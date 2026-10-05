@@ -117,6 +117,16 @@ let fftfreq dtype ?d n = Frontend.fftfreq context dtype ?d n
 let rfftfreq dtype ?d n = Frontend.rfftfreq context dtype ?d n
 let hann dt n = Frontend.hann context dt n
 
+(* ───── Special functions ───── *)
+
+let erfc = Special.erfc
+let ndtr = Special.ndtr
+let log_ndtr = Special.log_ndtr
+let ndtri = Special.ndtri
+let lgamma = Special.lgamma
+let digamma = Special.digamma
+let lbeta = Special.lbeta
+
 (* For transformations and file formats *)
 
 module Op = struct

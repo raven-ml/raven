@@ -325,6 +325,22 @@
  (name test_special)
  (modules test_special)
  (package rune)
- (libraries windtrap rune nx_test nx nx.metal)
+ (libraries windtrap rune nx_test nx nx.device nx.metal)
  (deps
-  (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)))
+  (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)
+  (glob_files golden/special_grad/*.golden))
+ (action
+  (progn
+   (run %{test} --corrected --exclude-tag slow)
+   (diff? test_special.ml test_special.ml.corrected))))
+
+; The float64 inverses' compiled derivatives, which runtest leaves out.
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)
+  (glob_files golden/special_grad/*.golden))
+ (action
+  (run %{exe:test_special.exe} --tag slow)))

@@ -165,6 +165,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes `Nx.erfc`, `Nx.ndtr`, `Nx.log_ndtr`, `Nx.ndtri`,
+  `Nx.lgamma`, `Nx.digamma` and `Nx.lbeta` as nx does eagerly, and their
+  derivatives, in every argument and at every order, are within the bounds
+  `rune.mli` states, eagerly and compiled.
 - `Rune.jit` compiles `bit`, `int4` and `uint4` values, which it refused. A
   compiled function reads and writes their packed bytes, views at sub-byte
   offsets included, and computes `int4` and `uint4` as integers modulo 16.
@@ -3280,6 +3284,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.erfc`, `Nx.ndtr`, `Nx.log_ndtr`, `Nx.ndtri`, `Nx.lgamma`,
+  `Nx.digamma` and `Nx.lbeta`, the laws of the normal, gamma and beta
+  distributions, each within a stated bound of its correctly rounded value and
+  total on its domain.
 - `Nx.erfinv` is within `4 + 8κ` ulps, κ its condition number, as `nx.mli`
   states.
 - **Breaking:** `Nx.erf` takes and returns float tensors only; an integer or

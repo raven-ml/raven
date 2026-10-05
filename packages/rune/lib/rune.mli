@@ -218,6 +218,34 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     {!Nx.mod_}'s tangent is [da - trunc (a / b) db], one-sided at a multiple of
     [b]. *)
 
+(** {1:special Derivatives of nx's special functions}
+
+    rune differentiates {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr}, {!Nx.ndtri},
+    {!Nx.lgamma}, {!Nx.digamma} and {!Nx.lbeta} through the operations nx
+    computes them with, in every argument and at every order. Each derivative
+    is within the budget below of the exact derivative, at [float32] and
+    [float64], eagerly and compiled, where the function and its derivative are
+    finite, which leaves out {!Nx.ndtri} at [0] and [1]. [ε] is the distance
+    from 1 to the next float of the dtype.
+
+    {t
+    | Function | First derivative |
+    |---|---|
+    | {!Nx.erfc} | 128 ulps |
+    | {!Nx.ndtr} | 256 ulps |
+    | {!Nx.log_ndtr} | 512 ulps |
+    | {!Nx.ndtri} | 64 ulps |
+    | {!Nx.lgamma} | for [x > 0], 256 ulps, or [256ε] absolutely where below 1; below 0, 256 ulps or [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely |
+    | {!Nx.digamma} | for [x > 0], 256 ulps; below 0, 256 ulps or [256ε (1 + ψ'(1 - x) + π² / sin² (πx))] absolutely |
+    | {!Nx.lbeta}, in either argument | 4096 ulps, or [8192ε] absolutely where below 1 |
+    }
+
+    Second derivatives of {!Nx.lgamma} and {!Nx.lbeta} are within [2^-40]
+    relative at [float64] and [2^-16] at [float32]. Those of {!Nx.lbeta} hold
+    where both arguments are at least the cube root of the largest float's
+    reciprocal ([1.4e-13] at [float32], [1.8e-103] at [float64]); below, the
+    terms they subtract pass the largest float and the result may be NaN. *)
+
 (** {1:jacobians Jacobians} *)
 
 val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t

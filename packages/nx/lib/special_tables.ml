@@ -55,3 +55,482 @@ let erf_series_terms =
 (* The continued fraction's terms. *)
 let erfc_fraction_terms =
   64
+
+(* fdlibm's s_erf.c (1.3 95/01/18): Copyright (C) 1993 by Sun Microsystems, Inc.
+   All rights reserved. Developed at SunSoft, a Sun Microsystems, Inc. business.
+   Permission to use, copy, modify, and distribute this software is freely
+   granted, provided that this notice is preserved. [erx] is erf 1 rounded to 24
+   bits; [erf_small] is P/Q on [0, 0.84375) in x^2, [erf_near] on [0.84375,
+   1.25) in |x| - 1, [erfc_mid] and [erfc_far] the tails' R/S in 1/x^2 below and
+   from 1/0.35. *)
+let erx = 0x1.b0ac16p-1
+
+let erf_small_p =
+  [|
+    -0x1.8ead6120016acp-16;
+    -0x1.7a291236668e4p-8;
+    -0x1.d2a51dbd7194fp-6;
+    -0x1.4cd7d691cb913p-2;
+    0x1.06eba8214db68p-3;
+  |]
+
+let erf_small_q =
+  [|
+    -0x1.09c4342a2612p-18;
+    0x1.15dc9221c1a1p-13;
+    0x1.4d022c4d36b0fp-8;
+    0x1.0a54c5536cebap-4;
+    0x1.97779cddadc09p-2;
+    0x1p+0;
+  |]
+
+let erf_near_p =
+  [|
+    -0x1.1bf380a96073fp-9;
+    0x1.22a36599795ebp-5;
+    -0x1.c63983d3e28ecp-4;
+    0x1.45fca805120e4p-2;
+    -0x1.7d240fbb8c3f1p-2;
+    0x1.a8d00ad92b34dp-2;
+    -0x1.359b8bef77538p-9;
+  |]
+
+let erf_near_q =
+  [|
+    0x1.88b545735151dp-7;
+    0x1.bedc26b51dd1cp-7;
+    0x1.02660e763351fp-3;
+    0x1.2635cd99fe9a7p-4;
+    0x1.14af092eb6f33p-1;
+    0x1.b3e6618eee323p-4;
+    0x1p+0;
+  |]
+
+let erfc_mid_p =
+  [|
+    -0x1.3a0efc69ac25cp+3;
+    -0x1.4526557e4d2f2p+6;
+    -0x1.7135cebccabb2p+7;
+    -0x1.44cb184282266p+7;
+    -0x1.f300ae4cba38dp+5;
+    -0x1.51e0441b0e726p+3;
+    -0x1.63416e4ba736p-1;
+    -0x1.43412600d6435p-7;
+  |]
+
+let erfc_mid_q =
+  [|
+    -0x1.eeff2ee749a62p-5;
+    0x1.a47ef8e484a93p+2;
+    0x1.b28a3ee48ae2cp+6;
+    0x1.ad02157700314p+8;
+    0x1.42b1921ec2868p+9;
+    0x1.b290dd58a1a71p+8;
+    0x1.1350c526ae721p+7;
+    0x1.3a6b9bd707687p+4;
+    0x1p+0;
+  |]
+
+let erfc_far_p =
+  [|
+    -0x1.e384e9bdc383fp+8;
+    -0x1.004616a2e5992p+10;
+    -0x1.3ec881375f228p+9;
+    -0x1.4145d43c5ed98p+7;
+    -0x1.1c209555f995ap+4;
+    -0x1.993ba70c285dep-1;
+    -0x1.4341239e86f4ap-7;
+  |]
+
+let erfc_far_q =
+  [|
+    -0x1.670e242712d62p+4;
+    0x1.da874e79fe763p+8;
+    0x1.3f219cedf3be6p+11;
+    0x1.8ffb7688c246ap+11;
+    0x1.802eb189d5118p+10;
+    0x1.45cae221b9f0ap+8;
+    0x1.e568b261d519p+4;
+    0x1p+0;
+  |]
+
+(* erfc's regions in |x|: two forms of 1 - erf on either side of
+   [erfc_small_split] below [erf_small_below], P/Q about 1 below
+   [erf_near_below], the tails' R/S below and from [erfc_mid_below], and 0 or 2
+   from [erfc_far_from]. *)
+let erfc_small_split = 0x1p-2
+
+let erf_small_below = 0x1.bp-1
+
+let erf_near_below = 0x1.4p+0
+
+let erfc_mid_below = 0x1.6db6db6db6db7p+1
+
+let erfc_far_from = 0x1.cp+4
+
+(* AS 241's regions: central where |p - 1/2| <= [ndtri_central_below], in
+   [ndtri_central_r] - (p - 1/2)^2; in the tails, sqrt (-log q) less
+   [ndtri_near_shift] up to [ndtri_near_below] and less [ndtri_far_shift] above.
+   *)
+let ndtri_central_below = 0x1.b333333333333p-2
+
+let ndtri_central_r = 0x1.71eb851eb851fp-3
+
+let ndtri_near_below = 0x1.4p+2
+
+let ndtri_near_shift = 0x1.999999999999ap+0
+
+let ndtri_far_shift = 0x1.4p+2
+
+(* fdlibm's e_lgamma_r.c (1.3 95/01/18), under the same notice. [lgamma_tc] is
+   the minimum, [lgamma_tf] lgamma there and [lgamma_tt] minus its tail; [a] is
+   about 1 and 2, [t] about the minimum, [u]/[v] beside 1, [s]/[r] on [2, 3),
+   [w] Stirling's correction from 8, in 1/x^2. The last five are the regions'
+   lower ends on (0, 2). *)
+let lgamma_tc = 0x1.762d86356be3fp+0
+
+let lgamma_tf = -0x1.f19b9bcc38a42p-4
+
+let lgamma_tt = -0x1.0c7caa48a971fp-58
+
+let lgamma_a =
+  [|
+    0x1.7858e90a45837p-15;
+    0x1.a7074428cfa52p-16;
+    0x1.c5088987dfb07p-14;
+    0x1.cf2eced10e54dp-13;
+    0x1.0b6c689b99cp-11;
+    0x1.38a94116f3f5dp-10;
+    0x1.7add8ccb7926bp-9;
+    0x1.e404fb68fefe8p-8;
+    0x1.51322ac92547bp-6;
+    0x1.13e001a5562a7p-4;
+    0x1.4a34cc4a60fadp-2;
+    0x1.3c467e37db0c8p-4;
+  |]
+
+let lgamma_t =
+  [|
+    0x1.5fd3ee8c2d3f4p-12;
+    -0x1.47f24ecc38c38p-12;
+    0x1.4af6d6c0ebbf7p-12;
+    -0x1.1a6109c73e0ecp-11;
+    0x1.cdf0cef61a8e9p-11;
+    -0x1.6fe8ebf2d1af1p-10;
+    0x1.282d32e15c915p-9;
+    -0x1.e2effb3e914d7p-9;
+    0x1.8fce0e370e344p-8;
+    -0x1.51f9fba91ec6ap-7;
+    0x1.266e7970af9ecp-6;
+    -0x1.0c9a8df35b713p-5;
+    0x1.08b4294d5419bp-4;
+    -0x1.2e4278dc6c509p-3;
+    0x1.ef72bc8ee38a2p-2;
+  |]
+
+let lgamma_u =
+  [|
+    0x1.b678bbf2bab09p-7;
+    0x1.d4eaef6010924p-3;
+    0x1.f497644ea845p-1;
+    0x1.7475cd119bd6fp+0;
+    0x1.4401e8b005dffp-1;
+    -0x1.3c467e37db0c8p-4;
+  |]
+
+let lgamma_v =
+  [|
+    0x1.a5abb57d0cf61p-9;
+    0x1.aae55d6537c88p-4;
+    0x1.89dfbe45050afp-1;
+    0x1.10725a42b18f5p+1;
+    0x1.3a5d7c2bd619cp+1;
+    0x1p+0;
+  |]
+
+let lgamma_s =
+  [|
+    0x1.0bfecdd17e945p-15;
+    0x1.e26b67368f239p-10;
+    0x1.b481c7e939961p-6;
+    0x1.2bb9cbee5f2f7p-3;
+    0x1.4d98f4f139f59p-2;
+    0x1.b848b36e20878p-3;
+    -0x1.3c467e37db0c8p-4;
+  |]
+
+let lgamma_r =
+  [|
+    0x1.ebaf7a5b3814p-18;
+    0x1.97ddaca41a95bp-11;
+    0x1.317ea742ed475p-6;
+    0x1.601edccfbdf27p-3;
+    0x1.71a1893d3dcdcp-1;
+    0x1.645a762c4ab74p+0;
+    0x1p+0;
+  |]
+
+let lgamma_w0 = 0x1.acfe390c97d69p-2
+
+let lgamma_w =
+  [|
+    -0x1.ab89d0b9e43e4p-10;
+    0x1.b67ba4cdad5d1p-11;
+    -0x1.380cb8c0fe741p-11;
+    0x1.a019f98cf38b6p-11;
+    -0x1.6c16c16b02e5cp-9;
+    0x1.555555555553bp-4;
+  |]
+
+let lgamma_small = 0x1.ccccdp-1
+
+let lgamma_c = 0x1.76944p-1
+
+let lgamma_b = 0x1.da661p-3
+
+let lgamma_f = 0x1.bb4c3p+0
+
+let lgamma_e = 0x1.3b4c4p+0
+
+(* lgamma's regions from [lgamma_shift_from]: shifted down to [2, 3) below
+   [lgamma_stirling_from], Stirling's series from it. *)
+let lgamma_shift_from = 0x1p+1
+
+let lgamma_stirling_from = 0x1p+3
+
+(* The tables whose values differ between dtypes. *)
+type t = {
+  (* 1/sqrt 2 as two floats, whose sum is it to twice the dtype's precision. *)
+  sqrt1_2_hi : float;
+  sqrt1_2_lo : float;
+  (* AS 241's P/Q for |p - 1/2| <= 0.425 in 0.180625 - (p - 1/2)^2: Wichura,
+     Algorithm AS 241, Applied Statistics 37 (1988), its PPND7 at float32 and
+     PPND16 at float64, whose printed hash sums the generator checks; [near] in
+     sqrt (-log q) - 1.6 up to 5, [far] in sqrt (-log q) - 5. *)
+  ndtri_central_p : float array;
+  ndtri_central_q : float array;
+  ndtri_near_p : float array;
+  ndtri_near_q : float array;
+  ndtri_far_p : float array;
+  ndtri_far_q : float array;
+  (* log_ndtr's asymptotic series below [log_ndtr_below]: its least count within
+     u/8 of the value and the derivative. *)
+  log_ndtr_below : float;
+  log_ndtr_series : float array;
+  (* digamma's root near 1.4616 as two floats, and on [1, 2] the polynomial g in x
+     - 3/2 with digamma x = (x - root) g: the least degree within u of g and 16u
+     of the derivative. From [digamma_from], B_2k / 2k of the asymptotic series,
+     its least count within u/8. *)
+  digamma_root_hi : float;
+  digamma_root_lo : float;
+  digamma_core : float array;
+  digamma_from : float;
+  (* sin (pi x) on [0, 1/2] as x S(x^2): the least degree of S within u of the
+     value and 16u pi of the derivative. *)
+  sinpi : float array;
+  digamma_series : float array;
+}
+
+let float32 =
+  {
+    sqrt1_2_hi = 0x1.6a09e6p-1;
+    sqrt1_2_lo = 0x1.9fcef4p-27;
+    ndtri_central_p = [|
+        0x1.d8ep+5;
+        0x1.3e951p+7;
+        0x1.937964p+5;
+        0x1.b18d9p+1;
+      |];
+    ndtri_central_q = [|
+        0x1.0cc01p+6;
+        0x1.3b07f2p+6;
+        0x1.1e529ep+4;
+        0x1p+0;
+      |];
+    ndtri_near_p = [|
+        0x1.5ca5dap-3;
+        0x1.4e85c2p+0;
+        0x1.60df54p+1;
+        0x1.6c6662p+0;
+      |];
+    ndtri_near_q = [|
+        0x1.ec62b8p-4;
+        0x1.795848p-1;
+        0x1p+0;
+      |];
+    ndtri_far_p = [|
+        0x1.1c0d82p-6;
+        0x1.b6f8aap-2;
+        0x1.8a65ap+1;
+        0x1.aa1b1ep+2;
+      |];
+    ndtri_far_q = [|
+        0x1.91ad42p-7;
+        0x1.ef92a8p-3;
+        0x1p+0;
+      |];
+    log_ndtr_below = -0x1.4p+3;
+    log_ndtr_series = [|
+        -0x1.d88p+9;
+        0x1.a4p+6;
+        -0x1.ep+3;
+        0x1.8p+1;
+        -0x1p+0;
+      |];
+    digamma_root_hi = 0x1.762d86p+0;
+    digamma_root_lo = 0x1.ab5f2p-27;
+    digamma_core = [|
+        0x1.65418ap-7;
+        -0x1.0c43fp-6;
+        0x1.186978p-6;
+        -0x1.a67e08p-6;
+        0x1.4ea4b8p-5;
+        -0x1.fc5cd2p-5;
+        0x1.850eaap-4;
+        -0x1.2febbep-3;
+        0x1.eca19p-3;
+        -0x1.b1cb68p-2;
+        0x1.e6f0ccp-1;
+      |];
+    digamma_from = 0x1.8p+2;
+    sinpi = [|
+        0x1.3e142p-4;
+        -0x1.32531ep-1;
+        0x1.4668fp+1;
+        -0x1.4abbc4p+2;
+        0x1.921fb6p+1;
+      |];
+    digamma_series = [|
+        -0x1.111112p-8;
+        0x1.041042p-8;
+        -0x1.111112p-7;
+        0x1.555556p-4;
+      |];
+  }
+
+let float64 =
+  {
+    sqrt1_2_hi = 0x1.6a09e667f3bcdp-1;
+    sqrt1_2_lo = -0x1.bdd3413b26456p-55;
+    ndtri_central_p = [|
+        0x1.39a296f7d925ep+11;
+        0x1.052d26b2e45e4p+15;
+        0x1.06c1c55b78f2p+16;
+        0x1.66c3e869b752ap+15;
+        0x1.ad1d8cd4ee71dp+13;
+        0x1.ece5d2213c0ccp+10;
+        0x1.0a4888b1a436ep+7;
+        0x1.b18d91e9eef75p+1;
+      |];
+    ndtri_central_q = [|
+        0x1.46a7eca984b69p+12;
+        0x1.c0e457cb1ae76p+14;
+        0x1.3317caa64f4bep+15;
+        0x1.4b772d5d65266p+14;
+        0x1.512322e75c89fp+12;
+        0x1.5797efdc8b3f7p+9;
+        0x1.5281b386e1ab5p+5;
+        0x1p+0;
+      |];
+    ndtri_near_p = [|
+        0x1.9615ac0b7ace9p-11;
+        0x1.744eb6c45ec67p-6;
+        0x1.ef2abb9b85c37p-3;
+        0x1.453cc085375b2p+0;
+        0x1.d2ecb1a3d02c4p+1;
+        0x1.713f71462256ap+2;
+        0x1.2857748cab19bp+2;
+        0x1.6c665fde9526ap+0;
+      |];
+    ndtri_near_q = [|
+        0x1.20d3f686439e4p-30;
+        0x1.1f18cbfdf2728p-11;
+        0x1.f207a7eab17bfp-7;
+        0x1.2f5123394f04p-3;
+        0x1.61292f23385c9p-1;
+        0x1.ad278e6526633p+0;
+        0x1.06cefbb46a449p+1;
+        0x1p+0;
+      |];
+    ndtri_far_p = [|
+        0x1.afb74d693bf93p-23;
+        0x1.c6ec6cc59e02ap-16;
+        0x1.45c1908425345p-10;
+        0x1.b2b41193b4ee7p-6;
+        0x1.2fad9315255cfp-2;
+        0x1.c8ea6461fa445p+0;
+        0x1.5daea6e875003p+2;
+        0x1.aa1b1c13ee526p+2;
+      |];
+    ndtri_far_q = [|
+        0x1.269bff1f8c19p-49;
+        0x1.31446f740b9ep-23;
+        0x1.35c2c496374bfp-16;
+        0x1.9c8bc979dc5d7p-11;
+        0x1.e76f93215462ap-7;
+        0x1.186eb183443fbp-3;
+        0x1.331d34fc7d77fp-1;
+        0x1p+0;
+      |];
+    log_ndtr_below = -0x1.4p+4;
+    log_ndtr_series = [|
+        0x1.eee11p+20;
+        -0x1.07ef8p+17;
+        0x1.44d8p+13;
+        -0x1.d88p+9;
+        0x1.a4p+6;
+        -0x1.ep+3;
+        0x1.8p+1;
+        -0x1p+0;
+      |];
+    digamma_root_hi = 0x1.762d86356be3fp+0;
+    digamma_root_lo = 0x1.b86a722197829p-54;
+    digamma_core = [|
+        0x1.f255c4568ac4dp-14;
+        -0x1.75c084e78a4cdp-13;
+        0x1.94e73cc9821e1p-14;
+        -0x1.2fae5cb379bf2p-13;
+        0x1.53b23429da21bp-12;
+        -0x1.fd8e50abf2196p-12;
+        0x1.6a3e76070c135p-11;
+        -0x1.0fb38d217b8p-10;
+        0x1.99d3f5c0cad5ep-10;
+        -0x1.336dbe66757c8p-9;
+        0x1.cd2011454fd05p-9;
+        -0x1.5a06a5d662cb4p-8;
+        0x1.03c0adafa529cp-7;
+        -0x1.863563f44f303p-7;
+        0x1.2564717896ec6p-6;
+        -0x1.b9f8b11bfd3dp-6;
+        0x1.4de9aa1779d23p-5;
+        -0x1.fb44202a2306bp-5;
+        0x1.8512e5903903ep-4;
+        -0x1.2feeeb98a78eap-3;
+        0x1.eca189b8e6f6dp-3;
+        -0x1.b1cb63005ee98p-2;
+        0x1.e6f0cbb873616p-1;
+      |];
+    digamma_from = 0x1.4p+3;
+    sinpi = [|
+        0x1.9d462020fcc78p-21;
+        -0x1.6f7acdb8f658p-16;
+        0x1.e8f3675ee37ddp-12;
+        -0x1.e3074dfaf87afp-8;
+        0x1.5078348551854p-4;
+        -0x1.32d2cce627c86p-1;
+        0x1.466bc6775aa7dp+1;
+        -0x1.4abbce625be52p+2;
+        0x1.921fb54442d18p+1;
+      |];
+    digamma_series = [|
+        0x1.86e7f9b9fe6e8p+1;
+        -0x1.c5e5e5e5e5e5ep-2;
+        0x1.5555555555556p-4;
+        -0x1.5995995995995p-6;
+        0x1.f07c1f07c1f08p-8;
+        -0x1.1111111111111p-8;
+        0x1.041041041041p-8;
+        -0x1.1111111111111p-7;
+        0x1.5555555555555p-4;
+      |];
+  }

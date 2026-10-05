@@ -2324,7 +2324,13 @@ val isfinite : ('a, 'b) t -> (bool, bool_elt) t
 (** {2:math_special Special functions}
 
     The laws of the distributions {!Rng} samples. Each takes and returns
-    floats and states its bound ({{!section:accuracy}accuracy}). *)
+    floats, its arguments broadcast against each other, parameters first and
+    the variable last, and states its bound ({{!section:accuracy}accuracy}). A
+    function within [k] ulps, absolute near zeros, is within [k] ulps or within
+    [k ε] of its exact value where that value is below 1 in magnitude, [ε]
+    being the distance from 1 to the next float of the dtype. Where a bound is
+    absolute, a narrower float is within it plus half an ulp of its own
+    dtype. *)
 
 val erf : (float, 'b) t -> (float, 'b) t
 (** [erf x] is the error function [(2/√π) ∫₀ˣ e^{-u²} du]: within 2 ulps at
@@ -2348,6 +2354,64 @@ val erfinv : (float, 'b) t -> (float, 'b) t
       # erfinv (create float64 [| 3 |] [| -0.5; 0.; 0.5 |])
       - : (float, float64_elt) t = [-0.476936, 0, 0.476936]
     ]} *)
+
+val erfc : (float, 'b) t -> (float, 'b) t
+(** [erfc x] is the complementary error function [1 - erf x], within 8 ulps.
+    It keeps its relative precision where [erf x] rounds to [1]: [erfc 10] is
+    [2.088e-45]. It is [0] at [+inf] and [2] at [-inf]. *)
+
+val ndtr : (float, 'b) t -> (float, 'b) t
+(** [ndtr x] is the standard normal's distribution function [Φ(x) = (1 + erf
+    (x/√2)) / 2], within 16 ulps. Its lower tail keeps its relative precision
+    down to the least subnormal, at [x] about [-38.5] at [float64] and [-14]
+    at [float32]. It is [0] at [-inf] and [1] at [+inf].
+
+    {@ocaml[
+      # ndtr (create float64 [| 3 |] [| -1.; 0.; 1. |])
+      - : (float, float64_elt) t = [0.158655, 0.5, 0.841345]
+    ]} *)
+
+val log_ndtr : (float, 'b) t -> (float, 'b) t
+(** [log_ndtr x] is [log (ndtr x)], within 32 ulps. As [x] goes to [-inf],
+    where [ndtr x] underflows, it is [-x²/2 - log (-x) - log (2π)/2] to
+    leading order, finite while [x²/2] is: down to [x] about [-1.9e154] at
+    [float64] and [-2.6e19] at [float32], and [-inf] below. As [x] goes to
+    [+inf] it is [-ndtr (-x)]. It is [-inf] at [-inf] and [-0] at [+inf]. *)
+
+val ndtri : (float, 'b) t -> (float, 'b) t
+(** [ndtri p] is the standard normal's quantile, the inverse of {!ndtr} on
+    \[[0], [1]\]: [-inf] at [0], [+inf] at [1] and NaN outside. It is
+    within [4 + 16κ] ulps, where [κ = |p / (x Φ'(x))|] at [x = ndtri p] is the
+    condition number of the inverse. A [p] below [1/2] is read as the lower
+    tail and a [p] above as one minus the upper tail, so [ndtri p] is as
+    precise as [p] near either end: [ndtri 1e-300] is [-37.0471]. *)
+
+val lgamma : (float, 'b) t -> (float, 'b) t
+(** [lgamma x] is [log |Γ(x)|]. For [x > 0] it is within 16 ulps, absolute
+    near its zeros at [1] and [2]; below [0], within 16 ulps or [16ε (1 +
+    lgamma (1 - x))] absolutely, the precision the reflection [log π - log |sin
+    (πx)| - lgamma (1 - x)] keeps. It is [+inf] at [0], the negative integers and
+    [+inf], and NaN at [-inf].
+
+    {@ocaml[
+      # lgamma (create float64 [| 4 |] [| -1.; 0.; 0.5; 1e300 |])
+      - : (float, float64_elt) t = [inf, inf, 0.572365, 6.89776e+302]
+    ]} *)
+
+val digamma : (float, 'b) t -> (float, 'b) t
+(** [digamma x] is [ψ(x) = Γ'(x) / Γ(x)], the mean of [log X] for [X] a
+    gamma variate of concentration [x]. For [x > 0] it is within 16 ulps,
+    absolute near its root at [1.4616]; below [0], within 16 ulps or [16ε (1 +
+    |π cot (πx)|)] absolutely. It is [-inf] at [+0], [+inf] at [-0] and [+inf], and
+    NaN at the negative integers and [-inf]. *)
+
+val lbeta : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [lbeta a b] is [log B(a, b) = lgamma a + lgamma b - lgamma (a + b)] for [a,
+    b > 0], within 256 ulps, or [512ε] absolutely where it is below [1] in
+    magnitude. It keeps its precision where the three [lgamma]s cancel:
+    [lbeta 1e10 1] is [-log 1e10]. It is [+inf] as either argument reaches
+    [0] and [-inf] as either reaches [+inf] with the other positive and
+    finite. *)
 
 (** {1:comparison Comparison and logic} *)
 

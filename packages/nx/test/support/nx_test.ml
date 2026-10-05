@@ -1531,10 +1531,18 @@ module Accuracy = Accuracy
 
    A golden of [golden/special/] lists, per dtype, the arguments of a function
    and its value correctly rounded to the dtype, as hexadecimal floats, and for
-   an inverse a last column, its condition number at the row. *)
+   some functions a last column the function's bound reads: an inverse's
+   condition number, or the scale of an absolute bound. *)
 
 module Special = struct
-  type row = { args : float array; value : float; scale : float }
+  (* [overflow] when [value] is an infinity a finite exact value rounds to past
+     the dtype's range. *)
+  type row = {
+    args : float array;
+    value : float;
+    overflow : bool;
+    scale : float;
+  }
 
   (* The rows of [file] at the dtype named [short] ("f32", "f64"). *)
   let rows file short =
@@ -1553,23 +1561,46 @@ module Special = struct
           (fun line ->
             match String.split_on_char '\t' line with
             | dtype :: cells when dtype = short ->
-                let cells = Array.of_list (List.map float_of_string cells) in
+                let overflow =
+                  match List.nth cells n with
+                  | "overflow" | "-overflow" -> true
+                  | _ -> false
+                in
+                let float = function
+                  | "overflow" -> Float.infinity
+                  | "-overflow" -> Float.neg_infinity
+                  | cell -> float_of_string cell
+                in
+                let cells = Array.of_list (List.map float cells) in
                 Some
                   {
                     args = Array.sub cells 0 n;
                     value = cells.(n);
+                    overflow;
                     scale = (if scaled then cells.(n + 1) else Float.nan);
                   }
             | _ -> None)
           lines
 
-  (* The forms of a bound: [k] ulps, and an inverse's [k] ulps plus its
-     condition number times its forward function's bound. *)
-  type bound = Ulps of int | Inverse of int * int
+  (* The forms of a bound: [k] ulps; [k] ulps or [|f̂ - f| <= a eps] where [|f| <
+     1]; [k] ulps or [|f̂ - f| <= k eps scale]; an inverse's [k] ulps plus its
+     condition number times its forward function's bound; and a relative bound
+     at float64 and at float32. *)
+  type bound =
+    | Ulps of int
+    | Near_zeros of int * int
+    | Scaled of int
+    | Inverse of int * int
+    | Relative of float * float
 
   let pp_bound ppf = function
     | Ulps k -> Format.fprintf ppf "%d ulps" k
+    | Near_zeros (k, a) ->
+        Format.fprintf ppf "%d ulps, or %d eps where below 1" k a
+    | Scaled k -> Format.fprintf ppf "%d ulps, or %d eps times the scale" k k
     | Inverse (k, f) -> Format.fprintf ppf "%d + kappa * %d ulps" k f
+    | Relative (r64, r32) ->
+        Format.fprintf ppf "%g relative (%g at float32)" r64 r32
 
   (* The position of a float of [width] bits [b] among its format's values in
      order, [-0.] just below [+0.]. *)
@@ -1591,17 +1622,37 @@ module Special = struct
       Int64.to_float (Int64.abs (Int64.sub (rank_of ~f32 a) (rank_of ~f32 b)))
 
   (* Whether [got] meets [bound] against the correctly rounded [row]: exactly
-     where the value is not finite, and with its sign where it is zero. *)
-  let within ~f32 bound row got =
-    let d = ulps ~f32 row.value got in
-    if not (Float.is_finite row.value) then d = 0.
-    else if row.value = 0. && Float.sign_bit got <> Float.sign_bit row.value
+     where the value is an exact infinity or NaN, and with its sign where it is
+     zero. An overflow, read as the infinity one rank past the largest float, is
+     held by rank to the bound in ulps, since its absolute error is infinite. *)
+  let within ?(zeros = `Signed) ~f32 bound row got =
+    let eps = if f32 then 0x1p-23 else 0x1p-52 in
+    let r = row.value in
+    let d = ulps ~f32 r got in
+    let error = Float.abs (got -. r) in
+    if (not (Float.is_finite r)) && not row.overflow then d = 0.
+    else if zeros = `Signed && r = 0. && Float.sign_bit got <> Float.sign_bit r
     then false
+    else if row.overflow then
+      d
+      <=
+      match bound with
+      | Ulps k | Near_zeros (k, _) | Scaled k -> Float.of_int k
+      | Inverse (k, forward) ->
+          Float.of_int k +. (row.scale *. Float.of_int forward)
+      | Relative (r64, r32) -> (if f32 then r32 else r64) /. eps
     else
       match bound with
       | Ulps k -> d <= Float.of_int k
+      | Near_zeros (k, a) ->
+          d <= Float.of_int k
+          || (Float.abs r < 1. && error <= Float.of_int a *. eps)
+      | Scaled k ->
+          d <= Float.of_int k || error <= Float.of_int k *. eps *. row.scale
       | Inverse (k, forward) ->
           d <= Float.of_int k +. (row.scale *. Float.of_int forward)
+      | Relative (r64, r32) ->
+          d = 0. || error <= (if f32 then r32 else r64) *. Float.abs r
 
   type f = { f : 'b. (float, 'b) Nx.t array -> (float, 'b) Nx.t }
 
@@ -1622,12 +1673,18 @@ module Special = struct
     sub row.value || Array.exists sub row.args
 
   (* [check ~bound file f] holds [f] to [bound args] at every row of [file] that
-     [keep] keeps (all by default), at float32 and, unless [f32_only], float64,
-     and fails listing the rows that miss it, worst first. *)
-  let check ?(keep = fun _ -> true) ?(f32_only = false) ~bound file f =
+     [keep] keeps (all by default), at each of [dtypes] (both by default), each
+     a test tagged [tags], and fails listing the rows that miss it, worst first.
+     [zeros] says whether a zero is held to its sign ([`Signed], by default) or
+     not ([`Unsigned], for a derivative, whose zeros nx does not sign). *)
+  let check ?(keep = fun _ -> true) ?(dtypes = [ `F32; `F64 ]) ?tags ?zeros
+      ~bound file f =
     List.map
-      (fun (short, f32) ->
-        Windtrap.test short (fun () ->
+      (fun dtype ->
+        let short, f32 =
+          match dtype with `F32 -> ("f32", true) | `F64 -> ("f64", false)
+        in
+        Windtrap.test ?tags short (fun () ->
             let rows = List.filter keep (rows file short) in
             let got =
               if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows
@@ -1637,7 +1694,7 @@ module Special = struct
                 (List.mapi
                    (fun i row ->
                      let b = bound row.args in
-                     if within ~f32 b row got.(i) then []
+                     if within ?zeros ~f32 b row got.(i) then []
                      else [ (ulps ~f32 row.value got.(i), row, got.(i), b) ])
                    rows)
             in
@@ -1660,7 +1717,7 @@ module Special = struct
                   (List.length misses) (List.length rows)
                   (Format.pp_print_list pp_miss)
                   (List.filteri (fun i _ -> i < 8) misses)))
-      (if f32_only then [ ("f32", true) ] else [ ("f32", true); ("f64", false) ])
+      dtypes
 
   (* Narrow floats
 
@@ -1670,16 +1727,23 @@ module Special = struct
      float64 result lies within its bound of a narrow midpoint. *)
 
   type narrow =
-    | Narrow : string * (float, 'b) Nx.dtype * int -> narrow
-        (** A name, a dtype and its width in bits. *)
+    | Narrow : string * (float, 'b) Nx.dtype * int * int * int -> narrow
+        (** A name, a dtype, its width, its precision and its least exponent. *)
 
   let narrows =
     [
-      Narrow ("float16", Nx.float16, 16);
-      Narrow ("bfloat16", Nx.bfloat16, 16);
-      Narrow ("float8_e4m3", Nx.float8_e4m3, 8);
-      Narrow ("float8_e5m2", Nx.float8_e5m2, 8);
+      Narrow ("float16", Nx.float16, 16, 11, -14);
+      Narrow ("bfloat16", Nx.bfloat16, 16, 8, -126);
+      Narrow ("float8_e4m3", Nx.float8_e4m3, 8, 4, -6);
+      Narrow ("float8_e5m2", Nx.float8_e5m2, 8, 3, -14);
     ]
+
+  (* The unit in the last place of [x] in a format of precision [p] and least
+     exponent [emin]: the least subnormal at zero. *)
+  let ulp ~p ~emin x =
+    let _, e = Float.frexp x in
+    let e = if x = 0. then emin else Int.max (e - 1) emin in
+    Float.ldexp 1. (e - (p - 1))
 
   (* Every float of a narrow dtype of [width] bits, and the ranks of a tensor of
      it. *)
@@ -1711,7 +1775,7 @@ module Special = struct
      non-finite value is held exactly. *)
   let narrow ~bound ?scale { f } =
     List.map
-      (fun (Narrow (name, dt, width)) ->
+      (fun (Narrow (name, dt, width, p, emin)) ->
         Windtrap.test name (fun () ->
             let x = every dt width in
             let n = 1 lsl width in
@@ -1729,14 +1793,17 @@ module Special = struct
               Array.mapi
                 (fun i x ->
                   match bound [| x |] with
-                  | Ulps k -> Float.of_int k
+                  | Ulps k | Near_zeros (k, _) | Scaled k -> Float.of_int k
                   | Inverse (k, fw) ->
-                      Float.of_int k +. (scales.(i) *. Float.of_int fw))
+                      Float.of_int k +. (scales.(i) *. Float.of_int fw)
+                  | Relative (r, _) -> r *. 0x1p52)
                 xs
             in
             let slack =
               Nx.create Nx.float64 [| n |]
-                (Array.map (fun b -> b *. 0x1p-52) bounds)
+                (Array.map
+                   (fun b -> if Float.is_finite b then b *. 0x1p-52 else 0.)
+                   bounds)
             in
             let rounded k =
               Nx.cast dt (Nx.mul v (Nx.add_s (Nx.mul_s slack k) 1.))
@@ -1762,6 +1829,21 @@ module Special = struct
                       (fun d c -> Int.min d (abs (got_ranks.(i) - c.(i))))
                       max_int candidates
                 in
+                let h = 0.5 *. ulp ~p ~emin v in
+                (* Where the bound is absolute, its float32 bound and half an
+                   ulp of the narrow dtype. *)
+                let absolute =
+                  match bound [| x |] with
+                  | Ulps _ | Inverse _ -> false
+                  | Near_zeros (_, a) ->
+                      Float.abs v < 1.
+                      && Float.abs (g -. v) <= (Float.of_int a *. 0x1p-23) +. h
+                  | Scaled k ->
+                      Float.abs (g -. v)
+                      <= (Float.of_int k *. 0x1p-23 *. scales.(i)) +. h
+                  | Relative (_, r) ->
+                      Float.abs (g -. v) <= (r *. Float.abs v) +. h
+                in
                 let ok =
                   if not (Float.is_finite v) then
                     (Float.is_nan g && Float.is_nan cs.(i)) || g = cs.(i)
@@ -1770,6 +1852,7 @@ module Special = struct
                     && (g <> 0.
                        || cs.(i) <> 0.
                        || Float.sign_bit g = Float.sign_bit cs.(i))
+                    || absolute
                 in
                 if not ok then misses := (x, g, v) :: !misses)
               xs;

@@ -20,6 +20,7 @@ the function holds that scale.
 """
 
 import argparse
+from decimal import Decimal
 import difflib
 import math
 import random
@@ -56,6 +57,12 @@ F64 = Format("float64", "f64", 53, -1022, 1023)
 FORMATS = [F32, F64]
 
 
+class Overflow(float):
+    """An infinity a finite value rounds to past the format's range, which a
+    golden writes as `overflow`: the largest finite float is one ulp from it,
+    where an exact infinity is held exactly."""
+
+
 def round_to(fmt, v):
     """`v`, an mpf, rounded to nearest even in `fmt`, as a Python float."""
     if mpmath.isnan(v):
@@ -69,7 +76,7 @@ def round_to(fmt, v):
     _, exp = mpmath.frexp(a)
     e = int(exp) - 1
     if e > fmt.emax:
-        return sign * math.inf
+        return Overflow(sign * math.inf)
     q = max(e, fmt.emin) - (fmt.p - 1)
     scaled = mpmath.ldexp(a, -q)
     n = int(mpmath.floor(scaled))
@@ -78,7 +85,7 @@ def round_to(fmt, v):
         n += 1
     r = math.ldexp(n, q) if q > -1100 else float(mpmath.ldexp(n, q))
     if r > fmt.max:
-        return sign * math.inf
+        return Overflow(sign * math.inf)
     return sign * r
 
 
@@ -123,10 +130,14 @@ def neighbours(fmt, c, k=8):
     return downs[::-1] + [x] + ups
 
 
+# The precision points are computed at, by mpmath, so that no platform's libm
+# moves a point.
+POINT_PREC = 100
+
+
 def log_sweep(fmt, lo, hi, n):
-    """`n` floats of `fmt` log-spaced over `[lo, hi]`, both positive, computed
-    by mpmath so that no platform's libm moves a point."""
-    with mp.workprec(100):
+    """`n` floats of `fmt` log-spaced over `[lo, hi]`, both positive."""
+    with mp.workprec(POINT_PREC):
         a, b = mpmath.log(mpf(lo)), mpmath.log(mpf(hi))
         return [round_to(fmt, mpmath.exp(a + (b - a) * i / (n - 1))) for i in range(n)]
 
@@ -159,6 +170,8 @@ def correctly_rounded(fmt, f, *args):
 
 
 def hexf(x):
+    if isinstance(x, Overflow):
+        return "overflow" if x > 0 else "-overflow"
     if math.isnan(x):
         return "nan"
     if math.isinf(x):
@@ -206,7 +219,7 @@ class Function:
         return rows
 
     def golden(self):
-        columns = ["dtype"] + list(self.args) + ["f"] + ([self.extra.__name__] if self.extra else [])
+        columns = ["dtype"] + list(self.args) + ["f"] + (["kappa" if "kappa" in self.extra.__name__ else "scale"] if self.extra else [])
         lines = ["\t".join(columns)]
         for fmt in FORMATS:
             lines += ["\t".join(r) for r in self.rows(fmt)]
@@ -310,9 +323,730 @@ def erfinv_points(fmt):
             + uniform(fmt, rng, -1, 1, 96) + points + [-x for x in points])
 
 
+# Sources
+#
+# Coefficients as their sources print them: a decimal and, for fdlibm, the
+# two words of its double, which the run checks against each other.
+
+FDLIBM_NOTICE = ("Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. Developed "
+                 "at SunSoft, a Sun Microsystems, Inc. business. Permission to use, copy, "
+                 "modify, and distribute this software is freely granted, provided that this "
+                 "notice is preserved.")
+
+# fdlibm s_erf.c, version 1.3 95/01/18.
+S_ERF = {
+    "erx": ("8.45062911510467529297e-01", 0x3FEB0AC160000000),
+    "pp0": ("1.28379167095512558561e-01", 0x3FC06EBA8214DB68),
+    "pp1": ("-3.25042107247001499370e-01", 0xBFD4CD7D691CB913),
+    "pp2": ("-2.84817495755985104766e-02", 0xBF9D2A51DBD7194F),
+    "pp3": ("-5.77027029648944159157e-03", 0xBF77A291236668E4),
+    "pp4": ("-2.37630166566501626084e-05", 0xBEF8EAD6120016AC),
+    "qq1": ("3.97917223959155352819e-01", 0x3FD97779CDDADC09),
+    "qq2": ("6.50222499887672944485e-02", 0x3FB0A54C5536CEBA),
+    "qq3": ("5.08130628187576562776e-03", 0x3F74D022C4D36B0F),
+    "qq4": ("1.32494738004321644526e-04", 0x3F215DC9221C1A10),
+    "qq5": ("-3.96022827877536812320e-06", 0xBED09C4342A26120),
+    "pa0": ("-2.36211856075265944077e-03", 0xBF6359B8BEF77538),
+    "pa1": ("4.14856118683748331666e-01", 0x3FDA8D00AD92B34D),
+    "pa2": ("-3.72207876035701323847e-01", 0xBFD7D240FBB8C3F1),
+    "pa3": ("3.18346619901161753674e-01", 0x3FD45FCA805120E4),
+    "pa4": ("-1.10894694282396677476e-01", 0xBFBC63983D3E28EC),
+    "pa5": ("3.54783043256182359371e-02", 0x3FA22A36599795EB),
+    "pa6": ("-2.16637559486879084300e-03", 0xBF61BF380A96073F),
+    "qa1": ("1.06420880400844228286e-01", 0x3FBB3E6618EEE323),
+    "qa2": ("5.40397917702171048937e-01", 0x3FE14AF092EB6F33),
+    "qa3": ("7.18286544141962662868e-02", 0x3FB2635CD99FE9A7),
+    "qa4": ("1.26171219808761642112e-01", 0x3FC02660E763351F),
+    "qa5": ("1.36370839120290507362e-02", 0x3F8BEDC26B51DD1C),
+    "qa6": ("1.19844998467991074170e-02", 0x3F888B545735151D),
+    "ra0": ("-9.86494403484714822705e-03", 0xBF843412600D6435),
+    "ra1": ("-6.93858572707181764372e-01", 0xBFE63416E4BA7360),
+    "ra2": ("-1.05586262253232909814e+01", 0xC0251E0441B0E726),
+    "ra3": ("-6.23753324503260060396e+01", 0xC04F300AE4CBA38D),
+    "ra4": ("-1.62396669462573470355e+02", 0xC0644CB184282266),
+    "ra5": ("-1.84605092906711035994e+02", 0xC067135CEBCCABB2),
+    "ra6": ("-8.12874355063065934246e+01", 0xC054526557E4D2F2),
+    "ra7": ("-9.81432934416914548592e+00", 0xC023A0EFC69AC25C),
+    "sa1": ("1.96512716674392571292e+01", 0x4033A6B9BD707687),
+    "sa2": ("1.37657754143519042600e+02", 0x4061350C526AE721),
+    "sa3": ("4.34565877475229228821e+02", 0x407B290DD58A1A71),
+    "sa4": ("6.45387271733267880336e+02", 0x40842B1921EC2868),
+    "sa5": ("4.29008140027567833386e+02", 0x407AD02157700314),
+    "sa6": ("1.08635005541779435134e+02", 0x405B28A3EE48AE2C),
+    "sa7": ("6.57024977031928170135e+00", 0x401A47EF8E484A93),
+    "sa8": ("-6.04244152148580987438e-02", 0xBFAEEFF2EE749A62),
+    "rb0": ("-9.86494292470009928597e-03", 0xBF84341239E86F4A),
+    "rb1": ("-7.99283237680523006574e-01", 0xBFE993BA70C285DE),
+    "rb2": ("-1.77579549177547519889e+01", 0xC031C209555F995A),
+    "rb3": ("-1.60636384855821916062e+02", 0xC064145D43C5ED98),
+    "rb4": ("-6.37566443368389627722e+02", 0xC083EC881375F228),
+    "rb5": ("-1.02509513161107724954e+03", 0xC09004616A2E5992),
+    "rb6": ("-4.83519191608651397019e+02", 0xC07E384E9BDC383F),
+    "sb1": ("3.03380607434824582924e+01", 0x403E568B261D5190),
+    "sb2": ("3.25792512996573918826e+02", 0x40745CAE221B9F0A),
+    "sb3": ("1.53672958608443695994e+03", 0x409802EB189D5118),
+    "sb4": ("3.19985821950859553908e+03", 0x40A8FFB7688C246A),
+    "sb5": ("2.55305040643316442583e+03", 0x40A3F219CEDF3BE6),
+    "sb6": ("4.74528541206955367215e+02", 0x407DA874E79FE763),
+    "sb7": ("-2.24409524465858183362e+01", 0xC03670E242712D62),
+}
+
+# fdlibm e_lgamma_r.c, version 1.3 95/01/18.
+E_LGAMMA = {
+    "a0": ("7.72156649015328655494e-02", 0x3FB3C467E37DB0C8),
+    "a1": ("3.22467033424113591611e-01", 0x3FD4A34CC4A60FAD),
+    "a2": ("6.73523010531292681824e-02", 0x3FB13E001A5562A7),
+    "a3": ("2.05808084325167332806e-02", 0x3F951322AC92547B),
+    "a4": ("7.38555086081402883957e-03", 0x3F7E404FB68FEFE8),
+    "a5": ("2.89051383673415629091e-03", 0x3F67ADD8CCB7926B),
+    "a6": ("1.19270763183362067845e-03", 0x3F538A94116F3F5D),
+    "a7": ("5.10069792153511336608e-04", 0x3F40B6C689B99C00),
+    "a8": ("2.20862790713908385557e-04", 0x3F2CF2ECED10E54D),
+    "a9": ("1.08011567247583939954e-04", 0x3F1C5088987DFB07),
+    "a10": ("2.52144565451257326939e-05", 0x3EFA7074428CFA52),
+    "a11": ("4.48640949618915160150e-05", 0x3F07858E90A45837),
+    "tc": ("1.46163214496836224576e+00", 0x3FF762D86356BE3F),
+    "tf": ("-1.21486290535849611461e-01", 0xBFBF19B9BCC38A42),
+    "tt": ("-3.63867699703950536541e-18", 0xBC50C7CAA48A971F),
+    "t0": ("4.83836122723810047042e-01", 0x3FDEF72BC8EE38A2),
+    "t1": ("-1.47587722994593911752e-01", 0xBFC2E4278DC6C509),
+    "t2": ("6.46249402391333854778e-02", 0x3FB08B4294D5419B),
+    "t3": ("-3.27885410759859649565e-02", 0xBFA0C9A8DF35B713),
+    "t4": ("1.79706750811820387126e-02", 0x3F9266E7970AF9EC),
+    "t5": ("-1.03142241298341437450e-02", 0xBF851F9FBA91EC6A),
+    "t6": ("6.10053870246291332635e-03", 0x3F78FCE0E370E344),
+    "t7": ("-3.68452016781138256760e-03", 0xBF6E2EFFB3E914D7),
+    "t8": ("2.25964780900612472250e-03", 0x3F6282D32E15C915),
+    "t9": ("-1.40346469989232843813e-03", 0xBF56FE8EBF2D1AF1),
+    "t10": ("8.81081882437654011382e-04", 0x3F4CDF0CEF61A8E9),
+    "t11": ("-5.38595305356740546715e-04", 0xBF41A6109C73E0EC),
+    "t12": ("3.15632070903625950361e-04", 0x3F34AF6D6C0EBBF7),
+    "t13": ("-3.12754168375120860518e-04", 0xBF347F24ECC38C38),
+    "t14": ("3.35529192635519073543e-04", 0x3F35FD3EE8C2D3F4),
+    "u0": ("-7.72156649015328655494e-02", 0xBFB3C467E37DB0C8),
+    "u1": ("6.32827064025093366517e-01", 0x3FE4401E8B005DFF),
+    "u2": ("1.45492250137234768737e+00", 0x3FF7475CD119BD6F),
+    "u3": ("9.77717527963372745603e-01", 0x3FEF497644EA8450),
+    "u4": ("2.28963728064692451092e-01", 0x3FCD4EAEF6010924),
+    "u5": ("1.33810918536787660377e-02", 0x3F8B678BBF2BAB09),
+    "v1": ("2.45597793713041134822e+00", 0x4003A5D7C2BD619C),
+    "v2": ("2.12848976379893395361e+00", 0x40010725A42B18F5),
+    "v3": ("7.69285150456672783825e-01", 0x3FE89DFBE45050AF),
+    "v4": ("1.04222645593369134254e-01", 0x3FBAAE55D6537C88),
+    "v5": ("3.21709242282423911810e-03", 0x3F6A5ABB57D0CF61),
+    "s0": ("-7.72156649015328655494e-02", 0xBFB3C467E37DB0C8),
+    "s1": ("2.14982415960608852501e-01", 0x3FCB848B36E20878),
+    "s2": ("3.25778796408930981787e-01", 0x3FD4D98F4F139F59),
+    "s3": ("1.46350472652464452805e-01", 0x3FC2BB9CBEE5F2F7),
+    "s4": ("2.66422703033638609560e-02", 0x3F9B481C7E939961),
+    "s5": ("1.84028451407337715652e-03", 0x3F5E26B67368F239),
+    "s6": ("3.19475326584100867617e-05", 0x3F00BFECDD17E945),
+    "r1": ("1.39200533467621045958e+00", 0x3FF645A762C4AB74),
+    "r2": ("7.21935547567138069525e-01", 0x3FE71A1893D3DCDC),
+    "r3": ("1.71933865632803078993e-01", 0x3FC601EDCCFBDF27),
+    "r4": ("1.86459191715652901344e-02", 0x3F9317EA742ED475),
+    "r5": ("7.77942496381893596434e-04", 0x3F497DDACA41A95B),
+    "r6": ("7.32668430744625636189e-06", 0x3EDEBAF7A5B38140),
+    "w0": ("4.18938533204672725052e-01", 0x3FDACFE390C97D69),
+    "w1": ("8.33333333333329678849e-02", 0x3FB555555555553B),
+    "w2": ("-2.77777777728775536470e-03", 0xBF66C16C16B02E5C),
+    "w3": ("7.93650558643019558500e-04", 0x3F4A019F98CF38B6),
+    "w4": ("-5.95187557450339963135e-04", 0xBF4380CB8C0FE741),
+    "w5": ("8.36339918996282139126e-04", 0x3F4B67BA4CDAD5D1),
+    "w6": ("-1.63092934096575273989e-03", 0xBF5AB89D0B9E43E4),
+}
+
+
+def fdlibm(table, names):
+    """The doubles of `names` in `table`, each checked against its words."""
+    out = []
+    for n in names:
+        decimal, word = table[n]
+        x = float(decimal)
+        if bits(F64, x) != word:
+            sys.exit(f"fdlibm {n}: {decimal} is not 0x{word:016X}")
+        out.append(x)
+    return out
+
+
+def series(prefix, lo, hi):
+    return [f"{prefix}{i}" for i in range(hi, lo - 1, -1)]
+
+
+# Wichura, Algorithm AS 241, Applied Statistics 37 (1988), 477-484: PPND7
+# and PPND16, coefficients lowest degree first, and the sums of their
+# mantissas the paper prints for checking a transcription.
+AS241 = {
+    "PPND7": {
+        "a": ["3.38713 27179E+00", "5.04342 71938E+01", "1.59291 13202E+02", "5.91093 74720E+01"],
+        "b": ["1.78951 69469E+01", "7.87577 57664E+01", "6.71875 63600E+01"],
+        "c": ["1.42343 72777E+00", "2.75681 53900E+00", "1.30672 84816E+00", "1.70238 21103E-01"],
+        "d": ["7.37001 64250E-01", "1.20211 32975E-01"],
+        "e": ["6.65790 51150E+00", "3.08122 63860E+00", "4.28682 94337E-01", "1.73372 03997E-02"],
+        "f": ["2.41978 94225E-01", "1.22582 02635E-02"],
+        "sums": {"ab": "32.31845 77772", "cd": "15.76149 29821", "ef": "19.40529 10204"},
+    },
+    "PPND16": {
+        "a": ["3.38713 28727 96366 6080D0", "1.33141 66789 17843 7745D+2", "1.97159 09503 06551 4427D+3",
+              "1.37316 93765 50946 1125D+4", "4.59219 53931 54987 1457D+4", "6.72657 70927 00870 0853D+4",
+              "3.34305 75583 58812 8105D+4", "2.50908 09287 30122 6727D+3"],
+        "b": ["4.23133 30701 60091 1252D+1", "6.87187 00749 20579 0830D+2", "5.39419 60214 24751 1077D+3",
+              "2.12137 94301 58659 5867D+4", "3.93078 95800 09271 0610D+4", "2.87290 85735 72194 2674D+4",
+              "5.22649 52788 52854 5610D+3"],
+        "c": ["1.42343 71107 49683 57734D0", "4.63033 78461 56545 29590D0", "5.76949 72214 60691 40550D0",
+              "3.64784 83247 63204 60504D0", "1.27045 82524 52368 38258D0", "2.41780 72517 74506 11770D-1",
+              "2.27238 44989 26918 45833D-2", "7.74545 01427 83414 07640D-4"],
+        "d": ["2.05319 16266 37758 82187D0", "1.67638 48301 83803 84940D0", "6.89767 33498 51000 04550D-1",
+              "1.48103 97642 74800 74590D-1", "1.51986 66563 61645 71966D-2", "5.47593 80849 95344 94600D-4",
+              "1.05075 00716 44416 84324D-9"],
+        "e": ["6.65790 46435 01103 77720D0", "5.46378 49111 64114 36990D0", "1.78482 65399 17291 33580D0",
+              "2.96560 57182 85048 91230D-1", "2.65321 89526 57612 30930D-2", "1.24266 09473 88078 43860D-3",
+              "2.71155 55687 43487 57815D-5", "2.01033 43992 92288 13265D-7"],
+        "f": ["5.99832 20655 58879 37690D-1", "1.36929 88092 27358 05310D-1", "1.48753 61290 85061 48525D-2",
+              "7.86869 13114 56132 59100D-4", "1.84631 83175 10054 68180D-5", "1.42151 17583 16445 88870D-7",
+              "2.04426 31033 89939 78564D-15"],
+        "sums": {"ab": "55.88319 28806 14901 4439", "cd": "49.33206 50330 16102 89036",
+                 "ef": "47.52583 31754 92896 71629"},
+    },
+}
+
+
+def fortran(d):
+    return mpf(d.replace(" ", "").replace("D", "E"))
+
+
+def as241(name):
+    """PPND7 or PPND16's coefficients as mpfs, its hash sums checked: the
+    sum of each pair of polynomials' mantissas in [1, 10)."""
+    t = AS241[name]
+    mantissa = lambda d: Decimal(d.replace(" ", "").replace("D", "E").split("E")[0])
+    for pair, total in t["sums"].items():
+        got = sum(mantissa(d) for k in pair for d in t[k])
+        if got != Decimal(total.replace(" ", "")):
+            sys.exit(f"AS 241 {name} {pair}: mantissas sum to {got}, the paper prints {total}")
+    with mp.workprec(200):
+        return {k: [fortran(d) for d in t[k]] for k in "abcdef"}
+
+
+# Proofs
+#
+# A count or a degree is the least that meets its bound, measured against
+# mpmath on a dense grid of its region: the value within an eighth of the
+# dtype's unit roundoff relative, and the derivative within the same,
+# leaving the rest of each function's bound to rounding.
+
+GRID = 400
+
+
+def grid(lo, hi, n=GRID):
+    return [lo + (hi - lo) * mpf(i) / (n - 1) for i in range(n)]
+
+
+def worst(xs, approx, exact):
+    return max(abs(approx(x) / exact(x) - 1) for x in xs)
+
+
+def least(counts, ok):
+    for n in counts:
+        if ok(n):
+            return n
+    sys.exit("no count meets its bound")
+
+
+# log_ndtr below its threshold: log Phi(x) = -x^2/2 - log(-x) - log(2 pi)/2
+# + log (1 + sum_k (-1)^k (2k-1)!! / x^(2k)).
+
+LOG_NDTR_BELOW = {F32: -10.0, F64: -20.0}
+
+
+def log_ndtr_asymptotic(x, n):
+    s = sum((-1) ** k * mpmath.fac2(2 * k - 1) / x ** (2 * k) for k in range(1, n + 1))
+    return -x * x / 2 - mpmath.log(-x) - mpmath.log(2 * mpmath.pi) / 2 + mpmath.log1p(s)
+
+
+def log_ndtr_terms(fmt):
+    lo = mpf(LOG_NDTR_BELOW[fmt])
+    xs = [lo * mpf(2) ** (i / 8) for i in range(0, 40)]
+    with mp.workprec(200):
+        def ok(n):
+            value = worst(xs, lambda x: log_ndtr_asymptotic(x, n), lambda x: mpmath.log(mpmath.ncdf(x)))
+            slope = worst(xs, lambda x: mpmath.diff(lambda y: log_ndtr_asymptotic(y, n), x),
+                          lambda x: mpmath.npdf(x) / mpmath.ncdf(x))
+            return value <= fmt.u / 8 and slope <= fmt.u / 8
+        return least(range(1, 40), ok)
+
+
+# digamma: on [1, 2], (x - x0) g(x - 3/2), x0 its root, g a polynomial; from
+# DIGAMMA_FROM up, log x - 1/(2x) - sum_k B_2k / (2k x^2k).
+
+DIGAMMA_FROM = {F32: 6.0, F64: 10.0}
+
+
+def digamma_root():
+    with mp.workprec(300):
+        return mpmath.findroot(mpmath.digamma, mpf("1.4616321449683623"))
+
+
+def split(fmt, x):
+    hi = round_to(fmt, x)
+    return hi, round_to(fmt, x - mpf(hi))
+
+
+def digamma_core(fmt):
+    """The coefficients of g, highest degree first, rounded to `fmt`: the
+    least degree whose rounded coefficients put g within one unit roundoff
+    and the derivative of (x - x0) g within sixteen."""
+    with mp.workprec(300):
+        x0 = digamma_root()
+        g = lambda s: mpmath.digamma(s + mpf(3) / 2) / (s + mpf(3) / 2 - x0)
+        xs = grid(mpf(-1) / 2, mpf(1) / 2)
+        exact = [g(s) for s in xs]
+        slopes = [mpmath.polygamma(1, s + mpf(3) / 2) for s in xs]
+        for n in range(4, 60):
+            coeffs = [mpf(round_to(fmt, c)) for c in mpmath.chebyfit(g, [-0.5, 0.5], n)]
+            approx = [mpmath.polyval(coeffs, s, derivative=True) for s in xs]
+            value = max(abs(a / e - 1) for (a, _), e in zip(approx, exact))
+            if value > fmt.u:
+                continue
+            slope = max(abs((a + (s + mpf(3) / 2 - x0) * da) / d - 1)
+                        for (a, da), s, d in zip(approx, xs, slopes))
+            if slope <= 16 * fmt.u:
+                return [float(c) for c in coeffs]
+    sys.exit("no degree meets digamma's bound")
+
+
+def digamma_asymptotic(x, n):
+    return (mpmath.log(x) - 1 / (2 * x)
+            - sum(mpmath.bernoulli(2 * k) / (2 * k * x ** (2 * k)) for k in range(1, n + 1)))
+
+
+def digamma_terms(fmt):
+    lo = mpf(DIGAMMA_FROM[fmt])
+    xs = [lo * mpf(2) ** (i / 8) for i in range(0, 40)]
+    with mp.workprec(200):
+        def ok(n):
+            value = worst(xs, lambda x: digamma_asymptotic(x, n), mpmath.digamma)
+            slope = worst(xs, lambda x: mpmath.diff(lambda y: digamma_asymptotic(y, n), x),
+                          lambda x: mpmath.polygamma(1, x))
+            return value <= fmt.u / 8 and slope <= fmt.u / 8
+        return least(range(1, 40), ok)
+
+
+# sin (pi x) on [0, 1/2] as x S(x^2), S a polynomial: the least degree whose
+# rounded coefficients put sin (pi x) within one unit roundoff and its
+# derivative within sixteen of its largest, pi.
+
+
+def sinpi_poly(fmt):
+    with mp.workprec(200):
+        g = lambda t: mpmath.sin(mpmath.pi * mpmath.sqrt(t)) / mpmath.sqrt(t) if t > 0 else mpmath.pi
+        xs = grid(mpf(1) / 10 ** 6, mpf(1) / 2)
+        exact = [mpmath.sin(mpmath.pi * x) for x in xs]
+        slopes = [mpmath.pi * mpmath.cos(mpmath.pi * x) for x in xs]
+        for n in range(3, 30):
+            coeffs = [mpf(round_to(fmt, c)) for c in mpmath.chebyfit(g, [0, mpf(1) / 4], n)]
+            approx = [mpmath.polyval(coeffs, x * x, derivative=True) for x in xs]
+            value = max(abs(x * a / e - 1) for x, (a, _), e in zip(xs, approx, exact))
+            if value > fmt.u:
+                continue
+            slope = max(abs(a + 2 * x * x * da - d) for x, (a, da), d in zip(xs, approx, slopes))
+            if slope <= 16 * fmt.u * mpmath.pi:
+                return [float(c) for c in coeffs]
+    sys.exit("no degree meets sinpi's bound")
+
+
+# The per-dtype record
+
+def per_dtype(fmt):
+    """Fields of the per-dtype record and their OCaml values, with the
+    comment each carries."""
+    ppnd = as241("PPND7" if fmt is F32 else "PPND16")
+    high_first = lambda cs: [round_to(fmt, c) for c in reversed(cs)]
+    one_last = lambda cs: [round_to(fmt, c) for c in reversed(cs)] + [1.0]
+    k_ndtr = log_ndtr_terms(fmt)
+    k_psi = digamma_terms(fmt)
+    x0 = digamma_root()
+    hi, lo = split(fmt, x0)
+    core = digamma_core(fmt)
+    with mp.workprec(200):
+        c_hi, c_lo = split(fmt, 1 / mpmath.sqrt(2))
+    return [
+        ("sqrt1_2_hi", ocaml_float(c_hi)),
+        ("sqrt1_2_lo", ocaml_float(c_lo)),
+        ("ndtri_central_p", ocaml_array(high_first(ppnd["a"]))),
+        ("ndtri_central_q", ocaml_array(one_last(ppnd["b"]))),
+        ("ndtri_near_p", ocaml_array(high_first(ppnd["c"]))),
+        ("ndtri_near_q", ocaml_array(one_last(ppnd["d"]))),
+        ("ndtri_far_p", ocaml_array(high_first(ppnd["e"]))),
+        ("ndtri_far_q", ocaml_array(one_last(ppnd["f"]))),
+        ("log_ndtr_below", ocaml_float(LOG_NDTR_BELOW[fmt])),
+        ("log_ndtr_series", ocaml_array([float((-1) ** k * mpmath.fac2(2 * k - 1)) for k in range(k_ndtr, 0, -1)])),
+        ("digamma_root_hi", ocaml_float(hi)),
+        ("digamma_root_lo", ocaml_float(lo)),
+        ("digamma_core", ocaml_array(core)),
+        ("digamma_from", ocaml_float(DIGAMMA_FROM[fmt])),
+        ("sinpi", ocaml_array(sinpi_poly(fmt))),
+        ("digamma_series", ocaml_array([round_to(fmt, mpmath.bernoulli(2 * k) / (2 * k)) for k in range(k_psi, 0, -1)])),
+    ]
+
+
+# The tables both dtypes share, highest degree first; a dtype rounds each
+# coefficient to itself once.
+
+def word(w):
+    return of_bits(F64, w << 32)
+
+
+# lgamma's regions on (0, 2), as fdlibm compares the high word of x.
+LGAMMA_SMALL = word(0x3FECCCCD)   # x <= 0.9: lgamma (x + 1) - log x
+LGAMMA_C = word(0x3FE76944)       # [0.7316, 0.9] about 1, in 1 - x
+LGAMMA_B = word(0x3FCDA661)       # [0.2316, 0.7316) about the minimum
+LGAMMA_F = word(0x3FFBB4C3)       # [1.7316, 2) about 2, in 2 - x
+LGAMMA_E = word(0x3FF3B4C4)       # [1.2316, 1.7316) about the minimum
+
+
+# erfc's regions in |x|, as fdlibm splits them: erf's P/Q below 0.84375, two
+# forms of 1 - erf on either side of 1/4, P/Q about 1 to 1.25, the tails' R/S
+# below and from 1/0.35, and 0 or 2 from 28.
+ERFC_SMALL_SPLIT = 0.25
+ERF_SMALL_BELOW = 0.84375
+ERF_NEAR_BELOW = 1.25
+ERFC_MID_BELOW = 1 / 0.35
+ERFC_FAR_FROM = 28.0
+
+# ndtri's regions, as AS 241 splits them: |p - 1/2| <= 0.425 central, in
+# 0.180625 - (p - 1/2)^2; then r = sqrt (-log q), q the nearer tail, shifted by
+# 1.6 up to 5 and by 5 above.
+NDTRI_CENTRAL_BELOW = 0.425
+NDTRI_CENTRAL_R = 0.180625
+NDTRI_NEAR_BELOW = 5.0
+NDTRI_NEAR_SHIFT = 1.6
+NDTRI_FAR_SHIFT = 5.0
+
+# lgamma's regions from 2, as fdlibm splits them: [2, 8) shifted down to
+# [2, 3), Stirling's series from 8.
+LGAMMA_SHIFT_FROM = 2.0
+LGAMMA_STIRLING_FROM = 8.0
+
+
+def shared_tables():
+    erf = lambda names: fdlibm(S_ERF, names)
+    lg = lambda names: fdlibm(E_LGAMMA, names)
+    one = [1.0]
+    return [
+        ("erx", ocaml_float(erf(["erx"])[0])),
+        ("erf_small_p", ocaml_array(erf(series("pp", 0, 4)))),
+        ("erf_small_q", ocaml_array(erf(series("qq", 1, 5)) + one)),
+        ("erf_near_p", ocaml_array(erf(series("pa", 0, 6)))),
+        ("erf_near_q", ocaml_array(erf(series("qa", 1, 6)) + one)),
+        ("erfc_mid_p", ocaml_array(erf(series("ra", 0, 7)))),
+        ("erfc_mid_q", ocaml_array(erf(series("sa", 1, 8)) + one)),
+        ("erfc_far_p", ocaml_array(erf(series("rb", 0, 6)))),
+        ("erfc_far_q", ocaml_array(erf(series("sb", 1, 7)) + one)),
+        ("erfc_small_split", ocaml_float(ERFC_SMALL_SPLIT)),
+        ("erf_small_below", ocaml_float(ERF_SMALL_BELOW)),
+        ("erf_near_below", ocaml_float(ERF_NEAR_BELOW)),
+        ("erfc_mid_below", ocaml_float(ERFC_MID_BELOW)),
+        ("erfc_far_from", ocaml_float(ERFC_FAR_FROM)),
+        ("ndtri_central_below", ocaml_float(NDTRI_CENTRAL_BELOW)),
+        ("ndtri_central_r", ocaml_float(NDTRI_CENTRAL_R)),
+        ("ndtri_near_below", ocaml_float(NDTRI_NEAR_BELOW)),
+        ("ndtri_near_shift", ocaml_float(NDTRI_NEAR_SHIFT)),
+        ("ndtri_far_shift", ocaml_float(NDTRI_FAR_SHIFT)),
+        ("lgamma_tc", ocaml_float(lg(["tc"])[0])),
+        ("lgamma_tf", ocaml_float(lg(["tf"])[0])),
+        ("lgamma_tt", ocaml_float(lg(["tt"])[0])),
+        ("lgamma_a", ocaml_array(lg(series("a", 0, 11)))),
+        ("lgamma_t", ocaml_array(lg(series("t", 0, 14)))),
+        ("lgamma_u", ocaml_array(lg(series("u", 0, 5)))),
+        ("lgamma_v", ocaml_array(lg(series("v", 1, 5)) + one)),
+        ("lgamma_s", ocaml_array(lg(series("s", 0, 6)))),
+        ("lgamma_r", ocaml_array(lg(series("r", 1, 6)) + one)),
+        ("lgamma_w0", ocaml_float(lg(["w0"])[0])),
+        ("lgamma_w", ocaml_array(lg(series("w", 1, 6)))),
+        ("lgamma_small", ocaml_float(LGAMMA_SMALL)),
+        ("lgamma_c", ocaml_float(LGAMMA_C)),
+        ("lgamma_b", ocaml_float(LGAMMA_B)),
+        ("lgamma_f", ocaml_float(LGAMMA_F)),
+        ("lgamma_e", ocaml_float(LGAMMA_E)),
+        ("lgamma_shift_from", ocaml_float(LGAMMA_SHIFT_FROM)),
+        ("lgamma_stirling_from", ocaml_float(LGAMMA_STIRLING_FROM)),
+    ]
+
+
+# erfc, ndtr and log_ndtr: their points are the boundaries of erfc's regions,
+# mapped through -x/sqrt 2 for ndtr, log_ndtr's own, and where each
+# underflows or saturates.
+
+ERFC_EDGES = [ERFC_SMALL_SPLIT, ERF_SMALL_BELOW, ERF_NEAR_BELOW, ERFC_MID_BELOW, ERFC_FAR_FROM]
+
+
+def plain(f, lo_limit, hi_limit):
+    """A reference of one argument that rounds to its limits beyond 100 in
+    magnitude."""
+    def g(fmt, x):
+        if math.isnan(x):
+            return math.nan
+        if x < -100:
+            return lo_limit
+        if x > 100:
+            return hi_limit
+        return correctly_rounded(fmt, f, x)
+    return g
+
+
+def thresholds(fmt, f, lo, hi):
+    """Where `f`, decreasing on [lo, hi], first rounds to a subnormal and to
+    zero."""
+    def first(target):
+        a, b = lo, hi
+        while True:
+            mid = round_to(fmt, (mpf(a) + mpf(b)) / 2)
+            if mid in (a, b):
+                return b
+            if target(abs(correctly_rounded(fmt, f, mid))):
+                b = mid
+            else:
+                a = mid
+    return [first(lambda v: v < fmt.min_normal), first(lambda v: v == 0)]
+
+
+def sqrt2_times(fmt, e):
+    """`e sqrt 2` rounded to `fmt`: an erfc boundary in ndtr's argument."""
+    with mp.workprec(POINT_PREC):
+        return round_to(fmt, mpf(e) * mpmath.sqrt(2))
+
+
+def erfc_points(fmt):
+    rng = random.Random(f"erfc {fmt.name}")
+    edges = ERFC_EDGES + thresholds(fmt, mpmath.erfc, 1.0, 30.0)
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    two = saturation(fmt, lambda x: mpmath.erfc(-x), 1.0, 30.0, 2.0)
+    return (standard(fmt, rng, fmt.tiny, 30.0) + points + [-x for x in points]
+            + [-x for x in neighbours(fmt, two)])
+
+
+def ndtr_points(fmt):
+    rng = random.Random(f"ndtr {fmt.name}")
+    edges = [sqrt2_times(fmt, e) for e in ERFC_EDGES] + [-t for t in thresholds(fmt, lambda x: mpmath.ncdf(-x), 1.0, 45.0)]
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    one = saturation(fmt, mpmath.ncdf, 1.0, 45.0, 1.0)
+    return (standard(fmt, rng, fmt.tiny, 45.0) + points + [-x for x in points]
+            + neighbours(fmt, one))
+
+
+def log_ndtr_reference(fmt, x):
+    if math.isnan(x):
+        return math.nan
+    if x == math.inf:
+        return -0.0
+    if x == -math.inf:
+        return -math.inf
+    if x > 100:
+        return -0.0
+    if x < -100:
+        # The asymptotic series converges past any precision asked here.
+        return correctly_rounded(fmt, lambda y: log_ndtr_asymptotic(y, 40), x)
+    if x > 0:
+        return correctly_rounded(fmt, lambda y: mpmath.log1p(-mpmath.ncdf(-y)), x)
+    return correctly_rounded(fmt, lambda y: mpmath.log(mpmath.ncdf(y)), x)
+
+
+def log_ndtr_points(fmt):
+    rng = random.Random(f"log_ndtr {fmt.name}")
+    edges = [0.0, LOG_NDTR_BELOW[fmt]] + [-sqrt2_times(fmt, e) for e in ERFC_EDGES]
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    far = log_sweep(fmt, 10.0, fmt.max, 64)
+    with mp.workprec(POINT_PREC):
+        overflow = round_to(fmt, mpmath.sqrt(2 * mpf(fmt.max)))
+    return (standard(fmt, rng, fmt.tiny, 45.0) + points + [-x for x in far]
+            + [-x for x in neighbours(fmt, overflow)]
+            + [x for x in neighbours(fmt, 8.0)] + [37.5, 40.0])
+
+
+# ndtri: its regions are |p - 1/2| <= 0.425 and sqrt (-log q) = 5, q the
+# nearer tail.
+
+def ndtri_exact(p):
+    """The standard normal's quantile at `p`, by Newton on log Phi."""
+    p = mpf(p)
+    if p == mpf(1) / 2:
+        return mpf(0)
+    q = min(p, 1 - p)
+    x = -mpmath.sqrt(-2 * mpmath.log(q))
+    lq = mpmath.log(q)
+    for _ in range(200):
+        step = (mpmath.log(mpmath.ncdf(x)) - lq) * mpmath.ncdf(x) / mpmath.npdf(x)
+        x -= step
+        if abs(step) < abs(x) * mpf(2) ** (-mp.prec + 4):
+            break
+    return x if p < mpf(1) / 2 else -x
+
+
+def ndtri_reference(fmt, p):
+    if math.isnan(p) or p < 0 or p > 1:
+        return math.nan
+    if p == 0:
+        return -math.inf
+    if p == 1:
+        return math.inf
+    return correctly_rounded(fmt, ndtri_exact, p)
+
+
+def ndtri_kappa(fmt, value, p):
+    """|p / (x Phi'(x))| at x = ndtri p."""
+    if math.isnan(value) or math.isinf(value):
+        return "infinity"
+    if p == 0.5:
+        return "1"
+    with mp.workprec(fmt.p + 40):
+        x = ndtri_exact(p)
+        return scale(abs(mpf(p) / (x * mpmath.npdf(x))))
+
+
+def ndtri_points(fmt):
+    rng = random.Random(f"ndtri {fmt.name}")
+    with mp.workprec(POINT_PREC):
+        tail = round_to(fmt, mpmath.exp(-mpf(NDTRI_NEAR_BELOW) ** 2))
+    edges = [round_to(fmt, mpf(1) / 2 - mpf(NDTRI_CENTRAL_BELOW)),
+             round_to(fmt, mpf(1) / 2 + mpf(NDTRI_CENTRAL_BELOW)), tail, 0.5]
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    near = [round_to(fmt, mpf(1) - mpf(2) ** -k) for k in range(2, fmt.p + 1)]
+    sweep = log_sweep(fmt, fmt.tiny, 0.5, 64)
+    return ([math.nan, 0.0, -0.0, 1.0, -1.0, 2.0, math.inf, -math.inf] + sweep + near
+            + uniform(fmt, rng, 0, 1, 96) + [p for p in points if 0 <= p <= 1]
+            + [next_up(fmt, 0.0), next_down(fmt, 1.0)])
+
+
+# lgamma: log |Gamma x|. Its points are fdlibm's region boundaries, the
+# zeros at 1 and 2 and the negative ones, the poles, and where it overflows.
+
+def lgamma_exact(x):
+    if x > 0:
+        return mpmath.loggamma(x)
+    return mpmath.re(mpmath.loggamma(x))
+
+
+def lgamma_reference(fmt, x):
+    if math.isnan(x) or x == -math.inf:
+        return math.nan
+    if x == math.inf or (x <= 0 and x == math.floor(x)):
+        return math.inf
+    return correctly_rounded(fmt, lgamma_exact, x)
+
+
+def lgamma_scale(fmt, value, x):
+    """1 + lgamma (1 - x), the scale of the absolute bound below 0."""
+    if math.isnan(x) or x >= 0 or math.isinf(x) or x == math.floor(x):
+        return "1"
+    with mp.workprec(fmt.p + 40):
+        return scale(1 + abs(lgamma_exact(1 - mpf(x))))
+
+
+def negative_zeros(f, n):
+    """The roots of `f` on (-k - 1, -k) for k < n, where it has one."""
+    roots = []
+    with mp.workprec(120):
+        for k in range(n):
+            for lo, hi in [(-k - 1 + mpf(1) / 1000, -k - mpf(1) / 2), (-k - mpf(1) / 2, -k - mpf(1) / 1000)]:
+                if f(lo) * f(hi) < 0:
+                    roots.append(float(mpmath.findroot(f, (lo, hi), solver="anderson")))
+    return roots
+
+
+def lgamma_points(fmt):
+    rng = random.Random(f"lgamma {fmt.name}")
+    edges = [LGAMMA_SMALL, LGAMMA_C, LGAMMA_B, LGAMMA_F, LGAMMA_E, 1.0, LGAMMA_SHIFT_FROM, 3.0, 4.0,
+             7.0, LGAMMA_STIRLING_FROM]
+    overflow = saturation(fmt, lgamma_exact, 1e30, fmt.max, math.inf)
+    zeros = negative_zeros(lambda x: lgamma_exact(x), 4)
+    poles = [-1.0, -2.0, -3.0, -10.0, -100.0, -2.0 ** (fmt.p - 1)]
+    points = [x for c in edges + [overflow] + zeros + poles for x in neighbours(fmt, c)]
+    sweep = log_sweep(fmt, fmt.tiny, fmt.max, 96)
+    return ([math.nan] + specials(fmt) + sweep + [-x for x in log_sweep(fmt, 1e-3, 1e6, 48)]
+            + uniform(fmt, rng, -20, 20, 96) + uniform(fmt, rng, 0, 10, 64) + points)
+
+
+# digamma: its points are its root, the regions' ends, the poles and the
+# negative roots.
+
+def digamma_reference(fmt, x):
+    if math.isnan(x) or x == -math.inf:
+        return math.nan
+    if x == math.inf:
+        return math.inf
+    if x == 0:
+        return -math.inf if math.copysign(1, x) > 0 else math.inf
+    if x < 0 and x == math.floor(x):
+        return math.nan
+    return correctly_rounded(fmt, mpmath.digamma, x)
+
+
+def digamma_scale(fmt, value, x):
+    """1 + |pi cot (pi x)|, the scale of the absolute bound below 0."""
+    if math.isnan(x) or x >= 0 or math.isinf(x) or x == math.floor(x):
+        return "1"
+    with mp.workprec(fmt.p + 40):
+        return scale(1 + abs(mpmath.pi * mpmath.cot(mpmath.pi * mpf(x))))
+
+
+def digamma_points(fmt):
+    rng = random.Random(f"digamma {fmt.name}")
+    edges = [float(digamma_root()), 1.0, 2.0, 3.0, DIGAMMA_FROM[fmt]]
+    zeros = negative_zeros(mpmath.digamma, 4)
+    poles = [-1.0, -2.0, -3.0, -10.0, -100.0]
+    points = [x for c in edges + zeros + poles for x in neighbours(fmt, c)]
+    sweep = log_sweep(fmt, fmt.tiny, fmt.max, 96)
+    return ([math.nan] + specials(fmt) + sweep + [-x for x in log_sweep(fmt, 1e-3, 1e6, 48)]
+            + uniform(fmt, rng, -20, 20, 96) + uniform(fmt, rng, 0, 10, 64) + points)
+
+
+# lbeta: its points are a grid of both arguments, both orders, the boundary
+# where the larger reaches 8, and the edges.
+
+def lbeta_exact(a, b):
+    extra = int(max(0, math.log2(max(abs(float(a)), abs(float(b)), 1.0)))) + 20
+    with mp.workprec(mp.prec + extra):
+        return lgamma_exact(a) + lgamma_exact(b) - lgamma_exact(a + b)
+
+
+def lbeta_reference(fmt, a, b):
+    if math.isnan(a) or math.isnan(b) or a < 0 or b < 0:
+        return math.nan
+    if a == 0 or b == 0:
+        return math.nan if math.inf in (a, b) else math.inf
+    if math.inf in (a, b):
+        return -math.inf
+    return correctly_rounded(fmt, lbeta_exact, a, b)
+
+
+def lbeta_points(fmt):
+    rng = random.Random(f"lbeta {fmt.name}")
+    axis = [round_to(fmt, mpf(10) ** (e / 2)) for e in range(-60, 61, 5)]
+    grid_points = [(a, b) for a in axis for b in axis if max(a, b) <= 2.0 ** 10 or a == b or min(a, b) < 10]
+    near_eight = [(a, b) for b in neighbours(fmt, LGAMMA_STIRLING_FROM) for a in (0.5, 1.0, 3.0, 7.5, 8.0)]
+    near_eight += [(b, a) for a, b in near_eight]
+    named = [(1.0, 1.0), (1.0, 7.0), (0.3, 7.9), (2.0, 0.5), (1e-10, 1e-10), (1e10, 1.0), (5e5, 0.5)]
+    named = [(round_to(fmt, mpf(a)), round_to(fmt, mpf(b))) for a, b in named]
+    edges = [(0.0, 1.0), (1.0, 0.0), (math.inf, 1.0), (1.0, math.inf), (math.inf, math.inf),
+             (0.0, math.inf), (-1.0, 1.0), (1.0, -1.0), (math.nan, 1.0), (1.0, math.nan),
+             (fmt.tiny, 1.0), (fmt.tiny, fmt.tiny), (fmt.max, 1.0), (fmt.max, fmt.max)]
+    with mp.workprec(POINT_PREC):
+        randoms = [(round_to(fmt, mpmath.exp(mpf(rng.uniform(-10, 10)))),
+                    round_to(fmt, mpmath.exp(mpf(rng.uniform(-10, 10))))) for _ in range(96)]
+    return grid_points + near_eight + named + edges + randoms
+
+
 FUNCTIONS = [
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
+    Function("erfc", ["x"], plain(mpmath.erfc, 2.0, 0.0), erfc_points),
+    Function("ndtr", ["x"], plain(mpmath.ncdf, 0.0, 1.0), ndtr_points),
+    Function("log_ndtr", ["x"], log_ndtr_reference, log_ndtr_points),
+    Function("ndtri", ["p"], ndtri_reference, ndtri_points, extra=ndtri_kappa),
+    Function("lgamma", ["x"], lgamma_reference, lgamma_points, extra=lgamma_scale),
+    Function("digamma", ["x"], digamma_reference, digamma_points, extra=digamma_scale),
+    Function("lbeta", ["a", "b"], lbeta_reference, lbeta_points),
 ]
 
 
@@ -367,7 +1101,49 @@ def single(decimals):
         return [round_to(F32, mpf(d)) for d in decimals]
 
 
+COMMENTS = {
+    "erx": "fdlibm's s_erf.c (1.3 95/01/18): " + FDLIBM_NOTICE
+           + " [erx] is erf 1 rounded to 24 bits; [erf_small] is P/Q on [0, 0.84375) in x^2, "
+             "[erf_near] on [0.84375, 1.25) in |x| - 1, [erfc_mid] and [erfc_far] the tails' "
+             "R/S in 1/x^2 below and from 1/0.35.",
+    "erfc_small_split": "erfc's regions in |x|: two forms of 1 - erf on either side of "
+                        "[erfc_small_split] below [erf_small_below], P/Q about 1 below "
+                        "[erf_near_below], the tails' R/S below and from [erfc_mid_below], and 0 "
+                        "or 2 from [erfc_far_from].",
+    "ndtri_central_below": "AS 241's regions: central where |p - 1/2| <= [ndtri_central_below], "
+                           "in [ndtri_central_r] - (p - 1/2)^2; in the tails, sqrt (-log q) "
+                           "less [ndtri_near_shift] up to [ndtri_near_below] and less "
+                           "[ndtri_far_shift] above.",
+    "lgamma_shift_from": "lgamma's regions from [lgamma_shift_from]: shifted down to [2, 3) "
+                         "below [lgamma_stirling_from], Stirling's series from it.",
+    "lgamma_tc": "fdlibm's e_lgamma_r.c (1.3 95/01/18), under the same notice. [lgamma_tc] is "
+                 "the minimum, [lgamma_tf] lgamma there and [lgamma_tt] minus its tail; [a] is "
+                 "about 1 and 2, [t] about the minimum, [u]/[v] beside 1, [s]/[r] on [2, 3), "
+                 "[w] Stirling's correction from 8, in 1/x^2. The last five are the regions' "
+                 "lower ends on (0, 2).",
+}
+
+PER_DTYPE = {
+    "sqrt1_2_hi": "1/sqrt 2 as two floats, whose sum is it to twice the dtype's precision.",
+    "ndtri_central_p": "AS 241's P/Q for |p - 1/2| <= 0.425 in 0.180625 - (p - 1/2)^2: "
+                       "Wichura, Algorithm AS 241, Applied Statistics 37 (1988), its PPND7 "
+                       "at float32 and PPND16 at float64, whose printed hash sums the generator "
+                       "checks; [near] in sqrt (-log q) - 1.6 up to 5, [far] in sqrt (-log q) - 5.",
+    "sinpi": "sin (pi x) on [0, 1/2] as x S(x^2): the least degree of S within u of the value "
+             "and 16u pi of the derivative.",
+    "log_ndtr_below": "log_ndtr's asymptotic series below [log_ndtr_below]: its least count "
+                      "within u/8 of the value and the derivative.",
+    "digamma_root_hi": "digamma's root near 1.4616 as two floats, and on [1, 2] the "
+                       "polynomial g in x - 3/2 with digamma x = (x - root) g: the least degree "
+                       "within u of g and 16u of the derivative. From [digamma_from], "
+                       "B_2k / 2k of the asymptotic series, its least count within u/8.",
+}
+
+
 def tables():
+    shared = shared_tables()
+    rows = {F32: per_dtype(F32), F64: per_dtype(F64)}
+    out = [comment(HEADER[2:]), ""]
     giles = "Giles, Approximating the erfinv function, GPU Computing Gems Jade (2011), single precision"
     parts = [
         binding(f"erfinv's guess below [w = erfinv_w_split], [w = -log ((1 - p)(1 + p))], a "
@@ -386,7 +1162,28 @@ def tables():
         binding("The series' terms.", "erf_series_terms", str(ERF_SERIES_TERMS)),
         binding("The continued fraction's terms.", "erfc_fraction_terms", str(ERFC_FRACTION_TERMS)),
     ]
-    return comment(HEADER[2:]) + "\n\n" + "\n".join(parts)
+    out += parts
+    for name, value in shared:
+        text = comment(COMMENTS[name]) + "\n" if name in COMMENTS else ""
+        out.append(f"{text}let {name} = {value}\n" if not value.startswith("[|")
+                   else f"{text}let {name} =\n  {value}\n")
+    fields = [name for name, _ in rows[F64]]
+    decl = ["(* The tables whose values differ between dtypes. *)", "type t = {"]
+    for name in fields:
+        kind = "float array" if rows[F64][fields.index(name)][1].startswith("[|") else "float"
+        if name in PER_DTYPE:
+            decl.append("  " + comment(PER_DTYPE[name]).replace("\n", "\n  "))
+        decl.append(f"  {name} : {kind};")
+    decl.append("}\n")
+    out.append("\n".join(decl))
+    for fmt, label in [(F32, "float32"), (F64, "float64")]:
+        body = [f"let {label} =", "  {"]
+        for name, value in rows[fmt]:
+            value = value.replace("\n", "\n    ")
+            body.append(f"    {name} = {value};")
+        body.append("  }\n")
+        out.append("\n".join(body))
+    return "\n".join(out)
 
 
 # Driver

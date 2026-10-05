@@ -20,6 +20,7 @@
   intercept
   entry
   frontend
+  special
   special_tables
   ptree
   ptree_intf)

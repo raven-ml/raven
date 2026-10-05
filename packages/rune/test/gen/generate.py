@@ -33,10 +33,12 @@ sys.path.insert(0, str(TOLK_GEN))
 from generate import CHILD, HEADER, TINYGRAD, check_checkout, default_tinygrad, patched, read, write  # noqa: E402
 
 MANIFEST = HERE / "manifest"
+# The scripts here that are not tinygrad generators.
+OWN = {"generate.py", "special_grad.py"}
 
 
 def generators(modules):
-    found = {path.stem: path for path in sorted(HERE.glob("*.py")) if path.name != "generate.py"}
+    found = {path.stem: path for path in sorted(HERE.glob("*.py")) if path.name not in OWN}
     unknown = [module for module in modules if module not in found]
     if unknown:
         sys.exit(f"no generator for {', '.join(unknown)}; generators: {', '.join(found)}")
