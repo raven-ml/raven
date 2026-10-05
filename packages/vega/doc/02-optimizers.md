@@ -45,7 +45,7 @@ between the backward pass and the step:
 |----------|-------------|
 | `clip_by_global_norm p ~max_norm g` | Rescale all leaves together so their joint L2 norm is at most `max_norm` |
 | `clip_by_value p ~max g` | Clamp every element to `[-max, max]` |
-| `global_norm p g` | The joint L2 norm, read on the host for logging |
+| `Nx.Ptree.norm p Nx.float32 g` | The joint L2 norm, a scalar tensor; `Nx.item [] (Nx.Ptree.norm p Nx.float64 g)` reads it for logging |
 
 Your own transformation is a function over the structure, usually one
 `Nx.Ptree.map`. To centralize the gradients of every matrix, for instance:

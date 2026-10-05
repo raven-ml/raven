@@ -338,6 +338,62 @@ let precondition_tests =
           (Oracle.message (fun () -> Rune.vmap' Nx.sin (scalar 1.))));
   ]
 
+(* Arithmetic. A float32 vector, a float64 matrix held transposed, and an int32
+   counter that the arithmetic carries. The values are small multiples of 1/4,
+   whose products and sums are exact in any order. *)
+
+let mixed = Nx.Ptree.(pair tensor (pair tensor tensor))
+
+let mixed_value u m c =
+  ( Nx.create Nx.float32 [| 3 |] u,
+    (Nx.transpose (Nx.create f64 [| 2; 2 |] m), Nx.create Nx.int32 [| 1 |] c) )
+
+let mixed_w =
+  Testable.contramap
+    (fun (u, (m, c)) ->
+      (Nx.to_array (Nx.cast f64 u), Nx.to_array m, Nx.to_array c))
+    (triple (array float_exact) (array float_exact) (array int32))
+
+let x () = mixed_value [| 1.; -2.; 0.5 |] [| 3.; -1.; 2.; 0.25 |] [| 7l |]
+let y () = mixed_value [| 0.25; 4.; -3. |] [| -1.; 2.; 5.; 1.5 |] [| 9l |]
+
+let arithmetic_tests =
+  [
+    test
+      "compiled dot and axpy equal eager over floats of two dtypes beside a \
+       counter" (fun () ->
+        let f a x y = (Nx.Ptree.dot mixed f64 x y, Nx.Ptree.axpy mixed a x y) in
+        let g =
+          Rune.jit
+            Nx.Ptree.(
+              tensor @-> mixed @-> mixed @-> returns (pair tensor mixed))
+            f
+        in
+        let a = Nx.scalar Nx.float32 1.5 in
+        let d, z = f a (x ()) (y ()) and d', z' = g a (x ()) (y ()) in
+        equal ~msg:"dot" (exact ()) d d';
+        equal ~msg:"axpy" mixed_w z z');
+    test "vmap of axpy over a batch of factors is axpy at each factor"
+      (fun () ->
+        let a = Nx.create Nx.float32 [| 3 |] [| 0.5; -2.; 0. |] in
+        let z =
+          Rune.vmap
+            Nx.Ptree.(tensor @-> returns mixed)
+            (fun a -> Nx.Ptree.axpy mixed a (x ()) (y ()))
+            a
+        in
+        let lane i (u, (m, c)) =
+          (Nx.get [ i ] u, (Nx.get [ i ] m, Nx.get [ i ] c))
+        in
+        for i = 0 to 2 do
+          equal
+            ~msg:(Printf.sprintf "lane %d" i)
+            mixed_w
+            (Nx.Ptree.axpy mixed (Nx.get [ i ] a) (x ()) (y ()))
+            (lane i z)
+        done);
+  ]
+
 let () =
   exit
     (run "Rune structures"
@@ -345,4 +401,5 @@ let () =
          group "mismatches" mismatch_tests;
          group "signatures" signature_tests;
          group "preconditions" precondition_tests;
+         group "arithmetic" arithmetic_tests;
        ])

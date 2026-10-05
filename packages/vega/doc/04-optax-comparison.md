@@ -90,7 +90,7 @@ Transformations of the gradients are functions applied before the step.
 |-------|------|
 | `clip_by_global_norm(max)` | `clip_by_global_norm p ~max_norm g` |
 | `clip(delta)` | `clip_by_value p ~max:delta g` |
-| `global_norm(g)` | `global_norm p g` (a host float) |
+| `global_norm(g)` | `Nx.Ptree.norm p Nx.float32 g` |
 | `apply_if_finite(tx)` | `Loss_scale.step p s (Loss_scale.static 1.0) ~grads update x` |
 | `scale_by_schedule(fn)`, `scale_by_learning_rate(lr)` | `~lr:(sched st.step)` |
 

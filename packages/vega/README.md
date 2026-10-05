@@ -37,7 +37,7 @@ let () =
 - **States are structures**: `adam_ptree`, `sgd_ptree`, ... name every leaf of
   a state by path, for checkpoints and compiled steps
 - **Learning rate schedules**: `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, `cosine_decay_restarts`, `piecewise_constant`, `join`
-- **Gradient transformations**: `clip_by_global_norm`, `clip_by_value`, `global_norm`
+- **Gradient transformations**: `clip_by_global_norm`, `clip_by_value`
 - **Loss scaling** for float16 training: `Loss_scale`
 - **No autodiff dependency**: works with Nx directly
 

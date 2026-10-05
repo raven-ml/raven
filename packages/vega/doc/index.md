@@ -8,7 +8,7 @@ Vega provides gradient-based optimizers for OCaml. An optimizer steps a whole pa
 - **States are structures** — `sgd_ptree`, `adam_ptree`, `lbfgs_ptree` and the others name every leaf of a state by path, for saved files and compiled steps
 - **Jit-compilable steps** — every time-varying scalar is a tensor leaf, so a whole training step compiles as one `Rune.jit` program
 - **Learning rate schedules** — `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, `piecewise_constant`, `join` — tensor arithmetic over a step counter, so one family serves eager and compiled loops alike
-- **Gradient transformations** — `clip_by_global_norm`, `clip_by_value`, `global_norm`
+- **Gradient transformations** — `clip_by_global_norm`, `clip_by_value`
 - **Loss scaling** — `Loss_scale` for float16 training
 
 ## Quick Start

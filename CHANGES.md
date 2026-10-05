@@ -66,6 +66,12 @@ All notable changes to this project will be documented in this file.
 
 ### Vega
 
+- **Breaking:** `Vega.global_dot` and `global_norm` are removed for
+  `Nx.Ptree.dot` and `Nx.Ptree.norm`, which return scalar tensors; read one
+  for logging with `Nx.item []`.
+- `clip_by_global_norm` no longer scales a tensor that is not a float, which
+  rounded an integer counter to zero, and its norm no longer counts such
+  tensors, so a structure with a counter clips at the norm of its floats.
 - `Loss_scale.step` replaces `Loss_scale.unscale`, `grads_finite` and
   `adjust`: it wraps an optimizer step, divides the gradients by the scale,
   skips the step on overflow and returns the next scale. A skipped step keeps
@@ -3126,6 +3132,9 @@ thread.
 
 ### Nx
 
+- Add `Nx.Ptree.dot`, `norm`, `scale` and `axpy`: the linear algebra of a
+  structure's float tensors taken as one vector, in tensor arithmetic that
+  traces and batches. Other tensors, such as counters and keys, are carried.
 - **Breaking:** `Nx.relu` is removed; it lives in `Kaun.Fn.relu`. Outside
   kaun, write `Nx.maximum_s x 0.`, whose derivative at 0 is 1/2.
 - `Nx.softmax` and `Nx.log_softmax` no longer overflow for a negative `~scale`

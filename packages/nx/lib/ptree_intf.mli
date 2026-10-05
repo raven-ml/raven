@@ -26,6 +26,8 @@ module type Ptree = sig
         {!type-t}.
       + Map, zip and fold its tensors with {!map}, {!map2} and {!fold}, and test
         its walk with {!visits}.
+      + Combine its float tensors as one vector with {!dot}, {!norm}, {!scale}
+        and {!axpy}.
       + Change the payload's type with {!cast} and {!Payload}, which take the
         structure's module.
       + Describe a compiled function's arguments and result with a signature,
@@ -367,6 +369,47 @@ module type Ptree = sig
     'acc
   (** [fold s f x acc] is [f pn tn (... (f p1 t1 acc))], where [t1], ..., [tn]
       are [x]'s tensors in walk order and [p1], ..., [pn] their paths. *)
+
+  (** {1:arithmetic Arithmetic}
+
+      The float tensors of a value are one vector, their elements taken
+      together. These functions are the vector's linear algebra, the steps of
+      optimisers, integrators and samplers written over a structure. A tensor of
+      another dtype, such as a counter, an RNG key or a complex tensor, is not
+      part of the vector: {!dot} skips it, and {!scale} and {!axpy} carry it
+      unchanged. They are tensor operations that read nothing on the host, so a
+      compiled function traces them and a map batches them.
+
+      The functions of two values raise [Invalid_argument] where {!map2} does,
+      with its messages prefixed by their own name, and if two tensors at one
+      path differ in shape, as in
+      ["Nx.Ptree.dot: w: shape [2,3] in the first value, [3,2] in the second"].
+  *)
+
+  val dot : 's t -> (float, 'c) Nx_dtype.t -> 's -> 's -> (float, 'c) tensor
+  (** [dot s dtype x y] is the inner product of [x] and [y], a scalar of
+      [dtype]: the sum, in walk order, of
+      [Nx.vdot (cast dtype t) (cast dtype u)] over each float tensor [t] of [x]
+      and the tensor [u] of [y] at its path. It is [0] if [x] has no float
+      tensor. *)
+
+  val norm : 's t -> (float, 'c) Nx_dtype.t -> 's -> (float, 'c) tensor
+  (** [norm s dtype x] is [sqrt (dot s dtype x x)], the Euclidean norm of [x].
+  *)
+
+  val scale : 's t -> (float, 'c) tensor -> 's -> 's
+  (** [scale s a x] is [x] with each float tensor [t] replaced by [a * t], with
+      [a] cast to [t]'s dtype.
+
+      Raises [Invalid_argument] if [a] is not a scalar. *)
+
+  val axpy : 's t -> (float, 'c) tensor -> 's -> 's -> 's
+  (** [axpy s a x y] is [y] with each float tensor [u] replaced by [a * t + u],
+      where [t] is [x]'s tensor at [u]'s path and [a] is cast to [u]'s dtype.
+      The product and the sum are each rounded to that dtype. Tensors of other
+      dtypes are [y]'s.
+
+      Raises [Invalid_argument] if [a] is not a scalar. *)
 
   (** {1:visits Visits} *)
 

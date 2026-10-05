@@ -115,20 +115,17 @@ module Schedule = Schedule
     Pure functions on gradient structures, applied between the backward pass and
     the optimizer step. *)
 
-val global_norm : 'p Nx.Ptree.t -> 'p -> float
-(** [global_norm p grads] is the L2 norm of all leaves of [grads] taken
-    together: [sqrt (sum of every element squared)]. *)
-
 val clip_by_global_norm : 'p Nx.Ptree.t -> max_norm:float -> 'p -> 'p
-(** [clip_by_global_norm p ~max_norm grads] scales [grads] so that its
-    {!global_norm} does not exceed [max_norm]. Gradients within the bound
-    (including all-zero gradients) are returned unchanged; larger ones are
-    scaled by [max_norm /. norm], preserving their direction.
+(** [clip_by_global_norm p ~max_norm grads] scales [grads] so that their norm,
+    {!Nx.Ptree.norm} at float32, does not exceed [max_norm]. Gradients within
+    the bound (including all-zero gradients) are returned unchanged; larger ones
+    are scaled by [max_norm /. norm], preserving their direction. Leaves that
+    are not floats are returned unchanged.
 
     The scale factor is computed in float32 tensor arithmetic and selected with
     {!Nx.where} — no host read — so the transform traces under {!Rune.val-jit}
     on any device and can sit between a jitted backward pass and a jitted
-    optimizer step. {!global_norm} remains the float64 host read for reporting.
+    optimizer step.
 
     Raises [Invalid_argument] if [max_norm <= 0.]. *)
 
@@ -137,18 +134,6 @@ val clip_by_value : 'p Nx.Ptree.t -> max:float -> 'p -> 'p
     \[[-. max];[max]\].
 
     Raises [Invalid_argument] if [max <= 0.]. *)
-
-val global_dot :
-  'p Nx.Ptree.t -> (float, 'v) Nx.dtype -> 'p -> 'p -> (float, 'v) Nx.t
-(** [global_dot p dt a b] is the inner product of [a] and [b] over all their
-    float leaves taken together, as a scalar tensor: every leaf's inner product
-    is {!Nx.vdot}, at {!Nx.matmul}'s precision in the leaf's dtype, then cast to
-    [dt] and accumulated. Non-float leaves contribute nothing. Tensor arithmetic
-    with no host read, so it traces under {!Rune.val-jit}; [dt] sets the
-    precision of the accumulation.
-
-    Raises [Invalid_argument], naming the first path at which they differ, if
-    [a] and [b] differ in their paths, reports or dtypes. *)
 
 (** {1:loss_scaling Loss Scaling}
 

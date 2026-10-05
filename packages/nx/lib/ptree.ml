@@ -332,10 +332,11 @@ let place s p x = map s (fun _ t -> Entry.place p t) x
 
 type recorded = Recorded_leaf of Path.t * Value.packed | Recorded of visit
 
-let map2 (type s) (s : s t)
+(* [zip fn s f x y] is [map2 s f x y], with [fn] naming the function in its
+   errors. *)
+let zip (type s) fn (s : s t)
     (f : 'a 'b. Path.t -> ('a, 'b) tensor -> ('a, 'b) tensor -> ('a, 'b) tensor)
     (x : s) (y : s) : s =
-  let fn = "Nx.Ptree.map2" in
   let recorded = ref [] in
   let record : type a b. Path.t -> (a, b) tensor -> (a, b) tensor =
    fun path y ->
@@ -377,6 +378,11 @@ let map2 (type s) (s : s t)
   match s.walk { tensor; report } Path.Root x with
   | z -> ( match !expected with [] -> z | _ -> mismatch ())
   | exception Mismatch -> mismatch ()
+
+let map2 s
+    (f : 'a 'b. Path.t -> ('a, 'b) tensor -> ('a, 'b) tensor -> ('a, 'b) tensor)
+    x y =
+  zip "Nx.Ptree.map2" s f x y
 
 let fold (type s) (s : s t)
     (f : 'a 'b. Path.t -> ('a, 'b) tensor -> 'acc -> 'acc) (x : s) (acc : 'acc)
@@ -454,3 +460,72 @@ end
 let cast (module U : S) (dt : ('c, 'd) Nx_dtype.t) (x : ('a, 'b) tensor U.t) :
     ('c, 'd) tensor U.t =
   Payload.map (module U) (fun _ x -> cast_tensor dt x) x
+
+(* Arithmetic
+
+   The float leaves of a value are one vector, every other leaf is carried. *)
+
+let is_float x = Nx_dtype.is_float (Value.dtype x)
+let shape x = Nx_array.View.shape (Value.view x)
+
+let check_shapes fn path x y =
+  let sx = shape x and sy = shape y in
+  if not (Nx_array.Shape.equal sx sy) then
+    invalid_arg
+      (Printf.sprintf "%s: %s: shape %s in the first value, %s in the second" fn
+         (Path.describe path)
+         (Nx_array.Shape.to_string sx)
+         (Nx_array.Shape.to_string sy))
+
+let check_scalar fn a =
+  let s = shape a in
+  if Array.length s <> 0 then
+    invalid_arg
+      (Printf.sprintf "%s: the factor has shape %s, expected a scalar" fn
+         (Nx_array.Shape.to_string s))
+
+(* [a * x], [a] cast to [x]'s dtype and expanded to its shape. *)
+let times a x =
+  Entry.binary Mul (Entry.broadcast (cast_tensor (Value.dtype x) a) (shape x)) x
+
+(* [vdot x y] is [Nx.vdot x y]: the row of [x]'s elements times the column of
+   [y]'s. *)
+let vdot x y =
+  let n = Nx_array.Shape.numel (shape x) in
+  let r =
+    Entry.matmul (Entry.reshape x [| 1; n |]) (Entry.reshape y [| n; 1 |])
+  in
+  Entry.reshape r [||]
+
+let dot (type c d) s (dt : (c, d) Nx_dtype.t) x y : (c, d) tensor =
+  let fn = "Nx.Ptree.dot" in
+  let acc = ref None in
+  let leaf : type a b. Path.t -> (a, b) tensor -> (a, b) tensor -> (a, b) tensor
+      =
+   fun path x y ->
+    check_shapes fn path x y;
+    (if is_float x then
+       let d = vdot (cast_tensor dt x) (cast_tensor dt y) in
+       acc :=
+         Some (match !acc with None -> d | Some acc -> Entry.binary Add acc d));
+    x
+  in
+  ignore (zip fn s leaf x y);
+  match !acc with
+  | Some d -> d
+  | None -> Entry.full Placement.host dt [||] (Nx_dtype.zero dt)
+
+let norm s dt x = Entry.unary Sqrt (dot s dt x x)
+
+let scale s a x =
+  check_scalar "Nx.Ptree.scale" a;
+  map s (fun _ x -> if is_float x then times a x else x) x
+
+let axpy s a x y =
+  let fn = "Nx.Ptree.axpy" in
+  check_scalar fn a;
+  zip fn s
+    (fun path x y ->
+      check_shapes fn path x y;
+      if is_float x then Entry.binary Add (times a x) y else y)
+    x y

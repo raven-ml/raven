@@ -62,8 +62,10 @@ let bowl_grads (params : Pair.t) =
     b = Nx.mul_s (Nx.sub params.b target.b) 2.0;
   }
 
+let norm p x = Nx.item [] (Nx.Ptree.norm p Nx.float64 x)
+
 let bowl_distance params =
-  Vega.global_norm Pair.ptree (Pair.sub params (Lazy.force bowl_target))
+  norm Pair.ptree (Pair.sub params (Lazy.force bowl_target))
 
 let visit_lines s x =
   List.map (Format.asprintf "%a" Nx.Ptree.pp_visit) (Nx.Ptree.visits s x)
@@ -74,16 +76,10 @@ let descend ~steps ~step params =
 
 (* Gradient transformations *)
 
-let test_global_norm () =
-  (* sqrt (3^2 + 0^2 + 4^2 + 12^2) = 13 *)
-  let grads = pair [| 3.0; 0.0 |] [| 4.0; 12.0 |] in
-  equal (float 1e-6) 13.0 (Vega.global_norm Pair.ptree grads)
-
 let test_clip_by_global_norm_rescales () =
   let grads = pair [| 3.0; 0.0 |] [| 4.0 |] in
   let clipped = Vega.clip_by_global_norm Pair.ptree ~max_norm:1.0 grads in
-  equal ~msg:"norm is the bound" (float 1e-6) 1.0
-    (Vega.global_norm Pair.ptree clipped);
+  equal ~msg:"norm is the bound" (float 1e-6) 1.0 (norm Pair.ptree clipped);
   check_vec ~eps:1e-6 ~msg:"direction preserved" [| 0.6; 0.0 |] clipped.a;
   check_vec ~eps:1e-6 [| 0.8 |] clipped.b
 
@@ -95,6 +91,15 @@ let test_clip_by_global_norm_small () =
   let zeros = pair [| 0.0; 0.0 |] [| 0.0 |] in
   let clipped = Vega.clip_by_global_norm Pair.ptree ~max_norm:1.0 zeros in
   check_vec ~eps:0. ~msg:"zero gradients pass through" [| 0.0 |] clipped.b
+
+let test_clip_by_global_norm_carries () =
+  let p = Nx.Ptree.(pair tensor tensor) in
+  let grads =
+    (Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |], Nx.scalar Nx.int32 7l)
+  in
+  let clipped, counter = Vega.clip_by_global_norm p ~max_norm:1.0 grads in
+  check_vec ~eps:1e-6 [| 0.6; 0.8 |] clipped;
+  equal ~msg:"an int32 leaf is carried" int32 7l (Nx.item [] counter)
 
 let test_clip_by_value () =
   let grads = pair [| -3.0; 0.2 |] [| 5.0 |] in
@@ -853,22 +858,6 @@ let rosenbrock (v : Vec.t) =
 let iterations (st : (_, _) Vega.lbfgs_state) =
   Int32.to_int (Nx.item [] st.step)
 
-let test_global_dot () =
-  let a = pair [| 1.0; 2.0 |] [| 3.0 |] and b = pair [| 4.0; 5.0 |] [| 6.0 |] in
-  let d = Vega.global_dot Pair.ptree Nx.float64 a b in
-  equal ~msg:"spans all leaves" (float 1e-12) 32.0 (Nx.item [] d);
-  equal ~msg:"accumulates at the requested dtype" (float 1e-12) 32.0
-    (Nx.item [] (Vega.global_dot Pair.ptree Nx.float32 a b));
-  (* A bfloat16 leaf's inner product is [Nx.vdot]'s: (1 + 2^-7)^2 + 2^-8 sums
-     exactly to just above a tie and rounds up once to 1 + 3 * 2^-7, where
-     rounding each product first lands on the tie and goes down to even. *)
-  let u = Float.ldexp 1.0 (-7) in
-  let x = Nx.create Nx.bfloat16 [| 2 |] [| 1.0 +. u; u /. 2.0 |]
-  and y = Nx.create Nx.bfloat16 [| 2 |] [| 1.0 +. u; 1.0 |] in
-  equal ~msg:"a bfloat16 leaf's product rounds once" float_exact
-    (1.0 +. (3.0 *. u))
-    (Nx.item [] (Vega.global_dot Nx.Ptree.tensor Nx.float32 x y))
-
 let test_lbfgs_init () =
   let params = Lazy.force bowl_start in
   let st = Vega.lbfgs_init Pair.ptree ~history:3 bowl params in
@@ -978,7 +967,7 @@ let test_lbfgs_rejects_negative_curvature () =
   check_vec ~msg:"first step is descent" [| 1.2 |] st.params;
   is_true ~msg:"the pair has negative curvature"
     (Nx.item []
-       (Vega.global_dot Vec.ptree Nx.float64 (Nx.get [ 0 ] st.y)
+       (Nx.Ptree.dot Vec.ptree Nx.float64 (Nx.get [ 0 ] st.y)
           (Nx.get [ 0 ] st.s))
     < 0.0);
   equal ~msg:"and no weight" float_exact 0.0 (Nx.item [ 0 ] st.rho);
@@ -1270,11 +1259,12 @@ let tests =
   [
     group "gradient transformations"
       [
-        test "global norm spans all leaves" test_global_norm;
         test "clip by global norm rescales to the bound"
           test_clip_by_global_norm_rescales;
         test "clip by global norm passes small gradients through"
           test_clip_by_global_norm_small;
+        test "clip by global norm carries a leaf that is not a float"
+          test_clip_by_global_norm_carries;
         test "clip by value clamps elementwise" test_clip_by_value;
         test "clipping rejects non-positive bounds" test_clip_validation;
       ];
@@ -1354,7 +1344,6 @@ let tests =
       ];
     group "lbfgs"
       [
-        test "global dot spans all leaves" test_global_dot;
         test "init evaluates the objective and empties the memory"
           test_lbfgs_init;
         test "a fixed rate preconditions the gradient" test_lbfgs_fixed_step;
