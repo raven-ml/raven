@@ -260,6 +260,144 @@ let unaries =
       name = "max along its first axis";
       f = (fun t -> if Nx.ndim t = 0 then t else Nx.max ~axes:[ 0 ] t);
     };
+    {
+      name = "min along its last axis";
+      f = (fun t -> if Nx.ndim t = 0 then t else Nx.min ~axes:[ -1 ] t);
+    };
+    { name = "fill"; f = (fun t -> Nx.fill true t) };
+    {
+      name = "a copy of its flattened transpose";
+      f = (fun t -> flat (Nx.transpose t));
+    };
+    {
+      name = "every third element";
+      f = (fun t -> Nx.slice [ Rs (0, Nx.numel t, 3) ] (flat t));
+    };
+    {
+      name = "sort descending";
+      f = (fun t -> fst (Nx.sort ~descending:true (flat t)));
+    };
+    {
+      name = "sort along its last axis";
+      f = (fun t -> if Nx.ndim t = 0 then t else fst (Nx.sort ~axis:(-1) t));
+    };
+    {
+      name = "top_k of 5";
+      f = (fun t -> fst (Nx.top_k ~k:(min 5 (Nx.numel t)) (flat t)));
+    };
+    {
+      name = "top_k of 40";
+      f = (fun t -> fst (Nx.top_k ~k:(min 40 (Nx.numel t)) (flat t)));
+    };
+    { name = "cummin"; f = (fun t -> Nx.cummin (flat t)) };
+    {
+      name = "stack with its negation";
+      f = (fun t -> Nx.stack [ t; Nx.logical_not t ]);
+    };
+    {
+      name = "diagonal";
+      f = (fun t -> if Nx.ndim t < 2 then t else Nx.diagonal t);
+    };
+    { name = "triu"; f = (fun t -> if Nx.ndim t < 2 then t else Nx.triu t) };
+    {
+      name = "compress where its flip holds";
+      f =
+        (fun t ->
+          Nx.compress ~condition:(Nx.cast Nx.bool (Nx.flip (flat t))) (flat t));
+    };
+    {
+      name = "extract where it holds";
+      f = (fun t -> Nx.extract ~condition:(Nx.cast Nx.bool t) t);
+    };
+    {
+      name = "its halves swapped";
+      f =
+        (fun t ->
+          if Nx.ndim t = 0 || Nx.dim 0 t mod 2 <> 0 then t
+          else Nx.concatenate ~axis:0 (List.rev (Nx.split ~axis:0 2 t)));
+    };
+    {
+      name = "take along its last axis with indices outside";
+      f =
+        (fun t ->
+          if Nx.ndim t = 0 then t
+          else
+            let c = Nx.dim (-1) t in
+            Nx.take ~axis:(-1) ~indices:(indices (c + 3) (fun i -> c + 1 - i)) t);
+    };
+    {
+      name = "scatter with Min";
+      f =
+        (fun t ->
+          let n = Nx.numel t in
+          if n = 0 then flat t
+          else
+            Nx.scatter ~mode:`Min ~axis:0
+              ~indices:(indices n (fun i -> i * 5 mod n))
+              ~values:(Nx.logical_not (flat t))
+              (flat t));
+    };
+    {
+      name = "scatter with Add";
+      f =
+        (fun t ->
+          let n = Nx.numel t in
+          if n = 0 then flat t
+          else
+            Nx.scatter ~mode:`Add ~axis:0
+              ~indices:(indices n (fun i -> i))
+              ~values:(flat t) (flat t));
+    };
+    {
+      name = "set of a window of rows to a broadcast true";
+      f =
+        (fun t ->
+          if Nx.ndim t <> 2 || Nx.dim 0 t < 2 || Nx.dim 1 t < 3 then t
+          else
+            Nx.set
+              [ R (1, Nx.dim 0 t); R (1, Nx.dim 1 t - 1) ]
+              (Nx.full (Nx.dtype t) [||] true)
+              t);
+    };
+    {
+      name = "set of a window of rows to its negated corner";
+      f =
+        (fun t ->
+          if Nx.ndim t <> 2 || Nx.dim 0 t < 2 || Nx.dim 1 t < 3 then t
+          else
+            let r = Nx.dim 0 t - 1 and c = Nx.dim 1 t - 2 in
+            Nx.set
+              [ R (1, r + 1); R (2, c + 2) ]
+              (Nx.logical_not (Nx.slice [ R (0, r); R (0, c) ] t))
+              t);
+    };
+    {
+      name = "scatter with Set of a broadcast true";
+      f =
+        (fun t ->
+          let n = Nx.numel t in
+          if n = 0 then flat t
+          else
+            Nx.scatter ~axis:0
+              ~indices:(indices n (fun i -> (i * 11) + 1 - n))
+              ~values:(Nx.full (Nx.dtype t) [||] true)
+              (flat t));
+    };
+    {
+      name = "where with a broadcast true branch";
+      f =
+        (fun t ->
+          Nx.where
+            (Nx.cast Nx.bool (Nx.logical_not t))
+            (Nx.full (Nx.dtype t) [||] true)
+            t);
+    };
+    {
+      name = "where of a condition from its flip";
+      f =
+        (fun t ->
+          Nx.where (Nx.cast Nx.bool (Nx.flip t)) (Nx.flip t) (Nx.logical_not t));
+    };
   ]
 
 let binaries =
@@ -356,6 +494,71 @@ let other_dtypes =
       gname = "to_array";
       g = (fun t -> p (Nx.create Nx.bool [| Nx.numel t |] (Nx.to_array t)));
     };
+    { gname = "argmin"; g = (fun t -> p (Nx.argmin t)) };
+    { gname = "argsort"; g = (fun t -> p (Nx.argsort (flat t))) };
+    {
+      gname = "argsort descending";
+      g = (fun t -> p (Nx.argsort ~descending:true (flat t)));
+    };
+    {
+      gname = "top_k's indices";
+      g = (fun t -> p (snd (Nx.top_k ~k:(min 7 (Nx.numel t)) (flat t))));
+    };
+    { gname = "unique's groups"; g = (fun t -> p (Nx.unique (flat t)).ids) };
+    { gname = "unique's counts"; g = (fun t -> p (Nx.unique (flat t)).counts) };
+    {
+      gname = "lexsort of its rows";
+      g =
+        (fun t ->
+          if Nx.ndim t <> 2 then p (Nx.lexsort (flat t)) else p (Nx.lexsort t));
+    };
+    {
+      gname = "searchsorted in its sorted values";
+      g =
+        (fun t ->
+          let s = fst (Nx.sort (flat t)) in
+          p
+            (Nx.concatenate ~axis:0
+               [
+                 Nx.searchsorted ~side:`Left s (flat t);
+                 Nx.searchsorted ~side:`Right s (flat t);
+               ]));
+    };
+    {
+      gname = "not_equal to its flip";
+      g = (fun t -> p (Nx.not_equal t (Nx.flip t)));
+    };
+    { gname = "less than its flip"; g = (fun t -> p (Nx.less t (Nx.flip t))) };
+    {
+      gname = "greater_equal to its flip";
+      g = (fun t -> p (Nx.greater_equal t (Nx.flip t)));
+    };
+    {
+      gname = "array_equal to itself";
+      g = (fun t -> p (Nx.array_equal t (Nx.copy t)));
+    };
+    {
+      gname = "count along the first axis, keeping dims";
+      g =
+        (fun t ->
+          if Nx.ndim t = 0 then p (Nx.count t)
+          else p (Nx.count ~axes:[ 0 ] ~keepdims:true t));
+    };
+    { gname = "cast bool"; g = (fun t -> p (Nx.cast Nx.bool t)) };
+    {
+      gname = "cast uint4";
+      g = (fun t -> p (Nx.cast Nx.int8 (Nx.cast Nx.uint4 t)));
+    };
+    { gname = "cast uint64"; g = (fun t -> p (Nx.cast Nx.uint64 t)) };
+    { gname = "cast float16"; g = (fun t -> p (Nx.cast Nx.float16 t)) };
+    { gname = "cast bfloat16"; g = (fun t -> p (Nx.cast Nx.bfloat16 t)) };
+    { gname = "cast float8_e4m3"; g = (fun t -> p (Nx.cast Nx.float8_e4m3 t)) };
+    { gname = "cast float64"; g = (fun t -> p (Nx.cast Nx.float64 t)) };
+    { gname = "cast complex128"; g = (fun t -> p (Nx.cast Nx.complex128 t)) };
+    {
+      gname = "one_hot of its cast";
+      g = (fun t -> p (Nx.one_hot ~num_classes:3 (Nx.cast Nx.int8 t)));
+    };
   ]
 
 let returning_other_dtypes =
@@ -431,6 +634,60 @@ let storage =
           equal int 2 (Nx.nbytes (Nx.zeros Nx.int4 [| 3 |]));
           equal int 13 (Nx.nbytes (Nx.zeros Nx.bool [| 13 |])));
     ]
+
+(* Casts to bit read every dtype's values as a cast to bool does, NaN payloads,
+   signed zeros, subnormals and the 4-bit integers included. *)
+
+let nibbles name dtype lo hi =
+  Stored.case name dtype
+    (viewed ~pp:Format.pp_print_int dtype (Gen.int_range lo hi))
+    (tensor int)
+
+let every_dtype =
+  Stored.every
+  @ [ nibbles "int4" Nx.int4 (-8) 7; nibbles "uint4" Nx.uint4 0 15 ]
+
+let to_bit (Stored.Case c) =
+  prop (c.name ^ " cast to bit holds its cast to bool") c.tensors (fun t ->
+      equal same (Nx.cast Nx.bool t) (Nx.cast Nx.bool (Nx.cast Nx.bit t)))
+
+let casts =
+  group "casts"
+    (List.map to_bit every_dtype
+    @ [
+        test "zeros of either sign are false, and NaN and infinities true"
+          (fun () ->
+            let x =
+              Nx.create Nx.float32 [| 6 |]
+                [|
+                  0.; -0.; Float.nan; Float.infinity; Float.neg_infinity; 1e-45;
+                |]
+            in
+            equal (array bool)
+              [| false; false; true; true; true; true |]
+              (Nx.to_array (Nx.cast Nx.bit x)));
+        test "a complex value is true when either part is not zero" (fun () ->
+            let z re im = { Complex.re; im } in
+            let x =
+              Nx.create Nx.complex64 [| 4 |]
+                [| z 0. 0.; z (-0.) 0.; z 0. 1.; z Float.nan 0. |]
+            in
+            equal same (Nx.cast Nx.bool x) (Nx.cast Nx.bool (Nx.cast Nx.bit x)));
+        test "an int4 is true unless it is 0, -8 included" (fun () ->
+            let x = Nx.create Nx.int4 [| 5 |] [| 0; -8; 7; 16; -1 |] in
+            equal (array bool)
+              [| false; true; true; false; true |]
+              (Nx.to_array (Nx.cast Nx.bit x)));
+        test "true casts to 1 and false to 0 in every integer and float dtype"
+          (fun () ->
+            let m = bits [ true; false; true ] in
+            equal (array int) [| 1; 0; 1 |] (Nx.to_array (Nx.cast Nx.int4 m));
+            equal (array int) [| 1; 0; 1 |] (Nx.to_array (Nx.cast Nx.uint4 m));
+            equal (array int64) [| 1L; 0L; 1L |]
+              (Nx.to_array (Nx.cast Nx.uint64 m));
+            equal (array float_exact) [| 1.; 0.; 1. |]
+              (Nx.to_array (Nx.cast Nx.bfloat16 m)));
+      ])
 
 (* Refusals *)
 
@@ -645,6 +902,278 @@ let elements =
           let b = bools [ true; false; true ] in
           let printed t = Format.asprintf "%a" Nx.pp t in
           equal string (printed b) (printed (Nx.cast Nx.bit b)));
+      test "to_bigarray refuses a mask, as it refuses bool" (fun () ->
+          raises_invalid_arg (fun () -> Nx.to_bigarray (bools [ true ]));
+          raises_invalid_arg (fun () -> Nx.to_bigarray (bits [ true ])));
+      test "arange bit holds what arange bool holds" (fun () ->
+          equal same (Nx.arange Nx.bool 0 2 1)
+            (Nx.cast Nx.bool (Nx.arange Nx.bit 0 2 1));
+          raises_invalid_arg (fun () -> Nx.arange Nx.bool 0 3 1);
+          raises_invalid_arg (fun () -> Nx.arange Nx.bit 0 3 1));
+      prop "a view at any bit reads, gets and prints as its bool" mask (fun m ->
+          cover_views m;
+          equal ~msg:"to_array" (array bool) (Nx.to_array m.bools)
+            (Nx.to_array m.bits);
+          let printed t = Format.asprintf "%a" Nx.pp t in
+          (* An empty tensor prints its dtype's name. *)
+          let renamed s = String.concat "bool" (Str_split.on "bit" s) in
+          equal ~msg:"printed" string (printed m.bools)
+            (renamed (printed m.bits));
+          if Nx.ndim m.bits > 0 && Nx.dim 0 m.bits > 0 then
+            let last = Nx.dim 0 m.bits - 1 in
+            equal ~msg:"get of its last row" same (Nx.get [ last ] m.bools)
+              (Nx.cast Nx.bool (Nx.get [ last ] m.bits)));
+    ]
+
+(* Packed bytes *)
+
+(* Rows of [k] elements of a mask in any layout. *)
+let rows k = Gen.bind (Gen.int_range 0 9) (fun r -> mask_of [| r; k |])
+
+(* The bit patterns of a byte, as [packed] writes them. *)
+let byte_bits b = Array.init 8 (fun j -> (b lsr j) land 1 = 1)
+
+let nibble_rows dtype lo hi =
+  viewed ~pp:Format.pp_print_int ~layout:row_layout
+    ~shape:(Gen.map (fun r -> [| r; 2 |]) (Gen.int_range 0 9))
+    dtype (Gen.int_range lo hi)
+
+let low_nibble_first lo_hi =
+  Array.map (fun (lo, hi) -> lo land 15 lor ((hi land 15) lsl 4)) lo_hi
+
+let row_pairs t =
+  let vs = Nx.to_array t in
+  Array.init (Array.length vs / 2) (fun i -> (vs.(2 * i), vs.((2 * i) + 1)))
+
+let bytes =
+  group "packed bytes"
+    [
+      prop "bitcast uint8 of rows of eight bits in any layout packs each row"
+        (rows 8) (fun m ->
+          cover_views m;
+          let vs = Nx.to_array m.bools in
+          equal (array int) (packed vs)
+            (Nx.to_array (Nx.bitcast Nx.uint8 m.bits)));
+      prop "bitcast bit of bytes in any layout reads bit i mod 8 of byte i / 8"
+        (viewed ~pp:Format.pp_print_int Nx.uint8 (Gen.int_range 0 255))
+        (fun b ->
+          let m = Nx.bitcast Nx.bit b in
+          equal ~msg:"shape" (array int)
+            (Array.append (Nx.shape b) [| 8 |])
+            (Nx.shape m);
+          equal (array bool)
+            (Array.concat (List.map byte_bits (Array.to_list (Nx.to_array b))))
+            (Nx.to_array m));
+      prop "bitcast uint8 of rows of two int4 in any layout holds the first low"
+        (nibble_rows Nx.int4 (-8) 7) (fun q ->
+          equal (array int)
+            (low_nibble_first (row_pairs q))
+            (Nx.to_array (Nx.bitcast Nx.uint8 q)));
+      prop
+        "bitcast uint8 of rows of two uint4 in any layout holds the first low"
+        (nibble_rows Nx.uint4 0 15) (fun q ->
+          equal (array int)
+            (low_nibble_first (row_pairs q))
+            (Nx.to_array (Nx.bitcast Nx.uint8 q)));
+      test
+        "bitcast int4 of four bits reads them as one nibble, the first lowest"
+        (fun () ->
+          let m =
+            Nx.reshape [| 2; 4 |]
+              (bits [ true; false; false; true; false; false; false; true ])
+          in
+          equal (array int) [| -7; -8 |] (Nx.to_array (Nx.bitcast Nx.int4 m));
+          equal (array int) [| 9; 8 |] (Nx.to_array (Nx.bitcast Nx.uint4 m)));
+      test "bitcast bit of an int4 gives its four bits, the lowest first"
+        (fun () ->
+          let q = Nx.create Nx.int4 [| 2 |] [| -7; 6 |] in
+          equal (array bool)
+            [| true; false; false; true; false; true; true; false |]
+            (Nx.to_array (Nx.bitcast Nx.bit q)));
+      test
+        "bitcast uint8 of rows of eight bits from byte 1 shares their storage"
+        (fun () ->
+          let m =
+            Nx.cast Nx.bit (Nx.init Nx.bool [| 32 |] (fun i -> i.(0) mod 3 = 0))
+          in
+          let rows = Nx.reshape [| 3; 8 |] (Nx.shrink [| (8, 32) |] m) in
+          is_true
+            (share_memory
+               (Nx_test.storage (Nx.bitcast Nx.uint8 rows))
+               (Nx_test.storage m)));
+    ]
+
+(* Across buffers and devices *)
+
+let d1 = Devices.d1
+and d2 = Devices.d2
+
+(* A sub-byte value under a layout, and the witness of its elements: bytes past
+   its last element hold no element, so values compare by their elements. *)
+type sub_byte = Sub : string * ('a, 'b) Nx.t Gen.t * 'a testable -> sub_byte
+
+let sub_bytes =
+  [
+    Sub ("bit", Gen.map (fun m -> m.bits) mask, bool);
+    Sub
+      ( "int4",
+        viewed ~pp:Format.pp_print_int Nx.int4 (Gen.int_range (-8) 7),
+        int );
+    Sub
+      ( "uint4",
+        viewed ~pp:Format.pp_print_int Nx.uint4 (Gen.int_range 0 15),
+        int );
+  ]
+
+let on_host x = Nx.place Nx.Placement.host x
+
+let devices =
+  group "buffers and devices"
+    (List.concat_map
+       (fun (Sub (name, tensors, w)) ->
+         [
+           prop (name ^ ": of_buffer reads back to_buffer's elements") tensors
+             (fun t ->
+               equal (tensor w) t
+                 (Nx.of_buffer (Nx.dtype t) (Nx.shape t) (Nx.to_buffer t)));
+           prop
+             (name ^ ": a value placed on devices and back is the value")
+             (Runtimes.placed [ d1; d2 ] tensors)
+             (fun (t, p) ->
+               let x = Nx.place p t in
+               equal ~msg:"back on the host" (tensor w) t (on_host x);
+               let buffers, v = Nx.shards x in
+               equal ~msg:"of_shards over shards" (tensor w) t
+                 (on_host (Nx.of_shards p (Nx.dtype x) v buffers)));
+           prop (name ^ ": a copy on a device is the host's copy") tensors
+             (fun t ->
+               equal (tensor w) (Nx.copy t)
+                 (on_host (Nx.copy (Nx.place (Nx.Placement.on d1) t))));
+         ])
+       sub_bytes
+    @ [
+        prop "logical_and of masks on a device is the host's" two (fun (a, b) ->
+            let on = Nx.place (Nx.Placement.on d1) in
+            equal same
+              (Nx.cast Nx.bool (Nx.logical_and a.bits b.bits))
+              (Nx.cast Nx.bool
+                 (on_host (Nx.logical_and (on a.bits) (on b.bits)))));
+      ])
+
+(* From two domains *)
+
+(* Calls on one mask from two domains at once give what they give one after the
+   other: each reads the mask's bits and writes words of its own result. *)
+
+let shared = abstract "m"
+
+let mask_values =
+  Gen.with_pp
+    (fun ppf vs ->
+      Array.iter (fun v -> Format.pp_print_char ppf (if v then '1' else '0')) vs)
+    (Gen.array ~size:(Gen.int_range 0 300) Gen.bool)
+
+(* The system's mask starts at bit 3 of its storage. *)
+let shared_mask vs =
+  let n = Array.length vs in
+  let padded =
+    Array.init (n + 5) (fun i -> i >= 3 && i < n + 3 && vs.(i - 3))
+  in
+  Nx.shrink
+    [| (3, n + 3) |]
+    (Nx.cast Nx.bit (Nx.create Nx.bool [| n + 5 |] padded))
+
+let on_both { name; f } =
+  command name
+    (shared ^-> returns (array bool))
+    (fun b -> Nx.to_array (f b))
+    (fun m -> Nx.to_array (f m))
+
+let concurrent_calls =
+  command "mask"
+    (mask_values @-> makes shared)
+    (fun vs -> Nx.create Nx.bool [| Array.length vs |] vs)
+    shared_mask
+  :: command "count"
+       (shared ^-> returns int64)
+       (fun b -> Nx.item [] (Nx.count b))
+       (fun m -> Nx.item [] (Nx.count m))
+  :: List.map on_both
+       (List.filter
+          (fun { name; _ } ->
+            List.mem name
+              [
+                "copy";
+                "logical_not";
+                "a copy of its flip";
+                "concatenate between parts of 13";
+                "pad";
+                "take with indices outside";
+                "set of a window";
+                "scatter with Set";
+                "every third element";
+              ])
+          unaries)
+
+let domains =
+  group "domains"
+    [
+      stateful "calls on one mask give their bool results" concurrent_calls;
+      stateful ~tags:[ "slow" ] ~domains:2
+        "calls on one mask from two domains at once give their bool results"
+        concurrent_calls;
+    ]
+
+(* Many workers *)
+
+(* nx.cpu splits a write of tens of millions of elements between workers by the
+   64-bit words of the destination. A destination that starts inside a word
+   shares its first word with what lies before it. *)
+
+let pattern n =
+  Nx.reshape
+    [| 8 * n |]
+    (Nx.bitcast Nx.bit
+       (Nx.init Nx.uint8 [| n |] (fun i -> i.(0) * 37 land 255)))
+
+let differences a b = Nx.item [] (Nx.count (Nx.logical_xor a b))
+
+let workers =
+  group "many workers"
+    [
+      slow "a part of 2^28 bits concatenated at bit 13 holds its bits"
+        (fun () ->
+          let big = pattern (1 lsl 25) and n = 1 lsl 28 in
+          let thirteen = bits (List.init 13 (fun i -> i mod 3 = 0)) in
+          let c = Nx.concatenate ~axis:0 [ thirteen; big; thirteen ] in
+          equal ~msg:"the first part" same (Nx.cast Nx.bool thirteen)
+            (Nx.cast Nx.bool (Nx.shrink [| (0, 13) |] c));
+          equal ~msg:"bits that differ" int64 0L
+            (differences big (Nx.shrink [| (13, n + 13) |] c));
+          equal ~msg:"the last part" same (Nx.cast Nx.bool thirteen)
+            (Nx.cast Nx.bool (Nx.shrink [| (n + 13, n + 26) |] c)));
+      slow "a window of 2^28 bits set from bit 5 keeps the bits around it"
+        (fun () ->
+          let n = 1 lsl 28 in
+          let src = pattern (1 lsl 25) in
+          let t = Nx.set [ R (5, n + 5) ] src (Nx.ones Nx.bit [| n + 70 |]) in
+          equal ~msg:"bits that differ" int64 0L
+            (differences src (Nx.shrink [| (5, n + 5) |] t));
+          equal ~msg:"the ones around it" int64 (Int64.of_int 70)
+            (Int64.sub (Nx.item [] (Nx.count t)) (Nx.item [] (Nx.count src))));
+      slow
+        "int4 parts of 13 around 2^26 elements concatenate as their int8 twins"
+        (fun () ->
+          let n = (1 lsl 26) + 3 in
+          let big = Nx.init Nx.int8 [| n |] (fun i -> (i.(0) * 7 mod 16) - 8) in
+          let thirteen = Nx.init Nx.int8 [| 13 |] (fun i -> i.(0) - 6) in
+          let parts = [ thirteen; big; thirteen ] in
+          let q = Nx.concatenate ~axis:0 (List.map (Nx.cast Nx.int4) parts) in
+          equal bool true
+            (Nx.item []
+               (Nx.array_equal
+                  (Nx.concatenate ~axis:0 parts)
+                  (Nx.cast Nx.int8 q))));
     ]
 
 let () =
@@ -654,8 +1183,13 @@ let () =
          storage;
          one_meaning;
          returning_other_dtypes;
+         casts;
          arithmetic;
          exact;
          counting;
          elements;
+         bytes;
+         devices;
+         domains;
+         workers;
        ])

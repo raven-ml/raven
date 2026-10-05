@@ -1204,6 +1204,370 @@ let integer_rules =
             (Nx.cast Nx.uint4 (Nx.create Nx.float64 [| 2 |] [| 15.5; 1e30 |])));
     ]
 
+(* Every pair of 4-bit values, in one tensor that starts inside a byte, computes
+   as its byte twin cast back. *)
+
+(* More functions of 4-bit operands, which return their dtype. *)
+let more_unary_ints =
+  let whole f x = if Nx.numel x = 0 then x else f x in
+  [
+    ("lshift 0", { f = (fun x -> Nx.lshift x 0) });
+    ("lshift 2", { f = (fun x -> Nx.lshift x 2) });
+    ("rshift 2", { f = (fun x -> Nx.rshift x 2) });
+    ("cummax", { f = (fun x -> Nx.cummax x) });
+    ("cummin", { f = (fun x -> Nx.cummin x) });
+    ("sum keeping dims", { f = (fun x -> Nx.sum ~keepdims:true x) });
+    ("prod over the last axis", { f = (fun x -> Nx.prod ~axes:[ -1 ] x) });
+    ("cumsum over the last axis", { f = (fun x -> Nx.cumsum ~axis:(-1) x) });
+    ("clamp to [-3, 5]", { f = (fun x -> Nx.clamp ~min:(-3) ~max:5 x) });
+    ("top_k of 3", { f = (fun x -> whole (fun x -> fst (Nx.top_k ~k:3 x)) x) });
+    ("sort descending", { f = (fun x -> fst (Nx.sort ~descending:true x)) });
+    ("flip", { f = Nx.flip });
+    ( "set of a window of rows to 9",
+      {
+        f =
+          (fun x ->
+            if Nx.ndim x <> 2 || Nx.dim 0 x < 2 || Nx.dim 1 x < 3 then x
+            else
+              Nx.set
+                [ R (1, Nx.dim 0 x); R (1, Nx.dim 1 x - 1) ]
+                (Nx.full (Nx.dtype x) [||] 9)
+                x);
+      } );
+    ( "pad of 2 each side with 9",
+      { f = (fun x -> Nx.pad (Array.map (fun _ -> (2, 2)) (Nx.shape x)) 9 x) }
+    );
+    ( "take with indices outside",
+      {
+        f =
+          (fun x ->
+            let n = Nx.numel x in
+            Nx.take
+              ~indices:
+                (Nx.init Nx.int64
+                   [| n + 3 |]
+                   (fun i -> Int64.of_int (n + 1 - i.(0))))
+              (Nx.flatten x));
+      } );
+    ( "scatter with Max of duplicates",
+      {
+        f =
+          (fun x ->
+            let n = Nx.numel x in
+            if n = 0 then Nx.flatten x
+            else
+              let idx =
+                Nx.init Nx.int64 [| n |] (fun i ->
+                    Int64.of_int (i.(0) mod 3 mod n))
+              in
+              Nx.scatter ~mode:`Max ~axis:0 ~indices:idx
+                ~values:(Nx.flatten (Nx.flip x))
+                (Nx.flatten x));
+      } );
+    ( "scatter with Add of duplicates",
+      {
+        f =
+          (fun x ->
+            let n = Nx.numel x in
+            if n = 0 then Nx.flatten x
+            else
+              let idx =
+                Nx.init Nx.int64 [| n |] (fun i ->
+                    Int64.of_int (i.(0) mod 3 mod n))
+              in
+              Nx.scatter ~mode:`Add ~axis:0 ~indices:idx ~values:(Nx.flatten x)
+                (Nx.flatten x));
+      } );
+    ("a copy of its transpose", { f = (fun x -> Nx.copy (Nx.transpose x)) });
+  ]
+
+let more_binary_ints =
+  [
+    ("fma", { g = (fun x y -> Nx.fma x y x) });
+    ( "dot",
+      {
+        g =
+          (fun x y ->
+            if Nx.ndim x < 2 then Nx.dot x y
+            else Nx.dot x (Nx.swapaxes (-1) (-2) y));
+      } );
+    ( "scatter with Add",
+      {
+        g =
+          (fun x y ->
+            let n = Nx.numel x in
+            let idx =
+              Nx.init Nx.int64 [| n |] (fun i ->
+                  Int64.of_int (i.(0) * 7 mod max n 1))
+            in
+            Nx.scatter ~mode:`Add ~axis:0 ~indices:idx ~values:(Nx.flatten y)
+              (Nx.flatten x));
+      } );
+  ]
+
+type compare_int = { cmp : 'b. (int, 'b) Nx.t -> (int, 'b) Nx.t -> Nx.bool_t }
+
+let every_pair (type b c) (name, (q : (int, b) Nx.dtype))
+    (twin, (w : (int, c) Nx.dtype)) lo hi =
+  test
+    (name ^ ": every pair of values, from inside a byte, computes as its "
+   ^ twin ^ " twin cast back")
+    (fun () ->
+      let n = hi - lo + 1 in
+      (* [lo; …; hi] along rows, and along columns, each viewed from element 1
+         of its storage. *)
+      let grid f =
+        let flat =
+          Nx.init q
+            [| (n * n) + 2 |]
+            (fun i ->
+              let k = i.(0) - 1 in
+              if k < 0 || k >= n * n then 0 else f k)
+        in
+        Nx.reshape [| n; n |] (Nx.shrink [| (1, (n * n) + 1) |] flat)
+      in
+      let x = grid (fun k -> lo + (k / n))
+      and y = grid (fun k -> lo + (k mod n)) in
+      let wide = Nx.cast w in
+      equal ~msg:"the grid" (array int)
+        (Array.init (n * n) (fun k -> lo + (k / n)))
+        (Nx.to_array x);
+      List.iter
+        (fun (msg, { f }) ->
+          equal ~msg (tensor int) (Nx.cast q (f (wide x))) (f x))
+        (unary_ints @ more_unary_ints);
+      List.iter
+        (fun (msg, { g }) ->
+          equal ~msg (tensor int) (Nx.cast q (g (wide x) (wide y))) (g x y))
+        (binary_ints @ more_binary_ints);
+      List.iter
+        (fun (msg, { cmp }) ->
+          equal ~msg (tensor bool) (cmp (wide x) (wide y)) (cmp x y))
+        [
+          ("less", { cmp = Nx.less });
+          ("less_equal", { cmp = Nx.less_equal });
+          ("greater", { cmp = Nx.greater });
+          ("equal", { cmp = Nx.equal });
+          ("not_equal", { cmp = Nx.not_equal });
+        ];
+      equal ~msg:"argsort" (tensor int64)
+        (Nx.argsort (Nx.flatten (wide x)))
+        (Nx.argsort (Nx.flatten x));
+      equal ~msg:"unique's groups" (tensor int64)
+        (Nx.unique (Nx.flatten (wide y))).ids (Nx.unique (Nx.flatten y)).ids;
+      equal ~msg:"searchsorted" (tensor int64)
+        (Nx.searchsorted ~side:`Right (Nx.flatten (wide x)) (wide y))
+        (Nx.searchsorted ~side:`Right (Nx.flatten x) y);
+      equal ~msg:"argmax along rows" (tensor int64)
+        (Nx.argmax ~axis:1 (wide (Nx.mul x y)))
+        (Nx.argmax ~axis:1 (Nx.mul x y)))
+
+(* The nibble past the last element of a fresh odd-length result, which belongs
+   to no element and is written as 0. *)
+let past_last t =
+  let n = Nx.numel t in
+  let b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer t) in
+  if n mod 2 = 0 then 0 else b.{n / 2} lsr 4
+
+let fresh_nibbles =
+  let odd = Gen.map (fun n -> [| (2 * n) + 1 |]) (Gen.int_range 0 40) in
+  let results x =
+    let x = Nx.flatten x in
+    let y = Nx.flip x in
+    [
+      ("add", Nx.add x y);
+      ("neg", Nx.neg x);
+      ("bitwise_not", Nx.bitwise_not x);
+      ("copy", Nx.copy x);
+      ("cast from int8", Nx.cast Nx.int4 (Nx.cast Nx.int8 x));
+      ("concatenate", Nx.concatenate ~axis:0 [ x; Nx.full Nx.int4 [| 2 |] (-1) ]);
+      ("pad", Nx.pad [| (1, 1) |] (-1) x);
+      ("take", Nx.take ~indices:(Nx.zeros Nx.int64 [| Nx.numel x |]) x);
+      ("cumsum", Nx.cumsum x);
+      ("full", Nx.full Nx.int4 (Nx.shape x) (-1));
+    ]
+  in
+  prop "an odd-length int4 result writes the nibble past its last element as 0"
+    (viewed ~pp:Format.pp_print_int ~shape:odd Nx.int4 (Gen.int_range (-8) 7))
+    (fun x ->
+      cover "an odd length" (Nx.numel x mod 2 = 1);
+      List.iter
+        (fun (msg, t) ->
+          if Nx.numel t mod 2 = 1 then equal ~msg int 0 (past_last t))
+        (results x))
+
+let four_bit_cases =
+  group "4-bit values"
+    [
+      fresh_nibbles;
+      every_pair ("int4", Nx.int4) ("int8", Nx.int8) (-8) 7;
+      every_pair ("uint4", Nx.uint4) ("uint8", Nx.uint8) 0 15;
+      test "7 + 1 is -8, and abs and neg of -8 are -8" (fun () ->
+          let seven = Nx.scalar Nx.int4 7 and least = Nx.scalar Nx.int4 (-8) in
+          equal (tensor int) least (Nx.add seven (Nx.scalar Nx.int4 1));
+          equal (tensor int) least (Nx.abs least);
+          equal (tensor int) least (Nx.neg least);
+          equal (tensor int) (Nx.scalar Nx.uint4 0)
+            (Nx.add (Nx.scalar Nx.uint4 15) (Nx.scalar Nx.uint4 1)));
+      test "sums and products keep the dtype, wrapped modulo 16" (fun () ->
+          let x = Nx.create Nx.int4 [| 2; 3 |] [| 7; 7; 7; -8; -8; 1 |] in
+          equal (tensor int)
+            (Nx.create Nx.int4 [| 2 |] [| 5; 1 |])
+            (Nx.sum ~axes:[ 1 ] x);
+          equal (tensor int) (Nx.scalar Nx.int4 6) (Nx.sum x);
+          equal (tensor int) (Nx.scalar Nx.int4 0) (Nx.prod x);
+          equal (tensor int)
+            (Nx.create Nx.int4 [| 2; 3 |] [| 7; -2; 5; -8; 0; 1 |])
+            (Nx.cumsum ~axis:1 x);
+          (* 17 * 15 = 255 = 15 * 16 + 15 *)
+          let u = Nx.full Nx.uint4 [| 17 |] 15 in
+          equal (tensor int) (Nx.scalar Nx.uint4 15) (Nx.sum u));
+      test "a matmul of int4 keeps the dtype, wrapped modulo 16" (fun () ->
+          let a = Nx.full Nx.int4 [| 2; 5 |] 7
+          and b = Nx.full Nx.int4 [| 5; 1 |] 7 in
+          (* 5 * 49 = 245 = 15 * 16 + 5 *)
+          equal (tensor int)
+            (Nx.create Nx.int4 [| 2; 1 |] [| 5; 5 |])
+            (Nx.matmul a b));
+      test "a literal is stored modulo 16 by every constructor" (fun () ->
+          equal (array int) [| 4; 4 |]
+            (Nx.to_array (Nx.full Nx.int4 [| 2 |] 100));
+          equal (array int) [| -8; 7; -1; 0 |]
+            (Nx.to_array (Nx.create Nx.int4 [| 4 |] [| 8; -9; 15; 16 |]));
+          equal (array int) [| 15; 0; 4 |]
+            (Nx.to_array (Nx.create Nx.uint4 [| 3 |] [| -1; 16; 100 |]));
+          equal (array int) [| 4; -7 |]
+            (Nx.to_array
+               (Nx.init Nx.int4 [| 2 |] (fun i -> if i.(0) = 0 then 100 else 9)));
+          equal (array int) [| -6; -5 |]
+            (Nx.to_array (Nx.add_s (Nx.create Nx.int4 [| 2 |] [| 1; 2 |]) 9));
+          equal (array int) [| 0; -7; 0 |]
+            (Nx.to_array
+               (Nx.set [ I 1 ] (Nx.scalar Nx.int4 25) (Nx.zeros Nx.int4 [| 3 |]))));
+      test "pad, arange and comparisons with a literal read it modulo 16"
+        (fun () ->
+          let x = Nx.create Nx.int4 [| 2 |] [| -7; 1 |] in
+          equal (array int) [| -7; -7; 1; -7 |]
+            (Nx.to_array (Nx.pad [| (1, 1) |] 9 x));
+          equal (array bool) [| true; false |] (Nx.to_array (Nx.equal_s x 9));
+          equal (array int)
+            (Array.init 16 (fun i -> i - 8))
+            (Nx.to_array (Nx.arange Nx.int4 (-8) 8 1));
+          equal (array int) (Array.init 16 Fun.id)
+            (Nx.to_array (Nx.arange Nx.uint4 0 16 1));
+          raises_invalid_arg (fun () -> Nx.arange Nx.int4 0 9 1);
+          raises_invalid_arg (fun () -> Nx.arange Nx.uint4 (-1) 3 1));
+      test "zero-size and one-element int4 tensors compute" (fun () ->
+          let e = Nx.zeros Nx.int4 [| 0; 3 |] in
+          equal (tensor int) (Nx.zeros Nx.int4 [| 3 |]) (Nx.sum ~axes:[ 0 ] e);
+          equal (tensor int) (Nx.ones Nx.int4 [| 3 |]) (Nx.prod ~axes:[ 0 ] e);
+          equal (tensor int) e (Nx.add e e);
+          let one = Nx.create Nx.int4 [| 1 |] [| -8 |] in
+          equal (tensor int)
+            (Nx.create Nx.int4 [| 1 |] [| 0 |])
+            (Nx.add one one));
+    ]
+
+(* Casts to and from 4-bit integers: from integers modulo 16, from floats by
+   truncation held at the range's ends with NaN as 0, and to every dtype by the
+   representative. *)
+
+let nibble ~signed v = wrap ~bits:4 ~signed v
+
+(* What a float becomes in a 4-bit integer. *)
+let held ~signed f =
+  let lo, hi = if signed then (-8., 7.) else (0., 15.) in
+  if Float.is_nan f then 0
+  else int_of_float (Float.max lo (Float.min hi (Float.trunc f)))
+
+let int4_from (Int_dtype d) =
+  prop
+    (d.name ^ " cast to int4 and uint4 is its value modulo 16")
+    (viewed
+       ~pp:(fun ppf v -> Format.fprintf ppf "%Ld" v)
+       Nx.int64
+       (int_value ~bits:d.bits ~signed:d.signed))
+    (fun v ->
+      let x = Nx.cast d.dtype v in
+      let vs = Array.map (fun v -> d.to_i64 (d.of_i64 v)) (Nx.to_array v) in
+      equal ~msg:"int4" (array int)
+        (Array.map (fun v -> Int64.to_int (nibble ~signed:true v)) vs)
+        (Nx.to_array (Nx.cast Nx.int4 x));
+      equal ~msg:"uint4" (array int)
+        (Array.map (fun v -> Int64.to_int (nibble ~signed:false v)) vs)
+        (Nx.to_array (Nx.cast Nx.uint4 x)))
+
+let int4_to (Int_dtype d) =
+  let each (type b) name (q : (int, b) Nx.dtype) lo hi =
+    prop
+      (name ^ " cast to " ^ d.name ^ " is its value modulo the width")
+      (viewed ~pp:Format.pp_print_int q (Gen.int_range lo hi))
+      (fun x ->
+        equal (array d.exact)
+          (Array.map
+             (fun v ->
+               d.of_i64 (wrap ~bits:d.bits ~signed:d.signed (Int64.of_int v)))
+             (Nx.to_array x))
+          (Nx.to_array (Nx.cast d.dtype x)))
+  in
+  [ each "int4" Nx.int4 (-8) 7; each "uint4" Nx.uint4 0 15 ]
+
+let int4_from_float (Stored.Case c) =
+  prop
+    (c.name ^ " cast to int4 and uint4 truncates, holds at the ends, NaN as 0")
+    c.tensors (fun t ->
+      let fs = Nx.to_array (Nx.cast Nx.float64 t) in
+      equal ~msg:"int4" (array int)
+        (Array.map (held ~signed:true) fs)
+        (Nx.to_array (Nx.cast Nx.int4 t));
+      equal ~msg:"uint4" (array int)
+        (Array.map (held ~signed:false) fs)
+        (Nx.to_array (Nx.cast Nx.uint4 t)))
+
+let int4_casts =
+  group "4-bit casts"
+    (List.map int4_from int_dtypes
+    @ List.concat_map int4_to int_dtypes
+    @ List.map int4_from_float
+        Stored.[ float8_e4m3; float8_e5m2; float16; bfloat16; float32; float64 ]
+    @ [
+        test "infinities and signed zeros become the ends and 0" (fun () ->
+            let x =
+              Nx.create Nx.float32 [| 5 |]
+                [| Float.infinity; Float.neg_infinity; -0.; -0.9; 1e-45 |]
+            in
+            equal (array int) [| 7; -8; 0; 0; 0 |]
+              (Nx.to_array (Nx.cast Nx.int4 x));
+            equal (array int) [| 15; 0; 0; 0; 0 |]
+              (Nx.to_array (Nx.cast Nx.uint4 x)));
+        test "int4 and uint4 cast to each other modulo 16" (fun () ->
+            equal (array int) [| 8; 15; 0; 7 |]
+              (Nx.to_array
+                 (Nx.cast Nx.uint4
+                    (Nx.create Nx.int4 [| 4 |] [| -8; -1; 0; 7 |])));
+            equal (array int) [| -8; -1; 0; 7 |]
+              (Nx.to_array
+                 (Nx.cast Nx.int4
+                    (Nx.create Nx.uint4 [| 4 |] [| 8; 15; 0; 7 |]))));
+        test "int4 casts to floats and complex numbers exactly" (fun () ->
+            let x = Nx.create Nx.int4 [| 3 |] [| -8; 7; -1 |] in
+            equal (array float_exact) [| -8.; 7.; -1. |]
+              (Nx.to_array (Nx.cast Nx.float8_e4m3 x));
+            equal (array float_exact) [| -8.; 7.; -1. |]
+              (Nx.to_array (Nx.cast Nx.bfloat16 x));
+            equal (array float_exact) [| -8.; 7.; -1. |]
+              (Array.map
+                 (fun (z : Complex.t) -> z.re)
+                 (Nx.to_array (Nx.cast Nx.complex64 x))));
+        test "a complex value casts to int4 by its real part" (fun () ->
+            let z re im = { Complex.re; im } in
+            let x =
+              Nx.create Nx.complex64 [| 3 |]
+                [| z 3.7 9.; z (-20.) 0.; z Float.nan 1. |]
+            in
+            equal (array int) [| 3; -8; 0 |] (Nx.to_array (Nx.cast Nx.int4 x)));
+      ])
+
 let packed_ints =
   let b = Nx.ones Nx.bool [| 2 |] in
   cases "bool has no arithmetic"
@@ -1682,6 +2046,8 @@ let () =
          int_ops;
          integer_dtypes;
          four_bit_ints;
+         four_bit_cases;
+         int4_casts;
          integer_rules;
          packed_ints;
          complex_numbers;

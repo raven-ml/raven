@@ -84,11 +84,12 @@ jobs:
       # The codecs parse untrusted bytes, and the bit kernels read and write
       # views at any bit: their suites run with the C of nx built under
       # AddressSanitizer and UndefinedBehaviorSanitizer, each property over
-      # 1000 cases.
+      # 1000 cases. A domain's thread exits on the signal stack the OCaml
+      # runtime allocated, which AddressSanitizer would unmap as its own.
       - name: Test nx.io and the bit dtype under the sanitizers
         if: runner.os != 'Windows'
         env:
-          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
         run: |
