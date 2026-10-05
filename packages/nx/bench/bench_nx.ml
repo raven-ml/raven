@@ -144,6 +144,10 @@ let random_benchmarks () =
   let param shape v = Nx.broadcast_to shape (Nx.scalar f32 v) in
   let p = param large 0.9 in
   let concentration = param [| 100_000 |] 2.5 in
+  let concentration_f64 =
+    Nx.broadcast_to [| 100_000 |] (Nx.scalar Nx.Float64 2.5)
+  in
+  let b = param [| 100_000 |] 4.0 in
   let rate r = param [| 10_000 |] r in
   let rate_1 = rate 1.0 and rate_30 = rate 30.0 and rate_100 = rate 100.0 in
   [
@@ -151,9 +155,30 @@ let random_benchmarks () =
     Thumper.bench "normal 1M" (fun () -> Nx.Rng.normal key f32 large);
     Thumper.bench "bernoulli 1M" (fun () -> Nx.Rng.bernoulli key p);
     Thumper.bench "gamma 100k" (fun () -> Nx.Rng.gamma key concentration);
+    Thumper.bench "gamma f64 100k" (fun () ->
+        Nx.Rng.gamma key concentration_f64);
+    Thumper.bench "beta 100k" (fun () -> Nx.Rng.beta key concentration b);
     Thumper.bench "poisson rate 1 10k" (fun () -> Nx.Rng.poisson key rate_1);
     Thumper.bench "poisson rate 30 10k" (fun () -> Nx.Rng.poisson key rate_30);
     Thumper.bench "poisson rate 100 10k" (fun () -> Nx.Rng.poisson key rate_100);
+  ]
+
+(* Special functions over a million elements at each compute dtype, inputs
+   spread over the function's domain. *)
+let special_benchmarks () =
+  let n = 1_000_000 in
+  let inputs dt lo hi =
+    Nx.add_s (Nx.mul_s (Nx.rand dt [| n |]) (hi -. lo)) lo
+  in
+  let at dt name f lo hi =
+    let x = inputs dt lo hi in
+    Thumper.bench name (fun () -> f x)
+  in
+  [
+    at Nx.Float32 "erf 1e6" Nx.erf (-4.) 4.;
+    at Nx.Float64 "erf f64 1e6" Nx.erf (-6.) 6.;
+    at Nx.Float32 "erfinv 1e6" Nx.erfinv (-1.) 1.;
+    at Nx.Float64 "erfinv f64 1e6" Nx.erfinv (-1.) 1.;
   ]
 
 let () =
@@ -171,5 +196,6 @@ let () =
       Thumper.group "reduce" (reduce_benchmarks ());
       Thumper.group "structural" (structural_benchmarks ());
       Thumper.group "random" (random_benchmarks ());
+      Thumper.group "special" (special_benchmarks ());
     ]
   |> exit

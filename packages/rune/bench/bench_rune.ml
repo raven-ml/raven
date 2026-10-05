@@ -441,6 +441,46 @@ let warm_start_benchmarks () =
         | _ -> failwith "bench_rune: the first call failed");
   ]
 
+(* Special functions and a sampler compiled over a million elements: one compile
+   in the setup, then replays. *)
+let compiled_n = 1_000_000
+
+let replay f x () =
+  let f = Rune.jit' f in
+  ignore (Sys.opaque_identity (f x));
+  f
+
+let jit_special_benchmarks () =
+  let at dt name f lo hi =
+    let x = Nx.add_s (Nx.mul_s (Nx.rand dt [| compiled_n |]) (hi -. lo)) lo in
+    Thumper.bench_with_setup ~setup:(replay f x) name (fun f -> f x)
+  in
+  [
+    at Nx.float32 "erf 1e6" Nx.erf (-4.) 4.;
+    at Nx.float64 "erf f64 1e6" Nx.erf (-6.) 6.;
+    at Nx.float32 "erfinv 1e6" Nx.erfinv (-1.) 1.;
+    at Nx.float64 "erfinv f64 1e6" Nx.erfinv (-1.) 1.;
+  ]
+
+let jit_random_benchmarks () =
+  let key = Nx.Rng.key 7 in
+  let concentration =
+    Nx.copy (Nx.broadcast_to [| compiled_n |] (Nx.scalar Nx.float32 2.5))
+  in
+  let gamma () =
+    let f =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+        Nx.Rng.gamma
+    in
+    ignore (Sys.opaque_identity (f key concentration));
+    f
+  in
+  [
+    Thumper.bench_with_setup ~setup:gamma "gamma 1e6" (fun f ->
+        f key concentration);
+  ]
+
 (* Process-isolated cold compile: one fresh jit of the given workload, timed by
    wall clock (the compile shells out to the kernel compiler). Driven one fresh
    process per call so the program cache starts empty. *)
@@ -510,6 +550,11 @@ let suite () =
     Thumper.group "JitFootprint"
       (jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20);
     Thumper.group "WarmStart" (warm_start_benchmarks ());
+    Thumper.group "jit"
+      [
+        Thumper.group "special" (jit_special_benchmarks ());
+        Thumper.group "random" (jit_random_benchmarks ());
+      ];
   ]
 
 let config = Thumper.Config.(default |> deadline 120.)

@@ -67,6 +67,7 @@ WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.698e-02	2.590e-0
 # machine: 943935ae6b4f79ac
 # host: MacBookPro · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
+# forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 jit/random/gamma-1e6 under load 10.8 on 10 cores
 
 Declined/add-1-beside-grad-on-another-domain	alloc_words	exact	7700
 Declined/add-1-beside-grad-on-another-domain	wall_time	batch=256	n=20	2.729e-05	2.704e-05 2.706e-05 2.707e-05 2.710e-05 2.715e-05 2.720e-05 2.724e-05 2.726e-05 2.726e-05 2.727e-05 2.730e-05 2.734e-05 2.738e-05 2.739e-05 2.741e-05 2.751e-05 2.751e-05 2.784e-05 2.804e-05 2.822e-05
@@ -126,3 +127,13 @@ PerSampleGrads/per-sample-mlp-w3-grads	alloc_words	exact	6553
 PerSampleGrads/per-sample-mlp-w3-grads	wall_time	batch=8	n=20	8.580e-04	8.129e-04 8.198e-04 8.220e-04 8.435e-04 8.453e-04 8.494e-04 8.500e-04 8.538e-04 8.556e-04 8.560e-04 8.601e-04 8.707e-04 8.789e-04 8.854e-04 9.107e-04 9.477e-04 9.493e-04 1.002e-03 1.028e-03 1.052e-03
 WarmStart/mlp-sgd-step-warm-first-call	alloc_words	exact	33
 WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	3.428e-02	3.361e-02 3.370e-02 3.371e-02 3.375e-02 3.390e-02 3.393e-02 3.411e-02 3.421e-02 3.422e-02 3.426e-02 3.431e-02 3.455e-02 3.460e-02 3.464e-02 3.470e-02 3.482e-02 3.540e-02 3.556e-02 3.576e-02 3.596e-02
+jit/random/gamma-1e6	alloc_words	exact	1607
+jit/random/gamma-1e6	wall_time	batch=1	n=20	8.225e-02	6.875e-02 7.027e-02 7.117e-02 7.493e-02 7.558e-02 7.631e-02 7.693e-02 7.710e-02 7.824e-02 8.125e-02 8.325e-02 8.442e-02 8.531e-02 9.189e-02 9.277e-02 9.516e-02 9.622e-02 9.657e-02 1.058e-01 1.080e-01
+jit/special/erf-1e6	alloc_words	exact	826
+jit/special/erf-1e6	wall_time	batch=1	n=20	9.019e-03	7.146e-03 7.489e-03 7.558e-03 7.751e-03 7.848e-03 8.460e-03 8.585e-03 8.609e-03 8.656e-03 8.897e-03 9.140e-03 9.320e-03 9.361e-03 9.727e-03 1.039e-02 1.093e-02 1.099e-02 1.118e-02 1.175e-02 1.576e-02
+jit/special/erf-f64-1e6	alloc_words	exact	826
+jit/special/erf-f64-1e6	wall_time	batch=1	n=20	6.541e-03	4.469e-03 5.130e-03 5.401e-03 5.598e-03 5.897e-03 6.019e-03 6.042e-03 6.172e-03 6.324e-03 6.413e-03 6.669e-03 6.908e-03 6.995e-03 7.072e-03 7.254e-03 7.263e-03 7.442e-03 8.266e-03 8.267e-03 9.194e-03
+jit/special/erfinv-1e6	alloc_words	exact	826
+jit/special/erfinv-1e6	wall_time	batch=2	n=20	3.295e-03	2.359e-03 2.484e-03 2.495e-03 2.787e-03 2.885e-03 2.948e-03 2.955e-03 3.014e-03 3.207e-03 3.285e-03 3.305e-03 3.307e-03 3.408e-03 3.495e-03 3.774e-03 3.826e-03 4.312e-03 4.328e-03 5.046e-03 6.149e-03
+jit/special/erfinv-f64-1e6	alloc_words	exact	826
+jit/special/erfinv-f64-1e6	wall_time	batch=1	n=20	2.473e-01	1.401e-01 1.681e-01 1.723e-01 1.760e-01 2.248e-01 2.291e-01 2.300e-01 2.363e-01 2.396e-01 2.455e-01 2.491e-01 2.515e-01 2.530e-01 2.539e-01 2.550e-01 2.566e-01 2.589e-01 2.619e-01 2.635e-01 2.971e-01
