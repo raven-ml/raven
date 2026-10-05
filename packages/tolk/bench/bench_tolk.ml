@@ -24,7 +24,9 @@
    [search] times what a beam search pays per candidate before timing it: its
    program linked on the buffers of its kernel, which a timer allocates once per
    search ({!Tolk_engine.timer}), on the host and on Metal, for gpt-oss-20b's
-   key and value projection.
+   key and value projection; and its lowering of a candidate up to its
+   instructions ([linearize]), which every candidate pays, for the kernels of
+   [lorenz] on a CUDA renderer.
 
    [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
    on the host where the hand-coded optimisations lost most to a beam search,
@@ -230,6 +232,47 @@ let prepare name open_device =
     name
     (fun (stage, prg) -> stage prg)
 
+(* A search's candidates of a lorenz kernel, lowered for a CUDA renderer that
+   compiles nothing: the kernel as the search is handed it, with the
+   optimisations the search chose dropped, and the first [linearized] of the
+   kernels one action makes of it, each optimised as a candidate is. *)
+let linearized = 8
+
+let cuda_renderer =
+  Renderer.with_compiler
+    (Renderer.Compiler.v Fun.id)
+    (Cstyle.cuda
+       { target with device = "CUDA"; renderer = "CUDA"; arch = "sm_89" })
+
+let candidates text =
+  let k = Graph.of_string text in
+  let k =
+    match Ops.arg k with
+    | Ops.Kernel info ->
+        Ops.replace k ~arg:(Kernel { info with opts_to_apply = None; beam = 1 })
+    | _ -> k
+  in
+  let handed = ref None in
+  let search _ s =
+    handed := Some (Postrange.Scheduler.copy s);
+    s
+  in
+  ignore (Codegen.full_rewrite_to_sink ~beam:search k cuda_renderer);
+  Search.get_kernel_actions ~include_0:false (Option.get !handed)
+  |> List.filteri (fun i _ -> i < linearized)
+  |> List.map (fun (_, c) ->
+      Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)
+
+let linearize_candidates =
+  Thumper.group "linearize"
+    (List.map
+       (fun (kernel, text) ->
+         Thumper.bench_with_setup
+           ~setup:(fun () -> candidates text)
+           kernel
+           (List.map (fun ast -> Codegen.linearize ast cuda_renderer)))
+       Lorenz.all)
+
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
 
@@ -255,6 +298,7 @@ let search () =
   Thumper.group "search"
     [
       Thumper.group "prepare" (prepare "cpu" (fun () -> Nx_device.host) :: metal);
+      linearize_candidates;
     ]
 
 let suite () =

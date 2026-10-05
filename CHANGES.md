@@ -965,6 +965,10 @@ thread.
 
 ### Tolk (new)
 
+- Lowering a kernel allocates 2.4 to 2.9 times less: a pattern that fails to
+  match allocates nothing, and a rewrite walk no longer builds a table per
+  node. A beam search's candidates collect less often across its domains: 8
+  domains lowering lorenz_simple's candidates take 2.9 s, from 6.1 s.
 - `BEAM_DEBUG`'s compile time of a candidate counts its rendering and its
   compiler, which it left out.
 - On arm64 the host hides a float zero from clang only where a comparison

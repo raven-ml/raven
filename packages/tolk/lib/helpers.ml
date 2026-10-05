@@ -80,15 +80,28 @@ end
 
 let prod l = List.fold_left ( * ) 1 l
 
+(* The length up to which [dedup] searches the elements kept in order, rather
+   than making a table of them: most lists it is given are this short. *)
+let dedup_scan = 8
+
 let dedup (type a) (module H : Hashtbl.HashedType with type t = a) l =
-  let module Seen = Hashtbl.Make (H) in
-  let seen = Seen.create 16 in
-  let first x =
-    let before = Seen.mem seen x in
-    Seen.replace seen x ();
-    not before
-  in
-  List.filter first l
+  if List.compare_length_with l dedup_scan <= 0 then
+    let rec kept acc = function
+      | [] -> List.rev acc
+      | x :: rest ->
+          if List.exists (H.equal x) acc then kept acc rest
+          else kept (x :: acc) rest
+    in
+    kept [] l
+  else
+    let module Seen = Hashtbl.Make (H) in
+    let seen = Seen.create 16 in
+    let first x =
+      let before = Seen.mem seen x in
+      Seen.replace seen x ();
+      not before
+    in
+    List.filter first l
 
 let argsort l =
   List.mapi (fun i x -> (x, i)) l

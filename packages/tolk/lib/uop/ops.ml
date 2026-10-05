@@ -319,7 +319,6 @@ and Node : sig
     mutable marg_memo : movement option; [@atomic]
     mutable key_memo : string option; [@atomic]
     mutable arg_repr_memo : string option; [@atomic]
-    mutable src_ops_memo : Op.Set.t option; [@atomic]
   }
 
   (* A set in the order its nodes joined it. Small sets are searched in order;
@@ -546,9 +545,10 @@ module Interned = struct
     && Option.equal Tag.equal u0.tag u1.tag
 
   let hash u =
+    let tag = match u.tag with None -> 0 | Some g -> 1 + Tag.hash g in
     List.fold_left
       (fun h s -> (h * 31) + s.id)
-      (Hashtbl.hash (Op.to_int u.op, hash_arg u.arg, Option.map Tag.hash u.tag))
+      (Hashtbl.hash ((((Op.to_int u.op * 31) + hash_arg u.arg) * 31) + tag))
       u.src
 end
 
@@ -588,7 +588,6 @@ let node op src arg tag dtype id =
     marg_memo = None;
     key_memo = None;
     arg_repr_memo = None;
-    src_ops_memo = None;
   }
 
 (* The whole-specification check that construction runs when the setting [SPEC]
@@ -679,26 +678,27 @@ let dtype_of op src arg =
 
 let v ?(src = []) ?(arg = No_arg) ?tag op =
   let probe = node op src arg tag Dtype.Void (-1) in
-  let created = ref false in
   let table, lock = shards.(Hashtbl.hash (Interned.hash probe) land 63) in
-  let u =
-    Mutex.protect lock (fun () ->
-        match Table.find_opt table probe with
-        | Some u -> u
-        | None ->
-            let u =
-              node op src arg tag (dtype_of op src arg)
-                (Atomic.fetch_and_add next_id 1)
-            in
-            Table.add table u;
-            created := true;
-            u)
-  in
-  (if !created && Setting.value Setting.spec > 1 then
-     match Atomic.get construction_check with
-     | Some check -> check u
-     | None -> ());
-  u
+  Mutex.lock lock;
+  match Table.find_opt table probe with
+  | Some u ->
+      Mutex.unlock lock;
+      u
+  | None -> (
+      match dtype_of op src arg with
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          Mutex.unlock lock;
+          Printexc.raise_with_backtrace e bt
+      | dtype ->
+          let u = node op src arg tag dtype (Atomic.fetch_and_add next_id 1) in
+          Table.add table u;
+          Mutex.unlock lock;
+          (if Setting.value Setting.spec > 1 then
+             match Atomic.get construction_check with
+             | Some check -> check u
+             | None -> ());
+          u)
 
 let op u = u.op
 let dtype u = u.dtype
@@ -1001,6 +1001,12 @@ let pp_program_info ppf p = Format.pp_print_string ppf (repr_program_info p)
 let toposort ?gate ?(enter_calls = true) root =
   let cache = Tbl.create 64 and order = ref [] in
   let stack = Stack.create () in
+  let rec push_srcs = function
+    | [] -> ()
+    | s :: rest ->
+        push_srcs rest;
+        Stack.push (s, false) stack
+  in
   Stack.push (root, false) stack;
   while not (Stack.is_empty stack) do
     let node, visited = Stack.pop stack in
@@ -1008,11 +1014,9 @@ let toposort ?gate ?(enter_calls = true) root =
       if not visited then
         begin if match gate with None -> true | Some g -> g node then begin
           Stack.push (node, true) stack;
-          let srcs =
-            if (not enter_calls) && node.op = Op.Call then drop 1 node.src
-            else node.src
-          in
-          List.iter (fun s -> Stack.push (s, false) stack) (List.rev srcs)
+          push_srcs
+            (if (not enter_calls) && node.op = Op.Call then drop 1 node.src
+             else node.src)
         end
         end
       else begin
@@ -1038,13 +1042,20 @@ let topovisit root f cache =
 
 (* A recursive property is filled bottom-up over the nodes that lack it, so a
    deep graph never recurses deeply. *)
-let memoized ?enter_calls ~get ~set ~compute u =
+let memoized ?(enter_calls = true) ~get ~set ~compute u =
   match get u with
   | Some x -> x
   | None ->
-      List.iter
-        (fun n -> set n (compute n))
-        (toposort ?enter_calls ~gate:(fun n -> Option.is_none (get n)) u);
+      (* A new node is mostly built on nodes that have the property. *)
+      let srcs =
+        if (not enter_calls) && u.op = Op.Call then drop 1 u.src else u.src
+      in
+      if List.for_all (fun s -> Option.is_some (get s)) srcs then
+        set u (compute u)
+      else
+        List.iter
+          (fun n -> set n (compute n))
+          (toposort ~enter_calls ~gate:(fun n -> Option.is_none (get n)) u);
       Option.get (get u)
 
 let backward_slice u =
@@ -4107,6 +4118,7 @@ module Upat = struct
     cached : bool;
         (* Variables are memoised by their arguments: equal variables are one
            pattern, so their operands in any order are one ordering. *)
+    unique : bool;  (* At most one naming of any node. *)
   }
 
   and in_src = Fixed of t list | Perm of t list | Each of t
@@ -4178,6 +4190,14 @@ module Upat = struct
       custom_early_reject = early_reject;
       early_reject = early;
       cached;
+      unique =
+        (not is_any)
+        &&
+        match p_src with
+        | None -> true
+        | Some (Tuples [ tuple ]) -> List.for_all (fun q -> q.unique) tuple
+        | Some (Repeat q) -> q.unique
+        | Some (Tuples _) -> false;
     }
 
   let only ~src ~perm ~each =
@@ -4316,65 +4336,134 @@ module Upat = struct
     | Const (#Dtype.value as x), Const (#Dtype.value as y) -> Value.( = ) x y
     | _ -> equal_arg a b
 
-  let rec zip l0 l1 =
-    match (l0, l1) with x :: r0, y :: r1 -> (x, y) :: zip r0 r1 | _ -> []
+  (* The nodes a match names, the latest first. *)
+  type store = Empty | Bound of string * node * store
 
-  let rec matches p (u : node) store =
-    if p.is_any then
+  let rec mem_dtype dt = function
+    | [] -> false
+    | d :: rest -> Dtype.equal dt d || mem_dtype dt rest
+
+  let rec mem_tag g = function
+    | [] -> false
+    | t :: rest -> Tag.equal g t || mem_tag g rest
+
+  (* Whether [u] itself fits [p], sources aside. *)
+  let fits p u =
+    let n_src = List.length u.src in
+    (match p.dtypes with Some dts -> mem_dtype u.dtype dts | None -> true)
+    && (match p.p_arg with Some a -> arg_matches a u.arg | None -> true)
+    && (match p.tags with
+      | Some tags -> (
+          match u.tag with Some g -> mem_tag g tags | None -> false)
+      | None -> true)
+    && n_src >= p.required_len
+    && not (p.strict_length && n_src <> p.required_len)
+
+  exception No_match
+
+  (* [store] extended with what [p] names in [u]. Raises [No_match] if the name
+     is bound to another node. *)
+  let rec bound_in n u store = function
+    | Empty -> Bound (n, u, store)
+    | Bound (m, b, rest) ->
+        if not (String.equal m n) then bound_in n u store rest
+        else if b == u then store
+        else raise_notrace No_match
+
+  let named_in p u store =
+    match p.p_name with None -> store | Some n -> bound_in n u store store
+
+  (* A unique pattern names a node in at most one way, which [bind] finds
+     without continuations: a match costs only the names it binds. *)
+  let rec bind p (u : node) store =
+    match p.ops with
+    | Some ops when not (List.mem u.op ops) -> raise_notrace No_match
+    | _ when not (fits p u) -> raise_notrace No_match
+    | _ -> (
+        let store = named_in p u store in
+        match p.p_src with
+        | None -> store
+        | Some (Tuples [ tuple ]) -> bind_sources tuple u.src store
+        | Some (Repeat q) -> bind_each q u.src store
+        | Some (Tuples _) -> assert false)
+
+  and bind_sources pats srcs store =
+    match (pats, srcs) with
+    | p :: pats, u :: srcs -> bind_sources pats srcs (bind p u store)
+    | _ -> store
+
+  and bind_each q srcs store =
+    match srcs with
+    | [] -> store
+    | u :: srcs -> bind_each q srcs (bind q u store)
+
+  (* Matching enumerates each naming of [u] by [p] in order, each extending
+     [store], and is the first result [k] gives one: alternatives and orderings
+     in turn, and each source's namings before the next source's. *)
+  let rec first p (u : node) store k =
+    if p.unique then
+      match bind p u store with store -> k store | exception No_match -> None
+    else if p.is_any then
       match p.p_src with
-      | Some (Tuples [ alternatives ]) ->
-          List.concat_map (fun alt -> matches alt u store) alternatives
-      | _ -> []
-    else if
-      match p.ops with Some ops -> not (List.mem u.op ops) | None -> false
-    then []
+      | Some (Tuples [ alternatives ]) -> first_of alternatives u store k
+      | _ -> None
     else
-      let store =
-        match p.p_name with
-        | None -> Some store
-        | Some n -> (
-            match List.assoc_opt n store with
-            | Some bound -> if bound == u then Some store else None
-            | None -> Some ((n, u) :: store))
-      in
-      match store with
-      | None -> []
-      | Some store -> (
-          let n_src = List.length u.src in
-          if
-            (match p.dtypes with
-              | Some dts -> not (List.exists (Dtype.equal u.dtype) dts)
-              | None -> false)
-            || (match p.p_arg with
-              | Some a -> not (arg_matches a u.arg)
-              | None -> false)
-            || (match p.tags with
-              | Some tags -> (
-                  match u.tag with
-                  | Some g -> not (List.exists (Tag.equal g) tags)
-                  | None -> true)
-              | None -> false)
-            || n_src < p.required_len
-            || (p.strict_length && n_src <> p.required_len)
-          then []
-          else
-            match p.p_src with
-            | None -> [ store ]
-            | Some srcs ->
-                let tuples =
-                  match srcs with
-                  | Tuples ts -> ts
-                  | Repeat q -> [ List.map (fun _ -> q) u.src ]
-                in
-                List.concat_map
-                  (fun tuple ->
-                    List.fold_left
-                      (fun stores (child, pat) ->
-                        List.concat_map (fun s -> matches pat child s) stores)
-                      [ store ] (zip u.src tuple))
-                  tuples)
+      match p.ops with
+      | Some ops when not (List.mem u.op ops) -> None
+      | _ when not (fits p u) -> None
+      | _ -> (
+          match named_in p u store with
+          | exception No_match -> None
+          | store -> (
+              match p.p_src with
+              | None -> k store
+              | Some (Tuples tuples) -> first_tuple tuples u.src store k
+              | Some (Repeat q) -> each q u.src store k))
 
-  let match_ p u = List.map List.rev (matches p u [])
+  and first_of alternatives u store k =
+    match alternatives with
+    | [] -> None
+    | p :: rest -> (
+        match first p u store k with
+        | Some _ as r -> r
+        | None -> first_of rest u store k)
+
+  and first_tuple tuples srcs store k =
+    match tuples with
+    | [] -> None
+    | tuple :: rest -> (
+        match sources tuple srcs store k with
+        | Some _ as r -> r
+        | None -> first_tuple rest srcs store k)
+
+  and sources pats srcs store k =
+    match (pats, srcs) with
+    | [ p ], u :: _ -> first p u store k
+    | p :: pats, u :: srcs when p.unique -> (
+        match bind p u store with
+        | store -> sources pats srcs store k
+        | exception No_match -> None)
+    | p :: pats, u :: srcs ->
+        first p u store (fun store -> sources pats srcs store k)
+    | _ -> k store
+
+  and each q srcs store k =
+    match srcs with
+    | [] -> k store
+    | [ u ] -> first q u store k
+    | u :: srcs -> first q u store (fun store -> each q srcs store k)
+
+  let rec naming acc = function
+    | Empty -> acc
+    | Bound (n, u, rest) -> naming ((n, u) :: acc) rest
+
+  let match_ p u =
+    let namings = ref [] in
+    ignore
+      (first p u Empty (fun store ->
+           namings := naming [] store :: !namings;
+           None));
+    List.rev !namings
 
   include O
 end
@@ -4441,37 +4530,46 @@ module Pattern_matcher = struct
           (fun p -> { p with by_op = Array.map (List.map ignore_ctx) p.by_op })
           (parts m))
 
-  let src_ops u =
-    match u.src_ops_memo with
-    | Some s -> s
-    | None ->
-        let s = Op.Set.of_list (List.map (fun s -> s.op) u.src) in
-        u.src_ops_memo <- Some s;
-        s
+  let rec lookup store name =
+    match store with
+    | Upat.Empty -> invalid_argf "the pattern names no %s" name
+    | Bound (n, u, rest) -> if String.equal n name then u else lookup rest name
 
-  let lookup store name =
-    match List.assoc_opt name store with
-    | Some u -> u
-    | None -> invalid_argf "the pattern names no %s" name
+  let rec has_op o = function
+    | [] -> false
+    | s :: srcs -> Op.equal s.op o || has_op o srcs
 
-  let rewrite m ctx u =
-    let applies r =
-      List.for_all (fun o -> Op.Set.mem o (src_ops u)) r.pattern.early_reject
-    in
-    let rec first_rule p = function
-      | [] -> None
-      | r :: rest -> (
-          if not (applies r) then first_rule p rest
-          else
-            match
-              List.find_map
-                (fun store -> r.fn ctx (lookup store))
-                (Upat.matches r.pattern u [])
-            with
-            | Some x when not (p.declines x u) -> Some x
-            | _ -> first_rule p rest)
-    in
-    List.find_map (fun p -> first_rule p p.by_op.(Op.to_int u.op)) (parts m)
+  (* Whether [u] has a source of each operation in [ops]. *)
+  let rec has_sources ops u =
+    match ops with
+    | [] -> true
+    | o :: ops -> has_op o u.src && has_sources ops u
+
+  let applied r ctx u =
+    if r.pattern.unique then
+      match Upat.bind r.pattern u Empty with
+      | store -> r.fn ctx (lookup store)
+      | exception Upat.No_match -> None
+    else Upat.first r.pattern u Empty (fun store -> r.fn ctx (lookup store))
+
+  let rec first_rule p ctx u = function
+    | [] -> None
+    | r :: rest -> (
+        if not (has_sources r.pattern.early_reject u) then
+          first_rule p ctx u rest
+        else
+          match applied r ctx u with
+          | Some x when not (p.declines x u) -> Some x
+          | _ -> first_rule p ctx u rest)
+
+  let rec first_part ctx u = function
+    | [] -> None
+    | p :: parts -> (
+        match first_rule p ctx u p.by_op.(Op.to_int u.op) with
+        | Some _ as r -> r
+        | None -> first_part ctx u parts)
+
+  let rewrite m ctx u = first_part ctx u (parts m)
 end
 
 (* Rewriting *)
@@ -4504,19 +4602,19 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
   in
   let body_skipped n = n.op = Op.Call && not enter_calls in
   let rest_of n = if body_skipped n then drop 1 n.src else n.src in
+  let now x = Option.value (Tbl.find_opt replaced x) ~default:x in
+  let rec unchanged = function
+    | [] -> true
+    | x :: rest -> now x == x && unchanged rest
+  in
   let rebuild n =
-    let src =
-      if body_skipped n then
-        List.hd n.src
-        :: List.map
-             (fun x -> Option.value (Tbl.find_opt replaced x) ~default:x)
-             (drop 1 n.src)
-      else
-        List.map
-          (fun x -> Option.value (Tbl.find_opt replaced x) ~default:x)
-          n.src
-    in
-    if List.equal ( == ) src n.src then n else v n.op ~src ~arg:n.arg ?tag:n.tag
+    if unchanged (rest_of n) then n
+    else
+      let src =
+        if body_skipped n then List.hd n.src :: List.map now (drop 1 n.src)
+        else List.map now n.src
+      in
+      v n.op ~src ~arg:n.arg ?tag:n.tag
   in
   if walk then begin
     (* A single pass: a node rewritten on the way down is not entered, and one
@@ -4566,6 +4664,45 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
           List.iter (fun e -> Stack.push e stack) (List.rev waiting)
       | None -> ()
     in
+    (* A node rewritten bottom-up to a fixed point; the set of the nodes it went
+       through is made only when it moves. *)
+    let fixed_point n =
+      match bpm with
+      | None -> n
+      | Some _ -> (
+          match bpm_rewrite n with
+          | None -> n
+          | exception Bottom_up_gate -> raise_notrace (Gate n)
+          | Some next ->
+              let seen = Tbl.create 4 in
+              Tbl.replace seen n ();
+              let rec loop current =
+                if Tbl.mem seen current then
+                  invalid_arg
+                    "graph_rewrite does not terminate: a bottom-up rewrite \
+                     cycles";
+                Tbl.replace seen current ();
+                match bpm_rewrite current with
+                | Some next -> loop next
+                | None -> current
+                | exception Bottom_up_gate -> raise_notrace (Gate current)
+              in
+              loop next)
+    in
+    (* The sources not yet on the stack, the first on top. *)
+    let rec push_down = function
+      | [] -> ()
+      | x :: rest ->
+          push_down rest;
+          if not (Tbl.mem on_stack x) then begin
+            Stack.push (x, `Down, x) stack;
+            Tbl.replace on_stack x ()
+          end
+    in
+    let rec pending = function
+      | [] -> None
+      | x :: rest -> if Tbl.mem replaced x then pending rest else Some x
+    in
     Stack.push (root, `Down, root) stack;
     Tbl.replace on_stack root ();
     while not (Stack.is_empty stack) do
@@ -4576,40 +4713,14 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
       if not (Tbl.mem replaced n) then
         match stage with
         | `Down -> (
-            let fixed_point =
-              match bpm with
-              | None -> Ok n
-              | Some _ -> (
-                  let seen = Tbl.create 4 in
-                  let rec loop current =
-                    if Tbl.mem seen current then
-                      invalid_arg
-                        "graph_rewrite does not terminate: a bottom-up rewrite \
-                         cycles";
-                    Tbl.replace seen current ();
-                    match bpm_rewrite current with
-                    | Some next -> loop next
-                    | None -> current
-                    | exception Bottom_up_gate -> raise_notrace (Gate current)
-                  in
-                  try Ok (loop n) with Gate current -> Error current)
-            in
-            match fixed_point with
-            | Error gated -> finish n gated
-            | Ok new_n ->
+            match fixed_point n with
+            | exception Gate gated -> finish n gated
+            | new_n ->
                 Stack.push (n, `Rebuild, new_n) stack;
-                List.iter
-                  (fun x ->
-                    if not (Tbl.mem on_stack x) then begin
-                      Stack.push (x, `Down, x) stack;
-                      Tbl.replace on_stack x ()
-                    end)
-                  (List.rev (rest_of new_n)))
+                push_down (rest_of new_n))
         | `Rebuild -> (
-            match
-              List.find_opt (fun x -> not (Tbl.mem replaced x)) (rest_of new_n)
-            with
-            | Some pending -> wait pending (n, `Rebuild, new_n)
+            match pending (rest_of new_n) with
+            | Some dep -> wait dep (n, `Rebuild, new_n)
             | None -> (
                 let rebuilt = rebuild new_n in
                 let next =
