@@ -3675,3 +3675,28 @@ stores through a pad.
   and hold more than one value`; the memory goldens `convs` and
   `matmul_chain`, whose stored activations after a ReLU carry
   `(0.0, inf)`, recorded from the equally patched tinygrad.
+
+## D124. A search times no compilation
+
+- **tinygrad:** `codegen/opt/search.py:50-60,77` (`timeout_handler`, and the
+  alarm of `BEAM_TIMEOUT_SEC` that `_try_compile` sets and clears).
+- **tolk:** `lib/codegen/opt/search.ml:93` (`try_compile`).
+- **Differs:** a candidate's lowering and compilation run to their end.
+  tinygrad sets an alarm of `BEAM_TIMEOUT_SEC` (10 s) around each candidate
+  in its worker process and drops the candidate when it rings. The alarm
+  stops Python code and a Clang child. comgr, NVRTC and MTLCompiler run in
+  the worker through ctypes, and Python runs a signal handler only once the
+  call returns, so tinygrad drops such a candidate after its compile ends,
+  and a compile that hangs hangs its search. tolk bounds a candidate by its
+  size instead: one of `BEAM_UOPS_MAX` instructions or more is dropped
+  before it is compiled (D115), and lowering raises past
+  `REWRITE_STACK_LIMIT`.
+- **Reason:** (a): tinygrad bounds a candidate as one unit in a worker
+  process. A tolk candidate is lowered on a domain (D5), which no signal
+  stops, and a process with domains cannot fork. NVRTC and MTLCompiler
+  compile in this process and cannot be stopped either. A limit would reach
+  only Clang and comgr, the toolchains that run as processes, and give the
+  search a promise that depends on the backend.
+- **Pinned by:** an absence; the bound tolk keeps is pinned by D115's
+  `Tolk.Search › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX
+  instructions or more is not compiled`.
