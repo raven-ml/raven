@@ -185,6 +185,11 @@ jobs:
           opam exec -- dune build --release packages/norn
           opam exec -- dune build --release @packages/norn/runtest
 
+      - name: Build and test ymir
+        run: |
+          opam exec -- dune build --release contrib/ymir
+          opam exec -- dune build --release @contrib/ymir/runtest
+
       - name: Build and test tolk
         run: |
           opam exec -- dune build --release packages/tolk

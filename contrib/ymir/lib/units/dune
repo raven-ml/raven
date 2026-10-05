@@ -1,0 +1,5 @@
+(library
+ (name ymir_units)
+ (public_name ymir.units)
+ (libraries nx nx.dtype)
+ (private_modules nat prime exact))

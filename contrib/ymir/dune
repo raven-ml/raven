@@ -1,0 +1,8 @@
+; Since dune language 3.21 the dev profile compiles with the compiler's
+; default warnings, which leave unused values, opens and fields unreported.
+; Keep dune's stricter development set.
+
+(env
+ (dev
+  (flags
+   (:standard %{dune-warnings}))))
