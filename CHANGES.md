@@ -3280,6 +3280,14 @@ thread.
 
 ### Nx
 
+- `Nx.erfinv` is within `4 + 8κ` ulps, κ its condition number, as `nx.mli`
+  states.
+- **Breaking:** `Nx.erf` takes and returns float tensors only; an integer or
+  complex `erf` was refused at run time.
+- Fix `Nx.erfinv` and `Nx.hypot` at `float16`, `bfloat16` and the float8
+  dtypes, which computed at the narrow dtype: they compute at `float32` and
+  round once, as every elementwise function does. `erfinv`'s first
+  coefficient was below float16's least subnormal.
 - Programs that link `nx.amd` carry 5.8 MB of AMD kernels instead of 8.7 MB,
   and their first eager operations on an AMD GPU load fewer code objects: the
   first use of 18 float32 operations spends about 9 ms loading instead of
@@ -5624,6 +5632,8 @@ thread.
 
 ### Kaun
 
+- **Breaking:** `Fn.gelu` takes and returns float tensors only, as `Nx.erf`
+  does.
 - **Breaking:** `Fn.sigmoid`, `Fn.tanh`, `Fn.softmax` and `Fn.log_softmax` are
   removed: use `Nx.sigmoid`, `Nx.tanh`, `Nx.softmax` and `Nx.log_softmax`, whose
   `~axes:[ a ]` is the old `~axis:a`.

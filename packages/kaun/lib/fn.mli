@@ -23,7 +23,7 @@ val leaky_relu : ?negative_slope:float -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 
     [negative_slope] defaults to [0.01]. *)
 
-val gelu : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val gelu : (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [gelu x] is the exact Gaussian error linear unit [x * Φ(x)], computed as
     [0.5 * x * (1 + erf(x / sqrt 2))] where [Φ] is the standard normal CDF.
 

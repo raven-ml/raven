@@ -1526,3 +1526,260 @@ module Faulty = struct
 end
 
 module Accuracy = Accuracy
+
+(* Special-function goldens
+
+   A golden of [golden/special/] lists, per dtype, the arguments of a function
+   and its value correctly rounded to the dtype, as hexadecimal floats, and for
+   an inverse a last column, its condition number at the row. *)
+
+module Special = struct
+  type row = { args : float array; value : float; scale : float }
+
+  (* The rows of [file] at the dtype named [short] ("f32", "f64"). *)
+  let rows file short =
+    let path = Filename.concat (Filename.dirname Sys.executable_name) file in
+    let lines = In_channel.with_open_bin path In_channel.input_lines in
+    match
+      List.filter (fun l -> not (String.starts_with ~prefix:"#" l)) lines
+    with
+    | [] -> failwith (file ^ ": no header")
+    | header :: lines ->
+        (* The columns are the dtype, the arguments, [f] and maybe a scale. *)
+        let columns = String.split_on_char '\t' header in
+        let scaled = List.nth columns (List.length columns - 1) <> "f" in
+        let n = List.length columns - if scaled then 3 else 2 in
+        List.filter_map
+          (fun line ->
+            match String.split_on_char '\t' line with
+            | dtype :: cells when dtype = short ->
+                let cells = Array.of_list (List.map float_of_string cells) in
+                Some
+                  {
+                    args = Array.sub cells 0 n;
+                    value = cells.(n);
+                    scale = (if scaled then cells.(n + 1) else Float.nan);
+                  }
+            | _ -> None)
+          lines
+
+  (* The forms of a bound: [k] ulps, and an inverse's [k] ulps plus its
+     condition number times its forward function's bound. *)
+  type bound = Ulps of int | Inverse of int * int
+
+  let pp_bound ppf = function
+    | Ulps k -> Format.fprintf ppf "%d ulps" k
+    | Inverse (k, f) -> Format.fprintf ppf "%d + kappa * %d ulps" k f
+
+  (* The position of a float of [width] bits [b] among its format's values in
+     order, [-0.] just below [+0.]. *)
+  let rank ~width b = Accuracy.position width b
+
+  let rank_of ~f32 x =
+    if f32 then
+      rank ~width:32
+        (Int64.logand (Int64.of_int32 (Int32.bits_of_float x)) 0xffff_ffffL)
+    else rank ~width:64 (Int64.bits_of_float x)
+
+  (* [ulps ~f32 a b] is the distance between [a] and [b] in floats, as a float
+     so that it reaches past [max_int]: zero between two NaNs, infinite between
+     a NaN and a number. *)
+  let ulps ~f32 a b =
+    if Float.is_nan a || Float.is_nan b then
+      if Float.is_nan a && Float.is_nan b then 0. else Float.infinity
+    else
+      Int64.to_float (Int64.abs (Int64.sub (rank_of ~f32 a) (rank_of ~f32 b)))
+
+  (* Whether [got] meets [bound] against the correctly rounded [row]: exactly
+     where the value is not finite, and with its sign where it is zero. *)
+  let within ~f32 bound row got =
+    let d = ulps ~f32 row.value got in
+    if not (Float.is_finite row.value) then d = 0.
+    else if row.value = 0. && Float.sign_bit got <> Float.sign_bit row.value
+    then false
+    else
+      match bound with
+      | Ulps k -> d <= Float.of_int k
+      | Inverse (k, forward) ->
+          d <= Float.of_int k +. (row.scale *. Float.of_int forward)
+
+  type f = { f : 'b. (float, 'b) Nx.t array -> (float, 'b) Nx.t }
+
+  let eval (type b) (dt : (float, b) Nx.dtype) { f } rows =
+    let n = List.length rows in
+    let arity = match rows with [] -> 0 | r :: _ -> Array.length r.args in
+    let args =
+      Array.init arity (fun i ->
+          Nx.create dt [| n |]
+            (Array.of_list (List.map (fun r -> r.args.(i)) rows)))
+    in
+    Nx.to_array (Nx.cast Nx.float64 (f args))
+
+  (* A row with a subnormal argument or value, which a device that flushes
+     subnormals reads or writes as zero. *)
+  let subnormal row =
+    let sub x = x <> 0. && Float.abs x < 0x1p-126 in
+    sub row.value || Array.exists sub row.args
+
+  (* [check ~bound file f] holds [f] to [bound args] at every row of [file] that
+     [keep] keeps (all by default), at float32 and, unless [f32_only], float64,
+     and fails listing the rows that miss it, worst first. *)
+  let check ?(keep = fun _ -> true) ?(f32_only = false) ~bound file f =
+    List.map
+      (fun (short, f32) ->
+        Windtrap.test short (fun () ->
+            let rows = List.filter keep (rows file short) in
+            let got =
+              if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows
+            in
+            let misses =
+              List.concat
+                (List.mapi
+                   (fun i row ->
+                     let b = bound row.args in
+                     if within ~f32 b row got.(i) then []
+                     else [ (ulps ~f32 row.value got.(i), row, got.(i), b) ])
+                   rows)
+            in
+            let misses =
+              List.sort (fun (a, _, _, _) (b, _, _, _) -> compare b a) misses
+            in
+            match misses with
+            | [] -> ()
+            | _ ->
+                let pp_miss ppf (d, row, got, b) =
+                  Format.fprintf ppf "at (%a): %h, not %h (%g ulps), bound %a"
+                    (Format.pp_print_list
+                       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+                       (fun ppf x -> Format.fprintf ppf "%h" x))
+                    (Array.to_list row.args) got row.value d pp_bound b;
+                  if Float.is_finite row.scale then
+                    Format.fprintf ppf " (scale %g)" row.scale
+                in
+                Windtrap.failf "%d of %d rows miss their bound:@\n%a"
+                  (List.length misses) (List.length rows)
+                  (Format.pp_print_list pp_miss)
+                  (List.filteri (fun i _ -> i < 8) misses)))
+      (if f32_only then [ ("f32", true) ] else [ ("f32", true); ("f64", false) ])
+
+  (* Narrow floats
+
+     A narrow float computes at float32 and rounds once. Its reference is the
+     float64 result, whose own bound the goldens hold: rounded to the narrow
+     dtype it is the correctly rounded value, or one of its neighbours when the
+     float64 result lies within its bound of a narrow midpoint. *)
+
+  type narrow =
+    | Narrow : string * (float, 'b) Nx.dtype * int -> narrow
+        (** A name, a dtype and its width in bits. *)
+
+  let narrows =
+    [
+      Narrow ("float16", Nx.float16, 16);
+      Narrow ("bfloat16", Nx.bfloat16, 16);
+      Narrow ("float8_e4m3", Nx.float8_e4m3, 8);
+      Narrow ("float8_e5m2", Nx.float8_e5m2, 8);
+    ]
+
+  (* Every float of a narrow dtype of [width] bits, and the ranks of a tensor of
+     it. *)
+  let every (type b) (dt : (float, b) Nx.dtype) width : (float, b) Nx.t =
+    let n = 1 lsl width in
+    match width with
+    | 16 ->
+        Nx.bitcast dt
+          (Nx.create Nx.int16 [| n |] (Array.init n (fun i -> i - (n / 2))))
+    | _ -> Nx.bitcast dt (Nx.create Nx.uint8 [| n |] (Array.init n Fun.id))
+
+  let ranks (type b) width (x : (float, b) Nx.t) =
+    let bits =
+      match width with
+      | 16 -> Nx.to_array (Nx.bitcast Nx.int16 x)
+      | _ -> Nx.to_array (Nx.bitcast Nx.uint8 x)
+    in
+    let mask = (1 lsl width) - 1 in
+    Array.map
+      (fun b -> Int64.to_int (rank ~width (Int64.of_int (b land mask))))
+      bits
+
+  (* [narrow ~bound ?scale f] holds [f] at every float of each narrow dtype
+     within one ulp of its correctly rounded value, and a zero to its sign,
+     [scale] being an inverse's condition number at the float64 argument. The
+     reference is the float64 result, within [bound] of its own correctly
+     rounded value: rounded to the narrow dtype it is the correctly rounded
+     value, or a neighbour where that bound reaches a narrow midpoint. A
+     non-finite value is held exactly. *)
+  let narrow ~bound ?scale { f } =
+    List.map
+      (fun (Narrow (name, dt, width)) ->
+        Windtrap.test name (fun () ->
+            let x = every dt width in
+            let n = 1 lsl width in
+            let got = f [| x |] in
+            let x64 = Nx.cast Nx.float64 x in
+            let v = f [| x64 |] in
+            let xs = Nx.to_array x64 in
+            let scales =
+              match scale with
+              | Some { f } -> Nx.to_array (f [| x64 |])
+              | None -> Array.make n Float.nan
+            in
+            (* The float64 bound, in ulps, at each input. *)
+            let bounds =
+              Array.mapi
+                (fun i x ->
+                  match bound [| x |] with
+                  | Ulps k -> Float.of_int k
+                  | Inverse (k, fw) ->
+                      Float.of_int k +. (scales.(i) *. Float.of_int fw))
+                xs
+            in
+            let slack =
+              Nx.create Nx.float64 [| n |]
+                (Array.map (fun b -> b *. 0x1p-52) bounds)
+            in
+            let rounded k =
+              Nx.cast dt (Nx.mul v (Nx.add_s (Nx.mul_s slack k) 1.))
+            in
+            let candidates =
+              List.map (fun k -> ranks width (rounded k)) [ 0.; -1.; 1. ]
+            in
+            let got_ranks = ranks width got in
+            let gs = Nx.to_array (Nx.cast Nx.float64 got) in
+            let vs = Nx.to_array v in
+            (* What the float64 result is in the narrow dtype: a dtype with no
+               infinities has no other value for one. *)
+            let cs = Nx.to_array (Nx.cast Nx.float64 (Nx.cast dt v)) in
+            let misses = ref [] in
+            Array.iteri
+              (fun i x ->
+                let g = gs.(i) and v = vs.(i) in
+                let d =
+                  if Float.is_nan v || Float.is_nan g then
+                    if Float.is_nan v && Float.is_nan g then 0 else max_int
+                  else
+                    List.fold_left
+                      (fun d c -> Int.min d (abs (got_ranks.(i) - c.(i))))
+                      max_int candidates
+                in
+                let ok =
+                  if not (Float.is_finite v) then
+                    (Float.is_nan g && Float.is_nan cs.(i)) || g = cs.(i)
+                  else
+                    d <= 1
+                    && (g <> 0.
+                       || cs.(i) <> 0.
+                       || Float.sign_bit g = Float.sign_bit cs.(i))
+                in
+                if not ok then misses := (x, g, v) :: !misses)
+              xs;
+            match !misses with
+            | [] -> ()
+            | misses ->
+                Windtrap.failf "%d of %d inputs miss:@\n%a" (List.length misses)
+                  n
+                  (Format.pp_print_list (fun ppf (x, g, v) ->
+                       Format.fprintf ppf "at %h: %h, float64 %h" x g v))
+                  (List.filteri (fun i _ -> i < 8) (List.rev misses))))
+      narrows
+end

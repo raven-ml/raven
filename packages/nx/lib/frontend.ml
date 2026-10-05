@@ -566,11 +566,19 @@ let abs x = B.unary Abs x
    float32 and rounds once, as an operation of the backend does. *)
 type composite = { f : 'a 'b. ('a, 'b) t -> ('a, 'b) t }
 
-let at_float32 (type a b) c (x : (a, b) t) : (a, b) t =
-  match dtype x with
-  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
-      cast (dtype x) (c.f (cast Nx_dtype.float32 x))
-  | _ -> c.f x
+(* The floats narrower than float32. *)
+let narrow dt = Nx_dtype.is_float dt && Nx_dtype.itemsize dt < 4
+
+let at_float32 c x =
+  if narrow (dtype x) then cast (dtype x) (c.f (cast Nx_dtype.float32 x))
+  else c.f x
+
+(* The same for a function of floats alone. *)
+type real = { r : 'b. (float, 'b) t -> (float, 'b) t }
+
+let real_at_float32 c x =
+  if narrow (dtype x) then cast (dtype x) (c.r (cast Nx_dtype.float32 x))
+  else c.r x
 
 let log2 x =
   at_float32
@@ -803,8 +811,7 @@ let atanh x =
 let atan2 y x = binop Atan2 y x
 
 (* sqrt(x² + y²) with overflow protection via max * sqrt(1 + (min/max)²) *)
-let hypot x y =
-  let x', y' = broadcasted x y in
+let hypot_at x' y' =
   let dt = dtype x' in
   let x_abs = abs x' in
   let y_abs = abs y' in
@@ -826,6 +833,13 @@ let hypot x y =
       (logical_or (isinf x') (isinf y'))
       (scalar_like x' (Nx_dtype.of_float dt Float.infinity))
       result
+
+let hypot x y =
+  let x, y = broadcasted x y in
+  if narrow (dtype x) then
+    let f32 = cast Nx_dtype.float32 in
+    cast (dtype x) (hypot_at (f32 x) (f32 y))
+  else hypot_at x y
 
 (* ───── Reduction Operations ───── *)
 
@@ -3441,17 +3455,15 @@ let histogram (type b) ?weights (dims : ((float, b) t * (float, b) t) list) :
 
    Defined here rather than beside [erf] because [Rng.truncated_normal] below
    is its consumer. *)
-let erf_series_rounds = 80
-let erfc_fraction_rounds = 64
-
-let erfinv (type b) (x : (float, b) t) : (float, b) t =
+let erfinv_at (type b) (x : (float, b) t) : (float, b) t =
   let lit v = scalar_like x v in
+  (* Horner from the leading coefficient down. *)
   let poly coeffs w =
-    (* Horner from the leading coefficient down. *)
-    match coeffs with
-    | [] -> invalid_arg "erfinv: empty polynomial"
-    | c0 :: rest ->
-        List.fold_left (fun acc c -> add (mul acc w) (lit c)) (lit c0) rest
+    let acc = ref (lit coeffs.(0)) in
+    for i = 1 to Array.length coeffs - 1 do
+      acc := add (mul !acc w) (lit coeffs.(i))
+    done;
+    !acc
   in
   let at_one = cmpeq (abs x) (lit 1.0) in
   let sign_infinity =
@@ -3460,50 +3472,31 @@ let erfinv (type b) (x : (float, b) t) : (float, b) t =
   let x = where at_one (lit 0.0) x in
   let w = neg (log (mul (sub (lit 1.0) x) (add (lit 1.0) x))) in
   let central =
-    poly
-      [
-        2.81022636e-08;
-        3.43273939e-07;
-        -3.5233877e-06;
-        -4.39150654e-06;
-        0.00021858087;
-        -0.00125372503;
-        -0.00417768164;
-        0.246640727;
-        1.50140941;
-      ]
-      (sub w (scalar_like x 2.5))
+    poly Special_tables.erfinv_central
+      (sub w (lit Special_tables.erfinv_central_shift))
   in
   (* The tail is selected only at [w >= 5], so flooring [w] at 1 changes no
      value; it keeps the unselected branch's derivative finite at [x = 0],
      where [sqrt' 0] is infinite and would turn the zero cotangent [where]
      sends there into NaN. *)
   let tail =
-    poly
-      [
-        -0.000200214257;
-        0.000100950558;
-        0.00134934322;
-        -0.00367342844;
-        0.00573950773;
-        -0.0076224613;
-        0.00943887047;
-        1.00167406;
-        2.83297682;
-      ]
-      (sub (sqrt (maximum w (lit 1.0))) (lit 3.0))
+    poly Special_tables.erfinv_tail
+      (sub (sqrt (maximum w (lit 1.0))) (lit Special_tables.erfinv_tail_shift))
   in
-  let guess = mul x (where (cmplt w (lit 5.0)) central tail) in
+  let guess =
+    mul x (where (cmplt w (lit Special_tables.erfinv_w_split)) central tail)
+  in
   let refined =
     match dtype x with
     | Nx_dtype.Float64 ->
-        (* Below 2 in |y|, Newton on erf from the guess. The residual comes
-           from the series whose terms are all positive, so nothing cancels;
-           80 terms carry it to double precision there. *)
+        (* Where [|p| < erf 2], so [|y| < 2], Newton on erf from the guess.
+           The residual comes from the series whose terms are all positive,
+           so nothing cancels; the table's count of terms carries it to double
+           precision there. *)
         let erf y =
           let twice_y2 = mul (lit 2.0) (mul y y) in
           let term = ref y and acc = ref y in
-          for n = 1 to erf_series_rounds - 1 do
+          for n = 1 to Special_tables.erf_series_terms - 1 do
             term :=
               div (mul !term twice_y2) (lit (float_of_int ((2 * n) + 1)));
             acc := add !acc !term
@@ -3519,11 +3512,12 @@ let erfinv (type b) (x : (float, b) t) : (float, b) t =
                (mul (lit (Float.sqrt Float.pi /. 2.0)) (exp (mul y y))))
         in
         let central = step (step guess) in
-        (* From 2 up, the residual must be [erfc y - (1 - |x|)]: the
+        (* From [erf 2] up, the residual must be [erfc y - (1 - |x|)]: the
            complement is what [x] determines there, and [1 - |x|] is exact
            where [1 - erf y] is not. [erfc y = exp (-y^2) / (sqrt pi k)] for
            [k] the continued fraction [y + (1/2)/(y + 1/(y + (3/2)/(y +
-           ...)))], which 64 terms carry to double precision from 2 up. Newton
+           ...)))], which the table's count of terms carries to double
+           precision from 2 up. Newton
            runs on [log erfc], nearly linear in [y^2], from the asymptotic
            [y^2 = -log c - log (sqrt pi y)] iterated twice: three steps reach
            machine precision from there for every [c]. Every quantity is of
@@ -3532,7 +3526,7 @@ let erfinv (type b) (x : (float, b) t) : (float, b) t =
         let c = sub (lit 1.0) (abs x) in
         let fraction y =
           let k = ref y in
-          for n = erfc_fraction_rounds downto 1 do
+          for n = Special_tables.erfc_fraction_terms downto 1 do
             k := add y (div (lit (float_of_int n /. 2.0)) !k)
           done;
           !k
@@ -3557,10 +3551,12 @@ let erfinv (type b) (x : (float, b) t) : (float, b) t =
         in
         let start = asymptotic (asymptotic (sqrt w)) in
         let tail = mul (sign x) (log_step (log_step (log_step start))) in
-        where (cmplt (abs guess) (lit 2.0)) central tail
+        where (cmplt (abs x) (lit Special_tables.erfinv_erf2)) central tail
     | _ -> guess
   in
   where at_one sign_infinity refined
+
+let erfinv x = real_at_float32 { r = erfinv_at } x
 
 (* One splittable Threefry-2x32 generator with two front-ends over it: the
    explicit samplers below take a key and are pure functions of it
@@ -7036,7 +7032,7 @@ let standardize ?axes ?mean:mean_param ?variance:variance_param
        (add variance_tensor
           (scalar_like x (Nx_dtype.of_float (dtype x) epsilon))))
 
-let erf x = B.unary Erf x
+let erf (x : (float, 'b) t) = B.unary Erf x
 
 let sliding_window ?axis ~window ?(step = 1) x =
   let r = ndim x in

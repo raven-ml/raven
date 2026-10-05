@@ -63,7 +63,6 @@ let unary =
     { name = "asinh"; nx = Nx.asinh; ocaml = Float.asinh; exact = false };
     { name = "acosh"; nx = Nx.acosh; ocaml = Float.acosh; exact = false };
     { name = "atanh"; nx = Nx.atanh; ocaml = Float.atanh; exact = false };
-    { name = "erf"; nx = Nx.erf; ocaml = Float.erf; exact = false };
     {
       name = "sigmoid";
       nx = Nx.sigmoid;
@@ -1883,6 +1882,13 @@ let narrow_floats =
                equal ~msg:"sqrt" exact
                  (Nx.cast dt (Nx.sqrt (wide a)))
                  (Nx.sqrt a));
+           test (name ^ " hypot is float32's, rounded once") (fun () ->
+               let side n = Nx.cast dt (Nx.linspace Nx.float32 0.1 100. n) in
+               let a = Nx.reshape [| 64; 1 |] (side 64)
+               and b = Nx.reshape [| 1; 48 |] (side 48) in
+               equal exact
+                 (Nx.cast dt (Nx.hypot (wide a) (wide b)))
+                 (Nx.hypot a b));
            prop
              (name ^ " unary operations are float32's, rounded once")
              (Gen.map (Nx.cast dt) (floats Nx.float32))

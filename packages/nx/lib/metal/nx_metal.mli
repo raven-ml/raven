@@ -11,6 +11,10 @@
     [Invalid_argument] naming the remedies. Constants, views, reads and
     [Nx.place] work on it.
 
+    It flushes [float32] subnormal numbers to zero: a subnormal operand reads
+    as zero and a subnormal result is written as zero, so nx's accuracy bounds
+    hold on it where the operands and the result are normal.
+
     The library builds on every system; off macOS no device opens. *)
 
 val get : int -> (Nx.Device.t, string) result

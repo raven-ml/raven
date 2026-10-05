@@ -26,7 +26,8 @@
   test_lost
   test_bit
   test_segments
-  test_accuracy)
+  test_accuracy
+  test_special)
  (package nx)
  (modules :standard \ test_linalg test_format links_no_metal)
  (libraries
@@ -39,6 +40,8 @@
   unix
   windtrap
   nx_test)
+ (deps
+  (glob_files golden/special/*.golden))
  (forbidden_libraries
   nx.cuda.device
   nx.nv.device

@@ -19,7 +19,7 @@ type device = { put : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 let host = { put = Fun.id }
 let back x = Nx.place Nx.Placement.host x
 
-type unary = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+type unary = { f : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t }
 type binary = { g : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 type fn = Unary of unary | Binary of binary
 

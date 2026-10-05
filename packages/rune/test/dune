@@ -318,3 +318,13 @@
  (deps
   (package nx)
   (glob_files internals/.rune_internals.objs/byte/*.cmi)))
+
+; nx's special functions compiled, against nx's goldens.
+
+(test
+ (name test_special)
+ (modules test_special)
+ (package rune)
+ (libraries windtrap rune nx_test nx nx.metal)
+ (deps
+  (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)))

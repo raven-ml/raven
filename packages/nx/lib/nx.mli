@@ -2092,7 +2092,14 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
 (** [conjugate t] negates the imaginary component of each element, [0.] to [-0.]
     included, and keeps the real one. Real dtypes are returned unchanged. *)
 
-(** {1:math Mathematical functions} *)
+(** {1:math Mathematical functions}
+
+    An elementwise function never raises on values. Outside its domain the
+    result is NaN; at a pole it is the limit where both one-sided limits agree,
+    the one-sided limit when a signed zero selects the side, and NaN otherwise;
+    a result beyond the dtype's range is the signed infinity. A NaN operand
+    gives NaN as {{!section:accuracy}accuracy} states. Types, shapes and static
+    arguments raise [Invalid_argument] when the call is made. *)
 
 (** {2:accuracy Floating-point accuracy}
 
@@ -2103,26 +2110,33 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
 
     Each function below whose result is not exact states its bound at [float32]
     and [float64]. At [float16], [bfloat16] and the float8 dtypes, which compute
-    at [float32] and round once, every one is within 1 ulp, but that
-    [float8_e4m3], which has no infinity, is NaN where the [float32] result is
-    infinite, as [exp] of [96] is. A function's bound at a dtype is the largest
-    that the C libraries and GPU math libraries of nx's backends document for
-    it, and every backend is tested against it.
+    at [float32] and round once, every one is within 1 ulp of its correctly
+    rounded value unless its entry states otherwise, but that [float8_e4m3],
+    which has no infinity, is NaN where the [float32] result is infinite, as
+    [exp] of [96] is. The bound of a function each backend computes with its
+    own library is the largest that the C libraries and GPU math libraries of
+    nx's backends document for it, and every backend is tested against it; a
+    function nx composes from others states the bound its parts give.
 
     Whatever the bound, these are exact:
     - the special values of C99's Annex F, such as [exp] of [-inf], which is
       [+0], [log] of [±0], which is [-inf], and [sin] of an infinity, which is
       NaN;
-    - NaN for a NaN operand, but where Annex F gives a number, such as [pow] of
-      a quiet NaN to the power [0], which is [1]. For a signaling NaN, such a
-      result is that number or NaN;
+    - NaN for a NaN operand of a function with a float result, but where every
+      value of the operand, the infinities included, gives the same number, as
+      Annex F's [pow] of a quiet NaN to the power [0] and [hypot] of an
+      infinity and a NaN do: [1] and [inf]. For a signaling NaN, such a result
+      is that number or NaN;
     - the sign of a zero, which {!sin}, {!tan}, {!asin}, {!atan}, {!sinh},
-      {!tanh}, {!erf}, {!expm1} and {!log1p} keep: [sin (-0.)] is [-0.].
+      {!tanh}, {!erf}, {!erfinv}, {!expm1} and {!log1p} keep: [sin (-0.)] is
+      [-0.].
 
-    No function flushes a subnormal operand or result to zero. A NaN result's
-    sign and payload are unspecified, except as {!section-arithmetic} states on
-    the host. Functions built from others, such as {!log2} and {!asinh}, state
-    no bound of their own. *)
+    No function flushes a subnormal operand or result to zero on the host. A
+    device that flushes them reads a subnormal operand as zero and writes a
+    subnormal result as zero; there each bound holds where the operands and
+    the result are normal. A NaN result's sign and payload are unspecified,
+    except as {!section-arithmetic} states on the host. Functions built from
+    others, such as {!log2} and {!asinh}, state no bound of their own. *)
 
 (** {2:math_basic Basic} *)
 
@@ -2306,6 +2320,34 @@ val isfinite : ('a, 'b) t -> (bool, bool_elt) t
     dtypes always return all [true].
 
     See also {!isinf}, {!isnan}. *)
+
+(** {2:math_special Special functions}
+
+    The laws of the distributions {!Rng} samples. Each takes and returns
+    floats and states its bound ({{!section:accuracy}accuracy}). *)
+
+val erf : (float, 'b) t -> (float, 'b) t
+(** [erf x] is the error function [(2/√π) ∫₀ˣ e^{-u²} du]: within 2 ulps at
+    [float32] and [float64]. It is [-1] at [-inf] and [1] at [+inf].
+
+    {@ocaml[
+      # erf (scalar float32 0.) |> item []
+      - : float = 0.
+    ]} *)
+
+val erfinv : (float, 'b) t -> (float, 'b) t
+(** [erfinv p] is the inverse of {!erf} on \[[-1], [1]\]: [erf (erfinv p) = p].
+    It is [-inf] at [-1], [+inf] at [1] and NaN outside the interval.
+
+    It is within [4 + 8κ] ulps, where [κ = |p √π e^{x²} / (2x)|] at [x =
+    erfinv p], [1] at [0], is the condition number of the inverse: about [23]
+    at [p = 0.995], and growing as [p] nears [±1], where a change of one ulp in
+    [p] moves the exact result by many.
+
+    {@ocaml[
+      # erfinv (create float64 [| 3 |] [| -0.5; 0.; 0.5 |])
+      - : (float, float64_elt) t = [-0.476936, 0, 0.476936]
+    ]} *)
 
 (** {1:comparison Comparison and logic} *)
 
@@ -4208,7 +4250,7 @@ val istft :
 
     See also {!stft}. *)
 
-(** {1:normalisations Normalisations and special functions} *)
+(** {1:normalisations Normalisations} *)
 
 val sigmoid : ('a, 'b) t -> ('a, 'b) t
 (** [sigmoid t] is [1 / (1 + exp(-t))] element-wise, in [[0, 1]]: an element is
@@ -4270,28 +4312,6 @@ val standardize :
     [(t - mean) / sqrt(variance + epsilon)]. When [mean] or [variance] are
     omitted, they are computed along [axes] (default all). [epsilon] defaults to
     [1e-5]. *)
-
-val erf : ('a, 'b) t -> ('a, 'b) t
-(** [erf t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du]: within 2
-    ulps at [float32] and [float64] ({{!section:accuracy}accuracy}).
-
-    {@ocaml[
-      # erf (scalar float32 0.) |> item []
-      - : float = 0.
-    ]} *)
-
-val erfinv : (float, 'b) t -> (float, 'b) t
-(** [erfinv t] is the inverse of {!erf} on \[[-1], [1]\]: [erf (erfinv x) = x].
-    It is [±infinity] at [±1] and NaN outside the interval.
-
-    At float64 the result carries double precision over the whole interval, to
-    the last representable value before [±1]. At narrower dtypes it carries
-    about seven digits.
-
-    {@ocaml[
-      # erfinv (create float64 [| 3 |] [| -0.5; 0.; 0.5 |])
-      - : (float, float64_elt) t = [-0.476936, 0, 0.476936]
-    ]} *)
 
 (** {1:windows Sliding windows} *)
 
