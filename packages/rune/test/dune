@@ -31,6 +31,12 @@
  (libraries windtrap rune rune_test nx nx.dtype))
 
 (test
+ (name test_iterate)
+ (modules test_iterate)
+ (package rune)
+ (libraries windtrap rune rune_test nx nx.dtype))
+
+(test
  (name test_staging)
  (modules test_staging)
  (package rune)

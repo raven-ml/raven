@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Scans under a stager on the host: each transformation installed between a
-   compiled call's stager and a scan passes the scan on transformed, and the
+(* Loops under a stager on the host: each transformation installed between a
+   compiled call's stager and a loop passes the loop on transformed, and the
    stager folds it. The stager's protocol is private to rune, so this suite
    links rune_internals. The trusted side is the same loss run eagerly. *)
 
@@ -18,12 +18,14 @@ let close () = Oracle.tensor ~rel:1e-12 ()
 
 module Construct = Rune_internals.Construct
 
-(* [staged f] is [f ()] under a stager that answers each scan by folding it
+(* [staged f] is [f ()] under a stager that answers each loop by folding it
    where it answers it, as a compiled call stages one: every installation
-   between passes the scan on transformed, and its step runs outside them.
-   [steps] counts the step's runs and [late] the barriers that reached it with a
-   traced value, one another installation should have passed on. *)
+   between passes the loop on transformed, and its step runs outside them.
+   [steps] counts the step's runs, [outputs] the output tensors of each loop it
+   folded, last first, and [late] the barriers that reached it with a traced
+   value, one another installation should have passed on. *)
 let steps = ref 0
+let outputs = ref []
 let late = ref 0
 
 let staged f =
@@ -34,12 +36,16 @@ let staged f =
   let call : type r. r Construct.t -> (unit -> r) option =
    fun c ->
     match[@warning "@4@8"] c with
-    | Scan r ->
+    | Loop r ->
         let req_step c x =
           incr steps;
           r.req_step c x
         in
-        Some (fun () -> Rune_internals.Scan.fold { r with req_step })
+        Some
+          (fun () ->
+            let r = Rune_internals.Trips.fold { r with req_step } in
+            outputs := List.length r.r_ys :: !outputs;
+            r)
     | Barrier { values; after } ->
         if traced values || traced after then incr late;
         Some (fun () -> values)
@@ -152,6 +158,59 @@ let staged_losses =
         Nx.mul r r );
   ]
 
+(* Losses of [w] over an iterate, which stops once every element of its carry is
+   small: each lane of a map takes its own number of trips. *)
+let small x = Nx.less_s (Nx.max (Nx.abs x)) 0.05
+let contract w x = Nx.mul_s (Nx.mul x (Nx.tanh (Nx.add_s (Nx.mul w x) 0.3))) 0.9
+
+let iterate_losses =
+  [
+    ( "an iterate with a tracked carry",
+      fun w ->
+        Nx.sum (Nx.sin (Rune.iterate' ~max:80 ~until:small ~f:(contract w) w))
+    );
+    ( "an iterate whose carry becomes tracked",
+      fun w ->
+        let x, k =
+          Rune.iterate
+            Nx.Ptree.(pair tensor tensor)
+            ~max:80
+            ~until:(fun (x, _) -> small x)
+            ~f:(fun (x, k) -> (contract w x, Nx.add_s k 1.))
+            (Nx.ones f64 [| 3 |], scalar 0.)
+        in
+        Nx.add (Nx.sum (Nx.mul x x)) k );
+    ( "an iterate in a scan's step",
+      fun w ->
+        let step c x =
+          let c =
+            Rune.iterate' ~max:80 ~until:small ~f:(contract w)
+              (Nx.add c (Nx.mul_s x 0.1))
+          in
+          (c, Nx.sum c)
+        in
+        let c, ys = Rune.scan' ~f:step ~init:w sxs in
+        Nx.add (Nx.sum c) (Nx.sum ys) );
+    ( "an iterate in an iterate's step",
+      fun w ->
+        let step x =
+          let y =
+            Rune.iterate' ~max:80 ~until:small ~f:(contract w) (Nx.mul_s x 1.5)
+          in
+          Nx.mul_s (Nx.add x y) 0.5
+        in
+        let coarse x = Nx.less_s (Nx.max (Nx.abs x)) 0.1 in
+        Nx.sum (Nx.sin (Rune.iterate' ~max:80 ~until:coarse ~f:step w)) );
+    ( "an untracked iterate beside a tracked value",
+      fun w ->
+        let x =
+          Rune.iterate' ~max:80 ~until:small
+            ~f:(contract (scalar 0.4))
+            (Nx.ones f64 [| 3 |])
+        in
+        Nx.sum (Nx.mul (Nx.sin w) (Nx.add_s x 1.)) );
+  ]
+
 let applications =
   [
     ("the value", fun l -> l sw);
@@ -182,16 +241,51 @@ let counter w =
   in
   Nx.mul_s (Nx.sum c) (Int32.to_float (Nx.item [] k))
 
+(* Untracked loops: one whose carry and outputs depend on no tracked value is
+   not differentiated, whatever its step reads. Under grad the stager folds the
+   forward loop alone, with its own outputs; a tracked one adds the carry it
+   keeps per trip and the transposed loop. *)
+let untracked_law =
+  prop "grad differentiates a loop only when its carry or outputs are tracked"
+    Gen.(triple bool bool bool)
+    (fun (scan, tracked, reads) ->
+      cover "an untracked loop whose step reads a tracked value"
+        ((not tracked) && reads);
+      let loss w =
+        let start = if tracked then w else Nx.ones f64 [| 3 |] in
+        let step x =
+          let y = contract (scalar 0.4) x in
+          if reads then ignore (Nx.mul y w);
+          y
+        in
+        let x =
+          if scan then
+            fst
+              (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
+                 ~f:(fun x _ -> (step x, ()))
+                 ~init:start sxs)
+          else Rune.iterate' ~max:80 ~until:small ~f:step start
+        in
+        Nx.sum (Nx.mul (Nx.sin w) (Nx.add_s x 1.))
+      in
+      outputs := [];
+      equal (close ()) (Rune.grad' loss sw)
+        (staged (fun () -> Rune.grad' loss sw));
+      (* The forward loop keeps the carry, and an iterate its trip count; a
+         transposed loop follows. *)
+      equal (list int) (if tracked then [ 0; 1 ] else [ 0 ]) !outputs)
+
 let staged_tests =
   List.concat_map
     (fun (loss, l) ->
       List.map
         (fun (app, a) ->
           test
-            (app ^ " of a loss with " ^ loss ^ " is the folded scan's")
+            (app ^ " of a loss with " ^ loss ^ " is the folded loop's")
             (fun () -> equal (close ()) (a l) (staged (fun () -> a l))))
         applications)
-    staged_losses
+    (staged_losses @ iterate_losses)
+  @ [ untracked_law ]
   @ List.map
       (fun (app, a) ->
         test (app ^ " of a loss with an integer counter in the carry")
@@ -259,4 +353,4 @@ let staged_tests =
           equal int 0 !late);
     ]
 
-let () = exit (run "Rune.scan staged" [ group "on the host" staged_tests ])
+let () = exit (run "Loops staged" [ group "on the host" staged_tests ])

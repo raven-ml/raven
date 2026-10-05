@@ -826,9 +826,18 @@ let holds_tensor q y = Nx.Ptree.fold q (fun _ _ _ -> true) y false
 let holds_own i p args =
   Nx.Ptree.fold p (fun _ x any -> any || owns i x) args false
 
+(* [primals i f] is [f ()] with each of [i]'s duals it reads replaced by its
+   primal: code with no derivative, such as a loop's stop. *)
+let primals i f =
+  let owner = { Construct.owns = (fun x -> owns i x) } in
+  let primal (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
+    if owns i x then dual_primal x else x
+  in
+  Construct.substituting owner { f = primal } f
+
 (* [guarded i ~entry ~loops f] is [f ()], raising at an operation on one of
    [i]'s duals: a rule receives its arguments' primals, and a value [i] tracks
-   that it captures would lose its derivative. Unless [loops], a scan [f]
+   that it captures would lose its derivative. Unless [loops], a loop [f]
    performs is declined, so that it unrolls into operations the recorder
    sees. *)
 let guarded i ~entry ~loops f =
@@ -841,8 +850,8 @@ let guarded i ~entry ~loops f =
   let owner = { Construct.owns = (fun x -> owns i x) } in
   let claims op = Construct.claims owner op in
   let call : type r. r Construct.t -> (unit -> r) option = function
-    | Scan _ when not loops -> Some (fun () -> raise Scan.Not_staged)
-    | Scan _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
+    | Loop _ when not loops -> Some (fun () -> raise Trips.Not_staged)
+    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
     | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None
   in
@@ -951,7 +960,7 @@ let with_tangents i flags leaves =
   List.map (primal_leaf i) leaves @ tangents i flags leaves
 
 let of_tangents i flags n l =
-  let leaves, ts = Scan.split n l in
+  let leaves, ts = Trips.split n l in
   duals i flags leaves ts
 
 (* A barrier with duals of [i] among its values or [after] reads the values'
@@ -968,6 +977,54 @@ let barrier i values after =
       let primals = List.map (primal_leaf i) values in
       let read = Construct.perform (Barrier { values = primals; after }) in
       duals i flags read (tangents i flags values)
+
+(* Loops *)
+
+(* [stop i n trips] is [trips] for a transformed loop whose carry starts with
+   its [n] primals: the stop reads them, with [i]'s values as primals. *)
+let stop i n (trips : Trips.trips) : Trips.trips =
+  match trips with
+  | Rows _ -> trips
+  | Until s ->
+      let until c = primals i (fun () -> s.until (fst (Trips.split n c))) in
+      Until { s with until }
+
+let rows_of : Trips.trips -> Nx.packed list = function
+  | Rows { xs; _ } -> xs
+  | Until _ -> []
+
+let with_rows (trips : Trips.trips) xs : Trips.trips =
+  match trips with Rows r -> Rows { r with xs } | Until _ -> trips
+
+let sum (Nx.P a) (Nx.P b) = Nx.P (Nx.add a (Nx.unpack (Nx.dtype a) (Nx.P b)))
+let succ k = Nx.P (Nx.add_s (Nx.unpack Nx.int32 k) 1l)
+
+(* [reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry] is the
+   transpose of a loop until a stop that took [count] trips, from the cotangents
+   [carry] of [nk] carry tensors and [ncaps] captures: a loop from the last trip
+   to the first that reads trip [k]'s carry and outputs' cotangents at row [k]
+   of [carries] and [ct_ys], applies [pull], and stops once its count reaches
+   zero. *)
+let reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry =
+  let trip carry = Nx.unpack Nx.int32 (List.nth carry (nk + ncaps)) in
+  let req_step carry _ =
+    Total.discarding @@ fun () ->
+    let ct_c, rest = Trips.split nk carry in
+    let ct_caps, k = Trips.split ncaps rest in
+    let k = Nx.sub_s (Nx.unpack Nx.int32 (List.hd k)) 1l in
+    let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 k) in
+    let at (Nx.P x) =
+      Nx.P (Nx.squeeze ~axes:[ 0 ] (Nx.take ~axis:0 ~indices:row x))
+    in
+    let ct_c, _ = pull ct_c ct_caps (List.map at carries) (List.map at ct_ys) in
+    (ct_c @ [ Nx.P k ], [])
+  in
+  let until carry = Nx.equal_s (trip carry) 0l in
+  {
+    Trips.req_carry = carry @ count;
+    req_trips = Until { until; max; failure };
+    req_step;
+  }
 
 let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
  fun i c ->
@@ -991,24 +1048,25 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
   | Lanes (axis, x) ->
       let lanes x = Construct.perform (Lanes (axis, x)) in
       Option.map (fun (x, dx) () -> dual i (lanes x) (lanes dx)) (own i x)
-  | Scan r -> (
+  | Loop r -> (
       match i.slots with
-      | None -> Some (fun () -> scan_values i r)
-      | Some tape -> Some (fun () -> scan_slots i tape r))
+      | None -> Some (fun () -> loop_values i r)
+      | Some tape -> Some (fun () -> loop_slots i tape r))
   | Barrier { values; after } ->
       if List.exists (fun (Nx.P x) -> owns i x) (values @ after) then
         Some (fun () -> barrier i values after)
       else None
   | Lane_index _ | Lane_count _ -> None
 
-(* With value tangents a scan passes on as the scan of its jvp: the carry and
+(* With value tangents a loop passes on as the loop of its jvp: the carry and
    the rows gain the tangents of those that have one, the outputs those of
    theirs, and the step runs the body under [i] reinstalled. *)
-and scan_values : t -> Scan.request -> Scan.result =
+and loop_values : t -> Trips.request -> Trips.result =
  fun i r ->
-  let nc = List.length r.req_carry and nx = List.length r.req_xs in
-  let rows = owned i r.req_xs in
-  Scan.fixpoint (owned i r.req_carry) (fun ~grow carried ->
+  let xs = rows_of r.req_trips in
+  let nc = List.length r.req_carry and nx = List.length xs in
+  let rows = owned i xs in
+  Trips.fixpoint (owned i r.req_carry) (fun ~grow carried ->
       let outputs = ref [] in
       let req_step c x =
         let c', y =
@@ -1020,104 +1078,133 @@ and scan_values : t -> Scan.request -> Scan.result =
         (with_tangents i carried c', with_tangents i !outputs y)
       in
       let req_carry = with_tangents i carried r.req_carry
-      and req_xs = with_tangents i rows r.req_xs in
+      and req_trips =
+        with_rows (stop i nc r.req_trips) (with_tangents i rows xs)
+      in
       let result =
-        Construct.perform (Scan { r with req_carry; req_xs; req_step })
+        Construct.perform (Loop { req_carry; req_trips; req_step })
       in
       {
-        Scan.r_carry = of_tangents i carried nc result.r_carry;
+        Trips.r_carry = of_tangents i carried nc result.r_carry;
         r_ys = of_tangents i !outputs (List.length !outputs) result.r_ys;
       })
 
-(* Under reverse mode a scan passes on as its primal scan, whose step runs the
-   body under a child of [i] on a scratch tape it drops and also outputs the
-   carry it received. Once it returns, the tape gains one linear call from the
-   tangents of the tracked initial carry, rows and captures to those of the
-   dependent final carry and outputs; its transpose is the reversed scan that
-   runs each step again at its carry, threading the carry's cotangent and
-   summing the captures'. *)
-and scan_slots : t -> Linear.tape -> Scan.request -> Scan.result =
+(* Under reverse mode a loop passes on as its primal loop, whose step runs the
+   body under a child of [i] on a scratch tape it drops. A loop none of whose
+   carry or outputs is tracked is not differentiated: it outputs its own
+   outputs, and the tape gains nothing. Otherwise its step also outputs the
+   carry it received, and a loop until a stop counts its trips in one more
+   carry; a step whose outputs are tracked restarts an attempt that assumed
+   none. Once it returns, the tape gains one linear call from the tangents of
+   the tracked initial carry, rows and captures to those of the dependent final
+   carry and outputs; its transpose runs each step again at its carry, last
+   first, threading the carry's cotangent and summing the captures': a scan over
+   the rows reversed, or a loop over the trips taken. *)
+and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
  fun i tape r ->
-  let nc = List.length r.req_carry and nx = List.length r.req_xs in
-  let rows = owned i r.req_xs in
+  let xs = rows_of r.req_trips in
+  let nc = List.length r.req_carry and nx = List.length xs in
+  let rows = owned i xs in
+  let primal_xs = List.map (primal_leaf i) xs in
+  let stops = match r.req_trips with Rows _ -> false | Until _ -> true in
   let step l =
-    let c, x = Scan.split nc l in
+    let c, x = Trips.split nc l in
     let c', y = r.req_step c x in
     c' @ y
   in
-  Scan.fixpoint (owned i r.req_carry) (fun ~grow carried ->
+  (* The attempt's flags: the carry tensors it tracks, then whether the outputs
+     of a step whose carry it tracks none of are tracked. *)
+  Trips.fixpoint
+    (owned i r.req_carry @ [ false ])
+    (fun ~grow active ->
+      let carried, _ = Trips.split nc active in
+      let derived = List.mem true active in
+      let counted = derived && stops in
       let flags = carried @ rows in
       let outputs = ref [] and captures = ref [] in
       let req_step c x =
+        let c, count = if counted then Trips.split nc c else (c, []) in
         let ch, _, out =
           region i (Linear.create i.entry) [] flags (c @ x) step
         in
-        let c', y = Scan.split nc out in
-        grow (owned ch c');
-        outputs := owned ch y;
+        let c', y = Trips.split nc out in
+        let ys = owned ch y in
+        grow (owned ch c' @ [ (not derived) && List.mem true ys ]);
+        outputs := ys;
         captures := captures_of ch;
-        (List.map (primal_leaf ch) c', List.map (primal_leaf ch) y @ c)
+        let c' = List.map (primal_leaf ch) c'
+        and y = List.map (primal_leaf ch) y in
+        if not derived then (c', y) else (c' @ List.map succ count, y @ c)
       in
-      let xs = List.map (primal_leaf i) r.req_xs in
+      let req_carry =
+        List.map (primal_leaf i) r.req_carry
+        @ if counted then [ Nx.P (Nx.scalar Nx.int32 0l) ] else []
+      and req_trips = with_rows (stop i nc r.req_trips) primal_xs in
       let result =
-        Construct.perform
-          (Scan
-             {
-               r with
-               req_carry = List.map (primal_leaf i) r.req_carry;
-               req_xs = xs;
-               req_step;
-             })
+        Construct.perform (Loop { req_carry; req_trips; req_step })
       in
+      let final, count = Trips.split nc result.r_carry in
       let outputs = !outputs and captures = !captures in
-      let ys, carries = Scan.split (List.length outputs) result.r_ys in
-      let final = result.r_carry in
-      if not (List.mem true carried || List.mem true outputs) then
-        { Scan.r_carry = final; r_ys = ys }
+      if not derived then { Trips.r_carry = final; r_ys = result.r_ys }
       else
-        let initial = owned i r.req_carry in
-        let inputs =
-          tangents i initial r.req_carry
-          @ tangents i rows r.req_xs
-          @ List.map (fun (Capture (d, _)) -> Nx.P (tangent i d)) captures
-        in
-        let nk = List.length (List.filter Fun.id carried) in
-        let transpose cts =
-          let ct_carry, ct_ys = Scan.split nk cts in
-          let sum (Nx.P a) (Nx.P b) =
-            Nx.P (Nx.add a (Nx.unpack (Nx.dtype a) (Nx.P b)))
+        let ys, carries = Trips.split (List.length outputs) result.r_ys in
+        if not (List.mem true carried || List.mem true outputs) then
+          { Trips.r_carry = final; r_ys = ys }
+        else
+          let initial = owned i r.req_carry in
+          let inputs =
+            tangents i initial r.req_carry
+            @ tangents i rows xs
+            @ List.map (fun (Capture (d, _)) -> Nx.P (tangent i d)) captures
           in
-          let req_step carry row =
-            Total.discarding @@ fun () ->
-            let ct_c, ct_caps = Scan.split nk carry in
-            let cx, ct_y = Scan.split (nc + nx) row in
+          let nk = List.length (List.filter Fun.id carried) in
+          let pull ct_c ct_caps cx ct_y =
             let ct_in, ct_captured =
               pullback i captures flags cx step (carried @ outputs) (ct_c @ ct_y)
             in
-            let ct_c, ct_x = Scan.split nk ct_in in
+            let ct_c, ct_x = Trips.split nk ct_in in
             (ct_c @ List.map2 sum ct_caps ct_captured, ct_x)
           in
           let zeros (Capture (d, _)) = Nx.P (Nx.zeros_like (node_primal d)) in
-          let request =
-            {
-              Scan.req_carry = ct_carry @ List.map zeros captures;
-              req_xs = carries @ xs @ ct_ys;
-              req_step;
-              req_reverse = not r.req_reverse;
-            }
+          let transpose cts =
+            let ct_carry, ct_ys = Trips.split nk cts in
+            let req_carry = ct_carry @ List.map zeros captures in
+            let request =
+              match r.req_trips with
+              | Rows { reverse; _ } ->
+                  let req_step carry row =
+                    Total.discarding @@ fun () ->
+                    let ct_c, ct_caps = Trips.split nk carry in
+                    let cx, ct_y = Trips.split (nc + nx) row in
+                    pull ct_c ct_caps cx ct_y
+                  in
+                  {
+                    Trips.req_carry;
+                    req_trips =
+                      Rows
+                        {
+                          xs = carries @ primal_xs @ ct_ys;
+                          reverse = not reverse;
+                        };
+                    req_step;
+                  }
+              | Until { max; failure; _ } ->
+                  reversed ~pull ~nk ~ncaps:(List.length captures) carries ct_ys
+                    ~max ~failure count req_carry
+            in
+            let result = Construct.loop request in
+            let ct_c0, rest = Trips.split nk result.r_carry in
+            let ct_caps, _ = Trips.split (List.length captures) rest in
+            pick (pick carried initial) ct_c0 @ result.r_ys @ ct_caps
           in
-          let result = Construct.scan request in
-          let ct_c0, ct_caps = Scan.split nk result.r_carry in
-          pick (pick carried initial) ct_c0 @ result.r_ys @ ct_caps
-        in
-        let slots =
-          Linear.call tape inputs transpose
-            (pick carried final @ pick outputs ys)
-        in
-        let r_carry, r_ys =
-          Scan.split nc (duals i (carried @ outputs) (final @ ys) slots)
-        in
-        { Scan.r_carry; r_ys })
+          let slots =
+            Linear.call tape inputs transpose
+              (pick carried final @ pick outputs ys)
+          in
+          let r_carry, r_ys =
+            Trips.split nc (duals i (carried @ outputs) (final @ ys) slots)
+          in
+          { Trips.r_carry; r_ys })
 
 (* With value tangents a remat passes on as the remat of its function's jvp,
    over the arguments' primals and tangents, so that no dual of [i] crosses into

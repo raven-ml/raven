@@ -5,11 +5,18 @@
 
 type leaves = Nx.packed list
 
+type trips =
+  | Rows of { xs : leaves; reverse : bool }
+  | Until of {
+      until : leaves -> Nx.bool_t;
+      max : int;
+      failure : int array -> string;
+    }
+
 type request = {
   req_carry : leaves;
-  req_xs : leaves;
+  req_trips : trips;
   req_step : leaves -> leaves -> leaves * leaves;
-  req_reverse : bool;
 }
 
 type result = { r_carry : leaves; r_ys : leaves }
@@ -32,23 +39,43 @@ let own (Nx.P c) =
   | Traced _ -> Nx.P (Nx.copy c)
   | Host _ | Placed _ -> Nx.P c
 
-let fold r =
-  let (Nx.P x) = List.hd r.req_xs in
+let over_rows r xs reverse =
+  let (Nx.P x) = List.hd xs in
   let n = (Nx.shape x).(0) in
   let ys = Array.make n [] in
   let carry = ref r.req_carry in
   for k = 0 to n - 1 do
-    let i = if r.req_reverse then n - 1 - k else k in
-    let row =
-      List.map (fun (Nx.P x) -> Nx.P (Nx.slice [ Nx.I i ] x)) r.req_xs
-    in
+    let i = if reverse then n - 1 - k else k in
+    let row = List.map (fun (Nx.P x) -> Nx.P (Nx.slice [ Nx.I i ] x)) xs in
     let c, y = r.req_step !carry row in
     carry := List.map own c;
     ys.(i) <- y
   done;
   { r_carry = !carry; r_ys = stack (Array.to_list ys) }
 
-(* Transformed scans *)
+(* The stop is tested before each step and once more after the last, where a
+   failure raises through the check. *)
+let until_stop r until max failure =
+  let rec go k carry ys =
+    let stop = until carry in
+    if Nx.item [] (Nx.all stop) then
+      { r_carry = carry; r_ys = stack (List.rev ys) }
+    else if k = max then begin
+      Nx.check stop failure;
+      assert false (* [stop] has a false element. *)
+    end
+    else
+      let c, y = r.req_step carry [] in
+      go (k + 1) (List.map own c) (y :: ys)
+  in
+  go 0 r.req_carry []
+
+let fold r =
+  match r.req_trips with
+  | Rows { xs; reverse } -> over_rows r xs reverse
+  | Until { until; max; failure } -> until_stop r until max failure
+
+(* Transformed loops *)
 
 let rec split n l =
   if n = 0 then ([], l)
@@ -57,7 +84,7 @@ let rec split n l =
     | x :: l ->
         let a, b = split (n - 1) l in
         (x :: a, b)
-    | [] -> invalid_arg "Scan.split: too few leaves"
+    | [] -> invalid_arg "Trips.split: too few elements"
 
 let fixpoint active attempt =
   let exception Grow of bool list in

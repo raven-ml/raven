@@ -16,10 +16,10 @@
   lower
   loop
   memo
-  scan
   staged
   structure
   total
+  trips
   vmap)
  (libraries
   nx

@@ -8,14 +8,14 @@ let shape_mismatch v zero =
     (Format.asprintf "Rune.Total.add: shape %a does not match the total's %a"
        Nx.pp_shape (Nx.shape v) Nx.pp_shape (Nx.shape zero))
 
-(* [threaded t ~zero r] is the scan [r] with one more carry leaf, the sum of
+(* [threaded t ~zero r] is the loop [r] with one more carry leaf, the sum of
    each run of the step's additions to [t] from the carried sum, performed
    outward; it is the result and the final sum. *)
 let rec threaded : type a b.
     (a, b) Construct.total ->
     zero:(a, b) Nx.t ->
-    Scan.request ->
-    Scan.result * (a, b) Nx.t =
+    Trips.request ->
+    Trips.result * (a, b) Nx.t =
  fun t ~zero r ->
   let n = List.length r.req_carry in
   let split l = (List.filteri (fun i _ -> i < n) l, List.nth l n) in
@@ -26,12 +26,18 @@ let rec threaded : type a b.
     in
     (c' @ [ Nx.P s' ], y)
   in
+  let req_trips : Trips.trips =
+    match r.req_trips with
+    | Rows _ as rows -> rows
+    | Until stop ->
+        Until { stop with until = (fun c -> stop.until (fst (split c))) }
+  in
   let result =
     Construct.perform
-      (Scan
+      (Loop
          {
-           r with
            req_carry = r.req_carry @ [ Nx.P (Nx.zeros_like zero) ];
+           req_trips;
            req_step;
          })
   in
@@ -54,7 +60,7 @@ and collect : type a b r.
         match Type.Id.provably_equal t t' with
         | Some Equal -> Some (fun () -> receive v)
         | None -> None)
-    | Scan r ->
+    | Loop r ->
         Some
           (fun () ->
             let result, s = threaded t ~zero r in
@@ -95,9 +101,19 @@ let rec discarding : type r. (unit -> r) -> r =
    fun c ->
     match[@warning "@4@8"] c with
     | Add _ -> Some ignore
-    | Scan r ->
+    | Loop r ->
         let req_step c x = discarding (fun () -> r.req_step c x) in
-        Some (fun () -> Construct.perform (Scan { r with req_step }))
+        let req_trips : Trips.trips =
+          match r.req_trips with
+          | Rows _ as rows -> rows
+          | Until stop ->
+              Until
+                {
+                  stop with
+                  until = (fun c -> discarding (fun () -> stop.until c));
+                }
+        in
+        Some (fun () -> Construct.perform (Loop { r with req_step; req_trips }))
     | Remat ({ f; _ } as r) ->
         let f args = discarding (fun () -> f args) in
         Some (fun () -> Construct.perform (Remat { r with f }))

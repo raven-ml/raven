@@ -165,6 +165,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Add `Rune.iterate` and `Rune.iterate'`, a loop that applies a step until a
+  condition holds and raises after `max` steps. Under `vmap` each lane stops on
+  its own; derivatives cover the steps each lane took. It does not compile yet.
+- `grad` of a `scan` whose carry and outputs depend on no tracked value keeps
+  no carry per step under `jit`.
 - A compiled integer remainder by zero is its dividend, as `Nx.mod_`'s.
 - `Rune.jit` refuses `bit` values, as it refuses `int4`.
 - `RUNE_JIT_DEBUG` is a tolk setting: it holds an integer, nonzero to report,

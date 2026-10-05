@@ -9,27 +9,27 @@
     rune's constructs ({!Construct.t}) outside that interception, so that the
     operations an answer issues are lowered in a scope of its choosing.
 
-    {b Staged scans.} A scan stages as one loop of the program: its step runs
-    once, traced as the body of one call that a range of as many trips as the
-    scan has steps runs. The body's parameters stand for one trip's carry and
-    rows; every part of the step's graph that does not depend on them is
-    computed once, before the loop, and passed to the call. On trip [i], the
-    step reads row [r] of each stacked input and writes row [r] of each stacked
-    output, [r] being [i], or [n - 1 - i] for a reversed scan of [n] steps. Rows
-    are 16 bytes of memory apart, as the body's vector accesses require: a
-    stacked input whose rows are not is read from a padded copy, made once per
-    call. Each carry is one buffer that each trip updates in place, once every
-    kernel that reads it ran, as the schedule orders them; a next carry that
-    reads the carry elsewhere than at its own index is computed into storage of
-    its own first, and so is, each trip, the latest of carries whose next values
-    read each other in a cycle, such as two carries that swap. A scan inside the
-    step is written out inside the body.
+    {b Staged scans.} A loop over rows, a scan, stages as one loop of the
+    program: its step runs once, traced as the body of one call that a range of
+    as many trips as the scan has steps runs. The body's parameters stand for
+    one trip's carry and rows; every part of the step's graph that does not
+    depend on them is computed once, before the loop, and passed to the call. On
+    trip [i], the step reads row [r] of each stacked input and writes row [r] of
+    each stacked output, [r] being [i], or [n - 1 - i] for a reversed scan of
+    [n] steps. Rows are 16 bytes of memory apart, as the body's vector accesses
+    require: a stacked input whose rows are not is read from a padded copy, made
+    once per call. Each carry is one buffer that each trip updates in place,
+    once every kernel that reads it ran, as the schedule orders them; a next
+    carry that reads the carry elsewhere than at its own index is computed into
+    storage of its own first, and so is, each trip, the latest of carries whose
+    next values read each other in a cycle, such as two carries that swap. A
+    scan inside the step is written out inside the body.
 
     A scan stages when its leaves lie on one device, host leaves joining it, and
     its loop runs ({!Tolk.Hcq2.runs}): on a device whose work runs from command
     queues (Metal, CUDA, AMD, NV), as one batch of the body's calls; on the
     host, or a device without queues, its calls once per trip. It is declined
-    ({!Scan.Not_staged}), and folds where it is written:
+    ({!Trips.Not_staged}), and folds where it is written:
     - before its step runs, when its leaves lie on several devices;
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
@@ -57,8 +57,9 @@ val reach : from:Tolk.Ops.t -> Tolk.Ops.t -> reach
 val install : Lower.scope -> (unit -> 'a) -> 'a
 (** [install s f] is [f ()] traced in [s]: every operation of its extent lowered
     by [Lower.op s], and the constructs it performs answered as follows.
-    - [Scan r] is staged, or declined as above. An exception of the step
-      propagates unchanged.
+    - [Loop r] over rows is staged, or declined as above. An exception of the
+      step propagates unchanged.
+    - [Loop r] until a stop raises {!Lower.Jit_error}.
     - [Remat { recomputed = true; f; args; _ }] is [f args], each argument that
       the trace computes materialised: its storage is what the backward pass
       reads again.

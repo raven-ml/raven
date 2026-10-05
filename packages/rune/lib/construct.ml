@@ -95,7 +95,7 @@ end
 let packed : Nx.packed list Nx.Ptree.t = Nx.Ptree.instantiate (module Packed)
 
 type _ t =
-  | Scan : Scan.request -> Scan.result t
+  | Loop : Trips.request -> Trips.result t
   | Compiled : {
       p : 'p Nx.Ptree.t;
       q : 'q Nx.Ptree.t;
@@ -175,7 +175,7 @@ let claims : type r. owner -> r Nx.Op.t -> bool =
 type _ Effect.t += Construct : 'r t -> 'r Effect.t
 
 let default : type r. r t -> r = function
-  | Scan _ -> raise Scan.Not_staged
+  | Loop _ -> raise Trips.Not_staged
   | Compiled { p; q; f; args; compiler } -> compiler.run p q f args
   | Remat { f; args; _ } -> f args
   | Barrier { values; _ } -> values
@@ -202,10 +202,10 @@ let perform c =
     | r -> r
     | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> default c
 
-let scan r =
-  match perform (Scan r) with
+let loop r =
+  match perform (Loop r) with
   | r -> r
-  | exception Scan.Not_staged -> Scan.fold r
+  | exception Trips.Not_staged -> Trips.fold r
 
 let resume answer k =
   match answer () with
@@ -234,3 +234,79 @@ let install i f =
   Atomic.incr installed;
   Fun.protect ~finally:(fun () -> Atomic.decr installed) @@ fun () ->
   Effect.Deep.match_with f () { retc = Fun.id; exnc; effc }
+
+let substituting owner (s : Nx.Op.mapper) f =
+  let leaf (Nx.P x) = Nx.P (s.f x) in
+  let leaves = List.map leaf in
+  let rec reinstall : 'a. (unit -> 'a) -> 'a =
+   fun f ->
+    let claims op = claims owner op in
+    let run op = Nx.Op.eval (Nx.Op.map_operands s op) in
+    install { op = Some { run; claims }; call } f
+  and call : type r. r t -> (unit -> r) option =
+   fun c ->
+    let again c = Some (fun () -> perform c) in
+    let args p a = Nx.Ptree.map p (fun _ x -> s.f x) a in
+    match[@warning "@4@8"] c with
+    | Loop r ->
+        let req_trips : Trips.trips =
+          match r.req_trips with
+          | Rows rows -> Rows { rows with xs = leaves rows.xs }
+          | Until stop ->
+              Until
+                {
+                  stop with
+                  until = (fun c -> reinstall (fun () -> stop.until c));
+                }
+        in
+        again
+          (Loop
+             {
+               req_carry = leaves r.req_carry;
+               req_trips;
+               req_step = (fun c x -> reinstall (fun () -> r.req_step c x));
+             })
+    | Compiled k ->
+        again
+          (Compiled
+             {
+               k with
+               args = args k.p k.args;
+               f = (fun a -> reinstall (fun () -> k.f a));
+             })
+    | Remat k ->
+        again
+          (Remat
+             {
+               k with
+               args = args k.p k.args;
+               f = (fun a -> reinstall (fun () -> k.f a));
+             })
+    | Barrier { values; after } ->
+        again (Barrier { values = leaves values; after = leaves after })
+    | Custom (Jvp_rule k) ->
+        let rule a =
+          let y, map = reinstall (fun () -> k.rule a) in
+          (y, fun da -> reinstall (fun () -> map da))
+        in
+        again
+          (Custom
+             (Jvp_rule
+                {
+                  k with
+                  args = args k.p k.args;
+                  value = Option.map (args k.q) k.value;
+                  rule;
+                }))
+    | Custom (Vjp_rule k) ->
+        let rule a =
+          let y, pullback = reinstall (fun () -> k.rule a) in
+          (y, fun ct -> reinstall (fun () -> pullback ct))
+        in
+        again (Custom (Vjp_rule { k with args = args k.p k.args; rule }))
+    | Lanes (axis, x) -> again (Lanes (axis, s.f x))
+    | Detach x -> again (Detach (s.f x))
+    | Add (t, v) -> again (Add (t, s.f v))
+    | Lane_index _ | Lane_count _ -> None
+  in
+  reinstall f

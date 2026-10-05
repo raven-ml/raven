@@ -88,7 +88,7 @@ let reach ~from =
   in
   go
 
-(* Staged scans *)
+(* Staged loops *)
 
 let numel shape = Array.fold_left ( * ) 1 shape
 let ints l = List.map (fun n -> Ops.Int n) l
@@ -99,11 +99,11 @@ let stride u m =
   let per = Int.max 1 (16 / Ops.element_size u) in
   (m + per - 1) / per * per
 
-(* [stage trace s r] is the scan [r] in the trace [s]: a range of as many trips
-   as [r] has steps around one call of its step, which [trace] traces once in
-   [s] as the call's body. *)
-let stage trace s (r : Scan.request) =
-  let leaves = r.req_carry @ r.req_xs in
+(* [stage trace s r xs reverse] is the loop [r] over the rows [xs] in the trace
+   [s]: a range of as many trips as [r] has steps around one call of its step,
+   which [trace] traces once in [s] as the call's body. *)
+let stage trace s (r : Trips.request) xs reverse =
+  let leaves = r.req_carry @ xs in
   let at (Nx.P x) = Nx.placement x in
   (* The loop runs where its leaves lie, on one device, host leaves joining
      it. *)
@@ -119,7 +119,7 @@ let stage trace s (r : Scan.request) =
          (List.for_all
             (fun l -> Nx.Placement.(equal (at l) p || equal (at l) host))
             leaves)
-  then raise Scan.Not_staged;
+  then raise Trips.Not_staged;
   let device =
     Ops.Single
       (Nx_device.name (Nx.Device.memory (List.hd (Nx.Placement.devices p))))
@@ -170,7 +170,7 @@ let stage trace s (r : Scan.request) =
           parameter p (Nx.dtype x) (Array.sub shape 1 (Array.length shape - 1))
         in
         (slot, Nx.P v))
-      r.req_xs
+      xs
   in
   let (carry', ys), checks =
     Lower.checking s (fun () ->
@@ -186,7 +186,7 @@ let stage trace s (r : Scan.request) =
          (List.for_all
             (fun y -> Nx.Placement.(equal (at y) p || equal (at y) host))
             ys)
-  then raise Scan.Not_staged;
+  then raise Trips.Not_staged;
   (* Each check of the step carries the index of its first failure, or its
      element count while none failed: the first trip that fails keeps its
      index. *)
@@ -209,12 +209,10 @@ let stage trace s (r : Scan.request) =
   let init = r.req_carry @ List.map (fun (i, _, _) -> i) failures
   and carry = carry @ List.map (fun (_, c, _) -> c) failures
   and carry' = carry' @ List.map (fun (_, _, n) -> n) failures in
-  let (Nx.P x) = List.hd r.req_xs in
+  let (Nx.P x) = List.hd xs in
   let n = (Nx.shape x).(0) in
   let range = Ops.range ~axis_type:Loop (Ops.Int n) [ Ops.unique_num () ] in
-  let trip =
-    if r.req_reverse then Ops.O.(int (Int.pred n) - range) else range
-  in
+  let trip = if reverse then Ops.O.(int (Int.pred n) - range) else range in
   let window b start m =
     Ops.shrink b [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int m)) ]
   in
@@ -287,7 +285,7 @@ let stage trace s (r : Scan.request) =
             [ Ops.Int (n * k) ]
       in
       pass slot (window (Ops.contiguous flat) Ops.O.(trip * int k) m))
-    r.req_xs rows;
+    xs rows;
   (* Each trip writes its row of each stacked output. *)
   let outputs =
     List.map
@@ -343,14 +341,14 @@ let stage trace s (r : Scan.request) =
       (List.exists
          (Hcq2.runs ~devices:(fun d -> (Lower.engine s d).compiler))
          (Ops.src linear))
-  then raise Scan.Not_staged;
+  then raise Trips.Not_staged;
   let e = call !args in
   let finals =
     List.map2
       (fun (Nx.P c) final -> Nx.P (Lower.traced s p (Nx.dtype c) (final e)))
       init carries
   in
-  let r_carry, firsts = Scan.split (List.length r.req_carry) finals in
+  let r_carry, firsts = Trips.split (List.length r.req_carry) finals in
   (* A step's check holds where the loop's first failure is not. *)
   List.iter2
     (fun (c : Lower.check) (Nx.P first) ->
@@ -366,7 +364,7 @@ let stage trace s (r : Scan.request) =
       Lower.op s (Nx.Op.Check { ok = Lower.traced s p Nx.bool ok; msg = c.msg }))
     checks firsts;
   {
-    Scan.r_carry;
+    Trips.r_carry;
     r_ys =
       (* An output on the host is written on the loop's device, and its rows
          copied to the host once the loop ran. *)
@@ -394,7 +392,15 @@ let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
     | Detach x -> Some (fun () -> x)
     | Compiled { f; args; _ } ->
         Some (fun () -> trace ~body s (fun () -> f args))
-    | Scan r -> Some (fun () -> stage (trace ~body:true) s r)
+    | Loop ({ req_trips = Rows { xs; reverse }; _ } as r) ->
+        Some (fun () -> stage (trace ~body:true) s r xs reverse)
+    | Loop { req_trips = Until _; _ } ->
+        Some
+          (fun () ->
+            raise
+              (Lower.Jit_error
+                 "Rune.jit: a loop that stops on a condition (Rune.iterate) \
+                  cannot be compiled"))
     | Remat { recomputed = true; p; f; args; _ } when not body ->
         Some
           (fun () ->
@@ -410,10 +416,10 @@ let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
         None
   in
   (* A body runs outside the key scopes the function opened, and once for every
-     trip: a draw it cannot vary is drawn where the scan is written. *)
+     trip: a draw it cannot vary is drawn where the loop is written. *)
   let run : type r. r Nx.Op.t -> r = function
     | Threefry _ as o when body -> (
-        try Lower.op s o with Lower.Jit_error _ -> raise Scan.Not_staged)
+        try Lower.op s o with Lower.Jit_error _ -> raise Trips.Not_staged)
     | o -> Lower.op s o
   in
   let op = { Nx.Op.run; claims = (fun _ -> true) } in

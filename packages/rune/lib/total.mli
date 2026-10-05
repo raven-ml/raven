@@ -5,10 +5,10 @@
 
 (** Scopes of totals.
 
-    A scope answers the additions to the totals it covers. Code that a scan runs
-    away from where it is written, a staged scan's step, runs under a nested
+    A scope answers the additions to the totals it covers. Code that a loop runs
+    away from where it is written, a staged loop's step, runs under a nested
     scope whose sum leaves as one more carry leaf, which the scope adds once the
-    scan returns; a scan that nothing stages folds where it is written, inside
+    loop returns; a loop that nothing stages folds where it is written, inside
     the scope. *)
 
 val collect :
@@ -25,5 +25,5 @@ val collect :
 
 val discarding : (unit -> 'r) -> 'r
 (** [discarding f] is [f ()] with every addition [f] makes dropped, a staged
-    scan's step's included: the additions of code run a second time, which
+    loop's step's included: the additions of code run a second time, which
     counted the first. *)

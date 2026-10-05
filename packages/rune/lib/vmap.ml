@@ -11,9 +11,25 @@ type t = {
   axis : Construct.axis option;
   size : int;
   id : unit ref;  (** The installation's identity, which its lanes name. *)
+  held : held option;
+      (** For the step of a loop whose lanes stop apart, how its stopped lanes
+          run. *)
 }
 
-let create ?axis entry size = { entry; axis; size; id = ref () }
+(* A stopped lane runs the step at a running lane's point, its donor's: the map
+   adopts the lanes of [parent] that the step reads from outside, each lane's
+   row the one [donors] names, and drops the stopped lanes' additions to
+   totals. *)
+and held = {
+  parent : t;
+  donors : Nx.int64_t;  (** Each lane's donor, itself if it runs. *)
+  running : Nx.bool_t;  (** Which lanes run. *)
+  mutable gathered : gathered list;  (** The adopted lanes' rows, by lane. *)
+}
+
+and gathered = Gathered : ('a, 'b) Nx.t * ('a, 'b) Nx.t -> gathered
+
+let create ?axis entry size = { entry; axis; size; id = ref (); held = None }
 
 type (_, _) Repr.node +=
   | Lane : { map : t; batched : ('a, 'b) Nx.t } -> ('a, 'b) Repr.node
@@ -26,23 +42,53 @@ let lane m x =
     (Array.sub s 1 (Array.length s - 1))
     (Lane { map = m; batched = x })
 
+(* [adopts m map] is [true] iff [m] runs a held step inside [map]. *)
+let rec adopts m map =
+  match m.held with
+  | Some h -> h.parent.id == map.id || adopts h.parent map
+  | None -> false
+
 let owns m x =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
-      | Lane { map; _ } -> map.id == m.id
+      | Lane { map; _ } -> map.id == m.id || adopts m map
       | _ -> false)
   | Host _ | Placed _ -> false
 
-(* [physical m x] is the batched tensor of [x] if it is a lane of [m], and [x]
-   otherwise. *)
-let physical (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t =
+let rec gathered : type a b. gathered list -> (a, b) Nx.t -> (a, b) Nx.t option
+    =
+ fun l x ->
+  match l with
+  | Gathered (y, g) :: rest -> (
+      match Nx_dtype.equal_witness (Nx.dtype y) (Nx.dtype x) with
+      | Some Type.Equal when y == x -> Some g
+      | _ -> gathered rest x)
+  | [] -> None
+
+(* [physical m x] is the batched tensor of [x] if it is a lane of [m], its
+   donors' rows if it is a lane [m] adopts, and [x] otherwise. *)
+let rec physical : type a b. t -> (a, b) Nx.t -> (a, b) Nx.t =
+ fun m x ->
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
       | Lane { map; batched } when map.id == m.id -> batched
+      | Lane { map; _ } when adopts m map -> adopted m x
       | _ -> x)
   | Host _ | Placed _ -> x
+
+and adopted : type a b. t -> (a, b) Nx.t -> (a, b) Nx.t =
+ fun m x ->
+  match m.held with
+  | None -> assert false (* Only a held map adopts. *)
+  | Some h -> (
+      match gathered h.gathered x with
+      | Some g -> g
+      | None ->
+          let g = Nx.take ~axis:0 ~indices:h.donors (physical h.parent x) in
+          h.gathered <- Gathered (x, g) :: h.gathered;
+          g)
 
 (* [batched m x] is [x] with the map's axis in front: a lane's batched tensor,
    or a value every lane shares broadcast along a new leading axis. *)
@@ -58,6 +104,19 @@ let batched m x =
 let sum_lanes m v =
   if owns m v then Nx.sum ~axes:[ 0 ] (physical m v)
   else Nx.mul_s v (Nx_dtype.of_float (Nx.dtype v) (Float.of_int m.size))
+
+(* [along m mask x] is [mask], one boolean per lane, shaped to broadcast against
+   [x]'s batched tensor. *)
+let along m mask x =
+  Nx.reshape (Array.append [| m.size |] (Array.make (Nx.ndim x - 1) 1)) mask
+
+(* The sum over the running lanes of a value each lane holds. *)
+let sum_running m v =
+  match m.held with
+  | None -> sum_lanes m v
+  | Some h ->
+      let b = batched m v in
+      Nx.sum ~axes:[ 0 ] (Nx.where (along m h.running b) b (Nx.zeros_like b))
 
 let named m axis =
   match m.axis with Some a -> Type.Id.uid a = Type.Id.uid axis | None -> false
@@ -282,9 +341,42 @@ let all_batched m s x = Nx.Ptree.map s (fun _ x -> batched m x) x
    back. *)
 let swap (Nx.P x) = Nx.P (Nx.swapaxes 0 1 x)
 
+(* [deferring_additions f] is [f ()], whose additions to totals are performed
+   once it returns, and dropped if it raises. *)
+let deferring_additions f =
+  let pending = ref [] in
+  let call : type r. r Construct.t -> (unit -> r) option =
+   fun c ->
+    match[@warning "@4@8"] c with
+    | Add (t, v) ->
+        Some
+          (fun () ->
+            pending := (fun () -> Construct.perform (Add (t, v))) :: !pending)
+    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _
+    | Lane_index _ | Lane_count _ | Detach _ ->
+        None
+  in
+  let y = Construct.install { op = None; call } f in
+  List.iter (fun add -> add ()) (List.rev !pending);
+  y
+
+(* [folded r] is the loop [r] performed outward, or folded here, its additions
+   deferred, when no stager stages it. *)
+let folded r =
+  match Construct.perform (Loop r) with
+  | result -> result
+  | exception Trips.Not_staged -> deferring_additions (fun () -> Trips.fold r)
+
 let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
  fun m c ->
   match[@warning "@4@8"] c with
+  | Lanes (axis, _) when named m axis && Option.is_some m.held ->
+      Some
+        (fun () ->
+          invalid_arg
+            "Rune.lanes: a lane of Rune.iterate that stopped takes no more \
+             trips, so a step cannot gather every lane; give every lane the \
+             same stop")
   | Lanes (axis, x) when named m axis ->
       Some
         (fun () ->
@@ -301,10 +393,15 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
       let ours =
         match axis with Some a -> named m a | None -> Option.is_none m.axis
       in
-      if ours then Some (fun () -> lane m (Nx.arange Nx.int32 0 m.size 1))
-      else None
+      if not ours then None
+      else
+        Some
+          (fun () ->
+            match m.held with
+            | Some h -> lane m (Nx.cast Nx.int32 h.donors)
+            | None -> lane m (Nx.arange Nx.int32 0 m.size 1))
   | Lane_count axis -> if named m axis then Some (fun () -> m.size) else None
-  | Add (t, v) -> Some (fun () -> Construct.perform (Add (t, sum_lanes m v)))
+  | Add (t, v) -> Some (fun () -> Construct.perform (Add (t, sum_running m v)))
   | Detach x ->
       if owns m x then
         Some (fun () -> lane m (Construct.perform (Detach (physical m x))))
@@ -355,7 +452,10 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
           in
           let outs = List.map (fun _ -> true) (fst (Nx.Ptree.flatten q y)) in
           relanes m q outs y)
-  | Scan r -> Some (fun () -> scan m r)
+  | Loop ({ req_trips = Rows { xs; reverse }; _ } as r) ->
+      Some (fun () -> scan m r xs reverse)
+  | Loop ({ req_trips = Until { until; max; failure }; _ } as r) ->
+      Some (fun () -> iterate m r ~until ~max ~failure)
   | Barrier { values; after } ->
       let flags = leaf_lanes m values in
       if List.mem true flags || List.mem true (leaf_lanes m after) then
@@ -375,15 +475,13 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
 (* A scan passes on batched: a lane row has the scan's axis in front of the
    map's, a lane carry stays batched through every step, and the step runs the
    body under the map reinstalled. *)
-and scan : t -> Scan.request -> Scan.result =
- fun m r ->
-  let rows = leaf_lanes m r.req_xs in
+and scan : t -> Trips.request -> Nx.packed list -> bool -> Trips.result =
+ fun m r xs reverse ->
+  let rows = leaf_lanes m xs in
   let xs =
-    List.map2
-      (fun f x -> if f then swap (physical_leaf m x) else x)
-      rows r.req_xs
+    List.map2 (fun f x -> if f then swap (physical_leaf m x) else x) rows xs
   in
-  Scan.fixpoint (leaf_lanes m r.req_carry) (fun ~grow carried ->
+  Trips.fixpoint (leaf_lanes m r.req_carry) (fun ~grow carried ->
       let outputs = ref [] in
       let req_step c x =
         let c', y =
@@ -396,21 +494,123 @@ and scan : t -> Scan.request -> Scan.result =
       in
       let result =
         Construct.perform
-          (Scan
+          (Loop
              {
-               r with
                req_carry = batched_at m carried r.req_carry;
-               req_xs = xs;
+               req_trips = Rows { xs; reverse };
                req_step;
              })
       in
-      let r_ys =
-        List.map2
-          (fun f y ->
-            if f then match swap y with Nx.P y -> Nx.P (lane m y) else y)
-          !outputs result.r_ys
-      in
-      { Scan.r_carry = lanes_at m carried result.r_carry; r_ys })
+      {
+        Trips.r_carry = lanes_at m carried result.r_carry;
+        r_ys = unswap m !outputs result.r_ys;
+      })
+
+(* A loop's outputs, the loop's axis in front of the map's, as lanes where
+   [outputs] marks them. *)
+and unswap m outputs ys =
+  List.map2
+    (fun f y -> if f then match swap y with Nx.P y -> Nx.P (lane m y) else y)
+    outputs ys
+
+(* A loop until a stop the lanes share passes on batched, as a scan does. One
+   whose stop differs between lanes passes on masked: every carry tensor
+   batched, with the stop's value as one more, the loop's stop that every lane
+   has stopped, and a step that holds each stopped lane's carry. A stopped lane
+   runs the step at its donor's point: the first running lane's carry and the
+   lanes the step reads from outside. With no stager, the map folds either loop
+   itself, since a carry that gains lanes makes a shared stop one that differs
+   between lanes, and keeps the additions to totals until the loop returns: an
+   attempt a transformation restarts made none. *)
+and iterate :
+    t ->
+    Trips.request ->
+    until:(Nx.packed list -> Nx.bool_t) ->
+    max:int ->
+    failure:(int array -> string) ->
+    Trips.result =
+ fun m r ~until ~max ~failure ->
+  let until_at carried c = install m (fun () -> until (lanes_at m carried c)) in
+  Trips.fixpoint (leaf_lanes m r.req_carry) (fun ~grow carried ->
+      let carry = batched_at m carried r.req_carry in
+      let u = until_at carried carry in
+      if owns m u then masked m r ~until ~max ~failure u
+      else
+        let outputs = ref [] in
+        let req_step c x =
+          let c', y =
+            install m (fun () -> r.req_step (lanes_at m carried c) x)
+          in
+          grow (leaf_lanes m c');
+          outputs := leaf_lanes m y;
+          (batched_at m carried c', List.map (physical_leaf m) y)
+        in
+        let req_trips =
+          Trips.Until { until = until_at carried; max; failure }
+        in
+        let result = folded { req_carry = carry; req_trips; req_step } in
+        {
+          Trips.r_carry = lanes_at m carried result.r_carry;
+          r_ys = unswap m !outputs result.r_ys;
+        })
+
+(* [masked m r ~until ~max ~failure u] is the loop [r] whose stop [u] at its
+   initial carry differs between lanes, every carry tensor batched. *)
+and masked m r ~until ~max ~failure u =
+  let nc = List.length r.req_carry in
+  let all = List.map (fun _ -> true) r.req_carry in
+  (* Inside a held step, the lanes the outer loop stopped run on their donors'
+     carries: they start stopped, so they take no trip of their own. *)
+  let u =
+    let u = physical m u in
+    match m.held with
+    | None -> u
+    | Some h -> Nx.logical_or u (along m (Nx.logical_not h.running) u)
+  in
+  (* A lane has stopped once every element of its stop holds; the stop's other
+     axes are those of maps inside this one. *)
+  let inner = List.init (Nx.ndim u - 1) succ in
+  let own = Nx.arange Nx.int64 0 m.size 1 in
+  let outputs = ref [] in
+  let req_step c _ =
+    let c, u = Trips.split nc c in
+    let u = Nx.unpack Nx.bool (List.hd u) in
+    let stopped = if inner = [] then u else Nx.all ~axes:inner u in
+    let running = Nx.logical_not stopped in
+    let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 running) in
+    let donors = Nx.where stopped (Nx.broadcast_to [| m.size |] first) own in
+    let held = { parent = m; donors; running; gathered = [] } in
+    let m' = { m with id = ref (); held = Some held } in
+    let from_donor (Nx.P x) = Nx.P (Nx.take ~axis:0 ~indices:donors x) in
+    let c', y =
+      install m' (fun () ->
+          r.req_step (lanes_at m' all (List.map from_donor c)) [])
+    in
+    outputs := List.map (fun _ -> true) y;
+    let hold (Nx.P x) x' =
+      let x' = batched m' (Nx.unpack (Nx.dtype x) x') in
+      Nx.P (Nx.where (along m stopped x) x x')
+    in
+    let c' = List.map2 hold c c' in
+    let u' = batched m (install m (fun () -> until (lanes_at m all c'))) in
+    let u' = Nx.where (along m stopped u') u u' in
+    (c' @ [ Nx.P u' ], List.map (fun (Nx.P y) -> Nx.P (batched m' y)) y)
+  in
+  (* Every axis of the stop is a map's, this one's first: the message names the
+     lanes outermost first, after the loop's own message, which an index of no
+     lanes gives. *)
+  let failure i =
+    failure [||]
+    ^ String.concat ""
+        (List.map (Printf.sprintf ", in lane %d") (Array.to_list i))
+  in
+  let until c = Nx.unpack Nx.bool (List.nth c nc) in
+  let req_carry = batched_at m all r.req_carry @ [ Nx.P u ] in
+  let result =
+    folded { req_carry; req_trips = Until { until; max; failure }; req_step }
+  in
+  let final, _ = Trips.split nc result.r_carry in
+  { Trips.r_carry = lanes_at m all final; r_ys = unswap m !outputs result.r_ys }
 
 (* A custom call passes on as the call of its rule batched: the rule runs under
    the map reinstalled, so the lanes it receives and captures are the map's

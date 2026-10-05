@@ -231,7 +231,7 @@ let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
       if Nx.Ptree.fold p (fun _ x any -> any || owns t x) args false then
         Some (fun () -> install t (fun () -> f args))
       else None
-  | Scan _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
+  | Loop _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
       None
 
 and install : type a. tape -> (unit -> a) -> a =

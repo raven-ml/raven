@@ -5,7 +5,7 @@
 
 (** rune's constructs, and the one frame that installs their interpreters.
 
-    A {e construct} is an operation rune adds to nx's: a scan, a compiled call,
+    A {e construct} is an operation rune adds to nx's: a loop, a compiled call,
     a remat, a custom rule, a collective of a map, an addition to a total, a
     detach. Its performer asks the installations around it with {!perform}; an
     installation ({!install}) is one application of a transformation, an
@@ -140,8 +140,8 @@ val packed : Nx.packed list Nx.Ptree.t
 (** The type for constructs whose answer is ['r]. Each has a {e default}, its
     answer when no installation takes it. *)
 type _ t =
-  | Scan : Scan.request -> Scan.result t
-      (** A scan. Default: raises {!Scan.Not_staged}. *)
+  | Loop : Trips.request -> Trips.result t
+      (** A loop. Default: raises {!Trips.Not_staged}. *)
   | Compiled : {
       p : 'p Nx.Ptree.t;
       q : 'q Nx.Ptree.t;
@@ -227,7 +227,13 @@ val perform : 'r t -> 'r
     [c]'s default, computed at the call, when none does. An exception an
     installation answers with is raised here. *)
 
-val scan : Scan.request -> Scan.result
-(** [scan r] is [perform (Scan r)], or, when [r] is declined with
-    {!Scan.Not_staged}, [Scan.fold r] at the call, inside every installation
+val loop : Trips.request -> Trips.result
+(** [loop r] is [perform (Loop r)], or, when [r] is declined with
+    {!Trips.Not_staged}, [Trips.fold r] at the call, inside every installation
     around it. *)
+
+val substituting : owner -> Nx.Op.mapper -> (unit -> 'a) -> 'a
+(** [substituting o s f] is [f ()] with each value [o] owns that an operation or
+    a construct of its extent reads replaced by [s]'s for it, in the functions
+    the constructs carry too. A construct passes outward, with its values
+    replaced. *)

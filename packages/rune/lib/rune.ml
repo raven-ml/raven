@@ -320,13 +320,40 @@ let scan_of fn cs xs_s ys_s ~f ~init xs =
     (fst (Ptree.flatten cs c'), fst (Ptree.flatten ys_s y))
   in
   let req_carry, _ = Ptree.flatten cs init in
-  let r = Construct.scan { req_carry; req_xs; req_step; req_reverse = false } in
+  let req_trips = Trips.Rows { xs = req_xs; reverse = false } in
+  let r = Construct.loop { req_carry; req_trips; req_step } in
   match !first with
   | Some y0 ->
       (Ptree.rebuild cs ~like:init r.r_carry, Ptree.rebuild ys_s ~like:y0 r.r_ys)
   | None -> assert false (* Every answer runs the body at least once. *)
 
 let scan cs xs_s ys_s ~f ~init xs = scan_of "Rune.scan" cs xs_s ys_s ~f ~init xs
+
+let iterate c ~max ~until ~f init =
+  let fn = "Rune.iterate" in
+  if max < 0 then invalid_argf "%s: max = %d is negative" fn max;
+  let carry l = Ptree.rebuild c ~like:init l in
+  let until l =
+    let u = until (carry l) in
+    if Nx.numel u <> 1 then
+      invalid_arg
+        (Format.asprintf "%s: until must return one boolean, got %a %a" fn
+           Nx.pp_dtype (Nx.dtype u) Nx.pp_shape (Nx.shape u));
+    Nx.reshape [||] u
+  in
+  let this = "the carry the step returned" and that = "the carry it received" in
+  let req_step l _ =
+    let x = carry l in
+    let x' = Structure.map2 fn c ~this ~that (fun _ x' _ -> x') (f x) x in
+    Structure.check_placements fn c ~this x' ~that x;
+    (fst (Ptree.flatten c x'), [])
+  in
+  let failure _ =
+    Printf.sprintf "%s: until is still false after max = %d steps" fn max
+  in
+  let req_carry, _ = Ptree.flatten c init in
+  let req_trips = Trips.Until { until; max; failure } in
+  carry (Construct.loop { req_carry; req_trips; req_step }).r_carry
 
 (* Compilation *)
 
@@ -343,6 +370,7 @@ let vjp' f x = vjp_of "Rune.vjp'" t t f x
 let jvp' f x dx = jvp_of "Rune.jvp'" t t f x dx
 let vmap' ?axis f x = vmap_of "Rune.vmap'" ?axis Ptree.(t @-> returns t) f x
 let scan' ~f ~init xs = scan_of "Rune.scan'" t t t ~f ~init xs
+let iterate' ~max ~until ~f x = iterate t ~max ~until ~f x
 
 let jit' ?beam ?parallel f =
   Jit.jit ?beam ?parallel "Rune.jit'" Ptree.(tensor @-> returns tensor) f

@@ -40,6 +40,8 @@ val install : t -> (unit -> 'a) -> 'a
     as the call of its rule batched, and a remat as the remat of its function
     batched, each reinstalling [m] around the user's function, so that the lanes
     it captures are [m]'s again; the gradient of a custom call's argument the
-    lanes share is the sum over the lanes.
+    lanes share is the sum over the lanes. A loop until a stop the lanes do not
+    share runs masked: a stopped lane holds its carry, runs the step at a
+    running lane's point, and its additions are dropped.
 
     Raises [Invalid_argument], at the operation, for a read of a lane. *)

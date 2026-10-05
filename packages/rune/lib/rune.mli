@@ -14,10 +14,11 @@
     - {!val-vmap}, {!remat} and {!val-jit} take the signature
       ({!Nx.Ptree.type-fn}) of the function they transform and return a function
       of the same type.
-    - {!scan} takes the structures of its carry, rows and outputs.
+    - {!scan} takes the structures of its carry, rows and outputs, and
+      {!iterate} that of its carry.
     - A function of one tensor has its own form of the transformations that take
       one structure or signature: {!grad'}, {!vjp'}, {!jvp'}, {!vmap'},
-      {!scan'}, {!jit'}, ...
+      {!scan'}, {!iterate'}, {!jit'}, ...
 
     Tensors of a structure may have different dtypes: one forward and backward
     pass produces gradients for all of them.
@@ -534,11 +535,11 @@ end
 
 (** {1:flow Loops and branches}
 
-    A branch on a value is OCaml's [if] on {!Nx.item}, and a loop whose length
-    depends on a value is recursion: both run under {!grad} and {!jvp}, which
-    differentiate the path taken. A predicate that depends on a map's lanes
-    raises, one that depends on a compiled function's arguments raises
-    {!Jit_error}, and {!Nx.where} selects everywhere. *)
+    A branch on a value is OCaml's [if] on {!Nx.item}: it runs under {!grad} and
+    {!jvp}, which differentiate the path taken. A predicate that depends on a
+    map's lanes raises, one that depends on a compiled function's arguments
+    raises {!Jit_error}, and {!Nx.where} selects everywhere. A loop whose length
+    depends on a value is {!iterate}, which also runs under {!val-vmap}. *)
 
 val scan :
   'c Nx.Ptree.t ->
@@ -590,6 +591,64 @@ val scan :
     there, as in
     ["Rune.scan: 1: length 3 in the carry the body returned, length 2 in the
      carry it received"]. *)
+
+val iterate :
+  'c Nx.Ptree.t ->
+  max:int ->
+  until:('c -> (bool, Nx.bool_elt) Nx.t) ->
+  f:('c -> 'c) ->
+  'c ->
+  'c
+(** [iterate c ~max ~until ~f init] applies [f] to the carry, starting from
+    [init], until [until carry] holds, and returns that carry. [until] is tested
+    before each step: if it holds of [init], the result is [init]. The loop
+    takes at most [max] steps. If [until] is still false after [max] steps, it
+    raises through {!Nx.check}:
+    ["Rune.iterate: until is still false after max = 50 steps"]. A method with a
+    budget puts it in [until], so the loop ends there and the method reports:
+
+    {[
+    let minimize ~budget ~converged ~step x0 =
+      let x, _ =
+        Rune.iterate
+          Nx.Ptree.(pair tensor tensor)
+          ~max:budget
+          ~until:(fun (x, k) ->
+            Nx.logical_or (converged x)
+              (Nx.greater_equal_s k (Int32.of_int budget)))
+          ~f:(fun (x, k) -> (step x, Nx.add_s k 1l))
+          (x0, Nx.scalar Nx.int32 0l)
+      in
+      (x, converged x)
+    ]}
+
+    Under {!val-vmap} each lane stops on its own condition, and the loop runs
+    until every lane has stopped. A stopped lane keeps its carry; inside the
+    step it computes a running lane's trip, its {e donor}'s, at the donor's
+    carry and with the donor's rows of the lanes the step reads from outside, so
+    the step only runs at a point some lane reached. Its {!lane_index} there is
+    its donor's, its additions to a {!Total} are dropped, and {!lanes} of the
+    map raises. The error names the first lane still running:
+    ["Rune.iterate: until is still false after max = 50 steps, in lane 3"]. A
+    stop that every lane shares holds no lane and admits {!lanes}, and its error
+    names no lane.
+
+    Under {!grad}, {!vjp} and {!jvp} the derivative covers the steps each lane
+    took: a stopped lane contributes exact zeros. [until] has no derivative. A
+    loop none of whose carry depends on a value the differentiation tracks is
+    not differentiated. An iterate in another's step follows these rules at each
+    level: an outer lane that stopped holds its carry through the inner loop's
+    trips, and a derivative covers the trips each loop took. Under {!val-jit} a
+    loop that stops on a condition raises {!Jit_error}.
+
+    Raises [Invalid_argument] if [max < 0]
+    (["Rune.iterate: max = -1 is negative"]), if [until] does not return one
+    boolean (["Rune.iterate: until must return one boolean, got bool [3]"]), and
+    at the step if [f] returns a carry whose visits, dtypes, shapes or
+    placements differ from the carry it received, naming the first path where
+    they differ, as in
+    ["Rune.iterate: the root: shape [3] in the carry the step returned, [2] in
+     the carry it received"]. *)
 
 (** {1:jit Compilation} *)
 
@@ -813,6 +872,15 @@ val scan' :
   ('a, 'b) Nx.t * ('e, 'f) Nx.t
 (** [scan' ~f ~init xs] is
     [scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor ~f ~init xs]. *)
+
+val iterate' :
+  max:int ->
+  until:(('a, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t) ->
+  f:(('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('a, 'b) Nx.t
+(** [iterate' ~max ~until ~f x] is [iterate Nx.Ptree.tensor ~max ~until ~f x].
+*)
 
 val jit' :
   ?beam:int ->

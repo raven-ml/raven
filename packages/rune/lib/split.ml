@@ -66,7 +66,7 @@ let results : type r. r Nx.Op.t -> r -> Nx.packed list =
 let made : type r. r Construct.t -> r -> Nx.packed list =
  fun c r ->
   match[@warning "@4@8"] c with
-  | Scan _ -> r.Scan.r_carry @ r.r_ys
+  | Loop _ -> r.Trips.r_carry @ r.r_ys
   | Compiled { q; _ } -> fst (Ptree.flatten q r)
   | Remat { q; _ } -> fst (Ptree.flatten q r)
   | Barrier _ -> r
@@ -76,79 +76,6 @@ let made : type r. r Construct.t -> r -> Nx.packed list =
   | Lane_index _ -> one r
   | Detach _ -> one r
   | Lane_count _ | Add _ -> []
-
-(* Substitutions *)
-
-(* [substituting owner s f] is [f ()] with each value [owner] owns that an
-   operation or a construct of its extent reads replaced by [s]'s for it, in the
-   callbacks of the constructs too. *)
-let substituting (owner : Construct.owner) (s : mapper) f =
-  let leaf (Nx.P x) = Nx.P (s.f x) in
-  let leaves = List.map leaf in
-  let rec install : 'a. (unit -> 'a) -> 'a =
-   fun f ->
-    let claims op = Construct.claims owner op in
-    Construct.install
-      { op = Some { run = (fun op -> eval (map_operands s op)); claims }; call }
-      f
-  and call : type r. r Construct.t -> (unit -> r) option =
-   fun c ->
-    let again c = Some (fun () -> Construct.perform c) in
-    let args p a = Ptree.map p (fun _ x -> s.f x) a in
-    match[@warning "@4@8"] c with
-    | Scan r ->
-        again
-          (Scan
-             {
-               r with
-               req_carry = leaves r.req_carry;
-               req_xs = leaves r.req_xs;
-               req_step = (fun c x -> install (fun () -> r.req_step c x));
-             })
-    | Compiled k ->
-        again
-          (Compiled
-             {
-               k with
-               args = args k.p k.args;
-               f = (fun a -> install (fun () -> k.f a));
-             })
-    | Remat k ->
-        again
-          (Remat
-             {
-               k with
-               args = args k.p k.args;
-               f = (fun a -> install (fun () -> k.f a));
-             })
-    | Barrier { values; after } ->
-        again (Barrier { values = leaves values; after = leaves after })
-    | Custom (Jvp_rule k) ->
-        let rule a =
-          let y, map = install (fun () -> k.rule a) in
-          (y, fun da -> install (fun () -> map da))
-        in
-        again
-          (Custom
-             (Jvp_rule
-                {
-                  k with
-                  args = args k.p k.args;
-                  value = Option.map (args k.q) k.value;
-                  rule;
-                }))
-    | Custom (Vjp_rule k) ->
-        let rule a =
-          let y, pullback = install (fun () -> k.rule a) in
-          (y, fun ct -> install (fun () -> pullback ct))
-        in
-        again (Custom (Vjp_rule { k with args = args k.p k.args; rule }))
-    | Lanes (axis, x) -> again (Lanes (axis, s.f x))
-    | Detach x -> again (Detach (s.f x))
-    | Add (t, v) -> again (Add (t, s.f v))
-    | Lane_index _ | Lane_count _ -> None
-  in
-  install f
 
 (* Numbering *)
 
@@ -178,9 +105,9 @@ let id x =
 type numbered = { values : Nx.packed array; recipes : (int, recipe) Hashtbl.t }
 
 (* [numbering f] is [f ()] and the values the operations and the constructs of
-   its extent made, each operation and construct passed on unchanged. A scan
+   its extent made, each operation and construct passed on unchanged. A loop
    that no trace stages folds outside the extent, so that only its results are
-   numbered: whether a trace stages a scan depends on more than the dtypes,
+   numbered: whether a trace stages a loop depends on more than the dtypes,
    shapes and placements of the function's arguments, such as the lanes of a map
    around the call. *)
 let numbering f =
@@ -202,7 +129,7 @@ let numbering f =
       (fun () ->
         let r : r =
           match[@warning "@4@8"] c with
-          | Scan q -> Construct.scan q
+          | Loop q -> Construct.loop q
           | Compiled _ | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _
           | Lane_count _ | Add _ | Detach _ ->
               Construct.perform c
@@ -250,7 +177,7 @@ let rec traced :
             let shape = Array.append [| count axis |] (Nx.shape x) in
             fresh s (Nx.placement x) (Nx.dtype x) shape)
     | Lane_index _ -> Some (fun () -> fresh s Nx.Placement.host Nx.int32 [||])
-    | Scan _ -> default ()
+    | Loop _ -> default ()
     | Compiled _ -> default ()
     | Remat _ -> default ()
     | Barrier _ -> default ()
@@ -365,7 +292,7 @@ let plan (type p q) (p : p Ptree.t) (q : q Ptree.t) (vjp : (p, q) Construct.vjp)
   ignore
     ( finally bw @@ fun () ->
       traced bw counts (fun () ->
-          substituting owner
+          Construct.substituting owner
             (subst { stand_in = discover })
             (fun () -> transpose (standing bw outputs))) );
   let residuals = List.rev !reached in
@@ -401,6 +328,8 @@ let plan (type p q) (p : p Ptree.t) (q : q Ptree.t) (vjp : (p, q) Construct.vjp)
     let res = Array.of_list res in
     let read r v = Nx.unpack (Nx.dtype v) res.(Hashtbl.find position r) in
     Total.discarding (fun () ->
-        substituting owner (subst { stand_in = read }) (fun () -> transpose cts))
+        Construct.substituting owner
+          (subst { stand_in = read })
+          (fun () -> transpose cts))
   in
   (!counts, { forward; backward; residuals = residuals_of })
