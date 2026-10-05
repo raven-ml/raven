@@ -3327,19 +3327,20 @@ stores through a pad.
 
 ## D113. A compiled binary is kept under its compiler's identity
 
-- **tinygrad:** `device.py:335-341` (`Compiler.__init__`, `compile_cached`:
-  a binary is kept under its source in the table `cachekey`);
+- **tinygrad:** `device.py:335-341` (`Compiler.__init__`, which drops
+  `cachekey` when `CCACHE` is 0, and `compile_cached`: a binary is kept under
+  its source in the table `cachekey`);
   `runtime/support/compiler_cpu.py:16`, `runtime/ops_metal.py:40`,
   `runtime/support/compiler_cuda.py:54` and
   `runtime/support/compiler_amd.py:84` (the tables, named by the compiler,
   the architecture and a key); `codegen/opt/search.py:107` (the beam search's
   key: the kernel, the width, `allow_test_size`, the device and the suffix).
-- **tolk:** `lib/renderer/renderer.ml:141-166` (`Compiler.v`'s `cachekey`, a
+- **tolk:** `lib/renderer/renderer.ml:143-165` (`Compiler.v`'s `cachekey`, a
   function asked once, and `compile_cached`);
   `lib/runtime/support/compiler_cpu.ml:38` (`statement`)
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
-  (`C.identity`); `lib/codegen/codegen.ml:1175-1191` (`program_key`, `kept`);
+  (`C.identity`); `lib/codegen/codegen.ml:1181-1198` (`program_key`, `kept`);
   `lib/codegen/opt/search.ml:19-27` (the settings declared) and `:266`
   (the beam search's key).
 - **Differs:** a table also names everything besides the source that
@@ -3348,24 +3349,33 @@ stores through a pad.
   resolves to, every option), with `-ffile-compilation-dir=.` keeping the
   working directory out; for MTLCompiler, NVRTC and comgr, the build of macOS
   or the library's file, size and modification time, and the options, PTX or
-  cubin included. A program is kept on disk under its compiler's table, and
-  only if that compiler caches its binaries. The beam search's key adds the
+  cubin included. The table is the compiler's identity whatever `CCACHE`
+  holds: the keys of programs and searches take it, and `CCACHE`, read when a
+  binary or a program is compiled, decides only whether the disk keeps it. A
+  program is kept on disk under its compiler's table. The beam search's key
+  adds the
   library's sources, the renderer, its compiler's table, and the settings
   that shape compilation (`Setting.shaping`), among which those that pick
   the candidates (`TC`, `BEAM_TC_OPT` and `BEAM_PADTO`, D114) and those
   the search declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`,
-  `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`. `BEAM_STRICT_MODE` is not keyed:
-  a strict search that completes finds what another finds.
+  `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`.
+  `BEAM_STRICT_MODE` is not keyed: a strict search that completes finds what
+  another finds.
 - **Reason:** (b): raven's test suites and rune share the default cache, so a
   hit must answer the compilation it stands for. tinygrad's key answers a
   changed flag in `compiler_cpu.py`, an upgraded toolchain, a program of
   another compiler of the same renderer name, or a search under other
-  settings, with a binary or a search made for something else.
+  settings, with a binary or a search made for something else; with
+  `CCACHE=0` its compilers have no table, so two that differ in their options
+  alone share programs.
 - **Pinned by:** `Tolk.Compiler_cpu › cache`, `Tolk.Compiler_metal › cache`,
   `Tolk.Compiler_cuda › cache`, `Tolk.Compiler_amd › cache`,
   `Tolk.Renderer › Compiler › the table is asked for once, when first
-  needed`, `Tolk.C › identity`, `Tolk.Codegen › programs are kept on disk
-  › a program is not read back for a compiler of another table`, and
+  needed`, `› ccache is read when compiling` and `› compile_cached compiles
+  every time with ccache off`, `Tolk.C › identity`, `Tolk.Codegen › programs
+  are kept › a program is not returned for a compiler of other options, with
+  CCACHE=0`, `Tolk.Codegen › programs are kept on disk › a program is not
+  read back for a compiler of another table`, and
   `Tolk.Search › a search kept under one setting measures again under
   another`, `› a search kept under one value of a setting declared by its
   caller measures again under another` and `› the search's settings shape

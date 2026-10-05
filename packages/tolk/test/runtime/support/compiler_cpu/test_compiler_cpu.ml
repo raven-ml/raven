@@ -385,10 +385,11 @@ let cache =
       test "the table does not depend on the working directory" (fun () ->
           let a = table_in () in
           equal Disk_cache.outcome a (table_in ()));
-      test "objects are not cached without ccache" (fun () ->
-          is_none
-            (Compiler.cachekey
-               (ccache_off (fun () -> Compiler_cpu.clang "arm64,native"))));
+      test "the table is named with ccache off" (fun () ->
+          let table () =
+            Compiler.cachekey (Compiler_cpu.clang "arm64,native")
+          in
+          equal (option string) (table ()) (ccache_off table));
     ]
 
 let () =

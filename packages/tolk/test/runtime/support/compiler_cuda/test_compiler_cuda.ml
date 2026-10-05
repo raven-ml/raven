@@ -54,10 +54,9 @@ let cache =
       test "cache_key names the table" (fun () ->
           named ~prefix:"compile_nv_sm_120_"
             (table (Compiler_cuda.nvrtc ~ptx:false ~cache_key:"nv" "sm_120")));
-      test "binaries are not cached without ccache" (fun () ->
-          is_none
-            (Compiler.cachekey
-               (ccache_off (fun () -> Compiler_cuda.nvrtc "sm_89"))));
+      test "the table is named with ccache off" (fun () ->
+          let table () = Compiler.cachekey (Compiler_cuda.nvrtc "sm_89") in
+          equal (option string) (table ()) (ccache_off table));
     ]
 
 (* Without NVRTC on the machine *)

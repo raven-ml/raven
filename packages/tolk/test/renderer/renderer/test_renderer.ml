@@ -581,25 +581,24 @@ let a_damaged_entry_is_compiled_anew () =
   equal (option string) ~msg:"replaced" (Some "lib:a") (get table "a")
 
 let without_ccache () =
-  let t = toolchain () and table = fresh_table () in
-  let c =
-    ccache_off (fun () ->
-        Renderer.Compiler.v ~cachekey:(fun () -> table) (build t))
-  in
-  equal (option string) None (Renderer.Compiler.cachekey c);
-  equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
-  equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
+  let c, table, t = cached () in
+  ccache_off (fun () ->
+      equal string "lib:a" (Renderer.Compiler.compile_cached c "a");
+      equal string "lib:a" (Renderer.Compiler.compile_cached c "a"));
   equal (option string) None (get table "a");
   equal int ~msg:"runs of the toolchain" 2 t.runs
 
-let ccache_is_read_when_made () =
+(* A compiler made with ccache off keeps its binaries once ccache holds, and
+   names its table either way. *)
+let ccache_is_read_when_compiling () =
   let table = fresh_table () in
   let c =
-    Renderer.Compiler.v ~cachekey:(fun () -> table) (build (toolchain ()))
+    ccache_off (fun () ->
+        Renderer.Compiler.v ~cachekey:(fun () -> table) (build (toolchain ())))
   in
-  ccache_off (fun () ->
-      equal (option string) (Some table) (Renderer.Compiler.cachekey c);
-      ignore (Renderer.Compiler.compile_cached c "a"));
+  equal (option string) ~msg:"made with ccache off" (Some table)
+    (Renderer.Compiler.cachekey c);
+  ignore (Renderer.Compiler.compile_cached c "a");
   equal (option string) (Some "lib:a") (get table "a")
 
 let with_the_cache_disabled () =
@@ -766,9 +765,8 @@ let compilers =
         a_cached_binary_wins;
       test "compile_cached compiles a damaged entry anew and replaces it"
         a_damaged_entry_is_compiled_anew;
-      test "compile_cached compiles every time with ccache off when made"
-        without_ccache;
-      test "ccache is read when the compiler is made" ccache_is_read_when_made;
+      test "compile_cached compiles every time with ccache off" without_ccache;
+      test "ccache is read when compiling" ccache_is_read_when_compiling;
       test "compile_cached compiles every time with the disk cache disabled"
         with_the_cache_disabled;
       test "compile_cached compiles every time without a cachekey"

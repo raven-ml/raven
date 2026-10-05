@@ -90,18 +90,16 @@ module Compiler : sig
     t
   (** [v ~cachekey ~disassemble compile] is the compiler that compiles a source
       with [compile]. [disassemble] prints a binary as instructions on standard
-      output; it defaults to printing nothing. With [cachekey], binaries are
-      kept in the {!Helpers.Diskcache} table [cachekey ()], unless the setting
-      {!Setting.ccache} is [false] when the compiler is made.
-
-      A binary is read back for the source it was compiled from, so the table
-      must name everything else that determines it: the toolchain, its version
-      and its options. [cachekey] is called when the table is first needed, and
-      again only after it raised. *)
+      output; it defaults to printing nothing. [cachekey ()] names everything
+      besides a source that determines its binary: the toolchain, its version
+      and its options. The caches of programs and searches key on it, and
+      binaries are kept in the {!Helpers.Diskcache} table it names while the
+      setting {!Setting.ccache} holds. [cachekey] is called when the name is
+      first needed, and again only after it raised. *)
 
   val cachekey : t -> string option
-  (** [cachekey c] is the disk cache table of [c]'s binaries, if they are
-      cached.
+  (** [cachekey c] is the name of [c]'s toolchain and options, if [c] has one:
+      the table of its binaries, whether or not they are kept.
 
       Raises what [c]'s [cachekey] function raises. *)
 
@@ -112,8 +110,9 @@ module Compiler : sig
 
   val compile_cached : t -> string -> string
   (** [compile_cached c src] is the binary of [src] held in [c]'s disk cache
-      table, or else [compile c src] ({!compile}), which is then kept there. An
-      entry that does not read is compiled anew and replaced.
+      table, or else [compile c src] ({!compile}), which is then kept there,
+      while {!Setting.ccache} holds; otherwise it is [compile c src]. An entry
+      that does not read is compiled anew and replaced.
 
       Raises {!Compile_error} as {!compile}, what {!cachekey} raises, and
       [Invalid_argument] naming [src] if it must be compiled while the

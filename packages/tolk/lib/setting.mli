@@ -251,8 +251,8 @@ val tuple_order : bool t
     Defaults to [true]. *)
 
 val ccache : bool t
-(** [ccache] caches compiled programs in the {!Helpers.Diskcache}, from
-    [CCACHE]. Defaults to [true]. *)
+(** [ccache] keeps compiled programs and binaries in the {!Helpers.Diskcache},
+    from [CCACHE]. Defaults to [true]. *)
 
 val allow_tf32 : bool t
 (** [allow_tf32] lets float32 matrix multiplications use TF32 tensor cores on

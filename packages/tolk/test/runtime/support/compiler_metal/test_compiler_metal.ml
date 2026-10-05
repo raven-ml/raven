@@ -75,8 +75,8 @@ let cache =
           not_equal string default named_file;
           Out_channel.with_open_bin file (fun oc -> output_string oc "changed");
           not_equal string ~msg:"once the file changed" named_file (table ()));
-      test "libraries are not cached without ccache" (fun () ->
-          is_none (Compiler.cachekey (ccache_off Compiler_metal.compiler)));
+      test "the table is named with ccache off" (fun () ->
+          equal string (table ()) (ccache_off table));
     ]
 
 (* Without MTLCompiler on the machine *)

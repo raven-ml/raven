@@ -141,19 +141,17 @@ module Compiler = struct
           v
 
   let v ?cachekey ?(disassemble = ignore) compile =
-    let cachekey =
-      if Setting.value Setting.ccache then Option.map once cachekey else None
-    in
-    { cachekey; compile; disassemble }
+    { cachekey = Option.map once cachekey; compile; disassemble }
 
-  let cachekey c = Option.map (fun table -> table ()) c.cachekey
+  let cachekey c = Option.map (fun key -> key ()) c.cachekey
   let compile c src = c.compile src
   let disassemble c lib = c.disassemble lib
 
-  (* An entry that does not read, as a damaged one, is compiled anew and
-     replaced. *)
+  (* Binaries are kept in the table the compiler's key names while the setting
+     ccache holds. An entry that does not read, as a damaged one, is compiled
+     anew and replaced. *)
   let compile_cached c src =
-    let table = cachekey c in
+    let table = if Setting.value Setting.ccache then cachekey c else None in
     let kept table =
       try Helpers.Diskcache.get ~table src with Failure _ -> None
     in

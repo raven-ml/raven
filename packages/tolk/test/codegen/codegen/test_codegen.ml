@@ -681,6 +681,30 @@ let separates_targets () =
   equal string "CLANG" (target_of (Codegen.to_program k clang));
   equal string "METAL" (target_of (Codegen.to_program k metal))
 
+(* Two compilers that differ only in their options, which each names in its key,
+   made and used with CCACHE=0: a program compiled by one is not returned for
+   the other. *)
+let separates_compilers_without_ccache () =
+  let compiled = Atomic.make 0 in
+  let compiler options =
+    Renderer.Compiler.v
+      ~cachekey:(fun () -> "test_codegen_options_" ^ options)
+      (fun src ->
+        Atomic.incr compiled;
+        options ^ src)
+  in
+  let k = fresh_kernel () in
+  Setting.context
+    [ B (Setting.ccache, false) ]
+    (fun () ->
+      List.iter
+        (fun options ->
+          ignore
+            (Codegen.to_program k
+               (renderer_for ~compiler:(compiler options) clang_target)))
+        [ "-O1"; "-O2" ]);
+  equal int ~msg:"compilations" 2 (Atomic.get compiled)
+
 (* The compiler rejects its first source and accepts the next. *)
 let makes_anew_after_a_failure () =
   let calls = Atomic.make 0 in
@@ -727,6 +751,10 @@ let caching =
                ("TUPLE_ORDER", B (tuple_order, false));
                ("a setting its caller declares", B (declared, 1));
              ]);
+      test
+        "a program is not returned for a compiler of other options, with \
+         CCACHE=0"
+        separates_compilers_without_ccache;
       test "a program for one target is not returned for another"
         separates_targets;
       test "a failed compilation is not kept: the next call compiles anew"

@@ -48,10 +48,9 @@ let cache =
          digest" (fun () ->
           named ~prefix:"compile_hip_gfx1100_"
             (Option.get (Compiler.cachekey (Compiler_amd.hip "gfx1100"))));
-      test "code objects are not cached without ccache" (fun () ->
-          is_none
-            (Compiler.cachekey
-               (ccache_off (fun () -> Compiler_amd.hip "gfx1100"))));
+      test "the table is named with ccache off" (fun () ->
+          let table () = Compiler.cachekey (Compiler_amd.hip "gfx1100") in
+          equal (option string) (table ()) (ccache_off table));
     ]
 
 (* Without comgr on the machine *)

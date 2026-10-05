@@ -1189,11 +1189,12 @@ let program_key ast (ren : Renderer.t) =
      ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
-(* A program holds its binary: it is kept on disk only if its compiler's
+(* A program holds its binary: it is kept on disk only while its compiler's
    binaries are, under a table that names the compiler. A kernel that asks for a
    beam search is not kept, since its program is what the search found. *)
 let kept ast (ren : Renderer.t) =
-  Option.is_some (Renderer.Compiler.cachekey ren.compiler)
+  Setting.value Setting.ccache
+  && Option.is_some (Renderer.Compiler.cachekey ren.compiler)
   && match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true
 
 let program prg = op prg = Op.Program && List.length (src prg) = 4

@@ -1006,6 +1006,10 @@ thread.
 - `TC_OPT` is the level of hand-coded optimizations, default 0, and the new
   `BEAM_TC_OPT` that of the search's candidates, default 2: `TC_OPT` no longer
   reaches the search. `Search.actions` reads `TC` and `BEAM_TC_OPT` as bound.
+- A compiler's cache key names it whatever `CCACHE` holds, so programs and
+  searches key on it; `CCACHE`, now read when compiling, decides only whether
+  binaries and programs go to disk. With `CCACHE=0`, two compilers differing in
+  their options alone shared in-memory programs.
 - `Hcq2.compile_linear` and `Jit.jit_lower` no longer read `DEBUG`: `profile`
   defaults to `false`, and `Tolk_engine.reporting` says when the engine prints
   kernel times, which needs a stamped schedule.
