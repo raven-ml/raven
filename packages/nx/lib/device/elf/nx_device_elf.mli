@@ -53,6 +53,10 @@ type relocation = {
 type t = {
   kind : int;  (** The object's type, [e_type]: [1] for a relocatable one. *)
   machine : int;  (** Its machine, [e_machine]. *)
+  abi_version : int;
+      (** The version of its ABI, [EI_ABIVERSION], whose meaning is its
+          machine's. *)
+  flags : int;  (** Its machine's flags, [e_flags]. *)
   image : string;  (** The laid-out image of the [SHT_PROGBITS] sections. *)
   sections : section list;
       (** Every section, in order, from the null section at index [0]. *)

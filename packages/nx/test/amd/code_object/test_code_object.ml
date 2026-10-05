@@ -4,16 +4,17 @@
   ---------------------------------------------------------------------------*)
 
 (* Code objects the test builds: relocation, padding, kernel names, the fields
-   of a kernel descriptor at the offsets of LLVM's AMDHSAKernelDescriptor.h, and
-   refusals. *)
+   of a kernel descriptor at the offsets of LLVM's AMDHSAKernelDescriptor.h, the
+   processor of the header's flags and the GPUs that run it, after LLVM's
+   AMDGPUUsage, and refusals. *)
 
 open Windtrap
 module C = Nx_amd_code_object
 
-(* A 64-bit little-endian relocatable object with the given sections, after the
-   null section: (name, type, address, contents, link, info, align, entry
-   size). *)
-let elf sections =
+(* A 64-bit little-endian relocatable object for [machine] with the header's ABI
+   version [abi] and flags [flags], and the given sections, after the null
+   section: (name, type, address, contents, link, info, align, entry size). *)
+let elf ~machine ~abi ~flags sections =
   let names = Buffer.create 64 in
   Buffer.add_char names '\000';
   let name_of s =
@@ -47,8 +48,10 @@ let elf sections =
   let shoff = Buffer.length body in
   let hdr = Bytes.make 64 '\000' in
   Bytes.blit_string "\x7fELF\002\001\001" 0 hdr 0 7;
+  Bytes.set_uint8 hdr 8 abi;
   Bytes.set_uint16_le hdr 16 1;
-  Bytes.set_uint16_le hdr 18 224;
+  Bytes.set_uint16_le hdr 18 machine;
+  Bytes.set_int32_le hdr 48 (Int32.of_int flags);
   Bytes.set_int64_le hdr 40 (Int64.of_int shoff);
   Bytes.set_uint16_le hdr 58 64;
   Bytes.set_uint16_le hdr 60 (List.length sections + 1);
@@ -107,11 +110,23 @@ let private_segment_buffer = 0x1
 let dispatch_ptr = 0x2
 let wave32 = 0x400
 
+(* ELF.h's AMD GPU machine, code object version 6, and EF_AMDGPU_MACH values
+   with the generic version in the flags' top byte. *)
+let em_amdgpu = 224
+let v5 = 3
+let v6 = 4
+let gfx1201 = 0x4e
+let gfx12_generic = 0x59
+let generic ?(version = 1) mach = (version lsl 24) lor mach
+
 (* Laid out: [.rodata], two descriptors, at 0, of kernels whose code properties
    differ in each bit; [.data] at 128, a word that [reloc] patches to point to
    [k]; [.text], 6 bytes, at 256, where [k] starts: 262 bytes. Kernel [k]'s
-   descriptor is the first, [a]'s the second, and [ext] is undefined. *)
-let code_object ?(reloc = rela 0 2 rel64 4) ?(entry = 256) () =
+   descriptor is the first, [a]'s the second, and [ext] is undefined. It is
+   compiled for gfx1201 in a code object of version 6, unless [machine], [abi]
+   and [flags] say otherwise. *)
+let code_object ?(reloc = rela 0 2 rel64 4) ?(entry = 256)
+    ?(machine = em_amdgpu) ?(abi = v6) ?(flags = gfx1201) () =
   let k =
     descriptor ~group:0x100 ~private_:0x40 ~kernarg:0x18 ~entry ~rsrc1:0x11
       ~rsrc2:0x22 ~rsrc3:0x3
@@ -121,7 +136,7 @@ let code_object ?(reloc = rela 0 2 rel64 4) ?(entry = 256) () =
       ~rsrc2:0 ~rsrc3:0 ~props:dispatch_ptr
   in
   let strtab = "\000k.kd\000k\000a.kd\000ext\000" in
-  elf
+  elf ~machine ~abi ~flags
     [
       (".rodata", 1, 0, k ^ a, 0, 0, 64, 0);
       (".data", 1, 0, String.make 8 '\000', 0, 0, 8, 0);
@@ -174,12 +189,61 @@ let test_kernel () =
   equal ~msg:"a reads its dispatch packet" bool true a.dispatch_ptr;
   equal ~msg:"a reads no scratch descriptor" bool false a.private_segment_buffer
 
+(* The GPUs each processor's code objects run on: the GPU itself, and every GPU
+   a generic processor lists. *)
+let gpus = [ "gfx1100"; "gfx1151"; "gfx1200"; "gfx1201"; "gfx942"; "gfx950" ]
+
+let processors =
+  cases
+    ~name:(fun ((p, flags), _) -> Printf.sprintf "%s (flags 0x%x)" p flags)
+    "the GPUs that run a code object"
+    [
+      (* (processor, flags), and the GPUs of [gpus] that run it *)
+      (("gfx1201", gfx1201), [ "gfx1201" ]);
+      (("gfx1100", 0x41), [ "gfx1100" ]);
+      (("gfx942", 0x4c), [ "gfx942" ]);
+      (("gfx12-generic", generic gfx12_generic), [ "gfx1200"; "gfx1201" ]);
+      (("gfx11-generic", generic 0x54), [ "gfx1100"; "gfx1151" ]);
+      (("gfx9-4-generic", generic 0x5f), [ "gfx942"; "gfx950" ]);
+      ( ("gfx12-generic", generic ~version:2 gfx12_generic),
+        [ "gfx1200"; "gfx1201" ] );
+      (* XNACK and SRAMECC settings leave the processor as it is. *)
+      (("gfx942", 0xf00 lor 0x4c), [ "gfx942" ]);
+    ]
+    (fun ((processor, flags), runs) ->
+      let co = load (code_object ~flags ()) in
+      equal ~msg:"its processor" string processor (C.target co);
+      equal ~msg:"the GPUs that run it" (list string) runs
+        (List.filter (C.runs_on co) gpus))
+
 let errors =
   let co = load (code_object ()) in
   group "errors"
     [
       test "not an ELF object" (fun () ->
           ignore (require_error (C.of_string "not an elf")));
+      test "an object for another machine" (fun () ->
+          require_error (C.of_string (code_object ~machine:62 ()))
+          |> starts_with ~affix:"not an AMD GPU code object (e_machine 62)");
+      cases ~name:(Printf.sprintf "EF_AMDGPU_MACH 0x%x")
+        "a processor LLVM does not name" [ 0x0; 0x1; 0x27; 0xff ] (fun mach ->
+          require_error (C.of_string (code_object ~flags:mach ()))
+          |> starts_with ~affix:"a code object for no AMD GPU");
+      test "a generic code object before version 6" (fun () ->
+          require_error
+            (C.of_string
+               (code_object ~abi:v5 ~flags:(generic gfx12_generic) ()))
+          |> starts_with
+               ~affix:"a gfx12-generic code object before code object version 6");
+      test "a generic code object of version 0" (fun () ->
+          require_error
+            (C.of_string
+               (code_object ~flags:(generic ~version:0 gfx12_generic) ()))
+          |> starts_with
+               ~affix:"a gfx12-generic code object of generic version 0");
+      test "a GPU's code object before version 6" (fun () ->
+          equal string "gfx1201"
+            (C.target (load (code_object ~abi:v5 ~flags:gfx1201 ()))));
       test "a relocation of another kind" (fun () ->
           require_error (C.of_string (code_object ~reloc:(rela 0 2 1 0) ()))
           |> starts_with ~affix:"an unknown AMD GPU relocation 1");
@@ -201,5 +265,6 @@ let () =
          test "the image is relocated and padded" test_image;
          test "kernels are named by their descriptors" test_kernels;
          test "a descriptor's fields" test_kernel;
+         processors;
          errors;
        ])

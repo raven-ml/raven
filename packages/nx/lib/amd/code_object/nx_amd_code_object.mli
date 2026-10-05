@@ -5,11 +5,11 @@
 
 (** AMD GPU code objects.
 
-    A code object is the ELF executable a compiler links for one GPU
-    architecture. A device loads its image at an address of its memory. Each
-    kernel in it has a kernel descriptor, which a dispatch reads: where the
-    kernel's code starts, the memory it takes, and the registers it sets up for
-    its waves. *)
+    A code object is the ELF executable a compiler links for one processor: a
+    GPU, or a generic processor, whose code objects every GPU of a generation
+    runs. A device loads its image at an address of its memory. Each kernel in
+    it has a kernel descriptor, which a dispatch reads: where the kernel's code
+    starts, the memory it takes, and the registers it sets up for its waves. *)
 
 type t
 (** The type for code objects, relocated. *)
@@ -19,8 +19,19 @@ val of_string : string -> (t, string) result
     loader applies them: each [R_AMDGPU_REL64] word holds its target's offset
     from itself, so that the image runs at any address.
 
-    Errors if [obj] is not a 64-bit little-endian ELF object, or one of its
+    Errors if [obj] is not a 64-bit little-endian ELF object for AMD GPUs, if it
+    is compiled for no processor LLVM names, or for a generic one in a code
+    object before version 6 or of generic version [0], or if one of its
     relocations is of another kind or refers to a symbol it does not define. *)
+
+val target : t -> string
+(** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
+    such as ["gfx1201"], or a generic processor, such as ["gfx12-generic"]. *)
+
+val runs_on : t -> string -> bool
+(** [runs_on co gpu] is [true] iff the GPU [gpu], such as ["gfx1201"], runs
+    [co]: [co] is compiled for [gpu], or for a generic processor that LLVM lists
+    [gpu] under. *)
 
 val image : t -> string
 (** [image co] is the bytes a device loads, padded with zeros to whole 32-bit

@@ -261,9 +261,9 @@ let test_peer () =
   done;
   Domain.join t0
 
-(* A kernel that stores [value], compiled at test time, when a compiler for the
-   GPU's target is at hand: an object the load relocates, so no linker is
-   needed. *)
+(* A kernel that stores [value], compiled at test time for the processor [arch]
+   in a code object of version 6, when a compiler for it is at hand: an object
+   the load relocates, so no linker is needed. *)
 let compile ?(value = 42) arch =
   let clang =
     List.find_opt Sys.file_exists
@@ -283,7 +283,7 @@ let compile ?(value = 42) arch =
       let cmd =
         Printf.sprintf
           "%s -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=%s \
-           -nogpulib -O2 %s -o %s 2>/dev/null"
+           -mcode-object-version=6 -nogpulib -O2 %s -o %s 2>/dev/null"
           clang arch src out
       in
       if Sys.command cmd = 0 then
@@ -314,6 +314,30 @@ let test_programs () =
       match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"
       | Error why -> contains ~msg:"refused" ~sub:"no kernel" why)
+
+(* A code object for another GPU is refused, naming both, and one for the
+   generic processor of the GPU's generation, as LLVM's AMDGPUUsage lists them,
+   loads. *)
+let test_targets () =
+  let d = device () in
+  let gpu = Nx_device.arch d in
+  let other = if gpu = "gfx1100" then "gfx1201" else "gfx1100" in
+  let generic =
+    if String.starts_with ~prefix:"gfx12" gpu then "gfx12-generic"
+    else if String.starts_with ~prefix:"gfx11" gpu then "gfx11-generic"
+    else "gfx9-4-generic"
+  in
+  match (compile other, compile generic) with
+  | None, _ | _, None -> skip ~reason:"no compiler for the GPU's targets" ()
+  | Some foreign, Some binary ->
+      (match Nx_device.Program.load d ~binary:foreign ~name:"fill" with
+      | Ok _ -> fail "loaded a code object for another GPU"
+      | Error why ->
+          equal string
+            (Printf.sprintf "%s: a code object for %s; the GPU is %s"
+               (Nx_device.name d) other gpu)
+            why);
+      ignore (program d ~binary ~name:"fill")
 
 (* A load waits for the copy of its code, which takes microseconds: the median
    of fresh loads stays under [load_ms], which a wait that sleeps on the
@@ -639,6 +663,7 @@ let () =
          group "programs"
            [
              test "code objects" test_programs;
+             test "code objects for another GPU" test_targets;
              test "loads wait for their copy alone" test_load_time;
              test "scratch" test_scratch;
            ];

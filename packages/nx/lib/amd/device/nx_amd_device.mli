@@ -66,12 +66,14 @@
     runtime's profiles.
 
     {b Programs} are functions of AMD GPU code objects, ELF objects compiled for
-    the device's {!Nx_device.arch}: the function [name] is the kernel whose
-    descriptor is the symbol [name ^ ".kd"]. A code object is uploaded once
-    while a program of it or its {!kernel}'s code is reachable
-    ({!Nx_device.Program.load}). It lies in the GPU's own memory, and counts
-    there ({!Nx_device.budget}), whatever the size of the memory BAR: the copy
-    engine copies it from system memory, and the load returns once it is there.
+    the device's {!Nx_device.arch} or for a generic processor that lists it
+    ({!Nx_amd_code_object.runs_on}); a load refuses a code object compiled for
+    another GPU. The function [name] is the kernel whose descriptor is the
+    symbol [name ^ ".kd"]. A code object is uploaded once while a program of it
+    or its {!kernel}'s code is reachable ({!Nx_device.Program.load}). It lies in
+    the GPU's own memory, and counts there ({!Nx_device.budget}), whatever the
+    size of the memory BAR: the copy engine copies it from system memory, and
+    the load returns once it is there.
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault, loses
     the device ({!Nx_device.Lost}) with the driver's report when a wait finds

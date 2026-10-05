@@ -104,5 +104,7 @@
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_kernel_code.h": "2f48b1fff5432fb96aa460d3c5ac0bccb2e8996adfa5ecdb508722f3911ff9d0",
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/inc/amd_hsa_queue.h": "1f45345473ea2a02200748106a43f8aaf97568e11c8182a789684320008592e3",
  "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h": "f0dc5099a15c812cb6cdf33cf67ec35f1386be222a6d0f05896cfff16916e514",
+ "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/docs/AMDGPUUsage.rst": "890eb917afae5554b579da333df0823ddd4226fe6d1d5c321b9e63fb98a6412d",
+ "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/include/llvm/BinaryFormat/ELF.h": "b9ade3a9aed6564183cad82a21d709a9c3c1be7495f4e1bbc3361daf45398864",
  "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/include/llvm/Support/AMDHSAKernelDescriptor.h": "f5aa03627f1baa20b4f5535275447513902926a467f65de886d15c53214609d3"
 }

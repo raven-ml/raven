@@ -21,6 +21,8 @@ type relocation = { at : int; target : target; kind : int; addend : int }
 type t = {
   kind : int;
   machine : int;
+  abi_version : int;
+  flags : int;
   image : string;
   sections : section list;
   symbols : symbol array;
@@ -218,6 +220,8 @@ let load ?(align = 1) obj =
   {
     kind = u16 16;
     machine = u16 18;
+    abi_version = Char.code obj.[8];
+    flags = u32 48;
     image = Bytes.to_string image;
     sections;
     symbols =

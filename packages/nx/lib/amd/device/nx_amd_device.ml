@@ -406,6 +406,8 @@ let dma a r =
 
 (* Programs *)
 
+let arch (a, b, c) = Printf.sprintf "gfx%d%x%x" a b c
+
 (* Code lies in the GPU's own memory, under both interfaces and whatever the
    size of the memory BAR, so that instruction fetches stay in VRAM: the host
    writes it into system memory, [staging], and the SDMA queue copies it from
@@ -438,11 +440,16 @@ let fits_lds a (k : Code_object.kernel) =
   (k.group_segment + 511) / 512 land 0x1FF <= a.props.lds_bytes / 512
 
 (* The code object [binary], relocated and uploaded to the device's memory,
-   which it frees once unloaded. A code object the device cannot run is refused,
-   and the device stays usable. *)
+   which it frees once unloaded. A code object the device cannot run, such as
+   one compiled for another GPU, is refused, and the device stays usable. *)
 let load a ~sleep ~binary =
+  let gpu = arch a.props.target in
   match Code_object.of_string binary with
   | Error _ as e -> e
+  | Ok obj when not (Code_object.runs_on obj gpu) ->
+      Error
+        (Printf.sprintf "a code object for %s; the GPU is %s"
+           (Code_object.target obj) gpu)
   | Ok obj -> (
       let img = Code_object.image obj in
       let bytes = String.length img in
@@ -539,8 +546,6 @@ let gpu_name a =
 let target_of v =
   let v = if v = 90403 then 90402 else v in
   (v / 10000, v / 100 mod 100, v mod 100)
-
-let arch (a, b, c) = Printf.sprintf "gfx%d%x%x" a b c
 
 let supported ((major, _, _) as t) =
   if not (List.mem t [ (9, 4, 2); (9, 5, 0) ] || major = 11 || major = 12) then

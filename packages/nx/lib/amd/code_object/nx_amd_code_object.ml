@@ -7,7 +7,7 @@ module Elf = Nx_device_elf
 module D = Code_object_defs
 module K = D.Kernel_descriptor
 
-type t = { elf : Elf.t; image : string }
+type t = { elf : Elf.t; image : string; target : string }
 
 (* LLVM's AMDGPU relocations, ELFRelocs/AMDGPU.def. *)
 let r_amdgpu_rel64 = 5
@@ -24,10 +24,39 @@ let relocate b (r : Elf.relocation) =
       Bytes.set_int64_le b r.at (Int64.of_int (target - r.at + r.addend));
       Ok ()
 
+(* The processor of [elf]'s flags. A generic processor's code object carries the
+   version of the processor's code, which LLVM numbers from 1, in a code object
+   of version 6 or later. *)
+let processor (elf : Elf.t) =
+  let mach = elf.flags land D.ef_amdgpu_mach in
+  let version =
+    (elf.flags land D.ef_amdgpu_generic_version)
+    lsr D.ef_amdgpu_generic_version_offset
+  in
+  match List.assoc_opt mach D.processors with
+  | None ->
+      Error
+        (Printf.sprintf "a code object for no AMD GPU (EF_AMDGPU_MACH 0x%x)"
+           mach)
+  | Some name when not (List.mem_assoc name D.generic) -> Ok name
+  | Some name when elf.abi_version < D.elfabiversion_amdgpu_hsa_v6 ->
+      Error
+        (Printf.sprintf "a %s code object before code object version 6" name)
+  | Some name when version = 0 ->
+      Error (Printf.sprintf "a %s code object of generic version 0" name)
+  | Some name -> Ok name
+
 let of_string obj =
   let* elf =
     match Elf.load obj with e -> Ok e | exception Failure why -> Error why
   in
+  let* () =
+    if elf.machine = D.em_amdgpu then Ok ()
+    else
+      Error
+        (Printf.sprintf "not an AMD GPU code object (e_machine %d)" elf.machine)
+  in
+  let* target = processor elf in
   let n = String.length elf.image in
   let b = Bytes.make ((n + 3) / 4 * 4) '\000' in
   Bytes.blit_string elf.image 0 b 0 n;
@@ -36,9 +65,17 @@ let of_string obj =
       (fun acc r -> Result.bind acc (fun () -> relocate b r))
       (Ok ()) elf.relocations
   in
-  Ok { elf; image = Bytes.to_string b }
+  Ok { elf; image = Bytes.to_string b; target }
 
 let image co = co.image
+let target co = co.target
+
+let runs_on co gpu =
+  co.target = gpu
+  || List.exists
+       (fun (g, members) -> g = co.target && List.mem gpu members)
+       D.generic
+
 let kd_suffix = ".kd"
 
 let kernels co =

@@ -3226,6 +3226,12 @@ thread.
 
 ### Nx
 
+- An AMD device refuses a code object compiled for another GPU
+  (`Nx_device.Program.load` is `Error "AMD: a code object for gfx1100; the GPU
+  is gfx1201"`) instead of loading it to fault or compute garbage. It loads
+  one for a generic processor that lists the GPU, such as `gfx12-generic`.
+  `Nx_amd_code_object.target` and `runs_on` say which, and `Nx_device_elf.t`
+  gains `flags` and `abi_version`.
 - **Breaking:** `Nx_quant.apply` takes no `?ids`. Route positions to a stack
   of experts with `Nx.map_segments`, whose function applies
   `Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:owners w) rows`, so a whole
@@ -3248,7 +3254,6 @@ thread.
 - Fix waits on AMD GPUs under the `amdgpu` driver that waited up to 200 ms
   past a run's end once they slept: the driver ignored the GPU's interrupt
   until the host armed its event's slot, which `Nx_amd_device` now does.
-
 - Add `nx.amd.packet`: the PM4, AQL and SDMA packets of AMD GPUs' queues and
   the GC registers they write, polymorphic in the values they place
   (`Nx_amd_packet.Pm4`, `Aql`, `Sdma`, `Gc`). `nx.amd.device`'s copies and

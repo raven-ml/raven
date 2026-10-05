@@ -18,3 +18,77 @@ end
 let amd_kernel_code_properties_enable_sgpr_private_segment_buffer = 1
 let amd_kernel_code_properties_enable_sgpr_dispatch_ptr = 2
 let amd_kernel_code_properties_enable_wavefront_size32 = 0x400
+
+(* The ELF header of a code object. *)
+let em_amdgpu = 0xe0
+let elfabiversion_amdgpu_hsa_v6 = 4
+let ef_amdgpu_mach = 0xff
+let ef_amdgpu_generic_version = 0xff000000
+let ef_amdgpu_generic_version_offset = 0x18
+
+(* LLVM's AMDGCN processors, by their EF_AMDGPU_MACH value. *)
+let processors = [
+  (0x20, "gfx600");
+  (0x21, "gfx601");
+  (0x22, "gfx700");
+  (0x23, "gfx701");
+  (0x24, "gfx702");
+  (0x25, "gfx703");
+  (0x26, "gfx704");
+  (0x28, "gfx801");
+  (0x29, "gfx802");
+  (0x2a, "gfx803");
+  (0x2b, "gfx810");
+  (0x2c, "gfx900");
+  (0x2d, "gfx902");
+  (0x2e, "gfx904");
+  (0x2f, "gfx906");
+  (0x30, "gfx908");
+  (0x31, "gfx909");
+  (0x32, "gfx90c");
+  (0x33, "gfx1010");
+  (0x34, "gfx1011");
+  (0x35, "gfx1012");
+  (0x36, "gfx1030");
+  (0x37, "gfx1031");
+  (0x38, "gfx1032");
+  (0x39, "gfx1033");
+  (0x3a, "gfx602");
+  (0x3b, "gfx705");
+  (0x3c, "gfx805");
+  (0x3d, "gfx1035");
+  (0x3e, "gfx1034");
+  (0x3f, "gfx90a");
+  (0x40, "gfx940");
+  (0x41, "gfx1100");
+  (0x42, "gfx1013");
+  (0x43, "gfx1150");
+  (0x44, "gfx1103");
+  (0x45, "gfx1036");
+  (0x46, "gfx1101");
+  (0x47, "gfx1102");
+  (0x48, "gfx1200");
+  (0x4a, "gfx1151");
+  (0x4b, "gfx941");
+  (0x4c, "gfx942");
+  (0x4e, "gfx1201");
+  (0x4f, "gfx950");
+  (0x51, "gfx9-generic");
+  (0x52, "gfx10-1-generic");
+  (0x53, "gfx10-3-generic");
+  (0x54, "gfx11-generic");
+  (0x55, "gfx1152");
+  (0x58, "gfx1153");
+  (0x59, "gfx12-generic");
+  (0x5f, "gfx9-4-generic");
+]
+
+(* The generic processors, and the processors that run their code objects. *)
+let generic = [
+  ("gfx9-generic", [ "gfx900"; "gfx902"; "gfx904"; "gfx906"; "gfx909"; "gfx90c" ]);
+  ("gfx9-4-generic", [ "gfx940"; "gfx941"; "gfx942"; "gfx950" ]);
+  ("gfx10-1-generic", [ "gfx1010"; "gfx1011"; "gfx1012"; "gfx1013" ]);
+  ("gfx10-3-generic", [ "gfx1030"; "gfx1031"; "gfx1032"; "gfx1033"; "gfx1034"; "gfx1035"; "gfx1036" ]);
+  ("gfx11-generic", [ "gfx1100"; "gfx1101"; "gfx1102"; "gfx1103"; "gfx1150"; "gfx1151"; "gfx1152"; "gfx1153" ]);
+  ("gfx12-generic", [ "gfx1200"; "gfx1201" ]);
+]

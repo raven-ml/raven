@@ -61,7 +61,8 @@ ROCM_FILES = [
     "projects/aqlprofile/linux/soc24_enum.h",
     COUNTER_DEFS,
 ]
-LLVM_FILES = ["llvm/include/llvm/Support/AMDHSAKernelDescriptor.h"]
+LLVM_FILES = ["llvm/include/llvm/Support/AMDHSAKernelDescriptor.h", "llvm/include/llvm/BinaryFormat/ELF.h",
+              "llvm/docs/AMDGPUUsage.rst"]
 
 # The performance counters of the blocks the runtime counts, for the GPUs it
 # supports: each GFX9 GPU by its own name, the later ones by their generation.
@@ -203,6 +204,10 @@ KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_
              "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
 KD_CONSTANTS = ["AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
                 "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_WAVEFRONT_SIZE32"]
+# ELF.h's values of the AMDGPU header: its machine, its ABI version, and the
+# fields of its flags.
+ELF_CONSTANTS = ["EM_AMDGPU", "ELFABIVERSION_AMDGPU_HSA_V6", "EF_AMDGPU_MACH",
+                 "EF_AMDGPU_GENERIC_VERSION", "EF_AMDGPU_GENERIC_VERSION_OFFSET"]
 # PM4, for nx.amd.packet: the same in soc15d.h (GFX9) and nvd.h (GFX10 on), and
 # the release's enumerations in kfd_pm4_headers_ai.h.
 PM4_CONSTANTS = [
@@ -475,6 +480,61 @@ def rlcg_extent(regs):
         if any(re.match("(mm|reg)" + p, name) for p in RLCG_PATTERNS):
             ext[seg] = max(ext.get(seg, 0), off)
     return sorted(ext.items())
+
+# Processors
+
+
+def rst_table(lines, name):
+    """The rows of the reStructuredText simple table [name], each a list of its
+    columns' lines."""
+    start = lines.index(f"     :name: {name}") + 2
+    rule = lines[start]
+    cols = [(m.start(), m.end()) for m in re.finditer(r"=+", rule)]
+    body = lines[start + 1:]
+    head = next(i for i, l in enumerate(body) if l.strip() and set(l.strip()) <= {"=", " "})
+    rows = []
+    for l in body[head + 1:]:
+        if l.strip() and set(l.strip()) <= {"=", " "}:
+            return rows
+        cells = [l[a:b if i + 1 < len(cols) else None].strip() for i, (a, b) in enumerate(cols)]
+        if cells[0] or not rows:
+            rows.append([[] for _ in cols])
+        for i, c in enumerate(cells):
+            if c:
+                rows[-1][i].append(c)
+    sys.exit(f"table {name} does not end")
+
+
+def processors(llvm):
+    """LLVM's AMDGCN processors by their [EF_AMDGPU_MACH] value, and the
+    processors each generic one lists, from ELF.h and AMDGPUUsage.rst, which
+    must agree."""
+    header = (llvm / LLVM_FILES[1]).read_text()
+    enums = {m.group(1): int(m.group(2), 0)
+             for m in re.finditer(r"^\s*(E[A-Z0-9_]+)\s*=\s*(0x[0-9a-fA-F]+|\d+),", header, re.M)}
+    missing = [c for c in ELF_CONSTANTS if c not in enums]
+    if missing:
+        sys.exit(f"ELF.h lacks {missing}")
+    lines = (llvm / LLVM_FILES[2]).read_text().splitlines()
+    code = re.compile(r"``([^`]+)``")
+    machs = []
+    for name, value, desc in rst_table(lines, "amdgpu-ef-amdgpu-mach-table"):
+        m = code.fullmatch(name[0])
+        if not (m and m.group(1).startswith("EF_AMDGPU_MACH_AMDGCN_")):
+            continue
+        if enums.get(m.group(1)) != int(value[0], 16):
+            sys.exit(f"{m.group(1)}: ELF.h and AMDGPUUsage.rst differ")
+        machs.append((int(value[0], 16), code.match(desc[0]).group(1)))
+    names = {n for _, n in machs}
+    generic = []
+    for row in rst_table(lines, "amdgpu-generic-processor-table"):
+        name = code.fullmatch(row[0][0]).group(1)
+        members = [code.search(l).group(1) for l in row[2] if l.startswith("- ")]
+        if name not in names or not set(members) <= names:
+            sys.exit(f"{name}: a generic processor or member without an EF_AMDGPU_MACH value")
+        generic.append((name, members))
+    return {c: enums[c] for c in ELF_CONSTANTS}, machs, generic
+
 
 def generate(cache, pins, pin, outdir):
     import clang.cindex as ci
@@ -786,6 +846,14 @@ def generate(cache, pins, pin, outdir):
     struct_module(co, "Kernel_descriptor", size, fields, KD_FIELDS)
     co.append("(* Its code properties. *)")
     co += [f"let {ml_name(c)} = {ml_int(values[c])}" for c in KD_CONSTANTS]
+    elf, machs, generic = processors(llvm)
+    co += ["", "(* The ELF header of a code object. *)"]
+    co += [f"let {ml_name(c)} = {ml_int(v)}" for c, v in elf.items()]
+    co += ["", "(* LLVM's AMDGCN processors, by their EF_AMDGPU_MACH value. *)", "let processors = ["]
+    co += [f"  ({ml_int(v)}, {json.dumps(n)});" for v, n in machs]
+    co += ["]", "", "(* The generic processors, and the processors that run their code objects. *)", "let generic = ["]
+    co += [f"  ({json.dumps(n)}, [ " + "; ".join(json.dumps(m) for m in ms) + " ]);" for n, ms in generic]
+    co.append("]")
 
     for name, lines in (("device/amd_defs.ml", out), ("packet/packet_defs.ml", pk),
                         ("code_object/code_object_defs.ml", co)):

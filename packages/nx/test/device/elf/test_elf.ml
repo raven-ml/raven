@@ -46,8 +46,10 @@ let elf sections =
   let shoff = Buffer.length body in
   let hdr = Bytes.make 64 '\000' in
   Bytes.blit_string "\x7fELF\002\001\001" 0 hdr 0 7;
+  Bytes.set_uint8 hdr 8 3;
   Bytes.set_uint16_le hdr 16 1;
   Bytes.set_uint16_le hdr 18 183;
+  Bytes.set_int32_le hdr 48 0xff00_004el;
   Bytes.set_int64_le hdr 40 (Int64.of_int shoff);
   Bytes.set_uint16_le hdr 58 64;
   Bytes.set_uint16_le hdr 60 (List.length sections + 1);
@@ -118,6 +120,8 @@ let test_elf () =
   let o = Elf.load obj in
   equal ~msg:"the object's type" int 1 o.kind;
   equal ~msg:"its machine" int 183 o.machine;
+  equal ~msg:"its ABI version" int 3 o.abi_version;
+  equal ~msg:"its flags, unsigned" int 0xff00_004e o.flags;
   equal ~msg:"text, then data at its alignment" string
     ("ABCD" ^ String.make 12 '\000' ^ "01234567")
     o.image;
