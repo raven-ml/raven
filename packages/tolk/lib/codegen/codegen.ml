@@ -13,7 +13,7 @@ let pm = Pattern_matcher.v
 let ( ++ ) = Pattern_matcher.append
 let lift = Pattern_matcher.with_ctx
 let ops l = Op.Set.of_list l
-let setting = Helpers.Context_var.value
+let setting = Setting.value
 let is o u = Op.equal (op u) o
 let upto n = List.init n Fun.id
 let srcs u = List.tl (src u)
@@ -658,7 +658,7 @@ let kernel_info u =
   | _ -> invalid_arg "a kernel's sink needs kernel information"
 
 let check_spec spec sink =
-  if setting Helpers.spec <> 0 then Spec.type_verify spec sink
+  if setting Setting.spec <> 0 then Spec.type_verify spec sink
 
 let apply_opts ?beam sink ren =
   let k = kernel_info sink in
@@ -676,7 +676,7 @@ let apply_opts ?beam sink ren =
   Postrange.apply_opts ?beam ~hand_coded:Heuristic.hand_coded_optimizations sink
     ren
 
-let dbgtv = Helpers.Context_var.string ~reach:Process "DBGTV" ""
+let dbgtv = Setting.string ~reach:Process "DBGTV" ""
 
 (* Host programs in blocks *)
 
@@ -894,11 +894,11 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       [
         lift pm_decomp;
         Decomp_op.late_patterns
-          ~disable_fast_idiv:(setting Helpers.disable_fast_idiv)
+          ~disable_fast_idiv:(setting Setting.disable_fast_idiv)
           supported_ops;
         lift
           (Transcendental.patterns
-             ~force:(setting Helpers.transcendental >= 2)
+             ~force:(setting Setting.transcendental >= 2)
              supported_ops);
       ]
   in
@@ -943,9 +943,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink =
     graph_rewrite ~walk:true ~ctx:(ref num_params) sink pm_number_params
   in
-  if setting Helpers.spec <> 0 then (
+  if setting Setting.spec <> 0 then (
     try Spec.type_verify Spec.program sink
-    with Invalid_argument _ as e when Helpers.Context_var.value dbgtv <> "" ->
+    with Invalid_argument _ as e when Setting.value dbgtv <> "" ->
       Format.printf "%a@." Render.pp_uops (toposort sink);
       raise e);
   sink
@@ -1011,7 +1011,7 @@ let pp_opts ppf = function
 
 let do_linearize prg sink =
   let k = kernel_info sink in
-  if setting Helpers.debug >= 3 && k.applied_opts <> [] then
+  if setting Setting.debug >= 3 && k.applied_opts <> [] then
     Format.printf "%-25s opts: %a@." (function_name k) pp_opts k.applied_opts;
   let lst =
     line_rewrite
@@ -1102,13 +1102,13 @@ let host_entry prg lin source =
 
 let do_compile (ren : Renderer.t) prg source =
   let source = match arg source with String s -> s | _ -> assert false in
-  if setting Helpers.debug >= 4 then print_endline source;
+  if setting Setting.debug >= 4 then print_endline source;
   let source =
     if ren.target.device = "CPU" then host_entry prg (nth prg 1) source
     else source
   in
   let lib = Renderer.Compiler.compile_cached ren.compiler source in
-  if setting Helpers.debug >= 7 then
+  if setting Setting.debug >= 7 then
     Renderer.Compiler.disassemble ren.compiler lib;
   Some (replace prg ~src:(src prg @ [ v Op.Binary ~arg:(Bytes lib) ]))
 
@@ -1176,7 +1176,7 @@ let to_program_lock = Mutex.create ()
 (* The key of a program, in memory and on disk: the kernel, the renderer and its
    target, the table of its compiler's binaries, which names the compiler and
    its options, every setting and variable that shapes what compilation makes
-   ([Helpers.shaping]), and the digest of this library's sources, of which a
+   ([Setting.shaping]), and the digest of this library's sources, of which a
    program is a function. *)
 let program_key ast (ren : Renderer.t) =
   String.concat "\n"
@@ -1187,7 +1187,7 @@ let program_key ast (ren : Renderer.t) =
        Format.asprintf "%a" Helpers.Target.pp ren.target;
        Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
      ]
-    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
+    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
 (* A program holds its binary: it is kept on disk only if its compiler's
    binaries are, under a table that names the compiler. A kernel that asks for a
@@ -1203,8 +1203,8 @@ let program prg = op prg = Op.Program && List.length (src prg) = 4
 let show_kept (ren : Renderer.t) prg =
   match (arg (nth prg 2), arg (nth prg 3)) with
   | String source, Bytes lib ->
-      if setting Helpers.debug >= 4 then print_endline source;
-      if setting Helpers.debug >= 7 then
+      if setting Setting.debug >= 4 then print_endline source;
+      if setting Setting.debug >= 7 then
         Renderer.Compiler.disassemble ren.compiler lib
   | _ -> ()
 

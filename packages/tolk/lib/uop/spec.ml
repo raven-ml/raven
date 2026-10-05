@@ -26,7 +26,7 @@ let decide p name f = Pattern_matcher.rule p (fun m -> f (m name))
 let validate_index ?(gate = bool true) uidx =
   match src uidx with
   | [ buf; idx ]
-    when (not (is_invalid idx)) && Helpers.Context_var.value Helpers.check_oob
+    when (not (is_invalid idx)) && Setting.value Setting.check_oob
     ->
       (* Without an SMT solver, the bounds of the index are the proof: an index
          they do not prove fails, as the solver's unknown verdict does. *)
@@ -64,7 +64,7 @@ let type_verify ?enter_calls spec ast =
   List.iteri
     (fun i u ->
       if Pattern_matcher.rewrite spec () u <> Some true then begin
-        if Helpers.Context_var.value Helpers.debug >= 3 then
+        if Setting.value Setting.debug >= 3 then
           Format.eprintf "%a@." Render.pp_uops lst;
         let pp_src ppf x =
           Format.fprintf ppf "(%a, %a, %a)" Op.pp (op x) Dtype.pp (dtype x)

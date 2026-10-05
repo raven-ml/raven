@@ -681,19 +681,17 @@ let of_name s =
 
 (* The data type a setting names, of the kind [is_kind] accepts. *)
 let setting_dtype setting ~kind is_kind =
-  let value = Helpers.Context_var.value setting in
+  let value = Setting.value setting in
   match of_name (String.lowercase_ascii value) with
   | Some dt when is_kind dt -> dt
-  | _ ->
-      invalid_arg
-        (strf "%s=%s is not %s" (Helpers.Context_var.key setting) value kind)
+  | _ -> invalid_arg (strf "%s=%s is not %s" (Setting.key setting) value kind)
 
 let default_float () =
-  setting_dtype Helpers.default_float ~kind:"a float of known width" (fun dt ->
+  setting_dtype Setting.default_float ~kind:"a float of known width" (fun dt ->
       List.mem dt floats)
 
 let default_int () =
-  setting_dtype Helpers.default_int ~kind:"an integer of known width" (fun dt ->
+  setting_dtype Setting.default_int ~kind:"an integer of known width" (fun dt ->
       List.mem dt ints)
 
 let of_string s =
@@ -815,13 +813,13 @@ let can_lossless_cast d0 d1 =
   | Int16 -> List.mem d0 [ Uint8; Int8 ]
   | _ -> false
 
-let sum_dtype = Helpers.Context_var.string ~reach:Output "SUM_DTYPE" "float32"
+let sum_dtype = Setting.string ~reach:Output "SUM_DTYPE" "float32"
 
 let sum_acc dt =
   if is_unsigned dt then least_upper [ dt; Uint32 ]
   else if is_int dt || dt = Bool then least_upper [ dt; Int32 ]
   else
-    let name = Helpers.Context_var.value sum_dtype in
+    let name = Setting.value sum_dtype in
     match of_string name with
     | Ok acc -> least_upper [ dt; acc ]
     | Error _ -> invalid_arg (strf "SUM_DTYPE=%s is not a data type" name)

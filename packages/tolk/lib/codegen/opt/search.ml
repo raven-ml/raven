@@ -7,23 +7,22 @@
 
 open Ops
 module K = Postrange.Scheduler
-module C = Helpers.Context_var
 
-let setting = C.value
-let debug () = setting Helpers.debug
+let setting = Setting.value
+let debug () = setting Setting.debug
 
 (* The settings that pick a search's candidates and how it measures and stops,
    which shape what it finds. A strict search raises where another drops a
    candidate, and finds what the other finds when it does not raise. *)
-let padto = C.bool ~reach:Output "BEAM_PADTO" false
-let uops_max = C.int ~reach:Output "BEAM_UOPS_MAX" 3000
-let upcast_max = C.int ~reach:Output "BEAM_UPCAST_MAX" 256
-let local_max = C.int ~reach:Output "BEAM_LOCAL_MAX" 1024
-let min_progress = C.float ~reach:Output "BEAM_MIN_PROGRESS" 0.01
-let estimate = C.bool ~reach:Output "BEAM_ESTIMATE" true
-let strict_mode = C.bool ~reach:Process "BEAM_STRICT_MODE" false
-let log_surpass_max = C.bool ~reach:Process "BEAM_LOG_SURPASS_MAX" false
-let beam_debug = C.int ~reach:Process "BEAM_DEBUG" 0
+let padto = Setting.bool ~reach:Output "BEAM_PADTO" false
+let uops_max = Setting.int ~reach:Output "BEAM_UOPS_MAX" 3000
+let upcast_max = Setting.int ~reach:Output "BEAM_UPCAST_MAX" 256
+let local_max = Setting.int ~reach:Output "BEAM_LOCAL_MAX" 1024
+let min_progress = Setting.float ~reach:Output "BEAM_MIN_PROGRESS" 0.01
+let estimate = Setting.bool ~reach:Output "BEAM_ESTIMATE" true
+let strict_mode = Setting.bool ~reach:Process "BEAM_STRICT_MODE" false
+let log_surpass_max = Setting.bool ~reach:Process "BEAM_LOG_SURPASS_MAX" false
+let beam_debug = Setting.int ~reach:Process "BEAM_DEBUG" 0
 let upto n = List.init n Fun.id
 
 let actions () =
@@ -33,7 +32,7 @@ let actions () =
         List.map (fun axis -> Opt.Split { axis; amount; target; top }) axes)
       amounts
   in
-  let use_tc = setting Helpers.use_tc in
+  let use_tc = setting Setting.use_tc in
   let tc tc_opt axis = Opt.Tc { axis; tc_select = -1; tc_opt; use_tc } in
   List.concat
     [
@@ -47,7 +46,7 @@ let actions () =
       split Local [ 32 ] [ 0 ];
       [ tc 0 0 ];
       (* covers resnet kernels (3 global * 3 reduce) *)
-      List.map (tc (Option.value (setting Helpers.tc_opt) ~default:2)) (upto 9);
+      List.map (tc (Option.value (setting Setting.tc_opt) ~default:2)) (upto 9);
       List.concat_map
         (fun axis ->
           List.map
@@ -277,10 +276,10 @@ let beam_search ~time ?allow_test_size amt s =
          Format.asprintf "%a" Helpers.Target.pp ren.target;
          Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
        ]
-      @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
+      @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
   in
   let cached =
-    if Helpers.Context_var.value Helpers.ignore_beam_cache then None
+    if Setting.value Setting.ignore_beam_cache then None
     else Helpers.Diskcache.get ~table:"beam_search" key
   in
   match cached with

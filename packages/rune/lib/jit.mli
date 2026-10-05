@@ -13,7 +13,7 @@
     ({!Lower.span}) and where it starts within 16 bytes of memory
     ({!Lower.phase}), on every device, the host included; and what a caller may
     change around a call that changes the program: every setting of tolk that
-    shapes what it compiles ({!Tolk.Helpers.shaping}), the search's width
+    shapes what it compiles ({!Tolk.Setting.shaping}), the search's width
     ([BEAM] or [JITBEAM]), whether batches are profiled ([DEBUG] at 2 or more),
     and the counters and traces of the profile being taken
     ({!Nx_device.Profile}).

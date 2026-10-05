@@ -556,10 +556,10 @@ let run_rangeify ?(debug = false) tsink =
       if not (Op.Set.mem (op x) no_ranges) then
         assign_ranges rctx ~debug ~consumer_map ~ending_ranges x)
     (List.rev tsink_toposort);
-  let spec = min (Helpers.Context_var.value Helpers.spec) 2 in
+  let spec = min (Setting.value Setting.spec) 2 in
   let tsink =
-    Helpers.context
-      [ B (Helpers.spec, spec) ]
+    Setting.context
+      [ B (Setting.spec, spec) ]
       (fun () ->
         graph_rewrite ~bottom_up:true ~ctx:rctx tsink pm_apply_rangeify)
   in

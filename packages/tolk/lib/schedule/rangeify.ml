@@ -302,7 +302,7 @@ end)
 type limit_bufs_ctx = { buf_cache : Bufs.t Tbl.t; mutable range_idx : int }
 
 let limit_bufs ctx root =
-  let max_bufs = Helpers.Context_var.value Helpers.max_kernel_buffers in
+  let max_bufs = Setting.value Setting.max_kernel_buffers in
   (* Without a device, the node computes indices. *)
   if Option.is_none (device root) || max_bufs = 0 then None
   else
@@ -685,9 +685,9 @@ let split_kernels =
     ])
 
 let get_kernel_graph tsink =
-  let setting = Helpers.Context_var.value in
+  let setting = Setting.value in
   let tsink =
-    Indexing.run_rangeify ~debug:(setting Helpers.debug_rangeify) tsink
+    Indexing.run_rangeify ~debug:(setting Setting.debug_rangeify) tsink
   in
   (* Cleanups for speed and runnability. *)
   let tsink =
@@ -723,6 +723,6 @@ let get_kernel_graph tsink =
   let tsink = graph_rewrite ~bottom_up:true ~ctx:() tsink split_kernels in
   let tsink = graph_rewrite ~ctx:() tsink pm_no_indexing_calls in
   let tsink = graph_rewrite ~ctx:() tsink pm_no_views in
-  if setting Helpers.spec <> 0 then
+  if setting Setting.spec <> 0 then
     Spec.type_verify ~enter_calls:false Spec.kernel_graph tsink;
   tsink

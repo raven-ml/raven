@@ -5,107 +5,10 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Settings, integer and list utilities, terminal text and the disk cache.
+(** Compilation targets, integer and list utilities, terminal text, the disk
+    cache and programs. *)
 
-    Settings are the library's only global state besides the cache. Each is read
-    from an environment variable when the program starts and can be overridden
-    for the extent of a function call with {!context}. *)
-
-(** {1:settings Settings}
-
-    A setting is declared once, with the environment variable it is read from
-    and what its value reaches. Besides settings, tolk reads only where it finds
-    files: [CACHEDB] ({!cachedb}), the system's [PATH], [LD_LIBRARY_PATH],
-    [HOME] and [XDG_CACHE_HOME], and the variable that names a library's file
-    ([C.findlib]). A library that compiles with tolk declares its settings here
-    too, so that the caches key on those that reach its output. *)
-
-(** What a setting changes. *)
-type reach =
-  | Output
-      (** What compilation makes: programs, schedules and the optimisations a
-          search finds, whose caches key on its value ({!shaping}). *)
-  | Process
-      (** Only how the process runs: what it prints, keeps or checks, where it
-          finds its tools, or how many domains compile. *)
-
-(** Settings.
-
-    A setting has an initial value, read from its environment variable when it
-    is declared, and a current value on each domain: the innermost {!context}
-    override made on the domain, or else the value it had on the domain that
-    spawned it, when it spawned it, or else the initial value.
-
-    Integers are an optional [+] or [-] followed by decimal digits, where a
-    single underscore may separate two digits, surrounded by any number of
-    spaces, tabs, newlines, vertical tabs, form feeds and carriage returns.
-    Numbers are an optional [+] or [-] followed by [inf], [infinity] or [nan] in
-    any case, or by a decimal number: digits with an optional fraction ([1.5],
-    [1.] or [.5]) and an optional exponent ([e] or [E], an optional sign, and
-    digits), with digits and white space as for integers.
-
-    Declare a setting at a module's top level, so that it is declared before
-    anything is compiled. Every constructor raises [Invalid_argument] if a
-    setting named [key] is already declared, or if the variable [key] holds
-    something its type does not read, non-ASCII digits and white space included,
-    or an integer out of [int]'s range. *)
-module Context_var : sig
-  type 'a t
-  (** The type for settings of type ['a]. *)
-
-  val int : reach:reach -> string -> int -> int t
-  (** [int ~reach key default] is a setting whose initial value is the integer
-      the variable [key] holds, or [default] if [key] is unset. *)
-
-  val bool : reach:reach -> string -> bool -> bool t
-  (** [bool ~reach key default] is a setting whose initial value is [true] iff
-      the variable [key] holds a nonzero integer, and [default] if [key] is
-      unset. *)
-
-  val float : reach:reach -> string -> float -> float t
-  (** [float ~reach key default] is a setting whose initial value is the number
-      the variable [key] holds, or [default] if [key] is unset. *)
-
-  val string : reach:reach -> string -> string -> string t
-  (** [string ~reach key default] is a setting whose initial value is the
-      variable [key] as written, or [default] if [key] is unset. A variable set
-      to the empty string is [""]. *)
-
-  val int_option : reach:reach -> string -> int option t
-  (** [int_option ~reach key] is a setting whose initial value is [Some n] if
-      the variable [key] holds the integer [n], and [None] if [key] is unset:
-      its readers state what [None] stands for. *)
-
-  val key : 'a t -> string
-  (** [key v] is the name of [v]'s environment variable. *)
-
-  val value : 'a t -> 'a
-  (** [value v] is [v]'s current value on the calling domain. *)
-end
-
-val shaping : unit -> (string * string) list
-(** [shaping ()] is the name and the current value on the calling domain, as
-    text, of each setting whose reach is {!Output}, sorted by name: what the
-    caches of programs, schedules and searches key on. Two values have the same
-    text only if they are equal: a number is written in hexadecimal and [None]
-    as [""]. While no such setting changes on the calling domain, the result is
-    the same list, and reading it allocates nothing. *)
-
-(** The type for settings bound to values. *)
-type binding =
-  | B : 'a Context_var.t * 'a -> binding
-      (** [B (v, x)] binds setting [v] to [x]. *)
-
-val context : binding list -> (unit -> 'a) -> 'a
-(** [context bindings f] is [f ()], run with each setting of [bindings] holding
-    its bound value; when a setting is bound twice, the later binding wins. Each
-    setting gets its previous value back when [f] returns or raises.
-
-    The overrides are seen by what runs meanwhile on the calling domain, and by
-    the domains it spawns meanwhile, which start with its values. Other domains
-    do not see them, so domains override settings independently. *)
-
-(** {2:targets Compilation targets} *)
+(** {1:targets Compilation targets} *)
 
 (** Compilation targets.
 
@@ -133,160 +36,6 @@ module Target : sig
   (** [pp] formats a target as {!of_string} reads it, without trailing
       separators. *)
 end
-
-(** {2:list List of settings}
-
-    Levels and counts are integers; switches are [true] when their variable
-    holds a nonzero integer. *)
-
-val debug : int Context_var.t
-(** [debug] is the verbosity of diagnostics printed on standard output, from
-    [DEBUG]. [0] prints nothing and each level adds detail. Defaults to [0]. *)
-
-val beam : int Context_var.t
-(** [beam] is the width of the beam search that picks kernel optimizations, from
-    [BEAM]. [0] applies hand-coded optimizations instead. Defaults to [0]. *)
-
-val jitbeam : int option Context_var.t
-(** [jitbeam] is the width of the beam search for the kernels of a captured
-    program ([Jit]), from [JITBEAM]. [None], the default, stands for {!beam}'s
-    current value. *)
-
-val noopt : bool Context_var.t
-(** [noopt] disables kernel optimizations, from [NOOPT]. Defaults to [false]. *)
-
-val no_color : bool Context_var.t
-(** [no_color] makes {!colored} leave text unchanged, from [NO_COLOR]. Defaults
-    to [false]. *)
-
-val use_tc : int Context_var.t
-(** [use_tc] is how kernel optimization uses tensor cores, from [TC]. [0] never
-    uses them, [1] uses them, [2] shapes the kernel for them without emitting
-    tensor core instructions. Defaults to [1]. *)
-
-val tc_select : int Context_var.t
-(** [tc_select] is the tensor core kernel optimization uses, from [TC_SELECT]:
-    [-1] tries the target's tensor cores in order and uses the first that fits,
-    [n] uses only the [n]-th. Defaults to [-1]. *)
-
-val tc_opt : int option Context_var.t
-(** [tc_opt] is which kernels may use tensor cores, from [TC_OPT]. [0] admits
-    kernels with a single reduce axis multiplying loaded values, [1] also
-    kernels with several reduce axes and casted operands, [2] also kernels whose
-    axes must be padded to the tensor core's dimensions. [None], the default,
-    stands for [0] in hand-coded optimizations ([Heuristic]) and for [2] in a
-    beam search ([Search]), which measures what it admits. *)
-
-val tc_min_globals : int Context_var.t
-(** [tc_min_globals] is the number of global axes below which tensor core
-    optimization does not upcast its N axis, from [TC_MIN_GLOBALS]. Defaults to
-    [0]. *)
-
-val transcendental : int Context_var.t
-(** [transcendental] is how code generation decomposes transcendental functions
-    into polynomial approximations, from [TRANSCENDENTAL]: from [2] on, all of
-    them; below, those the target does not support. Defaults to [1]. *)
-
-val split_reduceop : bool Context_var.t
-(** [split_reduceop] lets scheduling split a large reduction into two kernels to
-    expose more parallelism, from [SPLIT_REDUCEOP]. Defaults to [true]. *)
-
-val no_memory_planner : bool Context_var.t
-(** [no_memory_planner] keeps scheduling from reusing the memory of buffers that
-    are no longer needed, from [NO_MEMORY_PLANNER]. Defaults to [false]. *)
-
-val ring : int Context_var.t
-(** [ring] is when allreduce uses the ring algorithm, from [RING]: [0] never,
-    [1] across more than two devices on large enough inputs, [2] always.
-    Defaults to [1]. *)
-
-val all2all : int Context_var.t
-(** [all2all] is when allreduce uses the all-to-all algorithm, which takes
-    precedence over the ring, from [ALL2ALL], with the levels of {!ring}.
-    Defaults to [0]. *)
-
-val allreduce_cast : bool Context_var.t
-(** [allreduce_cast] makes the allreduce of a value cast up from a 16-bit float
-    exchange the 16-bit values, from [ALLREDUCE_CAST]. Defaults to [true]. *)
-
-val allreduce_node_ndevs : int Context_var.t
-(** [allreduce_node_ndevs] is the number of devices per node, from
-    [ALLREDUCE_NODE_NDEVS]. When positive and dividing the number of devices,
-    allreduce reduces within each node before crossing nodes, device [k] of a
-    node exchanging with device [k] of the others. [0] treats all devices as one
-    node. Defaults to [0]. *)
-
-val cachelevel : int Context_var.t
-(** [cachelevel] enables the {!Diskcache} when positive, from [CACHELEVEL].
-    Defaults to [2]. *)
-
-val ignore_beam_cache : bool Context_var.t
-(** [ignore_beam_cache] makes the beam search ignore the results it cached, from
-    [IGNORE_BEAM_CACHE]. Defaults to [false]. *)
-
-val disable_fast_idiv : bool Context_var.t
-(** [disable_fast_idiv] keeps code generation from replacing integer division by
-    a constant with a multiplication and a shift, from [DISABLE_FAST_IDIV].
-    Defaults to [true]. *)
-
-val max_kernel_buffers : int Context_var.t
-(** [max_kernel_buffers] is the number of buffers one kernel may access, from
-    [MAX_KERNEL_BUFFERS]. [0] uses the device's limit. Defaults to [0]. *)
-
-val emulated_dtypes : string list Context_var.t
-(** [emulated_dtypes] names the data types code generation emulates with other
-    types, as if the target did not support them, from [EMULATED_DTYPES]: a
-    [,]-separated list, empty items dropped. Defaults to [[]]. *)
-
-val default_float : string Context_var.t
-(** [default_float] names the data type of floating-point values that do not
-    state one, from [DEFAULT_FLOAT]. Defaults to ["float32"]. *)
-
-val default_int : string Context_var.t
-(** [default_int] names the data type of integer values that do not state one,
-    from [DEFAULT_INT]. Defaults to ["int32"]. *)
-
-val parallel : int Context_var.t
-(** [parallel] is the number of domains compiling kernels and running the beam
-    search, from [PARALLEL]. [0] works on the calling domain. Defaults to the
-    number of CPUs available to the process, bounded by its cgroup's CPU quota
-    and by the runtime's maximum number of domains. *)
-
-val spec : int Context_var.t
-(** [spec] is how much of the graph is checked against its specification, from
-    [SPEC]. [0] checks nothing, [1] checks the graphs passed between stages, [2]
-    also checks every node when it is created, [3] also computes each created
-    node's shape. Defaults to [1]. *)
-
-val check_oob : bool Context_var.t
-(** [check_oob] makes specification checks prove that memory accesses stay
-    within their buffers, from [CHECK_OOB]. Defaults to [false]. *)
-
-val debug_rangeify : bool Context_var.t
-(** [debug_rangeify] prints the steps of range assignment, from
-    [DEBUG_RANGEIFY]. Defaults to [false]. *)
-
-val tuple_order : bool Context_var.t
-(** [tuple_order] makes linearization order nodes of equal priority by their
-    structure, from [TUPLE_ORDER]. Otherwise they keep their topological order.
-    Defaults to [true]. *)
-
-val ccache : bool Context_var.t
-(** [ccache] caches compiled programs in the {!Diskcache}, from [CCACHE].
-    Defaults to [true]. *)
-
-val allow_tf32 : bool Context_var.t
-(** [allow_tf32] lets float32 matrix multiplications use TF32 tensor cores on
-    NVIDIA devices, from [ALLOW_TF32]. Defaults to [false]. *)
-
-val scache : int Context_var.t
-(** [scache] is where schedules are cached, from [SCACHE]: [0] nowhere, [1] in
-    memory, [2] or more also in the {!Diskcache}. Defaults to [2]. *)
-
-val disallow_broadcast : bool Context_var.t
-(** [disallow_broadcast] makes an elementwise operation on operands of different
-    shapes fail instead of broadcasting them, from [DISALLOW_BROADCAST].
-    Defaults to [false]. *)
 
 (** {1:lists Integers and lists} *)
 
@@ -386,7 +135,7 @@ type color =
 val colored : ?background:bool -> color -> string -> string
 (** [colored c s] is [s] wrapped in the ANSI escape sequences that paint it, or
     its background if [background] is [true], in [c]. It is [s] itself when
-    {!no_color} is set. [background] defaults to [false]. *)
+    {!Setting.no_color} is set. [background] defaults to [false]. *)
 
 val time_to_str : ?w:int -> float -> string
 (** [time_to_str ~w t] is the duration of [t] seconds right-aligned in [w]
@@ -445,7 +194,7 @@ val cachedb : string
     writer of a key wins. Tables are versioned with the library: entries written
     by a library whose cached data meant something else are not seen. Tables and
     keys are any strings; entries stay within {!cachedb} whatever they hold. The
-    cache is disabled while {!cachelevel} is not positive. *)
+    cache is disabled while {!Setting.cachelevel} is not positive. *)
 module Diskcache : sig
   val get : table:string -> string -> string option
   (** [get ~table key] is the value of [key] in [table], if any. It is [None]
@@ -471,8 +220,8 @@ val system : ?input:string -> string -> string
     arguments separated by spaces, run with [input] on its standard input or,
     without [input], with the process's: what it writes on its standard output
     and standard error, together, without the white space that starts and ends
-    it. With {!debug} at least 1, it prints how many bytes [cmd] returned and
-    how long it took.
+    it. With {!Setting.debug} at least 1, it prints how many bytes [cmd]
+    returned and how long it took.
 
     Raises [Failure] naming [cmd] with the reason and output if [cmd] cannot run
     or exits otherwise than with status [0]. *)

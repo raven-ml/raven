@@ -41,6 +41,6 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     place ({!Ops.shrink}) viewed as its type ({!Ops.bitcast}). New arenas take
     the next slots ({!Ops.unique_num}).
 
-    [linear] is itself if {!Helpers.no_memory_planner} is set or no buffer is
-    planned. With {!Helpers.debug} at [1] or more, the memory saved is printed
+    [linear] is itself if {!Setting.no_memory_planner} is set or no buffer is
+    planned. With {!Setting.debug} at [1] or more, the memory saved is printed
     on standard output. *)

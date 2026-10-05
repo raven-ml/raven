@@ -172,7 +172,7 @@ val apply_opts :
     ["test"]. After making weak output axes global
     ({!Scheduler.convert_loop_to_global}), it applies the optimisations that
     [ast]'s argument asks for, or else searches with [beam] if given, or else,
-    unless the setting {!Helpers.noopt} is set, [ast] already had optimisations
+    unless the setting {!Setting.noopt} is set, [ast] already had optimisations
     applied, or it buffers values ({!Op.Stage}), applies [hand_coded]. A kernel
     [ast] that is tagged is returned as it is.
 

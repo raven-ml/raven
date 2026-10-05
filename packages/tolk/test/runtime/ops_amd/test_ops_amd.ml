@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk
 
-let plain f = Helpers.context [ B (Helpers.no_color, true) ] f
+let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
 let is_batch c =
   match Ops.arg (Ops.without_after c) with
@@ -1151,7 +1151,7 @@ let packets =
 let waves_keyed =
   test "WAVES_PER_SH is keyed with what shapes compilation" (fun () ->
       equal (option string) (Some "0")
-        (List.assoc_opt "WAVES_PER_SH" (Helpers.shaping ())))
+        (List.assoc_opt "WAVES_PER_SH" (Setting.shaping ())))
 
 let () =
   exit

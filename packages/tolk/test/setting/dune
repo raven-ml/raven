@@ -1,0 +1,9 @@
+; Settings are read when the program starts: the suite observes the reading in
+; children of its own, started with the variables set.
+
+(test
+ (name test_setting)
+ (package tolk)
+ (libraries windtrap tolk tolk_test unix)
+ (deps
+  (glob_files *.golden)))

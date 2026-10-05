@@ -883,7 +883,7 @@ let do_dtype_decomps ctx sink =
   let emulated =
     List.filter_map
       (fun s -> Result.to_option (Dtype.of_string s))
-      (Helpers.Context_var.value Helpers.emulated_dtypes)
+      (Setting.value Setting.emulated_dtypes)
   in
   let supported = Renderer.supported_dtypes ctx.renderer in
   let should_emulate dt = List.mem dt emulated || not (List.mem dt supported) in
@@ -891,7 +891,7 @@ let do_dtype_decomps ctx sink =
     List.fold_left
       (fun sink fr ->
         let to_ = if Dtype.equal fr Int64 then Dtype.Int32 else Float32 in
-        if Helpers.Context_var.value Helpers.debug >= 2 then
+        if Setting.value Setting.debug >= 2 then
           Format.eprintf "emulating %a as %a@." Dtype.pp fr Dtype.pp to_;
         if List.mem fr Dtype.floats then
           graph_rewrite ~bottom_up:true ~ctx:(fr, to_) sink pm_float_decomp

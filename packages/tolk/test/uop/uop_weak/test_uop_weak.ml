@@ -26,8 +26,8 @@ let rewrite pm u = Ops.graph_rewrite ~ctx:() u pm
    DEFAULT_FLOAT at [default_float] (default float). *)
 let rewrites ?(default_float = "float") pm name u =
   Golden.graph (name ^ ".golden") (fun () ->
-      Helpers.context
-        [ B (Helpers.default_float, default_float) ]
+      Setting.context
+        [ B (Setting.default_float, default_float) ]
         (fun () -> Ops.sink [ u; rewrite pm u ]))
 
 let loaded_float =

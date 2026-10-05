@@ -26,7 +26,7 @@
     gradual underflow, and infinities and NaNs kept where the format has them.
 
     A type is emulated when the target does not support it
-    ({!Renderer.supported_dtypes}) or the setting {!Helpers.emulated_dtypes}
+    ({!Renderer.supported_dtypes}) or the setting {!Setting.emulated_dtypes}
     names it. *)
 
 (** {1:floats Float conversion} *)
@@ -88,4 +88,4 @@ val pm_dtype_decomps : (ctx, Ops.t) Ops.Pattern_matcher.t
     Unsigned 64-bit integers are emulated with signed ones.
 
     Raises [Invalid_argument] if a 64-bit integer variable must be emulated, or
-    if {!Helpers.emulated_dtypes} names no data type. *)
+    if {!Setting.emulated_dtypes} names no data type. *)

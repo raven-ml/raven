@@ -52,7 +52,7 @@ val prepare_rangeify : Ops.t -> Ops.t
         - an {!Op.Allreduce} is a call of its own
           ({!Allreduce.create_allreduce_function});
         - a large reduction over few outputs is split in two, when the setting
-          {!Helpers.split_reduceop} is on: the reduced axis of the input is
+          {!Setting.split_reduceop} is on: the reduced axis of the input is
           split by the largest divisor from [256] down to [8] that keeps the
           first reduction's output within [2]{^ [REDUCEOP_SPLIT_SIZE]} elements
           (default [22]), and the first reduction is materialised. It applies

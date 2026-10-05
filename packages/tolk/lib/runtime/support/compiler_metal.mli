@@ -20,7 +20,7 @@ val compiler : unit -> Renderer.Compiler.t
     Metal's standard library are cached in {!Helpers.cache_dir}, which makes
     later compiles faster.
 
-    With {!Helpers.ccache}, libraries are cached in the table
+    With {!Setting.ccache}, libraries are cached in the table
     [compile_metal_direct_D], where [D] is the digest of the build of macOS,
     which MTLCompiler is part of, MTLCompiler's file ({!C.identity}), the
     language and the options: a library is read back only for its source,

@@ -29,7 +29,7 @@ type case = {
   name : string;
   kernel : string;
   renderer : string;
-  settings : Helpers.binding list;
+  settings : Setting.binding list;
   environment : string;
       (** The switch of the matrix-vector layouts, [MV], which is read once from
           the environment: a case under it runs in a process of its own (see
@@ -80,8 +80,8 @@ let in_process environment tests =
 
 (* The goldens were recorded without colours. *)
 let optimize c =
-  Helpers.context
-    (Helpers.B (Helpers.no_color, true) :: c.settings)
+  Setting.context
+    (Setting.B (Setting.no_color, true) :: c.settings)
     (fun () ->
       Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
         (kernel c.kernel) (renderer c.renderer))

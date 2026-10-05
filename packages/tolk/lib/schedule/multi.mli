@@ -37,7 +37,7 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
       differently are resharded on the result's one sharded axis, each taking
       its part of a whole copy;
     - a reduction of sharded axes reduces each shard, then reduces the shards
-      across the devices ({!Ops.allreduce}); with {!Helpers.allreduce_cast}, a
+      across the devices ({!Ops.allreduce}); with {!Setting.allreduce_cast}, a
       value cast from a half or a bfloat16 crosses the devices in that type. A
       reduction of none of them reduces each shard;
     - movements move the sharded axes. A reshape keeps each sharded axis whole

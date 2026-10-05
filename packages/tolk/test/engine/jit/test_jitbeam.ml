@@ -37,8 +37,8 @@ let searched width =
     s
   in
   let linear, out, x = captured (float_of_int !kernels) in
-  Helpers.context
-    [ B (Helpers.beam, width) ]
+  Setting.context
+    [ B (Setting.beam, width) ]
     (fun () ->
       ignore
         (Jit.jit_lower ~search
@@ -72,11 +72,11 @@ let three =
       under (Some "3") "BEAM keeps its value once the lowering returns"
         (fun () ->
           equal int 2
-            (Helpers.context
-               [ B (Helpers.beam, 2) ]
+            (Setting.context
+               [ B (Setting.beam, 2) ]
                (fun () ->
                  ignore (searched 2);
-                 Helpers.Context_var.value Helpers.beam)));
+                 Setting.value Setting.beam)));
     ]
 
 let zero =

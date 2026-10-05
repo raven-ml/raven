@@ -550,8 +550,8 @@ let cached ?(t = toolchain ()) () =
   (Renderer.Compiler.v ~cachekey:(fun () -> table) (build t), table, t)
 
 let get table src = Helpers.Diskcache.get ~table src
-let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
-let cache_off f = Helpers.context [ B (Helpers.cachelevel, 0) ] f
+let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
+let cache_off f = Setting.context [ B (Setting.cachelevel, 0) ] f
 
 let compiles_once () =
   let c, table, t = cached () in
@@ -923,8 +923,8 @@ let emulated cell =
   |> List.filter (fun s -> s <> "")
 
 let supported_under names r =
-  Helpers.context
-    [ B (Helpers.emulated_dtypes, names) ]
+  Setting.context
+    [ B (Setting.emulated_dtypes, names) ]
     (fun () -> Renderer.supported_dtypes r)
 
 let without dt = List.filter (fun d -> not (Dtype.equal d dt)) Dtype.all

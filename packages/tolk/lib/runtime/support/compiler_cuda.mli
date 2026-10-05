@@ -24,7 +24,7 @@ val nvrtc : ?ptx:bool -> ?cache_key:string -> string -> Renderer.Compiler.t
     version 12.4, NVRTC compiles faster without textures, surfaces and the
     device runtime API ([--minimal]), which rendered kernels do not use.
 
-    With {!Helpers.ccache}, binaries are cached in the table [compile_K_A_D],
+    With {!Setting.ccache}, binaries are cached in the table [compile_K_A_D],
     where [K] is [cache_key] (default ["cuda"]), [A] is [arch], and [D] the
     digest of NVRTC's library ({!C.identity}), whether it makes PTX, and its
     options: a binary is read back only for its source, compiled by the same

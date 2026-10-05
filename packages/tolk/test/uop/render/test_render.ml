@@ -234,8 +234,8 @@ let srender =
 (* pp_uops *)
 
 let listing ?(color = false) uops =
-  Helpers.context
-    [ B (Helpers.no_color, not color) ]
+  Setting.context
+    [ B (Setting.no_color, not color) ]
     (fun () -> Format.asprintf "%a" Render.pp_uops uops)
 
 (* tinygrad prints each line ended; a formatter leaves the last line open. *)

@@ -37,10 +37,10 @@ val full_rewrite_to_sink :
     ({!Postrange.apply_opts}): with the optimisations its argument lists, or
     else, if its argument asks for a beam search of width [w] greater than [0],
     with [beam w], or else with {!Heuristic.hand_coded_optimizations} unless the
-    setting {!Helpers.noopt} holds. The settings {!Helpers.disable_fast_idiv}
-    and {!Helpers.transcendental} choose how divisions by constants and
+    setting {!Setting.noopt} holds. The settings {!Setting.disable_fast_idiv}
+    and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
-    {!Transcendental.patterns}). When the setting {!Helpers.spec} is [1] or
+    {!Transcendental.patterns}). When the setting {!Setting.spec} is [1] or
     more, [ast] is checked against {!Spec.tensor} and the result against
     {!Spec.program}; when the environment variable [DBGTV] is set and not empty
     when the program starts, a result that fails is first printed on standard
@@ -96,7 +96,7 @@ val to_program :
     Programs are kept: a second call with an equal [ast], a renderer of the same
     name and target whose compiler caches its binaries in the same table, if
     any, and the same values of the settings and variables that shape what
-    compilation makes ({!Helpers.shaping}) returns the program the first made.
+    compilation makes ({!Setting.shaping}) returns the program the first made.
     [to_program] may be called from several domains at once, and makes each
     program once: a call that asks for a program another domain is making waits
     for it. A call that raises keeps nothing, and the next call makes the
@@ -111,7 +111,7 @@ val to_program :
     on disk only if its compiler caches its binaries, and the program of a
     kernel that asks for a beam search is not.
 
-    When the setting {!Helpers.debug} is [3] or more, the optimisations applied
+    When the setting {!Setting.debug} is [3] or more, the optimisations applied
     are printed on standard output, from [4] the source too, and from [7] the
     binary is disassembled ({!Renderer.Compiler.disassemble}), for a program
     read back from disk too.

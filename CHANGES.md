@@ -179,7 +179,7 @@ All notable changes to this project will be documented in this file.
 - `RUNE_JIT_DEBUG` is a tolk setting: it holds an integer, nonzero to report,
   and any other value raises when the program starts.
 - A `jit`-compiled function compiles again when any tolk setting that shapes
-  compilation changes around a call (`Tolk.Helpers.shaping`). It keyed its
+  compilation changes around a call (`Tolk.Setting.shaping`). It keyed its
   programs on `NOOPT` and the search width alone, so a change of
   `SPLIT_REDUCEOP`, `RING`, `MAX_KERNEL_BUFFERS` and the like ran the old
   program.
@@ -997,12 +997,12 @@ thread.
   sample once and silently, compiles each kernel once, and compiles no
   candidate past `BEAM_UOPS_MAX` (new `Codegen.linearize`). A candidate's setup
   on Metal takes about 1.2 ms, from about 3.9 ms. PR #235 found these costs.
-- Every environment variable is one setting declared with its reach
-  (`Helpers.Context_var`, new `float` and `int_option`), and `Helpers.getenv*`
-  and `variable*` are removed, so the caches key on every variable that changes
-  compiled output (`Helpers.shaping`). `TC_OPT` is one setting for hand-coded
-  optimizations and the search, unset meaning 0 and 2; `Search.actions` reads
-  `TC` and `TC_OPT` as bound; `JITBEAM` is `Helpers.jitbeam`.
+- Every environment variable is one setting of the new module `Tolk.Setting`,
+  declared with its reach, and `Helpers.getenv*` and `variable*` are removed,
+  so the caches key on every variable that changes compiled output
+  (`Setting.shaping`). `TC_OPT` is one setting for hand-coded optimizations and
+  the search, unset meaning 0 and 2; `Search.actions` reads `TC` and `TC_OPT`
+  as bound; `JITBEAM` is `Setting.jitbeam`.
 - Scheduling a large graph no longer grows with the square of its kernels:
   weighing whether a stage could be inlined walked every kernel upstream of
   it, and the where-closure rule searched branches its INDEX gate rejects.

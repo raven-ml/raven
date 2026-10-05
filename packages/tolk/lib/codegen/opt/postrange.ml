@@ -532,7 +532,7 @@ module Scheduler = struct
     if
       (device = "CUDA" || device = "NV")
       && Dtype.equal tc.dtype_in Dtype.Float32
-      && not (Helpers.Context_var.value Helpers.allow_tf32)
+      && not (Setting.value Setting.allow_tf32)
     then None
     else if
       Option.is_none (tc_operand tc in0)
@@ -558,7 +558,7 @@ module Scheduler = struct
          takes it, then in1, whose ranges then run along M. *)
       let roles swapped a b =
         let a_ranges = only a b m_dim and b_ranges = only b a n_dim in
-        if Helpers.Context_var.value Helpers.debug >= 3 then begin
+        if Setting.value Setting.debug >= 3 then begin
           let show rs =
             String.concat ", "
               (List.map
@@ -806,7 +806,7 @@ let apply_opts ?beam ~hand_coded ast ren =
           k
       | _, Some search -> search k
       | _
-        when (not (Helpers.Context_var.value Helpers.noopt))
+        when (not (Setting.value Setting.noopt))
              && match info with Some i -> i.applied_opts = [] | None -> true ->
           (* NOTE: hand_coded_optimizations doesn't support multiblock opts
              yet *)

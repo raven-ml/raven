@@ -38,7 +38,7 @@ let () =
          test
            "kernels of emulated data types compile on several domains at once"
            (fun () ->
-             is_true (Helpers.Context_var.value Helpers.parallel >= 4);
+             is_true (Setting.value Setting.parallel >= 4);
              let programs =
                Worker.map (fun k -> Codegen.to_program k clang) kernels
              in

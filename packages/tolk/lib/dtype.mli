@@ -321,13 +321,13 @@ val of_string : string -> (t, string) result
 
 val default_float : unit -> t
 (** [default_float ()] is the data type named, in any case, by the current value
-    of the setting {!Helpers.default_float}, [DEFAULT_FLOAT].
+    of the setting {!Setting.default_float}, [DEFAULT_FLOAT].
 
     Raises [Invalid_argument] if that is not a float of known width. *)
 
 val default_int : unit -> t
 (** [default_int ()] is the data type named, in any case, by the current value
-    of the setting {!Helpers.default_int}, [DEFAULT_INT].
+    of the setting {!Setting.default_int}, [DEFAULT_INT].
 
     Raises [Invalid_argument] if that is not an integer of known width. *)
 

@@ -56,8 +56,8 @@ let scheduled name target =
 
 (* tinygrad's goldens name kernels without colour, and keep no search. *)
 let quietly ?(settings = []) f =
-  Helpers.context
-    (B (Helpers.no_color, true) :: B (Helpers.cachelevel, 0) :: settings)
+  Setting.context
+    (B (Setting.no_color, true) :: B (Setting.cachelevel, 0) :: settings)
     f
 
 let opts = list Kernel_opts.opt
@@ -411,7 +411,7 @@ let is_deterministic =
         let time, calls = recording (golden_time ~failing:false) in
         let k =
           search
-            ~settings:[ B (Helpers.parallel, parallel) ]
+            ~settings:[ B (Setting.parallel, parallel) ]
             ~time 2
             (scheduled "sum_rows" "clang")
         in
@@ -871,7 +871,7 @@ let cache =
   let cached ?(ignore = false) time =
     search
       ~settings:
-        [ B (Helpers.cachelevel, 1); B (Helpers.ignore_beam_cache, ignore) ]
+        [ B (Setting.cachelevel, 1); B (Setting.ignore_beam_cache, ignore) ]
       ~time 2
       (scheduled "sum_rows" "metal")
   in
@@ -893,18 +893,18 @@ let cache_settings =
       let cached ?(settings = []) time =
         ignore
           (search
-             ~settings:(B (Helpers.cachelevel, 1) :: settings)
+             ~settings:(B (Setting.cachelevel, 1) :: settings)
              ~time 2
              (scheduled "sum_rows" "metal"))
       in
       cached (fst (recording (golden_time ~failing:false)));
       let time, calls = recording (golden_time ~failing:false) in
-      cached ~settings:[ B (Helpers.transcendental, 2) ] time;
+      cached ~settings:[ B (Setting.transcendental, 2) ] time;
       greater int ~than:0 (List.length (calls ())))
 
 (* A setting that its caller declares to reach output: the search knows nothing
    of it, yet keys on it. *)
-let declared = Helpers.Context_var.int ~reach:Output "TOLK_TEST_SEARCH" 0
+let declared = Setting.int ~reach:Output "TOLK_TEST_SEARCH" 0
 
 let cache_declared =
   test
@@ -913,7 +913,7 @@ let cache_declared =
       let cached ?(settings = []) time =
         ignore
           (search
-             ~settings:(B (Helpers.cachelevel, 1) :: settings)
+             ~settings:(B (Setting.cachelevel, 1) :: settings)
              ~time 2
              (scheduled "sum_rows" "metal"))
       in
@@ -936,7 +936,7 @@ let cache_variables =
     ]
     (fun (name, value) ->
       equal (option string) (Some value)
-        (List.assoc_opt name (Helpers.shaping ())))
+        (List.assoc_opt name (Setting.shaping ())))
 
 (* A measurement that favours tensor cores, then swaps, with an optimum at two
    optimisations. *)
@@ -951,7 +951,7 @@ let cache_kinds =
       let cached time =
         K.applied_opts
           (search
-             ~settings:[ B (Helpers.cachelevel, 1) ]
+             ~settings:[ B (Setting.cachelevel, 1) ]
              ~time 1
              (scheduled "matmul_half" "metal"))
       in
@@ -972,7 +972,7 @@ let progress =
       let time, _ = recording (golden_time ~failing:false) in
       ignore
         (search
-           ~settings:[ B (Helpers.debug, 2) ]
+           ~settings:[ B (Setting.debug, 2) ]
            ~time 1
            (scheduled "add_small" "clang"));
       in_order
@@ -996,7 +996,7 @@ let failure_printed =
       let time, _ = recording (golden_time ~failing:false) in
       ignore
         (search
-           ~settings:[ B (Helpers.debug, 4) ]
+           ~settings:[ B (Setting.debug, 4) ]
            ~time 1
            (scheduled_for ren "sum_rows"));
       contains ~sub:"Failure(\"rejected\")" (output ()))
@@ -1136,8 +1136,8 @@ let tc_actions =
       test "ask for TC_OPT's level on every axis but the first, 2 if unset"
         (fun () ->
           let levels o =
-            Helpers.context
-              [ B (Helpers.tc_opt, o) ]
+            Setting.context
+              [ B (Setting.tc_opt, o) ]
               (fun () -> List.map fst (tc_levels ()))
           in
           equal (list int) ~msg:"unset"
@@ -1148,8 +1148,8 @@ let tc_actions =
             (levels (Some 1)));
       test "ask for TC's level" (fun () ->
           let uses =
-            Helpers.context
-              [ B (Helpers.use_tc, 2) ]
+            Setting.context
+              [ B (Setting.use_tc, 2) ]
               (fun () -> List.map snd (tc_levels ()))
           in
           equal (list int) (List.init 10 (Fun.const 2)) uses);

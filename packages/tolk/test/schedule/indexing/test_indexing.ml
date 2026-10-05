@@ -428,8 +428,8 @@ let yellow line =
 
 let printout name =
   Golden.text (name ^ "_debug.golden") (fun () ->
-      Helpers.context
-        [ Helpers.B (Helpers.no_color, true) ]
+      Setting.context
+        [ Setting.B (Setting.no_color, true) ]
         (fun () -> ignore (Indexing.run_rangeify ~debug:true (program name)));
       chomp (output ()))
 
@@ -441,8 +441,8 @@ let debug =
       printout "shared_view";
       printout "softmax";
       test "in colour, the axes a node is stored over are yellow" (fun () ->
-          Helpers.context
-            [ Helpers.B (Helpers.no_color, false) ]
+          Setting.context
+            [ Setting.B (Setting.no_color, false) ]
             (fun () ->
               ignore
                 (Indexing.run_rangeify ~debug:true (program "two_consumers")));

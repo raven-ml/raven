@@ -439,7 +439,7 @@ val v : ?src:t list -> ?arg:arg -> ?tag:Tag.t -> Op.t -> t
     operations whose type comes from their argument need its shape: {!Op.Const}
     a [Const], {!Op.Cast} and {!Op.Bitcast} a [Dtype], {!Op.Param}, {!Op.Buffer}
     and {!Op.Alloc} a [Param], {!Op.Custom}, {!Op.Customi} and {!Op.Ins} a
-    [Code]. When the setting {!Helpers.spec} is 2 or more, the node is also
+    [Code]. When the setting {!Setting.spec} is 2 or more, the node is also
     checked against the whole specification, the first time it is built.
 
     Raises [Invalid_argument] if no type can be derived, as for a {!Op.Where}
@@ -1822,7 +1822,7 @@ exception Bottom_up_gate
 (** Raised by a bottom-up rule to keep the node it last produced and leave its
     sources unvisited. *)
 
-val rewrite_stack_limit : int Helpers.Context_var.t
+val rewrite_stack_limit : int Setting.t
 (** [rewrite_stack_limit] bounds the work list of {!graph_rewrite}, from the
     variable [REWRITE_STACK_LIMIT] (default [250000]). *)
 
@@ -1894,7 +1894,7 @@ module Private : sig
 
   val set_spec : (unit, bool) Pattern_matcher.t -> unit
   (** [set_spec m] makes [m] the specification that nodes are checked against
-      when {!Helpers.spec} is 2 or more.
+      when {!Setting.spec} is 2 or more.
 
       Raises [Invalid_argument] if it is set already. *)
 end

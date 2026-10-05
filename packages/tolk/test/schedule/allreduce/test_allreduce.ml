@@ -11,9 +11,9 @@ let uop = Uops.uop
 
    Each case of the generator, with its settings. *)
 
-let ring n = Helpers.B (Helpers.ring, n)
-let all2all n = Helpers.B (Helpers.all2all, n)
-let nodes n = Helpers.B (Helpers.allreduce_node_ndevs, n)
+let ring n = Setting.B (Setting.ring, n)
+let all2all n = Setting.B (Setting.all2all, n)
+let nodes n = Setting.B (Setting.allreduce_node_ndevs, n)
 
 let cases =
   [
@@ -42,11 +42,11 @@ let settings name = List.assoc name cases
 let allreduce name = Ops.nth (Golden.sink (name ^ ".golden")) 0
 
 let handled ?(settings = []) red =
-  Helpers.context settings (fun () ->
+  Setting.context settings (fun () ->
       require_some (Allreduce.handle_allreduce red))
 
 let created ?(settings = []) red =
-  Helpers.context settings (fun () -> Allreduce.create_allreduce_function red)
+  Setting.context settings (fun () -> Allreduce.create_allreduce_function red)
 
 (* The storage a graph makes that [red] does not hold. *)
 let made_storage red u =
@@ -132,7 +132,7 @@ let printouts =
          Golden.text (name ^ "_debug.golden") (fun () ->
              ignore
                (handled
-                  ~settings:(Helpers.B (Helpers.debug, 2) :: settings name)
+                  ~settings:(Setting.B (Setting.debug, 2) :: settings name)
                   (allreduce name));
              chomp (output ())))
        [
@@ -142,7 +142,7 @@ let printouts =
         test "below debug level 2, nothing is printed" (fun () ->
             ignore
               (handled
-                 ~settings:[ Helpers.B (Helpers.debug, 1) ]
+                 ~settings:[ Setting.B (Setting.debug, 1) ]
                  (allreduce "naive_two_devices"));
             equal string "" (output ()));
       ])
@@ -307,7 +307,7 @@ let chosen c =
     }
   in
   ignore
-    (handled ~settings:(Helpers.B (Helpers.debug, 2) :: bindings d) (red_of d));
+    (handled ~settings:(Setting.B (Setting.debug, 2) :: bindings d) (red_of d));
   chomp (output ())
 
 (* The devices a copy moves a value between, one pair per target. *)

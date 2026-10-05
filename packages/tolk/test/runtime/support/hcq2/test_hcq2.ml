@@ -3,7 +3,7 @@ open Tolk
 
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 let uop = Uops.uop
-let plain f = Helpers.context [ B (Helpers.no_color, true) ] f
+let plain f = Setting.context [ B (Setting.no_color, true) ] f
 let op = Testable.make ~pp:Op.pp ~equal:Op.equal
 
 (* Nodes *)
@@ -889,8 +889,8 @@ let scheduling =
                 [ "AMD:1"; "AMD:2" ]
             in
             let out =
-              Helpers.context
-                [ B (Helpers.all2all, all2all) ]
+              Setting.context
+                [ B (Setting.all2all, all2all) ]
                 (fun () -> sched calls)
             in
             List.sort_uniq compare
@@ -1123,8 +1123,8 @@ let compiling =
             ]
           in
           ignore
-            (Helpers.context
-               [ B (Helpers.beam, 1) ]
+            (Setting.context
+               [ B (Setting.beam, 1) ]
                (fun () ->
                  Hcq2.compile_linear ~search ~devices:(recorded_devices ())
                    (linear calls)));
@@ -1133,8 +1133,8 @@ let compiling =
           let calls = chained (chain "CPU:1" 1) in
           let slots debug =
             let c =
-              Helpers.context
-                [ B (Helpers.debug, debug) ]
+              Setting.context
+                [ B (Setting.debug, debug) ]
                 (fun () ->
                   Hcq2.compile_linear ~devices:(recorded_devices ())
                     (linear calls))

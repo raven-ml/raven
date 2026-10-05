@@ -65,11 +65,11 @@ val create_linear_with_vars :
       variables, each replaced in the body by a parameter; call-local storage is
       numbered by its order in each body, so equal graphs schedule alike;
     + each such call's body is scheduled ({!create_schedule}), once per body
-      when the setting {!Helpers.scache} is [1] or more. From [2], the default,
+      when the setting {!Setting.scache} is [1] or more. From [2], the default,
       schedules are also kept on disk ({!Helpers.Diskcache}, table
       ["schedule_cache"]) for later processes: a schedule is read back for the
       same body, the same values of the settings and variables that shape what
-      compilation makes ({!Helpers.shaping}), and the same sources of this
+      compilation makes ({!Setting.shaping}), and the same sources of this
       library; a body scheduled under other values is scheduled again, in memory
       too; an entry that does not read as a schedule is made anew and replaced;
     + the schedule's parameters are bound to the call's arguments, and each
@@ -81,8 +81,8 @@ val create_linear_with_vars :
       name, whose contents outlive the schedule. A jit capturing the schedule
       plans it with the schedules it captures along with it.
 
-    With the setting {!Helpers.spec} at [1] or more, [big_sink] and each body
-    are checked against {!Spec.tensor}. With {!Helpers.debug} at [1] or more,
+    With the setting {!Setting.spec} at [1] or more, [big_sink] and each body
+    are checked against {!Spec.tensor}. With {!Setting.debug} at [1] or more,
     each schedule of more than one call prints its size and time on standard
     output.
 

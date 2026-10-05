@@ -51,7 +51,7 @@ let metal_version () =
 
 (* The cache *)
 
-let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
+let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
 
 (* [named ~prefix table] checks that [table] is [prefix] then a digest. *)
 let named ~prefix table =

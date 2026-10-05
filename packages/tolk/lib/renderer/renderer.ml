@@ -116,8 +116,7 @@ end
 
 (* Compilers *)
 
-let assert_compile =
-  Helpers.Context_var.bool ~reach:Process "ASSERT_COMPILE" false
+let assert_compile = Setting.bool ~reach:Process "ASSERT_COMPILE" false
 
 module Compiler = struct
   exception Compile_error of string
@@ -143,8 +142,7 @@ module Compiler = struct
 
   let v ?cachekey ?(disassemble = ignore) compile =
     let cachekey =
-      if Helpers.Context_var.value Helpers.ccache then Option.map once cachekey
-      else None
+      if Setting.value Setting.ccache then Option.map once cachekey else None
     in
     { cachekey; compile; disassemble }
 
@@ -162,7 +160,7 @@ module Compiler = struct
     match Option.bind table kept with
     | Some lib -> lib
     | None ->
-        if Helpers.Context_var.value assert_compile then
+        if Setting.value assert_compile then
           invalid_arg ("tried to compile with ASSERT_COMPILE set\n" ^ src);
         let lib = c.compile src in
         Option.iter (fun table -> Helpers.Diskcache.put ~table src lib) table;
@@ -225,7 +223,7 @@ let emulated () =
   let dtype n =
     match Dtype.of_string n with Ok dt -> dt | Error e -> invalid_arg e
   in
-  List.map dtype (Helpers.Context_var.value Helpers.emulated_dtypes)
+  List.map dtype (Setting.value Setting.emulated_dtypes)
 
 (* double can't be bitcast to anything without long support *)
 let supported_dtypes r =

@@ -37,7 +37,7 @@ let can_plan held b =
 type lane = { mutable peak : int; tlsf : Tlsf.t }
 
 let memory_plan_rewrite ?(held_bufs = []) linear =
-  if Helpers.Context_var.value Helpers.no_memory_planner then linear
+  if Setting.value Setting.no_memory_planner then linear
   else begin
     let held = Tbl.create 16 in
     List.iter (fun b -> Tbl.replace held b ()) held_bufs;
@@ -142,7 +142,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
                 (dtype b) ))
           bufs
       in
-      if Helpers.Context_var.value Helpers.debug >= 1 then begin
+      if Setting.value Setting.debug >= 1 then begin
         let mb n = float_of_int n /. 1e6 in
         let omem = mb (List.fold_left (fun n b -> n + rounded b) 0 bufs)
         and nmem =

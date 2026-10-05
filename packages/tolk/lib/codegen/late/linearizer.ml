@@ -11,7 +11,7 @@ module Ready = Set.Make (Int)
 (* Linearizing *)
 
 let debug_linearize =
-  Helpers.Context_var.bool ~reach:Process "DEBUG_LINEARIZE" false
+  Setting.bool ~reach:Process "DEBUG_LINEARIZE" false
 
 let priority u =
   (* Nodes with higher run counts are placed later. *)
@@ -49,7 +49,7 @@ let linearize sink =
       Tbl.replace priorities u (priority u))
     lst;
   (* Number the nodes in the ideal order. *)
-  let tuple_order = Helpers.Context_var.value Helpers.tuple_order in
+  let tuple_order = Setting.value Setting.tuple_order in
   let ideal u0 u1 =
     match Stdlib.compare (Tbl.find priorities u0) (Tbl.find priorities u1) with
     | 0 when tuple_order -> compare_structure u0 u1
@@ -74,7 +74,7 @@ let linearize sink =
           (u :: placed)
   in
   let lst = place (Ready.singleton (Tbl.find nkey sink)) [] in
-  if Helpers.Context_var.value debug_linearize then
+  if Setting.value debug_linearize then
     List.iteri
       (fun i u ->
         Format.printf "%4d %-20s %s %a@." i

@@ -26,7 +26,7 @@ val clang : string -> Renderer.Compiler.t
     not set [errno], so that a square root is one instruction. On [arm64] the
     register [x18] is left alone, since macOS and Windows clobber it.
 
-    Objects do not depend on the working directory. With {!Helpers.ccache}, they
+    Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
     is [arch] with its commas replaced by underscores, and [D] the digest of
     what that Clang states it runs to compile ([clang -###]): its version and

@@ -17,7 +17,7 @@
     of tensor graphs and of programs, and {!hcq} those of command-queue
     programs. {!full} accepts the nodes of every stage and of the forms passes
     produce in between; linking this module makes it the check that {!Ops.v}
-    runs on the nodes it builds when {!Helpers.spec} is 2 or more.
+    runs on the nodes it builds when {!Setting.spec} is 2 or more.
     {!kernel_graph} is the graph of kernel calls that scheduling produces. *)
 
 type t = (unit, bool) Ops.Pattern_matcher.t
@@ -43,7 +43,7 @@ val shared : t
 
     A weak type ({!Dtype.weaks}) and {!Ops.invalid} match any type.
 
-    When {!Helpers.check_oob} holds, a load or store through an index into
+    When {!Setting.check_oob} holds, a load or store through an index into
     storage must be proved in bounds: the bounds of the index ({!Ops.vmin},
     {!Ops.vmax}) must lie within the storage's {!Ops.max_numel}. An index they
     do not prove fails, whatever its gate, and its bounds, the index and the
@@ -94,7 +94,7 @@ val kernel_graph : t
 val type_verify : ?enter_calls:bool -> t -> Ops.t -> unit
 (** [type_verify ~enter_calls spec u] checks every node of [u]'s graph against
     [spec], sources first ({!Ops.toposort}[ ~enter_calls u]; [enter_calls]
-    defaults to [true]). When {!Helpers.debug} is 3 or more, a failure first
+    defaults to [true]). When {!Setting.debug} is 3 or more, a failure first
     prints the graph's nodes on standard error ({!Render.pp_uops}).
 
     Raises [Invalid_argument] on the first node that fails, naming its position

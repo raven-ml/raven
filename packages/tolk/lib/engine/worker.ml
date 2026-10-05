@@ -11,7 +11,7 @@ let spawned = Atomic.make 0
 
 let rec reserve wanted =
   let n = Atomic.get spawned in
-  let free = Helpers.Context_var.value Helpers.parallel - 1 - n in
+  let free = Setting.value Setting.parallel - 1 - n in
   let k = max 0 (min wanted free) in
   if k = 0 || Atomic.compare_and_set spawned n (n + k) then k
   else reserve wanted

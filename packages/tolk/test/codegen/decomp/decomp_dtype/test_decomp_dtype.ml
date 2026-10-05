@@ -16,7 +16,7 @@ let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
    is [f ()] with the setting that names the data types to emulate. *)
 let lacking dts = Renderer.v ~native:(fun dt -> not (List.mem dt dts)) target
 let everything = lacking []
-let told names f = Helpers.context [ B (Helpers.emulated_dtypes, names) ] f
+let told names f = Setting.context [ B (Setting.emulated_dtypes, names) ] f
 
 (* [emulate on kernel] is [kernel] rewritten for the target [on] by the pass as
    code generation runs it, with the weak constants of its rules committed. *)

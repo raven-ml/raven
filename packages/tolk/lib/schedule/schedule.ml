@@ -12,7 +12,7 @@ let rule_ctx = Pattern_matcher.rule_ctx
 let with_ctx = Pattern_matcher.with_ctx
 let ops = Op.Set.of_list
 let var = Upat.var
-let setting = Helpers.Context_var.value
+let setting = Setting.value
 
 (* Ordered tables: the keys in the order they were first added. *)
 module Ordered = struct
@@ -321,12 +321,12 @@ let ranges_in_order fn =
 
 (* The key of a schedule, in memory and, with the setting scache at 2 or more,
    on disk: the function's, its ranges numbered in order, every setting and
-   variable that shapes what compilation makes ([Helpers.shaping]), and the
+   variable that shapes what compilation makes ([Setting.shaping]), and the
    digest of this library's sources, of which a schedule is a function. *)
 let schedule_key fn =
   String.concat "\n"
     ([ Source_digest.digest; key (ranges_in_order fn) ]
-    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
+    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
 let lower_sink_to_linear call =
   let fn = body call in
@@ -336,7 +336,7 @@ let lower_sink_to_linear call =
   | Op.Sink, _ when precompile ->
       let start = Unix.gettimeofday () in
       let cache_key = Digest.BLAKE256.string (schedule_key fn)
-      and cached = setting Helpers.scache >= 1 in
+      and cached = setting Setting.scache >= 1 in
       let hit =
         if cached then
           Mutex.protect schedule_cache_lock (fun () ->
@@ -344,7 +344,7 @@ let lower_sink_to_linear call =
         else None
       in
       let make () =
-        if setting Helpers.spec <> 0 then Spec.type_verify Spec.tensor fn;
+        if setting Setting.spec <> 0 then Spec.type_verify Spec.tensor fn;
         create_schedule
           (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn))
       in
@@ -353,7 +353,7 @@ let lower_sink_to_linear call =
         | Some linear -> (linear, true)
         | None ->
             let linear, kept =
-              if setting Helpers.scache >= 2 then
+              if setting Setting.scache >= 2 then
                 Graph.cached ~table:"schedule_cache" ~key:cache_key
                   ~valid:(fun l -> op l = Op.Linear)
                   make
@@ -364,7 +364,7 @@ let lower_sink_to_linear call =
                   Hashtbl.replace schedule_cache cache_key linear);
             (linear, kept)
       in
-      let n = List.length (src linear) and debug = setting Helpers.debug in
+      let n = List.length (src linear) and debug = setting Setting.debug in
       if (debug >= 1 && n > 1) || debug >= 3 then
         Format.printf "scheduled %5d kernels in %8.2f ms | %s %s@." n
           ((Unix.gettimeofday () -. start) *. 1000.)
@@ -620,7 +620,7 @@ let pm_replace_buf =
     ])
 
 let transform_to_call big_sink =
-  if setting Helpers.spec <> 0 then Spec.type_verify Spec.tensor big_sink;
+  if setting Setting.spec <> 0 then Spec.type_verify Spec.tensor big_sink;
   (* The stores are collected before these rewrites change node identities. *)
   let ctx = callify_ctx () in
   ignore (graph_rewrite ~ctx big_sink pm_callify_ctx_collect);

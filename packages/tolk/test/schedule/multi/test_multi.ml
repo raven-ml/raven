@@ -137,12 +137,12 @@ let gather_programs =
 
 (* The settings a program was recorded under. *)
 let settings = function
-  | "allreduce_no_cast" -> [ Helpers.B (Helpers.allreduce_cast, false) ]
+  | "allreduce_no_cast" -> [ Setting.B (Setting.allreduce_cast, false) ]
   | _ -> []
 
 let rewritten name =
   Golden.graph (name ^ "_multi.golden") (fun () ->
-      Helpers.context (settings name) (fun () -> multi (program name)))
+      Setting.context (settings name) (fun () -> multi (program name)))
 
 let recorded =
   group "multi_pm › recorded"
@@ -209,7 +209,7 @@ let keeps_writes name =
   test (name ^ " writes what it wrote before") (fun () ->
       let sink = program name in
       let buffers = filled sink in
-      let rewritten = Helpers.context (settings name) (fun () -> multi sink) in
+      let rewritten = Setting.context (settings name) (fun () -> multi sink) in
       equal (list write)
         (Tensors.writes ~buffers sink)
         (Tensors.writes ~buffers rewritten))
@@ -656,8 +656,8 @@ let reductions =
   let half = sharded ~dtype:Float16 4 [ 2; 8 ] 0 in
   let sum_up u = Ops.rop (Ops.cast u Float32) Add [ 0 ] in
   let cast_sum settings =
-    Helpers.context
-      [ Helpers.B (Helpers.allreduce_cast, settings) ]
+    Setting.context
+      [ Setting.B (Setting.allreduce_cast, settings) ]
       (fun () -> multi (sum_up half))
   in
   group "multi_pm › reductions"
@@ -684,8 +684,8 @@ let reductions =
           let local = sum_up (shard bf) in
           equal uop
             (Ops.cast (Ops.allreduce (Ops.cast local Bfloat16) Add two) Float32)
-            (Helpers.context
-               [ Helpers.B (Helpers.allreduce_cast, true) ]
+            (Setting.context
+               [ Setting.B (Setting.allreduce_cast, true) ]
                (fun () -> multi (sum_up bf))));
       test "without allreduce_cast, it crosses in the type it is reduced in"
         (fun () ->

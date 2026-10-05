@@ -22,8 +22,8 @@ let verdict_of_cell = function
   | "None" -> None
   | s -> invalid_arg (Printf.sprintf "%S is not a verdict" s)
 
-let with_spec level f = Helpers.context [ B (Helpers.spec, level) ] f
-let checking_bounds f = Helpers.context [ B (Helpers.check_oob, true) ] f
+let with_spec level f = Setting.context [ B (Setting.spec, level) ] f
+let checking_bounds f = Setting.context [ B (Setting.check_oob, true) ] f
 
 (* [failure spec u] is the message of [type_verify spec u], [None] if it
    passes. *)
@@ -239,15 +239,15 @@ let type_verify =
                 (Option.bind (failure spec u) failed_at))
             specs);
       test "prints nothing when DEBUG is below 3" (fun () ->
-          Helpers.context
-            [ B (Helpers.debug, 2) ]
+          Setting.context
+            [ B (Setting.debug, 2) ]
             (fun () -> ignore (failure Spec.shared ill_typed_graph));
           equal string "" (output ()));
       group "prints the graph when DEBUG is 3 or more, before failing"
         [
           Golden.text "debug_listing.golden" (fun () ->
-              Helpers.context
-                [ B (Helpers.debug, 3) ]
+              Setting.context
+                [ B (Setting.debug, 3) ]
                 (fun () -> ignore (failure Spec.shared ill_typed_graph));
               output ());
         ];

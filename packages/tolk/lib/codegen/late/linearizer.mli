@@ -31,7 +31,7 @@ val linearize : Ops.t -> Ops.t list
     - their kind: parameters first, by slot; then buffers outside local memory,
       buffers in local memory, loop ends ({!Op.End} and {!Op.Backedge}), loads,
       the other nodes, stores, and ranges last;
-    - their structure ({!Ops.compare_structure}) if {!Helpers.tuple_order}
+    - their structure ({!Ops.compare_structure}) if {!Setting.tuple_order}
       holds;
     - their position in {!Ops.toposort}.
 

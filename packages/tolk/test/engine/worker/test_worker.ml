@@ -1,13 +1,12 @@
 open Windtrap
 open Tolk
-open Helpers
 
 (* The host's target, as the engine gives it. *)
 let host_target = Tolk_engine.target Nx_device.host
 
 exception Failed of int
 
-let with_parallel p f = context [ B (parallel, p) ] f
+let with_parallel p f = Setting.context [ B (Setting.parallel, p) ] f
 let domain () = (Domain.self () :> int)
 
 (* A call that never returns fails its test instead of the run. *)
@@ -384,14 +383,18 @@ let failure =
 
 (* The values of BEAM, DEFAULT_FLOAT and CHECK_OOB. *)
 let seen () =
-  ( Context_var.value beam,
-    Context_var.value default_float,
-    Context_var.value check_oob )
+  ( Setting.value Setting.beam,
+    Setting.value Setting.default_float,
+    Setting.value Setting.check_oob )
 
 let seen_w = triple int string bool
 
 let under (b, d, c) f =
-  context [ B (beam, b); B (default_float, d); B (check_oob, c) ] f
+  Setting.context
+    [
+      B (Setting.beam, b); B (Setting.default_float, d); B (Setting.check_oob, c);
+    ]
+    f
 
 let sees_caller_settings () =
   let s = (3, "half", true) in
@@ -425,39 +428,40 @@ let each_caller_passes_its_own () =
   |> List.iter (fun (s, on) -> List.iter (equal seen_w s) on)
 
 let binding_stays_in_its_application () =
-  let before = Context_var.value beam and meet = meeting 3 in
+  let before = Setting.value Setting.beam and meet = meeting 3 in
   let f i =
-    context
-      [ B (beam, 10 + i) ]
+    Setting.context
+      [ B (Setting.beam, 10 + i) ]
       (fun () ->
         meet ();
-        Context_var.value beam)
+        Setting.value Setting.beam)
   in
   equal (list int) [ 10; 11; 12 ]
     (with_parallel 3 (fun () -> Worker.map f [ 0; 1; 2 ]));
-  equal ~msg:"the caller's value" int before (Context_var.value beam)
+  equal ~msg:"the caller's value" int before (Setting.value Setting.beam)
 
 (* Two applications on two domains bind CHECK_OOB apart and build nodes under
    SPEC=2, whose construction check binds CHECK_OOB itself. *)
 let check_oob_race () =
   let fresh = Atomic.make (1 lsl 40) and meet = meeting 2 in
-  let before = Context_var.value check_oob in
+  let before = Setting.value Setting.check_oob in
   let build own =
-    context
-      [ B (spec, 2); B (check_oob, own) ]
+    Setting.context
+      [ B (Setting.spec, 2); B (Setting.check_oob, own) ]
       (fun () ->
         meet ();
         let strays = ref 0 in
         for _ = 1 to 2000 do
           let k = Atomic.fetch_and_add fresh 1 in
           ignore (Ops.const (`Int (Bigint.of_int k)));
-          if Context_var.value check_oob <> own then incr strays
+          if Setting.value Setting.check_oob <> own then incr strays
         done;
         !strays)
   in
   equal (list int) [ 0; 0 ]
     (with_parallel 2 (fun () -> Worker.map build [ true; false ]));
-  equal ~msg:"the caller's CHECK_OOB" bool before (Context_var.value check_oob)
+  equal ~msg:"the caller's CHECK_OOB" bool before
+    (Setting.value Setting.check_oob)
 
 let settings =
   group "settings"

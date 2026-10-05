@@ -37,8 +37,8 @@ val actions : unit -> Opt.t list
       program starts, pads of the axes [0] to [6] to a multiple of [32];
     - a split of the axis [0] into [32] local threads;
     - tensor cores on the axis [0] with the level [tc_opt] [0], then on the axes
-      [0] to [8] with the level of {!Helpers.tc_opt}, [2] if it is [None], each
-      with the first core that fits and the level [use_tc] of {!Helpers.use_tc};
+      [0] to [8] with the level of {!Setting.tc_opt}, [2] if it is [None], each
+      with the first core that fits and the level [use_tc] of {!Setting.use_tc};
     - swaps of each two of the axes [0] to [4]. *)
 
 val get_kernel_actions :
@@ -132,23 +132,23 @@ val beam_search :
     the last one greater than [16] is halved until their product is at most
     [65536], and its time is scaled up by the ratio of the products.
 
-    While the setting {!Helpers.cachelevel} is positive, each search keeps the
+    While the setting {!Setting.cachelevel} is positive, each search keeps the
     optimisations it finds in the {!Helpers.Diskcache} table ["beam_search"],
     keyed by what the search is a function of but the times it measures: [k]'s
     kernel ({!Ops.key}), [amt], [allow_test_size], the name and target of [k]'s
     renderer and the table of its compiler's binaries
     ({!Renderer.Compiler.cachekey}), the settings that shape compilation
-    ({!Helpers.shaping}), among them those that pick the candidates
-    ({!Helpers.use_tc}, {!Helpers.tc_opt} and [BEAM_PADTO]) and the environment
+    ({!Setting.shaping}), among them those that pick the candidates
+    ({!Setting.use_tc}, {!Setting.tc_opt} and [BEAM_PADTO]) and the environment
     variables [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX],
     [BEAM_MIN_PROGRESS] and [BEAM_ESTIMATE], and the sources of this library.
-    Unless {!Helpers.ignore_beam_cache} holds, a search whose key is kept
+    Unless {!Setting.ignore_beam_cache} holds, a search whose key is kept
     compiles and times nothing, applies nothing of [time], and applies the
     optimisations kept beyond as many as [k] has to a copy of [k]. A kept result
     is what an earlier search measured fastest: another search may measure
     otherwise.
 
-    When the setting {!Helpers.debug} is [2] or more, the progress of the search
+    When the setting {!Setting.debug} is [2] or more, the progress of the search
     is printed on standard output. When the environment variable [BEAM_DEBUG]
     holds a positive integer, so are the kernel searched, the candidates whose
     timing failed and the result; from [2], every candidate timed.

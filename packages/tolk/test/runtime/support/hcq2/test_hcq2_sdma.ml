@@ -37,8 +37,8 @@ let copy_queues =
         List.map (fun d -> Ops.store_call (storage d) src) [ "AMD:1"; "AMD:2" ]
       in
       let batched =
-        Helpers.context
-          [ B (Helpers.all2all, 1) ]
+        Setting.context
+          [ B (Setting.all2all, 1) ]
           (fun () ->
             Hcq2.sched_batches ~devices ~profile:false (Ops.v Linear ~src:calls))
       in
@@ -56,6 +56,6 @@ let copy_queues =
 let keyed =
   test "the compiled batches key on HCQ_NUM_SDMA" (fun () ->
       equal (option string) (Some "1")
-        (List.assoc_opt "HCQ_NUM_SDMA" (Helpers.shaping ())))
+        (List.assoc_opt "HCQ_NUM_SDMA" (Setting.shaping ())))
 
 let () = exit (run "Hcq2 with HCQ_NUM_SDMA=1" [ copy_queues; keyed ])

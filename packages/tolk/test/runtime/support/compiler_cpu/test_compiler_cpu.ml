@@ -341,7 +341,7 @@ let disassembly_ =
 
 (* The cache *)
 
-let ccache_off f = Helpers.context [ B (Helpers.ccache, false) ] f
+let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
 
 (* The table of the host's compiler, as a process of its own names it. *)
 let host_table () =

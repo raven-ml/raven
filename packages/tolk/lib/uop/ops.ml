@@ -694,7 +694,7 @@ let v ?(src = []) ?(arg = No_arg) ?tag op =
             created := true;
             u)
   in
-  (if !created && Helpers.Context_var.value Helpers.spec > 1 then
+  (if !created && Setting.value Setting.spec > 1 then
      match Atomic.get construction_check with
      | Some check -> check u
      | None -> ());
@@ -2199,7 +2199,7 @@ and compute_shape u : sint list option =
       in
       if List.is_empty shapes then invalid_argf "%s needs sources" (Op.name op);
       if
-        Helpers.Context_var.value Helpers.disallow_broadcast
+        Setting.value Setting.disallow_broadcast
         && not (Helpers.all_same equal_shape shapes)
       then
         invalid_argf "%s of shapes %s" (Op.name op)
@@ -4479,7 +4479,7 @@ end
 exception Bottom_up_gate
 
 let rewrite_stack_limit =
-  Helpers.Context_var.int ~reach:Process "REWRITE_STACK_LIMIT" 250000
+  Setting.int ~reach:Process "REWRITE_STACK_LIMIT" 250000
 let src_without_body u = if u.op = Op.Call then drop 1 u.src else u.src
 
 let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
@@ -4553,7 +4553,7 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
        the sources are done, rebuild on them and rewrite top-down. Link: the
        node becomes whatever its rewrite became. An entry whose dependency is
        not done waits for it instead of spinning. *)
-    let limit = Helpers.Context_var.value rewrite_stack_limit in
+    let limit = Setting.value rewrite_stack_limit in
     let stack = Stack.create () in
     let on_stack = Tbl.create 64 and waitlist = Tbl.create 16 in
     let wait dep entry =
@@ -4978,10 +4978,10 @@ module Private = struct
 
   let set_spec pm =
     set_once construction_check "specification rules" (fun u ->
-        if Helpers.Context_var.value Helpers.spec > 2 then ignore (shape_opt u);
+        if Setting.value Setting.spec > 2 then ignore (shape_opt u);
         match
-          Helpers.context
-            [ B (Helpers.check_oob, false) ]
+          Setting.context
+            [ B (Setting.check_oob, false) ]
             (fun () -> Pattern_matcher.rewrite pm () u)
         with
         | Some true -> ()

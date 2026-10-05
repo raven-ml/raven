@@ -92,7 +92,7 @@ module Compiler : sig
       with [compile]. [disassemble] prints a binary as instructions on standard
       output; it defaults to printing nothing. With [cachekey], binaries are
       kept in the {!Helpers.Diskcache} table [cachekey ()], unless the setting
-      {!Helpers.ccache} is [false] when the compiler is made.
+      {!Setting.ccache} is [false] when the compiler is made.
 
       A binary is read back for the source it was compiled from, so the table
       must name everything else that determines it: the toolchain, its version
@@ -203,8 +203,8 @@ val with_compiler : Compiler.t -> t -> t
 val supported_dtypes : t -> Dtype.t list
 (** [supported_dtypes r] is the data types of {!Dtype.all}, in order, that [r]
     has natively, without {!Dtype.Float64} if {!Dtype.Int64} is emulated
-    (setting {!Helpers.emulated_dtypes}): a double cannot be bitcast without a
+    (setting {!Setting.emulated_dtypes}): a double cannot be bitcast without a
     64-bit integer.
 
-    Raises [Invalid_argument] if {!Helpers.emulated_dtypes} names no data type
+    Raises [Invalid_argument] if {!Setting.emulated_dtypes} names no data type
     ({!Dtype.of_string}). *)

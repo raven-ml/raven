@@ -11,11 +11,11 @@ let program name = Golden.sink (name ^ ".golden")
 let settings = function
   | "many_inputs_limited" | "many_matrices_limited" | "many_cubes_limited"
   | "many_sums_limited" | "many_sharded_limited" ->
-      [ Helpers.B (Helpers.max_kernel_buffers, 4) ]
+      [ Setting.B (Setting.max_kernel_buffers, 4) ]
   | _ -> []
 
 let kernel_graph name =
-  Helpers.context (settings name) (fun () ->
+  Setting.context (settings name) (fun () ->
       Rangeify.get_kernel_graph (program name))
 
 (* Recorded graphs *)
@@ -438,10 +438,10 @@ let debug =
   group "get_kernel_graph › debug"
     [
       Golden.text "softmax_debug.golden" (fun () ->
-          Helpers.context
+          Setting.context
             [
-              Helpers.B (Helpers.debug_rangeify, true);
-              Helpers.B (Helpers.no_color, true);
+              Setting.B (Setting.debug_rangeify, true);
+              Setting.B (Setting.no_color, true);
             ]
             (fun () -> ignore (kernel_graph "softmax"));
           chomp (output ()));
@@ -455,8 +455,8 @@ let spec =
     [
       test "with spec checks on, every recorded kernel graph passes them"
         (fun () ->
-          Helpers.context
-            [ Helpers.B (Helpers.spec, 1) ]
+          Setting.context
+            [ Setting.B (Setting.spec, 1) ]
             (fun () ->
               List.iter (fun name -> ignore (kernel_graph name)) programs));
     ]
@@ -516,8 +516,8 @@ let rules =
             (kernels_of (Ops.sink [ Ops.after out [ Ops.store out invalid ] ])));
       test "a kernel accesses at most max_kernel_buffers storages" (fun () ->
           let u =
-            Helpers.context
-              [ Helpers.B (Helpers.max_kernel_buffers, 4) ]
+            Setting.context
+              [ Setting.B (Setting.max_kernel_buffers, 4) ]
               (fun () -> kernel_graph "many_inputs_limited")
           in
           List.iter

@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk
 
-let plain f = Helpers.context [ B (Helpers.no_color, true) ] f
+let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
 let is_batch c =
   match Ops.arg (Ops.without_after c) with

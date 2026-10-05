@@ -18,7 +18,7 @@ val get_kernel_graph : Ops.t -> Ops.t
 
     {ol
      {- ranges index the graph ({!Indexing.run_rangeify}), which prints them
-        when the setting {!Helpers.debug_rangeify} is on;
+        when the setting {!Setting.debug_rangeify} is on;
      }
      {- the graph is simplified ({!Symbolic.symbolic},
         {!Simplify.pm_reduce_simplify}), and storage that need not exist is
@@ -33,7 +33,7 @@ val get_kernel_graph : Ops.t -> Ops.t
         - a store of a value into itself does nothing;
      }
      {- when a kernel may access at most [n] buffers (the setting
-        {!Helpers.max_kernel_buffers}, if not [0]), an operation that reads [n]
+        {!Setting.max_kernel_buffers}, if not [0]), an operation that reads [n]
         buffers or more stores its elementwise sources first;
      }
      {- each stage becomes a store into new storage ({!Op.Alloc}) of its
@@ -54,7 +54,7 @@ val get_kernel_graph : Ops.t -> Ops.t
      }
     }
 
-    With the setting {!Helpers.spec} at [1] or more, the result is checked
+    With the setting {!Setting.spec} at [1] or more, the result is checked
     against {!Spec.kernel_graph}.
 
     Raises [Invalid_argument] if a kernel reads one storage in two different

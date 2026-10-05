@@ -1342,7 +1342,7 @@ let chunked lowered = function
 
 (* The SDMA queues copies take: by default as many as the copies' AMD peers
    under ALL2ALL, at most 8, and one otherwise. *)
-let num_sdma = Helpers.Context_var.int_option ~reach:Output "HCQ_NUM_SDMA"
+let num_sdma = Setting.int_option ~reach:Output "HCQ_NUM_SDMA"
 
 let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   (* The calls in a range that no device with queues runs are the engine's, once
@@ -1381,10 +1381,10 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   let npeers = List.length peers in
   let num_queues =
     max 1
-      (match Helpers.Context_var.value num_sdma with
+      (match Setting.value num_sdma with
       | Some n -> n
       | None ->
-          if Helpers.Context_var.value Helpers.all2all >= 1 then min npeers 8
+          if Setting.value Setting.all2all >= 1 then min npeers 8
           else 1)
   in
   let index d =
@@ -2026,8 +2026,8 @@ let hcq_compile ~devices ~lower_and_compile ~profile linear =
         (sched_batches ~lower:(lower_call ~devices) ~devices ~profile linear)
         (pm_encode devices)
     in
-    Helpers.context
-      [ B (Helpers.emulated_dtypes, []) ]
+    Setting.context
+      [ B (Setting.emulated_dtypes, []) ]
       (fun () -> lower_and_compile lin)
 
 (* A kernel that asks for no beam search asks for one of the setting's width. *)
@@ -2050,11 +2050,11 @@ let pm_beam width =
 
 let compile_linear ?search ?profile ~devices linear =
   let profile =
-    Option.value profile ~default:(Helpers.Context_var.value Helpers.debug >= 2)
+    Option.value profile ~default:(Setting.value Setting.debug >= 2)
   in
   let targets d = (devices d).target in
   let lower_and_compile = Realize.lower_and_compile ?search ~targets in
-  let width = Helpers.Context_var.value Helpers.beam in
+  let width = Setting.value Setting.beam in
   let linear =
     if width >= 1 then graph_rewrite ~ctx:() ~walk:true linear (pm_beam width)
     else linear

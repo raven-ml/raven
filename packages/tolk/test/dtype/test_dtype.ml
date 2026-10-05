@@ -5,7 +5,7 @@ open Dtypes
 let lub2 a b = Dtype.least_upper [ a; b ]
 let promotes a b = Dtype.equal (lub2 a b) b
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
-let with_setting setting name f = Helpers.context [ B (setting, name) ] f
+let with_setting setting name f = Setting.context [ B (setting, name) ] f
 
 let bool_cell = function
   | "True" -> true
@@ -250,29 +250,29 @@ let defaults =
       cases "default_float is the float DEFAULT_FLOAT names" ~name:alias
         Dtype.floats (fun dt ->
           equal dtype dt
-            (with_setting Helpers.default_float (alias dt) Dtype.default_float));
+            (with_setting Setting.default_float (alias dt) Dtype.default_float));
       test "DEFAULT_FLOAT is read in any case" (fun () ->
           equal dtype Dtype.Float16
-            (with_setting Helpers.default_float "HALF" Dtype.default_float));
+            (with_setting Setting.default_float "HALF" Dtype.default_float));
       cases "default_int is the integer DEFAULT_INT names" ~name:alias
         Dtype.ints (fun dt ->
           equal dtype dt
-            (with_setting Helpers.default_int (alias dt) Dtype.default_int));
+            (with_setting Setting.default_int (alias dt) Dtype.default_int));
       cases "default_float rejects what is not a float of known width"
         ~name:Fun.id [ "int32"; "weakfloat"; "bool"; "void"; "typo" ]
         (fun name ->
           rejects (fun () ->
-              with_setting Helpers.default_float name Dtype.default_float));
+              with_setting Setting.default_float name Dtype.default_float));
       cases "default_int rejects what is not an integer of known width"
         ~name:Fun.id [ "float32"; "weakint"; "bool"; "void"; "typo" ]
         (fun name ->
           rejects (fun () ->
-              with_setting Helpers.default_int name Dtype.default_int));
+              with_setting Setting.default_int name Dtype.default_int));
       test "strong commits the weak data types at the current defaults"
         (fun () ->
-          with_setting Helpers.default_int "int64" (fun () ->
+          with_setting Setting.default_int "int64" (fun () ->
               equal dtype Dtype.Int64 (Dtype.strong Dtype.Weak_int));
-          with_setting Helpers.default_float "float16" (fun () ->
+          with_setting Setting.default_float "float16" (fun () ->
               equal dtype Dtype.Float16 (Dtype.strong Dtype.Weak_float)));
       Golden.cases "projections.golden" (fun cell ->
           let dt = dtype_of_cell (cell "dtype") in
@@ -416,13 +416,13 @@ let promotion =
           is_true (Dtype.is_float (Dtype.least_upper_float dt)));
       cases "least_upper_float keeps a float whatever the default" ~name:alias
         Dtype.floats (fun default ->
-          with_setting Helpers.default_float (alias default) (fun () ->
+          with_setting Setting.default_float (alias default) (fun () ->
               List.iter
                 (fun dt -> equal dtype dt (Dtype.least_upper_float dt))
                 Dtype.floats));
       cases "least_upper_float takes an integer to the default float"
         ~name:alias Dtype.floats (fun default ->
-          with_setting Helpers.default_float (alias default) (fun () ->
+          with_setting Setting.default_float (alias default) (fun () ->
               List.iter
                 (fun dt -> equal dtype default (Dtype.least_upper_float dt))
                 Dtype.ints));
@@ -1113,7 +1113,7 @@ let conversions =
 let sum_dtype_keyed =
   test "SUM_DTYPE is keyed with what shapes compilation" (fun () ->
       equal (option string) (Some "float32")
-        (List.assoc_opt "SUM_DTYPE" (Helpers.shaping ())))
+        (List.assoc_opt "SUM_DTYPE" (Setting.shaping ())))
 
 let () =
   exit

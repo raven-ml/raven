@@ -78,17 +78,17 @@ let opts_of_cell s =
 let settings_of_cell s =
   let setting pair =
     match String.split_on_char '=' pair with
-    | [ "TC"; v ] -> Helpers.B (Helpers.use_tc, int_of_string v)
-    | [ "TC_OPT"; v ] -> B (Helpers.tc_opt, Some (int_of_string v))
-    | [ "TC_SELECT"; v ] -> B (Helpers.tc_select, int_of_string v)
-    | [ "TC_MIN_GLOBALS"; v ] -> B (Helpers.tc_min_globals, int_of_string v)
-    | [ "ALLOW_TF32"; v ] -> B (Helpers.allow_tf32, int_of_string v <> 0)
-    | [ "NOOPT"; v ] -> B (Helpers.noopt, int_of_string v <> 0)
+    | [ "TC"; v ] -> Setting.B (Setting.use_tc, int_of_string v)
+    | [ "TC_OPT"; v ] -> B (Setting.tc_opt, Some (int_of_string v))
+    | [ "TC_SELECT"; v ] -> B (Setting.tc_select, int_of_string v)
+    | [ "TC_MIN_GLOBALS"; v ] -> B (Setting.tc_min_globals, int_of_string v)
+    | [ "ALLOW_TF32"; v ] -> B (Setting.allow_tf32, int_of_string v <> 0)
+    | [ "NOOPT"; v ] -> B (Setting.noopt, int_of_string v <> 0)
     | [ "EMULATED_DTYPES"; v ] ->
-        B (Helpers.emulated_dtypes, String.split_on_char ',' v)
+        B (Setting.emulated_dtypes, String.split_on_char ',' v)
     | [ "DISABLE_FAST_IDIV"; v ] ->
-        B (Helpers.disable_fast_idiv, int_of_string v <> 0)
-    | [ "TRANSCENDENTAL"; v ] -> B (Helpers.transcendental, int_of_string v)
+        B (Setting.disable_fast_idiv, int_of_string v <> 0)
+    | [ "TRANSCENDENTAL"; v ] -> B (Setting.transcendental, int_of_string v)
     | _ -> failwith ("no setting " ^ pair)
   in
   String.split_on_char ' ' s |> List.filter (( <> ) "") |> List.map setting

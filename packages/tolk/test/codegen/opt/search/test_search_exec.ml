@@ -42,8 +42,8 @@ let searched name =
   (* A search times anew: a result kept by an earlier run would hide what this
      one finds. *)
   let prg =
-    Helpers.context
-      [ B (Helpers.ignore_beam_cache, true) ]
+    Setting.context
+      [ B (Setting.ignore_beam_cache, true) ]
       (fun () ->
         Codegen.to_program ~beam:(Search.beam_search ~time)
           (with_info (fun i -> { i with beam = 2 }) k)

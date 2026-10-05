@@ -1148,8 +1148,8 @@ let shapes =
       test "disallow_broadcast rejects sources of different shapes" (fun () ->
           let a = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32
           and b = Ops.param ~shape:(ints [ 3 ]) 1 Float32 in
-          Helpers.context
-            [ B (Helpers.disallow_broadcast, true) ]
+          Setting.context
+            [ B (Setting.disallow_broadcast, true) ]
             (fun () -> rejects (fun () -> Ops.shape Ops.O.(a + b)));
           equal shape (ints [ 2; 3 ]) (Ops.shape Ops.O.(a + b)));
       test "a node passing its source through keeps its shape" (fun () ->

@@ -29,7 +29,7 @@ val jit_lower :
       [held_bufs], whose contents outlive a run, such as the buffers a caller
       keeps or that hold constants;
     + it is compiled ({!Hcq2.compile_linear}, with [search] and [devices]), with
-      the beam width [beam], or else {!Helpers.jitbeam}'s, or else
-      {!Helpers.beam}'s.
+      the beam width [beam], or else {!Setting.jitbeam}'s, or else
+      {!Setting.beam}'s.
 
     Raises as {!Hcq2.compile_linear} does. *)

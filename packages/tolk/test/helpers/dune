@@ -1,5 +1,5 @@
-; Settings are read when the program starts, so CACHEDB is set here, to a
-; directory of the sandbox: the suite clears the cache it writes to.
+; The cache's directory is read when the program starts, so CACHEDB is set
+; here, to a directory of the sandbox: the suite clears the cache it writes to.
 
 (test
  (name test_helpers)

@@ -162,7 +162,7 @@ let replace_allreduce =
     ])
 
 let late_allreduce =
-  Helpers.Context_var.bool ~reach:Output "LATE_ALLREDUCE" true
+  Setting.bool ~reach:Output "LATE_ALLREDUCE" true
 
 (* Without LATE_ALLREDUCE, an allreduce becomes its copies here, before the
    rules above see it. *)
@@ -173,7 +173,7 @@ let replace_allreduce =
            rule
              (Upat.op Op.Allreduce ~name:"red" ~src:[ Upat.var "buf" ])
              (fun m ->
-               if Helpers.Context_var.value late_allreduce then None
+               if Setting.value late_allreduce then None
                else Allreduce.handle_allreduce (m "red"));
          ]))
     replace_allreduce
@@ -352,7 +352,7 @@ let reduce_multi root multi =
         (* All sharded axes are reduced: a full allreduce. *)
         match (op x, src x) with
         | Op.Cast, inner :: _
-          when Helpers.Context_var.value Helpers.allreduce_cast
+          when Setting.value Setting.allreduce_cast
                && List.mem (dtype inner) Dtype.[ Bfloat16; Float16 ] ->
             Some
               (cast

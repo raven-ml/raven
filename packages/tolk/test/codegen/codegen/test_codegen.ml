@@ -60,8 +60,8 @@ let renderer_of_row row =
 
 (* tinygrad's goldens name kernels without colour. *)
 let under row f =
-  Helpers.context
-    (B (Helpers.no_color, true) :: Kernel_opts.settings_of_cell (row "setting"))
+  Setting.context
+    (B (Setting.no_color, true) :: Kernel_opts.settings_of_cell (row "setting"))
     f
 
 let optimize k = Ops.tag k = None
@@ -649,8 +649,8 @@ let separates_settings () =
   let k = Ops.replace add ~arg:(Kernel (Ops.kernel_info ~name:"settings" ())) in
   let optimised = Codegen.to_program k clang in
   let unoptimised =
-    Helpers.context
-      [ B (Helpers.noopt, true) ]
+    Setting.context
+      [ B (Setting.noopt, true) ]
       (fun () -> Codegen.to_program k clang)
   in
   let applied p = (kernel_info (Ops.nth p 0)).applied_opts in
@@ -662,13 +662,13 @@ let separates_settings () =
    from being returned: the program is made, and compiled, again. Among them, a
    setting its caller declares to reach output, of which codegen knows
    nothing. *)
-let declared = Helpers.Context_var.int ~reach:Output "TOLK_TEST_CODEGEN" 0
+let declared = Setting.int ~reach:Output "TOLK_TEST_CODEGEN" 0
 
 let separates setting () =
   let compiled, r = counting () in
   let k = fresh_kernel () in
   ignore (Codegen.to_program k r);
-  ignore (Helpers.context [ setting ] (fun () -> Codegen.to_program k r));
+  ignore (Setting.context [ setting ] (fun () -> Codegen.to_program k r));
   equal int ~msg:"compilations" 2 (Atomic.get compiled)
 
 let target_of p =
@@ -708,7 +708,7 @@ let caching =
       group "a program is made again under another value of"
         (List.map
            (fun (name, setting) -> test name (separates setting))
-           Helpers.
+           Setting.
              [
                ("NOOPT", B (noopt, true));
                ("TC", B (use_tc, 0));
@@ -886,7 +886,7 @@ let other_values () =
           match List.assoc_opt name strings with
           | Some other -> (name, other)
           | None -> failf "%s holds a string: give it another value" name))
-    (List.remove_assoc "DEFAULT_FLOAT" (Helpers.shaping ()))
+    (List.remove_assoc "DEFAULT_FLOAT" (Setting.shaping ()))
 
 let on_disk =
   group "programs are kept on disk"
@@ -1338,8 +1338,8 @@ let lowering_claims =
 let plain = Renderer.v (target "" "" "")
 
 let full_rewrite ?(ren = plain) uops =
-  Helpers.context
-    [ B (Helpers.spec, 0) ]
+  Setting.context
+    [ B (Setting.spec, 0) ]
     (fun () ->
       Codegen.full_rewrite_to_sink
         (Ops.sink ~kernel:(Ops.kernel_info ()) uops)
@@ -1471,7 +1471,7 @@ let gated_index slot =
 let loaded ?(slot = 0) ?(size = 3) dt i =
   Ops.index (Ops.param ~shape:[ Int size ] slot dt) [ Ops.int i ]
 
-let fast_idiv = [ Helpers.B (Helpers.disable_fast_idiv, false) ]
+let fast_idiv = [ Setting.B (Setting.disable_fast_idiv, false) ]
 
 (* Clang's operations without a maximum, as tinygrad's base C renderer. *)
 let without_max =
@@ -1556,7 +1556,7 @@ let divisions =
       test
         "with DISABLE_FAST_IDIV=0, a division and a remainder by 3 multiply \
          and shift" (fun () ->
-          Helpers.context fast_idiv (fun () ->
+          Setting.context fast_idiv (fun () ->
               let div =
                 instructions_of
                   [ Ops.alu (loaded ~size:4 Uint32 3) Cdiv [ Ops.int 3 ] ]
@@ -1574,12 +1574,12 @@ let divisions =
         "a division by a divisor that is not positive is no shift"
         [ (Op.Cdiv, -3); (Cdiv, 0); (Cmod, -3); (Cmod, 0) ]
         (fun (o, d) ->
-          Helpers.context fast_idiv (fun () ->
+          Setting.context fast_idiv (fun () ->
               lacks Shr
                 (instructions_of
                    [ Ops.alu (Ops.range (Int 20) [ 0 ]) o [ Ops.int d ] ])));
       test "a remainder the fast division declines stays a remainder" (fun () ->
-          Helpers.context fast_idiv (fun () ->
+          Setting.context fast_idiv (fun () ->
               has Cmod
                 (instructions_of
                    [
@@ -1597,7 +1597,7 @@ let divisions =
             Ops.variable ~dtype:Int32 "x" (`Int Bigint.zero) (`Int Bigint.one)
           in
           let lowered =
-            Helpers.context fast_idiv (fun () ->
+            Setting.context fast_idiv (fun () ->
                 full_rewrite [ Ops.alu x Cdiv [ Ops.int 3 ] ])
           in
           List.iter
@@ -1609,7 +1609,7 @@ let divisions =
             [ 0; 1 ]);
       test "a division by 7 times 64 shifts out the 64 first, in 32 bits"
         (fun () ->
-          Helpers.context fast_idiv (fun () ->
+          Setting.context fast_idiv (fun () ->
               let r = Ops.range (Int (1 lsl 20)) [ 0 ] in
               let uops =
                 instructions_of
@@ -1618,8 +1618,8 @@ let divisions =
               equal (list Uops.uop) [] (List.filter wide uops);
               lacks Cdiv uops));
       test "DISABLE_FAST_IDIV=1 keeps a division by 3" (fun () ->
-          Helpers.context
-            [ B (Helpers.disable_fast_idiv, true) ]
+          Setting.context
+            [ B (Setting.disable_fast_idiv, true) ]
             (fun () ->
               let uops =
                 instructions_of
@@ -1634,13 +1634,13 @@ let divisions =
 (* tinygrad's test: the ranges left after lowering [uops] without optimising,
    and the constant a range of [n] iterations ends at once lowered. *)
 let ranges_left uops =
-  Helpers.context
-    [ B (Helpers.noopt, true) ]
+  Setting.context
+    [ B (Setting.noopt, true) ]
     (fun () -> List.filter (is Range) (Ops.toposort (full_rewrite uops)))
 
 let lowered_end n =
-  Helpers.context
-    [ B (Helpers.noopt, true) ]
+  Setting.context
+    [ B (Setting.noopt, true) ]
     (fun () -> Ops.nth (full_rewrite [ Ops.int ~dtype:Int32 n ]) 0)
 
 let ends_at n uops =
@@ -1720,8 +1720,8 @@ let marker_kernel =
        ])
 
 let checks_what_it_lowers () =
-  Helpers.context
-    [ B (Helpers.spec, 1) ]
+  Setting.context
+    [ B (Setting.spec, 1) ]
     (fun () ->
       raises_match (Exn.invalid_arg ~substring:"UOp verification failed")
         (fun () ->
@@ -1752,8 +1752,8 @@ let accumulated c =
          Ops.store (lane 3 Float32 i) (Ops.index sum [ Ops.int ~dtype:Int32 i ])))
 
 let lowered_on_metal k =
-  Helpers.context
-    [ B (Helpers.spec, 0) ]
+  Setting.context
+    [ B (Setting.spec, 0) ]
     (fun () -> Codegen.full_rewrite_to_sink ~optimize:false k metal)
 
 (* A tensor core computes its accumulator plus a product that does not depend on
@@ -2032,8 +2032,8 @@ let half_zeros_kernel () =
   Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ r0; r1 ] ]
 
 let refused_on_a_cast kernel () =
-  Helpers.context
-    [ B (Helpers.spec, 1) ]
+  Setting.context
+    [ B (Setting.spec, 1) ]
     (fun () ->
       raises_match (Exn.invalid_arg ~substring:"on Ops.CAST") (fun () ->
           Codegen.to_program kernel clang))
@@ -2042,8 +2042,8 @@ let vectors =
   group "vectors in programs"
     [
       test "a select of lanes whose loads all fold is devectorized" (fun () ->
-          Helpers.context
-            [ B (Helpers.spec, 1) ]
+          Setting.context
+            [ B (Setting.spec, 1) ]
             (fun () ->
               ignore (Codegen.to_program (vector_select_kernel ()) clang)));
       test "a weak constant stored into four lanes of half is refused"
@@ -2279,8 +2279,8 @@ let errors =
         "with SPEC=0, a lowered graph that breaks the specification is returned"
         (fun () ->
           let lowered =
-            Helpers.context
-              [ B (Helpers.spec, 0) ]
+            Setting.context
+              [ B (Setting.spec, 0) ]
               (fun () ->
                 Codegen.full_rewrite_to_sink ~optimize:false
                   (Lazy.force marker_kernel) breaking)
@@ -2289,16 +2289,16 @@ let errors =
       test "with SPEC=0, a kernel that breaks the specification is lowered"
         (fun () ->
           let lowered =
-            Helpers.context
-              [ B (Helpers.spec, 0) ]
+            Setting.context
+              [ B (Setting.spec, 0) ]
               (fun () ->
                 Codegen.full_rewrite_to_sink ~optimize:false spec_breaking clang)
           in
           mem op If (List.map Ops.op (Ops.toposort lowered)));
       test "a kernel that breaks the specification raises Invalid_argument"
         (fun () ->
-          Helpers.context
-            [ B (Helpers.spec, 1) ]
+          Setting.context
+            [ B (Setting.spec, 1) ]
             (fun () ->
               raises_match
                 (Exn.invalid_arg ~substring:"UOp verification failed")
@@ -2315,7 +2315,7 @@ let errors =
 
 (* Diagnostics *)
 
-let at_debug level f = Helpers.context [ B (Helpers.debug, level) ] f
+let at_debug level f = Setting.context [ B (Setting.debug, level) ] f
 
 (* tinygrad prints a tuple of optimisations: [(o,)], or [(o0, o1)]. *)
 let prints_the_optimisations opts =
@@ -2337,8 +2337,8 @@ let prints_the_optimisations opts =
 (* A child lowers the breaking graph, which must fail its check. DBGTV is read
    when the program starts, so the child runs with it set. *)
 let lowers_a_breaking_graph () =
-  Helpers.context
-    [ B (Helpers.spec, 1) ]
+  Setting.context
+    [ B (Setting.spec, 1) ]
     (fun () ->
       match
         Codegen.full_rewrite_to_sink ~optimize:false (Lazy.force marker_kernel)
@@ -2591,8 +2591,8 @@ let keeps_a_shrunk_loop () =
   let r = Ops.range (Int 204) [ 0 ] in
   let x = Ops.where (Ops.lt r (Ops.int 4)) (Ops.float 1.) Ops.invalid in
   let prg =
-    Helpers.context
-      [ B (Helpers.noopt, true) ]
+    Setting.context
+      [ B (Setting.noopt, true) ]
       (fun () ->
         in_blocks
           [ Ops.end_ (Ops.store (Ops.index (floats 204 0) [ r ]) x) [ r ] ])

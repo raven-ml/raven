@@ -113,11 +113,11 @@ let programs =
 
 (* The settings a program was recorded under. *)
 let settings = function
-  | "no_split" -> [ Helpers.B (Helpers.split_reduceop, false) ]
+  | "no_split" -> [ Setting.B (Setting.split_reduceop, false) ]
   | _ -> []
 
 let prepared name =
-  Helpers.context (settings name) (fun () -> prepare (program name))
+  Setting.context (settings name) (fun () -> prepare (program name))
 
 let recorded =
   group "prepare_rangeify › recorded"
@@ -884,8 +884,8 @@ let earliest =
           let total = Ops.param ~device:cpu ~shape:[] 0 Float32 in
           let sum = Ops.rop (flat 65536) Add [ 0 ] in
           let u = Ops.sink [ Ops.after total [ Ops.store total sum ] ] in
-          Helpers.context
-            [ Helpers.B (Helpers.debug, 3) ]
+          Setting.context
+            [ Setting.B (Setting.debug, 3) ]
             (fun () -> ignore (prepare u));
           contains ~sub:"split 256: (65536,) -> (256, 256) -> ()" (output ()));
       test "a reduction of a symbolic shape is not split" (fun () ->

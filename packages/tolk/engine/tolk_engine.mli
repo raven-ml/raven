@@ -229,7 +229,7 @@ val run :
     and the buffer copied back ({!Nx_device.submit}). Runs of [s] are
     serialized: a run starts once the previous one returned.
 
-    When the setting {!Tolk.Helpers.debug} is [1] or more and [s] runs ten calls
+    When the setting {!Tolk.Setting.debug} is [1] or more and [s] runs ten calls
     or more, [run] first prints ["jit execs n calls"] on standard output, [n]
     its number of calls. When it is [2] or more, [run] prints a line for each
     kernel on standard output: its device, how many kernels ran before it, its
@@ -272,7 +272,7 @@ val timer :
       ({!Nx_device.Profile}), which a device with queues stamps and the host
       records around its call otherwise. While a profile is taken already, the
       time is the run and the device's synchronization on the host clock. A run
-      reports nothing on standard output, whatever {!Tolk.Helpers.debug} holds.
+      reports nothing on standard output, whatever {!Tolk.Setting.debug} holds.
       It allocates no device memory and loads nothing. Runs are serialized, as
       {!run}s are.
 

@@ -206,7 +206,7 @@ the Exclusions of `README.md`.
   `codegen/__init__.py:495-505` (`to_program_context`, the settings a worker
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
-  `lib/helpers.ml:127` (`Context_var`) and `:169` (`context`);
+  `lib/setting.ml:152` (`t`) and `:202` (`context`);
   `lib/codegen/codegen.ml:1008` (`to_program`'s cache);
   `lib/runtime/support/compiler_metal.ml:38` (`build`);
   `lib/runtime/support/compiler_amd.ml` (`run`) and
@@ -241,8 +241,8 @@ the Exclusions of `README.md`.
   through files, and a compile whose process ends without a reply raises
   `Compile_error`, where it would end tinygrad's worker.
 - **Reason:** (a).
-- **Pinned by:** `Tolk.Helpers › context › is not seen by the other
-  domains` and `Tolk.Helpers › context › binds for the domains spawned
+- **Pinned by:** `Tolk.Setting › context › is not seen by the other
+  domains` and `Tolk.Setting › context › binds for the domains spawned
   while it runs`; `Tolk.Worker` (every test); `Tolk.Codegen ›
   programs are kept › calls from several domains at once make one program,
   compiled once (D5)`; `Tolk.Compiler_metal › MTLCompiler › compiles
@@ -291,7 +291,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk:** `lib/helpers.ml:586-697` (`Diskcache`).
+- **tolk:** `lib/helpers.ml:393-504` (`Diskcache`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
   place; tables are versioned by tolk's own version.
@@ -1877,7 +1877,7 @@ the Exclusions of `README.md`.
   (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:309`
   (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
-  name); `lib/helpers.ml:289` (`scache`, `2` by default) and `:121`
+  name); `lib/setting.ml:267` (`scache`, `2` by default) and `:142`
   (`shaping`); `lib/runtime/support/compiler_cpu.ml:53` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
   `tools/source_digest.ml`.
@@ -1899,7 +1899,7 @@ the Exclusions of `README.md`.
   `BEAM_UPCAST_MAX`, `CC`, `CUDA_PATH`, `DMC`, `EXPAND_SSA`,
   `HCQ_NUM_SDMA`, `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT`
   variables, `RING_ALLREDUCE_THRESHOLD`, `SUM_DTYPE` and `WAVES_PER_SH`),
-  and the keys take every one that reaches output (`Helpers.shaping`), so
+  and the keys take every one that reaches output (`Setting.shaping`), so
   one declared later, by tolk or by its caller, is keyed without being
   listed; a setting of the process alone, such as `DEBUG`, `BEAM` or
   `PARALLEL`, is not. One key serves memory
@@ -2896,7 +2896,7 @@ stores through a pad.
   `DEV.target`); `device.py:483-486` (`_select_renderer`, which renders for
   `DEV.target` of the device's kind).
 - **tolk:** `engine/tolk_engine.ml:24` (`target`); `lib/device.ml:144`
-  (`renderer`); `lib/helpers.ml:188` (`Target`).
+  (`renderer`); `lib/helpers.ml:25` (`Target`).
 - **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
   of the device: its vendor's kind and its `arch`, or the host's CPU target.
   `Device.renderer` takes the target and renders for it, the first renderer
@@ -2907,7 +2907,7 @@ stores through a pad.
   environment applies to every device of the process, so it compiles for a
   device the values do not live on, and a malformed `DEV`, meant for another
   program, failed every program linking tolk when it started.
-- **Pinned by:** `Tolk.Helpers › startup › starts whatever DEV holds`;
+- **Pinned by:** `Tolk.Setting › startup › starts whatever DEV holds`;
   `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
   (each row renders for the target tinygrad's `DEV` gives the device) and
   `renders for the target it is given`.
@@ -3351,7 +3351,7 @@ stores through a pad.
   cubin included. A program is kept on disk under its compiler's table, and
   only if that compiler caches its binaries. The beam search's key adds the
   library's sources, the renderer, its compiler's table, and the settings
-  that shape compilation (`Helpers.shaping`), among which those that pick
+  that shape compilation (`Setting.shaping`), among which those that pick
   the candidates (`TC`, `TC_OPT` and `BEAM_PADTO`, D114) and those the search
   declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX`,
   `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`. `BEAM_STRICT_MODE` is not keyed:
@@ -3381,16 +3381,16 @@ stores through a pad.
   `0` otherwise); `engine/jit.py:36` (`getenv("JITBEAM", BEAM.value)`);
   `codegen/__init__.py:386` (`os.environ.get("DBGTV")`, read on each
   failure).
-- **tolk:** `lib/helpers.ml:88` (`reach`), `:121` (`shaping`), `:127`
-  (`Context_var`), `:235` (`jitbeam`) and `:240` (`tc_opt`);
+- **tolk:** `lib/setting.ml:88` (`reach`), `:142` (`shaping`), `:152`
+  (`t`), `:216` (`jitbeam`) and `:221` (`tc_opt`);
   `lib/codegen/opt/search.ml:30` (`actions`);
   `lib/codegen/opt/heuristic.ml:101`; `lib/codegen/codegen.ml:679`
   (`dbgtv`).
-- **Differs:** tolk reads no variable outside a setting: `Helpers` exports no
-  `getenv`. Each variable is declared once, as a setting with its type,
+- **Differs:** tolk reads no variable outside a setting: no module exports
+  `getenv`. Each variable is declared once (`Setting`), as a setting with its type,
   default and reach: `Output` if its value changes what compilation makes,
   and `Process` otherwise. The caches key on every `Output` setting
-  (`Helpers.shaping`, D63). tinygrad reads a variable with `getenv` at any
+  (`Setting.shaping`, D63). tinygrad reads a variable with `getenv` at any
   call site, so one variable can have two readers with two defaults:
   `TC_OPT` is a `ContextVar` of default `0` and a `getenv` of default `2`
   in the search. In tolk `TC_OPT` is one setting whose value is an option;
@@ -3404,12 +3404,12 @@ stores through a pad.
   that compiles with tolk declares its own variables the same way, so rune's
   jit keys on its `Output` settings too.
 - **Reason:** (b): rune's jit memo and tolk's program, schedule and search
-  caches key on `Helpers.shaping`. A variable read outside a declaration on
+  caches key on `Setting.shaping`. A variable read outside a declaration on
   a compile path is missing from every key, and a cache returns what was
   made under another value: the search's `TC_OPT`, read raw with its own
   default, kept a search made with `TC_OPT` unset for a process with
   `TC_OPT=0`.
-- **Pinned by:** `Tolk.Helpers › Context_var` and `› shaping` (every test);
+- **Pinned by:** `Tolk.Setting › declarations` and `› shaping` (every test);
   `Tolk.Search › the tensor cores' actions ›` both tests and `› a search
   kept under one value of a setting declared by its caller measures again
   under another`; `Tolk.Codegen › programs are kept › a program is made

@@ -1347,7 +1347,7 @@ let run_of_fills n =
       (Ops.v Op.Linear ~src:(List.map snd fills))
   in
   let s = Engine.link ~devices ~bound compiled in
-  Helpers.context [ B (Helpers.debug, 1) ] (fun () -> Engine.run s [||]);
+  Setting.context [ B (Setting.debug, 1) ] (fun () -> Engine.run s [||]);
   List.filter
     (String.starts_with ~prefix:"jit execs")
     (String.split_on_char '\n' (output ()))
@@ -1493,7 +1493,7 @@ let prints_nothing name =
   let stage, prg = timer_on name in
   let sample = stage prg in
   ignore (output ());
-  Helpers.context [ B (Helpers.debug, 2) ] (fun () -> ignore (sample ()));
+  Setting.context [ B (Setting.debug, 2) ] (fun () -> ignore (sample ()));
   expect (output ()) @@ __POS_OF__ {||}
 
 (* [kernel] with its parameter 1 moved to the slot 3. *)
@@ -1945,8 +1945,8 @@ let counts_up lines =
    the host devices, each a line timed on the host clock. *)
 let reports_host_calls () =
   let big = program "copy" in
-  Helpers.context
-    [ B (Helpers.debug, 2) ]
+  Setting.context
+    [ B (Setting.debug, 2) ]
     (fun () ->
       let s, vars, storage = linked big in
       Engine.run ~vars s (slots storage));
@@ -1971,8 +1971,8 @@ let reports_each_kernel () =
       (fun (y, _) -> (y, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]))
       fills
   in
-  Helpers.context
-    [ B (Helpers.debug, 2) ]
+  Setting.context
+    [ B (Setting.debug, 2) ]
     (fun () ->
       let s = link_calls ~bound (List.map snd fills) in
       Null_device.with_latency 0.02 (fun () -> Engine.run s [||]));
@@ -2196,7 +2196,7 @@ let fill_with name d =
 
 (* [fill_with name]'s kernel compiled with its loop whole, which the host
    splits. *)
-let unoptimized f = Helpers.context [ B (Helpers.noopt, true) ] f
+let unoptimized f = Setting.context [ B (Setting.noopt, true) ] f
 
 (* What a run of [fill_with name] on [d] writes with [name] bound to 3. *)
 let filled (devices : string -> Engine.device) d name =

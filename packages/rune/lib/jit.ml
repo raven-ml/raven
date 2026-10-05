@@ -13,8 +13,8 @@ module View = Nx_array.View
 module B = Nx_device.Buffer
 module Claim = Nx_device.Buffer.Claim
 
-let debug = Tolk.Helpers.Context_var.bool ~reach:Process "RUNE_JIT_DEBUG" false
-let debugging () = Tolk.Helpers.Context_var.value debug
+let debug = Tolk.Setting.bool ~reach:Process "RUNE_JIT_DEBUG" false
+let debugging () = Tolk.Setting.value debug
 
 let report fmt =
   if debugging () then Printf.eprintf ("rune.jit: " ^^ fmt ^^ "\n%!")
@@ -99,7 +99,7 @@ let starts_its_run (l : layout) =
 
 (* The settings a program depends on that a caller may change around a call:
    each setting of tolk that shapes what it compiles, which tolk names
-   ([Tolk.Helpers.shaping]), the search's width, and how the program's batches
+   ([Tolk.Setting.shaping]), the search's width, and how the program's batches
    profile: under DEBUG 2 or more, and for the counters and traces of the
    profile being taken, which a device's batches count and trace. *)
 type settings = {
@@ -113,17 +113,16 @@ type settings = {
 (* [settings ~beam ()] are the settings a call compiles with: [beam], or else
    the width tolk's lowering reads, [JITBEAM]'s or else [BEAM]'s. *)
 let settings ?beam () =
-  let module H = Tolk.Helpers in
   {
-    shaping = H.shaping ();
+    shaping = Tolk.Setting.shaping ();
     beam =
       (match beam with
       | Some beam -> beam
       | None -> (
-          match H.Context_var.value H.jitbeam with
+          match Tolk.Setting.value Tolk.Setting.jitbeam with
           | Some beam -> beam
-          | None -> H.Context_var.value H.beam));
-    profiled = H.Context_var.value H.debug >= 2;
+          | None -> Tolk.Setting.value Tolk.Setting.beam));
+    profiled = Tolk.Setting.value Tolk.Setting.debug >= 2;
     counters = Nx_device.Profile.counters ();
     traced = Nx_device.Profile.traced ();
   }
@@ -649,7 +648,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
         in
         match parallel with
         | None -> search ()
-        | Some p -> Tolk.Helpers.context [ B (Tolk.Helpers.parallel, p) ] search
+        | Some p -> Tolk.Setting.context [ B (Tolk.Setting.parallel, p) ] search
       in
       let linear =
         span "compile" (fun () ->

@@ -22,7 +22,7 @@ type t =
           core ([-1] the first that fits), [tc_opt] how far to relax its
           requirements, from 0 to 2, and [use_tc] how to use it, 1 or 2.
           [tc_opt] and [use_tc] carry the levels of the settings
-          {!Helpers.tc_opt} and {!Helpers.use_tc}, a reader's default standing
+          {!Setting.tc_opt} and {!Setting.use_tc}, a reader's default standing
           for an unset [tc_opt]. *)
   | Split of { axis : int; amount : int; target : target; top : bool }
       (** Split [amount] out of [axis] into a new axis for [target], taken from

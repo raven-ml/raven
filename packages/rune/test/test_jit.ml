@@ -588,8 +588,7 @@ let every_other t =
 
 (* A setting its caller declares to reach output, of which rune knows nothing:
    its key holds it all the same. *)
-let declared =
-  Tolk.Helpers.Context_var.int ~reach:Output "RUNE_TEST_JIT_SETTING" 0
+let declared = Tolk.Setting.int ~reach:Output "RUNE_TEST_JIT_SETTING" 0
 
 let keys =
   let g () = Rune.jit' poly in
@@ -672,18 +671,16 @@ let keys =
       test "a change of NOOPT around a call retraces once" (fun () ->
           let g = g () in
           let noopt f =
-            Tolk.Helpers.context [ B (Tolk.Helpers.noopt, true) ] f
+            Tolk.Setting.context [ B (Tolk.Setting.noopt, true) ] f
           in
           retraces
             (checked g poly (x ()))
             (fun () -> noopt (checked g poly (x ()))));
       cases
-        ~name:(fun (Tolk.Helpers.B (v, _)) ->
-          "a change of "
-          ^ Tolk.Helpers.Context_var.key v
-          ^ " around a call retraces once")
+        ~name:(fun (Tolk.Setting.B (v, _)) ->
+          "a change of " ^ Tolk.Setting.key v ^ " around a call retraces once")
         "a setting that shapes compilation"
-        Tolk.Helpers.
+        Tolk.Setting.
           [
             B (split_reduceop, false);
             B (transcendental, 2);
@@ -701,15 +698,15 @@ let keys =
           let g = g () in
           retraces
             (checked g poly (x ()))
-            (fun () -> Tolk.Helpers.context [ b ] (checked g poly (x ()))));
+            (fun () -> Tolk.Setting.context [ b ] (checked g poly (x ()))));
       (* A program of its own, whose kernel no earlier search chose: BEAM asks
          for a search, which times candidates on the host. *)
       test "a call under BEAM=1 searches its kernel and computes eager's values"
         (fun () ->
           let f a = Nx.add_s (poly a) 0.375 in
           let r =
-            Tolk.Helpers.context
-              [ B (Tolk.Helpers.beam, 1) ]
+            Tolk.Setting.context
+              [ B (Tolk.Setting.beam, 1) ]
               (fun () -> Rune.jit' f (x ()))
           in
           equal close (f (x ())) r);

@@ -11,7 +11,7 @@ let program name = Golden.sink (name ^ ".golden")
 (* A setting the suite declares to reach output, of which scheduling knows
    nothing: the caches key on it all the same. It is declared before a child
    runs, so that the child keys on it too. *)
-let declared = Helpers.Context_var.int ~reach:Output "TOLK_TEST_SCHEDULE" 0
+let declared = Setting.int ~reach:Output "TOLK_TEST_SCHEDULE" 0
 
 (* A child of the schedules-on-disk tests schedules matmul, before the suite's
    own schedules run. *)
@@ -361,8 +361,8 @@ let checked () =
       let big = program name in
       let plain = fst (Schedule.create_linear_with_vars ~capturing:true big) in
       let under_spec =
-        Helpers.context
-          [ B (Helpers.spec, 1) ]
+        Setting.context
+          [ B (Setting.spec, 1) ]
           (fun () -> fst (Schedule.create_linear_with_vars ~capturing:true big))
       in
       equal uop ~msg:name plain (Uops.numbered_like plain under_spec))
@@ -391,7 +391,7 @@ let unique ?(constant = 1.0) name =
     [ (Ops.float constant, Ops.float x) ]
 
 let with_settings ~debug ~scache f =
-  Helpers.context [ B (Helpers.debug, debug); B (Helpers.scache, scache) ] f
+  Setting.context [ B (Setting.debug, debug); B (Setting.scache, scache) ] f
 
 (* The lines scheduling printed, among what else it printed: each [(n, ms,
    verdict, key)] of a line [scheduled %5d kernels in %8.2f ms | <verdict>
@@ -608,7 +608,7 @@ let separates setting () =
   let big = unique "assign" in
   with_settings ~debug:3 ~scache:1 (fun () ->
       ignore (Schedule.create_linear_with_vars big);
-      Helpers.context [ setting ] (fun () ->
+      Setting.context [ setting ] (fun () ->
           ignore (Schedule.create_linear_with_vars big)));
   equal (list string)
     [ "CACHE MISS"; "CACHE MISS" ]
@@ -620,7 +620,7 @@ let cache =
       group "a body scheduled under one setting misses under another"
         (List.map
            (fun (name, setting) -> test name (separates setting))
-           Helpers.
+           Setting.
              [
                ("SPLIT_REDUCEOP", B (split_reduceop, false));
                ("MAX_KERNEL_BUFFERS", B (max_kernel_buffers, 8));
@@ -1326,7 +1326,7 @@ let other_values () =
           match List.assoc_opt name strings with
           | Some other -> (name, other)
           | None -> failf "%s holds a string: give it another value" name))
-    (Helpers.shaping ())
+    (Setting.shaping ())
 
 let on_disk =
   group "create_linear_with_vars › schedules are kept on disk"

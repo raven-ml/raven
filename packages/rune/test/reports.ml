@@ -49,8 +49,8 @@ let () =
   let neg = Rune.jit' Nx.neg in
   let a = Nx.ones Nx.float32 [| 4 |] in
   ignore (neg a);
-  Tolk.Helpers.context
-    [ B (Tolk.Helpers.noopt, true) ]
+  Tolk.Setting.context
+    [ B (Tolk.Setting.noopt, true) ]
     (fun () -> ignore (neg a))
 
 (* A retrace for the counters of the profile being taken: one counter whose name
@@ -75,7 +75,7 @@ let () =
   ignore (Rune.jit' g (Nx.ones Nx.float32 [| 4 |]));
   (* An explicit width overrides BEAM, [0] searching nothing; another width
      searches again. *)
-  Tolk.Helpers.context
-    [ B (Tolk.Helpers.beam, 1) ]
+  Tolk.Setting.context
+    [ B (Tolk.Setting.beam, 1) ]
     (fun () -> ignore (Rune.jit' ~beam:0 g (Nx.ones Nx.float32 [| 4 |])));
   ignore (Rune.jit' ~beam:2 f (Nx.ones Nx.float32 [| 4 |]))

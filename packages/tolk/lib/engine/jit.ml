@@ -18,10 +18,10 @@ let jit_lower ?beam ?search ~devices ~held_bufs ~inputs linear =
     match beam with
     | Some beam -> beam
     | None -> (
-        match Helpers.Context_var.value Helpers.jitbeam with
+        match Setting.value Setting.jitbeam with
         | Some beam -> beam
-        | None -> Helpers.Context_var.value Helpers.beam)
+        | None -> Setting.value Setting.beam)
   in
-  Helpers.context
-    [ B (Helpers.beam, beam) ]
+  Setting.context
+    [ B (Setting.beam, beam) ]
     (fun () -> Hcq2.compile_linear ?search ~devices linear)

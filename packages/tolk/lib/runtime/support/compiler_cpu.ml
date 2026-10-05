@@ -50,10 +50,10 @@ let statement =
 (* Clang *)
 
 (* The compiler run, which picks the binary of every CPU program. *)
-let cc = Helpers.Context_var.string ~reach:Output "CC" "clang"
+let cc = Setting.string ~reach:Output "CC" "clang"
 
 let clang arch =
-  let cc = Helpers.Context_var.value cc in
+  let cc = Setting.value cc in
   let machine, cpu, feats =
     match String.split_on_char ',' arch with
     | machine :: cpu :: feats -> (machine, cpu, feats)

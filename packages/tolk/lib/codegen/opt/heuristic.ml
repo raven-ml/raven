@@ -8,8 +8,8 @@
 open Ops
 module K = Postrange.Scheduler
 
-let setting = Helpers.Context_var.value
-let debug () = setting Helpers.debug
+let setting = Setting.value
+let debug () = setting Setting.debug
 
 (* A split the heuristic has checked applies. *)
 let split ?(top = false) k axis amount target =
@@ -97,10 +97,10 @@ let decoded_product k =
 
 (* first try the tensor cores *)
 let tensor_cores k =
-  let use_tc = setting Helpers.use_tc in
-  let tc_opt = Option.value (setting Helpers.tc_opt) ~default:0 in
-  let tc_select = setting Helpers.tc_select in
-  let min_globals = setting Helpers.tc_min_globals in
+  let use_tc = setting Setting.use_tc in
+  let tc_opt = Option.value (setting Setting.tc_opt) ~default:0 in
+  let tc_select = setting Setting.tc_select in
+  let min_globals = setting Setting.tc_min_globals in
   if
     use_tc > 0
     && (List.length (K.reduce_axes k) = 1 || tc_opt >= 1 || decoded_product k)
@@ -161,7 +161,7 @@ let tensor_cores k =
      unrolled by up to [in_flight]        few outputs a workgroup takes as
                                           few as [sector_lanes] across *)
 
-let mv = Helpers.Context_var.bool ~reach:Output "MV" true
+let mv = Setting.bool ~reach:Output "MV" true
 
 (* The threads of a SIMD group: a CUDA warp, an AMD wave32, a Metal
    simdgroup. *)
@@ -288,7 +288,7 @@ let matvec k =
   match (K.reduceop k, K.ranges_of k [ Reduce ]) with
   | Some r, first :: _
     when ren.has_local && ren.has_shared
-         && Helpers.Context_var.value mv
+         && Setting.value mv
          && (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
          && op (nth r 0) = Op.Mul -> (
       match operands first (nth r 0) with

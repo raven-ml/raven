@@ -25,13 +25,13 @@ val opts_of_cell : string -> Opt.t list
 
 (** {1:settings Settings} *)
 
-val settings_of_cell : string -> Helpers.binding list
+val settings_of_cell : string -> Setting.binding list
 (** [settings_of_cell s] binds the settings of [s], space-separated [NAME=value]
     pairs such as [TC=2 ALLOW_TF32=1], which name the environment variables of
-    {!Helpers.use_tc}, {!Helpers.tc_opt}, {!Helpers.tc_select},
-    {!Helpers.tc_min_globals}, {!Helpers.allow_tf32}, {!Helpers.noopt},
-    {!Helpers.emulated_dtypes}, {!Helpers.disable_fast_idiv} and
-    {!Helpers.transcendental}. The empty cell binds nothing.
+    {!Setting.use_tc}, {!Setting.tc_opt}, {!Setting.tc_select},
+    {!Setting.tc_min_globals}, {!Setting.allow_tf32}, {!Setting.noopt},
+    {!Setting.emulated_dtypes}, {!Setting.disable_fast_idiv} and
+    {!Setting.transcendental}. The empty cell binds nothing.
 
     Raises [Failure] naming a pair that is none of these. *)
 

@@ -29,7 +29,7 @@ val hip : string -> Renderer.Compiler.t
     kernels' symbols are internalized before code generation, so that only
     kernels stay visible.
 
-    With {!Helpers.ccache}, code objects are cached in the table
+    With {!Setting.ccache}, code objects are cached in the table
     [compile_hip_A_D], where [A] is [arch] and [D] the digest of comgr's library
     ({!C.identity}) and the options it compiles and links with: a code object is
     read back only for its source, compiled by the same comgr with the same

@@ -93,8 +93,8 @@ let printouts =
     (List.map
        (fun name ->
          Golden.text (name ^ "_debug.golden") (fun () ->
-             Helpers.context
-               [ Helpers.B (Helpers.debug, 1) ]
+             Setting.context
+               [ Setting.B (Setting.debug, 1) ]
                (fun () -> ignore (plan name));
              chomp (output ())))
        [ "simple"; "sizes"; "copies" ]
@@ -134,8 +134,8 @@ let rules =
       test "without the planner, a schedule is itself" (fun () ->
           let linear = schedule "simple" in
           equal uop linear
-            (Helpers.context
-               [ Helpers.B (Helpers.no_memory_planner, true) ]
+            (Setting.context
+               [ Setting.B (Setting.no_memory_planner, true) ]
                (fun () -> Memory.memory_plan_rewrite linear)));
       test "a schedule of held buffers only is itself" (fun () ->
           equal uop (schedule "all_held") (plan "all_held"));

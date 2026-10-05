@@ -29,7 +29,7 @@ type case = {
   kernel : string;
   renderer : string;
   opts : Opt.t list;
-  settings : Helpers.binding list;
+  settings : Setting.binding list;
   refused : (string * int) option;
       (** How tinygrad refuses an optimisation, and how many apply before it. *)
 }
@@ -52,7 +52,7 @@ let case name = List.find (fun c -> c.name = name) recorded_cases
 
 (* The goldens were recorded without colours. *)
 let recorded ?(settings = []) f =
-  Helpers.context (Helpers.B (Helpers.no_color, true) :: settings) f
+  Setting.context (Setting.B (Setting.no_color, true) :: settings) f
 
 let info ast = match Ops.arg ast with Kernel k -> k | _ -> Ops.kernel_info ()
 
@@ -222,8 +222,8 @@ let colors =
      is not"
     [
       Golden.cases "colors.golden" (fun cell ->
-          Helpers.context
-            [ B (Helpers.no_color, false) ]
+          Setting.context
+            [ B (Setting.no_color, false) ]
             (fun () ->
               let k =
                 K.v (kernel (cell "kernel")) (renderer (cell "renderer"))
@@ -424,8 +424,8 @@ let dispatch =
           equal (list Kernel_opts.opt) [] (applied ast));
       test "noopt turns the hand-coded optimisations off" (fun () ->
           let ast =
-            Helpers.context
-              [ B (Helpers.noopt, true) ]
+            Setting.context
+              [ B (Setting.noopt, true) ]
               (fun () ->
                 Postrange.apply_opts ~hand_coded:never_hand_coded
                   (kernel "sum_rows_64") cpu)

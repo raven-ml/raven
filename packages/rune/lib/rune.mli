@@ -772,7 +772,7 @@ val jit :
     storage, and where the run of storage it reaches starts within 16 bytes of
     memory), and make the same reports (an integer, a case, an option's
     presence, a list's length) at the same paths, under the same tolk settings
-    that shape compilation ({!Tolk.Helpers.shaping}). An integer that changes on
+    that shape compilation ({!Tolk.Setting.shaping}). An integer that changes on
     every call compiles a program per value; a value that varies belongs in a
     tensor. [RUNE_JIT_DEBUG=1] reports each retrace with the first difference
     from the previous call's key, such as

@@ -10,7 +10,7 @@ open Tolk
 module Engine = Tolk_engine
 
 let uop = Uops.uop
-let plain f = Helpers.context [ B (Helpers.no_color, true) ] f
+let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
 let param_arg u =
   match Ops.arg u with

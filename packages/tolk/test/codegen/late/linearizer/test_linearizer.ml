@@ -14,7 +14,7 @@ let chain sink =
 (* A linearization is written as the sources of a [LINEAR], tinygrad's node for
    a program in execution order. *)
 let linear sink = Ops.v Op.Linear ~src:(Linearizer.linearize sink)
-let toposorted f = Helpers.context [ B (Helpers.tuple_order, false) ] f
+let toposorted f = Setting.context [ B (Setting.tuple_order, false) ] f
 
 (* The cases of an input golden are its sink's sources, in order. *)
 let case file cell =
@@ -286,8 +286,8 @@ let printed () =
     (Some "1")
     (Sys.getenv_opt "DEBUG_LINEARIZE");
   ignore (output ());
-  Helpers.context
-    [ B (Helpers.no_color, true) ]
+  Setting.context
+    [ B (Setting.no_color, true) ]
     (fun () -> ignore (Linearizer.linearize (sink "dependent_loop_bound" "")));
   flush stdout;
   output ()

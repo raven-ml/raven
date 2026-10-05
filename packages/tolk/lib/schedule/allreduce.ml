@@ -7,10 +7,10 @@
 
 open Ops
 
-let setting = Helpers.Context_var.value
+let setting = Setting.value
 
 let ring_allreduce_threshold =
-  Helpers.Context_var.int ~reach:Output "RING_ALLREDUCE_THRESHOLD" 256_000
+  Setting.int ~reach:Output "RING_ALLREDUCE_THRESHOLD" 256_000
 
 (* The lists combined below hold one value per device or per chunk. *)
 let nonempty f = function
@@ -46,14 +46,14 @@ let handle_allreduce red =
       in
       let use_all2all =
         concrete
-        && (setting Helpers.all2all >= 2
-           || (large () && setting Helpers.all2all >= 1))
+        && (setting Setting.all2all >= 2
+           || (large () && setting Setting.all2all >= 1))
       in
       let use_ring =
         concrete && (not use_all2all)
-        && (setting Helpers.ring >= 2 || (large () && setting Helpers.ring >= 1))
+        && (setting Setting.ring >= 2 || (large () && setting Setting.ring >= 1))
       in
-      if setting Helpers.debug >= 2 then
+      if setting Setting.debug >= 2 then
         Format.printf "%s ALLREDUCE %dx%a | %a@."
           (if use_all2all then "ALL2ALL"
            else if use_ring then "RING"
@@ -62,7 +62,7 @@ let handle_allreduce red =
       let buf = pad_to buf (List.map (fun n -> Some (Int n)) (max_shape buf)) in
       (* Contiguous before it is copied. *)
       let buf = contiguous buf in
-      let hdev = setting Helpers.allreduce_node_ndevs in
+      let hdev = setting Setting.allreduce_node_ndevs in
       Some
         (match numel with
         | Int numel when concrete && hdev > 0 && ndev mod hdev = 0 ->

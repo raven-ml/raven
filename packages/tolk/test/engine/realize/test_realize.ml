@@ -160,10 +160,10 @@ let index_of u us =
 let recorded_call cell =
   List.nth (Ops.src (compiled (cell "program"))) (int_of_string (cell "call"))
 
-let in_colour f = Helpers.context [ B (Helpers.no_color, false) ] f
+let in_colour f = Setting.context [ B (Setting.no_color, false) ] f
 
 (* The goldens were recorded without colour, which kernel names carry. *)
-let plain f = Helpers.context [ B (Helpers.no_color, true) ] f
+let plain f = Setting.context [ B (Setting.no_color, true) ] f
 
 let reads_as_recorded cell =
   let call = recorded_call cell and var_vals = var_vals (cell "var_vals") in

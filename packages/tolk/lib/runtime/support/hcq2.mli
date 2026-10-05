@@ -323,7 +323,7 @@ val sched_batches :
     appear. A call is enqueued on the devices of its first buffer whose devices
     all have queues, a copy's source first, and a program runs on its compute
     queue (["COMPUTE:0"]), a copy on a copy queue (["COPY:0"], or with
-    {!Helpers.all2all}, one of up to eight between AMD devices, or the
+    {!Setting.all2all}, one of up to eight between AMD devices, or the
     [HCQ_NUM_SDMA] of them). A call is not enqueued when no buffer's devices all
     have queues, and neither is a copy on Metal, whose memory the host copies.
     Its other buffers may be memory of devices without queues, such as the
@@ -456,7 +456,7 @@ val compile_linear :
   Ops.t
 (** [compile_linear ~search ~profile ~devices linear] is the schedule [linear],
     whose devices [devices] describes, ready to link and run:
-    + when the setting {!Helpers.beam} is [1] or more, each kernel that asks for
+    + when the setting {!Setting.beam} is [1] or more, each kernel that asks for
       no beam search asks for one of that width;
     + its kernels are compiled ({!Realize.lower_and_compile}, with [search]);
     + a call enqueued on devices with queues whose buffers are on several
@@ -470,7 +470,7 @@ val compile_linear :
       ({!lower_call}), a batch a queue cannot hold in one submission split until
       each part fits, and its host program compiled, with no dtype emulated.
 
-    [profile] defaults to {!Helpers.debug} at [2] or more. A linear that holds a
+    [profile] defaults to {!Setting.debug} at [2] or more. A linear that holds a
     lowered batch is returned as it is.
 
     Raises as {!Realize.lower_and_compile} does. *)

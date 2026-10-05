@@ -1079,7 +1079,7 @@ let check_slots t slots =
 
 (* Reports *)
 
-let reporting () = Helpers.Context_var.value Helpers.debug >= 2
+let reporting () = Setting.value Setting.debug >= 2
 
 (* A run prints its reports as [DEBUG] asks, or nothing: a timing run is
    silent. *)
@@ -1262,7 +1262,7 @@ let run_with reports ~vars t slots =
   let n = List.length t.calls in
   if
     reports = Reported
-    && Helpers.Context_var.value Helpers.debug >= 1
+    && Setting.value Setting.debug >= 1
     && n >= 10
   then Printf.printf "jit execs %d calls\n%!" n;
   Mutex.protect t.lock (fun () ->
