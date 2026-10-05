@@ -63,33 +63,45 @@ let submit ch ~timeout_ms addr words =
 
 (* The runtime's segments *)
 
+(* A segment: its bytes [first, last) and the timeline value of its work. *)
+type segment = { first : int; last : int; value : int }
+
 type ring = {
   mem : Mmio.t; (* as the host writes it *)
   gpu : int; (* its address for the GPU *)
   mutable head : int;
-  mutable tags : (int * int * int) list; (* (start, end, value) of segments *)
+  segments : segment Queue.t; (* those whose bytes no later one took *)
 }
 
-let ring mem ~gpu = { mem; gpu; head = 0; tags = [] }
+let ring mem ~gpu = { mem; gpu; head = 0; segments = Queue.create () }
 
 (* Writes [words] into a new segment for the work of timeline value [v], and is
-   its address. The segment's bytes are reused once the work of every segment
-   that held them has signaled, as [signaled] reads: values complete in order,
-   so waiting for the latest is enough. *)
+   its address. Segments are taken in order around the ring, so the oldest are
+   first in [segments]: those the new one overlaps, whose work it waits for, as
+   [signaled] reads (values complete in order, so waiting for the latest is
+   enough), and, when the ring wraps, those past its head, which a segment of
+   the lap after them overlaps first. *)
 let segment r ~signaled ~timeout_ms v words =
   let n = 4 * List.length words in
   if n > Mmio.length r.mem then
     failwith "a command segment larger than the ring";
-  if r.head + n > Mmio.length r.mem then r.head <- 0;
-  let start = r.head and stop = r.head + n in
-  let last =
-    List.fold_left
-      (fun m (s, e, tv) -> if s < stop && start < e then Int.max m tv else m)
-      0 r.tags
+  let first_is p =
+    (not (Queue.is_empty r.segments)) && p (Queue.peek r.segments)
   in
+  if r.head + n > Mmio.length r.mem then begin
+    while first_is (fun s -> s.first >= r.head) do
+      ignore (Queue.pop r.segments)
+    done;
+    r.head <- 0
+  end;
+  let start = r.head and stop = r.head + n in
+  let latest = ref 0 in
+  while first_is (fun s -> s.first < stop && start < s.last) do
+    latest := Int.max !latest (Queue.pop r.segments).value
+  done;
   Nvdev.wait_until ~timeout_ms "a command segment the GPU still reads"
-    (fun () -> signaled () >= last);
-  r.tags <- (start, stop, v) :: List.filter (fun (_, _, tv) -> tv > last) r.tags;
+    (fun () -> signaled () >= !latest);
+  Queue.push { first = start; last = stop; value = v } r.segments;
   List.iteri (fun i w -> Mmio.set32 r.mem (start + (4 * i)) w) words;
   r.head <- stop;
   r.gpu + start

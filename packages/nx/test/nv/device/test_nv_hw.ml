@@ -527,6 +527,28 @@ let test_ring_wraps () =
   equal ~msg:"one step a copy" int copies (Nx_device.submitted d - before);
   check ~msg:"every copy" 2 w
 
+(* What a copy allocates once the runtime's command segments have wrapped many
+   times: bounded, whatever the copies before it. A copy's own bookkeeping takes
+   about 750 words; one that scanned every segment the ring holds took 3,100. *)
+let segment_words = 2000
+
+let test_copy_allocation () =
+  let d = device () in
+  let entries = B.length (Nx_nv_device.copy (low d)).ring in
+  let v = B.create d S.UInt8 16 and w = B.create d S.UInt8 16 in
+  for _ = 1 to 3 * entries do
+    B.copy ~src:v ~dst:w
+  done;
+  let copies = 100 in
+  let before = Gc.minor_words () in
+  for _ = 1 to copies do
+    B.copy ~src:v ~dst:w
+  done;
+  let per_copy = (Gc.minor_words () -. before) /. float_of_int copies in
+  less ~msg:"words a copy allocates" float_exact
+    ~than:(float_of_int segment_words)
+    per_copy
+
 (* The host writes, the GPU copies, the host reads, round after round of new
    bytes over the same memory, through the GPU's host memory, borrowed memory
    and VRAM: a byte the GPU or the host read from a stale cache shows. *)
@@ -608,6 +630,7 @@ let () =
              test "two GPUs around 64 MiB copies" (peer_boundaries (64 * mib));
              test "two GPUs around 2 GiB copies" (peer_boundaries (2048 * mib));
              test "copies that wrap the copy channel" test_ring_wraps;
+             test "what a copy allocates stays bounded" test_copy_allocation;
              test "host writes, GPU copies, host reads" test_coherence;
            ];
          group "programs"

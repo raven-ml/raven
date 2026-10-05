@@ -3226,6 +3226,9 @@ thread.
 
 ### Nx
 
+- NV devices queue a small copy in 5.1 µs instead of 8.9 µs, allocating 750
+  words instead of 3,100: the runtime scanned every command segment its ring
+  held on each copy, where it now tracks the segments in ring order.
 - AMD GPUs of the gfx12 generation (gfx1200, gfx1201) copy and cast eagerly:
   `Nx.copy`, `Nx.contiguous` and `Nx.cast` on `Nx_amd` devices run on the GPU,
   bit for bit as on the host, for every dtype but the complex ones, `int4`,
