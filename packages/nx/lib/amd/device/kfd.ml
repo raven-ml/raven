@@ -332,10 +332,13 @@ let alloc t kind n =
           unmap_mem addr n;
           raise e)
 
+(* The driver lets go of the memory before the process unmaps it: unmapping host
+   memory the driver still tracks makes it evict every queue of the process and
+   restore them later, which stalls the next work for 5 to 10 ms. *)
 let free t m =
   unmap_handle t m.handle;
-  Option.iter (fun a -> unmap_mem a m.size) m.mapped;
-  kfd_free t.fd m.handle
+  kfd_free t.fd m.handle;
+  Option.iter (fun a -> unmap_mem a m.size) m.mapped
 
 (* Registers the process memory at [a] with the GPU, at [a]. *)
 let map_host t a n =

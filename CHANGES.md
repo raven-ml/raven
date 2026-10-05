@@ -3120,6 +3120,9 @@ thread.
 
 ### Nx
 
+- AMD GPUs under the kernel driver load a program in about 0.3 ms instead of
+  8 to 12 ms, and freeing host memory mapped for the GPU no longer stalls the
+  next work on every queue of the process for 5 to 10 ms.
 - `Nx.Rng` samplers raise `Invalid_argument` on a parameter outside its
   domain, NaN included, where they returned NaN or a fixed draw (`bernoulli`
   true above 1, `poisson` 0 below 0). A traced one raises when the call returns.

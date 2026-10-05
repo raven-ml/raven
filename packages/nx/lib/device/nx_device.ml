@@ -993,20 +993,19 @@ let driver d f = try f () with Failure why -> fail d why
    its interrupts. *)
 let sleep_after_ms = 200
 
-(* Polls the signal word for [v]. Once the word has stayed still for
-   [sleep_after_ms], the device sleeps between polls, and once more before a
-   hang is declared, so a fault it reports names the cause. The timeout counts
-   from the word's last move. On this machine a wait blocks until the word
-   moves; on another, each read of the word is a round trip. *)
-let poll d v sleep =
-  let io = io_of d in
-  let word = timeline_address d and target = Int64.of_int v in
+(* Polls the word at [word], in the memory [io] reaches, for [v]. Once the word
+   has stayed still for [sleep_after_ms], the device sleeps between polls, and
+   once more before a hang is declared, so a fault it reports names the cause.
+   The timeout counts from the word's last move. On this machine a wait blocks
+   until the word moves; on another, each read of the word is a round trip. *)
+let poll_word ~io ~sleep ~timeout_ms word v =
+  let target = Int64.of_int v in
   let reached w = Int64.unsigned_compare w target >= 0 in
   let rec go seen still_since =
     let w = read_word io word and now = now_ms () in
     let still_since = if w <> seen then now else still_since in
     let still = now - still_since in
-    let left = Atomic.get d.timeout_ms - still in
+    let left = timeout_ms () - still in
     if reached w then true
     else if left <= 0 then begin
       sleep 1;
@@ -1023,6 +1022,11 @@ let poll d v sleep =
   in
   let w = read_word io word in
   go w (now_ms ())
+
+let poll d v sleep =
+  poll_word ~io:(io_of d) ~sleep
+    ~timeout_ms:(fun () -> Atomic.get d.timeout_ms)
+    (timeline_address d) v
 
 (* Values complete in order: a wait for a value at or below one a wait saw
    signaled is over, with no read of the device's machine. *)
@@ -3896,6 +3900,9 @@ module Driver = struct
   }
 
   let default_timeout = default_timeout
+
+  let wait ~sleep ~timeout_ms word v =
+    poll_word ~io:None ~sleep ~timeout_ms:(fun () -> timeout_ms) word v
 
   (* The host's heap: its regions keep their bigarrays until they are freed. *)
   let host_memory =

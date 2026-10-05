@@ -437,14 +437,11 @@ let upload a ~sleep ~staging dst img =
     (Sdma.packets ~family:(sdma_family a.props) ~max:(max_copy a.props)
        ~signal:(va staging + fence)
        ~dst:(va dst) ~src:(va staging) n 1);
-  let timeout_ms = timeout a and start = Amdev.now_ms () in
   (* A GPU that does not copy is lost, and may still read [staging], which is
      then never freed. *)
-  while Mmio.get32 host fence <> 1 do
-    if Amdev.now_ms () - start > timeout_ms then
-      failwith "hang detected: the copy engine did not upload the code";
-    sleep 1
-  done;
+  let word = Nativeint.add (Mmio.address host) (Nativeint.of_int fence) in
+  if not (Driver.wait ~sleep ~timeout_ms:(timeout a) word 1) then
+    failwith "hang detected: the copy engine did not upload the code";
   free_mem a staging
 
 (* The code object [binary], relocated and uploaded to the device's memory,

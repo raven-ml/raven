@@ -1444,6 +1444,14 @@ module Driver : sig
   (** [default_timeout] is [30_000], the {!timeout} in milliseconds every device
       starts at. *)
 
+  val wait : sleep:(int -> unit) -> timeout_ms:int -> nativeint -> int -> bool
+  (** [wait ~sleep ~timeout_ms word v] waits until the 64-bit word at the host
+      address [word] reaches [v], unsigned, as a wait on the timeline of a
+      [Sleep] device does: it polls, and runs [sleep] as that device's [sleep]
+      runs. It is [false] if the word stayed still for [timeout_ms]
+      milliseconds. A driver waits with it for work it signals outside the
+      timeline. *)
+
   val host_memory : allocator
   (** [host_memory] allocates memory of this process's heap, as the {!host}
       does: regions of at least 64 KiB (four pages where pages are larger) start

@@ -261,9 +261,10 @@ let test_peer () =
   done;
   Domain.join t0
 
-(* A kernel compiled at test time, when a compiler for the GPU's target is at
-   hand. *)
-let compile arch =
+(* A kernel that stores [value], compiled at test time, when a compiler for the
+   GPU's target is at hand: an object the load relocates, so no linker is
+   needed. *)
+let compile ?(value = 42) arch =
   let clang =
     List.find_opt Sys.file_exists
       [ "/opt/rocm/llvm/bin/clang"; "/usr/bin/clang"; "/usr/local/bin/clang" ]
@@ -275,13 +276,14 @@ let compile arch =
       let src = Filename.concat dir "k.cl"
       and out = Filename.concat dir "k.co" in
       Out_channel.with_open_text src (fun oc ->
-          output_string oc
+          Printf.fprintf oc
             "kernel void fill(global int *p) { \
-             p[__builtin_amdgcn_workitem_id_x()] = 42; }\n");
+             p[__builtin_amdgcn_workitem_id_x()] = %d; }\n"
+            value);
       let cmd =
         Printf.sprintf
-          "%s -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=%s -nogpulib \
-           -O2 %s -o %s 2>/dev/null"
+          "%s -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=%s \
+           -nogpulib -O2 %s -o %s 2>/dev/null"
           clang arch src out
       in
       if Sys.command cmd = 0 then
@@ -312,6 +314,28 @@ let test_programs () =
       match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"
       | Error why -> contains ~msg:"refused" ~sub:"no kernel" why)
+
+(* A load waits for the copy of its code, which takes microseconds: the median
+   of fresh loads stays under [load_ms], which a wait that sleeps on the
+   kernel's timer, for a tick or more, exceeds. *)
+let load_ms = 2.
+
+let test_load_time () =
+  let d = device () in
+  let binaries =
+    List.filter_map
+      (fun value -> compile ~value (Nx_device.arch d))
+      [ 1; 2; 3; 4; 5 ]
+  in
+  if binaries = [] then skip ~reason:"no compiler for the GPU's target" ();
+  let ms binary =
+    let t0 = Nx_device.Profile.now () in
+    ignore (program d ~binary ~name:"fill");
+    Float.of_int (Nx_device.Profile.now () - t0) /. 1e6
+  in
+  let times = List.sort Float.compare (List.map ms binaries) in
+  less ~msg:"median load, ms" float_exact ~than:load_ms
+    (List.nth times (List.length times / 2))
 
 let test_scratch () =
   let d = device () in
@@ -613,7 +637,11 @@ let () =
                test_mapped;
            ];
          group "programs"
-           [ test "code objects" test_programs; test "scratch" test_scratch ];
+           [
+             test "code objects" test_programs;
+             test "loads wait for their copy alone" test_load_time;
+             test "scratch" test_scratch;
+           ];
          group "profiles"
            (test
               "a profile that counts or traces gives the device its profiling"
