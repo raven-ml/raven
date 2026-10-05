@@ -978,6 +978,9 @@ thread.
 
 ### Tolk (new)
 
+- Lowering a kernel allocates 22% less again: a graph walk pushes its work
+  without allocating, and looking a node up builds a smaller probe. 8 domains
+  lowering lorenz_simple's candidates collect 25% less often.
 - A beam search keeps nothing of its candidates: they are compiled by
   `Codegen.linearize` then the new `Codegen.compile`, which keep nothing, and
   only the search's choice and the kernel compiled with it stay in the disk

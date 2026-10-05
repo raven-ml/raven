@@ -1005,25 +1005,73 @@ let pp_program_info ppf p = Format.pp_print_string ppf (repr_program_info p)
 
 type calls = Enter | Skip
 
+(* A stack of entries, each a node, a stage and a second node, held in arrays
+   that double as they fill: a walk pushes an entry per node it visits, and
+   pushing allocates nothing. *)
+module Work = struct
+  type node = t
+
+  type 's t = {
+    mutable nodes : node array;
+    mutable stages : 's array;
+    mutable others : node array;
+    mutable len : int;
+  }
+
+  let create u s =
+    {
+      nodes = Array.make 16 u;
+      stages = Array.make 16 s;
+      others = Array.make 16 u;
+      len = 0;
+    }
+
+  let is_empty w = w.len = 0
+  let length w = w.len
+
+  let grow w a =
+    let b = Array.make (2 * Array.length a) (Array.unsafe_get a 0) in
+    Array.blit a 0 b 0 w.len;
+    b
+
+  let push w u s o =
+    if w.len = Array.length w.nodes then begin
+      w.nodes <- grow w w.nodes;
+      w.stages <- grow w w.stages;
+      w.others <- grow w w.others
+    end;
+    Array.unsafe_set w.nodes w.len u;
+    Array.unsafe_set w.stages w.len s;
+    Array.unsafe_set w.others w.len o;
+    w.len <- w.len + 1
+
+  (* The top entry's parts, and its removal. *)
+  let node w = Array.unsafe_get w.nodes (w.len - 1)
+  let stage w = Array.unsafe_get w.stages (w.len - 1)
+  let other w = Array.unsafe_get w.others (w.len - 1)
+  let drop w = w.len <- w.len - 1
+end
+
 (* Each node is pushed with a flag: unset, its sources are pushed after it; set,
    its sources are done and it is. A node pushed twice before it is done is
    finished at its first pop with the flag set. *)
 let toposort ?gate ~calls root =
   let cache = Tbl.create 64 and order = ref [] in
-  let stack = Stack.create () in
+  let work = Work.create root false in
   let rec push_srcs = function
     | [] -> ()
     | s :: rest ->
         push_srcs rest;
-        Stack.push (s, false) stack
+        Work.push work s false s
   in
-  Stack.push (root, false) stack;
-  while not (Stack.is_empty stack) do
-    let node, visited = Stack.pop stack in
+  Work.push work root false root;
+  while not (Work.is_empty work) do
+    let node = Work.node work and visited = Work.stage work in
+    Work.drop work;
     if not (Tbl.mem cache node) then
       if not visited then
         begin if match gate with None -> true | Some g -> g node then begin
-          Stack.push (node, true) stack;
+          Work.push work node true node;
           push_srcs
             (if calls = Skip && node.op = Op.Call then drop 1 node.src
              else node.src)
@@ -1037,14 +1085,21 @@ let toposort ?gate ~calls root =
   List.rev !order
 
 let topovisit root f cache =
-  let stack = Stack.create () in
-  Stack.push (root, false) stack;
-  while not (Stack.is_empty stack) do
-    let node, visited = Stack.pop stack in
+  let work = Work.create root false in
+  let rec push_srcs = function
+    | [] -> ()
+    | s :: rest ->
+        push_srcs rest;
+        Work.push work s false s
+  in
+  Work.push work root false root;
+  while not (Work.is_empty work) do
+    let node = Work.node work and visited = Work.stage work in
+    Work.drop work;
     if not (Tbl.mem cache node) then
       if not visited then begin
-        Stack.push (node, true) stack;
-        List.iter (fun s -> Stack.push (s, false) stack) (List.rev node.src)
+        Work.push work node true node;
+        push_srcs node.src
       end
       else Tbl.replace cache node (f node)
   done;
@@ -4664,20 +4719,24 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
   if walk then begin
     (* A single pass: a node rewritten on the way down is not entered, and one
        rewritten on the way up is not rewritten again. *)
-    let stack = Stack.create () in
-    Stack.push (root, false) stack;
-    while not (Stack.is_empty stack) do
-      let n, processed = Stack.pop stack in
+    let work = Work.create root false in
+    let rec push_srcs = function
+      | [] -> ()
+      | x :: rest ->
+          push_srcs rest;
+          if not (Tbl.mem replaced x) then Work.push work x false x
+    in
+    Work.push work root false root;
+    while not (Work.is_empty work) do
+      let n = Work.node work and processed = Work.stage work in
+      Work.drop work;
       if not (Tbl.mem replaced n) then
         if not processed then
           begin match if Option.is_some bpm then bpm_rewrite n else None with
           | Some r -> Tbl.replace replaced n r
           | None ->
-              Stack.push (n, true) stack;
-              List.iter
-                (fun x ->
-                  if not (Tbl.mem replaced x) then Stack.push (x, false) stack)
-                (List.rev (rest_of n))
+              Work.push work n true n;
+              push_srcs (rest_of n)
           end
         else
           let new_n = rebuild n in
@@ -4695,7 +4754,7 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
        node becomes whatever its rewrite became. An entry whose dependency is
        not done waits for it instead of spinning. *)
     let limit = Setting.value Setting.rewrite_stack_limit in
-    let stack = Stack.create () in
+    let work = Work.create root `Down in
     let on_stack = Tbl.create 64 and waitlist = Tbl.create 16 in
     let wait dep entry =
       Tbl.replace waitlist dep
@@ -4706,7 +4765,9 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
       match Tbl.find_opt waitlist n with
       | Some waiting ->
           Tbl.remove waitlist n;
-          List.iter (fun e -> Stack.push e stack) (List.rev waiting)
+          List.iter
+            (fun (n, stage, new_n) -> Work.push work n stage new_n)
+            (List.rev waiting)
       | None -> ()
     in
     (* A node rewritten bottom-up to a fixed point; the set of the nodes it went
@@ -4740,7 +4801,7 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
       | x :: rest ->
           push_down rest;
           if not (Tbl.mem on_stack x) then begin
-            Stack.push (x, `Down, x) stack;
+            Work.push work x `Down x;
             Tbl.replace on_stack x ()
           end
     in
@@ -4748,20 +4809,23 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
       | [] -> None
       | x :: rest -> if Tbl.mem replaced x then pending rest else Some x
     in
-    Stack.push (root, `Down, root) stack;
+    Work.push work root `Down root;
     Tbl.replace on_stack root ();
-    while not (Stack.is_empty stack) do
-      if Stack.length stack > limit then
+    while not (Work.is_empty work) do
+      if Work.length work > limit then
         invalid_arg
           "graph_rewrite does not terminate: its work list is too long";
-      let n, stage, new_n = Stack.pop stack in
+      let n = Work.node work
+      and stage = Work.stage work
+      and new_n = Work.other work in
+      Work.drop work;
       if not (Tbl.mem replaced n) then
         match stage with
         | `Down -> (
             match fixed_point n with
             | exception Gate gated -> finish n gated
             | new_n ->
-                Stack.push (n, `Rebuild, new_n) stack;
+                Work.push work n `Rebuild new_n;
                 push_down (rest_of new_n))
         | `Rebuild -> (
             match pending (rest_of new_n) with
@@ -4774,8 +4838,8 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
                 match next with
                 | None -> finish n new_n
                 | Some next ->
-                    Stack.push (n, `Link, next) stack;
-                    Stack.push (next, `Down, next) stack))
+                    Work.push work n `Link next;
+                    Work.push work next `Down next))
         | `Link -> (
             match Tbl.find_opt replaced new_n with
             | Some r -> finish n r
