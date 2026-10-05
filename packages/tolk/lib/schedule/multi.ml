@@ -161,9 +161,6 @@ let replace_allreduce =
                     (src a))));
     ])
 
-let late_allreduce =
-  Setting.bool ~reach:Output "LATE_ALLREDUCE" true
-
 (* Without LATE_ALLREDUCE, an allreduce becomes its copies here, before the
    rules above see it. *)
 let replace_allreduce =
@@ -173,7 +170,7 @@ let replace_allreduce =
            rule
              (Upat.op Op.Allreduce ~name:"red" ~src:[ Upat.var "buf" ])
              (fun m ->
-               if Setting.value late_allreduce then None
+               if Setting.value Setting.late_allreduce then None
                else Allreduce.handle_allreduce (m "red"));
          ]))
     replace_allreduce

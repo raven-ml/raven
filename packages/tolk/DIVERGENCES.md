@@ -1878,7 +1878,7 @@ the Exclusions of `README.md`.
   (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
   name); `lib/setting.ml:267` (`scache`, `2` by default) and `:141`
-  (`shaping`); `lib/runtime/support/compiler_cpu.ml:53` (`cc`); and
+  (`shaping`); `lib/setting.ml:295` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
   `tools/source_digest.ml`.
 - **Differs:** the program `to_program` makes of a kernel, and by default
@@ -3341,8 +3341,8 @@ stores through a pad.
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
   (`C.identity`); `lib/codegen/codegen.ml:1181-1198` (`program_key`, `kept`);
-  `lib/codegen/opt/search.ml:19-27` (the settings declared) and `:266`
-  (the beam search's key).
+  `lib/setting.ml:286-291` (the search's settings) and
+  `lib/codegen/opt/search.ml:257` (the beam search's key).
 - **Differs:** a table also names everything besides the source that
   determines a binary: for Clang, the digest of what `clang -###` states it
   runs (its version and installation, the processor and features `native`
@@ -3394,8 +3394,8 @@ stores through a pad.
   (`os.environ.get("DBGTV")`, read on each failure).
 - **tolk:** `lib/setting.ml:87` (`reach`), `:141` (`shaping`), `:151`
   (`t`), `:215` (`jitbeam`), `:220` (`tc_opt`) and `:221` (`beam_tc_opt`);
-  `lib/codegen/opt/search.ml:28` (`actions`);
-  `lib/codegen/opt/heuristic.ml:101`; `lib/codegen/codegen.ml:679`
+  `lib/codegen/opt/search.ml:15` (`actions`);
+  `lib/codegen/opt/heuristic.ml:101`; `lib/setting.ml:301`
   (`dbgtv`); `lib/runtime/support/hcq2.ml:2051` (`compile_linear`);
   `engine/tolk_engine.ml:1082` (`reporting`); rune's `lib/jit.ml:105`
   (`settings`).

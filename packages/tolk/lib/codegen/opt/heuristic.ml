@@ -161,8 +161,6 @@ let tensor_cores k =
      unrolled by up to [in_flight]        few outputs a workgroup takes as
                                           few as [sector_lanes] across *)
 
-let mv = Setting.bool ~reach:Output "MV" true
-
 (* The threads of a SIMD group: a CUDA warp, an AMD wave32, a Metal
    simdgroup. *)
 let lanes = 32
@@ -288,7 +286,7 @@ let matvec k =
   match (K.reduceop k, K.ranges_of k [ Reduce ]) with
   | Some r, first :: _
     when ren.has_local && ren.has_shared
-         && Setting.value mv
+         && Setting.value Setting.mv
          && (match arg r with Reduce { op = Op.Add; _ } -> true | _ -> false)
          && op (nth r 0) = Op.Mul -> (
       match operands first (nth r 0) with

@@ -1822,10 +1822,6 @@ exception Bottom_up_gate
 (** Raised by a bottom-up rule to keep the node it last produced and leave its
     sources unvisited. *)
 
-val rewrite_stack_limit : int Setting.t
-(** [rewrite_stack_limit] bounds the work list of {!graph_rewrite}, from the
-    variable [REWRITE_STACK_LIMIT] (default [250000]). *)
-
 val graph_rewrite :
   ?bottom_up:bool ->
   ?bpm:('ctx, t) Pattern_matcher.t ->
@@ -1848,7 +1844,7 @@ val graph_rewrite :
 
     Raises [Invalid_argument] if both [bottom_up] and [bpm] are given, or if the
     rewrite does not terminate: a bottom-up rule cycles, the work list exceeds
-    {!rewrite_stack_limit}, or a node's rewrite depends on itself. *)
+    {!Setting.rewrite_stack_limit}, or a node's rewrite depends on itself. *)
 
 val substitute :
   ?extra_pm:(t Tbl.t, t) Pattern_matcher.t ->

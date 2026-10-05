@@ -114,10 +114,9 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
       in a buffer of the device. It then invalidates the caches the kernel reads
       through, other than its instructions' and the L2, and dispatches [prg]'s
       kernel from its code object with its scratch memory, its local size and
-      its grid of work-groups, at most the environment variable [WAVES_PER_SH]
-      waves on each shader array when it is not [0], then waits for it to
-      finish. With AQL, the dispatch is a dispatch packet, which waits for the
-      packets before it;
+      its grid of work-groups, at most {!Setting.waves_per_sh} waves on each
+      shader array when it is not [0], then waits for it to finish. With AQL,
+      the dispatch is a dispatch packet, which waits for the packets before it;
     - [copy dst src n] on a copy queue, which copies [n] bytes in pieces of at
       most the copy engine's largest copy: 1 GiB from version 4.4.2 below 5.0
       and from 5.2, 4 MiB otherwise;

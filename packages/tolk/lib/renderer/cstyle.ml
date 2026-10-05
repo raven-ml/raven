@@ -9,8 +9,6 @@ open Ops
 
 let strf = Printf.sprintf
 let is o u = Op.equal (op u) o
-let expand_ssa = Setting.bool ~reach:Output "EXPAND_SSA" false
-let aligned = Setting.bool ~reach:Output "ALIGNED" true
 
 (* the integer [s] holds from its [i]th character on *)
 let number_from i s =
@@ -705,7 +703,7 @@ let render_uops l uops =
        || (casts && is_ptr (addrspace u))
        || (casts || Op.equal o Op.Stack || Op.Set.mem o alu_but_where)
           && children u = 1
-          && not (Setting.value expand_ssa))
+          && not (Setting.value Setting.expand_ssa))
   in
   let visit u =
     match op u with
@@ -894,7 +892,7 @@ let clang_vector_prefix l (dt, count) =
   let rec pow2_floor n p = if 2 * p > n then p else pow2_floor n (2 * p) in
   (* round (down) to a power of two, as clang does by default *)
   let alignment =
-    if Setting.value aligned && not (Dtype.is_bool dt) then
+    if Setting.value Setting.aligned && not (Dtype.is_bool dt) then
       pow2_floor (Dtype.itemsize dt * count) 1
     else 1
   in

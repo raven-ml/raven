@@ -33,8 +33,8 @@ val actions : unit -> Opt.t list
     - splits of the axes [0] to [7] into {!Opt.Local} threads by [0], [2], [3],
       [4], [8], [13], [16] and [29], then from the top by [13], [16], [28],
       [29], [32], [49], [64] and [256];
-    - if the environment variable [BEAM_PADTO] holds a nonzero integer when the
-      program starts, pads of the axes [0] to [6] to a multiple of [32];
+    - under {!Setting.beam_padto}, pads of the axes [0] to [6] to a multiple of
+      [32];
     - a split of the axis [0] into [32] local threads;
     - tensor cores on the axis [0] with the level [tc_opt] [0], then on the axes
       [0] to [8] with the level of {!Setting.beam_tc_opt}, each with the first
@@ -54,12 +54,11 @@ val get_kernel_actions :
     - it does not apply ({!Postrange.Scheduler.apply_opt});
     - it is no tensor core and its axis is not one of [k]'s, or it splits a
       whole axis by its size while [actions ()] splits it by [0] alike;
-    - [k'] has more upcast and unrolled lanes than [max_up] (default the
-      environment variable [BEAM_UPCAST_MAX], or [256]), not counting a tensor
-      core's product for each of its threads, or more warp and local threads
-      than [BEAM_LOCAL_MAX] (default [1024]). When [BEAM_LOG_SURPASS_MAX] holds
-      a nonzero integer, these are reported on standard output. Variables are
-      read when the program starts.
+    - [k'] has more upcast and unrolled lanes than [max_up] (default
+      {!Setting.beam_upcast_max}), not counting a tensor core's product for each
+      of its threads, or more warp and local threads than
+      {!Setting.beam_local_max}. Under {!Setting.beam_log_surpass_max}, these
+      are reported on standard output.
 
     Raises [Invalid_argument] as {!Postrange.Scheduler.apply_opt} does, and if
     whether a kernel has too many lanes or threads depends on the value of a
@@ -93,14 +92,13 @@ val beam_search :
 
     A kernel is compiled for [k]'s renderer named ["test"], with its storage
     placed on the renderer's device. It is first linearized
-    ({!Codegen.linearize}) and dropped if it has [BEAM_UOPS_MAX] (default
-    [3000]) instructions or more, unless that is [0] or less. It is then
-    completed ({!Codegen.to_program}). A kernel whose compilation raises
-    [Failure] is dropped, and so is one whose compilation raises another
-    exception, unless the environment variable [BEAM_STRICT_MODE] holds a
-    nonzero integer and the exception is raised. A search compiles each kernel
-    ({!Postrange.Scheduler.ast}) once: a candidate whose kernel it met before
-    takes that kernel's result.
+    ({!Codegen.linearize}) and dropped if it has {!Setting.beam_uops_max}
+    instructions or more, unless that is [0] or less. It is then completed
+    ({!Codegen.to_program}). A kernel whose compilation raises [Failure] is
+    dropped, and so is one whose compilation raises another exception, unless
+    {!Setting.beam_strict_mode} holds and the exception is raised. A search
+    compiles each kernel ({!Postrange.Scheduler.ast}) once: a candidate whose
+    kernel it met before takes that kernel's result.
 
     A program is timed up to three times, stopping once its least time exceeds
     an early stop. Its samples are the times measured.
@@ -118,19 +116,18 @@ val beam_search :
       sample of the beam's first kernel.
     + The fastest candidate is the one of least sample, the first of ties. The
       round progresses if each of its samples is less than each sample of the
-      beam's first kernel by more than [BEAM_MIN_PROGRESS] microseconds (default
-      [0.01]). A kernel with no samples is slower than any. If the round
+      beam's first kernel by more than {!Setting.beam_min_progress}
+      microseconds. A kernel with no samples is slower than any. If the round
       progresses, the beam becomes the [amt] candidates of least sample, ties in
       order, and a new round starts. Otherwise the search ends.
 
     The result is the beam's first kernel. It is [k] unless a candidate
     progressed on it.
 
-    With [allow_test_size] (default: whether the environment variable
-    [BEAM_ESTIMATE] holds a nonzero integer, default [1]), a program launching
-    more than [65536] workgroups is timed launching fewer: of its global sizes,
-    the last one greater than [16] is halved until their product is at most
-    [65536], and its time is scaled up by the ratio of the products.
+    With [allow_test_size] (default {!Setting.beam_estimate}), a program
+    launching more than [65536] workgroups is timed launching fewer: of its
+    global sizes, the last one greater than [16] is halved until their product
+    is at most [65536], and its time is scaled up by the ratio of the products.
 
     While the setting {!Setting.cachelevel} is positive, each search keeps the
     optimisations it finds in the {!Helpers.Diskcache} table ["beam_search"],
@@ -139,21 +136,18 @@ val beam_search :
     renderer and the table of its compiler's binaries
     ({!Renderer.Compiler.cachekey}), the settings that shape compilation
     ({!Setting.shaping}), among them those that pick the candidates
-    ({!Setting.use_tc}, {!Setting.beam_tc_opt} and [BEAM_PADTO]) and the
-    environment variables [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX],
-    [BEAM_MIN_PROGRESS] and [BEAM_ESTIMATE], and the sources of this library.
-    Unless {!Setting.ignore_beam_cache} holds, a search whose key is kept
-    compiles and times nothing, applies nothing of [time], and applies the
-    optimisations kept beyond as many as [k] has to a copy of [k]. A kept result
-    is what an earlier search measured fastest: another search may measure
-    otherwise.
+    ({!Setting.use_tc}, {!Setting.beam_tc_opt} and {!Setting.beam_padto}) and
+    how it measures and stops ({!Setting.beam_uops_max},
+    {!Setting.beam_upcast_max}, {!Setting.beam_local_max},
+    {!Setting.beam_min_progress} and {!Setting.beam_estimate}), and the sources
+    of this library. Unless {!Setting.ignore_beam_cache} holds, a search whose
+    key is kept compiles and times nothing, applies nothing of [time], and
+    applies the optimisations kept beyond as many as [k] has to a copy of [k]. A
+    kept result is what an earlier search measured fastest: another search may
+    measure otherwise.
 
     When the setting {!Setting.debug} is [2] or more, the progress of the search
-    is printed on standard output. When the environment variable [BEAM_DEBUG]
-    holds a positive integer, so are the kernel searched, the candidates whose
-    timing failed and the result; from [2], every candidate timed.
-
-    The environment variables are read when the program starts.
+    is printed on standard output, and {!Setting.beam_debug} prints more.
 
     Raises [Invalid_argument] if [amt] is not positive or as
     {!get_kernel_actions} does, and [Failure] if the kept optimisations are

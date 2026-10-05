@@ -37,7 +37,7 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
           local threads, then 2 upcast lanes, and the first reduce axis into
           the least power of two of local threads that makes 32768 threads,
           at most 32, or the largest that divides it.}}
-      [MV=0] turns it off;
+      {!Setting.mv} turns it on;
     - {b grouping}: when the upcastable axes hold at most 2048 elements, the
       first of the first three reduce axes that splits by 16 into local threads
       from the top; nothing more is applied then.

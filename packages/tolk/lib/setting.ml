@@ -266,3 +266,36 @@ let ccache = bool ~reach:Process "CCACHE" true
 let allow_tf32 = bool ~reach:Output "ALLOW_TF32" false
 let scache = int ~reach:Process "SCACHE" 2
 let disallow_broadcast = bool ~reach:Process "DISALLOW_BROADCAST" false
+let sum_dtype = string ~reach:Output "SUM_DTYPE" "float32"
+let late_allreduce = bool ~reach:Output "LATE_ALLREDUCE" true
+
+let ring_allreduce_threshold =
+  int ~reach:Output "RING_ALLREDUCE_THRESHOLD" 256_000
+
+let reduceop_split_threshold =
+  int ~reach:Output "REDUCEOP_SPLIT_THRESHOLD" 32768
+
+let reduceop_split_size = int ~reach:Output "REDUCEOP_SPLIT_SIZE" 22
+let hcq_num_sdma = int_option ~reach:Output "HCQ_NUM_SDMA"
+let mv = bool ~reach:Output "MV" true
+let dmc = bool ~reach:Output "DMC" false
+let allow_half8 = bool ~reach:Output "ALLOW_HALF8" false
+let expand_ssa = bool ~reach:Output "EXPAND_SSA" false
+let aligned = bool ~reach:Output "ALIGNED" true
+let waves_per_sh = int ~reach:Output "WAVES_PER_SH" 0
+let beam_padto = bool ~reach:Output "BEAM_PADTO" false
+let beam_uops_max = int ~reach:Output "BEAM_UOPS_MAX" 3000
+let beam_upcast_max = int ~reach:Output "BEAM_UPCAST_MAX" 256
+let beam_local_max = int ~reach:Output "BEAM_LOCAL_MAX" 1024
+let beam_min_progress = float ~reach:Output "BEAM_MIN_PROGRESS" 0.01
+let beam_estimate = bool ~reach:Output "BEAM_ESTIMATE" true
+let beam_strict_mode = bool ~reach:Process "BEAM_STRICT_MODE" false
+let beam_log_surpass_max = bool ~reach:Process "BEAM_LOG_SURPASS_MAX" false
+let beam_debug = int ~reach:Process "BEAM_DEBUG" 0
+let cc = string ~reach:Process "CC" "clang"
+let cuda_path = string ~reach:Process "CUDA_PATH" ""
+let rocm_path = string ~reach:Process "ROCM_PATH" "/opt/rocm"
+let assert_compile = bool ~reach:Process "ASSERT_COMPILE" false
+let rewrite_stack_limit = int ~reach:Process "REWRITE_STACK_LIMIT" 250000
+let debug_linearize = bool ~reach:Process "DEBUG_LINEARIZE" false
+let dbgtv = string ~reach:Process "DBGTV" ""

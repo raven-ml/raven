@@ -10,19 +10,6 @@ module K = Postrange.Scheduler
 
 let setting = Setting.value
 let debug () = setting Setting.debug
-
-(* The settings that pick a search's candidates and how it measures and stops,
-   which shape what it finds. A strict search raises where another drops a
-   candidate, and finds what the other finds when it does not raise. *)
-let padto = Setting.bool ~reach:Output "BEAM_PADTO" false
-let uops_max = Setting.int ~reach:Output "BEAM_UOPS_MAX" 3000
-let upcast_max = Setting.int ~reach:Output "BEAM_UPCAST_MAX" 256
-let local_max = Setting.int ~reach:Output "BEAM_LOCAL_MAX" 1024
-let min_progress = Setting.float ~reach:Output "BEAM_MIN_PROGRESS" 0.01
-let estimate = Setting.bool ~reach:Output "BEAM_ESTIMATE" true
-let strict_mode = Setting.bool ~reach:Process "BEAM_STRICT_MODE" false
-let log_surpass_max = Setting.bool ~reach:Process "BEAM_LOG_SURPASS_MAX" false
-let beam_debug = Setting.int ~reach:Process "BEAM_DEBUG" 0
 let upto n = List.init n Fun.id
 
 let actions () =
@@ -40,7 +27,7 @@ let actions () =
       split Unroll [ 0; 2; 3; 4; 5; 7 ] (upto 10);
       split Local [ 0; 2; 3; 4; 8; 13; 16; 29 ] (upto 8);
       split ~top:true Local [ 13; 16; 28; 29; 32; 49; 64; 256 ] (upto 8);
-      (if setting padto then
+      (if setting Setting.beam_padto then
          List.map (fun axis -> Opt.Padto { axis; amount = 32 }) (upto 7)
        else []);
       split Local [ 32 ] [ 0 ];
@@ -117,9 +104,9 @@ let try_compile k =
         ren
     in
     let uops = List.length (src (nth lin 1)) in
-    let uops_max = setting uops_max in
+    let uops_max = setting Setting.beam_uops_max in
     if uops_max > 0 && uops >= uops_max then (
-      if setting log_surpass_max then
+      if setting Setting.beam_log_surpass_max then
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
           uops_max;
       None)
@@ -130,7 +117,7 @@ let try_compile k =
   | exception (Failure _ as e) ->
       if debug () >= 4 then print_endline (Printexc.to_string e);
       None
-  | exception e when setting strict_mode -> raise e
+  | exception e when setting Setting.beam_strict_mode -> raise e
   | exception _ -> None
 
 (* The least and greatest product of [sizes] over their variables' values. *)
@@ -170,7 +157,7 @@ let too_many ~max_up ~max_lcl k =
     Bigint.(fdiv lo (of_int tc_up), fdiv hi (of_int tc_up))
   and lcl = size [ Warp; Local ] in
   let too_many = exceeds up max_up || exceeds lcl max_lcl in
-  if too_many && setting log_surpass_max then
+  if too_many && setting Setting.beam_log_surpass_max then
     Printf.printf
       "too many upcast/local. up//tc_up=%s, max_up=%d, lcl=%s, max_lcl=%d\n%!"
       (Bigint.to_string (snd up))
@@ -188,8 +175,8 @@ let redundant actions k = function
   | _ -> false
 
 let get_kernel_actions ?(include_0 = true) ?max_up k =
-  let max_up = Option.value max_up ~default:(setting upcast_max) in
-  let max_lcl = setting local_max and actions = actions () in
+  let max_up = Option.value max_up ~default:(setting Setting.beam_upcast_max) in
+  let max_lcl = setting Setting.beam_local_max and actions = actions () in
   let act i a =
     if redundant actions k a then None
     else
@@ -257,9 +244,11 @@ let beam_search ~time ?allow_test_size amt s =
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
   let allow_test_size =
-    match allow_test_size with Some allow -> allow | None -> setting estimate
+    match allow_test_size with
+    | Some allow -> allow
+    | None -> setting Setting.beam_estimate
   in
-  let beam_debug = setting beam_debug in
+  let beam_debug = setting Setting.beam_debug in
   let ren = K.ren s in
   (* What a search's result is a function of, but the times it measures: the
      kernel, the search, the renderer, its compiler, what shapes compilation,
@@ -296,7 +285,7 @@ let beam_search ~time ?allow_test_size amt s =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
       let time = time ~vars (K.ast s) in
-      let min_progress = setting min_progress /. 1e6 in
+      let min_progress = setting Setting.beam_min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
       (* Each kernel is compiled once: two sequences of actions can reach equal
          kernels, whose programs [Codegen.to_program] keys apart by the
@@ -368,7 +357,7 @@ let beam_search ~time ?allow_test_size amt s =
               (* filter out kernels that use 1000x more compute than the
                  smallest *)
               if !least_compute_ops *. 1000. < this_compute_ops then (
-                if setting log_surpass_max then
+                if setting Setting.beam_log_surpass_max then
                   Printf.printf "too much compute. %g when least is %g\n%!"
                     this_compute_ops !least_compute_ops)
               else (

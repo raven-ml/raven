@@ -340,6 +340,34 @@ let settings =
     switch Setting.allow_tf32;
     number Setting.scache;
     switch Setting.disallow_broadcast;
+    word Setting.sum_dtype;
+    switch Setting.late_allreduce;
+    number Setting.ring_allreduce_threshold;
+    number Setting.reduceop_split_threshold;
+    number Setting.reduceop_split_size;
+    optional Setting.hcq_num_sdma;
+    switch Setting.mv;
+    switch Setting.dmc;
+    switch Setting.allow_half8;
+    switch Setting.expand_ssa;
+    switch Setting.aligned;
+    number Setting.waves_per_sh;
+    switch Setting.beam_padto;
+    number Setting.beam_uops_max;
+    number Setting.beam_upcast_max;
+    number Setting.beam_local_max;
+    S (Setting.beam_min_progress, string_of_float);
+    switch Setting.beam_estimate;
+    switch Setting.beam_strict_mode;
+    switch Setting.beam_log_surpass_max;
+    number Setting.beam_debug;
+    word Setting.cc;
+    word Setting.cuda_path;
+    word Setting.rocm_path;
+    switch Setting.assert_compile;
+    number Setting.rewrite_stack_limit;
+    switch Setting.debug_linearize;
+    word Setting.dbgtv;
   ]
 
 (* The settings whose readers tolk does not port, as its README lists them. *)
@@ -370,11 +398,45 @@ let not_ported =
     ]
 
 (* The golden leaves out the settings whose default it cannot record, and
-   tinygrad's helpers do not declare those that tinygrad reads with [getenv] at
-   one call site: there, [JITBEAM] defaults to [BEAM]'s value, and the search's
-   [TC_OPT] to 2, which is [BEAM_TC_OPT]'s default. *)
+   tinygrad's helpers do not declare those that tinygrad reads with [getenv]
+   where it uses them, which hold the defaults [Setting] states: [JITBEAM]'s
+   stands for [BEAM]'s value, and the search's [TC_OPT] is [BEAM_TC_OPT]. *)
 let unrecorded = [ "PARALLEL"; "NO_COLOR" ]
-let getenv_defaults = [ ("JITBEAM", ""); ("BEAM_TC_OPT", "2") ]
+
+let getenv_defaults =
+  [
+    ("JITBEAM", "");
+    ("BEAM_TC_OPT", "2");
+    ("SUM_DTYPE", "float32");
+    ("LATE_ALLREDUCE", "1");
+    ("RING_ALLREDUCE_THRESHOLD", "256000");
+    ("REDUCEOP_SPLIT_THRESHOLD", "32768");
+    ("REDUCEOP_SPLIT_SIZE", "22");
+    ("HCQ_NUM_SDMA", "");
+    ("MV", "1");
+    ("DMC", "0");
+    ("ALLOW_HALF8", "0");
+    ("EXPAND_SSA", "0");
+    ("ALIGNED", "1");
+    ("WAVES_PER_SH", "0");
+    ("BEAM_PADTO", "0");
+    ("BEAM_UOPS_MAX", "3000");
+    ("BEAM_UPCAST_MAX", "256");
+    ("BEAM_LOCAL_MAX", "1024");
+    ("BEAM_MIN_PROGRESS", "0.01");
+    ("BEAM_ESTIMATE", "1");
+    ("BEAM_STRICT_MODE", "0");
+    ("BEAM_LOG_SURPASS_MAX", "0");
+    ("BEAM_DEBUG", "0");
+    ("CC", "clang");
+    ("CUDA_PATH", "");
+    ("ROCM_PATH", "/opt/rocm");
+    ("ASSERT_COMPILE", "0");
+    ("REWRITE_STACK_LIMIT", "250000");
+    ("DEBUG_LINEARIZE", "0");
+    ("DBGTV", "");
+  ]
+
 let tinygrad_settings = Golden.rows "settings.golden"
 let tinygrad_keys = List.map (fun cell -> cell "key") tinygrad_settings
 let ported s = List.mem (key s) tinygrad_keys
@@ -615,8 +677,8 @@ let library_settings =
         (List.filter ported settings)
         holds_tinygrad_default;
       cases ~name:fst
-        "read at one call site by tinygrad hold its default there when their \
-         variable is unset"
+        "read by tinygrad where it uses them hold the default Setting states \
+         when their variable is unset"
         getenv_defaults (fun (k, default) ->
           unless_set k;
           equal string default

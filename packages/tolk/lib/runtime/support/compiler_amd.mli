@@ -15,9 +15,9 @@
     to {!Helpers.cache_dir}, under a name holding its digest. The library,
     [libamd_comgr], is loaded by that process from where {!C.findlib} finds it:
     the file [COMGR_PATH] names, then [lib/libamd_comgr.so] in the directory
-    [ROCM_PATH] names ([/opt/rocm] by default, read when the program starts),
-    then the system's library directories. Its major version picks its numbering
-    of languages and actions, which version 3 changed. *)
+    {!Setting.rocm_path} names, then the system's library directories. Its major
+    version picks its numbering of languages and actions, which version 3
+    changed. *)
 
 val hip : string -> Renderer.Compiler.t
 (** [hip arch] is the compiler of HIP source to executable code objects for the

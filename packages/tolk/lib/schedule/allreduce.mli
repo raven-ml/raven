@@ -30,10 +30,10 @@ val handle_allreduce : Ops.t -> Ops.t option
       is shrunk back to [x]'s shape;
     - {e all-to-all}, when [x]'s shape is known and {!Setting.all2all} is [2],
       or [1] with more than two devices and more elements than
-      [RING_ALLREDUCE_THRESHOLD] (default [256000]): the flattened value is cut
-      into [n] chunks, of sizes multiples of the largest of [32], [16], [8], [4]
-      and [2] that divides its size; device [i] gathers and reduces chunk [i]
-      from every device, then sends it to every device;
+      {!Setting.ring_allreduce_threshold}: the flattened value is cut into [n]
+      chunks, of sizes multiples of the largest of [32], [16], [8], [4] and [2]
+      that divides its size; device [i] gathers and reduces chunk [i] from every
+      device, then sends it to every device;
     - {e ring}, when all-to-all does not apply and {!Setting.ring} is [2], or
       [1] under the same conditions: the same chunks each travel around the ring
       of devices, reduced at each step, and the reduced chunks travel around it

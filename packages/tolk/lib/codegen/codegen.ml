@@ -676,8 +676,6 @@ let apply_opts ?beam sink ren =
   Postrange.apply_opts ?beam ~hand_coded:Heuristic.hand_coded_optimizations sink
     ren
 
-let dbgtv = Setting.string ~reach:Process "DBGTV" ""
-
 (* Host programs in blocks *)
 
 (* The memory a store writes, as opposed to a register or local memory: a
@@ -945,7 +943,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   in
   if setting Setting.spec <> 0 then (
     try Spec.type_verify Spec.program sink
-    with Invalid_argument _ as e when Setting.value dbgtv <> "" ->
+    with Invalid_argument _ as e when Setting.value Setting.dbgtv <> "" ->
       Format.printf "%a@." Render.pp_uops (toposort sink);
       raise e);
   sink

@@ -8,10 +8,9 @@
 external worker_memfd : string -> int = "caml_tolk_comgr_worker_memfd"
 
 (* comgr's library. *)
-let rocm_path = Setting.string ~reach:Process "ROCM_PATH" "/opt/rocm"
 
 let library () =
-  let rocm = Setting.value rocm_path in
+  let rocm = Setting.value Setting.rocm_path in
   C.findlib "comgr" [ rocm ^ "/lib/libamd_comgr.so"; "amd_comgr" ]
 
 (* The worker *)

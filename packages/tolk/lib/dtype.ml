@@ -813,13 +813,11 @@ let can_lossless_cast d0 d1 =
   | Int16 -> List.mem d0 [ Uint8; Int8 ]
   | _ -> false
 
-let sum_dtype = Setting.string ~reach:Output "SUM_DTYPE" "float32"
-
 let sum_acc dt =
   if is_unsigned dt then least_upper [ dt; Uint32 ]
   else if is_int dt || dt = Bool then least_upper [ dt; Int32 ]
   else
-    let name = Setting.value sum_dtype in
+    let name = Setting.value Setting.sum_dtype in
     match of_string name with
     | Ok acc -> least_upper [ dt; acc ]
     | Error _ -> invalid_arg (strf "SUM_DTYPE=%s is not a data type" name)

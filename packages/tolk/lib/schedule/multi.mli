@@ -89,9 +89,9 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
     - a shrink of an {!Op.Mstack} shrinks each of its sources, substituting in
       each the device's position for the device range, and materialises them.
 
-    With [LATE_ALLREDUCE] set to [0] in the environment when the library is
-    initialised, each {!Op.Allreduce} of a value that is not sharded is also
-    replaced by its value ({!Allreduce.handle_allreduce}).
+    Unless {!Setting.late_allreduce} holds, each {!Op.Allreduce} of a value
+    that is not sharded is also replaced by its value
+    ({!Allreduce.handle_allreduce}).
 
     Raises [Invalid_argument] on what has no shard of its own: a reshape that
     moves elements between shards, a pad, flip or shrink of a sharded axis other

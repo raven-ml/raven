@@ -210,12 +210,6 @@ let pp_shape ppf s =
     s
     (if List.length s = 1 then "," else "")
 
-let reduceop_split_threshold =
-  Setting.int ~reach:Output "REDUCEOP_SPLIT_THRESHOLD" 32768
-
-let reduceop_split_size =
-  Setting.int ~reach:Output "REDUCEOP_SPLIT_SIZE" 22
-
 (* A large reduction over few outputs is split into two kernels, to turn some of
    the reduction into outputs. The split axis moves last, so the second
    reduction reads it with the most locality. The first reduction's output is
@@ -236,7 +230,7 @@ let split_reduceop reduce x =
         out = 0
         || (not (Setting.value Setting.split_reduceop))
         || Helpers.prod xs / out
-           < Setting.value reduceop_split_threshold
+           < Setting.value Setting.reduceop_split_threshold
       then None
       else
         (* The axes the input is broadcast along index no range once indexed. *)
@@ -262,7 +256,7 @@ let split_reduceop reduce x =
                      indexed
                      [ (base x, v Op.Noop) ])))
         in
-        let size = Setting.value reduceop_split_size in
+        let size = Setting.value Setting.reduceop_split_size in
         let limit = min 256 ((1 lsl size) / out) in
         let divisors = List.init (max 0 (limit - 7)) (fun k -> limit - k) in
         let candidates =

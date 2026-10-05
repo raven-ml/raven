@@ -998,9 +998,10 @@ thread.
   candidate past `BEAM_UOPS_MAX` (new `Codegen.linearize`). A candidate's setup
   on Metal takes about 1.2 ms, from about 3.9 ms. PR #235 found these costs.
 - Every environment variable is one setting of the new module `Tolk.Setting`,
-  declared with its reach, and `Helpers.getenv*` and `variable*` are removed,
-  so the caches key on every variable that changes compiled output
-  (`Setting.shaping`). A setting reaches output when a change of it alone can
+  declared and documented there with its reach, so each can be bound with
+  `Setting.context` (`Ops.rewrite_stack_limit` is `Setting.rewrite_stack_limit`).
+  `Helpers.getenv*` and `variable*` are removed, so the caches key on every
+  variable that changes compiled output (`Setting.shaping`). A setting reaches output when a change of it alone can
   change what a compilation returns: `BEAM` and `JITBEAM` do; `CC` and
   `CUDA_PATH`, which a compiler's cache key names, do not.
 - `TC_OPT` is the level of hand-coded optimizations, default 0, and the new

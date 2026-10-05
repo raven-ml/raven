@@ -18,8 +18,8 @@ val nvrtc : ?ptx:bool -> ?cache_key:string -> string -> Renderer.Compiler.t
     default), which the driver translates for the GPU it loads it on, and else
     to a cubin, the binary of [arch] itself.
 
-    Headers are searched in [include] of the directory that the variable
-    [CUDA_PATH] names when the compiler is made, or if it is empty in
+    Headers are searched in [include] of the directory {!Setting.cuda_path}
+    names when the compiler is made, or if it is empty in
     [/usr/local/cuda/include], [/usr/include] and [/opt/cuda/include]. From
     version 12.4, NVRTC compiles faster without textures, surfaces and the
     device runtime API ([--minimal]), which rendered kernels do not use.

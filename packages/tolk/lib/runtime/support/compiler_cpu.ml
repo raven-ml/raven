@@ -49,11 +49,8 @@ let statement =
 
 (* Clang *)
 
-(* The compiler run, read when a compiler is made, whose table names it. *)
-let cc = Setting.string ~reach:Process "CC" "clang"
-
 let clang arch =
-  let cc = Setting.value cc in
+  let cc = Setting.value Setting.cc in
   let machine, cpu, feats =
     match String.split_on_char ',' arch with
     | machine :: cpu :: feats -> (machine, cpu, feats)

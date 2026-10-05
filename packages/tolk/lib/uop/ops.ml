@@ -4478,8 +4478,6 @@ end
 
 exception Bottom_up_gate
 
-let rewrite_stack_limit =
-  Setting.int ~reach:Process "REWRITE_STACK_LIMIT" 250000
 let src_without_body u = if u.op = Op.Call then drop 1 u.src else u.src
 
 let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
@@ -4553,7 +4551,7 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
        the sources are done, rebuild on them and rewrite top-down. Link: the
        node becomes whatever its rewrite became. An entry whose dependency is
        not done waits for it instead of spinning. *)
-    let limit = Setting.value rewrite_stack_limit in
+    let limit = Setting.value Setting.rewrite_stack_limit in
     let stack = Stack.create () in
     let on_stack = Tbl.create 64 and waitlist = Tbl.create 16 in
     let wait dep entry =

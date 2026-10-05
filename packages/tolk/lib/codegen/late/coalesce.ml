@@ -50,11 +50,8 @@ let runs l =
   in
   match l with [] -> [] | _ -> go [] [] l
 
-let dmc = Setting.bool ~reach:Output "DMC" false
-let allow_half8 = Setting.bool ~reach:Output "ALLOW_HALF8" false
-
 let memory_coalescing sink (r : Renderer.t) =
-  if Setting.value dmc then sink
+  if Setting.value Setting.dmc then sink
   else begin
     (* Collect, each group's offsets in the order first seen. *)
     let groups = ref [] in
@@ -120,7 +117,7 @@ let memory_coalescing sink (r : Renderer.t) =
            then
              if
                dtype key.buf = Dtype.Float16
-               && Setting.value allow_half8
+               && Setting.value Setting.allow_half8
              then [ 8; 4; 2 ]
              else [ 4; 2 ]
            else [])

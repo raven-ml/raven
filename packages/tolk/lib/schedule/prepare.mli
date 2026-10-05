@@ -54,11 +54,12 @@ val prepare_rangeify : Ops.t -> Ops.t
         - a large reduction over few outputs is split in two, when the setting
           {!Setting.split_reduceop} is on: the reduced axis of the input is
           split by the largest divisor from [256] down to [8] that keeps the
-          first reduction's output within [2]{^ [REDUCEOP_SPLIT_SIZE]} elements
-          (default [22]), and the first reduction is materialised. It applies
-          when the input's shape is known and the input has at least
-          [REDUCEOP_SPLIT_THRESHOLD] (default [32768]) times as many elements as
-          the output, and only to an axis the input is not broadcast along;
+          first reduction's output within [2]{^ n} elements, [n] the setting
+          {!Setting.reduceop_split_size}, and the first reduction is
+          materialised. It applies when the input's shape is known and the input
+          has at least {!Setting.reduceop_split_threshold} times as many
+          elements as the output, and only to an axis the input is not broadcast
+          along;
         - {!Op.Detach} and {!Op.Contiguous_backward} are their source;
         - the sink's sources lose their movements and sharding;
         - a copy to the device the value is on is the value; a store of a copy

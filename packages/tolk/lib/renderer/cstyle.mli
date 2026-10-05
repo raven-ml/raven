@@ -23,10 +23,8 @@
     list only decides whether code generation turns a reciprocal into a
     division.
 
-    Two settings are read once, when they are first needed:
-    - [EXPAND_SSA] (default [0]): when nonzero, every value is a local variable;
-    - [ALIGNED] (default [1]): when zero, {!clang}'s vector types are aligned to
-      one byte, so that buffers at any address can be passed. *)
+    {!Setting.expand_ssa} gives every value a local variable, and
+    {!Setting.aligned} decides how {!clang}'s vector types are aligned. *)
 
 val clang : Helpers.Target.t -> Renderer.t
 (** [clang target] renders C for Clang, for a CPU. [target]'s architecture is

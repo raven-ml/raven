@@ -775,11 +775,11 @@ let rewriting =
             (Ops.graph_rewrite ~ctx:() g plus_one));
       test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
           equal string "REWRITE_STACK_LIMIT"
-            (Setting.key Ops.rewrite_stack_limit);
-          equal int 250000 (Setting.value Ops.rewrite_stack_limit);
+            (Setting.key Setting.rewrite_stack_limit);
+          equal int 250000 (Setting.value Setting.rewrite_stack_limit);
           let wide = Ops.sink (List.init 64 (fun n -> Ops.int n)) in
           Setting.context
-            [ B (Ops.rewrite_stack_limit, 8) ]
+            [ B (Setting.rewrite_stack_limit, 8) ]
             (fun () ->
               rejects (fun () ->
                   Ops.graph_rewrite ~ctx:() wide (Pm.v (fun () -> [])))));

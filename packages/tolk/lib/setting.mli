@@ -13,9 +13,10 @@
     what its value reaches. Besides settings, tolk reads only where it finds
     files: [CACHEDB] ({!Helpers.cachedb}), the system's [PATH],
     [LD_LIBRARY_PATH], [HOME] and [XDG_CACHE_HOME], and the variable that names
-    a library's file ([C.findlib]). A library that compiles with tolk declares
-    its settings here too, so that the caches key on those that reach its
-    output.
+    a library's file ([C.findlib]). Tolk's settings are all declared here
+    ({!tolk}), so that each can be bound with {!context}. A library that
+    compiles with tolk declares its own settings with this module too, so that
+    the caches key on those that reach its output.
 
     A setting has an initial value, read from its environment variable when it
     is declared, and a current value on each domain: the innermost {!context}
@@ -266,3 +267,135 @@ val disallow_broadcast : bool t
 (** [disallow_broadcast] makes an elementwise operation on operands of different
     shapes fail instead of broadcasting them, from [DISALLOW_BROADCAST].
     Defaults to [false]. *)
+
+val sum_dtype : string t
+(** [sum_dtype] names the least data type that sums of floats accumulate in
+    ({!Dtype.sum_acc}), from [SUM_DTYPE]. Defaults to ["float32"]. *)
+
+val late_allreduce : bool t
+(** [late_allreduce] leaves each allreduce to a call of its own
+    ({!Allreduce.create_allreduce_function}), from [LATE_ALLREDUCE]. Otherwise
+    sharding ({!Multi}) replaces an allreduce of a value that is not sharded
+    ({!Allreduce.handle_allreduce}). Defaults to [true]. *)
+
+val ring_allreduce_threshold : int t
+(** [ring_allreduce_threshold] is the number of elements a value must exceed for
+    allreduce to use the all-to-all or ring algorithm at level [1] of {!all2all}
+    or {!ring}, from [RING_ALLREDUCE_THRESHOLD]. Defaults to [256000]. *)
+
+val reduceop_split_threshold : int t
+(** [reduceop_split_threshold] is how many times as many elements as its output
+    a reduction's input must have for scheduling to split it, under
+    {!split_reduceop}, from [REDUCEOP_SPLIT_THRESHOLD]. Defaults to [32768]. *)
+
+val reduceop_split_size : int t
+(** [reduceop_split_size] is [n] such that the first kernel of a split reduction
+    outputs at most [2]{^ [n]} elements, from [REDUCEOP_SPLIT_SIZE]. Defaults to
+    [22]. *)
+
+val hcq_num_sdma : int option t
+(** [hcq_num_sdma] is the number of copy queues copies take
+    ({!Hcq2.sched_batches}), at least one, from [HCQ_NUM_SDMA]. [None], the
+    default, stands for as many as the AMD devices the copies reach, at most
+    [8], under {!all2all}, and for [1] otherwise. *)
+
+val mv : bool t
+(** [mv] lets hand-coded optimizations lay out matrix-vector products
+    ({!Heuristic.hand_coded_optimizations}), from [MV]. Defaults to [true]. *)
+
+val dmc : bool t
+(** [dmc] keeps code generation from merging loads, and stores, of consecutive
+    elements into vector accesses ({!Coalesce.memory_coalescing}), from [DMC].
+    Defaults to [false]. *)
+
+val allow_half8 : bool t
+(** [allow_half8] lets that merging make accesses of eight 16-bit floats, from
+    [ALLOW_HALF8]. Defaults to [false]. *)
+
+val expand_ssa : bool t
+(** [expand_ssa] makes C-style code generation ({!Cstyle}) give every value a
+    local variable, from [EXPAND_SSA]. Otherwise a value read once is written
+    into the expression that reads it. Defaults to [false]. *)
+
+val aligned : bool t
+(** [aligned] aligns the vector types of {!Cstyle.clang} to their size, from
+    [ALIGNED]. Otherwise they are aligned to one byte, so that buffers at any
+    address can be passed. Defaults to [true]. *)
+
+val waves_per_sh : int t
+(** [waves_per_sh] is the most waves an AMD dispatch runs on each shader array
+    ({!Ops_amd}), from [WAVES_PER_SH]. [0] sets no limit. Defaults to [0]. *)
+
+val beam_padto : bool t
+(** [beam_padto] adds pads of axes to the candidates of the beam search
+    ({!Search.actions}), from [BEAM_PADTO]. Defaults to [false]. *)
+
+val beam_uops_max : int t
+(** [beam_uops_max] is the number of instructions from which the beam search
+    drops a candidate, none if it is [0] or less, from [BEAM_UOPS_MAX]. Defaults
+    to [3000]. *)
+
+val beam_upcast_max : int t
+(** [beam_upcast_max] is the most upcast and unrolled lanes a candidate of the
+    beam search may have ({!Search.get_kernel_actions}), from [BEAM_UPCAST_MAX].
+    Defaults to [256]. *)
+
+val beam_local_max : int t
+(** [beam_local_max] is the most warp and local threads a candidate of the beam
+    search may have, from [BEAM_LOCAL_MAX]. Defaults to [1024]. *)
+
+val beam_min_progress : float t
+(** [beam_min_progress] is the microseconds a round of the beam search must gain
+    for the search to go on, from [BEAM_MIN_PROGRESS]. Defaults to [0.01]. *)
+
+val beam_estimate : bool t
+(** [beam_estimate] lets the beam search time a program that launches more than
+    [65536] workgroups launching fewer, and scale its time up, from
+    [BEAM_ESTIMATE]. Defaults to [true]. *)
+
+val beam_strict_mode : bool t
+(** [beam_strict_mode] makes the beam search raise what the compilation of a
+    candidate raises, but [Failure], instead of dropping the candidate, from
+    [BEAM_STRICT_MODE]. Defaults to [false]. *)
+
+val beam_log_surpass_max : bool t
+(** [beam_log_surpass_max] prints the candidates the beam search drops for
+    exceeding {!beam_upcast_max}, {!beam_local_max} or {!beam_uops_max}, from
+    [BEAM_LOG_SURPASS_MAX]. Defaults to [false]. *)
+
+val beam_debug : int t
+(** [beam_debug] is the verbosity of the beam search's diagnostics, from
+    [BEAM_DEBUG]: from [1], the kernel searched, the candidates whose timing
+    failed and the result; from [2], every candidate timed. Defaults to [0]. *)
+
+val cc : string t
+(** [cc] is the program {!Compiler_cpu.clang} runs, from [CC], read when the
+    compiler is made. Defaults to ["clang"]. *)
+
+val cuda_path : string t
+(** [cuda_path] is the directory of the CUDA toolkit whose headers
+    {!Compiler_cuda.nvrtc} includes, from [CUDA_PATH], read when the compiler is
+    made. [""], the default, searches the usual directories. *)
+
+val rocm_path : string t
+(** [rocm_path] is the directory of the ROCm installation whose comgr library
+    {!Compiler_amd.hip} loads, from [ROCM_PATH]. Defaults to ["/opt/rocm"]. *)
+
+val assert_compile : bool t
+(** [assert_compile] makes compiling a source whose binary no disk cache table
+    holds raise ({!Renderer.Compiler.compile_cached}), from [ASSERT_COMPILE].
+    Defaults to [false]. *)
+
+val rewrite_stack_limit : int t
+(** [rewrite_stack_limit] bounds the work list of {!Ops.graph_rewrite}, from
+    [REWRITE_STACK_LIMIT]. Defaults to [250000]. *)
+
+val debug_linearize : bool t
+(** [debug_linearize] prints each node linearization places, with its position,
+    operation, ranges and priority ({!Linearizer.linearize}), from
+    [DEBUG_LINEARIZE]. Defaults to [false]. *)
+
+val dbgtv : string t
+(** [dbgtv], when not empty, makes code generation print the instructions of a
+    program that fails its specification check ({!Codegen}), from [DBGTV].
+    Defaults to [""]. *)

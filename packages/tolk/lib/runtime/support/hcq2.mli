@@ -324,10 +324,10 @@ val sched_batches :
     all have queues, a copy's source first, and a program runs on its compute
     queue (["COMPUTE:0"]), a copy on a copy queue (["COPY:0"], or with
     {!Setting.all2all}, one of up to eight between AMD devices, or the
-    [HCQ_NUM_SDMA] of them). A call is not enqueued when no buffer's devices all
-    have queues, and neither is a copy on Metal, whose memory the host copies.
-    Its other buffers may be memory of devices without queues, such as the
-    source of a copy into a device with queues: those devices are not the
+    {!Setting.hcq_num_sdma} of them). A call is not enqueued when no buffer's
+    devices all have queues, and neither is a copy on Metal, whose memory the
+    host copies. Its other buffers may be memory of devices without queues, such
+    as the source of a copy into a device with queues: those devices are not the
     batch's, and no queue of the batch waits for their work, which the batch's
     runner waits for.
 

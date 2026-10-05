@@ -9,9 +9,6 @@ open Ops
 
 let setting = Setting.value
 
-let ring_allreduce_threshold =
-  Setting.int ~reach:Output "RING_ALLREDUCE_THRESHOLD" 256_000
-
 (* The lists combined below hold one value per device or per chunk. *)
 let nonempty f = function
   | x :: rest -> f x rest
@@ -42,7 +39,8 @@ let handle_allreduce red =
       in
       let large () =
         ndev > 2
-        && Sint.(resolve (numel > Int (setting ring_allreduce_threshold)))
+        && Sint.(
+             resolve (numel > Int (setting Setting.ring_allreduce_threshold)))
       in
       let use_all2all =
         concrete

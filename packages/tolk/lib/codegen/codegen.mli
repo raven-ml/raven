@@ -42,9 +42,8 @@ val full_rewrite_to_sink :
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
     {!Transcendental.patterns}). When the setting {!Setting.spec} is [1] or
     more, [ast] is checked against {!Spec.tensor} and the result against
-    {!Spec.program}; when the environment variable [DBGTV] is set and not empty
-    when the program starts, a result that fails is first printed on standard
-    output ({!Render.pp_uops}).
+    {!Spec.program}; when {!Setting.dbgtv} is not empty, a result that fails is
+    first printed on standard output ({!Render.pp_uops}).
 
     Raises [Invalid_argument] if [optimize] holds and [ast]'s argument is not a
     {!Ops.kernel_info}, if its beam search is asked for without [beam], if an

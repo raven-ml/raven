@@ -70,13 +70,9 @@ let cuda_disassemble ~ptx arch lib =
 
 (* NVRTC *)
 
-(* The toolkit whose headers kernels include, read when a compiler is made,
-   whose table names the options that include them. *)
-let cuda_path = Setting.string ~reach:Process "CUDA_PATH" ""
-
 let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
   let includes =
-    match Setting.value cuda_path with
+    match Setting.value Setting.cuda_path with
     | "" ->
         [ "-I/usr/local/cuda/include"; "-I/usr/include"; "-I/opt/cuda/include" ]
     | cuda_path -> [ "-I" ^ cuda_path ^ "/include" ]

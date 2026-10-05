@@ -9,8 +9,7 @@
 
     Clang compiles the source to a relocatable ELF object that is freestanding:
     it calls no library, so a loader places it in memory and runs it as it is.
-    The Clang run is the program named by the environment variable [CC], [clang]
-    by default, when the compiler is made. *)
+    The Clang run is {!Setting.cc} when the compiler is made. *)
 
 val clang : string -> Renderer.Compiler.t
 (** [clang arch] is the compiler of C source to objects for [arch], written

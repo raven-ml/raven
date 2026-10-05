@@ -105,9 +105,6 @@ let blob ws =
 
 (* PM4 *)
 
-(* The waves a dispatch runs on each shader array, [0] for no limit. *)
-let waves_per_sh = Setting.int ~reach:Output "WAVES_PER_SH" 0
-
 (* The poll interval of a wait, as tinygrad sets it. *)
 let wait_interval = 4
 
@@ -814,7 +811,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
       done;
       set "RESTART_X" [ u32 0; u32 0; u32 0 ];
       set "USER_DATA_0" user_regs;
-      set "RESOURCE_LIMITS" [ u32 (Setting.value waves_per_sh) ];
+      set "RESOURCE_LIMITS" [ u32 (Setting.value Setting.waves_per_sh) ];
       set "START_X"
         ([ u32 0; u32 0; u32 0 ]
         @ List.map (function Int l -> u32 l | Sym l -> l) info.local_size

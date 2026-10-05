@@ -38,9 +38,8 @@ val linearize : Ops.t -> Ops.t list
     The list is built from its end: starting with [sink], each step places the
     node latest in the ideal order among those whose consumers are all placed.
 
-    When the environment variable [DEBUG_LINEARIZE] holds a nonzero integer,
-    each node is printed on standard output with its position, operation, ranges
-    and priority. *)
+    Under {!Setting.debug_linearize}, each node is printed on standard output
+    with its position, operation, ranges and priority. *)
 
 (** {1:cfg Chaining loops} *)
 
