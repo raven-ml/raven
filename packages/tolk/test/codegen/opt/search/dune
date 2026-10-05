@@ -7,7 +7,7 @@
  (name test_search)
  (modules test_search)
  (package tolk)
- (libraries windtrap tolk tolk_test)
+ (libraries windtrap tolk tolk_test unix)
  (deps
   (sandbox always)
   (glob_files *.golden))

@@ -3349,7 +3349,7 @@ stores through a pad.
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
   (`C.identity`); `lib/codegen/codegen.ml:1181-1198` (`program_key`, `kept`);
   `lib/setting.ml:285-290` (the search's settings) and
-  `lib/codegen/opt/search.ml:261` (the beam search's key).
+  `lib/codegen/opt/search.ml:300` (the beam search's key).
 - **Differs:** a table also names everything besides the source that
   determines a binary: for Clang, the digest of what `clang -###` states it
   runs (its version and installation, the processor and features `native`
@@ -3485,11 +3485,12 @@ stores through a pad.
   linearize and compile › compile completes linearize into the program
   to_program makes` and `› linearize compiles nothing`.
 
-## D116. A search compiles each kernel once
+## D116. A search compiles each kernel and each source once
 
 - **tinygrad:** `codegen/opt/search.py:132-142` (each candidate compiled,
   then dropped if its binary is in `seen_libs`).
-- **tolk:** `lib/codegen/opt/search.ml:304` (`compiled`, `compile`).
+- **tolk:** `lib/codegen/opt/search.ml:335` (`compiled`), `:337` (the
+  memoized compiler) and `:344` (`compile`); `:138` (`memo`).
 - **Differs:** a search keeps each kernel's compilation, by its scheduler's
   kernel (`Postrange.Scheduler.ast`), and a candidate whose kernel it met
   before, in this round or an earlier one, takes that result uncompiled. The
@@ -3499,12 +3500,20 @@ stores through a pad.
   whose kernel information records different optimisations, so
   `to_program`'s cache misses, and `seen_libs` drops the second binary only
   after compiling it. A program depends only on its kernel and its name,
-  `"test"`, so the search keeps and drops the same candidates.
+  `"test"`, so the search keeps and drops the same candidates. Distinct
+  kernels can also render one source: the search compiles through a memo of
+  its compiler, so a source is compiled or rejected once, and a domain asking
+  for one another is compiling waits for it. A binary or a rejection depends
+  only on its source, so `seen_libs` sees the same binaries. Candidates are
+  compiled without the disk cache of the compiler's binaries.
 - **Reason:** speed, measured by PR #235 on GNODE and lorenz_simple on AMD,
-  where 12 to 16% of a search's candidates were such duplicates. Admitting a
-  speed rule is the maintainer's call, as for D115.
+  where 12 to 16% of a search's candidates were such duplicates, and in the
+  host searches of a lorenz_simple step on AMD, where 10 of 12 candidates of
+  a round compiled to binaries already timed. Admitting a speed rule is the
+  maintainer's call, as for D115.
 - **Pinned by:** `Tolk.Search › a search compiles each kernel once`
-  (`matmul_small`, whose upcast and swap commute).
+  (`matmul_small`, whose upcast and swap commute; it counts renders) and
+  `› a search compiles each source once` (both tests).
 
 ## D117. A search starts from its kernel's samples and progresses beyond their spread
 
@@ -3513,7 +3522,7 @@ stores through a pad.
   search if nothing was timed, if the fastest took less than
   `BEAM_MIN_PROGRESS`, or if it beat the beam's first by less than that;
   the search then keeps the fastest alone if it beat the beam's first).
-- **tolk:** `lib/codegen/opt/search.ml:348` (`progresses`) and `:422`
+- **tolk:** `lib/codegen/opt/search.ml:388` (`progresses`) and `:462`
   (`start`); the golden generator, `test/gen/codegen/opt/search.py`
   (`beam_search`).
 - **Differs:** the search compiles and times its kernel before its first

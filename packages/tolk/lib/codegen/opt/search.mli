@@ -95,7 +95,10 @@ val beam_search :
     is one whose compilation raises another exception, unless
     {!Setting.beam_strict_mode} holds and the exception is raised. A search
     compiles each kernel ({!Postrange.Scheduler.ast}) once: a candidate whose
-    kernel it met before takes that kernel's result.
+    kernel it met before takes that kernel's result. It also compiles each
+    source once: a kernel that renders a source compiled or rejected before
+    takes that binary or rejection. Candidates are compiled without the disk
+    cache of their compiler's binaries.
 
     A program is timed up to three times, stopping once its least time exceeds
     an early stop. Its samples are the times measured.

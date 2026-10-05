@@ -88,11 +88,10 @@ let time_program ~link ~time ~early_stop ~allow_test_size ~vars ?(cnt = 3) prg =
   in
   go [] cnt
 
-(* A kernel linearized, dropped past the cap, then compiled: its program and
-   compile time. *)
-let try_compile k =
+(* A kernel linearized, dropped past the cap, then compiled for [ren]: its
+   program and compile time. *)
+let try_compile (ren : Renderer.t) k =
   let st = Unix.gettimeofday () in
-  let ren = K.ren k in
   let on_device p =
     match arg p with
     | Param a when op p = Op.Param && addrspace p <> Some Dtype.Alu ->
@@ -128,6 +127,42 @@ let try_compile k =
       None
   | exception e when setting Setting.beam_strict_mode -> raise e
   | exception _ -> None
+
+(* [compile] memoized: each source is compiled once, and a domain asking for one
+   that another is compiling waits for it, holding the entry's lock. A rejection
+   depends only on the source, so it is kept too; any other exception passes
+   through and leaves the source to be compiled again. *)
+type outcome = Compiled of string | Rejected of string
+type entry = { lock : Mutex.t; mutable outcome : outcome option }
+
+let memo compile =
+  let lock = Mutex.create () and entries = Hashtbl.create 64 in
+  fun src ->
+    let entry =
+      Mutex.protect lock (fun () ->
+          match Hashtbl.find_opt entries src with
+          | Some e -> e
+          | None ->
+              let e = { lock = Mutex.create (); outcome = None } in
+              Hashtbl.replace entries src e;
+              e)
+    in
+    let outcome =
+      Mutex.protect entry.lock (fun () ->
+          match entry.outcome with
+          | Some o -> o
+          | None ->
+              let o =
+                match compile src with
+                | lib -> Compiled lib
+                | exception Renderer.Compiler.Compile_error msg -> Rejected msg
+              in
+              entry.outcome <- Some o;
+              o)
+    in
+    match outcome with
+    | Compiled lib -> lib
+    | Rejected msg -> raise (Renderer.Compiler.Compile_error msg)
 
 (* The least and greatest product of [sizes] over their variables' values. *)
 let product_bounds sizes =
@@ -297,6 +332,14 @@ let beam_search ~link ~time ?allow_test_size amt s =
       (* Each kernel is compiled once: two sequences of actions can reach equal
          kernels, whose kernel information records different optimisations. *)
       let compiled = Ops.Tbl.create 256 in
+      (* Distinct kernels can render one source: it is compiled once. *)
+      let ren =
+        Renderer.with_compiler
+          (Renderer.Compiler.v
+             ~disassemble:(Renderer.Compiler.disassemble ren.compiler)
+             (memo (Renderer.Compiler.compile ren.compiler)))
+          ren
+      in
       let compile ks =
         let met = Ops.Tbl.create 64 in
         let fresh =
@@ -313,7 +356,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
         List.iter2
           (fun k r -> Ops.Tbl.replace compiled (K.ast k) r)
           fresh
-          (Worker.map try_compile fresh);
+          (Worker.map (try_compile ren) fresh);
         List.map (fun k -> (k, Ops.Tbl.find compiled (K.ast k))) ks
       in
       (* [k]'s program timed with an early stop, or [None] if its timing

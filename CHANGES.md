@@ -978,6 +978,11 @@ thread.
 
 ### Tolk (new)
 
+- `Search.beam_search` compiles each source once: candidates of distinct
+  kernels that render one source each ran the compiler, a rejected one again
+  for every domain waiting on it. A domain asking for a source another is
+  compiling now waits for its binary or rejection. Candidates are compiled
+  without the disk cache of their compiler's binaries.
 - `Compiler_cpu.clang` runs Clang as a process of its own, waited for with
   the runtime released, instead of through the C library's `system`, which
   macOS runs one at a time: 16 compiles on 8 domains take 0.11 s, from

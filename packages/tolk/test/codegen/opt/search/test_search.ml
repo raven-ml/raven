@@ -778,16 +778,31 @@ let scheduled_for ren name =
   K.convert_loop_to_global k;
   k
 
-(* A Metal renderer whose compiler counts the times it compiles each source, for
-   the family [arch] of its own, so that no other test's programs are reused. *)
-let counting arch =
-  let compiled = Hashtbl.create 64 and lock = Mutex.create () in
-  let compile src =
-    Mutex.protect lock (fun () ->
-        Hashtbl.replace compiled src
-          (1 + Option.value ~default:0 (Hashtbl.find_opt compiled src)));
-    src
-  in
+(* Counts per source, safe from several domains. *)
+type counts = { lock : Mutex.t; table : (string, int) Hashtbl.t }
+
+let counts () = { lock = Mutex.create (); table = Hashtbl.create 64 }
+
+let count c src =
+  Mutex.protect c.lock (fun () ->
+      Hashtbl.replace c.table src
+        (1 + Option.value ~default:0 (Hashtbl.find_opt c.table src)))
+
+let counted c src =
+  Mutex.protect c.lock (fun () ->
+      Option.value ~default:0 (Hashtbl.find_opt c.table src))
+
+let to_list c =
+  Mutex.protect c.lock (fun () ->
+      Hashtbl.fold (fun src n l -> (src, n) :: l) c.table [])
+
+(* A Metal renderer for the family [arch] of its own, so that no other test's
+   programs are reused, whose renders and compilations are counted per source.
+   Each render of a source calls [rendering src] first. Its compiler counts a
+   source, then compiles it to itself after [before ~rendered ~compiled src]. *)
+let counting ?(rendering = ignore)
+    ?(before = fun ~rendered:_ ~compiled:_ _ -> ()) arch =
+  let rendered = counts () and compiled = counts () in
   let t =
     {
       Helpers.Target.device = "METAL";
@@ -797,8 +812,29 @@ let counting arch =
       indices = "";
     }
   in
-  ( Renderer.with_compiler (Renderer.Compiler.v compile) (Cstyle.metal t),
-    fun () -> Hashtbl.fold (fun src n l -> (src, n) :: l) compiled [] )
+  let m = Cstyle.metal t in
+  let render uops =
+    let src = m.render uops in
+    rendering src;
+    count rendered src;
+    src
+  in
+  let compile src =
+    count compiled src;
+    before ~rendered ~compiled src;
+    src
+  in
+  let ren =
+    Renderer.v ~name:m.name ~suffix:m.suffix ~supports_float4:m.supports_float4
+      ~has_local:m.has_local ~has_shared:m.has_shared ~global_max:m.global_max
+      ~local_max:m.local_max ?global_prod_max:m.global_prod_max
+      ~shared_max:m.shared_max ~tensor_cores:m.tensor_cores
+      ~extra_matcher:m.extra_matcher ~code_for_op:m.code_for_op ~native:m.native
+      ~render
+      ~compiler:(Renderer.Compiler.v compile)
+      t
+  in
+  (ren, rendered, compiled)
 
 (* A search of width 2 whose beam after its first round is an upcast and a swap,
    and whose second round gains nothing, compiles its kernel and the candidates
@@ -814,7 +850,7 @@ let compiles_once =
     | _ -> 1e-3
   in
   test "a search compiles each kernel once" (fun () ->
-      let ren, compiled = counting "Apple7" in
+      let ren, rendered, _ = counting "Apple7" in
       let k = scheduled_for ren "matmul_small" in
       let timing, record = sampling favoured in
       ignore (search ~timing 2 k);
@@ -835,8 +871,106 @@ let compiles_once =
       List.iter
         (fun k -> Ops.Tbl.replace distinct (K.ast k) ())
         ((k :: actions k) @ actions (acted upcast) @ actions (acted swap));
-      equal int (Ops.Tbl.length distinct)
-        (List.fold_left (fun n (_, c) -> n + c) 0 (compiled ())))
+      equal int ~msg:"renders" (Ops.Tbl.length distinct)
+        (List.fold_left (fun n (_, c) -> n + c) 0 (to_list rendered)))
+
+(* The sources of [kernel] that a search of width 2 for the family [arch]
+   renders twice within the round that first renders them, in order: rendered
+   again before the search times anything more. *)
+let repeated arch kernel =
+  let samples = ref 0 and first = Hashtbl.create 64 and repeats = ref [] in
+  let rendering src =
+    match Hashtbl.find_opt first src with
+    | Some round when round = !samples && not (List.mem src !repeats) ->
+        repeats := src :: !repeats
+    | Some _ -> ()
+    | None -> Hashtbl.replace first src !samples
+  in
+  let ren, _, _ = counting ~rendering arch in
+  let timing, _ =
+    sampling (fun ~vars prg _ ->
+        incr samples;
+        golden_time ~failing:false ~vars prg)
+  in
+  ignore
+    (search
+       ~settings:[ B (Setting.parallel, 0) ]
+       ~timing 2 (scheduled_for ren kernel));
+  List.rev !repeats
+
+(* [cond ()] held, waited for for at most ten seconds. *)
+let await what cond =
+  let deadline = Unix.gettimeofday () +. 10. in
+  while not (cond ()) do
+    if Unix.gettimeofday () > deadline then
+      failf "waited ten seconds for %s" what;
+    Domain.cpu_relax ()
+  done
+
+let compiles_sources_once =
+  group "a search compiles each source once"
+    [
+      test "and keeps a rejection, on one domain" (fun () ->
+          let repeats = repeated "Apple72" "matmul_small" in
+          greater int ~msg:"sources rendered twice in a round" ~than:0
+            (List.length repeats);
+          let before ~rendered:_ ~compiled:_ src =
+            if List.mem src repeats then
+              raise (Renderer.Compiler.Compile_error "rejected")
+          in
+          let ren, rendered, compiled = counting ~before "Apple71" in
+          let timing, _ = recording (golden_time ~failing:false) in
+          ignore
+            (search
+               ~settings:[ B (Setting.parallel, 0) ]
+               ~timing 2
+               (scheduled_for ren "matmul_small"));
+          List.iter
+            (fun src ->
+              let msg = Digest.to_hex (Digest.string src) in
+              at_least int ~msg ~than:2 (counted rendered src);
+              equal int ~msg 1 (counted compiled src))
+            repeats);
+      test
+        "when a domain asks for a source another is compiling, on several \
+         domains" (fun () ->
+          let first =
+            match repeated "Apple74" "matmul_small" with
+            | src :: _ -> src
+            | [] -> fail "no source rendered twice in a round"
+          in
+          (* The first compilation of the source lasts until the source is
+             rendered again, and then until it is compiled again or for a fifth
+             of a second: the second candidate asks for it while it is being
+             compiled, and a search that compiled it again would do so within
+             that time. Other domains keep compiling meanwhile. *)
+          let before ~rendered ~compiled src =
+            let compiled_again () = counted compiled first >= 2 in
+            if src = first && not (compiled_again ()) then begin
+              await "the source rendered again" (fun () ->
+                  counted rendered src >= 2);
+              let deadline = Unix.gettimeofday () +. 0.2 in
+              while
+                (not (compiled_again ())) && Unix.gettimeofday () < deadline
+              do
+                Domain.cpu_relax ()
+              done
+            end
+          in
+          let ren, rendered, compiled = counting ~before "Apple73" in
+          let timing, _ = recording (golden_time ~failing:false) in
+          ignore
+            (search
+               ~settings:[ B (Setting.parallel, 4) ]
+               ~timing 2
+               (scheduled_for ren "matmul_small"));
+          at_least int ~msg:"renders of the source" ~than:2
+            (counted rendered first);
+          List.iter
+            (fun (src, n) ->
+              equal int ~msg:(Digest.to_hex (Digest.string src)) 1 n)
+            (to_list compiled));
+    ]
 
 let uncompilable =
   let dropped reject () =
@@ -1077,7 +1211,7 @@ let under_environment =
           contains ~sub:"too many uops" (output ()));
       test "a candidate of BEAM_UOPS_MAX instructions or more is not compiled"
         (fun () ->
-          let ren, compiled = counting "Apple8" in
+          let ren, _, compiled = counting "Apple8" in
           let timing, record =
             sampling (fun ~vars prg _ -> golden_time ~failing:false ~vars prg)
           in
@@ -1089,7 +1223,7 @@ let under_environment =
               satisfies ~claim:"a linked program's" string
                 (fun src -> List.mem src linked)
                 src)
-            (compiled ()));
+            (to_list compiled));
       test "a compilation that raises is raised under BEAM_STRICT_MODE"
         (fun () ->
           let ren, _ = rejecting ~every:1 rejected_by_compiler in
@@ -1209,6 +1343,7 @@ let () =
          cache_candidates;
          uncompilable;
          compiles_once;
+         compiles_sources_once;
          progress;
          quiet;
          failure_printed;
