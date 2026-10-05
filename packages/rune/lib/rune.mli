@@ -445,6 +445,10 @@ val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
      from the mapped function instead"]: an OCaml [if] on a value that depends
     on the lanes raises, and {!Nx.where} selects per lane.
 
+    A check in [f] ({!Nx.check}) raises the exception of its first failing lane,
+    with that lane prefixed to the index, each enclosing map's lane outside it.
+    Its data are the lane's elements there.
+
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument;
     and when applied to its arguments if they have no tensor, if a tensor is a
     scalar, or if two tensors differ in the length of their axis 0, naming each
@@ -849,12 +853,13 @@ val jit :
     [f] returns at two leaves comes back as two values, the second a copy of the
     first.
 
-    {b Checks.} {!Nx.check} of a value [f] computes reads nothing as [f] traces:
-    the program also returns the index of each check's first false element, and
-    once it has run, the call raises [Invalid_argument] with the message of the
-    first check traced that failed, its consumed arguments consumed. A check in
-    a staged {!scan} reports the first step that fails. The message is made
-    then, from the values [f] captured as it traced.
+    {b Checks.} A check ({!Nx.check}) any of whose operands [f] computes reads
+    nothing as [f] traces: the program also returns the index of each check's
+    first false element and its data there, and once it has run, the call raises
+    the exception of the first check traced that failed, its consumed arguments
+    consumed. The exception is built then, from that index and data, and equals
+    the one an eager call raises. A check in a staged {!scan} reports the first
+    step that fails, with that step's data.
 
     {b Consumption.} Before its first kernel, a call marks every storage that a
     leaf of a consumed argument reaches as consumed; nothing unmarks it. From

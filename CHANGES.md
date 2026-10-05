@@ -3295,6 +3295,14 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.check s ok data fail` carries data: it raises the
+  exception `fail` builds from the first failing index and each leaf of `data`
+  there, so a message can read a computed value. A check with no data passes
+  `Nx.Ptree.unit` and `()`.
+- **Breaking:** `Nx.Op.Check` carries `data` and `fail` in place of `msg`.
+- `Nx.Rng`'s parameter refusals print the offending value, as in
+  `Nx.Rng.gamma: concentration at [3] is -1, not in (0, inf)`. A sampler of
+  two parameters checks each in turn.
 - Add `Nx.i0e` and `Nx.i1e`, `e^-|x|` times the modified Bessel functions
   `I₀` and `I₁`, within 8 ulps: the von Mises distribution's normaliser and
   mean resultant length, finite where `I₀` overflows.

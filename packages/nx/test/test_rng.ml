@@ -764,8 +764,8 @@ let errors =
     (fun (_, refused) -> List.iter raises_invalid_arg refused)
 
 (* A parameter outside its domain is refused with a message naming the sampler,
-   the parameter, the index of its first element outside the domain, and the
-   domain. A broadcast parameter is indexed in its broadcast shape. *)
+   the parameter, the index of its first element outside the domain, its value
+   and the domain. A broadcast parameter is indexed in its broadcast shape. *)
 let refusals =
   let v d xs = Nx.create d [| Array.length xs |] xs in
   let m d r c xs = Nx.create d [| r; c |] xs in
@@ -773,61 +773,61 @@ let refusals =
   let two = Nx.scalar f32 2. in
   cases ~name:fst "refusals"
     [
-      ( "Nx.Rng.gamma: concentration at [2] is not in (0, inf)",
+      ( "Nx.Rng.gamma: concentration at [2] is -0.5, not in (0, inf)",
         fun () -> ignore (Rng.gamma k0 (v f32 [| 1.; 2.; -0.5 |])) );
-      ( "Nx.Rng.gamma: concentration at [1] is not in (0, inf)",
+      ( "Nx.Rng.gamma: concentration at [1] is 0, not in (0, inf)",
         fun () -> ignore (Rng.gamma k0 (v f64 [| 1.; 0.; Float.nan |])) );
-      ( "Nx.Rng.beta: a at [0; 1] is not in (0, inf)",
+      ( "Nx.Rng.beta: a at [0; 1] is 0, not in (0, inf)",
         fun () -> ignore (Rng.beta k0 (m f32 1 2 [| 1.; 0. |]) two) );
-      ( "Nx.Rng.beta: b at [1] is not in (0, inf)",
+      ( "Nx.Rng.beta: b at [1] is nan, not in (0, inf)",
         fun () ->
           ignore (Rng.beta k0 (v f32 [| 1.; 1. |]) (v f32 [| 1.; Float.nan |]))
       );
-      ( "Nx.Rng.dirichlet: concentration at [1; 1] is not in (0, inf)",
+      ( "Nx.Rng.dirichlet: concentration at [1; 1] is inf, not in (0, inf)",
         fun () ->
           ignore (Rng.dirichlet k0 (m f64 2 2 [| 1.; 1.; 1.; infinity |])) );
-      ( "Nx.Rng.poisson: rate is not in [0, inf)",
+      ( "Nx.Rng.poisson: rate is -1, not in [0, inf)",
         fun () -> ignore (Rng.poisson k0 (Nx.scalar f32 (-1.))) );
-      ( "Nx.Rng.poisson: rate at [0] is not in [0, inf)",
+      ( "Nx.Rng.poisson: rate at [0] is inf, not in [0, inf)",
         fun () -> ignore (Rng.poisson k0 (v f64 [| infinity |])) );
-      ( "Nx.Rng.binomial: n at [1] is not in [0, inf)",
+      ( "Nx.Rng.binomial: n at [1] is -1, not in [0, inf)",
         fun () ->
           ignore
             (Rng.binomial k0
                (Nx.create Nx.int32 [| 2 |] [| 3l; -1l |])
                (v f32 [| 0.5; 1.5 |])) );
-      ( "Nx.Rng.binomial: p at [1] is not in [0, 1]",
+      ( "Nx.Rng.binomial: p at [1] is nan, not in [0, 1]",
         fun () ->
           ignore
             (Rng.binomial k0 (Nx.scalar Nx.int32 4l)
                (v f64 [| 0.5; Float.nan |])) );
-      ( "Nx.Rng.von_mises: concentration at [2] is not in [0, inf)",
+      ( "Nx.Rng.von_mises: concentration at [2] is inf, not in [0, inf)",
         fun () -> ignore (Rng.von_mises k0 (v f32 [| 0.; 1.; infinity |])) );
-      ( "Nx.Rng.bernoulli: p at [0; 2] is not in [0, 1]",
+      ( "Nx.Rng.bernoulli: p at [0; 2] is 1.5, not in [0, 1]",
         fun () ->
           ignore
             (Rng.bernoulli k0
                (Nx.broadcast_to [| 3; 4 |] (v f32 [| 0.5; 0.5; 1.5; 0.5 |]))) );
-      ( "Nx.Rng.bernoulli: p at [1; 0] is not in [0, 1]",
+      ( "Nx.Rng.bernoulli: p at [1; 0] is -0.1, not in [0, 1]",
         fun () ->
           ignore
             (Nx.bernoulli
                (Nx.broadcast_to [| 3; 4 |] (m f32 3 1 [| 0.; -0.1; 1. |]))) );
-      ( "Nx.Rng.truncated_normal: upper at [1] is NaN",
+      ( "Nx.Rng.truncated_normal: upper at [1] is nan, not in [-inf, inf]",
         fun () ->
           ignore
             (Rng.truncated_normal k0
                (v f32 [| 0.; 0. |])
                (v f32 [| 1.; Float.nan |])) );
-      ( "Nx.Rng.truncated_normal: lower is NaN",
+      ( "Nx.Rng.truncated_normal: lower is nan, not in [-inf, inf]",
         fun () ->
           ignore
             (Nx.truncated_normal (Nx.scalar f64 Float.nan) (v f64 [| 1.; 2. |]))
       );
-      ( "Nx.Rng.categorical: logits at [0; 1] is not in [-inf, inf)",
+      ( "Nx.Rng.categorical: logits at [0; 1] is inf, not in [-inf, inf)",
         fun () ->
           ignore (Rng.categorical k0 (m f32 2 2 [| 0.; infinity; 0.; 0. |])) );
-      ( "Nx.Rng.categorical: logits at [1; 0] is not in [-inf, inf)",
+      ( "Nx.Rng.categorical: logits at [1; 0] is nan, not in [-inf, inf)",
         fun () ->
           ignore
             (Nx.categorical ~axis:0

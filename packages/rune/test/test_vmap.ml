@@ -9,6 +9,10 @@
 
 open Windtrap
 
+(* A check with no data, raising [Invalid_argument (msg i)]. *)
+let require ok msg =
+  Nx.check Nx.Ptree.unit ok () (fun i () -> Invalid_argument (msg i))
+
 let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a
 let floats = array float_exact
@@ -123,40 +127,43 @@ let refusals =
 (* Checks *)
 
 let below_one x =
-  Nx.check (Nx.less_s x 1.) (fun i ->
+  require (Nx.less_s x 1.) (fun i ->
       Printf.sprintf "element %s"
         (String.concat "," (Array.to_list (Array.map string_of_int i))));
   x
 
 let checks =
   [
-    test "a check names the first false element of the first lane that has one"
-      (fun () ->
+    test
+      "a check names the first false element of the first lane that has one, \
+       the lane first" (fun () ->
         let rows =
           Nx.create f64 [| 3; 3 |] [| 0.; 0.; 0.; 0.; 0.; 5.; 7.; 0.; 0. |]
         in
-        raises (Invalid_argument "element 2") (fun () ->
+        raises (Invalid_argument "element 1,2") (fun () ->
             Rune.vmap' below_one rows));
     test "a check that holds in every lane passes" (fun () ->
         equal floats [| 0.; 0.5 |]
           (values (Rune.vmap' below_one (vec [| 0.; 0.5 |]))));
-    test "a check of mapped matrices names a matrix's index" (fun () ->
+    test "a check of mapped matrices names the lane, then the matrix's index"
+      (fun () ->
         let ms =
           Nx.create f64 [| 2; 2; 2 |] [| 0.; 0.; 0.; 0.; 0.; 0.; 3.; 0. |]
         in
-        raises (Invalid_argument "element 1,0") (fun () ->
+        raises (Invalid_argument "element 1,1,0") (fun () ->
             Rune.vmap' below_one ms));
     test "a sampler's mapped parameter is checked lane by lane" (fun () ->
         let rows = Nx.create f64 [| 2; 2 |] [| 0.5; 0.5; 0.5; 2. |] in
         raises
           (Invalid_argument
-             "Nx.Rng.gamma: concentration at [0] is not in (0, inf)") (fun () ->
-            Rune.vmap' (Nx.Rng.gamma (Nx.Rng.key 0)) (Nx.neg rows));
-        raises (Invalid_argument "Nx.Rng.bernoulli: p at [1] is not in [0, 1]")
+             "Nx.Rng.gamma: concentration at [0; 0] is -0.5, not in (0, inf)")
+          (fun () -> Rune.vmap' (Nx.Rng.gamma (Nx.Rng.key 0)) (Nx.neg rows));
+        raises
+          (Invalid_argument "Nx.Rng.bernoulli: p at [1; 1] is 2, not in [0, 1]")
           (fun () -> Rune.vmap' (Nx.Rng.bernoulli (Nx.Rng.key 0)) rows));
     test "a check of mapped values compiles" (fun () ->
         let rows = Nx.create f64 [| 2; 2 |] [| 0.; 0.; 0.; 4. |] in
-        raises (Invalid_argument "element 1") (fun () ->
+        raises (Invalid_argument "element 1,1") (fun () ->
             Rune.jit' (Rune.vmap' below_one) rows));
   ]
 

@@ -851,13 +851,12 @@ module Rng : sig
       and [mul] place them, the same line for a scalar and a tensor.
 
       Each sampler states its parameters' domain, which never holds NaN, and
-      checks every element against it with one {!val-check}: an element outside
-      raises [Invalid_argument] naming the sampler, the parameter, the index of
-      its first such element in C order and the domain, as in
-      [Nx.Rng.gamma: concentration at [3] is not in (0, inf)]. A concrete
-      parameter raises at once, a traced one when its compiled call returns, and
-      a mapped one with its index in the lane. Shapes and dtypes are known when
-      the program is built, so they raise as the call is made.
+      checks every element against it with one {!val-check} per parameter: an
+      element outside raises [Invalid_argument] naming the sampler, the
+      parameter, the index of its first such element in C order, its value and
+      the domain, as in
+      [Nx.Rng.gamma: concentration at [3] is -1, not in (0, inf)]. Shapes and
+      dtypes raise as the call is made.
 
       Float draws are computed at float64 for float64 parameters and at float32
       otherwise, then returned at the parameters' dtype. *)
@@ -2546,23 +2545,26 @@ val clamp : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
 (** [clamp ?min ?max t] clamps elements to \[[min], [max]\]. Either bound may be
     omitted. *)
 
-val check : (bool, bool_elt) t -> (int array -> string) -> unit
-(** [check ok msg] raises [Invalid_argument (msg i)] if an element of [ok] is
-    [false], [i] being the index of the first in C order. An empty [ok] passes.
+val check :
+  'd Ptree.t -> (bool, bool_elt) t -> 'd -> (int array -> 'd -> exn) -> unit
+(** [check s ok data fail] raises [fail i d] if an element of [ok] is [false],
+    [i] being the index of the first in C order and [d] the structure [data]
+    with each leaf replaced by its element at [i], a scalar of the leaf's dtype.
+    Each leaf broadcasts to [ok]'s shape. An empty [ok] passes. A check with no
+    data passes [Ptree.unit] and [()].
 
-    Inside a compiled function [check] reads nothing: the compiled call raises
-    the same exception when it returns, once its later operations have run, and
-    calls [msg] then, on the values it captured when the function was traced. A
-    call that consumes its arguments has consumed them by then. A check of a
-    value the function captures, rather than computes, is answered as the
-    function traces. Mapped over a batch, [i] indexes [ok]'s first false element
-    in the first lane that has one.
+    An interpreter may defer checks until its computation ends. It then raises
+    the exception of the first failing check in the order the checks were made,
+    built from the same [i] and [d].
+
+    Raises [Invalid_argument] if a leaf does not broadcast to [ok]'s shape.
 
     {@ocaml[
       # let t = create float32 [| 3 |] [| 0.5; 2.; 0.25 |] in
-        check (less_equal t (scalar float32 1.)) (fun i ->
-            Printf.sprintf "element %d is above 1" i.(0))
-      Exception: Invalid_argument "element 1 is above 1".
+        check Ptree.tensor (less_equal t (scalar float32 1.)) t (fun i x ->
+            Invalid_argument
+              (Printf.sprintf "element %d is %g, above 1" i.(0) (item [] x)))
+      Exception: Invalid_argument "element 1 is 2, above 1".
     ]} *)
 
 (** {1:bitwise Bitwise operations} *)
@@ -4837,13 +4839,15 @@ module Op : sig
             message that starts with [by]. *)
     | Check : {
         ok : (bool, Nx_dtype.bool_elt) value;
-        msg : int array -> string;
+        data : packed list;
+        fail : int array -> packed list -> exn;
       }
         -> unit t
-        (** [Check { ok; msg }] raises [Invalid_argument (msg i)] if an element
-            of [ok] is false, [i] being the index of the first in C order, as
-            {!Nx.check} describes. An interpreter that defers it, such as a
-            compiled call, raises when it ends and runs [msg] then. *)
+        (** [Check { ok; data; fail }] raises [fail i d] if an element of [ok]
+            is false, [i] being the index of the first in C order and [d] each
+            of [data]'s element at [i], as a scalar. Each of [data] has [ok]'s
+            shape. {!Nx.check} makes it. An interpreter that defers it
+            raises when its computation ends, from the same [i] and [d]. *)
 
   (** The type for operations whose result is ['r]. *)
 

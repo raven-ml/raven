@@ -291,14 +291,15 @@ let run : type r. t -> r Nx.Op.t -> r =
         (by
        ^ ": cannot read the value of a batched tensor inside vmap; return it \
           from the mapped function instead")
-  | Check { ok; msg } ->
+  | Check c ->
       (* The lanes' axis comes first, so the first failure is in the first
-         failing lane, and its index drops the lane. *)
+         failing lane, and its index starts with the lane. *)
       eval
         (Check
            {
-             ok = b ok;
-             msg = (fun i -> msg (Array.sub i 1 (Array.length i - 1)));
+             c with
+             ok = b c.ok;
+             data = List.map (fun (Nx.P x) -> Nx.P (b x)) c.data;
            })
 
 (* Constructs *)

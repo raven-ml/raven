@@ -141,31 +141,6 @@ module Rng = struct
     let target = Shape.broadcast (shape a) (shape b) in
     (broadcast_to target a, broadcast_to target b)
 
-  (* A sampler checks its parameters against their domains with one [check]
-     before it draws, so a concrete parameter raises at once and a traced one
-     when its compiled call returns. A parameter is given by its name, its
-     refusal and where its elements lie in its domain. Two parameters are
-     checked as one, their flattened tests end to end, and the index of the
-     first failure tells them apart. *)
-  let refusal sampler name refused i =
-    let at =
-      if Array.length i = 0 then ""
-      else Printf.sprintf " at [%s]" (shape_string i)
-    in
-    Printf.sprintf "Nx.Rng.%s: %s%s %s" sampler name at refused
-
-  let require sampler (name, refused, ok) =
-    check ok (refusal sampler name refused)
-
-  let require_both sampler (na, ra, a) (nb, rb, b) =
-    let n = numel a in
-    check
-      (concatenate ~axis:0 [ flatten a; flatten b ])
-      (fun i ->
-        let i = i.(0) in
-        if i < n then refusal sampler na ra (Shape.unravel_index i (shape a))
-        else refusal sampler nb rb (Shape.unravel_index (i - n) (shape b)))
-
   (* [distinct x] is [x] with each broadcast axis, of stride 0, cut to its first
      element: the elements a check must read, one for a broadcast scalar. The
      first failing element of [x] in C order sits at index 0 on such an axis, so
@@ -177,30 +152,58 @@ module Rng = struct
       let keep d n = if strides.(d) = 0 && n > 0 then (0, 1) else (0, n) in
       shrink (Array.mapi keep (shape x)) x
 
-  (* The domains, NaN outside each. *)
-  let positive x =
+  (* A parameter's domain: as written in a refusal, and where a tensor's
+     elements lie in it. NaN lies outside each. *)
+  type 'a domain = { text : string; inside : 'a -> (bool, Nx_dtype.bool_elt) t }
+
+  let positive =
+    {
+      text = "(0, inf)";
+      inside = (fun x -> logical_and (cmpgt x (scalar_like x 0.0)) (isfinite x));
+    }
+
+  let non_negative =
+    {
+      text = "[0, inf)";
+      inside = (fun x -> logical_and (cmpge x (scalar_like x 0.0)) (isfinite x));
+    }
+
+  let natural =
+    { text = "[0, inf)"; inside = (fun x -> cmpge x (scalar_like x 0l)) }
+
+  let probability =
+    {
+      text = "[0, 1]";
+      inside =
+        (fun x ->
+          logical_and
+            (cmpge x (scalar_like x 0.0))
+            (cmple x (scalar_like x 1.0)));
+    }
+
+  let not_nan =
+    { text = "[-inf, inf]"; inside = (fun x -> logical_not (isnan x)) }
+
+  let below_infinity =
+    {
+      text = "[-inf, inf)";
+      inside = (fun x -> cmplt x (scalar_like x Float.infinity));
+    }
+
+  (* A sampler checks each parameter against its domain with one [check] before
+     it draws, so a concrete parameter raises at once and a traced one when its
+     compiled call returns. The refusal names the first element outside the
+     domain by its index and value. *)
+  let require sampler name d x =
     let x = distinct x in
-    logical_and (cmpgt x (scalar_like x 0.0)) (isfinite x)
-
-  let non_negative x =
-    let x = distinct x in
-    logical_and (cmpge x (scalar_like x 0.0)) (isfinite x)
-
-  let natural x =
-    let x = distinct x in
-    cmpge x (scalar_like x 0l)
-
-  let probability x =
-    let x = distinct x in
-    logical_and (cmpge x (scalar_like x 0.0)) (cmple x (scalar_like x 1.0))
-
-  let not_nan x = logical_not (isnan (distinct x))
-
-  let below_infinity x =
-    let x = distinct x in
-    cmplt x (scalar_like x Float.infinity)
-
-  let in_positive = "is not in (0, inf)"
+    check Ptree.tensor (d.inside x) x (fun i x ->
+        let at =
+          if Array.length i = 0 then ""
+          else Printf.sprintf " at [%s]" (shape_string i)
+        in
+        Invalid_argument
+          (Printf.sprintf "Nx.Rng.%s: %s%s is %s, not in %s" sampler name at
+             (to_string x) d.text))
 
   (* Random bits -> [0, 1): keep the low [p] bits and scale them by 2^-p,
      where [p] is the destination's significand width. Both steps are exact,
@@ -410,7 +413,7 @@ module Rng = struct
 
   (* Gamma(a) = Gamma(a + 1) * U^(1/a) below 1. *)
   let gamma (type b) k (concentration : (float, b) t) : (float, b) t =
-    require "gamma" ("concentration", in_positive, positive concentration);
+    require "gamma" "concentration" positive concentration;
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let acc, a, below_one, boost = marsaglia_tsang compute k concentration in
       at (dtype concentration)
@@ -433,9 +436,8 @@ module Rng = struct
      difference of their logarithms is not. Both draws inherit {!gamma}'s
      bounded-rejection approximation. *)
   let beta (type b) k (a : (float, b) t) (b : (float, b) t) : (float, b) t =
-    require_both "beta"
-      ("a", in_positive, positive a)
-      ("b", in_positive, positive b);
+    require "beta" "a" positive a;
+    require "beta" "b" positive b;
     let a, b = pair a b in
     let ks = split k in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
@@ -456,7 +458,7 @@ module Rng = struct
       invalid_arg
         "Nx.Rng.dirichlet: concentration needs at least two components on its \
          last axis";
-    require "dirichlet" ("concentration", in_positive, positive concentration);
+    require "dirichlet" "concentration" positive concentration;
     let axes = [ nd - 1 ] in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       let l = log_gamma compute k concentration in
@@ -530,8 +532,7 @@ module Rng = struct
     (rho, one_minus_rho, a)
 
   let von_mises (type b) k (concentration : (float, b) t) : (float, b) t =
-    require "von_mises"
-      ("concentration", "is not in [0, inf)", non_negative concentration);
+    require "von_mises" "concentration" non_negative concentration;
     let ctx = Value.context k in
     let shape = shape concentration in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
@@ -708,7 +709,7 @@ module Rng = struct
   let poisson_rejection_rounds = 16
 
   let poisson (type b) k (rate : (float, b) t) =
-    require "poisson" ("rate", "is not in [0, inf)", non_negative rate);
+    require "poisson" "rate" non_negative rate;
     let ctx = Value.context k in
     let shape = shape rate in
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
@@ -824,9 +825,8 @@ module Rng = struct
   let binomial_rejection_rounds = 18
 
   let binomial (type b) k (n : int32_t) (p : (float, b) t) =
-    require_both "binomial"
-      ("n", "is not in [0, inf)", natural n)
-      ("p", "is not in [0, 1]", probability p);
+    require "binomial" "n" natural n;
+    require "binomial" "p" probability p;
     let ctx = Value.context k in
     let shape = Shape.broadcast (shape n) (shape p) in
     let n = broadcast_to shape n and p = broadcast_to shape p in
@@ -964,7 +964,7 @@ module Rng = struct
          (scalar ctx Nx_dtype.uint32 (Int32.of_int low)))
 
   let bernoulli (type b) k (p : (float, b) t) =
-    require "bernoulli" ("p", "is not in [0, 1]", probability p);
+    require "bernoulli" "p" probability p;
     let draw (type c) (compute : (float, c) Nx_dtype.t) =
       cmplt (uniform k compute (shape p)) (at compute p)
     in
@@ -978,9 +978,8 @@ module Rng = struct
      depend on how much mass the interval holds. *)
   let truncated_normal (type b) k (lower : (float, b) t) (upper : (float, b) t)
       : (float, b) t =
-    require_both "truncated_normal"
-      ("lower", "is NaN", not_nan lower)
-      ("upper", "is NaN", not_nan upper);
+    require "truncated_normal" "lower" not_nan lower;
+    require "truncated_normal" "upper" not_nan upper;
     let lower, upper = pair lower upper in
     let ctx = Value.context k in
     let target = dtype lower in
@@ -1063,8 +1062,7 @@ module Rng = struct
       | Float8_e4m3 | Float8_e5m2 ->
           invalid_arg "Nx.Rng.categorical: float8 logits are not supported"
     in
-    require "categorical"
-      ("logits", "is not in [-inf, inf)", below_infinity logits);
+    require "categorical" "logits" below_infinity logits;
     argmax (add logits g) ~axis ~keepdims:false
 
   (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by

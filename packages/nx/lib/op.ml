@@ -160,7 +160,8 @@ type _ t =
   | Read : { by : string; x : ('a, 'b) Value.t } -> Nx_device.Buffer.t t
   | Check : {
       ok : (bool, Nx_dtype.bool_elt) Value.t;
-      msg : int array -> string;
+      data : Value.packed list;
+      fail : int array -> Value.packed list -> exn;
     }
       -> unit t
 
@@ -299,7 +300,7 @@ let operands : type r. r t -> Value.packed list =
   | Move (x, _) -> [ Value.P x ]
   | Place (_, x) -> [ Value.P x ]
   | Read { x; _ } -> [ Value.P x ]
-  | Check { ok; _ } -> [ Value.P ok ]
+  | Check { ok; data; _ } -> Value.P ok :: data
 
 type mapper = { f : 'a 'b. ('a, 'b) Value.t -> ('a, 'b) Value.t }
 
@@ -344,7 +345,13 @@ let map_operands : type r. mapper -> r t -> r t =
   | Move (x, m) -> Move (f x, m)
   | Place (p, x) -> Place (p, f x)
   | Read r -> Read { r with x = f r.x }
-  | Check c -> Check { c with ok = f c.ok }
+  | Check c ->
+      Check
+        {
+          c with
+          ok = f c.ok;
+          data = List.map (fun (Value.P x) -> Value.P (f x)) c.data;
+        }
 
 let pp ppf op =
   let operand ppf (Value.P x) =

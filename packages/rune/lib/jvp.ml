@@ -774,7 +774,14 @@ let run : type r. t -> r Nx.Op.t -> r =
       dual i (eval (Move (x, m))) (eval (Move (viewable m dx, m)))
   | Place (p, x) -> linear x (fun x -> eval (Place (p, x)))
   | Read { by; x } -> eval (Read { by; x = primal i x })
-  | Check c -> eval (Check { c with ok = primal i c.ok })
+  | Check c ->
+      eval
+        (Check
+           {
+             c with
+             ok = primal i c.ok;
+             data = List.map (fun (Nx.P x) -> Nx.P (primal i x)) c.data;
+           })
 
 (* Leaves *)
 

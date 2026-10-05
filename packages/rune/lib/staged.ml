@@ -244,22 +244,28 @@ let stage ~here ~inside s (r : Trips.request) =
       stop'
   in
   (* Each check of the step carries the index of its first failure, or its
-     element count while none failed: the first trip that fails keeps its
-     index. *)
+     element count while none failed, and its data there: the first trip that
+     fails keeps its index and data. *)
   let failures =
-    List.map
+    List.concat_map
       (fun (c : Lower.check) ->
         let count = numel c.shape in
         let slot, v = parameter p Nx.int64 [||] in
         let u = Lower.uop s v in
-        let next =
-          Ops.where
-            (Ops.lt u (Ops.const_like u (`Int (Bigint.of_int count))))
-            u (Lower.uop s c.first)
+        let failed = Ops.lt u (Ops.const_like u (`Int (Bigint.of_int count))) in
+        let kept (Nx.P x) =
+          let slot, v = parameter p (Nx.dtype x) [||] in
+          let next = Ops.where failed (Lower.uop s v) (Lower.uop s x) in
+          ( Nx.P (Nx.zeros (Nx.dtype x) [||]),
+            (slot, Nx.P v),
+            Nx.P (Lower.traced s p (Nx.dtype x) next) )
         in
         ( Nx.P (Nx.scalar Nx.int64 (Int64.of_int count)),
           (slot, Nx.P v),
-          Nx.P (Lower.traced s p Nx.int64 next) ))
+          Nx.P
+            (Lower.traced s p Nx.int64
+               (Ops.where failed u (Lower.uop s c.first))) )
+        :: List.map kept c.data)
       checks
   in
   let init =
@@ -427,27 +433,47 @@ let stage ~here ~inside s (r : Trips.request) =
       init carries
   in
   let r_carry, rest = Trips.split (List.length r.req_carry) finals in
-  let firsts, stopped = Trips.split (List.length checks) rest in
+  let carried, stopped = Trips.split (List.length failures) rest in
   (* Once the trips are done, the stop holds or the loop fails. *)
   (match (r.req_trips, stopped) with
   | Until { failure; _ }, [ Nx.P u; _ ] ->
       Lower.op s
-        (Nx.Op.Check { ok = Nx.unpack Nx.bool (Nx.P u); msg = failure })
+        (Nx.Op.Check
+           {
+             ok = Nx.unpack Nx.bool (Nx.P u);
+             data = [];
+             fail = (fun i _ -> Invalid_argument (failure i));
+           })
   | _ -> ());
-  (* A step's check holds where the loop's first failure is not. *)
-  List.iter2
-    (fun (c : Lower.check) (Nx.P first) ->
-      let count = numel c.shape in
-      let u = Lower.uop s first in
-      let ok =
-        Ops.reshape
-          (Ops.ne
-             (Ops.arange ~dtype:Int64 count)
-             (Lower.broadcast u [| count |]))
-          (ints (Array.to_list c.shape))
-      in
-      Lower.op s (Nx.Op.Check { ok = Lower.traced s p Nx.bool ok; msg = c.msg }))
-    checks firsts;
+  (* A step's check holds where the loop's first failure is not, and its data
+     there is what that trip read: each check carried its index, then its
+     data. *)
+  let rec answer checks carried =
+    match (checks, carried) with
+    | [], [] -> ()
+    | (c : Lower.check) :: checks, Nx.P first :: rest ->
+        let count = numel c.shape and shape = ints (Array.to_list c.shape) in
+        let spread (Nx.P x) =
+          let u = Lower.broadcast (Lower.uop s x) [| count |] in
+          Nx.P (Lower.traced s p (Nx.dtype x) (Ops.reshape u shape))
+        in
+        let data, rest = Trips.split (List.length c.data) rest in
+        let ok =
+          Ops.ne
+            (Ops.arange ~dtype:Int64 count)
+            (Lower.broadcast (Lower.uop s first) [| count |])
+        in
+        Lower.op s
+          (Nx.Op.Check
+             {
+               ok = Lower.traced s p Nx.bool (Ops.reshape ok shape);
+               data = List.map spread data;
+               fail = c.fail;
+             });
+        answer checks rest
+    | _ -> assert false
+  in
+  answer checks carried;
   {
     Trips.r_carry;
     r_ys =
@@ -484,7 +510,9 @@ let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
         (* A loop of no trip checks its stop. *)
         Some
           (fun () ->
-            trace ~body s (fun () -> Nx.check (until r.req_carry) failure);
+            trace ~body s (fun () ->
+                Nx.check Nx.Ptree.unit (until r.req_carry) () (fun i () ->
+                    Invalid_argument (failure i)));
             { Trips.r_carry = r.req_carry; r_ys = [] })
     | Loop ({ req_trips = Until _; _ } as r) ->
         Some

@@ -321,8 +321,9 @@ type write = { result : Ops.t; into : Ops.t; regions : Lower_index.region list }
 
 type check = {
   first : (int64, Nx_dtype.int64_elt) Nx.t;
+  data : Nx.packed list;
   shape : int array;
-  msg : int array -> string;
+  fail : int array -> Nx.packed list -> exn;
 }
 
 type scope = {
@@ -1418,33 +1419,54 @@ let op : type r. scope -> r Nx.Op.t -> r =
              it from the compiled function instead"
             by
       | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)
-  | Check { ok; msg } -> (
-      match Repr.v ok with
-      | Repr.Traced _ ->
-          (* The first false element's index in C order, or the element count:
-             the least of the indices, each where its element is false and the
-             count elsewhere. *)
-          let shape = Nx.shape ok in
-          let count = Array.fold_left ( * ) 1 shape in
-          if count > 0 then begin
-            (* The index lives where a reduction of [ok] over every axis would:
-               placed as nx places one, a copy on each device of a split
-               value. *)
-            let at =
-              Nx.Op.placement
-                (Reduce (Sum, Array.init (Array.length shape) Fun.id, ok))
+  | Check { ok; data; fail } ->
+      let traced_leaf (Nx.P x) =
+        match Repr.v x with
+        | Repr.Traced _ -> true
+        | Repr.Host _ | Repr.Placed _ -> false
+      in
+      if not (List.exists traced_leaf (Nx.P ok :: data)) then Nx.Op.eval o
+      else
+        (* The first false element's index in C order, or the element count: the
+           least of the indices, each where its element is false and the count
+           elsewhere. Each leaf of [data] is read at that index, which reads a
+           zero where every element holds. *)
+        let shape = Nx.shape ok in
+        let count = Array.fold_left ( * ) 1 shape in
+        if count > 0 then begin
+          (* The index lives where a reduction of [ok] over every axis would:
+             placed as nx places one, a copy on each device of a split value.
+             Each leaf is read where a reduction of it would live, from a copy
+             of the index there. *)
+          let reduced x =
+            Nx.Op.placement
+              (Reduce (Sum, Array.init (Array.length shape) Fun.id, x))
+          in
+          let at = reduced ok in
+          let flat x = Ops.reshape (value s x) [ Ops.Int count ] in
+          let i = Ops.arange ~dtype:Int64 count in
+          let first =
+            Lower_reduce.reduce Min ~axes:[ 0 ]
+              (Ops.where (flat ok)
+                 (Ops.const_like i (`Int (Bigint.of_int count)))
+                 i)
+          in
+          let read (Nx.P x) =
+            let dt = Nx.dtype x and q = reduced x in
+            ignore (check s what q dt);
+            let first = place s what at q (traced s at Nx_dtype.int64 first) in
+            let e =
+              Lower_reduce.take (flat x) 0 (Ops.reshape first [ Ops.Int 1 ])
             in
-            let i = Ops.arange ~dtype:Int64 count in
-            let first =
-              Lower_reduce.reduce Min ~axes:[ 0 ]
-                (Ops.where
-                   (Ops.reshape (value s ok) [ Ops.Int count ])
-                   (Ops.const_like i (`Int (Bigint.of_int count)))
-                   i)
-            in
-            ignore (check s what at Nx_dtype.int64);
-            s.checks <-
-              { first = traced s at Nx_dtype.int64 first; shape; msg }
-              :: s.checks
-          end
-      | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)
+            Nx.P (traced s q dt (Ops.reshape e []))
+          in
+          ignore (check s what at Nx_dtype.int64);
+          s.checks <-
+            {
+              first = traced s at Nx_dtype.int64 first;
+              data = List.map read data;
+              shape;
+              fail;
+            }
+            :: s.checks
+        end

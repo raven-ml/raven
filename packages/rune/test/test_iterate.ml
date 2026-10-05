@@ -10,6 +10,10 @@
 
 open Windtrap
 
+(* A check with no data, raising [Invalid_argument (msg i)]. *)
+let require ok msg =
+  Nx.check Nx.Ptree.unit ok () (fun i () -> Invalid_argument (msg i))
+
 let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a
 let scalar x = Nx.scalar f64 x
@@ -228,7 +232,7 @@ let lane_tests =
         (* A step checks its own precondition: a held lane evaluated at its own
            carry would fail it. *)
         let f x =
-          Nx.check (Nx.greater_s x 0.) (fun _ -> "the step left its domain");
+          require (Nx.greater_s x 0.) (fun _ -> "the step left its domain");
           Nx.sub_s (Nx.sqrt x) 1.
         in
         let until x = Nx.less_equal_s x 0. in
@@ -240,7 +244,7 @@ let lane_tests =
         (* Each carry holds its lane's index; a stopped lane runs its donor's
            carry, so the two indices agree on every lane at every trip. *)
         let step (x, id) =
-          Nx.check
+          require
             (Nx.equal id (Rune.lane_index ()))
             (fun _ -> "the carry's lane is not the step's lane");
           (contract w0 x, id)
@@ -533,7 +537,7 @@ let counted_nested w xs =
       ~max:80
       ~until:(fun (y, _) -> small inner_tol y)
       ~f:(fun (y, id) ->
-        Nx.check
+        require
           (Nx.equal id (Rune.lane_index ()))
           (fun _ -> "the inner carry's lane is not the step's lane");
         Rune.Total.add count (scalar 1.);
@@ -870,7 +874,7 @@ let carried : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
 (* Each trip checks that the step runs as the lane its carry names, and adds its
    carry to [carried]. *)
 let checked_step (x, id) =
-  Nx.check
+  require
     (Nx.equal id (Rune.lane_index ()))
     (fun _ -> "the carry's lane is not the step's lane");
   Rune.Total.add carried x;

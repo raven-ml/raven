@@ -14,6 +14,10 @@
 open Windtrap
 open Nx_test
 
+(* A check with no data, raising [Invalid_argument (msg i)]. *)
+let require ok msg =
+  Nx.check Nx.Ptree.unit ok () (fun i () -> Invalid_argument (msg i))
+
 let floats = tensor float_exact
 
 (* Floats whose zeros are equal whatever their sign, and every NaN equal: a
@@ -1947,7 +1951,7 @@ let failure i =
 
 (* [bounded x] is [2 x], checking that [x] is below 1. *)
 let bounded x =
-  Nx.check (Nx.less_s x 1.) failure;
+  require (Nx.less_s x 1.) failure;
   Nx.mul_s x 2.
 
 let passing () = Nx.create Nx.float32 [| 3 |] [| 0.; 0.5; -2. |]
@@ -1978,9 +1982,9 @@ let checks =
               Rune.jit' bounded m));
       test "the first check traced that fails raises" (fun () ->
           let f x =
-            Nx.check (Nx.less_s x 10.) (fun _ -> "first");
-            Nx.check (Nx.less_s x 1.) (fun _ -> "second");
-            Nx.check (Nx.less_s x 0.) (fun _ -> "third");
+            require (Nx.less_s x 10.) (fun _ -> "first");
+            require (Nx.less_s x 1.) (fun _ -> "second");
+            require (Nx.less_s x 0.) (fun _ -> "third");
             x
           in
           raises (Invalid_argument "second") (fun () ->
@@ -1995,7 +1999,7 @@ let checks =
           and table = Nx.create Nx.float32 [| 2 |] [| -1.; 1. |] in
           let g =
             Rune.jit' (fun x ->
-                Nx.check
+                require
                   (Nx.less x
                      (Nx.broadcast_to (Nx.shape x) (Nx.slice [ I 1 ] table)))
                   (fun i ->
@@ -2023,7 +2027,7 @@ let checks =
               (Rune.scan'
                  ~f:(fun c x ->
                    incr steps;
-                   Nx.check (Nx.less_s x 1.) failure;
+                   require (Nx.less_s x 1.) failure;
                    (c, Nx.mul_s x 2.))
                  ~init:(Nx.zeros Nx.float32 [| 3 |])
                  xs)
@@ -2045,7 +2049,7 @@ let checks =
               (Rune.scan'
                  ~f:(fun c x ->
                    incr steps;
-                   Nx.check (Nx.less_s x 1.) failure;
+                   require (Nx.less_s x 1.) failure;
                    (c, x))
                  ~init:(Nx.zeros Nx.float32 [| 2 |])
                  xs)
@@ -2065,7 +2069,7 @@ let checks =
               Nx.Rng.bernoulli
           in
           raises
-            (Invalid_argument "Nx.Rng.bernoulli: p at [2] is not in [0, 1]")
+            (Invalid_argument "Nx.Rng.bernoulli: p at [2] is 3, not in [0, 1]")
             (fun () -> draw k (failing ()));
           let p = Nx.create Nx.float32 [| 3 |] [| 0.; 0.5; 1. |] in
           equal (array bool)
@@ -2078,6 +2082,186 @@ let checks =
           equal close
             (Nx.full Nx.float32 [| 3 |] 2.)
             (Rune.jit' (Rune.grad' loss) (passing ())));
+    ]
+
+(* Checks with data *)
+
+(* [Out (i, d)] is a failure at index [i] whose datum has the bits [d]. *)
+exception Out of string * int64
+
+let index i = String.concat "," (Array.to_list (Array.map string_of_int i))
+let bits d = Int64.bits_of_float (Nx.item [] d)
+let out i d = Out (index i, bits d)
+
+(* [doubled x] is [x], checking that [x] is below 1 with [2 x] as its data: a
+   value the function computes. *)
+let doubled x =
+  Nx.check Nx.Ptree.tensor (Nx.less_s x 1.) (Nx.mul_s x 2.) out;
+  x
+
+(* [outcome f x] is the failure [f x] raises, or [None]. *)
+let outcome f x =
+  match f x with _ -> None | exception Out (i, d) -> Some (i, d)
+
+let outcomes = option (pair string int64)
+
+let drawn =
+  Gen.of_list ~pp:Format.pp_print_float
+    [ -1.; -0.; 0.5; 0.75; 1.; 2.; Float.infinity; Float.nan ]
+
+(* Six elements, as one row and as two rows of three. *)
+let six = Gen.array ~size:(Gen.int_range 6 6) drawn
+
+(* The first element of [xs] not below 1 and twice its value. *)
+let first_out xs =
+  Option.map
+    (fun k -> (k, Int64.bits_of_float (2. *. xs.(k))))
+    (Array.find_index (fun v -> not (v < 1.)) xs)
+
+let rows xs = Nx.create Nx.float64 [| 2; 3 |] xs
+
+(* A staged scan's check: each trip checks its row. *)
+let scanned xs =
+  snd
+    (Rune.scan'
+       ~f:(fun c x -> (c, doubled x))
+       ~init:(Nx.zeros Nx.float64 [| 3 |])
+       xs)
+
+let one_check =
+  prop
+    "a check raises the same exception from the same data eagerly, compiled, \
+     mapped and in a staged scan"
+    six (fun xs ->
+      let flat = Nx.create Nx.float64 [| 6 |] xs in
+      let expected = first_out xs in
+      cover "a failure" (Option.is_some expected);
+      cover "a pass" (Option.is_none expected);
+      let at f = Option.map (fun (k, d) -> (f k, d)) expected in
+      let flat_at = at string_of_int in
+      let lane_at = at (fun k -> Printf.sprintf "%d,%d" (k / 3) (k mod 3)) in
+      let trip_at = at (fun k -> string_of_int (k mod 3)) in
+      equal ~msg:"eager" outcomes flat_at (outcome doubled flat);
+      equal ~msg:"compiled" outcomes flat_at (outcome (Rune.jit' doubled) flat);
+      equal ~msg:"mapped" outcomes lane_at
+        (outcome (Rune.vmap' doubled) (rows xs));
+      equal ~msg:"mapped and compiled" outcomes lane_at
+        (outcome (Rune.jit' (Rune.vmap' doubled)) (rows xs));
+      equal ~msg:"in a scan" outcomes trip_at (outcome scanned (rows xs));
+      equal ~msg:"in a staged scan" outcomes trip_at
+        (outcome (Rune.jit' scanned) (rows xs)))
+
+(* [Pair (i, x, n)] is a failure at index [i] with the data [x] and [n]. *)
+exception Pair of string * Nx.float32_t * (int32, Nx.int32_elt) Nx.t
+
+(* [pair_failure f x] writes the failure [f x] raises: its index, then each
+   datum's value and shape. *)
+let pair_failure f x =
+  match f x with
+  | _ -> None
+  | exception Pair (i, a, n) ->
+      Some
+        (Printf.sprintf "%s: %g of shape [%s], %ld of shape [%s]" i
+           (Nx.item [] a)
+           (index (Nx.shape a))
+           (Nx.item [] n)
+           (index (Nx.shape n)))
+
+let checks_with =
+  group "checks with data"
+    [
+      one_check;
+      test
+        "a compiled check reads leaves of several dtypes, a broadcast one \
+         among them" (fun () ->
+          let f m =
+            let counts = Nx.cast Nx.int32 (Nx.sum ~axes:[ 1 ] m) in
+            Nx.check
+              Nx.Ptree.(pair tensor tensor)
+              (Nx.less_s m 1.)
+              (m, Nx.reshape [| 2; 1 |] counts)
+              (fun i (a, n) -> Pair (index i, a, n));
+            m
+          in
+          let m = Nx.create Nx.float32 [| 2; 2 |] [| 0.; 0.; 0.; 3. |] in
+          let expected = Some "1,1: 3 of shape [], 3 of shape []" in
+          equal ~msg:"eager" (option string) expected (pair_failure f m);
+          equal ~msg:"compiled" (option string) expected
+            (pair_failure (Rune.jit' f) m));
+      test "a check of a constant over computed data is compiled" (fun () ->
+          let f x =
+            Nx.check Nx.Ptree.tensor
+              (Nx.create Nx.bool [| 3 |] [| true; false; true |])
+              (Nx.mul_s x 2.) out;
+            x
+          in
+          let x = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |] in
+          equal outcomes
+            (Some ("1", Int64.bits_of_float 4.))
+            (outcome (Rune.jit' f) x));
+      test "the first check traced that fails raises, with its own data"
+        (fun () ->
+          let f x =
+            Nx.check Nx.Ptree.tensor (Nx.less_s x 10.) x out;
+            Nx.check Nx.Ptree.tensor (Nx.less_s x 1.) (Nx.neg x) out;
+            Nx.check Nx.Ptree.tensor (Nx.less_s x 0.) x out;
+            x
+          in
+          let x = Nx.create Nx.float64 [| 3 |] [| 0.; 4.; 2. |] in
+          equal outcomes
+            (Some ("1", Int64.bits_of_float (-4.)))
+            (outcome (Rune.jit' f) x));
+      test "a check reads a leaf placed apart from it where the leaf lies"
+        (fun () ->
+          let f x =
+            Nx.check Nx.Ptree.tensor (Nx.less_s x 1.)
+              (Nx.place (Nx.Placement.on d2) (Nx.mul_s x 2.))
+              out;
+            x
+          in
+          let x =
+            Nx.place (Nx.Placement.on d1)
+              (Nx.create Nx.float64 [| 3 |] [| 0.; 4.; 2. |])
+          in
+          let expected = Some ("1", Int64.bits_of_float 8.) in
+          equal ~msg:"eager" outcomes expected (outcome f x);
+          equal ~msg:"compiled" outcomes expected (outcome (Rune.jit' f) x));
+      test "a sampler's parameter split over devices is checked as eagerly"
+        (fun () ->
+          let split = Nx.Placement.sharded ~axis:0 [ d1; d2 ] in
+          let k = Nx.Rng.key 0 in
+          let draw =
+            Rune.jit
+              Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+              Nx.Rng.gamma
+          in
+          let concentration xs =
+            Nx.place split (Nx.create Nx.float32 [| 4 |] xs)
+          in
+          equal ~msg:"a pass" (array int) [| 4 |]
+            (Nx.shape (draw k (concentration [| 1.; 2.; 3.; 4. |])));
+          (* Rows 2 and 3 are on the second device. *)
+          List.iter
+            (fun (xs, refusal) ->
+              equal ~msg:"eager" string refusal
+                (message (fun () -> Nx.Rng.gamma k (concentration xs)));
+              equal ~msg:"compiled" string refusal
+                (message (fun () -> draw k (concentration xs))))
+            [
+              ( [| 1.; 2.; 3.; -1. |],
+                "Nx.Rng.gamma: concentration at [3] is -1, not in (0, inf)" );
+              ( [| 1.; 2.; -0.; 4. |],
+                "Nx.Rng.gamma: concentration at [2] is -0, not in (0, inf)" );
+            ]);
+      test "a staged scan's check reads the first failing trip's data"
+        (fun () ->
+          let xs =
+            Nx.create Nx.float64 [| 4; 3 |]
+              [| 0.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 5.; 9.; 0.; 0. |]
+          in
+          equal outcomes
+            (Some ("2", Int64.bits_of_float 10.))
+            (outcome (Rune.jit' scanned) xs));
     ]
 
 (* Reports *)
@@ -4583,7 +4767,7 @@ let on_one_device ~name d =
             snd
               (Rune.scan'
                  ~f:(fun c x ->
-                   Nx.check (Nx.less_s x 1.) failure;
+                   require (Nx.less_s x 1.) failure;
                    (c, x))
                  ~init:(placed d (Nx.zeros Nx.float32 [| 2 |]))
                  xs)
@@ -4991,6 +5175,7 @@ let () =
          errors;
          division;
          checks;
+         checks_with;
          reports;
          domains;
          transformations;

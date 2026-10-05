@@ -728,9 +728,11 @@ let near_zero_and_fma =
 
 let index i = String.concat "," (Array.to_list (Array.map string_of_int i))
 
-(* [checked ok] is the index [Nx.check ok] names, or [None]. *)
+(* [checked ok] is the index a check of [ok] with no data names, or [None]. *)
 let checked ok =
-  match Nx.check ok index with
+  match
+    Nx.check Nx.Ptree.unit ok () (fun i () -> Invalid_argument (index i))
+  with
   | () -> None
   | exception Invalid_argument m -> Some m
 
@@ -753,8 +755,91 @@ let checks =
       test "a check of a scalar names the empty index" (fun () ->
           equal (option string) (Some "") (checked (Nx.scalar Nx.bool false)));
       test "a passing check makes no message" (fun () ->
-          Nx.check (Nx.ones Nx.bool [| 4 |]) (fun _ ->
+          Nx.check Nx.Ptree.unit (Nx.ones Nx.bool [| 4 |]) () (fun _ () ->
               fail "a message was made"));
+    ]
+
+(* [Failed (i, x)] is a failure at index [i] whose datum is [x]'s bits. *)
+exception Failed of string * int64
+
+let bits x = Int64.bits_of_float (Nx.item [] x)
+
+(* [failure s ok data] is the failure [Nx.check] raises, or [None]. *)
+let failure s ok data fail =
+  match Nx.check s ok data fail with
+  | () -> None
+  | exception Failed (i, x) -> Some (i, x)
+
+let failed i x = Failed (index i, bits x)
+
+exception Leaves of string * Nx.float32_t * (int32, Nx.int32_elt) Nx.t
+
+let checks_with =
+  group "checks with data"
+    [
+      prop
+        "a check reads its data's element at the first false index, over any \
+         layout"
+        (floats Nx.float64) (fun x ->
+          let r = Ref.of_nx x in
+          let expected =
+            Option.map
+              (fun k ->
+                (index (Ref.unravel r.shape k), Int64.bits_of_float r.data.(k)))
+              (Array.find_index (fun v -> not (v < 0.)) r.data)
+          in
+          equal
+            (option (pair string int64))
+            expected
+            (failure Nx.Ptree.tensor (Nx.less_s x 0.) x failed));
+      test "a broadcast leaf is read at the failing index" (fun () ->
+          let ok =
+            Nx.create Nx.bool [| 2; 3 |]
+              [| true; true; true; true; false; true |]
+          and row = Nx.create Nx.float64 [| 3 |] [| 10.; 20.; 30. |] in
+          equal
+            (option (pair string int64))
+            (Some ("1,1", Int64.bits_of_float 20.))
+            (failure Nx.Ptree.tensor ok row failed));
+      test "each leaf of a structure is read in its own dtype" (fun () ->
+          let ok = Nx.create Nx.bool [| 3 |] [| true; false; false |]
+          and xs = Nx.create Nx.float32 [| 3 |] [| 0.5; 1.5; 2.5 |]
+          and ns = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
+          let read (_, x, n) = (Nx.item [] x, Nx.item [] n) in
+          match
+            Nx.check
+              Nx.Ptree.(pair tensor tensor)
+              ok (xs, ns)
+              (fun i (x, n) -> Leaves (index i, x, n))
+          with
+          | () -> fail "the check passed"
+          | exception Leaves (i, x, n) ->
+              equal string "1" i;
+              equal (pair float_exact int32) (1.5, 2l) (read (i, x, n)));
+      test "the data's leaves are scalars" (fun () ->
+          let ok = Nx.create Nx.bool [| 2; 2 |] [| true; true; true; false |] in
+          match
+            Nx.check Nx.Ptree.tensor ok
+              (Nx.zeros Nx.float32 [| 2; 2 |])
+              (fun _ x -> Failed (index (Nx.shape x), 0L))
+          with
+          | () -> fail "the check passed"
+          | exception Failed (shape, _) -> equal string "" shape);
+      test "a check of no element passes without reading its data" (fun () ->
+          Nx.check Nx.Ptree.tensor (Nx.zeros Nx.bool [| 0 |])
+            (Nx.zeros Nx.float32 [| 0 |]) (fun _ _ ->
+              Failure "the check failed"));
+      test "a leaf that does not broadcast to the check's shape is refused"
+        (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.check Nx.Ptree.tensor (Nx.ones Nx.bool [| 3 |])
+                (Nx.zeros Nx.float32 [| 4 |]) (fun _ _ ->
+                  Failure "the check failed")));
+      test "a leaf of more axes than the check is refused" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.check Nx.Ptree.tensor (Nx.ones Nx.bool [| 3 |])
+                (Nx.zeros Nx.float32 [| 1; 3 |])
+                (fun _ _ -> Failure "the check failed")));
     ]
 
 (* A scalar variant is its operation against a scalar tensor, on either side. *)
@@ -2042,6 +2127,7 @@ let () =
          unary_ops;
          near_zero_and_fma;
          checks;
+         checks_with;
          classifiers;
          binary_ops;
          nan_operands;

@@ -415,10 +415,10 @@ let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
   | Placed r -> Place.read_elements r
   | Traced _ -> outside_trace ()
 
-(* [check_elements ok msg] raises [Invalid_argument (msg i)] for the index [i]
-   of [ok]'s first false element in C order, its elements read under a read
-   claim. *)
-let check_elements ok msg =
+(* [check_elements ok data fail] raises [fail i d] for the index [i] of [ok]'s
+   first false element in C order, its elements read under a read claim, and [d]
+   each of [data], of [ok]'s shape, cut to its element at [i]. *)
+let check_elements ok data fail =
   let shape = View.shape (view ok) in
   let n = Shape.numel shape in
   if n > 0 then begin
@@ -431,7 +431,16 @@ let check_elements ok msg =
         ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
         (fun () -> first 0)
     in
-    if i < n then invalid_arg (msg (Shape.unravel_index i shape))
+    if i < n then begin
+      let i = Shape.unravel_index i shape in
+      (* A copy of the one element, so the exception holds none of the leaf's
+         storage. *)
+      let at (P x) =
+        let x = move x (Shrink (Array.map (fun j -> (j, j + 1)) i)) in
+        P (copy (move x (Reshape [||])))
+      in
+      raise (fail i (List.map at data))
+    end
   end
 
 (* [direct op] answers [op] with no interpretation. The decompositions run
@@ -474,4 +483,4 @@ let direct : type r. r Op.t -> r =
   | Move (x, m) -> move x m
   | Place (p, x) -> Place.move_to p x
   | Read { x; _ } -> read_elements_of x
-  | Check { ok; msg } -> check_elements ok msg
+  | Check { ok; data; fail } -> check_elements ok data fail

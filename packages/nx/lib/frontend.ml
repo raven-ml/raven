@@ -775,7 +775,30 @@ let fma a b c =
   in
   B.fma (broadcast_to target a) (broadcast_to target b) (broadcast_to target c)
 
-let check ok msg = B.check ok msg
+(* Each leaf of [data] is broadcast to [ok]'s shape, which every interpreter
+   then reads at the failing index. *)
+let check s ok data fail =
+  let target = shape ok in
+  let fits x =
+    let r = Array.length x and t = Array.length target in
+    r <= t
+    && Array.for_all2
+         (fun n m -> n = 1 || n = m)
+         x
+         (Array.sub target (t - r) r)
+  in
+  let leaf path x acc =
+    if not (fits (shape x)) then begin
+      let at = Ptree.Path.to_string path in
+      err "check" "data%s has shape %s, which does not broadcast to %s"
+        (if at = "" then "" else " at " ^ at)
+        (Shape.to_string (shape x))
+        (Shape.to_string target)
+    end;
+    Value.P (broadcast_to target x) :: acc
+  in
+  let leaves = List.rev (Ptree.fold s leaf data []) in
+  B.check ok leaves (fun i d -> fail i (Ptree.rebuild s ~like:data d))
 
 (* An arithmetic shift: [t / 2^n] rounded toward negative infinity. *)
 let rshift x n =

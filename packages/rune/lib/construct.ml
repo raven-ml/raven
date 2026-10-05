@@ -189,7 +189,8 @@ let claims : type r. owner -> r Nx.Op.t -> bool =
   | Move (x, _) -> owns x
   | Place (_, x) -> owns x
   | Read { x; _ } -> owns x
-  | Check { ok; _ } -> owns ok
+  | Check { ok; data; _ } ->
+      owns ok || List.exists (fun (Nx.P x) -> owns x) data
 
 type _ Effect.t += Construct : 'r t -> 'r Effect.t
 

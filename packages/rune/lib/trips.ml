@@ -71,7 +71,7 @@ let until_stop r until max failure =
     let stop = until carry in
     if holds stop then { r_carry = carry; r_ys = stack (List.rev ys) }
     else if k = max then begin
-      Nx.check stop failure;
+      Nx.check Nx.Ptree.unit stop () (fun i () -> Invalid_argument (failure i));
       assert false (* [stop] has a false element. *)
     end
     else

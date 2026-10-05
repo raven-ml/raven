@@ -244,9 +244,9 @@ let read ~by x =
   if Intercept.intercepting () then Intercept.perform (Read { by; x })
   else Dispatch.read_elements_of x
 
-let check ok msg =
-  if Intercept.intercepting () then Intercept.perform (Check { ok; msg })
-  else Dispatch.check_elements ok msg
+let check ok data fail =
+  if Intercept.intercepting () then Intercept.perform (Check { ok; data; fail })
+  else Dispatch.check_elements ok data fail
 
 (* A value already at [p] is returned as it is. *)
 let place (type a b) p (x : (a, b) t) : (a, b) t =

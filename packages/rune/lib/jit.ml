@@ -264,14 +264,21 @@ type result = {
   name : string;
 }
 
+(* A check, answered from its results: the index of its first failure, then its
+   data there. *)
+type answer = {
+  shape : int array;
+  leaves : int;
+  fail : int array -> Nx.packed list -> exn;
+}
+
 type 'r program = {
   linked : Engine.t option;
   slots : int array; (* By leaf: its parameter's slot, or [-1]. *)
   consumed : bool array; (* By leaf. *)
   paths : string array; (* By leaf. *)
-  results : result array; (* The function's, then a scalar per check. *)
-  checks : (int array * (int array -> string)) array;
-      (* Each check's shape and message. *)
+  results : result array; (* The function's, then each check's answer. *)
+  checks : answer array;
   captured : B.t list; (* The runs its captures bind. *)
   rebuild : Nx.packed list -> 'r;
 }
@@ -476,11 +483,15 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
       (List.rev (Ptree.fold result_s (fun p t acc -> (p, Nx.P t) :: acc) y []))
   in
   (* A check is answered when the program has run, from the index of its first
-     failure, which the program returns after the function's results. *)
+     failure and its data there, which the program returns after the function's
+     results. *)
   let checks = Array.of_list (Lower.checks s) in
   let ys =
     Array.append (Array.map snd named)
-      (Array.map (fun (c : Lower.check) -> Nx.P c.first) checks)
+      (Array.of_list
+         (List.concat_map
+            (fun (c : Lower.check) -> Nx.P c.first :: c.data)
+            (Array.to_list checks)))
   in
   let user = Array.length named in
   let nodes = Array.map (fun (Nx.P t) -> Lower.value s t) ys in
@@ -709,7 +720,11 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
       consumed;
       paths;
       results;
-      checks = Array.map (fun (c : Lower.check) -> (c.shape, c.msg)) checks;
+      checks =
+        Array.map
+          (fun (c : Lower.check) ->
+            { shape = c.shape; leaves = List.length c.data; fail = c.fail })
+          checks;
       captured = List.concat_map snd bound;
       rebuild = Ptree.rebuild result_s ~like;
     }
@@ -860,14 +875,22 @@ let run entry p leaves =
           | None -> report "%s consumed, lent to no result" p.paths.(i))
       leaves;
   let values = Array.map2 value p.results results in
-  let user = Array.length values - Array.length p.checks in
-  Array.iteri
-    (fun k (shape, msg) ->
-      let first = Nx.item [] (Nx.unpack Nx.int64 values.(user + k)) in
-      if Int64.to_int first < numel shape then
-        invalid_arg
-          (msg (Nx_array.Shape.unravel_index (Int64.to_int first) shape)))
-    p.checks;
+  let answers = Array.fold_left (fun n c -> n + 1 + c.leaves) 0 p.checks in
+  let user = Array.length values - answers in
+  (* Check [k]'s index is at [j], its data after it. *)
+  let rec answer j k =
+    if k < Array.length p.checks then begin
+      let c = p.checks.(k) in
+      let first = Int64.to_int (Nx.item [] (Nx.unpack Nx.int64 values.(j))) in
+      if first < numel c.shape then
+        raise
+          (c.fail
+             (Nx_array.Shape.unravel_index first c.shape)
+             (Array.to_list (Array.sub values (j + 1) c.leaves)));
+      answer (j + 1 + c.leaves) (k + 1)
+    end
+  in
+  answer user 0;
   p.rebuild (Array.to_list (Array.sub values 0 user))
 
 module Programs = Memo.Make (struct
