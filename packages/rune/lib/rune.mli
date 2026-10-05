@@ -849,18 +849,21 @@ val jit :
     {b Numerics.} A sum over an axis ({!Nx.sum}, {!Nx.mean}, the contraction of
     {!Nx.matmul}) is the sum of its terms in an unspecified association, so
     results differ from eager's in rounding, and at overflow in whether a term
-    overflows. A maximum over an axis is exact. Compiled float results can also
-    differ from eager's in the last bits where the compiler fuses a multiply and
-    an add, turns a division by a constant into a multiplication, or turns a
-    multiplication by a reciprocal ({!Nx.recip}) into a division, which also
-    differs where the reciprocal overflows: [x * recip y] is NaN at [x = 0] and
-    a [y] whose reciprocal is infinite, where [x / y] is [0]. They also differ
-    in transcendental functions, which are approximations within a few units in
-    the last place of the correctly rounded result: {!Nx.log} within one, and on
-    the host {!Nx.exp}, {!Nx.sin} and {!Nx.cos} within two; Metal flushes
-    float32 subnormals to zero. A product over an axis ({!Nx.prod}) multiplies
-    in an unspecified association too. A failed factorisation gives non-finite
-    values where eager raises {!Nx_backend.Linalg_error}.
+    overflows; on a target with a multiply-add, a sum of products, such as
+    {!Nx.matmul}'s contraction, adds each product with one rounding. A maximum
+    over an axis is exact. Elementwise, each product, sum and quotient rounds
+    once, as eagerly: a product and a sum are never fused into one rounding, and
+    a division, by a constant included, divides. On the host a product by a
+    reciprocal ({!Nx.recip}) is a division, which rounds once where the product
+    rounds twice, and differs where the reciprocal overflows: [x * recip y] is
+    NaN at [x = 0] and a [y] whose reciprocal is infinite, where [x / y] is [0].
+    Compiled float results also differ in transcendental functions, which are
+    approximations within a few units in the last place of the correctly rounded
+    result: {!Nx.log} within one, and on the host {!Nx.exp}, {!Nx.sin} and
+    {!Nx.cos} within two; Metal flushes float32 subnormals to zero. A product
+    over an axis ({!Nx.prod}) multiplies in an unspecified association too. A
+    failed factorisation gives non-finite values where eager raises
+    {!Nx_backend.Linalg_error}.
 
     {b Domains.} A compiled function may be called from any domain, several at
     once, and from inside its own function. A key being compiled makes the other
