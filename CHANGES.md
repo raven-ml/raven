@@ -3189,6 +3189,21 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_quant.apply` takes no `?ids`. Route positions to a stack
+  of experts with `Nx.map_segments`, whose function applies
+  `Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:owners w) rows`, so a whole
+  expert feed-forward sorts its positions once.
+- **Breaking:** `Nx_quant.place` and `Nx_quant.walk` are removed: use
+  `Nx.Ptree.place Nx_quant.ptree` and `Nx.Ptree.Walk.structure Nx_quant.ptree`.
+  The constructors and `Nx.Ptree.place Nx_quant.ptree` refuse a split inside a
+  block.
+- Add `Nx_quant.take ~axis ~indices w`, a weight's rows or matrices gathered
+  from its packed bytes, so an eager caller reads a large table's rows without
+  decoding the table.
+- `Nx_quant.dequant Nx.bfloat16` decodes MXFP4 by a bit shift, with the same
+  values, and a product over it runs 1.5x faster on the host. `Nx_quant.apply`
+  of a `float64` input accumulates at float64, where it rounded the input to
+  float32.
 - Add `Nx.map_segments ~segments ids f x`: each position's row of `x` goes
   through `f` with the owner its id names, in one call on the rows grouped by
   id, so a stack of `segments` matrices is read once per block of rows. An id

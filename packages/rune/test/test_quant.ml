@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* Quantised products under rune. Compiled, Nx_quant.apply and dequant compute
-   eager's values, which nx's suite checks against the format: on the host, on
-   test devices over the host's memory with the weight, its routes and its rows
-   placed, and on the Metal, CUDA and AMD devices the machine has. The
-   derivatives of apply in its rows, and its maps, are those of the product with
-   the dequantised weight. *)
+   eager's values, which nx's suite checks against the format, alone and routed
+   to experts by Nx.map_segments: on the host, on test devices over the host's
+   memory with the weight, its routes and its rows placed, and on the Metal,
+   CUDA and AMD devices the machine has. The derivatives of a product in its
+   rows, and its maps, are those of the product with the dequantised weight. *)
 
 open Windtrap
 open Nx_test
@@ -112,6 +112,26 @@ let floats shape =
 
 let ints shape v = Nx.create Nx.int64 shape (Array.map Int64.of_int v)
 
+(* [routed w ids x] is each position's rows of [x] through the expert of [w] [[|
+   e; n; k |]] its id names, and zeros where it names none: [x] is [[| s...; m;
+   k |]] for [ids] of shape [[| s... |]], its leading axes broadcasting, and the
+   result [[| s...; m; n |]]. *)
+let routed w ids x =
+  let s = Nx_quant.shape w in
+  let e = s.(0) and n = s.(1) and k = s.(2) and m = Nx.dim (-2) x in
+  Nx.map_segments ~segments:e ids
+    (fun owners rows ->
+      let g = Nx.dim 0 rows and c = Nx.dim 1 rows in
+      Nx.reshape [| g; c; m; n |]
+        (Nx_quant.apply
+           (Nx_quant.take ~axis:0 ~indices:owners w)
+           (Nx.reshape [| g; c * m; k |] rows)))
+    x
+
+(* [apply ?ids w x] is the product of [w] and [x], routed by [ids]. *)
+let apply ?ids w x =
+  match ids with None -> Nx_quant.apply w x | Some ids -> routed w ids x
+
 (* [poison ~at x] is [x] with a NaN and an infinity in its rows at the batch
    indices [at], positions that select no expert. *)
 let poison ~at x =
@@ -141,7 +161,7 @@ type case = {
 let case ?ids name w x = { name; w; ids; x }
 
 (* [product c w x] is [c]'s product of [w] and [x]. *)
-let product c w x = Nx_quant.apply ?ids:c.ids w x
+let product c w x = apply ?ids:c.ids w x
 
 (* [gathered a ~lanes ids] is the matrices of [a] [[| l...; e; n; k |]], with
    [lanes] leading axes, that [ids] select in their lanes, an id clamped among
@@ -234,17 +254,14 @@ let products ?(format = Mxfp4) ~scale () =
       ~ids:(ints [| 2; 2 |] [| 3; -1; 6; 3 |])
       w68
       (poison ~at:[ [ 0; 1 ]; [ 1; 0 ] ] (floats [| 2; 2; 1 |]));
-    case "ids outside the experts, over a vector"
+    case "ids outside the experts, over one row"
       ~ids:(ints [| 3 |] [| 5; -5; 0 |])
-      w68 (floats [||]);
+      w68
+      (floats [| 1; 1 |]);
     case "ids 2^32 from an expert"
       ~ids:(ints [| 6; 1 |] [| 0; (1 lsl 32) + 2; 1; 3; 5 - (1 lsl 32); 4 |])
       w68
       (floats [| 6; 1; 2 |]);
-    case "a lane of experts per batch row"
-      ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
-      (weight [| 2; 3; 8 |])
-      (floats [| 2; 2; 1 |]);
     case "as many positions as experts or more"
       ~ids:(ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |])
       w38
@@ -299,10 +316,10 @@ let blocked ?(placement = Nx.Placement.host) c =
   let compiled =
     Rune.jit
       Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-      (fun ids x -> Nx_quant.apply ~ids c.w x)
+      (fun ids x -> apply ~ids c.w x)
       (Nx.place placement ids) (Nx.place placement x)
   in
-  (Nx_quant.apply ~ids c.w x, Nx.place Nx.Placement.host compiled)
+  (apply ~ids c.w x, Nx.place Nx.Placement.host compiled)
 
 (* [compiled c] is [c]'s product compiled, its routes and rows arguments. *)
 let compiled c =
@@ -331,11 +348,10 @@ let values =
           in
           let x = Nx.cast Nx.float16 c.x in
           let ids = Option.get c.ids in
-          agrees c
-            (Nx_quant.apply ~ids c.w x)
+          agrees c (apply ~ids c.w x)
             (Rune.jit
                Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-               (fun ids x -> Nx_quant.apply ~ids c.w x)
+               (fun ids x -> apply ~ids c.w x)
                ids x));
       cases ~name:fst "compiled, dequant is eager's bit for bit"
         [
@@ -373,7 +389,6 @@ let devices = List.map Nx.Device.cpu [ 1; 2; 3; 4 ]
 let pair = [ List.nth devices 0; List.nth devices 1 ]
 let split ?(axis = 0) ds = Nx.Placement.sharded ~axis ds
 let host t = Nx.place Nx.Placement.host t
-let routed w ids x = Nx_quant.apply ~ids w x
 
 let routed_compiled w =
   Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (routed w)
@@ -410,7 +425,7 @@ let placements =
                (Rune.jit
                   Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
                   (fun w -> routed w ids x)
-                  (Nx_quant.place (split pair) w))));
+                  (Nx.Ptree.place Nx_quant.ptree (split pair) w))));
       test
         "experts split under routes split over two devices give eager's product"
         (fun () ->
@@ -424,7 +439,7 @@ let placements =
                   Nx.Ptree.(
                     Nx_quant.ptree @-> tensor @-> tensor @-> returns tensor)
                   routed
-                  (Nx_quant.place (split pair) w)
+                  (Nx.Ptree.place Nx_quant.ptree (split pair) w)
                   (Nx.place (split pair) ids)
                   (Nx.place (split pair) x))));
       slow "sixteen experts over four devices, four each, give eager's product"
@@ -442,7 +457,7 @@ let placements =
                   Nx.Ptree.(
                     Nx_quant.ptree @-> tensor @-> tensor @-> returns tensor)
                   routed
-                  (Nx_quant.place (split devices) w)
+                  (Nx.Ptree.place Nx_quant.ptree (split devices) w)
                   (Nx.place (Nx.Placement.replicated devices) ids)
                   (Nx.place (Nx.Placement.replicated devices) x))));
       test "dequant of a weight placed on a device is eager's bit for bit"
@@ -455,7 +470,7 @@ let placements =
                (Rune.jit
                   Nx.Ptree.(Nx_quant.ptree @-> returns tensor)
                   (Nx_quant.dequant Nx.float32)
-                  (Nx_quant.place p w))));
+                  (Nx.Ptree.place Nx_quant.ptree p w))));
     ]
 
 (* Memory *)
@@ -494,7 +509,10 @@ let memory =
     [
       test "compiled, a routed product holds its result and its ids' size"
         (fun () ->
-          let w = Nx_quant.place p (weight ~scale:moderate [| 8; 64; 256 |]) in
+          let w =
+            Nx.Ptree.place Nx_quant.ptree p
+              (weight ~scale:moderate [| 8; 64; 256 |])
+          in
           let ids =
             Nx.place p (ints [| 16; 2 |] (Array.init 32 (fun i -> i * 3 mod 9)))
           and x = Nx.place p (floats [| 16; 2; 1; 256 |]) in
@@ -586,7 +604,7 @@ let transformations =
         (rule_cases ())
         (fun (_, ids, w, x) ->
           let expected = Rune.grad' (fun x -> weighted (dense ?ids w x)) x in
-          let f x = weighted (Nx_quant.apply ?ids w x) in
+          let f x = weighted (apply ?ids w x) in
           near ~msg:"eager" expected (Rune.grad' f x);
           near ~msg:"compiled" expected (Rune.jit' (Rune.grad' f) x));
       test "an expert's infinities leave other experts' rows finite gradients"
@@ -608,7 +626,7 @@ let transformations =
             let rows = Nx.reshape [| 6; 2; 1; 1 |] (Nx.not_equal_s ids 0L) in
             Nx.where (Nx.broadcast_to (Nx.shape g) rows) g (Nx.zeros_like g)
           in
-          let f x = weighted (Nx_quant.apply ~ids w x) in
+          let f x = weighted (apply ~ids w x) in
           let expected =
             others (Rune.grad' (fun x -> weighted (dense ~ids w x)) x)
           in
@@ -622,27 +640,26 @@ let transformations =
           let x = floats [| 3; 1; 1; 64 |] in
           let mixed p x = weighted (Nx.sum ~axes:[ 1 ] (p x)) in
           let expected = Rune.grad' (mixed (dense ~ids w)) x in
-          near ~msg:"eager" expected
-            (Rune.grad' (mixed (Nx_quant.apply ~ids w)) x);
+          near ~msg:"eager" expected (Rune.grad' (mixed (apply ~ids w)) x);
           near ~msg:"compiled" expected
-            (Rune.jit' (Rune.grad' (mixed (Nx_quant.apply ~ids w))) x));
+            (Rune.jit' (Rune.grad' (mixed (apply ~ids w))) x));
       cases
         ~name:(fun (n, _, _, _) -> n)
         "the tangent in x is the dense product's, eager and compiled"
         (rule_cases ())
         (fun (_, ids, w, x) ->
           let t = floats (Nx.shape x) in
-          let y, dy = Rune.jvp' (Nx_quant.apply ?ids w) x t in
+          let y, dy = Rune.jvp' (apply ?ids w) x t in
           let y', dy' = Rune.jvp' (dense ?ids w) x t in
           near ~msg:"primal" y' y;
           near ~msg:"tangent" dy' dy;
           near ~msg:"compiled tangent" dy'
-            (Rune.jit' (fun x -> snd (Rune.jvp' (Nx_quant.apply ?ids w) x t)) x));
+            (Rune.jit' (fun x -> snd (Rune.jvp' (apply ?ids w) x t)) x));
       cases ~name:fst "a map over x is each row's product, eager and compiled"
         map_routes (fun (_, ids) ->
           let w = weight ~scale:moderate [| 4; 8; 64 |] in
           let xs = floats [| 3; (Nx.shape ids).(0); 1; 1; 64 |] in
-          let f = Nx_quant.apply ~ids w in
+          let f = apply ~ids w in
           let expected =
             Nx.stack (List.init 3 (fun i -> f (Nx.slice [ I i ] xs)))
           in
@@ -659,7 +676,7 @@ let transformations =
                    Nx.sub ids (Nx.full Nx.int64 (Nx.shape ids) (Int64.of_int i))))
           in
           let xs = floats [| 3; t; 1; 1; 64 |] in
-          let f (ids, x) = Nx_quant.apply ~ids w x in
+          let f (ids, x) = apply ~ids w x in
           let s = Nx.Ptree.(pair tensor tensor @-> returns tensor) in
           let expected =
             Nx.stack
@@ -674,11 +691,32 @@ let transformations =
           let lane i =
             Nx.Ptree.map Nx_quant.ptree (fun _ t -> Nx.slice [ I i ] t) ws
           in
-          let f w = Nx_quant.apply ~ids w x in
+          let f w = apply ~ids w x in
           let s = Nx.Ptree.(Nx_quant.ptree @-> returns tensor) in
           let expected = Nx.stack (List.init 3 (fun i -> f (lane i))) in
           near ~msg:"eager" expected (Rune.vmap s f ws);
           near ~msg:"compiled" expected (Rune.jit s (Rune.vmap s f) ws));
+      test
+        "a map over weights, routes and rows routes each lane to its own \
+         experts, eagerly bit for bit" (fun () ->
+          let ws = weight ~scale:moderate [| 3; 4; 8; 64 |] in
+          let ids =
+            ints [| 3; 8; 2 |] (Array.init 48 (fun i -> (i * 7 mod 6) - 1))
+          and xs = floats [| 3; 8; 1; 1; 64 |] in
+          let lane i =
+            ( Nx.Ptree.map Nx_quant.ptree (fun _ t -> Nx.slice [ I i ] t) ws,
+              (Nx.slice [ I i ] ids, Nx.slice [ I i ] xs) )
+          in
+          let f (w, (ids, x)) = apply ~ids w x in
+          let s =
+            Nx.Ptree.(
+              pair Nx_quant.ptree (pair tensor tensor) @-> returns tensor)
+          in
+          let expected = Nx.stack (List.init 3 (fun i -> f (lane i))) in
+          equal ~msg:"eager" (tensor float_exact) expected
+            (Rune.vmap s f (ws, (ids, xs)));
+          near ~msg:"compiled" expected
+            (Rune.jit s (Rune.vmap s f) (ws, (ids, xs))));
     ]
 
 let empty =
@@ -688,7 +726,7 @@ let empty =
       let r =
         Rune.jit
           Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-          (fun ids x -> Nx_quant.apply ~ids w x)
+          (fun ids x -> apply ~ids w x)
           ids x
       in
       equal (array int) [| 0; 2; 1; 8 |] (Nx.shape r))

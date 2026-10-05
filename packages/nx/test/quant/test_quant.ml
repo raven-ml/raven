@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Quantised weights against their formats' definitions: dequant gives each
-   value at its dtype, as the format's reference decodes it from its bytes, and
+   value at its dtype, as the format's reference decodes it from its bytes,
    apply is the product with the dequantised weight within the error of a
-   float32 sum. *)
+   float32 sum, and take is the gather of the dequantised weight. *)
 
 open Windtrap
 open Nx_test
@@ -365,39 +365,6 @@ let product x w' =
   let t = Nx.matrix_transpose in
   (Nx.matmul x (t w'), Nx.matmul (Nx.abs x) (t (Nx.abs w')))
 
-let broadcast a b =
-  let n = Int.max (Array.length a) (Array.length b) in
-  let dim s i =
-    if i < n - Array.length s then 1 else s.(i - n + Array.length s)
-  in
-  Array.init n (fun i -> if dim a i = 1 then dim b i else dim a i)
-
-(* [w'] of [apply ~ids] for the dequantised weight [dq] with [lanes] leading
-   axes: each id's expert in its lane, ids clamped into the experts. *)
-let gathered dq ~lanes ids =
-  let ds = Nx.shape dq and is = Nx.shape ids in
-  let wb =
-    Array.append
-      (broadcast (Array.sub ds 0 lanes) (Array.sub is 0 lanes))
-      (Array.sub is lanes (Array.length is - lanes))
-  in
-  let ids = Nx.broadcast_to wb ids in
-  let matrix i =
-    let pos = unravel wb i in
-    let id = Int64.to_int (Nx.item (Array.to_list pos) ids) in
-    let lane = List.init lanes (fun a -> if ds.(a) = 1 then 0 else pos.(a)) in
-    Nx.slice
-      (List.map
-         (fun i -> Nx.I i)
-         (lane @ [ Int.max 0 (Int.min (ds.(lanes) - 1) id) ]))
-      dq
-  in
-  let count = Ref.numel wb in
-  Nx.reshape
-    (Array.append wb [| ds.(lanes + 1); ds.(lanes + 2) |])
-    (if count = 0 then Nx.zeros Nx.float32 [| 0 |]
-     else Nx.stack ~axis:0 (List.init count matrix))
-
 (* An input at one of the float dtypes. *)
 type input = X : { at : fdt; x : (float, 'b) Nx.t } -> input
 
@@ -453,96 +420,30 @@ let input ~batch ~inputs =
   in
   X { at; x }
 
-(* A weight, ids selecting its experts or none, and an input. *)
+(* A weight and an input. *)
 let products =
   let open Gen in
-  let id e =
-    frequency
-      [
-        (6, map Int64.of_int (int_range (-2) (e + 1)));
-        ( 1,
-          of_list
-            ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
-            [ Int64.min_int; Int64.max_int; 0x1_0000_0000L ] );
-      ]
-  in
-  let* experts, lanes =
-    pair flag (list ~size:(int_range 0 1) (int_range 1 2))
-  in
-  let* view, w =
-    if experts then
-      weight ~lead:(map (fun e -> lanes @ [ e ]) (int_range 1 3)) ()
-    else weight ()
-  in
+  let* view, w = weight () in
   let lead, _, k = dims w in
-  let p = Array.length lead - 1 in
-  let* ids, batch =
-    if not experts then constant (None, lead)
-    else
-      let* whole, tokens =
-        pair
-          (list ~size:(constant p) usually)
-          (list ~size:(int_range 0 2) (int_range 0 3))
-      in
-      let is =
-        Array.append
-          (Array.of_list
-             (List.mapi (fun a w -> if w then lead.(a) else 1) whole))
-          (Array.of_list tokens)
-      in
-      let+ ids = array ~size:(constant (Ref.numel is)) (id lead.(p)) in
-      ( Some (Nx.create Nx.int64 is ids),
-        Array.append
-          (broadcast (Array.sub lead 0 p) (Array.sub is 0 p))
-          (Array.of_list tokens) )
-  in
-  let+ x = input ~batch ~inputs:k in
-  (view, w, ids, x)
+  let+ x = input ~batch:lead ~inputs:k in
+  (view, w, x)
 
-let pp_product ppf (view, w, ids, X { x; _ }) =
-  Format.fprintf ppf "@[<v>%a@,ids %a@,x %a@]" pp_weight (view, w)
-    (Format.pp_print_option Nx.pp)
-    ids Nx.pp x
+let pp_product ppf (view, w, X { x; _ }) =
+  Format.fprintf ppf "@[<v>%a@,x %a@]" pp_weight (view, w) Nx.pp x
 
-(* [label] is [cover] in a property. *)
-let product_law (_, w, ids, X { at; x }) =
-  let lead, _, k = dims w in
-  let dq = Nx_quant.dequant Nx.float32 w in
-  let w' =
-    match ids with
-    | None -> dq
-    | Some ids -> gathered dq ~lanes:(Array.length lead - 1) ids
-  in
-  let expected, bound = product x w' in
-  let valid =
-    match ids with
-    | None -> Nx.full Nx.bool (Nx.shape expected) true
-    | Some ids ->
-        let e = Int64.of_int lead.(Array.length lead - 1) in
-        let v = Nx.logical_and (Nx.greater_equal_s ids 0L) (Nx.less_s ids e) in
-        let units = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
-        Nx.broadcast_to (Nx.shape expected)
-          (Nx.reshape (Array.append (Nx.shape v) units) v)
-  in
+let product_law (_, w, X { at; x }) =
+  let _, _, k = dims w in
+  let expected, bound = product x (Nx_quant.dequant Nx.float32 w) in
   List.iter
     (fun f -> cover ("a " ^ format_name f ^ " weight") (format_of w = f))
     formats;
   cover "one block per row" (k = block_values (format_of w));
-  cover "an id that selects no expert" (Array.mem false (Nx.to_array valid));
   cover "an empty result" (Nx.numel expected = 0);
-  (let s = Nx.shape expected in
-   let batch = Array.sub s 0 (Array.length s - min (Nx.ndim x) 2) in
-   cover "twice as many instances as matrices or more"
-     (ids <> None && Ref.numel batch >= 2 * Ref.numel lead));
-  let y = Nx_quant.apply ?ids w x in
+  let y = Nx_quant.apply w x in
   equal ~msg:"dtype" string
     (Nx_dtype.to_string (Nx.dtype x))
     (Nx_dtype.to_string (Nx.dtype y));
-  agrees ~at ~k (Nx.where valid expected (Nx.zeros_like expected)) bound y;
-  let y = Nx.to_array (Nx.cast Nx.float64 y) in
-  Array.iteri
-    (fun i v -> if not v then equal ~msg:"no expert" float_exact 0. y.(i))
-    (Nx.to_array valid)
+  agrees ~at ~k expected bound y
 
 (* Known blocks. A block's bytes are written from the format's layout and its
    values from the format's formula. *)
@@ -649,6 +550,65 @@ let ggml =
            (Nx_io.Gguf.tensors g))
         (Nx_quant.dequant Nx.float32 w))
 
+(* Takes *)
+
+(* The quants of [w]: MXFP4's codes or a GGUF format's blocks. *)
+let part = function
+  | Nx_quant.Mxfp4 { codes; _ } -> codes
+  | Nx_quant.Q8_0 { blocks } | Q4_K { blocks } | Q6_K { blocks } -> blocks
+
+(* [bits t] is each element's bits, so -0 and +0 differ and a NaN is its
+   payload. *)
+let bits (type b) (t : (float, b) Nx.t) =
+  match Nx.dtype t with
+  | Nx.Float64 -> Nx.to_array (Nx.bitcast Nx.int64 t)
+  | Nx.Float32 -> Array.map Int64.of_int32 (Nx.to_array (Nx.bitcast Nx.int32 t))
+  | Nx.Float16 | Nx.BFloat16 ->
+      Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint16 t))
+  | dt -> failf "no bits for %s" (Nx_dtype.to_string dt)
+
+(* A weight, an axis other than its last, counted from either end, and indices
+   in range along it. *)
+let takes =
+  let open Gen in
+  let pp ppf ((view, w), axis, indices) =
+    Format.fprintf ppf "@[<v>%a@,axis %d, indices [%s]@]" pp_weight (view, w)
+      axis
+      (String.concat "; " (List.map string_of_int indices))
+  in
+  with_pp pp
+    (let* ((_, w) as vw) =
+       weight
+         ~lead:(list ~size:(int_range 0 2) (int_range 1 3))
+         ~n:(int_range 1 4) ()
+     in
+     let s = Nx_quant.shape w in
+     let r = Array.length s in
+     let* a, negative = pair (int_range 0 (r - 2)) bool in
+     let+ indices = list ~size:(int_range 0 4) (int_range 0 (s.(a) - 1)) in
+     (vw, (if negative then a - r else a), indices))
+
+let take_law ((_, w), axis, indices) =
+  let indices =
+    Nx.create Nx.int64
+      [| List.length indices |]
+      (Array.of_list (List.map Int64.of_int indices))
+  in
+  cover "an axis counted from the end" (axis < 0);
+  cover "no index" (Nx.numel indices = 0);
+  cover "a repeated index"
+    (List.length (List.sort_uniq compare (Array.to_list (Nx.to_array indices)))
+    < Nx.numel indices);
+  let taken = Nx_quant.take ~axis ~indices w in
+  List.iter
+    (fun (F d) ->
+      equal
+        ~msg:(Nx_dtype.to_string d.dtype)
+        (array int64)
+        (bits (Nx.take ~axis ~indices (Nx_quant.dequant d.dtype w)))
+        (bits (Nx_quant.dequant d.dtype taken)))
+    fdts
+
 let values_and_products =
   group "values and products"
     [
@@ -670,11 +630,46 @@ let values_and_products =
             (pair (array int) (array float_exact))
             (Nx_quant.shape w, Array.map d.round exact)
             (Nx.shape got, Nx.to_array (Nx.cast Nx.float64 got)));
-      prop
-        "apply is the product with the dequantised weight, or with each id's \
-         expert and exactly zero where an id selects none"
+      prop "apply is the product with the dequantised weight"
         (Gen.with_pp pp_product products)
         product_law;
+      test "a float64 input accumulates at float64" (fun () ->
+          (* Every value of this weight is 1: each output sums the input. *)
+          let w =
+            Nx_quant.q8_0
+              (Nx.create Nx.uint8 [| 1; 34 |]
+                 (Array.init 34 (fun i ->
+                      match i with 0 -> 0x00 | 1 -> 0x3C | _ -> 1)))
+          in
+          let tiny = Float.ldexp 1. (-40) in
+          let x =
+            Nx.create Nx.float64 [| 32 |]
+              (Array.init 32 (fun i -> if i = 0 then 1. else tiny))
+          in
+          equal (array float_exact)
+            [| 1. +. (31. *. tiny) |]
+            (Nx.to_array (Nx_quant.apply w x)));
+      prop "take is the gather of the dequantised weight at indices in range"
+        takes take_law;
+      cases ~name:format_name
+        "an index out of range gathers zero bytes, which decode to zeros"
+        formats (fun format ->
+          let w = random_weight ~format [| 3; 4; 256 |] in
+          let indices = Nx.create Nx.int64 [| 3 |] [| -1L; 1L; 3L |] in
+          let zero = if format = Q6_K then -0. else 0. in
+          let got =
+            Nx_quant.dequant Nx.float32 (Nx_quant.take ~axis:0 ~indices w)
+          in
+          equal ~msg:"bytes" (array int)
+            (Array.make (Nx.numel (Nx.slice [ I 0 ] (part w))) 0)
+            (Nx.to_array
+               (Nx.slice [ I 0 ] (part (Nx_quant.take ~axis:0 ~indices w))));
+          equal (array float_exact)
+            (Array.make (4 * 256) zero)
+            (Nx.to_array (Nx.slice [ I 0 ] got));
+          equal (array float_exact)
+            (Array.make (4 * 256) zero)
+            (Nx.to_array (Nx.slice [ I 2 ] got)));
     ]
 
 (* Construction and placement *)
@@ -689,11 +684,21 @@ let errors =
       (Nx_quant.mxfp4 ~scales:(Nx.zeros Nx.uint8 scales)
          (Nx.zeros Nx.uint8 codes))
   in
-  let blocks f shape () = ignore (f (Nx.zeros Nx.uint8 shape)) in
+  let blocks f ?(devices = false) shape () =
+    let b = Nx.zeros Nx.uint8 shape in
+    let b =
+      if devices then Nx.place (Nx.Placement.sharded ~axis:1 [ d1; d2 ]) b
+      else b
+    in
+    ignore (f b)
+  in
   let halve (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
     if Nx.dim (-1) t = 2 then Nx.slice [ A; A; R (0, 1) ] t else t
   in
-  let apply ?ids w x () = ignore (Nx_quant.apply ?ids w x) in
+  let apply w x () = ignore (Nx_quant.apply w x) in
+  let take axis () =
+    ignore (Nx_quant.take ~axis ~indices:(Nx.zeros Nx.int64 [| 1 |]) w)
+  in
   cases "refuse, naming what is wrong"
     ~name:(fun (n, _, _) -> n)
     [
@@ -714,7 +719,7 @@ let errors =
         "blocks",
         blocks Nx_quant.q6_k [| 2; 144 |] );
       ( "a map that changes a part's shape",
-        "Nx_quant.walk",
+        "Nx_quant.ptree",
         fun () -> ignore (Nx.Ptree.map Nx_quant.ptree (fun _ t -> halve t) w) );
       ( "apply to a scalar",
         "at least one axis",
@@ -725,17 +730,21 @@ let errors =
       ( "apply over batch axes that do not broadcast",
         "broadcast",
         apply w (x [| 3; 1; 64 |]) );
-      ( "ids without an expert axis",
-        "expert axis",
-        apply
-          ~ids:(Nx.zeros Nx.int64 [| 3 |])
-          (random_weight [| 5; 64 |])
-          (x [| 64 |]) );
-      ( "ids without the weight's lanes",
-        "leading axes",
-        apply ~ids:(Nx.scalar Nx.int64 0L)
-          (random_weight [| 2; 3; 5; 64 |])
-          (x [| 64 |]) );
+      ( "q8_0 blocks split over two devices inside a block",
+        "axis 1",
+        blocks Nx_quant.q8_0 ~devices:true [| 2; 34 |] );
+      ( "mxfp4 codes split over two devices inside a group",
+        "axis 1",
+        fun () ->
+          ignore
+            (Nx_quant.mxfp4
+               ~scales:(Nx.zeros Nx.uint8 [| 2; 1 |])
+               (Nx.place
+                  (Nx.Placement.sharded ~axis:1 [ d1; d2 ])
+                  (Nx.zeros Nx.uint8 [| 2; 16 |]))) );
+      ("take along the last axis", "last axis", take 2);
+      ("take along the last axis, counted from the end", "last axis", take (-1));
+      ("take along an axis past the weight's", "out of bounds", take 3);
     ]
     (fun (_, part, f) -> raises_match (Exn.invalid_arg ~substring:part) f)
 
@@ -757,40 +766,40 @@ let placements =
     in
     (w, devices, axis)
   in
-  prop "place splits any axis Nx.place can, and k only between blocks" drawn
-    (fun ((_, w), devices, axis) ->
+  prop "a weight is placed wherever its parts split, and never inside a block"
+    drawn (fun ((_, w), devices, axis) ->
       let s = Nx_quant.shape w in
       let r = Array.length s in
+      let m = List.length devices in
       let p =
         match axis with
         | None -> Nx.Placement.replicated devices
         | Some axis -> Nx.Placement.sharded ~axis devices
       in
-      let refused =
+      let dims a =
+        Nx.Ptree.fold Nx_quant.ptree (fun _ t l -> Nx.dim a t :: l) w []
+      in
+      let uneven =
         match axis with
         | None -> false
-        | Some a ->
-            a >= r
-            || (if a = r - 1 then s.(a) / block_values (format_of w) else s.(a))
-               mod List.length devices
-               <> 0
+        | Some a -> a >= r || List.exists (fun d -> d mod m <> 0) (dims a)
       in
-      cover "a split of k" (axis = Some (r - 1) && not refused);
-      cover "k refused" (axis = Some (r - 1) && refused);
-      match Nx_quant.place p w with
-      | exception Invalid_argument _ ->
-          is_true ~msg:"refused only where a split cuts a group or an axis"
-            refused
-      | placed ->
-          is_false ~msg:"placed where a split cuts a block or an axis" refused;
-          let parts w =
-            Nx.Ptree.fold Nx_quant.ptree (fun _ t l -> Nx.placement t :: l) w []
-          in
-          equal
-            (pair (list placement) (array float_exact))
-            ( List.map (fun _ -> p) (parts w),
-              Nx.to_array (Nx_quant.dequant Nx.float32 w) )
-            (parts placed, Nx.to_array (Nx_quant.dequant Nx.float32 placed)))
+      let cuts =
+        axis = Some (r - 1) && s.(r - 1) / block_values (format_of w) mod m <> 0
+      in
+      cover "a split of k between blocks"
+        (axis = Some (r - 1) && (not uneven) && not cuts);
+      cover "a split of k inside a block" ((not uneven) && cuts);
+      let place () = Nx.Ptree.place Nx_quant.ptree p w in
+      if uneven then raises_invalid_arg place
+      else if cuts then
+        raises_match
+          (Exn.invalid_arg ~substring:(Printf.sprintf "axis %d" (r - 1)))
+          (fun () -> ignore (place ()))
+      else
+        equal (array float_exact)
+          (Nx.to_array (Nx_quant.dequant Nx.float32 w))
+          (Nx.to_array (Nx_quant.dequant Nx.float32 (place ()))))
 
 let others =
   group "weights"
@@ -819,17 +828,6 @@ let others =
             ([| 4; 6; 64 |], [| 4; 6; 512 |])
             (Nx_quant.shape w, Nx_quant.shape q);
           equal int 0 (bytes_out () - sent));
-      cases ~name:format_name
-        "ids that select no expert give zeros over NaN rows" formats
-        (fun format ->
-          let w = random_weight ~format [| 4; 6; 256 |] in
-          let ids =
-            Nx.create Nx.int64 [| 3; 2 |] [| -1L; 4L; 9L; -1L; -3L; 4L |]
-          in
-          equal (tensor float_exact)
-            (Nx.zeros Nx.float32 [| 3; 2; 1; 6 |])
-            (Nx_quant.apply ~ids w
-               (Nx.full Nx.float32 [| 3; 1; 1; 256 |] Float.nan)));
       cases ~name:format_name "dequant and apply read no value's elements"
         formats (fun format ->
           let w = random_weight ~format [| 3; 4; 256 |] in
@@ -850,29 +848,16 @@ let others =
           equal (list string) []
             (reads (fun () -> Nx_quant.dequant Nx.float32 w));
           equal (list string) []
-            (reads (fun () ->
-                 Nx_quant.apply
-                   ~ids:(Nx.create Nx.int64 [| 2 |] [| 0L; 2L |])
-                   w
-                   (random_floats [| 2; 1; 256 |]))));
+            (reads (fun () -> Nx_quant.apply w (random_floats [| 3; 1; 256 |]))));
       test "products live where their operands are" (fun () ->
           let p = Nx.Placement.on d1 in
-          let w = Nx_quant.place p (random_weight [| 3; 4; 64 |]) in
-          let x = Nx.place p (random_floats [| 2; 1; 64 |])
-          and ids = Nx.place p (Nx.create Nx.int64 [| 2 |] [| 0L; 2L |]) in
+          let w =
+            Nx.Ptree.place Nx_quant.ptree p (random_weight [| 3; 4; 64 |])
+          in
+          let x = Nx.place p (random_floats [| 3; 2; 64 |]) in
           equal (pair placement placement) (p, p)
             ( Nx.placement (Nx_quant.dequant Nx.float32 w),
-              Nx.placement (Nx_quant.apply ~ids w x) ));
-      test "routes split over two devices give the host's product" (fun () ->
-          let w = random_weight [| 4; 8; 64 |] in
-          let ids =
-            Nx.create Nx.int64 [| 8; 2 |]
-              (Array.init 16 (fun i -> Int64.of_int ((i * 5 mod 6) - 1)))
-          and x = random_floats [| 8; 2; 1; 64 |] in
-          let split t = Nx.place (Nx.Placement.sharded ~axis:0 [ d1; d2 ]) t in
-          equal (tensor float_exact) (Nx_quant.apply ~ids w x)
-            (Nx.place Nx.Placement.host
-               (Nx_quant.apply ~ids:(split ids) w (split x))));
+              Nx.placement (Nx_quant.apply w x) ));
       test
         "visits the case, then codes before scales; rebuild and place keep the \
          parts" (fun () ->
@@ -896,7 +881,7 @@ let others =
                (Nx.Ptree.rebuild Nx_quant.ptree ~like:w
                   (fst (Nx.Ptree.flatten Nx_quant.ptree w))));
           is_true ~msg:"place keeps parts already placed"
-            (same (Nx_quant.place Nx.Placement.host w)));
+            (same (Nx.Ptree.place Nx_quant.ptree Nx.Placement.host w)));
       test "visits a GGUF format's case, then its blocks" (fun () ->
           equal (list string)
             [ "the root: case \"q8_0\""; "blocks: a leaf" ]

@@ -2815,14 +2815,14 @@ stores through a pad.
   value converts integers it reads into floats, by a cast or a bitcast,
   outside any access's address. The axis's lanes then share the operand's
   value. With several such axes, each is upcast.
-- **Reason:** (b): `Nx_quant.apply ~ids` on a prompt, which sorts positions by
-  expert into blocks of 2 rows that read their block's matrix,
-  `owner[row / 2]`. Every row decoded the matrix's MXFP4 codes and scales
-  again: the row axis reaches the matrix through the gather, so tinygrad sees
-  no reuse. Upcast by 2, a block's rows decode once. The 512-token gate and up
-  product's kernel on an RTX 5000 Ada, from 42.5 ms to 26.2 ms
-  (`r_520_5760_32_4_9_2_5` to `r_260_5760_32_4_2_9_2_5`), against 34.4 ms
-  for one matrix per position; on the Mac's Metal, from 275.9 ms to 225.5 ms,
+- **Reason:** (b): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
+  sorts positions by expert into blocks of 2 rows that read their block's
+  matrix, `owner[row / 2]`. Every row decoded the matrix's MXFP4 codes and
+  scales again: the row axis reaches the matrix through the gather, so tinygrad
+  sees no reuse. Upcast by 2, a block's rows decode once. The 512-token gate and
+  up product's kernel on an RTX 5000 Ada, from 42.5 ms to 26.2 ms
+  (`r_520_5760_32_4_9_2_5` to `r_260_5760_32_4_2_9_2_5`), against 34.4 ms for
+  one matrix per position; on the Mac's Metal, from 275.9 ms to 225.5 ms,
   against 258.5 ms. gpt-oss-20b's 512-token prefill on CUDA, from 1.49 s to
   1.11 s. An operand of floats is left alone: upcasting the query heads that
   share a key and value head (`h / 8`), whose cache a select joins to the new
@@ -2923,15 +2923,15 @@ stores through a pad.
 - **Differs:** D89's rows layout splits its 4 SIMD groups from the first
   global axis that 4 divides among those the vector does not read, and from
   one the vector reads only when none of the others divides.
-- **Reason:** (b): `Nx_quant.apply ~ids` on a prompt, whose blocks of rows
-  each multiply their expert's matrix. The vector, a block's rows, reads the
-  block axis, so the 4 groups of a workgroup took 4 blocks, each reading its
-  own rows for every output. In blocks of 4, D92's upcast, a workgroup reads
-  16 rows of 2880 floats, 184 KB, more than an SM's L1 holds on an RTX 5000
-  Ada; in blocks of 2, half that. On the matrix's rows the 4 groups read one
-  block's rows. gpt-oss-20b's 512-token gate and up product on that GPU, in
-  blocks of 4, from 56.6 ms to 21.9 ms, and in blocks of 2 from 26.0 ms to
-  25.3 ms, with the same registers (63 and 61, no spills); on an M1 Max's
+- **Reason:** (b): `Nx.map_segments` over `Nx_quant.apply` on a prompt, whose
+  blocks of rows each multiply their expert's matrix. The vector, a block's
+  rows, reads the block axis, so the 4 groups of a workgroup took 4 blocks, each
+  reading its own rows for every output. In blocks of 4, D92's upcast, a
+  workgroup reads 16 rows of 2880 floats, 184 KB, more than an SM's L1 holds on
+  an RTX 5000 Ada; in blocks of 2, half that. On the matrix's rows the 4 groups
+  read one block's rows. gpt-oss-20b's 512-token gate and up product on that
+  GPU, in blocks of 4, from 56.6 ms to 21.9 ms, and in blocks of 2 from 26.0 ms
+  to 25.3 ms, with the same registers (63 and 61, no spills); on an M1 Max's
   Metal from 224 ms to 162 ms and from 225 ms to 167 ms.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `routed_blocks_metal`,
@@ -3085,16 +3085,16 @@ stores through a pad.
   core's A: the choices with `in0` as A come first, as tinygrad orders them,
   then those with `in1`. A summed product with a decoded operand (D92's
   `decoded`) tries the cores whatever its number of reduce axes.
-- **Reason:** (b): `Nx_quant.apply ~ids` on a prompt, which sorts positions
-  by expert into blocks of up to 16 rows, each multiplying its expert's
-  matrix, `W[owner[row / 16]]`. The rows read the row axis and the matrix
-  reads it by blocks, so tinygrad finds no M range; the decoded bytes split
-  the reduce into bytes and a byte's two values (D81), which tinygrad's
-  heuristic leaves to the hand-coded path. A block of 8, which fewer
-  positions take, fits CUDA's N of 8 and not its M of 16, so its rows are the
-  core's B. gpt-oss-20b's 512-token gate and up product on an
-  RTX 5000 Ada takes 2.9 ms on the tensor cores, from 13.3 ms, and the down
-  product 1.5 ms, from 6.9 ms; the prefill takes 0.22 s, from 0.71 s.
+- **Reason:** (b): `Nx.map_segments` over `Nx_quant.apply` on a prompt, which
+  sorts positions by expert into blocks of up to 16 rows, each multiplying its
+  expert's matrix, `W[owner[row / 16]]`. The rows read the row axis and the
+  matrix reads it by blocks, so tinygrad finds no M range; the decoded bytes
+  split the reduce into bytes and a byte's two values (D81), which tinygrad's
+  heuristic leaves to the hand-coded path. A block of 8, which fewer positions
+  take, fits CUDA's N of 8 and not its M of 16, so its rows are the core's B.
+  gpt-oss-20b's 512-token gate and up product on an RTX 5000 Ada takes 2.9 ms on
+  the tensor cores, from 13.3 ms, and the down product 1.5 ms, from 6.9 ms; the
+  prefill takes 0.22 s, from 0.71 s.
 - **Pinned by:** the Heuristic suite's cases `routed_tiles_{metal,cuda,amd}`
   (the cores apply to a product in blocks of 16 rows), recorded from the
   equally patched tinygrad; the Postrange suite's `tc_operands_swapped`

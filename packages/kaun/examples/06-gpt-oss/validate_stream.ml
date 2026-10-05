@@ -30,10 +30,10 @@
    the differences of the three statistics.
 
    Each block runs compiled, once per attention kind: the experts' products then
-   decode their packed weights inside the products, where an eager
-   [Nx_quant.apply] would hold every token's experts decoded at float32. A whole
-   run on the host of an M1 Max peaks at 16.6 GB resident, the 13.8 GB of mapped
-   weights included, and takes 9 minutes.
+   decode their packed weights inside the products, where an eager run would
+   hold each block of tokens' expert decoded at float32. A whole run on the host
+   of an M1 Max peaks at 16.6 GB resident, the 13.8 GB of mapped weights
+   included, and takes 9 minutes.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
    [--tol X] [--device DEV]. With [--blocks] only the first [N] blocks run and

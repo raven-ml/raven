@@ -505,34 +505,70 @@ let parity =
 
    A product with a quantised weight gathers the codes of the experts its ids
    select, decodes them and multiplies. The decoding is integer operations on
-   the code bytes: no kernel stores a value wider than the bytes and the decoded
-   floats, such as an index into a table. *)
+   the code bytes, so no kernel stores the decoded stack. One token's few
+   experts each take a block of their own: no kernel sorts them, and no kernel
+   stores an index array wider than one element. *)
 
 let quantised =
+  let experts = 8 and n = 16 and k = 64 in
   let codes =
-    Nx.init Nx.uint8 [| 8; 16; 32 |] (fun i -> (i.(1) * 37) + i.(2))
+    Nx.init Nx.uint8 [| experts; n; k / 2 |] (fun i -> (i.(1) * 37) + i.(2))
   in
-  let scales = Nx.full Nx.uint8 [| 8; 16; 2 |] 127 in
+  let scales = Nx.full Nx.uint8 [| experts; n; k / 32 |] 127 in
   let w = Nx_quant.mxfp4 ~scales codes in
-  let stores_int64 k =
-    List.exists
+  let routed ids x =
+    Nx.map_segments ~segments:experts ids
+      (fun owners rows ->
+        let g = Nx.dim 0 rows and c = Nx.dim 1 rows in
+        let m = Nx.dim 2 rows in
+        Nx.reshape [| g; c; m; n |]
+          (Nx_quant.apply
+             (Nx_quant.take ~axis:0 ~indices:owners w)
+             (Nx.reshape [| g; c * m; k |] rows)))
+      x
+  in
+  (* The elements of each buffer a kernel of [y]'s program stores values of [dt]
+     into. *)
+  let stores dt y =
+    let size u =
+      List.find_map
+        (fun v ->
+          match (Tolk.Ops.op v, Tolk.Ops.arg v) with
+          | Param, Tolk.Ops.Param p -> p.size
+          | _ -> None)
+        (Tolk.Ops.toposort (Tolk.Ops.nth u 0))
+    in
+    List.filter_map
       (fun u ->
-        Tolk.Op.equal (Tolk.Ops.op u) Store
-        && Tolk.Dtype.equal (Tolk.Ops.dtype (Tolk.Ops.nth u 1)) Int64)
-      (Tolk.Ops.toposort k)
+        if
+          Tolk.Op.equal (Tolk.Ops.op u) Store
+          && Tolk.Dtype.equal (Tolk.Ops.dtype (Tolk.Ops.nth u 1)) dt
+        then size u
+        else None)
+      (Tolk.Ops.toposort (Programs.kernels y))
+  in
+  let traced ids x =
+    let s = scope () in
+    within s (fun () -> routed (argument s ids) (argument s x))
   in
   group "quantised products"
     [
-      test "a routed product stores no int64" (fun () ->
+      test "one token's routed product stores no int64 array of two elements"
+        (fun () ->
           let ids = Nx.create Nx.int64 [| 1; 2 |] [| 3L; 5L |] in
-          let x = Nx.ones Nx.float32 [| 1; 1; 3; 64 |] in
-          let s = scope () in
-          let y =
-            within s (fun () ->
-                Nx_quant.apply ~ids:(argument s ids) w (argument s x))
+          let x = Nx.ones Nx.float32 [| 1; 1; 3; k |] in
+          equal (list int) []
+            (List.filter (fun n -> n > 1) (stores Int64 (traced ids x))));
+      test "a prompt's routed product stores no float array of the stack's size"
+        (fun () ->
+          let ids =
+            Nx.create Nx.int64 [| 32; 2 |]
+              (Array.init 64 (fun i -> Int64.of_int (i * 3 mod experts)))
           in
-          is_false
-            (List.exists stores_int64 (Tolk.Ops.src (Programs.kernels y))));
+          let x = Nx.ones Nx.float32 [| 32; 1; 1; k |] in
+          let stack = experts * n * k in
+          equal (list int) []
+            (List.filter (fun n -> n >= stack) (stores Float32 (traced ids x))));
     ]
 
 let () =

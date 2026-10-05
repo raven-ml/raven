@@ -20,7 +20,7 @@ let walk_weight c =
       Float (leaf c w)
   | Quant w ->
       case c "quant";
-      Quant (Nx_quant.walk c w)
+      Quant (structure Nx_quant.ptree c w)
 
 let walk c p =
   let open Nx.Ptree.Walk in
@@ -46,29 +46,24 @@ let activation ~limit h =
   let linear = Nx.clamp ~min:(-.limit) ~max:limit (feature 1) in
   Nx.mul (Nx.mul gate (Nx.sigmoid (Nx.mul_s gate 1.702))) (Nx.add_s linear 1.0)
 
-let take_rows ids t =
-  let rows = Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] ids) t in
-  let rest = Array.sub (Nx.shape t) 1 (Nx.ndim t - 1) in
-  Nx.reshape (Array.append (Nx.shape ids) rest) rows
+(* [linear w b e x] is the projection [w] and bias [b] of each block's expert
+   [e], [[| g |]], applied to the block's rows [x], [[| g; c; inputs |]]. *)
+let linear w b e x =
+  let y =
+    match w with
+    | Quant w -> Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:e w) x
+    | Float w -> Nx.matmul x (Nx.take ~axis:0 ~indices:e w)
+  in
+  Nx.add y (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 ~indices:e b))
 
-(* [product ids w x] is each token's experts [ids], [[| tokens; k |]], applied
-   to its row of [x], [[| tokens; 1; 1; inputs |]]: [[| tokens; k; 1; outputs
-   |]]. *)
-let product ids w x =
-  match w with
-  | Quant w -> Nx_quant.apply ~ids w x
-  | Float w -> Nx.matmul x (take_rows ids w)
+let expert ~limit p e x =
+  linear p.down p.down_bias e
+    (activation ~limit (linear p.gate_up p.gate_up_bias e x))
 
 let apply ~limit p (ids, weights) x =
-  let shape = Nx.shape x in
-  let width = shape.(Array.length shape - 1) in
-  let k = Nx.dim (Nx.ndim ids - 1) ids in
-  let ids = Nx.reshape [| -1; k |] ids in
-  let weights = Nx.reshape [| -1; k |] weights in
-  let bias b = Nx.unsqueeze ~axes:[ 2 ] (take_rows ids b) in
-  let x = Nx.reshape [| -1; 1; 1; width |] x in
-  let h = Nx.add (product ids p.gate_up x) (bias p.gate_up_bias) in
-  let h = activation ~limit h in
-  let y = Nx.add (product ids p.down h) (bias p.down_bias) in
-  Nx.reshape shape
-    (Nx.sum ~axes:[ 1; 2 ] (Nx.mul y (Nx.unsqueeze ~axes:[ 2; 3 ] weights)))
+  let experts = Nx.dim 0 p.down_bias in
+  let y =
+    Nx.map_segments ~segments:experts ids (expert ~limit p)
+      (Nx.unsqueeze ~axes:[ -2 ] x)
+  in
+  Nx.sum ~axes:[ -2 ] (Nx.mul y (Nx.unsqueeze ~axes:[ -1 ] weights))

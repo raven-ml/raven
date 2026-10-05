@@ -277,7 +277,7 @@ let of_hf ?placement cfg dt weights =
         Moe.Quant
           (match placement with
           | None -> w
-          | Some p -> Nx_quant.place (p Experts ~axis:0) w)
+          | Some p -> Nx.Ptree.place Nx_quant.ptree (p Experts ~axis:0) w)
   in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in

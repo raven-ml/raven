@@ -5,47 +5,31 @@
 
 (** Quantised weights.
 
-    A quantised weight is packed codes and their scales, in the byte layout a
-    checkpoint stores, so a weight loaded from a mapped file is used without a
-    copy. Its logical shape is [[| ...; n; k |]], [n] outputs by [k] inputs, as
-    files store linear layers, with blocks of values running along [k] inside
-    each row. {!dequant} is its meaning and {!apply} its one product.
+    A quantised weight is a float array of shape [[| ...; n; k |]], [n] outputs
+    by [k] inputs, stored in a block format: blocks of values along [k], each as
+    codes and a shared scale, in the bytes a file holds. Each constructor takes
+    those bytes, so a mapped file is used without a copy. {!dequant} is its
+    meaning, {!apply} its product, {!take} a gather of its rows.
 
-    Each format has one constructor, taking the bytes as the file stores them. A
-    GGUF file's block formats are read from the [uint8] tensors
+    A GGUF file's block formats are read from the [uint8] tensors
     [Nx_io.load_gguf] gives, after matching on the tensor's stored type:
     [Nx_quant.q8_0 t] for a [Q8_0] tensor [t], whose shape is the weight's with
     its last axis in bytes.
 
-    {!dequant} and {!apply} are compositions of nx's operations, so every
-    transformation and compiled call sees them as it sees any other program: the
-    values assembled from the code bytes with integer operations, a gather of
-    the experts [ids] selects and one product. Their results live where their
-    operands join ({!Nx.place}).
-
-    With [ids], a product whose positions number at most twice the weight's
-    experts, those of all its lanes, multiplies each position by its expert.
-    With more, as when a prompt's tokens each choose a few of the experts, the
-    positions are sorted by expert, each expert's run is padded to whole blocks
-    of positions, and each block is one product with its expert, whose matrix is
-    then read once per block. A block holds 16 positions, or 8, 4 or 2, the most
-    that keep the padding below half the positions. Positions split over devices
-    are grouped on each device.
-
-    Run eagerly, the composition holds the matrices it multiplies, decoded at
-    float32: {!dequant} holds the whole weight, and {!apply} with [ids] holds
-    one matrix per position, or one per block when it groups them. A compiled
-    call decodes them inside the product. Large weights are therefore for
-    compiled calls.
-
-    A quantised weight has no gradient: build it once and capture it.
+    {!take} gathers before decoding, so a caller reads a large table's rows
+    without decoding the table. Routing positions to a stack of weights is
+    {!Nx.map_segments}:
 
     {[
     let gate_up =
       Nx_quant.mxfp4 ~scales
         (Nx.reshape [| experts; outputs; inputs / 2 |] blocks)
     in
-    Nx_quant.apply ~ids gate_up x
+    (* ids : [| tokens; k |], x : [| tokens; inputs |] *)
+    Nx.map_segments ~segments:experts ids
+      (fun e rows ->
+        Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:e gate_up) rows)
+      (Nx.unsqueeze ~axes:[ -2 ] x)
     ]} *)
 
 (** {1:weights Weights} *)
@@ -55,7 +39,8 @@
 
     A GGUF format stores each block of [k]'s values as one run of bytes, in the
     layout of ggml's [block_q8_0], [block_q4_K] and [block_q6_K]
-    (ggml-common.h). Its float16 fields are little-endian. *)
+    (ggml-common.h). Its float16 fields are little-endian. In every format a
+    block of zero bytes decodes to zeros, [-0.] in Q6_K. *)
 type t = private
   | Mxfp4 of {
       codes : (int, Nx.uint8_elt) Nx.t;
@@ -92,104 +77,100 @@ type t = private
 
 val mxfp4 : scales:(int, Nx.uint8_elt) Nx.t -> (int, Nx.uint8_elt) Nx.t -> t
 (** [mxfp4 ~scales codes] is the MXFP4 weight with [codes] and [scales]. Only
-    their shapes are read: no byte of either is.
+    their shapes and placements are read: no byte of either is.
 
     Raises [Invalid_argument] naming the part if [codes] does not have shape
     [[| ...; n; k / 2 |]] with [k] a multiple of 32, or if [scales] does not
-    have shape [[| ...; n; k / 32 |]]. *)
+    have shape [[| ...; n; k / 32 |]], and naming the axis if [codes] is split
+    over devices inside a group of 32 values. *)
 
 val q8_0 : (int, Nx.uint8_elt) Nx.t -> t
-(** [q8_0 blocks] is the Q8_0 weight stored as [blocks]. Only its shape is read.
+(** [q8_0 blocks] is the Q8_0 weight stored as [blocks]. Only its shape and
+    placement are read.
 
     Raises [Invalid_argument] if [blocks] does not have shape
-    [[| ...; n; k / 32 * 34 |]] with [k] a multiple of 32. *)
+    [[| ...; n; k / 32 * 34 |]] with [k] a multiple of 32, or, naming the axis,
+    if [blocks] is split over devices inside a block. *)
 
 val q4_k : (int, Nx.uint8_elt) Nx.t -> t
-(** [q4_k blocks] is the Q4_K weight stored as [blocks]. Only its shape is read.
+(** [q4_k blocks] is the Q4_K weight stored as [blocks]. Only its shape and
+    placement are read.
 
     Raises [Invalid_argument] if [blocks] does not have shape
-    [[| ...; n; k / 256 * 144 |]] with [k] a multiple of 256. *)
+    [[| ...; n; k / 256 * 144 |]] with [k] a multiple of 256, or, naming the
+    axis, if [blocks] is split over devices inside a block. *)
 
 val q6_k : (int, Nx.uint8_elt) Nx.t -> t
-(** [q6_k blocks] is the Q6_K weight stored as [blocks]. Only its shape is read.
+(** [q6_k blocks] is the Q6_K weight stored as [blocks]. Only its shape and
+    placement are read.
 
     Raises [Invalid_argument] if [blocks] does not have shape
-    [[| ...; n; k / 256 * 210 |]] with [k] a multiple of 256. *)
+    [[| ...; n; k / 256 * 210 |]] with [k] a multiple of 256, or, naming the
+    axis, if [blocks] is split over devices inside a block. *)
 
 val shape : t -> int array
 (** [shape w] is [w]'s logical shape, [[| ...; n; k |]]. *)
 
-val place : Nx.Placement.t -> t -> t
-(** [place p w] is [w] with every part placed with [p] ({!Nx.place}). A leading
-    axis or [n] splits wherever {!Nx.place} can split it; [k] splits only
-    between blocks, of 32 values for MXFP4 and Q8_0 and of 256 for Q4_K and
-    Q6_K, so that each shard holds whole blocks and their scales.
-
-    Raises [Invalid_argument] naming the axis if [p] splits [k] across a block,
-    or as {!Nx.place} does for a part. *)
-
 (** {1:products Products} *)
 
 val dequant : (float, 'b) Nx.dtype -> t -> (float, 'b) Nx.t
-(** [dequant dt w] is the values of [w] at [dt], of shape [shape w].
+(** [dequant dt w] is the values of [w] at [dt], of shape [shape w], each
+    rounded once to [dt].
 
-    Values are computed at float32, then rounded once to [dt].
+    A value of [w] is a float32 value. An MXFP4 value is exact barring overflow:
+    codes of magnitude 4 or more at scale byte 253, and of 2 or more at 254, are
+    infinite at every dtype. Float32, bfloat16 and float64 hold every other
+    value exactly. A GGUF value is computed as ggml's float32 dequantisation
+    computes it, its products left to right, and equals it bit for bit: a Q8_0
+    value and a Q4_K product are exact, a Q4_K value rounds once at its
+    subtraction and a Q6_K value once at its last product. A block whose float16
+    scale is infinite or NaN gives infinite or NaN values.
 
-    An MXFP4 value is exact at float32 barring overflow: codes of magnitude 4 or
-    more at scale byte 253, and of 2 or more at 254, are infinite at every
-    dtype. Float32, bfloat16 and float64 hold every other value exactly; float16
-    rounds each value once.
+    MXFP4 at bfloat16 decodes by keeping the high half of each value's float32
+    bits: every MXFP4 value is exact at bfloat16, so nothing is rounded. *)
 
-    A GGUF value is computed as ggml's float32 dequantisation computes it, its
-    products left to right, and equals it bit for bit: a Q8_0 value and a Q4_K
-    product are exact, a Q4_K value rounds once at its subtraction and a Q6_K
-    value once at its last product. A block whose float16 scale is infinite or
-    NaN gives infinite or NaN values. *)
+val apply : t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [apply w x] is [w] applied to [x] as a linear map from [k] inputs to [n]
+    outputs: with [a] the wider of float32 and [x]'s dtype,
 
-val apply : ?ids:Nx.int64_t -> t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
-(** [apply ?ids w x] is
-    [Nx.matmul x (Nx.matrix_transpose (dequant Nx.float32 w))] at [x]'s dtype,
-    with {!Nx.matmul}'s shapes: [w] is [[| ...; n; k |]], [x] is
-    [[| ...; m; k |]] or [[| k |]], and batch axes broadcast. Products
-    accumulate at float32 and the result is rounded once to [x]'s dtype.
+    {[
+    Nx.cast (Nx.dtype x)
+      (Nx.matmul (Nx.cast a x) (Nx.matrix_transpose (dequant a w)))
+    ]}
 
-    With [ids], [w] is [[| b...; e; n; k |]], [e] experts behind [b] leading
-    axes, and [ids] is [[| b...; s... |]], its [b] leading axes broadcasting
-    against [w]'s. The product is then over [w'] of shape
-    [[| b...; s...; n; k |]], whose matrix at [(b, s)] is [w]'s expert
-    [ids.(b, s)] of lane [b]. A weight with no leading axes is gathered by [ids]
-    whole: [apply ~ids w x] with [w] of shape [[| e; n; k |]], [ids] of shape
-    [[| t; 4 |]] and [x] of shape [[| t; 1; 1; k |]] is [[| t; 4; 1; n |]].
+    [w] is [[| ...; n; k |]], [x] is [[| ...; m; k |]] or [[| k |]], batch axes
+    broadcast as {!Nx.matmul}'s, and the result is [[| ...; m; n |]], or
+    [[| ...; n |]] for a vector.
 
-    An id outside \[[0], [e]), [-1] included, selects no expert: its position of
-    the result is exactly zero, whatever [x] holds there. Ids may repeat. An
-    empty [ids] or [x] gives an empty result.
+    When every value of [w]'s format is exact at [x]'s dtype, as MXFP4's are at
+    bfloat16, this is
+    [Nx.matmul x (Nx.matrix_transpose (dequant (Nx.dtype x) w))].
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis is not [k],
-    if the batch axes do not broadcast, or, with [ids], if [w] has no expert
-    axis or [ids] lacks [w]'s leading axes. *)
+    or if the batch axes do not broadcast. *)
 
-(** {1:structure Structure}
+val take : axis:int -> indices:Nx.int64_t -> t -> t
+(** [take ~axis ~indices w] is the rows or matrices of [w] at [indices] along
+    [axis], gathered from its packed parts with no value decoded, [indices] read
+    as {!Nx.take} reads them. At every index in range,
+    [dequant dt (take ~axis ~indices w)] is
+    [Nx.take ~axis ~indices (dequant dt w)]. An index out of range gathers zero
+    bytes, which decode to zeros.
 
-    A weight is a structure without a parameter ({!Nx.Ptree.S} with
-    [type _ t = t]): its parts are tensors of a fixed type, so casts and
-    {!Nx.Ptree.Payload} operations keep them. *)
+    Raises [Invalid_argument] if [axis] is [w]'s last axis, negative or not,
+    since a gather along it would cut blocks, if [axis] is out of bounds, or as
+    {!Nx.take} does. *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> t -> t
-(** [walk c w] walks [w] at [c]'s path: it reports [w]'s case, ["mxfp4"],
-    ["q8_0"], ["q4_k"] or ["q6_k"], then walks each part at its field's name,
-    [codes] then [scales] or [blocks], with {!Nx.Ptree.Walk.tensor}. It checks
-    the parts it rebuilds as the case's constructor does, and reads neither
-    bytes nor placement, so it runs under every transformation and compiled
-    trace. A model's own [walk] walks a quantised field with it:
-    [field c "gate_up" Nx_quant.walk w].
-
-    Raises [Invalid_argument] as the constructors do, naming [Nx_quant.walk], if
-    a walk returns parts of other shapes. *)
+(** {1:structure Structure} *)
 
 val ptree : t Nx.Ptree.t
-(** [ptree] is a weight as a structure at one type, walked by {!walk}: an MXFP4
-    weight's visits are [the root: case "mxfp4"], [codes: a leaf] and
-    [scales: a leaf], and a Q8_0 weight's [the root: case "q8_0"] and
-    [blocks: a leaf]. Compiled programs therefore key on the format, and
-    [Nx.Ptree.map ptree f w] maps its parts. *)
+(** [ptree] is a weight as a structure: its case, ["mxfp4"], ["q8_0"], ["q4_k"]
+    or ["q6_k"], then each part as a tensor at its field's name, [codes] then
+    [scales] or [blocks], rebuilt with the case's checks, which refuse a part
+    split over devices inside a block. Its parts are tensors of a fixed type, so
+    casts and {!Nx.Ptree.Payload} operations keep them. Weights of two formats
+    are different structures; [Nx.Ptree.place ptree] places a weight and
+    [Nx.Ptree.Walk.structure ptree] walks one inside a model.
+
+    A walk that returns parts of other shapes or splits raises
+    [Invalid_argument] as the constructors do, naming [Nx_quant.ptree]. *)

@@ -199,9 +199,10 @@ val of_hf :
 
     With [placement], each float leaf is placed with
     [Nx.place (placement role ~axis)] as it is built (see {!role}), and each
-    packed weight with [Nx_quant.place (placement Experts ~axis:0)], so a
-    function compiled where the model is that captures it uploads nothing and
-    the host holds one leaf at a time.
+    packed weight with
+    [Nx.Ptree.place Nx_quant.ptree (placement Experts ~axis:0)], so a function
+    compiled where the model is that captures it uploads nothing and the host
+    holds one leaf at a time.
 
     Raises [Failure], naming the entry, if one is missing, has another shape
     than [cfg] says, or has a dtype the leaf cannot take. *)

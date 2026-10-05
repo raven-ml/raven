@@ -85,7 +85,10 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
       Nx_quant.mxfp4 ~scales
         (random_bytes [| c.experts; outputs; inputs / 2 |] 0 256)
     in
-    Moe.Quant (match placement with None -> w | Some p -> Nx_quant.place p w)
+    Moe.Quant
+      (match placement with
+      | None -> w
+      | Some p -> Nx.Ptree.place Nx_quant.ptree p w)
   in
   let gamma () = { Rms_norm.gamma = f ~scale:1.0 [| c.dim |] } in
   let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in

@@ -187,7 +187,7 @@ let place_experts devices (p : _ Moe.t) =
       let split = Nx.Placement.sharded ~axis:0 ds in
       let weight = function
         | Moe.Float w -> Moe.Float (Nx.place split w)
-        | Moe.Quant w -> Moe.Quant (Nx_quant.place split w)
+        | Moe.Quant w -> Moe.Quant (Nx.Ptree.place Nx_quant.ptree split w)
       in
       {
         gate_up = weight p.gate_up;

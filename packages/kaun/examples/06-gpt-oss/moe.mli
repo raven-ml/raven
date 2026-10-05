@@ -38,7 +38,7 @@ val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
 (** [walk c p] walks [p]'s parts at [gate_up], [gate_up_bias], [down] and
     [down_bias], in that order. A weight reports its case at its path, ["float"]
     or ["quant"]: a float weight is a position of the parameter, and a packed
-    one is walked by {!Nx_quant.walk}, its codes and scales fixed tensors. So
+    one is walked by {!Nx_quant.ptree}, its codes and scales fixed tensors. So
     [Nx.Ptree.cast (module Moe) dt p] converts precision and keeps the packed
     weights. *)
 
@@ -70,7 +70,9 @@ val apply :
     [x]'s leading axes followed by the number of experts per token. The result
     has [x]'s shape.
 
-    Packed weights are multiplied with {!Nx_quant.apply}, which decodes each
-    token's experts inside the product under [Rune.jit] and holds them decoded
-    eagerly. Float weights are gathered for each token's experts, a copy of
-    every selected expert: they suit small checkpoints. *)
+    Tokens are grouped by expert with {!Nx.map_segments}, so each expert's
+    weights are read once per block of its tokens. Packed weights are gathered
+    by expert with {!Nx_quant.take} and multiplied with {!Nx_quant.apply}, which
+    decodes them inside the product under [Rune.jit] and holds each block's
+    expert decoded eagerly. Float weights are gathered for each block, a copy of
+    its expert. *)
