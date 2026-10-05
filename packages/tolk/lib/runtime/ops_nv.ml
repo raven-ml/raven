@@ -120,8 +120,8 @@ let build_program props devs prg =
   | Some p -> p
   | None ->
       let image_size, data = program_data props obj in
-      Qmd.set_local_memory data.qmd
-        (local_word devs (P.Program.local_bytes data.program));
+      let local = local_word devs (P.Program.local_bytes data.program) in
+      let data = { data with qmd = Qmd.set_local_memory data.qmd local } in
       let p =
         ( data,
           placeholder ~slot:0 ~device:(Multi devs)
@@ -200,7 +200,11 @@ let queue props q : Hcq2.commands =
     let rec build = function
       | [] -> None
       | qmd :: rest ->
-          Option.iter (fun r -> Qmd.chain qmd (addr r)) (build rest);
+          let qmd =
+            match build rest with
+            | Some next -> Qmd.chain qmd (addr next)
+            | None -> qmd
+          in
           Some (Nv_packet.structure "qmd" (Qmd.structure qmd))
     in
     Option.iter (fun head -> emit (M.schedule (addr head))) (build !chain);
@@ -232,15 +236,19 @@ let queue props q : Hcq2.commands =
       exceeds info.global_size [ 2147483647; 65535; 65535 ]
       || exceeds info.local_size [ 1024; 1024; 64 ]
     then invalid_arg "Invalid global/local dims";
-    let qmd = Qmd.copy data.qmd in
-    List.iter2
-      (fun d s ->
-        match s with
-        | Int n -> Qmd.set_dim qmd d n
-        | Sym u -> Qmd.patch_dim qmd d u)
-      P.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
-      (info.global_size @ info.local_size);
-    Qmd.set_program qmd (add (addr lib) (int (P.Program.code data.program)));
+    let qmd =
+      List.fold_left2
+        (fun q d s ->
+          match s with
+          | Int n -> Qmd.set_dim q d n
+          | Sym u -> Qmd.patch_dim q d u)
+        data.qmd
+        P.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
+        (info.global_size @ info.local_size)
+    in
+    let qmd =
+      Qmd.set_program qmd (add (addr lib) (int (P.Program.code data.program)))
+    in
     (* constant buffer 0: the driver params, then the arguments *)
     let bufs = Realize.get_call_arg_uops call in
     let vals = Realize.get_call_var_uops call prg in
@@ -254,20 +262,28 @@ let queue props q : Hcq2.commands =
     let driver = Bytes.make data.kernargs_size '\000' in
     Bytes.blit_string params 0 driver 0 at;
     let cbuf = Nv_packet.region "cbuf" (Bytes.to_string driver) args in
-    List.iter
-      (fun (b : Nx_nv_cubin.bank) ->
-        Qmd.set_bank qmd b.index
-          (if b.index = 0 then addr cbuf else add (addr lib) (int b.offset)))
-      (P.Program.banks data.program);
+    let qmd =
+      List.fold_left
+        (fun q (b : Nx_nv_cubin.bank) ->
+          Qmd.set_bank q b.index
+            (if b.index = 0 then addr cbuf else add (addr lib) (int b.offset)))
+        qmd
+        (P.Program.banks data.program)
+    in
     chain := !chain @ [ qmd ]
   in
   let compute_release signal value ~timestamp =
-    match List.rev !chain with
-    | prev :: _
-      when (if timestamp then Qmd.release_stamp else Qmd.release)
-             prev (addr signal) value ->
-        ()
-    | _ ->
+    let released =
+      match List.rev !chain with
+      | prev :: before ->
+          (if timestamp then Qmd.release_stamp else Qmd.release)
+            prev (addr signal) value
+          |> Option.map (fun q -> List.rev (q :: before))
+      | [] -> None
+    in
+    match released with
+    | Some c -> chain := c
+    | None ->
         end_chain ();
         release signal value ~timestamp
   in

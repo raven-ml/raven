@@ -195,52 +195,48 @@ type dim =
   | Block of axis  (** A block's threads along an axis. *)
 
 (** Launch descriptors: version 5 for the compute classes from Blackwell's on,
-    version 3 before. A descriptor is mutable; its fields are known integers, or
-    holes for values. *)
+    version 3 before. A descriptor's fields are known integers, or holes for
+    values. *)
 module Qmd : sig
   type 'v t
-  (** The type for launch descriptors being encoded. *)
+  (** The type for launch descriptors. *)
 
   val make : Program.t -> 'v t
   (** [make p] is the descriptor of a launch of [p], without its sizes and
       addresses. *)
 
-  val copy : 'v t -> 'v t
-  (** [copy q] is a descriptor with [q]'s fields, which changes independently of
-      [q]. *)
-
-  val set_dim : 'v t -> dim -> int -> unit
-  (** [set_dim q d n] sets the size [d] of the launch to [n].
+  val set_dim : 'v t -> dim -> int -> 'v t
+  (** [set_dim q d n] is [q] with the size [d] of the launch [n].
 
       Raises [Invalid_argument] if [n] does not fit the field. *)
 
-  val patch_dim : 'v t -> dim -> 'v -> unit
-  (** [patch_dim q d v] sets the size [d] of the launch to [v]. *)
+  val patch_dim : 'v t -> dim -> 'v -> 'v t
+  (** [patch_dim q d v] is [q] with the size [d] of the launch [v]. *)
 
-  val set_program : 'v t -> 'v -> unit
-  (** [set_program q addr] sets the address of the kernel's first instruction to
-      [addr], 256-byte aligned. *)
+  val set_program : 'v t -> 'v -> 'v t
+  (** [set_program q addr] is [q] with the kernel's first instruction at [addr],
+      256-byte aligned. *)
 
-  val set_bank : 'v t -> int -> 'v -> unit
-  (** [set_bank q i addr] sets the address of the constant bank [i] to [addr],
-      64-byte aligned. *)
+  val set_bank : 'v t -> int -> 'v -> 'v t
+  (** [set_bank q i addr] is [q] with the constant bank [i] at [addr], 64-byte
+      aligned. *)
 
-  val set_local_memory : 'v t -> 'v -> unit
-  (** [set_local_memory q bytes] sets the local memory each thread has to
-      [bytes], a multiple of 16. *)
+  val set_local_memory : 'v t -> 'v -> 'v t
+  (** [set_local_memory q bytes] is [q] with [bytes] of local memory for each
+      thread, a multiple of 16. *)
 
-  val release : 'v t -> 'v -> 'v -> bool
-  (** [release q addr v] makes the launch write the 64-bit [v] at [addr] once it
-      completes, and is [true], if one of the descriptor's two releases is free,
-      and is [false] otherwise. *)
+  val release : 'v t -> 'v -> 'v -> 'v t option
+  (** [release q addr v] is [q] with a launch that writes the 64-bit [v] at
+      [addr] once it completes, or [None] if both of [q]'s releases are taken.
+  *)
 
-  val release_stamp : 'v t -> 'v -> 'v -> bool
+  val release_stamp : 'v t -> 'v -> 'v -> 'v t option
   (** [release_stamp q addr v] is {!release}, also writing the GPU's timer at
       [addr + 8]. *)
 
-  val chain : 'v t -> 'v -> unit
-  (** [chain q addr] makes the launch of the descriptor at [addr], 256-byte
-      aligned, start once [q]'s completes, scheduled with [q]. *)
+  val chain : 'v t -> 'v -> 'v t
+  (** [chain q addr] is [q] with the launch of the descriptor at [addr],
+      256-byte aligned, starting once [q]'s completes, scheduled with [q]. *)
 
   val structure : 'v t -> 'v structure
   (** [structure q] is [q] laid out. Its holes are the widest unsigned words

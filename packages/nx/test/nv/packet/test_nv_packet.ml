@@ -303,10 +303,8 @@ let test_limits () =
 (* Launch descriptors *)
 
 let test_holes () =
-  let q = Qmd.make (program (kernel ())) in
-  Qmd.patch_dim q (Grid X) 7;
-  Qmd.set_program q 0x12_3456_7800;
-  let s = Qmd.structure q in
+  let q = Qmd.patch_dim (Qmd.make (program (kernel ()))) (Grid X) 7 in
+  let s = Qmd.structure (Qmd.set_program q 0x12_3456_7800) in
   (* The widest of 8, 4, 2 and 1 bytes within each field, by offset. *)
   let hole f bytes = (List.assoc f D.qmd_v3 / 8, bytes) in
   equal
@@ -325,17 +323,25 @@ let test_holes () =
        (String.get_int32_le (P.fill s)
           (List.assoc "cta_raster_width" D.qmd_v3 / 8)))
 
+let test_values () =
+  let q = Qmd.make (program (kernel ())) in
+  let before = P.fill (Qmd.structure q) in
+  let q' = Qmd.set_dim (Qmd.set_program q 0x1000) (Block X) 32 in
+  ignore (Qmd.release q 0x2000 1);
+  equal ~msg:"q unchanged" string before (P.fill (Qmd.structure q));
+  not_equal ~msg:"q' changed" string before (P.fill (Qmd.structure q'))
+
 let test_dims () =
   let q = Qmd.make (program ~blackwell:true (kernel ())) in
-  Qmd.set_dim q (Block Z) 0xff;
+  ignore (Qmd.set_dim q (Block Z) 0xff);
   raises_match (Exn.invalid_arg ~substring:"does not fit") (fun () ->
       Qmd.set_dim q (Block Z) 0x100)
 
 let test_releases () =
   let q = Qmd.make (program (kernel ())) in
-  equal ~msg:"a first release" bool true (Qmd.release q 0x1000 1);
-  equal ~msg:"a second" bool true (Qmd.release_stamp q 0x2000 0);
-  equal ~msg:"no third" bool false (Qmd.release q 0x3000 2)
+  let q = require_some ~msg:"a first release" (Qmd.release q 0x1000 1) in
+  let q = require_some ~msg:"a second" (Qmd.release_stamp q 0x2000 0) in
+  is_none ~msg:"no third" (Qmd.release q 0x3000 2)
 
 let () =
   exit
@@ -375,6 +381,7 @@ let () =
          group "launch descriptors"
            [
              test "holes are the fields' widest words, in order" test_holes;
+             test "a setter leaves its descriptor as it was" test_values;
              test "a size that does not fit its field is refused" test_dims;
              test "two releases, then none" test_releases;
            ];

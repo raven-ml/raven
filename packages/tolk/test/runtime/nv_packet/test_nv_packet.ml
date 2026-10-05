@@ -53,21 +53,27 @@ let encode leaf = function
       [ P.W64 (P.Gpfifo.entry (leaf a) ~offset ~words) ]
 
 let descriptor leaf program l =
-  let q = P.Qmd.make program in
-  List.iter
-    (fun (d, value, n) ->
-      if value then P.Qmd.patch_dim q d (leaf n) else P.Qmd.set_dim q d n)
-    l.dims;
-  P.Qmd.set_program q (leaf l.program);
-  List.iteri (fun i a -> P.Qmd.set_bank q i (leaf a)) l.banks;
-  P.Qmd.set_local_memory q (leaf l.local);
-  List.iter
-    (fun (stamp, a, v) ->
-      ignore
-        ((if stamp then P.Qmd.release_stamp else P.Qmd.release)
-           q (leaf a) (leaf v)))
-    l.releases;
-  Option.iter (fun a -> P.Qmd.chain q (leaf a)) l.next;
+  let q =
+    List.fold_left
+      (fun q (d, value, n) ->
+        if value then P.Qmd.patch_dim q d (leaf n) else P.Qmd.set_dim q d n)
+      (P.Qmd.make program) l.dims
+  in
+  let q = P.Qmd.set_program q (leaf l.program) in
+  let q, _ =
+    List.fold_left
+      (fun (q, i) a -> (P.Qmd.set_bank q i (leaf a), i + 1))
+      (q, 0) l.banks
+  in
+  let q = P.Qmd.set_local_memory q (leaf l.local) in
+  let q =
+    List.fold_left
+      (fun q (stamp, a, v) ->
+        let release = if stamp then P.Qmd.release_stamp else P.Qmd.release in
+        Option.value ~default:q (release q (leaf a) (leaf v)))
+      q l.releases
+  in
+  let q = match l.next with Some a -> P.Qmd.chain q (leaf a) | None -> q in
   P.Qmd.structure q
 
 (* Values as variables of a batch, each bound to its integer. *)

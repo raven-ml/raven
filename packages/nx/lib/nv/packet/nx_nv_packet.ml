@@ -294,8 +294,8 @@ module Qmd = struct
   type 'v t = {
     ver : int;
     fields : (string * (int * int)) list;
-    mv : Bytes.t;
-    mutable holes : 'v hole list; (* the latest at each offset *)
+    bytes : string;
+    holes : 'v hole list; (* the latest at each offset *)
   }
 
   let range q k =
@@ -307,7 +307,7 @@ module Qmd = struct
   let number q lo hi =
     let n = ref 0 in
     for i = hi / 8 downto lo / 8 do
-      n := (!n lsl 8) lor Char.code (Bytes.get q.mv i)
+      n := (!n lsl 8) lor Char.code q.bytes.[i]
     done;
     !n
 
@@ -321,9 +321,13 @@ module Qmd = struct
     let hi = lo + w - 1 in
     let mask = ((1 lsl w) - 1) lsl (lo mod 8) in
     let n = number q lo hi land lnot mask lor (v lsl (lo mod 8)) in
+    let b = Bytes.of_string q.bytes in
     for i = lo / 8 to hi / 8 do
-      Bytes.set q.mv i (Char.chr ((n lsr (8 * (i - (lo / 8)))) land 0xff))
-    done
+      Bytes.set b i (Char.chr ((n lsr (8 * (i - (lo / 8)))) land 0xff))
+    done;
+    { q with bytes = Bytes.unsafe_to_string b }
+
+  let writes q fs = List.fold_left (fun q (k, v) -> write q k v) q fs
 
   (* A hole of the widest unsigned word the field holds. *)
   let patch q k v =
@@ -331,13 +335,16 @@ module Qmd = struct
     if lo mod 8 <> 0 then invalid_arg (k ^ " is not byte aligned");
     let bytes = List.find (fun n -> n * 8 <= w) [ 8; 4; 2; 1 ] in
     let at = lo / 8 in
-    q.holes <-
-      { at; bytes; value = v } :: List.filter (fun h -> h.at <> at) q.holes
+    {
+      q with
+      holes =
+        { at; bytes; value = v } :: List.filter (fun h -> h.at <> at) q.holes;
+    }
 
   let v4 q = q.ver >= 4
 
-  let set_addr q name ?(sfx = "") addr =
-    patch q (name ^ "_lower" ^ sfx) addr;
+  let set_addr ?(sfx = "") name addr q =
+    let q = patch q (name ^ "_lower" ^ sfx) addr in
     patch q (name ^ "_upper" ^ sfx) (Shift (addr, 32))
 
   let make (p : Program.t) =
@@ -345,7 +352,9 @@ module Qmd = struct
     let ver, words, fields =
       if p.blackwell then (5, 0x60, D.qmd_v5) else (3, 0x40, D.qmd_v3)
     in
-    let q = { ver; fields; mv = Bytes.make (words * 4) '\000'; holes = [] } in
+    let q =
+      { ver; fields; bytes = String.make (words * 4) '\000'; holes = [] }
+    in
     let k = p.kernel in
     let own =
       if p.blackwell then
@@ -363,8 +372,17 @@ module Qmd = struct
           ("register_count_v", k.registers);
         ]
     in
-    List.iter
-      (fun (f, v) -> write q f v)
+    let banks =
+      List.concat_map
+        (fun (b : Nx_nv_cubin.bank) ->
+          [
+            ( Printf.sprintf "constant_buffer_size_shifted4_%d" b.index,
+              (b.bytes + 15) lsr 4 );
+            (Printf.sprintf "constant_buffer_valid_%d" b.index, 1);
+          ])
+        (Program.banks p)
+    in
+    writes q
       (own
       @ [
           ("qmd_group_id", 0x3f);
@@ -382,17 +400,9 @@ module Qmd = struct
           ("max_sm_config_shared_mem_size", 0x1a);
           ("program_prefetch_size", Stdlib.Int.min (k.code_bytes lsr 8) 0x1ff);
           ("sass_version", p.sass_version);
-        ]);
-    List.iter
-      (fun (b : Nx_nv_cubin.bank) ->
-        write q
-          (Printf.sprintf "constant_buffer_size_shifted4_%d" b.index)
-          ((b.bytes + 15) lsr 4);
-        write q (Printf.sprintf "constant_buffer_valid_%d" b.index) 1)
-      (Program.banks p);
-    q
+        ]
+      @ banks)
 
-  let copy q = { q with mv = Bytes.copy q.mv }
   let axis = function X -> 0 | Y -> 1 | Z -> 2
 
   let dim q = function
@@ -408,19 +418,24 @@ module Qmd = struct
 
   let set_program q addr =
     let addr = Value addr in
-    if v4 q then set_addr q "program_address" ~sfx:"_shifted4" (Shift (addr, 4))
-    else set_addr q "program_address" (Shift (addr, 0));
-    set_addr q "program_prefetch_addr" ~sfx:"_shifted" (Shift (addr, 8))
+    let q =
+      if v4 q then
+        set_addr "program_address" ~sfx:"_shifted4" (Shift (addr, 4)) q
+      else set_addr "program_address" (Shift (addr, 0)) q
+    in
+    set_addr "program_prefetch_addr" ~sfx:"_shifted" (Shift (addr, 8)) q
 
   let set_bank q i addr =
     let addr = Value addr in
     if v4 q then
-      set_addr q "constant_buffer_addr"
+      set_addr "constant_buffer_addr"
         ~sfx:(Printf.sprintf "_shifted6_%d" i)
         (Shift (addr, 6))
+        q
     else
-      set_addr q "constant_buffer_addr" ~sfx:(Printf.sprintf "_%d" i)
+      set_addr "constant_buffer_addr" ~sfx:(Printf.sprintf "_%d" i)
         (Shift (addr, 0))
+        q
 
   let set_local_memory q bytes =
     if v4 q then
@@ -435,39 +450,43 @@ module Qmd = struct
       else Printf.sprintf "release%d_enable" i
     in
     match List.find_opt (fun i -> read q (enable i) = 0) [ 0; 1 ] with
-    | None -> false
+    | None -> None
     | Some i ->
         let name s = Printf.sprintf s i in
-        if v4 q then (
-          set_addr q (name "release_semaphore%d_addr") (Value addr);
-          set_addr q (name "release_semaphore%d_payload") (Value v))
-        else (
-          set_addr q (name "release%d_address") (Value addr);
-          set_addr q (name "release%d_payload") (Value v));
-        write q (enable i) 1;
-        write q
-          (if v4 q then name "release_structure_size_%d"
-           else name "release%d_structure_size")
-          (if stamp then 0 else 2);
-        if not (v4 q) then write q (name "release%d_payload64b") 1;
-        true
+        let q =
+          if v4 q then
+            q
+            |> set_addr (name "release_semaphore%d_addr") (Value addr)
+            |> set_addr (name "release_semaphore%d_payload") (Value v)
+          else
+            q
+            |> set_addr (name "release%d_address") (Value addr)
+            |> set_addr (name "release%d_payload") (Value v)
+        in
+        let size =
+          if v4 q then name "release_structure_size_%d"
+          else name "release%d_structure_size"
+        in
+        let q = writes q [ (enable i, 1); (size, if stamp then 0 else 2) ] in
+        Some (if v4 q then q else write q (name "release%d_payload64b") 1)
 
   let release q addr v = add_release q addr v ~stamp:false
   let release_stamp q addr v = add_release q addr v ~stamp:true
 
   let chain q addr =
-    List.iter
-      (fun f -> write q f 1)
-      [
-        "dependent_qmd0_action";
-        "dependent_qmd0_prefetch";
-        "dependent_qmd0_enable";
-      ];
+    let q =
+      writes q
+        [
+          ("dependent_qmd0_action", 1);
+          ("dependent_qmd0_prefetch", 1);
+          ("dependent_qmd0_enable", 1);
+        ]
+    in
     patch q "dependent_qmd0_pointer" (Shift (Value addr, 8))
 
   let structure q =
     {
-      bytes = Bytes.to_string q.mv;
+      bytes = q.bytes;
       holes = List.sort (fun a b -> Stdlib.Int.compare a.at b.at) q.holes;
     }
 end
