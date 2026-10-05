@@ -732,6 +732,17 @@ let keys =
       test "a call compiled with ~beam:1 computes eager's values" (fun () ->
           let f a = Nx.add_s (poly a) 0.6875 in
           equal close (f (x ())) (Rune.jit' ~beam:1 ~parallel:2 f (x ())));
+      test
+        "a call compiled with ~beam replays its program under another BEAM or \
+         JITBEAM" (fun () ->
+          let f a = Nx.add_s (poly a) 0.8125 in
+          let g = Rune.jit' ~beam:1 ~parallel:2 f in
+          shares
+            (checked g f (x ()))
+            (fun () ->
+              Tolk.Setting.context
+                [ B (Tolk.Setting.beam, 2); B (Tolk.Setting.jitbeam, Some 3) ]
+                (checked g f (x ()))));
       slow "a flipped view retraces once" (fun () ->
           let g = g () in
           retraces

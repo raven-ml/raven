@@ -109,9 +109,34 @@ type settings = {
   traced : bool;
 }
 
-let settings () =
+(* [shaping beam] reads tolk's [shaping] for a compiled function searched at the
+   width [beam]. An explicit width stands for what [BEAM] and [JITBEAM] decide:
+   [BEAM]'s entry holds it and [JITBEAM]'s is left out, so neither setting
+   retraces. The entries are made again only when tolk's change, which keeps a
+   replay from allocating them. *)
+let shaping = function
+  | None -> Tolk.Setting.shaping
+  | Some width ->
+      let beam = Tolk.Setting.key Tolk.Setting.beam
+      and jitbeam = Tolk.Setting.key Tolk.Setting.jitbeam in
+      let entry ((k, _) as e) =
+        if String.equal k beam then Some (k, string_of_int width)
+        else if String.equal k jitbeam then None
+        else Some e
+      in
+      let last = Atomic.make ([], []) in
+      fun () ->
+        let entries = Tolk.Setting.shaping () in
+        let seen, widened = Atomic.get last in
+        if seen == entries then widened
+        else
+          let widened = List.filter_map entry entries in
+          Atomic.set last (entries, widened);
+          widened
+
+let settings shaping =
   {
-    shaping = Tolk.Setting.shaping ();
+    shaping = shaping ();
     profile = Engine.profile ();
     counters = Nx_device.Profile.counters ();
     traced = Nx_device.Profile.traced ();
@@ -884,7 +909,7 @@ let rec compiler : type a r.
     (a, r) Construct.compiler =
  fun beam parallel entry roles ->
   let table = Programs.create () and last = Atomic.make None in
-  let plans = Plans.create () in
+  let plans = Plans.create () and shaping = shaping beam in
   let children = ref [] and lock = Mutex.create () in
   let call (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r) (args : a) :
       r =
@@ -893,7 +918,7 @@ let rec compiler : type a r.
     let key =
       {
         skeleton;
-        settings = settings ();
+        settings = settings shaping;
         layouts = Array.to_list (Array.map (fun l -> l.layout) leaves);
       }
     in

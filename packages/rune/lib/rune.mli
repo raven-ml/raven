@@ -785,7 +785,8 @@ val jit :
     many domains. An explicit [beam], [0] (no search) included, overrides the
     [BEAM] and [JITBEAM] settings, and [parallel] the [PARALLEL] setting, which
     decide otherwise. The width is part of a call's key, so functions searched
-    at different widths never share a program.
+    at different widths never share a program; with an explicit [beam], a change
+    of [BEAM] or [JITBEAM] around a call compiles nothing.
 
     {b Placement.} A call compiles for the memories of its placed arguments and
     captures, and for the host's when there are none: the backends their devices

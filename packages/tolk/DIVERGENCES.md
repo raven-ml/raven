@@ -3430,7 +3430,9 @@ stores through a pad.
   tolk declares its own variables the same way, so rune's jit keys on its
   `Output` settings too, and beyond them only on what is not a setting of
   tolk: `Tolk_engine.profile ()` and the counters and traces of the
-  profile being taken.
+  profile being taken. A function compiled with an explicit width keys on
+  that width in `BEAM`'s entry, without `JITBEAM`'s, since the width
+  overrides both.
 - **Reason:** (b): rune's jit memo and tolk's program, schedule and search
   caches key on `Setting.shaping`. A variable read outside a declaration on
   a compile path is missing from every key, and a cache returns what was
@@ -3451,8 +3453,9 @@ stores through a pad.
   › cache › a body scheduled under one setting misses under another › a
   setting its caller declares`; `Rune.jit › keys › a setting that shapes
   compilation ›` each setting, `› a call under DEBUG=2, which reports
-  kernel times, retraces once` and `› a call under DEBUG=1 replays the
-  program`.
+  kernel times, retraces once`, `› a call under DEBUG=1 replays the
+  program` and `› a call compiled with ~beam replays its program under
+  another BEAM or JITBEAM`.
 
 ## D115. A search linearizes a candidate before it compiles it
 
