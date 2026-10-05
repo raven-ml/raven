@@ -1006,7 +1006,7 @@ thread.
   once: comgr serialises the compiles of a process. A source that crashes
   LLVM raises `Compile_error` instead of ending the program. A beam search of GNODE's step on an R9700
   takes 19 s at `PARALLEL=8`, from 43 s.
-- On AMD, a profile's span of a kernel covers its run, so `Tolk_engine.timer`
+- On AMD, a profile's span of a kernel covers its run, so `Tolk_engine.time`
   and searches time long kernels right. The compute queue's timestamps waited
   for the pipe to drain, which on GFX12 included the next dispatch: a 0.6 s
   kernel timed at 11 us, and searches kept such candidates.
@@ -1016,12 +1016,13 @@ thread.
   `BEAM_MIN_PROGRESS`, so a search never answers a kernel slower than the one
   it was given. The least of noisy timings is biased low, and searches ran
   rounds on gains within the noise, as PR #235 found.
-- **Breaking:** `Tolk_engine.measure` is replaced by `Tolk_engine.timer`, and
-  `Search.beam_search` takes `~time`. A search allocates its buffers once, and
-  not at all when its result is cached, links each candidate once, runs each
-  sample once and silently, compiles each kernel once, and compiles no
-  candidate past `BEAM_UOPS_MAX` (new `Codegen.linearize`). A candidate's setup
-  on Metal takes about 1.2 ms, from about 3.9 ms. PR #235 found these costs.
+- **Breaking:** `Tolk_engine.measure` is replaced by `Tolk_engine.slots`,
+  `Tolk_engine.link_program` and `Tolk_engine.time`, and `Search.beam_search`
+  takes `~link` and `~time`. A search allocates its buffers once, and not at
+  all when its result is cached, links each candidate once, runs each sample
+  once and silently, compiles each kernel once, and compiles no candidate past
+  `BEAM_UOPS_MAX` (new `Codegen.linearize`). A candidate's setup on Metal
+  takes about 1.2 ms, from about 3.9 ms. PR #235 found these costs.
 - Every environment variable is one setting of the new module `Tolk.Setting`,
   declared and documented there with its reach, so each can be bound with
   `Setting.context` (`Ops.rewrite_stack_limit` is `Setting.rewrite_stack_limit`).

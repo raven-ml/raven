@@ -12,15 +12,21 @@ let applied_opts prg =
   | Kernel info -> info.applied_opts
   | _ -> failf "the program %a has no kernel" Ops.pp prg
 
-(* The engine's timing, with the samples of an optimised program scaled down a
-   thousandfold, so that a search progresses past its kernel whatever the host's
-   noise: when a search stops is the Search suite's. *)
-let time ~vars kernel =
-  let stage = Tolk_engine.timer ~devices "CPU" ~vars kernel in
-  fun prg ->
-    let sample = stage prg in
+(* The engine's linking and timing of a kernel's programs on the host, on the
+   slots of the first one timed, with the samples of an optimised program scaled
+   down a thousandfold, so that a search progresses past its kernel whatever the
+   host's noise: when a search stops is the Search suite's. *)
+let timing () =
+  let slots = ref None in
+  let link prg =
     let scale = if applied_opts prg = [] then 1. else 1e-3 in
-    fun () -> sample () *. scale
+    (Tolk_engine.link_program ~devices "CPU" prg, scale)
+  in
+  let time ~vars (s, scale) =
+    if Option.is_none !slots then slots := Some (Tolk_engine.slots s);
+    Tolk_engine.time ~vars s (Option.get !slots) *. scale
+  in
+  (link, time)
 
 let with_info f k =
   match Ops.arg k with
@@ -41,11 +47,13 @@ let searched name =
   in
   (* A search times anew: a result kept by an earlier run would hide what this
      one finds. *)
+  let link, time = timing () in
   let prg =
     Setting.context
       [ B (Setting.ignore_beam_cache, true) ]
       (fun () ->
-        Codegen.to_program ~beam:(Search.beam_search ~time)
+        Codegen.to_program
+          ~beam:(Search.beam_search ~link ~time)
           (with_info (fun i -> { i with beam = 2 }) k)
           host)
   in

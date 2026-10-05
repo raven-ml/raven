@@ -22,11 +22,10 @@
    ([--cuda]) says whether a CUDA device opens.
 
    [search] times what a beam search pays per candidate before timing it: its
-   program linked on the buffers of its kernel, which a timer allocates once per
-   search ({!Tolk_engine.timer}), on the host and on Metal, for gpt-oss-20b's
-   key and value projection; and its lowering of a candidate up to its
-   instructions ([linearize]), which every candidate pays, for the kernels of
-   [lorenz] on a CUDA renderer.
+   program linked ({!Tolk_engine.link_program}), on the host and on Metal, for
+   gpt-oss-20b's key and value projection; and its lowering of a candidate up
+   to its instructions ([linearize]), which every candidate pays, for the
+   kernels of [lorenz] on a CUDA renderer.
 
    [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
    on the host where the hand-coded optimisations lost most to a beam search,
@@ -217,20 +216,18 @@ let lorenz =
 
 let search_kernel () = Graph.of_string (List.assoc "gpt_oss_kv" Kernels.all)
 
-(* The kernel stage of a timer of [search_kernel ()] on the device [name], and
-   the kernel's program. *)
+(* The devices map of the device [name], its name in it, and the program of
+   [search_kernel ()] on it. *)
 let search_setup name open_device =
   let d = open_device () and device = String.uppercase_ascii name in
-  let devices = Tolk_engine.device [ (device, d) ] in
-  let k = search_kernel () in
-  let prg = Codegen.to_program k (Tolk_engine.renderer d) in
-  (Tolk_engine.timer ~devices device ~vars:[] k, prg)
+  let prg = Codegen.to_program (search_kernel ()) (Tolk_engine.renderer d) in
+  (Tolk_engine.device [ (device, d) ], device, prg)
 
 let prepare name open_device =
   Thumper.bench_with_setup
     ~setup:(fun () -> search_setup name open_device)
     name
-    (fun (stage, prg) -> stage prg)
+    (fun (devices, device, prg) -> Tolk_engine.link_program ~devices device prg)
 
 (* A search's candidates of a lorenz kernel, lowered for a CUDA renderer that
    compiles nothing: the kernel as the search is handed it, with the
@@ -313,8 +310,9 @@ let () =
       match Metal.open_device with
       | None -> exit 1
       | Some open_device ->
-          let stage, prg = search_setup "metal" open_device in
-          ignore ((stage prg) ());
+          let devices, device, prg = search_setup "metal" open_device in
+          let s = Tolk_engine.link_program ~devices device prg in
+          ignore (Tolk_engine.time s (Tolk_engine.slots s));
           exit 0)
   | [ _; "--warm" ] ->
       (* Each case that compiles, once, in as few calls as a trial takes: the

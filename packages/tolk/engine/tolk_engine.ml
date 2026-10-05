@@ -1290,79 +1290,110 @@ let run ?(vars = []) t slots = run_with Reported ~vars t slots
 let invalidate_caches d =
   Option.iter Nx_nv_device.invalidate_caches (Nx_nv_device.of_device d)
 
-(* The span of [f]'s work named [name] on [d], as [d] stamps it, or, while a
-   profile is taken elsewhere, [f] and [d]'s synchronization on the host
-   clock. *)
-let timed d name f =
+(* Each kernel of [calls] once, as the device whose profile records its span and
+   its name: a host program's span is the host's, where it is loaded. *)
+let rec kernels calls =
+  let add ks k =
+    if List.exists (fun (d, n) -> d == fst k && n = snd k) ks then ks
+    else k :: ks
+  in
+  let of_call ks = function
+    | Kernel { launches; _ } ->
+        Array.fold_left
+          (fun ks l ->
+            let p = l.program.program in
+            add ks (Nx_device.Program.device p, Nx_device.Program.name p))
+          ks launches
+    | Batch b ->
+        List.fold_left
+          (fun ks (k : Ops.hcq_kernel) ->
+            List.fold_left
+              (fun ks dn -> add ks (b.named dn, k.name))
+              ks k.devices)
+          ks b.info.kernels
+    | Range { body; _ } -> List.fold_left add ks (kernels body)
+    | Copy _ -> ks
+  in
+  List.rev (List.fold_left of_call [] calls)
+
+(* The nanoseconds of the spans of the kernel [name] on [d] in [events]. *)
+let spans events (d, name) =
+  let ns =
+    List.filter_map
+      (function
+        | Nx_device.Profile.Span sp when sp.device == d && sp.name = name ->
+            Some (sp.stop - sp.start)
+        | _ -> None)
+      events
+  in
+  if ns = [] then fail "Tolk_engine.time" "no span of %s" name;
+  List.fold_left ( + ) 0 ns
+
+let time ?(vars = []) t slots =
+  let kernels = kernels t.calls in
+  let devices =
+    List.fold_left
+      (fun ds (d, _) -> if List.memq d ds then ds else d :: ds)
+      [] kernels
+  in
+  List.iter invalidate_caches devices;
+  let run () = run_with Silent ~vars t slots in
   let now = Nx_device.Profile.now in
-  if Nx_device.Profile.enabled () then (
-    let t0 = now () in
-    f ();
-    Nx_device.synchronize d;
-    now () - t0)
-  else
-    let p = Nx_device.Profile.start () in
-    let events =
-      match f () with
-      | () -> Nx_device.Profile.stop p
-      | exception e ->
-          ignore (Nx_device.Profile.stop p);
-          raise e
-    in
-    let span = function
-      | Nx_device.Profile.Span sp when sp.device == d && sp.name = name ->
-          Some (sp.stop - sp.start)
-      | _ -> None
-    in
-    match List.find_map span events with
-    | Some ns -> ns
-    | None -> invalid_arg ("Tolk_engine.timer: no span of " ^ name)
+  let ns =
+    if Nx_device.Profile.enabled () then begin
+      let t0 = now () in
+      run ();
+      List.iter Nx_device.synchronize devices;
+      now () - t0
+    end
+    else
+      let p = Nx_device.Profile.start () in
+      let events =
+        match run () with
+        | () -> Nx_device.Profile.stop p
+        | exception e ->
+            ignore (Nx_device.Profile.stop p);
+            raise e
+      in
+      List.fold_left (fun ns k -> ns + spans events k) 0 kernels
+  in
+  Float.of_int ns *. 1e-9
 
-(* The storage parameters of [kernel], by slot. *)
-let storage_params kernel =
-  List.filter_map
-    (fun u ->
-      match Ops.arg u with
-      | Ops.Param { slot; _ } when is_slot u && slot >= 0 -> Some (slot, u)
-      | _ -> None)
-    (Ops.toposort ~calls:Enter kernel)
-  |> List.sort_uniq (fun (s, _) (s', _) -> Int.compare s s')
+let slots t =
+  let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.params in
+  let slots = Array.make n [] in
+  List.iter
+    (fun (slot, ds, bytes) ->
+      slots.(slot) <-
+        List.map (fun d -> B.create d Nx_dtype.Scalar.UInt8 (max 1 bytes)) ds)
+    t.params;
+  slots
 
-let timer ~devices name ~vars kernel =
-  let dev = devices name in
-  let params = storage_params kernel in
-  if List.map fst params <> List.init (List.length params) Fun.id then
-    fail "Tolk_engine.timer" "the kernel's parameters skip a slot";
-  let args =
-    List.map
-      (fun (slot, u) ->
+let link_program ~devices name prg =
+  let info =
+    match Ops.arg prg with
+    | Ops.Program info -> info
+    | _ -> fail "Tolk_engine.link_program" "not a compiled program"
+  in
+  let buffers =
+    List.filteri
+      (fun i _ -> i < List.length info.globals)
+      (Device.Tiny_elf.of_program prg).signature
+    |> List.combine info.globals
+  in
+  (* The call's arguments are the program's slots in order: one the program does
+     not read is a byte. *)
+  let arg slot =
+    match List.assoc_opt slot buffers with
+    | Some (b : Device.Tiny_elf.param) ->
         Ops.param
-          ~shape:[ Ops.Int (Ops.max_numel u) ]
-          ~device:(Single name) slot (Ops.dtype u))
-      params
+          ~shape:(List.map (fun n -> Ops.Int n) b.shape)
+          ~device:(Single name) slot b.dtype
+    | None -> Ops.param ~shape:[ Ops.Int 1 ] ~device:(Single name) slot Uint8
   in
-  let slots =
-    Array.of_list
-      (List.map
-         (fun u ->
-           [ B.create dev.device Nx_dtype.Scalar.UInt8 (max 1 (bytes u)) ])
-         args)
-  in
-  let on =
-    match dev.compiler.queues with
-    | None -> Nx_device.host_of dev.device
-    | Some _ -> dev.device
-  in
-  fun prg ->
-    let s =
-      link ~devices
-        (Hcq2.compile_linear ~profile:Stamped
-           ~devices:(fun n -> (devices n).compiler)
-           (Ops.v Op.Linear ~src:[ Ops.call prg args ]))
-    in
-    let kernel_name = (Device.Tiny_elf.of_program prg).name in
-    fun () ->
-      invalidate_caches dev.device;
-      Float.of_int
-        (timed on kernel_name (fun () -> run_with Silent ~vars s slots))
-      *. 1e-9
+  let n = List.fold_left (fun n slot -> max n (slot + 1)) 0 info.globals in
+  let args = List.init n arg in
+  link ~devices
+    (Hcq2.compile_linear ~profile:Stamped
+       ~devices:(fun n -> (devices n).compiler)
+       (Ops.v Op.Linear ~src:[ Ops.call prg args ]))

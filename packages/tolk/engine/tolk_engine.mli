@@ -251,42 +251,45 @@ val profile : unit -> Tolk.Hcq2.profile
     time from its stamps, and {!Tolk.Hcq2.Unstamped} otherwise. A caller that
     keeps compiled schedules keeps one for each value of [profile ()]. *)
 
-(** {1:timing Timing} *)
+val slots : t -> Nx_device.Buffer.t list array
+(** [slots s] is, for each slot that a parameter of [s] takes, a buffer on each
+    device of the parameter's placement holding the parameter's bytes, and no
+    buffer for a slot no parameter takes: slots {!run} and {!time} accept. Their
+    contents are unspecified.
 
-val timer :
-  devices:(string -> device) ->
-  string ->
-  vars:(string * int) list ->
-  Ops.t ->
-  Ops.t ->
-  unit ->
-  float
-(** [timer ~devices name ~vars kernel prg ()] is the time in seconds of one run
-    of the program [prg], compiled from the kernel [kernel], on the device
-    [devices] maps [name] to, from cold caches, with each variable bound to its
-    value in [vars]. It is staged for a search, which times many programs of one
-    kernel, each a few times:
+    Raises {!Nx_device.Out_of_memory} if a device cannot allocate a buffer. *)
 
-    - [timer ~devices name ~vars kernel] allocates, on the device, a buffer for
-      each storage parameter of [kernel] ({!Tolk.Op.Param} of slot [0] or more,
-      outside {!Tolk.Dtype.Alu}) holding the parameter's bytes. Their contents
-      are unspecified. Every program applied to it runs on these buffers.
-    - Applying that to [prg] links [prg] as a schedule of one call over those
-      buffers ({!link}).
-    - Each application of the result to [()] invalidates the device's caches
-      where its vendor can ([Nx_nv_device.invalidate_caches]) and runs [prg]
-      once. The time of the run is the span of its kernel in a profile of it
-      ({!Nx_device.Profile}), which a device with queues stamps and the host
-      records around its call otherwise. While a profile is taken already, the
-      time is the run and the device's synchronization on the host clock. A run
-      reports nothing on standard output, whatever {!Tolk.Setting.debug} holds.
-      It allocates no device memory and loads nothing. Runs are serialized, as
-      {!run}s are.
+(** {1:timing Timing}
 
-    Each stage keeps what it allocated or linked while its result is reachable.
+    A search times many programs of one kernel, each a few times: it links each
+    program ({!link_program}), allocates slots once, for the first ({!slots}),
+    and times the runs of each on them ({!time}). *)
 
-    Raises [Invalid_argument] if [devices] does not map [name], or if [kernel]'s
-    storage parameters do not take the slots [0] to [n - 1], and
-    {!Nx_device.Out_of_memory} if the device cannot allocate the buffers, all
-    when applied to [kernel]. Applied to [prg], it raises as {!link} does. A run
-    raises as {!run} does. *)
+val link_program : devices:(string -> device) -> string -> Ops.t -> t
+(** [link_program ~devices name prg] is the compiled program [prg]
+    ({!Tolk.Op.Program}) linked on the device [devices] maps [name] to, as a
+    schedule of one call of [prg] that records its kernel's span while a profile
+    is taken ({!Tolk.Hcq2.compile_linear}[ ~profile:Stamped]). Its parameter [i]
+    is the buffer [prg] takes as its argument [i] ({!Tolk.Ops.program_info}'s
+    [globals]), or a byte for an argument below the last that [prg] does not
+    take.
+
+    Raises [Invalid_argument] if [prg] is not a compiled program, and as {!link}
+    does. *)
+
+val time :
+  ?vars:(string * int) list -> t -> Nx_device.Buffer.t list array -> float
+(** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
+    with [vars] ({!run}), from cold caches. It invalidates the caches of the
+    devices that run [s]'s kernels where their vendor can
+    ([Nx_nv_device.invalidate_caches]), then runs [s] once, reporting nothing on
+    standard output whatever {!Tolk.Setting.debug} holds. The time is the sum of
+    the spans of [s]'s kernels in a profile of the run ({!Nx_device.Profile}),
+    which a device with queues stamps and the host records around each call of a
+    host program. While a profile is taken already, it is the run and the
+    synchronization of those devices on the host clock. A time allocates no
+    device memory and loads nothing.
+
+    Raises as {!run} does, and [Invalid_argument] if a kernel of [s] records no
+    span in the profile: one of a batch compiled without a profile, or one under
+    a range of no trips. *)

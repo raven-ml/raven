@@ -657,13 +657,26 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
       (* Each kernel asks for a search of width [beam], or else of the width
          tolk's settings give, and one of at least 1 is searched, each candidate
          timed on the device its renderer targets, on as many domains as
-         [parallel] gives or the [PARALLEL] setting. *)
+         [parallel] gives or the [PARALLEL] setting. The candidates, programs of
+         one kernel, run on the slots of the first one timed: a search the disk
+         cache answers allocates nothing. *)
       let search width k =
         report "searched a kernel at width %d" width;
         let name = (Tolk.Postrange.Scheduler.ren k).target.device in
-        let search () =
-          Tolk.Search.beam_search ~time:(Engine.timer ~devices name) width k
+        let slots = ref None in
+        let link prg = Engine.link_program ~devices name prg in
+        let time ~vars s =
+          let slots =
+            match !slots with
+            | Some b -> b
+            | None ->
+                let b = Engine.slots s in
+                slots := Some b;
+                b
+          in
+          Engine.time ~vars s slots
         in
+        let search () = Tolk.Search.beam_search ~link ~time width k in
         match parallel with
         | None -> search ()
         | Some p -> Tolk.Setting.context [ B (Tolk.Setting.parallel, p) ] search

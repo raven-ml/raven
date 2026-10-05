@@ -154,10 +154,10 @@ the Exclusions of `README.md`.
   - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
     since a renderer holds its compiler and `Device` follows `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` follows
-    `Postrange` and takes the timing of a kernel as its `time` argument,
-    where `beam_search` takes `rawbufs` and `var_vals`: applied to the
-    kernel, it makes the buffers `args_from_ast` describes, since `tolk`
-    cannot name nx.device's buffers;
+    `Postrange` and takes how to link and time a program as its `link`
+    and `time` arguments, where `beam_search` takes `rawbufs` and
+    `var_vals`: its caller makes the buffers `args_from_ast` describes
+    (`Tolk_engine.slots`), since `tolk` cannot name nx.device's buffers;
     `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;
@@ -3581,7 +3581,7 @@ stores through a pad.
   stamp after the work before it is complete, since each dispatch ends with a
   CS partial flush and each AQL packet has its barrier bit, so a stamp after a
   kernel still follows its waves.
-- **Reason:** (b). `Tolk_engine.timer` times a search's candidates by their
+- **Reason:** (b). `Tolk_engine.time` times a search's candidates by their
   spans. In the lorenz training step on AMD, most of one kernel's candidates
   timed at 10 to 13 us; the search picked one, which took 0.8 s of each 1.08 s
   step, where NV's search picked a candidate of 2.9 ms.

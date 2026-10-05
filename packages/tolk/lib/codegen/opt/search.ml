@@ -69,7 +69,7 @@ let most = List.fold_left Float.max neg_infinity
 
 (* Timed up to [cnt] times, stopping once its least exceeds [early_stop]: the
    samples. *)
-let time_program ~time ~early_stop ~allow_test_size ~vars ?(cnt = 3) prg =
+let time_program ~link ~time ~early_stop ~allow_test_size ~vars ?(cnt = 3) prg =
   let prg, factor =
     match arg prg with
     | Program info when allow_test_size ->
@@ -80,9 +80,9 @@ let time_program ~time ~early_stop ~allow_test_size ~vars ?(cnt = 3) prg =
         (replace prg ~arg:(Program { info with global_size }), factor)
     | _ -> (prg, 1.)
   in
-  let sample = time prg in
+  let linked = link prg in
   let rec go samples cnt =
-    let samples = (sample () *. factor) :: samples in
+    let samples = (time ~vars linked *. factor) :: samples in
     if cnt = 1 || early_stop < least samples then samples
     else go samples (cnt - 1)
   in
@@ -248,7 +248,7 @@ let midpoint v =
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
-let beam_search ~time ?allow_test_size amt s =
+let beam_search ~link ~time ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -293,7 +293,6 @@ let beam_search ~time ?allow_test_size amt s =
       let vars =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
-      let time = time ~vars (K.ast s) in
       let min_progress = setting Setting.beam_min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
       (* Each kernel is compiled once: two sequences of actions can reach equal
@@ -322,7 +321,9 @@ let beam_search ~time ?allow_test_size amt s =
       (* [k]'s program timed with an early stop, or [None] if its timing
          failed. *)
       let sampled k prg ~early_stop =
-        match time_program ~time ~vars ~early_stop ~allow_test_size prg with
+        match
+          time_program ~link ~time ~vars ~early_stop ~allow_test_size prg
+        with
         | samples -> Some samples
         | exception e -> (
             let bt = Printexc.get_raw_backtrace () in

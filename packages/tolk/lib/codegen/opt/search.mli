@@ -18,10 +18,10 @@
     the optimisations it finds are then applied by name ({!Ops.kernel_info}'s
     [opts_to_apply]). No kernel is searched unless its argument asks for a width
     ({!Ops.kernel_info}'s [beam]) and its compiler is given the search:
-    [Codegen.to_program ~beam:(beam_search ~time)].
+    [Codegen.to_program ~beam:(beam_search ~link ~time)].
 
-    Nothing here runs a program. The search times candidates with the timing it
-    is given, which runs them on a device. *)
+    Nothing here runs a program. The search links and times candidates with the
+    functions it is given, which run them on a device. *)
 
 (** {1:actions Actions} *)
 
@@ -68,27 +68,26 @@ val get_kernel_actions :
 (** {1:search Searching} *)
 
 val beam_search :
-  time:(vars:(string * int) list -> Ops.t -> Ops.t -> unit -> float) ->
+  link:(Ops.t -> 'linked) ->
+  time:(vars:(string * int) list -> 'linked -> float) ->
   ?allow_test_size:bool ->
   int ->
   Postrange.Scheduler.t ->
   Postrange.Scheduler.t
-(** [beam_search ~time ~allow_test_size amt k] is [k], or a copy of it, with the
-    optimisations that a beam search of width [amt] finds fastest. [k]'s kernel
-    is the sink that {!Postrange.apply_opts} optimises.
+(** [beam_search ~link ~time ~allow_test_size amt k] is [k], or a copy of it,
+    with the optimisations that a beam search of width [amt] finds fastest.
+    [k]'s kernel is the sink that {!Postrange.apply_opts} optimises.
 
-    [time ~vars kernel prg ()] is the time in seconds of one run of the compiled
-    program [prg] ({!Op.Program}), compiled from the kernel [kernel], on a
-    device of the target of [k]'s renderer, from cold caches where the device
-    can, with each variable bound to its value in [vars]. A search that measures
-    applies [time ~vars] to [k]'s kernel once, before it compiles anything, with
-    each variable of the kernel ({!Ops.variables}) bound to the middle of its
-    bounds, [(vmin + vmax) / 2] rounded down. It applies the result once to each
-    program it times, and that result to [()] once per sample. The search raises
-    any exception from the first application. A program whose application or
-    sample raises [Failure] is dropped; the search raises any other exception.
-    The search limits neither a compilation nor a run: a candidate whose
-    compilation or run hangs hangs the search, one more reason to run it
+    [link prg] is the compiled program [prg] ({!Op.Program}) of [k]'s kernel
+    made ready to run on a device of the target of [k]'s renderer, and
+    [time ~vars p] is the time in seconds of one run of the program [p] links,
+    from cold caches where the device can, with each variable bound to its value
+    in [vars]: each variable of [k]'s kernel ({!Ops.variables}) bound to the
+    middle of its bounds, [(vmin + vmax) / 2] rounded down. The search links
+    each program it times once, and times it once per sample. A program whose
+    [link] or [time] raises [Failure] is dropped; the search raises any other
+    exception. The search limits neither a compilation nor a run: a candidate
+    whose compilation or run hangs hangs the search, one more reason to run it
     offline.
 
     A kernel is compiled for [k]'s renderer named ["test"], with its storage
@@ -141,10 +140,10 @@ val beam_search :
     ({!Setting.beam_uops_max}, {!Setting.beam_upcast_max},
     {!Setting.beam_local_max}, {!Setting.beam_min_progress} and
     {!Setting.beam_estimate}), and the sources of this library. Unless
-    {!Setting.ignore_beam_cache} holds, a search whose key is kept compiles and
-    times nothing, applies nothing of [time], and applies the optimisations kept
-    beyond as many as [k] has to a copy of [k]. A kept result is what an earlier
-    search measured fastest: another search may measure otherwise.
+    {!Setting.ignore_beam_cache} holds, a search whose key is kept compiles,
+    links and times nothing, and applies the optimisations kept beyond as many
+    as [k] has to a copy of [k]. A kept result is what an earlier search
+    measured fastest: another search may measure otherwise.
 
     When the setting {!Setting.debug} is [2] or more, the progress of the search
     is printed on standard output, and {!Setting.beam_debug} prints more.

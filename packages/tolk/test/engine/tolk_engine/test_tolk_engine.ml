@@ -1392,7 +1392,7 @@ let runs =
 let null = lazy (Null_device.devices ())
 let on_null name = (Lazy.force null) name
 
-(* The devices a timer runs on: the host, which runs a program as a call, a
+(* The devices a time runs on: the host, which runs a program as a call, a
    device with queues, and Metal. *)
 let timed_on =
   [ ("the host", "CPU"); ("a device with queues", "CPU:1"); ("Metal", "METAL") ]
@@ -1407,11 +1407,16 @@ let timing_on name =
   | "CPU:1" -> (on_null, Lazy.force clang)
   | _ -> (devices, Lazy.force clang)
 
-(* The kernel stage of a timer of [long_axpy ()] on [name], and its program. *)
-let timer_on ?(vars = [ ("n", 3) ]) name =
+(* The program of [long_axpy ()] linked on [name], and its slots. *)
+let timed name =
   let devices, ren = timing_on name in
-  let k = long_axpy () in
-  (Engine.timer ~devices name ~vars k, Codegen.to_program k ren)
+  let s =
+    Engine.link_program ~devices name (Codegen.to_program (long_axpy ()) ren)
+  in
+  (s, Engine.slots s)
+
+(* The variable of [long_axpy ()], bound. *)
+let n_bound = [ ("n", 3) ]
 
 let span_count name events =
   List.length
@@ -1434,44 +1439,42 @@ let profiled f =
       (r, taken, Nx_device.Profile.stop p))
 
 let positive name =
-  let stage, prg = timer_on name in
-  let sample = stage prg in
-  let t = sample () in
+  let s, slots = timed name in
+  let t = Engine.time ~vars:n_bound s slots in
   greater float_exact ~than:0. t;
   less float_exact ~than:1. t
 
 let leaves_the_profile name =
-  let stage, prg = timer_on name in
-  let sample = stage prg in
-  let t, taken, _ = profiled sample in
+  let s, slots = timed name in
+  let t, taken, _ = profiled (fun () -> Engine.time ~vars:n_bound s slots) in
   greater float_exact ~than:0. t;
   less float_exact ~than:1. t;
   is_true ~msg:"taken" taken
 
-let runs_once_per_sample name =
-  let stage, prg = timer_on name in
-  let sample = stage prg in
-  let n = 5 in
+let runs_once name =
+  let s, slots = timed name in
+  let runs = 5 in
   let (), _, events =
     profiled (fun () ->
-        for _ = 1 to n do
-          ignore (sample ())
+        for _ = 1 to runs do
+          ignore (Engine.time ~vars:n_bound s slots)
         done)
   in
-  equal int n (span_count "long_axpy" events)
+  equal int runs (span_count "long_axpy" events)
 
-(* A sample's allocations and loads are the profile's Allocation and Load
-   events, and a sample that allocates nothing leaves the device's allocated
-   bytes as they were, or fewer. *)
-let samples_allocate_nothing name =
-  let stage, prg = timer_on name in
-  let sample = stage prg in
-  ignore (sample ());
+(* A time's allocations and loads are the profile's Allocation and Load events,
+   and a time that allocates nothing leaves the device's allocated bytes as they
+   were, or fewer. *)
+let time_allocates_nothing name =
+  let s, slots = timed name in
+  ignore (Engine.time ~vars:n_bound s slots);
   let devices, _ = timing_on name in
   let stats () = Nx_device.stats (devices name).device in
   Gc.full_major ();
   let before = stats () in
-  let (), _, events = profiled (fun () -> ignore (sample ())) in
+  let (), _, events =
+    profiled (fun () -> ignore (Engine.time ~vars:n_bound s slots))
+  in
   let count f = List.length (List.filter f events) in
   equal int ~msg:"allocations" 0
     (count (function Nx_device.Profile.Allocation _ -> true | _ -> false));
@@ -1480,9 +1483,9 @@ let samples_allocate_nothing name =
   at_most int ~than:0
     (Nx_device.Stats.allocated (Nx_device.Stats.diff before (stats ())))
 
-(* A timer used and dropped returns what it allocated: after a warming round,
-   rounds of a kernel stage, a preparation and a sample leave the device's
-   allocated bytes as they were. *)
+(* Slots and a linked program, timed and dropped, return what they allocated:
+   after a warming round, rounds of them leave the device's allocated bytes as
+   they were. *)
 let returns_its_memory name =
   let devices, _ = timing_on name in
   let allocated () =
@@ -1492,8 +1495,8 @@ let returns_its_memory name =
     Nx_device.Stats.allocated (Nx_device.stats (devices name).device)
   in
   let round () =
-    let stage, prg = timer_on name in
-    ignore (Sys.opaque_identity ((stage prg) ()))
+    let s, slots = timed name in
+    ignore (Sys.opaque_identity (Engine.time ~vars:n_bound s slots))
   in
   round ();
   let before = allocated () in
@@ -1505,10 +1508,11 @@ let returns_its_memory name =
   at_most int ~than:before (allocated ())
 
 let prints_nothing name =
-  let stage, prg = timer_on name in
-  let sample = stage prg in
+  let s, slots = timed name in
   ignore (output ());
-  Setting.context [ B (Setting.debug, 2) ] (fun () -> ignore (sample ()));
+  Setting.context
+    [ B (Setting.debug, 2) ]
+    (fun () -> ignore (Engine.time ~vars:n_bound s slots));
   expect (output ()) @@ __POS_OF__ {||}
 
 (* [kernel] with its parameter 1 moved to the slot 3. *)
@@ -1523,29 +1527,68 @@ let skipping_a_slot () =
   Ops.substitute ~calls:Skip k
     (List.concat_map moved (Ops.toposort ~calls:Enter k))
 
+(* The program of [long_axpy ()] linked on the device with queues by a schedule
+   compiled without a profile. *)
+let unprofiled () =
+  let k = long_axpy () in
+  let prg = Codegen.to_program k (Lazy.force clang) in
+  let args =
+    List.init 3 (fun slot ->
+        Ops.param
+          ~shape:[ Ops.Int (1 lsl 18) ]
+          ~device:(Single "CPU:1") slot Float32)
+  in
+  let s =
+    Engine.link ~devices:on_null
+      (Hcq2.compile_linear ~profile:Unstamped
+         ~devices:(fun n -> (on_null n).compiler)
+         (Ops.v Op.Linear ~src:[ Ops.call prg args ]))
+  in
+  (s, Engine.slots s)
+
+(* The slots of the linked schedule of the program [name], which hold as many
+   buffers per slot as its storage's, and which a run takes. *)
+let slots_fit name =
+  let s, vars, storage = linked (program name) in
+  let fresh = Engine.slots s in
+  let counts slots = Array.to_list (Array.map List.length slots) in
+  equal (list int) (counts (slots storage)) (counts fresh);
+  Engine.run ~vars s fresh
+
 let timing =
   let on f = cases ~name:fst "on" timed_on (fun (_, name) -> f name) in
   group "timing"
     [
-      test "the kernel stage refuses a name the map does not hold" (fun () ->
+      cases ~name:Fun.id "run takes the slots of a linked schedule"
+        [ "add"; "shard_add" ] slots_fit;
+      test "link_program refuses a name the map does not hold" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Engine.timer ~devices "CPU:9" ~vars:[] (kernel ())));
-      test "the kernel stage refuses a kernel whose storage skips a slot"
+              Engine.link_program ~devices "CPU:9" (Lazy.force axpy)));
+      test "a program whose buffers skip a slot links and runs on its slots"
         (fun () ->
-          raises_match Exn.invalid_arg (fun () ->
-              Engine.timer ~devices "CPU" ~vars:[] (skipping_a_slot ())));
-      group "a sample takes a positive time, under a second" [ on positive ];
-      group "a sample under a profile leaves the profile taken"
+          let prg =
+            Codegen.to_program (skipping_a_slot ()) (Lazy.force clang)
+          in
+          let s = Engine.link_program ~devices "CPU" prg in
+          let slots = Engine.slots s in
+          equal ~msg:"buffers by slot" (list int) [ 1; 1; 1; 1 ]
+            (Array.to_list (Array.map List.length slots));
+          Engine.run ~vars:n_bound s slots);
+      group "a time is positive, under a second" [ on positive ];
+      group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];
-      group "each sample runs its program once" [ on runs_once_per_sample ];
-      group "a sample allocates and loads nothing"
-        [ on samples_allocate_nothing ];
-      group "a dropped timer returns its memory" [ on returns_its_memory ];
-      group "a sample prints nothing at DEBUG=2" [ on prints_nothing ];
-      test "a sample refuses an unbound variable" (fun () ->
-          let stage, prg = timer_on ~vars:[] "CPU" in
-          let sample = stage prg in
-          raises_match Exn.invalid_arg sample);
+      group "each time runs its program once" [ on runs_once ];
+      group "a time allocates and loads nothing" [ on time_allocates_nothing ];
+      group "slots and a linked program, dropped, return their memory"
+        [ on returns_its_memory ];
+      group "a time prints nothing at DEBUG=2" [ on prints_nothing ];
+      test "a time refuses an unbound variable" (fun () ->
+          let s, slots = timed "CPU" in
+          raises_match Exn.invalid_arg (fun () -> Engine.time s slots));
+      test "a time refuses a kernel whose batch records no span" (fun () ->
+          let s, slots = unprofiled () in
+          raises_match Exn.invalid_arg (fun () ->
+              Engine.time ~vars:n_bound s slots));
     ]
 
 (* Batches
