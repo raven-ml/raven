@@ -826,10 +826,6 @@ let holds_tensor q y = Nx.Ptree.fold q (fun _ _ _ -> true) y false
 let holds_own i p args =
   Nx.Ptree.fold p (fun _ x any -> any || owns i x) args false
 
-let operator_tracked =
-  "Rune.root: linear_solve's operator cannot be differentiated inside \
-   linear_solve"
-
 (* [primals i f] is [f ()] with each of [i]'s duals it reads replaced by its
    primal: code with no derivative, such as a loop's stop. *)
 let primals i f =
@@ -1059,9 +1055,18 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
       else None
   | Root { x; residual; solve; linear_solve } ->
       Some (fun () -> root i x residual solve linear_solve)
-  | At_map { p; x; _ } ->
-      if holds_own i p x then Some (fun () -> invalid_arg operator_tracked)
-      else None
+  | At_map ({ p; q; x; _ } as a) ->
+      (* [f] is linear: its tangent is [f] of the argument's tangent. *)
+      if not (holds_own i p x) then None
+      else
+        Some
+          (fun () ->
+            let at x = Construct.perform (At_map { a with x }) in
+            let y = at (Nx.Ptree.map p (fun _ v -> primal i v) x) in
+            let dy = at (Nx.Ptree.map p (fun _ v -> tangent i v) x) in
+            Nx.Ptree.map2 q
+              (fun _ y dy -> if Linear.differentiable y then dual i y dy else y)
+              y dy)
   | Lane_index _ | Lane_count _ -> None
 
 (* With value tangents a loop passes on as the loop of its jvp: the carry and
@@ -1509,7 +1514,8 @@ and root : type x.
     let solve () =
       Total.discarding (fun () ->
           read (fun () ->
-              linear_solve j (Nx.Ptree.map x (fun _ r -> Nx.neg r) r)))
+              Construct.operator x x j (fun op ->
+                  linear_solve op (Nx.Ptree.map x (fun _ r -> Nx.neg r) r))))
     in
     let dy = Construct.perform (Root { x; residual; solve; linear_solve }) in
     Nx.Ptree.map2 x

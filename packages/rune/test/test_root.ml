@@ -500,68 +500,96 @@ let mapped_tests =
           (Rune.grad' (fun ths -> Nx.sum (Rune.vmap' root ths)) ths));
   ]
 
+(* The operator's contract *)
+
+(* Each context a root's derivative can run in, as each lane's gradient of the
+   system's loss. *)
+let contexts =
+  let ths = vec [| 0.3; -1.1 |] in
+  [
+    ( "grad",
+      fun linear_solve -> per_lane (Rune.grad' (system_loss ~linear_solve)) ths
+    );
+    ( "jvp",
+      fun linear_solve ->
+        per_lane
+          (fun th -> snd (Rune.jvp' (system_loss ~linear_solve) th (scalar 1.)))
+          ths );
+    ( "grad of vmap",
+      fun linear_solve ->
+        Rune.grad'
+          (fun ths -> Nx.sum (Rune.vmap' (system_loss ~linear_solve) ths))
+          ths );
+    ( "vmap of grad",
+      fun linear_solve ->
+        Rune.vmap' (Rune.grad' (system_loss ~linear_solve)) ths );
+  ]
+
+(* Solvers that differentiate their operator: its matrix by forward mode, and by
+   reverse mode. *)
+let by_jacfwd op b = solve_dense (Rune.jacfwd' op b) b
+let by_jacrev op b = solve_dense (Rune.jacrev' op b) b
+
+let contract_tests =
+  let expected = per_lane (Rune.grad' system_closed) (vec [| 0.3; -1.1 |]) in
+  List.concat_map
+    (fun (context, run) ->
+      [
+        test
+          (context ^ ": a linear solve may differentiate its operator forward")
+          (fun () -> equal (close ()) expected (run by_jacfwd));
+        test
+          (context ^ ": a linear solve may differentiate its operator backward")
+          (fun () -> equal (close ()) expected (run by_jacrev));
+      ])
+    contexts
+
 (* Refusals *)
 
-let refused message linear_solve =
-  raises (Invalid_argument message) (fun () ->
-      Rune.grad'
-        (fun ths -> Nx.sum (Rune.vmap' (system_loss ~linear_solve) ths))
-        (vec [| 0.3; -1.1 |]))
+let escaped =
+  "Rune.root: linear_solve's operator was applied after linear_solve returned, \
+   or inside a Rune.jit it called"
 
 let stash = ref None
 
 let refusal_cases =
-  [
-    ( "the operator called after linear_solve returned",
-      fun () ->
-        let ths = vec [| 0.3; -1.1 |] in
-        ignore
-          (Rune.grad'
-             (fun ths ->
-               Nx.sum
-                 (Rune.vmap'
-                    (system_loss ~linear_solve:(fun op b ->
-                         stash := Some op;
-                         mapped_dense op b))
-                    ths))
-             ths);
-        raises
-          (Invalid_argument
-             "Rune.root: linear_solve's operator was applied after \
-              linear_solve returned, or inside a Rune.jit it called") (fun () ->
-            (Option.get !stash) (vec [| 1.; 2.; 3. |])) );
-    ( "the operator under jvp inside linear_solve",
-      fun () ->
-        refused
-          "Rune.root: linear_solve's operator cannot be differentiated inside \
-           linear_solve" (fun op b ->
-            ignore (Rune.jvp' op b b);
-            mapped_dense op b) );
-    ( "the operator inside a Rune.jit linear_solve calls",
-      fun () ->
-        refused
-          "Rune.root: linear_solve's operator was applied after linear_solve \
-           returned, or inside a Rune.jit it called" (fun op b ->
-            mapped_dense (Rune.jit' op) b) );
-    ( "a residual that reads other lanes of the root's map",
-      fun () ->
-        let a = Rune.axis () in
-        raises
-          (Invalid_argument
-             "Rune.root: the residual reads other lanes of the map, so the \
-              lanes' systems are not separate") (fun () ->
-            Rune.grad'
-              (fun ths ->
-                Nx.sum
-                  (Rune.vmap' ~axis:a
-                     (fun th ->
-                       Rune.root one
-                         ~residual:(fun x ->
-                           Nx.sub (Nx.mul_s x 2.) (Nx.sum (Rune.lanes a th)))
-                         (fun () -> th))
-                     ths))
-              (vec [| 0.3; -1.1 |])) );
-  ]
+  List.concat_map
+    (fun (context, run) ->
+      [
+        ( context ^ ": the operator called after linear_solve returned",
+          fun () ->
+            ignore
+              (run (fun op b ->
+                   stash := Some op;
+                   mapped_dense op b));
+            raises (Invalid_argument escaped) (fun () ->
+                (Option.get !stash) (vec [| 1.; 2.; 3. |])) );
+        ( context ^ ": the operator inside a Rune.jit linear_solve calls",
+          fun () ->
+            raises (Invalid_argument escaped) (fun () ->
+                run (fun op b -> mapped_dense (Rune.jit' op) b)) );
+      ])
+    contexts
+  @ [
+      ( "a residual that reads other lanes of the root's map",
+        fun () ->
+          let a = Rune.axis () in
+          raises
+            (Invalid_argument
+               "Rune.root: the residual reads other lanes of the map, so the \
+                lanes' systems are not separate") (fun () ->
+              Rune.grad'
+                (fun ths ->
+                  Nx.sum
+                    (Rune.vmap' ~axis:a
+                       (fun th ->
+                         Rune.root one
+                           ~residual:(fun x ->
+                             Nx.sub (Nx.mul_s x 2.) (Nx.sum (Rune.lanes a th)))
+                           (fun () -> th))
+                       ths))
+                (vec [| 0.3; -1.1 |])) );
+    ]
 
 let refusal_tests =
   List.map (fun (name, f) -> test (name ^ " is refused") f) refusal_cases
@@ -1017,6 +1045,7 @@ let () =
          group "structures" structure_tests;
          group "mapped linear solves"
            (mapped_props @ second_order_props @ mapped_tests);
+         group "the operator's contract" contract_tests;
          group "refusals" refusal_tests;
          group "totals" total_tests;
          group "compiled" compiled_tests;

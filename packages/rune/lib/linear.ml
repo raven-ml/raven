@@ -604,16 +604,66 @@ let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
       else None
   | Root { x; residual; solve; linear_solve } ->
       Some (fun () -> root t x residual solve linear_solve)
-  | At_map { p; x; _ } ->
+  | At_map { map; p; q; f; x } ->
       if Nx.Ptree.fold p (fun _ v any -> any || owns t v) x false then
-        Some
-          (fun () ->
-            invalid_arg
-              "Rune.root: linear_solve's operator cannot be differentiated \
-               inside linear_solve")
+        Some (fun () -> at_map t map p q f x)
       else None
   | Loop _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
       None
+
+(* An application of a linear [f] at another level to slots of [t] is a linear
+   call from those slots, whose transpose applies [f]'s transpose at that level.
+   A leaf of the argument that is no slot stands for zero, and [f] at zeros
+   gives the result's metadata. *)
+and at_map : type p q.
+    tape -> Construct.map -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> q
+    =
+ fun t map p q f x ->
+  let zeros = Nx.Ptree.map p (fun _ v -> Nx.zeros_like v) x in
+  let y0 = Construct.perform (At_map { map; p; q; f; x = zeros }) in
+  let leaves, _ = Nx.Ptree.flatten p x in
+  let flags = List.map (fun (Nx.P v) -> owns t v) leaves in
+  let pick l =
+    List.filter_map
+      (fun (f, v) -> if f then Some v else None)
+      (List.combine flags l)
+  in
+  let pullback cts =
+    let ct = Nx.Ptree.rebuild q ~like:y0 cts in
+    let g =
+      Construct.perform
+        (At_map
+           {
+             map;
+             p = Nx.Ptree.pair p q;
+             q = p;
+             f = transposed t.entry p q f;
+             x = (zeros, ct);
+           })
+    in
+    pick (fst (Nx.Ptree.flatten p g))
+  in
+  let like, _ = Nx.Ptree.flatten q y0 in
+  Nx.Ptree.rebuild q ~like:y0 (call t (pick leaves) pullback like)
+
+(* [transposed entry p q f (x, c)] is the transpose of the linear [f], recorded
+   at values like [x], applied to [c]. *)
+and transposed : type p q.
+    string -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p * q -> p =
+ fun entry p q f (x, c) ->
+  let tape = create entry in
+  let s = Nx.Ptree.map p (fun _ v -> input tape v) x in
+  let y = install tape (fun () -> f s) in
+  let cts = cotangents tape in
+  List.iter2
+    (fun (Nx.P y) (Nx.P c) -> add cts y (Nx.unpack (Nx.dtype y) (Nx.P c)))
+    (fst (Nx.Ptree.flatten q y))
+    (fst (Nx.Ptree.flatten q c));
+  transpose cts;
+  Nx.Ptree.map p
+    (fun _ s ->
+      match cotangent cts s with Some g -> g | None -> Nx.zeros_like s)
+    s
 
 (* A root whose functions read slots of [t] is linear in them: its solve runs
    with the slots read as zeros, which gives the solution's metadata, and when
@@ -695,7 +745,10 @@ and root : type x.
         Total.discarding (fun () ->
             Nx.Ptree.map2 x (fun _ a b -> Nx.sub a b) (jt w) ct)
       in
-      let solve () = Total.discarding (fun () -> linear_solve jt ct) in
+      let solve () =
+        Total.discarding (fun () ->
+            Construct.operator x x jt (fun op -> linear_solve op ct))
+      in
       let w = Construct.perform (Root { x; residual; solve; linear_solve }) in
       let cotangent = transposed w in
       List.map

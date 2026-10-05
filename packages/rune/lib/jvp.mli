@@ -49,7 +49,9 @@ val install : t -> (unit -> 'a) -> 'a
 
     A root passes on with [i]'s values read as primals in its functions, so its
     solve is never differentiated; its tangent is the root, passed on, of the
-    residual's derivative at the result plus the residual's tangent there.
+    residual's derivative at the result plus the residual's tangent there. A
+    linear function applied at another level ({!Construct.At_map}) to one of
+    [i]'s duals is applied to its primal and to its tangent.
 
     Raises [Invalid_argument], at the operation, when an operation on one of
     [i]'s duals has no tangent rule; at a custom rule's operation on one of

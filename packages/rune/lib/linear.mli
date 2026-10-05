@@ -50,7 +50,10 @@ val install : tape -> (unit -> 'a) -> 'a
     A root ({!Construct.Root}) passes outward with [t]'s slots read as zeros.
     When its residual at the result reads a slot, the result is the slot of a
     linear call from the slots the residual reads, whose transpose is the root
-    of the residual's derivative transposed, recorded at the call.
+    of the residual's derivative transposed, recorded at the call. A linear
+    function applied at another level ({!Construct.At_map}) to slots is a linear
+    call from them, whose transpose applies the function's transpose at that
+    level.
 
     Raises [Invalid_argument], at the operation, naming [t]'s entry point, if
     the operation is not linear in its slots, as in

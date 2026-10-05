@@ -199,10 +199,13 @@ type _ t =
       x : 'p;
     }
       -> 'q t
-      (** Each lane's row of [f] applied to [x]'s values batched over [map]:
-          every lane's value of each leaf stacked on a leading axis. [f] is code
-          of the level around [map]; it runs where [map] answers, outside its
-          extent. Default: raises [Invalid_argument]. *)
+      (** [f], a linear function, applied at the level of [map]: each lane's row
+          of [f] applied to [x]'s values batched over [map], every lane's value
+          of each leaf stacked on a leading axis. A level of {!operator} has one
+          lane. [f] is code of the level around [map]; it runs where [map]
+          answers, outside its extent. A differentiation inside that level
+          applies [f] to tangents and transposes it. Default: raises
+          [Invalid_argument]. *)
   | Lanes : axis * ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
       (** Every lane's value of the map named [axis], stacked on a new leading
           axis. Default: [Nx.unsqueeze ~axes:[0] x]. *)
@@ -261,6 +264,13 @@ val loop : Trips.request -> Trips.result
 (** [loop r] is [perform (Loop r)], or, when [r] is declined with
     {!Trips.Not_staged}, [Trips.fold r] at the call, inside every installation
     around it. *)
+
+val operator :
+  'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> (('p -> 'q) -> 'r) -> 'r
+(** [operator p q f k] is [k op], where [op], applied during [k]'s extent, is
+    [f] applied at a level of [k]'s call through {!At_map}: every transformation
+    [k] opens sees [op] as one linear function. Applied after [k] returned, or
+    inside a compiled call [k] makes, it raises [Invalid_argument]. *)
 
 val substituting : owner -> Nx.Op.mapper -> (unit -> 'a) -> 'a
 (** [substituting o s f] is [f ()] with each value [o] owns that an operation or

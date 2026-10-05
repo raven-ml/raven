@@ -259,92 +259,118 @@ let install i f =
   Fun.protect ~finally:(fun () -> Atomic.decr installed) @@ fun () ->
   Effect.Deep.match_with f () { retc = Fun.id; exnc; effc }
 
+(* [carried within s c] is [c] with each value it reads replaced by [s]'s for it
+   and each function it carries run [within] an installation, or [None] for a
+   construct that carries neither. *)
+type within = { within : 'a. (unit -> 'a) -> 'a }
+
+let carried : type r. within -> Nx.Op.mapper -> r t -> r t option =
+ fun { within } s c ->
+  let leaves = List.map (fun (Nx.P x) -> Nx.P (s.f x)) in
+  let args p a = Nx.Ptree.map p (fun _ x -> s.f x) a in
+  match[@warning "@4@8"] c with
+  | Loop r ->
+      let req_trips : Trips.trips =
+        match r.req_trips with
+        | Rows rows -> Rows { rows with xs = leaves rows.xs }
+        | Until stop ->
+            Until
+              { stop with until = (fun c -> within (fun () -> stop.until c)) }
+      in
+      Some
+        (Loop
+           {
+             req_carry = leaves r.req_carry;
+             req_trips;
+             req_step = (fun c x -> within (fun () -> r.req_step c x));
+           })
+  | Compiled k ->
+      Some
+        (Compiled
+           {
+             k with
+             args = args k.p k.args;
+             f = (fun a -> within (fun () -> k.f a));
+           })
+  | Remat k ->
+      Some
+        (Remat
+           {
+             k with
+             args = args k.p k.args;
+             f = (fun a -> within (fun () -> k.f a));
+           })
+  | Barrier { values; after } ->
+      Some (Barrier { values = leaves values; after = leaves after })
+  | Custom (Jvp_rule k) ->
+      let rule a =
+        let y, map = within (fun () -> k.rule a) in
+        (y, fun da -> within (fun () -> map da))
+      in
+      Some
+        (Custom
+           (Jvp_rule
+              {
+                k with
+                args = args k.p k.args;
+                value = Option.map (args k.q) k.value;
+                rule;
+              }))
+  | Custom (Vjp_rule k) ->
+      let rule a =
+        let y, pullback = within (fun () -> k.rule a) in
+        (y, fun ct -> within (fun () -> pullback ct))
+      in
+      Some (Custom (Vjp_rule { k with args = args k.p k.args; rule }))
+  | Root k ->
+      let residual x = within (fun () -> k.residual x)
+      and solve () = within k.solve
+      and linear_solve op b = within (fun () -> k.linear_solve op b) in
+      Some (Root { k with residual; solve; linear_solve })
+  | At_map k ->
+      Some
+        (At_map
+           { k with x = args k.p k.x; f = (fun a -> within (fun () -> k.f a)) })
+  | Lanes (axis, x) -> Some (Lanes (axis, s.f x))
+  | Detach x -> Some (Detach (s.f x))
+  | Add (t, v) -> Some (Add (t, s.f v))
+  | Lane_index _ | Lane_count _ -> None
+
+let again c = Option.map (fun c () -> perform c) c
+
 let substituting owner (s : Nx.Op.mapper) f =
   let s : Nx.Op.mapper = { f = (fun x -> if owner.owns x then s.f x else x) } in
-  let leaf (Nx.P x) = Nx.P (s.f x) in
-  let leaves = List.map leaf in
-  let rec reinstall : 'a. (unit -> 'a) -> 'a =
+  let rec within : 'a. (unit -> 'a) -> 'a =
    fun f ->
     let claims op = claims owner op in
     let run op = Nx.Op.eval (Nx.Op.map_operands s op) in
     install { op = Some { run; claims }; call } f
   and call : type r. r t -> (unit -> r) option =
-   fun c ->
-    let again c = Some (fun () -> perform c) in
-    let args p a = Nx.Ptree.map p (fun _ x -> s.f x) a in
-    match[@warning "@4@8"] c with
-    | Loop r ->
-        let req_trips : Trips.trips =
-          match r.req_trips with
-          | Rows rows -> Rows { rows with xs = leaves rows.xs }
-          | Until stop ->
-              Until
-                {
-                  stop with
-                  until = (fun c -> reinstall (fun () -> stop.until c));
-                }
-        in
-        again
-          (Loop
-             {
-               req_carry = leaves r.req_carry;
-               req_trips;
-               req_step = (fun c x -> reinstall (fun () -> r.req_step c x));
-             })
-    | Compiled k ->
-        again
-          (Compiled
-             {
-               k with
-               args = args k.p k.args;
-               f = (fun a -> reinstall (fun () -> k.f a));
-             })
-    | Remat k ->
-        again
-          (Remat
-             {
-               k with
-               args = args k.p k.args;
-               f = (fun a -> reinstall (fun () -> k.f a));
-             })
-    | Barrier { values; after } ->
-        again (Barrier { values = leaves values; after = leaves after })
-    | Custom (Jvp_rule k) ->
-        let rule a =
-          let y, map = reinstall (fun () -> k.rule a) in
-          (y, fun da -> reinstall (fun () -> map da))
-        in
-        again
-          (Custom
-             (Jvp_rule
-                {
-                  k with
-                  args = args k.p k.args;
-                  value = Option.map (args k.q) k.value;
-                  rule;
-                }))
-    | Custom (Vjp_rule k) ->
-        let rule a =
-          let y, pullback = reinstall (fun () -> k.rule a) in
-          (y, fun ct -> reinstall (fun () -> pullback ct))
-        in
-        again (Custom (Vjp_rule { k with args = args k.p k.args; rule }))
-    | Root k ->
-        let residual x = reinstall (fun () -> k.residual x)
-        and solve () = reinstall k.solve
-        and linear_solve op b = reinstall (fun () -> k.linear_solve op b) in
-        again (Root { k with residual; solve; linear_solve })
-    | At_map k ->
-        again
-          (At_map
-             {
-               k with
-               x = args k.p k.x;
-               f = (fun a -> reinstall (fun () -> k.f a));
-             })
-    | Lanes (axis, x) -> again (Lanes (axis, s.f x))
-    | Detach x -> again (Detach (s.f x))
-    | Add (t, v) -> again (Add (t, s.f v))
-    | Lane_index _ | Lane_count _ -> None
+   fun c -> again (carried { within } s c)
   in
-  reinstall f
+  within f
+
+let operator p q f k =
+  (* A level of one lane, answered as a map's is: its axis first, so a map
+     opened inside [k] puts its own axis second. Every function a construct
+     carries runs inside the level, wherever an installation runs it; a compiled
+     call's function runs outside it. *)
+  let level = fresh_map () in
+  let add x = Nx.Ptree.map x (fun _ v -> Nx.unsqueeze ~axes:[ 0 ] v) in
+  let drop x = Nx.Ptree.map x (fun _ v -> Nx.squeeze ~axes:[ 0 ] v) in
+  let same : Nx.Op.mapper = { f = Fun.id } in
+  let rec within : 'a. (unit -> 'a) -> 'a =
+   fun f -> install { op = None; call } f
+  and call : type r. r t -> (unit -> r) option =
+   fun c ->
+    match[@warning "@4@8"] c with
+    | At_map a when a.map == level ->
+        Some (fun () -> drop a.q (a.f (add a.p a.x)))
+    | Compiled _ -> Some (fun () -> perform c)
+    | At_map _ | Loop _ | Remat _ | Barrier _ | Custom _ | Root _ | Lanes _
+    | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
+        again (carried { within } same c)
+  in
+  let f x = add q (f (drop p x)) in
+  let op x = perform (At_map { map = level; p; q; f; x }) in
+  within (fun () -> k op)
