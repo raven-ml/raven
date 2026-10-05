@@ -3501,3 +3501,31 @@ stores through a pad.
   points the crafted cubin's attributes at its kernel's symbol; nx's
   `nx.nv.cubin › kernels › each kernel reads its own registers, stack and
   banks`.
+
+## D119. AMD's compute queue stamps the GPU's clock as it reaches the packet
+
+- **tinygrad:** `runtime/ops_amd.py:404-407` (`AMDComputeQueue.timestamp`, a
+  `RELEASE_MEM` of the GPU's clock on the end-of-pipe event
+  `CACHE_FLUSH_AND_INV_TS_EVENT`).
+- **tolk:** `lib/runtime/ops_amd.ml:766` (`clock_into`), used by `:861`
+  (the compute queue's `timestamp`) and by the counted runs' times of D66
+  (`:796`, `:810`).
+- **Differs:** the compute queue writes the GPU's clock with a `COPY_DATA`
+  from the clock counter, 64 bits with a confirmed write, which the queue
+  executes as it reaches the packet. An end-of-pipe write waits for the pipe
+  to drain, and on GFX12 the drain can include the dispatch queued behind the
+  stamp: on an R9700 (gfx1201, KFD), a stamp before a kernel of 0.6 s was
+  written 11 us before the stamp after it in most runs, so the kernel's span
+  was 11 us. A `BOTTOM_OF_PIPE_TS` event did the same. The queue reaches a
+  stamp after the work before it is complete, since each dispatch ends with a
+  CS partial flush and each AQL packet has its barrier bit, so a stamp after a
+  kernel still follows its waves.
+- **Reason:** (b). `Tolk_engine.timer` times a search's candidates by their
+  spans. In the lorenz training step on AMD, most of one kernel's candidates
+  timed at 10 to 13 us; the search picked one, which took 0.8 s of each 1.08 s
+  step, where NV's search picked a candidate of 2.9 ms.
+- **Pinned by:** the Ops_amd execution suite
+  (`test/runtime/ops_amd/test_ops_amd_exec.ml`): `a profile's span of a long
+  kernel covers its run`; the Ops_amd suite: `recorded cases › profile`,
+  `counters` and `traces`, from the generator patched as
+  `test/gen/runtime/ops_amd.py` says.

@@ -47,8 +47,9 @@ PM4_CONSTANTS = [
     "PACKET3_RELEASE_MEM", "PACKET3_DISPATCH_DIRECT", "PACKET3_EVENT_WRITE", "PACKET3_INDIRECT_BUFFER", "PACKET3_COPY_DATA",
     "INDIRECT_BUFFER_VALID", "CACHE_FLUSH_AND_INV_TS_EVENT", "event_index__mec_release_mem__end_of_pipe",
     "data_sel__mec_release_mem__send_32_bit_low", "data_sel__mec_release_mem__send_64_bit_data",
-    "data_sel__mec_release_mem__send_gpu_clock_counter", "int_sel__mec_release_mem__none",
-    "int_sel__mec_release_mem__send_interrupt_after_write_confirm",
+    "int_sel__mec_release_mem__send_interrupt_after_write_confirm", "PACKET3_COPY_DATA__SRC_SEL__GPU_CLOCK_COUNT",
+    "PACKET3_COPY_DATA__DST_SEL__TC_L2", "PACKET3_COPY_DATA__COUNT_SEL__64_BITS_OF_DATA",
+    "PACKET3_COPY_DATA__WR_CONFIRM__WAIT_FOR_CONFIRMATION",
 ]
 # Fields, as the shift of their first bit: the headers give no width. RELEASE_MEM's fields are pm4_soc15.py's
 # DATA_SEL and INT_SEL, and pm4_nv.py's PACKET3_RELEASE_MEM_* of the same shifts.

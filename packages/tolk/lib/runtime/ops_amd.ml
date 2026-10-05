@@ -75,6 +75,12 @@ let event_index_partial_flush = 4
 let wait_reg_mem_function_eq = 3
 let wait_reg_mem_function_geq = 5
 
+(* The first bits of COPY_DATA's fields in its control word, after its source's
+   selector. *)
+let copy_data_dst_sel = 8
+let copy_data_count_sel = 16
+let copy_data_wr_confirm = 20
+
 let aql_hdr =
   (1 lsl G.hsa_packet_header_barrier)
   lor (G.hsa_fence_scope_system lsl G.hsa_packet_header_scacquire_fence_scope)
@@ -747,17 +753,31 @@ let compute_queue ~host gpu q : Hcq2.commands =
   in
   Option.iter (fun p -> Option.iter start_counting p.counting) gpu.profiling;
   let runs = ref [] in
-  (* The [i]th word of [slot]'s entry, and the GPU's clock written there once
-     the work before it completed, so that a run is timed by itself. *)
+  (* The [i]th word of [slot]'s entry. *)
   let word slot i =
     let base = O.(u64 1 + (u64 entry * slot) + u64 i) in
     O.(getaddr log + (base * u64 8))
   in
+  (* The GPU's clock, written to [address] as the queue reaches the packet: the
+     work before it is complete, as each dispatch waits for its waves, and the
+     work after it has not started. An end-of-pipe write would wait for the pipe
+     to drain, which on GFX12 can take in the dispatch queued behind it and
+     stamp the start of a long kernel at its end. *)
   let clock_into address =
     pred_exec 1 (fun () ->
-        release_mem ~address ~value:(u64 0)
-          ~data_sel:G.data_sel__mec_release_mem__send_gpu_clock_counter
-          ~int_sel:G.int_sel__mec_release_mem__none ())
+        pkt3 G.packet3_copy_data
+          [
+            u32
+              (G.packet3_copy_data__src_sel__gpu_clock_count
+              lor (G.packet3_copy_data__dst_sel__tc_l2 lsl copy_data_dst_sel)
+              lor G.packet3_copy_data__count_sel__64_bits_of_data
+                  lsl copy_data_count_sel
+              lor G.packet3_copy_data__wr_confirm__wait_for_confirmation
+                  lsl copy_data_wr_confirm);
+            u32 0;
+            u32 0;
+            address;
+          ])
   in
   (* A profiled run takes the next slot of the log, which the host program
      writes. *)
@@ -838,14 +858,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
     in
     wait_reg_mem ~op ~mem:(getaddr signal) (cast value Dtype.Uint32)
   in
-  let timestamp signal =
-    pred_exec 1 (fun () ->
-        release_mem
-          ~address:O.(getaddr signal + u64 8)
-          ~value:(u64 0)
-          ~data_sel:G.data_sel__mec_release_mem__send_gpu_clock_counter
-          ~int_sel:G.int_sel__mec_release_mem__none ())
-  in
+  let timestamp signal = clock_into O.(getaddr signal + u64 8) in
   (* A device's value is written whole, in one 64-bit write. *)
   let signal_mem signal value =
     let data_sel =

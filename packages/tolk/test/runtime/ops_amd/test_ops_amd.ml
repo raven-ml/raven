@@ -808,9 +808,9 @@ let loops =
           in
           equal ~msg:"one batch" int 1 batches;
           is_true ~msg:"a loop of three trips" (contains "< 3; Lidx");
-          (* A trip's timestamps are 80 bytes of PM4 commands. *)
+          (* A trip's timestamps are 64 bytes of PM4 commands. *)
           is_true ~msg:"each trip's indirect buffer runs its trip's commands"
-            (contains "))*80ul))");
+            (contains "))<<6ul))");
           is_false ~msg:"addresses in integers" (contains "float"));
     ]
 

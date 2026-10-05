@@ -44,7 +44,10 @@ tinygrad is changed as tolk differs from it:
 - an address is taken on the queue's first device, as tolk names one
   device;
 - a memory barrier invalidates the GPU's caches only: the host flushes the
-  host data path before each submission.
+  host data path before each submission;
+- the compute queue writes the GPU's clock with a COPY_DATA as it reaches the
+  packet, instead of an end-of-pipe RELEASE_MEM, which on GFX12 can wait for
+  the dispatch after it.
 """
 
 from types import SimpleNamespace
@@ -211,13 +214,22 @@ ops_amd.AMDDevice.sqtt_buf = property(lambda self: SimpleNamespace(size=self.sqt
 ops_amd.AMDDevice.sqtt_wptrs = property(lambda self: SimpleNamespace(size=self.prof_slots * self.sqtt_ses, dtype=dtypes.uint32))
 
 
+# The GPU's clock as the queue reaches the packet
+
+def write_clock(q, address):
+    pm4 = q.pm4
+    with q.pred_exec(xcc_mask=0b1):
+        q.pkt3(pm4.PACKET3_COPY_DATA, pm4.PACKET3_COPY_DATA__SRC_SEL__GPU_CLOCK_COUNT | pm4.PACKET3_COPY_DATA__DST_SEL__TC_L2 << 8 |
+               pm4.PACKET3_COPY_DATA__COUNT_SEL__64_BITS_OF_DATA << 16 | pm4.PACKET3_COPY_DATA__WR_CONFIRM__WAIT_FOR_CONFIRMATION << 20,
+               0, 0, address)
+
+
+ops_amd.AMDComputeQueue.timestamp = lambda self, signal: write_clock(self, signal.getaddr(self.devs) + UOp.const(8, dtypes.uint64))
+
+
 # Counted runs in the profile log
 
-def clock_into(q, slot, i):
-    address = q.prof_buf("prof_log").getaddr(q.devs) + (1 + 3 * slot + i) * 8
-    with q.pred_exec(xcc_mask=0b1):
-        q.release_mem(address, 0, q.pm4.data_sel__mec_release_mem__send_gpu_clock_counter,
-                      q.pm4.int_sel__mec_release_mem__none)
+def clock_into(q, slot, i): write_clock(q, q.prof_buf("prof_log").getaddr(q.devs) + (1 + 3 * slot + i) * 8)
 
 
 def prof_start(self, data, info, lib):

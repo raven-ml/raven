@@ -965,6 +965,10 @@ thread.
 
 ### Tolk (new)
 
+- On AMD, a profile's span of a kernel covers its run, so `Tolk_engine.timer`
+  and searches time long kernels right. The compute queue's timestamps waited
+  for the pipe to drain, which on GFX12 included the next dispatch: a 0.6 s
+  kernel timed at 11 us, and searches kept such candidates.
 - `Search.beam_search` times its kernel before its first round and starts
   from it, and a round progresses only when every sample of its fastest
   candidate beats every sample of the beam's first kernel by

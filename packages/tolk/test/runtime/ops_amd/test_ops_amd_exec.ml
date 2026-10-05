@@ -54,6 +54,24 @@ let adds ?(n = 4) out inp =
     (Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ i ] ])
     [ out; inp ]
 
+(* The call of the kernel storing into each of the [rows] floats of [out] the
+   sum over [reps] passes of its column of [src], [rows] floats wide and [cols]
+   long, each element plus the pass's index: every pass reads [src] again. *)
+let sums ~rows ~cols ~reps out src =
+  let device = Option.get (Ops.device out) in
+  let out_p = Ops.param ~shape:[ Int rows ] ~device 0 Float32 in
+  let src_p = Ops.param ~shape:[ Int (rows * cols) ] ~device 1 Float32 in
+  let g = Ops.range (Int rows) [ 0 ] in
+  let rep = Ops.range ~axis_type:Reduce (Int reps) [ 1 ] in
+  let i = Ops.range ~axis_type:Reduce (Int cols) [ 2 ] in
+  let x = Ops.load (Ops.index src_p [ Ops.O.((i * Ops.int rows) + g) ]) [] in
+  let sum = Ops.reduce (Ops.add x (Ops.cast rep Float32)) Op.Add [ rep; i ] in
+  Ops.call
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"sums" ~opts_to_apply:[] ())
+       [ Ops.end_ (Ops.store (Ops.index out_p [ g ]) sum) [ g ] ])
+    [ out; src ]
+
 let storage ?(n = 4) device = Ops.new_buffer (Single device) n Float32
 let linear calls = Ops.v Linear ~src:calls
 
@@ -223,6 +241,38 @@ let execution =
           | [ (_, _, first_stop); (_, second_start, _) ] ->
               at_least int ~than:first_stop second_start
           | _ -> ());
+      slow "a profile's span of a long kernel covers its run" (fun () ->
+          (* A run of about 400 ms, long enough for the host to sleep while it
+             waits: it sees the run end at most a sleep of 200 ms late, so the
+             span is at least half of what the host sees. *)
+          let rows = 256 and cols = 65536 in
+          let out = storage ~n:rows "AMD"
+          and src = storage ~n:(rows * cols) "AMD" in
+          let bound =
+            [
+              (out, [ B.create (amd ()) Float32 rows ]);
+              (src, [ B.create (amd ()) Float32 (rows * cols) ]);
+            ]
+          in
+          let s =
+            link ~profile:true ~bound [ sums ~rows ~cols ~reps:256 out src ]
+          in
+          for run = 1 to 6 do
+            let seen = ref 0 in
+            let events =
+              profiled (fun () ->
+                  let submitted = Nx_device.Profile.now () in
+                  Tolk_engine.run s [||];
+                  Nx_device.synchronize (amd ());
+                  seen := Nx_device.Profile.now () - submitted)
+            in
+            match spans events with
+            | [ (_, start, stop) ] ->
+                at_least int
+                  ~msg:(Printf.sprintf "run %d's span, in ns" run)
+                  ~than:(!seen / 2) (stop - start)
+            | spans -> equal int ~msg:"one span" 1 (List.length spans)
+          done);
       slow "a profile that counts has each kernel's run count, in order"
         (fun () ->
           let events =

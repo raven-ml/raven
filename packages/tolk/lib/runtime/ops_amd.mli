@@ -126,7 +126,8 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
       work before it is complete and its writes are visible, and interrupts the
       host;
     - [timestamp slot], which writes the GPU's 100 MHz clock into the second
-      word of [slot] once the work before it is complete;
+      word of [slot] as the queue reaches it: once the work before it is
+      complete, and before the work after it starts;
     - [memory_barrier ()], which on the compute queue flushes the host data
       path, making the host's writes to the GPU's memory visible, then
       invalidates the GPU's caches; it does nothing on a copy queue;
