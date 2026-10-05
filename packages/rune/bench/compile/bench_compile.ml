@@ -45,6 +45,28 @@ let shaped ops a x =
 let shaped_case ops () =
   compile (shaped ops (Nx.scalar Nx.float64 0.5)) (input 0. 1.)
 
+(* A special function of one argument and its derivative, over inputs in [lo,
+   hi]. *)
+let special name f lo hi =
+  [
+    ("special/" ^ name, fun () -> compile f (input lo hi));
+    ("special/" ^ name ^ "-grad", fun () -> compile (grad f) (input lo hi));
+  ]
+
+(* [lbeta] and its derivative in each argument. *)
+let lbeta =
+  let b = input 0.5 20. in
+  let compile2 f = compile (fun a -> f a b) (input 0.5 20.) in
+  [
+    ("special/lbeta", fun () -> compile2 Nx.lbeta);
+    ( "special/lbeta-grad-a",
+      fun () ->
+        compile2 (fun a b -> Rune.grad' (fun a -> Nx.sum (Nx.lbeta a b)) a) );
+    ( "special/lbeta-grad-b",
+      fun () ->
+        compile2 (fun a b -> Rune.grad' (fun b -> Nx.sum (Nx.lbeta a b)) b) );
+  ]
+
 let cases =
   [
     ("erfinv", fun () -> compile Nx.erfinv (input (-1.) 1.));
@@ -53,6 +75,13 @@ let cases =
     ("shaped-4k", shaped_case 4096);
     ("shaped-16k", shaped_case 16384);
   ]
+  @ special "erfc" Nx.erfc (-6.) 6.
+  @ special "ndtr" Nx.ndtr (-10.) 10.
+  @ special "log_ndtr" Nx.log_ndtr (-40.) 10.
+  @ special "ndtri" Nx.ndtri 0. 1.
+  @ special "lgamma" Nx.lgamma (-10.) 20.
+  @ special "digamma" Nx.digamma (-10.) 20.
+  @ lbeta
 
 let rec remove path =
   if Sys.is_directory path then (

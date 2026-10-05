@@ -68,6 +68,7 @@ WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.698e-02	2.590e-0
 # host: MacBookPro · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 jit/random/gamma-1e6 under load 10.8 on 10 cores
+# forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 jit/special/erfc-1e6 jit/special/erfc-f64-1e6 jit/special/ndtr-1e6 jit/special/ndtr-f64-1e6 jit/special/log-ndtr-1e6 jit/special/log-ndtr-f64-1e6 jit/special/ndtri-1e5 jit/special/ndtri-f64-1e5 jit/special/lgamma-1e6 jit/special/lgamma-f64-1e6 jit/special/digamma-1e6 jit/special/digamma-f64-1e6 jit/special/lbeta-1e6 jit/special/lbeta-f64-1e6 under load 19.1 on 10 cores
 
 Declined/add-1-beside-grad-on-another-domain	alloc_words	exact	7700
 Declined/add-1-beside-grad-on-another-domain	wall_time	batch=256	n=20	2.729e-05	2.704e-05 2.706e-05 2.707e-05 2.710e-05 2.715e-05 2.720e-05 2.724e-05 2.726e-05 2.726e-05 2.727e-05 2.730e-05 2.734e-05 2.738e-05 2.739e-05 2.741e-05 2.751e-05 2.751e-05 2.784e-05 2.804e-05 2.822e-05
@@ -129,11 +130,39 @@ WarmStart/mlp-sgd-step-warm-first-call	alloc_words	exact	33
 WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	3.428e-02	3.361e-02 3.370e-02 3.371e-02 3.375e-02 3.390e-02 3.393e-02 3.411e-02 3.421e-02 3.422e-02 3.426e-02 3.431e-02 3.455e-02 3.460e-02 3.464e-02 3.470e-02 3.482e-02 3.540e-02 3.556e-02 3.576e-02 3.596e-02
 jit/random/gamma-1e6	alloc_words	exact	1607
 jit/random/gamma-1e6	wall_time	batch=1	n=20	8.225e-02	6.875e-02 7.027e-02 7.117e-02 7.493e-02 7.558e-02 7.631e-02 7.693e-02 7.710e-02 7.824e-02 8.125e-02 8.325e-02 8.442e-02 8.531e-02 9.189e-02 9.277e-02 9.516e-02 9.622e-02 9.657e-02 1.058e-01 1.080e-01
+jit/special/digamma-1e6	alloc_words	exact	826
+jit/special/digamma-1e6	wall_time	batch=1	n=20	1.035e-02	3.824e-03 5.324e-03 5.416e-03 5.807e-03 6.246e-03 6.765e-03 7.585e-03 8.421e-03 9.334e-03 1.000e-02 1.070e-02 1.538e-02 1.548e-02 1.595e-02 1.662e-02 1.697e-02 1.777e-02 1.927e-02 2.028e-02 2.389e-02
+jit/special/digamma-f64-1e6	alloc_words	exact	826
+jit/special/digamma-f64-1e6	wall_time	batch=1	n=20	1.302e-02	7.282e-03 7.318e-03 7.470e-03 8.463e-03 8.704e-03 9.606e-03 9.997e-03 1.122e-02 1.146e-02 1.229e-02 1.374e-02 1.613e-02 1.713e-02 1.993e-02 2.206e-02 2.354e-02 2.367e-02 2.571e-02 3.204e-02 3.929e-02
 jit/special/erf-1e6	alloc_words	exact	826
-jit/special/erf-1e6	wall_time	batch=1	n=20	9.019e-03	7.146e-03 7.489e-03 7.558e-03 7.751e-03 7.848e-03 8.460e-03 8.585e-03 8.609e-03 8.656e-03 8.897e-03 9.140e-03 9.320e-03 9.361e-03 9.727e-03 1.039e-02 1.093e-02 1.099e-02 1.118e-02 1.175e-02 1.576e-02
+jit/special/erf-1e6	wall_time	batch=1	n=20	1.085e-02	7.426e-03 8.196e-03 8.779e-03 8.858e-03 8.863e-03 9.124e-03 9.130e-03 1.066e-02 1.068e-02 1.074e-02 1.095e-02 1.154e-02 1.176e-02 1.182e-02 1.362e-02 1.386e-02 1.559e-02 1.665e-02 1.828e-02 1.880e-02
 jit/special/erf-f64-1e6	alloc_words	exact	826
-jit/special/erf-f64-1e6	wall_time	batch=1	n=20	6.541e-03	4.469e-03 5.130e-03 5.401e-03 5.598e-03 5.897e-03 6.019e-03 6.042e-03 6.172e-03 6.324e-03 6.413e-03 6.669e-03 6.908e-03 6.995e-03 7.072e-03 7.254e-03 7.263e-03 7.442e-03 8.266e-03 8.267e-03 9.194e-03
+jit/special/erf-f64-1e6	wall_time	batch=1	n=20	8.762e-03	5.501e-03 6.069e-03 6.308e-03 6.657e-03 6.703e-03 6.768e-03 7.187e-03 7.433e-03 8.050e-03 8.484e-03 9.041e-03 9.090e-03 9.205e-03 9.822e-03 1.028e-02 1.064e-02 1.120e-02 1.285e-02 1.717e-02 1.738e-02
+jit/special/erfc-1e6	alloc_words	exact	826
+jit/special/erfc-1e6	wall_time	batch=1	n=20	2.322e-02	1.283e-02 1.312e-02 1.354e-02 1.519e-02 1.584e-02 1.645e-02 2.033e-02 2.090e-02 2.183e-02 2.220e-02 2.424e-02 2.443e-02 2.469e-02 2.642e-02 2.836e-02 3.285e-02 3.384e-02 3.778e-02 4.107e-02 8.370e-02
+jit/special/erfc-f64-1e6	alloc_words	exact	826
+jit/special/erfc-f64-1e6	wall_time	batch=1	n=20	6.102e-03	4.729e-03 4.775e-03 4.825e-03 4.930e-03 5.356e-03 5.435e-03 5.704e-03 5.773e-03 5.810e-03 6.028e-03 6.176e-03 6.189e-03 6.511e-03 6.900e-03 7.089e-03 7.858e-03 8.040e-03 8.342e-03 9.759e-03 1.090e-02
 jit/special/erfinv-1e6	alloc_words	exact	826
-jit/special/erfinv-1e6	wall_time	batch=2	n=20	3.295e-03	2.359e-03 2.484e-03 2.495e-03 2.787e-03 2.885e-03 2.948e-03 2.955e-03 3.014e-03 3.207e-03 3.285e-03 3.305e-03 3.307e-03 3.408e-03 3.495e-03 3.774e-03 3.826e-03 4.312e-03 4.328e-03 5.046e-03 6.149e-03
+jit/special/erfinv-1e6	wall_time	batch=1	n=20	3.649e-03	2.162e-03 2.257e-03 2.264e-03 2.609e-03 2.613e-03 2.620e-03 2.814e-03 2.838e-03 2.943e-03 3.472e-03 3.827e-03 4.093e-03 4.419e-03 4.471e-03 4.642e-03 6.103e-03 6.456e-03 7.771e-03 8.902e-03 1.575e-02
 jit/special/erfinv-f64-1e6	alloc_words	exact	826
-jit/special/erfinv-f64-1e6	wall_time	batch=1	n=20	2.473e-01	1.401e-01 1.681e-01 1.723e-01 1.760e-01 2.248e-01 2.291e-01 2.300e-01 2.363e-01 2.396e-01 2.455e-01 2.491e-01 2.515e-01 2.530e-01 2.539e-01 2.550e-01 2.566e-01 2.589e-01 2.619e-01 2.635e-01 2.971e-01
+jit/special/erfinv-f64-1e6	wall_time	batch=1	n=20	2.368e-01	1.729e-01 1.825e-01 1.846e-01 1.856e-01 1.863e-01 1.885e-01 2.023e-01 2.073e-01 2.107e-01 2.323e-01 2.412e-01 2.502e-01 2.676e-01 2.686e-01 2.713e-01 2.737e-01 2.805e-01 2.811e-01 3.113e-01 3.578e-01
+jit/special/lbeta-1e6	alloc_words	exact	1103
+jit/special/lbeta-1e6	wall_time	batch=1	n=20	2.244e-02	1.571e-02 1.604e-02 1.913e-02 1.928e-02 1.928e-02 1.934e-02 1.941e-02 2.111e-02 2.207e-02 2.226e-02 2.261e-02 2.311e-02 2.495e-02 2.754e-02 2.830e-02 3.031e-02 3.133e-02 3.290e-02 3.593e-02 3.613e-02
+jit/special/lbeta-f64-1e6	alloc_words	exact	1103
+jit/special/lbeta-f64-1e6	wall_time	batch=1	n=20	2.641e-02	1.459e-02 1.751e-02 1.876e-02 1.880e-02 1.936e-02 1.978e-02 2.342e-02 2.371e-02 2.458e-02 2.547e-02 2.735e-02 3.224e-02 3.447e-02 3.709e-02 4.155e-02 4.400e-02 4.568e-02 5.272e-02 7.391e-02 7.646e-02
+jit/special/lgamma-1e6	alloc_words	exact	826
+jit/special/lgamma-1e6	wall_time	batch=1	n=20	1.319e-02	8.403e-03 9.447e-03 1.044e-02 1.064e-02 1.066e-02 1.103e-02 1.185e-02 1.226e-02 1.253e-02 1.256e-02 1.382e-02 1.411e-02 1.579e-02 2.008e-02 2.183e-02 2.230e-02 2.924e-02 2.981e-02 3.325e-02 4.875e-02
+jit/special/lgamma-f64-1e6	alloc_words	exact	826
+jit/special/lgamma-f64-1e6	wall_time	batch=1	n=20	8.797e-03	6.586e-03 6.868e-03 7.224e-03 7.689e-03 7.905e-03 8.063e-03 8.162e-03 8.617e-03 8.672e-03 8.787e-03 8.807e-03 8.822e-03 9.111e-03 9.618e-03 9.773e-03 1.005e-02 1.090e-02 1.168e-02 1.181e-02 1.247e-02
+jit/special/log-ndtr-1e6	alloc_words	exact	826
+jit/special/log-ndtr-1e6	wall_time	batch=1	n=20	3.107e-02	1.508e-02 1.665e-02 1.849e-02 1.894e-02 2.157e-02 2.746e-02 2.787e-02 2.839e-02 2.915e-02 3.045e-02 3.168e-02 3.309e-02 3.433e-02 3.588e-02 3.620e-02 3.760e-02 4.027e-02 4.293e-02 5.125e-02 5.130e-02
+jit/special/log-ndtr-f64-1e6	alloc_words	exact	826
+jit/special/log-ndtr-f64-1e6	wall_time	batch=1	n=20	2.524e-02	1.479e-02 1.623e-02 1.685e-02 1.829e-02 1.897e-02 1.933e-02 1.981e-02 2.076e-02 2.118e-02 2.442e-02 2.606e-02 2.729e-02 2.973e-02 3.024e-02 3.091e-02 3.146e-02 3.220e-02 3.240e-02 7.902e-02 1.022e-01
+jit/special/ndtr-1e6	alloc_words	exact	826
+jit/special/ndtr-1e6	wall_time	batch=1	n=20	1.733e-02	1.364e-02 1.416e-02 1.448e-02 1.567e-02 1.594e-02 1.598e-02 1.617e-02 1.638e-02 1.682e-02 1.702e-02 1.764e-02 1.775e-02 1.784e-02 1.887e-02 1.890e-02 1.972e-02 2.007e-02 2.073e-02 2.142e-02 2.281e-02
+jit/special/ndtr-f64-1e6	alloc_words	exact	826
+jit/special/ndtr-f64-1e6	wall_time	batch=1	n=20	1.827e-02	7.982e-03 8.456e-03 9.835e-03 1.156e-02 1.261e-02 1.382e-02 1.382e-02 1.654e-02 1.767e-02 1.818e-02 1.836e-02 1.842e-02 1.867e-02 2.040e-02 2.129e-02 2.301e-02 2.369e-02 2.451e-02 2.864e-02 2.883e-02
+jit/special/ndtri-1e5	alloc_words	exact	826
+jit/special/ndtri-1e5	wall_time	batch=2	n=20	3.587e-03	2.912e-03 3.030e-03 3.076e-03 3.166e-03 3.184e-03 3.184e-03 3.282e-03 3.329e-03 3.374e-03 3.578e-03 3.597e-03 3.630e-03 3.638e-03 3.679e-03 3.685e-03 3.694e-03 3.857e-03 4.108e-03 4.230e-03 5.116e-03
+jit/special/ndtri-f64-1e5	alloc_words	exact	826
+jit/special/ndtri-f64-1e5	wall_time	batch=2	n=20	9.609e-03	2.282e-03 4.242e-03 4.733e-03 6.601e-03 6.878e-03 7.010e-03 7.363e-03 8.635e-03 8.716e-03 9.451e-03 9.768e-03 1.074e-02 1.111e-02 1.134e-02 1.451e-02 1.604e-02 1.673e-02 1.816e-02 1.842e-02 2.290e-02

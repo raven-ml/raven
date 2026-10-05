@@ -116,6 +116,7 @@ unary/sqrt-1M	wall_time	batch=8	n=20	1.313e-04	1.240e-04 1.242e-04 1.247e-04 1.2
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 10.6 on 10 cores
+# forced: blessed special/erf-1e6 special/erf-f64-1e6 special/erfinv-1e6 special/erfinv-f64-1e6 special/erfc-1e6 special/erfc-f64-1e6 special/ndtr-1e6 special/ndtr-f64-1e6 special/log-ndtr-1e6 special/log-ndtr-f64-1e6 special/ndtri-1e5 special/ndtri-f64-1e5 special/lgamma-1e6 special/lgamma-f64-1e6 special/digamma-1e6 special/digamma-f64-1e6 special/lbeta-1e6 special/lbeta-f64-1e6 under load 17.5 on 10 cores
 
 binary/add-100x100-f64	alloc_words	exact	65
 binary/add-100x100-f64	wall_time	batch=2048	n=20	3.606e-06	3.369e-06 3.485e-06 3.503e-06 3.509e-06 3.522e-06 3.528e-06 3.534e-06 3.547e-06 3.570e-06 3.581e-06 3.631e-06 3.635e-06 3.665e-06 3.689e-06 3.689e-06 3.702e-06 3.705e-06 3.708e-06 3.810e-06 4.193e-06
@@ -201,14 +202,42 @@ reduce/sum-full-1M	alloc_words	exact	114
 reduce/sum-full-1M	wall_time	batch=128	n=20	5.850e-05	5.618e-05 5.649e-05 5.663e-05 5.678e-05 5.696e-05 5.704e-05 5.712e-05 5.715e-05 5.722e-05 5.850e-05 5.851e-05 5.876e-05 5.894e-05 5.928e-05 5.991e-05 6.032e-05 6.042e-05 6.319e-05 6.438e-05 6.539e-05
 reduce/sum-transposed-2048x2048	alloc_words	exact	130
 reduce/sum-transposed-2048x2048	wall_time	batch=16	n=20	4.014e-04	3.450e-04 3.451e-04 3.514e-04 3.525e-04 3.619e-04 3.662e-04 3.675e-04 3.719e-04 3.845e-04 3.974e-04 4.054e-04 4.210e-04 4.256e-04 4.260e-04 4.279e-04 4.290e-04 4.416e-04 4.507e-04 4.576e-04 4.832e-04
+special/digamma-1e6	alloc_words	exact	17906
+special/digamma-1e6	wall_time	batch=1	n=20	2.647e-02	2.502e-02 2.527e-02 2.537e-02 2.571e-02 2.583e-02 2.583e-02 2.607e-02 2.619e-02 2.636e-02 2.637e-02 2.656e-02 2.696e-02 2.712e-02 2.754e-02 2.845e-02 2.945e-02 3.093e-02 3.113e-02 3.759e-02 3.961e-02
+special/digamma-f64-1e6	alloc_words	exact	27146
+special/digamma-f64-1e6	wall_time	batch=1	n=20	8.444e-02	7.285e-02 7.672e-02 7.934e-02 8.010e-02 8.100e-02 8.191e-02 8.246e-02 8.331e-02 8.379e-02 8.436e-02 8.451e-02 8.474e-02 8.535e-02 8.885e-02 8.932e-02 9.512e-02 9.644e-02 9.882e-02 1.010e-01 1.019e-01
 special/erf-1e6	alloc_words	exact	64
-special/erf-1e6	wall_time	batch=4	n=20	1.139e-03	7.751e-04 9.133e-04 9.568e-04 9.670e-04 9.990e-04 1.013e-03 1.019e-03 1.056e-03 1.059e-03 1.136e-03 1.141e-03 1.177e-03 1.258e-03 1.273e-03 1.312e-03 1.504e-03 1.543e-03 1.590e-03 1.686e-03 1.857e-03
+special/erf-1e6	wall_time	batch=4	n=20	1.616e-03	1.176e-03 1.281e-03 1.327e-03 1.339e-03 1.368e-03 1.387e-03 1.400e-03 1.498e-03 1.555e-03 1.569e-03 1.663e-03 1.731e-03 1.737e-03 1.741e-03 1.742e-03 1.814e-03 1.951e-03 2.023e-03 2.171e-03 2.814e-03
 special/erf-f64-1e6	alloc_words	exact	64
-special/erf-f64-1e6	wall_time	batch=1	n=20	4.225e-03	3.484e-03 3.717e-03 3.755e-03 3.873e-03 3.898e-03 3.913e-03 3.952e-03 3.988e-03 4.038e-03 4.103e-03 4.347e-03 4.615e-03 4.708e-03 5.057e-03 5.528e-03 5.685e-03 5.707e-03 6.112e-03 6.565e-03 6.870e-03
-special/erfinv-1e6	alloc_words	exact	6442
-special/erfinv-1e6	wall_time	batch=1	n=20	9.461e-03	8.469e-03 8.939e-03 9.082e-03 9.099e-03 9.168e-03 9.277e-03 9.279e-03 9.409e-03 9.447e-03 9.449e-03 9.473e-03 9.477e-03 9.681e-03 9.725e-03 9.823e-03 9.834e-03 1.002e-02 1.013e-02 1.026e-02 1.062e-02
-special/erfinv-f64-1e6	alloc_words	exact	108430
-special/erfinv-f64-1e6	wall_time	batch=1	n=20	3.522e-01	3.251e-01 3.318e-01 3.363e-01 3.365e-01 3.388e-01 3.406e-01 3.444e-01 3.468e-01 3.497e-01 3.521e-01 3.522e-01 3.574e-01 3.741e-01 3.782e-01 3.862e-01 3.933e-01 4.059e-01 4.196e-01 4.354e-01 4.370e-01
+special/erf-f64-1e6	wall_time	batch=1	n=20	4.705e-03	4.164e-03 4.187e-03 4.323e-03 4.366e-03 4.404e-03 4.462e-03 4.635e-03 4.671e-03 4.689e-03 4.691e-03 4.719e-03 5.006e-03 5.036e-03 5.217e-03 5.239e-03 5.286e-03 6.009e-03 7.677e-03 8.759e-03 1.366e-02
+special/erfc-1e6	alloc_words	exact	19594
+special/erfc-1e6	wall_time	batch=1	n=20	3.053e-02	2.812e-02 2.903e-02 2.926e-02 2.963e-02 2.972e-02 2.978e-02 3.005e-02 3.016e-02 3.033e-02 3.048e-02 3.059e-02 3.067e-02 3.067e-02 3.069e-02 3.141e-02 3.153e-02 3.167e-02 3.344e-02 3.453e-02 3.910e-02
+special/erfc-f64-1e6	alloc_words	exact	19674
+special/erfc-f64-1e6	wall_time	batch=1	n=20	5.697e-02	5.541e-02 5.543e-02 5.578e-02 5.652e-02 5.652e-02 5.674e-02 5.676e-02 5.678e-02 5.680e-02 5.689e-02 5.706e-02 5.708e-02 5.715e-02 5.785e-02 5.816e-02 5.824e-02 5.825e-02 5.834e-02 5.835e-02 5.913e-02
+special/erfinv-1e6	alloc_words	exact	6466
+special/erfinv-1e6	wall_time	batch=1	n=20	1.028e-02	9.719e-03 9.719e-03 9.770e-03 9.910e-03 1.008e-02 1.009e-02 1.011e-02 1.011e-02 1.015e-02 1.021e-02 1.036e-02 1.046e-02 1.053e-02 1.063e-02 1.068e-02 1.106e-02 1.158e-02 1.167e-02 1.279e-02 2.096e-02
+special/erfinv-f64-1e6	alloc_words	exact	108454
+special/erfinv-f64-1e6	wall_time	batch=1	n=20	3.922e-01	3.517e-01 3.540e-01 3.658e-01 3.713e-01 3.724e-01 3.779e-01 3.803e-01 3.827e-01 3.827e-01 3.921e-01 3.924e-01 3.936e-01 3.983e-01 4.001e-01 4.015e-01 4.031e-01 4.194e-01 4.210e-01 4.253e-01 5.228e-01
+special/lbeta-1e6	alloc_words	exact	42691
+special/lbeta-1e6	wall_time	batch=1	n=20	8.574e-02	7.156e-02 7.243e-02 7.325e-02 7.470e-02 7.622e-02 7.832e-02 7.914e-02 7.990e-02 8.010e-02 8.447e-02 8.700e-02 8.740e-02 8.849e-02 9.132e-02 9.290e-02 9.377e-02 9.493e-02 9.563e-02 1.108e-01 1.110e-01
+special/lbeta-f64-1e6	alloc_words	exact	42856
+special/lbeta-f64-1e6	wall_time	batch=1	n=20	1.395e-01	1.346e-01 1.346e-01 1.351e-01 1.351e-01 1.359e-01 1.361e-01 1.364e-01 1.370e-01 1.379e-01 1.395e-01 1.395e-01 1.424e-01 1.458e-01 1.459e-01 1.477e-01 1.496e-01 1.501e-01 1.520e-01 1.524e-01 1.538e-01
+special/lgamma-1e6	alloc_words	exact	30128
+special/lgamma-1e6	wall_time	batch=1	n=20	5.274e-02	4.738e-02 4.832e-02 4.839e-02 4.973e-02 5.036e-02 5.156e-02 5.157e-02 5.157e-02 5.172e-02 5.240e-02 5.308e-02 5.327e-02 5.379e-02 5.432e-02 5.514e-02 5.697e-02 5.904e-02 6.348e-02 6.593e-02 8.089e-02
+special/lgamma-f64-1e6	alloc_words	exact	31219
+special/lgamma-f64-1e6	wall_time	batch=1	n=20	1.030e-01	8.881e-02 9.152e-02 9.290e-02 9.328e-02 9.382e-02 9.403e-02 9.415e-02 9.697e-02 9.901e-02 9.942e-02 1.066e-01 1.101e-01 1.132e-01 1.166e-01 1.175e-01 1.177e-01 1.183e-01 1.365e-01 1.390e-01 1.414e-01
+special/log-ndtr-1e6	alloc_words	exact	26388
+special/log-ndtr-1e6	wall_time	batch=1	n=20	6.497e-02	5.626e-02 5.763e-02 5.790e-02 5.799e-02 5.887e-02 5.947e-02 6.105e-02 6.273e-02 6.408e-02 6.478e-02 6.516e-02 6.605e-02 6.874e-02 6.990e-02 7.090e-02 7.098e-02 7.505e-02 7.620e-02 8.939e-02 9.056e-02
+special/log-ndtr-f64-1e6	alloc_words	exact	27219
+special/log-ndtr-f64-1e6	wall_time	batch=1	n=20	1.033e-01	8.989e-02 9.012e-02 9.148e-02 9.196e-02 9.597e-02 9.793e-02 1.012e-01 1.018e-01 1.023e-01 1.027e-01 1.040e-01 1.057e-01 1.061e-01 1.099e-01 1.152e-01 1.184e-01 1.196e-01 1.215e-01 1.247e-01 1.573e-01
+special/ndtr-1e6	alloc_words	exact	22636
+special/ndtr-1e6	wall_time	batch=1	n=20	3.510e-02	3.346e-02 3.363e-02 3.392e-02 3.459e-02 3.460e-02 3.468e-02 3.481e-02 3.497e-02 3.500e-02 3.500e-02 3.520e-02 3.525e-02 3.536e-02 3.629e-02 3.655e-02 3.732e-02 3.741e-02 3.841e-02 3.903e-02 3.985e-02
+special/ndtr-f64-1e6	alloc_words	exact	22728
+special/ndtr-f64-1e6	wall_time	batch=1	n=20	6.656e-02	6.256e-02 6.394e-02 6.424e-02 6.490e-02 6.561e-02 6.573e-02 6.600e-02 6.604e-02 6.638e-02 6.641e-02 6.670e-02 6.729e-02 6.783e-02 7.736e-02 7.828e-02 8.032e-02 8.084e-02 8.400e-02 8.796e-02 9.739e-02
+special/ndtri-1e5	alloc_words	exact	35018
+special/ndtri-1e5	wall_time	batch=1	n=20	6.421e-03	6.121e-03 6.152e-03 6.224e-03 6.237e-03 6.297e-03 6.307e-03 6.357e-03 6.372e-03 6.405e-03 6.413e-03 6.429e-03 6.485e-03 6.492e-03 6.634e-03 6.757e-03 6.772e-03 6.998e-03 7.066e-03 8.339e-03 1.579e-02
+special/ndtri-f64-1e5	alloc_words	exact	41586
+special/ndtri-f64-1e5	wall_time	batch=1	n=20	1.277e-02	1.207e-02 1.223e-02 1.237e-02 1.237e-02 1.241e-02 1.249e-02 1.251e-02 1.251e-02 1.266e-02 1.272e-02 1.281e-02 1.305e-02 1.331e-02 1.335e-02 1.345e-02 1.345e-02 1.354e-02 1.366e-02 1.409e-02 1.477e-02
 structural/cast-f32-f16-1M	alloc_words	exact	64
 structural/cast-f32-f16-1M	wall_time	batch=16	n=20	2.883e-04	2.800e-04 2.822e-04 2.832e-04 2.834e-04 2.835e-04 2.836e-04 2.845e-04 2.862e-04 2.873e-04 2.879e-04 2.887e-04 2.890e-04 2.921e-04 2.922e-04 2.937e-04 2.952e-04 2.955e-04 3.016e-04 3.021e-04 3.185e-04
 structural/cast-f32-i32-1M	alloc_words	exact	64

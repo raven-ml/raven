@@ -451,15 +451,43 @@ let replay f x () =
   f
 
 let jit_special_benchmarks () =
-  let at dt name f lo hi =
-    let x = Nx.add_s (Nx.mul_s (Nx.rand dt [| compiled_n |]) (hi -. lo)) lo in
+  let inputs n dt lo hi =
+    Nx.add_s (Nx.mul_s (Nx.rand dt [| n |]) (hi -. lo)) lo
+  in
+  let at ?(n = compiled_n) dt name f lo hi =
+    let x = inputs n dt lo hi in
     Thumper.bench_with_setup ~setup:(replay f x) name (fun f -> f x)
+  in
+  let lbeta dt name =
+    let a = inputs compiled_n dt 0.1 20. and b = inputs compiled_n dt 0.1 20. in
+    let setup () =
+      let f =
+        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.lbeta
+      in
+      ignore (Sys.opaque_identity (f a b));
+      f
+    in
+    Thumper.bench_with_setup ~setup name (fun f -> f a b)
   in
   [
     at Nx.float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.float64 "erf f64 1e6" Nx.erf (-6.) 6.;
     at Nx.float32 "erfinv 1e6" Nx.erfinv (-1.) 1.;
     at Nx.float64 "erfinv f64 1e6" Nx.erfinv (-1.) 1.;
+    at Nx.float32 "erfc 1e6" Nx.erfc (-4.) 10.;
+    at Nx.float64 "erfc f64 1e6" Nx.erfc (-6.) 27.;
+    at Nx.float32 "ndtr 1e6" Nx.ndtr (-14.) 6.;
+    at Nx.float64 "ndtr f64 1e6" Nx.ndtr (-38.) 9.;
+    at Nx.float32 "log ndtr 1e6" Nx.log_ndtr (-40.) 10.;
+    at Nx.float64 "log ndtr f64 1e6" Nx.log_ndtr (-40.) 10.;
+    at ~n:100_000 Nx.float32 "ndtri 1e5" Nx.ndtri 0. 1.;
+    at ~n:100_000 Nx.float64 "ndtri f64 1e5" Nx.ndtri 0. 1.;
+    at Nx.float32 "lgamma 1e6" Nx.lgamma (-10.) 30.;
+    at Nx.float64 "lgamma f64 1e6" Nx.lgamma (-10.) 30.;
+    at Nx.float32 "digamma 1e6" Nx.digamma (-10.) 30.;
+    at Nx.float64 "digamma f64 1e6" Nx.digamma (-10.) 30.;
+    lbeta Nx.float32 "lbeta 1e6";
+    lbeta Nx.float64 "lbeta f64 1e6";
   ]
 
 let jit_random_benchmarks () =

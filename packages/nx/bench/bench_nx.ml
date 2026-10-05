@@ -164,26 +164,46 @@ let random_benchmarks () =
   ]
 
 (* Special functions over a million elements at each compute dtype, inputs
-   spread over the function's domain. *)
+   spread over the function's domain; inverses over a hundred thousand. *)
 let special_benchmarks () =
-  let n = 1_000_000 in
-  let inputs dt lo hi =
+  let inputs n dt lo hi =
     Nx.add_s (Nx.mul_s (Nx.rand dt [| n |]) (hi -. lo)) lo
   in
-  let at dt name f lo hi =
-    let x = inputs dt lo hi in
+  let at ?(n = 1_000_000) dt name f lo hi =
+    let x = inputs n dt lo hi in
     Thumper.bench name (fun () -> f x)
+  in
+  let lbeta dt name =
+    let a = inputs 1_000_000 dt 0.1 20. and b = inputs 1_000_000 dt 0.1 20. in
+    Thumper.bench name (fun () -> Nx.lbeta a b)
   in
   [
     at Nx.Float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.Float64 "erf f64 1e6" Nx.erf (-6.) 6.;
     at Nx.Float32 "erfinv 1e6" Nx.erfinv (-1.) 1.;
     at Nx.Float64 "erfinv f64 1e6" Nx.erfinv (-1.) 1.;
+    at Nx.Float32 "erfc 1e6" Nx.erfc (-4.) 10.;
+    at Nx.Float64 "erfc f64 1e6" Nx.erfc (-6.) 27.;
+    at Nx.Float32 "ndtr 1e6" Nx.ndtr (-14.) 6.;
+    at Nx.Float64 "ndtr f64 1e6" Nx.ndtr (-38.) 9.;
+    at Nx.Float32 "log ndtr 1e6" Nx.log_ndtr (-40.) 10.;
+    at Nx.Float64 "log ndtr f64 1e6" Nx.log_ndtr (-40.) 10.;
+    at ~n:100_000 Nx.Float32 "ndtri 1e5" Nx.ndtri 0. 1.;
+    at ~n:100_000 Nx.Float64 "ndtri f64 1e5" Nx.ndtri 0. 1.;
+    at Nx.Float32 "lgamma 1e6" Nx.lgamma (-10.) 30.;
+    at Nx.Float64 "lgamma f64 1e6" Nx.lgamma (-10.) 30.;
+    at Nx.Float32 "digamma 1e6" Nx.digamma (-10.) 30.;
+    at Nx.Float64 "digamma f64 1e6" Nx.digamma (-10.) 30.;
+    lbeta Nx.Float32 "lbeta 1e6";
+    lbeta Nx.Float64 "lbeta f64 1e6";
   ]
+
+(* The float64 special functions take a third of a second a call eagerly. *)
+let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  Thumper.run "nx"
+  Thumper.run "nx" ~config
     ~budgets:
       [
         Thumper.Budget.no_slower_than 0.05;
