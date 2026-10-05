@@ -304,9 +304,14 @@ and Node : sig
     tag : Tag.t option;
     dtype : Dtype.t;
     id : int;
-    (* Properties computed on first use. Each is a function of the node, so
-       domains racing to fill one write the same value; the fields are atomic so
-       that a reader that sees a value sees it whole. *)
+    memos : memos;
+  }
+
+  (* Properties computed on first use. Each is a function of the node, so
+     domains racing to fill one write the same value; the fields are atomic so
+     that a reader that sees a value sees it whole. They are a record of their
+     own so that the probe a lookup builds ({!v}) shares one empty record. *)
+  and memos = {
     mutable shape_memo : sint list option option; [@atomic]
     mutable ranges_memo : nodes option; [@atomic]
     mutable ended_ranges_memo : t list option; [@atomic]
@@ -568,14 +573,8 @@ module Table = Stdlib.Weak.Make (Interned)
 let shards = Array.init 64 (fun _ -> (Table.create 0, Mutex.create ()))
 let next_id = Atomic.make 0
 
-let node op src arg tag dtype id =
+let memos () =
   {
-    op;
-    src;
-    arg;
-    tag;
-    dtype;
-    id;
     shape_memo = None;
     ranges_memo = None;
     ended_ranges_memo = None;
@@ -589,6 +588,13 @@ let node op src arg tag dtype id =
     key_memo = None;
     arg_repr_memo = None;
   }
+
+let node op src arg tag dtype id =
+  { op; src; arg; tag; dtype; id; memos = memos () }
+
+(* The memos of every probe, which no one reads or fills: a probe only looks its
+   node up. *)
+let probe_memos = memos ()
 
 (* The whole-specification check that construction runs when the setting [SPEC]
    is 2 or more; [Spec] installs it. Nodes built while the library is
@@ -677,7 +683,9 @@ let dtype_of op src arg =
 (* Nodes *)
 
 let v ?(src = []) ?(arg = No_arg) ?tag op =
-  let probe = node op src arg tag Dtype.Void (-1) in
+  let probe =
+    { op; src; arg; tag; dtype = Dtype.Void; id = -1; memos = probe_memos }
+  in
   let table, lock = shards.(Hashtbl.hash (Interned.hash probe) land 63) in
   Mutex.lock lock;
   match Table.find_opt table probe with
@@ -886,11 +894,11 @@ and tag_str u =
   | Some g -> ", tag=" ^ Tag.repr g
 
 and arg_repr u =
-  match u.arg_repr_memo with
+  match u.memos.arg_repr_memo with
   | Some s -> s
   | None ->
       let s = repr_arg u.arg in
-      u.arg_repr_memo <- Some s;
+      u.memos.arg_repr_memo <- Some s;
       s
 
 and repr_sint s = repr_sint_with repr s
@@ -1066,12 +1074,12 @@ let backward_slice ~calls u =
   let walk () =
     Nodes.of_list (List.filter (fun n -> n != u) (toposort ~calls u))
   in
-  match (calls, u.backward_slice_memo) with
+  match (calls, u.memos.backward_slice_memo) with
   | Enter, _ -> walk ()
   | Skip, Some s -> s
   | Skip, None ->
       let s = walk () in
-      u.backward_slice_memo <- Some s;
+      u.memos.backward_slice_memo <- Some s;
       s
 
 let backward_slice_with_self ~calls u =
@@ -1082,11 +1090,11 @@ let backward_slice_with_self ~calls u =
    whose set is one of its sources' shares that source's set. *)
 let ops_reached u =
   memoized ~calls:Skip
-    ~get:(fun n -> n.ops_reached_memo)
-    ~set:(fun n s -> n.ops_reached_memo <- Some s)
+    ~get:(fun n -> n.memos.ops_reached_memo)
+    ~set:(fun n s -> n.memos.ops_reached_memo <- Some s)
     ~compute:(fun n ->
       let srcs = if n.op = Op.Call then drop 1 n.src else n.src in
-      let sets = List.map (fun s -> Option.get s.ops_reached_memo) srcs in
+      let sets = List.map (fun s -> Option.get s.memos.ops_reached_memo) srcs in
       let all = List.fold_left Op.Set.union (Op.Set.of_list [ n.op ]) sets in
       Option.value ~default:all (List.find_opt (Op.Set.equal all) sets))
     u
@@ -1137,14 +1145,16 @@ let compare_structure u0 u1 =
 
 let key u =
   memoized ~calls:Enter
-    ~get:(fun n -> n.key_memo)
-    ~set:(fun n k -> n.key_memo <- Some k)
+    ~get:(fun n -> n.memos.key_memo)
+    ~set:(fun n k -> n.memos.key_memo <- Some k)
     ~compute:(fun n ->
       let b = Buffer.create 128 in
       Buffer.add_string b
         (repr_tuple
            [ Format.asprintf "%a" Op.pp n.op; repr_dtype n.dtype; arg_repr n ]);
-      List.iter (fun s -> Buffer.add_string b (Option.get s.key_memo)) n.src;
+      List.iter
+        (fun s -> Buffer.add_string b (Option.get s.memos.key_memo))
+        n.src;
       Digest.BLAKE256.string (Buffer.contents b))
     u
 
@@ -1579,11 +1589,11 @@ let rounded dt ((lo, hi) as b : Dtype.value * Dtype.value) =
    fill the whole graph below. A node's bounds, and those of an operand an
    operation commits to its type, are at their width. *)
 let rec min_max u =
-  match u.min_max_memo with
+  match u.memos.min_max_memo with
   | Some b -> b
   | None ->
       let b = at_width u.dtype (compute_min_max u) in
-      u.min_max_memo <- Some b;
+      u.memos.min_max_memo <- Some b;
       b
 
 and operand_bounds u s =
@@ -2048,7 +2058,7 @@ let as_shape u : sint list =
   | _ -> [ ssimplify u ]
 
 let marg u =
-  match u.marg_memo with
+  match u.memos.marg_memo with
   | Some m -> m
   | None ->
       let shape_src i = as_shape (nth u i) in
@@ -2062,7 +2072,7 @@ let marg u =
         | Op.Flip, Flips l -> Flip l
         | op, _ -> invalid_argf "%s is not a movement" (Op.name op)
       in
-      u.marg_memo <- Some m;
+      u.memos.marg_memo <- Some m;
       m
 
 let marg_shape u =
@@ -2126,8 +2136,8 @@ let broadcast_axes src out =
 
 let rec shape_opt u =
   memoized ~calls:Enter
-    ~get:(fun n -> n.shape_memo)
-    ~set:(fun n s -> n.shape_memo <- Some s)
+    ~get:(fun n -> n.memos.shape_memo)
+    ~set:(fun n s -> n.memos.shape_memo <- Some s)
     ~compute:compute_shape u
 
 and shape u =
@@ -2341,7 +2351,7 @@ let body u =
   | op, _ -> invalid_argf "%s is not a call" (Op.name op)
 
 let rec ended_ranges u =
-  match u.ended_ranges_memo with
+  match u.memos.ended_ranges_memo with
   | Some l -> l
   | None ->
       let l =
@@ -2360,13 +2370,13 @@ let rec ended_ranges u =
         | Op.Unshard -> drop 1 u.src
         | _ -> []
       in
-      u.ended_ranges_memo <- Some l;
+      u.memos.ended_ranges_memo <- Some l;
       l
 
 let rec ranges u =
   memoized ~calls:Enter
-    ~get:(fun n -> n.ranges_memo)
-    ~set:(fun n r -> n.ranges_memo <- Some r)
+    ~get:(fun n -> n.memos.ranges_memo)
+    ~set:(fun n r -> n.memos.ranges_memo <- Some r)
     ~compute:compute_ranges u
 
 (* The node itself if it is a range, then the ranges of its sources in order of
@@ -2516,8 +2526,8 @@ let rec get_valid u =
 
 let rec device u =
   memoized ~calls:Enter
-    ~get:(fun n -> n.device_memo)
-    ~set:(fun n d -> n.device_memo <- Some d)
+    ~get:(fun n -> n.memos.device_memo)
+    ~set:(fun n d -> n.memos.device_memo <- Some d)
     ~compute:compute_device u
 
 and compute_device u =
@@ -2554,8 +2564,8 @@ let is_virtual u = Option.is_none (device u) || List.mem u.dtype Dtype.weaks
 
 let rec addrspace u =
   memoized ~calls:Enter
-    ~get:(fun n -> n.addrspace_memo)
-    ~set:(fun n a -> n.addrspace_memo <- Some a)
+    ~get:(fun n -> n.memos.addrspace_memo)
+    ~set:(fun n a -> n.memos.addrspace_memo <- Some a)
     ~compute:compute_addrspace u
 
 and compute_addrspace u =
@@ -3176,11 +3186,11 @@ let arange ?(start = 0) ?(step = 1) ?dtype stop =
 (* Several devices *)
 
 let rec axis u =
-  match u.axis_memo with
+  match u.memos.axis_memo with
   | Some a -> a
   | None ->
       let a = compute_axis u in
-      u.axis_memo <- Some a;
+      u.memos.axis_memo <- Some a;
       a
 
 and compute_axis u =
