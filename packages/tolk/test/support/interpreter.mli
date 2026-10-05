@@ -23,10 +23,12 @@
     that operation of their lanes [k].
 
     The value of an index where its gate fails ({!Tolk.Ops.valid}) is
-    [`Invalid], which poisons what reads it: an operation of an [`Invalid]
-    operand, a read at an [`Invalid] index, a reduction of an [`Invalid] value,
-    and a selection by an [`Invalid] condition, is [`Invalid]. A selection picks
-    its branch, [`Invalid] included.
+    [`Invalid], which poisons what computes with it: an operation of an
+    [`Invalid] operand, a reduction of an [`Invalid] value, and a selection by
+    an [`Invalid] condition, is [`Invalid]. A selection picks its branch,
+    [`Invalid] included. A read of storage at an [`Invalid] index, or a lane of
+    a vector load at an [`Invalid] offset, is zero of its type, as compiled code
+    gates the read.
 
     A kernel is denoted by the set of its writes ({!writes}): which element of
     which storage takes which value. It has no memory state and no order: a

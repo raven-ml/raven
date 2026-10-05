@@ -125,13 +125,14 @@ let reads in_shape out_shape idxs =
       Interpreter.eval ~vars ~buffers:[ (0, elements in_shape) ] read)
     (coords out_shape)
 
-let defined in_shape m =
+(* [moved in_shape m] is the elements of the movement [m] of the source. The
+   source holds no zero, so a zero is an element a pad adds, which a read at an
+   invalid index gives. *)
+let moved in_shape m =
   let moved = Ops.mop (view in_shape) m in
   match Tensors.eval ~buffers:[ (0, elements in_shape) ] moved with
   | [ elements ] ->
-      List.map
-        (function `Int v when Bigint.equal v Bigint.zero -> `Invalid | v -> v)
-        (Array.to_list elements)
+      List.map (fun v -> (v :> Dtype.const)) (Array.to_list elements)
   | _ -> fail "a movement of a value on one device is on one device"
 
 let apply in_shape m idxs = Indexing.apply_movement_op (ints in_shape) m idxs
@@ -139,8 +140,9 @@ let apply in_shape m idxs = Indexing.apply_movement_op (ints in_shape) m idxs
 (* A pad's law says something only where the pad adds elements. *)
 let index_law kind (in_shape, m) =
   let out_shape = shape_of in_shape m in
-  let expected = defined in_shape m in
-  if kind = `Pad then cover "an element is padded" (List.mem `Invalid expected);
+  let expected = moved in_shape m in
+  if kind = `Pad then
+    cover "an element is padded" (List.mem (`Int Bigint.zero) expected);
   equal (list Dtypes.const) expected
     (reads in_shape out_shape (apply in_shape m (ranges out_shape)))
 

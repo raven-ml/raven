@@ -628,18 +628,20 @@ let step =
         Read_twice;
       ])
 
+let pp_program ppf (shape, steps) =
+  Format.fprintf ppf "[%s], then %a"
+    (String.concat "; " (List.map string_of_int shape))
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
+       pp_step)
+    steps
+
 let program =
   Gen.(
     let* shape = list ~size:(int_range 1 3) (int_range 1 4) in
     let+ steps = list ~size:(int_range 1 5) step in
     (shape, steps))
-  |> Gen.with_pp (fun ppf (shape, steps) ->
-      Format.fprintf ppf "[%s], then %a"
-        (String.concat "; " (List.map string_of_int shape))
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
-           pp_step)
-        steps)
+  |> Gen.with_pp pp_program
 
 let dims u =
   List.map
@@ -710,7 +712,7 @@ let build (shape, steps) =
   in
   (sink, !memory)
 
-let schedules_what_it_computes drawn =
+let writes_what_it_computes ?(cover = fun _ _ -> ()) drawn =
   let sink, buffers = build drawn in
   let kernels = schedule sink in
   let expected = Tensors.writes ~buffers sink in
@@ -718,11 +720,20 @@ let schedules_what_it_computes drawn =
   cover "a value is written" (expected <> []);
   equal (list write) expected (Kernel_graphs.writes ~buffers kernels)
 
+(* Programs the law once failed on. A sum over a padded axis of size 1 folds
+   into the value times its own validity, which reads the input at an invalid
+   index where it is padding: that read is zero. *)
+let counterexamples = [ ([ 1 ], [ Pad 0; Unsqueeze 0; Pad 0; Sum 0 ]) ]
+
 let laws =
   group "get_kernel_graph › laws"
     [
       prop "a scheduled function writes what its tensors compute" program
-        schedules_what_it_computes;
+        (writes_what_it_computes ~cover);
+      cases
+        ~name:(Format.asprintf "%a" pp_program)
+        "a scheduled function writes what its tensors compute, for"
+        counterexamples writes_what_it_computes;
     ]
 
 (* Loops of calls *)

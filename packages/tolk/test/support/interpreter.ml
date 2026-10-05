@@ -8,6 +8,7 @@ let name u =
   | _ -> None
 
 let is_invalid = function `Invalid -> true | #Dtype.value -> false
+let zero dt = Dtype.const dt (`Int Bigint.zero)
 let weak u = List.mem (Ops.dtype u) Dtype.weaks
 
 (* [held ~check dt v] is [v] as [dt] holds it: converted, then wrapped to [dt]'s
@@ -398,8 +399,10 @@ and read ~check p i =
         | Some elements -> elements
         | None -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
       in
+      (* Compiled code gates a read at an invalid index, which then reads
+         zero. *)
       match (offset, value ~check p ix) with
-      | `Invalid, _ | _, `Invalid -> `Invalid
+      | `Invalid, _ | _, `Invalid -> zero (Ops.dtype p.nodes.(i))
       | `Int o, `Int k -> (
           (match length with
           | Some n when not Bigint.(geq k zero && lt k (Ops.to_z n)) ->

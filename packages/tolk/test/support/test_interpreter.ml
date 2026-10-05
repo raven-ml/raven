@@ -239,8 +239,8 @@ let storage =
           in
           equal const ~msg:"at 3" (int 13) (at 3 gated);
           equal const ~msg:"at 7, outside the storage" (int (-1)) (at 7 gated));
-      test "an index at an invalid index is invalid" (fun () ->
-          equal const `Invalid
+      test "an index at an invalid index reads zero" (fun () ->
+          equal const (int 0)
             (at 7 (Ops.index table [ Ops.valid i Ops.O.(i < int 4) ])));
       test "an index outside the storage is refused" (fun () ->
           rejects (fun () -> at 4 (Ops.index table [ i ])));
@@ -251,10 +251,10 @@ let storage =
         (fun () ->
           let vector = Ops.load (vector table (Ops.int 1) 2) [] in
           equal const (int 12) (at 0 (Ops.index vector [ Ops.int 1 ])));
-      test "a lane of a vector load at an invalid offset is invalid" (fun () ->
+      test "a lane of a vector load at an invalid offset reads zero" (fun () ->
           let offset = Ops.valid i Ops.O.(i < int 2) in
           let vector = Ops.load (vector table offset 2) [] in
-          equal const `Invalid (at 3 (Ops.index vector [ Ops.int 0 ])));
+          equal const (int 0) (at 3 (Ops.index vector [ Ops.int 0 ])));
       test "a lane of a stack is its source" (fun () ->
           equal const (int 5) (eval (stack_lane 0));
           equal const (int 7) (eval (stack_lane 2)));
