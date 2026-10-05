@@ -1,5 +1,5 @@
 (tests
- (names test_algebra test_text test_ratio)
+ (names test_algebra test_text test_ratio test_quantity)
  (package ymir)
- (libraries ymir.units ymir_units_test nx windtrap)
+ (libraries ymir.units ymir_units_test nx nx.dtype rune windtrap)
  (deps golden/ratio.golden))

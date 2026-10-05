@@ -32,6 +32,10 @@
   dune
   (nx
    (>= 1.0.0~alpha3))
+  (rune
+   (and
+    :with-test
+    (>= 1.0.0~alpha3)))
   (windtrap
    (and
     :with-test
