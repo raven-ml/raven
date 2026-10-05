@@ -258,8 +258,13 @@ let candidates text =
   |> List.map (fun (_, c) ->
       Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)
 
+(* Only the time is measured. What a lowering allocates depends on which nodes
+   of earlier calls the collector has not yet reclaimed, since building a node
+   that still exists allocates nothing: from one call to the next it moves by
+   about 2%, and no count is constant for thumper to prove exact. *)
 let linearize_candidates =
   Thumper.group "linearize"
+    ~metrics:[ Thumper.Metric.wall_time ]
     (List.map
        (fun (kernel, text) ->
          Thumper.bench_with_setup
