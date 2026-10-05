@@ -3482,7 +3482,8 @@ stores through a pad.
   (b) speaks of a call site that fails.
 - **Pinned by:** `Tolk.Search › BEAM_PADTO=1 ... › a candidate of
   BEAM_UOPS_MAX instructions or more is not compiled`; `Tolk.Codegen ›
-  linearize` (both tests).
+  linearize and compile › compile completes linearize into the program
+  to_program makes` and `› linearize compiles nothing`.
 
 ## D116. A search compiles each kernel once
 
@@ -3846,3 +3847,41 @@ stores through a pad.
   selection holds a weak constant at its type, where it may round to zero`;
   rune's Rune.jit programs suite: `a compiled program › computes eager's
   bits`, whose examples hold the pad.
+
+## D129. A search keeps nothing of its candidates
+
+- **tinygrad:** `codegen/opt/search.py:64` (`_try_compile` calls
+  `to_program`), `codegen/__init__.py:465-491` (`do_to_program` takes a
+  sink or a program at any stage), `:502-504` (`to_program_cache`) and
+  `:451` (`do_compile` calls `compile_cached`); `engine/realize.py:231`
+  (`_get_call_to_compile` takes a program not yet compiled).
+- **tolk:** `lib/codegen/opt/search.ml:93` (`try_compile`),
+  `lib/codegen/codegen.ml:1200` (`compile`) and `:1255` (`to_program`), and
+  `lib/engine/realize.ml:126` (`get_call_to_compile`).
+- **Differs:** a candidate is compiled by `Codegen.linearize` then
+  `Codegen.compile`, which keep nothing: the compiler neither reads nor fills
+  its disk cache table, and the program enters neither of `to_program`'s
+  tables. tinygrad compiles a candidate through `to_program`, which keeps the
+  program in memory for the life of the process, and through
+  `compile_cached`, which keeps its binary on disk. A search keeps its
+  choice, and the kernel compiled with it keeps its own binary, as in
+  tinygrad; as in tinygrad, that kernel is compiled apart from the candidate
+  it was, since a candidate is named `"test"`. `to_program` takes only a
+  kernel's sink, and `compile` only what `linearize` returns:
+  `to_program ast ren` is `compile (linearize ast ren) ren`, kept. tinygrad's
+  `do_to_program`, and `lower_and_compile` with it, also resume a program
+  from any stage. Under `ASSERT_COMPILE` a search not kept compiles its
+  candidates, and the kernel compiled with it raises at its own compilation,
+  where tinygrad raises at the first candidate.
+- **Reason:** disk and memory, measured: a search makes hundreds of
+  candidates, and kept, they grew tolk's disk cache without bound, to 8.9 GB
+  on an M1 Max, and its memory table for the life of a process. A later
+  search of the same kernel reads its choice back and compiles no candidate,
+  so the kept binaries served only a search run again under
+  `IGNORE_BEAM_CACHE`. A program resumed from a later stage had no caller
+  but tests, and one keeping and one transient pipeline leave each fact in
+  one place. Admitting a resource rule is the maintainer's call, as for
+  D115, and the maintainer asked for this one.
+- **Pinned by:** `Tolk.Search › a kernel compiled with a search keeps the
+  search's choice and its own binary alone`; `Tolk.Codegen › linearize and
+  compile` (every test).

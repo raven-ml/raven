@@ -7,8 +7,11 @@ let program r uops =
     | Ops.Kernel _ -> sink
     | _ -> Ops.replace sink ~arg:(Ops.Kernel (Ops.kernel_info ()))
   in
-  Codegen.to_program
-    (Ops.v Op.Program ~src:[ sink; Ops.v Op.Linear ~src:uops ])
+  let info = Ops.program_info_of_sink ~target:r.Renderer.target sink in
+  Codegen.compile
+    (Ops.v Op.Program
+       ~src:[ sink; Ops.v Op.Linear ~src:uops ]
+       ~arg:(Program info))
     r
 
 (* Elements as their bytes, little-endian *)

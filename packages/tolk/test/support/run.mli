@@ -8,7 +8,7 @@ open Tolk
 
 val program : Renderer.t -> Ops.t list -> Ops.t
 (** [program r uops] is the linearized kernel [uops] rendered with [r] and
-    compiled with [r]'s compiler ({!Codegen.to_program}).
+    compiled with [r]'s compiler ({!Codegen.compile}).
 
     Raises {!Renderer.Compiler.Compile_error} if the compiler rejects the
     source. *)

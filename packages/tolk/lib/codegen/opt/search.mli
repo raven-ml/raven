@@ -90,8 +90,9 @@ val beam_search :
     placed on the renderer's device. It is first linearized
     ({!Codegen.linearize}) and dropped if it has {!Setting.beam_uops_max}
     instructions or more, unless that is [0] or less. It is then completed
-    ({!Codegen.to_program}). A kernel whose compilation raises [Failure] is
-    dropped, and so is one whose compilation raises another exception, unless
+    ({!Codegen.compile}), and neither its program nor its binary is kept past
+    the search. A kernel whose compilation raises [Failure] is dropped, and so
+    is one whose compilation raises another exception, unless
     {!Setting.beam_strict_mode} holds and the exception is raised. A search
     compiles each kernel ({!Postrange.Scheduler.ast}) once: a candidate whose
     kernel it met before takes that kernel's result.

@@ -457,19 +457,6 @@ let compiling =
             linear [ Ops.call (program plus_one) [ storage 4; storage 4 ] ]
           in
           equal uop l (Realize.lower_and_compile ~targets l));
-      test "compiles a program not yet compiled" (fun () ->
-          let lowered =
-            Ops.v Program
-              ~src:[ Codegen.full_rewrite_to_sink plus_one uncompiled ]
-          in
-          let l = linear [ Ops.call lowered [ storage 4; storage 4 ] ] in
-          match calls_of (Realize.lower_and_compile ~targets l) with
-          | [ c ] ->
-              equal
-                (Testable.make ~pp:Op.pp ~equal:Op.equal)
-                Binary
-                (Ops.op (List.nth (Ops.src (body_of c)) 3))
-          | cs -> failf "one call, not %d" (List.length cs));
       test "compiles a call on several devices for its first" (fun () ->
           let asked = ref [] in
           let targets d =

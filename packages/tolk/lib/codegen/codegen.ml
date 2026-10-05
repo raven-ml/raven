@@ -1133,14 +1133,14 @@ let host_entry prg lin source =
         (String.concat ", " (List.map pass params));
     ]
 
-let do_compile (ren : Renderer.t) prg source =
+let do_compile ((ren : Renderer.t), compile) prg source =
   let source = match arg source with String s -> s | _ -> assert false in
   if setting Setting.debug >= 4 then print_endline source;
   let source =
     if ren.target.device = "CPU" then host_entry prg (nth prg 1) source
     else source
   in
-  let lib = Renderer.Compiler.compile_cached ren.compiler source in
+  let lib = compile ren.compiler source in
   if setting Setting.debug >= 7 then
     Renderer.Compiler.disassemble ren.compiler lib;
   Some (replace prg ~src:(src prg @ [ v Op.Binary ~arg:(Bytes lib) ]))
@@ -1159,48 +1159,45 @@ let pm_linearize =
         (fun m -> do_estimates (m "prg") (m "sink") (m "lin"));
     ])
 
-let pm_to_program =
+(* Its context is the renderer and how a source is compiled. *)
+let pm_compile =
   let lin = Upat.op Op.Linear ~name:"lin" in
-  pm_linearize
-  ++ pm
-       (fun () -> [
-         rule_ctx
-           (program_with [ Upat.wild; lin ])
-           (fun ren m -> do_render ren (m "prg") (m "lin"));
-         rule_ctx
-           (program_with
-              [ Upat.wild; Upat.op Op.Linear; Upat.op Op.Source ~name:"source" ])
-           (fun ren m -> do_compile ren (m "prg") (m "source"));
-       ])
+  pm
+    (fun () -> [
+      rule_ctx
+        (program_with [ Upat.wild; lin ])
+        (fun (ren, _) m -> do_render ren (m "prg") (m "lin"));
+      rule_ctx
+        (program_with
+           [ Upat.wild; Upat.op Op.Linear; Upat.op Op.Source ~name:"source" ])
+        (fun ctx m -> do_compile ctx (m "prg") (m "source"));
+    ])
 
-(* [ast] as a program of its lowered sink, or the program it is. *)
-let lowered ?beam ast (ren : Renderer.t) =
-  let prg =
-    match (op ast, arg ast) with
-    | Op.Program, _ -> ast
-    | Op.Sink, Kernel _ ->
-        let optimize = Option.is_none (tag ast) in
-        let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
-        let info = program_info_of_sink ~target:ren.target full_sink in
-        v Op.Program ~src:[ full_sink ] ~arg:(Program info)
-    | Op.Sink, _ ->
-        invalid_arg "to_program needs a sink with kernel information"
-    | o, _ ->
-        invalid_arg (Format.asprintf "can't call to_program on %a" Op.pp o)
-  in
-  match arg prg with
-  | Program _ -> prg
-  | _ ->
-      replace prg
-        ~arg:(Program (program_info_of_sink ~target:ren.target (nth prg 0)))
+let kernel_of ast =
+  match (op ast, arg ast) with
+  | Op.Sink, Kernel k -> k
+  | _ -> invalid_arg "a program is made of a sink with kernel information"
 
-let do_to_program ?beam ast ren =
-  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren (lowered ?beam ast ren)
-    (After_sources pm_to_program)
-
-let linearize ast ren =
-  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren (lowered ast ren)
+let linearized ?beam ast (ren : Renderer.t) =
+  let (_ : kernel_info) = kernel_of ast in
+  let optimize = Option.is_none (tag ast) in
+  let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
+  let info = program_info_of_sink ~target:ren.target full_sink in
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+    (v Op.Program ~src:[ full_sink ] ~arg:(Program info))
     (After_sources pm_linearize)
+
+let linearize ast ren = linearized ast ren
+
+let compiled compile_source prg (ren : Renderer.t) =
+  match src prg with
+  | [ sink; lin ]
+    when op prg = Op.Program && op sink = Op.Sink && op lin = Op.Linear ->
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(ren, compile_source) prg
+        (After_sources pm_compile)
+  | _ -> invalid_arg "compile needs a program linearize made"
+
+let compile prg ren = compiled Renderer.Compiler.compile prg ren
 
 (* Each kernel's program is made once: a domain that asks for one being made
    waits for it, holding the entry's lock, rather than making it again. *)
@@ -1228,10 +1225,10 @@ let program_key ast (ren : Renderer.t) =
 (* A program holds its binary: it is kept on disk only while its compiler's
    binaries are, under a table that names the compiler. A kernel that asks for a
    beam search is not kept, since its program is what the search found. *)
-let kept ast (ren : Renderer.t) =
+let kept (k : kernel_info) (ren : Renderer.t) =
   Setting.value Setting.ccache
   && Option.is_some (Renderer.Compiler.cachekey ren.compiler)
-  && match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true
+  && k.beam = 0
 
 let program prg = op prg = Op.Program && List.length (src prg) = 4
 
@@ -1245,17 +1242,18 @@ let show_kept (ren : Renderer.t) prg =
         Renderer.Compiler.disassemble ren.compiler lib
   | _ -> ()
 
-let made_program ?beam ~key ast ren =
-  if not (kept ast ren) then do_to_program ?beam ast ren
+let made_program ?beam ~key ~kernel ast ren =
+  let make () =
+    compiled Renderer.Compiler.compile_cached (linearized ?beam ast ren) ren
+  in
+  if not (kept kernel ren) then make ()
   else
-    let prg, hit =
-      Graph.cached ~table:"to_program" ~key ~valid:program (fun () ->
-          do_to_program ?beam ast ren)
-    in
+    let prg, hit = Graph.cached ~table:"to_program" ~key ~valid:program make in
     if hit then show_kept ren prg;
     prg
 
 let to_program ?beam ast ren =
+  let kernel = kernel_of ast in
   let key = program_key ast ren in
   let entry =
     Mutex.protect to_program_lock (fun () ->
@@ -1270,6 +1268,6 @@ let to_program ?beam ast ren =
       match entry.prg with
       | Some prg -> prg
       | None ->
-          let prg = made_program ?beam ~key ast ren in
+          let prg = made_program ?beam ~key ~kernel ast ren in
           entry.prg <- Some prg;
           prg)

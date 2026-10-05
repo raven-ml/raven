@@ -118,7 +118,7 @@ let try_compile k =
     else
       (* Bound before the clock is read: a tuple's components are evaluated
          right to left. *)
-      let prg = Codegen.to_program lin ren in
+      let prg = Codegen.compile lin ren in
       Some (prg, Unix.gettimeofday () -. st)
   with
   | compiled -> compiled
@@ -295,8 +295,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
       let min_progress = setting Setting.beam_min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
       (* Each kernel is compiled once: two sequences of actions can reach equal
-         kernels, whose programs [Codegen.to_program] keys apart by the
-         optimisations they record. *)
+         kernels, whose kernel information records different optimisations. *)
       let compiled = Ops.Tbl.create 256 in
       let compile ks =
         let met = Ops.Tbl.create 64 in

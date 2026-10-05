@@ -380,8 +380,10 @@ val rocm_path : string t
 
 val assert_compile : bool t
 (** [assert_compile] makes compiling a source whose binary no disk cache table
-    holds raise ({!Renderer.Compiler.compile_cached}), from [ASSERT_COMPILE].
-    Defaults to [false]. *)
+    holds raise ({!Renderer.Compiler.compile_cached}), from [ASSERT_COMPILE]. A
+    beam search's candidates compile regardless ({!Codegen.compile}): a search
+    that is not kept runs under it, and the kernel compiled with its result then
+    raises if its own binary is not kept. Defaults to [false]. *)
 
 val rewrite_stack_limit : int t
 (** [rewrite_stack_limit] bounds the work list of {!Ops.graph_rewrite}, from

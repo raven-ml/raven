@@ -978,6 +978,16 @@ thread.
 
 ### Tolk (new)
 
+- A beam search keeps nothing of its candidates: they are compiled by
+  `Codegen.linearize` then the new `Codegen.compile`, which keep nothing, and
+  only the search's choice and the kernel compiled with it stay in the disk
+  cache. Candidates grew the cache without bound, to 8.9 GB on one machine.
+- **Breaking:** `Codegen.to_program` takes only a kernel's sink, and `Codegen.compile` only
+  what `Codegen.linearize` returns; `Realize.lower_and_compile` no longer
+  completes a program compiled in part.
+- `ASSERT_COMPILE` no longer stops a beam search at its first candidate: a
+  search that is not kept compiles its candidates, and the kernel compiled
+  with its result raises at its own compilation.
 - **Breaking:** `Ops.toposort`, `Ops.reaches`, `Ops.graph_rewrite`,
   `Ops.substitute` and `Spec.type_verify` take a required
   `~calls:(Enter | Skip)` (new `Ops.calls`) in place of `?enter_calls`, whose

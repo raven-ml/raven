@@ -768,8 +768,7 @@ let caching =
 
 let completes_linearize =
   let rows = List.filter (fun row -> compiles row && by_default row) rows in
-  prop ~count:20
-    "to_program completes linearize into the program of the kernel itself"
+  prop ~count:20 "compile completes linearize into the program to_program makes"
     Gen.(
       with_pp
         (fun ppf row -> Format.pp_print_string ppf (row "name"))
@@ -780,16 +779,29 @@ let completes_linearize =
           let lin = Codegen.linearize k ren in
           let prg = Codegen.to_program k ren in
           same_graph ~msg:"its first two" (first 2 prg) lin;
-          same_graph prg (Codegen.to_program lin ren)))
+          same_graph prg (Codegen.compile lin ren)))
 
 let linearizing =
-  group "linearize"
+  group "linearize and compile"
     [
       completes_linearize;
-      test "compiles nothing" (fun () ->
+      test "linearize compiles nothing" (fun () ->
           let compiled, r = counting () in
           ignore (Codegen.linearize (fresh_kernel ()) r);
           equal int 0 (Atomic.get compiled));
+      test "compile keeps nothing: each call compiles" (fun () ->
+          let compiled, r = counting () in
+          let lin = Codegen.linearize (fresh_kernel ()) r in
+          ignore (Codegen.compile lin r);
+          ignore (Codegen.compile lin r);
+          equal int 2 (Atomic.get compiled));
+      test "compile refuses what linearize does not make" (fun () ->
+          let k = fresh_kernel () in
+          rejects (fun () -> Codegen.compile k clang);
+          rejects (fun () -> Codegen.compile (Codegen.to_program k clang) clang));
+      test "to_program refuses a program" (fun () ->
+          let lin = Codegen.linearize (fresh_kernel ()) clang in
+          rejects (fun () -> Codegen.to_program lin clang));
     ]
 
 (* Programs on disk
@@ -947,17 +959,6 @@ let on_disk =
 
 let on_clang row = row "target" = "clang" && compiles row
 
-let resumes_from_its_sink row =
-  let p = program row in
-  let r = renderer_of_row row in
-  under row (fun () ->
-      same_graph ~msg:"from the lowered sink" p
-        (Codegen.to_program (Ops.v Program ~src:[ lowered row ]) r);
-      same_graph ~msg:"from the sink and the instructions, with its argument" p
-        (Codegen.to_program
-           (Ops.v Program ~src:[ Ops.nth p 0; Ops.nth p 1 ] ~arg:(Ops.arg p))
-           r))
-
 let estimates row =
   let p = program row in
   match (kernel_info (Ops.nth p 0)).estimates with
@@ -1038,8 +1039,6 @@ let ten_scalars () =
 let programs =
   group "programs"
     [
-      group "to_program resumes a program from its lowered sink"
-        (per_row ~only:on_clang ~default:sample resumes_from_its_sink);
       group "the estimates count the instructions, leaving out index arithmetic"
         (per_row ~only:compiles counts_its_instructions);
       group "full_rewrite_to_sink lowers a kernel the same each time"

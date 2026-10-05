@@ -72,9 +72,7 @@ let linearize sink =
 (* The instructions each kernel's program renders. *)
 let instructions name =
   List.map
-    (fun k ->
-      let program = Ops.v Op.Program ~src:[ lower k ] in
-      Ops.src (Ops.nth (Codegen.to_program program renderer) 1))
+    (fun k -> Ops.src (Ops.nth (Codegen.linearize k renderer) 1))
     (kernels name)
 
 (* The keys under which [name]'s schedule and programs are put in the disk

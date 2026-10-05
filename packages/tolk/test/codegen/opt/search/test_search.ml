@@ -951,6 +951,52 @@ let cache_kinds =
         (List.exists (function Opt.Swap _ -> true | _ -> false) first);
       equal opts first (cached untimed))
 
+(* The entries of every table of the disk cache. *)
+let entries () =
+  let rec count dir =
+    Array.fold_left
+      (fun n name ->
+        let path = Filename.concat dir name in
+        if Sys.is_directory path then n + count path else n + 1)
+      0 (Sys.readdir dir)
+  in
+  if Sys.file_exists Helpers.cachedb then count Helpers.cachedb else 0
+
+let source prg =
+  match Ops.arg (Ops.nth prg 2) with
+  | String s -> s
+  | _ -> failf "the program %a has no source" Ops.pp prg
+
+(* A compiler whose binaries are kept, in the table [binaries]. *)
+let binaries = "search test binaries"
+
+let cache_candidates =
+  test
+    "a kernel compiled with a search keeps the search's choice and its own \
+     binary alone" (fun () ->
+      let ren =
+        Renderer.with_compiler
+          (Renderer.Compiler.v ~cachekey:(fun () -> binaries) Fun.id)
+          (renderer "metal")
+      in
+      let k = kernel "sum_rows" in
+      let k = Ops.replace k ~arg:(Kernel (Ops.kernel_info ~beam:2 ())) in
+      let (link, time), record =
+        sampling (fun ~vars prg _ -> golden_time ~failing:false ~vars prg)
+      in
+      quietly ~settings:[ B (Setting.cachelevel, 1) ] @@ fun () ->
+      Helpers.Diskcache.clear ();
+      let prg =
+        Codegen.to_program ~beam:(Search.beam_search ~link ~time) k ren
+      in
+      let kept p = Helpers.Diskcache.get ~table:binaries (source p) in
+      let candidates = (record ()).linked in
+      greater int ~than:1 (List.length candidates);
+      equal ~msg:"candidates' binaries kept" int 0
+        (List.length (List.filter_map kept candidates));
+      equal (option string) (Some (binary prg)) (kept prg);
+      equal ~msg:"entries" int 2 (entries ()))
+
 (* Printing *)
 
 let progress =
@@ -1160,6 +1206,7 @@ let () =
          cache_declared;
          cache_variables;
          cache_kinds;
+         cache_candidates;
          uncompilable;
          compiles_once;
          progress;

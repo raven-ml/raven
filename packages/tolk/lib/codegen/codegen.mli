@@ -20,7 +20,10 @@
       into a binary ({!Renderer.Compiler}).
 
     {!to_program} runs the three and returns an {!Op.Program} that holds each
-    step's result. Nothing here runs a program or opens a device. *)
+    step's result, which it keeps for later calls and processes. {!linearize}
+    then {!compile} run the same steps and keep nothing, for programs that live
+    only as long as their caller, as a search's candidates do. Nothing here runs
+    a program or opens a device. *)
 
 (** {1:lowering Lowering} *)
 
@@ -88,9 +91,10 @@ val to_program :
     + an {!Op.Binary} of that source compiled by [ren]'s compiler
       ({!Renderer.Compiler.compile_cached}).
 
-    [ast] is a kernel's sink, or a program whose sources are the first of these,
-    from a sink already lowered; the missing ones are then added, and the
-    argument if it is not a {!Ops.program_info}.
+    [ast] is a kernel's sink. [to_program ast ren] and
+    [compile (linearize ast ren) ren] are equal programs: [to_program] is the
+    pipeline that keeps what it makes, {!linearize} and {!compile} the one that
+    keeps nothing.
 
     Programs are kept: a second call with an equal [ast], a renderer of the same
     name and target whose compiler has the same name of its toolchain and
@@ -115,16 +119,29 @@ val to_program :
     binary is disassembled ({!Renderer.Compiler.disassemble}), for a program
     read back from disk too.
 
-    Raises [Invalid_argument] if [ast] is neither an {!Op.Sink} with kernel
-    information nor an {!Op.Program}, or as {!full_rewrite_to_sink} does. Raises
+    Raises [Invalid_argument] if [ast] is not an {!Op.Sink} with kernel
+    information, or as {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
 
 val linearize : Ops.t -> Renderer.t -> Ops.t
-(** [linearize ast ren] is the program of [ast] for [ren] up to its
-    instructions: an {!Op.Program} whose sources are the first two of
+(** [linearize ast ren] is the program of the kernel's sink [ast] for [ren] up
+    to its instructions: an {!Op.Program} whose sources are the first two of
     {!to_program}'s, the lowered sink and the {!Op.Linear} of its instructions,
-    and whose argument is its {!Ops.program_info}. It renders and compiles
-    nothing. {!to_program} completes it: [to_program (linearize ast ren) ren]
-    and [to_program ast ren] are equal programs.
+    and whose argument is its {!Ops.program_info}. It renders, compiles and
+    keeps nothing.
 
     Raises as {!to_program} does before rendering. *)
+
+val compile : Ops.t -> Renderer.t -> Ops.t
+(** [compile prg ren] is the program {!linearize} made, [prg], completed for
+    [ren] with the source [ren] writes and its binary, made anew and kept
+    nowhere: neither the program, in memory or on disk, nor its binary, which
+    [ren]'s compiler makes ({!Renderer.Compiler.compile}) without reading or
+    filling its disk cache table, so that {!Setting.assert_compile} does not
+    apply. A beam search compiles its candidates so.
+
+    When the setting {!Setting.debug} is [4] or more, the source is printed on
+    standard output, and from [7] the binary is disassembled.
+
+    Raises [Invalid_argument] if [prg] is not a program {!linearize} made, and
+    {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
