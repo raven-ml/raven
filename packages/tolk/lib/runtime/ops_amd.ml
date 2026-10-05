@@ -50,41 +50,66 @@ let major gpu =
   let m, _, _ = gpu.target in
   m
 
-module G = Amd_gpu
+module P = Nx_amd_packet
 
-(* A field of a word at its bits [(hi, lo)]. *)
-let bits (hi, lo) v =
+(* A field of a word at its bits [(lo, hi)]. *)
+let bits (lo, hi) v =
   (v
   land ((1 lsl ((hi - lo) [@mutate off "every value fits its field"] + 1)) - 1)
   )
   lsl lo
 
-let packet3 op n =
-  (G.packet_type3 lsl 30) lor ((op land 0xff) lsl 8) lor ((n land 0x3fff) lsl 16)
-
-let u32 n = int ~dtype:Dtype.Uint32 (n land 0xffff_ffff)
+let u32 = Hcq2.Queue.dword
 let u64 n = int ~dtype:Dtype.Uint64 n
 let binary s = v Op.Binary ~arg:(Bytes s)
 let q_of = Hcq2.Queue.q
+
+(* Packets *)
+
+(* A term as tinygrad's call sites compute it: an offset added as a [uint64]
+   constant, a right shift by a weak literal. *)
+let rec term = function
+  | P.Value v -> v
+  | Add (t, n) ->
+      O.(term t + const ~dtype:Dtype.Uint64 (`Int (Bigint.of_int64_unsigned n)))
+  | Shift (t, n) -> O.(term t lsr int n)
+
+(* A packet's words as nodes: a constant word as a [uint32] constant, and a term
+   as its node, which the caller made of the width its word takes. *)
+let lower ws =
+  List.map (function P.Dword n -> u32 n | W32 t | W64 t -> term t) ws
+
+(* Nodes as the words of a packet, each of the width of its type. *)
+let words vs =
+  List.map
+    (fun v ->
+      let t = P.Value v in
+      if Dtype.itemsize (dtype v) = 8 then P.W64 t else P.W32 t)
+    vs
+
+(* A packet's words as nodes, each run of constant words one {!Op.Binary}, as a
+   structure in memory lays them out. *)
+let blob ws =
+  let run cs =
+    let b = Bytes.create (4 * List.length cs) in
+    List.iteri (fun i n -> Bytes.set_int32_le b (4 * i) (Int32.of_int n)) cs;
+    binary (Bytes.to_string b)
+  in
+  let rec go cs = function
+    | P.Dword n :: ws -> go (n :: cs) ws
+    | (P.W32 t | W64 t) :: ws ->
+        (if cs = [] then [] else [ run (List.rev cs) ]) @ (term t :: go [] ws)
+    | [] -> if cs = [] then [] else [ run (List.rev cs) ]
+  in
+  go [] ws
 
 (* PM4 *)
 
 (* The waves a dispatch runs on each shader array, [0] for no limit. *)
 let waves_per_sh = Helpers.Context_var.int ~reach:Output "WAVES_PER_SH" 0
-let event_index_partial_flush = 4
-let wait_reg_mem_function_eq = 3
-let wait_reg_mem_function_geq = 5
 
-(* The first bits of COPY_DATA's fields in its control word, after its source's
-   selector. *)
-let copy_data_dst_sel = 8
-let copy_data_count_sel = 16
-let copy_data_wr_confirm = 20
-
-let aql_hdr =
-  (1 lsl G.hsa_packet_header_barrier)
-  lor (G.hsa_fence_scope_system lsl G.hsa_packet_header_scacquire_fence_scope)
-  lor (G.hsa_fence_scope_system lsl G.hsa_packet_header_screlease_fence_scope)
+(* The poll interval of a wait, as tinygrad sets it. *)
+let wait_interval = 4
 
 (* The ring and its pointers, tagged [name_queue] like the placeholders the
    engine binds to the device's queue. *)
@@ -99,17 +124,21 @@ let queue_args devs queue ring =
     arg "doorbell" [ 1 ] Dtype.Uint64,
     arg "put_value" [ 1 ] Dtype.Uint64 )
 
-let dw vals =
-  List.fold_left
-    (fun n w -> n + if Dtype.itemsize (dtype w) = 8 then 2 else 1)
-    0 vals
-
 (* A device's signal word, which only the batch's own work moves past the value
    its queues wait for. *)
 let is_signal_word s =
   match tag (fst (Hcq2.unwrap_view s)) with
   | Some (Tag.String "timeline") -> true
   | _ -> false
+
+(* How a queue waits for a signal: for a device's signal word, its exact value;
+   for a queue's signal, a value at least the one waited for. *)
+let comparison s : P.comparison =
+  if is_signal_word s then Equal else Greater_equal
+
+(* RGP's marker of a pipeline's binding, in the user data of a thread trace
+   (RGP's sqtt.h, RGP_SQTT_MARKER_IDENTIFIER_BIND_PIPELINE). *)
+let rgp_sqtt_marker_identifier_bind_pipeline = 12
 
 (* Program data *)
 
@@ -119,7 +148,7 @@ type program = {
   rsrc1 : int;
   rsrc2 : int;
   rsrc3 : int;
-  wave32 : bool;
+  wave : P.Pm4.wave;
   private_segment_size : int;
   group_segment_size : int;
   kernargs_segment_size : int;
@@ -156,7 +185,7 @@ let program_data gpu lib =
     rsrc1 = (k.rsrc1 lor if major gpu = 11 then 1 lsl 20 else 0);
     rsrc2 = k.rsrc2 lor (lds lsl 15);
     rsrc3 = k.rsrc3;
-    wave32 = k.wave32;
+    wave = (if k.wave32 then Wave32 else Wave64);
     private_segment_size = k.private_segment;
     group_segment_size = k.group_segment;
     kernargs_segment_size = k.kernarg_size;
@@ -183,21 +212,6 @@ let dispatch_packet data (info : program_info) ?(kernel_object = u64 0)
       (function Int l -> l | Sym _ -> invalid_arg "a symbolic local size")
       info.local_size
   in
-  let pkt = Bytes.make G.dispatch_size '\000' in
-  Bytes.set_uint16_le pkt G.dispatch_header
-    (aql_hdr
-    lor (G.hsa_packet_type_kernel_dispatch lsl G.hsa_packet_header_type));
-  Bytes.set_uint16_le pkt G.dispatch_setup
-    (3 lsl G.hsa_kernel_dispatch_packet_setup_dimensions);
-  List.iteri
-    (fun i l ->
-      Bytes.set_uint16_le pkt (G.dispatch_workgroup_size_x + (2 * i)) l)
-    local;
-  Bytes.set_int32_le pkt G.dispatch_private_segment_size
-    (Int32.of_int data.private_segment_size);
-  Bytes.set_int32_le pkt G.dispatch_group_segment_size
-    (Int32.of_int data.group_segment_size);
-  let part a b = binary (Bytes.sub_string pkt a (b - a)) in
   let grid =
     List.map2
       (fun g l ->
@@ -206,60 +220,33 @@ let dispatch_packet data (info : program_info) ?(kernel_object = u64 0)
         | Sym g -> cast O.(g * int l) Dtype.Uint32)
       info.global_size local
   in
-  (part 0 G.dispatch_grid_size_x :: grid)
-  @ [
-      part G.dispatch_private_segment_size G.dispatch_kernel_object;
-      kernel_object;
-      kernarg_address;
-      part (G.dispatch_kernel_object + 16) G.dispatch_size;
-    ]
+  match (local, grid) with
+  | [ lx; ly; lz ], [ gx; gy; gz ] ->
+      blob
+        (P.Aql.dispatch ~threads:(lx, ly, lz) ~grid:(gx, gy, gz)
+           ~private_segment:data.private_segment_size
+           ~group_segment:data.group_segment_size ~descriptor:kernel_object
+           ~args:kernarg_address)
+  | _ -> invalid_arg "an AMD dispatch of other than three dimensions"
+
+(* The GC register [name] of the GPU's graphics family: the latest family of its
+   major at or before its version, as tinygrad picks a register module. *)
+let register gpu name =
+  match P.Gc.find gpu.gc ("reg" ^ name) with
+  | Some r -> Some (P.Gc.address gpu.gc r, r)
+  | None -> None
+
+let register_exn gpu name =
+  match register gpu name with
+  | Some r -> r
+  | None -> invalid_arg (Printf.sprintf "the GPU has no register %s" name)
 
 (* The scratch memory's COMPUTE_TMPRING_SIZE for kernels of [n] bytes per lane:
    the waves it serves and the size of one. *)
 let tmpring_size gpu n =
-  let n = max n 128 and lanes_per_wave = 64 in
-  let mem_alignment_size = if major gpu <> 9 then 256 else 1024 in
-  let size_per_thread =
-    Helpers.round_up n (mem_alignment_size / lanes_per_wave)
-  in
-  let size_per_xcc =
-    size_per_thread * lanes_per_wave * gpu.scratch_slots_per_cu
-    * gpu.compute_units
-  in
-  let max_scratch_waves =
-    gpu.compute_units * gpu.scratch_slots_per_cu * gpu.xccs
-  in
-  let wave_scratch =
-    Helpers.ceildiv (lanes_per_wave * size_per_thread) mem_alignment_size
-  in
-  let num_waves =
-    size_per_xcc
-    / (wave_scratch * mem_alignment_size)
-    / if major gpu <> 9 then gpu.shader_engines else 1
-  in
-  let waves, wavesize =
-    match major gpu with
-    | 9 ->
-        G.(compute_tmpring_size_waves_gfx9, compute_tmpring_size_wavesize_gfx9)
-    | 11 ->
-        G.(compute_tmpring_size_waves_gfx11, compute_tmpring_size_wavesize_gfx11)
-    | _ ->
-        G.(compute_tmpring_size_waves_gfx12, compute_tmpring_size_wavesize_gfx12)
-  in
-  bits waves (min num_waves max_scratch_waves) lor bits wavesize wave_scratch
-
-(* The counter registers of the GPU's graphics family: the latest family of its
-   major at or before its version, as tinygrad picks a register module. *)
-let profile_registers gpu =
-  let m, _, _ = gpu.gc in
-  match
-    List.rev
-      (List.filter
-         (fun ((m', _, _) as v) -> m' = m && v <= gpu.gc)
-         G.gc_families)
-  with
-  | v :: _ -> G.profile_registers v
-  | [] -> []
+  P.Gc.tmpring_size ~gc:gpu.gc ~compute_units:gpu.compute_units
+    ~slots:gpu.scratch_slots_per_cu ~shader_engines:gpu.shader_engines
+    ~xccs:gpu.xccs n
 
 (* An AQL queue's packets: dispatches and runs of PM4 packets, and loops around
    them, each with its range and the bytes of its trip in the command buffer. *)
@@ -272,129 +259,42 @@ let compute_queue ~host gpu q : Hcq2.commands =
   let queue = Hcq2.Queue.name q in
   let gfx9 = major gpu = 9 in
   let getaddr = getaddr ~device:dev in
-  let pkt3 cmd vals =
-    ignore (q_of q (u32 (packet3 cmd (dw vals - 1)) :: vals))
-  in
-  let wreg reg vals =
-    let set, start =
-      if
-        (G.packet3_set_sh_reg_start <= reg
-        && reg < G.packet3_set_sh_reg_end)
-        [@mutate
-          off
-            "every register written is an SH register, far from the range's \
-             ends"]
-      then (G.packet3_set_sh_reg, G.packet3_set_sh_reg_start)
-      else if
-        G.packet3_set_uconfig_reg_start <= reg
-        && reg < G.packet3_set_uconfig_reg_start + 0xffff
-      then (G.packet3_set_uconfig_reg, G.packet3_set_uconfig_reg_start)
-      else
-        invalid_arg (Printf.sprintf "no PM4 packet sets the register 0x%x" reg)
-    in
-    pkt3 set (u32 (reg - start) :: vals)
-  in
-  (* The count fills in when the block closes. *)
+  let emit ws = ignore (q_of q (lower ws)) in
+  let wreg reg vals = emit (P.Pm4.set_reg reg (words vals)) in
+  (* The count fills in when the block closes: its packet is encoded again with
+     it. *)
   let pred_exec xcc_mask f =
-    if gpu.xccs > 1 then pkt3 G.packet3_pred_exec [ u32 (xcc_mask lsl 24) ];
+    if gpu.xccs > 1 then emit (P.Pm4.pred_exec ~xcc_mask ~dwords:0);
     let start = Hcq2.Queue.size q in
     f ();
     if gpu.xccs > 1 then
-      Hcq2.Queue.set_dword q (start - 4)
-        (Hcq2.Queue.get_dword q (start - 4)
-        lor ((Hcq2.Queue.size q - start) / 4))
+      let dwords = (Hcq2.Queue.size q - start) / 4 in
+      List.iteri
+        (fun i w -> Hcq2.Queue.set_dword q (start - 8 + (4 * i)) w)
+        (P.dwords (P.Pm4.pred_exec ~xcc_mask ~dwords))
   in
-  let wait_reg_mem ?(mask = 0xffff_ffff) ?mem ?(reg = 0)
-      ?(op = wait_reg_mem_function_geq) value =
-    let info =
-      (Bool.to_int (Option.is_some mem) lsl G.wait_reg_mem_mem_space)
-      lor (op lsl G.wait_reg_mem_function)
-      lor (0 lsl G.wait_reg_mem_engine)
-    in
-    let at = match mem with Some m -> [ m ] | None -> [ u32 reg; u32 0 ] in
-    pkt3 G.packet3_wait_reg_mem ((u32 info :: at) @ [ value; u32 mask; u32 4 ])
+  let wait_reg_mem ?(mask = 0xffff_ffff) loc cmp value =
+    emit (P.Pm4.wait ~gc:gpu.gc loc cmp value ~mask ~interval:wait_interval)
   in
-  let acquire_mem ?(gli = 1) ?(gl2 = 1) () =
-    let everything = [ u32 0xffff_ffff; u32 0xffff_ffff; u32 0; u32 0 ] in
-    if not gfx9 then
-      let cache_flags =
-        (gli lsl G.packet3_acquire_mem_gcr_cntl_gli_inv)
-        lor (1 lsl G.packet3_acquire_mem_gcr_cntl_glm_inv)
-        lor (1 lsl G.packet3_acquire_mem_gcr_cntl_glm_wb)
-        lor (1 lsl G.packet3_acquire_mem_gcr_cntl_glk_inv)
-        lor (1 lsl G.packet3_acquire_mem_gcr_cntl_glk_wb)
-        lor (1 lsl G.packet3_acquire_mem_gcr_cntl_glv_inv)
-        lor (1 lsl G.packet3_acquire_mem_gcr_cntl_gl1_inv)
-        lor (gl2 lsl G.packet3_acquire_mem_gcr_cntl_gl2_inv)
-        lor (gl2 lsl G.packet3_acquire_mem_gcr_cntl_gl2_wb)
-      in
-      pkt3 G.packet3_acquire_mem
-        ((u32 0 :: everything) @ [ u32 0; u32 cache_flags ])
-    else
-      let cp_coher_cntl =
-        (gli lsl G.packet3_acquire_mem_cp_coher_cntl_sh_icache_action_ena)
-        lor (1 lsl G.packet3_acquire_mem_cp_coher_cntl_sh_kcache_action_ena)
-        lor (gl2 lsl G.packet3_acquire_mem_cp_coher_cntl_tc_action_ena)
-        lor (1 lsl G.packet3_acquire_mem_cp_coher_cntl_tcl1_action_ena)
-        lor (gl2 lsl G.packet3_acquire_mem_cp_coher_cntl_tc_wb_action_ena)
-      in
-      pkt3 G.packet3_acquire_mem
-        ((u32 cp_coher_cntl :: everything) @ [ u32 0x0000000A ])
-  in
-  let release_mem ~address ~value ~data_sel ~int_sel ?(cache_flush = false) () =
-    let cache_flags =
-      if not cache_flush then 0
-      else if not gfx9 then
-        G.packet3_release_mem_gcr_glv_inv lor G.packet3_release_mem_gcr_gl1_inv
-        lor G.packet3_release_mem_gcr_gl2_inv
-        lor G.packet3_release_mem_gcr_glm_wb
-        lor G.packet3_release_mem_gcr_glm_inv
-        lor G.packet3_release_mem_gcr_gl2_wb lor G.packet3_release_mem_gcr_seq
-      else G.eop_tc_wb_action_en lor G.eop_tc_nc_action_en
-    in
-    let event_dw =
-      (G.cache_flush_and_inv_ts_event lsl G.event_type)
-      lor (G.event_index__mec_release_mem__end_of_pipe lsl G.event_index)
-    in
-    let memsel_dw =
-      (* Its destination (DST_SEL) is 0, memory. *)
-      (data_sel lsl G.data_sel) lor (int_sel lsl G.int_sel)
-    in
-    pkt3 G.packet3_release_mem
-      [
-        u32 (event_dw lor cache_flags);
-        u32 memsel_dw;
-        address;
-        cast value Dtype.Uint64;
-        u32 0;
-      ]
+  let acquire_mem caches = emit (P.Pm4.acquire_mem ~gc:gpu.gc caches) in
+  let release_mem address data =
+    emit (P.Pm4.release_mem ~gc:gpu.gc address data)
   in
   (* The host flushes the host data path before each submission, after its
      writes through the BAR, so a barrier only invalidates the GPU's caches. A
      flush from the queue, which requests every client's flush and waits until
      all of them are done, hangs a GFX12 compute queue within a few hundred
      batches: its MEC waits on the read of the done register. *)
-  let memory_barrier () = acquire_mem () in
+  let memory_barrier () = acquire_mem All_caches in
   (* Profiling: a run's slot holds its counters and its traces until a
      synchronization reads them back. *)
-  let registers = lazy (profile_registers gpu) in
-  let register name =
-    match List.find_opt (fun (n, _, _) -> n = name) (Lazy.force registers) with
-    | Some (_, addr, fields) -> Some (addr, fields)
-    | None -> None
-  in
-  let fields name =
-    match register name with
-    | Some r -> r
-    | None -> invalid_arg (Printf.sprintf "the GPU has no register %s" name)
-  in
-  let address name = fst (fields name) in
+  let register = register gpu in
+  let address name = fst (register_exn gpu name) in
   (* Each value is cut to its field's width, so that none sets the next. *)
-  let encode name values =
-    let fs = snd (fields name) in
-    List.fold_left (fun w (f, v) -> w lor bits (List.assoc f fs) v) 0 values
+  let encode name values = P.Gc.encode (snd (register_exn gpu name)) values in
+  let mask name field =
+    bits (List.assoc field (snd (register_exn gpu name)).fields) (-1)
   in
-  let mask name field = bits (List.assoc field (snd (fields name))) (-1) in
   let set name values = wreg (address name) [ u32 (encode name values) ] in
   let set_grbm ?instance ?se ?sa ?wgp () =
     let instance =
@@ -491,13 +391,9 @@ let compute_queue ~host gpu q : Hcq2.commands =
                         let copy reg at =
                           (* From a performance counter to memory through the
                              L2. *)
-                          pkt3 G.packet3_copy_data
-                            [
-                              u32 ((2 lsl 8) lor 4);
-                              u32 reg;
-                              u32 0;
-                              O.(buf + u64 at);
-                            ]
+                          emit
+                            (P.Pm4.copy_data Posted (Counter reg)
+                               O.(buf + u64 at))
                         in
                         let name = sample_register ct in
                         Option.iter
@@ -520,10 +416,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
      the first SIMD of their first work-group processor. *)
   let gfx12 = major gpu >= 12 in
   let itraced se = se < 2 in
-  let event_write event index =
-    pkt3 G.packet3_event_write
-      [ u32 ((event lsl G.event_type) lor (index lsl G.event_index)) ]
-  in
+  let event_write e = emit (P.Pm4.event_write e) in
   let spi_config ~tracing =
     let t = Bool.to_int tracing in
     set "SPI_CONFIG_CNTL"
@@ -546,7 +439,9 @@ let compute_queue ~host gpu q : Hcq2.commands =
          ("util_timer", 1);
          ("mode", Bool.to_int tracing);
        ]
-      @ if gfx12 then [] else [ ("rt_freq", G.sq_tt_rt_freq_4096_clk) ])
+      @
+      if gfx12 then [] else [ ("rt_freq", P.Gc.Thread_trace.rt_freq_4096_clk) ]
+      )
   in
   (* Words for the trace, in pairs of user data registers. *)
   let userdata words =
@@ -566,7 +461,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
     let hash = data.libhash in
     userdata
       [
-        u32 (G.rgp_sqtt_marker_identifier_bind_pipeline lor (1 lsl 7));
+        u32 (rgp_sqtt_marker_identifier_bind_pipeline lor (1 lsl 7));
         u32 (Int64.to_int hash);
         u32 (Int64.to_int (Int64.shift_right_logical hash 32));
       ];
@@ -644,27 +539,28 @@ let compute_queue ~host gpu q : Hcq2.commands =
         set "SQ_THREAD_TRACE_MASK"
           [
             ( "wtype_include",
-              if gfx12 then 1 lsl 6 else G.sq_tt_wtype_include_cs_bit );
+              if gfx12 then 1 lsl 6 else P.Gc.Thread_trace.wtype_include_cs_bit
+            );
             ("simd_sel", 0);
             ("wgp_sel", 0);
             ("sa_sel", 0);
           ];
         let registers =
-          G.(
-            sq_tt_token_mask_sqdec_bit lor sq_tt_token_mask_shdec_bit
-            lor sq_tt_token_mask_gfxudec_bit lor sq_tt_token_mask_comp_bit
-            lor sq_tt_token_mask_context_bit)
+          P.Gc.Thread_trace.(
+            token_mask_sqdec_bit lor token_mask_shdec_bit
+            lor token_mask_gfxudec_bit lor token_mask_comp_bit
+            lor token_mask_context_bit)
         in
         let excluded =
           if itraced se then 0
           else if gfx12 then 0x927
           else
-            G.(
-              (1 lsl sq_tt_token_exclude_vmemexec_shift)
-              lor (1 lsl sq_tt_token_exclude_aluexec_shift)
-              lor (1 lsl sq_tt_token_exclude_valuinst_shift)
-              lor (1 lsl sq_tt_token_exclude_immediate_shift)
-              lor (1 lsl sq_tt_token_exclude_inst_shift))
+            P.Gc.Thread_trace.(
+              (1 lsl token_exclude_vmemexec_shift)
+              lor (1 lsl token_exclude_aluexec_shift)
+              lor (1 lsl token_exclude_valuinst_shift)
+              lor (1 lsl token_exclude_immediate_shift)
+              lor (1 lsl token_exclude_inst_shift))
         in
         (* A GFX11 trace includes its exec tokens (TTRACE_EXEC), the bit just
            past its 11 token exclusions. *)
@@ -695,11 +591,9 @@ let compute_queue ~host gpu q : Hcq2.commands =
         [ ("mask_cs", 1); ("autoflush_en", 1); ("mode", 0) ]
     else begin
       wreg (address "COMPUTE_THREAD_TRACE_ENABLE") [ u32 0 ];
-      event_write G.thread_trace_finish 0
+      event_write Thread_trace_finish
     end;
-    let status =
-      address "SQ_THREAD_TRACE_STATUS"
-      - if gfx9 then G.packet3_set_uconfig_reg_start else 0
+    let status = address "SQ_THREAD_TRACE_STATUS"
     and engines = gpu.shader_engines in
     for se = 0 to t.engines - 1 do
       pred_exec
@@ -707,26 +601,23 @@ let compute_queue ~host gpu q : Hcq2.commands =
         (fun () ->
           set_grbm ~se:(se mod engines) ~sa:0 ();
           let idle field =
-            wait_reg_mem ~reg:status
+            wait_reg_mem
               ~mask:(mask "SQ_THREAD_TRACE_STATUS" field)
-              ~op:wait_reg_mem_function_eq (u32 0)
+              (Register status) Equal (u32 0)
           in
           if not gfx9 then begin
             idle "finish_pending";
             trace_config ~tracing:false
           end;
           idle "busy";
-          event_write G.cs_partial_flush event_index_partial_flush;
+          event_write Cs_partial_flush;
           let engine_end = u64 (se * 4) in
           (* Where the engine's trace ends, to memory with its write
              confirmed. *)
-          pkt3 G.packet3_copy_data
-            [
-              u32 ((1 lsl 20) lor (2 lsl 8) lor 4);
-              u32 (address "SQ_THREAD_TRACE_WPTR");
-              u32 0;
-              O.(run_ends + engine_end);
-            ])
+          emit
+            (P.Pm4.copy_data Confirmed
+               (Counter (address "SQ_THREAD_TRACE_WPTR"))
+               O.(run_ends + engine_end)))
     done;
     set_grbm ();
     if not gfx9 then spi_config ~tracing:false;
@@ -745,20 +636,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
      to drain, which on GFX12 can take in the dispatch queued behind it and
      stamp the start of a long kernel at its end. *)
   let clock_into address =
-    pred_exec 1 (fun () ->
-        pkt3 G.packet3_copy_data
-          [
-            u32
-              (G.packet3_copy_data__src_sel__gpu_clock_count
-              lor (G.packet3_copy_data__dst_sel__tc_l2 lsl copy_data_dst_sel)
-              lor G.packet3_copy_data__count_sel__64_bits_of_data
-                  lsl copy_data_count_sel
-              lor G.packet3_copy_data__wr_confirm__wait_for_confirmation
-                  lsl copy_data_wr_confirm);
-            u32 0;
-            u32 0;
-            address;
-          ])
+    pred_exec 1 (fun () -> emit (P.Pm4.copy_data Confirmed Clock address))
   in
   (* A profiled run takes the next slot of the log, which the host program
      writes. *)
@@ -833,25 +711,18 @@ let compute_queue ~host gpu q : Hcq2.commands =
         ~arg:(Region { name = "kernargs"; align = 128 }) )
   in
   let wait signal value =
-    let op =
-      if is_signal_word signal then wait_reg_mem_function_eq
-      else wait_reg_mem_function_geq
-    in
-    wait_reg_mem ~op ~mem:(getaddr signal) (cast value Dtype.Uint32)
+    wait_reg_mem
+      (Memory (getaddr signal))
+      (comparison signal) (cast value Dtype.Uint32)
   in
   let timestamp signal = clock_into O.(getaddr signal + u64 8) in
   (* A device's value is written whole, in one 64-bit write. *)
   let signal_mem signal value =
-    let data_sel =
-      if is_signal_word signal then
-        G.data_sel__mec_release_mem__send_64_bit_data
-      else G.data_sel__mec_release_mem__send_32_bit_low
+    let value = cast value Dtype.Uint64 in
+    let data : _ P.Pm4.data =
+      if is_signal_word signal then Data_64 value else Low_32 value
     in
-    pred_exec 1 (fun () ->
-        release_mem ~address:(getaddr signal) ~value ~data_sel
-          ~int_sel:
-            G.int_sel__mec_release_mem__send_interrupt_after_write_confirm
-          ~cache_flush:true ())
+    pred_exec 1 (fun () -> release_mem (getaddr signal) data)
   in
   let ring_queue = (queue, gpu.compute_ring) in
   let push cmdbuf words ?(unit = 4) ?(doorbell_lag = 0) () =
@@ -887,16 +758,13 @@ let compute_queue ~host gpu q : Hcq2.commands =
     let info, ka = kernargs call prg data in
     (data, lib, info, ka)
   in
+  (* Its address is patched in at submit. *)
   let ib_blob cmdbuf =
-    let b = Bytes.create 16 in
-    List.iteri
-      (fun i w -> Bytes.set_int32_le b (4 * i) (Int32.of_int w))
-      [
-        packet3 G.packet3_indirect_buffer 2;
-        0;
-        0;
-        max_numel cmdbuf / 4 lor G.indirect_buffer_valid;
-      ];
+    let ws =
+      P.dwords (P.Pm4.indirect_buffer 0 ~dwords:(max_numel cmdbuf / 4))
+    in
+    let b = Bytes.create (4 * List.length ws) in
+    List.iteri (fun i w -> Bytes.set_int32_le b (4 * i) (Int32.of_int w)) ws;
     Bytes.to_string b
   in
   if not gpu.aql then
@@ -924,42 +792,36 @@ let compute_queue ~host gpu q : Hcq2.commands =
            else [])
         @ [ args_addr ]
       in
-      let dispatch_init =
-        (if gfx9 then 0
-         else
-           bits G.compute_dispatch_initiator_cs_w32_en (Bool.to_int data.wave32))
-        lor bits G.compute_dispatch_initiator_force_start_at_000 1
-        lor bits G.compute_dispatch_initiator_compute_shader_en 1
+      let groups =
+        match
+          List.map (function Int g -> u32 g | Sym g -> g) info.global_size
+        with
+        | [ x; y; z ] -> (x, y, z)
+        | _ -> invalid_arg "an AMD dispatch of other than three dimensions"
       in
-      acquire_mem ~gli:0 ~gl2:0 ();
+      let set name = wreg (address ("COMPUTE_" ^ name)) in
+      acquire_mem Data_caches;
       let run = start_run lib data info in
-      wreg G.compute_pgm_lo [ O.(prog_addr lsr int 8) ];
-      wreg G.compute_pgm_rsrc1 [ u32 data.rsrc1; u32 data.rsrc2 ];
-      wreg
-        (if gfx9 then G.compute_pgm_rsrc3_gfx9 else G.compute_pgm_rsrc3)
-        [ u32 data.rsrc3 ];
-      wreg G.compute_tmpring_size
-        [ u32 (tmpring_size gpu data.private_segment_size) ];
+      emit (P.Pm4.set_program ~gc:gpu.gc prog_addr);
+      set "PGM_RSRC1" [ u32 data.rsrc1; u32 data.rsrc2 ];
+      set "PGM_RSRC3" [ u32 data.rsrc3 ];
+      set "TMPRING_SIZE" [ u32 (tmpring_size gpu data.private_segment_size) ];
       (* Architected flat scratch: each die gets its part. *)
       for xcc = 0 to gpu.xccs - 1 do
         let part = data.private_segment_size / gpu.xccs * xcc in
         pred_exec (1 lsl xcc) (fun () ->
-            wreg G.compute_dispatch_scratch_base_lo
-              [ O.((scratch_addr + int part) lsr int 8) ])
+            emit (P.Pm4.set_scratch ~gc:gpu.gc O.(scratch_addr + int part)))
       done;
-      wreg G.compute_restart_x [ u32 0; u32 0; u32 0 ];
-      wreg G.compute_user_data_0 user_regs;
-      wreg G.compute_resource_limits
-        [ u32 (Helpers.Context_var.value waves_per_sh) ];
-      wreg G.compute_start_x
+      set "RESTART_X" [ u32 0; u32 0; u32 0 ];
+      set "USER_DATA_0" user_regs;
+      set "RESOURCE_LIMITS" [ u32 (Helpers.Context_var.value waves_per_sh) ];
+      set "START_X"
         ([ u32 0; u32 0; u32 0 ]
         @ List.map (function Int l -> u32 l | Sym l -> l) info.local_size
         @ [ u32 0; u32 0 ]);
-      pkt3 G.packet3_dispatch_direct
-        (List.map (function Int g -> u32 g | Sym g -> g) info.global_size
-        @ [ u32 dispatch_init ]);
-      if traced then event_write G.thread_trace_marker 0;
-      event_write G.cs_partial_flush event_index_partial_flush;
+      emit (P.Pm4.dispatch_direct ~gc:gpu.gc data.wave groups);
+      if traced then event_write Thread_trace_marker;
+      event_write Cs_partial_flush;
       stop_run run
     in
     (* The ring gets an indirect buffer packet: 4 dwords, and put stays aligned
@@ -999,21 +861,12 @@ let compute_queue ~host gpu q : Hcq2.commands =
     let items = ref [] and run_start = ref 0 in
     let add ws = items := !items @ [ Packets ws ] in
     let close_run end_ =
-      if end_ > !run_start then begin
-        let hdr =
-          aql_hdr
-          lor (G.hsa_packet_type_vendor_specific lsl G.hsa_packet_header_type)
-          lor (1 lsl 16)
-        in
-        let ib =
-          [
-            u32 (packet3 G.packet3_indirect_buffer 2);
-            O.(cmd_addr + int !run_start);
-            u32 ((end_ - !run_start) / 4 lor G.indirect_buffer_valid);
-          ]
-        in
-        add ((u32 hdr :: ib) @ (u32 10 :: List.init 10 (fun _ -> u32 0)))
-      end;
+      if end_ > !run_start then
+        add
+          (lower
+             (P.Aql.indirect_buffer
+                O.(cmd_addr + int !run_start)
+                ~dwords:((end_ - !run_start) / 4)));
       run_start := end_
     in
     (* Close the PM4 run, so that the signal waits for the dispatches before it:
@@ -1104,83 +957,36 @@ let copy_queue ~host gpu q : Hcq2.commands =
   in
   let loop = Hcq2.Queue.loop q in
   let cmdbuf () = Hcq2.bufferize_cmdbuf q "cmdbuf" in
-  let q words = ignore (q_of q words) in
-  let sdma_major, _, _ = gpu.sdma in
-  let max_copy_size =
-    if (gpu.sdma >= (4, 4, 2) && sdma_major < 5) || gpu.sdma >= (5, 2, 0) then
-      0x40000000
-    else 0x400000
-  in
+  let emit ws = ignore (q_of q (lower ws)) in
   let copy dst src sz =
-    let addr a off = if off = 0 then a else O.(a + u64 off) in
-    for k = 0 to Helpers.ceildiv sz max_copy_size - 1 do
-      let off = k * max_copy_size in
-      q
-        [
-          u32
-            (G.sdma_op_copy
-            lor bits G.sdma_pkt_copy_linear_header_sub_op
-                  G.sdma_subop_copy_linear);
-          u32 (min (sz - off) max_copy_size - 1);
-          u32 0;
-          addr (getaddr src) off;
-          addr (getaddr dst) off;
-        ]
-    done
+    emit (P.Sdma.copy ~sdma:gpu.sdma ~dst:(getaddr dst) ~src:(getaddr src) sz)
   in
   let wait signal value =
-    let func =
-      if is_signal_word signal then wait_reg_mem_function_eq
-      else wait_reg_mem_function_geq
-    in
-    q
-      [
-        u32
-          (G.sdma_op_poll_regmem
-          lor bits G.sdma_pkt_poll_regmem_header_func func
-          lor bits G.sdma_pkt_poll_regmem_header_mem_poll 1);
-        getaddr signal;
-        cast value Dtype.Uint32;
-        u32 ((1 lsl (8 * min (Dtype.itemsize (dtype value)) 4)) - 1);
-        u32
-          (bits G.sdma_pkt_poll_regmem_dw5_interval 0x04
-          lor bits G.sdma_pkt_poll_regmem_dw5_retry_count 0xfff);
-      ]
+    emit
+      (P.Sdma.poll (getaddr signal) (comparison signal)
+         (cast value Dtype.Uint32)
+         ~mask:((1 lsl (8 * min (Dtype.itemsize (dtype value)) 4)) - 1))
   in
-  let timestamp signal =
-    q
-      [
-        u32
-          (G.sdma_op_timestamp
-          lor bits G.sdma_pkt_timestamp_get_header_sub_op
-                G.sdma_subop_timestamp_get_global);
-        O.(getaddr signal + u64 8);
-      ]
-  in
+  let timestamp signal = emit (P.Sdma.timestamp O.(getaddr signal + u64 8)) in
   (* A device's value is written 32 bits at a time: its high half only when its
      low half is 0, the high half every later value shares; four NOPs otherwise
      . *)
   let signal signal value =
-    let fence =
-      G.sdma_op_fence
-      lor if major gpu <> 9 then bits G.sdma_pkt_fence_header_mtype 3 else 0
-    in
+    let fence addr v = lower (P.Sdma.fence ~sdma:gpu.sdma addr v) in
     let high =
       if not (is_signal_word signal) then []
       else
         let carry = eq (cast value Dtype.Uint32) (u32 0) in
         List.map
           (fun w -> where carry w (const_like w (`Int Bigint.zero)))
-          [
-            u32 fence;
-            O.(getaddr signal + u64 4);
-            cast O.(value lsr u64 32) Dtype.Uint32;
-          ]
+          (fence
+             O.(getaddr signal + u64 4)
+             (cast O.(value lsr u64 32) Dtype.Uint32))
     in
-    q
-      ([ u32 fence; getaddr signal; cast value Dtype.Uint32 ]
-      @ high
-      @ [ u32 G.sdma_op_trap; u32 0 ])
+    ignore
+      (q_of q
+         (fence (getaddr signal) (cast value Dtype.Uint32)
+         @ high @ lower P.Sdma.trap))
   in
   (* SDMA needs the command buffer whole in the ring: if it does not fit before
      the ring's end, it restarts at 0 and zeroes the tail. *)

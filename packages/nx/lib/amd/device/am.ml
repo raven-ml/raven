@@ -7,6 +7,7 @@
    interrupt ring, sets up its queues, and leaves it for the next process. *)
 
 module D = Amd_defs
+module P = Nx_amd_packet
 module Mmio = Nx_device_support.Mmio
 module Pci = Nx_device_support.Pci
 module Page_table = Nx_device_support.Page_table
@@ -129,8 +130,8 @@ let flush_hdp d =
     write d ~value:0 "regBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL" []
   else wreg d (read d "regBIF_BX0_REMAP_HDP_MEM_FLUSH_CNTL" / 4) 0
 
-let packet3 op n =
-  (3 lsl 30) lor ((n land 0x3FFF) lsl 16) lor ((op land 0xFF) lsl 8)
+(* The poll interval of a KIQ's register wait, as the kernel driver's. *)
+let kiq_poll_interval = 0x20
 
 (* Invalidates the TLBs of hub [ip] ("GC" or "MM") for [vmid]. A VF asks its KIQ
    to, since the invalidation engines are the host's. *)
@@ -166,25 +167,11 @@ let flush_tlb d ip ~vmid =
             let wptr = Int64.to_int (Mmio.get64 ptrs 8) in
             let fence = kiq_va + base + 0x1010 in
             let pkt =
-              [
-                packet3 D.packet3_write_data 3;
-                1 lsl 16;
-                req_addr;
-                0;
-                req;
-                packet3 D.packet3_wait_reg_mem 5;
-                3;
-                ack_addr;
-                0;
-                1 lsl vmid;
-                1 lsl vmid;
-                0x20;
-                packet3 D.packet3_write_data 3;
-                D.wr_confirm lor (5 lsl 8);
-                lo32 fence;
-                hi32 fence;
-                wptr + 1;
-              ]
+              P.dwords
+                (P.Pm4.write_data (Register req_addr) req
+                @ P.Pm4.wait ~gc:(gc d) (Register ack_addr) Equal (1 lsl vmid)
+                    ~mask:(1 lsl vmid) ~interval:kiq_poll_interval
+                @ P.Pm4.write_data (Memory fence) (wptr + 1))
             in
             List.iteri
               (fun i w -> Mmio.set32 ring (4 * ((wptr + i) mod 0x400)) w)

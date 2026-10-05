@@ -3166,6 +3166,10 @@ thread.
 
 ### Nx
 
+- Add `nx.amd.packet`: the PM4, AQL and SDMA packets of AMD GPUs' queues and
+  the GC registers they write, polymorphic in the values they place
+  (`Nx_amd_packet.Pm4`, `Aql`, `Sdma`, `Gc`). `nx.amd.device`'s copies and
+  tolk's AMD queues encode their packets with it.
 - Add `nx.amd.code_object`: AMD GPU code objects relocated as a loader
   relocates them (`Nx_amd_code_object.of_string`, `image`), and each kernel's
   descriptor (`kernels`, `kernel`). `nx.amd.device` and tolk read descriptors

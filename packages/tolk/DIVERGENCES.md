@@ -3517,9 +3517,9 @@ stores through a pad.
 - **tinygrad:** `runtime/ops_amd.py:404-407` (`AMDComputeQueue.timestamp`, a
   `RELEASE_MEM` of the GPU's clock on the end-of-pipe event
   `CACHE_FLUSH_AND_INV_TS_EVENT`).
-- **tolk:** `lib/runtime/ops_amd.ml:766` (`clock_into`), used by `:861`
-  (the compute queue's `timestamp`) and by the counted runs' times of D66
-  (`:796`, `:810`).
+- **tolk:** `lib/runtime/ops_amd.ml:638` (`clock_into`, through
+  `Nx_amd_packet.Pm4.copy_data`), used by `:718` (the compute queue's
+  `timestamp`) and by the counted runs' times of D66 (`:655`, `:669`).
 - **Differs:** the compute queue writes the GPU's clock with a `COPY_DATA`
   from the clock counter, 64 bits with a confirmed write, which the queue
   executes as it reaches the packet. An end-of-pipe write waits for the pipe
@@ -3544,7 +3544,7 @@ stores through a pad.
 
 - **tinygrad:** `runtime/ops_amd.py:545-555` (`amd_build_program`: the
   descriptor at the start of `.rodata`, relocated by its own loop).
-- **tolk:** `lib/runtime/ops_amd.ml:134` (`program_data`).
+- **tolk:** `lib/runtime/ops_amd.ml:163` (`program_data`).
 - **Differs:** tolk reads the code object through `nx.amd.code_object`,
   which nx's AMD loader reads too: the descriptor is the symbol `name.kd` of
   the code object's one kernel, and a code object of several kernels is
@@ -3554,3 +3554,39 @@ stores through a pad.
   is the same layout, read once.
 - **Pinned by:** the `recorded cases` of `Tolk.Ops_amd`, whose fixtures hold
   one kernel each; `nx.amd.code_object`'s suite for the layout.
+
+## D121. AMD's packet layouts are nx.amd.packet's
+
+- **tinygrad:** `runtime/ops_amd.py:60-136` (`dispatch_packet`, `pkt3`,
+  `wreg`, `pred_exec`, `wait_reg_mem`, `acquire_mem`, `release_mem`),
+  `:366-399` (`exec`'s dispatch), `:430-443` (the AQL indirect buffer) and
+  `:470-500` (`AMDSDMAQueue`'s packets); the PM4, SDMA, HSA and register
+  constants of `runtime/autogen/am` and `runtime/autogen/hsa.py`.
+- **tolk:** `lib/runtime/ops_amd.ml:71` (`term`, `lower`), `:256`
+  (`compute_queue`) and `:944` (`copy_queue`).
+- **Differs:** every packet's layout, the GC registers it writes and their
+  addresses, the scratch ring's `COMPUTE_TMPRING_SIZE`, and the constants they
+  read come from `nx.amd.packet`, which nx's AMD runtime encodes its copies
+  and its KIQ's packets with. Its packets are polymorphic in the values they
+  place, and a layout's arithmetic on a value is a term of additions and right
+  shifts, with no step of 0: the pieces of an SDMA copy at their offsets, and
+  the program's and the scratch's addresses from their bit 8. tolk lowers
+  them to the nodes tinygrad's call sites build: a constant word is a
+  `uint32` constant, an addition adds a `uint64` constant, and a shift is by
+  a weak literal. Arithmetic tinygrad spells otherwise
+  stays at tolk's call site: the program's address (`+` of a weak literal),
+  each die's scratch (`+` of a weak literal, kept at 0), the AQL dispatch's
+  grid (a product) and kernel object, the AQL indirect buffers' addresses, the
+  user SGPRs (an `or` of bit 63), the timestamp slots, the SDMA signal's high
+  word (`lsr` of a `uint64` constant), and the profiling copies' addresses.
+  GFX9's wait on a UCONFIG register addresses it from UCONFIG's start in the
+  packet, where tinygrad subtracts at the call. An SDMA fence takes a memory
+  type on SDMA from version 5, where tinygrad asks whether the graphics
+  target's major is not 9: the same engines on every GPU tolk supports. A PM4
+  predicated block's count is the packet encoded again with it, where tinygrad
+  patches the count's bits in place.
+- **Reason:** (b), `nx.amd.device`'s SDMA queue and KIQ, whose packets are
+  the same layouts, defined once.
+- **Pinned by:** the `recorded cases` of `Tolk.Ops_amd`; `Tolk.Ops_amd ›
+  packets`, a law per packet that tolk's encoding, evaluated, is
+  `Nx_amd_packet.dwords`'s; `nx.amd.packet`'s suite for the words.

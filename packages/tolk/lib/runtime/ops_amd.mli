@@ -173,6 +173,15 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
     takes PM4 packets, or if [gpu.target] is none of [(9, 4, 2)], [(9, 5, 0)]
     and the targets of major version 11 and 12. *)
 
+(** {1:packets Packets} *)
+
+val lower : Ops.t Nx_amd_packet.word list -> Ops.t list
+(** [lower ws] is the packet [ws] as the nodes {!Hcq2.Queue.q} appends: a
+    constant word as a [uint32] constant ({!Hcq2.Queue.dword}), and a term as
+    its value with each offset added as a [uint64] constant and each shift right
+    by an untyped literal. A value has its word's width, so that the queue lays
+    [ws] out as {!Nx_amd_packet.dwords} does. *)
+
 (** {1:linking What the engine links} *)
 
 (** The type for the storage that the placeholders of AMD's commands name. The

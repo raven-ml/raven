@@ -1,0 +1,4 @@
+(test
+ (name test_packet)
+ (package nx)
+ (libraries nx.amd.packet windtrap))

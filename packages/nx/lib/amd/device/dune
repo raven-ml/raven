@@ -4,6 +4,7 @@
  (libraries
   nx.device
   nx.amd.code_object
+  nx.amd.packet
   nx.device.support
   nx.remote.device
   nx.dtype

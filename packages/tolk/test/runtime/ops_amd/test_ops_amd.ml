@@ -882,6 +882,272 @@ let splits =
           List.iter (fun (_, bytes) -> at_most int ~than:(ring / 4) bytes) ps);
     ]
 
+(* Packets *)
+
+module P = Nx_amd_packet
+
+type width = Word32 | Word64
+
+(* A packet over values of [widths], whose other parameters it reads from
+   [ints], drawn alike for both encodings. *)
+type command = {
+  name : string;
+  widths : width list;
+  build : 'v. int array -> 'v array -> 'v P.word list;
+}
+
+(* A caller's value as a word's term, as it is. *)
+let t value = P.Value value
+let gcs = [| (9, 4, 3); (11, 0, 0); (11, 5, 0); (12, 0, 0) |]
+let sdmas = [| (4, 4, 2); (5, 0, 0); (5, 2, 0); (6, 0, 0); (7, 0, 0) |]
+let pick a i = a.(i mod Array.length a)
+let flag i = i mod 2 = 1
+let cmp i : P.comparison = if flag i then Equal else Greater_equal
+
+let commands =
+  [
+    {
+      name = "Pm4.set_reg of an SH register";
+      widths = [ Word32; Word64 ];
+      build =
+        (fun i v ->
+          P.Pm4.set_reg
+            (0x2c00 + (i.(0) mod 0x400))
+            [
+              W32 (t v.(0));
+              W64 (Shift (Add (Value v.(1), Int64.of_int i.(2)), i.(3) mod 32));
+              Dword i.(1);
+            ]);
+    };
+    {
+      name = "Pm4.set_reg of a UCONFIG register";
+      widths = [ Word32 ];
+      build =
+        (fun i v ->
+          P.Pm4.set_reg (0xc000 + (i.(0) mod 0x1000)) [ W32 (t v.(0)) ]);
+    };
+    {
+      name = "Pm4.wait on memory";
+      widths = [ Word64; Word32 ];
+      build =
+        (fun i v ->
+          P.Pm4.wait
+            ~gc:(pick gcs i.(4))
+            (Memory v.(0))
+            (cmp i.(0))
+            v.(1) ~mask:i.(1) ~interval:i.(2));
+    };
+    {
+      name = "Pm4.wait on a register";
+      widths = [ Word32 ];
+      build =
+        (fun i v ->
+          P.Pm4.wait
+            ~gc:(pick gcs i.(4))
+            (Register i.(3))
+            (cmp i.(0))
+            v.(0) ~mask:i.(1) ~interval:i.(2));
+    };
+    {
+      name = "Pm4.acquire_mem";
+      widths = [];
+      build =
+        (fun i _ ->
+          P.Pm4.acquire_mem
+            ~gc:(pick gcs i.(0))
+            (if flag i.(1) then All_caches else Data_caches));
+    };
+    {
+      name = "Pm4.release_mem";
+      widths = [ Word64; Word64 ];
+      build =
+        (fun i v ->
+          let data : _ P.Pm4.data =
+            if flag i.(1) then Low_32 v.(1) else Data_64 v.(1)
+          in
+          P.Pm4.release_mem ~gc:(pick gcs i.(0)) v.(0) data);
+    };
+    {
+      name = "Pm4.pred_exec";
+      widths = [];
+      build =
+        (fun i _ ->
+          P.Pm4.pred_exec ~xcc_mask:(i.(0) land 0xff) ~dwords:(i.(1) land 0x3fff));
+    };
+    {
+      name = "Pm4.event_write";
+      widths = [];
+      build =
+        (fun i _ ->
+          P.Pm4.event_write
+            (pick
+               [|
+                 P.Pm4.Cs_partial_flush;
+                 Thread_trace_marker;
+                 Thread_trace_finish;
+               |]
+               i.(0)));
+    };
+    {
+      name = "Pm4.copy_data";
+      widths = [ Word64 ];
+      build =
+        (fun i v ->
+          P.Pm4.copy_data
+            (if flag i.(0) then Confirmed else Posted)
+            (if flag i.(2) then Clock else Counter i.(1))
+            v.(0));
+    };
+    {
+      name = "Pm4.write_data to a register";
+      widths = [ Word32 ];
+      build = (fun i v -> P.Pm4.write_data (Register i.(0)) v.(0));
+    };
+    {
+      name = "Pm4.write_data to memory";
+      widths = [ Word64; Word32 ];
+      build = (fun _ v -> P.Pm4.write_data (Memory v.(0)) v.(1));
+    };
+    {
+      name = "Pm4.indirect_buffer";
+      widths = [ Word64 ];
+      build =
+        (fun i v -> P.Pm4.indirect_buffer v.(0) ~dwords:(i.(0) land 0xfffff));
+    };
+    {
+      name = "Pm4.dispatch_direct";
+      widths = [ Word32; Word32; Word32 ];
+      build =
+        (fun i v ->
+          P.Pm4.dispatch_direct
+            ~gc:(pick gcs i.(0))
+            (if flag i.(1) then Wave32 else Wave64)
+            (v.(0), v.(1), v.(2)));
+    };
+    {
+      name = "Aql.dispatch";
+      widths = [ Word32; Word32; Word32; Word64; Word64 ];
+      build =
+        (fun i v ->
+          P.Aql.dispatch
+            ~threads:(i.(0) land 0x3ff, i.(1) land 0x3ff, i.(2) land 0x3ff)
+            ~grid:(v.(0), v.(1), v.(2))
+            ~private_segment:i.(3) ~group_segment:i.(4) ~descriptor:v.(3)
+            ~args:v.(4));
+    };
+    {
+      name = "Aql.indirect_buffer";
+      widths = [ Word64 ];
+      build =
+        (fun i v -> P.Aql.indirect_buffer v.(0) ~dwords:(i.(0) land 0xfffff));
+    };
+    {
+      name = "Sdma.copy";
+      widths = [ Word64; Word64 ];
+      build =
+        (fun i v ->
+          P.Sdma.copy ~sdma:(pick sdmas i.(0)) ~dst:v.(0) ~src:v.(1) i.(1));
+    };
+    {
+      name = "Pm4.set_program";
+      widths = [ Word64 ];
+      build = (fun i v -> P.Pm4.set_program ~gc:(pick gcs i.(0)) v.(0));
+    };
+    {
+      name = "Pm4.set_scratch";
+      widths = [ Word64 ];
+      build = (fun i v -> P.Pm4.set_scratch ~gc:(pick gcs i.(0)) v.(0));
+    };
+    {
+      name = "Sdma.poll";
+      widths = [ Word64; Word32 ];
+      build = (fun i v -> P.Sdma.poll v.(0) (cmp i.(0)) v.(1) ~mask:i.(1));
+    };
+    {
+      name = "Sdma.fence";
+      widths = [ Word64; Word32 ];
+      build = (fun i v -> P.Sdma.fence ~sdma:(pick sdmas i.(0)) v.(0) v.(1));
+    };
+    { name = "Sdma.trap"; widths = []; build = (fun _ _ -> P.Sdma.trap) };
+    {
+      name = "Sdma.timestamp";
+      widths = [ Word64 ];
+      build = (fun _ v -> P.Sdma.timestamp v.(0));
+    };
+  ]
+
+(* A 64-bit value is any non-negative integer, so that a term's sum reaches past
+   bit 62. *)
+let largest = function Word32 -> 0xffff_ffff | Word64 -> max_int
+let dtype_of = function Word32 -> Dtype.Uint32 | Word64 -> Dtype.Uint64
+
+(* A value of a word, its bounds and their neighbours among them. *)
+let value w =
+  let n = largest w in
+  Gen.frequency
+    [
+      (6, Gen.int_range 0 n);
+      (1, Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 0xffff_ffff; n - 1; n ]);
+    ]
+
+let values ws =
+  List.fold_right
+    (fun w acc ->
+      let open Gen in
+      let+ v = value w and+ vs = acc in
+      v :: vs)
+    ws (Gen.constant [])
+
+(* The words a queue holds after the packet [c] over variables, each bound to
+   its value of [vs]: the packet as tolk encodes it, evaluated. *)
+let symbolic c ints vs =
+  let vars =
+    List.mapi
+      (fun i w ->
+        Ops.variable ~dtype:(dtype_of w) (Printf.sprintf "v%d" i)
+          (`Int Bigint.zero)
+          (`Int (Bigint.of_int (largest w))))
+      c.widths
+  in
+  let nodes = Ops_amd.lower (c.build ints (Array.of_list vars)) in
+  let bound =
+    Ops.src
+      (Ops.substitute (Ops.sink nodes)
+         (List.map2
+            (fun var (w, x) -> (var, Ops.int ~dtype:(dtype_of w) x))
+            vars (List.combine c.widths vs)))
+  in
+  (* A word that computes on its bound value, such as an offset's sum, is
+     evaluated to the constant of its type. *)
+  let bound =
+    List.map
+      (fun n ->
+        match Ops.value n with
+        | _ -> n
+        | exception Invalid_argument _ ->
+            Ops.const ~dtype:(Ops.dtype n) (`Int (Ops.to_z n)))
+      bound
+  in
+  let q = Hcq2.Queue.v ~devices:[ "AMD" ] "COMPUTE:0" in
+  ignore (Hcq2.Queue.q q bound);
+  List.init (Hcq2.Queue.size q / 4) (fun i -> Hcq2.Queue.get_dword q (4 * i))
+
+let packets =
+  group "packets"
+    (List.map
+       (fun c ->
+         prop
+           (c.name ^ ": tolk's encoding, evaluated, is the integer encoding")
+           Gen.(
+             pair
+               (array ~size:(constant 5) (int_range 0 (1 lsl 30)))
+               (values c.widths))
+           (fun (ints, vs) ->
+             equal (list int)
+               (P.dwords (c.build ints (Array.of_list vs)))
+               (symbolic c ints vs)))
+       commands)
+
 let waves_keyed =
   test "WAVES_PER_SH is keyed with what shapes compilation" (fun () ->
       equal (option string) (Some "0")
@@ -899,5 +1165,6 @@ let () =
          linking;
          refusals;
          loops;
+         packets;
          waves_keyed;
        ])

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Generates the AMD definitions nx's AMD libraries read: device/amd_defs.ml
-and device/kfd_ioctl.h for nx.amd.device, and code_object/code_object_defs.ml
-for nx.amd.code_object. Each definition is generated once, into the library
-that owns it.
+"""Generates the AMD definitions nx's AMD libraries read, and tolk through them:
+device/amd_defs.ml and device/kfd_ioctl.h for nx.amd.device,
+packet/packet_defs.ml for nx.amd.packet (the command packets, and the GC
+registers they write), and code_object/code_object_defs.ml for
+nx.amd.code_object. Each definition is generated once, into the library that
+owns it.
 
 Run from the repository root:
 
@@ -122,6 +124,14 @@ REG_INVENTORY = {
     "sdma": [r"regSDMA_GFX_(RB_CNTL|RB_BASE(_HI)?|RB_RPTR(_HI)?|RB_WPTR(_HI)?|RB_RPTR_ADDR_(LO|HI)|"
              r"RB_WPTR_POLL_ADDR_(LO|HI)|DOORBELL|DOORBELL_OFFSET|MINOR_PTR_UPDATE|IB_CNTL)", r"regSDMA_CNTL"],
 }
+# The GC registers a compute queue's commands write: those of a dispatch, and
+# those a run that counts or traces writes and reads.
+REG_INVENTORY["gc"] += [
+    r"regCOMPUTE_(DISPATCH_INITIATOR|START_X|PGM_LO|DISPATCH_SCRATCH_BASE_LO|PGM_RSRC1|RESOURCE_LIMITS|RESTART_X|"
+    r"PGM_RSRC3|USER_DATA_0|PERFCOUNT_ENABLE|THREAD_TRACE_ENABLE)",
+    r"regCP_PERFMON_CNTL(_1)?", r"regSQ_PERFCOUNTER_(CTRL2?|MASK)", r"reg(GRBM|GL2C|TCC|SQ)_PERFCOUNTER\d+_(SELECT|LO|HI)",
+    r"regSQ_THREAD_TRACE_\w+", r"regSPI_CONFIG_CNTL",
+]
 REG_INVENTORY["gc"] += REG_INVENTORY["vm"]
 REG_INVENTORY["mmhub"] = REG_INVENTORY["vm"]
 REG_INVENTORY["nbif"] = REG_INVENTORY["nbio"]
@@ -171,8 +181,6 @@ CONSTANTS = [
     "AMDGPU_NAVI10_DOORBELL_MEC_RING0", "AMDGPU_NAVI10_DOORBELL_sDMA_ENGINE0", "AMDGPU_DOORBELL_KIQ",
     # interrupt clients
     "SOC15_IH_CLIENTID_GRBM_CP", "SOC15_IH_CLIENTID_UTCL2", "SOC21_IH_CLIENTID_GRBM_CP", "SOC21_IH_CLIENTID_GFX",
-    # PM4 packets of a VF's KIQ
-    "PACKET3_WRITE_DATA", "PACKET3_WAIT_REG_MEM", "WR_CONFIRM",
     # KFD
     "KFD_IOC_ALLOC_MEM_FLAGS_VRAM", "KFD_IOC_ALLOC_MEM_FLAGS_GTT", "KFD_IOC_ALLOC_MEM_FLAGS_USERPTR",
     "KFD_IOC_ALLOC_MEM_FLAGS_WRITABLE", "KFD_IOC_ALLOC_MEM_FLAGS_EXECUTABLE", "KFD_IOC_ALLOC_MEM_FLAGS_PUBLIC",
@@ -195,6 +203,52 @@ KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_
              "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
 KD_CONSTANTS = ["AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
                 "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_WAVEFRONT_SIZE32"]
+# PM4, for nx.amd.packet: the same in soc15d.h (GFX9) and nvd.h (GFX10 on), and
+# the release's enumerations in kfd_pm4_headers_ai.h.
+PM4_CONSTANTS = [
+    "PACKET_TYPE3", "PACKET3_SET_SH_REG", "PACKET3_SET_SH_REG_START", "PACKET3_SET_SH_REG_END", "PACKET3_SET_UCONFIG_REG",
+    "PACKET3_SET_UCONFIG_REG_START", "PACKET3_PRED_EXEC", "PACKET3_WAIT_REG_MEM", "PACKET3_ACQUIRE_MEM",
+    "PACKET3_RELEASE_MEM", "PACKET3_DISPATCH_DIRECT", "PACKET3_EVENT_WRITE", "PACKET3_INDIRECT_BUFFER", "PACKET3_COPY_DATA",
+    "PACKET3_WRITE_DATA", "INDIRECT_BUFFER_VALID", "CACHE_FLUSH_AND_INV_TS_EVENT", "WR_ONE_ADDR", "WR_CONFIRM",
+    "PACKET3_WAIT_REG_MEM__FUNCTION__EQUAL_TO_THE_REFERENCE_VALUE",
+    "PACKET3_WAIT_REG_MEM__FUNCTION__GREATER_THAN_OR_EQUAL_REFERENCE_VALUE",
+    "event_index__mec_release_mem__end_of_pipe", "data_sel__mec_release_mem__send_32_bit_low",
+    "data_sel__mec_release_mem__send_64_bit_data", "int_sel__mec_release_mem__send_interrupt_after_write_confirm",
+]
+# soc15d.h alone: the destinations of WRITE_DATA, and the source and destination
+# of COPY_DATA.
+PM4_SOC15_ONLY = ["PACKET3_WRITE_DATA__DST_SEL__MEM_MAPPED_REGISTER", "PACKET3_WRITE_DATA__DST_SEL__MEMORY",
+                  "PACKET3_COPY_DATA__SRC_SEL__PERFCOUNTERS", "PACKET3_COPY_DATA__SRC_SEL__GPU_CLOCK_COUNT",
+                  "PACKET3_COPY_DATA__DST_SEL__TC_L2", "PACKET3_COPY_DATA__COUNT_SEL__64_BITS_OF_DATA",
+                  "PACKET3_COPY_DATA__WR_CONFIRM__WAIT_FOR_CONFIRMATION"]
+# Fields, as the shift of their first bit, the argument macros of both headers: (name, GFX9's, GFX10's).
+PM4_SHIFTS = [("WAIT_REG_MEM_MEM_SPACE",) * 2, ("WAIT_REG_MEM_FUNCTION",) * 2, ("WAIT_REG_MEM_ENGINE",) * 2,
+              ("WRITE_DATA_DST_SEL",) * 2, ("PACKET3_COPY_DATA__SRC_SEL",) * 2, ("PACKET3_COPY_DATA__DST_SEL",) * 2,
+              ("PACKET3_COPY_DATA__COUNT_SEL",) * 2, ("PACKET3_COPY_DATA__WR_CONFIRM",) * 2, ("EVENT_TYPE",) * 2, ("EVENT_INDEX",) * 2,
+              ("DATA_SEL", "PACKET3_RELEASE_MEM_DATA_SEL"), ("INT_SEL", "PACKET3_RELEASE_MEM_INT_SEL"),
+              ("EVENT_TYPE", "PACKET3_RELEASE_MEM_EVENT_TYPE"), ("EVENT_INDEX", "PACKET3_RELEASE_MEM_EVENT_INDEX")]
+PM4_NV_SHIFTS = [f"PACKET3_ACQUIRE_MEM_GCR_CNTL_{f}" for f in
+                 ("GLI_INV", "GLM_INV", "GLM_WB", "GLK_INV", "GLK_WB", "GLV_INV", "GL1_INV", "GL2_INV", "GL2_WB")]
+PM4_NV_CONSTANTS = [f"PACKET3_RELEASE_MEM_GCR_{f}" for f in ("GLV_INV", "GL1_INV", "GL2_INV", "GLM_WB", "GLM_INV", "GL2_WB", "SEQ")]
+PM4_SOC15_SHIFTS = [f"PACKET3_ACQUIRE_MEM_CP_COHER_CNTL_{f}" for f in
+                    ("SH_ICACHE_ACTION_ENA", "SH_KCACHE_ACTION_ENA", "TC_ACTION_ENA", "TCL1_ACTION_ENA", "TC_WB_ACTION_ENA")]
+PM4_SOC15_CONSTANTS = ["EOP_TC_WB_ACTION_EN", "EOP_TC_NC_ACTION_EN"]
+# The events and thread trace values of the SOC enumerations, the same in each that defines them.
+SOC_EVENTS = ["CS_PARTIAL_FLUSH", "THREAD_TRACE_MARKER", "THREAD_TRACE_FINISH"]
+SOC_TRACE = ["SQ_TT_RT_FREQ_4096_CLK", "SQ_TT_WTYPE_INCLUDE_CS_BIT", "SQ_TT_TOKEN_MASK_SQDEC_BIT",
+             "SQ_TT_TOKEN_MASK_SHDEC_BIT", "SQ_TT_TOKEN_MASK_GFXUDEC_BIT", "SQ_TT_TOKEN_MASK_COMP_BIT",
+             "SQ_TT_TOKEN_MASK_CONTEXT_BIT", "SQ_TT_TOKEN_EXCLUDE_VMEMEXEC_SHIFT", "SQ_TT_TOKEN_EXCLUDE_ALUEXEC_SHIFT",
+             "SQ_TT_TOKEN_EXCLUDE_VALUINST_SHIFT", "SQ_TT_TOKEN_EXCLUDE_IMMEDIATE_SHIFT", "SQ_TT_TOKEN_EXCLUDE_INST_SHIFT"]
+# AQL, from hsa.h.
+HSA_CONSTANTS = ["HSA_PACKET_HEADER_TYPE", "HSA_PACKET_HEADER_BARRIER", "HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE",
+                 "HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE", "HSA_FENCE_SCOPE_SYSTEM", "HSA_PACKET_TYPE_VENDOR_SPECIFIC",
+                 "HSA_PACKET_TYPE_KERNEL_DISPATCH", "HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS"]
+DISPATCH_FIELDS = ["header", "setup", "workgroup_size_x", "workgroup_size_y", "workgroup_size_z", "grid_size_x",
+                   "grid_size_y", "grid_size_z", "private_segment_size", "group_segment_size", "kernel_object",
+                   "kernarg_address"]
+# The bases of the GC's register segments in each generation's PM4 register space.
+GC_BASES = {9: "vega20_ip_offset.h", 10: "sienna_cichlid_ip_offset.h"}
+
 # 64-bit page-table flags.
 PTE_CONSTANTS = ["AMDGPU_PTE_VALID", "AMDGPU_PTE_SYSTEM", "AMDGPU_PTE_SNOOPED", "AMDGPU_PTE_EXECUTABLE",
                  "AMDGPU_PTE_READABLE", "AMDGPU_PTE_WRITEABLE", "AMDGPU_PTE_TF", "AMDGPU_PDE_PTE",
@@ -285,6 +339,8 @@ SMU_NAMES = ["PPSMC_MSG_" + m for m in (
     "Mode1Reset", "GetDpmFreqByIndex", "SetSoftMinByFreq", "SetSoftMaxByFreq", "QueryValidMcaCount",
     "McaBankDumpDW", "QueryValidMcaCeCount", "McaBankCeDumpDW")] + ["PPCLK_UCLK", "PPCLK_FCLK", "PPCLK_SOCCLK",
                                                                     "PPCLK_GFXCLK"]
+# SDMA packets, for nx.amd.packet: the same in each version's header but for the
+# fence's memory type, from version 5.
 SDMA_PKT = {(4, 0, 0): "vega10_sdma_pkt_open", (5, 0, 0): "navi10_sdma_pkt_open", (6, 0, 0): "sdma_v6_0_0_pkt_open"}
 SDMA_OPS = ["SDMA_OP_COPY", "SDMA_OP_FENCE", "SDMA_OP_TRAP", "SDMA_OP_POLL_REGMEM", "SDMA_OP_TIMESTAMP",
             "SDMA_SUBOP_COPY_LINEAR", "SDMA_SUBOP_TIMESTAMP_GET_GLOBAL"]
@@ -395,6 +451,24 @@ def registers(kernel, prefix, ver):
             for reg, off in defs.items() if f"{reg}_BASE_IDX" in defs}
 
 
+def same(what, values):
+    if len(set(values)) != 1:
+        sys.exit(f"{what} differs: {values}")
+    return values[0]
+
+
+def shifts(ci, unit, names):
+    """The shift of each argument macro [name(x)]: the first bit of [name(1)]."""
+    probe = "".join(f"enum {{ __shift_{n} = (int)({n}(1)) }};\n" for n in names)
+    tu = unit.parse(unit.src + probe)
+    vals = {c.spelling[len("__shift_"):]: c.enum_value for c in tu.cursor.walk_preorder()
+            if c.kind == ci.CursorKind.ENUM_CONSTANT_DECL and c.spelling.startswith("__shift_")}
+    missing = [n for n in names if n not in vals]
+    if missing:
+        sys.exit(f"undefined argument macros: {missing}")
+    return {n: (vals[n] & 0xffffffff).bit_length() - 1 for n in names}
+
+
 def rlcg_extent(regs):
     ext = {}
     for name, (off, seg, _) in regs.items():
@@ -412,21 +486,28 @@ def generate(cache, pins, pin, outdir):
 
     # Registers
     regs = {(p, v): registers(kernel, p, v) for p, vs in REG_FILES.items() for v in vs}
+    pk = [*out, "(* The registers of each GC version: (name, offset, segment, fields as",
+          "   (name, lowest bit, highest bit)). *)", "let gc_registers = ["]
     out.append("(* The registers of each block version: (name, offset, segment, fields as")
-    out.append("   (name, lowest bit, highest bit)). *)")
+    out.append("   (name, lowest bit, highest bit)), but GC's, which nx.amd.packet holds. *)")
     out.append("let registers = [")
-    for (prefix, ver), rs in regs.items():
+
+    def emit(lines, prefix, ver, rs):
         pats = [re.compile(p) for p in REG_INVENTORY[prefix]]
         keep = [(n, r) for n, r in rs.items() if any(p.fullmatch(n) for p in pats)]
-        out.append(f"  ( {json.dumps(prefix)}, {ml_version(ver)}, [")
+        lines.append(f"  ( {json.dumps(prefix)}, {ml_version(ver)}, [" if prefix != "gc" else f"  ( {ml_version(ver)}, [")
         for n, (off, seg, fields) in keep:
             fs = "; ".join(f"({json.dumps(f)}, {lo}, {hi})" for f, lo, hi in fields)
-            out.append(f"      ({json.dumps(n)}, {ml_int(off)}, {seg}, [ {fs} ]);")
-        out.append("    ] );")
+            lines.append(f"      ({json.dumps(n)}, {ml_int(off)}, {seg}, [ {fs} ]);")
+        lines.append("    ] );")
+    for (prefix, ver), rs in regs.items():
+        emit(pk if prefix == "gc" else out, prefix, ver, rs)
     out.append("]")
     out.append("")
-    out.append("(* The block versions with definitions: registers, SMU messages and SDMA packets. *)")
-    fams = [(p, v) for p, v in regs] + [("smu", v) for v in SMU] + [("sdma_pkt", v) for v in SDMA_PKT]
+    pk.append("]")
+    pk.append("")
+    out.append("(* The block versions with definitions: registers but GC's, and SMU messages. *)")
+    fams = [(p, v) for p, v in regs if p != "gc"] + [("smu", v) for v in SMU]
     out.append("let families = [ " + "; ".join(f"({json.dumps(p)}, {ml_version(v)})" for p, v in fams) + " ]")
     out.append("")
     out.append("(* The extent of the GC registers a VF reaches through the RLC gateway, per segment. *)")
@@ -602,37 +683,78 @@ def generate(cache, pins, pin, outdir):
     out.append("  | _ -> []")
     out.append("")
 
-    # SDMA packets
-    out.append("module type SDMA = sig")
+    # Packets, for nx.amd.packet
+    pk.append("(* PM4, the same in soc15d.h (GFX9) and nvd.h (GFX10 on) *)")
+    pk.append("")
+    soc = Unit(ci, [amd / "amdkfd/kfd_pm4_headers_ai.h", amd / "amdgpu/soc15d.h"], incs, stub, defines=DEFINES)
+    nv = Unit(ci, [amd / "amdkfd/kfd_pm4_headers_ai.h", amd / "amdgpu/nvd.h"], incs, stub, defines=DEFINES)
+
+    def consts(u, names):
+        vals = {**u.enums(), **u.macros(names)}
+        missing = [n for n in names if n not in vals]
+        if missing:
+            sys.exit(f"undefined constants: {missing}")
+        return vals
+    sv, nvv = consts(soc, PM4_CONSTANTS + PM4_SOC15_ONLY + PM4_SOC15_CONSTANTS), consts(nv, PM4_CONSTANTS + PM4_NV_CONSTANTS)
+    pk += [f"let {ml_name(n)} = {ml_int(same(n, [sv[n], nvv[n]]))}" for n in PM4_CONSTANTS]
+    ss = shifts(ci, soc, sorted({g for g, _ in PM4_SHIFTS} | set(PM4_SOC15_SHIFTS)))
+    ns = shifts(ci, nv, sorted({n for _, n in PM4_SHIFTS} | set(PM4_NV_SHIFTS)))
+    seen = set()
+    for g, n in PM4_SHIFTS:
+        v = same(g, [ss[g], ns[n]])
+        if g not in seen:
+            pk.append(f"let {ml_name(g)} = {v}")
+            seen.add(g)
+    pk += ["", "(* nvd.h alone, GFX10 on *)", ""]
+    pk += [f"let {ml_name(n)} = {ns[n]}" for n in PM4_NV_SHIFTS]
+    pk += [f"let {ml_name(n)} = {ml_int(nvv[n])}" for n in PM4_NV_CONSTANTS]
+    pk += ["", "(* soc15d.h alone, GFX9 *)", ""]
+    pk += [f"let {ml_name(n)} = {ss[n]}" for n in PM4_SOC15_SHIFTS]
+    pk += [f"let {ml_name(n)} = {ml_int(sv[n])}" for n in PM4_SOC15_CONSTANTS + PM4_SOC15_ONLY]
+
+    pk += ["", "(* Events and thread trace values, the same in each SOC enumeration that", "   defines them *)", ""]
+    socs = [(rocm / "projects/aqlprofile/linux" / f).read_text() for f in ("vega10_enum.h", "soc21_enum.h", "soc24_enum.h")]
+
+    def soc_enum(n):
+        found = [int(m.group(1), 0) for t in socs if (m := re.search(rf"^\s*{n}\s*=\s*(0x[0-9a-fA-F]+|\d+)", t, re.M))]
+        if not found:
+            sys.exit(f"no SOC enumeration defines {n}")
+        return same(n, found)
+    pk += [f"let {ml_name(n)} = {ml_int(soc_enum(n))}" for n in SOC_EVENTS + SOC_TRACE]
+
+    pk += ["", "(* SDMA: (mask, shift) for a field *)", ""]
+    sdma = {ver: Unit(ci, [amd / "amdgpu" / f"{h}.h"], incs, stub, defines=DEFINES) for ver, h in SDMA_PKT.items()}
+    want = SDMA_OPS + [f"{n}_{k}" for n in SDMA_FIELDS for k in ("mask", "shift")]
+    svals = {ver: u.macros(want) for ver, u in sdma.items()}
     for n in SDMA_OPS:
-        out.append(f"  val {ml_name(n[5:])} : int")
+        pk.append(f"let {ml_name(n)} = {ml_int(same(n, [v[n] for v in svals.values()]))}")
     for n in SDMA_FIELDS:
-        opt = " option" if n in SDMA_OPTIONAL else ""
-        out.append(f"  val {ml_name(n[9:])} : (int * int){opt}  (* mask, shift *)")
-    out.append("end")
-    out.append("")
-    for ver, h in SDMA_PKT.items():
-        u = Unit(ci, [amd / "amdgpu" / f"{h}.h"], incs, stub, defines=DEFINES)
-        want = SDMA_OPS + [f"{n}_{k}" for n in SDMA_FIELDS for k in ("mask", "shift")]
-        vals = u.macros(want)
-        out.append(f"module Sdma_v{ver[0]} : SDMA = struct")
-        for n in SDMA_OPS:
-            out.append(f"  let {ml_name(n[5:])} = {ml_int(vals[n])}")
-        for n in SDMA_FIELDS:
-            if n + "_mask" in vals:
-                v = f"({ml_int(vals[n + '_mask'])}, {vals[n + '_shift']})"
-                out.append(f"  let {ml_name(n[9:])} = {'Some ' + v if n in SDMA_OPTIONAL else v}")
-            elif n in SDMA_OPTIONAL:
-                out.append(f"  let {ml_name(n[9:])} = None")
-            else:
-                sys.exit(f"{h} has no {n}")
-        out.append("end")
-        out.append("")
-    out.append("let sdma = function")
-    for ver in SDMA_PKT:
-        out.append(f"  | {ml_version(ver)} -> (module Sdma_v{ver[0]} : SDMA)")
-    out.append("  | _ -> failwith \"no SDMA packet definitions\"")
-    out.append("")
+        have = [(v[n + "_mask"], v[n + "_shift"]) for v in svals.values() if n + "_mask" in v]
+        if len(have) != len(svals) and n not in SDMA_OPTIONAL:
+            sys.exit(f"an SDMA header has no {n}")
+        mask, sh = same(n, have)
+        pk.append(f"let {ml_name(n)} = ({ml_int(mask)}, {sh})")
+    first = min(ver for ver, v in svals.items() if "SDMA_PKT_FENCE_HEADER_mtype_mask" in v)
+    pk.append(f"let sdma_fence_mtype_from = {ml_version(first)}")
+
+    pk += ["", "(* AQL: hsa.h's constants, and its kernel dispatch packet as (byte offset,", "   bytes) *)", ""]
+    hu = Unit(ci, [rocm / "projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h"],
+              [rocm / "projects/rocr-runtime/runtime/hsa-runtime/inc"], stub, defines=DEFINES)
+    hv = consts(hu, HSA_CONSTANTS)
+    pk += [f"let {ml_name(n)} = {ml_int(hv[n])}" for n in HSA_CONSTANTS]
+    pk.append("")
+    size, fields = layout(ci, hu.struct("hsa_kernel_dispatch_packet_t"))
+    struct_module(pk, "Dispatch", size, fields, DISPATCH_FIELDS)
+
+    pk.append("(* The bases of the GC's register segments, by the GC major version from")
+    pk.append("   which they hold. *)")
+    pk.append("let gc_bases = [")
+    for major, h in GC_BASES.items():
+        bu = Unit(ci, [amd / "include" / h], incs, stub, defines=DEFINES)
+        segs = [f"GC_BASE__INST0_SEG{i}" for i in range(6)]
+        bv = bu.macros(segs)
+        pk.append(f"  ({major}, [| " + "; ".join(ml_int(bv.get(n, 0)) for n in segs) + " |]);")
+    pk.append("]")
 
     # performance counters
     import yaml
@@ -665,7 +787,8 @@ def generate(cache, pins, pin, outdir):
     co.append("(* Its code properties. *)")
     co += [f"let {ml_name(c)} = {ml_int(values[c])}" for c in KD_CONSTANTS]
 
-    for name, lines in (("device/amd_defs.ml", out), ("code_object/code_object_defs.ml", co)):
+    for name, lines in (("device/amd_defs.ml", out), ("packet/packet_defs.ml", pk),
+                        ("code_object/code_object_defs.ml", co)):
         (outdir / name).parent.mkdir(parents=True, exist_ok=True)
         (outdir / name).write_text("\n".join(lines) + "\n")
     header = (kernel / "include/uapi/linux/kfd_ioctl.h").read_text()
@@ -680,5 +803,5 @@ def generate(cache, pins, pin, outdir):
 
 
 if __name__ == "__main__":
-    main(__doc__, generate, ["device/amd_defs.ml", "device/kfd_ioctl.h", "code_object/code_object_defs.ml"], HERE, OUT,
-         "amd-gen")
+    main(__doc__, generate, ["device/amd_defs.ml", "device/kfd_ioctl.h", "packet/packet_defs.ml",
+                             "code_object/code_object_defs.ml"], HERE, OUT, "amd-gen")

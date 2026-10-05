@@ -7,7 +7,7 @@
    device's previous timeline value, work, signal the next value, and
    interrupt. *)
 
-module D = Amd_defs
+module P = Nx_amd_packet
 module Mmio = Nx_device_support.Mmio
 
 type queue = {
@@ -18,77 +18,34 @@ type queue = {
   doorbell : Mmio.t; (* 8 bytes *)
 }
 
-let field (mask, shift) v = (v land mask) lsl shift
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff
 
-(* The packets of the work of timeline value [v], whose signal word is at
-   [signal]: a wait for [v - 1], [body], the signal of [v], and an interrupt.
-   Fences write uncached, on the engines that take a memory type. *)
-let work ~family ~signal v body =
-  let module P = (val D.sdma family : D.SDMA) in
+(* The words of the work of timeline value [v] on an engine of version [sdma],
+   whose signal word is at [signal]: a wait for [v - 1], [body], the signal of
+   [v], and an interrupt. *)
+let work ~sdma ~signal v body =
   (* Values complete in order and only [v]'s work writes [v], so the signal word
      is at most [v - 1] when the engine reaches this: equality of the low words
      is exact, and never wraps. *)
-  let poll =
-    [
-      P.op_poll_regmem
-      lor field P.poll_regmem_header_func 3
-      lor field P.poll_regmem_header_mem_poll 1;
-      lo32 signal;
-      hi32 signal;
-      lo32 (v - 1);
-      0xffff_ffff;
-      field P.poll_regmem_dw5_interval 0x04
-      lor field P.poll_regmem_dw5_retry_count 0xfff;
-    ]
-  in
+  let poll = P.Sdma.poll signal Equal (v - 1) ~mask:0xffff_ffff in
   (* The high word changes only when the low one wraps to 0, and is then written
      after it: mid-write, the word reads no higher than before, so no wait
      passes early. A high word written late carries the value every later writer
      has too, so it never takes the word back. *)
-  let fence addr data =
-    let mtype =
-      match P.fence_header_mtype with Some f -> field f 3 | None -> 0
-    in
-    [ P.op_fence lor mtype; lo32 addr; hi32 addr; data ]
+  let high =
+    if lo32 v = 0 then P.Sdma.fence ~sdma (signal + 4) (hi32 v) else []
   in
-  let high = if lo32 v = 0 then fence (signal + 4) (hi32 v) else [] in
-  poll @ body @ fence signal (lo32 v) @ high @ [ P.op_trap; 0 ]
+  P.dwords (poll @ body @ P.Sdma.fence ~sdma signal v @ high @ P.Sdma.trap)
 
 (* A copy of [n] bytes from [src] to [dst] as timeline work of value [v]. *)
-let packets ~family ~max ~signal ~dst ~src n v =
-  let module P = (val D.sdma family : D.SDMA) in
-  work ~family ~signal v
-    (List.concat
-       (List.init
-          ((n + max - 1) / max)
-          (fun i ->
-            let off = i * max in
-            let len = Int.min max (n - off) in
-            [
-              P.op_copy
-              lor field P.copy_linear_header_sub_op P.subop_copy_linear;
-              len - 1;
-              0;
-              lo32 (src + off);
-              hi32 (src + off);
-              lo32 (dst + off);
-              hi32 (dst + off);
-            ])))
+let packets ~sdma ~signal ~dst ~src n v =
+  work ~sdma ~signal v (P.Sdma.copy ~sdma ~dst ~src n)
 
 (* The global timestamp, 100 MHz ticks, written into the second word of the 16
    bytes at [slot] as timeline work of value [v]. *)
-let stamp ~family ~signal ~slot v =
-  let module P = (val D.sdma family : D.SDMA) in
-  work ~family ~signal v
-    [
-      P.op_timestamp
-      lor field P.timestamp_get_global_header_sub_op
-            P.subop_timestamp_get_global;
-      lo32 (slot + 8);
-      hi32 (slot + 8);
-    ]
+let stamp ~sdma ~signal ~slot v =
+  work ~sdma ~signal v (P.Sdma.timestamp (slot + 8))
 
 (* Appends [words] to [q]'s ring and rings its doorbell. Positions count bytes;
    packets never wrap, so a submission that does not fit before the ring's end

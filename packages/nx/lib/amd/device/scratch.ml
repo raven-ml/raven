@@ -26,29 +26,13 @@ let major g =
    generation. *)
 let per_thread g n =
   let align = if major g <> 9 then 256 else 1024 in
-  (round_up (Int.max n 128) (align / 64), align)
+  round_up (Int.max n 128) (align / 64)
 
-let bytes g n =
-  let t, _ = per_thread g n in
-  t * 64 * g.slots * g.compute_units * g.xccs
+let bytes g n = per_thread g n * 64 * g.slots * g.compute_units * g.xccs
 
 let tmpring_size g n =
-  let t, align = per_thread g n in
-  let per_xcc = t * 64 * g.slots * g.compute_units in
-  let max_waves = g.compute_units * g.slots * g.xccs in
-  let wave = ((64 * t) + align - 1) / align in
-  let waves =
-    per_xcc / (wave * align) / if major g <> 9 then g.shader_engines else 1
-  in
-  let r =
-    match
-      List.assoc_opt "regCOMPUTE_TMPRING_SIZE"
-        (Am_reg.registers "gc" g.gc ~bases:[])
-    with
-    | Some r -> r
-    | None -> failwith "no COMPUTE_TMPRING_SIZE register"
-  in
-  Am_reg.encode r [ ("waves", Int.min waves max_waves); ("wavesize", wave) ]
+  Nx_amd_packet.Gc.tmpring_size ~gc:g.gc ~compute_units:g.compute_units
+    ~slots:g.slots ~shader_engines:g.shader_engines ~xccs:g.xccs n
 
 (* The four words of the buffer descriptor of [n] bytes of scratch at [base],
    split among the XCCs. *)

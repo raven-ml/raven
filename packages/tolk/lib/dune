@@ -4,7 +4,7 @@
  (name tolk)
  (public_name tolk)
  (private_modules host_config source_digest comgr_worker)
- (libraries unix nx.device.elf nx.amd.code_object nx.nv.cubin nx.nv.packet)
+ (libraries unix nx.device.elf nx.amd.code_object nx.amd.packet nx.nv.cubin nx.nv.packet)
  ; The compilers that run in the process find their vendor's library at run
  ; time, so that the library builds and runs without CUDA, ROCm or Metal.
  (foreign_stubs

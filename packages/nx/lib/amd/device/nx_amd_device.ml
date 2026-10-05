@@ -280,19 +280,6 @@ let sdma_queue a (q : queue) =
     doorbell = word q.doorbell;
   }
 
-let sdma_family (props : props) =
-  Am_reg.family "sdma_pkt"
-    (if compare props.sdma (6, 0, 0) < 0 then props.sdma else (6, 0, 0))
-
-(* The largest linear copy the engine takes at once. *)
-let max_copy (props : props) =
-  let v = props.sdma in
-  if
-    (compare (4, 4, 2) v <= 0 && compare v (5, 0, 0) < 0)
-    || compare v (5, 2, 0) >= 0
-  then 0x40000000
-  else 0x400000
-
 (* The opened GPUs, by the host of their machine and bus address there. *)
 let opened : ((Nx_device.t * string) * t) list Atomic.t = Atomic.make []
 
@@ -369,15 +356,15 @@ let enqueue a words =
 let queue a ~timeline =
   let signal = Nativeint.to_int (Region.address timeline) in
   let props = a.props in
-  let family = sdma_family props and max = max_copy props in
+  let sdma = props.sdma in
   let enqueue = enqueue a in
   let submit ~dst ~src n ~signal:v =
     enqueue
-      (Sdma.packets ~family ~max ~signal ~dst:(Nativeint.to_int dst)
+      (Sdma.packets ~sdma ~signal ~dst:(Nativeint.to_int dst)
          ~src:(Nativeint.to_int src) n v)
   in
   let stamp ~slot ~signal:v =
-    enqueue (Sdma.stamp ~family ~signal ~slot:(Nativeint.to_int slot) v)
+    enqueue (Sdma.stamp ~sdma ~signal ~slot:(Nativeint.to_int slot) v)
   in
   (* A transfer writes the destination through this GPU's mapping of it. *)
   let transfer d' =
@@ -435,7 +422,7 @@ let upload a ~sleep ~staging dst img =
   Mmio.set64 host fence 0L;
   Mmio.barrier ();
   enqueue a
-    (Sdma.packets ~family:(sdma_family a.props) ~max:(max_copy a.props)
+    (Sdma.packets ~sdma:a.props.sdma
        ~signal:(va staging + fence)
        ~dst:(va dst) ~src:(va staging) n 1);
   (* A GPU that does not copy is lost, and may still read [staging], which is

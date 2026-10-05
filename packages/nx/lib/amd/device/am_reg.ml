@@ -15,9 +15,14 @@ type t = {
 
 let pp_version (a, b, c) = Printf.sprintf "%d.%d.%d" a b c
 
+let no_family prefix target =
+  failwith
+    (Printf.sprintf "no %s definitions for version %s" prefix
+       (pp_version target))
+
 (* The family closest below [target] with its major version: the header set a
    block of version [target] is programmed with. A few versions are named after
-   another. *)
+   another. GC's registers are the packets' ({!Nx_amd_packet.Gc}). *)
 let family prefix target =
   let target =
     match (prefix, target) with
@@ -31,27 +36,43 @@ let family prefix target =
         p = prefix && m = major && compare v target <= 0)
       Amd_defs.families
   in
-  match List.sort (fun (_, a) (_, b) -> compare b a) candidates with
-  | (_, v) :: _ -> v
-  | [] ->
-      failwith
-        (Printf.sprintf "no %s definitions for version %s" prefix
-           (pp_version target))
+  let best = List.sort (fun (_, a) (_, b) -> compare b a) candidates in
+  match (prefix, best) with
+  | "gc", _ -> (
+      match Nx_amd_packet.Gc.family target with
+      | Some v -> v
+      | None -> no_family prefix target)
+  | _, (_, v) :: _ -> v
+  | _, [] -> no_family prefix target
+
+(* The registers of [prefix] at [version], each as (name, offset, segment,
+   fields). *)
+let table prefix version =
+  if prefix = "gc" then
+    List.map
+      (fun (r : Nx_amd_packet.Gc.register) ->
+        (r.name, r.offset, r.segment, r.fields))
+      (Nx_amd_packet.Gc.registers (family prefix version))
+  else
+    let v = family prefix version in
+    match
+      List.find_opt (fun (p, v', _) -> p = prefix && v' = v) Amd_defs.registers
+    with
+    | Some (_, _, regs) ->
+        List.map
+          (fun (name, offset, segment, fields) ->
+            ( name,
+              offset,
+              segment,
+              List.map (fun (f, lo, hi) -> (f, (lo, hi))) fields ))
+          regs
+    | None -> []
 
 (* The registers of [prefix] at [version], at the instances whose segment bases
    are [bases]. *)
 let registers prefix version ~bases =
-  let v = family prefix version in
-  let regs =
-    match
-      List.find_opt (fun (p, v', _) -> p = prefix && v' = v) Amd_defs.registers
-    with
-    | Some (_, _, regs) -> regs
-    | None -> []
-  in
   List.map
     (fun (name, offset, segment, fields) ->
-      let fields = List.map (fun (f, lo, hi) -> (f, (lo, hi))) fields in
       let addr =
         List.filter_map
           (fun (inst, segs) ->
@@ -61,7 +82,7 @@ let registers prefix version ~bases =
           bases
       in
       (name, { name; offset; segment; fields; addr }))
-    regs
+    (table prefix version)
 
 let field r name =
   match List.assoc_opt name r.fields with
