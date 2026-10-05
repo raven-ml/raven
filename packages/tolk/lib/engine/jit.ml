@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-let jit_lower ?beam ?search ?profile ~devices ~held_bufs ~inputs linear =
+let jit_lower ?beam ?search ~profile ~devices ~held_bufs ~inputs linear =
   let param i u =
     ( u,
       Ops.param
@@ -24,4 +24,4 @@ let jit_lower ?beam ?search ?profile ~devices ~held_bufs ~inputs linear =
   in
   Setting.context
     [ B (Setting.beam, beam) ]
-    (fun () -> Hcq2.compile_linear ?search ?profile ~devices linear)
+    (fun () -> Hcq2.compile_linear ?search ~profile ~devices linear)

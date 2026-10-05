@@ -708,6 +708,8 @@ end
    range of [behind], which both are in. *)
 type dep = { tag : int; behind : Ops.t list }
 
+type profile = Stamped | Unstamped
+
 type ctx = {
   devices : string -> device;
   batch : entry array;
@@ -1447,7 +1449,8 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
             grp;
           (* A batch whose submission a queue cannot hold runs as two. *)
           let rec lowered items =
-            match lower (finalize_batch (make_ctx devices items profile)) with
+            let stamped = profile = Stamped in
+            match lower (finalize_batch (make_ctx devices items stamped)) with
             | batch -> [ batch ]
             | exception Over_capacity why ->
                 List.concat_map lowered (halves why items)
@@ -2044,7 +2047,7 @@ let pm_beam width =
           | _ -> None);
     ])
 
-let compile_linear ?search ?(profile = false) ~devices linear =
+let compile_linear ?search ~profile ~devices linear =
   let targets d = (devices d).target in
   let lower_and_compile = Realize.lower_and_compile ?search ~targets in
   let width = Setting.value Setting.beam in

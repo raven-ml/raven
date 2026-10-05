@@ -99,12 +99,12 @@ let starts_its_run (l : layout) =
 
 (* The settings a program depends on that a caller may change around a call:
    each setting that shapes what tolk compiles ([Tolk.Setting.shaping]), whether
-   the engine reports each kernel's time, for which the program's batches stamp
-   their kernels ([Engine.reporting]), and the counters and traces of the
-   profile being taken, which a device's batches count and trace. *)
+   the program's batches stamp their kernels for the engine's reports
+   ([Engine.profile]), and the counters and traces of the profile being taken,
+   which a device's batches count and trace. *)
 type settings = {
   shaping : (string * string) list;
-  profiled : bool;
+  profile : Tolk.Hcq2.profile;
   counters : string list;
   traced : bool;
 }
@@ -112,7 +112,7 @@ type settings = {
 let settings () =
   {
     shaping = Tolk.Setting.shaping ();
-    profiled = Engine.reporting ();
+    profile = Engine.profile ();
     counters = Nx_device.Profile.counters ();
     traced = Nx_device.Profile.traced ();
   }
@@ -122,7 +122,8 @@ let settings () =
 let entries s =
   s.shaping
   @ [
-      ("profiled", string_of_bool s.profiled);
+      ( "profile",
+        match s.profile with Stamped -> "stamped" | Unstamped -> "unstamped" );
       ( "counters",
         "["
         ^ String.concat "; " (List.map (Printf.sprintf "%S") s.counters)
@@ -426,7 +427,7 @@ let paths args_s roles args =
 
 (* [compile args_s result_s g args leaves ~paths ~consumed] traces [g] at
    [args], whose leaves are [leaves], and compiles and links its program, its
-   batches stamping their kernels if [profile]. *)
+   batches stamping their kernels as [profile] says. *)
 let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
     (result_s : r Ptree.t) (g : a -> r) (args : a) leaves ~paths ~consumed =
   let s = Lower.scope ~renderer:Engine.renderer in
@@ -906,7 +907,7 @@ let rec compiler : type a r.
     let p =
       Programs.find table key ~miss:retrace (fun () ->
           let paths, consumed = paths args_s roles args in
-          compile ?beam ?parallel ~profile:key.settings.profiled args_s result_s
+          compile ?beam ?parallel ~profile:key.settings.profile args_s result_s
             g args leaves ~paths ~consumed)
     in
     Atomic.set last (Some key);

@@ -557,7 +557,10 @@ let expected ?(vars = []) big storage =
 
 let schedule ?(devices = devices) big =
   let linear, vars = Schedule.create_linear_with_vars big in
-  (Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear, vars)
+  ( Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear,
+    vars )
 
 let linked ?(devices = devices) big =
   let compiled, vars = schedule ~devices big in
@@ -690,7 +693,7 @@ let parameterized ?(devices = devices) name =
   in
   let linear, vars = Schedule.create_linear_with_vars big in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.substitute linear parameters)
   in
@@ -731,7 +734,9 @@ let runs_once_per_trip () =
       ~src:[ Ops.end_ (Ops.call one [ trip out; trip src ]) [ r ] ]
   in
   let compiled =
-    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
   in
   let xs = Array.init 12 Float.of_int in
   let out_buffer = Run.buffer host Float32 (floats (Array.make 12 0.)) in
@@ -778,7 +783,9 @@ let scans_with_a_carry () =
       (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ])
   in
   let compiled =
-    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
   in
   let c0 = [| 1.; 2.; 3.; 4. |] and x = Array.init (n * k) Float.of_int in
   let c_buffer = Run.buffer host Float32 (floats c0)
@@ -835,7 +842,9 @@ let scans_with_an_empty_carry () =
       (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ])
   in
   let compiled =
-    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
   in
   let x = Array.init (n * k) Float.of_int in
   let ys_buffer = Run.buffer host Float32 (floats (Array.make (n * k) 0.)) in
@@ -897,7 +906,7 @@ let replays_a_scan =
     [ (xs, Ops.replace ~op:Param xs); (ys, Ops.replace ~op:Param ys) ]
   in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.substitute linear parameters)
   in
@@ -972,7 +981,9 @@ let plans_the_buffers_of_a_range ~through_a_view () =
     Memory.memory_plan_rewrite ~held_bufs:[ a; b; out_z; out_y ] linear
   in
   let compiled =
-    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) planned
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      planned
   in
   let zeros () = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]) in
   let result_z = zeros () and result_y = zeros () in
@@ -1006,7 +1017,9 @@ let copies_in_order () =
         ]
   in
   let compiled =
-    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
   in
   let out_buffer = Run.buffer host Uint8 (bytes 0) in
   let s =
@@ -1342,7 +1355,7 @@ let run_of_fills n =
     List.map (fun (y, _) -> (y, [ Run.buffer host Float32 a ])) fills
   in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.v Op.Linear ~src:(List.map snd fills))
   in
@@ -1558,10 +1571,10 @@ let signals_once_per_run ?(devices = on_null) () =
   equal int ~msg:"submitted" (before + 3) (Nx_device.submitted d);
   equal int ~msg:"signaled" (before + 3) (Nx_device.signaled d)
 
-let link_calls ?profile ~bound calls =
+let link_calls ?(profile = Hcq2.Unstamped) ~bound calls =
   let devices = on_null in
   let compiled =
-    Hcq2.compile_linear ?profile
+    Hcq2.compile_linear ~profile
       ~devices:(fun n -> (devices n).compiler)
       (Ops.v Op.Linear ~src:calls)
   in
@@ -1667,7 +1680,7 @@ let waits_for_a_device_without_queues ~as_input () =
   in
   let devices n = if n = "CPU:2" then devices n else on_null n in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.v Op.Linear ~src:[ Ops.store_call x src ])
   in
@@ -1827,7 +1840,7 @@ let spans_on_lanes () =
       (z, [ Run.buffer (Null_device.device "CPU:2") Float32 a ]);
     ]
   in
-  let s = link_calls ~profile:true ~bound [ filled; Ops.store_call z y ] in
+  let s = link_calls ~profile:Stamped ~bound [ filled; Ops.store_call z y ] in
   let p = Nx_device.Profile.start () in
   let events =
     Fun.protect
@@ -1975,7 +1988,7 @@ let reports_each_kernel () =
     [ B (Setting.debug, 2) ]
     (fun () ->
       let s =
-        link_calls ~profile:(Engine.reporting ()) ~bound (List.map snd fills)
+        link_calls ~profile:(Engine.profile ()) ~bound (List.map snd fills)
       in
       Null_device.with_latency 0.02 (fun () -> Engine.run s [||]));
   let lines = reported () in
@@ -2003,7 +2016,7 @@ let staged_copy src dst xs =
   let x = Ops.new_buffer (Single src) 4 Float32
   and y = Ops.new_buffer (Single dst) 4 Float32 in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (on_apart n).compiler)
       (Ops.v Op.Linear ~src:[ Ops.store_call y x ])
   in
@@ -2063,7 +2076,7 @@ let staged_runs_from_two_domains () =
 let batch_run_words ?(devices = on_null) () =
   let y, filled = fill "CPU:1" 7. in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.v Op.Linear ~src:[ filled ])
   in
@@ -2083,7 +2096,7 @@ let refuses_an_unknown_library () =
   let y, filled = fill "CPU:1" 7. in
   let devices n = { (on_null n) with placeholder = (fun _ -> None) } in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.v Op.Linear ~src:[ filled ])
   in
@@ -2134,7 +2147,7 @@ let places_in_mapped_memory () =
   in
   let y, filled = fill "CPU:1" 7. in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
       (Ops.v Op.Linear ~src:[ filled ])
   in
@@ -2205,7 +2218,7 @@ let filled (devices : string -> Engine.device) d name =
   let y, call = fill_with name d in
   let compiled =
     unoptimized (fun () ->
-        Hcq2.compile_linear
+        Hcq2.compile_linear ~profile:Unstamped
           ~devices:(fun n -> (devices n).compiler)
           (Ops.v Op.Linear ~src:[ call ]))
   in
@@ -2294,11 +2307,17 @@ let batches =
       test "at DEBUG=2, a host copy and a host kernel print a timed line each"
         reports_host_calls;
       cases ~name:(Printf.sprintf "DEBUG=%d")
-        "reporting holds from DEBUG=2" [ 0; 1; 2; 3 ] (fun level ->
-          equal bool (level >= 2)
-            (Setting.context
-               [ B (Setting.debug, level) ]
-               Engine.reporting));
+        "profile is Stamped from DEBUG=2" [ 0; 1; 2; 3 ] (fun level ->
+          let profile =
+            Testable.make ~equal:( = ) ~pp:(fun ppf p ->
+                Format.pp_print_string ppf
+                  (match p with
+                  | Hcq2.Stamped -> "Stamped"
+                  | Unstamped -> "Unstamped"))
+          in
+          equal profile
+            (if level >= 2 then Stamped else Unstamped)
+            (Setting.context [ B (Setting.debug, level) ] Engine.profile));
       test "linked schedules that stage share the host's staging memory"
         shares_the_staging_memory;
       test "staged runs of two programs on other devices take turns"

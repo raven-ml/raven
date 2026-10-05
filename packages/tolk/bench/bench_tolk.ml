@@ -164,7 +164,7 @@ let compiled name d sink =
                  ~device:(Single name) slot p.dtype))
       in
       let linear =
-        Hcq2.compile_linear
+        Hcq2.compile_linear ~profile:Unstamped
           ~devices:(fun n -> (devices n).compiler)
           (Ops.v Op.Linear ~src:[ call ])
       in

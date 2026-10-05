@@ -126,7 +126,7 @@ let kinds ?(copy_queue = true) ?(submission = Hcq2.Buffered) () =
         queues = Some queues;
       }
 
-let sched ?(profile = false) ?copy_queue ?submission calls =
+let sched ?(profile = Hcq2.Unstamped) ?copy_queue ?submission calls =
   Hcq2.sched_batches
     ~devices:(kinds ?copy_queue ?submission ())
     ~profile (linear calls)
@@ -170,16 +170,16 @@ let host_sources linear =
 (* Each case with whether it profiles and has copy queues. *)
 let cases =
   [
-    ("chain", false, true);
-    ("chain_profile", true, true);
-    ("peer_copy", false, true);
-    ("peer_copy_kernel", false, false);
-    ("peer_copy_profile", true, true);
-    ("sharded", false, true);
-    ("host_split", false, true);
-    ("sharded_sum", false, true);
-    ("copies", false, true);
-    ("variable", false, true);
+    ("chain", Hcq2.Unstamped, true);
+    ("chain_profile", Hcq2.Stamped, true);
+    ("peer_copy", Hcq2.Unstamped, true);
+    ("peer_copy_kernel", Hcq2.Unstamped, false);
+    ("peer_copy_profile", Hcq2.Stamped, true);
+    ("sharded", Hcq2.Unstamped, true);
+    ("host_split", Hcq2.Unstamped, true);
+    ("sharded_sum", Hcq2.Unstamped, true);
+    ("copies", Hcq2.Unstamped, true);
+    ("variable", Hcq2.Unstamped, true);
   ]
 
 (* Compiling these takes long. *)
@@ -399,7 +399,8 @@ let timeline_values =
       test "a host program neither reads a signal word nor loops" (fun () ->
           let b = List.init 3 (fun _ -> storage "CPU:1") in
           let compiled =
-            Hcq2.compile_linear ~devices:(recorded_devices ())
+            Hcq2.compile_linear ~profile:Unstamped
+              ~devices:(recorded_devices ())
               (linear
                  [
                    adds (List.nth b 1) (List.nth b 0);
@@ -973,16 +974,16 @@ let stamps =
             (list (option int))
             ~msg:"profiling"
             [ Some (2 * (1 + (2 * 2))) ]
-            (slot_sizes true);
+            (slot_sizes Stamped);
           equal
             (list (option int))
-            ~msg:"not profiling" [ Some 2 ] (slot_sizes false));
+            ~msg:"not profiling" [ Some 2 ] (slot_sizes Unstamped));
       test
         "a kernel's stamps are the second word of its two slots after the \
          queues'" (fun () ->
           let info =
             info_of
-              (the_batch (sched ~profile:true (chained (chain "CPU:1" 2))))
+              (the_batch (sched ~profile:Stamped (chained (chain "CPU:1" 2))))
           in
           equal
             (list (list int))
@@ -992,7 +993,7 @@ let stamps =
         "profiling passes each device's slots to the batch, and timestamps \
          each call" (fun () ->
           let batch =
-            the_batch (sched ~profile:true (chained (chain "CPU:1" 2)))
+            the_batch (sched ~profile:Stamped (chained (chain "CPU:1" 2)))
           in
           equal (list string) [ "slots" ]
             (List.map tag_of (List.tl (Ops.src batch)));
@@ -1028,7 +1029,7 @@ let lowering =
         (fun () ->
           let lowered =
             Hcq2.lower_call ~devices:(kinds ())
-              (the_batch (sched ~profile:true (chained (chain "CPU:1" 2))))
+              (the_batch (sched ~profile:Stamped (chained (chain "CPU:1" 2))))
           in
           let call = Ops.without_after lowered in
           let info = info_of call in
@@ -1100,11 +1101,13 @@ let compiling =
     [
       test "returns a linear holding a lowered batch as it is" (fun () ->
           let compiled =
-            Hcq2.compile_linear ~devices:(recorded_devices ())
+            Hcq2.compile_linear ~profile:Unstamped
+              ~devices:(recorded_devices ())
               (linear (chained (chain "CPU:1" 1)))
           in
           is_true
-            (Hcq2.compile_linear ~devices:(recorded_devices ()) compiled
+            (Hcq2.compile_linear ~profile:Unstamped
+               ~devices:(recorded_devices ()) compiled
             == compiled));
       test "makes each kernel ask for a beam of the width BEAM sets" (fun () ->
           let widths = ref [] in
@@ -1126,18 +1129,18 @@ let compiling =
             (Setting.context
                [ B (Setting.beam, 1) ]
                (fun () ->
-                 Hcq2.compile_linear ~search ~devices:(recorded_devices ())
-                   (linear calls)));
+                 Hcq2.compile_linear ~profile:Unstamped ~search
+                   ~devices:(recorded_devices ()) (linear calls)));
           equal (list int) [ 1 ] !widths);
       test "stamps its kernels with profile alone, whatever DEBUG holds"
         (fun () ->
           let calls = chained (chain "CPU:1" 1) in
-          let stamped ?profile debug =
+          let stamped ?(profile = Hcq2.Unstamped) debug =
             let c =
               Setting.context
                 [ B (Setting.debug, debug) ]
                 (fun () ->
-                  Hcq2.compile_linear ?profile ~devices:(recorded_devices ())
+                  Hcq2.compile_linear ~profile ~devices:(recorded_devices ())
                     (linear calls))
             in
             List.exists
@@ -1149,8 +1152,8 @@ let compiling =
             [
               stamped 0;
               stamped 2;
-              stamped ~profile:true 0;
-              stamped ~profile:true 2;
+              stamped ~profile:Stamped 0;
+              stamped ~profile:Stamped 2;
             ]);
       test "runs a call on sharded buffers once per device, each on its shard"
         (fun () ->
@@ -1162,8 +1165,8 @@ let compiling =
           let info =
             info_of
               (the_batch
-                 (Hcq2.compile_linear ~devices:(recorded_devices ())
-                    (linear [ call ])))
+                 (Hcq2.compile_linear ~profile:Unstamped
+                    ~devices:(recorded_devices ()) (linear [ call ])))
           in
           equal
             (list (list string))
@@ -1191,7 +1194,8 @@ let compiling =
           let src = Ops.new_buffer (Single "CPU:1") big Float32
           and dst = Ops.new_buffer (Single "CPU:2") big Float32 in
           let compiled =
-            Hcq2.compile_linear ~devices (linear [ Ops.store_call dst src ])
+            Hcq2.compile_linear ~profile:Unstamped ~devices
+              (linear [ Ops.store_call dst src ])
           in
           let staging =
             List.filter (fun n -> tag_of n = "staging") (Ops.toposort compiled)
@@ -1207,7 +1211,7 @@ let compiling =
           let events = Null_queue.events () in
           ignore events;
           let compiled =
-            Hcq2.compile_linear
+            Hcq2.compile_linear ~profile:Unstamped
               ~devices:(recorded_devices ~copy_queue:false ())
               (linear [ Ops.store_call (storage "CPU:2") (storage "CPU:1") ])
           in
@@ -1258,10 +1262,10 @@ let bound_storage calls =
           (placement u) ))
     (storage_of calls)
 
-let run_calls ?(devices = Null_device.devices ()) ?profile ?(vars = [])
-    ?(slots = [||]) ~bound calls =
+let run_calls ?(devices = Null_device.devices ()) ?(profile = Hcq2.Unstamped)
+    ?(vars = []) ?(slots = [||]) ~bound calls =
   let compiled =
-    Hcq2.compile_linear ?profile
+    Hcq2.compile_linear ~profile
       ~devices:(fun n -> (devices n).compiler)
       (linear calls)
   in
@@ -1459,7 +1463,7 @@ let running =
           in
           let devices = Null_device.devices () in
           let compiled =
-            Hcq2.compile_linear
+            Hcq2.compile_linear ~profile:Unstamped
               ~devices:(fun n -> (devices n).compiler)
               (linear [ kernel_adds ~c:10. b a ])
           in
@@ -1482,7 +1486,7 @@ let running =
           in
           let devices = Null_device.devices () in
           let compiled =
-            Hcq2.compile_linear
+            Hcq2.compile_linear ~profile:Unstamped
               ~devices:(fun n -> (devices n).compiler)
               (linear [ kernel_adds ~c:10. b a ])
           in
@@ -1534,7 +1538,7 @@ let running =
                 if Nx_device.Profile.enabled () then
                   ignore (Nx_device.Profile.stop p))
               (fun () ->
-                ignore (run_calls ~profile:true ~bound (kernel_chained b));
+                ignore (run_calls ~profile:Stamped ~bound (kernel_chained b));
                 Nx_device.Profile.stop p)
           in
           let spans =
@@ -1717,7 +1721,7 @@ let probing probe =
 
 let lower_with devices calls =
   Hcq2.lower_call ~devices
-    (the_batch (Hcq2.sched_batches ~devices ~profile:false (linear calls)))
+    (the_batch (Hcq2.sched_batches ~devices ~profile:Unstamped (linear calls)))
 
 let queues =
   group "Queue"
@@ -1948,7 +1952,7 @@ let word_tests =
                 }
           in
           let compiled =
-            Hcq2.compile_linear
+            Hcq2.compile_linear ~profile:Unstamped
               ~devices:(fun n -> (devices n).compiler)
               (linear [ kernel_adds (storage d) (storage d) ])
           in
@@ -2027,7 +2031,7 @@ let word_tests =
                 }
           in
           let compiled =
-            Hcq2.compile_linear
+            Hcq2.compile_linear ~profile:Unstamped
               ~devices:(fun n -> (devices n).compiler)
               (linear [ kernel_adds (storage d) (storage d) ])
           in
@@ -2068,7 +2072,7 @@ let word_tests =
             :: bound_storage calls
           in
           let compiled =
-            Hcq2.compile_linear
+            Hcq2.compile_linear ~profile:Unstamped
               ~devices:(fun n -> (devices n).compiler)
               (linear calls)
           in
@@ -2258,7 +2262,7 @@ let splits_a_range_its_queue_cannot_hold () =
   let src = storage ~n:(4 * n) "CPU:1" and dst = storage ~n:(4 * n) "CPU:1" in
   let devices = Null_device.devices ~ring:256 () in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun d -> (devices d).compiler)
       (linear [ Ops.end_ (kernel_adds (window dst) (window src)) [ r ] ])
   in
@@ -2295,7 +2299,7 @@ let chunks_a_long_range () =
   let src = storage ~n:(4 * n) "CPU:1" and dst = storage ~n:(4 * n) "CPU:1" in
   let devices = Null_device.devices () in
   let compiled =
-    Hcq2.compile_linear
+    Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun d -> (devices d).compiler)
       (linear [ Ops.end_ (kernel_adds (window dst) (window src)) [ r ] ])
   in
@@ -2340,7 +2344,7 @@ let ranges =
         (fun () ->
           let devices = Null_device.devices ~ring:64 () in
           raises_match Exn.invalid_arg (fun () ->
-              Hcq2.compile_linear
+              Hcq2.compile_linear ~profile:Unstamped
                 ~devices:(fun d -> (devices d).compiler)
                 (linear [ kernel_adds (storage "CPU:1") (storage "CPU:1") ])));
       test "a ranged batch's addresses are integers, profiled or not" (fun () ->
@@ -2360,7 +2364,7 @@ let ranges =
                      (linear [ e ]))
               in
               is_false ~msg:"float" (contains src "float"))
-            [ false; true ]);
+            [ Hcq2.Unstamped; Stamped ]);
       test "a trip reads its window past what a float offset holds"
         reads_its_window_past_a_float;
       test
@@ -2430,7 +2434,8 @@ let ranges =
                   ignore (Nx_device.Profile.stop p))
               (fun () ->
                 ignore
-                  (run_calls ~profile:true ~bound:(windows_bound src dst) [ e ]);
+                  (run_calls ~profile:Stamped ~bound:(windows_bound src dst)
+                     [ e ]);
                 Nx_device.Profile.stop p)
           in
           let spans =

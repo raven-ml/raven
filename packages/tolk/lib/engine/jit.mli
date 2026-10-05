@@ -16,7 +16,7 @@
 val jit_lower :
   ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
-  ?profile:bool ->
+  profile:Hcq2.profile ->
   devices:(string -> Hcq2.device) ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->

@@ -62,9 +62,9 @@ let adds out inp =
 let storage ?(n = 4) device = Ops.new_buffer (Single device) n Float32
 let linear calls = Ops.v Linear ~src:calls
 
-let compile ?profile calls =
+let compile ?(profile = Hcq2.Unstamped) calls =
   let devices = devices () in
-  Hcq2.compile_linear ?profile
+  Hcq2.compile_linear ~profile
     ~devices:(fun n -> (devices n).compiler)
     (linear calls)
 
@@ -203,7 +203,7 @@ let execution =
           let spans =
             spans
               (profiled (fun () ->
-                   ignore (run_calls ~profile:true ~bound (chained b))))
+                   ignore (run_calls ~profile:Stamped ~bound (chained b))))
           in
           equal (list string) [ "k"; "k" ] (List.map (fun (n, _, _) -> n) spans);
           List.iter

@@ -229,31 +229,31 @@ let host_sources linear =
 (* Each case with its GPU and profile. *)
 let cases =
   [
-    ("chain", "gfx1100", false);
-    ("chain_gfx1201", "gfx1201", false);
-    ("chain_gfx942", "gfx942", false);
-    ("chain_gfx942_cpx", "gfx942_cpx", false);
-    ("profile", "gfx1100", true);
-    ("profile_gfx942", "gfx942", true);
-    ("copies", "gfx1100", false);
-    ("copies_gfx942", "gfx942", false);
-    ("copies_no_sdma", "gfx1100_no_sdma", false);
-    ("copies_profile", "gfx1100", true);
-    ("large_copy", "gfx1100_sdma5", false);
-    ("large_copy_sdma52", "gfx1100_sdma52", false);
-    ("large_copy_gfx942", "gfx942", false);
-    ("lds", "gfx1100", false);
-    ("variable", "gfx1100", false);
-    ("variable_gfx942", "gfx942", false);
-    ("scratch", "gfx1100", false);
-    ("scratch_gfx942", "gfx942", false);
-    ("counters", "gfx1100_counters", false);
-    ("counters_gfx1201", "gfx1201_counters", false);
-    ("counters_gfx942", "gfx942_counters", false);
-    ("traces", "gfx1100_traces", false);
-    ("traces_gfx1201", "gfx1201_traces", false);
-    ("traces_gfx942", "gfx942_traces", false);
-    ("counters_traces", "gfx1100_counters_traces", false);
+    ("chain", "gfx1100", Hcq2.Unstamped);
+    ("chain_gfx1201", "gfx1201", Hcq2.Unstamped);
+    ("chain_gfx942", "gfx942", Hcq2.Unstamped);
+    ("chain_gfx942_cpx", "gfx942_cpx", Hcq2.Unstamped);
+    ("profile", "gfx1100", Hcq2.Stamped);
+    ("profile_gfx942", "gfx942", Hcq2.Stamped);
+    ("copies", "gfx1100", Hcq2.Unstamped);
+    ("copies_gfx942", "gfx942", Hcq2.Unstamped);
+    ("copies_no_sdma", "gfx1100_no_sdma", Hcq2.Unstamped);
+    ("copies_profile", "gfx1100", Hcq2.Stamped);
+    ("large_copy", "gfx1100_sdma5", Hcq2.Unstamped);
+    ("large_copy_sdma52", "gfx1100_sdma52", Hcq2.Unstamped);
+    ("large_copy_gfx942", "gfx942", Hcq2.Unstamped);
+    ("lds", "gfx1100", Hcq2.Unstamped);
+    ("variable", "gfx1100", Hcq2.Unstamped);
+    ("variable_gfx942", "gfx942", Hcq2.Unstamped);
+    ("scratch", "gfx1100", Hcq2.Unstamped);
+    ("scratch_gfx942", "gfx942", Hcq2.Unstamped);
+    ("counters", "gfx1100_counters", Hcq2.Unstamped);
+    ("counters_gfx1201", "gfx1201_counters", Hcq2.Unstamped);
+    ("counters_gfx942", "gfx942_counters", Hcq2.Unstamped);
+    ("traces", "gfx1100_traces", Hcq2.Unstamped);
+    ("traces_gfx1201", "gfx1201_traces", Hcq2.Unstamped);
+    ("traces_gfx942", "gfx942_traces", Hcq2.Unstamped);
+    ("counters_traces", "gfx1100_counters_traces", Hcq2.Unstamped);
   ]
 
 let recorded =
@@ -774,10 +774,10 @@ let ranged ?(trips = 3) ?(copy = false) name case =
   in
   Ops.v Linear ~src:[ Ops.end_ call [ r ] ]
 
-let batched ?profile name case =
+let batched ?(profile = Hcq2.Unstamped) name case =
   let linear =
     plain (fun () ->
-        Hcq2.compile_linear ?profile ~devices:(recorded_devices name)
+        Hcq2.compile_linear ~profile ~devices:(recorded_devices name)
           (ranged name case))
   in
   let contains sub =
@@ -804,7 +804,7 @@ let loops =
         "a profiled range is one batch whose AQL packets repeat per trip, each \
          running its trip's commands" (fun () ->
           let batches, contains =
-            batched ~profile:true "gfx942" "chain_gfx942"
+            batched ~profile:Stamped "gfx942" "chain_gfx942"
           in
           equal ~msg:"one batch" int 1 batches;
           is_true ~msg:"a loop of three trips" (contains "< 3; Lidx");
@@ -823,7 +823,7 @@ let loops =
 let pieces ?copy ~trips g name case tag =
   let linear =
     plain (fun () ->
-        Hcq2.compile_linear ~devices:(gpu_devices g)
+        Hcq2.compile_linear ~profile:Unstamped ~devices:(gpu_devices g)
           (ranged ?copy ~trips name case))
   in
   List.map

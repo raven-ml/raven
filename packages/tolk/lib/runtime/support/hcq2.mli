@@ -307,6 +307,13 @@ end
 
 (** {1:batches Batches} *)
 
+(** Whether a batch stamps its kernels. *)
+type profile =
+  | Stamped
+      (** Each kernel stamps the times it starts and ends, which a profile
+          records ({!Nx_device.Submission.record}). *)
+  | Unstamped  (** No kernel stamps a time. *)
+
 val chunk_calls : int
 (** [chunk_calls] is the most calls of a range a batch holds ({!sched_batches}).
 *)
@@ -314,7 +321,7 @@ val chunk_calls : int
 val sched_batches :
   ?lower:(Ops.t -> Ops.t) ->
   devices:(string -> device) ->
-  profile:bool ->
+  profile:profile ->
   Ops.t ->
   Ops.t
 (** [sched_batches ~lower ~devices ~profile linear] is [linear] with each run of
@@ -349,9 +356,9 @@ val sched_batches :
     engine around it, and a batch of the [n mod c] trips left, when there are
     any. Its batches then hold at most [2·c·k] commands, whatever [n].
 
-    A batch is a call, with an {!Ops.hcq_info} argument and, with [profile], the
-    slots of its devices as arguments, of a sink of one submission per queue. A
-    submission is a {!Op.Custom_function} named
+    A batch is a call, with an {!Ops.hcq_info} argument and, when {!Stamped},
+    the slots of its devices as arguments, of a sink of one submission per
+    queue. A submission is a {!Op.Custom_function} named
     [to_name ["submit"; kind; queue kind]] of an {!Op.Linear} of the queue's
     commands, ordered after the submissions before it and after the batch's
     fence. The commands of a queue are, in order:
@@ -362,7 +369,7 @@ val sched_batches :
       ({!Deps}), in a loop those of the current trip and those after it in the
       trip before, each a wait for the queue's signal to reach the call's
       position plus one ([0] in a loop's first trip for the trip before); with
-      [profile], a timestamp before and after it; the call; and, when another
+      {!Stamped}, a timestamp before and after it; the call; and, when another
       queue waits for it, a store of its position plus one into its queue's
       signal;
     - on one queue of each device, the compute queue when the device has
@@ -382,7 +389,7 @@ val sched_batches :
 
     The slots of a device are a volatile placeholder tagged ["slots"] of 16-byte
     slots, each a signal then a timestamp: one per queue of the device, then,
-    with [profile], two per run of a call of the batch, its start and end
+    when {!Stamped}, two per run of a call of the batch, its start and end
     timestamps.
 
     Each batch is [lower batch] (default the batch). Where its streamed queues
@@ -450,7 +457,7 @@ val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 
 val compile_linear :
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
-  ?profile:bool ->
+  profile:profile ->
   devices:(string -> device) ->
   Ops.t ->
   Ops.t
@@ -470,9 +477,9 @@ val compile_linear :
       ({!lower_call}), a batch a queue cannot hold in one submission split until
       each part fits, and its host program compiled, with no dtype emulated.
 
-    With [profile] (defaults to [false]), its batches stamp each kernel's start
-    and end ({!sched_batches}). A linear that holds a lowered batch is returned
-    as it is.
+    Its batches stamp each kernel's start and end when [profile] is {!Stamped}
+    ({!sched_batches}). A linear that holds a lowered batch is returned as it
+    is.
 
     Raises as {!Realize.lower_and_compile} does. *)
 

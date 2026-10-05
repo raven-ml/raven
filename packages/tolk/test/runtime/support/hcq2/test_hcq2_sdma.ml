@@ -40,7 +40,8 @@ let copy_queues =
         Setting.context
           [ B (Setting.all2all, 1) ]
           (fun () ->
-            Hcq2.sched_batches ~devices ~profile:false (Ops.v Linear ~src:calls))
+            Hcq2.sched_batches ~devices ~profile:Unstamped
+              (Ops.v Linear ~src:calls))
       in
       let names =
         List.map

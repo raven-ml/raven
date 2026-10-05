@@ -80,22 +80,22 @@ let host_sources linear =
 (* Each case, whether its GPU is a Blackwell one, and whether it profiles. *)
 let recorded_cases =
   [
-    ("chain", false, false);
-    ("chain_blackwell", true, false);
-    ("chain_profile", false, true);
-    ("variable", false, false);
-    ("copy_in", false, false);
-    ("copy_out_profile", false, true);
-    ("copy_large", false, false);
-    ("host_split", false, false);
-    ("simple_add", false, false);
-    ("simple_add_blackwell", true, false);
-    ("simple_add_chain", false, false);
-    ("simple_add_chain_blackwell", true, false);
-    ("simple_add_profile", false, true);
-    ("simple_add_grid", false, false);
-    ("crafted", false, false);
-    ("crafted_blackwell", true, false);
+    ("chain", false, Hcq2.Unstamped);
+    ("chain_blackwell", true, Hcq2.Unstamped);
+    ("chain_profile", false, Hcq2.Stamped);
+    ("variable", false, Hcq2.Unstamped);
+    ("copy_in", false, Hcq2.Unstamped);
+    ("copy_out_profile", false, Hcq2.Stamped);
+    ("copy_large", false, Hcq2.Unstamped);
+    ("host_split", false, Hcq2.Unstamped);
+    ("simple_add", false, Hcq2.Unstamped);
+    ("simple_add_blackwell", true, Hcq2.Unstamped);
+    ("simple_add_chain", false, Hcq2.Unstamped);
+    ("simple_add_chain_blackwell", true, Hcq2.Unstamped);
+    ("simple_add_profile", false, Hcq2.Stamped);
+    ("simple_add_grid", false, Hcq2.Unstamped);
+    ("crafted", false, Hcq2.Unstamped);
+    ("crafted_blackwell", true, Hcq2.Unstamped);
   ]
 
 let recorded =
@@ -639,7 +639,7 @@ let storages =
           in
           let compiled =
             plain (fun () ->
-                Hcq2.compile_linear
+                Hcq2.compile_linear ~profile:Unstamped
                   ~devices:(recorded_devices ~blackwell:false)
                   (Ops.v Linear ~src:[ call; other ]))
           in
@@ -895,7 +895,8 @@ let loops =
           in
           ignore
             (plain (fun () ->
-                 Hcq2.compile_linear ~devices (Ops.v Linear ~src:[ ranged () ])));
+                 Hcq2.compile_linear ~profile:Unstamped ~devices
+                   (Ops.v Linear ~src:[ ranged () ])));
           let submitted = Ops.sink !submitted in
           equal int 3
             (List.length

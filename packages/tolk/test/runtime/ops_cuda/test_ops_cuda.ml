@@ -61,12 +61,12 @@ let host_sources linear =
 (* Each case with whether it profiles. *)
 let cases =
   [
-    ("chain", false);
-    ("chain_profile", true);
-    ("variable", false);
-    ("copy_in", false);
-    ("copy_in_profile", true);
-    ("host_split", false);
+    ("chain", Hcq2.Unstamped);
+    ("chain_profile", Hcq2.Stamped);
+    ("variable", Hcq2.Unstamped);
+    ("copy_in", Hcq2.Unstamped);
+    ("copy_in_profile", Hcq2.Stamped);
+    ("host_split", Hcq2.Unstamped);
   ]
 
 let recorded =
@@ -131,7 +131,7 @@ let function_words =
           in
           let compiled =
             plain (fun () ->
-                Hcq2.compile_linear ~devices:recorded_devices
+                Hcq2.compile_linear ~profile:Unstamped ~devices:recorded_devices
                   (Ops.v Linear ~src:calls))
           in
           let words =
@@ -181,7 +181,8 @@ let loops =
           let src =
             host_sources
               (plain (fun () ->
-                   Hcq2.compile_linear ~devices:recorded_devices
+                   Hcq2.compile_linear ~profile:Unstamped
+                     ~devices:recorded_devices
                      (Ops.v Linear ~src:[ ranged () ])))
           in
           (* The launch's extra words are five 64-bit words a trip. *)
@@ -192,7 +193,8 @@ let loops =
           let src =
             host_sources
               (plain (fun () ->
-                   Hcq2.compile_linear ~devices:recorded_devices
+                   Hcq2.compile_linear ~profile:Unstamped
+                     ~devices:recorded_devices
                      (Ops.v Linear ~src:[ once (); ranged () ])))
           in
           (* Each trip's extra words follow the launch's before the loop. *)
@@ -207,7 +209,7 @@ let loops =
                          (Ops.v Linear ~src:[ ranged () ])))
               in
               is_false ~msg:"float" (contains src "float"))
-            [ false; true ]);
+            [ Hcq2.Unstamped; Stamped ]);
     ]
 
 let () = exit (run "Tolk.Ops_cuda" [ recorded; function_words; loops ])

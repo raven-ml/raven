@@ -41,7 +41,7 @@ let searched width =
     [ B (Setting.beam, width) ]
     (fun () ->
       ignore
-        (Jit.jit_lower ~search
+        (Jit.jit_lower ~search ~profile:Unstamped
            ~devices:(fun n -> (devices n).compiler)
            ~held_bufs:[ out ] ~inputs:[ x ] linear));
   !widths

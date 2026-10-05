@@ -61,15 +61,15 @@ let host_sources linear =
 (* Each case with its GPU family, residency set and profile. *)
 let cases =
   [
-    ("chain", "Apple9", true, false);
-    ("chain_apple7", "Apple7", true, false);
-    ("chain_mac2", "Mac2", true, false);
-    ("chain_no_residency_set", "Apple9", false, false);
-    ("chain_profile", "Apple9", true, true);
-    ("one_profile", "Apple9", true, true);
-    ("variable", "Apple9", true, false);
-    ("variable_second", "Apple9", true, false);
-    ("host_split", "Apple9", true, false);
+    ("chain", "Apple9", true, Hcq2.Unstamped);
+    ("chain_apple7", "Apple7", true, Hcq2.Unstamped);
+    ("chain_mac2", "Mac2", true, Hcq2.Unstamped);
+    ("chain_no_residency_set", "Apple9", false, Hcq2.Unstamped);
+    ("chain_profile", "Apple9", true, Hcq2.Stamped);
+    ("one_profile", "Apple9", true, Hcq2.Stamped);
+    ("variable", "Apple9", true, Hcq2.Unstamped);
+    ("variable_second", "Apple9", true, Hcq2.Unstamped);
+    ("host_split", "Apple9", true, Hcq2.Unstamped);
   ]
 
 let recorded =
@@ -186,7 +186,7 @@ let sizes =
           let src =
             host_sources
               (plain (fun () ->
-                   Hcq2.compile_linear
+                   Hcq2.compile_linear ~profile:Unstamped
                      ~devices:
                        (recorded_devices ~arch:"Apple9" ~residency_set:true)
                      (Ops.v Linear ~src:[ quarter_sized () ])))
@@ -209,9 +209,9 @@ let loops =
               in
               is_false ~msg:"float" (contains src "float"))
             [
-              ("Apple9", true, false);
-              ("Apple7", false, false);
-              ("Apple9", true, true);
+              ("Apple9", true, Hcq2.Unstamped);
+              ("Apple7", false, Hcq2.Unstamped);
+              ("Apple9", true, Hcq2.Stamped);
             ]);
       test
         "a loop's commands repeat once per trip, a trip apart, after the \
@@ -219,7 +219,7 @@ let loops =
           let cmds =
             icb_commands
               (plain (fun () ->
-                   Hcq2.compile_linear
+                   Hcq2.compile_linear ~profile:Unstamped
                      ~devices:
                        (recorded_devices ~arch:"Apple9" ~residency_set:true)
                      (Ops.v Linear ~src:[ once (); ranged () ])))

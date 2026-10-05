@@ -3397,7 +3397,7 @@ stores through a pad.
   `lib/codegen/opt/search.ml:17` (`tc_opt_all`) and `:19` (`actions`);
   `lib/codegen/opt/heuristic.ml:101`; `lib/setting.ml:300`
   (`dbgtv`); `lib/runtime/support/hcq2.ml:2051` (`compile_linear`);
-  `engine/tolk_engine.ml:1082` (`reporting`); rune's `lib/jit.ml:105`
+  `engine/tolk_engine.ml:1083` (`profile`); rune's `lib/jit.ml:105`
   (`settings`).
 - **Differs:** tolk reads no variable outside a setting: no module exports
   `getenv`. Each variable is declared once (`Setting`), with its type,
@@ -3420,16 +3420,16 @@ stores through a pad.
   `BEAM_PADTO` are read when the search makes its candidates (`actions` is a
   function), so a `context` binding of `TC` reaches the search, where
   tinygrad's search sees the environment alone. `JITBEAM` is a setting
-  whose `None` stands for `BEAM`'s current value. `compile_linear`'s
-  `profile` defaults to `false`:
-  `DEBUG` is read by its caller, through `Tolk_engine.reporting`, which is
-  true from `DEBUG` 2, when the engine prints each kernel's time, and there
-  is no `PROFILE`: nx.device's profiles record the spans of what was
+  whose `None` stands for `BEAM`'s current value. `compile_linear` and
+  `jit_lower` take a required `profile`, `Stamped` or `Unstamped`, and read
+  no setting for it: their caller asks the engine (`Tolk_engine.profile`),
+  which is `Stamped` from `DEBUG` 2, when it prints each kernel's time, and
+  there is no `PROFILE`: nx.device's profiles record the spans of what was
   compiled to stamp them. A variable tinygrad reads on each use, such as
   `DBGTV`, is read when the program starts. A library that compiles with
   tolk declares its own variables the same way, so rune's jit keys on its
   `Output` settings too, and beyond them only on what is not a setting of
-  tolk: `Tolk_engine.reporting ()` and the counters and traces of the
+  tolk: `Tolk_engine.profile ()` and the counters and traces of the
   profile being taken.
 - **Reason:** (b): rune's jit memo and tolk's program, schedule and search
   caches key on `Setting.shaping`. A variable read outside a declaration on

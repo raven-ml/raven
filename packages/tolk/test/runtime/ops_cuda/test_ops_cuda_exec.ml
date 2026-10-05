@@ -61,9 +61,9 @@ let adds ?n ?c out inp =
 let storage ?(n = 4) device = Ops.new_buffer (Single device) n Float32
 let linear calls = Ops.v Linear ~src:calls
 
-let compile ?profile calls =
+let compile ?(profile = Hcq2.Unstamped) calls =
   let devices = devices () in
-  Hcq2.compile_linear ?profile
+  Hcq2.compile_linear ~profile
     ~devices:(fun n -> (devices n).compiler)
     (linear calls)
 
@@ -241,7 +241,7 @@ let execution =
                 if Nx_device.Profile.enabled () then
                   ignore (Nx_device.Profile.stop p))
               (fun () ->
-                ignore (run_calls ~profile:true ~bound (chained b));
+                ignore (run_calls ~profile:Stamped ~bound (chained b));
                 Nx_device.Profile.stop p)
           in
           let spans =
@@ -268,7 +268,7 @@ let execution =
           in
           let s =
             Tolk_engine.link ~devices:(devices ()) ~bound
-              (compile ~profile:true (chained b))
+              (compile ~profile:Stamped (chained b))
           in
           let p = Nx_device.Profile.start () in
           let events =

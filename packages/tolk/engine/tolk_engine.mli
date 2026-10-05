@@ -231,7 +231,7 @@ val run :
 
     When the setting {!Tolk.Setting.debug} is [1] or more and [s] runs ten calls
     or more, [run] first prints ["jit execs n calls"] on standard output, [n]
-    its number of calls. When it is [2] or more ({!reporting}), [run] prints a
+    its number of calls. When it is [2] or more ({!profile}), [run] prints a
     line for each kernel on standard output: its device, how many kernels ran
     before it, its name, its number of arguments, and its time and throughput. A
     host program and a copy are timed on the host clock. A batch synchronizes
@@ -244,12 +244,12 @@ val run :
     variable is unbound, or if a device refuses to run a batch now (its
     [submitting]), and {!Nx_device.Lost} as the devices do. *)
 
-val reporting : unit -> bool
-(** [reporting ()] is [true] iff {!run} prints a line for each kernel: while
-    {!Tolk.Setting.debug} is [2] or more. A kernel's line has its time only if
-    its schedule stamps it ({!Tolk.Hcq2.compile_linear}'s [profile]): a caller
-    compiles with [~profile:(reporting ())] and keeps what it compiles for each
-    value of [reporting ()]. *)
+val profile : unit -> Tolk.Hcq2.profile
+(** [profile ()] is the profile that a schedule compiled now needs for {!run}'s
+    reports ({!Tolk.Hcq2.compile_linear}'s [profile]): {!Tolk.Hcq2.Stamped}
+    while {!Tolk.Setting.debug} is [2] or more, when [run] prints each kernel's
+    time from its stamps, and {!Tolk.Hcq2.Unstamped} otherwise. A caller that
+    keeps compiled schedules keeps one for each value of [profile ()]. *)
 
 (** {1:timing Timing} *)
 

@@ -1012,9 +1012,9 @@ thread.
   searches key on it; `CCACHE`, now read when compiling, decides only whether
   binaries and programs go to disk. With `CCACHE=0`, two compilers differing in
   their options alone shared in-memory programs.
-- `Hcq2.compile_linear` and `Jit.jit_lower` no longer read `DEBUG`: `profile`
-  defaults to `false`, and `Tolk_engine.reporting` says when the engine prints
-  kernel times, which needs a stamped schedule.
+- `Hcq2.compile_linear`, `Hcq2.sched_batches` and `Jit.jit_lower` take a
+  required `~profile:Hcq2.profile` (`Stamped` or `Unstamped`) and no longer
+  read `DEBUG`; `Tolk_engine.profile` gives the one the engine's reports need.
 - Scheduling a large graph no longer grows with the square of its kernels:
   weighing whether a stage could be inlined walked every kernel upstream of
   it, and the where-closure rule searched branches its INDEX gate rejects.

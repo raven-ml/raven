@@ -1080,6 +1080,7 @@ let check_slots t slots =
 (* Reports *)
 
 let reporting () = Setting.value Setting.debug >= 2
+let profile () = if reporting () then Hcq2.Stamped else Hcq2.Unstamped
 
 (* A run prints its reports as [DEBUG] asks, or nothing: a timing run is
    silent. *)
@@ -1354,7 +1355,7 @@ let timer ~devices name ~vars kernel =
   fun prg ->
     let s =
       link ~devices
-        (Hcq2.compile_linear ~profile:true
+        (Hcq2.compile_linear ~profile:Stamped
            ~devices:(fun n -> (devices n).compiler)
            (Ops.v Op.Linear ~src:[ Ops.call prg args ]))
     in

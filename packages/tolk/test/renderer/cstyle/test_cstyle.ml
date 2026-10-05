@@ -1211,7 +1211,7 @@ let divides_on_metal () =
       let buffer () = Ops.new_buffer (Single "CPU:1") n Float32 in
       let out = buffer () and a = buffer () and b = buffer () in
       let compiled =
-        Hcq2.compile_linear
+        Hcq2.compile_linear ~profile:Unstamped
           ~devices:(fun d -> (devices d).compiler)
           (Ops.v Op.Linear ~src:[ Ops.call division [ out; a; b ] ])
       in

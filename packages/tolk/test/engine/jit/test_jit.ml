@@ -155,7 +155,9 @@ let unplanned ~devices ~held ~inputs captured =
     Engine.link ~devices
       ~bound:(List.map (fun (u, b) -> (u, [ b ])) bufs)
       (plain (fun () ->
-           Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) captured))
+           Hcq2.compile_linear ~profile:Unstamped
+             ~devices:(fun n -> (devices n).compiler)
+             captured))
   in
   replay ~inputs bufs (fun vars -> Engine.run ~vars s [||])
 
@@ -212,7 +214,7 @@ let recorded_devices () =
 
 let lower ?search ?(devices = recorded_devices ()) case =
   plain (fun () ->
-      Jit.jit_lower ?search ~devices ~held_bufs:(held case)
+      Jit.jit_lower ?search ~profile:Unstamped ~devices ~held_bufs:(held case)
         ~inputs:(inputs case) (captured case))
 
 (* The cases of tinygrad's jit tests, by the file they come from. *)
@@ -579,7 +581,7 @@ let capture_of d =
     List.init d.n_inputs (Array.get nodes) )
 
 let lower_drawn (linear, held, inputs) =
-  Jit.jit_lower
+  Jit.jit_lower ~profile:Unstamped
     ~devices:(fun n -> (unqueued n).compiler)
     ~held_bufs:held ~inputs linear
 
