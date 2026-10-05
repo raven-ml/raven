@@ -941,12 +941,16 @@ let of_string text =
       | u -> nodes.(i) <- Some u
       | exception (Failure e | Invalid_argument e) -> fail "node %d: %s" i e)
     lines;
-  (* The graph's storage slots are taken: a slot {!Ops.unique_num} hands out
-     later must not name one of them, or new storage would be the graph's. *)
+  (* The graph's numbers are taken: a number {!Ops.unique_num} hands out later
+     must not name one of its slots or ranges, or new storage would be the
+     graph's, and a new loop one of its loops. *)
   let taken =
     Array.fold_left
       (fun m u ->
-        match Ops.arg (Option.get u) with Param p -> max m p.slot | _ -> m)
+        match Ops.arg (Option.get u) with
+        | Param p -> max m p.slot
+        | Range r -> List.fold_left max m r.axis_id
+        | _ -> m)
       (-1) nodes
   in
   while Ops.unique_num () <= taken do

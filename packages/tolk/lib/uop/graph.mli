@@ -14,8 +14,9 @@ val to_string : Ops.t -> string
 
 val of_string : string -> Ops.t
 (** [of_string text] is the sink of the graph [text], the node of its last line.
-    Reading takes the graph's storage slots: every slot {!Ops.unique_num}
-    returns afterwards is greater than each slot of the graph.
+    Reading takes the graph's numbers: every number {!Ops.unique_num} returns
+    afterwards is greater than each slot of the graph and each number of its
+    ranges' axes.
 
     Raises [Failure] naming the node, by its line's position, and what is wrong
     with it if [text] is empty, a line does not read, an index is not its line's
