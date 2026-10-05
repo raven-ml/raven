@@ -229,7 +229,11 @@ let bool =
   ]
 
 (* The bool rows' work on masks of 1e7 bits, eight to a byte. A concatenation
-   joins three parts of odd lengths, each after the last inside a byte. *)
+   joins three parts of odd lengths, each after the last inside a byte. A
+   reduction over a random mask is decided by its first word; one over zeros
+   reads every word, and one along rows or columns reads a block per output. A
+   flipped operand is read in reverse, and a padded image's rows start inside
+   bytes. *)
 let bit =
   let bits n = Nx.cast Nx.bit (mask n) in
   let two () = (bits l, Nx.copy (Nx.flip (bits l))) in
@@ -242,12 +246,26 @@ let bit =
       Nx.shrink [| ((2 * third) + 2, l) |] m;
     ]
   in
+  let image () = Nx.reshape [| 2500; 4000 |] (bits l) in
   [
     row "pack-1e7" l (fun () -> mask l) (Nx.cast Nx.bit);
     row "unpack-1e7" l (fun () -> bits l) (Nx.cast Nx.bool);
     row "count-1e7" l (fun () -> bits l) (fun m -> Nx.count m);
     row "and-1e7" l two (fun (a, b) -> Nx.logical_and a b);
+    row "and-flipped-1e7" l
+      (fun () -> (bits l, bits l))
+      (fun (a, b) -> Nx.logical_and a (Nx.flip b));
     row "any-1e7" l (fun () -> bits l) (fun m -> Nx.any m);
+    row "any-zeros-1e7" l
+      (fun () -> Nx.copy (Nx.zeros Nx.bit [| l |]))
+      (fun m -> Nx.any m);
+    row "any-rows-2500x4000" l image (fun m -> Nx.any ~axes:[ 1 ] m);
+    row "any-columns-2500x4000" l image (fun m -> Nx.any ~axes:[ 0 ] m);
+    row "pad-2500x4000" l image (Nx.pad [| (1, 1); (1, 1) |] false);
+    row "pad-odd-1e7" l (fun () -> bits l) (Nx.pad [| (3, 5) |] false);
+    row "scatter-set-1e6-into-1e7" l
+      (fun () -> (bits m, indices m l, bits l))
+      (fun (values, indices, base) -> Nx.scatter ~axis:0 ~indices ~values base);
     row "take-sorted-1e7" l sorted (fun (m, indices) ->
         Nx.take ~axis:0 ~indices m);
     row "concat-odd-1e7" l parts (Nx.concatenate ~axis:0);
