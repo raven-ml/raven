@@ -917,6 +917,96 @@ let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
             if i mod 4 = 0 && i / 4 < trips then Float.of_int (i / 4) else -1.)))
     (Run.values Float32 ys_buffer)
 
+(* A kernel that stores [f] of the one element of its parameter 1, of dtype
+   [src], into the one element of its parameter 0, of dtype [dst]. *)
+let scalar_kernel name ~dst ~src f =
+  let i = Ops.range (Int 1) [ 0 ] in
+  let at slot dt = Ops.index (Ops.placeholder ~slot [ 1 ] dt) [ i ] in
+  Ops.sink ~kernel:(Ops.kernel_info ~name ())
+    [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
+
+(* A loop of at most [max] trips on the device [d] around four calls each
+   trip: the first stores [c + 1] into [t], and the others read it to store [2
+   t] into the carry [c], whether [2 t] is below [limit] into the flag [f], and
+   [t] into its row of [ys], 16 bytes apart. Each call after the first reads
+   what the first wrote in the same trip, and the first reads the carry the
+   second wrote in the trip before. The flag starts as [0 < limit]. *)
+let loops_around_calls ?(devices = devices) d (limit, max) =
+  let at = Ops.Single d in
+  let k name dst f = scalar_kernel name ~dst ~src:Float32 f in
+  let inc = k "inc" Float32 (fun x -> Ops.O.(x + float 1.))
+  and twice = k "twice" Float32 (fun x -> Ops.O.(x * float 2.))
+  and below =
+    k "below" Bool (fun x -> Ops.O.(x * float 2. < float (Float.of_int limit)))
+  and copy = k "copy" Float32 Fun.id in
+  let c = Ops.new_buffer at 1 Float32
+  and t = Ops.new_buffer at 1 Float32
+  and f = Ops.new_buffer at 1 Bool
+  and ys = Ops.new_buffer at (4 * max) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
+  let row =
+    Ops.shrink ys
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
+  in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Ops.backedge
+            (Ops.v Op.Linear
+               ~src:
+                 [
+                   Ops.call inc [ t; c ];
+                   Ops.call twice [ c; t ];
+                   Ops.call below [ f; t ];
+                   Ops.call copy [ row; t ];
+                 ])
+            ~loop:r ~cond:f;
+        ]
+  in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
+  in
+  let on = (devices d).device in
+  let c_buffer = Run.buffer on Float32 [| `Float 0. |]
+  and ys_buffer = Run.buffer on Float32 (floats (Array.make (4 * max) (-1.))) in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [
+          (c, [ c_buffer ]);
+          (t, [ Run.buffer on Float32 [| `Float (-1.) |] ]);
+          (f, [ Run.buffer on Bool [| `Bool (0 < limit) |] ]);
+          (ys, [ ys_buffer ]);
+        ]
+      compiled
+  in
+  Engine.run s [||];
+  (* The carry after [k] trips is [2^(k+1) - 2]; a trip runs while the carry
+     before it is below [limit], at most [max] of them. *)
+  let carry k = Float.of_int ((1 lsl (k + 1)) - 2) in
+  let rec trips k =
+    if k < max && carry k < Float.of_int limit then trips (k + 1) else k
+  in
+  let trips = trips 0 in
+  cover "no trip" (trips = 0);
+  cover "stops on its flag" (trips > 0 && trips < max);
+  cover "stops at its trips" (trips = max);
+  equal values ~msg:"the carry"
+    (floats [| carry trips |])
+    (Run.values Float32 c_buffer);
+  equal values ~msg:"the rows"
+    (floats
+       (Array.init (4 * max) (fun i ->
+            if i mod 4 = 0 && i / 4 < trips then carry (i / 4) +. 1. else -1.)))
+    (Run.values Float32 ys_buffer)
+
+let loops_around_calls_on_the_host =
+  prop ~count:30 "a loop runs its calls in order each trip while its flag holds"
+    Gen.(pair (int_range (-1) 40) (int_range 1 6))
+    (fun bounds -> loops_around_calls "CPU" bounds)
 (* A loop's flag is storage of one boolean: a view of one element of wider
    storage is refused, since the engine reads the storage it names. *)
 let refuses_a_view_as_flag () =
@@ -1275,6 +1365,7 @@ let schedules =
         scans_with_an_empty_carry;
       replays_a_scan;
       loops_on_the_host;
+      loops_around_calls_on_the_host;
       test "a loop's flag that views wider storage is refused"
         refuses_a_view_as_flag;
       test "a planned buffer a range writes is not placed over one it leaves"
@@ -2637,6 +2728,10 @@ let metal =
         Gen.(pair (int_range (-1) 6) (int_range 1 5))
         (fun bounds ->
           loops_while_a_flag_holds ~devices:on_metal "CPU:1" bounds);
+      prop ~tags:[ "slow" ]
+        "a loop runs its calls in order each trip while its flag holds"
+        Gen.(pair (int_range (-1) 40) (int_range 1 6))
+        (fun bounds -> loops_around_calls ~devices:on_metal "CPU:1" bounds);
     ]
 
 let () =
