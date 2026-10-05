@@ -90,11 +90,7 @@ let programs d s target key =
   | Some p -> p
   | None ->
       let path = target ^ "/" ^ key in
-      let binary =
-        match Archive.find path with
-        | Some b -> b
-        | None -> failwith ("nx.amd carries no code object " ^ path)
-      in
+      let binary = Option.get (Archive.find path) in
       let load name =
         match Program.load d ~binary ~name with
         | Ok p -> p
@@ -118,6 +114,7 @@ let run key ~dst srcs =
   let dev = Nx_device.Buffer.device d.buffer in
   let s = device dev in
   let target = match s.target with Ok t -> t | Error e -> refuse "%s" e in
+  if not (Archive.mem (target ^ "/" ^ key)) then refuse "no kernel %s" key;
   let ops = dst :: srcs in
   let views = View.coalesce (List.map view ops) in
   let n = View.numel d.view and rank = View.ndim (List.hd views) in
@@ -188,6 +185,53 @@ let served (type a b) (dt : (a, b) Nx_dtype.t) =
 
 (* Kernels *)
 
+(* The names of the kinds, as module keys spell them. *)
+let unary_name : Nx_backend.unary -> string = function
+  | Neg -> "neg"
+  | Recip -> "recip"
+  | Abs -> "abs"
+  | Sqrt -> "sqrt"
+  | Sign -> "sign"
+  | Exp -> "exp"
+  | Log -> "log"
+  | Log1p -> "log1p"
+  | Expm1 -> "expm1"
+  | Sin -> "sin"
+  | Cos -> "cos"
+  | Tan -> "tan"
+  | Asin -> "asin"
+  | Acos -> "acos"
+  | Atan -> "atan"
+  | Sinh -> "sinh"
+  | Cosh -> "cosh"
+  | Tanh -> "tanh"
+  | Trunc -> "trunc"
+  | Ceil -> "ceil"
+  | Floor -> "floor"
+  | Round -> "round"
+  | Erf -> "erf"
+
+let binary_name : Nx_backend.binary -> string = function
+  | Add -> "add"
+  | Sub -> "sub"
+  | Mul -> "mul"
+  | Fdiv -> "fdiv"
+  | Idiv -> "idiv"
+  | Mod -> "mod"
+  | Pow -> "pow"
+  | Atan2 -> "atan2"
+  | Maximum -> "maximum"
+  | Minimum -> "minimum"
+  | And -> "and"
+  | Or -> "or"
+  | Xor -> "xor"
+
+let compare_name : Nx_backend.compare -> string = function
+  | Equal -> "equal"
+  | Not_equal -> "not_equal"
+  | Less -> "less"
+  | Less_equal -> "less_equal"
+
 module Kernels : Nx_backend.S = struct
   let name = name
   let runs_on d = Option.is_some (Nx_amd_device.of_device d)
@@ -208,11 +252,40 @@ module Kernels : Nx_backend.S = struct
         ~dst:(Operand dst) [ Operand x ]
     else run (Printf.sprintf "cast.%s.%s" s d) ~dst:(Operand dst) [ Operand x ]
 
-  let unary _ _ ~dst:_ = no "unary kernels"
-  let binary _ _ _ ~dst:_ = no "binary kernels"
-  let compare _ _ _ ~dst:_ = no "comparisons"
-  let fma _ _ _ ~dst:_ = no "fma"
-  let where _ _ _ ~dst:_ = no "where"
+  let unary (type a b) k (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
+    let dt = served x.dtype in
+    match (k : Nx_backend.unary) with
+    | (Trunc | Ceil | Floor | Round) when not (Nx_dtype.is_float x.dtype) ->
+        contiguous x ~dst
+    | _ ->
+        run
+          (Printf.sprintf "unary.%s.%s" (unary_name k) dt)
+          ~dst:(Operand dst) [ Operand x ]
+
+  let binary (type a b) k (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t) =
+    run
+      (Printf.sprintf "binary.%s.%s" (binary_name k) (served a.dtype))
+      ~dst:(Operand dst) [ Operand a; Operand b ]
+
+  let compare (type a b) k (a : (a, b) Nx_array.t) b ~dst =
+    run
+      (Printf.sprintf "compare.%s.%s" (compare_name k) (served a.dtype))
+      ~dst:(Operand dst) [ Operand a; Operand b ]
+
+  let fma (type a b) (a : (a, b) Nx_array.t) b c ~(dst : (a, b) Nx_array.t) =
+    run
+      (Printf.sprintf "fma.%s" (served a.dtype))
+      ~dst:(Operand dst)
+      [ Operand a; Operand b; Operand c ]
+
+  let where (type a b) cond (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t)
+      =
+    ignore (served a.dtype);
+    run
+      (Printf.sprintf "where.%d" (Nx_dtype.itemsize a.dtype))
+      ~dst:(Operand dst)
+      [ Operand cond; Operand a; Operand b ]
+
   let threefry _ _ ~dst:_ = no "threefry"
   let reduce _ ~axes:_ _ ~dst:_ = no "reductions"
   let scan _ ~axis:_ _ ~dst:_ = no "scans"

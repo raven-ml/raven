@@ -19,13 +19,16 @@
 
     A device computes eagerly through nx.amd's backend, AMD memory's own
     ([Nx_backend.S.owns]), from code objects the library carries, compiled for
-    [gfx12-generic]: GPUs of the gfx12 generation (gfx1200, gfx1201) copy values
-    ({!Nx.copy}, {!Nx.contiguous}) and cast them ({!Nx.cast}), bit for bit as
-    the host does, of every dtype but the complex ones, [int4], [uint4] and
-    [bit]. Any other eager operation, dtype or GPU raises [Invalid_argument]
-    naming the remedies: [Rune.jit] compiles for every AMD device, and
-    [Nx.place] moves values to the host. Constants, views and reads work on
-    every AMD device. *)
+    [gfx12-generic]. GPUs of the gfx12 generation (gfx1200, gfx1201) copy values
+    ({!Nx.copy}, {!Nx.contiguous}) and cast them ({!Nx.cast}), and compute the
+    elementwise functions of one, two and three operands, the comparisons and
+    {!Nx.where}, of every dtype but the complex ones, [int4], [uint4] and [bit]:
+    bit for bit as the host does, but the transcendental functions, which keep
+    the accuracy {!Nx} states, and the sign and payload of a NaN an arithmetic
+    operation makes. Any other eager operation, dtype or GPU raises
+    [Invalid_argument] naming the remedies: [Rune.jit] compiles for every AMD
+    device, and [Nx.place] moves values to the host. Constants, views and reads
+    work on every AMD device. *)
 
 val get : int -> (Nx.Device.t, string) result
 (** [get i] is AMD GPU [i] of the kernel driver, opened now, or [Error msg] with

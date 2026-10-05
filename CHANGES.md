@@ -3248,6 +3248,12 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation compute the elementwise operations eagerly:
+  the unary functions (`Nx.neg`, `Nx.sqrt`, `Nx.exp`, `Nx.sin`, the
+  roundings...), the binary ones (`Nx.add`, `Nx.div`, `Nx.pow`, `Nx.maximum`,
+  the bitwise ones...), the comparisons, `Nx.fma` and `Nx.where`, bit for bit
+  as on the host but for the transcendental functions, which keep `nx.mli`'s
+  ulp bounds.
 - NV devices queue a small copy in 5.1 µs instead of 8.9 µs, allocating 750
   words instead of 3,100: the runtime scanned every command segment its ring
   held on each copy, where it now tracks the segments in ring order.

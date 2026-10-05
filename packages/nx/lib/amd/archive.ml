@@ -27,6 +27,9 @@ let index =
      if length () < !at then failwith "nx.amd: a truncated kernel archive";
      t)
 
+(* Whether the library carries the code object of [key]. *)
+let mem key = Hashtbl.mem (Lazy.force index) key
+
 (* The code object of [key], ["gfx12-generic/cast.float32.int8"], if the library
    carries it. *)
 let find key =

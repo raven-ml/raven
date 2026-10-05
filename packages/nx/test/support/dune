@@ -1,3 +1,6 @@
 (library
  (name nx_test)
+ (foreign_stubs
+  (language c)
+  (names accuracy_stubs))
  (libraries nx nx.array nx.backend nx.cpu nx.device nx.dtype windtrap))

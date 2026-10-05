@@ -20,6 +20,10 @@ deterministic for a version and options. A dune rule checks the digests on
 every machine, with no toolchain, so a source changed without regenerating,
 or a code object edited, fails the tests.
 
+comgr 3.0 writes out the device libraries a generic target links under a name
+its clang does not read, so the script hands clang a copy under the right name
+(device_libs).
+
 Python's standard library only.
 """
 
@@ -30,6 +34,8 @@ import json
 import multiprocessing
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -62,14 +68,42 @@ CODEGEN = ["-O3", "-ffp-contract=off", "-mcode-object-version=6", "-mllvm",
            "-amdgpu-internalize-symbols"]
 
 
+# The kinds of each family and the dtypes they serve, as nx.cpu's tables
+# (cpu/nx_c_map.c) give them: integers (signed or not), floats and booleans.
+INTS = ["int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64"]
+FLOATS = ["float16", "bfloat16", "float32", "float64", "float8_e4m3", "float8_e5m2"]
+NUMERIC = INTS + FLOATS
+UNARY = [(["neg", "recip", "abs", "sign"], NUMERIC),
+         (["sqrt", "exp", "log", "log1p", "expm1", "sin", "cos", "tan", "asin", "acos", "atan", "sinh",
+           "cosh", "tanh", "erf", "trunc", "ceil", "floor", "round"], FLOATS)]
+BINARY = [(["add", "sub", "mul", "pow", "idiv", "mod"], NUMERIC), (["fdiv", "atan2"], FLOATS),
+          (["maximum", "minimum"], NUMERIC + ["bool"]), (["and", "or", "xor"], INTS + ["bool"])]
+COMPARE = [(["equal", "not_equal", "less", "less_equal"], NUMERIC + ["bool"])]
+# A kind whose name C++ reserves takes a trailing underscore.
+C_NAMES = {"and": "and_", "or": "or_", "xor": "xor_", "bool": "bool_"}
+
+
+def c_name(n):
+    return C_NAMES.get(n, n)
+
+
 def modules():
     """Each module: its key, and the source that instantiates it."""
     for w, t in WIDTHS.items():
         yield f"contiguous.{w}", f'#include "contiguous.hip"\nCONTIGUOUS({t})\n'
+        yield f"where.{w}", f'#include "where.hip"\nWHERE({t})\n'
     for s, cs in DTYPES:
         for d, cd in DTYPES:
             if s != d:
                 yield f"cast.{s}.{d}", f'#include "cast.hip"\nCAST({cs}, {cd})\n'
+    for family, macro, table in (("unary", "UNARY", UNARY), ("binary", "BINARY", BINARY),
+                                 ("compare", "COMPARE", COMPARE)):
+        for kinds, dtypes in table:
+            for k in kinds:
+                for d in dtypes:
+                    yield f"{family}.{k}.{d}", f'#include "{family}.hip"\n{macro}({c_name(k)}, {c_name(d)})\n'
+    for d in NUMERIC:
+        yield f"fma.{d}", f'#include "fma.hip"\nFMA({c_name(d)})\n'
 
 
 def inputs():
@@ -140,7 +174,7 @@ class Comgr:
         self.check(self.c.amd_comgr_action_info_set_option_list(info, arr, ctypes.c_size_t(len(opts))),
                    "set_option_list")
 
-    def compile(self, target, name, source, includes):
+    def compile(self, target, name, source, includes, libs):
         c = self.c
         info = self.handle()
         self.check(c.amd_comgr_create_action_info(ctypes.byref(info)), "create_action_info")
@@ -160,7 +194,8 @@ class Comgr:
             if c.amd_comgr_do_action(kind, info, src, dst) != 0:
                 raise RuntimeError(f"{name}: {what} failed\n{self.get(dst, DATA_KIND_LOG).decode()}")
 
-        action(ACTION_COMPILE_SOURCE_WITH_DEVICE_LIBS_TO_BC, COMPILE + [f"--offload-arch={target}"],
+        action(ACTION_COMPILE_SOURCE_WITH_DEVICE_LIBS_TO_BC,
+               COMPILE + [f"--offload-arch={target}", f"--rocm-device-lib-path={libs}"],
                sets[0], sets[1], "compile")
         action(ACTION_CODEGEN_BC_TO_RELOCATABLE, CODEGEN, sets[1], sets[2], "codegen")
         action(ACTION_LINK_RELOCATABLE_TO_EXECUTABLE, [""], sets[2], sets[3], "link")
@@ -176,8 +211,41 @@ def compile_one(job):
     global COMGR
     if COMGR is None:
         COMGR = Comgr()
-    target, key, source, includes = job
-    return target, key, COMGR.compile(target, key + ".hip", source.encode(), includes)
+    target, key, source, includes, libs = job
+    return target, key, COMGR.compile(target, key + ".hip", source.encode(), includes, libs)
+
+
+def extract_device_libs():
+    """A compile that keeps its temporary files, where comgr writes its embedded
+    device libraries: run in a process of its own, whose environment comgr
+    reads when it loads."""
+    try:
+        Comgr().compile("gfx1201", "probe.hip", b'extern "C" __attribute__((global)) void k() {}', {}, "")
+    except RuntimeError:
+        pass  # the libraries are written out before anything can fail
+
+
+def device_libs(workdir):
+    """comgr's device libraries, as its clang looks for them, in a directory of
+    [workdir]. comgr writes them out for each compile, naming the ISA library
+    of a generic target oclc_isa_version_12_generic.bc where its clang reads
+    oclc_isa_version_12-generic.bc, so a compile for a generic target links no
+    device library at all (comgr 3.0, ROCm 7.0). They are written out once, by
+    a compile that keeps its temporary files, in a process of its own, and each
+    generic ISA library is copied under the name clang reads."""
+    tmp = workdir / "extract"
+    tmp.mkdir()
+    env = {**os.environ, "TMPDIR": str(tmp), "AMD_COMGR_SAVE_TEMPS": "1"}
+    subprocess.run([sys.executable, __file__, "--extract-device-libs"], env=env, check=True)
+    found = sorted(tmp.glob("comgr-*/rocm/amdgcn/bitcode"))
+    if not found:
+        sys.exit("comgr wrote out no device library")
+    libs = workdir / "bitcode"
+    shutil.copytree(found[0], libs)
+    for f in libs.glob("oclc_isa_version_*_generic.bc"):
+        version = f.name[len("oclc_isa_version_"):-len("_generic.bc")]
+        shutil.copy(f, libs / f"oclc_isa_version_{version.replace('_', '-')}-generic.bc")
+    return libs
 
 
 def generate(outdir, jobs):
@@ -185,7 +253,13 @@ def generate(outdir, jobs):
     kernels/ and its digest, by path."""
     includes = {f.name: f.read_bytes() for f in [*SRC.glob("*.h"), *SRC.glob("*.hip"), *(SRC / "libc").glob("*.h"),
                                                  DTYPE_H]}
-    work = [(t, k, s, includes) for t in TARGETS for k, s in modules()]
+    with tempfile.TemporaryDirectory() as d:
+        libs = device_libs(pathlib.Path(d))
+        work = [(t, k, s, includes, libs) for t in TARGETS for k, s in modules()]
+        return compile_all(outdir, work, jobs)
+
+
+def compile_all(outdir, work, jobs):
     outputs = {}
     with multiprocessing.get_context("fork").Pool(jobs) as pool:
         for target, key, co in pool.imap_unordered(compile_one, work):
@@ -203,7 +277,11 @@ def main():
     ap.add_argument("--check", action="store_true", help="fail if a committed file differs")
     ap.add_argument("--pin", action="store_true", help="move the toolchain pin and regenerate")
     ap.add_argument("-j", type=int, default=4, help="compiles at once")
+    ap.add_argument("--extract-device-libs", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.extract_device_libs:
+        extract_device_libs()
+        return
     tool = toolchain()
     pins = json.loads(PINS.read_text()) if PINS.exists() else {}
     if not args.pin and pins.get("comgr") != tool:

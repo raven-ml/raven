@@ -1524,3 +1524,5 @@ module Faulty = struct
         Atomic.set m.fault (Some why);
         try Nx_device.synchronize memory with Nx_device.Lost _ -> ())
 end
+
+module Accuracy = Accuracy

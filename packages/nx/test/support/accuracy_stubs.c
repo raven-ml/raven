@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The float64 oracle of test_accuracy: the C library's long double functions,
+/* The float64 oracle of Nx_test.Accuracy: the C library's long double functions,
    rounded once to double. It is an oracle only where long double is wider than
    double, such as x86_64 and aarch64 Linux; on macOS they are the same. */
 
@@ -18,7 +18,7 @@ value nx_test_ldbl_wide(value unit) {
   return Val_bool(LDBL_MANT_DIG > DBL_MANT_DIG);
 }
 
-/* The functions by the index test_accuracy gives them. */
+/* The functions by the index Nx_test.Accuracy gives them. */
 static long double ldbl_unary(int k, long double x) {
   switch (k) {
   case 0: return expl(x);
