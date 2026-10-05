@@ -409,32 +409,26 @@ let dma a r =
 (* Code lies in the GPU's own memory, under both interfaces and whatever the
    size of the memory BAR, so that instruction fetches stay in VRAM: the host
    writes it into system memory, [staging], and the SDMA queue copies it from
-   there. The copy then writes the word after the code in [staging], a fence of
+   there. The copy then writes the word before the code in [staging], a fence of
    the upload's own, so it waits on nothing of the timeline. The work that runs
    the code starts by invalidating the shader caches it reaches the code
    through. *)
-let fence_at n = round_up n 8
+let fence_bytes = 8
 
 let upload a ~sleep ~staging dst img =
-  let n = String.length img and fence = fence_at (String.length img) in
+  let n = String.length img in
   let host = Option.get (host_view staging) in
-  Mmio.write host 0 img;
-  Mmio.set64 host fence 0L;
+  Mmio.set64 host 0 0L;
+  Mmio.write host fence_bytes img;
   Mmio.barrier ();
   enqueue a
-    (Sdma.packets ~sdma:a.props.sdma
-       ~signal:(va staging + fence)
-       ~dst:(va dst) ~src:(va staging) n 1);
+    (Sdma.packets ~sdma:a.props.sdma ~signal:(va staging) ~dst:(va dst)
+       ~src:(va staging + fence_bytes)
+       n 1);
   (* A GPU that does not copy is lost, and may still read [staging], which is
      then never freed. *)
-  let at = Nativeint.of_int fence in
-  let word =
-    Region.v
-      ~host:(Nativeint.add (Mmio.address host) at)
-      (Nativeint.add (Nativeint.of_int (va staging)) at)
-      8
-  in
-  if not (Driver.wait ~sleep ~timeout_ms:(timeout a) word 1) then
+  let fence = region_of staging fence_bytes in
+  if not (Driver.wait ~sleep ~timeout_ms:(timeout a) fence 1) then
     failwith "hang detected: the copy engine did not upload the code";
   free_mem a staging
 
@@ -452,7 +446,9 @@ let load a ~sleep ~binary =
   | Ok obj -> (
       let img = Code_object.image obj in
       let bytes = String.length img in
-      match (alloc_mem a Vram bytes, alloc_mem a Host (fence_at bytes + 8)) with
+      match
+        (alloc_mem a Vram bytes, alloc_mem a Host (fence_bytes + bytes))
+      with
       | (None, _ | _, None) as got ->
           Option.iter (free_mem a) (fst got);
           Option.iter (free_mem a) (snd got);
@@ -1031,9 +1027,7 @@ let mapped a =
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
     Driver.device ~name:(gpu_name a) ~arch:(arch a.props.target) ~host:a.machine
-      ~budget
-      ~completion:(Sleep (fun ~timeline:_ -> sleep))
-      ~load:(load a ~sleep) ~peer:(peer a)
+      ~budget ~completion:(Sleep sleep) ~load:(load a ~sleep) ~peer:(peer a)
       ~reaches:(fun d' ->
         match amd_of d' with Some peer -> reaches a peer | None -> false)
       ~dma:(dma a) ~room:(room a) ~report:(report a) ?finalize
@@ -1129,7 +1123,11 @@ let open_kfd ~index bus =
       ~cu_per_array:(pr "cu_per_simd_array")
   in
   let compute, aql, sdma = setup a ~saves:true ~sdma_queues:1 in
-  let dev = make_device a ~budget:k.vram ~sleep:(fun ms -> Kfd.sleep k ms) () in
+  let dev =
+    make_device a ~budget:k.vram
+      ~sleep:(fun ~timeline:_ ms -> Kfd.sleep k ms)
+      ()
+  in
   finish a dev (compute, aql, sdma);
   a
 
@@ -1169,7 +1167,7 @@ let open_booted ~machine ~buses ~index pci (am : Am.t) =
   if d.is_vf then Amdev.release_vf_access d;
   let dev =
     make_device a ~budget:(Page_table.memory am.mm)
-      ~sleep:(fun ms -> with_hw a (fun () -> Am.sleep am ms))
+      ~sleep:(fun ~timeline:_ ms -> with_hw a (fun () -> Am.sleep am ms))
       ~finalize:(fun ~failed -> with_hw a (fun () -> Am.fini am ~failed))
       ()
   in

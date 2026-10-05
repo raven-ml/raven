@@ -3928,7 +3928,10 @@ module Driver = struct
     if word.nbytes < 8 then refuse "wait" "a word of %d bytes" word.nbytes;
     match word.host with
     | None -> refuse "wait" "the host does not address the word"
-    | Some a -> poll_word ~io:None ~sleep ~timeout_ms:(fun () -> timeout_ms) a v
+    | Some a ->
+        poll_word ~io:None ~sleep:(sleep ~timeline:word)
+          ~timeout_ms:(fun () -> timeout_ms)
+          a v
 
   let compose ?(host = host) local =
     match host.kind with

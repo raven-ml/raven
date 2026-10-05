@@ -4119,7 +4119,7 @@ let with_host_word f =
         ~finally:(fun () -> Driver.host_memory.free r)
         (fun () -> f r a)
 
-let sleep_for ms = Unix.sleepf (Float.of_int ms /. 1000.)
+let sleep_for ~timeline:_ ms = Unix.sleepf (Float.of_int ms /. 1000.)
 
 let driver_wait =
   group "Driver.wait"
@@ -4137,17 +4137,21 @@ let driver_wait =
               Domain.join late;
               equal bool true reached));
       test
-        "is false once the word stayed still for the timeout, after sleeps of \
-         at most 200 ms and a last one of 1 ms" (fun () ->
+        "is false once the word stayed still for the timeout, after sleeps on \
+         the word of at most 200 ms and a last one of 1 ms" (fun () ->
           with_host_word (fun word _ ->
               let sleeps = ref [] in
-              let sleep ms =
-                sleeps := ms :: !sleeps;
-                sleep_for ms
+              let sleep ~timeline ms =
+                sleeps := (timeline == word, ms) :: !sleeps;
+                sleep_for ~timeline ms
               in
               equal bool false (Driver.wait ~sleep ~timeout_ms:500 word 1);
-              equal ~msg:"the last sleep" int 1 (List.hd !sleeps);
-              List.iter (fun ms -> at_most int ~than:200 ms) !sleeps));
+              equal ~msg:"the last sleep" int 1 (snd (List.hd !sleeps));
+              List.iter
+                (fun (on_word, ms) ->
+                  equal ~msg:"the timeline is the word" bool true on_word;
+                  at_most int ~than:200 ms)
+                !sleeps));
       test "refuses a word the host does not address" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Driver.wait ~sleep:sleep_for ~timeout_ms:10 (Region.v 0x1000n 8) 1));

@@ -1447,13 +1447,19 @@ module Driver : sig
   (** [default_timeout] is [30_000], the {!timeout} in milliseconds every device
       starts at. *)
 
-  val wait : sleep:(int -> unit) -> timeout_ms:int -> Region.t -> int -> bool
+  val wait :
+    sleep:(timeline:Region.t -> int -> unit) ->
+    timeout_ms:int ->
+    Region.t ->
+    int ->
+    bool
   (** [wait ~sleep ~timeout_ms word v] waits until the 64-bit word that starts
       the region [word] reaches [v], unsigned, as a wait on the timeline of a
-      [Sleep] device does: it polls, and runs [sleep ms] as that device's sleep
-      runs, which blocks for at most [ms] milliseconds. It is [false] if the
-      word stayed still for [timeout_ms] milliseconds. A driver waits with it
-      for work it signals outside the timeline.
+      [Sleep] device does, [word] standing for its timeline: it polls, and runs
+      [sleep ~timeline:word ms] as that device's sleep runs, which blocks for at
+      most [ms] milliseconds. It is [false] if the word stayed still for
+      [timeout_ms] milliseconds. A driver waits with it for work it signals
+      outside the timeline, with the sleep of its [Sleep] completion.
 
       Raises [Invalid_argument] if the host does not address [word] or if [word]
       holds fewer than 8 bytes, and what [sleep] raises. *)
