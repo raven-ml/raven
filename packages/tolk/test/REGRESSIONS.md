@@ -2936,7 +2936,7 @@ more than 100 KiB of shared memory is unread.
 | old: `unit/test_runtime_nv.ml` program image group, cubin fixture group | | `N › recorded cases › simple_add*`, `crafted*`; relocation and upload are nx.nv.device's (D38) |
 | old: `unit/test_runtime_nv.ml` "independent retained batches cannot overfill the FIFO", "compute and copy FIFOs resume when the GPU retires work" | a writer of a channel waits for room | nx.device: `Nx_device.submit` waits for each NV channel to be at most half full (`Driver.device`'s `room`) |
 | old: `unit/test_runtime_nv.ml` the other compiled queue tests, local memory, iface wire formats, driver version, va allocator, device info, device hang, Pci_iface and device groups | the old runtime's submissions, memory and driver | dropped here: nx.nv.device's suite |
-| old: `unit/test_nv_tables.ml`, `unit/test_nv_ip.ml`, `unit/test_nv_nvdev.ml` | the driver's tables, GSP boot and the driver-less device | dropped here: nx.nv.device's suite; the constants the encoder reads are `lib/runtime/autogen/nv_gpu.ml`'s |
+| old: `unit/test_nv_tables.ml`, `unit/test_nv_ip.ml`, `unit/test_nv_nvdev.ml` | the driver's tables, GSP boot and the driver-less device | dropped here: nx.nv.device's suite; the constants the encoder reads are nx.nv.packet's (`Nx_nv_packet.Defs`) |
 
 ### Execution
 

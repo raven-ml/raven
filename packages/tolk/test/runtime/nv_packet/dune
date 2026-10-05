@@ -1,0 +1,4 @@
+(test
+ (name test_nv_packet)
+ (package tolk)
+ (libraries windtrap tolk nx.nv.packet nx.nv.cubin))

@@ -361,8 +361,9 @@ let queue n ~timeline =
   let submit ~dst ~src bytes ~signal:v =
     let _, copy = channels n in
     run n copy ~timeline ~signal:Pushbuf.copy_release v
-      (Pushbuf.copy ~dst:(Nativeint.to_int dst) ~src:(Nativeint.to_int src)
-         bytes)
+      (Pushbuf.words
+         (Pushbuf.M.copy ~dst:(Nativeint.to_int dst) ~src:(Nativeint.to_int src)
+            bytes))
   in
   (* A transfer writes the destination through this GPU's mapping of it. *)
   let transfer d' =
@@ -373,7 +374,7 @@ let queue n ~timeline =
   let stamp ~slot ~signal:v =
     let _, copy = channels n in
     run n copy ~timeline ~signal:Pushbuf.copy_release v
-      (Pushbuf.copy_stamp (Nativeint.to_int slot))
+      (Pushbuf.words (Pushbuf.M.copy_stamp (Nativeint.to_int slot)))
   in
   {
     Driver.copy = submit;
@@ -855,23 +856,18 @@ let bind_engines n =
   let d = Option.get n.dev in
   let tl = Region.of_buffer (Nx_device.signal_word d) in
   let compute, copy = channels n in
-  let hi v = (v lsr 32) land 0xffff_ffff and lo v = v land 0xffff_ffff in
   Nx_device.submit [ d ] ~touches:[] (fun s ->
       run n compute ~timeline:tl ~signal:Pushbuf.release
         (Nx_device.Submission.value s d)
-        (Pushbuf.methods Pushbuf.compute D.nvc6c0_set_object
-           [ n.props.compute_class ]
-        @ Pushbuf.methods Pushbuf.compute
-            D.nvc6c0_set_shader_local_memory_window_a
-            [ hi local_window; lo local_window ]
-        @ Pushbuf.methods Pushbuf.compute
-            D.nvc6c0_set_shader_shared_memory_window_a
-            [ hi shared_window; lo shared_window ]));
+        Pushbuf.(
+          words
+            (M.set_object Compute n.props.compute_class
+            @ M.local_memory_window local_window
+            @ M.shared_memory_window shared_window)));
   Nx_device.submit [ d ] ~touches:[] (fun s ->
       run n copy ~timeline:tl ~signal:Pushbuf.release
         (Nx_device.Submission.value s d)
-        (Pushbuf.methods Pushbuf.copy_engine D.nvc6c0_set_object
-           [ n.props.dma_class ]))
+        Pushbuf.(words (M.set_object Copy n.props.dma_class)))
 
 (* The GPU's memory the host writes through BAR1, for mapped buffers and code,
    and the window's size. Under the driver-less interface a BAR of 256 MiB gives
@@ -1279,18 +1275,11 @@ let local_memory n bytes =
           let b = Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8 size in
           let addr = Nativeint.to_int (Nx_device.Buffer.address b) in
           let tl = Region.of_buffer (Nx_device.signal_word d) in
-          let hi v = (v lsr 32) land 0xffff_ffff
-          and lo v = v land 0xffff_ffff in
           let compute, _ = channels n in
           Nx_device.submit [ d ] ~touches:[] (fun s ->
               run n compute ~timeline:tl ~signal:Pushbuf.release
                 (Nx_device.Submission.value s d)
-                (Pushbuf.methods Pushbuf.compute
-                   D.nvc6c0_set_shader_local_memory_a
-                   [ hi addr; lo addr ]
-                @ Pushbuf.methods Pushbuf.compute
-                    D.nvc6c0_set_shader_local_memory_non_throttled_a
-                    [ hi per_tpc; lo per_tpc; 0xff ]));
+                Pushbuf.(words (M.local_memory addr ~per_tpc)));
           n.local <- Some (b, per);
           { address = Nativeint.of_int addr; bytes = size; per_thread = per })
 

@@ -7,80 +7,16 @@
    copies, as methods in command segments of a ring of its own, which the
    channels' GPFIFOs point to. *)
 
-module D = Nv_defs
-module P = Params
+module P = Nx_nv_packet
+module M = P.Methods (P.Int)
+module Gpfifo = P.Gpfifo (P.Int)
 module Mmio = Nx_device_support.Mmio
-
-let lo32 v = v land 0xffff_ffff
-let hi32 v = (v lsr 32) land 0xffff_ffff
 
 (* Methods *)
 
-(* The subchannels the engines are bound to. *)
-let host = 0
-let compute = 1
-let copy_engine = 4
-
-(* Incrementing methods of [subc] from [mthd], one per value. *)
-let methods subc mthd vals =
-  ((2 lsl 28) lor (List.length vals lsl 16) lor (subc lsl 13) lor (mthd lsr 2))
-  :: vals
-
-(* Waits until the 64-bit semaphore at [addr] is at least [v]. *)
-let acquire addr v =
-  methods host D.nvc56f_sem_addr_lo
-    [
-      lo32 addr;
-      hi32 addr;
-      lo32 v;
-      hi32 v;
-      P.bits D.nvc56f_sem_execute_operation
-        D.nvc56f_sem_execute_operation_acq_circ_geq
-      lor P.bits D.nvc56f_sem_execute_payload_size
-            D.nvc56f_sem_execute_payload_size_64bit;
-    ]
-
-(* Writes the 64-bit [v] at [addr] once the channel's earlier work is done. *)
-let release addr v =
-  methods host D.nvc56f_sem_addr_lo
-    [
-      lo32 addr;
-      hi32 addr;
-      lo32 v;
-      hi32 v;
-      P.bits D.nvc56f_sem_execute_operation
-        D.nvc56f_sem_execute_operation_release
-      lor P.bits D.nvc56f_sem_execute_release_wfi
-            D.nvc56f_sem_execute_release_wfi_en
-      lor P.bits D.nvc56f_sem_execute_payload_size
-            D.nvc56f_sem_execute_payload_size_64bit;
-    ]
-  @ methods host D.nvc56f_non_stall_interrupt [ 0 ]
-
-(* The copy engine: a copy of [n] bytes, in lines of at most 2 GiB. *)
-let copy ~dst ~src n =
-  let step = 1 lsl 31 in
-  let launch =
-    P.bits D.nvc6b5_launch_dma_data_transfer_type
-      D.nvc6b5_launch_dma_data_transfer_type_non_pipelined
-    lor P.bits D.nvc6b5_launch_dma_src_memory_layout
-          D.nvc6b5_launch_dma_src_memory_layout_pitch
-    lor P.bits D.nvc6b5_launch_dma_dst_memory_layout
-          D.nvc6b5_launch_dma_dst_memory_layout_pitch
-  in
-  let rec go off acc =
-    if off >= n then List.concat (List.rev acc)
-    else
-      let s = src + off and d = dst + off in
-      go (off + step)
-        ((methods copy_engine D.nvc6b5_offset_in_upper
-            [ hi32 s; lo32 s; hi32 d; lo32 d ]
-         @ methods copy_engine D.nvc6b5_line_length_in
-             [ Int.min step (n - off) ]
-         @ methods copy_engine D.nvc6b5_launch_dma [ launch ])
-        :: acc)
-  in
-  go 0 []
+let words = P.dwords
+let acquire addr v = words (M.acquire addr v)
+let release addr v = words (M.release addr v)
 
 (* The copy engine writes 32 bits per semaphore, so the 64-bit [v] goes as its
    low word, then its high word when the low one wrapped to 0: mid-write, the
@@ -89,30 +25,10 @@ let copy ~dst ~src n =
    the word back, as rewriting it on every release would once another channel's
    release lands between the two words. *)
 let copy_release addr v =
-  let one a w =
-    methods copy_engine D.nvc6b5_set_semaphore_a [ hi32 a; lo32 a; w ]
-    @ methods copy_engine D.nvc6b5_launch_dma
-        [
-          P.bits D.nvc6b5_launch_dma_flush_enable
-            D.nvc6b5_launch_dma_flush_enable_true
-          lor P.bits D.nvc6b5_launch_dma_semaphore_type
-                D.nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore;
-        ]
+  let high =
+    if v land 0xffff_ffff = 0 then M.copy_release (addr + 4) (v lsr 32) else []
   in
-  one addr (lo32 v) @ if lo32 v = 0 then one (addr + 4) (hi32 v) else []
-
-(* The copy engine's timestamp: a four-word semaphore release at the 16 bytes at
-   [addr] writes a payload of 0 into the first 8 and the GPU timer, in
-   nanoseconds, into the last 8. *)
-let copy_stamp addr =
-  methods copy_engine D.nvc6b5_set_semaphore_a [ hi32 addr; lo32 addr; 0 ]
-  @ methods copy_engine D.nvc6b5_launch_dma
-      [
-        P.bits D.nvc6b5_launch_dma_flush_enable
-          D.nvc6b5_launch_dma_flush_enable_true
-        lor P.bits D.nvc6b5_launch_dma_semaphore_type
-              D.nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore;
-      ]
+  words (M.copy_release addr v @ high)
 
 (* Channels *)
 
@@ -126,16 +42,6 @@ type channel = {
   token : int;
 }
 
-(* The GPFIFO entry of the segment of [words] words at [addr]. *)
-let entry addr words =
-  let e0 = P.bits D.nvc56f_gp_entry0_get (addr lsr 2) in
-  let e1 =
-    P.bits D.nvc56f_gp_entry1_get_hi (addr lsr 32)
-    lor P.bits D.nvc56f_gp_entry1_level D.nvc56f_gp_entry1_level_subroutine
-    lor P.bits D.nvc56f_gp_entry1_length words
-  in
-  Int64.logor (Int64.of_int e0) (Int64.shift_left (Int64.of_int e1) 32)
-
 (* Appends the segment of [words] words at [addr] to [ch], after waiting until
    the GPU has fetched enough of its entries to make room, for at most
    [timeout_ms]. *)
@@ -147,7 +53,9 @@ let submit ch ~timeout_ms addr words =
   in
   Nvdev.wait_until ~timeout_ms "room in the GPU channel" (fun () ->
       unfetched () < ch.entries - 1);
-  Mmio.set64 ch.ring (8 * (put mod ch.entries)) (entry addr words);
+  Mmio.set64 ch.ring
+    (8 * (put mod ch.entries))
+    (Int64.of_int (Gpfifo.entry addr ~offset:0 ~words));
   Mmio.barrier ();
   Mmio.set64 ch.put 0 (Int64.of_int (put + 1));
   Mmio.set32 ch.gp_put 0 ((put + 1) mod ch.entries);

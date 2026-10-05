@@ -11,5 +11,7 @@
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/bootloader-570.144.bin": "82428f532240727e95bb3083fbaaba9b2cc7b937314323f2d546ce7245f27fad",
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/gsp-570.144.bin": "a8c3ebeed280323aedb51c061f321e73379cce7a9ae643a33dd03915df027f7f",
  "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/bootloader-570.144.bin": "d40b48e431d1707dc77af3605db358ed7a32ebfc2830eb74de2eddb4d3025071",
- "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/fmc-570.144.bin": "cb59a35c1d4bd1274d7267fd10243c29f843ff41c851b9cbd59f5af2ddd7fece"
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/fmc-570.144.bin": "cb59a35c1d4bd1274d7267fd10243c29f843ff41c851b9cbd59f5af2ddd7fece",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/classes/compute/clc6c0qmd.h": "9427646887d0620e5dbf0957b04d979413319c7dc37839267c05d7c6408cb004",
+ "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/classes/compute/clcec0qmd.h": "6ba3a6d4742a722346c725a1c95114a62738c9a165fe18ec1cdd84c2511b4cfc"
 }

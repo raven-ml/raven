@@ -1,0 +1,4 @@
+(test
+ (name test_nv_packet)
+ (package nx)
+ (libraries nx.nv.packet nx.nv.cubin windtrap))

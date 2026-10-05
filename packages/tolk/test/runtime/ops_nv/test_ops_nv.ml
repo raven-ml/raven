@@ -284,16 +284,32 @@ let pp_action ppf = function
 
 let action = Testable.make ~pp:pp_action ~equal:( = )
 
+(* The methods and fields the tests decode, from NVIDIA's class headers clc56f.h
+   (host), clc6c0.h (compute) and clc6b5.h (copy engine). Fields are (lowest
+   bit, bits). *)
+module G = struct
+  let nvc56f_sem_addr_lo = 0x5c
+  let nvc56f_sem_execute = 0x6c
+  let nvc56f_sem_execute_operation = (0, 3)
+  let nvc56f_sem_execute_operation_acq_circ_geq = 3
+  let nvc56f_sem_execute_release_timestamp = (25, 1)
+  let nvc6c0_send_pcas_a = 0x2b4
+  let nvc6b5_set_semaphore_a = 0x240
+  let nvc6b5_launch_dma = 0x300
+  let nvc6b5_launch_dma_semaphore_type = (3, 2)
+  let nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore = 1
+  let nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore = 2
+end
+
 (* The methods of the host (subchannel 0) and the copy engine (subchannel 4)
    that semaphores use. *)
 let decode words =
   let state = Hashtbl.create 8 in
   let get m = Option.value ~default:0 (Hashtbl.find_opt state m) in
-  let field (hi, lo) v = (v lsr lo) land ((1 lsl (hi - lo + 1)) - 1) in
+  let field (lo, bits) v = (v lsr lo) land ((1 lsl bits) - 1) in
   let actions = ref [] in
   let meth subc m v =
     Hashtbl.replace state (subc, m) v;
-    let module G = Nv_gpu in
     if subc = 0 && m = G.nvc56f_sem_execute then begin
       let a =
         get (0, G.nvc56f_sem_addr_lo)
@@ -375,7 +391,7 @@ let words =
           equal int lines
             (List.length
                (List.filter
-                  (( = ) Nv_gpu.nvc6b5_launch_dma)
+                  (( = ) G.nvc6b5_launch_dma)
                   (methods ~subc:4
                      (command_buffer "COPY:0"
                         [ Ops.store_call (buf ()) (buf ()) ])))));
@@ -426,7 +442,7 @@ let scheduled cmds =
   in
   List.length
     (List.filter
-       (( = ) Nv_gpu.nvc6c0_send_pcas_a)
+       (( = ) G.nvc6c0_send_pcas_a)
        (methods (command_buffer "COMPUTE:0" (List.map launch cmds))))
 
 let chains =
@@ -884,7 +900,7 @@ let loops =
           equal int 3
             (List.length
                (List.filter
-                  (( = ) Nv_gpu.nvc6c0_send_pcas_a)
+                  (( = ) G.nvc6c0_send_pcas_a)
                   (compute_methods submitted)));
           (* Two descriptors of 256 bytes a trip. *)
           equal (list int)

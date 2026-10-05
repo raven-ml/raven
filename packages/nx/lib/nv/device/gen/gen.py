@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Generates nv_defs.ml, the NVIDIA definitions nx.nv.device reads.
+"""Generates the NVIDIA definitions nx reads: device/nv_defs.ml for
+nx.nv.device, and packet/defs.ml for nx.nv.packet, the methods, their fields
+and the launch descriptors' layouts that nx's runtime and tolk's queues encode.
 
 Run from the repository root:
 
@@ -7,24 +9,25 @@ Run from the repository root:
   uv run --with libclang==18.1.1 packages/nx/lib/nv/device/gen/gen.py --check
 
 Every input is pinned by URL and SHA-256 in pins.json: NVIDIA's open kernel
-modules at each driver release the kernel interface supports, two headers of
+modules at each driver release the kernel interface supports, the launch
+descriptor headers of NVIDIA's open-gpu-doc at one commit, two headers of
 Linux's nouveau driver, and the firmware files of linux-firmware at one commit.
 Downloads are kept in --cache. The output is deterministic: --check generates
-into a temporary directory and fails if the committed file differs.
+into a temporary directory and fails if a committed file differs.
 
 The GSP firmware is release 570.144, so everything the driver-less interface
 reads comes from that tree: the GSP's messages, the resource manager's
 parameters it forwards, registers, page-table formats and class methods. The
 kernel interface speaks to the installed driver, whose parameter layouts and
 bit fields differ between releases: those that differ are emitted once per
-release, the others once, and the script fails if the split changes.
+release, the others once, and the script fails if the split changes. The
+methods the packet encoders write must be the same in every release.
 
 Struct layouts come from libclang, for x86_64 Linux; the script checks that
 aarch64 Linux lays them out the same. Structures upstream defines only inside
 .c files are cut out of them by name. The VBIOS structures are laid out by
 their format strings, which describe them as the ROM packs them. It emits only
-what the runtime and the libraries that submit work to it read, such as the
-method constants of tolk's pushbuffers: the inventories below name it.
+what the runtime and the packet encoders read: the inventories below name it.
 """
 
 import glob
@@ -36,7 +39,7 @@ import sys
 import tarfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-OUT = HERE.parent
+OUT = HERE.parents[1]
 sys.path.insert(0, str(HERE.parents[2] / "device" / "gen"))
 from devgen import Unit, fetch, key, layout, main, ml_int, stub_dir  # noqa: E402
 
@@ -87,7 +90,7 @@ RM_CONSTANTS = [
     "NV01_MEMORY_SYSTEM_OS_DESCRIPTOR", "NV1_MEMORY_SYSTEM", "NV1_MEMORY_USER", "FERMI_VASPACE_A",
     "FERMI_CONTEXT_SHARE_A", "KEPLER_CHANNEL_GROUP_A", "TURING_USERMODE_A", "HOPPER_USERMODE_A",
     "AMPERE_CHANNEL_GPFIFO_A", "BLACKWELL_CHANNEL_GPFIFO_A", "AMPERE_COMPUTE_B", "ADA_COMPUTE_A",
-    "BLACKWELL_COMPUTE_A", "BLACKWELL_COMPUTE_B", "AMPERE_DMA_COPY_B", "BLACKWELL_DMA_COPY_B", "GT200_DEBUGGER",
+    "BLACKWELL_COMPUTE_B", "AMPERE_DMA_COPY_B", "BLACKWELL_DMA_COPY_B", "GT200_DEBUGGER",
     # escapes
     "NV_IOCTL_MAGIC", "NV_ESC_CARD_INFO", "NV_ESC_REGISTER_FD", "NV_ESC_RM_ALLOC", "NV_ESC_RM_ALLOC_MEMORY",
     "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY", "NV_ESC_RM_MAP_MEMORY_DMA",
@@ -101,18 +104,6 @@ RM_CONSTANTS = [
     "NVOS32_ALLOC_FLAGS_IGNORE_BANK_PLACEMENT", "NVOS32_ALLOC_FLAGS_PERSISTENT_VIDMEM", "NVOS32_TYPE_IMAGE",
     "NVOS32_TYPE_NOTIFIER", "NVOS33_FLAGS_CACHING_TYPE_WRITECOMBINED", "NVOS46_FLAGS_PAGE_SIZE_4KB",
     "NVOS46_FLAGS_CACHE_SNOOP_ENABLE", "NVOS46_FLAGS_DMA_OFFSET_FIXED_TRUE",
-    # channel methods
-    "NVC56F_SEM_ADDR_LO", "NVC56F_SEM_ADDR_HI", "NVC56F_SEM_PAYLOAD_LO", "NVC56F_SEM_PAYLOAD_HI",
-    "NVC56F_SEM_EXECUTE", "NVC56F_NON_STALL_INTERRUPT", "NVC56F_SEM_EXECUTE_OPERATION_ACQ_CIRC_GEQ",
-    "NVC56F_SEM_EXECUTE_OPERATION_RELEASE", "NVC56F_SEM_EXECUTE_PAYLOAD_SIZE_64BIT",
-    "NVC56F_SEM_EXECUTE_RELEASE_WFI_EN", "NVC56F_GP_ENTRY1_LEVEL_SUBROUTINE",
-    "NVC6C0_SET_OBJECT", "NVC6C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A", "NVC6C0_SET_SHADER_SHARED_MEMORY_WINDOW_A",
-    "NVC6C0_SET_SHADER_LOCAL_MEMORY_A", "NVC6C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A",
-    "NVC6B5_OFFSET_IN_UPPER", "NVC6B5_LINE_LENGTH_IN", "NVC6B5_LAUNCH_DMA", "NVC6B5_SET_SEMAPHORE_A",
-    "NVC6B5_LAUNCH_DMA_DATA_TRANSFER_TYPE_NONE", "NVC6B5_LAUNCH_DMA_DATA_TRANSFER_TYPE_NON_PIPELINED",
-    "NVC6B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT_PITCH", "NVC6B5_LAUNCH_DMA_DST_MEMORY_LAYOUT_PITCH",
-    "NVC6B5_LAUNCH_DMA_FLUSH_ENABLE_TRUE", "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_ONE_WORD_SEMAPHORE",
-    "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_FOUR_WORD_SEMAPHORE",
     # controls
     "NV0000_CTRL_CMD_SYSTEM_GET_BUILD_VERSION_V2", "NV0000_CTRL_CMD_GPU_GET_ID_INFO_V2",
     "NV0080_CTRL_CMD_GPU_GET_CLASSLIST", "NV2080_CTRL_CMD_GPU_GET_GID_INFO",
@@ -151,11 +142,6 @@ RM_FIELDS = [
     "NVOS32_ATTR_PAGE_SIZE", "NVOS32_ATTR_LOCATION", "NVOS32_ATTR2_GPU_CACHEABLE", "NVOS32_ATTR2_PAGE_SIZE_HUGE",
     "NVOS32_ATTR2_ZBC", "NVOS33_FLAGS_CACHING_TYPE", "NVOS46_FLAGS_PAGE_SIZE", "NVOS46_FLAGS_CACHE_SNOOP",
     "NVOS46_FLAGS_DMA_OFFSET_FIXED",
-    "NVC56F_SEM_ADDR_LO_OFFSET", "NVC56F_SEM_EXECUTE_OPERATION", "NVC56F_SEM_EXECUTE_PAYLOAD_SIZE",
-    "NVC56F_SEM_EXECUTE_RELEASE_WFI", "NVC56F_GP_ENTRY0_GET", "NVC56F_GP_ENTRY1_GET_HI", "NVC56F_GP_ENTRY1_LEVEL",
-    "NVC56F_GP_ENTRY1_LENGTH",
-    "NVC6B5_LAUNCH_DMA_DATA_TRANSFER_TYPE", "NVC6B5_LAUNCH_DMA_FLUSH_ENABLE", "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE",
-    "NVC6B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT", "NVC6B5_LAUNCH_DMA_DST_MEMORY_LAYOUT",
     "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT", "NV2080_CTRL_PERF_BOOST_FLAGS_CMD", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA",
     "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY", "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_WRITE_BACK",
     "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_INVALIDATE", "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_FLUSH_MODE",
@@ -165,6 +151,71 @@ RM_FIELDS = [
 RM_FIELDS_PER_RELEASE = {"NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_WRITE_BACK",
                          "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_INVALIDATE",
                          "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_FLUSH_MODE"}
+
+# The packet encoders' constants (nx.nv.packet): the methods of the host, compute and copy classes, their fields and
+# values, and the compute class from which launch descriptors take version 5.
+PACKET_CONSTANTS = [
+    "BLACKWELL_COMPUTE_A",
+    # host methods, on every channel
+    "NVC56F_SEM_ADDR_LO", "NVC56F_SEM_EXECUTE", "NVC56F_NON_STALL_INTERRUPT",
+    "NVC56F_SEM_EXECUTE_OPERATION_ACQ_CIRC_GEQ", "NVC56F_SEM_EXECUTE_OPERATION_RELEASE",
+    "NVC56F_SEM_EXECUTE_PAYLOAD_SIZE_64BIT", "NVC56F_SEM_EXECUTE_RELEASE_WFI_EN",
+    "NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP_EN", "NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP_DIS",
+    "NVC56F_GP_ENTRY1_LEVEL_SUBROUTINE",
+    # the compute engine
+    "NVC6C0_SET_OBJECT", "NVC6C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A", "NVC6C0_SET_SHADER_SHARED_MEMORY_WINDOW_A",
+    "NVC6C0_SET_SHADER_LOCAL_MEMORY_A", "NVC6C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A",
+    "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI", "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION_TRUE",
+    "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA_TRUE", "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT_TRUE",
+    "NVC6C0_SEND_PCAS_A", "NVC6C0_SEND_SIGNALING_PCAS2_B", "NVC6C0_SEND_SIGNALING_PCAS2_B_PCAS_ACTION_PREFETCH_SCHEDULE",
+    # the copy engine
+    "NVC6B5_OFFSET_IN_UPPER", "NVC6B5_LINE_LENGTH_IN", "NVC6B5_SET_SEMAPHORE_A", "NVC6B5_LAUNCH_DMA",
+    "NVC6B5_LAUNCH_DMA_DATA_TRANSFER_TYPE_NON_PIPELINED", "NVC6B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT_PITCH",
+    "NVC6B5_LAUNCH_DMA_DST_MEMORY_LAYOUT_PITCH", "NVC6B5_LAUNCH_DMA_FLUSH_ENABLE_TRUE",
+    "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_ONE_WORD_SEMAPHORE",
+    "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_FOUR_WORD_SEMAPHORE",
+]
+PACKET_FIELDS = [
+    "NVC56F_SEM_EXECUTE_OPERATION", "NVC56F_SEM_EXECUTE_PAYLOAD_SIZE", "NVC56F_SEM_EXECUTE_RELEASE_WFI",
+    "NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP", "NVC56F_GP_ENTRY0_GET", "NVC56F_GP_ENTRY1_GET_HI",
+    "NVC56F_GP_ENTRY1_LEVEL", "NVC56F_GP_ENTRY1_LENGTH",
+    "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION", "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA",
+    "NVC6C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT",
+    "NVC6B5_LAUNCH_DMA_DATA_TRANSFER_TYPE", "NVC6B5_LAUNCH_DMA_FLUSH_ENABLE", "NVC6B5_LAUNCH_DMA_SEMAPHORE_TYPE",
+    "NVC6B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT", "NVC6B5_LAUNCH_DMA_DST_MEMORY_LAYOUT",
+]
+
+# Launch descriptors (QMDs), from NVIDIA's open-gpu-doc: the open kernel modules carry none of these headers. Each
+# version is (header, prefix); its table holds the fields the encoder writes, by name, a field that takes an index
+# named once for each of 0 to 7 with the index after an underscore.
+OPEN_GPU_DOC = "https://raw.githubusercontent.com/NVIDIA/open-gpu-doc/9fdf5c4062007929d9f4e6cbad9c9771fe61b880/"
+QMD_VERSIONS = {
+    "qmd_v3": (OPEN_GPU_DOC + "classes/compute/clc6c0qmd.h", "NVC6C0_QMDV03_00"),
+    "qmd_v5": (OPEN_GPU_DOC + "classes/compute/clcec0qmd.h", "NVCEC0_QMDV05_00"),
+}
+QMD_FIELDS = [
+    "grid_width", "grid_height", "grid_depth", "cta_raster_width", "cta_raster_height", "cta_raster_depth",
+    *[f"cta_thread_dimension{j}" for j in range(3)],
+    "program_address_lower", "program_address_upper", "program_address_lower_shifted4", "program_address_upper_shifted4",
+    "program_prefetch_addr_lower_shifted", "program_prefetch_addr_upper_shifted", "program_prefetch_size",
+    *[f"{f}_{i}" for f in ("constant_buffer_addr_lower", "constant_buffer_addr_upper", "constant_buffer_addr_lower_shifted6",
+                             "constant_buffer_addr_upper_shifted6", "constant_buffer_size_shifted4", "constant_buffer_valid")
+      for i in range(8)],
+    *[f for i in range(2) for f in (f"release{i}_enable", f"release_enable_{i}", f"release{i}_address_lower",
+                                     f"release{i}_address_upper", f"release{i}_payload_lower", f"release{i}_payload_upper",
+                                     f"release{i}_structure_size", f"release{i}_payload64b",
+                                     f"release_semaphore{i}_addr_lower", f"release_semaphore{i}_addr_upper",
+                                     f"release_semaphore{i}_payload_lower", f"release_semaphore{i}_payload_upper",
+                                     f"release_structure_size_{i}")],
+    "dependent_qmd0_pointer", "dependent_qmd0_action", "dependent_qmd0_prefetch", "dependent_qmd0_enable",
+    "qmd_major_version", "qmd_type", "register_count", "register_count_v", "shared_memory_size", "shared_memory_size_shifted7",
+    "shader_local_memory_high_size", "shader_local_memory_high_size_shifted4", "sm_global_caching_enable", "qmd_group_id",
+    "invalidate_texture_header_cache", "invalidate_texture_sampler_cache", "invalidate_texture_data_cache",
+    "invalidate_shader_data_cache", "api_visible_call_limit", "sampler_index", "barrier_count", "cwd_membar_type",
+    "constant_buffer_invalidate_0", "min_sm_config_shared_mem_size", "target_sm_config_shared_mem_size",
+    "max_sm_config_shared_mem_size", "sass_version",
+]
+QMD_VALUES = ["NVC6C0_QMDV03_00_CWD_MEMBAR_TYPE_L1_SYSMEMBAR", "NVCEC0_QMDV05_00_QMD_TYPE_GRID_CTA"]
 
 # Structs, by C name: the module they become and the fields read ("a__b" for a
 # nested field). An array field is (offset, bytes of an element, count).
@@ -679,6 +730,69 @@ def registers(tree, name, arch):
 # Generation
 
 
+def qmd_fields(text, pref):
+    """The fields of the descriptor version [pref] in the header [text], as (lowest bit, bits), the indexed ones once
+    for each of 0 to 7."""
+    out = {}
+    for m in re.finditer(rf"^#define\s+{pref}_(\w+?)(\(i\))?\s+MW\((.+)\)\s*$", text, re.M):
+        name, indexed, body = m.group(1).lower(), m.group(2), m.group(3)
+        hi, lo = body.split(":")
+        for i in range(8) if indexed else [None]:
+            env = {"__builtins__": {}, "i": i}
+            h, l = eval(hi, env), eval(lo, env)
+            out[name if i is None else f"{name}_{i}"] = (l, h - l + 1)
+    return out
+
+
+def packet_module(units, rm_files, trees, cache, pins, pin):
+    """nx.nv.packet's constants: methods, fields and values the same in every release, and the descriptor tables."""
+    values = {}
+    for rel, u in units.items():
+        v = u.macros(PACKET_CONSTANTS)
+        missing = [c for c in PACKET_CONSTANTS if c not in v]
+        if missing:
+            sys.exit(f"{rel}: undefined constants {missing}")
+        values[rel] = v
+    for c in PACKET_CONSTANTS:
+        if len({values[r][c] for r in trees}) != 1:
+            sys.exit(f"{c} differs between releases")
+    ranges = {rel: field_ranges(rm_files[rel], PACKET_FIELDS) for rel in trees}
+    for f in PACKET_FIELDS:
+        if len({ranges[r][f] for r in trees}) != 1:
+            sys.exit(f"{f} differs between releases")
+    out = ["(* Generated by device/gen/gen.py; do not edit. The inputs and the command",
+           "   that regenerates this file are in gen.py; their digests are in pins.json. *)", ""]
+    out.append("(* Methods and values, the same in every release. *)")
+    for c in PACKET_CONSTANTS:
+        out.append(f"let {snake(c)} = {ml_const(values[GSP][c])}")
+    out.append("")
+    out.append("(* Bit fields of their words: (lowest bit, bits). *)")
+    for f in PACKET_FIELDS:
+        out.append(f"let {f.lower()} = {ml_tuple(ranges[GSP][f])}")
+    out.append("")
+    texts = {v: fetch(cache, url, pins, pin).read_text() for v, (url, _) in QMD_VERSIONS.items()}
+    qvals = {}
+    for text in texts.values():
+        qvals.update({n: int(x, 0) for n, x in re.findall(r"^#define\s+(\w+)\s+(0x[0-9A-Fa-f]+|\d+)\s*$", text, re.M)})
+    missing = [n for n in QMD_VALUES if n not in qvals]
+    if missing:
+        sys.exit(f"no descriptor values {missing}")
+    out.append("(* Values of launch descriptors' fields. *)")
+    for n in QMD_VALUES:
+        out.append(f"let {n.lower()} = {ml_int(qvals[n])}")
+    tables = {v: qmd_fields(texts[v], pref) for v, (_, pref) in QMD_VERSIONS.items()}
+    missing = [f for f in QMD_FIELDS if not any(f in t for t in tables.values())]
+    if missing:
+        sys.exit(f"no descriptor version has the fields {missing}")
+    for ml_name, (url, pref) in QMD_VERSIONS.items():
+        fields = tables[ml_name]
+        out += ["", f"(* The fields of {pref}'s launch descriptors, by name: (lowest bit, bits). *)",
+                f"let {ml_name} =", "  ["]
+        out += [f'    ("{f}", {ml_tuple(fields[f])});' for f in QMD_FIELDS if f in fields]
+        out.append("  ]")
+    return "\n".join(out) + "\n"
+
+
 def generate(cache, pins, pin, outdir):
     import clang.cindex as ci
     trees, nvfw = sources(cache, pins, pin)
@@ -918,8 +1032,11 @@ def generate(cache, pins, pin, outdir):
         digest = hashlib.sha256(fetch(cache, FIRMWARE_RAW.format(name=n), pins, pin).read_bytes()).hexdigest()
         out.append(f"  ({json.dumps(n)}, {json.dumps(digest)});")
     out.append("]")
-    (outdir / "nv_defs.ml").write_text("\n".join(out) + "\n")
+    (outdir / "device").mkdir(parents=True, exist_ok=True)
+    (outdir / "device" / "nv_defs.ml").write_text("\n".join(out) + "\n")
+    (outdir / "packet").mkdir(parents=True, exist_ok=True)
+    (outdir / "packet" / "defs.ml").write_text(packet_module(units, rm_files, trees, cache, pins, pin))
 
 
 if __name__ == "__main__":
-    main(__doc__, generate, ["nv_defs.ml"], HERE, OUT, "nv-gen")
+    main(__doc__, generate, ["device/nv_defs.ml", "packet/defs.ml"], HERE, OUT, "nv-gen")

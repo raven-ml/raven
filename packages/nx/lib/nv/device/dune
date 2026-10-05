@@ -5,6 +5,7 @@
   nx.device
   nx.device.elf
   nx.nv.cubin
+  nx.nv.packet
   nx.device.support
   nx.remote.device
   nx.dtype
