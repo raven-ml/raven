@@ -886,8 +886,19 @@ let symbolic =
               rule
                 Upat.(named "f" (alu (alu x o [ cvar "c1" ]) o [ cvar "c2" ]))
                 (fun m ->
-                  let o = op (m "f") in
-                  Some (alu (m "x") o [ alu (m "c1") o [ m "c2" ] ])))
+                  let f = m "f" in
+                  let o = op f in
+                  (* a sum, a product and a bitwise operation fold the same
+                     before or after wrapping; a maximum orders wrapped values:
+                     on uint8, max(1, -3) is 253, so its weak constants fold at
+                     its width *)
+                  let at_width c =
+                    if o = Op.Max && List.mem (Ops.dtype c) Dtype.weaks then
+                      ccast c (Ops.dtype f)
+                    else c
+                  in
+                  let c = alu (at_width (m "c1")) o [ at_width (m "c2") ] in
+                  Some (alu (m "x") o [ c ])))
             (Op.Set.to_list Op.Set.associative)
         @ [
             (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)

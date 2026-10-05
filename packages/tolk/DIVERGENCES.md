@@ -402,14 +402,16 @@ the Exclusions of `README.md`.
 ## D13. Folding reads and writes committed constants at their width
 
 - **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`, whose result keeps
-  the unwrapped value, `truncate_output=False`) and `:154-155` (the collapse
-  of committed const conversions), which read a constant with `UOp.val`
+  the unwrapped value, `truncate_output=False`), `:154-155` (the collapse
+  of committed const conversions) and `:279-280` (two stage ALU folding),
+  which read a constant with `UOp.val`
   (`uop/ops.py:259-263`), unwrapped; `uop/ops.py:1104-1163` (`_min_max`),
   which bounds a weak operand of a committed operation by its unwrapped value;
   `uop/weak.py:82-87` (`uncast_const`), which leaves the literal bare.
   tinygrad's own `TestModularWraparound` expects the wrapped results and is
   marked `xfail_broken_const_wraparound`.
-- **tolk:** `lib/uop/symbolic.ml:100` (`fold_const_alu`) and `:467`;
+- **tolk:** `lib/uop/symbolic.ml:100` (`fold_const_alu`), `:467` and `:895`
+  (the two stage fold of a maximum);
   `lib/uop/ops.ml:1470` (`at_width`) and `:1492` (`operand_bounds`);
   `lib/uop/uop_weak.ml:203` (`uncast_const`).
 - **Differs:** a committed integer constant holds its type's value. A fold
@@ -431,7 +433,11 @@ the Exclusions of `README.md`.
   `max(253, a)`; on uint32, `max(1, b) // -2` folds to `-1`, which is
   `4294967295`, where the machine divides by `4294967294` and gives `0`; and
   `max(-max(b % 2, -c), b)` at `c = 2` becomes `b` where the machine gives
-  `2`, since `-c` folded to `-254`. A maximum by bounds that keeps a weak
+  `2`, since `-c` folded to `-254`. A sum, a product and a bitwise operation
+  fold the same before or after wrapping; a maximum orders the wrapped values,
+  so the two stage fold reads a maximum's weak constants at its width: on
+  uint8, `max(max(w, 1), -3)` would become `max(w, 1)` where the machine
+  computes `max(w, 253)`. A maximum by bounds that keeps a weak
   operand commits it to the maximum's type, so the operations that read it do
   not lose their width. Reading at the width also keeps
   `c0 + x < c1 → x < c1 - c0` from a wrong answer where the offset wraps: on

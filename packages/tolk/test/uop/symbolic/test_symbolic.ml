@@ -910,6 +910,12 @@ let committed_constants =
           keeps_machine_value
             Ops.O.(Ops.maximum ~-(Ops.maximum (b % int 2) ~-c) b)
             [ [ ("b", i 0); ("c", i 2) ]; [ ("b", i 1); ("c", i 2) ] ]);
+      test "nested maxima fold their constants at the width of the operation"
+        (fun () ->
+          let w = v "w" 0 255 in
+          keeps_machine_value
+            Ops.O.(Ops.maximum (Ops.maximum w (int 1)) (int (-3)))
+            [ [ ("w", i 0) ]; [ ("w", i 254) ] ]);
     ]
 
 (* Floats keep IEEE's values, signed zeros, infinities, NaN and subnormals

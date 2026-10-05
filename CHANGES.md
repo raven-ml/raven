@@ -969,6 +969,9 @@ thread.
 
 ### Tolk (new)
 
+- `Symbolic.sym` folds the constants of nested integer maxima at the
+  maximum's width: on uint8, `max(max(w, 1), -3)` became `max(w, 1)`, where
+  the machine computes `max(w, 253)`.
 - `Transcendental.xexp2`, `xlog2` and `xsin` are within one unit in the last
   place of the correctly rounded result in every float; float16 now computes
   at float32 and rounds once, and the functions refuse it. `xsin` was 205266
