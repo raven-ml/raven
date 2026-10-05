@@ -98,31 +98,21 @@ let starts_its_run (l : layout) =
 (* Keys *)
 
 (* The settings a program depends on that a caller may change around a call:
-   each setting of tolk that shapes what it compiles, which tolk names
-   ([Tolk.Setting.shaping]), the search's width, and how the program's batches
-   profile: under DEBUG 2 or more, and for the counters and traces of the
+   each setting that shapes what tolk compiles ([Tolk.Setting.shaping]), whether
+   the engine reports each kernel's time, for which the program's batches stamp
+   their kernels ([Engine.reporting]), and the counters and traces of the
    profile being taken, which a device's batches count and trace. *)
 type settings = {
   shaping : (string * string) list;
-  beam : int;
   profiled : bool;
   counters : string list;
   traced : bool;
 }
 
-(* [settings ~beam ()] are the settings a call compiles with: [beam], or else
-   the width tolk's lowering reads, [JITBEAM]'s or else [BEAM]'s. *)
-let settings ?beam () =
+let settings () =
   {
     shaping = Tolk.Setting.shaping ();
-    beam =
-      (match beam with
-      | Some beam -> beam
-      | None -> (
-          match Tolk.Setting.value Tolk.Setting.jitbeam with
-          | Some beam -> beam
-          | None -> Tolk.Setting.value Tolk.Setting.beam));
-    profiled = Tolk.Setting.value Tolk.Setting.debug >= 2;
+    profiled = Engine.reporting ();
     counters = Nx_device.Profile.counters ();
     traced = Nx_device.Profile.traced ();
   }
@@ -132,7 +122,6 @@ let settings ?beam () =
 let entries s =
   s.shaping
   @ [
-      ("BEAM", string_of_int s.beam);
       ("profiled", string_of_bool s.profiled);
       ( "counters",
         "["
@@ -436,8 +425,9 @@ let paths args_s roles args =
     Array.of_list (List.map consumed at) )
 
 (* [compile args_s result_s g args leaves ~paths ~consumed] traces [g] at
-   [args], whose leaves are [leaves], and compiles and links its program. *)
-let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
+   [args], whose leaves are [leaves], and compiles and links its program, its
+   batches stamping their kernels if [profile]. *)
+let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
     (result_s : r Ptree.t) (g : a -> r) (args : a) leaves ~paths ~consumed =
   let s = Lower.scope ~renderer:Engine.renderer in
   let slots = Array.map (fun _ -> Ops.unique_num ()) leaves in
@@ -637,9 +627,10 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
         span "schedule" (fun () ->
             fst (Tolk.Schedule.create_linear_with_vars ~capturing:true sink))
       in
-      (* Each kernel asks for a search of width [beam], and one of at least 1 is
-         searched, each candidate timed on the device its renderer targets, on
-         as many domains as [parallel] gives or the [PARALLEL] setting. *)
+      (* Each kernel asks for a search of width [beam], or else of the width
+         tolk's settings give, and one of at least 1 is searched, each candidate
+         timed on the device its renderer targets, on as many domains as
+         [parallel] gives or the [PARALLEL] setting. *)
       let search width k =
         report "searched a kernel at width %d" width;
         let name = (Tolk.Postrange.Scheduler.ren k).target.device in
@@ -652,7 +643,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
       in
       let linear =
         span "compile" (fun () ->
-            Tolk.Jit.jit_lower ~beam ~search
+            Tolk.Jit.jit_lower ?beam ~search ~profile
               ~devices:(fun n -> (devices n).compiler)
               ~held_bufs:(List.map fst bound)
               ~inputs:(List.map (Hashtbl.find buffers) order)
@@ -901,7 +892,7 @@ let rec compiler : type a r.
     let key =
       {
         skeleton;
-        settings = settings ?beam ();
+        settings = settings ();
         layouts = Array.to_list (Array.map (fun l -> l.layout) leaves);
       }
     in
@@ -915,8 +906,8 @@ let rec compiler : type a r.
     let p =
       Programs.find table key ~miss:retrace (fun () ->
           let paths, consumed = paths args_s roles args in
-          compile ~beam:key.settings.beam ?parallel args_s result_s g args
-            leaves ~paths ~consumed)
+          compile ?beam ?parallel ~profile:key.settings.profiled args_s result_s
+            g args leaves ~paths ~consumed)
     in
     Atomic.set last (Some key);
     check entry p.consumed p.paths leaves;

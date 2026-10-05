@@ -1974,7 +1974,9 @@ let reports_each_kernel () =
   Setting.context
     [ B (Setting.debug, 2) ]
     (fun () ->
-      let s = link_calls ~bound (List.map snd fills) in
+      let s =
+        link_calls ~profile:(Engine.reporting ()) ~bound (List.map snd fills)
+      in
       Null_device.with_latency 0.02 (fun () -> Engine.run s [||]));
   let lines = reported () in
   equal int ~msg:"one line per kernel" 3 (List.length lines);
@@ -2291,6 +2293,12 @@ let batches =
         reports_each_kernel;
       test "at DEBUG=2, a host copy and a host kernel print a timed line each"
         reports_host_calls;
+      cases ~name:(Printf.sprintf "DEBUG=%d")
+        "reporting holds from DEBUG=2" [ 0; 1; 2; 3 ] (fun level ->
+          equal bool (level >= 2)
+            (Setting.context
+               [ B (Setting.debug, level) ]
+               Engine.reporting));
       test "linked schedules that stage share the host's staging memory"
         shares_the_staging_memory;
       test "staged runs of two programs on other devices take turns"

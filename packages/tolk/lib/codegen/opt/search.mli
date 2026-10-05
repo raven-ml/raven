@@ -37,8 +37,8 @@ val actions : unit -> Opt.t list
       program starts, pads of the axes [0] to [6] to a multiple of [32];
     - a split of the axis [0] into [32] local threads;
     - tensor cores on the axis [0] with the level [tc_opt] [0], then on the axes
-      [0] to [8] with the level of {!Setting.tc_opt}, [2] if it is [None], each
-      with the first core that fits and the level [use_tc] of {!Setting.use_tc};
+      [0] to [8] with the level of {!Setting.beam_tc_opt}, each with the first
+      core that fits and the level [use_tc] of {!Setting.use_tc};
     - swaps of each two of the axes [0] to [4]. *)
 
 val get_kernel_actions :
@@ -139,8 +139,8 @@ val beam_search :
     renderer and the table of its compiler's binaries
     ({!Renderer.Compiler.cachekey}), the settings that shape compilation
     ({!Setting.shaping}), among them those that pick the candidates
-    ({!Setting.use_tc}, {!Setting.tc_opt} and [BEAM_PADTO]) and the environment
-    variables [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX],
+    ({!Setting.use_tc}, {!Setting.beam_tc_opt} and [BEAM_PADTO]) and the
+    environment variables [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX],
     [BEAM_MIN_PROGRESS] and [BEAM_ESTIMATE], and the sources of this library.
     Unless {!Setting.ignore_beam_cache} holds, a search whose key is kept
     compiles and times nothing, applies nothing of [time], and applies the

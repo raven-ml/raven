@@ -46,7 +46,7 @@ let actions () =
       split Local [ 32 ] [ 0 ];
       [ tc 0 0 ];
       (* covers resnet kernels (3 global * 3 reduce) *)
-      List.map (tc (Option.value (setting Setting.tc_opt) ~default:2)) (upto 9);
+      List.map (tc (setting Setting.beam_tc_opt)) (upto 9);
       List.concat_map
         (fun axis ->
           List.map

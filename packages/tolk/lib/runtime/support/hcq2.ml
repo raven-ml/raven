@@ -2048,10 +2048,7 @@ let pm_beam width =
           | _ -> None);
     ])
 
-let compile_linear ?search ?profile ~devices linear =
-  let profile =
-    Option.value profile ~default:(Setting.value Setting.debug >= 2)
-  in
+let compile_linear ?search ?(profile = false) ~devices linear =
   let targets d = (devices d).target in
   let lower_and_compile = Realize.lower_and_compile ?search ~targets in
   let width = Setting.value Setting.beam in

@@ -1305,14 +1305,12 @@ let memory_only () =
 let other_values () =
   let strings =
     [
-      ("CC", "cc");
-      ("CUDA_PATH", "/opt/cuda");
       ("DEFAULT_FLOAT", "half");
       ("DEFAULT_INT", "long");
       ("EMULATED_DTYPES", "long");
       ("HCQ_NUM_SDMA", "2");
+      ("JITBEAM", "1");
       ("SUM_DTYPE", "half");
-      ("TC_OPT", "1");
     ]
   in
   List.map

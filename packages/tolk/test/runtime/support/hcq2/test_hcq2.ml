@@ -1129,22 +1129,29 @@ let compiling =
                  Hcq2.compile_linear ~search ~devices:(recorded_devices ())
                    (linear calls)));
           equal (list int) [ 1 ] !widths);
-      test "profiles when DEBUG is 2 or more" (fun () ->
+      test "stamps its kernels with profile alone, whatever DEBUG holds"
+        (fun () ->
           let calls = chained (chain "CPU:1" 1) in
-          let slots debug =
+          let stamped ?profile debug =
             let c =
               Setting.context
                 [ B (Setting.debug, debug) ]
                 (fun () ->
-                  Hcq2.compile_linear ~devices:(recorded_devices ())
+                  Hcq2.compile_linear ?profile ~devices:(recorded_devices ())
                     (linear calls))
             in
             List.exists
               (fun (k : Ops.hcq_kernel) -> k.stamps <> [])
               (info_of (the_batch c)).kernels
           in
-          is_false ~msg:"DEBUG=0" (slots 0);
-          is_true ~msg:"DEBUG=2" (slots 2));
+          equal (list bool) ~msg:"DEBUG=0, DEBUG=2"
+            [ false; false; true; true ]
+            [
+              stamped 0;
+              stamped 2;
+              stamped ~profile:true 0;
+              stamped ~profile:true 2;
+            ]);
       test "runs a call on sharded buffers once per device, each on its shard"
         (fun () ->
           let devices = Ops.Multi [ "CPU:1"; "CPU:2" ] in

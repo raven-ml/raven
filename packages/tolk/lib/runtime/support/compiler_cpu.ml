@@ -49,8 +49,8 @@ let statement =
 
 (* Clang *)
 
-(* The compiler run, which picks the binary of every CPU program. *)
-let cc = Setting.string ~reach:Output "CC" "clang"
+(* The compiler run, read when a compiler is made, whose table names it. *)
+let cc = Setting.string ~reach:Process "CC" "clang"
 
 let clang arch =
   let cc = Setting.value cc in

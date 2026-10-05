@@ -24,7 +24,7 @@
       TC
       2
       (setenv
-       TC_OPT
+       BEAM_TC_OPT
        0
        (setenv
         BEAM_STRICT_MODE

@@ -80,10 +80,9 @@ let read key parse default =
 
 (* Declarations
 
-   Each setting has a name no other one has. Those whose reach is [Output]
-   change what compilation makes, and are recorded, sorted by name, with the
-   text of their current value, on which the caches of programs, schedules and
-   searches are keyed. *)
+   Each setting has a name no other one has. Those whose reach is [Output] are
+   recorded, sorted by name, with the text of their current value, on which the
+   caches of programs, schedules and searches are keyed. *)
 
 type reach = Output | Process
 
@@ -212,13 +211,14 @@ let context bindings f =
 (* Tolk's settings *)
 
 let debug = int ~reach:Process "DEBUG" 0
-let beam = int ~reach:Process "BEAM" 0
-let jitbeam = int_option ~reach:Process "JITBEAM"
+let beam = int ~reach:Output "BEAM" 0
+let jitbeam = int_option ~reach:Output "JITBEAM"
 let noopt = bool ~reach:Output "NOOPT" false
 let no_color = bool ~reach:Process "NO_COLOR" false
 let use_tc = int ~reach:Output "TC" 1
 let tc_select = int ~reach:Output "TC_SELECT" (-1)
-let tc_opt = int_option ~reach:Output "TC_OPT"
+let tc_opt = int ~reach:Output "TC_OPT" 0
+let beam_tc_opt = int ~reach:Output "BEAM_TC_OPT" 2
 let tc_min_globals = int ~reach:Output "TC_MIN_GLOBALS" 0
 let transcendental = int ~reach:Output "TRANSCENDENTAL" 1
 let split_reduceop = bool ~reach:Output "SPLIT_REDUCEOP" true

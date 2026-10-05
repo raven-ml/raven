@@ -713,7 +713,10 @@ let caching =
                ("NOOPT", B (noopt, true));
                ("TC", B (use_tc, 0));
                ("TC_SELECT", B (tc_select, 0));
-               ("TC_OPT", B (tc_opt, Some 1));
+               ("TC_OPT", B (tc_opt, 1));
+               ("BEAM_TC_OPT", B (beam_tc_opt, 1));
+               ("BEAM", B (beam, 1));
+               ("JITBEAM", B (jitbeam, Some 1));
                ("TC_MIN_GLOBALS", B (tc_min_globals, 1));
                ("TRANSCENDENTAL", B (transcendental, 2));
                ("DISABLE_FAST_IDIV", B (disable_fast_idiv, false));
@@ -866,13 +869,11 @@ let races () =
 let other_values () =
   let strings =
     [
-      ("CC", "cc");
-      ("CUDA_PATH", "/opt/cuda");
       ("DEFAULT_INT", "long");
       ("EMULATED_DTYPES", "long");
       ("HCQ_NUM_SDMA", "2");
+      ("JITBEAM", "1");
       ("SUM_DTYPE", "half");
-      ("TC_OPT", "1");
     ]
   in
   List.map

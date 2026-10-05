@@ -98,7 +98,7 @@ let decoded_product k =
 (* first try the tensor cores *)
 let tensor_cores k =
   let use_tc = setting Setting.use_tc in
-  let tc_opt = Option.value (setting Setting.tc_opt) ~default:0 in
+  let tc_opt = setting Setting.tc_opt in
   let tc_select = setting Setting.tc_select in
   let min_globals = setting Setting.tc_min_globals in
   if

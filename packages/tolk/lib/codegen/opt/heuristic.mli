@@ -15,10 +15,10 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     [k] itself is left as it is. The first of these that applies decides:
 
     - {b tensor cores}, when the setting {!Setting.use_tc} is positive and [k]
-      reduces over one axis, or {!Setting.tc_opt} ([0] if [None]) admits more:
-      the first of the three candidate axes on which a tensor core applies
-      ({!Opt.Tc}), then upcasts and a local split of its [N] and [M] axes, by
-      the first of 5, 4, 3 and 2 (4 and 2 for the local) that divides them.
+      reduces over one axis, or {!Setting.tc_opt} admits more: the first of the
+      three candidate axes on which a tensor core applies ({!Opt.Tc}), then
+      upcasts and a local split of its [N] and [M] axes, by the first of 5, 4,
+      3 and 2 (4 and 2 for the local) that divides them.
       With {!Setting.tc_min_globals}, [M] is upcast only while enough global
       threads remain;
     - {b matrix-vector}, for a renderer with local indices and shared memory

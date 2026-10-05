@@ -309,11 +309,13 @@ let settings =
   [
     number Setting.debug;
     number Setting.beam;
+    optional Setting.jitbeam;
     switch Setting.noopt;
     switch Setting.no_color;
     number Setting.use_tc;
     number Setting.tc_select;
-    optional Setting.tc_opt;
+    number Setting.tc_opt;
+    number Setting.beam_tc_opt;
     number Setting.tc_min_globals;
     number Setting.transcendental;
     switch Setting.split_reduceop;
@@ -367,8 +369,12 @@ let not_ported =
       "PROFILE";
     ]
 
-(* The golden leaves out the settings whose default it cannot record. *)
+(* The golden leaves out the settings whose default it cannot record, and
+   tinygrad's helpers do not declare those that tinygrad reads with [getenv] at
+   one call site: there, [JITBEAM] defaults to [BEAM]'s value, and the search's
+   [TC_OPT] to 2, which is [BEAM_TC_OPT]'s default. *)
 let unrecorded = [ "PARALLEL"; "NO_COLOR" ]
+let getenv_defaults = [ ("JITBEAM", ""); ("BEAM_TC_OPT", "2") ]
 let tinygrad_settings = Golden.rows "settings.golden"
 let tinygrad_keys = List.map (fun cell -> cell "key") tinygrad_settings
 let ported s = List.mem (key s) tinygrad_keys
@@ -377,9 +383,8 @@ let unless_set key =
   if Option.is_some (Sys.getenv_opt key) then
     skip ~reason:(key ^ " is set in the environment") ()
 
-(* Defaults that are not tinygrad's: schedules are kept on disk, and TC_OPT
-   leaves its default to its readers, the search's being 2. *)
-let diverging = [ ("SCACHE", "2"); ("TC_OPT", "") ]
+(* A default that is not tinygrad's: schedules are kept on disk. *)
+let diverging = [ ("SCACHE", "2") ]
 
 let holds_tinygrad_default s =
   unless_set (key s);
@@ -392,6 +397,82 @@ let holds_tinygrad_default s =
   equal string default (shown s)
 
 (* What the caches key on *)
+
+(* The library's settings whose change can change what a compilation returns:
+   the caches key on them. The others print, check, keep, look up, work in
+   parallel or raise; among them [CC], [CUDA_PATH] and [ROCM_PATH], read when a
+   compiler is made, whose cache key names its tools. *)
+let output_settings =
+  [
+    "ALIGNED";
+    "ALL2ALL";
+    "ALLOW_HALF8";
+    "ALLOW_TF32";
+    "ALLREDUCE_CAST";
+    "ALLREDUCE_NODE_NDEVS";
+    "BEAM";
+    "BEAM_ESTIMATE";
+    "BEAM_LOCAL_MAX";
+    "BEAM_MIN_PROGRESS";
+    "BEAM_PADTO";
+    "BEAM_TC_OPT";
+    "BEAM_UOPS_MAX";
+    "BEAM_UPCAST_MAX";
+    "DEFAULT_FLOAT";
+    "DEFAULT_INT";
+    "DISABLE_FAST_IDIV";
+    "DMC";
+    "EMULATED_DTYPES";
+    "EXPAND_SSA";
+    "HCQ_NUM_SDMA";
+    "JITBEAM";
+    "LATE_ALLREDUCE";
+    "MAX_KERNEL_BUFFERS";
+    "MV";
+    "NOOPT";
+    "NO_MEMORY_PLANNER";
+    "REDUCEOP_SPLIT_SIZE";
+    "REDUCEOP_SPLIT_THRESHOLD";
+    "RING";
+    "RING_ALLREDUCE_THRESHOLD";
+    "SPLIT_REDUCEOP";
+    "SUM_DTYPE";
+    "TC";
+    "TC_MIN_GLOBALS";
+    "TC_OPT";
+    "TC_SELECT";
+    "TRANSCENDENTAL";
+    "TUPLE_ORDER";
+    "WAVES_PER_SH";
+  ]
+
+(* Each exported setting of output bound to a value other than its default. *)
+let other_outputs =
+  Setting.
+    [
+      B (beam, 1);
+      B (jitbeam, Some 0);
+      B (noopt, true);
+      B (use_tc, 2);
+      B (tc_select, 0);
+      B (tc_opt, 1);
+      B (beam_tc_opt, 0);
+      B (tc_min_globals, 1);
+      B (transcendental, 2);
+      B (split_reduceop, false);
+      B (no_memory_planner, true);
+      B (ring, 2);
+      B (all2all, 1);
+      B (allreduce_cast, false);
+      B (allreduce_node_ndevs, 2);
+      B (disable_fast_idiv, false);
+      B (max_kernel_buffers, 8);
+      B (emulated_dtypes, [ "half" ]);
+      B (default_float, "half");
+      B (default_int, "long");
+      B (tuple_order, false);
+      B (allow_tf32, true);
+    ]
 
 let keyed key = List.assoc_opt key (shaping ())
 let entries = list (pair string string)
@@ -480,18 +561,18 @@ let cache_keys =
           equal (option string) None
             (shown_as (Some "1") (fun key ->
                  Setting.bool ~reach:Process key false)));
-      test "leaves out the library's settings of the process" (fun () ->
-          List.iter
-            (fun key -> equal (option string) ~msg:key None (keyed key))
-            [
-              "DEBUG";
-              "BEAM";
-              "JITBEAM";
-              "CACHELEVEL";
-              "SCACHE";
-              "CCACHE";
-              "PARALLEL";
-            ]);
+      test "holds the library's settings of output, and those alone" (fun () ->
+          let library k = not (String.starts_with ~prefix:"TOLK_TEST_" k) in
+          equal (list string) output_settings
+            (List.filter library (List.map fst (shaping ()))));
+      cases
+        ~name:(fun (Setting.B (v, _)) -> Setting.key v)
+        "changes a library setting's entry when the setting changes"
+        other_outputs
+        (fun (B (v, x)) ->
+          let before = keyed (Setting.key v) in
+          not_equal (option string) before
+            (context [ B (v, x) ] (fun () -> keyed (Setting.key v))));
       test "is sorted by name" (fun () ->
           let names = List.map fst (shaping ()) in
           equal (list string) (List.sort compare names) names);
@@ -525,15 +606,21 @@ let library_settings =
         (fun () ->
           equal
             (slist string String.compare)
-            unrecorded
+            (unrecorded @ List.map fst getenv_defaults)
             (List.filter_map
                (fun s -> if ported s then None else Some (key s))
                settings));
       cases ~name:key
-        "hold tinygrad's default when their variable is unset, but SCACHE and \
-         TC_OPT"
+        "hold tinygrad's default when their variable is unset, but SCACHE"
         (List.filter ported settings)
         holds_tinygrad_default;
+      cases ~name:fst
+        "read at one call site by tinygrad hold its default there when their \
+         variable is unset"
+        getenv_defaults (fun (k, default) ->
+          unless_set k;
+          equal string default
+            (shown (List.find (fun s -> String.equal (key s) k) settings)));
       test "no_color is off when NO_COLOR is unset" (fun () ->
           unless_set "NO_COLOR";
           equal bool false (value Setting.no_color));

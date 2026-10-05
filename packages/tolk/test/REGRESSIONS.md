@@ -1546,7 +1546,8 @@ Postrange's.
 The suite is `Tolk.Search` (`codegen/opt/search/`), written `S` below,
 with `Tolk.Search on the host` (`test_search_exec.ml`, slow), written
 `SH`. `actions.golden` is the table of actions and `actions_padto.golden` the
-table under `BEAM_PADTO=1 TC=2 TC_OPT=0`. `candidates.golden` holds the
+table under `BEAM_PADTO=1 TC=2 TC_OPT=0`, which tolk's search reads as
+`BEAM_TC_OPT=0` (D114). `candidates.golden` holds the
 positions `get_kernel_actions` returns for 14 kernels on the Clang, Metal,
 CUDA sm_89 and HIP gfx1100 renderers (`S › candidates.golden`, 52 rows).
 `searches.golden` holds what `beam_search` chooses, and how many times it
@@ -1560,7 +1561,7 @@ BEAM_PADTO=1 TC=2 ...`, the suite's dune).
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: `runtime/test_search.py::TestSearch::test_beam_symbolic_kernel` | a beam search of a symbolic kernel on the CPU applies optimisations | `SH › a searched kernel computes what its unoptimised kernel computes › symbolic` (through `Codegen.to_program ~beam`, timed by `Tolk_engine.timer` with optimised programs' samples scaled down: under D117 a search of a kernel this small answers the kernel when no candidate beats its samples); the same kernel's candidates, `candidates.golden` `symbolic` |
-| tinygrad: `codegen/opt/search.py` `actions` | the table, in order; `BEAM_PADTO`, `TC`, `TC_OPT` | `S › the actions are tinygrad's, in order`; `S › BEAM_PADTO=1 ... › the actions are tinygrad's, pads included` |
+| tinygrad: `codegen/opt/search.py` `actions` | the table, in order; `BEAM_PADTO`, `TC`, `TC_OPT` (tolk's `BEAM_TC_OPT`) | `S › the actions are tinygrad's, in order`; `S › BEAM_PADTO=1 ... › the actions are tinygrad's, pads included` |
 | tinygrad: `codegen/opt/search.py` `get_kernel_actions` | actions out of range, a whole-axis split by its size, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX`, a tensor core's lanes, `max_up`, `include_0` | `candidates.golden` (every row, `max_up` rows `add clang 4`, `matmul_half metal 16`); `S › get_kernel_actions` (4 laws) |
 | tinygrad: `codegen/opt/search.py` `beam_search` | rounds, the beam of width `amt`, `BEAM_MIN_PROGRESS`, binaries timed once, measurements that fail; the kernel timed first and progress beyond the samples' spread (D117) | `searches.golden` (every row); `S › a search chooses the fastest program it measured` (law, slow); `S › rounds` (4 tests); `S › a round goes on iff ...` (law); `S › the kernel is sampled three times before any candidate`; `S › a search whose kernel does not compile progresses on any candidate`; `S › a timing that raises` (6 tests); `S › a search applies its timing once, to its kernel` (law); `S › a search compiles each kernel once` |
 | tinygrad: `codegen/opt/search.py` `_time_program`, `get_test_global_size` | three measurements, stopping early above three times the best; launches of more than 65536 workgroups halved from the last size above 16, times scaled | `S › rounds › a candidate is measured three times unless slower than three times the incumbent`; `S › each program is prepared once and sampled until ...` (law); `S › measuring on fewer workgroups` (5 tests; `add_3d` pins the last size above 16, `add_large` a launch of exactly 65536); the `measurements` column of `searches.golden` |

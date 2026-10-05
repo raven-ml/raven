@@ -688,7 +688,10 @@ let keys =
             B (ring, 0);
             B (all2all, 1);
             B (allreduce_cast, false);
-            B (tc_opt, Some 2);
+            B (tc_opt, 2);
+            B (beam_tc_opt, 1);
+            B (beam, 1);
+            B (jitbeam, Some 1);
             B (disable_fast_idiv, false);
             B (allow_tf32, true);
             B (no_memory_planner, true);
@@ -699,6 +702,23 @@ let keys =
           retraces
             (checked g poly (x ()))
             (fun () -> Tolk.Setting.context [ b ] (checked g poly (x ()))));
+      test "a call under DEBUG=2, which reports kernel times, retraces once"
+        (fun () ->
+          let g = g () in
+          retraces
+            (checked g poly (x ()))
+            (fun () ->
+              Tolk.Setting.context
+                [ B (Tolk.Setting.debug, 2) ]
+                (checked g poly (x ()))));
+      test "a call under DEBUG=1 replays the program" (fun () ->
+          let g = g () in
+          shares
+            (checked g poly (x ()))
+            (fun () ->
+              Tolk.Setting.context
+                [ B (Tolk.Setting.debug, 1) ]
+                (checked g poly (x ()))));
       (* A program of its own, whose kernel no earlier search chose: BEAM asks
          for a search, which times candidates on the host. *)
       test "a call under BEAM=1 searches its kernel and computes eager's values"

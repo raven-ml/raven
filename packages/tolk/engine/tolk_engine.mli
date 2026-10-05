@@ -231,18 +231,25 @@ val run :
 
     When the setting {!Tolk.Setting.debug} is [1] or more and [s] runs ten calls
     or more, [run] first prints ["jit execs n calls"] on standard output, [n]
-    its number of calls. When it is [2] or more, [run] prints a line for each
-    kernel on standard output: its device, how many kernels ran before it, its
-    name, its number of arguments, and its time and throughput. A host program
-    and a copy are timed on the host clock. A batch synchronizes its devices
-    once submitted, and its kernels' times are their spans as the devices stamp
-    them, unless a profile is being taken elsewhere, whose spans they are: their
-    lines then have no time.
+    its number of calls. When it is [2] or more ({!reporting}), [run] prints a
+    line for each kernel on standard output: its device, how many kernels ran
+    before it, its name, its number of arguments, and its time and throughput. A
+    host program and a copy are timed on the host clock. A batch synchronizes
+    its devices once submitted, and its kernels' times are their spans as the
+    devices stamp them, if its schedule stamps them, unless a profile is being
+    taken elsewhere, whose spans they are: their lines then have no time.
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     buffers of its placement's devices, each holding its parameter's bytes, if a
     variable is unbound, or if a device refuses to run a batch now (its
     [submitting]), and {!Nx_device.Lost} as the devices do. *)
+
+val reporting : unit -> bool
+(** [reporting ()] is [true] iff {!run} prints a line for each kernel: while
+    {!Tolk.Setting.debug} is [2] or more. A kernel's line has its time only if
+    its schedule stamps it ({!Tolk.Hcq2.compile_linear}'s [profile]): a caller
+    compiles with [~profile:(reporting ())] and keeps what it compiles for each
+    value of [reporting ()]. *)
 
 (** {1:timing Timing} *)
 

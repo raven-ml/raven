@@ -470,8 +470,9 @@ val compile_linear :
       ({!lower_call}), a batch a queue cannot hold in one submission split until
       each part fits, and its host program compiled, with no dtype emulated.
 
-    [profile] defaults to {!Setting.debug} at [2] or more. A linear that holds a
-    lowered batch is returned as it is.
+    With [profile] (defaults to [false]), its batches stamp each kernel's start
+    and end ({!sched_batches}). A linear that holds a lowered batch is returned
+    as it is.
 
     Raises as {!Realize.lower_and_compile} does. *)
 

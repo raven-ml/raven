@@ -13,10 +13,10 @@
     ({!Lower.span}) and where it starts within 16 bytes of memory
     ({!Lower.phase}), on every device, the host included; and what a caller may
     change around a call that changes the program: every setting of tolk that
-    shapes what it compiles ({!Tolk.Setting.shaping}), the search's width
-    ([BEAM] or [JITBEAM]), whether batches are profiled ([DEBUG] at 2 or more),
-    and the counters and traces of the profile being taken
-    ({!Nx_device.Profile}).
+    shapes what it compiles ({!Tolk.Setting.shaping}), the search's widths
+    [BEAM] and [JITBEAM] among them, whether the engine reports each kernel's
+    time ({!Tolk_engine.reporting}), and the counters and traces of the profile
+    being taken ({!Nx_device.Profile}).
 
     A key being compiled makes the other calls with that key wait. A compile
     that raises installs nothing: its waiters, and later calls, trace again. A

@@ -70,8 +70,9 @@ let cuda_disassemble ~ptx arch lib =
 
 (* NVRTC *)
 
-(* The toolkit whose headers kernels include. *)
-let cuda_path = Setting.string ~reach:Output "CUDA_PATH" ""
+(* The toolkit whose headers kernels include, read when a compiler is made,
+   whose table names the options that include them. *)
+let cuda_path = Setting.string ~reach:Process "CUDA_PATH" ""
 
 let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
   let includes =

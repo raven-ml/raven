@@ -1000,9 +1000,15 @@ thread.
 - Every environment variable is one setting of the new module `Tolk.Setting`,
   declared with its reach, and `Helpers.getenv*` and `variable*` are removed,
   so the caches key on every variable that changes compiled output
-  (`Setting.shaping`). `TC_OPT` is one setting for hand-coded optimizations and
-  the search, unset meaning 0 and 2; `Search.actions` reads `TC` and `TC_OPT`
-  as bound; `JITBEAM` is `Setting.jitbeam`.
+  (`Setting.shaping`). A setting reaches output when a change of it alone can
+  change what a compilation returns: `BEAM` and `JITBEAM` do; `CC` and
+  `CUDA_PATH`, which a compiler's cache key names, do not.
+- `TC_OPT` is the level of hand-coded optimizations, default 0, and the new
+  `BEAM_TC_OPT` that of the search's candidates, default 2: `TC_OPT` no longer
+  reaches the search. `Search.actions` reads `TC` and `BEAM_TC_OPT` as bound.
+- `Hcq2.compile_linear` and `Jit.jit_lower` no longer read `DEBUG`: `profile`
+  defaults to `false`, and `Tolk_engine.reporting` says when the engine prints
+  kernel times, which needs a stamped schedule.
 - Scheduling a large graph no longer grows with the square of its kernels:
   weighing whether a stage could be inlined walked every kernel upstream of
   it, and the where-closure rule searched branches its INDEX gate rejects.

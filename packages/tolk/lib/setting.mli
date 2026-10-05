@@ -32,14 +32,23 @@
 
 (** {1:reach Reach} *)
 
-(** What a setting changes. *)
+(** What a setting's value reaches.
+
+    A compilation makes a schedule, a kernel's program, the optimizations a
+    search picks or a compiled schedule from its arguments: the graph, and the
+    renderer with its compiler. A setting reaches {!Output} if a change of its
+    value alone can change what a compilation that returns makes, and {!Process}
+    otherwise: then a change makes compilation only print, check, keep, look up
+    or work in parallel otherwise, or raise where it returned.
+
+    A compiler names the tools it runs and their options in its cache key
+    ({!Renderer.Compiler.v}), which the caches take with what it makes, so a
+    setting read when a compiler is made, such as where its tools are, reaches
+    the process. *)
 type reach =
   | Output
-      (** What compilation makes: programs, schedules and the optimisations a
-          search finds, whose caches key on its value ({!shaping}). *)
-  | Process
-      (** Only how the process runs: what it prints, keeps or checks, where it
-          finds its tools, or how many domains compile. *)
+      (** The caches of what compilation makes key on its value ({!shaping}). *)
+  | Process  (** No cache keys on its value. *)
 
 (** {1:settings Settings}
 
@@ -115,7 +124,7 @@ val beam : int t
 
 val jitbeam : int option t
 (** [jitbeam] is the width of the beam search for the kernels of a captured
-    program ([Jit]), from [JITBEAM]. [None], the default, stands for {!beam}'s
+    schedule ([Jit]), from [JITBEAM]. [None], the default, stands for {!beam}'s
     current value. *)
 
 val noopt : bool t
@@ -135,13 +144,17 @@ val tc_select : int t
     [-1] tries the target's tensor cores in order and uses the first that fits,
     [n] uses only the [n]-th. Defaults to [-1]. *)
 
-val tc_opt : int option t
-(** [tc_opt] is which kernels may use tensor cores, from [TC_OPT]. [0] admits
-    kernels with a single reduce axis multiplying loaded values, [1] also
-    kernels with several reduce axes and casted operands, [2] also kernels whose
-    axes must be padded to the tensor core's dimensions. [None], the default,
-    stands for [0] in hand-coded optimizations ([Heuristic]) and for [2] in a
-    beam search ([Search]), which measures what it admits. *)
+val tc_opt : int t
+(** [tc_opt] is which kernels hand-coded optimizations ([Heuristic]) let use
+    tensor cores, from [TC_OPT]. [0] admits kernels with a single reduce axis
+    multiplying loaded values, [1] also kernels with several reduce axes and
+    casted operands, [2] also kernels whose axes must be padded to the tensor
+    core's dimensions. Defaults to [0]. *)
+
+val beam_tc_opt : int t
+(** [beam_tc_opt] is which kernels the beam search ([Search]) lets use tensor
+    cores, from [BEAM_TC_OPT], with the levels of {!tc_opt}. The search measures
+    what it admits, so it defaults to [2]. *)
 
 val tc_min_globals : int t
 (** [tc_min_globals] is the number of global axes below which tensor core
