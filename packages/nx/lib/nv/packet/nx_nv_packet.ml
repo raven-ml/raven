@@ -9,25 +9,28 @@ module D = Defs
 
 (* Terms and words *)
 
-type 'v term = Value of 'v | Add of 'v term * int | Shift of 'v term * int
+type 'v term = Value of 'v | Add of 'v term * int64 | Shift of 'v term * int
 
 let rec eval = function
-  | Value v -> v
-  | Add (t, n) -> eval t + n
-  | Shift (t, n) -> eval t lsr n
+  | Value v -> Int64.of_int v
+  | Add (t, n) -> Int64.add (eval t) n
+  | Shift (t, n) -> Int64.shift_right_logical (eval t) n
 
 type 'v word = Dword of int | W32 of 'v term | W64 of 'v term
 
 let mask32 = 0xffff_ffff
 
+(* The 32-bit word of [n] from bit [at]. *)
+let word32 n at = Int64.to_int (Int64.shift_right_logical n at) land mask32
+
 let dwords ws =
   List.concat_map
     (function
       | Dword n -> [ n land mask32 ]
-      | W32 t -> [ eval t land mask32 ]
+      | W32 t -> [ word32 (eval t) 0 ]
       | W64 t ->
           let n = eval t in
-          [ n land mask32; (n lsr 32) land mask32 ])
+          [ word32 n 0; word32 n 32 ])
     ws
 
 (* [v] in the field [(lo, _)] of a word. *)
@@ -131,7 +134,8 @@ module Methods = struct
       else
         let words =
           methods Copy D.nvc6b5_offset_in_upper
-            (hi_lo (Add (Value src, off)) @ hi_lo (Add (Value dst, off)))
+            (hi_lo (Add (Value src, Int64.of_int off))
+            @ hi_lo (Add (Value dst, Int64.of_int off)))
           @ methods Copy D.nvc6b5_line_length_in
               [ Dword (Stdlib.Int.min line (n - off)) ]
           @ methods Copy D.nvc6b5_launch_dma [ Dword launch ]
@@ -174,7 +178,7 @@ module Gpfifo = struct
       bits D.nvc56f_gp_entry1_level D.nvc56f_gp_entry1_level_subroutine
       lor bits D.nvc56f_gp_entry1_length words
     in
-    Add (Value a, offset lor (flags lsl 32))
+    Add (Value a, Int64.(logor (of_int offset) (shift_left (of_int flags) 32)))
 end
 
 (* Launches *)
@@ -276,8 +280,9 @@ let fill (s : int structure) =
   let b = Bytes.of_string s.bytes in
   List.iter
     (fun (h : int hole) ->
+      let v = eval h.value in
       for i = 0 to h.bytes - 1 do
-        Bytes.set b (h.at + i) (Char.chr ((eval h.value lsr (8 * i)) land 0xff))
+        Bytes.set b (h.at + i) (Char.chr (word32 v (8 * i) land 0xff))
       done)
     s.holes;
   Bytes.to_string b

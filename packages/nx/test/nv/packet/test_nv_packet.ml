@@ -60,17 +60,18 @@ let values =
           [ 0; mask32; 1 lsl 32; (1 lsl 32) + 1; (1 lsl 62) - 1 ] );
     ]
 
-(* A term computes on 64-bit unsigned integers; the values drawn keep the sum
-   within OCaml's integers. *)
+(* A term computes on 64-bit unsigned integers. *)
 let term_law ((v, n), k) =
-  equal int ((v + n) lsr k) (P.eval (P.Shift (P.Add (P.Value v, n), k)));
-  equal int ((v lsr k) + n) (P.eval (P.Add (P.Shift (P.Value v, k), n)))
+  let v' = Int64.of_int v and n' = Int64.of_int n in
+  equal int64
+    (Int64.shift_right_logical (Int64.add v' n') k)
+    (P.eval (P.Shift (P.Add (P.Value v, n'), k)));
+  equal int64
+    (Int64.add (Int64.shift_right_logical v' k) n')
+    (P.eval (P.Add (P.Shift (P.Value v, k), n')))
 
 let terms =
-  Gen.(
-    pair
-      (pair (int_range 0 (1 lsl 61)) (int_range 0 (1 lsl 32)))
-      (int_range 0 62))
+  Gen.(pair (pair (int_range 0 max_int) (int_range 0 max_int)) (int_range 0 63))
 
 let words_law v =
   equal (list int)
@@ -178,7 +179,7 @@ let test_copy_release () =
 
 let entry_law ((a, offset), words) =
   let a = a * 4 and offset = offset * 4 in
-  let e = P.eval (Gpfifo.entry a ~offset ~words) in
+  let e = Int64.to_int (P.eval (Gpfifo.entry a ~offset ~words)) in
   equal ~msg:"the segment's address" int (a + offset) (e land ((1 lsl 40) - 1));
   equal ~msg:"a subroutine" int D.nvc56f_gp_entry1_level_subroutine
     (field D.nvc56f_gp_entry1_level (e lsr 32));
@@ -193,6 +194,23 @@ let test_entry_words () =
       Gpfifo.entry 0x1000 ~offset:0 ~words:(max + 1));
   raises_match (Exn.invalid_arg ~substring:"words") (fun () ->
       Gpfifo.entry 0x1000 ~offset:0 ~words:(-1))
+
+(* An entry is a 64-bit word: its length field reaches bit 62, and bit 63 (SYNC)
+   stays clear. *)
+let test_entry_bits () =
+  let a = 0x12_3456_7000 in
+  List.iter
+    (fun words ->
+      let expected =
+        Int64.(
+          add (of_int a)
+            (logor (shift_left 1L 41) (shift_left (of_int words) 42)))
+      in
+      equal
+        ~msg:(Printf.sprintf "%d words" words)
+        int64 expected
+        (P.eval (Gpfifo.entry a ~offset:0 ~words)))
+    [ 1 lsl 20; (1 lsl 21) - 1 ]
 
 let entries =
   Gen.pair
@@ -342,6 +360,8 @@ let () =
            [
              prop "an entry holds the segment's address and words" entries
                entry_law;
+             test "an entry of 2^20 words or more keeps bit 63 clear"
+               test_entry_bits;
              test
                "an entry of more words than its length field holds is refused"
                test_entry_words;

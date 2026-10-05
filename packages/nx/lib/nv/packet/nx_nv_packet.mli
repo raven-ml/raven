@@ -21,14 +21,21 @@
 
 (** {1:words Terms and words} *)
 
-(** The type for computations on a value, as 64-bit unsigned integers. *)
+(** The type for computations on a value, as 64-bit unsigned integers.
+
+    A term lists each operation a layout applies, in the order it applies them:
+    an address shifted for its field, then shifted again for its high word, is
+    two [Shift] nodes, and a shift by [0] or an add of [0] is a node too. An
+    interpreter applies every node as it stands, never omitting one or merging
+    two, so that what it builds of a term mirrors the term. *)
 type 'v term =
   | Value of 'v  (** The value. *)
-  | Add of 'v term * int  (** [Add (t, n)] is [t + n]. *)
+  | Add of 'v term * int64  (** [Add (t, n)] is [t + n], modulo [2{^64}]. *)
   | Shift of 'v term * int  (** [Shift (t, n)] is [t] shifted right by [n]. *)
 
-val eval : int term -> int
-(** [eval t] is the integer [t] computes. *)
+val eval : int term -> int64
+(** [eval t] is the 64-bit unsigned integer [t] computes, its values taken as
+    non-negative integers. *)
 
 (** The type for the words of a packet. *)
 type 'v word =

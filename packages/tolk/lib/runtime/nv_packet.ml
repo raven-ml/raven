@@ -9,7 +9,9 @@ open Ops
 
 let rec term = function
   | Nx_nv_packet.Value v -> v
-  | Add (t, n) -> add (term t) (int ~dtype:Dtype.Uint64 n)
+  | Add (t, n) ->
+      add (term t)
+        (const ~dtype:Dtype.Uint64 (`Int (Bigint.of_int64_unsigned n)))
   | Shift (t, n) -> shr (term t) (int n)
 
 let words =

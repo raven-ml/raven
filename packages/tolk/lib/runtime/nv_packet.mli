@@ -14,8 +14,8 @@
 
 val term : Ops.t Nx_nv_packet.term -> Ops.t
 (** [term t] is [t] computed on nodes, in its order: an [Add (t, n)] is
-    [Ops.add (term t) (Ops.int ~dtype:Uint64 n)], and a [Shift (t, n)] is
-    [Ops.shr (term t) (Ops.int n)]. *)
+    [Ops.add (term t) c], with [c] the [Uint64] constant [n] as an unsigned
+    integer, and a [Shift (t, n)] is [Ops.shr (term t) (Ops.int n)]. *)
 
 val words : Ops.t Nx_nv_packet.word list -> Ops.t list
 (** [words ws] is the words [ws] as a queue takes them ({!Hcq2.Queue.q}): a

@@ -207,7 +207,7 @@ let command =
              (fun ((a, o), w) -> Entry (a * 4, o * 4, w))
              (pair
                 (pair (int_range 0 ((1 lsl 38) - 1)) (int_range 0 0xffff))
-                (int_range 0 ((1 lsl 20) - 1))) );
+                (int_range 0 ((1 lsl 21) - 1))) );
        ])
 
 (* A kernel of [banks] constant banks. *)
