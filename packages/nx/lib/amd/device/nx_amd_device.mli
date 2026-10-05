@@ -216,9 +216,11 @@ val fetch_firmware : int -> (unit, string) result
     Work for the value [v] first waits on its queue until the low 32 bits of the
     signal word ({!Nx_device.signal_word}) equal [v - 1], and ends by writing
     [v] into it: all 64 bits in one write, or its low 32 bits and then, only
-    when they are [0], its high 32 bits. The values thus complete in order
-    across the queues, and a high word written late never takes the word back.
-    The device's own copies follow the same rule on the SDMA queue.
+    when they are [0], its high 32 bits. It then interrupts the host, once the
+    write is visible, which wakes a host that sleeps while it waits for a long
+    run. The values thus complete in order across the queues, and a high word
+    written late never takes the word back. The device's own copies follow the
+    same rule on the SDMA queue.
 
     A queue compares 32-bit words, and a test that the low half is at least a
     value passes early once the value's low half wraps. So work waits on its

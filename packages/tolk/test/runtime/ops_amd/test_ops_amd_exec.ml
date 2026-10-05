@@ -144,6 +144,10 @@ let profile_chain ?counters ?trace () =
           skip ~reason:why ()
       | _ -> Nx_device.Profile.stop p)
 
+(* How much later than a kernel's span the host may see the kernel end: its
+   launch and its wake. *)
+let late_ms = 20
+
 let execution =
   group "execution"
     [
@@ -241,10 +245,10 @@ let execution =
           | [ (_, _, first_stop); (_, second_start, _) ] ->
               at_least int ~than:first_stop second_start
           | _ -> ());
-      slow "a profile's span of a long kernel covers its run" (fun () ->
-          (* A run of about 400 ms, long enough for the host to sleep while it
-             waits: it sees the run end at most a sleep of 200 ms late, so the
-             span is at least half of what the host sees. *)
+      slow "the host sees a long kernel end as its span ends" (fun () ->
+          (* Runs of 300 to 600 ms, of two lengths, long enough for the host to
+             sleep while it waits. The GPU's interrupt wakes it at once; a host
+             that woke only every 200 ms would see most of them end late. *)
           let rows = 256 and cols = 65536 in
           let out = storage ~n:rows "AMD"
           and src = storage ~n:(rows * cols) "AMD" in
@@ -254,25 +258,31 @@ let execution =
               (src, [ B.create (amd ()) Float32 (rows * cols) ]);
             ]
           in
-          let s =
-            link ~profile:true ~bound [ sums ~rows ~cols ~reps:256 out src ]
-          in
-          for run = 1 to 6 do
-            let seen = ref 0 in
-            let events =
-              profiled (fun () ->
-                  let submitted = Nx_device.Profile.now () in
-                  Tolk_engine.run s [||];
-                  Nx_device.synchronize (amd ());
-                  seen := Nx_device.Profile.now () - submitted)
+          let run reps =
+            let s =
+              link ~profile:true ~bound [ sums ~rows ~cols ~reps out src ]
             in
-            match spans events with
-            | [ (_, start, stop) ] ->
-                at_least int
-                  ~msg:(Printf.sprintf "run %d's span, in ns" run)
-                  ~than:(!seen / 2) (stop - start)
-            | spans -> equal int ~msg:"one span" 1 (List.length spans)
-          done);
+            for run = 1 to 3 do
+              let seen = ref 0 in
+              let events =
+                profiled (fun () ->
+                    let submitted = Nx_device.Profile.now () in
+                    Tolk_engine.run s [||];
+                    Nx_device.synchronize (amd ());
+                    seen := Nx_device.Profile.now () - submitted)
+              in
+              match spans events with
+              | [ (_, start, stop) ] ->
+                  at_least int
+                    ~msg:
+                      (Printf.sprintf "%d passes, run %d: span, in ns" reps run)
+                    ~than:(!seen - (late_ms * 1_000_000))
+                    (stop - start)
+              | spans -> equal int ~msg:"one span" 1 (List.length spans)
+            done
+          in
+          run 256;
+          run 320);
       slow "a profile that counts has each kernel's run count, in order"
         (fun () ->
           let events =

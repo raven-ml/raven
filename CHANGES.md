@@ -3166,6 +3166,10 @@ thread.
 
 ### Nx
 
+- Fix waits on AMD GPUs under the `amdgpu` driver that waited up to 200 ms
+  past a run's end once they slept: the driver ignored the GPU's interrupt
+  until the host armed its event's slot, which `Nx_amd_device` now does.
+
 - Add `nx.amd.packet`: the PM4, AQL and SDMA packets of AMD GPUs' queues and
   the GC registers they write, polymorphic in the values they place
   (`Nx_amd_packet.Pm4`, `Aql`, `Sdma`, `Gc`). `nx.amd.device`'s copies and

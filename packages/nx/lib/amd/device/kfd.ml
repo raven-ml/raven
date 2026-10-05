@@ -383,6 +383,23 @@ let event_page : (t * mem) option ref = ref None
 let event_kinds =
   D.[| kfd_ioc_event_signal; kfd_ioc_event_memory; kfd_ioc_event_hw_exception |]
 
+(* Arms [t]'s signal event. On an interrupt from the GPU, the driver sets a
+   signal event only if the event's slot of the event page holds a value other
+   than all ones, and puts all ones back as it does. The GPU's work interrupts
+   after it signals but writes no slot, so the host arms the slot: when the
+   event is created, and after each wait, before the caller reads the signal
+   word again. An interrupt then finds the slot armed, and sets the event or
+   wakes the wait, or comes between a wait and its arm, before a read that sees
+   the word the work wrote. A signal event's slot is its id. *)
+let arm t =
+  match !event_page with
+  | Some (_, { host = Some page; _ }) ->
+      let slot = t.events.(0) in
+      Mmio.set64 page (8 * slot) (Int64.of_int slot);
+      Mmio.barrier ()
+  | Some (_, { host = None; _ }) | None ->
+      invalid_arg "Kfd.arm: no event page that the host maps"
+
 let events t =
   if t.events = [||] then begin
     (match !event_page with
@@ -393,15 +410,18 @@ let events t =
             ignore (create_event t.fd D.kfd_ioc_event_signal m.handle);
             event_page := Some (t, m)
         | None -> failwith "no memory for the KFD event page"));
-    t.events <- Array.map (fun kind -> create_event t.fd kind 0L) event_kinds
+    t.events <- Array.map (fun kind -> create_event t.fd kind 0L) event_kinds;
+    arm t
   end
 
 (* New events for the queues of a GPU opened again after a fault. Its waits do
    not reset the exception events, so the old ones stay signaled with the
    fault. *)
 let renew_events t =
-  if t.events <> [||] then
-    t.events <- Array.map (fun kind -> create_event t.fd kind 0L) event_kinds
+  if t.events <> [||] then begin
+    t.events <- Array.map (fun kind -> create_event t.fd kind 0L) event_kinds;
+    arm t
+  end
 
 (* Creates a queue; the address of its doorbell. *)
 let create_queue t args =
@@ -429,8 +449,6 @@ let flush_hdp t =
 
 let flushes_hdp t = Option.is_some t.hdp
 
-(* Blocks at most [ms] on the GPU's events; raises the report of an exception of
-   this GPU. *)
 (* The compute units of each shader array that the amdgpu driver reports
    active: a bitmap per engine and array, as its device information lays them
    out. *)
@@ -477,8 +495,11 @@ let hold_stable_power t =
     t.stable <- true
   end
 
+(* Blocks at most [ms] on the GPU's events; raises the report of an exception of
+   this GPU. *)
 let sleep t ms =
-  if t.events <> [||] then
-    match wait_events t.fd t.events t.gpu_id ms with
-    | "" -> ()
-    | report -> failwith report
+  if t.events <> [||] then begin
+    let report = wait_events t.fd t.events t.gpu_id ms in
+    arm t;
+    if report <> "" then failwith report
+  end
