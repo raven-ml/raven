@@ -1060,17 +1060,22 @@ let memoized ~calls ~get ~set ~compute u =
           (toposort ~calls ~gate:(fun n -> Option.is_none (get n)) u);
       Option.get (get u)
 
-let backward_slice u =
-  match u.backward_slice_memo with
-  | Some s -> s
-  | None ->
-      let all = toposort ~calls:Skip u in
-      let s = Nodes.of_list (List.filter (fun n -> n != u) all) in
+(* A slice outside call bodies is kept with its node; one that enters them is
+   walked anew. *)
+let backward_slice ~calls u =
+  let walk () =
+    Nodes.of_list (List.filter (fun n -> n != u) (toposort ~calls u))
+  in
+  match (calls, u.backward_slice_memo) with
+  | Enter, _ -> walk ()
+  | Skip, Some s -> s
+  | Skip, None ->
+      let s = walk () in
       u.backward_slice_memo <- Some s;
       s
 
-let backward_slice_with_self u =
-  Nodes.of_list (u :: Nodes.to_list (backward_slice u))
+let backward_slice_with_self ~calls u =
+  Nodes.of_list (u :: Nodes.to_list (backward_slice ~calls u))
 
 (* The operations of [u] and of the nodes it reaches outside call bodies, as a
    property of each node, so that asking costs no walk of the slice. A node
@@ -1086,9 +1091,12 @@ let ops_reached u =
       Option.value ~default:all (List.find_opt (Op.Set.equal all) sets))
     u
 
-let op_in_backward_slice_with_self u ops =
-  let reached = ops_reached u in
-  List.exists (fun o -> Op.Set.mem o reached) ops
+let op_in_backward_slice_with_self ~calls u ops =
+  match calls with
+  | Enter -> List.exists (fun n -> List.mem n.op ops) (toposort ~calls u)
+  | Skip ->
+      let reached = ops_reached u in
+      List.exists (fun o -> Op.Set.mem o reached) ops
 
 (* A node is built after its sources, so ids grow along every edge: the search
    for [x] never enters a node built before it, and stops once it meets [x]. *)
@@ -4843,7 +4851,8 @@ let unbind var =
 
 let unbind_all u =
   let bound =
-    List.filter is_bound_var (Nodes.to_list (backward_slice_with_self u))
+    List.filter is_bound_var
+      (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
   in
   let pairs = List.map (fun x -> (x, unbound x)) bound in
   ( substitute ~calls:Skip ~walk:true u pairs,
@@ -4861,7 +4870,7 @@ let variables u =
            then
              Some (variable ~dtype:x.dtype "_device_num" (`Int Bigint.zero) (vmax x))
            else None)
-         (Nodes.to_list (backward_slice_with_self u)))
+         (Nodes.to_list (backward_slice_with_self ~calls:Skip u)))
   in
   let key x =
     let p = param_arg_of x in

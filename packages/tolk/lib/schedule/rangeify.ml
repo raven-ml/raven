@@ -133,7 +133,8 @@ let remove_bufferize src buf idx =
          [After] it orders, so the operations kept outside call bodies answer as
          a walk into them does. *)
       let reads_buffer r =
-        op_in_backward_slice_with_self (nth r 0) Op.[ Param; Stage; After ]
+        op_in_backward_slice_with_self ~calls:Skip (nth r 0)
+          Op.[ Param; Stage; After ]
       in
       if List.exists reads_buffer reduces then None
       else

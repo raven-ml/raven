@@ -11,7 +11,7 @@ let cpu = Ops.Single "CPU"
 
 (* The storage [u] makes that [linear] does not hold, the arenas. *)
 let arenas linear u =
-  let held = Ops.backward_slice_with_self linear in
+  let held = Ops.backward_slice_with_self ~calls:Skip linear in
   List.filter
     (fun n -> Ops.op n = Buffer && not (Ops.Nodes.mem n held))
     (Ops.toposort ~calls:Enter u)

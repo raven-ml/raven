@@ -64,7 +64,7 @@ module Scheduler = struct
     let ids =
       List.filter_map
         (fun u -> if op u = Op.Range then Some (List.hd (axis_id u)) else None)
-        (Nodes.to_list (backward_slice ast))
+        (Nodes.to_list (backward_slice ~calls:Skip ast))
     in
     let last = match ids with [] -> 0 | i :: is -> List.fold_left max i is in
     { ast; ren; applied_opts; next_range = last + 1 }
@@ -77,7 +77,7 @@ module Scheduler = struct
   let ast k = k.ast
   let ren k = k.ren
   let applied_opts k = k.applied_opts
-  let slice k = Nodes.to_list (backward_slice k.ast)
+  let slice k = Nodes.to_list (backward_slice ~calls:Skip k.ast)
   let of_op k o = List.filter (fun u -> op u = o) (slice k)
 
   (* always in order by axistype. void RANGEs are loops, not opt axes. the
@@ -355,7 +355,7 @@ module Scheduler = struct
     let readers =
       List.filter
         (fun x -> List.memq r (src x))
-        (Nodes.to_list (backward_slice_with_self u))
+        (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
     in
     let tile x =
       op x = Op.Floordiv
@@ -813,7 +813,7 @@ let apply_opts ?beam ~hand_coded ast ren =
              && match info with Some i -> i.applied_opts = [] | None -> true ->
           (* NOTE: hand_coded_optimizations doesn't support multiblock opts
              yet *)
-          if op_in_backward_slice_with_self ast [ Op.Stage ] then k
+          if op_in_backward_slice_with_self ~calls:Skip ast [ Op.Stage ] then k
           else hand_coded k
       | _ -> k
     in

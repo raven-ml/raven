@@ -55,8 +55,8 @@ let index_of x l =
   go 0 l
 
 let idx b = get_idx (nth b 1)
-let indexes r b = Nodes.mem r (backward_slice (idx b))
-let reads r b = Nodes.mem r (backward_slice_with_self (idx b))
+let indexes r b = Nodes.mem r (backward_slice ~calls:Skip (idx b))
+let reads r b = Nodes.mem r (backward_slice_with_self ~calls:Skip (idx b))
 
 (* Whether [r] is a term of the index [i], alone or times a constant. *)
 let term_of r i =
@@ -67,7 +67,7 @@ let term_of r i =
 
 (* The accesses [u] computes from, when it computes with no reduce. *)
 let accesses u =
-  let slice = Nodes.to_list (backward_slice_with_self u) in
+  let slice = Nodes.to_list (backward_slice_with_self ~calls:Skip u) in
   if List.exists (fun x -> op x = Op.Reduce) slice then []
   else List.filter (fun x -> op x = Op.Index) slice
 
@@ -328,7 +328,7 @@ let run o r =
   let readers =
     List.filter
       (fun u -> List.memq r (src u))
-      (Nodes.to_list (backward_slice_with_self o))
+      (Nodes.to_list (backward_slice_with_self ~calls:Skip o))
   in
   let divisor u =
     if op u = Op.Floordiv && op (nth u 1) = Op.Const then
@@ -395,7 +395,7 @@ let upcast_masked k =
     List.concat_map
       (fun u ->
         if op u = Op.Where then Nodes.to_list (ranges (nth u 0)) else [])
-      (Nodes.to_list (backward_slice (K.ast k)))
+      (Nodes.to_list (backward_slice ~calls:Skip (K.ast k)))
   in
   (* upcast leading axes first (hack-ish for winograd; we actually want to
      upcast masked axes with low stride first) *)

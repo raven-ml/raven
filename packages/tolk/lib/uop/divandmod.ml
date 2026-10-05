@@ -24,7 +24,7 @@ let num u = number (value u)
    becomes, and [sum] starts from the integer 0, as Python's does. *)
 let lit (n : V.t) = const (n :> Dtype.const)
 let sum us = List.fold_left add (lit zero) us
-let size u = Nodes.cardinal (backward_slice u)
+let size u = Nodes.cardinal (backward_slice ~calls:Skip u)
 let zero_like u = const_like u (zero :> Dtype.const)
 
 (* [first rules] is the result of the first rule that applies. *)

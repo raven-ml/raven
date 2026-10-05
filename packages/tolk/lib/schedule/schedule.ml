@@ -139,8 +139,8 @@ let create_schedule sched_sink =
           if a != u then
             List.iter
               (fun t ->
-                if t != k && not (Nodes.mem t (backward_slice k)) then
-                  add_child k t)
+                if t != k && not (Nodes.mem t (backward_slice ~calls:Skip k))
+                then add_child k t)
               write_kernels)
         (List.rev (Option.value (Tbl.find_opt writes s) ~default:[])))
     (List.rev !reads);

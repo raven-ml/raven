@@ -629,7 +629,8 @@ let scatter_dests =
             | dest :: rest
               when Indexing.is_gather dest
                    && (not (is_scattered dest))
-                   && op_in_backward_slice_with_self (nth dest 0) [ Op.Unshard ]
+                   && op_in_backward_slice_with_self ~calls:Skip (nth dest 0)
+                        [ Op.Unshard ]
               ->
                 if Option.is_some (tag dest) then
                   invalid_arg "a store through a gather that carries a tag";

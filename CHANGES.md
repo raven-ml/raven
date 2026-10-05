@@ -974,6 +974,9 @@ thread.
   `~calls:(Enter | Skip)` (new `Ops.calls`) in place of `?enter_calls`, whose
   default entered call bodies in the first two and `type_verify` and skipped
   them in the others.
+- **Breaking:** `Ops.backward_slice`, `Ops.backward_slice_with_self` and
+  `Ops.op_in_backward_slice_with_self` take the required `~calls`, as their
+  sibling walks do; they always left call bodies out.
 - `Symbolic.sym` folds the constants of nested integer maxima at the
   maximum's width: on uint8, `max(max(w, 1), -3)` became `max(w, 1)`, where
   the machine computes `max(w, 253)`.

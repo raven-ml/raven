@@ -570,7 +570,7 @@ let identity =
               ( Ops.ranges c,
                 Ops.vmin r,
                 Ops.shape r,
-                Ops.backward_slice c,
+                Ops.backward_slice ~calls:Skip c,
                 Ops.device c,
                 Ops.addrspace c );
             Weak.set cell 0 (Some r);
@@ -853,17 +853,21 @@ let graphs =
       prop "op_in_backward_slice_with_self is an operation of the slice"
         gen_dag (fun edges ->
           let nodes = Ops.toposort ~calls:Enter (dag edges) in
-          let slice u = Ops.Nodes.to_list (Ops.backward_slice_with_self u) in
-          let reference u ops =
-            List.exists (fun n -> List.mem (Ops.op n) ops) (slice u)
+          let slice calls u =
+            Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls u)
+          in
+          let reference calls u ops =
+            List.exists (fun n -> List.mem (Ops.op n) ops) (slice calls u)
           in
           List.iter
             (fun u ->
               List.iter
-                (fun ops ->
-                  equal bool (reference u ops)
-                    (Ops.op_in_backward_slice_with_self u ops))
-                [ [ Op.Add ]; [ Op.Param ]; [ Op.Sink ]; [ Op.Mul; Op.Add ] ])
+                (fun (calls, ops) ->
+                  equal bool (reference calls u ops)
+                    (Ops.op_in_backward_slice_with_self ~calls u ops))
+                (List.concat_map
+                   (fun ops -> [ (Ops.Skip, ops); (Ops.Enter, ops) ])
+                   Op.[ [ Add ]; [ Param ]; [ Sink ]; [ Mul; Add ] ]))
             nodes);
       test "toposort finishes sources left to right, then the node" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
@@ -899,32 +903,40 @@ let graphs =
           equal uops [ a; s ] (List.rev !seen);
           equal int 2 (Ops.topovisit s depth cache);
           equal int 2 (List.length !seen));
-      test "backward_slice is the reached nodes without the root or call bodies"
-        (fun () ->
+      test "backward_slice is the reached nodes without the root" (fun () ->
           let leaf = Ops.param 97 Int32 in
           let branch = Ops.O.(leaf + Ops.int 3) in
           let root = Ops.sink [ branch; leaf; branch ] in
           equal uops
             (List.filter (fun u -> u != root) (Ops.toposort ~calls:Enter root))
-            (Ops.Nodes.to_list (Ops.backward_slice root));
+            (Ops.Nodes.to_list (Ops.backward_slice ~calls:Skip root));
           equal uops
-            (root :: Ops.Nodes.to_list (Ops.backward_slice root))
-            (Ops.Nodes.to_list (Ops.backward_slice_with_self root));
+            (root :: Ops.Nodes.to_list (Ops.backward_slice ~calls:Skip root))
+            (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls:Skip root));
           let body = Ops.sink [ var "inside" 0 1 ] in
-          is_false (Ops.Nodes.mem body (Ops.backward_slice (Ops.call body []))));
+          let c = Ops.call body [] in
+          equal bool ~msg:"Skip" false
+            (Ops.Nodes.mem body (Ops.backward_slice ~calls:Skip c));
+          equal bool ~msg:"Enter after Skip" true
+            (Ops.Nodes.mem body (Ops.backward_slice ~calls:Enter c));
+          equal bool ~msg:"Skip after Enter" false
+            (Ops.Nodes.mem body (Ops.backward_slice ~calls:Skip c)));
       test
         "op_in_backward_slice_with_self looks at the node and what it reaches"
         (fun () ->
           let e = Ops.O.(var "a" 0 4 + Ops.int 1) in
-          is_true (Ops.op_in_backward_slice_with_self e [ Op.Add ]);
-          is_true (Ops.op_in_backward_slice_with_self e [ Op.Param; Op.Mul ]);
-          is_false (Ops.op_in_backward_slice_with_self e [ Op.Mul ]));
-      test "op_in_backward_slice_with_self does not enter call bodies"
+          let has ops = Ops.op_in_backward_slice_with_self ~calls:Skip e ops in
+          is_true (has [ Op.Add ]);
+          is_true (has [ Op.Param; Op.Mul ]);
+          is_false (has [ Op.Mul ]));
+      test "op_in_backward_slice_with_self enters call bodies only under Enter"
         (fun () ->
           let body = Ops.sink [ Ops.O.(var "inside" 0 1 * Ops.int 2) ] in
           let c = Ops.call body [ Ops.O.(var "arg" 0 1 + Ops.int 1) ] in
-          is_true (Ops.op_in_backward_slice_with_self c [ Op.Add ]);
-          is_false (Ops.op_in_backward_slice_with_self c [ Op.Mul ]));
+          let has calls ops = Ops.op_in_backward_slice_with_self ~calls c ops in
+          equal bool ~msg:"Skip, an argument's" true (has Skip [ Op.Add ]);
+          equal bool ~msg:"Skip, the body's" false (has Skip [ Op.Mul ]);
+          equal bool ~msg:"Enter, the body's" true (has Enter [ Op.Mul ]));
       test "reaches ~calls:Enter enters call bodies" (fun () ->
           let inside = var "inside" 0 1 in
           let c = Ops.call (Ops.sink [ inside ]) [] in

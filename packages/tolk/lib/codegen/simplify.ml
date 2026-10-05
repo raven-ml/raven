@@ -46,7 +46,8 @@ let pm_flatten_range =
 let count_divmod x =
   Nodes.fold
     (fun u n -> if op u = Op.Floordiv || op u = Op.Floormod then n + 1 else n)
-    (backward_slice x) 0
+    (backward_slice ~calls:Skip x)
+    0
 
 let merge_rewrite =
   Pattern_matcher.concat
@@ -60,7 +61,7 @@ let simplify_merge_adjacent u =
   let reduce_ranges =
     Nodes.fold
       (fun x acc -> if op x = Op.Reduce then ranges x :: acc else acc)
-      (backward_slice_with_self u)
+      (backward_slice_with_self ~calls:Skip u)
       []
   in
   let ended = ended_ranges u in
@@ -194,7 +195,7 @@ let pm_split_ranges =
 
 (* Reductions *)
 
-let no_range u = not (op_in_backward_slice_with_self u [ Op.Range ])
+let no_range u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Range ])
 
 let reduce_unparented red =
   match arg red with
@@ -439,7 +440,7 @@ let pm_reduce_simplify =
         ]);
     ]
 
-let no_load u = not (op_in_backward_slice_with_self u [ Op.Index ])
+let no_load u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Index ])
 
 (* Remove a reduction on a load, from indexing a tensor with another. *)
 let pm_load_collapse =

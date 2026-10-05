@@ -571,16 +571,17 @@ val topovisit : t -> (t -> 'a) -> 'a Tbl.t -> 'a
     reaches, each after its sources, and stored in [cache]. Nodes already in
     [cache] are not visited again. *)
 
-val backward_slice : t -> Nodes.t
-(** [backward_slice u] is the nodes [u] reaches, without [u], in {!toposort}'s
-    order, without entering call bodies. *)
+val backward_slice : calls:calls -> t -> Nodes.t
+(** [backward_slice ~calls u] is the nodes [u] reaches, without [u], in
+    {!toposort}[ ~calls]'s order. *)
 
-val backward_slice_with_self : t -> Nodes.t
-(** [backward_slice_with_self u] is [u] followed by [backward_slice u]. *)
+val backward_slice_with_self : calls:calls -> t -> Nodes.t
+(** [backward_slice_with_self ~calls u] is [u] followed by
+    [backward_slice ~calls u]. *)
 
-val op_in_backward_slice_with_self : t -> Op.t list -> bool
-(** [op_in_backward_slice_with_self u ops] is [true] iff [u] or a node of
-    [backward_slice u] has an operation in [ops]. *)
+val op_in_backward_slice_with_self : calls:calls -> t -> Op.t list -> bool
+(** [op_in_backward_slice_with_self ~calls u ops] is [true] iff [u] or a node of
+    [backward_slice ~calls u] has an operation in [ops]. *)
 
 val reaches : calls:calls -> t -> t -> bool
 (** [reaches ~calls u x] is [true] iff [x] is [u] or a node [u] reaches,

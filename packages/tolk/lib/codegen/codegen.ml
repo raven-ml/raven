@@ -371,7 +371,7 @@ let same_nodes s0 s1 =
 let merge_reduce_ends sink =
   (* merge ENDs that share the same range and nesting context (only those created by reduce_to_acc) *)
   (* ENDs at different nesting depths get cloned RANGEs so each RANGE maps to one END *)
-  let slice = Nodes.to_list (backward_slice sink) in
+  let slice = Nodes.to_list (backward_slice ~calls:Skip sink) in
   let range_to_ends =
     List.fold_left
       (fun acc u ->
@@ -621,7 +621,7 @@ let add_war_barrier end_ =
   let body = nth end_ 0 in
   if rngs = [] || is Op.Barrier body then None
   else
-    let sl = Nodes.to_list (backward_slice_with_self body) in
+    let sl = Nodes.to_list (backward_slice_with_self ~calls:Skip body) in
     (* only stores that are inside this loop body (not in the backward slice
        through AFTER chains from other loops) *)
     let store_bufs =
@@ -709,7 +709,7 @@ let int_vmax u = match vmax u with `Int z -> Bigint.to_int z | _ -> 0
    taken, which the numbering of the kernel's other variables keeps; their
    names, fresh among the kernel's variables, only name them in its source. *)
 let split_blocks sink =
-  let all = Nodes.to_list (backward_slice_with_self sink) in
+  let all = Nodes.to_list (backward_slice_with_self ~calls:Skip sink) in
   let slots, names =
     List.fold_left
       (fun (slots, names) u ->
@@ -725,7 +725,7 @@ let split_blocks sink =
     if List.mem name names then fresh ~i:(i + 1) base else name
   in
   let stores = List.filter (fun u -> is Op.Store u && writes_memory u) all in
-  let addressed r st = Nodes.mem r (backward_slice (nth st 0)) in
+  let addressed r st = Nodes.mem r (backward_slice ~calls:Skip (nth st 0)) in
   let qualifies r =
     is Op.Range r
     && axis_type r = Axis_type.Weak

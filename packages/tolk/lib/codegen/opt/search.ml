@@ -159,7 +159,7 @@ let too_many ~max_up ~max_lcl k =
       | _ -> None
     in
     Option.value ~default:1
-      (List.find_map tc (Nodes.to_list (backward_slice (K.ast k))))
+      (List.find_map tc (Nodes.to_list (backward_slice ~calls:Skip (K.ast k))))
   in
   let up =
     let lo, hi = size [ Upcast; Unroll ] in

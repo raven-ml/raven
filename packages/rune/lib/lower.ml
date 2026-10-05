@@ -826,8 +826,8 @@ let op : type r. scope -> r Nx.Op.t -> r =
       let k = n key and c = n counter in
       (* A parameter is an argument of a called body: a staged loop's trip. *)
       let varies u =
-        let slice = Ops.backward_slice_with_self u in
-        Ops.op_in_backward_slice_with_self u [ Op.Param ]
+        let slice = Ops.backward_slice_with_self ~calls:Skip u in
+        Ops.op_in_backward_slice_with_self ~calls:Skip u [ Op.Param ]
         || List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments
       in
       (* An empty draw has nothing to repeat. *)

@@ -186,7 +186,8 @@ let fix_store_hazard target src =
     let unsafe =
       Op.[ Permute; Flip ]
       @
-      if op_in_backward_slice_with_self target [ Op.Shrink ] then [ Op.Shrink ]
+      if op_in_backward_slice_with_self ~calls:Skip target [ Op.Shrink ] then
+        [ Op.Shrink ]
       else []
     in
     let reaches_base = Tbl.create 16 in

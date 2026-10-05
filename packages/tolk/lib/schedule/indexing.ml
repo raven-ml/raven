@@ -485,7 +485,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
              is scalar arithmetic, which may be an offset of a shard. *)
           if
             List.is_empty out_rngs
-            && not (op_in_backward_slice_with_self x [ Op.Reduce ])
+            && not (op_in_backward_slice_with_self ~calls:Skip x [ Op.Reduce ])
           then out_rngs
           else begin
             Tbl.replace rctx.realize_map x

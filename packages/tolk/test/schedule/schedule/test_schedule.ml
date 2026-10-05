@@ -565,7 +565,7 @@ let one_body_at_once () =
         first
         (Uops.numbered_like first r))
     results;
-  let held = Ops.backward_slice_with_self big in
+  let held = Ops.backward_slice_with_self ~calls:Skip big in
   let made =
     List.concat_map
       (fun r ->

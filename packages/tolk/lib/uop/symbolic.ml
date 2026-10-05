@@ -688,7 +688,7 @@ let fold_where_closure cond t f =
     (* INDEX gates are owned by the valid/store-coalescing machinery, leave them
        alone. Asked before the search below, which walks the branches. *)
     List.exists
-      (fun u -> op_in_backward_slice_with_self u [ Op.Index ])
+      (fun u -> op_in_backward_slice_with_self ~calls:Skip u [ Op.Index ])
       [ cond; t; f ]
   then None
   else if not (reaches ~calls:Enter t cond || reaches ~calls:Enter f cond)
@@ -1143,7 +1143,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
       (* For X0 + X1 + ... > 0, check whether every Xi > 0 gives the same
          simplified output. *)
       let candidate = List.map (fun t -> (t, fake i t one (vmax t))) terms in
-      let slice = backward_slice_with_self u in
+      let slice = backward_slice_with_self ~calls:Skip u in
       if List.exists (fun (t, _) -> not (Nodes.mem t slice)) candidate then u
       else
         let given (x, nx) =
@@ -1177,12 +1177,12 @@ let valid_priority v valids =
   match parse_valid v with
   | None -> (0, Bigint.zero)
   | Some (e, upper, c) ->
-      let depends o = e == o || Nodes.mem e (backward_slice o) in
+      let depends o = e == o || Nodes.mem e (backward_slice ~calls:Skip o) in
       (-List.length (List.filter depends valids), if upper then c else Bigint.neg c)
 
 let simplify_valid valid =
   (* this should only be for indexing, skip if there's a INDEX *)
-  if op_in_backward_slice_with_self valid [ Op.Index ] then None
+  if op_in_backward_slice_with_self ~calls:Skip valid [ Op.Index ] then None
   else
     let valids = split_uop valid Op.And in
     let keyed = List.map (fun v -> (valid_priority v valids, v)) valids in
@@ -1209,7 +1209,7 @@ let reduce_mul_chain r =
     when not (Dtype.is_float (dtype r)) -> (
       let ranges = List.tl (src r) in
       let outside m =
-        let parents = backward_slice m in
+        let parents = backward_slice ~calls:Skip m in
         (not (List.memq m ranges))
         && List.for_all (fun rg -> not (Nodes.mem rg parents)) ranges
         && (rop <> Op.Max || V.(vmin m >= zero))
@@ -1244,7 +1244,7 @@ let where_on_load cond buf idx or_cast =
   let idx_index =
     List.filter
       (fun u -> op u = Op.Index)
-      (Nodes.to_list (backward_slice_with_self idx))
+      (Nodes.to_list (backward_slice_with_self ~calls:Skip idx))
   in
   let idx_ranges = Ops.ranges idx in
   (* can move if: not a const, condition's ranges are subset of idx's ranges,
@@ -1255,7 +1255,7 @@ let where_on_load cond buf idx or_cast =
     && List.for_all
          (fun r -> Nodes.mem r idx_ranges)
          (Nodes.to_list (Ops.ranges c))
-    && List.for_all own (Nodes.to_list (backward_slice_with_self c))
+    && List.for_all own (Nodes.to_list (backward_slice_with_self ~calls:Skip c))
   in
   let clauses =
     List.filter (fun c -> not (List.memq c in_load)) where_clauses
@@ -1292,7 +1292,7 @@ let pm_move_where_on_load =
 let gated_given_valid cond x i =
   if
     (not (Dtype.equal (dtype x) Dtype.Weak_int))
-    || op_in_backward_slice_with_self x [ Op.Index ]
+    || op_in_backward_slice_with_self ~calls:Skip x [ Op.Index ]
   then None
   else Some (where cond (uop_given_valid ~try_simplex:false cond x) i)
 

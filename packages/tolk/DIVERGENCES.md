@@ -2891,7 +2891,8 @@ stores through a pad.
 - **Pinned by:** the Symbolic suite: `cost › sym's work on a chain of
   selections is linear in its length`; the Ops suite: `graphs ›
   op_in_backward_slice_with_self is an operation of the slice` and `›
-  op_in_backward_slice_with_self does not enter call bodies`; the rune bench's
+  op_in_backward_slice_with_self enters call bodies only under Enter`; the
+  rune bench's
   `Jit/jit-run-chain`.
 
 ## D95. A device's target follows from the device alone

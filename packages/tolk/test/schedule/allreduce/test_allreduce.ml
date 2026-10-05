@@ -50,7 +50,7 @@ let created ?(settings = []) red =
 
 (* The storage a graph makes that [red] does not hold. *)
 let made_storage red u =
-  let held = Ops.backward_slice_with_self red in
+  let held = Ops.backward_slice_with_self ~calls:Skip red in
   List.filter
     (fun n -> Ops.op n = Alloc && not (Ops.Nodes.mem n held))
     (Ops.toposort ~calls:Enter u)

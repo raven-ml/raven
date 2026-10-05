@@ -362,7 +362,8 @@ let reduce_simplifying =
           let u =
             reduce_simplify (sum (Ops.where Ops.O.(r < o) two zero) [ r ])
           in
-          is_true (Ops.Nodes.mem o (Ops.backward_slice_with_self u)));
+          is_true
+            (Ops.Nodes.mem o (Ops.backward_slice_with_self ~calls:Skip u)));
       test "a sum left with a range after collapsing is left" (fun () ->
           let u =
             sum

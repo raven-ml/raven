@@ -128,7 +128,7 @@ let cfg_context sink =
     in
     let add (x, y) =
       let r = nth y 1 in
-      if Nodes.mem r (backward_slice_with_self x) then
+      if Nodes.mem r (backward_slice_with_self ~calls:Skip x) then
         invalid_arg
           (Printf.sprintf "range %s would run after a loop that depends on it"
              (range_str r));

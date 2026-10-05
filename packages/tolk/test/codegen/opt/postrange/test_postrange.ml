@@ -328,7 +328,7 @@ let shifts =
           equal Dtypes.z (Bigint.of_int 4) (size amount);
           equal axis_type Weak (Ops.axis_type quotient);
           equal axis_type Upcast (Ops.axis_type amount);
-          let slice = Ops.backward_slice (K.ast k) in
+          let slice = Ops.backward_slice ~calls:Skip (K.ast k) in
           equal ~msg:"the axis is gone" bool false
             (Ops.Nodes.mem (axis 0) slice);
           equal ~msg:"its quotient is used" bool true
@@ -481,7 +481,7 @@ let evaluable c =
            (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false)
            c.opts))
   && not
-       (Ops.op_in_backward_slice_with_self (kernel c.kernel)
+       (Ops.op_in_backward_slice_with_self ~calls:Skip (kernel c.kernel)
           [ Op.Stage; Op.Backedge; Op.Special ])
 
 let iterations c =
