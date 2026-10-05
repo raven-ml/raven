@@ -40,6 +40,31 @@ let cover_outside n idx =
   cover "an index 2^32 from a position of its axis"
     (Array.exists (fun k -> Int.abs k >= far / 2) idx)
 
+(* Demands takes along [axis] of [s] that copy runs of several elements, and
+   takes that copy one element at a time. *)
+let cover_runs s axis =
+  let after = Array.sub s (axis + 1) (Array.length s - axis - 1) in
+  let runs = Array.exists (fun n -> n > 1) after in
+  cover "runs of several elements after the axis" runs;
+  cover "one element at a time" (not runs)
+
+(* [take ~axis ~indices:idx x] built from slices: the slice of [x] at each
+   index, zeros for one outside the axis, joined along it. *)
+let slices_named axis idx x =
+  let s = Nx.shape x in
+  let one = Array.copy s in
+  one.(axis) <- 1;
+  let piece k =
+    if k >= 0 && k < s.(axis) then
+      Nx.slice (List.init axis (Fun.const Nx.A) @ [ Nx.R (k, k + 1) ]) x
+    else Nx.zeros (Nx.dtype x) one
+  in
+  if Array.length idx = 0 then (
+    let none = Array.copy s in
+    none.(axis) <- 0;
+    Nx.zeros (Nx.dtype x) none)
+  else Nx.concatenate ~axis (List.map piece (Array.to_list idx))
+
 (* A shape, an axis of it, and indices along that axis. *)
 let along =
   let open Gen in
@@ -86,6 +111,7 @@ let gathers =
         along
         (fun (s, axis, idx) ->
           cover_outside s.(axis) idx;
+          cover_runs s axis;
           let r, t = tensor_of s in
           let out = Array.copy s in
           out.(axis) <- Array.length idx;
@@ -95,6 +121,79 @@ let gathers =
                  src.(axis) <- idx.(i.(axis));
                  read r src))
             (Ref.of_nx (Nx.take ~axis ~indices:(indices_tensor idx) t)));
+      prop "take along an axis of a view stepped backwards reads its elements"
+        along (fun (s, axis, idx) ->
+          cover_outside s.(axis) idx;
+          cover_runs s axis;
+          let wide = Array.copy s in
+          wide.(0) <- 2 * s.(0);
+          let r, t = tensor_of wide in
+          (* Every other position of the first dim, from the last one. *)
+          let spec = [ Nx.Rs ((2 * s.(0)) - 1, 0, -2) ] in
+          let r = Ref.slice spec r and t = Nx.slice spec t in
+          let out = Array.copy s in
+          out.(axis) <- Array.length idx;
+          equal ints
+            (Ref.init out (fun i ->
+                 let src = Array.copy i in
+                 src.(axis) <- idx.(i.(axis));
+                 read r src))
+            (Ref.of_nx (Nx.take ~axis ~indices:(indices_tensor idx) t)));
+      test "take split across workers reads every run" (fun () ->
+          (* 2^24 elements and more are split across workers. The axis's length
+             is prime, so ranges start inside a line of runs. *)
+          let a = 7 and b = 299_993 and n = 299_999 and r = 8 in
+          let index k =
+            if k mod 97 = 0 then b + (k mod 3)
+            else if k mod 89 = 0 then -1 - (k mod 2)
+            else k * 7919 mod b
+          in
+          let x =
+            Nx.reshape [| a; b; r |] (Nx.arange Nx.int32 0 (a * b * r) 1)
+          in
+          let indices =
+            Nx.init Nx.int64 [| n |] (fun k -> Int64.of_int (index k.(0)))
+          in
+          let y = Nx.take ~axis:1 ~indices x in
+          equal (array int) [| a; n; r |] (Nx.shape y);
+          let got = Bigarray.reshape_1 (Nx.to_bigarray y) (a * n * r) in
+          (* The first positions read wrong: position, value expected, value
+             read. *)
+          let wrong = ref [] in
+          for i = 0 to a - 1 do
+            for k = 0 to n - 1 do
+              let src = index k in
+              for j = 0 to r - 1 do
+                let at = (((i * n) + k) * r) + j in
+                let want =
+                  if src < 0 || src >= b then 0l
+                  else Int32.of_int ((((i * b) + src) * r) + j)
+                in
+                if (not (Int32.equal got.{at} want)) && List.length !wrong < 3
+                then wrong := (at, want, got.{at}) :: !wrong
+              done
+            done
+          done;
+          equal (list (triple int int32 int32)) [] (List.rev !wrong));
+      group "take along an axis reads the slices it names, of every dtype"
+        (List.map
+           (fun (Stored.Case c) ->
+             let drawn =
+               let open Gen in
+               let* x = c.tensors in
+               let x = if Nx.ndim x = 0 then Nx.reshape [| 1 |] x else x in
+               let* axis = int_range 0 (Nx.ndim x - 1) in
+               let+ idx =
+                 array ~size:(int_range 0 5)
+                   (int_range (-2) ((Nx.shape x).(axis) + 1))
+               in
+               (x, axis, idx)
+             in
+             prop c.name drawn (fun (x, axis, idx) ->
+                 cover_runs (Nx.shape x) axis;
+                 equal c.values (slices_named axis idx x)
+                   (Nx.take ~axis ~indices:(indices_tensor idx) x)))
+           (Stored.every @ Runtimes.narrow));
       group "take along one axis reads elements of every width"
         (List.map
            (fun (Int_dtype d) ->

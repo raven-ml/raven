@@ -108,17 +108,6 @@ static inline int64_t nx_c_dot(int ndim, const int64_t *coord,
   return s;
 }
 
-static bool nx_c_is_contiguous_off0(const nx_c_ndarray *a) {
-  if (a->offset != 0) return false;
-  int64_t s = 1;
-  for (int d = a->ndim - 1; d >= 0; d--) {
-    if (a->shape[d] == 1) continue; /* size-1 dims add no iteration */
-    if (a->strides[d] != s) return false;
-    s *= a->shape[d];
-  }
-  return true;
-}
-
 /* Policy + execution for the custom drivers: pick the thread count for `total`
    independent output units of `run_len` work each, cap it by the unit count
    (never more threads than units), and run the body through the engine's one
@@ -302,172 +291,195 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
    zero: the transpose of scatter's dropped write, and what compiled code
    computes. All-zero bytes are zero in every dtype this op accepts. Reads are
    disjoint across outputs, so the copy parallelizes freely over output
-   elements, and a packed output over the words nx_c_packed_gather writes. */
+   positions, and a packed output over the words nx_c_packed_gather writes.
 
-typedef struct {
-  const nx_c_ndarray *data;
-  const nx_c_ndarray *indices;
-  const nx_c_ndarray *out;
-  int axis;
-  int64_t esize;
-} nx_c_gather_ctx;
+   The output's dims are walked with those of 1 dropped and neighbours merged
+   where they compose in the data, the indices and the output, never across
+   [axis], which stays. When the last walked dim follows [axis], is dense in
+   the data and the output, and holds the index constant, as the broadcast
+   index of a [take ~axis] does, it leaves the walk as a run: one index load
+   moves the whole run. Each walked position is one work unit; a worker
+   unravels its first and walks the rest line by line along the last dim, by an
+   odometer over the dims before it.
 
-/* One axis of elements of 1, 2, 4 or 8 bytes, in that unsigned width. An index
-   outside the axis reads element 0 and keeps zero instead, so that indices in
-   and out of range take no branch each. */
-#define NX_C_GATHER_LINE(T)                                                    \
-  static void nx_c_gather_line_##T(const nx_c_gather_ctx *g, int64_t lo,       \
-                                   int64_t hi) {                               \
-    const nx_c_ndarray *data = g->data, *ix = g->indices, *out = g->out;      \
-    const int64_t *index = (const int64_t *)ix->data + ix->offset;            \
-    const T *d = (const T *)data->data + data->offset;                        \
-    T *o = (T *)out->data + out->offset;                                      \
-    int64_t n = data->shape[0], is = ix->strides[0], ds = data->strides[0],   \
-            os = out->strides[0];                                             \
-    for (int64_t it = lo; it < hi; it++) {                                    \
-      int64_t k = index[it * is];                                             \
-      bool kept = (uint64_t)k < (uint64_t)n;                                  \
-      T v = n > 0 ? d[(kept ? k : 0) * ds] : (T)0;                            \
-      o[it * os] = kept ? v : (T)0;                                           \
+     out [8; 1023; 256], take ~axis:1       walk [8; 1023], run 256
+     out [n], take ~axis:0                  walk [n], run 1
+     out [m; n], take_along_axis ~axis:0    walk [m; n], run 1 */
+
+typedef struct nx_c_gather_plan nx_c_gather_plan;
+
+/* [n] positions of the last walked dim from offsets [d], [o] and [i]. */
+typedef void nx_c_gather_line(const nx_c_gather_plan *p, int64_t n, int64_t d,
+                              int64_t o, int64_t i);
+
+/* Strides and offsets are in elements. [ds] is 0 at [axis], whose data term
+   is the index's, times [da]. */
+struct nx_c_gather_plan {
+  int ndim, axis; /* walked rank, >= 1, and the axis's place in the walk */
+  int64_t shape[NX_C_MAX_NDIM];
+  int64_t ds[NX_C_MAX_NDIM], os[NX_C_MAX_NDIM], is[NX_C_MAX_NDIM];
+  int64_t da, axis_len, run, esize;
+  int64_t d0, o0, i0;
+  const void *src;
+  void *dst;
+  const int64_t *index;
+  nx_c_gather_line *line;
+};
+
+/* Elements of 1, 2, 4 or 8 bytes, in that unsigned width. An index outside the
+   axis reads its element 0 and keeps zero instead, so that indices in and out
+   of range take no branch each. A line along [axis] reads only through the
+   index; one along another dim also steps the data. */
+#define NX_C_GATHER_LINE(T, name, DS, STEP)                                    \
+  static void nx_c_gather_##name##_##T(const nx_c_gather_plan *p, int64_t n,   \
+                                       int64_t d, int64_t o, int64_t i) {      \
+    const T *src = (const T *)p->src + d;                                      \
+    T *dst = (T *)p->dst + o;                                                  \
+    const int64_t *index = p->index + i;                                       \
+    int l = p->ndim - 1;                                                       \
+    int64_t len = p->axis_len, da = p->da, os = p->os[l], is = p->is[l];       \
+    DS                                                                         \
+    for (int64_t j = 0; j < n; j++) {                                          \
+      int64_t k = index[j * is];                                               \
+      bool kept = (uint64_t)k < (uint64_t)len;                                 \
+      T v = len > 0 ? src[STEP (kept ? k : 0) * da] : (T)0;                    \
+      dst[j * os] = kept ? v : (T)0;                                           \
     }                                                                          \
   }
-NX_C_GATHER_LINE(uint8_t)
-NX_C_GATHER_LINE(uint16_t)
-NX_C_GATHER_LINE(uint32_t)
-NX_C_GATHER_LINE(uint64_t)
+#define NX_C_GATHER_LINES(T)                                                   \
+  NX_C_GATHER_LINE(T, axis, , )                                                \
+  NX_C_GATHER_LINE(T, line, int64_t ds = p->ds[l];, j * ds +)
+NX_C_GATHER_LINES(uint8_t)
+NX_C_GATHER_LINES(uint16_t)
+NX_C_GATHER_LINES(uint32_t)
+NX_C_GATHER_LINES(uint64_t)
+#undef NX_C_GATHER_LINES
 #undef NX_C_GATHER_LINE
+
+/* Runs of [p->run] elements, moved as bytes: a run of several elements, or
+   one element of a width with no typed line. */
+static void nx_c_gather_line_runs(const nx_c_gather_plan *p, int64_t n,
+                                  int64_t d, int64_t o, int64_t i) {
+  const char *src = p->src;
+  char *dst = p->dst;
+  const int64_t *index = p->index + i;
+  int l = p->ndim - 1;
+  int64_t len = p->axis_len, da = p->da, ds = p->ds[l], os = p->os[l],
+          is = p->is[l], esize = p->esize;
+  size_t bytes = (size_t)p->run * (size_t)esize;
+  for (int64_t j = 0; j < n; j++) {
+    int64_t k = index[j * is];
+    char *to = dst + (o + j * os) * esize;
+    if ((uint64_t)k < (uint64_t)len)
+      memcpy(to, src + (d + j * ds + k * da) * esize, bytes);
+    else
+      memset(to, 0, bytes);
+  }
+}
+
+static void nx_c_gather_plan_of(const nx_c_ndarray *data,
+                                const nx_c_ndarray *indices,
+                                const nx_c_ndarray *out, int axis,
+                                int64_t esize, nx_c_gather_plan *p) {
+  int nd = 0;
+  p->axis = -1;
+  for (int d = 0; d < out->ndim; d++) {
+    int64_t n = out->shape[d];
+    int64_t ds = d == axis ? 0 : data->strides[d];
+    int64_t os = out->strides[d], is = indices->strides[d];
+    if (d != axis && n == 1) continue;
+    int last = nd - 1;
+    if (d != axis && nd > 0 && last != p->axis && p->ds[last] == ds * n &&
+        p->os[last] == os * n && p->is[last] == is * n) {
+      p->shape[last] *= n;
+      p->ds[last] = ds;
+      p->os[last] = os;
+      p->is[last] = is;
+      continue;
+    }
+    if (d == axis) p->axis = nd;
+    p->shape[nd] = n;
+    p->ds[nd] = ds;
+    p->os[nd] = os;
+    p->is[nd] = is;
+    nd++;
+  }
+
+  int last = nd - 1;
+  p->run = 1;
+  if (last > p->axis && p->is[last] == 0 && p->ds[last] == 1 &&
+      p->os[last] == 1) {
+    p->run = p->shape[last];
+    nd--;
+  }
+  p->ndim = nd;
+
+  p->da = data->strides[axis];
+  p->axis_len = data->shape[axis];
+  p->esize = esize;
+  p->d0 = data->offset;
+  p->o0 = out->offset;
+  p->i0 = indices->offset;
+  p->src = data->data;
+  p->dst = out->data;
+  p->index = indices->data;
+  if (p->run > 1) {
+    p->line = nx_c_gather_line_runs;
+    return;
+  }
+  bool along = p->axis == p->ndim - 1;
+  switch (esize) {
+  case 1:
+    p->line = along ? nx_c_gather_axis_uint8_t : nx_c_gather_line_uint8_t;
+    break;
+  case 2:
+    p->line = along ? nx_c_gather_axis_uint16_t : nx_c_gather_line_uint16_t;
+    break;
+  case 4:
+    p->line = along ? nx_c_gather_axis_uint32_t : nx_c_gather_line_uint32_t;
+    break;
+  case 8:
+    p->line = along ? nx_c_gather_axis_uint64_t : nx_c_gather_line_uint64_t;
+    break;
+  default: p->line = nx_c_gather_line_runs;
+  }
+}
 
 static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
-  const nx_c_gather_ctx *g = vctx;
-  const nx_c_ndarray *data = g->data;
-  const nx_c_ndarray *idx = g->indices;
-  const nx_c_ndarray *out = g->out;
-  int nd = out->ndim, axis = g->axis;
-  int64_t esize = g->esize, axis_len = data->shape[axis];
-  if (nd == 1) {
-    switch (esize) {
-    case 1: nx_c_gather_line_uint8_t(g, lo, hi); return;
-    case 2: nx_c_gather_line_uint16_t(g, lo, hi); return;
-    case 4: nx_c_gather_line_uint32_t(g, lo, hi); return;
-    case 8: nx_c_gather_line_uint64_t(g, lo, hi); return;
-    default: break;
-    }
-    /* One axis: positions are strides times the counter, with no unravel. */
-    for (int64_t it = lo; it < hi; it++) {
-      int64_t index = ((const int64_t *)idx->data)[idx->offset +
-                                                   it * idx->strides[0]];
-      int64_t out_off = out->offset + it * out->strides[0];
-      if (index < 0 || index >= axis_len)
-        nx_c_elem_zero(out->data, out_off, esize, 0);
-      else
-        nx_c_elem_move(out->data, out_off, data->data,
-                       data->offset + index * data->strides[0], esize, 0);
-    }
-    return;
-  }
-  int64_t coord[NX_C_MAX_NDIM], dcoord[NX_C_MAX_NDIM];
-  for (int64_t it = lo; it < hi; it++) {
-    nx_c_unravel(it, nd, out->shape, coord);
-    int64_t idx_off = idx->offset + nx_c_dot(nd, coord, idx->strides);
-    int64_t index = *(const int64_t *)((const char *)idx->data +
-                                        idx_off * (int64_t)sizeof(int64_t));
-    int64_t out_off = out->offset + nx_c_dot(nd, coord, out->strides);
-    if (index < 0 || index >= axis_len) {
-      nx_c_elem_zero(out->data, out_off, esize, 0);
-      continue;
-    }
-    for (int d = 0; d < nd; d++) dcoord[d] = (d == axis) ? index : coord[d];
-    int64_t data_off = data->offset + nx_c_dot(nd, dcoord, data->strides);
-    nx_c_elem_move(out->data, out_off, data->data, data_off, esize, 0);
-  }
-}
-
-/* Fast path: axis-0 2-D gather with a column-broadcast index (indices stride 1
-   == 0) into a contiguous out, from data whose rows are each one run, at any
-   row stride (a window view's rows overlap) — every output row is a whole
-   source row, so copy rows, not elements. The stride-0 column axis makes the
-   index constant across a row, so the body reads one index per row. */
-typedef struct {
-  const nx_c_ndarray *data;
-  const nx_c_ndarray *indices;
-  const nx_c_ndarray *out;
-  int64_t esize;
-  int64_t row_elems;
-} nx_c_gather_rows_ctx;
-
-static void nx_c_gather_rows_body(int64_t lo, int64_t hi, int worker,
-                                 void *vctx) {
-  (void)worker;
-  const nx_c_gather_rows_ctx *g = vctx;
-  const nx_c_ndarray *data = g->data;
-  const nx_c_ndarray *idx = g->indices;
-  const nx_c_ndarray *out = g->out;
-  int64_t axis_len = data->shape[0];
-  size_t row_bytes = (size_t)g->row_elems * g->esize;
-  for (int64_t i = lo; i < hi; i++) {
-    int64_t idx_off = idx->offset + i * idx->strides[0];
-    int64_t index = *(const int64_t *)((const char *)idx->data +
-                                       idx_off * (int64_t)sizeof(int64_t));
-    int64_t dst = out->offset + i * out->strides[0];
-    char *o = (char *)out->data + dst * g->esize;
-    if (index < 0 || index >= axis_len) {
-      memset(o, 0, row_bytes);
-      continue;
-    }
-    int64_t src = data->offset + index * data->strides[0];
-    memcpy(o, (const char *)data->data + src * g->esize, row_bytes);
-  }
-}
-
-/* Fast path: a gather whose elements after [axis] are one dense run in both
-the data and the output (the innermost dims are stride 1) and whose index is
-constant along that run, as a broadcast index of a [take ~axis] is. Every
-outer coordinate copies a whole run, at one index load for the run, instead of
-one out-of-range test and one move per element; the outer coordinates are
-walked by an odometer, so a run costs no unravel. The run's length is the
-product of the dims after [axis], and [outer] is the number of distinct
-coordinates before it, which is one work unit. */
-typedef struct {
-  const nx_c_ndarray *data;
-  const nx_c_ndarray *indices;
-  const nx_c_ndarray *out;
-  int axis;
-  int64_t esize;
-  int64_t run_elems;
-} nx_c_gather_runs_ctx;
-
-static void nx_c_gather_runs_body(int64_t lo, int64_t hi, int worker,
-                                 void *vctx) {
-  (void)worker;
-  const nx_c_gather_runs_ctx *g = vctx;
-  const nx_c_ndarray *data = g->data, *idx = g->indices, *out = g->out;
-  int axis = g->axis;
-  int64_t esize = g->esize, run = g->run_elems;
-  int64_t axis_len = data->shape[axis], n_idx = out->shape[axis];
-  size_t run_bytes = (size_t)run * (size_t)esize;
+  const nx_c_gather_plan *p = vctx;
+  int last = p->ndim - 1;
   int64_t coord[NX_C_MAX_NDIM];
-  for (int64_t o = lo; o < hi; o++) {
-    nx_c_unravel(o, axis, out->shape, coord);
-    int64_t d_base = data->offset, o_base = out->offset,
-            i_base = idx->offset;
-    for (int d = 0; d < axis; d++) {
-      d_base += coord[d] * data->strides[d];
-      o_base += coord[d] * out->strides[d];
-      i_base += coord[d] * idx->strides[d];
-    }
-    for (int64_t k = 0; k < n_idx; k++) {
-      int64_t index = *(const int64_t *)((const char *)idx->data +
-                                         i_base * (int64_t)sizeof(int64_t));
-      char *dst = (char *)out->data + o_base * esize;
-      if (index < 0 || index >= axis_len) {
-        memset(dst, 0, run_bytes);
-      } else {
-        int64_t src = d_base + index * data->strides[axis];
-        memcpy(dst, (const char *)data->data + src * esize, run_bytes);
+  nx_c_unravel(lo, p->ndim, p->shape, coord);
+  int64_t d = p->d0 + nx_c_dot(p->ndim, coord, p->ds);
+  int64_t o = p->o0 + nx_c_dot(p->ndim, coord, p->os);
+  int64_t i = p->i0 + nx_c_dot(p->ndim, coord, p->is);
+
+  for (int64_t r = lo; r < hi;) {
+    int64_t n = p->shape[last] - coord[last];
+    if (n > hi - r) n = hi - r;
+    p->line(p, n, d, o, i);
+    r += n;
+    if (r == hi) break;
+
+    /* The line is done: back to the start of its dim, at the next position of
+       the dims before it. */
+    d -= coord[last] * p->ds[last];
+    o -= coord[last] * p->os[last];
+    i -= coord[last] * p->is[last];
+    coord[last] = 0;
+    for (int k = last - 1; k >= 0; k--) {
+      if (++coord[k] < p->shape[k]) {
+        d += p->ds[k];
+        o += p->os[k];
+        i += p->is[k];
+        break;
       }
-      o_base += out->strides[axis];
-      i_base += idx->strides[axis];
+      int64_t back = p->shape[k] - 1;
+      coord[k] = 0;
+      d -= back * p->ds[k];
+      o -= back * p->os[k];
+      i -= back * p->is[k];
     }
   }
 }
@@ -485,43 +497,10 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
   int64_t total = nx_c_prod(out->ndim, out->shape);
   if (total == 0) return NX_C_OK;
 
-  /* Whether the dims after [axis] are one dense run in both the data and the
-     output, and the index is one per run (constant along it): the condition of
-     the run-copy path below. */
-  bool dense_tail = true;
-  int64_t s = 1;
-  for (int d = out->ndim - 1; d > axis; d--) {
-    if (data->strides[d] != s || out->strides[d] != s ||
-        indices->strides[d] != 0) {
-      dense_tail = false;
-      break;
-    }
-    s *= out->shape[d];
-  }
-
-  if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
-      data->shape[1] == out->shape[1] &&
-      (data->shape[1] == 1 || data->strides[1] == 1) &&
-      nx_c_is_contiguous_off0(out)) {
-    int64_t rows = out->shape[0], row_elems = out->shape[1];
-    nx_c_gather_rows_ctx g = {data, indices, out, esize, row_elems};
-    int64_t bytes = 2 * rows * row_elems * esize;
-    nx_c_move_dispatch(NX_C_COST_BANDWIDTH, rows, row_elems, bytes,
-                      nx_c_gather_rows_body, &g);
-  } else if (dense_tail) {
-    /* A dense tail after [axis]: copy runs, not elements. */
-    int64_t run_elems = 1;
-    for (int d = axis + 1; d < out->ndim; d++) run_elems *= out->shape[d];
-    int64_t outer = nx_c_prod(axis, out->shape);
-    nx_c_gather_runs_ctx g = {data, indices, out, axis, esize, run_elems};
-    int64_t bytes = 2 * total * esize;
-    nx_c_move_dispatch(NX_C_COST_BANDWIDTH, outer, run_elems * out->shape[axis],
-                      bytes, nx_c_gather_runs_body, &g);
-  } else {
-    nx_c_gather_ctx g = {data, indices, out, axis, esize};
-    int64_t bytes = 2 * total * esize;
-    nx_c_move_dispatch(NX_C_COST_BANDWIDTH, total, 1, bytes, nx_c_gather_body, &g);
-  }
+  nx_c_gather_plan p;
+  nx_c_gather_plan_of(data, indices, out, axis, esize, &p);
+  nx_c_move_dispatch(NX_C_COST_BANDWIDTH, total / p.run, p.run,
+                    2 * total * esize, nx_c_gather_body, &p);
   return NX_C_OK;
 }
 

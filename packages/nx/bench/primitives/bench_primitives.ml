@@ -126,6 +126,16 @@ let gather =
     row "float32-rows-1.25e6x8" 1_250_000
       (fun () -> rows 1_250_000)
       (take ~axis:0);
+    row "float32-axis1-8x1024x256" (8 * 1023)
+      (fun () ->
+        ( Nx.reshape [| 8; 1024; 256 |] (uniform_float32 (8 * 1024 * 256)),
+          indices 1023 1024 ))
+      (take ~axis:1);
+    row "float32-along-axis1-2000x2000" 2000
+      (fun () ->
+        let x = Nx.reshape [| 2000; 2000 |] (uniform_float32 (2000 * 2000)) in
+        (x, Nx.argsort ~axis:1 x))
+      (fun (x, indices) -> Nx.take_along_axis ~axis:1 ~indices x);
   ]
 
 let mask n = Nx.less_s (uniform_float64 n) 0.5

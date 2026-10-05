@@ -3148,6 +3148,11 @@ thread.
 
 ### Nx
 
+- `Nx.take` and `Nx.take_along_axis` on the CPU walk their output without
+  recomputing each element's position, and `Nx.take ~axis` copies the
+  contiguous elements after `axis` at one index read: a take along axis 1 of
+  `[8; 1024; 256]` runs 50 times faster, a `take_along_axis` of
+  `[2000; 2000]` 7 to 9 times.
 - `int4` and `uint4` compute as integers modulo 16, as every integer dtype
   computes modulo its width, where every function but casts and moves raised.
 - `Nx.mod_` by zero is its dividend at every integer width, where it was 0, so

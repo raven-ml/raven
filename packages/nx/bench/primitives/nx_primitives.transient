@@ -22,6 +22,8 @@ gather/float32-1e7-monotone	0	0.0
 gather/float64-1e7-random	0	0.0
 gather/float32-rows-4e4x8	0	0.0
 gather/float32-rows-1.25e6x8	0	0.0
+gather/float32-axis1-8x1024x256	0	0.0
+gather/float32-along-axis1-2000x2000	0	0.0
 positions/mask50-4e4	1624752	40.6
 positions/mask50-1e7	400117984	40.0
 positions/counts-1e7	450116176	45.0

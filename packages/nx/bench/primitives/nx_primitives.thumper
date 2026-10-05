@@ -121,6 +121,8 @@ unique/int64-4e4-1e4	wall_time	batch=32	n=20	3.026e-04	3.016e-04 3.016e-04 3.018
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 14.7 on 10 cores
 # forced: blessed arange/int64-4e4 arange/int64-1e7 arange/int32-1e7 scatter/add-float64-4e4-into-1e2 scatter/add-float64-1e7-into-1e2 scatter/add-float64-1e7-into-1e6 scatter/set-float64-4e4-into-4e4 scatter/set-float64-1e7-into-1e6 scatter/max-float64-4e4-into-1e2 scatter/max-float64-1e7-into-1e2 scatter/max-float64-1e7-into-1e6 scatter/add-float16-1e7-into-1e6 gather/float32-4e4-monotone gather/float32-1e7-monotone gather/float64-1e7-random gather/float32-rows-4e4x8 gather/float32-rows-1.25e6x8 unique/int64-1e6-1e2 ragged-take/strings6-4e4-permuted ragged-take/strings6-4e4-permuted-runcopy ragged/v-strings12-1e7 under load 7.5 on 10 cores
+# forced: blessed gather/float32-axis1-8x1024x256 under load 8.4 on 10 cores
+# forced: blessed gather/float32-along-axis1-2000x2000 under load 6.3 on 10 cores
 
 arange/int32-1e7	alloc_words	exact	1627
 arange/int32-1e7	wall_time	batch=1	n=20	2.933e-03	2.871e-03 2.884e-03 2.895e-03 2.897e-03 2.904e-03 2.905e-03 2.914e-03 2.916e-03 2.923e-03 2.926e-03 2.940e-03 2.941e-03 2.943e-03 2.943e-03 2.944e-03 2.945e-03 2.948e-03 2.950e-03 2.980e-03 3.112e-03
@@ -170,6 +172,10 @@ gather/float32-1e7-monotone	alloc_words	exact	89
 gather/float32-1e7-monotone	wall_time	batch=1	n=20	5.482e-03	5.105e-03 5.159e-03 5.176e-03 5.179e-03 5.308e-03 5.321e-03 5.327e-03 5.384e-03 5.417e-03 5.429e-03 5.535e-03 5.551e-03 5.552e-03 5.569e-03 5.606e-03 5.615e-03 5.658e-03 5.672e-03 5.861e-03 3.886e-02
 gather/float32-4e4-monotone	alloc_words	exact	89
 gather/float32-4e4-monotone	wall_time	batch=256	n=20	2.854e-05	2.830e-05 2.835e-05 2.837e-05 2.837e-05 2.839e-05 2.840e-05 2.842e-05 2.849e-05 2.849e-05 2.851e-05 2.856e-05 2.859e-05 2.863e-05 2.871e-05 2.882e-05 2.896e-05 2.897e-05 2.914e-05 2.937e-05 2.950e-05
+gather/float32-along-axis1-2000x2000	alloc_words	exact	71
+gather/float32-along-axis1-2000x2000	wall_time	batch=2	n=20	2.234e-03	2.182e-03 2.193e-03 2.193e-03 2.200e-03 2.203e-03 2.215e-03 2.217e-03 2.222e-03 2.231e-03 2.232e-03 2.235e-03 2.238e-03 2.246e-03 2.247e-03 2.250e-03 2.254e-03 2.261e-03 2.273e-03 2.296e-03 2.321e-03
+gather/float32-axis1-8x1024x256	alloc_words	exact	139
+gather/float32-axis1-8x1024x256	wall_time	batch=8	n=20	6.563e-04	6.061e-04 6.197e-04 6.281e-04 6.342e-04 6.413e-04 6.479e-04 6.484e-04 6.523e-04 6.548e-04 6.558e-04 6.569e-04 6.628e-04 6.649e-04 6.783e-04 6.812e-04 7.099e-04 7.962e-04 8.063e-04 8.358e-04 8.856e-04
 gather/float32-rows-1.25e6x8	alloc_words	exact	133
 gather/float32-rows-1.25e6x8	wall_time	batch=1	n=20	1.754e-02	1.608e-02 1.627e-02 1.664e-02 1.676e-02 1.684e-02 1.701e-02 1.705e-02 1.706e-02 1.729e-02 1.740e-02 1.768e-02 1.776e-02 1.779e-02 1.788e-02 1.849e-02 1.861e-02 1.876e-02 1.933e-02 1.958e-02 2.187e-02
 gather/float32-rows-4e4x8	alloc_words	exact	133
