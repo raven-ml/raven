@@ -113,6 +113,19 @@ answer, decide it and say why; ask only for the maintainer's own calls.
   as such.
 - **Fix upstream.** A capability missing in nx, rune or tolk is built there,
   never worked around downstream.
+- **Argue for the most elegant shape.** Each new concept (a module type,
+  functor, scope, cache, mode or optional argument) weighs its alternatives —
+  plain data, an existing noun, composition, not exporting it — and shows the
+  chosen one captures the problem's structure with the fewest concepts and each
+  fact in one place. The simplest mechanism often wins, but not when it
+  scatters a fact across callers. A design that can't make the case is not
+  ready.
+- **Review the shape before landing.** A change to a public `.mli` lands only
+  after a review of its API shape against this section. Passing tests and a
+  correctness review don't make it ready.
+- **Briefs state problems.** A brief to an agent gives the problem, its
+  constraints and the decisions already made, never a mechanism nobody
+  weighed.
 
 ## Code and docs
 
