@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 /* nx_c_packed.c — the sub-byte family's reader, writer and kernels: copy,
-   gather and the logical operations of bit. nx_c_packed.h states the storage
-   and the rules every load and store keeps. The casts to and from bit live
-   with the other casts, in nx_c_map.c. */
+   gather, pad, and the logical operations and reductions of bit.
+   nx_c_packed.h states the storage and the rules every load and store keeps.
+   The casts to and from bit live with the other casts, in nx_c_map.c. */
 
 #include "nx_c_packed.h"
 
@@ -63,7 +63,17 @@ uint64_t nx_c_packed_read_any(const nx_c_packed_src *s, int64_t e, int k) {
       v = nx_c_bits_load(s->base, pos * bits, run * bits);
     else if (s_in == 0)
       v = nx_c_packed_splat(nx_c_packed_get(s->base, pos, bits), bits, run);
-    else {
+    else if (s_in == -1)
+      v = nx_c_packed_reverse(
+          nx_c_bits_load(s->base, (pos - run + 1) * bits, run * bits), bits,
+          run);
+    else if (bits == 1) {
+      v = 0;
+      for (int j = 0; j < run; j++) {
+        int64_t p = pos + j * s_in;
+        v |= (uint64_t)((s->base[p >> 3] >> (p & 7)) & 1) << j;
+      }
+    } else {
       v = 0;
       for (int j = 0; j < run; j++)
         v |= (uint64_t)nx_c_packed_get(s->base, pos + j * s_in, bits)
@@ -191,14 +201,15 @@ static uint64_t nx_c_packed_copy_fill(const void *ctx, int64_t e, int k) {
 }
 
 /* Whole words of a copy: the source's bytes when it is one run starting on a
-   byte, its words through the funnel shift when it starts inside one. */
+   byte, its words through the funnel shift when it starts inside one, and
+   through the reader otherwise. */
 static void nx_c_packed_copy_words(const void *ctx, int64_t e, int64_t n,
                                    uint8_t *dst) {
   const nx_c_packed_src *s = ctx;
   int per = 64 / s->bits;
   if (!nx_c_packed_dense(s)) {
     for (int64_t j = 0; j < n; j++)
-      nx_c_st64(dst + 8 * j, nx_c_packed_read_any(s, e + j * per, per));
+      nx_c_st64(dst + 8 * j, nx_c_packed_read(s, e + j * per, per));
     return;
   }
   int64_t bit = (s->offset + e) * s->bits;
@@ -305,44 +316,63 @@ static uint64_t nx_c_bit_logic_fill(const void *vctx, int64_t e, int k) {
   return 0;
 }
 
-/* An operand that is one run or one element broadcast: a word of it from
-   element e. */
+/* A word from element e of an operand that is one run or one element
+   broadcast, and of one that may also be a run reversed. The second costs a
+   branch the first does not pay. */
 static inline uint64_t nx_c_bit_word(const nx_c_packed_src *s, int64_t e) {
   if (s->strides[0] == 0)
     return nx_c_packed_get(s->base, s->offset, 1) ? ~(uint64_t)0 : 0;
   return nx_c_bits_load(s->base, s->offset + e, 64);
 }
 
-#define NX_C_BIT_LOGIC_WORDS(name, OP)                                         \
+static inline uint64_t nx_c_bit_word_any(const nx_c_packed_src *s,
+                                         int64_t e) {
+  if (s->strides[0] != -1) return nx_c_bit_word(s, e);
+  return nx_c_packed_reverse(nx_c_bits_load(s->base, s->offset - e - 63, 64),
+                             1, 64);
+}
+
+#define NX_C_BIT_LOGIC_WORDS(name, WORD, OP)                                   \
   static void name(const nx_c_bit_logic_ctx *c, int64_t e, int64_t n,          \
                    uint8_t *dst) {                                             \
     for (int64_t j = 0; j < n; j++) {                                          \
-      uint64_t a = nx_c_bit_word(&c->a, e + 64 * j);                           \
-      uint64_t b = nx_c_bit_word(&c->b, e + 64 * j);                           \
+      uint64_t a = WORD(&c->a, e + 64 * j);                                    \
+      uint64_t b = WORD(&c->b, e + 64 * j);                                    \
       nx_c_st64(dst + 8 * j, OP);                                              \
     }                                                                          \
   }
-NX_C_BIT_LOGIC_WORDS(nx_c_bit_and_words, a & b)
-NX_C_BIT_LOGIC_WORDS(nx_c_bit_or_words, a | b)
-NX_C_BIT_LOGIC_WORDS(nx_c_bit_xor_words, a ^ b)
+NX_C_BIT_LOGIC_WORDS(nx_c_bit_and_words, nx_c_bit_word, a & b)
+NX_C_BIT_LOGIC_WORDS(nx_c_bit_or_words, nx_c_bit_word, a | b)
+NX_C_BIT_LOGIC_WORDS(nx_c_bit_xor_words, nx_c_bit_word, a ^ b)
+NX_C_BIT_LOGIC_WORDS(nx_c_bit_and_words_any, nx_c_bit_word_any, a & b)
+NX_C_BIT_LOGIC_WORDS(nx_c_bit_or_words_any, nx_c_bit_word_any, a | b)
+NX_C_BIT_LOGIC_WORDS(nx_c_bit_xor_words_any, nx_c_bit_word_any, a ^ b)
 #undef NX_C_BIT_LOGIC_WORDS
 
 /* Whole words of two operands each one run or one element broadcast, word by
-   word; any other layout element by element. */
+   word, and of operands of which one is a run reversed likewise; any other
+   layout through the reader. */
 static void nx_c_bit_logic_words(const void *vctx, int64_t e, int64_t n,
                                  uint8_t *dst) {
   const nx_c_bit_logic_ctx *c = vctx;
-  if (!(c->a.ndim == 1 && c->b.ndim == 1 &&
-        (c->a.strides[0] == 1 || c->a.strides[0] == 0) &&
-        (c->b.strides[0] == 1 || c->b.strides[0] == 0))) {
+  int64_t sa = c->a.strides[0], sb = c->b.strides[0];
+  if (c->a.ndim != 1 || c->b.ndim != 1 || sa < -1 || sa > 1 || sb < -1 ||
+      sb > 1) {
     for (int64_t j = 0; j < n; j++)
       nx_c_st64(dst + 8 * j, nx_c_bit_logic_fill(c, e + 64 * j, 64));
     return;
   }
+  bool reversed = sa == -1 || sb == -1;
   switch (c->op) {
-  case NX_C_BIT_AND: nx_c_bit_and_words(c, e, n, dst); return;
-  case NX_C_BIT_OR: nx_c_bit_or_words(c, e, n, dst); return;
-  case NX_C_BIT_XOR: nx_c_bit_xor_words(c, e, n, dst); return;
+  case NX_C_BIT_AND:
+    (reversed ? nx_c_bit_and_words_any : nx_c_bit_and_words)(c, e, n, dst);
+    return;
+  case NX_C_BIT_OR:
+    (reversed ? nx_c_bit_or_words_any : nx_c_bit_or_words)(c, e, n, dst);
+    return;
+  case NX_C_BIT_XOR:
+    (reversed ? nx_c_bit_xor_words_any : nx_c_bit_xor_words)(c, e, n, dst);
+    return;
   }
 }
 
@@ -361,4 +391,317 @@ nx_c_status nx_c_bit_logic(nx_c_bit_op op, const nx_c_ndarray *out,
   for (int d = 0; d < out->ndim; d++) total *= out->shape[d];
   nx_c_packed_filler f = {nx_c_bit_logic_fill, nx_c_bit_logic_words, &c};
   return nx_c_packed_write(out, 1, &f, 3 * ((total + 7) / 8));
+}
+
+/* Reduce: or (max, any) and and (min, all) of bit along axes. The view is
+   split in two: the kept axes, in order, which number the outputs, and the
+   reduced axes, which an output's elements range over. The order of the
+   reduced axes does not change an or or an and, so they are sorted by
+   decreasing stride and turned to positive strides, which makes the reduced
+   block of a transposed or flipped view one run when its storage is.
+
+   An output reads its block a run at a time and stops at its first decisive
+   word: a set bit for or, a clear one for and. When the block is not one run
+   but the kept axes are, reversed or not, as for the rows of [h; w] along
+   axis 0, a word of outputs is reduced at once: the or (and) of the words of kept elements at
+   each point of the block, stopping when every output is decided. */
+
+typedef struct {
+  nx_c_packed_src kept;    /* the kept axes, from the block's first element */
+  nx_c_packed_src reduced; /* the reduced axes, from position 0 */
+  int64_t size;            /* elements in a block */
+  uint64_t flip;           /* 0 for or, ~0 for and: a decisive bit is 1 */
+  bool across;             /* a word of outputs at once */
+} nx_c_bit_reduce_ctx;
+
+/* The storage position of element e of s. */
+static int64_t nx_c_packed_pos(const nx_c_packed_src *s, int64_t e) {
+  int last = s->ndim - 1;
+  int64_t n_in = s->shape[last];
+  return nx_c_packed_row(s, e / n_in) + (e % n_in) * s->strides[last];
+}
+
+/* Whether bits [bit, bit + n) of the storage at base hold a bit that is 1
+   after xor with flip. Whole words are read 8 at a time between the partial
+   ones at the ends. */
+static bool nx_c_bits_decisive(const uint8_t *base, int64_t bit, int64_t n,
+                               uint64_t flip) {
+  int64_t end = bit + n;
+  if (n == 0) return false;
+  if (bit & 63) {
+    int k = (int)(64 - (bit & 63) < n ? 64 - (bit & 63) : n);
+    if ((nx_c_bits_load(base, bit, k) ^ flip) & nx_c_low_bits(k)) return true;
+    bit += k;
+  }
+  for (; bit + 512 <= end; bit += 512) {
+    const uint8_t *p = base + (bit >> 3);
+    uint64_t any = 0;
+    for (int j = 0; j < 8; j++) any |= nx_c_ld64(p + 8 * j) ^ flip;
+    if (any) return true;
+  }
+  for (; bit + 64 <= end; bit += 64)
+    if (nx_c_ld64(base + (bit >> 3)) ^ flip) return true;
+  if (bit < end) {
+    int k = (int)(end - bit);
+    if ((nx_c_bits_load(base, bit, k) ^ flip) & nx_c_low_bits(k)) return true;
+  }
+  return false;
+}
+
+/* Whether the block of output o holds a decisive bit. */
+static bool nx_c_bit_block(const nx_c_bit_reduce_ctx *c, int64_t o) {
+  nx_c_packed_src r = c->reduced;
+  r.offset = nx_c_packed_pos(&c->kept, o);
+  if (nx_c_packed_dense(&r))
+    return nx_c_bits_decisive(r.base, r.offset, c->size, c->flip);
+  for (int64_t i = 0; i < c->size; i += 64) {
+    int k = (int)(c->size - i < 64 ? c->size - i : 64);
+    if ((nx_c_packed_read(&r, i, k) ^ c->flip) & nx_c_low_bits(k)) return true;
+  }
+  return false;
+}
+
+static uint64_t nx_c_bit_reduce_fill(const void *vctx, int64_t e, int k) {
+  const nx_c_bit_reduce_ctx *c = vctx;
+  uint64_t all = nx_c_low_bits(k), found = 0;
+  if (!c->across) {
+    for (int j = 0; j < k; j++)
+      found |= (uint64_t)nx_c_bit_block(c, e + j) << j;
+    return found ^ (c->flip & all);
+  }
+  /* The points of the block by an odometer over the reduced axes. */
+  const nx_c_packed_src *r = &c->reduced;
+  nx_c_packed_src kept = c->kept;
+  int64_t at[NX_C_MAX_NDIM] = {0};
+  for (int64_t i = 0; i < c->size && found != all; i++) {
+    found |= (nx_c_packed_read(&kept, e, k) ^ c->flip) & all;
+    for (int d = r->ndim - 1; d >= 0; d--) {
+      kept.offset += r->strides[d];
+      if (++at[d] < r->shape[d]) break;
+      kept.offset -= at[d] * r->strides[d];
+      at[d] = 0;
+    }
+  }
+  return found ^ (c->flip & all);
+}
+
+nx_c_status nx_c_bit_reduce(nx_c_bit_op op, const nx_c_ndarray *out,
+                            const nx_c_ndarray *in, const int *axes, int n) {
+  bool reduced[NX_C_MAX_NDIM] = {false};
+  for (int i = 0; i < n; i++) {
+    if (axes[i] < 0 || axes[i] >= in->ndim || reduced[axes[i]])
+      return NX_C_ERR_AXES;
+    reduced[axes[i]] = true;
+  }
+  if (out->ndim != in->ndim - n) return NX_C_ERR_OUT_RANK;
+
+  nx_c_ndarray kept = *in, block = *in;
+  kept.ndim = 0;
+  block.ndim = 0;
+  block.offset = 0;
+  int64_t size = 1;
+  for (int d = 0; d < in->ndim; d++) {
+    int64_t len = in->shape[d], stride = in->strides[d];
+    if (!reduced[d]) {
+      if (out->shape[kept.ndim] != len) return NX_C_ERR_SHAPE;
+      kept.shape[kept.ndim] = len;
+      kept.strides[kept.ndim++] = stride;
+      continue;
+    }
+    /* An or or an and of copies is the element's, so a broadcast axis
+       counts once; one of length 0 still empties the block. */
+    if (stride == 0 && len > 0) continue;
+    if (stride < 0) {
+      kept.offset += (len - 1) * stride;
+      stride = -stride;
+    }
+    int j = block.ndim++;
+    for (; j > 0 && block.strides[j - 1] < stride; j--) {
+      block.shape[j] = block.shape[j - 1];
+      block.strides[j] = block.strides[j - 1];
+    }
+    block.shape[j] = len;
+    block.strides[j] = stride;
+    size *= len;
+  }
+
+  nx_c_bit_reduce_ctx c;
+  nx_c_packed_src_init(&c.kept, &kept, 1);
+  nx_c_packed_src_init(&c.reduced, &block, 1);
+  c.size = size;
+  c.flip = op == NX_C_BIT_AND ? ~(uint64_t)0 : 0;
+  int64_t outputs = 1;
+  for (int d = 0; d < out->ndim; d++) outputs *= out->shape[d];
+  c.across = outputs > 1 && c.kept.ndim == 1 &&
+             (c.kept.strides[0] == 1 || c.kept.strides[0] == -1) &&
+             !nx_c_packed_dense(&c.reduced);
+  nx_c_packed_filler f = {nx_c_bit_reduce_fill, NULL, &c};
+  return nx_c_packed_write(out, 1, &f, (outputs * size + 7) / 8);
+}
+
+/* Pad: out's elements in C order are the pad value outside in's box and in's
+   elements inside it. Each worker's words are composed as a stream of runs,
+   the value over a border, in's row across the box, so a row of a padded
+   image costs about a copy of its words. */
+
+/* Whole words of storage written run after run: each run is appended to the
+   bits of the last, and a word is stored once it is full. */
+typedef struct {
+  uint8_t *dst;
+  uint64_t acc;
+  int used; /* bits of acc that hold elements, < 64 */
+} nx_c_bit_stream;
+
+/* Appends the low n bits of v, 0 < n <= 64, whose bits above n are 0. The
+   bits of v past a full word are v >> (64 - used), shifted in two steps so
+   that a used of 0 shifts by 64 and keeps none. */
+static inline void nx_c_stream_put(nx_c_bit_stream *st, uint64_t v, int n) {
+  int used = st->used;
+  st->acc |= v << used;
+  st->used = used + n;
+  if (st->used < 64) return;
+  nx_c_st64(st->dst, st->acc);
+  st->dst += 8;
+  st->used -= 64;
+  st->acc = (v >> 1) >> (63 - used);
+}
+
+/* Appends bits [bit, bit + n) of the storage at base. The bits' offset in
+   their bytes and the stream's in its word stay the same across the run's
+   words, so each word is one or two loads and one store. */
+static void nx_c_stream_run(nx_c_bit_stream *st, const uint8_t *base,
+                            int64_t bit, int64_t n) {
+  const uint8_t *q = base + (bit >> 3);
+  int sh = (int)(bit & 7), u = st->used;
+  uint8_t *dst = st->dst;
+  uint64_t acc = st->acc;
+  int64_t words = n >> 6;
+  for (int64_t j = 0; j < words; j++, q += 8, dst += 8) {
+    uint64_t v = nx_c_ld64(q);
+    if (sh) v = (v >> sh) | ((uint64_t)q[8] << (64 - sh));
+    nx_c_st64(dst, acc | (v << u));
+    acc = (v >> 1) >> (63 - u);
+  }
+  st->dst = dst;
+  st->acc = acc;
+  int rest = (int)(n & 63);
+  if (rest)
+    nx_c_stream_put(st, nx_c_bits_load(base, bit + (words << 6), rest), rest);
+}
+
+typedef struct {
+  nx_c_packed_src in;
+  int bits;
+  int ndim; /* >= 1 */
+  int64_t shape[NX_C_MAX_NDIM];  /* out's */
+  int64_t before[NX_C_MAX_NDIM]; /* where in's box starts in out */
+  int64_t inner[NX_C_MAX_NDIM];  /* in's shape */
+  uint64_t value;                /* a word of the pad value */
+} nx_c_packed_pad_ctx;
+
+/* The runs below work on a copy of the stream, which stays in registers
+   where the stream itself could alias the words it stores. */
+
+static void nx_c_pad_value(const nx_c_packed_pad_ctx *p, int64_t n,
+                           nx_c_bit_stream *st) {
+  nx_c_bit_stream s = *st;
+  int per = 64 / p->bits;
+  for (; n > 0; n -= per) {
+    int k = (int)(n < per ? n : per);
+    nx_c_stream_put(&s, p->value & nx_c_low_bits(k * p->bits), k * p->bits);
+  }
+  *st = s;
+}
+
+static void nx_c_pad_input(const nx_c_packed_pad_ctx *p, int64_t ie, int64_t n,
+                           nx_c_bit_stream *st) {
+  nx_c_bit_stream s = *st;
+  int per = 64 / p->bits;
+  if (nx_c_packed_dense(&p->in)) {
+    nx_c_stream_run(&s, p->in.base, (p->in.offset + ie) * p->bits,
+                    n * p->bits);
+  } else {
+    for (; n > 0; n -= per, ie += per) {
+      int k = (int)(n < per ? n : per);
+      nx_c_stream_put(&s, nx_c_packed_read(&p->in, ie, k), k * p->bits);
+    }
+  }
+  *st = s;
+}
+
+/* Elements [e, e + n) of out into st, a row at a time. */
+static void nx_c_pad_emit(const nx_c_packed_pad_ctx *p, int64_t e, int64_t n,
+                          nx_c_bit_stream *st) {
+  int last = p->ndim - 1;
+  int64_t w = p->shape[last], b = p->before[last], iw = p->inner[last];
+  int64_t row = e / w, col = e % w;
+  for (; n > 0; row++, col = 0) {
+    int64_t end = col + n < w ? col + n : w;
+    n -= end - col;
+
+    /* The row of in this row reads, when it is inside the box. */
+    bool inside = true;
+    int64_t irow = 0, scale = 1, r = row;
+    for (int d = last - 1; d >= 0; d--) {
+      int64_t c = r % p->shape[d] - p->before[d];
+      r /= p->shape[d];
+      if (c < 0 || c >= p->inner[d]) inside = false;
+      irow += c * scale;
+      scale *= p->inner[d];
+    }
+    if (!inside) {
+      nx_c_pad_value(p, end - col, st);
+      continue;
+    }
+
+    int64_t lo = col > b ? col : b, hi = end < b + iw ? end : b + iw;
+    if (lo >= hi) {
+      nx_c_pad_value(p, end - col, st);
+      continue;
+    }
+    nx_c_pad_value(p, lo - col, st);
+    nx_c_pad_input(p, irow * iw + (lo - b), hi - lo, st);
+    nx_c_pad_value(p, end - hi, st);
+  }
+}
+
+static uint64_t nx_c_pad_word(const void *ctx, int64_t e, int k) {
+  const nx_c_packed_pad_ctx *p = ctx;
+  uint8_t word[8];
+  nx_c_bit_stream st = {word, 0, 0};
+  nx_c_pad_emit(p, e, k, &st);
+  return st.dst == word ? st.acc : nx_c_ld64(word);
+}
+
+static void nx_c_pad_words(const void *ctx, int64_t e, int64_t n,
+                           uint8_t *dst) {
+  const nx_c_packed_pad_ctx *p = ctx;
+  nx_c_bit_stream st = {dst, 0, 0};
+  nx_c_pad_emit(p, e, n * (64 / p->bits), &st);
+}
+
+nx_c_status nx_c_packed_pad(const nx_c_ndarray *out, const nx_c_ndarray *in,
+                            const nx_c_ndarray *value, const int64_t *before,
+                            nx_c_dtype dt) {
+  if (out->ndim != in->ndim) return NX_C_ERR_SHAPE;
+  nx_c_packed_pad_ctx p;
+  p.bits = nx_c_packed_bits(dt);
+  p.ndim = out->ndim > 0 ? out->ndim : 1;
+  p.shape[0] = 1;
+  p.before[0] = 0;
+  p.inner[0] = 1;
+  for (int d = 0; d < out->ndim; d++) {
+    p.shape[d] = out->shape[d];
+    p.before[d] = before[d];
+    p.inner[d] = in->shape[d];
+    if (before[d] < 0 || before[d] + in->shape[d] > out->shape[d])
+      return NX_C_ERR_SHAPE;
+  }
+  nx_c_packed_src_init(&p.in, in, p.bits);
+  uint8_t v = nx_c_packed_get(value->data, value->offset, p.bits);
+  p.value = nx_c_packed_splat(v, p.bits, 64 / p.bits);
+  int64_t total = 1;
+  for (int d = 0; d < out->ndim; d++) total *= out->shape[d];
+  nx_c_packed_filler f = {nx_c_pad_word, nx_c_pad_words, &p};
+  return nx_c_packed_write(out, p.bits, &f, 2 * nx_c_dtype_bytes(dt, total));
 }

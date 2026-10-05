@@ -3406,7 +3406,9 @@ thread.
 - Add the `bit` dtype (`Nx.bit`, `Nx.bit_t`): booleans eight to a byte, for
   keeping large masks. Every function that takes `bool` outside a condition
   takes `bit`; a condition stays `bool`, as `Nx.cast Nx.bool m`. `Nx.count`
-  counts the `true` elements of a `bool` or `bit` mask.
+  counts the `true` elements of a `bool` or `bit` mask. `Nx.any`, `Nx.all`,
+  `Nx.max` and `Nx.min` of a `bit` mask read it a 64-bit word at a time and
+  stop at the first word that decides them.
 - **Breaking:** remove `Nx.itemsize`, whose bytes per element miscount every
   sub-byte dtype; `Nx.nbytes` gives sizes and `Nx_dtype.Scalar.bitsize`
   widths.

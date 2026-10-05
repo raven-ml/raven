@@ -119,11 +119,11 @@ type index_array = (int64, Nx_dtype.int64_elt) Nx_array.t
     destination has the result's shape and dtype.
 
     [bit] reaches only [cast], the [And], [Or], [Xor], [Maximum] and [Minimum]
-    of [binary], and the moves ([pad], [cat], [contiguous], [gather], [scatter]
-    with [`Set] and [update]); nx reads the [bit] operands of every
-    other operation as [bool]. The bits of a [bit], [int4] or [uint4] buffer
-    after its last element belong to no value: a kernel whose destination ends
-    its buffer writes them as 0. *)
+    of [binary], the [Max] and [Min] of [reduce], and the moves ([pad], [cat],
+    [contiguous], [gather], [scatter] with [`Set] and [update]); nx reads the
+    [bit] operands of every other operation as [bool]. The bits of a [bit],
+    [int4] or [uint4] buffer after its last element belong to no value: a kernel
+    whose destination ends its buffer writes them as 0. *)
 module type S = sig
   val name : string
   (** [name] is the backend's name, as errors and device names show it, such as

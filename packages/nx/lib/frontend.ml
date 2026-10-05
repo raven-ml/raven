@@ -961,9 +961,16 @@ let var ?axes ?(keepdims = false) ?(ddof = 0) x =
 let std ?axes ?(keepdims = false) ?(ddof = 0) x =
   sqrt (var ?axes ~keepdims ~ddof x)
 
+(* A [bool] or [bit] tensor reduces as it is; any other is compared with zero
+   first. *)
+let truth_reduce (type a b) op axes (x : (a, b) t) : bool_t =
+  match dtype x with
+  | Bool -> B.reduce op ~axes x
+  | Bit -> cast Bool (B.reduce op ~axes x)
+  | dt -> B.reduce op ~axes (not_equal_s x (Nx_dtype.zero dt))
+
 let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
-  let bool_t = not_equal_s x (Nx_dtype.zero (dtype x)) in
-  let input_shape = shape bool_t in
+  let input_shape = shape x in
   let rank = Array.length input_shape in
   let axes_to_reduce =
     normalize_and_dedup_axes ~op:op_name rank
@@ -977,7 +984,7 @@ let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
       (Shape.reduce_output_shape input_shape axes_to_reduce keepdims)
       identity
   else
-    let reduced = B.reduce op ~axes:axes_to_reduce bool_t in
+    let reduced = truth_reduce op axes_to_reduce x in
     if keepdims then
       reshape
         (Shape.reduce_output_shape input_shape axes_to_reduce true)

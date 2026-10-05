@@ -14,8 +14,9 @@
 
    Reading. A source is read by its elements in C order, up to 64 bits at a
    time (nx_c_packed_read): a unit-stride run with two word loads and a funnel
-   shift, any other stride element by element. Every load stays inside the
-   bytes the view reaches: a last partial word is loaded byte by byte.
+   shift, a run of stride -1 the same way and reversed, any other stride
+   element by element. Every load stays inside the bytes the view reaches: a
+   last partial word is loaded byte by byte.
 
    Writing. A destination is written by the 64-bit words of its storage,
    counted from the buffer's first byte (nx_c_packed_write). One worker owns
@@ -131,6 +132,28 @@ static inline uint64_t nx_c_packed_splat(uint64_t v, int bits, int k) {
   return w & nx_c_low_bits(k * bits);
 }
 
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_bitreverse64)
+#define NX_C_BITREVERSE64(v) __builtin_bitreverse64(v)
+#endif
+#endif
+
+/* The k bits-wide elements in the low bits of v in reverse order, k * bits <=
+   64: element j moves to k - 1 - j. A flipped run is the reverse of the run
+   it covers. */
+static inline uint64_t nx_c_packed_reverse(uint64_t v, int bits, int k) {
+  if (bits == 1) {
+#ifdef NX_C_BITREVERSE64
+    return NX_C_BITREVERSE64(v) >> (64 - k);
+#else
+    v = ((v >> 1) & 0x5555555555555555u) | ((v & 0x5555555555555555u) << 1);
+    v = ((v >> 2) & 0x3333333333333333u) | ((v & 0x3333333333333333u) << 2);
+#endif
+  }
+  v = ((v >> 4) & 0x0f0f0f0f0f0f0f0fu) | ((v & 0x0f0f0f0f0f0f0f0fu) << 4);
+  return __builtin_bswap64(v) >> (64 - k * bits);
+}
+
 /* A packed operand read by its elements in C order: its view with size-1 axes
    dropped and neighbours that are one run merged, so a C-contiguous view is
    one axis of stride 1. */
@@ -151,13 +174,20 @@ static inline bool nx_c_packed_dense(const nx_c_packed_src *s) {
 }
 
 /* Elements [e, e + k) of s in C order, k * bits <= 64, element e + j in bits
-   [j * bits, (j + 1) * bits) of the result and the bits above them 0. */
+   [j * bits, (j + 1) * bits) of the result and the bits above them 0. A run of
+   stride 1 or -1 is loaded whole, reversed for -1; any other stride element by
+   element. */
 uint64_t nx_c_packed_read_any(const nx_c_packed_src *s, int64_t e, int k);
 
 static inline uint64_t nx_c_packed_read(const nx_c_packed_src *s, int64_t e,
                                         int k) {
   if (nx_c_packed_dense(s))
     return nx_c_bits_load(s->base, (s->offset + e) * s->bits, k * s->bits);
+  if (s->ndim == 1 && s->strides[0] == -1)
+    return nx_c_packed_reverse(
+        nx_c_bits_load(s->base, (s->offset - e - k + 1) * s->bits,
+                       k * s->bits),
+        s->bits, k);
   return nx_c_packed_read_any(s, e, k);
 }
 
@@ -181,10 +211,14 @@ typedef struct {
 nx_c_status nx_c_packed_write(const nx_c_ndarray *out, int bits,
                               const nx_c_packed_filler *f, int64_t bytes);
 
-/* The movers. Each writes out, of in's shape (copy) or indices' (gather), as
-   nx_c_packed_write does. */
+/* The movers. Each writes out, of in's shape (copy), indices' (gather) or
+   in's grown by the padding (pad), as nx_c_packed_write does. pad's value is
+   value's element, before[d] the elements before in on axis d. */
 nx_c_status nx_c_packed_copy(const nx_c_ndarray *out, const nx_c_ndarray *in,
                              nx_c_dtype dt);
+nx_c_status nx_c_packed_pad(const nx_c_ndarray *out, const nx_c_ndarray *in,
+                            const nx_c_ndarray *value, const int64_t *before,
+                            nx_c_dtype dt);
 nx_c_status nx_c_packed_gather(const nx_c_ndarray *out,
                                const nx_c_ndarray *data,
                                const nx_c_ndarray *indices, int axis,
@@ -199,6 +233,11 @@ typedef enum {
 
 nx_c_status nx_c_bit_logic(nx_c_bit_op op, const nx_c_ndarray *out,
                            const nx_c_ndarray *a, const nx_c_ndarray *b);
+
+/* The or (NX_C_BIT_OR) or the and (NX_C_BIT_AND) of in along its n distinct
+   axes, into out of in's shape without them. */
+nx_c_status nx_c_bit_reduce(nx_c_bit_op op, const nx_c_ndarray *out,
+                            const nx_c_ndarray *in, const int *axes, int n);
 
 /* Packing and unpacking, n <= 64: the n booleans at `bytes` as the low n
    bits of a word, element j in bit j and every non-zero byte a 1; and the low

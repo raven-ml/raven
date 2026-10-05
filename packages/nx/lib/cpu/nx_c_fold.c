@@ -30,12 +30,14 @@
    The backend contract pins these semantics. This file only states scalar
    behavior over a run. It includes neither caml/fail.h nor caml/threads.h: kernels never
    raise and never touch the runtime lock — only the funnels (nx_c_engine.c) do,
-   and the CAMLprim stubs at the foot call exactly one funnel each. */
+   and the CAMLprim stubs at the foot call exactly one funnel each, but for max
+   and min of bit, which the sub-byte family reduces (nx_c_packed.c). */
 
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
 #include "nx_c_engine.h"
+#include "nx_c_packed.h"
 
 /* ── Accumulator field for a compute type ─────────────────────────────────────
    nx_c_acc is a union keyed by C type; a kernel carries its reduced value in the
@@ -957,8 +959,39 @@ static const nx_c_scan_table nx_c_cummin_table = {
 
 NX_C_FOLD_STUB(reduce_sum, "reduce_sum", nx_c_sum_table, false)
 NX_C_FOLD_STUB(reduce_prod, "reduce_prod", nx_c_prod_table, false)
-NX_C_FOLD_STUB(reduce_max, "reduce_max", nx_c_max_table, true)
-NX_C_FOLD_STUB(reduce_min, "reduce_min", nx_c_min_table, true)
+/* max and min take bit operands too, word by word: on bit, max is or and min
+   is and, as on bool. */
+static void nx_c_extreme_run(const char *op, const nx_c_fold_table *tbl,
+                             nx_c_bit_op bop, value vout, value vin,
+                             value vaxes, int threads) {
+  if (nx_c_dtype_of_value(vin) != NX_C_DTYPE_bit) {
+    nx_c_fold_funnel(op, tbl, NX_C_COST_BANDWIDTH, vout, vin, vaxes, true,
+                     threads, NULL);
+    return;
+  }
+  nx_c_ndarray out, in;
+  nx_c_status s = nx_c_ndarray_of_value(vout, &out);
+  if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
+  if (s != NX_C_OK) nx_c_raise(op, s);
+  int n = (int)Wosize_val(vaxes);
+  if (n > NX_C_MAX_NDIM) nx_c_raise(op, NX_C_ERR_NDIM);
+  int axes[NX_C_MAX_NDIM];
+  for (int i = 0; i < n; i++) axes[i] = (int)Long_val(Field(vaxes, i));
+  s = nx_c_bit_reduce(bop, &out, &in, axes, n);
+  if (s != NX_C_OK) nx_c_raise_status(op, s);
+}
+
+#define NX_C_EXTREME_STUB(cname, opname, table, bop)                           \
+  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxes,         \
+                                   value vthreads) {                           \
+    CAMLparam4(vout, vin, vaxes, vthreads);                                    \
+    nx_c_extreme_run((opname), &(table), (bop), vout, vin, vaxes,              \
+                     Int_val(vthreads));                                       \
+    CAMLreturn(Val_unit);                                                      \
+  }
+
+NX_C_EXTREME_STUB(reduce_max, "reduce_max", nx_c_max_table, NX_C_BIT_OR)
+NX_C_EXTREME_STUB(reduce_min, "reduce_min", nx_c_min_table, NX_C_BIT_AND)
 NX_C_ARG_STUB(argmax, "argmax", nx_c_argmax_table)
 NX_C_ARG_STUB(argmin, "argmin", nx_c_argmin_table)
 NX_C_SCAN_STUB(cumsum, "cumsum", nx_c_cumsum_table)

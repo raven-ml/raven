@@ -49,20 +49,26 @@ let offset =
       (1, Gen.of_list ~pp:Format.pp_print_int [ 0; 64; 65; 127 ]);
     ]
 
-(* [stored n] is a mask of [n] values in a 1-D view at a drawn offset of a
-   longer storage, so at any bit of a word. *)
-let stored n =
+(* [stored n] is a mask of [n] values, each drawn from [value], in a 1-D view at
+   a drawn offset of a longer storage, so at any bit of a word. *)
+let stored ?(value = Gen.bool) n =
   let open Gen in
   let* off = offset in
   let* extra = int_range 0 70 in
-  let+ vs = array ~size:(constant (off + n + extra)) bool in
+  let+ vs = array ~size:(constant (off + n + extra)) value in
   let bools = Nx.create Nx.bool [| Array.length vs |] vs in
   both
     { move = (fun t -> Nx.shrink [| (off, off + n) |] t) }
     { bits = Nx.cast Nx.bit bools; bools }
 
 (* How a mask of a shape lies in its storage. *)
-type layout = Dense | Transposed | Flipped | Strided | Broadcast
+type layout =
+  | Dense
+  | Transposed
+  | Flipped
+  | Rows_flipped
+  | Strided
+  | Broadcast
 
 let pp_layout ppf l =
   Format.pp_print_string ppf
@@ -70,6 +76,7 @@ let pp_layout ppf l =
     | Dense -> "dense"
     | Transposed -> "transposed"
     | Flipped -> "flipped"
+    | Rows_flipped -> "each row reversed"
     | Strided -> "every other element"
     | Broadcast -> "broadcast from its first row")
 
@@ -80,9 +87,10 @@ let every_other t =
   if Nx.numel t = 0 then t
   else Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~window:1 ~step:2 t)
 
-let laid s l =
+let laid ?value s l =
   let reversed = Array.of_list (List.rev (Array.to_list s)) in
   let first_row = Array.mapi (fun i d -> if i = 0 then 1 else d) s in
+  let stored n = stored ?value n in
   match l with
   | Dense ->
       Gen.map (both { move = (fun t -> Nx.reshape s t) }) (stored (numel s))
@@ -93,6 +101,11 @@ let laid s l =
   | Flipped ->
       Gen.map
         (both { move = (fun t -> Nx.flip (Nx.reshape s t)) })
+        (stored (numel s))
+  | Rows_flipped ->
+      let last = if Array.length s = 0 then [] else [ -1 ] in
+      Gen.map
+        (both { move = (fun t -> Nx.flip ~axes:last (Nx.reshape s t)) })
         (stored (numel s))
   | Strided ->
       Gen.map
@@ -115,11 +128,13 @@ let shape =
     ]
 
 (* A mask of shape [s] in a drawn layout. *)
-let mask_of s =
-  let layouts = [ Dense; Transposed; Flipped; Strided; Broadcast ] in
+let mask_of ?value s =
+  let layouts =
+    [ Dense; Transposed; Flipped; Rows_flipped; Strided; Broadcast ]
+  in
   let drawn =
     Gen.bind (Gen.of_list ~pp:pp_layout layouts) (fun l ->
-        Gen.map (fun m -> (l, m)) (laid s l))
+        Gen.map (fun m -> (l, m)) (laid ?value s l))
   in
   Gen.map snd
     (Gen.with_pp
@@ -573,6 +588,238 @@ let returning_other_dtypes =
                  raises_invalid_arg (fun () -> g m.bits)))
        other_dtypes)
 
+(* Word kernels *)
+
+(* Values true about one time in [k], or false one time in [k]: the first word
+   that decides an any or an all may then lie anywhere in a mask, or nowhere. *)
+let rare =
+  let open Gen in
+  let* k = of_list ~pp:Format.pp_print_int [ 2; 100; 3000 ] in
+  let+ v = bool in
+  map (fun i -> if i = 0 then not v else v) (int_range 0 (k - 1))
+
+(* Shapes whose reductions cross words: long rows, rows past a word, and three
+   axes to keep or reduce in every combination. *)
+let reduced_shape =
+  Gen.frequency
+    [
+      (2, Gen.map (fun n -> [| n |]) (Gen.int_range 0 1500));
+      ( 2,
+        Gen.(
+          let+ r = int_range 0 12 and+ c = int_range 0 200 in
+          [| r; c |]) );
+      ( 2,
+        Gen.(
+          let+ a = int_range 0 4
+          and+ b = int_range 0 5
+          and+ c = int_range 0 70 in
+          [| a; b; c |]) );
+    ]
+
+let reduction =
+  Gen.bind reduced_shape (fun s ->
+      let axes = Gen.subsequence (List.init (Array.length s) Fun.id) in
+      Gen.pair (Gen.bind rare (fun value -> mask_of ~value s)) axes)
+
+(* A reduction of masks to bool or to their dtype. *)
+type r = {
+  rname : string;
+  r : 'b. axes:int list -> (bool, 'b) Nx.t -> Nx.packed;
+}
+
+let reductions =
+  let to_bool t = Nx.P (Nx.cast Nx.bool t) in
+  [
+    { rname = "any"; r = (fun ~axes t -> Nx.P (Nx.any ~axes t)) };
+    { rname = "all"; r = (fun ~axes t -> Nx.P (Nx.all ~axes t)) };
+    { rname = "max"; r = (fun ~axes t -> to_bool (Nx.max ~axes t)) };
+    { rname = "min"; r = (fun ~axes t -> to_bool (Nx.min ~axes t)) };
+    {
+      rname = "all, keeping dims";
+      r = (fun ~axes t -> Nx.P (Nx.all ~axes ~keepdims:true t));
+    };
+  ]
+
+let cover_reduction (m, axes) =
+  let s = Nx.shape m.bits in
+  let block = List.fold_left (fun n a -> n * s.(a)) 1 axes in
+  cover "a block of more than 8 words" (block > 576);
+  cover "every axis" (List.length axes = Array.length s && axes <> []);
+  cover "a leading axis of rows" (Array.length s >= 2 && axes = [ 0 ]);
+  cover "the last axis of rows"
+    (Array.length s >= 2 && axes = [ Array.length s - 1 ])
+
+(* Paddings of up to a word before and after each axis. *)
+let padded =
+  Gen.bind shape (fun s ->
+      let amount = Gen.int_range 0 70 in
+      let padding =
+        Gen.array ~size:(Gen.constant (Array.length s)) (Gen.pair amount amount)
+      in
+      Gen.triple (mask_of s) padding Gen.bool)
+
+(* A scatter of updates in any layout into a mask, at positions inside and
+   outside its axis, some repeated. *)
+let scattered =
+  let open Gen in
+  let* n = length in
+  let* k = length in
+  let* strided = bool in
+  let+ into, updates, at =
+    triple (mask_of [| n |]) (mask_of [| k |])
+      (array ~size:(constant k) (int_range (-3) (n + 2)))
+  in
+  (into, updates, at, strided)
+
+(* The positions [at], in a view of stride 2 when [strided]. *)
+let positions_of at strided =
+  let k = Array.length at in
+  if not strided then Nx.create Nx.int64 [| k |] (Array.map Int64.of_int at)
+  else
+    every_other
+      (Nx.create Nx.int64
+         [| 2 * k |]
+         (Array.init (2 * k) (fun i ->
+              if i mod 2 = 0 then Int64.of_int at.(i / 2) else -7L)))
+
+let word_kernels =
+  group "word kernels"
+    (List.map
+       (fun { rname; r } ->
+         prop (rname ^ " over any axes of a bit mask is it of the bool mask")
+           reduction (fun ((m, axes) as c) ->
+             cover_views m;
+             cover_reduction c;
+             match r ~axes m.bools with
+             | expected -> equal Stored.packed expected (r ~axes m.bits)
+             | exception Invalid_argument _ ->
+                 raises_invalid_arg (fun () -> r ~axes m.bits)))
+       reductions
+    @ [
+        prop
+          "pad by any amounts of a bit mask is cast bit of it of the bool mask"
+          padded (fun (m, padding, v) ->
+            cover_views m;
+            cover "a row that is not a whole number of bytes"
+              (Nx.ndim m.bits = 2
+              && (Nx.dim 1 m.bits + fst padding.(1) + snd padding.(1)) mod 8
+                 <> 0);
+            equal same (Nx.pad padding v m.bools)
+              (Nx.cast Nx.bool (Nx.pad padding v m.bits)));
+        prop
+          "scatter with Set of updates in any layout is cast bit of it of the \
+           bool masks"
+          scattered (fun (into, updates, at, strided) ->
+            cover_views updates;
+            cover "positions of stride 2" (strided && Array.length at > 1);
+            let indices = positions_of at strided in
+            let scatter t values = Nx.scatter ~axis:0 ~indices ~values t in
+            match scatter into.bools updates.bools with
+            | expected ->
+                equal same expected
+                  (Nx.cast Nx.bool (scatter into.bits updates.bits))
+            | exception Invalid_argument _ ->
+                raises_invalid_arg (fun () -> scatter into.bits updates.bits));
+        test "one true bit anywhere in 1300 decides any, and one false all"
+          (fun () ->
+            let n = 1300 in
+            let at p v =
+              Nx.init Nx.bit [| n + 3 |] (fun i -> i.(0) = p + 3 = v)
+            in
+            let view t = Nx.shrink [| (3, n + 3) |] t in
+            for p = 0 to n - 1 do
+              let msg = string_of_int p in
+              equal ~msg bool true (Nx.item [] (Nx.any (view (at p true))));
+              equal ~msg bool false (Nx.item [] (Nx.all (view (at p false))))
+            done);
+        test "one true bit in rows of 200 decides its column alone" (fun () ->
+            let r = 9 and c = 200 in
+            for p = 0 to (r * c) - 1 do
+              let m =
+                Nx.init Nx.bit [| r; c |] (fun i -> (i.(0) * c) + i.(1) = p)
+              in
+              equal ~msg:(string_of_int p) (array bool)
+                (Array.init c (fun j -> j = p mod c))
+                (Nx.to_array (Nx.any ~axes:[ 0 ] m))
+            done);
+        test "any finds a last true bit after 2^20 false ones" (fun () ->
+            let n = (1 lsl 20) + 77 in
+            let m = Nx.init Nx.bit [| n |] (fun i -> i.(0) = n - 1) in
+            equal bool true (Nx.item [] (Nx.any (Nx.shrink [| (5, n) |] m)));
+            equal bool false
+              (Nx.item [] (Nx.any (Nx.shrink [| (5, n - 1) |] m))));
+        test "all finds a last false bit after 2^20 true ones" (fun () ->
+            let n = (1 lsl 20) + 77 in
+            let m = Nx.init Nx.bit [| n |] (fun i -> i.(0) <> n - 1) in
+            equal bool false (Nx.item [] (Nx.all (Nx.flip m)));
+            equal bool true (Nx.item [] (Nx.all (Nx.shrink [| (0, n - 1) |] m))));
+      ])
+
+(* 4-bit moves *)
+
+(* The kernels that move bits move nibbles too: a move of int4 or uint4 values
+   is the same move of their int8 values, cast back (Law 8). The views start at
+   any nibble and the runs cross words of 16 elements. *)
+
+let nibble_view lo hi =
+  let open Gen in
+  let* n = int_range 0 200 in
+  let* off = int_range 0 17 in
+  let* extra = int_range 0 17 in
+  let+ vs = array ~size:(constant (off + n + extra)) (int_range lo hi) in
+  (off, n, vs)
+
+(* A move of integer values of any width. *)
+type nibble_move = {
+  mname : string;
+  move4 : 'b. (int, 'b) Nx.t -> (int, 'b) Nx.t;
+}
+
+let moves_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
+  let moves =
+    [
+      { mname = "a copy of its flip"; move4 = (fun t -> Nx.copy (Nx.flip t)) };
+      {
+        mname = "pad by 3 and 21 with the last value";
+        move4 = (fun t -> Nx.pad [| (3, 21) |] hi t);
+      };
+      {
+        mname = "pad of its rows of 5 by 1 and 2";
+        move4 =
+          (fun t ->
+            let n = Nx.numel t / 5 * 5 in
+            Nx.pad
+              [| (1, 1); (1, 2) |]
+              lo
+              (Nx.reshape [| n / 5; 5 |] (Nx.shrink [| (0, n) |] t)));
+      };
+      {
+        mname = "scatter with Set of its flip, some positions outside";
+        move4 =
+          (fun t ->
+            let n = Nx.numel t in
+            Nx.scatter ~axis:0
+              ~indices:(indices n (fun i -> (i * 7 mod (n + 4)) - 2))
+              ~values:(Nx.flip t) t);
+      };
+    ]
+  in
+  List.map
+    (fun { mname; move4 } ->
+      prop
+        (Printf.sprintf "%s of %s values is it of their int8 values, cast back"
+           mname name) (nibble_view lo hi) (fun (off, n, vs) ->
+          let wide = Nx.create Nx.int8 [| Array.length vs |] vs in
+          let at t = Nx.shrink [| (off, off + n) |] t in
+          equal (array int)
+            (Nx.to_array (move4 (at wide)))
+            (Nx.to_array (Nx.cast Nx.int8 (move4 (at (Nx.cast dtype wide)))))))
+    moves
+
+let nibble_moves =
+  group "4-bit moves"
+    (moves_as_int8 "int4" Nx.int4 (-8) 7 @ moves_as_int8 "uint4" Nx.uint4 0 15)
+
 (* Storage *)
 
 let bools l = Nx.create Nx.bool [| List.length l |] (Array.of_list l)
@@ -764,6 +1011,20 @@ let fresh =
     ( "pad",
       fun m ->
         Nx.pad (Array.map (fun _ -> (1, 2)) (Nx.shape m.bits)) true m.bits );
+    ( "max along the first axis",
+      fun m ->
+        if Nx.ndim m.bits = 0 || Nx.dim 0 m.bits = 0 then Nx.copy m.bits
+        else Nx.max ~axes:[ 0 ] m.bits );
+    ( "min along the last axis",
+      fun m ->
+        if Nx.ndim m.bits = 0 || Nx.dim (-1) m.bits = 0 then Nx.copy m.bits
+        else Nx.min ~axes:[ -1 ] m.bits );
+    ( "scatter with Set",
+      fun m ->
+        let f = flat m.bits in
+        Nx.scatter ~axis:0
+          ~indices:(indices (Nx.numel f) (fun i -> i - 1))
+          ~values:f f );
   ]
 
 let exact =
@@ -1098,6 +1359,19 @@ let concurrent_calls =
        (shared ^-> returns int64)
        (fun b -> Nx.item [] (Nx.count b))
        (fun m -> Nx.item [] (Nx.count m))
+  :: command "any"
+       (shared ^-> returns bool)
+       (fun b -> Nx.item [] (Nx.any b))
+       (fun m -> Nx.item [] (Nx.any m))
+  :: command "all"
+       (shared ^-> returns bool)
+       (fun b -> Nx.item [] (Nx.all b))
+       (fun m -> Nx.item [] (Nx.all m))
+  :: on_both
+       {
+         name = "and with its flip";
+         f = (fun t -> Nx.logical_and t (Nx.flip t));
+       }
   :: List.map on_both
        (List.filter
           (fun { name; _ } ->
@@ -1112,6 +1386,8 @@ let concurrent_calls =
                 "set of a window";
                 "scatter with Set";
                 "every third element";
+                "max along its first axis";
+                "min along its last axis";
               ])
           unaries)
 
@@ -1162,6 +1438,18 @@ let workers =
           equal ~msg:"the ones around it" int64 (Int64.of_int 70)
             (Int64.sub (Nx.item [] (Nx.count t)) (Nx.item [] (Nx.count src))));
       slow
+        "2^28 bits padded by 5 and 3, which several workers write, hold their \
+         bits" (fun () ->
+          let n = 1 lsl 28 in
+          let src = Nx.shrink [| (3, n + 3) |] (pattern ((1 lsl 25) + 1)) in
+          let t = Nx.pad [| (5, 3) |] true src in
+          equal ~msg:"bits that differ" int64 0L
+            (differences src (Nx.shrink [| (5, n + 5) |] t));
+          equal ~msg:"the ones around it" int64 8L
+            (Int64.sub (Nx.item [] (Nx.count t)) (Nx.item [] (Nx.count src)));
+          equal ~msg:"the last ones" (array bool) [| true; true; true |]
+            (Nx.to_array (Nx.shrink [| (n + 5, n + 8) |] t)));
+      slow
         "int4 parts of 13 around 2^26 elements concatenate as their int8 twins"
         (fun () ->
           let n = (1 lsl 26) + 3 in
@@ -1183,6 +1471,8 @@ let () =
          storage;
          one_meaning;
          returning_other_dtypes;
+         word_kernels;
+         nibble_moves;
          casts;
          arithmetic;
          exact;

@@ -28,9 +28,9 @@
    The packed dtypes (int4, uint4, bit) move like every other dtype, an
    element being 4 bits or 1: copy, pad, cat and gather through the sub-byte
    family's writer (nx_c_packed.h), which gives each worker whole words of the
-   destination, and scatter's `Set and unfold through the element move below,
-   on one worker. Only fold and scatter's `Add, `Max and `Min, which compute,
-   refuse them. */
+   destination, scatter's `Set by its packed line, which reads the updates a
+   word at a time, and unfold through the element move below, on one worker.
+   Only fold and scatter's `Add, `Max and `Min, which compute, refuse them. */
 
 #include <string.h>
 
@@ -197,7 +197,9 @@ CAMLprim value caml_nx_c_copy(value vout, value vin) {
    handshake. The fill value crosses the FFI as a scalar tensor rather than a
    per-dtype value: the binding, which knows the OCaml element type statically,
    sets it with Elements.fill, so C needs no per-dtype value-extraction switch
-   — and every pass reuses the one copy, packed dtypes included. */
+   — and every pass reuses the one copy. A packed dtype pads in one pass
+   instead (nx_c_packed_pad): its slabs' rows share bytes, which the writer
+   would write one row at a time on one worker. */
 
 static nx_c_status nx_c_pad_fill(const nx_c_ndarray *slab, const nx_c_ndarray *fill,
                                nx_c_dtype dt) {
@@ -220,6 +222,15 @@ CAMLprim value caml_nx_c_pad(value vout, value vin, value vfill,
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
   if (out.ndim != in.ndim || (int)Wosize_val(vpad_before) != out.ndim)
     nx_c_raise_invalid("pad", NX_C_ERR_SHAPE);
+
+  if (nx_c_dtype_is_packed(dt)) {
+    int64_t before[NX_C_MAX_NDIM];
+    for (int d = 0; d < out.ndim; d++)
+      before[d] = Long_val(Field(vpad_before, d));
+    s = nx_c_packed_pad(&out, &in, &fill, before, dt);
+    if (s != NX_C_OK) nx_c_raise("pad", s);
+    CAMLreturn(Val_unit);
+  }
 
   /* `slab` narrows toward the interior: entering iteration d, axes < d carry
      the interior shape/offset and axes >= d are still full. The frontend
@@ -717,11 +728,43 @@ NX_C_SCATTER_ADD_LINE(uint32_t)
 NX_C_SCATTER_ADD_LINE(uint64_t)
 #undef NX_C_SCATTER_ADD_LINE
 
+/* `Set of packed elements along one axis: the updates are read a word at a
+   time, and each element replaces its bits in its byte. A dropped update is
+   skipped, where the lines above rewrite element 0: when the positions lie
+   inside the axis but for a few, the branch costs less than reading the old
+   bits. */
+static void nx_c_scatter_set_line_packed(const nx_c_scatter_ctx *sc,
+                                         int64_t lo, int64_t hi) {
+  const nx_c_ndarray *out = sc->out, *ix = sc->indices;
+  const int64_t *index = (const int64_t *)ix->data + ix->offset;
+  uint8_t *o = out->data;
+  int bits = sc->bits, per = 64 / bits;
+  unsigned mask = (1u << bits) - 1;
+  int64_t n = out->shape[0], is = ix->strides[0], os = out->strides[0],
+          first = out->offset;
+  nx_c_packed_src u;
+  nx_c_packed_src_init(&u, sc->updates, bits);
+  for (int64_t it = lo; it < hi; it += per) {
+    int k = (int)(hi - it < per ? hi - it : per);
+    uint64_t v = nx_c_packed_read(&u, it, k);
+    for (int j = 0; j < k; j++, v >>= bits) {
+      int64_t at = index[(it + j) * is];
+      if ((uint64_t)at >= (uint64_t)n) continue;
+      int64_t bit = (first + at * os) * bits;
+      uint8_t *b = o + (bit >> 3);
+      unsigned shift = (unsigned)(bit & 7);
+      *b = (uint8_t)((*b & ~(mask << shift)) |
+                     (((unsigned)v & mask) << shift));
+    }
+  }
+}
+
 static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const nx_c_scatter_ctx *sc = vctx;
   if (sc->indices->ndim == 1 && !sc->combine) {
     switch (sc->esize) {
+    case 0: nx_c_scatter_set_line_packed(sc, lo, hi); return;
     case 1: nx_c_scatter_set_line_uint8_t(sc, lo, hi); return;
     case 2: nx_c_scatter_set_line_uint16_t(sc, lo, hi); return;
     case 4: nx_c_scatter_set_line_uint32_t(sc, lo, hi); return;

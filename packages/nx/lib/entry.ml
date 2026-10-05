@@ -13,11 +13,11 @@ open Value
    operation. Constants and values over runtime buffers build on them.
 
    A [bit] operand reaches an operation only where backends compute on bits:
-   casts, bitcasts, [And], [Or], [Xor], [Maximum] and [Minimum], and the moves
-   ([pad], [cat], [gather], [scatter] with [`Set], [update] and copies). Every
-   other operation reads its [bit] operands as [bool] and stores a result of
-   their dtype as [bit], so it answers as it does on [bool], raising where it
-   raises. *)
+   casts, bitcasts, [And], [Or], [Xor], [Maximum] and [Minimum], the [Max] and
+   [Min] reductions, and the moves ([pad], [cat], [gather], [scatter] with
+   [`Set], [update] and copies). Every other operation reads its [bit] operands
+   as [bool] and stores a result of their dtype as [bit], so it answers as it
+   does on [bool], raising where it raises. *)
 
 let cast dtype x =
   if Intercept.intercepting () then Intercept.perform (Convert (Cast, dtype, x))
@@ -80,9 +80,9 @@ let reduce_op k axes x =
   if Intercept.intercepting () then Intercept.perform (Reduce (k, axes, x))
   else Dispatch.reduce k axes x
 
-let reduce (type a b) k ~axes (x : (a, b) t) : (a, b) t =
-  match dtype x with
-  | Nx_dtype.Bit -> through_bool (reduce_op k axes) x
+let reduce (type a b) (k : Nx_backend.reduce) ~axes (x : (a, b) t) : (a, b) t =
+  match (dtype x, k) with
+  | Nx_dtype.Bit, (Sum | Prod) -> through_bool (reduce_op k axes) x
   | _ -> reduce_op k axes x
 
 let scan_op k axis x =
