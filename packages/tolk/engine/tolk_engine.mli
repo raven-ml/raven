@@ -244,26 +244,42 @@ val run :
     variable is unbound, or if a device refuses to run a batch now (its
     [submitting]), and {!Nx_device.Lost} as the devices do. *)
 
-(** {1:measuring Measuring} *)
+(** {1:timing Timing} *)
 
-val measure :
-  ?cold:bool ->
-  ?vars:(string * int) list ->
+val timer :
   devices:(string -> device) ->
   string ->
+  vars:(string * int) list ->
   Ops.t ->
+  Ops.t ->
+  unit ->
   float
-(** [measure ~cold ~vars ~devices name prg] is the time in seconds of one run of
-    the compiled program [prg] on the device [devices] maps [name] to, on
-    scratch buffers of its parameters' sizes. Each run is timed by a profile of
-    it ({!Nx_device.Profile}): the span of its kernel, which a device with
-    queues stamps and the host records around its call otherwise. While a
-    profile is taken already, it is the run and the device's synchronization on
-    the host clock. The time is the mean of as many runs as take at least 10
-    microseconds in all, up to 1000 runs, so that a kernel shorter than a tick
-    of its clock is not measured as taking no time. With [cold] (default
-    [false]), the device's caches are invalidated before each run where its
-    vendor can ([Nx_nv_device.invalidate_caches]). It is the measurement the
-    compiler's search of kernel optimisations times its candidates with.
+(** [timer ~devices name ~vars kernel prg ()] is the time in seconds of one run
+    of the program [prg], compiled from the kernel [kernel], on the device
+    [devices] maps [name] to, from cold caches, with each variable bound to its
+    value in [vars]. It is staged for a search, which times many programs of one
+    kernel, each a few times:
 
-    Raises as {!link} and {!run} do. *)
+    - [timer ~devices name ~vars kernel] allocates, on the device, a buffer for
+      each storage parameter of [kernel] ({!Tolk.Op.Param} of slot [0] or more,
+      outside {!Tolk.Dtype.Alu}) holding the parameter's bytes. Their contents
+      are unspecified. Every program applied to it runs on these buffers.
+    - Applying that to [prg] links [prg] as a schedule of one call over those
+      buffers ({!link}).
+    - Each application of the result to [()] invalidates the device's caches
+      where its vendor can ([Nx_nv_device.invalidate_caches]) and runs [prg]
+      once. The time of the run is the span of its kernel in a profile of it
+      ({!Nx_device.Profile}), which a device with queues stamps and the host
+      records around its call otherwise. While a profile is taken already, the
+      time is the run and the device's synchronization on the host clock. A run
+      reports nothing on standard output, whatever {!Tolk.Helpers.debug} holds.
+      It allocates no device memory and loads nothing. Runs are serialized, as
+      {!run}s are.
+
+    Each stage keeps what it allocated or linked while its result is reachable.
+
+    Raises [Invalid_argument] if [devices] does not map [name], or if [kernel]'s
+    storage parameters do not take the slots [0] to [n - 1], and
+    {!Nx_device.Out_of_memory} if the device cannot allocate the buffers, all
+    when applied to [kernel]. Applied to [prg], it raises as {!link} does. A run
+    raises as {!run} does. *)

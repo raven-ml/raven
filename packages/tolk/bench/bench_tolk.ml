@@ -21,6 +21,11 @@
    must not be initialized before the fork: a fresh process of this executable
    ([--cuda]) says whether a CUDA device opens.
 
+   [search] times what a beam search pays per candidate before timing it: its
+   program linked on the buffers of its kernel, which a timer allocates once per
+   search ({!Tolk_engine.timer}), on the host and on Metal, for gpt-oss-20b's
+   key and value projection.
+
    [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
    on the host where the hand-coded optimisations lost most to a beam search,
    each compiled with the optimisations the search chose for it ([searched]) and
@@ -206,6 +211,25 @@ let lorenz =
            [ case text false "searched"; case text true "heuristic" ])
        Lorenz.all)
 
+(* Searches *)
+
+let search_kernel () = Graph.of_string (List.assoc "gpt_oss_kv" Kernels.all)
+
+(* The kernel stage of a timer of [search_kernel ()] on the device [name], and
+   the kernel's program. *)
+let search_setup name open_device =
+  let d = open_device () and device = String.uppercase_ascii name in
+  let devices = Tolk_engine.device [ (device, d) ] in
+  let k = search_kernel () in
+  let prg = Codegen.to_program k (Tolk_engine.renderer d) in
+  (Tolk_engine.timer ~devices device ~vars:[] k, prg)
+
+let prepare name open_device =
+  Thumper.bench_with_setup
+    ~setup:(fun () -> search_setup name open_device)
+    name
+    (fun (stage, prg) -> stage prg)
+
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
 
@@ -217,14 +241,37 @@ let cuda () =
           match Nx_cuda_device.get 0 with Ok d -> d | Error e -> failwith e);
     ]
 
+(* A forked worker cannot reach Metal's compiler, so a fresh process ([--metal])
+   compiles the kernel into the disk cache and links and runs it once, which
+   leaves its pipeline in Metal's cache, and says whether Metal opens. The
+   worker's setup and links then read both back. *)
+let search () =
+  let metal =
+    match Metal.open_device with
+    | Some open_device when run_self "--metal" = 0 ->
+        [ prepare "metal" open_device ]
+    | _ -> []
+  in
+  Thumper.group "search"
+    [
+      Thumper.group "prepare" (prepare "cpu" (fun () -> Nx_device.host) :: metal);
+    ]
+
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
-  @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: cuda ())
+  @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: search () :: cuda ())
 
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--cuda" ] ->
       exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
+  | [ _; "--metal" ] -> (
+      match Metal.open_device with
+      | None -> exit 1
+      | Some open_device ->
+          let stage, prg = search_setup "metal" open_device in
+          ignore ((stage prg) ());
+          exit 0)
   | [ _; "--warm" ] ->
       (* Each case that compiles, once, in as few calls as a trial takes: the
          kernels its setup compiles land in tolk's disk cache, which a
@@ -232,7 +279,8 @@ let () =
       ignore
         (Thumper.measure
            ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
-           ~filter:(`Or [ `Id "cpu/"; `Id "cuda/"; `Id "lorenz/" ])
+           ~filter:
+             (`Or [ `Id "cpu/"; `Id "cuda/"; `Id "lorenz/"; `Id "search/" ])
            (suite ()))
   | _ ->
       Thumper.run "tolk"

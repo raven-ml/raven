@@ -196,7 +196,7 @@ let compiled ?name ?size ?bound () =
 let axpy = lazy (compiled ())
 
 (* A kernel long enough for the host clock to see it run. *)
-let long_axpy = lazy (compiled ~name:"long_axpy" ~size:(1 lsl 18) ())
+let long_axpy () = kernel ~name:"long_axpy" ~size:(1 lsl 18) ()
 let a = floats [| 1.; 2.; 3.; 4. |]
 let b = floats [| 10.; 20.; 30.; 40. |]
 
@@ -1371,77 +1371,165 @@ let runs =
           equal (list string) [] (run_of_fills 9));
     ]
 
-(* Measuring *)
+(* Timing *)
 
-let measures =
-  group "measure"
+(* The devices of test support whose queues run on a domain of their own. *)
+let null = lazy (Null_device.devices ())
+let on_null name = (Lazy.force null) name
+
+(* The devices a timer runs on: the host, which runs a program as a call, a
+   device with queues, and Metal. *)
+let timed_on =
+  [ ("the host", "CPU"); ("a device with queues", "CPU:1"); ("Metal", "METAL") ]
+
+(* The devices map and renderer of [name], skipping the test without Metal. *)
+let timing_on name =
+  match name with
+  | "METAL" -> (
+      match Metal.device with
+      | None -> skip ~reason:"no Metal device" ()
+      | Some m -> (Engine.device [ ("METAL", m) ], Engine.renderer m))
+  | "CPU:1" -> (on_null, Lazy.force clang)
+  | _ -> (devices, Lazy.force clang)
+
+(* The kernel stage of a timer of [long_axpy ()] on [name], and its program. *)
+let timer_on ?(vars = [ ("n", 3) ]) name =
+  let devices, ren = timing_on name in
+  let k = long_axpy () in
+  (Engine.timer ~devices name ~vars k, Codegen.to_program k ren)
+
+let span_count name events =
+  List.length
+    (List.filter
+       (function
+         | Nx_device.Profile.Span sp -> String.starts_with ~prefix:name sp.name
+         | _ -> false)
+       events)
+
+(* [f ()], whether a profile was still taken after it, and the profile's
+   events. *)
+let profiled f =
+  let p = Nx_device.Profile.start () in
+  Fun.protect
+    ~finally:(fun () ->
+      if Nx_device.Profile.enabled () then ignore (Nx_device.Profile.stop p))
+    (fun () ->
+      let r = f () in
+      let taken = Nx_device.Profile.enabled () in
+      (r, taken, Nx_device.Profile.stop p))
+
+let positive name =
+  let stage, prg = timer_on name in
+  let sample = stage prg in
+  let t = sample () in
+  greater float_exact ~than:0. t;
+  less float_exact ~than:1. t
+
+let leaves_the_profile name =
+  let stage, prg = timer_on name in
+  let sample = stage prg in
+  let t, taken, _ = profiled sample in
+  greater float_exact ~than:0. t;
+  less float_exact ~than:1. t;
+  is_true ~msg:"taken" taken
+
+let runs_once_per_sample name =
+  let stage, prg = timer_on name in
+  let sample = stage prg in
+  let n = 5 in
+  let (), _, events =
+    profiled (fun () ->
+        for _ = 1 to n do
+          ignore (sample ())
+        done)
+  in
+  equal int n (span_count "long_axpy" events)
+
+(* A sample's allocations and loads are the profile's Allocation and Load
+   events, and a sample that allocates nothing leaves the device's allocated
+   bytes as they were, or fewer. *)
+let samples_allocate_nothing name =
+  let stage, prg = timer_on name in
+  let sample = stage prg in
+  ignore (sample ());
+  let devices, _ = timing_on name in
+  let stats () = Nx_device.stats (devices name).device in
+  Gc.full_major ();
+  let before = stats () in
+  let (), _, events = profiled (fun () -> ignore (sample ())) in
+  let count f = List.length (List.filter f events) in
+  equal int ~msg:"allocations" 0
+    (count (function Nx_device.Profile.Allocation _ -> true | _ -> false));
+  equal int ~msg:"loads" 0
+    (count (function Nx_device.Profile.Load _ -> true | _ -> false));
+  at_most int ~than:0
+    (Nx_device.Stats.allocated (Nx_device.Stats.diff before (stats ())))
+
+(* A timer used and dropped returns what it allocated: after a warming round,
+   rounds of a kernel stage, a preparation and a sample leave the device's
+   allocated bytes as they were. *)
+let returns_its_memory name =
+  let devices, _ = timing_on name in
+  let allocated () =
+    Gc.full_major ();
+    Gc.full_major ();
+    Nx_device.synchronize (devices name).device;
+    Nx_device.Stats.allocated (Nx_device.stats (devices name).device)
+  in
+  let round () =
+    let stage, prg = timer_on name in
+    ignore (Sys.opaque_identity ((stage prg) ()))
+  in
+  round ();
+  let before = allocated () in
+  for _ = 1 to 4 do
+    round ()
+  done;
+  ignore (allocated ());
+  ignore (allocated ());
+  at_most int ~than:before (allocated ())
+
+let prints_nothing name =
+  let stage, prg = timer_on name in
+  let sample = stage prg in
+  ignore (output ());
+  Helpers.context [ B (Helpers.debug, 2) ] (fun () -> ignore (sample ()));
+  expect (output ()) @@ __POS_OF__ {||}
+
+(* [kernel] with its parameter 1 moved to the slot 3. *)
+let skipping_a_slot () =
+  let k = kernel () in
+  let moved u =
+    match Ops.arg u with
+    | Ops.Param ({ slot = 1; _ } as p) when Ops.op u = Op.Param ->
+        [ (u, Ops.replace u ~arg:(Param { p with slot = 3 })) ]
+    | _ -> []
+  in
+  Ops.substitute k (List.concat_map moved (Ops.toposort k))
+
+let timing =
+  let on f = cases ~name:fst "on" timed_on (fun (_, name) -> f name) in
+  group "timing"
     [
-      test "a program's run on the host takes a positive time, under a second"
-        (fun () ->
-          let t =
-            Engine.measure
-              ~vars:[ ("n", 3) ]
-              ~devices "CPU" (Lazy.force long_axpy)
-          in
-          greater float_exact ~than:0. t;
-          less float_exact ~than:1. t);
-      test "a cold run takes a positive time" (fun () ->
-          greater float_exact ~than:0.
-            (Engine.measure ~cold:true
-               ~vars:[ ("n", 3) ]
-               ~devices "CPU:1" (Lazy.force long_axpy)));
-      test "a run measured under a profile leaves the profile taken" (fun () ->
-          let p = Nx_device.Profile.start () in
-          let t, taken =
-            Fun.protect
-              ~finally:(fun () -> ignore (Nx_device.Profile.stop p))
-              (fun () ->
-                let t =
-                  Engine.measure
-                    ~vars:[ ("n", 3) ]
-                    ~devices "CPU" (Lazy.force long_axpy)
-                in
-                (t, Nx_device.Profile.enabled ()))
-          in
-          greater float_exact ~than:0. t;
-          less float_exact ~than:1. t;
-          is_true taken);
-      test "a kernel longer than 10 us is run once" (fun () ->
-          let p = Nx_device.Profile.start () in
-          let spans =
-            Fun.protect
-              ~finally:(fun () ->
-                if Nx_device.Profile.enabled () then
-                  ignore (Nx_device.Profile.stop p))
-              (fun () ->
-                ignore
-                  (Engine.measure
-                     ~vars:[ ("n", 3) ]
-                     ~devices "CPU" (Lazy.force long_axpy));
-                List.filter
-                  (function
-                    | Nx_device.Profile.Span sp ->
-                        String.starts_with ~prefix:"long_axpy" sp.name
-                    | _ -> false)
-                  (Nx_device.Profile.stop p))
-          in
-          equal int 1 (List.length spans));
-      test "a four-element kernel takes a positive time, below a clock tick"
-        (fun () ->
-          for _ = 1 to 20 do
-            greater float_exact ~than:0.
-              (Engine.measure
-                 ~vars:[ ("n", 3) ]
-                 ~devices "CPU" (Lazy.force axpy))
-          done);
-      test "a name the map does not hold is refused" (fun () ->
+      test "the kernel stage refuses a name the map does not hold" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Engine.measure
-                ~vars:[ ("n", 3) ]
-                ~devices "CPU:9" (Lazy.force axpy)));
-      test "an unbound variable is refused" (fun () ->
+              Engine.timer ~devices "CPU:9" ~vars:[] (kernel ())));
+      test "the kernel stage refuses a kernel whose storage skips a slot"
+        (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Engine.measure ~devices "CPU" (Lazy.force long_axpy)));
+              Engine.timer ~devices "CPU" ~vars:[] (skipping_a_slot ())));
+      group "a sample takes a positive time, under a second" [ on positive ];
+      group "a sample under a profile leaves the profile taken"
+        [ on leaves_the_profile ];
+      group "each sample runs its program once" [ on runs_once_per_sample ];
+      group "a sample allocates and loads nothing"
+        [ on samples_allocate_nothing ];
+      group "a dropped timer returns its memory" [ on returns_its_memory ];
+      group "a sample prints nothing at DEBUG=2" [ on prints_nothing ];
+      test "a sample refuses an unbound variable" (fun () ->
+          let stage, prg = timer_on ~vars:[] "CPU" in
+          let sample = stage prg in
+          raises_match Exn.invalid_arg sample);
     ]
 
 (* Batches
@@ -1449,9 +1537,6 @@ let measures =
    The NULL devices of test support run their queues on a domain of their own,
    behind the host. The recorded copy puts a copy and a kernel on CPU:1 in one
    batch, and shard_add a kernel on each of CPU and CPU:1. *)
-
-let null = lazy (Null_device.devices ())
-let on_null name = (Lazy.force null) name
 
 let computes_on_null name =
   test (name ^ " writes what its tensors compute") (fun () ->
@@ -2244,15 +2329,6 @@ let batches =
                   (Array.make 15 (`Float 0.));
               ])
             storage);
-      test "a program's run on a device with queues takes a positive time"
-        (fun () ->
-          let t =
-            Engine.measure
-              ~vars:[ ("n", 3) ]
-              ~devices:on_null "CPU:1" (Lazy.force long_axpy)
-          in
-          greater float_exact ~than:0. t;
-          less float_exact ~than:1. t);
     ]
 
 (* Metal
@@ -2275,13 +2351,6 @@ let computes_on_metal name =
       let s, vars, storage = linked ~devices:on_metal big in
       Engine.run ~vars s (slots storage);
       equal slot_values (expected ~vars big storage) (by_slot storage contents))
-
-(* A kernel of Metal, [out = a * n + b] over [2^18] floats, as [measure] runs it
-   on scratch buffers. *)
-let metal_axpy () =
-  match Device.renderer (on_metal "CPU:1").compiler.target with
-  | Error why -> fail why
-  | Ok r -> Codegen.to_program (kernel ~name:"metal_axpy" ~size:(1 lsl 18) ()) r
 
 let metal =
   group "Metal"
@@ -2318,15 +2387,6 @@ let metal =
         "a store through a gather writes each row at its loaded index and \
          drops an invalid one"
         (stores_through_a_gather ~devices:on_metal "CPU:1" [| 6; -1; 8; 2 |]);
-      slow "a program's run on Metal takes a positive time, under a second"
-        (fun () ->
-          let t =
-            Engine.measure
-              ~vars:[ ("n", 3) ]
-              ~devices:on_metal "CPU:1" (metal_axpy ())
-          in
-          greater float_exact ~than:0. t;
-          less float_exact ~than:1. t);
     ]
 
 let () =
@@ -2342,7 +2402,7 @@ let () =
          group "a store through a shrink" [ valid_slot_store ];
          refusals;
          runs;
-         measures;
+         timing;
          batches;
          named_as_bounds;
          metal;

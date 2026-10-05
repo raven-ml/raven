@@ -1112,27 +1112,36 @@ let do_compile (ren : Renderer.t) prg source =
     Renderer.Compiler.disassemble ren.compiler lib;
   Some (replace prg ~src:(src prg @ [ v Op.Binary ~arg:(Bytes lib) ]))
 
-let pm_to_program =
-  let program srcs = Upat.op Op.Program ~src:srcs ~name:"prg" in
+let program_with srcs = Upat.op Op.Program ~src:srcs ~name:"prg"
+
+let pm_linearize =
   let sink = Upat.op Op.Sink ~name:"sink"
   and lin = Upat.op Op.Linear ~name:"lin" in
   pm
     (fun () -> [
-      rule (program [ sink ]) (fun m ->
+      rule (program_with [ sink ]) (fun m ->
           Some (do_linearize (m "prg") (m "sink")));
       rule
-        (program [ sink; lin ])
+        (program_with [ sink; lin ])
         (fun m -> do_estimates (m "prg") (m "sink") (m "lin"));
-      rule_ctx
-        (program [ Upat.wild; lin ])
-        (fun ren m -> do_render ren (m "prg") (m "lin"));
-      rule_ctx
-        (program
-           [ Upat.wild; Upat.op Op.Linear; Upat.op Op.Source ~name:"source" ])
-        (fun ren m -> do_compile ren (m "prg") (m "source"));
     ])
 
-let do_to_program ?beam ast (ren : Renderer.t) =
+let pm_to_program =
+  let lin = Upat.op Op.Linear ~name:"lin" in
+  pm_linearize
+  ++ pm
+       (fun () -> [
+         rule_ctx
+           (program_with [ Upat.wild; lin ])
+           (fun ren m -> do_render ren (m "prg") (m "lin"));
+         rule_ctx
+           (program_with
+              [ Upat.wild; Upat.op Op.Linear; Upat.op Op.Source ~name:"source" ])
+           (fun ren m -> do_compile ren (m "prg") (m "source"));
+       ])
+
+(* [ast] as a program of its lowered sink, or the program it is. *)
+let lowered ?beam ast (ren : Renderer.t) =
   let prg =
     match (op ast, arg ast) with
     | Op.Program, _ -> ast
@@ -1146,14 +1155,16 @@ let do_to_program ?beam ast (ren : Renderer.t) =
     | o, _ ->
         invalid_arg (Format.asprintf "can't call to_program on %a" Op.pp o)
   in
-  let prg =
-    match arg prg with
-    | Program _ -> prg
-    | _ ->
-        replace prg
-          ~arg:(Program (program_info_of_sink ~target:ren.target (nth prg 0)))
-  in
-  graph_rewrite ~ctx:ren prg pm_to_program
+  match arg prg with
+  | Program _ -> prg
+  | _ ->
+      replace prg
+        ~arg:(Program (program_info_of_sink ~target:ren.target (nth prg 0)))
+
+let do_to_program ?beam ast ren =
+  graph_rewrite ~ctx:ren (lowered ?beam ast ren) pm_to_program
+
+let linearize ast ren = graph_rewrite ~ctx:ren (lowered ast ren) pm_linearize
 
 (* Each kernel's program is made once: a domain that asks for one being made
    waits for it, holding the entry's lock, rather than making it again. *)

@@ -173,3 +173,13 @@ split_sum/schedule	alloc_words	batch=8192	n=20	1.049e+03	1.049e+03 1.049e+03 1.0
 split_sum/schedule	wall_time	batch=8192	n=20	8.990e-07	8.781e-07 8.832e-07 8.849e-07 8.853e-07 8.869e-07 8.880e-07 8.888e-07 8.920e-07 8.979e-07 8.984e-07 8.996e-07 9.069e-07 9.071e-07 9.108e-07 9.110e-07 9.129e-07 9.152e-07 9.189e-07 9.194e-07 9.274e-07
 split_sum/warm	alloc_words	exact	73857
 split_sum/warm	wall_time	batch=32	n=20	1.589e-04	1.505e-04 1.507e-04 1.511e-04 1.512e-04 1.532e-04 1.561e-04 1.565e-04 1.581e-04 1.588e-04 1.588e-04 1.589e-04 1.595e-04 1.596e-04 1.597e-04 1.598e-04 1.598e-04 1.606e-04 1.612e-04 1.614e-04 1.621e-04
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed search/prepare/cpu search/prepare/metal under load 7.3 on 10 cores
+
+search/prepare/cpu	alloc_words	exact	12949
+search/prepare/cpu	wall_time	batch=256	n=20	2.471e-05	2.414e-05 2.418e-05 2.419e-05 2.427e-05 2.427e-05 2.428e-05 2.429e-05 2.433e-05 2.455e-05 2.471e-05 2.471e-05 2.473e-05 2.476e-05 2.482e-05 2.500e-05 2.508e-05 2.522e-05 2.536e-05 2.557e-05 2.580e-05
+search/prepare/metal	alloc_words	batch=1	n=20	2.810e+05	2.806e+05 2.806e+05 2.807e+05 2.807e+05 2.807e+05 2.807e+05 2.807e+05 2.808e+05 2.808e+05 2.810e+05 2.810e+05 2.810e+05 2.812e+05 2.812e+05 2.815e+05 2.817e+05 2.818e+05 2.819e+05 2.829e+05 3.881e+05
+search/prepare/metal	wall_time	batch=1	n=20	8.981e-04	8.520e-04 8.605e-04 8.613e-04 8.715e-04 8.718e-04 8.848e-04 8.890e-04 8.905e-04 8.937e-04 8.976e-04 8.985e-04 8.990e-04 9.052e-04 9.130e-04 9.147e-04 1.042e-03 1.046e-03 1.049e-03 1.069e-03 1.090e-03

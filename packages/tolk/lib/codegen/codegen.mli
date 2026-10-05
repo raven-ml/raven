@@ -119,3 +119,13 @@ val to_program :
     Raises [Invalid_argument] if [ast] is neither an {!Op.Sink} with kernel
     information nor an {!Op.Program}, or as {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
+
+val linearize : Ops.t -> Renderer.t -> Ops.t
+(** [linearize ast ren] is the program of [ast] for [ren] up to its
+    instructions: an {!Op.Program} whose sources are the first two of
+    {!to_program}'s, the lowered sink and the {!Op.Linear} of its instructions,
+    and whose argument is its {!Ops.program_info}. It renders and compiles
+    nothing. {!to_program} completes it: [to_program (linearize ast ren) ren]
+    and [to_program ast ren] are equal programs.
+
+    Raises as {!to_program} does before rendering. *)

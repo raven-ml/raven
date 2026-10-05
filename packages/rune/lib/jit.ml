@@ -645,10 +645,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
         report "searched a kernel at width %d" width;
         let name = (Tolk.Postrange.Scheduler.ren k).target.device in
         let search () =
-          Tolk.Search.beam_search
-            ~measure:(fun ~cold ~vars prg ->
-              Engine.measure ~cold ~vars ~devices name prg)
-            width k
+          Tolk.Search.beam_search ~time:(Engine.timer ~devices name) width k
         in
         match parallel with
         | None -> search ()

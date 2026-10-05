@@ -952,6 +952,12 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Tolk_engine.measure` is replaced by `Tolk_engine.timer`, and
+  `Search.beam_search` takes `~time`. A search allocates its buffers once, and
+  not at all when its result is cached, links each candidate once, runs each
+  sample once and silently, compiles each kernel once, and compiles no
+  candidate past `BEAM_UOPS_MAX` (new `Codegen.linearize`). A candidate's setup
+  on Metal takes about 1.2 ms, from about 3.9 ms. PR #235 found these costs.
 - Every environment variable is one setting declared with its reach
   (`Helpers.Context_var`, new `float` and `int_option`), and `Helpers.getenv*`
   and `variable*` are removed, so the caches key on every variable that changes

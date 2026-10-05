@@ -74,9 +74,11 @@ let get_test_global_size global_size max_global_size vars =
   let size = shrink input in
   (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
 
-(* Measured up to [cnt] times, stopping once slower than [early_stop]: the least
-   time. *)
-let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
+let least = List.fold_left Float.min infinity
+
+(* Timed up to [cnt] times, stopping once its least exceeds [early_stop]: the
+   samples. *)
+let time_program ~time ~early_stop ~allow_test_size ~vars ?(cnt = 3) prg =
   let prg, factor =
     match arg prg with
     | Program info when allow_test_size ->
@@ -87,13 +89,16 @@ let time_program ~measure ~vars ~early_stop ~allow_test_size ?(cnt = 3) prg =
         (replace prg ~arg:(Program { info with global_size }), factor)
     | _ -> (prg, 1.)
   in
-  let rec go least cnt =
-    let least = Float.min least (measure ~cold:true ~vars prg *. factor) in
-    if cnt = 1 || early_stop < least then least else go least (cnt - 1)
+  let sample = time prg in
+  let rec go samples cnt =
+    let samples = (sample () *. factor) :: samples in
+    if cnt = 1 || early_stop < least samples then samples
+    else go samples (cnt - 1)
   in
-  go infinity cnt
+  go [] cnt
 
-(* A candidate's program and its compile time, if it compiles. *)
+(* A kernel linearized, dropped past the cap, then compiled: its program and
+   compile time. *)
 let try_compile k =
   let st = Unix.gettimeofday () in
   let ren = K.ren k in
@@ -106,19 +111,19 @@ let try_compile k =
   in
   match
     let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
-    let prg =
-      Codegen.to_program
+    let lin =
+      Codegen.linearize
         (substitute ast (List.concat_map on_device (toposort ast)))
         ren
     in
-    let uops = List.length (src (nth prg 1)) in
+    let uops = List.length (src (nth lin 1)) in
     let uops_max = setting uops_max in
     if uops_max > 0 && uops >= uops_max then (
       if setting log_surpass_max then
         Printf.printf "too many uops. len(uops)=%d, uops_max=%d\n%!" uops
           uops_max;
       None)
-    else Some (prg, Unix.gettimeofday () -. st)
+    else Some (Codegen.to_program lin ren, Unix.gettimeofday () -. st)
   with
   | compiled -> compiled
   | exception (Sys.Break as e) -> raise e
@@ -247,7 +252,7 @@ let midpoint v =
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
-let beam_search ~measure ?allow_test_size amt s =
+let beam_search ~time ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -290,8 +295,32 @@ let beam_search ~measure ?allow_test_size amt s =
       let vars =
         List.map (fun v -> (expr v, midpoint v)) (variables (K.ast s))
       in
+      let time = time ~vars (K.ast s) in
       let min_progress = setting min_progress /. 1e6 in
       let seen_libs = Hashtbl.create 256 in
+      (* Each kernel is compiled once: two sequences of actions can reach equal
+         kernels, whose programs [Codegen.to_program] keys apart by the
+         optimisations they record. *)
+      let compiled = Ops.Tbl.create 256 in
+      let compile ks =
+        let met = Ops.Tbl.create 64 in
+        let fresh =
+          List.filter
+            (fun k ->
+              let ast = K.ast k in
+              let first =
+                not (Ops.Tbl.mem compiled ast || Ops.Tbl.mem met ast)
+              in
+              if first then Ops.Tbl.add met ast ();
+              first)
+            ks
+        in
+        List.iter2
+          (fun k r -> Ops.Tbl.replace compiled (K.ast k) r)
+          fresh
+          (Worker.map try_compile fresh);
+        List.map (fun k -> (k, Ops.Tbl.find compiled (K.ast k))) ks
+      in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in
       if beam_debug > 0 then Format.printf "BEAM_SEARCH:@.%a@." pp (K.ast s);
@@ -299,7 +328,7 @@ let beam_search ~measure ?allow_test_size amt s =
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
       let rec search beam =
-        let best = snd (List.hd beam) in
+        let best = least (snd (List.hd beam)) in
         let candidates =
           List.concat_map
             (fun (k, _) -> List.map snd (get_kernel_actions ~include_0:false k))
@@ -327,12 +356,12 @@ let beam_search ~measure ?allow_test_size amt s =
               else (
                 Hashtbl.add seen_libs (binary prg) ();
                 match
-                  time_program ~measure ~vars ~early_stop:(best *. 3.)
+                  time_program ~time ~vars ~early_stop:(best *. 3.)
                     ~allow_test_size prg
                 with
-                | tm ->
-                    timed := (cand, tm) :: !timed;
-                    let tm = Helpers.time_to_str ~w:12 tm in
+                | samples ->
+                    timed := (cand, samples) :: !timed;
+                    let tm = Helpers.time_to_str ~w:12 (least samples) in
                     let progress = List.length !timed in
                     if beam_debug > 1 then
                       Printf.printf
@@ -357,26 +386,27 @@ let beam_search ~measure ?allow_test_size amt s =
                     | e -> Printexc.raise_with_backtrace e bt))
           | _ -> ()
         in
-        List.iteri consider
-          (List.combine candidates (Worker.map try_compile candidates));
+        List.iteri consider (compile candidates);
         let opts =
           List.stable_sort
-            (fun (_, t0) (_, t1) -> Float.compare t0 t1)
+            (fun (_, t0) (_, t1) -> Float.compare (least t0) (least t1))
             (List.rev !timed)
         in
         let exiting =
           match opts with
           | [] -> true
-          | (_, tm) :: _ -> tm < min_progress || best -. tm < min_progress
+          | (_, c) :: _ ->
+              let tm = least c in
+              tm < min_progress || best -. tm < min_progress
         in
         let beam =
           match opts with
           | _ when not exiting -> List.filteri (fun i _ -> i < amt) opts
-          | ((_, tm) as fastest) :: _ when tm < best -> [ fastest ]
+          | ((_, c) as fastest) :: _ when least c < best -> [ fastest ]
           | _ -> beam
         in
         (if debug () >= 2 then
-           let tm = Helpers.time_to_str ~w:12 (snd (List.hd beam)) in
+           let tm = Helpers.time_to_str ~w:12 (least (snd (List.hd beam))) in
            Printf.printf "\r%7.2fs: %s from %3d -> %3d actions\027[K %s\n%!"
              (elapsed ())
              (if exiting then Helpers.colored Green tm else tm)
@@ -384,12 +414,12 @@ let beam_search ~measure ?allow_test_size amt s =
              (K.colored_shape (fst (List.hd beam))));
         if exiting then beam else search beam
       in
-      let beam = search [ (s, infinity) ] in
-      let k, tm = List.hd beam in
+      let beam = search [ (s, []) ] in
+      let k, samples = List.hd beam in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
       if beam_debug > 0 then
         Format.printf "BEAM_SEARCH: final tm=%s, applied_opts=[%a]@."
-          (Helpers.time_to_str ~w:0 tm)
+          (Helpers.time_to_str ~w:0 (least samples))
           pp_opts (K.applied_opts k);
       k

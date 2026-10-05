@@ -154,7 +154,10 @@ the Exclusions of `README.md`.
   - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
     since a renderer holds its compiler and `Device` follows `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` follows
-    `Postrange` and takes the timing of a kernel as its `measure` argument;
+    `Postrange` and takes the timing of a kernel as its `time` argument,
+    where `beam_search` takes `rawbufs` and `var_vals`: applied to the
+    kernel, it makes the buffers `args_from_ast` describes, since `tolk`
+    cannot name nx.device's buffers;
     `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;
@@ -3396,3 +3399,44 @@ stores through a pad.
   under one setting misses under another › a setting its caller declares`;
   `Rune.jit › keys › a setting that shapes compilation › a change of
   RUNE_TEST_JIT_SETTING around a call retraces once`.
+
+## D115. A search linearizes a candidate before it compiles it
+
+- **tinygrad:** `codegen/opt/search.py:64-70` (`_try_compile`: `to_program`,
+  then the count of `prg.src[1].src` against `BEAM_UOPS_MAX`).
+- **tolk:** `lib/codegen/opt/search.ml:102` (`try_compile`) and
+  `lib/codegen/codegen.ml:1167` (`linearize`).
+- **Differs:** a candidate is linearized (`Codegen.linearize`), dropped if it
+  has `BEAM_UOPS_MAX` instructions or more, and only then rendered and
+  compiled (`Codegen.to_program` completes the linearized program). tinygrad
+  renders and compiles every candidate, then drops the one past the cap. The
+  search keeps and drops the same candidates.
+- **Reason:** speed, measured by PR #235 on lorenz_simple's step on AMD: the
+  candidates past the cap are the largest unrolls, the slowest to compile,
+  and compiling them took 154 s of a search, 30 s once they were dropped
+  before compiling. Admitting a speed rule is the maintainer's call: reason
+  (b) speaks of a call site that fails.
+- **Pinned by:** `Tolk.Search › BEAM_PADTO=1 ... › a candidate of
+  BEAM_UOPS_MAX instructions or more is not compiled`; `Tolk.Codegen ›
+  linearize` (both tests).
+
+## D116. A search compiles each kernel once
+
+- **tinygrad:** `codegen/opt/search.py:132-142` (each candidate compiled,
+  then dropped if its binary is in `seen_libs`).
+- **tolk:** `lib/codegen/opt/search.ml:304` (`compiled`, `compile`).
+- **Differs:** a search keeps each kernel's compilation, by its scheduler's
+  kernel (`Postrange.Scheduler.ast`), and a candidate whose kernel it met
+  before, in this round or an earlier one, takes that result uncompiled. The
+  memo is filled before a round's compilations are spread over the domains.
+  tinygrad compiles both: two sequences of actions, such as an upcast then a
+  swap and the swap then the upcast of the swapped axis, reach equal kernels
+  whose kernel information records different optimisations, so
+  `to_program`'s cache misses, and `seen_libs` drops the second binary only
+  after compiling it. A program depends only on its kernel and its name,
+  `"test"`, so the search keeps and drops the same candidates.
+- **Reason:** speed, measured by PR #235 on GNODE and lorenz_simple on AMD,
+  where 12 to 16% of a search's candidates were such duplicates. Admitting a
+  speed rule is the maintainer's call, as for D115.
+- **Pinned by:** `Tolk.Search › a search compiles each kernel once`
+  (`matmul_small`, whose upcast and swap commute).

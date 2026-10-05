@@ -18,10 +18,10 @@
     the optimisations it finds are then applied by name ({!Ops.kernel_info}'s
     [opts_to_apply]). No kernel is searched unless its argument asks for a width
     ({!Ops.kernel_info}'s [beam]) and its compiler is given the search:
-    [Codegen.to_program ~beam:(beam_search ~measure)].
+    [Codegen.to_program ~beam:(beam_search ~time)].
 
-    Nothing here runs a program. The search times candidates with the
-    measurement it is given, which runs them on a device. *)
+    Nothing here runs a program. The search times candidates with the timing it
+    is given, which runs them on a device. *)
 
 (** {1:actions Actions} *)
 
@@ -68,44 +68,53 @@ val get_kernel_actions :
 (** {1:search Searching} *)
 
 val beam_search :
-  measure:(cold:bool -> vars:(string * int) list -> Ops.t -> float) ->
+  time:(vars:(string * int) list -> Ops.t -> Ops.t -> unit -> float) ->
   ?allow_test_size:bool ->
   int ->
   Postrange.Scheduler.t ->
   Postrange.Scheduler.t
-(** [beam_search ~measure ~allow_test_size amt k] is [k], or a copy of it, with
-    the optimisations that a beam search of width [amt] finds fastest. [k]'s
-    kernel is the sink that {!Postrange.apply_opts} optimises.
+(** [beam_search ~time ~allow_test_size amt k] is [k], or a copy of it, with the
+    optimisations that a beam search of width [amt] finds fastest. [k]'s kernel
+    is the sink that {!Postrange.apply_opts} optimises.
 
-    [measure ~cold ~vars prg] is the time in seconds of one run of the compiled
-    program [prg] ({!Op.Program}) on a device of the target of [k]'s renderer,
-    with each variable bound to its value in [vars], and with the device's
-    caches invalidated first if [cold] and the device can. The search asks for
-    cold runs, with each variable of [k]'s kernel ({!Ops.variables}) bound to
-    the middle of its bounds, [(vmin + vmax) / 2] rounded down. A measurement
-    that raises [Failure] drops its candidate; any other exception is raised by
-    the search. The search limits neither a compilation nor a run: a candidate
-    whose compilation or run hangs hangs the search, one more reason to run it
+    [time ~vars kernel prg ()] is the time in seconds of one run of the compiled
+    program [prg] ({!Op.Program}), compiled from the kernel [kernel], on a
+    device of the target of [k]'s renderer, from cold caches where the device
+    can, with each variable bound to its value in [vars]. A search that measures
+    applies [time ~vars] to [k]'s kernel once, before it compiles anything, with
+    each variable of the kernel ({!Ops.variables}) bound to the middle of its
+    bounds, [(vmin + vmax) / 2] rounded down. It applies the result once to each
+    program it times, and that result to [()] once per sample. The search raises
+    any exception from the first application. A program whose application or
+    sample raises [Failure] is dropped; the search raises any other exception.
+    The search limits neither a compilation nor a run: a candidate whose
+    compilation or run hangs hangs the search, one more reason to run it
     offline.
+
+    A kernel is compiled for [k]'s renderer named ["test"], with its storage
+    placed on the renderer's device. It is first linearized
+    ({!Codegen.linearize}) and dropped if it has [BEAM_UOPS_MAX] (default
+    [3000]) instructions or more, unless that is [0] or less. It is then
+    completed ({!Codegen.to_program}). A kernel whose compilation raises
+    [Failure] is dropped, and so is one whose compilation raises another
+    exception, unless the environment variable [BEAM_STRICT_MODE] holds a
+    nonzero integer and the exception is raised. A search compiles each kernel
+    ({!Postrange.Scheduler.ast}) once: a candidate whose kernel it met before
+    takes that kernel's result.
+
+    A program is timed up to three times, stopping once its least time exceeds
+    an early stop. Its samples are the times measured, and its time the least.
 
     The beam holds up to [amt] kernels, and starts as [k], of an infinite time.
     Each round:
     + The candidates are the kernels {!get_kernel_actions} makes of the beam's
-      kernels ([~include_0:false]), in order.
-    + Each candidate's kernel is compiled for [k]'s renderer
-      ({!Codegen.to_program}), named ["test"] and with its storage placed on the
-      renderer's device, on the domains {!Worker.map} spreads them over. A
-      candidate whose compilation raises [Failure] is dropped, and so is one
-      whose compilation raises another exception, unless the environment
-      variable [BEAM_STRICT_MODE] holds a nonzero integer and the exception is
-      raised. A candidate is also dropped if its program has [BEAM_UOPS_MAX]
-      (default [3000]) instructions or more, unless that is [0] or less.
+      kernels ([~include_0:false]), in order, compiled on the domains
+      {!Worker.map} spreads them over.
     + In order, a candidate is dropped if its binary was timed before in this
       search, or if its program's estimated operations ({!Ops.estimates}, [0] if
       unknown) are more than [1000] times the fewest of this round's programs so
-      far. Each other one is measured up to three times, stopping once its least
-      time exceeds three times the time of the beam's first kernel; its time is
-      the least measured.
+      far. Each other one is timed with an early stop of three times the time of
+      the beam's first kernel.
     + The search ends if no candidate was timed, if the fastest took less than
       [BEAM_MIN_PROGRESS] microseconds (default [0.01]), or if it is faster than
       the beam's first kernel by less than that. It then keeps the fastest
@@ -117,9 +126,9 @@ val beam_search :
 
     With [allow_test_size] (default: whether the environment variable
     [BEAM_ESTIMATE] holds a nonzero integer, default [1]), a program launching
-    more than [65536] workgroups is measured launching fewer: of its global
-    sizes, the last one greater than [16] is halved until their product is at
-    most [65536], and its time is scaled up by the ratio of the products.
+    more than [65536] workgroups is timed launching fewer: of its global sizes,
+    the last one greater than [16] is halved until their product is at most
+    [65536], and its time is scaled up by the ratio of the products.
 
     While the setting {!Helpers.cachelevel} is positive, each search keeps the
     optimisations it finds in the {!Helpers.Diskcache} table ["beam_search"],
@@ -132,14 +141,15 @@ val beam_search :
     variables [BEAM_UOPS_MAX], [BEAM_UPCAST_MAX], [BEAM_LOCAL_MAX],
     [BEAM_MIN_PROGRESS] and [BEAM_ESTIMATE], and the sources of this library.
     Unless {!Helpers.ignore_beam_cache} holds, a search whose key is kept
-    measures nothing, and applies the optimisations kept beyond as many as [k]
-    has to a copy of [k]. A kept result is what an earlier search measured
-    fastest: another search may measure otherwise.
+    compiles and times nothing, applies nothing of [time], and applies the
+    optimisations kept beyond as many as [k] has to a copy of [k]. A kept result
+    is what an earlier search measured fastest: another search may measure
+    otherwise.
 
     When the setting {!Helpers.debug} is [2] or more, the progress of the search
     is printed on standard output. When the environment variable [BEAM_DEBUG]
     holds a positive integer, so are the kernel searched, the candidates whose
-    measurement failed and the result; from [2], every candidate timed.
+    timing failed and the result; from [2], every candidate timed.
 
     The environment variables are read when the program starts.
 

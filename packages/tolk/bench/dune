@@ -5,7 +5,7 @@
 
 (executable
  (name bench_tolk)
- (modules bench_tolk programs kernels lorenz)
+ (modules bench_tolk programs kernels lorenz metal)
  (libraries
   tolk
   tolk.engine
@@ -13,7 +13,12 @@
   tolk_run
   nx.device
   nx.cuda.device
-  thumper))
+  thumper
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))
 
 (executable
  (name embed)

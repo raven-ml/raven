@@ -730,6 +730,34 @@ let caching =
         makes_anew_after_a_failure;
     ]
 
+(* Linearizing *)
+
+let completes_linearize =
+  let rows = List.filter (fun row -> compiles row && by_default row) rows in
+  prop ~count:20
+    "to_program completes linearize into the program of the kernel itself"
+    Gen.(
+      with_pp
+        (fun ppf row -> Format.pp_print_string ppf (row "name"))
+        (of_list rows))
+    (fun row ->
+      under row (fun () ->
+          let k = kernel row and ren = renderer_of_row row in
+          let lin = Codegen.linearize k ren in
+          let prg = Codegen.to_program k ren in
+          same_graph ~msg:"its first two" (first 2 prg) lin;
+          same_graph prg (Codegen.to_program lin ren)))
+
+let linearizing =
+  group "linearize"
+    [
+      completes_linearize;
+      test "compiles nothing" (fun () ->
+          let compiled, r = counting () in
+          ignore (Codegen.linearize (fresh_kernel ()) r);
+          equal int 0 (Atomic.get compiled));
+    ]
+
 (* Programs on disk
 
    A child makes the program of add_clang's kernel and prints it. With
@@ -2641,6 +2669,7 @@ let () =
          blocks;
          beam_search;
          caching;
+         linearizing;
          on_disk;
          programs;
          errors;

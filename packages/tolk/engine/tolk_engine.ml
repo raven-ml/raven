@@ -1080,6 +1080,12 @@ let check_slots t slots =
 (* Reports *)
 
 let reporting () = Helpers.Context_var.value Helpers.debug >= 2
+
+(* A run prints its reports as [DEBUG] asks, or nothing: a timing run is
+   silent. *)
+type reports = Reported | Silent
+
+let reported = function Reported -> reporting () | Silent -> false
 let kernels_run = Atomic.make 0
 
 (* One line per kernel, as [DEBUG=2] prints it: its device, how many kernels ran
@@ -1175,7 +1181,7 @@ let settle t buffers =
     end
   done
 
-let run_launch t call slots l =
+let run_launch t reports call slots l =
   let env = t.env in
   let buffers = Array.map (fun a -> a slots env) l.args in
   settle t buffers;
@@ -1189,7 +1195,7 @@ let run_launch t call slots l =
   let launch () =
     Nx_device.Program.call ?split l.program.program buffers values
   in
-  if reporting () then
+  if reported reports then
     let vars = bindings t in
     report
       ~device:(Nx_device.name (B.device buffers.(0)))
@@ -1201,13 +1207,13 @@ let run_launch t call slots l =
       (Some (seconds launch))
   else launch ()
 
-let rec run_call t slots = function
+let rec run_call t reports slots = function
   | Copy { call; dst; src } ->
       let dsts = dst slots t.env and srcs = src slots t.env in
       List.iteri
         (fun i dst ->
           let copy () = B.copy ~src:(lane srcs i) ~dst in
-          if reporting () then
+          if reported reports then
             let vars = bindings t in
             report
               ~device:(Nx_device.name (B.device dst))
@@ -1221,16 +1227,17 @@ let rec run_call t slots = function
         dsts
   | Kernel { call; launches } ->
       for i = 0 to Array.length launches - 1 do
-        run_launch t call slots launches.(i)
+        run_launch t reports call slots launches.(i)
       done
   | Batch b ->
-      if reporting () then run_reported ~env:t.env ~vars:(bindings t) slots b
+      if reported reports then
+        run_reported ~env:t.env ~vars:(bindings t) slots b
       else run_batch ~env:t.env slots b;
       t.synced <- []
   | Range { ranges; body } ->
       let env = t.env in
       let rec trips = function
-        | [] -> List.iter (run_call t slots) body
+        | [] -> run_calls t reports slots body
         | (c, count) :: rest ->
             let n = count env in
             let value = env.values.(c) and set = env.set.(c) in
@@ -1244,11 +1251,20 @@ let rec run_call t slots = function
       in
       trips ranges
 
-let run ?(vars = []) t slots =
+and run_calls t reports slots = function
+  | [] -> ()
+  | call :: rest ->
+      run_call t reports slots call;
+      run_calls t reports slots rest
+
+let run_with reports ~vars t slots =
   check_slots t slots;
   let n = List.length t.calls in
-  if Helpers.Context_var.value Helpers.debug >= 1 && n >= 10 then
-    Printf.printf "jit execs %d calls\n%!" n;
+  if
+    reports = Reported
+    && Helpers.Context_var.value Helpers.debug >= 1
+    && n >= 10
+  then Printf.printf "jit execs %d calls\n%!" n;
   Mutex.protect t.lock (fun () ->
       let env = t.env in
       Array.fill env.set 0 (Array.length env.set) false;
@@ -1262,9 +1278,11 @@ let run ?(vars = []) t slots =
           | Some _ | None -> ())
         vars;
       t.synced <- [];
-      List.iter (run_call t slots) t.calls)
+      run_calls t reports slots t.calls)
 
-(* Measuring *)
+let run ?(vars = []) t slots = run_with Reported ~vars t slots
+
+(* Timing *)
 
 (* Only NV invalidates its caches on demand. *)
 let invalidate_caches d =
@@ -1296,63 +1314,53 @@ let timed d name f =
     in
     match List.find_map span events with
     | Some ns -> ns
-    | None -> invalid_arg ("Tolk_engine.measure: no span of " ^ name)
+    | None -> invalid_arg ("Tolk_engine.timer: no span of " ^ name)
 
-(* A run shorter than a tick of its clock measures 0: the mean of runs that take
-   [enough_ns] in all is off by at most a tick in [enough_ns]. *)
-let enough_ns = 10_000
-let most_runs = 1000
+(* The storage parameters of [kernel], by slot. *)
+let storage_params kernel =
+  List.filter_map
+    (fun u ->
+      match Ops.arg u with
+      | Ops.Param { slot; _ } when is_slot u && slot >= 0 -> Some (slot, u)
+      | _ -> None)
+    (Ops.toposort kernel)
+  |> List.sort_uniq (fun (s, _) (s', _) -> Int.compare s s')
 
-let mean_ns run =
-  let rec go runs total =
-    if total >= enough_ns || runs >= most_runs then
-      Float.of_int total /. Float.of_int runs
-    else go (runs + 1) (total + run ())
-  in
-  go 1 (run ())
-
-let measure ?(cold = false) ?(vars = []) ~devices name prg =
+let timer ~devices name ~vars kernel =
   let dev = devices name in
-  let d = dev.device in
-  let elf = Device.Tiny_elf.of_program prg in
-  let info = match Ops.arg prg with Ops.Program i -> i | _ -> assert false in
-  let buffers =
-    List.filteri (fun i _ -> i < List.length info.globals) elf.signature
+  let params = storage_params kernel in
+  if List.map fst params <> List.init (List.length params) Fun.id then
+    fail "Tolk_engine.timer" "the kernel's parameters skip a slot";
+  let args =
+    List.map
+      (fun (slot, u) ->
+        Ops.param
+          ~shape:[ Ops.Int (Ops.max_numel u) ]
+          ~device:(Single name) slot (Ops.dtype u))
+      params
   in
-  let scratch (param : Device.Tiny_elf.param) =
-    B.create d Nx_dtype.Scalar.UInt8
-      (max 1 (List.fold_left ( * ) (Dtype.itemsize param.dtype) param.shape))
+  let slots =
+    Array.of_list
+      (List.map
+         (fun u ->
+           [ B.create dev.device Nx_dtype.Scalar.UInt8 (max 1 (bytes u)) ])
+         args)
   in
-  let run =
+  let on =
     match dev.compiler.queues with
-    | None ->
-        let p = Program.load d prg in
-        let bs = List.map scratch buffers in
-        fun () ->
-          timed (Nx_device.host_of d) elf.name (fun () ->
-              Program.run ~vars p bs)
-    | Some _ ->
-        let nslots = 1 + List.fold_left max 0 info.globals in
-        let buffer slot =
-          List.nth buffers
-            (Option.get (List.find_index (Int.equal slot) info.globals))
-        in
-        let param slot =
-          let b = buffer slot in
-          Ops.param
-            ~shape:(List.map (fun n -> Ops.Int n) b.shape)
-            ~device:(Single name) slot b.dtype
-        in
-        let linear =
-          Hcq2.compile_linear ~profile:true
-            ~devices:(fun n -> (devices n).compiler)
-            (Ops.v Op.Linear ~src:[ Ops.call prg (List.init nslots param) ])
-        in
-        let s = link ~devices linear in
-        let slots = Array.init nslots (fun slot -> [ scratch (buffer slot) ]) in
-        fun () -> timed d elf.name (fun () -> run ~vars s slots)
+    | None -> Nx_device.host_of dev.device
+    | Some _ -> dev.device
   in
-  mean_ns (fun () ->
-      if cold then invalidate_caches d;
-      run ())
-  *. 1e-9
+  fun prg ->
+    let s =
+      link ~devices
+        (Hcq2.compile_linear ~profile:true
+           ~devices:(fun n -> (devices n).compiler)
+           (Ops.v Op.Linear ~src:[ Ops.call prg args ]))
+    in
+    let kernel_name = (Device.Tiny_elf.of_program prg).name in
+    fun () ->
+      invalidate_caches dev.device;
+      Float.of_int
+        (timed on kernel_name (fun () -> run_with Silent ~vars s slots))
+      *. 1e-9

@@ -88,24 +88,43 @@ let workgroups ~vars prg =
       Helpers.prod (List.map (fun s -> Ops.sym_infer s vars) p.global_size)
   | _ -> failf "%a is no program" Ops.pp prg
 
-(* Measurements *)
+(* Timings *)
 
-type call = {
-  prg : Ops.t;
-  cold : bool;
-  vars : (string * int) list;
-  time : float;
-}
+type call = { prg : Ops.t; vars : (string * int) list; time : float }
 
-(* The measurement [time], recording each call that returns. *)
-let recording time =
-  let calls = ref [] in
-  let measure ~cold ~vars prg =
-    let t = time ~vars prg in
-    calls := { prg; cold; vars; time = t } :: !calls;
-    t
+(* What a timing was applied to: the kernels, the programs prepared and the
+   samples that returned, in order. *)
+type record = { kernels : Ops.t list; prepared : Ops.t list; calls : call list }
+
+(* The timing whose samples of a program take [sample ~vars prg i], [i] the
+   number of samples of it before, and its record. *)
+let sampling sample =
+  let kernels = ref [] and prepared = ref [] and calls = ref [] in
+  let time ~vars kernel =
+    kernels := kernel :: !kernels;
+    fun prg ->
+      prepared := prg :: !prepared;
+      let i = ref 0 in
+      fun () ->
+        let t = sample ~vars prg !i in
+        incr i;
+        calls := { prg; vars; time = t } :: !calls;
+        t
   in
-  (measure, fun () -> List.rev !calls)
+  let record () =
+    {
+      kernels = List.rev !kernels;
+      prepared = List.rev !prepared;
+      calls = List.rev !calls;
+    }
+  in
+  (time, record)
+
+(* The timing whose samples of a program all take [time ~vars prg], and the
+   samples that returned. *)
+let recording time =
+  let time, record = sampling (fun ~vars prg _ -> time ~vars prg) in
+  (time, fun () -> (record ()).calls)
 
 (* The measurement of searches.golden: an optimum at two optimisations, each
    weighed by its action's position, scaled by the launch's workgroups. When
@@ -120,9 +139,8 @@ let golden_time ~failing ~vars prg =
   let tm = List.fold_left weigh tm positions in
   tm *. (1. +. (Float.of_int (workgroups ~vars prg mod 5) /. 10.))
 
-let search ?settings ?allow_test_size ~measure amt k =
-  quietly ?settings (fun () ->
-      Search.beam_search ~measure ?allow_test_size amt k)
+let search ?settings ?allow_test_size ~time amt k =
+  quietly ?settings (fun () -> Search.beam_search ~time ?allow_test_size amt k)
 
 (* The actions *)
 
@@ -148,11 +166,11 @@ let candidates =
 (* Searches *)
 
 let searched cell =
-  let measure, calls =
+  let time, calls =
     recording (golden_time ~failing:(bool_of_cell (cell "failing")))
   in
   let k =
-    search ~measure
+    search ~time
       ~allow_test_size:(bool_of_cell (cell "allow_test_size"))
       (int_of_string (cell "amt"))
       (scheduled (cell "kernel") (cell "target"))
@@ -330,8 +348,8 @@ let measured_times n calls =
 let rounds =
   let min_progress = 0.01 /. 1e6 in
   let searched times =
-    let measure, calls = recording (by_depth times) in
-    let k = search ~measure 1 (scheduled "sum_rows" "clang") in
+    let time, calls = recording (by_depth times) in
+    let k = search ~time 1 (scheduled "sum_rows" "clang") in
     (k, calls ())
   in
   group "rounds"
@@ -368,9 +386,9 @@ let chooses_the_fastest =
            (of_list [ "add_small"; "sum_rows"; "variable_rows" ])
            (int_range 1 3) nat))
     (fun (kernel, amt, seed) ->
-      let measure, calls = recording (drawn_time seed) in
+      let time, calls = recording (drawn_time seed) in
       let k = scheduled kernel "clang" in
-      let chosen = search ~measure amt k in
+      let chosen = search ~time amt k in
       match calls () with
       | [] -> equal Uops.uop (K.ast k) (K.ast chosen)
       | calls ->
@@ -385,11 +403,11 @@ let is_deterministic =
   test "a search measures and chooses alike on one domain and on several"
     (fun () ->
       let run parallel =
-        let measure, calls = recording (golden_time ~failing:false) in
+        let time, calls = recording (golden_time ~failing:false) in
         let k =
           search
             ~settings:[ B (Helpers.parallel, parallel) ]
-            ~measure 2
+            ~time 2
             (scheduled "sum_rows" "clang")
         in
         (K.applied_opts k, binaries (calls ()))
@@ -398,23 +416,152 @@ let is_deterministic =
       equal opts serial_opts parallel_opts;
       equal (list string) serial parallel)
 
-let asks_cold_midpoints =
-  test "a search asks for cold runs with each variable at its bounds' middle"
-    (fun () ->
-      let measure, calls = recording (golden_time ~failing:false) in
-      ignore (search ~measure 1 (scheduled "variable_rows" "metal"));
+let midpoints =
+  test "a search times with each variable at its bounds' middle" (fun () ->
+      let time, calls = recording (golden_time ~failing:false) in
+      ignore (search ~time 1 (scheduled "variable_rows" "metal"));
       let calls = calls () in
       is_true ~msg:"measured" (calls <> []);
       List.iter
-        (fun c ->
-          is_true ~msg:"cold" c.cold;
-          equal (list (pair string int)) [ ("n", 8) ] c.vars)
+        (fun c -> equal (list (pair string int)) [ ("n", 8) ] c.vars)
         calls)
+
+(* The timing's stages *)
+
+let small_searches =
+  Gen.(
+    with_pp
+      (fun ppf (kernel, target, amt) ->
+        Format.fprintf ppf "%s on %s, width %d" kernel target amt)
+      (triple
+         (of_list [ "add_small"; "sum_rows"; "variable_rows"; "symbolic" ])
+         (of_list [ "clang"; "metal" ])
+         (int_range 1 3)))
+
+let applies_the_kernel_once =
+  prop ~count:10 "a search applies its timing once, to its kernel"
+    small_searches (fun (kernel, target, amt) ->
+      let time, record =
+        sampling (fun ~vars prg _ -> golden_time ~failing:false ~vars prg)
+      in
+      let k = scheduled kernel target in
+      ignore (search ~time amt k);
+      equal (list Uops.uop) [ K.ast k ] (record ()).kernels)
+
+(* Samples drawn from [seed], from a microsecond to two milliseconds, which a
+   program's other samples and other programs' overlap. *)
+let spread seed ~vars:_ prg i =
+  let positions = List.map position (kernel_info prg).applied_opts in
+  1e-6 *. Float.of_int (1 + (Hashtbl.seeded_hash seed (positions, i) mod 2000))
+
+let least = List.fold_left Float.min infinity
+
+(* The samples of each program prepared, by binary, in order. *)
+let samples_of r =
+  List.map
+    (fun p ->
+      ( p,
+        List.filter_map
+          (fun c -> if binary c.prg = binary p then Some c.time else None)
+          r.calls ))
+    r.prepared
+
+(* The least sample of a program of [depth] optimisations: the incumbent of the
+   round that times programs of one more. *)
+let incumbent r depth =
+  least
+    (List.concat_map
+       (fun (p, ts) ->
+         if List.length (kernel_info p).applied_opts = depth then ts else [])
+       (samples_of r))
+
+let early_stops =
+  let pp ppf (kernel, amt, seed) =
+    Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
+  in
+  prop ~count:20
+    "each program is prepared once and sampled until its least exceeds three \
+     times the incumbent's, three times at most"
+    Gen.(
+      with_pp pp
+        (triple
+           (of_list [ "add_small"; "sum_rows"; "variable_rows" ])
+           (int_range 1 3) nat))
+    (fun (kernel, amt, seed) ->
+      let time, record = sampling (spread seed) in
+      ignore
+        (search ~allow_test_size:false ~time amt (scheduled kernel "clang"));
+      let r = record () in
+      equal ~msg:"prepared once" (list string)
+        (List.sort_uniq String.compare (List.map binary r.prepared))
+        (List.sort String.compare (List.map binary r.prepared));
+      List.iter
+        (fun (p, ts) ->
+          let depth = List.length (kernel_info p).applied_opts in
+          let stop =
+            if depth = 0 then infinity else 3. *. incumbent r (depth - 1)
+          in
+          let n = List.length ts in
+          let msg =
+            Format.asprintf "%a"
+              (Format.pp_print_list Opt.pp)
+              (kernel_info p).applied_opts
+          in
+          at_least int ~msg ~than:1 n;
+          at_most int ~msg ~than:3 n;
+          List.iteri
+            (fun i _ ->
+              let before = least (List.filteri (fun j _ -> j <= i) ts) in
+              if i < n - 1 then at_most float_exact ~msg ~than:stop before
+              else if n < 3 then greater float_exact ~msg ~than:stop before)
+            ts;
+          cover "an early stop" (n < 3);
+          cover "three samples" (n = 3))
+        (samples_of r))
+
+(* A timing of constant samples that raises [e] when applied to the kernel, when
+   preparing a program, or when sampling one. *)
+let raising_at stage e ~vars:_ _ =
+  if stage = `Kernel then raise e;
+  fun _ ->
+    if stage = `Prepare then raise e;
+    fun () -> if stage = `Sample then raise e else 1e-3
+
+let stages =
+  [
+    ("the kernel", `Kernel); ("a preparation", `Prepare); ("a sample", `Sample);
+  ]
+
+let exceptions =
+  group "a timing that raises"
+    [
+      cases ~name:fst "Exit is raised by the search, from" stages
+        (fun (_, stage) ->
+          raises Exit (fun () ->
+              search ~time:(raising_at stage Exit) 1
+                (scheduled "sum_rows" "clang")));
+      test "Failure from the kernel is raised by the search" (fun () ->
+          raises (Failure "no device") (fun () ->
+              search
+                ~time:(raising_at `Kernel (Failure "no device"))
+                1
+                (scheduled "sum_rows" "clang")));
+      cases ~name:fst
+        "Failure drops its program, and a search of no timed candidate keeps \
+         its kernel, from"
+        (List.tl stages) (fun (_, stage) ->
+          let k = scheduled "sum_rows" "clang" in
+          let chosen =
+            search ~time:(raising_at stage (Failure "no device")) 1 k
+          in
+          equal Uops.uop (K.ast k) (K.ast chosen);
+          equal opts [] (K.applied_opts chosen));
+    ]
 
 let storage_placed =
   test "a candidate's storage is placed on its renderer's device" (fun () ->
-      let measure, calls = recording (golden_time ~failing:false) in
-      ignore (search ~measure 1 (scheduled "sum_rows" "metal"));
+      let time, calls = recording (golden_time ~failing:false) in
+      ignore (search ~time 1 (scheduled "sum_rows" "metal"));
       let placed prg =
         List.iter
           (fun u ->
@@ -429,8 +576,8 @@ let storage_placed =
 (* The launch each candidate of [kernel] is measured with, under a measurement
    that times them alike, so that the search ends after its first round. *)
 let launches ?allow_test_size kernel =
-  let measure, calls = recording (fun ~vars:_ _ -> 1e-3) in
-  ignore (search ?allow_test_size ~measure 1 (scheduled kernel "metal"));
+  let time, calls = recording (fun ~vars:_ _ -> 1e-3) in
+  ignore (search ?allow_test_size ~time 1 (scheduled kernel "metal"));
   List.map
     (fun c ->
       ( (kernel_info c.prg).applied_opts,
@@ -466,8 +613,8 @@ let test_size =
                (Opt.Split { axis = 0; amount = 16; target = Local; top = true })));
       test "launches no measured program on more than 65536 workgroups"
         (fun () ->
-          let measure, calls = recording (golden_time ~failing:false) in
-          ignore (search ~measure 1 (scheduled "add_large" "metal"));
+          let time, calls = recording (golden_time ~failing:false) in
+          ignore (search ~time 1 (scheduled "add_large" "metal"));
           List.iter
             (fun c ->
               satisfies ~claim:"at most 65536" int
@@ -475,9 +622,9 @@ let test_size =
                 (workgroups ~vars:c.vars c.prg))
             (calls ()));
       test "launches them all without allow_test_size" (fun () ->
-          let measure, calls = recording (golden_time ~failing:false) in
+          let time, calls = recording (golden_time ~failing:false) in
           ignore
-            (search ~allow_test_size:false ~measure 1
+            (search ~allow_test_size:false ~time 1
                (scheduled "add_large" "metal"));
           is_true
             (List.exists
@@ -486,39 +633,18 @@ let test_size =
       slow "chooses as measuring them all does, for a time per workgroup"
         (fun () ->
           let choose allow_test_size =
-            let measure, _ = recording per_workgroup in
+            let time, _ = recording per_workgroup in
             K.applied_opts
-              (search ~allow_test_size ~measure 1
-                 (scheduled "add_large" "metal"))
+              (search ~allow_test_size ~time 1 (scheduled "add_large" "metal"))
           in
           equal opts (choose false) (choose true));
-    ]
-
-let failures =
-  group "a failing measurement"
-    [
-      test
-        "drops its candidate, and a search of no timed candidate keeps its \
-         kernel" (fun () ->
-          let k = scheduled "sum_rows" "clang" in
-          let chosen =
-            search ~measure:(fun ~cold:_ ~vars:_ _ -> failwith "no device") 1 k
-          in
-          equal Uops.uop (K.ast k) (K.ast chosen);
-          equal opts [] (K.applied_opts chosen));
-      test "raising anything but Failure is raised by the search" (fun () ->
-          raises Exit (fun () ->
-              search
-                ~measure:(fun ~cold:_ ~vars:_ _ -> raise Exit)
-                1
-                (scheduled "sum_rows" "clang")));
     ]
 
 let width =
   test "a search of no width is refused" (fun () ->
       raises_match (Exn.invalid_arg ?substring:None) (fun () ->
           search
-            ~measure:(fun ~cold:_ ~vars:_ _ -> 1.)
+            ~time:(fun ~vars:_ _ _ () -> 1.)
             0
             (scheduled "sum_rows" "clang")))
 
@@ -555,11 +681,72 @@ let scheduled_for ren name =
   K.convert_loop_to_global k;
   k
 
+(* A Metal renderer whose compiler counts the times it compiles each source, for
+   the family [arch] of its own, so that no other test's programs are reused. *)
+let counting arch =
+  let compiled = Hashtbl.create 64 and lock = Mutex.create () in
+  let compile src =
+    Mutex.protect lock (fun () ->
+        Hashtbl.replace compiled src
+          (1 + Option.value ~default:0 (Hashtbl.find_opt compiled src)));
+    src
+  in
+  let t =
+    {
+      Helpers.Target.device = "METAL";
+      renderer = "METAL";
+      arch;
+      interface = "";
+      indices = "";
+    }
+  in
+  ( Renderer.with_compiler (Renderer.Compiler.v compile) (Cstyle.metal t),
+    fun () -> Hashtbl.fold (fun src n l -> (src, n) :: l) compiled [] )
+
+(* A search of width 2 whose beam after its first round is an upcast and a swap,
+   and whose second round gains nothing. Its second round reaches kernels by
+   both orders of the two, as [[upcast; swap]] and [[swap; upcast']], which are
+   equal kernels. *)
+let compiles_once =
+  let upcast = Opt.Split { axis = 1; amount = 2; target = Upcast; top = false }
+  and swap = Opt.Swap { axis = 0; with_axis = 1 } in
+  let favoured ~vars:_ prg _ =
+    match (kernel_info prg).applied_opts with
+    | [] -> 1.
+    | [ o ] when Opt.equal o upcast || Opt.equal o swap -> 1e-4
+    | _ -> 1e-3
+  in
+  test "a search compiles each kernel once" (fun () ->
+      let ren, compiled = counting "Apple7" in
+      let k = scheduled_for ren "matmul_small" in
+      let time, record = sampling favoured in
+      ignore (search ~time 2 k);
+      let applied =
+        List.map (fun p -> (kernel_info p).applied_opts) (record ()).prepared
+      in
+      is_true ~msg:"the beam was timed"
+        (List.mem [ upcast ] applied && List.mem [ swap ] applied);
+      let acted o =
+        let k' = K.copy k in
+        ignore (K.apply_opt k' o);
+        k'
+      in
+      let actions k =
+        List.map snd
+          (quietly (fun () -> Search.get_kernel_actions ~include_0:false k))
+      in
+      let distinct = Ops.Tbl.create 64 in
+      List.iter
+        (fun k -> Ops.Tbl.replace distinct (K.ast k) ())
+        (actions k @ actions (acted upcast) @ actions (acted swap));
+      equal int (Ops.Tbl.length distinct)
+        (List.fold_left (fun n (_, c) -> n + c) 0 (compiled ())))
+
 let uncompilable =
   let dropped reject () =
     let ren, rejected = rejecting reject in
-    let measure, calls = recording (golden_time ~failing:false) in
-    ignore (search ~measure 1 (scheduled_for ren "sum_rows"));
+    let time, calls = recording (golden_time ~failing:false) in
+    ignore (search ~time 1 (scheduled_for ren "sum_rows"));
     is_true ~msg:"rejected some" (!rejected > 0);
     is_true ~msg:"measured others" (calls () <> [])
   in
@@ -574,37 +761,38 @@ let uncompilable =
 
 (* CACHEDB is a directory of the sandbox (see dune). *)
 let cache =
-  let cached ?(ignore = false) measure =
+  let cached ?(ignore = false) time =
     search
       ~settings:
         [ B (Helpers.cachelevel, 1); B (Helpers.ignore_beam_cache, ignore) ]
-      ~measure 2
+      ~time 2
       (scheduled "sum_rows" "metal")
   in
-  let unmeasured ~cold:_ ~vars:_ _ = fail "the search measured" in
-  test "a search kept in the cache measures nothing, unless it is ignored"
-    (fun () ->
-      let measure, _ = recording (golden_time ~failing:false) in
-      let first = K.applied_opts (cached measure) in
-      equal opts first (K.applied_opts (cached unmeasured));
-      let measure, calls = recording (golden_time ~failing:false) in
-      equal opts first (K.applied_opts (cached ~ignore:true measure));
+  let untimed ~vars:_ _ = fail "the search applied its timing" in
+  test
+    "a search kept in the cache applies nothing of its timing, unless it is \
+     ignored" (fun () ->
+      let time, _ = recording (golden_time ~failing:false) in
+      let first = K.applied_opts (cached time) in
+      equal opts first (K.applied_opts (cached untimed));
+      let time, calls = recording (golden_time ~failing:false) in
+      equal opts first (K.applied_opts (cached ~ignore:true time));
       is_true ~msg:"measured again" (calls () <> []))
 
 (* A search kept under one value of a setting that shapes compilation is not
    used under another. *)
 let cache_settings =
   test "a search kept under one setting measures again under another" (fun () ->
-      let cached ?(settings = []) measure =
+      let cached ?(settings = []) time =
         ignore
           (search
              ~settings:(B (Helpers.cachelevel, 1) :: settings)
-             ~measure 2
+             ~time 2
              (scheduled "sum_rows" "metal"))
       in
       cached (fst (recording (golden_time ~failing:false)));
-      let measure, calls = recording (golden_time ~failing:false) in
-      cached ~settings:[ B (Helpers.transcendental, 2) ] measure;
+      let time, calls = recording (golden_time ~failing:false) in
+      cached ~settings:[ B (Helpers.transcendental, 2) ] time;
       greater int ~than:0 (List.length (calls ())))
 
 (* A setting that its caller declares to reach output: the search knows nothing
@@ -615,16 +803,16 @@ let cache_declared =
   test
     "a search kept under one value of a setting declared by its caller \
      measures again under another" (fun () ->
-      let cached ?(settings = []) measure =
+      let cached ?(settings = []) time =
         ignore
           (search
              ~settings:(B (Helpers.cachelevel, 1) :: settings)
-             ~measure 2
+             ~time 2
              (scheduled "sum_rows" "metal"))
       in
       cached (fst (recording (golden_time ~failing:false)));
-      let measure, calls = recording (golden_time ~failing:false) in
-      cached ~settings:[ B (declared, 1) ] measure;
+      let time, calls = recording (golden_time ~failing:false) in
+      cached ~settings:[ B (declared, 1) ] time;
       greater int ~than:0 (List.length (calls ())))
 
 (* The settings that pick candidates and how a search measures and stops shape
@@ -653,32 +841,32 @@ let kinds_time ~vars:_ prg =
 
 let cache_kinds =
   slow "the cache keeps tensor cores and swaps" (fun () ->
-      let cached measure =
+      let cached time =
         K.applied_opts
           (search
              ~settings:[ B (Helpers.cachelevel, 1) ]
-             ~measure 1
+             ~time 1
              (scheduled "matmul_half" "metal"))
       in
-      let measure, _ = recording kinds_time in
-      let first = cached measure in
+      let time, _ = recording kinds_time in
+      let first = cached time in
       is_true ~msg:"a tensor core"
         (List.exists (function Opt.Tc _ -> true | _ -> false) first);
       is_true ~msg:"a swap"
         (List.exists (function Opt.Swap _ -> true | _ -> false) first);
       equal opts first
-        (cached (fun ~cold:_ ~vars:_ _ -> fail "the search measured")))
+        (cached (fun ~vars:_ _ -> fail "the search applied its timing")))
 
 (* Printing *)
 
 let progress =
   test "a search prints its progress under DEBUG=2" (fun () ->
       ignore (output ());
-      let measure, _ = recording (golden_time ~failing:false) in
+      let time, _ = recording (golden_time ~failing:false) in
       ignore
         (search
            ~settings:[ B (Helpers.debug, 2) ]
-           ~measure 1
+           ~time 1
            (scheduled "add_small" "clang"));
       in_order
         ~subs:[ "from   1 ->   1 actions"; "   1/"; "actions\027[K" ]
@@ -687,8 +875,8 @@ let progress =
 let quiet =
   test "a search prints nothing by default" (fun () ->
       ignore (output ());
-      let measure, _ = recording (golden_time ~failing:true) in
-      ignore (search ~measure 2 (scheduled "add_small" "clang"));
+      let time, _ = recording (golden_time ~failing:true) in
+      ignore (search ~time 2 (scheduled "add_small" "clang"));
       ignore
         (quietly (fun () ->
              Search.get_kernel_actions ~max_up:1 (scheduled "sum_rows" "metal")));
@@ -698,11 +886,11 @@ let failure_printed =
   test "a compilation's failure is printed under DEBUG=4" (fun () ->
       let ren, _ = rejecting (fun () -> failwith "rejected") in
       ignore (output ());
-      let measure, _ = recording (golden_time ~failing:false) in
+      let time, _ = recording (golden_time ~failing:false) in
       ignore
         (search
            ~settings:[ B (Helpers.debug, 4) ]
-           ~measure 1
+           ~time 1
            (scheduled_for ren "sum_rows"));
       contains ~sub:"Failure(\"rejected\")" (output ()))
 
@@ -739,8 +927,8 @@ let under_environment =
       test "a candidate of BEAM_UOPS_MAX instructions or more is dropped"
         (fun () ->
           ignore (output ());
-          let measure, calls = recording (golden_time ~failing:false) in
-          ignore (search ~measure 1 (scheduled "sum_rows" "clang"));
+          let time, calls = recording (golden_time ~failing:false) in
+          ignore (search ~time 1 (scheduled "sum_rows" "clang"));
           List.iter
             (fun c ->
               satisfies ~claim:"fewer than 43" int
@@ -748,6 +936,21 @@ let under_environment =
                 (instructions c.prg))
             (calls ());
           contains ~sub:"too many uops" (output ()));
+      test "a candidate of BEAM_UOPS_MAX instructions or more is not compiled"
+        (fun () ->
+          let ren, compiled = counting "Apple8" in
+          let time, record =
+            sampling (fun ~vars prg _ -> golden_time ~failing:false ~vars prg)
+          in
+          ignore (search ~time 1 (scheduled_for ren "sum_rows"));
+          let prepared = List.map binary (record ()).prepared in
+          is_true ~msg:"prepared" (prepared <> []);
+          List.iter
+            (fun (src, _) ->
+              satisfies ~claim:"a prepared program's" string
+                (fun src -> List.mem src prepared)
+                src)
+            (compiled ()));
       test "a compilation that raises is raised under BEAM_STRICT_MODE"
         (fun () ->
           let ren, _ = rejecting ~every:1 rejected_by_compiler in
@@ -755,15 +958,15 @@ let under_environment =
             (function Renderer.Compiler.Compile_error _ -> true | _ -> false)
             (fun () ->
               search
-                ~measure:(fun ~cold:_ ~vars:_ _ -> 1.)
+                ~time:(fun ~vars:_ _ _ () -> 1.)
                 1
                 (scheduled_for ren "sum_rows")));
       test
         "a search prints the kernel, failures and its choice under BEAM_DEBUG"
         (fun () ->
           ignore (output ());
-          let measure, _ = recording (golden_time ~failing:true) in
-          ignore (search ~measure 2 (scheduled "add_small" "clang"));
+          let time, _ = recording (golden_time ~failing:true) in
+          ignore (search ~time 2 (scheduled "add_small" "clang"));
           in_order
             ~subs:
               [
@@ -772,9 +975,9 @@ let under_environment =
             (output ()));
       Golden.cases ~key:[ "kernel"; "target"; "amt" ]
         "searches_environment.golden" (fun cell ->
-          let measure, calls = recording (golden_time ~failing:false) in
+          let time, calls = recording (golden_time ~failing:false) in
           let k =
-            search ~measure
+            search ~time
               (int_of_string (cell "amt"))
               (scheduled (cell "kernel") (cell "target"))
           in
@@ -794,8 +997,8 @@ let under_environment =
           in
           is_true ~msg:"a pad is a candidate" (pads <> []);
           ignore (output ());
-          let measure, calls = recording (golden_time ~failing:false) in
-          ignore (search ~measure 1 k);
+          let time, calls = recording (golden_time ~failing:false) in
+          ignore (search ~time 1 k);
           contains ~sub:"too much compute" (output ());
           is_true ~msg:"measured" (calls () <> []);
           List.iter
@@ -859,9 +1062,11 @@ let () =
          keeps_writes_exhaustively;
          chooses_the_fastest;
          is_deterministic;
-         asks_cold_midpoints;
+         midpoints;
+         applies_the_kernel_once;
+         early_stops;
+         exceptions;
          test_size;
-         failures;
          width;
          cache;
          cache_settings;
@@ -869,6 +1074,7 @@ let () =
          cache_variables;
          cache_kinds;
          uncompilable;
+         compiles_once;
          progress;
          quiet;
          failure_printed;
