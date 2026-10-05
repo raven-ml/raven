@@ -170,15 +170,17 @@ module Program : sig
 end
 
 type 'v hole = {
-  at : int;  (** The byte offset of the hole. *)
-  bytes : int;  (** Its size: 1, 2, 4 or 8. *)
-  value : 'v term;  (** The term whose low bytes fill it, little-endian. *)
+  at : int;  (** The byte offset of its field. *)
+  bits : int;  (** The bits of its field, from the field's first byte. *)
+  value : 'v term;  (** The term that fills it. *)
 }
-(** The type for words of a structure that values fill. *)
+(** The type for fields of a structure that values fill. A hole is the word of
+    the narrowest of 1, 2, 4 and 8 bytes that covers its [bits], at [at]: the
+    value's low [bits] bits replace those bits of the word, and the rest of the
+    word is the structure's [bytes]. *)
 
 type 'v structure = {
-  bytes : string;
-      (** The structure's bytes, of which its holes replace those they cover. *)
+  bytes : string;  (** The structure's bytes, where values fill its holes. *)
   holes : 'v hole list;  (** Its holes, in increasing offsets. *)
 }
 (** The type for structures in memory around values. *)
@@ -239,6 +241,5 @@ module Qmd : sig
       256-byte aligned, starting once [q]'s completes, scheduled with [q]. *)
 
   val structure : 'v t -> 'v structure
-  (** [structure q] is [q] laid out. Its holes are the widest unsigned words
-      within their fields. *)
+  (** [structure q] is [q] laid out: each field a value fills is a hole. *)
 end

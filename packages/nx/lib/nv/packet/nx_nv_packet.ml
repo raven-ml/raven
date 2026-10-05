@@ -273,15 +273,33 @@ module Program = struct
     65536 / round_up (Stdlib.Int.max 1 p.kernel.registers * 32) 256 / 4 * 4 * 32
 end
 
-type 'v hole = { at : int; bytes : int; value : 'v term }
+type 'v hole = { at : int; bits : int; value : 'v term }
 type 'v structure = { bytes : string; holes : 'v hole list }
+
+(* The narrowest of 1, 2, 4 and 8 bytes that covers [bits]. *)
+let word_bytes bits = List.find (fun n -> n * 8 >= bits) [ 1; 2; 4; 8 ]
+let mask bits = if bits >= 64 then -1L else Int64.(sub (shift_left 1L bits) 1L)
+
+(* The little-endian word of [n] bytes of [s] at [at]. *)
+let word s at n =
+  let w = ref 0L in
+  for i = n - 1 downto 0 do
+    w := Int64.(logor (shift_left !w 8) (of_int (Char.code s.[at + i])))
+  done;
+  !w
 
 let fill (s : int structure) =
   let b = Bytes.of_string s.bytes in
   List.iter
-    (fun (h : int hole) ->
-      let v = eval h.value in
-      for i = 0 to h.bytes - 1 do
+    (fun h ->
+      let n = word_bytes h.bits and m = mask h.bits in
+      let v =
+        Int64.(
+          logor
+            (logand (word s.bytes h.at n) (lognot m))
+            (logand (eval h.value) m))
+      in
+      for i = 0 to n - 1 do
         Bytes.set b (h.at + i) (Char.chr (word32 v (8 * i) land 0xff))
       done)
     s.holes;
@@ -329,16 +347,14 @@ module Qmd = struct
 
   let writes q fs = List.fold_left (fun q (k, v) -> write q k v) q fs
 
-  (* A hole of the widest unsigned word the field holds. *)
   let patch q k v =
     let lo, w = range q k in
     if lo mod 8 <> 0 then invalid_arg (k ^ " is not byte aligned");
-    let bytes = List.find (fun n -> n * 8 <= w) [ 8; 4; 2; 1 ] in
     let at = lo / 8 in
     {
       q with
       holes =
-        { at; bytes; value = v } :: List.filter (fun h -> h.at <> at) q.holes;
+        { at; bits = w; value = v } :: List.filter (fun h -> h.at <> at) q.holes;
     }
 
   let v4 q = q.ver >= 4

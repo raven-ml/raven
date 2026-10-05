@@ -45,6 +45,14 @@ module D = struct
       ("program_prefetch_addr_lower_shifted", 256);
       ("program_prefetch_addr_upper_shifted", 1632);
     ]
+
+  (* Fields as (lowest bit, bits): of version 3's descriptors (clc6c0qmd.h),
+     then of version 5's (clcec0qmd.h). *)
+  let v3_local_memory = (1600, 24)
+  let v3_program_upper = (1568, 17)
+  let v3_prefetch_size = (1641, 9)
+  let v5_program_upper = (1056, 21)
+  let v5_prefetch_size = (1077, 9)
 end
 
 let mask32 = 0xffff_ffff
@@ -305,23 +313,65 @@ let test_limits () =
 let test_holes () =
   let q = Qmd.patch_dim (Qmd.make (program (kernel ()))) (Grid X) 7 in
   let s = Qmd.structure (Qmd.set_program q 0x12_3456_7800) in
-  (* The widest of 8, 4, 2 and 1 bytes within each field, by offset. *)
-  let hole f bytes = (List.assoc f D.qmd_v3 / 8, bytes) in
+  (* Each field's offset and bits, by offset. *)
+  let hole f bits = (List.assoc f D.qmd_v3 / 8, bits) in
   equal
     (list (pair int int))
     (List.sort compare
        [
-         hole "cta_raster_width" 4;
-         hole "program_address_lower" 4;
-         hole "program_address_upper" 2;
-         hole "program_prefetch_addr_lower_shifted" 4;
-         hole "program_prefetch_addr_upper_shifted" 1;
+         hole "cta_raster_width" 32;
+         hole "program_address_lower" 32;
+         hole "program_address_upper" 17;
+         hole "program_prefetch_addr_lower_shifted" 32;
+         hole "program_prefetch_addr_upper_shifted" 9;
        ])
-    (List.map (fun (h : int P.hole) -> (h.at, h.bytes)) s.holes);
+    (List.map (fun (h : int P.hole) -> (h.at, h.bits)) s.holes);
   equal ~msg:"fill writes the grid's width" int 7
     (Int32.to_int
        (String.get_int32_le (P.fill s)
           (List.assoc "cta_raster_width" D.qmd_v3 / 8)))
+
+(* The field [(lo, bits)] of the bytes [s]. *)
+let field_in s (lo, bits) =
+  let n = ref 0 in
+  for i = (lo + bits - 1) / 8 downto lo / 8 do
+    n := (!n lsl 8) lor Char.code s.[i]
+  done;
+  (!n lsr (lo mod 8)) land ((1 lsl bits) - 1)
+
+let laid q = P.fill (Qmd.structure q)
+
+let test_local_memory () =
+  let q = Qmd.set_local_memory (Qmd.make (program (kernel ()))) 0x10000 in
+  equal ~msg:"64 KiB" int 0x10000 (field_in (laid q) D.v3_local_memory)
+
+(* An address with bit 48 set, 256-byte aligned. *)
+let high_address = (1 lsl 48) lor 0x12_3456_7800
+
+let test_high_address () =
+  let v3 = Qmd.set_program (Qmd.make (program (kernel ()))) high_address in
+  equal ~msg:"version 3" int
+    ((high_address lsr 32) land 0x1ffff)
+    (field_in (laid v3) D.v3_program_upper);
+  let v5 =
+    Qmd.set_program
+      (Qmd.make (program ~blackwell:true (kernel ())))
+      high_address
+  in
+  equal ~msg:"version 5" int
+    ((high_address lsr 36) land 0x1fffff)
+    (field_in (laid v5) D.v5_program_upper)
+
+(* The kernel's 0x100 bytes of code prefetch as one unit. *)
+let test_neighbours () =
+  let v3 = Qmd.set_program (Qmd.make (program (kernel ()))) high_address in
+  equal ~msg:"version 3" int 1 (field_in (laid v3) D.v3_prefetch_size);
+  let v5 =
+    Qmd.set_program
+      (Qmd.make (program ~blackwell:true (kernel ())))
+      high_address
+  in
+  equal ~msg:"version 5" int 1 (field_in (laid v5) D.v5_prefetch_size)
 
 let test_values () =
   let q = Qmd.make (program (kernel ())) in
@@ -380,7 +430,11 @@ let () =
            ];
          group "launch descriptors"
            [
-             test "holes are the fields' widest words, in order" test_holes;
+             test "holes are their fields, in order" test_holes;
+             test "a local memory of 64 KiB per thread fills its field"
+               test_local_memory;
+             test "an address keeps bit 48" test_high_address;
+             test "a hole keeps the fields it shares bytes with" test_neighbours;
              test "a setter leaves its descriptor as it was" test_values;
              test "a size that does not fit its field is refused" test_dims;
              test "two releases, then none" test_releases;

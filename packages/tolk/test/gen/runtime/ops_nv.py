@@ -36,7 +36,10 @@ tinygrad is changed as tolk differs from it:
   into the descriptor;
 - a descriptor states a constant bank's size in 16-byte
   units, where tinygrad writes its bytes;
-- an address is taken on one device, as tolk names one device.
+- an address is taken on one device, as tolk names one device;
+- a field a value fills is a hole of the narrowest word that covers it, its
+  value masked to the field and ored with the word's other bits, where
+  tinygrad writes the widest word within the field.
 """
 
 import itertools
@@ -245,6 +248,36 @@ def nv_build_program(dev, prg, devs):
 ops_nv.nv_build_program = nv_build_program
 
 
+# A field a value fills is a hole of the narrowest unsigned word that covers it. A field narrower than its word takes the
+# value masked to its bits, ored with the word's other bits, where tinygrad writes the widest word within the field.
+
+qmd_write = ops_nv.QMD.write
+
+
+def write(self, **kwargs):
+    for k, v in kwargs.items():
+        if isinstance(v, UOp):
+            hi, lo = ops_nv.QMD.fields[self.pref][k.upper()]
+            assert lo % 8 == 0, f"{k} is not byte aligned"
+            self.patches[lo // 8] = (v, hi - lo + 1)
+        else: qmd_write(self, **{k: v})
+
+
+ops_nv.QMD.write = write
+
+
+def holes(qmd):
+    out = {}
+    for at, (v, bits) in qmd.patches.items():
+        n = next(n for n in (1, 2, 4, 8) if n * 8 >= bits)
+        if n * 8 != bits:
+            mask = (1 << bits) - 1
+            rest = int.from_bytes(qmd.mv[at:at + n], "little") & ~mask
+            v = (v & UOp.const(mask, dtypes.uint64)) | UOp.const(rest, dtypes.uint64)
+        out[at] = v.ccast({1: dtypes.uint8, 2: dtypes.uint16, 4: dtypes.uint32, 8: dtypes.uint64}[n])
+    return out
+
+
 # The compute queue: launches in regions, chains ended when stopped
 
 def compute_init(self, submit):
@@ -256,7 +289,7 @@ def end_chain(self):
     head = None
     for launch in reversed(self.chain):
         if head is not None: launch.write(dependent_qmd0_pointer=head.getaddr(self.devs) >> 8)
-        head = region("qmd", launch.mv, launch.patches)
+        head = region("qmd", launch.mv, holes(launch))
     if head is not None:
         self.nvm(1, nv_gpu.NVC6C0_SEND_PCAS_A, (head.getaddr(self.devs) >> 8).cast(dtypes.uint32))
         self.nvm(1, nv_gpu.NVC6C0_SEND_SIGNALING_PCAS2_B, nv_gpu.NVC6C0_SEND_SIGNALING_PCAS2_B_PCAS_ACTION_PREFETCH_SCHEDULE)

@@ -6,9 +6,9 @@ void hcq_submit(volatile unsigned int* restrict doorbell_compute_0_0_1, volatile
   *(slots_1_2+0) = 0ul;
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
   unsigned long val2 = (*(put_value_compute_0_8_1+0));
-  *(((unsigned short*)(qmd_compute_0_6_256))+100) = ((unsigned short)(val0));
   *(((int*)(cbuf_compute_0_5_512))+92) = v_;
   *(((unsigned int*)(qmd_compute_0_6_256))+12) = ((unsigned int)(v_));
+  *(((unsigned int*)(qmd_compute_0_6_256))+50) = ((unsigned int)((((unsigned long)(val0))&16777215ul)));
   *(((unsigned long*)((cmdbuf_compute_0_4_48+4)))+2) = submitted_nv_;
   *((unsigned_int2*)((((unsigned int*)(qmd_compute_0_6_256))+26))) = (unsigned_int2){((unsigned int)(value_nv_)),((unsigned int)((value_nv_>>32ul)))};
   unsigned long alu7 = (val2+1ul);

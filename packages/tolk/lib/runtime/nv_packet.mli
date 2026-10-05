@@ -28,5 +28,8 @@ val region : string -> string -> (int * Ops.t) list -> Ops.t
     written over the bytes from [offset] for the width of [w]'s type. *)
 
 val structure : string -> Ops.t Nx_nv_packet.structure -> Ops.t
-(** [structure name s] is {!region}[ name] of [s]'s bytes, each hole of [n]
-    bytes its {!term} as the unsigned type of [n] bytes. *)
+(** [structure name s] is {!region}[ name] of [s]'s bytes, each hole the
+    unsigned word of its bytes ({!Nx_nv_packet.hole}): {!term} of its value
+    where its field fills the word, and else
+    [Ops.bitwise_or (Ops.bitwise_and (term v) m) r], with [m] the [Uint64] mask
+    of its field and [r] the word's other bits in [s]'s bytes. *)

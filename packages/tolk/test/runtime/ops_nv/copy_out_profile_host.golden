@@ -8,7 +8,7 @@ void hcq_submit(volatile unsigned long* restrict slots_0_12, volatile unsigned i
   *(slots_0_12+2) = 0ul;
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
   unsigned long val3 = (*(put_value_compute_0_8_1+0));
-  *(((unsigned short*)(qmd_compute_0_6_256))+100) = ((unsigned short)(val0));
+  *(((unsigned int*)(qmd_compute_0_6_256))+50) = ((unsigned int)((((unsigned long)(val0))&16777215ul)));
   *(((unsigned long*)((cmdbuf_compute_0_4_128+4)))+13) = value_nv_;
   *(((unsigned long*)((cmdbuf_compute_0_4_128+4)))+2) = submitted_nv_;
   unsigned long alu6 = (val3+1ul);

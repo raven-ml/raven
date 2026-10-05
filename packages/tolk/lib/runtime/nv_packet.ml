@@ -7,11 +7,11 @@
 
 open Ops
 
+let u64 n = const ~dtype:Dtype.Uint64 (`Int (Bigint.of_int64_unsigned n))
+
 let rec term = function
   | Nx_nv_packet.Value v -> v
-  | Add (t, n) ->
-      add (term t)
-        (const ~dtype:Dtype.Uint64 (`Int (Bigint.of_int64_unsigned n)))
+  | Add (t, n) -> add (term t) (u64 n)
   | Shift (t, n) -> shr (term t) (int n)
 
 let words =
@@ -40,9 +40,27 @@ let unsigned = function
   | 4 -> Dtype.Uint32
   | _ -> Dtype.Uint64
 
+(* The little-endian word of [n] bytes of [s] at [at]. *)
+let word s at n =
+  let w = ref 0L in
+  for i = n - 1 downto 0 do
+    w := Int64.(logor (shift_left !w 8) (of_int (Char.code s.[at + i])))
+  done;
+  !w
+
+(* A hole's word: its term where its field fills the word, and else the term's
+   field bits ored with the word's other bits. *)
 let structure name (s : Ops.t Nx_nv_packet.structure) =
-  region name s.bytes
-    (List.map
-       (fun (h : Ops.t Nx_nv_packet.hole) ->
-         (h.at, ccast (term h.value) (unsigned h.bytes)))
-       s.holes)
+  let hole (h : Ops.t Nx_nv_packet.hole) =
+    let n = List.find (fun n -> n * 8 >= h.bits) [ 1; 2; 4; 8 ] in
+    let v = term h.value in
+    let v =
+      if n * 8 = h.bits then v
+      else
+        let mask = Int64.(sub (shift_left 1L h.bits) 1L) in
+        let rest = Int64.logand (word s.bytes h.at n) (Int64.lognot mask) in
+        bitwise_or (bitwise_and v (u64 mask)) (u64 rest)
+    in
+    (h.at, ccast v (unsigned n))
+  in
+  region name s.bytes (List.map hole s.holes)

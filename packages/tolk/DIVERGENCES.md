@@ -3700,3 +3700,28 @@ stores through a pad.
 - **Pinned by:** an absence; the bound tolk keeps is pinned by D115's
   `Tolk.Search › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX
   instructions or more is not compiled`.
+
+## D125. A launch descriptor's field holds all of its value
+
+- **tinygrad:** `runtime/ops_nv.py:73` (`QMD.write` patches a value as the
+  widest unsigned word within its field).
+- **tolk:** `lib/runtime/nv_packet.ml:53` (`structure`), over
+  `Nx_nv_packet.hole`, whose holes are their fields' bit ranges; the golden
+  generator, `test/gen/runtime/ops_nv.py` (`write`, `holes`).
+- **Differs:** a field a value fills is a hole of the narrowest unsigned word
+  that covers it. When the field is narrower than its word, the word is the
+  value masked to the field's bits, ored with the word's other bits as the
+  descriptor holds them.
+- **Reason:** (c). The descriptor's layout is nx.nv.packet's, which tolk's
+  queues and nx.nv.device share, and a word within the field drops the
+  value's high bits. Version 3's
+  24-bit `shader_local_memory_high_size` took a 2-byte word, so a kernel with
+  64 KiB or more of local memory per thread ran with that size modulo
+  64 KiB, and the 17- to 25-bit high words of addresses (program, prefetch,
+  constant banks, releases) dropped bit 48 and above. The law that nodes and
+  integers encode alike cannot see it, since both truncated alike.
+- **Pinned by:** nx's `nx.nv.packet › launch descriptors › a local memory of
+  64 KiB per thread fills its field`, `› an address keeps bit 48`, `› a hole
+  keeps the fields it shares bytes with` and `› holes cover their fields, in
+  order`; the Ops_nv suite's recorded cases, whose generator applies the same
+  holes to tinygrad.
