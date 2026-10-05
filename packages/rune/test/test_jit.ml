@@ -645,6 +645,30 @@ let keys =
           retraces
             (checked g poly (x ()))
             (fun () -> noopt (checked g poly (x ()))));
+      cases
+        ~name:(fun (Tolk.Helpers.B (v, _)) ->
+          "a change of "
+          ^ Tolk.Helpers.Context_var.key v
+          ^ " around a call retraces once")
+        "a setting that shapes compilation"
+        Tolk.Helpers.
+          [
+            B (split_reduceop, false);
+            B (transcendental, 2);
+            B (max_kernel_buffers, 3);
+            B (ring, 0);
+            B (all2all, 1);
+            B (allreduce_cast, false);
+            B (tc_opt, 2);
+            B (disable_fast_idiv, false);
+            B (allow_tf32, true);
+            B (no_memory_planner, true);
+          ]
+        (fun b ->
+          let g = g () in
+          retraces
+            (checked g poly (x ()))
+            (fun () -> Tolk.Helpers.context [ b ] (checked g poly (x ()))));
       (* A program of its own, whose kernel no earlier search chose: BEAM asks
          for a search, which times candidates on the host. *)
       test "a call under BEAM=1 searches its kernel and computes eager's values"

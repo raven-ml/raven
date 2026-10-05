@@ -99,13 +99,14 @@ let starts_its_run (l : layout) =
 
 (* Keys *)
 
-(* The settings of tolk a program depends on that a caller may change around a
-   call: the search's width, unoptimised kernels, profiled batches, and the
-   counters and traces of the profile being taken, which a device's batches
-   count and trace. *)
+(* The settings a program depends on that a caller may change around a call:
+   each setting of tolk that shapes what it compiles, which tolk names
+   ([Tolk.Helpers.shaping]), the search's width, and how the program's batches
+   profile: under DEBUG 2 or more, and for the counters and traces of the
+   profile being taken, which a device's batches count and trace. *)
 type settings = {
+  shaping : (string * string) list;
   beam : int;
-  noopt : bool;
   profiled : bool;
   counters : string list;
   traced : bool;
@@ -116,15 +117,29 @@ type settings = {
 let settings ?beam () =
   let module H = Tolk.Helpers in
   {
+    shaping = H.shaping ();
     beam =
       (match beam with
       | Some beam -> beam
       | None -> H.getenv "JITBEAM" (H.Context_var.value H.beam));
-    noopt = H.Context_var.value H.noopt;
     profiled = H.Context_var.value H.debug >= 2;
     counters = Nx_device.Profile.counters ();
     traced = Nx_device.Profile.traced ();
   }
+
+(* [s]'s settings by name, each value printed so that two values print alike
+   only if they are equal. *)
+let entries s =
+  s.shaping
+  @ [
+      ("BEAM", string_of_int s.beam);
+      ("profiled", string_of_bool s.profiled);
+      ( "counters",
+        "["
+        ^ String.concat "; " (List.map (Printf.sprintf "%S") s.counters)
+        ^ "]" );
+      ("traced", string_of_bool s.traced);
+    ]
 
 type key = {
   skeleton : Ptree.Skeleton.t;
@@ -159,12 +174,6 @@ let parts l =
     "a run at [" ^ ints (Array.of_list l.phases) ^ "] bytes past 16";
   ]
 
-let pp_settings ppf s =
-  Format.fprintf ppf "BEAM=%d NOOPT=%b profiled=%b counters=[%s] traced=%b"
-    s.beam s.noopt s.profiled
-    (String.concat "; " s.counters)
-    s.traced
-
 (* The first difference between the key [k] and the previous key [k'], whose
    leaves are at [paths]. *)
 let difference paths k k' =
@@ -177,7 +186,16 @@ let difference paths k k' =
   with
   | Some m -> m
   | None when k.settings <> k'.settings ->
-      differ pp_settings k.settings k'.settings
+      let here = entries k.settings and previous = entries k'.settings in
+      let value name e =
+        Option.value (List.assoc_opt name e) ~default:"unset"
+      in
+      let differs (name, _) = value name here <> value name previous in
+      Option.fold ~none:"other settings than in the previous key"
+        ~some:(fun (name, _) ->
+          Printf.sprintf "%s=%s here, %s=%s in the previous key" name
+            (value name here) name (value name previous))
+        (List.find_opt differs (here @ previous))
   | None ->
       let rec first i = function
         | l :: ls, l' :: ls' when same_layout l l' -> first (i + 1) (ls, ls')

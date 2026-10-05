@@ -53,6 +53,19 @@ let () =
     [ B (Tolk.Helpers.noopt, true) ]
     (fun () -> ignore (neg a))
 
+(* A retrace for the counters of the profile being taken: one counter whose name
+   holds "; " against two. *)
+let () =
+  let neg = Rune.jit' Nx.neg in
+  let a = Nx.ones Nx.float32 [| 4 |] in
+  let under counters =
+    let p = Nx_device.Profile.start ~counters () in
+    ignore (neg a);
+    ignore (Nx_device.Profile.stop p)
+  in
+  under [ "a; b" ];
+  under [ "a"; "b" ]
+
 (* A function compiled with a search reports each kernel it searches; another
    compiled without one, in the same process, reports none. *)
 let () =

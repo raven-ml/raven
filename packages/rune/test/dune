@@ -272,7 +272,7 @@
 (executable
  (name reports)
  (modules reports)
- (libraries rune nx tolk))
+ (libraries rune nx nx.device tolk))
 
 (cram
  (applies_to reports)

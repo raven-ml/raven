@@ -157,6 +157,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `jit`-compiled function compiles again when any tolk setting that shapes
+  compilation changes around a call (`Tolk.Helpers.shaping`). It keyed its
+  programs on `NOOPT` and the search width alone, so a change of
+  `SPLIT_REDUCEOP`, `RING`, `MAX_KERNEL_BUFFERS` and the like ran the old
+  program.
 - `jit` of `Nx.eigh`, `Nx.svd` and `Nx.qr` compiles in one to four seconds at
   any size: the program holds one Jacobi round or Householder step, which a
   loop repeats. It held every step, so an 8 x 8 `eigh` took 35 s to compile, a
