@@ -81,7 +81,7 @@ let scaled_dot_product_attention ?mask ?scale ?sinks q k v =
     in
     let neg_inf t = Nx.scalar_like t Float.neg_infinity in
     match (mask, sinks) with
-    | None, None -> Fn.softmax scores
+    | None, None -> Nx.softmax scores
     | _, Some sinks ->
         let queries = Array.sub (Nx.shape scores) 0 (Nx.ndim scores - 1) in
         if not (broadcasts ~onto:queries (Nx.shape sinks)) then

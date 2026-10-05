@@ -69,7 +69,7 @@ module Batch_norm = Batch_norm
     Pure operations with no parameters: activations, pooling, dropout. *)
 
 module Fn = Fn
-(** Activation functions ([relu], [gelu], [softmax], ...). *)
+(** Activation functions ([relu], [gelu], [silu], ...) and sampling masks. *)
 
 module Pool = Pool
 (** 2-D max and average pooling. *)

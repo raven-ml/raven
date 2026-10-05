@@ -62,10 +62,10 @@
     are its values, and their layout is its own.
 
     {b Kinks.} At a point where an operation has no derivative, the
-    transformations use these: [Nx.relu] and [Nx.abs] have derivative [0] at
-    [0], and where the operands of [Nx.maximum] or [Nx.minimum] tie, each takes
-    half of the derivative, as the tied elements along the axes of [Nx.max] and
-    [Nx.min] share it equally.
+    transformations use these: [Nx.abs] has derivative [0] at [0], and where the
+    operands of [Nx.maximum] or [Nx.minimum] tie, each takes half of the
+    derivative, as the tied elements along the axes of [Nx.max] and [Nx.min]
+    share it equally.
 
     {b Nesting.} Transformations nest in any order, and each differentiates,
     maps or compiles only the values of its own function: in

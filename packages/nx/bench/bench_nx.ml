@@ -56,7 +56,6 @@ let unary_benchmarks () =
     Thumper.bench "log 512x512" (fun () -> Nx.log mat);
     Thumper.bench "sqrt 1M" (fun () -> Nx.sqrt flat);
     Thumper.bench "neg 512x512" (fun () -> Nx.neg mat);
-    Thumper.bench ~tags:lab "relu 1M" (fun () -> Nx.relu flat);
     Thumper.bench "abs 512x512" (fun () -> Nx.abs mat);
   ]
 

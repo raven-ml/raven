@@ -95,7 +95,7 @@ let () =
   done;
 
   (* Evaluate. *)
-  let pred = Fn.sigmoid (Mlp.apply (fst !state) x) in
+  let pred = Nx.sigmoid (Mlp.apply (fst !state) x) in
   for i = 0 to 3 do
     Printf.printf "[%.0f, %.0f] -> %.3f\n"
       (Nx.item [ i; 0 ] x)

@@ -788,6 +788,54 @@ let normalisations =
           equal near
             (Ref.along ~axis:a ~length:r.shape.(a) lsm r)
             (Ref.of_nx (Nx.log_softmax t)));
+      test "softmax normalises along the axes asked for" (fun () ->
+          let t =
+            Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+          in
+          let near = array (float 1e-12) in
+          equal ~msg:"rows" near [| 1.; 1. |]
+            (Nx.to_array (Nx.sum ~axes:[ 1 ] (Nx.softmax t)));
+          equal ~msg:"columns" near [| 1.; 1.; 1. |]
+            (Nx.to_array (Nx.sum ~axes:[ 0 ] (Nx.softmax ~axes:[ 0 ] t)));
+          equal ~msg:"both" near [| 1. |]
+            (Nx.to_array
+               (Nx.reshape [| 1 |] (Nx.sum (Nx.softmax ~axes:[ 0; -1 ] t)))));
+      test "softmax and log_softmax of large logits do not overflow" (fun () ->
+          let near = array (float 1e-12) in
+          let v xs = Nx.create Nx.float64 [| 3 |] xs in
+          equal ~msg:"softmax is shift invariant" near
+            (Nx.to_array (Nx.softmax (v [| 1.; 2.; 3. |])))
+            (Nx.to_array (Nx.softmax (v [| 1001.; 1002.; 1003. |])));
+          equal ~msg:"log_softmax keeps its spread" near
+            [| -2000.; -1000.; 0. |]
+            (Nx.to_array (Nx.log_softmax (v [| -1000.; 0.; 1000. |]))));
+      test "softmax and log_softmax of a negative scale do not overflow"
+        (fun () ->
+          let t = Nx.create Nx.float64 [| 2 |] [| 0.; 1000. |] in
+          let near = array (float 1e-12) in
+          equal ~msg:"softmax" near [| 1.; 0. |]
+            (Nx.to_array (Nx.softmax ~scale:(-1.) t));
+          equal ~msg:"log_softmax" near [| 0.; -1000. |]
+            (Nx.to_array (Nx.log_softmax ~scale:(-1.) t)));
+      test "a NaN makes its whole lane NaN" (fun () ->
+          let t = Nx.create Nx.float64 [| 2; 2 |] [| Float.nan; 1.; 2.; 3. |] in
+          let nan_rows f =
+            Array.map Float.is_nan (Nx.to_array (Nx.reshape [| 4 |] (f t)))
+          in
+          let expected = [| true; true; false; false |] in
+          equal ~msg:"softmax" (array bool) expected (nan_rows Nx.softmax);
+          equal ~msg:"negative scale" (array bool) expected
+            (nan_rows (Nx.softmax ~scale:(-1.)));
+          equal ~msg:"log_softmax" (array bool) expected
+            (nan_rows Nx.log_softmax));
+      test "softmax and log_softmax name an axis out of bounds" (fun () ->
+          let t = Nx.zeros Nx.float32 [| 2; 3 |] in
+          raises
+            (Invalid_argument "softmax: axis -3 out of bounds for 2D tensor")
+            (fun () -> Nx.softmax ~axes:[ -3 ] t);
+          raises
+            (Invalid_argument "log_softmax: axis 2 out of bounds for 2D tensor")
+            (fun () -> Nx.log_softmax ~axes:[ 2 ] t));
       prop "standardize is (x - mean) / sqrt (var + epsilon) over all axes"
         values (fun t ->
           let r = Ref.of_nx t in

@@ -113,7 +113,7 @@ let softplus_hessian_at_0 =
   (2. *. sigmoid0 *. sigmoid0) +. (2. *. Float.log 2. *. sigmoid'0)
 
 let stable x =
-  Nx.add (Nx.relu x) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) 1.))
+  Nx.add (Nx.maximum_s x 0.) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) 1.))
 
 let softplus =
   Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->

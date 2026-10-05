@@ -115,7 +115,11 @@ let extremes =
               (fun u -> Tolk.Ops.op u = Tolk.Op.Bitcast)
               (Tolk.Ops.toposort (Programs.kernels (snd (trace f))))
           in
-          is_false ~msg:"relu" (reads_sign (fun () -> Nx.relu x));
+          let relu x =
+            let zero = Nx.scalar_like x 0. in
+            Nx.where (Nx.less_equal x zero) zero x
+          in
+          is_false ~msg:"relu" (reads_sign (fun () -> relu x));
           is_false ~msg:"maximum" (reads_sign (fun () -> Nx.maximum x y));
           is_false ~msg:"minimum" (reads_sign (fun () -> Nx.minimum x y)));
     ]

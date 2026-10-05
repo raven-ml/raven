@@ -3126,6 +3126,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.relu` is removed; it lives in `Kaun.Fn.relu`. Outside
+  kaun, write `Nx.maximum_s x 0.`, whose derivative at 0 is 1/2.
+- `Nx.softmax` and `Nx.log_softmax` no longer overflow for a negative `~scale`
+  (they returned NaN), and `Nx.softmax` raises `Invalid_argument` on an axis
+  out of bounds, where an axis below `-rank` selected another axis.
 - AMD GPUs under the kernel driver load a program in about 0.3 ms instead of
   8 to 12 ms, and freeing host memory mapped for the GPU no longer stalls the
   next work on every queue of the process for 5 to 10 ms.
@@ -5317,6 +5322,9 @@ thread.
 
 ### Kaun
 
+- **Breaking:** `Fn.sigmoid`, `Fn.tanh`, `Fn.softmax` and `Fn.log_softmax` are
+  removed: use `Nx.sigmoid`, `Nx.tanh`, `Nx.softmax` and `Nx.log_softmax`, whose
+  `~axes:[ a ]` is the old `~axis:a`.
 - **Breaking:** `Kaun.Checkpoint` is removed. A model's structure saves and
   reads it back through `Nx_io.Archive.of_value` and `to_value`, sections are
   `Nx.Ptree.field`s joined with `Archive.union`, and an importer reads entries

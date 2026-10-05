@@ -40,12 +40,6 @@ let unary =
     { name = "floor"; nx = Nx.floor; ocaml = Float.floor; exact = true };
     { name = "round"; nx = Nx.round; ocaml = Float.round; exact = true };
     {
-      name = "relu";
-      nx = Nx.relu;
-      ocaml = (fun x -> Float.max x 0.);
-      exact = true;
-    };
-    {
       name = "rsqrt";
       nx = Nx.rsqrt;
       ocaml = (fun x -> 1. /. Float.sqrt x);

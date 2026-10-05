@@ -241,19 +241,10 @@ let elementwise_kinks =
         let r = 1. /. Float.sqrt 2. in
         equal ~msg:"x" (Oracle.tensor ~rel:1e-15 ()) (vec [| r; -.r |]) gx;
         equal ~msg:"y" (Oracle.tensor ~rel:1e-15 ()) (vec [| r; r |]) gy);
-    test "relu has derivative 0 at 0" (fun () ->
-        equal (exact ())
-          (vec [| 0.; 0.; 1. |])
-          (Rune.grad' (fun x -> Nx.sum (Nx.relu x)) (vec [| -1.; 0.; 2. |])));
     test "abs has derivative 0 at 0" (fun () ->
         equal (exact ())
           (vec [| -1.; 0.; 1. |])
           (Rune.grad' (fun x -> Nx.sum (Nx.abs x)) (vec [| -1.; 0.; 2. |])));
-    test "relu propagates NaN and maps -0. to 0." (fun () ->
-        let y = Nx.to_array (Nx.relu (vec [| Float.nan; -0.; 0.; -2. |])) in
-        is_true ~msg:"NaN" (Float.is_nan y.(0));
-        equal ~msg:"-0., 0. and -2." (list float_exact) [ 0.; 0.; 0. ]
-          [ y.(1); y.(2); y.(3) ]);
   ]
 
 let () =

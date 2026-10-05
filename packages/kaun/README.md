@@ -79,8 +79,8 @@ save, or swap.
   (running statistics as explicit state); each is a parameter record
   with `init`/`make`, `apply`, and traversals
 - **Stateless functions** — `Fn` activations (`relu`, `gelu`, `silu`,
-  `softmax`, ...), `Pool` (max/avg 2-D pooling), `Dropout` with an
-  explicit `~training` flag
+  ...), `Pool` (max/avg 2-D pooling), `Dropout` with an explicit
+  `~training` flag
 - **Initializers** — `Init`: Glorot/Xavier, He/Kaiming, LeCun, generic
   `variance_scaling`; any function of the right type is an initializer
 - **Losses** — `Loss`: MSE, MAE, Huber, `sigmoid_bce`,
@@ -134,7 +134,7 @@ let () =
     let s, _ = step !state in
     state := s
   done;
-  Nx.print_data (Fn.sigmoid (Mlp.apply (fst !state) x))
+  Nx.print_data (Nx.sigmoid (Mlp.apply (fst !state) x))
 ```
 
 ```sh

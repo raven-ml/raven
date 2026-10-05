@@ -27,6 +27,11 @@ let x = Nx.create Nx.float32 [| 1 |] [| 0.5 |]
 let w = Nx.create Nx.float32 [| 1; 1 |] [| 0.5 |]
 let row = Nx.reshape [| 1; 1 |] x
 
+(* A selection: [x] where it is positive, [0.] elsewhere. *)
+let relu x =
+  let zero = Nx.scalar_like x 0. in
+  Nx.where (Nx.less_equal x zero) zero x
+
 let reverse =
   group "reverse mode"
     [
@@ -35,7 +40,7 @@ let reverse =
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x)));
       test "grad of a selection" (fun () ->
           equal int 1695
-            (words (fun () -> Rune.grad' (fun x -> Nx.sum (Nx.relu x)) x)));
+            (words (fun () -> Rune.grad' (fun x -> Nx.sum (relu x)) x)));
       test "grad of a matrix product" (fun () ->
           equal int 1212
             (words (fun () -> Rune.grad' (fun w -> Nx.sum (Nx.matmul row w)) w)));

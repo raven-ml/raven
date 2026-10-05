@@ -3,15 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Every function lowers to Nx operations with reverse- and forward-mode rules
-   in Rune (add, mul, div, exp, log, tanh, erf, maximum, where, reduce_max,
-   reduce_sum), so they all differentiate. *)
+(* Every activation lowers to Nx operations with reverse- and forward-mode rules
+   in Rune (add, mul, abs, exp, log, tanh, erf, sigmoid, where), so they all
+   differentiate. *)
 
 (* A float constant in [x]'s element type, for the [_s] scalar operations. *)
 let const x v = Nx_dtype.of_float (Nx.dtype x) v
-let relu = Nx.relu
-let sigmoid = Nx.sigmoid
-let tanh = Nx.tanh
+
+(* [x] where it is positive or NaN, and zero elsewhere, [-0.] included: there [x
+   <= 0] is false. Selecting the zero gives the derivative [0] at [0]. *)
+let relu x =
+  let zero = Nx.scalar_like x (const x 0.0) in
+  Nx.where (Nx.less_equal x zero) zero x
 
 let leaky_relu ?(negative_slope = 0.01) x =
   Nx.where
@@ -42,11 +45,7 @@ let silu x = Nx.mul x (Nx.sigmoid x)
 (* softplus(x) = max(x, 0) + log(1 + exp(-|x|)): [exp] sees a non-positive
    argument on both sides of 0, so large inputs cannot overflow. *)
 let softplus x =
-  Nx.add (Nx.relu x)
-    (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) (const x 1.0)))
-
-let softmax ?(axis = -1) x = Nx.softmax ~axes:[ axis ] x
-let log_softmax ?(axis = -1) x = Nx.log_softmax ~axes:[ axis ] x
+  Nx.add (relu x) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) (const x 1.0)))
 
 (* Sampling masks *)
 

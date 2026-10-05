@@ -40,7 +40,7 @@ Stateless companions, all pure functions:
 
 | Module | Contents |
 |--------|----------|
-| `Fn` | `relu`, `leaky_relu`, `sigmoid`, `tanh`, `gelu`, `gelu_approx`, `silu`, `softplus`, `softmax`, `log_softmax` |
+| `Fn` | `relu`, `leaky_relu`, `gelu`, `gelu_approx`, `silu`, `softplus`, `keep_top_k`, `keep_top_p` |
 | `Pool` | `max_pool2d`, `avg_pool2d` over the last two axes |
 | `Dropout` | `apply ~rate ~training` |
 | `Init` | `glorot_*`, `he_*`, `lecun_*`, `variance_scaling`, constants |

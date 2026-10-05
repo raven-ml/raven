@@ -39,9 +39,13 @@ let d_h1 = 256
 let d_h2 = 128
 let d_out = 10
 
+let relu x =
+  let zero = Nx.scalar_like x 0. in
+  Nx.where (Nx.less_equal x zero) zero x
+
 let forward p x =
-  let h1 = Nx.relu (Nx.add (Nx.matmul x p.w1) p.b1) in
-  let h2 = Nx.relu (Nx.add (Nx.matmul h1 p.w2) p.b2) in
+  let h1 = relu (Nx.add (Nx.matmul x p.w1) p.b1) in
+  let h2 = relu (Nx.add (Nx.matmul h1 p.w2) p.b2) in
   Nx.add (Nx.matmul h2 p.w3) p.b3
 
 let loss p x y = Nx.mean (Nx.square (Nx.sub (forward p x) y))

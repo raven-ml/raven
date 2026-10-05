@@ -282,7 +282,7 @@ A custom rule gives a function the derivative a transformation would compute for
 
 ```ocaml
 let stable x =
-  Nx.add (Nx.relu x) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) 1.))
+  Nx.add (Nx.maximum_s x 0.) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) 1.))
 
 let softplus =
   Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->

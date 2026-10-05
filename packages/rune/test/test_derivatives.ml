@@ -1258,6 +1258,41 @@ let operations f =
 
 let operation_tests =
   [
+    test "sigmoid differentiates as e / (1 + e)², with e = exp (-|x|)"
+      (fun () ->
+        let x = [| 0.9; -1.7; 0.; 30. |] in
+        let d v =
+          let e = Float.exp (-.Float.abs v) in
+          e /. ((1. +. e) *. (1. +. e))
+        in
+        equal (close ())
+          (vec (Array.map d x))
+          (Rune.grad' (fun x -> Nx.sum (Nx.sigmoid x)) (vec x)));
+    test "softmax and log_softmax differentiate as their analytic gradients"
+      (fun () ->
+        let x = vec [| 1.; 2.; 3. |] in
+        let softmax = Nx.to_array (Nx.softmax x) in
+        (* sum (softmax x) is constantly 1, and d/dx_i sum_j log_softmax(x)_j is
+           1 - n softmax(x)_i. *)
+        equal ~msg:"softmax"
+          (Oracle.tensor ~abs:1e-15 ())
+          (vec [| 0.; 0.; 0. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.softmax x)) x);
+        equal ~msg:"log_softmax" (close ())
+          (vec (Array.map (fun s -> 1. -. (3. *. s)) softmax))
+          (Rune.grad' (fun x -> Nx.sum (Nx.log_softmax x)) x));
+    test "weighted softmax and log_softmax match central differences" (fun () ->
+        let w = vec [| 0.7; -0.3; 1.1; 0.2; -0.9 |] in
+        let x = vec [| 0.9; -1.7; 0.3; 2.4; -0.6 |] in
+        let weighted f x = Nx.sum (Nx.mul w (f x)) in
+        require_ok ~msg:"softmax" ~pp:Format.pp_print_string
+          (Rune.check_grads Nx.Ptree.tensor
+             (weighted (fun x -> Nx.softmax x))
+             x);
+        require_ok ~msg:"log_softmax" ~pp:Format.pp_print_string
+          (Rune.check_grads Nx.Ptree.tensor
+             (weighted (fun x -> Nx.log_softmax x))
+             x));
     test
       "a pair of cancelling transposes adds no copy and no arithmetic to a \
        gradient" (fun () ->

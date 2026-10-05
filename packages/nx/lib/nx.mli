@@ -4015,17 +4015,7 @@ val istft :
 
     See also {!stft}. *)
 
-(** {1:activation Activation functions} *)
-
-val relu : ('a, 'b) t -> ('a, 'b) t
-(** [relu t] is [max(0, t)] element-wise.
-
-    {@ocaml[
-      # create float32 [| 5 |]
-          [| -2.; -1.; 0.; 1.; 2. |]
-        |> relu
-      - : (float, float32_elt) t = float32 [5] [0, 0, ..., 1, 2]
-    ]} *)
+(** {1:normalisations Normalisations and special functions} *)
 
 val sigmoid : ('a, 'b) t -> ('a, 'b) t
 (** [sigmoid t] is [1 / (1 + exp(-t))] element-wise, in [[0, 1]]: an element is
@@ -4037,10 +4027,16 @@ val sigmoid : ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val softmax : ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
-(** [softmax ?axes ?scale t] is the softmax normalisation
-    [exp(scale * (t - max t)) / Σ exp(scale * (t - max t))]. [axes] defaults to
-    [[-1]]. [scale] defaults to [1.0]. Output sums to [1] along the specified
-    axes.
+(** [softmax ?axes ?scale t] is the softmax normalisation of [scale * t] along
+    [axes]: [exp(scale * t) / Σ exp(scale * t)]. The output sums to [1] along
+    [axes]. [axes] defaults to [[-1]]; negative axes count from the last.
+    [scale] defaults to [1.0].
+
+    The exponent is shifted by the maximum of [scale * t] before it is taken, so
+    large inputs do not overflow, whatever the sign of [scale]. A NaN makes its
+    whole lane NaN.
+
+    Raises [Invalid_argument] if an axis is out of bounds.
 
     {@ocaml[
       # create float32 [| 3 |] [| 1.; 2.; 3. |]
@@ -4051,8 +4047,10 @@ val softmax : ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
     See also {!log_softmax}. *)
 
 val log_softmax : ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
-(** [log_softmax ?axes ?scale t] is the natural logarithm of {!softmax}. Same
-    defaults as {!softmax}.
+(** [log_softmax ?axes ?scale t] is the natural logarithm of {!softmax},
+    computed as [scale * t - logsumexp (scale * t)]: entries far below the
+    maximum keep their precision where [log (softmax t)] would round them to
+    [-infinity]. Same defaults and errors as {!softmax}.
 
     See also {!softmax}, {!logsumexp}. *)
 

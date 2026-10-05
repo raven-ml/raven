@@ -3408,7 +3408,9 @@ let device_lists =
                (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3; d4 ]) xs))));
       slow "a column-then-row split MLP equals one device" (fun () ->
           let w1 = Nx.mul_s (grid 3 4) 0.1 and w2 = Nx.mul_s (grid 4 3) 0.1 in
-          let f (a, (w1, w2)) = Nx.matmul (Nx.relu (Nx.matmul a w1)) w2 in
+          let f (a, (w1, w2)) =
+            Nx.matmul (Nx.maximum_s (Nx.matmul a w1) 0.) w2
+          in
           let s = Nx.Ptree.(pair tensor (pair tensor tensor)) in
           let a = Nx.mul_s (grid 2 3) 0.1 in
           let r =
@@ -3903,7 +3905,9 @@ let eighs =
 (* The calls whose bytes and memory a device counts, on [d]: the test devices,
    and Metal where the machine has it. *)
 let on_one_device ~name d =
-  let block (w1, w2) a = Nx.add a (Nx.matmul (Nx.relu (Nx.matmul a w1)) w2) in
+  let block (w1, w2) a =
+    Nx.add a (Nx.matmul (Nx.maximum_s (Nx.matmul a w1) 0.) w2)
+  in
   group name
     [
       test "a call runs where its arguments lie, and leaves its results there"

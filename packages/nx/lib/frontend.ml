@@ -668,12 +668,6 @@ let where cond if_true if_false =
     B.where (broadcast_to target cond) (broadcast_to target if_true)
       (broadcast_to target if_false)
 
-(* [x] where it is positive or NaN, and zero elsewhere, [-0.] included: there
-   [x <= 0] is false. *)
-let relu x =
-  let zero = scalar_like x (Nx_dtype.zero (dtype x)) in
-  where (less_equal x zero) zero x
-
 let fma a b c =
   let dt = dtype a in
   if Nx_dtype.is_complex dt || Nx_dtype.equal dt Nx_dtype.bool then
@@ -6321,33 +6315,28 @@ let dstn ?(type_ = 2) ?axes ?(norm = `Backward) x =
 let idstn ?(type_ = 2) ?axes ?(norm = `Backward) x =
   real_transformn ~op:"idstn" ~family:`Dst ~inverse:true ~type_ ~axes ~norm x
 
-(* ───── Neural Network Operations ───── *)
+(* ───── Normalisations ───── *)
+
+(* [scale * (x - m)] along [axes], with [m] the maximum of [x] for a
+   non-negative scale and its minimum for a negative one: no element is
+   positive, so its [exp] cannot overflow. *)
+let scaled_shift ~axes ~scale x =
+  let extreme = if scale >= 0.0 then max else min in
+  let shifted = sub x (extreme x ~axes ~keepdims:true) in
+  if scale = 1.0 then shifted
+  else mul (scalar_like x (Nx_dtype.of_float (dtype x) scale)) shifted
 
 let softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
-  let nd = Array.length (shape x) in
-  let axes_norm = List.map (fun ax -> if ax < 0 then nd + ax else ax) axes in
-  let max_x = max x ~axes:axes_norm ~keepdims:true in
-  let dt = dtype x in
-  let shifted =
-    if scale = 1.0 then sub x max_x
-    else mul (scalar_like x (Nx_dtype.of_float dt scale)) (sub x max_x)
-  in
-  let e = exp shifted in
-  div e (sum e ~axes:axes_norm ~keepdims:true)
+  let axes = normalize_and_dedup_axes ~op:"softmax" (ndim x) axes in
+  let e = exp (scaled_shift ~axes ~scale x) in
+  div e (sum e ~axes ~keepdims:true)
 
 let log_softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
-  let axes_norm = normalize_and_dedup_axes ~op:"log_softmax" (ndim x) axes in
-  if axes_norm = [] then zeros_like x
+  let axes = normalize_and_dedup_axes ~op:"log_softmax" (ndim x) axes in
+  if axes = [] then zeros_like x
   else
-    let max_x = max x ~axes:axes_norm ~keepdims:true in
-    let shifted = sub x max_x in
-    let dt = dtype x in
-    let scaled =
-      if scale = 1.0 then shifted
-      else mul (scalar_like shifted (Nx_dtype.of_float dt scale)) shifted
-    in
-    let log_den = log (sum (exp scaled) ~axes:axes_norm ~keepdims:true) in
-    sub scaled log_den
+    let scaled = scaled_shift ~axes ~scale x in
+    sub scaled (log (sum (exp scaled) ~axes ~keepdims:true))
 
 let logsumexp ?axes ?(keepdims = false) x =
   let axes_norm =

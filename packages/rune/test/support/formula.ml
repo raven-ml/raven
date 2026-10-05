@@ -30,6 +30,11 @@ type t = { term : term; input : int array; output : int array }
 
 (* Evaluation *)
 
+(* [x] where it is positive, [0.] elsewhere: a selection with a kink at [0]. *)
+let relu x =
+  let zero = Nx.scalar_like x 0. in
+  Nx.where (Nx.less_equal x zero) zero x
+
 let unary op x =
   match op with
   | Sin -> Nx.sin x
@@ -38,7 +43,7 @@ let unary op x =
   | Neg -> Nx.neg x
   | Log1p_sq -> Nx.log (Nx.add_s (Nx.mul x x) 1.)
   | Abs -> Nx.abs x
-  | Relu -> Nx.relu x
+  | Relu -> relu x
 
 let binary op a b =
   match op with

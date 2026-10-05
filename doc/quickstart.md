@@ -135,7 +135,7 @@ let () =
   done;
 
   (* Predict *)
-  let pred = Fn.sigmoid (Mlp.apply (fst !state) x) in
+  let pred = Nx.sigmoid (Mlp.apply (fst !state) x) in
   Printf.printf "\npredictions (expected 0 1 1 0):\n";
   for i = 0 to 3 do
     Printf.printf "  [%.0f, %.0f] -> %.3f\n"
