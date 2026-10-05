@@ -3403,7 +3403,8 @@ stores through a pad.
   `getenv`. Each variable is declared once (`Setting`), with its type,
   default and reach. A setting reaches `Output` if a change of its value
   alone can change what a compilation that returns makes from its graph,
-  renderer and compiler, and `Process` otherwise. The caches key on every
+  renderer and compiler, for the same measurements, and `Process`
+  otherwise. The caches key on every
   `Output` setting (`Setting.shaping`, D63). `BEAM` and `JITBEAM` reach
   output: `compile_linear` writes the width into the kernels it searches.
   `CC`, `CUDA_PATH` and `ROCM_PATH` reach the process: they are read when a

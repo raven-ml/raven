@@ -38,9 +38,11 @@
     A compilation makes a schedule, a kernel's program, the optimizations a
     search picks or a compiled schedule from its arguments: the graph, and the
     renderer with its compiler. A setting reaches {!Output} if a change of its
-    value alone can change what a compilation that returns makes, and {!Process}
-    otherwise: then a change makes compilation only print, check, keep, look up
-    or work in parallel otherwise, or raise where it returned.
+    value alone can change what a compilation that returns makes, for the same
+    measurements, since what a search picks depends on the times it measures. It
+    reaches {!Process} otherwise: then a change makes compilation only print,
+    check, keep, look up or work in parallel otherwise, or raise where it
+    returned.
 
     A compiler names the tools it runs and their options in its cache key
     ({!Renderer.Compiler.v}), which the caches take with what it makes, so a
