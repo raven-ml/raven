@@ -53,4 +53,9 @@ let copy_queues =
       let copies = List.filter (String.starts_with ~prefix:"COPY") names in
       equal (list string) [ "COPY:0" ] (List.sort_uniq String.compare copies))
 
-let () = exit (run "Hcq2 with HCQ_NUM_SDMA=1" [ copy_queues ])
+let keyed =
+  test "the compiled batches key on HCQ_NUM_SDMA" (fun () ->
+      equal (option string) (Some "1")
+        (List.assoc_opt "HCQ_NUM_SDMA" (Helpers.shaping ())))
+
+let () = exit (run "Hcq2 with HCQ_NUM_SDMA=1" [ copy_queues; keyed ])

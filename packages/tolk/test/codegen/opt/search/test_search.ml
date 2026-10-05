@@ -607,6 +607,21 @@ let cache_settings =
       cached ~settings:[ B (Helpers.transcendental, 2) ] measure;
       greater int ~than:0 (List.length (calls ())))
 
+(* The variables that pick candidates and when a search stops are keyed with the
+   settings that shape compilation, at their defaults here. *)
+let cache_variables =
+  cases ~name:fst "the search's variables shape compilation"
+    [
+      ("BEAM_PADTO", "0");
+      ("BEAM_UOPS_MAX", "3000");
+      ("BEAM_UPCAST_MAX", "256");
+      ("BEAM_LOCAL_MAX", "1024");
+      ("BEAM_MIN_PROGRESS", "0x1.47ae147ae147bp-7");
+    ]
+    (fun (name, value) ->
+      equal (option string) (Some value)
+        (List.assoc_opt name (Helpers.shaping ())))
+
 (* A measurement that favours tensor cores, then swaps, with an optimum at two
    optimisations. *)
 let kinds_time ~vars:_ prg =
@@ -775,12 +790,44 @@ let under_environment =
           contains ~sub:"too many upcast/local" (output ()));
     ]
 
+(* TC_OPT=0 picks other candidates than an unset TC_OPT, whose default is 2,
+   though the setting TC_OPT is 0 under both. The suite runs this group in a
+   process of its own, after the default environment's process kept its searches
+   in the cache (see dune). *)
+let under_tc_opt =
+  group ~tags:[ "tc_opt" ] "TC_OPT=0"
+    [
+      test "the tensor cores' actions ask for TC_OPT 0" (fun () ->
+          let tc_opts =
+            List.filter_map
+              (function Opt.Tc t -> Some t.tc_opt | _ -> None)
+              Search.actions
+          in
+          equal (list int) (List.init 10 (Fun.const 0)) tc_opts);
+      test "a search kept without TC_OPT measures again" (fun () ->
+          let kept () =
+            List.length
+              (Disk_cache.entries ~table:"beam_search" Helpers.cachedb)
+          in
+          let before = kept () in
+          greater int ~msg:"searches the first process kept" ~than:0 before;
+          let measure, calls = recording (golden_time ~failing:false) in
+          ignore
+            (search
+               ~settings:[ B (Helpers.cachelevel, 1) ]
+               ~measure 2
+               (scheduled "sum_rows" "metal"));
+          greater int ~msg:"measurements" ~than:0 (List.length (calls ()));
+          equal int ~msg:"kept under a key of its own" (before + 1) (kept ()));
+    ]
+
 let () =
   exit
     (Windtrap.run "Tolk.Search"
        [
          actions;
          under_environment;
+         under_tc_opt;
          candidates;
          searches;
          candidate_laws;
@@ -794,6 +841,7 @@ let () =
          width;
          cache;
          cache_settings;
+         cache_variables;
          cache_kinds;
          uncompilable;
          progress;

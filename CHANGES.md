@@ -939,6 +939,12 @@ thread.
 
 ### Tolk (new)
 
+- A beam search is read back from the disk cache only for the candidates it
+  chose among, so `TC_OPT=0` no longer reads back a search made with `TC_OPT`
+  unset. The search's `BEAM_*` variables, `SUM_DTYPE`, `HCQ_NUM_SDMA` and
+  `WAVES_PER_SH` are declared (`Helpers.variable`, new `variable_float` and
+  `variable_opt`), and `NO_MEMORY_PLANNER` reaches results, so the caches key
+  on them too.
 - A function with two loops or reductions of one length, such as a scan body
   of `sum (mul x (matmul x c))`, schedules again: numbering its ranges for the
   schedule cache's key raised "a bottom-up rewrite cycles" when two ranges

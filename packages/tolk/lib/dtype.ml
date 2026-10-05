@@ -815,11 +815,12 @@ let can_lossless_cast d0 d1 =
   | Int16 -> List.mem d0 [ Uint8; Int8 ]
   | _ -> false
 
+let sum_dtype = Helpers.variable_string "SUM_DTYPE" "float32"
+
 let sum_acc dt =
   if is_unsigned dt then least_upper [ dt; Uint32 ]
   else if is_int dt || dt = Bool then least_upper [ dt; Int32 ]
   else
-    let value = Helpers.getenv_string "SUM_DTYPE" "float32" in
-    match of_string value with
+    match of_string sum_dtype with
     | Ok acc -> least_upper [ dt; acc ]
-    | Error _ -> invalid_arg (strf "SUM_DTYPE=%s is not a data type" value)
+    | Error _ -> invalid_arg (strf "SUM_DTYPE=%s is not a data type" sum_dtype)

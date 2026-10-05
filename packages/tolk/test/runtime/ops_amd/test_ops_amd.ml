@@ -882,6 +882,11 @@ let splits =
           List.iter (fun (_, bytes) -> at_most int ~than:(ring / 4) bytes) ps);
     ]
 
+let waves_keyed =
+  test "WAVES_PER_SH is keyed with what shapes compilation" (fun () ->
+      equal (option string) (Some "0")
+        (List.assoc_opt "WAVES_PER_SH" (Helpers.shaping ())))
+
 let () =
   exit
     (run "Tolk.Ops_amd"
@@ -894,4 +899,5 @@ let () =
          linking;
          refusals;
          loops;
+         waves_keyed;
        ])

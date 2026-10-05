@@ -69,6 +69,8 @@ let q_of = Hcq2.Queue.q
 
 (* PM4 *)
 
+(* The waves a dispatch runs on each shader array, [0] for no limit. *)
+let waves_per_sh = Helpers.variable "WAVES_PER_SH" 0
 let event_index_partial_flush = 4
 let wait_reg_mem_function_eq = 3
 let wait_reg_mem_function_geq = 5
@@ -953,7 +955,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
       done;
       wreg G.compute_restart_x [ u32 0; u32 0; u32 0 ];
       wreg G.compute_user_data_0 user_regs;
-      wreg G.compute_resource_limits [ u32 (Helpers.getenv "WAVES_PER_SH" 0) ];
+      wreg G.compute_resource_limits [ u32 waves_per_sh ];
       wreg G.compute_start_x
         ([ u32 0; u32 0; u32 0 ]
         @ List.map (function Int l -> u32 l | Sym l -> l) info.local_size

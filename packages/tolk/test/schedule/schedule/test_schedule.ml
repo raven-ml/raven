@@ -1294,8 +1294,8 @@ let memory_only () =
   | Error err -> failf "the child failed: %s" err
 
 (* Another value of each setting and variable that shapes what compilation
-   makes, as the environment holds it: a flag flipped, an integer plus one, and
-   a string from this table, which a string declared later must join. *)
+   makes, as the environment holds it: a flag flipped, a number plus one, and a
+   string from this table, which a string declared later must join. *)
 let other_values () =
   let strings =
     [
@@ -1303,15 +1303,18 @@ let other_values () =
       ("DEFAULT_FLOAT", "half");
       ("DEFAULT_INT", "long");
       ("EMULATED_DTYPES", "long");
+      ("HCQ_NUM_SDMA", "2");
+      ("SUM_DTYPE", "half");
     ]
   in
   List.map
     (fun (name, value) ->
-      match (value, int_of_string_opt value) with
-      | "true", _ -> (name, "0")
-      | "false", _ -> (name, "1")
-      | _, Some n -> (name, string_of_int (n + 1))
-      | _, None -> (
+      match (value, int_of_string_opt value, float_of_string_opt value) with
+      | "true", _, _ -> (name, "0")
+      | "false", _, _ -> (name, "1")
+      | _, Some n, _ -> (name, string_of_int (n + 1))
+      | _, None, Some x -> (name, string_of_float (x +. 1.))
+      | _, None, None -> (
           match List.assoc_opt name strings with
           | Some other -> (name, other)
           | None -> failf "%s holds a string: give it another value" name))

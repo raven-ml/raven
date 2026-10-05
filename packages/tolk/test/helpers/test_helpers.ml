@@ -473,10 +473,43 @@ let cache_keys =
           equal (option string) ~msg:"declared" (Some "1") (keyed key);
           equal (option string) ~msg:"in a context" (Some "4")
             (context [ B (v, 4) ] (fun () -> keyed key)));
+      test "holds a setting's value again once a context ends" (fun () ->
+          let key = fresh () in
+          let v = Context_var.int key 1 in
+          ignore (keyed key);
+          context [ B (v, 4) ] (fun () -> ignore (keyed key));
+          equal (option string) (Some "1") (keyed key));
       test "holds a variable's value as read" (fun () ->
           let key = variable (Some " 6 ") in
           equal int 6 (Tolk.Helpers.variable key 2);
           equal (option string) (Some "6") (keyed key));
+      test "holds a number variable's value as read" (fun () ->
+          let key = variable (Some " 2.5 ") in
+          equal float_exact 2.5 (Tolk.Helpers.variable_float key 0.01);
+          equal (option string) (Some "0x1.4p+1") (keyed key));
+      test "tells apart number variables one ulp apart" (fun () ->
+          let a = variable (Some "0.1")
+          and b = variable (Some "0.10000000000000002") in
+          ignore (Tolk.Helpers.variable_float a 0.);
+          ignore (Tolk.Helpers.variable_float b 0.);
+          not_equal (option string) (keyed a) (keyed b));
+      test "a domain spawned in a context holds the values it spawned with"
+        (fun () ->
+          let key = fresh () in
+          let v = Context_var.int key 1 in
+          ignore (keyed key);
+          let inside =
+            context
+              [ B (v, 4) ]
+              (fun () ->
+                ignore (keyed key);
+                Domain.spawn (fun () -> keyed key))
+          in
+          let after = Domain.spawn (fun () -> keyed key) in
+          equal (option string) ~msg:"spawned in the context" (Some "4")
+            (Domain.join inside);
+          equal (option string) ~msg:"spawned after it" (Some "1")
+            (Domain.join after));
       test "leaves out a setting that reaches only the process" (fun () ->
           let key = fresh () in
           ignore (Context_var.bool ~reach:Process key false);

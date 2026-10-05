@@ -63,6 +63,18 @@ val variable : string -> int -> int
     Raises [Invalid_argument] if a setting or variable named [key] is already
     declared. *)
 
+val variable_float : string -> float -> float
+(** [variable_float key default] is {!variable} for [getenv_float key default].
+    It is recorded in hexadecimal, each number with a text of its own. *)
+
+val variable_opt : string -> int option
+(** [variable_opt key] is {!variable} for a variable whose default the caller
+    computes: [Some n] if [key] holds the integer [n], as {!getenv} reads it,
+    and [None] if it is unset, recorded as [""].
+
+    Raises [Invalid_argument] as {!variable} does, or if [key] holds anything
+    but an integer. *)
+
 val variable_string : string -> string -> string
 (** [variable_string key default] is {!variable} for
     [getenv_string key default]. *)

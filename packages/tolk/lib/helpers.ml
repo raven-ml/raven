@@ -129,13 +129,46 @@ let declare ~reach key show =
   declare_name key;
   match reach with Results -> record key show | Process -> ()
 
+(* Each domain keeps the entries as it last read them, with the declarations and
+   the generation they were read at: a caller that reads them at each call
+   allocates nothing while nothing changes. A setting that reaches results bumps
+   its domain's generation once it holds its new value, so entries read at an
+   older generation are read again, even those a thread of the domain stores
+   after the change. A spawned domain starts at its parent's generation and
+   entries, as it starts with its values. *)
+let generation =
+  Domain.DLS.new_key
+    ~split_from_parent:(fun g -> Atomic.make (Atomic.get g))
+    (fun () -> Atomic.make 0)
+
+let rendered = Domain.DLS.new_key ~split_from_parent:Fun.id (fun () -> None)
+
 let shaping () =
-  List.sort compare
-    (List.map (fun (k, show) -> (k, show ())) (Atomic.get shaping))
+  let declared = Atomic.get shaping in
+  let g = Atomic.get (Domain.DLS.get generation) in
+  match Domain.DLS.get rendered with
+  | Some (g', d, entries) when g' = g && d == declared -> entries
+  | _ ->
+      let entries =
+        List.sort compare (List.map (fun (k, show) -> (k, show ())) declared)
+      in
+      Domain.DLS.set rendered (Some (g, declared, entries));
+      entries
 
 let variable key default =
   let x = getenv key default in
   declare ~reach:Results key (fun () -> string_of_int x);
+  x
+
+let variable_float key default =
+  let x = getenv_float key default in
+  declare ~reach:Results key (fun () -> Printf.sprintf "%h" x);
+  x
+
+let variable_opt key =
+  let x = read key (fun s -> Result.map Option.some (parse_int s)) None in
+  declare ~reach:Results key (fun () ->
+      Option.fold ~none:"" ~some:string_of_int x);
   x
 
 let variable_string key default =
@@ -147,12 +180,13 @@ let variable_string key default =
 
 module Context_var = struct
   (* A domain starts with the values of the domain that spawns it. *)
-  type 'a t = { key : string; value : 'a Domain.DLS.key }
+  type 'a t = { key : string; reach : reach; value : 'a Domain.DLS.key }
 
   let v ?(reach = Results) ~show key x =
     let t =
       {
         key;
+        reach;
         value = Domain.DLS.new_key ~split_from_parent:Fun.id (fun () -> x);
       }
     in
@@ -170,7 +204,10 @@ module Context_var = struct
 
   let key v = v.key
   let value v = Domain.DLS.get v.value
-  let set v x = Domain.DLS.set v.value x
+
+  let set v x =
+    Domain.DLS.set v.value x;
+    if v.reach = Results then Atomic.incr (Domain.DLS.get generation)
 end
 
 type binding = B : 'a Context_var.t * 'a -> binding
@@ -249,10 +286,7 @@ let tc_opt = Context_var.int "TC_OPT" 0
 let tc_min_globals = Context_var.int "TC_MIN_GLOBALS" 0
 let transcendental = Context_var.int "TRANSCENDENTAL" 1
 let split_reduceop = Context_var.bool "SPLIT_REDUCEOP" true
-
-let no_memory_planner =
-  Context_var.bool ~reach:Process "NO_MEMORY_PLANNER" false
-
+let no_memory_planner = Context_var.bool "NO_MEMORY_PLANNER" false
 let ring = Context_var.int "RING" 1
 let all2all = Context_var.int "ALL2ALL" 0
 let allreduce_cast = Context_var.bool "ALLREDUCE_CAST" true

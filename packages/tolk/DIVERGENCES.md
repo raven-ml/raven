@@ -1881,8 +1881,11 @@ the Exclusions of `README.md`.
   library's sources, which dune computes when it builds the library: an
   entry is a function of the code that made it. Settings and the variables
   tinygrad reads with `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`,
-  `CC`, `DMC`, `EXPAND_SSA`, `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT`
-  variables and `RING_ALLREDUCE_THRESHOLD`) are declared with their reach, and
+  `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
+  `BEAM_UPCAST_MAX`, `CC`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`,
+  `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT` variables,
+  `RING_ALLREDUCE_THRESHOLD`, `SUM_DTYPE` and `WAVES_PER_SH`) are declared
+  with their reach, and
   the keys take every one that reaches results (`Helpers.shaping`), so one
   declared later is keyed without being listed; a setting of the process
   alone, such as `DEBUG`, `BEAM` or `PARALLEL`, is not. One key serves memory
@@ -3306,7 +3309,8 @@ stores through a pad.
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
   (`C.identity`); `lib/codegen/codegen.ml:1175-1191` (`program_key`, `kept`);
-  `lib/codegen/opt/search.ml:22` and `:272` (the beam search's key).
+  `lib/codegen/opt/search.ml:17-21` (the variables declared) and `:262`
+  (the beam search's key).
 - **Differs:** a table also names everything besides the source that
   determines a binary: for Clang, the digest of what `clang -###` states it
   runs (its version and installation, the processor and features `native`
@@ -3315,8 +3319,15 @@ stores through a pad.
   or the library's file, size and modification time, and the options, PTX or
   cubin included. A program is kept on disk under its compiler's table, and
   only if that compiler caches its binaries. The beam search's key adds the
-  library's sources, the renderer, its compiler's table, the settings that
-  shape compilation and the `BEAM_*` settings that pick its candidates.
+  library's sources, the renderer, its compiler's table, the candidate
+  actions, and the settings and variables that shape compilation
+  (`Helpers.shaping`), among which the search declares `BEAM_PADTO`,
+  `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX` and
+  `BEAM_MIN_PROGRESS`. The actions stand for the variables `TC` and `TC_OPT`
+  they read, whose defaults differ from those of the settings of the same
+  names (`TC_OPT=0` and an unset `TC_OPT` give the setting one value and
+  the actions two). `BEAM_STRICT_MODE` is not keyed: a strict search that
+  completes finds what another finds.
 - **Reason:** (b): raven's test suites and rune share the default cache, so a
   hit must answer the compilation it stands for. tinygrad's key answers a
   changed flag in `compiler_cpu.py`, an upgraded toolchain, a program of
@@ -3328,4 +3339,5 @@ stores through a pad.
   needed`, `Tolk.C › identity`, `Tolk.Codegen › programs are kept on disk
   › a program is not read back for a compiler of another table`, and
   `Tolk.Search › a search kept under one setting measures again under
-  another`.
+  another`, `› the search's variables shape compilation` and `› TC_OPT=0 ›
+  a search kept without TC_OPT measures again`.

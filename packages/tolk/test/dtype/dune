@@ -4,7 +4,12 @@
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden)))
+  (glob_files *.golden))
+ (action
+  (setenv
+   SUM_DTYPE
+   float32
+   (run %{test}))))
 
 (executable
  (name sum_acc)

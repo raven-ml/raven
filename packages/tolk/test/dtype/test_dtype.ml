@@ -1109,6 +1109,12 @@ let conversions =
           is_true ((not (a <= b)) || Stdlib.( <= ) (to_float a) (to_float b)));
     ]
 
+(* The suite runs with SUM_DTYPE at its default (see dune). *)
+let sum_dtype_keyed =
+  test "SUM_DTYPE is keyed with what shapes compilation" (fun () ->
+      equal (option string) (Some "float32")
+        (List.assoc_opt "SUM_DTYPE" (Helpers.shaping ())))
+
 let () =
   exit
     (run "Tolk.Dtype"
@@ -1127,4 +1133,5 @@ let () =
          consts;
          values;
          conversions;
+         sum_dtype_keyed;
        ])

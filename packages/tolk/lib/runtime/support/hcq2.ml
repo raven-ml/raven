@@ -1340,6 +1340,10 @@ let chunked lowered = function
         [ chunk ]
       :: left
 
+(* The SDMA queues copies take: by default as many as the copies' AMD peers
+   under ALL2ALL, at most 8, and one otherwise. *)
+let num_sdma = Helpers.variable_opt "HCQ_NUM_SDMA"
+
 let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   (* The calls in a range that no device with queues runs are the engine's, once
      per trip: they read the range as a variable. *)
@@ -1377,9 +1381,11 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   let npeers = List.length peers in
   let num_queues =
     max 1
-      (Helpers.getenv "HCQ_NUM_SDMA"
-         (if Helpers.Context_var.value Helpers.all2all >= 1 then min npeers 8
-          else 1))
+      (match num_sdma with
+      | Some n -> n
+      | None ->
+          if Helpers.Context_var.value Helpers.all2all >= 1 then min npeers 8
+          else 1)
   in
   let index d =
     let rec go i = function

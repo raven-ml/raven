@@ -826,21 +826,28 @@ let races () =
   equal outcome ~msg:"read back" (the_program ()) (read_from_disk db)
 
 (* Another value of each setting and variable that shapes what compilation
-   makes, as the environment holds it: a flag flipped, an integer plus one, and
-   a string from this table, which a string declared later must join.
+   makes, as the environment holds it: a flag flipped, a number plus one, and a
+   string from this table, which a string declared later must join.
    DEFAULT_FLOAT retypes the recorded kernel the child reads, so its key is
    tested in memory, where the key is the same. *)
 let other_values () =
   let strings =
-    [ ("CC", "cc"); ("DEFAULT_INT", "long"); ("EMULATED_DTYPES", "long") ]
+    [
+      ("CC", "cc");
+      ("DEFAULT_INT", "long");
+      ("EMULATED_DTYPES", "long");
+      ("HCQ_NUM_SDMA", "2");
+      ("SUM_DTYPE", "half");
+    ]
   in
   List.map
     (fun (name, value) ->
-      match (value, int_of_string_opt value) with
-      | "true", _ -> (name, "0")
-      | "false", _ -> (name, "1")
-      | _, Some n -> (name, string_of_int (n + 1))
-      | _, None -> (
+      match (value, int_of_string_opt value, float_of_string_opt value) with
+      | "true", _, _ -> (name, "0")
+      | "false", _, _ -> (name, "1")
+      | _, Some n, _ -> (name, string_of_int (n + 1))
+      | _, None, Some x -> (name, string_of_float (x +. 1.))
+      | _, None, None -> (
           match List.assoc_opt name strings with
           | Some other -> (name, other)
           | None -> failf "%s holds a string: give it another value" name))
