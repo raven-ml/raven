@@ -413,7 +413,9 @@ let merge_reduce_ends sink =
               if i = 0 then ends
               else
                 List.map
-                  (fun e -> substitute ~calls:Skip e (List.combine r tr))
+                  (fun e ->
+                    substitute ~calls:Skip ~pass:Fixed_point e
+                      (List.combine r tr))
                   ends
             in
             let merged =
@@ -426,7 +428,7 @@ let merge_reduce_ends sink =
     range_to_ends;
   match !subs with
   | [] -> None
-  | subs -> Some (substitute ~calls:Skip sink (List.rev subs))
+  | subs -> Some (substitute ~calls:Skip ~pass:Fixed_point sink (List.rev subs))
 
 (* A sum adds each product of its source into its running sum as one
    multiply-add, rounded once, where the renderer [ren] writes one for its type,
@@ -656,8 +658,8 @@ let pm_implicit_barriers =
 
 (* Lowering *)
 
-let rewrite ?bottom_up ?walk ?(ctx = ()) m sink =
-  graph_rewrite ?bottom_up ?walk ~calls:Skip ~ctx sink m
+let rewrite ?(ctx = ()) m sink =
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx sink (After_sources m)
 
 let kernel_info u =
   match arg u with
@@ -747,7 +749,7 @@ let split_blocks sink =
       let lo = bound slots "block_lo" and hi = bound (slots + 1) "block_hi" in
       let r' = replace r ~src:(alu hi Op.Sub [ lo ] :: List.tl (src r)) in
       let moved = alu lo Op.Add [ r' ] in
-      let sink = substitute ~calls:Skip sink [ (r, moved) ] in
+      let sink = substitute ~calls:Skip ~pass:Fixed_point sink [ (r, moved) ] in
       let ends =
         pm (fun () ->
             [
@@ -774,22 +776,27 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
      scheduler; this handles in-kernel shards, e.g. fragments) *)
   let sink = rewrite Multi.multi_pm ast in
   (* preprocess *)
-  let sink = rewrite ~bottom_up:true Prepare.pm_mops sink in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+      (Before_sources Prepare.pm_mops)
+  in
   let sink =
     if not optimize then sink
     else
       (* collapse loads reduce (indexing by a tensor) *)
       let sink = rewrite Simplify.pm_load_collapse sink in
       let sink =
-        graph_rewrite ~calls:Skip ~ctx:(Tbl.create 8) sink
-          (Simplify.pm_split_ranges ++ lift Simplify.pm_flatten_range)
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) sink
+          (After_sources
+             (Simplify.pm_split_ranges ++ lift Simplify.pm_flatten_range))
       in
       (* symbolic (NOTE: this is a requirement for pm_simplify_ranges to be
          correct) *)
       let sink = rewrite (Symbolic.sym ++ Simplify.pm_flatten_range) sink in
       let sink =
-        graph_rewrite ~calls:Skip ~ctx:(Tbl.create 8) sink
-          (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges)
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) sink
+          (After_sources
+             (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges))
       in
       (* do postrange optimization, BEAM or hand_coded_optimizations *)
       apply_opts ?beam sink ren
@@ -809,7 +816,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       sink
   in
   let sink =
-    graph_rewrite ~calls:Skip ~ctx:(build_range_map sink) sink expander
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(build_range_map sink) sink
+      (After_sources expander)
   in
   let slots =
     let next =
@@ -828,12 +836,18 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       slot
   in
   let sink =
-    graph_rewrite ~calls:Skip ~ctx:(slots, ren) sink
-      (lift Movement.mop_cleanup ++ pm_reduce_local)
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(slots, ren) sink
+      (After_sources (lift Movement.mop_cleanup ++ pm_reduce_local))
   in
-  let sink = graph_rewrite ~calls:Skip ~ctx:slots sink pm_add_local_buffers in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:slots sink
+      (After_sources pm_add_local_buffers)
+  in
   (* add gpu dims (late). this works after devectorize, but it's faster here *)
-  let sink = graph_rewrite ~calls:Skip ~ctx:ren sink Gpudims.pm_add_gpudims in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
+      (After_sources Gpudims.pm_add_gpudims)
+  in
   (* optimizations are done, now we lower to actual code *)
   let sink =
     rewrite
@@ -851,7 +865,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite Symbolic.sym sink in
   (* do memory coalescing (late) *)
   let sink = Coalesce.memory_coalescing sink ren in
-  let sink = rewrite ~bottom_up:true Symbolic.symbolic_simple sink in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+      (Before_sources Symbolic.symbolic_simple)
+  in
   (* extra symbolic before decomp. crashes without this? *)
   (* NOTE: also run indexing_simplify here, while the index is still weakint
      and (x+y)*c -> x*c+y*c applies *)
@@ -871,8 +888,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
      weak result CAST into a gated WHERE, remaking the weak node, and it
      cycles *)
   let sink =
-    graph_rewrite ~calls:Enter ~ctx:() sink
-      (Uop_weak.pm_lower_weak ++ Coalesce.indexing_simplify)
+    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() sink
+      (After_sources (Uop_weak.pm_lower_weak ++ Coalesce.indexing_simplify))
   in
   (* final symbolic before decomp *)
   let sink = rewrite Symbolic.symbolic sink in
@@ -893,8 +910,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite pm_decomp sink in
   (* late decomps + move gates from unrenderable INVALID where *)
   let sink =
-    graph_rewrite ~calls:Skip ~ctx:(Decomp_dtype.ctx ren) sink
-      (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak)
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Decomp_dtype.ctx ren) sink
+      (After_sources
+         (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak))
   in
   let pm_decomp =
     Pattern_matcher.concat
@@ -909,7 +927,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
              supported_ops);
       ]
   in
-  let sink = graph_rewrite ~calls:Skip ~ctx:ren sink pm_decomp in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
+      (After_sources pm_decomp)
+  in
   let sink = rewrite Gater.pm_move_gates_from_index sink in
   (* final rules for the renderer (without sym) *)
   let pm_final_rewrite =
@@ -922,7 +943,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
         lift Symbolic.pm_remove_invalid;
       ]
   in
-  let sink = graph_rewrite ~calls:Skip ~ctx:ren sink pm_final_rewrite in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
+      (After_sources pm_final_rewrite)
+  in
   (* commit every const still bare so no renderer reads one *)
   let sink = rewrite Uop_weak.pm_cast_const sink in
   let sink =
@@ -933,9 +957,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite pm_implicit_barriers sink in
   (* this was the linearizer *)
   let sink =
-    graph_rewrite ~calls:Skip ~bottom_up:true
+    graph_rewrite ~calls:Skip ~pass:Fixed_point
       ~ctx:(Linearizer.cfg_context sink)
-      sink Linearizer.pm_add_control_flow
+      sink (Before_sources Linearizer.pm_add_control_flow)
   in
   (* put unnumbered variable PARAMs in slots *)
   let num_params =
@@ -948,8 +972,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
          (toposort ~calls:Enter sink))
   in
   let sink =
-    graph_rewrite ~calls:Skip ~walk:true ~ctx:(ref num_params) sink
-      pm_number_params
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:(ref num_params) sink
+      (After_sources pm_number_params)
   in
   if setting Setting.spec <> 0 then (
     try Spec.type_verify ~calls:Enter Spec.program sink
@@ -1059,7 +1083,7 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
                 Int (sym_infer count [ (expr lo, 0); (expr hi, whole) ])
             | _ ->
                 ssimplify
-                  (substitute ~calls:Skip u
+                  (substitute ~calls:Skip ~pass:Fixed_point u
                      [ (lo, int ~dtype:(dtype lo) 0); (hi, n) ]))
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
@@ -1171,10 +1195,12 @@ let lowered ?beam ast (ren : Renderer.t) =
         ~arg:(Program (program_info_of_sink ~target:ren.target (nth prg 0)))
 
 let do_to_program ?beam ast ren =
-  graph_rewrite ~calls:Skip ~ctx:ren (lowered ?beam ast ren) pm_to_program
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren (lowered ?beam ast ren)
+    (After_sources pm_to_program)
 
 let linearize ast ren =
-  graph_rewrite ~calls:Skip ~ctx:ren (lowered ast ren) pm_linearize
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren (lowered ast ren)
+    (After_sources pm_linearize)
 
 (* Each kernel's program is made once: a domain that asks for one being made
    waits for it, holding the entry's lock, rather than making it again. *)

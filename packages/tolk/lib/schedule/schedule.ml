@@ -246,9 +246,9 @@ let pm_post_sched_cache =
 let rec resolve_linear_call ?(outer_binds = []) linear_call =
   let args = List.tl (src linear_call) in
   let linear =
-    graph_rewrite ~calls:Skip ~walk:true
+    graph_rewrite ~calls:Skip ~pass:Once
       ~ctx:(Tbl.create 8, args)
-      (body linear_call) pm_post_sched_cache
+      (body linear_call) (After_sources pm_post_sched_cache)
   in
   let binds =
     let local =
@@ -281,7 +281,10 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
             (src si)
         in
         replace si
-          ~src:(List.map (fun s -> substitute ~calls:Skip s subs) (src si))
+          ~src:
+            (List.map
+               (fun s -> substitute ~calls:Skip ~pass:Fixed_point s subs)
+               (src si))
   in
   replace linear ~src:(List.map apply_binds (src linear))
 
@@ -312,7 +315,7 @@ let ranges_in_order fn =
   let ranges =
     List.filter (fun u -> op u = Op.Range) (toposort ~calls:Enter fn)
   in
-  substitute ~walk:true ~calls:Enter fn
+  substitute ~calls:Enter ~pass:Once fn
     (List.mapi
        (fun k r ->
          ( r,
@@ -417,14 +420,15 @@ let simplify_copy_kernel call ast dst src =
   if not (is_copy dst src) then None
   else
     let sink =
-      graph_rewrite ~calls:Skip ~ctx:(Tbl.create 8) ast
-        (Pattern_matcher.concat
-           [
-             with_ctx Symbolic.sym;
-             with_ctx Prepare.pm_mops;
-             with_ctx Simplify.pm_flatten_range;
-             Simplify.pm_simplify_ranges;
-           ])
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Tbl.create 8) ast
+        (After_sources
+           (Pattern_matcher.concat
+              [
+                with_ctx Symbolic.sym;
+                with_ctx Prepare.pm_mops;
+                with_ctx Simplify.pm_flatten_range;
+                Simplify.pm_simplify_ranges;
+              ]))
     in
     Some (replace call ~src:(sink :: List.tl (Ops.src call)))
 
@@ -497,7 +501,10 @@ let rec view_of ctx c src =
       match device c with
       | Some (Single _) -> None
       | _ -> (
-          let unshard = graph_rewrite ~calls:Skip ~ctx:() src Multi.multi_pm in
+          let unshard =
+            graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() src
+              (After_sources Multi.multi_pm)
+          in
           if op unshard <> Op.Unshard then None
           else
             let shard = nth unshard 0 in
@@ -574,8 +581,8 @@ let canonicalize_alloc ctx b =
 
 let rec canonicalize_call_body c =
   let body =
-    graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:(callify_ctx ()) (body c)
-      (Lazy.force pm_canonicalize_alloc)
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(callify_ctx ()) (body c)
+      (Before_sources (Lazy.force pm_canonicalize_alloc))
   in
   replace c ~src:(body :: List.tl (src c))
 
@@ -627,16 +634,18 @@ let transform_to_call big_sink =
     Spec.type_verify ~calls:Enter Spec.tensor big_sink;
   (* The stores are collected before these rewrites change node identities. *)
   let ctx = callify_ctx () in
-  ignore (graph_rewrite ~calls:Skip ~ctx big_sink pm_callify_ctx_collect);
+  ignore
+    (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx big_sink
+       (After_sources pm_callify_ctx_collect));
   let ret =
-    graph_rewrite ~calls:Skip ~bottom_up:true ~ctx
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx
       (sink (List.rev ctx.stores))
-      (Pattern_matcher.concat
+      (Before_sources (Pattern_matcher.concat
          [
            pm_canonicalize_alloc;
            pm_replace_buf;
            with_ctx remove_all_tags;
-         ])
+         ]))
   in
   call ~precompile:true ret (List.rev ctx.replacements)
 
@@ -645,12 +654,19 @@ let transform_to_call big_sink =
 let create_linear_with_vars ?(capturing = false) big_sink =
   let big_sink = transform_to_call big_sink in
   (* The call's sources are the values to realize. *)
-  let linear_call = graph_rewrite ~calls:Enter ~ctx:() big_sink pm_schedule in
+  let linear_call =
+    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() big_sink
+      (After_sources pm_schedule)
+  in
   (* The linear call is resolved recursively, and its storage allocated. *)
   let linear =
-    graph_rewrite ~calls:Skip ~ctx:() linear_call pm_resolve_linear_call
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() linear_call
+      (After_sources pm_resolve_linear_call)
   in
-  let linear = graph_rewrite ~calls:Skip ~ctx:() linear pm_copy_from_store in
+  let linear =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() linear
+      (After_sources pm_copy_from_store)
+  in
   let used_vars =
     List.concat_map
       (fun si -> List.map expr (variables (nth si 0)))

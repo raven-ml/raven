@@ -695,7 +695,8 @@ let fold_where_closure cond t f =
   then None
   else
     let assume b u =
-      substitute ~calls:Skip u [ (cond, const_like cond (`Bool b)) ]
+      substitute ~calls:Skip ~pass:Fixed_point u
+        [ (cond, const_like cond (`Bool b)) ]
     in
     Some (where cond (assume true t) (assume false f))
 
@@ -1148,8 +1149,9 @@ let uop_given_valid ?(try_simplex = true) valid u =
       else
         let given (x, nx) =
           simplify
-            (substitute ~calls:Skip
-               (simplify (substitute ~calls:Skip u [ (x, nx) ]))
+            (substitute ~calls:Skip ~pass:Fixed_point
+               (simplify
+                  (substitute ~calls:Skip ~pass:Fixed_point u [ (x, nx) ]))
                [ (nx, x) ])
         in
         match List.map given candidate with
@@ -1164,11 +1166,11 @@ let uop_given_valid ?(try_simplex = true) valid u =
   let u = List.fold_left simplex u exprs in
   (* try all the valids together (but only the whole expressions) *)
   let subs = List.map (fun (i, e, lo, hi) -> (e, fake i e lo hi)) exprs in
-  let s = substitute ~calls:Skip u subs in
+  let s = substitute ~calls:Skip ~pass:Fixed_point u subs in
   if s == u then u
   else
     simplify
-      (substitute ~calls:Skip (simplify s)
+      (substitute ~calls:Skip ~pass:Fixed_point (simplify s)
          (List.map (fun (e, x) -> (x, e)) subs))
 
 (* prioritize dependencies, then tighter bounds, so weaker clauses don't hide

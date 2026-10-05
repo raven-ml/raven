@@ -7,8 +7,8 @@ open Common
 
 (* [folds_to input expected] is the claim that symbolic_simple rewrites [input]
    to [expected]. *)
-let folds_to ?bottom_up input expected =
-  equal uop expected (rewrite ?bottom_up Symbolic.symbolic_simple input)
+let folds_to input expected =
+  equal uop expected (rewrite Symbolic.symbolic_simple input)
 
 (* [simplifies_to ~by input expected] is the claim that [by] (default [sym])
    rewrites [input] to [expected], the operands of [expected] in the order
@@ -385,7 +385,7 @@ let constants =
       test "0 / 0 is NaN" (fun () ->
           let zero = Ops.float 0. in
           let nan =
-            rewrite ~bottom_up:true Symbolic.symbolic_simple Ops.O.(zero / zero)
+            rewrite ~order:before Symbolic.symbolic_simple Ops.O.(zero / zero)
           in
           match Ops.arg nan with
           | Const (`Float v) when Float.is_nan v -> ()

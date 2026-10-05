@@ -342,7 +342,8 @@ let simplifying_sets =
   ]
 
 let simplify_with set s =
-  Ops.graph_rewrite ~calls:Skip ~ctx:() s (Decomp_op.simplifying_patterns set)
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() s
+    (After_sources (Decomp_op.simplifying_patterns set))
 
 let simplifying_graphs =
   List.concat_map
@@ -428,8 +429,8 @@ let simplifying =
 (* Late patterns *)
 
 let late_with ?(disable_fast_idiv = true) ?(renderer = everything) set s =
-  Ops.graph_rewrite ~calls:Skip ~ctx:renderer s
-    (Decomp_op.late_patterns ~disable_fast_idiv set)
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:renderer s
+    (After_sources (Decomp_op.late_patterns ~disable_fast_idiv set))
 
 let fparam ?slot () = param ?slot Float32
 

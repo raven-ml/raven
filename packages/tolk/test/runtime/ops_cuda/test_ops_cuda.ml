@@ -47,7 +47,7 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute ~calls:Skip u
+  Ops.substitute ~calls:Skip ~pass:Fixed_point u
     (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =

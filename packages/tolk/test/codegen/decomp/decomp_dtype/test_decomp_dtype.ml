@@ -21,9 +21,11 @@ let told names f = Setting.context [ B (Setting.emulated_dtypes, names) ] f
 (* [emulate on kernel] is [kernel] rewritten for the target [on] by the pass as
    code generation runs it, with the weak constants of its rules committed. *)
 let emulate on kernel =
-  Ops.graph_rewrite ~calls:Skip ~ctx:(Decomp_dtype.ctx on) kernel
-    (PM.append Decomp_dtype.pm_dtype_decomps
-       (PM.with_ctx Uop_weak.pm_commit_weak))
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Decomp_dtype.ctx on)
+    kernel
+    (After_sources
+       (PM.append Decomp_dtype.pm_dtype_decomps
+          (PM.with_ctx Uop_weak.pm_commit_weak)))
 
 let narrows =
   Dtype.[ Float16; Bfloat16; Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz ]
@@ -1186,9 +1188,10 @@ let with_conversions u =
     PM.v (fun () ->
         [ PM.rule (Ops.Upat.op Custom ~name:"c") (fun m -> conversion (m "c")) ])
   in
-  Ops.graph_rewrite ~calls:Skip ~ctx:()
-    (Ops.graph_rewrite ~calls:Skip ~ctx:() u restore)
-    Uop_weak.pm_commit_weak
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+    (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+       (After_sources restore))
+    (After_sources Uop_weak.pm_commit_weak)
 
 let narrow_kernels =
   [
@@ -1467,8 +1470,8 @@ let graphs =
 (* The pass *)
 
 let decomps on k =
-  Ops.graph_rewrite ~calls:Skip ~ctx:(Decomp_dtype.ctx on) k
-    Decomp_dtype.pm_dtype_decomps
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Decomp_dtype.ctx on) k
+    (After_sources Decomp_dtype.pm_dtype_decomps)
 
 let add dt =
   kernel [ dt; dt ] dt 4 (fun xs -> Ops.O.(List.nth xs 0 + List.nth xs 1))

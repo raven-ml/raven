@@ -68,7 +68,7 @@ let forward_call_outputs sink =
         | None -> after target [ st ]
   in
   let items = List.map forward (Ops.src sink) in
-  substitute ~calls:Skip ~walk:true (Ops.sink items)
+  substitute ~calls:Skip ~pass:Once (Ops.sink items)
     (List.of_seq (Tbl.to_seq placed))
 
 let rec walk_mop u =
@@ -109,10 +109,10 @@ let move_index in_shape m idxs =
       in
       let moved =
         Indexing.apply_movement_op in_shape m
-          (src (substitute ~calls:Skip (sink idxs) held))
+          (src (substitute ~calls:Skip ~pass:Fixed_point (sink idxs) held))
       in
       src
-        (substitute ~calls:Skip (sink moved)
+        (substitute ~calls:Skip ~pass:Fixed_point (sink moved)
            (List.map (fun (u, p) -> (p, u)) held))
 
 let mop_index r idx =
@@ -257,7 +257,7 @@ let split_reduceop reduce x =
             (fun r -> List.hd (axis_id r))
             (Nodes.to_list
                (ranges
-                  (substitute ~calls:Skip
+                  (substitute ~calls:Skip ~pass:Fixed_point
                      ~extra_pm:(Pattern_matcher.with_ctx pm_tensor_mops)
                      indexed
                      [ (base x, v Op.Noop) ])))
@@ -379,7 +379,7 @@ let resolve_function c =
           | _ -> None)
         nodes
     in
-    Some (substitute ~calls:Skip ~walk:true (body c) subs)
+    Some (substitute ~calls:Skip ~pass:Once (body c) subs)
 
 let uint_of_bytes = function
   | 1 -> Dtype.Uint8
@@ -635,16 +635,18 @@ let earliest_rewrites =
 
 let prepare_rangeify sink =
   let tsink =
-    graph_rewrite ~calls:Skip ~bpm:Multi.scatter_dests ~ctx:()
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
       (forward_call_outputs sink)
-      Multi.multi_pm
+      (Around_sources { before = Multi.scatter_dests; after = Multi.multi_pm })
   in
   let tsink =
-    graph_rewrite ~calls:Skip ~ctx:() tsink
-      (Pattern_matcher.concat [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ])
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+      (After_sources
+         (Pattern_matcher.concat
+            [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ]))
   in
-  graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() tsink
-    (Pattern_matcher.append pm_tensor_mops earliest_rewrites)
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+    (Before_sources (Pattern_matcher.append pm_tensor_mops earliest_rewrites))
 
 (* Contiguous views *)
 
@@ -719,13 +721,14 @@ let contiguous_view u =
   else
     let idx = index (flatten u) [ range (numel u) [ 0 ] ] in
     let out =
-      graph_rewrite ~calls:Skip ~ctx:u idx
-        (Pattern_matcher.concat
-           [
-             Pattern_matcher.with_ctx pm_mops;
-             Pattern_matcher.with_ctx Symbolic.symbolic;
-             pm_contiguous_view_offset;
-           ])
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:u idx
+        (After_sources
+           (Pattern_matcher.concat
+              [
+                Pattern_matcher.with_ctx pm_mops;
+                Pattern_matcher.with_ctx Symbolic.symbolic;
+                pm_contiguous_view_offset;
+              ]))
     in
     match (op out, src out) with
     | Op.Index, b :: c :: _ when Option.is_some (tag b) && op c = Op.Const -> (

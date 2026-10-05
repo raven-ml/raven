@@ -387,7 +387,7 @@ let constants = Atomic.make 0
 
 let unique ?(constant = 1.0) name =
   let x = 1000. +. float_of_int (Atomic.fetch_and_add constants 1) in
-  Ops.substitute ~calls:Enter (program name)
+  Ops.substitute ~calls:Enter ~pass:Fixed_point (program name)
     [ (Ops.float constant, Ops.float x) ]
 
 let with_settings ~debug ~scache f =
@@ -499,7 +499,7 @@ let renumbered () =
   let in_slot slot =
     match Ops.arg alloc with
     | Param p ->
-        Ops.substitute ~calls:Skip big
+        Ops.substitute ~calls:Skip ~pass:Fixed_point big
           [ (alloc, Ops.replace ~arg:(Param { p with slot }) alloc) ]
     | _ -> fail "call-local storage without its argument"
   in
@@ -534,7 +534,7 @@ let rebinding () =
   let big = unique ~constant:2.0 "variable_shrink" in
   let v = List.find Ops.is_bound_var (Ops.toposort ~calls:Enter big) in
   let five =
-    Ops.substitute ~calls:Skip big
+    Ops.substitute ~calls:Skip ~pass:Fixed_point big
       [ (v, Ops.bind (Ops.unbound v) (`Int (Bigint.of_int 5))) ]
   in
   let vals =
@@ -814,13 +814,15 @@ let flattening () =
           linear
       in
       equal uop linear
-        (Ops.graph_rewrite ~calls:Skip ~ctx:() nested Schedule.pm_flatten_linear)
+        (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() nested
+           (After_sources Schedule.pm_flatten_linear))
   | calls -> failf "softmax schedules %d kernels" (List.length calls)
 
 let flat () =
   let linear = Schedule.create_schedule (program "softmax_kernels") in
   equal uop linear
-    (Ops.graph_rewrite ~calls:Skip ~ctx:() linear Schedule.pm_flatten_linear)
+    (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() linear
+       (After_sources Schedule.pm_flatten_linear))
 
 let flatten =
   group "pm_flatten_linear"
@@ -997,7 +999,7 @@ let bound_var name =
 (* variable_two binds v to 4 and w to 7; [rebound value] binds, in w's place,
    another variable named v, of another range, to [value]. *)
 let rebound value =
-  Ops.substitute ~calls:Skip (program "variable_two")
+  Ops.substitute ~calls:Skip ~pass:Fixed_point (program "variable_two")
     [
       ( bound_var "w",
         Ops.bind
@@ -1018,7 +1020,7 @@ let several_devices () =
     | _ -> None
   in
   let input = require_some (List.find_map moved (buffers_of big)) in
-  let across = Ops.substitute ~calls:Skip big [ input ] in
+  let across = Ops.substitute ~calls:Skip ~pass:Fixed_point big [ input ] in
   raises_match (Exn.invalid_arg ~substring:"same device") (fun () ->
       Schedule.create_linear_with_vars across)
 

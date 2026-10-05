@@ -4587,15 +4587,25 @@ exception Bottom_up_gate
 
 let src_without_body u = if u.op = Op.Call then drop 1 u.src else u.src
 
-let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false) ~calls ~ctx root pm
-    =
+type pass = Fixed_point | Once
+
+type 'ctx rules =
+  | After_sources of ('ctx, t) Pattern_matcher.t
+  | Before_sources of ('ctx, t) Pattern_matcher.t
+  | Around_sources of {
+      before : ('ctx, t) Pattern_matcher.t;
+      after : ('ctx, t) Pattern_matcher.t;
+    }
+
+let graph_rewrite ~calls ~pass ~ctx root rules =
   let exception Gate of t in
   let pm, bpm =
-    match (bottom_up, bpm) with
-    | true, Some _ -> invalid_arg "a bottom-up rewrite takes no second matcher"
-    | true, None -> (None, Some pm)
-    | false, bpm -> (Some pm, bpm)
+    match rules with
+    | After_sources m -> (Some m, None)
+    | Before_sources m -> (None, Some m)
+    | Around_sources { before; after } -> (Some after, Some before)
   in
+  let walk = pass = Once in
   let replaced = Tbl.create 64 in
   let bpm_cache = Tbl.create (if Option.is_some bpm then 64 else 1) in
   let bpm_rewrite x =
@@ -4760,7 +4770,7 @@ let pm_substitute : (t Tbl.t, t) Pattern_matcher.t =
             Tbl.find_opt subs (m "x"));
       ]))
 
-let substitute ?extra_pm ?(walk = false) ~calls u subs =
+let substitute ?extra_pm ~calls ~pass u subs =
   let tbl = Tbl.create 16 in
   List.iter (fun (k, x) -> Tbl.replace tbl k x) subs;
   Tbl.filter_map_inplace (fun k x -> if k == x then None else Some x) tbl;
@@ -4771,7 +4781,7 @@ let substitute ?extra_pm ?(walk = false) ~calls u subs =
       | Some extra -> Pattern_matcher.append extra pm_substitute
       | None -> pm_substitute
     in
-    graph_rewrite ~bottom_up:true ~walk ~calls ~ctx:tbl u pm
+    graph_rewrite ~calls ~pass ~ctx:tbl u (Before_sources pm)
 
 let remove_all_tags =
   Pattern_matcher.(
@@ -4820,7 +4830,7 @@ let contract u rs =
   stack
     (List.map
        (fun idx ->
-         substitute ~calls:Skip u
+         substitute ~calls:Skip ~pass:Fixed_point u
            (List.map2 (fun r i -> (r, const_like r (`Int (Bigint.of_int i)))) rs idx))
        (product rs))
 
@@ -4855,7 +4865,7 @@ let unbind_all u =
       (Nodes.to_list (backward_slice_with_self ~calls:Skip u))
   in
   let pairs = List.map (fun x -> (x, unbound x)) bound in
-  ( substitute ~calls:Skip ~walk:true u pairs,
+  ( substitute ~calls:Skip ~pass:Once u pairs,
     List.map (fun (x, var) -> (var, snd (unbind x))) pairs )
 
 let variables u =
@@ -4967,8 +4977,8 @@ let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
           | Int k -> Int k
           | Sym s ->
               Sym
-                (graph_rewrite ~calls:Skip ~walk:true ~ctx:params s
-                   pm_resolve_params))
+                (graph_rewrite ~calls:Skip ~pass:Once ~ctx:params s
+                   (After_sources pm_resolve_params)))
         (shard_shape o)
     in
     ( alloc resolved o.dtype ~slot:(param_arg_of (buf_uop buf)).slot ?device:dev
@@ -5095,7 +5105,7 @@ module Private = struct
 
   let set_symbolic pm =
     set_once simplify_hook "symbolic rules" (fun u ->
-        graph_rewrite ~calls:Skip ~ctx:() u pm)
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u (After_sources pm))
 
   let set_spec pm =
     set_once construction_check "specification rules" (fun u ->

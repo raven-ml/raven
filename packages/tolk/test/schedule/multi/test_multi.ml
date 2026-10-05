@@ -7,8 +7,8 @@ open Tolk
 
 let uop = Uops.uop
 let multi u =
-  Ops.graph_rewrite ~calls:Skip ~bpm:Multi.scatter_dests ~ctx:() u
-    Multi.multi_pm
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (Around_sources { before = Multi.scatter_dests; after = Multi.multi_pm })
 let program name = Golden.sink (name ^ ".golden")
 
 (* Recorded graphs *)

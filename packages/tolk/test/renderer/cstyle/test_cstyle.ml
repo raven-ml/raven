@@ -151,9 +151,9 @@ let rewrites =
           let r = renderer_of_row row in
           equal Uops.uop
             (nth_of rewritten row "output")
-            (Ops.graph_rewrite ~calls:Skip ~ctx:()
+            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
                (nth_of rewrite_inputs row "input")
-               r.extra_matcher));
+               (After_sources r.extra_matcher)));
     ]
 
 (* Declarations *)
@@ -574,7 +574,8 @@ let truncated_bf16 =
     [ Ops.store (at 0) (Ops.trunc (Ops.load (at 1) [])) ]
 
 let through_metal_matcher sink =
-  Ops.graph_rewrite ~calls:Skip ~ctx:() sink metal.extra_matcher
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+    (After_sources metal.extra_matcher)
 
 let truncs sink =
   List.filter
@@ -590,7 +591,9 @@ let truncates_in_float () =
 let compiles_its_truncation () =
   let sink =
     List.fold_left
-      (fun sink m -> Ops.graph_rewrite ~calls:Skip ~ctx:() sink m)
+      (fun sink m ->
+        Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+          (After_sources m))
       (through_metal_matcher truncated_bf16)
       [
         Uop_weak.pm_commit_weak; Uop_weak.pm_lower_weak; Uop_weak.pm_cast_const;
@@ -612,8 +615,8 @@ let bf16_truncation =
         (fun () ->
           let rewritten =
             truncs
-              (Ops.graph_rewrite ~calls:Skip ~ctx:() truncated_bf16
-                 cuda.extra_matcher)
+              (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+                 truncated_bf16 (After_sources cuda.extra_matcher))
           in
           equal (list Dtypes.dtype) [ Dtype.Bfloat16 ]
             (List.map Ops.dtype rewritten));

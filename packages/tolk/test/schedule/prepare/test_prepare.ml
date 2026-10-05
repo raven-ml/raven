@@ -228,7 +228,9 @@ let values =
    which [pm_mops › pads] states. Storage element [j] holds [j + 1], so that a
    padded [0] is told from a read. *)
 
-let mops u = Ops.graph_rewrite ~calls:Skip ~ctx:() u Prepare.pm_mops
+let mops u =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (After_sources Prepare.pm_mops)
 
 let range ?(axis_type = Ops.Axis_type.Loop) n axis =
   Ops.range ~axis_type (Int n) [ axis ]

@@ -154,7 +154,8 @@ let shrinking =
             kernel [ Ops.end_ (gated_load Ops.O.(r < Ops.int 4) r) [ r ] ]
           in
           ignore
-            (Ops.graph_rewrite ~calls:Skip ~ctx u Simplify.pm_simplify_ranges);
+            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx u
+               (After_sources Simplify.pm_simplify_ranges));
           equal int 0 (Ops.Tbl.length ctx));
     ]
 

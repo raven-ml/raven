@@ -9,7 +9,8 @@ let coalesce ?(renderer = vector) sink =
   Coalesce.memory_coalescing sink renderer
 
 let simplify u =
-  Ops.graph_rewrite ~calls:Skip ~ctx:() u Coalesce.indexing_simplify
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (After_sources Coalesce.indexing_simplify)
 
 (* The cases of an input golden are its sink's sources, in order. *)
 let case file cell =
@@ -468,7 +469,7 @@ let from_boundary u =
       lead
       + int_of
           (Ops.simplify
-             (Ops.substitute ~calls:Skip
+             (Ops.substitute ~calls:Skip ~pass:Fixed_point
                 (Ops.get_idx (Ops.nth p 1))
                 [ (r, Ops.int k) ])))
 

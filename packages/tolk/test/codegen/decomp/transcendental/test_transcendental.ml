@@ -105,8 +105,8 @@ let transcendentals dt =
   Ops.sink [ Ops.exp2 d; Ops.log2 d; Ops.alu d Sin []; Ops.sqrt d ]
 
 let rewrite ?(force = false) ops dt =
-  Ops.graph_rewrite ~calls:Skip ~ctx:() (transcendentals dt)
-    (T.patterns ~force (Op.Set.of_list ops))
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (transcendentals dt)
+    (After_sources (T.patterns ~force (Op.Set.of_list ops)))
 
 let all_ops = Op.[ Exp2; Log2; Sin; Sqrt ]
 
@@ -359,9 +359,9 @@ let rewritten op dt =
   let none = Op.Set.of_list [] in
   match
     Ops.src
-      (Ops.graph_rewrite ~calls:Skip ~ctx:()
+      (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
          (Ops.sink [ op (x dt) ])
-         (T.patterns ~force:false none))
+         (After_sources (T.patterns ~force:false none)))
   with
   | [ u ] -> u
   | _ -> invalid_arg "a sink of one node"

@@ -146,7 +146,9 @@ let remove_bufferize src buf idx =
               op k <> Op.Const && not (op v = Op.Const && is_invalid v))
             (zip (List.tl (Ops.src buf)) (List.tl (Ops.src idx)))
         in
-        Some (substitute ~calls:Skip ~extra_pm:pm_gate_substitute src replaced)
+        Some
+          (substitute ~calls:Skip ~pass:Fixed_point
+             ~extra_pm:pm_gate_substitute src replaced)
 
 let remove_noop_bufferize idx b2 =
   if not (List.equal ( == ) (List.tl (src idx)) (List.tl (src b2))) then None
@@ -347,7 +349,8 @@ let limit_bufs ctx root =
           in
           index
             (bufferize ~opts
-               (substitute ~calls:Skip s (List.combine orig ends))
+               (substitute ~calls:Skip ~pass:Fixed_point s
+                  (List.combine orig ends))
                ends)
             orig
       in
@@ -670,9 +673,10 @@ let split_store x =
   else
     let lctx = { dg = 0; map = Tbl.create 8; order = []; range = 0 } in
     let ret =
-      graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:lctx x
-        (Pattern_matcher.append to_define_global
-           (with_ctx Simplify.pm_flatten_range))
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:lctx x
+        (Before_sources
+           (Pattern_matcher.append to_define_global
+              (with_ctx Simplify.pm_flatten_range)))
     in
     (* Buffers can be on different devices here: the schedule compiles such
        kernels to copies. *)
@@ -694,14 +698,15 @@ let get_kernel_graph tsink =
   in
   (* Cleanups for speed and runnability. *)
   let tsink =
-    graph_rewrite ~calls:Skip ~ctx:() tsink
-      (Pattern_matcher.concat
-         [
-           Symbolic.symbolic;
-           Simplify.pm_reduce_simplify;
-           pm_const_buffer_folding;
-           pm_remove_bufferize;
-         ])
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+      (After_sources
+         (Pattern_matcher.concat
+            [
+              Symbolic.symbolic;
+              Simplify.pm_reduce_simplify;
+              pm_const_buffer_folding;
+              pm_remove_bufferize;
+            ]))
   in
   let ranges =
     List.filter (fun x -> op x = Op.Range) (toposort ~calls:Enter tsink)
@@ -710,9 +715,9 @@ let get_kernel_graph tsink =
     1 + List.fold_left (fun m r -> max m (List.hd (axis_id r))) (-1) ranges
   in
   let tsink =
-    graph_rewrite ~calls:Skip
+    graph_rewrite ~calls:Skip ~pass:Fixed_point
       ~ctx:{ buf_cache = Tbl.create 64; range_idx = next_range }
-      tsink pm_limit_bufs
+      tsink (After_sources pm_limit_bufs)
   in
   let slots =
     List.filter_map
@@ -722,14 +727,23 @@ let get_kernel_graph tsink =
   in
   let next_slot = ref (1 + List.fold_left max (-1) slots) in
   let tsink =
-    graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:next_slot tsink
-      (Pattern_matcher.append pm_add_buffers (with_ctx pm_add_param_range_tags))
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:next_slot tsink
+      (Before_sources
+         (Pattern_matcher.append pm_add_buffers
+            (with_ctx pm_add_param_range_tags)))
   in
   let tsink =
-    graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() tsink split_kernels
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+      (Before_sources split_kernels)
   in
-  let tsink = graph_rewrite ~calls:Skip ~ctx:() tsink pm_no_indexing_calls in
-  let tsink = graph_rewrite ~calls:Skip ~ctx:() tsink pm_no_views in
+  let tsink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+      (After_sources pm_no_indexing_calls)
+  in
+  let tsink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
+      (After_sources pm_no_views)
+  in
   if setting Setting.spec <> 0 then
     Spec.type_verify ~calls:Skip Spec.kernel_graph tsink;
   tsink

@@ -215,7 +215,7 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute ~calls:Skip u
+  Ops.substitute ~calls:Skip ~pass:Fixed_point u
     (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =
@@ -318,7 +318,10 @@ let command_words ~gpu ~queue ~command ~word v =
       let getaddrs =
         List.filter (fun g -> Ops.op g = Getaddr) (Ops.toposort ~calls:Enter w)
       in
-      let w = Ops.substitute ~calls:Skip w (List.map address getaddrs) in
+      let w =
+        Ops.substitute ~calls:Skip ~pass:Fixed_point w
+          (List.map address getaddrs)
+      in
       let vars =
         [
           ( Option.get (Interpreter.name (Hcq2.value device)),
@@ -1113,7 +1116,7 @@ let symbolic c ints vs =
   let nodes = Ops_amd.lower (c.build ints (Array.of_list vars)) in
   let bound =
     Ops.src
-      (Ops.substitute ~calls:Skip (Ops.sink nodes)
+      (Ops.substitute ~calls:Skip ~pass:Fixed_point (Ops.sink nodes)
          (List.map2
             (fun var (w, x) -> (var, Ops.int ~dtype:(dtype_of w) x))
             vars (List.combine c.widths vs)))

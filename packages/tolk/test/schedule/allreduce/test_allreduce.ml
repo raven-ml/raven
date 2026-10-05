@@ -71,7 +71,7 @@ let numbered_as golden red u =
             mine ))
       (made_storage red u) (made_storage red golden)
   in
-  Ops.substitute ~calls:Skip u subs
+  Ops.substitute ~calls:Skip ~pass:Fixed_point u subs
 
 (* Tinygrad gathers each chunk a hierarchical allreduce reduces on every
    device, whatever its target. Where the target is one device, tolk copies
@@ -86,7 +86,7 @@ let landed_on_its_device golden =
   let gathers =
     List.filter (fun n -> Ops.op n = Mstack) (Ops.toposort ~calls:Enter golden)
   in
-  Ops.substitute ~calls:Skip golden
+  Ops.substitute ~calls:Skip ~pass:Fixed_point golden
     (List.map
        (fun m -> (m, Ops.copy_to_device (Ops.nth (Ops.nth m 0) 0) target))
        gathers)

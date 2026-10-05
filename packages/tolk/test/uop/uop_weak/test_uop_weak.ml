@@ -20,7 +20,8 @@ let flag = Ops.variable ~dtype:Bool "c" (`Bool false) (`Bool true)
 let fvar ?(dtype = Dtype.Float32) name hi =
   Ops.variable ~dtype name (`Float 0.) (`Float hi)
 
-let rewrite pm u = Ops.graph_rewrite ~calls:Skip ~ctx:() u pm
+let rewrite pm u =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u (After_sources pm)
 
 (* A golden holds a graph and its rewrite by one pass, with the setting
    DEFAULT_FLOAT at [default_float] (default float). *)

@@ -66,7 +66,7 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute ~calls:Skip u
+  Ops.substitute ~calls:Skip ~pass:Fixed_point u
     (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =
@@ -208,7 +208,9 @@ let command_buffer queue cmds =
           else None)
         (Ops.toposort ~calls:Enter w)
     in
-    match Interpreter.eval (Ops.substitute ~calls:Skip w addrs) with
+    match
+      Interpreter.eval (Ops.substitute ~calls:Skip ~pass:Fixed_point w addrs)
+    with
     | `Int z ->
         Bigint.to_int (Bigint.extract z 0 (8 * Dtype.itemsize (Ops.dtype w)))
     | _ -> fail "a command word is no integer"

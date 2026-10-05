@@ -30,7 +30,7 @@ let simplification kind =
   | [ "simplify" ] -> fun u -> Some (Ops.simplify u)
   | [ "simplify_valid" ] -> Symbolic.simplify_valid
   | [ m ] -> fun u -> Some (rewrite (matcher m) u)
-  | [ m; "bottom_up" ] -> fun u -> Some (rewrite ~bottom_up:true (matcher m) u)
+  | [ m; "bottom_up" ] -> fun u -> Some (rewrite ~order:before (matcher m) u)
   | _ -> failf "no simplification %s" kind
 
 type record = {

@@ -89,7 +89,9 @@ let leaves () =
     bound := (x, Ops.int ~dtype:Dtype.Uint64 n) :: !bound;
     x
   in
-  (leaf, fun u -> Ops.simplify (Ops.substitute ~calls:Skip u !bound))
+  ( leaf,
+    fun u ->
+      Ops.simplify (Ops.substitute ~calls:Skip ~pass:Fixed_point u !bound) )
 
 (* The little-endian bytes of the constant [c]. *)
 let bytes c =

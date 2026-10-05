@@ -41,7 +41,7 @@ module Estimates = struct
     | Sym m ->
         let zero x = (x, const_like x (`Int Bigint.zero)) in
         Sym
-          (substitute ~calls:Skip m
+          (substitute ~calls:Skip ~pass:Fixed_point m
              (List.map zero
                 (List.filter (is Op.Special) (toposort ~calls:Enter m))))
 

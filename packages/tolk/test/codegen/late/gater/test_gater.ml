@@ -2,7 +2,8 @@ open Windtrap
 open Tolk
 
 let move u =
-  Ops.graph_rewrite ~calls:Skip ~ctx:() u Gater.pm_move_gates_from_index
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (After_sources Gater.pm_move_gates_from_index)
 
 (* The cases of an input golden are its sink's sources, in order. *)
 let case file cell =

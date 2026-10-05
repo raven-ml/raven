@@ -4,12 +4,14 @@ open Tolk
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* The passes, as the codegen pipeline applies them. *)
-let split u = Ops.graph_rewrite ~calls:Skip ~ctx:() u Linearizer.pm_split_ends
+let split u =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (After_sources Linearizer.pm_split_ends)
 
 let chain sink =
-  Ops.graph_rewrite ~calls:Skip ~bottom_up:true
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point
     ~ctx:(Linearizer.cfg_context sink)
-    sink Linearizer.pm_add_control_flow
+    sink (Before_sources Linearizer.pm_add_control_flow)
 
 (* A linearization is written as the sources of a [LINEAR], tinygrad's node for
    a program in execution order. *)

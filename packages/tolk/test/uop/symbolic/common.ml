@@ -14,8 +14,12 @@ let i n = `Int (Bigint.of_int n)
 let var ?dtype ?multiple_of name lo hi =
   Ops.variable ?dtype ?multiple_of name (i lo) (i hi)
 
-let rewrite ?bottom_up m u =
-  Ops.graph_rewrite ~calls:Skip ?bottom_up ~ctx:() u m
+(* [rewrite ~order m u] is [u] rewritten by [m], after the sources unless
+   [order] is [before]. *)
+let before m = Ops.Before_sources m
+
+let rewrite ?(order = fun m -> Ops.After_sources m) m u =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u (order m)
 
 let simple u = rewrite Symbolic.symbolic_simple u
 let symbolic u = rewrite Symbolic.symbolic u

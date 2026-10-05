@@ -10,7 +10,9 @@ let i n = `Int (Bigint.of_int n)
 
 (* Passes *)
 
-let rewrite m u = Ops.graph_rewrite ~calls:Skip ~ctx:() u m
+let rewrite m u =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u (After_sources m)
+
 let flatten u = rewrite Simplify.pm_flatten_range u
 let unparent u = rewrite Simplify.pm_reduce_unparented u
 let collapse u = rewrite Simplify.pm_reduce_collapse u
@@ -20,14 +22,17 @@ let load_collapse u = rewrite Simplify.pm_load_collapse u
 (* The range passes read a context, which starts empty; the pipeline flattens
    the ranges of what they build. *)
 let split u =
-  Ops.graph_rewrite ~calls:Skip ~ctx:(Ops.Tbl.create 8) u
-    (Pm.append Simplify.pm_split_ranges (Pm.with_ctx Simplify.pm_flatten_range))
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Ops.Tbl.create 8) u
+    (After_sources
+       (Pm.append Simplify.pm_split_ranges
+          (Pm.with_ctx Simplify.pm_flatten_range)))
 
 let simplify u =
-  Ops.graph_rewrite ~calls:Skip ~ctx:(Ops.Tbl.create 8) u
-    (Pm.append
-       (Pm.with_ctx Simplify.pm_flatten_range)
-       Simplify.pm_simplify_ranges)
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Ops.Tbl.create 8) u
+    (After_sources
+       (Pm.append
+          (Pm.with_ctx Simplify.pm_flatten_range)
+          Simplify.pm_simplify_ranges))
 
 (* The symbolic pass the pipeline runs before simplifying ranges, which removes
    the guards that hold everywhere. *)

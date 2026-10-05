@@ -42,7 +42,7 @@ let get_call_var_uops call prg =
                         else None)
                       (toposort ~calls:Enter n)
                   in
-                  substitute ~calls:Skip n values
+                  substitute ~calls:Skip ~pass:Fixed_point n values
             in
             fun v ->
               match arg v with
@@ -167,7 +167,7 @@ let lower_and_compile ?search ~targets linear =
       (map (fun (ast, ren) -> Codegen.to_program ?beam:search ast ren) todo)
   in
   let program a = snd (List.find (fun (b, _) -> same a b) compiled) in
-  substitute ~calls:Skip linear
+  substitute ~calls:Skip ~pass:Fixed_point linear
     (List.map
        (fun (c, a) -> (c, replace c ~src:(program a :: List.tl (src c))))
        calls)

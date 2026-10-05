@@ -710,12 +710,14 @@ let follow s q u =
                 (memories q)
             in
             let node =
-              Ops.substitute ~calls:Skip c.node [ (c.buffer, buffer) ]
+              Ops.substitute ~calls:Skip ~pass:Fixed_point c.node
+                [ (c.buffer, buffer) ]
             in
             s.captures <- { c with at = q; node; buffer; buffers } :: s.captures;
             (c.buffer, buffer)
       in
-      Some (Ops.substitute ~calls:Skip u (List.map moved !read))
+      Some
+        (Ops.substitute ~calls:Skip ~pass:Fixed_point u (List.map moved !read))
 
 (* [followed s q u] is [follow s q u], once per trace. *)
 let followed s q u =

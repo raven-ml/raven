@@ -204,5 +204,5 @@ let memory_coalescing sink (r : Renderer.t) =
             take run)
           (runs sorted))
       (List.rev !groups);
-    substitute ~calls:Skip sink !replacements
+    substitute ~calls:Skip ~pass:Fixed_point sink !replacements
   end

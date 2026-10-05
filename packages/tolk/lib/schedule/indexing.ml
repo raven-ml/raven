@@ -286,9 +286,10 @@ let apply_reshape in_shape out_shape urngs =
       (combined, []) (List.rev in_shape)
   in
   (* Simplifying merges what reshapes of reshapes would otherwise stack. *)
-  graph_rewrite ~calls:Skip ~ctx:() (Ops.sink axes_out)
-    (Pattern_matcher.concat
-       Symbolic.[ symbolic; pm_simplify_valid; pm_drop_and_clauses ])
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (Ops.sink axes_out)
+    (After_sources
+       (Pattern_matcher.concat
+          Symbolic.[ symbolic; pm_simplify_valid; pm_drop_and_clauses ]))
 
 let pad_valid = Pattern_matcher.concat Symbolic.[ symbolic; pm_simplify_valid ]
 
@@ -318,7 +319,8 @@ let apply_movement_op in_shape m rngs =
             in
             valid
               (sub r (sint off))
-              (graph_rewrite ~calls:Skip ~ctx:() inside pad_valid))
+              (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() inside
+                 (After_sources pad_valid)))
         (List.combine rngs in_shape)
         b
   | Reshape out_shape ->
@@ -336,10 +338,11 @@ let apply_movement_op in_shape m rngs =
           (Nodes.to_list (ranges sink))
       in
       let reshaped =
-        apply_reshape in_shape out_shape (substitute ~calls:Skip sink sub_array)
+        apply_reshape in_shape out_shape
+          (substitute ~calls:Skip ~pass:Fixed_point sink sub_array)
       in
       src
-        (substitute ~calls:Skip reshaped
+        (substitute ~calls:Skip ~pass:Fixed_point reshaped
            (List.map (fun (r, p) -> (p, r)) sub_array))
 
 (* Rangeify *)
@@ -400,9 +403,9 @@ let merge_consumer_rngs rctx x consumer_rngs =
     List.map2
       (fun local rngs ->
         let minimum_valid = usum (bool false) (List.map get_valid rngs) in
-        graph_rewrite ~calls:Skip ~ctx:()
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
           (valid (List.hd local) minimum_valid)
-          Symbolic.symbolic)
+          (After_sources Symbolic.symbolic))
       locals axes
   else begin
     Tbl.replace rctx.realize_map x (Some (List.init (List.length axes) Fun.id));
@@ -540,7 +543,9 @@ let run_rangeify ?(debug = false) tsink =
       range_idx = 0;
     }
   in
-  ignore (graph_rewrite ~calls:Skip ~ctx:rctx tsink pm_generate_realize_map);
+  ignore
+    (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
+       (After_sources pm_generate_realize_map));
   let tsink_toposort = toposort ~calls:Enter ~gate:gate_kernel_sink tsink in
   let consumer_map = Tbl.create 256 in
   List.iter (fun x -> Tbl.replace consumer_map x []) tsink_toposort;
@@ -565,8 +570,9 @@ let run_rangeify ?(debug = false) tsink =
     Setting.context
       [ B (Setting.spec, spec) ]
       (fun () ->
-        graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:rctx tsink
-          pm_apply_rangeify)
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
+          (Before_sources pm_apply_rangeify))
   in
   (* A value without a device that must be stored lives on the sink's. *)
-  graph_rewrite ~calls:Skip ~ctx:(device tsink) tsink pm_fix_deviceless
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(device tsink) tsink
+    (After_sources pm_fix_deviceless)

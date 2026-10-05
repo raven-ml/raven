@@ -321,8 +321,8 @@ let rec split_l2i ctx op dt uops =
   | Some words -> words
   | None ->
       let words =
-        graph_rewrite ~calls:Skip ~bottom_up:true ~ctx (sink uops)
-          (Lazy.force pm_long_decomp)
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx (sink uops)
+          (Before_sources (Lazy.force pm_long_decomp))
         |> src |> l2i op dt
       in
       Splits.replace ctx key words;
@@ -465,8 +465,8 @@ and pm_long_decomp =
              let x = m "x" in
              tagged x (fun w ->
                  let idx =
-                   graph_rewrite ~calls:Skip ~bottom_up:true ~ctx (m "idx")
-                     (Lazy.force pm_long_decomp)
+                   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx (m "idx")
+                     (Before_sources (Lazy.force pm_long_decomp))
                  in
                  load (replace (reindex ~mul:2 idx w) ~tag:None) []));
        ]))
@@ -719,7 +719,8 @@ and rounded (fr, to_) x =
   f2f (f2f (bitcast x (f2f_dt to_)) to_ fr) fr to_
 
 and f2f_rewrite ctx x =
-  graph_rewrite ~calls:Skip ~bottom_up:true ~ctx x (Lazy.force pm_float_decomp)
+  graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx x
+    (Before_sources (Lazy.force pm_float_decomp))
 
 and pm_float_decomp =
   lazy
@@ -894,11 +895,11 @@ let do_dtype_decomps ctx sink =
         if Setting.value Setting.debug >= 2 then
           Format.eprintf "emulating %a as %a@." Dtype.pp fr Dtype.pp to_;
         if List.mem fr Dtype.floats then
-          graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:(fr, to_) sink
-            pm_float_decomp
+          graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(fr, to_) sink
+            (Before_sources pm_float_decomp)
         else
-          graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:(Splits.create 64) sink
-            pm_long_decomp)
+          graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Splits.create 64)
+            sink (Before_sources pm_long_decomp))
       sink
       (List.sort Dtype.compare (List.filter should_emulate ctx.found))
   in

@@ -260,7 +260,8 @@ let rewritten ?(renderer = renderer ()) sink =
   Ops.sink
     [
       sink;
-      Ops.graph_rewrite ~calls:Skip ~ctx:renderer sink Gpudims.pm_add_gpudims;
+      Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:renderer sink
+        (After_sources Gpudims.pm_add_gpudims);
     ]
 
 let rewrites name ?renderer sink =

@@ -980,7 +980,9 @@ let whole_loop p (e : Ops.estimates) : Ops.estimates =
       in
       let fill : Ops.sint -> Ops.sint = function
         | Int _ as i -> i
-        | Sym u -> Ops.ssimplify (Ops.substitute ~calls:Skip u bounds)
+        | Sym u ->
+            Ops.ssimplify
+              (Ops.substitute ~calls:Skip ~pass:Fixed_point u bounds)
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
 
@@ -1796,7 +1798,7 @@ let lowered_on_metal k =
    floats of slot 4. *)
 let with_products u =
   let products = lanes 4 Float32 in
-  Ops.substitute ~calls:Skip u
+  Ops.substitute ~calls:Skip ~pass:Fixed_point u
     (List.filter_map
        (fun w ->
          if is Wmma w then Some (w, Ops.add (Ops.nth w 2) products) else None)

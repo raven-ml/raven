@@ -13,7 +13,7 @@ let jit_lower ?beam ?search ~profile ~devices ~held_bufs ~inputs linear =
         ?device:(Ops.device u) i (Ops.dtype u) )
   in
   let linear =
-    Ops.substitute ~calls:Skip ~walk:true linear (List.mapi param inputs)
+    Ops.substitute ~calls:Skip ~pass:Once linear (List.mapi param inputs)
   in
   let linear = Memory.memory_plan_rewrite ~held_bufs linear in
   let beam =

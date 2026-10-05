@@ -531,7 +531,7 @@ let by_slot storage f = List.map (fun s -> (s.arg.slot, f s)) storage
 (* [with_values vars big] is [big] with each variable replaced by its value in
    [vars], or its bound value. *)
 let with_values vars big =
-  Ops.substitute ~calls:Skip big
+  Ops.substitute ~calls:Skip ~pass:Fixed_point big
     (List.filter_map
        (fun n ->
          match (Ops.op n, Ops.arg n) with
@@ -695,11 +695,11 @@ let parameterized ?(devices = devices) name =
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
-      (Ops.substitute ~calls:Skip linear parameters)
+      (Ops.substitute ~calls:Skip ~pass:Fixed_point linear parameters)
   in
   ( Engine.link ~devices compiled,
     vars,
-    Ops.substitute ~calls:Skip big parameters )
+    Ops.substitute ~calls:Skip ~pass:Fixed_point big parameters )
 
 let runs_on_its_slots ?(devices = devices) name () =
   let s, vars, big = parameterized ~devices name in
@@ -910,7 +910,7 @@ let replays_a_scan =
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
-      (Ops.substitute ~calls:Skip linear parameters)
+      (Ops.substitute ~calls:Skip ~pass:Fixed_point linear parameters)
   in
   let runs =
     Gen.list ~size:(Gen.int_range 1 4)
@@ -1524,7 +1524,7 @@ let skipping_a_slot () =
         [ (u, Ops.replace u ~arg:(Param { p with slot = 3 })) ]
     | _ -> []
   in
-  Ops.substitute ~calls:Skip k
+  Ops.substitute ~calls:Skip ~pass:Fixed_point k
     (List.concat_map moved (Ops.toposort ~calls:Enter k))
 
 (* The program of [long_axpy ()] linked on the device with queues by a schedule

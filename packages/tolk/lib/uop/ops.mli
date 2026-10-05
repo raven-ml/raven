@@ -1826,44 +1826,59 @@ end
 (** {1:rewrite Rewriting} *)
 
 exception Bottom_up_gate
-(** Raised by a bottom-up rule to keep the node it last produced and leave its
-    sources unvisited. *)
+(** Raised by a rule before the sources ({!Before_sources}, {!Around_sources}'s
+    [before]) under {!Fixed_point} to keep the node it last produced and leave
+    its sources unvisited. Raised by a rule after the sources, or under {!Once},
+    it escapes {!graph_rewrite}. *)
 
-val graph_rewrite :
-  ?bottom_up:bool ->
-  ?bpm:('ctx, t) Pattern_matcher.t ->
-  ?walk:bool ->
-  calls:calls ->
-  ctx:'ctx ->
-  t ->
-  ('ctx, t) Pattern_matcher.t ->
-  t
-(** [graph_rewrite ~calls ~ctx u m] is [u] rewritten to a fixed point: each node
-    is rebuilt on its rewritten sources, then rewritten with [m] until no rule
-    applies, and each result is rewritten in turn. Each node is rewritten once,
-    and shared nodes stay shared.
+(** The type for how often a rewrite applies its rules to a node and its
+    results. *)
+type pass =
+  | Fixed_point
+      (** A rule before the sources rewrites a node until none applies, and the
+          sources of the result are then rewritten. A node that a rule after the
+          sources rewrites, or that is rebuilt on rewritten sources, is
+          rewritten again in turn, to a fixed point. *)
+  | Once
+      (** A rule rewrites a node at most once, and its result is never rewritten
+          again: a node that a rule before the sources rewrites is replaced and
+          its sources are left as they are. *)
 
-    With [bottom_up], [m] rewrites each node before its sources, to a fixed
-    point, and the sources of its result are then rewritten; [bpm] adds such a
-    matcher to a top-down rewrite. With [walk], a result is never rewritten
-    again, and {!Bottom_up_gate} is not caught. A call's body is rewritten with
-    its arguments under [Enter], and left alone under [Skip].
+(** The type for the rules of a rewrite and when they meet a node. *)
+type 'ctx rules =
+  | After_sources of ('ctx, t) Pattern_matcher.t
+      (** Rewrites each node once its sources are rewritten. *)
+  | Before_sources of ('ctx, t) Pattern_matcher.t
+      (** Rewrites each node before its sources. *)
+  | Around_sources of {
+      before : ('ctx, t) Pattern_matcher.t;
+      after : ('ctx, t) Pattern_matcher.t;
+    }
+      (** Rewrites each node with [before] before its sources and with [after]
+          once they are rewritten. *)
 
-    Raises [Invalid_argument] if both [bottom_up] and [bpm] are given, or if the
-    rewrite does not terminate: a bottom-up rule cycles, the work list exceeds
-    {!Setting.rewrite_stack_limit}, or a node's rewrite depends on itself. *)
+val graph_rewrite : calls:calls -> pass:pass -> ctx:'ctx -> t -> 'ctx rules -> t
+(** [graph_rewrite ~calls ~pass ~ctx u rules] is [u] rewritten by [rules] as
+    [pass] says: each node is rebuilt on its rewritten sources and rewritten by
+    the first rule that applies, and shared nodes stay shared. A call's body is
+    rewritten with its arguments under [Enter], and left alone under [Skip].
+
+    Raises [Invalid_argument] if a {!Fixed_point} rewrite does not terminate: a
+    rule before the sources cycles, the work list exceeds
+    {!Setting.rewrite_stack_limit}, or a node's rewrite depends on itself, and
+    {!Bottom_up_gate} as that exception's description says. *)
 
 val substitute :
   ?extra_pm:(t Tbl.t, t) Pattern_matcher.t ->
-  ?walk:bool ->
   calls:calls ->
+  pass:pass ->
   t ->
   (t * t) list ->
   t
-(** [substitute ~calls u subs] is [u] with each node of [subs] replaced by its
-    pair, top-first, rewriting with [extra_pm] as well, which reads the
-    substitution, and treating calls as {!graph_rewrite} does. Nodes paired with
-    themselves are ignored. *)
+(** [substitute ~calls ~pass u subs] is [u] with each node of [subs] replaced by
+    its pair, top-first, rewriting with [extra_pm] as well, which reads the
+    substitution, and treating calls and results as {!graph_rewrite} does. Nodes
+    paired with themselves are ignored. *)
 
 val pm_substitute : (t Tbl.t, t) Pattern_matcher.t
 (** [pm_substitute] replaces each node its context maps by its image. *)

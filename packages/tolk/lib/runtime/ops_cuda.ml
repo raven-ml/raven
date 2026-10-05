@@ -145,7 +145,7 @@ let queue ~host q : Hcq2.commands =
         (fun at -> (at, index kernargs [ add (nth at 1) (mul r (int trip)) ]))
         !launches
     in
-    h := substitute ~calls:Skip !h moved;
+    h := substitute ~calls:Skip ~pass:Fixed_point !h moved;
     (* A trip ends with its status: a loop ends an effect. *)
     h := end_ (status ()) [ r ];
     ranges := List.tl !ranges;
@@ -153,7 +153,7 @@ let queue ~host q : Hcq2.commands =
   in
   let submit () =
     let ka = Hcq2.bufferize_cmdbuf q "cmdbuf" in
-    substitute ~calls:Skip
+    substitute ~calls:Skip ~pass:Fixed_point
       (if op !h = Op.End then !h else status ())
       [ (kernargs, ka) ]
   in

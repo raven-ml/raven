@@ -156,6 +156,6 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
             "memory reduced from %.2f MB -> %.2f MB, %d -> %d bufs\n%!" omem
             nmem (List.length bufs) (List.length arenas)
       end;
-      substitute ~calls:Skip ~walk:true linear replace_map
+      substitute ~calls:Skip ~pass:Once linear replace_map
     end
   end

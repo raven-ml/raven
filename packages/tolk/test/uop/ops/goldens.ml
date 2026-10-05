@@ -568,12 +568,12 @@ let substitution () =
   let sin u = alu u Op.Sin [] in
   sink
     [
-      substitute ~calls:Skip e [ (a, b) ];
-      substitute ~calls:Skip e [ (a, a) ];
-      substitute ~calls:Skip
+      substitute ~calls:Skip ~pass:Fixed_point e [ (a, b) ];
+      substitute ~calls:Skip ~pass:Fixed_point e [ (a, a) ];
+      substitute ~calls:Skip ~pass:Fixed_point
         (replace ~tag:(Some (Tag.Int 1)) O.(a + int 4))
         [ (a, c) ];
-      substitute ~calls:Skip (sin (sin x)) [ (sin x, sqrt x) ];
+      substitute ~calls:Skip ~pass:Fixed_point (sin (sin x)) [ (sin x, sqrt x) ];
     ]
 
 let clones () =
@@ -714,7 +714,7 @@ let minted sink =
               | _ -> None);
         ])
   in
-  graph_rewrite ~calls:Skip ~walk:true ~ctx:() sink renumber
+  graph_rewrite ~calls:Skip ~pass:Once ~ctx:() sink (After_sources renumber)
 
 (* Each golden, the graph built for it, and whether it mints slots. *)
 let all =

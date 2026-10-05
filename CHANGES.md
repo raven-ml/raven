@@ -977,6 +977,11 @@ thread.
 - **Breaking:** `Ops.backward_slice`, `Ops.backward_slice_with_self` and
   `Ops.op_in_backward_slice_with_self` take the required `~calls`, as their
   sibling walks do; they always left call bodies out.
+- **Breaking:** `Ops.graph_rewrite` takes its rules as an `Ops.rules`
+  (`After_sources`, `Before_sources` or `Around_sources`) and a required
+  `~pass:(Fixed_point | Once)` in place of `?bottom_up`, `?bpm` and `?walk`,
+  so a rewrite before the sources with a second matcher, which raised, cannot
+  be written. `Ops.substitute` takes `~pass` in place of `?walk`.
 - `Symbolic.sym` folds the constants of nested integer maxima at the
   maximum's width: on uint8, `max(max(w, 1), -3)` became `max(w, 1)`, where
   the machine computes `max(w, 253)`.

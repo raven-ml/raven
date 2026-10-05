@@ -247,7 +247,7 @@ let add_gpudims (r : Renderer.t) s =
                 | None -> ())
             s_topo;
           Some
-            (substitute ~calls:Skip s
+            (substitute ~calls:Skip ~pass:Fixed_point s
                (Tbl.fold (fun k v acc -> (k, v) :: acc) subs [])))
   | _ -> None
 

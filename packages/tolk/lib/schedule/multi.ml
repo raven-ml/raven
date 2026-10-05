@@ -54,7 +54,8 @@ let device_ranges x =
 let at_device i x =
   match device_ranges x with
   | r :: _ ->
-      substitute ~calls:Skip x [ (r, const_like r (`Int (Bigint.of_int i))) ]
+      substitute ~calls:Skip ~pass:Fixed_point x
+        [ (r, const_like r (`Int (Bigint.of_int i))) ]
   | [] -> x
 
 let apply_shrink marg s i =
@@ -86,7 +87,8 @@ let lower_broadcast_copy c x =
   match (device c, device x) with
   | Some (Multi ds), Some (Single _) ->
       let sx =
-        graph_rewrite ~calls:Skip ~ctx:() (simplify x) pm_unselect_deviceless
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (simplify x)
+          (After_sources pm_unselect_deviceless)
       in
       if Option.is_none (device sx) then
         Some (v Op.Mstack ~src:(List.map (fun _ -> sx) ds))
@@ -253,7 +255,7 @@ and shard_idx rng dev_idx =
   | r :: _ -> (
       match
         ssimplify
-          (substitute ~calls:Skip rng
+          (substitute ~calls:Skip ~pass:Fixed_point rng
              [ (r, const_like r (`Int (Bigint.of_int dev_idx))) ])
       with
       | Int n -> n
@@ -738,7 +740,8 @@ let rec rewrite_into_function call =
   if not (is_inline_call call) then None
   else
     let new_body =
-      graph_rewrite ~calls:Skip ~ctx:() (body call) (Lazy.force multi_pm)
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (body call)
+        (After_sources (Lazy.force multi_pm))
     in
     if op new_body <> Op.Sink then invalid_arg "a call's body must stay a sink";
     Some (replace call ~src:(new_body :: List.map peel (List.tl (src call))))

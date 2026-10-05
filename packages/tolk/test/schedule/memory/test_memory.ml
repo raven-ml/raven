@@ -23,7 +23,7 @@ let numbered_as golden linear u =
   let slot n =
     match Ops.arg n with Param p -> p | _ -> fail "an arena has a parameter"
   in
-  Ops.substitute ~calls:Skip u
+  Ops.substitute ~calls:Skip ~pass:Fixed_point u
     (List.map2
        (fun mine theirs ->
          ( mine,

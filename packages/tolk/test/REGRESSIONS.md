@@ -3073,7 +3073,7 @@ inputs left as buffers (killed by the compiler: `param` unused), the slots
 shifted by one, the inputs in reverse order, the held buffers ignored, no
 plan, a parameter of one element, a parameter without a device, `JITBEAM`
 ignored, and `JITBEAM` defaulting to 0 are killed. Two survive, equivalent:
-`~walk:false` in the substitution of the inputs, whose parameters hold no
+`~pass:Fixed_point` in the substitution of the inputs, whose parameters hold no
 input to rewrite again, and planning with the inputs held, which the
 substitution has already replaced.
 

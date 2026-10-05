@@ -94,7 +94,10 @@ let simplify_merge_adjacent u =
         let subs = Tbl.create 2 in
         Tbl.replace subs r0 O.(new_range // s1);
         Tbl.replace subs r1 O.(new_range % s1);
-        let nidx = graph_rewrite ~calls:Skip ~ctx:subs u merge_rewrite in
+        let nidx =
+          graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:subs u
+            (After_sources merge_rewrite)
+        in
         (* Return after one merge, so that the next rewrite merges the new
            ranges, not stale pairs of the old ones. *)
         if count_divmod nidx <= count_divmod u then Some nidx else None
@@ -137,7 +140,7 @@ let do_substitute ctx x sub =
   | No_arg -> None
   | _ ->
       let ret =
-        substitute ~calls:Skip x
+        substitute ~calls:Skip ~pass:Fixed_point x
           (Tbl.fold (fun k v acc -> (k, sub k v) :: acc) ctx [])
       in
       Tbl.reset ctx;
@@ -371,7 +374,8 @@ let pm_reduce_load_collapse =
               let v = O.((idx >= int 0) land (idx < nth r 0)) in
               Some
                 (where v
-                   (substitute ~calls:Skip expr [ (r, valid idx v) ])
+                   (substitute ~calls:Skip ~pass:Fixed_point expr
+                      [ (r, valid idx v) ])
                    (int 0)));
         ]);
     ]
@@ -412,14 +416,16 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
                 (src x))
             included;
           let sink =
-            graph_rewrite ~calls:Skip ~ctx:()
-              (reduce (substitute ~calls:Skip u !order) Op.Add [ r ])
-              pm
+            graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+              (reduce
+                 (substitute ~calls:Skip ~pass:Fixed_point u !order)
+                 Op.Add [ r ])
+              (After_sources pm)
           in
           if not (no_range sink) then None
           else
             collapse
-              (substitute ~calls:Skip sink
+              (substitute ~calls:Skip ~pass:Fixed_point sink
                  (List.map (fun (k, v) -> (v, k)) !order))
               rest
   in
