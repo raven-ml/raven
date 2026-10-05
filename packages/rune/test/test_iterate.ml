@@ -115,7 +115,7 @@ let refusal_tests =
     test "until must return one boolean" (fun () ->
         raises
           (Invalid_argument
-             "Rune.iterate: until must return one boolean, got bool [2]")
+             "Rune.iterate: until must return one boolean, got shape [2]")
           (fun () ->
             Rune.iterate' ~max:3
               ~until:(fun x -> Nx.less_s x 1.)
@@ -144,7 +144,7 @@ let refusal_tests =
     test "under vmap until must return one boolean per lane" (fun () ->
         raises
           (Invalid_argument
-             "Rune.iterate: until must return one boolean, got bool [2]")
+             "Rune.iterate: until must return one boolean, got shape [2]")
           (fun () ->
             Rune.vmap'
               (Rune.iterate' ~max:3 ~until:(fun x -> Nx.less_s x 1.) ~f:Fun.id)

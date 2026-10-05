@@ -337,8 +337,8 @@ let iterate c ~max ~until ~f init =
     let u = until (carry l) in
     if Nx.numel u <> 1 then
       invalid_arg
-        (Format.asprintf "%s: until must return one boolean, got %a %a" fn
-           Nx.pp_dtype (Nx.dtype u) Nx.pp_shape (Nx.shape u));
+        (Format.asprintf "%s: until must return one boolean, got shape %a" fn
+           Nx.pp_shape (Nx.shape u));
     Nx.reshape [||] u
   in
   let this = "the carry the step returned" and that = "the carry it received" in
