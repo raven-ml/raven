@@ -1007,7 +1007,6 @@ let environment =
   [
     ("BEAM_PADTO", "1");
     ("TC", "2");
-    ("BEAM_TC_OPT", "0");
     ("BEAM_STRICT_MODE", "1");
     ("BEAM_UOPS_MAX", "43");
     ("BEAM_LOG_SURPASS_MAX", "1");
@@ -1133,18 +1132,10 @@ let tc_levels () =
 let tc_actions =
   group "the tensor cores' actions"
     [
-      test "ask for BEAM_TC_OPT's level on every axis but the first" (fun () ->
-          let levels o =
-            Setting.context
-              [ B (Setting.beam_tc_opt, o) ]
-              (fun () -> List.map fst (tc_levels ()))
-          in
-          equal (list int) ~msg:"default"
+      test "ask for level 2 on every axis but the first" (fun () ->
+          equal (list int)
             (0 :: List.init 9 (Fun.const 2))
-            (List.map fst (tc_levels ()));
-          equal (list int) ~msg:"BEAM_TC_OPT=1"
-            (0 :: List.init 9 (Fun.const 1))
-            (levels 1));
+            (List.map fst (tc_levels ())));
       test "leave TC_OPT to hand-coded optimizations" (fun () ->
           let levels o =
             Setting.context

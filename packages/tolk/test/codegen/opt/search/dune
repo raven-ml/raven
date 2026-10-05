@@ -24,21 +24,18 @@
       TC
       2
       (setenv
-       BEAM_TC_OPT
-       0
+       BEAM_STRICT_MODE
+       1
        (setenv
-        BEAM_STRICT_MODE
-        1
+        BEAM_UOPS_MAX
+        43
         (setenv
-         BEAM_UOPS_MAX
-         43
+         BEAM_LOG_SURPASS_MAX
+         1
          (setenv
-          BEAM_LOG_SURPASS_MAX
-          1
-          (setenv
-           BEAM_DEBUG
-           2
-           (run %{test} --tag environment))))))))))))
+          BEAM_DEBUG
+          2
+          (run %{test} --tag environment)))))))))))
 
 ; The searches of kernels on the host compile each candidate with its C
 ; compiler and time it through the engine.

@@ -738,7 +738,6 @@ let caching =
                ("TC", B (use_tc, 0));
                ("TC_SELECT", B (tc_select, 0));
                ("TC_OPT", B (tc_opt, 1));
-               ("BEAM_TC_OPT", B (beam_tc_opt, 1));
                ("BEAM", B (beam, 1));
                ("JITBEAM", B (jitbeam, Some 1));
                ("TC_MIN_GLOBALS", B (tc_min_globals, 1));

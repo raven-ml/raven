@@ -218,7 +218,6 @@ let no_color = bool ~reach:Process "NO_COLOR" false
 let use_tc = int ~reach:Output "TC" 1
 let tc_select = int ~reach:Output "TC_SELECT" (-1)
 let tc_opt = int ~reach:Output "TC_OPT" 0
-let beam_tc_opt = int ~reach:Output "BEAM_TC_OPT" 2
 let tc_min_globals = int ~reach:Output "TC_MIN_GLOBALS" 0
 let transcendental = int ~reach:Output "TRANSCENDENTAL" 1
 let split_reduceop = bool ~reach:Output "SPLIT_REDUCEOP" true

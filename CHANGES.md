@@ -1001,12 +1001,13 @@ thread.
   declared and documented there with its reach, so each can be bound with
   `Setting.context` (`Ops.rewrite_stack_limit` is `Setting.rewrite_stack_limit`).
   `Helpers.getenv*` and `variable*` are removed, so the caches key on every
-  variable that changes compiled output (`Setting.shaping`). A setting reaches output when a change of it alone can
-  change what a compilation returns: `BEAM` and `JITBEAM` do; `CC` and
-  `CUDA_PATH`, which a compiler's cache key names, do not.
-- `TC_OPT` is the level of hand-coded optimizations, default 0, and the new
-  `BEAM_TC_OPT` that of the search's candidates, default 2: `TC_OPT` no longer
-  reaches the search. `Search.actions` reads `TC` and `BEAM_TC_OPT` as bound.
+  variable that changes compiled output (`Setting.shaping`). A setting reaches
+  output when a change of it alone can change what a compilation returns:
+  `BEAM` and `JITBEAM` do; `CC` and `CUDA_PATH`, which a compiler's cache key
+  names, do not.
+- `TC_OPT` is the level of hand-coded optimizations alone, default 0; the
+  search's tensor-core candidates always take level 2, which admits every
+  kernel. `Search.actions` reads `TC` and `BEAM_PADTO` as bound.
 - A compiler's cache key names it whatever `CCACHE` holds, so programs and
   searches key on it; `CCACHE`, now read when compiling, decides only whether
   binaries and programs go to disk. With `CCACHE=0`, two compilers differing in

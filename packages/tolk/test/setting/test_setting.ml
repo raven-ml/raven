@@ -315,7 +315,6 @@ let settings =
     number Setting.use_tc;
     number Setting.tc_select;
     number Setting.tc_opt;
-    number Setting.beam_tc_opt;
     number Setting.tc_min_globals;
     number Setting.transcendental;
     switch Setting.split_reduceop;
@@ -400,13 +399,12 @@ let not_ported =
 (* The golden leaves out the settings whose default it cannot record, and
    tinygrad's helpers do not declare those that tinygrad reads with [getenv]
    where it uses them, which hold the defaults [Setting] states: [JITBEAM]'s
-   stands for [BEAM]'s value, and the search's [TC_OPT] is [BEAM_TC_OPT]. *)
+   stands for [BEAM]'s value. *)
 let unrecorded = [ "PARALLEL"; "NO_COLOR" ]
 
 let getenv_defaults =
   [
     ("JITBEAM", "");
-    ("BEAM_TC_OPT", "2");
     ("SUM_DTYPE", "float32");
     ("LATE_ALLREDUCE", "1");
     ("RING_ALLREDUCE_THRESHOLD", "256000");
@@ -477,7 +475,6 @@ let output_settings =
     "BEAM_LOCAL_MAX";
     "BEAM_MIN_PROGRESS";
     "BEAM_PADTO";
-    "BEAM_TC_OPT";
     "BEAM_UOPS_MAX";
     "BEAM_UPCAST_MAX";
     "DEFAULT_FLOAT";
@@ -518,7 +515,6 @@ let other_outputs =
       B (use_tc, 2);
       B (tc_select, 0);
       B (tc_opt, 1);
-      B (beam_tc_opt, 0);
       B (tc_min_globals, 1);
       B (transcendental, 2);
       B (split_reduceop, false);

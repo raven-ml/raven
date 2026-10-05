@@ -689,7 +689,6 @@ let keys =
             B (all2all, 1);
             B (allreduce_cast, false);
             B (tc_opt, 2);
-            B (beam_tc_opt, 1);
             B (beam, 1);
             B (jitbeam, Some 1);
             B (disable_fast_idiv, false);

@@ -12,6 +12,10 @@ let setting = Setting.value
 let debug () = setting Setting.debug
 let upto n = List.init n Fun.id
 
+(* The level of the search's tensor cores: [2] admits every kernel that [0] and
+   [1] admit, and more, and the search measures what it admits. *)
+let tc_opt_all = 2
+
 let actions () =
   let split ?(top = false) target amounts axes =
     List.concat_map
@@ -33,7 +37,7 @@ let actions () =
       split Local [ 32 ] [ 0 ];
       [ tc 0 0 ];
       (* covers resnet kernels (3 global * 3 reduce) *)
-      List.map (tc (setting Setting.beam_tc_opt)) (upto 9);
+      List.map (tc tc_opt_all) (upto 9);
       List.concat_map
         (fun axis ->
           List.map

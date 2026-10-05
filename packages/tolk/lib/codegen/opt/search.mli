@@ -37,8 +37,9 @@ val actions : unit -> Opt.t list
       [32];
     - a split of the axis [0] into [32] local threads;
     - tensor cores on the axis [0] with the level [tc_opt] [0], then on the axes
-      [0] to [8] with the level of {!Setting.beam_tc_opt}, each with the first
-      core that fits and the level [use_tc] of {!Setting.use_tc};
+      [0] to [8] with the level [2], which admits every kernel a tensor core
+      fits, each with the first core that fits and the level [use_tc] of
+      {!Setting.use_tc};
     - swaps of each two of the axes [0] to [4]. *)
 
 val get_kernel_actions :
@@ -136,15 +137,14 @@ val beam_search :
     renderer and the table of its compiler's binaries
     ({!Renderer.Compiler.cachekey}), the settings that shape compilation
     ({!Setting.shaping}), among them those that pick the candidates
-    ({!Setting.use_tc}, {!Setting.beam_tc_opt} and {!Setting.beam_padto}) and
-    how it measures and stops ({!Setting.beam_uops_max},
-    {!Setting.beam_upcast_max}, {!Setting.beam_local_max},
-    {!Setting.beam_min_progress} and {!Setting.beam_estimate}), and the sources
-    of this library. Unless {!Setting.ignore_beam_cache} holds, a search whose
-    key is kept compiles and times nothing, applies nothing of [time], and
-    applies the optimisations kept beyond as many as [k] has to a copy of [k]. A
-    kept result is what an earlier search measured fastest: another search may
-    measure otherwise.
+    ({!Setting.use_tc} and {!Setting.beam_padto}) and how it measures and stops
+    ({!Setting.beam_uops_max}, {!Setting.beam_upcast_max},
+    {!Setting.beam_local_max}, {!Setting.beam_min_progress} and
+    {!Setting.beam_estimate}), and the sources of this library. Unless
+    {!Setting.ignore_beam_cache} holds, a search whose key is kept compiles and
+    times nothing, applies nothing of [time], and applies the optimisations kept
+    beyond as many as [k] has to a copy of [k]. A kept result is what an earlier
+    search measured fastest: another search may measure otherwise.
 
     When the setting {!Setting.debug} is [2] or more, the progress of the search
     is printed on standard output, and {!Setting.beam_debug} prints more.

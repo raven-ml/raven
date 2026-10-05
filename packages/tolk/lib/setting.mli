@@ -152,11 +152,6 @@ val tc_opt : int t
     casted operands, [2] also kernels whose axes must be padded to the tensor
     core's dimensions. Defaults to [0]. *)
 
-val beam_tc_opt : int t
-(** [beam_tc_opt] is which kernels the beam search ([Search]) lets use tensor
-    cores, from [BEAM_TC_OPT], with the levels of {!tc_opt}. The search measures
-    what it admits, so it defaults to [2]. *)
-
 val tc_min_globals : int t
 (** [tc_min_globals] is the number of global axes below which tensor core
     optimization does not upcast its N axis, from [TC_MIN_GLOBALS]. Defaults to

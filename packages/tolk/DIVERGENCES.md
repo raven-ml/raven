@@ -1877,8 +1877,8 @@ the Exclusions of `README.md`.
   (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:309`
   (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
-  name); `lib/setting.ml:267` (`scache`, `2` by default) and `:141`
-  (`shaping`); `lib/setting.ml:295` (`cc`); and
+  name); `lib/setting.ml:266` (`scache`, `2` by default) and `:141`
+  (`shaping`); `lib/setting.ml:294` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
   `tools/source_digest.ml`.
 - **Differs:** the program `to_program` makes of a kernel, and by default
@@ -3341,8 +3341,8 @@ stores through a pad.
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
   (`C.identity`); `lib/codegen/codegen.ml:1181-1198` (`program_key`, `kept`);
-  `lib/setting.ml:286-291` (the search's settings) and
-  `lib/codegen/opt/search.ml:257` (the beam search's key).
+  `lib/setting.ml:285-290` (the search's settings) and
+  `lib/codegen/opt/search.ml:261` (the beam search's key).
 - **Differs:** a table also names everything besides the source that
   determines a binary: for Clang, the digest of what `clang -###` states it
   runs (its version and installation, the processor and features `native`
@@ -3356,7 +3356,7 @@ stores through a pad.
   adds the
   library's sources, the renderer, its compiler's table, and the settings
   that shape compilation (`Setting.shaping`), among which those that pick
-  the candidates (`TC`, `BEAM_TC_OPT` and `BEAM_PADTO`, D114) and those
+  the candidates (`TC` and `BEAM_PADTO`, D114) and those
   the search declares, `BEAM_UOPS_MAX`, `BEAM_UPCAST_MAX`,
   `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS` and `BEAM_ESTIMATE`.
   `BEAM_STRICT_MODE` is not keyed: a strict search that completes finds what
@@ -3393,9 +3393,9 @@ stores through a pad.
   DEBUG >= 2` unless given); `codegen/__init__.py:386`
   (`os.environ.get("DBGTV")`, read on each failure).
 - **tolk:** `lib/setting.ml:87` (`reach`), `:141` (`shaping`), `:151`
-  (`t`), `:215` (`jitbeam`), `:220` (`tc_opt`) and `:221` (`beam_tc_opt`);
-  `lib/codegen/opt/search.ml:15` (`actions`);
-  `lib/codegen/opt/heuristic.ml:101`; `lib/setting.ml:301`
+  (`t`), `:215` (`jitbeam`) and `:220` (`tc_opt`);
+  `lib/codegen/opt/search.ml:17` (`tc_opt_all`) and `:19` (`actions`);
+  `lib/codegen/opt/heuristic.ml:101`; `lib/setting.ml:300`
   (`dbgtv`); `lib/runtime/support/hcq2.ml:2051` (`compile_linear`);
   `engine/tolk_engine.ml:1082` (`reporting`); rune's `lib/jit.ml:105`
   (`settings`).
@@ -3411,14 +3411,16 @@ stores through a pad.
   (D113). tinygrad reads a variable with `getenv` at any call site, so one
   variable can have two readers with two defaults: `TC_OPT` is a
   `ContextVar` of default `0` and a `getenv` of default `2` in the search.
-  In tolk `TC_OPT` is the level of hand-coded optimizations, default `0`,
-  and `BEAM_TC_OPT` the level of the search's candidates, default `2`, so
-  `TC_OPT` in the environment no longer reaches the search. `TC`,
-  `BEAM_TC_OPT` and `BEAM_PADTO` are read when the search makes its
-  candidates (`actions` is a function), so a `context` binding of `TC` or
-  `BEAM_TC_OPT` reaches the search, where tinygrad's search sees the
-  environment alone. `JITBEAM` is a setting whose `None` stands for
-  `BEAM`'s current value. `compile_linear`'s `profile` defaults to `false`:
+  In tolk `TC_OPT` is the level of hand-coded optimizations alone, default
+  `0`, and the search's candidates take the level `2`, a constant
+  (`Search.tc_opt_all`): it admits every kernel the lower levels admit, and
+  the search measures what it admits, so a lower level only shrinks the
+  search. `TC_OPT` in the environment no longer reaches the search. `TC` and
+  `BEAM_PADTO` are read when the search makes its candidates (`actions` is a
+  function), so a `context` binding of `TC` reaches the search, where
+  tinygrad's search sees the environment alone. `JITBEAM` is a setting
+  whose `None` stands for `BEAM`'s current value. `compile_linear`'s
+  `profile` defaults to `false`:
   `DEBUG` is read by its caller, through `Tolk_engine.reporting`, which is
   true from `DEBUG` 2, when the engine prints each kernel's time, and there
   is no `PROFILE`: nx.device's profiles record the spans of what was
