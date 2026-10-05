@@ -103,7 +103,7 @@ let past_boundary n =
 (* The phase of the storage [u] reads, a parameter or a buffer. *)
 let phase u =
   let storage v = Ops.op v = Op.Param || Ops.op v = Op.Buffer in
-  match List.filter storage (Ops.toposort u) with
+  match List.filter storage (Ops.toposort ~calls:Enter u) with
   | [ v ] -> (
       match Ops.arg v with Param p -> p.phase | _ -> fail "a parameter")
   | _ -> fail "one storage"
@@ -233,7 +233,7 @@ let parameters =
                 match (Ops.op u, Ops.arg u) with
                 | Op.Param, Param p -> Some p.phase
                 | _ -> None)
-              (Ops.toposort (Programs.kernels y))
+              (Ops.toposort ~calls:Enter (Programs.kernels y))
           in
           equal (list int) [ 0; 4 ] (List.sort compare phases);
           exact (Nx.add x (Nx.mul x x)) (Programs.compiled s y));
@@ -414,7 +414,7 @@ let kernel_buffers y =
     (fun k ->
       List.filter_map
         (fun u -> if Ops.op u = Op.Param then Some (Ops.max_numel u) else None)
-        (Ops.toposort k))
+        (Ops.toposort ~calls:Enter k))
     (List.concat_map bodies (Ops.src linear))
 
 let staged_scans =

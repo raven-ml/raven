@@ -146,7 +146,7 @@ let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
       (List.combine sizes (suffix_prods sizes))
 
 let add_gpudims (r : Renderer.t) s =
-  let s_topo = toposort s in
+  let s_topo = toposort ~calls:Enter s in
   match arg s with
   | Kernel _ when not (List.exists (fun x -> op x = Op.Special) s_topo) -> (
       let all_ranges = Hashtbl.create 8 in
@@ -246,7 +246,9 @@ let add_gpudims (r : Renderer.t) s =
                 | Some i -> Tbl.replace subs x (List.nth idxs i)
                 | None -> ())
             s_topo;
-          Some (substitute s (Tbl.fold (fun k v acc -> (k, v) :: acc) subs [])))
+          Some
+            (substitute ~calls:Skip s
+               (Tbl.fold (fun k v acc -> (k, v) :: acc) subs [])))
   | _ -> None
 
 let pm_device_to_var =

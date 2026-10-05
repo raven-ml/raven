@@ -13,7 +13,7 @@ let uop =
 (* [substituted u subs] is [u] with [subs] applied, the storage that the queue
    data of its calls names included. *)
 let substituted u subs =
-  let u = Ops.substitute ~enter_calls:true u subs in
+  let u = Ops.substitute ~calls:Enter u subs in
   let mapped n = Option.value (List.assq_opt n subs) ~default:n in
   let requeued c =
     match Ops.arg c with
@@ -25,10 +25,13 @@ let substituted u subs =
         Some (c, Ops.replace ~arg:(Call { ci with aux }) c)
     | _ -> None
   in
-  Ops.substitute ~enter_calls:true u (List.filter_map requeued (Ops.toposort u))
+  Ops.substitute ~calls:Enter u
+    (List.filter_map requeued (Ops.toposort ~calls:Enter u))
 
 let numbered_like like u =
-  let made op g = List.filter (fun n -> Ops.op n = op) (Ops.toposort g) in
+  let made op g =
+    List.filter (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter g)
+  in
   let renumbered mine theirs =
     match (Ops.arg mine, Ops.arg theirs) with
     | Param p, Param q ->
@@ -52,14 +55,16 @@ let binaries_as_sources u =
         | _ -> None)
     | _ -> None
   in
-  let programs = List.filter (fun n -> Ops.op n = Program) (Ops.toposort u) in
-  Ops.substitute ~enter_calls:true u (List.filter_map recorded programs)
+  let programs =
+    List.filter (fun n -> Ops.op n = Program) (Ops.toposort ~calls:Enter u)
+  in
+  Ops.substitute ~calls:Enter u (List.filter_map recorded programs)
 
 let placeholders_like like u =
   let placeholders g =
     List.filter
       (fun n -> Ops.op n = Param && Option.is_some (Ops.tag n))
-      (Ops.toposort g)
+      (Ops.toposort ~calls:Enter g)
   in
   let renumbered mine theirs =
     match (Ops.arg mine, Ops.arg theirs) with
@@ -87,4 +92,5 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))
+  Ops.substitute ~calls:Skip u
+    (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))

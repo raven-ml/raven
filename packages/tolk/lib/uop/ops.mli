@@ -554,11 +554,17 @@ val identity_element : Op.t -> Dtype.t -> Dtype.const
 
 (** {1:graphs Graphs} *)
 
-val toposort : ?gate:(t -> bool) -> ?enter_calls:bool -> t -> t list
-(** [toposort ~gate ~enter_calls u] is [u] and the nodes it reaches, each after
-    its sources, in the order a depth-first walk of the sources, in order,
-    finishes them. The walk enters only the nodes [gate] accepts (default all),
-    and enters a call's body iff [enter_calls] (default [true]). *)
+(** The type for how a walk of a graph treats a call ({!Op.Call}), whose first
+    source is its body. *)
+type calls =
+  | Enter  (** A call's body is walked with its arguments. *)
+  | Skip  (** A call's body is left out: the call is its arguments alone. *)
+
+val toposort : ?gate:(t -> bool) -> calls:calls -> t -> t list
+(** [toposort ~gate ~calls u] is [u] and the nodes it reaches, each after its
+    sources, in the order a depth-first walk of the sources, in order, finishes
+    them. The walk enters only the nodes [gate] accepts (default all), and
+    treats calls as [calls] says. *)
 
 val topovisit : t -> (t -> 'a) -> 'a Tbl.t -> 'a
 (** [topovisit u f cache] is [f u], after [f] has been applied to each node [u]
@@ -576,9 +582,9 @@ val op_in_backward_slice_with_self : t -> Op.t list -> bool
 (** [op_in_backward_slice_with_self u ops] is [true] iff [u] or a node of
     [backward_slice u] has an operation in [ops]. *)
 
-val reaches : ?enter_calls:bool -> t -> t -> bool
-(** [reaches ~enter_calls u x] is [true] iff [x] is [u] or a node [u] reaches,
-    entering call bodies iff [enter_calls] (default [true]). *)
+val reaches : calls:calls -> t -> t -> bool
+(** [reaches ~calls u x] is [true] iff [x] is [u] or a node [u] reaches,
+    treating calls as [calls] says. *)
 
 val split_uop : t -> Op.t -> t list
 (** [split_uop u op] is the operands of the tree of [op] nodes rooted at [u],
@@ -1826,21 +1832,21 @@ val graph_rewrite :
   ?bottom_up:bool ->
   ?bpm:('ctx, t) Pattern_matcher.t ->
   ?walk:bool ->
-  ?enter_calls:bool ->
+  calls:calls ->
   ctx:'ctx ->
   t ->
   ('ctx, t) Pattern_matcher.t ->
   t
-(** [graph_rewrite ~ctx u m] is [u] rewritten to a fixed point: each node is
-    rebuilt on its rewritten sources, then rewritten with [m] until no rule
+(** [graph_rewrite ~calls ~ctx u m] is [u] rewritten to a fixed point: each node
+    is rebuilt on its rewritten sources, then rewritten with [m] until no rule
     applies, and each result is rewritten in turn. Each node is rewritten once,
     and shared nodes stay shared.
 
     With [bottom_up], [m] rewrites each node before its sources, to a fixed
     point, and the sources of its result are then rewritten; [bpm] adds such a
     matcher to a top-down rewrite. With [walk], a result is never rewritten
-    again, and {!Bottom_up_gate} is not caught. Call bodies are left alone
-    unless [enter_calls].
+    again, and {!Bottom_up_gate} is not caught. A call's body is rewritten with
+    its arguments under [Enter], and left alone under [Skip].
 
     Raises [Invalid_argument] if both [bottom_up] and [bpm] are given, or if the
     rewrite does not terminate: a bottom-up rule cycles, the work list exceeds
@@ -1849,13 +1855,14 @@ val graph_rewrite :
 val substitute :
   ?extra_pm:(t Tbl.t, t) Pattern_matcher.t ->
   ?walk:bool ->
-  ?enter_calls:bool ->
+  calls:calls ->
   t ->
   (t * t) list ->
   t
-(** [substitute u subs] is [u] with each node of [subs] replaced by its pair,
-    top-first, rewriting with [extra_pm] as well, which reads the substitution.
-    Nodes paired with themselves are ignored. *)
+(** [substitute ~calls u subs] is [u] with each node of [subs] replaced by its
+    pair, top-first, rewriting with [extra_pm] as well, which reads the
+    substitution, and treating calls as {!graph_rewrite} does. Nodes paired with
+    themselves are ignored. *)
 
 val pm_substitute : (t Tbl.t, t) Pattern_matcher.t
 (** [pm_substitute] replaces each node its context maps by its image. *)

@@ -168,7 +168,7 @@ let rec add p u =
       i
 
 let make u =
-  let nodes = Ops.toposort u in
+  let nodes = Ops.toposort ~calls:Enter u in
   let n = List.length nodes + 16 in
   let p =
     {
@@ -481,7 +481,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
         (fun n ->
           if Ops.op n = Op.Range && Ops.Nodes.mem n inside then Some (id n)
           else None)
-        (Ops.toposort s)
+        (Ops.toposort ~calls:Enter s)
     in
     let write acc =
       let opened =

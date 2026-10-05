@@ -568,10 +568,12 @@ let substitution () =
   let sin u = alu u Op.Sin [] in
   sink
     [
-      substitute e [ (a, b) ];
-      substitute e [ (a, a) ];
-      substitute (replace ~tag:(Some (Tag.Int 1)) O.(a + int 4)) [ (a, c) ];
-      substitute (sin (sin x)) [ (sin x, sqrt x) ];
+      substitute ~calls:Skip e [ (a, b) ];
+      substitute ~calls:Skip e [ (a, a) ];
+      substitute ~calls:Skip
+        (replace ~tag:(Some (Tag.Int 1)) O.(a + int 4))
+        [ (a, c) ];
+      substitute ~calls:Skip (sin (sin x)) [ (sin x, sqrt x) ];
     ]
 
 let clones () =
@@ -695,7 +697,8 @@ let minted sink =
         | Op.Alloc, Param p when not (List.mem_assoc p.slot acc) ->
             (p.slot, 1000 + List.length acc) :: acc
         | _ -> acc)
-      [] (toposort sink)
+      []
+      (toposort ~calls:Enter sink)
   in
   let renumber =
     Pattern_matcher.v (fun () ->
@@ -711,7 +714,7 @@ let minted sink =
               | _ -> None);
         ])
   in
-  graph_rewrite ~walk:true ~ctx:() sink renumber
+  graph_rewrite ~calls:Skip ~walk:true ~ctx:() sink renumber
 
 (* Each golden, the graph built for it, and whether it mints slots. *)
 let all =

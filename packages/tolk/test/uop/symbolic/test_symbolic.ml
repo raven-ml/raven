@@ -494,7 +494,7 @@ let powers =
           equal (list string) []
             (List.filter_map
                (fun u -> if Ops.op u = Sqrt then Some "Ops.SQRT" else None)
-               (Ops.toposort p)));
+               (Ops.toposort ~calls:Enter p)));
       test "x ** infinity and x ** NaN are left to xpow" (fun () ->
           List.iter
             (fun e ->

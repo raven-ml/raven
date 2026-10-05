@@ -489,7 +489,7 @@ let storage_of ?(devices = devices) ?(seed = 0) big =
           in
           Some { node = n; arg = p; before; buffers }
       | _ -> None)
-    (Ops.toposort ~enter_calls:false big)
+    (Ops.toposort ~calls:Skip big)
 
 let bound storage =
   List.filter_map
@@ -531,7 +531,7 @@ let by_slot storage f = List.map (fun s -> (s.arg.slot, f s)) storage
 (* [with_values vars big] is [big] with each variable replaced by its value in
    [vars], or its bound value. *)
 let with_values vars big =
-  Ops.substitute big
+  Ops.substitute ~calls:Skip big
     (List.filter_map
        (fun n ->
          match (Ops.op n, Ops.arg n) with
@@ -542,7 +542,7 @@ let with_values vars big =
                  Some (n, Ops.const ~dtype:(Ops.dtype n) (x :> Dtype.const))
              | None, None -> None)
          | _ -> None)
-       (Ops.toposort big))
+       (Ops.toposort ~calls:Enter big))
 
 (* What [big] leaves in its storage when run with [vars]. *)
 let expected ?(vars = []) big storage =
@@ -689,15 +689,17 @@ let parameterized ?(devices = devices) name =
     List.filter_map
       (fun n ->
         if Ops.op n = Buffer then Some (n, Ops.replace ~op:Param n) else None)
-      (Ops.toposort ~enter_calls:false big)
+      (Ops.toposort ~calls:Skip big)
   in
   let linear, vars = Schedule.create_linear_with_vars big in
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
-      (Ops.substitute linear parameters)
+      (Ops.substitute ~calls:Skip linear parameters)
   in
-  (Engine.link ~devices compiled, vars, Ops.substitute big parameters)
+  ( Engine.link ~devices compiled,
+    vars,
+    Ops.substitute ~calls:Skip big parameters )
 
 let runs_on_its_slots ?(devices = devices) name () =
   let s, vars, big = parameterized ~devices name in
@@ -908,7 +910,7 @@ let replays_a_scan =
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
-      (Ops.substitute linear parameters)
+      (Ops.substitute ~calls:Skip linear parameters)
   in
   let runs =
     Gen.list ~size:(Gen.int_range 1 4)
@@ -1321,7 +1323,7 @@ let spans_each_kernel () =
           match Ops.arg (Ops.nth u 0) with
           | Kernel k -> Some (Ops.function_name k)
           | _ -> None)
-      (Ops.toposort ~enter_calls:true compiled)
+      (Ops.toposort ~calls:Enter compiled)
   in
   let p = Nx_device.Profile.start () in
   Engine.run ~vars s [||];
@@ -1518,7 +1520,8 @@ let skipping_a_slot () =
         [ (u, Ops.replace u ~arg:(Param { p with slot = 3 })) ]
     | _ -> []
   in
-  Ops.substitute k (List.concat_map moved (Ops.toposort k))
+  Ops.substitute ~calls:Skip k
+    (List.concat_map moved (Ops.toposort ~calls:Enter k))
 
 let timing =
   let on f = cases ~name:fst "on" timed_on (fun (_, name) -> f name) in
@@ -2161,7 +2164,7 @@ let places_in_mapped_memory () =
           | _ -> false)
         (* The engine allocates those the device does not give. *)
         && Option.is_none ((devices "CPU:1").placeholder u))
-      (Ops.toposort ~enter_calls:true compiled)
+      (Ops.toposort ~calls:Enter compiled)
   in
   let bytes u = Ops.max_numel u * Dtype.itemsize (Ops.dtype u) in
   let is_mapped u =

@@ -602,18 +602,19 @@ let simple_pm =
       ])
 
 let rewrite_to value u =
-  let out = Ops.graph_rewrite ~ctx:() u simple_pm in
+  let out = Ops.graph_rewrite ~calls:Skip ~ctx:() u simple_pm in
   equal op Op.Const (Ops.op out);
   equal float_exact value (value_of out)
 
-(* Rewriting with the substitution of [pairs]. *)
+(* Rewriting with the substitution of [pairs], outside call bodies unless
+   [calls] is [Enter]. *)
 let table pairs =
   let t = Ops.Tbl.create 4 in
   List.iter (fun (k, v) -> Ops.Tbl.replace t k v) pairs;
   t
 
-let rw ?bottom_up ?walk ?enter_calls pairs u =
-  Ops.graph_rewrite ?bottom_up ?walk ?enter_calls ~ctx:(table pairs) u
+let rw ?bottom_up ?walk ?(calls = Ops.Skip) pairs u =
+  Ops.graph_rewrite ?bottom_up ?walk ~calls ~ctx:(table pairs) u
     Ops.pm_substitute
 
 let sin u = Ops.alu u Op.Sin []
@@ -658,12 +659,16 @@ let rewriting =
           rewrite_to 3. (Ops.int 4));
       test "rewrites a node's result in turn" (fun () ->
           let v = fvar "v" in
-          let out = Ops.graph_rewrite ~ctx:() Ops.O.(v + c1 + c2) simple_pm in
+          let out =
+            Ops.graph_rewrite ~calls:Skip ~ctx:() Ops.O.(v + c1 + c2) simple_pm
+          in
           equal uop Ops.O.(v + float 3.) out);
       test "keeps shared nodes shared" (fun () ->
           let v1 = fvar "v" and v2 = fvar "v" in
           let out =
-            Ops.graph_rewrite ~ctx:() Ops.O.(v1 + v2) (Pm.v (fun () -> []))
+            Ops.graph_rewrite ~calls:Skip ~ctx:()
+              Ops.O.(v1 + v2)
+              (Pm.v (fun () -> []))
           in
           is_true (Ops.nth out 0 == Ops.nth out 1));
       test "a rule that returns its node declines, whatever the direction"
@@ -672,13 +677,14 @@ let rewriting =
             Pm.v (fun () ->
                 [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x")) ])
           in
-          equal uop a (Ops.graph_rewrite ~ctx:() a m);
-          equal uop a (Ops.graph_rewrite ~bottom_up:true ~ctx:() a m));
+          equal uop a (Ops.graph_rewrite ~calls:Skip ~ctx:() a m);
+          equal uop a
+            (Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() a m));
       test "rejects rules that never settle, whatever the direction" (fun () ->
           rejects (fun () ->
-              Ops.graph_rewrite ~ctx:() (Ops.int 3) three_to_four);
+              Ops.graph_rewrite ~calls:Skip ~ctx:() (Ops.int 3) three_to_four);
           rejects (fun () ->
-              Ops.graph_rewrite ~bottom_up:true ~ctx:() (Ops.int 3)
+              Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() (Ops.int 3)
                 three_to_four));
       test "rejects a replacement that depends on the node it replaces"
         (fun () ->
@@ -705,12 +711,14 @@ let rewriting =
                 ])
           in
           rejects (fun () ->
-              Ops.graph_rewrite ~bottom_up:true ~ctx:() (Ops.sink [ staged ]) m));
+              Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:()
+                (Ops.sink [ staged ]) m));
       test "a gate keeps a bottom-up node and leaves its sources unvisited"
         (fun () ->
           let m = Pm.v (fun () -> [ gate; unreachable Op.Mul ]) in
           let u = Ops.O.((a * a) + (b * c)) in
-          equal uop u (Ops.graph_rewrite ~bottom_up:true ~ctx:() u m);
+          equal uop u
+            (Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() u m);
           let m =
             Pm.v (fun () ->
                 [
@@ -723,24 +731,26 @@ let rewriting =
           in
           equal uop
             Ops.O.(int 2 * a)
-            (Ops.graph_rewrite ~bottom_up:true ~ctx:() Ops.O.(a + a) m));
+            (Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:()
+               Ops.O.(a + a)
+               m));
       test "rejects bottom_up with bpm" (fun () ->
           rejects (fun () ->
-              Ops.graph_rewrite ~bottom_up:true
+              Ops.graph_rewrite ~calls:Skip ~bottom_up:true
                 ~bpm:(Pm.v (fun () -> []))
                 ~ctx:() a
                 (Pm.v (fun () -> []))));
       test "a walk lets a gate escape" (fun () ->
           let m = Pm.v (fun () -> [ gate ]) in
           raises Ops.Bottom_up_gate (fun () ->
-              Ops.graph_rewrite ~walk:true ~bottom_up:true ~ctx:()
+              Ops.graph_rewrite ~calls:Skip ~walk:true ~bottom_up:true ~ctx:()
                 Ops.O.(a + b)
                 m));
       test "bpm rewrites before the sources and the matcher after them"
         (fun () ->
           let log = ref [] in
           ignore
-            (Ops.graph_rewrite ~bpm:(recorder " bpm") ~ctx:log
+            (Ops.graph_rewrite ~calls:Skip ~bpm:(recorder " bpm") ~ctx:log
                Ops.O.(int 1 + int 2)
                (recorder " pm"));
           equal (list string)
@@ -763,16 +773,18 @@ let rewriting =
                 ])
           in
           let one = Ops.int 1 in
-          let g = Ops.graph_rewrite ~ctx:() Ops.O.(one + one) plus_one in
+          let g =
+            Ops.graph_rewrite ~calls:Skip ~ctx:() Ops.O.(one + one) plus_one
+          in
           let two = Ops.rtag ~tag:(Int 1) (Ops.int 2) in
           equal uop (Ops.v ~src:[ two; two ] Op.Add) g;
-          is_true (Ops.graph_rewrite ~ctx:() g plus_one == g);
-          let g = Ops.graph_rewrite ~ctx:() g Ops.remove_all_tags in
+          is_true (Ops.graph_rewrite ~calls:Skip ~ctx:() g plus_one == g);
+          let g = Ops.graph_rewrite ~calls:Skip ~ctx:() g Ops.remove_all_tags in
           equal uop Ops.O.(int 2 + int 2) g;
           let three = Ops.rtag ~tag:(Int 1) (Ops.int 3) in
           equal uop
             (Ops.v ~src:[ three; three ] Op.Add)
-            (Ops.graph_rewrite ~ctx:() g plus_one));
+            (Ops.graph_rewrite ~calls:Skip ~ctx:() g plus_one));
       test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
           equal string "REWRITE_STACK_LIMIT"
             (Setting.key Setting.rewrite_stack_limit);
@@ -782,7 +794,8 @@ let rewriting =
             [ B (Setting.rewrite_stack_limit, 8) ]
             (fun () ->
               rejects (fun () ->
-                  Ops.graph_rewrite ~ctx:() wide (Pm.v (fun () -> [])))));
+                  Ops.graph_rewrite ~calls:Skip ~ctx:() wide
+                    (Pm.v (fun () -> [])))));
     ]
 
 let substituting =
@@ -796,33 +809,38 @@ let substituting =
       test "replaces a node wherever it is" (fun () ->
           equal uop
             Ops.O.(b + int 4)
-            (Ops.substitute Ops.O.(a + int 4) [ (a, b) ]);
+            (Ops.substitute ~calls:Skip Ops.O.(a + int 4) [ (a, b) ]);
           equal uop
             Ops.O.(c + int 4 + c)
-            (Ops.substitute Ops.O.(a + int 4 + b) [ (a, c); (b, c) ]);
+            (Ops.substitute ~calls:Skip
+               Ops.O.(a + int 4 + b)
+               [ (a, c); (b, c) ]);
           equal uop
             Ops.O.(b + int 4 + (b + int 5))
-            (Ops.substitute Ops.O.(a + int 4 + (a + int 5)) [ (a, b) ]));
+            (Ops.substitute ~calls:Skip
+               Ops.O.(a + int 4 + (a + int 5))
+               [ (a, b) ]));
       test "replaces the node nearest the root first" (fun () ->
           let y = fvar "y" in
-          equal uop (sin y) (Ops.substitute (sin (sin x)) [ (sin x, y) ]);
+          equal uop (sin y)
+            (Ops.substitute ~calls:Skip (sin (sin x)) [ (sin x, y) ]);
           equal uop
             (sin (Ops.sqrt x))
-            (Ops.substitute (sin (sin x)) [ (sin x, Ops.sqrt x) ]);
+            (Ops.substitute ~calls:Skip (sin (sin x)) [ (sin x, Ops.sqrt x) ]);
           equal uop
             (Ops.sqrt (Ops.sqrt x))
-            (Ops.substitute
+            (Ops.substitute ~calls:Skip
                (sin (sin x))
                [ (sin x, Ops.sqrt x); (sin (sin x), Ops.sqrt (sin x)) ]));
       test "keeps a rebuilt node's tag" (fun () ->
           let t u = Ops.replace ~tag:(Some (Int 1)) u in
           equal uop
             (t Ops.O.(b + int 4))
-            (Ops.substitute (t Ops.O.(a + int 4)) [ (a, b) ]));
+            (Ops.substitute ~calls:Skip (t Ops.O.(a + int 4)) [ (a, b) ]));
       test "ignores nodes paired with themselves" (fun () ->
           let e = Ops.O.(a + int 4) in
-          is_true (Ops.substitute e [ (a, a) ] == e);
-          is_true (Ops.substitute e [] == e));
+          is_true (Ops.substitute ~calls:Skip e [ (a, a) ] == e);
+          is_true (Ops.substitute ~calls:Skip e [] == e));
       test "rewrites with extra_pm too, never inside a replacement" (fun () ->
           let three = Ops.int 3 and four = Ops.int 4 in
           let s = Ops.O.(three + four) in
@@ -838,24 +856,29 @@ let substituting =
           in
           equal uop
             Ops.O.(int 7 + int 2)
-            (Ops.substitute ~extra_pm:(Pm.with_ctx visit)
+            (Ops.substitute ~calls:Skip ~extra_pm:(Pm.with_ctx visit)
                Ops.O.(s + int 2)
                [ (s, Ops.int 7) ]));
       test "walk does not enter a replacement" (fun () ->
           equal uop
             Ops.O.(b + c + int 4)
-            (Ops.substitute ~walk:true
+            (Ops.substitute ~calls:Skip ~walk:true
                Ops.O.(a + int 4)
                [ (a, Ops.O.(b + c)); (b, d) ]);
           equal uop
             Ops.O.(d + c + int 4)
-            (Ops.substitute Ops.O.(a + int 4) [ (a, Ops.O.(b + c)); (b, d) ]));
+            (Ops.substitute ~calls:Skip
+               Ops.O.(a + int 4)
+               [ (a, Ops.O.(b + c)); (b, d) ]));
       prop "is idempotent when no replacement holds a replaced node"
         Nodes.gen_recipe (fun r ->
           let vars = Nodes.leaves () in
           let u = Nodes.build vars r in
-          cover "replaces" (List.memq vars.(0) (Ops.toposort u));
-          let f u = Ops.substitute u [ (vars.(0), Ops.O.(vars.(1) + int 1)) ] in
+          cover "replaces" (List.memq vars.(0) (Ops.toposort ~calls:Enter u));
+          let f u =
+            Ops.substitute ~calls:Skip u
+              [ (vars.(0), Ops.O.(vars.(1) + int 1)) ]
+          in
           equal uop (f u) (f (f u)));
     ]
 
@@ -888,7 +911,8 @@ let walks =
                Ops.O.(a + int 4)));
       test "top-down, applies a bouncing rule once" (fun () ->
           equal uop (Ops.int 4)
-            (Ops.graph_rewrite ~walk:true ~ctx:() (Ops.int 3) three_to_four));
+            (Ops.graph_rewrite ~calls:Skip ~walk:true ~ctx:() (Ops.int 3)
+               three_to_four));
       test "top-down, rewrites the sources before the rebuilt node" (fun () ->
           let n1 = sin x in
           equal uop
@@ -904,7 +928,7 @@ let walks =
       test "top-down, visits after the sources" (fun () ->
           let log = ref [] in
           ignore
-            (Ops.graph_rewrite ~walk:true ~ctx:log
+            (Ops.graph_rewrite ~calls:Skip ~walk:true ~ctx:log
                Ops.O.(int 1 + int 2)
                (recorder ""));
           equal (list string) [ "1"; "2"; "Ops.ADD" ] (recorded log));
@@ -932,12 +956,12 @@ let walks =
                (sin n1)));
       test "bottom-up, applies a bouncing rule once" (fun () ->
           equal uop (Ops.int 4)
-            (Ops.graph_rewrite ~bottom_up:true ~walk:true ~ctx:() (Ops.int 3)
-               three_to_four));
+            (Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~walk:true ~ctx:()
+               (Ops.int 3) three_to_four));
       test "bottom-up, visits before the sources" (fun () ->
           let log = ref [] in
           ignore
-            (Ops.graph_rewrite ~bottom_up:true ~walk:true ~ctx:log
+            (Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~walk:true ~ctx:log
                Ops.O.(int 1 + int 2)
                (recorder ""));
           equal (list string) [ "Ops.ADD"; "1"; "2" ] (recorded log));
@@ -945,7 +969,8 @@ let walks =
         (fun () ->
           let log = ref [] in
           ignore
-            (Ops.graph_rewrite ~walk:true ~bpm:(recorder " bpm") ~ctx:log
+            (Ops.graph_rewrite ~calls:Skip ~walk:true ~bpm:(recorder " bpm")
+               ~ctx:log
                Ops.O.(int 1 + int 2)
                (recorder " pm"));
           equal (list string)
@@ -965,7 +990,7 @@ let walks =
                 ])
           in
           let out =
-            Ops.graph_rewrite ~walk:true ~bpm ~ctx:log
+            Ops.graph_rewrite ~calls:Skip ~walk:true ~bpm ~ctx:log
               Ops.O.(one + two)
               (recorder " pm")
           in
@@ -992,25 +1017,22 @@ let call_bodies =
                 uop (Ops.sink [ call ])
                 (rw ~walk ~bottom_up [ (staged, call) ] (Ops.sink [ staged ])))
             modes);
-      test "a body is rewritten only with enter_calls, its arguments always"
+      test "a body is rewritten only under Enter, its arguments always"
         (fun () ->
           let call = Ops.call (Ops.custom_function "f" [ a ]) [ a ] in
           List.iter
             (fun (walk, bottom_up) ->
               List.iter
-                (fun enter_calls ->
+                (fun (name, calls, body) ->
                   equal
                     ~msg:
-                      (Printf.sprintf "%s enter_calls=%b"
+                      (Printf.sprintf "%s %s"
                          (mode_name (walk, bottom_up))
-                         enter_calls)
+                         name)
                     uop
-                    (Ops.call
-                       (Ops.custom_function "f"
-                          [ (if enter_calls then b else a) ])
-                       [ b ])
-                    (rw ~walk ~bottom_up ~enter_calls [ (a, b) ] call))
-                [ false; true ])
+                    (Ops.call (Ops.custom_function "f" [ body ]) [ b ])
+                    (rw ~walk ~bottom_up ~calls [ (a, b) ] call))
+                [ ("Skip", Ops.Skip, a); ("Enter", Ops.Enter, b) ])
             modes);
       test "a body shared with a sibling is left alone, the sibling rewritten"
         (fun () ->
@@ -1025,14 +1047,14 @@ let call_bodies =
                 (Ops.sink [ b; call ])
                 (rw ~walk ~bottom_up [ (a, b) ] (Ops.sink [ a; call ])))
             modes);
-      test "substitute leaves call bodies alone unless enter_calls" (fun () ->
+      test "substitute leaves call bodies alone unless under Enter" (fun () ->
           let call = Ops.call (Ops.custom_function "f" [ a ]) [ a ] in
           equal uop
             (Ops.call (Ops.custom_function "f" [ a ]) [ b ])
-            (Ops.substitute call [ (a, b) ]);
+            (Ops.substitute ~calls:Skip call [ (a, b) ]);
           equal uop
             (Ops.call (Ops.custom_function "f" [ b ]) [ b ])
-            (Ops.substitute ~enter_calls:true call [ (a, b) ]));
+            (Ops.substitute ~calls:Enter call [ (a, b) ]));
     ]
 
 (* Fixed points, over expressions of weak integers *)
@@ -1097,7 +1119,7 @@ let rec expr x = function
 
 let fixed_points =
   let x = weak_var "x" (-5) 5 in
-  let rewrite u = Ops.graph_rewrite ~ctx:() u fold in
+  let rewrite u = Ops.graph_rewrite ~calls:Skip ~ctx:() u fold in
   group "fixed points"
     [
       prop "rewriting a rewritten graph changes nothing" gen_expr (fun e ->
@@ -1114,7 +1136,7 @@ let fixed_points =
         (fun e ->
           let u = expr x e in
           equal uop (rewrite u)
-            (Ops.graph_rewrite ~bottom_up:true ~ctx:() u fold));
+            (Ops.graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() u fold));
     ]
 
 (* The matchers of the module *)
@@ -1128,18 +1150,21 @@ let module_matchers =
         (fun () ->
           let leaf = Ops.rtag ~tag:(String "leaf") (Ops.int 1) in
           let root = Ops.rtag ~tag:(String "root") Ops.O.(leaf + int 2) in
-          let stripped = Ops.graph_rewrite ~ctx:() root Ops.remove_all_tags in
+          let stripped =
+            Ops.graph_rewrite ~calls:Skip ~ctx:() root Ops.remove_all_tags
+          in
           equal uop Ops.O.(int 1 + int 2) stripped;
           let untagged = Ops.O.(int 4 + int 3) in
           is_true
-            (Ops.graph_rewrite ~ctx:() untagged Ops.remove_all_tags == untagged));
+            (Ops.graph_rewrite ~calls:Skip ~ctx:() untagged Ops.remove_all_tags
+            == untagged));
       test "pm_drop_after keeps the first source of each after" (fun () ->
           let st =
             Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.float ~dtype:Float32 1.)
           in
           equal uop
             Ops.O.(p + float 1.)
-            (Ops.graph_rewrite ~ctx:()
+            (Ops.graph_rewrite ~calls:Skip ~ctx:()
                Ops.O.(Ops.after p [ st ] + float 1.)
                Ops.pm_drop_after));
       test "resolve_returned_after finds the one store into an output"

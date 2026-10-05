@@ -14,7 +14,7 @@ let arenas linear u =
   let held = Ops.backward_slice_with_self linear in
   List.filter
     (fun n -> Ops.op n = Buffer && not (Ops.Nodes.mem n held))
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 (* [numbered_as golden linear u] is [u] with its arenas numbered as [golden]'s:
    new storage takes its number from a counter the process shares, so the
@@ -23,7 +23,7 @@ let numbered_as golden linear u =
   let slot n =
     match Ops.arg n with Param p -> p | _ -> fail "an arena has a parameter"
   in
-  Ops.substitute u
+  Ops.substitute ~calls:Skip u
     (List.map2
        (fun mine theirs ->
          ( mine,

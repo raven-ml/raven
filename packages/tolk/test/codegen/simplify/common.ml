@@ -10,7 +10,7 @@ let i n = `Int (Bigint.of_int n)
 
 (* Passes *)
 
-let rewrite m u = Ops.graph_rewrite ~ctx:() u m
+let rewrite m u = Ops.graph_rewrite ~calls:Skip ~ctx:() u m
 let flatten u = rewrite Simplify.pm_flatten_range u
 let unparent u = rewrite Simplify.pm_reduce_unparented u
 let collapse u = rewrite Simplify.pm_reduce_collapse u
@@ -20,11 +20,11 @@ let load_collapse u = rewrite Simplify.pm_load_collapse u
 (* The range passes read a context, which starts empty; the pipeline flattens
    the ranges of what they build. *)
 let split u =
-  Ops.graph_rewrite ~ctx:(Ops.Tbl.create 8) u
+  Ops.graph_rewrite ~calls:Skip ~ctx:(Ops.Tbl.create 8) u
     (Pm.append Simplify.pm_split_ranges (Pm.with_ctx Simplify.pm_flatten_range))
 
 let simplify u =
-  Ops.graph_rewrite ~ctx:(Ops.Tbl.create 8) u
+  Ops.graph_rewrite ~calls:Skip ~ctx:(Ops.Tbl.create 8) u
     (Pm.append
        (Pm.with_ctx Simplify.pm_flatten_range)
        Simplify.pm_simplify_ranges)
@@ -53,12 +53,15 @@ let gated_load valid idx =
 
 (* Inspection *)
 
-let ranges u = List.filter (fun n -> Ops.op n = Range) (Ops.toposort u)
+let ranges u =
+  List.filter (fun n -> Ops.op n = Range) (Ops.toposort ~calls:Enter u)
+
 let size r = Bigint.to_int (Ops.to_z (Ops.nth r 0))
 let sizes u = List.sort compare (List.map size (ranges u))
 
 let count op u =
-  List.length (List.filter (fun n -> Ops.op n = op) (Ops.toposort u))
+  List.length
+    (List.filter (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u))
 
 (* Values
 
@@ -103,7 +106,7 @@ let leaves u =
       | Range -> Ops.Nodes.mem n free
       | Param -> true
       | _ -> false)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 (* [binding rng k us] is the [k]th binding of the leaves of [us], or [None] if a
    range it binds is empty. Storage elements lie in [-3, 12], so that an index

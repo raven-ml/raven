@@ -2868,7 +2868,7 @@ stores through a pad.
   under one far condition is linear in its length` and tinygrad's
   `test_where_closure_folding*` goldens; the Ops suite (`test/uop/ops`):
   `graphs › reaches is membership in the node's toposort` and `› reaches
-  enters call bodies`; the rune bench's `Jit/jit-run-chain`.
+  ~calls:Enter enters call bodies`; the rune bench's `Jit/jit-run-chain`.
 
 ## D94. A node keeps the operations it reaches
 

@@ -100,7 +100,7 @@ let memory_coalescing sink (r : Renderer.t) =
               end
           | _ -> invalid_arg "an index of memory needs a buffer and one index"
         end)
-      (toposort sink);
+      (toposort ~calls:Enter sink);
     (* Build the replacements. *)
     let replacements = ref [] in
     List.iter
@@ -204,5 +204,5 @@ let memory_coalescing sink (r : Renderer.t) =
             take run)
           (runs sorted))
       (List.rev !groups);
-    substitute sink !replacements
+    substitute ~calls:Skip sink !replacements
   end

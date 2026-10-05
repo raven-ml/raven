@@ -65,7 +65,7 @@ let realize_srcs ctx rb =
 (* An assign needs this only for a write-after-read hazard, the destination read
    by the value stored into it. *)
 let realize_store_after_src ctx dest s =
-  if List.memq (base dest) (toposort ~enter_calls:false s) then realize ctx s
+  if List.memq (base dest) (toposort ~calls:Skip s) then realize ctx s
 
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
@@ -286,7 +286,7 @@ let apply_reshape in_shape out_shape urngs =
       (combined, []) (List.rev in_shape)
   in
   (* Simplifying merges what reshapes of reshapes would otherwise stack. *)
-  graph_rewrite ~ctx:() (Ops.sink axes_out)
+  graph_rewrite ~calls:Skip ~ctx:() (Ops.sink axes_out)
     (Pattern_matcher.concat
        Symbolic.[ symbolic; pm_simplify_valid; pm_drop_and_clauses ])
 
@@ -316,7 +316,9 @@ let apply_movement_op in_shape m rngs =
             let inside =
               bitwise_and (ge r (sint off)) (lt r (sint Sint.(sh + off)))
             in
-            valid (sub r (sint off)) (graph_rewrite ~ctx:() inside pad_valid))
+            valid
+              (sub r (sint off))
+              (graph_rewrite ~calls:Skip ~ctx:() inside pad_valid))
         (List.combine rngs in_shape)
         b
   | Reshape out_shape ->
@@ -334,9 +336,11 @@ let apply_movement_op in_shape m rngs =
           (Nodes.to_list (ranges sink))
       in
       let reshaped =
-        apply_reshape in_shape out_shape (substitute sink sub_array)
+        apply_reshape in_shape out_shape (substitute ~calls:Skip sink sub_array)
       in
-      src (substitute reshaped (List.map (fun (r, p) -> (p, r)) sub_array))
+      src
+        (substitute ~calls:Skip reshaped
+           (List.map (fun (r, p) -> (p, r)) sub_array))
 
 (* Rangeify *)
 
@@ -396,7 +400,7 @@ let merge_consumer_rngs rctx x consumer_rngs =
     List.map2
       (fun local rngs ->
         let minimum_valid = usum (bool false) (List.map get_valid rngs) in
-        graph_rewrite ~ctx:()
+        graph_rewrite ~calls:Skip ~ctx:()
           (valid (List.hd local) minimum_valid)
           Symbolic.symbolic)
       locals axes
@@ -536,8 +540,8 @@ let run_rangeify ?(debug = false) tsink =
       range_idx = 0;
     }
   in
-  ignore (graph_rewrite ~ctx:rctx tsink pm_generate_realize_map);
-  let tsink_toposort = toposort ~gate:gate_kernel_sink tsink in
+  ignore (graph_rewrite ~calls:Skip ~ctx:rctx tsink pm_generate_realize_map);
+  let tsink_toposort = toposort ~calls:Enter ~gate:gate_kernel_sink tsink in
   let consumer_map = Tbl.create 256 in
   List.iter (fun x -> Tbl.replace consumer_map x []) tsink_toposort;
   List.iter
@@ -561,7 +565,8 @@ let run_rangeify ?(debug = false) tsink =
     Setting.context
       [ B (Setting.spec, spec) ]
       (fun () ->
-        graph_rewrite ~bottom_up:true ~ctx:rctx tsink pm_apply_rangeify)
+        graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:rctx tsink
+          pm_apply_rangeify)
   in
   (* A value without a device that must be stored lives on the sink's. *)
-  graph_rewrite ~ctx:(device tsink) tsink pm_fix_deviceless
+  graph_rewrite ~calls:Skip ~ctx:(device tsink) tsink pm_fix_deviceless

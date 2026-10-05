@@ -226,7 +226,7 @@ let keeps_value d env =
     (Ops.op u = Op.Floordiv || Ops.op u = Op.Floormod)
     && Dtype.equal_const (Interpreter.eval ~vars:env (Ops.nth u 1)) (i 0)
   in
-  assume (not (List.exists divides_by_zero (Ops.toposort d)));
+  assume (not (List.exists divides_by_zero (Ops.toposort ~calls:Enter d)));
   let r = rewritten_alone d in
   cover "rewritten" (not (Ops.equal d r));
   equal Dtypes.const ~msg:"the value of the rewrite"
@@ -279,7 +279,7 @@ let golden_divisions =
     | o -> o = Op.Const || o = Op.Cast || Op.Set.mem o Op.Set.alu
   in
   List.concat_map recorded goldens
-  |> List.filter (fun d -> List.for_all evaluable (Ops.toposort d))
+  |> List.filter (fun d -> List.for_all evaluable (Ops.toposort ~calls:Enter d))
 
 (* Random divisions *)
 

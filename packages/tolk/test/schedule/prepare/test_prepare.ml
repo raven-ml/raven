@@ -153,7 +153,7 @@ let storage u =
       | (Param | Buffer | Alloc), Param p when p.addrspace <> Some Alu ->
           Some (n, p)
       | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let filled u =
   let sharded =
@@ -161,7 +161,7 @@ let filled u =
       (fun n ->
         if Ops.op n = Unshard then Some (Ops.storage_base (Ops.nth n 0))
         else None)
-      (Ops.toposort u)
+      (Ops.toposort ~calls:Enter u)
   in
   List.map
     (fun (n, (p : Ops.param_arg)) ->
@@ -228,7 +228,7 @@ let values =
    which [pm_mops › pads] states. Storage element [j] holds [j + 1], so that a
    padded [0] is told from a read. *)
 
-let mops u = Ops.graph_rewrite ~ctx:() u Prepare.pm_mops
+let mops u = Ops.graph_rewrite ~calls:Skip ~ctx:() u Prepare.pm_mops
 
 let range ?(axis_type = Ops.Axis_type.Loop) n axis =
   Ops.range ~axis_type (Int n) [ axis ]
@@ -312,7 +312,9 @@ let pm_mops_rules =
           let row = Ops.cast (Ops.index state [ r1 ]) Weak_int in
           let moved = mops (Ops.index (Ops.permute x [ 1; 0 ]) [ r0; row ]) in
           let states =
-            List.filter (fun u -> Ops.op u = After) (Ops.toposort moved)
+            List.filter
+              (fun u -> Ops.op u = After)
+              (Ops.toposort ~calls:Enter moved)
           in
           equal (list uop) [ state ] states);
     ]
@@ -623,7 +625,9 @@ let contiguous_view_laws =
 let out = Ops.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
 let input slot = Ops.param ~device:cpu ~shape:[ Int 16 ] slot Float32
 let stores value = Ops.sink [ Ops.after out [ Ops.store out value ] ]
-let has op u = List.exists (fun n -> Ops.op n = op) (Ops.toposort u)
+let has op u =
+  List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 let calls u =
@@ -632,7 +636,7 @@ let calls u =
       match Ops.arg n with
       | Call c when Ops.op n = Call -> Some c.name
       | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let copy_body =
   Ops.sink
@@ -756,7 +760,7 @@ let calls_inline =
                 match Ops.arg n with
                 | Param p when Ops.op n = Alloc -> Some p.slot
                 | _ -> None)
-              (Ops.toposort u)
+              (Ops.toposort ~calls:Enter u)
           in
           let renamed =
             slots (prepare (Ops.sink [ Ops.call body [ out; input 1 ] ]))
@@ -834,7 +838,7 @@ let earliest =
                  match Ops.arg n with
                  | Param { size = Some s; _ } when Ops.op n = Alloc -> Some s
                  | _ -> None)
-               (Ops.toposort u)));
+               (Ops.toposort ~calls:Enter u)));
       test "a detach and a gradient marker are their source" (fun () ->
           let value = Ops.exp2 (input 1) in
           let marked =
@@ -868,7 +872,7 @@ let earliest =
                  match Ops.arg n with
                  | Param { size = Some s; _ } when Ops.op n = Alloc -> Some s
                  | _ -> None)
-               (Ops.toposort u)));
+               (Ops.toposort ~calls:Enter u)));
       test
         "a value that permutes other storage and reads its destination is \
          stored directly" (fun () ->
@@ -920,7 +924,7 @@ let earliest =
             [ Single "CPU:2" ]
             (List.filter_map
                (fun n -> if Ops.op n = Alloc then Ops.device n else None)
-               (Ops.toposort u)));
+               (Ops.toposort ~calls:Enter u)));
       test "the second of two equal stores into one storage is dropped"
         (fun () ->
           let v = input 1 in
@@ -944,7 +948,7 @@ let earliest =
           is_true
             (List.exists
                (fun n -> Ops.op n = Bitcast && Ops.dtype (Ops.nth n 0) = Uint8)
-               (Ops.toposort u)));
+               (Ops.toposort ~calls:Enter u)));
       test "a value with an empty axis is zero" (fun () ->
           let none = Ops.param ~device:cpu ~shape:[ Int 0 ] 0 Float32 in
           let nothing = Ops.param ~device:cpu ~shape:[ Int 0 ] 1 Float32 in

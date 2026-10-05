@@ -312,7 +312,7 @@ let stage trace s (r : Trips.request) xs reverse =
       ys
   in
   let body =
-    Ops.substitute ~enter_calls:false
+    Ops.substitute ~calls:Skip
       (Loop.cut ~own next args (Ops.sink (List.rev !stores)))
       !renumbered
   in

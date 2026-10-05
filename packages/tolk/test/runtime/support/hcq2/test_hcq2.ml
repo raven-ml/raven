@@ -32,7 +32,8 @@ let the_batch linear =
   | bs -> failf "one batch, not %d" (List.length bs)
 
 let tag_of u = match Ops.tag u with Some (String s) -> s | _ -> ""
-let nodes op u = List.filter (fun n -> Ops.op n = op) (Ops.toposort u)
+let nodes op u =
+  List.filter (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
 
 let instruction c =
   match (Ops.op c, Ops.arg c) with
@@ -429,7 +430,7 @@ let timeline_values =
               (List.filter
                  (fun n ->
                    Ops.op n = Custom_function && Ops.arg n = String "hcq_fence")
-                 (Ops.toposort batch))
+                 (Ops.toposort ~calls:Enter batch))
           in
           match fences with
           | [ fence ] ->
@@ -968,7 +969,7 @@ let stamps =
               (fun p -> (param_arg p).size)
               (List.filter
                  (fun n -> tag_of n = "slots")
-                 (Ops.toposort (sched ~profile calls)))
+                 (Ops.toposort ~calls:Enter (sched ~profile calls)))
           in
           equal
             (list (option int))
@@ -1070,7 +1071,7 @@ let lowering =
                 (fun n ->
                   is_false ~msg:"a variable" (Ops.is_variable n);
                   is_false ~msg:"a load" (Ops.op n = Load))
-                (Ops.toposort p))
+                (Ops.toposort ~calls:Enter p))
             patches);
       test "an input's address is loaded from the address table on each run"
         (fun () ->
@@ -1198,7 +1199,9 @@ let compiling =
               (linear [ Ops.store_call dst src ])
           in
           let staging =
-            List.filter (fun n -> tag_of n = "staging") (Ops.toposort compiled)
+            List.filter
+              (fun n -> tag_of n = "staging")
+              (Ops.toposort ~calls:Enter compiled)
           in
           equal
             (list (pair (option int) (list string)))
@@ -1246,7 +1249,8 @@ let new_floats name xs =
 let storage_of calls =
   List.sort_uniq Ops.compare
     (List.concat_map
-       (fun c -> List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort c))
+       (fun c ->
+         List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~calls:Enter c))
        calls)
 
 (* Buffers for each storage node of [calls], one per device of its placement,
@@ -1907,7 +1911,9 @@ let word_tests =
               (List.tl (Ops.src lowered))
           in
           let link_words =
-            List.concat_map (fun st -> Ops.toposort (Ops.nth st 1)) stores
+            List.concat_map
+              (fun st -> Ops.toposort ~calls:Enter (Ops.nth st 1))
+              stores
           in
           is_true ~msg:"the constant row at link"
             (List.exists (fun n -> n == u32 1) link_words);
@@ -1918,7 +1924,7 @@ let word_tests =
                  Ops.op n = Param
                  && Ops.is_variable n
                  && Ops.expr n = Ops.expr (Hcq2.value d))
-               (Ops.toposort host)));
+               (Ops.toposort ~calls:Enter host)));
       test "each region starts at its own alignment in the buffer of its name"
         (fun () ->
           let d = "CPU:1" in
@@ -1967,7 +1973,7 @@ let word_tests =
                     | Shrink [ (Int start, _) ] -> Some start
                     | _ -> None)
                 | _ -> None)
-              (Ops.toposort ~enter_calls:true compiled)
+              (Ops.toposort ~calls:Enter compiled)
           in
           equal (list int) [ 0; 256; 384 ] (List.sort_uniq Int.compare starts));
       test
@@ -1993,7 +1999,7 @@ let word_tests =
           is_true ~msg:"the buffer of the regions"
             (List.exists
                (fun u -> Ops.tag u = Some (String "r_q"))
-               (Ops.toposort buf)));
+               (Ops.toposort ~calls:Enter buf)));
       test
         "a region addressed through another region is laid out once, in the \
          buffer of its name" (fun () ->
@@ -2038,7 +2044,7 @@ let word_tests =
           let inner =
             List.filter
               (fun u -> Ops.tag u = Some (String "inner_compute_0"))
-              (Ops.toposort ~enter_calls:true compiled)
+              (Ops.toposort ~calls:Enter compiled)
           in
           equal int 1 (List.length inner));
       test "a word written at several offsets is written by one loop" (fun () ->
@@ -2400,7 +2406,7 @@ let ranges =
           let loops =
             List.filter
               (fun n -> Ops.op n = End && List.memq r (List.tl (Ops.src n)))
-              (Ops.toposort batch)
+              (Ops.toposort ~calls:Enter batch)
           in
           equal int ~msg:"one loop over the range" 1 (List.length loops);
           is_true ~msg:"around the queue's commands"

@@ -58,7 +58,7 @@ let build_range_map sink =
     (fun x ->
       if is Op.Range x && List.mem (axis_type x) Axis_type.[ Unroll; Upcast ]
       then Hashtbl.replace ctx (axis_id x) (Hashtbl.length ctx))
-    (toposort sink);
+    (toposort ~calls:Enter sink);
   ctx
 
 let expand_reduce r =
@@ -411,7 +411,10 @@ let merge_reduce_ends sink =
             if i > 0 then next_axis := !next_axis + List.length r;
             let mapped =
               if i = 0 then ends
-              else List.map (fun e -> substitute e (List.combine r tr)) ends
+              else
+                List.map
+                  (fun e -> substitute ~calls:Skip e (List.combine r tr))
+                  ends
             in
             let merged =
               match mapped with
@@ -421,7 +424,9 @@ let merge_reduce_ends sink =
             List.iter (fun e -> subs := (e, merged) :: !subs) ends)
           by_ctx)
     range_to_ends;
-  match !subs with [] -> None | subs -> Some (substitute sink (List.rev subs))
+  match !subs with
+  | [] -> None
+  | subs -> Some (substitute ~calls:Skip sink (List.rev subs))
 
 (* A sum adds each product of its source into its running sum as one
    multiply-add, rounded once, where the renderer [ren] writes one for its type,
@@ -596,7 +601,9 @@ let add_raw_barrier after =
   else
     (* one toposort over all the deps *)
     let deps =
-      toposort ~gate:(fun x -> not (is Op.Barrier x)) (sink (srcs after))
+      toposort ~calls:Enter
+        ~gate:(fun x -> not (is Op.Barrier x))
+        (sink (srcs after))
     in
     if not (List.exists is_local_store deps) then None
     else Some (Ops.after (nth after 0) [ v Op.Barrier ~src:(srcs after) ])
@@ -649,8 +656,8 @@ let pm_implicit_barriers =
 
 (* Lowering *)
 
-let rewrite ?bottom_up ?enter_calls ?walk ?(ctx = ()) m sink =
-  graph_rewrite ?bottom_up ?enter_calls ?walk ~ctx sink m
+let rewrite ?bottom_up ?walk ?(ctx = ()) m sink =
+  graph_rewrite ?bottom_up ?walk ~calls:Skip ~ctx sink m
 
 let kernel_info u =
   match arg u with
@@ -658,7 +665,7 @@ let kernel_info u =
   | _ -> invalid_arg "a kernel's sink needs kernel information"
 
 let check_spec spec sink =
-  if setting Setting.spec <> 0 then Spec.type_verify spec sink
+  if setting Setting.spec <> 0 then Spec.type_verify ~calls:Enter spec sink
 
 let apply_opts ?beam sink ren =
   let k = kernel_info sink in
@@ -740,7 +747,7 @@ let split_blocks sink =
       let lo = bound slots "block_lo" and hi = bound (slots + 1) "block_hi" in
       let r' = replace r ~src:(alu hi Op.Sub [ lo ] :: List.tl (src r)) in
       let moved = alu lo Op.Add [ r' ] in
-      let sink = substitute sink [ (r, moved) ] in
+      let sink = substitute ~calls:Skip sink [ (r, moved) ] in
       let ends =
         pm (fun () ->
             [
@@ -774,14 +781,14 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       (* collapse loads reduce (indexing by a tensor) *)
       let sink = rewrite Simplify.pm_load_collapse sink in
       let sink =
-        graph_rewrite ~ctx:(Tbl.create 8) sink
+        graph_rewrite ~calls:Skip ~ctx:(Tbl.create 8) sink
           (Simplify.pm_split_ranges ++ lift Simplify.pm_flatten_range)
       in
       (* symbolic (NOTE: this is a requirement for pm_simplify_ranges to be
          correct) *)
       let sink = rewrite (Symbolic.sym ++ Simplify.pm_flatten_range) sink in
       let sink =
-        graph_rewrite ~ctx:(Tbl.create 8) sink
+        graph_rewrite ~calls:Skip ~ctx:(Tbl.create 8) sink
           (lift Simplify.pm_flatten_range ++ Simplify.pm_simplify_ranges)
       in
       (* do postrange optimization, BEAM or hand_coded_optimizations *)
@@ -801,7 +808,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
          ])
       sink
   in
-  let sink = graph_rewrite ~ctx:(build_range_map sink) sink expander in
+  let sink =
+    graph_rewrite ~calls:Skip ~ctx:(build_range_map sink) sink expander
+  in
   let slots =
     let next =
       List.fold_left
@@ -809,7 +818,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
           match (op u, arg u) with
           | (Op.Buffer | Op.Alloc), Param p -> max n (p.slot + 1)
           | _ -> n)
-        0 (toposort sink)
+        0
+        (toposort ~calls:Enter sink)
       |> ref
     in
     fun () ->
@@ -818,12 +828,12 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       slot
   in
   let sink =
-    graph_rewrite ~ctx:(slots, ren) sink
+    graph_rewrite ~calls:Skip ~ctx:(slots, ren) sink
       (lift Movement.mop_cleanup ++ pm_reduce_local)
   in
-  let sink = graph_rewrite ~ctx:slots sink pm_add_local_buffers in
+  let sink = graph_rewrite ~calls:Skip ~ctx:slots sink pm_add_local_buffers in
   (* add gpu dims (late). this works after devectorize, but it's faster here *)
-  let sink = graph_rewrite ~ctx:ren sink Gpudims.pm_add_gpudims in
+  let sink = graph_rewrite ~calls:Skip ~ctx:ren sink Gpudims.pm_add_gpudims in
   (* optimizations are done, now we lower to actual code *)
   let sink =
     rewrite
@@ -861,9 +871,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
      weak result CAST into a gated WHERE, remaking the weak node, and it
      cycles *)
   let sink =
-    rewrite ~enter_calls:true
+    graph_rewrite ~calls:Enter ~ctx:() sink
       (Uop_weak.pm_lower_weak ++ Coalesce.indexing_simplify)
-      sink
   in
   (* final symbolic before decomp *)
   let sink = rewrite Symbolic.symbolic sink in
@@ -884,7 +893,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite pm_decomp sink in
   (* late decomps + move gates from unrenderable INVALID where *)
   let sink =
-    graph_rewrite ~ctx:(Decomp_dtype.ctx ren) sink
+    graph_rewrite ~calls:Skip ~ctx:(Decomp_dtype.ctx ren) sink
       (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak)
   in
   let pm_decomp =
@@ -900,7 +909,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
              supported_ops);
       ]
   in
-  let sink = graph_rewrite ~ctx:ren sink pm_decomp in
+  let sink = graph_rewrite ~calls:Skip ~ctx:ren sink pm_decomp in
   let sink = rewrite Gater.pm_move_gates_from_index sink in
   (* final rules for the renderer (without sym) *)
   let pm_final_rewrite =
@@ -913,7 +922,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
         lift Symbolic.pm_remove_invalid;
       ]
   in
-  let sink = graph_rewrite ~ctx:ren sink pm_final_rewrite in
+  let sink = graph_rewrite ~calls:Skip ~ctx:ren sink pm_final_rewrite in
   (* commit every const still bare so no renderer reads one *)
   let sink = rewrite Uop_weak.pm_cast_const sink in
   let sink =
@@ -924,7 +933,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite pm_implicit_barriers sink in
   (* this was the linearizer *)
   let sink =
-    graph_rewrite ~bottom_up:true
+    graph_rewrite ~calls:Skip ~bottom_up:true
       ~ctx:(Linearizer.cfg_context sink)
       sink Linearizer.pm_add_control_flow
   in
@@ -936,15 +945,16 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
            match (op x, arg x) with
            | Op.Param, Param p -> p.slot <> -1
            | _ -> false)
-         (toposort sink))
+         (toposort ~calls:Enter sink))
   in
   let sink =
-    graph_rewrite ~walk:true ~ctx:(ref num_params) sink pm_number_params
+    graph_rewrite ~calls:Skip ~walk:true ~ctx:(ref num_params) sink
+      pm_number_params
   in
   if setting Setting.spec <> 0 then (
-    try Spec.type_verify Spec.program sink
+    try Spec.type_verify ~calls:Enter Spec.program sink
     with Invalid_argument _ as e when Setting.value Setting.dbgtv <> "" ->
-      Format.printf "%a@." Render.pp_uops (toposort sink);
+      Format.printf "%a@." Render.pp_uops (toposort ~calls:Enter sink);
       raise e);
   sink
 
@@ -1039,7 +1049,7 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
       let bounds_only u =
         List.for_all
           (fun v -> (not (is_variable v)) || v == lo || v == hi)
-          (toposort u)
+          (toposort ~calls:Enter u)
       in
       let fill = function
         | Int _ as i -> i
@@ -1049,7 +1059,8 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
                 Int (sym_infer count [ (expr lo, 0); (expr hi, whole) ])
             | _ ->
                 ssimplify
-                  (substitute u [ (lo, int ~dtype:(dtype lo) 0); (hi, n) ]))
+                  (substitute ~calls:Skip u
+                     [ (lo, int ~dtype:(dtype lo) 0); (hi, n) ]))
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
 
@@ -1160,9 +1171,10 @@ let lowered ?beam ast (ren : Renderer.t) =
         ~arg:(Program (program_info_of_sink ~target:ren.target (nth prg 0)))
 
 let do_to_program ?beam ast ren =
-  graph_rewrite ~ctx:ren (lowered ?beam ast ren) pm_to_program
+  graph_rewrite ~calls:Skip ~ctx:ren (lowered ?beam ast ren) pm_to_program
 
-let linearize ast ren = graph_rewrite ~ctx:ren (lowered ast ren) pm_linearize
+let linearize ast ren =
+  graph_rewrite ~calls:Skip ~ctx:ren (lowered ast ren) pm_linearize
 
 (* Each kernel's program is made once: a domain that asks for one being made
    waits for it, holding the entry's lock, rather than making it again. *)

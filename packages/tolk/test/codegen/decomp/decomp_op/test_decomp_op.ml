@@ -162,7 +162,9 @@ let fast_idiv_divides =
       | Some u ->
           cover "divides" true;
           cover "widens"
-            (List.exists (fun u -> Ops.op u = Cast) (Ops.toposort u));
+            (List.exists
+               (fun u -> Ops.op u = Cast)
+               (Ops.toposort ~calls:Enter u));
           equal const (`Int (Bigint.div n d)) (at [ ("x", `Int n) ] u))
 
 (* A golden holds the dividend and its quotient. *)
@@ -274,7 +276,8 @@ let threefry =
       test "the hash of constants simplifies to a constant" (fun () ->
           let alu u = Op.Set.mem (Ops.op u) Op.Set.alu in
           equal (list Uops.uop) []
-            (List.filter alu (Ops.toposort (Ops.simplify hash_of_constants))));
+            (List.filter alu
+               (Ops.toposort ~calls:Enter (Ops.simplify hash_of_constants))));
       (* Folding reads committed constants at their width, so the fold
          wraps each 32-bit word as the hash does. *)
       test "the hash of constants folds to its value" (fun () ->
@@ -339,7 +342,7 @@ let simplifying_sets =
   ]
 
 let simplify_with set s =
-  Ops.graph_rewrite ~ctx:() s (Decomp_op.simplifying_patterns set)
+  Ops.graph_rewrite ~calls:Skip ~ctx:() s (Decomp_op.simplifying_patterns set)
 
 let simplifying_graphs =
   List.concat_map
@@ -425,7 +428,7 @@ let simplifying =
 (* Late patterns *)
 
 let late_with ?(disable_fast_idiv = true) ?(renderer = everything) set s =
-  Ops.graph_rewrite ~ctx:renderer s
+  Ops.graph_rewrite ~calls:Skip ~ctx:renderer s
     (Decomp_op.late_patterns ~disable_fast_idiv set)
 
 let fparam ?slot () = param ?slot Float32
@@ -750,7 +753,9 @@ let late =
    promotion. *)
 let non_integers =
   let x = v "x" 0 100 in
-  let has op u = List.exists (fun n -> Ops.op n = op) (Ops.toposort u) in
+  let has op u =
+    List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+  in
   let keeps rewrite e = equal Uops.uop e (rewrite e) in
   let shr_and = ops [ Shr; And ] in
   group "constants other than integers are declined"

@@ -45,7 +45,7 @@ let multiply_add_is_a_multiply_and_an_add () =
   let separate = Ops.v Add ~src:[ Ops.v Mul ~src:[ u1; u2 ]; u3 ] in
   let fused = Ops.v Mulacc ~src:[ u1; u2; u3 ] in
   let flops_lds u =
-    let e = Renderer.Estimates.of_uops (Ops.toposort u) in
+    let e = Renderer.Estimates.of_uops (Ops.toposort ~calls:Enter u) in
     (e.ops, e.lds)
   in
   equal (pair sint sint) (flops_lds separate) (flops_lds fused);
@@ -57,7 +57,9 @@ let tensor_core ~threads =
 
 let tensor_core_product () =
   let ops threads =
-    (Renderer.Estimates.of_uops (Ops.toposort (tensor_core ~threads))).ops
+    (Renderer.Estimates.of_uops
+       (Ops.toposort ~calls:Enter (tensor_core ~threads)))
+      .ops
   in
   equal sint ~msg:"a warp of 32" (Int (2 * 8 * 16 * 16 / 32)) (ops 32);
   equal sint ~msg:"a warp of 64" (Int (2 * 8 * 16 * 16 / 64)) (ops 64)
@@ -69,7 +71,7 @@ let not_arithmetic () =
   let stored = Ops.store (at out (Ops.int 0)) x in
   equal sint (Int 0)
     (Renderer.Estimates.of_uops
-       (Ops.toposort (Ops.sink [ stored; cast; bits ])))
+       (Ops.toposort ~calls:Enter (Ops.sink [ stored; cast; bits ])))
       .ops
 
 let lanes () =
@@ -119,7 +121,8 @@ let an_end_without_a_range () =
 let a_tensor_core_without_its_argument () =
   let a = Ops.float ~dtype:Dtype.Float16 1. in
   let product = Ops.v Wmma ~src:[ a; a; f32 0. ] in
-  rejects (fun () -> Renderer.Estimates.of_uops (Ops.toposort product))
+  rejects (fun () ->
+      Renderer.Estimates.of_uops (Ops.toposort ~calls:Enter product))
 
 let a_backedge_without_a_loop () =
   let a = f32 1. in
@@ -138,14 +141,17 @@ let a_store_counts_its_value () =
   let buf = buffer ~dtype:Dtype.Int32 0 4 in
   let stored = Ops.store (at buf (Ops.int 1)) (Ops.int ~dtype:Dtype.Int32 5) in
   equal estimates (counts 0 4 4)
-    (Renderer.Estimates.of_uops (Ops.toposort (Ops.sink [ stored ])))
+    (Renderer.Estimates.of_uops
+       (Ops.toposort ~calls:Enter (Ops.sink [ stored ])))
 
 let loads_and_stores_count_apart () =
   let buf = buffer 0 16 and r = range 16 in
   let x = load buf r in
   let stored = Ops.store (at buf r) Ops.O.(x + x) in
   let ended = Ops.end_ stored [ r ] in
-  let e = Renderer.Estimates.of_uops (Ops.toposort (Ops.sink [ ended ])) in
+  let e =
+    Renderer.Estimates.of_uops (Ops.toposort ~calls:Enter (Ops.sink [ ended ]))
+  in
   equal sint ~msg:"a read and a write of 64 bytes" (Int 128) e.mem;
   equal sint (Int 128) e.lds
 
@@ -153,7 +159,9 @@ let two_loads_of_one_buffer () =
   let buf = buffer 0 4 and r = range 4 in
   let sum = Ops.O.(load buf r + load buf (Ops.int 3)) in
   let ended = Ops.end_ sum [ r ] in
-  let e = Renderer.Estimates.of_uops (Ops.toposort (Ops.sink [ ended ])) in
+  let e =
+    Renderer.Estimates.of_uops (Ops.toposort ~calls:Enter (Ops.sink [ ended ]))
+  in
   equal sint ~msg:"lds counts both" (Int 32) e.lds;
   equal sint ~msg:"mem counts the buffer once" (Int 16) e.mem
 
@@ -162,19 +170,21 @@ let registers_move_no_bytes () =
   let stored = Ops.store (at reg (Ops.int 0)) (f32 1.) in
   let x = load reg (Ops.int 1) in
   equal estimates (counts 0 0 0)
-    (Renderer.Estimates.of_uops (Ops.toposort (Ops.sink [ stored; x ])))
+    (Renderer.Estimates.of_uops
+       (Ops.toposort ~calls:Enter (Ops.sink [ stored; x ])))
 
 let shared_memory_is_not_a_parameter () =
   let smem = Ops.alloc ~addrspace:Local [ Int 4 ] Dtype.Float32 in
   let stored = Ops.store (at smem (Ops.int 0)) (f32 1.) in
   equal estimates (counts 0 4 0)
-    (Renderer.Estimates.of_uops (Ops.toposort (Ops.sink [ stored ])))
+    (Renderer.Estimates.of_uops
+       (Ops.toposort ~calls:Enter (Ops.sink [ stored ])))
 
 let indexing () =
   let buf = buffer 0 32 and out = buffer 1 32 and r = range 16 in
   let x = load buf Ops.O.((r * int 2) + int 1) in
   let stored = Ops.store (at out r) Ops.O.(x * x) in
-  let uops = Ops.toposort (Ops.sink [ Ops.end_ stored [ r ] ]) in
+  let uops = Ops.toposort ~calls:Enter (Ops.sink [ Ops.end_ stored [ r ] ]) in
   equal sint ~msg:"counting the index"
     (Int (16 * 3))
     (Renderer.Estimates.of_uops uops).ops;
@@ -185,7 +195,7 @@ let an_index_shared_with_a_value () =
   let out = buffer 0 32 and r = range 16 in
   let twice = Ops.O.(r * int 2) in
   let stored = Ops.store (at out twice) (Ops.cast twice Dtype.Float32) in
-  let uops = Ops.toposort (Ops.sink [ Ops.end_ stored [ r ] ]) in
+  let uops = Ops.toposort ~calls:Enter (Ops.sink [ Ops.end_ stored [ r ] ]) in
   equal sint (Int 0) (Renderer.Estimates.of_uops ~ignore_indexing:true uops).ops
 
 let shrink_indexing () =
@@ -194,7 +204,7 @@ let shrink_indexing () =
   let shrunk =
     Ops.v Shrink ~src:[ storage; Ops.O.(a + int 1); Ops.O.(a * int 2) ]
   in
-  let uops = Ops.toposort (Ops.sink [ Ops.load shrunk [] ]) in
+  let uops = Ops.toposort ~calls:Enter (Ops.sink [ Ops.load shrunk [] ]) in
   equal sint (Int 0) (Renderer.Estimates.of_uops ~ignore_indexing:true uops).ops
 
 (* An index that reads the result of a loop: the loop computes the index, but
@@ -206,7 +216,7 @@ let an_index_after_a_loop () =
     let total = Ops.load (Ops.after cell [ closed ]) [] in
     let stored = Ops.store (at (buffer 0 16) total) (f32 1.) in
     (Renderer.Estimates.of_uops ~ignore_indexing:true
-       (Ops.toposort (Ops.sink [ stored ])))
+       (Ops.toposort ~calls:Enter (Ops.sink [ stored ])))
       .ops
   in
   let r = range 4 and loop = Ops.loop 1 in

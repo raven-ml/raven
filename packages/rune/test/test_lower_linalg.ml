@@ -274,7 +274,7 @@ let multiplies_on_tensor_cores ren dt =
         not
           (List.exists
              (fun u -> Op.equal (Ops.op u) Op.Wmma)
-             (Ops.toposort lowered))
+             (Ops.toposort ~calls:Enter lowered))
       then fail "no tensor core multiplies the product")
     (Ops.src (Programs.kernels y))
 
@@ -920,7 +920,7 @@ let parity =
 let nodes f =
   let s, ys = trace f in
   List.length
-    (Ops.toposort
+    (Ops.toposort ~calls:Enter
        (Ops.sink (List.map (fun (Nx.P y) -> Rune_internals.Lower.uop s y) ys)))
 
 let loops =

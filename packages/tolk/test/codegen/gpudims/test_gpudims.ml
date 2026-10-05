@@ -23,7 +23,7 @@ let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* The hardware indices under [idxs], with their sizes, by name. *)
 let specials idxs =
-  List.concat_map Ops.toposort idxs
+  List.concat_map (Ops.toposort ~calls:Enter) idxs
   |> List.filter (fun u -> Ops.op u = Special)
   |> List.sort_uniq Ops.compare
   |> List.map (fun u ->
@@ -257,7 +257,11 @@ let kernel ?(size = 4096) index value ranges =
     [ Ops.end_ (Ops.store (Ops.index (buffer size) [ index ]) value) ranges ]
 
 let rewritten ?(renderer = renderer ()) sink =
-  Ops.sink [ sink; Ops.graph_rewrite ~ctx:renderer sink Gpudims.pm_add_gpudims ]
+  Ops.sink
+    [
+      sink;
+      Ops.graph_rewrite ~calls:Skip ~ctx:renderer sink Gpudims.pm_add_gpudims;
+    ]
 
 let rewrites name ?renderer sink =
   Golden.graph (name ^ ".golden") (fun () -> rewritten ?renderer (sink ()))
@@ -435,7 +439,7 @@ let symbolic_warp =
           (Gpudims.add_gpudims (renderer ~local_max:[ 1024; 1024; 64 ] ()) sink)
       in
       let sizes =
-        Ops.toposort r
+        Ops.toposort ~calls:Enter r
         |> List.filter (fun u -> Ops.op u = Special)
         |> List.map (fun u ->
             ( Render.render ~simplify:false u,

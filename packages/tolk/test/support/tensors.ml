@@ -32,7 +32,8 @@ let count r = Bigint.to_int (Ops.to_z (Ops.nth r 0))
 
 let on_device k u =
   Ops.ssimplify
-    (Ops.substitute u (List.map (fun r -> (r, Ops.int k)) (device_ranges u)))
+    (Ops.substitute ~calls:Skip u
+       (List.map (fun r -> (r, Ops.int k)) (device_ranges u)))
 
 let int ~device = function
   | Ops.Int n -> n
@@ -490,7 +491,7 @@ let rec run m params u =
             for k = 0 to count r - 1 do
               call
                 (fun a -> reread m (value a))
-                (Ops.substitute c [ (r, Ops.int k) ])
+                (Ops.substitute ~calls:Skip c [ (r, Ops.int k) ])
             done;
             []
         | _ -> fail "cannot evaluate an end of %d sources" (List.length src))

@@ -398,7 +398,7 @@ let patch ?blob buf rows =
           if List.memq o rngs then own_range r else o
         in
         let fresh = List.map (fun r -> (r, own_range r)) rngs in
-        let own us = src (substitute (Ops.sink us) fresh) in
+        let own us = src (substitute ~calls:Skip (Ops.sink us) fresh) in
         end_
           (store
              (index view [ stack (own offs) ])
@@ -1255,7 +1255,7 @@ let runs ~devices e =
 
 (* [body] with the range [r] read as [v]. *)
 let rec shift r v = function
-  | One (c, devs, q) -> One (substitute c [ (r, v) ], devs, q)
+  | One (c, devs, q) -> One (substitute ~calls:Skip c [ (r, v) ], devs, q)
   | Loop (r', body) -> Loop (r', List.map (shift r v) body)
 
 (* A range of [k] trips like [r], other than [r] and every range of the calls of
@@ -1351,7 +1351,8 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
     let inner =
       sched_batches ~lower ~devices ~profile
         (v Op.Linear
-           ~src:(List.map (fun c -> substitute c vars) (range_body e)))
+           ~src:
+             (List.map (fun c -> substitute ~calls:Skip c vars) (range_body e)))
     in
     end_ (match src inner with [ c ] -> c | _ -> inner) rs
   in
@@ -1533,7 +1534,7 @@ let bufferize_cmdbuf ?device q name =
                if op g = Op.Getaddr && op (nth g 0) = Op.Linear then
                  Some (nth g 0)
                else None)
-             (toposort w))
+             (toposort ~calls:Enter w))
          patches)
   in
   let region l =
@@ -1565,7 +1566,7 @@ let bufferize_cmdbuf ?device q name =
                        if op g = Op.Getaddr && op (nth g 0) = Op.Linear then
                          reads (nth g 0)
                        else [])
-                     (toposort w))
+                     (toposort ~calls:Enter w))
                (src l))
         in
         Ops.Tbl.add read l rs;
@@ -1617,7 +1618,9 @@ let bufferize_cmdbuf ?device q name =
       bufs
   in
   let write (buf, stream, patches) =
-    let words = src (substitute (Ops.sink (List.map snd patches)) views) in
+    let words =
+      src (substitute ~calls:Skip (Ops.sink (List.map snd patches)) views)
+    in
     patch buf (List.combine (List.map fst patches) words) ~blob:stream
   in
   after
@@ -1684,13 +1687,13 @@ let pm_hcq_encode devices =
         (fun m ->
           let root = m "root" and deps = List.tl (src (m "a")) in
           Some
-            (substitute ~walk:true root
+            (substitute ~calls:Skip ~walk:true root
                (List.filter_map
                   (fun s ->
                     if op s = Op.Store then
                       Some (buf_uop s, after (buf_uop s) deps)
                     else None)
-                  (toposort root))));
+                  (toposort ~calls:Enter root))));
     ])
 
 (* The words known at link leave the host program: link writes them. *)
@@ -1791,11 +1794,12 @@ let lower_call ~devices call =
   let host = (queues devices (List.hd info.device)).host in
   let lt_patches = ref [] in
   let body =
-    graph_rewrite ~ctx:lt_patches ~bpm:pm_patches (body call)
+    graph_rewrite ~calls:Skip ~ctx:lt_patches ~bpm:pm_patches (body call)
       (Pattern_matcher.with_ctx (pm_hcq_encode devices))
   in
   let body =
-    graph_rewrite ~ctx:lt_patches ~bpm:pm_patches body (Pattern_matcher.v (fun () -> []))
+    graph_rewrite ~calls:Skip ~ctx:lt_patches ~bpm:pm_patches body
+      (Pattern_matcher.v (fun () -> []))
   in
   (* An address is its storage's and a byte offset: afters drop, since an
      address depends on nothing, and views share their storage's slot. *)
@@ -1813,7 +1817,7 @@ let lower_call ~devices call =
   let normalized =
     List.filter_map
       (fun g -> if op g = Op.Getaddr then Some (g, normalize g) else None)
-      (toposort body)
+      (toposort ~calls:Enter body)
   in
   (* Addresses load from a table: the inputs' written on each run, the others at
      link. *)
@@ -1835,7 +1839,7 @@ let lower_call ~devices call =
     go 0 addrs
   in
   let body =
-    substitute body
+    substitute ~calls:Skip body
       (List.map
          (fun (g, (n, moving)) ->
            let addr = load (index table [ int (slot_of n) ]) [] in
@@ -1863,7 +1867,7 @@ let lower_call ~devices call =
           | None | Some (Tag.String "program") -> false
           | _ -> true)
         && match arg u with Param p -> p.slot <> 0 | _ -> false)
-      (toposort body)
+      (toposort ~calls:Enter body)
   in
   let pkey u =
     match arg u with
@@ -1912,15 +1916,17 @@ let lower_call ~devices call =
       ~extra_pm:
         (Pattern_matcher.with_ctx
            (Pattern_matcher.concat [ Prepare.pm_mops; pm_views ]))
-      ~enter_calls:true body views
+      ~calls:Enter body views
   in
-  let patches = src (substitute (Ops.sink (dedup !lt_patches)) views) in
+  let patches =
+    src (substitute ~calls:Skip (Ops.sink (dedup !lt_patches)) views)
+  in
   (* The placeholders become the body's parameters in visit order, and the
      variables follow them, by name. *)
   let bufs, alus =
     List.partition
       (fun u -> tag u <> None)
-      (List.filter (fun u -> op u = Op.Param) (toposort body))
+      (List.filter (fun u -> op u = Op.Param) (toposort ~calls:Enter body))
   in
   let bufs = dedup (src_without_body call @ bufs) in
   let names =
@@ -1955,8 +1961,8 @@ let lower_call ~devices call =
       alus
   in
   let sink =
-    graph_rewrite ~ctx:(ref 0) ~walk:true ~enter_calls:true
-      (substitute ~enter_calls:true body (params @ vals))
+    graph_rewrite ~ctx:(ref 0) ~walk:true ~calls:Enter
+      (substitute ~calls:Enter body (params @ vals))
       pm_renumber
   in
   let index_of b =
@@ -2018,10 +2024,11 @@ let hcq_compile ~devices ~lower_and_compile ~profile linear =
   if List.exists is_batch (src linear) then linear
   else
     let linear =
-      graph_rewrite ~ctx:() linear (pm_prep ~devices ~lower_and_compile)
+      graph_rewrite ~calls:Skip ~ctx:() linear
+        (pm_prep ~devices ~lower_and_compile)
     in
     let lin =
-      graph_rewrite ~ctx:() ~walk:true
+      graph_rewrite ~calls:Skip ~ctx:() ~walk:true
         (sched_batches ~lower:(lower_call ~devices) ~devices ~profile linear)
         (pm_encode devices)
     in
@@ -2052,7 +2059,8 @@ let compile_linear ?search ~profile ~devices linear =
   let lower_and_compile = Realize.lower_and_compile ?search ~targets in
   let width = Setting.value Setting.beam in
   let linear =
-    if width >= 1 then graph_rewrite ~ctx:() ~walk:true linear (pm_beam width)
+    if width >= 1 then
+      graph_rewrite ~calls:Skip ~ctx:() ~walk:true linear (pm_beam width)
     else linear
   in
   hcq_compile ~devices ~lower_and_compile ~profile (lower_and_compile linear)

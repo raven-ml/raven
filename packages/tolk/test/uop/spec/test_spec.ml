@@ -25,10 +25,10 @@ let verdict_of_cell = function
 let with_spec level f = Setting.context [ B (Setting.spec, level) ] f
 let checking_bounds f = Setting.context [ B (Setting.check_oob, true) ] f
 
-(* [failure spec u] is the message of [type_verify spec u], [None] if it
-   passes. *)
-let failure ?enter_calls spec u =
-  match Spec.type_verify ?enter_calls spec u with
+(* [failure ~calls spec u] is the message of [type_verify ~calls spec u], [None]
+   if it passes. *)
+let failure ~calls spec u =
+  match Spec.type_verify ~calls spec u with
   | () -> None
   | exception Invalid_argument msg -> Some msg
 
@@ -214,13 +214,13 @@ let type_verify =
       each_node "failures.golden" (fun cell u ->
           equal ~msg:"tensor" (option string)
             (failure_of_cell (cell "tensor"))
-            (failure Spec.tensor u);
+            (failure ~calls:Enter Spec.tensor u);
           equal ~msg:"program" (option string)
             (failure_of_cell (cell "program"))
-            (failure Spec.program u);
+            (failure ~calls:Enter Spec.program u);
           equal ~msg:"outside calls" (option string)
             (failure_of_cell (cell "tensor_outside_calls"))
-            (failure ~enter_calls:false Spec.tensor u));
+            (failure ~calls:Skip Spec.tensor u));
       prop
         "fails at the first node, sources first, that the specification does \
          not accept"
@@ -231,24 +231,26 @@ let type_verify =
               let first =
                 List.find_index
                   (fun n -> judge spec n <> Some true)
-                  (Ops.toposort u)
+                  (Ops.toposort ~calls:Enter u)
               in
               cover (name ^ " accepts a graph") (Option.is_none first);
               cover (name ^ " rejects a graph") (Option.is_some first);
               equal ~msg:name (option int) first
-                (Option.bind (failure spec u) failed_at))
+                (Option.bind (failure ~calls:Enter spec u) failed_at))
             specs);
       test "prints nothing when DEBUG is below 3" (fun () ->
           Setting.context
             [ B (Setting.debug, 2) ]
-            (fun () -> ignore (failure Spec.shared ill_typed_graph));
+            (fun () ->
+              ignore (failure ~calls:Enter Spec.shared ill_typed_graph));
           equal string "" (output ()));
       group "prints the graph when DEBUG is 3 or more, before failing"
         [
           Golden.text "debug_listing.golden" (fun () ->
               Setting.context
                 [ B (Setting.debug, 3) ]
-                (fun () -> ignore (failure Spec.shared ill_typed_graph));
+                (fun () ->
+                  ignore (failure ~calls:Enter Spec.shared ill_typed_graph));
               output ());
         ];
     ]

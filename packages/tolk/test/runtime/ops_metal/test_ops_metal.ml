@@ -47,7 +47,8 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))
+  Ops.substitute ~calls:Skip u
+    (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =
   String.concat ""
@@ -138,7 +139,7 @@ let once () =
 
 (* The commands of the indirect command buffer of [linear]'s one batch. *)
 let icb_commands linear =
-  match List.filter_map Ops_metal.icb (Ops.toposort linear) with
+  match List.filter_map Ops_metal.icb (Ops.toposort ~calls:Enter linear) with
   | [ (cmds, _) ] -> cmds
   | l -> failf "%d indirect command buffers, not one" (List.length l)
 

@@ -105,7 +105,7 @@ let transcendentals dt =
   Ops.sink [ Ops.exp2 d; Ops.log2 d; Ops.alu d Sin []; Ops.sqrt d ]
 
 let rewrite ?(force = false) ops dt =
-  Ops.graph_rewrite ~ctx:() (transcendentals dt)
+  Ops.graph_rewrite ~calls:Skip ~ctx:() (transcendentals dt)
     (T.patterns ~force (Op.Set.of_list ops))
 
 let all_ops = Op.[ Exp2; Log2; Sin; Sqrt ]
@@ -170,7 +170,7 @@ let patterns =
             let left =
               List.filter
                 (fun u -> List.mem (Ops.op u) all_ops)
-                (Ops.toposort (rewrite [] dt))
+                (Ops.toposort ~calls:Enter (rewrite [] dt))
             in
             equal int 0 (List.length left));
         rewritten_values;
@@ -359,7 +359,7 @@ let rewritten op dt =
   let none = Op.Set.of_list [] in
   match
     Ops.src
-      (Ops.graph_rewrite ~ctx:()
+      (Ops.graph_rewrite ~calls:Skip ~ctx:()
          (Ops.sink [ op (x dt) ])
          (T.patterns ~force:false none))
   with

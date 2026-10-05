@@ -536,7 +536,7 @@ let quantised =
           match (Tolk.Ops.op v, Tolk.Ops.arg v) with
           | Param, Tolk.Ops.Param p -> p.size
           | _ -> None)
-        (Tolk.Ops.toposort (Tolk.Ops.nth u 0))
+        (Tolk.Ops.toposort ~calls:Enter (Tolk.Ops.nth u 0))
     in
     List.filter_map
       (fun u ->
@@ -545,7 +545,7 @@ let quantised =
           && Tolk.Dtype.equal (Tolk.Ops.dtype (Tolk.Ops.nth u 1)) dt
         then size u
         else None)
-      (Tolk.Ops.toposort (Programs.kernels y))
+      (Tolk.Ops.toposort ~calls:Enter (Programs.kernels y))
   in
   let traced ids x =
     let s = scope () in

@@ -151,7 +151,7 @@ let rewrites =
           let r = renderer_of_row row in
           equal Uops.uop
             (nth_of rewritten row "output")
-            (Ops.graph_rewrite ~ctx:()
+            (Ops.graph_rewrite ~calls:Skip ~ctx:()
                (nth_of rewrite_inputs row "input")
                r.extra_matcher));
     ]
@@ -374,7 +374,8 @@ let one_operation op dt =
     List.init (arity op) (fun i -> Ops.load (at (i + 1) (operand i)) [])
   in
   let value = Ops.v op ~src:loads in
-  Ops.toposort (Ops.sink [ Ops.store (at 0 (Ops.dtype value)) value ])
+  Ops.toposort ~calls:Enter
+    (Ops.sink [ Ops.store (at 0 (Ops.dtype value)) value ])
 
 let floats_only = Op.[ Exp2; Log2; Sin; Sqrt; Reciprocal; Trunc; Fdiv ]
 let ints_only = Op.[ Shl; Shr; And; Or; Xor; Cmod; Cdiv ]
@@ -431,7 +432,7 @@ let keeps_no_reference () =
     in
     let sink = Ops.sink [ Ops.store at (Ops.float ~dtype:Float32 7139.) ] in
     Stdlib.Weak.set weak 0 (Some sink);
-    ignore (render clang (Ops.toposort sink))
+    ignore (render clang (Ops.toposort ~calls:Enter sink))
   in
   render_once ();
   Gc.full_major ();
@@ -459,7 +460,7 @@ let custom code =
   let value =
     Ops.v Customi ~src:operands ~arg:(Code { code; dtype = Float32 })
   in
-  render clang (Ops.toposort (Ops.sink [ Ops.store (at 0) value ]))
+  render clang (Ops.toposort ~calls:Enter (Ops.sink [ Ops.store (at 0) value ]))
 
 let formats_custom_code (code, expr) =
   satisfies
@@ -573,10 +574,12 @@ let truncated_bf16 =
     [ Ops.store (at 0) (Ops.trunc (Ops.load (at 1) [])) ]
 
 let through_metal_matcher sink =
-  Ops.graph_rewrite ~ctx:() sink metal.extra_matcher
+  Ops.graph_rewrite ~calls:Skip ~ctx:() sink metal.extra_matcher
 
 let truncs sink =
-  List.filter (fun u -> Op.equal (Ops.op u) Trunc) (Ops.toposort sink)
+  List.filter
+    (fun u -> Op.equal (Ops.op u) Trunc)
+    (Ops.toposort ~calls:Enter sink)
 
 let truncates_in_float () =
   let rewritten = truncs (through_metal_matcher truncated_bf16) in
@@ -587,7 +590,7 @@ let truncates_in_float () =
 let compiles_its_truncation () =
   let sink =
     List.fold_left
-      (fun sink m -> Ops.graph_rewrite ~ctx:() sink m)
+      (fun sink m -> Ops.graph_rewrite ~calls:Skip ~ctx:() sink m)
       (through_metal_matcher truncated_bf16)
       [
         Uop_weak.pm_commit_weak; Uop_weak.pm_lower_weak; Uop_weak.pm_cast_const;
@@ -608,7 +611,9 @@ let bf16_truncation =
       test "leaves it to CUDA, which truncates a bfloat16 with htrunc"
         (fun () ->
           let rewritten =
-            truncs (Ops.graph_rewrite ~ctx:() truncated_bf16 cuda.extra_matcher)
+            truncs
+              (Ops.graph_rewrite ~calls:Skip ~ctx:() truncated_bf16
+                 cuda.extra_matcher)
           in
           equal (list Dtypes.dtype) [ Dtype.Bfloat16 ]
             (List.map Ops.dtype rewritten));
@@ -984,7 +989,7 @@ let bounds_a_block uops slot =
 let variables_of uops =
   let iterations =
     match split_of uops with
-    | Some { iterations = Sym u; _ } -> Ops.toposort u
+    | Some { iterations = Sym u; _ } -> Ops.toposort ~calls:Enter u
     | _ -> []
   in
   let variable u =

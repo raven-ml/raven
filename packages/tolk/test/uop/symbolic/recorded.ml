@@ -80,7 +80,7 @@ let replay test k r =
     if
       List.exists
         (fun u -> List.exists (Op.equal (Ops.op u)) host_libm)
-        (Ops.toposort r.input)
+        (Ops.toposort ~calls:Enter r.input)
     then folded_within_ulp
     else uop
   in

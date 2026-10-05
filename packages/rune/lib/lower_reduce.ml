@@ -231,7 +231,9 @@ let varies u =
       read src (Indexing.apply_movement_op (Ops.shape src) (Ops.marg u) index)
     else index
   in
-  let reached = List.concat_map Ops.toposort (read u positions) in
+  let reached =
+    List.concat_map (Ops.toposort ~calls:Enter) (read u positions)
+  in
   List.filter
     (fun d -> List.memq (List.nth positions d) reached)
     (List.init (Ops.ndim u) Fun.id)

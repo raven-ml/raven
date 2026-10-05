@@ -59,8 +59,8 @@ let pp_arg_text ppf = function
   | Const c -> Dtype.pp_const ppf c
   | a -> pp_arg ppf a
 
-let type_verify ?enter_calls spec ast =
-  let lst = toposort ?enter_calls ast in
+let type_verify ~calls spec ast =
+  let lst = toposort ~calls ast in
   List.iteri
     (fun i u ->
       if Pattern_matcher.rewrite spec () u <> Some true then begin
@@ -124,7 +124,7 @@ let args_fit c =
           let align, phase = storage_phase args.(p.slot) in
           align >= p.align && phase mod p.align = p.phase
       | _ -> true)
-    (toposort ~enter_calls:false (body c))
+    (toposort ~calls:Skip (body c))
 
 let shared : t =
   Pattern_matcher.fold

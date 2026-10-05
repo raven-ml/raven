@@ -8,7 +8,8 @@ let scalar = Renderer.v ~supports_float4:false cpu
 let coalesce ?(renderer = vector) sink =
   Coalesce.memory_coalescing sink renderer
 
-let simplify u = Ops.graph_rewrite ~ctx:() u Coalesce.indexing_simplify
+let simplify u =
+  Ops.graph_rewrite ~calls:Skip ~ctx:() u Coalesce.indexing_simplify
 
 (* The cases of an input golden are its sink's sources, in order. *)
 let case file cell =
@@ -41,7 +42,7 @@ let accesses op sink =
   in
   List.filter_map
     (fun u -> if Ops.op u = op then Some (access u) else None)
-    (Ops.toposort sink)
+    (Ops.toposort ~calls:Enter sink)
 
 let runs = slist (pair int int) compare
 
@@ -51,7 +52,9 @@ let vectors ?(dtype = Dtype.Float32) ?(width = 4) sink =
   let wide u = Ops.shape u = [ Ops.Int width ] in
   let count op f =
     List.length
-      (List.filter (fun u -> Ops.op u = op && f u) (Ops.toposort sink))
+      (List.filter
+         (fun u -> Ops.op u = op && f u)
+         (Ops.toposort ~calls:Enter sink))
   in
   ( count Op.Load (fun u -> Dtype.equal (Ops.dtype u) dtype && wide u),
     count Op.Store (fun u ->
@@ -128,7 +131,8 @@ let gen_float4 =
 
 let linearizer =
   let count op sink =
-    List.length (List.filter (fun u -> Ops.op u = op) (Ops.toposort sink))
+    List.length
+      (List.filter (fun u -> Ops.op u = op) (Ops.toposort ~calls:Enter sink))
   in
   group "test_linearizer.py"
     [
@@ -145,7 +149,7 @@ let linearizer =
               then
                 at_least ~msg:(Graph.to_string u) int ~than:2
                   (Ops.max_numel (Ops.nth u 1)))
-            (Ops.toposort (coalesce (kernel "grouped_store"))));
+            (Ops.toposort ~calls:Enter (coalesce (kernel "grouped_store"))));
     ]
 
 (* Hand-built accesses *)
@@ -440,7 +444,7 @@ let preserves_writes ?phases renderer (dtype, runs) =
   let merged op =
     List.exists
       (fun u -> Ops.op u = op && Ops.op (Ops.nth u 0) = Op.Shrink)
-      (Ops.toposort coalesced)
+      (Ops.toposort ~calls:Enter coalesced)
   in
   if renderer.supports_float4 then begin
     cover "loads were merged" (merged Op.Load);
@@ -464,7 +468,9 @@ let from_boundary u =
       lead
       + int_of
           (Ops.simplify
-             (Ops.substitute (Ops.get_idx (Ops.nth p 1)) [ (r, Ops.int k) ])))
+             (Ops.substitute ~calls:Skip
+                (Ops.get_idx (Ops.nth p 1))
+                [ (r, Ops.int k) ])))
 
 let aligned (phases, k) =
   let coalesced = coalesce (generated ~phases k) in
@@ -487,7 +493,7 @@ let aligned (phases, k) =
             equal ~msg:(Format.asprintf "%a" Ops.pp u) int 0 (e mod width))
           (from_boundary u)
       end)
-    (Ops.toposort coalesced)
+    (Ops.toposort ~calls:Enter coalesced)
 
 let laws =
   group "laws"

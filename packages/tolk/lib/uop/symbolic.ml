@@ -691,9 +691,12 @@ let fold_where_closure cond t f =
       (fun u -> op_in_backward_slice_with_self u [ Op.Index ])
       [ cond; t; f ]
   then None
-  else if not (reaches t cond || reaches f cond) then None
+  else if not (reaches ~calls:Enter t cond || reaches ~calls:Enter f cond)
+  then None
   else
-    let assume b u = substitute u [ (cond, const_like cond (`Bool b)) ] in
+    let assume b u =
+      substitute ~calls:Skip u [ (cond, const_like cond (`Bool b)) ]
+    in
     Some (where cond (assume true t) (assume false f))
 
 let both_const u0 u1 = is_const u0 && is_const u1
@@ -1145,7 +1148,9 @@ let uop_given_valid ?(try_simplex = true) valid u =
       else
         let given (x, nx) =
           simplify
-            (substitute (simplify (substitute u [ (x, nx) ])) [ (nx, x) ])
+            (substitute ~calls:Skip
+               (simplify (substitute ~calls:Skip u [ (x, nx) ]))
+               [ (nx, x) ])
         in
         match List.map given candidate with
         | n :: news when List.for_all (( == ) n) news -> n
@@ -1159,9 +1164,12 @@ let uop_given_valid ?(try_simplex = true) valid u =
   let u = List.fold_left simplex u exprs in
   (* try all the valids together (but only the whole expressions) *)
   let subs = List.map (fun (i, e, lo, hi) -> (e, fake i e lo hi)) exprs in
-  let s = substitute u subs in
+  let s = substitute ~calls:Skip u subs in
   if s == u then u
-  else simplify (substitute (simplify s) (List.map (fun (e, x) -> (x, e)) subs))
+  else
+    simplify
+      (substitute ~calls:Skip (simplify s)
+         (List.map (fun (e, x) -> (x, e)) subs))
 
 (* prioritize dependencies, then tighter bounds, so weaker clauses don't hide
    useful simplifications *)

@@ -192,8 +192,7 @@ let recorded =
 
 let is_kernel u = Ops.op u = Call && Ops.op (Ops.nth u 0) = Sink
 
-let kernels u =
-  List.length (List.filter is_kernel (Ops.toposort ~enter_calls:false u))
+let kernels u = List.length (List.filter is_kernel (Ops.toposort ~calls:Skip u))
 
 let counts =
   Golden.cases "kernel_counts.golden" (fun cell ->
@@ -229,7 +228,7 @@ let storage u =
       | (Param | Buffer | Alloc), Param p when p.addrspace <> Some Alu ->
           Some (n, p)
       | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let filled u =
   List.map
@@ -297,7 +296,7 @@ let unevaluated =
 let on_several_devices u =
   List.exists
     (fun n -> match Ops.device n with Some (Multi _) -> true | _ -> false)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let values =
   group "get_kernel_graph › values"
@@ -316,7 +315,7 @@ let values =
    storage it makes is never of a weak type, and each is read after it is
    written. *)
 
-let calls u = List.filter is_kernel (Ops.toposort ~enter_calls:false u)
+let calls u = List.filter is_kernel (Ops.toposort ~calls:Skip u)
 
 let storage_params body =
   List.filter_map
@@ -324,7 +323,7 @@ let storage_params body =
       match (Ops.op n, Ops.arg n) with
       | Param, Param p when p.addrspace <> Some Alu -> Some (n, p)
       | _ -> None)
-    (Ops.toposort body)
+    (Ops.toposort ~calls:Enter body)
 
 let rec storage_of u =
   match Ops.op u with
@@ -362,7 +361,7 @@ let ranges_from_zero u =
                  match Ops.axis_id n with
                  | id :: _ when id >= 0 -> Some id
                  | _ -> None)
-             (Ops.toposort (Ops.nth c 0)))
+             (Ops.toposort ~calls:Enter (Ops.nth c 0)))
       in
       equal ~msg:"range ids" (list int) (List.init (List.length ids) Fun.id) ids)
     (calls u)
@@ -380,7 +379,7 @@ let arguments_are_storage u =
     (calls u)
 
 let made_storage u =
-  List.filter (fun n -> Ops.op n = Alloc) (Ops.toposort ~enter_calls:false u)
+  List.filter (fun n -> Ops.op n = Alloc) (Ops.toposort ~calls:Skip u)
 
 let strong_storage u =
   List.iter
@@ -401,7 +400,7 @@ let read_after_written u =
   let written a =
     List.exists
       (fun n -> Ops.op n = After && Ops.nth n 0 == a)
-      (Ops.toposort ~enter_calls:false u)
+      (Ops.toposort ~calls:Skip u)
   in
   List.iter
     (fun a ->
@@ -568,7 +567,7 @@ let rules =
                  match Ops.arg n with
                  | Param { size = Some s; _ } when Ops.op n = Alloc -> Some s
                  | _ -> None)
-               (Ops.toposort (Rangeify.get_kernel_graph sink))));
+               (Ops.toposort ~calls:Enter (Rangeify.get_kernel_graph sink))));
     ]
 
 (* Generated programs
@@ -778,7 +777,7 @@ let loops =
           let ends =
             List.filter
               (fun u -> Ops.op u = End)
-              (Ops.toposort ~enter_calls:false (schedule sink))
+              (Ops.toposort ~calls:Skip (schedule sink))
           in
           match ends with
           | [ e ] ->

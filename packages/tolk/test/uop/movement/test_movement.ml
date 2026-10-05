@@ -11,7 +11,7 @@ let var name lo hi =
   Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
 
 let storage shape = Ops.param ~shape:(ints shape) 0 Float32
-let cleanup u = Ops.graph_rewrite ~ctx:() u Movement.mop_cleanup
+let cleanup u = Ops.graph_rewrite ~calls:Skip ~ctx:() u Movement.mop_cleanup
 let index u idxs = Ops.v Op.Index ~src:(u :: idxs)
 let element u i = index u [ int i ]
 

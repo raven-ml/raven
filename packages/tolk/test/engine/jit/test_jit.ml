@@ -23,12 +23,12 @@ let device_name u =
   | _ -> invalid_arg "storage on one device"
 
 let storage u =
-  List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~enter_calls:false u)
+  List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~calls:Skip u)
 
 (* The parameters of a lowered schedule that each run binds: those its calls
    take, and the inputs of its batches. *)
 let parameters u =
-  let nodes = Ops.toposort ~enter_calls:false u in
+  let nodes = Ops.toposort ~calls:Skip u in
   let batch_inputs n =
     match Ops.arg n with
     | Call { aux = Some info; _ } -> List.map (fun (p, _, _) -> p) info.inputs
@@ -62,7 +62,7 @@ let variables linear =
              } ->
              Some (v, (Dtype.Value.to_int lo, Dtype.Value.to_int hi))
          | _ -> None)
-       (Ops.toposort linear))
+       (Ops.toposort ~calls:Enter linear))
 
 (* The laws, for a captured schedule [captured] holding [held] and reading
    [inputs], and its lowering [lowered]. *)

@@ -91,11 +91,11 @@ val kernel_graph : t
 
 (** {1:verify Verifying} *)
 
-val type_verify : ?enter_calls:bool -> t -> Ops.t -> unit
-(** [type_verify ~enter_calls spec u] checks every node of [u]'s graph against
-    [spec], sources first ({!Ops.toposort}[ ~enter_calls u]; [enter_calls]
-    defaults to [true]). When {!Setting.debug} is 3 or more, a failure first
-    prints the graph's nodes on standard error ({!Render.pp_uops}).
+val type_verify : calls:Ops.calls -> t -> Ops.t -> unit
+(** [type_verify ~calls spec u] checks every node of [u]'s graph against [spec],
+    sources first ({!Ops.toposort}[ ~calls u]). When {!Setting.debug} is 3 or
+    more, a failure first prints the graph's nodes on standard error
+    ({!Render.pp_uops}).
 
     Raises [Invalid_argument] on the first node that fails, naming its position
     in that order, its operation, type and number of sources, each source's

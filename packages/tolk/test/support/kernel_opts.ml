@@ -122,7 +122,7 @@ let inputs k =
         else if Dtype.is_float p.dtype then `Float (Float.of_int (i mod 3))
         else `Int (Bigint.of_int (i mod 3)))
   in
-  Ops.toposort k
+  Ops.toposort ~calls:Enter k
   |> List.filter_map (fun u ->
       match (Ops.op u, Ops.arg u) with
       | Op.Param, Param ({ slot; size = Some size; _ } as p) when slot >= 0 ->

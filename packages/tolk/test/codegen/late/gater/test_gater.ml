@@ -1,7 +1,8 @@
 open Windtrap
 open Tolk
 
-let move u = Ops.graph_rewrite ~ctx:() u Gater.pm_move_gates_from_index
+let move u =
+  Ops.graph_rewrite ~calls:Skip ~ctx:() u Gater.pm_move_gates_from_index
 
 (* The cases of an input golden are its sink's sources, in order. *)
 let case file cell =
@@ -84,7 +85,7 @@ let laws =
       prop "no access through a first index gated by invalid remains" accesses
         (fun u ->
           is_false ~msg:"an access still reads through a gated index"
-            (List.exists gated_first_index (Ops.toposort (move u))));
+            (List.exists gated_first_index (Ops.toposort ~calls:Enter (move u))));
       prop "moving the gates is idempotent" accesses
         (Law.idempotent Uops.uop move);
     ]

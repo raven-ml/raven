@@ -226,7 +226,7 @@ module Program = struct
       List.filter_map
         (fun v ->
           if Ops.is_variable v then Some (Ops.expr v, value v) else None)
-        (Ops.toposort u)
+        (Ops.toposort ~calls:Enter u)
     in
     match s with Int n -> n | Sym u -> Ops.sym_infer s (variables u)
 
@@ -708,7 +708,7 @@ let link_batch ~device ~storage ~cells call patches =
   let is_placeholder u = Ops.op u = Op.Param && Option.is_some (Ops.tag u) in
   (* The placeholders the patches address are the batch's too, though its host
      program may not take them, such as a signal word only its queues read. *)
-  let patched = List.concat_map Ops.toposort patches in
+  let patched = List.concat_map (Ops.toposort ~calls:Enter) patches in
   List.iter
     (fun u ->
       if is_placeholder u && not (Ops.Tbl.mem storage u) then
@@ -975,7 +975,8 @@ let link ~devices ?(bound = []) linear =
           | Some i -> List.map (fun (base, _, _) -> base) i.inputs
           | None -> []
         in
-        List.concat_map Ops.toposort
+        List.concat_map
+          (Ops.toposort ~calls:Enter)
           (Realize.get_call_arg_uops c @ patches @ inputs))
       (List.concat_map calls_of entries)
   in
@@ -1324,7 +1325,7 @@ let storage_params kernel =
       match Ops.arg u with
       | Ops.Param { slot; _ } when is_slot u && slot >= 0 -> Some (slot, u)
       | _ -> None)
-    (Ops.toposort kernel)
+    (Ops.toposort ~calls:Enter kernel)
   |> List.sort_uniq (fun (s, _) (s', _) -> Int.compare s s')
 
 let timer ~devices name ~vars kernel =

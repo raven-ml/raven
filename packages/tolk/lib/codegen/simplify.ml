@@ -93,7 +93,7 @@ let simplify_merge_adjacent u =
         let subs = Tbl.create 2 in
         Tbl.replace subs r0 O.(new_range // s1);
         Tbl.replace subs r1 O.(new_range % s1);
-        let nidx = graph_rewrite ~ctx:subs u merge_rewrite in
+        let nidx = graph_rewrite ~calls:Skip ~ctx:subs u merge_rewrite in
         (* Return after one merge, so that the next rewrite merges the new
            ranges, not stale pairs of the old ones. *)
         if count_divmod nidx <= count_divmod u then Some nidx else None
@@ -136,7 +136,8 @@ let do_substitute ctx x sub =
   | No_arg -> None
   | _ ->
       let ret =
-        substitute x (Tbl.fold (fun k v acc -> (k, sub k v) :: acc) ctx [])
+        substitute ~calls:Skip x
+          (Tbl.fold (fun k v acc -> (k, sub k v) :: acc) ctx [])
       in
       Tbl.reset ctx;
       if ret == x then None else Some (simplify ret)
@@ -367,7 +368,10 @@ let pm_reduce_load_collapse =
               let r = m "r" and expr = m "expr" in
               let idx = cast (m "idx") (dtype r) in
               let v = O.((idx >= int 0) land (idx < nth r 0)) in
-              Some (where v (substitute expr [ (r, valid idx v) ]) (int 0)));
+              Some
+                (where v
+                   (substitute ~calls:Skip expr [ (r, valid idx v) ])
+                   (int 0)));
         ]);
     ]
 
@@ -375,7 +379,9 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
   let rec collapse u = function
     | [] -> Some u
     | r :: rest ->
-        let included = toposort ~gate:(fun x -> Nodes.mem r (ranges x)) u in
+        let included =
+          toposort ~calls:Enter ~gate:(fun x -> Nodes.mem r (ranges x)) u
+        in
         if List.exists (fun x -> op x = Op.Store || op x = Op.Reduce) included
         then None
         else
@@ -405,12 +411,15 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
                 (src x))
             included;
           let sink =
-            graph_rewrite ~ctx:() (reduce (substitute u !order) Op.Add [ r ]) pm
+            graph_rewrite ~calls:Skip ~ctx:()
+              (reduce (substitute ~calls:Skip u !order) Op.Add [ r ])
+              pm
           in
           if not (no_range sink) then None
           else
             collapse
-              (substitute sink (List.map (fun (k, v) -> (v, k)) !order))
+              (substitute ~calls:Skip sink
+                 (List.map (fun (k, v) -> (v, k)) !order))
               rest
   in
   collapse u (List.tl (src red))

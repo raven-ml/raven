@@ -49,7 +49,7 @@ let cut ~own next args body =
             match Ops.arg (storage (Ops.nth u 0)) with
             | Ops.Param p -> Some p.slot
             | _ -> None)
-        (Ops.toposort ~enter_calls:false (Ops.body c))
+        (Ops.toposort ~calls:Skip (Ops.body c))
     in
     List.filteri (fun k _ -> List.mem k slots) (Ops.src_without_body c)
     |> List.map storage
@@ -57,7 +57,7 @@ let cut ~own next args body =
   let calls =
     List.filter_map
       (fun u -> if Ops.op u = Op.Call then Some (u, writes u) else None)
-      (Ops.toposort ~enter_calls:false body)
+      (Ops.toposort ~calls:Skip body)
   in
   let open_ranges u = Ops.Nodes.cardinal (Ops.ranges u) > 0 in
   (* The storage a call of the body that runs each trip writes, such as a loop's

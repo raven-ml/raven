@@ -215,7 +215,8 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))
+  Ops.substitute ~calls:Skip u
+    (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =
   String.concat ""
@@ -315,9 +316,9 @@ let command_words ~gpu ~queue ~command ~word v =
   List.iter
     (fun (off, w) ->
       let getaddrs =
-        List.filter (fun g -> Ops.op g = Getaddr) (Ops.toposort w)
+        List.filter (fun g -> Ops.op g = Getaddr) (Ops.toposort ~calls:Enter w)
       in
-      let w = Ops.substitute w (List.map address getaddrs) in
+      let w = Ops.substitute ~calls:Skip w (List.map address getaddrs) in
       let vars =
         [
           ( Option.get (Interpreter.name (Hcq2.value device)),
@@ -683,7 +684,7 @@ let linking =
                       | None, t ->
                           fail (Format.asprintf "%s: %a" case Ops.Tag.pp t))
                   | _ -> ())
-                (Ops.toposort ~enter_calls:true compiled))
+                (Ops.toposort ~calls:Enter compiled))
             cases);
     ]
 
@@ -729,7 +730,7 @@ let code_object case =
     List.filter_map
       (fun u ->
         match (Ops.op u, Ops.arg u) with Binary, Bytes s -> Some s | _ -> None)
-      (Ops.toposort ~enter_calls:true (Golden.sink (case ^ "_prepared.golden")))
+      (Ops.toposort ~calls:Enter (Golden.sink (case ^ "_prepared.golden")))
   in
   List.find (fun b -> String.starts_with ~prefix:"\x7fELF" b) binaries
 
@@ -839,7 +840,7 @@ let pieces ?copy ~trips g name case tag =
             match Ops.tag u with
             | Some (String t) when t = tag -> Some (Ops.max_numel u)
             | _ -> None)
-          (Ops.toposort ~enter_calls:true b)
+          (Ops.toposort ~calls:Enter b)
       in
       (trips, Option.get bytes))
     (List.filter is_batch
@@ -1112,7 +1113,7 @@ let symbolic c ints vs =
   let nodes = Ops_amd.lower (c.build ints (Array.of_list vars)) in
   let bound =
     Ops.src
-      (Ops.substitute (Ops.sink nodes)
+      (Ops.substitute ~calls:Skip (Ops.sink nodes)
          (List.map2
             (fun var (w, x) -> (var, Ops.int ~dtype:(dtype_of w) x))
             vars (List.combine c.widths vs)))

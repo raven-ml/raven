@@ -66,7 +66,8 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))
+  Ops.substitute ~calls:Skip u
+    (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =
   String.concat ""
@@ -205,9 +206,9 @@ let command_buffer queue cmds =
         (fun u ->
           if Ops.op u = Getaddr then Some (u, Ops.int ~dtype:Uint64 (address u))
           else None)
-        (Ops.toposort w)
+        (Ops.toposort ~calls:Enter w)
     in
-    match Interpreter.eval (Ops.substitute w addrs) with
+    match Interpreter.eval (Ops.substitute ~calls:Skip w addrs) with
     | `Int z ->
         Bigint.to_int (Bigint.extract z 0 (8 * Dtype.itemsize (Ops.dtype w)))
     | _ -> fail "a command word is no integer"
@@ -226,7 +227,7 @@ let command_buffer queue cmds =
         match Ops.tag (storage (Ops.nth st 0)) with
         | Some (String t) -> String.starts_with ~prefix:"cmdbuf" t
         | _ -> false)
-      (Ops.toposort g)
+      (Ops.toposort ~calls:Enter g)
   in
   let bytes = ref Bytes.empty in
   List.iter
@@ -424,7 +425,8 @@ let simple_add out a b =
   let call =
     List.find
       (fun u -> Ops.op u = Call)
-      (Ops.toposort (Golden.sink "simple_add_chain_prepared.golden"))
+      (Ops.toposort ~calls:Enter
+         (Golden.sink "simple_add_chain_prepared.golden"))
   in
   match Ops.src call with
   | [ prg; _; _; _; n ] -> Ops.replace ~src:[ prg; out; a; b; n ] call
@@ -474,7 +476,7 @@ let launch_of ?(crafted = false) f =
     if crafted then
       List.find
         (fun u -> Ops.op u = Call)
-        (Ops.toposort (Golden.sink "crafted_prepared.golden"))
+        (Ops.toposort ~calls:Enter (Golden.sink "crafted_prepared.golden"))
     else simple_add (buf ()) (buf ()) (buf ())
   in
   match Ops.src call with
@@ -583,7 +585,7 @@ let named queue cmds =
   List.sort_uniq compare
     (List.filter_map
        (fun u -> if Ops.op u = Param then Ops_nv.storage u else None)
-       (Ops.toposort (submission queue cmds)))
+       (Ops.toposort ~calls:Enter (submission queue cmds)))
 
 let storages =
   let buf () = Ops.new_buffer (Single "NV") 32 Int32 in
@@ -649,7 +651,7 @@ let storages =
                 match Ops.tag u with
                 | Some (Tuple (String n :: _)) -> n = name
                 | _ -> false)
-              (Ops.toposort ~enter_calls:true compiled)
+              (Ops.toposort ~calls:Enter compiled)
           in
           equal ~msg:"programs" int 2 (List.length (tagged "program"));
           let words = tagged "nv_local" in
@@ -857,7 +859,7 @@ let compute_methods submitted =
                 Some b
             | _ -> None)
         | _ -> None)
-      (Ops.toposort submitted)
+      (Ops.toposort ~calls:Enter submitted)
   in
   List.concat_map
     (fun b ->
@@ -912,7 +914,7 @@ let loops =
                     if Ops.tag u = Some (String "qmd_compute_0") then
                       Some (Ops.max_numel u)
                     else None)
-                  (Ops.toposort submitted))));
+                  (Ops.toposort ~calls:Enter submitted))));
     ]
 
 let () =

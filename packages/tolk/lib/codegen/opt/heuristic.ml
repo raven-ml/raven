@@ -79,7 +79,8 @@ let decoded o =
     && Dtype.is_float (dtype u)
     && Dtype.is_int (dtype (nth u 0))
   in
-  List.exists converts (toposort ~gate:(fun u -> op u <> Op.Index) o)
+  List.exists converts
+    (toposort ~calls:Enter ~gate:(fun u -> op u <> Op.Index) o)
 
 (* Whether [k] sums a product with a decoded operand. Decoding packed values
    splits the reduce into a range over the bytes and one over a byte's values,

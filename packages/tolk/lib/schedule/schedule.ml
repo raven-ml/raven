@@ -128,7 +128,7 @@ let create_schedule sched_sink =
               (read_states @ List.concat_map states after_deps))
           kernels
       end)
-    (toposort ~gate:gate_kernel_sink sched_sink);
+    (toposort ~calls:Enter ~gate:gate_kernel_sink sched_sink);
   (* Write after read: a kernel reading a state runs before any other write that
      supersedes it. An after supersedes only the state before it: the kernels it
      shares with that state order, and do not write. *)
@@ -246,7 +246,7 @@ let pm_post_sched_cache =
 let rec resolve_linear_call ?(outer_binds = []) linear_call =
   let args = List.tl (src linear_call) in
   let linear =
-    graph_rewrite ~walk:true
+    graph_rewrite ~calls:Skip ~walk:true
       ~ctx:(Tbl.create 8, args)
       (body linear_call) pm_post_sched_cache
   in
@@ -280,7 +280,8 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
                 (variables s))
             (src si)
         in
-        replace si ~src:(List.map (fun s -> substitute s subs) (src si))
+        replace si
+          ~src:(List.map (fun s -> substitute ~calls:Skip s subs) (src si))
   in
   replace linear ~src:(List.map apply_binds (src linear))
 
@@ -309,9 +310,9 @@ let schedule_cache_lock = Mutex.create ()
    renumbered again. *)
 let ranges_in_order fn =
   let ranges =
-    List.filter (fun u -> op u = Op.Range) (toposort ~enter_calls:true fn)
+    List.filter (fun u -> op u = Op.Range) (toposort ~calls:Enter fn)
   in
-  substitute ~walk:true ~enter_calls:true fn
+  substitute ~walk:true ~calls:Enter fn
     (List.mapi
        (fun k r ->
          ( r,
@@ -344,7 +345,8 @@ let lower_sink_to_linear call =
         else None
       in
       let make () =
-        if setting Setting.spec <> 0 then Spec.type_verify Spec.tensor fn;
+        if setting Setting.spec <> 0 then
+          Spec.type_verify ~calls:Enter Spec.tensor fn;
         create_schedule
           (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn))
       in
@@ -390,7 +392,8 @@ let assert_all_same_devices ast =
         | Op.Param, Some d when not (List.exists (equal_device d) acc) ->
             acc @ [ d ]
         | _ -> acc)
-      [] (toposort ast)
+      []
+      (toposort ~calls:Enter ast)
   in
   if List.length devices >= 2 then
     invalid_arg
@@ -414,7 +417,7 @@ let simplify_copy_kernel call ast dst src =
   if not (is_copy dst src) then None
   else
     let sink =
-      graph_rewrite ~ctx:(Tbl.create 8) ast
+      graph_rewrite ~calls:Skip ~ctx:(Tbl.create 8) ast
         (Pattern_matcher.concat
            [
              with_ctx Symbolic.sym;
@@ -494,7 +497,7 @@ let rec view_of ctx c src =
       match device c with
       | Some (Single _) -> None
       | _ -> (
-          let unshard = graph_rewrite ~ctx:() src Multi.multi_pm in
+          let unshard = graph_rewrite ~calls:Skip ~ctx:() src Multi.multi_pm in
           if op unshard <> Op.Unshard then None
           else
             let shard = nth unshard 0 in
@@ -571,7 +574,7 @@ let canonicalize_alloc ctx b =
 
 let rec canonicalize_call_body c =
   let body =
-    graph_rewrite ~bottom_up:true ~ctx:(callify_ctx ()) (body c)
+    graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:(callify_ctx ()) (body c)
       (Lazy.force pm_canonicalize_alloc)
   in
   replace c ~src:(body :: List.tl (src c))
@@ -620,12 +623,13 @@ let pm_replace_buf =
     ])
 
 let transform_to_call big_sink =
-  if setting Setting.spec <> 0 then Spec.type_verify Spec.tensor big_sink;
+  if setting Setting.spec <> 0 then
+    Spec.type_verify ~calls:Enter Spec.tensor big_sink;
   (* The stores are collected before these rewrites change node identities. *)
   let ctx = callify_ctx () in
-  ignore (graph_rewrite ~ctx big_sink pm_callify_ctx_collect);
+  ignore (graph_rewrite ~calls:Skip ~ctx big_sink pm_callify_ctx_collect);
   let ret =
-    graph_rewrite ~bottom_up:true ~ctx
+    graph_rewrite ~calls:Skip ~bottom_up:true ~ctx
       (sink (List.rev ctx.stores))
       (Pattern_matcher.concat
          [
@@ -641,12 +645,12 @@ let transform_to_call big_sink =
 let create_linear_with_vars ?(capturing = false) big_sink =
   let big_sink = transform_to_call big_sink in
   (* The call's sources are the values to realize. *)
-  let linear_call =
-    graph_rewrite ~enter_calls:true ~ctx:() big_sink pm_schedule
-  in
+  let linear_call = graph_rewrite ~calls:Enter ~ctx:() big_sink pm_schedule in
   (* The linear call is resolved recursively, and its storage allocated. *)
-  let linear = graph_rewrite ~ctx:() linear_call pm_resolve_linear_call in
-  let linear = graph_rewrite ~ctx:() linear pm_copy_from_store in
+  let linear =
+    graph_rewrite ~calls:Skip ~ctx:() linear_call pm_resolve_linear_call
+  in
+  let linear = graph_rewrite ~calls:Skip ~ctx:() linear pm_copy_from_store in
   let used_vars =
     List.concat_map
       (fun si -> List.map expr (variables (nth si 0)))

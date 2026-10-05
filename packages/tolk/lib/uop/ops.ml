@@ -995,10 +995,12 @@ let pp_program_info ppf p = Format.pp_print_string ppf (repr_program_info p)
 
 (* Graphs *)
 
+type calls = Enter | Skip
+
 (* Each node is pushed with a flag: unset, its sources are pushed after it; set,
    its sources are done and it is. A node pushed twice before it is done is
    finished at its first pop with the flag set. *)
-let toposort ?gate ?(enter_calls = true) root =
+let toposort ?gate ~calls root =
   let cache = Tbl.create 64 and order = ref [] in
   let stack = Stack.create () in
   let rec push_srcs = function
@@ -1015,7 +1017,7 @@ let toposort ?gate ?(enter_calls = true) root =
         begin if match gate with None -> true | Some g -> g node then begin
           Stack.push (node, true) stack;
           push_srcs
-            (if (not enter_calls) && node.op = Op.Call then drop 1 node.src
+            (if calls = Skip && node.op = Op.Call then drop 1 node.src
              else node.src)
         end
         end
@@ -1042,27 +1044,27 @@ let topovisit root f cache =
 
 (* A recursive property is filled bottom-up over the nodes that lack it, so a
    deep graph never recurses deeply. *)
-let memoized ?(enter_calls = true) ~get ~set ~compute u =
+let memoized ~calls ~get ~set ~compute u =
   match get u with
   | Some x -> x
   | None ->
       (* A new node is mostly built on nodes that have the property. *)
       let srcs =
-        if (not enter_calls) && u.op = Op.Call then drop 1 u.src else u.src
+        if calls = Skip && u.op = Op.Call then drop 1 u.src else u.src
       in
       if List.for_all (fun s -> Option.is_some (get s)) srcs then
         set u (compute u)
       else
         List.iter
           (fun n -> set n (compute n))
-          (toposort ~enter_calls ~gate:(fun n -> Option.is_none (get n)) u);
+          (toposort ~calls ~gate:(fun n -> Option.is_none (get n)) u);
       Option.get (get u)
 
 let backward_slice u =
   match u.backward_slice_memo with
   | Some s -> s
   | None ->
-      let all = toposort ~enter_calls:false u in
+      let all = toposort ~calls:Skip u in
       let s = Nodes.of_list (List.filter (fun n -> n != u) all) in
       u.backward_slice_memo <- Some s;
       s
@@ -1074,7 +1076,7 @@ let backward_slice_with_self u =
    property of each node, so that asking costs no walk of the slice. A node
    whose set is one of its sources' shares that source's set. *)
 let ops_reached u =
-  memoized ~enter_calls:false
+  memoized ~calls:Skip
     ~get:(fun n -> n.ops_reached_memo)
     ~set:(fun n s -> n.ops_reached_memo <- Some s)
     ~compute:(fun n ->
@@ -1090,17 +1092,14 @@ let op_in_backward_slice_with_self u ops =
 
 (* A node is built after its sources, so ids grow along every edge: the search
    for [x] never enters a node built before it, and stops once it meets [x]. *)
-let reaches ?enter_calls u x =
+let reaches ~calls u x =
   let gate n =
     if n == x then raise_notrace Exit;
     n.id >= x.id
   in
   u == x
   || x.id < u.id
-     &&
-     match toposort ?enter_calls ~gate u with
-     | _ -> false
-     | exception Exit -> true
+     && match toposort ~calls ~gate u with _ -> false | exception Exit -> true
 
 let rec split_uop u sep =
   if Op.equal u.op sep then List.concat_map (fun s -> split_uop s sep) u.src
@@ -1129,7 +1128,7 @@ let compare_structure u0 u1 =
   cmp u0 u1
 
 let key u =
-  memoized
+  memoized ~calls:Enter
     ~get:(fun n -> n.key_memo)
     ~set:(fun n k -> n.key_memo <- Some k)
     ~compute:(fun n ->
@@ -2102,7 +2101,7 @@ let broadcast_axes src out =
          src)
 
 let rec shape_opt u =
-  memoized
+  memoized ~calls:Enter
     ~get:(fun n -> n.shape_memo)
     ~set:(fun n s -> n.shape_memo <- Some s)
     ~compute:compute_shape u
@@ -2228,7 +2227,7 @@ and movement_shape u ps =
   let numbers s =
     List.iter
       (function
-        | Sym d when List.exists is_const_invalid (toposort d) ->
+        | Sym d when List.exists is_const_invalid (toposort ~calls:Enter d) ->
             invalid_argf "%s of sizes %s, one holding Invalid, which is no number"
               (Op.name u.op) (repr_shape s)
         | _ -> ())
@@ -2341,7 +2340,7 @@ let rec ended_ranges u =
       l
 
 let rec ranges u =
-  memoized
+  memoized ~calls:Enter
     ~get:(fun n -> n.ranges_memo)
     ~set:(fun n r -> n.ranges_memo <- Some r)
     ~compute:compute_ranges u
@@ -2492,7 +2491,7 @@ let rec get_valid u =
 (* Devices *)
 
 let rec device u =
-  memoized
+  memoized ~calls:Enter
     ~get:(fun n -> n.device_memo)
     ~set:(fun n d -> n.device_memo <- Some d)
     ~compute:compute_device u
@@ -2530,7 +2529,7 @@ let on_disk u =
 let is_virtual u = Option.is_none (device u) || List.mem u.dtype Dtype.weaks
 
 let rec addrspace u =
-  memoized
+  memoized ~calls:Enter
     ~get:(fun n -> n.addrspace_memo)
     ~set:(fun n a -> n.addrspace_memo <- Some a)
     ~compute:compute_addrspace u
@@ -3239,7 +3238,9 @@ and reshape_axis u src_axis =
     match device u with
     | Some (Multi ds) -> List.length ds
     | _ -> (
-        match List.find_opt (fun n -> n.op = Op.Unshard) (toposort src) with
+        match
+          List.find_opt (fun n -> n.op = Op.Unshard) (toposort ~calls:Enter src)
+        with
         | Some un -> Value.to_int (vmax (nth un 1)) + 1
         | None -> moved ())
   in
@@ -4578,8 +4579,8 @@ exception Bottom_up_gate
 
 let src_without_body u = if u.op = Op.Call then drop 1 u.src else u.src
 
-let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
-    ?(enter_calls = false) ~ctx root pm =
+let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false) ~calls ~ctx root pm
+    =
   let exception Gate of t in
   let pm, bpm =
     match (bottom_up, bpm) with
@@ -4600,7 +4601,7 @@ let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)
   let pm_rewrite x =
     match pm with None -> None | Some pm -> Pattern_matcher.rewrite pm ctx x
   in
-  let body_skipped n = n.op = Op.Call && not enter_calls in
+  let body_skipped n = n.op = Op.Call && calls = Skip in
   let rest_of n = if body_skipped n then drop 1 n.src else n.src in
   let now x = Option.value (Tbl.find_opt replaced x) ~default:x in
   let rec unchanged = function
@@ -4751,7 +4752,7 @@ let pm_substitute : (t Tbl.t, t) Pattern_matcher.t =
             Tbl.find_opt subs (m "x"));
       ]))
 
-let substitute ?extra_pm ?(walk = false) ?(enter_calls = false) u subs =
+let substitute ?extra_pm ?(walk = false) ~calls u subs =
   let tbl = Tbl.create 16 in
   List.iter (fun (k, x) -> Tbl.replace tbl k x) subs;
   Tbl.filter_map_inplace (fun k x -> if k == x then None else Some x) tbl;
@@ -4762,7 +4763,7 @@ let substitute ?extra_pm ?(walk = false) ?(enter_calls = false) u subs =
       | Some extra -> Pattern_matcher.append extra pm_substitute
       | None -> pm_substitute
     in
-    graph_rewrite ~bottom_up:true ~walk ~enter_calls ~ctx:tbl u pm
+    graph_rewrite ~bottom_up:true ~walk ~calls ~ctx:tbl u pm
 
 let remove_all_tags =
   Pattern_matcher.(
@@ -4811,7 +4812,7 @@ let contract u rs =
   stack
     (List.map
        (fun idx ->
-         substitute u
+         substitute ~calls:Skip u
            (List.map2 (fun r i -> (r, const_like r (`Int (Bigint.of_int i)))) rs idx))
        (product rs))
 
@@ -4845,7 +4846,7 @@ let unbind_all u =
     List.filter is_bound_var (Nodes.to_list (backward_slice_with_self u))
   in
   let pairs = List.map (fun x -> (x, unbound x)) bound in
-  ( substitute ~walk:true u pairs,
+  ( substitute ~calls:Skip ~walk:true u pairs,
     List.map (fun (x, var) -> (var, snd (unbind x))) pairs )
 
 let variables u =
@@ -4956,7 +4957,9 @@ let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
         (function
           | Int k -> Int k
           | Sym s ->
-              Sym (graph_rewrite ~walk:true ~ctx:params s pm_resolve_params))
+              Sym
+                (graph_rewrite ~calls:Skip ~walk:true ~ctx:params s
+                   pm_resolve_params))
         (shard_shape o)
     in
     ( alloc resolved o.dtype ~slot:(param_arg_of (buf_uop buf)).slot ?device:dev
@@ -5040,7 +5043,7 @@ let program_info_of_sink
             let sizes = if name.[0] = 'l' then local_size else global_size in
             sizes.(axis) <- ssimplify (nth u 0)
         | _ -> invalid_arg "a hardware index needs a name")
-    (toposort sink);
+    (toposort ~calls:Enter sink);
   let sorted l = List.sort_uniq Int.compare l in
   let outs, ins =
     if List.is_empty !outs && List.is_empty !ins then (!globals, !globals)
@@ -5083,7 +5086,7 @@ module Private = struct
 
   let set_symbolic pm =
     set_once simplify_hook "symbolic rules" (fun u ->
-        graph_rewrite ~ctx:() u pm)
+        graph_rewrite ~calls:Skip ~ctx:() u pm)
 
   let set_spec pm =
     set_once construction_check "specification rules" (fun u ->

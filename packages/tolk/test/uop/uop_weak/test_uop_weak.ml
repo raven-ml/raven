@@ -20,7 +20,7 @@ let flag = Ops.variable ~dtype:Bool "c" (`Bool false) (`Bool true)
 let fvar ?(dtype = Dtype.Float32) name hi =
   Ops.variable ~dtype name (`Float 0.) (`Float hi)
 
-let rewrite pm u = Ops.graph_rewrite ~ctx:() u pm
+let rewrite pm u = Ops.graph_rewrite ~calls:Skip ~ctx:() u pm
 
 (* A golden holds a graph and its rewrite by one pass, with the setting
    DEFAULT_FLOAT at [default_float] (default float). *)
@@ -321,7 +321,7 @@ let bare_consumers sink =
   in
   List.filter
     (fun u -> Ops.op u <> Op.Cast && List.exists bare (Ops.src u))
-    (Ops.toposort sink)
+    (Ops.toposort ~calls:Enter sink)
 
 let integer_type =
   Gen.of_list ~pp:(Testable.pp Dtypes.dtype)
@@ -335,7 +335,7 @@ let laws =
         (fun es ->
           let lowered = rewrite Uop_weak.pm_lower_weak (sink es) in
           equal (list Uops.uop) []
-            (List.filter weak_non_constant (Ops.toposort lowered)));
+            (List.filter weak_non_constant (Ops.toposort ~calls:Enter lowered)));
       prop "pm_lower_weak keeps the values of what it lowers"
         (Gen.pair gen_expr gen_point) (fun (es, env) ->
           let u = sink es in
@@ -355,7 +355,7 @@ let laws =
           equal (list Uops.uop) []
             (List.filter
                (fun u -> Dtype.is_float (Ops.dtype u))
-               (Ops.toposort committed)));
+               (Ops.toposort ~calls:Enter committed)));
       prop "pm_cast_const states the width of every constant" gen_expr
         (fun es ->
           equal (list Uops.uop) []

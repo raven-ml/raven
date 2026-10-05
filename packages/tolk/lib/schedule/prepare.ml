@@ -12,7 +12,7 @@ let rule_ctx = Pattern_matcher.rule_ctx
 let ops = Op.Set.of_list
 let equal_shape s0 s1 = List.equal Sint.equal s0 s1
 let ints = List.map (fun n -> Int n)
-let reaches = Ops.reaches ~enter_calls:false
+let reaches = Ops.reaches ~calls:Skip
 let is_empty_shape u = List.exists (Sint.equal (Int 0)) (shape u)
 let equal_device_of u0 u1 = Option.equal equal_device (device u0) (device u1)
 
@@ -68,7 +68,8 @@ let forward_call_outputs sink =
         | None -> after target [ st ]
   in
   let items = List.map forward (Ops.src sink) in
-  substitute ~walk:true (Ops.sink items) (List.of_seq (Tbl.to_seq placed))
+  substitute ~calls:Skip ~walk:true (Ops.sink items)
+    (List.of_seq (Tbl.to_seq placed))
 
 let rec walk_mop u =
   if
@@ -92,7 +93,8 @@ let move_index in_shape m idxs =
     op u = Op.Index && shape_opt u = Some [] && op (base (nth u 0)) = Op.After
   in
   match
-    List.filter load (toposort ~gate:(fun u -> op u <> Op.After) (sink idxs))
+    List.filter load
+      (toposort ~calls:Enter ~gate:(fun u -> op u <> Op.After) (sink idxs))
   with
   | [] -> Indexing.apply_movement_op in_shape m idxs
   | loads ->
@@ -107,9 +109,11 @@ let move_index in_shape m idxs =
       in
       let moved =
         Indexing.apply_movement_op in_shape m
-          (src (substitute (sink idxs) held))
+          (src (substitute ~calls:Skip (sink idxs) held))
       in
-      src (substitute (sink moved) (List.map (fun (u, p) -> (p, u)) held))
+      src
+        (substitute ~calls:Skip (sink moved)
+           (List.map (fun (u, p) -> (p, u)) held))
 
 let mop_index r idx =
   let idxs = List.tl (src idx) and s = shape (nth r 0) in
@@ -198,8 +202,9 @@ let fix_store_hazard target src =
       in
       r && reorders && not (s == target && op s = Op.Shrink)
     in
-    if List.exists hazard (toposort ~gate:store_hazard_boundary src) then
-      Some (store target (contiguous src))
+    if
+      List.exists hazard (toposort ~calls:Enter ~gate:store_hazard_boundary src)
+    then Some (store target (contiguous src))
     else None
 
 let pp_shape ppf s =
@@ -251,7 +256,7 @@ let split_reduceop reduce x =
             (fun r -> List.hd (axis_id r))
             (Nodes.to_list
                (ranges
-                  (substitute
+                  (substitute ~calls:Skip
                      ~extra_pm:(Pattern_matcher.with_ctx pm_tensor_mops)
                      indexed
                      [ (base x, v Op.Noop) ])))
@@ -298,7 +303,7 @@ let split_reduceop reduce x =
 let resolve_function c =
   if not (is_inline_call c) then None
   else
-    let nodes = toposort ~enter_calls:false (body c) in
+    let nodes = toposort ~calls:Skip (body c) in
     (* Input and output parameters both bind to explicit arguments by slot;
        unused arguments are allowed. *)
     let args = Array.of_list (List.tl (src c)) in
@@ -373,7 +378,7 @@ let resolve_function c =
           | _ -> None)
         nodes
     in
-    Some (substitute ~walk:true (body c) subs)
+    Some (substitute ~calls:Skip ~walk:true (body c) subs)
 
 let uint_of_bytes = function
   | 1 -> Dtype.Uint8
@@ -629,14 +634,15 @@ let earliest_rewrites =
 
 let prepare_rangeify sink =
   let tsink =
-    graph_rewrite ~bpm:Multi.scatter_dests ~ctx:() (forward_call_outputs sink)
+    graph_rewrite ~calls:Skip ~bpm:Multi.scatter_dests ~ctx:()
+      (forward_call_outputs sink)
       Multi.multi_pm
   in
   let tsink =
-    graph_rewrite ~ctx:() tsink
+    graph_rewrite ~calls:Skip ~ctx:() tsink
       (Pattern_matcher.concat [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ])
   in
-  graph_rewrite ~bottom_up:true ~ctx:() tsink
+  graph_rewrite ~calls:Skip ~bottom_up:true ~ctx:() tsink
     (Pattern_matcher.append pm_tensor_mops earliest_rewrites)
 
 (* Contiguous views *)
@@ -712,7 +718,7 @@ let contiguous_view u =
   else
     let idx = index (flatten u) [ range (numel u) [ 0 ] ] in
     let out =
-      graph_rewrite ~ctx:u idx
+      graph_rewrite ~calls:Skip ~ctx:u idx
         (Pattern_matcher.concat
            [
              Pattern_matcher.with_ctx pm_mops;

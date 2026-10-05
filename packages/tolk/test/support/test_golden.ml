@@ -72,7 +72,7 @@ let slots u =
   let open Tolk in
   List.filter_map
     (fun n -> match Ops.arg n with Ops.Param p -> Some p.slot | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let schedules_apart () =
   let open Tolk in
@@ -83,7 +83,7 @@ let schedules_apart () =
     List.concat_map slots
       (List.filter
          (fun n -> Ops.op n = Buffer && not (Ops.Nodes.mem n held))
-         (Ops.toposort linear))
+         (Ops.toposort ~calls:Enter linear))
   in
   not_equal (list int) [] made;
   equal (list int) [] (List.filter (fun k -> List.mem k (slots big)) made)

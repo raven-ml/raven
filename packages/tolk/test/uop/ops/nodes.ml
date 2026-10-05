@@ -818,7 +818,7 @@ let graphs =
     [
       prop "toposort lists each node once, after its sources" gen_dag
         (fun edges ->
-          let order = Ops.toposort (dag edges) in
+          let order = Ops.toposort ~calls:Enter (dag edges) in
           let at = index_of order in
           equal int (List.length order)
             (Ops.Tbl.length
@@ -838,19 +838,21 @@ let graphs =
           in
           equal int
             (List.length (reach [] root))
-            (List.length (Ops.toposort root)));
+            (List.length (Ops.toposort ~calls:Enter root)));
       prop "reaches is membership in the node's toposort" gen_dag (fun edges ->
-          let nodes = Ops.toposort (dag edges) in
+          let nodes = Ops.toposort ~calls:Enter (dag edges) in
           List.iter
             (fun u ->
-              let reached = Ops.toposort u in
+              let reached = Ops.toposort ~calls:Enter u in
               List.iter
-                (fun x -> equal bool (List.memq x reached) (Ops.reaches u x))
+                (fun x ->
+                  equal bool (List.memq x reached)
+                    (Ops.reaches ~calls:Enter u x))
                 nodes)
             nodes);
       prop "op_in_backward_slice_with_self is an operation of the slice"
         gen_dag (fun edges ->
-          let nodes = Ops.toposort (dag edges) in
+          let nodes = Ops.toposort ~calls:Enter (dag edges) in
           let slice u = Ops.Nodes.to_list (Ops.backward_slice_with_self u) in
           let reference u ops =
             List.exists (fun n -> List.mem (Ops.op n) ops) (slice u)
@@ -868,21 +870,21 @@ let graphs =
           let c = Ops.int 2 in
           equal uops
             [ a; b; Ops.O.(a + b); c; Ops.O.((a + b) * c) ]
-            (Ops.toposort Ops.O.((a + b) * c)));
+            (Ops.toposort ~calls:Enter Ops.O.((a + b) * c)));
       test "toposort enters only the nodes the gate accepts" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
           let s = Ops.O.(a + b) in
           equal uops
             [ Ops.O.(s * s) ]
-            (Ops.toposort ~gate:(fun u -> u != s) Ops.O.(s * s));
-          equal uops [] (Ops.toposort ~gate:(fun _ -> false) s));
-      test "toposort does not enter call bodies without enter_calls" (fun () ->
+            (Ops.toposort ~calls:Enter ~gate:(fun u -> u != s) Ops.O.(s * s));
+          equal uops [] (Ops.toposort ~calls:Enter ~gate:(fun _ -> false) s));
+      test "toposort ~calls:Skip does not enter call bodies" (fun () ->
           let body = Ops.sink [ var "inside" 0 1 ] in
           let arg = var "arg" 0 1 in
           let c = Ops.call body [ arg ] in
-          is_true (List.memq body (Ops.toposort c));
-          is_false (List.memq body (Ops.toposort ~enter_calls:false c));
-          is_true (List.memq arg (Ops.toposort ~enter_calls:false c)));
+          is_true (List.memq body (Ops.toposort ~calls:Enter c));
+          is_false (List.memq body (Ops.toposort ~calls:Skip c));
+          is_true (List.memq arg (Ops.toposort ~calls:Skip c)));
       test "topovisit applies its function once per node, sources first"
         (fun () ->
           let a = var "a" 0 4 in
@@ -903,7 +905,7 @@ let graphs =
           let branch = Ops.O.(leaf + Ops.int 3) in
           let root = Ops.sink [ branch; leaf; branch ] in
           equal uops
-            (List.filter (fun u -> u != root) (Ops.toposort root))
+            (List.filter (fun u -> u != root) (Ops.toposort ~calls:Enter root))
             (Ops.Nodes.to_list (Ops.backward_slice root));
           equal uops
             (root :: Ops.Nodes.to_list (Ops.backward_slice root))
@@ -923,17 +925,17 @@ let graphs =
           let c = Ops.call body [ Ops.O.(var "arg" 0 1 + Ops.int 1) ] in
           is_true (Ops.op_in_backward_slice_with_self c [ Op.Add ]);
           is_false (Ops.op_in_backward_slice_with_self c [ Op.Mul ]));
-      test "reaches enters call bodies" (fun () ->
+      test "reaches ~calls:Enter enters call bodies" (fun () ->
           let inside = var "inside" 0 1 in
           let c = Ops.call (Ops.sink [ inside ]) [] in
-          is_true (Ops.reaches c inside);
-          is_true (Ops.reaches c c);
-          is_false (Ops.reaches inside c));
-      test "reaches ~enter_calls:false does not enter call bodies" (fun () ->
+          is_true (Ops.reaches ~calls:Enter c inside);
+          is_true (Ops.reaches ~calls:Enter c c);
+          is_false (Ops.reaches ~calls:Enter inside c));
+      test "reaches ~calls:Skip does not enter call bodies" (fun () ->
           let inside = var "inside" 0 1 and arg = var "arg" 0 1 in
           let c = Ops.call (Ops.sink [ inside ]) [ arg ] in
-          equal bool false (Ops.reaches ~enter_calls:false c inside);
-          equal bool true (Ops.reaches ~enter_calls:false c arg));
+          equal bool false (Ops.reaches ~calls:Skip c inside);
+          equal bool true (Ops.reaches ~calls:Skip c arg));
       test "split_uop is the operands of a tree of one operation" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 and c = var "c" 0 4 in
           equal uops [ a; b; c ] (Ops.split_uop Ops.O.(a + b + c) Op.Add);

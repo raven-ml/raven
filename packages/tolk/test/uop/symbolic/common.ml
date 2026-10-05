@@ -14,7 +14,9 @@ let i n = `Int (Bigint.of_int n)
 let var ?dtype ?multiple_of name lo hi =
   Ops.variable ?dtype ?multiple_of name (i lo) (i hi)
 
-let rewrite ?bottom_up m u = Ops.graph_rewrite ?bottom_up ~ctx:() u m
+let rewrite ?bottom_up m u =
+  Ops.graph_rewrite ~calls:Skip ?bottom_up ~ctx:() u m
+
 let simple u = rewrite Symbolic.symbolic_simple u
 let symbolic u = rewrite Symbolic.symbolic u
 let sym u = rewrite Symbolic.sym u
@@ -38,7 +40,7 @@ let exact u =
     | Const | Param | Range | Special | Cast | Bitcast -> true
     | op -> Op.Set.mem op Op.Set.alu && op <> Op.Threefry
   in
-  List.for_all node (Ops.toposort u)
+  List.for_all node (Ops.toposort ~calls:Enter u)
 
 (* Leaves *)
 
@@ -90,7 +92,7 @@ let counter_value rng k env u =
 (* [bindings rng k us] is the [k]th binding of the leaves of [us] by name, or
    [None] if a range it binds is empty or two leaves share a name. *)
 let bindings rng k us =
-  let leaves = List.filter is_leaf (Ops.toposort (Ops.sink us)) in
+  let leaves = List.filter is_leaf (Ops.toposort ~calls:Enter (Ops.sink us)) in
   let names = List.filter_map Interpreter.name leaves in
   if List.length (List.sort_uniq String.compare names) <> List.length names then
     None
@@ -117,7 +119,7 @@ let defined env u =
           | `Int d -> not (Bigint.equal d Bigint.zero)
           | _ -> true)
       | _ -> true)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let pp_binding ppf env =
   let pp_one ppf (name, v) = Format.fprintf ppf "%s=%a" name Dtype.pp_const v in
@@ -144,7 +146,9 @@ let within_bounds ~msg u v =
 let keeps_value ?(count = 16) ?(wrapping = false) ~name before after =
   if exact before && exact after then begin
     let rng = Random.State.make [| Hashtbl.hash (name, Ops.key before) |] in
-    let constants = not (List.exists is_leaf (Ops.toposort before)) in
+    let constants =
+      not (List.exists is_leaf (Ops.toposort ~calls:Enter before))
+    in
     let defined env =
       defined env before
       && (wrapping || constants || not (Interpreter.overflows ~vars:env before))

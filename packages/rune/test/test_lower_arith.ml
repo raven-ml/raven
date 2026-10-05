@@ -113,7 +113,8 @@ let extremes =
           let reads_sign f =
             List.exists
               (fun u -> Tolk.Ops.op u = Tolk.Op.Bitcast)
-              (Tolk.Ops.toposort (Programs.kernels (snd (trace f))))
+              (Tolk.Ops.toposort ~calls:Enter
+                 (Programs.kernels (snd (trace f))))
           in
           let relu x =
             let zero = Nx.scalar_like x 0. in
@@ -625,7 +626,7 @@ let kernels_reading c y =
     List.exists
       (fun u ->
         match Tolk.Ops.arg u with Tolk.Ops.Const v -> v = c | _ -> false)
-      (Tolk.Ops.toposort
+      (Tolk.Ops.toposort ~calls:Enter
          (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
   in
   List.length (List.filter reads (Tolk.Ops.src (Programs.kernels y)))

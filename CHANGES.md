@@ -969,6 +969,11 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Ops.toposort`, `Ops.reaches`, `Ops.graph_rewrite`,
+  `Ops.substitute` and `Spec.type_verify` take a required
+  `~calls:(Enter | Skip)` (new `Ops.calls`) in place of `?enter_calls`, whose
+  default entered call bodies in the first two and `type_verify` and skipped
+  them in the others.
 - `Symbolic.sym` folds the constants of nested integer maxima at the
   maximum's width: on uint8, `max(max(w, 1), -3)` became `max(w, 1)`, where
   the machine computes `max(w, 253)`.
@@ -1039,7 +1044,7 @@ thread.
   weighing whether a stage could be inlined walked every kernel upstream of
   it, and the where-closure rule searched branches its INDEX gate rejects.
   An unrolled training step of 2031 kernels schedules in 5.3 s, from 27 s.
-  `Ops.reaches` takes `?enter_calls` and stops at the node it looks for.
+  `Ops.reaches` stops at the node it looks for.
 - A beam search is read back from the disk cache only for the candidates it
   chose among, so `TC_OPT=0` no longer reads back a search made with `TC_OPT`
   unset. The search's `BEAM_*` variables, `SUM_DTYPE`, `HCQ_NUM_SDMA` and

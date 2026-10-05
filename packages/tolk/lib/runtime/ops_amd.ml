@@ -904,7 +904,9 @@ let compute_queue ~host gpu q : Hcq2.commands =
       Hcq2.Queue.reset q;
       let rec emit addr = function
         | Packets ws ->
-            ignore (q_of q (src (substitute (sink ws) [ (cmd_addr, addr) ])))
+            ignore
+              (q_of q
+                 (src (substitute ~calls:Skip (sink ws) [ (cmd_addr, addr) ])))
         | Trips (r, trip, items) ->
             Hcq2.Queue.loop q r (fun () ->
                 List.iter
@@ -998,7 +1000,7 @@ let copy_queue ~host gpu q : Hcq2.commands =
           replace ~arg:(Param { p with device = Some (Single host) }) base
       | _ -> invalid_arg "an AMD command buffer is a placeholder"
     in
-    let cmdbuf = substitute cmdbuf [ (base, on_host) ] in
+    let cmdbuf = substitute ~calls:Skip cmdbuf [ (base, on_host) ] in
     let rs = ring / 4 and size_dw = max_numel cmdbuf / 4 in
     (* Zeroing the tail can double what a submission writes, which is at most
        half the ring. *)

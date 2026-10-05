@@ -47,7 +47,8 @@ let without_profile_keys u =
               c )
     | _ -> None
   in
-  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))
+  Ops.substitute ~calls:Skip u
+    (List.filter_map unkeyed (Ops.toposort ~calls:Enter u))
 
 let host_sources linear =
   String.concat ""
@@ -140,7 +141,7 @@ let function_words =
                 match Ops.tag u with
                 | Some (Tuple (String "function" :: _)) -> true
                 | _ -> false)
-              (Ops.toposort compiled)
+              (Ops.toposort ~calls:Enter compiled)
           in
           let placement u =
             match Ops.device u with

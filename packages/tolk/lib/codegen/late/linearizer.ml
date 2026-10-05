@@ -37,7 +37,7 @@ let pp_priority ppf (run_count, priority, extra) =
   Format.fprintf ppf "(%d, %d, %a)" run_count priority pp_extra extra
 
 let linearize sink =
-  let lst = toposort sink in
+  let lst = toposort ~calls:Enter sink in
   let out_degree = Tbl.create 256 and priorities = Tbl.create 256 in
   let degree u = Option.value ~default:0 (Tbl.find_opt out_degree u) in
   List.iter
@@ -113,7 +113,7 @@ let cfg_context sink =
       if is_loop u || op u = Op.Sink then List.iter (nest u) d;
       let self = match op u with Op.Range -> true | _ -> is_loop u in
       Tbl.replace deps u (if self then d @ [ u ] else d))
-    (toposort sink);
+    (toposort ~calls:Enter sink);
   let nesting = List.rev !nesting and edges = Tbl.create 16 in
   let add_edges k =
     let v =

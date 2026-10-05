@@ -7,7 +7,8 @@ open Tolk
 
 let uop = Uops.uop
 let multi u =
-  Ops.graph_rewrite ~bpm:Multi.scatter_dests ~ctx:() u Multi.multi_pm
+  Ops.graph_rewrite ~calls:Skip ~bpm:Multi.scatter_dests ~ctx:() u
+    Multi.multi_pm
 let program name = Golden.sink (name ^ ".golden")
 
 (* Recorded graphs *)
@@ -168,7 +169,7 @@ let sharded_storage u =
   List.filter_map
     (fun n ->
       if Ops.op n = Unshard then Some (Ops.storage_base (Ops.nth n 0)) else None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
@@ -191,7 +192,7 @@ let filled u =
           in
           Some (slot, Array.init (size * devices device) at)
       | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 (* A reduction across devices adds its terms in another order than one over the
    whole, so floats agree up to the rounding of float32. *)
@@ -225,7 +226,7 @@ let concrete u =
       List.for_all
         (function Ops.Int _ -> true | Sym _ -> false)
         (Option.value ~default:[] (Ops.shape_opt n)))
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let values =
   group "multi_pm › values"
@@ -477,7 +478,9 @@ let holds_whole d =
   let v, axes, buffers = build d in
   cover "a value stays sharded" (axes <> []);
   cover "a sharded axis is reduced across devices"
-    (List.exists (fun n -> Ops.op n = Allreduce) (Ops.toposort (multi v)));
+    (List.exists
+       (fun n -> Ops.op n = Allreduce)
+       (Ops.toposort ~calls:Enter (multi v)));
   agrees v buffers
 
 let holds_whole_once d =
@@ -558,7 +561,8 @@ let whole = storage 3 [ 4; 8 ]
 let refused ~because u =
   raises_match (Exn.invalid_arg ~substring:because) (fun () -> multi u)
 
-let has op u = List.exists (fun n -> Ops.op n = op) (Ops.toposort u)
+let has op u =
+  List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
 
 let arithmetic =
   group "multi_pm › arithmetic"
@@ -586,7 +590,7 @@ let arithmetic =
           let expands u =
             List.filter_map
               (fun n -> if Ops.op n = Expand then Some (Ops.shape n) else None)
-              (Ops.toposort u)
+              (Ops.toposort ~calls:Enter u)
           in
           equal
             (list (list uop))
@@ -931,7 +935,7 @@ let copies =
                  match Ops.arg n with
                  | Allreduce { device; _ } -> Some device
                  | _ -> None)
-               (Ops.toposort u)));
+               (Ops.toposort ~calls:Enter u)));
       test "a copy of a value on one device to several is a copy to each"
         (fun () ->
           equal uop

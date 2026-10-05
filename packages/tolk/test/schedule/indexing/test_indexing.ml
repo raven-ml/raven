@@ -478,7 +478,7 @@ let filled u =
           in
           Some (slot, Array.init (size * devices device) element)
       | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let write = triple int int Dtypes.value
 
@@ -561,7 +561,9 @@ let stored value =
     [ Ops.after out [ Ops.store (Ops.reshape out (Ops.shape value)) value ] ]
 
 let rangeified value = Indexing.run_rangeify (stored value)
-let all op u = List.filter (fun n -> Ops.op n = op) (Ops.toposort u)
+let all op u =
+  List.filter (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+
 let count op u = List.length (all op u)
 let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
 
@@ -684,7 +686,7 @@ let depth u =
       in
       let own = if Ops.op n = Where && Ops.dtype n = Float32 then 1 else 0 in
       Ops.Tbl.replace depths n (below + own))
-    (Ops.toposort u);
+    (Ops.toposort ~calls:Enter u);
   Ops.Tbl.find depths u
 
 let stacks =
@@ -789,7 +791,7 @@ let rewrites =
             (List.length
                (List.filter
                   (fun n -> List.mem (Ops.op n) movements)
-                  (Ops.toposort u))));
+                  (Ops.toposort ~calls:Enter u))));
       test "calls, afters and shards get no ranges" (fun () ->
           ignore (Indexing.run_rangeify ~debug:true (program "shard_sum"));
           let printed = output () in

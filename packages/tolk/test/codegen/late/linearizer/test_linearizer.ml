@@ -4,10 +4,10 @@ open Tolk
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* The passes, as the codegen pipeline applies them. *)
-let split u = Ops.graph_rewrite ~ctx:() u Linearizer.pm_split_ends
+let split u = Ops.graph_rewrite ~calls:Skip ~ctx:() u Linearizer.pm_split_ends
 
 let chain sink =
-  Ops.graph_rewrite ~bottom_up:true
+  Ops.graph_rewrite ~calls:Skip ~bottom_up:true
     ~ctx:(Linearizer.cfg_context sink)
     sink Linearizer.pm_add_control_flow
 
@@ -81,7 +81,7 @@ let is_end u = match Ops.op u with Op.End | Op.Backedge -> true | _ -> false
 
 let is_topological sink order =
   let at = positions order in
-  equal (slist Uops.uop Ops.compare) (Ops.toposort sink) order;
+  equal (slist Uops.uop Ops.compare) (Ops.toposort ~calls:Enter sink) order;
   equal Uops.uop sink (List.hd (List.rev order));
   List.iter
     (fun u ->
@@ -133,7 +133,7 @@ let ends_are_single sink =
     (fun u ->
       if Ops.op u = Op.End then
         equal ~msg:"an end closes one range" int 2 (List.length (Ops.src u)))
-    (Ops.toposort sink)
+    (Ops.toposort ~calls:Enter sink)
 
 (* Generated kernels: trees of loops storing into parameters. A loop either
    closes its own range, or [fuses] its children's ends into its own, as kernels
@@ -227,7 +227,7 @@ let laws =
         (Law.idempotent Uops.uop split);
       prop "pm_split_ends closes the ranges it was given" kernels_gen (fun k ->
           let closed u =
-            List.concat_map Ops.ended_ranges (Ops.toposort u)
+            List.concat_map Ops.ended_ranges (Ops.toposort ~calls:Enter u)
             |> List.sort_uniq Ops.compare
           in
           equal (list Uops.uop) (closed k) (closed (split k)));

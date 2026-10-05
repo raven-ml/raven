@@ -40,9 +40,9 @@ let get_call_var_uops call prg =
                         if is_variable v then
                           Option.map (fun c -> (v, c)) (named v)
                         else None)
-                      (toposort n)
+                      (toposort ~calls:Enter n)
                   in
-                  substitute n values
+                  substitute ~calls:Skip n values
             in
             fun v ->
               match arg v with
@@ -143,7 +143,7 @@ let lower_and_compile ?search ~targets linear =
       (fun c ->
         if op c <> Op.Call then None
         else Option.map (fun a -> (c, a)) (get_call_to_compile targets c))
-      (toposort linear)
+      (toposort ~calls:Enter linear)
   in
   let same (a0, r0) (a1, r1) = a0 == a1 && r0 == r1 in
   let todo =
@@ -167,7 +167,7 @@ let lower_and_compile ?search ~targets linear =
       (map (fun (ast, ren) -> Codegen.to_program ?beam:search ast ren) todo)
   in
   let program a = snd (List.find (fun (b, _) -> same a b) compiled) in
-  substitute linear
+  substitute ~calls:Skip linear
     (List.map
        (fun (c, a) -> (c, replace c ~src:(program a :: List.tl (src c))))
        calls)

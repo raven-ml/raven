@@ -212,7 +212,10 @@ module Scheduler = struct
         (rngs k)
     in
     let independent grouped u =
-      not (List.exists (fun g -> reaches u g || reaches g u) grouped)
+      not
+        (List.exists
+           (fun g -> reaches ~calls:Enter u g || reaches ~calls:Enter g u)
+           grouped)
     in
     let take (axes, grouped) u =
       match axis_of u with
@@ -267,7 +270,7 @@ module Scheduler = struct
         (r, replace r ~arg:(Range { axis_id = axis_id r; axis_type = Global }))
       in
       k.ast <-
-        substitute k.ast
+        substitute ~calls:Skip k.ast
           (List.map global
              (List.filter (fun r -> List.memq r globalizable) (rngs k)))
     end
@@ -305,7 +308,7 @@ module Scheduler = struct
       if top then O.((new_rng * old_sz) + replaced_rng)
       else O.((replaced_rng * z amount) + new_rng)
     in
-    k.ast <- substitute k.ast [ (rng, sub_axis) ];
+    k.ast <- substitute ~calls:Skip k.ast [ (rng, sub_axis) ];
     (replaced_rng, new_rng)
 
   let shift_to ?top ?new_rng k rng amount target =
@@ -481,7 +484,7 @@ module Scheduler = struct
             else []
           in
           k.ast <-
-            substitute k.ast
+            substitute ~calls:Skip k.ast
               (((rng, replaced_rng) :: List.concat_map pad_buf (bufs k))
               @ List.concat_map pad_reduce (reduceops k));
           [ replaced_rng ]
@@ -500,7 +503,7 @@ module Scheduler = struct
               ~arg:(Range { axis_id = axis_id other; axis_type = axis_type r })
           in
           k.ast <-
-            substitute ~walk:true k.ast
+            substitute ~calls:Skip ~walk:true k.ast
               [ (rng, renamed rng altrng); (altrng, renamed altrng rng) ];
           []
     in
@@ -668,7 +671,7 @@ module Scheduler = struct
        one value over a tile: its reads of the other's bits, which stay below
        the tile, are read at 0. A reads no N bit, and B no M bit. *)
     let own bit x =
-      substitute (Option.get (tc_operand tc x))
+      substitute ~calls:Skip (Option.get (tc_operand tc x))
         (List.filter_map
            (fun (c, r) ->
              if bit c then Some (r, const ~dtype:(dtype r) (`Int Bigint.zero))
@@ -698,7 +701,7 @@ module Scheduler = struct
     let srcs =
       List.map2
         (fun x rl ->
-          substitute ~walk:true x
+          substitute ~calls:Skip ~walk:true x
             (List.map (fun (a, b) -> (ne_of a, ne_of b)) rl))
         ins [ relabel_a; relabel_b ]
     in
@@ -730,7 +733,7 @@ module Scheduler = struct
     let reduce_ranges =
       List.filter
         (fun x -> op x = Op.Range && not (List.memq x k_ranges))
-        (toposort (sink (List.tl (src reduceop))))
+        (toposort ~calls:Enter (sink (List.tl (src reduceop))))
     in
     let tc_uop =
       match reduce_ranges with
@@ -739,7 +742,7 @@ module Scheduler = struct
           Ops.v Op.Reduce ~src:(tc_uop :: rs)
             ~arg:(Reduce { op = Op.Add; num_axes = 0 })
     in
-    k.ast <- substitute k.ast [ (reduceop, tc_uop) ]
+    k.ast <- substitute ~calls:Skip k.ast [ (reduceop, tc_uop) ]
 
   and index_of x l =
     let rec go i = function
@@ -782,7 +785,7 @@ module Scheduler = struct
           let axes = List.map (fun x -> Render.render (nth x 0)) (rngs k) in
           k_type ^ String.concat "_" (("" :: special_ops) @ axes)
     in
-    k.ast <- graph_rewrite ~ctx:() k.ast Simplify.pm_flatten_range;
+    k.ast <- graph_rewrite ~calls:Skip ~ctx:() k.ast Simplify.pm_flatten_range;
     replace k.ast
       ~arg:(Kernel (kernel_info ~name ~applied_opts:k.applied_opts ()))
       ~tag:(Some (Tag.Int 1))

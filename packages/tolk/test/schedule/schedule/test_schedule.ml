@@ -205,7 +205,7 @@ let given u =
       match (Ops.op n, Ops.arg n) with
       | (Param | Buffer), Param p when p.addrspace <> Some Alu -> Some (n, p)
       | _ -> None)
-    (Ops.toposort ~enter_calls:false u)
+    (Ops.toposort ~calls:Skip u)
 
 let filled u =
   List.map
@@ -232,12 +232,12 @@ let write = triple int int value
 let on_several_devices u =
   List.exists
     (fun n -> match Ops.device n with Some (Multi _) -> true | _ -> false)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let calls_only_kernels u =
   List.for_all
     (fun n -> Ops.op n <> Call || Ops.op (Ops.nth n 0) = Sink)
-    (Ops.toposort ~enter_calls:false u)
+    (Ops.toposort ~calls:Skip u)
 
 (* Custom kernels keep their views until they are compiled, which the
    Interpreter does not run. The call of assign_bitcast passes a buffer and a
@@ -318,7 +318,7 @@ let has_variables u =
       match (Ops.op n, Ops.arg n) with
       | Param, Param { addrspace = Some Alu; name = Some _; _ } -> true
       | _ -> false)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let realized =
   group "create_linear_with_vars › values"
@@ -340,7 +340,7 @@ let realized =
    plans it as create_linear_with_vars does, holding the program's buffers. *)
 
 let buffers_of big =
-  List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~enter_calls:false big)
+  List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~calls:Skip big)
 
 let planned_later name =
   test (name ^ ": planned later, the captured schedule is the planned one")
@@ -387,7 +387,7 @@ let constants = Atomic.make 0
 
 let unique ?(constant = 1.0) name =
   let x = 1000. +. float_of_int (Atomic.fetch_and_add constants 1) in
-  Ops.substitute ~enter_calls:true (program name)
+  Ops.substitute ~calls:Enter (program name)
     [ (Ops.float constant, Ops.float x) ]
 
 let with_settings ~debug ~scache f =
@@ -494,12 +494,12 @@ let timed () =
 let renumbered () =
   let big = unique "precompiled_function" in
   let alloc =
-    List.find (fun n -> Ops.op n = Alloc) (Ops.toposort ~enter_calls:false big)
+    List.find (fun n -> Ops.op n = Alloc) (Ops.toposort ~calls:Skip big)
   in
   let in_slot slot =
     match Ops.arg alloc with
     | Param p ->
-        Ops.substitute big
+        Ops.substitute ~calls:Skip big
           [ (alloc, Ops.replace ~arg:(Param { p with slot }) alloc) ]
     | _ -> fail "call-local storage without its argument"
   in
@@ -532,9 +532,9 @@ let chained () =
 (* variable_shrink binds v to 3 and multiplies by 2.0. *)
 let rebinding () =
   let big = unique ~constant:2.0 "variable_shrink" in
-  let v = List.find Ops.is_bound_var (Ops.toposort big) in
+  let v = List.find Ops.is_bound_var (Ops.toposort ~calls:Enter big) in
   let five =
-    Ops.substitute big
+    Ops.substitute ~calls:Skip big
       [ (v, Ops.bind (Ops.unbound v) (`Int (Bigint.of_int 5))) ]
   in
   let vals =
@@ -575,7 +575,7 @@ let one_body_at_once () =
             | Param p when Ops.op n = Buffer && not (Ops.Nodes.mem n held) ->
                 Some p.slot
             | _ -> None)
-          (Ops.toposort r))
+          (Ops.toposort ~calls:Enter r))
       results
   in
   at_least ~msg:"each domain makes buffers" int ~than:(List.length results)
@@ -656,7 +656,7 @@ let cache =
 let clone = program "clone_kernels"
 
 let copy_call =
-  List.find (fun n -> Ops.op n = Call) (Ops.toposort ~enter_calls:false clone)
+  List.find (fun n -> Ops.op n = Call) (Ops.toposort ~calls:Skip clone)
 
 let copy_kernel = Ops.nth copy_call 0
 
@@ -814,12 +814,13 @@ let flattening () =
           linear
       in
       equal uop linear
-        (Ops.graph_rewrite ~ctx:() nested Schedule.pm_flatten_linear)
+        (Ops.graph_rewrite ~calls:Skip ~ctx:() nested Schedule.pm_flatten_linear)
   | calls -> failf "softmax schedules %d kernels" (List.length calls)
 
 let flat () =
   let linear = Schedule.create_schedule (program "softmax_kernels") in
-  equal uop linear (Ops.graph_rewrite ~ctx:() linear Schedule.pm_flatten_linear)
+  equal uop linear
+    (Ops.graph_rewrite ~calls:Skip ~ctx:() linear Schedule.pm_flatten_linear)
 
 let flatten =
   group "pm_flatten_linear"
@@ -874,7 +875,7 @@ let bytes =
 let sharded_grid =
   List.find
     (fun n -> Ops.op n = Unshard)
-    (Ops.toposort (program "shard_to_one"))
+    (Ops.toposort ~calls:Enter (program "shard_to_one"))
 
 let sharded = Ops.reshape sharded_grid [ Int 32 ]
 
@@ -991,12 +992,12 @@ let views =
 let bound_var name =
   List.find
     (fun n -> Ops.is_bound_var n && Ops.expr n = name)
-    (Ops.toposort (program "variable_two"))
+    (Ops.toposort ~calls:Enter (program "variable_two"))
 
 (* variable_two binds v to 4 and w to 7; [rebound value] binds, in w's place,
    another variable named v, of another range, to [value]. *)
 let rebound value =
-  Ops.substitute (program "variable_two")
+  Ops.substitute ~calls:Skip (program "variable_two")
     [
       ( bound_var "w",
         Ops.bind
@@ -1017,7 +1018,7 @@ let several_devices () =
     | _ -> None
   in
   let input = require_some (List.find_map moved (buffers_of big)) in
-  let across = Ops.substitute big [ input ] in
+  let across = Ops.substitute ~calls:Skip big [ input ] in
   raises_match (Exn.invalid_arg ~substring:"same device") (fun () ->
       Schedule.create_linear_with_vars across)
 

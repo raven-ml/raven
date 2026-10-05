@@ -21,7 +21,7 @@ let told names f = Setting.context [ B (Setting.emulated_dtypes, names) ] f
 (* [emulate on kernel] is [kernel] rewritten for the target [on] by the pass as
    code generation runs it, with the weak constants of its rules committed. *)
 let emulate on kernel =
-  Ops.graph_rewrite ~ctx:(Decomp_dtype.ctx on) kernel
+  Ops.graph_rewrite ~calls:Skip ~ctx:(Decomp_dtype.ctx on) kernel
     (PM.append Decomp_dtype.pm_dtype_decomps
        (PM.with_ctx Uop_weak.pm_commit_weak))
 
@@ -436,7 +436,7 @@ let casts_narrow_integers dt () =
    emulated on [on], converts a float to an integer type that cannot hold it,
    which C leaves undefined; given the storage [inputs]. *)
 let undefined_casts ~on k inputs =
-  let nodes = Ops.toposort (emulate on k) in
+  let nodes = Ops.toposort ~calls:Enter (emulate on k) in
   let r = List.find (fun u -> Ops.op u = Range) nodes in
   let casts =
     List.filter
@@ -1186,8 +1186,8 @@ let with_conversions u =
     PM.v (fun () ->
         [ PM.rule (Ops.Upat.op Custom ~name:"c") (fun m -> conversion (m "c")) ])
   in
-  Ops.graph_rewrite ~ctx:()
-    (Ops.graph_rewrite ~ctx:() u restore)
+  Ops.graph_rewrite ~calls:Skip ~ctx:()
+    (Ops.graph_rewrite ~calls:Skip ~ctx:() u restore)
     Uop_weak.pm_commit_weak
 
 let narrow_kernels =
@@ -1326,7 +1326,7 @@ let params k =
   List.filter_map
     (fun u ->
       match (Ops.op u, Ops.arg u) with Param, Param a -> Some a | _ -> None)
-    (Ops.toposort k)
+    (Ops.toposort ~calls:Enter k)
   |> List.sort_uniq (fun (a : Ops.param_arg) b -> Int.compare a.slot b.slot)
 
 let random_z rng bits =
@@ -1467,7 +1467,8 @@ let graphs =
 (* The pass *)
 
 let decomps on k =
-  Ops.graph_rewrite ~ctx:(Decomp_dtype.ctx on) k Decomp_dtype.pm_dtype_decomps
+  Ops.graph_rewrite ~calls:Skip ~ctx:(Decomp_dtype.ctx on) k
+    Decomp_dtype.pm_dtype_decomps
 
 let add dt =
   kernel [ dt; dt ] dt 4 (fun xs -> Ops.O.(List.nth xs 0 + List.nth xs 1))

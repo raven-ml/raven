@@ -241,7 +241,9 @@ let opaque =
     ]
 
 let interpretable u =
-  List.for_all (fun v -> not (List.mem (Ops.op v) opaque)) (Ops.toposort u)
+  List.for_all
+    (fun v -> not (List.mem (Ops.op v) opaque))
+    (Ops.toposort ~calls:Enter u)
 
 let bound k =
   List.map
@@ -265,7 +267,9 @@ let keeps_writes row =
     match (kernel_info u).split with
     | None -> []
     | Some s ->
-        let name slot = Ops.expr (variable_of (Ops.toposort u) slot) in
+        let name slot =
+          Ops.expr (variable_of (Ops.toposort ~calls:Enter u) slot)
+        in
         let hi = Ops.sym_infer s.iterations (Kernel_opts.variables k) in
         [ (name s.lo, `Int Bigint.zero); (name s.hi, `Int (Bigint.of_int hi)) ]
   in
@@ -413,7 +417,7 @@ let runs_as_interpreted name () =
     under row (fun () -> Codegen.to_program k (Lazy.force host_uncompiled))
   in
   let uops = Ops.src (Ops.nth prg 1) in
-  let kernel = buffer_dtypes (Ops.toposort k)
+  let kernel = buffer_dtypes (Ops.toposort ~calls:Enter k)
   and program = buffer_dtypes uops in
   let outputs =
     Run.on_host ~vars:(Kernel_opts.variables k)
@@ -976,7 +980,7 @@ let whole_loop p (e : Ops.estimates) : Ops.estimates =
       in
       let fill : Ops.sint -> Ops.sint = function
         | Int _ as i -> i
-        | Sym u -> Ops.ssimplify (Ops.substitute u bounds)
+        | Sym u -> Ops.ssimplify (Ops.substitute ~calls:Skip u bounds)
       in
       { ops = fill e.ops; lds = fill e.lds; mem = fill e.mem }
 
@@ -1108,12 +1112,12 @@ let stages_through_locals row =
       equal int ~msg:"lanes of the local store" 4
         (Ops.max_numel (Ops.nth first 1));
       is_true ~msg:"the first store is to local memory"
-        (List.exists (in_space Local) (Ops.toposort first));
+        (List.exists (in_space Local) (Ops.toposort ~calls:Enter first));
       equal int ~msg:"lanes of the global store" 1
         (Ops.max_numel (Ops.nth last 1));
       equal Dtypes.dtype Float32 (Ops.dtype (Ops.nth last 1));
       is_true ~msg:"the last store is to a parameter"
-        (List.exists (is Param) (Ops.toposort last))
+        (List.exists (is Param) (Ops.toposort ~calls:Enter last))
   | stores ->
       failf "a local then a global store, not %d stores" (List.length stores)
 
@@ -1165,7 +1169,9 @@ let arange_without_phis row =
 let wide u = Dtype.equal (Ops.dtype u) Int64 || Dtype.equal (Ops.dtype u) Uint64
 
 let wide_alu row =
-  List.length (List.filter wide (alu (Ops.toposort (Ops.nth (program row) 0))))
+  List.length
+    (List.filter wide
+       (alu (Ops.toposort ~calls:Enter (Ops.nth (program row) 0))))
 
 let estimated_ops row =
   match (kernel_info (Ops.nth (program row) 0)).estimates with
@@ -1224,7 +1230,7 @@ let claims =
             (count Barrier uops));
       claim "reduce_shapeless_const_unroll"
         "folds the sum of a constant over an unroll" (fun row ->
-          let nodes = Ops.toposort (lowered row) in
+          let nodes = Ops.toposort ~calls:Enter (lowered row) in
           equal int ~msg:"reductions" 0 (count Reduce nodes);
           mem Dtypes.const (`Float 12.)
             (List.filter_map
@@ -1261,7 +1267,7 @@ let claims =
 
 (* tinygrad's claims on lowered kernels *)
 
-let lowered_nodes row = Ops.toposort (lowered row)
+let lowered_nodes row = Ops.toposort ~calls:Enter (lowered row)
 
 let one_ending ending row =
   match List.filter (is ending) (lowered_nodes row) with
@@ -1664,7 +1670,8 @@ let divisions =
 let ranges_left uops =
   Setting.context
     [ B (Setting.noopt, true) ]
-    (fun () -> List.filter (is Range) (Ops.toposort (full_rewrite uops)))
+    (fun () ->
+      List.filter (is Range) (Ops.toposort ~calls:Enter (full_rewrite uops)))
 
 let lowered_end n =
   Setting.context
@@ -1789,11 +1796,11 @@ let lowered_on_metal k =
    floats of slot 4. *)
 let with_products u =
   let products = lanes 4 Float32 in
-  Ops.substitute u
+  Ops.substitute ~calls:Skip u
     (List.filter_map
        (fun w ->
          if is Wmma w then Some (w, Ops.add (Ops.nth w 2) products) else None)
-       (Ops.toposort u))
+       (Ops.toposort ~calls:Enter u))
 
 (* The kernel of [c] and its lowering, each tensor core standing for its sum,
    lowered once for every case of a property. *)
@@ -1861,8 +1868,9 @@ let replaces_a_zero c =
   List.iter
     (fun w ->
       equal (list Uops.uop) []
-        (List.filter float_constant (Ops.toposort (Ops.nth w 2))))
-    (List.filter (is Wmma) (Ops.toposort (lowered_on_metal (accumulated c))))
+        (List.filter float_constant (Ops.toposort ~calls:Enter (Ops.nth w 2))))
+    (List.filter (is Wmma)
+       (Ops.toposort ~calls:Enter (lowered_on_metal (accumulated c))))
 
 let accumulators =
   group "tensor-core accumulators"
@@ -2313,7 +2321,7 @@ let errors =
                 Codegen.full_rewrite_to_sink ~optimize:false
                   (Lazy.force marker_kernel) breaking)
           in
-          mem op Source (List.map Ops.op (Ops.toposort lowered)));
+          mem op Source (List.map Ops.op (Ops.toposort ~calls:Enter lowered)));
       test "with SPEC=0, a kernel that breaks the specification is lowered"
         (fun () ->
           let lowered =
@@ -2322,7 +2330,7 @@ let errors =
               (fun () ->
                 Codegen.full_rewrite_to_sink ~optimize:false spec_breaking clang)
           in
-          mem op If (List.map Ops.op (Ops.toposort lowered)));
+          mem op If (List.map Ops.op (Ops.toposort ~calls:Enter lowered)));
       test "a kernel that breaks the specification raises Invalid_argument"
         (fun () ->
           Setting.context
@@ -2637,7 +2645,8 @@ let keeps_narrow_indices () =
   let prg =
     in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) a) [ i ] ]
   in
-  equal (list Uops.uop) [] (List.filter wide (Ops.toposort (Ops.nth prg 0)))
+  equal (list Uops.uop) []
+    (List.filter wide (Ops.toposort ~calls:Enter (Ops.nth prg 0)))
 
 (* 2^16 sums of 2^16 products count at least a product and a sum each, 2^33
    operations: past the 32-bit index type a block's count is kept in. *)

@@ -6,7 +6,7 @@ open Windtrap
 open Tolk
 
 let uop = Uops.uop
-let multi u = Ops.graph_rewrite ~ctx:() u Multi.multi_pm
+let multi u = Ops.graph_rewrite ~calls:Skip ~ctx:() u Multi.multi_pm
 let two = Ops.Multi [ "CPU:0"; "CPU:1" ]
 let whole = Ops.reshape (Ops.new_buffer ~slot:1 two 8 Float32) [ Int 2; Int 4 ]
 let red = Ops.allreduce whole Add two

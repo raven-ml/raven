@@ -583,7 +583,8 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
                 List.map
                   (fun (r : Lower_index.region) ->
                     Ops.store
-                      (value (Ops.substitute r.dest [ (into, target) ]))
+                      (value
+                         (Ops.substitute ~calls:Skip r.dest [ (into, target) ]))
                       (value r.value))
                   regions
           in
@@ -623,7 +624,7 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
         { like; shape; at; out; name })
       ys
   in
-  let sink = Ops.substitute (Ops.sink (List.rev !stores)) !taken in
+  let sink = Ops.substitute ~calls:Skip (Ops.sink (List.rev !stores)) !taken in
   let buffers = Hashtbl.create 16 in
   List.iter
     (fun u ->
@@ -631,7 +632,7 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
       | Ops.Param p when Ops.op u = Op.Buffer ->
           Hashtbl.replace buffers p.slot u
       | _ -> ())
-    (Ops.toposort sink);
+    (Ops.toposort ~calls:Enter sink);
   let fresh =
     List.filter_map
       (fun r -> match r.out with Fresh k -> Some k | _ -> None)

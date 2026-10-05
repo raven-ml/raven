@@ -104,7 +104,8 @@ let try_compile k =
     let ast = K.get_optimized_ast ~name_override:"test" (K.copy k) in
     let lin =
       Codegen.linearize
-        (substitute ast (List.concat_map on_device (toposort ast)))
+        (substitute ~calls:Skip ast
+           (List.concat_map on_device (toposort ~calls:Enter ast)))
         ren
     in
     let uops = List.length (src (nth lin 1)) in

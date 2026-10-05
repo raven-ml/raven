@@ -53,7 +53,7 @@ let made_storage red u =
   let held = Ops.backward_slice_with_self red in
   List.filter
     (fun n -> Ops.op n = Alloc && not (Ops.Nodes.mem n held))
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 (* [numbered_as golden red u] is [u] with the storage it makes numbered as the
    storage [golden] makes: numbers of new storage come from a counter that the
@@ -71,7 +71,7 @@ let numbered_as golden red u =
             mine ))
       (made_storage red u) (made_storage red golden)
   in
-  Ops.substitute u subs
+  Ops.substitute ~calls:Skip u subs
 
 (* Tinygrad gathers each chunk a hierarchical allreduce reduces on every
    device, whatever its target. Where the target is one device, tolk copies
@@ -84,9 +84,9 @@ let landed_on_its_device golden =
     | _ -> fail "an allreduce has a target"
   in
   let gathers =
-    List.filter (fun n -> Ops.op n = Mstack) (Ops.toposort golden)
+    List.filter (fun n -> Ops.op n = Mstack) (Ops.toposort ~calls:Enter golden)
   in
-  Ops.substitute golden
+  Ops.substitute ~calls:Skip golden
     (List.map
        (fun m -> (m, Ops.copy_to_device (Ops.nth (Ops.nth m 0) 0) target))
        gathers)
@@ -168,7 +168,7 @@ let filled u =
           in
           Some (slot, Array.init (size * devices device) element)
       | _ -> None)
-    (Ops.toposort u)
+    (Ops.toposort ~calls:Enter u)
 
 let value red u = Tensors.eval ~buffers:(filled red) u
 
@@ -324,7 +324,7 @@ let route c =
 
 let crossings u =
   List.concat_map route
-    (List.filter (fun n -> Ops.op n = Copy) (Ops.toposort u))
+    (List.filter (fun n -> Ops.op n = Copy) (Ops.toposort ~calls:Enter u))
   |> List.filter (fun (a, b) -> a <> b)
 
 let four = List.init 4 (Printf.sprintf "CPU:%d")
@@ -409,7 +409,8 @@ let rules =
           let calls =
             List.filter
               (fun n -> Ops.op n = Call)
-              (Ops.toposort (created (allreduce "naive_two_devices")))
+              (Ops.toposort ~calls:Enter
+                 (created (allreduce "naive_two_devices")))
           in
           equal
             (list (pair (option string) bool))
