@@ -1364,6 +1364,18 @@ let time ?(vars = []) t slots =
   in
   Float.of_int ns *. 1e-9
 
+(* A host program's call is timed on the host's clock; a batch's kernels are
+   stamped by their devices, unless a profile is taken already. *)
+let clock t =
+  let rec stamped = function
+    | Kernel _ -> false
+    | Copy _ | Batch _ -> true
+    | Range { body; _ } -> List.for_all stamped body
+  in
+  if Nx_device.Profile.enabled () || not (List.for_all stamped t.calls) then
+    Search.Host
+  else Search.Device
+
 let slots t =
   let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.params in
   let slots = Array.make n [] in

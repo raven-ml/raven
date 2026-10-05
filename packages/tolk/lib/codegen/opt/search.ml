@@ -67,20 +67,21 @@ let get_test_global_size global_size max_global_size vars =
 let least = List.fold_left Float.min infinity
 let most = List.fold_left Float.max neg_infinity
 
-(* Timed up to [cnt] times, stopping once its least exceeds [early_stop]: the
-   samples. *)
-let time_program ~link ~time ~early_stop ~allow_test_size ~vars ?(cnt = 3) prg =
-  let prg, factor =
-    match arg prg with
-    | Program info when allow_test_size ->
-        let global_size, factor =
-          get_test_global_size info.global_size 65536 vars
-        in
-        let global_size = List.map (fun n -> Int n) global_size in
-        (replace prg ~arg:(Program { info with global_size }), factor)
-    | _ -> (prg, 1.)
-  in
-  let linked = link prg in
+(* The program timed for [prg]: with [allow_test_size], one launching fewer
+   workgroups, and the factor that scales its times up. *)
+let test_size ~allow_test_size ~vars prg =
+  match arg prg with
+  | Program info when allow_test_size ->
+      let global_size, factor =
+        get_test_global_size info.global_size 65536 vars
+      in
+      let global_size = List.map (fun n -> Int n) global_size in
+      (replace prg ~arg:(Program { info with global_size }), factor)
+  | _ -> (prg, 1.)
+
+(* [linked] timed up to [cnt] times, stopping once its least exceeds
+   [early_stop]: the samples. *)
+let time_program ~time ~early_stop ~factor ~vars ?(cnt = 3) linked =
   let rec go samples cnt =
     let samples = (time ~vars linked *. factor) :: samples in
     if cnt = 1 || early_stop < least samples then samples
@@ -282,7 +283,9 @@ let midpoint v =
   | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
-let beam_search ~link ~time ?allow_test_size amt s =
+type clock = Device | Host
+
+let beam_search ~link ~time ~clock ?allow_test_size amt s =
   if amt < 1 then
     invalid_arg
       (Printf.sprintf "a beam search needs a positive width, not %d" amt);
@@ -340,32 +343,43 @@ let beam_search ~link ~time ?allow_test_size amt s =
              (memo (Renderer.Compiler.compile ren.compiler)))
           ren
       in
-      let compile ks =
+      (* [f i k] applied, in order, to each kernel [k] of [ks] and its
+         compilation. On a device's clock, a kernel is timed while later ones
+         compile; on the host's, compiling would lengthen the runs, so all
+         compile first. Timing in order keeps the choices of [seen_libs] and the
+         compute filter those of a serial search. *)
+      let compile ~clock ks f =
         let met = Ops.Tbl.create 64 in
-        let fresh =
-          List.filter
-            (fun k ->
-              let ast = K.ast k in
-              let first =
-                not (Ops.Tbl.mem compiled ast || Ops.Tbl.mem met ast)
-              in
-              if first then Ops.Tbl.add met ast ();
-              first)
-            ks
+        let first k =
+          let ast = K.ast k in
+          let first = not (Ops.Tbl.mem compiled ast || Ops.Tbl.mem met ast) in
+          if first then Ops.Tbl.add met ast ();
+          first
         in
-        List.iter2
-          (fun k r -> Ops.Tbl.replace compiled (K.ast k) r)
-          fresh
-          (Worker.map (try_compile ren) fresh);
-        List.map (fun k -> (k, Ops.Tbl.find compiled (K.ast k))) ks
+        let tasks = List.mapi (fun i k -> (i, k, first k)) ks in
+        let compile_first (_, k, first) =
+          if first then Some (try_compile ren k) else None
+        in
+        (* A kernel met before takes its compilation, which an earlier task
+           kept. *)
+        let take (i, k, _) r =
+          let ast = K.ast k in
+          Option.iter (Ops.Tbl.replace compiled ast) r;
+          f i k (Ops.Tbl.find compiled ast)
+        in
+        match clock with
+        | Device -> Worker.iter compile_first take tasks
+        | Host -> List.iter2 take tasks (Worker.map compile_first tasks)
       in
-      (* [k]'s program timed with an early stop, or [None] if its timing
-         failed. *)
+      (* [k]'s program linked and timed with an early stop, or [None] if its
+         linking or timing failed. *)
       let sampled k prg ~early_stop =
         match
-          time_program ~link ~time ~vars ~early_stop ~allow_test_size prg
+          let prg, factor = test_size ~allow_test_size ~vars prg in
+          let linked = link prg in
+          (linked, time_program ~time ~vars ~early_stop ~factor linked)
         with
-        | samples -> Some samples
+        | r -> Some r
         | exception e -> (
             let bt = Printexc.get_raw_backtrace () in
             if beam_debug > 0 then
@@ -385,7 +399,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
          beam's first by more than [min_progress]: the least of noisy times is
          biased low, and a search never answers a kernel slower than [s]. *)
       let progresses (_, c) (_, b) = most c +. min_progress < least b in
-      let rec search beam =
+      let rec search ~clock beam =
         let best = least (snd (List.hd beam)) in
         let candidates =
           List.concat_map
@@ -394,7 +408,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
         in
         let n = List.length candidates in
         let timed = ref [] and least_compute_ops = ref infinity in
-        let consider i (cand, compiled) =
+        let consider i cand compiled =
           match compiled with
           | Some (prg, compile_et) when not (Hashtbl.mem seen_libs (binary prg))
             ->
@@ -415,7 +429,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
                 Hashtbl.add seen_libs (binary prg) ();
                 match sampled cand prg ~early_stop:(best *. 3.) with
                 | None -> ()
-                | Some samples ->
+                | Some (_, samples) ->
                     timed := (cand, samples) :: !timed;
                     let tm = Helpers.time_to_str ~w:12 (least samples) in
                     let progress = List.length !timed in
@@ -434,7 +448,7 @@ let beam_search ~link ~time ?allow_test_size amt s =
                         (elapsed ()) tm progress n (K.colored_shape cand))
           | _ -> ()
         in
-        List.iteri consider (compile candidates);
+        compile ~clock candidates consider;
         let opts =
           List.stable_sort
             (fun (_, t0) (_, t1) -> Float.compare (least t0) (least t1))
@@ -455,17 +469,23 @@ let beam_search ~link ~time ?allow_test_size amt s =
              (if exiting then Helpers.colored Green tm else tm)
              n (List.length opts)
              (K.colored_shape (fst (List.hd beam))));
-        if exiting then beam else search beam
+        if exiting then beam else search ~clock beam
       in
-      (* [s] itself, timed with no early stop, starts the beam. *)
-      let start =
-        match compile [ s ] with
-        | [ (_, Some (prg, _)) ] ->
+      (* [s] itself, timed with no early stop, starts the beam, and its linked
+         program tells the clock that times the candidates: the host's if [s] is
+         not timed. *)
+      let clock, start =
+        let r = try_compile ren s in
+        Ops.Tbl.replace compiled (K.ast s) r;
+        match r with
+        | None -> (Host, [])
+        | Some (prg, _) -> (
             Hashtbl.add seen_libs (binary prg) ();
-            Option.value ~default:[] (sampled s prg ~early_stop:infinity)
-        | _ -> []
+            match sampled s prg ~early_stop:infinity with
+            | Some (linked, samples) -> (clock linked, samples)
+            | None -> (Host, []))
       in
-      let k, samples = List.hd (search [ (s, start) ]) in
+      let k, samples = List.hd (search ~clock [ (s, start) ]) in
       Helpers.Diskcache.put ~table:"beam_search" key
         (encode_opts (K.applied_opts k));
       if beam_debug > 0 then

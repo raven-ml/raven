@@ -474,6 +474,170 @@ let settings =
       test "applications building nodes keep their own CHECK_OOB" check_oob_race;
     ]
 
+(* Streaming *)
+
+(* The elements [iter] handed to [g], with their images, in order. *)
+let streamed p f l =
+  let seen = ref [] in
+  with_parallel p (fun () ->
+      Worker.iter f (fun x y -> seen := (x, y) :: !seen) l);
+  List.rev !seen
+
+let is_list_iter (p, fn, l) =
+  cover "several domains may apply f" (p > 1 && List.length l > 1);
+  equal
+    (list (pair int string))
+    (List.map (fun x -> (x, apply fn x)) l)
+    (streamed p (apply fn) l)
+
+(* Earlier elements take longer, so that later ones end first. *)
+let streams_late_finishers_in_order () =
+  let l = List.init 8 Fun.id in
+  let f i =
+    Unix.sleepf (0.002 *. Float.of_int (8 - i));
+    i * 10
+  in
+  equal (list (pair int int)) (List.map (fun i -> (i, f i)) l) (streamed 4 f l)
+
+(* The last element's application waits for [g]'s first: [g] reaches an element
+   once its own image is computed, whatever the later ones. *)
+let consumes_while_computing p () =
+  let consumed = Atomic.make false in
+  let n = 6 in
+  let f i =
+    if i = n - 1 then
+      await "g of the first element" (fun () -> Atomic.get consumed);
+    i
+  in
+  let g _ _ = Atomic.set consumed true in
+  with_parallel p (fun () -> Worker.iter f g (List.init n Fun.id))
+
+let consumes_on_caller p =
+  let caller = domain () and on = ref [] in
+  with_parallel p (fun () ->
+      Worker.iter Fun.id
+        (fun _ () -> on := domain () :: !on)
+        (List.init 16 ignore));
+  List.iter (equal int caller) !on
+
+let computes_at_most p () =
+  let g = gauge () in
+  with_parallel p (fun () ->
+      Worker.iter
+        (fun () -> within g (fun () -> Unix.sleepf 0.001))
+        (fun () () -> ())
+        (List.init 40 ignore));
+  at_most int ~than:p (Atomic.get g.peak)
+
+(* [n] elements of which [f] raises on [failing] and [g] on [g_failing]: [g] is
+   applied to the elements before the first of either, and the call raises the
+   first one's exception. *)
+let streamed_failure_case =
+  let ints = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
+  let pp ppf (p, n, failing, g_failing) =
+    Format.fprintf ppf "PARALLEL=%d, %d elements, f raises on [%a], g on [%a]" p
+      n ints failing ints g_failing
+  in
+  Gen.(
+    with_pp pp
+      (let* p, n = pair parallels (int_range 1 24) in
+       let+ failing = subsequence ~pp:Format.pp_print_int (List.init n Fun.id)
+       and+ g_failing =
+         subsequence ~pp:Format.pp_print_int (List.init n Fun.id)
+       in
+       (p, n, failing, g_failing)))
+
+exception G_failed of int
+
+let raises_first (p, n, failing, g_failing) =
+  let consumed = ref [] in
+  let f i =
+    if List.mem i failing then begin
+      Unix.sleepf (0.0002 *. Float.of_int (n - i));
+      fail_at i
+    end
+    else i
+  in
+  let g i _ =
+    if List.mem i g_failing then raise (G_failed i);
+    consumed := i :: !consumed
+  in
+  let first l = List.fold_left min n l in
+  let f_first = first failing and g_first = first g_failing in
+  let stop = min f_first g_first in
+  (match with_parallel p (fun () -> Worker.iter f g (List.init n Fun.id)) with
+  | () -> equal ~msg:"no element raised" int n stop
+  | exception Failed i ->
+      equal ~msg:"f raised" int f_first i;
+      at_most int ~than:g_first i
+  | exception G_failed i ->
+      equal ~msg:"g raised" int g_first i;
+      less int ~than:f_first i);
+  equal ~msg:"consumed" (list int) (List.init stop Fun.id) (List.rev !consumed);
+  cover "f raised first" (f_first < g_first);
+  cover "f and g raised on one element" (f_first = g_first && f_first < n);
+  cover "g raised first" (g_first < f_first)
+
+let joins_before_raising_from_g () =
+  let g_live = gauge () and started = Atomic.make 0 in
+  let f i =
+    within g_live (fun () ->
+        Atomic.incr started;
+        if i > 0 then Unix.sleepf 0.05)
+  in
+  let g i () =
+    if i = 0 then begin
+      await "the other applications" (fun () -> Atomic.get started >= 3);
+      raise (G_failed 0)
+    end
+  in
+  raises (G_failed 0) (fun () ->
+      with_parallel 4 (fun () -> Worker.iter f g [ 0; 1; 2; 3 ]));
+  equal ~msg:"applications running once the call raised" int 0
+    (Atomic.get g_live.live)
+
+let iter_sees_caller_settings () =
+  let s = (3, "half", true) in
+  let on = ref [] in
+  under s (fun () ->
+      with_parallel 3 (fun () ->
+          Worker.iter
+            (fun () ->
+              Unix.sleepf 0.001;
+              seen ())
+            (fun () v -> on := v :: !on)
+            (List.init 8 ignore)));
+  List.iter (equal seen_w s) !on
+
+let streaming =
+  group "streaming"
+    [
+      prop "iter f g l is List.iter (fun x -> g x (f x)) l"
+        ~examples:[ (4, { a = 1; b = 0; spins = 0 }, []) ]
+        Gen.(triple parallels fn (list small_int))
+        is_list_iter;
+      test "applies g in the order of l when later elements finish first"
+        streams_late_finishers_in_order;
+      cases ~name:(Printf.sprintf "PARALLEL=%d")
+        "applies g to an element while f applies to later ones, under"
+        [ 0; 1; 2; 4 ] (fun p -> consumes_while_computing p ());
+      cases
+        ~name:(Printf.sprintf "PARALLEL=%d")
+        "applies g on the calling domain under" [ 0; 1; 4 ] consumes_on_caller;
+      cases ~name:(Printf.sprintf "PARALLEL=%d")
+        "runs at most PARALLEL applications of f at once under" [ 1; 2; 4 ]
+        (fun p -> computes_at_most p ());
+      prop
+        "raises the first exception of f or g, and applies g to the elements \
+         before it"
+        streamed_failure_case raises_first;
+      test
+        "raises from g only after the applications of f it started have ended"
+        joins_before_raising_from_g;
+      test "every application of f sees the caller's settings"
+        iter_sees_caller_settings;
+    ]
+
 (* Compiling *)
 
 module Compiler = Renderer.Compiler
@@ -508,4 +672,5 @@ let compiling =
 
 let () =
   exit
-    (run "Tolk.Worker" [ law; domains; nesting; failure; settings; compiling ])
+    (run "Tolk.Worker"
+       [ law; domains; nesting; failure; settings; streaming; compiling ])

@@ -3894,3 +3894,30 @@ stores through a pad.
 - **Pinned by:** `Tolk.Search › a kernel compiled with a search keeps the
   search's choice and its own binary alone`; `Tolk.Codegen › linearize and
   compile` (every test).
+
+## D130. A search times its candidates in order, compiling meanwhile on a device's clock
+
+- **tinygrad:** `codegen/opt/search.py:132` (`pool.imap_unordered`: a
+  round's candidates are timed in the order their compilations end, on every
+  device).
+- **tolk:** `lib/codegen/opt/search.ml:352` (`compile`);
+  `lib/engine/worker.ml:77` (`iter`); `engine/tolk_engine.ml:1369`
+  (`clock`).
+- **Differs:** a round's candidates are timed in their own order, each once
+  its compilation has ended, while other domains compile the later ones
+  (`Worker.iter`). Where the host's clock times the runs (`Search.Host`: a
+  program the host calls, any program while a profile is taken, or a search
+  whose kernel was not timed), a round compiles all its candidates before it
+  times any. The search reads the clock from its kernel's linked program.
+- **Reason:** the compute filter's running minimum, `seen_libs` and ties
+  between equal samples read the order: timed as their compilations end, two
+  searches of equal measurements choose apart, and `searches.golden` could
+  not pin tinygrad's choices. A device stamps its runs on its own clock, but
+  the host times its runs on its own cores, which compilations on the other
+  cores slow. Admitting this is the maintainer's call, as for D115.
+- **Pinned by:** `Tolk.Search › a search on a device's clock times its
+  candidates as one on the host's, whatever order their compilations end
+  in` and `› a search on the host's clock compiles nothing while it times`;
+  `Tolk.Worker › streaming` (every test); `Tolk_engine › timing › the clock
+  is the device's where it has queues, the host's otherwise` and `› the
+  clock is the host's under a profile`.

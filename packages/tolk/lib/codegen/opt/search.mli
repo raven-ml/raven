@@ -63,15 +63,25 @@ val get_kernel_actions :
 
 (** {1:search Searching} *)
 
+(** The type for the clocks that time runs. *)
+type clock =
+  | Device
+      (** The device stamps each run's start and end: work on the host leaves
+          its times as they are. *)
+  | Host
+      (** The host's clock times each run: work on the host lengthens the runs
+          it overlaps. *)
+
 val beam_search :
   link:(Ops.t -> 'linked) ->
   time:(vars:(string * int) list -> 'linked -> float) ->
+  clock:('linked -> clock) ->
   ?allow_test_size:bool ->
   int ->
   Postrange.Scheduler.t ->
   Postrange.Scheduler.t
-(** [beam_search ~link ~time ~allow_test_size amt k] is [k], or a copy of it,
-    with the optimisations that a beam search of width [amt] finds fastest.
+(** [beam_search ~link ~time ~clock ~allow_test_size amt k] is [k], or a copy of
+    it, with the optimisations that a beam search of width [amt] finds fastest.
     [k]'s kernel is the sink that {!Postrange.apply_opts} optimises.
 
     [link prg] is the compiled program [prg] ({!Op.Program}) of [k]'s kernel
@@ -79,12 +89,12 @@ val beam_search :
     [time ~vars p] is the time in seconds of one run of the program [p] links,
     from cold caches where the device can, with each variable bound to its value
     in [vars]: each variable of [k]'s kernel ({!Ops.variables}) bound to the
-    middle of its bounds, [(vmin + vmax) / 2] rounded down. The search links
-    each program it times once, and times it once per sample. A program whose
-    [link] or [time] raises [Failure] is dropped; the search raises any other
-    exception. The search limits neither a compilation nor a run: a candidate
-    whose compilation or run hangs hangs the search, one more reason to run it
-    offline.
+    middle of its bounds, [(vmin + vmax) / 2] rounded down. [clock p] is the
+    clock [time] times the runs of [p] on. The search links each program it
+    times once, and times it once per sample. A program whose [link] or [time]
+    raises [Failure] is dropped; the search raises any other exception. The
+    search limits neither a compilation nor a run: a candidate whose compilation
+    or run hangs hangs the search, one more reason to run it offline.
 
     A kernel is compiled for [k]'s renderer named ["test"], with its storage
     placed on the renderer's device. It is first linearized
@@ -107,8 +117,10 @@ val beam_search :
     up to [amt] kernels and starts as [k] with its samples, or with none if [k]
     was dropped. Each round:
     + The candidates are the kernels {!get_kernel_actions} makes of the beam's
-      kernels, in order, compiled on the domains {!Worker.map} spreads them
-      over.
+      kernels, in order. If the clock of [k]'s linked program is {!Device}, they
+      are compiled on the domains {!Worker.iter} spreads them over while the
+      calling domain times those compiled before. Otherwise, as when [k] is not
+      timed, all are compiled ({!Worker.map}) before any is timed.
     + In order, a candidate is dropped if its binary was timed before in this
       search, or if its program's estimated operations ({!Ops.estimates}, [0] if
       unknown) are more than [1000] times the fewest of this round's programs so

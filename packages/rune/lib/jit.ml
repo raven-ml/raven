@@ -681,7 +681,9 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
           in
           Engine.time ~vars s slots
         in
-        let search () = Tolk.Search.beam_search ~link ~time width k in
+        let search () =
+          Tolk.Search.beam_search ~link ~time ~clock:Engine.clock width k
+        in
         match parallel with
         | None -> search ()
         | Some p -> Tolk.Setting.context [ B (Tolk.Setting.parallel, p) ] search

@@ -1438,6 +1438,26 @@ let profiled f =
       let taken = Nx_device.Profile.enabled () in
       (r, taken, Nx_device.Profile.stop p))
 
+let clock =
+  Testable.make
+    ~pp:(fun ppf c ->
+      Format.pp_print_string ppf
+        (match c with Search.Device -> "Device" | Search.Host -> "Host"))
+    ~equal:( = )
+
+(* The host calls a program and times the call; a device with queues stamps
+   its batches. *)
+let clock_by_device name =
+  let s, _ = timed name in
+  equal clock
+    (if name = "CPU" then Search.Host else Search.Device)
+    (Engine.clock s)
+
+let clock_under_profile name =
+  let s, _ = timed name in
+  let c, _, _ = profiled (fun () -> Engine.clock s) in
+  equal clock Search.Host c
+
 let positive name =
   let s, slots = timed name in
   let t = Engine.time ~vars:n_bound s slots in
@@ -1574,6 +1594,11 @@ let timing =
           equal ~msg:"buffers by slot" (list int) [ 1; 1; 1; 1 ]
             (Array.to_list (Array.map List.length slots));
           Engine.run ~vars:n_bound s slots);
+      group "the clock is the device's where it has queues, the host's \
+             otherwise"
+        [ on clock_by_device ];
+      group "the clock is the host's under a profile"
+        [ on clock_under_profile ];
       group "a time is positive, under a second" [ on positive ];
       group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];

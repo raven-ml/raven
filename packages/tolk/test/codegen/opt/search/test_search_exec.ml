@@ -53,7 +53,9 @@ let searched name =
       [ B (Setting.ignore_beam_cache, true) ]
       (fun () ->
         Codegen.to_program
-          ~beam:(Search.beam_search ~link ~time)
+          ~beam:
+            (Search.beam_search ~link ~time ~clock:(fun (s, _) ->
+                 Tolk_engine.clock s))
           (with_info (fun i -> { i with beam = 2 }) k)
           host)
   in

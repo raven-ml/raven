@@ -978,6 +978,12 @@ thread.
 
 ### Tolk (new)
 
+- On a device that stamps its own runs, `Search.beam_search` times a round's
+  candidates in order while later ones compile (new `Worker.iter`); on the
+  host's clock, which compiles would slow, its rounds still compile first. It
+  takes `~clock` and reads it from its kernel's linked program: new
+  `Search.clock` and `Tolk_engine.clock`. A search round of gpt-oss-20b's key
+  and value projection on an M1 Max's Metal takes 352 ms, from 430 ms.
 - `Tolk_engine.time` raises `Nx_device.Lost` when a device that runs the
   timed kernels is lost during the run, where it raised `Invalid_argument`
   "no span": a search on NV that a GPU co-tenant held past the hang timeout

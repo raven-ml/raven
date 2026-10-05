@@ -277,6 +277,11 @@ val link_program : devices:(string -> device) -> string -> Ops.t -> t
     Raises [Invalid_argument] if [prg] is not a compiled program, and as {!link}
     does. *)
 
+val clock : t -> Tolk.Search.clock
+(** [clock s] is the clock {!time} times [s] on now: {!Tolk.Search.Device} if no
+    profile is taken and every kernel of [s] runs in a batch of a device with
+    queues, which stamps it, and {!Tolk.Search.Host} otherwise. *)
+
 val time :
   ?vars:(string * int) list -> t -> Nx_device.Buffer.t list array -> float
 (** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
