@@ -35,12 +35,17 @@ def declare(name, fn):
 
 # Graphs of each function, for each float type
 
-for name, dt in FLOATS.items():
+# The functions are defined in float32 and float64 only.
+WIDE = {name: dt for name, dt in FLOATS.items() if dt != dtypes.half}
+
+for name, dt in WIDE.items():
     declare(f"xsin_{name}", lambda dt=dt: xsin(x(dt)).sink())
     declare(f"xsin_fast_{name}", lambda dt=dt: xsin(x(dt), fast=True).sink())
     declare(f"xsin_switch_over_{name}", lambda dt=dt: xsin(x(dt), switch_over=100.0).sink())
     declare(f"xexp2_{name}", lambda dt=dt: xexp2(x(dt)).sink())
     declare(f"xlog2_{name}", lambda dt=dt: xlog2(x(dt)).sink())
+
+for name, dt in FLOATS.items():
     declare(f"xpow_{name}", lambda dt=dt: xpow(x(dt), x(dt, 1)).sink())
     declare(f"frexp_{name}", lambda dt=dt: UOp.sink(*frexp(x(dt))))
     declare(f"payne_hanek_{name}", lambda dt=dt: UOp.sink(*payne_hanek_reduction(x(dt))))
@@ -154,7 +159,7 @@ UNARY = {"xsin": xsin, "xsin_fast": lambda d: xsin(d, fast=True), "xexp2": xexp2
 def values():
     rows = []
     for fname, f in UNARY.items():
-        for name, dt in FLOATS.items():
+        for name, dt in WIDE.items():
             root = f(x(dt)).sink()
             for i, v in enumerate(inputs(dt, f"{fname}/{name}")):
                 if fname == "xsin_fast" and not abs(v) < 30.0: continue

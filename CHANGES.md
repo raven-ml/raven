@@ -965,6 +965,13 @@ thread.
 
 ### Tolk (new)
 
+- `Transcendental.xexp2`, `xlog2` and `xsin` are within one unit in the last
+  place of the correctly rounded result in every float; float16 now computes
+  at float32 and rounds once, and the functions refuse it. `xsin` was 205266
+  units off in float32 near multiples of pi below 30, where its Cody-Waite
+  reduction subtracted a wrong part of pi, and up to two units elsewhere;
+  `xlog2` was up to five units off. `cody_waite_reduction` removes quarter
+  turns.
 - Lowering a kernel allocates 2.4 to 2.9 times less: a pattern that fails to
   match allocates nothing, and a rewrite walk no longer builds a table per
   node. A beam search's candidates collect less often across its domains: 8

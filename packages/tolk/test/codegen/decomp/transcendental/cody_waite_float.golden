@@ -1,6 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
-1 Ops.CONST dtypes.weakfloat [] 0.3183098861837907
+1 Ops.CONST dtypes.weakfloat [] 0.6366197723675814
 2 Ops.MUL dtypes.float [0, 1]
 3 Ops.CONST dtypes.weakfloat [] 0.0
 4 Ops.CMPLT dtypes.bool [2, 3]
@@ -12,17 +12,23 @@
 10 Ops.ADD dtypes.float [2, 9]
 11 Ops.CAST dtypes.int [10] dtypes.int
 12 Ops.CAST dtypes.float [11] dtypes.float
-13 Ops.CONST dtypes.weakfloat [] -1.215420125655342e-10
+13 Ops.CONST dtypes.weakfloat [] -0.00048351287841796875
 14 Ops.MUL dtypes.float [12, 13]
-15 Ops.CONST dtypes.weakfloat [] -1.984187258941006e-09
+15 Ops.CONST dtypes.weakfloat [] -1.5703125
 16 Ops.MUL dtypes.float [12, 15]
-17 Ops.CONST dtypes.weakfloat [] -0.0001131594181060791
-18 Ops.MUL dtypes.float [12, 17]
-19 Ops.CONST dtypes.weakfloat [] -3.1414794921875
+17 Ops.ADD dtypes.float [16, 0]
+18 Ops.ADD dtypes.float [14, 17]
+19 Ops.CONST dtypes.weakfloat [] -3.1385570764541626e-07
 20 Ops.MUL dtypes.float [12, 19]
-21 Ops.ADD dtypes.float [20, 0]
-22 Ops.ADD dtypes.float [18, 21]
-23 Ops.ADD dtypes.float [16, 22]
-24 Ops.ADD dtypes.float [14, 23]
-25 Ops.SINK dtypes.void [24, 11]
+21 Ops.ADD dtypes.float [18, 20]
+22 Ops.CONST dtypes.weakfloat [] -1.0
+23 Ops.MUL dtypes.float [18, 22]
+24 Ops.ADD dtypes.float [21, 23]
+25 Ops.MUL dtypes.float [24, 22]
+26 Ops.ADD dtypes.float [20, 25]
+27 Ops.CONST dtypes.weakfloat [] -6.07710062827671e-11
+28 Ops.MUL dtypes.float [12, 27]
+29 Ops.ADD dtypes.float [26, 28]
+30 Ops.ADD dtypes.float [21, 29]
+31 Ops.SINK dtypes.void [30, 11]
 

@@ -13,14 +13,13 @@
     polynomial approximations on a reduced argument, with the reduction and the
     reconstruction done on the bits of the floating-point representation.
 
-    [exp2], [log2] and [sin] are defined in {!Dtype.Float16}, {!Dtype.Float32}
-    and {!Dtype.Float64}, and return IEEE's special values at infinities, NaNs
-    and zeros. Elsewhere their results are within a relative error of [5e-3]
-    plus an absolute error of [1e-2] of the exact value in {!Dtype.Float16},
-    [1e-5] plus [2e-5] in {!Dtype.Float32}, and [1e-5] plus [3e-2] in
-    {!Dtype.Float64}. The sine of a {!Dtype.Float64} meets that bound for
-    arguments below [1e7] in magnitude; beyond, its absolute error grows by
-    about [4e-10] times the argument.
+    [exp2], [log2] and [sin] are defined in {!Dtype.Float32} and
+    {!Dtype.Float64}. They return IEEE's special values at infinities, NaNs and
+    zeros, and the sine of a zero is that zero, its sign kept. Elsewhere each
+    result is within one unit in the last place of the correctly rounded one: at
+    most one value of its type away from it, on the ordered line of the type's
+    values. The other floats compute them in {!Dtype.Float32} and round once
+    ({!patterns}), which keeps them within one unit too.
 
     {b Errors.} A function given a node of another type than it is defined for
     raises [Invalid_argument]. *)
@@ -74,24 +73,26 @@ val payne_hanek_reduction : Ops.t -> Ops.t * Ops.t
     [|r| <= pi/4], for [1 <= d], infinities excluded. [r] has [d]'s type and [q]
     is a {!Dtype.Int32} whose value modulo 4 is the quadrant of [d]. It
     multiplies [d]'s whole mantissa by the bits of [1/(2pi)] at its exponent, to
-    128 bits of the fraction, which keeps [r] within an ulp or two of the exact
-    remainder whatever [d]'s magnitude. *)
+    128 bits of the fraction, and rounds the remainder once from them, which
+    keeps [r] within an ulp of the exact remainder whatever [d]'s magnitude. *)
 
 val cody_waite_reduction : Ops.t -> Ops.t * Ops.t
-(** [cody_waite_reduction d] is [(r, q)] with [d = q * pi + r] and
-    [|r| <= pi/2], for [|d| <= 39800]. [r] has [d]'s type and [q] is a
-    {!Dtype.Int32}. It subtracts [q * pi] in several parts whose products are
-    exact, which is precise only while [q] is small. *)
+(** [cody_waite_reduction d] is [(r, q)] with [d = q * pi/2 + r] and [|r|] about
+    [pi/4] at most, for [|d| <= 39800]. [r] has [d]'s type and [q] is a
+    {!Dtype.Int32} whose value modulo 4 is the quadrant of [d]. It subtracts
+    [q * pi/2] in several parts whose products are exact, which is precise only
+    while [q] is small. *)
 
 (** {1:functions Functions} *)
 
 val xsin : ?fast:bool -> ?switch_over:float -> Ops.t -> Ops.t
 (** [xsin ~fast ~switch_over d] is the sine of [d], NaN at infinities and NaN.
-    Angles below [switch_over] (default [30.]) in magnitude are reduced with
-    {!cody_waite_reduction}, and larger ones with {!payne_hanek_reduction},
-    unless [fast] (default [false]), which assumes every angle is below
-    [switch_over] and builds only the first. [fast] holds when [d]'s bounds
-    ({!Ops.vmin}, {!Ops.vmax}) lie below [switch_over] in magnitude. *)
+    Angles below [switch_over] (default [30.], at most [39800.]) in magnitude
+    are reduced with {!cody_waite_reduction}, and larger ones with
+    {!payne_hanek_reduction}, unless [fast] (default [false]), which assumes
+    every angle is below [switch_over] and builds only the first. [fast] holds
+    when [d]'s bounds ({!Ops.vmin}, {!Ops.vmax}) lie below [switch_over] in
+    magnitude. *)
 
 val xexp2 : Ops.t -> Ops.t
 (** [xexp2 d] is [2]{^ [d]}: [inf] where it overflows [d]'s type, [0] where it
@@ -113,6 +114,7 @@ val xpow : Ops.t -> Ops.t -> Ops.t
 val patterns : force:bool -> Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
 (** [patterns ~force ops] rewrites each {!Op.Exp2}, {!Op.Log2} and {!Op.Sin}
     whose operation is not in [ops], or every one if [force], to {!xexp2},
-    {!xlog2} and {!xsin}. On the other floats, {!Dtype.Bfloat16} and the 8-bit
-    ones, the operation is computed in {!Dtype.Float32} and cast back. An
-    {!Op.Sqrt} under the same condition becomes [xpow d 0.5]. *)
+    {!xlog2} and {!xsin}. On the other floats, {!Dtype.Float16},
+    {!Dtype.Bfloat16} and the 8-bit ones, the operation is computed in
+    {!Dtype.Float32} and cast back. An {!Op.Sqrt} under the same condition
+    becomes [xpow d 0.5]. *)

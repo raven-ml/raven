@@ -241,13 +241,61 @@ index e1d9579..1e6a05d 100644
     st.replace(src=(idx, val.src[0].bitcast(f2f_dt[ctx[0]]))) if val.dtype == ctx[0] and idx.tag == ctx[0] else None),
    (UPat(Ops.STORE, src=(UPat.var("idx").or_casted(), UPat.var("val", dtypes.floats)), name='st'), lambda ctx,st,idx,val:
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
-index 62c3191..fb2d746 100644
+index 62c3191..d0be7d4 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
 +++ b/tinygrad/codegen/decomp/transcendental.py
-@@ -63,6 +63,13 @@ def frexp(v:UOp) -> tuple[UOp, UOp]:
+@@ -1,10 +1,12 @@
+ from typing import Callable
+-import math, functools
++import math, functools, struct
+ from tinygrad.dtype import dtypes, DType
+ from tinygrad.helpers import polyN
+ from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher
+ 
+-TRANSCENDENTAL_DTYPES = (dtypes.float16, dtypes.float32, dtypes.float64)
++# the floats the functions compute in, and those with an integer of their width, which the bit manipulations take
++TRANSCENDENTAL_DTYPES = (dtypes.float32, dtypes.float64)
++WIDTHS = (dtypes.float16, dtypes.float32, dtypes.float64)
+ 
+ def _lazy_map_numbers(x:UOp, inf:UOp, _inf:UOp, nan:UOp, ratio:UOp):
+   """replace inf -> inf, -inf -> _inf, nan -> nan, otherwise -> ratio"""
+@@ -31,14 +33,14 @@ def pow2if(q:UOp, float_dtype:DType):
+ 
+ def ilogb2k(d:UOp) -> UOp:
+   """calculate the integer part of log2(d), where d is normalized fp value in the range of [0, +inf)."""
+-  assert d.dtype in TRANSCENDENTAL_DTYPES
++  assert d.dtype in WIDTHS
+   dint = d.bitcast({dtypes.float64: dtypes.int64, dtypes.float32: dtypes.int32, dtypes.float16: dtypes.int16}[d.dtype])
+   # -1 <= ilog2bk(d) <= 128
+   return (shr(dint, mantissa_bits(d.dtype)) & exponent_mask(d.dtype)) - exponent_bias(d.dtype)
+ 
+ def ldexp3k(d:UOp, e:UOp) -> UOp:
+   """d*2^e. e is a number obtained by casting an integer in the range [-127, 127] to a float. d is any float number."""
+-  assert d.dtype in TRANSCENDENTAL_DTYPES and e.dtype in TRANSCENDENTAL_DTYPES
++  assert d.dtype in WIDTHS and e.dtype in WIDTHS
+   dtype = {dtypes.float64: dtypes.int64, dtypes.float32: dtypes.int32, dtypes.float16: dtypes.int16}[d.dtype]
+   m1 = d.bitcast(dtype)
+   m2 = shl(e.cast(dtype), mantissa_bits(d.dtype))
+@@ -46,12 +48,12 @@ def ldexp3k(d:UOp, e:UOp) -> UOp:
+ 
+ def ldexp2k(d:UOp, e:UOp) -> UOp:
+   """d*2^e. much faster than ldexp3k but risky. d > 0 and d is not denormal."""
+-  assert d.dtype in TRANSCENDENTAL_DTYPES and e.dtype in (dtypes.int16, dtypes.int32, dtypes.int64)
++  assert d.dtype in WIDTHS and e.dtype in (dtypes.int16, dtypes.int32, dtypes.int64)
+   return (d * pow2if(shr(e, 1), d.dtype)) * pow2if(e - shr(e, 1), d.dtype)
+ 
+ def frexp(v:UOp) -> tuple[UOp, UOp]:
+   """frexp(v) -> (mantissa, exponent) assuming v != 0"""
+-  assert v.dtype in TRANSCENDENTAL_DTYPES
++  assert v.dtype in WIDTHS
+   # m1 = masks for mantissa, m2 = masks to normalize the mantissa.
+   m1 = {dtypes.float64: 0x000FFFFFFFFFFFFF, dtypes.float32: 0x807FFFFF, dtypes.float16: 0x83FF}[v.dtype]
+   m2 = {dtypes.float64: 0x3FE0000000000000, dtypes.float32: 0x3F000000, dtypes.float16: 0x3800}[v.dtype]
+@@ -63,54 +65,120 @@ def frexp(v:UOp) -> tuple[UOp, UOp]:
    return mantissa, exp
  
  # *** reduction algorithms for sine ***
+-def payne_hanek_reduction(d:UOp) -> tuple[UOp, UOp]:
 +# 1/(2pi) in 32-bit words, the first its integer part: 1312 bits, as a float64's greatest exponent needs
 +ONE_OVER_TWO_PI = [0x00000000, 0x28be60db, 0x9391054a, 0x7f09d5f4, 0x7d4d3770, 0x36d8a566, 0x4f10e410, 0x7f9458ea,
 +  0xf7aef158, 0x6dc91b8e, 0x909374b8, 0x01924bba, 0x82746487, 0x3f877ac7, 0x2c4a69cf, 0xba208d7d, 0x4baed121, 0x3a671c09,
@@ -255,20 +303,21 @@ index 62c3191..fb2d746 100644
 +  0xc9f2c26d, 0xd3d18fd9, 0xa797fa8b, 0x5d49eeb1, 0xfaf97c5e, 0xcf41ce7d, 0xe294a4ba, 0x9afed7ec, 0x47e35742, 0x1580cc11,
 +  0xbf1edaea, 0xfc33ef08, 0x26bd0d87, 0x6a78e458]
 +
- def payne_hanek_reduction(d:UOp) -> tuple[UOp, UOp]:
++def _payne_hanek(d:UOp) -> tuple[UOp, UOp, UOp]:
    """
    Performs Payne-Hanek Reduction: computes the remainder of `d` modulo pi/2 for the values `d` where
-@@ -70,47 +77,49 @@ def payne_hanek_reduction(d:UOp) -> tuple[UOp, UOp]:
+     39800.0 <= d <= +Inf
    Returns a tuple of `(r, q)`:
    - `r`[d.dtype] is the reminder value corresponding to `round_to_nearest(x % pi/2)`.
    - `q`[int32] is an integer, and q % 4 is corresponding to the quadrant of the original angle `d`.
 +  The whole mantissa is multiplied by 1/(2pi), exactly to 128 bits of the fraction, so a float64 keeps every bit.
    """
-   assert d.dtype in TRANSCENDENTAL_DTYPES
+-  assert d.dtype in TRANSCENDENTAL_DTYPES
 -  # https://stackoverflow.com/questions/30463616/payne-hanek-algorithm-implementation-in-c/30465751#30465751
 -  # 190 bits of 2/pi for Payne-Hanek style argument reduction
 -  two_over_pi_f = [0x00000000, 0x28be60db, 0x9391054a, 0x7f09d5f4, 0x7d4d3770, 0x36d8a566, 0x4f10e410]
 -
++  assert d.dtype in WIDTHS
    intermediate_dtype = dtypes.float32 if d.dtype == dtypes.float16 else d.dtype
 -
 +  # d = m * 2^(e - W), the integer m of W bits in K words of 32 bits
@@ -287,25 +336,6 @@ index 62c3191..fb2d746 100644
 -    return an
 -  def _shl_lazy(x:UOp, y:UOp): return (x.cast(dtypes.uint64) << y.cast(dtypes.uint64)).cast(dtypes.uint32)
 -  def _shr_lazy(x:UOp, y:UOp): return (x.cast(dtypes.uint64) >> y.cast(dtypes.uint64)).cast(dtypes.uint32)
--
--  a = [_take(UOp.const(0, dtypes.uint32), i) for i in range(4)]
--  #  (two_over_pi_f[Int(i) + n] << e) | (two_over_pi_f[Int(i) + n+1] >> (nbits - e))
--  # Note: e >= 1 for all numbers d >= 1.0. assume e != 0
--  hi = _shl_lazy(a[0], e) | _shr_lazy(a[1], offset)
--  mi = _shl_lazy(a[1], e) | _shr_lazy(a[2], offset)
--  lo = _shl_lazy(a[2], e) | _shr_lazy(a[3], offset)
--
--  def _hp_mul(x:UOp, y:UOp) -> UOp: return x.cast(dtypes.uint64) * y.cast(dtypes.uint64)
--  # compute x * 2/pi
--  p = shl(_hp_mul(ia, hi), 32) + _hp_mul(ia, mi) + shr(_hp_mul(ia, lo), 32)
--
--  # round quotient to nearest
--  q = shr(p, 62).cast(dtypes.int32)
--  p = p & 0x3fffffffffffffff
--  r = (p.cast(intermediate_dtype) * (3.4061215800865545e-19)).cast(d.dtype)
--
--  # if fraction >= 0.5, r -= pi/2, q += 1
--  return (f<0.5).where(r, r - math.pi/2), (f<0.5).where(q, q + 1)
 +  m = (f.cast(intermediate_dtype) * float(2**W)).cast(dtypes.uint64)
 +  ms = [m & 0xffffffff, shr(m, 32)][:K]
 +  # d/(2pi) * 2^128 mod 2^128 comes from the words of 1/(2pi) at d's exponent, with G words below it for the carries
@@ -340,22 +370,161 @@ index 62c3191..fb2d746 100644
 +  half = shr(zh, 61) & 1
 +  q = (shr(zh, 62) + half).cast(dtypes.int32)
 +  hi = (zh & 0x3fffffffffffffff).cast(dtypes.int64) - shl(half.cast(dtypes.int64), 62)
-+  r = hi.cast(intermediate_dtype) * (2 * math.pi / 2**64) + zl.cast(intermediate_dtype) * (2 * math.pi / 2**128)
++  r, r_lo = radians(hi, zl, intermediate_dtype)
++  return r, r_lo, q
+ 
+-  a = [_take(UOp.const(0, dtypes.uint32), i) for i in range(4)]
+-  #  (two_over_pi_f[Int(i) + n] << e) | (two_over_pi_f[Int(i) + n+1] >> (nbits - e))
+-  # Note: e >= 1 for all numbers d >= 1.0. assume e != 0
+-  hi = _shl_lazy(a[0], e) | _shr_lazy(a[1], offset)
+-  mi = _shl_lazy(a[1], e) | _shr_lazy(a[2], offset)
+-  lo = _shl_lazy(a[2], e) | _shr_lazy(a[3], offset)
+-
+-  def _hp_mul(x:UOp, y:UOp) -> UOp: return x.cast(dtypes.uint64) * y.cast(dtypes.uint64)
+-  # compute x * 2/pi
+-  p = shl(_hp_mul(ia, hi), 32) + _hp_mul(ia, mi) + shr(_hp_mul(ia, lo), 32)
+-
+-  # round quotient to nearest
+-  q = shr(p, 62).cast(dtypes.int32)
+-  p = p & 0x3fffffffffffffff
+-  r = (p.cast(intermediate_dtype) * (3.4061215800865545e-19)).cast(d.dtype)
+-
+-  # if fraction >= 0.5, r -= pi/2, q += 1
+-  return (f<0.5).where(r, r - math.pi/2), (f<0.5).where(q, q + 1)
++def payne_hanek_reduction(d:UOp) -> tuple[UOp, UOp]:
++  r, _, q = _payne_hanek(d)
 +  return r.cast(d.dtype), q
++
++def fast_two_sum(a:UOp, b:UOp) -> tuple[UOp, UOp]:
++  """(s, e) with s = a + b rounded and s + e exact, for a zero or of an exponent at least b's"""
++  s = a + b
++  return s, b - (s - a)
++
++def _round_to(dt:DType, c:float) -> float: return c if dt == dtypes.float64 else struct.unpack("f", struct.pack("f", c))[0]
++# Dekker's factor, 2^ceil(p/2) + 1, splits a float into halves whose products are exact
++def _splitter(dt:DType) -> float: return 134217729.0 if dt == dtypes.float64 else 4097.0
++
++def _turn_unit(dt:DType) -> tuple[float, float, float, float]:
++  """2pi/2^64 to twice the precision of dt: its leading part k in halves (k_hi, k_lo), and the rest"""
++  pi_lo = 1.2246467991473532e-16
++  k = _round_to(dt, math.ldexp(2 * math.pi, -64))
++  p = _round_to(dt, k * _splitter(dt))
++  k_hi = _round_to(dt, p - _round_to(dt, p - k))
++  rest = (2 * math.pi) - math.ldexp(k, 64) + 2 * pi_lo
++  return k, k_hi, k - k_hi, math.ldexp(rest, -64)
++
++def radians(hi:UOp, zl:UOp, dt:DType) -> tuple[UOp, UOp]:
++  """the angle of hi + zl/2^64 units of 2^-64 turn, |hi| < 2^62, as (r rounded once, the rest): summed exactly in two floats from parts
++  that convert exactly, then multiplied by 2pi/2^64 in two floats"""
++  if dt == dtypes.float64: parts = [(shr(hi, 32), 32), (hi & 0xffffffff, 0), (shr(zl, 11), -53)]
++  else: parts = [(shr(hi, 42), 42), (shr(hi, 21) & 0x1fffff, 21), (hi & 0x1fffff, 0), (shr(zl, 43), -43)]
++  terms = [c.cast(dt) * math.ldexp(1.0, e) for c, e in parts]
++  s, e = terms[0], terms[0].const_like(0.0)
++  for t in terms[1:]:
++    s, e2 = fast_two_sum(s, t)
++    e = e + e2
++  k, k_hi, k_lo, k_rest = _turn_unit(dt)
++  c = s * _splitter(dt)
++  s_hi = c - (c - s)
++  s_lo = s - s_hi
++  p = s * k
++  p_err = s_hi * k_hi - p + s_hi * k_lo + s_lo * k_hi + s_lo * k_lo
++  return fast_two_sum(p, p_err + s * k_rest + e * k)
++
++def cody_waite(d:UOp) -> tuple[UOp, UOp, UOp]:
++  """
++  cody_waite_reduction's remainder in two parts, for a float32 or float64 d. q pi/2 is subtracted in four parts: those of
++  float32 have 8, 9, 9 and 24 bits, those of float64 25, 24, 25 and 52, so that the products by a quotient below 2^15 are
++  exact but the last, and so are the first two differences. The third rounds once the remainder is large enough; its error
++  is carried to the last.
++  """
++  if d.dtype == dtypes.float64: a, b, c, last = 1.5707963109016418457, 1.5893254712295856735e-08, 6.123233932053594251e-17, 6.368317163510949908e-25
++  else: a, b, c, last = 1.5703125, 0.00048351287841796875, 3.13855707645416259765e-07, 6.077100628276710381e-11
++  quadrant = rintk(d * 0.636619772367581343075535053490057448)
++  q = quadrant.cast(d.dtype)
++  x = q * -a + d
++  x = q * -b + x
++  x, e = fast_two_sum(x, q * -c)
++  r, r_lo = fast_two_sum(x, e + q * -last)
++  return r, r_lo, quadrant.cast(dtypes.int32)
  
  def cody_waite_reduction(d:UOp) -> tuple[UOp, UOp]:
    """
-@@ -162,7 +171,8 @@ def sin_poly_small(d:UOp, q:UOp) -> UOp:
-   return r * _ifand(q, 1).where(r.const_like(-1), r.const_like(1))
- 
- def sin_poly_large(d:UOp, q:UOp) -> UOp:
+@@ -118,52 +186,27 @@ def cody_waite_reduction(d:UOp) -> tuple[UOp, UOp]:
+       0 <= abs(d) <= 39800.0
+   Returns a tuple of `(r, q)`, where the output format is the same as that of `payne_hanek_reduction`.
+   """
+-  def _reduce_d(x:UOp, q:UOp):
+-    # https://github.com/shibatch/sleef/blob/4e08851f59fc2b545f9c393c6a23dfd311a26308/src/libm/sleefdp.c#L789-L823
+-    if x.dtype == dtypes.float64:
+-      # https://github.com/shibatch/sleef/blob/f6d8a841fbfddd26ce712834d4da220cd76048fb/src/common/misc.h#L77
+-      PI_A, PI_B, PI_C, PI_D = 3.1415926218032836914, 3.1786509424591713469e-08, 1.2246467864107188502e-16, 1.2736634327021899816e-24
+-      d = qdh * -PI_A + x
+-      d = q * -PI_A + d
+-      d = qdh * -PI_B + d
+-      d = q * -PI_B + d
+-      d = qdh * -PI_C + d
+-      d = q * -PI_C + d
+-      d = (qdh + q) * -PI_D + d
+-    elif x.dtype == dtypes.float16:
+-      # [FIXME] when reducing `d`, FP16 needs FP32 precision to achieve 1.0 ULP precision.
+-      d = _reduce_d(x.cast(dtypes.float32), q.cast(dtypes.float32)).cast(dtypes.float16)
+-    else:
+-      # https://github.com/shibatch/sleef/blob/4e08851f59fc2b545f9c393c6a23dfd311a26308/src/libm/sleefsp.c#L464-L503
+-      d = q * -3.1414794921875 + x
+-      d = q * -0.00011315941810607910156 + d
+-      d = q * -1.9841872589410058936e-09 + d
+-      d = q * -1.2154201256553420762e-10 + d
+-    return d
+-
+-  m_1_pi = 0.318309886183790671537767526745028724
+-  qdh = (d * (m_1_pi / 2.0**24)).cast(dtypes.int64).cast(d.dtype) * (2.0**24)
+-  quadrant = rintk(d * m_1_pi -qdh) if d.dtype == dtypes.float64 else rintk(d * m_1_pi)
+-  return _reduce_d(d, quadrant.cast(d.dtype)), quadrant.cast(dtypes.int32)
+-
+-# *** approximate sine on small angle. ***
+-def trig_poly(d:UOp, coeff32, coeff64): return d * (polyN(d*d, coeff64) if d.dtype == dtypes.float64 else polyN(d*d, coeff32))
+-# approximate sine on [-pi/2, pi/2]
+-def sin_poly(d:UOp) -> UOp:
+-  return trig_poly(d, [2.6083159809786593541503e-06, -0.0001981069071916863322258, 0.00833307858556509017944336, -0.166666597127914428710938, 1.0],
+-                      [-7.97255955009037868891952e-18, 2.81009972710863200091251e-15, -7.64712219118158833288484e-13, 1.60590430605664501629054e-10,
+-                       -2.50521083763502045810755e-08, 2.75573192239198747630416e-06, -0.000198412698412696162806809, 0.00833333333333332974823815,
+-                       -0.166666666666666657414808,    1.0])
+-
+-def _ifand(q:UOp, n:int): return (q & n).ne(0)
+-
+-def sin_poly_small(d:UOp, q:UOp) -> UOp:
+-  r = sin_poly(d)
+-  return r * _ifand(q, 1).where(r.const_like(-1), r.const_like(1))
+-
+-def sin_poly_large(d:UOp, q:UOp) -> UOp:
 -  r = sin_poly(d + _ifand(q, 1).where(d.const_like(math.pi / 2), d.const_like(0)))
-+  # an odd quadrant's sine is the cosine of the remainder, sin(pi/2 - |d|), within the polynomial's range
-+  r = sin_poly(_ifand(q, 1).where(math.pi / 2 - (d < 0).where(-d, d), d))
-   return r * _ifand(q, 2).where(r.const_like(-1), r.const_like(1))
+-  return r * _ifand(q, 2).where(r.const_like(-1), r.const_like(1))
++  if d.dtype == dtypes.float16:
++    r, _, q = cody_waite(d.cast(dtypes.float32))
++    return r.cast(dtypes.float16), q
++  r, _, q = cody_waite(d)
++  return r, q
++
++# *** sine and cosine of a remainder in [-pi/4, pi/4], fdlibm's __kernel_sin and __kernel_cos ***
++def sin_kernel(r:UOp, r_lo:UOp, z:UOp) -> UOp:
++  s = [1.58969099521155010221e-10, -2.50507602534068634195e-08, 2.75573137070700676789e-06, -1.98412698298579493134e-04,
++       8.33333333332248946124e-03] if r.dtype == dtypes.float64 else \
++      [2.75573137070700676789e-06, -1.98412698298579493134e-04, 8.33333333332248946124e-03]
++  v = z * r
++  return r - ((z * (0.5 * r_lo - v * polyN(z, s)) - r_lo - v * -1.66666666666666324348e-01))
++
++def cos_kernel(r:UOp, r_lo:UOp, z:UOp) -> UOp:
++  c = [-1.13596475577881948265e-11, 2.08757232129817482790e-09, -2.75573143513906633035e-07, 2.48015872894767294178e-05,
++       -1.38888888888741095749e-03, 4.16666666666666019037e-02] if z.dtype == dtypes.float64 else \
++      [-2.75573143513906633035e-07, 2.48015872894767294178e-05, -1.38888888888741095749e-03, 4.16666666666666019037e-02]
++  h = 0.5 * z
++  w = 1.0 - h
++  return w + ((1.0 - w - h) + (z * z * polyN(z, c) - r * r_lo))
  
  # *** toplevel functions for xsin/xlog2/xexp2 ***
-@@ -174,6 +184,8 @@ def xsin(d:UOp, fast:bool=False, switch_over:float=30.0) -> UOp:
+ 
+@@ -174,19 +217,25 @@ def xsin(d:UOp, fast:bool=False, switch_over:float=30.0) -> UOp:
    - switch_over is the threshold for switching to payne_hanek_reduction.
    """
    assert d.dtype in TRANSCENDENTAL_DTYPES
@@ -363,14 +532,89 @@ index 62c3191..fb2d746 100644
 +  fast = fast or (-switch_over < d.vmin and d.vmax < switch_over)
    # mask +-inf/nan as zero
    x = _lazy_map_numbers(d, d.const_like(0.0), d.const_like(0.0), d.const_like(0.0), d)
-   # x_sign = sign(x)
-@@ -241,18 +253,20 @@ def xlog2(d:UOp) -> UOp:
-   else:
-     t = polyN(x2, [0.4374550283e+0, 0.5764790177e+0, 0.9618012905120])
-     # s_lo term (x*3.27e-08) only for float32 - underflows in float16
+-  # x_sign = sign(x)
+-  x_sign = x.ne(0).where((x<0).where(x.const_like(-1), x.const_like(1)), x.const_like(0))
++  x_sign = (x<0).where(x.const_like(-1), x.const_like(1))
+   x_abs = x * x_sign
+-  r, q = (cody_waite_reduction if fast else payne_hanek_reduction)(x_abs)
+-  if fast: result = sin_poly_small(r, q)
+-  else:
+-    # Payne Hanek Reduction assumes abs(x) >= pi/4, so for smaller values, use cody_waite_reduction.
+-    r_small, q_small = cody_waite_reduction(x_abs)
+-    result = (x_abs<switch_over).where(sin_poly_small(r_small, q_small), sin_poly_large(r, q))
+-  # adjusts the sign for abs(x)
+-  result = result * x_sign
++  r, r_lo, q = cody_waite(x_abs)
++  if not fast:
++    # Payne-Hanek takes angles from 1 on; the smaller ones take Cody-Waite, which is exact below the switch-over
++    r2, r_lo2, q2 = _payne_hanek(x_abs)
++    small = x_abs < switch_over
++    r, r_lo, q = small.where(r, r2), small.where(r_lo, r_lo2), small.where(q, q2)
++  # the sine of d = q pi/2 + r is that of r or its cosine, by the parity of q, negated in the lower half-turn
++  z = r * r
++  s = (q & 1).ne(0).where(cos_kernel(r, r_lo, z), sin_kernel(r, r_lo, z))
++  s = s * x_sign
++  s = (q & 2).ne(0).where(-s, s)
++  # a zero is its own sine, of its sign
++  result = x.ne(0).where(s, x)
+   # sin(Inf) = NaN, sin(-Inf) = NaN, sin(NaN) = NaN
+   return _lazy_map_numbers(d, d.const_like(math.nan), d.const_like(math.nan), d.const_like(math.nan), result)
+ 
+@@ -208,7 +257,7 @@ def xexp2(d:UOp) -> UOp:
+                   0.6931471805599452862e+0, 0.1000000000000000000e+1])
+   else: u = polyN(s, [0.1535920892e-3, 0.1339262701e-2, 0.9618384764e-2, 0.5550347269e-1, 0.2402264476e+0, 0.6931471825e+0, 1.0])
+   u = ldexp2k(u, q) # u*2^q
+-  upper, lower = {dtypes.float64: (1024, -2000), dtypes.float32: (128, -150), dtypes.float16: (23, -22)}[d.dtype]
++  upper, lower = (1024, -2000) if d.dtype == dtypes.float64 else (128, -150)
+   # Replace x >= upper with +inf
+   u = (d >= upper).where(d.const_like(math.inf), u)
+   # Replace x < lower with zero.
+@@ -222,37 +271,41 @@ def xlog2(d:UOp) -> UOp:
+   Paper: https://arxiv.org/pdf/2001.09258 5.5
+   """
+   assert d.dtype in TRANSCENDENTAL_DTYPES
+-  # float16 uses 2^10 for denormal scaling (2^64 overflows), float32/64 use 2^64
+-  denormal_exp = 10 if d.dtype == dtypes.float16 else 64
+-  FLT_MIN = d.const_like({dtypes.float16: 6.1e-5, dtypes.float32: 1e-4, dtypes.float64: 1e-4}[d.dtype])
+-  is_denormal = d<FLT_MIN
+-  a = is_denormal.where(d * (2.0 ** denormal_exp), d)
+-
+-  e = ilogb2k(a * (1.0 / 0.75)).cast(a.dtype)
++  # d = m 2^e with m in [1/sqrt 2, sqrt 2); log(1 + f) = f - h + s (h + R) for f = m - 1, h = f^2/2, s = f / (2 + f), fdlibm's __kernel_log
++  is_denormal = d < 2.0 ** (1 - exponent_bias(d.dtype))
++  a = is_denormal.where(d * (2.0 ** 64), d)
++  e = ilogb2k(a * math.sqrt(2.0)).cast(a.dtype)
+   m = ldexp3k(a, -e)
+-  e = is_denormal.where(e - denormal_exp, e)
+-
+-  x = (m - 1.0) / (m + 1.0)
+-  x2 = x * x
+-  if d.dtype == dtypes.float64:
+-    t = polyN(x2, [0.2211941750456081490e+0, 0.2200768693152277689e+0, 0.2623708057488514656e+0, 0.3205977477944495502e+0,
+-                   0.4121985945485324709e+0, 0.5770780162997058982e+0, 0.96179669392608091449])
+-    r = t * (x * x2) + e + x * 2.885390081777926774
+-  else:
+-    t = polyN(x2, [0.4374550283e+0, 0.5764790177e+0, 0.9618012905120])
+-    # s_lo term (x*3.27e-08) only for float32 - underflows in float16
 -    r = t * (x * x2) + e + x * 2.8853900432586669922 + (x * 3.2734474483568488616e-08 if d.dtype == dtypes.float32 else 0)
-+    r = t * (x * x2) + e + x * 2.8853900432586669922
-+    if d.dtype == dtypes.float32: r = r + x * 3.2734474483568488616e-08
++  e = is_denormal.where(e - 64, e)
++  f = m - 1.0
++  s = f / (2.0 + f)
++  z = s * s
++  lg = [1.479819860511658591e-01, 1.531383769920937332e-01, 1.818357216161805012e-01, 2.222219843214978396e-01, 2.857142874366239149e-01,
++        3.999999999940941908e-01, 6.666666666666735130e-01] if d.dtype == dtypes.float64 else \
++       [0xf89e26 * 2.0**-26, 0x91e9ee * 2.0**-25, 0xccce13 * 2.0**-25, 0xaaaaaa * 2.0**-24]
++  h = 0.5 * f * f
++  tail = s * (h + z * polyN(z, lg))
++  # f - h in two parts, the first of few enough bits that its product by the leading part of 1/ln 2 is exact (e_log2.c)
++  bits = (f - h).bitcast(dtypes.uint64 if d.dtype == dtypes.float64 else dtypes.uint32)
++  hi = (bits & bits.const_like(0xffffffff00000000 if d.dtype == dtypes.float64 else 0xfffff000)).bitcast(d.dtype)
++  lo = f - hi - h + tail
++  ivln2_hi, ivln2_lo = (1.44269504072144627571e+00, 1.67517131648865118353e-10) if d.dtype == dtypes.float64 else (1.4428710938e+00, -1.7605285393e-04)
++  val_hi = hi * ivln2_hi
++  val_lo = (lo + hi) * ivln2_lo + lo * ivln2_hi
++  w = e + val_hi
++  r = val_lo + (e - w + val_hi) + w
  
    # log2(Inf) = Inf
    r = d.ne(math.inf).where(r, r.const_like(math.inf))

@@ -2,12 +2,24 @@
   Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
   Copyright (c) 2026 The Raven authors. ISC License.
 
-  SPDX-License-Identifier: MIT AND ISC
+  SPDX-License-Identifier: MIT AND ISC AND SunPro
   ---------------------------------------------------------------------------*)
+
+(* The coefficients of the sine, cosine and logarithm kernels, and the split of
+   [1/ln 2] in [xlog2], are fdlibm's ([k_sin.c], [k_cos.c], [k_log.h],
+   [e_log2.c], [e_log2f.c]), which carry this notice:
+
+   Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. Developed
+   at SunPro, a Sun Microsystems, Inc. business. Permission to use, copy,
+   modify, and distribute this software is freely granted, provided that this
+   notice is preserved. *)
 
 open Ops
 
-let transcendental_dtypes = Dtype.[ Float16; Float32; Float64 ]
+(* The floats the functions compute in, and those with an integer of their
+   width, which the bit manipulations take. *)
+let transcendental_dtypes = Dtype.[ Float32; Float64 ]
+let widths = Dtype.[ Float16; Float32; Float64 ]
 let float_like u x = const_like u (`Float x)
 let int_like u n = const_like u (`Int (Bigint.of_int n))
 
@@ -16,9 +28,11 @@ let not_in what dt =
 
 let not_float = not_in "a float16, float32 or float64"
 let not_int = not_in "an int16, int32 or int64"
+let check_width d = if not (List.mem (dtype d) widths) then not_float (dtype d)
 
 let check d =
-  if not (List.mem (dtype d) transcendental_dtypes) then not_float (dtype d)
+  if not (List.mem (dtype d) transcendental_dtypes) then
+    not_in "a float32 or float64" (dtype d)
 
 let int_of_width : Dtype.t -> Dtype.t = function
   | Float64 -> Int64
@@ -88,7 +102,7 @@ let ldexp2k d e =
   O.(d * pow2if (shr e 1) (dtype d) * pow2if (e - shr e 1) (dtype d))
 
 let frexp v =
-  check v;
+  check_width v;
   let dt = dtype v in
   (* m1 masks the sign and the mantissa, m2 sets the exponent that normalizes
      the mantissa into [0.5, 1). *)
@@ -153,8 +167,11 @@ let one_over_two_pi =
     0x6a78e458;
   |]
 
-let payne_hanek_reduction d =
-  check d;
+(* [turn_fraction d] is [(zh, zl, dt)]: the fraction of a turn in [d >= 1], to
+   128 bits in the 64-bit words [zh] and [zl], and the type [dt] it is computed
+   for, {!Dtype.Float32} for a {!Dtype.Float16} [d]. *)
+let turn_fraction d =
+  check_width d;
   let dt = dtype d in
   let intermediate_dtype : Dtype.t = if dt = Float16 then Float32 else dt in
   (* d = m * 2^(e - w), the integer m of w bits in k words of 32 bits *)
@@ -221,6 +238,80 @@ let payne_hanek_reduction d =
     | z3 :: z2 :: z1 :: z0 :: _ -> (O.(shl z3 32 lor z2), O.(shl z1 32 lor z0))
     | _ -> invalid_arg "fewer than four columns"
   in
+  (zh, zl, intermediate_dtype)
+
+(* [round_to dt c] is [c] rounded to the float [dt]. *)
+let round_to (dt : Dtype.t) c =
+  if dt = Float64 then c else Int32.float_of_bits (Int32.bits_of_float c)
+
+(* Dekker's factor, [2^ceil(p/2) + 1] for [p] bits of significand, splits a
+   float into halves whose products are exact. *)
+let splitter (dt : Dtype.t) = if dt = Float64 then 134217729. else 4097.
+
+(* [2pi/2^64] to twice the precision of [dt]: its leading part [k] in halves
+   [(k_hi, k_lo)], and the rest. *)
+let turn_unit dt =
+  let pi_lo = 1.2246467991473532e-16 in
+  let k = round_to dt (Float.ldexp (2. *. Float.pi) (-64)) in
+  let p = round_to dt (k *. splitter dt) in
+  let k_hi = round_to dt (p -. round_to dt (p -. k)) in
+  let rest = (2. *. Float.pi) -. Float.ldexp k 64 +. (2. *. pi_lo) in
+  (k, k_hi, k -. k_hi, Float.ldexp rest (-64))
+
+(* [fast_two_sum a b] is [(s, e)] with [s = a + b] rounded and [s + e] exact,
+   for [a] zero or of an exponent at least [b]'s. *)
+let fast_two_sum a b =
+  let s = O.(a + b) in
+  (s, O.(b - (s - a)))
+
+(* [radians hi zl dt] is the angle of [hi + zl 2^-64] units of [2^-64] turn, for
+   a signed [hi] below [2^62] in magnitude, as [(r, r_lo)]: [r] rounded once to
+   [dt], and the rest. The fraction is summed in two floats, from parts that
+   convert exactly and whose sums are each exact as a rounded sum and its error,
+   then multiplied by [2pi/2^64] in two floats. *)
+let radians hi zl (dt : Dtype.t) =
+  let low n = O.(hi land int Stdlib.((1 lsl n) - 1)) in
+  let parts =
+    if dt = Float64 then [ (shr hi 32, 32); (low 32, 0); (shr zl 11, -53) ]
+    else
+      [
+        (shr hi 42, 42);
+        (O.(shr hi 21 land int 0x1fffff), 21);
+        (low 21, 0);
+        (shr zl 43, -43);
+      ]
+  in
+  let term (c, e) = O.(cast c dt * float (Float.ldexp 1. e)) in
+  let sum (s, e) part =
+    let s, e' = fast_two_sum s (term part) in
+    (s, O.(e + e'))
+  in
+  let s, e =
+    match parts with
+    | p :: ps ->
+        let t = term p in
+        List.fold_left sum (t, float_like t 0.) ps
+    | [] -> invalid_arg "no parts"
+  in
+  let k, k_hi, k_lo, k_rest = turn_unit dt in
+  let c = O.(s * float (splitter dt)) in
+  let s_hi = O.(c - (c - s)) in
+  let s_lo = O.(s - s_hi) in
+  let p = O.(s * float k) in
+  let p_err =
+    O.(
+      (s_hi * float k_hi)
+      - p
+      + (s_hi * float k_lo)
+      + (s_lo * float k_hi)
+      + (s_lo * float k_lo))
+  in
+  fast_two_sum p O.(p_err + (s * float k_rest) + (e * float k))
+
+(* [payne_hanek d] is [(r, r_lo, q)]: {!payne_hanek_reduction}'s remainder in
+   two parts, in float32 for a float16 [d]. *)
+let payne_hanek d =
+  let zh, zl, dt = turn_fraction d in
   (* The quotient rounds to the nearest quadrant: from half a quadrant up, the
      remainder is the fraction less a quadrant. *)
   let half = O.(shr zh 61 land int 1) in
@@ -228,97 +319,115 @@ let payne_hanek_reduction d =
   let hi =
     O.(cast (zh land int 0x3fffffffffffffff) Int64 - shl (cast half Int64) 62)
   in
-  let r =
-    O.(
-      (cast hi intermediate_dtype * float (2. *. Float.pi /. Float.ldexp 1. 64))
-      + cast zl intermediate_dtype
-        * float (2. *. Float.pi /. Float.ldexp 1. 128))
+  let r, r_lo = radians hi zl dt in
+  (r, r_lo, q)
+
+let payne_hanek_reduction d =
+  let r, _, q = payne_hanek d in
+  (cast r (dtype d), q)
+
+(* [cody_waite d] is [(r, r_lo, q)]: {!cody_waite_reduction}'s remainder in two
+   parts, for a float32 or float64 [d]. [q pi/2] is subtracted in four parts:
+   those of float32 have 8, 9, 9 and 24 bits, those of float64 25, 24, 25 and
+   52, so that the products by a quotient below 2^15 are exact but the last, and
+   so are the first two differences. The third rounds once the remainder is
+   large enough; its error is carried to the last. *)
+let cody_waite d =
+  let a, b, c, last =
+    if dtype d = Float64 then
+      ( 1.5707963109016418457,
+        1.5893254712295856735e-08,
+        6.123233932053594251e-17,
+        6.368317163510949908e-25 )
+    else
+      ( 1.5703125,
+        0.00048351287841796875,
+        3.13855707645416259765e-07,
+        6.077100628276710381e-11 )
   in
-  (cast r dt, q)
+  let quadrant = rintk O.(d * float 0.636619772367581343075535053490057448) in
+  let q = cast quadrant (dtype d) in
+  let x = O.((q * float (-.a)) + d) in
+  let x = O.((q * float (-.b)) + x) in
+  let x, e = fast_two_sum x O.(q * float (-.c)) in
+  let r, r_lo = fast_two_sum x O.(e + (q * float (-.last))) in
+  (r, r_lo, cast quadrant Int32)
 
 let cody_waite_reduction d =
-  let m_1_pi = 0.318309886183790671537767526745028724 in
-  let dt = dtype d in
-  let qdh =
-    O.(
-      cast (cast (d * float (Float.ldexp m_1_pi (-24))) Int64) dt
-      * float (Float.ldexp 1. 24))
-  in
-  let rec reduce_d x q =
-    match dtype x with
-    | Float64 ->
-        let pi_a, pi_b = (3.1415926218032836914, 3.1786509424591713469e-08) in
-        let pi_c, pi_d =
-          (1.2246467864107188502e-16, 1.2736634327021899816e-24)
-        in
-        let d = O.((qdh * float (-.pi_a)) + x) in
-        let d = O.((q * float (-.pi_a)) + d) in
-        let d = O.((qdh * float (-.pi_b)) + d) in
-        let d = O.((q * float (-.pi_b)) + d) in
-        let d = O.((qdh * float (-.pi_c)) + d) in
-        let d = O.((q * float (-.pi_c)) + d) in
-        O.(((qdh + q) * float (-.pi_d)) + d)
-    | Float16 ->
-        (* float16 reaches 1 ulp only when reduced in float32. *)
-        cast (reduce_d (cast x Float32) (cast q Float32)) Float16
-    | _ ->
-        let d = O.((q * float (-3.1414794921875)) + x) in
-        let d = O.((q * float (-0.00011315941810607910156)) + d) in
-        let d = O.((q * float (-1.9841872589410058936e-09)) + d) in
-        O.((q * float (-1.2154201256553420762e-10)) + d)
-  in
-  let quadrant =
-    if dt = Float64 then rintk O.((d * float m_1_pi) - qdh)
-    else rintk O.(d * float m_1_pi)
-  in
-  (reduce_d d (cast quadrant dt), cast quadrant Int32)
+  if dtype d = Float16 then
+    let r, _, q = cody_waite (cast d Float32) in
+    (cast r Float16, q)
+  else
+    let r, _, q = cody_waite d in
+    (r, q)
 
-(* Approximate sine on small angle *)
+(* Sine and cosine of a remainder
+
+   On [[-pi/4, pi/4]], the sine is [r + r^3 S(r^2)] and the cosine [1 - r^2/2 +
+   r^4 C(r^2)], with fdlibm's minimax coefficients ([__kernel_sin],
+   [__kernel_cos]), in float32 the leading ones rounded. The leading term of
+   each is exact and the others small, so that only the last addition rounds at
+   the result's scale; the cosine adds back the rounding of [1 - r^2/2] ([w]
+   below), which is not small. Both take the remainder as [r + r_lo], its
+   rounding [r_lo] first order: the remainder rounded alone costs up to an ulp
+   of the result. *)
 
 let poly_n x = function
   | c :: cs ->
       List.fold_left (fun acc c -> O.((acc * x) + float c)) (float c) cs
   | [] -> invalid_arg "a polynomial without coefficients"
 
-let trig_poly d coeff32 coeff64 =
-  O.(d * poly_n (d * d) (if dtype d = Float64 then coeff64 else coeff32))
+let sin_kernel r r_lo z =
+  let s =
+    if dtype r = Float64 then
+      [
+        1.58969099521155010221e-10;
+        -2.50507602534068634195e-08;
+        2.75573137070700676789e-06;
+        -1.98412698298579493134e-04;
+        8.33333333332248946124e-03;
+      ]
+    else
+      [
+        2.75573137070700676789e-06;
+        -1.98412698298579493134e-04;
+        8.33333333332248946124e-03;
+      ]
+  in
+  let v = O.(z * r) in
+  O.(
+    r
+    - ((z * ((float 0.5 * r_lo) - (v * poly_n z s)))
+      - r_lo
+      - (v * float (-1.66666666666666324348e-01))))
 
-(* Approximates sine on [-pi/2, pi/2]. *)
-let sin_poly d =
-  trig_poly d
-    [
-      2.6083159809786593541503e-06;
-      -0.0001981069071916863322258;
-      0.00833307858556509017944336;
-      -0.166666597127914428710938;
-      1.0;
-    ]
-    [
-      -7.97255955009037868891952e-18;
-      2.81009972710863200091251e-15;
-      -7.64712219118158833288484e-13;
-      1.60590430605664501629054e-10;
-      -2.50521083763502045810755e-08;
-      2.75573192239198747630416e-06;
-      -0.000198412698412696162806809;
-      0.00833333333333332974823815;
-      -0.166666666666666657414808;
-      1.0;
-    ]
-
-let ifand q n = O.(q land int n <> int 0)
-let sign_if cond r = O.(r * where cond (int_like r (-1)) (int_like r 1))
-let sin_poly_small d q = sign_if (ifand q 1) (sin_poly d)
-
-(* An odd quadrant's sine is the cosine of the remainder, sin (pi/2 - |d|),
-   within the polynomial's range. *)
-let sin_poly_large d q =
-  let magnitude = where O.(d < int 0) O.(-d) d in
-  let d = where (ifand q 1) O.(float (Float.pi /. 2.) - magnitude) d in
-  sign_if (ifand q 2) (sin_poly d)
+let cos_kernel r r_lo z =
+  let c =
+    if dtype z = Float64 then
+      [
+        -1.13596475577881948265e-11;
+        2.08757232129817482790e-09;
+        -2.75573143513906633035e-07;
+        2.48015872894767294178e-05;
+        -1.38888888888741095749e-03;
+        4.16666666666666019037e-02;
+      ]
+    else
+      [
+        -2.75573143513906633035e-07;
+        2.48015872894767294178e-05;
+        -1.38888888888741095749e-03;
+        4.16666666666666019037e-02;
+      ]
+  in
+  let h = O.(float 0.5 * z) in
+  let w = O.(float 1. - h) in
+  O.(w + (float 1. - w - h + ((z * z * poly_n z c) - (r * r_lo))))
 
 (* Toplevel functions for xsin, xlog2 and xexp2 *)
 
+(* The sine of [d = q pi/2 + r] is that of [r] or its cosine, by the parity of
+   [q], negated in the lower half-turn. *)
 let xsin ?(fast = false) ?(switch_over = 30.0) d =
   check d;
   let fast =
@@ -328,28 +437,28 @@ let xsin ?(fast = false) ?(switch_over = 30.0) d =
   in
   let zero = float_like d 0. in
   let x = lazy_map_numbers d ~inf:zero ~neg_inf:zero ~nan:zero d in
-  let x_sign =
-    where
-      O.(x <> int 0)
-      (where O.(x < int 0) (int_like x (-1)) (int_like x 1))
-      (int_like x 0)
-  in
+  let x_sign = where O.(x < int 0) (int_like x (-1)) (int_like x 1) in
   let x_abs = O.(x * x_sign) in
-  let result =
-    if fast then
-      let r, q = cody_waite_reduction x_abs in
-      sin_poly_small r q
+  let r, r_lo, q =
+    let small = cody_waite x_abs in
+    if fast then small
     else
-      let r, q = payne_hanek_reduction x_abs in
-      (* Payne-Hanek assumes |x| >= pi/4, so smaller angles use Cody-Waite. *)
-      let r_small, q_small = cody_waite_reduction x_abs in
-      where
-        O.(x_abs < float switch_over)
-        (sin_poly_small r_small q_small)
-        (sin_poly_large r q)
+      (* Payne-Hanek takes angles from 1 on; the smaller ones take Cody-Waite,
+         precise below the switch-over. *)
+      let r, r_lo, q = small and r', r_lo', q' = payne_hanek x_abs in
+      let small = O.(x_abs < float switch_over) in
+      (where small r r', where small r_lo r_lo', where small q q')
   in
+  let z = O.(r * r) in
+  let s =
+    where O.(q land int 1 <> int 0) (cos_kernel r r_lo z) (sin_kernel r r_lo z)
+  in
+  let s = O.(s * x_sign) in
+  let s = where O.(q land int 2 <> int 0) O.(-s) s in
+  (* A zero is its own sine, of its sign. *)
+  let s = where O.(x <> int 0) s x in
   let nan = float_like d Dtype.nan in
-  lazy_map_numbers d ~inf:nan ~neg_inf:nan ~nan O.(result * x_sign)
+  lazy_map_numbers d ~inf:nan ~neg_inf:nan ~nan s
 
 let xexp2 d =
   check d;
@@ -388,51 +497,62 @@ let xexp2 d =
         ]
   in
   let u = ldexp2k u q in
-  let upper, lower =
-    match dtype d with
-    | Float64 -> (1024, -2000)
-    | Float32 -> (128, -150)
-    | _ -> (23, -22)
-  in
+  let upper, lower = if dtype d = Float64 then (1024, -2000) else (128, -150) in
   let u = where O.(d >= int upper) (float_like d infinity) u in
   let u = where O.(d < int lower) (float_like d 0.) u in
   where O.(d <> d) (float_like d Dtype.nan) u
 
+(* The logarithm of [d = m 2^e], [m] in [[1/sqrt 2, sqrt 2)], is [e + log2 (1 +
+   f)] for [f = m - 1], which is exact. [log (1 + f)] is [f - h + s (h + R)]
+   with [h = f^2/2], [s = f / (2 + f)] and [R] a minimax polynomial in [s^2]
+   that approximates [2 atanh s / s - 2] (fdlibm's [__kernel_log]): every term
+   but [f] is small, so only the sum rounds at the result's scale. Base 2 then
+   keeps [f - h] in two parts, the first of few enough bits that its product by
+   the leading part of [1/ln 2] is exact, and adds [e] last, carrying the
+   rounding of that sum. *)
 let xlog2 d =
   check d;
   let dt = dtype d in
-  (* float16 scales subnormals by 2^10, since 2^64 overflows it. *)
-  let denormal_exp = if dt = Float16 then 10 else 64 in
-  let flt_min = float_like d (if dt = Float16 then 6.1e-5 else 1e-4) in
-  let is_denormal = O.(d < flt_min) in
-  let a = where is_denormal O.(d * float (Float.ldexp 1. denormal_exp)) d in
-  let e = cast (ilogb2k O.(a * float (1.0 /. 0.75))) (dtype a) in
+  let is64 = dt = Float64 in
+  let least_normal = Float.ldexp 1. (1 - exponent_bias dt) in
+  let is_denormal = O.(d < float least_normal) in
+  let a = where is_denormal O.(d * float (Float.ldexp 1. 64)) d in
+  let e = cast (ilogb2k O.(a * float (Float.sqrt 2.))) dt in
   let m = ldexp3k a O.(-e) in
-  let e = where is_denormal O.(e - int denormal_exp) e in
-  let x = O.((m - float 1.0) / (m + float 1.0)) in
-  let x2 = O.(x * x) in
-  let r =
-    if dt = Float64 then
-      let t =
-        poly_n x2
-          [
-            0.2211941750456081490e+0;
-            0.2200768693152277689e+0;
-            0.2623708057488514656e+0;
-            0.3205977477944495502e+0;
-            0.4121985945485324709e+0;
-            0.5770780162997058982e+0;
-            0.96179669392608091449;
-          ]
-      in
-      O.((t * (x * x2)) + e + (x * float 2.885390081777926774))
-    else
-      let t = poly_n x2 [ 0.4374550283e+0; 0.5764790177e+0; 0.9618012905120 ] in
-      let hi = O.((t * (x * x2)) + e + (x * float 2.8853900432586669922)) in
-      (* The low part of the constant underflows in float16. *)
-      if dt = Float32 then O.(hi + (x * float 3.2734474483568488616e-08))
-      else hi
+  let e = where is_denormal O.(e - int 64) e in
+  let f = O.(m - float 1.) in
+  let s = O.(f / (float 2. + f)) in
+  let z = O.(s * s) in
+  let lg =
+    if is64 then
+      [
+        1.479819860511658591e-01;
+        1.531383769920937332e-01;
+        1.818357216161805012e-01;
+        2.222219843214978396e-01;
+        2.857142874366239149e-01;
+        3.999999999940941908e-01;
+        6.666666666666735130e-01;
+      ]
+    else [ 0xf89e26.0p-26; 0x91e9ee.0p-25; 0xccce13.0p-25; 0xaaaaaa.0p-24 ]
   in
+  let h = O.(float 0.5 * f * f) in
+  let tail = O.(s * (h + (z * poly_n z lg))) in
+  let bits = bitcast O.(f - h) (if is64 then Uint64 else Uint32) in
+  let keep =
+    if is64 then Bigint.of_string "0xffffffff00000000"
+    else Bigint.of_int 0xfffff000
+  in
+  let hi = bitcast O.(bits land const_like bits (`Int keep)) dt in
+  let lo = O.(f - hi - h + tail) in
+  let ivln2_hi, ivln2_lo =
+    if is64 then (1.44269504072144627571e+00, 1.67517131648865118353e-10)
+    else (1.4428710938e+00, -1.7605285393e-04)
+  in
+  let val_hi = O.(hi * float ivln2_hi) in
+  let val_lo = O.(((lo + hi) * float ivln2_lo) + (lo * float ivln2_hi)) in
+  let w = O.(e + val_hi) in
+  let r = O.(val_lo + (e - w + val_hi) + w) in
   let r = where O.(d <> float infinity) r (float_like r infinity) in
   let r = where O.(d <> float 0.0) r (float_like r neg_infinity) in
   (* Some targets do not find -0.0 equal to 0.0; its reciprocal is -inf. So is

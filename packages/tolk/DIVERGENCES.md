@@ -792,11 +792,10 @@ the Exclusions of `README.md`.
     the lowering adds `+0.` to every float sum's result, which the `x + 0` fold
     now keeps.
   - **Transcendental polynomials.** tinygrad: `helpers.py:153` (`polyN`, from
-    `0.0`) and `codegen/decomp/transcendental.py:244` (`xlog2` adds an integer
-    `0` outside float32). tolk: `lib/codegen/decomp/transcendental.ml:195,343`.
-    A polynomial starts from its first coefficient and `xlog2` adds its low
-    term only in float32, so the decompositions no longer rely on the float
-    folds of `0. * x` and `x + 0` to be what tinygrad renders.
+    `0.0`). tolk: `lib/codegen/decomp/transcendental.ml:375` (`poly_n`). A
+    polynomial starts from its first coefficient, so the decompositions no
+    longer rely on the float folds of `0. * x` and `x + 0` to be what tinygrad
+    renders.
   - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py:102-104`
     (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator
     operand). tolk: `lib/codegen/codegen.ml:167`
@@ -1129,9 +1128,9 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `codegen/decomp/transcendental.py:66-113`
   (`payne_hanek_reduction`) and `:164-166` (`sin_poly_large`).
-- **tolk:** `lib/codegen/decomp/transcendental.ml:110`
-  (`one_over_two_pi`), `:156` (`payne_hanek_reduction`) and `:315`
-  (`sin_poly_large`); `test/gen/tinygrad.patch`, which gives tinygrad the same
+- **tolk:** `lib/codegen/decomp/transcendental.ml:124`
+  (`one_over_two_pi`), `:173` (`turn_fraction`), `:272` (`radians`) and `:313`
+  (`payne_hanek`); `test/gen/tinygrad.patch`, which gives tinygrad the same
   reduction before the goldens are generated.
 - **Differs:** tinygrad rounds the quotient on `f < 0.5`, where `f` is
   frexp's mantissa, always at least 0.5, so it always returns the fraction
@@ -1144,12 +1143,11 @@ the Exclusions of `README.md`.
   the whole mantissa, 24 bits or 53 in two words, is multiplied by the bits of
   `1/(2pi)` at its exponent, from a table of 1312 bits that covers a
   float64's greatest exponent, to 128 bits of the fraction, carried word by
-  word; and the remainder is the signed fraction's two 64-bit halves, each
-  converted and scaled. The remainder is within an ulp or two of the exact
-  one in float32 and float64, `6381956970095103 * 2^797`, the float64 nearest
-  a multiple of `pi/2`, included. `sin_poly_large` takes the sine of an odd
-  quadrant as `sin (pi/2 - |r|)`, which stays within the polynomial's range
-  for the nearest remainder.
+  word; and the remainder is the signed fraction, summed exactly in two floats
+  from parts that convert exactly and multiplied by `2pi/2^64` in two floats
+  (D126). The remainder is within an ulp of the exact one in float32 and
+  float64, `6381956970095103 * 2^797`, the float64 nearest a multiple of
+  `pi/2`, included.
 - **Reason:** (b): rune's `sin` and `cos` reduce by `pi/2` with this
   reduction beyond `2^12` in float32 and `2^22` in float64, where their exact
   Cody-Waite parts stop (RFC 0012), and tolk's own `xsin` uses it beyond its
@@ -1717,7 +1715,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `codegen/decomp/transcendental.py:250-255` (`xlog2` selects
   NaN where `d < -0.0`, then `-inf` where the reciprocal of `d` is `-inf`,
   which it means for `-0.0`).
-- **tolk:** `lib/codegen/decomp/transcendental.ml:433-439` (`xlog2`),
+- **tolk:** `lib/codegen/decomp/transcendental.ml:556-564` (`xlog2`),
   and `test/gen/tinygrad.patch`, which reorders tinygrad's selects the same
   way.
 - **Differs:** the reciprocal of a negative number of magnitude below
@@ -1726,9 +1724,9 @@ the Exclusions of `README.md`.
   tinygrad's last select turned the NaN of such a number's logarithm into
   `-inf`. The `-inf` select now comes first and the NaN select after it:
   `-0.0` still gives `-inf`, and every negative number gives NaN.
-- **Reason:** (b). rune's lowering computes nx's logarithms with `xlog2`,
-  and nx gives NaN for the logarithm of every negative number, subnormals
-  included.
+- **Reason:** (b). The planned AMD ISA renderer and the eager GPU kernels
+  compute nx's logarithms with `xlog2`, and nx gives NaN for the logarithm of
+  every negative number, subnormals included.
 - **Pinned by:** the `Transcendental` suite
   (`test/codegen/decomp/transcendental`): `special values › xlog2 of a
   negative number whose reciprocal overflows is NaN, and of -0. is -inf
@@ -2235,7 +2233,7 @@ stores through a pad.
 - **tolk:** `lib/uop/ops.ml:1485` (`unbounded`), `:1519`
   (`compute_min_max`), `:1536` (`Where`), `:1568` (`Trunc`), `:1572` (`Neg`),
   `:1585` (`selected`), `:1600` (`float_bounds`) and `:1644` (`cast_bounds`);
-  `lib/codegen/decomp/transcendental.ml:322` (`xsin`); `test/gen/tinygrad.patch`,
+  `lib/codegen/decomp/transcendental.ml:431` (`xsin`); `test/gen/tinygrad.patch`,
   which gives tinygrad the same bounds and the same `xsin` before the goldens
   are generated.
 - **Differs:** a float sum, difference or product of operands with finite
@@ -3725,3 +3723,59 @@ stores through a pad.
   keeps the fields it shares bytes with` and `› holes cover their fields, in
   order`; the Ops_nv suite's recorded cases, whose generator applies the same
   holes to tinygrad.
+
+## D126. The transcendental functions are within one ulp
+
+- **tinygrad:** `codegen/decomp/transcendental.py:7`
+  (`TRANSCENDENTAL_DTYPES`, float16 included), `:115-148`
+  (`cody_waite_reduction`, by half turns, whose float32 parts are the first
+  three of Sleef's split for FMA and the fourth of its other split),
+  `:150-166` (`sin_poly`, `sin_poly_small`, `sin_poly_large`), `:170-191`
+  (`xsin`), and `:219-255` (`xlog2`).
+- **tolk:** `lib/codegen/decomp/transcendental.ml:21`
+  (`transcendental_dtypes`), `:272` (`radians`), `:335` (`cody_waite`),
+  `:380` (`sin_kernel`), `:404` (`cos_kernel`), `:431` (`xsin`) and `:513`
+  (`xlog2`); `test/gen/tinygrad.patch`, which gives tinygrad the same
+  functions before the goldens are generated.
+- **Differs:** `xexp2`, `xlog2` and `xsin` are defined in float32 and float64;
+  float16 computes at float32 and rounds once, as bfloat16 and the 8-bit
+  floats did. Both reductions remove quarter turns and return the remainder
+  in two floats, the rounded remainder and the rest: Cody-Waite subtracts
+  `q pi/2` in four parts whose products by a quotient below `2^15` are exact,
+  and carries the rounding of the third difference to the last, in place of
+  tinygrad's parts, whose fourth term belongs to another split of pi and
+  leaves `1.2e-10 q` behind; Payne-Hanek's remainder is summed and scaled in
+  two floats (D31). The sine and the cosine of the remainder are fdlibm's
+  kernels, which take the rest to first order, in place of one polynomial on
+  half turns evaluated as `d p(d^2)`. `xsin` returns a zero of either sign
+  unchanged. `xlog2` is fdlibm's `log2` (`e_log2.c`): `m` in
+  `[1/sqrt 2, sqrt 2)`, `log (1 + f) = f - h + s (h + R)`, `f - h` split so
+  that its product by the leading part of `1/ln 2` is exact, the exponent
+  added last with its rounding carried, in place of a polynomial in
+  `(m - 1)/(m + 1)` whose rounding scales into the result. `xexp2` is
+  unchanged. Measured against correctly rounded results, every float32 input
+  and every float16 and bfloat16 input, and drawn float64 inputs, the largest
+  errors were 1, 5 and 205266 units in the last place in float32 (`exp2`,
+  `log2`, `sin`), 4, 3 and 2 in float16, and 1, 3 and 2 in float64; they are 1
+  in every case. On one core of the M1 Max, without vectorization, a float32
+  `xlog2` costs 8.0 ns from 5.0, `xsin` below its switch-over 11.4 ns from
+  6.2 and beyond it 28.5 from 21.0; float64 `xlog2` 9.8 ns from 6.4, `xsin`
+  13.3 from 11.4 and 69.2 from 73.4.
+- **Reason:** (b). rune's `exp`, `sin` and `cos` compute with `exp2` and `sin`
+  (`packages/rune/lib/lower_arith.ml`), and the planned AMD ISA renderer and
+  the eager GPU kernels compute every transcendental kind with these
+  functions, under a bound of one unit for the narrow floats and of the
+  vendors' documented maxima elsewhere.
+  A target's function one unit off leaves rune's compositions within their
+  bound of two; tinygrad's `xsin` left the sine of a float32 near a multiple
+  of pi below 30 with no correct bit, and its `xlog2` put rune's compiled
+  `log` two units off on the host.
+- **Pinned by:** the Transcendental suite (`test/codegen/decomp/transcendental`):
+  `accuracy › <function> of <type> is within an ulp` for `exp2`, `log2` and
+  `sin` in float16, bfloat16, float32 and float64, against references computed
+  in integers (`exact.ml`), and `› xsin ~fast of <type> is within an ulp below
+  30`; `special values › sin <type> -0x0p+0 is -0x0p+0` and the subnormal rows;
+  `types › <function> refuses a node of another type › half`; the graph
+  goldens and `values.golden`, from the patched tinygrad; and rune's
+  `lower_arith` suite: `transcendental functions on the host › log`, `› exp`,
+  `› sin`, `› cos`.

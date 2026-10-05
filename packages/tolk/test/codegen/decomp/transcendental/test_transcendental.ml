@@ -44,7 +44,10 @@ let close ~atol ~rtol =
 let graph_of name f = Golden.graph (name ^ ".golden") f
 let sink_of (a, b) = Ops.sink [ a; b ]
 
-let graphs_of (name, dt) =
+(* The functions are defined in float32 and float64 only. *)
+let wide = List.filter (fun (_, dt) -> dt <> Dtype.Float16) floats
+
+let functions_of (name, dt) =
   [
     graph_of ("xsin_" ^ name) (fun () -> Ops.sink [ T.xsin (x dt) ]);
     graph_of ("xsin_fast_" ^ name) (fun () ->
@@ -53,6 +56,10 @@ let graphs_of (name, dt) =
         Ops.sink [ T.xsin ~switch_over:100. (x dt) ]);
     graph_of ("xexp2_" ^ name) (fun () -> Ops.sink [ T.xexp2 (x dt) ]);
     graph_of ("xlog2_" ^ name) (fun () -> Ops.sink [ T.xlog2 (x dt) ]);
+  ]
+
+let graphs_of (name, dt) =
+  [
     graph_of ("xpow_" ^ name) (fun () ->
         Ops.sink [ T.xpow (x dt) (x ~slot:1 dt) ]);
     graph_of ("frexp_" ^ name) (fun () -> sink_of (T.frexp (x dt)));
@@ -65,7 +72,8 @@ let graphs_of (name, dt) =
 
 let graphs =
   group "graphs"
-    (List.concat_map graphs_of floats
+    (List.concat_map functions_of wide
+    @ List.concat_map graphs_of floats
     @ [
         graph_of "pow2if_short" (fun () ->
             Ops.sink [ T.pow2if (x Dtype.Int16) Dtype.Float16 ]);
@@ -81,7 +89,7 @@ let graphs =
               ]);
         cases ~name:fst
           "a sine of an angle bounded below the switch-over is its fast form"
-          floats (fun (_, dt) ->
+          wide (fun (_, dt) ->
             let angle lo hi =
               Ops.variable ~dtype:dt "a" (`Float lo) (`Float hi)
             in
@@ -316,12 +324,12 @@ let reductions =
           equal (close ~atol:0. ~rtol)
             (as_float (value_of_cell (cell "r")))
             (as_float (eval rem)));
-      test "cody_waite_reduction removes half turns" (fun () ->
+      test "cody_waite_reduction removes quarter turns" (fun () ->
           let v = (12. *. Float.pi) +. 0.1 in
           let rem, quadrant = T.cody_waite_reduction (x Dtype.Float64) in
           let eval u = Interpreter.eval ~params:[ (0, `Float v) ] u in
           equal (close ~atol:0. ~rtol:1e-7) 0.1 (as_float (eval rem));
-          equal int 12 (as_int (eval quadrant)));
+          equal int 24 (as_int (eval quadrant)));
       test "the reductions give an Int32 quadrant" (fun () ->
           List.iter
             (fun (_, dt) ->
@@ -332,44 +340,93 @@ let reductions =
             floats);
     ]
 
-(* Special values *)
+(* Special values
+
+   Exact, through the rewrite of each operation, in every float the patterns
+   rewrite: IEEE's values at infinities, NaN and zeros, a zero's sign kept by
+   the sine, and the sine of a subnormal, which rounds to the subnormal. *)
+
+let sixteen_up =
+  [
+    ("half", Dtype.Float16);
+    ("bfloat16", Dtype.Bfloat16);
+    ("float", Dtype.Float32);
+    ("double", Dtype.Float64);
+  ]
+
+(* [rewritten op dt] is [op] of a [dt] input, rewritten by the patterns. *)
+let rewritten op dt =
+  let none = Op.Set.of_list [] in
+  match
+    Ops.src
+      (Ops.graph_rewrite ~ctx:()
+         (Ops.sink [ op (x dt) ])
+         (T.patterns ~force:false none))
+  with
+  | [ u ] -> u
+  | _ -> invalid_arg "a sink of one node"
+
+let exp2 = Ops.exp2
+let log2 = Ops.log2
+let sin d = Ops.alu d Sin []
+let tiny dt = Float.ldexp 1. (1 - T.exponent_bias dt - snd (Dtype.finfo dt))
+
+let greatest dt =
+  Float.ldexp
+    (2. -. Float.ldexp 1. (-snd (Dtype.finfo dt)))
+    (T.exponent_bias dt)
 
 let specials =
   let nan = Float.nan and inf = Float.infinity in
-  let special name f cases =
+  let special name op cases =
     List.concat_map
       (fun (dname, dt) ->
         List.map
           (fun (v, expected) ->
+            let v = v dt and expected = expected dt in
             test (Printf.sprintf "%s %s %h is %h" name dname v expected)
-              (fun () -> equal const (`Float expected) (at dt f v)))
+              (fun () ->
+                equal const (`Float expected)
+                  (at dt (fun _ -> rewritten op dt) v)))
           cases)
-      floats
+      sixteen_up
   in
+  let c v _ = v in
   group "special values"
-    (special "xsin" T.xsin [ (inf, nan); (-.inf, nan); (nan, nan); (0., 0.) ]
-    @ special "xexp2" T.xexp2
+    (special "sin" sin
+       [
+         (c inf, c nan);
+         (c (-.inf), c nan);
+         (c nan, c nan);
+         (c 0., c 0.);
+         (c (-0.), c (-0.));
+         (tiny, tiny);
+         ((fun dt -> -.tiny dt), fun dt -> -.tiny dt);
+       ]
+    @ special "exp2" exp2
         [
-          (inf, inf);
-          (-.inf, 0.);
-          (nan, nan);
-          (0., 1.);
-          (1., 2.);
-          (-1., 0.5);
-          (2000., inf);
-          (-2000., 0.);
+          (c inf, c inf);
+          (c (-.inf), c 0.);
+          (c nan, c nan);
+          (c 0., c 1.);
+          (c (-0.), c 1.);
+          (c 1., c 2.);
+          (c (-1.), c 0.5);
+          (greatest, c inf);
+          ((fun dt -> -.greatest dt), c 0.);
         ]
-    @ special "xlog2" T.xlog2
+    @ special "log2" log2
         [
-          (inf, inf);
-          (0., -.inf);
-          (-0., -.inf);
-          (-1., nan);
-          (-.inf, nan);
-          (nan, nan);
-          (1., 0.);
-          (2., 1.);
-          (0.5, -1.);
+          (c inf, c inf);
+          (c 0., c (-.inf));
+          (c (-0.), c (-.inf));
+          (c (-1.), c nan);
+          (c (-.inf), c nan);
+          (c nan, c nan);
+          (c 1., c 0.);
+          (c 2., c 1.);
+          (c 0.5, c (-1.));
+          ((fun dt -> -.tiny dt), c nan);
         ]
     @ [
         test "xexp2 of float overflows at 128 and underflows below -149"
@@ -419,19 +476,20 @@ let pow_specials =
 (* Types *)
 
 let refused_types =
-  let refuse name f =
+  let refuse ?(also = []) name f =
     cases
       ~name:(Format.asprintf "%a" Dtype.pp)
       (name ^ " refuses a node of another type")
-      Dtype.[ Int32; Bfloat16; Fp8e4m3; Bool ]
+      (also @ Dtype.[ Int32; Bfloat16; Fp8e4m3; Bool ])
       (fun dt -> rejects (fun () -> f (x dt)))
   in
+  let float16 = [ Dtype.Float16 ] in
   group "types"
     [
-      refuse "xsin" (T.xsin ?fast:None ?switch_over:None);
-      refuse "xsin ~fast" (T.xsin ~fast:true ?switch_over:None);
-      refuse "xexp2" T.xexp2;
-      refuse "xlog2" T.xlog2;
+      refuse ~also:float16 "xsin" (T.xsin ?fast:None ?switch_over:None);
+      refuse ~also:float16 "xsin ~fast" (T.xsin ~fast:true ?switch_over:None);
+      refuse ~also:float16 "xexp2" T.xexp2;
+      refuse ~also:float16 "xlog2" T.xlog2;
       refuse "frexp" T.frexp;
       refuse "rintk" T.rintk;
       refuse "payne_hanek_reduction" T.payne_hanek_reduction;
@@ -448,87 +506,115 @@ let refused_types =
             Dtype.[ Bfloat16; Fp8e4m3; Float16 ]);
     ]
 
-(* Accuracy: tinygrad's tolerances against libm, per type *)
+(* Accuracy
 
-let tolerance = function
-  | Dtype.Float16 -> (1e-2, 5e-3)
-  | Dtype.Float32 -> (2e-5, 1e-5)
-  | _ -> (1e-14, 1e-14)
+   Each function is within one unit in the last place of the correctly rounded
+   result ({!Exact}), counted on the ordered line of its type, over values drawn
+   from the bits of the type (every magnitude, the subnormals, the zeros, the
+   infinities and NaN), from the range where the result is neither 0, 1 nor
+   infinite, and for the sine near multiples of a quarter turn, where it
+   cancels. *)
 
-let inputs dt ~lo ~hi =
-  Gen.with_pp Format.pp_print_float (Gen.map (round dt) (Gen.float_range lo hi))
+let pp_hex ppf v = Format.fprintf ppf "%h" v
 
-(* tinygrad checks sine below 1e8; a double is drawn from its whole range, which
-   the exact reduction keeps within an ulp or two. *)
-let sine_bound = function Dtype.Float64 -> (-1e300, 1e300) | _ -> (-1e8, 1e8)
+let of_bits dt =
+  let gen =
+    match (dt : Dtype.t) with
+    | Float16 | Bfloat16 ->
+        Gen.map
+          (fun b -> as_float (Dtype.bitcast Uint16 dt (`Int (Bigint.of_int b))))
+          (Gen.int_range 0 0xffff)
+    | Float32 -> Gen.map Int32.float_of_bits Gen.int32
+    | _ -> Gen.map Int64.float_of_bits Gen.int64
+  in
+  Gen.with_pp pp_hex gen
 
-let accurate name f reference ~bound =
-  List.map
-    (fun (dname, dt) ->
-      let atol, rtol = tolerance dt and lo, hi = bound dt in
-      prop
-        (Printf.sprintf "%s of %s is libm's within tinygrad's tolerance" name
-           dname) (inputs dt ~lo ~hi) (fun v ->
-          equal (close ~atol ~rtol)
-            (round dt (reference v))
-            (as_float (at dt f v))))
-    floats
+let between dt lo hi =
+  Gen.with_pp pp_hex (Gen.map (round dt) (Gen.float_range lo hi))
+
+(* [k pi/2] rounded to [dt], for [k] from 1 to [n]. *)
+let quarter_turns dt n =
+  Gen.with_pp pp_hex
+    (Gen.map
+       (fun k -> round dt (Float.of_int k *. Float.pi /. 2.))
+       (Gen.int_range 1 n))
+
+let draws gens = Gen.frequency (List.map (fun g -> (1, g)) gens)
+
+(* The exponents past which [2^x] overflows and underflows [dt]. *)
+let exp2_range dt =
+  let bias = T.exponent_bias dt and _, mbits = Dtype.finfo dt in
+  (Float.of_int (-bias - mbits - 2), Float.of_int (bias + 2))
+
+let last_turn dt = if dt = Dtype.Float16 then 40000 else 0x3fffffff
+
+(* tinygrad's fuzzer found these inputs, run before any drawn one. *)
+let least_normal dt = Float.ldexp 1. (1 - T.exponent_bias dt)
+
+let fuzzed_sines =
+  [ -35.; -25.; 25.; 30.; 35.; 0.; Float.pi /. 2.; 2. *. Float.pi ]
+
+let fuzzed_logarithms dt =
+  List.concat_map
+    (fun scale ->
+      let v = least_normal dt *. scale in
+      [ v; -.v ])
+    [ 1.; 1e10; 1e20; 1e30 ]
+  @ [ 0.; 9e-7 ]
+
+let accuracy_of =
+  [
+    ( "exp2",
+      exp2,
+      Exact.exp2,
+      (fun _ -> []),
+      fun dt ->
+        let lo, hi = exp2_range dt in
+        [ of_bits dt; between dt lo hi; between dt (-1.) 1. ] );
+    ( "log2",
+      log2,
+      Exact.log2,
+      fuzzed_logarithms,
+      fun dt -> [ of_bits dt; between dt 0.5 2.; between dt 0. 1e-30 ] );
+    ( "sin",
+      sin,
+      Exact.sin,
+      (fun _ -> fuzzed_sines),
+      fun dt ->
+        [
+          of_bits dt;
+          between dt (-30.) 30.;
+          quarter_turns dt 20;
+          quarter_turns dt (last_turn dt);
+        ] );
+  ]
+
+let within_ulp dt f exact v =
+  let expected = exact dt v and actual = as_float (at dt f v) in
+  at_most int ~than:1
+    ~msg:(Printf.sprintf "at %h: %h, correctly rounded %h" v actual expected)
+    (Exact.ulps dt expected actual)
 
 let accuracy =
   group "accuracy"
-    (accurate "xexp2" T.xexp2 Float.exp2 ~bound:(fun _ -> (-160., 130.))
-    @ accurate "xlog2" T.xlog2 Float.log2 ~bound:(fun _ -> (0., 1e30))
-    @ accurate "xsin" T.xsin Float.sin ~bound:sine_bound
-    @ accurate "xsin ~fast" (T.xsin ~fast:true) Float.sin ~bound:(fun _ ->
-        (-30., 30.)))
-
-(* The worst cases tinygrad's fuzzer found, each within [unit] units in the last
-   place of 1.0. *)
-
-let ulp_of_one = function
-  | Dtype.Float16 -> Float.ldexp 1. (-10)
-  | Dtype.Float32 -> Float.ldexp 1. (-23)
-  | _ -> Float.epsilon
-
-let least_normal = function
-  | Dtype.Float16 -> Float.ldexp 1. (-14)
-  | Dtype.Float32 -> Float.ldexp 1. (-126)
-  | _ -> Float.ldexp 1. (-1022)
-
-let within name f reference cases =
-  List.concat_map
-    (fun (dname, dt) ->
-      List.map
-        (fun (v, unit) ->
-          test (Printf.sprintf "%s of %s %g" name dname v) (fun () ->
-              let v = round dt v in
-              equal
-                (close ~atol:(unit *. ulp_of_one dt) ~rtol:1e-5)
-                (round dt (reference v))
-                (as_float (at dt f v))))
-        (cases dt))
-    floats
-
-let fuzzed =
-  group "fuzzer cases"
-    (within "xsin" T.xsin Float.sin (fun _ ->
-         [
-           (-35., 1.);
-           (-25., 1.);
-           (25., 1.);
-           (30., 1.);
-           (35., 1.);
-           (0., 1.);
-           (Float.pi /. 2., 1.);
-           (Float.pi *. 2., 1.5);
-         ])
-    @ within "xlog2" T.xlog2 Float.log2 (fun dt ->
-        List.concat_map
-          (fun scale ->
-            let v = least_normal dt *. scale in
-            [ (v, 1.); (-.v, 1.) ])
-          [ 1.; 1e10; 1e20; 1e30 ]
-        @ [ (0., 1.); (9e-7, 1.) ]))
+    (List.concat_map
+       (fun (name, op, exact, examples, gens) ->
+         List.map
+           (fun (dname, dt) ->
+             let examples = List.map (round dt) (examples dt) in
+             prop ~count:500 ~examples
+               (Printf.sprintf "%s of %s is within an ulp" name dname)
+               (draws (gens dt))
+               (within_ulp dt (fun _ -> rewritten op dt) exact))
+           sixteen_up)
+       accuracy_of
+    @ List.map
+        (fun (dname, dt) ->
+          prop ~count:500
+            (Printf.sprintf "xsin ~fast of %s is within an ulp below 30" dname)
+            (draws [ between dt (-30.) 30.; quarter_turns dt 19 ])
+            (within_ulp dt (T.xsin ~fast:true) Exact.sin))
+        [ ("float", Dtype.Float32); ("double", Dtype.Float64) ])
 
 let () =
   exit
@@ -543,5 +629,4 @@ let () =
          pow_specials;
          refused_types;
          accuracy;
-         fuzzed;
        ])
