@@ -2398,6 +2398,268 @@ let reduce_segments op ~segments ids x =
     ~values:x
     (full (Value.context x) dt into identity)
 
+(* Maps over segments
+
+   [map_segments] sorts each group's positions by id, pads each id's run to
+   whole blocks of [c] rows, calls [f] once on every block, and gathers each
+   position's row of [f]'s result back. A block's pad rows repeat a row the
+   block holds, so [f] meets only pairs the per-position map meets: a row of
+   zeros is a pair that map never evaluates, where [f] may not be finite.
+
+   The helpers below take a group's ids [[| r; j |]], [r] groups of [j]
+   positions, and their rows [[| r; j; row... |]]. [call ~g ~c owners rows] is
+   [f]'s result and its row shape, after checking its leading axes. *)
+
+(* A block holds as many rows as its padding allows, up to 16: padding costs at
+   most [c - 1] rows per segment, which stay below half the positions. Larger
+   blocks read each segment's data fewer times, and 16 rows are the tile a GPU's
+   tensor core multiplies at once. gpt-oss-20b's gate and up product of 512
+   tokens takes 2.9 ms in blocks of 16 on an RTX 5000 Ada, 4.1 ms in blocks of
+   32 and 7.5 ms in blocks of 8; of 64 tokens on the host, whose rows share a
+   decoded weight four at a time, 220 ms in blocks of 4, 289 ms in blocks of 8
+   and 440 ms in blocks of 16. *)
+let largest_block = 16
+
+(* [block ~segments j] is the rows of a block of [j] positions over [segments]
+   segments, 1 when no block of 2 or more keeps the padding below half of them:
+   then each position is its own block and nothing is sorted. *)
+let block ~segments j =
+  let rec go c =
+    if c < 2 || 2 * (c - 1) * segments < j then c else go (c / 2)
+  in
+  (* With as many segments as positions no block of 2 or more qualifies,
+     since [2 (c - 1) segments >= 2 j > j]. Deciding it first keeps the
+     product below [30 j], which [segments] alone could overflow. *)
+  if segments >= j then 1 else go largest_block
+
+(* [windows what ~positional t] is the number of devices' windows that split
+   [t]'s first axis, which must be a position axis. *)
+let windows what ~positional t =
+  List.fold_left
+    (fun r (a, n) ->
+      if a <> 0 || not positional then
+        err "map_segments" "%s is split over devices along axis %d" what a;
+      r * n)
+    1
+    (Placement.cuts (Value.placement t))
+
+let units t = Array.make (Array.length t) 1
+
+(* [first ~axes named] is, per group of [named] along [axes], its first
+   in-range position as a position of the group, and whether it has one. [named]
+   has a group's shape, [[| r; ... |]] for [r] groups of [j] positions; with no
+   in-range position the first is [j], which a gather reads as zero. One [max]
+   finds it: the first in-range position has the most positions after it. *)
+let first ~axes named =
+  let s = shape named in
+  let r = s.(0) in
+  let j = numel named / r in
+  let last = Int64.of_int (j - 1) in
+  let after =
+    reshape s
+      (broadcast_to [| r; j |]
+         (reshape [| 1; j |]
+            (sub
+               (scalar (Value.context named) Int64 last)
+               (arange (Value.context named) Int64 0 j 1))))
+  in
+  let most =
+    max ~axes ~keepdims:true (where named after (scalar_like after (-1L)))
+  in
+  (sub (scalar_like most last) most, greater_equal_s most 0L)
+
+(* [in_range ~segments owners] is [owners], which are in range already: the
+   clamp writes that range into the program, where the gathers by them read
+   it. *)
+let in_range ~segments owners =
+  clamp ~min:0L ~max:(Int64.of_int (segments - 1)) owners
+
+(* [direct ~segments ~call ~named ~gs ids x] gives each position a block of its
+   own. [gs] is a group's positions as axes, [[| r; ... |]], and [x] holds their
+   rows in that shape, with an axis of length 1 where positions share a row. An
+   out-of-range position keeps its row and takes the owner of the first
+   in-range position that reads it. A row that no in-range position reads takes
+   the group's first in-range position and its row, or zeros. Rows then vary
+   only along the axes [x] varies along: at one token over a few experts, every
+   block reads the token's row. *)
+let direct ~segments ~call ~named ~gs ids x =
+  let r = dim 0 ids and j = dim 1 ids in
+  let n = Array.length gs in
+  let lead = Array.sub (shape x) 0 n and row = Array.sub (shape x) n (ndim x - n) in
+  let inner = List.init (n - 1) succ in
+  let varies = List.exists (fun a -> lead.(a) > 1) inner in
+  let shared = List.filter (fun a -> lead.(a) = 1 && gs.(a) > 1) inner in
+  let at, any = first ~axes:[ 1 ] named in
+  let id = take_along_axis ~axis:1 ~indices:at ids in
+  let per_group t = reshape (Array.append [| r |] (Array.make (n - 1) 1)) t in
+  let by_row t = reshape (Array.append (shape t) (units row)) t in
+  (* Each row's owners, and whether an in-range position reads the row. *)
+  let owners, read =
+    if not varies then (where named ids id, per_group any)
+    else if shared = [] then (where named ids id, reshape gs named)
+    else
+      let at_row, read = first ~axes:shared (reshape gs named) in
+      let flat t = reshape [| r; j |] (broadcast_to gs t) in
+      let owner = take_along_axis ~axis:1 ~indices:(flat at_row) ids in
+      (where named ids (where (flat read) owner id), read)
+  in
+  let fallback =
+    if not varies then scalar_like x (Nx_dtype.zero (dtype x))
+    else
+      let rows = reshape (Array.append [| r; j |] row) (broadcast_to (Array.append gs row) x) in
+      reshape
+        (Array.append (shape (per_group at)) row)
+        (take_along_axis ~axis:1
+           ~indices:(broadcast_to (Array.append [| r; 1 |] row) (by_row at))
+           rows)
+  in
+  let rows = where (by_row read) x fallback in
+  let y, out =
+    call ~g:(r * j) ~c:1
+      (reshape [| r * j |] (in_range ~segments owners))
+      (reshape
+         (Array.append [| r * j; 1 |] row)
+         (broadcast_to (Array.append gs row) rows))
+  in
+  (reshape (Array.append [| r; j |] out) y, out)
+
+(* [grouped ~segments ~c ~call ~named ids x] sorts each group's positions by id
+   into blocks of [c] rows. *)
+let grouped ~segments ~c ~call ~named ids x =
+  let r = dim 0 ids and j = dim 1 ids in
+  let row = Array.sub (shape x) 2 (ndim x - 2) in
+  let ctx = Value.context ids and k = Int64.of_int in
+  let along t indices = take_along_axis ~axis:1 ~indices t in
+  let at, any = first ~axes:[ 1 ] named in
+  let id = along ids at in
+  (* Out-of-range positions sort last, as segment [segments], and take no
+     slot. *)
+  let key = where named ids (scalar_like ids (k segments)) in
+  let order = argsort ~axis:1 key in
+  (* Each segment's run in sorted order, [[| r; segments |]]: its length, first
+     position, and slots padded to whole blocks. *)
+  let count =
+    scatter ~mode:`Add ~axis:1 ~indices:key ~values:(ones_like key)
+      (zeros ctx Int64 [| r; segments |])
+  in
+  let first = sub (cumsum ~axis:1 count) count in
+  let padded = mul_s (div_s (add_s count (k (c - 1))) (k c)) (k c) in
+  let ends = cumsum ~axis:1 padded in
+  let starts = sub ends padded in
+  (* Blocks: a bound of the padded runs, whatever the ids. *)
+  let blocks = (j + (Stdlib.min segments j * (c - 1)) + c - 1) / c in
+  let slots = blocks * c in
+  (* A block's owner is the number of runs that end at or before its first slot;
+     a block past the last run takes the fallback id. *)
+  let ended =
+    cast Int64
+      (sum ~axes:[ 2 ]
+         (cast Int32
+            (less_equal
+               (reshape [| r; 1; segments |] ends)
+               (reshape [| 1; blocks; 1 |] (arange ctx Int64 0 slots c)))))
+  in
+  let owners =
+    in_range ~segments (where (less_s ended (k segments)) ended id)
+  in
+  let slot_owner =
+    reshape [| r; slots |]
+      (broadcast_to [| r; blocks; c |] (reshape [| r; blocks; 1 |] owners))
+  in
+  (* A slot past its run repeats the run's last row, which its block holds. *)
+  let offset =
+    sub
+      (reshape [| 1; slots |] (arange ctx Int64 0 slots 1))
+      (along starts slot_owner)
+  in
+  let held = minimum offset (sub_s (along count slot_owner) 1L) in
+  let position = along order (add (along first slot_owner) held) in
+  let position = where any position (scalar_like position (-1L)) in
+  let by_row t = reshape (Array.append (shape t) (units row)) t in
+  let rows =
+    along x (broadcast_to (Array.append [| r; slots |] row) (by_row position))
+  in
+  let y, out =
+    call ~g:(r * blocks) ~c
+      (reshape [| r * blocks |] owners)
+      (reshape (Array.append [| r * blocks; c |] row) rows)
+  in
+  (* Each position's slot: its run's first slot and its rank in the run, and -1
+     out of range, which a scatter drops. *)
+  let rank =
+    scatter ~unique_indices:true ~axis:1 ~indices:order
+      ~values:(broadcast_to [| r; j |] (arange ctx Int64 0 j 1))
+      (zeros ctx Int64 [| r; j |])
+  in
+  let slot = add (along starts key) (sub rank (along first key)) in
+  let slot = where named slot (scalar_like slot (-1L)) in
+  let by_out t = reshape (Array.append (shape t) (units out)) t in
+  ( along
+      (reshape (Array.append [| r; slots |] out) y)
+      (broadcast_to (Array.append [| r; j |] out) (by_out slot)),
+    out )
+
+let map_segments ~segments ids f x =
+  let op = "map_segments" in
+  if segments < 0 then err op "%d segments" segments;
+  let s = shape ids and xs = shape x in
+  let ns = Array.length s in
+  if
+    Array.length xs < ns
+    || not (Array.for_all2 (fun d e -> d = e || d = 1) (Array.sub xs 0 ns) s)
+  then
+    err op "x of shape %s does not broadcast to ids of shape %s"
+      (Shape.to_string xs) (Shape.to_string s);
+  let row = Array.sub xs ns (Array.length xs - ns) in
+  let positional = ns > 0 in
+  let r =
+    match (windows "ids" ~positional ids, windows "x" ~positional x) with
+    | 1, r | r, 1 -> r
+    | a, b when a = b -> a
+    | a, b -> err op "ids are split in %d windows and x in %d" a b
+  in
+  let call ~g ~c owners rows =
+    let y = f owners rows in
+    let ys = shape y in
+    if Array.length ys < 2 || ys.(0) <> g || ys.(1) <> c then
+      err op "f gave shape %s for %d blocks of %d rows" (Shape.to_string ys) g c;
+    (y, Array.sub ys 2 (Array.length ys - 2))
+  in
+  let full = broadcast_to (Array.append s row) x in
+  let p = Array.fold_left ( * ) 1 s in
+  if segments = 0 || p = 0 then
+    let y, out =
+      call ~g:0 ~c:1
+        (zeros (Value.context ids) Int64 [| 0 |])
+        (zeros (Value.context x) (dtype x) (Array.append [| 0; 1 |] row))
+    in
+    zeros (Value.context y) (dtype y) (Array.append s out)
+  else
+    let j = p / r in
+    let ids = reshape [| r; j |] ids in
+    let named =
+      logical_and (greater_equal_s ids 0L) (less_s ids (Int64.of_int segments))
+    in
+    let c = block ~segments j in
+    let y, out =
+      if c = 1 then
+        (* A group's positions as axes, and [x]'s rows in that shape, unbroadcast. *)
+        let gs, lead =
+          if not positional then ([| 1; 1 |], [| 1; 1 |])
+          else
+            let split d = if d = 1 then [| 1; 1 |] else [| r; d / r |] in
+            let rest t = Array.sub t 1 (ns - 1) in
+            ( Array.append (split s.(0)) (rest s),
+              Array.append (split xs.(0)) (rest xs) )
+        in
+        direct ~segments ~call ~named ~gs ids (reshape (Array.append lead row) x)
+      else
+        grouped ~segments ~c ~call ~named ids
+          (reshape (Array.append [| r; j |] row) full)
+    in
+    let named = reshape (Array.append [| r; j |] (units out)) named in
+    reshape (Array.append s out) (where named y (zeros_like y))
+
 (* Scans of structures
 
    [associative_scan] is the odd/even recursion: it combines neighbouring pairs,

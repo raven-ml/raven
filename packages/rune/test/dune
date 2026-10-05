@@ -280,6 +280,12 @@
   nx.cuda
   nx.amd))
 
+(test
+ (name test_segments)
+ (modules test_segments)
+ (package rune)
+ (libraries windtrap rune rune_test nx))
+
 (executable
  (name reports)
  (modules reports)

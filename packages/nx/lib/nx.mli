@@ -2899,6 +2899,72 @@ val reduce_segments :
 
     See also {!unique}, {!scatter}. *)
 
+val map_segments :
+  segments:int ->
+  int64_t ->
+  (int64_t -> ('a, 'b) t -> ('c, 'd) t) ->
+  ('a, 'b) t ->
+  ('c, 'd) t
+(** [map_segments ~segments ids f x] is [f] applied to each position alone, the
+    per-position map: at each position [p] of [ids], the row [f] gives [p]'s row
+    of [x] with owner [ids.{p}] when [ids.{p}] is in \[[0], [segments]), and
+    zeros otherwise, [-1] included, whatever [x] holds at [p]. [f] is called
+    once on the rows grouped by id, so what [f] reads by owner is read once per
+    block, not once per position. Where {!reduce_segments} combines a segment's
+    rows into one, [map_segments] keeps one result per position.
+
+    {b Shapes.} Positions are the indices of [ids], of shape [[| s... |]]. The
+    first [ndim ids] axes of [x] broadcast to [[| s... |]], and [p]'s row is [x]
+    at [p] after that broadcast, of shape [[| r... |]]. The result has shape
+    [[| s...; r'... |]]. Ids may repeat. Results agree with the per-position map
+    up to how [f] rounds rows it computes together.
+
+    {b What [f] receives.} [f owners rows] is called exactly once. [rows] is
+    [[| g; c; r... |]] at [x]'s dtype, [g] blocks of [c] rows, and [owners] is
+    [[| g |]], every owner in range. Every row of block [b] is the row of an
+    in-range position whose id is [owners.{b}]: each such position fills one
+    row, and the block's other rows repeat rows it already holds. A block no
+    position fills takes the owner and row of an in-range position of its group.
+    A position whose id is out of range never reaches [f]. In a group with no
+    in-range position, every row is zeros. The order of blocks, and of rows in a
+    block, is unspecified. [f] returns [[| g; c; r'... |]], with [r']
+    independent of [g] and [c], and computes each row of its result from that
+    row and its block's owner alone.
+
+    {b Selection.} [map_segments] is a composition of nx's operations, sorts,
+    gathers, scatters and selects among them, and adds none of its own. Results
+    are selected, never multiplied by a mask: what [f] gives a repeated row
+    never reaches the result, and a position out of range reaches neither [f]
+    nor the result, whatever its row holds.
+
+    {b Groups and blocks.} Positions are grouped per device. [g] and [c] depend
+    on shapes, [segments] and placement, never on ids' values, so the shapes [f]
+    sees never depend on the routing. [c] is [1] when a group holds few
+    positions per segment, as one token over many experts: then each position is
+    its own block and nothing is sorted. With [segments] zero or no positions,
+    [g] is [0] and the result is zeros. [ids] and [x] may be split over devices
+    along their first axis only, in equal windows, identically or one of them
+    replicated; [rows], [owners] and [f]'s result are split along their first
+    axis as the positions are.
+
+    {@ocaml[
+      # let ids = create int64 [| 4 |] [| 1L; -1L; 0L; 1L |] in
+        let x = create float64 [| 4; 1 |] [| 1.; 2.; 3.; 4. |] in
+        let scale = create float64 [| 2; 1; 1 |] [| 10.; 100. |] in
+        to_array
+          (map_segments ~segments:2 ids
+             (fun owners rows -> mul rows (take ~axis:0 ~indices:owners scale))
+             x)
+      - : float array = [|100.; 0.; 30.; 400.|]
+    ]}
+
+    Raises [Invalid_argument] if [segments] is negative, if [x] has fewer axes
+    than [ids] or its leading axes do not broadcast to [ids]', if [ids] or [x]
+    is split along another axis or in unequal windows, or if [f]'s result does
+    not have shape [[| g; c; ... |]].
+
+    See also {!reduce_segments}, {!argsort}. *)
+
 val reduce_ranges :
   [ `Add | `Max | `Min ] -> lo:int64_t -> hi:int64_t -> ('a, 'b) t -> ('a, 'b) t
 (** [reduce_ranges op ~lo ~hi x] combines ranges of rows of [x]: row [i] of the

@@ -3189,6 +3189,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.map_segments ~segments ids f x`: each position's row of `x` goes
+  through `f` with the owner its id names, in one call on the rows grouped by
+  id, so a stack of `segments` matrices is read once per block of rows. An id
+  out of range gives zeros, and its row never reaches `f`.
 - Fix waits on AMD GPUs under the `amdgpu` driver that waited up to 200 ms
   past a run's end once they slept: the driver ignored the GPU's interrupt
   until the host armed its event's slot, which `Nx_amd_device` now does.
