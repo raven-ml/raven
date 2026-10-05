@@ -965,6 +965,11 @@ thread.
 
 ### Tolk (new)
 
+- On arm64 the host hides a float zero from clang only where a comparison
+  reads it, which is all its select-to-`fminnm` lowering needs, so a select of
+  a zero by another condition compiles to a mask again. A routed MXFP4 product
+  whose rows are selected by their validity ran 1.17 times as long as without
+  the select, and runs 1.05 times as long.
 - A value one kernel stores keeps its bounds in the kernels that read it (new
   `Ops.stored_bounds`), and a bitcast between integer types of one width keeps
   them, so a gather whose stored indices have a known range keeps no per-load

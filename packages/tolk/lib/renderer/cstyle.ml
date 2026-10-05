@@ -834,28 +834,45 @@ let clang_lang =
    value's sign where the select returns the constant's: [(v < 0.0f) ? v : 0.0f]
    is -0.0 at v = -0.0 from -O1 up, in Homebrew clang 22.1.7 and Apple clang 17.
    A maximum against a zero, rendered as such a select, meets it too, and an add
-   of +0.0 after it is then folded away. The backend matches the literal: on
-   arm64 a float zero is rendered as a value it cannot see through, an empty asm
-   statement over a register holding it. It costs that register, which loops
-   hoist, and comparisons against it where an immediate zero would do. *)
+   of +0.0 after it is then folded away. The lowering needs the select's
+   operands to be the comparison's: on arm64 a float zero that a comparison
+   reads is rendered as a value the backend cannot see through, an empty asm
+   statement over a register holding it, and is a literal elsewhere. A select
+   of a zero by any other condition, [c ? v : 0.0f], stays one the backend
+   makes a mask of. *)
+let float_zero u =
+  is Op.Cast u
+  && List.mem (dtype u) Dtype.floats
+  &&
+  match src u with
+  | [ c ] when is Op.Const c -> (
+      match value c with `Float v -> v = 0. | _ -> false)
+  | _ -> false
+
+let opaque ctx z =
+  let c = nth z 0 in
+  if Dtype.equal (dtype z) Dtype.Float64 then
+    strf "({double z = %s; __asm__(\"\" : \"+w\"(z)); z;})" (const_str c)
+  else
+    let zero =
+      strf "({float z = %sf; __asm__(\"\" : \"+w\"(z)); z;})" (const_str c)
+    in
+    if Dtype.equal (dtype z) Dtype.Float32 then zero
+    else strf "(%s)" (render_cast ctx z zero)
+
 let opaque_zero =
   Pattern_matcher.fold (fun () ->
       [
-        rule_ctx (cast_of ~dtype:Dtype.floats ~name:"x" c) (fun ctx m ->
-            match value (m "c") with
-            | `Float v when v = 0. && Dtype.equal (dtype (m "x")) Dtype.Float64
-              ->
-                Some
-                  (strf "({double z = %s; __asm__(\"\" : \"+w\"(z)); z;})"
-                     (const_str (m "c")))
-            | `Float v when v = 0. ->
-                let zero =
-                  strf "({float z = %sf; __asm__(\"\" : \"+w\"(z)); z;})"
-                    (const_str (m "c"))
-                in
-                if Dtype.equal (dtype (m "x")) Dtype.Float32 then Some zero
-                else Some (strf "(%s)" (render_cast ctx (m "x") zero))
-            | _ -> None);
+        rule_ctx
+          (Upat.v ~op:(Op.Set.of_list Op.[ Cmplt; Cmpne; Cmpeq ]) ~name:"x" ())
+          (fun ctx m ->
+            let x = m "x" in
+            let operand u = if float_zero u then opaque ctx u else ctx.%{u} in
+            if not (List.exists float_zero (src x)) then None
+            else
+              Option.map
+                (fun f -> f (List.map operand (src x)) (dtype x))
+                (List.assoc_opt (op x) ctx.lang.code_for_op));
       ])
 
 (* LLVM legalizes a double to half cast on CPUs without native support (such as

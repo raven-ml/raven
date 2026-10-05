@@ -1342,6 +1342,16 @@ let zero_select dt =
        ~kernel:(Ops.kernel_info ~name:"zero_select" ())
        [ Ops.store (at 0) (Ops.where (Ops.lt x z) x z) ])
 
+(* A select of a value and a zero by a condition loaded from memory. *)
+let zero_masked dt =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let at slot dt = Ops.index (Ops.param ~shape:[ Int 1 ] slot dt) [ zero ] in
+  let x = Ops.load (at 1 dt) [] and c = Ops.load (at 2 Bool) [] in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"zero_masked" ())
+       [ Ops.store (at 0 dt) (Ops.where c x (Ops.float ~dtype:dt 0.)) ])
+
 let arm64 = Cstyle.clang (target "CPU" "CLANG" "arm64,generic")
 let asm_barrier = "__asm__(\"\" : \"+w\"(z))"
 
@@ -1357,8 +1367,8 @@ let zeros_on_arm64 =
     [
       cases
         ~name:(fun dt -> Dtype.name dt)
-        "a float zero is opaque to the backend on arm64, and a literal on \
-         x86_64"
+        "a float zero a comparison reads is opaque to the backend on arm64, \
+         and a literal on x86_64"
         Dtype.[ Float16; Bfloat16; Float32; Float64 ]
         (fun dt ->
           let uops = zero_select dt in
@@ -1366,6 +1376,12 @@ let zeros_on_arm64 =
             (contains (render arm64 uops) asm_barrier);
           equal ~msg:"x86_64" bool false
             (contains (render clang uops) asm_barrier));
+      cases
+        ~name:(fun dt -> Dtype.name dt)
+        "a float zero that no comparison reads is a literal on arm64"
+        Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+        (fun dt ->
+          equal bool false (contains (render arm64 (zero_masked dt)) asm_barrier));
       test "a select of a value and a zero picks the zero at -0., on the host"
         (fun () ->
           let k = Run.program (Lazy.force host) (zero_select Float32) in
