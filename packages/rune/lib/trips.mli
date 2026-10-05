@@ -53,7 +53,9 @@ type result = {
   r_ys : leaves;
       (** The outputs of the steps taken, each stacked along a new leading axis:
           over rows, row [i] from the step that read row [i]; until a stop, row
-          [k] from step [k]. A loop that took no step has none. *)
+          [k] from step [k]. A loop that took no step has none. A compiled
+          call's loop until a stop has [max] rows, those past its last step
+          holding no value of the loop. *)
 }
 (** The type for the results of loops. *)
 
@@ -65,7 +67,8 @@ val fold : request -> result
 (** [fold r] runs [r]'s steps one after the other in the caller's
     interpretation, so every installation around the caller sees each step's
     operations. A stop is read with {!Nx.item}, and once it fails after [max]
-    steps, {!Nx.check} raises its failure. A traced step's carry is copied
+    steps, {!Nx.check} raises its failure; inside a compiled call, which cannot
+    read it, it raises {!Lower.Jit_error}. A traced step's carry is copied
     ({!Nx.copy}), so that a compiled call stores it before the next step reads
     it. An exception of [r.req_step] propagates unchanged. *)
 

@@ -230,6 +230,40 @@ let applications =
     ("vmap of jvp", fun l -> Rune.vmap' (fun w -> snd (Rune.jvp' l w sv)) sws);
   ]
 
+(* The applications compiled, their inputs arguments of the compiled call. *)
+let compiled_applications =
+  let two = Nx.Ptree.(tensor @-> tensor @-> returns tensor) in
+  [
+    ("the value", fun l -> Rune.jit' l sw);
+    ("grad", fun l -> Rune.jit' (Rune.grad' l) sw);
+    ("jvp", fun l -> Rune.jit two (fun w v -> snd (Rune.jvp' l w v)) sw sv);
+    ("vmap", fun l -> Rune.jit' (Rune.vmap' l) sws);
+    ("vmap of grad", fun l -> Rune.jit' (Rune.vmap' (Rune.grad' l)) sws);
+    ( "jvp of grad",
+      fun l ->
+        Rune.jit two (fun w v -> snd (Rune.jvp' (Rune.grad' l) w v)) sw sv );
+    ( "grad of grad",
+      fun l ->
+        Rune.jit two
+          (fun w v ->
+            Rune.grad' (fun w -> Nx.sum (Nx.mul (Rune.grad' l w) v)) w)
+          sw sv );
+    ( "grad of vmap",
+      fun l ->
+        Rune.jit two
+          (fun w ws ->
+            Rune.grad'
+              (fun w ->
+                Nx.sum (Rune.vmap' l (Nx.mul ws (Nx.reshape [| 1; 3 |] w))))
+              w)
+          sw sws );
+    ( "vmap of jvp",
+      fun l ->
+        Rune.jit two
+          (fun ws v -> Rune.vmap' (fun w -> snd (Rune.jvp' l w v)) ws)
+          sws sv );
+  ]
+
 let counter w =
   let (c, k), () =
     Rune.scan
@@ -353,4 +387,24 @@ let staged_tests =
           equal int 0 !late);
     ]
 
-let () = exit (run "Loops staged" [ group "on the host" staged_tests ])
+(* Iterates compiled: each application of a loss compiles its loops, the loss's
+   eager value the trusted side. *)
+let compiled_tests =
+  List.concat_map
+    (fun (loss, l) ->
+      List.map
+        (fun (app, a) ->
+          test
+            (app ^ " of a loss with " ^ loss ^ ", compiled, is eager's")
+            (fun () ->
+              equal
+                (Oracle.tensor ~rel:1e-10 ~abs:1e-12 ())
+                ((List.assoc app applications) l)
+                (a l)))
+        compiled_applications)
+    iterate_losses
+
+let () =
+  exit
+    (run "Loops staged"
+       [ group "on the host" staged_tests; group "compiled" compiled_tests ])

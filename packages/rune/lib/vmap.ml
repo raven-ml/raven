@@ -624,8 +624,14 @@ and masked m r ~until ~max ~failure u =
     let u = Nx.unpack Nx.bool (List.hd u) in
     let stopped = if inner = [] then u else Nx.all ~axes:inner u in
     let running = Nx.logical_not stopped in
-    let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 running) in
-    let donors = Nx.where stopped (Nx.broadcast_to [| m.size |] first) own in
+    (* A map of no lanes has no donor to pick; a compiled loop traces its step
+       even then. *)
+    let donors =
+      if m.size = 0 then own
+      else
+        let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 running) in
+        Nx.where stopped (Nx.broadcast_to [| m.size |] first) own
+    in
     let held = { parent = m; donors; running } in
     let m' = { m with id = Construct.fresh_map (); held = Some held } in
     let from_donor (Nx.P x) = Nx.P (Nx.take ~axis:0 ~indices:donors x) in

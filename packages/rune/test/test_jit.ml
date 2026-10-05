@@ -2449,6 +2449,110 @@ let nested_scans at =
       equal ~msg:"outputs" floats (host ys') (host ys);
       equal ~msg:"inner steps traced" int 1 !ran)
 
+(* Staged iterates *)
+
+(* Newton's iteration for the square root of [a], from [a + 1]. *)
+let newton ?(max = 50) a =
+  Rune.iterate' ~max
+    ~until:(fun x -> Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-4)
+    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (Nx.add_s a 1.)
+
+let halve x = Nx.mul_s x 0.5
+let below t x = Nx.less_s (Nx.max (Nx.abs x)) t
+
+(* [staged_iterates at] checks iterates compiled with their arguments at [at]
+   against eager. *)
+let staged_iterates at =
+  let a () = Nx.create Nx.float32 [| 3 |] [| 0.5; 2.; 3. |] in
+  let lanes () = Nx.create Nx.float32 [| 4 |] [| 0.5; 2.; 30.; 1e4 |] in
+  let compiled f x = host (Rune.jit' f (Nx.place at x)) in
+  group "staged iterates"
+    [
+      test "an iterate stages, its step traced once" (fun () ->
+          let steps = ref 0 in
+          let f x =
+            incr steps;
+            halve x
+          in
+          let loop = Rune.iterate' ~max:20 ~until:(below 0.01) ~f in
+          let x = Nx.create Nx.float32 [| 2 |] [| 1.; -3. |] in
+          let expected = loop x in
+          steps := 0;
+          equal near expected (compiled loop x);
+          equal ~msg:"steps traced" int 1 !steps);
+      test "Newton's iteration computes eager's root" (fun () ->
+          equal near (newton (a ())) (compiled newton (a ())));
+      test "a start that satisfies until takes no step" (fun () ->
+          let x = Nx.create Nx.float32 [| 2 |] [| 0.001; -0.002 |] in
+          equal floats x
+            (compiled (Rune.iterate' ~max:5 ~until:(below 0.01) ~f:halve) x));
+      test "a loop that does not end raises its failure when the call returns"
+        (fun () ->
+          raises
+            (Invalid_argument
+               "Rune.iterate: until is still false after max = 3 steps")
+            (fun () ->
+              compiled
+                (Rune.iterate' ~max:3 ~until:(below 0.01) ~f:halve)
+                (Nx.create Nx.float32 [| 1 |] [| 1. |])));
+      test "lanes that stop apart keep their own roots" (fun () ->
+          equal near
+            (Rune.vmap' newton (lanes ()))
+            (compiled (Rune.vmap' newton) (lanes ())));
+      test "grad covers the trips taken" (fun () ->
+          let loss a = Nx.sum (newton a) in
+          equal near
+            (Rune.grad' loss (a ()))
+            (compiled (Rune.grad' loss) (a ())));
+      test "grad of the map covers each lane's trips" (fun () ->
+          let loss a = Nx.sum (Rune.vmap' newton a) in
+          equal near
+            (Rune.grad' loss (lanes ()))
+            (compiled (Rune.grad' loss) (lanes ())));
+      test "an iterate in a scan's step stages as a loop in the body" (fun () ->
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   let c = newton (Nx.add (Nx.abs c) x) in
+                   (c, c))
+                 ~init:(Nx.ones Nx.float32 [| 3 |])
+                 xs)
+          in
+          let xs = Nx.mul_s (Nx.abs (Nx.sin (grid 4 3))) 2. in
+          equal near (f xs) (compiled f xs);
+          equal ~msg:"grad" near
+            (Rune.grad' (fun xs -> Nx.sum (f xs)) xs)
+            (compiled (Rune.grad' (fun xs -> Nx.sum (f xs))) xs));
+      test "an iterate in an iterate's step stages as nested loops" (fun () ->
+          let f x =
+            Rune.iterate' ~max:30 ~until:(below 0.05)
+              ~f:(fun x ->
+                Nx.mul_s
+                  (Nx.add x
+                     (Rune.iterate' ~max:30 ~until:(below 0.01) ~f:halve x))
+                  0.5)
+              x
+          in
+          let x = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 0.04 |] in
+          equal near (f x) (compiled f x);
+          equal ~msg:"vmap" near (Rune.vmap' f x) (compiled (Rune.vmap' f) x));
+      test "a scan in an iterate's step stages as a loop in the body" (fun () ->
+          let f x =
+            Rune.iterate' ~max:30 ~until:(below 0.05)
+              ~f:(fun x ->
+                fst
+                  (Rune.scan'
+                     ~f:(fun c r -> (Nx.add (halve c) r, c))
+                     ~init:x
+                     (Nx.mul_s (grid 3 3) 0.001)))
+              x
+          in
+          let x = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 0.5 |] in
+          equal near (f x) (compiled f x));
+    ]
+
 let product c x =
   let w = Nx.mul_s (grid 3 3) 0.1 in
   let c =
@@ -2762,6 +2866,20 @@ let staged_scans d =
       staged at "stage a scan whose step stages a scan of its own" ~steps:once
         ~init:(zeros 4) nested (rows 6 16);
       nested_scans at;
+      staged_iterates at;
+      test
+        "refuse an iterate whose step computes on the host between device steps"
+        (fun () ->
+          raises
+            (Rune.Jit_error
+               "Rune.jit: Rune.iterate cannot be compiled: its step runs on a \
+                device with command queues and on the host, or on devices of \
+                two kinds") (fun () ->
+              Rune.jit'
+                (Rune.iterate' ~max:10 ~until:(below 0.01) ~f:(fun x ->
+                     let h = Nx.sqrt (Nx.place Nx.Placement.host x) in
+                     Nx.mul_s (Nx.place (Nx.placement x) h) 0.5))
+                (Nx.place at (ones 4))));
       reads_outer at;
       staged at "update a carry its next value reads rotated" ~steps:once
         ~init:(ones 3) rotated (rows 5 3);
@@ -3188,6 +3306,7 @@ let scans =
         ~steps:(fun _ -> 1)
         ~init:(zeros 4) decay (rows 400 4);
       nested_scans Nx.Placement.host;
+      staged_iterates Nx.Placement.host;
       test "a scan over rows computed from constants alone equals eager"
         (fun () ->
           List.iter

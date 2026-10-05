@@ -53,13 +53,23 @@ let over_rows r xs reverse =
   done;
   { r_carry = !carry; r_ys = stack (Array.to_list ys) }
 
+(* A compiled call stages every loop until a stop it meets; one folded inside
+   its trace was declined by a custom_jvp tangent map under reverse mode, where
+   reading the stop raises. *)
+let holds stop =
+  try Nx.item [] (Nx.all stop)
+  with Lower.Jit_error _ ->
+    raise
+      (Lower.Jit_error
+         "Rune.jit: Rune.iterate cannot be compiled inside a custom_jvp \
+          tangent map under reverse mode")
+
 (* The stop is tested before each step and once more after the last, where a
    failure raises through the check. *)
 let until_stop r until max failure =
   let rec go k carry ys =
     let stop = until carry in
-    if Nx.item [] (Nx.all stop) then
-      { r_carry = carry; r_ys = stack (List.rev ys) }
+    if holds stop then { r_carry = carry; r_ys = stack (List.rev ys) }
     else if k = max then begin
       Nx.check stop failure;
       assert false (* [stop] has a false element. *)

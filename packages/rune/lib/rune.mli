@@ -543,8 +543,8 @@ end
     {!jvp}, which differentiate the path taken. A predicate that depends on a
     map's lanes raises, one that depends on a compiled function's arguments
     raises {!Jit_error}, and {!Nx.where} selects everywhere. A loop whose length
-    depends on a value is {!iterate}, which runs under differentiation and
-    {!val-vmap}, not yet under {!val-jit}. *)
+    depends on a value is {!iterate}, which runs under differentiation,
+    {!val-vmap} and {!val-jit}. *)
 
 val scan :
   'c Nx.Ptree.t ->
@@ -575,13 +575,15 @@ val scan :
     in [xs]; the cotangent of [xs] is stacked like the outputs, while a captured
     tensor's cotangent is the sum over the steps. A carry tensor the step
     updates with {!Nx.set}, or reads only at the index it writes, is updated in
-    place. A scan inside the step of a compiled loop compiles as a loop nested
-    in it, its step compiled once, and its values are those of the scan written
-    out. A compiled function writes the loop out instead, step by step, each
+    place. A compiled function writes the loop out instead, step by step, each
     step's carry stored before the next step reads it, when the carry changes
-    its shapes across steps, when the step runs on a device with command queues
-    and on the host, or on devices of two kinds, and inside a {!custom_jvp}
-    tangent map under reverse mode.
+    its shapes across steps, when its tensors lie on several devices, when the
+    step runs on a device with command queues and on the host, as for a carry
+    tensor the function placed on the host beside tensors on the device, or on
+    devices of two kinds, and inside a {!custom_jvp} tangent map under reverse
+    mode. A scan inside the step of a compiled loop compiles as a loop nested in
+    it, its step compiled once, and its values are those of the scan written
+    out.
 
     Everywhere else the scan is its loop, run where it is written, inside every
     transformation, {!Total.collect} and {!Nx.Rng.with_key} around it.
@@ -657,7 +659,18 @@ val iterate :
     whose carry depends on no value the differentiation tracks is not
     differentiated. An iterate inside another's step follows these rules at each
     level: a lane the outer loop stopped is held through the inner loop's trips.
-    Under {!val-jit}, [iterate] raises {!Jit_error}.
+
+    Under {!val-jit} the step compiles once, and the loop runs in the compiled
+    program, which tests [until] before each step: on a device with command
+    queues, one submission and one wait per step. The error raises when the
+    compiled call returns. Reverse mode keeps [max] carries, whatever the steps
+    taken. A loop or a scan inside the step compiles as a loop nested in it.
+    [iterate] raises {!Jit_error} where {!scan} would write its loop out: a
+    carry on several devices; a step or an [until] on a device with command
+    queues and on the host, as for a carry tensor the function placed on the
+    host beside tensors on the device, or on devices of two kinds; a step that
+    draws from a key it does not vary; and inside a {!custom_jvp} tangent map
+    under reverse mode.
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
@@ -709,7 +722,7 @@ val root :
     product, whatever maps [linear_solve] opens. Additions to a {!Total} that
     [solve] makes count once; those of [residual] and [linear_solve], which only
     derivatives run, are dropped. Under {!val-jit} the call is traced as
-    [solve]; a [solve] that uses {!iterate} raises {!Jit_error}.
+    [solve].
 
     Raises [Invalid_argument], when a derivative runs [residual], if its result
     differs from the solution, naming the first path where they differ, as in

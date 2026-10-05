@@ -99,10 +99,29 @@ let stride u m =
   let per = Int.max 1 (16 / Ops.element_size u) in
   (m + per - 1) / per * per
 
-(* [stage trace s r xs reverse] is the loop [r] over the rows [xs] in the trace
-   [s]: a range of as many trips as [r] has steps around one call of its step,
-   which [trace] traces once in [s] as the call's body. *)
-let stage trace s (r : Trips.request) xs reverse =
+(* [stage ~here ~inside s r] is the loop [r] in the trace [s]: a range of as
+   many trips as [r] has rows, or of at most [max] trips while a flag holds,
+   around one call of its step, which [inside] traces once in [s] as the call's
+   body. [here] traces where the loop is written. A loop until a stop carries
+   the stop's value and the flag that it does not hold yet in two more carries,
+   and the engine reads the flag before each trip. *)
+let stage ~here ~inside s (r : Trips.request) =
+  let xs, n =
+    match r.req_trips with
+    | Rows { xs; _ } ->
+        let (Nx.P x) = List.hd xs in
+        (xs, (Nx.shape x).(0))
+    | Until { max; _ } -> ([], max)
+  in
+  (* A loop over rows that cannot stage is written out; a loop until a stop has
+     no written-out form. *)
+  let decline why =
+    match r.req_trips with
+    | Rows _ -> raise Trips.Not_staged
+    | Until _ ->
+        raise
+          (Lower.Jit_error ("Rune.jit: Rune.iterate cannot be compiled: " ^ why))
+  in
   let leaves = r.req_carry @ xs in
   let at (Nx.P x) = Nx.placement x in
   (* The loop runs where its leaves lie, on one device, host leaves joining
@@ -119,7 +138,27 @@ let stage trace s (r : Trips.request) xs reverse =
          (List.for_all
             (fun l -> Nx.Placement.(equal (at l) p || equal (at l) host))
             leaves)
-  then raise Trips.Not_staged;
+  then decline "its carry lies on several devices";
+  (* A host leaf joins the loop's device, as nx joins a host operand to a
+     device one, unless the function moved it to the host: there it stays, and a
+     loop on a device cannot run a step on it. *)
+  let host =
+    Ops.Single
+      (Nx_device.name
+         (Nx.Device.memory (List.hd (Nx.Placement.devices Nx.Placement.host))))
+  in
+  let to_host v = Ops.op v = Op.Copy && Ops.device v = Some host in
+  let moved_to_host (Nx.P x as l) =
+    (not (Nx.Placement.equal (at l) p))
+    &&
+    match computed s x with
+    | Some u -> List.exists to_host (Ops.toposort ~calls:Enter u)
+    | None -> false
+  in
+  if List.exists moved_to_host leaves then
+    decline
+      "its step runs on a device with command queues and on the host, or on \
+       devices of two kinds";
   let device =
     Ops.Single
       (Nx_device.name (Nx.Device.memory (List.hd (Nx.Placement.devices p))))
@@ -172,9 +211,19 @@ let stage trace s (r : Trips.request) xs reverse =
         (slot, Nx.P v))
       xs
   in
-  let (carry', ys), checks =
+  (* The stop's value, and whether the loop runs on, at a carry. *)
+  let stop c =
+    match r.req_trips with
+    | Rows _ -> []
+    | Until { until; _ } ->
+        let u = until c in
+        [ Nx.P u; Nx.P (Nx.reshape [| 1 |] (Nx.logical_not (Nx.all u))) ]
+  in
+  let (carry', ys, stop'), checks =
     Lower.checking s (fun () ->
-        trace s (fun () -> r.req_step (List.map snd carry) (List.map snd rows)))
+        inside s (fun () ->
+            let c', ys = r.req_step (List.map snd carry) (List.map snd rows) in
+            (c', ys, stop c')))
   in
   let same_shape (_, Nx.P c) (Nx.P c') =
     Nx.shape c = Nx.shape c' && Nx.Placement.equal (Nx.placement c') p
@@ -186,7 +235,14 @@ let stage trace s (r : Trips.request) xs reverse =
          (List.for_all
             (fun y -> Nx.Placement.(equal (at y) p || equal (at y) host))
             ys)
-  then raise Trips.Not_staged;
+  then decline "its step changes the carry's shapes or placements";
+  let stops =
+    List.map
+      (fun (Nx.P u) ->
+        let slot, v = parameter p (Nx.dtype u) (Nx.shape u) in
+        (slot, Nx.P v))
+      stop'
+  in
   (* Each check of the step carries the index of its first failure, or its
      element count while none failed: the first trip that fails keeps its
      index. *)
@@ -206,13 +262,18 @@ let stage trace s (r : Trips.request) xs reverse =
           Nx.P (Lower.traced s p Nx.int64 next) ))
       checks
   in
-  let init = r.req_carry @ List.map (fun (i, _, _) -> i) failures
-  and carry = carry @ List.map (fun (_, c, _) -> c) failures
-  and carry' = carry' @ List.map (fun (_, _, n) -> n) failures in
-  let (Nx.P x) = List.hd xs in
-  let n = (Nx.shape x).(0) in
+  let init =
+    r.req_carry
+    @ List.map (fun (i, _, _) -> i) failures
+    @ here s (fun () -> stop r.req_carry)
+  and carry = carry @ List.map (fun (_, c, _) -> c) failures @ stops
+  and carry' = carry' @ List.map (fun (_, _, n) -> n) failures @ stop' in
   let range = Ops.range ~axis_type:Loop (Ops.Int n) [ Ops.unique_num () ] in
-  let trip = if reverse then Ops.O.(int (Int.pred n) - range) else range in
+  let trip =
+    match r.req_trips with
+    | Rows { reverse = true; _ } -> Ops.O.(int (Int.pred n) - range)
+    | Rows _ | Until _ -> range
+  in
   let window b start m =
     Ops.shrink b [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int m)) ]
   in
@@ -316,13 +377,19 @@ let stage trace s (r : Trips.request) xs reverse =
       (Loop.cut ~own next args (Ops.sink (List.rev !stores)))
       !renumbered
   in
+  (* A loop until a stop reads its flag, the last carry, from the storage each
+     trip updates. *)
   let call args =
-    Ops.end_
-      (Ops.call ~precompile:true body (List.map snd (List.sort compare args)))
-      [ range ]
+    let c =
+      Ops.call ~precompile:true body (List.map snd (List.sort compare args))
+    in
+    match stops with
+    | [ _; (flag, _) ] ->
+        Ops.backedge c ~loop:range ~cond:(List.assoc flag args)
+    | _ -> Ops.end_ c [ range ]
   in
   (* Before answering, the loop must run: as one batch, or trip by trip, which a
-     probe of its schedule tells. A loop of one trip is its call, which runs. *)
+     probe of its schedule tells. A loop of one trip is its calls, which run. *)
   let probe =
     List.map
       (fun (slot, u) ->
@@ -343,14 +410,24 @@ let stage trace s (r : Trips.request) xs reverse =
         loop e
         && not (Hcq2.runs ~devices:(fun d -> (Lower.engine s d).compiler) e))
       (Ops.src linear)
-  then raise Trips.Not_staged;
+  then
+    decline
+      "its step runs on a device with command queues and on the host, or on \
+       devices of two kinds";
   let e = call !args in
   let finals =
     List.map2
       (fun (Nx.P c) final -> Nx.P (Lower.traced s p (Nx.dtype c) (final e)))
       init carries
   in
-  let r_carry, firsts = Trips.split (List.length r.req_carry) finals in
+  let r_carry, rest = Trips.split (List.length r.req_carry) finals in
+  let firsts, stopped = Trips.split (List.length checks) rest in
+  (* Once the trips are done, the stop holds or the loop fails. *)
+  (match (r.req_trips, stopped) with
+  | Until { failure; _ }, [ Nx.P u; _ ] ->
+      Lower.op s
+        (Nx.Op.Check { ok = Nx.unpack Nx.bool (Nx.P u); msg = failure })
+  | _ -> ());
   (* A step's check holds where the loop's first failure is not. *)
   List.iter2
     (fun (c : Lower.check) (Nx.P first) ->
@@ -394,15 +471,26 @@ let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
     | Detach x -> Some (fun () -> x)
     | Compiled { f; args; _ } ->
         Some (fun () -> trace ~body s (fun () -> f args))
-    | Loop ({ req_trips = Rows { xs; reverse }; _ } as r) ->
-        Some (fun () -> stage (trace ~body:true) s r xs reverse)
-    | Loop { req_trips = Until _; _ } ->
+    | Loop ({ req_trips = Rows _; _ } as r) ->
+        Some
+          (fun () -> stage ~here:(trace ~body) ~inside:(trace ~body:true) s r)
+    | Loop ({ req_trips = Until { until; max = 0; failure }; _ } as r) ->
+        (* A loop of no trip checks its stop. *)
         Some
           (fun () ->
-            raise
-              (Lower.Jit_error
-                 "Rune.jit: a loop that stops on a condition (Rune.iterate) \
-                  cannot be compiled"))
+            trace ~body s (fun () -> Nx.check (until r.req_carry) failure);
+            { Trips.r_carry = r.req_carry; r_ys = [] })
+    | Loop ({ req_trips = Until _; _ } as r) ->
+        Some
+          (fun () ->
+            (* A loop until a stop declines nothing itself: [Not_staged] here is
+               a draw of its step from a key the body does not vary. *)
+            try stage ~here:(trace ~body) ~inside:(trace ~body:true) s r
+            with Trips.Not_staged ->
+              raise
+                (Lower.Jit_error
+                   "Rune.jit: Rune.iterate cannot be compiled: its step draws \
+                    from a key it does not vary"))
     | Remat { recomputed = true; p; f; args; _ } when not body ->
         Some
           (fun () ->

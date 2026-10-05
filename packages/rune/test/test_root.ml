@@ -1000,6 +1000,9 @@ let loop_tests =
 
 (* Compilation *)
 
+let pair_to_pair =
+  Nx.Ptree.(pair tensor tensor @-> returns (pair tensor tensor))
+
 let compiled_tests =
   [
     test "jit of grad is eager grad" (fun () ->
@@ -1026,11 +1029,41 @@ let compiled_tests =
           Nx.sum (Rune.vmap' (system_loss ~linear_solve:mapped_dense) ths)
         in
         equal (close ()) (Rune.grad' f ths) (Rune.jit' (Rune.grad' f) ths));
-    test "jit of a root whose solve iterates raises Jit_error" (fun () ->
-        raises
-          (Rune.Jit_error
-             "Rune.jit: a loop that stops on a condition (Rune.iterate) cannot \
-              be compiled") (fun () -> Rune.jit' sqrt_root (vec [| 2. |])));
+    test "jit of a root whose solve iterates is eager's value" (fun () ->
+        let a = vec [| 0.5; 2.; 3. |] in
+        equal (close ()) (sqrt_root a) (Rune.jit' sqrt_root a));
+    prop ~count:10
+      "jit of jvp of a root whose solve iterates is the finite difference of \
+       the closed-form root"
+      positive (fun a ->
+        let v = direction a in
+        equal (close ())
+          (Oracle.central ~eps:1e-6 closed a v)
+          (Rune.jit
+             Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+             (fun a v -> snd (Rune.jvp' loss a v))
+             a v));
+    prop ~count:10
+      "jit of grad of a root whose solve iterates is the finite difference of \
+       the closed-form root"
+      positive (fun a ->
+        let v = direction a in
+        equal (close ())
+          (Oracle.central ~eps:1e-6 closed a v)
+          (scalar (Oracle.dot (Rune.jit' (Rune.grad' loss) a) v)));
+    test "jit of vmap of a root whose solve iterates solves each lane"
+      (fun () ->
+        let a = vec [| 0.5; 2.; 3. |] in
+        equal (close ()) (Nx.sqrt a) (Rune.jit' (Rune.vmap' sqrt_root) a));
+    test "jit of grad of a linear solve on iterate is the closed form's"
+      (fun () ->
+        let f = solved_loss ~linear_solve:cg in
+        let ga, gb =
+          Rune.jit pair_to_pair (Rune.grad pair f) (spd (), rhs ())
+        in
+        let ga', gb' = Rune.grad pair closed_solve (spd (), rhs ()) in
+        equal ~msg:"a" (close ()) ga' ga;
+        equal ~msg:"b" (close ()) gb' gb);
   ]
 
 let () =

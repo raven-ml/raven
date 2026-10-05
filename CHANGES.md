@@ -165,6 +165,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled scan whose carry holds a tensor the function moved to the host is
+  written out, so the tensor comes back on the host; it came back on the loop's
+  device.
 - A compiled scan of one row stages as a loop, its step traced once, where it
   was written out; a scan inside a compiled loop's step is a loop nested in it.
 - A compiled comparison of a value padded by a float the tensor's type rounds
@@ -186,7 +189,9 @@ All notable changes to this project will be documented in this file.
   early. `?linear_solve` replaces the default dense solve.
 - Add `Rune.iterate` and `Rune.iterate'`, a loop that applies a step until a
   condition holds and raises after `max` steps. Under `vmap` each lane stops on
-  its own; derivatives cover the steps each lane took. It does not compile yet.
+  its own; derivatives cover the steps each lane took. Under `jit` it compiles
+  to one loop that tests its condition before each step, nested inside a
+  compiled scan's or iterate's step too.
 - `grad` of a `scan` whose carry and outputs depend on no tracked value keeps
   no carry per step under `jit`.
 - A compiled integer remainder by zero is its dividend, as `Nx.mod_`'s.
