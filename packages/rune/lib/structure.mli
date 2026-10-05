@@ -41,14 +41,19 @@ val map2 :
     [t] and [u] differ in dtype or shape, as in
     ["Rune.vjp: 0.w: shape [3] in the result, [2] in the cotangents"]. *)
 
-val check_placements :
-  string -> 's Nx.Ptree.t -> this:string -> 's -> that:string -> 's -> unit
-(** [check_placements fn s ~this x ~that y] is [()] iff [x] and [y] have equal
-    visits and dtypes, as {!check} requires, and their tensors at each path lie
-    at equal placements.
+val placement :
+  string ->
+  Nx.Ptree.Path.t ->
+  this:string ->
+  ('a, 'b) Nx.t ->
+  that:string ->
+  ('a, 'b) Nx.t ->
+  unit
+(** [placement fn path ~this x ~that y] is [()] iff [x] and [y], the tensors at
+    [path] of two values, lie at equal placements.
 
-    Raises [Invalid_argument] as {!check} does, and otherwise naming the first
-    path where the placements differ and both placements, as in
+    Raises [Invalid_argument] otherwise, naming [path] and both placements, as
+    in
     ["Rune.iterate: 0: host in the carry the step returned, metal:0 in the carry
      it received"]. *)
 

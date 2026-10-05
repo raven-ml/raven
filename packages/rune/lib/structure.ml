@@ -60,17 +60,12 @@ let map2 fn s ~this ~that
       f path t u)
     x
 
-let check_placements fn s ~this x ~that y =
-  let { next } = partner fn s ~this x ~that y in
-  Ptree.fold s
-    (fun path t () ->
-      let u = next path t in
-      if not (Nx.Placement.equal (Nx.placement t) (Nx.placement u)) then
-        invalid_arg
-          (Format.asprintf "%s: %s: %a in %s, %a in %s" fn (describe path)
-             Nx.Placement.pp (Nx.placement t) this Nx.Placement.pp
-             (Nx.placement u) that))
-    x ()
+let placement fn path ~this x ~that y =
+  if not (Nx.Placement.equal (Nx.placement x) (Nx.placement y)) then
+    invalid_arg
+      (Format.asprintf "%s: %s: %a in %s, %a in %s" fn (describe path)
+         Nx.Placement.pp (Nx.placement x) this Nx.Placement.pp (Nx.placement y)
+         that)
 
 (* Signatures *)
 

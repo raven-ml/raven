@@ -344,8 +344,13 @@ let iterate c ~max ~until ~f init =
   let this = "the carry the step returned" and that = "the carry it received" in
   let req_step l _ =
     let x = carry l in
-    let x' = Structure.map2 fn c ~this ~that (fun _ x' _ -> x') (f x) x in
-    Structure.check_placements fn c ~this x' ~that x;
+    let x' =
+      Structure.map2 fn c ~this ~that
+        (fun path x' x ->
+          Structure.placement fn path ~this x' ~that x;
+          x')
+        (f x) x
+    in
     (fst (Ptree.flatten c x'), [])
   in
   let failure _ =
