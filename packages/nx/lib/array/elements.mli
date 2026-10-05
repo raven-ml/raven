@@ -9,8 +9,8 @@
     {!Nx_device.Buffer.bigarray} at their format's storage kind. Formats with no
     kind of their own go through {!Nx_dtype.Scalar.encode} and
     {!Nx_dtype.Scalar.decode}: bfloat16 and the float8 formats as their bits,
-    booleans as bytes [0] and [1], and 4-bit integers two to a byte, the first
-    in the low nibble.
+    [bool] as bytes [0] and [1], [bit] eight to a byte and 4-bit integers two
+    to a byte, the first element in the low bits.
 
     Access is outside the devices' ordering, as {!Nx_device.Buffer.bigarray}'s
     is. *)

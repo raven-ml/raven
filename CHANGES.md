@@ -51,6 +51,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Nx.bit` values are not real, as `Nx.bool` ones are not: `Stats.histogram`
+  refuses them.
 - **Breaking:** hugin is redesigned: a figure (`Hugin.t`) is marks that bind
   channels (`num`, `cat`, `dim`) to roles over named `Scale.t`s, composed with
   `layer`, `grid` and facets. `imshow`, `hstack`, `Cmap` and decorations go.
@@ -163,6 +165,7 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` refuses `bit` values, as it refuses `int4`.
 - `RUNE_JIT_DEBUG` is a tolk setting: it holds an integer, nonzero to report,
   and any other value raises when the program starts.
 - A `jit`-compiled function compiles again when any tolk setting that shapes
@@ -3144,6 +3147,16 @@ thread.
 
 ### Nx
 
+- Add the `bit` dtype (`Nx.bit`, `Nx.bit_t`): booleans eight to a byte, for
+  keeping large masks. Every function that takes `bool` outside a condition
+  takes `bit`; a condition stays `bool`, as `Nx.cast Nx.bool m`. `Nx.count`
+  counts the `true` elements of a `bool` or `bit` mask.
+- `Nx.bitcast` counts widths in bits, so `bit`, `int4` and `uint4` read as
+  their packed bytes, where it refused the 4-bit dtypes. `Nx.nbytes` counts
+  bits too: an `int4` tensor reported twice its bytes.
+- `Nx_io.save_npy`, `save_npz` and `save_safetensors` refuse `bit`, naming
+  `Nx.cast Nx.bool` and the packed bytes as the ways to save it; `save_txt`
+  writes its booleans.
 - Add `Nx.Rng.binomial k n p`, exact by inversion below a mean of 10, by
   transformed rejection over a fixed 18 rounds above, and
   `Nx.Rng.von_mises k concentration`, whose concentration 0 is the uniform

@@ -1281,6 +1281,7 @@ let refusals =
   and f8 = [ z Nx.float8_e4m3; z Nx.float8_e5m2 ] in
   let complex = [ z Nx.complex64; z Nx.complex128 ] in
   let int4 = [ z Nx.int4; z Nx.uint4 ] in
+  let bit = [ z Nx.bit ] in
   let saves ?naming save p =
     let dir = temp_dir () in
     let path = Filename.concat dir "old" in
@@ -1301,13 +1302,43 @@ let refusals =
           (format ^ " refuses " ^ dtype, fun () -> check p))
         dtypes)
     [
-      ("npy", bf16 @ f8 @ int4, saves save_npy);
+      ("npy", bf16 @ f8 @ int4 @ bit, saves save_npy);
       ( "npz",
-        bf16 @ f8 @ int4,
+        bf16 @ f8 @ int4 @ bit,
         saves ~naming:"entry w" (fun path p -> save_npz path [ ("entry w", p) ])
       );
-      ("safetensors", complex @ int4, saves ~naming:"t" save_safetensors);
+      ("safetensors", complex @ int4 @ bit, saves ~naming:"t" save_safetensors);
       ("text", f8 @ complex @ int4, text);
+    ]
+
+(* A bit tensor: the formats with no 1-bit dtype name the two ways to save it,
+   and text writes its booleans. *)
+let bits =
+  let m = Nx.cast Nx.bit (Nx.create Nx.bool [| 3 |] [| true; false; true |]) in
+  let ways =
+    "has no 1-bit dtype; save Nx.cast Nx.bool m, one byte per value, or its \
+     packed bytes after padding it to a multiple of 8 elements; numpy reads \
+     them with unpackbits(..., bitorder=\"little\")"
+  in
+  group "bit"
+    [
+      test "npy refuses it, naming both ways to save it" (fun () ->
+          raises
+            (Failure ("Nx_io.save_npy: npy " ^ ways))
+            (fun () -> Nx_io.save_npy (temp_file ()) m));
+      test "safetensors refuses it, naming the entry and both ways" (fun () ->
+          raises
+            (Failure ("t: SafeTensors " ^ ways))
+            (fun () ->
+              Nx_io.save_safetensors (temp_file ())
+                (Nx_io.Archive.of_list [ ("t", Nx.P m) ])));
+      test "text writes its booleans as bool's text does" (fun () ->
+          let saved t =
+            let path = temp_file () in
+            Nx_io.save_txt path t;
+            read path
+          in
+          equal string (saved (Nx.cast Nx.bool m)) (saved m));
     ]
 
 let every_format =
@@ -1437,5 +1468,6 @@ let () =
          images_group;
          png_chunks_group;
          every_format;
+         bits;
          malformed;
        ])

@@ -23,16 +23,19 @@ let check fn (type a b) (dt : (a, b) Nx_dtype.t) b =
 
 let bytes b = B.bigarray Bigarray.int8_unsigned b
 
-(* 4-bit elements, two to a byte, the first in the low nibble *)
+(* Elements of [bits] < 8 bits, [8 / bits] to a byte, the first in the low bits:
+   element [i] is bits [i * bits mod 8] and up of byte [i * bits / 8]. *)
 
-let nibble ba i =
-  let byte = A.unsafe_get ba (i lsr 1) in
-  if i land 1 = 0 then byte land 0xf else byte lsr 4
+let sub ba bits i =
+  let bit = i * bits in
+  (A.unsafe_get ba (bit lsr 3) lsr (bit land 7)) land ((1 lsl bits) - 1)
 
-let set_nibble ba i v =
-  let byte = A.unsafe_get ba (i lsr 1) in
-  A.unsafe_set ba (i lsr 1)
-    (if i land 1 = 0 then byte land 0xf0 lor v else byte land 0x0f lor (v lsl 4))
+let set_sub ba bits i v =
+  let bit = i * bits in
+  let m = ((1 lsl bits) - 1) lsl (bit land 7) in
+  let byte = A.unsafe_get ba (bit lsr 3) in
+  A.unsafe_set ba (bit lsr 3)
+    (byte land lnot m lor ((v lsl (bit land 7)) land m))
 
 let in_bounds fn n i =
   if i < 0 || i >= n then
@@ -70,13 +73,13 @@ let get (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a =
       let ba = bytes b and n = B.length b in
       fun i ->
         in_bounds "get" n i;
-        let v = nibble ba i in
+        let v = sub ba 4 i in
         if v >= 8 then v - 16 else v
   | UInt4 ->
       let ba = bytes b and n = B.length b in
       fun i ->
         in_bounds "get" n i;
-        nibble ba i
+        sub ba 4 i
   | Int8 ->
       let ba = B.bigarray Bigarray.int8_signed b in
       fun i -> A.get ba i
@@ -110,6 +113,11 @@ let get (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a =
   | Bool ->
       let ba = bytes b in
       fun i -> A.get ba i <> 0
+  | Bit ->
+      let ba = bytes b and n = B.length b in
+      fun i ->
+        in_bounds "get" n i;
+        sub ba 1 i <> 0
 
 let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
   check "set" dt b;
@@ -136,12 +144,12 @@ let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
       let ba = bytes b and n = B.length b in
       fun i v ->
         in_bounds "set" n i;
-        set_nibble ba i (v land 0xf)
+        set_sub ba 4 i v
   | UInt4 ->
       let ba = bytes b and n = B.length b in
       fun i v ->
         in_bounds "set" n i;
-        set_nibble ba i (v land 0xf)
+        set_sub ba 4 i v
   | Int8 ->
       let ba = B.bigarray Bigarray.int8_signed b in
       fun i v -> A.set ba i v
@@ -175,13 +183,25 @@ let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
   | Bool ->
       let ba = bytes b in
       fun i v -> A.set ba i (Bool.to_int v)
+  | Bit ->
+      let ba = bytes b and n = B.length b in
+      fun i v ->
+        in_bounds "set" n i;
+        set_sub ba 1 i (Bool.to_int v)
 
-(* An odd number of 4-bit elements leaves the last byte's high nibble to the
-   memory after [b]. *)
-let fill_nibbles b v =
+(* Elements of fewer than 8 bits fill whole bytes, then one at a time the last
+   ones, whose byte holds bits past [b] that belong to the memory after it. *)
+let fill_sub b bits v =
   let ba = bytes b and n = B.length b in
-  A.fill (A.sub ba 0 (n / 2)) (v lor (v lsl 4));
-  if n land 1 = 1 then set_nibble ba (n - 1) v
+  let per = 8 / bits in
+  let byte = ref 0 in
+  for k = 0 to per - 1 do
+    byte := !byte lor (v lsl (k * bits))
+  done;
+  A.fill (A.sub ba 0 (n / per)) !byte;
+  for i = n / per * per to n - 1 do
+    set_sub ba bits i v
+  done
 
 (* The bytes of [v] as one element of [dt], [width] bytes. *)
 let element (type a b) (dt : (a, b) Nx_dtype.t) width (v : a) =
@@ -209,7 +229,8 @@ let element (type a b) (dt : (a, b) Nx_dtype.t) width (v : a) =
   | Complex128 ->
       Bytes.set_int64_ne e 0 (Int64.bits_of_float v.re);
       Bytes.set_int64_ne e 8 (Int64.bits_of_float v.im)
-  | Bool -> Bytes.set_uint8 e 0 (Bool.to_int v));
+  | Bool -> Bytes.set_uint8 e 0 (Bool.to_int v)
+  | Bit -> Bytes.set_uint8 e 0 (Bool.to_int v));
   e
 
 external fill_bytes :
@@ -220,8 +241,9 @@ external fill_bytes :
 let fill (type a b) (dt : (a, b) Nx_dtype.t) b (v : a) =
   check "fill" dt b;
   match dt with
-  | Int4 -> fill_nibbles b (v land 0xf)
-  | UInt4 -> fill_nibbles b (v land 0xf)
+  | Int4 -> fill_sub b 4 (v land 0xf)
+  | UInt4 -> fill_sub b 4 (v land 0xf)
+  | Bit -> fill_sub b 1 (Bool.to_int v)
   | _ ->
       let e = element dt (S.bitsize (B.dtype b) / 8) v in
       fill_bytes (B.address b) (B.nbytes b) e
@@ -291,9 +313,9 @@ let gather b v =
     (* Each width is its own loop, over its own kind, which the compiler
        specializes. *)
     begin match S.bitsize (B.dtype b) with
-    | 4 ->
+    | (1 | 4) as bits ->
         let s = bytes b and d = bytes dst in
-        iter_view v ~run:1 (fun src dst -> set_nibble d dst (nibble s src))
+        iter_view v ~run:1 (fun src dst -> set_sub d bits dst (sub s bits src))
     | 8 ->
         let s = bytes b and d = bytes dst in
         copy_view v ~copy_run:(blit s d) ~copy:(fun src dst ->

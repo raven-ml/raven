@@ -81,16 +81,19 @@ jobs:
           opam exec -- dune build --release packages/nx
           opam exec -- dune build --release @packages/nx/runtest
 
-      # The codecs parse untrusted bytes: their suite runs with the C of nx
-      # built under AddressSanitizer and UndefinedBehaviorSanitizer, each
-      # property over 1000 streams.
-      - name: Test nx.io under the sanitizers
+      # The codecs parse untrusted bytes, and the bit kernels read and write
+      # views at any bit: their suites run with the C of nx built under
+      # AddressSanitizer and UndefinedBehaviorSanitizer, each property over
+      # 1000 cases.
+      - name: Test nx.io and the bit dtype under the sanitizers
         if: runner.os != 'Windows'
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
+        run: |
+          opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
+          opam exec -- dune exec --profile sanitize packages/nx/test/test_bit.exe
 
       - name: Build and test brot
         env:

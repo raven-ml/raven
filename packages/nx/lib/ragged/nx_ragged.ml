@@ -191,7 +191,7 @@ let quantile (type b) qs (r : (float, b) t) : (float, b) Nx.t =
 (* The order keys of elements at their own width. *)
 let keys (type a b) op (x : (a, b) Nx.t) =
   match dtype x with
-  | Bool | UInt4 | UInt8 | Int4 | Int8 | Float8_e4m3 | Float8_e5m2 ->
+  | Bool | Bit | UInt4 | UInt8 | Int4 | Int8 | Float8_e4m3 | Float8_e5m2 ->
       P (order_key uint8 x)
   | UInt16 | Int16 | Float16 | BFloat16 -> P (order_key uint16 x)
   | UInt32 | Int32 | Float32 -> P (order_key uint32 x)

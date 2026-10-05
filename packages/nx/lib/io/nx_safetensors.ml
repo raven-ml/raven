@@ -123,6 +123,13 @@ let tensor_data (type a b) name (t : (a, b) Nx.t) =
     | BFloat16 -> BF16
     | Float32 -> F32
     | Float64 -> F64
+    | Bit ->
+        fail_msg
+          "%s: SafeTensors has no 1-bit dtype; save Nx.cast Nx.bool m, one \
+           byte per value, or its packed bytes after padding it to a multiple \
+           of 8 elements; numpy reads them with unpackbits(..., \
+           bitorder=\"little\")"
+          name
     | dtype ->
         fail_msg "%s: SafeTensors has no %s" name (Nx_dtype.to_string dtype)
   in

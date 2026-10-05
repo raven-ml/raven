@@ -274,8 +274,10 @@ module Buffer : sig
   type t
   (** The type for buffers: {!length} elements of format {!dtype} in a range of
       one device's memory. Their bytes are the elements in their storage
-      representation, in order: [Nx_dtype.Scalar.bitsize s / 8] bytes each, and
-      two per byte for [Int4] and [UInt4], the first in the low nibble.
+      representation, in order: [Nx_dtype.Scalar.bitsize s / 8] bytes each,
+      two per byte for [Int4] and [UInt4], the first in the low nibble, and
+      eight per byte for [Bit], the first in the lowest bit: [n] elements of
+      [b] bits take [(n * b + 7) / 8] bytes.
       Multi-byte elements are little-endian, the byte order of the host on arm64
       and x86_64 and of Metal; a big-endian host holds its own byte order.
 
@@ -665,8 +667,9 @@ module Buffer : sig
       Formats with no kind of their own are read as their storage kind and
       decoded with {!Nx_dtype.Scalar.decode}: [BFloat16] as [Int16_unsigned],
       the float8 formats as [Int8_unsigned], [Int4] and [UInt4] as
-      [Int8_unsigned] holding two per byte. With an odd number of 4-bit
-      elements, the last byte's high nibble is not [b]'s, and a write to it may
+      [Int8_unsigned] holding two per byte, and [Bit] as [Int8_unsigned]
+      holding eight. Where the elements end inside a byte, the bits of that
+      byte past [b]'s last element are not [b]'s, and a write to them may
       change memory outside [b].
 
       Raises [Invalid_argument] if [b] is not on {!host}, if [k] is [Int] or

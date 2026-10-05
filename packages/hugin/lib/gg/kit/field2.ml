@@ -20,7 +20,7 @@ let err fmt = Printf.ksprintf (fun s -> invalid_arg ("Field2.v: " ^ s)) fmt
 
 let is_real (type a b) (dtype : (a, b) Nx.dtype) =
   match dtype with
-  | Complex64 | Complex128 | Bool -> false
+  | Complex64 | Complex128 | Bool | Bit -> false
   | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4
   | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 ->
       true

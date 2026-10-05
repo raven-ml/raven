@@ -124,7 +124,7 @@ let scale_kind : type d r. (d, r) t -> d Scale.kind option =
 (* Lifts *)
 
 let is_real : type a b. (a, b) Nx.dtype -> bool = function
-  | Nx.Complex64 | Nx.Complex128 | Nx.Bool -> false
+  | Nx.Complex64 | Nx.Complex128 | Nx.Bool | Nx.Bit -> false
   | _ -> true
 
 let is_integer : type a b. (a, b) Nx.dtype -> bool = function

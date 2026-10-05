@@ -24,6 +24,7 @@ type uint64_elt = |
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
 type bool_elt = |
+type bit_elt = |
 
 (* Dtypes. The constructor order is pinned by the nx.cpu dtype table in nx_c.h,
    whose tags are the constructor indices; keep the two in sync. *)
@@ -48,6 +49,7 @@ type ('a, 'b) t =
   | Complex64 : (Complex.t, complex32_elt) t
   | Complex128 : (Complex.t, complex64_elt) t
   | Bool : (bool, bool_elt) t
+  | Bit : (bool, bit_elt) t
 
 type ('a, 'b) dtype = ('a, 'b) t
 
@@ -70,6 +72,7 @@ let uint64 = UInt64
 let complex64 = Complex64
 let complex128 = Complex128
 let bool = Bool
+let bit = Bit
 
 (* Scalar descriptors *)
 
@@ -96,6 +99,7 @@ module Scalar = struct
     | Complex64
     | Complex128
     | Bool
+    | Bit
 
   let of_dtype : type a b. (a, b) dtype -> t = function
     | Float16 -> Float16
@@ -117,6 +121,7 @@ module Scalar = struct
     | Complex64 -> Complex64
     | Complex128 -> Complex128
     | Bool -> Bool
+    | Bit -> Bit
 
   let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> t option = function
     | Bigarray.Float16 -> Some Float16
@@ -137,6 +142,7 @@ module Scalar = struct
     | UInt8 | Bool ->
         8
     | Int4 | UInt4 -> 4
+    | Bit -> 1
     | Float16 | BFloat16 | Int16 | UInt16 -> 16
     | Float32 | Int32 | UInt32 -> 32
     | Float64 | Int64 | UInt64 | Complex64 -> 64
@@ -164,6 +170,7 @@ module Scalar = struct
     | Complex64 -> "complex64"
     | Complex128 -> "complex128"
     | Bool -> "bool"
+    | Bit -> "bit"
 
   let equal (a : t) b = a = b
 
@@ -250,6 +257,7 @@ let zero : type a b. (a, b) t -> a = function
   | Complex64 -> Complex.zero
   | Complex128 -> Complex.zero
   | Bool -> false
+  | Bit -> false
 
 let one : type a b. (a, b) t -> a = function
   | Float16 -> 1.0
@@ -271,6 +279,7 @@ let one : type a b. (a, b) t -> a = function
   | Complex64 -> Complex.one
   | Complex128 -> Complex.one
   | Bool -> true
+  | Bit -> true
 
 let two : type a b. (a, b) t -> a = function
   | Float16 -> 2.0
@@ -292,6 +301,7 @@ let two : type a b. (a, b) t -> a = function
   | Complex64 -> Complex.{ re = 2.0; im = 0.0 }
   | Complex128 -> Complex.{ re = 2.0; im = 0.0 }
   | Bool -> true
+  | Bit -> true
 
 let minus_one : type a b. (a, b) t -> a = function
   | Float16 -> -1.0
@@ -313,6 +323,7 @@ let minus_one : type a b. (a, b) t -> a = function
   | Complex64 -> Complex.{ re = -1.0; im = 0.0 }
   | Complex128 -> Complex.{ re = -1.0; im = 0.0 }
   | Bool -> true
+  | Bit -> true
 
 let min_value : type a b. (a, b) t -> a = function
   | Float16 -> Float.neg_infinity
@@ -334,6 +345,7 @@ let min_value : type a b. (a, b) t -> a = function
   | Complex64 | Complex128 ->
       invalid_arg "Nx_dtype.min_value: complex numbers are not ordered"
   | Bool -> false
+  | Bit -> false
 
 let max_value : type a b. (a, b) t -> a = function
   | Float16 -> Float.infinity
@@ -355,6 +367,7 @@ let max_value : type a b. (a, b) t -> a = function
   | Complex64 | Complex128 ->
       invalid_arg "Nx_dtype.max_value: complex numbers are not ordered"
   | Bool -> true
+  | Bit -> true
 
 (* Converting *)
 
@@ -385,6 +398,7 @@ let of_float : type a b. (a, b) t -> float -> a =
   | Complex64 -> Complex.{ re = v; im = 0. }
   | Complex128 -> Complex.{ re = v; im = 0. }
   | Bool -> v <> 0.0
+  | Bit -> v <> 0.0
 
 let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Float16 -> Float16
@@ -415,7 +429,7 @@ let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind option =
   | Complex64 -> Some Bigarray.Complex32
   | Complex128 -> Some Bigarray.Complex64
   | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | UInt32 | UInt64 | Bool
-    ->
+  | Bit ->
       None
 
 (* Equality *)
@@ -445,4 +459,5 @@ let equal_witness : type a b c d.
   | Complex64, Complex64 -> Some Type.Equal
   | Complex128, Complex128 -> Some Type.Equal
   | Bool, Bool -> Some Type.Equal
+  | Bit, Bit -> Some Type.Equal
   | _ -> None

@@ -16,12 +16,14 @@ module V = Nx_array.View
 let bytes b = B.bigarray Bigarray.char b
 let size s = Int.max 1 (S.bitsize s / 8)
 
-(* The bits of element [i] of [ba], elements of [s] in storage order. *)
+(* The bits of element [i] of [ba], elements of [s] in storage order: an element
+   narrower than a byte as one byte of its value. *)
 let bits s ba i =
-  if S.bitsize s = 4 then
-    let byte = Char.code ba.{i / 2} in
-    String.make 1
-      (Char.chr (if i land 1 = 0 then byte land 0xf else byte lsr 4))
+  let w = S.bitsize s in
+  if w < 8 then
+    let bit = i * w in
+    let byte = Char.code ba.{bit / 8} in
+    String.make 1 (Char.chr ((byte lsr (bit mod 8)) land ((1 lsl w) - 1)))
   else String.init (size s) (fun k -> ba.{(i * size s) + k})
 
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
@@ -94,6 +96,7 @@ let elts =
     elt Nx_dtype.complex64 c64 r64 w64;
     elt Nx_dtype.complex128 c128 r128 w128;
     elt ~code:(fun b -> le 1 (Bool.to_int b)) Nx_dtype.bool Gen.bool Fun.id bool;
+    elt ~code:(fun b -> le 1 (Bool.to_int b)) Nx_dtype.bit Gen.bool Fun.id bool;
   ]
 
 let stores =
@@ -130,13 +133,14 @@ let fills =
           ^ " stores its value as every element, and nothing outside them")
            (Gen.triple e.value (Gen.int_range 0 9) (Gen.int_range 0 3))
            (fun (x, n, k) ->
-             let m = n + (2 * k) + 3 in
+             (* The view starts on a byte. *)
+             let first = 2 * k * Int.max 1 (8 / S.bitsize s) in
+             let m = n + first + 3 in
              let whole = B.create Nx_device.host s m in
              let ba = bytes whole in
              for i = 0 to Bigarray.Array1.dim ba - 1 do
                ba.{i} <- Char.chr (((i * 37) + 11) land 0xff)
              done;
-             let first = 2 * k in
              let others () =
                List.filteri
                  (fun i _ -> i < first || i >= first + n)
@@ -179,7 +183,7 @@ let pp_view ppf (v, n) =
 let formats =
   Gen.of_list
     ~pp:(fun ppf s -> Format.pp_print_string ppf (S.to_string s))
-    S.[ Bool; Int4; UInt4; UInt8; BFloat16; Float32; Int64; Complex128 ]
+    S.[ Bool; Bit; Int4; UInt4; UInt8; BFloat16; Float32; Int64; Complex128 ]
 
 (* A format, a view and a buffer of that format the view reaches, its bytes
    drawn from a seed. *)

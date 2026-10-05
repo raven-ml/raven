@@ -78,6 +78,9 @@ type complex64_elt = Bigarray.complex64_elt
 type bool_elt
 (** The element type of booleans, one to a byte. *)
 
+type bit_elt
+(** The element type of booleans, eight to a byte. *)
+
 (** {1:types Dtypes} *)
 
 (** The type for dtypes. ['a] is the OCaml type of values and ['b] the element
@@ -104,7 +107,11 @@ type ('a, 'b) t =
       (** Complex values with binary32 components. *)
   | Complex128 : (Complex.t, complex64_elt) t
       (** Complex values with binary64 components. *)
-  | Bool : (bool, bool_elt) t  (** Booleans. *)
+  | Bool : (bool, bool_elt) t  (** Booleans, one to a byte. *)
+  | Bit : (bool, bit_elt) t
+      (** Booleans, eight to a byte. Element [i] of a buffer is bit [i mod 8]
+          of byte [i / 8]. [Bool] and [Bit] are the only dtypes whose elements
+          are OCaml [bool]. *)
 
 val float16 : (float, float16_elt) t
 (** [float16] is {!Float16}. *)
@@ -163,6 +170,9 @@ val complex128 : (Complex.t, complex64_elt) t
 val bool : (bool, bool_elt) t
 (** [bool] is {!Bool}. *)
 
+val bit : (bool, bit_elt) t
+(** [bit] is {!Bit}. *)
+
 (** {1:queries Queries} *)
 
 val to_string : ('a, 'b) t -> string
@@ -173,8 +183,9 @@ val pp : Format.formatter -> ('a, 'b) t -> unit
 (** [pp ppf dt] formats [dt] with {!to_string}. *)
 
 val itemsize : ('a, 'b) t -> int
-(** [itemsize dt] is the size in bytes of one element of [dt]. It is [1] for
-    {!Int4} and {!UInt4}, whose elements are 4 bits. *)
+(** [itemsize dt] is the bytes per element of [dt], rounded up to a whole byte:
+    [1] for {!Bit}, {!Int4} and {!UInt4}. {!Scalar.bitsize} gives the exact
+    width. *)
 
 val is_float : ('a, 'b) t -> bool
 (** [is_float dt] is [true] iff [dt] is a real floating-point dtype. *)
@@ -191,17 +202,17 @@ val is_uint : ('a, 'b) t -> bool
 (** {1:constants Constants} *)
 
 val zero : ('a, 'b) t -> 'a
-(** [zero dt] is [0] as a value of [dt], and [false] for {!Bool}. *)
+(** [zero dt] is [0] as a value of [dt], and [false] for {!Bool} and {!Bit}. *)
 
 val one : ('a, 'b) t -> 'a
-(** [one dt] is [1] as a value of [dt], and [true] for {!Bool}. *)
+(** [one dt] is [1] as a value of [dt], and [true] for {!Bool} and {!Bit}. *)
 
 val two : ('a, 'b) t -> 'a
-(** [two dt] is [2] as a value of [dt], and [true] for {!Bool}. *)
+(** [two dt] is [2] as a value of [dt], and [true] for {!Bool} and {!Bit}. *)
 
 val minus_one : ('a, 'b) t -> 'a
 (** [minus_one dt] is [-1] as a value of [dt]. For unsigned dtypes it is the
-    value with every bit set, and for {!Bool} it is [true]. *)
+    value with every bit set, and for {!Bool} and {!Bit} it is [true]. *)
 
 val min_value : ('a, 'b) t -> 'a
 (** [min_value dt] is the least value of [dt]: [neg_infinity] for the float
@@ -222,7 +233,7 @@ val of_float : ('a, 'b) t -> float -> 'a
 (** [of_float dt x] is [x] as a value of [dt]. Float dtypes keep [x]; storing it
     rounds it. Signed integers truncate [x] toward zero, unsigned integers also
     clamp it to their range, complex dtypes give [x] a zero imaginary part and
-    {!Bool} is [x <> 0.]. *)
+    {!Bool} and {!Bit} are [x <> 0.]. *)
 
 val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
 (** [of_bigarray_kind k] is the dtype of [k]'s elements.
@@ -232,7 +243,7 @@ val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
 val to_bigarray_kind : ('a, 'b) t -> ('a, 'b) Bigarray.kind option
 (** [to_bigarray_kind dt] is the {!Bigarray.kind} of [dt]'s elements, if
     {!Bigarray} has one. It is [None] for {!BFloat16}, the float8 dtypes,
-    {!Int4}, {!UInt4}, {!UInt32}, {!UInt64} and {!Bool}. *)
+    {!Int4}, {!UInt4}, {!UInt32}, {!UInt64}, {!Bool} and {!Bit}. *)
 
 (** {1:predicates Equality} *)
 
@@ -278,6 +289,7 @@ module Scalar : sig
     | Complex64
     | Complex128
     | Bool
+    | Bit
 
   val of_dtype : ('a, 'b) dtype -> t
   (** [of_dtype dt] is the format of [dt]'s elements. *)
@@ -288,8 +300,8 @@ module Scalar : sig
       platform. *)
 
   val bitsize : t -> int
-  (** [bitsize s] is the size in bits of one element of [s]: [4] for {!Int4} and
-      {!UInt4}, and [8] for {!Bool}. *)
+  (** [bitsize s] is the size in bits of one element of [s]: [1] for {!Bit},
+      [4] for {!Int4} and {!UInt4}, and [8] for {!Bool}. *)
 
   val to_string : t -> string
   (** [to_string s] is the lowercase name of [s], its constructor's name. For

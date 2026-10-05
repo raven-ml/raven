@@ -311,7 +311,8 @@ let rows_of k tensors =
   Gen.with_pp (fun ppf t -> Stored.pp_packed ppf (Nx.P t)) drawn
 
 let reads_the_bytes (Stored.Case c) (T dt) =
-  let w = Nx_dtype.itemsize c.dtype and w' = Nx_dtype.itemsize dt in
+  let bits d = Nx_dtype.Scalar.(bitsize (of_dtype d)) in
+  let w = bits c.dtype and w' = bits dt in
   let tensors = if w' > w then rows_of (w' / w) c.tensors else c.tensors in
   prop
     (Printf.sprintf "bitcast from %s to %s keeps the bytes in row-major order"
@@ -389,8 +390,18 @@ let bitcasts =
             is_true ~msg:"from an aligned element at an odd offset"
               (shares (Nx.bitcast Nx.uint64 even) even));
         test
-          "bitcast refuses bool, packed int4, and a widening without a last \
-           axis of the ratio" (fun () ->
+          "int4 and uint4 read as their packed bytes, the first in the low \
+           nibble" (fun () ->
+            let t = Nx.create Nx.int4 [| 2; 2 |] [| 1; -1; 2; 3 |] in
+            equal (array int) [| 0xf1; 0x32 |]
+              (Nx.to_array (Nx.bitcast Nx.uint8 t));
+            equal (array int) [| 1; 15; 2; 3 |]
+              (Nx.to_array
+                 (Nx.reshape [| 4 |]
+                    (Nx.bitcast Nx.uint4 (Nx.bitcast Nx.uint8 t)))));
+        test
+          "bitcast refuses bool, and a widening without a last axis of the \
+           ratio" (fun () ->
             raises_invalid_arg (fun () ->
                 Nx.bitcast Nx.int64 (Nx.zeros Nx.float32 [| 3 |]));
             raises_invalid_arg (fun () ->
@@ -400,7 +411,7 @@ let bitcasts =
             raises_invalid_arg (fun () ->
                 Nx.bitcast Nx.bool (Nx.zeros Nx.uint8 [| 2 |]));
             raises_invalid_arg (fun () ->
-                Nx.bitcast Nx.int8 (Nx.zeros Nx.int4 [| 2 |])));
+                Nx.bitcast Nx.int8 (Nx.zeros Nx.int4 [| 3 |])));
       ])
 
 let () =

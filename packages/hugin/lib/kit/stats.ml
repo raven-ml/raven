@@ -59,7 +59,7 @@ let edges n (lo, hi) =
 
 let histogram (type a b) ?bins (v : (a, b) Nx.t) =
   (match Nx.dtype v with
-  | Nx.Complex64 | Nx.Complex128 | Nx.Bool ->
+  | Nx.Complex64 | Nx.Complex128 | Nx.Bool | Nx.Bit ->
       invalid_arg
         (Format.asprintf "Stats.histogram: values of dtype %a" Nx.pp_dtype
            (Nx.dtype v))

@@ -339,6 +339,16 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           let print = print_bool
           let parse = parse_bool
         end)
+  | Bit ->
+      Some
+        (module struct
+          type elt = bool
+          type kind = b
+
+          let kind = kind
+          let print = print_bool
+          let parse = parse_bool
+        end)
   | _ -> None
 
 (*---------------------------------------------------------------------------

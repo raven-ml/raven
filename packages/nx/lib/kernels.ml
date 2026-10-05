@@ -387,18 +387,20 @@ let contiguous (e : env) a =
       Printexc.raise_with_backtrace e bt);
   dst
 
-(* [bitcast e dtype a] is [a]'s bytes read as elements of [dtype]: at [a]'s
+(* [bitcast e dtype a] is [a]'s bits read as elements of [dtype]: at [a]'s
    width, the same view; [k] times narrower, each element as [k] along a new
    last axis; [k] times wider, each run of [k] along the last axis, of [k], as
    one element: a view of [a]'s memory when [a] is C-contiguous from a first
-   element aligned to [dtype]'s width, and of a C-contiguous copy of [a] that
-   [e] makes otherwise. *)
+   element whose bits start at a multiple of [dtype]'s width in memory, and of a
+   C-contiguous copy of [a] that [e] makes otherwise. Widths count bits, so
+   [bit] is an eighth of [uint8]. *)
 let bitcast (type a b c d) (e : env) (dtype : (c, d) Nx_dtype.t)
     (a : (a, b) Nx_array.t) : (c, d) Nx_array.t =
-  let w = Nx_dtype.itemsize a.dtype and w' = Nx_dtype.itemsize dtype in
+  let bits dt = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
+  let w = bits a.dtype and w' = bits dtype in
+  let scalar = Nx_dtype.Scalar.of_dtype dtype in
   let over (a : (a, b) Nx_array.t) view : (c, d) Nx_array.t =
-    let n = Nx_device.Buffer.nbytes a.buffer / w' in
-    let scalar = Nx_dtype.Scalar.of_dtype dtype in
+    let n = Nx_device.Buffer.nbytes a.buffer * 8 / w' in
     { dtype; view; buffer = Nx_device.Buffer.view a.buffer ~offset:0 scalar n }
   in
   let v = a.view in
@@ -412,24 +414,28 @@ let bitcast (type a b c d) (e : env) (dtype : (c, d) Nx_dtype.t)
          (Array.append (View.shape v) [| k |]))
   else
     let k = w' / w in
+    (* The first element's bits, counted from a byte of the buffer's memory
+       aligned to [dtype]'s width when it is a whole number of bytes. *)
     let first = View.offset v * w in
     let aligned =
-      Nativeint.(
-        rem (add (Nx_device.Buffer.address a.buffer) (of_int first)) (of_int w'))
-      = 0n
+      let align = Int.max 1 (w' / 8) in
+      let byte =
+        Nativeint.(add (Nx_device.Buffer.address a.buffer) (of_int (first / 8)))
+      in
+      first mod Int.min 8 w' = 0 && Nativeint.(rem byte (of_int align)) = 0n
     in
     let a, first =
       if View.is_c_contiguous v && aligned then (a, first)
       else (contiguous e a, 0)
     in
     let s = View.shape a.view in
+    let skip = first mod 8 / w' in
     {
       dtype;
-      view = View.create (Array.sub s 0 (Array.length s - 1));
+      view = View.create ~offset:skip (Array.sub s 0 (Array.length s - 1));
       buffer =
-        Nx_device.Buffer.view a.buffer ~offset:first
-          (Nx_dtype.Scalar.of_dtype dtype)
-          (View.numel a.view / k);
+        Nx_device.Buffer.view a.buffer ~offset:(first / 8) scalar
+          (skip + (View.numel a.view / k));
     }
 
 let cholesky (e : env) upper a =

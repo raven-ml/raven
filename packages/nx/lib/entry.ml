@@ -10,39 +10,97 @@ open Value
 
    One per constructor of [Op.t]. While no interception is live anywhere, each
    answers directly and builds no operation; otherwise it performs its
-   operation. Constants and values over runtime buffers build on them. *)
+   operation. Constants and values over runtime buffers build on them.
 
-let unary k x =
+   A [bit] operand reaches an operation only where backends compute on bits:
+   casts, bitcasts, [And], [Or], [Xor], [Maximum] and [Minimum], and the moves
+   ([pad], [cat], [gather], [scatter] with [`Set], [update] and copies). Every
+   other operation reads its [bit] operands as [bool] and stores a result of
+   their dtype as [bit], so it answers as it does on [bool], raising where it
+   raises. *)
+
+let cast_op dtype x =
+  if Intercept.intercepting () then Intercept.perform (Convert (Cast, dtype, x))
+  else Dispatch.convert Cast dtype x
+
+let bool x = cast_op Nx_dtype.Bool x
+
+(* [through_bool f x] is [f] of [x] read as [bool], its result kept as [bit]. *)
+let through_bool f x = cast_op Nx_dtype.Bit (f (bool x))
+
+let unary_op k x =
   if Intercept.intercepting () then Intercept.perform (Unary (k, x))
   else Dispatch.unary k x
 
-let binary k x y =
+let unary (type a b) k (x : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit -> through_bool (unary_op k) x
+  | _ -> unary_op k x
+
+let binary_op k x y =
   if Intercept.intercepting () then Intercept.perform (Binary (k, x, y))
   else Dispatch.binary k x y
 
-let cmp k x y =
+let binary (type a b) (k : Nx_backend.binary) (x : (a, b) t) (y : (a, b) t) :
+    (a, b) t =
+  match (dtype x, k) with
+  | Nx_dtype.Bit, (Add | Sub | Mul | Fdiv | Idiv | Mod | Pow | Atan2) ->
+      through_bool (fun x -> binary_op k x (bool y)) x
+  | _ -> binary_op k x y
+
+let cmp_op k x y =
   if Intercept.intercepting () then Intercept.perform (Compare (k, x, y))
   else Dispatch.compare k x y
 
-let where c x y =
+let cmp (type a b) k (x : (a, b) t) (y : (a, b) t) =
+  match dtype x with
+  | Nx_dtype.Bit -> cmp_op k (bool x) (bool y)
+  | _ -> cmp_op k x y
+
+let where_op c x y =
   if Intercept.intercepting () then Intercept.perform (Where (c, x, y))
   else Dispatch.where c x y
 
-let fma a b c =
+let where (type a b) c (x : (a, b) t) (y : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit -> through_bool (fun x -> where_op c x (bool y)) x
+  | _ -> where_op c x y
+
+let fma_op a b c =
   if Intercept.intercepting () then Intercept.perform (Fma (a, b, c))
   else Dispatch.fma a b c
 
-let reduce k ~axes x =
+let fma (type a b) (a : (a, b) t) (b : (a, b) t) (c : (a, b) t) : (a, b) t =
+  match dtype a with
+  | Nx_dtype.Bit -> through_bool (fun a -> fma_op a (bool b) (bool c)) a
+  | _ -> fma_op a b c
+
+let reduce_op k axes x =
   if Intercept.intercepting () then Intercept.perform (Reduce (k, axes, x))
   else Dispatch.reduce k axes x
 
-let scan k ~axis x =
+let reduce (type a b) k ~axes (x : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit -> through_bool (reduce_op k axes) x
+  | _ -> reduce_op k axes x
+
+let scan_op k axis x =
   if Intercept.intercepting () then Intercept.perform (Scan (k, axis, x))
   else Dispatch.scan k axis x
 
-let arg_reduce k ~axis x =
+let scan (type a b) k ~axis (x : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit -> through_bool (scan_op k axis) x
+  | _ -> scan_op k axis x
+
+let arg_reduce_op k axis x =
   if Intercept.intercepting () then Intercept.perform (Arg_reduce (k, axis, x))
   else Dispatch.arg_reduce k axis x
+
+let arg_reduce (type a b) k ~axis (x : (a, b) t) =
+  match dtype x with
+  | Nx_dtype.Bit -> arg_reduce_op k axis (bool x)
+  | _ -> arg_reduce_op k axis x
 
 let sort ~descending ~axis x =
   if Intercept.intercepting () then
@@ -66,9 +124,13 @@ let cat ~axis xs =
   if Intercept.intercepting () then Intercept.perform (Cat (axis, xs))
   else Dispatch.cat axis xs
 
-let cast dtype x =
-  if Intercept.intercepting () then Intercept.perform (Convert (Cast, dtype, x))
-  else Dispatch.convert Cast dtype x
+(* A cast between [bit] and a 4-bit dtype goes through [bool]. *)
+let cast (type a b c d) (dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
+  match (Value.dtype x, dtype) with
+  | Nx_dtype.Bit, (Nx_dtype.Int4 | Nx_dtype.UInt4)
+  | (Nx_dtype.Int4 | Nx_dtype.UInt4), Nx_dtype.Bit ->
+      cast_op dtype (bool x)
+  | _ -> cast_op dtype x
 
 let bitcast dtype x =
   if Intercept.intercepting () then
@@ -84,29 +146,55 @@ let gather ~axis indices x =
     Intercept.perform (Gather (axis, indices, x))
   else Dispatch.gather axis indices x
 
-let scatter ~mode ~unique ~axis ~indices ~updates into =
+let scatter_op mode unique axis indices updates into =
   if Intercept.intercepting () then
     Intercept.perform (Scatter { mode; unique; axis; indices; updates; into })
   else Dispatch.scatter mode unique axis indices updates into
+
+let scatter (type a b) ~mode ~unique ~axis ~indices ~(updates : (a, b) t)
+    (into : (a, b) t) : (a, b) t =
+  match (dtype into, mode) with
+  | Nx_dtype.Bit, (`Add | `Max | `Min) ->
+      through_bool (scatter_op mode unique axis indices (bool updates)) into
+  | _ -> scatter_op mode unique axis indices updates into
 
 let update x ~starts v =
   if Intercept.intercepting () then Intercept.perform (Update (x, starts, v))
   else Dispatch.update x starts v
 
-let unfold ~kernel_size ~stride ~dilation ~padding x =
+let unfold_op kernel_size stride dilation padding x =
   if Intercept.intercepting () then
     Intercept.perform (Unfold { kernel_size; stride; dilation; padding; x })
   else Dispatch.unfold kernel_size stride dilation padding x
 
-let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
+let unfold (type a b) ~kernel_size ~stride ~dilation ~padding (x : (a, b) t) :
+    (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit ->
+      through_bool (unfold_op kernel_size stride dilation padding) x
+  | _ -> unfold_op kernel_size stride dilation padding x
+
+let fold_op output_size kernel_size stride dilation padding x =
   if Intercept.intercepting () then
     Intercept.perform
       (Fold { output_size; kernel_size; stride; dilation; padding; x })
   else Dispatch.fold output_size kernel_size stride dilation padding x
 
-let matmul x y =
+let fold (type a b) ~output_size ~kernel_size ~stride ~dilation ~padding
+    (x : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit ->
+      through_bool (fold_op output_size kernel_size stride dilation padding) x
+  | _ -> fold_op output_size kernel_size stride dilation padding x
+
+let matmul_op x y =
   if Intercept.intercepting () then Intercept.perform (Matmul (x, y))
   else Dispatch.matmul x y
+
+let matmul (type a b) (x : (a, b) t) (y : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit -> through_bool (fun x -> matmul_op x (bool y)) x
+  | _ -> matmul_op x y
 
 let fft ~inverse ~axes x =
   if Intercept.intercepting () then Intercept.perform (Fft { inverse; axes; x })

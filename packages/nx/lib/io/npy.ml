@@ -348,6 +348,13 @@ let read_copy path =
   then read_error "NPY payload size does not match its shape and dtype";
   materialize header ~src ~off:header.data_offset
 
+(* What saving a [bit] tensor refuses with: npy's booleans are bytes, and a
+   writer that unpacked would load back as [bool]. *)
+let no_bit =
+  "npy has no 1-bit dtype; save Nx.cast Nx.bool m, one byte per value, or its \
+   packed bytes after padding it to a multiple of 8 elements; numpy reads them \
+   with unpackbits(..., bitorder=\"little\")"
+
 let code_of_kind : type a b. (a, b) Nx_dtype.t -> string = function
   | Float16 -> "f2"
   | Float32 -> "f4"
@@ -363,6 +370,7 @@ let code_of_kind : type a b. (a, b) Nx_dtype.t -> string = function
   | Complex64 -> "c8"
   | Complex128 -> "c16"
   | Bool -> "b1"
+  | Bit -> invalid_arg no_bit
   | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 ->
       invalid_arg "dtype has no standard NPY representation"
 

@@ -28,18 +28,21 @@ let wrap_exn f =
 
 let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
 
-let save_npy ?(overwrite = true) path arr =
-  wrap_exn @@ fun () ->
-  with_npy ~by:"Nx_io.save_npy" arr @@ fun packed ->
-  (if not overwrite then Npy.write ~exclusive:true packed path
-   else
-     let temp = Temp_file.sibling path in
-     match Npy.write packed temp with
-     | () -> Temp_file.replace temp path
-     | exception exn ->
-         Temp_file.remove_if_exists temp;
-         raise exn);
-  Ok ()
+let save_npy (type a b) ?(overwrite = true) path (arr : (a, b) Nx.t) =
+  match Nx.dtype arr with
+  | Bit -> Error (Other ("Nx_io.save_npy: " ^ Npy.no_bit))
+  | _ ->
+      wrap_exn @@ fun () ->
+      with_npy ~by:"Nx_io.save_npy" arr @@ fun packed ->
+      (if not overwrite then Npy.write ~exclusive:true packed path
+       else
+         let temp = Temp_file.sibling path in
+         match Npy.write packed temp with
+         | () -> Temp_file.replace temp path
+         | exception exn ->
+             Temp_file.remove_if_exists temp;
+             raise exn);
+      Ok ()
 
 (* Npz *)
 

@@ -23,7 +23,8 @@
   test_buffers
   test_intercept
   test_allocation
-  test_lost)
+  test_lost
+  test_bit)
  (package nx)
  (modules :standard \ test_linalg test_format links_no_metal)
  (libraries

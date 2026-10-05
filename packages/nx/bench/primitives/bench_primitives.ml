@@ -226,9 +226,34 @@ let bool =
   let sorted () = (mask l, Nx.positions (mask l)) in
   [
     row "and-1e7" l two (fun (a, b) -> Nx.logical_and a b);
-    row "count-1e7" l (fun () -> mask l) (fun m -> Nx.sum (Nx.cast Nx.int64 m));
+    row "count-1e7" l (fun () -> mask l) (fun m -> Nx.count m);
     row "take-sorted-1e7" l sorted (fun (m, indices) ->
         Nx.take ~axis:0 ~indices m);
+  ]
+
+(* The bool rows' work on masks of 1e7 bits, eight to a byte. A concatenation
+   joins three parts of odd lengths, each after the last inside a byte. *)
+let bit =
+  let bits n = Nx.cast Nx.bit (mask n) in
+  let two () = (bits l, Nx.copy (Nx.flip (bits l))) in
+  let sorted () = (bits l, Nx.positions (mask l)) in
+  let parts () =
+    let m = bits l and third = l / 3 in
+    [
+      Nx.shrink [| (0, third + 5) |] m;
+      Nx.shrink [| (third + 5, (2 * third) + 2) |] m;
+      Nx.shrink [| ((2 * third) + 2, l) |] m;
+    ]
+  in
+  [
+    row "pack-1e7" l (fun () -> mask l) (Nx.cast Nx.bit);
+    row "unpack-1e7" l (fun () -> bits l) (Nx.cast Nx.bool);
+    row "count-1e7" l (fun () -> bits l) (fun m -> Nx.count m);
+    row "and-1e7" l two (fun (a, b) -> Nx.logical_and a b);
+    row "any-1e7" l (fun () -> bits l) (fun m -> Nx.any m);
+    row "take-sorted-1e7" l sorted (fun (m, indices) ->
+        Nx.take ~axis:0 ~indices m);
+    row "concat-odd-1e7" l parts (Nx.concatenate ~axis:0);
   ]
 
 (* [n] strings of [w] random lowercase letters, as offsets and bytes, and a
@@ -351,6 +376,7 @@ let groups =
     ("quantile", quantile);
     ("ranges", ranges);
     ("bool", bool);
+    ("bit", bit);
     ("bits", bits);
     ("ragged-take", ragged_take);
     ("ragged", ragged_rows);

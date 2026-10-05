@@ -30,6 +30,12 @@ static inline void *nx_device_buffer_host(value b) {
   return (char *)Nativeint_val(Field(host, 0)) + Long_val(Field(b, 1));
 }
 
+/* The number of elements of the Nx_device.Buffer.t [b], of its format (slot
+   3). */
+static inline int64_t nx_device_buffer_length(value b) {
+  return Long_val(Field(b, 3));
+}
+
 /* Whether the Nx_device.Buffer.t [b] is live: its memory was not consumed
    (Nx_device.Buffer.Claim.consume) since [b] was made. [b]'s generation (slot
    4) is then its memory's: slot 1 of the claim record in slot 9 of [b]'s base,

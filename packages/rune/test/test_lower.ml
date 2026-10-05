@@ -53,7 +53,9 @@ let dtypes =
       test "the 8-bit floats are the OCP formats" (fun () ->
           equal tolk_dtype (Some Dtype.Fp8e4m3) (Lower.dtype Nx.float8_e4m3);
           equal tolk_dtype (Some Dtype.Fp8e5m2) (Lower.dtype Nx.float8_e5m2));
-      test "4-bit integers and complex numbers have no counterpart" (fun () ->
+      test "bits, 4-bit integers and complex numbers have no counterpart"
+        (fun () ->
+          is_none (Lower.dtype Nx.bit);
           is_none (Lower.dtype Nx.int4);
           is_none (Lower.dtype Nx.uint4);
           is_none (Lower.dtype Nx.complex64);
@@ -469,6 +471,12 @@ let refusals =
             (Lower.Jit_error "cannot compile contiguous: int4 is not supported")
             (fun () ->
               trace (fun () -> Nx.copy (Nx.create Nx.int4 [| 2 |] [| 1; 2 |]))));
+      test "a bit value is refused as an int4 one is" (fun () ->
+          raises
+            (Lower.Jit_error "cannot compile contiguous: bit is not supported")
+            (fun () ->
+              trace (fun () ->
+                  Nx.copy (Nx.create Nx.bit [| 9 |] (Array.make 9 true)))));
       test "a Fourier transform is refused" (fun () ->
           let z = Nx.cast Nx.complex64 (arange 4) in
           raises (Lower.Jit_error "cannot compile fft") (fun () ->

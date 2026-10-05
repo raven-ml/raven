@@ -63,6 +63,7 @@ let to_value : type a b. (a, b) Nx_dtype.t -> a -> Dtype.value =
   | Int64 -> `Int (Bigint.of_int64 v)
   | UInt64 -> `Int (Bigint.of_int64_unsigned v)
   | Bool -> `Bool v
+  | Bit -> `Bool v
   | Complex64 | Complex128 -> invalid_arg "a complex element"
 
 let of_const : type a b. (a, b) Nx_dtype.t -> Dtype.const -> a =
@@ -87,6 +88,7 @@ let of_const : type a b. (a, b) Nx_dtype.t -> Dtype.const -> a =
   | Int64 -> Bigint.to_int64 (int c)
   | UInt64 -> Bigint.to_int64_unsigned (int c)
   | Bool -> ( match c with `Bool b -> b | _ -> invalid_arg "not a boolean")
+  | Bit -> ( match c with `Bool b -> b | _ -> invalid_arg "not a boolean")
   | Complex64 | Complex128 -> invalid_arg "a complex element"
 
 (* The elements of [b], a buffer of [dt]'s elements on any device. *)

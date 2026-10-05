@@ -53,6 +53,7 @@ type uint64_elt = Nx_dtype.uint64_elt
 type complex32_elt = Nx_dtype.complex32_elt
 type complex64_elt = Nx_dtype.complex64_elt
 type bool_elt = Nx_dtype.bool_elt
+type bit_elt = Nx_dtype.bit_elt
 
 (** {2:dtype Data types} *)
 
@@ -76,6 +77,7 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Complex64 : (Complex.t, complex32_elt) dtype
   | Complex128 : (Complex.t, complex64_elt) dtype
   | Bool : (bool, bool_elt) dtype
+  | Bit : (bool, bit_elt) dtype
       (** The type for data type descriptors. A [('a, 'b) dtype] links the OCaml
           element type ['a] to its buffer representation ['b].
 
@@ -84,7 +86,13 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
           [Invalid_argument]; cast them to a wider integer to compute. [bool]
           values compare, combine logically and bitwise, select ({!where}), sort
           and reduce by {!max} and {!min}; arithmetic on them (sums, products,
-          negation, cumulative sums, {!matmul}) raises [Invalid_argument]. *)
+          negation, cumulative sums, {!matmul}) raises [Invalid_argument].
+
+          [bit] holds booleans eight to a byte, for keeping large masks. Every
+          function that takes [bool] outside a condition takes [bit], and one
+          that returns its operands' dtype returns [bit]. A condition
+          ({!where}, {!compress}, {!extract}, a mask index [M], {!check}) is a
+          [bool]: compute with [cast bool m] and keep with [cast bit m]. *)
 
 (** {2:tensor_aliases Tensor aliases} *)
 
@@ -107,6 +115,7 @@ type uint64_t = (int64, uint64_elt) t
 type complex64_t = (Complex.t, complex32_elt) t
 type complex128_t = (Complex.t, complex64_elt) t
 type bool_t = (bool, bool_elt) t
+type bit_t = (bool, bit_elt) t
 
 (** {2:dtype_vals Data type values} *)
 
@@ -129,6 +138,7 @@ val uint64 : (int64, uint64_elt) dtype
 val complex64 : (Complex.t, complex32_elt) dtype
 val complex128 : (Complex.t, complex64_elt) dtype
 val bool : (bool, bool_elt) dtype
+val bit : (bool, bit_elt) dtype
 
 (** {2:index Index specifications} *)
 
@@ -185,13 +195,16 @@ val ndim : ('a, 'b) t -> int
 (** [ndim t] is the number of dimensions of [t]. *)
 
 val itemsize : ('a, 'b) t -> int
-(** [itemsize t] is the number of bytes per element. *)
+(** [itemsize t] is the bytes per element, rounded up to a whole byte: 1 for
+    [bit], [int4] and [uint4]. *)
 
 val numel : ('a, 'b) t -> int
 (** [numel t] is the total number of elements in [t]. *)
 
 val nbytes : ('a, 'b) t -> int
-(** [nbytes t] is [numel t * itemsize t]. *)
+(** [nbytes t] is the bytes of [t]'s elements, [(numel t * bits + 7) / 8] for
+    elements of [bits] bits: [numel t * itemsize t] for every dtype of a whole
+    number of bytes. *)
 
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] is [true] iff [t]'s elements are laid out contiguously
@@ -1496,16 +1509,17 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     as arm64 and x86_64 are, the first element of a group holds the lowest-order
     bits of the wider element.
 
-    A host value's result shares its storage, except where [dtype] is wider and
-    [t] is not C-contiguous from an address aligned to [dtype]'s width: it is
-    then read from a C-contiguous copy of [t].
+    [bit], [int4] and [uint4] read as their packed bytes: a [bit] tensor whose
+    last axis has 8 elements is a [uint8] tensor without that axis. A host
+    value's result shares its storage, except where [dtype] is wider and [t] is
+    not C-contiguous from an element whose bits start on a byte aligned to
+    [dtype]'s width: it is then read from a C-contiguous copy of [t].
 
     Raises [Invalid_argument] if either dtype is [bool], whose only bytes are 0
-    and 1, or [int4] or [uint4], whose elements are packed in pairs, or if
-    [dtype] is wider and [t] has no last axis of [k] elements. A compiled
-    function (under [Rune.jit]) refuses a bitcast between widths, and one to or
-    from [float8_e4m3] or [float8_e5m2]: the compiler emulates those formats
-    through a wider float, which would change subnormal and infinite bits.
+    and 1, or if [dtype] is wider and [t] has no last axis of [k] elements. A
+    compiled function (under [Rune.jit]) refuses a bitcast to or from
+    [float8_e4m3] or [float8_e5m2]: the compiler emulates those formats through
+    a wider float, which would change subnormal and infinite bits.
 
     Reading a float's bits as an integer of its width gives a key that sorts as
     the float does once negative keys have their other bits flipped:
@@ -2788,6 +2802,18 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
     non-zero. [keepdims] defaults to [false].
 
     See also {!all}. *)
+
+val count : ?axes:int list -> ?keepdims:bool -> (bool, 'b) t -> int64_t
+(** [count ?axes ?keepdims m] is the number of [true] elements of [m] along
+    [axes], all of them by default. [m] is a [bool] or a [bit] tensor.
+    [keepdims] defaults to [false].
+
+    {@ocaml[
+      # create bool [| 4 |] [| true; false; true; true |] |> count |> item []
+      - : int64 = 3L
+    ]}
+
+    Raises [Invalid_argument] if an axis is out of bounds. *)
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 (** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]: the

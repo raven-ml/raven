@@ -215,7 +215,7 @@ let same (type a b) (a : (a, b) Nx.t) (b : (a, b) Nx.t) : Nx.bool_t =
   | Float8_e4m3 | Float8_e5m2 ->
       bits Nx.uint16 (Nx.cast Nx.float16 a) (Nx.cast Nx.float16 b)
   | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
-  | UInt64 | Bool | Complex64 | Complex128 ->
+  | UInt64 | Bool | Bit | Complex64 | Complex128 ->
       Nx.equal a b
 
 (* [linear_scan ~axis a b] is [r] with [r_k = a_k r_(k-1) + b_k] along [axis]

@@ -25,11 +25,12 @@
    caml/fail.h or caml/threads.h: it cannot raise or touch the runtime lock
    except through the engine, exactly like every other kernel-family file.
 
-   Packed int4/uint4 move like every other dtype, an element being a nibble:
-   copy, pad and cat through the packed copy, gather, scatter's `Set and unfold
-   through the element move below, serially wherever two elements of one byte
-   could otherwise be written by two workers. Only fold and scatter's `Add,
-   `Max and `Min, which compute, refuse them. */
+   The packed dtypes (int4, uint4, bit) move like every other dtype, an
+   element being 4 bits or 1: copy, pad, cat and gather through the sub-byte
+   family's writer (nx_c_packed.h), which gives each worker whole words of the
+   destination, and scatter's `Set and unfold through the element move below,
+   on one worker. Only fold and scatter's `Add, `Max and `Min, which compute,
+   refuse them. */
 
 #include <string.h>
 
@@ -37,6 +38,7 @@
 #include <caml/mlvalues.h>
 
 #include "nx_c_engine.h"
+#include "nx_c_packed.h"
 
 /* Spatial-dimension bound for unfold/fold stack arrays. A tensor's total rank
    is already capped at NX_C_MAX_NDIM, and leading_ndim + K <= ndim, so K can
@@ -139,28 +141,17 @@ static void nx_c_move_dispatch(nx_c_cost_class cls, int64_t total, int64_t run_l
    the engine already handles. Dispatch is on the output dtype (== input
    dtype). */
 
-/* Element [i] of packed data: two elements a byte, the first in the low
-   nibble. */
-static inline uint8_t nx_c_nibble_get(const void *p, int64_t i) {
-  uint8_t b = ((const uint8_t *)p)[i >> 1];
-  return (i & 1) ? (uint8_t)(b >> 4) : (uint8_t)(b & 0x0f);
-}
-
-static inline void nx_c_nibble_set(void *p, int64_t i, uint8_t v) {
-  uint8_t *b = (uint8_t *)p + (i >> 1);
-  *b = (i & 1) ? (uint8_t)((*b & 0x0f) | (v << 4)) : (uint8_t)((*b & 0xf0) | v);
-}
-
 /* Element [si] of [src] to element [di] of [dst], and zero into element [di],
    for the index-dependent movers. [esize] is 0 for a packed dtype, whose
-   elements are nibbles (nx_c_elem_size). A move of a fixed width is one load
-   and one store, where a width only known at run time calls memcpy. */
+   elements are [bits] wide (nx_c_elem_size, nx_c_packed_bits). A move of a
+   fixed width is one load and one store, where a width only known at run time
+   calls memcpy. */
 static inline void nx_c_elem_move(void *dst, int64_t di, const void *src,
-                                  int64_t si, int64_t esize) {
+                                  int64_t si, int64_t esize, int bits) {
   char *d = (char *)dst + di * esize;
   const char *s = (const char *)src + si * esize;
   switch (esize) {
-  case 0: nx_c_nibble_set(dst, di, nx_c_nibble_get(src, si)); break;
+  case 0: nx_c_packed_set(dst, di, bits, nx_c_packed_get(src, si, bits)); break;
   case 1: memcpy(d, s, 1); break;
   case 2: memcpy(d, s, 2); break;
   case 4: memcpy(d, s, 4); break;
@@ -169,73 +160,18 @@ static inline void nx_c_elem_move(void *dst, int64_t di, const void *src,
   }
 }
 
-static inline void nx_c_elem_zero(void *dst, int64_t di, int64_t esize) {
+static inline void nx_c_elem_zero(void *dst, int64_t di, int64_t esize,
+                                  int bits) {
   if (esize == 0)
-    nx_c_nibble_set(dst, di, 0);
+    nx_c_packed_set(dst, di, bits, 0);
   else
     memset((char *)dst + di * esize, 0, (size_t)esize);
-}
-
-typedef struct {
-  const nx_c_ndarray *out;
-  const nx_c_ndarray *in;
-} nx_c_copy_packed_ctx;
-
-static void nx_c_copy_packed_body(int64_t lo, int64_t hi, int worker,
-                                  void *vctx) {
-  (void)worker;
-  const nx_c_copy_packed_ctx *c = vctx;
-  const nx_c_ndarray *out = c->out, *in = c->in;
-  int64_t coord[NX_C_MAX_NDIM];
-  for (int64_t it = lo; it < hi; it++) {
-    nx_c_unravel(it, out->ndim, out->shape, coord);
-    nx_c_elem_move(out->data,
-                   out->offset + nx_c_dot(out->ndim, coord, out->strides),
-                   in->data, in->offset + nx_c_dot(in->ndim, coord, in->strides),
-                   0);
-  }
-}
-
-/* Packed copy of [in] into [out], of one shape. When both are contiguous from
-   offset 0, whole bytes go through the u8 identity kernel and an odd count's
-   last element alone is written as a nibble, so the other nibble of its byte
-   is kept. Any other layout (a transpose, a strided or offset view, a
-   broadcast input, a window of a larger destination) moves nibble by nibble
-   on one worker, since two elements of one byte must not be written by two. */
-static nx_c_status nx_c_copy_packed(const nx_c_ndarray *out,
-                                    const nx_c_ndarray *in) {
-  if (out->ndim != in->ndim) return NX_C_ERR_RANK_MISMATCH;
-  for (int d = 0; d < out->ndim; d++)
-    if (out->shape[d] != in->shape[d]) return NX_C_ERR_SHAPE;
-  int64_t total = nx_c_prod(out->ndim, out->shape);
-  if (total == 0) return NX_C_OK;
-
-  if (nx_c_is_contiguous_off0(out) && nx_c_is_contiguous_off0(in)) {
-    int64_t bytes = total / 2;
-    if (bytes > 0) {
-      nx_c_ndarray bout = *out, bin = *in;
-      bout.ndim = bin.ndim = 1;
-      bout.shape[0] = bin.shape[0] = bytes;
-      bout.strides[0] = bin.strides[0] = 1;
-      int64_t e2[2] = {1, 1};
-      nx_c_ndarray ops[2] = {bout, bin};
-      nx_c_status s = nx_c_map_run(&nx_c_copy_table, NX_C_DTYPE_u8, 1, ops, e2,
-                                   NX_C_COST_BANDWIDTH, NULL);
-      if (s != NX_C_OK) return s;
-    }
-    if (total & 1) nx_c_elem_move(out->data, total - 1, in->data, total - 1, 0);
-    return NX_C_OK;
-  }
-
-  nx_c_copy_packed_ctx c = {out, in};
-  nx_c_parallel_for(1, total, (total + 1) / 2, nx_c_copy_packed_body, &c, NULL);
-  return NX_C_OK;
 }
 
 /* [in] into [out] through the identity copy, packed or not. */
 static nx_c_status nx_c_copy_into(const nx_c_ndarray *out,
                                   const nx_c_ndarray *in, nx_c_dtype dt) {
-  if (nx_c_dtype_is_packed(dt)) return nx_c_copy_packed(out, in);
+  if (nx_c_dtype_is_packed(dt)) return nx_c_packed_copy(out, in, dt);
   int64_t esize = nx_c_elem_size(dt);
   int64_t e2[2] = {esize, esize};
   nx_c_ndarray ops[2] = {*out, *in};
@@ -250,7 +186,7 @@ CAMLprim value caml_nx_c_copy(value vout, value vin) {
     nx_c_ndarray out, in;
     nx_c_status s = nx_c_ndarray_of_value(vout, &out);
     if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
-    if (s == NX_C_OK) s = nx_c_copy_packed(&out, &in);
+    if (s == NX_C_OK) s = nx_c_packed_copy(&out, &in, dt);
     if (s != NX_C_OK) nx_c_raise("copy", s);
   } else {
     value vals[2] = {vout, vin};
@@ -366,7 +302,7 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
    zero: the transpose of scatter's dropped write, and what compiled code
    computes. All-zero bytes are zero in every dtype this op accepts. Reads are
    disjoint across outputs, so the copy parallelizes freely over output
-   elements, a packed output's on one worker. */
+   elements, and a packed output over the words nx_c_packed_gather writes. */
 
 typedef struct {
   const nx_c_ndarray *data;
@@ -423,10 +359,10 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
                                                    it * idx->strides[0]];
       int64_t out_off = out->offset + it * out->strides[0];
       if (index < 0 || index >= axis_len)
-        nx_c_elem_zero(out->data, out_off, esize);
+        nx_c_elem_zero(out->data, out_off, esize, 0);
       else
         nx_c_elem_move(out->data, out_off, data->data,
-                       data->offset + index * data->strides[0], esize);
+                       data->offset + index * data->strides[0], esize, 0);
     }
     return;
   }
@@ -438,12 +374,12 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
                                         idx_off * (int64_t)sizeof(int64_t));
     int64_t out_off = out->offset + nx_c_dot(nd, coord, out->strides);
     if (index < 0 || index >= axis_len) {
-      nx_c_elem_zero(out->data, out_off, esize);
+      nx_c_elem_zero(out->data, out_off, esize, 0);
       continue;
     }
     for (int d = 0; d < nd; d++) dcoord[d] = (d == axis) ? index : coord[d];
     int64_t data_off = data->offset + nx_c_dot(nd, dcoord, data->strides);
-    nx_c_elem_move(out->data, out_off, data->data, data_off, esize);
+    nx_c_elem_move(out->data, out_off, data->data, data_off, esize, 0);
   }
 }
 
@@ -497,11 +433,7 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
   int64_t total = nx_c_prod(out->ndim, out->shape);
   if (total == 0) return NX_C_OK;
 
-  if (esize == 0) {
-    /* Packed: two outputs of one byte stay on one worker. */
-    nx_c_gather_ctx g = {data, indices, out, axis, esize};
-    nx_c_parallel_for(1, total, total, nx_c_gather_body, &g, NULL);
-  } else if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
+  if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
       data->shape[1] == out->shape[1] &&
       (data->shape[1] == 1 || data->strides[1] == 1) &&
       nx_c_is_contiguous_off0(out)) {
@@ -527,7 +459,11 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vindices, &indices);
   if (s != NX_C_OK) nx_c_raise("gather", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  s = nx_c_gather_run(&data, &indices, &out, Int_val(vaxis), nx_c_elem_size(dt));
+  if (nx_c_dtype_is_packed(dt))
+    s = nx_c_packed_gather(&out, &data, &indices, Int_val(vaxis), dt);
+  else
+    s = nx_c_gather_run(&data, &indices, &out, Int_val(vaxis),
+                        nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_status("gather", s);
   CAMLreturn(Val_unit);
 }
@@ -670,6 +606,7 @@ typedef struct {
   int axis;
   int64_t esize;
   bool int_add; /* `Add of integers, which wrap in their storage width */
+  int bits;     /* a packed dtype's, when esize is 0 */
 } nx_c_scatter_ctx;
 
 /* `Set along one axis of elements of 1, 2, 4 or 8 bytes, in that unsigned
@@ -784,7 +721,8 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     } else if (sc->combine)
       sc->combine(o, u);
     else
-      nx_c_elem_move(out->data, out_off, updates->data, upd_off, esize);
+      nx_c_elem_move(out->data, out_off, updates->data, upd_off, esize,
+                     sc->bits);
   }
 }
 
@@ -822,7 +760,8 @@ static nx_c_status nx_c_scatter_run(const nx_c_ndarray *out,
   if (total == 0) return NX_C_OK;
   nx_c_scatter_ctx sc = {out,  indices, updates, combine,
                          NULL, NULL,    NULL,    axis,
-                         esize, mode == 1 && nx_c_dtype_is_int(dt)};
+                         esize, mode == 1 && nx_c_dtype_is_int(dt),
+                         nx_c_packed_bits(dt)};
   /* A narrow float sum keeps 5 bytes of scratch per position of out. With
      distinct positions each sum has one update, which the per-update add
      already rounds once. out is C-contiguous from its first element, so a
@@ -1062,6 +1001,7 @@ typedef struct {
   const nx_c_window *w;
   const nx_c_ndarray *in;  /* (leading..., spatial...) */
   const nx_c_ndarray *out; /* (leading..., kernel_prod, L) */
+  int bits;                /* a packed dtype's, when w->esize is 0 */
 } nx_c_unfold_ctx;
 
 /* Windows [win_lo, win_hi) of the output row selected by kernel tap kf, within
@@ -1307,7 +1247,7 @@ static void nx_c_fold_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 }
 
 /* Unfold of a packed dtype, element by element on one worker: output (lead,
-   kf, window) is the input nibble the tap reads, or zero in the pad. */
+   kf, window) is the input element the tap reads, or zero in the pad. */
 static void nx_c_unfold_packed_body(int64_t lo, int64_t hi, int worker,
                                     void *vctx) {
   (void)worker;
@@ -1333,9 +1273,9 @@ static void nx_c_unfold_packed_body(int64_t lo, int64_t hi, int worker,
     int64_t dst = out->offset + nx_c_dot(ld, lead_coord, out->strides) +
                   kf * out->strides[ld] + l * out->strides[ld + 1];
     if (inside)
-      nx_c_elem_move(out->data, dst, in->data, src, 0);
+      nx_c_elem_move(out->data, dst, in->data, src, 0, u->bits);
     else
-      nx_c_elem_zero(out->data, dst, 0);
+      nx_c_elem_zero(out->data, dst, 0, u->bits);
   }
 }
 
@@ -1373,7 +1313,7 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
   if (!nx_c_window_prod(out.ndim, out.shape, &total))
     nx_c_raise_invalid("unfold", NX_C_ERR_WINDOW);
   if (total > 0) {
-    nx_c_unfold_ctx u = {&w, &in, &out};
+    nx_c_unfold_ctx u = {&w, &in, &out, nx_c_packed_bits(dt)};
     if (w.esize == 0) {
       nx_c_parallel_for(1, total, total, nx_c_unfold_packed_body, &u, NULL);
     } else {

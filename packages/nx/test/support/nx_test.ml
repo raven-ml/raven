@@ -1192,14 +1192,21 @@ module Runtimes = struct
 
   let host x = Nx.place Nx.Placement.host x
 
-  (* Values of the 4-bit dtypes, which pack two to a byte: they compare by
-     value, since the unused half of an odd last byte is no element. *)
-  let nibbles =
+  (* Values of the dtypes narrower than a byte, 4-bit integers two to a byte and
+     bits eight: they compare by value, since the bits of a last byte past the
+     last element belong to no element. *)
+  let narrow =
     let pp = Format.pp_print_int in
     let nibbles name dtype lo hi =
       case name dtype (viewed ~pp dtype (Gen.int_range lo hi)) (tensor int)
     in
-    [ nibbles "int4" Nx.int4 (-8) 7; nibbles "uint4" Nx.uint4 0 15 ]
+    [
+      nibbles "int4" Nx.int4 (-8) 7;
+      nibbles "uint4" Nx.uint4 0 15;
+      case "bit" Nx.bit
+        (viewed ~pp:Format.pp_print_bool Nx.bit Gen.bool)
+        (tensor Windtrap.bool);
+    ]
 
   (* Each device alone, a copy on all, and a split along each axis that divides
      among them. *)
@@ -1276,7 +1283,7 @@ module Runtimes = struct
         in
         (* A value on the disk is borrowed from its file's pages by devices
            whose memory the host addresses, which receive no byte, unless a
-           window of 4-bit elements starts inside a byte. *)
+           window of elements narrower than a byte starts inside a byte. *)
         let borrows = List.for_all Nx_device.shares_host_memory ms in
         let round_trip ~disk (Case c) =
           prop
@@ -1290,7 +1297,7 @@ module Runtimes = struct
               equal Devices.placement p (Nx.placement y);
               let windows = List.map (window_bytes p x) ds in
               (match c.dtype with
-              | (Int4 | UInt4) when disk && borrows ->
+              | (Int4 | UInt4 | Bit) when disk && borrows ->
                   is_true ~msg:"bytes received: none, or the windows"
                     (List.for_all (( = ) 0) bytes || bytes = windows)
               | _ when disk && borrows ->
@@ -1299,7 +1306,7 @@ module Runtimes = struct
                     bytes
               | _ -> equal ~msg:"bytes received" (list int) windows bytes);
               match c.dtype with
-              | Int4 | UInt4 -> equal c.values x (host y)
+              | Int4 | UInt4 | Bit -> equal c.values x (host y)
               | _ -> equal packed (Nx.P x) (Nx.P (host y)))
         in
         let ops =
@@ -1364,9 +1371,9 @@ module Runtimes = struct
               ]
         in
         [
-          group "placing" (List.map (round_trip ~disk:false) (every @ nibbles));
+          group "placing" (List.map (round_trip ~disk:false) (every @ narrow));
           group "placing from the disk"
-            (List.map (round_trip ~disk:true) (every @ nibbles));
+            (List.map (round_trip ~disk:true) (every @ narrow));
           test
             "a placement the runtime cannot allocate raises Out_of_memory with \
              the device and its bytes" (fun () ->

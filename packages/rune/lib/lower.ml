@@ -30,7 +30,7 @@ let dtype : type a b. (a, b) Nx_dtype.t -> Dtype.t option = function
   | Int64 -> Some Int64
   | UInt64 -> Some Uint64
   | Bool -> Some Bool
-  | Int4 | UInt4 | Complex64 | Complex128 -> None
+  | Int4 | UInt4 | Bit | Complex64 | Complex128 -> None
 
 (* [const dt v] is the element [v] of [dt] as a constant. *)
 let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
@@ -53,6 +53,7 @@ let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
   | Int64 -> `Int (Bigint.of_int64 v)
   | UInt64 -> `Int (Bigint.of_int64_unsigned v)
   | Bool -> `Bool v
+  | Bit -> `Bool v
   | Complex64 | Complex128 -> invalid_arg "a complex constant"
 
 (* Views over storage

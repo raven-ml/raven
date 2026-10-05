@@ -229,8 +229,8 @@ let routing : type r. r Op.t -> routing =
   | Convert (Bitcast, dt, x) ->
       (* A widening reads each run of the last axis as one element, so the axis
          must be whole on each device. *)
-      if Nx_dtype.itemsize dt > Nx_dtype.itemsize (Value.dtype x) then
-        along_axes [ rank (Value.P x) - 1 ]
+      let bits dt = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
+      if bits dt > bits (Value.dtype x) then along_axes [ rank (Value.P x) - 1 ]
       else computes Elementwise
   | Reduce (_, axes, _) -> computes (Reduce { axes; keepdims = false })
   | Arg_reduce (_, axis, _) ->

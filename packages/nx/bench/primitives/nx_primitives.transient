@@ -42,6 +42,13 @@ ranges/max-float64-4e4-w1e3	130989970	3274.7
 bool/and-1e7	0	0.0
 bool/count-1e7	80000000	8.0
 bool/take-sorted-1e7	0	0.0
+bit/pack-1e7	0	0.0
+bit/unpack-1e7	0	0.0
+bit/count-1e7	20002064	2.0
+bit/and-1e7	0	0.0
+bit/any-1e7	30000001	3.0
+bit/take-sorted-1e7	0	0.0
+bit/concat-odd-1e7	0	0.0
 bits/of_bool-1e7	40000017	4.0
 bits/to_bool-1e7	30000017	3.0
 bits/count-1e7	20002116	2.0

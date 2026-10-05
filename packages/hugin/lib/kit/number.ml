@@ -46,7 +46,7 @@ let format (type a b) (dtype : (a, b) Nx.dtype) : Decimal.format option =
   | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
   | UInt64 ->
       None
-  | Complex64 | Complex128 | Bool ->
+  | Complex64 | Complex128 | Bool | Bit ->
       invalid_arg "Number.decimals: not a real dtype"
 
 let decimals dtype x =

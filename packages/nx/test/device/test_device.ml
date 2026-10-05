@@ -722,7 +722,7 @@ let budgets =
 (* Every storage format. *)
 let formats =
   Gen.of_list ~pp:pp_format
-    (S.[ Bool; UInt8; Int8; Int4; UInt4; Int16; UInt16; Int32; UInt32 ]
+    (S.[ Bool; Bit; UInt8; Int8; Int4; UInt4; Int16; UInt16; Int32; UInt32 ]
     @ S.[ Int64; UInt64; Float8_e4m3; Float8_e5m2; Float8_e4m3fnuz ]
     @ S.[ Float8_e5m2fnuz; Float16; BFloat16; Float32; Float64 ]
     @ S.[ Complex64; Complex128 ])
@@ -749,6 +749,8 @@ let windows =
           (n, UInt8, 0);
           (0, Int4, (2 * n) - 1);
           (1, UInt4, 1);
+          (0, Bit, (8 * n) - 3);
+          (1, Bit, 9);
           (2, Int16, 1);
           (1, Int16, 1);
           (4, Float32, (n - 4) / 4);

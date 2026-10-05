@@ -1143,7 +1143,7 @@ let scalar_of : type a b. (a, b) Nx.dtype -> a scalar option = function
   | Nx.Float16 -> Some (Scalar (Type.float16, Kind.float, Option.some))
   | Nx.Float32 -> Some (Scalar (Type.float32, Kind.float, Option.some))
   | Nx.Float64 -> Some (Scalar (Type.float64, Kind.float, Option.some))
-  | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 | Nx.Int4 | Nx.UInt4
+  | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 | Nx.Int4 | Nx.UInt4 | Nx.Bit
   | Nx.Complex64 | Nx.Complex128 ->
       None
 

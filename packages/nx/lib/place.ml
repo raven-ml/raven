@@ -42,7 +42,9 @@ let iter_rows box ~into ~at f =
    extents [box] in C order, into [dst], the elements of shape [into] in C
    order, with the box's corner at [at]. Rows are copied whole, as integer words
    of the element's width: a float copied through an OCaml float would quiet a
-   signalling NaN. 4-bit elements are copied as their bits, one at a time. *)
+   signalling NaN. Elements narrower than a byte are packed: a row that starts
+   and ends on bytes of both buffers is copied as its bytes, any other one
+   element at a time. *)
 let blit_box src box dst ~into ~at =
   let box, into, at =
     if Array.length box = 0 then ([| 1 |], [| 1 |], [| 0 |]) else (box, into, at)
@@ -63,19 +65,31 @@ let blit_box src box dst ~into ~at =
           (Bigarray.Array1.sub s src_off run)
           (Bigarray.Array1.sub d dst_off run))
   in
-  match Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype src) with
-  | 4 ->
-      let bits b =
-        Nx_device.Buffer.view b ~offset:0 Nx_dtype.Scalar.UInt4
-          (Nx_device.Buffer.length b)
-      in
-      let get = Elements.get Nx_dtype.uint4 (bits src)
-      and set = Elements.set Nx_dtype.uint4 (bits dst) in
-      let run = box.(Array.length box - 1) in
-      iter_rows box ~into ~at (fun src_off dst_off ->
+  let packed (type c d) (dt : (c, d) Nx_dtype.t) bits =
+    let as_dt b =
+      Nx_device.Buffer.view b ~offset:0
+        (Nx_dtype.Scalar.of_dtype dt)
+        (Nx_device.Buffer.length b)
+    in
+    let get = Elements.get dt (as_dt src)
+    and set = Elements.set dt (as_dt dst) in
+    let s = Nx_device.Buffer.bigarray Bigarray.int8_unsigned src
+    and d = Nx_device.Buffer.bigarray Bigarray.int8_unsigned dst in
+    let run = box.(Array.length box - 1) in
+    let on_bytes i = i * bits mod 8 = 0 in
+    iter_rows box ~into ~at (fun src_off dst_off ->
+        if on_bytes src_off && on_bytes dst_off && on_bytes run then
+          Bigarray.Array1.blit
+            (Bigarray.Array1.sub s (src_off * bits / 8) (run * bits / 8))
+            (Bigarray.Array1.sub d (dst_off * bits / 8) (run * bits / 8))
+        else
           for i = 0 to run - 1 do
             set (dst_off + i) (get (src_off + i))
           done)
+  in
+  match Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype src) with
+  | 1 -> packed Nx_dtype.bit 1
+  | 4 -> packed Nx_dtype.uint4 4
   | 8 -> words Bigarray.int8_unsigned 1
   | 16 -> words Bigarray.int16_unsigned 1
   | 32 -> words Bigarray.int32 1
@@ -131,17 +145,17 @@ let assemble (type a b) (r : (a, b) resident) window
 
 module Cpu = (val Nx_backend.kernels Nx_cpu.backend)
 
-(* The elements of view [v] of [b], of [dtype]. Int4 storage is read whole: its
-   elements may not start on a byte. A strided view is gathered by nx.cpu. *)
+(* The elements of view [v] of [b], of [dtype]. Storage of elements narrower
+   than a byte is read whole: its elements may not start on a byte. A strided
+   view is gathered by nx.cpu. *)
 let read_view dtype b v =
   let s = Nx_device.Buffer.dtype b in
   let n = View.numel v in
   if n = 0 then Nx_device.Buffer.create Nx_device.host s 0
   else
     let lo, hi =
-      match s with
-      | Nx_dtype.Scalar.Int4 | UInt4 -> (0, Nx_device.Buffer.length b)
-      | _ -> View.extent v
+      if Nx_dtype.Scalar.bitsize s < 8 then (0, Nx_device.Buffer.length b)
+      else View.extent v
     in
     let span = Nx_device.Buffer.create Nx_device.host s (hi - lo) in
     Nx_device.Buffer.copy

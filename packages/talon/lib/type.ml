@@ -150,7 +150,7 @@ let rec has_float : type a. a t -> bool = function
       | Complex64 | Complex128 ->
           true
       | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
-      | UInt64 | Bool ->
+      | UInt64 | Bool | Bit ->
           false)
   | Ext { storage; _ } -> has_float storage
   | _ -> false
@@ -383,6 +383,7 @@ let compare_element : type a b. (a, b) Nx.dtype -> a -> a -> int = function
   | Complex64 -> compare_complex
   | Complex128 -> compare_complex
   | Bool -> Bool.compare
+  | Bit -> Bool.compare
 
 let compare_arrays cmp a0 a1 =
   let n0 = Array.length a0 and n1 = Array.length a1 in

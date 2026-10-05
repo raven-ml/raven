@@ -110,14 +110,15 @@ static inline void nx_c_aligned_free(void *p) {
    The one place a dtype is described. Adding a dtype is exactly one new row.
 
    ONE table in Nx_dtype.t declaration order, so the generated enum values
-   equal its constructor indices (0=Float16 … 18=Bool) and NX_C_DTYPE_COUNT
+   equal its constructor indices (0=Float16 … 19=Bit) and NX_C_DTYPE_COUNT
    falls out as the trailing enumerator — the correspondence is pinned by a
    _Static_assert below and each row's facts by the binding's dtype test, never
    by hand. Two iterators project the single table: NX_C_FOR_EACH_DTYPE walks
-   all 19 rows (enum, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
+   all 20 rows (enum, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
    compute rows (load/store, float->int, kernel dispatch tables) — packed rows
    expand to nothing via the `sel` selector, so no compute code is ever
-   emitted for int4/uint4 and no second list exists to drift.
+   emitted for int4/uint4/bit and no second list exists to drift. The packed
+   rows' kernels are the sub-byte family (nx_c_packed.c).
 
    Row: X(A, suffix, storage, compute, load, store, cat, sel)
      A        threaded generator (supplied by the iterator, not by callers).
@@ -202,7 +203,8 @@ static inline void nx_c_aligned_free(void *p) {
   X(A, c64, nx_c_complex64, nx_c_complex64, NX_C_ID, NX_C_ID,                      \
     NX_C_CAT_COMPLEX, NX_C_COMPUTE)                                              \
   X(A, bool_, uint8_t, uint8_t, NX_C_BOOL_LD, NX_C_BOOL_ST,                      \
-    NX_C_CAT_BOOL, NX_C_COMPUTE)
+    NX_C_CAT_BOOL, NX_C_COMPUTE)                                                 \
+  X(A, bit, uint8_t, void, NX_C_ID, NX_C_ID, NX_C_CAT_BOOL, NX_C_PACKED)
 
 /* Full iteration: G receives all seven columns (including cat and sel). */
 #define NX_C_FULL(G, sfx, storage, compute, ld, st, cat, sel)                  \
@@ -239,7 +241,8 @@ _Static_assert(NX_C_DTYPE_f16 == 0 && NX_C_DTYPE_f32 == 1 &&
                    NX_C_DTYPE_i32 == 12 && NX_C_DTYPE_u32 == 13 &&
                    NX_C_DTYPE_i64 == 14 && NX_C_DTYPE_u64 == 15 &&
                    NX_C_DTYPE_c32 == 16 && NX_C_DTYPE_c64 == 17 &&
-                   NX_C_DTYPE_bool_ == 18 && NX_C_DTYPE_COUNT == 19,
+                   NX_C_DTYPE_bool_ == 18 && NX_C_DTYPE_bit == 19 &&
+                   NX_C_DTYPE_COUNT == 20,
                "nx_c_dtype must equal Nx_dtype.t's constructor index");
 
 /* ── Per-dtype load/store and saturating float->int (compute dtypes only) ──
@@ -402,10 +405,25 @@ static inline bool nx_c_compute_isnan(nx_c_dtype dt, const void *p) {
   }
 }
 
-/* Byte extent of `count` contiguous elements — the one place packed nibble
-   arithmetic lives (two elements per byte, rounded up). */
+/* Bits of one element of a packed dtype: 4 for int4 and uint4, 1 for bit;
+   0 for every other dtype. */
+static inline int nx_c_packed_bits(nx_c_dtype dt) {
+  switch (dt) {
+  case NX_C_DTYPE_i4:
+  case NX_C_DTYPE_u4:
+    return 4;
+  case NX_C_DTYPE_bit:
+    return 1;
+  default:
+    return 0;
+  }
+}
+
+/* Byte extent of `count` contiguous elements: (bits * count + 7) / 8 for a
+   packed dtype. */
 static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
-  if (nx_c_dtype_is_packed(dt)) return (count + 1) / 2;
+  if (nx_c_dtype_is_packed(dt))
+    return (count * nx_c_packed_bits(dt) + 7) / 8;
   return count * nx_c_elem_size(dt);
 }
 
@@ -616,13 +634,14 @@ NX_C_NORETURN void nx_c_raise_invalid(const char *op, nx_c_status status);
    get the byte steps the kernel ABI wants — that conversion happens in exactly
    one place. Entries [ndim, NX_C_MAX_NDIM) are unspecified; consumers read only
    [0, ndim). `data` is the buffer's first byte; the first live element is at
-   data + offset*elem_size. */
+   data + offset*elem_size. `length` is the buffer's number of elements. */
 typedef struct {
   void *data;
   int ndim;
   int64_t shape[NX_C_MAX_NDIM];
   int64_t strides[NX_C_MAX_NDIM];
   int64_t offset;
+  int64_t length;
 } nx_c_ndarray;
 
 /* Extract operand metadata from an FFI record value into `out`.
@@ -645,6 +664,7 @@ static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
   if (ndim > NX_C_MAX_NDIM) return NX_C_ERR_NDIM;
   if ((int)Wosize_val(v_strides) != ndim) return NX_C_ERR_RANK_MISMATCH;
   out->data = nx_device_buffer_host(v_buffer);
+  out->length = nx_device_buffer_length(v_buffer);
   out->ndim = ndim;
   out->offset = Long_val(Field(v_view, NX_C_FFI_VIEW_OFFSET));
   for (int i = 0; i < ndim; i++) {

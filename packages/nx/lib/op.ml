@@ -373,7 +373,8 @@ let pad_shape padding s =
    [dst] consumes the last axis, of [k], and a [k] times narrower one adds a
    last axis of [k]. *)
 let bitcast_shape src dst shape =
-  let w = Nx_dtype.itemsize src and w' = Nx_dtype.itemsize dst in
+  let bits dt = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
+  let w = bits src and w' = bits dst in
   if w' > w then Array.sub shape 0 (Array.length shape - 1)
   else if w' < w then Array.append shape [| w / w' |]
   else shape

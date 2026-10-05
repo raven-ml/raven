@@ -556,7 +556,7 @@ let cells : type a b. string -> (a, b) Nx.t -> Type.any =
     | Float16 -> Any Type.float16
     | Float32 -> Any Type.float32
     | Float64 -> Any Type.float64
-    | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Complex64
+    | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Bit | Complex64
     | Complex128 ->
         err "Column.%s: no scalar type stores %a; make it 2-D" fn Nx_dtype.pp dt
 

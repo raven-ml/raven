@@ -25,6 +25,7 @@
 #include <caml/mlvalues.h>
 
 #include "nx_c_engine.h"
+#include "nx_c_packed.h"
 
 /* ── Fast/strided contiguous fast path ─────────────────────────────────────
 
@@ -1600,6 +1601,216 @@ static nx_c_status nx_c_cast_packed(nx_c_dtype src, nx_c_dtype dst,
   return NX_C_OK;
 }
 
+/* bit, through bool. A compute element becomes a bit as the cast to bool
+   converts it, and a bit becomes a compute element as its bool does, so a cast
+   through bit is a cast through bool. Blocks of 64 elements in C order go
+   through 64 bytes of bool on the stack: the cast table's kernels convert
+   them, and the pack and unpack of nx_c_packed.c move them to and from bits. */
+
+/* A compute operand read or written by its elements in C order, as
+   nx_c_packed_src reads a packed one: its view with size-1 axes dropped and
+   runs merged. */
+typedef struct {
+  char *base;
+  int64_t esize;
+  int ndim; /* >= 1 */
+  int64_t offset;
+  int64_t shape[NX_C_MAX_NDIM];
+  int64_t strides[NX_C_MAX_NDIM];
+} nx_c_cast_side;
+
+static void nx_c_cast_side_init(nx_c_cast_side *c, const nx_c_ndarray *a,
+                                int64_t esize) {
+  c->base = (char *)a->data;
+  c->esize = esize;
+  c->offset = a->offset;
+  int nd = 0;
+  for (int d = 0; d < a->ndim; d++) {
+    if (a->shape[d] == 1) continue;
+    if (nd > 0 && c->strides[nd - 1] == a->strides[d] * a->shape[d]) {
+      c->shape[nd - 1] *= a->shape[d];
+      c->strides[nd - 1] = a->strides[d];
+      continue;
+    }
+    c->shape[nd] = a->shape[d];
+    c->strides[nd] = a->strides[d];
+    nd++;
+  }
+  if (nd == 0) {
+    c->shape[0] = 1;
+    c->strides[0] = 1;
+    nd = 1;
+  }
+  c->ndim = nd;
+}
+
+/* Calls f on the runs of elements [e, e + k) of c in C order: the first
+   element's address, the byte step and the run's length, and the run's place
+   among the k. */
+typedef void nx_c_cast_piece(const void *ctx, char *p, int64_t step,
+                             int64_t n, int64_t j);
+
+static void nx_c_cast_runs(const nx_c_cast_side *c, int64_t e, int64_t k,
+                           nx_c_cast_piece *f, const void *ctx) {
+  int last = c->ndim - 1;
+  int64_t n_in = c->shape[last], s_in = c->strides[last];
+  for (int64_t j = 0; j < k;) {
+    int64_t col = (e + j) % n_in, r = (e + j) / n_in;
+    int64_t pos = c->offset + col * s_in;
+    for (int d = last - 1; d >= 0; d--) {
+      pos += (r % c->shape[d]) * c->strides[d];
+      r /= c->shape[d];
+    }
+    int64_t n = k - j;
+    if (n_in - col < n) n = n_in - col;
+    f(ctx, c->base + pos * c->esize, s_in * c->esize, n, j);
+    j += n;
+  }
+}
+
+typedef struct {
+  nx_c_cast_side in;
+  nx_c_map_loop *to_bool; /* NULL when in is bool */
+} nx_c_cast_pack_ctx;
+
+typedef struct {
+  const nx_c_cast_pack_ctx *c;
+  uint8_t *bytes;
+} nx_c_cast_pack_piece_ctx;
+
+static void nx_c_cast_pack_piece(const void *vctx, char *p, int64_t step,
+                                 int64_t n, int64_t j) {
+  const nx_c_cast_pack_piece_ctx *pc = vctx;
+  char *ptrs[2] = {(char *)pc->bytes + j, p};
+  int64_t steps[2] = {1, step};
+  if (pc->c->to_bool) {
+    pc->c->to_bool(ptrs, steps, n, NULL);
+    return;
+  }
+  for (int64_t i = 0; i < n; i++) pc->bytes[j + i] = p[i * step] != 0;
+}
+
+static uint64_t nx_c_cast_pack_fill(const void *vctx, int64_t e, int k) {
+  const nx_c_cast_pack_ctx *c = vctx;
+  const nx_c_cast_side *in = &c->in;
+  if (!c->to_bool && in->ndim == 1 && in->strides[0] == 1)
+    return nx_c_bit_pack((const uint8_t *)in->base + in->offset + e, k);
+  uint8_t bytes[64];
+  nx_c_cast_pack_piece_ctx pc = {c, bytes};
+  nx_c_cast_runs(in, e, k, nx_c_cast_pack_piece, &pc);
+  return nx_c_bit_pack(bytes, k);
+}
+
+/* Whole words packed from a bool operand that is one run, 64 bytes a word. */
+static void nx_c_cast_pack_words(const void *vctx, int64_t e, int64_t n,
+                                 uint8_t *dst) {
+  const nx_c_cast_pack_ctx *c = vctx;
+  const nx_c_cast_side *in = &c->in;
+  if (c->to_bool || in->ndim != 1 || in->strides[0] != 1) {
+    for (int64_t j = 0; j < n; j++)
+      nx_c_st64(dst + 8 * j, nx_c_cast_pack_fill(c, e + 64 * j, 64));
+    return;
+  }
+  const uint8_t *src = (const uint8_t *)in->base + in->offset + e;
+  for (int64_t j = 0; j < n; j++)
+    nx_c_st64(dst + 8 * j, nx_c_bit_pack(src + 64 * j, 64));
+}
+
+typedef struct {
+  nx_c_packed_src in;
+  nx_c_cast_side out;
+  nx_c_map_loop *from_bool; /* NULL when out is bool */
+} nx_c_cast_unpack_ctx;
+
+typedef struct {
+  const nx_c_cast_unpack_ctx *c;
+  uint8_t *bytes;
+} nx_c_cast_unpack_piece_ctx;
+
+static void nx_c_cast_unpack_piece(const void *vctx, char *p, int64_t step,
+                                   int64_t n, int64_t j) {
+  const nx_c_cast_unpack_piece_ctx *pc = vctx;
+  char *ptrs[2] = {p, (char *)pc->bytes + j};
+  int64_t steps[2] = {step, 1};
+  if (pc->c->from_bool) {
+    pc->c->from_bool(ptrs, steps, n, NULL);
+    return;
+  }
+  for (int64_t i = 0; i < n; i++) p[i * step] = (char)pc->bytes[j + i];
+}
+
+/* Blocks [lo, hi) of 64 elements of the destination. */
+static void nx_c_cast_unpack_body(int64_t lo, int64_t hi, int worker,
+                                  void *vctx) {
+  (void)worker;
+  const nx_c_cast_unpack_ctx *c = vctx;
+  const nx_c_cast_side *out = &c->out;
+  int64_t total = 1;
+  for (int d = 0; d < out->ndim; d++) total *= out->shape[d];
+  bool dense = out->ndim == 1 && out->strides[0] == 1;
+  /* A run of bits to a run of bools, a word to 64 bytes. */
+  if (dense && !c->from_bool && nx_c_packed_dense(&c->in)) {
+    uint8_t *dst = (uint8_t *)out->base + out->offset;
+    int64_t full = hi * 64 <= total ? hi : total / 64;
+    for (int64_t blk = lo; blk < full; blk++)
+      nx_c_bit_unpack(dst + 64 * blk,
+                      nx_c_bits_load(c->in.base, c->in.offset + 64 * blk, 64),
+                      64);
+    lo = full > lo ? full : lo;
+  }
+  uint8_t bytes[64];
+  for (int64_t blk = lo; blk < hi; blk++) {
+    int64_t e = blk * 64;
+    int k = total - e < 64 ? (int)(total - e) : 64;
+    uint64_t v = nx_c_packed_read(&c->in, e, k);
+    if (dense && !c->from_bool) {
+      nx_c_bit_unpack((uint8_t *)out->base + out->offset + e, v, k);
+      continue;
+    }
+    nx_c_bit_unpack(bytes, v, k);
+    nx_c_cast_unpack_piece_ctx pc = {c, bytes};
+    nx_c_cast_runs(out, e, k, nx_c_cast_unpack_piece, &pc);
+  }
+}
+
+static nx_c_status nx_c_cast_bit(nx_c_dtype src, nx_c_dtype dst,
+                                 const nx_c_ndarray *o,
+                                 const nx_c_ndarray *in) {
+  if (o->ndim != in->ndim) return NX_C_ERR_RANK_MISMATCH;
+  int64_t total = 1;
+  for (int d = 0; d < o->ndim; d++) {
+    if (o->shape[d] != in->shape[d]) return NX_C_ERR_SHAPE;
+    total *= o->shape[d];
+  }
+  if (dst == NX_C_DTYPE_bit) {
+    if (nx_c_dtype_is_packed(src)) return NX_C_ERR_PACKED;
+    nx_c_cast_pack_ctx c;
+    nx_c_cast_side_init(&c.in, in, nx_c_elem_size(src));
+    c.to_bool = src == NX_C_DTYPE_bool_
+                    ? NULL
+                    : nx_c_cast_tables[src].fn[NX_C_DTYPE_bool_];
+    int64_t bytes = total * nx_c_elem_size(src) + (total + 7) / 8;
+    nx_c_packed_filler f = {nx_c_cast_pack_fill, nx_c_cast_pack_words, &c};
+    return nx_c_packed_write(o, 1, &f, bytes);
+  }
+  if (nx_c_dtype_is_packed(dst)) return NX_C_ERR_PACKED;
+  if (total == 0) return NX_C_OK;
+  for (int d = 0; d < o->ndim; d++)
+    if (o->strides[d] == 0 && o->shape[d] > 1) return NX_C_ERR_OUT_ALIASED;
+  nx_c_cast_unpack_ctx c;
+  nx_c_packed_src_init(&c.in, in, 1);
+  nx_c_cast_side_init(&c.out, o, nx_c_elem_size(dst));
+  c.from_bool = dst == NX_C_DTYPE_bool_
+                    ? NULL
+                    : nx_c_cast_tables[NX_C_DTYPE_bool_].fn[dst];
+  int64_t blocks = (total + 63) / 64;
+  int64_t bytes = total * nx_c_elem_size(dst) + (total + 7) / 8;
+  int nth = nx_c_threads_for(NX_C_COST_BANDWIDTH, total, 1, bytes);
+  if (nth > blocks) nth = (int)blocks;
+  nx_c_parallel_for(nth, blocks, bytes, nx_c_cast_unpack_body, &c, NULL);
+  return NX_C_OK;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    Family stubs — the one place this file touches the OCaml runtime
    ═════════════════════════════════════════════════════════════════════════ */
@@ -1636,13 +1847,38 @@ NX_C_MAP2_STUB(mul, "mul", nx_c_mul_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP2_STUB(idiv, "idiv", nx_c_idiv_table, NX_C_COST_COMPUTE)
 NX_C_MAP2_STUB(fdiv, "fdiv", nx_c_fdiv_table, NX_C_COST_COMPUTE)
 NX_C_MAP2_STUB(mod, "mod", nx_c_mod_table, NX_C_COST_COMPUTE)
-NX_C_MAP2_STUB(max, "max", nx_c_max_table, NX_C_COST_BANDWIDTH)
-NX_C_MAP2_STUB(min, "min", nx_c_min_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP2_STUB(pow, "pow", nx_c_pow_table, NX_C_COST_COMPUTE)
 NX_C_MAP2_STUB(atan2, "atan2", nx_c_atan2_table, NX_C_COST_COMPUTE)
-NX_C_MAP2_STUB(xor, "xor", nx_c_xor_table, NX_C_COST_BANDWIDTH)
-NX_C_MAP2_STUB(or, "or", nx_c_or_table, NX_C_COST_BANDWIDTH)
-NX_C_MAP2_STUB(and, "and", nx_c_and_table, NX_C_COST_BANDWIDTH)
+
+/* The logical operations take bit operands too, word by word: on bit, max is
+   or and min is and, as on bool. */
+static void nx_c_logic_run(const char *op, const nx_c_map_table *tbl,
+                           nx_c_bit_op bop, value vout, value va, value vb) {
+  if (nx_c_dtype_of_value(vout) != NX_C_DTYPE_bit) {
+    value vals[3] = {vout, va, vb};
+    nx_c_map_funnel(op, tbl, NX_C_COST_BANDWIDTH, 2, vals, NULL);
+    return;
+  }
+  nx_c_ndarray ops[3];
+  nx_c_status s;
+  if ((s = nx_c_ndarray_of_value(vout, &ops[0])) != NX_C_OK) nx_c_raise(op, s);
+  if ((s = nx_c_ndarray_of_value(va, &ops[1])) != NX_C_OK) nx_c_raise(op, s);
+  if ((s = nx_c_ndarray_of_value(vb, &ops[2])) != NX_C_OK) nx_c_raise(op, s);
+  s = nx_c_bit_logic(bop, &ops[0], &ops[1], &ops[2]);
+  if (s != NX_C_OK) nx_c_raise_status(op, s);
+}
+
+#define NX_C_LOGIC_STUB(cname, opname, table, bop)                              \
+  CAMLprim value caml_nx_c_##cname(value vout, value va, value vb) {            \
+    CAMLparam3(vout, va, vb);                                                  \
+    nx_c_logic_run((opname), &(table), (bop), vout, va, vb);                   \
+    CAMLreturn(Val_unit);                                                      \
+  }
+NX_C_LOGIC_STUB(max, "max", nx_c_max_table, NX_C_BIT_OR)
+NX_C_LOGIC_STUB(min, "min", nx_c_min_table, NX_C_BIT_AND)
+NX_C_LOGIC_STUB(xor, "xor", nx_c_xor_table, NX_C_BIT_XOR)
+NX_C_LOGIC_STUB(or, "or", nx_c_or_table, NX_C_BIT_OR)
+NX_C_LOGIC_STUB(and, "and", nx_c_and_table, NX_C_BIT_AND)
 NX_C_MAP2_STUB(shl, "shl", nx_c_shl_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP2_STUB(shr, "shr", nx_c_shr_table, NX_C_COST_BANDWIDTH)
 
@@ -1681,8 +1917,8 @@ NX_C_CMP_STUB(cmplt, "cmplt", nx_c_cmplt_table)
 NX_C_CMP_STUB(cmple, "cmple", nx_c_cmple_table)
 
 /* cast keys on the (src, dst) pair. Compute pairs run the pair matrix through
-   the map driver (dispatched on the dst dtype); anything touching int4/uint4
-   takes the serial nibble path. */
+   the map driver (dispatched on the dst dtype); a pair with bit goes through
+   bool, and anything else touching int4/uint4 takes the serial nibble path. */
 CAMLprim value caml_nx_c_cast(value vout, value va) {
   CAMLparam2(vout, va);
   nx_c_ndarray ops[2];
@@ -1691,7 +1927,9 @@ CAMLprim value caml_nx_c_cast(value vout, value va) {
   if ((s = nx_c_ndarray_of_value(va, &ops[1])) != NX_C_OK) nx_c_raise("cast", s);
   nx_c_dtype dst = nx_c_dtype_of_value(vout);
   nx_c_dtype src = nx_c_dtype_of_value(va);
-  if (nx_c_dtype_is_packed(src) || nx_c_dtype_is_packed(dst)) {
+  if (src == NX_C_DTYPE_bit || dst == NX_C_DTYPE_bit) {
+    s = nx_c_cast_bit(src, dst, &ops[0], &ops[1]);
+  } else if (nx_c_dtype_is_packed(src) || nx_c_dtype_is_packed(dst)) {
     s = nx_c_cast_packed(src, dst, &ops[0], &ops[1]);
   } else {
     int64_t elem[2] = {nx_c_elem_size(dst), nx_c_elem_size(src)};

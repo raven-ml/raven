@@ -580,7 +580,7 @@ module Column : sig
       [validity] marks the rows that hold a value; it defaults to every row.
 
       Raises [Invalid_argument] if [x] is a scalar, if [x] is 1-D of a dtype
-      that no scalar type stores ([bfloat16], the float8 and int4 dtypes,
+      that no scalar type stores ([bfloat16], the float8 and int4 dtypes, [bit],
       complex), or if [validity]'s length is not [x]'s rows. *)
 
   val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t

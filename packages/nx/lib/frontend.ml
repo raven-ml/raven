@@ -32,6 +32,7 @@ type uint64_elt = Nx_dtype.uint64_elt
 type complex32_elt = Nx_dtype.complex32_elt
 type complex64_elt = Nx_dtype.complex64_elt
 type bool_elt = Nx_dtype.bool_elt
+type bit_elt = Nx_dtype.bit_elt
 
 type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Float16 : (float, float16_elt) dtype
@@ -53,6 +54,7 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Complex64 : (Complex.t, complex32_elt) dtype
   | Complex128 : (Complex.t, complex64_elt) dtype
   | Bool : (bool, bool_elt) dtype
+  | Bit : (bool, bit_elt) dtype
 
 type float16_t = (float, float16_elt) t
 type float32_t = (float, float32_elt) t
@@ -68,6 +70,7 @@ type uint64_t = (int64, uint64_elt) t
 type complex64_t = (Complex.t, complex32_elt) t
 type complex128_t = (Complex.t, complex64_elt) t
 type bool_t = (bool, bool_elt) t
+type bit_t = (bool, bit_elt) t
 
 let float16 = Float16
 let float32 = Float32
@@ -88,6 +91,7 @@ let uint64 = UInt64
 let complex64 = Complex64
 let complex128 = Complex128
 let bool = Bool
+let bit = Bit
 
 type index =
   | I of int
@@ -116,7 +120,11 @@ let dim i x =
 let ndim x = View.ndim (Value.view x)
 let size x = View.numel (Value.view x)
 let numel x = size x
-let nbytes x = numel x * itemsize x
+
+let nbytes x =
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Value.dtype x))) in
+  ((numel x * bits) + 7) / 8
+
 let is_c_contiguous x = View.is_c_contiguous (Value.view x)
 
 (* ───── Internal Utilities ───── *)
@@ -329,16 +337,13 @@ let bitcast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
       (Nx_dtype.to_string dt) reason
   in
   let unfit (type e f) (d : (e, f) Nx_dtype.t) =
-    match d with
-    | Nx_dtype.Bool -> Some "bool holds only 0 and 1"
-    | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
-        Some "4-bit elements are packed in pairs"
-    | _ -> None
+    match d with Nx_dtype.Bool -> Some "bool holds only 0 and 1" | _ -> None
   in
   (match (unfit src, unfit dt) with
   | Some reason, _ | None, Some reason -> refuse reason
   | None, None -> ());
-  let w = Nx_dtype.itemsize src and w' = Nx_dtype.itemsize dt in
+  let bits d = Nx_dtype.Scalar.(bitsize (of_dtype d)) in
+  let w = bits src and w' = bits dt in
   (if w' > w then
      let k = w' / w and s = shape x in
      let r = Array.length s in
@@ -509,14 +514,22 @@ let truth x =
 let logical (type a b) op (a : (a, b) t) (b : (a, b) t) : (a, b) t =
   match dtype a with
   | Nx_dtype.Bool -> binop op a b
+  | Nx_dtype.Bit -> binop op a b
   | _ -> cast (dtype a) (binop op (truth a) (truth b))
 let logical_and a b = logical And a b
 let logical_or a b = logical Or a b
 let logical_xor a b = logical Xor a b
 
-let logical_not x =
-  cast (dtype x)
-    (cmpop Equal x (scalar_like x (Nx_dtype.zero (dtype x))))
+let bitwise_not x =
+  let dt = dtype x in
+  binop Xor x
+    (broadcast_to (shape x)
+       (B.full (Value.context x) dt [||] (Nx_dtype.minus_one dt)))
+
+let logical_not (type a b) (x : (a, b) t) : (a, b) t =
+  match dtype x with
+  | Nx_dtype.Bit -> bitwise_not x
+  | dt -> cast dt (cmpop Equal x (scalar_like x (Nx_dtype.zero dt)))
 
 let cmpeq a b = cmpop Equal a b
 let cmpne a b = cmpop Not_equal a b
@@ -540,13 +553,6 @@ let greater_equal_s a s = greater_equal a (scalar_like a s)
 (* ───── Element-wise Unary Operations ───── *)
 
 let neg x = B.unary Neg x
-
-let bitwise_not x =
-  let dt = dtype x in
-  binop Xor x
-    (broadcast_to (shape x)
-       (B.full (Value.context x) dt [||] (Nx_dtype.minus_one dt)))
-
 let sin x = B.unary Sin x
 let cos x = B.unary Cos x
 let sqrt x = B.unary Sqrt x
@@ -670,7 +676,11 @@ let where cond if_true if_false =
 
 let fma a b c =
   let dt = dtype a in
-  if Nx_dtype.is_complex dt || Nx_dtype.equal dt Nx_dtype.bool then
+  if
+    Nx_dtype.is_complex dt
+    || Nx_dtype.equal dt Nx_dtype.bool
+    || Nx_dtype.equal dt Nx_dtype.bit
+  then
     err "fma" "dtype %s, expected a float or integer dtype"
       (Nx_dtype.to_string dt);
   let target =
@@ -685,7 +695,7 @@ let rshift x n =
   let dt = dtype x in
   let zero = scalar_like x (Nx_dtype.zero dt) in
   let one = scalar_like x (Nx_dtype.one dt) in
-  let bits = 8 * Nx_dtype.itemsize dt in
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
   if
     Nx_dtype.is_int dt
     && (not (Nx_dtype.is_uint dt))
@@ -1409,6 +1419,7 @@ let eye ctx ?m ?k dtype n =
 let held_integers (type a b) (dtype : (a, b) Nx_dtype.t) =
   match dtype with
   | Nx_dtype.Bool -> (0, 1)
+  | Nx_dtype.Bit -> (0, 1)
   | Nx_dtype.Int4 -> (-8, 7)
   | Nx_dtype.UInt4 -> (0, 15)
   | Nx_dtype.Int8 -> (-128, 127)
@@ -1618,6 +1629,46 @@ let take_along_axis ~axis ~indices t =
           idx_shape.(i) dim)
     t_shape;
   B.gather ~axis indices t
+
+(* ───── Counting ───── *)
+
+(* The set bits of each byte. *)
+let popcounts ctx =
+  let rec bits n =
+    if n = 0 then 0L else Int64.add (Int64.of_int (n land 1)) (bits (n lsr 1))
+  in
+  create ctx Int64 [| 256 |] (Array.init 256 bits)
+
+(* A [bit] mask counts its whole bytes by a table of their set bits, then its
+   last elements, fewer than 8, as booleans. *)
+let count_bits (m : bit_t) : int64_t =
+  let flat = reshape [| numel m |] m in
+  let n = numel flat in
+  let whole = n - (n mod 8) in
+  let tail = sum (cast Int64 (cast Bool (shrink [| (whole, n) |] flat))) in
+  if whole = 0 then tail
+  else
+    let bytes =
+      bitcast UInt8 (reshape [| whole / 8; 8 |] (shrink [| (0, whole) |] flat))
+    in
+    let ones = take ~indices:(cast Int64 bytes) (popcounts (Value.context m)) in
+    add (sum ones) tail
+
+let count (type b) ?axes ?(keepdims = false) (m : (bool, b) t) : int64_t =
+  match dtype m with
+  | Bool -> sum ?axes ~keepdims (cast Int64 m)
+  | Bit ->
+      let rank = ndim m in
+      let reduced =
+        match axes with
+        | None -> rank
+        | Some axes ->
+            List.length (normalize_and_dedup_axes ~op:"count" rank axes)
+      in
+      if reduced < rank then sum ?axes ~keepdims (cast Int64 (cast Bool m))
+      else
+        let c = count_bits m in
+        if keepdims then reshape (Array.make rank 1) c else c
 
 (* ───── Indexing and Slicing ───── *)
 
@@ -2018,12 +2069,12 @@ let set specs v x =
 
 (* Lengths that depend on values *)
 
-(* [positions' ~by c] is [positions c], its length read by the surface function
-   [by]. A boolean reads its total. Integer counts also read their least count
+(* [positions_of ~by c] is [positions c] for boolean or integer counts [c], its
+   length read by the surface function [by]. A boolean reads its total. Integer counts also read their least count
    and their least running total: with every count in [0, 2^63), the first
    running total past int64's range is negative, so the two catch a negative
    count and a sum that wraps. *)
-let positions' (type a b) ~by (c : (a, b) t) : int64_t =
+let positions_of (type a b) ~by (c : (a, b) t) : int64_t =
   let dt = dtype c in
   if ndim c <> 1 then
     err "positions" "counts of shape %s, not 1-D" (Shape.to_string (shape c));
@@ -2073,6 +2124,12 @@ let positions' (type a b) ~by (c : (a, b) t) : int64_t =
       in
       match dt with Bool -> placed | _ -> cummax placed
 
+(* A [bit] mask reads its positions as [bool]. *)
+let positions' (type a b) ~by (c : (a, b) t) : int64_t =
+  match dtype c with
+  | Bit -> positions_of ~by (cast Bool c)
+  | _ -> positions_of ~by c
+
 let positions c = positions' ~by:"Nx.positions" c
 
 let compress ?axis ~condition t =
@@ -2097,7 +2154,10 @@ let extract ~condition t =
 (* The flat positions, in C order, of [t]'s non-zero elements. *)
 let flat_nonzero (type a b) ~by (t : (a, b) t) =
   let mask : bool_t =
-    match dtype t with Bool -> t | _ -> not_equal t (zeros_like t)
+    match dtype t with
+    | Bool -> t
+    | Bit -> cast Bool t
+    | _ -> not_equal t (zeros_like t)
   in
   positions' ~by (flatten mask)
 
@@ -2190,8 +2250,8 @@ let sort_axis op x axis =
     err op "axis %d out of bounds for %dD tensor" axis r;
   axis
 
-(* The sort kernels take no packed dtype: [int4] and [uint4] sort as the 8-bit
-   integers they widen to exactly. *)
+(* The sort kernels take no packed dtype: [int4], [uint4] and [bit] sort as the
+   8-bit integers they widen to exactly. *)
 let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
   if ndim x = 0 then (x, scalar (Value.context x) Nx_dtype.int64 0L)
   else
@@ -2206,6 +2266,9 @@ let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     | UInt4 ->
         let v, i = sorted (cast UInt8 x) in
         (cast UInt4 v, i)
+    | Bit ->
+        let v, i = sorted (cast UInt8 x) in
+        (cast Bit v, i)
     | _ -> sorted x
 
 let argsort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
@@ -2215,6 +2278,7 @@ let argsort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     match dtype x with
     | Int4 -> B.argsort ~descending ~axis (cast Int8 x)
     | UInt4 -> B.argsort ~descending ~axis (cast UInt8 x)
+    | Bit -> B.argsort ~descending ~axis (cast UInt8 x)
     | _ -> B.argsort ~descending ~axis x
 
 (* Quantiles *)
@@ -2303,7 +2367,7 @@ let argmin ?axis ?(keepdims = false) x =
    booleans and the extremes of complex numbers. *)
 let identity_of (type a b) name op (dt : (a, b) dtype) : a =
   match (op, dt) with
-  | `Add, Bool -> err name "booleans have no sum"
+  | `Add, (Bool | Bit) -> err name "booleans have no sum"
   | `Add, _ -> Nx_dtype.zero dt
   | (`Max | `Min), _ when Nx_dtype.is_complex dt ->
       err name "complex numbers are not ordered"
@@ -2845,7 +2909,7 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
     | Nx_dtype.Int16 -> positions x
     | Nx_dtype.Int32 -> positions x
     | Nx_dtype.Int64 -> positions x
-    | Nx_dtype.UInt4 | Nx_dtype.Bool ->
+    | Nx_dtype.UInt4 | Nx_dtype.Bool | Nx_dtype.Bit ->
         positions (unsigned_key Nx_dtype.int8 0x80 (cast Nx_dtype.uint8 x))
     | Nx_dtype.UInt8 -> positions (unsigned_key Nx_dtype.int8 0x80 x)
     | Nx_dtype.UInt16 -> positions (unsigned_key Nx_dtype.int16 0x8000 x)
@@ -2878,7 +2942,7 @@ let order_key (type a b c d) (kd : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
     bitcast kd (where (isnan x) ones (bitwise_xor b flip))
   in
   match (dtype x, kd) with
-  | (Bool | UInt4 | UInt8), (UInt8 | UInt16 | UInt32 | UInt64)
+  | (Bool | Bit | UInt4 | UInt8), (UInt8 | UInt16 | UInt32 | UInt64)
   | UInt16, (UInt16 | UInt32 | UInt64)
   | UInt32, (UInt32 | UInt64)
   | UInt64, UInt64 ->
@@ -6903,6 +6967,7 @@ let pp' (type a b) ~by fmt (x : (a, b) t) =
     | Int4 -> fprintf fmt "%d" elt
     | UInt4 -> fprintf fmt "%d" elt
     | Bool -> fprintf fmt "%b" elt
+    | Bit -> fprintf fmt "%b" elt
     | Complex64 -> fprintf fmt "(%g%+gi)" elt.re elt.im
     | Complex128 -> fprintf fmt "(%g%+gi)" elt.re elt.im
   in
