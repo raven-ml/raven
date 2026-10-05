@@ -16,8 +16,9 @@
     - {b extremes} follow IEEE 754-2019: NaN when an operand is NaN, and [-0.]
       below [0.];
     - {b the transcendental functions} are accurate compositions of [exp2],
-      [log2], [sin] and [sqrt], within a few units in the last place of the
-      correctly rounded result;
+      [sin] and [sqrt], or arithmetic, within a few units in the last place of
+      the correctly rounded result: [log] within one, [exp], [sin] and [cos]
+      within two, where the target's [exp2] and [sin] are within one;
     - {b a float converted to an integer} saturates at the integer's range, and
       NaN is 0. *)
 

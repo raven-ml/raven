@@ -165,6 +165,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.log` is within one unit in the last place of the correctly
+  rounded result, from up to four in float32 on the host. It is computed from
+  its argument's bits and a polynomial instead of a target's `log2` times
+  `ln 2`, whose rounding adds to the target's error on every device.
 - Add `Rune.root`, a value stated to solve an equation. Its derivative is the
   implicit function theorem's at the value, under every transformation, and
   the solve that found it is never differentiated, so it may iterate and stop

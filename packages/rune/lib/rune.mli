@@ -855,11 +855,12 @@ val jit :
     multiplication by a reciprocal ({!Nx.recip}) into a division, which also
     differs where the reciprocal overflows: [x * recip y] is NaN at [x = 0] and
     a [y] whose reciprocal is infinite, where [x / y] is [0]. They also differ
-    in transcendental functions, which are approximations within 4 units in the
-    last place of the result's dtype; Metal flushes float32 subnormals to zero.
-    A product over an axis ({!Nx.prod}) multiplies in an unspecified association
-    too. A failed factorisation gives non-finite values where eager raises
-    {!Nx_backend.Linalg_error}.
+    in transcendental functions, which are approximations within a few units in
+    the last place of the correctly rounded result: {!Nx.log} within one, and on
+    the host {!Nx.exp}, {!Nx.sin} and {!Nx.cos} within two; Metal flushes
+    float32 subnormals to zero. A product over an axis ({!Nx.prod}) multiplies
+    in an unspecified association too. A failed factorisation gives non-finite
+    values where eager raises {!Nx_backend.Linalg_error}.
 
     {b Domains.} A compiled function may be called from any domain, several at
     once, and from inside its own function. A key being compiled makes the other

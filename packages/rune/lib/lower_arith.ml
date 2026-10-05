@@ -215,16 +215,71 @@ let exp ?times x =
 
 (* Logarithm
 
+   [log x] for [x = m 2^e], [m] in [[1/sqrt 2, sqrt 2)], is [e ln 2 + log (1 +
+   f)] with [f = m - 1], which is exact. [log (1 + f)] is [f - (h - s (h + R))]
+   with [h = f^2/2], [s = f / (2 + f)] and [R] a minimax polynomial in [s^2]
+   that approximates [2 atanh s / s - 2]: every term but [f] is small, so only
+   the last sum rounds at the result's scale. [ln 2] is in two parts, the first
+   of few enough bits that its product by [e] is exact. The coefficients and the
+   parts are fdlibm's ([e_log.c], [e_logf.c]), under the notice of the error
+   function below. The logarithm is arithmetic: a target's [log2] times [ln 2]
+   would add a rounding to the target's error, which can reach two units.
+
    A number below zero, a negative subnormal included, has no logarithm. The
-   sign and the magnitude are read from the bits: a target's [log2] can take a
-   negative subnormal for [-0.], as tolk's polynomial does when the subnormal's
-   reciprocal overflows, or as a target that flushes subnormals does. *)
+   sign and the magnitude are read from the bits: a target can take a negative
+   subnormal for [-0.], as one that flushes subnormals does. *)
+
+(* [normalized a] is [(m, e)] with [a = m 2^e], [m] in [[1/sqrt 2, sqrt 2)] and
+   [e] an integer of [a]'s dtype, for a finite [a > 0]. [frexp] takes a normal
+   float: subnormals are scaled into the normals first. *)
+let normalized a =
+  let dt = dtype a in
+  let _, mbits = Dtype.finfo dt and bias = Transcendental.exponent_bias dt in
+  let tiny = Ops.lt a (float a (Float.ldexp 1. (1 - bias))) in
+  let a = where tiny (a *: float a (Float.ldexp 1. (mbits + 1))) a in
+  let m, e = Transcendental.frexp a in
+  let e = Ops.cast (Ops.bitcast e (if is64 a then Int64 else Int32)) dt in
+  let e = where tiny (e -: float a (Float.of_int (mbits + 1))) e in
+  let high = Ops.lt (float a (Float.sqrt 2. /. 2.)) m in
+  (where high m (m *: float a 2.), where high e (e -: float a 1.))
 
 let log x =
   let below_zero =
     Ops.bitwise_and (sign_bit x) (Ops.ne (magnitude x) (int (bits x) 0))
   in
-  where below_zero (float x Float.nan) (Ops.log2 x *: Ops.float (fst ln2))
+  let inf = float x Float.infinity in
+  let positive = Ops.bitwise_and (Ops.lt (float x 0.) x) (Ops.lt x inf) in
+  let m, e = normalized (where positive x (float x 1.)) in
+  let f = m -: float x 1. in
+  let s = f /: (float x 2. +: f) in
+  let z = s *: s in
+  let lg, ln2_hi, ln2_lo =
+    if is64 x then
+      ( [
+          6.666666666666735130e-01;
+          3.999999999940941908e-01;
+          2.857142874366239149e-01;
+          2.222219843214978396e-01;
+          1.818357216161805012e-01;
+          1.531383769920937332e-01;
+          1.479819860511658591e-01;
+        ],
+        6.93147180369123816490e-01,
+        1.90821492927058770002e-10 )
+    else
+      ( [ 0xaaaaaa.0p-24; 0xccce13.0p-25; 0x91e9ee.0p-25; 0xf89e26.0p-26 ],
+        6.9313812256e-01,
+        9.0580006145e-06 )
+  in
+  let h = float x 0.5 *: f *: f in
+  let r = z *: horner z lg in
+  let l =
+    (e *: float x ln2_hi)
+    -: (h -: ((s *: (h +: r)) +: (e *: float x ln2_lo)) -: f)
+  in
+  where below_zero (float x Float.nan)
+    (where positive l
+       (where (Ops.eq x (float x 0.)) (neg inf) (where (isnan x) x inf)))
 
 (* Trigonometry
 
@@ -599,18 +654,7 @@ let two_sum a b =
 let odd_inverses n = List.init n (fun k -> 1. /. Float.of_int ((2 * k) + 3))
 
 let log2_parts a =
-  let dt = dtype a in
-  let _, mbits = Dtype.finfo dt and bias = Transcendental.exponent_bias dt in
-  (* [frexp] takes a normal float: subnormals are scaled into the normals
-     first. *)
-  let tiny = Ops.lt a (float a (Float.ldexp 1. (1 - bias))) in
-  let a = where tiny (a *: float a (Float.ldexp 1. (mbits + 1))) a in
-  let m, e = Transcendental.frexp a in
-  let e = Ops.cast (Ops.bitcast e (if is64 a then Int64 else Int32)) dt in
-  let e = where tiny (e -: float a (Float.of_int (mbits + 1))) e in
-  let high = Ops.lt (float a (Float.sqrt 2. /. 2.)) m in
-  let m = where high m (m *: float a 2.)
-  and e = where high e (e -: float a 1.) in
+  let m, e = normalized a in
   (* [s = (m - 1) / (m + 1)] in two parts; [m - 1] is exact. *)
   let num = m -: float a 1. in
   let den, den_lo = two_sum m (float a 1.) in

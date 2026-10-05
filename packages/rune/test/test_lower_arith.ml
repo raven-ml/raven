@@ -429,17 +429,17 @@ let tanh_edges ~by =
 let transcendentals ?tags name by =
   group ?tags name
     [
-      unary ~by "exp" ~budget:4 Float.exp { f = Nx.exp };
-      unary ~by "log" ~budget:4 Float.log { f = Nx.log };
+      unary ~by "exp" ~budget:2 Float.exp { f = Nx.exp };
+      unary ~by "log" ~budget:1 Float.log { f = Nx.log };
       unary ~by "log1p" ~budget:4 Float.log1p { f = Nx.log1p };
       unary ~by ~file:"expm1_64.golden" "expm1" ~budget:4 Float.expm1
         { f = Nx.expm1 };
-      unary ~by "sin" ~budget:4 Float.sin { f = Nx.sin };
-      unary ~by "cos" ~budget:4 Float.cos { f = Nx.cos };
+      unary ~by "sin" ~budget:2 Float.sin { f = Nx.sin };
+      unary ~by "cos" ~budget:2 Float.cos { f = Nx.cos };
       unary ~by "tan" ~budget:8 Float.tan { f = Nx.tan };
-      unary ~by ~file:"sin_far64.golden" "sin of large arguments" ~budget:4
+      unary ~by ~file:"sin_far64.golden" "sin of large arguments" ~budget:2
         Float.sin { f = Nx.sin };
-      unary ~by ~file:"cos_far64.golden" "cos of large arguments" ~budget:4
+      unary ~by ~file:"cos_far64.golden" "cos of large arguments" ~budget:2
         Float.cos { f = Nx.cos };
       unary ~by ~file:"tan_far64.golden" "tan of large arguments" ~budget:8
         Float.tan { f = Nx.tan };
