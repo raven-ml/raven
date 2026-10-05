@@ -779,6 +779,45 @@ let on_device name device =
               agrees c eager compiled);
         ]
 
+(* Dtypes. Defined last and run last, so their draws leave the others' weights
+   as they are. *)
+
+type fdt = F : (float, 'b) Nx.dtype -> fdt
+
+let dtypes =
+  group "dtypes"
+    [
+      cases
+        ~name:(fun (F dt) -> Format.asprintf "%a" Nx.pp_dtype dt)
+        "compiled, dequant at each float dtype is eager's bit for bit"
+        [ F Nx.float16; F Nx.float64; F Nx.float8_e4m3; F Nx.float8_e5m2 ]
+        (fun (F dt) ->
+          List.iter
+            (fun format ->
+              let w = weight ~format [| 3; 8; 256 |] in
+              let f w = Nx.cast Nx.float64 (Nx_quant.dequant dt w) in
+              equal ~msg:(format_name format) (tensor float_exact) (f w)
+                (Rune.jit Nx.Ptree.(Nx_quant.ptree @-> returns tensor) f w))
+            formats);
+      test
+        "compiled, an MXFP4 product at bfloat16 is the bfloat16 product of its \
+         bfloat16 values, bit for bit" (fun () ->
+          let w = weight ~scale:moderate [| 32; 256 |] in
+          let x = Nx.cast Nx.bfloat16 (floats [| 8; 256 |]) in
+          let signature = Nx.Ptree.(tensor @-> returns tensor) in
+          let bits t = Nx.bitcast Nx.uint16 t in
+          equal (tensor int32)
+            (Nx.cast Nx.int32
+               (bits
+                  (Rune.jit signature
+                     (fun x ->
+                       Nx.matmul x
+                         (Nx.matrix_transpose (Nx_quant.dequant Nx.bfloat16 w)))
+                     x)))
+            (Nx.cast Nx.int32
+               (bits (Rune.jit signature (fun x -> Nx_quant.apply w x) x))));
+    ]
+
 let () =
   exit
     (run "Rune.quant"
@@ -795,4 +834,5 @@ let () =
              on_device "CUDA" (Nx_cuda.get 0);
              on_device "AMD" (Nx_amd.get 0);
            ];
+         dtypes;
        ])
