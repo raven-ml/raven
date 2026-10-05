@@ -1347,6 +1347,7 @@ let two = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 
 let compiled_loop_law =
   prop ~count:25
+    ~examples:[ (Expr.X, (Nx.ones f64 Expr.shape, 0.6), 1) ]
     "compiled, iterate is the loop that tests until before each step"
     Gen.(
       triple Expr.gen (pair Expr.point (float_range 0.01 2.)) (int_range 0 8))
@@ -1365,6 +1366,7 @@ let compiled_loop_law =
 
 let compiled_bound_law =
   prop ~count:25
+    ~examples:[ (vec [| 0.06; 0.01 |], 1) ]
     "compiled, under vmap each lane ends within max, or the first running is \
      named"
     Gen.(pair starts (int_range 0 5))
