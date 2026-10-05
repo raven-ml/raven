@@ -939,6 +939,10 @@ thread.
 
 ### Tolk (new)
 
+- A function with two loops or reductions of one length, such as a scan body
+  of `sum (mul x (matmul x c))`, schedules again: numbering its ranges for the
+  schedule cache's key raised "a bottom-up rewrite cycles" when two ranges
+  traded numbers, and merged them when one took the other's (#236).
 - A compiled binary is read back from the disk cache only for the compiler,
   version and options that made it: `Renderer.Compiler.v` takes the table as a
   function, which Clang's, Metal's, NVRTC's and comgr's compilers derive from

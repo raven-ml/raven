@@ -1145,6 +1145,49 @@ let renumbered_loop () =
   is_true ~msg:"under another number, every body hits"
     (List.for_all (String.equal " cache hit") (verdicts 7))
 
+(* A scan's body holding two loops of six trips, around ranges numbered [a] and
+   [b]: each adds a row of its own buffer to the carry. *)
+let two_loops (a, b) =
+  let k = 4 and n = 6 in
+  let q slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let inner = Ops.sink [ Ops.store (q 0) Ops.O.(q 0 + q 1) ] in
+  let p0 = Ops.param ~shape:[ Int k ] ~device:cpu 0 Float32 in
+  let loop axis slot =
+    let r = Ops.range ~axis_type:Loop (Int n) [ axis ] in
+    let p = Ops.param ~shape:[ Int (n * k) ] ~device:cpu slot Float32 in
+    let row =
+      Ops.shrink p
+        [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+    in
+    Ops.end_ (Ops.call ~precompile:true inner [ p0; row ]) [ r ]
+  in
+  let outer = Ops.sink [ Ops.after p0 [ loop a 1; loop b 2 ] ] in
+  let c = Ops.new_buffer cpu k Float32
+  and xs = Ops.new_buffer cpu (n * k) Float32
+  and ys = Ops.new_buffer cpu (n * k) Float32 in
+  let e = Ops.call ~precompile:true outer [ c; xs; ys ] in
+  Ops.sink [ Ops.after c [ e ] ]
+
+(* Under some of these numberings, a loop's number by order is the other loop's
+   number: the two trade numbers, or one takes the other's and the other a new
+   one. Each run makes four schedules: the inner body once per loop, the outer
+   body, and the function. *)
+let renumbered_loops () =
+  let verdicts axes =
+    with_settings ~debug:3 ~scache:1 (fun () ->
+        ignore
+          (Schedule.create_linear_with_vars ~capturing:true (two_loops axes)));
+    List.map (fun (_, verdict, _) -> verdict) (reports ())
+  in
+  ignore (verdicts (7, 8));
+  List.iter
+    (fun ((a, b) as axes) ->
+      equal (list string)
+        ~msg:(Printf.sprintf "numbered %d, %d" a b)
+        (List.init 4 (fun _ -> " cache hit"))
+        (verdicts axes))
+    [ (1, 0); (0, 1); (1, 2); (2, 1) ]
+
 let loops =
   group "create_linear_with_vars › loops of calls"
     [
@@ -1153,6 +1196,7 @@ let loops =
       test "a loop inside a loop's body keeps its own end" nested_linear;
       test "a loop whose range has another number is the same body"
         renumbered_loop;
+      test "a body whose loops trade numbers is the same body" renumbered_loops;
     ]
 
 (* Schedules on disk

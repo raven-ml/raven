@@ -472,6 +472,17 @@ let compiled_tests =
         equal (close ())
           (Rune.grad' by_scan (v4 ()))
           (Rune.jit' (Rune.grad' by_scan) (v4 ())));
+    test "a scan under jit whose body reduces twice over one length is eager"
+      (fun () ->
+        let f xs =
+          let c = Nx.eye f64 4 in
+          Nx.sum
+            (snd
+               (Rune.scan Nx.Ptree.unit Nx.Ptree.tensor Nx.Ptree.tensor
+                  ~f:(fun () x -> ((), Nx.sum (Nx.mul x (Nx.matmul x c))))
+                  ~init:() xs))
+        in
+        equal (close ()) (f (rows ())) (Rune.jit' f (rows ())));
     test "a changed carry is refused under jit" (fun () ->
         raises (Invalid_argument changed_length) (fun () ->
             Rune.jit' scan_growing (v4 ())));

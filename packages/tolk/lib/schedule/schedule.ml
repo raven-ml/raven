@@ -303,12 +303,15 @@ let schedule_cache_lock = Mutex.create ()
 (* [fn] with its ranges numbered by their order in it. Whoever makes a loop
    numbers its range from a counter of its own, whose value depends on what the
    process did before, such as making a schedule or reading one back: the key
-   is the same for every numbering of one function's ranges. *)
+   is the same for every numbering of one function's ranges. A range's new
+   number can be another range's old one, as when ranges numbered 1 and 0 trade
+   numbers, so the renumbering is one walk: a renumbered range is not
+   renumbered again. *)
 let ranges_in_order fn =
   let ranges =
     List.filter (fun u -> op u = Op.Range) (toposort ~enter_calls:true fn)
   in
-  substitute ~enter_calls:true fn
+  substitute ~walk:true ~enter_calls:true fn
     (List.mapi
        (fun k r ->
          ( r,
