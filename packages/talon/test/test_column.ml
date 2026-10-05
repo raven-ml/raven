@@ -1004,9 +1004,49 @@ let take_column is c =
     in
     column joined "x"
 
+(* [column_at m] is [column_of m] with its validity a view from bit 5 of longer
+   bits, set around it. *)
+let column_at m =
+  let n = Array.length m in
+  let bits =
+    Array.init (n + 14) (fun i ->
+        if i < 5 || i >= n + 5 then true else m.(i - 5))
+  in
+  let validity = Nx.shrink [| (5, n + 5) |] (valid_bits bits) in
+  Column.of_tensor ~validity (int64s n)
+
+let run_x q c =
+  column (Error.get_ok (Query.run (q (Query.of_table (v [ ("x", c) ]))))) "x"
+
+let x_null = Expr.is_null (Col.int "x")
+let valid_rows m = Array.make (Array.length m - count_model m) true
+let lengths = Gen.with_pp Format.pp_print_int (Gen.int_range 0 45)
+
+let slice_model offset length m =
+  let n = Array.length m in
+  let lo = min offset n in
+  Array.sub m lo (min length (n - lo))
+
 let counts =
   [
     command "of_tensor" (masks @-> makes column_w) Fun.id column_of;
+    command "of_tensor at bit 5" (masks @-> makes column_w) Fun.id column_at;
+    command "filter to its nulls"
+      (column_w ^-> makes column_w)
+      (fun m -> Array.make (count_model m) false)
+      (run_x (Query.filter x_null));
+    command "filter to its values"
+      (column_w ^-> makes column_w)
+      valid_rows
+      (run_x (Query.filter (Expr.not x_null)));
+    command "sort, nulls first"
+      (column_w ^-> makes column_w)
+      (fun m -> Array.append (Array.make (count_model m) false) (valid_rows m))
+      (run_x (Query.sort [ Order.nulls_first (Order.asc "x") ]));
+    command "slice"
+      (lengths @-> lengths @-> column_w ^-> makes column_w)
+      slice_model
+      (fun offset length -> run_x (Query.slice ~offset ~length));
     command "null_count"
       (column_w ^-> returns int)
       count_model Column.null_count;

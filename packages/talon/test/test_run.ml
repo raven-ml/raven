@@ -72,6 +72,40 @@ let expressible s =
       Option.is_some (Kind.provably_equal (Type.kind t) (Type.kind t)))
     s
 
+(* [with_validity v l] is [l] with the validity [v]. *)
+let with_validity v : Column.layout -> Column.layout = function
+  | Fixed { values; _ } -> Fixed { validity = Some v; values }
+  | Varsize { offsets; child; _ } ->
+      Varsize { validity = Some v; offsets; child }
+  | Children { length; fields; _ } ->
+      Children { validity = Some v; length; fields }
+
+(* [scattered ty vs] is the column of [vs] with a value of [ty] under each null
+   and its validity a view from bit [k] of longer bits, whose bits around it are
+   drawn too: the layout a format or a derived column may hand out. *)
+let scattered ty vs =
+  let n = Array.length vs in
+  Gen.(
+    let+ under = array ~size:(constant n) (value ty)
+    and+ k = int_range 0 70
+    and+ around = array ~size:(constant (n + 70)) bool in
+    let filled = Array.mapi (fun i o -> Option.value o ~default:under.(i)) vs in
+    let bits =
+      Array.init
+        (k + n + 9)
+        (fun i ->
+          if i >= k && i < k + n then Option.is_some vs.(i - k)
+          else around.(i mod (n + 70)))
+    in
+    let v =
+      Nx.shrink
+        [| (k, k + n) |]
+        (Nx.cast Nx.bit (Nx.create Nx.bool [| k + n + 9 |] bits))
+    in
+    Result.get_ok
+      (Column.of_layout (Any ty)
+         (with_validity v (Column.layout (Column.v ty filled)))))
+
 let rec drawn : type a. a Type.t -> int -> Column.t Gen.t =
  fun ty n ->
   match ty with
@@ -79,8 +113,14 @@ let rec drawn : type a. a Type.t -> int -> Column.t Gen.t =
       let ext c = Result.get_ok (Column.of_layout (Any ty) (Column.layout c)) in
       Gen.map ext (drawn storage n)
   | _ ->
-      Gen.map (Column.of_options ty)
+      Gen.bind
         (Gen.array ~size:(Gen.constant n) (Gen.option (value ty)))
+        (fun vs ->
+          Gen.frequency
+            [
+              (1, Gen.map (fun () -> Column.of_options ty vs) Gen.unit);
+              (1, scattered ty vs);
+            ])
 
 let table s =
   Gen.bind (Gen.int_range 0 12) (fun n ->
@@ -2689,6 +2729,170 @@ let kit_runs =
                    {| filter (Str.parse int64 s > 0): row 1: "x": not an integer. |});
     ]
 
+(* Values under nulls
+
+   A null row's value is unspecified: whatever lies under it, a run reads the
+   row as null, and lays it out the same whatever the batches. *)
+
+(* [garbled vs under] is the int64 column of [vs] with [under.(i)] under the
+   null row [i], its validity a view from bit 3 of longer bits, set around
+   it. *)
+let garbled vs under =
+  let n = Array.length vs in
+  let values = Array.mapi (fun i o -> Option.value o ~default:under.(i)) vs in
+  let bits =
+    Array.init (n + 11) (fun i ->
+        i < 3 || i >= n + 3 || Option.is_some vs.(i - 3))
+  in
+  let validity =
+    Nx.shrink
+      [| (3, n + 3) |]
+      (Nx.cast Nx.bit (Nx.create Nx.bool [| n + 11 |] bits))
+  in
+  Column.of_tensor ~validity (Nx.create Nx.int64 [| n |] values)
+
+let validity_bytes c =
+  match Column.validity c with
+  | None -> None
+  | Some b ->
+      let n = Nx.numel b in
+      let raw =
+        Nx_device.Buffer.bigarray Bigarray.int8_unsigned (Nx.to_buffer b)
+      in
+      Some (Array.init ((n + 7) / 8) (fun i -> raw.{i}))
+
+let under_nulls_cases =
+  let s x = Some x in
+  let keys = [| s 1L; None; s 2L; None; s 1L |] in
+  group "Values under nulls"
+    [
+      test "Talon.equal reads the nulls of a column, not the values under them"
+        (fun () ->
+          let t under = v [ ("k", garbled keys under) ] in
+          is_true
+            (Talon.equal
+               (t [| 0L; 7L; 0L; -9L; 0L |])
+               (t [| 0L; 0L; 0L; 0L; 0L |]));
+          is_false
+            (Talon.equal
+               (t [| 0L; 7L; 0L; -9L; 0L |])
+               (v [ ("k", Column.v Type.int64 [| 1; 7; 2; -9; 1 |]) ])));
+      test "null keys over different values are one group" (fun () ->
+          let t =
+            v
+              [
+                ("k", garbled keys [| 0L; 7L; 0L; -9L; 0L |]);
+                ("y", i64 [| 10; 11; 12; 13; 14 |]);
+              ]
+          in
+          let g =
+            run_ok
+              (Query.aggregate ~by:[ "k" ]
+                 Expr.[ "n" := count (Col.int "y"); "s" := sum (Col.int "y") ]
+                 (Query.of_table t))
+          in
+          let by_key =
+            List.sort compare
+              (List.combine
+                 (Array.to_list (Column.options Kind.int (column g "k")))
+                 (Array.to_list (Column.options Kind.int (column g "s"))))
+          in
+          equal
+            (list (Windtrap.pair (option int) (option int)))
+            [ (None, s 24); (s 1, s 24); (s 2, s 12) ]
+            by_key);
+      test "null keys over different values match each other in a join"
+        (fun () ->
+          let l =
+            v
+              [
+                ("k", garbled [| None; s 5L |] [| 3L; 0L |]);
+                ("x", i64 [| 0; 1 |]);
+              ]
+          in
+          let r =
+            v
+              [
+                ("k", garbled [| s 3L; None |] [| 0L; -1L |]);
+                ("y", i64 [| 10; 11 |]);
+              ]
+          in
+          let t = joined ~kind:Left (Join.keys [ "k" ]) l r in
+          column_is t ("x", [ s 0; s 1 ]);
+          column_is t ("y", [ s 11; None ]));
+      test "a filter, sort and append of offset validities read their nulls"
+        (fun () ->
+          let part i =
+            garbled
+              (Array.init 13 (fun j ->
+                   if (i + j) mod 4 = 0 then None else s (Int64.of_int j)))
+              (Array.make 13 (-1L))
+          in
+          let t = of_batches (List.init 3 (fun i -> v [ ("x", part i) ])) in
+          let x = Col.int "x" in
+          let q =
+            Query.(
+              of_table t
+              |> filter Expr.(is_null x || x > int 2)
+              |> sort [ Order.nulls_first (Order.desc "x") ])
+          in
+          let c = column (run_ok q) "x" in
+          let nulls =
+            List.init 3 (fun i ->
+                List.length
+                  (List.filter
+                     (fun j -> (i + j) mod 4 = 0)
+                     (List.init 13 Fun.id)))
+          in
+          let n = List.fold_left ( + ) 0 nulls in
+          equal ~msg:"null count" int n (Column.null_count c);
+          let rows = Column.options Kind.int c in
+          equal ~msg:"nulls first"
+            (array (option int))
+            (Array.make n None) (Array.sub rows 0 n);
+          let values =
+            Array.to_list (Array.sub rows n (Array.length rows - n))
+          in
+          equal ~msg:"the values, descending"
+            (list (option int))
+            (List.sort (fun a b -> compare b a) values)
+            values;
+          is_true ~msg:"every value above 2"
+            (List.for_all (function Some v -> v > 2 | None -> false) values));
+      test "a run's validity of 13 rows from three parts is canonical"
+        (fun () ->
+          let part vs =
+            v [ ("x", garbled vs (Array.make (Array.length vs) 5L)) ]
+          in
+          let t =
+            of_batches
+              [
+                part [| None; s 1L; s 2L; s 3L; None |];
+                part [| s 1L; None; s 1L; s 1L |];
+                part [| s 9L; s 9L; None; s 9L |];
+              ]
+          in
+          let c = column (run_ok (Query.of_table t)) "x" in
+          (* Rows 0, 4, 6 and 11 are null: 0b10101110 then 0b00010111. *)
+          equal (option (array int)) (Some [| 0xae; 0x17 |]) (validity_bytes c));
+      test
+        "a comparison of tensor cells with null lays out the same bytes in one \
+         batch and row by row" (fun () ->
+          let cells = Nx.create Nx.float32 [| 2; 2 |] [| 0.; 1.; 0.; 0. |] in
+          let row i =
+            v [ ("c", Column.of_tensor (Nx.slice [ R (i, i + 1) ] cells)) ]
+          in
+          let c = Col.v (Kind.tensor Nx.float32) "c" in
+          let q t =
+            Query.(select Expr.[ "r" := not (c = null) ] (of_table t))
+          in
+          let one = run_ok (q (v [ ("c", Column.of_tensor cells) ])) in
+          let rows = run_ok (q (of_batches [ row 0; row 1 ])) in
+          equal (list string)
+            (buffers (column rows "r"))
+            (buffers (column one "r")));
+    ]
+
 let () =
   exit
     (run "Run"
@@ -2704,6 +2908,7 @@ let () =
          failure_order;
          reductions;
          joins;
+         under_nulls_cases;
          lifts;
          sorting;
          sources;

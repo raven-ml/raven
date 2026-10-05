@@ -103,7 +103,7 @@
  (name test_run)
  (modules test_run)
  (package talon)
- (libraries windtrap talon talon_gen talon_reference nx)
+ (libraries windtrap talon talon_gen talon_reference nx nx.device)
  (action
   (progn
    (run %{test} --corrected)
