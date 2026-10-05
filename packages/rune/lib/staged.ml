@@ -321,8 +321,8 @@ let stage trace s (r : Trips.request) xs reverse =
       (Ops.call ~precompile:true body (List.map snd (List.sort compare args)))
       [ range ]
   in
-  (* Before answering, the loop must run: as one batch, or trip by trip on the
-     host, which a probe of its schedule tells. *)
+  (* Before answering, the loop must run: as one batch, or trip by trip, which a
+     probe of its schedule tells. A loop of one trip is its call, which runs. *)
   let probe =
     List.map
       (fun (slot, u) ->
@@ -336,11 +336,13 @@ let stage trace s (r : Trips.request) xs reverse =
     Tolk.Schedule.create_linear_with_vars ~capturing:true
       (Ops.sink [ Ops.after (snd (List.hd probe)) [ call probe ] ])
   in
+  let loop e = Ops.op e = Op.End || Ops.op e = Op.Backedge in
   if
-    not
-      (List.exists
-         (Hcq2.runs ~devices:(fun d -> (Lower.engine s d).compiler))
-         (Ops.src linear))
+    List.exists
+      (fun e ->
+        loop e
+        && not (Hcq2.runs ~devices:(fun d -> (Lower.engine s d).compiler) e))
+      (Ops.src linear)
   then raise Trips.Not_staged;
   let e = call !args in
   let finals =

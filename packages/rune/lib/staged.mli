@@ -22,8 +22,11 @@
     once every kernel that reads it ran, as the schedule orders them; a next
     carry that reads the carry elsewhere than at its own index is computed into
     storage of its own first, and so is, each trip, the latest of carries whose
-    next values read each other in a cycle, such as two carries that swap. A
-    scan inside the step is written out inside the body.
+    next values read each other in a cycle, such as two carries that swap.
+
+    A scan inside the step stages as a loop of the body, nested in the outer
+    one: its step is traced once, and its values are those of the scan written
+    out, each trip's carry stored before the next reads it.
 
     A scan stages when its leaves lie on one device, host leaves joining it, and
     its loop runs ({!Tolk.Hcq2.runs}): on a device whose work runs from command

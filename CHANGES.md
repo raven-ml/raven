@@ -165,6 +165,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled scan of one row stages as a loop, its step traced once, where it
+  was written out; a scan inside a compiled loop's step is a loop nested in it.
 - A compiled comparison of a value padded by a float the tensor's type rounds
   to 0, as a float32 pad of `5e-324`, compares the rounded value: the compiler
   bounded it unrounded and folded `Nx.equal` with 0 to false.

@@ -2392,6 +2392,63 @@ let reads_outer at =
           equal near (f batch) (host (Rune.jit' f (Nx.place at batch))));
     ]
 
+(* [nested_scans at] checks that a scan in a staged scan's step, placed at [at],
+   runs as a loop nested in the outer one: its values are those of the inner
+   scan written out, each trip's carry stored before the next reads it, bit for
+   bit, and its step is traced once. The inner step reads the outer carry. *)
+let nested_scans at =
+  let inner c d y =
+    let d = Nx.add (Nx.mul_s d 0.9) (Nx.mul y c) in
+    (d, Nx.sin d)
+  in
+  let nested ran m xs =
+    Rune.scan'
+      ~f:(fun c x ->
+        Rune.scan'
+          ~f:(fun d y ->
+            incr ran;
+            inner c d y)
+          ~init:c
+          (Nx.reshape [| m; 4 |] x))
+      ~init:(ones 4) xs
+  in
+  let written m xs =
+    Rune.scan'
+      ~f:(fun c x ->
+        let rows = Nx.reshape [| m; 4 |] x in
+        let d = ref c and ys = ref [] in
+        for i = 0 to m - 1 do
+          let d', y = inner c !d (Nx.slice [ I i ] rows) in
+          d := Nx.copy d';
+          ys := y :: !ys
+        done;
+        (!d, Nx.stack ~axis:0 (List.rev !ys)))
+      ~init:(ones 4) xs
+  in
+  prop ~count:12
+    ~examples:[ (1, 1); (1, 3); (3, 1) ]
+    "a scan in a staged scan's step is the scan written out, bit for bit, its \
+     step traced once"
+    Gen.(pair (int_range 1 4) (int_range 1 4))
+    (fun (n, m) ->
+      cover "one outer trip" (n = 1);
+      cover "one inner trip" (m = 1);
+      let xs = Nx.place at (Nx.mul_s (Nx.sin (grid n (4 * m))) 0.5) in
+      let ran = ref 0 in
+      let c, ys =
+        Rune.jit
+          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+          (nested ran m) xs
+      in
+      let c', ys' =
+        Rune.jit
+          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+          (written m) xs
+      in
+      equal ~msg:"carry" floats (host c') (host c);
+      equal ~msg:"outputs" floats (host ys') (host ys);
+      equal ~msg:"inner steps traced" int 1 !ran)
+
 let product c x =
   let w = Nx.mul_s (grid 3 3) 0.1 in
   let c =
@@ -2704,6 +2761,7 @@ let staged_scans d =
         ~steps:once ~init:(ones 3) product (rows 6 3);
       staged at "stage a scan whose step stages a scan of its own" ~steps:once
         ~init:(zeros 4) nested (rows 6 16);
+      nested_scans at;
       reads_outer at;
       staged at "update a carry its next value reads rotated" ~steps:once
         ~init:(ones 3) rotated (rows 5 3);
@@ -3129,6 +3187,7 @@ let scans =
       staged Nx.Placement.host "a scan of four hundred steps on the host stages"
         ~steps:(fun _ -> 1)
         ~init:(zeros 4) decay (rows 400 4);
+      nested_scans Nx.Placement.host;
       test "a scan over rows computed from constants alone equals eager"
         (fun () ->
           List.iter

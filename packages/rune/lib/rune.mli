@@ -575,12 +575,13 @@ val scan :
     in [xs]; the cotangent of [xs] is stacked like the outputs, while a captured
     tensor's cotangent is the sum over the steps. A carry tensor the step
     updates with {!Nx.set}, or reads only at the index it writes, is updated in
-    place. A compiled function writes the loop out instead, step by step, each
+    place. A scan inside the step of a compiled loop compiles as a loop nested
+    in it, its step compiled once, and its values are those of the scan written
+    out. A compiled function writes the loop out instead, step by step, each
     step's carry stored before the next step reads it, when the carry changes
     its shapes across steps, when the step runs on a device with command queues
-    and on the host, or on devices of two kinds, inside the step of a loop it
-    compiles (an inner scan runs step by step within each step of the outer
-    loop), and inside a {!custom_jvp} tangent map under reverse mode.
+    and on the host, or on devices of two kinds, and inside a {!custom_jvp}
+    tangent map under reverse mode.
 
     Everywhere else the scan is its loop, run where it is written, inside every
     transformation, {!Total.collect} and {!Nx.Rng.with_key} around it.
