@@ -455,9 +455,8 @@ let load n ~binary =
           Mmio.barrier ();
           let entry name =
             match Nx_nv_cubin.kernel c name with
-            | Some k when List.mem name (Nx_nv_cubin.kernels c) ->
-                Ok (Nativeint.of_int (va mem + k.code))
-            | _ -> Error ("the cubin has no function " ^ name)
+            | Some k -> Ok (Nativeint.of_int (va mem + k.code))
+            | None -> Error ("the cubin has no function " ^ name)
           in
           Ok
             {

@@ -250,15 +250,11 @@ let test_per_function () =
 let test_absent () =
   is_none ~msg:"a kernel the cubin lacks" (Cubin.kernel (load (cubin ())) "j")
 
-let test_all_code () =
+let test_no_kernels () =
   let obj =
     elf [ (".nv.constant0", progbits, 0, String.make 0x20 '\000', 0, 0, 4, 0) ]
   in
-  let laid = (Elf.load ~align:128 obj).image in
-  let k = kernel (load obj) "any" in
-  equal ~msg:"code from the start" int 0 k.code;
-  equal ~msg:"all of it" int (String.length laid) k.code_bytes;
-  equal ~msg:"no registers" int 0 k.registers
+  is_none ~msg:"a cubin without code" (Cubin.kernel (load obj) "any")
 
 let test_truncated_attribute () =
   (* A regcount whose header claims 8 bytes the section lacks. *)
@@ -340,7 +336,7 @@ let () =
              test "each kernel reads its own registers, stack and banks"
                test_per_function;
              test "a kernel the cubin lacks is none" test_absent;
-             test "a cubin without kernels is all code" test_all_code;
+             test "a cubin without code has no kernel" test_no_kernels;
              test "an attribute the section truncates is ignored"
                test_truncated_attribute;
              test "kernels lists the code sections in order" test_kernels;

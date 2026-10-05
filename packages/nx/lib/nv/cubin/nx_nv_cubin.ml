@@ -186,10 +186,10 @@ let kernel c name =
           List.fold_left (attribute s) k (attributes s)
       | None -> k
   in
-  let all_code =
+  let empty =
     {
       code = 0;
-      code_bytes = String.length c.elf.image;
+      code_bytes = 0;
       registers = 0;
       shared_bytes = 0;
       stack_bytes = 0;
@@ -197,6 +197,6 @@ let kernel c name =
       banks = [];
     }
   in
-  let ks = kernels c in
-  if ks <> [] && not (List.mem name ks) then None
-  else Some (List.fold_left section all_code c.elf.sections)
+  if List.mem name (kernels c) then
+    Some (List.fold_left section empty c.elf.sections)
+  else None

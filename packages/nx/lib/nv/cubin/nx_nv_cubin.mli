@@ -62,11 +62,9 @@ type kernel = {
 
 val kernel : t -> string -> kernel option
 (** [kernel c name] is what a launch of the kernel [name] of [c] needs, or
-    [None] if [c] has kernels and [name] is not one of them ({!kernels}). Its
-    code is the section [.text.name]; a cubin without kernels is all code, from
-    offset [0] for the size of its sections laid out. Its [shared_bytes] is the
-    size of the section [.nv.shared.name], and its [params_offset] the offset
-    the attribute [EIATTR_PARAM_CBANK] of [.nv.info.name] records. Its
+    [None] if [c] has no section [.text.name], its code. Its [shared_bytes] is
+    the size of the section [.nv.shared.name], and its [params_offset] the
+    offset the attribute [EIATTR_PARAM_CBANK] of [.nv.info.name] records. Its
     [registers] and [stack_bytes] are the values the attributes
     [EIATTR_REGCOUNT] and [EIATTR_MIN_STACK_SIZE] of the section [.nv.info]
     record for its function, the last if several do: an attribute names its
