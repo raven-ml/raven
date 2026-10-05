@@ -8,8 +8,7 @@
    channels' GPFIFOs point to. *)
 
 module P = Nx_nv_packet
-module M = P.Methods (P.Int)
-module Gpfifo = P.Gpfifo (P.Int)
+module M = P.Methods
 module Mmio = Nx_device_support.Mmio
 
 (* Methods *)
@@ -55,7 +54,7 @@ let submit ch ~timeout_ms addr words =
       unfetched () < ch.entries - 1);
   Mmio.set64 ch.ring
     (8 * (put mod ch.entries))
-    (Int64.of_int (Gpfifo.entry addr ~offset:0 ~words));
+    (Int64.of_int (P.eval (P.Gpfifo.entry addr ~offset:0 ~words)));
   Mmio.barrier ();
   Mmio.set64 ch.put 0 (Int64.of_int (put + 1));
   Mmio.set32 ch.gp_put 0 ((put + 1) mod ch.entries);

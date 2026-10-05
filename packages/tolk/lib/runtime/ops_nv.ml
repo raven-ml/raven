@@ -7,9 +7,8 @@
 
 open Ops
 module P = Nx_nv_packet
-module M = P.Methods (Nv_packet.Value)
-module Gpfifo = P.Gpfifo (Nv_packet.Value)
-module Qmd = P.Qmd (Nv_packet.Value)
+module M = P.Methods
+module Qmd = P.Qmd
 
 let u32 = Hcq2.Queue.dword
 let u64 n = int ~dtype:Dtype.Uint64 n
@@ -33,7 +32,7 @@ type program = {
   program : P.Program.t;
   vars : Dtype.t list;
   kernargs_size : int;
-  qmd : Qmd.t; (* the template of the program's launches *)
+  qmd : Ops.t Qmd.t; (* the template of the program's launches *)
 }
 
 let program_data props (obj : Device.Tiny_elf.t) =
@@ -160,16 +159,20 @@ let queue props q : Hcq2.commands =
     and doorbell = word "doorbell" Dtype.Uint32 1
     and put = word "put_value" Dtype.Uint64 1 in
     let dwords = max_numel cmdbuf * Dtype.itemsize (dtype cmdbuf) / 4 in
-    if dwords > Gpfifo.max_words then
+    if dwords > P.Gpfifo.max_words then
       raise
         (Hcq2.Over_capacity
            (Printf.sprintf
               "an NV command buffer of %d words exceeds a GPFIFO entry's %d"
-              dwords Gpfifo.max_words));
+              dwords P.Gpfifo.max_words));
     let gpentry =
       Hcq2.patch
         (word "gpentry" Dtype.Uint64 1)
-        [ (int 0, Gpfifo.entry (addr ib) ~offset:off ~words:dwords) ]
+        [
+          ( int 0,
+            Nv_packet.term (P.Gpfifo.entry (addr ib) ~offset:off ~words:dwords)
+          );
+        ]
     in
     let p = load (index put [ int 0 ]) [] in
     let written =

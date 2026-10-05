@@ -13,34 +13,28 @@
     one on take in turn. A launch runs from a launch descriptor in memory, whose
     layout depends on the compute engine's class.
 
-    Packets are words around values of the caller's type: integers for a runtime
+    Packets are data around values of the caller's type: integers for a runtime
     that writes them now, or values computed later for a library that encodes
-    work ahead of time. The encoders compute on values only through {!VALUE}, so
-    an encoding evaluated at given integers is the encoding of those integers.
-*)
+    work ahead of time. Where a layout computes on a value, such as an address
+    shifted to fit its field, the packet holds the computation as a {!term},
+    which the caller interprets. *)
 
-(** {1:values Values} *)
+(** {1:words Terms and words} *)
 
-(** The operations the encoders apply to values. *)
-module type VALUE = sig
-  type t
-  (** The type for values: 64-bit unsigned integers, or what stands for them. *)
+(** The type for computations on a value, as 64-bit unsigned integers. *)
+type 'v term =
+  | Value of 'v  (** The value. *)
+  | Add of 'v term * int  (** [Add (t, n)] is [t + n]. *)
+  | Shift of 'v term * int  (** [Shift (t, n)] is [t] shifted right by [n]. *)
 
-  val add : t -> int -> t
-  (** [add v n] is [v + n]. *)
-
-  val shift_right : t -> int -> t
-  (** [shift_right v n] is [v] shifted right by [n] bits. *)
-end
-
-module Int : VALUE with type t = int
-(** Values known now, as OCaml integers. *)
+val eval : int term -> int
+(** [eval t] is the integer [t] computes. *)
 
 (** The type for the words of a packet. *)
 type 'v word =
   | Dword of int  (** A word known when encoding: the integer's low 32 bits. *)
-  | W32 of 'v  (** A value's low 32 bits. *)
-  | W64 of 'v  (** A value's 64 bits, as two words, low first. *)
+  | W32 of 'v term  (** A term's low 32 bits. *)
+  | W64 of 'v term  (** A term's 64 bits, as two words, low first. *)
 
 val dwords : int word list -> int list
 (** [dwords ws] is the 32-bit words of [ws]. *)
@@ -55,52 +49,52 @@ type subchannel =
 
 (** Methods. A semaphore of the host is a 64-bit word; the copy engine's are
     32-bit words. Addresses are of memory the GPU addresses. *)
-module Methods (V : VALUE) : sig
-  val acquire : V.t -> V.t -> V.t word list
+module Methods : sig
+  val acquire : 'v -> 'v -> 'v word list
   (** [acquire addr v] waits until the semaphore at [addr] is at least [v],
       compared circularly. *)
 
-  val release : V.t -> V.t -> V.t word list
+  val release : 'v -> 'v -> 'v word list
   (** [release addr v] writes [v] at [addr] once the channel's earlier work is
       done, then raises a non-stalling interrupt. *)
 
-  val release_stamp : V.t -> V.t -> V.t word list
+  val release_stamp : 'v -> 'v -> 'v word list
   (** [release_stamp addr v] writes [v] at [addr] and the GPU's timer, in
       nanoseconds, at [addr + 8], once the channel's earlier work is done. *)
 
-  val set_object : subchannel -> int -> V.t word list
+  val set_object : subchannel -> int -> 'v word list
   (** [set_object s cls] binds the engine of class [cls] to [s]. *)
 
-  val local_memory_window : V.t -> V.t word list
+  val local_memory_window : 'v -> 'v word list
   (** [local_memory_window addr] makes kernels' local memory appear at [addr].
   *)
 
-  val shared_memory_window : V.t -> V.t word list
+  val shared_memory_window : 'v -> 'v word list
   (** [shared_memory_window addr] makes kernels' shared memory appear at [addr].
   *)
 
-  val local_memory : V.t -> per_tpc:V.t -> V.t word list
+  val local_memory : 'v -> per_tpc:'v -> 'v word list
   (** [local_memory addr ~per_tpc] gives kernels the local memory at [addr],
       [per_tpc] bytes for each texture processing cluster, on every streaming
       multiprocessor. *)
 
-  val invalidate_caches : V.t word list
+  val invalidate_caches : 'v word list
   (** [invalidate_caches] invalidates the compute engine's instruction, data and
       constant caches, without waiting for its work to finish. *)
 
-  val schedule : V.t -> V.t word list
+  val schedule : 'v -> 'v word list
   (** [schedule addr] schedules the launch descriptor at [addr], 256-byte
       aligned, and the descriptors that depend on it ({!Qmd.chain}). *)
 
-  val copy : dst:V.t -> src:V.t -> int -> V.t word list
+  val copy : dst:'v -> src:'v -> int -> 'v word list
   (** [copy ~dst ~src n] copies [n] bytes from [src] to [dst] on the copy
       engine, in lines of at most 2 GiB. *)
 
-  val copy_release : V.t -> V.t -> V.t word list
+  val copy_release : 'v -> 'v -> 'v word list
   (** [copy_release addr v] writes [v]'s low 32 bits at [addr] on the copy
       engine, once its earlier copies are done. *)
 
-  val copy_stamp : V.t -> V.t word list
+  val copy_stamp : 'v -> 'v word list
   (** [copy_stamp addr] writes [0] into the 8 bytes at [addr] and the GPU's
       timer, in nanoseconds, into the 8 after, on the copy engine. *)
 end
@@ -109,11 +103,11 @@ end
 
 (** A channel's ring (its GPFIFO) holds 64-bit entries, each naming a segment of
     words. *)
-module Gpfifo (V : VALUE) : sig
+module Gpfifo : sig
   val max_words : int
   (** [max_words] is the most words an entry's segment holds, [2{^21} - 1]. *)
 
-  val entry : V.t -> offset:int -> words:int -> V.t
+  val entry : 'v -> offset:int -> words:int -> 'v term
   (** [entry addr ~offset ~words] is the entry of the segment of [words] words
       at [addr + offset], 4-byte aligned and below [2{^40}], which the channel
       runs as a subroutine.
@@ -171,7 +165,7 @@ end
 type 'v hole = {
   at : int;  (** The byte offset of the hole. *)
   bytes : int;  (** Its size: 1, 2, 4 or 8. *)
-  value : 'v;  (** The value whose low bytes fill it, little-endian. *)
+  value : 'v term;  (** The term whose low bytes fill it, little-endian. *)
 }
 (** The type for words of a structure that values fill. *)
 
@@ -196,52 +190,52 @@ type dim =
 (** Launch descriptors: version 5 for the compute classes from Blackwell's on,
     version 3 before. A descriptor is mutable; its fields are known integers, or
     holes for values. *)
-module Qmd (V : VALUE) : sig
-  type t
+module Qmd : sig
+  type 'v t
   (** The type for launch descriptors being encoded. *)
 
-  val make : Program.t -> t
+  val make : Program.t -> 'v t
   (** [make p] is the descriptor of a launch of [p], without its sizes and
       addresses. *)
 
-  val copy : t -> t
+  val copy : 'v t -> 'v t
   (** [copy q] is a descriptor with [q]'s fields, which changes independently of
       [q]. *)
 
-  val set_dim : t -> dim -> int -> unit
+  val set_dim : 'v t -> dim -> int -> unit
   (** [set_dim q d n] sets the size [d] of the launch to [n].
 
       Raises [Invalid_argument] if [n] does not fit the field. *)
 
-  val patch_dim : t -> dim -> V.t -> unit
+  val patch_dim : 'v t -> dim -> 'v -> unit
   (** [patch_dim q d v] sets the size [d] of the launch to [v]. *)
 
-  val set_program : t -> V.t -> unit
+  val set_program : 'v t -> 'v -> unit
   (** [set_program q addr] sets the address of the kernel's first instruction to
       [addr], 256-byte aligned. *)
 
-  val set_bank : t -> int -> V.t -> unit
+  val set_bank : 'v t -> int -> 'v -> unit
   (** [set_bank q i addr] sets the address of the constant bank [i] to [addr],
       64-byte aligned. *)
 
-  val set_local_memory : t -> V.t -> unit
+  val set_local_memory : 'v t -> 'v -> unit
   (** [set_local_memory q bytes] sets the local memory each thread has to
       [bytes], a multiple of 16. *)
 
-  val release : t -> V.t -> V.t -> bool
+  val release : 'v t -> 'v -> 'v -> bool
   (** [release q addr v] makes the launch write the 64-bit [v] at [addr] once it
       completes, and is [true], if one of the descriptor's two releases is free,
       and is [false] otherwise. *)
 
-  val release_stamp : t -> V.t -> V.t -> bool
+  val release_stamp : 'v t -> 'v -> 'v -> bool
   (** [release_stamp q addr v] is {!release}, also writing the GPU's timer at
       [addr + 8]. *)
 
-  val chain : t -> V.t -> unit
+  val chain : 'v t -> 'v -> unit
   (** [chain q addr] makes the launch of the descriptor at [addr], 256-byte
       aligned, start once [q]'s completes, scheduled with [q]. *)
 
-  val structure : t -> V.t structure
+  val structure : 'v t -> 'v structure
   (** [structure q] is [q] laid out. Its holes are the widest unsigned words
       within their fields. *)
 end

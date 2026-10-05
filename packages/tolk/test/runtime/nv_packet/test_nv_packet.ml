@@ -1,6 +1,6 @@
-(* Tests of Tolk.Nv_packet: NVIDIA's packets encoded over a batch's nodes,
-   evaluated at integers, are the packets of those integers. nx.nv.device
-   encodes the integers; tolk's queues encode the nodes. *)
+(* Tests of Tolk.Nv_packet: NVIDIA's packets interpreted on a batch's nodes,
+   then evaluated at integers, are the packets interpreted on those integers.
+   nx.nv.device interprets them on integers; tolk's queues on nodes. *)
 
 open Windtrap
 open Tolk
@@ -34,49 +34,41 @@ type launch = {
   next : int option;
 }
 
-(* The commands and launches over values of [V], each value made by [leaf]. *)
-module Encode (V : P.VALUE) = struct
-  module M = P.Methods (V)
-  module Gpfifo = P.Gpfifo (V)
-  module Qmd = P.Qmd (V)
+(* The encoding of a command and of a launch descriptor, each value made by
+   [leaf]. *)
+let encode leaf = function
+  | Acquire (a, v) -> P.Methods.acquire (leaf a) (leaf v)
+  | Release (a, v) -> P.Methods.release (leaf a) (leaf v)
+  | Release_stamp (a, v) -> P.Methods.release_stamp (leaf a) (leaf v)
+  | Set_object (s, cls) -> P.Methods.set_object s cls
+  | Local_memory_window a -> P.Methods.local_memory_window (leaf a)
+  | Shared_memory_window a -> P.Methods.shared_memory_window (leaf a)
+  | Local_memory (a, per) -> P.Methods.local_memory (leaf a) ~per_tpc:(leaf per)
+  | Invalidate_caches -> P.Methods.invalidate_caches
+  | Schedule a -> P.Methods.schedule (leaf a)
+  | Copy (dst, src, n) -> P.Methods.copy ~dst:(leaf dst) ~src:(leaf src) n
+  | Copy_release (a, v) -> P.Methods.copy_release (leaf a) (leaf v)
+  | Copy_stamp a -> P.Methods.copy_stamp (leaf a)
+  | Entry (a, offset, words) ->
+      [ P.W64 (P.Gpfifo.entry (leaf a) ~offset ~words) ]
 
-  let command leaf = function
-    | Acquire (a, v) -> M.acquire (leaf a) (leaf v)
-    | Release (a, v) -> M.release (leaf a) (leaf v)
-    | Release_stamp (a, v) -> M.release_stamp (leaf a) (leaf v)
-    | Set_object (s, cls) -> M.set_object s cls
-    | Local_memory_window a -> M.local_memory_window (leaf a)
-    | Shared_memory_window a -> M.shared_memory_window (leaf a)
-    | Local_memory (a, per) -> M.local_memory (leaf a) ~per_tpc:(leaf per)
-    | Invalidate_caches -> M.invalidate_caches
-    | Schedule a -> M.schedule (leaf a)
-    | Copy (dst, src, n) -> M.copy ~dst:(leaf dst) ~src:(leaf src) n
-    | Copy_release (a, v) -> M.copy_release (leaf a) (leaf v)
-    | Copy_stamp a -> M.copy_stamp (leaf a)
-    | Entry (a, offset, words) ->
-        [ P.W64 (Gpfifo.entry (leaf a) ~offset ~words) ]
-
-  let launch leaf program l =
-    let q = Qmd.make program in
-    List.iter
-      (fun (d, value, n) ->
-        if value then Qmd.patch_dim q d (leaf n) else Qmd.set_dim q d n)
-      l.dims;
-    Qmd.set_program q (leaf l.program);
-    List.iteri (fun i a -> Qmd.set_bank q i (leaf a)) l.banks;
-    Qmd.set_local_memory q (leaf l.local);
-    List.iter
-      (fun (stamp, a, v) ->
-        ignore
-          ((if stamp then Qmd.release_stamp else Qmd.release)
-             q (leaf a) (leaf v)))
-      l.releases;
-    Option.iter (fun a -> Qmd.chain q (leaf a)) l.next;
-    Qmd.structure q
-end
-
-module Ints = Encode (P.Int)
-module Nodes = Encode (Nv_packet.Value)
+let descriptor leaf program l =
+  let q = P.Qmd.make program in
+  List.iter
+    (fun (d, value, n) ->
+      if value then P.Qmd.patch_dim q d (leaf n) else P.Qmd.set_dim q d n)
+    l.dims;
+  P.Qmd.set_program q (leaf l.program);
+  List.iteri (fun i a -> P.Qmd.set_bank q i (leaf a)) l.banks;
+  P.Qmd.set_local_memory q (leaf l.local);
+  List.iter
+    (fun (stamp, a, v) ->
+      ignore
+        ((if stamp then P.Qmd.release_stamp else P.Qmd.release)
+           q (leaf a) (leaf v)))
+    l.releases;
+  Option.iter (fun a -> P.Qmd.chain q (leaf a)) l.next;
+  P.Qmd.structure q
 
 (* Values as variables of a batch, each bound to its integer. *)
 let leaves () =
@@ -277,9 +269,7 @@ let words = list int
 
 let command_law c =
   let leaf, eval = leaves () in
-  equal words
-    (P.dwords (Ints.command Fun.id c))
-    (evaluated eval (Nodes.command leaf c))
+  equal words (P.dwords (encode Fun.id c)) (evaluated eval (encode leaf c))
 
 (* Copies apart, so that copies of several lines are frequent. *)
 let copy_law ((dst, src), n) =
@@ -293,8 +283,8 @@ let launch_law l =
   cover "a descriptor of version 3" (not l.blackwell);
   cover "both releases taken, and a third refused" (List.length l.releases = 3);
   equal string
-    (P.fill (Ints.launch Fun.id p l))
-    (region_bytes eval (Nv_packet.structure "qmd" (Nodes.launch leaf p l)))
+    (P.fill (descriptor Fun.id p l))
+    (region_bytes eval (Nv_packet.structure "qmd" (descriptor leaf p l)))
 
 let () =
   exit

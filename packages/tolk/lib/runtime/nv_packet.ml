@@ -7,18 +7,16 @@
 
 open Ops
 
-module Value = struct
-  type t = Ops.t
-
-  let add v n = add v (int ~dtype:Dtype.Uint64 n)
-  let shift_right v n = shr v (int n)
-end
+let rec term = function
+  | Nx_nv_packet.Value v -> v
+  | Add (t, n) -> add (term t) (int ~dtype:Dtype.Uint64 n)
+  | Shift (t, n) -> shr (term t) (int n)
 
 let words =
   List.map (function
     | Nx_nv_packet.Dword n -> Hcq2.Queue.dword n
-    | W32 v -> ccast v Dtype.Uint32
-    | W64 v -> ccast v Dtype.Uint64)
+    | W32 t -> ccast (term t) Dtype.Uint32
+    | W64 t -> ccast (term t) Dtype.Uint64)
 
 let binary s = v Op.Binary ~arg:(Bytes s)
 
@@ -44,5 +42,5 @@ let structure name (s : Ops.t Nx_nv_packet.structure) =
   region name s.bytes
     (List.map
        (fun (h : Ops.t Nx_nv_packet.hole) ->
-         (h.at, ccast h.value (unsigned h.bytes)))
+         (h.at, ccast (term h.value) (unsigned h.bytes)))
        s.holes)

@@ -8,9 +8,9 @@
 
 open Windtrap
 module P = Nx_nv_packet
-module M = P.Methods (P.Int)
-module Gpfifo = P.Gpfifo (P.Int)
-module Qmd = P.Qmd (P.Int)
+module M = P.Methods
+module Gpfifo = P.Gpfifo
+module Qmd = P.Qmd
 
 (* The spec: NVIDIA's class headers clc56f.h (host), clc6b5.h (copy engine),
    clcdc0.h and clc6c0qmd.h (launch descriptors, version 3). Fields are (lowest
@@ -60,10 +60,22 @@ let values =
           [ 0; mask32; 1 lsl 32; (1 lsl 32) + 1; (1 lsl 62) - 1 ] );
     ]
 
+(* A term computes on 64-bit unsigned integers; the values drawn keep the sum
+   within OCaml's integers. *)
+let term_law ((v, n), k) =
+  equal int ((v + n) lsr k) (P.eval (P.Shift (P.Add (P.Value v, n), k)));
+  equal int ((v lsr k) + n) (P.eval (P.Add (P.Shift (P.Value v, k), n)))
+
+let terms =
+  Gen.(
+    pair
+      (pair (int_range 0 (1 lsl 61)) (int_range 0 (1 lsl 32)))
+      (int_range 0 62))
+
 let words_law v =
   equal (list int)
     [ v land mask32; v land mask32; v land mask32; (v lsr 32) land mask32 ]
-    (P.dwords [ P.Dword v; P.W32 v; P.W64 v ])
+    (P.dwords [ P.Dword v; P.W32 (P.Value v); P.W64 (P.Value v) ])
 
 (* Method headers *)
 
@@ -166,7 +178,7 @@ let test_copy_release () =
 
 let entry_law ((a, offset), words) =
   let a = a * 4 and offset = offset * 4 in
-  let e = Gpfifo.entry a ~offset ~words in
+  let e = P.eval (Gpfifo.entry a ~offset ~words) in
   equal ~msg:"the segment's address" int (a + offset) (e land ((1 lsl 40) - 1));
   equal ~msg:"a subroutine" int D.nvc56f_gp_entry1_level_subroutine
     (field D.nvc56f_gp_entry1_level (e lsr 32));
@@ -311,8 +323,9 @@ let () =
   exit
     (run "nx.nv.packet"
        [
-         group "words"
+         group "terms and words"
            [
+             prop "a term adds and shifts in its order" terms term_law;
              prop "a value's words are its low 32 bits, then its high" values
                words_law;
            ];

@@ -3168,9 +3168,9 @@ thread.
 
 - Add `nx.nv.packet`, which encodes NVIDIA GPUs' commands once for the
   runtime and for tolk: methods, ring entries and launch descriptors
-  (`Nx_nv_packet.Methods`, `Gpfifo`, `Qmd`), over integers or over values
-  computed later (`Nx_nv_packet.VALUE`). nx.nv.device's channels and tolk's NV
-  queues write through it.
+  (`Nx_nv_packet.Methods`, `Gpfifo`, `Qmd`), as data around values of any
+  type, with the arithmetic on them recorded as terms (`Nx_nv_packet.term`).
+  nx.nv.device's channels and tolk's NV queues write through it.
 
 - Add `nx.nv.cubin`, which reads cubins: their image laid out and relocated
   (`Nx_nv_cubin.image`, `relocate`) and what a launch of a kernel needs, its

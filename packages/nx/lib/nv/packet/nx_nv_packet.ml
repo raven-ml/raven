@@ -7,31 +7,27 @@
 
 module D = Defs
 
-(* Values *)
+(* Terms and words *)
 
-module type VALUE = sig
-  type t
+type 'v term = Value of 'v | Add of 'v term * int | Shift of 'v term * int
 
-  val add : t -> int -> t
-  val shift_right : t -> int -> t
-end
+let rec eval = function
+  | Value v -> v
+  | Add (t, n) -> eval t + n
+  | Shift (t, n) -> eval t lsr n
 
-module Int = struct
-  type t = int
-
-  let add = ( + )
-  let shift_right = ( lsr )
-end
-
-type 'v word = Dword of int | W32 of 'v | W64 of 'v
+type 'v word = Dword of int | W32 of 'v term | W64 of 'v term
 
 let mask32 = 0xffff_ffff
 
 let dwords ws =
   List.concat_map
     (function
-      | Dword n | W32 n -> [ n land mask32 ]
-      | W64 n -> [ n land mask32; (n lsr 32) land mask32 ])
+      | Dword n -> [ n land mask32 ]
+      | W32 t -> [ eval t land mask32 ]
+      | W64 t ->
+          let n = eval t in
+          [ n land mask32; (n lsr 32) land mask32 ])
     ws
 
 (* [v] in the field [(lo, _)] of a word. *)
@@ -56,15 +52,15 @@ let methods s mthd ws =
 (* A copy's line is at most 2 GiB. *)
 let line = 1 lsl 31
 
-module Methods (V : VALUE) = struct
+module Methods = struct
   (* An address as the copy engine takes it: its high word, then its low. *)
-  let hi_lo a = [ W32 (V.shift_right a 32); W32 a ]
+  let hi_lo a = [ W32 (Shift (a, 32)); W32 a ]
 
   let semaphore a v flags =
     methods Host D.nvc56f_sem_addr_lo
       [
-        W64 a;
-        W64 v;
+        W64 (Value a);
+        W64 (Value v);
         Dword
           (bits D.nvc56f_sem_execute_payload_size
              D.nvc56f_sem_execute_payload_size_64bit
@@ -92,17 +88,17 @@ module Methods (V : VALUE) = struct
   let set_object s cls = methods s D.nvc6c0_set_object [ Dword cls ]
 
   let local_memory_window a =
-    methods Compute D.nvc6c0_set_shader_local_memory_window_a (hi_lo a)
+    methods Compute D.nvc6c0_set_shader_local_memory_window_a (hi_lo (Value a))
 
   let shared_memory_window a =
-    methods Compute D.nvc6c0_set_shader_shared_memory_window_a (hi_lo a)
+    methods Compute D.nvc6c0_set_shader_shared_memory_window_a (hi_lo (Value a))
 
   (* The third word is the most streaming multiprocessors the memory serves: all
      of them. *)
   let local_memory a ~per_tpc =
-    methods Compute D.nvc6c0_set_shader_local_memory_a (hi_lo a)
+    methods Compute D.nvc6c0_set_shader_local_memory_a (hi_lo (Value a))
     @ methods Compute D.nvc6c0_set_shader_local_memory_non_throttled_a
-        (hi_lo per_tpc @ [ Dword 0xff ])
+        (hi_lo (Value per_tpc) @ [ Dword 0xff ])
 
   let invalidate_caches =
     methods Compute D.nvc6c0_invalidate_shader_caches_no_wfi
@@ -117,7 +113,7 @@ module Methods (V : VALUE) = struct
       ]
 
   let schedule a =
-    methods Compute D.nvc6c0_send_pcas_a [ W32 (V.shift_right a 8) ]
+    methods Compute D.nvc6c0_send_pcas_a [ W32 (Shift (Value a, 8)) ]
     @ methods Compute D.nvc6c0_send_signaling_pcas2_b
         [ Dword D.nvc6c0_send_signaling_pcas2_b_pcas_action_prefetch_schedule ]
 
@@ -135,7 +131,7 @@ module Methods (V : VALUE) = struct
       else
         let words =
           methods Copy D.nvc6b5_offset_in_upper
-            (hi_lo (V.add src off) @ hi_lo (V.add dst off))
+            (hi_lo (Add (Value src, off)) @ hi_lo (Add (Value dst, off)))
           @ methods Copy D.nvc6b5_line_length_in
               [ Dword (Stdlib.Int.min line (n - off)) ]
           @ methods Copy D.nvc6b5_launch_dma [ Dword launch ]
@@ -145,7 +141,7 @@ module Methods (V : VALUE) = struct
     go 0 []
 
   let copy_semaphore a v kind =
-    methods Copy D.nvc6b5_set_semaphore_a (hi_lo a @ [ v ])
+    methods Copy D.nvc6b5_set_semaphore_a (hi_lo (Value a) @ [ v ])
     @ methods Copy D.nvc6b5_launch_dma
         [
           Dword
@@ -155,7 +151,7 @@ module Methods (V : VALUE) = struct
         ]
 
   let copy_release a v =
-    copy_semaphore a (W32 v)
+    copy_semaphore a (W32 (Value v))
       D.nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore
 
   let copy_stamp a =
@@ -165,7 +161,7 @@ end
 
 (* Channel rings *)
 
-module Gpfifo (V : VALUE) = struct
+module Gpfifo = struct
   let max_words = (1 lsl snd D.nvc56f_gp_entry1_length) - 1
 
   (* An address below 2^40, 4-byte aligned, is the entry's low 40 bits: its word
@@ -174,11 +170,11 @@ module Gpfifo (V : VALUE) = struct
     if words < 0 || words > max_words then
       invalid_arg
         (Printf.sprintf "Gpfifo.entry: %d words, at most %d" words max_words);
-    V.add a
-      (offset
-      lor (bits D.nvc56f_gp_entry1_level D.nvc56f_gp_entry1_level_subroutine
-          lor bits D.nvc56f_gp_entry1_length words)
-          lsl 32)
+    let flags =
+      bits D.nvc56f_gp_entry1_level D.nvc56f_gp_entry1_level_subroutine
+      lor bits D.nvc56f_gp_entry1_length words
+    in
+    Add (Value a, offset lor (flags lsl 32))
 end
 
 (* Launches *)
@@ -273,7 +269,7 @@ module Program = struct
     65536 / round_up (Stdlib.Int.max 1 p.kernel.registers * 32) 256 / 4 * 4 * 32
 end
 
-type 'v hole = { at : int; bytes : int; value : 'v }
+type 'v hole = { at : int; bytes : int; value : 'v term }
 type 'v structure = { bytes : string; holes : 'v hole list }
 
 let fill (s : int structure) =
@@ -281,7 +277,7 @@ let fill (s : int structure) =
   List.iter
     (fun (h : int hole) ->
       for i = 0 to h.bytes - 1 do
-        Bytes.set b (h.at + i) (Char.chr ((h.value lsr (8 * i)) land 0xff))
+        Bytes.set b (h.at + i) (Char.chr ((eval h.value lsr (8 * i)) land 0xff))
       done)
     s.holes;
   Bytes.to_string b
@@ -289,12 +285,12 @@ let fill (s : int structure) =
 type axis = X | Y | Z
 type dim = Grid of axis | Block of axis
 
-module Qmd (V : VALUE) = struct
-  type t = {
+module Qmd = struct
+  type 'v t = {
     ver : int;
     fields : (string * (int * int)) list;
     mv : Bytes.t;
-    mutable holes : V.t hole list; (* the latest at each offset *)
+    mutable holes : 'v hole list; (* the latest at each offset *)
   }
 
   let range q k =
@@ -337,7 +333,7 @@ module Qmd (V : VALUE) = struct
 
   let set_addr q name ?(sfx = "") addr =
     patch q (name ^ "_lower" ^ sfx) addr;
-    patch q (name ^ "_upper" ^ sfx) (V.shift_right addr 32)
+    patch q (name ^ "_upper" ^ sfx) (Shift (addr, 32))
 
   let make (p : Program.t) =
     (* The version, its size in words, and its fields. *)
@@ -403,27 +399,28 @@ module Qmd (V : VALUE) = struct
     | Block a -> Printf.sprintf "cta_thread_dimension%d" (axis a)
 
   let set_dim q d n = write q (dim q d) n
-  let patch_dim q d v = patch q (dim q d) v
+  let patch_dim q d v = patch q (dim q d) (Value v)
 
   let set_program q addr =
-    if v4 q then
-      set_addr q "program_address" ~sfx:"_shifted4" (V.shift_right addr 4)
-    else set_addr q "program_address" (V.shift_right addr 0);
-    set_addr q "program_prefetch_addr" ~sfx:"_shifted" (V.shift_right addr 8)
+    let addr = Value addr in
+    if v4 q then set_addr q "program_address" ~sfx:"_shifted4" (Shift (addr, 4))
+    else set_addr q "program_address" (Shift (addr, 0));
+    set_addr q "program_prefetch_addr" ~sfx:"_shifted" (Shift (addr, 8))
 
   let set_bank q i addr =
+    let addr = Value addr in
     if v4 q then
       set_addr q "constant_buffer_addr"
         ~sfx:(Printf.sprintf "_shifted6_%d" i)
-        (V.shift_right addr 6)
+        (Shift (addr, 6))
     else
       set_addr q "constant_buffer_addr" ~sfx:(Printf.sprintf "_%d" i)
-        (V.shift_right addr 0)
+        (Shift (addr, 0))
 
   let set_local_memory q bytes =
     if v4 q then
-      patch q "shader_local_memory_high_size_shifted4" (V.shift_right bytes 4)
-    else patch q "shader_local_memory_high_size" bytes
+      patch q "shader_local_memory_high_size_shifted4" (Shift (Value bytes, 4))
+    else patch q "shader_local_memory_high_size" (Value bytes)
 
   (* One of the two releases, if one is free: a 64-bit payload, or with [stamp]
      the payload and the timer. *)
@@ -437,11 +434,11 @@ module Qmd (V : VALUE) = struct
     | Some i ->
         let name s = Printf.sprintf s i in
         if v4 q then (
-          set_addr q (name "release_semaphore%d_addr") addr;
-          set_addr q (name "release_semaphore%d_payload") v)
+          set_addr q (name "release_semaphore%d_addr") (Value addr);
+          set_addr q (name "release_semaphore%d_payload") (Value v))
         else (
-          set_addr q (name "release%d_address") addr;
-          set_addr q (name "release%d_payload") v);
+          set_addr q (name "release%d_address") (Value addr);
+          set_addr q (name "release%d_payload") (Value v));
         write q (enable i) 1;
         write q
           (if v4 q then name "release_structure_size_%d"
@@ -461,7 +458,7 @@ module Qmd (V : VALUE) = struct
         "dependent_qmd0_prefetch";
         "dependent_qmd0_enable";
       ];
-    patch q "dependent_qmd0_pointer" (V.shift_right addr 8)
+    patch q "dependent_qmd0_pointer" (Shift (Value addr, 8))
 
   let structure q =
     {
@@ -469,4 +466,3 @@ module Qmd (V : VALUE) = struct
       holes = List.sort (fun a b -> Stdlib.Int.compare a.at b.at) q.holes;
     }
 end
-
