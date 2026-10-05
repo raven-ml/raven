@@ -110,8 +110,8 @@ let bound =
     [
       (4, Gen.float_range (-3.) 3.);
       ( 2,
-        chosen
-          [ Float.nan; neg_infinity; infinity; -9.; -6.; -0.; 5.5; 7.; 9. ] );
+        chosen [ Float.nan; neg_infinity; infinity; -9.; -6.; -0.; 5.5; 7.; 9. ]
+      );
     ]
 
 (* Positive over many orders of magnitude, where most float32 gammas underflow,
@@ -128,6 +128,27 @@ let rate =
     [
       (3, Gen.float_range 0. 60.);
       (2, chosen ([ 1e-3; 9.99; 10.; 10.01; 1e3; 9e4 ] @ outside));
+    ]
+
+(* Trial counts: small, both regimes' worth, the int32 extremes and past
+   them. *)
+let trials =
+  Gen.frequency
+    [
+      (4, Gen.int_range 0 60);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_int
+          [ 0; 1; 1000; 1_000_000; 0x7FFF_FFFF; -1; -0x8000_0000 ] );
+    ]
+
+(* Concentrations from zero over many orders of magnitude, and past the
+   domain. *)
+let circular =
+  Gen.frequency
+    [
+      (6, Gen.map (fun e -> 10. ** e) (Gen.float_range (-3.) 6.));
+      (1, chosen [ 0.; 1.; 1e30; Float.max_float ]);
+      (1, chosen outside);
     ]
 
 let logit =
@@ -165,6 +186,11 @@ let keyed : (string * (Rng.t -> float Ref.t)) list =
     ("beta", fun k -> drawn (Rng.beta k p3 (Nx.flip p3)));
     ("dirichlet", fun k -> drawn (Rng.dirichlet k p3));
     ("poisson", fun k -> drawn (Rng.poisson k (Nx.mul_s p3 40.)));
+    ( "binomial",
+      fun k ->
+        drawn (Rng.binomial k (Nx.create Nx.int32 [| 3 |] [| 5l; 90l; 0l |]) p3)
+    );
+    ("von_mises", fun k -> drawn (Rng.von_mises k (Nx.mul_s p3 10.)));
     ("categorical", fun k -> drawn (Rng.categorical k (Nx.tile [| 4; 1 |] p3)));
     ("permutation", fun k -> drawn (Rng.permutation k 5));
     ("shuffle", fun k -> drawn (Rng.shuffle k (Nx.arange Nx.float64 0 5 1)));
@@ -396,6 +422,27 @@ let logits_along =
      let+ axis = int_range (-Nx.ndim t) (Nx.ndim t - 1) in
      (P t, axis))
 
+(* A probability and trial counts of its shape, or one count for all of it. *)
+let binomial_args =
+  Gen.with_pp
+    (fun ppf (P p, n) ->
+      Format.fprintf ppf "n %a, p %a %a"
+        (Ref.pp Format.pp_print_int)
+        (Ref.map Int32.to_int (Ref.of_nx n))
+        Nx_dtype.pp (Nx.dtype p) (Ref.pp pp_float) (drawn p))
+    (let open Gen in
+     let* (P p) = param probability in
+     let* one = bool in
+     let+ ns = array ~size:(constant (if one then 1 else Nx.numel p)) trials in
+     let ns = Array.map Int32.of_int ns in
+     ( P p,
+       if one then Nx.scalar Nx.int32 ns.(0)
+       else Nx.create Nx.int32 (Nx.shape p) ns ))
+
+(* [pi] rounded up to [p] bits: the largest angle a draw rounded to a dtype of
+   [p] bits can reach. *)
+let pi_up p = Float.ldexp (Float.ceil (Float.ldexp Float.pi (p - 2))) (2 - p)
+
 let same_draw sampler t =
   equal exactly (drawn (sampler (Nx.copy t))) (drawn (sampler t))
 
@@ -444,6 +491,75 @@ let supports =
               Int32.to_float (Int32.logand w 0xFF_FFFFl) *. 0x1p-24
             in
             equal exactly (Ref.map low24 b) (drawn (Rng.uniform k Nx.float32 s)));
+        prop
+          "binomial counts lie in [0, n], are 0 where p or n is 0 and n where \
+           p is 1, in the broadcast shape; an argument outside its domain \
+           raises" (Gen.pair key binomial_args) (fun (k, (P p, n)) ->
+            let ps = floats p and ns = Nx.to_array n in
+            let valid =
+              Array.for_all in_unit ps && Array.for_all (fun n -> n >= 0l) ns
+            in
+            cover "an argument outside the domain" (not valid);
+            cover "a non-empty draw inside the domain" (valid && Nx.numel p > 0);
+            if not valid then raises_invalid_arg (fun () -> Rng.binomial k n p)
+            else (
+              equal exactly
+                (drawn (Rng.binomial k (Nx.copy n) (Nx.copy p)))
+                (drawn (Rng.binomial k n p));
+              let c = Ref.of_nx (Rng.binomial k n p) in
+              equal (array int) (Nx.shape p) c.shape;
+              let n = Ref.broadcast_to c.shape (Ref.of_nx n) in
+              cover "a mean of 10 or more"
+                (Array.exists2
+                   (fun n p -> Int32.to_float n *. Float.min p (1. -. p) >= 10.)
+                   n.data ps);
+              Array.iteri
+                (fun i c ->
+                  let n = n.data.(i) and p = ps.(i) in
+                  let msg = Printf.sprintf "%ld of %ld at %h" c n p in
+                  at_least ~msg int32 ~than:0l c;
+                  at_most ~msg int32 ~than:n c;
+                  if p = 0. || n = 0l then equal ~msg int32 0l c;
+                  if p = 1. then equal ~msg int32 n c)
+                c.data));
+        prop
+          "von_mises draws are angles in [-pi, pi] at their dtype, in their \
+           concentration's shape; a concentration outside [0, inf) raises"
+          (Gen.pair key (param circular))
+          (fun (k, P t) ->
+            let valid = Array.for_all in_rates (floats t) in
+            cover "a concentration outside the domain" (not valid);
+            cover "a zero concentration" (Array.mem 0. (floats t));
+            if not valid then raises_invalid_arg (fun () -> Rng.von_mises k t)
+            else (
+              same_draw (Rng.von_mises k) t;
+              let r = drawn (Rng.von_mises k t) in
+              equal (array int) (Nx.shape t) r.shape;
+              let pi = pi_up (significand (Nx.dtype t)) in
+              Array.iter
+                (satisfies ~claim:"an angle in [-pi, pi], rounded to the dtype"
+                   float_exact (fun v -> Float.abs v <= pi))
+                r.data));
+        cases
+          ~name:(fun (n, p, c) ->
+            Printf.sprintf "binomial of %ld trials at p = %g is %ld" n p c)
+          "exact"
+          [
+            (0l, 0.3, 0l);
+            (7l, 0., 0l);
+            (7l, 1., 7l);
+            (1000l, 0., 0l);
+            (1000l, 1., 1000l);
+            (0x7FFF_FFFFl, 0., 0l);
+            (0x7FFF_FFFFl, 1., 0x7FFF_FFFFl);
+          ]
+          (fun (n, p, c) ->
+            let n = Nx.full Nx.int32 [| 50 |] n in
+            List.iter
+              (fun (F d) ->
+                Array.iter (equal int32 c)
+                  (Nx.to_array (Rng.binomial k0 n (Nx.full d [| 50 |] p))))
+              [ F Nx.float32; F Nx.float64 ]);
         prop "randint draws lie in [low, high)"
           (Gen.quad key int32_bound int32_bound shape)
           ~examples:[ (k0, -0x8000_0000, 0x7FFF_FFFF, [| 64 |]) ]
@@ -619,10 +735,12 @@ let errors =
           (fun () -> ignore (Rng.randint k0 ~low:(-0x8000_0001) ~high:0 [||]));
           (fun () -> ignore (Nx.randint ~high:0x8000_0000 [| 2 |]));
         ] );
-      ( "truncated_normal and beta refuse parameters that do not broadcast",
+      ( "truncated_normal, beta and binomial refuse parameters that do not \
+         broadcast",
         [
           (fun () -> ignore (Rng.truncated_normal k0 (z [| 3 |]) (z [| 4 |])));
           (fun () -> ignore (Rng.beta k0 (z [| 3 |]) (z [| 4 |])));
+          (fun () -> ignore (Rng.binomial k0 (w [| 3 |]) (z [| 4 |])));
         ] );
       ( "dirichlet refuses fewer than two components",
         [
@@ -672,6 +790,19 @@ let refusals =
         fun () -> ignore (Rng.poisson k0 (Nx.scalar f32 (-1.))) );
       ( "Nx.Rng.poisson: rate at [0] is not in [0, inf)",
         fun () -> ignore (Rng.poisson k0 (v f64 [| infinity |])) );
+      ( "Nx.Rng.binomial: n at [1] is not in [0, inf)",
+        fun () ->
+          ignore
+            (Rng.binomial k0
+               (Nx.create Nx.int32 [| 2 |] [| 3l; -1l |])
+               (v f32 [| 0.5; 1.5 |])) );
+      ( "Nx.Rng.binomial: p at [1] is not in [0, 1]",
+        fun () ->
+          ignore
+            (Rng.binomial k0 (Nx.scalar Nx.int32 4l)
+               (v f64 [| 0.5; Float.nan |])) );
+      ( "Nx.Rng.von_mises: concentration at [2] is not in [0, inf)",
+        fun () -> ignore (Rng.von_mises k0 (v f32 [| 0.; 1.; infinity |])) );
       ( "Nx.Rng.bernoulli: p at [0; 2] is not in [0, 1]",
         fun () ->
           ignore
@@ -803,7 +934,12 @@ let scopes =
    e^2) (Dvoretzky-Kiefer-Wolfowitz, with Massart's constant), and so does the
    mean gap of draws on [0, 1] (Hoeffding); [tolerance] is the e where that is
    1e-7. Rounding each draw to its dtype moves its cdf by less than 1e-3 in
-   every row, which [tolerance] adds. *)
+   every row, which [tolerance] adds.
+
+   The same bound gives each row its power. At 100,000 draws [tolerance] is
+   0.0102, and the draws' own gap exceeds 0.0092 with probability below 1e-7, so
+   a sampler whose cdf is 0.02 or more from the law's at some point passes with
+   probability below 1e-7. *)
 
 type law = Cdf of (float -> float) | Pmf of (int -> float) | Mean of float
 
@@ -891,6 +1027,56 @@ let poisson rate =
     (fun k ->
       Float.exp ((float_of_int k *. Float.log rate) -. rate -. log_factorial k))
 
+(* The binomial pmf, its factorials as [poisson]'s. *)
+let binomial n p =
+  let log_factorial k =
+    let x = float_of_int k in
+    if k < 20 then
+      Float.log
+        (Seq.fold_left ( *. ) 1. (Seq.init k (fun i -> float_of_int (i + 1))))
+    else
+      ((x +. 0.5) *. Float.log x)
+      -. x +. 0.9189385332046727
+      +. (1. /. (12. *. x))
+  in
+  Pmf
+    (fun k ->
+      if k > n then 0.
+      else
+        Float.exp
+          (log_factorial n -. log_factorial k
+          -. log_factorial (n - k)
+          +. (float_of_int k *. Float.log p)
+          +. (float_of_int (n - k) *. Float.log1p (-.p))))
+
+(* The von Mises cdf on [-pi, pi], from its density [exp (kappa (cos t - 1))]
+   summed by the trapezoid rule over 2^16 steps and normalised; a large
+   concentration is the normal of variance [1 / kappa], within [1 / kappa] of
+   it. *)
+let von_mises kappa =
+  if kappa > 1e4 then Cdf (fun x -> phi (x *. Float.sqrt kappa))
+  else
+    let steps = 1 lsl 16 in
+    let h = 2. *. Float.pi /. float_of_int steps in
+    let density i =
+      Float.exp (kappa *. (Float.cos ((float_of_int i *. h) -. Float.pi) -. 1.))
+    in
+    let cumulative = Array.make (steps + 1) 0. in
+    for i = 1 to steps do
+      cumulative.(i) <-
+        cumulative.(i - 1) +. (0.5 *. h *. (density (i - 1) +. density i))
+    done;
+    let total = cumulative.(steps) in
+    Cdf
+      (fun x ->
+        let t = (x +. Float.pi) /. h in
+        if t <= 0. then 0.
+        else if t >= float_of_int steps then 1.
+        else
+          let i = int_of_float t in
+          let f = t -. float_of_int i in
+          ((cumulative.(i) *. (1. -. f)) +. (cumulative.(i + 1) *. f)) /. total)
+
 (* The product of two independent uniforms, on which a dependence between them
    shows. *)
 let product =
@@ -918,6 +1104,16 @@ let two name s d a b law =
   ( Format.asprintf "%s(%g, %g) at %a" name a b pp_dtype d,
     (fun k -> floats (s k (at d a) (at d b))),
     law )
+
+(* [n] draws of binomial(trials, p), [p] at [d]. *)
+let binomial_row d trials p =
+  ( Format.asprintf "binomial(%d, %g) at %a" trials p pp_dtype d,
+    (fun k ->
+      floats
+        (Rng.binomial k (Nx.scalar Nx.int32 (Int32.of_int trials)) (at d p))),
+    binomial trials p )
+
+let at2 v = Nx.broadcast_to [| n; 2 |] (Nx.scalar Nx.float64 v)
 
 let trunc d a b =
   two "truncated_normal" Rng.truncated_normal d a b (truncated a b)
@@ -985,6 +1181,32 @@ let distributions =
     one "poisson" Rng.poisson f64 1e7 (poisson 1e7);
     column "poisson(500) beside poisson(0.5)" Rng.poisson [| 0.5; 500. |] 1
       (poisson 500.);
+    binomial_row f32 20 0.5;
+    binomial_row f64 30 0.2;
+    binomial_row f64 5 0.9;
+    binomial_row f32 100 0.97;
+    binomial_row f32 1000 0.3;
+    binomial_row f32 1_000_000 0.1;
+    binomial_row f64 1_000_000 0.6;
+    binomial_row f64 1_000_000_000 2e-9;
+    binomial_row f32 1_000_000_000 9e-9;
+    ( "binomial(40, 0.5) beside binomial(3, 0.5)",
+      (fun k ->
+        let n =
+          Nx.broadcast_to [| n; 2 |] (Nx.create Nx.int32 [| 2 |] [| 3l; 40l |])
+        in
+        floats (Nx.slice [ A; I 1 ] (Rng.binomial k n (at2 0.5)))),
+      binomial 40 0.5 );
+    one "von_mises" Rng.von_mises f32 0.
+      (Cdf (fun x -> clamp ((x +. Float.pi) /. (2. *. Float.pi))));
+    one "von_mises" Rng.von_mises f64 0.5 (von_mises 0.5);
+    one "von_mises" Rng.von_mises f32 0.9 (von_mises 0.9);
+    one "von_mises" Rng.von_mises f64 1. (von_mises 1.);
+    one "von_mises" Rng.von_mises f32 2. (von_mises 2.);
+    one "von_mises" Rng.von_mises f64 30. (von_mises 30.);
+    one "von_mises" Rng.von_mises f32 1e6 (von_mises 1e6);
+    column "von_mises(4) beside von_mises(0)" Rng.von_mises [| 0.; 4. |] 1
+      (von_mises 4.);
     column "bernoulli(0.9) beside bernoulli(0.1)" Rng.bernoulli [| 0.1; 0.9 |] 1
       (pmf [| 0.1; 0.9 |]);
     (* A comparison at the dtype's 3 bits would make it 6 in 16. *)

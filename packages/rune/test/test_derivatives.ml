@@ -965,6 +965,28 @@ let edge_tests =
         equal (exact ())
           (vec [| 1.; 1. |])
           (Rune.grad' Nx.sum (vec [| inf; neg_infinity |])));
+    test
+      "a von Mises draw has a finite derivative in its concentration, from \
+       zero to 1e30" (fun () ->
+        let c =
+          Nx.create Nx.float32 [| 7 |] [| 0.; 1e-30; 0.5; 1.; 4.; 1e6; 1e30 |]
+        in
+        let k = Nx.Rng.key 5 in
+        let grad k c = Rune.grad' (fun c -> Nx.sum (Nx.Rng.von_mises k c)) c in
+        let finite how g =
+          Array.iteri
+            (fun i g ->
+              satisfies
+                ~msg:(Printf.sprintf "%s at %g" how (Nx.item [ i ] c))
+                ~claim:"a finite derivative" float_exact Float.is_finite g)
+            (Nx.to_array g)
+        in
+        finite "grad" (grad k c);
+        finite "jvp" (snd (Rune.jvp' (Nx.Rng.von_mises k) c (Nx.ones_like c)));
+        finite "compiled grad"
+          (Rune.jit
+             Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+             grad k c));
     test "an empty leaf has an empty gradient" (fun () ->
         let ga, gb =
           Rune.grad pair

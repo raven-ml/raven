@@ -3402,6 +3402,10 @@ module Rng = struct
     let x = distinct x in
     logical_and (cmpge x (scalar_like x 0.0)) (isfinite x)
 
+  let natural x =
+    let x = distinct x in
+    cmpge x (scalar_like x 0l)
+
   let probability x =
     let x = distinct x in
     logical_and (cmpge x (scalar_like x 0.0)) (cmple x (scalar_like x 1.0))
@@ -3691,24 +3695,134 @@ module Rng = struct
     | Nx_dtype.Float64 -> draw Nx_dtype.float64
     | _ -> draw Nx_dtype.float32
 
-  (* The Poisson log pmf at an integer-valued [k], written so that no term
-     grows with the rate: the direct form cancels three terms of size [rate
-     log rate] to a margin of order one, which float32 loses above a rate of
-     ten thousand. With Stirling's formula for [log k!] the pmf is
+  (* Von Mises(0, kappa) by Best and Fisher's rejection (1979) from a wrapped
+     Cauchy envelope of parameter [rho]: a proposal [z = cos theta] from one
+     uniform, accepted against a second through [y = kappa (s - z)], where [s =
+     (1 + rho^2) / (2 rho)], with a squeeze [y (2 - y) > v] or the bound [log (y
+     / v) + 1 - y >= 0]. Acceptance is lowest as [kappa] grows, near 0.66, so 20
+     rounds leave 5e-10 of an element unaccepted; that element takes its last
+     proposal, a draw from the envelope.
 
-     -bd0 (k, rate) - log (2 pi k) / 2 - stirlerr k,
+     The textbook form cancels at both ends: [rho = (tau - sqrt (2 tau)) / (2
+     kappa)] with [tau = 1 + sqrt (1 + 4 kappa^2)] loses every digit as [kappa]
+     goes to zero, and [z] reaches 1 at large [kappa], where [acos z] is the
+     root of a difference. So the draw is written in the uniform's half angle
+     [phi = pi (2 u - 1) / 2], with [D = tau + sqrt (2 tau)], [rho = 2 kappa /
+     D], [1 - rho = (D - 2 kappa) / D] and [A = D (1 - rho)^2 / 4]:
 
-     where [bd0 (x, m) = x log (x/m) + m - x] is the saddle-point deviance and
-     [stirlerr k] the remainder of Stirling's series. Near [x = m] the
-     deviance is itself a cancellation, so there it comes from Loader's series
-     in [v = (x - m) / (x + m)], whose terms are all the same sign. The
-     remainder's asymptotic series holds from 8 up; below that it is read off
-     a shift by eight, where every quantity is small. Both regimes of each
-     [where] run everywhere, so the arithmetic must stay finite wherever the
-     result is not selected: [k = 0], where the deviance is [0 log 0], gets
-     its own branch. *)
-  let log_poisson_pmf k rate =
-    let lit v = scalar_like k v in
+     denom = (1 - rho)^2 + 4 rho cos^2 phi,
+
+     y = A (1 + rho)^2 / denom,
+
+     theta = 2 asin (|sin phi| (1 - rho) / sqrt denom), signed as phi,
+
+     where [D - 2 kappa = 1 + 1 / (sqrt (1 + 4 kappa^2) + 2 kappa) + sqrt (2
+     tau)] has no cancellation. From [kappa = 1] up the constants are formed in
+     [e = 1 / (2 kappa)], which keeps them finite up to the largest float: [D /
+     (2 kappa) = d = h + e + g] for [h = sqrt (1 + e^2)] and [g = sqrt (2 e (e +
+     h))], [rho = 1 / d], [1 - rho = sqrt e w / d] and [A = w^2 / (4 d)], where
+     [w = (d - 1) / sqrt e = e sqrt e / (h + 1) + sqrt e + sqrt (2 (e + h))]. At
+     [kappa = 0], [rho] is 0, [y] is 1, every proposal is accepted and [theta]
+     is [2 phi]: the uniform circle. *)
+  let von_mises_rounds = 20
+
+  let wrapped_cauchy kappa =
+    let lit v = scalar_like kappa v in
+    (* Each regime reads a concentration of its own range, so neither divides
+       by zero or overflows where the other is selected: a derivative passes
+       through both. *)
+    let large = cmpge kappa (lit 1.0) in
+    let small_kappa = where large (lit 0.0) kappa in
+    let large_kappa = where large kappa (lit 1.0) in
+    let two_kappa = mul (lit 2.0) small_kappa in
+    let root = sqrt (add (lit 1.0) (mul two_kappa two_kappa)) in
+    let tau = add (lit 1.0) root in
+    let r = sqrt (mul (lit 2.0) tau) in
+    let dd = add tau r in
+    let gap = add (add (lit 1.0) (recip (add root two_kappa))) r in
+    let e = div (lit 0.5) large_kappa in
+    let h = sqrt (add (lit 1.0) (mul e e)) in
+    let d = add (add h e) (sqrt (mul (lit 2.0) (mul e (add e h)))) in
+    let w =
+      add
+        (add (div (mul e (sqrt e)) (add h (lit 1.0))) (sqrt e))
+        (sqrt (mul (lit 2.0) (add e h)))
+    in
+    let rho = where large (recip d) (div two_kappa dd) in
+    let one_minus_rho = where large (div (mul (sqrt e) w) d) (div gap dd) in
+    let a =
+      where large
+        (div (mul w w) (mul (lit 4.0) d))
+        (div (mul gap gap) (mul (lit 4.0) dd))
+    in
+    (rho, one_minus_rho, a)
+
+  let von_mises (type b) k (concentration : (float, b) t) : (float, b) t =
+    require "von_mises"
+      ("concentration", "is not in [0, inf)", non_negative concentration);
+    let ctx = Value.context k in
+    let shape = shape concentration in
+    let draw (type c) (compute : (float, c) Nx_dtype.t) =
+      let lit v = scalar ctx compute v in
+      let rho, one_minus_rho, a = wrapped_cauchy (at compute concentration) in
+      let one_plus_rho = add (lit 1.0) rho in
+      let lift = mul a (mul one_plus_rho one_plus_rho) in
+      let denom phi =
+        let c = cos phi in
+        add
+          (mul one_minus_rho one_minus_rho)
+          (mul (mul (lit 4.0) rho) (mul c c))
+      in
+      let rounds = von_mises_rounds in
+      let draws = unit k compute (Array.append [| 2; rounds |] shape) in
+      (* The rounds settle on a half angle; the angle is formed once, from the
+         half angle each element took. *)
+      let acc = ref (zeros ctx compute shape) in
+      let last = ref !acc in
+      let settled = ref (cmpne !acc !acc) in
+      for j = 0 to rounds - 1 do
+        let u = slice [ I 0; I j ] draws in
+        let v = slice [ I 1; I j ] draws in
+        let phi = mul (sub u (lit 0.5)) (lit Float.pi) in
+        let y = div lift (denom phi) in
+        let accept =
+          logical_or
+            (cmpgt (mul y (sub (lit 2.0) y)) v)
+            (cmpge (sub (log (div y v)) y) (lit (-1.0)))
+        in
+        let take = logical_and accept (logical_not !settled) in
+        acc := where take phi !acc;
+        settled := logical_or !settled accept;
+        last := phi
+      done;
+      let phi = where !settled !acc !last in
+      let half = div (mul (abs (sin phi)) one_minus_rho) (sqrt (denom phi)) in
+      let theta =
+        mul (sign phi) (mul (lit 2.0) (asin (minimum half (lit 1.0))))
+      in
+      at (dtype concentration) theta
+    in
+    match dtype concentration with
+    | Nx_dtype.Float64 -> draw Nx_dtype.float64
+    | _ -> draw Nx_dtype.float32
+
+  (* Log pmfs at integer-valued counts, written so that no term grows with the
+     counts: the direct forms cancel terms of size [m log m] to a margin of
+     order one, which float32 loses above a mean of ten thousand. With
+     Stirling's formula for the factorials they are sums of saddle-point
+     deviances [bd0 (x, m) = x log (x/m) + m - x], remainders [stirlerr x] of
+     Stirling's series and a logarithm of order one (Loader, 2000).
+
+     Near [x = m] the deviance is itself a cancellation, so there it comes from
+     Loader's series in [v = (x - m) / (x + m)], whose terms are all the same
+     sign; [deviance x m d] takes [d = x - m] from its caller, who can form it
+     without subtracting two large numbers. The remainder's asymptotic series
+     holds from 8 up; below that it is read off a shift by eight, where every
+     quantity is small. Both regimes of each [where] run everywhere, so the
+     arithmetic must stay finite wherever the result is not selected: a count of
+     zero, where the deviance is [0 log 0], gets its own branch. *)
+  let stirlerr y =
+    let lit v = scalar_like y v in
     let stirling_main y =
       add
         (sub (mul (add y (lit 0.5)) (log y)) y)
@@ -3722,41 +3836,79 @@ module Rng = struct
            (div (sub (lit (1.0 /. 360.0)) (div (lit (1.0 /. 1260.0)) y2)) y2))
         y
     in
-    let stirlerr =
-      let shifted = add k (lit 8.0) in
-      let product = ref (add k (lit 1.0)) in
-      for i = 2 to 8 do
-        product := mul !product (add k (lit (float_of_int i)))
-      done;
-      let small =
-        sub
-          (sub
-             (add (stirling_main shifted) (stirling_tail shifted))
-             (log !product))
-          (stirling_main k)
-      in
-      where (cmplt k (lit 8.0)) small (stirling_tail k)
+    let shifted = add y (lit 8.0) in
+    let product = ref (add y (lit 1.0)) in
+    for i = 2 to 8 do
+      product := mul !product (add y (lit (float_of_int i)))
+    done;
+    let small =
+      sub
+        (sub
+           (add (stirling_main shifted) (stirling_tail shifted))
+           (log !product))
+        (stirling_main y)
     in
-    let deviance =
-      let d = sub k rate and s = add k rate in
-      let v = div d s in
-      let v2 = mul v v in
-      let acc = ref (mul d v) in
-      let term = ref (mul (mul (lit 2.0) k) v) in
-      for j = 1 to 6 do
-        term := mul !term v2;
-        acc := add !acc (div !term (lit (float_of_int ((2 * j) + 1))))
-      done;
-      let direct = add (sub (mul k (log (div k rate))) k) rate in
-      where (cmplt (abs d) (mul (lit 0.1) s)) !acc direct
-    in
+    where (cmplt y (lit 8.0)) small (stirling_tail y)
+
+  let deviance x m d =
+    let lit v = scalar_like x v in
+    let s = add x m in
+    let v = div d s in
+    let v2 = mul v v in
+    let acc = ref (mul d v) in
+    let term = ref (mul (mul (lit 2.0) x) v) in
+    for j = 1 to 6 do
+      term := mul !term v2;
+      acc := add !acc (div !term (lit (float_of_int ((2 * j) + 1))))
+    done;
+    let direct = add (sub (mul x (log (div x m))) x) m in
+    where (cmplt (abs d) (mul (lit 0.1) s)) !acc direct
+
+  (* The Poisson log pmf: -bd0 (k, rate) - log (2 pi k) / 2 - stirlerr k. *)
+  let log_poisson_pmf k rate =
+    let lit v = scalar_like k v in
     where
       (cmplt k (lit 0.5))
       (neg rate)
       (sub
-         (sub (neg deviance)
+         (sub
+            (neg (deviance k rate (sub k rate)))
             (mul (lit 0.5) (log (mul (lit (2.0 *. Float.pi)) k))))
-         stirlerr)
+         (stirlerr k))
+
+  (* The binomial log pmf of [n] trials of probability [p], with [q = 1 - p]:
+
+     stirlerr n - stirlerr k - stirlerr (n - k)
+
+     - bd0 (k, n p) - bd0 (n - k, n q) - log (2 pi k (n - k) / n) / 2,
+
+     where both deviances take their difference from [n p - k], which no large
+     [n] cancels. The counts [0] and [n] have their own branches, the rest is
+     read at a count kept strictly inside them. *)
+  let log_binomial_pmf k n p q =
+    let lit v = scalar_like k v in
+    let inside = maximum (minimum k (sub n (lit 1.0))) (lit 1.0) in
+    let rest = sub n inside in
+    let d = sub inside (mul n p) in
+    let saddle =
+      sub
+        (sub
+           (sub (sub (stirlerr n) (stirlerr inside)) (stirlerr rest))
+           (deviance inside (mul n p) d))
+        (deviance rest (mul n q) (neg d))
+    in
+    let spread =
+      add
+        (log (mul (lit (2.0 *. Float.pi)) inside))
+        (log1p (neg (div inside n)))
+    in
+    where
+      (cmplt k (lit 0.5))
+      (mul n (log1p (neg p)))
+      (where
+         (cmpgt k (sub n (lit 0.5)))
+         (mul n (log p))
+         (sub saddle (mul (lit 0.5) spread)))
 
   (* Two regimes with a fixed round count each, chosen per element, so the
      shape of the computation does not depend on the rate and the rate can be
@@ -3876,6 +4028,136 @@ module Rng = struct
       cast Nx_dtype.int32 (where small inversion rejection)
     in
     match dtype rate with
+    | Nx_dtype.Float64 -> draw Nx_dtype.float64
+    | _ -> draw Nx_dtype.float32
+
+  (* Binomial(n, p) counts the failures of [1 - p] where [p] exceeds one half,
+     so the samplers below see [p <= 1/2]. As for [poisson], two regimes run for
+     every element and [where] picks, by the mean [n p].
+
+     Below 10, inversion over a leading axis of 48 rounds: the terms of the pmf
+     follow from [pmf 0 = (1 - p)^n] by the ratios [(n - j) p / ((j + 1) (1 -
+     p))], summed in logarithms, so a [p] of zero or a count past [n] gives a
+     term of zero rather than a product with an infinity. A uniform scaled by
+     the sum of the terms is compared against their running sum, so the count
+     never passes [n] or the last round. The mass beyond 48 is below 1e-16.
+
+     From 10 up, Hörmann's transformed rejection (BTRS, 1993): a proposal from a
+     scaled logistic hat around the mean, accepted by a squeeze test or, failing
+     that, by comparing against the log pmf relative to the mode's. Acceptance
+     is least, 0.71, at [n = 20] and [p = 1/2], so 18 rounds leave 2e-10 of an
+     element unaccepted; that element takes its last proposal. The elements the
+     inversion owns see the benign [n = 1000, p = 1/2] here. *)
+  let binomial_inversion_rounds = 48
+  let binomial_rejection_rounds = 18
+
+  let binomial (type b) k (n : int32_t) (p : (float, b) t) =
+    require_both "binomial"
+      ("n", "is not in [0, inf)", natural n)
+      ("p", "is not in [0, 1]", probability p);
+    let ctx = Value.context k in
+    let shape = Shape.broadcast (shape n) (shape p) in
+    let n = broadcast_to shape n and p = broadcast_to shape p in
+    let draw (type c) (compute : (float, c) Nx_dtype.t) =
+      let lit v = scalar ctx compute v in
+      let nf = cast compute n and p = at compute p in
+      let flip = cmpgt p (lit 0.5) in
+      let p = where flip (sub (lit 1.0) p) p in
+      let small = logical_not (cmpge (mul nf p) (lit 10.0)) in
+      let ks = split k in
+      let inversion =
+        let rounds = binomial_inversion_rounds in
+        let along_rounds v =
+          reshape
+            (Array.append [| rounds |] (Array.make (Array.length shape) 1))
+            v
+        in
+        let j =
+          along_rounds (cast compute (arange ctx Nx_dtype.int32 0 rounds 1))
+        in
+        let log_fact =
+          let acc = ref 0.0 in
+          Array.init rounds (fun i ->
+              if i > 0 then acc := !acc +. Float.log (float_of_int i);
+              !acc)
+        in
+        let log_fact =
+          along_rounds (create ctx compute [| rounds |] log_fact)
+        in
+        (* Round [j] holds [log (n (n - 1) ... (n - j + 1) (p / q)^j)]: the
+           logarithms of the ratios [(n - i) p / q], summed over [i < j]. *)
+        let ratio =
+          add (log (maximum (sub nf j) (lit 0.0))) (sub (log p) (log1p (neg p)))
+        in
+        let falling =
+          concatenate ~axis:0
+            [
+              zeros ctx compute (Array.append [| 1 |] shape);
+              cumsum ~axis:0 (slice [ R (0, rounds - 1) ] ratio);
+            ]
+        in
+        let log_pmf = sub (add (mul nf (log1p (neg p))) falling) log_fact in
+        let cdf = cumsum ~axis:0 (exp log_pmf) in
+        let total = slice [ I (rounds - 1) ] cdf in
+        let u = uniform ks.(0) compute shape in
+        sum ~axes:[ 0 ] (cast compute (cmplt cdf (mul u total)))
+      in
+      let rejection =
+        let rounds = binomial_rejection_rounds in
+        let nf = where small (lit 1000.0) nf and p = where small (lit 0.5) p in
+        let q = sub (lit 1.0) p in
+        let mean = mul nf p in
+        let spq = sqrt (mul mean q) in
+        let b = add (lit 1.15) (mul (lit 2.53) spq) in
+        let a =
+          add (add (lit (-0.0873)) (mul (lit 0.0248) b)) (mul (lit 0.01) p)
+        in
+        let c = add mean (lit 0.5) in
+        let log_alpha = log (mul (add (lit 2.83) (div (lit 5.1) b)) spq) in
+        let vr = sub (lit 0.92) (div (lit 4.2) b) in
+        let mode = floor (mul (add nf (lit 1.0)) p) in
+        let log_mode = log_binomial_pmf mode nf p q in
+        let draws =
+          uniform ks.(1) compute (Array.append [| 2; rounds |] shape)
+        in
+        let acc = ref (zeros ctx compute shape) in
+        let last = ref !acc in
+        let settled = ref (cmpne !acc !acc) in
+        for j = 0 to rounds - 1 do
+          let u = sub (contiguous (slice [ I 0; I j ] draws)) (lit 0.5) in
+          let v = contiguous (slice [ I 1; I j ] draws) in
+          let us = sub (lit 0.5) (abs u) in
+          let proposal =
+            floor (add (mul (add (div (mul (lit 2.0) a) us) b) u) c)
+          in
+          (* A [us] of zero sends the proposal to an infinity, which the range
+             test rejects; the count stays finite for the cast. *)
+          let count =
+            where (cmpge proposal (lit 0.0)) (minimum proposal nf) (lit 0.0)
+          in
+          let inside =
+            logical_and (cmpge proposal (lit 0.0)) (cmple proposal nf)
+          in
+          let squeeze = logical_and (cmpge us (lit 0.07)) (cmple v vr) in
+          let lhs =
+            sub (add (log v) log_alpha) (log (add (div a (mul us us)) b))
+          in
+          let accept =
+            logical_and inside
+              (logical_or squeeze
+                 (cmple lhs (sub (log_binomial_pmf count nf p q) log_mode)))
+          in
+          let take = logical_and accept (logical_not !settled) in
+          acc := where take count !acc;
+          settled := logical_or !settled accept;
+          last := count
+        done;
+        where !settled !acc !last
+      in
+      let y = cast Nx_dtype.int32 (where small inversion rejection) in
+      where flip (sub n y) y
+    in
+    match dtype p with
     | Nx_dtype.Float64 -> draw Nx_dtype.float64
     | _ -> draw Nx_dtype.float32
 

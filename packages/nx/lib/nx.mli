@@ -939,6 +939,25 @@ module Rng : sig
       than two components, or if an element of [concentration] is outside ([0],
       [inf]). *)
 
+  val von_mises : t -> (float, 'b) tensor -> (float, 'b) tensor
+  (** [von_mises k concentration] samples the von Mises distribution, the normal
+      distribution of the circle, with mean direction 0 and the given
+      concentration, elementwise, as angles in \[[-pi], [pi]\], rounded to the
+      dtype. A concentration of zero is the uniform distribution on the circle;
+      a large one approaches a normal of variance [1 /. concentration]. Add a
+      mean direction to the draw for another; the sum is the same angle, outside
+      \[[-pi], [pi]\] until wrapped.
+
+      {b This sampler is not exact.} It is Best and Fisher's rejection from a
+      wrapped Cauchy envelope, run for a fixed twenty rounds: about one element
+      in [2e9] is accepted by none and takes its last proposal, a draw from the
+      envelope. Its derivative in [concentration] flows through the accepted
+      proposal alone, without the acceptance correction, so it is a biased
+      estimator.
+
+      Raises [Invalid_argument] if an element of [concentration] is outside
+      \[[0], [inf]): negative, infinite or NaN. *)
+
   val poisson : t -> (float, 'b) tensor -> int32_t
   (** [poisson k rate] samples the Poisson distribution with the given rate,
       elementwise, at any rate; a rate of zero gives a count of [0].
@@ -956,6 +975,27 @@ module Rng : sig
 
       Raises [Invalid_argument] if an element of [rate] is outside \[[0],
       [inf]): negative, infinite or NaN. *)
+
+  val binomial : t -> int32_t -> (float, 'b) tensor -> int32_t
+  (** [binomial k n p] samples the binomial distribution, the number of
+      successes in [n] independent trials that each succeed with probability
+      [p], elementwise; [n] and [p] broadcast against each other. A probability
+      of [0] gives [0] and one of [1] gives [n].
+
+      A draw at [p] above one half counts the failures of [1 - p]. Where
+      [n * min p (1 - p)], the mean of that count, is below 10, the count is
+      read off the cumulative distribution with one uniform, exactly. From 10 up
+      it comes from Hörmann's transformed rejection sampler run for a fixed
+      eighteen rounds, so like {!poisson} it is not quite exact: about one
+      element in [4e9] is accepted by no round and takes its last proposal, a
+      draw from the envelope around the mean.
+
+      Computed at [p]'s compute dtype, so a float32 [p] compiles on every
+      device. Float32 places the proposals exactly up to a mean of about [1e5];
+      give a float64 [p] beyond that.
+
+      Raises [Invalid_argument] if [n] and [p] do not broadcast, if an element
+      of [n] is negative, or if an element of [p] is outside \[[0], [1]\]. *)
 
   val categorical : t -> ?axis:int -> (float, 'a) tensor -> int64_t
   (** [categorical k logits] samples category indices from unnormalised

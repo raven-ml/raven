@@ -292,6 +292,40 @@ let values =
   group "values"
     [
       group "one operation per family equals eager" (List.map law families);
+      test
+        "binomial draws eager's counts, by inversion, by rejection and past p \
+         = 1/2" (fun () ->
+          let k = Nx.Rng.key 3 in
+          let n =
+            Nx.create Nx.int32 [| 8 |]
+              [| 0l; 5l; 40l; 1000l; 20l; 3l; 7l; 90l |]
+          in
+          let p =
+            Nx.create Nx.float32 [| 8 |]
+              [| 0.3; 0.5; 0.1; 0.3; 0.5; 1.; 0.; 0.8 |]
+          in
+          let n = Nx.tile [| 16 |] n and p = Nx.tile [| 16 |] p in
+          let draw =
+            Rune.jit
+              Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> tensor @-> returns tensor)
+              Nx.Rng.binomial
+          in
+          equal (tensor int32) (Nx.Rng.binomial k n p) (draw k n p));
+      test "von_mises draws eager's angles, from zero concentration up"
+        (fun () ->
+          let k = Nx.Rng.key 3 in
+          let c =
+            Nx.tile [| 16 |]
+              (Nx.create Nx.float32 [| 6 |] [| 0.; 0.3; 1.; 4.; 100.; 1e6 |])
+          in
+          let draw =
+            Rune.jit
+              Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+              Nx.Rng.von_mises
+          in
+          equal
+            (Oracle.tensor ~rel:1e-5 ~abs:1e-6 ())
+            (Nx.Rng.von_mises k c) (draw k c));
       test "a replay reads its new arguments, and an earlier call's again"
         (fun () ->
           let g = Rune.jit' poly in

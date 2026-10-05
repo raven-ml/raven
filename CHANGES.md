@@ -3132,6 +3132,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.Rng.binomial k n p`, exact by inversion below a mean of 10, by
+  transformed rejection over a fixed 18 rounds above, and
+  `Nx.Rng.von_mises k concentration`, whose concentration 0 is the uniform
+  circle. Both take tensor parameters, check their domains and compile.
 - Add `Nx.Ptree.dot`, `norm`, `scale` and `axpy`: the linear algebra of a
   structure's float tensors taken as one vector, in tensor arithmetic that
   traces and batches. Other tensors, such as counters and keys, are carried.
