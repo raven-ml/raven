@@ -434,6 +434,86 @@ let launches ?(prefix = "") ~place ~sync () =
         sync ());
   ]
 
+(* Loops that stop on a condition
+
+   Compiled iterates, which test their condition before each trip: Newton's
+   iteration for the square roots of 1,024 values, until every residual is
+   small, and the scan's step above iterated until a count reaches 256, against
+   the scan's 256 steps. On the host, Newton's iteration of one value mapped
+   over 256 lanes from 0.5 to 10,000, whose lanes stop after 4 to 10 trips,
+   eagerly and compiled. *)
+
+let roots = 1024
+
+let newton a =
+  Rune.iterate' ~max:64
+    ~until:(fun x -> Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-3)
+    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (Nx.add_s a 1.)
+
+let counted h =
+  fst
+    (Rune.iterate
+       Nx.Ptree.(pair tensor tensor)
+       ~max:scan_steps
+       ~until:(fun (_, k) -> Nx.greater_equal_s k (Int32.of_int scan_steps))
+       ~f:(fun (h, k) -> (Nx.tanh (Nx.matmul h h), Nx.add_s k 1l))
+       (h, Nx.scalar Nx.int32 0l))
+
+let loop_setups ~place ~sync =
+  let st = Random.State.make [| 16 |] in
+  let compiled f shape lo hi () =
+    let f = Rune.jit' f
+    and x =
+      place (Nx.init Nx.float32 shape (fun _ -> lo +. Random.State.float st hi))
+    in
+    ignore (f x);
+    sync ();
+    (f, x)
+  in
+  [
+    (Printf.sprintf "newton-%d" roots, compiled newton [| roots |] 0.5 4.);
+    ( Printf.sprintf "iterate-%d" scan_steps,
+      compiled counted [| launch_dim; launch_dim |] 0. 0.1 );
+  ]
+
+let lanes = 256
+
+(* Newton's iteration for the square root of one value, to a relative
+   residual. *)
+let lane_newton a =
+  Rune.iterate' ~max:64
+    ~until:(fun x -> Nx.less (Nx.abs (Nx.sub (Nx.mul x x) a)) (Nx.mul_s a 1e-5))
+    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (Nx.add_s a 1.)
+
+let lane_loops () =
+  let a () =
+    Nx.init Nx.float32 [| lanes |] (fun i ->
+        0.5 *. (20_000. ** (Float.of_int i.(0) /. Float.of_int (lanes - 1))))
+  in
+  let mapped = Rune.vmap' lane_newton in
+  [
+    Thumper.bench_with_setup ~setup:a
+      (Printf.sprintf "vmap-newton-%d-lanes-eager" lanes) (fun a ->
+        ignore (mapped a));
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let f = Rune.jit' mapped and a = a () in
+        ignore (f a);
+        (f, a))
+      (Printf.sprintf "vmap-newton-%d-lanes-compiled" lanes)
+      (fun (f, a) -> ignore (f a));
+  ]
+
+let loops ?(prefix = "") ~place ~sync () =
+  List.map
+    (fun (id, setup) ->
+      Thumper.bench_with_setup ~setup (prefix ^ id) (fun (f, x) ->
+          ignore (f x);
+          sync ()))
+    (loop_setups ~place ~sync)
+
 (* The launches on a GPU's device, which opens in the measuring worker. *)
 let gpu_launches open_device =
   let device = lazy (open_device ()) in
@@ -454,10 +534,10 @@ let cuda () =
         (gpu_launches (fun () -> Nx_cuda.device 0));
     ]
 
-(* The finite checks on the Mac's Metal GPU. A forked worker cannot reach
-   Metal's compiler, so a fresh process ([--metal]) compiles the step into the
-   disk cache, which the worker's step then reads, and says whether Metal
-   opens. *)
+(* The finite checks and the loops on the Mac's Metal GPU. A forked worker
+   cannot reach Metal's compiler, so a fresh process ([--metal]) compiles them
+   into the disk cache, which the worker's setups then read, and says whether
+   Metal opens. *)
 let on_metal () =
   let device = Nx_metal.device 0 in
   ( (fun x -> Nx.place (Nx.Placement.on device) x),
@@ -467,14 +547,13 @@ let metal () =
   if run_self "--metal" <> 0 then []
   else
     let device = lazy (on_metal ()) in
+    let place x = fst (Lazy.force device) x
+    and sync () = snd (Lazy.force device) () in
     [
       Thumper.group ~id:"metal" "metal"
-        [
-          finite_checks
-            ~place:(fun x -> fst (Lazy.force device) x)
-            ~sync:(fun () -> snd (Lazy.force device) ())
-            (Printf.sprintf "finite-checks-%d-leaves" finite_leaves);
-        ];
+        (finite_checks ~place ~sync
+           (Printf.sprintf "finite-checks-%d-leaves" finite_leaves)
+        :: loops ~prefix:"jit-" ~place ~sync ());
     ]
 
 let suite () =
@@ -496,6 +575,11 @@ let suite () =
          (launches ~place:Fun.id
             ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
             ())
+    :: Thumper.group ~id:"loop" "loop"
+         (loops ~place:Fun.id
+            ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+            ()
+         @ lane_loops ())
     :: (cuda () @ metal ())
 
 let config = Thumper.Config.(default |> deadline 120.)
@@ -509,6 +593,9 @@ let () =
       | Ok _ ->
           let place, sync = on_metal () in
           ignore (finite_setup ~place ~sync ());
+          List.iter
+            (fun (_, setup) -> ignore (setup ()))
+            (loop_setups ~place ~sync);
           exit 0)
   | [ _; "--warm" ] ->
       (* Each case once, in as few calls as a trial takes: what the setups

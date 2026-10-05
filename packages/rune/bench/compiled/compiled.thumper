@@ -52,6 +52,7 @@ topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed transcendental/exp-float32-1Mi-host transcendental/log-float32-1Mi-host transcendental/sin-float32-1Mi-host transcendental/sin-far-float32-1Mi-host transcendental/exp-float64-1Mi-host transcendental/log-float64-1Mi-host transcendental/sin-float64-1Mi-host transcendental/sin-far-float64-1Mi-host under load 11.6 on 10 cores
+# forced: blessed loop/newton-1024 loop/iterate-256 loop/vmap-newton-256-lanes-eager loop/vmap-newton-256-lanes-compiled metal/jit-newton-1024 metal/jit-iterate-256 under load 13.3 on 10 cores
 
 eigh/float32-64x8x8-eager	alloc_words	exact	254
 eigh/float32-64x8x8-eager	wall_time	batch=256	n=20	3.544e-05	2.592e-05 3.165e-05 3.167e-05 3.222e-05 3.248e-05 3.273e-05 3.334e-05 3.396e-05 3.438e-05 3.498e-05 3.589e-05 3.787e-05 3.813e-05 4.029e-05 4.316e-05 4.547e-05 4.690e-05 4.844e-05 5.042e-05 5.549e-05
@@ -69,8 +70,20 @@ launch/chain-64	alloc_words	exact	4556
 launch/chain-64	wall_time	batch=128	n=20	7.203e-05	7.193e-05 7.196e-05 7.196e-05 7.197e-05 7.198e-05 7.200e-05 7.200e-05 7.200e-05 7.202e-05 7.203e-05 7.203e-05 7.209e-05 7.210e-05 7.213e-05 7.216e-05 7.219e-05 7.226e-05 7.232e-05 7.233e-05 7.239e-05
 launch/scan-256	alloc_words	exact	65197
 launch/scan-256	wall_time	batch=16	n=20	4.541e-04	4.519e-04 4.519e-04 4.522e-04 4.523e-04 4.523e-04 4.525e-04 4.529e-04 4.531e-04 4.535e-04 4.540e-04 4.542e-04 4.543e-04 4.547e-04 4.565e-04 4.572e-04 4.575e-04 4.583e-04 4.618e-04 4.649e-04 4.833e-04
+loop/iterate-256	alloc_words	exact	106271
+loop/iterate-256	wall_time	batch=16	n=20	5.005e-04	4.981e-04 4.987e-04 4.987e-04 4.989e-04 4.991e-04 4.992e-04 4.993e-04 4.997e-04 5.003e-04 5.004e-04 5.007e-04 5.009e-04 5.017e-04 5.022e-04 5.025e-04 5.034e-04 5.054e-04 5.085e-04 5.422e-04 5.442e-04
+loop/newton-1024	alloc_words	exact	2776
+loop/newton-1024	wall_time	batch=512	n=20	1.611e-05	1.601e-05 1.601e-05 1.601e-05 1.604e-05 1.605e-05 1.606e-05 1.607e-05 1.609e-05 1.610e-05 1.611e-05 1.611e-05 1.611e-05 1.613e-05 1.641e-05 1.724e-05 1.889e-05 1.924e-05 1.941e-05 2.187e-05 2.994e-05
+loop/vmap-newton-256-lanes-compiled	alloc_words	exact	8346
+loop/vmap-newton-256-lanes-compiled	wall_time	batch=256	n=20	2.806e-05	2.776e-05 2.782e-05 2.783e-05 2.789e-05 2.792e-05 2.798e-05 2.799e-05 2.800e-05 2.804e-05 2.805e-05 2.808e-05 2.829e-05 2.890e-05 2.897e-05 2.903e-05 2.924e-05 2.932e-05 2.966e-05 3.027e-05 3.400e-05
+loop/vmap-newton-256-lanes-eager	alloc_words	exact	39530
+loop/vmap-newton-256-lanes-eager	wall_time	batch=32	n=20	1.269e-04	1.222e-04 1.222e-04 1.229e-04 1.237e-04 1.239e-04 1.253e-04 1.254e-04 1.255e-04 1.255e-04 1.264e-04 1.274e-04 1.275e-04 1.276e-04 1.278e-04 1.284e-04 1.296e-04 1.296e-04 1.298e-04 2.122e-04 2.747e-04
 metal/finite-checks-128-leaves	alloc_words	exact	347429
 metal/finite-checks-128-leaves	wall_time	batch=1	n=20	8.036e-03	5.596e-03 6.005e-03 6.019e-03 6.785e-03 6.841e-03 7.290e-03 7.585e-03 7.603e-03 7.656e-03 8.034e-03 8.039e-03 8.277e-03 8.290e-03 8.346e-03 8.406e-03 8.496e-03 8.496e-03 8.645e-03 8.685e-03 8.983e-03
+metal/jit-iterate-256	alloc_words	batch=1	n=20	1.238e+05	1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.238e+05 1.239e+05 1.239e+05 1.239e+05 1.239e+05 1.239e+05 1.239e+05 1.240e+05 1.240e+05 1.242e+05
+metal/jit-iterate-256	wall_time	batch=1	n=20	8.782e-02	6.790e-02 7.094e-02 7.418e-02 7.465e-02 7.571e-02 7.792e-02 7.995e-02 8.095e-02 8.334e-02 8.530e-02 9.033e-02 9.815e-02 9.822e-02 9.831e-02 9.857e-02 1.041e-01 1.075e-01 1.275e-01 1.300e-01 1.418e-01
+metal/jit-newton-1024	alloc_words	exact	4538
+metal/jit-newton-1024	wall_time	batch=2	n=20	2.451e-03	1.770e-03 1.793e-03 1.803e-03 1.868e-03 1.915e-03 2.051e-03 2.095e-03 2.223e-03 2.367e-03 2.430e-03 2.472e-03 2.504e-03 2.600e-03 2.651e-03 2.814e-03 2.903e-03 3.224e-03 3.285e-03 6.976e-03 2.177e-02
 reverse/grad-of-jit-mlp-float32-host	alloc_words	exact	8402
 reverse/grad-of-jit-mlp-float32-host	wall_time	batch=128	n=20	6.140e-05	5.943e-05 5.943e-05 5.947e-05 5.969e-05 5.980e-05 5.985e-05 6.052e-05 6.097e-05 6.101e-05 6.114e-05 6.167e-05 6.167e-05 6.177e-05 6.243e-05 6.261e-05 6.318e-05 6.327e-05 6.441e-05 6.469e-05 6.483e-05
 reverse/jit-of-grad-mlp-float32-host	alloc_words	exact	2996
