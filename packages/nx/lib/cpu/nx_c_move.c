@@ -484,6 +484,58 @@ static void nx_c_gather_rows_body(int64_t lo, int64_t hi, int worker,
   }
 }
 
+/* Fast path: a gather whose elements after [axis] are one dense run in both
+the data and the output (the innermost dims are stride 1) and whose index is
+constant along that run, as a broadcast index of a [take ~axis] is. Every
+outer coordinate copies a whole run, at one index load for the run, instead of
+one out-of-range test and one move per element; the outer coordinates are
+walked by an odometer, so a run costs no unravel. The run's length is the
+product of the dims after [axis], and [outer] is the number of distinct
+coordinates before it, which is one work unit. */
+typedef struct {
+  const nx_c_ndarray *data;
+  const nx_c_ndarray *indices;
+  const nx_c_ndarray *out;
+  int axis;
+  int64_t esize;
+  int64_t run_elems;
+} nx_c_gather_runs_ctx;
+
+static void nx_c_gather_runs_body(int64_t lo, int64_t hi, int worker,
+                                 void *vctx) {
+  (void)worker;
+  const nx_c_gather_runs_ctx *g = vctx;
+  const nx_c_ndarray *data = g->data, *idx = g->indices, *out = g->out;
+  int axis = g->axis;
+  int64_t esize = g->esize, run = g->run_elems;
+  int64_t axis_len = data->shape[axis], n_idx = out->shape[axis];
+  size_t run_bytes = (size_t)run * (size_t)esize;
+  int64_t coord[NX_C_MAX_NDIM];
+  for (int64_t o = lo; o < hi; o++) {
+    nx_c_unravel(o, axis, out->shape, coord);
+    int64_t d_base = data->offset, o_base = out->offset,
+            i_base = idx->offset;
+    for (int d = 0; d < axis; d++) {
+      d_base += coord[d] * data->strides[d];
+      o_base += coord[d] * out->strides[d];
+      i_base += coord[d] * idx->strides[d];
+    }
+    for (int64_t k = 0; k < n_idx; k++) {
+      int64_t index = *(const int64_t *)((const char *)idx->data +
+                                         i_base * (int64_t)sizeof(int64_t));
+      char *dst = (char *)out->data + o_base * esize;
+      if (index < 0 || index >= axis_len) {
+        memset(dst, 0, run_bytes);
+      } else {
+        int64_t src = d_base + index * data->strides[axis];
+        memcpy(dst, (const char *)data->data + src * esize, run_bytes);
+      }
+      o_base += out->strides[axis];
+      i_base += idx->strides[axis];
+    }
+  }
+}
+
 static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
                                  const nx_c_ndarray *indices,
                                  const nx_c_ndarray *out, int axis,
@@ -496,6 +548,22 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
 
   int64_t total = nx_c_prod(out->ndim, out->shape);
   if (total == 0) return NX_C_OK;
+
+  /* Whether the dims after [axis] are one dense run in both the data and the
+     output, and the index is one per run (constant along it): the condition of
+     the run-copy path below. */
+  bool dense_tail = esize != 0;
+  if (dense_tail) {
+    int64_t s = 1;
+    for (int d = out->ndim - 1; d > axis; d--) {
+      if (data->strides[d] != s || out->strides[d] != s ||
+          indices->strides[d] != 0) {
+        dense_tail = false;
+        break;
+      }
+      s *= out->shape[d];
+    }
+  }
 
   if (esize == 0) {
     /* Packed: two outputs of one byte stay on one worker. */
@@ -510,6 +578,15 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
     int64_t bytes = 2 * rows * row_elems * esize;
     nx_c_move_dispatch(NX_C_COST_BANDWIDTH, rows, row_elems, bytes,
                       nx_c_gather_rows_body, &g);
+  } else if (dense_tail) {
+    /* A dense tail after [axis]: copy runs, not elements. */
+    int64_t run_elems = 1;
+    for (int d = axis + 1; d < out->ndim; d++) run_elems *= out->shape[d];
+    int64_t outer = nx_c_prod(axis, out->shape);
+    nx_c_gather_runs_ctx g = {data, indices, out, axis, esize, run_elems};
+    int64_t bytes = 2 * total * esize;
+    nx_c_move_dispatch(NX_C_COST_BANDWIDTH, outer, run_elems * out->shape[axis],
+                      bytes, nx_c_gather_runs_body, &g);
   } else {
     nx_c_gather_ctx g = {data, indices, out, axis, esize};
     int64_t bytes = 2 * total * esize;
