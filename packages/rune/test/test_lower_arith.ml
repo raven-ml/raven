@@ -426,6 +426,19 @@ let tanh_edges ~by =
                ~expected [| x |] (by.eval s y)))
        float_dtypes)
 
+(* The float32 sine and cosine where a sine kernel of [x (1 + p(x^2))], one unit
+   off itself, put them three units off: within two of libm's, rounded once. *)
+let trig_edges ~by =
+  let points = [| 0x1.da6568p+9; 0x1.3734cap+11; -0x1.da6568p+9 |] in
+  let x = Nx.create Nx.float32 [| Array.length points |] points in
+  group "sin and cos where a sine one unit off puts them three off"
+    (List.map
+       (fun (name, f, libm) ->
+         test name (fun () ->
+             let s, y = trace (fun () -> f x) in
+             ulps ~budget:2 ~expected:(Nx.map_item libm x) [| x |] (by.eval s y)))
+       [ ("sin", Nx.sin, Float.sin); ("cos", Nx.cos, Float.cos) ])
+
 let transcendentals ?tags name by =
   group ?tags name
     [
@@ -450,6 +463,7 @@ let transcendentals ?tags name by =
       unary ~by "cosh" ~budget:8 Float.cosh { f = Nx.cosh };
       unary ~by "tanh" ~budget:8 Float.tanh { f = Nx.tanh };
       tanh_edges ~by;
+      trig_edges ~by;
       unary ~by "erf" ~budget:8 Float.erf { f = Nx.erf };
       binary ~by "atan2" ~budget:8 Float.atan2 { g = Nx.atan2 }
         "atan2_64.golden";
