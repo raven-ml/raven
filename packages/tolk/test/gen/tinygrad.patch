@@ -1356,7 +1356,7 @@ index 099ac10..2e22d4b 100644
    # a COPY of a sharded value copies every shard to the target device
    (UPat(Ops.COPY, src=(UPat(Ops.UNSHARD, name="multi"),), allow_any_len=True, name="copy"), lambda multi,copy: copy_multi(multi, copy.arg)),
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index a5cf57d..ae2879b 100644
+index a5cf57d..dff4198 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
 @@ -1,10 +1,10 @@
@@ -1437,6 +1437,22 @@ index a5cf57d..ae2879b 100644
    is_expanded = [i not in range_nums for i in range(len(x.shape))]
  
    if not (split_candidates:=[(i,d) for i in range(reduce.arg[1])
+@@ -166,13 +186,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
+   x = x.pad_to(x.max_shape)
+   # the buffer takes the DEVICE range from the copy (no-op for single device copies)
+   buf = UOp(Ops.ALLOC, src=copy.src[1:],
+-            arg=ParamArg(next(UOp.unique_num), copy.dtype, prod(x.max_shape), device=copy.device)).reshape(x.max_shape)
++            arg=ParamArg(next(UOp.unique_num), copy.dtype, prod(x.max_shape), vmin_vmax=x.stored_bounds(copy.dtype), device=copy.device)).reshape(x.max_shape)
+   return buf.after(buf.store(x)).shrink_to(copy.shape)
+ 
+ def stage_to_anon_store(x:UOp, stg:UOp):
+   # the buffer created here is inside the call and is not persisted, like the buffers created for copies
+   buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.device),
+-            arg=ParamArg(next(UOp.unique_num), stg.dtype, prod(x.max_shape), device=x.device)).reshape(x.max_shape)
++            arg=ParamArg(next(UOp.unique_num), stg.dtype, prod(x.max_shape), vmin_vmax=x.stored_bounds(stg.dtype), device=x.device)).reshape(x.max_shape)
+   view = buf.shrink_to(stg.shape)
+   return view.after(view.store(x))
+ 
 @@ -272,7 +292,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
  def prepare_rangeify(sink:UOp) -> UOp:
    # prepare for rangeify
@@ -1448,7 +1464,7 @@ index a5cf57d..ae2879b 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 0239aa4..2e2e110 100644
+index 0239aa4..d96d398 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,7 +1,7 @@
@@ -1485,16 +1501,18 @@ index 0239aa4..2e2e110 100644
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -227,10 +232,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -227,10 +237,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
+-    buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, size, device=x.arg.device))
+-    do_store = buf.index(idx).store(x.src[0].cast(dtype)).end(*rngs)
 +    # a value its kernels read widened from a narrower type that holds every value is stored narrow, and each read widens it; a value
 +    # stored whole keeps its type
 +    value = x.src[0]
 +    if x.arg.removable and widens(value): value, dtype = value.src[0], value.src[0].commit_dtype()
-     buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, size, device=x.arg.device))
--    do_store = buf.index(idx).store(x.src[0].cast(dtype)).end(*rngs)
++    buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, size, vmin_vmax=value.stored_bounds(dtype),
++                                                                        device=x.arg.device))
 +    do_store = buf.index(idx).store(value.cast(dtype)).end(*rngs)
      return buf.after(do_store).cast(x.dtype)
  
@@ -1506,7 +1524,7 @@ index 0239aa4..2e2e110 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -258,6 +272,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -258,6 +278,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -1516,6 +1534,17 @@ index 0239aa4..2e2e110 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
+@@ -281,7 +304,9 @@ class LocalAddBufferContext:
+   range:int = 0
+ 
+ def debuf(ctx:LocalAddBufferContext, buf:UOp):
+-  param = UOp(Ops.PARAM, arg=ParamArg(ctx.dg, buf.dtype, prod(buf.max_shape), addrspace=buf.addrspace, device=buf.device))
++  # the kernel reads the storage's values within their bounds
++  bounds = buf.arg.vmin_vmax if isinstance(buf.arg, ParamArg) else None
++  param = UOp(Ops.PARAM, arg=ParamArg(ctx.dg, buf.dtype, prod(buf.max_shape), vmin_vmax=bounds, addrspace=buf.addrspace, device=buf.device))
+   ret = param.reshape(buf.max_shape)
+   # if the buffer has symbolic shape, shrink the max-sized view to the actual shape
+   if buf.max_shape != buf.shape: ret = ret.shrink(tuple((0, s) for s in buf.shape))
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py
@@ -1538,7 +1567,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..e29e8ff 100644
+index 2842d7e..c196d5a 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -92,6 +92,15 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
@@ -1588,7 +1617,7 @@ index 2842d7e..e29e8ff 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,28 +1169,45 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1139,28 +1169,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -1638,11 +1667,21 @@ index 2842d7e..e29e8ff 100644
 +      if self.dtype in dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
          return max(self.dtype.min, smin), min(smax, self.dtype.max)
 -    return self.dtype.min, self.dtype.max
++    # a bitcast between integer types of one width keeps the bits, so a value both types hold is unchanged
++    if self.op is Ops.BITCAST and (s:=self.src[0]).dtype in dtypes.ints and self.dtype in dtypes.ints and s.dtype.itemsize == self.dtype.itemsize:
++      smin, smax = s._min_max
++      if 0 <= smin and smax <= min(s.dtype.max, self.dtype.max): return smin, smax
 +    return unbounded(self.dtype)
++
++  def stored_bounds(self, dtype:DType) -> tuple[PyConst, PyConst]|None:
++    # the bounds of storage of dtype that holds only this value's elements, which every read of it keeps, where narrower than dtype's;
++    # bounds of one value would fold the storage itself to a constant
++    lo, hi = self.vmin, self.vmax
++    return (lo, hi) if lo < hi and (dtype.min < lo or hi < dtype.max) else None
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1333,6 +1380,8 @@ class KernelInfo:
+@@ -1333,6 +1390,8 @@ class KernelInfo:
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
@@ -1651,7 +1690,7 @@ index 2842d7e..e29e8ff 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1363,6 +1412,7 @@ class ProgramInfo:
+@@ -1363,6 +1422,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -1659,7 +1698,7 @@ index 2842d7e..e29e8ff 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1404,12 +1454,18 @@ def safe_pow(x, y):
+@@ -1404,12 +1464,18 @@ def safe_pow(x, y):
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -1680,7 +1719,7 @@ index 2842d7e..e29e8ff 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1476,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1486,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

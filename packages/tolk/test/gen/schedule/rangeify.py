@@ -437,6 +437,14 @@ def zero_fill():
     return stores(inside.where(rows_x().index(rows_l()), 0.0))
 
 
+def stored_zero_fill():
+    """A gather by indices that a reduction computes and clamps: a kernel of their own stores them, and the gather's kernel
+    reads them within their bounds, which fold its bound check, unsigned as rune writes one."""
+    i = param(2, 3, 5, dtype=dtypes.int32)._rop(Ops.MAX, (1,)).reshape((3,)).maximum(0).minimum(7)
+    inside = (i.bitcast(dtypes.uint32) < 8).reshape((3, 1)).expand((3, 4))
+    return stores(inside.where(rows_x().index(i.cast(dtypes.weakint)), 0.0))
+
+
 def assign_gathered_self():
     xp = UOp.param(1, dtypes.float, 32, "CPU")
     x, i = xp.reshape((8, 4)), param(2, 6, dtype=dtypes.int32)
@@ -454,6 +462,7 @@ GATHERS = {
     "index_zip": zip_gather,
     "index_of_index": lambda: stores(rows_x().index(clamp(8, param(2, 6, dtype=dtypes.int32).index(clamp(6, param(2, 3, dtype=dtypes.int32)))))),
     "index_zero_fill": zero_fill,
+    "index_stored_zero_fill": stored_zero_fill,
     "index_assign_self": assign_gathered_self,
 }
 

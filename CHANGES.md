@@ -965,6 +965,12 @@ thread.
 
 ### Tolk (new)
 
+- A value one kernel stores keeps its bounds in the kernels that read it (new
+  `Ops.stored_bounds`), and a bitcast between integer types of one width keeps
+  them, so a gather whose stored indices have a known range keeps no per-load
+  check. A routed MXFP4 product whose experts are sorted in kernels of their
+  own masked 40 byte loads a step: gpt-oss-20b's gate and up product of 512
+  tokens on Metal takes 36.4 ms, from 42.6 ms.
 - `Compiler_amd.hip` compiles each source in a process of its own, from a
   small program the library carries, so compiles from several domains run at
   once: comgr serialises the compiles of a process. A source that crashes

@@ -431,6 +431,7 @@ let copy_to_anon_store x copy =
       ~arg:
         (Param
            (param_arg ~slot:(unique_num ()) ~size:(max_numel x)
+              ?vmin_vmax:(stored_bounds x (dtype copy))
               ?device:(device copy) (dtype copy)))
   in
   let buf = reshape buf (ints (max_shape x)) in
@@ -444,6 +445,7 @@ let stage_to_anon_store x stg =
       ~arg:
         (Param
            (param_arg ~slot:(unique_num ()) ~size:(max_numel x)
+              ?vmin_vmax:(stored_bounds x (dtype stg))
               ?device:(device x) (dtype stg)))
   in
   let view =

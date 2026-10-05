@@ -3581,6 +3581,8 @@ schedule/rangeify/index_rows.golden
 schedule/rangeify/index_rows_computed.golden
 schedule/rangeify/index_rows_computed_kernels.golden
 schedule/rangeify/index_rows_kernels.golden
+schedule/rangeify/index_stored_zero_fill.golden
+schedule/rangeify/index_stored_zero_fill_kernels.golden
 schedule/rangeify/index_under_reduce.golden
 schedule/rangeify/index_under_reduce_kernels.golden
 schedule/rangeify/index_view_source.golden
@@ -4185,6 +4187,7 @@ uop/ops/aranges.golden
 uop/ops/axes.golden
 uop/ops/axis_types.golden
 uop/ops/binary_bounds.golden
+uop/ops/bitcast_bounds.golden
 uop/ops/bitcasts.golden
 uop/ops/bitwise.golden
 uop/ops/calls.golden

@@ -420,9 +420,12 @@ let bufferize_to_store ctx x idx =
         in
         let slot = !ctx in
         incr ctx;
+        let vmin_vmax = stored_bounds value dtype in
         let buf =
           v Op.Alloc ~src:(device_range_src device)
-            ~arg:(Param (param_arg ~slot ~size:(max_numel x) ?device dtype))
+            ~arg:
+              (Param
+                 (param_arg ~slot ~size:(max_numel x) ?vmin_vmax ?device dtype))
         in
         let do_store =
           end_ (store (index buf [ idx ]) (cast value dtype)) rngs
@@ -550,11 +553,16 @@ let add_arg ctx buf value =
 
 let debuf ctx buf =
   let align, phase = storage_phase buf in
+  (* The kernel reads the storage's values within their bounds: an index
+     clamped where it is stored is in range where a gather reads it. *)
+  let vmin_vmax =
+    match arg buf with Param p -> p.vmin_vmax | _ -> None
+  in
   let param =
     v Op.Param
       ~arg:
         (Param
-           (param_arg ~slot:ctx.dg ~size:(max_numel buf)
+           (param_arg ~slot:ctx.dg ~size:(max_numel buf) ?vmin_vmax
               ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align
               (dtype buf)))
   in

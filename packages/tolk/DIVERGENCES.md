@@ -3590,3 +3590,41 @@ stores through a pad.
 - **Pinned by:** the `recorded cases` of `Tolk.Ops_amd`; `Tolk.Ops_amd ›
   packets`, a law per packet that tolk's encoding, evaluated, is
   `Nx_amd_packet.dwords`'s; `nx.amd.packet`'s suite for the words.
+
+## D122. A stored value keeps its bounds
+
+- **tinygrad:** `schedule/rangeify.py:230` (`bufferize_to_store`'s `ALLOC`),
+  `:283` (`debuf`) and `schedule/prepare.py:164,172` (`copy_to_anon_store`,
+  `stage_to_anon_store`), whose storage carries no bounds, so a read of it
+  has its type's; `uop/ops.py:1163` (`_min_max`, which bounds a `BITCAST` by
+  its type).
+- **tolk:** `lib/uop/ops.ml:1826` (`stored_bounds`) and `:1630`
+  (`bitcast_bounds`); `lib/schedule/rangeify.ml:423` (a stage's storage) and
+  `:554` (`debuf`); `lib/schedule/prepare.ml:434,448`;
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the
+  goldens are recorded.
+- **Differs:** storage that a stage or a copy fills carries the bounds of the
+  value stored when they are narrower than its type's, and the parameter a
+  kernel reads it through keeps them, so each read has them. Bounds of one
+  value are not kept: a parameter whose bounds are one value folds to that
+  constant, in place of the storage. A bitcast between integer types of one
+  width keeps the bounds of a value that both types hold, from 0 to the
+  lesser of their greatest values.
+- **Reason:** (b): rune lowers `Nx.take` to a gather at the clamped index
+  and a check of the index, one unsigned comparison, `bitcast i < n`. A
+  gather by indices that other kernels compute, clamp and store read them
+  at their type's bounds, so the check stayed, and `pm_move_where_on_load`
+  moved it onto each load the gather feeds. With the stored range known, the
+  gather keeps no per-load check. A routed MXFP4 product whose experts are
+  sorted and clamped in kernels of their own masked its 40 code and scale
+  byte loads: gpt-oss-20b's gate and up product of 512 tokens on an M1
+  Max's Metal took 42.6 ms and takes 36.4 ms, as fast as a gather of the
+  decoded matrices. Within one kernel, the bitcast hid the clamp's bounds
+  from the check.
+- **Pinned by:** the Rangeify suite's `index_stored_zero_fill` gather, whose
+  `_kernels` golden reads the stored indices with bounds `(0, 7)` and keeps
+  no check; the Ops suite's `bitcast_bounds.golden` and `› bounds › storage
+  keeps the bounds of its values where they are narrower than its type's
+  and hold more than one value`; the memory goldens `convs` and
+  `matmul_chain`, whose stored activations after a ReLU carry
+  `(0.0, inf)`, recorded from the equally patched tinygrad.

@@ -779,6 +779,11 @@ val operand_bounds : t -> t -> Dtype.value * Dtype.value
 val overflows : t -> Dtype.t -> bool
 (** [overflows u dt] is [true] iff [u]'s bounds reach outside [dt]'s. *)
 
+val stored_bounds : t -> Dtype.t -> (Dtype.value * Dtype.value) option
+(** [stored_bounds u dt] is [Some (vmin u, vmax u)] iff [u]'s bounds hold more
+    than one value and are narrower than [dt]'s: the bounds of storage of [dt]
+    that holds only [u]'s values, which every read of it keeps. *)
+
 val exact : Dtype.t -> Dtype.value list -> bool
 (** [exact dt vs] is [true] iff [dt] is not a committed integer type, or each of
     [vs] is one of its values. Arithmetic on a committed integer type wraps at

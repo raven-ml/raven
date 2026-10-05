@@ -231,6 +231,18 @@ let cast_bounds cell =
     (Ops.cast x (dtype_of_cell (cell "to")))
     (value_of_cell (cell "vmin"), value_of_cell (cell "vmax"))
 
+let bitcast_bounds cell =
+  let x =
+    variable
+      (dtype_of_cell (cell "from"))
+      (value_of_cell (cell "lo"))
+      (value_of_cell (cell "hi"))
+      "x"
+  in
+  check_bounds
+    (Ops.bitcast x (dtype_of_cell (cell "to")))
+    (value_of_cell (cell "vmin"), value_of_cell (cell "vmax"))
+
 (* The reference interpreter: the value of an integer expression over variables,
    each operation computed exactly. It discards a case where an operation leaves
    its type, where the result is undefined. *)
@@ -376,6 +388,23 @@ let bounds_group =
       Golden.cases "cast_bounds.golden"
         ~key:[ "from"; "lo"; "hi"; "to" ]
         cast_bounds;
+      Golden.cases "bitcast_bounds.golden"
+        ~key:[ "from"; "lo"; "hi"; "to" ]
+        bitcast_bounds;
+      test
+        "storage keeps the bounds of its values where they are narrower than \
+         its type's and hold more than one value" (fun () ->
+          let stored lo hi = Ops.stored_bounds (variable Int64 lo hi "x") in
+          let bounds = option (pair value value) in
+          equal bounds (Some (i 0, i 31)) (stored (i 0) (i 31) Int64);
+          equal bounds (Some (i 0, i 31)) (stored (i 0) (i 31) Int32);
+          equal bounds None
+            (stored (Dtype.min Int32) (Dtype.max Int32) Int32);
+          equal bounds None (stored (i 3) (i 3) Int64);
+          let x = variable Float32 (f 0.) (f Float.infinity) "x" in
+          equal bounds
+            (Some (f 0., f Float.infinity))
+            (Ops.stored_bounds x Float32));
       prop "bounds hold every value the expression takes"
         (Gen.pair Nodes.gen_recipe gen_point) (fun (r, (x0, x1)) ->
           let u = Nodes.build (Nodes.leaves ()) r in

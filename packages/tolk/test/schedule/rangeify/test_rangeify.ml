@@ -33,6 +33,7 @@ let gathers =
     "index_zip";
     "index_of_index";
     "index_zero_fill";
+    "index_stored_zero_fill";
     "index_assign_self";
   ]
 
