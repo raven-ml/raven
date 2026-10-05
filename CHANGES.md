@@ -6245,6 +6245,9 @@ thread.
 
 ### Talon
 
+- `talon.parquet` decodes definition levels and booleans straight into bits
+  and puts a page's values on its rows in one C pass: a 2^20-row file of
+  nullable columns reads in 0.6 of the time.
 - **Breaking:** a `bool` column stores its values as `Nx.bit`:
   `Column.to_tensor Nx.bit` and `Column.ragged Nx.bit` read them, and
   `Nx.cast Nx.bool` gives bytes. `Column.of_tensor` shares a 1-D `bit`

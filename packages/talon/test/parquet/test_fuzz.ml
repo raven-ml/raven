@@ -15,9 +15,10 @@ module P = Talon_parquet
 (* Corpus *)
 
 (* One file per page version, codec and encoding, with the columns each file
-   holds as decimals, which reading needs declared. The uncompressed files reach
-   the page decoders with every changed byte; the compressed ones reach the
-   decompressors. *)
+   holds as decimals, which reading needs declared, and two whose levels and
+   booleans run over every length around a byte and a word. The uncompressed
+   files reach the page decoders with every changed byte; the compressed ones
+   reach the decompressors. *)
 let corpus =
   [
     ("types_plain.parquet", [ "d9"; "d18" ]);
@@ -35,6 +36,8 @@ let corpus =
     ("types_v2_zstd.parquet", [ "d9"; "d18" ]);
     ("types_gzip.parquet", [ "d18" ]);
     ("types_lz4.parquet", [ "d18" ]);
+    ("bits_v1.parquet", []);
+    ("bits_v2_rle.parquet", []);
   ]
 
 let file_bytes =

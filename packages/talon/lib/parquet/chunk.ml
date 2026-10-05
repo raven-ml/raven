@@ -10,9 +10,9 @@ type bigbytes = Meta.bigbytes
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A1.t
 
 type t =
-  | Fixed of { valid : Nx.bool_t option; values : Nx.packed }
+  | Fixed of { valid : Nx.bit_t option; values : Nx.packed }
   | Varsize of {
-      valid : Nx.bool_t option;
+      valid : Nx.bit_t option;
       offsets : Nx.int64_t;
       data : Nx.uint8_t;
     }
@@ -27,6 +27,26 @@ external hybrid :
   int ->
   int ->
   int = "talon_parquet_hybrid_byte" "talon_parquet_hybrid"
+[@@noalloc]
+
+external hybrid_bits :
+  bigbytes -> int -> int -> int -> int -> bigbytes -> int -> int
+  = "talon_parquet_hybrid_bits_byte" "talon_parquet_hybrid_bits"
+[@@noalloc]
+
+external plain_bits : bigbytes -> int -> int -> int -> bigbytes -> int -> int
+  = "talon_parquet_plain_bits_byte" "talon_parquet_plain_bits"
+[@@noalloc]
+
+external count_bits : bigbytes -> int -> int -> int = "talon_parquet_count_bits"
+[@@noalloc]
+
+external spread_fixed : bigbytes -> bigbytes -> int -> int -> bigbytes -> int
+  = "talon_parquet_spread_fixed"
+[@@noalloc]
+
+external spread_offsets : bigbytes -> int64s -> int -> int64s -> int
+  = "talon_parquet_spread_offsets"
 [@@noalloc]
 
 external delta_binary_packed :
@@ -67,6 +87,27 @@ external gather_byte_arrays :
 let bytes n = A1.create Bigarray.int8_unsigned Bigarray.c_layout n
 let int64s n = A1.create Bigarray.int64 Bigarray.c_layout n
 let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+
+(* [zeros_for_bits n] is the bytes of a bit array of [n] elements, all clear,
+   which its writers fill bit by bit. *)
+let zeros_for_bits n =
+  let b = bytes ((n + 7) / 8) in
+  A1.fill b 0;
+  b
+
+(* [bits b n] is the first [n] elements of the bit array [b]. *)
+let bits b n =
+  Nx.shrink [| (0, n) |] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor b)))
+
+(* [reading x f] is [f b] for [b] the bytes of [x]'s elements in C order, under
+   a read claim. *)
+let reading x f =
+  let b = Nx.Op.eval (Read { by = "Talon_parquet.source"; x }) in
+  Nx_device.Buffer.Claim.read b;
+  Fun.protect
+    ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
+    (fun () -> f (Nx_device.Buffer.bigarray Bigarray.int8_unsigned b))
+
 let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 
 let first_page (cm : Meta.column_meta) =
@@ -124,9 +165,10 @@ let check (m : Meta.file) ~row_group i (l : Leaf.t) =
 (* Parquet values
 
    A table holds the chunk's Parquet values, the dictionary's first: [n] values
-   of [width] bytes in [bytes], or, for byte arrays ([width = 0]), [n] byte
-   strings in [bytes] whose ends are [offsets.{1}] to [offsets.{n}]. Widths and
-   the counts of pages are [i32]s, so their products fit an [int]. *)
+   of [width] bytes in [bytes], [n] booleans as a bit array ([width = 1] on a
+   boolean leaf), or, for byte arrays ([width = 0]), [n] byte strings in [bytes]
+   whose ends are [offsets.{1}] to [offsets.{n}]. Widths and the counts of pages
+   are [i32]s, so their products fit an [int]. *)
 
 type table = {
   width : int;
@@ -153,6 +195,14 @@ let table width ~values ~data =
     offsets;
     n = 0;
   }
+
+(* [leaf_table l ~values ~data] is the table of [values] values of the leaf [l],
+   booleans as a bit array. *)
+let leaf_table (l : Leaf.t) ~values ~data =
+  match l.physical with
+  | Boolean ->
+      { width = 1; bytes = zeros_for_bits values; offsets = int64s 0; n = 0 }
+  | _ -> table (width l) ~values ~data
 
 let span t i =
   if t.width = 0 then
@@ -366,7 +416,7 @@ let convert (type a) ~row_group (l : Leaf.t) (ty : a Type.t) t =
   match (l.physical, l.annotation, ty) with
   | _, Some (Decimal { scale; _ }), Float64 -> floats ~row_group l scale t
   | (Byte_array | Fixed_len_byte_array), _, Int64 -> unscaled ~row_group t
-  | Boolean, _, _ -> Values (P (tensor (A1.sub t.bytes 0 t.n)))
+  | Boolean, _, _ -> Values (P (bits t.bytes t.n))
   | Int32, _, Uint32 -> values Nx.uint32
   | Int32, _, (Clock _ | Int64) ->
       Values (P (Nx.cast Nx.int64 (fixed t Nx.int32)))
@@ -398,45 +448,53 @@ let gather s (idx : int64s) =
       assert (r = 0);
       Strings { offsets = out; data = d }
 
+let kernel_error = function
+  | -1 -> "the data ends inside a value"
+  | -2 -> "a value is out of its bounds"
+  | -3 -> "a bit width is wider than its values"
+  | -4 -> "a header is malformed"
+  | -5 -> "a header counts other values than the page holds"
+  | _ -> "an output is too small"
+
+(* [spread_values v ~valid ~rows] is the values [v] at the rows the bit array
+   [valid] marks, zero under the others, and the number of values it took. *)
+let spread_values (type a b) (v : (a, b) Nx.t) ~valid ~rows =
+  let dt = Nx.dtype v in
+  let s = Nx_dtype.Scalar.of_dtype dt in
+  let out = Nx_device.Buffer.create Nx_device.host s rows in
+  let dst = Nx_device.Buffer.bigarray Bigarray.int8_unsigned out in
+  let taken =
+    reading v (fun src ->
+        spread_fixed valid src (Nx_dtype.Scalar.bitsize s) rows dst)
+  in
+  (Nx.of_buffer dt [| rows |] out, taken)
+
 (* [spread s ~valid ~rows ~present] puts the [present] values of [s] at the rows
-   [valid] marks, zero under the others. *)
-let spread s ~valid ~rows ~present =
+   the bit array [valid] marks, zero under the others. *)
+let spread ~row_group s ~valid ~rows ~present =
   if present = rows then
     match s with
     | Values values -> Fixed { valid = None; values }
     | Strings { offsets; data } ->
         Varsize { valid = None; offsets = tensor offsets; data = tensor data }
   else
-    let mask = Nx.cast Nx.bool (tensor valid) in
-    let at = (Nx.nonzero mask).(0) in
-    let scatter values zeros = Nx.scatter ~axis:0 ~indices:at ~values zeros in
+    let mask = bits valid rows in
+    let took n =
+      if n < 0 then Meta.fail ~row_group "the spread: %s" (kernel_error n);
+      assert (n = present)
+    in
     match s with
     | Values (P v) ->
-        Fixed
-          {
-            valid = Some mask;
-            values = P (scatter v (Nx.zeros (Nx.dtype v) [| rows |]));
-          }
+        let values, n = spread_values v ~valid ~rows in
+        took n;
+        Fixed { valid = Some mask; values = P values }
     | Strings { offsets; data } ->
-        let o = tensor offsets in
-        let lengths =
-          Nx.sub
-            (Nx.slice [ Nx.R (1, present + 1) ] o)
-            (Nx.slice [ Nx.R (0, present) ] o)
-        in
-        let lengths = scatter lengths (Nx.zeros Nx.int64 [| rows |]) in
-        Varsize
-          {
-            valid = Some mask;
-            offsets =
-              Nx.concatenate ~axis:0
-                [ Nx.zeros Nx.int64 [| 1 |]; Nx.cumsum lengths ];
-            data = tensor data;
-          }
+        let o = int64s (rows + 1) in
+        took (spread_offsets valid offsets rows o);
+        Varsize { valid = Some mask; offsets = tensor o; data = tensor data }
 
-(* [narrow ~row_group ty c] is [c] in the storage of [ty]: int32s narrowed to an
-   integer type narrower than int32, and the bytes of booleans packed into
-   bits. *)
+(* [narrow ~row_group ty c] is [c], whose values are int32s, in the storage of
+   [ty] when [ty] is an integer type narrower than int32. *)
 let narrow (type a) ~row_group (ty : a Type.t) c =
   let into dt lo hi =
     match c with
@@ -457,11 +515,6 @@ let narrow (type a) ~row_group (ty : a Type.t) c =
   | Int16 -> into Nx.int16 (-32768l) 32767l
   | Uint8 -> into Nx.uint8 0l 255l
   | Uint16 -> into Nx.uint16 0l 65535l
-  | Bool -> (
-      match c with
-      | Varsize _ -> assert false
-      | Fixed { valid; values = P v } ->
-          Fixed { valid; values = P (Nx.cast Nx.bit v) })
   | _ -> c
 
 (* Reading *)
@@ -477,14 +530,6 @@ let encoding_name : Meta.encoding -> string = function
   | Rle_dictionary -> "RLE_DICTIONARY"
   | Byte_stream_split -> "BYTE_STREAM_SPLIT"
   | Unknown_encoding n -> Printf.sprintf "encoding %d" n
-
-let kernel_error = function
-  | -1 -> "the data ends inside a value"
-  | -2 -> "a value is out of its bounds"
-  | -3 -> "a bit width is wider than its values"
-  | -4 -> "a header is malformed"
-  | -5 -> "a header counts other values than the page holds"
-  | _ -> "an output is too small"
 
 let u32 b pos = Int64.to_int (le b pos 4)
 
@@ -502,7 +547,7 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
   (* [consumes what len r] checks that a kernel that returned [r] decoded [what]
      from exactly [len] bytes. *)
   let consumes what len r = exactly what (kernel what r) len in
-  let valid = bytes (if l.optional then rows else 0) in
+  let valid = zeros_for_bits (if l.optional then rows else 0) in
   let tbl = ref None and idx = ref None and dict = ref 0 in
   let row = ref 0 and present = ref 0 in
   (* [chunk_table ~dictionary] is the chunk's table, made on the first page for
@@ -514,9 +559,8 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
         let w = width l in
         if cm.values > (max_int / max 1 w) - dictionary - 1 then
           fail "the chunk's %d values do not fit in memory" cm.values;
-        let t =
-          table w ~values:(dictionary + cm.values) ~data:cm.uncompressed_size
-        in
+        let values = dictionary + cm.values in
+        let t = leaf_table l ~values ~data:cm.uncompressed_size in
         tbl := Some t;
         t
   in
@@ -546,20 +590,13 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
   in
   let levels src pos len values =
     consumes "the definition levels" len
-      (hybrid src pos len 1 values valid !row 2);
-    let n = ref 0 in
-    for r = !row to !row + values - 1 do
-      n := !n + valid.{r}
-    done;
-    !n
+      (hybrid_bits src pos len 1 values valid !row);
+    kernel "the definition levels" (count_bits valid !row values)
   in
   let plain t src pos len n =
     match l.physical with
     | Boolean ->
-        exactly "the PLAIN booleans" ((n + 7) / 8) len;
-        for k = 0 to n - 1 do
-          t.bytes.{t.n + k} <- (src.{pos + (k / 8)} lsr (k mod 8)) land 1
-        done
+        consumes "the PLAIN booleans" len (plain_bits src pos len n t.bytes t.n)
     | Byte_array ->
         ensure t len;
         consumes "the PLAIN byte arrays" len
@@ -604,7 +641,7 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
         if len < 4 || u32 src pos <> len - 4 then
           fail "the RLE booleans do not fill their page";
         consumes "the RLE booleans" (len - 4)
-          (hybrid src (pos + 4) (len - 4) 1 n t.bytes t.n 2)
+          (hybrid_bits src (pos + 4) (len - 4) 1 n t.bytes t.n)
     | Delta_binary_packed, (Int32 | Int64) ->
         consumes "the DELTA_BINARY_PACKED values" len
           (delta_binary_packed src pos len n t.bytes t.n t.width)
@@ -775,4 +812,4 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
   let s =
     match !idx with None -> s | Some idx -> gather s (A1.sub idx 0 !present)
   in
-  narrow ~row_group ty (spread s ~valid ~rows ~present:!present)
+  narrow ~row_group ty (spread ~row_group s ~valid ~rows ~present:!present)

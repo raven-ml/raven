@@ -4,6 +4,7 @@
  (libraries
   talon
   nx
+  nx.dtype
   nx.device
   compress.deflate
   compress.snappy

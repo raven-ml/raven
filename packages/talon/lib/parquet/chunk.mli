@@ -14,16 +14,18 @@
     of the column's talon type, the values of dictionary-encoded pages are
     gathered from it, and the values are spread onto the rows once, zero under
     the nulls. Integers narrower than [int32] are checked and narrowed last, so
-    that a value that does not fit is found at its row.
+    that a value that does not fit is found at its row. Levels and booleans,
+    bit-packed in the file, decode straight into bits: the validity and the
+    values of a [bool] column.
 
     Pages decompress with the [compress] libraries' [decompress], straight from
     the mapped file into a buffer reused across the chunk's pages, and a page
-    with a CRC is checked against it first. The RLE and bit-packing hybrid, the
-    delta encodings, [PLAIN] byte arrays and the gather of dictionary-encoded
-    byte strings run in C ([talon_parquet_stubs.c]). Fixed-width gathers, the
-    spread and dtype changes are nx operations; [BYTE_STREAM_SPLIT], [PLAIN]
-    booleans, the conversions of [int96] and of decimals and categorical lookups
-    are OCaml loops.
+    with a CRC is checked against it first. The RLE and bit-packing hybrid,
+    [PLAIN] booleans, the delta encodings, [PLAIN] byte arrays, the gather of
+    dictionary-encoded byte strings and the spread run in C
+    ([talon_parquet_stubs.c]). Fixed-width gathers and dtype changes are nx
+    operations; [BYTE_STREAM_SPLIT], the conversions of [int96] and of decimals
+    and categorical lookups are OCaml loops.
 
     Encodings read: [PLAIN], [PLAIN_DICTIONARY] and [RLE_DICTIONARY], [RLE] for
     booleans, [DELTA_BINARY_PACKED], [DELTA_LENGTH_BYTE_ARRAY],
@@ -34,13 +36,13 @@
 (** The type for decoded columns. A row's value is zero, or the empty byte
     string, under a null. *)
 type t =
-  | Fixed of { valid : Nx.bool_t option; values : Nx.packed }
-      (** One value per row, in the storage of the column's type: [bool],
+  | Fixed of { valid : Nx.bit_t option; values : Nx.packed }
+      (** One value per row, in the storage of the column's type: [bit],
           integers of the type's width, [float16] to [float64], [int32] days,
           [int64] ticks, [int32] codes of a categorical. [valid] is [true] at
           the rows that hold a value, and [None] when every row does. *)
   | Varsize of {
-      valid : Nx.bool_t option;
+      valid : Nx.bit_t option;
       offsets : Nx.int64_t;
       data : Nx.uint8_t;
     }

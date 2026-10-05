@@ -194,6 +194,44 @@ def decimals_table():
     return pa.table({f"d{p}_{s}": column(p, s) for p, s in [(9, 0), (9, 2), (18, 0), (18, 6), (38, 0), (38, 10)]})
 
 
+BIT_ROWS = 2001
+
+
+def bits_table():
+    """Columns whose levels and booleans are bit-packed: runs of each length
+    around a byte and a word, alternating valid and null, then random rows, a
+    run of nulls and a run of values longer than a page; booleans in runs of
+    the same lengths, then random. An own generator keeps the other fixtures'
+    draws."""
+    r = np.random.default_rng(23)
+    lengths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17, 23, 24, 25, 31, 32, 33, 63, 64, 65, 127, 128, 129]
+
+    def runs(first):
+        return np.concatenate([np.full(n, (k % 2 == 0) == first) for k, n in enumerate(lengths)])
+
+    ran = runs(True)
+    tail = BIT_ROWS - len(ran) - 600
+    valid = np.concatenate([ran, r.random(tail) < 0.5, np.zeros(300, bool), np.ones(300, bool)])
+    values = np.concatenate([runs(False), r.random(BIT_ROWS - len(ran)) < 0.5])
+    mask = pa.array(~valid)
+    masked = lambda a: pc.if_else(mask, pa.nulls(BIT_ROWS, a.type), a)
+    return pa.table(
+        {
+            "b": masked(pa.array(values)),
+            "f": masked(pa.array(r.standard_normal(BIT_ROWS))),
+            "s": masked(pa.array([f"s{k}" for k in r.integers(0, 50, BIT_ROWS)])),
+            "b_none": pa.nulls(BIT_ROWS, pa.bool_()),
+            "b_full": pa.array(values),
+            "b_req": pa.array(values),
+        },
+        schema=pa.schema(
+            [pa.field("b", pa.bool_()), pa.field("f", pa.float64()), pa.field("s", pa.string()),
+             pa.field("b_none", pa.bool_()), pa.field("b_full", pa.bool_()),
+             pa.field("b_req", pa.bool_(), nullable=False)]
+        ),
+    )
+
+
 def write(name, table, **kw):
     kw = dict(store_schema=False, row_group_size=100, write_batch_size=16, data_page_size=256) | kw
     pq.write_table(table, OUT / name, **kw)
@@ -230,6 +268,19 @@ def generate():
     write("int96.parquet", t.select(["ts_ns"]), use_deprecated_int96_timestamps=True)
     write("bad_encoding.parquet", t.select(["i32"]), use_dictionary=False, compression="none")
     bad_encoding()
+    bits = bits_table()
+    # Odd row groups and pages that start inside a byte of the validity.
+    small = dict(row_group_size=731, write_batch_size=13, data_page_size=16)
+    write("bits_v1.parquet", bits, data_page_version="1.0", use_dictionary=False, compression="none", **small)
+    booleans = {c: "RLE" for c in ["b", "b_none", "b_full", "b_req"]}
+    write(
+        "bits_v2_rle.parquet", bits, data_page_version="2.0", use_dictionary=False, compression="none",
+        column_encoding=booleans, **small,
+    )
+    write("bits_dict.parquet", bits, data_page_version="1.0", compression="snappy", **small)
+    assert set(encodings("bits_v1.parquet", "b")) == {"PLAIN"}
+    assert set(encodings("bits_v2_rle.parquet", "b")) == {"RLE"}
+    assert "RLE_DICTIONARY" in encodings("bits_dict.parquet", "s")
     assert set(encodings("fallback.parquet", "i8")) >= {"DICT", "RLE_DICTIONARY", "PLAIN"}
     assert "DELTA_BYTE_ARRAY" in encodings("encodings.parquet", "fsb")
 
@@ -438,6 +489,7 @@ READ = [p.removeprefix("data/") for p, _ in CORPUS if not p.endswith(".encrypted
     "types.parquet", "types_v2_zstd.parquet", "types_gzip.parquet", "types_lz4.parquet",
     "types_plain.parquet", "encodings.parquet", "encodings_uncompressed.parquet", "fallback.parquet", "names.parquet", "empty.parquet",
     "int96.parquet", "decimals_int.parquet", "decimals_bytes.parquet", "decimal38.parquet",
+    "bits_v1.parquet", "bits_v2_rle.parquet", "bits_dict.parquet",
 ]
 # Refused by talon when sniffed; read with errors by talon where pyarrow guesses
 # (nation.dict-malformed's chunks are longer than their metadata say); or not

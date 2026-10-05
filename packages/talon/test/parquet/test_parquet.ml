@@ -786,6 +786,16 @@ let synthesized =
           in
           equal text "parquet (1 column)\n  x int32 ← required int32"
             (format_text (Error.get_ok (P.sniff b))));
+      test "an RLE boolean run of value 2 is an error" (fun () ->
+          (* Four booleans: a 4-byte length, then an RLE run of 4 of value 2. *)
+          let file =
+            parquet ~rows:4
+              ~column:[ (1, I32 0) ]
+              (page ~data_page:[ (2, I32 3) ] 4 "\x02\x00\x00\x00\x08\x02")
+          in
+          expect (outcome (read_x file))
+          @@ __POS_OF__
+               {| row group 0: bytes 4-24: the RLE booleans: a value is out of its bounds |});
       test "an int8 that does not fit names its row" (fun () ->
           (* Rows 0, 2 and 3 hold 1, 2 and 300: the levels are a bit-packed run
              of 1, 0, 1, 1. *)
@@ -892,9 +902,57 @@ let filtered show b x ps =
       Printf.printf "%s: %s\n" name (outcome_of show (Query.values x q)))
     ps
 
+type bytes =
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+(* The spread of [talon_parquet_stubs.c], which reading runs into a fresh
+   buffer: [spread valid src bits rows dst] puts the values of [src], each of
+   [bits] bits, at the rows the bit array [valid] marks in [dst], zero at the
+   others, and is the number of values it took. *)
+external spread : bytes -> bytes -> int -> int -> bytes -> int
+  = "talon_parquet_spread_fixed"
+[@@noalloc]
+
+let filled n v =
+  let a = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n in
+  Bigarray.Array1.fill a v;
+  a
+
+(* A fresh buffer holds any bits: here, ones. 731 rows end at bit 3 of byte
+   91. *)
+let spread_tail =
+  cases
+    ~name:(fun (name, _, _) -> name)
+    "spread writes the bits past a bit destination's last row as 0"
+    [ ("every row valid", 0xff, 731); ("every other row valid", 0x55, 366) ]
+    (fun (_, valid, taken) ->
+      let rows = 731 in
+      let bytes = (rows + 7) / 8 in
+      let dst = filled bytes 0xff in
+      equal int taken
+        (spread (filled bytes valid) (filled bytes 0xff) 1 rows dst);
+      equal int 0 (dst.{rows / 8} lsr (rows mod 8)))
+
+(* [first_batch name] is the first batch a query of the file [name]'s source
+   folds over: its first row group, as decoded. *)
+let first_batch name =
+  let b = buffer name in
+  let q = Query.of_source (P.source (sniff name) b) in
+  let first acc t = match acc with None -> Some t | some -> some in
+  Option.get (Error.get_ok (Query.fold q ~init:None first))
+
 let sources =
   group "Sources"
     [
+      spread_tail;
+      test
+        "a decoded bool column of nulls in 731 rows is canonical, the bits \
+         past its rows clear" (fun () ->
+          let t = first_batch "bits_v1.parquet" in
+          equal int 731 (rows t);
+          satisfies ~claim:"the decoded column itself" pass
+            (fun c -> c == Talon.column t "b")
+            (Talon.column t "b"));
       test "statistics skip the row groups no row of which passes" (fun () ->
           let ints a b = int32s [ a; b ] in
           let b =

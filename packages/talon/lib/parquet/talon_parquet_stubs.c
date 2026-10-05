@@ -3,9 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Parquet's sequential decoders: the RLE and bit-packing hybrid, delta binary
-   packing, the assembly of delta-encoded byte arrays, and PLAIN byte arrays;
-   and the gather of dictionary-encoded byte arrays.
+/* Parquet's sequential decoders: the RLE and bit-packing hybrid, into bytes,
+   int64s or bits, PLAIN booleans, delta binary packing, the assembly of
+   delta-encoded byte arrays, and PLAIN byte arrays; the gather of
+   dictionary-encoded byte arrays; and the spread of a page's values onto its
+   rows.
 
    Each decoder reads the span [src + pos, src + pos + len), checks every read
    and write against the span and the arrays it is given, whatever its integer
@@ -63,6 +65,55 @@ static inline uint64_t bits_at(const uint8_t *p, const uint8_t *end,
   return w == 64 ? v : v & ((UINT64_C(1) << w) - 1);
 }
 
+/* Bits
+
+   A bit array holds element [i] at bit [i mod 8] of byte [i / 8], as Parquet
+   packs booleans and levels and nx stores its bit dtype. A writer writes
+   exactly the bits of its elements, so that pages can start inside a byte. */
+
+/* [put(d, bit, v, n)] writes the [n] bits of [v], at most 64, least
+   significant first, at bit [bit] of [d], and no other bit. */
+static inline void put(uint8_t *d, uint64_t bit, uint64_t v, int n)
+{
+  while (n > 0) {
+    uint8_t *q = d + (bit >> 3);
+    int s = (int)(bit & 7), k = 8 - s < n ? 8 - s : n;
+    uint8_t mask = (uint8_t)(((1u << k) - 1) << s);
+    *q = (uint8_t)((*q & ~mask) | (((uint8_t)v << s) & mask));
+    v >>= k;
+    bit += (uint64_t)k;
+    n -= k;
+  }
+}
+
+/* [ones(v)] is the number of set bits of [v]. */
+static inline int ones(uint64_t v)
+{
+  v = v - ((v >> 1) & UINT64_C(0x5555555555555555));
+  v = (v & UINT64_C(0x3333333333333333)) + ((v >> 2) & UINT64_C(0x3333333333333333));
+  v = (v + (v >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
+  return (int)((v * UINT64_C(0x0101010101010101)) >> 56);
+}
+
+/* [fill(d, bit, v, n)] writes [n] copies of the bit [v] from bit [bit]. */
+static void fill(uint8_t *d, uint64_t bit, int v, int64_t n)
+{
+  uint64_t word = v ? ~UINT64_C(0) : 0;
+  for (int64_t k = 0; k < n; k += 64)
+    put(d, bit + (uint64_t)k, word, n - k < 64 ? (int)(n - k) : 64);
+}
+
+/* [blit(d, bit, p, end, n)] writes the first [n] bits of [p] at bit [bit] of
+   [d]. The caller checked that they lie before [end]. */
+static void blit(uint8_t *d, uint64_t bit, const uint8_t *p,
+                 const uint8_t *end, int64_t n)
+{
+  for (int64_t k = 0; k < n; k += 64) {
+    int m = n - k < 64 ? (int)(n - k) : 64;
+    put(d, bit + (uint64_t)k, bits_at(p, end, (uint64_t)k, m), m);
+  }
+}
+
 /* An unsigned LEB128 varint of at most [max] bytes, or -1. */
 static int64_t varint(const uint8_t **p, const uint8_t *end, int max)
 {
@@ -93,14 +144,17 @@ static int zigzag(const uint8_t **p, const uint8_t *end, int64_t *v)
 
 /* The RLE and bit-packing hybrid */
 
+/* The element types a hybrid decodes into. Bits take values of at most one
+   bit, which a bit-packed run already holds as bits. */
+enum out { OUT_BYTES, OUT_INT64, OUT_BITS };
+
 static int64_t hybrid(const uint8_t *p, int64_t len, int w, int64_t n,
-                      int wide, uint8_t *dst, int64_t at, int64_t bound)
+                      enum out out, uint8_t *dst, int64_t at, int64_t bound)
 {
   const uint8_t *start = p, *end = p + len;
-  uint8_t *d8 = dst + at;
-  int64_t *d64 = (int64_t *)dst + at;
+  int64_t *d64 = (int64_t *)dst;
   int64_t i = 0;
-  if (w < 0 || w > 32) return ERR_WIDTH;
+  if (w < 0 || w > 32 || (out == OUT_BITS && w > 1)) return ERR_WIDTH;
   while (i < n) {
     int64_t h = varint(&p, end, 5);
     if (h < 0) return ERR_TRUNCATED;
@@ -108,12 +162,17 @@ static int64_t hybrid(const uint8_t *p, int64_t len, int w, int64_t n,
       int64_t bytes = (h >> 1) * w, count = (h >> 1) * 8;
       if (bytes > end - p) return ERR_TRUNCATED;
       if (count > n - i) count = n - i;
-      for (int64_t k = 0; k < count; k++, i++) {
-        uint64_t v = bits_at(p, end, (uint64_t)k * w, w);
-        if (v >= (uint64_t)bound) return ERR_BOUND;
-        if (wide) d64[i] = (int64_t)v;
-        else d8[i] = (uint8_t)v;
-      }
+      if (out == OUT_BITS) {
+        if (w == 0) fill(dst, (uint64_t)(at + i), 0, count);
+        else blit(dst, (uint64_t)(at + i), p, end, count);
+        i += count;
+      } else
+        for (int64_t k = 0; k < count; k++, i++) {
+          uint64_t v = bits_at(p, end, (uint64_t)k * w, w);
+          if (v >= (uint64_t)bound) return ERR_BOUND;
+          if (out == OUT_INT64) d64[at + i] = (int64_t)v;
+          else dst[at + i] = (uint8_t)v;
+        }
       p += bytes;
     } else {
       int64_t count = h >> 1, bytes = (w + 7) / 8;
@@ -123,9 +182,10 @@ static int64_t hybrid(const uint8_t *p, int64_t len, int w, int64_t n,
       p += bytes;
       if (count > n - i) count = n - i;
       if (count > 0 && v >= (uint64_t)bound) return ERR_BOUND;
-      if (wide)
-        for (int64_t k = 0; k < count; k++) d64[i + k] = (int64_t)v;
-      else memset(d8 + i, (int)v, (size_t)count);
+      if (out == OUT_BITS) fill(dst, (uint64_t)(at + i), (int)v, count);
+      else if (out == OUT_INT64)
+        for (int64_t k = 0; k < count; k++) d64[at + i + k] = (int64_t)v;
+      else memset(dst + at + i, (int)v, (size_t)count);
       i += count;
     }
   }
@@ -142,7 +202,8 @@ CAMLprim value talon_parquet_hybrid(value src, value pos, value len,
   if (!span(src, Long_val(pos), Long_val(len))) return Val_long(ERR_TRUNCATED);
   if (!room(Long_val(at), Long_val(n), DIM(dst))) return Val_long(ERR_CAPACITY);
   return Val_long(hybrid(BYTES(src) + Long_val(pos), Long_val(len),
-                         (int)Long_val(width), Long_val(n), wide, BYTES(dst),
+                         (int)Long_val(width), Long_val(n),
+                         wide ? OUT_INT64 : OUT_BYTES, BYTES(dst),
                          Long_val(at), Long_val(bound)));
 }
 
@@ -151,6 +212,62 @@ CAMLprim value talon_parquet_hybrid_byte(value *argv, int argc)
   (void)argc;
   return talon_parquet_hybrid(argv[0], argv[1], argv[2], argv[3], argv[4],
                               argv[5], argv[6], argv[7]);
+}
+
+/* [hybrid_bits src pos len width n dst at] decodes [n] values of [width] bits,
+   at most 1, into the bit array [dst] from bit [at]. */
+CAMLprim value talon_parquet_hybrid_bits(value src, value pos, value len,
+                                         value width, value n, value dst,
+                                         value at)
+{
+  if (!span(src, Long_val(pos), Long_val(len))) return Val_long(ERR_TRUNCATED);
+  if (!room(Long_val(at), Long_val(n), 8 * DIM(dst)))
+    return Val_long(ERR_CAPACITY);
+  return Val_long(hybrid(BYTES(src) + Long_val(pos), Long_val(len),
+                         (int)Long_val(width), Long_val(n), OUT_BITS,
+                         BYTES(dst), Long_val(at), 2));
+}
+
+CAMLprim value talon_parquet_hybrid_bits_byte(value *argv, int argc)
+{
+  (void)argc;
+  return talon_parquet_hybrid_bits(argv[0], argv[1], argv[2], argv[3],
+                                   argv[4], argv[5], argv[6]);
+}
+
+/* [plain_bits src pos len n dst at] copies the [n] PLAIN booleans of the span,
+   bit-packed from its first bit, into the bit array [dst] from bit [at]. */
+CAMLprim value talon_parquet_plain_bits(value src, value pos, value len,
+                                        value n, value dst, value at)
+{
+  int64_t count = Long_val(n), bytes = (count + 7) / 8;
+  if (!span(src, Long_val(pos), Long_val(len))) return Val_long(ERR_TRUNCATED);
+  if (!room(Long_val(at), count, 8 * DIM(dst))) return Val_long(ERR_CAPACITY);
+  if (bytes > Long_val(len)) return Val_long(ERR_TRUNCATED);
+  const uint8_t *p = BYTES(src) + Long_val(pos);
+  blit(BYTES(dst), (uint64_t)Long_val(at), p, p + bytes, count);
+  return Val_long(bytes);
+}
+
+CAMLprim value talon_parquet_plain_bits_byte(value *argv, int argc)
+{
+  (void)argc;
+  return talon_parquet_plain_bits(argv[0], argv[1], argv[2], argv[3], argv[4],
+                                  argv[5]);
+}
+
+/* [count_bits b at n] is the number of set bits among the [n] bits of the bit
+   array [b] from bit [at]. */
+CAMLprim value talon_parquet_count_bits(value b, value at, value n)
+{
+  int64_t a = Long_val(at), count = Long_val(n), set = 0;
+  if (!room(a, count, 8 * DIM(b))) return Val_long(ERR_CAPACITY);
+  const uint8_t *p = BYTES(b) + a / 8, *end = BYTES(b) + DIM(b);
+  for (int64_t k = 0; k < count; k += 64) {
+    int m = count - k < 64 ? (int)(count - k) : 64;
+    set += ones(bits_at(p, end, (uint64_t)(a % 8 + k), m));
+  }
+  return Val_long(set);
 }
 
 /* Delta binary packing */
@@ -303,6 +420,100 @@ CAMLprim value talon_parquet_plain_byte_array_byte(value *argv, int argc)
   (void)argc;
   return talon_parquet_plain_byte_array(argv[0], argv[1], argv[2], argv[3],
                                         argv[4], argv[5], argv[6]);
+}
+
+/* The spread
+
+   A page's values are compacted: one per row its levels mark. The spread puts
+   them at their rows and zero at the others, a 64-row word of the validity at
+   a time: a word of valid rows copies a run, and a word of nulls writes
+   zeros. */
+
+/* [valid_word(v, base, m)] is the [m] bits of the bit array [v] from bit
+   [base], a multiple of 8. */
+static inline uint64_t valid_word(value v, int64_t base, int m)
+{
+  const uint8_t *p = BYTES(v) + base / 8;
+  return bits_at(p, BYTES(v) + DIM(v), 0, m);
+}
+
+/* [spread_fixed valid src bits rows dst] puts the values of [src], each of
+   [bits] bits, 1 or a multiple of 8 up to 128, at the rows the bit array
+   [valid] marks in [dst], of [rows] values, and zero elsewhere; a bit
+   destination's bits past its last row are zero too. [src] and [dst] do not
+   overlap. It is the number of values it took. [src]'s bytes may hold a few
+   bits past its last value, which this counts as values: the caller checks
+   the number taken. */
+CAMLprim value talon_parquet_spread_fixed(value valid, value src, value bits,
+                                          value rows, value dst)
+{
+  int64_t n = Long_val(rows), b = Long_val(bits), j = 0;
+  if (b != 1 && (b <= 0 || b % 8 || b > 128)) return Val_long(ERR_WIDTH);
+  int64_t have = 8 * DIM(src) / b, k = b / 8;
+  const uint8_t *s = BYTES(src), *s_end = s + DIM(src);
+  uint8_t *d = BYTES(dst);
+  if (n < 0 || 8 * DIM(valid) < n || n > 8 * DIM(dst) / b)
+    return Val_long(ERR_CAPACITY);
+  for (int64_t base = 0; base < n; base += 64) {
+    int m = n - base < 64 ? (int)(n - base) : 64;
+    uint64_t v = valid_word(valid, base, m);
+    int set = ones(v);
+    if (set > have - j) return Val_long(ERR_CAPACITY);
+    if (b == 1) {
+      /* The word's values, deposited at its set rows. [put] writes whole
+         bytes, so the last byte's bits past the last row are written 0. */
+      uint64_t w = bits_at(s, s_end, (uint64_t)j, set), out = w;
+      j += set;
+      if (set < m) {
+        out = 0;
+        for (int r = 0; r < m && w; r++)
+          if (v >> r & 1) {
+            out |= (w & 1) << r;
+            w >>= 1;
+          }
+      }
+      put(d, (uint64_t)base, out, (m + 7) & ~7);
+    } else if (set == m) {
+      memcpy(d + base * k, s + j * k, (size_t)(m * k));
+      j += m;
+    } else
+      for (int r = 0; r < m; r++) {
+        uint8_t *at = d + (base + r) * k;
+        if (v >> r & 1) memcpy(at, s + j++ * k, (size_t)k);
+        else memset(at, 0, (size_t)k);
+      }
+  }
+  return Val_long(j);
+}
+
+/* [spread_offsets valid src rows dst] puts the byte strings whose ends are
+   [src.{1}] onward at the rows the bit array [valid] marks: [dst.{r + 1}] is
+   [dst.{r}] plus the length of row [r], [0] at a null, and [dst.{0}] is
+   [src.{0}]. [src] and [dst] do not overlap. It is the number of strings it
+   took. */
+CAMLprim value talon_parquet_spread_offsets(value valid, value src,
+                                            value rows, value dst)
+{
+  const int64_t *s = (const int64_t *)Caml_ba_data_val(src);
+  int64_t *d = (int64_t *)Caml_ba_data_val(dst);
+  int64_t n = Long_val(rows), have = DIM(src) - 1, j = 0;
+  if (have < 0 || 8 * DIM(valid) < n || DIM(dst) < n + 1)
+    return Val_long(ERR_CAPACITY);
+  d[0] = s[0];
+  for (int64_t base = 0; base < n; base += 64) {
+    int m = n - base < 64 ? (int)(n - base) : 64;
+    uint64_t v = valid_word(valid, base, m);
+    if (ones(v) > have - j) return Val_long(ERR_CAPACITY);
+    for (int r = 0; r < m; r++) {
+      int64_t l = 0;
+      if (v >> r & 1) {
+        l = s[j + 1] - s[j];
+        j++;
+      }
+      d[base + r + 1] = d[base + r] + l;
+    }
+  }
+  return Val_long(j);
 }
 
 /* [gather_byte_arrays offsets data idx ends out] copies the byte arrays

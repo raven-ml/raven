@@ -204,14 +204,11 @@ let rec usable f (p : Source.Pred.t) =
 (* Sources *)
 
 let decode bytes m g i leaf name ty =
-  (* The decoded levels are packed once, into the validity. *)
-  let validity = Option.map (Nx.cast Nx.bit) in
   let layout : Column.layout =
     match Chunk.read bytes m ~row_group:g i leaf ty with
-    | Fixed { valid; values } -> Fixed { validity = validity valid; values }
+    | Fixed { valid; values } -> Fixed { validity = valid; values }
     | Varsize { valid; offsets; data } ->
-        Varsize
-          { validity = validity valid; offsets; child = Column.of_tensor data }
+        Varsize { validity = valid; offsets; child = Column.of_tensor data }
   in
   match Column.of_layout ty layout with
   | Ok c -> c
