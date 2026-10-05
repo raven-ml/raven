@@ -216,6 +216,18 @@ let compatible (v : Model.value) (w : Model.value) =
    device and its fault. *)
 let read_outcome = result elements unit
 
+(* Listed twice, so drawn twice as often: every read checks the law. *)
+let read =
+  command "read"
+    (value ^-> returns read_outcome)
+    Model.read
+    (fun x ->
+      match Nx.to_array x.v with
+      | a -> Ok a
+      | exception (Nx_device.Lost (m, why) as e) ->
+          if m == memory_of (Nx.placement x.v) && why = "fault" then Error ()
+          else raise e)
+
 let commands =
   [
     command "world"
@@ -241,15 +253,8 @@ let commands =
       (value ^-> value ^-> makes value)
       Model.add
       (fun x y -> { v = Nx.add x.v y.v });
-    command "read"
-      (value ^-> returns read_outcome)
-      Model.read
-      (fun x ->
-        match Nx.to_array x.v with
-        | a -> Ok a
-        | exception (Nx_device.Lost (m, why) as e) ->
-            if m == memory_of (Nx.placement x.v) && why = "fault" then Error ()
-            else raise e);
+    read;
+    read;
     command "move"
       (value ^-> device ^-> makes value)
       Model.move
@@ -264,8 +269,11 @@ let commands =
       (fun d -> Faulty.lose d "fault");
   ]
 
+(* A copy read once its source is lost takes a chain of six calls (world,
+   device, place, copy, lose, read) in which the copy and the read each pick one
+   value among many: programs this long reach it in about 1 case in 14. *)
 let machine =
-  stateful ~count:300 ~steps:25
+  stateful ~count:300 ~steps:100
     "devices lose their values at a fault and none other, and reopen fresh"
     commands
 
