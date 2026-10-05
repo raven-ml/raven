@@ -219,6 +219,18 @@ let bits =
     row "count-1e7" l bitmap Nx_bits.count;
   ]
 
+(* Masks of 1e7 booleans, one byte each. A sorted take reads the positions of
+   half the elements, as a filter does. *)
+let bool =
+  let two () = (mask l, Nx.copy (Nx.flip (mask l))) in
+  let sorted () = (mask l, Nx.positions (mask l)) in
+  [
+    row "and-1e7" l two (fun (a, b) -> Nx.logical_and a b);
+    row "count-1e7" l (fun () -> mask l) (fun m -> Nx.sum (Nx.cast Nx.int64 m));
+    row "take-sorted-1e7" l sorted (fun (m, indices) ->
+        Nx.take ~axis:0 ~indices m);
+  ]
+
 (* [n] strings of [w] random lowercase letters, as offsets and bytes, and a
    permutation of them. *)
 let strings n w =
@@ -338,6 +350,7 @@ let groups =
     ("unique", unique);
     ("quantile", quantile);
     ("ranges", ranges);
+    ("bool", bool);
     ("bits", bits);
     ("ragged-take", ragged_take);
     ("ragged", ragged_rows);

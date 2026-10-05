@@ -39,6 +39,9 @@ quantile/float64-4e4	320343	8.0
 quantile/float64-1e6	8000343	8.0
 ranges/add-float64-4e4-w1e3	59799336	1495.0
 ranges/max-float64-4e4-w1e3	130989970	3274.7
+bool/and-1e7	0	0.0
+bool/count-1e7	80000000	8.0
+bool/take-sorted-1e7	0	0.0
 bits/of_bool-1e7	40000017	4.0
 bits/to_bool-1e7	30000017	3.0
 bits/count-1e7	20002116	2.0
