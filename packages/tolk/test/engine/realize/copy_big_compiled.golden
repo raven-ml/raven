@@ -6,52 +6,27 @@
 4 Ops.BITCAST dtypes.uchar [3] dtypes.uchar
 5 Ops.BUFFER dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=1048576, device="CPU")
 6 Ops.CALL dtypes.void [2, 4, 5] CallInfo()
-7 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 262144), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-8 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 262144), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+7 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 1048576), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 1048576), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
 9 Ops.SUB dtypes.int [8, 7]
 10 Ops.RANGE dtypes.int [9] (0, AxisType.WEAK)
 11 Ops.ADD dtypes.int [7, 10]
-12 Ops.CONST dtypes.weakint [] 2
-13 Ops.CAST dtypes.int [12] dtypes.int
-14 Ops.SHL dtypes.int [11, 13]
-15 Ops.INDEX dtypes.uchar [0, 14]
-16 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=1048576, device="CPU:1")
-17 Ops.INDEX dtypes.uchar [16, 14]
-18 Ops.LOAD dtypes.uchar [17]
-19 Ops.CONST dtypes.weakint [] 1
-20 Ops.CAST dtypes.uchar [19] dtypes.uchar
-21 Ops.ADD dtypes.uchar [18, 20]
-22 Ops.STORE dtypes.void [15, 21]
-23 Ops.CAST dtypes.int [19] dtypes.int
-24 Ops.ADD dtypes.int [14, 23]
-25 Ops.INDEX dtypes.uchar [0, 24]
-26 Ops.INDEX dtypes.uchar [16, 24]
-27 Ops.LOAD dtypes.uchar [26]
-28 Ops.ADD dtypes.uchar [27, 20]
-29 Ops.STORE dtypes.void [25, 28]
-30 Ops.ADD dtypes.int [14, 13]
-31 Ops.INDEX dtypes.uchar [0, 30]
-32 Ops.INDEX dtypes.uchar [16, 30]
-33 Ops.LOAD dtypes.uchar [32]
-34 Ops.ADD dtypes.uchar [33, 20]
-35 Ops.STORE dtypes.void [31, 34]
-36 Ops.CONST dtypes.weakint [] 3
-37 Ops.CAST dtypes.int [36] dtypes.int
-38 Ops.ADD dtypes.int [14, 37]
-39 Ops.INDEX dtypes.uchar [0, 38]
-40 Ops.INDEX dtypes.uchar [16, 38]
-41 Ops.LOAD dtypes.uchar [40]
-42 Ops.ADD dtypes.uchar [41, 20]
-43 Ops.STORE dtypes.void [39, 42]
-44 Ops.GROUP dtypes.void [22, 29, 35, 43]
-45 Ops.END dtypes.void [44, 10]
-46 Ops.SINK dtypes.void [45] KernelInfo(name="E_262144_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=1048576, lds=2097152, mem=2097152), split=(262144, 2, 3)) tag=1
-47 Ops.SINK dtypes.void [45] KernelInfo(name="E_262144_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(262144, 2, 3)) tag=1
-48 Ops.LINEAR dtypes.void [0, 16, 7, 8, 19, 23, 12, 13, 36, 37, 20, 9, 10, 11, 14, 24, 26, 27, 30, 32, 33, 38, 40, 41, 17, 18, 25, 31, 39, 15, 28, 34, 42, 21, 29, 35, 43, 22, 44, 45, 47]
-49 Ops.SOURCE dtypes.void [] "\nvoid E_262144_4(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    int alu1 = (alu0+1);\n    unsigned char val0 = (*(data1_1048576+alu1));\n    int alu2 = (alu0+2);\n    unsigned char val1 = (*(data1_1048576+alu2));\n    int alu3 = (alu0+3);\n    unsigned char val2 = (*(data1_1048576+alu3));\n    unsigned char val3 = (*(data1_1048576+alu0));\n    *(data0_1048576+alu1) = (val0+((unsigned char)(1u)));\n    *(data0_1048576+alu2) = (val1+((unsigned char)(1u)));\n    *(data0_1048576+alu3) = (val2+((unsigned char)(1u)));\n    *(data0_1048576+alu0) = (val3+((unsigned char)(1u)));\n  }\n}\n"
-50 Ops.BINARY dtypes.uchar [] b"\nvoid E_262144_4(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    int alu1 = (alu0+1);\n    unsigned char val0 = (*(data1_1048576+alu1));\n    int alu2 = (alu0+2);\n    unsigned char val1 = (*(data1_1048576+alu2));\n    int alu3 = (alu0+3);\n    unsigned char val2 = (*(data1_1048576+alu3));\n    unsigned char val3 = (*(data1_1048576+alu0));\n    *(data0_1048576+alu1) = (val0+((unsigned char)(1u)));\n    *(data0_1048576+alu2) = (val1+((unsigned char)(1u)));\n    *(data0_1048576+alu3) = (val2+((unsigned char)(1u)));\n    *(data0_1048576+alu0) = (val3+((unsigned char)(1u)));\n  }\n}\n"
-51 Ops.PROGRAM dtypes.void [46, 48, 49, 50] ProgramInfo(global_size=(262144, 1, 1), vars=(%7, %8), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-52 Ops.BUFFER dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=1048576, device="CPU:1")
-53 Ops.CALL dtypes.void [51, 52, 4] CallInfo()
-54 Ops.LINEAR dtypes.void [6, 53]
+12 Ops.INDEX dtypes.uchar [0, 11]
+13 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=1048576, device="CPU:1")
+14 Ops.INDEX dtypes.uchar [13, 11]
+15 Ops.LOAD dtypes.uchar [14]
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.CAST dtypes.uchar [16] dtypes.uchar
+18 Ops.ADD dtypes.uchar [15, 17]
+19 Ops.STORE dtypes.void [12, 18]
+20 Ops.END dtypes.void [19, 10]
+21 Ops.SINK dtypes.void [20] KernelInfo(name="E_1048576", estimates=Estimates(ops=1048576, lds=2097152, mem=2097152), split=(1048576, 2, 3)) tag=1
+22 Ops.SINK dtypes.void [20] KernelInfo(name="E_1048576", split=(1048576, 2, 3)) tag=1
+23 Ops.LINEAR dtypes.void [0, 13, 7, 8, 16, 17, 9, 10, 11, 14, 15, 12, 18, 19, 20, 22]
+24 Ops.SOURCE dtypes.void [] "\nvoid E_1048576(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned char val0 = (*(data1_1048576+alu0));\n    *(data0_1048576+alu0) = (val0+((unsigned char)(1u)));\n  }\n}\n"
+25 Ops.BINARY dtypes.uchar [] b"\nvoid E_1048576(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned char val0 = (*(data1_1048576+alu0));\n    *(data0_1048576+alu0) = (val0+((unsigned char)(1u)));\n  }\n}\n"
+26 Ops.PROGRAM dtypes.void [21, 23, 24, 25] ProgramInfo(global_size=(1048576, 1, 1), vars=(%7, %8), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+27 Ops.BUFFER dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=1048576, device="CPU:1")
+28 Ops.CALL dtypes.void [26, 27, 4] CallInfo()
+29 Ops.LINEAR dtypes.void [6, 28]
 

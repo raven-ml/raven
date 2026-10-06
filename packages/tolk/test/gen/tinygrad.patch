@@ -706,7 +706,7 @@ index 319a60c..612ddfa 100644
  pm_move_gates_from_index = PatternMatcher([
    # for image idx (must be first)
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..45e6242 100644
+index 712a2b7..8175d85 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -2,6 +2,7 @@ import itertools
@@ -834,7 +834,7 @@ index 712a2b7..45e6242 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -111,25 +174,43 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -111,25 +174,42 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -849,11 +849,10 @@ index 712a2b7..45e6242 100644
 +        if c.op is Ops.MUL and c.src[0] is rng and c.src[1].op is Ops.CONST: sum_strides += c.src[1].val
 +        if c.op is Ops.MUL and c.src[1] is rng and c.src[0].op is Ops.CONST: sum_strides += c.src[0].val
 +    return num_strides, sum_strides
-+  # on the host a kernel without a reduce whose accesses merge into vectors takes no upcast but its masked ones: its lanes would read a
-+  # vector and compute each element alone, which keeps clang from vectorizing the loop over its outputs; lanes of a type that does not
-+  # merge stay scalar, and clang vectorizes them together
-+  merges = lambda dt: dt in (dtypes.float, dtypes.half, dtypes.int, dtypes.uint, *dtypes.fp8s) and k.ren.supports_float4
-+  host_elementwise = k.ren.target.device == "CPU" and not k.reduceops and any(merges(b.src[0].dtype) for b in k.bufs)
++  # on the host a kernel without a reduce takes no upcast but its masked ones: clang vectorizes the loop over its outputs itself, and
++  # upcast lanes copy the body as scalars, which keeps that vectorizer off a float loop and costs a double one a compile time that
++  # grows faster than the copies
++  host_elementwise = k.ren.target.device == "CPU" and not k.reduceops
    upcasted_axis: set[int] = set()
 -  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims) >= 1024) and (k.upcast_size() < 32):
 +  while not host_elementwise and resolve(prod(k.full_shape[i] for i in k.upcastable_dims) >= 1024) and (k.upcast_size() < 32):
@@ -888,7 +887,7 @@ index 712a2b7..45e6242 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -141,21 +222,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -141,21 +220,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
      if k.unrollable_dims and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UNROLL)) and (k.upcast_size() < 64):

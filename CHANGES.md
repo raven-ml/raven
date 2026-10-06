@@ -1174,10 +1174,11 @@ thread.
 - Stored values of one shape that share a computation, and do not read each
   other, run as one kernel that writes them all: a compiled `Nx_wide.add`
   runs one kernel, from six, and computes its chain once.
-- On the host, a kernel without a reduce whose accesses merge into vectors
-  (float32, float16, int32) is no longer upcast, so Clang vectorizes its loop:
-  float32 transcendentals replay 1.4 to 4 times as fast. float64 kernels keep
-  their upcast, which latency-bound chains such as `Nx.erfc` need.
+- On the host, a kernel without a reduce is no longer upcast, so Clang
+  vectorizes its loop and compiles each element's work once: float64
+  `Nx.log_betainc` compiles in a fraction of the time, and float32
+  transcendentals replay 1.4 to 4 times as fast. Latency-bound float64
+  chains such as `Nx.erfc` replay up to 1.6 times as long.
 - A host program's variables take slots past its blocks' bounds when its
   buffers skip a slot; a variable could take `block_hi`'s slot and read it.
 - A cast of an unsigned mask, or of a right shift by less than the operand's
