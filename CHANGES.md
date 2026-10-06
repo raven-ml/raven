@@ -3482,6 +3482,8 @@ thread.
 
 ### Nx
 
+- `Nx.logsumexp` and `logmeanexp` of a lane whose elements are all `-inf` are
+  `-inf`, and of one holding `+inf` are `+inf`; both were NaN.
 - Add the incomplete beta family: `Nx.betainc`, `Nx.betaincc`,
   `Nx.log_betainc` and `Nx.log_betaincc`, the beta distribution's laws,
   within stated bounds for shapes up to 2^20; the logarithms stay finite
