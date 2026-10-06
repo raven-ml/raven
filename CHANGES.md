@@ -999,6 +999,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- A failed solve's report gives its settings, the lane's inputs, the
+  budget used in its own unit and what to change; `Solution.pp` prints it
+  for the first failing lane. `Ode.sample`'s times out of order end their
+  lane `Stalled` instead of raising, and `Ode.solve` returns its start at
+  `t0 = t1`.
 - Add `Ode.solve` and `Ode.sample`, adaptive solves with the embedded
   methods `bs3`, `tsit5` and `dopri5`: a proportional–integral controller
   chooses steps on detached values, and the answer takes the accepted steps

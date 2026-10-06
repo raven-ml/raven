@@ -286,10 +286,10 @@ let solution_tests =
           "Jera.Root.bracket: lane [1]: the ends do not bracket a zero"
           (fun () -> Solution.get (mixed ())));
     test "the report prints the lane's data" (fun () ->
-        failure_with "lo 0, hi 0, estimate 0" (fun () ->
+        failure_with "lo 0, hi 0, f lo 1, f hi 1, estimate 0" (fun () ->
             Solution.get (mixed ())));
     test "the report counts the other lanes that converged" (fun () ->
-        failure_with "2 other lanes converged" (fun () ->
+        failure_with "2 other elements of this problem converged." (fun () ->
             Solution.get (mixed ())));
     test "a compiled get raises when the call returns" (fun () ->
         failure_with "lane [1]" (fun () ->
@@ -317,8 +317,16 @@ let solution_tests =
           (Solution.best (sqrt_bracket a))
           (Solution.best (f a));
         failure_with "lane [1]" (fun () -> Solution.get (f a)));
-    test "pp counts the lanes in each status" (fun () ->
-        equal string "Jera.Root.bracket: 2 converged, 1 not bracketed"
+    test "pp counts the lanes and reports the first failing one" (fun () ->
+        equal text
+          "Jera.Root.bracket: 2 converged, 1 not bracketed\n\
+           Jera.Root.bracket: lane [1]: the ends do not bracket a zero: f has \
+           one sign at both.\n\
+          \  tol rel 1e-13 abs 1e-15\n\
+          \  lo 0, hi 0, f lo 1, f hi 1, estimate 0\n\
+          \  2 evaluations.\n\
+          \  Widen [lo, hi] until f changes sign between them.\n\
+          \  2 other elements of this problem converged."
           (Format.asprintf "%a" Solution.pp (mixed ())));
   ]
 

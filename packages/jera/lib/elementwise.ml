@@ -9,7 +9,7 @@ let searching st = Nx.equal_s st running
 let settle st cond s =
   Nx.where
     (Nx.logical_and (searching st) cond)
-    (Nx.full_like st (Solution.code s))
+    (Nx.full_like st (Answer.code s))
     st
 
 (* The derivative's system is diagonal for an elementwise residual: its diagonal

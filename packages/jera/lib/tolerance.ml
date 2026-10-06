@@ -40,3 +40,8 @@ let ratio t ~e ~y =
   let r = Nx.div e (Nx.where (Nx.equal s zero) (Nx.ones_like s) s) in
   Nx.where (Nx.equal e zero) zero
     (Nx.where (Nx.equal s zero) (Nx.full_like e Float.infinity) (Nx.abs r))
+
+let zero_hint = function
+  | Scaled { abs; _ } when abs > 0. -> ""
+  | Scaled _ | Ulps _ ->
+      " An answer that may be zero needs abs: Tol.v ~rel ~abs."

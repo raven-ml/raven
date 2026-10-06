@@ -330,7 +330,12 @@ let adaptive_tests =
     test "the budget ends a solve" (fun () ->
         let s = adaptive ~budget:2 Nx.log (unit_range (vec [| 0. |])) in
         equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
-          (Solution.is Budget_spent s));
+          (Solution.is Budget_spent s);
+        let report = Format.asprintf "%a" Solution.pp s in
+        contains ~sub:"rule kronrod 7, tol rel 1e-10 abs 1e-12, budget 2" report;
+        contains ~sub:"a 0, b 1, estimate" report;
+        contains ~sub:"2 of 2 pieces, 45 evaluations." report;
+        contains ~sub:"Raise the budget or loosen tol" report);
     test "a pole is not finite or stalls" (fun () ->
         let s =
           adaptive

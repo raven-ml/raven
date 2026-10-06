@@ -17,11 +17,11 @@
     Nx.where ok (Solution.best s) (Nx.zeros_like lo)
     ]} *)
 
-type 'a t
+type 'a t = 'a Answer.t
 (** The type for answers of type ['a]. *)
 
 (** The type for a lane's outcome. *)
-type status =
+type status = Answer.status =
   | Converged  (** The error estimate met the tolerance. *)
   | Budget_spent  (** The budget ran out first. *)
   | Not_bracketed  (** The ends of a bracket have one sign. *)
@@ -35,9 +35,10 @@ val get : 'a t -> 'a
 (** [get s] is the answer if every lane converged.
 
     Raises [Failure] with the report of the first lane in C order that did not
-    converge: the entry point, the lane, its status, the lane's data and what to
-    change. Inside {!Rune.val-jit}, [get] returns {!best} and the compiled call
-    raises when it returns. *)
+    converge: the entry point, the lane, its status, the solve's settings, the
+    lane's data, the budget it used, what to change, and how many other elements
+    of its problem converged. Inside {!Rune.val-jit}, [get] returns {!best} and
+    the compiled call raises when it returns. *)
 
 val best : 'a t -> 'a
 (** [best s] is the estimate in every lane. A lane that did not converge holds
@@ -55,44 +56,16 @@ val error : 'a t -> 'a
     solve defines it: an estimate, never a bound. *)
 
 val evaluations : 'a t -> (int32, Nx.int32_elt) Nx.t
-(** [evaluations s] is each lane's count of the problem function's evaluations,
-    of the lanes' shape. *)
+(** [evaluations s] is each lane's count of the points at which the problem's
+    function was evaluated, of the lanes' shape. *)
 
 val ptree : 'a Nx.Ptree.t -> 'a t Nx.Ptree.t
 (** [ptree s] is the structure of answers of structure [s], so a compiled
     function returns one: the answer at [value], the error at [error], the
-    statuses at [status], the counts at [evaluations] and the report's data
-    under [report]. *)
+    statuses at [status], the counts at [evaluations], the budget used at [used]
+    and the report's data under [report]. *)
 
 val pp : Format.formatter -> 'a t -> unit
-(** [pp ppf s] formats the count of lanes in each status, reading the statuses.
-*)
-
-(**/**)
-
-(* The solves' constructor. *)
-
-type fact =
-  | Fact : string * (float, 'b) Nx.t -> fact
-      (** A named float of each lane, which a report prints. *)
-
-val code : status -> int32
-
-val v :
-  fn:string ->
-  settings:string ->
-  value:'a ->
-  error:'a ->
-  status:(int32, Nx.int32_elt) Nx.t ->
-  evaluations:(int32, Nx.int32_elt) Nx.t ->
-  facts:fact list ->
-  'a t
-(** [v ~fn ~settings ~value ~error ~status ~evaluations ~facts] is an answer of
-    the solve [fn] run with [settings], such as ["tol rel 1e-06 abs 0"]. Each
-    fact is of the lanes' shape or broadcasts to it. *)
-
-val map : fn:string -> ('a -> 'b) -> 'a t -> 'b t
-(** [map ~fn f s] is [s] with [f] applied to its answer and its error, as the
-    solve [fn]. *)
-
-(**/**)
+(** [pp ppf s] formats the count of lanes in each status and the report {!get}
+    would raise for the first lane that did not converge. It reads the statuses,
+    so it runs eagerly. *)

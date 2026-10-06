@@ -147,10 +147,11 @@ val solve :
   'y ->
   'y Solution.t
 (** [solve y m ~tol ~budget f ~t0 ~t1 y0] is the state at [t1] of the solution
-    from [y0] at [t0], scalars; [t1] may precede [t0].
+    from [y0] at [t0], scalars; [t1] may equal or precede [t0]. At [t1 = t0] it
+    is [y0], converged with a zero error.
 
-    Raises [Invalid_argument] if [budget < 1], if [t0 = t1], or as {!march} does
-    for a field of another structure. *)
+    Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a scalar,
+    or as {!march} does for a field of another structure. *)
 
 val sample :
   'y Nx.Ptree.t ->
@@ -164,8 +165,10 @@ val sample :
 (** [sample y m ~tol ~budget f ~at y0] is the state at each time of [at],
     stacked on a new leading axis of each leaf, [y0] first at [at.(0)], with
     [budget] attempts across all of them. The steps land on every time of [at],
-    so no state is interpolated.
+    so no state is interpolated. Its error is stacked like its value: at each
+    time, per component, the sum of the magnitudes of the local estimates of the
+    accepted steps before it. Times that are not strictly monotone end the lane
+    [Stalled] before any step, and its report names the first.
 
     Raises [Invalid_argument] if [budget < 1], if [at] is not a non-empty 1-D
-    tensor, through {!Nx.check} if it is not strictly monotone, and as {!march}
-    does for a field of another structure. *)
+    tensor, and as {!march} does for a field of another structure. *)

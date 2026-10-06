@@ -7,7 +7,7 @@
 
 module Rule = struct
   (* Nodes in increasing order on [-1, 1] and their weights, in float64. *)
-  type -'k t = { x : float array; w : float array }
+  type -'k t = { name : string; x : float array; w : float array }
 
   (* Double-word arithmetic: [hi + lo] with [|lo| <= ulp hi / 2], so the nodes
      and weights below are computed to about 32 digits and rounded once to
@@ -86,7 +86,7 @@ module Rule = struct
 
   (* A symmetric rule from its nodes in [0, 1), largest first, and the center's
      weight when it has one. *)
-  let symmetric positive center =
+  let symmetric name positive center =
     let half = Array.length positive in
     let n = (2 * half) + Option.fold ~none:0 ~some:(fun _ -> 1) center in
     let x = Array.make n 0. and w = Array.make n 0. in
@@ -98,14 +98,14 @@ module Rule = struct
         w.(n - 1 - i) <- wi)
       positive;
     Option.iter (fun wc -> w.(half) <- wc) center;
-    { x; w }
+    { name; x; w }
 
   let gauss n =
     if n < 1 then
       invalid_arg (Printf.sprintf "Jera.Quad.Rule.gauss: n = %d is below 1" n);
     let positive = Array.init (n / 2) (root n) in
     let center = if n mod 2 = 1 then Some (snd (root n (n / 2))) else None in
-    symmetric positive center
+    symmetric (Printf.sprintf "gauss %d" n) positive center
 
   (* QUADPACK's qk15 and qk21 (Piessens, de Doncker-Kapenga, Überhuber and
      Kahaner, 1983): the Kronrod nodes in (0, 1), largest first, and their
@@ -173,7 +173,10 @@ module Rule = struct
                n)
     in
     let half = Array.length x in
-    symmetric (Array.init half (fun i -> (x.(i), w.(i)))) (Some w.(half))
+    symmetric
+      (Printf.sprintf "kronrod %d" n)
+      (Array.init half (fun i -> (x.(i), w.(i))))
+      (Some w.(half))
 
   let nodes r dtype = (Num.constant dtype r.x, Num.constant dtype r.w)
 end
@@ -212,6 +215,22 @@ module Box = struct
 end
 
 type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
+
+(* The facts a report prints of a range. *)
+let range_facts : _ Range.t -> Answer.fact list = function
+  | Range.Finite (a, b) -> [ Fact ("a", a); Fact ("b", b) ]
+  | From a -> [ Fact ("a", a) ]
+  | Line c -> [ Fact ("c", c) ]
+
+(* What to change for an integral that stopped short. *)
+let quad_fix tol ~budget ~stalled (st : Answer.status) _ =
+  match st with
+  | Budget_spent -> budget
+  | Stalled -> stalled ^ Tolerance.zero_hint tol
+  | Not_finite ->
+      "The integrand is not finite at a point it was given: Quad.tanh_sinh \
+       keeps away from the ends of a range."
+  | Converged | Not_bracketed -> ""
 
 (* Formulas *)
 
@@ -483,7 +502,7 @@ let adaptive r ~tol ~budget f range =
       ~until:(fun p -> Nx.logical_not (Nx.any (Elementwise.searching p.status)))
       ~f:step initial
   in
-  let ok = Nx.equal_s p.status (Solution.code Converged) in
+  let ok = Nx.equal_s p.status (Answer.code Converged) in
   (* The answer: the rule over the final partition, tracked, in chunks of pieces
      under a scan. An unused slot integrates the whole range with weight zero,
      so its points lie inside the range. *)
@@ -510,11 +529,26 @@ let adaptive r ~tol ~budget f range =
       ( chunks (unused p.level),
         (chunks (unused p.index), chunks (Nx.cast dtype used)) )
   in
-  Solution.v ~fn
-    ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
-    ~value:(Nx.where ok total (used_sum p p.sums))
-    ~error:(used_sum p p.errors) ~status:p.status ~evaluations:p.evaluations
-    ~facts:[]
+  let estimate = used_sum p p.sums and error = used_sum p p.errors in
+  Answer.v ~fn
+    ~settings:
+      (Format.asprintf "rule %s, tol %a, budget %d" r.name Tol.pp tol budget)
+    ~spent:{ used = p.used; unit = "pieces"; budget }
+    ~fix:
+      (quad_fix tol
+         ~budget:
+           "Raise the budget or loosen tol; an endpoint singularity converges \
+            in fewer evaluations with Quad.tanh_sinh."
+         ~stalled:
+           "A piece cannot be bisected further: the integrand has a \
+            singularity inside the range; split the range there, or use \
+            Quad.tanh_sinh for one at an end.")
+    ~value:(Nx.where ok total estimate)
+    ~error ~status:p.status ~evaluations:p.evaluations
+    ~facts:
+      (range_facts range
+      @ [ Fact ("estimate", estimate); Fact ("error", error) ])
+    ()
 
 (* Double-exponential rules *)
 
@@ -772,7 +806,7 @@ let tanh_sinh ~tol f range =
                   ( Nx.full Nx.int32 lanes Elementwise.running,
                     Nx.zeros Nx.int32 lanes ) ) ) ) ) ) )
   in
-  let ok = Nx.equal_s st (Solution.code Converged) in
+  let ok = Nx.equal_s st (Answer.code Converged) in
   (* The answer: 2^-K times the terms of every level up to each lane's final
      level K, tracked, chunk by chunk. *)
   let chunk_sum total (k, (s, (u, w))) =
@@ -787,11 +821,21 @@ let tanh_sinh ~tol f range =
       (levels, (side, (offset, weight)))
   in
   let answer = Nx.mul total (Nx.exp2 (Nx.neg (Nx.cast dtype final))) in
-  Solution.v ~fn
+  let error = Nx.abs (Nx.sub current prev) in
+  Answer.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
+    ~fix:
+      (quad_fix tol ~budget:""
+         ~stalled:
+           "The terms at the truncation, or the finest level's change, stay \
+            above the tolerance: the integrand decays too slowly at an end, or \
+            the tolerance is below the dtype's reach. Scale the variable so \
+            the integrand's width is near 1.")
     ~value:(Nx.where ok answer current)
-    ~error:(Nx.abs (Nx.sub current prev))
-    ~status:st ~evaluations:n ~facts:[]
+    ~error ~status:st ~evaluations:n
+    ~facts:
+      (range_facts range @ [ Fact ("estimate", current); Fact ("error", error) ])
+    ()
 
 (* Cubature *)
 
@@ -1110,7 +1154,7 @@ let cubature ~tol ~budget f (box : _ Box.t) =
       ~until:(fun b -> Nx.logical_not (Nx.any (Elementwise.searching b.state)))
       ~f:step initial
   in
-  let ok = Nx.equal_s b.state (Solution.code Converged) in
+  let ok = Nx.equal_s b.state (Answer.code Converged) in
   (* The answer: the degree-7 rule over the final partition, tracked, in chunks
      of boxes under a scan; an unused slot integrates the whole box with weight
      zero. *)
@@ -1152,10 +1196,22 @@ let cubature ~tol ~budget f (box : _ Box.t) =
       ( chunks (unused b.levels),
         (chunks (unused b.indices), chunks (Nx.cast dtype used)) )
   in
-  Solution.v ~fn
+  let estimate = used_sum b b.sums7 and error = used_sum b b.diffs in
+  Answer.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
-    ~value:(Nx.where ok total (used_sum b b.sums7))
-    ~error:(used_sum b b.diffs) ~status:b.state ~evaluations:b.count ~facts:[]
+    ~spent:{ used = b.filled; unit = "boxes"; budget }
+    ~fix:
+      (quad_fix tol
+         ~budget:
+           "Raise the budget or loosen tol; above about six dimensions \
+            Quad.qmc converges in fewer evaluations."
+         ~stalled:
+           "A box cannot be bisected further: the integrand has a singularity \
+            inside the box.")
+    ~value:(Nx.where ok total estimate)
+    ~error ~status:b.state ~evaluations:b.count
+    ~facts:[ Fact ("estimate", estimate); Fact ("error", error) ]
+    ()
 
 (* Quasi-Monte Carlo *)
 
@@ -1319,7 +1375,7 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
           ( Nx.zeros Nx.int32 lanes,
             (zeros, (zeros, Nx.full Nx.int32 lanes Elementwise.running)) ) ) )
   in
-  let ok = Nx.equal_s st (Solution.code Converged) in
+  let ok = Nx.equal_s st (Answer.code Converged) in
   (* The answer: the mean over each lane's final points, tracked, chunk by
      chunk. *)
   let sum_chunk total j =
@@ -1333,9 +1389,17 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
       (Nx.arange Nx.int32 0 budget 1)
   in
   let count = Nx.mul_s (Nx.cast dtype used) (float (qmc_chunk * shifts)) in
-  Solution.v ~fn
+  Answer.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
+    ~spent:{ used; unit = "chunks"; budget }
+    ~fix:
+      (quad_fix tol
+         ~budget:
+           "Raise the budget or loosen tol: the standard error of a smooth \
+            integrand falls about as the inverse of the point count."
+         ~stalled:"")
     ~value:(Nx.where ok (Nx.div total count) estimate)
     ~error ~status:st
     ~evaluations:(Nx.mul_s used (Int32.of_int (qmc_chunk * shifts)))
-    ~facts:[]
+    ~facts:[ Fact ("estimate", estimate); Fact ("error", error) ]
+    ()

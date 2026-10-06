@@ -372,7 +372,51 @@ let solve_tests =
           (Solution.is Budget_spent s);
         raises_match
           (Exn.failure ~substring:"Jera.Ode.solve: the budget is spent")
+          (fun () -> Solution.get s);
+        let report = Format.asprintf "%a" Solution.pp s in
+        contains ~sub:"method tsit5, tol rel 1e-10 abs 1e-12, budget 3" report;
+        contains ~sub:"3 of 3 attempted steps" report);
+    test "times out of order end their lane, and the report says where"
+      (fun () ->
+        let s =
+          Ode.sample one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:100
+            (decay (scalar 1.))
+            ~at:(vec [| 0.; 1.; 0.5 |])
+            (scalar 1.)
+        in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Stalled s);
+        raises_match
+          (Exn.failure ~substring:"The times are not strictly monotone at [2].")
           (fun () -> Solution.get s));
+    test "times out of order in one lane leave the others converged" (fun () ->
+        let at =
+          Nx.create f64 [| 3; 3 |] [| 0.; 1.; 2.; 0.; 1.; 0.5; 0.; 0.5; 1. |]
+        in
+        let ok =
+          Rune.vmap
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun at ->
+              Solution.ok
+                (Ode.sample one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:100
+                   (decay (scalar 1.))
+                   ~at (scalar 1.)))
+            at
+        in
+        equal (Oracle.tensor ())
+          (Nx.create Nx.bool [| 3 |] [| true; false; true |])
+          ok);
+    test "a solve over no time is its start" (fun () ->
+        let s = solve (decay (scalar 1.)) ~t0:0.7 ~t1:0.7 (scalar 2.) in
+        equal (Oracle.tensor ()) (scalar 2.) (Solution.get s);
+        equal (Oracle.tensor ()) (scalar 0.) (Solution.error s));
+    test "solve rejects a time that is not a scalar" (fun () ->
+        raises_match
+          (Exn.invalid_arg
+             ~substring:"Jera.Ode.solve: t0 and t1 must be scalars") (fun () ->
+            Ode.solve one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:10
+              (decay (scalar 1.))
+              ~t0:(vec [| 0. |]) ~t1:(scalar 1.) (scalar 1.)));
     test "a blow-up does not converge" (fun () ->
         (* y' = y² from 1 is 1 / (1 − t), infinite at t = 1. *)
         let s = solve (fun _ y -> Nx.square y) ~t0:0. ~t1:2. (scalar 1.) in

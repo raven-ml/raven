@@ -139,14 +139,32 @@ let bracket ~tol f ~lo ~hi =
   in
   let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
   let x = estimate br in
-  let ok = Nx.equal_s st (Solution.code Converged) in
+  let ok = Nx.equal_s st (Answer.code Converged) in
   let value = state fn ~ok f x in
-  Solution.v ~fn
+  let given = Nx.less_equal lo hi in
+  let fix (st : Solution.status) _ =
+    match st with
+    | Not_bracketed -> "Widen [lo, hi] until f changes sign between them."
+    | Stalled ->
+        "|f| at the estimate exceeds its value at the ends: f has a pole or a \
+         jump in [lo, hi], or no zero there."
+    | Not_finite -> "f is not finite inside [lo, hi]: narrow it to f's domain."
+    | Converged | Budget_spent -> ""
+  in
+  Answer.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
-    ~value
+    ~fix ~value
     ~error:(Nx.div_s (Nx.sub b a) 2.)
     ~status:st ~evaluations:n
-    ~facts:[ Fact ("lo", lo); Fact ("hi", hi); Fact ("estimate", x) ]
+    ~facts:
+      [
+        Fact ("lo", lo);
+        Fact ("hi", hi);
+        Fact ("f lo", Nx.where given fa0 fb0);
+        Fact ("f hi", Nx.where given fb0 fa0);
+        Fact ("estimate", x);
+      ]
+    ()
 
 (* Newton *)
 
@@ -209,9 +227,25 @@ let newton ~tol ~budget ~slope f x0 =
       ~until:(fun (_, (st, _)) -> Nx.logical_not (Nx.any (searching st)))
       ~f:step initial
   in
-  let ok = Nx.equal_s st (Solution.code Converged) in
+  let ok = Nx.equal_s st (Answer.code Converged) in
   let value = state fn ~ok f x in
-  Solution.v ~fn
+  let fix (st : Solution.status) _ =
+    match st with
+    | Budget_spent ->
+        "Raise the budget, start nearer the zero, or bracket it with \
+         Root.bracket."
+    | Stalled ->
+        "The slope is zero or not finite, or the steps stopped shrinking: \
+         check the slope, or bracket the zero with Root.bracket."
+        ^ Tolerance.zero_hint tol
+    | Not_finite ->
+        "f is not finite at an iterate: start inside f's domain, or bracket \
+         the zero with Root.bracket."
+    | Converged | Not_bracketed -> ""
+  in
+  Answer.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
-    ~value ~error:last ~status:st ~evaluations:n
-    ~facts:[ Fact ("start", x0); Fact ("estimate", x) ]
+    ~spent:{ used = n; unit = "iterations"; budget }
+    ~fix ~value ~error:last ~status:st ~evaluations:n
+    ~facts:[ Fact ("start", x0); Fact ("estimate", x); Fact ("step", last) ]
+    ()

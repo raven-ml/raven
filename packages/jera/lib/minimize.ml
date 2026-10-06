@@ -191,7 +191,7 @@ let bracket ~tol f ~lo ~hi =
   in
   let s = of_fields fs in
   let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
-  let ok = Nx.equal_s st (Solution.code Converged) in
+  let ok = Nx.equal_s st (Answer.code Converged) in
   (* A minimum whose bracket kept a given end is that end. *)
   let at_lo = Nx.logical_and ok (Nx.equal s.a a0)
   and at_hi = Nx.logical_and ok (Nx.equal s.b b0) in
@@ -203,9 +203,18 @@ let bracket ~tol f ~lo ~hi =
   let slope x = snd (Rune.jvp' f x (Nx.ones_like x)) in
   let stated = state fn ~ok:interior slope s.x in
   let value = Nx.where at_lo lo_end (Nx.where at_hi hi_end stated) in
-  Solution.v ~fn
+  let fix (st : Solution.status) _ =
+    match st with
+    | Not_finite -> "f is not finite inside [lo, hi]: narrow it to f's domain."
+    | Stalled ->
+        "The bracket stopped shrinking: f may be flat or noisy at the \
+         tolerance's scale; loosen tol."
+    | Converged | Budget_spent | Not_bracketed -> ""
+  in
+  Answer.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
-    ~value
+    ~fix ~value
     ~error:(Nx.div_s (Nx.sub s.b s.a) 2.)
     ~status:st ~evaluations:n
     ~facts:[ Fact ("lo", lo); Fact ("hi", hi); Fact ("estimate", s.x) ]
+    ()

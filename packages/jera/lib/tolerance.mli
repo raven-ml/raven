@@ -23,3 +23,7 @@ val scale : t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 val ratio : t -> e:(float, 'b) Nx.t -> y:(float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [ratio t ~e ~y] is [e / s] elementwise, [0] where [e = 0] and infinite where
     [s = 0] and [e <> 0]. *)
+
+val zero_hint : t -> string
+(** [zero_hint t] is the advice for a solve that stopped short under [t] without
+    [abs]: an answer that may be zero needs one; [""] when [t] has [abs]. *)

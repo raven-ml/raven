@@ -14,6 +14,7 @@ type embedded = { e : float array; order : int }
    last stage evaluates the field at the step's result, so the next step starts
    from it. *)
 type tableau = {
+  name : string;
   a : float array array;
   b : float array;
   c : float array;
@@ -30,25 +31,25 @@ let first_same_as_last a b c =
   && b.(s - 1) = 0.
   && Array.for_all2 ( = ) a.(s - 1) (Array.sub b 0 (s - 1))
 
-let make ?embedded ~a ~b ~c () =
-  { a; b; c; fsal = first_same_as_last a b c; embedded }
+let make ?embedded name ~a ~b ~c () =
+  { name; a; b; c; fsal = first_same_as_last a b c; embedded }
 
-let euler = make ~a:[| [||] |] ~b:[| 1. |] ~c:[| 0. |] ()
+let euler = make "euler" ~a:[| [||] |] ~b:[| 1. |] ~c:[| 0. |] ()
 
 let rk4 =
-  make
+  make "rk4"
     ~a:[| [||]; [| 0.5 |]; [| 0.; 0.5 |]; [| 0.; 0.; 1. |] |]
     ~b:[| 1. /. 6.; 1. /. 3.; 1. /. 3.; 1. /. 6. |]
     ~c:[| 0.; 0.5; 0.5; 1. |] ()
 
 let ssprk3 =
-  make
+  make "ssprk3"
     ~a:[| [||]; [| 1. |]; [| 0.25; 0.25 |] |]
     ~b:[| 1. /. 6.; 1. /. 6.; 2. /. 3. |]
     ~c:[| 0.; 1.; 0.5 |] ()
 
 let bs3 =
-  make
+  make "bs3"
     ~embedded:
       { e = [| -5. /. 72.; 1. /. 12.; 1. /. 9.; -1. /. 8. |]; order = 3 }
     ~a:[| [||]; [| 0.5 |]; [| 0.; 0.75 |]; [| 2. /. 9.; 1. /. 3.; 4. /. 9. |] |]
@@ -67,7 +68,7 @@ let tsit5 =
       2.324710524099774;
     |]
   in
-  make
+  make "tsit5"
     ~embedded:
       {
         e =
@@ -113,7 +114,7 @@ let dopri5 =
       35. /. 384.; 0.; 500. /. 1113.; 125. /. 192.; -2187. /. 6784.; 11. /. 84.;
     |]
   in
-  make
+  make "dopri5"
     ~embedded:
       {
         e =
@@ -172,7 +173,8 @@ let tableau ~a ~b ~c =
   if not (finite b && finite c && Array.for_all finite a) then
     fail "a coefficient is not finite";
   if not (sums_to_one b) then fail "b does not sum to 1";
-  make ~a:(Array.map Array.copy a) ~b:(Array.copy b) ~c:(Array.copy c) ()
+  make "tableau" ~a:(Array.map Array.copy a) ~b:(Array.copy b) ~c:(Array.copy c)
+    ()
 
 (* Marches *)
 
@@ -356,22 +358,65 @@ let search_ptree (type v t) (y : v Nx.Ptree.t) : (v, t) search Nx.Ptree.t =
 let scalar_at t i =
   Nx.reshape [||] (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) t)
 
-let sample y m ~tol ~budget f ~at y0 =
-  let fn = "Jera.Ode.sample" in
+(* What to change for a solve that stopped short, from its lane's facts. *)
+let fix tol (st : Answer.status) facts =
+  let fact name = List.assoc name facts in
+  match st with
+  | Budget_spent ->
+      "Raise the budget or loosen tol; if the steps stay small, the field may \
+       be stiff."
+  | Stalled when fact "disorder" >= 0. ->
+      Printf.sprintf "The times are not strictly monotone at [%.0f]."
+        (fact "disorder")
+  | Stalled ->
+      "The step fell below the time's resolution near t: the solution may blow \
+       up there." ^ Tolerance.zero_hint tol
+  | Not_finite -> "The field is not finite at an accepted state near t."
+  | Converged | Not_bracketed -> ""
+
+(* The index of the first time of [at] that does not continue its direction, or
+   [−1]: strictly, or with repeats when [repeats] is [`Allowed]. *)
+let disorder repeats at =
+  let n = Nx.dim 0 at in
+  if n < 2 then Nx.scalar Nx.int32 (-1l)
+  else
+    let d =
+      Nx.sub (Nx.shrink [| (1, n) |] at) (Nx.shrink [| (0, n - 1) |] at)
+    in
+    let direction = Nx.sign (Nx.sub (Nx.get [ n - 1 ] at) (Nx.get [ 0 ] at)) in
+    let along = Nx.mul d direction in
+    let fine =
+      match repeats with
+      | `Allowed -> Nx.greater_equal along (Nx.zeros_like along)
+      | `Refused -> Nx.greater along (Nx.zeros_like along)
+    in
+    let bad = Nx.logical_not fine in
+    let first = Nx.cast Nx.int32 (Nx.argmax (Nx.cast Nx.int32 bad)) in
+    Nx.where (Nx.any bad) (Nx.add_s first 1l) (Nx.scalar Nx.int32 (-1l))
+
+let run fn repeats y m ~tol ~budget f ~at y0 =
   let emb = match m.embedded with Some e -> e | None -> assert false in
-  March.check fn ~steps:1 at;
+  if Nx.ndim at <> 1 || Nx.dim 0 at = 0 then
+    invalid_arg
+      (Printf.sprintf "%s: at must hold at least one time, got shape %s" fn
+         (Num.shape (Nx.shape at)));
   if budget < 1 then
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   let n = Nx.dim 0 at in
   let dtype = Nx.dtype at in
   let n_int = n - 1 in
+  let settings =
+    Format.asprintf "method %s, tol %a, budget %d" m.name Tol.pp tol budget
+  in
   let stack1 v = Nx.Ptree.map y (fun _ x -> Nx.unsqueeze ~axes:[ 0 ] x) v in
   if n_int = 0 then
-    Solution.v ~fn ~settings:"" ~value:(stack1 y0)
+    Answer.v ~fn ~settings ~fix:(fix tol) ~value:(stack1 y0)
       ~error:(stack1 (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) y0))
-      ~status:(Nx.scalar Nx.int32 (Solution.code Converged))
-      ~evaluations:(Nx.scalar Nx.int32 0l) ~facts:[]
+      ~status:(Nx.scalar Nx.int32 (Answer.code Converged))
+      ~evaluations:(Nx.scalar Nx.int32 0l) ~facts:[] ()
   else begin
+    (* Times out of order are a status: the lane stops before its search. *)
+    let disorder = disorder repeats (Rune.detach at) in
     let at0 = Rune.detach at in
     let starts = Nx.slice [ Nx.R (0, n_int) ] at0
     and stops = Nx.slice [ Nx.R (1, n) ] at0 in
@@ -431,6 +476,8 @@ let sample y m ~tol ~budget f ~at y0 =
       in
       let a = scalar_at starts j and b = scalar_at stops j in
       let span = Nx.sub b a in
+      (* An empty interval, of [t0 = t1] in a solve, ends with no step. *)
+      let empty = Nx.equal_s span 0. in
       let t = Nx.add a (Nx.mul span s.sigma) in
       let ds = Nx.div s.h (Nx.abs span) in
       let lands = Nx.greater_equal (Nx.add s.sigma ds) one in
@@ -451,7 +498,28 @@ let sample y m ~tol ~budget f ~at y0 =
       let r = error_norm y tol dtype e s.v v' in
       let k' = ks.(stages - 1) in
       let running = Elementwise.searching s.status in
-      let ok = Nx.logical_and running (Nx.less_equal_s r 1.) in
+      let stepping = Nx.logical_and running (Nx.logical_not empty) in
+      let ok =
+        Nx.logical_and running (Nx.logical_or empty (Nx.less_equal_s r 1.))
+      in
+      let taken = Nx.logical_and ok (Nx.logical_not empty) in
+      let v' =
+        Nx.Ptree.map2 y
+          (fun _ x z -> Nx.where (Nx.broadcast_to (Nx.shape x) empty) z x)
+          v' s.v
+      in
+      let k' =
+        Nx.Ptree.map2 y
+          (fun _ x z -> Nx.where (Nx.broadcast_to (Nx.shape x) empty) z x)
+          k' s.k
+      in
+      let e =
+        Nx.Ptree.map y
+          (fun _ x ->
+            Nx.where (Nx.broadcast_to (Nx.shape x) empty) (Nx.zeros_like x) x)
+          e
+      in
+      let lands = Nx.logical_or lands empty in
       let t_end = Nx.add a (Nx.mul span sigma_end) in
       (* Controller *)
       let rr = Nx.maximum r (Nx.full_like r 1e-10) in
@@ -496,7 +564,7 @@ let sample y m ~tol ~budget f ~at y0 =
       in
       let ends =
         Nx.where
-          (Nx.logical_and slot (Nx.broadcast_to [| budget |] ok))
+          (Nx.logical_and slot (Nx.broadcast_to [| budget |] taken))
           (Nx.broadcast_to [| budget |] sigma_end)
           s.ends
       in
@@ -506,7 +574,7 @@ let sample y m ~tol ~budget f ~at y0 =
       let counts =
         Nx.add s.counts
           (Nx.cast Nx.int32
-             (Nx.logical_and at_j (Nx.broadcast_to [| n_int |] ok)))
+             (Nx.logical_and at_j (Nx.broadcast_to [| n_int |] taken)))
       in
       let interval = Nx.where finishing (Nx.add_s s.interval 1l) s.interval in
       let st = s.status in
@@ -520,8 +588,12 @@ let sample y m ~tol ~budget f ~at y0 =
           (Nx.logical_and finishing (Nx.equal_s interval (Int32.of_int n_int)))
           Converged
       in
-      let st = Elementwise.settle st (Nx.equal t_end t) Stalled in
-      let attempts = Nx.add s.attempts (Nx.cast Nx.int32 running) in
+      let st =
+        Elementwise.settle st
+          (Nx.logical_and stepping (Nx.equal t_end t))
+          Stalled
+      in
+      let attempts = Nx.add s.attempts (Nx.cast Nx.int32 stepping) in
       let st =
         Elementwise.settle st
           (Nx.greater_equal_s attempts (Int32.of_int budget))
@@ -538,16 +610,16 @@ let sample y m ~tol ~budget f ~at y0 =
           Nx.where ok
             (Nx.where lands (Nx.zeros_like sigma_end) sigma_end)
             s.sigma;
-        h = Nx.where running h s.h;
-        prev = Nx.where ok (Nx.maximum r (Nx.full_like r 1e-4)) s.prev;
-        rejected = Nx.logical_and running (Nx.logical_not ok);
+        h = Nx.where stepping h s.h;
+        prev = Nx.where taken (Nx.maximum r (Nx.full_like r 1e-4)) s.prev;
+        rejected = Nx.logical_and stepping (Nx.logical_not ok);
         ends;
         counts;
-        accepted = Nx.add s.accepted (Nx.cast Nx.int32 ok);
+        accepted = Nx.add s.accepted (Nx.cast Nx.int32 taken);
         attempts;
         evals =
           Nx.add s.evals
-            (Nx.mul_s (Nx.cast Nx.int32 running) (Int32.of_int (stages - 1)));
+            (Nx.mul_s (Nx.cast Nx.int32 stepping) (Int32.of_int (stages - 1)));
         status = st;
       }
     in
@@ -568,7 +640,11 @@ let sample y m ~tol ~budget f ~at y0 =
         accepted = Nx.scalar Nx.int32 0l;
         attempts = Nx.scalar Nx.int32 0l;
         evals = Nx.scalar Nx.int32 2l;
-        status = Nx.scalar Nx.int32 Elementwise.running;
+        status =
+          Nx.where
+            (Nx.greater_equal_s disorder 0l)
+            (Nx.scalar Nx.int32 (Answer.code Stalled))
+            (Nx.scalar Nx.int32 Elementwise.running);
       }
     in
     let s =
@@ -576,7 +652,7 @@ let sample y m ~tol ~budget f ~at y0 =
         ~until:(fun s -> Nx.logical_not (Elementwise.searching s.status))
         ~f:attempt initial
     in
-    let ok = Nx.equal_s s.status (Solution.code Converged) in
+    let ok = Nx.equal_s s.status (Answer.code Converged) in
     (* The answer: each interval's accepted steps taken again with the tracked
        field, as fractions of the interval, so a moved end stretches every
        step. *)
@@ -650,15 +726,31 @@ let sample y m ~tol ~budget f ~at y0 =
         b
         (Nx.add a (Nx.mul (Nx.sub b a) s.sigma))
     in
-    Solution.v ~fn
-      ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
-      ~value ~error:s.errs ~status:s.status ~evaluations:s.evals
-      ~facts:[ Fact ("t", stopped); Fact ("step", s.h) ]
+    let count c = Nx.cast dtype c in
+    Answer.v ~fn ~settings
+      ~spent:{ used = s.attempts; unit = "attempted steps"; budget }
+      ~fix:(fix tol) ~value ~error:s.errs ~status:s.status ~evaluations:s.evals
+      ~facts:
+        [
+          Fact ("t", stopped);
+          Fact ("step", s.h);
+          Fact ("accepted", count s.accepted);
+          Fact ("rejected", count (Nx.sub s.attempts s.accepted));
+          Fact ("disorder", count disorder);
+        ]
+      ()
   end
 
+let sample y m ~tol ~budget f ~at y0 =
+  run "Jera.Ode.sample" `Refused y m ~tol ~budget f ~at y0
+
 let solve y m ~tol ~budget f ~t0 ~t1 y0 =
-  let at =
-    Nx.concatenate ~axis:0 [ Nx.reshape [| 1 |] t0; Nx.reshape [| 1 |] t1 ]
-  in
+  let fn = "Jera.Ode.solve" in
+  if Nx.ndim t0 <> 0 || Nx.ndim t1 <> 0 then
+    invalid_arg
+      (Printf.sprintf "%s: t0 and t1 must be scalars, got shapes %s and %s" fn
+         (Num.shape (Nx.shape t0))
+         (Num.shape (Nx.shape t1)));
+  let at = Nx.stack [ t0; t1 ] in
   let last v = Nx.Ptree.map y (fun _ x -> Nx.get [ 1 ] x) v in
-  Solution.map ~fn:"Jera.Ode.solve" last (sample y m ~tol ~budget f ~at y0)
+  Answer.map ~fn last (run fn `Allowed y m ~tol ~budget f ~at y0)

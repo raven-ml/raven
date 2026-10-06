@@ -320,13 +320,20 @@ let adapt s ~degree ~tol ~budget f a b =
       pair tensor
         (pair tensor (pair tensor (pair s (pair tensor (pair tensor tensor))))))
   in
-  let level, (index, (_, (c, (used, (st, n))))) =
+  let level, (index, (ratio, (c, (used, (st, n))))) =
     Rune.iterate carry ~max:budget
       ~until:(fun (_, (_, (_, (_, (_, (st, _)))))) ->
         Nx.logical_not (Elementwise.searching st))
       ~f:step initial
   in
-  let ok = Nx.equal_s st (Solution.code Converged) in
+  let ok = Nx.equal_s st (Answer.code Converged) in
+  (* The worst piece, which a report prints. *)
+  let worst_from, worst_to =
+    let j = worst used ratio in
+    let t0, t1 = fractions (pick j level) (pick j index) in
+    let x t = Nx.reshape [||] (Nx.add a0 (Nx.mul (Nx.sub b0 a0) t)) in
+    (x t0, x t1)
+  in
   (* The final partition in increasing order, unused slots last as empty pieces
      at b. *)
   let used_mask = in_use used in
@@ -400,10 +407,22 @@ let adapt s ~degree ~tol ~budget f a b =
           best.coefficients;
     }
   in
-  Solution.v ~fn
+  let fix (st : Answer.status) _ =
+    match st with
+    | Budget_spent -> "Raise the budget or the degree, or loosen tol."
+    | Stalled ->
+        "The worst piece cannot be bisected further: f has a jump or a kink \
+         there, which no series of a degree meets." ^ Tolerance.zero_hint tol
+    | Not_finite -> "f is not finite in the worst piece."
+    | Converged | Not_bracketed -> ""
+  in
+  Answer.v ~fn
     ~settings:
       (Format.asprintf "degree %d, tol %a, budget %d" degree Tol.pp tol budget)
-    ~value ~error ~status:st ~evaluations:n ~facts:[]
+    ~spent:{ used; unit = "pieces"; budget }
+    ~fix ~value ~error ~status:st ~evaluations:n
+    ~facts:[ Fact ("worst from", worst_from); Fact ("worst to", worst_to) ]
+    ()
 
 (* Evaluation *)
 
