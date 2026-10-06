@@ -458,12 +458,10 @@ let jit_special_benchmarks () =
     let x = inputs n dt lo hi in
     Thumper.bench_with_setup ~setup:(replay f x) name (fun f -> f x)
   in
-  let lbeta dt name =
-    let a = inputs compiled_n dt 0.1 20. and b = inputs compiled_n dt 0.1 20. in
+  let binary ?(n = compiled_n) dt name g (a_lo, a_hi) (lo, hi) =
+    let a = inputs n dt a_lo a_hi and b = inputs n dt lo hi in
     let setup () =
-      let f =
-        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.lbeta
-      in
+      let f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) g in
       ignore (Sys.opaque_identity (f a b));
       f
     in
@@ -483,6 +481,8 @@ let jit_special_benchmarks () =
     in
     Thumper.bench_with_setup ~setup name (fun f -> f a b x)
   in
+  let lbeta dt name = binary dt name Nx.lbeta (0.1, 20.) (0.1, 20.) in
+  let shape = (0.1, 50.) and variable = (0., 60.) in
   [
     at Nx.float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.float64 "erf f64 1e6" Nx.erf (-6.) 6.;
@@ -508,6 +508,13 @@ let jit_special_benchmarks () =
     at Nx.float64 "i1e f64 1e6" Nx.i1e (-30.) 30.;
     lbeta Nx.float32 "lbeta 1e6";
     lbeta Nx.float64 "lbeta f64 1e6";
+    binary Nx.float32 "gammainc 1e6" Nx.gammainc shape variable;
+    binary Nx.float64 "gammainc f64 1e6" Nx.gammainc shape variable;
+    binary Nx.float32 "log gammainc 1e6" Nx.log_gammainc shape variable;
+    binary Nx.float64 "log gammainc f64 1e6" Nx.log_gammainc shape variable;
+    binary ~n:100_000 Nx.float32 "gammaincinv 1e5" Nx.gammaincinv shape (0., 1.);
+    binary ~n:100_000 Nx.float64 "gammaincinv f64 1e5" Nx.gammaincinv shape
+      (0., 1.);
   ]
 
 let jit_random_benchmarks () =

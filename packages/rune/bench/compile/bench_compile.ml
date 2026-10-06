@@ -21,7 +21,13 @@
    of width 2 on [search_parallel] domains, then [calls] more: one product of
    two float32 square matrices, on the host and on each GPU the machine has. The
    search compiles, loads and times each candidate; the calls run the kernel it
-   chose, and take longer if its timings misled it. *)
+   chose, and take longer if its timings misled it.
+
+   [--cold ID] runs one case's first call, of a row or of [once], and prints its
+   milliseconds: run with [CACHEDB] at an empty path and [PARALLEL=1]. The cases
+   [once] lists are not rows, since a compile of several seconds, repeated five
+   times, would not fit the suite's time: the incomplete gamma's derivatives,
+   and its inverse and theirs. *)
 
 let n = 1024
 let input lo hi = Nx.add_s (Nx.mul_s (Nx.rand Nx.float64 [| n |]) (hi -. lo)) lo
@@ -90,6 +96,31 @@ let wide_sum () =
   ignore
     (Sys.opaque_identity
        (Rune.jit Nx.Ptree.(p @-> returns p) (fun w -> Nx_wide.sum w) w))
+
+(* A function of a parameter and a variable, over parameters in [a_lo, a_hi] and
+   variables in [lo, hi], and its derivative in the parameter or in the
+   variable. *)
+let binary f (a_lo, a_hi) (lo, hi) () =
+  let x = input lo hi in
+  compile (fun a -> f a x) (input a_lo a_hi)
+
+let in_a f a x = Rune.grad' (fun a -> Nx.sum (f a x)) a
+let in_x f a x = Rune.grad' (fun x -> Nx.sum (f a x)) x
+let shape = (0.1, 50.)
+let variable = (0., 60.)
+let probability = (0., 1.)
+
+(* The incomplete gamma's long compiles, run one at a time with [--cold]. *)
+let once =
+  [
+    ("special/gammainc-grad-a", binary (in_a Nx.gammainc) shape variable);
+    ("special/gammainc-grad-x", binary (in_x Nx.gammainc) shape variable);
+    ("special/gammaincinv", binary Nx.gammaincinv shape probability);
+    ( "special/gammaincinv-grad-a",
+      binary (in_a Nx.gammaincinv) shape probability );
+    ( "special/gammaincinv-grad-p",
+      binary (in_x Nx.gammaincinv) shape probability );
+  ]
 
 (* Sinkhorn iterations in the log domain between two uniform batches, over a
    cost matrix of [sinkhorn_rows] rows, and the gradient of the transport cost
@@ -223,6 +254,7 @@ let cases =
       [ 32; 128; 512 ]
   @ [ ("sinkhorn-64", sinkhorn_case 64) ]
   @ search_cases
+  @ [ ("special/gammainc", binary Nx.gammainc shape variable) ]
 
 let rec remove path =
   if Sys.is_directory path then (
@@ -240,9 +272,11 @@ let cold id () =
   in
   let status =
     Fun.protect ~finally:(fun () -> remove dir) @@ fun () ->
+    let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0 in
+    Fun.protect ~finally:(fun () -> Unix.close null) @@ fun () ->
     let pid =
-      Unix.create_process_env exe [| exe; "--cold"; id |] env Unix.stdin
-        Unix.stdout Unix.stderr
+      Unix.create_process_env exe [| exe; "--cold"; id |] env Unix.stdin null
+        Unix.stderr
     in
     snd (Unix.waitpid [] pid)
   in
@@ -262,8 +296,11 @@ let () =
       let opens = Option.is_some (open_device ()) in
       exit (if opens then 0 else 1)
   | [ _; "--cold"; id ] -> (
-      match List.assoc_opt id cases with
-      | Some f -> Nx.Rng.with_key (Nx.Rng.key 42) f
+      match List.assoc_opt id (cases @ once) with
+      | Some f ->
+          let t0 = Unix.gettimeofday () in
+          Nx.Rng.with_key (Nx.Rng.key 42) f;
+          Printf.printf "%.3f\n" ((Unix.gettimeofday () -. t0) *. 1000.)
       | None ->
           prerr_endline ("bench_compile: no case " ^ id);
           exit 2)

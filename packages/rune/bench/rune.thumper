@@ -107,6 +107,7 @@ jit/special/ndtri-f64-1e5	wall_time	batch=8	n=20	8.188e-04	7.916e-04 7.938e-04 7
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 22.1 on 10 cores
 # forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e5 jit/special/erfinv-f64-1e5 jit/special/erfc-1e6 jit/special/erfc-f64-1e6 jit/special/ndtr-1e6 jit/special/ndtr-f64-1e6 jit/special/log-ndtr-1e6 jit/special/log-ndtr-f64-1e6 jit/special/ndtri-1e5 jit/special/ndtri-f64-1e5 jit/special/lgamma-1e6 jit/special/lgamma-f64-1e6 jit/special/digamma-1e6 jit/special/digamma-f64-1e6 jit/special/i0e-1e6 jit/special/i0e-f64-1e6 jit/special/betainc-1e6 jit/special/betainc-f64-1e6 jit/special/i1e-1e6 jit/special/i1e-f64-1e6 jit/special/lbeta-1e6 jit/special/lbeta-f64-1e6 jit/random/gamma-1e6 under load 6.9 on 10 cores
+# forced: blessed jit/special/gammainc-1e6 jit/special/gammainc-f64-1e6 jit/special/log-gammainc-1e6 jit/special/log-gammainc-f64-1e6 jit/special/gammaincinv-1e5 jit/special/gammaincinv-f64-1e5 under load 8.1 on 10 cores
 
 Bodies/grad-remat-eager	alloc_words	batch=8	n=20	2.756e+04	2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04 2.756e+04
 Bodies/grad-remat-eager	wall_time	batch=8	n=20	6.161e-04	5.267e-04 5.650e-04 5.682e-04 5.762e-04 5.781e-04 5.803e-04 5.890e-04 6.108e-04 6.129e-04 6.156e-04 6.167e-04 6.169e-04 6.169e-04 6.241e-04 6.250e-04 6.279e-04 6.298e-04 6.305e-04 6.451e-04 6.880e-04
@@ -194,6 +195,14 @@ jit/special/erfinv-1e5	alloc_words	exact	816
 jit/special/erfinv-1e5	wall_time	batch=16	n=20	5.504e-04	5.042e-04 5.074e-04 5.100e-04 5.174e-04 5.175e-04 5.176e-04 5.384e-04 5.409e-04 5.483e-04 5.498e-04 5.510e-04 5.599e-04 5.998e-04 6.088e-04 6.108e-04 6.229e-04 6.343e-04 6.520e-04 6.595e-04 6.696e-04
 jit/special/erfinv-f64-1e5	alloc_words	exact	816
 jit/special/erfinv-f64-1e5	wall_time	batch=4	n=20	1.443e-03	1.338e-03 1.366e-03 1.370e-03 1.376e-03 1.383e-03 1.387e-03 1.393e-03 1.403e-03 1.410e-03 1.436e-03 1.450e-03 1.478e-03 1.488e-03 1.506e-03 1.509e-03 1.518e-03 1.525e-03 1.567e-03 1.577e-03 1.802e-03
+jit/special/gammainc-1e6	alloc_words	exact	1093
+jit/special/gammainc-1e6	wall_time	batch=1	n=20	1.947e-02	1.848e-02 1.889e-02 1.892e-02 1.911e-02 1.920e-02 1.923e-02 1.927e-02 1.932e-02 1.934e-02 1.940e-02 1.955e-02 1.968e-02 1.976e-02 1.991e-02 2.021e-02 2.027e-02 2.032e-02 2.080e-02 2.096e-02 2.096e-02
+jit/special/gammainc-f64-1e6	alloc_words	exact	1093
+jit/special/gammainc-f64-1e6	wall_time	batch=1	n=20	9.190e-02	8.775e-02 8.967e-02 8.974e-02 8.975e-02 8.982e-02 9.091e-02 9.135e-02 9.137e-02 9.166e-02 9.178e-02 9.202e-02 9.215e-02 9.265e-02 9.290e-02 9.342e-02 9.345e-02 9.528e-02 9.558e-02 9.700e-02 9.839e-02
+jit/special/gammaincinv-1e5	alloc_words	exact	1093
+jit/special/gammaincinv-1e5	wall_time	batch=1	n=20	6.426e-03	5.257e-03 6.090e-03 6.397e-03 6.401e-03 6.412e-03 6.415e-03 6.424e-03 6.425e-03 6.426e-03 6.426e-03 6.427e-03 6.430e-03 6.433e-03 6.436e-03 6.442e-03 6.451e-03 6.462e-03 6.471e-03 6.505e-03 7.436e-03
+jit/special/gammaincinv-f64-1e5	alloc_words	exact	1093
+jit/special/gammaincinv-f64-1e5	wall_time	batch=1	n=20	3.164e-02	2.839e-02 2.866e-02 2.897e-02 3.058e-02 3.092e-02 3.124e-02 3.130e-02 3.139e-02 3.145e-02 3.152e-02 3.176e-02 3.179e-02 3.185e-02 3.207e-02 3.262e-02 3.262e-02 3.268e-02 3.288e-02 3.293e-02 3.371e-02
 jit/special/i0e-1e6	alloc_words	exact	816
 jit/special/i0e-1e6	wall_time	batch=8	n=20	9.398e-04	8.019e-04 8.379e-04 8.624e-04 8.630e-04 8.912e-04 9.031e-04 9.032e-04 9.166e-04 9.294e-04 9.339e-04 9.456e-04 9.563e-04 9.726e-04 9.745e-04 9.843e-04 9.845e-04 1.006e-03 1.072e-03 1.098e-03 1.285e-03
 jit/special/i0e-f64-1e6	alloc_words	exact	816
@@ -210,6 +219,10 @@ jit/special/lgamma-1e6	alloc_words	exact	816
 jit/special/lgamma-1e6	wall_time	batch=2	n=20	2.457e-03	2.272e-03 2.320e-03 2.374e-03 2.388e-03 2.425e-03 2.427e-03 2.430e-03 2.442e-03 2.453e-03 2.456e-03 2.459e-03 2.475e-03 2.487e-03 2.510e-03 2.523e-03 2.533e-03 2.596e-03 2.679e-03 2.821e-03 3.153e-03
 jit/special/lgamma-f64-1e6	alloc_words	exact	816
 jit/special/lgamma-f64-1e6	wall_time	batch=1	n=20	5.933e-03	5.327e-03 5.360e-03 5.360e-03 5.405e-03 5.440e-03 5.464e-03 5.488e-03 5.509e-03 5.558e-03 5.889e-03 5.978e-03 5.998e-03 6.013e-03 6.159e-03 6.164e-03 6.342e-03 6.459e-03 6.469e-03 6.473e-03 7.033e-03
+jit/special/log-gammainc-1e6	alloc_words	exact	1093
+jit/special/log-gammainc-1e6	wall_time	batch=1	n=20	1.818e-02	1.749e-02 1.754e-02 1.763e-02 1.765e-02 1.766e-02 1.788e-02 1.806e-02 1.813e-02 1.816e-02 1.817e-02 1.818e-02 1.822e-02 1.867e-02 1.873e-02 1.905e-02 1.921e-02 1.934e-02 1.946e-02 1.967e-02 1.991e-02
+jit/special/log-gammainc-f64-1e6	alloc_words	exact	1093
+jit/special/log-gammainc-f64-1e6	wall_time	batch=1	n=20	8.448e-02	7.607e-02 7.727e-02 7.979e-02 8.135e-02 8.142e-02 8.314e-02 8.318e-02 8.360e-02 8.368e-02 8.435e-02 8.461e-02 8.463e-02 8.580e-02 8.592e-02 8.612e-02 8.624e-02 8.642e-02 8.661e-02 8.738e-02 8.786e-02
 jit/special/log-ndtr-1e6	alloc_words	exact	816
 jit/special/log-ndtr-1e6	wall_time	batch=2	n=20	5.518e-03	4.799e-03 4.903e-03 4.987e-03 5.057e-03 5.077e-03 5.124e-03 5.261e-03 5.480e-03 5.486e-03 5.497e-03 5.539e-03 5.616e-03 5.698e-03 6.388e-03 6.477e-03 6.960e-03 7.095e-03 7.186e-03 8.912e-03 1.076e-02
 jit/special/log-ndtr-f64-1e6	alloc_words	exact	816

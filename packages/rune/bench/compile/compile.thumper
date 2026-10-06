@@ -45,6 +45,7 @@ special/ndtri-grad	wall_time	batch=1	n=5	8.948e-01	8.931e-01 8.946e-01 8.948e-01
 # forced: blessed linalg/solve-32 linalg/solve-128 linalg/solve-512 under load 15.2 on 10 cores
 # forced: blessed wide/sum-1e6 under load 14.5 on 10 cores
 # forced: blessed erfinv erfinv-grad shaped-1k shaped-4k shaped-16k special/erfc special/erfc-grad special/ndtr special/ndtr-grad special/log_ndtr special/log_ndtr-grad special/ndtri special/ndtri-grad special/lgamma special/lgamma-grad special/digamma special/digamma-grad special/i0e special/i0e-grad special/i1e special/i1e-grad special/lbeta special/lbeta-grad-a special/lbeta-grad-b special/betainc special/log_betainc special/log_betainc-grad-x special/log_betainc-grad-a special/log_betainc-grad-b wide/sum-1e6 under load 6.5 on 10 cores
+# forced: blessed special/gammainc under load 9.2 on 10 cores
 
 erfinv	wall_time	batch=1	n=5	2.240e-01	2.235e-01 2.239e-01 2.240e-01 2.253e-01 2.281e-01
 erfinv-grad	wall_time	batch=1	n=5	2.961e-01	2.925e-01 2.952e-01 2.961e-01 2.973e-01 2.997e-01
@@ -62,6 +63,7 @@ special/digamma	wall_time	batch=1	n=5	1.563e-01	1.558e-01 1.561e-01 1.563e-01 1.
 special/digamma-grad	wall_time	batch=1	n=5	1.840e-01	1.834e-01 1.838e-01 1.840e-01 1.847e-01 1.848e-01
 special/erfc	wall_time	batch=1	n=5	1.507e-01	1.502e-01 1.504e-01 1.507e-01 1.523e-01 1.576e-01
 special/erfc-grad	wall_time	batch=1	n=5	1.849e-01	1.839e-01 1.844e-01 1.849e-01 1.921e-01 2.282e-01
+special/gammainc	wall_time	batch=1	n=5	9.177e-01	9.107e-01 9.145e-01 9.177e-01 9.351e-01 9.407e-01
 special/i0e	wall_time	batch=1	n=5	1.352e-01	1.338e-01 1.345e-01 1.352e-01 1.362e-01 1.376e-01
 special/i0e-grad	wall_time	batch=1	n=5	1.818e-01	1.790e-01 1.803e-01 1.818e-01 1.828e-01 1.883e-01
 special/i1e	wall_time	batch=1	n=5	1.338e-01	1.320e-01 1.331e-01 1.338e-01 1.345e-01 1.364e-01

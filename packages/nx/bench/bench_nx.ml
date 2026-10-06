@@ -169,9 +169,9 @@ let special_benchmarks () =
     let x = inputs n dt lo hi in
     Thumper.bench name (fun () -> f x)
   in
-  let lbeta dt name =
-    let a = inputs 1_000_000 dt 0.1 20. and b = inputs 1_000_000 dt 0.1 20. in
-    Thumper.bench name (fun () -> Nx.lbeta a b)
+  let binary ?(n = 1_000_000) dt name f (a_lo, a_hi) (lo, hi) =
+    let a = inputs n dt a_lo a_hi and x = inputs n dt lo hi in
+    Thumper.bench name (fun () -> f a x)
   in
   (* Shapes log-uniform over [e^-5, e^12], every TOMS 708 region among them. *)
   let betainc dt name =
@@ -179,6 +179,8 @@ let special_benchmarks () =
     let a = shape () and b = shape () and x = inputs 100_000 dt 0. 1. in
     Thumper.bench name (fun () -> Nx.betainc a b x)
   in
+  let lbeta dt name = binary dt name Nx.lbeta (0.1, 20.) (0.1, 20.) in
+  let shape = (0.1, 50.) and variable = (0., 60.) in
   [
     at Nx.Float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.Float64 "erf f64 1e6" Nx.erf (-6.) 6.;
@@ -204,6 +206,15 @@ let special_benchmarks () =
     at Nx.Float64 "i1e f64 1e6" Nx.i1e (-30.) 30.;
     lbeta Nx.Float32 "lbeta 1e6";
     lbeta Nx.Float64 "lbeta f64 1e6";
+    binary ~n:100_000 Nx.Float32 "gammainc 1e5" Nx.gammainc shape variable;
+    binary ~n:100_000 Nx.Float64 "gammainc f64 1e5" Nx.gammainc shape variable;
+    binary ~n:100_000 Nx.Float32 "log gammainc 1e5" Nx.log_gammainc shape
+      variable;
+    binary ~n:100_000 Nx.Float64 "log gammainc f64 1e5" Nx.log_gammainc shape
+      variable;
+    binary ~n:10_000 Nx.Float32 "gammaincinv 1e4" Nx.gammaincinv shape (0., 1.);
+    binary ~n:10_000 Nx.Float64 "gammaincinv f64 1e4" Nx.gammaincinv shape
+      (0., 1.);
   ]
 
 (* The float64 special functions take a third of a second a call eagerly. *)
