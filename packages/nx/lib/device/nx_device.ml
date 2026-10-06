@@ -3197,10 +3197,23 @@ module Program = struct
         Buffer.reachable b)
       buffers;
     if d == host then begin
-      (* The entry records the call's span while a profile is taken. The program
-         runs with the runtime released: it must stay reachable, and its code
-         mapped, until it returns. *)
-      run ();
+      (match Atomic.get profile with
+      | None -> run ()
+      | Some c ->
+          let start = now_ns () in
+          run ();
+          let stop = now_ns () in
+          push c.events
+            (Span
+               {
+                 device = host;
+                 lane = domain_lane ();
+                 name = p.p_name;
+                 start;
+                 stop;
+               }));
+      (* The program runs with the runtime released: it must stay reachable, and
+         its code mapped, until it returns. *)
       ignore (Sys.opaque_identity p)
     end
     else

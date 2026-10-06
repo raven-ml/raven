@@ -1116,8 +1116,8 @@ value caml_nx_device_entry(value unit) {
 }
 
 /* Runs [f(buffers, values)] with the runtime released, once, or once per
-   block of [v_split] (an Nx_device.Program.split, or 0) on the host's pool:
-   through the entry, or, for programs by address, as itself. The buffers'
+   block of [v_split] (an Nx_device.Program.split, or 0) on the host's pool,
+   whose span, while a profile is taken, Nx_device records. The buffers'
    addresses and the values are read first, into memory the collector does
    not move: from Nx_device.Buffer.t values, or from (address, size) pairs
    when [addresses]. */
@@ -1150,10 +1150,7 @@ static value call(value v_entry, value v_buffers, value v_values,
     for (int i = 0; i < 4; i++) split[i] = Long_val(Field(v_split, i));
   lane = Caml_state->id;
   caml_release_runtime_system();
-  if (addresses)
-    run(f, b, v, (int64_t)nv, split_ ? split : NULL);
-  else
-    entry(f, b, v, (int64_t)nv, split_ ? split : NULL);
+  run(f, b, v, (int64_t)nv, split_ ? split : NULL);
   caml_acquire_runtime_system();
   if (b != small_b) free(b);
   if (v != small_v) free(v);
