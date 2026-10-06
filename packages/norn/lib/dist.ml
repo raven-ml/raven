@@ -6,9 +6,12 @@
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* A parameter's domain check, run on use: [run context unless] checks the
-   parameter where [unless] does not hold, its message starting with
-   [context]. *)
-type check = { run : string -> Nx.bool_t option -> unit }
+   parameter where [unless] does not hold, its message starting with [context];
+   [inside ()] is whether every element is in the domain. *)
+type check = {
+  run : string -> Nx.bool_t option -> unit;
+  inside : unit -> Nx.bool_t;
+}
 
 type ('x, 'f) kind =
   | Continuous : ((float, 'f) Nx.t, 'f) kind
@@ -118,29 +121,23 @@ let finite x = Nx.isfinite x
 let below_infinity x = Nx.less x (const x Float.infinity)
 let not_nan x = Nx.logical_not (Nx.isnan x)
 
-(* [locate i x] splits the index [i] of a failing element of the parameter [x]
-   into its place in [x], the trailing entries, and the outermost entry before
-   them, which a map over chains prefixes. *)
-let locate i x =
-  let n = Array.length (Nx.shape x) and k = Array.length i in
-  let at =
-    if n = 0 then ""
-    else Printf.sprintf " at [%s]" (shape_string (Array.sub i (k - n) n))
-  in
-  let chain = if k > n then Printf.sprintf ", chain %d" i.(0) else "" in
-  (at, chain)
-
 let check family param domain inside x =
   let run context unless =
     let ok = inside x in
     let ok = match unless with None -> ok | Some u -> Nx.logical_or ok u in
     Nx.check Nx.Ptree.tensor ok x (fun i v ->
-        let at, chain = locate i x in
+        (* [unless] may broadcast [ok] past [x]: [x]'s place is the trailing
+           entries. *)
+        let n = Nx.ndim x and k = Array.length i in
+        let at =
+          if n = 0 then ""
+          else Printf.sprintf " at [%s]" (shape_string (Array.sub i (k - n) n))
+        in
         Invalid_argument
-          (Printf.sprintf "%s%s: %s: %s%s is %s, not in %s" context chain family
-             param at (Nx.to_string v) domain))
+          (Printf.sprintf "%s: %s: %s%s is %s, not in %s" context family param
+             at (Nx.to_string v) domain))
   in
-  { run }
+  { run; inside = (fun () -> Nx.all (inside x)) }
 
 let in_positive family name x = check family name "(0, inf)" positive x
 let in_reals family name x = check family name "(-inf, inf)" finite x
@@ -917,3 +914,8 @@ let pp ppf d = Format.pp_print_string ppf d.descr
 let check ?unless context d =
   run_checks ?unless context d.checks;
   { d with checked = true }
+
+let valid d =
+  List.fold_left
+    (fun ok c -> Nx.logical_and ok (c.inside ()))
+    (Nx.scalar Nx.bool true) d.checks

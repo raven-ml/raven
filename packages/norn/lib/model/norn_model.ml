@@ -416,6 +416,14 @@ type parts = { prior : bool; jacobian : bool; likelihood : bool }
 
 let all_parts = { prior = true; jacobian = true; likelihood = true }
 
+(* What a site does with a computed parameter outside its domain. [Total]: its
+   term is -inf, as a density a sampler explores must be. [Refuse site]: it
+   raises with [site name] as the context, except where the density so far is
+   -inf or [unless] holds. *)
+type params =
+  | Total
+  | Refuse of { site : string -> string; unless : Nx.bool_t option }
+
 (* The latent sites' answer: coordinates, or values. *)
 type latent = Coords of Nx.packed array | Values of Nx.packed array
 
@@ -428,7 +436,7 @@ let points x =
   else if Nx.ndim x = 1 then x
   else Nx.sum ~axes:(List.init (Nx.ndim x - 1) (fun a -> a + 1)) x
 
-let score m context parts latent data =
+let score m context params parts latent data =
   let s =
     { total = Nx.zeros m.dtype [||]; terms = []; points = []; factors = None }
   in
@@ -443,20 +451,24 @@ let score m context parts latent data =
            (Nx.logical_or (Nx.isnan term)
               (Nx.equal term (Nx.scalar m.dtype Float.infinity))))
     in
-    Nx.check Nx.Ptree.tensor ok term (fun i v ->
-        (* Under the map over chains, the index is the chain's. *)
-        let chain =
-          if Array.length i > 0 then Printf.sprintf ", chain %d" i.(0) else ""
-        in
+    Nx.check Nx.Ptree.tensor ok term (fun _ v ->
         Invalid_argument
-          (Printf.sprintf "%s: %s%s: its log density is %s" context source chain
+          (Printf.sprintf "%s: %s: its log density is %s" context source
              (Nx.to_string v)));
     s.total <- Nx.where (dead ()) s.total (Nx.add s.total term);
     term
   in
+  (* [valid] is whether the site's parameters are in their domain: where they
+     are not, the term is -inf. *)
   let add : type x g.
-      string -> (x, g) D.t -> (float, g) Nx.t -> (float, g) Nx.t -> unit =
-   fun name d f term ->
+      string ->
+      Nx.bool_t ->
+      (x, g) D.t ->
+      (float, g) Nx.t ->
+      (float, g) Nx.t ->
+      unit =
+   fun name valid d f term ->
+    let term = Nx.where valid term (neg_inf_like term) in
     let value = enter ("site " ^ name) term in
     let flat = Nx.reshape [| Nx.numel f |] (Nx.cast m.dtype f) in
     let bad = Nx.logical_not (Nx.isfinite flat) in
@@ -490,8 +502,19 @@ let score m context parts latent data =
       }
       :: s.terms
   in
+  (* [checked name d] is [d] with its parameters checked as [params] says, and
+     whether they are in their domain. *)
   let checked name d =
-    D.check ~unless:(dead ()) (context ^ ": site " ^ name) d
+    let valid = D.valid d in
+    match params with
+    | Total -> (D.check ~unless:(Nx.logical_not valid) "" d, valid)
+    | Refuse { site; unless } ->
+        let unless =
+          match unless with
+          | None -> dead ()
+          | Some u -> Nx.logical_or (dead ()) u
+        in
+        (D.check ~unless (site name) d, valid)
   in
   let answer i l d =
     let name = l.site.name in
@@ -502,21 +525,21 @@ let score m context parts latent data =
         | Coords cs ->
             let x, ld = forward m i d cs.(l.leaf) in
             if parts.prior || parts.jacobian then begin
-              let d = checked name d in
+              let d, valid = checked name d in
               let f =
                 if parts.prior then D.factors d x else Nx.zeros (D.dtype d) [||]
               in
               let t = Nx.sum f in
               let t = if parts.jacobian then Nx.add t (Nx.sum ld) else t in
-              add name d f t
+              add name valid d f t
             end;
             x
         | Values vs ->
             let x = fresh d (unpack d vs.(l.leaf)) vs.(l.leaf) in
             if parts.prior then begin
-              let d = checked name d in
+              let d, valid = checked name d in
               let f = D.factors d x in
-              add name d f (Nx.sum f)
+              add name valid d f (Nx.sum f)
             end;
             x)
     | Observed, None -> (
@@ -525,10 +548,10 @@ let score m context parts latent data =
         | Some ys ->
             let x = fresh d (unpack d ys.(l.leaf)) ys.(l.leaf) in
             if parts.likelihood then begin
-              let d = checked name d in
+              let d, valid = checked name d in
               let f = D.factors d x in
               s.points <- Nx.cast m.dtype (points f) :: s.points;
-              add name d f (Nx.sum f)
+              add name valid d f (Nx.sum f)
             end;
             x)
   in
@@ -630,18 +653,19 @@ let batched m context f c =
 let log_density m y =
   let context = "Norn_model.log_density" in
   let ys = check_data context m y in
-  batched m context (fun c -> (score m context all_parts c (Some ys)).total)
+  batched m context (fun c ->
+      (score m context Total all_parts c (Some ys)).total)
 
 let log_prior m =
   let context = "Norn_model.log_prior" in
   let parts = { prior = true; jacobian = true; likelihood = false } in
-  batched m context (fun c -> (score m context parts c None).total)
+  batched m context (fun c -> (score m context Total parts c None).total)
 
 let log_likelihood m y =
   let context = "Norn_model.log_likelihood" in
   let ys = check_data context m y in
   let parts = { prior = false; jacobian = false; likelihood = true } in
-  batched m context (fun c -> (score m context parts c (Some ys)).total)
+  batched m context (fun c -> (score m context Total parts c (Some ys)).total)
 
 let terms m y c =
   let context = "Norn_model.terms" in
@@ -653,7 +677,7 @@ let terms m y c =
       Nx.Ptree.(m.latent @-> returns (pair (list tensor) tensor))
       (fun c ->
         let s =
-          score m context all_parts
+          score m context Total all_parts
             (Coords (Array.map snd (leaves m.latent c)))
             (Some ys)
         in
@@ -670,11 +694,17 @@ let terms m y c =
   in
   (List.combine names sites, factors)
 
+(* One instance's interpreters refuse a parameter outside its domain. *)
+let refuse context =
+  Refuse { site = (fun name -> context ^ ": site " ^ name); unless = None }
+
 let log_joint m y p =
   let context = "Norn_model.log_joint" in
   let ys = check_data context m y in
   let parts = { prior = true; jacobian = false; likelihood = true } in
-  (score m context parts (Values (Array.map snd (leaves m.latent p))) (Some ys))
+  (score m context (refuse context) parts
+     (Values (Array.map snd (leaves m.latent p)))
+     (Some ys))
     .total
 
 let pointwise m y p =
@@ -682,7 +712,9 @@ let pointwise m y p =
   let ys = check_data context m y in
   let parts = { prior = false; jacobian = false; likelihood = true } in
   let s =
-    score m context parts (Values (Array.map snd (leaves m.latent p))) (Some ys)
+    score m context (refuse context) parts
+      (Values (Array.map snd (leaves m.latent p)))
+      (Some ys)
   in
   match List.rev s.points with
   | [] -> Nx.zeros m.dtype [| 0 |]
@@ -937,8 +969,16 @@ let init ?(from = Init.Uniform) m y ~chains k =
         (fun _ x -> Nx.slice [ Nx.I (candidates - 1) ] x)
         cands
     in
+    (* Where no candidate is finite, a parameter outside its domain at the last
+       is the refusal. *)
+    let site name =
+      Printf.sprintf
+        "%s: no finite log density in %d candidates; at the last, site %s"
+        context candidates name
+    in
+    let params = Refuse { site; unless = Some (Nx.any finite) } in
     let s =
-      score m context all_parts
+      score m context params all_parts
         (Coords (Array.map snd (leaves m.latent last)))
         (Some ys)
     in

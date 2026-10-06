@@ -334,25 +334,8 @@ let observations =
                 model: at y, data of shape [7], the site's shape [8]")
             (fun () ->
               M.log_density eight_schools (Nx.zeros Nx.float64 [| 7 |])));
-      test
-        "a parameter the model computes outside its domain raises naming the \
-         site" (fun () ->
-          let m =
-            model (fun () ->
-                let a = M.sample std in
-                let b =
-                  M.sample
-                    (D.normal ~loc:(f64 0.) ~scale:(Nx.sub_s (Nx.abs a) 10.))
-                in
-                ({ a; b }, M.sample std))
-          in
-          let c = Lazy.force two_coords in
-          raises_match
-            (Exn.invalid_arg
-               ~substring:
-                 "Norn_model.log_density: site b, chain 0: normal: scale is -")
-            (fun () -> M.log_density m (f64 0.) c));
-      test "after a factor of -inf a bad parameter gives -inf" (fun () ->
+      test "after a factor of -inf log_joint takes a bad parameter as -inf"
+        (fun () ->
           let m =
             model (fun () ->
                 let a = M.sample std in
@@ -363,9 +346,8 @@ let observations =
                 in
                 ({ a; b }, M.sample std))
           in
-          let c = Lazy.force two_coords in
           equal float_exact Float.neg_infinity
-            (Nx.item [ 0 ] (M.log_density m (f64 0.) c)));
+            (item (M.log_joint m (f64 0.) { a = f64 1.; b = f64 0. })));
       test "a factor joins the likelihood as its points" (fun () ->
           let m =
             model (fun () ->
@@ -499,24 +481,108 @@ let scaled_coords =
          else t)
        (M.from_prior twin ~n:2 (Nx.Rng.key 0)))
 
-let chains =
-  group "chains in messages"
+(* A Poisson site whose rate is [exp f]: at [f = 1000] the rate overflows. *)
+let counts =
+  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+      let f = M.sample std in
+      (f, M.sample (D.poisson ~rate:(Nx.exp f))))
+
+(* An mvn whose correlation [r] is the latent value: at [r = 2] the matrix is
+   not positive definite and its Cholesky factor holds NaN. *)
+let correlated =
+  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+      let r = M.sample std in
+      let cov =
+        Nx.add (Nx.eye Nx.float64 2)
+          (Nx.mul r (Nx.create Nx.float64 [| 2; 2 |] [| 0.; 1.; 1.; 0. |]))
+      in
+      let x =
+        M.sample
+          (D.mvn
+             ~loc:(Nx.zeros Nx.float64 [| 2 |])
+             ~scale_tril:(Nx.cholesky cov))
+      in
+      (r, x))
+
+(* [coords m xs] is coordinates of [m], a latent tensor, holding [xs]. *)
+let coords m xs =
+  Nx.Ptree.map (M.coords m)
+    (fun _ t -> Nx.cast (Nx.dtype t) (vec xs))
+    (M.from_prior m ~n:(Array.length xs) (Nx.Rng.key 0))
+
+let domains =
+  group "parameters outside their domain"
     [
-      test "a vector parameter names its element and the chain" (fun () ->
+      test "a batched density is -inf where a parameter is outside its domain"
+        (fun () ->
+          let lp = M.log_density scaled (f64 0.) (Lazy.force scaled_coords) in
+          satisfies ~claim:"finite" float_exact Float.is_finite
+            (Nx.item [ 0 ] lp);
+          equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
+      test "log_joint refuses a parameter outside its domain naming the site"
+        (fun () ->
           raises
             (Invalid_argument
-               "Norn_model.log_density: site b, chain 1: normal: scale at [1] \
-                is -2, not in (0, inf)") (fun () ->
-              M.log_density scaled (f64 0.) (Lazy.force scaled_coords)));
-      test "a refusal under init names the chain, not the candidate" (fun () ->
-          let p = { a = f64 (-0.05); b = vec [| 0.1; 0.2; 0.3 |] } in
+               "Norn_model.log_joint: site b: normal: scale at [1] is -2, not \
+                in (0, inf)") (fun () ->
+              M.log_joint scaled (f64 0.)
+                { a = f64 (-2.); b = vec [| 0.; 0.; 0. |] }));
+      test "an overflowed rate gives -inf" (fun () ->
+          let lp =
+            M.log_density counts (Nx.scalar Nx.int32 3l)
+              (coords counts [| 0.; 1000. |])
+          in
+          satisfies ~claim:"finite" float_exact Float.is_finite
+            (Nx.item [ 0 ] lp);
+          equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
+      (* Compiled: the factorisation runs to NaN where eager stops. *)
+      test "a NaN Cholesky factor gives -inf" (fun () ->
+          let lp =
+            Rune.jit
+              Nx.Ptree.(M.coords correlated @-> returns tensor)
+              (M.log_density correlated (vec [| 0.5; -0.5 |]))
+              (coords correlated [| 0.5; 2. |])
+          in
+          satisfies ~claim:"finite" float_exact Float.is_finite
+            (Nx.item [ 0 ] lp);
+          equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
+      test "an overflowed trajectory is a divergence" (fun () ->
+          let lp = M.log_density counts (Nx.scalar Nx.int32 3l) in
+          let u = M.coords counts in
+          (* A geometry a thousand wide sends the first step past the rate's
+             overflow. *)
+          let at v =
+            Nx.Ptree.map u
+              (fun _ t -> Nx.cast (Nx.dtype t) (f64 v))
+              (M.unconstrain counts (f64 0.))
+          in
+          let geometry =
+            Norn.Gaussian.diagonal u Nx.float64 ~mean:(at 0.) ~scale:(at 1e3)
+          in
+          let s =
+            Norn.Nuts.init u ~geometry lp (coords counts [| 0.; 0.; 0.; 0. |])
+          in
+          let s = Norn.Nuts.step u lp (Nx.Rng.key 0) s in
+          equal (array bool)
+            [| true; true; true; true |]
+            (Nx.to_array s.stats.diverging));
+      test "a model wrong everywhere fails at init naming the site" (fun () ->
+          let m =
+            model (fun () ->
+                let a = M.sample std in
+                let b =
+                  M.sample
+                    (D.normal ~loc:(f64 0.)
+                       ~scale:(Nx.sub_s (Nx.neg (Nx.abs a)) 1.))
+                in
+                ({ a; b }, M.sample std))
+          in
           raises_match
             (Exn.invalid_arg
                ~substring:
-                 "Norn_model.log_density: site b, chain 0: normal: scale at \
-                  [1] is") (fun () ->
-              M.init ~from:(M.Init.near p) scaled (f64 0.) ~chains:3
-                (Nx.Rng.key 0)));
+                 "Norn_model.init: no finite log density in 100 candidates; at \
+                  the last, site b: normal: scale is -") (fun () ->
+              M.init m (f64 0.) ~chains:2 (Nx.Rng.key 0)));
     ]
 
 let inits =
@@ -665,6 +731,6 @@ let () =
          kinds;
          coordinate_shapes;
          refusals;
-         chains;
+         domains;
          group "pp" [ printing ];
        ])

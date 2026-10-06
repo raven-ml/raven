@@ -116,12 +116,11 @@ val log_density : ('p, 'y, 'f) t -> 'y -> ('p coords, 'f) Norn.density
     Raises [Invalid_argument] at once if [y] does not match the model, naming
     the first site that differs, as in
     [Norn_model.log_density: the observations do not match the model: at counts,
-     data of shape [111], the site's shape [112]]. A parameter outside its
-    domain raises naming the site and the chain, as in
-    [Norn_model.log_density: site theta, chain 17: normal: scale at [3] is -1,
-     not in (0, inf)], except where the log density accumulated before the site
-    is already [-inf]: there the site's term is [-inf]. A term that is NaN or
-    [+inf] raises naming the site and the chain. *)
+     data of shape [111], the site's shape [112]]. The density is total in the
+    coordinates: where a parameter the model computes is outside its domain,
+    NaN included, the site's term is [-inf], so a trajectory that leaves the
+    model's numbers diverges. A term that is NaN or [+inf] with its parameters
+    in their domain raises naming the site. *)
 
 val log_prior : ('p, 'y, 'f) t -> ('p coords, 'f) Norn.density
 (** [log_prior m] is the prior density of the coordinates: the latent sites'
@@ -170,9 +169,11 @@ val init :
     candidate, naming the first site whose term is not finite at the last
     candidate and listing every term, as in
     [Norn_model.init: no finite log density in 100 candidates; at the last, site
-     counts has log density -inf: element 17 of its factors is outside the
-     support of poisson, {0, 1, 2, ...}; the terms are rate -1.2, counts -inf].
-*)
+     counts has log density -inf: element [17] is outside the support of
+     poisson, {0, 1, 2, ...}; the terms are rate -1.2, counts -inf]. A site
+    whose parameter is outside its domain is named with the parameter, as in
+    [Norn_model.init: no finite log density in 100 candidates; at the last, site
+     theta: normal: scale at [3] is -1, not in (0, inf)]. *)
 
 (** {1:single Single-instance interpreters}
 
@@ -181,7 +182,14 @@ val init :
 
 val log_joint : ('p, 'y, 'f) t -> 'y -> 'p -> (float, 'f) Nx.t
 (** [log_joint m y p] is the log density of the values [p] and the observations
-    [y], with no log-determinant: the argument's type says which. *)
+    [y], with no log-determinant: the argument's type says which.
+
+    Raises [Invalid_argument] if a parameter the model computes is outside its
+    domain, naming the site, as in
+    [Norn_model.log_joint: site theta: normal: scale at [3] is -1, not in
+     (0, inf)], except where the log density accumulated before the site is
+    already [-inf]: there the site's term is [-inf]. {!pointwise} raises the
+    same way. *)
 
 val pointwise : ('p, 'y, 'f) t -> 'y -> 'p -> (float, 'f) Nx.t
 (** [pointwise m y p] is the log likelihood of every point, in the order the

@@ -258,7 +258,10 @@ val check : ?unless:Nx.bool_t -> string -> ('x, 'f) t -> ('x, 'f) t
 (** [check ?unless what d] is [d] whose parameters are checked now, and whose
     eliminators then check none: a caller that computes parameters names itself
     in the refusal. A parameter outside its domain raises [Invalid_argument]
-    with the message [what: family: param at [i] is v, not in domain]. Under
-    {!Rune.val-vmap}, the outermost map's lane is named as a chain:
-    [what, chain c: ...]. Where [unless] holds, a parameter is taken whatever
-    its value: [unless] broadcasts against the parameters. *)
+    with the message [what: family: param at [i] is v, not in domain]. Where
+    [unless] holds, a parameter is taken whatever its value: [unless] broadcasts
+    against the parameters. *)
+
+val valid : ('x, 'f) t -> Nx.bool_t
+(** [valid d] is whether every parameter of [d] is in its domain, a scalar: the
+    checks {!check} runs, read as data. *)
