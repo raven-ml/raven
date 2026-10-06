@@ -3385,6 +3385,9 @@ thread.
 
 ### Nx
 
+- Add `Nx.Rng.peek`, the key `Nx.Rng.next_key` would return, taking none: the
+  next draw returns it too.
+
 - Add `Nx_quant.mxfp4_blocks`, which reads a GGUF file's MXFP4 tensor as views
   of its blocks: no byte is copied at load, and a compiled product reads each
   byte once.

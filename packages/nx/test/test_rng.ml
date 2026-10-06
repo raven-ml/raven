@@ -991,6 +991,41 @@ let scopes =
           equal ~msg:"the scope's first key" (array int32)
             (Rng.with_key (Rng.key 3) (fun () -> words (Rng.next_key ())))
             drawn);
+      prop
+        "peek is the key next_key returns next, and leaves the scope's \
+         sequence as it was"
+        Gen.(pair key (pair program program))
+        (fun (k, (before, after)) ->
+          let peeked, next, drawn =
+            Rng.with_key k (fun () ->
+                let a = keyless before in
+                let peeked = words (Rng.peek ()) in
+                let next = words (Rng.next_key ()) in
+                (peeked, next, a @ keyless after))
+          in
+          equal ~msg:"the next key" (array int32) next peeked;
+          equal ~msg:"the draws" values
+            (Rng.with_key k (fun () ->
+                 let a = keyless before in
+                 ignore (Rng.next_key ());
+                 a @ keyless after))
+            drawn);
+      test "peek runs a scope's root once, as a draw would" (fun () ->
+          let runs = ref 0 in
+          let peeked, next =
+            Rng.with_root
+              (fun () ->
+                incr runs;
+                Rng.key 5)
+              (fun () ->
+                let peeked = words (Rng.peek ()) in
+                (peeked, words (Rng.next_key ())))
+          in
+          equal ~msg:"the next key" (array int32) next peeked;
+          equal ~msg:"root runs" int 1 !runs);
+      test "peek outside a scope is the next key" (fun () ->
+          let peeked = words (Rng.peek ()) in
+          equal (array int32) (words (Rng.next_key ())) peeked);
       test "a domain spawned inside a scope draws outside it" (fun () ->
           let spawned () =
             Rng.with_key (Rng.key 7) (fun () ->

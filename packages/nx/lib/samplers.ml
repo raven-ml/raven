@@ -1065,16 +1065,18 @@ module Rng = struct
     require "categorical" "logits" below_infinity logits;
     argmax (add logits g) ~axis ~keepdims:false
 
-  (* The scope: [next_key] performs [E_next_key]; [with_key] answers it by
-     [fold_in root counter] with an incrementing counter — the same [fold_in]
-     the explicit path uses, so the two front-ends share one stream. Every
-     derived key is therefore a tensor computation on the root, which is what
-     lets a scope rooted at a traced or batched key compile and batch like an
-     explicit one.
+  (* The scope: [next_key] performs [E_key Take]; [with_key] answers it by
+     [fold_in root counter] with an incrementing counter, and [E_key Peek],
+     which [peek] performs, by the same key without incrementing it — the same
+     [fold_in] the explicit path uses, so the two front-ends share one stream.
+     Every derived key is therefore a tensor computation on the root, which is
+     what lets a scope rooted at a traced or batched key compile and batch like
+     an explicit one.
 
      The handler is an effect handler, so it is per-fiber and per-domain: a draw
      on a domain spawned inside a scope does not see it and falls back below. *)
-  type _ Effect.t += E_next_key : key Effect.t
+  type use = Take | Peek
+  type _ Effect.t += E_key : use -> key Effect.t
 
   (* The root is taken at the first draw, in the handler, outside the scope: a
      draw [root] makes comes from the scope around. A key that raises raises at
@@ -1082,7 +1084,7 @@ module Rng = struct
      unwinds; the next draw takes the root again. *)
   let make_handler root =
     let counter = ref 0 and taken = ref None in
-    let next () =
+    let next use =
       let r =
         match !taken with
         | Some r -> r
@@ -1092,7 +1094,7 @@ module Rng = struct
             r
       in
       let key = fold_in r !counter in
-      incr counter;
+      (match use with Take -> incr counter | Peek -> ());
       key
     in
     let open Effect.Deep in
@@ -1102,10 +1104,10 @@ module Rng = struct
       effc =
         (fun (type a) (eff : a Effect.t) ->
           match eff with
-          | E_next_key ->
+          | E_key use ->
               Some
                 (fun (k : (a, _) continuation) ->
-                  match next () with
+                  match next use with
                   | key -> continue k key
                   | exception e ->
                       let bt = Printexc.get_raw_backtrace () in
@@ -1123,8 +1125,8 @@ module Rng = struct
      varying the moment some linked library called [Random.self_init].
      Reproducibility is what a scope is for; without one the draws should be
      fresh. *)
-  let next_key ctx =
-    try Effect.perform E_next_key
+  let key_for use ctx =
+    try Effect.perform (E_key use)
     with Effect.Unhandled _ ->
       let cell = Domain.DLS.get fallback in
       let state =
@@ -1132,11 +1134,16 @@ module Rng = struct
         | Some s -> s
         | None ->
             let entropy = Random.State.make_self_init () in
-            key ctx (Int64.to_int (Random.State.bits64 entropy))
+            let s = key ctx (Int64.to_int (Random.State.bits64 entropy)) in
+            cell := Some s;
+            s
       in
       let keys = split state in
-      cell := Some keys.(0);
+      (match use with Take -> cell := Some keys.(0) | Peek -> ());
       keys.(1)
+
+  let next_key ctx = key_for Take ctx
+  let peek ctx = key_for Peek ctx
 end
 
 let validate_random_float_params op dtype shape =

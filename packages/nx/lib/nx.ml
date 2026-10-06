@@ -42,6 +42,7 @@ module Rng = struct
 
   let key seed = Samplers.Rng.key context seed
   let next_key () = Samplers.Rng.next_key context
+  let peek () = Samplers.Rng.peek context
 
   type t = key
 

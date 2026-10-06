@@ -1108,6 +1108,11 @@ module Rng : sig
       Outside any scope the subkey comes from a per-domain generator seeded from
       system entropy, so unscoped draws differ from run to run. Open a scope to
       make them reproducible. *)
+
+  val peek : unit -> t
+  (** [peek ()] is the key [next_key ()] would return, and takes none: the next
+      draw returns it too. In a scope whose root has not run, [peek] runs it, as
+      a draw would. *)
 end
 
 (** {2:keyless Keyless samplers}
