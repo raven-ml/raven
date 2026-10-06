@@ -371,9 +371,7 @@ let convert (type a b c d) (c : Op.conversion) (dtype : (c, d) Nx_dtype.t)
   match (c, x) with
   | Cast, Host a -> Host (Kernels.cast Kernels.host dtype a)
   | Bitcast, Host a -> Host (Kernels.bitcast Kernels.host dtype a)
-  (* A value on the disk is read by the host, which bitcasts it over its file's
-     pages. *)
-  | Bitcast, Placed r when not (Placement.on_disk r.r_placement) -> (
+  | Bitcast, Placed r -> (
       match bitcast_view dtype r with
       | Some y -> y
       | None -> on_devices (Convert (c, dtype, x)))

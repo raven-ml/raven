@@ -92,7 +92,12 @@ val mxfp4_blocks : (int, Nx.uint8_elt) Nx.t -> t
     [[| ...; n; k / 32 * 17 |]]: per 32 values, one e8m0 scale byte, then 16
     bytes whose low nibbles hold values 0 to 15 and whose high nibbles hold
     values 16 to 31. Its codes and scales are views of [b] when [b]'s last axis
-    is contiguous: only its shape and placement are read, no byte.
+    is contiguous, on [b]'s devices, the disk included: only its shape and
+    placement are read, no byte.
+
+    Its values are the format's, {!type:t}'s: the scale byte [255] makes its
+    group NaN where ggml reads it as [2 ^ 128], and the code of sign 1 and
+    magnitude 0 is [-0.] where ggml gives [0.].
 
     Raises [Invalid_argument] if [b] does not have shape
     [[| ...; n; k / 32 * 17 |]], or, naming the axis, if [b] is split over

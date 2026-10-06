@@ -804,6 +804,37 @@ let file_layouts =
             (shape (random_weight [| 2; 3; 128 |]));
           equal (array int) [| 2; 3; 4; 2; 16 |]
             (shape (Nx_quant.mxfp4_blocks (Nx.zeros Nx.uint8 [| 2; 3; 68 |]))));
+      test
+        "mxfp4_blocks of a GGUF file's MXFP4 tensor views the file on the disk \
+         and gives ggml's values" (fun () ->
+          let g = Nx_io.load_gguf "golden/ggml.gguf" in
+          let info = Nx_io.Gguf.info "mxfp4" g in
+          let tensors = Nx_io.Gguf.tensors g in
+          let stored =
+            Nx_io.Archive.tensor
+              ~shape:[| info.shape.(0); info.shape.(1) / 32 * 17 |]
+              Nx.uint8 "mxfp4" tensors
+          in
+          let w = Nx_quant.mxfp4_blocks stored in
+          let codes, scales =
+            match w with
+            | Nx_quant.Mxfp4 { codes; scales } -> (codes, scales)
+            | w -> failf "a %s weight" (format_name (format_of w))
+          in
+          let where t = Format.asprintf "%a" Nx.Placement.pp (Nx.placement t) in
+          equal ~msg:"placements" (pair string string)
+            (where stored, where stored)
+            (where codes, where scales);
+          equal ~msg:"one storage" (pair bool bool) (true, true)
+            ( Devices.storage_of codes == Devices.storage_of stored,
+              Devices.storage_of scales == Devices.storage_of stored );
+          (* ggml reads the code of sign 1 and magnitude 0 as 0., which the
+             format's e2m1 reads as -0.: adding 0. makes -0. into 0. and keeps
+             every other value. *)
+          equal (tensor float_exact)
+            (Nx_io.Archive.tensor ~shape:info.shape Nx.float32 "mxfp4.values"
+               tensors)
+            (Nx.add_s (Nx_quant.dequant Nx.float32 w) 0.));
       test "mxfp4 and mxfp4_blocks view their bytes, allocating nothing"
         (fun () ->
           let host = Nx.Device.memory Nx.Device.host in

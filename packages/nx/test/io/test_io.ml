@@ -455,7 +455,9 @@ let safetensors =
             in
             equal ~msg:"the header" int header bytes;
             let (Nx.P t) = find archive "u32" in
-            snd (reads (fun () -> Nx.to_array (Nx.bitcast Nx.int32 t)))
+            (* A computation reads the entry on the host; a bitcast is a view of
+               the file, which reads nothing. *)
+            snd (reads (fun () -> Nx.to_array (Nx.neg t)))
           in
           equal ~msg:"an aligned entry" int 0 (used 0);
           equal ~msg:"an entry one byte past" int 16 (used 1));

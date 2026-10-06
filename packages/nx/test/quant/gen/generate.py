@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Generate golden/ggml.gguf: block-quantised tensors and ggml's values of them.
 
-For each of Q8_0, Q4_K and Q6_K, the file holds a tensor `<type>` of shape
-(4, 512) stored in that type, and an F32 tensor `<type>.values` of the values
-gguf-py, llama.cpp's own Python package, dequantises from it. Rows hold a zero
-block, a block at the largest float16 scale, blocks of negative and subnormal
-scales, and blocks of random bytes under finite scales.
+For each of Q8_0, Q4_K, Q6_K and MXFP4, the file holds a tensor `<type>` of
+shape (4, 512) stored in that type, and an F32 tensor `<type>.values` of the
+values gguf-py, llama.cpp's own Python package, dequantises from it. Rows hold a
+zero block, a block at the largest float16 scale, blocks of negative and
+subnormal scales, and blocks of random bytes under finite scales. MXFP4's
+blocks hold scale bytes 0, 1, 127, 253 and 254 and random ones, never 255,
+which ggml reads as 2^128 and the OCP format as NaN.
 
 Usage:
     uv run --no-project --with gguf --with numpy \\
@@ -54,6 +56,17 @@ def blocks(qtype, nbytes, fields):
     return b.reshape(ROWS, -1)
 
 
+def mxfp4_blocks():
+    """MXFP4 blocks: a scale byte, the special ones first, then 16 random code
+    bytes; the first block zero."""
+    n = ROWS * COLS // 32
+    b = rng.integers(0, 256, size=(n, 17), dtype=np.uint8)
+    special = [0, 1, 127, 253, 254]
+    b[:, 0] = special + list(rng.integers(100, 151, size=n - len(special)))
+    b[0] = 0
+    return b.reshape(ROWS, -1)
+
+
 def main():
     w = GGUFWriter(OUT, "test", use_temp_file=False)
     cases = [
@@ -67,6 +80,11 @@ def main():
         values = dequantize(raw, qtype).astype(np.float32)
         assert values.shape == (ROWS, COLS)
         w.add_tensor(name + ".values", values)
+    raw = mxfp4_blocks()
+    w.add_tensor("mxfp4", raw, raw_dtype=GGMLQuantizationType.MXFP4)
+    values = dequantize(raw, GGMLQuantizationType.MXFP4).astype(np.float32)
+    assert values.shape == (ROWS, COLS)
+    w.add_tensor("mxfp4.values", values)
     w.write_header_to_file()
     w.write_kv_data_to_file()
     w.write_tensors_to_file()
