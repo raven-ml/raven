@@ -200,6 +200,9 @@ promises, through the public interface, never what the code does today.
   compiled step, a search), never the internals the fix changed, so it
   survives their rewrite. Its baseline is recorded on every machine the fix
   targets.
+- Each package's bench suite runs within 2 minutes warm on every machine. A
+  row that needs more is shrunk to the smallest size that still shows its
+  regression. Benches never run in `dune build`.
 - Time only on a quiet machine. Correctness runs need no quiet.
 
 ## Commits
