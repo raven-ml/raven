@@ -22,7 +22,14 @@
     a compiled function when the call returns: a parameter outside its domain
     raises [Invalid_argument] naming its index and value, as in
     [Norn.Dist.log_density: normal: scale at [3] is -1, not in (0, inf)]. A
-    value outside the support has density [-inf] and raises nothing. *)
+    value outside the support has density [-inf] and raises nothing. {!valid}
+    reads the same checks as data, for a density that must be total:
+
+    {[
+    let ok = Norn.Dist.valid d in
+    let d = Norn.Dist.check ~unless:(Nx.scalar Nx.bool true) "" d in
+    Nx.where ok (Norn.Dist.log_density d x) (Nx.scalar dt Float.neg_infinity)
+    ]} *)
 
 type ('x, 'f) t
 (** The type for distributions over values ['x] whose log densities have element
@@ -263,5 +270,7 @@ val check : ?unless:Nx.bool_t -> string -> ('x, 'f) t -> ('x, 'f) t
     against the parameters. *)
 
 val valid : ('x, 'f) t -> Nx.bool_t
-(** [valid d] is whether every parameter of [d] is in its domain, a scalar: the
-    checks {!check} runs, read as data. *)
+(** [valid d] is whether every element of every parameter of [d] is in its
+    domain, a scalar over all of [d]'s parameters: under {!Rune.val-vmap}, one
+    per lane. NaN is in no domain. It reads the checks {!check} runs, raises
+    nothing and ignores whether [d] was checked. *)

@@ -507,7 +507,7 @@ let score m context params parts latent data =
   let checked name d =
     let valid = D.valid d in
     match params with
-    | Total -> (D.check ~unless:(Nx.logical_not valid) "" d, valid)
+    | Total -> (D.check ~unless:(Nx.scalar Nx.bool true) "" d, valid)
     | Refuse { site; unless } ->
         let unless =
           match unless with
