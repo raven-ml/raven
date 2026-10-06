@@ -159,6 +159,18 @@ let search_cases =
     (fun (name, search, d) -> ("search/" ^ name, search_case search d))
     devices
 
+(* A dense solve of a float64 system of [m] equations: an LU factorization with
+   partial pivoting and two triangular solves, each a loop of one step per
+   row. *)
+let solve m () =
+  let a =
+    Nx.add
+      (Nx.rand Nx.float64 [| m; m |])
+      (Nx.mul_s (Nx.eye Nx.float64 m) (float_of_int m))
+  in
+  let b = Nx.rand Nx.float64 [| m |] in
+  ignore (Sys.opaque_identity (Rune.jit' (fun a -> Nx.solve a b) a))
+
 let cases =
   [
     ("erfinv", fun () -> compile Nx.erfinv (input (-1.) 1.));
@@ -177,6 +189,9 @@ let cases =
   @ special "i1e" Nx.i1e (-30.) 30.
   @ lbeta
   @ [ ("wide/sum-1e6", wide_sum) ]
+  @ List.map
+      (fun m -> (Printf.sprintf "linalg/solve-%d" m, solve m))
+      [ 32; 128; 512 ]
   @ [ ("sinkhorn-64", sinkhorn_case 64) ]
   @ search_cases
 

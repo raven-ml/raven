@@ -15,7 +15,7 @@
     every element is NaN, as nx documents. [float16] computes at [float32] and
     rounds each result once.
 
-    The factorizations that take [~device] hold their step once, in a loop that
+    The functions that take [~device] hold their step once, in a loop that
     runs on [device], the device of their result ({!Loop.repeat}): their graphs
     do not grow with the number of steps. *)
 
@@ -43,8 +43,8 @@ val qr : device:Ops.device -> reduced:bool -> Ops.t -> Ops.t * Ops.t
     the factors lose accuracy where squares of elements overflow or fall below
     the normal range. *)
 
-val lu : Ops.t -> Ops.t * Ops.t * Ops.t
-(** [lu a] is [(lu, pivots, perm)], the factorization of [a] with partial
+val lu : device:Ops.device -> Ops.t -> Ops.t * Ops.t * Ops.t
+(** [lu ~device a] is [(lu, pivots, perm)], the factorization of [a] with partial
     pivoting as {!Nx_backend.S.lu} writes it: both factors packed in [a]'s
     shape, the [int64] row interchanged at each step, and the [int64] row order
     they produce. The pivot of a column is its first element of largest
@@ -78,8 +78,14 @@ val eigh : device:Ops.device -> vectors:bool -> Ops.t -> Ops.t * Ops.t option
     roundoff of its norm, fails. *)
 
 val solve_triangular :
-  upper:bool -> transpose:bool -> unit_diag:bool -> Ops.t -> Ops.t -> Ops.t
-(** [solve_triangular ~upper ~transpose ~unit_diag a b] is the [x] with
+  device:Ops.device ->
+  upper:bool ->
+  transpose:bool ->
+  unit_diag:bool ->
+  Ops.t ->
+  Ops.t ->
+  Ops.t
+(** [solve_triangular ~device ~upper ~transpose ~unit_diag a b] is the [x] with
     [a x = b], or [aᵀ x = b] under [transpose], reading only the triangle of [a]
     that [upper] names and taking its diagonal as ones under [unit_diag]. [b] is
     a vector of [a]'s batch shape and size, or right-hand sides as columns. A

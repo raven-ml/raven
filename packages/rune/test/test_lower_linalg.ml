@@ -470,6 +470,15 @@ let solves =
           let b = Nx.ones Nx.float64 [| 2 |] in
           near ~bound:(16. *. 0x1p-53) (Nx.solve a b)
             (traced (fun () -> Nx.solve a b)));
+      test "a zero on the diagonal is NaN alone in its batch" (fun () ->
+          let a = failing_lane (square [ 1.; 0.; 3.; 0. ]) in
+          let b = Nx.ones Nx.float64 [| 3; 2; 2 |] in
+          List.iter
+            (fun upper ->
+              near ~bound:(16. *. 0x1p-53)
+                (Nx.solve_triangular ~upper a b)
+                (traced (fun () -> Nx.solve_triangular ~upper a b)))
+            [ false; true ]);
       test "no element" (fun () ->
           agrees (fun () ->
               Nx.solve_triangular
@@ -1019,6 +1028,11 @@ let loops =
       grows_by_less_than_half "qr" (fun a () ->
           let q, r = Nx.qr a in
           [ Nx.P q; Nx.P r ]);
+      grows_by_less_than_half "lu" (fun a () ->
+          let lu, pivots, perm = Nx.Op.eval (Lu a) in
+          [ Nx.P lu; Nx.P pivots; Nx.P perm ]);
+      grows_by_less_than_half "solve_triangular" (fun a () ->
+          [ Nx.P (Nx.solve_triangular a (Nx.copy (Nx.ones_like a))) ]);
     ]
 
 (* Integers *)

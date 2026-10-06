@@ -401,6 +401,29 @@ let gaussian =
           fun g -> g p);
     ]
 
+(* Dense solves of a float64 system of 32, 128 and 512 equations, compiled for
+   the host: an LU factorization with partial pivoting and two triangular
+   solves, each a loop of one step per row. *)
+let solves =
+  let row m =
+    compiled_call
+      (Printf.sprintf "float64-%d-host" m)
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      Nx.solve
+      (fun () ->
+        let st = Random.State.make [| 19 |] in
+        let a =
+          Nx.add
+            (Nx.init Nx.float64 [| m; m |] (fun _ -> Random.State.float st 1.))
+            (Nx.mul_s (Nx.eye Nx.float64 m) (float_of_int m))
+        in
+        let b =
+          Nx.init Nx.float64 [| m |] (fun _ -> Random.State.float st 1.)
+        in
+        fun g -> g a b)
+  in
+  Thumper.group ~id:"solve" "solve" (List.map row [ 32; 128; 512 ])
+
 (* Reverse mode of a two-layer perceptron's loss over a batch of 32 rows of 64
    inputs, 128 hidden units and 10 outputs: the gradient of the compiled loss, a
    forward program that returns the values its backward program reads, then that
@@ -812,7 +835,7 @@ let suite () =
          searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
        ]
   :: split :: indexed :: rope :: select_zero :: masks :: transcendental
-  :: gaussian :: factorizations
+  :: gaussian :: solves :: factorizations
   @ reverse
     :: Thumper.group ~id:"finite" "finite"
          [

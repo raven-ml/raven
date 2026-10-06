@@ -46,7 +46,6 @@ let diagonal u =
        (Some (0, 1)))
     (ints (batch @ [ n ]))
 
-let row u i = block u (Some (i, i + 1)) None
 let column u j = block u None (Some (j, j + 1))
 let entry u i j = block u (Some (i, i + 1)) (Some (j, j + 1))
 
@@ -61,6 +60,18 @@ let eye dt n m = Ops.cast (Ops.eq (row_index n) (Ops.arange ~dtype:Int32 m)) dt
    zero one. *)
 let direction x = Ops.where (Ops.lt x (zero x)) (float x (-1.)) (float x 1.)
 let fdiv x y = Lower_arith.binary Fdiv x (Ops.expand y (Ops.shape x))
+
+(* [at axis u i] is the element [i] of [u] along [axis], one per matrix, the
+   axis kept of size one. *)
+let at axis u i =
+  Lower_index.gather axis
+    (Ops.expand i
+       (List.mapi (fun k d -> if k = axis then Ops.Int 1 else d) (Ops.shape u)))
+    u
+
+(* A loop's count: [next i] follows [i], and [first ()] is where it starts. *)
+let next i = Ops.add i (Ops.const_like i (`Int Bigint.one))
+let first () = Ops.const ~dtype:Int32 (`Int Bigint.zero)
 
 (* Failing matrices
 
@@ -157,13 +168,7 @@ let householder ~device a =
   let rows = row_index m and columns = column_index n in
   let reflect q r i =
     let at_i = Ops.eq idx i in
-    let c =
-      Ops.squeeze ~axis:(-1)
-        (Lower_index.gather
-           (Ops.ndim r - 1)
-           (Ops.expand i (ints (batch @ [ m; 1 ])))
-           r)
-    in
+    let c = Ops.squeeze ~axis:(-1) (at (Ops.ndim r - 1) r i) in
     let x = Ops.where (Ops.ge idx i) c (zero c) in
     (* The reflector is built from the column divided by its largest magnitude,
        so that no square, sum or quotient overflows or underflows; only the
@@ -214,7 +219,7 @@ let householder ~device a =
       Ops.where on (Ops.sub q (dot (Ops.contiguous (dot q v)) (transpose w))) q;
       Ops.where (Ops.eq columns i) reflected
         (Ops.where (Ops.ge rows i) (Ops.where on applied r) r);
-      Ops.add i (Ops.const_like i (`Int Bigint.one));
+      next i;
     ]
   in
   let step = function
@@ -222,11 +227,7 @@ let householder ~device a =
     | _ -> invalid_arg "Lower_linalg.householder"
   in
   let q = Ops.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
-  match
-    Loop.repeat device (Int.min m n)
-      [ q; a; Ops.const ~dtype:Int32 (`Int Bigint.zero) ]
-      step
-  with
+  match Loop.repeat device (Int.min m n) [ q; a; first () ] step with
   | q :: r :: _ -> (q, r)
   | _ -> invalid_arg "Lower_linalg.householder"
 
@@ -535,64 +536,73 @@ let eigh ~device ~vectors a =
    or below the diagonal, a NaN on the diagonal being the largest and one below
    it the least, and swaps it with row [j], moving each element with its bits.
    The column below the pivot is divided by it, unless it is zero, and the
-   trailing rows take the rank-one update. *)
+   trailing rows take the rank-one update. Step [j] writes its pivot's row at
+   position [j] of the pivots. A loop repeats the step ({!Loop.repeat}), which
+   reads [j] from a count it carries. *)
 
-let lu a =
+let lu ~device a =
   let dt = dtype a in
   let x = Lower_arith.widen a in
   let batch, m, n = matrix x in
+  let k = Int.min m n in
   let rank = Ops.ndim x in
+  let index = row_index m and cols = column_index n in
   (* The rows are [int64], as the pivots and the row order are. *)
-  let rows = Ops.cast (row_index m) Int64 and cols = column_index n in
+  let rows = Ops.cast index Int64 in
+  let positions = Ops.arange ~dtype:Int32 k in
   (* [swap u j p] exchanges row [j] and row [p], one per matrix, of [u]. *)
   let swap u j p =
     let _, _, c = matrix u in
     let row_p =
       Lower_index.gather (rank - 2) (Ops.expand p (ints (batch @ [ 1; c ]))) u
     in
-    Ops.where (is rows j) row_p (Ops.where (Ops.eq rows p) (row u j) u)
+    Ops.where (Ops.eq index j) row_p
+      (Ops.where (Ops.eq rows p) (at (rank - 2) u j) u)
   in
-  let step (x, perm, pivots) j =
-    let col = column x j in
-    let never = float col Float.neg_infinity in
-    let magnitude =
-      Ops.where
-        (Ops.lt rows (Ops.int j))
-        never
-        (Ops.where (Ops.ne col col)
-           (Ops.where (is rows j) (float col Float.infinity) never)
-           (Lower_arith.unary Abs col))
-    in
-    let p = Lower_reduce.arg_reduce Argmax ~axis:(rank - 2) magnitude in
-    let pp = Ops.unsqueeze p (-2) in
-    let x = swap x j pp and perm = swap perm j pp in
-    let pivot = entry x j j and col = column x j in
-    let l = Ops.where (Ops.ne pivot (zero pivot)) (fdiv col pivot) col in
-    let below = Ops.gt rows (Ops.int j) in
-    let x =
-      Ops.where
-        (Ops.bitwise_and below (is cols j))
-        l
-        (Ops.where
-           (Ops.bitwise_and below (Ops.gt cols (Ops.int j)))
-           (Ops.sub x (Ops.mul l (row x j)))
-           x)
-    in
-    (x, perm, p :: pivots)
+  let step = function
+    | [ x; perm; pivots; j ] ->
+        let col = at (rank - 1) x j in
+        let never = float col Float.neg_infinity in
+        let magnitude =
+          Ops.where (Ops.lt index j) never
+            (Ops.where (Ops.ne col col)
+               (Ops.where (Ops.eq index j) (float col Float.infinity) never)
+               (Lower_arith.unary Abs col))
+        in
+        let p = Lower_reduce.arg_reduce Argmax ~axis:(rank - 2) magnitude in
+        let pp = Ops.unsqueeze p (-2) in
+        let x = swap x j pp and perm = swap perm j pp in
+        let col = at (rank - 1) x j in
+        let pivot = at (rank - 2) col j in
+        let l = Ops.where (Ops.ne pivot (zero pivot)) (fdiv col pivot) col in
+        let below = Ops.gt index j in
+        let x =
+          Ops.where
+            (Ops.bitwise_and below (Ops.eq cols j))
+            l
+            (Ops.where
+               (Ops.bitwise_and below (Ops.gt cols j))
+               (Ops.sub x (Ops.mul l (at (rank - 2) x j)))
+               x)
+        in
+        let pivots =
+          Ops.where (Ops.eq positions j)
+            (Ops.expand p (Ops.shape pivots))
+            pivots
+        in
+        [ x; perm; pivots; next j ]
+    | _ -> invalid_arg "Lower_linalg.lu"
   in
   let perm = Ops.expand rows (ints (batch @ [ m; 1 ])) in
-  let x, perm, pivots =
-    List.fold_left step (x, perm, []) (List.init (Int.min m n) Fun.id)
-  in
-  let perm = Ops.squeeze ~axis:(-1) perm in
-  (* The pivots follow no pivot at all, none of [perm]'s elements, which a
-     concatenation drops. *)
   let pivots =
-    Lower_index.cat (rank - 2)
-      (Ops.shrink_to perm (List.map Option.some (ints (batch @ [ 0 ]))))
-      (List.rev pivots)
+    Ops.expand
+      (Ops.const ~dtype:Int64 (`Int Bigint.zero))
+      (ints (batch @ [ k ]))
   in
-  (Ops.cast x dt, pivots, perm)
+  match Loop.repeat device k [ x; perm; pivots; first () ] step with
+  | [ x; perm; pivots; _ ] ->
+      (Ops.cast x dt, pivots, Ops.squeeze ~axis:(-1) perm)
+  | _ -> invalid_arg "Lower_linalg.lu"
 
 (* Cholesky
 
@@ -639,11 +649,13 @@ let cholesky ~upper a =
 
    The system is made lower triangular, [aᵀ] under [transpose], and reversed
    along both axes, with [b]'s rows, when the triangle it reads is the upper
-   one. Row [i] of the solution is then row [i] of [b] less the strictly lower
-   part of row [i] of the matrix times the rows solved before it, divided by the
-   diagonal element. A zero diagonal element makes the matrix singular. *)
+   one. Step [i] divides row [i] of the right-hand sides by the diagonal
+   element, which makes it row [i] of the solution, and takes its product with
+   column [i] of the matrix from the rows below. A loop repeats the step
+   ({!Loop.repeat}), which reads [i] from a count it carries. A zero diagonal
+   element makes the matrix singular. *)
 
-let solve_triangular ~upper ~transpose:t ~unit_diag a b =
+let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
   let dt = dtype b in
   let vector = Ops.ndim b = Ops.ndim a - 1 in
   let b = Lower_arith.widen (if vector then Ops.unsqueeze b (-1) else b) in
@@ -652,19 +664,31 @@ let solve_triangular ~upper ~transpose:t ~unit_diag a b =
   let reversed = upper <> t in
   let m = if reversed then Ops.flip m [ rank - 2; rank - 1 ] else m in
   let b = if reversed then Ops.flip b [ rank - 2 ] else b in
-  let _, n, _ = matrix m in
+  let batch, n, _ = matrix m in
   let rows = row_index n in
-  let strict = Ops.where (Ops.lt (column_index n) rows) m (zero m) in
-  let solve (x, ok) i =
-    let rest = Ops.sub (row b i) (dot (row strict i) x) in
-    let xi, ok =
-      if unit_diag then (rest, ok)
-      else
-        let d = entry m i i in
-        (fdiv rest d, both ok (Ops.ne d (zero d)))
-    in
-    (Ops.where (is rows i) (Ops.expand xi (Ops.shape x)) x, ok)
+  let step = function
+    | [ x; i ] ->
+        let c = at (rank - 1) m i in
+        let xi = at (rank - 2) x i in
+        let xi = if unit_diag then xi else fdiv xi (at (rank - 2) c i) in
+        [
+          Ops.where (Ops.eq rows i)
+            (Ops.expand xi (Ops.shape x))
+            (Ops.where (Ops.gt rows i) (Ops.sub x (Ops.mul c xi)) x);
+          next i;
+        ]
+    | _ -> invalid_arg "Lower_linalg.solve_triangular"
   in
-  let x, ok = List.fold_left solve (zero b, None) (List.init n Fun.id) in
-  let x = defined ok (if reversed then Ops.flip x [ rank - 2 ] else x) in
-  Ops.cast (if vector then Ops.squeeze ~axis:(-1) x else x) dt
+  let ok =
+    if unit_diag || n = 0 then None
+    else
+      let d = diagonal m in
+      let zeros = Ops.cast (Ops.eq d (zero d)) Int32 in
+      let none = Ops.eq (Ops.rop zeros Op.Max [ rank - 2 ]) (Ops.int 0) in
+      Some (Ops.reshape none (ints (batch @ [ 1; 1 ])))
+  in
+  match Loop.repeat device n [ b; first () ] step with
+  | x :: _ ->
+      let x = defined ok (if reversed then Ops.flip x [ rank - 2 ] else x) in
+      Ops.cast (if vector then Ops.squeeze ~axis:(-1) x else x) dt
+  | [] -> invalid_arg "Lower_linalg.solve_triangular"

@@ -1431,7 +1431,9 @@ let op : type r. scope -> r Nx.Op.t -> r =
       in
       (like x q, like x r)
   | Lu x ->
-      let lu, pivots, perm = Lower_linalg.lu (factored x) in
+      let lu, pivots, perm =
+        Lower_linalg.lu ~device:(device_of s p) (factored x)
+      in
       (like x lu, ret Nx_dtype.int64 pivots, ret Nx_dtype.int64 perm)
   | Svd { full_matrices; x } ->
       let u, sv, vt =
@@ -1440,8 +1442,8 @@ let op : type r. scope -> r Nx.Op.t -> r =
       (like x u, ret Nx_dtype.float64 sv, like x vt)
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       like b
-        (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag (factored a)
-           (factored b))
+        (Lower_linalg.solve_triangular ~device:(device_of s p) ~upper ~transpose
+           ~unit_diag (factored a) (factored b))
   | Eigh { vectors; x } ->
       let w, v =
         Lower_linalg.eigh ~device:(device_of s p) ~vectors (factored x)

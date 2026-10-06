@@ -173,6 +173,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.solve_triangular` and LU factorization, and so `Nx.solve`,
+  `Nx.inv` and `Nx.det`, hold one step in a loop: compiling no longer grows
+  with the number of rows. A float64 solve of 32 equations compiles in 1.1 s
+  instead of 16 s, and one of 128 runs in 3.5 ms instead of 17 ms.
 - A compiled `Nx.cholesky` stores its factor once: a product or reduction that
   read the factor recomputed the factorization for every term.
 - `Rune.jit` computes `Nx.gammainc`, `Nx.gammaincc`, their logarithms and
