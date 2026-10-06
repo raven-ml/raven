@@ -4,15 +4,16 @@
   ---------------------------------------------------------------------------*)
 
 (* nx's eager kernels on GPUs, each beside its host twin: a cast from bfloat16
-   to float32, the exponential of a float32 value, the sum of two and the sum of
-   one's elements, at 4K, 1M and 16M elements, and the product of a float32
-   square matrix by itself, of 128, 1,024 and 4,096 rows, timed to the work's
-   completion, and the first use of a kernel in a fresh process, which opens the
-   GPU and loads the kernel's code objects. AMD loads code objects with no
-   compiler, so the first use has no cold and warm cases. Rows exist for the
-   GPUs the machine has: AMD GPU 0 under the kernel driver. The GPU is opened in
-   each measuring worker, never in the parent that forks them; the host twins
-   run on every machine. *)
+   to float32, the exponential of a float32 value, the sum of two, the sum of
+   one's elements, a gather of every element at drawn positions, the
+   concatenation of two halves and a square padded by one, at 4K, 1M and 16M
+   elements, and the product of a float32 square matrix by itself, of 128, 1,024
+   and 4,096 rows, timed to the work's completion, and the first use of a kernel
+   in a fresh process, which opens the GPU and loads the kernel's code objects.
+   AMD loads code objects with no compiler, so the first use has no cold and
+   warm cases. Rows exist for the GPUs the machine has: AMD GPU 0 under the
+   kernel driver. The GPU is opened in each measuring worker, never in the
+   parent that forks them; the host twins run on every machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -40,9 +41,9 @@ let warm m f =
   Nx_device.synchronize m;
   Gc.full_major ()
 
-(* The rows of [op] over [input ()], of [n] elements, named [name] and [name ^
-   "-host"]. *)
-let rows ~gpu name (label, n) ~input ~op =
+(* The rows of [op] over [input n], named [name] and [name ^ "-host"]; [put]
+   places an input on a device. *)
+let rows ~put ~gpu name (label, n) ~input ~op =
   let name = name ^ "-" ^ label in
   let host =
     Thumper.bench_with_setup ~setup:(fun () -> input n) (name ^ "-host") op
@@ -54,7 +55,7 @@ let rows ~gpu name (label, n) ~input ~op =
         ~setup:(fun () ->
           let d = Nx_amd.device 0 in
           let m = Nx.Device.memory d
-          and x = Nx.place (Nx.Placement.on d) (input n) in
+          and x = put (Nx.Placement.on d) (input n) in
           warm m (fun () -> op x);
           (m, x))
         name
@@ -65,17 +66,38 @@ let rows ~gpu name (label, n) ~input ~op =
       host;
     ]
 
+(* Placing one value, and two. *)
+let one p x = Nx.place p x
+let two p (a, b) = (Nx.place p a, Nx.place p b)
 let floats n = Nx.rand Nx.float32 [| n |]
+
+(* [n] positions in [0, n), drawn. *)
+let positions n =
+  Nx.cast Nx.int64 (Nx.mul_s (Nx.rand Nx.float32 [| n |]) (Float.of_int n))
+
+(* A square of about [n] elements. *)
+let square n =
+  let side = Float.to_int (Float.sqrt (Float.of_int n)) in
+  Nx.rand Nx.float32 [| side; side |]
+
 let squares = [ ("128", 128); ("1024", 1024); ("4096", 4096) ]
 let matrix n = Nx.rand Nx.float32 [| n; n |]
 
 let cases ~gpu size =
-  rows ~gpu "cast-bf16-f32" size
+  rows ~put:one ~gpu "cast-bf16-f32" size
     ~input:(fun n -> Nx.cast Nx.bfloat16 (floats n))
     ~op:(Nx.cast Nx.float32)
-  @ rows ~gpu "unary-exp" size ~input:floats ~op:Nx.exp
-  @ rows ~gpu "binary-add" size ~input:floats ~op:(fun x -> Nx.add x x)
-  @ rows ~gpu "reduce-sum" size ~input:floats ~op:(fun x -> Nx.sum x)
+  @ rows ~put:one ~gpu "unary-exp" size ~input:floats ~op:Nx.exp
+  @ rows ~put:one ~gpu "binary-add" size ~input:floats ~op:(fun x -> Nx.add x x)
+  @ rows ~put:one ~gpu "reduce-sum" size ~input:floats ~op:(fun x -> Nx.sum x)
+  @ rows ~put:two ~gpu "gather" size
+      ~input:(fun n -> (floats n, positions n))
+      ~op:(fun (x, indices) -> Nx.take ~indices x)
+  @ rows ~put:two ~gpu "cat" size
+      ~input:(fun n -> (floats (n / 2), floats (n / 2)))
+      ~op:(fun (a, b) -> Nx.concatenate ~axis:0 [ a; b ])
+  @ rows ~put:one ~gpu "pad" size ~input:square
+      ~op:(Nx.pad [| (1, 1); (1, 1) |] 0.)
 
 let first_use_case () =
   let exe = Sys.executable_name in
@@ -103,7 +125,7 @@ let () =
             (List.concat_map (cases ~gpu) sizes
             @ List.concat_map
                 (fun size ->
-                  rows ~gpu "matmul" size ~input:matrix ~op:(fun x ->
+                  rows ~put:one ~gpu "matmul" size ~input:matrix ~op:(fun x ->
                       Nx.matmul x x))
                 squares
             @ if gpu then [ first_use_case () ] else []);

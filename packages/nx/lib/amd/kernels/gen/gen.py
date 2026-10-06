@@ -99,6 +99,9 @@ def modules():
     for w, t in WIDTHS.items():
         yield f"contiguous.{w}", f'#include "contiguous.hip"\nCONTIGUOUS({t})\n'
         yield f"where.{w}", f'#include "where.hip"\nWHERE({t})\n'
+        yield f"gather.{w}", f'#include "gather.hip"\nGATHER({t})\n'
+        yield f"pad.{w}", f'#include "pad.hip"\nPAD({t})\n'
+        yield f"place.{w}", f'#include "place.hip"\nPLACE({t})\n'
     for s, cs in DTYPES:
         for d, cd in DTYPES:
             if s != d:

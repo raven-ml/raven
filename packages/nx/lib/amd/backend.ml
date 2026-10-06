@@ -138,8 +138,27 @@ let words i64 a =
 let dispatch program groups args : Nx_amd_device.dispatch =
   { program; groups = (groups, 1, 1); threads = (threads, 1, 1); args }
 
-(* Runs [key]'s module writing [dst] from [srcs]. *)
-let run key ~dst srcs =
+(* The words of a strided form's [meta]: [n], the extents of [views]' shape,
+   which they share, [groups], and each view's offset and strides. *)
+let meta i64 ~n ~groups views =
+  let vs = Array.of_list views in
+  let shape = View.shape vs.(0) in
+  i64 n;
+  i64 (Array.length shape);
+  i64 groups;
+  words i64 shape;
+  for k = 0 to max_operands - 1 do
+    i64 (if k < Array.length vs then View.offset vs.(k) else 0)
+  done;
+  for k = 0 to max_operands - 1 do
+    words i64 (if k < Array.length vs then View.strides vs.(k) else [||])
+  done
+
+let groups_of s n = Int.min (cdiv n threads) (waves * units s)
+
+(* The run of [key]'s elementwise module writing [dst] from [srcs], its
+   parameters followed by [extra], if [dst] has elements. *)
+let elementwise ?(extra = []) key ~dst srcs =
   let (Operand d) = dst in
   let dev, s, target = locate key dst in
   let ops = dst :: srcs in
@@ -149,35 +168,199 @@ let run key ~dst srcs =
     refuse "operands of %d axes once merged; kernels take %d" rank max_rank;
   if List.length srcs > max_operands then
     refuse "%d operands; kernels take %d" (List.length srcs) max_operands;
-  if n > 0 then begin
-    let groups = Int.min (cdiv n threads) (waves * units s) in
-    let d =
-      if List.for_all unit_stride views then
-        dispatch (program dev s target key "c") groups
-        @@ args (fun i64 ->
-            List.iter2 (fun o v -> i64 (at o v)) ops views;
-            i64 n;
-            i64 groups)
-      else
-        let dv = List.hd views and svs = Array.of_list (List.tl views) in
-        dispatch (program dev s target key "s") groups
-        @@ args (fun i64 ->
-            i64 (at dst dv);
-            List.iter (fun o -> i64 (address o)) srcs;
-            i64 n;
-            i64 rank;
-            i64 groups;
-            words i64 (View.shape dv);
-            for k = 0 to max_operands - 1 do
-              i64 (if k < Array.length svs then View.offset svs.(k) else 0)
-            done;
-            for k = 0 to max_operands - 1 do
-              words i64
-                (if k < Array.length svs then View.strides svs.(k) else [||])
-            done)
+  if n = 0 then None
+  else
+    let groups = groups_of s n in
+    Option.some
+    @@
+    if List.for_all unit_stride views then
+      dispatch (program dev s target key "c") groups
+      @@ args (fun i64 ->
+          List.iter2 (fun o v -> i64 (at o v)) ops views;
+          i64 n;
+          i64 groups;
+          List.iter i64 extra)
+    else
+      dispatch (program dev s target key "s") groups
+      @@ args (fun i64 ->
+          i64 (at dst (List.hd views));
+          List.iter (fun o -> i64 (address o)) srcs;
+          meta i64 ~n ~groups (List.tl views);
+          List.iter i64 extra)
+
+(* Runs [key]'s module writing [dst] from [srcs]. *)
+let run ?extra key ~dst srcs =
+  Option.iter
+    (fun d ->
+      Nx_amd_device.launch ~touches:(List.map buffer (dst :: srcs)) [ d ])
+    (elementwise ?extra key ~dst srcs)
+
+(* Moves
+
+   gather, pad and the window writes of cat and update move bytes: their modules
+   are keyed by element width. *)
+
+let width (Operand a) = Nx_dtype.itemsize a.dtype
+
+(* The bits of [v] as an element of [dt], zero-extended to 64. *)
+let bits (type a b) (dt : (a, b) Nx_dtype.t) (v : a) =
+  let e = Nx_array.Elements.create dt 1 in
+  Nx_array.Elements.fill dt e v;
+  let bytes = Nx_device.Buffer.bigarray Bigarray.char e in
+  let w = ref 0L in
+  for i = Bigarray.Array1.dim bytes - 1 downto 0 do
+    w :=
+      Int64.logor (Int64.shift_left !w 8) (Int64.of_int (Char.code bytes.{i}))
+  done;
+  !w
+
+(* The C-contiguous strides of [shape]. *)
+let c_strides shape =
+  let n = Array.length shape in
+  let st = Array.make n 1 in
+  for i = n - 2 downto 0 do
+    st.(i) <- st.(i + 1) * shape.(i + 1)
+  done;
+  st
+
+(* The run of [key]'s place module writing [x] into the window of [dst] at
+   [offset] of [x]'s shape, moved by [corner]: the address of a vector of
+   positions, its rank, offset and stride, and the destination strides they move
+   along. *)
+let place key ~dst x ~offset ~corner:(starts, rank, off, str, dstr) =
+  let (Operand d) = dst in
+  let dev, s, target = locate key dst in
+  let window =
+    View.create ~offset
+      ~strides:(c_strides (View.shape d.view))
+      (View.shape (view x))
+  in
+  let views = View.coalesce [ window; view x ] in
+  let w = List.hd views and xv = List.nth views 1 in
+  let n = View.numel xv in
+  if View.ndim w > max_rank then
+    refuse "operands of %d axes once merged; kernels take %d" (View.ndim w)
+      max_rank;
+  if n = 0 then None
+  else
+    let groups = groups_of s n in
+    let corner i64 =
+      List.iter i64 [ rank; off; str ];
+      words i64 dstr
     in
-    Nx_amd_device.launch ~touches:(List.map buffer ops) [ d ]
+    Option.some
+    @@
+    if List.for_all unit_stride views then
+      dispatch (program dev s target key "c") groups
+      @@ args (fun i64 ->
+          i64 (at dst w);
+          i64 (at x xv);
+          i64 starts;
+          i64 n;
+          i64 groups;
+          corner i64)
+    else
+      dispatch (program dev s target key "s") groups
+      @@ args (fun i64 ->
+          i64 (address dst);
+          i64 (address x);
+          i64 starts;
+          meta i64 ~n ~groups views;
+          corner i64)
+
+let gather ~axis (indices : Nx_backend.index_array) x ~dst =
+  let (Operand xa) = x in
+  let v = xa.view in
+  let strides =
+    Array.mapi (fun d s -> if d = axis then 0 else s) (View.strides v)
+  in
+  (* [x] over the indices' shape, its axis left to the index. *)
+  let along =
+    {
+      xa with
+      view =
+        View.create ~offset:(View.offset v) ~strides (View.shape indices.view);
+    }
+  in
+  run
+    (Printf.sprintf "gather.%d" (width x))
+    ~dst
+    [ Operand along; Operand indices ]
+    ~extra:[ (View.strides v).(axis); (View.shape v).(axis) ]
+
+let pad padding fill x ~dst =
+  let (Operand d) = dst in
+  let key = Printf.sprintf "pad.%d" (width dst) in
+  let dev, s, target = locate key dst in
+  let n = View.numel d.view and shape = View.shape d.view in
+  let rank = Array.length shape in
+  if rank > max_rank then refuse "%d axes; kernels take %d" rank max_rank;
+  if n > 0 then begin
+    let groups = groups_of s n in
+    let lo = Array.map fst padding in
+    let hi = Array.mapi (fun i l -> l + (View.shape (view x)).(i)) lo in
+    let args =
+      args (fun i64 ->
+          i64 (at dst d.view);
+          i64 (address x);
+          List.iter i64 [ n; rank; groups; View.offset (view x) ];
+          words i64 shape;
+          words i64 lo;
+          words i64 hi;
+          words i64 (View.strides (view x)))
+    in
+    let b = Buffer.create 8 in
+    Buffer.add_int64_le b fill;
+    Nx_amd_device.launch
+      ~touches:[ buffer dst; buffer x ]
+      [
+        dispatch (program dev s target key "s") groups (args ^ Buffer.contents b);
+      ]
   end
+
+let no_corner = (0, 0, 0, 0, [||])
+
+let cat ~axis xs ~dst =
+  let (Operand d) = dst in
+  let key = Printf.sprintf "place.%d" (width dst) in
+  let step = (c_strides (View.shape d.view)).(axis) in
+  let _, runs =
+    List.fold_left
+      (fun (pos, runs) x ->
+        let offset = View.offset d.view + (pos * step) in
+        let r = place key ~dst x ~offset ~corner:no_corner in
+        (pos + (View.shape (view x)).(axis), Option.to_list r @ runs))
+      (0, []) xs
+  in
+  if runs <> [] then
+    Nx_amd_device.launch
+      ~touches:(buffer dst :: List.map buffer xs)
+      (List.rev runs)
+
+let update x ~(starts : Nx_backend.index_array) v ~dst =
+  let (Operand d) = dst in
+  let shape = View.shape d.view in
+  let copy =
+    elementwise (Printf.sprintf "contiguous.%d" (width dst)) ~dst [ x ]
+  in
+  let corner =
+    ( at (Operand starts) starts.view,
+      Array.length shape,
+      0,
+      View.stride 0 starts.view,
+      c_strides shape )
+  in
+  let write =
+    place
+      (Printf.sprintf "place.%d" (width dst))
+      ~dst v ~offset:(View.offset d.view) ~corner
+  in
+  match Option.to_list copy @ Option.to_list write with
+  | [] -> ()
+  | runs ->
+      Nx_amd_device.launch
+        ~touches:[ buffer dst; buffer x; buffer v; starts.buffer ]
+        runs
 
 (* Reductions
 
@@ -493,14 +676,29 @@ module Kernels : Nx_backend.S = struct
   let sort ~descending:_ ~axis:_ _ ~dst:_ = no "sort"
   let argsort ~descending:_ ~axis:_ _ ~dst:_ = no "argsort"
   let group _ ~dst:_ = no "group"
-  let pad _ _ _ ~dst:_ = no "pad"
-  let cat ~axis:_ _ ~dst:_ = no "cat"
-  let gather ~axis:_ _ _ ~dst:_ = no "gather"
+
+  let pad (type a b) padding (v : a) (x : (a, b) Nx_array.t)
+      ~(dst : (a, b) Nx_array.t) =
+    ignore (served x.dtype);
+    pad padding (bits x.dtype v) (Operand x) ~dst:(Operand dst)
+
+  let cat (type a b) ~axis (xs : (a, b) Nx_array.t list)
+      ~(dst : (a, b) Nx_array.t) =
+    ignore (served dst.dtype);
+    cat ~axis (List.map (fun x -> Operand x) xs) ~dst:(Operand dst)
+
+  let gather (type a b) ~axis indices (x : (a, b) Nx_array.t)
+      ~(dst : (a, b) Nx_array.t) =
+    ignore (served x.dtype);
+    gather ~axis indices (Operand x) ~dst:(Operand dst)
 
   let scatter ~mode:_ ~unique:_ ~axis:_ ~indices:_ ~updates:_ _ ~dst:_ =
     no "scatter"
 
-  let update _ ~starts:_ _ ~dst:_ = no "update"
+  let update (type a b) (x : (a, b) Nx_array.t) ~starts v
+      ~(dst : (a, b) Nx_array.t) =
+    ignore (served x.dtype);
+    update (Operand x) ~starts (Operand v) ~dst:(Operand dst)
 
   let unfold ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ _ ~dst:_ =
     no "unfold"

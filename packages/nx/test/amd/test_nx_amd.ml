@@ -1036,6 +1036,149 @@ let product_bounds =
           done);
     ]
 
+(* Moves *)
+
+(* [f x] with [x] on the GPU, read back, against [f x] on the host, bit for
+   bit. *)
+let moved ?msg f x =
+  equal ?msg Stored.packed (Nx.P (f x)) (Nx.P (host (f (on_gpu x))))
+
+(* Positions along an axis of [n]: inside it mostly, its bounds' neighbours, and
+   the extremes of int64. *)
+let positions n =
+  Gen.frequency
+    [
+      (6, Gen.map Int64.of_int (Gen.int_range 0 (Int.max 0 (n - 1))));
+      (2, Gen.map Int64.of_int (Gen.int_range (-2) (n + 2)));
+      ( 1,
+        Gen.of_list
+          ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
+          [ Int64.min_int; Int64.max_int ] );
+    ]
+
+(* A value drawn under every layout, of rank 1 at least, and one of its axes. *)
+let with_axis tensors =
+  Gen.bind tensors (fun x ->
+      if Nx.ndim x = 0 then Gen.constant (Nx.reshape [| 1 |] x, 0)
+      else Gen.map (fun a -> (x, a)) (Gen.int_range 0 (Nx.ndim x - 1)))
+
+let moves =
+  group "moves"
+    (List.concat_map
+       (fun (Stored.Case c) ->
+         [
+           prop
+             (c.name
+            ^ " values of every layout gather along an axis as on the host, \
+               out-of-range indices included")
+             (Gen.bind (with_axis c.tensors) (fun (x, axis) ->
+                  let shape = Array.copy (Nx.shape x) in
+                  let open Gen in
+                  let* k = int_range 0 3 in
+                  shape.(axis) <- k;
+                  let+ ix =
+                    array
+                      ~size:(constant (Array.fold_left ( * ) 1 shape))
+                      (positions (Nx.dim axis x))
+                  in
+                  (x, axis, Nx.create Nx.int64 shape ix)))
+             (fun (x, axis, indices) ->
+               let n = Int64.of_int (Nx.dim axis x) in
+               cover "strided" (not (Nx.is_c_contiguous x));
+               cover "out of range"
+                 (Array.exists
+                    (fun i -> i < 0L || i >= n)
+                    (Nx.to_array indices));
+               equal Stored.packed
+                 (Nx.P (Nx.take_along_axis ~axis ~indices x))
+                 (Nx.P
+                    (host
+                       (Nx.take_along_axis ~axis ~indices:(on_gpu indices)
+                          (on_gpu x)))));
+           prop
+             (c.name ^ " values of every layout concatenate as on the host")
+             (Gen.pair (with_axis c.tensors) (Gen.int_range 0 4))
+             (fun ((x, axis), k) ->
+               let k = Int.min k (Nx.dim axis x) in
+               let head =
+                 Array.mapi (fun d n -> if d = axis then (0, k) else (0, n))
+               in
+               cover "strided" (not (Nx.is_c_contiguous x));
+               cover "an empty member" (k = 0 || Nx.numel x = 0);
+               moved
+                 (fun x ->
+                   Nx.concatenate ~axis
+                     [ x; Nx.shrink (head (Nx.shape x)) x; Nx.flip x ])
+                 x);
+           prop
+             (c.name ^ " values of every layout pad with a value as on the host")
+             (Gen.triple c.tensors c.tensors
+                (Gen.array ~size:(Gen.constant 8)
+                   (Gen.pair (Gen.int_range 0 3) (Gen.int_range 0 3))))
+             (fun (x, y, widths) ->
+               let widths = Array.sub widths 0 (Nx.ndim x) in
+               cover "strided" (not (Nx.is_c_contiguous x));
+               cover "empty" (Nx.numel x = 0);
+               if Nx.numel y > 0 then
+                 moved (Nx.pad widths (Nx.to_array y).(0)) x);
+           prop
+             (c.name ^ " values of every layout set at a window as on the host")
+             (Gen.bind (Gen.pair c.tensors Gen.int) (fun (x, seed) ->
+                  let rng = Random.State.make [| seed |] in
+                  let window =
+                    Array.map
+                      (fun n ->
+                        let a = Random.State.int rng (n + 1) in
+                        (a, a + Random.State.int rng (n - a + 1)))
+                      (Nx.shape x)
+                  in
+                  Gen.constant (x, window)))
+             (fun (x, window) ->
+               let specs =
+                 Array.to_list (Array.map (fun (a, b) -> Nx.R (a, b)) window)
+               in
+               cover "strided" (not (Nx.is_c_contiguous x));
+               cover "an empty window"
+                 (Array.exists (fun (a, b) -> a = b) window);
+               moved (fun x -> Nx.set specs (Nx.slice specs (Nx.flip x)) x) x);
+         ])
+       (List.filter served_case Stored.every))
+
+let move_cases =
+  group "move cases"
+    [
+      test "gathers out of range read zero, at every dtype" (fun () ->
+          List.iter
+            (fun (Dtype d) ->
+              let x = on_gpu (Nx.ones d [| 3 |]) in
+              let indices =
+                on_gpu
+                  (Nx.create Nx.int64 [| 6 |]
+                     [| -1L; 3L; Int64.min_int; Int64.max_int; 0L; 2L |])
+              in
+              let ones = Nx.ones d [| 1 |] and zeros = Nx.zeros d [| 4 |] in
+              equal ~msg:(Nx_dtype.to_string d) Stored.packed
+                (Nx.P (Nx.concatenate ~axis:0 [ zeros; ones; ones ]))
+                (Nx.P (host (Nx.take ~indices x))))
+            served);
+      test "a window at a position read on the GPU is clamped to fit" (fun () ->
+          let x = Nx.create Nx.int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
+          let v = Nx.create Nx.int32 [| 2 |] [| 7l; 8l |] in
+          List.iter
+            (fun (start, at) ->
+              let s = on_gpu (Nx.scalar Nx.int64 start) in
+              equal
+                ~msg:(Printf.sprintf "start %Ld" start)
+                Stored.packed
+                (Nx.P (Nx.set [ R (at, at + 2) ] v x))
+                (Nx.P (host (Nx.set [ D (s, 2) ] (on_gpu v) (on_gpu x)))))
+            [ (0L, 0); (2L, 2); (3L, 3); (10L, 3); (-4L, 0) ]);
+      test "negative pads raise, as on the host" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              ignore
+                (Nx.pad [| (-1, 0) |] 0. (on_gpu (Nx.ones Nx.float32 [| 3 |])))));
+    ]
+
 let accuracy = group "accuracy" (Nx_test.Accuracy.groups { put = on_gpu })
 
 let () =
@@ -1055,5 +1198,7 @@ let () =
          multiplied;
          product_cases;
          product_bounds;
+         moves;
+         move_cases;
          accuracy;
        ])

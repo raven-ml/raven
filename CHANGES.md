@@ -3267,6 +3267,10 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation pad, concatenate, gather and write windows
+  eagerly: `Nx.pad`, `Nx.concatenate`, `Nx.take`, `Nx.take_along_axis` and
+  `Nx.set` at a window run on the GPU for every dtype but the complex and
+  sub-byte ones, bit for bit as on the host, an index out of range reading 0.
 - AMD GPUs of the gfx12 generation multiply matrices eagerly: `Nx.matmul` runs
   on the GPU for every numeric dtype, operands of any layout and broadcast
   batches, integers bit for bit as on the host, floats within `k·eps·Σ|a b|`.
