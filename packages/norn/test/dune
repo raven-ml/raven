@@ -1,6 +1,6 @@
 (tests
- (names test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_nested test_weighted)
- (modules test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_nested test_weighted)
+ (names test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_nested test_weighted test_smc)
+ (modules test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_nested test_weighted test_smc)
  (package norn)
  (deps
   (glob_files golden/*.golden))

@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Norn.Smc`, waste-free tempered sequential Monte Carlo, which returns
+  an `Evidence.t`. Particles move by Hamiltonian transitions (`Hmc`, the
+  default) whose step size and length are tuned between temperatures, or by
+  slice steps (`Slice`) for a likelihood without a derivative.
 - Add `Norn.Nested`, nested sampling by slice moves on the prior, which
   returns an `Evidence.t`; a spent budget returns the estimate with the nats
   the live points could still add.

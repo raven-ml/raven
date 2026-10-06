@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Law 10: reference posteriors. On six posteriordb posteriors, NUTS, HMC,
-   ensemble slice sampling and nested sampling each recover every element's mean
-   and standard deviation within z sqrt (mcse² + mcse_ref²). The reference
+   ensemble slice sampling, SMC and nested sampling each recover every element's
+   mean and standard deviation within z sqrt (mcse² + mcse_ref²). The reference
    moments and their errors come from gen/posteriordb.py. HMC also recovers
    Neal's funnel, non-centred, at 1024 chains. z holds the family-wise
    false-alarm rate over every comparison at 1%. *)
@@ -18,8 +18,8 @@ let posteriors = lazy (P.all "../golden/posteriordb.golden")
 let warmup = 300
 let false_alarms = 0.01
 
-(* Four samplers on every reference, and the funnel's four moments. *)
-let kernels = 4
+(* Five samplers on every reference, and the funnel's four moments. *)
+let kernels = 5
 let funnel_comparisons = 4
 
 let comparisons =
@@ -154,6 +154,40 @@ type fitter = {
 
 let of_kernel kernel = { draws = (fun m y -> fit kernel m P.latent y) }
 
+(* Tempering from 1000 prior draws, in 25 chains of 40 states: the particles are
+   read as those chains' draws, so their errors count the chains'
+   autocorrelation. *)
+let smc =
+  let particles = 1000 and chains = 25 in
+  {
+    draws =
+      (fun m y ->
+        let u = M.coords m in
+        let run =
+          Rune.jit
+            Nx.Ptree.(Nx.Rng.ptree @-> returns (Norn.Evidence.ptree u))
+            (fun k ->
+              Norn.Smc.run u ~budget:200 ~prior:(M.log_prior m)
+                ~likelihood:(M.log_likelihood m y) (Nx.Rng.fold_in k 0)
+                (M.from_prior m ~n:particles (Nx.Rng.fold_in k 1)))
+        in
+        let x = (Norn.Evidence.sample (run (Nx.Rng.key 1))).values in
+        (* Particle [i] is state [i / M] of chain [i mod M]. *)
+        let chained =
+          Nx.Ptree.map u
+            (fun _ t ->
+              let s = Nx.shape t in
+              Nx.moveaxis 0 1
+                (Nx.reshape
+                   (Array.append
+                      [| particles / chains; chains |]
+                      (Array.sub s 1 (Array.length s - 1)))
+                   t))
+            x
+        in
+        Norn.Draws.map u P.latent (M.constrain m) (Norn.Draws.v u chained));
+  }
+
 (* Nested sampling from 500 prior draws; its weighted dead points are the
    posterior's draws, resampled in a random order into one chain of as many
    draws as their effective sample size, whose errors are then those of
@@ -262,5 +296,6 @@ let () =
            (List.map (recovers (of_kernel hmc)) all @ [ funnel_test ]);
          group "ensemble slice sampling recovers"
            (List.map (recovers (of_kernel ensemble)) all);
+         group "SMC recovers" (List.map (recovers smc) all);
          group "nested sampling recovers" (List.map (recovers nested) all);
        ])

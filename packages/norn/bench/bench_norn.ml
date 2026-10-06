@@ -143,6 +143,27 @@ let nested_step =
   in
   Thumper.bench_with_setup ~setup "gaussian5/400" (fun (step, k, s) -> step k s)
 
+(* A tempering step, compiled: 20 chains of 20 states, moved by each kernel. *)
+let smc_step move name =
+  let t = Nx.Ptree.tensor in
+  let setup () =
+    let s =
+      Norn.Smc.init t ~move ~prior:cube_prior ~likelihood:gaussian
+        (points (Nx.Rng.key 1))
+    in
+    let sp = Norn.Smc.ptree t in
+    let step =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        (Norn.Smc.step t ~prior:cube_prior ~likelihood:gaussian)
+    in
+    let k = Nx.Rng.key 2 in
+    ignore (step k s);
+    (step, k, s)
+  in
+  Thumper.bench_with_setup ~setup (name ^ "/gaussian5/400") (fun (step, k, s) ->
+      step k s)
+
 let log_density =
   let setup () =
     let lp = M.log_density model y in
@@ -197,6 +218,8 @@ let () =
       Thumper.group "hmc" [ hmc_step 4; hmc_step 64; hmc_step 1024 ];
       Thumper.group "ensemble" [ ensemble_step ];
       Thumper.group "nested" [ nested_step ];
+      Thumper.group "smc"
+        [ smc_step Norn.Smc.Hmc "hmc"; smc_step Norn.Smc.Slice "slice" ];
       Thumper.group "model" [ log_density ];
       Thumper.group "dist" [ factors ];
       Thumper.group "diag" [ rhat ];
