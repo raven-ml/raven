@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..405c70f 100644
+index efb2e82..51c08be 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,7 +2,7 @@ from dataclasses import replace
@@ -157,7 +157,17 @@ index efb2e82..405c70f 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -432,9 +489,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -377,7 +434,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+   sink = graph_rewrite(sink, pm_add_control_flow, ctx=CFGContext(sink), name="add control flow", bottom_up=True)
+ 
+   # put unnumbered variable PARAMs in slots
+-  num_params = len([x for x in sink.toposort() if x.op is Ops.PARAM and x.arg.slot != -1])
++  # past every slot a PARAM takes: the slots can skip some, and a split's bounds take the first two past the others
++  num_params = max([x.arg.slot+1 for x in sink.toposort() if x.op is Ops.PARAM and x.arg.slot != -1], default=0)
+   sink = graph_rewrite(sink, pm_number_params, ctx=[num_params], name="number params with -1", walk=True)
+ 
+   if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Output AST")
+@@ -432,9 +490,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  

@@ -6,13 +6,13 @@
 4 Ops.PARAM dtypes.int [] ParamArg(slot=7, dtype=dtypes.int, size=1)
 5 Ops.INDEX dtypes.int [4, 2]
 6 Ops.LOAD dtypes.int [5]
-7 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 100), multiple_of=1, name="increment", addrspace=AddrSpace.ALU)
+7 Ops.PARAM dtypes.int [] ParamArg(slot=8, dtype=dtypes.int, vmin_vmax=(0, 100), multiple_of=1, name="increment", addrspace=AddrSpace.ALU)
 8 Ops.ADD dtypes.int [6, 7]
 9 Ops.STORE dtypes.void [3, 8]
 10 Ops.SINK dtypes.void [9] KernelInfo(name="sparse", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
 11 Ops.SINK dtypes.void [9] KernelInfo(name="sparse") tag=1
-12 Ops.LINEAR dtypes.void [0, 7, 4, 1, 2, 5, 6, 3, 8, 9, 11]
-13 Ops.SOURCE dtypes.void [] "\nvoid sparse(int* restrict data2_1, const int increment_, int* restrict data7_1) {\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
-14 Ops.BINARY dtypes.uchar [] b"\nvoid sparse(int* restrict data2_1, const int increment_, int* restrict data7_1) {\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
+12 Ops.LINEAR dtypes.void [0, 4, 7, 1, 2, 5, 6, 3, 8, 9, 11]
+13 Ops.SOURCE dtypes.void [] "\nvoid sparse(int* restrict data2_1, int* restrict data7_1, const int increment_) {\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
+14 Ops.BINARY dtypes.uchar [] b"\nvoid sparse(int* restrict data2_1, int* restrict data7_1, const int increment_) {\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
 15 Ops.PROGRAM dtypes.void [10, 12, 13, 14] ProgramInfo(vars=(%7,), globals=(2, 7), outs=(2,), ins=(7,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 

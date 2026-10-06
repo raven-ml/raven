@@ -961,15 +961,17 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       ~ctx:(Linearizer.cfg_context sink)
       sink (Before_sources Linearizer.pm_add_control_flow)
   in
-  (* put unnumbered variable PARAMs in slots *)
+  (* put unnumbered variable PARAMs in slots, past every slot a PARAM takes:
+     the slots can skip some, and a split's bounds take the first two past
+     the others *)
   let num_params =
-    List.length
-      (List.filter
-         (fun x ->
-           match (op x, arg x) with
-           | Op.Param, Param p -> p.slot <> -1
-           | _ -> false)
-         (toposort ~calls:Enter sink))
+    List.fold_left
+      (fun n x ->
+        match (op x, arg x) with
+        | Op.Param, Param p when p.slot <> -1 -> max n (p.slot + 1)
+        | _ -> n)
+      0
+      (toposort ~calls:Enter sink)
   in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx:(ref num_params) sink

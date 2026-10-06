@@ -2588,6 +2588,36 @@ let splits_the_output_loop () =
   in
   equal (list string) [ "block_lo"; "block_hi" ] names
 
+(* A kernel whose buffers take the slots 0 and 2, and which reads a variable:
+   the block's bounds take the first two slots past the buffers', and the
+   variable the first past theirs, so that a launch finds each by its slot. *)
+let numbers_past_a_skipped_slot () =
+  let i = Ops.range (Int 1022) [ 0 ] in
+  let n =
+    Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
+      (Dtype.Value.of_int 100)
+  in
+  let value = Ops.add (Ops.index (floats 1022 2) [ i ]) (Ops.cast n Float32) in
+  let prg =
+    in_blocks
+      [ Ops.end_ (Ops.store (Ops.index (floats 1022 0) [ i ]) value) [ i ] ]
+  in
+  let slots =
+    match Ops.arg prg with
+    | Program p ->
+        List.map
+          (fun v ->
+            match Ops.arg v with
+            | Ops.Param q -> (Ops.expr v, q.slot)
+            | _ -> invalid_arg "a variable of a program is a parameter")
+          p.vars
+    | _ -> invalid_arg "a program holds its program information"
+  in
+  equal
+    (list (pair string int))
+    [ ("block_lo", 3); ("block_hi", 4); ("n", 5) ]
+    slots
+
 (* Two outputs, each written in a loop of its own: no loop is read by every
    store, and splitting either would run the other's whole loop in every
    block. *)
@@ -2690,6 +2720,10 @@ let blocks =
         keeps_narrow_indices;
       test "a split loop's estimates count its whole loop past 2^31"
         counts_a_large_loop;
+      test
+        "a split's bounds and a variable take slots of their own past buffers \
+         that skip one"
+        numbers_past_a_skipped_slot;
     ]
 
 let () =

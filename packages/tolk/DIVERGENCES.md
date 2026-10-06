@@ -2493,7 +2493,12 @@ stores through a pad.
   `block_hi - block_lo`. `block_lo` and `block_hi` are new variables of the
   range's type, bounded by `[0, n]` for a loop of `n` iterations, in the
   first two slots past those the kernel's parameters took, and named afresh
-  where the kernel has a variable of either name. The kernel's `KernelInfo`
+  where the kernel has a variable of either name. The variables numbered
+  after them take the slots past every slot a parameter takes, where tinygrad
+  numbers them from the count of the numbered parameters
+  (`codegen/__init__.py:380`): a kernel whose buffers skip a slot, as a beam
+  search's timer links them, would give a variable a bound's slot, and a
+  launch would read the bound for it. The kernel's `KernelInfo`
   records `split = (n, lo, hi)`, the iterations and the two slots, by which
   each launch finds the bounds; `n` is its program's first global size, and
   its estimates count the whole loop, exactly when they read no other
@@ -2513,7 +2518,7 @@ stores through a pad.
   count its whole loop past 2^31`, `› stores of separate loops
   split none`, `› a store of no loop splits none`, `› a reduction's loop is
   never split`, `› a serial loop is never split`, `› a loop shrunk by its
-  guard splits at its shrunk end, unguarded` and `› a split loop of 2^25 iterations keeps 32-bit indices`; the
+  guard splits at its shrunk end, unguarded`, `› a split loop of 2^25 iterations keeps 32-bit indices` and `› a split's bounds and a variable take slots of their own past buffers that skip one`; the
   Tolk_engine suite: `host programs in blocks › a program writes the same bits
   in 1, 3 and 32 blocks`, `› a run of much work splits into blocks`, `› a run
   of little work runs as one block` and `› a run of a large kernel computes
