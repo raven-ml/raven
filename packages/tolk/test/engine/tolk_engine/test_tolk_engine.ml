@@ -177,13 +177,13 @@ let describing =
 
 let kernel ?(name = "axpy") ?(size = 4) ?bound () =
   let open Ops.O in
-  let buffer slot = Shape.placeholder ~slot [ size ] Float32 in
+  let buffer slot = Call.placeholder ~slot [ size ] Float32 in
   let n =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
       (Dtype.Value.of_int 100)
   in
   let n =
-    match bound with Some v -> Shape.bind n (`Int (Bigint.of_int v)) | None -> n
+    match bound with Some v -> Call.bind n (`Int (Bigint.of_int v)) | None -> n
   in
   let i = Ops.range (Int size) [ 0 ] in
   let at b = Ops.index (buffer b) [ i ] in
@@ -320,7 +320,7 @@ let programs =
    is summed in one block, in the same order whatever the blocks. *)
 
 let sums ?(name = "sums") m k =
-  let buffer slot n = Shape.placeholder ~slot [ n ] Float32 in
+  let buffer slot n = Call.placeholder ~slot [ n ] Float32 in
   let a = buffer 1 (m * k) and b = buffer 2 k in
   let i = Ops.range (Int m) [ 0 ] in
   let j = Ops.range ~axis_type:Reduce (Int k) [ 1 ] in
@@ -716,7 +716,7 @@ let runs_on_its_slots ?(devices = devices) name () =
 let add_one =
   let open Ops.O in
   let i = Ops.range (Int 4) [ 0 ] in
-  let at slot = Ops.index (Shape.placeholder ~slot [ 4 ] Float32) [ i ] in
+  let at slot = Ops.index (Call.placeholder ~slot [ 4 ] Float32) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"add_one" ())
     [ Ops.end_ (Ops.store (at 0) (at 1 + Ops.O.float 1.)) [ i ] ]
@@ -761,7 +761,7 @@ let runs_once_per_trip () =
 let scans_with_a_carry () =
   let k = 4 and n = 3 in
   let cpu = Ops.Single "CPU" in
-  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
       [
@@ -820,7 +820,7 @@ let scans_with_a_carry () =
 let scans_with_an_empty_carry () =
   let k = 4 and n = 3 in
   let cpu = Ops.Single "CPU" in
-  let p ?(k = k) slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p ?(k = k) slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
       [
@@ -867,7 +867,7 @@ let scans_with_an_empty_carry () =
    [limit]. The flag starts as [0 < limit]. *)
 let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
   let at = Ops.Single d in
-  let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
+  let p slot dt = Call.param ~shape:[ Int 1 ] ~device:at slot dt in
   let next = Ops.O.(p 0 Float32 + float 1.) in
   let body =
     Ops.sink
@@ -921,7 +921,7 @@ let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
    [src], into the one element of its parameter 0, of dtype [dst]. *)
 let scalar_kernel name ~dst ~src f =
   let i = Ops.range (Int 1) [ 0 ] in
-  let at slot dt = Ops.index (Shape.placeholder ~slot [ 1 ] dt) [ i ] in
+  let at slot dt = Ops.index (Call.placeholder ~slot [ 1 ] dt) [ i ] in
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
 
@@ -1012,7 +1012,7 @@ let loops_around_calls_on_the_host =
    storage is refused, since the engine reads the storage it names. *)
 let refuses_a_view_as_flag () =
   let at = Ops.Single "CPU" in
-  let p = Shape.param ~shape:[ Int 1 ] ~device:at 0 Float32 in
+  let p = Call.param ~shape:[ Int 1 ] ~device:at 0 Float32 in
   let body = Ops.sink [ Ops.store p Ops.O.(p + float 1.) ] in
   let c = Ops.new_buffer at 1 Float32 and f = Ops.new_buffer at 2 Bool in
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
@@ -1044,7 +1044,7 @@ let loops_on_the_host =
 let replays_a_scan =
   let k = 4 and n = 3 in
   let cpu = Ops.Single "CPU" in
-  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let step =
     Ops.sink
       [
@@ -1187,7 +1187,7 @@ let plans_the_buffers_of_a_range ~through_a_view ~loop () =
 (* A kernel that stores false into its parameter 0, one boolean. *)
 let set_false =
   let i = Ops.range (Int 1) [ 0 ] in
-  let flag = Ops.index (Shape.placeholder ~slot:0 [ 1 ] Bool) [ i ] in
+  let flag = Ops.index (Call.placeholder ~slot:0 [ 1 ] Bool) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"set_false" ())
     [ Ops.end_ (Ops.store flag (Ops.O.bool false)) [ i ] ]
@@ -1238,9 +1238,9 @@ let copies_in_order () =
     Ops.v Op.Linear
       ~src:
         [
-          Shape.store_call out device_side;
-          Shape.store_call device_side fresh;
-          Shape.store_call out device_side;
+          Call.store_call out device_side;
+          Call.store_call device_side fresh;
+          Call.store_call out device_side;
         ]
   in
   let compiled =
@@ -1574,7 +1574,7 @@ let spans_each_kernel () =
 (* A kernel on [d] that fills four floats with [x]. *)
 let fill d x =
   let i = Ops.range (Int 4) [ 0 ] in
-  let out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
+  let out = Call.placeholder ~slot:0 [ 4 ] Float32 in
   let kernel =
     Ops.sink
       ~kernel:(Ops.kernel_info ~name:"fill" ())
@@ -1787,7 +1787,7 @@ let unprofiled () =
   let prg = Codegen.to_program k (Lazy.force clang) in
   let args =
     List.init 3 (fun slot ->
-        Shape.param
+        Call.param
           ~shape:[ Ops.Int (1 lsl 18) ]
           ~device:(Single "CPU:1") slot Float32)
   in
@@ -1907,7 +1907,7 @@ let waits_for_another_device () =
   in
   let fills = link_calls ~bound:[ (y, [ dst ]) ] [ filled ] in
   let copies =
-    link_calls ~bound:[ (x, [ src ]); (y, [ dst ]) ] [ Shape.store_call y x ]
+    link_calls ~bound:[ (x, [ src ]); (y, [ dst ]) ] [ Call.store_call y x ]
   in
   Null_device.with_latency 0.05 (fun () -> Engine.run fills [||]);
   Engine.run copies [||];
@@ -1988,14 +1988,14 @@ let waits_for_a_device_without_queues ~as_input () =
   let filler = zeros "CPU:2" and result = zeros "CPU:1" in
   let src =
     if as_input then
-      Shape.param ~shape:[ Int 4 ] ~device:(Single "CPU:2") 0 Float32
+      Call.param ~shape:[ Int 4 ] ~device:(Single "CPU:2") 0 Float32
     else y
   in
   let devices n = if n = "CPU:2" then devices n else on_null n in
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (devices n).compiler)
-      (Ops.v Op.Linear ~src:[ Shape.store_call x src ])
+      (Ops.v Op.Linear ~src:[ Call.store_call x src ])
   in
   let bound =
     (x, [ result ]) :: (if as_input then [] else [ (y, [ filler ]) ])
@@ -2015,7 +2015,7 @@ let stages_host_memory ~as_input n =
   let nd = Null_device.device in
   let from k = floats (Array.init n (fun i -> Float.of_int (k + i))) in
   let h =
-    if as_input then Shape.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
+    if as_input then Call.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
     else Ops.new_buffer (Single "CPU") n Float32
   in
   let x = Ops.new_buffer (Single "CPU:4") n Float32
@@ -2026,7 +2026,7 @@ let stages_host_memory ~as_input n =
   let bound =
     (x, [ xb ]) :: (y, [ yb ]) :: (if as_input then [] else [ (h, [ hb ]) ])
   in
-  let s = link_calls ~bound [ Shape.store_call x h; Shape.store_call h y ] in
+  let s = link_calls ~bound [ Call.store_call x h; Call.store_call h y ] in
   let run hb = Engine.run s (if as_input then [| [ hb ] |] else [||]) in
   run hb;
   equal values ~msg:"read" (from 1) (Run.values Float32 xb);
@@ -2052,8 +2052,8 @@ let waits_only_for_written_stages () =
   let hb = Run.buffer host Float32 a
   and xb = Run.buffer d Float32 (floats [| 0.; 0.; 0.; 0. |]) in
   let bound = [ (h, [ hb ]); (x, [ xb ]) ] in
-  let reads = link_calls ~bound [ Shape.store_call x h ]
-  and writes = link_calls ~bound [ Shape.store_call h x ] in
+  let reads = link_calls ~bound [ Call.store_call x h ]
+  and writes = link_calls ~bound [ Call.store_call h x ] in
   let pending () = Nx_device.signaled d < Nx_device.submitted d in
   Null_device.with_latency 0.05 (fun () -> Engine.run reads [||]);
   is_true ~msg:"a read returns at once" (pending ());
@@ -2073,11 +2073,11 @@ let borrows_outlive_the_link ~as_input () =
   let run () =
     let h =
       if as_input then
-        Shape.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
+        Call.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
       else Ops.new_buffer (Single "CPU") n Float32
     and x = Ops.new_buffer (Single "CPU:4") n Float32 in
     let bound = (x, [ xb ]) :: (if as_input then [] else [ (h, [ hb ]) ]) in
-    let s = link_calls ~bound [ Shape.store_call x h ] in
+    let s = link_calls ~bound [ Call.store_call x h ] in
     Null_device.with_latency 0.05 (fun () ->
         Engine.run s (if as_input then [| [ hb ] |] else [||]))
   in
@@ -2105,7 +2105,7 @@ let leaves_its_work_pending_on_the_host () =
         ]
       [
         Ops.call add_one [ t; t ];
-        Shape.store_call t x;
+        Call.store_call t x;
         Ops.call add_one [ out; t ];
       ]
   in
@@ -2118,7 +2118,7 @@ let leaves_its_work_pending_on_the_host () =
 let reads_a_view_of_each_shard () =
   let nd = Null_device.device in
   let lanes = Ops.Multi [ "CPU:1"; "CPU:2" ] in
-  let param = Shape.param ~shape:[ Int 8 ] ~device:lanes 0 Float32 in
+  let param = Call.param ~shape:[ Int 8 ] ~device:lanes 0 Float32 in
   let out = Ops.new_buffer lanes 4 Float32 in
   let results =
     List.map
@@ -2153,7 +2153,7 @@ let spans_on_lanes () =
       (z, [ Run.buffer (Null_device.device "CPU:2") Float32 a ]);
     ]
   in
-  let s = link_calls ~profile:Stamped ~bound [ filled; Shape.store_call z y ] in
+  let s = link_calls ~profile:Stamped ~bound [ filled; Call.store_call z y ] in
   let p = Nx_device.Profile.start () in
   let events =
     Fun.protect
@@ -2183,7 +2183,7 @@ let spans_on_lanes () =
 let calls_a_function_of_the_host () =
   let d = "CPU:1" in
   let out =
-    Shape.placeholder ~device:(Single d) ~volatile:true ~tag:(String "result")
+    Call.placeholder ~device:(Single d) ~volatile:true ~tag:(String "result")
       [ 1 ] Int32
   in
   let ffs =
@@ -2204,7 +2204,7 @@ let calls_a_function_of_the_host () =
 let refuses_short_storage () =
   let d = "CPU:1" in
   let out =
-    Shape.placeholder ~device:(Single d) ~volatile:true ~tag:(String "result")
+    Call.placeholder ~device:(Single d) ~volatile:true ~tag:(String "result")
       [ 2 ] Int32
   in
   let short = Nx_device.Buffer.create (Null_device.device d) Int32 1 in
@@ -2331,7 +2331,7 @@ let staged_copy src dst xs =
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
       ~devices:(fun n -> (on_apart n).compiler)
-      (Ops.v Op.Linear ~src:[ Shape.store_call y x ])
+      (Ops.v Op.Linear ~src:[ Call.store_call y x ])
   in
   let into =
     Run.buffer (Null_device.device dst) Float32 (floats [| 0.; 0.; 0.; 0. |])
@@ -2510,7 +2510,7 @@ let on_cpu1 storage = List.find (fun s -> placement s.arg = [ "CPU:1" ]) storage
    those a split of its loop would give its block's bounds. *)
 let fill_with name d =
   let i = Ops.range (Int 4) [ 0 ] in
-  let out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
+  let out = Call.placeholder ~slot:0 [ 4 ] Float32 in
   let v =
     Ops.variable ~dtype:Int32 name (Dtype.Value.of_int 0) (Dtype.Value.of_int 4)
   in

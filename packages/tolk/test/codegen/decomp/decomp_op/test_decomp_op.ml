@@ -12,7 +12,7 @@ let var ?(dtype = Dtype.Int32) name lo hi =
   Ops.variable ~dtype name (`Int lo) (`Int hi)
 
 let v ?dtype name lo hi = var ?dtype name (Bigint.of_int lo) (Bigint.of_int hi)
-let param ?(slot = 0) dt = Shape.param slot dt
+let param ?(slot = 0) dt = Call.param slot dt
 let target = Result.get_ok (Helpers.Target.of_string "")
 
 (* [everything] widens to any type; [nothing] has no type to widen to. *)

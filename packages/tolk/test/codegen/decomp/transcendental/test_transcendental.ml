@@ -12,7 +12,7 @@ let dtype_named name = List.assoc name floats
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* [x ~slot dt] is the scalar parameter [slot], an input nothing folds. *)
-let x ?(slot = 0) dt = Shape.param slot dt
+let x ?(slot = 0) dt = Call.param slot dt
 
 (* [at dt f v] is the value of [f] applied to a [dt] input holding [v]. *)
 let at dt f v = Interpreter.eval ~params:[ (0, `Float v) ] (f (x dt))

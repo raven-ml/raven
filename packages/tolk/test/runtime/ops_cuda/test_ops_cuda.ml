@@ -104,7 +104,7 @@ let uncompiled =
 (* The call of the kernel adding one to [inp] into [out], compiled. *)
 let adds out inp =
   let device = Option.get (Ops.device out) in
-  let param slot = Shape.param ~shape:[ Int 4 ] ~device slot Float32 in
+  let param slot = Call.param ~shape:[ Int 4 ] ~device slot Float32 in
   let i = Ops.range (Int 4) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
   let st =

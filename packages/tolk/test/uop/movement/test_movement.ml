@@ -10,7 +10,7 @@ let ints = List.map (fun n : Ops.sint -> Int n)
 let var name lo hi =
   Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
 
-let storage shape = Shape.param ~shape:(ints shape) 0 Float32
+let storage shape = Call.param ~shape:(ints shape) 0 Float32
 let cleanup u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
     (After_sources Shape.mop_cleanup)
@@ -81,7 +81,7 @@ let stacks =
 
 let indexing =
   let i = var "i" 0 3 and j = var "j" 0 4 in
-  let table = Shape.param ~shape:(ints [ 4; 5 ]) 1 Int32 in
+  let table = Call.param ~shape:(ints [ 4; 5 ]) 1 Int32 in
   group "indexing"
     [
       cleans "index_a_stack_by_a_constant"
@@ -89,7 +89,7 @@ let indexing =
       cleans "index_a_stack_by_a_constant_and_further_indices"
         (index
            (Shape.stack
-              [ storage [ 4 ]; Shape.param ~shape:(ints [ 4 ]) 1 Float32 ])
+              [ storage [ 4 ]; Call.param ~shape:(ints [ 4 ]) 1 Float32 ])
            [ int 1; var "j" 0 3 ]);
       cleans "index_an_index_by_scalars"
         (index (index (storage [ 4; 5 ]) [ i ]) [ j ]);

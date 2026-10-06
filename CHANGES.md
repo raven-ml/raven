@@ -1167,11 +1167,13 @@ thread.
   `Symbolic`.
 - **Breaking:** `Ops` keeps the node language: arguments, construction,
   bounds, ranges, patterns and rewriting. What reads a shape needs
-  simplification and moves to the new module `Shape`: `Shape.shape`, the
-  movements (`Shape.reshape`, `Shape.mop`, ...), `Shape.simplify`,
-  `Shape.resolve`, `Shape.Sint`, storage of a shape, sharding, the bindings
-  of variables, divisibility, `Shape.call_with_outputs` and
-  `Shape.program_info_of_sink`.
+  simplification and moves to two new modules. `Shape` holds shapes and
+  simplification, which call each other: `Shape.shape`, the movements
+  (`Shape.reshape`, `Shape.mop`, ...), `Shape.simplify`, `Shape.resolve`,
+  `Shape.Sint`, divisibility and `Shape.sym_infer`. `Call` holds what calls
+  take and the calls: storage (`Call.param`, `Call.alloc`, ...), sharding,
+  the bindings of variables, `Call.call_with_outputs` and
+  `Call.program_info_of_sink`.
 - **Breaking:** `SPEC=2` and `SPEC=3` no longer check each node as
   `Ops.v` builds it; any nonzero `SPEC` checks the graphs passed between
   stages. The check needed every module of tolk linked into every program.

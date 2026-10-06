@@ -1473,10 +1473,10 @@ let link_program ~devices name prg =
   let arg slot =
     match List.assoc_opt slot buffers with
     | Some (b : Device.Tiny_elf.param) ->
-        Shape.param
+        Call.param
           ~shape:(List.map (fun n -> Ops.Int n) b.shape)
           ~device:(Single name) slot b.dtype
-    | None -> Shape.param ~shape:[ Ops.Int 1 ] ~device:(Single name) slot Uint8
+    | None -> Call.param ~shape:[ Ops.Int 1 ] ~device:(Single name) slot Uint8
   in
   let n = List.fold_left (fun n slot -> max n (slot + 1)) 0 info.globals in
   let args = List.init n arg in

@@ -7,6 +7,7 @@
 
 open Ops
 open Shape
+open Call
 module P = Nx_nv_packet
 module M = P.Methods
 module Qmd = P.Qmd

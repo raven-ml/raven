@@ -88,7 +88,7 @@ val beam_search :
     made ready to run on a device of the target of [k]'s renderer, and
     [time ~vars p] is the time in seconds of one run of the program [p] links,
     from cold caches where the device can, with each variable bound to its value
-    in [vars]: each variable of [k]'s kernel ({!Shape.variables}) bound to the
+    in [vars]: each variable of [k]'s kernel ({!Call.variables}) bound to the
     middle of its bounds, [(vmin + vmax) / 2] rounded down. [clock p] is the
     clock [time] times the runs of [p] on. The search links each program it
     times once, and times it once per sample. A program whose [link] or [time]

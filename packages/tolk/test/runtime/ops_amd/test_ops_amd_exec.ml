@@ -42,7 +42,7 @@ let new_floats name xs =
    [out], [n] floats each, four by default. *)
 let adds ?(n = 4) out inp =
   let device = Option.get (Ops.device out) in
-  let param slot = Shape.param ~shape:[ Int n ] ~device slot Float32 in
+  let param slot = Call.param ~shape:[ Int n ] ~device slot Float32 in
   let i = Ops.range (Int n) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
   let st =
@@ -59,8 +59,8 @@ let adds ?(n = 4) out inp =
    long, each element plus the pass's index: every pass reads [src] again. *)
 let sums ~rows ~cols ~reps out src =
   let device = Option.get (Ops.device out) in
-  let out_p = Shape.param ~shape:[ Int rows ] ~device 0 Float32 in
-  let src_p = Shape.param ~shape:[ Int (rows * cols) ] ~device 1 Float32 in
+  let out_p = Call.param ~shape:[ Int rows ] ~device 0 Float32 in
+  let src_p = Call.param ~shape:[ Int (rows * cols) ] ~device 1 Float32 in
   let g = Ops.range (Int rows) [ 0 ] in
   let rep = Ops.range ~axis_type:Reduce (Int reps) [ 1 ] in
   let i = Ops.range ~axis_type:Reduce (Int cols) [ 2 ] in
@@ -161,7 +161,7 @@ let execution =
         (fun () ->
           let h = storage "CPU" and a = storage "AMD" and a' = storage "AMD" in
           let h' = storage "CPU" in
-          let calls = [ Shape.store_call a h; adds a' a; Shape.store_call h' a' ] in
+          let calls = [ Call.store_call a h; adds a' a; Call.store_call h' a' ] in
           let bound =
             [
               (h, [ new_floats "CPU" [| 1.; 2.; 3.; 4. |] ]);
@@ -184,7 +184,7 @@ let execution =
           in
           let read = new_floats "CPU" (Array.make 4 0.) in
           let s =
-            link ~bound:[ (a, [ m ]); (h, [ read ]) ] [ Shape.store_call h a ]
+            link ~bound:[ (a, [ m ]); (h, [ read ]) ] [ Call.store_call h a ]
           in
           for round = 1 to 8 do
             let xs = Array.init 4 (fun i -> float_of_int ((10 * round) + i)) in

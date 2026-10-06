@@ -259,7 +259,7 @@ let rows x axis p =
   let whole = List.filter (fun d -> not (List.mem d varying)) others in
   (* A sharded axis leads, so that each shard's rows stay one block. *)
   let lead =
-    match Shape.axis x with
+    match Call.axis x with
     | Some a when a = axis || List.mem a rows ->
         a :: List.filter (( <> ) a) (rows @ [ axis ])
     | _ -> rows @ [ axis ]

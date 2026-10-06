@@ -8,7 +8,7 @@
 let jit_lower ?beam ?search ~profile ~devices ~held_bufs ~inputs linear =
   let param i u =
     ( u,
-      Shape.param
+      Call.param
         ~shape:[ Int (Shape.max_numel u) ]
         ?device:(Ops.device u) i (Ops.dtype u) )
   in

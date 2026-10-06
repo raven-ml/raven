@@ -299,7 +299,7 @@ let command_words ~gpu ~queue ~command ~word v =
   let target, value =
     if word = "signal word" then (Hcq2.signal_word device, Hcq2.value device)
     else
-      ( Shape.placeholder ~slot:0 ~device:(Multi [ device ]) ~volatile:true
+      ( Call.placeholder ~slot:0 ~device:(Multi [ device ]) ~volatile:true
           ~tag:(String "slots") [ 2 ] Dtype.Uint64,
         Ops.int ~dtype:Dtype.Uint64 3 )
   in
@@ -557,7 +557,7 @@ let submits gpu queue commands =
   ignore (cmds.submit ())
 
 let buffer n =
-  Shape.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) [ n ] Dtype.Uint8
+  Call.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) [ n ] Dtype.Uint8
 
 let room =
   let small = { (gpu "gfx1100") with copy_rings = [ 224 ] } in
@@ -611,7 +611,7 @@ let pp_storage ppf = function
 let storage = Testable.make ~pp:pp_storage ~equal:( = )
 
 let tagged tag =
-  Shape.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) ~tag [ 8 ] Dtype.Uint64
+  Call.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) ~tag [ 8 ] Dtype.Uint64
 
 (* The placeholders the engine allocates itself: command buffers, kernel
    arguments and indirect buffers, the batch's slots and address table, the
@@ -664,7 +664,7 @@ let linking =
           equal (option storage) (Some (Ops_amd.Scratch 260))
             (Ops_amd.storage
                (Ops.rtag ~tag:(Ops.Tag.String "scratch")
-                  (Shape.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) [ 260 ]
+                  (Call.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) [ 260 ]
                      Dtype.Uint8))));
       test
         "every placeholder of a recorded batch is AMD's storage, or the \
@@ -751,7 +751,7 @@ let ranged ?(trips = 3) ?(copy = false) name case =
       (Cstyle.hip target)
   in
   let param slot =
-    Shape.param ~shape:[ Int 4 ] ~device:(Single "AMD") slot Float32
+    Call.param ~shape:[ Int 4 ] ~device:(Single "AMD") slot Float32
   in
   let i = Ops.range (Int 4) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
@@ -770,7 +770,7 @@ let ranged ?(trips = 3) ?(copy = false) name case =
   in
   let buf () = Ops.new_buffer (Single "AMD") (4 * trips) Float32 in
   let call =
-    if copy then Shape.store_call (window (buf ())) (window (buf ()))
+    if copy then Call.store_call (window (buf ())) (window (buf ()))
     else
       Ops.call
         (Codegen.to_program kernel renderer)

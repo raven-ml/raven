@@ -43,7 +43,7 @@ let new_floats name xs =
 
 (* Kernels *)
 
-let param ?(n = 4) device slot = Shape.param ~shape:[ Int n ] ~device slot Float32
+let param ?(n = 4) device slot = Call.param ~shape:[ Int n ] ~device slot Float32
 
 (* The kernel that stores [x + c] of each element [x] of slot 1 into slot 0. *)
 let adds_kernel ?(n = 4) ?(c = 1.) device =
@@ -151,9 +151,9 @@ let execution =
           let calls =
             [
               adds a a0;
-              Shape.store_call h a;
+              Call.store_call h a;
               adds ~c:3. h2 h;
-              Shape.store_call b h2;
+              Call.store_call b h2;
               adds b2 b;
             ]
           in
@@ -175,7 +175,7 @@ let execution =
               (x :: h :: b)
           in
           let calls =
-            adds (storage "CUDA") x :: Shape.store_call (List.hd b) h :: chained b
+            adds (storage "CUDA") x :: Call.store_call (List.hd b) h :: chained b
           in
           ignore (run_calls ~bound calls);
           equal floats
@@ -193,9 +193,9 @@ let execution =
               (fresh, [ new_floats "CPU" data ]);
             ]
           in
-          let copyout = Shape.store_call host vram in
+          let copyout = Call.store_call host vram in
           ignore
-            (run_calls ~bound [ copyout; Shape.store_call vram fresh; copyout ]);
+            (run_calls ~bound [ copyout; Call.store_call vram fresh; copyout ]);
           equal floats data (floats_of (List.hd (List.assq host bound))));
       slow
         "a run waits for its batch's previous run before it rewrites the \
@@ -360,7 +360,7 @@ let execution =
               (b, [ new_floats "CUDA:1" (Array.make 4 0.) ]);
             ]
           in
-          ignore (run_calls ~bound [ Shape.store_call b a ]);
+          ignore (run_calls ~bound [ Call.store_call b a ]);
           Nx_device.synchronize (nx "CUDA:1");
           equal floats [| 1.; 2.; 3.; 4. |]
             (floats_of (List.hd (List.assq b bound))));

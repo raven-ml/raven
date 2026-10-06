@@ -447,7 +447,7 @@ let bounds_group =
           let h = variable Float16 (f 0.) (f 65504.) "h" in
           let w = variable Weak_float (f 0.) (f 1.) "w" in
           check_bounds
-            (Ops.alu (Shape.param 0 Float32) Op.Add [ one Float32 ])
+            (Ops.alu (Call.param 0 Float32) Op.Add [ one Float32 ])
             (full Float32);
           check_bounds (Ops.alu h Op.Add [ h ]) (full Float16);
           check_bounds (Ops.alu h Op.Mul [ h ]) (full Float16);
@@ -455,7 +455,7 @@ let bounds_group =
       test "a float selection by a comparison narrows what it selects"
         (fun () ->
           let x = variable Float32 (f (-10.)) (f 10.) "x" in
-          let p = Shape.param 0 Float32 in
+          let p = Call.param 0 Float32 in
           let c = Ops.float ~dtype:Float32 2. in
           let minus_c = Ops.float ~dtype:Float32 (-2.) in
           check_bounds (Ops.where (Ops.lt x c) x minus_c) (f (-10.), f 2.);
@@ -472,7 +472,7 @@ let bounds_group =
       test
         "a committed float selection holds a weak constant at its type, where \
          it may round to zero" (fun () ->
-          let p = Shape.param 0 Float32 in
+          let p = Call.param 0 Float32 in
           let inf = Ops.float ~dtype:Float32 Float.infinity in
           let tiny = Ops.float 0x0.0000000000001p-1022 in
           let u = Ops.where (Ops.lt p (Ops.float ~dtype:Float32 0.)) inf tiny in
@@ -510,7 +510,7 @@ let bounds_group =
                 (Int64, Bigint.of_int64 Int64.min_int);
                 (Uint64, Bigint.pred (Bigint.shift_left Bigint.one 64));
               ];
-          check_bounds (Shape.param 7 Uint64) (Dtype.min Uint64, Dtype.max Uint64));
+          check_bounds (Call.param 7 Uint64) (Dtype.min Uint64, Dtype.max Uint64));
       test "a NaN constant has its type's bounds" (fun () ->
           check_bounds
             (Ops.float ~dtype:Float32 Float.nan)
@@ -598,7 +598,7 @@ let bounds_group =
           let y =
             Ops.load
               (Ops.index
-                 (Shape.param ~shape:(ints [ 1 ]) 0 Float32)
+                 (Call.param ~shape:(ints [ 1 ]) 0 Float32)
                  [ Ops.int 0 ])
               []
           in
@@ -608,7 +608,7 @@ let bounds_group =
       test "a load of an integer buffer has its type's bounds" (fun () ->
           let v =
             Ops.load
-              (Ops.index (Shape.param ~shape:(ints [ 1 ]) 1 Int32) [ Ops.int 0 ])
+              (Ops.index (Call.param ~shape:(ints [ 1 ]) 1 Int32) [ Ops.int 0 ])
               []
           in
           check_bounds Ops.O.(v // int 32) (int_bounds (-67108864) 67108863));
@@ -621,7 +621,7 @@ let bounds_group =
           let x = Shape.expand (Ops.int ~dtype:Int32 5) (ints [ 2 ]) in
           check_bounds (Shape.pad x [ Some (Int 1, Int 1) ]) (int_bounds 0 5));
       test "a copy and a contiguous keep their source's bounds" (fun () ->
-          let src = Ops.O.(Shape.placeholder ~slot:0 [ 4 ] Int32 land int 3) in
+          let src = Ops.O.(Call.placeholder ~slot:0 [ 4 ] Int32 land int 3) in
           check_bounds (Ops.contiguous src) (int_bounds 0 3);
           check_bounds (Ops.copy_to_device src (Single "NULL")) (int_bounds 0 3));
       test "a variable cast to float, bool or unsigned" (fun () ->
@@ -646,9 +646,9 @@ let bounds_group =
           let unknown = (f Float.neg_infinity, f Float.infinity) in
           List.iter
             (fun dt ->
-              check_bounds (Shape.param 0 dt) unknown;
-              check_bounds (Ops.cast (Shape.param 0 dt) Float32) unknown;
-              check_bounds (Ops.cast (Shape.param 0 Float32) dt) unknown;
+              check_bounds (Call.param 0 dt) unknown;
+              check_bounds (Ops.cast (Call.param 0 dt) Float32) unknown;
+              check_bounds (Ops.cast (Call.param 0 Float32) dt) unknown;
               let x = variable Float32 (f (-1.)) (f 2.) "x" in
               check_bounds (Ops.cast x dt) (f (-1.), f 2.);
               let greatest = Dtype.max dt in
@@ -891,7 +891,7 @@ let divisibility =
           is_none (Shape.divides Ops.O.(x + int 3) (Bigint.of_int 2)));
       test "const_factor of storage without a multiple is 1" (fun () ->
           equal z Bigint.one
-            (Ops.const_factor (Shape.param ~shape:(ints [ 4 ]) 0 Int32)));
+            (Ops.const_factor (Call.param ~shape:(ints [ 4 ]) 0 Int32)));
       test "gcd rejects nothing" (fun () -> rejects (fun () -> Shape.gcd []));
       test "gcd of constants is their gcd" (fun () ->
           equal uop (Ops.int 2) (Shape.gcd [ Ops.int 6; Ops.int 4 ]));
@@ -958,7 +958,7 @@ let divisibility =
 (* Symbolic inference and programs *)
 
 let alu_param ?(lo = 0) ?(hi = 8) name slot =
-  Shape.param ~vmin_vmax:(i lo, i hi) ~name ~addrspace:(Some Alu) slot Int32
+  Call.param ~vmin_vmax:(i lo, i hi) ~name ~addrspace:(Some Alu) slot Int32
 
 let inference =
   group "sym_infer"
@@ -970,7 +970,7 @@ let inference =
           equal int 7
             (Shape.sym_infer (Sym Ops.O.((n * int 2) + int 1)) [ ("n", 3) ]);
           equal int 9
-            (Shape.sym_infer (Sym Ops.O.(Shape.bind n (i 7) + int 1)) [ ("n", 8) ]));
+            (Shape.sym_infer (Sym Ops.O.(Call.bind n (i 7) + int 1)) [ ("n", 8) ]));
       test "divisions round as their operations say" (fun () ->
           let n = weak_var "n" (-10) 10 in
           equal int (-3) (Shape.sym_infer (Sym Ops.O.(n // int 3)) [ ("n", -7) ]);
@@ -1169,8 +1169,8 @@ let programs =
         (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
           and n = alu_param ~lo:2 "n" 1 in
-          let input = Shape.param ~shape:(ints [ 16 ]) 2 Float32
-          and output = Shape.param ~shape:(ints [ 16 ]) 3 Float32 in
+          let input = Call.param ~shape:(ints [ 16 ]) 2 Float32
+          and output = Call.param ~shape:(ints [ 16 ]) 3 Float32 in
           let stored =
             Ops.store (Ops.index output [ n ])
               (Ops.load (Ops.index input [ n ]) [])
@@ -1184,7 +1184,7 @@ let programs =
                 core_id;
               ]
           in
-          let info = Shape.program_info_of_sink sink in
+          let info = Call.program_info_of_sink sink in
           equal (list int) [ 2; 3 ] info.globals;
           equal (list int) [ 3 ] info.outs;
           equal (list int) [ 2 ] info.ins;
@@ -1193,7 +1193,7 @@ let programs =
           equal
             (pair (list int) (list int))
             ([ 1; 1; 4 ], [ 1; 8; 1 ])
-            (Shape.launch_dims info []);
+            (Call.launch_dims info []);
           is_true
             (info.target
             = Helpers.Target.
@@ -1206,8 +1206,8 @@ let programs =
                 }));
       test "a load through a cast and a store into a shrink are accesses"
         (fun () ->
-          let p0 = Shape.param ~shape:(ints [ 4 ]) 0 Uint8
-          and p1 = Shape.param ~shape:(ints [ 4 ]) 1 Uint8 in
+          let p0 = Call.param ~shape:(ints [ 4 ]) 0 Uint8
+          and p1 = Call.param ~shape:(ints [ 4 ]) 1 Uint8 in
           let cast_read =
             Ops.load
               (Ops.v
@@ -1220,33 +1220,33 @@ let programs =
               (Shape.shrink p1 [ Some (Int 0, Int 2) ])
               (Shape.expand (Ops.int ~dtype:Uint8 1) (ints [ 2 ]))
           in
-          let info = Shape.program_info_of_sink (Ops.sink [ write; cast_read ]) in
+          let info = Call.program_info_of_sink (Ops.sink [ write; cast_read ]) in
           equal (list int) [ 0 ] info.ins;
           equal (list int) [ 1 ] info.outs);
       test "a load through a cast of something other than an index is no access"
         (fun () ->
-          let p0 = Shape.param ~shape:(ints [ 4 ]) 0 Uint8
-          and p1 = Shape.param ~shape:(ints [ 4 ]) 1 Uint8 in
+          let p0 = Call.param ~shape:(ints [ 4 ]) 0 Uint8
+          and p1 = Call.param ~shape:(ints [ 4 ]) 1 Uint8 in
           let write =
             Ops.store (Ops.index p1 [ Ops.int 0 ]) (Ops.int ~dtype:Uint8 1)
           in
           let info =
-            Shape.program_info_of_sink
+            Call.program_info_of_sink
               (Ops.sink [ write; Ops.load (Ops.cast p0 Int8) [] ])
           in
           equal (list int) [ 1 ] info.outs;
           equal (list int) [] info.ins);
       test "vals rejects a missing variable, naming it" (fun () ->
           let info =
-            Shape.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])
+            Call.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])
           in
           raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
               Ops.vals info []));
       test "program_info_of_sink reads symbolic launch sizes" (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
           and n = alu_param ~lo:2 "n" 1 in
-          let input = Shape.param ~shape:(ints [ 16 ]) 2 Float32
-          and output = Shape.param ~shape:(ints [ 16 ]) 3 Float32 in
+          let input = Call.param ~shape:(ints [ 16 ]) 2 Float32
+          and output = Call.param ~shape:(ints [ 16 ]) 3 Float32 in
           let stored =
             Ops.store (Ops.index output [ n ])
               (Ops.load (Ops.index input [ n ]) [])
@@ -1261,7 +1261,7 @@ let programs =
                 core_id;
               ]
           in
-          let info = Shape.program_info_of_sink sink in
+          let info = Call.program_info_of_sink sink in
           equal (list int) [ 2; 3 ] info.globals;
           equal (list int) [ 3 ] info.outs;
           equal (list int) [ 2 ] info.ins;
@@ -1270,7 +1270,7 @@ let programs =
           equal
             (pair (list int) (list int))
             ([ 1; 1; 7 ], [ 1; 8; 1 ])
-            (Shape.launch_dims info [ ("n", 6); ("core_id", 2) ]);
+            (Call.launch_dims info [ ("n", 6); ("core_id", 2) ]);
           is_true
             (info.target
             = Helpers.Target.
@@ -1284,21 +1284,21 @@ let programs =
       test "every buffer reads and writes when no access says otherwise"
         (fun () ->
           let info =
-            Shape.program_info_of_sink
+            Call.program_info_of_sink
               (Ops.sink
                  [
-                   Shape.param ~shape:(ints [ 4 ]) 0 Float32;
-                   Shape.param ~shape:(ints [ 4 ]) 5 Float32;
+                   Call.param ~shape:(ints [ 4 ]) 0 Float32;
+                   Call.param ~shape:(ints [ 4 ]) 5 Float32;
                  ])
           in
           equal (list int) [ 0; 5 ] info.globals;
           equal (list int) [ 0; 5 ] info.outs;
           equal (list int) [ 0; 5 ] info.ins;
-          equal (list int) [ 1; 1; 1 ] (fst (Shape.launch_dims info [])));
+          equal (list int) [ 1; 1; 1 ] (fst (Call.launch_dims info [])));
       test "launch sizes divide as their operations say" (fun () ->
           let n = alu_param ~lo:(-10) ~hi:10 "n" 0 in
           let info =
-            Shape.program_info_of_sink
+            Call.program_info_of_sink
               (Ops.sink
                  [
                    Ops.special (Sym Ops.O.(n // int 3)) "gidx0";
@@ -1306,20 +1306,20 @@ let programs =
                  ])
           in
           equal (list int) [ -3; 2; 1 ]
-            (fst (Shape.launch_dims info [ ("n", -7) ])));
+            (fst (Call.launch_dims info [ ("n", -7) ])));
       test "launch_dims rejects a missing variable" (fun () ->
           let extent = alu_param "extent" 0 in
           let info =
-            Shape.program_info_of_sink
+            Call.program_info_of_sink
               (Ops.sink [ Ops.special (Sym extent) "gidx0" ])
           in
           raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
               Ops.vals info []);
-          rejects (fun () -> Shape.launch_dims info []));
+          rejects (fun () -> Call.launch_dims info []));
       test "program_info_of_sink records its target" (fun () ->
           let target = Result.get_ok (Helpers.Target.of_string "CPU:CLANG") in
           is_true
-            ((Shape.program_info_of_sink ~target (Ops.sink [])).target = target));
+            ((Call.program_info_of_sink ~target (Ops.sink [])).target = target));
     ]
 
 let groups =

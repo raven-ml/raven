@@ -25,7 +25,7 @@ let cpu = Result.get_ok (Helpers.Target.of_string "CPU")
 let f32 x = Ops.float ~dtype:Dtype.Float32 x
 
 let buffer ?(dtype = Dtype.Float32) slot size =
-  Shape.param ~shape:[ Int size ] slot dtype
+  Call.param ~shape:[ Int size ] slot dtype
 
 let range ?(axis = 0) size = Ops.range (Int size) [ axis ]
 let at buf i = Ops.index buf [ i ]
@@ -166,7 +166,7 @@ let two_loads_of_one_buffer () =
   equal sint ~msg:"mem counts the buffer once" (Int 16) e.mem
 
 let registers_move_no_bytes () =
-  let reg = Shape.alloc ~addrspace:Reg [ Int 4 ] Dtype.Float32 in
+  let reg = Call.alloc ~addrspace:Reg [ Int 4 ] Dtype.Float32 in
   let stored = Ops.store (at reg (Ops.int 0)) (f32 1.) in
   let x = load reg (Ops.int 1) in
   equal estimates (counts 0 0 0)
@@ -174,7 +174,7 @@ let registers_move_no_bytes () =
        (Ops.toposort ~calls:Enter (Ops.sink [ stored; x ])))
 
 let shared_memory_is_not_a_parameter () =
-  let smem = Shape.alloc ~addrspace:Local [ Int 4 ] Dtype.Float32 in
+  let smem = Call.alloc ~addrspace:Local [ Int 4 ] Dtype.Float32 in
   let stored = Ops.store (at smem (Ops.int 0)) (f32 1.) in
   equal estimates (counts 0 4 0)
     (Renderer.Estimates.of_uops
@@ -210,7 +210,7 @@ let shrink_indexing () =
 (* An index that reads the result of a loop: the loop computes the index, but
    the End or Backedge that closes it bounds what the index's operations are. *)
 let an_index_after_a_loop () =
-  let acc = Shape.alloc ~addrspace:Reg [ Int 1 ] Dtype.Int32 in
+  let acc = Call.alloc ~addrspace:Reg [ Int 1 ] Dtype.Int32 in
   let cell = at acc (Ops.int 0) in
   let ops closed =
     let total = Ops.load (Ops.after cell [ closed ]) [] in
@@ -473,8 +473,8 @@ let access =
     [
       ("param", fun dtype -> buffer ~dtype 0 16);
       ("buffer", fun dtype -> Ops.new_buffer ~slot:3 (Single "CPU") 16 dtype);
-      ("local", fun dtype -> Shape.alloc ~addrspace:Local [ Int 16 ] dtype);
-      ("register", fun dtype -> Shape.alloc ~addrspace:Reg [ Int 16 ] dtype);
+      ("local", fun dtype -> Call.alloc ~addrspace:Local [ Int 16 ] dtype);
+      ("register", fun dtype -> Call.alloc ~addrspace:Reg [ Int 16 ] dtype);
     ]
   in
   let pp_storage ppf (name, _) = Format.pp_print_string ppf name in

@@ -7,6 +7,7 @@
 
 open Ops
 open Shape
+open Call
 
 let u64 n = int ~dtype:Dtype.Uint64 n
 

@@ -373,7 +373,7 @@ let build d =
           (fun a n -> match a with 0 -> n / 2 | 1 -> n / columns | _ -> n)
           d.shape
       in
-      Shape.unshard
+      Call.unshard
         ~ranges:Ops.O.[ r // int columns; r % int columns ]
         (storage ~sharded:true Int32 shard)
         [ 0; 1 ]
@@ -381,7 +381,7 @@ let build d =
       let shard =
         List.mapi (fun a n -> if a = d.axis then n / d.n else n) d.shape
       in
-      Shape.unshard (storage ~sharded:true Int32 shard) [ d.axis ]
+      Call.unshard (storage ~sharded:true Int32 shard) [ d.axis ]
   in
   let apply (v, axes) step =
     let shape = dims v and dtype = Ops.dtype v in
@@ -547,11 +547,11 @@ let storage ?(devices = two) ?(dtype = Dtype.Float32) slot shape =
 
 (* A value of [shard]'s shape times the devices along [axis]. *)
 let sharded ?devices ?dtype slot shard axis =
-  Shape.unshard (storage ?devices ?dtype slot shard) [ axis ]
+  Call.unshard (storage ?devices ?dtype slot shard) [ axis ]
 
 let shard u = Ops.nth u 0
 let range u = Ops.nth u 1
-let unshard u axes like = Shape.unshard ~ranges:[ range like ] u axes
+let unshard u axes like = Call.unshard ~ranges:[ range like ] u axes
 let a = sharded 1 [ 2; 8 ] 0
 let b = sharded 2 [ 2; 8 ] 0
 let whole = storage 3 [ 4; 8 ]
@@ -580,7 +580,7 @@ let arithmetic =
         (fun () ->
           equal uop
             (unshard
-               Ops.O.(shard a + Shape.shard_slice whole 0 (range a))
+               Ops.O.(shard a + Call.shard_slice whole 0 (range a))
                [ 0 ] a)
             (multi Ops.O.(a + whole)));
       test "a broadcast scalar is broadcast over the shard" (fun () ->
@@ -699,7 +699,7 @@ let reductions =
       test "a reduction of some sharded axes but not all is refused" (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Shape.unshard
+            Call.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
@@ -775,7 +775,7 @@ let movements =
       test "a shrink to one shard of a grid's axis is refused" (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Shape.unshard
+            Call.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
@@ -792,8 +792,8 @@ let movements =
 let threads = Ops.range ~axis_type:Local (Int 8) [ 0 ]
 let rows = Ops.range ~axis_type:Loop (Int 8) [ 1 ]
 let cols = Ops.range ~axis_type:Loop (Int 8) [ 2 ]
-let registers = Shape.placeholder ~addrspace:Reg [ 8; 8 ] Float32
-let fragment = Shape.unshard ~ranges:[ threads ] registers [ 0 ]
+let registers = Call.placeholder ~addrspace:Reg [ 8; 8 ] Float32
+let fragment = Call.unshard ~ranges:[ threads ] registers [ 0 ]
 
 let fragments =
   group "multi_pm › fragments"
@@ -837,8 +837,8 @@ let fragments =
 
 let tile_rows = Ops.range ~axis_type:Local (Int 2) [ 0 ]
 let tile_cols = Ops.range ~axis_type:Local (Int 3) [ 1 ]
-let tile_part = Shape.placeholder ~addrspace:Reg [ 2; 4 ] Float32
-let tile = Shape.unshard ~ranges:[ tile_rows; tile_cols ] tile_part [ 0; 1 ]
+let tile_part = Call.placeholder ~addrspace:Reg [ 2; 4 ] Float32
+let tile = Call.unshard ~ranges:[ tile_rows; tile_cols ] tile_part [ 0; 1 ]
 let sharding = list (pair int uop)
 
 let tiles =
@@ -847,7 +847,7 @@ let tiles =
       test "a reshape divides each sharded axis by its own count"
         (fun () ->
           equal uop
-            (Shape.unshard ~ranges:[ tile_rows; tile_cols ]
+            (Call.unshard ~ranges:[ tile_rows; tile_cols ]
                (Shape.reshape tile_part (ints [ 2; 1; 4 ]))
                [ 0; 1 ])
             (multi (Shape.reshape tile (ints [ 4; 3; 4 ]))));
@@ -856,7 +856,7 @@ let tiles =
           let eight = Ops.Multi (List.init 8 (Printf.sprintf "CPU:%d")) in
           let r = Ops.range ~axis_type:Device (Int 8) [ -1 ] in
           let mesh =
-            Shape.unshard
+            Call.unshard
               ~ranges:Ops.O.[ r // int 4; r % int 4 ]
               (storage ~devices:eight ~dtype:Int32 1 [ 2; 3 ])
               [ 0; 1 ]
@@ -870,12 +870,12 @@ let tiles =
             (fun got -> equal (array Dtypes.const) whole got)
             (Tensors.eval ~buffers:memory (multi v)));
       test "an operation with a whole value takes its tile of it" (fun () ->
-          let whole = Shape.placeholder ~slot:1 [ 4; 12 ] Float32 in
+          let whole = Call.placeholder ~slot:1 [ 4; 12 ] Float32 in
           let part =
-            Shape.shard_slice (Shape.shard_slice whole 0 tile_rows) 1 tile_cols
+            Call.shard_slice (Call.shard_slice whole 0 tile_rows) 1 tile_cols
           in
           equal uop
-            (Shape.unshard ~ranges:[ tile_rows; tile_cols ]
+            (Call.unshard ~ranges:[ tile_rows; tile_cols ]
                Ops.O.(tile_part + part)
                [ 0; 1 ])
             (multi Ops.O.(tile + whole)));
@@ -887,7 +887,7 @@ let tiles =
         (fun () ->
           let own = Ops.O.(tile_rows * int 2) in
           equal uop
-            (Shape.unshard ~ranges:[ tile_cols ]
+            (Call.unshard ~ranges:[ tile_cols ]
                (Shape.mop tile_part (Shrink [ (Int 0, Int 2); (Int 0, Int 4) ]))
                [ 1 ])
             (multi
@@ -1051,14 +1051,14 @@ let gathers =
           is_true (has Allreduce (multi (Ops.index rows [ l ]))));
       test "a gather by a sharded index gathers each part of the index"
         (fun () ->
-          let index = Shape.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let index = Call.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let u = multi (Ops.index whole [ clamp 4 index ]) in
           equal (list int) [ 0 ] (List.map fst (Ops.sharding u));
           reads_whole (Ops.index whole [ clamp 4 index ]));
       test
         "a gather of sharded rows by a sharded index reads the whole's rows on \
          every device" (fun () ->
-          let index = Shape.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let index = Call.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let u = multi (Ops.index rows [ clamp 4 index ]) in
           equal (list int) [] (List.map fst (Ops.sharding u));
           reads_whole (Ops.index rows [ clamp 4 index ]));
@@ -1066,7 +1066,7 @@ let gathers =
         (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Shape.unshard
+            Call.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
@@ -1075,7 +1075,7 @@ let gathers =
           refused ~because:"another axis" (Ops.index grid [ l ]));
       test "a gather of a value on one device by a sharded index is refused"
         (fun () ->
-          let index = Shape.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let index = Call.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let x = storage ~devices:(cpu 0) 3 [ 4; 8 ] in
           refused ~because:"by an index on" (Ops.index x [ clamp 4 index ]));
       test "a gather of sharded rows by an index on other devices is refused"
@@ -1120,9 +1120,9 @@ let scatters =
         (fun () -> writes_whole (sharded 1 [ 4; 4 ] 1) (storage 3 [ 3; 8 ]));
       test "a scatter of a sharded value stores the whole value" (fun () ->
           writes_whole (sharded 1 [ 2; 8 ] 0)
-            (Shape.unshard (storage 3 [ 3; 4 ]) [ 1 ]));
+            (Call.unshard (storage 3 [ 3; 4 ]) [ 1 ]));
       test "a scatter by a sharded index joins the index" (fun () ->
-          let l = at (Shape.unshard (storage ~dtype:Int32 2 [ 1 ]) [ 0 ]) in
+          let l = at (Call.unshard (storage ~dtype:Int32 2 [ 1 ]) [ 0 ]) in
           let dest = sharded 1 [ 2; 8 ] 0 and v = storage 3 [ 2; 8 ] in
           let u = Ops.after dest [ Ops.store (Ops.index dest [ l ]) v ] in
           let whole = List.hd (Tensors.eval ~buffers:memory u) in
@@ -1133,7 +1133,7 @@ let scatters =
             refused" (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Shape.unshard
+            Call.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
@@ -1165,13 +1165,13 @@ let effects =
       test "a store of a whole value into a sharded destination stores its part"
         (fun () ->
           equal uop
-            (Ops.store (shard dest) (Shape.shard_slice whole 0 (range a)))
+            (Ops.store (shard dest) (Call.shard_slice whole 0 (range a)))
             (multi (Ops.store dest whole)));
       test "a gated store into a sharded destination keeps a scalar gate"
         (fun () ->
           let gate = Ops.bool true in
           equal uop
-            (Ops.store ~gate (shard dest) (Shape.shard_slice whole 0 (range a)))
+            (Ops.store ~gate (shard dest) (Call.shard_slice whole 0 (range a)))
             (multi (Ops.store ~gate dest whole)));
       test "a call of a compiled function passes its arguments' shards"
         (fun () ->
@@ -1179,8 +1179,8 @@ let effects =
             Ops.sink
               [
                 Ops.store
-                  (Shape.param ~shape:[ Int 16 ] 0 Float32)
-                  (Shape.param ~shape:[ Int 16 ] 1 Float32);
+                  (Call.param ~shape:[ Int 16 ] 0 Float32)
+                  (Call.param ~shape:[ Int 16 ] 1 Float32);
               ]
           in
           equal uop

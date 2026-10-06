@@ -22,9 +22,9 @@ let x = var ~dtype:Int32 "x" 0 8
 let y = var ~dtype:Int32 "y" 0 8
 let cond = Ops.O.(a < int 4)
 let other = Ops.O.(b < int 2)
-let f = Shape.param 0 Dtype.Float32
-let g = Shape.param 1 Dtype.Float32
-let buf = Shape.param ~shape:[ Int 16 ] 2 Dtype.Float32
+let f = Call.param 0 Dtype.Float32
+let g = Call.param 1 Dtype.Float32
+let buf = Call.param ~shape:[ Int 16 ] 2 Dtype.Float32
 let r0 = Ops.range (Int 4) [ 0 ]
 let r1 = Ops.range (Int 4) [ 1 ]
 let reduce_range = Ops.range ~axis_type:Reduce (Int 4) [ 2 ]
@@ -507,7 +507,7 @@ let powers =
           by_symbolic (Ops.pow (Ops.float ~dtype:Float32 1.) f) (Ops.float 1.);
           by_symbolic (Ops.pow (Ops.float ~dtype:Float32 2.) f) (Ops.exp2 f));
       test "c ** x computes in float for an integer exponent" (fun () ->
-          let n = Shape.param 5 Dtype.Int32 in
+          let n = Call.param 5 Dtype.Int32 in
           folds_to
             (Ops.pow (Ops.float 3.) n)
             (Ops.exp2 Ops.O.(Ops.cast n Weak_float * float (Float.log2 3.))));
@@ -542,8 +542,8 @@ let selections =
           folds_to (raw Where [ Ops.bool true; Ops.int 1; v ]) (Ops.int 1));
       test "a selection by a broadcast constant is the branch it picks"
         (fun () ->
-          let p = Shape.param ~shape:[ Int 4 ] 0 Dtype.Float32
-          and q = Shape.param ~shape:[ Int 4 ] 1 Dtype.Float32 in
+          let p = Call.param ~shape:[ Int 4 ] 0 Dtype.Float32
+          and q = Call.param ~shape:[ Int 4 ] 1 Dtype.Float32 in
           let truth b = Shape.const_like ~dtype:Bool p (`Bool b) in
           folds_to (Ops.where (truth true) p q) p;
           folds_to (Ops.where (truth false) p q) q;
@@ -555,12 +555,12 @@ let selections =
                (Ops.where (truth false) (Ops.where (truth true) p q) q))
             p);
       test "a selection by a padded constant is no constant's" (fun () ->
-          let p = Shape.param ~shape:[ Int 6 ] 0 Dtype.Float32
-          and q = Shape.param ~shape:[ Int 6 ] 1 Dtype.Float32 in
+          let p = Call.param ~shape:[ Int 6 ] 0 Dtype.Float32
+          and q = Call.param ~shape:[ Int 6 ] 1 Dtype.Float32 in
           let mask =
             Shape.pad
               (Shape.const_like ~dtype:Bool
-                 (Shape.param ~shape:[ Int 4 ] 2 Dtype.Float32)
+                 (Call.param ~shape:[ Int 4 ] 2 Dtype.Float32)
                  (`Bool true))
               [ Some (Ops.Int 1, Ops.Int 1) ]
           in
@@ -626,11 +626,11 @@ let terms =
           by_symbolic Ops.O.(b + (a * int 3) + a) Ops.O.(b + (a * int 4));
           by_symbolic Ops.O.(b + a + a) Ops.O.(b + (a * int 2)));
       test "a term's new coefficient is a weak constant" (fun () ->
-          let n = Shape.param 5 Dtype.Int32 in
+          let n = Call.param 5 Dtype.Int32 in
           by_symbolic Ops.O.(n + n) Ops.O.(n * int 2);
           folds_to Ops.O.(n // int (-1)) Ops.O.(n * int (-1)));
       test "(x / y) / z stays" (fun () ->
-          let h = Shape.param 3 Dtype.Float32 in
+          let h = Call.param 3 Dtype.Float32 in
           by_symbolic Ops.O.(f / g / h) Ops.O.(f / g / h));
       test "-(x + c) is -x + -c for integers, and stays for floats"
         (fun () ->
@@ -673,9 +673,9 @@ let symbolic_selections =
       test
         "a padded constant condition is not folded in the branches"
         (fun () ->
-          let x = Shape.param ~shape:[ Ops.Int 6 ] 0 Dtype.Float32 in
-          let y = Shape.param ~shape:[ Ops.Int 6 ] 1 Dtype.Float32 in
-          let inner = Shape.param ~shape:[ Ops.Int 4 ] 2 Dtype.Float32 in
+          let x = Call.param ~shape:[ Ops.Int 6 ] 0 Dtype.Float32 in
+          let y = Call.param ~shape:[ Ops.Int 6 ] 1 Dtype.Float32 in
+          let inner = Call.param ~shape:[ Ops.Int 4 ] 2 Dtype.Float32 in
           (* One node for every use of the constant: assuming it true in a
              branch would rewrite it everywhere. *)
           let c =
@@ -688,7 +688,7 @@ let symbolic_selections =
       test "a condition over an index is not folded in the branches" (fun () ->
           let load = Ops.index buf [ a ] in
           let c = Ops.O.(load < float 1.) in
-          let sel = Ops.where c (Ops.where c f g) (Shape.param 3 Dtype.Float32) in
+          let sel = Ops.where c (Ops.where c f g) (Call.param 3 Dtype.Float32) in
           equal uop sel (symbolic sel));
       test "where g x 0 <> 0 is g land (x <> 0)" (fun () ->
           by_symbolic
@@ -943,7 +943,7 @@ let keeps_float_bits ?(by = sym) u points =
     points
 
 let floats =
-  let h = Shape.param 3 Dtype.Float32 and inf = Float.infinity in
+  let h = Call.param 3 Dtype.Float32 and inf = Float.infinity in
   let cond = Ops.O.(f < float 1.) in
   group "floats keep IEEE values"
     [
@@ -1227,7 +1227,7 @@ let given_valid =
           let loaded =
             Ops.cast
               (Ops.index
-                 (Shape.param ~shape:[ Int 100 ] 1 Dtype.Int32)
+                 (Call.param ~shape:[ Int 100 ] 1 Dtype.Int32)
                  [ Shape.valid Ops.O.(x + int (-30)) inside ])
               Weak_int
           in
@@ -1556,7 +1556,7 @@ let other_tests =
           none Ops.O.((a * int 10) - int 1) Ops.O.(a * int 10));
       test "variables lists each variable once, sorted by name" (fun () ->
           let a = var "a" 0 10 and b = var "b" 0 10 and c = var "c" 0 10 in
-          let vars u = Shape.variables u in
+          let vars u = Call.variables u in
           equal (list uop) [] (vars (Ops.int 0));
           equal (list uop) [ a ] (vars Ops.O.(a * int 3));
           equal (list uop) [ a; b; c ] (vars Ops.O.(a + b + c));

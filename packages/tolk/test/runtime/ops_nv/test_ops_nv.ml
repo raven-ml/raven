@@ -397,7 +397,7 @@ let words =
                   (( = ) G.nvc6b5_launch_dma)
                   (methods ~subc:4
                      (command_buffer "COPY:0"
-                        [ Shape.store_call (buf ()) (buf ()) ])))));
+                        [ Call.store_call (buf ()) (buf ()) ])))));
       cases ~name:hex "the compute channel releases a value whole" values
         (fun v ->
           equal (list action) [ Write64 (signal, v) ] (signalled "COMPUTE:0" v));
@@ -566,7 +566,7 @@ let refusals =
       test "a compute queue copies nothing" (fun () ->
           let buf () = Ops.new_buffer (Single "NV") 32 Int32 in
           refused ~why:"copies nothing" "COMPUTE:0"
-            [ Shape.store_call (buf ()) (buf ()) ]);
+            [ Call.store_call (buf ()) (buf ()) ]);
     ]
 
 (* Storage *)
@@ -662,10 +662,10 @@ let storages =
       test "a copy queue names its channel's words" (fun () ->
           equal (list storage)
             [ Ring "COPY:0"; Gp_put "COPY:0"; Put "COPY:0"; Doorbell "COPY:0" ]
-            (named "COPY:0" [ Shape.store_call (buf ()) (buf ()) ]));
+            (named "COPY:0" [ Call.store_call (buf ()) (buf ()) ]));
       test "a placeholder NV's commands do not name has no storage" (fun () ->
           let cmdbuf =
-            Shape.placeholder ~device:(Single "NV")
+            Call.placeholder ~device:(Single "NV")
               ~tag:(String "cmdbuf_compute_0") [ 4 ] Uint8
           in
           equal (option storage) None (Ops_nv.storage cmdbuf));

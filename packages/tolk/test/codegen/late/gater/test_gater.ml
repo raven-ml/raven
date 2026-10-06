@@ -33,7 +33,7 @@ let idx n =
     (`Int (Bigint.of_int 63))
 
 let x = Ops.variable ~dtype:Float32 "x" (`Float (-1.)) (`Float 1.)
-let buf = Shape.param ~shape:[ Int 64 ] 0 Float32
+let buf = Call.param ~shape:[ Int 64 ] 0 Float32
 
 let access { indices; store; select } =
   let index = function
@@ -96,8 +96,8 @@ let laws =
    for an alternative [a] that the load's own type holds and for one it does
    not, a subnormal, a fraction, a zero's sign and a magnitude it rounds. *)
 let converted =
-  let narrow = Shape.param ~shape:[ Int 64 ] 1 Float16 in
-  let bytes = Shape.param ~shape:[ Int 64 ] 2 Int8 in
+  let narrow = Call.param ~shape:[ Int 64 ] 1 Float16 in
+  let bytes = Call.param ~shape:[ Int 64 ] 2 Int8 in
   let selection (buf, a) =
     let l = Ops.load (Ops.index buf [ Ops.where g (idx 0) Ops.invalid ]) [] in
     Ops.where g (Ops.cast l Float32) (Ops.const ~dtype:Float32 (`Float a))

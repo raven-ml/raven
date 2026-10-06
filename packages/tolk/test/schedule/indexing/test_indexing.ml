@@ -96,7 +96,7 @@ let concrete u =
     (function Ops.Int n -> n | Sym _ -> invalid_arg "a symbolic shape")
     (Shape.shape u)
 
-let source in_shape = Shape.param ~shape:[ Int (size in_shape) ] 0 Int32
+let source in_shape = Call.param ~shape:[ Int (size in_shape) ] 0 Int32
 let elements in_shape = Array.init (size in_shape) (fun j -> z (j + 1))
 let view in_shape = Shape.reshape (source in_shape) (ints in_shape)
 let shape_of in_shape m = concrete (Shape.mop (view in_shape) m)
@@ -551,11 +551,11 @@ let writes =
    on the CPU, that state one rule of run_rangeify at a time. *)
 
 let cpu = Ops.Single "CPU"
-let p slot shape = Shape.param ~device:cpu ~shape:(ints shape) slot Float32
+let p slot shape = Call.param ~device:cpu ~shape:(ints shape) slot Float32
 
 let stored value =
   let out =
-    Shape.param ~device:cpu ~shape:[ Int (size (concrete value)) ] 0 Float32
+    Call.param ~device:cpu ~shape:[ Int (size (concrete value)) ] 0 Float32
   in
   Ops.sink
     [ Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ] ]
@@ -633,7 +633,7 @@ let below_broadcasts =
     ]
 
 let storage =
-  let out = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
+  let out = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
   let dest = Shape.reshape out (ints [ 4; 4 ]) in
   let assign value = Ops.sink [ Ops.after out [ Ops.store dest value ] ] in
   (* The op of the value a store stores, and whether it is read from a stage. *)

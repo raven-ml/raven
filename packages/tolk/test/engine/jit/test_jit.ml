@@ -42,7 +42,7 @@ let parameters u =
 
 (* The parameter the [i]th input [u] becomes: of its type, device and size. *)
 let parameter i u =
-  Shape.param
+  Call.param
     ~shape:[ Int (Shape.max_numel u) ]
     ?device:(Ops.device u) i (Ops.dtype u)
 
@@ -541,7 +541,7 @@ let clang = lazy (Cstyle.clang (Engine.target Nx_device.host))
 let compiled name f =
   let kernel n =
     let i = Ops.range (Int n) [ 0 ] in
-    let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
+    let at slot = Ops.index (Call.placeholder ~slot [ n ] Float32) [ i ] in
     Codegen.to_program
       (Ops.sink
          ~kernel:(Ops.kernel_info ~name:(Printf.sprintf "%s_%d" name n) ())
@@ -570,7 +570,7 @@ let capture_of d =
     | Inc (dst, s) -> Ops.call (program inc dst) [ nodes.(dst); nodes.(s) ]
     | Add (dst, s0, s1) ->
         Ops.call (program add dst) [ nodes.(dst); nodes.(s0); nodes.(s1) ]
-    | Copy (dst, s) -> Shape.store_call nodes.(dst) nodes.(s)
+    | Copy (dst, s) -> Call.store_call nodes.(dst) nodes.(s)
   in
   let held =
     List.map (Array.get nodes)

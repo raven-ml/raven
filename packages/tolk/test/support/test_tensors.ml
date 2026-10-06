@@ -9,7 +9,7 @@ let two = Ops.Multi [ "CPU:0"; "CPU:1" ]
 
 (* [p slot size] is storage of [size] 32-bit integers, viewed as [dims]. *)
 let p ?(device = cpu) ?(dt = Dtype.Int32) ?dims slot size =
-  let flat = Shape.param ~device ~shape:[ Int size ] slot dt in
+  let flat = Call.param ~device ~shape:[ Int size ] slot dt in
   match dims with None -> flat | Some d -> Shape.reshape flat (shape d)
 
 let iota n = Array.init n (fun j -> z j)
@@ -184,7 +184,7 @@ let effects =
                     Ops.store (p 1 3) (Ops.after out [ Ops.store out reversed ]);
                   ])));
       test "call-local storage is memory of its own, and scratch" (fun () ->
-          let scratch = Shape.alloc ~slot:1 ~device:cpu [ Int 3 ] Int32 in
+          let scratch = Call.alloc ~slot:1 ~device:cpu [ Int 3 ] Int32 in
           let staged = Ops.after scratch [ Ops.store scratch (p 1 3) ] in
           equal write
             [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2) ]
@@ -194,8 +194,8 @@ let effects =
             Ops.sink
               [
                 Ops.store
-                  (Shape.param ~shape:[ Int 3 ] 0 Int32)
-                  (Shape.param ~shape:[ Int 3 ] 1 Int32);
+                  (Call.param ~shape:[ Int 3 ] 0 Int32)
+                  (Call.param ~shape:[ Int 3 ] 1 Int32);
               ]
           in
           equal write
@@ -203,7 +203,7 @@ let effects =
             (writes (Ops.sink [ Ops.call body [ out; p 1 3 ] ])));
       test "a loop calls its body once a trip, each reading the last's stores"
         (fun () ->
-          let x = Shape.param ~shape:[ Int 3 ] 0 Int32 in
+          let x = Call.param ~shape:[ Int 3 ] 0 Int32 in
           let body = Ops.sink [ Ops.store x Ops.O.(x + x) ] in
           let trips = Ops.range ~axis_type:Loop (Int 3) [ 0 ] in
           equal write
@@ -235,7 +235,7 @@ let shards =
                   (Ops.copy_to_device (p 1 4) two)
                   (Shrink [ (Sym start, Int 2) ]))));
       test "an unshard reassembles its devices' parts" (fun () ->
-          equal consts (ints [ 0; 1; 2; 3; 4; 5 ]) (eval (Shape.unshard x [ 0 ])));
+          equal consts (ints [ 0; 1; 2; 3; 4; 5 ]) (eval (Call.unshard x [ 0 ])));
       test "an unshard of two axes places each part at its ranges' values"
         (fun () ->
           let d = device_range 4 in
@@ -245,17 +245,17 @@ let shards =
             (ints [ 0; 1; 2; 3 ])
             (eval
                ~buffers:[ (1, iota 4) ]
-               (Shape.unshard ~ranges:[ rows; cols ] x [ 0; 1 ])));
+               (Call.unshard ~ranges:[ rows; cols ] x [ 0; 1 ])));
       test "a value sharded across a kernel's threads is refused" (fun () ->
           let threads = Ops.range ~axis_type:Local (Int 2) [ 0 ] in
-          rejects (fun () -> eval (Shape.unshard ~ranges:[ threads ] x [ 0 ])));
+          rejects (fun () -> eval (Call.unshard ~ranges:[ threads ] x [ 0 ])));
       test "a copy of a value on several devices is its first device's"
         (fun () ->
           equal consts (ints [ 0; 1; 2 ]) (eval (Ops.copy_to_device x cpu)));
     ]
 
 let sharded_effects =
-  let out = Shape.unshard (p ~device:two 0 2) [ 0 ] in
+  let out = Call.unshard (p ~device:two 0 2) [ 0 ] in
   let write = list (triple int int Dtypes.value) in
   let writes value =
     Tensors.writes
@@ -277,11 +277,11 @@ let sharded_effects =
     ]
 
 let sharded_calls =
-  let out = Shape.unshard (p ~device:two 0 2) [ 0 ] in
-  let param slot = Shape.param ~device:two ~shape:[ Int 2 ] slot Int32 in
+  let out = Call.unshard (p ~device:two 0 2) [ 0 ] in
+  let param slot = Call.param ~device:two ~shape:[ Int 2 ] slot Int32 in
   let body =
     Ops.sink
-      [ Ops.store (Shape.unshard (param 0) [ 0 ]) (Shape.unshard (param 1) [ 0 ]) ]
+      [ Ops.store (Call.unshard (param 0) [ 0 ]) (Call.unshard (param 1) [ 0 ]) ]
   in
   group "calls on sharded values"
     [
@@ -293,7 +293,7 @@ let sharded_calls =
                ~buffers:[ (1, iota 4) ]
                (Ops.sink
                   [
-                    Ops.call body [ out; Shape.unshard (p ~device:two 1 2) [ 0 ] ];
+                    Ops.call body [ out; Call.unshard (p ~device:two 1 2) [ 0 ] ];
                   ])));
     ]
 

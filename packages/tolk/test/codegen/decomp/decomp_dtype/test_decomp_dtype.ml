@@ -184,10 +184,10 @@ let at_code u c = Interpreter.eval ~params:[ (0, code c) ] u
 (* [widening dt] is the float32 code that f2f widens a [dt] code to; [narrowing
    ~sat dt] is the [dt] code that f2f narrows a float32 code to. *)
 let widening dt =
-  Ops.bitcast (Decomp_dtype.f2f (Shape.param 0 (storage dt)) dt Float32) Uint32
+  Ops.bitcast (Decomp_dtype.f2f (Call.param 0 (storage dt)) dt Float32) Uint32
 
 let narrowing ?sat dt =
-  Decomp_dtype.f2f ?sat (Shape.param 0 Dtype.Uint32) Float32 dt
+  Decomp_dtype.f2f ?sat (Call.param 0 Dtype.Uint32) Float32 dt
 
 let widens_exactly dt () =
   let u = widening dt in
@@ -237,18 +237,18 @@ let f2f =
                   (as_int (at_code (narrowing ~sat:false dt) (bits 1e10))))
               Dtype.fp8s);
         test "f2f converts only between a narrow float and a float32" (fun () ->
-            let v = Shape.param 0 Dtype.Uint16 in
+            let v = Call.param 0 Dtype.Uint16 in
             rejects (fun () -> Decomp_dtype.f2f v Float16 Bfloat16);
             rejects (fun () -> Decomp_dtype.f2f v Float16 Float64);
             rejects (fun () ->
-                Decomp_dtype.f2f (Shape.param 0 Uint32) Float32 Float32);
+                Decomp_dtype.f2f (Call.param 0 Uint32) Float32 Float32);
             rejects (fun () ->
-                Decomp_dtype.f2f (Shape.param 0 Uint64) Float64 Float16);
+                Decomp_dtype.f2f (Call.param 0 Uint64) Float64 Float16);
             rejects (fun () -> Decomp_dtype.f2f v Int16 Float32);
             rejects (fun () ->
-                Decomp_dtype.f2f (Shape.param 0 Uint32) Float32 Float64);
+                Decomp_dtype.f2f (Call.param 0 Uint32) Float32 Float64);
             rejects (fun () ->
-                Decomp_dtype.f2f (Shape.param 0 Uint64) Float64 Float32));
+                Decomp_dtype.f2f (Call.param 0 Uint64) Float64 Float32));
       ])
 
 (* f2f_clamp *)
@@ -257,7 +257,7 @@ let clamped ?sat dt x =
   as_float
     (Interpreter.eval
        ~params:[ (0, `Float x) ]
-       (Decomp_dtype.f2f_clamp ?sat (Shape.param 0 Dtype.Float32) dt))
+       (Decomp_dtype.f2f_clamp ?sat (Call.param 0 Dtype.Float32) dt))
 
 let infinity_of s = Float.copy_sign Float.infinity s
 
@@ -321,7 +321,7 @@ let f2f_clamp =
    element [r] of the [out] storage in the next slot. *)
 let kernel ins out n f =
   let r = Ops.range (Int n) [ 0 ] in
-  let at slot dt = Ops.index (Shape.param ~shape:[ Int n ] slot dt) [ r ] in
+  let at slot dt = Ops.index (Call.param ~shape:[ Int n ] slot dt) [ r ] in
   let xs = List.mapi (fun slot dt -> Ops.load (at slot dt) []) ins in
   Ops.sink [ Ops.end_ (Ops.store (at (List.length ins) out) (f xs)) [ r ] ]
 
@@ -1509,7 +1509,7 @@ let pass =
                    (params k)))
             longs);
       test "64-bit storage of no known size keeps none" (fun () ->
-          let p = Shape.param ~addrspace:(Some Global) 0 Int64 in
+          let p = Call.param ~addrspace:(Some Global) 0 Int64 in
           let k =
             Ops.sink
               [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int64 3) ]

@@ -160,7 +160,7 @@ let rec item depth =
           Loop { size; fuses; body } );
       ]
 
-let fbuf slot = Shape.param ~shape:[ Int 4096 ] slot Dtype.Float32
+let fbuf slot = Call.param ~shape:[ Int 4096 ] slot Dtype.Float32
 
 (* [kernel items] is the sink of [items]: each store writes the parameter of its
    own slot, from [1], at the sum of its enclosing ranges; a reading store loads

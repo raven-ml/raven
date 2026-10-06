@@ -209,7 +209,7 @@ let build d =
     List.map
       (fun (bs, copy) ->
         let bs = List.map (fun i -> buffers.(i)) bs in
-        if copy then Shape.store_call (List.hd bs) (List.nth bs 1)
+        if copy then Call.store_call (List.hd bs) (List.nth bs 1)
         else Ops.call (Ops.sink bs) bs)
       d.calls
   in

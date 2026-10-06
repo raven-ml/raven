@@ -36,7 +36,7 @@ let new_floats name xs =
 
 (* Kernels *)
 
-let param ?(n = 4) device slot = Shape.param ~shape:[ Int n ] ~device slot Float32
+let param ?(n = 4) device slot = Call.param ~shape:[ Int n ] ~device slot Float32
 
 (* The kernel that stores [x + c] of each element [x] of slot 1 into slot 0. *)
 let adds_kernel ?(n = 4) ?(c = 1.) device =
@@ -112,7 +112,7 @@ let windows n () =
 let floor_of_strided offset =
   let phase = offset in
   let half ?phase slot =
-    Shape.param ~shape:[ Int 12 ] ~device:(Single "METAL") ?phase slot Float16
+    Call.param ~shape:[ Int 12 ] ~device:(Single "METAL") ?phase slot Float16
   in
   let out = half 0 and inp = half ~phase 1 in
   let i = Ops.range (Int 3) [ 0 ] and j = Ops.range (Int 4) [ 1 ] in
@@ -230,9 +230,9 @@ let execution =
           let calls =
             [
               adds a a0;
-              Shape.store_call h a;
+              Call.store_call h a;
               adds ~c:3. h2 h;
-              Shape.store_call b h2;
+              Call.store_call b h2;
               adds b2 b;
             ]
           in
@@ -251,9 +251,9 @@ let execution =
               (fresh, [ new_floats "CPU" data ]);
             ]
           in
-          let copyout = Shape.store_call host vram in
+          let copyout = Call.store_call host vram in
           ignore
-            (run_calls ~bound [ copyout; Shape.store_call vram fresh; copyout ]);
+            (run_calls ~bound [ copyout; Call.store_call vram fresh; copyout ]);
           equal floats data (floats_of (List.hd (List.assq host bound))));
       slow
         "a run waits for its batch's previous run before it rewrites the \

@@ -47,7 +47,7 @@ let new_floats name xs =
    [out], four floats each. *)
 let adds out inp =
   let device = Option.get (Ops.device out) in
-  let param slot = Shape.param ~shape:[ Int 4 ] ~device slot Float32 in
+  let param slot = Call.param ~shape:[ Int 4 ] ~device slot Float32 in
   let i = Ops.range (Int 4) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
   let st =
@@ -173,7 +173,7 @@ let execution =
         (fun () ->
           let h = storage "CPU" and a = storage "NV" and a' = storage "NV" in
           let h' = storage "CPU" in
-          let calls = [ Shape.store_call a h; adds a' a; Shape.store_call h' a' ] in
+          let calls = [ Call.store_call a h; adds a' a; Call.store_call h' a' ] in
           let bound =
             [
               (h, [ new_floats "CPU" [| 1.; 2.; 3.; 4. |] ]);

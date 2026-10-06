@@ -34,7 +34,7 @@ let copy_queues =
      ALL2ALL says" (fun () ->
       let src = storage "AMD:0" in
       let calls =
-        List.map (fun d -> Shape.store_call (storage d) src) [ "AMD:1"; "AMD:2" ]
+        List.map (fun d -> Call.store_call (storage d) src) [ "AMD:1"; "AMD:2" ]
       in
       let batched =
         Setting.context

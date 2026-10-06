@@ -112,8 +112,8 @@ the Exclusions of `README.md`.
   - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
-- **tolk:** for `uop/ops.py`, `lib/uop/shape.ml:107` (`simplify_rules`) and
-  `:3559` (which sets them); `lib/uop/ops.ml:1190` (`Make_elementwise`), `:816`
+- **tolk:** for `uop/ops.py`, `lib/uop/shape.ml:87` (`simplify_rules`) and
+  `:2861` (which sets them); `lib/uop/ops.ml:1190` (`Make_elementwise`), `:816`
   (`repr`), `:244` (`bufferize_opts`), `:262` (`Calls`);
   `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
@@ -413,10 +413,10 @@ the Exclusions of `README.md`.
   `uop/weak.py:82-87` (`uncast_const`), which leaves the literal bare.
   tinygrad's own `TestModularWraparound` expects the wrapped results and is
   marked `xfail_broken_const_wraparound`.
-- **tolk:** `lib/uop/shape.ml:2551` (`fold_const_alu`), `:2917` and `:3345`
+- **tolk:** `lib/uop/shape.ml:1853` (`fold_const_alu`), `:2219` and `:2647`
   (the two stage fold of a maximum);
   `lib/uop/ops.ml:1470` (`at_width`) and `:1492` (`operand_bounds`);
-  `lib/uop/shape.ml:2049` (`uncast_const`).
+  `lib/uop/shape.ml:1351` (`uncast_const`).
 - **Differs:** a committed integer constant holds its type's value. A fold
   reads a committed constant, a cast of a literal to a type of known width,
   wrapped to that width, and so does a cast of it that collapses; it reads a
@@ -474,7 +474,7 @@ the Exclusions of `README.md`.
   intern as one node, and `exec_alu` compares with it: `nan != nan` and
   `nan < nan` fold to `False`, where `exec_alu` on floats gives `True` and
   `False`.
-- **tolk:** `lib/uop/shape.ml:2551` (`fold_const_alu`); constants are
+- **tolk:** `lib/uop/shape.ml:1853` (`fold_const_alu`); constants are
   interned by `Dtype.equal_const`, and `exec_alu` compares floats.
 - **Differs:** a folded comparison of NaN constants follows IEEE: `nan <> nan`
   is `true`.
@@ -730,8 +730,8 @@ the Exclusions of `README.md`.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:282` (`(x // c1) // c2`),
     `:285` (`c0 + x < c1`), `uop/divandmod.py:101` (`(x // c + a) // d`),
     `codegen/simplify.py:100-103` (`x + y < c`, `x * y < c`) and `:123`
-    (`x + y <> c` under a cast). tolk: `lib/uop/shape.ml:3312,3321`,
-    `lib/uop/shape.ml:2328`, `lib/codegen/simplify.ml:252,268,276,344`.
+    (`x + y <> c` under a cast). tolk: `lib/uop/shape.ml:2614,2623`,
+    `lib/uop/shape.ml:1630`, `lib/codegen/simplify.ml:252,268,276,344`.
     Each applies to a committed integer only where every value it computes
     fits the type; the comparisons of `Simplify` apply to integers only, since
     moving a float term rounds, and `x + y <> c` only under a cast that does
@@ -741,7 +741,7 @@ the Exclusions of `README.md`.
     wraps to `0`.
   - **Float folds.** tinygrad: `uop/symbolic.py:117` (`x + 0`), `:170-176`
     (`x / x`, `(x * y) / y`, `x * 0`), `:247` (`(x / y) / z`). tolk:
-    `lib/uop/shape.ml:2798,2971`. A float `x + 0` is `x` only for `-0.`
+    `lib/uop/shape.ml:2100,2273`. A float `x + 0` is `x` only for `-0.`
     (`-0. + +0.` is `+0.`); `x * 0` is `0` for integers and booleans only (a
     float product by zero is NaN at an infinity or a NaN and `-0.` at a
     negative `x`); `x / x`, `(x * y) / y` and `(x / y) / z` are gone, since
@@ -750,14 +750,14 @@ the Exclusions of `README.md`.
     `1e20 / 1e40` is `0.`.
   - **Signed zeros.** tinygrad: `uop/symbolic.py:248` (`-(x + c)`), `:267`
     (complementary selections), `:472` (`-(x + y)`). tolk:
-    `lib/uop/shape.ml:3158,3226`, `lib/uop/symbolic.ml:247`. For integers and
+    `lib/uop/shape.ml:2460,2528`, `lib/uop/symbolic.ml:247`. For integers and
     booleans only: `-(x + 3)` at `x = -3` is `-0.`, where `-x + -3` is `+0.`, and
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py:240-246` (like terms),
     `:264-265` (a sum of two selections), `:279-280` (two constants of an
     associative operation), `:293-294` (constants to the end), `:390-398,470`
-    (`reduce_mul_chain`). tolk: `lib/uop/shape.ml:3133,3214,3295,3351`,
+    (`reduce_mul_chain`). tolk: `lib/uop/shape.ml:2435,2516,2597,2653`,
     `lib/uop/symbolic.ml:87`.
     Sums, products and maxima regroup for integers and booleans only, and a
     factor leaves a float reduction nowhere: `(x + 1e8) + -1e8` at `x = 1` is
@@ -769,7 +769,7 @@ the Exclusions of `README.md`.
     `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
     `x + x` is still `x * 2`, which is exact.
   - **Maxima.** tinygrad: `uop/symbolic.py:273-275`. tolk:
-    `lib/uop/shape.ml:3258,3278`. A maximum by bounds applies to integers
+    `lib/uop/shape.ml:2560,2580`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
     `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
     computes a maximum becomes one for integers only: rune builds a float
@@ -783,7 +783,7 @@ the Exclusions of `README.md`.
     is `1e-8`, where `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it
     is `1.`.
   - **Pow.** tinygrad: `uop/symbolic.py:16-21` (`simplify_pow`), `:190`
-    (`c ** x`). tolk: `lib/uop/shape.ml:2511,3026`. The reciprocal of the
+    (`c ** x`). tolk: `lib/uop/shape.ml:1813,2328`. The reciprocal of the
     base is taken for exponents of magnitude at least 1 only, where the power
     overflows whenever the reciprocal does: `1e-40 ** -0.8` is `1e32`, where
     `(1 / 1e-40) ** 0.8` is `inf`. A float half-integer power selects `+0.`
@@ -970,7 +970,7 @@ the Exclusions of `README.md`.
   `uop/symbolic.py:23-26` (`fold_bitcast` converts the constant with
   `truncate` before reading its bits).
 - **tolk:** `lib/dtype.ml:17` (`equal_const`), `:27` (`hash_const`) and
-  `:647` (`const`); `lib/uop/shape.ml:2533` (`fold_bitcast`);
+  `:647` (`const`); `lib/uop/shape.ml:1835` (`fold_bitcast`);
   `test/gen/tinygrad.patch`, which applies the same rules to tinygrad before
   the goldens are generated.
 - **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
@@ -1646,8 +1646,8 @@ the Exclusions of `README.md`.
   `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
   Metal.
 - **tolk:** `lib/uop/ops.ml:241` (`phase` and `align`), `:3244`
-  (`param_arg`, which checks them); `lib/uop/shape.ml:1411` (`view_start`)
-  and `:1490` (`storage_phase`, which `param_like` gives a parameter);
+  (`param_arg`, which checks them); `lib/uop/call.ml:403` (`view_start`)
+  and `:482` (`storage_phase`, which `param_like` gives a parameter);
   `lib/schedule/rangeify.ml:532` (`debuf`, which gives them a kernel's
   parameter); `lib/codegen/late/coalesce.ml:130` (the merge).
 - **Differs:** a parameter or buffer carries a congruence for its start: its
@@ -2346,7 +2346,7 @@ stores through a pad.
   a `CONST` (`UPat.cvar("gate")`), and `:228-233` (`fold_where_closure`),
   which substitutes `True` for a selection's condition in its true branch and
   `False` in its false branch, whatever the condition is.
-- **tolk:** `lib/uop/shape.ml:2799` (`broadcast_const`), `:3060` and `:3131`
+- **tolk:** `lib/uop/shape.ml:2101` (`broadcast_const`), `:2362` and `:2433`
   (`fold_where_closure`); `test/gen/tinygrad.patch`, which gives tinygrad the
   same.
 - **Differs:** a selection whose condition is a constant through movements
@@ -2380,7 +2380,7 @@ stores through a pad.
 - **tinygrad:** `uop/symbolic.py:80` (`pm_data_invalid`'s first rule,
   `invalid_pat.broadcast()`), which folds a stack of `Invalid` lanes to one
   `Invalid`.
-- **tolk:** `lib/uop/shape.ml:2688` (`pm_data_invalid`, without that rule);
+- **tolk:** `lib/uop/shape.ml:1990` (`pm_data_invalid`, without that rule);
   `test/gen/tinygrad.patch`, which removes it from tinygrad too.
 - **Differs:** a stack of `Invalid` lanes stays a stack. When every upcast or
   unrolled lane of a gated index is `Invalid`, devectorize splits the index
@@ -2505,7 +2505,7 @@ stores through a pad.
   `:160` (`exec_kernel`).
 - **tolk:** `lib/codegen/codegen.ml:708` (`split_blocks`), `:924` (its place
   in the pipeline) and `:1030` (`whole_loop`); `lib/uop/ops.ml:340`
-  (`kernel_info.split`); `lib/uop/shape.ml:1957` (`program_info_of_sink`);
+  (`kernel_info.split`); `lib/uop/call.ml:719` (`program_info_of_sink`);
   `lib/engine/realize.ml:27` (`get_call_var_uops`);
   `engine/tolk_engine.ml:202` (`block_ops`) and `:230` (`Program.split`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
@@ -2800,7 +2800,7 @@ stores through a pad.
 - **tolk:** `engine/tolk_engine.ml:283` (`env`, the run's variable cells),
   `:481` (`operand`), `:507` (`lane_operand`), `:528` (`launch`), `:1171`
   (`settle`), `:1180` (`run_launch`) and `:1232` (`run_call`'s `Range`);
-  `lib/uop/shape.ml:1720` (`sym_compile`).
+  `lib/uop/shape.ml:1230` (`sym_compile`).
 - **Differs:** linking a schedule turns each call of a host program into a
   launch per lane: a view of linked storage at a constant offset is made
   once, the offset of a view that moves with a range or a variable is an
@@ -2889,7 +2889,7 @@ stores through a pad.
   whether the condition is in `t.bool_slice` or `f.bool_slice`) and
   `uop/ops.py:289-293` (`_bool_slice`, a `recursive_property`: each node
   keeps the set of the boolean nodes it reaches).
-- **tolk:** `lib/uop/shape.ml:3131` (`fold_where_closure`) and
+- **tolk:** `lib/uop/shape.ml:2433` (`fold_where_closure`) and
   `lib/uop/ops.ml:1082` (`reaches`).
 - **Differs:** the rule asks whether `t` or `f` reaches the condition, a
   scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
@@ -4082,7 +4082,7 @@ stores through a pad.
   vector of index expressions or a weak-integer tensor, a divisor of 1 is a
   broadcast 1, which is not the `CONST` 1 and divides no term:
   `UOp.stack(a, b) // 3` raises in `unwrap`.
-- **tolk:** `lib/uop/shape.ml:1588` (`gcd`).
+- **tolk:** `lib/uop/shape.ml:1098` (`gcd`).
 - **Differs:** the coefficient is a scalar constant of the first term's type,
   whatever the terms' shape, so a divisor of 1 is the `CONST` 1, and a larger
   one divides each term as `divides` does.
@@ -4096,7 +4096,7 @@ stores through a pad.
 
 - **tinygrad:** `uop/symbolic.py:304-308` (cast/long folding), which keeps a
   cast of `x & y` or `x >> k` as it is.
-- **tolk:** `lib/uop/shape.ml:3455` (`symbolic`'s cast rules);
+- **tolk:** `lib/uop/shape.ml:2757` (`symbolic`'s cast rules);
   `test/gen/tinygrad.patch`, which gives tinygrad the same rule before the
   goldens are generated.
 - **Differs:** a cast of an unsigned `x land y`, or `x lsr k` with `k` within

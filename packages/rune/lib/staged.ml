@@ -401,7 +401,7 @@ let stage ~here ~inside s (r : Trips.request) =
             let align, phase =
               match List.assoc_opt slot !args with
               | Some arg when a.addrspace = Some Tolk.Dtype.Global ->
-                  Shape.storage_phase arg
+                  Call.storage_phase arg
               | _ -> (a.align, a.phase)
             in
             (u, Ops.replace u ~arg:(Ops.Param { a with slot; align; phase }))

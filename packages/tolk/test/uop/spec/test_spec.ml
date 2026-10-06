@@ -53,7 +53,7 @@ let var ?(dtype = Dtype.Int32) name lo hi =
 
 let fvar name = Ops.variable ~dtype:Float32 name (`Float (-10.)) (`Float 10.)
 let flag name = Ops.variable ~dtype:Bool name (`Bool false) (`Bool true)
-let buffer ?(dtype = Dtype.Int32) n = Shape.param ~shape:[ Int n ] 0 dtype
+let buffer ?(dtype = Dtype.Int32) n = Call.param ~shape:[ Int n ] 0 dtype
 let load buf idx = Ops.load (Ops.index buf [ idx ]) []
 
 let gated_load buf idx =
@@ -311,7 +311,7 @@ let construction =
    three trips of [axis_type], with the range. *)
 let row axis_type =
   let r = Ops.range ~axis_type (Int 3) [ 100 ] in
-  let rows = Shape.param ~shape:[ Int 12 ] 1 Float32 in
+  let rows = Call.param ~shape:[ Int 12 ] 1 Float32 in
   ( Shape.shrink rows
       [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ],
     r )
@@ -359,10 +359,10 @@ let loops =
    apart. *)
 let call_on_rows ~align stride =
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
-  let rows = Shape.param ~shape:[ Int ((2 * stride) + 4) ] 1 Float32 in
+  let rows = Call.param ~shape:[ Int ((2 * stride) + 4) ] 1 Float32 in
   let start = Ops.O.(r * int stride) in
   let row = Shape.shrink rows [ Some (Sym start, Sym Ops.O.(start + int 4)) ] in
-  let p = Shape.param ~shape:[ Int 4 ] ~align 0 Float32 in
+  let p = Call.param ~shape:[ Int 4 ] ~align 0 Float32 in
   let k = Ops.range (Int 4) [ 0 ] in
   let one = Ops.float ~dtype:Float32 1. in
   let body =

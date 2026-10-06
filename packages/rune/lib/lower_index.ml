@@ -275,7 +275,7 @@ let update_region x ~starts v =
   in
   match List.init (Shape.ndim x) bound with
   | bounds -> (
-      match Shape.axis x with
+      match Call.axis x with
       | Some a when List.nth bounds a <> None -> None
       | _ -> Some { dest = Shape.shrink x bounds; value = v })
   | exception Exit -> None

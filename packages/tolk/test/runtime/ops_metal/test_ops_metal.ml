@@ -107,7 +107,7 @@ let uncompiled =
 (* The kernel on METAL adding one to each of four floats. *)
 let adds_one () =
   let param slot =
-    Shape.param ~shape:[ Int 4 ] ~device:(Single "METAL") slot Float32
+    Call.param ~shape:[ Int 4 ] ~device:(Single "METAL") slot Float32
   in
   let i = Ops.range (Int 4) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
@@ -158,7 +158,7 @@ let quarter_sized () =
   let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 1024)) in
   let size = Ops.O.((n + Ops.int 3) // Ops.int 4) in
   let param slot =
-    Shape.param ~shape:[ Int 256 ] ~device:(Single "METAL") slot Float32
+    Call.param ~shape:[ Int 256 ] ~device:(Single "METAL") slot Float32
   in
   let i = Ops.range (Sym size) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
@@ -178,7 +178,7 @@ let quarter_sized () =
   let buf () = Ops.new_buffer (Single "METAL") 256 Float32 in
   Ops.call
     (Codegen.to_program kernel metal)
-    [ buf (); buf (); Shape.bind n (`Int (Bigint.of_int 100)) ]
+    [ buf (); buf (); Call.bind n (`Int (Bigint.of_int 100)) ]
 
 let sizes =
   group "launch sizes"

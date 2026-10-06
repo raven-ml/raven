@@ -32,7 +32,7 @@ let rewrites ?(default_float = "float") pm name u =
         (fun () -> Ops.sink [ u; rewrite pm u ]))
 
 let loaded_float =
-  Ops.load (Ops.index (Shape.param ~shape:[ Int 1 ] 0 Float32) [ i32 0 ]) []
+  Ops.load (Ops.index (Call.param ~shape:[ Int 1 ] 0 Float32) [ i32 0 ]) []
 
 (* commit_weak_consts *)
 
@@ -83,7 +83,7 @@ let pm_commit_weak =
         Ops.O.(int 0xFFFF lsl var ~dtype:Uint32 "s" 0 16);
       commit ~default_float:"half" "store_commits_its_value_at_the_destination"
         (let dst =
-           Ops.index (Shape.param ~shape:[ Int 1 ] 0 Bfloat16) [ i32 0 ]
+           Ops.index (Call.param ~shape:[ Int 1 ] 0 Bfloat16) [ i32 0 ]
          in
          Ops.store ~gate:(Ops.bool true) dst (float 5.0));
       commit "cast_widens_a_weak_expression"
@@ -113,7 +113,7 @@ let pm_lower_weak =
   let range = Ops.range (Int 16) [ 0 ] in
   let gated_index size hi =
     let idx = Ops.variable ~dtype:Int64 "i" (i 0) (`Int hi) in
-    Ops.index (Shape.param ~shape:[ Int size ] 0 Float32) [ Shape.valid idx flag ]
+    Ops.index (Call.param ~shape:[ Int size ] 0 Float32) [ Shape.valid idx flag ]
   in
   let max_uint64 = Bigint.(pred (shift_left one 64)) in
   let custom = Ops.v Op.Custom ~arg:(Code { code = "n"; dtype = Weak_int }) in
@@ -163,12 +163,12 @@ let pm_lower_weak =
       lower "lower_a_gated_long_index_into_a_huge_buffer_keeps_int64"
         (gated_index (pow2 33) (Bigint.shift_left Bigint.one 32));
       lower "lower_a_gated_shrink_to_the_width_its_bounds_need"
-        (let buf = Shape.param ~shape:[ Int (pow2 31 + 64) ] 0 Float32 in
+        (let buf = Call.param ~shape:[ Int (pow2 31 + 64) ] 0 Float32 in
          let n = var "i" 0 (pow2 28) in
          let offset = Shape.valid Ops.O.(n * int 24) Ops.O.(n < int (pow2 28)) in
          Ops.v Op.Shrink ~src:[ buf; offset; int 4 ]);
       lower "lower_a_register_buffer_size"
-        (Shape.placeholder ~slot:0 ~addrspace:Reg [ 4 ] Float32);
+        (Call.placeholder ~slot:0 ~addrspace:Reg [ 4 ] Float32);
     ]
 
 (* pm_uncast_const *)

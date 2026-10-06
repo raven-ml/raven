@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 open Dtypes
 
-let x ?(slot = 0) dt = Shape.param slot dt
+let x ?(slot = 0) dt = Call.param slot dt
 let int n = `Int (Bigint.of_int n)
 let eval ?vars ?params ?buffers u = Interpreter.eval ?vars ?params ?buffers u
 let var name = Ops.variable ~dtype:Dtype.Int32 name (int 0) (int 10)
@@ -90,7 +90,7 @@ let leaves =
             (Interpreter.name (Ops.range (Int 4) [ 1; 2 ])));
       test "a bound variable is its bound value, unless vars binds it"
         (fun () ->
-          let b = Shape.bind (var "i") (int 2) in
+          let b = Call.bind (var "i") (int 2) in
           equal const (int 2) (eval b);
           equal const (int 5) (eval ~vars:[ ("i", int 5) ] b));
       test "a range or a hardware index without a value is refused" (fun () ->
@@ -220,7 +220,7 @@ let stack_lane k =
   Ops.v ~src:[ Shape.stack lanes; Ops.int ~dtype:Dtype.Int32 k ] Index
 
 let storage =
-  let table = Shape.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
+  let table = Call.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
   let elements = [ (0, Array.map int [| 10; 11; 12; 13 |]) ] in
   let i = var "i" in
   let at v u = eval ~vars:[ ("i", int v) ] ~buffers:elements u in
@@ -274,7 +274,7 @@ let storage =
     ]
 
 let kernels =
-  let out = Shape.param ~shape:[ Int 16 ] 0 Dtype.Int32 in
+  let out = Call.param ~shape:[ Int 16 ] 0 Dtype.Int32 in
   let r = Ops.range (Int 4) [ 0 ] and s = Ops.range (Int 2) [ 1 ] in
   let store ?gate index value =
     Ops.store ?gate (Ops.index out [ index ]) value
@@ -313,7 +313,7 @@ let kernels =
                   (store (Ops.int 3) (Ops.int ~dtype:Dtype.Int32 7))
                   [ r ])));
       test "a store's value may read storage and reduce" (fun () ->
-          let table = Shape.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
+          let table = Call.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
           let total = Ops.reduce (Ops.index table [ s ]) Add [ s ] in
           equal (list write)
             [ (0, 0, int 5) ]

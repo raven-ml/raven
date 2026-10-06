@@ -7,6 +7,7 @@
 
 open Ops
 open Shape
+open Call
 
 let rule = Pattern_matcher.rule
 let ops = Op.Set.of_list
@@ -225,12 +226,12 @@ let rec shard_srcs msrcs axis =
   let out_shape = broadcast_shape (List.map shape msrcs) in
   let each mlb =
     let src_axis = axis - (List.length out_shape - ndim mlb) in
-    if Option.equal Int.equal (Shape.axis mlb) (Some src_axis) then nth mlb 0
+    if Option.equal Int.equal (Call.axis mlb) (Some src_axis) then nth mlb 0
     else
       (* Every shard gets the whole copy, sharded iff this source has the axis:
          broadcast sources stay whole. *)
       let full =
-        if Shape.axis mlb = None then mlb
+        if Call.axis mlb = None then mlb
         else copy_multi mlb (Option.get (device mlb))
       in
       if List.mem axis (broadcast_axes (shape mlb) out_shape) then full

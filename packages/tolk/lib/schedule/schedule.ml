@@ -7,6 +7,7 @@
 
 open Ops
 open Shape
+open Call
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
@@ -521,7 +522,7 @@ let rec view_of ctx c src =
             | Some view ->
                 let s = sharding unshard in
                 Some
-                  (Shape.unshard ~ranges:(List.map snd s) view (List.map fst s)))
+                  (Call.unshard ~ranges:(List.map snd s) view (List.map fst s)))
     else if op buf <> Op.Buffer then None
     else
       match Prepare.contiguous_view src with

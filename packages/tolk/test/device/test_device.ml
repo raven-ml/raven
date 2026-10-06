@@ -290,7 +290,7 @@ let buffer_dtypes = [| Dtype.Float32; Dtype.Int8; Dtype.Float16; Dtype.Int64 |]
 
 (* Buffer [slot] of [slot + 1] elements, named after its slot. *)
 let buffer slot =
-  Shape.param
+  Call.param
     ~shape:[ Int (slot + 1) ]
     ~name:(Printf.sprintf "b%d" slot)
     slot
@@ -378,7 +378,7 @@ let signature_of_layout l =
 
 let refuses_incomplete () =
   let sink = Ops.sink ~kernel:(Ops.kernel_info ()) [] in
-  let info = Shape.program_info_of_sink ~target:hip sink in
+  let info = Call.program_info_of_sink ~target:hip sink in
   refuses (fun () -> Elf.of_program sink);
   refuses (fun () ->
       Elf.of_program (Ops.v Program ~arg:(Program info) ~src:[ sink ]))

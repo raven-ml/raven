@@ -1411,7 +1411,7 @@ val gate_kernel_sink : t -> bool
 
 (**/**)
 
-(* The memos of the properties that [Shape] computes: only it writes them. *)
+(* The memos of the properties [Shape] and [Call] compute: only they write them. *)
 
 val shape_memo : t -> sint list option option
 val set_shape_memo : t -> sint list option -> unit

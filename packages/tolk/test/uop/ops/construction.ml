@@ -8,7 +8,7 @@ open Common
 let str pp x = Format.asprintf "%a" pp x
 let cpu = Ops.Single "CPU"
 let pair_devices = Ops.Multi [ "CPU:0"; "CPU:1" ]
-let param ?device shape slot dt = Shape.param ?device ~shape:(ints shape) slot dt
+let param ?device shape slot dt = Call.param ?device ~shape:(ints shape) slot dt
 
 (* Graphs *)
 
@@ -363,7 +363,7 @@ let movement =
             (Ops.base (Shape.permute (Shape.reshape p (ints [ 6; 4 ])) [ 1; 0 ])
             == flat);
           let u =
-            Shape.unshard (param ~device:pair_devices [ 4 ] 1 Float32) [ 0 ]
+            Call.unshard (param ~device:pair_devices [ 4 ] 1 Float32) [ 0 ]
           in
           equal op Op.Unshard (Ops.op (Ops.base u));
           equal op Op.Param (Ops.op (Ops.unsharded_base u));
@@ -389,14 +389,14 @@ let movement =
           rejects (fun () -> Shape.cat p [ param [ 2; 4; 4 ] 1 Float32 ]));
       test "nbytes is the elements times their size" (fun () ->
           equal int 96 (Shape.nbytes p);
-          equal int 2 (Shape.nbytes (Shape.param 1 Float16)));
+          equal int 2 (Shape.nbytes (Call.param 1 Float16)));
     ]
 
 (* Several devices *)
 
 let devices =
   let m = param ~device:pair_devices [ 4; 6 ] 1 Float32 in
-  let sharded = Shape.unshard m [ 0 ] in
+  let sharded = Call.unshard m [ 0 ] in
   group "several devices"
     [
       test "device reads storage, copies and reductions, and sources otherwise"
@@ -422,49 +422,49 @@ let devices =
                (param ~device:(Multi [ "DISK:a"; "DISK:b" ]) [ 4 ] 0 Uint8)));
       test "axis follows movements, and a copy or a sliced shard axis loses it"
         (fun () ->
-          equal (option int) (Some 0) (Shape.axis sharded);
-          equal (option int) (Some 1) (Shape.axis (Shape.permute sharded [ 1; 0 ]));
+          equal (option int) (Some 0) (Call.axis sharded);
+          equal (option int) (Some 1) (Call.axis (Shape.permute sharded [ 1; 0 ]));
           equal (option int) (Some 0)
-            (Shape.axis (Shape.reshape sharded (ints [ 48 ])));
+            (Call.axis (Shape.reshape sharded (ints [ 48 ])));
           equal (option int) (Some 1)
-            (Shape.axis (Shape.expand sharded (ints [ 2; 8; 6 ])));
+            (Call.axis (Shape.expand sharded (ints [ 2; 8; 6 ])));
           equal (option int) (Some 0)
-            (Shape.axis (Shape.shrink sharded [ None; Some (Int 1, Int 3) ]));
+            (Call.axis (Shape.shrink sharded [ None; Some (Int 1, Int 3) ]));
           equal (option int) None
-            (Shape.axis (Shape.shrink sharded [ Some (Int 1, Int 3); None ]));
-          equal (option int) None (Shape.axis (Shape.rop sharded Op.Add [ 0 ]));
-          equal (option int) (Some 0) (Shape.axis (Shape.rop sharded Op.Add [ 1 ]));
-          equal (option int) None (Shape.axis (Ops.copy_to_device sharded cpu));
-          equal (option int) None (Shape.axis m));
+            (Call.axis (Shape.shrink sharded [ Some (Int 1, Int 3); None ]));
+          equal (option int) None (Call.axis (Shape.rop sharded Op.Add [ 0 ]));
+          equal (option int) (Some 0) (Call.axis (Shape.rop sharded Op.Add [ 1 ]));
+          equal (option int) None (Call.axis (Ops.copy_to_device sharded cpu));
+          equal (option int) None (Call.axis m));
       test
         "axis of an elementwise operation is its sharded source's, aligned \
          right" (fun () ->
-          equal (option int) (Some 0) (Shape.axis Ops.O.(sharded + float 1.));
+          equal (option int) (Some 0) (Call.axis Ops.O.(sharded + float 1.));
           equal (option int) (Some 1)
-            (Shape.axis
+            (Call.axis
                Ops.O.(Shape.expand (Ops.float 1.) (ints [ 2; 8; 6 ]) + sharded));
           equal (option int) (Some 1)
-            (Shape.axis (Shape.stack [ sharded; sharded ])));
+            (Call.axis (Shape.stack [ sharded; sharded ])));
       test "a shrink of part of the sharded axis loses the axis" (fun () ->
           equal (option int) None
-            (Shape.axis (Shape.shrink sharded [ Some (Int 0, Int 4); None ])));
+            (Call.axis (Shape.shrink sharded [ Some (Int 0, Int 4); None ])));
       test "a value sharded over a range counts the range's shards" (fun () ->
           let u =
-            Shape.unshard
+            Call.unshard
               ~ranges:[ Ops.range ~axis_type:Local (Int 4) [ -2 ] ]
               m [ 0 ]
           in
           equal shape (ints [ 16; 6 ]) (Shape.shape u);
-          equal shape (ints [ 4; 6 ]) (Shape.shard_shape u);
+          equal shape (ints [ 4; 6 ]) (Call.shard_shape u);
           equal
             (list (pair sint sint))
             [
               (Int 0, Int 4); (Int 4, Int 8); (Int 8, Int 12); (Int 12, Int 16);
             ]
-            (Shape.bounds u));
+            (Call.bounds u));
       test "axis rejects a node sharded on several axes" (fun () ->
           let two =
-            Shape.unshard
+            Call.unshard
               ~ranges:
                 [
                   Ops.range ~axis_type:Device (Int 2) [ -1 ];
@@ -472,43 +472,43 @@ let devices =
                 ]
               m [ 0; 1 ]
           in
-          rejects (fun () -> Shape.axis two));
+          rejects (fun () -> Call.axis two));
       test "axis rejects a reshape that moves elements between shards"
         (fun () ->
           rejects (fun () ->
-              Shape.axis (Shape.reshape (Shape.unshard m [ 1 ]) (ints [ 48 ]))));
+              Call.axis (Shape.reshape (Call.unshard m [ 1 ]) (ints [ 48 ]))));
       test "sharding pairs each sharded axis with its range" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           equal
             (list (pair int uop))
             [ (0, d) ]
-            (Ops.sharding (Shape.unshard ~ranges:[ d ] m [ 0 ]));
+            (Ops.sharding (Call.unshard ~ranges:[ d ] m [ 0 ]));
           equal (list (pair int uop)) [] (Ops.sharding m));
       test "a sharded value has its shards' shape and bounds" (fun () ->
           equal shape (ints [ 8; 6 ]) (Shape.shape sharded);
-          equal shape (ints [ 4; 6 ]) (Shape.shard_shape sharded);
-          equal (list int) [ 4; 6 ] (Shape.max_shard_shape sharded);
+          equal shape (ints [ 4; 6 ]) (Call.shard_shape sharded);
+          equal (list int) [ 4; 6 ] (Call.max_shard_shape sharded);
           equal
             (list (pair sint sint))
             [ (Int 0, Int 4); (Int 4, Int 8) ]
-            (Shape.bounds sharded);
-          equal shape (ints [ 4; 6 ]) (Shape.shard_shape m);
-          rejects (fun () -> Shape.bounds m));
+            (Call.bounds sharded);
+          equal shape (ints [ 4; 6 ]) (Call.shard_shape m);
+          rejects (fun () -> Call.bounds m));
       test
         "shard_slice is a scalar itself, and rejects a count that does not \
          divide the axis" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          is_true (Shape.shard_slice (Ops.int 1) 0 d == Ops.int 1);
-          rejects (fun () -> Shape.shard_slice (param [ 3 ] 0 Float32) 0 d));
+          is_true (Call.shard_slice (Ops.int 1) 0 d == Ops.int 1);
+          rejects (fun () -> Call.shard_slice (param [ 3 ] 0 Float32) 0 d));
       test "shard_slice rejects a size whose divisibility is not decided"
         (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          let x = Shape.param ~shape:[ Sym (weak_var "x" 0 10) ] 0 Float32 in
-          rejects (fun () -> Shape.shard_slice x 0 d));
+          let x = Call.param ~shape:[ Sym (weak_var "x" 0 10) ] 0 Float32 in
+          rejects (fun () -> Call.shard_slice x 0 d));
       test "unshard rejects unequal lengths and a repeated axis" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          rejects (fun () -> Shape.unshard ~ranges:[ d; d ] m [ 0 ]);
-          rejects (fun () -> Shape.unshard ~ranges:[ d; d ] m [ 0; 0 ]));
+          rejects (fun () -> Call.unshard ~ranges:[ d; d ] m [ 0 ]);
+          rejects (fun () -> Call.unshard ~ranges:[ d; d ] m [ 0; 0 ]));
       test "copy_to_device rejects a disk and a weak type" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
           rejects (fun () -> Ops.copy_to_device p (Single "DISK:/tmp/f"));
@@ -536,16 +536,16 @@ let devices =
       test "empty_like on one device takes a sharded value's whole shape"
         (fun () ->
           let u =
-            Shape.empty_like ~dtype:Int32 ~device:(Single "CPU:2") sharded
+            Call.empty_like ~dtype:Int32 ~device:(Single "CPU:2") sharded
           in
           equal shape (ints [ 8; 6 ]) (Shape.shape u);
           equal (option device) (Some (Single "CPU:2")) (Ops.device u);
-          equal (option int) None (Shape.axis u);
+          equal (option int) None (Call.axis u);
           is_true (Ops.has_buffer_identity u));
       test "empty_like on the same devices keeps the sharding" (fun () ->
-          let u = Shape.empty_like sharded in
+          let u = Call.empty_like sharded in
           equal shape (ints [ 8; 6 ]) (Shape.shape u);
-          equal (option int) (Some 0) (Shape.axis u);
+          equal (option int) (Some 0) (Call.axis u);
           equal dtype Float32 (Ops.dtype u));
     ]
 
@@ -555,7 +555,7 @@ let storage =
   group "storage"
     [
       test "addrspace of a stack is its sources' shared space" (fun () ->
-          let local = Shape.placeholder ~slot:0 ~addrspace:Local [ 8 ] Float32 in
+          let local = Call.placeholder ~slot:0 ~addrspace:Local [ 8 ] Float32 in
           let at n = Ops.index local [ Ops.int n ] in
           equal (option addr_space) (Some Local)
             (Ops.addrspace (Ops.v ~src:[ at 0; at 1 ] Op.Stack));
@@ -564,7 +564,7 @@ let storage =
                (Ops.v ~src:[ at 0; param [ 1 ] 1 Float32 ] Op.Stack)));
       test "addrspace reads storage, and passes through indexing and movement"
         (fun () ->
-          let local = Shape.placeholder ~slot:0 ~addrspace:Local [ 8 ] Float32 in
+          let local = Call.placeholder ~slot:0 ~addrspace:Local [ 8 ] Float32 in
           equal (option addr_space) (Some Local) (Ops.addrspace local);
           equal (option addr_space) (Some Local)
             (Ops.addrspace (Ops.index local [ Ops.int 0 ]));
@@ -611,7 +611,7 @@ let storage =
           is_true (Ops.needs_storage Ops.O.(p + float 1.));
           is_true
             (Ops.needs_storage
-               (Shape.alloc ~slot:3 ~device:cpu (ints [ 4 ]) Float32));
+               (Call.alloc ~slot:3 ~device:cpu (ints [ 4 ]) Float32));
           is_false (Ops.needs_storage Ops.O.(param [ 4 ] 1 Float32 + float 1.)));
       test "unique_num never returns a number twice, from any domain" (fun () ->
           let draw () = List.init 500 (fun _ -> Ops.unique_num ()) in
@@ -625,20 +625,20 @@ let storage =
           rejects (fun () -> Ops.getaddr (param [ 4 ] 0 Float32)));
       test "placeholder rejects a scalar variable's address space" (fun () ->
           rejects (fun () ->
-              Shape.placeholder ~slot:0 ~addrspace:Alu [ 4 ] Float32));
+              Call.placeholder ~slot:0 ~addrspace:Alu [ 4 ] Float32));
       test "storage rejects a weak type" (fun () ->
           rejects (fun () -> Ops.new_buffer cpu 4 Weak_float);
-          rejects (fun () -> Shape.empty ~device:cpu (ints [ 4 ]) Weak_int);
-          rejects (fun () -> Shape.param 0 Weak_int));
+          rejects (fun () -> Call.empty ~device:cpu (ints [ 4 ]) Weak_int);
+          rejects (fun () -> Call.param 0 Weak_int));
       test "placeholder rejects a device for local storage" (fun () ->
           rejects (fun () ->
-              Shape.placeholder ~slot:0 ~addrspace:Local ~device:cpu [ 4 ] Float32));
+              Call.placeholder ~slot:0 ~addrspace:Local ~device:cpu [ 4 ] Float32));
       test "placeholder commits a weak type" (fun () ->
-          equal dtype Int32 (Ops.dtype (Shape.placeholder ~slot:0 [ 4 ] Weak_int)));
+          equal dtype Int32 (Ops.dtype (Call.placeholder ~slot:0 [ 4 ] Weak_int)));
       test "a clone of a weak value commits its type" (fun () ->
           equal dtype Int32
             (Ops.dtype
-               (Shape.clone ~device:cpu (Shape.expand (Ops.int 3) (ints [ 4 ])))));
+               (Call.clone ~device:cpu (Shape.expand (Ops.int 3) (ints [ 4 ])))));
       test "a stage is its own base and storage, without buffer identity"
         (fun () ->
           let s = Ops.bufferize (param ~device:cpu [ 2; 4 ] 0 Float32) [] in
@@ -648,11 +648,11 @@ let storage =
           equal shape (ints [ 2; 4 ]) (Shape.shape s));
       test "clone rejects a disk, named in any case" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
-          rejects (fun () -> Shape.clone ~device:(Single "DISK:/tmp/f") p);
-          rejects (fun () -> Shape.clone ~device:(Single "disk:0") p);
+          rejects (fun () -> Call.clone ~device:(Single "DISK:/tmp/f") p);
+          rejects (fun () -> Call.clone ~device:(Single "disk:0") p);
           is_true
             (Ops.equal_device (Single "DISKS")
-               (Option.get (Ops.device (Shape.clone ~device:(Single "DISKS") p)))));
+               (Option.get (Ops.device (Call.clone ~device:(Single "DISKS") p)))));
       test "new_buffer takes the next slot without one" (fun () ->
           let slot u =
             match Ops.arg u with Param p -> p.slot | _ -> fail "a buffer"
@@ -670,46 +670,46 @@ let variables =
     [
       test "a variable is a named scalar with a range" (fun () ->
           is_true (Shape.is_variable n);
-          is_false (Shape.is_bound_var n);
+          is_false (Call.is_bound_var n);
           equal string "n" (Ops.expr n);
           equal (pair value value) (int_bounds 1 8) (bounds n);
           is_false (Shape.is_variable (param [ 4 ] 0 Float32));
-          is_false (Shape.is_variable (Shape.param 0 Int32)));
+          is_false (Shape.is_variable (Call.param 0 Int32)));
       test "expr names a named buffer, and rejects a node without a name"
         (fun () ->
           equal string "w"
-            (Ops.expr (Shape.param ~name:"w" ~shape:(ints [ 4 ]) 0 Float32));
+            (Ops.expr (Call.param ~name:"w" ~shape:(ints [ 4 ]) 0 Float32));
           rejects (fun () -> Ops.expr (param [ 4 ] 0 Float32)));
       test "bind binds a value within the range" (fun () ->
-          let b = Shape.bind n (i 3) in
-          is_true (Shape.is_bound_var b);
+          let b = Call.bind n (i 3) in
+          is_true (Call.is_bound_var b);
           is_true (Shape.is_variable b);
-          equal (pair uop value) (n, i 3) (Shape.unbind b);
-          ignore (Shape.bind n (i 1));
-          ignore (Shape.bind n (i 8)));
+          equal (pair uop value) (n, i 3) (Call.unbind b);
+          ignore (Call.bind n (i 1));
+          ignore (Call.bind n (i 8)));
       test
         "bind rejects a bound variable, a value out of range, and a value off \
          its multiple" (fun () ->
-          rejects (fun () -> Shape.bind (Shape.bind n (i 3)) (i 4));
-          rejects (fun () -> Shape.bind n (i 0));
-          rejects (fun () -> Shape.bind n (i 9));
-          rejects (fun () -> Shape.bind (weak_var ~multiple_of:4 "m" 0 16) (i 6));
-          ignore (Shape.bind (weak_var ~multiple_of:4 "m" 0 16) (i 12));
-          rejects (fun () -> Shape.bind (param [ 4 ] 0 Float32) (i 1)));
+          rejects (fun () -> Call.bind (Call.bind n (i 3)) (i 4));
+          rejects (fun () -> Call.bind n (i 0));
+          rejects (fun () -> Call.bind n (i 9));
+          rejects (fun () -> Call.bind (weak_var ~multiple_of:4 "m" 0 16) (i 6));
+          ignore (Call.bind (weak_var ~multiple_of:4 "m" 0 16) (i 12));
+          rejects (fun () -> Call.bind (param [ 4 ] 0 Float32) (i 1)));
       test "unbound strips the value and the tag" (fun () ->
-          is_true (Shape.unbound (Ops.rtag (Shape.bind n (i 3))) == n);
-          is_true (Shape.unbound n == n));
+          is_true (Call.unbound (Ops.rtag (Call.bind n (i 3))) == n);
+          is_true (Call.unbound n == n));
       test "unbound rejects a node that is not a variable" (fun () ->
-          rejects (fun () -> Shape.unbound (param [ 4 ] 0 Float32)));
+          rejects (fun () -> Call.unbound (param [ 4 ] 0 Float32)));
       test "variables lists a scalar parameter without a range" (fun () ->
-          let s = Shape.param ~addrspace:(Some Alu) 0 Int32 in
-          equal uops [ s ] (Shape.variables Ops.O.(s + int 1)));
+          let s = Call.param ~addrspace:(Some Alu) 0 Int32 in
+          equal uops [ s ] (Call.variables Ops.O.(s + int 1)));
       test "unbind rejects a variable that is not bound" (fun () ->
-          rejects (fun () -> Shape.unbind n));
+          rejects (fun () -> Call.unbind n));
       test "unbind_all unbinds each variable and lists its value" (fun () ->
           let m = weak_var "m" 0 4 in
-          let e = Ops.O.(Shape.bind n (i 3) + Shape.bind m (i 2)) in
-          let u, values = Shape.unbind_all e in
+          let e = Ops.O.(Call.bind n (i 3) + Call.bind m (i 2)) in
+          let u, values = Call.unbind_all e in
           equal uop Ops.O.(n + m) u;
           equal
             (slist (pair uop value) (fun (a, _) (b, _) -> Ops.compare a b))
@@ -718,12 +718,12 @@ let variables =
       test "variables are sorted by name, with a device range's device number"
         (fun () ->
           let m = weak_var "m" 0 4 in
-          equal uops [ m; n ] (Shape.variables Ops.O.(n + m));
-          equal uops [ m; n ] (Shape.variables Ops.O.(Shape.bind n (i 3) + m));
+          equal uops [ m; n ] (Call.variables Ops.O.(n + m));
+          equal uops [ m; n ] (Call.variables Ops.O.(Call.bind n (i 3) + m));
           let d = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           equal uops
             [ Ops.variable ~dtype:Weak_int "_device_num" (i 0) (i 3); n ]
-            (Shape.variables Ops.O.(d + n)));
+            (Call.variables Ops.O.(d + n)));
     ]
 
 (* Calls *)
@@ -777,7 +777,7 @@ let calls =
           is_false (Ops.is_inline_call body));
       test "a call with outputs has them unbound until they are resolved"
         (fun () ->
-          let out = Shape.call_with_output Ops.O.(arg + float 1.) [ arg ] in
+          let out = Call.call_with_output Ops.O.(arg + float 1.) [ arg ] in
           let c = Ops.nth out 1 in
           is_true (Ops.has_unbound_outputs c);
           equal uops [ out ] (Ops.unbound_outputs c);
@@ -788,16 +788,16 @@ let calls =
          the arguments" (fun () ->
           let v = Ops.O.(arg + float 1.) in
           rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 1; 0 ] [ v; v ] [ arg ]);
+              Call.call_with_outputs ~output_pos:[ 1; 0 ] [ v; v ] [ arg ]);
           rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 0; 0 ] [ v; v ] [ arg ]);
+              Call.call_with_outputs ~output_pos:[ 0; 0 ] [ v; v ] [ arg ]);
           rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 5 ] [ v ] [ arg ]);
+              Call.call_with_outputs ~output_pos:[ 5 ] [ v ] [ arg ]);
           rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 0; 1 ] [ v ] [ arg ]));
+              Call.call_with_outputs ~output_pos:[ 0; 1 ] [ v ] [ arg ]));
       test "a call compiled apart stages its arguments" (fun () ->
           let v = Ops.O.(arg + float 1.) in
-          let out = Shape.call_with_output ~precompile:true v [ v ] in
+          let out = Call.call_with_output ~precompile:true v [ v ] in
           equal op Op.Stage (Ops.op (Ops.nth (Ops.nth out 1) 1)));
       test "custom_function names an external function" (fun () ->
           let fn = Ops.custom_function "f" [ arg ] in

@@ -263,7 +263,7 @@ let gen_point d =
   in
   List.fold_right
     (fun v env -> Gen.map (fun (b, e) -> b :: e) (Gen.pair (within v) env))
-    (Shape.variables d) (Gen.constant [])
+    (Call.variables d) (Gen.constant [])
 
 let pp_case ppf (d, env) =
   Format.fprintf ppf "@[<v>%a@,at %a@]" (Testable.pp Uops.uop) d

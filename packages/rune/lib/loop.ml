@@ -100,7 +100,7 @@ let cut ~own next args body =
           else
             let slot = next () and arg = Ops.contiguous u in
             args := (slot, arg) :: !args;
-            Shape.param_like arg slot
+            Call.param_like arg slot
         in
         Ops.Tbl.add rebuilt u v;
         v
@@ -126,7 +126,7 @@ let carry device slot axis u =
           shape
       in
       let view s =
-        Shape.unshard
+        Call.unshard
           (Shape.reshape s (List.map (fun n -> Ops.Int n) part))
           [ axis ]
       in
@@ -147,7 +147,7 @@ let repeat device n init step =
        it mixes with a sharded value. An odd count takes its first step before
        the loop. *)
     let first = step init in
-    let axes = List.map Shape.axis first in
+    let axes = List.map Call.axis first in
     let init = if n mod 2 = 1 then List.map Ops.contiguous first else init in
     if n < 2 then init
     else
@@ -175,7 +175,7 @@ let repeat device n init step =
                   (Shape.shape u)
             | Carry { slot; init; numel; view } ->
                 let p =
-                  Shape.param ~shape:[ Ops.Int numel ] ~device slot
+                  Call.param ~shape:[ Ops.Int numel ] ~device slot
                     (Ops.dtype init)
                 in
                 Ops.Tbl.replace own p ();

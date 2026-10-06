@@ -159,7 +159,7 @@ let evaluate s us =
     match Shape.numel u with
     | Ops.Int n ->
         let slot = Ops.unique_num () in
-        let p = Shape.param ~shape:[ Ops.Int n ] slot (Ops.dtype u) in
+        let p = Call.param ~shape:[ Ops.Int n ] slot (Ops.dtype u) in
         (slot, Array.make n `Invalid, Ops.store p (Shape.reshape u [ Ops.Int n ]))
     | Ops.Sym _ -> invalid_arg "a value of symbolic shape"
   in

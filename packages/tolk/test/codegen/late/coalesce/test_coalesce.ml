@@ -18,7 +18,7 @@ let case file cell =
 
 (* Accesses *)
 
-let buf = Shape.param ~shape:[ Int 64 ] 0 Float32
+let buf = Call.param ~shape:[ Int 64 ] 0 Float32
 let at buf i = Ops.index buf [ i ]
 let load_at buf i = Ops.load (at buf (Ops.int i)) []
 let loads buf offsets = Ops.sink (List.map (load_at buf) offsets)
@@ -203,7 +203,7 @@ let lengths =
             (List.init 4 (fun k -> Ops.index merged [ Ops.int k ]))
             lanes);
       test "without ALLOW_HALF8, eight halves are two loads of four" (fun () ->
-          let half = Shape.param ~shape:[ Int 64 ] 2 Float16 in
+          let half = Call.param ~shape:[ Int 64 ] 2 Float16 in
           equal runs
             [ (0, 4); (4, 4) ]
             (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));
@@ -212,7 +212,7 @@ let lengths =
 (* A buffer whose first element lies [phase] bytes past a multiple of [align]
   . *)
 let phased ?(dtype = Dtype.Float32) ?align phase =
-  Shape.param ~shape:[ Int 64 ] ~phase ?align 0 dtype
+  Call.param ~shape:[ Int 64 ] ~phase ?align 0 dtype
 
 let phases =
   group "phase"
@@ -278,17 +278,17 @@ let left_alone =
   group "left alone"
     [
       same "register memory"
-        (loads (Shape.placeholder ~slot:3 ~addrspace:Reg [ 16 ] Float32) f4);
+        (loads (Call.placeholder ~slot:3 ~addrspace:Reg [ 16 ] Float32) f4);
       same "a volatile parameter"
-        (loads (Shape.param ~volatile:true ~shape:[ Int 16 ] 4 Float32) f4);
+        (loads (Call.param ~volatile:true ~shape:[ Int 16 ] 4 Float32) f4);
       same "a volatile parameter viewed at another type"
         (loads
            (Ops.bitcast
-              (Shape.param ~volatile:true ~shape:[ Int 4 ] 4 Uint32)
+              (Call.param ~volatile:true ~shape:[ Int 4 ] 4 Uint32)
               Int32)
            f4);
       same "stores to a volatile parameter"
-        (stores (Shape.param ~volatile:true ~shape:[ Int 16 ] 4 Float32) f4);
+        (stores (Call.param ~volatile:true ~shape:[ Int 16 ] 4 Float32) f4);
       test "a store stored twice is one store" (fun () ->
           let s = store_at buf 0 in
           equal runs
@@ -373,7 +373,7 @@ let size = 40
 
 let generated ?(phases = ((0, 16), (0, 16))) (dtype, runs) =
   let buffer slot (phase, align) =
-    Shape.param ~shape:[ Int size ] ~phase ~align slot dtype
+    Call.param ~shape:[ Int size ] ~phase ~align slot dtype
   in
   let input = buffer 0 (fst phases) and output = buffer 1 (snd phases) in
   (* A second store of one element under the same key is refused; the first
@@ -519,9 +519,9 @@ let laws =
    [r = 4] and [0] before it. Slot 0's index is loaded under the pad's gate. *)
 let padded_gather =
   let r = Ops.range (Int 8) [ 0 ] in
-  let ids = Shape.param ~shape:[ Int 4 ] 0 Int32 in
-  let xs = Shape.param ~shape:[ Int 4 ] 1 Float32 in
-  let out = Shape.param ~shape:[ Int 8 ] 2 Float32 in
+  let ids = Call.param ~shape:[ Int 4 ] 0 Int32 in
+  let xs = Call.param ~shape:[ Int 4 ] 1 Float32 in
+  let out = Call.param ~shape:[ Int 8 ] 2 Float32 in
   let inside = Ops.O.(int 3 < r) in
   let id = Ops.load (Ops.index ids [ Shape.valid Ops.O.(r - int 4) inside ]) [] in
   let at_id = Shape.valid (Ops.cast id Weak_int) inside in
@@ -555,7 +555,7 @@ let readme =
   group "README"
     [
       test "an image access, through two indices, is not simplified" (fun () ->
-          let image = Shape.param ~shape:[ Int 4; Int 4; Int 4 ] 1 Float32 in
+          let image = Call.param ~shape:[ Int 4; Int 4; Int 4 ] 1 Float32 in
           let r0 = Ops.range (Int 4) [ 0 ] and r1 = Ops.range (Int 4) [ 1 ] in
           let gate = Ops.O.(r0 < int 3) in
           let y = Shape.valid Ops.O.(r0 + int 1) gate
@@ -576,7 +576,7 @@ let readme =
           let dsp =
             Renderer.v (Result.get_ok (Helpers.Target.of_string "DSP"))
           in
-          let char = Shape.param ~shape:[ Int 64 ] 2 Int8 in
+          let char = Call.param ~shape:[ Int 64 ] 2 Int8 in
           equal runs
             [ (0, 1); (1, 1); (2, 1); (3, 1) ]
             (accesses Op.Load
@@ -601,7 +601,7 @@ let allow_half8 =
       prop "coalescing preserves the kernel's writes" kernels_of_runs
         (preserves_writes vector);
       test "eight halves are one load of eight" (fun () ->
-          let half = Shape.param ~shape:[ Int 64 ] 2 Float16 in
+          let half = Call.param ~shape:[ Int 64 ] 2 Float16 in
           equal runs
             [ (0, 8) ]
             (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));

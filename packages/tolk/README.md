@@ -42,7 +42,8 @@ The modules not named after their file:
 |---|---|---|
 | `uop/__init__.py` (the `Ops` enum, `GroupOp`) | `lib/uop/op.ml` | `Op` |
 | `uop/weak.py` | `lib/uop/uop_weak.ml` | `Uop_weak` (Stdlib has `Weak`) |
-| `uop/ops.py`: the `UOp` methods that need `simplify` (shapes, movement, resolving, storage of a shape, sharding, variables, divisibility, calls and programs); the rules `simplify` rewrites with: `uop/symbolic.py`'s `symbolic_simple`, `commutative` and `symbolic`, `uop/divandmod.py`, `uop/movement.py` and `uop/weak.py`'s `pm_uncast_const` | `lib/uop/shape.ml` | `Shape`, above `Ops`: a symbolic size is compared by simplifying it, and the rules read shapes (DIVERGENCES D4) |
+| `uop/ops.py`: the `UOp` methods that need `simplify` (shapes, movement, resolving, divisibility, evaluating symbolic integers); the rules `simplify` rewrites with: `uop/symbolic.py`'s `symbolic_simple`, `commutative` and `symbolic`, `uop/divandmod.py`, `uop/movement.py` and `uop/weak.py`'s `pm_uncast_const` | `lib/uop/shape.ml` | `Shape`, above `Ops`: a symbolic size is compared by simplifying it, and the rules read shapes (DIVERGENCES D4) |
+| `uop/ops.py`: the `UOp` methods of storage, sharding, variables, calls and programs, which read shapes | `lib/uop/call.ml` | `Call`, above `Shape` |
 | `codegen/__init__.py` | `lib/codegen/codegen.ml` | `Codegen` |
 | `codegen/decomp/dtype.py` | `lib/codegen/decomp/decomp_dtype.ml` | `Decomp_dtype` (`dtype.py`) |
 | `codegen/decomp/op.py` | `lib/codegen/decomp/decomp_op.ml` | `Decomp_op` (`uop/__init__.py`'s `Op`) |

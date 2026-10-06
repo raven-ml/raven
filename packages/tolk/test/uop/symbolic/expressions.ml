@@ -208,7 +208,7 @@ let rec pp_float ppf = function
 let rec float_node e =
   Ops.O.(
     match e with
-    | Param i -> Shape.param i Float32
+    | Param i -> Call.param i Float32
     | Special i ->
         Ops.const ~dtype:Float32 (List.nth Common.specials i :> Dtype.const)
     | Fneg a -> ~-(float_node a)

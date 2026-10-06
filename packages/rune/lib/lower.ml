@@ -495,7 +495,7 @@ let context p =
    each is split as nx splits it. *)
 let settled s what p u =
   let shape = Array.of_list (Shape.max_shape u) in
-  match (layout what p shape, Shape.axis u) with
+  match (layout what p shape, Call.axis u) with
   | One, _ | Copies, None -> u
   | Split a, Some b when a = b -> u
   | Copies, Some _ -> Ops.copy_to_device u (device_of s p)
@@ -505,7 +505,7 @@ let settled s what p u =
         | Some _ -> Ops.copy_to_device u (device_of s p)
         | None -> u
       in
-      Shape.shard ~axis:a whole (List.map (name s) (memories p))
+      Call.shard ~axis:a whole (List.map (name s) (memories p))
 
 let traced s p dt u =
   Repr.Traced.v ~context:(context p) p dt
@@ -547,7 +547,7 @@ let key : type a b. (a, b) Nx.t -> storage =
 let viewed what u p shape v start =
   let local = strided u v start in
   match layout what p shape with
-  | Split axis -> Shape.unshard local [ axis ]
+  | Split axis -> Call.unshard local [ axis ]
   | One | Copies -> local
 
 let span dt v =
@@ -691,10 +691,10 @@ let output s ~slot p dt shape =
       | One | Copies -> Ops.store b (pack dt u)
       | Split axis ->
           let window =
-            Shape.shard_slice u axis
+            Call.shard_slice u axis
               (List.hd (Ops.device_range_src (Ops.device b)))
           in
-          Ops.store (Shape.unshard b [ 0 ]) (Shape.unshard (pack dt window) [ 0 ])
+          Ops.store (Call.unshard b [ 0 ]) (Call.unshard (pack dt window) [ 0 ])
     in
     {
       node;
@@ -723,7 +723,7 @@ let regions t (w : write) =
 let parameter s ~slot p dt shape =
   traced s p dt
     (laid s "a loop's value"
-       (fun d n tdt -> Shape.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
+       (fun d n tdt -> Call.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
        p dt shape)
 
 (* Rows
@@ -746,7 +746,7 @@ let row s ~slot p dt shape =
       (laid s "a loop's value"
          (fun d n _ ->
            elements dt
-             (Shape.param ~shape:[ Ops.Int (bytes dt n) ] ~device:d slot Uint8))
+             (Call.param ~shape:[ Ops.Int (bytes dt n) ] ~device:d slot Uint8))
          p dt shape)
 
 let argument s ~slot p dt shape =
@@ -996,7 +996,7 @@ let moved s what p q u shape =
     match layout what q shape with
     | Split axis -> (
         match device_of s q with
-        | Ops.Multi names -> Shape.shard ~axis u names
+        | Ops.Multi names -> Call.shard ~axis u names
         | Ops.Single _ as d -> Ops.copy_to_device u d)
     | One | Copies -> (
         match followed s q u with
