@@ -3,26 +3,30 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Law 10: reference posteriors. On six posteriordb posteriors, NUTS recovers
-   each element's mean and standard deviation within z sqrt (mcse² + mcse_ref²).
-   The reference moments and their errors come from gen/posteriordb.py. z holds
-   the family-wise false-alarm rate over every comparison at 1%. *)
+(* Law 10: reference posteriors. On six posteriordb posteriors, NUTS and HMC
+   each recover every element's mean and standard deviation within z sqrt (mcse²
+   + mcse_ref²). The reference moments and their errors come from
+   gen/posteriordb.py. HMC also recovers Neal's funnel, non-centred, at 1024
+   chains. z holds the family-wise false-alarm rate over every comparison at
+   1%. *)
 
 open Windtrap
 module M = Norn_model
 module P = Posteriordb
 
 let posteriors = lazy (P.all "../golden/posteriordb.golden")
-let chains = 8
 let warmup = 300
-let draws = 150
 let false_alarms = 0.01
+
+(* Two kernels on every reference, and the funnel's four moments. *)
+let kernels = 2
+let funnel_comparisons = 4
 
 let comparisons =
   lazy
     (List.fold_left
-       (fun n (P.Posterior p) -> n + (2 * List.length p.refs))
-       0 (Lazy.force posteriors))
+       (fun n (P.Posterior p) -> n + (2 * kernels * List.length p.refs))
+       funnel_comparisons (Lazy.force posteriors))
 
 (* Two-sided, Bonferroni over every comparison. *)
 let z =
@@ -36,19 +40,46 @@ let z =
              ~scale:(Nx.scalar Nx.float64 1.))
           (Nx.scalar Nx.float64 p)))
 
-let fit (type y) (m : (Nx.float64_t list, y, Nx.float64_elt) M.t) (y : y) =
+(* A kernel: its chains and a run from a start. *)
+type kernel = {
+  chains : int;
+  run :
+    'u.
+    'u Nx.Ptree.t -> ('u -> Nx.float64_t) -> Nx.Rng.t -> 'u -> 'u Norn.Draws.t;
+}
+
+let nuts =
+  {
+    chains = 8;
+    run =
+      (fun u lp k start ->
+        let s = Norn.Nuts.init u lp start in
+        let s = Norn.Nuts.warmup u lp k ~steps:warmup s in
+        let _, d, _ = Norn.Nuts.sample u lp k ~draws:150 s in
+        d);
+  }
+
+let hmc =
+  {
+    chains = 64;
+    run =
+      (fun u lp k start ->
+        let s = Norn.Hmc.init u lp start in
+        let s = Norn.Hmc.warmup u lp k ~steps:warmup s in
+        let _, d, _ = Norn.Hmc.sample u lp k ~draws:50 s in
+        d);
+  }
+
+let fit (type p y) kernel (m : (p, y, Nx.float64_elt) M.t)
+    (latent : p Nx.Ptree.t) (y : y) =
   let u = M.coords m in
   let lp = M.log_density m y in
   let run =
     Rune.jit
       Nx.Ptree.(Nx.Rng.ptree @-> returns (Norn.Draws.ptree u))
-      (fun k ->
-        let s = Norn.Nuts.init u lp (M.init m y ~chains k) in
-        let s = Norn.Nuts.warmup u lp k ~steps:warmup s in
-        let _, d, _ = Norn.Nuts.sample u lp k ~draws s in
-        d)
+      (fun k -> kernel.run u lp k (M.init m y ~chains:kernel.chains k))
   in
-  Norn.Draws.map u P.latent (M.constrain m) (run (Nx.Rng.key 1))
+  Norn.Draws.map u latent (M.constrain m) (run (Nx.Rng.key 1))
 
 (* [mcse_mean x] is the Monte Carlo standard error of the mean of draws [x] of
    one element, chains by rows. *)
@@ -92,9 +123,9 @@ let close ~z what x ~ref ~mcse ~mcse_ref =
     ~msg
     (Float.abs (x -. ref))
 
-let recovers (P.Posterior p) =
+let recovers kernel (P.Posterior p) =
   test p.name (fun () ->
-      let d = fit p.model p.y in
+      let d = fit kernel p.model P.latent p.y in
       let values = Array.of_list (d :> Nx.float64_t list) in
       let z = Lazy.force z in
       List.iter
@@ -111,7 +142,56 @@ let recovers (P.Posterior p) =
           close ~z (what ^ " sd") sd ~ref:r.sd ~mcse:mcse_sd ~mcse_ref:r.mcse_sd)
         p.refs)
 
+(* Neal's funnel: v ~ N(0, 3), x ~ N(0, exp (v / 2)) in nine dimensions,
+   non-centred. Its exact moments: v's mean 0 and sd 3; each x's mean 0 and sd
+   exp (9 / 4), since E exp v = exp 4.5. *)
+
+type 'a funnel = { v : 'a; x : 'a }
+
+module Funnel = struct
+  type 'a t = 'a funnel
+
+  let walk c { v; x } =
+    let open Nx.Ptree.Walk in
+    let v = field c "v" leaf v in
+    let x = field c "x" leaf x in
+    { v; x }
+end
+
+let funnel_latent : Nx.float64_t funnel Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Funnel)
+
+let funnel =
+  M.noncentre
+    (fun p -> p.x)
+    ( M.v Nx.float64 funnel_latent Nx.Ptree.unit @@ fun () ->
+      let f64 = Nx.scalar Nx.float64 in
+      let v = M.sample (Norn.Dist.normal ~loc:(f64 0.) ~scale:(f64 3.)) in
+      let scale = Nx.exp (Nx.mul_s v 0.5) in
+      let x =
+        M.sample (Norn.Dist.iid [| 9 |] (Norn.Dist.normal ~loc:(f64 0.) ~scale))
+      in
+      ({ v; x }, ()) )
+
+let funnel_test =
+  slow "HMC recovers a funnel at 1024 chains" (fun () ->
+      let kernel = { hmc with chains = 1024 } in
+      let d = fit kernel funnel funnel_latent () in
+      let { v; x } = (d :> Nx.float64_t funnel) in
+      let z = Lazy.force z in
+      let check what x ~mean ~sd =
+        let m, s, mcse_m, mcse_s = moments (element x 0) in
+        close ~z (what ^ "'s mean") m ~ref:mean ~mcse:mcse_m ~mcse_ref:0.;
+        close ~z (what ^ "'s sd") s ~ref:sd ~mcse:mcse_s ~mcse_ref:0.
+      in
+      check "v" v ~mean:0. ~sd:3.;
+      check "x[0]" x ~mean:0. ~sd:(Float.exp 2.25))
+
 let () =
+  let all = Lazy.force posteriors in
   exit
     (run "Norn posteriordb"
-       [ group "NUTS recovers" (List.map recovers (Lazy.force posteriors)) ])
+       [
+         group "NUTS recovers" (List.map (recovers nuts) all);
+         group "HMC recovers" (List.map (recovers hmc) all @ [ funnel_test ]);
+       ])

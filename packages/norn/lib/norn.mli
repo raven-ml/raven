@@ -44,3 +44,4 @@ module Summary = Summary
 module Dist = Dist
 module Gaussian = Gaussian
 module Nuts = Nuts
+module Hmc = Hmc

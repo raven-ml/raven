@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Norn.Hmc`, Hamiltonian Monte Carlo whose chains share one step size,
+  trajectory length and geometry, so every chain takes the same number of
+  leapfrog steps; `Hmc.warmup` tunes the length by ChEES.
 - **Breaking:** norn is a core package again, rewritten around log densities
   over the caller's structures batched over a chain axis: `Norn.Dist`,
   `Norn.Bij`, `Norn.Gaussian`, `Norn.Nuts`, `Norn.Draws`, `Norn.Diag`,

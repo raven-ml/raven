@@ -66,6 +66,26 @@ let nuts_step chains =
   Thumper.bench_with_setup ~setup (Printf.sprintf "schools/%d" chains)
     (fun (step, k, s) -> step k s)
 
+(* An HMC transition, compiled, from one state with one key. The default length
+   and step size take one or two leapfrog steps. *)
+let hmc_step chains =
+  let setup () =
+    let lp = M.log_density model y in
+    let start = M.init model y ~chains (Nx.Rng.key 1) in
+    let s = Norn.Hmc.init u lp start in
+    let sp = Norn.Hmc.ptree u in
+    let step =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        (Norn.Hmc.step u lp)
+    in
+    let k = Nx.Rng.key 2 in
+    ignore (step k s);
+    (step, k, s)
+  in
+  Thumper.bench_with_setup ~setup (Printf.sprintf "schools/%d" chains)
+    (fun (step, k, s) -> step k s)
+
 let log_density =
   let setup () =
     let lp = M.log_density model y in
@@ -117,6 +137,7 @@ let () =
   Thumper.run "norn"
     [
       Thumper.group "nuts" [ nuts_step 4; nuts_step 64 ];
+      Thumper.group "hmc" [ hmc_step 4; hmc_step 64; hmc_step 1024 ];
       Thumper.group "model" [ log_density ];
       Thumper.group "dist" [ factors ];
       Thumper.group "diag" [ rhat ];

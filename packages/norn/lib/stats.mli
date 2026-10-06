@@ -12,8 +12,10 @@
 type 'f t = {
   lp : (float, 'f) Nx.t;  (** The log density at the transition's end. *)
   acceptance : (float, 'f) Nx.t;
-      (** The trajectory's mean of [min (1, exp (H0 - H))], [H0] the Hamiltonian
-          after the momentum draw. *)
+      (** The acceptance statistic warmup aims for, of [min (1, exp (H0 - H))],
+          [H0] the Hamiltonian after the momentum draw: its mean over the
+          trajectory for {!Norn.Nuts}, its value at the trajectory's end, the
+          Metropolis probability, for {!Norn.Hmc}. *)
   step_size : (float, 'f) Nx.t;  (** The step size the transition took. *)
   n_steps : Nx.int32_t;  (** The leapfrog steps it took. *)
   diverging : Nx.bool_t;
