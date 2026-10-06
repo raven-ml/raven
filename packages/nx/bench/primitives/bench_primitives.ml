@@ -271,6 +271,21 @@ let bit =
     row "concat-odd-1e7" l parts (Nx.concatenate ~axis:0);
   ]
 
+(* The uint4 rows' work on 1e7 values, two to a byte: a take of whole rows of a
+   table, as of a stack of 4-bit weights, and of single values. *)
+let uint4 =
+  let nibbles n = Nx.cast Nx.uint4 (Nx.cast Nx.uint8 (indices n 16)) in
+  let rows = 1000 in
+  let table () =
+    (Nx.reshape [| rows; l / rows |] (nibbles l), indices rows rows)
+  in
+  [
+    row "take-rows-1e7" l table (fun (t, indices) -> Nx.take ~axis:0 ~indices t);
+    row "take-1e7" l
+      (fun () -> (nibbles l, indices l l))
+      (fun (t, indices) -> Nx.take ~axis:0 ~indices t);
+  ]
+
 (* [n] strings of [w] random lowercase letters, as offsets and bytes, and a
    permutation of them. *)
 let strings n w =
@@ -392,6 +407,7 @@ let groups =
     ("ranges", ranges);
     ("bool", bool);
     ("bit", bit);
+    ("uint4", uint4);
     ("ragged-take", ragged_take);
     ("ragged", ragged_rows);
   ]

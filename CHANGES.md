@@ -3412,6 +3412,12 @@ thread.
 
 ### Nx
 
+- `Nx.take` of whole rows of `int4`, `uint4` and `bit` values on the host moves
+  their bytes: a take of 1000 rows of a uint4 `[| 1000; 10000 |]` table takes
+  0.8 ms instead of 48 ms, and the eager MXFP4 expert product it serves is no
+  slower than over `uint8` codes.
+- Add `Nx.Rng.peek`, the key `Nx.Rng.next_key` would return, taking none: the
+  next draw returns it too.
 - Add `Nx.Rng.next_root`, which takes the next key's place in the scope now
   and returns a function that computes that key: the draws after it are those
   after `Nx.Rng.next_key`, and no key is computed until the function is called.

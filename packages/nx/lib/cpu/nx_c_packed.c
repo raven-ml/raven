@@ -236,46 +236,212 @@ nx_c_status nx_c_packed_copy(const nx_c_ndarray *out, const nx_c_ndarray *in,
 }
 
 /* Gather: element c of out is element c of data with its axis component
-   replaced by indices' element c, or 0 for an index outside the axis. */
+   replaced by indices' element c, or 0 for an index outside the axis.
+
+   The output's dims, in C order, are walked as the byte gather walks them
+   (nx_c_move.c): those of 1 dropped and neighbours merged where they compose
+   in the data and the indices, never across axis. When the last walked dim
+   follows axis, is dense in the data and holds the index constant, as the
+   broadcast index of a take does, it is a run: one index load moves the whole
+   run as its bits, by memcpy where they lie on whole bytes, so a take of rows
+   of uint4 weights moves bytes as uint8's does. */
 
 typedef struct {
-  const nx_c_ndarray *out;
-  const nx_c_ndarray *data;
-  const nx_c_ndarray *indices;
-  int axis;
-  int bits;
+  int ndim, bits;
+  int64_t shape[NX_C_MAX_NDIM], ds[NX_C_MAX_NDIM], is[NX_C_MAX_NDIM];
+  int64_t run, da, axis_len, d0, i0;
+  const uint8_t *src;
+  const int64_t *index;
 } nx_c_packed_gather_ctx;
+
+static void nx_c_packed_gather_plan(nx_c_packed_gather_ctx *g,
+                                    const nx_c_ndarray *out,
+                                    const nx_c_ndarray *data,
+                                    const nx_c_ndarray *ix, int axis,
+                                    int bits) {
+  int nd = 0, walked_axis = -1;
+  for (int d = 0; d < out->ndim; d++) {
+    int64_t n = out->shape[d];
+    int64_t ds = d == axis ? 0 : data->strides[d], is = ix->strides[d];
+    if (d != axis && n == 1) continue;
+    int last = nd - 1;
+    if (d != axis && nd > 0 && last != walked_axis && g->ds[last] == ds * n &&
+        g->is[last] == is * n) {
+      g->shape[last] *= n;
+      g->ds[last] = ds;
+      g->is[last] = is;
+      continue;
+    }
+    if (d == axis) walked_axis = nd;
+    g->shape[nd] = n;
+    g->ds[nd] = ds;
+    g->is[nd] = is;
+    nd++;
+  }
+  int last = nd - 1;
+  g->run = 1;
+  if (last > walked_axis && g->is[last] == 0 && g->ds[last] == 1) {
+    g->run = g->shape[last];
+    nd--;
+  }
+  g->ndim = nd;
+  g->bits = bits;
+  g->da = data->strides[axis];
+  g->axis_len = data->shape[axis];
+  g->d0 = data->offset;
+  g->i0 = ix->offset;
+  g->src = (const uint8_t *)data->data;
+  g->index = (const int64_t *)ix->data;
+}
+
+/* The next walked position after coord, by an odometer, and the offsets d and
+   i into the data and the indices that follow it. */
+static inline void nx_c_packed_gather_step(const nx_c_packed_gather_ctx *g,
+                                           int64_t *coord, int64_t *d,
+                                           int64_t *i) {
+  for (int dd = g->ndim - 1; dd >= 0; dd--) {
+    if (++coord[dd] < g->shape[dd]) {
+      *d += g->ds[dd];
+      *i += g->is[dd];
+      return;
+    }
+    *d -= (g->shape[dd] - 1) * g->ds[dd];
+    *i -= (g->shape[dd] - 1) * g->is[dd];
+    coord[dd] = 0;
+  }
+}
 
 static uint64_t nx_c_packed_gather_fill(const void *vctx, int64_t e, int k) {
   const nx_c_packed_gather_ctx *g = vctx;
-  const nx_c_ndarray *data = g->data, *ix = g->indices, *out = g->out;
-  const int64_t *index = (const int64_t *)ix->data;
-  int64_t n = data->shape[g->axis];
   int bits = g->bits;
-  uint64_t w = 0;
-  if (out->ndim == 1) {
-    for (int j = 0; j < k; j++) {
-      int64_t i = index[ix->offset + (e + j) * ix->strides[0]];
-      if ((uint64_t)i < (uint64_t)n)
-        w |= (uint64_t)nx_c_packed_get(
-                 data->data, data->offset + i * data->strides[0], bits)
-             << (j * bits);
-    }
-    return w;
+  int64_t coord[NX_C_MAX_NDIM];
+  int64_t pos = e, off = 0, d = g->d0, i = g->i0;
+  if (g->run > 1) {
+    pos = e / g->run;
+    off = e % g->run;
   }
-  for (int j = 0; j < k; j++) {
-    int64_t r = e + j, ioff = ix->offset, doff = data->offset, i = 0;
-    int64_t coord[NX_C_MAX_NDIM];
-    for (int d = out->ndim - 1; d >= 0; d--) {
-      coord[d] = r % out->shape[d];
-      r /= out->shape[d];
-      ioff += coord[d] * ix->strides[d];
+  /* The outermost walked dim holds what the others leave of pos: no
+     division, so a gather of one walked dim divides nothing. */
+  for (int dd = g->ndim - 1; dd >= 0; dd--) {
+    coord[dd] = dd == 0 ? pos : pos % g->shape[dd];
+    if (dd > 0) pos /= g->shape[dd];
+    d += coord[dd] * g->ds[dd];
+    i += coord[dd] * g->is[dd];
+  }
+  uint64_t w = 0;
+  /* Elements one at a time, along the last walked dim's line and then the
+     next, as the byte gather walks them. */
+  if (g->run == 1) {
+    int last = g->ndim - 1;
+    const uint8_t *src = g->src;
+    int64_t ds = g->ds[last], is = g->is[last], da = g->da, len = g->axis_len;
+    for (int j = 0;;) {
+      int m = k - j;
+      if (g->shape[last] - coord[last] < m)
+        m = (int)(g->shape[last] - coord[last]);
+      const int64_t *index = g->index + i;
+      for (int t = 0; t < m; t++) {
+        int64_t x = index[t * is];
+        if ((uint64_t)x < (uint64_t)len)
+          w |= (uint64_t)nx_c_packed_get(src, d + t * ds + x * da, bits)
+               << ((j + t) * bits);
+      }
+      j += m;
+      if (j == k) return w;
+      coord[last] += m - 1;
+      d += (m - 1) * ds;
+      i += (m - 1) * is;
+      nx_c_packed_gather_step(g, coord, &d, &i);
     }
-    i = index[ioff];
-    if ((uint64_t)i >= (uint64_t)n) continue;
-    for (int d = 0; d < out->ndim; d++)
-      doff += (d == g->axis ? i : coord[d]) * data->strides[d];
-    w |= (uint64_t)nx_c_packed_get(data->data, doff, bits) << (j * bits);
+  }
+  for (int filled = 0;;) {
+    int n = k - filled;
+    if (g->run - off < n) n = (int)(g->run - off);
+    int64_t x = g->index[i];
+    if ((uint64_t)x < (uint64_t)g->axis_len)
+      w |= nx_c_bits_load(g->src, (d + x * g->da + off) * bits, n * bits)
+           << (filled * bits);
+    filled += n;
+    if (filled == k) return w;
+    off = 0;
+    nx_c_packed_gather_step(g, coord, &d, &i);
+  }
+}
+
+/* [nbits] bits of src from bit [from] written at bit [to] of dst, or zeros
+   where src is NULL: bytes moved whole where the three are whole bytes, and
+   otherwise a dst word, or the part of one, at a time. dst's words are the
+   writer's own. */
+static void nx_c_packed_move_bits(uint8_t *dst, int64_t to, const uint8_t *src,
+                                  int64_t from, int64_t nbits) {
+  if (((to | from | nbits) & 7) == 0) {
+    if (src) memcpy(dst + (to >> 3), src + (from >> 3), (size_t)(nbits >> 3));
+    else memset(dst + (to >> 3), 0, (size_t)(nbits >> 3));
+    return;
+  }
+  while (nbits > 0) {
+    int m = 64 - (int)(to & 63);
+    if (m > nbits) m = (int)nbits;
+    nx_c_bits_store(dst, to, m, src ? nx_c_bits_load(src, from, m) : 0);
+    to += m;
+    from += m;
+    nbits -= m;
+  }
+}
+
+/* Whole words of a gather from element e: run by run, each moved as its bits,
+   so a take of whole rows moves their bytes. */
+static void nx_c_packed_gather_words(const void *vctx, int64_t e, int64_t n,
+                                     uint8_t *dst) {
+  const nx_c_packed_gather_ctx *g = vctx;
+  int bits = g->bits;
+  if (g->run == 1) {
+    int per = 64 / bits;
+    for (int64_t j = 0; j < n; j++)
+      nx_c_st64(dst + 8 * j, nx_c_packed_gather_fill(g, e + j * per, per));
+    return;
+  }
+  int64_t coord[NX_C_MAX_NDIM];
+  int64_t pos = e / g->run, off = e % g->run, d = g->d0, i = g->i0;
+  for (int dd = g->ndim - 1; dd >= 0; dd--) {
+    coord[dd] = dd == 0 ? pos : pos % g->shape[dd];
+    if (dd > 0) pos /= g->shape[dd];
+    d += coord[dd] * g->ds[dd];
+    i += coord[dd] * g->is[dd];
+  }
+  int64_t to = 0, end = n * 64;
+  for (;;) {
+    int64_t len = g->run - off;
+    if (len > (end - to) / bits) len = (end - to) / bits;
+    int64_t x = g->index[i];
+    bool kept = (uint64_t)x < (uint64_t)g->axis_len;
+    nx_c_packed_move_bits(dst, to, kept ? g->src : NULL,
+                          (kept ? d + x * g->da + off : 0) * bits, len * bits);
+    to += len * bits;
+    if (to == end) return;
+    off = 0;
+    nx_c_packed_gather_step(g, coord, &d, &i);
+  }
+}
+
+/* A gather into a vector has one dim, the axis, so no runs: it reads element
+   by element, without the walk's bookkeeping, which costs a vector of random
+   indices about a quarter of its time. */
+typedef struct {
+  const uint8_t *src;
+  const int64_t *index;
+  int64_t d0, da, i0, is, axis_len;
+  int bits;
+} nx_c_packed_take_ctx;
+
+static uint64_t nx_c_packed_take_fill(const void *vctx, int64_t e, int k) {
+  const nx_c_packed_take_ctx *c = vctx;
+  uint64_t w = 0;
+  for (int j = 0; j < k; j++) {
+    int64_t x = c->index[c->i0 + (e + j) * c->is];
+    if ((uint64_t)x < (uint64_t)c->axis_len)
+      w |= (uint64_t)nx_c_packed_get(c->src, c->d0 + x * c->da, c->bits)
+           << (j * c->bits);
   }
   return w;
 }
@@ -289,13 +455,30 @@ nx_c_status nx_c_packed_gather(const nx_c_ndarray *out,
     return NX_C_ERR_SHAPE;
   for (int d = 0; d < out->ndim; d++)
     if (out->shape[d] != indices->shape[d]) return NX_C_ERR_SHAPE;
-  nx_c_packed_gather_ctx g = {out, data, indices, axis,
-                              nx_c_packed_bits(dt)};
+  int bits = nx_c_packed_bits(dt);
   int64_t total = 1;
   for (int d = 0; d < out->ndim; d++) total *= out->shape[d];
-  int64_t bytes = total * (int64_t)sizeof(int64_t) + 2 * nx_c_dtype_bytes(dt, total);
-  nx_c_packed_filler f = {nx_c_packed_gather_fill, NULL, &g};
-  return nx_c_packed_write(out, g.bits, &f, bytes);
+  if (out->ndim == 1) {
+    nx_c_packed_take_ctx c = {(const uint8_t *)data->data,
+                              (const int64_t *)indices->data,
+                              data->offset,
+                              data->strides[0],
+                              indices->offset,
+                              indices->strides[0],
+                              data->shape[0],
+                              bits};
+    nx_c_packed_filler f = {nx_c_packed_take_fill, NULL, &c};
+    return nx_c_packed_write(
+        out, bits, &f,
+        total * (int64_t)sizeof(int64_t) + 2 * nx_c_dtype_bytes(dt, total));
+  }
+  nx_c_packed_gather_ctx g;
+  nx_c_packed_gather_plan(&g, out, data, indices, axis, bits);
+  int64_t bytes = total / g.run * (int64_t)sizeof(int64_t) +
+                  2 * nx_c_dtype_bytes(dt, total);
+  nx_c_packed_filler f = {nx_c_packed_gather_fill, nx_c_packed_gather_words,
+                          &g};
+  return nx_c_packed_write(out, bits, &f, bytes);
 }
 
 /* Logic */

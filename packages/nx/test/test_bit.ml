@@ -775,6 +775,16 @@ type nibble_move = {
   move4 : 'b. (int, 'b) Nx.t -> (int, 'b) Nx.t;
 }
 
+(* The leading rows of [w] elements of a vector, and indices of rows of them,
+   some outside. *)
+let rows w t =
+  let n = Nx.numel t / w * w in
+  Nx.reshape [| n / w; w |] (Nx.shrink [| (0, n) |] t)
+
+let row_indices w t =
+  let r = Nx.numel t / w in
+  indices (r + 3) (fun i -> (i * 5 mod (r + 2)) - 1)
+
 let moves_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
   let moves =
     [
@@ -792,6 +802,40 @@ let moves_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
               [| (1, 1); (1, 2) |]
               lo
               (Nx.reshape [| n / 5; 5 |] (Nx.shrink [| (0, n) |] t)));
+      };
+      {
+        mname = "take of its rows of 5, indices outside";
+        move4 = (fun t -> Nx.take ~axis:0 ~indices:(row_indices 5 t) (rows 5 t));
+      };
+      {
+        mname = "take of its rows of 16, indices outside";
+        move4 =
+          (fun t -> Nx.take ~axis:0 ~indices:(row_indices 16 t) (rows 16 t));
+      };
+      {
+        mname = "take of its rows of 37, indices outside";
+        move4 =
+          (fun t -> Nx.take ~axis:0 ~indices:(row_indices 37 t) (rows 37 t));
+      };
+      {
+        mname = "take of its columns of rows of 5, indices outside";
+        move4 =
+          (fun t ->
+            Nx.take ~axis:1
+              ~indices:(indices 7 (fun i -> (i * 3) - 1))
+              (rows 5 t));
+      };
+      {
+        mname = "take_along_axis of its rows of 5";
+        move4 =
+          (fun t ->
+            let r = rows 5 t in
+            Nx.take_along_axis ~axis:1
+              ~indices:
+                (Nx.reshape
+                   [| Nx.dim 0 r; 5 |]
+                   (indices (Nx.numel r) (fun i -> (i * 7 mod 6) - 1)))
+              r);
       };
       {
         mname = "scatter with Set of its flip, some positions outside";
