@@ -162,6 +162,12 @@ Tests use windtrap, whose `.mli` (under `_build/_private/default/.pkg/`) is
 the contract, and cram tests for executables. A test states what the `.mli`
 promises, through the public interface, never what the code does today.
 
+- Every test runs in its package's `runtest`, which runs within 2 minutes on
+  a warm build. A slow test is made fast at its cause (the library, shared
+  setup, a smaller input whose `cover` shows it still reaches its cases),
+  never moved behind a tag, an opt-in alias or a scheduled job. Only a test
+  that needs what a test run cannot hold, such as a real model's weights,
+  lives outside `runtest`, and it says why.
 - Use the strongest tool the claim allows: `prop` for a law (agreement with
   a simpler reference, a round trip, an identity, `jit` equal to eager,
   `grad` against finite differences), with a `Law` verb when one names it;
@@ -202,7 +208,9 @@ promises, through the public interface, never what the code does today.
   targets.
 - Each package's bench suite runs within 2 minutes warm on every machine. A
   row that needs more is shrunk to the smallest size that still shows its
-  regression. Benches never run in `dune build`.
+  regression, never moved out of the suite. Only a run that a suite cannot
+  hold, such as gpt-oss's decode step on real weights, lives outside it, and
+  it says why. Benches never run in `dune build`.
 - Time only on a quiet machine. Correctness runs need no quiet.
 
 ## Commits
