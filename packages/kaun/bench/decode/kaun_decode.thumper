@@ -40,30 +40,36 @@ Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	2.064e-01	2.060e-01 2
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/routed-product-1-tokens-eager Quant/metal/routed-product-1-tokens Quant/metal/routed-product-512-tokens under load 13.6 on 10 cores
+# forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/mxfp4-product-1-token Quant/host/mxfp4-blocks-product-1-token Quant/host/routed-product-1-tokens-eager Quant/metal/routed-product-1-tokens Quant/metal/routed-product-512-tokens Quant/metal/mxfp4-product-1-token Quant/metal/mxfp4-blocks-product-1-token under load 7.8 on 10 cores
+# forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/mxfp4-product-1-token Quant/host/mxfp4-blocks-product-1-token Quant/host/routed-product-1-tokens-eager Quant/metal/routed-product-1-tokens Quant/metal/routed-product-512-tokens Quant/metal/mxfp4-product-1-token Quant/metal/mxfp4-blocks-product-1-token under load 11.8 on 10 cores
 
-Quant/host/mxfp4-product-1-token	alloc_words	exact	910
-Quant/host/mxfp4-product-1-token	wall_time	batch=2	n=20	3.323e-03	3.304e-03 3.305e-03 3.310e-03 3.310e-03 3.313e-03 3.313e-03 3.313e-03 3.316e-03 3.318e-03 3.318e-03 3.328e-03 3.328e-03 3.353e-03 3.395e-03 3.399e-03 3.402e-03 3.425e-03 3.448e-03 3.523e-03 4.252e-03
+Quant/host/mxfp4-blocks-product-1-token	alloc_words	exact	871
+Quant/host/mxfp4-blocks-product-1-token	wall_time	batch=2	n=20	3.144e-03	2.629e-03 2.679e-03 2.713e-03 2.750e-03 2.756e-03 2.809e-03 2.973e-03 2.974e-03 3.049e-03 3.058e-03 3.229e-03 3.365e-03 3.446e-03 3.489e-03 3.576e-03 3.627e-03 3.726e-03 4.303e-03 4.356e-03 4.860e-03
+Quant/host/mxfp4-product-1-token	alloc_words	exact	871
+Quant/host/mxfp4-product-1-token	wall_time	batch=1	n=20	5.151e-03	3.882e-03 3.973e-03 3.975e-03 4.406e-03 4.538e-03 4.635e-03 4.698e-03 4.935e-03 5.088e-03 5.100e-03 5.201e-03 5.203e-03 5.225e-03 5.282e-03 5.289e-03 5.597e-03 5.702e-03 5.730e-03 6.036e-03 6.450e-03
 Quant/host/q4_k-product-1-token	alloc_words	exact	906
 Quant/host/q4_k-product-1-token	wall_time	batch=4	n=20	1.368e-03	1.257e-03 1.266e-03 1.275e-03 1.279e-03 1.282e-03 1.288e-03 1.288e-03 1.292e-03 1.299e-03 1.340e-03 1.397e-03 1.407e-03 1.411e-03 1.419e-03 1.445e-03 1.445e-03 1.468e-03 1.493e-03 1.576e-03 1.672e-03
 Quant/host/q6_k-product-1-token	alloc_words	exact	906
 Quant/host/q6_k-product-1-token	wall_time	batch=2	n=20	2.881e-03	2.860e-03 2.861e-03 2.862e-03 2.863e-03 2.863e-03 2.864e-03 2.864e-03 2.866e-03 2.867e-03 2.867e-03 2.894e-03 2.983e-03 2.991e-03 3.469e-03 3.609e-03 3.610e-03 3.650e-03 3.661e-03 3.666e-03 3.691e-03
 Quant/host/q8_0-product-1-token	alloc_words	exact	906
 Quant/host/q8_0-product-1-token	wall_time	batch=8	n=20	8.832e-04	8.409e-04 8.512e-04 8.518e-04 8.536e-04 8.561e-04 8.729e-04 8.791e-04 8.819e-04 8.822e-04 8.826e-04 8.838e-04 8.853e-04 8.879e-04 8.883e-04 9.028e-04 9.235e-04 9.421e-04 1.133e-03 1.138e-03 1.404e-03
-Quant/host/routed-product-1-tokens	alloc_words	exact	1311
-Quant/host/routed-product-1-tokens	wall_time	batch=1	n=20	1.004e-02	8.283e-03 8.700e-03 9.083e-03 9.652e-03 9.673e-03 9.698e-03 9.855e-03 9.918e-03 9.996e-03 1.001e-02 1.007e-02 1.015e-02 1.054e-02 1.074e-02 1.075e-02 1.093e-02 1.162e-02 1.194e-02 1.228e-02 1.248e-02
-Quant/host/routed-product-1-tokens-eager	alloc_words	exact	8810
-Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	1.410e-01	1.197e-01 1.198e-01 1.223e-01 1.251e-01 1.320e-01 1.323e-01 1.340e-01 1.382e-01 1.387e-01 1.405e-01 1.414e-01 1.451e-01 1.453e-01 1.571e-01 1.582e-01 1.597e-01 1.830e-01 1.900e-01 1.981e-01 2.421e-01
-Quant/host/routed-product-64-tokens	alloc_words	exact	6213
-Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	3.264e-01	3.000e-01 3.047e-01 3.054e-01 3.096e-01 3.140e-01 3.181e-01 3.196e-01 3.259e-01 3.263e-01 3.263e-01 3.265e-01 3.279e-01 3.327e-01 3.384e-01 3.399e-01 3.421e-01 3.453e-01 3.648e-01 3.747e-01 3.774e-01
-Quant/metal/mxfp4-product-1-token	alloc_words	exact	1318
-Quant/metal/mxfp4-product-1-token	wall_time	batch=1	n=20	5.699e-04	5.533e-04 5.555e-04 5.562e-04 5.575e-04 5.599e-04 5.627e-04 5.653e-04 5.671e-04 5.674e-04 5.687e-04 5.710e-04 5.712e-04 5.778e-04 5.817e-04 5.820e-04 5.821e-04 5.822e-04 6.010e-04 6.168e-04 6.559e-04
+Quant/host/routed-product-1-tokens	alloc_words	exact	1301
+Quant/host/routed-product-1-tokens	wall_time	batch=1	n=20	1.190e-02	9.484e-03 9.543e-03 1.020e-02 1.029e-02 1.039e-02 1.049e-02 1.075e-02 1.082e-02 1.109e-02 1.162e-02 1.218e-02 1.219e-02 1.247e-02 1.338e-02 1.392e-02 1.454e-02 1.472e-02 1.556e-02 1.649e-02 1.667e-02
+Quant/host/routed-product-1-tokens-eager	alloc_words	exact	7704
+Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	1.351e-01	1.056e-01 1.064e-01 1.079e-01 1.131e-01 1.214e-01 1.252e-01 1.290e-01 1.296e-01 1.301e-01 1.320e-01 1.383e-01 1.393e-01 1.394e-01 1.408e-01 1.424e-01 1.430e-01 1.437e-01 1.446e-01 1.526e-01 1.536e-01
+Quant/host/routed-product-64-tokens	alloc_words	exact	6203
+Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	3.954e-01	3.184e-01 3.312e-01 3.343e-01 3.530e-01 3.644e-01 3.825e-01 3.862e-01 3.864e-01 3.881e-01 3.925e-01 3.984e-01 4.013e-01 4.083e-01 4.086e-01 4.175e-01 4.239e-01 4.256e-01 4.265e-01 4.281e-01 4.299e-01
+Quant/metal/mxfp4-blocks-product-1-token	alloc_words	exact	1225
+Quant/metal/mxfp4-blocks-product-1-token	wall_time	batch=1	n=20	1.404e-03	1.354e-03 1.354e-03 1.371e-03 1.372e-03 1.377e-03 1.382e-03 1.383e-03 1.386e-03 1.397e-03 1.400e-03 1.409e-03 1.421e-03 1.422e-03 1.432e-03 1.516e-03 1.722e-03 1.820e-03 1.918e-03 3.677e-03 6.620e-03
+Quant/metal/mxfp4-product-1-token	alloc_words	exact	1225
+Quant/metal/mxfp4-product-1-token	wall_time	batch=1	n=20	5.803e-04	5.551e-04 5.575e-04 5.613e-04 5.640e-04 5.728e-04 5.751e-04 5.755e-04 5.776e-04 5.788e-04 5.803e-04 5.804e-04 5.822e-04 5.851e-04 5.890e-04 5.943e-04 6.024e-04 6.085e-04 6.226e-04 6.251e-04 6.396e-04
 Quant/metal/q4_k-product-1-token	alloc_words	exact	1308
 Quant/metal/q4_k-product-1-token	wall_time	batch=1	n=20	1.430e-03	1.414e-03 1.416e-03 1.417e-03 1.419e-03 1.422e-03 1.426e-03 1.426e-03 1.427e-03 1.427e-03 1.429e-03 1.431e-03 1.432e-03 1.438e-03 1.441e-03 1.447e-03 1.456e-03 1.465e-03 1.470e-03 1.478e-03 1.809e-03
 Quant/metal/q6_k-product-1-token	alloc_words	exact	1345
 Quant/metal/q6_k-product-1-token	wall_time	batch=1	n=20	5.605e-03	5.583e-03 5.586e-03 5.590e-03 5.594e-03 5.595e-03 5.596e-03 5.596e-03 5.601e-03 5.603e-03 5.603e-03 5.607e-03 5.614e-03 5.617e-03 5.635e-03 5.648e-03 5.652e-03 5.653e-03 5.659e-03 5.691e-03 5.993e-03
 Quant/metal/q8_0-product-1-token	alloc_words	exact	1308
 Quant/metal/q8_0-product-1-token	wall_time	batch=1	n=20	6.955e-04	6.867e-04 6.875e-04 6.885e-04 6.887e-04 6.894e-04 6.903e-04 6.905e-04 6.906e-04 6.946e-04 6.947e-04 6.962e-04 6.964e-04 6.967e-04 6.970e-04 6.980e-04 6.984e-04 6.989e-04 6.998e-04 7.009e-04 7.342e-04
-Quant/metal/routed-product-1-tokens	alloc_words	exact	1548
-Quant/metal/routed-product-1-tokens	wall_time	batch=1	n=20	1.309e-03	1.036e-03 1.042e-03 1.081e-03 1.089e-03 1.190e-03 1.222e-03 1.280e-03 1.283e-03 1.304e-03 1.308e-03 1.310e-03 1.311e-03 1.323e-03 1.325e-03 1.325e-03 1.342e-03 1.343e-03 1.355e-03 1.381e-03 1.463e-03
-Quant/metal/routed-product-512-tokens	alloc_words	exact	1511
-Quant/metal/routed-product-512-tokens	wall_time	batch=1	n=20	3.679e-02	3.529e-02 3.532e-02 3.544e-02 3.544e-02 3.546e-02 3.581e-02 3.582e-02 3.603e-02 3.669e-02 3.677e-02 3.682e-02 3.685e-02 3.690e-02 3.692e-02 3.765e-02 3.772e-02 3.915e-02 4.003e-02 4.007e-02 4.195e-02
+Quant/metal/routed-product-1-tokens	alloc_words	exact	1552
+Quant/metal/routed-product-1-tokens	wall_time	batch=1	n=20	1.681e-03	1.585e-03 1.612e-03 1.642e-03 1.646e-03 1.649e-03 1.657e-03 1.662e-03 1.663e-03 1.663e-03 1.678e-03 1.683e-03 1.692e-03 1.755e-03 1.817e-03 1.930e-03 2.078e-03 2.214e-03 2.249e-03 2.583e-03 3.079e-03
+Quant/metal/routed-product-512-tokens	alloc_words	batch=1	n=20	1.630e+03	1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.593e+03 1.668e+03 1.739e+03 1.739e+03 1.739e+03 1.739e+03 1.741e+03 1.741e+03 1.814e+03 1.814e+03 1.849e+03
+Quant/metal/routed-product-512-tokens	wall_time	batch=1	n=20	3.013e-02	2.890e-02 2.910e-02 2.911e-02 2.915e-02 2.927e-02 2.935e-02 2.936e-02 2.952e-02 2.969e-02 2.987e-02 3.039e-02 3.057e-02 3.057e-02 3.059e-02 3.069e-02 3.100e-02 3.234e-02 3.248e-02 3.272e-02 3.837e-02
