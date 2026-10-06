@@ -62,9 +62,9 @@ let message t i (status, (evaluations, (converged, facts))) =
   let lane =
     if Array.length i = 0 then ""
     else
-      " lane ["
+      "lane ["
       ^ String.concat ", " (Array.to_list (Array.map string_of_int i))
-      ^ "]"
+      ^ "]: "
   in
   let facts =
     List.map
@@ -72,7 +72,7 @@ let message t i (status, (evaluations, (converged, facts))) =
       facts
   in
   let others = Int32.to_int (Nx.item [] converged) in
-  Printf.sprintf "%s:%s: %s.\n  %s%s\n  %ld evaluations.%s" t.fn lane
+  Printf.sprintf "%s: %s%s.\n  %s%s\n  %ld evaluations.%s" t.fn lane
     (reason (of_code (Nx.item [] status)))
     t.settings
     (if facts = [] then "" else "\n  " ^ String.concat ", " facts)

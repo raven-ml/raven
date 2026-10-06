@@ -74,6 +74,19 @@ module Range : sig
   (** [line c] is the whole line, around [c] at unit scale. *)
 end
 
+(** Boxes of integration, one per lane. *)
+module Box : sig
+  type 'b t
+  (** The type for boxes of dtype ['b]. *)
+
+  val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
+  (** [v lo hi] is the box with corners [lo] and [hi], of shape [lanes @ [d]]: a
+      point's coordinates are the last axis.
+
+      Raises [Invalid_argument] if [lo] and [hi] differ in shape or are scalars.
+  *)
+end
+
 type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** The type for integrands: [f x] is [f] at each point of [x], of [x]'s shape.
 *)
@@ -165,3 +178,26 @@ val tanh_sinh :
     the tolerance, or whose finest level does not meet it, ends [Stalled]; a
     non-finite sum ends it [Not_finite]. {b Derivative.} That of the sum over
     the final level, through the ends and the integrand's parameters. *)
+
+val cubature :
+  tol:Tol.t ->
+  budget:int ->
+  'b integrand ->
+  'b Box.t ->
+  (float, 'b) Nx.t Solution.t
+(** [cubature ~tol ~budget f box] is the integral of [f] over each lane's box,
+    of [d] dimensions with [2 ≤ d ≤ 10]. [f] receives points of shape
+    [[m; k] @ lanes @ [d]] and reduces only their last, coordinate axis.
+
+    {b Method.} Genz and Malik's (1980) adaptive rule of degree 7 with an
+    embedded degree 5, [2^d + 2d² + 2d + 1] points per box: it bisects the box
+    of largest error across the axis of largest fourth difference. {b Error.}
+    [e] is the sum over the boxes of the two rules' difference, and [y] the
+    integral. A lane whose worst box is at level 62 along its axis, or holds no
+    float strictly inside along it, ends [Stalled]; a non-finite sum ends it
+    [Not_finite]; [budget] boxes end it [Budget_spent]. {b Derivative.} The
+    final partition's rule's, through the corners and the integrand's
+    parameters.
+
+    Raises [Invalid_argument] if [d] is not in [[2, 10]], if [budget < 1], or if
+    [f]'s result is not the points' shape without its last axis. *)

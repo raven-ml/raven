@@ -958,6 +958,8 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Quad.cubature`, Genz and Malik's adaptive rule of degree 7 over boxes
+  of 2 to 10 dimensions, one problem per lane of `Quad.Box.v lo hi`.
 - Add `Quad.tanh_sinh`, double-exponential integration: tanh-sinh on a
   finite range, exp-sinh on `Range.from` and sinh-sinh on `Range.line`,
   for endpoint singularities and infinite ranges.

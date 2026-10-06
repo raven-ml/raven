@@ -447,10 +447,105 @@ let de_tests =
           (Solution.get s));
   ]
 
+(* Cubature *)
+
+(* Each lane's coordinate [k] of points [x] of shape [... @ [d]]. *)
+let coord k x = Nx.get [ k ] (Nx.moveaxis (Nx.ndim x - 1) 0 x)
+let product x = Nx.prod ~axes:[ Nx.ndim x - 1 ] x
+
+let unit_box lanes d =
+  Quad.Box.v
+    (Nx.zeros f64 (Array.append lanes [| d |]))
+    (Nx.ones f64 (Array.append lanes [| d |]))
+
+let cube ?(budget = 2000) f box =
+  Quad.cubature ~tol:(Tol.v ~rel:1e-9 ~abs:1e-13) ~budget f box
+
+let cubature_tests =
+  [
+    test "a degree-7 monomial is exact in one box" (fun () ->
+        (* ∫ x⁴ y³ over [0, 1]² = 1/20. *)
+        let f x = Nx.mul (Nx.pow_s (coord 0 x) 4.) (Nx.pow_s (coord 1 x) 3.) in
+        let s = cube ~budget:1 f (unit_box [||] 2) in
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (Nx.scalar f64 0.05) (Solution.best s));
+    test "a smooth integral converges in three dimensions" (fun () ->
+        (* ∫ e^(x + y + z) over [0, 1]³ = (e − 1)³. *)
+        let s =
+          cube
+            (fun x -> Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x))
+            (unit_box [||] 3)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.scalar f64 ((Float.exp 1. -. 1.) ** 3.))
+          (Solution.get s));
+    test "each lane integrates its own box" (fun () ->
+        let lo = Nx.create f64 [| 2; 2 |] [| 0.; 0.; -1.; 0. |] in
+        let hi = Nx.create f64 [| 2; 2 |] [| 1.; 2.; 1.; 1. |] in
+        (* ∫ x y over [0, 1] × [0, 2] = 1 and over [−1, 1] × [0, 1] = 0. *)
+        let s = cube (fun x -> product x) (Quad.Box.v lo hi) in
+        equal
+          (Oracle.tensor ~rel:1e-12 ~abs:1e-14 ())
+          (vec [| 1.; 0. |])
+          (Solution.get s));
+    test "a peak refines the partition" (fun () ->
+        let f x =
+          Nx.exp
+            (Nx.mul_s
+               (Nx.sum ~axes:[ Nx.ndim x - 1 ] (Nx.square (Nx.sub_s x 0.4)))
+               (-50.))
+        in
+        let s =
+          Quad.cubature ~tol:(Tol.rel 1e-7) ~budget:2000 f (unit_box [||] 2)
+        in
+        let one =
+          Float.sqrt (Float.pi /. 50.)
+          /. 2.
+          *. (Float.erf (0.6 *. Float.sqrt 50.)
+             +. Float.erf (0.4 *. Float.sqrt 50.))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-7 ())
+          (Nx.scalar f64 (one *. one))
+          (Solution.get s));
+    test "grad in a parameter is the exact integral's" (fun () ->
+        (* ∫ e^(θ(x + y)) over [0, 1]² = ((e^θ − 1) / θ)². *)
+        let theta = vec [| 0.5; -1. |] in
+        let integral t =
+          let f x = Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t) in
+          Nx.sum (Solution.get (cube f (unit_box [| 2 |] 2)))
+        in
+        let d t = 2. *. exp_integral t *. exp_integral' t in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (Nx.map_item d theta)
+          (Rune.grad' integral theta));
+    test "compiled equals eager" (fun () ->
+        let theta = vec [| 0.5; -1. |] in
+        let integral t =
+          Solution.get
+            (cube
+               (fun x -> Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t))
+               (unit_box [| 2 |] 2))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (integral theta) (Rune.jit' integral theta));
+    test "one dimension raises" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"d = 1 is not in [2, 10]")
+          (fun () -> cube (fun x -> product x) (unit_box [||] 1)));
+    test "eleven dimensions raise" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"d = 11 is not in [2, 10]")
+          (fun () -> cube (fun x -> product x) (unit_box [||] 11)));
+  ]
+
 let () =
   exit
     (run "Jera.Quad"
        [
+         group "cubature" cubature_tests;
          group "double-exponential" de_tests;
          group "adaptive" adaptive_tests;
          group "rules" rule_tests;
