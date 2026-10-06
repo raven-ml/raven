@@ -1146,6 +1146,14 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** the rules `Shape.simplify` rewrites with are `Shape`'s:
+  `symbolic`, `symbolic_simple`, `commutative`, `invalid_gate` and
+  `pm_remove_invalid` from `Symbolic`, `div_and_mod_symbolic` and its
+  `number`, `rule` and `Not_a_number` from `Divandmod`, `mop_cleanup` from
+  `Movement`, and `pm_uncast_const` from `Uop_weak`. `Divandmod` and
+  `Movement` are removed, and so is `Shape.Private.set_symbolic`: `Shape`
+  sets its own rules, so `simplify` works in a program that does not link
+  `Symbolic`.
 - **Breaking:** `Ops` keeps the node language: arguments, construction,
   bounds, ranges, patterns and rewriting. What reads a shape needs
   simplification and moves to the new module `Shape`: `Shape.shape`, the

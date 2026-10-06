@@ -1,5 +1,6 @@
-(* Tests of Tolk.Divandmod: each rewrite of a division or remainder is the one
-   tinygrad makes, and keeps the value of what it rewrites. *)
+(* Tests of Tolk.Shape.div_and_mod_symbolic: each rewrite of a division or
+   remainder is the one tinygrad makes, and keeps the value of what it
+   rewrites. *)
 
 open Windtrap
 open Tolk
@@ -13,7 +14,7 @@ let x = var "x" 0 100
 let a = var "a" 0 99
 let b = var "b" 0 99
 let int = Ops.int
-let rewrite d = Ops.Pattern_matcher.rewrite Divandmod.div_and_mod_symbolic () d
+let rewrite d = Ops.Pattern_matcher.rewrite Shape.div_and_mod_symbolic () d
 let once d = Option.value (rewrite d) ~default:d
 
 (* A golden holds divisions and remainders, each followed by its rewrite. *)
@@ -397,7 +398,7 @@ let values =
 
 let () =
   exit
-    (run "Tolk.Divandmod"
+    (run "Tolk.Shape.div_and_mod_symbolic"
        [
          nested_divisions;
          constant_terms;

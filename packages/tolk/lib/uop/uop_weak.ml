@@ -208,46 +208,6 @@ let pm_lower_weak =
             lower_weak_node (m "u"));
       ]))
 
-(* Drop the cast off a committed constant where the consumer derives it anyway,
-   so rules keyed on bare constants keep matching. The drop must change nothing
-   the consumer derives: neither the operands' meet nor the node's own type. *)
-let uncast_const u =
-  (* A weak cast over a constant is not a commit: it is still resolving. The
-     literal left is the constant at the width it was committed to, as a machine
-     holds it. A NaN or an infinity has no integer value: its literal is left as
-     it is written, and the consumer's derived type keeps the cast. *)
-  let uncast s =
-    if op s = Op.Cast && (not (weak s)) && is_const (nth s 0) && weak (nth s 0)
-    then
-      let dt = dtype s in
-      match value s with
-      | `Float f
-        when not (Float.is_finite f || Dtype.is_float dt || Dtype.is_bool dt) ->
-          nth s 0
-      | c -> (
-          match Dtype.const dt c with
-          | #Dtype.value as v -> const (Dtype.truncate dt v :> Dtype.const)
-          | `Invalid -> s)
-    else s
-  in
-  let src = List.map uncast (Ops.src u) in
-  if unchanged src u then None
-  else
-    match derived_dtypes u src with
-    | Some (meet, result)
-      when Dtype.equal meet (promo_dtype (Ops.src u))
-           && Dtype.equal result (dtype u) ->
-        Some (replace ~src u)
-    | _ -> None
-
-let pm_uncast_const =
-  Pattern_matcher.(
-    v
-      (fun () -> [
-        rule (Upat.v ~op:Op.Set.broadcastable ~name:"u" ()) (fun m ->
-            uncast_const (m "u"));
-      ]))
-
 (* Commit every remaining bare constant, keyed on the consumer: being bare is a
    property of the edge. *)
 let cast_consts u =

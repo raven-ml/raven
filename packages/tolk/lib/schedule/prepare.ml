@@ -499,7 +499,7 @@ let pm_disk_copy =
 let earliest_rewrites =
   let var = Upat.var in
   let buf_store_src = Upat.store (var "buf") [ var "src" ] in
-  Pattern_matcher.append Movement.mop_cleanup
+  Pattern_matcher.append Shape.mop_cleanup
     (Pattern_matcher.v
        (fun () -> [
          (* Allreduces are resolved bottom up. *)
@@ -741,7 +741,7 @@ let contiguous_view u =
                Pattern_matcher.concat
                  [
                    Pattern_matcher.with_ctx pm_mops;
-                   Pattern_matcher.with_ctx Symbolic.symbolic;
+                   Pattern_matcher.with_ctx Shape.symbolic;
                    pm_contiguous_view_offset;
                  ];
            })

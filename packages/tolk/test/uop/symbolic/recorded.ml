@@ -9,18 +9,18 @@ open Common
 
 let matcher = function
   | "sym" -> Symbolic.sym
-  | "symbolic" -> Symbolic.symbolic
-  | "symbolic_simple" -> Symbolic.symbolic_simple
-  | "commutative" -> Symbolic.commutative
+  | "symbolic" -> Shape.symbolic
+  | "symbolic_simple" -> Shape.symbolic_simple
+  | "commutative" -> Shape.commutative
   | "pm_simplify_valid" -> Symbolic.pm_simplify_valid
   | "pm_move_where_on_load" -> Symbolic.pm_move_where_on_load
   | "pm_drop_and_clauses" -> Symbolic.pm_drop_and_clauses
-  | "pm_remove_invalid" -> Symbolic.pm_remove_invalid
+  | "pm_remove_invalid" -> Shape.pm_remove_invalid
   | "pm_clean_up_group_sink" -> Symbolic.pm_clean_up_group_sink
   | "sym+pm_move_where_on_load" ->
       Ops.Pattern_matcher.append Symbolic.sym Symbolic.pm_move_where_on_load
   | "symbolic_simple+pm_commit_weak" ->
-      Ops.Pattern_matcher.append Symbolic.symbolic_simple
+      Ops.Pattern_matcher.append Shape.symbolic_simple
         Uop_weak.pm_commit_weak
   | name -> failf "no matcher %s" name
 

@@ -20,7 +20,7 @@ val get_kernel_graph : Ops.t -> Ops.t
      {- ranges index the graph ({!Indexing.run_rangeify}), which prints them
         when the setting {!Setting.debug_rangeify} is on;
      }
-     {- the graph is simplified ({!Symbolic.symbolic},
+     {- the graph is simplified ({!Shape.symbolic},
         {!Simplify.pm_reduce_simplify}), and storage that need not exist is
         removed:
         - a stage ({!Op.Stage}) that a later pass may inline drops the axes its

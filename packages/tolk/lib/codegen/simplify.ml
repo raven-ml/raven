@@ -7,7 +7,6 @@
 
 open Ops
 open Shape
-open Divandmod
 module V = Dtype.Value
 
 let rule_ctx = Pattern_matcher.rule_ctx
@@ -54,7 +53,7 @@ let merge_rewrite =
   Pattern_matcher.concat
     [
       pm_substitute;
-      Pattern_matcher.with_ctx Symbolic.symbolic;
+      Pattern_matcher.with_ctx Shape.symbolic;
       Pattern_matcher.with_ctx pm_flatten_range;
     ]
 
@@ -337,7 +336,7 @@ let pm_reduce_collapse =
               * Upat.f (var ~dtype:[ Dtype.Bool ] "gate") Op.Cast)
             (fun m -> Some (where (m "gate") (m "x") (int 0)));
         ]);
-      Symbolic.symbolic;
+      Shape.symbolic;
     ]
 
 let pm_reduce_load_collapse =

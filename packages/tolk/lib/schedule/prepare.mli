@@ -47,7 +47,7 @@ val prepare_rangeify : Ops.t -> Ops.t
         ({!Ops.resolve_returned_after}); and the movements of a copy from a disk
         move to the copy's result;
      }
-     {- from the leaves up, with {!Movement.mop_cleanup} and {!pm_mops}, gathers
+     {- from the leaves up, with {!Shape.mop_cleanup} and {!pm_mops}, gathers
         left whole:
         - an {!Op.Allreduce} is a call of its own
           ({!Allreduce.create_allreduce_function});

@@ -427,7 +427,7 @@ let merge_consumer_rngs rctx x consumer_rngs =
         let minimum_valid = usum (bool false) (List.map get_valid rngs) in
         graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
           (valid (List.hd local) minimum_valid)
-          (After_sources Symbolic.symbolic))
+          (After_sources Shape.symbolic))
       locals axes
   else begin
     Tbl.replace rctx.realize_map x (Some (List.init (List.length axes) Fun.id));

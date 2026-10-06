@@ -135,7 +135,7 @@ let expander =
           expand_wmma ctx (m "u"));
     ])
   ++ lift Simplify.pm_flatten_range
-  ++ lift Movement.mop_cleanup
+  ++ lift Shape.mop_cleanup
 
 (* Broadcasting and devectorizing *)
 
@@ -483,7 +483,7 @@ let pm_reduce_identity =
   pm
     (fun () -> [
       rule
-        (Upat.reduce ~allow_any_len:true ~name:"red" Symbolic.invalid_gate [])
+        (Upat.reduce ~allow_any_len:true ~name:"red" Shape.invalid_gate [])
         (fun m ->
           let red = m "red" and x = m "x" in
           let id =
@@ -838,7 +838,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(slots, ren) sink
-      (After_sources (lift Movement.mop_cleanup ++ pm_reduce_local))
+      (After_sources (lift Shape.mop_cleanup ++ pm_reduce_local))
   in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:slots sink
@@ -853,13 +853,13 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink =
     rewrite
       (Pattern_matcher.concat
-         [ Symbolic.symbolic_simple; pm_expand_broadcast; pm_add_loads ])
+         [ Shape.symbolic_simple; pm_expand_broadcast; pm_add_loads ])
       sink
   in
   let sink =
     rewrite
       (Pattern_matcher.concat
-         [ Symbolic.symbolic_simple; devectorizer2; Coalesce.indexing_simplify ])
+         [ Shape.symbolic_simple; devectorizer2; Coalesce.indexing_simplify ])
       sink
   in
   (* some coalescing misses without this *)
@@ -868,7 +868,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = Coalesce.memory_coalescing sink ren in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
-      (Before_sources Symbolic.symbolic_simple)
+      (Before_sources Shape.symbolic_simple)
   in
   (* extra symbolic before decomp. crashes without this? *)
   (* NOTE: also run indexing_simplify here, while the index is still weakint
@@ -893,7 +893,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       (After_sources (Uop_weak.pm_lower_weak ++ Coalesce.indexing_simplify))
   in
   (* final symbolic before decomp *)
-  let sink = rewrite Symbolic.symbolic sink in
+  let sink = rewrite Shape.symbolic sink in
   let sink = rewrite pm_cast_float_alu sink in
   let sink = rewrite pm_fuse_products sink in
   (* floordiv+mod / dtype decomp (early) *)
@@ -906,7 +906,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
          (List.map fst ren.Renderer.code_for_op))
   in
   let pm_decomp =
-    Symbolic.symbolic_simple ++ Decomp_op.simplifying_patterns supported_ops
+    Shape.symbolic_simple ++ Decomp_op.simplifying_patterns supported_ops
   in
   let sink = rewrite pm_decomp sink in
   (* late decomps + move gates from unrenderable INVALID where *)
@@ -941,7 +941,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
         pm_decomp;
         lift ren.extra_matcher;
         lift Linearizer.pm_split_ends;
-        lift Symbolic.pm_remove_invalid;
+        lift Shape.pm_remove_invalid;
       ]
   in
   let sink =

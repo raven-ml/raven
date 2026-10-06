@@ -1,4 +1,4 @@
-(* Tests of Tolk.Movement: mop_cleanup shortens chains of movements and indexing
+(* Tests of Tolk.Shape.mop_cleanup: it shortens chains of movements and indexing
    as tinygrad's does, and keeps the elements they denote. *)
 
 open Windtrap
@@ -13,7 +13,7 @@ let var name lo hi =
 let storage shape = Shape.param ~shape:(ints shape) 0 Float32
 let cleanup u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
-    (After_sources Movement.mop_cleanup)
+    (After_sources Shape.mop_cleanup)
 
 let index u idxs = Ops.v Op.Index ~src:(u :: idxs)
 let element u i = index u [ int i ]
@@ -225,5 +225,5 @@ let laws =
 
 let () =
   exit
-    (run "Tolk.Movement"
+    (run "Tolk.Shape.mop_cleanup"
        [ shrinks; reshapes; permutes; stacks; indexing; laws ])

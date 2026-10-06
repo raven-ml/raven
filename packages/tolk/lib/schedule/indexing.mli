@@ -34,7 +34,7 @@ val apply_movement_op :
       ({!Shape.valid}) only where it falls within the source;
     - [Reshape] flattens the index in row-major order and splits it along
       [in_shape], simplified with the symbolic rules and the validity rules
-      ({!Symbolic.symbolic}, {!Symbolic.pm_simplify_valid}).
+      ({!Shape.symbolic}, {!Symbolic.pm_simplify_valid}).
 
     The validity a [Pad] gives an index lasts only as long as the index
     expression carries it. A later movement whose simplification makes the index

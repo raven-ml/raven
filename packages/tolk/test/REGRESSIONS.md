@@ -776,7 +776,8 @@ pass.
 
 ## Movement
 
-The suite is `Tolk.Movement` (`uop/movement/`), written `M` below. A
+The suite is `Tolk.Shape.mop_cleanup` (`uop/movement/`, after tinygrad's
+`uop/movement.py`), written `M` below. A
 golden check is named after its golden, which holds a graph and its cleanup. A
 test of offsets that are nodes simplifies them with Symbolic's rules.
 
@@ -795,7 +796,8 @@ input capture); those tests belong to their passes' sections.
 
 ## Divandmod
 
-The suite is `Tolk.Divandmod` (`uop/divandmod/`), written `DM` below.
+The suite is `Tolk.Shape.div_and_mod_symbolic` (`uop/divandmod/`, after
+tinygrad's `uop/divandmod.py`), written `DM` below.
 Each golden holds divisions and remainders, each followed by its rewrite by
 `div_and_mod_symbolic` applied once, or by itself where no rule applies. A
 golden named after a claim holds one case, built in the suite. A golden

@@ -77,12 +77,6 @@ val pm_lower_weak : (unit, Ops.t) Ops.Pattern_matcher.t
       {!Dtype.Int32} when the storage's greatest index fits one: the values
       outside the guard are discarded. *)
 
-val pm_uncast_const : (unit, Ops.t) Ops.Pattern_matcher.t
-(** [pm_uncast_const] removes the cast from each committed constant source of a
-    broadcastable node, leaving the bare weak literal, when the node's sources
-    still derive the same least upper type and the node the same type. Rules
-    keyed on constant values then match the literal. *)
-
 val pm_cast_const : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_cast_const] states the width of every constant still weak, at each
     consumer: a broadcastable consumer that derives a committed type from its

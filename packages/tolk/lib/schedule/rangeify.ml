@@ -703,7 +703,7 @@ let get_kernel_graph tsink =
       (After_sources
          (Pattern_matcher.concat
             [
-              Symbolic.symbolic;
+              Shape.symbolic;
               Simplify.pm_reduce_simplify;
               pm_const_buffer_folding;
               pm_remove_bufferize;

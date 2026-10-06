@@ -8,13 +8,13 @@ open Common
 (* [folds_to input expected] is the claim that symbolic_simple rewrites [input]
    to [expected]. *)
 let folds_to input expected =
-  equal uop expected (rewrite Symbolic.symbolic_simple input)
+  equal uop expected (rewrite Shape.symbolic_simple input)
 
 (* [simplifies_to ~by input expected] is the claim that [by] (default [sym])
    rewrites [input] to [expected], the operands of [expected] in the order
    [commutative] gives them, as the rewrite does. *)
 let simplifies_to ?(by = sym) input expected =
-  equal uop (rewrite Symbolic.commutative expected) (by input)
+  equal uop (rewrite Shape.commutative expected) (by input)
 
 let a = var "a" 0 8
 let b = var "b" 0 8
@@ -48,11 +48,11 @@ let invalid_values =
           equal
             (list (list (pair string uop)))
             [ [ ("cond", cond); ("i", Ops.invalid); ("x", a) ] ]
-            (List.map by_name (Ops.Upat.match_ Symbolic.invalid_gate gated)));
+            (List.map by_name (Ops.Upat.match_ Shape.invalid_gate gated)));
       test "invalid_gate does not match a selection of a valid value" (fun () ->
           equal int 0
             (List.length
-               (Ops.Upat.match_ Symbolic.invalid_gate (Ops.where cond a b))));
+               (Ops.Upat.match_ Shape.invalid_gate (Ops.where cond a b))));
       test "a binary operation moves inside the gate of its first operand"
         (fun () ->
           folds_to Ops.O.(gated * int 10) (Shape.valid Ops.O.(a * int 10) cond);
@@ -86,7 +86,7 @@ let invalid_values =
       test "a rule that computes with the value of invalid does not apply"
         (fun () ->
           let stays e =
-            equal uop (rewrite Symbolic.commutative e) (symbolic e)
+            equal uop (rewrite Shape.commutative e) (symbolic e)
           in
           stays (Ops.where Ops.O.(a < Ops.invalid) (Ops.int 0) a);
           stays Ops.O.(a * int 2 < Ops.invalid);
@@ -135,7 +135,7 @@ let invalid_values =
     ]
 
 let remove_invalid =
-  let rewrite = rewrite Symbolic.pm_remove_invalid in
+  let rewrite = rewrite Shape.pm_remove_invalid in
   group "pm_remove_invalid"
     [
       test "a gate's invalid is 0 of the gate's type" (fun () ->
@@ -295,7 +295,7 @@ let constants =
       test "a comparison reads a committed constant at its width" (fun () ->
           let x = var ~dtype:Uint8 "x" 0 255 in
           let lt = Ops.O.(x < Ops.cconst Uint8 (i 300)) in
-          equal uop Ops.O.(x < int 44) (rewrite Uop_weak.pm_uncast_const lt);
+          equal uop Ops.O.(x < int 44) (rewrite Shape.pm_uncast_const lt);
           equal Dtypes.const (`Bool false)
             (Interpreter.eval ~vars:[ ("x", i 100) ] (symbolic lt)));
       (* A committed constant is read at its width, by an operation that
@@ -385,7 +385,7 @@ let constants =
       test "0 / 0 is NaN" (fun () ->
           let zero = Ops.float 0. in
           let nan =
-            rewrite ~order:before Symbolic.symbolic_simple Ops.O.(zero / zero)
+            rewrite ~order:before Shape.symbolic_simple Ops.O.(zero / zero)
           in
           match Ops.arg nan with
           | Const (`Float v) when Float.is_nan v -> ()
@@ -460,7 +460,7 @@ let casts =
    does not uncast: its claims hold under symbolic. *)
 let powers =
   let by_symbolic input expected =
-    equal uop (rewrite Symbolic.commutative expected) (symbolic input)
+    equal uop (rewrite Shape.commutative expected) (symbolic input)
   in
   group "powers"
     [
@@ -590,7 +590,7 @@ let symbolic_simple =
 (* commutative *)
 
 let commutative =
-  let canonical u = rewrite Symbolic.commutative u in
+  let canonical u = rewrite Shape.commutative u in
   group "commutative"
     [
       test "two sums of the same weak integer terms are the same node"
@@ -1684,7 +1684,7 @@ let laws =
         Gen.(pair weak_scenario weak_scenario)
         (fun (s0, s1) ->
           Law.commutative uop
-            (fun u0 u1 -> rewrite Symbolic.commutative Ops.O.(u0 + u1))
+            (fun u0 u1 -> rewrite Shape.commutative Ops.O.(u0 + u1))
             (node s0, node s1));
     ]
 

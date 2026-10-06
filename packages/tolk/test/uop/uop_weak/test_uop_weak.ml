@@ -173,7 +173,7 @@ let pm_lower_weak =
 
 (* pm_uncast_const *)
 
-let uncast = rewrites Uop_weak.pm_uncast_const
+let uncast = rewrites Shape.pm_uncast_const
 
 let pm_uncast_const =
   let u8 = small ~name:"u" Uint8 in
