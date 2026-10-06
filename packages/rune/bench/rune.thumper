@@ -69,6 +69,7 @@ WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.698e-02	2.590e-0
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 jit/random/gamma-1e6 under load 10.8 on 10 cores
 # forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 jit/special/erfc-1e6 jit/special/erfc-f64-1e6 jit/special/ndtr-1e6 jit/special/ndtr-f64-1e6 jit/special/log-ndtr-1e6 jit/special/log-ndtr-f64-1e6 jit/special/ndtri-1e5 jit/special/ndtri-f64-1e5 jit/special/lgamma-1e6 jit/special/lgamma-f64-1e6 jit/special/digamma-1e6 jit/special/digamma-f64-1e6 jit/special/lbeta-1e6 jit/special/lbeta-f64-1e6 under load 19.1 on 10 cores
+# forced: blessed jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 under load 11.4 on 10 cores
 
 Declined/add-1-beside-grad-on-another-domain	alloc_words	exact	7700
 Declined/add-1-beside-grad-on-another-domain	wall_time	batch=256	n=20	2.729e-05	2.704e-05 2.706e-05 2.707e-05 2.710e-05 2.715e-05 2.720e-05 2.724e-05 2.726e-05 2.726e-05 2.727e-05 2.730e-05 2.734e-05 2.738e-05 2.739e-05 2.741e-05 2.751e-05 2.751e-05 2.784e-05 2.804e-05 2.822e-05
@@ -143,9 +144,9 @@ jit/special/erfc-1e6	wall_time	batch=1	n=20	2.322e-02	1.283e-02 1.312e-02 1.354e
 jit/special/erfc-f64-1e6	alloc_words	exact	826
 jit/special/erfc-f64-1e6	wall_time	batch=1	n=20	6.102e-03	4.729e-03 4.775e-03 4.825e-03 4.930e-03 5.356e-03 5.435e-03 5.704e-03 5.773e-03 5.810e-03 6.028e-03 6.176e-03 6.189e-03 6.511e-03 6.900e-03 7.089e-03 7.858e-03 8.040e-03 8.342e-03 9.759e-03 1.090e-02
 jit/special/erfinv-1e6	alloc_words	exact	826
-jit/special/erfinv-1e6	wall_time	batch=1	n=20	3.649e-03	2.162e-03 2.257e-03 2.264e-03 2.609e-03 2.613e-03 2.620e-03 2.814e-03 2.838e-03 2.943e-03 3.472e-03 3.827e-03 4.093e-03 4.419e-03 4.471e-03 4.642e-03 6.103e-03 6.456e-03 7.771e-03 8.902e-03 1.575e-02
+jit/special/erfinv-1e6	wall_time	batch=1	n=20	1.604e-02	1.336e-02 1.433e-02 1.439e-02 1.458e-02 1.481e-02 1.484e-02 1.503e-02 1.505e-02 1.538e-02 1.538e-02 1.669e-02 1.680e-02 1.691e-02 1.698e-02 1.706e-02 1.724e-02 1.762e-02 1.766e-02 1.800e-02 1.890e-02
 jit/special/erfinv-f64-1e6	alloc_words	exact	826
-jit/special/erfinv-f64-1e6	wall_time	batch=1	n=20	2.368e-01	1.729e-01 1.825e-01 1.846e-01 1.856e-01 1.863e-01 1.885e-01 2.023e-01 2.073e-01 2.107e-01 2.323e-01 2.412e-01 2.502e-01 2.676e-01 2.686e-01 2.713e-01 2.737e-01 2.805e-01 2.811e-01 3.113e-01 3.578e-01
+jit/special/erfinv-f64-1e6	wall_time	batch=1	n=20	1.439e-02	1.152e-02 1.189e-02 1.212e-02 1.227e-02 1.279e-02 1.304e-02 1.357e-02 1.368e-02 1.394e-02 1.412e-02 1.465e-02 1.466e-02 1.480e-02 1.519e-02 1.575e-02 1.587e-02 1.611e-02 1.669e-02 1.833e-02 1.957e-02
 jit/special/lbeta-1e6	alloc_words	exact	1103
 jit/special/lbeta-1e6	wall_time	batch=1	n=20	2.244e-02	1.571e-02 1.604e-02 1.913e-02 1.928e-02 1.928e-02 1.934e-02 1.941e-02 2.111e-02 2.207e-02 2.226e-02 2.261e-02 2.311e-02 2.495e-02 2.754e-02 2.830e-02 3.031e-02 3.133e-02 3.290e-02 3.593e-02 3.613e-02
 jit/special/lbeta-f64-1e6	alloc_words	exact	1103

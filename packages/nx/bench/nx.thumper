@@ -117,6 +117,7 @@ unary/sqrt-1M	wall_time	batch=8	n=20	1.313e-04	1.240e-04 1.242e-04 1.247e-04 1.2
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 10.6 on 10 cores
 # forced: blessed special/erf-1e6 special/erf-f64-1e6 special/erfinv-1e6 special/erfinv-f64-1e6 special/erfc-1e6 special/erfc-f64-1e6 special/ndtr-1e6 special/ndtr-f64-1e6 special/log-ndtr-1e6 special/log-ndtr-f64-1e6 special/ndtri-1e5 special/ndtri-f64-1e5 special/lgamma-1e6 special/lgamma-f64-1e6 special/digamma-1e6 special/digamma-f64-1e6 special/lbeta-1e6 special/lbeta-f64-1e6 under load 17.5 on 10 cores
+# forced: blessed special/erfinv-1e6 special/erfinv-f64-1e6 under load 11.3 on 10 cores
 
 binary/add-100x100-f64	alloc_words	exact	65
 binary/add-100x100-f64	wall_time	batch=2048	n=20	3.606e-06	3.369e-06 3.485e-06 3.503e-06 3.509e-06 3.522e-06 3.528e-06 3.534e-06 3.547e-06 3.570e-06 3.581e-06 3.631e-06 3.635e-06 3.665e-06 3.689e-06 3.689e-06 3.702e-06 3.705e-06 3.708e-06 3.810e-06 4.193e-06
@@ -214,10 +215,10 @@ special/erfc-1e6	alloc_words	exact	19594
 special/erfc-1e6	wall_time	batch=1	n=20	3.053e-02	2.812e-02 2.903e-02 2.926e-02 2.963e-02 2.972e-02 2.978e-02 3.005e-02 3.016e-02 3.033e-02 3.048e-02 3.059e-02 3.067e-02 3.067e-02 3.069e-02 3.141e-02 3.153e-02 3.167e-02 3.344e-02 3.453e-02 3.910e-02
 special/erfc-f64-1e6	alloc_words	exact	19674
 special/erfc-f64-1e6	wall_time	batch=1	n=20	5.697e-02	5.541e-02 5.543e-02 5.578e-02 5.652e-02 5.652e-02 5.674e-02 5.676e-02 5.678e-02 5.680e-02 5.689e-02 5.706e-02 5.708e-02 5.715e-02 5.785e-02 5.816e-02 5.824e-02 5.825e-02 5.834e-02 5.835e-02 5.913e-02
-special/erfinv-1e6	alloc_words	exact	6466
-special/erfinv-1e6	wall_time	batch=1	n=20	1.028e-02	9.719e-03 9.719e-03 9.770e-03 9.910e-03 1.008e-02 1.009e-02 1.011e-02 1.011e-02 1.015e-02 1.021e-02 1.036e-02 1.046e-02 1.053e-02 1.063e-02 1.068e-02 1.106e-02 1.158e-02 1.167e-02 1.279e-02 2.096e-02
-special/erfinv-f64-1e6	alloc_words	exact	108454
-special/erfinv-f64-1e6	wall_time	batch=1	n=20	3.922e-01	3.517e-01 3.540e-01 3.658e-01 3.713e-01 3.724e-01 3.779e-01 3.803e-01 3.827e-01 3.827e-01 3.921e-01 3.924e-01 3.936e-01 3.983e-01 4.001e-01 4.015e-01 4.031e-01 4.194e-01 4.210e-01 4.253e-01 5.228e-01
+special/erfinv-1e6	alloc_words	exact	30218
+special/erfinv-1e6	wall_time	batch=1	n=20	4.438e-02	4.044e-02 4.151e-02 4.165e-02 4.182e-02 4.194e-02 4.217e-02 4.330e-02 4.367e-02 4.420e-02 4.423e-02 4.453e-02 4.455e-02 4.488e-02 4.489e-02 4.613e-02 4.864e-02 4.936e-02 5.197e-02 5.316e-02 5.552e-02
+special/erfinv-f64-1e6	alloc_words	exact	38717
+special/erfinv-f64-1e6	wall_time	batch=1	n=20	9.614e-02	9.149e-02 9.151e-02 9.240e-02 9.406e-02 9.406e-02 9.431e-02 9.460e-02 9.493e-02 9.581e-02 9.584e-02 9.645e-02 9.720e-02 9.823e-02 9.843e-02 9.873e-02 1.003e-01 1.040e-01 1.090e-01 1.144e-01 1.186e-01
 special/lbeta-1e6	alloc_words	exact	42691
 special/lbeta-1e6	wall_time	batch=1	n=20	8.574e-02	7.156e-02 7.243e-02 7.325e-02 7.470e-02 7.622e-02 7.832e-02 7.914e-02 7.990e-02 8.010e-02 8.447e-02 8.700e-02 8.740e-02 8.849e-02 9.132e-02 9.290e-02 9.377e-02 9.493e-02 9.563e-02 1.108e-01 1.110e-01
 special/lbeta-f64-1e6	alloc_words	exact	42856

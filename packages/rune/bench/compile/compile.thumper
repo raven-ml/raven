@@ -6,9 +6,10 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 9.2 on 10 cores
 # forced: blessed special/erfc special/erfc-grad special/ndtr special/ndtr-grad special/log_ndtr special/log_ndtr-grad special/ndtri special/ndtri-grad special/lgamma special/lgamma-grad special/digamma special/digamma-grad special/lbeta special/lbeta-grad-a special/lbeta-grad-b under load 15.2 on 10 cores
+# forced: blessed erfinv erfinv-grad under load 12.6 on 10 cores
 
-erfinv	wall_time	batch=1	n=5	1.350e+00	1.314e+00 1.316e+00 1.350e+00 1.360e+00 1.376e+00
-erfinv-grad	wall_time	batch=1	n=5	5.373e+00	5.311e+00 5.330e+00 5.373e+00 5.385e+00 5.480e+00
+erfinv	wall_time	batch=1	n=5	5.585e-01	5.520e-01 5.524e-01 5.585e-01 5.607e-01 5.624e-01
+erfinv-grad	wall_time	batch=1	n=5	9.487e-01	9.263e-01 9.270e-01 9.487e-01 9.561e-01 9.598e-01
 shaped-16k	wall_time	batch=1	n=5	7.143e+01	6.817e+01 6.983e+01 7.143e+01 7.267e+01 7.285e+01
 shaped-1k	wall_time	batch=1	n=5	7.861e-01	7.783e-01 7.822e-01 7.861e-01 7.906e-01 8.684e-01
 shaped-4k	wall_time	batch=1	n=5	7.183e+00	5.838e+00 6.953e+00 7.183e+00 7.292e+00 8.614e+00
