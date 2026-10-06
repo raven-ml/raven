@@ -54,6 +54,13 @@ let unary_benchmarks () =
     Thumper.bench "abs 512x512" (fun () -> Nx.abs mat);
   ]
 
+(* The 2x2 windows of a [32; 16; 26; 26] batch, stride 2, as a view of shape
+   [32; 16; 13; 13; 2; 2]: innermost runs of two elements. *)
+let pool_windows () =
+  Nx.rand Nx.Float32 [| 32; 16; 26; 26 |]
+  |> Nx.sliding_window ~axis:3 ~window:2 ~step:2
+  |> Nx.sliding_window ~axis:2 ~window:2 ~step:2
+
 let reduce_benchmarks () =
   let small = Nx.rand Nx.Float32 [| 128; 128 |] in
   let flat = Nx.rand Nx.Float32 [| 1_000_000 |] in
@@ -61,6 +68,7 @@ let reduce_benchmarks () =
   let transposed = Nx.transpose (Nx.rand Nx.Float32 [| 2048; 2048 |]) in
   let wide = Nx.rand Nx.Float32 [| 32; 262144 |] in
   let short_runs = Nx.rand Nx.Float32 [| 65536; 16; 2 |] in
+  let windows = pool_windows () in
   [
     Thumper.bench "sum 128x128" (fun () -> Nx.sum small);
     Thumper.bench "sum transposed 2048x2048" (fun () -> Nx.sum transposed);
@@ -71,6 +79,8 @@ let reduce_benchmarks () =
     Thumper.bench "sum axis0 512x512" (fun () -> Nx.sum ~axes:[ 0 ] mat);
     Thumper.bench "sum axis1 512x512" (fun () -> Nx.sum ~axes:[ 1 ] mat);
     Thumper.bench "max axis1 512x512" (fun () -> Nx.max ~axes:[ 1 ] mat);
+    Thumper.bench "max 2x2 windows 32x16x26x26" (fun () ->
+        Nx.max ~axes:[ 4; 5 ] windows);
     Thumper.bench "mean axis0 512x512" (fun () -> Nx.mean ~axes:[ 0 ] mat);
     Thumper.bench "argmax axis1 512x512" (fun () -> Nx.argmax ~axis:1 mat);
   ]
@@ -86,6 +96,8 @@ let structural_benchmarks () =
       (Array.init 1024 (fun i -> Int64.of_int (i * 37 mod 4096)))
   in
   let sort_input = Nx.rand Nx.Float32 [| 512; 512 |] in
+  let windows = pool_windows () in
+  let patches = Nx.rand Nx.Float32 [| 32; 16; 4; 169 |] in
   [
     Thumper.bench "contiguous of transpose 512x512" (fun () ->
         Nx.contiguous transpose_view);
@@ -96,6 +108,12 @@ let structural_benchmarks () =
     Thumper.bench "cast f32→f16 1M" (fun () -> Nx.cast Nx.Float16 flat);
     Thumper.bench "cast f32→i32 1M" (fun () -> Nx.cast Nx.Int32 flat);
     Thumper.bench "copy 1M" (fun () -> Nx.copy flat);
+    Thumper.bench "copy 2x2 windows 32x16x26x26" (fun () -> Nx.copy windows);
+    Thumper.bench "combine 2x2 patches 32x16x14x14" (fun () ->
+        Nx.combine_patches ~output_size:[| 14; 14 |] ~kernel_size:[| 2; 2 |]
+          ~stride:[| 1; 1 |] ~dilation:[| 1; 1 |]
+          ~padding:[| (0, 0); (0, 0) |]
+          patches);
     Thumper.bench "gather 1024 rows from 4096x256" (fun () ->
         Nx.take ~axis:0 ~indices:gather_indices gather_source);
     Thumper.bench "sort rows 512x512" (fun () -> Nx.sort sort_input);

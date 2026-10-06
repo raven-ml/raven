@@ -3536,6 +3536,11 @@ thread.
 
 ### Nx
 
+- Copies, elementwise operations and reductions over views whose innermost
+  axes are short, such as the windows of `Nx.sliding_window`, run 4 to 5 times
+  faster on the CPU, `Nx.combine_patches` about 3 times and `Nx_wide.sum` 1.6
+  times. A float sum of fewer than 8 terms per output over such a view adds
+  its terms in order and may round differently.
 - `Nx_device.Buffer.borrow` of a `Device_local` device's `Nx_device.signal_word`
   succeeds on the other devices of its machine, which map it as the device's
   pinned memory. It was refused, so one vendor's queue could not wait on

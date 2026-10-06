@@ -749,11 +749,12 @@ typedef union {
    The streaming path (nx_c_engine.h) serves a reduction across a kept axis
    more contiguous than every reduced axis, such as an axis-0 sum of a
    C-contiguous matrix, where the per-output path would gather each output's
-   terms a fresh cache line apart. It walks the input a row at a time: a row
-   is one point of the reduced axes, and its elements along the lane, the most
-   contiguous kept axis, are one term of each of `n` outputs. Folding a row
-   into `n` accumulators vectorizes across the lane, and every row is read
-   whole. `accs` is `n` accumulators of the op's compute type, so f16/bf16/fp8
+   terms a fresh cache line apart, and a reduction of a few terms per output,
+   such as a maximum over 2x2 windows, where it would make a call per output.
+   It walks the input a row at a time: a row is one point of the reduced axes,
+   and its elements along the lane, the most contiguous kept axis, are one term
+   of each of `n` outputs. Folding a row into `n` accumulators vectorizes
+   across the lane, and every row is read whole. `accs` is `n` accumulators of the op's compute type, so f16/bf16/fp8
    keep their float accumulation and small ints their 64-bit accumulation, as
    on the per-output path.
      stream folds one row into the `n` accumulators. `first != 0` seeds them

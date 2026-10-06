@@ -154,11 +154,14 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
      ties by axis index, and neighbours that are contiguous with each other
      (the outer's stride is the inner's times the inner's extent) merge. The
      last is the run, and the rows are the points of all of them, in order.
-   - The streaming path is taken when a kept axis has a smaller |stride| than
-     every reduced axis. Its lane is the kept axis of smallest |stride|, the
+   - The streaming path's lane is the kept axis of smallest |stride|, the
      first of equal ones, and its panels are the points of the other kept
-     axes. Otherwise the per-output path folds each output's runs with the
-     table's step.
+     axes. It is taken when the lane has a smaller |stride| than every
+     reduced axis, or when an output has fewer terms than NX_C_SHORT_RUN and
+     the lane has at least as many elements, where the per-output path would
+     spend a call per output on a few terms, as over the window axes of a
+     sliding-window view. Otherwise the per-output path folds each output's
+     runs with the table's step.
    A unit of parallel work is one output on the per-output path, and one
    panel's tile of at most a fixed number of lanes on the streaming path, so
    each worker's scratch is bounded however long the lane. A unit's bits

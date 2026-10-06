@@ -1296,50 +1296,77 @@ typedef struct {
   const nx_c_ndarray *out; /* (leading..., output...) */
 } nx_c_fold_ctx;
 
+/* Outputs of one row, along the last spatial axis, that a worker sums at a
+   time: their accumulators live on its stack. */
+#define NX_C_FOLD_CHUNK 256
+
+/* The outputs [lo, hi) a chunk at a time, each chunk within one row: for each
+   tap in order, the windows that place it on the chunk's outputs, a strided
+   run along the last spatial axis, add into the outputs' accumulators. Every
+   output sums its taps in tap order, as one output at a time would. */
 static void nx_c_fold_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const nx_c_fold_ctx *f = vctx;
   const nx_c_window *w = f->w;
   const nx_c_ndarray *in = f->in, *out = f->out;
-  int ld = w->leading_ndim, K = w->K;
+  int ld = w->leading_ndim, K = w->K, last = K - 1;
   int64_t esize = w->esize;
-  int64_t out_spatial = nx_c_prod(K, w->output_size);
+  int64_t row_len = w->output_size[last];
   int64_t lead_coord[NX_C_MAX_NDIM], ocoord[NX_C_MAX_SPATIAL];
-  for (int64_t it = lo; it < hi; it++) {
-    int64_t o_lin = it % out_spatial;
-    int64_t lead = it / out_spatial;
-    nx_c_unravel(o_lin, K, w->output_size, ocoord);
-    nx_c_unravel(lead, ld, out->shape, lead_coord);
-
-    int64_t out_off = out->offset + nx_c_dot(ld, lead_coord, out->strides);
-    for (int d = 0; d < K; d++) out_off += ocoord[d] * out->strides[ld + d];
+  nx_c_acc acc[NX_C_FOLD_CHUNK];
+  const char *in_data = (const char *)in->data;
+  int64_t in_k = in->strides[ld], in_l = in->strides[ld + 1];
+  int64_t out_l = out->strides[ld + last];
+  int64_t s = w->stride[last], win = w->win[last];
+  int64_t rows_per_lead = nx_c_prod(last, w->output_size);
+  for (int64_t it = lo; it < hi;) {
+    int64_t row = it / row_len, o_lo = it % row_len;
+    int64_t n = row_len - o_lo;
+    if (n > hi - it) n = hi - it;
+    if (n > NX_C_FOLD_CHUNK) n = NX_C_FOLD_CHUNK;
+    nx_c_unravel(row / rows_per_lead, ld, out->shape, lead_coord);
+    nx_c_unravel(row % rows_per_lead, last, w->output_size, ocoord);
     int64_t in_lead = in->offset + nx_c_dot(ld, lead_coord, in->strides);
+    int64_t out_off = out->offset + nx_c_dot(ld, lead_coord, out->strides);
+    for (int d = 0; d < last; d++) out_off += ocoord[d] * out->strides[ld + d];
+    out_off += o_lo * out_l;
 
-    nx_c_acc acc;
-    f->ops->zero(&acc);
+    for (int64_t j = 0; j < n; j++) f->ops->zero(&acc[j]);
     for (int64_t kf = 0; kf < w->kernel_prod; kf++) {
+      /* The window this tap reads along each axis but the last, fixed by the
+         row. */
       bool valid = true;
       int64_t win_flat = 0;
-      for (int d = 0; d < K; d++) {
+      for (int d = 0; d < last; d++) {
         int64_t kc = (kf / w->kernel_cumprod[d]) % w->kernel[d];
         int64_t num = ocoord[d] + w->pad_before[d] - kc * w->dilation[d];
-        if (num < 0 || num % w->stride[d] != 0) {
+        if (num < 0 || num % w->stride[d] != 0 ||
+            num / w->stride[d] >= w->win[d]) {
           valid = false;
           break;
         }
-        int64_t wc = num / w->stride[d];
-        if (wc >= w->win[d]) {
-          valid = false;
-          break;
-        }
-        win_flat += wc * w->win_cumprod[d];
+        win_flat += (num / w->stride[d]) * w->win_cumprod[d];
       }
       if (!valid) continue;
-      int64_t in_off =
-          in_lead + kf * in->strides[ld] + win_flat * in->strides[ld + 1];
-      f->ops->accum(&acc, (const char *)in->data + in_off * esize);
+      /* Along the last axis, window [wc] puts this tap on output
+         [wc * s + c0]: the windows from [wc_lo] to [wc_hi] land in the
+         chunk. */
+      int64_t kc = (kf / w->kernel_cumprod[last]) % w->kernel[last];
+      int64_t c0 = kc * w->dilation[last] - w->pad_before[last];
+      int64_t first = o_lo - c0, end = o_lo + n - 1 - c0;
+      if (end < 0) continue;
+      int64_t wc_lo = first <= 0 ? 0 : (first + s - 1) / s;
+      int64_t wc_hi = end / s;
+      if (wc_hi >= win) wc_hi = win - 1;
+      const char *ip =
+          in_data + (in_lead + kf * in_k + (win_flat + wc_lo) * in_l) * esize;
+      for (int64_t wc = wc_lo; wc <= wc_hi; wc++, ip += in_l * esize)
+        f->ops->accum(&acc[wc * s + c0 - o_lo], ip);
     }
-    f->ops->store((char *)out->data + out_off * esize, &acc);
+    char *op = (char *)out->data + out_off * esize;
+    for (int64_t j = 0; j < n; j++, op += out_l * esize)
+      f->ops->store(op, &acc[j]);
+    it += n;
   }
 }
 

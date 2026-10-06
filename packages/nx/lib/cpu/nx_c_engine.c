@@ -211,6 +211,10 @@ int nx_c_plan_threads(int threads, nx_c_cost_class cls, int64_t runs,
   return (int)n;
 }
 
+/* Below this many elements an innermost run costs more in the call that walks
+   it than in the walk. */
+#define NX_C_SHORT_RUN 8
+
 /* ── Dimension coalescing ──────────────────────────────────────────────────
 
    The map-family iteration plan: K operands sharing one shape, dropped of their
@@ -271,6 +275,26 @@ static void nx_c_coalesce_map(const nx_c_ndarray *ops, int nop,
     cshape[0] = 1;
     for (int k = 0; k < nop; k++) cstride[k][0] = 0;
     nd = 1;
+  }
+
+  /* A short innermost dim makes a kernel call per few elements: the window
+     axes of a sliding-window view, [n; c; oh; ow; 2; 2], hand the kernel runs
+     of 2. The innermost dim that is not short runs innermost instead;
+     elements are independent, so the order of the walk decides no bit. */
+  if (nd > 1 && cshape[nd - 1] < NX_C_SHORT_RUN) {
+    int d = nd - 2;
+    while (d >= 0 && cshape[d] < NX_C_SHORT_RUN) d--;
+    if (d >= 0) {
+      int64_t s = cshape[d];
+      int64_t st[NX_C_MAX_OPERANDS];
+      for (int k = 0; k < nop; k++) st[k] = cstride[k][d];
+      for (int i = d; i < nd - 1; i++) {
+        cshape[i] = cshape[i + 1];
+        for (int k = 0; k < nop; k++) cstride[k][i] = cstride[k][i + 1];
+      }
+      cshape[nd - 1] = s;
+      for (int k = 0; k < nop; k++) cstride[k][nd - 1] = st[k];
+    }
   }
 
   p->ndim = nd;
@@ -869,7 +893,8 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, nx_c_dtype dt,
     int lane = 0;
     for (int j = 1; j < e.nk; j++)
       if (llabs(e.k_in_stride[j]) < llabs(e.k_in_stride[lane])) lane = j;
-    if (llabs(e.k_in_stride[lane]) < llabs(e.r_in_stride[e.nr - 1]))
+    if (llabs(e.k_in_stride[lane]) < llabs(e.r_in_stride[e.nr - 1]) ||
+        (reduced_len < NX_C_SHORT_RUN && e.kshape[lane] >= NX_C_SHORT_RUN))
       return nx_c_fold_stream_run(tbl, dt, &e, lane, cls, threads, bytes);
   }
 
