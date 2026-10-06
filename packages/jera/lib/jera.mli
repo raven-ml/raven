@@ -1081,18 +1081,19 @@ module Ode : sig
       between [t0] and [t1], whichever way the solve runs. At a step's end the
       path is that step's state, up to the rounding of its series.
 
-      Its error is a series of degree 0 on the same breaks: on each piece, per
-      component, the sum of the magnitudes of the local estimates of the
-      accepted steps through it. [t0 = t1] ends the lane [Stalled], since a path
-      needs a piece of positive width.
+      [t0 = t1] ends the lane [Stalled], since a path needs a piece of positive
+      width.
 
-      {b Cost.} A solve's search, then [budget] steps in the answer: the
-      accepted ones taken again with the tracked field, and one of zero length
-      in each slot past them, so a [budget] near the steps the solve takes keeps
-      the answer's cost near the search's. Each piece costs [p + 1] combinations
-      of the stages for an extension of order [p]. {b Derivative.} The accepted
-      steps' and their extensions', through the initial state, [t0], [t1] and
-      every tracked value the field reads; the breaks move with [t0] and [t1].
+      {b Error.} The error is a series of degree 0 on the same breaks: on each
+      piece, per component, the sum of the magnitudes of the local estimates of
+      the accepted steps through it. {b Stability.} As {!solve}'s. {b Cost.} A
+      solve's search, then [budget] steps in the answer: the accepted ones taken
+      again with the tracked field, and one of zero length in each slot past
+      them, so a [budget] near the steps the solve takes keeps the answer's cost
+      near the search's. Each piece costs [p + 1] combinations of the stages for
+      an extension of order [p]. {b Derivative.} The accepted steps' and their
+      extensions', through the initial state, [t0], [t1] and every tracked value
+      the field reads; the breaks move with [t0] and [t1].
 
       Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
       scalar, if a leaf of the state is not a float tensor, or as {!march} does
@@ -1161,7 +1162,7 @@ module Ode : sig
 
   val delay :
     'y Nx.Ptree.t ->
-    ([ `Formula | `Embedded ], 'y, 't) t ->
+    ([> `Formula | `Embedded ], 'y, 't) t ->
     tol:Tol.t ->
     budget:int ->
     pieces:int ->
@@ -1182,25 +1183,26 @@ module Ode : sig
       [at.(0)] from [history] in the step that ends there and as [y0] in the
       step that starts there.
 
-      {b Method.} An explicit embedded method whose steps never exceed the
-      smallest lag, so every delayed state is read from an accepted step's
-      continuous extension (see {!section-paths}) or from [history]. The steps
-      land on the breakpoints [at.(0) + Σ_j k_j τ_j] with [1 ≤ Σ_j k_j ≤ p], [p]
-      the method's order, where the solution's derivative of order [Σ_j k_j] can
-      jump, or of order [1 + Σ_j k_j] when [y0 = history at.(0)]. The order of a
-      delay solve is [min(p, q + 1)], [q] its extension's order (Bellen and
-      Zennaro, 2003). {b Error.} As {!sample}'s. A lag that is not positive, or
-      the largest lag reaching back past the last [pieces] accepted steps, ends
-      the lane [Stalled], and its report names the count that would hold it.
-      Times of [at] that do not increase end the lane [Stalled] too.
-      {b Stability.} As {!solve}'s. {b Cost.} Each attempt costs the method's
-      evaluations, its first stage among them, since the field may jump where
-      one step ends and the next starts. Each stage reads [lags] delayed states,
-      each a binary search of the [pieces] pieces and a series of the
-      extension's degree; the carry holds [pieces] pieces, so a compiled reverse
-      keeps [budget × pieces]. {b Derivative.} The answer reads its own tracked
-      pieces, so the derivative reaches the delayed states, [history], the lags
-      and every tracked value [f] reads.
+      {b Method.} An explicit embedded method, which the two tags together mark,
+      whose steps never exceed the smallest lag, so every delayed state is read
+      from an accepted step's continuous extension (see {!section-paths}) or
+      from [history]. The steps land on the breakpoints [at.(0) + Σ_j k_j τ_j]
+      with [1 ≤ Σ_j k_j ≤ p], [p] the method's order, where the solution's
+      derivative of order [Σ_j k_j] can jump, or of order [1 + Σ_j k_j] when
+      [y0 = history at.(0)]. The order of a delay solve is [min(p, q + 1)], [q]
+      its extension's order (Bellen and Zennaro, 2003). {b Error.} As
+      {!sample}'s. A lag that is not positive, or the largest lag reaching back
+      past the last [pieces] accepted steps, ends the lane [Stalled], and its
+      report names the count that would hold it. Times of [at] that do not
+      increase end the lane [Stalled] too. {b Stability.} As {!solve}'s.
+      {b Cost.} Each attempt costs the method's evaluations, its first stage
+      among them, since the field may jump where one step ends and the next
+      starts. Each stage reads [lags] delayed states, each a binary search of
+      the [pieces] pieces and a series of the extension's degree; the carry
+      holds [pieces] pieces, so a compiled reverse keeps [budget × pieces].
+      {b Derivative.} The answer reads its own tracked pieces, so the derivative
+      reaches the delayed states, [history], the lags and every tracked value
+      [f] reads.
 
       Raises [Invalid_argument] if [budget < 1], if [pieces < 1], if [at] is not
       a non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
