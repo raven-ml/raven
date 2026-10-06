@@ -21,8 +21,9 @@
     {b Domain.} The domain is the closed interval from the first break to the
     last. A point on a break lies in the last piece of positive width that ends
     there, at [u = 1], and a point on the first break in the first piece. NaN
-    evaluates to NaN. Any other point outside raises [Invalid_argument] through
-    {!Nx.check}; {!extend} makes the whole line the domain.
+    evaluates to NaN. An infinite point raises [Invalid_argument] through
+    {!Nx.check} under every extension, and a finite point outside the domain
+    raises unless {!extend} made every finite point part of it.
 
     {b Cost.} Evaluation is a binary search of the breaks ({!Nx.searchsorted}),
     a gather of [degree + 1] coefficients and Clenshaw's recurrence:
@@ -151,8 +152,8 @@ val eval : ('v, 'b) t -> (float, 'b) Nx.t -> 'v
 (** [eval p x] is [p] at each point of [x], of shape [q]: each leaf of shape
     [q @ value].
 
-    Raises [Invalid_argument] through {!Nx.check} if a point that is not NaN
-    lies outside the domain of a value that is not extended. *)
+    Raises [Invalid_argument] through {!Nx.check} if a point is infinite, or
+    finite and outside the domain of a series that is not extended. *)
 
 val eval_at : ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
 (** [eval_at p i u] is the series of piece [i] at the local coordinate [u] in
@@ -164,8 +165,9 @@ val eval_at : ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
 
 (** {1:calculus Calculus}
 
-    Each keeps the breaks and the extension: outside the domain the result
-    extends as {!extend} says, from its own end pieces. *)
+    Each keeps the breaks and the extension, and the result extends from its own
+    end pieces: under [`Hold] the derivative holds its end values, which is not
+    the derivative of the held series. *)
 
 val derivative : ('v, 'b) t -> ('v, 'b) t
 (** [derivative p] is the derivative of [p] in [x] on each piece, of degree one
@@ -177,8 +179,8 @@ val integral : ('v, 'b) t -> ('v, 'b) t
     and continuous across breaks, of degree one more. *)
 
 val extend : [ `Hold | `Polynomial ] -> ('v, 'b) t -> ('v, 'b) t
-(** [extend e p] is [p] defined on the whole line: [`Hold] takes the value at
-    the nearest end, and [`Polynomial] continues the end pieces' series. *)
+(** [extend e p] is [p] defined at every finite point: [`Hold] takes the value
+    at the nearest end, and [`Polynomial] continues the end pieces' series. *)
 
 (** {1:access Access} *)
 

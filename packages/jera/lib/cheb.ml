@@ -8,22 +8,32 @@ type extension = Bounded | Hold | Polynomial
 let locate fn e breaks x =
   let n = Nx.dim 0 breaks - 1 in
   let first = Nx.get [ 0 ] breaks and last = Nx.get [ n ] breaks in
-  (match e with
-  | Bounded ->
-      let inside =
-        Nx.logical_or (Nx.isnan x)
-          (Nx.logical_and (Nx.greater_equal x first) (Nx.less_equal x last))
-      in
-      Nx.check
-        Nx.Ptree.(pair tensor (pair tensor tensor))
-        inside
-        (x, (first, last))
-        (fun i (x, (first, last)) ->
-          Invalid_argument
-            (Printf.sprintf
-               "%s: the point at [%d] is %g, outside the domain [%g, %g]" fn
-               i.(0) (Nx.item [] x) (Nx.item [] first) (Nx.item [] last)))
-  | Hold | Polynomial -> ());
+  (* A point is in the domain if it is NaN, which evaluates to NaN, or finite
+     and, unless the series is extended, between the ends. An infinite point has
+     no piece under any extension. *)
+  let within =
+    match e with
+    | Bounded ->
+        Nx.logical_and (Nx.greater_equal x first) (Nx.less_equal x last)
+    | Hold | Polynomial -> Nx.ones_like (Nx.isnan x)
+  in
+  let inside =
+    Nx.logical_or (Nx.isnan x) (Nx.logical_and (Nx.isfinite x) within)
+  in
+  Nx.check
+    Nx.Ptree.(pair tensor (pair tensor tensor))
+    inside
+    (x, (first, last))
+    (fun i (x, (first, last)) ->
+      let x = Nx.item [] x in
+      Invalid_argument
+        (if Float.is_finite x then
+           Printf.sprintf
+             "%s: the point at [%d] is %g, outside the domain [%g, %g]" fn i.(0)
+             x (Nx.item [] first) (Nx.item [] last)
+         else
+           Printf.sprintf "%s: the point at [%d] is %g, which no piece holds" fn
+             i.(0) x));
   let x =
     match e with
     | Hold -> Nx.minimum (Nx.maximum x first) last

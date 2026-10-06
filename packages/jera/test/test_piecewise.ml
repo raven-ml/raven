@@ -415,8 +415,18 @@ let domain_tests =
         raises_with "the point at [1] is 2.5, outside the domain [0, 2]"
           (fun () -> Piecewise.eval p (vec [| 1.; 2.5 |])));
     test "an infinite point raises" (fun () ->
-        raises_with "outside the domain" (fun () ->
+        raises_with "is -inf, which no piece holds" (fun () ->
             Piecewise.eval p (vec [| neg_infinity |])));
+    cases
+      ~name:(fun (n, _) -> n)
+      "an infinite point raises under every extension"
+      [ ("hold", `Hold); ("polynomial", `Polynomial) ]
+      (fun (_, e) ->
+        let q = Piecewise.extend e p in
+        raises_with "the point at [1] is inf, which no piece holds" (fun () ->
+            Piecewise.eval q (vec [| 0.5; infinity |]));
+        raises_with "the point at [0] is -inf, which no piece holds" (fun () ->
+            Piecewise.eval q (vec [| neg_infinity |])));
     test "hold takes the nearest end" (fun () ->
         equal (exact ())
           (vec [| 0.; 3. |])

@@ -10,7 +10,7 @@
 
 (** The type for what a series is outside its breaks. *)
 type extension =
-  | Bounded  (** Outside the breaks, a point that is not NaN raises. *)
+  | Bounded  (** Outside the breaks, a finite point raises. *)
   | Hold  (** Outside, the value at the nearest end. *)
   | Polynomial  (** Outside, the end pieces' series continued. *)
 
@@ -23,8 +23,8 @@ val locate :
 (** [locate fn e breaks x] is the piece and the local coordinate of each point
     of the 1-D [x]: a point on a break lies in the last piece of positive width
     that ends there, or the first piece at the first break. NaN gives NaN's
-    coordinate. Under [Bounded], a point outside that is not NaN raises
-    [Invalid_argument] naming [fn] through {!Nx.check}. *)
+    coordinate. An infinite point raises [Invalid_argument] naming [fn] through
+    {!Nx.check}, and under [Bounded] so does a finite point outside. *)
 
 val nodes : int -> float array
 (** [nodes n] is the [n + 1] Chebyshev points of the second kind on [[−1, 1]] in
