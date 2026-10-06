@@ -2384,7 +2384,7 @@ val erfinv : (float, 'b) t -> (float, 'b) t
 
     {@ocaml[
       # erfinv (create float64 [| 3 |] [| -0.5; 0.; 0.5 |])
-      - : (float, float64_elt) t = [-0.476936, 0, 0.476936]
+      - : (float, float64_elt) t = [-0.4769362762044699, 0, 0.4769362762044699]
     ]} *)
 
 val erfc : (float, 'b) t -> (float, 'b) t
@@ -2400,7 +2400,7 @@ val ndtr : (float, 'b) t -> (float, 'b) t
 
     {@ocaml[
       # ndtr (create float64 [| 3 |] [| -1.; 0.; 1. |])
-      - : (float, float64_elt) t = [0.158655, 0.5, 0.841345]
+      - : (float, float64_elt) t = [0.15865525393145702, 0.5, 0.841344746068543]
     ]} *)
 
 val log_ndtr : (float, 'b) t -> (float, 'b) t
@@ -2427,7 +2427,8 @@ val lgamma : (float, 'b) t -> (float, 'b) t
 
     {@ocaml[
       # lgamma (create float64 [| 4 |] [| -1.; 0.; 0.5; 1e300 |])
-      - : (float, float64_elt) t = [inf, inf, 0.572365, 6.89776e+302]
+      - : (float, float64_elt) t =
+      [inf, inf, 0.5723649429247001, 6.897755278982137e+302]
     ]} *)
 
 val digamma : (float, 'b) t -> (float, 'b) t
@@ -2455,7 +2456,8 @@ val i0e : (float, 'b) t -> (float, 'b) t
 
     {@ocaml[
       # i0e (create float64 [| 3 |] [| -1.; 0.; 1000. |])
-      - : (float, float64_elt) t = [0.46576, 1, 0.0126172]
+      - : (float, float64_elt) t =
+      [0.4657596075936405, 1.0000000000000002, 0.012617240455891255]
     ]} *)
 
 val i1e : (float, 'b) t -> (float, 'b) t
