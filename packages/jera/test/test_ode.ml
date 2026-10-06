@@ -859,6 +859,23 @@ let event_tests =
         raises_match
           (Exn.failure ~substring:"The crossing of component [1] near t")
           (fun () -> Solution.get s));
+    test "a compiled function returns the answer through an iso" (fun () ->
+        let s = pair in
+        let answer =
+          Solution.ptree
+            Nx.Ptree.(
+              iso
+                (fun (t, (y, i)) -> (t, y, i))
+                (fun (t, y, i) -> (t, (y, i)))
+                (pair tensor (pair s tensor)))
+        in
+        let f q0 = drop (fun _ (q, _) -> q) q0 in
+        let t, _, i =
+          Solution.get
+            (Rune.jit Nx.Ptree.(tensor @-> returns answer) f (scalar 10.))
+        in
+        equal (Oracle.tensor ~rel:5e-12 ()) (scalar (reaches 10. 0.)) t;
+        equal (Oracle.tensor ()) (index 0l) i);
     test "an event of no component raises before any step" (fun () ->
         let calls = ref 0 in
         let counted t y =

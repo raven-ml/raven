@@ -1254,6 +1254,18 @@ module Ode : sig
       tracked value the field and [event] read; the state's is the extension's
       at that time. Without a crossing, the derivative is {!solve}'s.
 
+      A compiled function returns the answer as a value of this structure, [s]
+      the state's:
+
+      {[
+      Solution.ptree
+        Nx.Ptree.(
+          iso
+            (fun (t, (y, i)) -> (t, y, i))
+            (fun (t, y, i) -> (t, (y, i)))
+            (pair tensor (pair s tensor)))
+      ]}
+
       Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
       scalar, if [event] has no component, or as {!march} does for a field of
       another structure. *)
