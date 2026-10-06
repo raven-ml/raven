@@ -27,7 +27,7 @@ let diagonal fn op b =
       (Nx.less_equal (Nx.abs (Nx.sub r b)) bound)
   in
   Nx.check Nx.Ptree.unit fine () (fun i () ->
-      Failure
+      Invalid_argument
         (Printf.sprintf
            "%s: the derivative at [%s] is not elementwise: the function reads \
             other elements than its argument's own"

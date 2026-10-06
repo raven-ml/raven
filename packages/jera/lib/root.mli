@@ -15,7 +15,7 @@
 
     The derivative solves elementwise and checks its solution with one more
     product: where it misses, [f] read another element than its own, and the
-    derivative raises [Failure] naming the entry point.
+    derivative raises [Invalid_argument] naming the entry point.
 
     {[
     (* Kepler's equation M = E − e sin E, for each epoch *)

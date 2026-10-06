@@ -178,7 +178,7 @@ let derivative_tests =
           Solution.best
             (Root.bracket ~tol:tight (f a) ~lo:(Nx.zeros_like a) ~hi:a)
         in
-        failure_with "is not elementwise" (fun () ->
+        raises_with "is not elementwise" (fun () ->
             Rune.grad' (fun a -> Nx.sum (solve a)) a));
     test "compiled equals eager" (fun () ->
         let a = vec [| 0.5; 2.; 30. |] in
