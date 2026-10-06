@@ -3,12 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Law 10: reference posteriors. On six posteriordb posteriors, NUTS, HMC and
-   ensemble slice sampling each recover every element's mean and standard
-   deviation within z sqrt (mcse² + mcse_ref²). The reference moments and their
-   errors come from gen/posteriordb.py. HMC also recovers Neal's funnel,
-   non-centred, at 1024 chains. z holds the family-wise false-alarm rate over
-   every comparison at 1%. *)
+(* Law 10: reference posteriors. On six posteriordb posteriors, NUTS, HMC,
+   ensemble slice sampling and nested sampling each recover every element's mean
+   and standard deviation within z sqrt (mcse² + mcse_ref²). The reference
+   moments and their errors come from gen/posteriordb.py. HMC also recovers
+   Neal's funnel, non-centred, at 1024 chains. z holds the family-wise
+   false-alarm rate over every comparison at 1%. *)
 
 open Windtrap
 module M = Norn_model
@@ -18,8 +18,8 @@ let posteriors = lazy (P.all "../golden/posteriordb.golden")
 let warmup = 300
 let false_alarms = 0.01
 
-(* Three kernels on every reference, and the funnel's four moments. *)
-let kernels = 3
+(* Four samplers on every reference, and the funnel's four moments. *)
+let kernels = 4
 let funnel_comparisons = 4
 
 let comparisons =
@@ -143,9 +143,54 @@ let close ~z what x ~ref ~mcse ~mcse_ref =
     ~msg
     (Float.abs (x -. ref))
 
-let recovers kernel (P.Posterior p) =
+(* A way to posterior draws of a posteriordb model. *)
+type fitter = {
+  draws :
+    'y.
+    (Nx.float64_t list, 'y, Nx.float64_elt) M.t ->
+    'y ->
+    Nx.float64_t list Norn.Draws.t;
+}
+
+let of_kernel kernel = { draws = (fun m y -> fit kernel m P.latent y) }
+
+(* Nested sampling from 500 prior draws; its weighted dead points are the
+   posterior's draws, resampled in a random order into one chain of as many
+   draws as their effective sample size, whose errors are then those of
+   independent draws. *)
+let nested =
+  let live = 500 in
+  {
+    draws =
+      (fun m y ->
+        let u = M.coords m in
+        let k = Nx.Rng.key 1 in
+        let run =
+          Rune.jit
+            Nx.Ptree.(Nx.Rng.ptree @-> returns (Norn.Evidence.ptree u))
+            (fun k ->
+              Norn.Nested.run u ~budget:200 ~prior:(M.log_prior m)
+                ~likelihood:(M.log_likelihood m y) (Nx.Rng.fold_in k 0)
+                (M.from_prior m ~n:live (Nx.Rng.fold_in k 1)))
+        in
+        let w = Norn.Evidence.sample (run k) in
+        let n = int_of_float (Nx.item [] (Norn.Weighted.ess w)) in
+        let x = Norn.Weighted.resample u (Nx.Rng.fold_in k 2) ~n w in
+        let order =
+          Nx.argsort (Nx.Rng.uniform (Nx.Rng.fold_in k 3) Nx.float64 [| n |])
+        in
+        let x =
+          Nx.Ptree.map u
+            (fun _ t ->
+              Nx.unsqueeze ~axes:[ 0 ] (Nx.take ~axis:0 ~indices:order t))
+            x
+        in
+        Norn.Draws.map u P.latent (M.constrain m) (Norn.Draws.v u x));
+  }
+
+let recovers fitter (P.Posterior p) =
   test p.name (fun () ->
-      let d = fit kernel p.model P.latent p.y in
+      let d = fitter.draws p.model p.y in
       let values = Array.of_list (d :> Nx.float64_t list) in
       let z = Lazy.force z in
       List.iter
@@ -212,8 +257,10 @@ let () =
   exit
     (run "Norn posteriordb"
        [
-         group "NUTS recovers" (List.map (recovers nuts) all);
-         group "HMC recovers" (List.map (recovers hmc) all @ [ funnel_test ]);
+         group "NUTS recovers" (List.map (recovers (of_kernel nuts)) all);
+         group "HMC recovers"
+           (List.map (recovers (of_kernel hmc)) all @ [ funnel_test ]);
          group "ensemble slice sampling recovers"
-           (List.map (recovers ensemble) all);
+           (List.map (recovers (of_kernel ensemble)) all);
+         group "nested sampling recovers" (List.map (recovers nested) all);
        ])

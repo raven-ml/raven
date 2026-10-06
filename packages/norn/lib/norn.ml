@@ -51,3 +51,4 @@ module Hmc = Hmc
 module Ensemble = Ensemble
 module Weighted = Weighted
 module Evidence = Evidence
+module Nested = Nested

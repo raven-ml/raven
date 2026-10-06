@@ -1,7 +1,7 @@
 (tests
- (names test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_weighted)
- (modules test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_weighted)
+ (names test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_nested test_weighted)
+ (modules test_support test_bij test_density test_draws test_diag test_summary test_dist test_gaussian test_nuts test_hmc test_ensemble test_nested test_weighted)
  (package norn)
  (deps
   (glob_files golden/*.golden))
- (libraries norn nx nx.dtype rune unix windtrap))
+ (libraries evidence_models norn nx nx.dtype rune unix windtrap))

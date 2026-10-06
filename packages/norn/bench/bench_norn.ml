@@ -104,6 +104,45 @@ let ensemble_step =
   in
   Thumper.bench_with_setup ~setup "schools/64" (fun (step, k, s) -> step k s)
 
+(* A Gaussian likelihood of scale 0.5 under a uniform prior on [-5, 5]^5, over
+   400 points. *)
+let cube_prior x =
+  let inside =
+    Nx.all ~axes:[ 1 ] (Nx.less_equal (Nx.abs x) (Nx.scalar Nx.float64 5.))
+  in
+  let c = (Nx.shape x).(0) in
+  Nx.where inside
+    (Nx.full Nx.float64 [| c |] (-5. *. Float.log 10.))
+    (Nx.full Nx.float64 [| c |] Float.neg_infinity)
+
+let gaussian x =
+  Nx.sub_s
+    (Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-2.))
+    (5. *. (Float.log 0.5 +. (0.5 *. Float.log (2. *. Float.pi))))
+
+let points k =
+  Nx.mul_s (Nx.sub_s (Nx.Rng.uniform k Nx.float64 [| 400; 5 |]) 0.5) 10.
+
+(* A nested sampling step, compiled: 200 points replaced. *)
+let nested_step =
+  let t = Nx.Ptree.tensor in
+  let setup () =
+    let s =
+      Norn.Nested.init t ~budget:10 ~prior:cube_prior ~likelihood:gaussian
+        (points (Nx.Rng.key 1))
+    in
+    let sp = Norn.Nested.ptree t in
+    let step =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        (Norn.Nested.step t ~prior:cube_prior ~likelihood:gaussian)
+    in
+    let k = Nx.Rng.key 2 in
+    ignore (step k s);
+    (step, k, s)
+  in
+  Thumper.bench_with_setup ~setup "gaussian5/400" (fun (step, k, s) -> step k s)
+
 let log_density =
   let setup () =
     let lp = M.log_density model y in
@@ -157,6 +196,7 @@ let () =
       Thumper.group "nuts" [ nuts_step 4; nuts_step 64 ];
       Thumper.group "hmc" [ hmc_step 4; hmc_step 64; hmc_step 1024 ];
       Thumper.group "ensemble" [ ensemble_step ];
+      Thumper.group "nested" [ nested_step ];
       Thumper.group "model" [ log_density ];
       Thumper.group "dist" [ factors ];
       Thumper.group "diag" [ rhat ];

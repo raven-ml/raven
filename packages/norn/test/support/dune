@@ -1,0 +1,3 @@
+(library
+ (name evidence_models)
+ (libraries nx))
