@@ -3302,7 +3302,8 @@ stores through a pad.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `gpt_oss_kv_*`, `gpt_oss_router_*`,
   `vecmat_*` and `shared_keys_*`, recorded from the equally patched
-  tinygrad; the tolk bench's `cuda/gpt_oss_kv` and `cuda/gpt_oss_router`.
+  tinygrad; rune's compiled bench's `cuda/decode-kv-2880x512-bfloat16` and
+  `cuda/decode-router-2880x32-bfloat16`.
 ## D111. A hung AM device is lost, never recovered in the process
 
 - **tinygrad:** `runtime/ops_amd.py:782-801` (`_collect_interrupts`, whose

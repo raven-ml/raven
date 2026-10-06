@@ -5,20 +5,8 @@
 
 (executable
  (name bench_tolk)
- (modules bench_tolk programs kernels lorenz metal)
- (libraries
-  tolk
-  tolk.engine
-  tolk_test
-  tolk_run
-  nx.device
-  nx.cuda.device
-  thumper
-  (select
-   metal.ml
-   from
-   (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
+ (modules bench_tolk programs lorenz)
+ (libraries tolk tolk.engine tolk_test tolk_run nx.device thumper))
 
 (executable
  (name embed)
@@ -42,23 +30,6 @@
    ../test/schedule/prepare/softmax.golden
    ../test/schedule/prepare/sort.golden
    ../test/schedule/prepare/split_sum.golden))
- (action
-  (with-stdout-to
-   %{target}
-   (run %{exe:embed.exe} %{goldens}))))
-
-; The kernels are the sinks the Heuristic suite optimises: gpt-oss-20b's
-; decode products.
-
-(rule
- (target kernels.ml)
- (deps
-  (:goldens
-   ../test/codegen/opt/heuristic/gpt_oss_qkv.golden
-   ../test/codegen/opt/heuristic/gpt_oss_kv.golden
-   ../test/codegen/opt/heuristic/gpt_oss_router.golden
-   ../test/codegen/opt/heuristic/gpt_oss_gate_up.golden
-   ../test/codegen/opt/heuristic/gpt_oss_down.golden))
  (action
   (with-stdout-to
    %{target}

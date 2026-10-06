@@ -11,28 +11,16 @@
    Kernels are lowered and rendered for the CPU's C renderer, on a fixed
    architecture, so every machine times the same work. Nothing is compiled.
 
-   [decode] runs kernels: gpt-oss-20b's decode products, recorded by the
-   Heuristic suite, compiled with the hand-coded optimisations for the host and
-   for a CUDA device, and timed one run at a time, synchronized. [qkv] is the
-   bfloat16 projection of a normalised activation, [kv] its narrower key or
-   value projection and [router] its experts' scores; [gate_up] and [down] are
-   four experts' MXFP4 products, [down] summing them. The CUDA device is opened
-   in the measuring worker, which is forked without an exec, and CUDA's driver
-   must not be initialized before the fork: a fresh process of this executable
-   ([--cuda]) says whether a CUDA device opens.
-
-   [search] times what a beam search pays per candidate before timing it: its
-   program linked ({!Tolk_engine.link_program}), on the host and on Metal, for
-   gpt-oss-20b's key and value projection; a search's first round on Metal
-   ([round]), which times candidates while later ones compile, for the same
-   kernel; and its lowering of a candidate up to its instructions
-   ([linearize]), which every candidate pays, for the kernels of [lorenz] on a
-   CUDA renderer.
+   [search/linearize] times a beam search's lowering of a candidate up to its
+   instructions, which every candidate pays, for the kernels of [lorenz] on a
+   CUDA renderer. What a search pays per candidate beyond it, and what it costs
+   whole, rune's compile suite times through [Rune.jit ~beam].
 
    [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
    on the host where the hand-coded optimisations lost most to a beam search,
    each compiled with the optimisations the search chose for it ([searched]) and
-   with the hand-coded ones ([heuristic]). *)
+   with the hand-coded ones ([heuristic]). No public call applies chosen
+   optimisations to a kernel, so these run through tolk's engine. *)
 
 open Tolk
 
@@ -120,21 +108,19 @@ let program name =
       bench ~setup:(fun () -> kept name) "warm" warm;
     ]
 
-(* Decode products *)
+(* Lorenz kernels *)
 
-(* An element of a buffer a timed kernel reads: a small float, a small integer,
-   and 127 in a byte, which is 1 as an E8M0 scale and +-6 as two FP4 codes.
+(* An element of a buffer a timed kernel reads: a small float, a small integer.
    Uninitialised memory would time NaN and subnormal arithmetic. *)
 let element dt i : Dtype.value =
   if Dtype.is_float dt then `Float (Float.of_int ((i mod 7) - 3) *. 0.25)
   else if Dtype.is_bool dt then `Bool (i mod 2 = 0)
-  else if Dtype.equal dt Uint8 then `Int (Bigint.of_int 127)
   else `Int (Bigint.of_int (i mod 7))
 
-(* [sink] compiled for [d], named [name], and a run of it on buffers of small
-   values ({!element}) that waits for the device. *)
-let compiled name d sink =
-  let devices = Tolk_engine.device [ (name, d) ] in
+(* [sink] compiled for the host, and a run of it on buffers of small values
+   ({!element}). *)
+let compiled sink =
+  let d = Nx_device.host in
   let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
   let elf = Device.Tiny_elf.of_program prg in
   let info = match Ops.arg prg with Program i -> i | _ -> assert false in
@@ -145,48 +131,9 @@ let compiled name d sink =
     let n = List.fold_left ( * ) 1 p.shape in
     Run.buffer d p.dtype (Array.init n (element p.dtype))
   in
-  match (devices name).compiler.queues with
-  | None ->
-      let p = Tolk_engine.Program.load d prg
-      and buffers = List.map scratch params in
-      fun () -> Tolk_engine.Program.run p buffers
-  | Some _ ->
-      let slots = 1 + List.fold_left max 0 info.globals in
-      let param slot =
-        List.nth params
-          (Option.get (List.find_index (Int.equal slot) info.globals))
-      in
-      let call =
-        Ops.call prg
-          (List.init slots (fun slot ->
-               let p = param slot in
-               Ops.param
-                 ~shape:(List.map (fun n -> Ops.Int n) p.shape)
-                 ~device:(Single name) slot p.dtype))
-      in
-      let linear =
-        Hcq2.compile_linear ~profile:Unstamped
-          ~devices:(fun n -> (devices n).compiler)
-          (Ops.v Op.Linear ~src:[ call ])
-      in
-      let s = Tolk_engine.link ~devices linear in
-      let buffers = Array.init slots (fun slot -> [ scratch (param slot) ]) in
-      fun () ->
-        Tolk_engine.run s buffers;
-        Nx_device.synchronize d
-
-let decode name open_device =
-  Thumper.group ~id:name name
-    (List.map
-       (fun (kernel, text) ->
-         Thumper.bench_with_setup
-           ~setup:(fun () ->
-             compiled
-               (String.uppercase_ascii name)
-               (open_device ()) (Graph.of_string text))
-           kernel
-           (fun run -> run ()))
-       Kernels.all)
+  let p = Tolk_engine.Program.load d prg
+  and buffers = List.map scratch params in
+  fun () -> Tolk_engine.Program.run p buffers
 
 (* The kernel graph [text] with the optimisations it asks for, or with the
    hand-coded ones when [heuristic]. *)
@@ -200,8 +147,7 @@ let lorenz_kernel ~heuristic text =
 let lorenz =
   let case text heuristic name =
     Thumper.bench_with_setup
-      ~setup:(fun () ->
-        compiled "CPU" Nx_device.host (lorenz_kernel ~heuristic text))
+      ~setup:(fun () -> compiled (lorenz_kernel ~heuristic text))
       name
       (fun run -> run ())
   in
@@ -213,68 +159,6 @@ let lorenz =
        Lorenz.all)
 
 (* Searches *)
-
-let search_kernel () = Graph.of_string (List.assoc "gpt_oss_kv" Kernels.all)
-
-(* The devices map of the device [name], its name in it, and the program of
-   [search_kernel ()] on it. *)
-let search_setup name open_device =
-  let d = open_device () and device = String.uppercase_ascii name in
-  let prg = Codegen.to_program (search_kernel ()) (Tolk_engine.renderer d) in
-  (Tolk_engine.device [ (device, d) ], device, prg)
-
-let prepare name open_device =
-  Thumper.bench_with_setup
-    ~setup:(fun () -> search_setup name open_device)
-    name
-    (fun (devices, device, prg) -> Tolk_engine.link_program ~devices device prg)
-
-(* A setting of the bench's own: each search binds it to a new value, which keys
-   its programs apart from the last search's, so that each compiles its
-   candidates anew. *)
-let searches = Setting.int ~reach:Output "TOLK_BENCH_SEARCH" 0
-
-(* The [n]th beam search of width 2 of [search_kernel ()] on [device], with the
-   disk cache off. A search that gains nothing short of a second ends after its
-   first round: it compiles and times one round's candidates, which no
-   measurement changes. *)
-let search_round ~devices device ren n =
-  let k = search_kernel () in
-  let k =
-    match Ops.arg k with
-    | Kernel info -> Ops.replace k ~arg:(Kernel { info with beam = 2 })
-    | _ -> invalid_arg "the search kernel is no kernel"
-  in
-  let slots = ref None in
-  let link prg = Tolk_engine.link_program ~devices device prg in
-  let time ~vars s =
-    if Option.is_none !slots then slots := Some (Tolk_engine.slots s);
-    Tolk_engine.time ~vars s (Option.get !slots)
-  in
-  Setting.context
-    [
-      B (searches, n);
-      B (Setting.cachelevel, 0);
-      B (Setting.beam_min_progress, 1e6);
-    ]
-    (fun () ->
-      Codegen.to_program
-        ~beam:(Search.beam_search ~link ~time ~clock:Tolk_engine.clock)
-        k ren)
-
-(* A search allocates on the domains that compile its candidates, and the
-   calling domain compiles those none has started when it reaches them: its
-   allocations change from run to run, so the case is timed alone. *)
-let round name open_device =
-  Thumper.bench_with_setup
-    ~metrics:[ Thumper.Metric.wall_time ]
-    ~setup:(fun () ->
-      let d = open_device () and device = String.uppercase_ascii name in
-      (Tolk_engine.device [ (device, d) ], device, Tolk_engine.renderer d, ref 0))
-    name
-    (fun (devices, device, ren, n) ->
-      incr n;
-      search_round ~devices device ren !n)
 
 (* A search's candidates of a lorenz kernel, lowered for a CUDA renderer that
    compiles nothing: the kernel as the search is handed it, with the
@@ -322,58 +206,12 @@ let linearize_candidates =
            (List.map (fun ast -> Codegen.linearize ast cuda_renderer)))
        Lorenz.all)
 
-let run_self flag =
-  Sys.command (Filename.quote_command Sys.executable_name [ flag ])
-
-let cuda () =
-  if run_self "--cuda" <> 0 then []
-  else
-    [
-      decode "cuda" (fun () ->
-          match Nx_cuda_device.get 0 with Ok d -> d | Error e -> failwith e);
-    ]
-
-(* A forked worker cannot reach Metal's compiler service, so a fresh process
-   ([--metal]) compiles the kernel into the disk cache and links and runs it
-   once, and runs a search round, which leaves the pipelines of the kernel and
-   of the round's candidates in Metal's cache, and says whether Metal opens.
-   The worker's setup and links then read them back. *)
-let search () =
-  let metal =
-    match Metal.open_device with
-    | Some open_device when run_self "--metal" = 0 ->
-        fun f -> [ f "metal" open_device ]
-    | _ -> fun _ -> []
-  in
-  Thumper.group "search"
-    [
-      Thumper.group "prepare"
-        (prepare "cpu" (fun () -> Nx_device.host) :: metal prepare);
-      linearize_candidates;
-      Thumper.group "round" (metal round);
-    ]
-
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
-  @ (decode "cpu" (fun () -> Nx_device.host) :: lorenz :: search () :: cuda ())
+  @ [ lorenz; Thumper.group "search" [ linearize_candidates ] ]
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--cuda" ] ->
-      exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
-  | [ _; "--metal" ] -> (
-      match Metal.open_device with
-      | None -> exit 1
-      | Some open_device ->
-          let devices, device, prg = search_setup "metal" open_device in
-          let s = Tolk_engine.link_program ~devices device prg in
-          ignore (Tolk_engine.time s (Tolk_engine.slots s));
-          let d = open_device () in
-          ignore
-            (search_round
-               ~devices:(Tolk_engine.device [ ("METAL", d) ])
-               "METAL" (Tolk_engine.renderer d) 0);
-          exit 0)
   | [ _; "--warm" ] ->
       (* Each case that compiles, once, in as few calls as a trial takes: the
          kernels its setup compiles land in tolk's disk cache, which a
@@ -381,11 +219,10 @@ let () =
       ignore
         (Thumper.measure
            ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
-           ~filter:
-             (`Or [ `Id "cpu/"; `Id "cuda/"; `Id "lorenz/"; `Id "search/" ])
-           (suite ()))
+           ~filter:(`Id "lorenz/") (suite ()))
   | _ ->
-      Thumper.run "tolk" ~config:Thumper.Config.(default |> deadline 30.)
+      Thumper.run "tolk"
+        ~config:Thumper.Config.(default |> deadline 30.)
         ~budgets:
           [
             Thumper.Budget.no_slower_than 0.05;
