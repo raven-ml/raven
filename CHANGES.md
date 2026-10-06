@@ -958,6 +958,13 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add solves, which return a `Solution.t` with a status per lane:
+  `Solution.get` returns an answer that converged everywhere and raises
+  `Failure` with the first failing lane's report, `best` and `ok` read every
+  lane. Tolerances are `Tol.v`, `rel`, `abs` and `ulps`. `Root.bracket`
+  (ITP with bisection, at most 2b + 2 evaluations) and `Root.newton` find
+  zeros elementwise, stated through `Rune.root` so their derivative is the
+  implicit one, and zero at a lane that did not converge.
 - Add `Sde.march`, fixed-step marches of stochastic differential equations
   along a `Sde.Brownian` path, a virtual tree that returns increments and
   space–time Lévy areas as a pure function of a key: `euler_maruyama`,

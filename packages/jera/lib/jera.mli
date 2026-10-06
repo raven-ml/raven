@@ -15,6 +15,8 @@
 
     {table
       {tr {th Problem } {th Regime } {th Method } }
+      {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
+      {tr {td  } {td a bracket } {td {!Root.bracket} } }
       {tr
         {td Integral, one dimension }
         {td smooth, fixed nodes }
@@ -46,21 +48,45 @@
     - {b Problems are closures.} A problem is an OCaml function and the data it
       is computed over. Every tracked value the function reads, argument or
       capture, reaches the derivative.
-    - {b Batching.} Elementwise families ({!Quad}'s integrals, evaluation) treat
-      every element as its own problem; their function must not reduce or mix
-      along any axis. Structured families solve one problem, and a state's
-      tensors share its steps. {!Rune.val-vmap} gives each lane its own.
+    - {b Batching.} Elementwise families ({!Root}, {!Quad}'s integrals,
+      evaluation) treat every element as its own problem; their function must
+      not reduce or mix along any axis. Structured families solve one problem,
+      and a state's tensors share its steps. {!Rune.val-vmap} gives each lane
+      its own.
     - {b Dtypes.} The working dtype is the data's, with no default. Times have
       their own dtype. Float leaves of a state are its vector; other leaves are
       carried unchanged.
-    - {b Formulas.} A function whose answer cannot miss on tensor data is a
-      formula and returns its value; its derivative is the composition's.
+    - {b Formula or solve.} A function whose answer can miss on tensor data (a
+      tolerance, a budget) is a solve and returns a {!Solution.t}, with a status
+      per lane; one that cannot is a formula and returns its value, and its
+      derivative is the composition's.
+    - {b Searches and answers.} A solve searches on detached values, then states
+      its answer from the search's decisions: a zero by its equation through
+      {!Rune.root}. The derivative is the answer's: no search is differentiated,
+      and a lane that did not converge has a zero derivative.
+    - {b Tags.} A method's tag says which drivers take it: [`Formula] runs in a
+      formula, [`Embedded] estimates its error and drives a solve. An impossible
+      pairing is a type error.
+    - {b Budgets} are arguments only where no bound is derivable, with no
+      default.
+    - {b Derivatives that steer.} A method that needs a derivative only to steer
+      its search takes it from the caller ([slope]); it changes the speed only.
     - {b Errors.} A broken precondition on static data raises [Invalid_argument]
-      naming the function, at once. One on tensor data raises [Invalid_argument]
-      through {!Nx.check}: at once eagerly, when the compiled call returns under
+      naming the function, at once. A missed tolerance is a status. A broken
+      precondition on a formula's tensor data raises [Invalid_argument] through
+      {!Nx.check}: at once eagerly, when the compiled call returns under
       {!Rune.val-jit}.
     - {b Devices.} Constants are computed on the host in float64 and rounded
       once to the working dtype. *)
+
+module Tol = Tol
+(** Tolerances. *)
+
+module Solution = Solution
+(** Answers of solves, with a status per lane. *)
+
+module Root = Root
+(** Zeros of functions of one variable. *)
 
 module Quad = Quad
 (** Integrals. *)

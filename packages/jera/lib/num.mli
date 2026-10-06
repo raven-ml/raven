@@ -27,3 +27,11 @@ val check_increasing : string -> string -> (float, 'b) Nx.t -> unit
 (** [check_increasing fn what x] checks that the 1-D [x] is strictly increasing,
     raising [Invalid_argument] through {!Nx.check} naming [fn], [what], the
     first index that is not above its predecessor and both values. *)
+
+val ordered_midpoint : (float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [ordered_midpoint a b] is the float halfway between [a <= b] in the order of
+    the floats themselves: the midpoint of their ordered-integer images, so a
+    bisection by it ends within the dtype's width of steps. *)
+
+val adjacent : (float, 'b) Nx.t -> (float, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t
+(** [adjacent a b] is [true] where no float lies strictly between [a <= b]. *)

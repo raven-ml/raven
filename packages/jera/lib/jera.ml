@@ -3,6 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+module Tol = Tol
+module Solution = Solution
+module Root = Root
 module Quad = Quad
 module Piecewise = Piecewise
 module Grid = Grid
