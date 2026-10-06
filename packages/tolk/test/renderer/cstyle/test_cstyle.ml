@@ -791,10 +791,15 @@ let int_constant =
       (fun (k, sign) -> `Int (Bigint.mul (Bigint.of_int sign) (power k)))
       (pair (int_range 60 130) (of_list [ 1; -1 ]))
   in
+  (* [1 + k 2^-52] is below 2, so the value is finite even at [e = 1023]: an
+     infinity has no integer value. *)
   let large_float =
     map
-      (fun ((e, m), sign) -> `Float (sign *. Float.ldexp (1. +. m) e))
-      (pair (pair (int_range 7 1023) (float_range 0. 1.)) (of_list [ 1.; -1. ]))
+      (fun ((e, k), sign) ->
+        `Float (sign *. Float.ldexp (1. +. Float.ldexp (Float.of_int k) (-52)) e))
+      (pair
+         (pair (int_range 7 1023) (int_range 0 ((1 lsl 52) - 1)))
+         (of_list [ 1.; -1. ]))
   in
   let float_edges =
     of_list
