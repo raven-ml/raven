@@ -964,6 +964,80 @@ let results =
             (Nx.fill 3. (Nx.transpose split)));
     ]
 
+(* Bitcasts. A bitcast reads a value's bytes as another dtype. Where the host's
+   is a view, a placed value's is the same view of its storage: it runs no
+   kernel, so a device with none takes it too. *)
+
+let bitcasts =
+  let cpu1 = Nx.Device.cpu 1 and cpu2 = Nx.Device.cpu 2 in
+  let gpu = Nx.Device.make gpu_memory in
+  let wheres =
+    [
+      ("on a device with no kernels", Nx.Placement.on gpu);
+      ("on CPU:1", Nx.Placement.on cpu1);
+      ( "rows split over CPU:1 and CPU:2",
+        Nx.Placement.sharded ~axis:0 [ cpu1; cpu2 ] );
+      ("copies on CPU:1 and CPU:2", Nx.Placement.replicated [ cpu1; cpu2 ]);
+    ]
+  in
+  (* Bytes of storage of their own: a constant would be one element seen at
+     every index. *)
+  let bytes =
+    Nx.init Nx.uint8 [| 4; 6 |] (fun i -> ((i.(0) * 61) + (i.(1) * 7)) land 255)
+  in
+  let allocated p =
+    List.fold_left
+      (fun n d ->
+        n + Nx_device.Stats.allocated (Nx_device.stats (Nx.Device.memory d)))
+      0 (Nx.Placement.devices p)
+  in
+  let views =
+    [
+      ("as uint4", fun x -> Nx.P (Nx.bitcast Nx.uint4 x));
+      ( "as uint4 and back as uint8",
+        fun x -> Nx.P (Nx.bitcast Nx.uint8 (Nx.bitcast Nx.uint4 x)) );
+      ("as int8", fun x -> Nx.P (Nx.bitcast Nx.int8 x));
+      ( "as uint16 in pairs",
+        fun x -> Nx.P (Nx.bitcast Nx.uint16 (Nx.reshape [| 4; 3; 2 |] x)) );
+      ( "a GGUF block's codes as uint4, their pairs swapped",
+        fun x ->
+          Nx.P
+            (Nx.swapaxes (-1) (-2)
+               (Nx.bitcast Nx.uint4 (Nx.shrink [| (0, 4); (1, 5) |] x))) );
+    ]
+  in
+  group "bitcasts"
+    [
+      cases "of placed bytes are the host's, a view of their storage"
+        ~name:(fun ((v, _), (w, _)) -> v ^ ", " ^ w)
+        (List.concat_map (fun v -> List.map (fun w -> (v, w)) wheres) views)
+        (fun ((_, f), (_, p)) ->
+          let x = Nx.place p (Nx.copy bytes) in
+          let before = allocated p in
+          let (Nx.P y) = f x in
+          let made = allocated p - before in
+          let (Nx.P expected) = f bytes in
+          equal ~msg:"placement" placement p (Nx.placement y);
+          equal ~msg:"bytes allocated" int 0 made;
+          equal ~msg:"one storage" bool true (storage_of y == storage_of x);
+          equal ~msg:"its memory" bool true
+            (share_memory (storage y) (storage x));
+          equal ~msg:"dtype" string
+            (Nx_dtype.to_string (Nx.dtype expected))
+            (Nx_dtype.to_string (Nx.dtype y));
+          equal ~msg:"bits" (array int)
+            (Nx.to_array (Nx.cast Nx.int32 expected) |> Array.map Int32.to_int)
+            (Nx.to_array (Nx.cast Nx.int32 (Nx.place Nx.Placement.host y))
+            |> Array.map Int32.to_int));
+      test "a widening bitcast that is no view on the host needs a kernel"
+        (fun () ->
+          let x = Nx.place (Nx.Placement.on gpu) (Nx.copy bytes) in
+          raises_match (Exn.invalid_arg ~substring:"has no eager kernels")
+            (fun () ->
+              ignore
+                (Nx.bitcast Nx.uint16 (Nx.reshape [| 4; 3; 2 |] (Nx.flip x)))));
+    ]
+
 (* Reads and views *)
 
 let reads =
@@ -1116,6 +1190,7 @@ let () =
          place_tests;
          movements;
          results;
+         bitcasts;
          reads;
          claims;
          identities;

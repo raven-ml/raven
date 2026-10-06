@@ -1547,10 +1547,12 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     bits of the wider element.
 
     [bit], [int4] and [uint4] read as their packed bytes: a [bit] tensor whose
-    last axis has 8 elements is a [uint8] tensor without that axis. A host
-    value's result shares its storage, except where [dtype] is wider and [t] is
-    not C-contiguous from an element whose bits start on a byte aligned to
-    [dtype]'s width: it is then read from a C-contiguous copy of [t].
+    last axis has 8 elements is a [uint8] tensor without that axis. The result
+    is a view of [t]'s storage, on the host and on any device, and runs no
+    kernel, except where [dtype] is wider and [t] is not C-contiguous from an
+    element whose bits start on a byte aligned to [dtype]'s width, or is split
+    over devices along its last axis: it is then read from a C-contiguous copy
+    of [t], made by [t]'s devices.
 
     Raises [Invalid_argument] if either dtype is [bool], whose only bytes are 0
     and 1, or if [dtype] is wider and [t] has no last axis of [k] elements.
@@ -4654,9 +4656,10 @@ val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
 val shards : ('a, 'b) t -> Nx_device.Buffer.t list * Nx_array.View.t
 (** [shards x] is the buffer of [x]'s storage on each device of
     [Placement.devices (placement x)], in that order, and the view each device
-    has of its buffer. A host value is its one buffer. The buffers are [x]'s own
-    handles: the values over one storage give physically equal ones, and nothing
-    is copied.
+    has of its buffer, read as [x]'s dtype. A host value is its one buffer. The
+    buffers are [x]'s own handles: the values of one dtype over one storage give
+    physically equal ones, a value of another dtype views their memory
+    ({!Nx_device.Buffer.view}), and nothing is copied.
 
     Raises [Invalid_argument] if [x] is traced, or as a read of a consumed value
     raises. *)
@@ -5035,11 +5038,13 @@ module Repr : sig
       Storage.t ->
       ('a, 'b) value
     (** [v p dtype view s] is the value of [dtype] at [p] whose elements, on
-        each device, are those [view] reaches in its storage [s].
+        each device, are those [view] reaches in its storage [s], whose bytes
+        it reads as [dtype]'s: values of several dtypes view one storage.
 
         Raises [Invalid_argument] if [p] is {!Placement.host}, if [view] reaches
-        an element outside [s], if [s]'s buffers are not of [dtype]'s format, or
-        if [s]'s devices do not hold [p]'s. *)
+        an element outside [s], if a buffer of [s] does not start on a byte
+        aligned to one of [dtype]'s elements, or if [s]'s devices do not hold
+        [p]'s. *)
 
     val id : ('a, 'b) t -> int
     (** [id x] is [x]'s identity, for hashing: every placed value has its own.

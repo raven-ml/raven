@@ -308,8 +308,11 @@ let same_storage s0 s1 =
   | Placed c0, Placed c1 -> c0 == c1
   | Host_buffer _, Placed _ | Placed _, Host_buffer _ -> false
 
+(* A capture is a storage read through a view as a dtype: values of several
+   dtypes view one placed storage. *)
 type capture = {
   storage : storage;
+  format : Nx_dtype.Scalar.t;
   view : View.t;
   at : Placement.t;
   node : Ops.t;
@@ -861,6 +864,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
   let dt = Nx.dtype x and shape = Nx.shape x in
   let tdt = check s what p dt in
   let key = key x and bufs, v = Nx.shards x in
+  let format = Nx_dtype.Scalar.of_dtype dt in
   let owned =
     match key with
     | Host_buffer b -> not (Nx_device.Buffer.is_borrowed b)
@@ -871,7 +875,9 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
   else if single v && owned then scalar tdt x
   else
     let same c =
-      same_storage c.storage key && same_view c.view v && Placement.equal c.at p
+      same_storage c.storage key
+      && Nx_dtype.Scalar.equal c.format format
+      && same_view c.view v && Placement.equal c.at p
     in
     match List.find_opt same s.captures with
     | Some c -> c.node
@@ -882,7 +888,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
         let node = storage_view s what dt buffer p shape v start in
         let buffers = List.map (run dt v) bufs in
         s.captures <-
-          { storage = key; view = v; at = p; node; buffer; buffers }
+          { storage = key; format; view = v; at = p; node; buffer; buffers }
           :: s.captures;
         node
 
@@ -926,6 +932,7 @@ let follow s q u =
       let moved c =
         let same c' =
           same_storage c'.storage c.storage
+          && Nx_dtype.Scalar.equal c'.format c.format
           && same_view c'.view c.view && Placement.equal c'.at q
         in
         match List.find_opt same s.captures with

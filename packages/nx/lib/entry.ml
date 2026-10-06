@@ -317,7 +317,7 @@ let run (type a b) (x : (a, b) t) =
   | Host t -> Place.run_in t.buffer t.view
   | Placed r -> (
       match Cell.state r.r_cell with
-      | Live [ b ] -> Place.run_in b r.r_view
+      | Live [ b ] -> Place.run_in (read_as r.r_dtype b) r.r_view
       | _ -> None)
   | Traced _ -> outside_trace ()
 

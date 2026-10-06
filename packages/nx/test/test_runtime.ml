@@ -55,11 +55,10 @@ let host_buffers =
 let big x = x > 1 lsl 30 || x < -(1 lsl 30)
 
 (* The representation's constructors build no value that a kernel would read
-   outside its buffers: every element a view reaches lies in them, and they are
-   of the value's format. *)
+   outside its buffers: every element a view reaches lies in them, and each
+   starts on a byte aligned to the value's elements. *)
 let representation =
   let outside = Exn.invalid_arg ~substring:"reaches outside"
-  and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
   and other_count = Exn.invalid_arg ~substring:"Nx.of_buffer: shape"
   and p = Nx.Placement.on (Nx.Device.make r1) in
   let shapes =
@@ -151,11 +150,25 @@ let representation =
         [ (0, [| 1 lsl 32; 1 lsl 32 |]); (4, [| -2; -2 |]); (1, [| -1; -1 |]) ]
         (fun (n, shape) ->
           raises_match other_count (fun () -> of_buffer n shape));
-      test "Nx.Repr.Placed.v refuses storage of another format" (fun () ->
+      test "Nx.Repr.Placed.v reads a storage's bytes as its dtype" (fun () ->
           let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float64 4 in
           let s = Nx.Repr.Storage.v p [ b ] in
-          raises_match other_format (fun () ->
-              Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 4 |]) s));
+          let x =
+            Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 8 |]) s
+          in
+          equal int 8 (Nx.numel x);
+          raises_match (Exn.invalid_arg ~substring:"outside the storage")
+            (fun () ->
+              Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 9 |]) s));
+      test "Nx.Repr.Placed.v refuses a buffer not aligned to its dtype"
+        (fun () ->
+          let b = Nx_device.Buffer.create r1 Nx_dtype.Scalar.UInt8 9 in
+          let s =
+            Nx.Repr.Storage.v p
+              [ Nx_device.Buffer.view b ~offset:1 Nx_dtype.Scalar.UInt8 8 ]
+          in
+          raises_match (Exn.invalid_arg ~substring:"not aligned") (fun () ->
+              Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 2 |]) s));
     ]
 
 (* Values on the disk: files, which the host reads where they lie, in their

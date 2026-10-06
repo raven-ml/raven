@@ -765,6 +765,25 @@ let devices =
           placed_values (Nx.Placement.sharded ~axis:0 [ d1; d2 ]));
       test "values split along their columns over two devices" (fun () ->
           placed_values (Nx.Placement.sharded ~axis:1 [ d1; d2 ]));
+      test
+        "a call that captures two dtypes of one storage reads each as its own"
+        (fun () ->
+          (* A bitcast of a placed value views its storage, so a uint8 value and
+             its int8 and uint4 readings share it, two at the same view. *)
+          let u =
+            Nx.place (Nx.Placement.on d1)
+              (Nx.init Nx.uint8 [| 2; 3 |] (fun i -> 120 + (i.(0) * 60) + i.(1)))
+          in
+          let i8 = Nx.bitcast Nx.int8 u and q = Nx.bitcast Nx.uint4 u in
+          let f x =
+            Nx.add
+              (Nx.add (Nx.cast Nx.int32 u) (Nx.cast Nx.int32 i8))
+              (Nx.add x (Nx.sum ~axes:[ 2 ] (Nx.cast Nx.int32 q)))
+          in
+          let x =
+            Nx.place (Nx.Placement.on d1) (Nx.zeros Nx.int32 [| 2; 3 |])
+          in
+          agrees (fun () -> f x) (fun () -> Rune.jit (one ()) f x));
       cases ~name:fst "a split whose windows end within a byte"
         [
           ("[2; 13] along its rows", ([| 2; 13 |], 0));

@@ -235,7 +235,10 @@ let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
           let shape = global r.r_placement (View.shape r.r_view) in
           assemble r
             (Array.map (fun n -> (0, n)) shape)
-            (fun d v -> read_view r.r_dtype (buffer_on r.r_cell bufs d) v))
+            (fun d v ->
+              read_view r.r_dtype
+                (read_as r.r_dtype (buffer_on r.r_cell bufs d))
+                v))
 
 (* [file_run r] is the file bytes that hold [r]'s storage, when they lie on the
    disk at a byte aligned to an element, so that the host can read them in
@@ -244,6 +247,7 @@ let file_run (type a b) (r : (a, b) resident) =
   match Cell.state r.r_cell with
   | Live [ b ] when Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk
     ->
+      let b = read_as r.r_dtype b in
       let size =
         Int.max 1 (Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype b) / 8)
       in
@@ -293,7 +297,7 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
     match x with
     | Placed r -> (
         match Cell.state r.r_cell with
-        | Live [ b ] -> (r.r_dtype, r.r_view, run_in b)
+        | Live [ b ] -> (r.r_dtype, r.r_view, run_in (read_as r.r_dtype b))
         | _ -> (r.r_dtype, whole_view r, fun _ -> None))
     | _ ->
         let h = Lazy.force host in
@@ -311,11 +315,7 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
     | _ -> None
   in
   match borrowed with
-  | Some (view, bufs) ->
-      placed "Nx.place" p dt view
-        (cell ~placement:p
-           ~length:(Nx_device.Buffer.length (List.hd bufs))
-           bufs)
+  | Some (view, bufs) -> placed "Nx.place" p dt view (cell ~placement:p bufs)
   | None ->
       let piece w =
         match run (View.shrink v w) with
@@ -332,8 +332,7 @@ let place_at : type a b. Placement.t -> (a, b) t -> (a, b) t =
             b)
           ds windows
       in
-      placed "Nx.place" p dt (View.create local)
-        (cell ~placement:p ~length:n bufs)
+      placed "Nx.place" p dt (View.create local) (cell ~placement:p bufs)
 
 (* Placing over one memory
 
@@ -355,10 +354,9 @@ let view_at (type a b) p (x : (a, b) t) : (a, b) t option =
   | Host t -> (
       match Placement.devices p with
       | [ d ] when Nx_device.equal (Device.memory d) Nx_device.host ->
-          let length = Nx_device.Buffer.length t.buffer in
           Some
             (placed "Nx.place" p t.dtype t.view
-               (cell ~placement:p ~length [ t.buffer ]))
+               (cell ~placement:p [ t.buffer ]))
       | _ -> None)
   | Placed r when Placement.on_disk r.r_placement -> None
   | Placed r ->
@@ -391,7 +389,12 @@ let host_view (type a b) (r : (a, b) resident) : (a, b) Nx_array.t option =
   match (Placement.devices r.r_placement, Cell.state r.r_cell) with
   | [ d ], Live [ buffer ] when Nx_device.equal (Device.memory d) Nx_device.host
     ->
-      Some { dtype = r.r_dtype; view = r.r_view; buffer }
+      Some
+        {
+          dtype = r.r_dtype;
+          view = r.r_view;
+          buffer = read_as r.r_dtype buffer;
+        }
   | _ -> None
 
 (* [x] at [p]: [x] itself when it is there, and placed there anew otherwise. *)

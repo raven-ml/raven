@@ -387,6 +387,14 @@ let contiguous (e : env) a =
       Printexc.raise_with_backtrace e bt);
   dst
 
+(* [narrowed v k] is the view [v] with each element read as [k] along a new last
+   axis, as a [k] times narrower dtype reads it. *)
+let narrowed v k =
+  View.create
+    ~offset:(View.offset v * k)
+    ~strides:(Array.append (Array.map (( * ) k) (View.strides v)) [| 1 |])
+    (Array.append (View.shape v) [| k |])
+
 (* [bitcast e dtype a] is [a]'s bits read as elements of [dtype]: at [a]'s
    width, the same view; [k] times narrower, each element as [k] along a new
    last axis; [k] times wider, each run of [k] along the last axis, of [k], as
@@ -405,13 +413,7 @@ let bitcast (type a b c d) (e : env) (dtype : (c, d) Nx_dtype.t)
   in
   let v = a.view in
   if w' = w then over a v
-  else if w' < w then
-    let k = w / w' in
-    over a
-      (View.create
-         ~offset:(View.offset v * k)
-         ~strides:(Array.append (Array.map (( * ) k) (View.strides v)) [| 1 |])
-         (Array.append (View.shape v) [| k |]))
+  else if w' < w then over a (narrowed v (w / w'))
   else
     let k = w' / w in
     (* The first element's bits, counted from a byte of the buffer's memory
@@ -555,7 +557,7 @@ let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
           {
             dtype = r.r_dtype;
             view = r.r_view;
-            buffer = buffer_on r.r_cell bufs d;
+            buffer = read_as r.r_dtype (buffer_on r.r_cell bufs d);
           }
       | Consumed k -> consumed k)
   | Host _ -> invalid_arg "Nx: a host value has no device array"

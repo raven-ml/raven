@@ -40,6 +40,26 @@ let computing =
           let y = Nx.place p x in
           equal bool true (Nx.Placement.equal p (Nx.placement y));
           equal (array float_exact) (Nx.to_array x) (Nx.to_array y));
+      test "a bitcast of bytes placed on it is the host's, a view of them"
+        (fun () ->
+          let bytes =
+            Nx.init Nx.uint8 [| 4; 6 |] (fun i ->
+                ((i.(0) * 61) + (i.(1) * 7)) land 255)
+          in
+          let x = Nx.place (Nx.Placement.on (gpu ())) bytes in
+          let storage t =
+            match Nx.Repr.v t with
+            | Nx.Repr.Placed r -> Nx.Repr.Placed.storage r
+            | _ -> failf "a value that is not placed"
+          in
+          let codes = Nx.bitcast Nx.uint4 x in
+          let back = Nx.bitcast Nx.uint8 codes in
+          equal (array int)
+            (Nx.to_array (Nx.bitcast Nx.uint4 bytes))
+            (Nx.to_array codes);
+          equal (array int) (Nx.to_array bytes) (Nx.to_array back);
+          equal ~msg:"one storage" (pair bool bool) (true, true)
+            (storage codes == storage x, storage back == storage x));
       test "an eager operation raises, naming the remedies" (fun () ->
           let x =
             Nx.place (Nx.Placement.on (gpu ())) (Nx.ones Nx.float32 [| 2 |])

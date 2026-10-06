@@ -155,7 +155,6 @@ let settle_on q ~windowed envs =
         let a = List.hd arrays in
         placed "Nx" q a.dtype a.view
           (cell ~placement:q
-             ~length:(Nx_device.Buffer.length a.buffer)
              (List.map (fun (a : (_, _) Nx_array.t) -> a.buffer) arrays)));
   }
 
@@ -332,11 +331,52 @@ let cat axis xs =
     Host (Kernels.cat Kernels.host axis (List.map Place.host_of xs))
   else on_devices (Cat (axis, xs))
 
+(* [bitcast_view dtype r] is [r]'s storage read as [dtype]'s elements, a view
+   with no kernel, where the host's bitcast would be one: always at an equal or
+   narrower width, and at a [k] times wider one when [r]'s view is C-contiguous
+   from a first element whose bits start at a multiple of [dtype]'s width, its
+   last axis is not split, and its buffers start on a byte aligned to one of
+   [dtype]'s elements. *)
+let bitcast_view (type a b c d) (dtype : (c, d) Nx_dtype.t)
+    (r : (a, b) resident) : (c, d) t option =
+  let bits d = Nx_dtype.Scalar.(bitsize (of_dtype d)) in
+  let w = bits r.r_dtype and w' = bits dtype and v = r.r_view in
+  let viewed r_view =
+    Some (Placed { r with r_id = fresh_id (); r_dtype = dtype; r_view })
+  in
+  if w' = w then viewed v
+  else if w' < w then viewed (Kernels.narrowed v (w / w'))
+  else
+    let s = View.shape v in
+    let last = Array.length s - 1 in
+    let first = View.offset v * w in
+    let readable () =
+      match Cell.state r.r_cell with
+      | Live bufs -> (
+          match List.iter (fun b -> ignore (read_as dtype b)) bufs with
+          | () -> true
+          | exception Invalid_argument _ -> false)
+      | Consumed _ -> false
+    in
+    if
+      View.is_c_contiguous v
+      && first mod w' = 0
+      && (not (List.mem_assoc last (Placement.cuts r.r_placement)))
+      && readable ()
+    then viewed (View.create ~offset:(first / w') (Array.sub s 0 last))
+    else None
+
 let convert (type a b c d) (c : Op.conversion) (dtype : (c, d) Nx_dtype.t)
     (x : (a, b) t) : (c, d) t =
   match (c, x) with
   | Cast, Host a -> Host (Kernels.cast Kernels.host dtype a)
   | Bitcast, Host a -> Host (Kernels.bitcast Kernels.host dtype a)
+  (* A value on the disk is read by the host, which bitcasts it over its file's
+     pages. *)
+  | Bitcast, Placed r when not (Placement.on_disk r.r_placement) -> (
+      match bitcast_view dtype r with
+      | Some y -> y
+      | None -> on_devices (Convert (c, dtype, x)))
   | _ -> on_devices (Convert (c, dtype, x))
 
 let threefry key ctr =

@@ -159,14 +159,15 @@ let whole_shards xs =
       (fun (Value.P x) ->
         match x with
         | Placed r when not (Placement.on_disk r.r_placement) ->
-            Some (r.r_cell, r.r_view, r.r_placement)
+            let bits = Nx_dtype.Scalar.(bitsize (of_dtype r.r_dtype)) in
+            Some (r.r_cell, (r.r_view, bits), r.r_placement)
         | _ -> None)
       xs
   in
-  (* A view of a whole shard reaches as many elements as the shard holds, and
-     none twice through a broadcast axis. *)
-  let whole (c : Value.cell) v =
-    View.numel v = c.length
+  (* A view of a whole shard reaches every byte the shard holds, and no element
+     twice through a broadcast axis. *)
+  let whole (c : Value.cell) (v, bits) =
+    ((View.numel v * bits) + 7) / 8 = c.bytes
     && not
          (Array.exists2
             (fun n s -> n > 1 && s = 0)
