@@ -1644,10 +1644,10 @@ the Exclusions of `README.md`.
   `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
   Metal.
 - **tolk:** `lib/uop/ops.ml:241` (`phase` and `align`), `:3244`
-  (`param_arg`, which checks them) and `:3489` (`storage_phase`, which
-  `param_like` gives a parameter); `lib/schedule/rangeify.ml:532` (`debuf`,
-  which gives them a kernel's parameter); `lib/codegen/late/coalesce.ml:130`
-  (the merge).
+  (`param_arg`, which checks them), `:3741` (`view_start`) and `:3806`
+  (`storage_phase`, which `param_like` gives a parameter);
+  `lib/schedule/rangeify.ml:532` (`debuf`, which gives them a kernel's
+  parameter); `lib/codegen/late/coalesce.ml:130` (the merge).
 - **Differs:** a parameter or buffer carries a congruence for its start: its
   first element lies `phase` bytes past a multiple of `align`, a power of two
   up to 16, the width of the widest vector access, and `phase` is a multiple
@@ -1665,8 +1665,14 @@ the Exclusions of `README.md`.
   into a view that reorders or pads the storage is known only to its
   element's size. Any other view of a view that reorders the storage keeps
   its storage's, as tinygrad takes every view to start aligned, and storage on
-  a disk, which no vector access reads, keeps the default. The congruence is part of the graph, so of a program's cache
-  key.
+  a disk, which no vector access reads, keeps the default. A stage of a view
+  of a buffer through movements and bitcasts is that view when the schedule
+  finds it contiguous (`Schedule.contiguous_mops_to_view`), and storage the
+  schedule allocates, on a boundary, otherwise: it is known at phase 0 modulo
+  the largest power of two up to the buffer's alignment that the byte of the
+  view's first element is a multiple of, which holds of both, and modulo 1
+  byte when a size is symbolic or the buffer sharded. The congruence is part
+  of the graph, so of a program's cache key.
 - **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
   given, and mapped weights put a tensor at any byte offset of its file: a
   vector access from an address that is not a multiple of its width is
@@ -1677,7 +1683,12 @@ the Exclusions of `README.md`.
   address. Single loads at computed indices are not merged, and read
   correctly. A batched range (D30) binds each trip's window at its own
   address, so a kernel vectorised for a window that starts aligned faulted on
-  x86, where Clang emits `movaps`, on the trips that moved it by 4 bytes.
+  x86, where Clang emits `movaps`, on the trips that moved it by 4 bytes. A
+  rune loop (`Loop.cut`) passes its body a stage of what it reads that does
+  not change, and the schedule makes a stage of a contiguous view the view:
+  norn's NUTS step on a posterior whose data the model reads from its sixth
+  double failed verification, its body compiled for storage on a boundary
+  and passed the data 8 bytes past one.
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase
   (D54) › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
@@ -1706,7 +1717,12 @@ the Exclusions of `README.md`.
   buffer starts 2 bytes into its memory is read where it is`, on the
   host and on Metal, whose sweeps draw buffers that start at any byte; the
   slow `Ops_metal (execution)` suite's `phase (D54) › a float16 buffer 2 or 6
-  bytes into its memory is read where it lies with its phase`.
+  bytes into its memory is read where it lies with its phase`; the `Schedule`
+  suite's `contiguous_mops_to_view › a stage of doubles one past a boundary is
+  known to start on 8 bytes (D54)` and `› a stage's alignment and phase hold
+  of the storage it gets, a view or its own (D54)`; rune's `Scan` suite's
+  `compiled › a scan under jit reads a copy of a slice that starts off a
+  16-byte boundary`.
 
 ## D55. Metal names a vector after its element's one-word name
 

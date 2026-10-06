@@ -1339,8 +1339,13 @@ val storage_phase : t -> int * int
     power of two those bytes are a multiple of, and a symbolic start into a
     view that reorders or pads the storage keeps only the element's size. Any
     other view keeps its storage's: a reordering, a bitcast, an ordering or a
-    shard selection. Storage on a disk, which no vector access reads, and
-    anything that is not storage or a view of it have [(16, 0)]. *)
+    shard selection. A stage of a view of a buffer through movements and
+    bitcasts is the view when scheduling finds it contiguous, and storage of
+    its own on a 16-byte boundary otherwise, so it has what both hold: phase
+    [0] and the largest power of two up to the buffer's alignment that the
+    view's first byte is a multiple of; [(1, 0)] when a size is symbolic or the
+    buffer sharded. Storage on a disk, which no vector access reads, and
+    anything else that is not storage or a view of it have [(16, 0)]. *)
 
 val view_as : ?axis:int -> t -> sint list -> t
 (** [view_as ~axis u shape] views the flat storage [u] as [shape], sharded on

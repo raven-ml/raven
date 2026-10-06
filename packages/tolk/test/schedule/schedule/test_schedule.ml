@@ -918,6 +918,78 @@ let shards_a_view () =
         (Tensors.eval ~buffers c)
   | parts -> failf "the view is %d values" (List.length parts)
 
+(* A view of a buffer of 24 floats that starts [phase] bytes past a 16-byte
+   boundary, through up to three movements of shapes known here. *)
+let gen_view =
+  let open Gen in
+  let rec each = function
+    | [] -> constant []
+    | g :: gs ->
+        let+ x = g and+ xs = each gs in
+        x :: xs
+  in
+  let dims u =
+    List.map (function Ops.Int n -> n | Sym _ -> 0) (Ops.shape u)
+  in
+  let movement u =
+    let shape = dims u in
+    let axes = List.init (List.length shape) Fun.id in
+    one_of
+      [
+        (let+ bounds =
+           each
+             (List.map
+                (fun n ->
+                  let* start = int_range 0 (n - 1) in
+                  let+ stop = int_range (start + 1) n in
+                  Some (Ops.Int start, Ops.Int stop))
+                shape)
+         in
+         Ops.shrink u bounds);
+        (let+ order = permutation axes in
+         Ops.permute u order);
+        (let+ flipped = subsequence axes in
+         Ops.flip u flipped);
+        constant (Ops.reshape u [ Int (List.fold_left ( * ) 1 shape) ]);
+        (let+ pad = int_range 0 2 in
+         Ops.pad u (List.map (fun _ -> Some (Ops.Int pad, Ops.Int 0)) shape));
+      ]
+  in
+  let rec moves u k =
+    if k = 0 then constant u
+    else
+      let* u = movement u in
+      moves u (k - 1)
+  in
+  (let* phase = of_list [ 0; 4; 8; 12 ] in
+   let* shape = of_list [ [ 24 ]; [ 4; 6 ]; [ 2; 3; 4 ] ] in
+   let* k = int_range 1 3 in
+   let b = Ops.new_buffer ~slot:1 ~phase cpu 24 Float32 in
+   moves (Ops.reshape b (List.map (fun n -> Ops.Int n) shape)) k)
+  |> with_pp (Testable.pp uop)
+
+(* A stage's alignment and phase hold of the storage it gets: a view of the
+   buffer when the stage reads a contiguous run of it, and storage of its own on
+   a boundary otherwise. *)
+let stage_phase_holds v =
+  let stage = Ops.contiguous v in
+  assume (Ops.op stage = Stage);
+  let align, phase = Ops.storage_phase stage in
+  let holds what (a, p) =
+    equal int
+      ~msg:(what ^ ": its alignment, up to the stage's")
+      align (min a align);
+    equal int
+      ~msg:(what ^ ": its phase, modulo the stage's alignment")
+      phase (p mod align)
+  in
+  holds "storage of its own" (16, 0);
+  match Schedule.contiguous_mops_to_view stage v with
+  | Some view ->
+      cover "a view" true;
+      holds "the view" (Ops.storage_phase view)
+  | None -> cover "a view" false
+
 let views =
   group "contiguous_mops_to_view"
     [
@@ -977,6 +1049,18 @@ let views =
           let prefix = Ops.shrink grid [ Some (Int 0, Sym v); None ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 prefix) prefix));
+      test
+        "a stage of doubles one past a boundary is known to start on 8 bytes \
+         (D54)" (fun () ->
+          let doubles = Ops.new_buffer ~slot:1 cpu 8 Float64 in
+          let stage =
+            Ops.contiguous (Ops.shrink doubles [ Some (Int 1, Int 8) ])
+          in
+          equal (pair int int) (8, 0) (Ops.storage_phase stage));
+      prop
+        "a stage's alignment and phase hold of the storage it gets, a view or \
+         its own (D54)"
+        gen_view stage_phase_holds;
       test "any other operation is the view itself" (fun () ->
           let view =
             require_some (Schedule.contiguous_mops_to_view rows rows)

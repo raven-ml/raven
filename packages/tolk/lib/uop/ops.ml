@@ -3730,11 +3730,79 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
   | [ x; c ] when Op.equal u.op op && c.op = Op.Const -> (x, value c)
   | _ -> (u, identity_element op u.dtype)
 
+(* Where a stage's view of a buffer, through movements and bitcasts, starts: the
+   buffer's alignment and the byte its first element lies at, the view's first
+   index, all zeros, taken through each movement to its source's. *)
+type view_start =
+  | Start of int * int
+  | Unknown (* A size or a bound is symbolic, or the buffer is sharded. *)
+  | No_view (* No buffer is viewed, or the first element is padding. *)
+
+let rec view_start u =
+  let exception Stop of view_start in
+  let int = function Int n -> n | Sym _ -> raise_notrace (Stop Unknown) in
+  let dims u = List.map int (shape u) in
+  let flat idx shape =
+    List.fold_left2 (fun acc i n -> (acc * n) + i) 0 idx shape
+  in
+  let unflat k shape =
+    fst
+      (List.fold_right
+         (fun n (idx, k) -> ((k mod n) :: idx, k / n))
+         shape ([], k))
+  in
+  let rec go u idx =
+    match (u.op, u.src) with
+    | Op.Buffer, _ ->
+        let p = param_arg_of u in
+        (p.align, p.phase + (flat idx (dims u) * element_size u))
+    | Op.Detach, x :: _ -> go x idx
+    | Op.Bitcast, x :: _ ->
+        let bytes = flat idx (dims u) * element_size u
+        and size = element_size x in
+        let align, start = go x (unflat (bytes / size) (dims x)) in
+        (align, start + (bytes mod size))
+    | o, x :: _ when Op.Set.mem o Op.Set.movement ->
+        let src = dims x in
+        let idx =
+          match marg u with
+          | Reshape _ -> unflat (flat idx (dims u)) src
+          | Expand added -> List.drop (List.length added) idx
+          | Shrink b -> List.map2 (fun i (off, _) -> i + int off) idx b
+          | Pad b ->
+              List.map2
+                (fun (i, n) (off, _) ->
+                  let j = i - int off in
+                  if j < 0 || j >= n then raise_notrace (Stop No_view) else j)
+                (List.combine idx src) b
+          | Permute p ->
+              let moved = Array.make (List.length p) 0 in
+              List.iter2 (fun i a -> moved.(a) <- i) idx p;
+              Array.to_list moved
+          | Flip f ->
+              List.map2
+                (fun (i, n) f -> if f then n - 1 - i else i)
+                (List.combine idx src) f
+        in
+        go x idx
+    | Op.Stage, x :: _ when view_start x <> No_view ->
+        raise_notrace (Stop Unknown)
+    | Op.Unshard, _ -> raise_notrace (Stop Unknown)
+    | _ -> raise_notrace (Stop No_view)
+  in
+  match go u (List.map (fun _ -> 0) (shape u)) with
+  | align, start -> Start (align, start mod align)
+  | exception Stop s -> s
+  | exception Division_by_zero -> No_view
+
 (* The alignment and phase of the storage [u] views: its storage's, moved by
    the bytes a shrink of storage seen whole skips, known modulo fewer bytes when
    the shrink's start is symbolic. Any other view keeps its storage's, as views
    are taken to start aligned, unless a symbolic start moves it; storage the
-   graph allocates, a stage's included, starts on a boundary. *)
+   graph allocates starts on a boundary. A stage of a view of a buffer is that
+   view when the view is contiguous, which scheduling decides
+   ([Schedule.contiguous_mops_to_view]), and storage of its own otherwise: its
+   phase is what the two agree on. *)
 let rec storage_phase u =
   let rec whole v =
     match (v.op, v.src) with
@@ -3784,6 +3852,16 @@ let rec storage_phase u =
       | _ -> (align, phase))
   | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
   | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
+  | Op.Stage, x :: _ when x.op = Op.Bitcast || Op.Set.mem x.op Op.Set.movement
+    -> (
+      match view_start x with
+      | No_view -> (16, 0)
+      | Unknown -> (1, 0)
+      | Start (align, phase) ->
+          (* The largest power of two up to [align] that [phase] is a multiple
+             of: storage on a boundary starts there too. *)
+          let rec known a = if phase mod a = 0 then a else known (a / 2) in
+          (known align, 0))
   | _ -> (16, 0)
 
 let param_like u slot =

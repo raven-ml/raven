@@ -173,6 +173,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles a `Rune.scan` or `Rune.iterate` whose step reads a copy
+  of a slice that starts off a 16-byte boundary, such as
+  `Nx.copy (Nx.shrink [| (1, n) |] x)` of `float64`: compiling failed "UOp
+  verification failed" on the loop's call.
 - `Rune.jit` compiles a function whose results are views of storage that a
   loop gathering by integer positions writes, such as a NUTS warmup and
   sampling over many chains: compiling raised `Invalid_argument "option is
