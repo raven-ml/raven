@@ -98,9 +98,9 @@ let cut ~own next args body =
               ~src:(if Ops.op u = Op.Call then Ops.body u :: src else src)
           else if not (reads_storage u) then u
           else
-            let slot = next () in
-            args := (slot, Ops.contiguous u) :: !args;
-            Ops.param_like u slot
+            let slot = next () and arg = Ops.contiguous u in
+            args := (slot, arg) :: !args;
+            Ops.param_like arg slot
         in
         Ops.Tbl.add rebuilt u v;
         v

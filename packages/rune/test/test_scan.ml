@@ -496,6 +496,19 @@ let compiled_tests =
         in
         let x = vec [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
         equal (close ()) (f x) (Rune.jit' f x));
+    test
+      "a scan under jit reads the bits of a slice that starts off a 16-byte \
+       boundary" (fun () ->
+        let f x =
+          let y = Nx.bitcast Nx.int64 (Nx.shrink [| (1, 8) |] x) in
+          fst
+            (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
+               ~f:(fun c _ -> (Nx.add c y, ()))
+               ~init:(Nx.zeros Nx.int64 [| 7 |])
+               (Nx.zeros f64 [| 4; 1 |]))
+        in
+        let x = vec [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
+        equal (exact ()) (f x) (Rune.jit' f x));
     test "a changed carry is refused under jit" (fun () ->
         raises (Invalid_argument changed_length) (fun () ->
             Rune.jit' scan_growing (v4 ())));

@@ -1722,7 +1722,8 @@ the Exclusions of `README.md`.
   known to start on 8 bytes (D54)` and `› a stage's alignment and phase hold
   of the storage it gets, a view or its own (D54)`; rune's `Scan` suite's
   `compiled › a scan under jit reads a copy of a slice that starts off a
-  16-byte boundary`.
+  16-byte boundary` and `› a scan under jit reads the bits of a slice that
+  starts off a 16-byte boundary`.
 
 ## D55. Metal names a vector after its element's one-word name
 
