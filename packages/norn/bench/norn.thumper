@@ -5,17 +5,25 @@
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 8.2 on 10 cores
+# forced: blessed hmc/schools/4 hmc/schools/64 hmc/schools/1024 under load 7.5 on 10 cores
+# forced: blessed nuts/schools/4 nuts/schools/64 under load 8.3 on 10 cores
 
 diag/rhat/4x1000x10	alloc_words	exact	6629121
 diag/rhat/4x1000x10	wall_time	batch=1	n=20	4.384e-02	4.298e-02 4.319e-02 4.325e-02 4.327e-02 4.335e-02 4.357e-02 4.359e-02 4.366e-02 4.370e-02 4.374e-02 4.394e-02 4.409e-02 4.411e-02 4.431e-02 4.442e-02 4.453e-02 4.477e-02 4.494e-02 4.505e-02 4.690e-02
 dist/student_t/100000	alloc_words	exact	2327
 dist/student_t/100000	wall_time	batch=4	n=20	2.157e-03	2.104e-03 2.124e-03 2.124e-03 2.128e-03 2.138e-03 2.143e-03 2.144e-03 2.148e-03 2.152e-03 2.153e-03 2.161e-03 2.167e-03 2.171e-03 2.171e-03 2.174e-03 2.174e-03 2.191e-03 2.195e-03 2.204e-03 2.208e-03
+hmc/schools/1024	alloc_words	exact	29254
+hmc/schools/1024	wall_time	batch=8	n=20	1.023e-03	9.895e-04 9.996e-04 1.001e-03 1.009e-03 1.013e-03 1.017e-03 1.017e-03 1.020e-03 1.022e-03 1.022e-03 1.024e-03 1.025e-03 1.025e-03 1.028e-03 1.033e-03 1.040e-03 1.044e-03 1.045e-03 1.052e-03 1.070e-03
+hmc/schools/4	alloc_words	exact	28674
+hmc/schools/4	wall_time	batch=64	n=20	7.745e-05	7.360e-05 7.408e-05 7.535e-05 7.603e-05 7.630e-05 7.642e-05 7.653e-05 7.670e-05 7.725e-05 7.727e-05 7.764e-05 7.776e-05 7.781e-05 7.787e-05 7.842e-05 7.846e-05 7.848e-05 7.926e-05 7.928e-05 8.014e-05
+hmc/schools/64	alloc_words	exact	29254
+hmc/schools/64	wall_time	batch=64	n=20	1.455e-04	1.416e-04 1.418e-04 1.423e-04 1.428e-04 1.435e-04 1.436e-04 1.439e-04 1.448e-04 1.448e-04 1.452e-04 1.459e-04 1.459e-04 1.461e-04 1.465e-04 1.466e-04 1.472e-04 1.472e-04 1.473e-04 1.474e-04 1.492e-04
 model/schools/16	alloc_words	exact	68223
 model/schools/16	wall_time	batch=32	n=20	2.065e-04	1.972e-04 1.986e-04 1.998e-04 2.006e-04 2.019e-04 2.021e-04 2.032e-04 2.035e-04 2.041e-04 2.061e-04 2.068e-04 2.072e-04 2.099e-04 2.115e-04 2.118e-04 2.125e-04 2.126e-04 2.132e-04 2.165e-04 2.194e-04
-nuts/schools/4	alloc_words	exact	318318
-nuts/schools/4	wall_time	batch=4	n=20	1.378e-03	1.317e-03 1.318e-03 1.324e-03 1.330e-03 1.333e-03 1.337e-03 1.341e-03 1.344e-03 1.351e-03 1.378e-03 1.379e-03 1.385e-03 1.394e-03 1.396e-03 1.407e-03 1.411e-03 1.414e-03 1.439e-03 1.446e-03 1.454e-03
+nuts/schools/4	alloc_words	exact	304058
+nuts/schools/4	wall_time	batch=8	n=20	1.289e-03	1.216e-03 1.233e-03 1.236e-03 1.257e-03 1.263e-03 1.276e-03 1.279e-03 1.281e-03 1.285e-03 1.289e-03 1.289e-03 1.297e-03 1.299e-03 1.299e-03 1.299e-03 1.304e-03 1.323e-03 1.324e-03 1.327e-03 1.330e-03
 nuts/schools/64	alloc_words	exact	510016
-nuts/schools/64	wall_time	batch=2	n=20	3.553e-03	3.433e-03 3.493e-03 3.497e-03 3.503e-03 3.503e-03 3.508e-03 3.509e-03 3.526e-03 3.548e-03 3.552e-03 3.553e-03 3.559e-03 3.590e-03 3.595e-03 3.625e-03 3.629e-03 3.633e-03 3.697e-03 6.201e-03 1.187e-02
+nuts/schools/64	wall_time	batch=2	n=20	3.411e-03	3.363e-03 3.369e-03 3.374e-03 3.388e-03 3.389e-03 3.392e-03 3.393e-03 3.395e-03 3.402e-03 3.403e-03 3.418e-03 3.420e-03 3.420e-03 3.422e-03 3.422e-03 3.426e-03 3.447e-03 3.479e-03 3.514e-03 3.642e-03
 posteriordb/arK-arK	alloc_words	exact	7460
 posteriordb/arK-arK	wall_time	batch=256	n=20	2.969e-05	2.839e-05 2.881e-05 2.894e-05 2.895e-05 2.930e-05 2.931e-05 2.940e-05 2.944e-05 2.957e-05 2.965e-05 2.974e-05 2.990e-05 3.000e-05 3.035e-05 3.039e-05 3.082e-05 3.085e-05 3.085e-05 3.100e-05 3.268e-05
 posteriordb/dogs-dogs	alloc_words	exact	3521
