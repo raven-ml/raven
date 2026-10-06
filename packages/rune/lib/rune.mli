@@ -613,9 +613,9 @@ val scan :
 
     Step [i] draws from a key scope of its own ({!Nx.Rng.with_root}), rooted at
     [Nx.Rng.fold_in k i], where [k] is one key the scan takes from the scope
-    around at its first draw: steps draw apart, the same values compiled or
-    transformed as eagerly, and a scan whose step draws nothing takes no key,
-    leaving the draws after it unchanged.
+    around at its call ({!Nx.Rng.next_root}) and computes at its first draw:
+    steps draw apart, the same values compiled, batched or transformed as
+    eagerly, and every scan shifts the draws after it by one key.
 
     Under {!val-jit} the step compiles once and runs as a loop in the compiled
     program, and differentiating compiles a reversed loop that replays a record

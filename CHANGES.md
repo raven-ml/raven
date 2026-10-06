@@ -184,16 +184,12 @@ All notable changes to this project will be documented in this file.
   loop gathering by integer positions writes, such as a NUTS warmup and
   sampling over many chains: compiling raised `Invalid_argument "option is
   None"` from tolk's division rules, or on a reshape of the gather's index.
-- A compiled loop that takes no trip, whose step draws, inside a `Rune.remat`
-  or a loop's step under a reverse derivative no longer shifts the draws after
-  it by one key: the derivative's run of its step reads the loop's key with
-  `Nx.Rng.peek`, and the draws equal those of the code without the derivative.
-
 - Step `i` of a `Rune.scan` or `Rune.iterate` draws from a key scope rooted at
-  `Nx.Rng.fold_in k i`, `k` one key the loop takes at its first draw, eagerly,
-  compiled and transformed alike. A compiled loop whose step draws now stages
-  instead of being written out step by step, or refused for `iterate`; a loop
-  whose step draws nothing takes no key.
+  `Nx.Rng.fold_in k i`, `k` one key the loop takes from the scope at its call
+  and computes at its first draw, eagerly, compiled, batched and transformed
+  alike, whatever trips the loop or each lane takes. Every loop shifts the
+  draws after it by one key. A compiled loop whose step draws now stages
+  instead of being written out step by step, or refused for `iterate`.
 
 - A reverse derivative runs a `Rune.remat`'s function, and the step of a loop
   it stages or batches, once, at the call, and keeps a record of its

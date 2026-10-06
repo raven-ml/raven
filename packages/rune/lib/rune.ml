@@ -300,28 +300,17 @@ let steps fn xs =
         invalid_arg (fn ^ ": the xs leaves differ in their leading length");
       if n = 0 then invalid_arg (fn ^ ": xs is empty along the scan axis")
 
-(* [trip key t f] runs the trip [t] of a loop, [f], in a key scope of its own,
-   rooted at the loop's key folded with [t]'s index: trips draw apart. [key]
-   holds the loop's key once a trip took it, at its first draw: a loop whose
-   step draws nothing takes none. *)
-let trip key (t : Trips.trip) f =
-  let root () =
-    let k =
-      match !key with
-      | Some k -> k
-      | None ->
-          let k = t.key () in
-          key := Some k;
-          k
-    in
-    Nx.Rng.fold_in_tensor k t.index
-  in
-  Nx.Rng.with_root root f
+(* [trip k i f] runs trip [i] of a loop, [f], in a key scope of its own, rooted
+   at the loop's key [k ()] folded with [i]: trips draw apart. The loop takes
+   its key's place in the scope around at its call, whatever its trips draw, so
+   that every interpretation of the loop takes the same keys; the key is
+   computed at a trip's first draw. *)
+let trip k i f = Nx.Rng.with_root (fun () -> Nx.Rng.fold_in_tensor (k ()) i) f
 
 let scan_of fn cs xs_s ys_s ~f ~init xs =
   let req_xs, _ = Ptree.flatten xs_s xs in
   steps fn req_xs;
-  let first = ref None and key = ref None in
+  let first = ref None and key = Nx.Rng.next_root () in
   let req_step i c_leaves x_leaves =
     let c = Ptree.rebuild cs ~like:init c_leaves in
     let c', y =
@@ -362,7 +351,7 @@ let iterate c ~max ~until ~f init =
     Nx.reshape [||] u
   in
   let this = "the carry the step returned" and that = "the carry it received" in
-  let key = ref None in
+  let key = Nx.Rng.next_root () in
   let req_step i l _ =
     let x = carry l in
     let x' =

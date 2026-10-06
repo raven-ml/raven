@@ -922,16 +922,16 @@ let handler_tests =
           (Rune.jit' (log_density applied) (p0 ())));
   ]
 
-(* Law 5: a loop's draws. Step [i] draws from a scope rooted at [Nx.Rng.fold_in
-   k i], [k] one key the loop takes at its first draw; a loop whose step draws
-   nothing takes none. The trusted side is the loop unrolled in OCaml with those
-   scopes, under the same stack. *)
+(* Law 5: a loop's draws. A loop takes one key [k] from the scope around at its
+   call, whatever its trips draw, and step [i] draws from a scope rooted at
+   [Nx.Rng.fold_in k i]. The trusted side is the loop unrolled in OCaml with
+   those scopes, under the same stack. *)
 
-type drawing = Scan_draws | Iterate_draws | Nested_draws
+type drawing = Scan_draws | Iterate_draws of int | Nested_draws
 
 let drawing_name = function
   | Scan_draws -> "scan"
-  | Iterate_draws -> "iterate"
+  | Iterate_draws t -> Printf.sprintf "iterate of %d trips" t
   | Nested_draws -> "scan in a scan's step"
 
 (* [scoped x f] runs [f] in a scope whose root depends on [x], so that a jit
@@ -944,16 +944,13 @@ let draw draws = if draws then Nx.rand f64 [||] else scalar 0.5
 let row x i = Nx.slice [ Nx.I i ] x
 let weighed draws c xi = Nx.add c (Nx.mul xi (draw draws))
 
-(* [unrolled draws n step] is [n] steps [step i c] from [c = 0], step [i] in a
-   scope rooted at [fold_in k i]. *)
-let unrolled draws n step =
-  let k = lazy (Nx.Rng.next_key ()) in
+(* [unrolled n step] is [n] steps [step i c] from [c = 0], step [i] in a scope
+   rooted at [fold_in k i], [k] taken first. *)
+let unrolled n step =
+  let k = Nx.Rng.next_key () in
   let c = ref (scalar 0.) in
   for i = 0 to n - 1 do
-    let run () = step i !c in
-    c :=
-      if draws then Nx.Rng.with_key (Nx.Rng.fold_in (Lazy.force k) i) run
-      else run ()
+    c := Nx.Rng.with_key (Nx.Rng.fold_in k i) (fun () -> step i !c)
   done;
   !c
 
@@ -964,14 +961,14 @@ let looped kind draws x =
   let n = (Nx.shape x).(0) in
   match kind with
   | Scan_draws -> summed draws x
-  | Iterate_draws ->
+  | Iterate_draws t ->
       let at i =
         Nx.sum
           (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) x)
       in
       snd
         (Rune.iterate pair ~max:n
-           ~until:(fun (i, _) -> Nx.greater_equal_s i (Float.of_int n))
+           ~until:(fun (i, _) -> Nx.greater_equal_s i (Float.of_int t))
            ~f:(fun (i, c) -> (Nx.add_s i 1., weighed draws c (at i)))
            (scalar 0., scalar 0.))
   | Nested_draws ->
@@ -986,10 +983,11 @@ let spec kind draws x =
   let n = (Nx.shape x).(0) in
   let flat i c = weighed draws c (row x i) in
   match kind with
-  | Scan_draws | Iterate_draws -> unrolled draws n flat
+  | Scan_draws -> unrolled n flat
+  | Iterate_draws t -> unrolled t flat
   | Nested_draws ->
-      unrolled draws n (fun i c ->
-          let c = Nx.add c (Nx.mul (row x i) (unrolled draws n flat)) in
+      unrolled n (fun i c ->
+          let c = Nx.add c (Nx.mul (row x i) (unrolled n flat)) in
           weighed draws c (row x i))
 
 (* The draws around the loop show the key it takes. *)
@@ -1005,7 +1003,16 @@ let law5 =
     let open Gen in
     let* n = int_range 0 2 in
     let* ts = list ~size:(constant n) (of_list layers) in
-    let* kind = of_list [ Scan_draws; Iterate_draws; Nested_draws ] in
+    let* kind =
+      of_list
+        [
+          Scan_draws;
+          Iterate_draws 0;
+          Iterate_draws 1;
+          Iterate_draws 3;
+          Nested_draws;
+        ]
+    in
     let+ draws = bool in
     (ts, kind, draws)
   in
@@ -1018,13 +1025,14 @@ let law5 =
   prop ~count:80
     ~examples:[ ([ Grad; Jit_layer ], Scan_draws, true) ]
     "step i of a loop draws from a scope rooted at fold_in k i, k one key the \
-     loop takes at its first draw, under every stack"
+     loop takes at its call, under every stack"
     (Gen.with_pp pp gen)
     (fun (ts, kind, draws) ->
       cover "a loop under jit" (List.mem Jit_layer ts);
       cover "a loop under vmap" (List.mem Vmap ts);
       cover "a loop under grad" (List.mem Grad ts);
       cover "a step that draws nothing" (not draws);
+      cover "an iterate of no trip" (kind = Iterate_draws 0);
       let x = argument ts in
       equal (close ())
         (compose ts (around (spec kind draws)) x)
@@ -1061,12 +1069,53 @@ let raising_root_tests =
         equal ~msg:"finalisers run" int 1 !cleaned);
   ]
 
-(* A loop that takes no trip, whose step draws, in a remat under grad: a
-   compiled loop of at most no trip never runs its step, which the remat's
-   record then runs for its program. That run reads the loop's key and takes
-   none, so the draws after the loop are those of the code without the
-   derivative. *)
-let unstepped k x =
+(* Keys at the call: a loop takes its key's place when it is called, whatever
+   its trips, and computes the key at a trip's first draw. *)
+let keyed = Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns tensor)
+let k7 = Nx.Rng.key 7
+let exact () = Oracle.tensor ~rel:0. ~abs:0. ()
+let x3 () = vec [| 0.5; -1.; 2. |]
+
+(* [iterated ~max ~trips ~draws x] iterates [trips] trips, of at most [max],
+   whose steps draw when [draws]. The count starts from [x], so that a compiled
+   loop learns its trips when it runs. *)
+let iterated ~max ~trips ~draws x =
+  snd
+    (Rune.iterate pair ~max
+       ~until:(fun (i, _) -> Nx.greater_equal_s i (Float.of_int trips))
+       ~f:(fun (i, y) ->
+         let step = if draws then Nx.rand f64 [| 3 |] else Nx.mul_s y 0.5 in
+         (Nx.add_s i 1., Nx.add y step))
+       (Nx.mul_s (Nx.sum x) 0., x))
+
+(* The same in a scope of [k], then a draw. *)
+let stopping ~max ~trips ~draws (k, x) =
+  Nx.Rng.with_key k (fun () ->
+      let y = iterated ~max ~trips ~draws x in
+      Nx.add y (Nx.rand f64 [| 3 |]))
+
+(* A scan whose step draws only through an iterate of no trip, then a draw by
+   the function's argument: the gradient is that draw. *)
+let through_inner (k, x) =
+  Nx.Rng.with_key k (fun () ->
+      let y =
+        fst
+          (Rune.scan'
+             ~f:(fun c e ->
+               let c =
+                 Rune.iterate' ~max:0
+                   ~until:(fun _ -> Nx.scalar Nx.bool true)
+                   ~f:(fun y -> Nx.add y (Nx.rand f64 [||]))
+                   (Nx.add c e)
+               in
+               (c, c))
+             ~init:(scalar 0.) x)
+      in
+      Nx.add (Nx.mul x (Nx.rand f64 [| 3 |])) (Nx.mul_s y 0.))
+
+(* A remat of an iterate of at most no trip whose step draws, then a draw by the
+   function's argument: the gradient is that draw. *)
+let unstepped (k, x) =
   Nx.Rng.with_key k (fun () ->
       Rune.remat
         Nx.Ptree.(tensor @-> returns tensor)
@@ -1080,19 +1129,134 @@ let unstepped k x =
           Nx.mul y (Nx.rand f64 [| 3 |]))
         x)
 
-let unstepped_tests =
+(* A scan whose step runs an iterate of [t] drawing trips, then draws. *)
+let inner_drawing ~t (k, x) =
+  Nx.Rng.with_key k (fun () ->
+      fst
+        (Rune.scan'
+           ~f:(fun c e ->
+             let _, y =
+               Rune.iterate pair ~max:3
+                 ~until:(fun (i, _) -> Nx.greater_equal_s i (Float.of_int t))
+                 ~f:(fun (i, y) -> (Nx.add_s i 1., Nx.add y (Nx.rand f64 [||])))
+                 (scalar 0., c)
+             in
+             let c = Nx.add y (Nx.mul e (Nx.rand f64 [||])) in
+             (c, c))
+           ~init:(scalar 0.) x))
+
+(* The key after one key: the draw after a loop. *)
+let second () =
+  Nx.Rng.with_key k7 (fun () ->
+      ignore (Nx.Rng.next_key ());
+      Nx.rand f64 [| 3 |])
+
+let summing x =
+  fst (Rune.scan' ~f:(fun c e -> (Nx.add c e, c)) ~init:(scalar 0.) x)
+
+let drawing_scan x =
+  fst
+    (Rune.scan'
+       ~f:(fun c e -> (Nx.add c (Nx.mul e (Nx.rand f64 [||])), c))
+       ~init:(scalar 0.) x)
+
+let key_tests =
   [
+    prop
+      "a compiled iterate draws as eagerly at every trip count, its key taken \
+       at its call"
+      Gen.(
+        let* max = of_list [ 0; 1; 5 ] in
+        let* trips = int_range 0 max in
+        let+ draws = bool in
+        (max, trips, draws))
+      (fun (max, trips, draws) ->
+        cover "no trip of several" (trips = 0 && max > 0);
+        cover "every trip" (trips = max && max > 0);
+        cover "a step that draws nothing" (not draws);
+        let f = stopping ~max ~trips ~draws in
+        equal (close ()) (f (k7, x3 ())) (Rune.jit keyed f (k7, x3 ())));
+    prop "vmap of an iterate whose lanes stop apart draws as each lane alone"
+      Gen.(array ~size:(constant 4) (int_range 0 3))
+      (fun trips ->
+        cover "a lane of no trip" (Array.mem 0 trips);
+        cover "lanes apart" (Array.exists (fun t -> t <> trips.(0)) trips);
+        let ts = Nx.create f64 [| 4 |] (Array.map Float.of_int trips) in
+        let f t =
+          let _, y =
+            Rune.iterate pair ~max:3
+              ~until:(fun (i, _) -> Nx.greater_equal i t)
+              ~f:(fun (i, y) -> (Nx.add_s i 1., Nx.add y (Nx.rand f64 [||])))
+              (scalar 0., scalar 0.)
+          in
+          Nx.add y (Nx.rand f64 [||])
+        in
+        let each =
+          Nx.stack
+            (List.init 4 (fun j ->
+                 Nx.Rng.with_key k7 (fun () -> f (Nx.get [ j ] ts))))
+        in
+        equal (close ()) each (Nx.Rng.with_key k7 (fun () -> Rune.vmap' f ts)));
     test
-      "a loop that takes no trip in a remat under grad leaves the draws after \
-       it as eager's, compiled" (fun () ->
-        let k = Nx.Rng.key 7 and x = vec [| 0.5; -1.; 2. |] in
-        let drawn = Nx.Rng.with_key k (fun () -> Nx.rand f64 [| 3 |]) in
-        let g (k, x) = grad1 (unstepped k) x in
-        equal ~msg:"eager" (close ()) drawn (g (k, x));
-        equal ~msg:"compiled" (close ()) drawn
-          (Rune.jit
-             Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns tensor)
-             g (k, x)));
+      "a scan whose step draws only through an iterate of no trip draws, under \
+       grad and compiled, as without them" (fun () ->
+        let g (k, x) = grad1 (fun x -> through_inner (k, x)) x in
+        equal ~msg:"without grad" (close ())
+          (Nx.mul (x3 ()) (second ()))
+          (through_inner (k7, x3 ()));
+        equal ~msg:"grad" (close ()) (second ()) (g (k7, x3 ()));
+        equal ~msg:"compiled grad" (close ()) (second ())
+          (Rune.jit keyed g (k7, x3 ())));
+    test
+      "a remat of an iterate of no trip draws, under grad and compiled, as \
+       without them" (fun () ->
+        let g (k, x) = grad1 (fun x -> unstepped (k, x)) x in
+        equal ~msg:"grad" (close ()) (second ()) (g (k7, x3 ()));
+        equal ~msg:"compiled grad" (close ()) (second ())
+          (Rune.jit keyed g (k7, x3 ())));
+    prop
+      "a compiled scan whose step runs a drawing iterate draws as eagerly, bit \
+       for bit"
+      Gen.(pair (int_range 1 3) (int_range 0 3))
+      (fun (n, t) ->
+        cover "an inner loop of no trip" (t = 0);
+        let x = Nx.slice [ Nx.R (0, n) ] (x3 ()) in
+        let f = inner_drawing ~t in
+        equal (exact ()) (f (k7, x)) (Rune.jit keyed f (k7, x)));
+    test
+      "loops whose steps draw nothing compile in a constant key's scope and \
+       outside any scope" (fun () ->
+        let loops =
+          [
+            ("scan", summing);
+            ("iterate of no trip", iterated ~max:3 ~trips:0 ~draws:false);
+            ("iterate of two trips", iterated ~max:3 ~trips:2 ~draws:false);
+          ]
+        in
+        List.iter
+          (fun (name, loop) ->
+            let x = x3 () in
+            let scoped x = Nx.Rng.with_key (Nx.Rng.key 42) (fun () -> loop x) in
+            equal ~msg:(name ^ ", scoped") (close ()) (loop x)
+              (Rune.jit' scoped x);
+            equal ~msg:(name ^ ", unscoped") (close ()) (loop x)
+              (Rune.jit' loop x))
+          loops);
+    test "loops whose steps draw raise in a constant key's scope under jit"
+      (fun () ->
+        let loops =
+          [
+            ("scan", drawing_scan);
+            ("iterate", iterated ~max:3 ~trips:2 ~draws:true);
+          ]
+        in
+        List.iter
+          (fun (name, loop) ->
+            let scoped x = Nx.Rng.with_key (Nx.Rng.key 42) (fun () -> loop x) in
+            raises_match ~msg:name
+              (function Rune.Jit_error _ -> true | _ -> false)
+              (fun () -> Rune.jit' scoped (x3 ())))
+          loops);
   ]
 
 let () =
@@ -1102,7 +1266,7 @@ let () =
          group "law 1" [ law1 ];
          group "law 5" [ law5 ];
          group "a raising root" raising_root_tests;
-         group "a loop that takes no trip" unstepped_tests;
+         group "keys at the call" key_tests;
          group "the boundary" boundary_tests;
          group "passing installations" passing_tests;
          group "roots in total scopes" root_tests;

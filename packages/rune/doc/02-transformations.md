@@ -420,7 +420,7 @@ Under `jit` the fold step compiles once and runs as a loop, and `grad` through a
 
 A compiled function writes the loop out step by step instead when the carry changes its shapes across steps, when the step runs on the host or on devices of two kinds, and inside a `custom_jvp` tangent map under reverse mode. Everywhere outside `jit` the scan is its loop, run where it is written, inside every transformation and `Rune.Total.collect` around it.
 
-Step `i` draws from a key scope of its own, rooted at `Nx.Rng.fold_in k i`, where `k` is one key the scan takes from the scope around at its first draw. The steps draw apart, and they draw the same values eagerly, compiled and transformed. A scan whose step draws nothing takes no key, so the draws after it are unchanged.
+Step `i` draws from a key scope of its own, rooted at `Nx.Rng.fold_in k i`, where `k` is one key the scan takes from the scope around at its call and computes at its first draw. The steps draw apart, and they draw the same values eagerly, compiled, batched and transformed. Every scan shifts the draws after it by one key, as a draw does.
 
 ### Branches and loops on values
 

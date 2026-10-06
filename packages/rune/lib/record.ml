@@ -349,7 +349,7 @@ and loop r (q : Trips.request) : Trips.result =
   let req_step trip c x =
     fst
       (kept step
-         (c @ x @ [ Nx.P trip.Trips.index ])
+         (c @ x @ [ Nx.P trip ])
          (fun () -> q.req_step trip c x)
          (fun (c', y) -> c' @ y))
   in
@@ -368,9 +368,8 @@ and loop r (q : Trips.request) : Trips.result =
   in
   (* A loop that took no step runs it once at its final carry, as its first
      trip, its additions dropped, so that its record replays at other inputs,
-     where its outputs have rows. A step that draws reads the key the loop would
-     take from the scope around and takes none: the draws after the loop are
-     those of the code without the record. *)
+     where its outputs have rows. A step that draws computes the loop's key from
+     the place the loop took at its call, and takes none. *)
   let result =
     match !step with
     | Some _ -> result
@@ -378,10 +377,7 @@ and loop r (q : Trips.request) : Trips.result =
         let _, ys =
           answered r (fun () ->
               Total.discarding (fun () ->
-                  let first =
-                    { Trips.index = Nx.scalar Nx.int32 0l; key = Nx.Rng.peek }
-                  in
-                  req_step first result.r_carry []))
+                  req_step (Nx.scalar Nx.int32 0l) result.r_carry []))
         in
         { result with r_ys = Trips.no_rows ys }
   in
@@ -617,7 +613,7 @@ let rec evaluate r inputs =
               Until { until; max; failure }
         in
         let req_step trip c x =
-          Trips.split n (outputs step (c @ x @ [ Nx.P trip.Trips.index ]))
+          Trips.split n (outputs step (c @ x @ [ Nx.P trip ]))
         in
         let result =
           Construct.loop
