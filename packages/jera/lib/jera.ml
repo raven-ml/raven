@@ -6,6 +6,7 @@
 module Tol = Tol
 module Solution = Solution
 module Root = Root
+module Minimize = Minimize
 module Quad = Quad
 module Piecewise = Piecewise
 module Grid = Grid

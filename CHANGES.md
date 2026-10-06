@@ -958,6 +958,8 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Minimize.bracket`, Brent's method elementwise with a forced golden
+  step, its minimum stated as a zero of rune's derivative of the function.
 - Add solves, which return a `Solution.t` with a status per lane:
   `Solution.get` returns an answer that converged everywhere and raises
   `Failure` with the first failing lane's report, `best` and `ok` read every

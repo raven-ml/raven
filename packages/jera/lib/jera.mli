@@ -18,6 +18,11 @@
       {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
       {tr {td  } {td a bracket } {td {!Root.bracket} } }
       {tr
+        {td Minimum }
+        {td one variable, a bracket }
+        {td {!Minimize.bracket} }
+      }
+      {tr
         {td Integral, one dimension }
         {td smooth, fixed nodes }
         {td {!Quad.fixed}, {!Quad.cumulative} }
@@ -87,6 +92,9 @@ module Solution = Solution
 
 module Root = Root
 (** Zeros of functions of one variable. *)
+
+module Minimize = Minimize
+(** Minima. *)
 
 module Quad = Quad
 (** Integrals. *)
