@@ -282,6 +282,97 @@ let fit_tests =
               (scalar 0.) (scalar 1.)));
   ]
 
+(* Adaptive fits *)
+
+let adapt ?(budget = 64) ?(degree = 8) f a b =
+  Piecewise.adapt Nx.Ptree.tensor ~degree
+    ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+    ~budget f (scalar a) (scalar b)
+
+let between = Nx.linspace f64 0.0123 1.9871 97
+
+let adapt_tests =
+  [
+    test "a smooth function is met between the nodes" (fun () ->
+        let p = Solution.get (adapt Nx.exp 0. 2.) in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.exp between) (Piecewise.eval p between));
+    test "a kink refines the pieces around it" (fun () ->
+        let f x = Nx.abs (Nx.sub_s x 0.3) in
+        let s = adapt ~budget:200 f 0. 2. in
+        let p = Solution.get s in
+        equal
+          (Oracle.tensor ~abs:1e-10 ())
+          (f between) (Piecewise.eval p between);
+        (* A piece containing 0.3 must be narrow. *)
+        let b = Oracle.floats (Piecewise.breaks p) in
+        let narrow = ref infinity in
+        Array.iteri
+          (fun i x ->
+            if i > 0 && b.(i - 1) <= 0.3 && x >= 0.3 then
+              narrow := Float.min !narrow (x -. b.(i - 1)))
+          b;
+        less (Windtrap.float 1.) ~than:1e-3 !narrow);
+    test "the budget ends a fit" (fun () ->
+        let s = adapt ~budget:3 (fun x -> Nx.abs (Nx.sub_s x 0.3)) 0. 1. in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Budget_spent s));
+    test "a structure fits each leaf" (fun () ->
+        let s2 = Nx.Ptree.(pair tensor tensor) in
+        let p =
+          Solution.get
+            (Piecewise.adapt s2 ~degree:10
+               ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+               ~budget:32
+               (fun x -> (Nx.sin x, Nx.cos x))
+               (scalar 0.) (scalar 2.))
+        in
+        equal
+          (Oracle.structure ~rel:1e-9 ~abs:1e-11 s2)
+          (Nx.sin between, Nx.cos between)
+          (Piecewise.eval p between));
+    test "grad in a captured parameter is the function's" (fun () ->
+        let x = vec [| 0.4; 1.3 |] in
+        let at theta =
+          Nx.sum
+            (Piecewise.eval
+               (Solution.get (adapt (fun z -> Nx.sin (Nx.mul z theta)) 0. 2.))
+               x)
+        in
+        let theta = scalar 1.7 in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (scalar (Oracle.dot x (Nx.cos (Nx.mul_s x 1.7))))
+          (Rune.grad' at theta));
+    test "compiled equals eager within the fit's rounding" (fun () ->
+        (* The fit is a matrix product, whose sums a compiled call may associate
+           otherwise. *)
+        let at theta =
+          Piecewise.eval
+            (Solution.get (adapt (fun z -> Nx.sin (Nx.mul z theta)) 0. 2.))
+            between
+        in
+        let theta = scalar 1.7 in
+        equal
+          (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
+          (at theta) (Rune.jit' at theta));
+    test "vmap gives each lane its own partition and status" (fun () ->
+        let fit theta =
+          Solution.ok (adapt ~budget:4 (fun z -> Nx.abs (Nx.sub z theta)) 0. 1.)
+        in
+        (* A kink at an end needs no refinement; one inside does. *)
+        equal (Oracle.tensor ())
+          (Nx.create Nx.bool [| 2 |] [| true; false |])
+          (Rune.vmap
+             Nx.Ptree.(tensor @-> returns tensor)
+             fit
+             (vec [| 0.; 0.37 |])));
+    test "adapt rejects degree 1" (fun () ->
+        raises_with "degree = 1 is below 2" (fun () ->
+            adapt ~degree:1 Nx.exp 0. 1.));
+  ]
+
 (* Domain *)
 
 let domain_tests =
@@ -444,6 +535,7 @@ let () =
          group "goldens" golden_tests;
          group "laws" law_tests;
          group "fits" fit_tests;
+         group "adapt" adapt_tests;
          group "domain" domain_tests;
          group "transformations" transformation_tests;
          group "errors" error_tests;

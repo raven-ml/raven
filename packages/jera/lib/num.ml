@@ -128,3 +128,24 @@ let adjacent (type b) (a : (float, b) Nx.t) (b : (float, b) Nx.t) =
   | Nx.Float32 -> next i32 a b
   | Nx.Float16 | Nx.BFloat16 -> next i16 a b
   | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> next i8 a b
+
+let rms_rows r =
+  let k = Nx.dim 0 r and n = Nx.dim 1 r in
+  if n = 0 then Nx.zeros (Nx.dtype r) [| k |]
+  else
+    let rec pow2 m = if m >= n then m else pow2 (2 * m) in
+    let m = pow2 1 in
+    let sq = Nx.square r in
+    let sq =
+      if m = n then sq
+      else Nx.concatenate ~axis:1 [ sq; Nx.zeros (Nx.dtype r) [| k; m - n |] ]
+    in
+    (* Neighbours added by sums over axes of two: a sum of two terms has one
+       association, so each level rounds alike eagerly and compiled, and each
+       level is a reduction, which a compiled program computes once rather than
+       inlining its producers into every term. *)
+    let rec halve v w =
+      if w = 1 then Nx.reshape [| k |] v
+      else halve (Nx.sum ~axes:[ 2 ] (Nx.reshape [| k; w / 2; 2 |] v)) (w / 2)
+    in
+    Nx.sqrt (Nx.div_s (halve sq m) (float n))

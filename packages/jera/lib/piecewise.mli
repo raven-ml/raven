@@ -117,6 +117,34 @@ val chebyshev :
     Raises [Invalid_argument] if [degree < 0], [pieces < 1], if [a] or [b] is
     not a scalar, or if [f]'s leaves do not start with the points' shape. *)
 
+val adapt :
+  'v Nx.Ptree.t ->
+  degree:int ->
+  tol:Tol.t ->
+  budget:int ->
+  ((float, 'b) Nx.t -> 'v) ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  ('v, 'b) t Solution.t
+(** [adapt s ~degree ~tol ~budget f a b] matches [f] on [[a, b]] to [tol] by
+    series of [degree], bisecting the piece whose tail is largest. It solves one
+    problem; {!Rune.val-vmap} gives each lane its own.
+
+    {b Error.} A piece's [e] is the larger of its last two coefficients in
+    magnitude, and [y] its largest coefficient: the series' tail against its
+    size. [budget] bounds the pieces, so the answer always holds [budget]
+    pieces, the unused ones empty at [b] after the domain. A lane whose worst
+    piece is at level 62, or holds no float strictly inside, ends [Stalled]; a
+    non-finite coefficient ends it [Not_finite]; [budget] pieces end it
+    [Budget_spent]. The error is a series of degree 0 on the answer's breaks,
+    each piece's tail. {b Cost.} [degree + 1] evaluations of [f] per piece, and
+    the answer evaluates [f] again at every piece's points. {b Derivative.} The
+    final partition's interpolant's: its breaks are
+    [a + (b − a) index / 2^level], so it reaches the ends.
+
+    Raises [Invalid_argument] if [degree < 2], [budget < 1], if [a] or [b] is
+    not a scalar, or if [f]'s leaves do not start with the points' shape. *)
+
 (** {1:eval Evaluation} *)
 
 val eval : ('v, 'b) t -> (float, 'b) Nx.t -> 'v

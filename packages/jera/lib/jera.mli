@@ -45,6 +45,11 @@
       {tr {td  } {td monotone samples } {td {!Piecewise.steffen} } }
       {tr
         {td  }
+        {td a function, to a tolerance }
+        {td {!Piecewise.adapt} }
+      }
+      {tr
+        {td  }
         {td a function, fixed resolution }
         {td {!Piecewise.chebyshev}, {!Grid.chebyshev} }
       }

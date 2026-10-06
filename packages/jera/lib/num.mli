@@ -49,3 +49,8 @@ val ordered_midpoint : (float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 
 val adjacent : (float, 'b) Nx.t -> (float, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t
 (** [adjacent a b] is [true] where no float lies strictly between [a <= b]. *)
+
+val rms_rows : (float, 'b) Nx.t -> (float, 'b) Nx.t
+(** [rms_rows r] is the root mean square of each row of [r], of shape [[k; n]],
+    summed pairwise in a fixed order so that eager and compiled calls round
+    alike: of shape [[k]]. A row of no element is [0]. *)

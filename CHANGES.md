@@ -958,6 +958,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Piecewise.adapt`, a piecewise Chebyshev fit of a function to a
+  tolerance on a partition of at most `budget` pieces, refined where the
+  series' tail is largest.
 - Add `Quad.qmc`, randomised quasi-Monte Carlo over boxes of up to 1111
   dimensions: a Sobol sequence under 16 random digital shifts drawn from a
   key, stopped on the standard error at powers of two.

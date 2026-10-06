@@ -135,6 +135,256 @@ let chebyshev s ~degree ~pieces f a b =
   in
   { s; breaks; coefficients; extension = Cheb.Bounded }
 
+(* Adaptive fits *)
+
+let max_level = 62
+
+let adapt s ~degree ~tol ~budget f a b =
+  let fn = "Jera.Piecewise.adapt" in
+  if degree < 2 then fail fn "degree = %d is below 2" degree;
+  if budget < 1 then fail fn "budget = %d is below 1" budget;
+  if Nx.ndim a <> 0 || Nx.ndim b <> 0 then
+    fail fn "the ends must be scalars, got shapes %s and %s"
+      (Num.shape (Nx.shape a))
+      (Num.shape (Nx.shape b));
+  let dtype = Nx.dtype a in
+  let m = degree + 1 in
+  let u = Nx.reshape [| 1; m |] (Num.constant dtype (Cheb.nodes degree)) in
+  (* The pieces [index / 2^level, (index + 1) / 2^level] of [0, 1], as their
+     ends' fractions. *)
+  let fractions level index =
+    let scale = Nx.exp2 (Nx.neg (Nx.cast dtype level)) in
+    let i = Nx.cast dtype index in
+    (Nx.mul i scale, Nx.mul (Nx.add_s i 1.) scale)
+  in
+  let points a b (t0, t1) =
+    let w = Nx.sub b a in
+    let x0 = Nx.add a (Nx.mul w t0) and x1 = Nx.add a (Nx.mul w t1) in
+    let k = Nx.dim 0 t0 in
+    let mid = Nx.div_s (Nx.add x0 x1) 2.
+    and half = Nx.div_s (Nx.sub x1 x0) 2. in
+    Nx.add (Nx.reshape [| k; 1 |] mid) (Nx.mul (Nx.reshape [| k; 1 |] half) u)
+  in
+  let fit f pts =
+    Nx.Ptree.map s
+      (fun path y ->
+        let shape = Nx.shape y in
+        if Array.length shape < 2 || shape.(0) <> Nx.dim 0 pts || shape.(1) <> m
+        then
+          fail fn "%s: shape %s for points of shape %s"
+            (Nx.Ptree.Path.to_string path)
+            (Num.shape shape)
+            (Num.shape (Nx.shape pts));
+        Num.on_float fn { f = Cheb.fit } y)
+      (f pts)
+  in
+  (* Each piece's tail against [tol]: the root mean square, over its components,
+     of the larger of the last two coefficients' magnitudes over the scale of
+     its largest. *)
+  let tails c =
+    let rows =
+      Nx.Ptree.fold s
+        (fun _ x acc ->
+          Num.on_float fn
+            {
+              f =
+                (fun x ->
+                  let k = Nx.dim 0 x in
+                  let flat = Nx.reshape [| k; m; -1 |] x in
+                  let last i = Nx.abs (Nx.get [ i ] (Nx.moveaxis 1 0 flat)) in
+                  let e = Nx.maximum (last degree) (last (degree - 1)) in
+                  let y = Nx.max ~axes:[ 1 ] (Nx.abs flat) in
+                  Nx.cast (Nx.dtype x) (Tol.ratio tol ~e ~y));
+            }
+            x
+          |> fun r -> Nx.cast dtype r :: acc)
+        c []
+    in
+    Num.rms_rows (Nx.concatenate ~axis:1 (List.rev rows))
+  in
+  let search_f x = Nx.Ptree.map s (fun _ y -> Rune.detach y) (f x) in
+  let a0 = Rune.detach a and b0 = Rune.detach b in
+  let slots = Nx.arange Nx.int32 0 budget 1 in
+  let in_use used = Nx.less slots (Nx.broadcast_to [| budget |] used) in
+  let worst used ratio =
+    Nx.argmax
+      (Nx.where (in_use used) ratio (Nx.full_like ratio Float.neg_infinity))
+  in
+  let pick j v = Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] j) v in
+  (* The carry: each slot's level, index, tail ratio and coefficients, the slots
+     used, the status and the evaluations. *)
+  let settle (level, (index, (ratio, (c, (used, (st, n)))))) =
+    let any_nan = Nx.any (Nx.logical_and (in_use used) (Nx.isnan ratio)) in
+    let st = Elementwise.settle st any_nan Not_finite in
+    let met =
+      Nx.all
+        (Nx.logical_or
+           (Nx.logical_not (in_use used))
+           (Nx.less_equal_s ratio 1.))
+    in
+    let st = Elementwise.settle st met Converged in
+    let j = worst used ratio in
+    let lj = pick j level and ij = pick j index in
+    let t0, t1 = fractions lj ij in
+    let x0 = Nx.add a0 (Nx.mul (Nx.sub b0 a0) t0)
+    and x1 = Nx.add a0 (Nx.mul (Nx.sub b0 a0) t1) in
+    let flat =
+      Nx.logical_or
+        (Nx.greater_equal_s lj (Int32.of_int max_level))
+        (Num.adjacent (Nx.minimum x0 x1) (Nx.maximum x0 x1))
+    in
+    let st = Elementwise.settle st (Nx.reshape [||] flat) Stalled in
+    let st =
+      Elementwise.settle st
+        (Nx.greater_equal_s used (Int32.of_int budget))
+        Budget_spent
+    in
+    (level, (index, (ratio, (c, (used, (st, n))))))
+  in
+  let step (level, (index, (ratio, (c, (used, (st, n)))))) =
+    let j = worst used ratio in
+    let lj = pick j level and ij = pick j index in
+    let level2 = Nx.concatenate ~axis:0 [ Nx.add_s lj 1l; Nx.add_s lj 1l ] in
+    let index2 =
+      Nx.concatenate ~axis:0 [ Nx.mul_s ij 2L; Nx.add_s (Nx.mul_s ij 2L) 1L ]
+    in
+    let c2 = fit search_f (points a0 b0 (fractions level2 index2)) in
+    let r2 = tails c2 in
+    let left =
+      Nx.equal slots (Nx.cast Nx.int32 (Nx.broadcast_to [| budget |] j))
+    in
+    let right = Nx.equal slots (Nx.broadcast_to [| budget |] used) in
+    let put v two =
+      let mask m =
+        Nx.reshape (Array.append [| budget |] (Array.make (Nx.ndim v - 1) 1)) m
+      in
+      let child i =
+        Nx.broadcast_to (Nx.shape v) (Nx.slice [ Nx.R (i, i + 1) ] two)
+      in
+      Nx.where (mask left) (child 0) (Nx.where (mask right) (child 1) v)
+    in
+    let c = Nx.Ptree.map2 s (fun _ v two -> put v two) c c2 in
+    settle
+      ( put level level2,
+        ( put index index2,
+          ( put ratio r2,
+            (c, (Nx.add_s used 1l, (st, Nx.add_s n (Int32.of_int (2 * m))))) )
+        ) )
+  in
+  let initial =
+    let one dt = Nx.zeros dt [| 1 |] in
+    let c1 =
+      fit search_f (points a0 b0 (fractions (one Nx.int32) (one Nx.int64)))
+    in
+    let pad v =
+      Nx.concatenate ~axis:0
+        [
+          v;
+          Nx.zeros (Nx.dtype v)
+            (Array.append
+               [| budget - 1 |]
+               (Array.sub (Nx.shape v) 1 (Nx.ndim v - 1)));
+        ]
+    in
+    settle
+      ( Nx.zeros Nx.int32 [| budget |],
+        ( Nx.zeros Nx.int64 [| budget |],
+          ( pad (tails c1),
+            ( Nx.Ptree.map s (fun _ v -> pad v) c1,
+              ( Nx.scalar Nx.int32 1l,
+                ( Nx.scalar Nx.int32 Elementwise.running,
+                  Nx.scalar Nx.int32 (Int32.of_int m) ) ) ) ) ) )
+  in
+  let carry =
+    Nx.Ptree.(
+      pair tensor
+        (pair tensor (pair tensor (pair s (pair tensor (pair tensor tensor))))))
+  in
+  let level, (index, (_, (c, (used, (st, n))))) =
+    Rune.iterate carry ~max:budget
+      ~until:(fun (_, (_, (_, (_, (_, (st, _)))))) ->
+        Nx.logical_not (Elementwise.searching st))
+      ~f:step initial
+  in
+  let ok = Nx.equal_s st (Solution.code Converged) in
+  (* The final partition in increasing order, unused slots last as empty pieces
+     at b. *)
+  let used_mask = in_use used in
+  let t0, _ = fractions level index in
+  let order =
+    Nx.argsort (Nx.where used_mask t0 (Nx.full_like t0 Float.infinity))
+  in
+  let sorted v = Nx.take ~axis:0 ~indices:order v in
+  let level = sorted level
+  and index = sorted index
+  and live = sorted used_mask in
+  let t0, t1 = fractions level index in
+  let t0 = Nx.where live t0 (Nx.ones_like t0)
+  and t1 = Nx.where live t1 (Nx.ones_like t1) in
+  let series a b c =
+    let breaks =
+      Nx.concatenate ~axis:0
+        [ Nx.add a (Nx.mul (Nx.sub b a) t0); Nx.reshape [| 1 |] b ]
+    in
+    let c =
+      Nx.Ptree.map s
+        (fun _ x ->
+          let mask =
+            Nx.reshape
+              (Array.append [| budget |] (Array.make (Nx.ndim x - 1) 1))
+              live
+          in
+          Nx.where mask x (Nx.zeros_like x))
+        c
+    in
+    { s; breaks; coefficients = c; extension = Cheb.Bounded }
+  in
+  (* The answer interpolates the tracked f at the final pieces' points; an
+     unused piece's points are inside the range. *)
+  let mid = Nx.full_like t0 0.5 in
+  let tracked =
+    fit f (points a b (Nx.where live t0 mid, Nx.where live t1 mid))
+  in
+  let best = series a0 b0 (Nx.Ptree.map s (fun _ x -> sorted x) c) in
+  let answer = series a b tracked in
+  let choose =
+    Nx.Ptree.map2 s (fun _ x y ->
+        Nx.where (Nx.broadcast_to (Nx.shape x) ok) x y)
+  in
+  let value =
+    {
+      answer with
+      breaks =
+        Nx.where
+          (Nx.broadcast_to (Nx.shape answer.breaks) ok)
+          answer.breaks best.breaks;
+      coefficients = choose answer.coefficients best.coefficients;
+    }
+  in
+  let error =
+    {
+      best with
+      coefficients =
+        Nx.Ptree.map s
+          (fun _ x ->
+            Num.on_float fn
+              {
+                f =
+                  (fun x ->
+                    let tail i =
+                      Nx.abs (Nx.slice [ Nx.A; Nx.R (i, i + 1) ] x)
+                    in
+                    Nx.maximum (tail degree) (tail (degree - 1)));
+              }
+              x)
+          best.coefficients;
+    }
+  in
+  Solution.v ~fn
+    ~settings:
+      (Format.asprintf "degree %d, tol %a, budget %d" degree Tol.pp tol budget)
+    ~value ~error ~status:st ~evaluations:n ~facts:[]
+
 (* Evaluation *)
 
 let locate fn p x =
