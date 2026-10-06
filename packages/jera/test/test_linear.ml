@@ -453,6 +453,18 @@ let transformation_tests =
           (Oracle.tensor ~rel:1e-12 ())
           (Nx.stack [ Nx.zeros f64 [| 3 |]; Solution.get (cg spd r) ])
           (Rune.vmap' (fun r -> Solution.get (cg spd r)) rs));
+    test "compiled dense equals eager on 96 unknowns" (fun () ->
+        let n = 96 in
+        let m =
+          Nx.add
+            (Nx.mul_s (Nx.eye f64 n) (Float.of_int n))
+            (Nx.sin
+               (Nx.reshape [| n; n |]
+                  (Nx.arange_f f64 0. (Float.of_int (n * n)) 1.)))
+        in
+        let f r = Solution.get (dense m r) in
+        let r = Nx.linspace f64 (-1.) 1. n in
+        equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (f r) (Rune.jit' f r));
     test "compiled equals eager to rounding" (fun () ->
         let f r = Solution.get (dense a r) in
         equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
