@@ -1695,7 +1695,7 @@ let compiled_edge_tests =
 
 (* Every dtype a compiled function takes as an argument, as a carry: [flips]
    moves each element of a row that is not a palindrome at each trip. A compiled
-   function refuses int4, uint4, bit and complex arguments. *)
+   function refuses complex arguments. *)
 let compiled_dtype name x =
   test (name ^ ", compiled, carries hold each lane's bits") (fun () ->
       let t = Nx.create i32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
@@ -1717,6 +1717,8 @@ let compiled_dtype_tests =
     compiled_dtype "float8_e4m3" (rows Nx.float8_e4m3 floats);
     compiled_dtype "float8_e5m2" (rows Nx.float8_e5m2 floats);
     compiled_dtype "int8" (rows Nx.int8 (ints (-128) 127));
+    compiled_dtype "int4" (rows Nx.int4 (ints (-8) 7));
+    compiled_dtype "uint4" (rows Nx.uint4 (uints 15));
     compiled_dtype "uint8" (rows Nx.uint8 (uints 255));
     compiled_dtype "int16" (rows Nx.int16 (ints (-32768) 32767));
     compiled_dtype "uint16" (rows Nx.uint16 (uints 65535));
@@ -1737,6 +1739,7 @@ let compiled_dtype_tests =
     compiled_dtype "uint64"
       (rows Nx.uint64 (Array.map Int64.of_int (uints (-1))));
     compiled_dtype "bool" (rows Nx.bool bools);
+    compiled_dtype "bit" (rows Nx.bit bools);
   ]
 
 (* Structures and sizes, compiled *)

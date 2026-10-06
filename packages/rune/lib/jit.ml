@@ -65,17 +65,18 @@ let leaf (Nx.P t) =
       phases = [];
     }
   in
-  match Lower.dtype (Nx.dtype t) with
-  | Some tdt when View.numel view > 0 ->
-      let start, _ = Lower.span tdt view in
+  let dt = Nx.dtype t in
+  match Lower.dtype dt with
+  | Some _ when View.numel view > 0 ->
+      let start, _ = Lower.span dt view in
       let layout =
         {
           layout with
-          view = Some (Lower.within tdt view);
-          phases = List.map (fun b -> Lower.phase tdt b start) buffers;
+          view = Some (Lower.within dt view);
+          phases = List.map (fun b -> Lower.phase dt b start) buffers;
         }
       in
-      let runs = List.map (Lower.run tdt view) buffers in
+      let runs = List.map (Lower.run dt view) buffers in
       { x; view; buffers; runs; layout }
   | _ -> { x; view; buffers; runs = []; layout }
 
@@ -509,14 +510,11 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
   let regions j =
     if lent.(j) < 0 then None
     else
-      List.find_map
+      List.find_opt
         (fun (w : Lower.write) ->
-          if
-            w.result == nodes.(j)
-            && w.into == leaf_nodes.(lent.(j))
-            && w.regions <> []
-          then Some (w.into, w.regions)
-          else None)
+          w.result == nodes.(j)
+          && w.into == leaf_nodes.(lent.(j))
+          && w.regions <> [])
         (Lower.writes s)
   in
   (* The results are stored in that order, rebuilt through one substitution: a
@@ -575,21 +573,16 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
         let target =
           Lower.output s ~slot (Nx.placement y) (Nx.dtype y) (Nx.shape y)
         in
-        if target != nodes.(j) then begin
+        if Lower.view target != nodes.(j) then begin
           let written =
             match regions j with
-            | None -> [ Ops.store target (value nodes.(j)) ]
-            | Some (into, regions) ->
+            | None -> [ Lower.store target (value nodes.(j)) ]
+            | Some w ->
                 List.map
-                  (fun (r : Lower_index.region) ->
-                    Ops.store
-                      (value
-                         (Ops.substitute ~calls:Skip ~pass:Fixed_point r.dest
-                            [ (into, target) ]))
-                      (value r.value))
-                  regions
+                  (fun (dest, v) -> Ops.store (value dest) (value v))
+                  (Lower.regions target w)
           in
-          let stored = Ops.after target written in
+          let stored = Lower.stored target written in
           stores := stored :: !stores;
           if lent.(j) >= 0 then assign nodes.(j) stored
         end
@@ -604,7 +597,8 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
         let target =
           Lower.output s ~slot:k (Nx.placement y) (Nx.dtype y) (Nx.shape y)
         in
-        if not (Option.is_none (regions j) && take j target) then store k;
+        if not (Option.is_none (regions j) && take j (Lower.view target)) then
+          store k;
         outs.(j) <- Fresh k)
     order;
   let results =

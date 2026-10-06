@@ -25,6 +25,22 @@
  (libraries windtrap rune rune_test nx nx.dtype nx.ragged))
 
 (test
+ (name test_packed)
+ (modules test_packed)
+ (package rune)
+ (libraries
+  windtrap
+  rune
+  nx_test
+  nx
+  nx.array
+  nx.device
+  nx.dtype
+  nx.metal
+  nx.quant
+  rune_test))
+
+(test
  (name test_scan)
  (modules test_scan)
  (package rune)

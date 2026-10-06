@@ -30,7 +30,10 @@ let dtype : type a b. (a, b) Nx_dtype.t -> Dtype.t option = function
   | Int64 -> Some Int64
   | UInt64 -> Some Uint64
   | Bool -> Some Bool
-  | Int4 | UInt4 | Bit | Complex64 | Complex128 -> None
+  | Int4 -> Some Int8
+  | UInt4 -> Some Uint8
+  | Bit -> Some Bool
+  | Complex64 | Complex128 -> None
 
 (* [const dt v] is the element [v] of [dt] as a constant. *)
 let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
@@ -42,8 +45,11 @@ let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
   | BFloat16 -> `Float v
   | Float8_e4m3 -> `Float v
   | Float8_e5m2 -> `Float v
-  | Int4 -> `Int (Bigint.of_int v)
-  | UInt4 -> `Int (Bigint.of_int v)
+  (* An integer literal is reduced modulo 16, as nx stores one. *)
+  | Int4 ->
+      let low = v land 15 in
+      `Int (Bigint.of_int (if low < 8 then low else low - 16))
+  | UInt4 -> `Int (Bigint.of_int (v land 15))
   | Int8 -> `Int (Bigint.of_int v)
   | UInt8 -> `Int (Bigint.of_int v)
   | Int16 -> `Int (Bigint.of_int v)
@@ -56,6 +62,120 @@ let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
   | Bit -> `Bool v
   | Complex64 | Complex128 -> invalid_arg "a complex constant"
 
+(* Packed elements
+
+   [bit], [int4] and [uint4] elements lie [8 / bits] to a byte, the first in the
+   lowest bits. A graph computes each at a byte, as {!dtype} says, an [int4] or
+   [uint4] holding its representative. The storage nx binds holds their bytes as
+   [uint8]: a graph unpacks it where it reads it and packs a value where it
+   stores one, so tolk sees no dtype narrower than a byte. *)
+
+let bits dt = Nx_dtype.Scalar.(bitsize (of_dtype dt))
+let packed dt = bits dt < 8
+
+(* The bytes that hold [n] elements of [dt]. *)
+let bytes dt n = ((n * bits dt) + 7) / 8
+let ints l = List.map (fun n -> Ops.Int n) l
+let uint8 u n = Ops.const_like ~dtype:Uint8 u (`Int (Bigint.of_int n))
+
+(* [code dt u] is the bits of [u]'s elements of [dt], a dtype of at most 8 bits,
+   as the low bits of [uint8]s whose other bits are 0. *)
+let code : type a b. (a, b) Nx_dtype.t -> Ops.t -> Ops.t =
+ fun dt u ->
+  match dt with
+  | Bool | Bit -> Ops.cast u Uint8
+  | Int4 -> Ops.bitwise_and (Ops.bitcast u Uint8) (uint8 u 15)
+  | UInt4 -> Ops.bitwise_and u (uint8 u 15)
+  | Float8_e4m3 | Float8_e5m2 | Int8 | UInt8 -> Ops.bitcast u Uint8
+  | Float16 | Float32 | Float64 | BFloat16 | Int16 | UInt16 | Int32 | UInt32
+  | Int64 | UInt64 | Complex64 | Complex128 ->
+      invalid_arg "the code of an element wider than a byte"
+
+(* [of_code dt c] is the elements of [dt] whose bits [code] gives as [c]. *)
+let of_code : type a b. (a, b) Nx_dtype.t -> Ops.t -> Ops.t =
+ fun dt c ->
+  match dt with
+  | Bool | Bit -> Ops.ne c (uint8 c 0)
+  | Int4 ->
+      let int n = Ops.const_like ~dtype:Int8 c (`Int (Bigint.of_int n)) in
+      Ops.sub (Ops.bitwise_xor (Ops.bitcast c Int8) (int 8)) (int 8)
+  | UInt4 -> c
+  | Float8_e4m3 -> Ops.bitcast c Fp8e4m3
+  | Float8_e5m2 -> Ops.bitcast c Fp8e5m2
+  | Int8 -> Ops.bitcast c Int8
+  | UInt8 -> c
+  | Float16 | Float32 | Float64 | BFloat16 | Int16 | UInt16 | Int32 | UInt32
+  | Int64 | UInt64 | Complex64 | Complex128 ->
+      invalid_arg "the element of a code wider than a byte"
+
+(* [modular dt u] is [u], a result of [dt] computed at a byte, reduced modulo 16
+   to its representative for [int4] and [uint4]: its code read back. *)
+let modular : type a b. (a, b) Nx_dtype.t -> Ops.t -> Ops.t =
+ fun dt u ->
+  match dt with
+  | Int4 | UInt4 -> of_code dt (code dt u)
+  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int8
+  | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 | Bool | Bit
+  | Complex64 | Complex128 ->
+      u
+
+(* The shifts [0; b; ...; (k - 1) b] along the last axis of [shape]. *)
+let shifts b k shape =
+  let ones = List.map (fun _ -> 1) shape in
+  Ops.expand
+    (Ops.reshape
+       (Ops.arange ~step:b ~dtype:Uint8 (k * b))
+       (ints (ones @ [ k ])))
+    (ints (shape @ [ k ]))
+
+(* [split dt c k] reads each byte of [c] as [k] elements of [dt], the first in
+   the lowest bits: a last axis of [m] bytes becomes one of [m * k] elements. *)
+let split dt c k =
+  let b = bits dt and shape = Ops.max_shape c in
+  let wide = Ops.expand (Ops.unsqueeze c (-1)) (ints (shape @ [ k ])) in
+  let codes =
+    Ops.bitwise_and
+      (Ops.shr wide (shifts b k shape))
+      (uint8 wide ((1 lsl b) - 1))
+  in
+  let shape =
+    match List.rev shape with
+    | m :: rest -> List.rev ((m * k) :: rest)
+    | [] -> [ k ]
+  in
+  of_code dt (Ops.reshape codes (ints shape))
+
+(* [join dt x k] is [split]'s inverse: each [k] elements of [dt] along the last
+   axis of [x] are one byte, the first in the lowest bits. *)
+let join dt x k =
+  let b = bits dt in
+  let front, m =
+    match List.rev (Ops.max_shape x) with
+    | n :: rest -> (List.rev rest, n / k)
+    | [] -> invalid_arg "a join of a scalar"
+  in
+  let rows = Ops.reshape (code dt x) (ints (front @ [ m; k ])) in
+  Ops.rop
+    (Ops.shl rows (shifts b k (front @ [ m ])))
+    Op.Add
+    [ List.length front + 1 ]
+
+(* [unpack dt u] is the elements of [dt] that the bytes [u] hold, [8 / bits] to
+   each. *)
+let unpack dt u = split dt u (8 / bits dt)
+
+(* [pack dt u] is the bytes that hold [u]'s elements of [dt] in C order, the
+   bits past the last element 0. *)
+let pack dt u =
+  let n = Ops.max_numel u and per = 8 / bits dt in
+  let m = (n + per - 1) / per in
+  let flat = Ops.reshape u [ Ops.Int n ] in
+  let flat =
+    if m * per = n then flat
+    else Ops.pad flat [ Some (Ops.Int 0, Ops.Int ((m * per) - n)) ]
+  in
+  join dt flat per
+
 (* Views over storage
 
    A view reaches the elements of its storage by strides from an offset. Over a
@@ -63,8 +183,6 @@ let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
    an expand, a negative stride a flip, and the stepped axes, by decreasing
    stride, are rows of a reshape cut by a shrink when each stride nests in the
    one before it. Overlapping axes are windows of [pool]. *)
-
-let ints l = List.map (fun n -> Ops.Int n) l
 
 (* [windows u axis size] is [Ops.pool] along [axis] of [u]: the windows take
    [axis]'s place, and their elements are a new last axis. *)
@@ -219,6 +337,9 @@ type scope = {
       (* Nodes that read an argument, a write, a copy or storage that is no
          capture: they cannot follow their use. *)
   followed : (Placement.t * Ops.t option) list Ops.Tbl.t;
+  bytes : Ops.t Ops.Tbl.t;
+      (* A packed value that views its storage C-contiguously from a byte, and
+         those bytes. *)
   mutable live : bool;
 }
 
@@ -235,6 +356,7 @@ let scope ~renderer =
     arguments = [];
     stuck = Ops.Tbl.create 64;
     followed = Ops.Tbl.create 16;
+    bytes = Ops.Tbl.create 16;
     live = true;
   }
 
@@ -424,37 +546,37 @@ let viewed what u p shape v start =
   | Split axis -> Ops.unshard local [ axis ]
   | One | Copies -> local
 
-let span tdt v =
+let span dt v =
   let lo, hi = View.extent v in
-  let per = Int.max 1 (alignment / Dtype.itemsize tdt) in
+  let per = Int.max 1 (8 * alignment / bits dt) in
   let start = lo - (lo mod per) in
   (start, hi - start)
 
-let within tdt v =
-  let start, _ = span tdt v and shape = View.shape v in
+let within dt v =
+  let start, _ = span dt v and shape = View.shape v in
   View.create
     ~offset:(View.offset v - start)
     ~strides:
       (Array.mapi (fun d s -> if shape.(d) = 1 then 0 else s) (View.strides v))
     shape
 
-let run tdt v b =
-  let start, span = span tdt v in
+let run dt v b =
+  let start, span = span dt v in
   Nx_device.Buffer.view b
-    ~offset:(start * Dtype.itemsize tdt)
+    ~offset:(start * bits dt / 8)
     (Nx_device.Buffer.dtype b) span
 
 let phase dt b start =
   if Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk then 0
   else
     let at = Nx_device.Buffer.address b in
-    Nativeint.(to_int (rem (add at (of_int (start * Dtype.itemsize dt))) 16n))
+    Nativeint.(to_int (rem (add at (of_int (start * bits dt / 8))) 16n))
 
 (* The phase of element [start] of [bufs], the buffers of one placement: the
    same for every buffer. *)
-let phase_of what tdt bufs start =
+let phase_of what dt bufs start =
   match
-    List.sort_uniq Int.compare (List.map (fun b -> phase tdt b start) bufs)
+    List.sort_uniq Int.compare (List.map (fun b -> phase dt b start) bufs)
   with
   | [] -> 0
   | [ p ] -> p
@@ -469,45 +591,159 @@ let broadcast c shape =
   let shape = Array.to_list shape in
   Ops.expand (Ops.reshape c (ints (List.map (fun _ -> 1) shape))) (ints shape)
 
+(* [buffer ?slot ?phase d dt tdt n] is a buffer on [d] of [n] elements of [dt],
+   which a graph computes as [tdt]: their bytes when [dt] is packed. *)
+let buffer ?slot ?phase d dt tdt n =
+  if packed dt then Ops.new_buffer ?slot ?phase d (bytes dt n) Uint8
+  else Ops.new_buffer ?slot ?phase d n tdt
+
+(* [elements dt b] is the flat node of the elements of [dt] that the buffer [b]
+   holds, past the last one for a packed [dt] up to its last byte. *)
+let elements dt b = if packed dt then unpack dt b else b
+
+(* [storage_view s what dt b p shape v start] is [viewed] over the elements of
+   [dt] that the buffer [b] holds, which [s] knows the bytes of where the view
+   reads them whole: C-contiguous from a byte, on one device or a copy on
+   each. *)
+let storage_view s what dt b p shape v start =
+  let u = viewed what (elements dt b) p shape v start in
+  let first = (View.offset v - start) * bits dt in
+  (match layout what p shape with
+  | (One | Copies) when packed dt && View.is_c_contiguous v && first mod 8 = 0
+    ->
+      let n = bytes dt (View.numel v) in
+      let whole = Ops.max_numel b = n && first = 0 in
+      Ops.Tbl.replace s.bytes u
+        (if whole then b
+         else
+           Ops.shrink b
+             [ Some (Ops.Int (first / 8), Ops.Int ((first / 8) + n)) ])
+  | One | Copies | Split _ -> ());
+  u
+
 let param s ~slot x =
   let what = "an argument" in
-  let p = Nx.placement x in
-  let tdt = check s what p (Nx.dtype x) in
+  let p = Nx.placement x and dt = Nx.dtype x in
+  let tdt = check s what p dt in
   let bufs, v = Nx.shards x in
   let shape = Nx.shape x in
   let u =
     if View.numel v = 0 then
       broadcast (Ops.const ~dtype:tdt (`Int Bigint.zero)) shape
     else
-      let start, span = span tdt v in
-      let phase = phase_of what tdt bufs start in
-      let buffer = Ops.new_buffer ~slot ~phase (device_of s p) span tdt in
+      let start, span = span dt v in
+      let phase = phase_of what dt bufs start in
+      let buffer = buffer ~slot ~phase (device_of s p) dt tdt span in
       s.arguments <- buffer :: s.arguments;
-      viewed what buffer p shape v start
+      storage_view s what dt buffer p shape v start
   in
-  traced s p (Nx.dtype x) u
+  traced s p dt u
+
+(* The view of the window each device of [p] holds of a value of [shape] in C
+   order: every device holds a window of one shape. *)
+let local p shape =
+  let d = List.hd (Placement.devices p) in
+  View.create (Array.map (fun (lo, hi) -> hi - lo) (Placement.window p shape d))
 
 (* [laid s what storage p dt shape] is a value of [dt] and [shape] at [p] in C
    order over the node [storage d n tdt] makes of [n] elements on [d]: each
    device's window, starting on 16 bytes. *)
 let laid s what storage p dt shape =
   let tdt = check s what p dt in
-  (* Every device holds a window of one shape. *)
-  let d = List.hd (Placement.devices p) in
-  let local =
-    View.create
-      (Array.map (fun (lo, hi) -> hi - lo) (Placement.window p shape d))
-  in
+  let local = local p shape in
   viewed what (storage (device_of s p) (View.numel local) tdt) p shape local 0
 
+type target = {
+  node : Ops.t;
+  byte_buffer : Ops.t option; (* A packed dtype's buffer. *)
+  store : Ops.t -> Ops.t;
+  stored : Ops.t list -> Ops.t;
+}
+
+(* Storage of one element a byte, viewed as [node]. *)
+let elementwise node =
+  {
+    node;
+    byte_buffer = None;
+    store = (fun u -> Ops.store node u);
+    stored = (fun stores -> Ops.after node stores);
+  }
+
+let scratch s p dt shape =
+  elementwise
+    (laid s "a value" (fun d n tdt -> Ops.new_buffer d n tdt) p dt shape)
+
 let output s ~slot p dt shape =
-  laid s "a result" (fun d n tdt -> Ops.new_buffer ~slot d n tdt) p dt shape
+  let what = "a result" in
+  let tdt = check s what p dt and local = local p shape in
+  let b = buffer ~slot (device_of s p) dt tdt (View.numel local) in
+  let read b = viewed what (elements dt b) p shape local 0 in
+  let node = read b in
+  if not (packed dt) then elementwise node
+  else
+    (* Each device packs its own window. *)
+    let store u =
+      match layout what p shape with
+      | One | Copies -> Ops.store b (pack dt u)
+      | Split axis ->
+          let window =
+            Ops.shard_slice u axis
+              (List.hd (Ops.device_range_src (Ops.device b)))
+          in
+          Ops.store (Ops.unshard b [ 0 ]) (Ops.unshard (pack dt window) [ 0 ])
+    in
+    {
+      node;
+      byte_buffer = Some b;
+      store;
+      stored = (fun stores -> read (Ops.after b stores));
+    }
+
+let view t = t.node
+let store t u = t.store u
+let stored t stores = t.stored stores
+
+let regions t (w : write) =
+  let into =
+    (w.into, t.node)
+    ::
+    (match t.byte_buffer with
+    | Some b -> [ (Ops.buf_uop w.into, b) ]
+    | None -> [])
+  in
+  List.map
+    (fun (r : Lower_index.region) ->
+      (Ops.substitute ~calls:Skip ~pass:Fixed_point r.dest into, r.value))
+    w.regions
 
 let parameter s ~slot p dt shape =
   traced s p dt
     (laid s "a loop's value"
        (fun d n tdt -> Ops.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
        p dt shape)
+
+(* Rows
+
+   A loop reads row [i] of a stacked input in place. A packed input whose rows
+   are whole bytes passes its bytes, and the body unpacks its row; a row that
+   starts within a byte is read from the input's elements, a byte each. *)
+
+let whole dt shape =
+  packed dt && Array.fold_left ( * ) 1 shape * bits dt mod 8 = 0
+
+let stacked s dt row u =
+  if not (whole dt row) then u
+  else match Ops.Tbl.find_opt s.bytes u with Some b -> b | None -> pack dt u
+
+let row s ~slot p dt shape =
+  if not (whole dt shape) then parameter s ~slot p dt shape
+  else
+    traced s p dt
+      (laid s "a loop's value"
+         (fun d n _ ->
+           elements dt
+             (Ops.param ~shape:[ Ops.Int (bytes dt n) ] ~device:d slot Uint8))
+         p dt shape)
 
 let argument s ~slot p dt shape =
   if Array.fold_left ( * ) 1 shape = 0 then
@@ -620,11 +856,11 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
     match List.find_opt same s.captures with
     | Some c -> c.node
     | None ->
-        let start, span = span tdt v in
-        let phase = phase_of what tdt bufs start in
-        let buffer = Ops.new_buffer ~phase (device_of s p) span tdt in
-        let node = viewed what buffer p shape v start in
-        let buffers = List.map (run tdt v) bufs in
+        let start, span = span dt v in
+        let phase = phase_of what dt bufs start in
+        let buffer = buffer ~phase (device_of s p) dt tdt span in
+        let node = storage_view s what dt buffer p shape v start in
+        let buffers = List.map (run dt v) bufs in
         s.captures <-
           { storage = key; view = v; at = p; node; buffer; buffers }
           :: s.captures;
@@ -695,15 +931,17 @@ let follow s q u =
         | Some c' -> (c.buffer, c'.buffer)
         | None ->
             let src = List.hd c.buffers in
-            let n = Nx_device.Buffer.length src in
             let buffer =
-              Ops.new_buffer (device_of s q) n (Ops.dtype c.buffer)
+              Ops.new_buffer (device_of s q) (Ops.max_numel c.buffer)
+                (Ops.dtype c.buffer)
             in
             let buffers =
               List.map
                 (fun d ->
                   let dst =
-                    Nx_device.Buffer.create d (Nx_device.Buffer.dtype src) n
+                    Nx_device.Buffer.create d
+                      (Nx_device.Buffer.dtype src)
+                      (Nx_device.Buffer.length src)
                   in
                   Nx_device.Buffer.copy ~src ~dst;
                   dst)
@@ -789,6 +1027,253 @@ let place s what p q x =
         | Some u -> u
         | None -> copied u (device_of s q))
 
+(* Conversions *)
+
+(* [cast dt tdt u] is [u] converted to [dt], computed as [tdt]. A float held at
+   the ends of [int4]'s or [uint4]'s range before it narrows to a byte, as a
+   cast to a wider integer holds at that integer's own, so [9.] becomes [7]. *)
+let cast : type a b. (a, b) Nx_dtype.t -> Dtype.t -> Ops.t -> Ops.t =
+ fun dt tdt u ->
+  let held lo hi =
+    if not (Dtype.is_float (Ops.dtype u)) then u
+    else
+      let lo = Ops.const_like u (`Float lo)
+      and hi = Ops.const_like u (`Float hi) in
+      Ops.where (Ops.lt u lo) lo (Ops.where (Ops.lt hi u) hi u)
+  in
+  match dt with
+  | Int4 -> modular dt (Lower_arith.cast tdt (held (-8.) 7.))
+  | UInt4 -> modular dt (Lower_arith.cast tdt (held 0. 15.))
+  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int8
+  | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 | Bool | Bit
+  | Complex64 | Complex128 ->
+      Lower_arith.cast tdt u
+
+(* [bitcast src dt tdt u] is [u], of [src], read as [dt] computed as [tdt]. A
+   packed dtype's elements are bits within bytes: a wider [dt] joins the
+   elements along [u]'s last axis, and a narrower one splits each into a new
+   last axis, through bytes where the other is wider than one. *)
+let bitcast src dt tdt u =
+  let sb = bits src and tb = bits dt in
+  if sb >= 8 && tb >= 8 then Lower_arith.bitcast tdt u
+  else if sb = tb then of_code dt (code src u)
+  else if sb < tb && tb <= 8 then
+    Ops.squeeze ~axis:(-1) (of_code dt (join src u (tb / sb)))
+  else if sb < tb then Lower_arith.bitcast tdt (join src u (8 / sb))
+  else if sb <= 8 then split dt (Ops.unsqueeze (code src u) (-1)) (sb / tb)
+  else split dt (Lower_arith.bitcast Uint8 u) (8 / tb)
+
+(* Packed writes
+
+   A write into a packed value that the program consumes is stored by bytes,
+   each by one writer: the bytes the written elements land in, each rebuilt from
+   the value's elements there and the writes landing among them. A value whose
+   bytes the scope does not know is stored whole. *)
+
+(* The C-order strides of [shape]. *)
+let strides shape =
+  snd
+    (List.fold_left
+       (fun (k, acc) n -> (k * n, k :: acc))
+       (1, []) (List.rev shape))
+
+(* [laid_as u shape full] is [u] reshaped to [shape] and expanded to [full]. *)
+let laid_as u shape full = Ops.expand (Ops.reshape u (ints shape)) (ints full)
+let int64_like u n = Ops.const_like ~dtype:Int64 u (`Int (Bigint.of_int n))
+
+(* The elements of [u] in C order, [8 / bits] to a row, zeros past the last. *)
+let by_byte dt u =
+  let per = 8 / bits dt and n = Ops.max_numel u in
+  let m = (n + per - 1) / per in
+  let flat = Ops.reshape u [ Ops.Int n ] in
+  let flat =
+    if m * per = n then flat
+    else Ops.pad flat [ Some (Ops.Int 0, Ops.Int ((m * per) - n)) ]
+  in
+  Ops.reshape flat (ints [ m; per ])
+
+(* The positions in C order of the elements of the [k] bytes [b], [[k; per]]. *)
+let positions dt b =
+  let per = 8 / bits dt and k = Ops.max_numel b in
+  let rows = laid_as b [ k; 1 ] [ k; per ] in
+  Ops.add
+    (Ops.mul rows (int64_like rows per))
+    (laid_as (Ops.arange ~dtype:Int64 per) [ 1; per ] [ k; per ])
+
+(* [scattered s dt ~axis ~indices ~updates into] is the region of a scatter that
+   sets [updates] at [indices] along [axis] of the packed [into]: the last
+   update landing in a byte stores it, as the last update at a position stores
+   an element, its [8 / bits] elements those of [into] with the last update at
+   each. Its [k x k] comparisons of the [k] updates are chosen where they cost
+   no more than the scatter's value. *)
+let scattered s dt ~axis ~indices ~updates into =
+  let shape = Ops.max_shape into and ishape = Ops.max_shape indices in
+  let n = Ops.max_numel into and k = Ops.max_numel indices in
+  match Ops.Tbl.find_opt s.bytes into with
+  | Some bytes when k > 0 && k * k <= n * List.nth ishape axis ->
+      let r = List.length shape and per = 8 / bits dt in
+      let m = (n + per - 1) / per in
+      let flat u = Ops.reshape u [ Ops.Int k ] in
+      let coord d stride =
+        let c =
+          if d = axis then indices
+          else
+            Ops.expand
+              (Lower_reduce.along r d
+                 (Ops.arange ~dtype:Int64 (List.nth ishape d)))
+              (ints ishape)
+        in
+        Ops.mul c (int64_like c stride)
+      in
+      let pos =
+        match List.mapi coord (strides shape) with
+        | c :: cs -> flat (List.fold_left Ops.add c cs)
+        | [] -> invalid_arg "a scatter into a scalar"
+      in
+      let inside =
+        let i = Ops.bitcast (flat indices) Uint64 in
+        Ops.lt i
+          (Ops.const_like ~dtype:Uint64 i
+             (`Int (Bigint.of_int (List.nth shape axis))))
+      in
+      let key = Ops.div ~rounding:`Trunc pos (int64_like pos per) in
+      let order = Ops.arange ~dtype:Int64 k in
+      (* The last update landing in each byte. *)
+      let pairs = [ k; k ] in
+      let column u = laid_as u [ k; 1 ] pairs
+      and row u = laid_as u [ 1; k ] pairs in
+      let followed =
+        Ops.rop
+          (Ops.bitwise_and
+             (Ops.eq (column key) (row key))
+             (Ops.bitwise_and (Ops.lt (column order) (row order)) (row inside)))
+          Op.Max [ 1 ]
+      in
+      let keep = Ops.bitwise_and inside (Ops.logical_not followed) in
+      let at =
+        Ops.maximum
+          (Ops.minimum key (int64_like key (m - 1)))
+          (int64_like key 0)
+      in
+      let old =
+        Lower_index.gather 0 (laid_as at [ k; 1 ] [ k; per ]) (by_byte dt into)
+      in
+      (* Each element of a stored byte against every update. *)
+      let lanes = [ k; per; k ] in
+      let update u = laid_as u [ 1; 1; k ] lanes in
+      let hit =
+        Ops.bitwise_and
+          (Ops.eq (update pos) (laid_as (positions dt at) [ k; per; 1 ] lanes))
+          (update inside)
+      in
+      let latest =
+        Ops.rop
+          (Ops.where hit (update order) (int64_like (update order) (-1)))
+          Op.Max [ 2 ]
+      in
+      let u = flat (Ops.expand updates (Ops.shape indices)) in
+      let set =
+        Lower_reduce.of_bits (Ops.dtype u)
+          (Lower_reduce.pick
+             (Ops.eq (update order) (laid_as latest [ k; per; 1 ] lanes))
+             (Lower_reduce.bits (update u)))
+      in
+      let value = Ops.where (Ops.le (int64_like latest 0) latest) set old in
+      [
+        {
+          Lower_index.dest =
+            Ops.index bytes [ Ops.valid (Lower_reduce.clamped m key) keep ];
+          value = Ops.reshape (join dt value per) (ints [ k ]);
+        };
+      ]
+  | Some _ | None -> []
+
+(* [windowed s dt into ~starts v] is the region of an update of the packed
+   [into] by [v] at the window of corner [starts]: the run of bytes from the
+   window's first element through its last, of one length wherever the window
+   lies, its elements [v]'s inside the window and [into]'s outside. *)
+let windowed s dt into ~starts v =
+  let static =
+    List.for_all
+      (function Ops.Int _ -> true | Ops.Sym _ -> false)
+      (Ops.shape v)
+  in
+  match Ops.Tbl.find_opt s.bytes into with
+  | Some bytes when static && Ops.max_numel v > 0 ->
+      let shape = Ops.max_shape into and window = Ops.max_shape v in
+      let per = 8 / bits dt and n = Ops.max_numel into in
+      let m = (n + per - 1) / per and steps = strides shape in
+      let span =
+        List.fold_left2 (fun a k st -> a + ((k - 1) * st)) 1 window steps
+      in
+      let w = Int.min m (((span + per - 1) / per) + 1) in
+      let start d =
+        Ops.cast
+          (Ops.reshape
+             (Ops.shrink (Ops.contiguous starts)
+                [ Some (Ops.Int d, Ops.Int (d + 1)) ])
+             [])
+          Int64
+      in
+      let first =
+        List.fold_left Ops.add
+          (Ops.const ~dtype:Int64 (`Int Bigint.zero))
+          (List.mapi
+             (fun d st -> Ops.mul (start d) (int64_like (start d) st))
+             steps)
+      in
+      let b =
+        Ops.minimum
+          (Ops.div ~rounding:`Trunc first (int64_like first per))
+          (int64_like first (m - w))
+      in
+      let run = Some (Ops.Sym b, Ops.Sym (Ops.add b (Ops.int w))) in
+      let q =
+        positions dt
+          (Ops.add (Ops.arange ~dtype:Int64 w) (laid_as b [ 1 ] [ w ]))
+      in
+      let full = [ w; per ] in
+      (* Each element's offset from the window's corner along each axis. *)
+      let offset d st =
+        let c = Ops.div ~rounding:`Trunc q (int64_like q st) in
+        let c =
+          if d = 0 then c else Ops.fmod c (int64_like c (List.nth shape d))
+        in
+        Ops.sub c (laid_as (start d) [ 1; 1 ] full)
+      in
+      let offsets = List.mapi offset steps in
+      let inside =
+        List.fold_left2
+          (fun acc o k ->
+            let o = Ops.bitcast o Uint64 in
+            Ops.bitwise_and acc
+              (Ops.lt o
+                 (Ops.const_like ~dtype:Uint64 o (`Int (Bigint.of_int k)))))
+          (Ops.const_like ~dtype:Bool q (`Bool true))
+          offsets window
+      in
+      let at =
+        List.fold_left2
+          (fun acc o st -> Ops.add acc (Ops.mul o (int64_like o st)))
+          (int64_like q 0) offsets (strides window)
+      in
+      let vs = Ops.reshape v [ Ops.Int (Ops.max_numel v) ] in
+      let read =
+        Ops.reshape
+          (Lower_reduce.take vs 0 (Ops.reshape at [ Ops.Int (w * per) ]))
+          (ints full)
+      in
+      let value =
+        Ops.where inside read (Ops.shrink (by_byte dt into) [ run; None ])
+      in
+      [
+        {
+          Lower_index.dest = Ops.shrink bytes [ run ];
+          value = Ops.reshape (join dt value per) (ints [ w ]);
+        };
+      ]
+  | Some _ | None -> []
+
 (* Operations *)
 
 let op : type r. scope -> r Nx.Op.t -> r =
@@ -803,6 +1288,8 @@ let op : type r. scope -> r Nx.Op.t -> r =
     traced s p dt (settled s what p u)
   in
   let like x u = ret (Nx.dtype x) u in
+  (* Arithmetic on [int4] and [uint4] computes at a byte and reduces. *)
+  let wrapped x u = like x (modular (Nx.dtype x) u) in
   let write ~into regions result =
     s.writes <- { result; into; regions } :: s.writes;
     result
@@ -816,14 +1303,14 @@ let op : type r. scope -> r Nx.Op.t -> r =
     n x
   in
   match[@warning "@4@8"] o with
-  | Unary (k, x) -> like x (Lower_arith.unary k (n x))
-  | Binary (k, x, y) -> like x (Lower_arith.binary k (n x) (n y))
+  | Unary (k, x) -> wrapped x (Lower_arith.unary k (n x))
+  | Binary (k, x, y) -> wrapped x (Lower_arith.binary k (n x) (n y))
   | Compare (k, x, y) -> ret Nx_dtype.bool (Lower_arith.compare k (n x) (n y))
   | Where (c, x, y) -> like x (Ops.where (n c) (n x) (n y))
-  | Fma (a, b, c) -> like a (Lower_arith.fma (n a) (n b) (n c))
-  | Convert (Cast, dt, x) -> ret dt (Lower_arith.cast (check s what p dt) (n x))
+  | Fma (a, b, c) -> wrapped a (Lower_arith.fma (n a) (n b) (n c))
+  | Convert (Cast, dt, x) -> ret dt (cast dt (check s what p dt) (n x))
   | Convert (Bitcast, dt, x) ->
-      ret dt (Lower_arith.bitcast (check s what p dt) (n x))
+      ret dt (bitcast (Nx.dtype x) dt (check s what p dt) (n x))
   | Threefry (key, counter) ->
       let k = n key and c = n counter in
       (* A parameter is an argument of a called body: a staged loop's trip. *)
@@ -840,8 +1327,8 @@ let op : type r. scope -> r Nx.Op.t -> r =
            would repeat on every call; pass the key as an argument";
       ret Nx_dtype.int32 (Lower_arith.threefry k c)
   | Reduce (k, axes, x) ->
-      like x (Lower_reduce.reduce k ~axes:(Array.to_list axes) (n x))
-  | Scan (k, axis, x) -> like x (Lower_reduce.scan k ~axis (n x))
+      wrapped x (Lower_reduce.reduce k ~axes:(Array.to_list axes) (n x))
+  | Scan (k, axis, x) -> wrapped x (Lower_reduce.scan k ~axis (n x))
   | Arg_reduce (k, axis, x) ->
       ret Nx_dtype.int64 (Lower_reduce.arg_reduce k ~axis (n x))
   | Sort { descending; axis; x } ->
@@ -858,23 +1345,33 @@ let op : type r. scope -> r Nx.Op.t -> r =
       like x (Lower_index.gather axis (n indices) (n x))
   | Scatter { mode; unique; axis; indices; updates; into = x } ->
       let indices = n indices and updates = n updates and into = n x in
+      let dt = Nx.dtype x in
       let result, regions =
         Lower_index.scatter ~mode ~unique ~axis ~indices ~updates into
+      in
+      let result = modular dt result in
+      let regions =
+        match mode with
+        | _ when not (packed dt) -> regions
+        | `Set -> scattered s dt ~axis ~indices ~updates into
+        | `Add | `Max | `Min -> []
       in
       like x (write ~into regions result)
   | Update (x, starts, v) ->
       let into = n x and starts = n starts and v = n v in
-      like x
-        (write ~into
-           (Option.to_list (Lower_index.update_region into ~starts v))
-           (Lower_index.update into ~starts v))
+      let result = Lower_index.update into ~starts v in
+      let regions =
+        if packed (Nx.dtype x) then windowed s (Nx.dtype x) into ~starts v
+        else Option.to_list (Lower_index.update_region into ~starts v)
+      in
+      like x (write ~into regions result)
   | Unfold { kernel_size; stride; dilation; padding; x } ->
       like x (Lower_index.unfold ~kernel_size ~stride ~dilation ~padding (n x))
   | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
-      like x
+      wrapped x
         (Lower_index.fold ~output_size ~kernel_size ~stride ~dilation ~padding
            (n x))
-  | Matmul (x, y) -> like x (Lower_linalg.matmul (n x) (n y))
+  | Matmul (x, y) -> wrapped x (Lower_linalg.matmul (n x) (n y))
   | Cholesky { upper; x } -> like x (Lower_linalg.cholesky ~upper (factored x))
   | Qr { reduced; x } ->
       let q, r =

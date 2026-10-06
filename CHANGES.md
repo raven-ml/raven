@@ -165,6 +165,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles `bit`, `int4` and `uint4` values, which it refused. A
+  compiled function reads and writes their packed bytes, views at sub-byte
+  offsets included, and computes `int4` and `uint4` as integers modulo 16.
 - A compiled scan whose carry holds a tensor the function moved to the host is
   written out, so the tensor comes back on the host; it came back on the loop's
   device.
@@ -195,7 +198,6 @@ All notable changes to this project will be documented in this file.
 - `grad` of a `scan` whose carry and outputs depend on no tracked value keeps
   no carry per step under `jit`.
 - A compiled integer remainder by zero is its dividend, as `Nx.mod_`'s.
-- `Rune.jit` refuses `bit` values, as it refuses `int4`.
 - `RUNE_JIT_DEBUG` is a tolk setting: it holds an integer, nonzero to report,
   and any other value raises when the program starts.
 - A `jit`-compiled function compiles again when any tolk setting that shapes

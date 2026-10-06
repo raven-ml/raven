@@ -53,11 +53,11 @@ let dtypes =
       test "the 8-bit floats are the OCP formats" (fun () ->
           equal tolk_dtype (Some Dtype.Fp8e4m3) (Lower.dtype Nx.float8_e4m3);
           equal tolk_dtype (Some Dtype.Fp8e5m2) (Lower.dtype Nx.float8_e5m2));
-      test "bits, 4-bit integers and complex numbers have no counterpart"
-        (fun () ->
-          is_none (Lower.dtype Nx.bit);
-          is_none (Lower.dtype Nx.int4);
-          is_none (Lower.dtype Nx.uint4);
+      test "bits and 4-bit integers compute a byte each" (fun () ->
+          equal tolk_dtype (Some Dtype.Bool) (Lower.dtype Nx.bit);
+          equal tolk_dtype (Some Dtype.Int8) (Lower.dtype Nx.int4);
+          equal tolk_dtype (Some Dtype.Uint8) (Lower.dtype Nx.uint4));
+      test "complex numbers have no counterpart" (fun () ->
           is_none (Lower.dtype Nx.complex64);
           is_none (Lower.dtype Nx.complex128));
       test "a trace reads a device's dtypes from its renderer once" (fun () ->
@@ -241,7 +241,7 @@ let parameters =
           let path = Filename.temp_file "lower" ".bin" in
           let b = Result.get_ok (Nx_device.Buffer.create_file path 64) in
           Sys.remove path;
-          equal int 0 (Lower.phase Dtype.Uint8 b 3));
+          equal int 0 (Lower.phase Nx.uint8 b 3));
       test "a parameter binds nothing when traced" (fun () ->
           let s = scope () in
           ignore (Lower.param s ~slot:0 (grid 2 3));
@@ -467,16 +467,11 @@ let refusals =
           let s, y = trace (fun () -> Nx.matmul x x) in
           Traces.exact (Nx.matmul x x) (Traces.value s y));
       test "a dtype with no counterpart is refused" (fun () ->
+          let z = Nx.cast Nx.complex64 (arange 2) in
           raises
-            (Lower.Jit_error "cannot compile contiguous: int4 is not supported")
-            (fun () ->
-              trace (fun () -> Nx.copy (Nx.create Nx.int4 [| 2 |] [| 1; 2 |]))));
-      test "a bit value is refused as an int4 one is" (fun () ->
-          raises
-            (Lower.Jit_error "cannot compile contiguous: bit is not supported")
-            (fun () ->
-              trace (fun () ->
-                  Nx.copy (Nx.create Nx.bit [| 9 |] (Array.make 9 true)))));
+            (Lower.Jit_error
+               "cannot compile contiguous: complex64 is not supported")
+            (fun () -> trace (fun () -> Nx.copy z)));
       test "a Fourier transform is refused" (fun () ->
           let z = Nx.cast Nx.complex64 (arange 4) in
           raises (Lower.Jit_error "cannot compile fft") (fun () ->

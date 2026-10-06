@@ -29,9 +29,15 @@ exception Jit_error of string
 
 val dtype : ('a, 'b) Nx_dtype.t -> Dtype.t option
 (** [dtype dt] is the data type of [dt]'s elements in a graph: floats, integers
-    and booleans one to one, and [float8_e4m3] and [float8_e5m2] as
-    {!Dtype.Fp8e4m3} and {!Dtype.Fp8e5m2}. It is [None] for [int4], [uint4],
-    [complex64] and [complex128], which no graph holds. *)
+    and booleans one to one, [float8_e4m3] and [float8_e5m2] as {!Dtype.Fp8e4m3}
+    and {!Dtype.Fp8e5m2}, and the packed dtypes a byte each: [bit] as
+    {!Dtype.Bool}, [int4] as {!Dtype.Int8} and [uint4] as {!Dtype.Uint8},
+    holding their representatives. It is [None] for [complex64] and
+    [complex128], which no graph holds.
+
+    The storage of a packed dtype is its bytes as {!Dtype.Uint8}: a graph
+    unpacks the elements where it reads storage that nx binds, an argument or a
+    capture, and packs a result where it stores it ({!output}). *)
 
 val const : ('a, 'b) Nx_dtype.t -> 'a -> Dtype.const
 (** [const dt v] is the element [v] of [dt] as a constant.
@@ -40,26 +46,31 @@ val const : ('a, 'b) Nx_dtype.t -> 'a -> Dtype.const
 
 (** {1:storage Views over storage} *)
 
-val span : Dtype.t -> Nx_array.View.t -> int * int
+val span : ('a, 'b) Nx_dtype.t -> Nx_array.View.t -> int * int
 (** [span dt v] is the run of elements of [dt] that the non-empty view [v]
-    reaches, from the element at or below the first one it reaches whose offset
-    is a multiple of 16 bytes, through the last one: [(start, length)]. *)
+    reaches, from the element at or below the first one it reaches whose bits
+    start at a multiple of 16 bytes, through the last one: [(start, length)]. *)
 
-val within : Dtype.t -> Nx_array.View.t -> Nx_array.View.t
+val within : ('a, 'b) Nx_dtype.t -> Nx_array.View.t -> Nx_array.View.t
 (** [within dt v] is the non-empty view [v] over the run {!span} gives: of [v]'s
     shape and strides, offset from the run's start, with the stride of each axis
     of one element [0], which no read steps along. Views that differ only in
     those strides, or in where their runs start, give equal views. *)
 
-val run : Dtype.t -> Nx_array.View.t -> Nx_device.Buffer.t -> Nx_device.Buffer.t
+val run :
+  ('a, 'b) Nx_dtype.t ->
+  Nx_array.View.t ->
+  Nx_device.Buffer.t ->
+  Nx_device.Buffer.t
 (** [run dt v b] is the run of [b]'s elements of [dt] that {!span} gives for the
     view [v]: the buffer a parameter of a value of view [v] over [b] binds. *)
 
-val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
-(** [phase dt b start] is the bytes by which element [start] of [dt] in [b] lies
-    past a 16-byte boundary of [b]'s memory: the phase of storage that starts
-    there ({!Tolk.Ops.param_arg}). It is [0] on the disk, whose files are read
-    at any byte.
+val phase : ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> int -> int
+(** [phase dt b start] is the bytes by which the byte holding the first bit of
+    element [start] of [dt] in [b] lies past a 16-byte boundary of [b]'s memory:
+    the phase of storage that starts there ({!Tolk.Ops.param_arg}). [start] is a
+    run's start ({!span}), whose bits start a byte. It is [0] on the disk, whose
+    files are read at any byte.
 
     Raises [Invalid_argument] if [b] is dead. *)
 
@@ -130,19 +141,60 @@ val param : scope -> slot:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     or [x]'s buffers start at different places within 16 bytes, and
     [Invalid_argument] if [x] is traced. *)
 
+type target
+(** The type for the storage a program stores a result into. *)
+
 val output :
   scope ->
   slot:int ->
   Nx.Placement.t ->
   ('a, 'b) Nx_dtype.t ->
   int array ->
-  Ops.t
-(** [output s ~slot p dt shape] is the node that views the storage of slot
-    [slot] as a value of [dt] and [shape] at [p], in C order: each device's
-    window of the value, starting on 16 bytes. A program stores a result into
-    it.
+  target
+(** [output s ~slot p dt shape] is the storage of slot [slot] for a value of
+    [dt] and [shape] at [p], in C order: each device's window of the value,
+    starting on 16 bytes.
 
     Raises as {!param} does. *)
+
+val view : target -> Ops.t
+(** [view t] is the node that views [t]'s storage as its value. *)
+
+val store : target -> Ops.t -> Ops.t
+(** [store t u] stores the value [u], of [t]'s dtype and shape, into [t]'s
+    storage: packed, for a packed dtype, each device's window by that device. *)
+
+val stored : target -> Ops.t list -> Ops.t
+(** [stored t stores] is {!view}[ t] once [stores], stores into [t]'s storage,
+    have run. *)
+
+val scratch :
+  scope -> Nx.Placement.t -> ('a, 'b) Nx_dtype.t -> int array -> target
+(** [scratch s p dt shape] is storage that the program alone holds for a value
+    of [dt] and [shape] at [p], in C order: a byte for each element of a packed
+    dtype, as a graph computes it.
+
+    Raises as {!param} does. *)
+
+(** {2:rows Rows of a loop's input} *)
+
+val stacked : scope -> ('a, 'b) Nx_dtype.t -> int array -> Ops.t -> Ops.t
+(** [stacked s dt row u] is the storage a loop reads the rows of shape [row] of
+    [u], a node of [s] of a value of [dt], from: [u] itself, or for a packed
+    [dt] whose rows are whole bytes, [u]'s bytes in C order, those of its
+    storage where [u] views it C-contiguously from a byte and packed otherwise.
+*)
+
+val row :
+  scope ->
+  slot:int ->
+  Nx.Placement.t ->
+  ('a, 'b) Nx_dtype.t ->
+  int array ->
+  ('a, 'b) Nx.t
+(** [row s ~slot p dt shape] is {!parameter} for a row of a loop's input, which
+    holds the storage {!stacked} gives for one row: unpacked by the body for a
+    packed [dt] whose rows are whole bytes. *)
 
 val parameter :
   scope ->
@@ -221,12 +273,19 @@ type write = {
   into : Ops.t;  (** The node of the value it writes into. *)
   regions : Lower_index.region list;
       (** The regions it writes, when it has a region form: storing them into
-          the storage of [into] makes it hold [result]. Empty otherwise. *)
+          the storage of [into] makes it hold [result]. Empty otherwise. A
+          packed dtype's regions are runs of bytes, each written by one store,
+          and a packed value whose bytes [s] does not know has none. *)
 }
 (** The type for indexed writes ([Nx.Op.Update], [Nx.Op.Scatter]). *)
 
 val writes : scope -> write list
 (** [writes s] is each indexed write that [s] lowered, the last first. *)
+
+val regions : target -> write -> (Ops.t * Ops.t) list
+(** [regions t w] is each region of [w] as a destination in [t] and its value:
+    storing each value into its destination leaves [t]'s storage holding
+    [w.result], for [t] the storage of [w.into]. *)
 
 type check = {
   first : (int64, Nx_dtype.int64_elt) Nx.t;

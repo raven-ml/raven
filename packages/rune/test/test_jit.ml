@@ -491,13 +491,6 @@ let values =
           let g = Nx.quantile [| 0.25; 0.75 |] in
           let b = Nx.cast Nx.float64 a in
           equal (tensor float_exact) (g b) (Rune.jit' g b));
-      test "a compiled call refuses a bit value, as an int4 one" (fun () ->
-          let m =
-            Nx.init Nx.bool [| 21 |] (fun i -> i.(0) mod 3 = 0 || i.(0) = 7)
-          in
-          raises_jit_error (fun () -> Rune.jit' (Nx.cast Nx.bit) m);
-          raises_jit_error (fun () ->
-              Rune.jit' Nx.logical_not (Nx.cast Nx.bit m)));
       test "a ragged array grouped by ids inside a compiled call is eager's"
         (fun () ->
           let ids = Nx.create Nx.int64 [| 6 |] [| 2L; 0L; -1L; 2L; 3L; 0L |] in
@@ -4880,11 +4873,11 @@ let lost_devices =
 
    A compiled call computes integers as eager does at every width: a remainder
    by zero is the dividend, a signed least value divided by -1 is itself, and a
-   shift by the width or past it gives 0, or -1 below zero. A 4-bit or bit value
-   is refused until rune compiles them. *)
+   shift by the width or past it gives 0, or -1 below zero. *)
 
 let integer_rules =
   let name (Int_dtype d) = d.name in
+  let int_dtypes = int_dtypes @ int4_dtypes in
   (* A width's ends, a neighbour, and small values. *)
   let edges ~bits ~signed =
     let lo, hi = int_range ~bits ~signed in
@@ -4951,20 +4944,6 @@ let integer_rules =
               equal ~msg (tensor d.exact) (Nx.rshift a n)
                 (Rune.jit' (fun a -> Nx.rshift a n) a))
             [ 0; 1; d.bits - 1 ]);
-      test "a compiled call refuses 4-bit integers with a jit error" (fun () ->
-          let q = Nx.create Nx.int4 [| 3 |] [| 7; -8; 1 |] in
-          let u = Nx.create Nx.uint4 [| 3 |] [| 15; 0; 1 |] in
-          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.add x x) q);
-          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.sum x) u);
-          raises_jit_error (fun () ->
-              Rune.jit' (fun x -> Nx.cast Nx.int4 x) (Nx.ones Nx.int8 [| 3 |]));
-          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.cast Nx.int8 x) q));
-      test "a compiled call refuses a bit result and a bit argument" (fun () ->
-          let m = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
-          raises_jit_error (fun () -> Rune.jit' (fun x -> Nx.cast Nx.bit x) m);
-          raises_jit_error (fun () ->
-              Rune.jit' (fun x -> Nx.cast Nx.bool x) (Nx.cast Nx.bit m));
-          raises_jit_error (fun () -> Rune.jit' Nx.count (Nx.cast Nx.bit m)));
     ]
 
 let () =

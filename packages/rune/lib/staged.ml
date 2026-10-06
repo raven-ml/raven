@@ -44,13 +44,11 @@ let after s values deps =
       | None -> Nx.P x
       | Some u ->
           let at = Nx.placement x and dt = Nx.dtype x in
-          let copy =
-            Lower.output s ~slot:(Ops.unique_num ()) at dt (Nx.shape x)
-          in
+          let copy = Lower.scratch s at dt (Nx.shape x) in
           Nx.P
             (Lower.traced s at dt
-               (Ops.after copy
-                  [ Ops.store copy (Ops.after (Ops.contiguous u) deps) ])))
+               (Lower.stored copy
+                  [ Lower.store copy (Ops.after (Ops.contiguous u) deps) ])))
     values
 
 (* How a node reads a value: not at all, at each element's own index only
@@ -183,9 +181,9 @@ let stage ~here ~inside s (r : Trips.request) =
      those numbers or slots of their own, and takes its slot once the body is
      cut. *)
   let own = Ops.Tbl.create 8 and renumbered = ref [] in
-  let parameter at dt shape =
+  let held make at dt shape =
     let slot = next () in
-    let v = Lower.parameter s ~slot:(-2 - Ops.unique_num ()) at dt shape in
+    let v = make s ~slot:(-2 - Ops.unique_num ()) at dt shape in
     let u = Ops.buf_uop (Lower.uop s v) in
     Ops.Tbl.replace own u ();
     let arg =
@@ -194,6 +192,7 @@ let stage ~here ~inside s (r : Trips.request) =
     renumbered := (u, Ops.replace u ~arg) :: !renumbered;
     (slot, v)
   in
+  let parameter at dt shape = held Lower.parameter at dt shape in
   let carry =
     List.map
       (fun (Nx.P c) ->
@@ -206,7 +205,8 @@ let stage ~here ~inside s (r : Trips.request) =
       (fun (Nx.P x) ->
         let shape = Nx.shape x in
         let slot, v =
-          parameter p (Nx.dtype x) (Array.sub shape 1 (Array.length shape - 1))
+          held Lower.row p (Nx.dtype x)
+            (Array.sub shape 1 (Array.length shape - 1))
         in
         (slot, Nx.P v))
       xs
@@ -334,7 +334,13 @@ let stage ~here ~inside s (r : Trips.request) =
      16 bytes apart when the input's are not. *)
   List.iter2
     (fun (Nx.P x as xs) (slot, _) ->
-      let u = node xs and m = numel (Nx.shape x) / n in
+      let shape = Nx.shape x in
+      let u =
+        Lower.stacked s (Nx.dtype x)
+          (Array.sub shape 1 (Array.length shape - 1))
+          (node xs)
+      in
+      let m = Ops.max_numel u / n in
       let k = stride u m in
       let flat =
         if k = m then Ops.reshape u [ Ops.Int (n * m) ]
