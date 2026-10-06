@@ -1,6 +1,6 @@
 (tests
- (names test_bij test_density test_draws test_diag test_summary)
- (modules test_bij test_density test_draws test_diag test_summary)
+ (names test_support test_bij test_density test_draws test_diag test_summary test_dist)
+ (modules test_support test_bij test_density test_draws test_diag test_summary test_dist)
  (package norn)
  (deps
   (glob_files golden/*.golden))

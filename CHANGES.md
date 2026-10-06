@@ -52,8 +52,8 @@ All notable changes to this project will be documented in this file.
 ### Norn
 
 - **Breaking:** norn is a core package again, rewritten around log densities
-  over the caller's structures batched over a chain axis: `Norn.Bij`,
-  `Norn.Draws`, `Norn.Diag` and `Norn.Summary` replace the flat-vector `Norn.hmc` and `nuts`.
+  over the caller's structures batched over a chain axis: `Norn.Dist`,
+  `Norn.Bij`, `Norn.Draws`, `Norn.Diag` and `Norn.Summary` replace the flat-vector `Norn.hmc` and `nuts`.
 
 ### Hugin
 

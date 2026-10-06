@@ -76,6 +76,17 @@ let cases (type f) (dt : (float, f) Nx.dtype) : f case list =
       inside = finite;
     };
     {
+      name = "affine_tril";
+      b =
+        B.affine_tril
+          ~loc:(v [| 1.; -2.; 0.5 |])
+          ~scale_tril:
+            (Nx.create dt [| 3; 3 |]
+               [| 2.; 9.; 9.; 0.5; 1.5; 9.; -1.; 0.25; 0.75 |]);
+      dim = 3;
+      inside = finite;
+    };
+    {
       name = "simplex";
       b = B.simplex;
       dim = 3;

@@ -26,7 +26,7 @@
     log-determinant of [-inf], so the pulled-back density counts no value twice:
     its mass is the target's mass between the saturation points. *)
 
-type 'f t
+type 'f t = 'f Bijection.t
 (** The type for bijectors over tensors of element type ['f]. *)
 
 (** {1:constructors Constructors} *)
@@ -50,6 +50,12 @@ val affine : loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> 'f t
 (** [affine ~loc ~scale] maps [u] to [loc + scale u], onto the reals. The
     parameters broadcast against the coordinates; [scale] must have no zero
     element. *)
+
+val affine_tril : loc:(float, 'f) Nx.t -> scale_tril:(float, 'f) Nx.t -> 'f t
+(** [affine_tril ~loc ~scale_tril] maps a vector [u] to [loc + L u], [L] the
+    lower triangle of [scale_tril], onto the reals. [scale_tril]'s last two axes
+    are a matrix, its leading axes batch axes; its diagonal must have no zero
+    element. Its log-determinant is the sum of the logarithms of [|L(i,i)|]. *)
 
 val simplex : 'f t
 (** [simplex] maps a vector of [K - 1] coordinates to a vector of [K] positive

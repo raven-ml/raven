@@ -38,8 +38,10 @@ let with_gradient u f =
       let lp, g = f x in
       (lp, fun dx -> rows_dot u lp g dx))
 
+module Support = Support
 module Bij = Bij
 module Stats = Stats
 module Draws = Draws
 module Diag = Diag
 module Summary = Summary
+module Dist = Dist

@@ -13,8 +13,9 @@
 
     Every algorithm takes the structure, the density, then the key. Gradient
     samplers differentiate the density with {!Rune}; a density with a gradient
-    of its own states it with {!with_gradient}. Samplers move in unconstrained
-    coordinates that a bijector ({!Bij}) maps onto a value's support. *)
+    of its own states it with {!with_gradient}. Continuous values live in
+    supports ({!Support}), and samplers move in unconstrained coordinates that a
+    bijector ({!Bij}) maps onto them. *)
 
 (** {1:densities Densities} *)
 
@@ -34,8 +35,10 @@ val with_gradient :
 
 (** {1:modules Modules} *)
 
+module Support = Support
 module Bij = Bij
 module Stats = Stats
 module Draws = Draws
 module Diag = Diag
 module Summary = Summary
+module Dist = Dist
