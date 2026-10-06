@@ -393,8 +393,8 @@ let computing =
         (fun () ->
           let x = on_gpu (Nx.ones Nx.float32 [| 2 |]) in
           raises_match
-            (Exn.invalid_arg ~substring:"no scans. Compile it with Rune.jit")
-            (fun () -> ignore (Nx.cumsum x)));
+            (Exn.invalid_arg ~substring:"no argsort. Compile it with Rune.jit")
+            (fun () -> ignore (Nx.argsort x)));
       test "a dtype it does not serve raises, naming it" (fun () ->
           let x = on_gpu (Nx.ones Nx.complex64 [| 2 |]) in
           raises_match (Exn.invalid_arg ~substring:"no complex dtypes")
@@ -1179,6 +1179,213 @@ let move_cases =
                 (Nx.pad [| (-1, 0) |] 0. (on_gpu (Nx.ones Nx.float32 [| 3 |])))));
     ]
 
+(* Scans *)
+
+(* A running value along an axis: an extreme, whose results are the host's bit
+   for bit, or a sum or a product. *)
+type running = {
+  name : string;
+  ordered : bool;
+  f : 'a 'b. int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t;
+}
+
+let runnings =
+  [
+    { name = "cumsum"; ordered = false; f = (fun axis x -> Nx.cumsum ~axis x) };
+    {
+      name = "cumprod";
+      ordered = false;
+      f = (fun axis x -> Nx.cumprod ~axis x);
+    };
+    { name = "cummax"; ordered = true; f = (fun axis x -> Nx.cummax ~axis x) };
+    { name = "cummin"; ordered = true; f = (fun axis x -> Nx.cummin ~axis x) };
+  ]
+
+let cumsum = List.find (fun r -> r.name = "cumsum") runnings
+let cumprod = List.find (fun r -> r.name = "cumprod") runnings
+
+(* [run] of [x] along [axis] on the GPU, read back, against the host's: bit for
+   bit, but for a NaN of a sum or a product, which is any NaN. *)
+let runs_as_on_host ?msg run axis x =
+  let float = Nx_dtype.is_float (Nx.dtype x) in
+  equal ?msg
+    (if run.ordered || not float then Stored.packed else floats_or_bits)
+    (Nx.P (run.f axis x))
+    (Nx.P (host (run.f axis (on_gpu x))))
+
+let scanned =
+  group "scanned"
+    (List.map
+       (fun (Stored.Case c) ->
+         let mine =
+           List.filter (fun r -> r.ordered || c.name <> "bool") runnings
+         in
+         prop ~count:300
+           (c.name ^ " values of every layout run along an axis as on the host")
+           (Gen.pair (with_axis c.tensors)
+              (Gen.of_list
+                 ~pp:(fun ppf r -> Format.pp_print_string ppf r.name)
+                 mine))
+           (fun ((x, axis), run) ->
+             List.iter (fun r -> cover r.name (r == run)) mine;
+             cover "strided" (not (Nx.is_c_contiguous x));
+             cover "an empty axis" (Nx.dim axis x = 0);
+             cover "a one-element axis" (Nx.dim axis x = 1);
+             runs_as_on_host run axis x))
+       (List.filter served_case Stored.every))
+
+(* Shapes and the axis they run along, crossing the kernels' geometry: short
+   rows on a thread each, rows on a workgroup each, and few long rows in parts
+   that start from the folds of the parts before them. *)
+let scan_geometries =
+  [
+    ([| 200_000; 3 |], 1);
+    ([| 1000; 257 |], 1);
+    ([| 257; 1000 |], 0);
+    ([| 5; 4099 |], 1);
+    ([| 3; 100_000 |], 1);
+    ([| 100_000; 3 |], 0);
+    ([| 1; 300_000 |], 1);
+  ]
+
+let scan_geometry =
+  group "scan geometry"
+    (List.map
+       (fun (Dtype d as dt) ->
+         let name = Nx_dtype.to_string d in
+         test
+           (name
+          ^ " rows of every length run as on the host, sums and products of \
+             exact partials included") (fun () ->
+             List.iter
+               (fun (shape, axis) ->
+                 let lay (Nx.P x) = function
+                   | "transposed" -> Nx.P (Nx.transpose x)
+                   | _ -> Nx.P x
+                 in
+                 List.iter
+                   (fun layout ->
+                     let t = layout = "transposed" in
+                     let stored =
+                       if t then [| shape.(1); shape.(0) |] else shape
+                     and axis = if t then 1 - axis else axis in
+                     let msg r what =
+                       Printf.sprintf "%s of %s [%s] along %d (%s)" r.name what
+                         (String.concat "x"
+                            (List.map string_of_int (Array.to_list shape)))
+                         axis layout
+                     in
+                     let input f =
+                       let (Nx.P x) = lay (values dt stored f) layout in
+                       Nx.P x
+                     in
+                     List.iter
+                       (fun (what, f) ->
+                         let (Nx.P x) = input f in
+                         List.iter
+                           (fun r ->
+                             if r.ordered then
+                               runs_as_on_host ~msg:(msg r what) r axis x)
+                           runnings)
+                       patterns;
+                     if name <> "bool" then begin
+                       let (Nx.P x) = input (List.assoc "ties" patterns) in
+                       runs_as_on_host ~msg:(msg cumsum "ties") cumsum axis x;
+                       let (Nx.P x) = input factors in
+                       runs_as_on_host ~msg:(msg cumprod "factors") cumprod axis
+                         x
+                     end)
+                   [ "stored"; "transposed" ])
+               scan_geometries))
+       served)
+
+let scan_cases =
+  group "scan cases"
+    [
+      test "running sums of -0 are +0, at every float dtype and length"
+        (fun () ->
+          List.iter
+            (fun (Dtype d) ->
+              List.iter
+                (fun n ->
+                  let x =
+                    on_gpu (Nx.cast d (Nx.full Nx.float64 [| 2; n |] (-0.)))
+                  in
+                  equal
+                    ~msg:
+                      (Printf.sprintf "%s, %d terms" (Nx_dtype.to_string d) n)
+                    Stored.packed
+                    (Nx.P (Nx.zeros d [| 2; n |]))
+                    (Nx.P (host (Nx.cumsum ~axis:1 x))))
+                [ 1; 5; 300; 5000; 100_000 ])
+            float_dtypes);
+      test "a scan along an empty axis is empty" (fun () ->
+          List.iter
+            (fun shape ->
+              let x = on_gpu (Nx.ones Nx.float32 shape) in
+              equal (array int) shape (Nx.shape (host (Nx.cumsum ~axis:1 x))))
+            [ [| 3; 0 |]; [| 0; 5 |] ]);
+    ]
+
+(* A running float sum of j terms lies within j eps sum |x| of the exact one. *)
+let scan_bounds =
+  group "scan bounds"
+    [
+      prop ~count:100
+        "a float running sum lies within j eps sum |x| of the exact sum of its \
+         j terms, plus a rounding to a narrow dtype"
+        Gen.(
+          quad
+            (of_list ~pp:pp_dtype float_dtypes)
+            (int_range 1 4) (int_range 0 20_000) int)
+        (fun (Dtype d, rows, n, seed) ->
+          let f = format d in
+          let rng = Random.State.make [| seed |] in
+          let scale = f.top /. Float.of_int (4 * Int.max n 1) in
+          let x =
+            Nx.cast d
+              (Nx.create Nx.float64 [| rows; n |]
+                 (Array.init (rows * n) (fun _ ->
+                      (Random.State.float rng 2. -. 1.)
+                      *. Float.ldexp scale (-Random.State.int rng 8))))
+          in
+          let terms = Nx.to_array (Nx.cast Nx.float64 x) in
+          let got =
+            Nx.to_array
+              (Nx.cast Nx.float64 (host (Nx.cumsum ~axis:1 (on_gpu x))))
+          in
+          cover "parts" (rows = 1 && n > 4096);
+          for r = 0 to rows - 1 do
+            (* The prefixes' exact sums by one running compensated sum, and the
+               element furthest past its bound. *)
+            let sum = ref 0. and c = ref 0. and mag = ref 0. in
+            let worst = ref (Float.neg_infinity, 0, 0., 0., 0.) in
+            for j = 0 to n - 1 do
+              let x = terms.((r * n) + j) in
+              let t = !sum +. x in
+              c :=
+                !c
+                +.
+                if Float.abs !sum >= Float.abs x then !sum -. t +. x
+                else x -. t +. !sum;
+              sum := t;
+              mag := !mag +. Float.abs x;
+              let s = !sum +. !c in
+              let e = Float.of_int (j + 1) *. f.eps *. !mag in
+              let narrow = if f.m < 23 then ulp f (Float.abs s +. e) else 0. in
+              let bound = e +. narrow +. (Float.epsilon *. Float.abs s) in
+              let off = Float.abs (got.((r * n) + j) -. s) in
+              let w, _, _, _, _ = !worst in
+              if off -. bound > w then worst := (off -. bound, j, s, off, bound)
+            done;
+            let _, j, s, off, bound = !worst in
+            if n > 0 then
+              at_most
+                ~msg:(Printf.sprintf "row %d, running sum %d, exact %h" r j s)
+                float_exact ~than:bound off
+          done);
+    ]
+
 let accuracy = group "accuracy" (Nx_test.Accuracy.groups { put = on_gpu })
 
 let () =
@@ -1200,5 +1407,9 @@ let () =
          product_bounds;
          moves;
          move_cases;
+         scanned;
+         scan_geometry;
+         scan_cases;
+         scan_bounds;
          accuracy;
        ])

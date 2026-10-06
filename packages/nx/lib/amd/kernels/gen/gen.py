@@ -82,8 +82,8 @@ UNARY = [(["neg", "recip", "abs", "sign"], NUMERIC),
 BINARY = [(["add", "sub", "mul", "pow", "idiv", "mod"], NUMERIC), (["fdiv", "atan2"], FLOATS),
           (["maximum", "minimum"], NUMERIC + ["bool"]), (["and", "or", "xor"], INTS + ["bool"])]
 COMPARE = [(["equal", "not_equal", "less", "less_equal"], NUMERIC + ["bool"])]
-# As nx.cpu's fold tables (cpu/nx_c_fold.c); arg_reduce's kinds are the
-# extremes of reduce's.
+# As nx.cpu's fold tables (cpu/nx_c_fold.c); scan's kinds are reduce's, and
+# arg_reduce's the extremes of reduce's.
 REDUCE = [(["sum", "prod"], NUMERIC), (["max", "min"], NUMERIC + ["bool"])]
 ARG_REDUCE = [(["max", "min"], NUMERIC + ["bool"])]
 # A kind whose name C++ reserves takes a trailing underscore.
@@ -116,6 +116,10 @@ def modules():
         yield f"fma.{d}", f'#include "fma.hip"\nFMA({c_name(d)})\n'
     for d in NUMERIC:
         yield f"matmul.{d}", f'#include "matmul.hip"\nMATMUL({c_name(d)})\n'
+    for kinds, dtypes in REDUCE:
+        for k in kinds:
+            for d in dtypes:
+                yield f"scan.{k}.{d}", f'#include "scan.hip"\nSCAN({k}, {c_name(d)})\n'
     for prefix, macro, table in (("", "REDUCE", REDUCE), ("arg", "ARG_REDUCE", ARG_REDUCE)):
         for kinds, dtypes in table:
             for k in kinds:

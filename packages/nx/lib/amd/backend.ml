@@ -8,11 +8,11 @@
    An elementwise operation names its module's key, its operands and its result;
    the operands' views are coalesced; the module's contiguous form [c] runs when
    every view is C-contiguous after merging, and its strided form [s] otherwise;
-   one launch on the device's compute queue. Reductions and matrix products take
-   paths of their own (Reductions, Matrix products). A module's kernels are
-   loaded on a device at their first use, and kept while the device is. A GPU
-   that no carried target covers refuses every kernel, as do the operations,
-   dtypes and layouts the kernels do not serve. *)
+   one launch on the device's compute queue. Reductions, scans and matrix
+   products take paths of their own (Reductions, Scans, Matrix products). A
+   module's kernels are loaded on a device at their first use, and kept while
+   the device is. A GPU that no carried target covers refuses every kernel, as
+   do the operations, dtypes and layouts the kernels do not serve. *)
 
 module View = Nx_array.View
 module Program = Nx_device.Program
@@ -384,6 +384,62 @@ let axes_of v keep =
     ~strides:(pick (View.strides v))
     (pick (View.shape v))
 
+(* The parts of a row of [len] elements among [rows] rows: one, or for fewer
+   rows than two per compute unit, of more than [split] elements, enough parts
+   of at least [split] elements to fill the device. *)
+let parts_of s ~rows ~len =
+  let units = units s in
+  if rows < 2 * units && len > split then
+    Int.min (cdiv (waves * units) rows) (len / split)
+  else 1
+
+(* Scratch for the partials of [items] runs, and the addresses of their
+   accumulators and positions. *)
+let partials dev ~parts ~items =
+  if parts = 1 then (None, 0, 0)
+  else
+    let b = Nx_device.Buffer.create dev Int64 (2 * items) in
+    let a = Nativeint.to_int (Nx_device.Buffer.address b) in
+    (Some b, a, a + (8 * items))
+
+(* The first pass of the reduction module [key] over [x]'s rows [xo] and reduced
+   elements [xr]: each row's fold into [dst], or with [parts] above 1 each run's
+   of [chunk] elements into the partials [pv] and [pi]. *)
+let fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
+  let units = units s in
+  let items = rows * parts in
+  let span = Int.min threads (pow2 chunk) in
+  let lanes =
+    let r = View.ndim xr in
+    if r = 0 || (View.strides xr).(r - 1) = 1 then span
+    else Int.min span (pow2 (cdiv (waves * units * threads) items))
+  in
+  let g = Int.min (cdiv items (threads / lanes)) (waves * units) in
+  if
+    len = 0
+    || (unit_stride xr && (View.ndim xo = 0 || View.strides xo = [| len |]))
+  then
+    dispatch (program dev s target key "c") g
+    @@ args (fun i64 ->
+        i64 (at dst (view dst));
+        i64 (at x xo);
+        i64 pv;
+        i64 pi;
+        List.iter i64 [ rows; len; lanes; parts; chunk; g ])
+  else
+    dispatch (program dev s target key "s") g
+    @@ args (fun i64 ->
+        i64 (at dst (view dst));
+        i64 (address x);
+        i64 pv;
+        i64 pi;
+        List.iter i64 [ rows; len; lanes; parts; chunk; g ];
+        List.iter i64 [ View.ndim xo; View.ndim xr; View.offset xo ];
+        words i64 (View.shape xo);
+        words i64 (View.strides xo);
+        words i64 (View.shape xr);
+        words i64 (View.strides xr))
+
 (* Runs the reduction module [key] writing [dst] from [x] folded over [axes]. *)
 let fold key ~dst x ~axes =
   let dev, s, target = locate key dst in
@@ -400,61 +456,15 @@ let fold key ~dst x ~axes =
     refuse "rows or reductions of %d axes once merged; kernels take %d" rank
       max_rank;
   if rows > 0 then begin
-    let units = units s in
-    let parts =
-      if rows < 2 * units && len > split then
-        Int.min (cdiv (waves * units) rows) (len / split)
-      else 1
-    in
-    let chunk = cdiv len parts and items = rows * parts in
-    let span = Int.min threads (pow2 chunk) in
-    let lanes =
-      let r = View.ndim xr in
-      if r = 0 || (View.strides xr).(r - 1) = 1 then span
-      else Int.min span (pow2 (cdiv (waves * units * threads) items))
-    in
-    let groups lanes n = Int.min (cdiv n (threads / lanes)) (waves * units) in
-    let scratch =
-      if parts = 1 then None
-      else Some (Nx_device.Buffer.create dev Int64 (2 * items))
-    in
-    let pv, pi =
-      match scratch with
-      | None -> (0, 0)
-      | Some b ->
-          let a = Nativeint.to_int (Nx_device.Buffer.address b) in
-          (a, a + (8 * items))
-    in
-    let g = groups lanes items in
+    let parts = parts_of s ~rows ~len in
+    let chunk = cdiv len parts in
+    let scratch, pv, pi = partials dev ~parts ~items:(rows * parts) in
     let first =
-      if
-        len = 0
-        || (unit_stride xr && (View.ndim xo = 0 || View.strides xo = [| len |]))
-      then
-        dispatch (program dev s target key "c") g
-        @@ args (fun i64 ->
-            i64 (at dst (view dst));
-            i64 (at x xo);
-            i64 pv;
-            i64 pi;
-            List.iter i64 [ rows; len; lanes; parts; chunk; g ])
-      else
-        dispatch (program dev s target key "s") g
-        @@ args (fun i64 ->
-            i64 (at dst (view dst));
-            i64 (address x);
-            i64 pv;
-            i64 pi;
-            List.iter i64 [ rows; len; lanes; parts; chunk; g ];
-            List.iter i64 [ View.ndim xo; View.ndim xr; View.offset xo ];
-            words i64 (View.shape xo);
-            words i64 (View.strides xo);
-            words i64 (View.shape xr);
-            words i64 (View.strides xr))
+      fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi
     in
     let second () =
       let lanes = Int.min threads (pow2 parts) in
-      let g = groups lanes rows in
+      let g = Int.min (cdiv rows (threads / lanes)) (waves * units s) in
       dispatch (program dev s target key "f") g
       @@ args (fun i64 ->
           i64 (at dst (view dst));
@@ -463,6 +473,63 @@ let fold key ~dst x ~axes =
     let touches = buffer dst :: buffer x :: Option.to_list scratch in
     Nx_amd_device.launch ~touches
       (if parts = 1 then [ first ] else [ first; second () ])
+  end
+
+(* Scans
+
+   Each row, the operand's elements along the axis, runs into the result's. The
+   rows' axes of both coalesce together. A thread runs along each row where rows
+   are short or many enough to fill the device; otherwise a workgroup runs along
+   each row, or for few long rows along each of its parts, which start from the
+   fold of the parts before them: reduce's first pass folds them. *)
+
+(* Rows at most this long run on a thread each. *)
+let short = 64
+
+(* Runs the scan module [key] writing [dst] from [x] along [axis], with the
+   reduction module [fold_key] of its kind and dtype. *)
+let scan key ~fold_key ~dst x ~axis =
+  let dev, s, target = locate key dst in
+  let without v = axes_of v (fun i -> i <> axis) in
+  let views = View.coalesce [ without (view dst); without (view x) ] in
+  let dov = List.hd views and xov = List.nth views 1 in
+  let rows = View.numel dov and len = (View.shape (view x)).(axis) in
+  if View.ndim dov > max_rank then
+    refuse "rows of %d axes once merged; kernels take %d" (View.ndim dov)
+      max_rank;
+  if rows > 0 && len > 0 then begin
+    let units = units s in
+    let thread = len <= short || rows >= waves * units * threads in
+    let parts = if thread then 1 else parts_of s ~rows ~len in
+    let chunk = cdiv len parts and items = rows * parts in
+    let scratch, pv, pi = partials dev ~parts ~items in
+    let g =
+      if thread then Int.min (cdiv rows threads) (waves * units)
+      else Int.min items (waves * units)
+    in
+    let run =
+      dispatch (program dev s target key (if thread then "t" else "w")) g
+      @@ args (fun i64 ->
+          i64 (at dst dov);
+          i64 (address x);
+          i64 pv;
+          List.iter i64 [ rows; len; parts; chunk; g; View.ndim dov ];
+          i64 (View.offset xov);
+          i64 (View.stride axis (view x));
+          i64 (View.stride axis (view dst));
+          words i64 (View.shape dov);
+          words i64 (View.strides xov);
+          words i64 (View.strides dov))
+    in
+    let totals () =
+      let xo = List.nth (View.coalesce [ View.create (View.shape dov); xov ]) 1
+      and xr = View.create ~strides:[| View.stride axis (view x) |] [| len |] in
+      fold_pass dev s target fold_key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk
+        ~pv ~pi
+    in
+    Nx_amd_device.launch
+      ~touches:(buffer dst :: buffer x :: Option.to_list scratch)
+      (if parts = 1 then [ run ] else [ totals (); run ])
   end
 
 (* Matrix products
@@ -666,7 +733,11 @@ module Kernels : Nx_backend.S = struct
       (Printf.sprintf "reduce.%s.%s" (reduce_name k) (served x.dtype))
       ~dst:(Operand dst) (Operand x) ~axes
 
-  let scan _ ~axis:_ _ ~dst:_ = no "scans"
+  let scan (type a b) k ~axis (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t)
+      =
+    let names = Printf.sprintf "%s.%s" (reduce_name k) (served x.dtype) in
+    scan ("scan." ^ names) ~fold_key:("reduce." ^ names) ~dst:(Operand dst)
+      (Operand x) ~axis
 
   let arg_reduce (type a b) k ~axis (x : (a, b) Nx_array.t) ~dst =
     fold

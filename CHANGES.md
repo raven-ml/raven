@@ -3267,6 +3267,10 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation run scans eagerly: `Nx.cumsum`,
+  `Nx.cumprod`, `Nx.cummax` and `Nx.cummin` run on the GPU, the running
+  extremes and integer results bit for bit as on the host, running sums from
+  `+0`. A running sum of 16M float32 elements takes 0.39 ms against 18 ms.
 - AMD GPUs of the gfx12 generation pad, concatenate, gather and write windows
   eagerly: `Nx.pad`, `Nx.concatenate`, `Nx.take`, `Nx.take_along_axis` and
   `Nx.set` at a window run on the GPU for every dtype but the complex and

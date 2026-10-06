@@ -205,3 +205,64 @@ template <class S, class D>
 DEVICE typename D::storage cast(typename S::storage x) {
   return store<D>(convert<D, S, D::cat, S::cat>::of(S::load(x)));
 }
+
+/* Arithmetic shared by families */
+
+/* The IEEE 754 maximum and minimum: NaN propagates, [a]'s when it is one, and
+   -0 orders below +0; between equal operands, and-ing (maximum) or or-ing
+   (minimum) their bits picks the zero of the right sign. */
+template <class T, class U> DEVICE T fmax(T a, T b) {
+  T g = (a > b || a != a) ? a : b;
+  U gb = __builtin_bit_cast(U, g), ab = __builtin_bit_cast(U, a);
+  U tie = (U)0 - (U)(a == b);
+  return __builtin_bit_cast(T, (U)(gb & (ab | ~tie)));
+}
+
+template <class T, class U> DEVICE T fmin(T a, T b) {
+  T g = (a < b || a != a) ? a : b;
+  U gb = __builtin_bit_cast(U, g), ab = __builtin_bit_cast(U, a);
+  U tie = (U)0 - (U)(a == b);
+  return __builtin_bit_cast(T, (U)(gb | (ab & tie)));
+}
+
+/* The greater and the lesser of [a] and [b] at a compute type, as IEEE 754
+   maximum and minimum for floats; for booleans, their or and and. */
+DEVICE float maximum(float a, float b) { return fmax<float, uint32_t>(a, b); }
+DEVICE double maximum(double a, double b) {
+  return fmax<double, uint64_t>(a, b);
+}
+template <class T> DEVICE T maximum(T a, T b) { return a > b ? a : b; }
+DEVICE float minimum(float a, float b) { return fmin<float, uint32_t>(a, b); }
+DEVICE double minimum(double a, double b) {
+  return fmin<double, uint64_t>(a, b);
+}
+template <class T> DEVICE T minimum(T a, T b) { return a < b ? a : b; }
+
+/* [a] and [b] added and multiplied at a compute type, integers in the
+   unsigned width, so that they wrap. */
+DEVICE float add(float a, float b) { return a + b; }
+DEVICE double add(double a, double b) { return a + b; }
+DEVICE int64_t add(int64_t a, int64_t b) {
+  return (int64_t)((uint64_t)a + (uint64_t)b);
+}
+DEVICE uint64_t add(uint64_t a, uint64_t b) { return a + b; }
+DEVICE float mul(float a, float b) { return a * b; }
+DEVICE double mul(double a, double b) { return a * b; }
+DEVICE int64_t mul(int64_t a, int64_t b) {
+  return (int64_t)((uint64_t)a * (uint64_t)b);
+}
+DEVICE uint64_t mul(uint64_t a, uint64_t b) { return a * b; }
+
+/* The extremes of a compute type, which seed max and min. */
+template <class A> DEVICE A lowest();
+template <class A> DEVICE A highest();
+template <> DEVICE float lowest<float>() { return -__builtin_inff(); }
+template <> DEVICE float highest<float>() { return __builtin_inff(); }
+template <> DEVICE double lowest<double>() { return -__builtin_inf(); }
+template <> DEVICE double highest<double>() { return __builtin_inf(); }
+template <> DEVICE int64_t lowest<int64_t>() { return INT64_MIN; }
+template <> DEVICE int64_t highest<int64_t>() { return INT64_MAX; }
+template <> DEVICE uint64_t lowest<uint64_t>() { return 0; }
+template <> DEVICE uint64_t highest<uint64_t>() { return UINT64_MAX; }
+template <> DEVICE uint8_t lowest<uint8_t>() { return 0; }
+template <> DEVICE uint8_t highest<uint8_t>() { return UINT8_MAX; }

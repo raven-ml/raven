@@ -18,23 +18,6 @@ template <class T> DEVICE T nan2(T a, T b, T r) {
   return a != a ? a : r;
 }
 
-/* The IEEE 754 maximum and minimum: NaN propagates, [a]'s when it is one, and
-   -0 orders below +0; between equal operands, and-ing (maximum) or or-ing
-   (minimum) their bits picks the zero of the right sign. */
-template <class T, class U> DEVICE T fmax(T a, T b) {
-  T g = (a > b || a != a) ? a : b;
-  U gb = __builtin_bit_cast(U, g), ab = __builtin_bit_cast(U, a);
-  U tie = (U)0 - (U)(a == b);
-  return __builtin_bit_cast(T, (U)(gb & (ab | ~tie)));
-}
-
-template <class T, class U> DEVICE T fmin(T a, T b) {
-  T g = (a < b || a != a) ? a : b;
-  U gb = __builtin_bit_cast(U, g), ab = __builtin_bit_cast(U, a);
-  U tie = (U)0 - (U)(a == b);
-  return __builtin_bit_cast(T, (U)(gb | (ab & tie)));
-}
-
 /* base^e of integers by squaring, wrapping. A negative exponent has a value
    for a base of 1 or -1 alone, and is 0 otherwise. */
 DEVICE int64_t ipow(int64_t base, int64_t e) {
