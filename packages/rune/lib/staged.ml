@@ -224,7 +224,9 @@ let stage ~here ~inside s (r : Trips.request) =
     Lower.checking s (fun () ->
         inside s (fun () ->
             let c', ys =
-              r.req_step index (List.map snd carry) (List.map snd rows)
+              r.req_step
+                { index; key = Nx.Rng.next_key }
+                (List.map snd carry) (List.map snd rows)
             in
             (c', ys, stop c')))
   in

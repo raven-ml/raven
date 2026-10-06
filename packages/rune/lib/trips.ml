@@ -13,7 +13,10 @@ type trips =
       failure : int array -> string;
     }
 
-type trip = (int32, Nx.int32_elt) Nx.t
+type trip = { index : (int32, Nx.int32_elt) Nx.t; key : unit -> Nx.Rng.t }
+
+let at i =
+  { index = Nx.scalar Nx.int32 (Int32.of_int i); key = Nx.Rng.next_key }
 
 type request = {
   req_carry : leaves;
@@ -49,7 +52,7 @@ let over_rows r xs reverse =
   for k = 0 to n - 1 do
     let i = if reverse then n - 1 - k else k in
     let row = List.map (fun (Nx.P x) -> Nx.P (Nx.slice [ Nx.I i ] x)) xs in
-    let c, y = r.req_step (Nx.scalar Nx.int32 (Int32.of_int i)) !carry row in
+    let c, y = r.req_step (at i) !carry row in
     carry := List.map own c;
     ys.(i) <- y
   done;
@@ -77,7 +80,7 @@ let until_stop r until max failure =
       assert false (* [stop] has a false element. *)
     end
     else
-      let c, y = r.req_step (Nx.scalar Nx.int32 (Int32.of_int k)) carry [] in
+      let c, y = r.req_step (at k) carry [] in
       go (k + 1) (List.map own c) (y :: ys)
   in
   go 0 r.req_carry []

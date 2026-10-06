@@ -1061,6 +1061,40 @@ let raising_root_tests =
         equal ~msg:"finalisers run" int 1 !cleaned);
   ]
 
+(* A loop that takes no trip, whose step draws, in a remat under grad: a
+   compiled loop of at most no trip never runs its step, which the remat's
+   record then runs for its program. That run reads the loop's key and takes
+   none, so the draws after the loop are those of the code without the
+   derivative. *)
+let unstepped k x =
+  Nx.Rng.with_key k (fun () ->
+      Rune.remat
+        Nx.Ptree.(tensor @-> returns tensor)
+        (fun x ->
+          let y =
+            Rune.iterate' ~max:0
+              ~until:(fun _ -> Nx.scalar Nx.bool true)
+              ~f:(fun y -> Nx.add y (Nx.rand f64 [| 3 |]))
+              x
+          in
+          Nx.mul y (Nx.rand f64 [| 3 |]))
+        x)
+
+let unstepped_tests =
+  [
+    test
+      "a loop that takes no trip in a remat under grad leaves the draws after \
+       it as eager's, compiled" (fun () ->
+        let k = Nx.Rng.key 7 and x = vec [| 0.5; -1.; 2. |] in
+        let drawn = Nx.Rng.with_key k (fun () -> Nx.rand f64 [| 3 |]) in
+        let g (k, x) = grad1 (unstepped k) x in
+        equal ~msg:"eager" (close ()) drawn (g (k, x));
+        equal ~msg:"compiled" (close ()) drawn
+          (Rune.jit
+             Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns tensor)
+             g (k, x)));
+  ]
+
 let () =
   exit
     (run "Rune bodies"
@@ -1068,6 +1102,7 @@ let () =
          group "law 1" [ law1 ];
          group "law 5" [ law5 ];
          group "a raising root" raising_root_tests;
+         group "a loop that takes no trip" unstepped_tests;
          group "the boundary" boundary_tests;
          group "passing installations" passing_tests;
          group "roots in total scopes" root_tests;

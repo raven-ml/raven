@@ -173,6 +173,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled loop that takes no trip, whose step draws, inside a `Rune.remat`
+  or a loop's step under a reverse derivative no longer shifts the draws after
+  it by one key: the derivative's run of its step reads the loop's key with
+  `Nx.Rng.peek`, and the draws equal those of the code without the derivative.
+
 - Step `i` of a `Rune.scan` or `Rune.iterate` draws from a key scope rooted at
   `Nx.Rng.fold_in k i`, `k` one key the loop takes at its first draw, eagerly,
   compiled and transformed alike. A compiled loop whose step draws now stages

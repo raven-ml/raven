@@ -1153,10 +1153,11 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
   let stops = match r.req_trips with Rows _ -> false | Until _ -> true in
   (* The step's leaves are its carry, its row and its trip, which no derivative
      tracks: a replay at trip [k] draws as trip [k] drew. *)
-  let step l =
+  let step (trip : Trips.trip) l =
     let c, rest = Trips.split nc l in
-    let x, trip = Trips.split nx rest in
-    let c', y = r.req_step (Nx.unpack Nx.int32 (List.hd trip)) c x in
+    let x, index = Trips.split nx rest in
+    let index = Nx.unpack Nx.int32 (List.hd index) in
+    let c', y = r.req_step { trip with index } c x in
     c' @ y
   in
   (* The attempt's flags: the carry tensors it tracks, then whether the outputs
@@ -1171,7 +1172,9 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
       let outputs = ref [] and captures = ref [] and last = ref None in
       let req_step trip c x =
         let c, count = if counted then Trips.split nc c else (c, []) in
-        let run, out = region i flags (c @ x @ [ Nx.P trip ]) step in
+        let run, out =
+          region i flags (c @ x @ [ Nx.P trip.Trips.index ]) (step trip)
+        in
         let ch = run.child in
         let c', y = Trips.split nc out in
         let ys = owned ch y in
@@ -1229,7 +1232,7 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
                     Total.discarding @@ fun () ->
                     let ct_c, ct_caps = Trips.split nk carry in
                     let cx, ct_y = Trips.split (nc + nx) row in
-                    pull ct_c ct_caps (cx @ [ Nx.P trip ]) ct_y
+                    pull ct_c ct_caps (cx @ [ Nx.P trip.Trips.index ]) ct_y
                   in
                   {
                     Trips.req_carry;
