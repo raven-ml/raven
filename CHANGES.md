@@ -3447,6 +3447,12 @@ thread.
   wanted, `Nx.check` that `all (isfinite r)`. `solve` and `inv` count only an
   exact zero pivot as singular, so `solve (s · a) b` is `solve a b / s` at any
   scale.
+- `matrix_rank` and `lstsq`'s `rank` are `-1` for a matrix on which `svd`
+  fails, where its rank is undefined. `cond` of a singular matrix is
+  `infinity` under every norm, where `` `Two `` gave about `1 / ε` and
+  `` `One `` and `` `Inf `` NaN; NaN is left for a matrix holding NaN or an
+  infinity. `` `One `` and `` `Inf `` take each matrix's norm, where they took
+  the largest of the batch.
 - `pinv`, `cond`, `matrix_rank` and `lstsq` take each matrix's cutoff from its
   own largest singular value, where they read the largest of the whole batch:
   one matrix holding NaN gave every other a `pinv` of zeros and a `cond` of

@@ -4710,10 +4710,14 @@ let larger_size a =
   let sh = shape a in
   float_of_int (Stdlib.max sh.(Array.length sh - 2) sh.(Array.length sh - 1))
 
-(* How many of [s] lie above [cutoff], over all matrices. *)
-let count_above ~by cutoff s =
-  let above = cast (dtype s) (greater s cutoff) in
-  int_of_float (Float.round (sum above |> read_item ~by))
+(* The rank of each matrix from its singular values [s]: how many lie above
+   [cutoff], or -1 where they are NaN, the matrix's factorization having
+   failed. Summed over the matrices. *)
+let rank_of ~by cutoff s =
+  let above = sum ~axes:[ -1 ] (cast (dtype s) (greater s cutoff)) in
+  let failed = isnan (sum ~axes:[ -1 ] s) in
+  let rank = where failed (full_like above (-1.)) above in
+  int_of_float (Float.round (sum rank |> read_item ~by))
 
 let matrix_rank' ~by ?tol ?rtol ?hermitian a =
   check_float_or_complex ~op:"matrix_rank" a;
@@ -4729,7 +4733,7 @@ let matrix_rank' ~by ?tol ?rtol ?hermitian a =
     | None, Some r -> relative r s
     | None, None -> relative (larger_size a *. roundoff (dtype a)) s
   in
-  count_above ~by cutoff s
+  rank_of ~by cutoff s
 
 let matrix_rank ?tol ?rtol ?hermitian a =
   matrix_rank' ~by:"Nx.matrix_rank" ?tol ?rtol ?hermitian a
@@ -4888,7 +4892,7 @@ let lstsq ?rcond a b =
       sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
     else zeros (Value.context a) (dtype b) [||]
   in
-  (x, residuals, count_above ~by:"Nx.lstsq" (relative rcond s) s, s)
+  (x, residuals, rank_of ~by:"Nx.lstsq" (relative rcond s) s, s)
 
 let inv a =
   check_square ~op:"inv" a;
@@ -4928,18 +4932,31 @@ let matrix_power a n =
 let cond ?p x =
   check_square ~op:"cond" x;
   check_float_or_complex ~op:"cond" x;
-  match p with
-  | None | Some `Two ->
-      (* A singular value below the roundoff of the largest counts as that
-         roundoff, so a singular matrix has a condition number of about
-         [1 / ε]. *)
-      let s = svdvals x in
-      let tol = relative (roundoff (dtype s)) s in
-      let smallest = min ~axes:[ -1 ] (where (greater s tol) s tol) in
-      cast (dtype x) (div (max ~axes:[ -1 ] s) smallest)
-  | Some `One -> mul (norm ~ord:`One x) (norm ~ord:`One (inv x))
-  | Some `Inf -> mul (norm ~ord:`Inf x) (norm ~ord:`Inf (inv x))
-  | _ -> invalid_arg "cond: unsupported norm"
+  (* A singular matrix, whose smallest singular value or [inv] says so, has a
+     condition number of infinity; one on which they fail, NaN. *)
+  let real t = cast Nx_dtype.float64 t in
+  let cond =
+    match p with
+    | None | Some `Two ->
+        let s = svdvals x in
+        let smallest = min ~axes:[ -1 ] s in
+        where
+          (cmpeq smallest (zeros_like smallest))
+          (full_like smallest Float.infinity)
+          (div (max ~axes:[ -1 ] s) smallest)
+    | Some ((`One | `Inf) as p) ->
+        (* The norm induced by the vector 1-norm sums each column; the one
+           induced by the inf-norm, each row. *)
+        let axis = match p with `One -> -2 | `Inf -> -1 in
+        let induced m = max ~axes:[ -1 ] (real (sum ~axes:[ axis ] (abs m))) in
+        let norm_x = induced x in
+        let r = mul norm_x (induced (inv x)) in
+        where
+          (logical_and (isnan r) (isfinite norm_x))
+          (full_like r Float.infinity) r
+    | _ -> invalid_arg "cond: unsupported norm"
+  in
+  cast (dtype x) cond
 
 let tensorsolve ?axes a b =
   check_float_or_complex ~op:"tensorsolve" a;

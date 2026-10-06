@@ -1746,7 +1746,10 @@ let failures =
            });
       prop "cond of a batch fails in its matrix holding NaN alone"
         (sized (fun n -> with_nan n n))
-        (lanes_apart ~real:true { apply = (fun a -> Nx.cond a) });
+        (fun lanes ->
+          lanes_apart ~real:true { apply = (fun a -> Nx.cond a) } lanes;
+          lanes_apart ~real:true { apply = (fun a -> Nx.cond ~p:`One a) } lanes;
+          lanes_apart ~real:true { apply = (fun a -> Nx.cond ~p:`Inf a) } lanes);
       prop "lstsq of a batch fails in its matrix holding NaN alone"
         (sized (fun m -> sized (fun n -> with_nan m n)))
         (lanes_apart
@@ -1758,10 +1761,41 @@ let failures =
                  in
                  x);
            });
-      test "matrix_rank of a matrix holding NaN is 0" (fun () ->
-          equal int 0
-            (Nx.matrix_rank
-               (float_matrix [ [ 1.; 0. ]; [ Float.nan; 1. ]; [ 0.; 2. ] ])));
+      cases ~name:fst
+        "matrix_rank and lstsq's rank of a matrix on which svd fails are -1"
+        [ ("NaN", Float.nan); ("an infinity", Float.infinity) ]
+        (fun (_, v) ->
+          let a = float_matrix [ [ 1.; 0. ]; [ v; 1. ]; [ 0.; 2. ] ] in
+          equal ~msg:"matrix_rank" int (-1) (Nx.matrix_rank a);
+          equal ~msg:"matrix_rank ~hermitian" int (-1)
+            (Nx.matrix_rank ~hermitian:true
+               (float_matrix [ [ 1.; v ]; [ v; 1. ] ]));
+          let _, _, rank, _ = Nx.lstsq a (Nx.ones Nx.float64 [| 3; 1 |]) in
+          equal ~msg:"lstsq" int (-1) rank);
+      cases
+        ~name:(fun (name, _, _) -> name)
+        "cond of a singular matrix is infinity, and of one holding NaN or an \
+         infinity NaN"
+        [
+          ("a zero pivot", [ [ 1.; 0. ]; [ 0.; 0. ] ], Float.infinity);
+          ("the zero matrix", [ [ 0.; 0. ]; [ 0.; 0. ] ], Float.infinity);
+          ("NaN", [ [ 1.; 0. ]; [ Float.nan; 1. ] ], Float.nan);
+          ("an infinity", [ [ 1.; 0. ]; [ Float.infinity; 1. ] ], Float.nan);
+        ]
+        (fun (_, rows, expected) ->
+          let a = float_matrix rows in
+          List.iter
+            (fun (msg, p) ->
+              equal ~msg (close ~rel:0. ()) expected (Nx.item [] (Nx.cond ~p a)))
+            [ ("two", `Two); ("one", `One); ("inf", `Inf) ]);
+      test
+        "cond under the 1- and inf-norms of a matrix with an exact zero pivot \
+         in lu is infinity" (fun () ->
+          let a = float_matrix [ [ 1.; 2. ]; [ 2.; 4. ] ] in
+          equal ~msg:"one" (close ~rel:0. ()) Float.infinity
+            (Nx.item [] (Nx.cond ~p:`One a));
+          equal ~msg:"inf" (close ~rel:0. ()) Float.infinity
+            (Nx.item [] (Nx.cond ~p:`Inf a)));
       cases
         ~name:(fun (name, _, _, _) -> name)
         "lstsq of a rank-deficient matrix is its least-squares solution of \

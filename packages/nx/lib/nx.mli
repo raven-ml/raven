@@ -3923,12 +3923,15 @@ val cond :
 (** [cond ?p a] is the condition number of each matrix of [a] in the [p]-norm.
     [p] defaults to [`Two].
 
-    Under [`Two] it is the ratio of the largest singular value to the smallest,
-    a singular value below [ε] times the largest counting as that, so a
-    singular matrix has a condition number of about [1 / ε]. A matrix on which
-    {!svd} fails has a condition number of NaN.
+    Under [`Two] it is the ratio of the largest singular value to the
+    smallest; under [`One] and [`Inf], the norm of the matrix times the norm of
+    its {!inv}. A singular matrix, one whose smallest singular value is zero or
+    whose {!inv} is NaN, has a condition number of infinity; a matrix singular
+    only to rounding has one near [1 / ε] or above. A matrix holding NaN or an
+    infinity, or on which {!svd} fails, has a condition number of NaN.
 
-    Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
+    Raises [Invalid_argument] if the dtype is not floating-point or complex, or
+    if [p] is not [`One], [`Two] or [`Inf]. *)
 
 val det : ('a, 'b) t -> ('a, 'b) t
 (** [det a] is the determinant of square matrix [a], in [a]'s dtype: the product
@@ -3959,8 +3962,9 @@ val matrix_rank :
     [true] (default [false]), uses a more efficient eigenvalue-based algorithm.
     [a] is one matrix.
 
-    A matrix on which {!svdvals} is NaN has rank [0]: no singular value is
-    above the tolerance.
+    A matrix on which {!svdvals} is NaN, one holding NaN or an infinity or on
+    which the iteration does not converge, has rank [-1]: its rank is
+    undefined.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
@@ -4034,8 +4038,8 @@ val lstsq :
     and empty otherwise.
 
     A matrix on which {!svd} fails has an [x] whose every element is NaN, and
-    the other matrices of its batch are unaffected; it counts [0] towards
-    [rank].
+    the other matrices of its batch are unaffected. [rank] is
+    [matrix_rank ~rtol:rcond a] for one matrix [a]: [-1] where {!svd} fails.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
