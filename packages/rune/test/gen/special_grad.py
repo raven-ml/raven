@@ -141,6 +141,43 @@ def inside(lo, hi):
     return points
 
 
+def hankel(nu, n=40):
+    """The coefficients a_k of e^-x I_nu x ~ (2 pi x)^-1/2 sum_k a_k x^-k."""
+    mu, a, cs = 4 * nu * nu, mpf(1), [mpf(1)]
+    for k in range(1, n + 1):
+        a *= -(mu - (2 * k - 1) ** 2) / mpf(8 * k)
+        cs.append(a)
+    return cs
+
+
+def hankel_sum(cs, x):
+    return sum(c / x ** k for k, c in enumerate(cs)) / mpmath.sqrt(2 * mpmath.pi * x)
+
+
+def i0e_slope(x):
+    """i1e x - sign x i0e x, its right-hand value -1 at 0. Far out, the
+    difference of the two expansions, term by term, which mpmath would
+    otherwise cancel to 0 at any precision Ziv's test tries."""
+    a = abs(x)
+    if a > nx.BESSEL_ASYMPTOTIC:
+        r = hankel_sum([c1 - c0 for c0, c1 in zip(hankel(0), hankel(1))], a)
+        return r if x >= 0 else -r
+    return nx.i1e_exact(x) - (1 if x >= 0 else -1) * nx.i0e_exact(x)
+
+
+def i1e_slope(x):
+    """i0e a - i1e a / a - i1e a at a = |x|, even, 1/2 at 0; far out, as
+    i0e_slope, one expansion."""
+    a = abs(x)
+    if a == 0:
+        return mpf(1) / 2
+    if a > nx.BESSEL_ASYMPTOTIC:
+        c0, c1 = hankel(0), hankel(1)
+        return hankel_sum([c0[k] - c1[k] - (c1[k - 1] if k else 0) for k in range(len(c0))], a)
+    i1 = nx.i1e_exact(a)
+    return nx.i0e_exact(a) - i1 / a - i1
+
+
 DERIVATIVES = [
     Derivative("erfc", F["erfc"],
                vanishing(lambda x: -2 / mpmath.sqrt(mpmath.pi) * mpmath.exp(-x * x), 100)),
@@ -168,6 +205,8 @@ DERIVATIVES = [
     Derivative("lbeta_bb", F["lbeta"], exact_difference(lambda a, b: trigamma(b) - trigamma(a + b)),
                points=lbeta_points_2),
     Derivative("lbeta_ab", F["lbeta"], lambda a, b: -trigamma(a + b), points=lbeta_points_2),
+    Derivative("i0e", F["i0e"], i0e_slope),
+    Derivative("i1e", F["i1e"], i1e_slope),
 ]
 
 

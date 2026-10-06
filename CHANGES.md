@@ -165,6 +165,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes `Nx.i0e` and `Nx.i1e` as nx does eagerly, and their
+  derivatives are within the bounds `rune.mli` states, eagerly and compiled.
 - `Rune.jit` compiles `Nx.erfinv` at `float64` 2.4 times as fast and its
   derivative 5.7 times as fast. The derivative is within 64 ulps.
 - `Rune.jit` computes `Nx.erfc`, `Nx.ndtr`, `Nx.log_ndtr`, `Nx.ndtri`,
@@ -3286,6 +3288,9 @@ thread.
 
 ### Nx
 
+- Add `Nx.i0e` and `Nx.i1e`, `e^-|x|` times the modified Bessel functions
+  `I₀` and `I₁`, within 8 ulps: the von Mises distribution's normaliser and
+  mean resultant length, finite where `I₀` overflows.
 - `Nx.logspace` and `Nx.geomspace` compute each value in float64 and round it
   once to the dtype, and `Nx.geomspace` ends exactly on `start` and `stop`: at
   float32 they gave `9.999999` and `100.00001` for powers of ten.

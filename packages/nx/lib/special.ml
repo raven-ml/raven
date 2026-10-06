@@ -543,6 +543,46 @@ let lbeta_at a b =
   let r = where valid r edge in
   where (logical_or (logical_or (isnan a) (isnan b)) (lt p0 0.)) nan r
 
+(* Modified Bessel functions *)
+
+(* [sum_k cs.(k) T_k t] by Clenshaw's recurrence. *)
+let clenshaw cs t =
+  let n = Array.length cs in
+  let two_t = add t t in
+  let b1 = ref (lit t cs.(n - 1)) and b2 = ref (zeros_like t) in
+  for k = n - 2 downto 1 do
+    let b = sub (add (lit t cs.(k)) (mul two_t !b1)) !b2 in
+    b2 := !b1;
+    b1 := b
+  done;
+  sub (add (lit t cs.(0)) (mul t !b1)) !b2
+
+(* [i0e] and [i1e] at [a = |x|], taken by selection so that [-0] takes the
+   right-hand branch with [+0]. On [0, bessel_split], [near] is the series of
+   [i0e a h] or [i1e a / a h^2] for [h = 1 + bessel_weight a], the weight
+   keeping the series' terms of the order of its value; above, [far] is the
+   series of [sqrt a i0e a] or [sqrt a i1e a]. Each region runs on its clamped
+   [a]. *)
+let bessel_parts x near far =
+  let a = where (lt x 0.) (neg x) x in
+  let inside = cmple a (lit a T.bessel_split) in
+  let an = clamp inside a (T.bessel_split /. 2.) in
+  let h = add_s (mul_s an T.bessel_weight) 1. in
+  let tn = sub_s (mul_s an (2. /. T.bessel_split)) 1. in
+  let af = clamp (logical_not inside) a (2. *. T.bessel_split) in
+  let tf = sub_s (div (lit af (2. *. T.bessel_split)) af) 1. in
+  (inside, clenshaw near tn, h, div (clenshaw far tf) (sqrt af))
+
+let i0e_at x =
+  let t = tables x in
+  let inside, near, h, far = bessel_parts x t.i0e_near t.i0e_far in
+  where inside (div near h) far
+
+let i1e_at x =
+  let t = tables x in
+  let inside, near, h, far = bessel_parts x t.i1e_near t.i1e_far in
+  where inside (mul x (div near (mul h h))) (where (lt x 0.) (neg far) far)
+
 (* The functions *)
 
 let nan_through x r = where (isnan x) x r
@@ -578,6 +618,9 @@ let erfinv p =
     where (logical_or (cmpgt (abs p) (lit p 1.)) (isnan p)) (lit p Float.nan) r
   in
   real_at_float32 { r = erfinv } p
+
+let i0e x = real_at_float32 { r = (fun x -> nan_through x (i0e_at x)) } x
+let i1e x = real_at_float32 { r = (fun x -> nan_through x (i1e_at x)) } x
 
 let lbeta a b =
   let a, b = broadcasted a b in

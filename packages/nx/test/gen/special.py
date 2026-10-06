@@ -751,7 +751,7 @@ def per_dtype(fmt):
         ("digamma_from", ocaml_float(DIGAMMA_FROM[fmt])),
         ("sinpi", ocaml_array(sinpi_poly(fmt))),
         ("digamma_series", ocaml_array([round_to(fmt, mpmath.bernoulli(2 * k) / (2 * k)) for k in range(k_psi, 0, -1)])),
-    ]
+    ] + bessel_tables(fmt)
 
 
 # The tables both dtypes share, highest degree first; a dtype rounds each
@@ -835,6 +835,8 @@ def shared_tables():
         ("lgamma_e", ocaml_float(LGAMMA_E)),
         ("lgamma_shift_from", ocaml_float(LGAMMA_SHIFT_FROM)),
         ("lgamma_stirling_from", ocaml_float(LGAMMA_STIRLING_FROM)),
+        ("bessel_split", ocaml_float(BESSEL_SPLIT)),
+        ("bessel_weight", ocaml_float(BESSEL_WEIGHT)),
     ]
 
 
@@ -1101,6 +1103,111 @@ def lbeta_points(fmt):
     return grid_points + near_eight + named + edges + randoms
 
 
+# i0e and i1e: e^-|x| I0 x and e^-|x| I1 x. On [0, BESSEL_SPLIT], i0e x h and
+# i1e x / x h^2 for h = 1 + BESSEL_WEIGHT x, Chebyshev series in
+# x (2 / BESSEL_SPLIT) - 1: the weight flattens each, so that the series'
+# terms, and their rounding, stay of the order of its value. Above,
+# sqrt x i0e x and sqrt x i1e x in 2 BESSEL_SPLIT / x - 1. Far out, past
+# BESSEL_ASYMPTOTIC, the references are Hankel's expansion, which mpmath's
+# besseli would reach through exp x.
+
+BESSEL_SPLIT = 8.0
+BESSEL_WEIGHT = 0.5
+BESSEL_ASYMPTOTIC = 1e4
+
+
+def bessel_asymptotic(nu, x, n=40):
+    """e^-x I_nu x for large positive x: Hankel's expansion to n terms."""
+    mu, term, total = 4 * nu * nu, mpf(1), mpf(1)
+    for k in range(1, n + 1):
+        term *= -(mu - (2 * k - 1) ** 2) / (k * 8 * x)
+        total += term
+    return total / mpmath.sqrt(2 * mpmath.pi * x)
+
+
+def i0e_exact(x):
+    a = abs(x)
+    if a > BESSEL_ASYMPTOTIC:
+        return bessel_asymptotic(0, a)
+    return mpmath.besseli(0, a) * mpmath.exp(-a)
+
+
+def i1e_exact(x):
+    a = abs(x)
+    r = bessel_asymptotic(1, a) if a > BESSEL_ASYMPTOTIC else mpmath.besseli(1, a) * mpmath.exp(-a)
+    return -r if x < 0 else r
+
+
+def chebyshev(f, n):
+    """The degree-n Chebyshev interpolant of f on [-1, 1], lowest degree
+    first."""
+    m = n + 1
+    angles = [mpmath.pi * (j + mpf(1) / 2) / m for j in range(m)]
+    values = [f(mpmath.cos(a)) for a in angles]
+    cs = [2 * sum(v * mpmath.cos(k * a) for v, a in zip(values, angles)) / m for k in range(m)]
+    cs[0] /= 2
+    return cs
+
+
+def clenshaw(cs, t):
+    """sum_k cs[k] T_k t and its derivative in t."""
+    b1 = b2 = d1 = d2 = mpf(0)
+    for c in reversed(cs[1:]):
+        b1, b2, d1, d2 = c + 2 * t * b1 - b2, b1, 2 * b1 + 2 * t * d1 - d2, d1
+    return cs[0] + t * b1 - b2, b1 + t * d1 - d2
+
+
+def bessel_series(fmt, f):
+    """The coefficients of f's series on [-1, 1], rounded to `fmt`: the least
+    degree whose rounded coefficients put the series within one unit
+    roundoff of f and its derivative within sixteen of the derivative's
+    largest magnitude."""
+    with mp.workprec(200):
+        ts = grid(mpf(-1) + mpf(10) ** -30, mpf(1), 200)
+        exact = [f(t) for t in ts]
+        slopes = [mpmath.diff(f, t) for t in ts]
+        steepest = max(abs(d) for d in slopes)
+        for n in range(3, 60):
+            cs = [mpf(round_to(fmt, c)) for c in chebyshev(f, n)]
+            approx = [clenshaw(cs, t) for t in ts]
+            if max(abs(a / e - 1) for (a, _), e in zip(approx, exact)) > fmt.u:
+                continue
+            if max(abs(da - d) for (_, da), d in zip(approx, slopes)) <= 16 * fmt.u * steepest:
+                return [float(c) for c in cs]
+    sys.exit("no degree meets the Bessel series' bound")
+
+
+def bessel_tables(fmt):
+    split, w = mpf(BESSEL_SPLIT), mpf(BESSEL_WEIGHT)
+    near = lambda t: split / 2 * (t + 1)
+    far = lambda t: 2 * split / (t + 1)
+    i1_near = lambda x: i1e_exact(x) / x if x > 0 else mpf(1) / 2
+    series = [
+        ("i0e_near", lambda t: i0e_exact(near(t)) * (1 + w * near(t))),
+        ("i1e_near", lambda t: i1_near(near(t)) * (1 + w * near(t)) ** 2),
+        ("i0e_far", lambda t: mpmath.sqrt(far(t)) * i0e_exact(far(t))),
+        ("i1e_far", lambda t: mpmath.sqrt(far(t)) * i1e_exact(far(t))),
+    ]
+    return [(name, ocaml_array(bessel_series(fmt, f))) for name, f in series]
+
+
+def bessel_reference(exact, sign):
+    def g(fmt, x):
+        if math.isnan(x):
+            return math.nan
+        if math.isinf(x):
+            return math.copysign(0.0, x) if sign else 0.0
+        r = correctly_rounded(fmt, exact, x)
+        return math.copysign(r, x) if sign and r == 0 else r
+    return g
+
+
+def bessel_points(fmt):
+    rng = random.Random(f"bessel {fmt.name}")
+    points = neighbours(fmt, BESSEL_SPLIT) + neighbours(fmt, BESSEL_ASYMPTOTIC)
+    return standard(fmt, rng, fmt.tiny, fmt.max, n_sweep=96) + uniform(fmt, rng, -20, 20, 96) + points + [-x for x in points]
+
+
 FUNCTIONS = [
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
@@ -1111,6 +1218,8 @@ FUNCTIONS = [
     Function("lgamma", ["x"], lgamma_reference, lgamma_points, extra=lgamma_scale),
     Function("digamma", ["x"], digamma_reference, digamma_points, extra=digamma_scale),
     Function("lbeta", ["a", "b"], lbeta_reference, lbeta_points),
+    Function("i0e", ["x"], bessel_reference(i0e_exact, False), bessel_points),
+    Function("i1e", ["x"], bessel_reference(i1e_exact, True), bessel_points),
 ]
 
 
@@ -1164,6 +1273,9 @@ COMMENTS = {
                            "[ndtri_far_shift] above.",
     "lgamma_shift_from": "lgamma's regions from [lgamma_shift_from]: shifted down to [2, 3) "
                          "below [lgamma_stirling_from], Stirling's series from it.",
+    "bessel_split": "i0e's and i1e's regions: Chebyshev series in x (2 / [bessel_split]) - 1 "
+                    "up to [bessel_split], weighted by h = 1 + [bessel_weight] x, and in "
+                    "2 [bessel_split] / x - 1 above.",
     "lgamma_tc": "fdlibm's e_lgamma_r.c (1.3 95/01/18), under the same notice. [lgamma_tc] is "
                  "the minimum, [lgamma_tf] lgamma there and [lgamma_tt] minus its tail; [a] is "
                  "about 1 and 2, [t] about the minimum, [u]/[v] beside 1, [s]/[r] on [2, 3), "
@@ -1188,6 +1300,9 @@ PER_DTYPE = {
              "and 16u pi of the derivative.",
     "log_ndtr_below": "log_ndtr's asymptotic series below [log_ndtr_below]: its least count "
                       "within u/8 of the value and the derivative.",
+    "i0e_near": "i0e x h and i1e x / x h^2 on [0, bessel_split], sqrt x i0e x and sqrt x i1e x "
+                "above, as Chebyshev series, lowest degree first: the least degree within u "
+                "of the value and 16u of the derivative's largest magnitude.",
     "digamma_root_hi": "digamma's root near 1.4616 as two floats, and on [1, 2] the "
                        "polynomial g in x - 3/2 with digamma x = (x - root) g: the least degree "
                        "within u of g and 16u of the derivative. From [digamma_from], "

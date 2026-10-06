@@ -127,6 +127,8 @@ let ndtri = Special.ndtri
 let lgamma = Special.lgamma
 let digamma = Special.digamma
 let lbeta = Special.lbeta
+let i0e = Special.i0e
+let i1e = Special.i1e
 
 (* For transformations and file formats *)
 

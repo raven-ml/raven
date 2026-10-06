@@ -88,6 +88,13 @@ let gamma =
         (fun at -> compiled2 at { b = Nx.lbeta });
     ]
 
+let bessel =
+  group "modified Bessel"
+    [
+      unary "i0e" ~bound:(everywhere (Ulps 8)) { u = Nx.i0e };
+      unary "i1e" ~bound:(everywhere (Ulps 8)) { u = Nx.i1e };
+    ]
+
 (* Derivatives
 
    rune differentiates each function through the operations nx computes it with.
@@ -184,11 +191,39 @@ let log_ndtr_far =
       at Nx.float64 [| 1e100; 1e200; Float.max_float |];
       at Nx.float32 [| 1e10; 1e30; 0x1.fffffep127 |])
 
+(* At [-0], [i0e]'s and [i1e]'s derivatives are their right-hand ones, those at
+   [+0]. *)
+let bessel_at_zero =
+  let at (type b) (dt : (float, b) Nx.dtype) =
+    let x = Nx.create dt [| 2 |] [| 0.; -0. |] in
+    let check name { u } =
+      let both y =
+        match Nx.to_array (Nx.cast Nx.float64 y) with
+        | [| p; n |] -> (p, n)
+        | _ -> assert false
+      in
+      let p, n = both (u x) in
+      equal ~msg:(name ^ " eagerly") float_exact p n;
+      let p, n = both (Rune.jit' u x) in
+      equal ~msg:(name ^ " compiled") float_exact p n
+    in
+    check "i0e" (d { u = Nx.i0e });
+    check "i1e" (d { u = Nx.i1e })
+  in
+  test "i0e's and i1e's derivatives at -0 are those at +0" (fun () ->
+      at Nx.float64;
+      at Nx.float32)
+
 let derivatives =
   group "derivatives"
     [
       digamma_near_zero;
       log_ndtr_far;
+      bessel_at_zero;
+      derivative "i0e" ~bound:(everywhere (Ulps 128)) (d { u = Nx.i0e });
+      derivative "i1e"
+        ~bound:(everywhere (Near_zeros (128, 128)))
+        (d { u = Nx.i1e });
       derivative "erfc" ~bound:(everywhere (Ulps 128)) (d { u = Nx.erfc });
       derivative "ndtr" ~bound:(everywhere (Ulps 256)) (d { u = Nx.ndtr });
       derivative "log_ndtr" ~bound:(everywhere (Ulps 512))
@@ -261,6 +296,8 @@ let residuals =
           ("lgamma", { u = Nx.lgamma }, -10.5, 30.);
           ("digamma", { u = Nx.digamma }, -10.5, 30.);
           ("lbeta", lbeta, 0.1, 30.);
+          ("i0e", { u = Nx.i0e }, -30., 30.);
+          ("i1e", { u = Nx.i1e }, -30., 30.);
         ];
       expect (output ())
       @@ __POS_OF__
@@ -273,9 +310,11 @@ let residuals =
         lgamma 730
         digamma 590
         lbeta 1267
+        i0e 563
+        i1e 564
         |})
 
 let () =
   exit
     (run "rune special"
-       [ error_function; normal; gamma; derivatives; residuals ])
+       [ error_function; normal; gamma; bessel; derivatives; residuals ])

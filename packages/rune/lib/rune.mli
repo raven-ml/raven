@@ -221,13 +221,14 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
 (** {1:special Derivatives of nx's special functions}
 
     rune differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
-    {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma} and {!Nx.lbeta} through the
-    operations nx computes them with, in every argument and at every order.
-    Each derivative is within the budget below of the exact derivative, at
-    [float32] and [float64], eagerly and compiled, where the function and its
-    derivative are finite, which leaves out {!Nx.erfinv} at [±1] and
-    {!Nx.ndtri} at [0] and [1]. [ε] is the distance from 1 to the next float of
-    the dtype.
+    {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma}, {!Nx.lbeta}, {!Nx.i0e} and
+    {!Nx.i1e} through the operations nx computes them with, in every argument
+    and at every order. Each derivative is within the budget below of the exact
+    derivative, at [float32] and [float64], eagerly and compiled, where the
+    function and its derivative are finite, which leaves out {!Nx.erfinv} at
+    [±1] and {!Nx.ndtri} at [0] and [1]. At [-0] as at [+0], the derivatives of
+    {!Nx.i0e} and {!Nx.i1e} are their right-hand ones, [-1] and [1/2]. [ε] is
+    the distance from 1 to the next float of the dtype.
 
     {t
     | Function | First derivative |
@@ -240,6 +241,8 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     | {!Nx.lgamma} | for [x > 0], 256 ulps, or [256ε] absolutely where below 1; below 0, 256 ulps or [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely |
     | {!Nx.digamma} | for [x > 0], 256 ulps; below 0, 256 ulps or [256ε (1 + ψ'(1 - x) + π² / sin² (πx))] absolutely |
     | {!Nx.lbeta}, in either argument | 4096 ulps, or [8192ε] absolutely where below 1 |
+    | {!Nx.i0e} | 128 ulps |
+    | {!Nx.i1e} | 128 ulps, or [128ε] absolutely where below 1 |
     }
 
     Second derivatives of {!Nx.lgamma} and {!Nx.lbeta} are within [2^-40]

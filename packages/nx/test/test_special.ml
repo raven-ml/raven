@@ -109,6 +109,13 @@ let gamma =
         ];
     ]
 
+let bessel =
+  group "modified Bessel"
+    [
+      unary "i0e" ~bound:(everywhere (Ulps 8)) { u = Nx.i0e };
+      unary "i1e" ~bound:(everywhere (Ulps 8)) { u = Nx.i1e };
+    ]
+
 (* Laws
 
    Identities the functions keep, at float64 over drawn batches, each within the
@@ -213,6 +220,22 @@ let laws =
             (mul_s (add_s (abs r) 1.) (512. *. eps))
             r
             (lbeta a (ones_like a)));
+      prop "i0e is even and i1e odd, bit for bit" (batch (-1e3) 1e3) (fun x ->
+          within (zeros_like x) (i0e x) (i0e (neg x));
+          within (zeros_like x) (neg (i1e x)) (i1e (neg x)));
+      prop "i0e decreases and 0 < i1e < i0e on (0, inf)" (batch 1e-3 1e3)
+        (fun x ->
+          let y = add_s x 1e-3 in
+          Array.iter2
+            (fun a b -> Windtrap.at_most float_exact ~than:a b)
+            (values (i0e x))
+            (values (i0e y));
+          Array.iter2
+            (fun i1 i0 ->
+              Windtrap.greater float_exact ~than:0. i1;
+              Windtrap.less float_exact ~than:i0 i1)
+            (values (i1e x))
+            (values (i0e x)));
     ]
 
-let () = exit (run "nx special" [ error_function; normal; gamma; laws ])
+let () = exit (run "nx special" [ error_function; normal; gamma; bessel; laws ])

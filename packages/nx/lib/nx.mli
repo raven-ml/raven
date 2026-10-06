@@ -2140,8 +2140,8 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
       infinity and a NaN do: [1] and [inf]. For a signaling NaN, such a result
       is that number or NaN;
     - the sign of a zero, which {!sin}, {!tan}, {!asin}, {!atan}, {!sinh},
-      {!tanh}, {!erf}, {!erfinv}, {!expm1} and {!log1p} keep: [sin (-0.)] is
-      [-0.].
+      {!tanh}, {!erf}, {!erfinv}, {!i1e}, {!expm1} and {!log1p} keep:
+      [sin (-0.)] is [-0.].
 
     No function flushes a subnormal operand or result to zero on the host. A
     device that flushes them reads a subnormal operand as zero and writes a
@@ -2424,6 +2424,25 @@ val lbeta : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     [lbeta 1e10 1] is [-log 1e10]. It is [+inf] as either argument reaches
     [0] and [-inf] as either reaches [+inf] with the other positive and
     finite. *)
+
+val i0e : (float, 'b) t -> (float, 'b) t
+(** [i0e x] is [e^{-|x|} I₀(x)], [I₀] the modified Bessel function of the first
+    kind of order 0, within 8 ulps. The von Mises distribution of
+    concentration [k] has the normaliser [2π I₀(k) = 2π e^{k} i0e k], whose
+    logarithm [k + log (2π i0e k)] stays finite where [I₀(k)] overflows, past
+    [k = 713] at [float64] and [89] at [float32]. [i0e] is even, [1] at [0]
+    and [0] at [-inf] and [+inf].
+
+    {@ocaml[
+      # i0e (create float64 [| 3 |] [| -1.; 0.; 1000. |])
+      - : (float, float64_elt) t = [0.46576, 1, 0.0126172]
+    ]} *)
+
+val i1e : (float, 'b) t -> (float, 'b) t
+(** [i1e x] is [e^{-|x|} I₁(x)], [I₁] the modified Bessel function of the first
+    kind of order 1, within 8 ulps. [i1e k / i0e k] is the mean [E (cos θ)] of
+    the von Mises distribution of concentration [k]. [i1e] is odd, so [i1e
+    (-0.)] is [-0.], and it is [-0] at [-inf] and [0] at [+inf]. *)
 
 (** {1:comparison Comparison and logic} *)
 
