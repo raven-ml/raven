@@ -195,7 +195,15 @@ let reshape =
   group "reshape"
     [
       prop "a reshape it can view keeps each element's position in C order"
-        (Gen.with_pp pp_reshaped reshaped) (fun (v, shape) ->
+        ~examples:
+          [
+            (* A transpose given an axis of one element, and flattened, whose
+               elements are not in one stride. *)
+            (V.permute (V.create [| 2; 3 |]) [| 1; 0 |], [| 3; 1; 2 |]);
+            (V.permute (V.create [| 2; 3 |]) [| 1; 0 |], [| 6 |]);
+          ]
+        (Gen.with_pp pp_reshaped reshaped)
+        (fun (v, shape) ->
           let viewable = V.can_reshape v shape in
           cover "viewed through strides" (viewable && not (V.is_c_contiguous v));
           cover "refused" (not viewable);
