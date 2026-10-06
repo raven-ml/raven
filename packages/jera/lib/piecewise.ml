@@ -157,8 +157,6 @@ let chebyshev s ~degree ~pieces f a b =
 
 (* Adaptive fits *)
 
-let max_level = 62
-
 let adapt s ~degree ~tol ~budget f a b =
   let fn = "Jera.Piecewise.adapt" in
   if degree < 2 then fail fn "degree = %d is below 2" degree;
@@ -170,12 +168,10 @@ let adapt s ~degree ~tol ~budget f a b =
   let dtype = Nx.dtype a in
   let m = degree + 1 in
   let u = Nx.reshape [| 1; m |] (Num.constant dtype (Cheb.nodes degree)) in
-  (* The pieces [index / 2^level, (index + 1) / 2^level] of [0, 1], as their
-     ends' fractions. *)
+  (* The pieces of [[0, 1]], [[k; 1]], as their ends' fractions. *)
   let fractions level index =
-    let scale = Nx.exp2 (Nx.neg (Nx.cast dtype level)) in
-    let i = Nx.cast dtype index in
-    (Nx.mul i scale, Nx.mul (Nx.add_s i 1.) scale)
+    let flat v = Nx.reshape [| Nx.dim 0 v |] v in
+    Partition.fractions dtype (flat level) (flat index)
   in
   let points a b (t0, t1) =
     let w = Nx.sub b a in
@@ -224,119 +220,26 @@ let adapt s ~degree ~tol ~budget f a b =
   in
   let search_f x = Nx.Ptree.map s (fun _ y -> Rune.detach y) (f x) in
   let a0 = Rune.detach a and b0 = Rune.detach b in
-  let slots = Nx.arange Nx.int32 0 budget 1 in
-  let in_use used = Nx.less slots (Nx.broadcast_to [| budget |] used) in
-  let worst used ratio =
-    Nx.argmax
-      (Nx.where (in_use used) ratio (Nx.full_like ratio Float.neg_infinity))
+  let x t = Nx.add a0 (Nx.mul (Nx.sub b0 a0) t) in
+  let p =
+    Partition.refine s ~budget ~lanes:[||] ~dims:1 ~cost:m
+      ~evaluate:(fun level index ->
+        let c = fit search_f (points a0 b0 (fractions level index)) in
+        (c, tails c, Nx.zeros Nx.int64 [| Nx.dim 0 level |]))
+      ~point:(fun _ t -> x t)
+      ~verdict:(fun p used ->
+        ( Nx.any (Nx.logical_and used (Nx.isnan p.error)),
+          Nx.all
+            (Nx.logical_or (Nx.logical_not used) (Nx.less_equal_s p.error 1.))
+        ))
   in
-  let pick j v = Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] j) v in
-  (* The carry: each slot's level, index, tail ratio and coefficients, the slots
-     used, the status and the evaluations. *)
-  let settle (level, (index, (ratio, (c, (used, (st, n)))))) =
-    let any_nan = Nx.any (Nx.logical_and (in_use used) (Nx.isnan ratio)) in
-    let st = Elementwise.settle st any_nan Not_finite in
-    let met =
-      Nx.all
-        (Nx.logical_or
-           (Nx.logical_not (in_use used))
-           (Nx.less_equal_s ratio 1.))
-    in
-    let st = Elementwise.settle st met Converged in
-    let j = worst used ratio in
-    let lj = pick j level and ij = pick j index in
-    let t0, t1 = fractions lj ij in
-    let x0 = Nx.add a0 (Nx.mul (Nx.sub b0 a0) t0)
-    and x1 = Nx.add a0 (Nx.mul (Nx.sub b0 a0) t1) in
-    let flat =
-      Nx.logical_or
-        (Nx.greater_equal_s lj (Int32.of_int max_level))
-        (Num.adjacent (Nx.minimum x0 x1) (Nx.maximum x0 x1))
-    in
-    let st = Elementwise.settle st (Nx.reshape [||] flat) Stalled in
-    let st =
-      Elementwise.settle st
-        (Nx.greater_equal_s used (Int32.of_int budget))
-        Budget_spent
-    in
-    (level, (index, (ratio, (c, (used, (st, n))))))
-  in
-  let step (level, (index, (ratio, (c, (used, (st, n)))))) =
-    let j = worst used ratio in
-    let lj = pick j level and ij = pick j index in
-    let level2 = Nx.concatenate ~axis:0 [ Nx.add_s lj 1l; Nx.add_s lj 1l ] in
-    let index2 =
-      Nx.concatenate ~axis:0 [ Nx.mul_s ij 2L; Nx.add_s (Nx.mul_s ij 2L) 1L ]
-    in
-    let c2 = fit search_f (points a0 b0 (fractions level2 index2)) in
-    let r2 = tails c2 in
-    let left =
-      Nx.equal slots (Nx.cast Nx.int32 (Nx.broadcast_to [| budget |] j))
-    in
-    let right = Nx.equal slots (Nx.broadcast_to [| budget |] used) in
-    let put v two =
-      let mask m =
-        Nx.reshape (Array.append [| budget |] (Array.make (Nx.ndim v - 1) 1)) m
-      in
-      let child i =
-        Nx.broadcast_to (Nx.shape v) (Nx.slice [ Nx.R (i, i + 1) ] two)
-      in
-      Nx.where (mask left) (child 0) (Nx.where (mask right) (child 1) v)
-    in
-    let c = Nx.Ptree.map2 s (fun _ v two -> put v two) c c2 in
-    settle
-      ( put level level2,
-        ( put index index2,
-          ( put ratio r2,
-            (c, (Nx.add_s used 1l, (st, Nx.add_s n (Int32.of_int (2 * m))))) )
-        ) )
-  in
-  let initial =
-    let one dt = Nx.zeros dt [| 1 |] in
-    let c1 =
-      fit search_f (points a0 b0 (fractions (one Nx.int32) (one Nx.int64)))
-    in
-    let pad v =
-      Nx.concatenate ~axis:0
-        [
-          v;
-          Nx.zeros (Nx.dtype v)
-            (Array.append
-               [| budget - 1 |]
-               (Array.sub (Nx.shape v) 1 (Nx.ndim v - 1)));
-        ]
-    in
-    settle
-      ( Nx.zeros Nx.int32 [| budget |],
-        ( Nx.zeros Nx.int64 [| budget |],
-          ( pad (tails c1),
-            ( Nx.Ptree.map s (fun _ v -> pad v) c1,
-              ( Nx.scalar Nx.int32 1l,
-                ( Nx.scalar Nx.int32 Elementwise.running,
-                  Nx.scalar Nx.int32 (Int32.of_int m) ) ) ) ) ) )
-  in
-  let carry =
-    Nx.Ptree.(
-      pair tensor
-        (pair tensor (pair tensor (pair s (pair tensor (pair tensor tensor))))))
-  in
-  let level, (index, (ratio, (c, (used, (st, n))))) =
-    Rune.iterate carry ~max:budget
-      ~until:(fun (_, (_, (_, (_, (_, (st, _)))))) ->
-        Nx.logical_not (Elementwise.searching st))
-      ~f:step initial
-  in
+  let st = p.status and n = p.evaluations and c = p.data in
   let ok = Nx.equal_s st (Solution.code Converged) in
-  (* The worst piece, which a report prints. *)
-  let worst_from, worst_to =
-    let j = worst used ratio in
-    let t0, t1 = fractions (pick j level) (pick j index) in
-    let x t = Nx.reshape [||] (Nx.add a0 (Nx.mul (Nx.sub b0 a0) t)) in
-    (x t0, x t1)
-  in
+  let worst_from, worst_to = Partition.worst p ~point:(fun _ t -> x t) in
   (* The final partition in increasing order, unused slots last as empty pieces
      at b. *)
-  let used_mask = in_use used in
+  let used_mask = Partition.in_use p in
+  let level = p.level and index = p.index in
   let t0, _ = fractions level index in
   let order =
     Nx.argsort (Nx.where used_mask t0 (Nx.full_like t0 Float.infinity))
@@ -419,7 +322,7 @@ let adapt s ~degree ~tol ~budget f a b =
   Solution.v ~fn
     ~settings:
       (Format.asprintf "degree %d, tol %a, budget %d" degree Tol.pp tol budget)
-    ~spent:{ used; unit = "pieces"; budget }
+    ~spent:{ used = p.used; unit = "pieces"; budget }
     ~fix ~value ~error ~status:st ~evaluations:n
     ~facts:[ Fact ("worst from", worst_from); Fact ("worst to", worst_to) ]
     ()
