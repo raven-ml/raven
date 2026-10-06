@@ -6,10 +6,11 @@
 (** Answers of solves.
 
     A solve returns its answer with a status per lane: one lane per element for
-    an elementwise family ({!Root}, {!Quad}'s one-dimensional solves), one for a
-    structured family, and one per lane of each {!Rune.val-vmap} around it.
-    {!get} reads an answer that converged everywhere and raises otherwise;
-    {!best} and {!ok} read every lane.
+    an elementwise family ({!Root}, {!Minimize.bracket}, {!Quad}'s
+    one-dimensional solves), one per box for {!Quad.cubature} and {!Quad.qmc},
+    one for a structured family, and one per lane of each {!Rune.val-vmap}
+    around it. {!get} reads an answer that converged everywhere and raises
+    otherwise; {!best} and {!ok} read every lane.
 
     {[
     let s = Root.bracket ~tol f ~lo ~hi in

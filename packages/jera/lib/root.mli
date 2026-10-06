@@ -67,6 +67,8 @@ val newton :
     while [q ≥ 1] or before two steps; [y] is the estimate. A zero step is a
     zero. A zero or non-finite slope, or a step that no longer moves the
     estimate without meeting [tol], ends the element [Stalled]; a non-finite [f]
-    ends it [Not_finite]; [budget] iterations end it [Budget_spent].
+    ends it [Not_finite]; [budget] iterations end it [Budget_spent], so a budget
+    of 1 converges only on a zero step. {b Cost.} One call of [f] and one of
+    [slope] per iteration.
 
     Raises [Invalid_argument] if [budget < 1]. *)

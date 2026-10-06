@@ -29,8 +29,8 @@ val state :
 (** [state fn ~ok r x] is [x] stated as a zero of [where ok (r x) (x − x)],
     elementwise: its derivative is [r]'s implicit one where [ok], zero
     elsewhere. Its linear solves divide by the diagonal and check the quotient
-    with one more product, raising [Invalid_argument] naming [fn] where it misses: [r]
-    read another element. *)
+    with one more product, raising [Invalid_argument] naming [fn] where it
+    misses: [r] read another element. *)
 
 val accepted :
   Tol.t -> e:(float, 'b) Nx.t -> y:(float, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t

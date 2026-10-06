@@ -118,10 +118,7 @@ val march :
     each step's local error, and the proportional–integral controller of Hairer,
     Nørsett and Wanner (I, §II.4) sizes the next. The search runs on detached
     values and records its accepted steps; the answer takes them again with the
-    tracked field, each step a fraction [s] of its interval, [h = (b − a) s], so
-    its derivative is the accepted steps' on their grid, through the initial
-    state, the times and every tracked value the field reads, and a lane that
-    did not converge returns its detached estimate.
+    tracked field.
 
     {b Error.} [e] is one step's embedded error, and [y], per component, the
     larger of the step's two states; a step is accepted when [e] meets [tol].
@@ -131,10 +128,16 @@ val march :
     stage is rejected; a non-finite field at an accepted state ends the lane
     [Not_finite], a step below the time's resolution [Stalled], and [budget]
     attempted steps [Budget_spent]. The last step of an interval lands on its
-    end exactly. {b Cost.} Each attempt costs the method's evaluations less one,
-    and the answer evaluates the accepted steps again. {b Memory.} Reverse mode
-    keeps one state per time of [at] and, while it reverses an interval, its
-    carries: compiled, [budget] of them; eagerly, the steps taken. *)
+    end exactly. {b Stability.} An explicit method's controller keeps [h] inside
+    its stability region, so on a stiff field its steps fall to that limit and
+    the budget runs out first. {b Cost.} Each attempt costs the method's
+    evaluations less one, and the answer evaluates the accepted steps again.
+    Reverse mode keeps one state per time of [at] and, while it reverses an
+    interval, its carries: compiled, [budget] of them; eagerly, the steps taken.
+    {b Derivative.} The accepted steps', each a fraction [s] of its interval,
+    [h = (b − a) s]: through the initial state, the times and every tracked
+    value the field reads. A lane that did not converge returns its detached
+    estimate, with a zero derivative. *)
 
 val solve :
   'y Nx.Ptree.t ->

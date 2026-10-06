@@ -75,11 +75,13 @@
     - {b Problems are closures.} A problem is an OCaml function and the data it
       is computed over. Every tracked value the function reads, argument or
       capture, reaches the derivative.
-    - {b Batching.} Elementwise families ({!Root}, {!Quad}'s integrals,
-      evaluation) treat every element as its own problem; their function must
-      not reduce or mix along any axis. Structured families solve one problem,
-      and a state's tensors share its steps. {!Rune.val-vmap} gives each lane
-      its own.
+    - {b Batching.} Elementwise families ({!Root}, {!Minimize.bracket},
+      {!Quad}'s one-dimensional integrals, evaluation) treat every element as
+      its own problem; their function must not reduce or mix along any axis.
+      {!Quad.cubature} and {!Quad.qmc} solve one problem per lane, their
+      integrand reducing only the last, coordinate axis. Structured families
+      solve one problem, and a state's tensors share its steps. {!Rune.val-vmap}
+      gives each lane its own.
     - {b Dtypes.} The working dtype is the data's, with no default. Times have
       their own dtype. Float leaves of a state are its vector; other leaves are
       carried unchanged.

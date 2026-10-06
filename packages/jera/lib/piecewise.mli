@@ -28,11 +28,13 @@
     {b Cost.} Evaluation is a binary search of the breaks ({!Nx.searchsorted}),
     a gather of [degree + 1] coefficients and Clenshaw's recurrence:
     [O(log pieces + degree)] per point. Every operation here compiles to a fixed
-    graph of tensor operations, fits included.
+    graph of tensor operations, fits included; {!adapt} is a stopping loop,
+    which a compiled call waits on once per trip.
 
     {b Derivative.} Every function is a composition of tensor operations, so it
     differentiates in the coefficients, the breaks, the samples and the points;
-    the piece a point falls in carries no derivative. *)
+    the piece a point falls in carries no derivative. {!adapt}'s derivative is
+    its final partition's interpolant's, and zero when it did not converge. *)
 
 type ('v, 'b) t
 (** The type for piecewise series with values of structure ['v] over breaks of
@@ -133,11 +135,12 @@ val adapt :
   (float, 'b) Nx.t ->
   ('v, 'b) t Solution.t
 (** [adapt s ~degree ~tol ~budget f a b] matches [f] on [[a, b]] to [tol] by
-    series of [degree], bisecting the piece whose tail is largest. It solves one
-    problem; {!Rune.val-vmap} gives each lane its own.
+    series of [degree]. It solves one problem; {!Rune.val-vmap} gives each lane
+    its own.
 
-    {b Error.} A piece's [e] is the larger of its last two coefficients in
-    magnitude, and [y] its largest coefficient: the series' tail against its
+    {b Method.} Bisects the piece whose tail is largest until every piece meets
+    [tol]. {b Error.} A piece's [e] is the larger of its last two coefficients
+    in magnitude, and [y] its largest coefficient: the series' tail against its
     size. [budget] bounds the pieces, so the answer always holds [budget]
     pieces, the unused ones empty at [b] after the domain. A lane whose worst
     piece is at level 62, or holds no float strictly inside, ends [Stalled]; a

@@ -6,9 +6,11 @@
 (** Integrals.
 
     An integrand is an elementwise function: it receives points with the rule's
-    node axis in front and the range's shape behind, and returns one value per
-    point, of the points' shape. Every element of a range is its own integral,
-    so the integrand must not reduce or mix along any axis.
+    node axes in front and the range's shape behind, and returns one value per
+    point. Over a range every element is its own integral, so the integrand must
+    not reduce or mix along any axis; over a box every lane is its own integral,
+    and the integrand reduces only the last, coordinate axis. The axes in front
+    and their sizes are the method's, and may change between calls.
 
     {[
     (* ∫₀¹ x^a dx for each a, by 10-point Gauss–Legendre *)
@@ -90,8 +92,9 @@ module Box : sig
 end
 
 type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
-(** The type for integrands: [f x] is [f] at each point of [x], of [x]'s shape.
-*)
+(** The type for integrands: [f x] is [f] at each point of [x]: of [x]'s shape
+    over a range, and over a box of [x]'s shape without its last, coordinate
+    axis. *)
 
 (** {1:formulas Formulas} *)
 
@@ -140,20 +143,21 @@ val adaptive :
   'b Range.t ->
   (float, 'b) Nx.t Solution.t
 (** [adaptive r ~tol ~budget f range] is the integral of [f] over each element
-    of [range] by the rule [r] on a partition it refines: it bisects the piece
-    of largest error until the error meets [tol]. An infinite range is mapped to
-    [[0, 1]] as {!fixed} maps it.
+    of [range]. [f] receives points of shape [[m; k] @ shape], [m] the rule's
+    points and [k] pieces.
 
-    {b Error.} [e] is the sum over the pieces of [|K − G|], the Kronrod sum's
-    difference from its embedded Gauss sum, and [y] the integral. An element
-    whose worst piece is at level 62, or holds no float strictly inside, ends
-    [Stalled]; a non-finite sum ends it [Not_finite]; [budget] pieces end it
-    [Budget_spent]. A feature narrower than the first rule's nodes can be
-    invisible to every estimate, and an element can converge without it.
-    {b Cost.} [2n + 1] points per piece, and the answer evaluates the final
-    partition again, in chunks of 32 pieces under a {!Rune.scan}, so reverse
-    mode keeps one chunk's values. {b Derivative.} The final partition's rule's:
-    the pieces are integers [(level, index)] whose ends are
+    {b Method.} The rule [r] on a partition it refines: it bisects the piece of
+    largest error until the error meets [tol]. An infinite range is mapped as
+    {!fixed} maps it. {b Error.} [e] is the sum over the pieces of [|K − G|],
+    the Kronrod sum's difference from its embedded Gauss sum, and [y] the
+    integral. An element whose worst piece is at level 62, or holds no float
+    strictly inside, ends [Stalled]; a non-finite sum ends it [Not_finite];
+    [budget] pieces end it [Budget_spent]. A feature narrower than the first
+    rule's nodes can be invisible to every estimate, and an element can converge
+    without it. {b Cost.} [2n + 1] points per piece, and the answer evaluates
+    the final partition again, in chunks of 32 pieces under a {!Rune.scan}, so
+    reverse mode keeps one chunk's values. {b Derivative.} The final partition's
+    rule's: the pieces are integers [(level, index)] whose ends are
     [a + (b − a) index / 2^level], so it reaches the ends.
 
     Raises [Invalid_argument] if [budget < 1], or as {!fixed} does. *)
@@ -165,7 +169,8 @@ val tanh_sinh :
     {!Range.from} and sinh-sinh on {!Range.line}. Its nodes crowd toward the
     ends double-exponentially, so it converges for an integrable singularity at
     an end, and on a half-line or the line for an integrand that decays. Scale
-    the variable so the integrand's width is near 1.
+    the variable so the integrand's width is near 1. [f] receives points of
+    shape [[64] @ shape], a chunk of nodes.
 
     {b Method.} The trapezoidal rule in [t] after the change of variable, at
     steps [1, 1/2, 1/4, ...]: each level adds the odd multiples of its step, in
@@ -178,8 +183,10 @@ val tanh_sinh :
     from its argument. {b Error.} [e] is the difference of the last two levels
     and [y] the integral. A lane whose terms at the truncation do not fall below
     the tolerance, or whose finest level does not meet it, ends [Stalled]; a
-    non-finite sum ends it [Not_finite]. {b Derivative.} That of the sum over
-    the final level, through the ends and the integrand's parameters. *)
+    non-finite sum ends it [Not_finite]. {b Cost.} At most the nodes of the
+    finest level, in chunks of 64, per element, and the answer evaluates the
+    final level's nodes again. {b Derivative.} That of the sum over the final
+    level, through the ends and the integrand's parameters. *)
 
 val cubature :
   tol:Tol.t ->
@@ -189,17 +196,19 @@ val cubature :
   (float, 'b) Nx.t Solution.t
 (** [cubature ~tol ~budget f box] is the integral of [f] over each lane's box,
     of [d] dimensions with [2 ≤ d ≤ 10]. [f] receives points of shape
-    [[m; k] @ lanes @ [d]] and reduces only their last, coordinate axis.
+    [[m; k] @ lanes @ [d]], [m] the rule's points and [k] boxes, and reduces
+    only their last, coordinate axis.
 
     {b Method.} Genz and Malik's (1980) adaptive rule of degree 7 with an
-    embedded degree 5, [2^d + 2d² + 2d + 1] points per box: it bisects the box
-    of largest error across the axis of largest fourth difference. {b Error.}
-    [e] is the sum over the boxes of the two rules' difference, and [y] the
-    integral. A lane whose worst box is at level 62 along its axis, or holds no
-    float strictly inside along it, ends [Stalled]; a non-finite sum ends it
-    [Not_finite]; [budget] boxes end it [Budget_spent]. {b Derivative.} The
-    final partition's rule's, through the corners and the integrand's
-    parameters.
+    embedded degree 5: it bisects the box of largest error across the axis of
+    largest fourth difference. {b Error.} [e] is the sum over the boxes of the
+    two rules' difference, and [y] the integral. A lane whose worst box is at
+    level 62 along its axis, or holds no float strictly inside along it, ends
+    [Stalled]; a non-finite sum ends it [Not_finite]; [budget] boxes end it
+    [Budget_spent]. {b Cost.} [2^d + 2d² + 2d + 1] points per box, [budget]
+    boxes at most per lane, and the answer evaluates the final partition again.
+    {b Derivative.} The final partition's rule's, through the corners and the
+    integrand's parameters.
 
     Raises [Invalid_argument] if [d] is not in [[2, 10]], if [budget < 1], or if
     [f]'s result is not the points' shape without its last axis. *)
@@ -213,8 +222,8 @@ val qmc :
   (float, 'b) Nx.t Solution.t
 (** [qmc key ~tol ~budget f box] is the integral of [f] over each lane's box, of
     any dimension [d] up to 1111, by randomised quasi-Monte Carlo. [f] receives
-    points of shape [[c; 16] @ lanes @ [d]] and reduces only their last,
-    coordinate axis.
+    points of shape [[64; 16] @ lanes @ [d]], a chunk of 64 points under each of
+    16 shifts, and reduces only their last, coordinate axis.
 
     {b Method.} The mean of [f] over a Sobol sequence (Joe and Kuo's direction
     numbers) under 16 independent random digital shifts drawn from [key]. It
@@ -225,9 +234,10 @@ val qmc :
     the shifts, an estimate of a standard deviation: the test is statistical.
     [y] is the integral. Each estimate at a fixed point count is unbiased, and
     the stopped one to within its standard error. [budget] chunks end a lane
-    [Budget_spent]. {b Derivative.} The mean's over the final points: an
-    estimate of the integral's derivative where the integrand is Lipschitz in
-    the parameter.
+    [Budget_spent]. {b Cost.} 1024 points per chunk, 64 under each of 16 shifts,
+    [budget] chunks at most, and the answer evaluates the final points again.
+    {b Derivative.} The mean's over the final points: an estimate of the
+    integral's derivative where the integrand is Lipschitz in the parameter.
 
     Raises [Invalid_argument] if [d] is above 1111, if [budget < 1], or if [f]'s
     result is not the points' shape without its last axis. *)
