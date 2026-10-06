@@ -8,7 +8,9 @@
    The data is the spiral y' = A y³ of Chen et al. (2018). *)
 
 open Kaun
-open Jera
+module Ode = Jera.Ode
+module Solution = Jera.Solution
+module Tol = Jera.Tol
 
 module Mlp = struct
   type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
