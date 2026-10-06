@@ -1036,6 +1036,17 @@ let bitcasts =
             (fun () ->
               ignore
                 (Nx.bitcast Nx.uint16 (Nx.reshape [| 4; 3; 2 |] (Nx.flip x)))));
+      test
+        "a widening bitcast of a value split along its last axis is no view, \
+         and refused as an operation along the split axis" (fun () ->
+          let pairs = Nx.reshape [| 12; 2 |] (Nx.copy bytes) in
+          let x =
+            Nx.place (Nx.Placement.sharded ~axis:1 [ cpu1; cpu2 ]) pairs
+          in
+          raises_match
+            (Exn.invalid_arg
+               ~substring:"place the value replicated or on one device first")
+            (fun () -> ignore (Nx.bitcast Nx.uint16 x)));
     ]
 
 (* Reads and views *)

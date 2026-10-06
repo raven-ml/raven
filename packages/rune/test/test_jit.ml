@@ -927,6 +927,23 @@ let consumption =
           is_true ~msg:m (String.length m > 0);
           raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
               ignore (Nx.to_array a)));
+      test "a call consuming a placed value's bitcast consumes the value"
+        (fun () ->
+          (* The bitcast views the value's storage, which the call consumes. *)
+          let at = Nx.Placement.on (Nx.Device.cpu 1) in
+          let bytes = Nx.init Nx.uint8 [| 8 |] (fun i -> 120 + (i.(0) * 3)) in
+          let x = Nx.place at bytes in
+          let f a = Nx.add a a in
+          let r =
+            Rune.jit
+              Nx.Ptree.(consumes tensor @@ returns tensor)
+              f (Nx.bitcast Nx.int8 x)
+          in
+          equal ~msg:"the result" (array int)
+            (Nx.to_array (f (Nx.bitcast Nx.int8 bytes)))
+            (Nx.to_array (Nx.place Nx.Placement.host r));
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              Nx.to_array x));
       test "a consumed argument keeps its shape and dtype" (fun () ->
           let a = Nx.zeros Nx.float32 [| 2; 3 |] in
           ignore (Rune.jit consumes Nx.neg a);
