@@ -458,6 +458,51 @@ let valid =
     [
       Windtrap.cases ~name:fst "a parameter of +inf is outside (0, inf)"
         infinite_positive (fun (_, v) -> equal bool false (Nx.item [] v));
+      test "parameters inside their domains are valid" (fun () ->
+          equal bool true
+            (Nx.item [] (D.valid (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))));
+      test "NaN logits are not valid" (fun () ->
+          equal bool false
+            (Nx.item [] (D.valid (D.bernoulli ~logits:(f64 Float.nan)))));
+      test "one bad element of a vector makes the scalar false" (fun () ->
+          let v =
+            D.valid (D.normal ~loc:(f64 0.) ~scale:(vec [| 1.; -1.; 2. |]))
+          in
+          equal (array int) [||] (Nx.shape v);
+          equal bool false (Nx.item [] v));
+      test "under a map, valid is one value per lane" (fun () ->
+          let v =
+            Rune.vmap
+              Nx.Ptree.(tensor @-> returns tensor)
+              (fun scale -> D.valid (D.normal ~loc:(f64 0.) ~scale))
+              (vec [| 1.; -1.; 2. |])
+          in
+          equal (array bool) [| true; false; true |] (Nx.to_array v));
+      test "a mixture is not valid with a bad component or NaN logits"
+        (fun () ->
+          let components scale = D.normal ~loc:(vec [| 0.; 1. |]) ~scale in
+          equal bool false
+            (Nx.item []
+               (D.valid
+                  (D.mixture
+                     ~logits:(vec [| 0.; 0. |])
+                     (components (vec [| 1.; -1. |])))));
+          equal bool false
+            (Nx.item []
+               (D.valid
+                  (D.mixture
+                     ~logits:(vec [| 0.; Float.nan |])
+                     (components (vec [| 1.; 1. |]))))));
+      test "iid copies are valid as their distribution is" (fun () ->
+          equal bool false
+            (Nx.item []
+               (D.valid (D.iid [| 3 |] (D.half_normal ~scale:(f64 (-1.)))))));
+      test "a checked distribution still reads as not valid" (fun () ->
+          let d =
+            D.check ~unless:(Nx.scalar Nx.bool true) "interpreter"
+              (D.normal ~loc:(f64 0.) ~scale:(f64 (-1.)))
+          in
+          equal bool false (Nx.item [] (D.valid d)));
       test "a NaN below the diagonal of scale_tril is not valid" (fun () ->
           equal bool false
             (Nx.item []
