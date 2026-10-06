@@ -624,11 +624,14 @@ val logspace :
     a logarithmic scale: [base{^x}] where [x] ranges from [start] to [stop].
     [endpoint] defaults to [true]. [base] defaults to [10.0].
 
+    Each value is [base] raised to its exponent in float64, rounded once to
+    [dtype]: [logspace float32 0. 2. 3] is exactly [1], [10] and [100].
+
     Raises [Invalid_argument] if [n] is negative.
 
     {@ocaml[
       # logspace float32 0. 2. 3
-      - : (float, float32_elt) t = [1, 9.999999, 99.99999]
+      - : (float, float32_elt) t = [1, 10, 100]
       # logspace float32 ~base:2.0 0. 3. 4
       - : (float, float32_elt) t = [1, 2, 4, 8]
     ]}
@@ -640,11 +643,15 @@ val geomspace :
 (** [geomspace dtype ?endpoint start stop n] is [n] values evenly spaced on a
     geometric (multiplicative) scale. [endpoint] defaults to [true].
 
+    The first value is [start] and, with [endpoint] and [n >= 2], the last is
+    [stop], each as [dtype] stores it. The others are computed in float64 and
+    rounded once to [dtype].
+
     Raises [Invalid_argument] if [start] or [stop] is not positive.
 
     {@ocaml[
       # geomspace float32 1. 1000. 4
-      - : (float, float32_elt) t = [1, 10, 100.00001, 1000.0001]
+      - : (float, float32_elt) t = [1, 10, 100, 1000]
     ]}
 
     See also {!linspace}, {!logspace}. *)

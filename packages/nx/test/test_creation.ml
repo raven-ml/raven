@@ -212,12 +212,12 @@ let linspace_bound (F d) =
              [ 0.; -0.; 0.1; -0.1; 1e300; -1e300; hi; -.hi ] );
        ])
 
-let pp_linspace ppf (d, endpoint, start, stop, n) =
-  Format.fprintf ppf "linspace ~endpoint:%b %a %h %h %d" endpoint pp_float_dtype
-    d start stop n
+let pp_spaced ppf (d, endpoint, start, stop, n) =
+  Format.fprintf ppf "~endpoint:%b %a %h %h %d" endpoint pp_float_dtype d start
+    stop n
 
 let linspace_case =
-  Gen.with_pp pp_linspace
+  Gen.with_pp pp_spaced
   @@
   let open Gen in
   let* d = float_dtypes in
@@ -349,6 +349,32 @@ let ranges =
                (Array.map exp
                   (linear_points ~endpoint (log start) (log stop) n)))
             (Ref.of_nx (Nx.geomspace ~endpoint Nx.float64 start stop n)));
+      prop "geomspace starts on start and, with its endpoint, ends on stop"
+        (Gen.with_pp pp_spaced
+        @@
+        let open Gen in
+        let positive = float_range 1e-3 1e3 in
+        let* d = float_dtypes in
+        let+ start = positive
+        and+ stop = positive
+        and+ n = int_range 1 12
+        and+ endpoint = bool in
+        (d, endpoint, start, stop, n))
+        (fun (F d, endpoint, start, stop, n) ->
+          let xs = Nx.to_array (Nx.geomspace ~endpoint d start stop n) in
+          equal ~msg:"the first point" float_exact (stored d start) xs.(0);
+          if endpoint && n >= 2 then
+            equal ~msg:"the last point" float_exact (stored d stop) xs.(n - 1));
+      test "logspace and geomspace give exact powers of ten at float32"
+        (fun () ->
+          let powers =
+            Array.init 10 (fun i ->
+                stored Nx.float32 (float_of_string ("1e" ^ string_of_int i)))
+          in
+          equal (array float_exact) powers
+            (Nx.to_array (Nx.logspace Nx.float32 0. 9. 10));
+          equal (array float_exact) powers
+            (Nx.to_array (Nx.geomspace Nx.float32 1. 1e9 10)));
       cases "logspace raises its base, 10 by default, to each point"
         ~name:(fun (name, _, _) -> name)
         [

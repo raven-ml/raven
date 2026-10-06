@@ -1657,56 +1657,54 @@ let arange_f ctx dtype start_f stop_f step_f =
     init ctx dtype [| n |] (fun idx ->
         start_f +. (float_of_int idx.(0) *. step_f))
 
+(* Point [i] of [count] points evenly spaced from [start] to [stop], which is
+   point [last], past the points when [endpoint] is false. Each point counts
+   from the nearer end, so both ends are exact. *)
+let spaced ~endpoint start stop count =
+  let last = if endpoint then count - 1 else count in
+  let span = float_of_int last in
+  (* [stop - start] can overflow where its share of a step does not. *)
+  let step =
+    let s = (stop -. start) /. span in
+    if Float.is_finite s then s else (stop /. span) -. (start /. span)
+  in
+  fun i ->
+    if i = 0 then start
+    else if i = last then stop
+    else if 2 * i < last then start +. (float_of_int i *. step)
+    else stop -. (float_of_int (last - i) *. step)
+
+(* The [count] values [f i], computed in float64 and rounded once to [dtype]. *)
+let of_points ctx dtype count f =
+  init ctx dtype [| count |] (fun idx -> Nx_dtype.of_float dtype (f idx.(0)))
+
 let linspace ctx dtype ?(endpoint = true) start_f stop_f count =
   if count < 0 then
     err "linspace" "count %d, negative count, use count >= 0" count;
   if count = 0 then empty ctx dtype [| 0 |]
-  else if count = 1 then
-    full ctx dtype [| 1 |] (Nx_dtype.of_float dtype start_f)
-  else
-    (* [stop] is point [last], past the points when [endpoint] is false. *)
-    let last = if endpoint then count - 1 else count in
-    let span = float_of_int last in
-    (* [stop - start] can overflow where its share of a step does not. *)
-    let step =
-      let s = (stop_f -. start_f) /. span in
-      if Float.is_finite s then s else (stop_f /. span) -. (start_f /. span)
-    in
-    (* Each point counts from the nearer end, so both ends are exact. *)
-    let point i =
-      if i = 0 then start_f
-      else if i = last then stop_f
-      else if 2 * i < last then start_f +. (float_of_int i *. step)
-      else stop_f -. (float_of_int (last - i) *. step)
-    in
-    init ctx dtype [| count |] (fun idx ->
-        Nx_dtype.of_float dtype (point idx.(0)))
+  else of_points ctx dtype count (spaced ~endpoint start_f stop_f count)
 
 let logspace ctx dtype ?(endpoint = true) ?(base = 10.0) start_exp stop_exp
     count =
   if count < 0 then err "logspace" "count must be >= 0, got %d" count;
   if count = 0 then empty ctx dtype [| 0 |]
   else
-    let exponents = linspace ctx dtype ~endpoint start_exp stop_exp count in
-    if base = Float.exp 1.0 then exp exponents
-    else
-      let log2_base = Stdlib.log base /. Stdlib.log 2.0 in
-      let log2_base_t =
-        broadcast_to (shape exponents) (scalar ctx dtype log2_base)
-      in
-      exp2 (mul exponents log2_base_t)
+    let exponent = spaced ~endpoint start_exp stop_exp count in
+    of_points ctx dtype count (fun i -> Float.pow base (exponent i))
 
 let geomspace ctx dtype ?(endpoint = true) start_f stop_f count =
   if start_f <= 0. || stop_f <= 0. then
     err "geomspace" "start %s and stop %s, both must be positive"
-      (float_text Float64 start_f) (float_text Float64 stop_f);
+      (float_text Float64 start_f)
+      (float_text Float64 stop_f);
   if count < 0 then err "geomspace" "count must be >= 0, got %d" count;
   if count = 0 then empty ctx dtype [| 0 |]
-  else if count = 1 then full ctx dtype [| 1 |] start_f
   else
-    exp
-      (linspace ctx dtype ~endpoint (Stdlib.log start_f) (Stdlib.log stop_f)
-         count)
+    let log = spaced ~endpoint (Stdlib.log start_f) (Stdlib.log stop_f) count in
+    of_points ctx dtype count (fun i ->
+        if i = 0 then start_f
+        else if endpoint && i = count - 1 then stop_f
+        else Stdlib.exp (log i))
 
 let meshgrid ?(indexing = `xy) x y =
   let x_shape = shape x in

@@ -3286,6 +3286,9 @@ thread.
 
 ### Nx
 
+- `Nx.logspace` and `Nx.geomspace` compute each value in float64 and round it
+  once to the dtype, and `Nx.geomspace` ends exactly on `start` and `stop`: at
+  float32 they gave `9.999999` and `100.00001` for powers of ten.
 - `Nx.linspace` ends exactly on `stop` with its endpoint, at every float dtype
   and count; its last value could miss `stop` by a rounding, and a range wider
   than the largest finite float gave infinities and NaN.
