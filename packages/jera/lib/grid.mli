@@ -64,12 +64,12 @@ val chebyshev :
     to [hi], both of shape [[d]], split into [pieces] equal pieces along each
     axis, at the tensor product of each piece's [degree + 1] Chebyshev points of
     the second kind. [f] receives points of shape [q @ [d]] and returns values
-    of shape [q]. It costs one call of [f] on [(pieces × (degree + 1))^d]
-    points.
+    of shape [q @ value]. It costs one call of [f] on
+    [(pieces × (degree + 1))^d] points.
 
     Raises [Invalid_argument] if [degree < 0], [pieces < 1], if [lo] and [hi]
-    are not of one shape [[d]] with [d ≥ 1], or if [f]'s result does not have
-    the points' shape without their last axis. *)
+    are not of one shape [[d]] with [d ≥ 1], or if [f]'s result does not start
+    with the points' shape without their last axis. *)
 
 (** {1:eval Evaluation} *)
 

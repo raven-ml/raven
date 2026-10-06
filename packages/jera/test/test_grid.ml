@@ -113,6 +113,22 @@ let law_tests =
         in
         let x = Nx.create f64 [| 3; 2 |] [| 0.; -1.; 0.37; 0.2; 1.; 1. |] in
         equal (Oracle.tensor ~rel:1e-13 ~abs:1e-14 ()) (f x) (Grid.eval g x));
+    test "a fit's values keep their own axes" (fun () ->
+        (* (x + y, x y) at each point: a value of shape [2]. *)
+        let f p =
+          let c k = Nx.get [ k ] (Nx.moveaxis (Nx.ndim p - 1) 0 p) in
+          Nx.stack ~axis:(-1) [ Nx.add (c 0) (c 1); Nx.mul (c 0) (c 1) ]
+        in
+        let g =
+          Grid.chebyshev ~degree:2 ~pieces:1 f
+            ~lo:(vec [| 0.; -1. |])
+            ~hi:(vec [| 1.; 1. |])
+        in
+        let x = Nx.create f64 [| 2; 2 |] [| 0.25; 0.5; 1.; -1. |] in
+        equal
+          (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
+          (Nx.create f64 [| 2; 2 |] [| 0.75; 0.125; 0.; -1. |])
+          (Grid.eval g x));
     test "points keep their leading shape" (fun () ->
         let g = Grid.linear ~axes values in
         equal (array int) [| 2; 3 |]

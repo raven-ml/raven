@@ -111,10 +111,13 @@ let chebyshev ~degree ~pieces f ~lo ~hi =
   in
   let points = Nx.stack ~axis:(-1) (List.mapi coordinate breaks) in
   let values = f points in
-  if Nx.shape values <> grid then
+  let shape = Nx.shape values in
+  let rank = Array.length shape in
+  if rank < 2 * d || Array.sub shape 0 (2 * d) <> grid then
     fail fn "the function returned shape %s for points of shape %s"
-      (Num.shape (Nx.shape values))
+      (Num.shape shape)
       (Num.shape (Nx.shape points));
+  let value = List.init (rank - (2 * d)) (fun i -> (2 * d) + i) in
   let fit k c =
     Cheb.fit (to_front [ 2 * k; (2 * k) + 1 ] c)
     |> of_front [ 2 * k; (2 * k) + 1 ]
@@ -125,7 +128,10 @@ let chebyshev ~degree ~pieces f ~lo ~hi =
   done;
   let coefficients =
     Nx.transpose
-      ~axes:(List.init d (fun k -> 2 * k) @ List.init d (fun k -> (2 * k) + 1))
+      ~axes:
+        (List.init d (fun k -> 2 * k)
+        @ List.init d (fun k -> (2 * k) + 1)
+        @ value)
       !c
   in
   { breaks; coefficients }
