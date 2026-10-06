@@ -185,10 +185,7 @@ let per_sample =
     xs ys
 ```
 
-Two honest caveats relative to `jax.vmap`:
-
-- rune's `vmap` has no batching rule for the matrix decompositions (`cholesky`, `qr`, `svd`, `eig`, `eigh`); those raise on batched inputs.
-- Implicit RNG inside the mapped function draws identical values for every lane (JAX avoids this by making you thread keys; in rune, thread randomness in as mapped inputs).
+One caveat relative to `jax.vmap`: implicit RNG inside the mapped function draws identical values for every lane (JAX avoids this by making you thread keys; in rune, thread randomness in as mapped inputs).
 
 ---
 

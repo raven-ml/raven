@@ -4079,15 +4079,16 @@ val pinv : ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> ('a, 'b) t
 val tensorsolve : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [tensorsolve ?axes a b] solves the tensor equation [tensordot a x axes = b]
     for [x], by {!solve} of [a] and [b] as a matrix and a vector: NaN in every
-    element where that matrix is singular.
+    element when that matrix is singular.
 
     Raises [Invalid_argument] if shapes are incompatible or the dtype is not
     floating-point or complex. *)
 
 val tensorinv : ?ind:int -> ('a, 'b) t -> ('a, 'b) t
 (** [tensorinv ?ind a] is the tensor inverse such that
-    [tensordot a (tensorinv a) ind] is the identity. [ind] defaults to [2]. It
-    is {!inv} of [a] as a matrix: NaN in every element where that matrix is
+    [tensordot a (tensorinv a) ind] is the identity. [ind], the number of
+    leading axes taken as rows, defaults to half the rank of [a], rounded down.
+    It is {!inv} of [a] as a matrix: NaN in every element when that matrix is
     singular.
 
     Raises [Invalid_argument] if the result is not square in the specified
