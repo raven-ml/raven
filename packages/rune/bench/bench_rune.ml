@@ -513,6 +513,58 @@ let jit_random_benchmarks () =
         f key concentration);
   ]
 
+(* Bodies: a remat's function and a custom rule run at their call. Eager grad of
+   a remat holds none of its function's intermediates, and the backward pass
+   replays a record of them; under jit the replay is compiled. A scan in a
+   custom_jvp rule under grad, inside a total scope, runs each step under the
+   scope and the rule's guard, installed again around it. *)
+let remat_depth = 8
+
+let remat_chain x =
+  let y = ref x in
+  for _ = 1 to remat_depth do
+    y := Nx.tanh (Nx.mul_s !y 1.1)
+  done;
+  Nx.sum !y
+
+let rematted = Rune.remat Nx.Ptree.(tensor @-> returns tensor) remat_chain
+let grad_remat x = Rune.grad' rematted x
+let added : (float, Nx.float32_elt) Rune.Total.t = Rune.Total.make ()
+
+let scanned_rule =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      let y =
+        fst
+          (Rune.scan'
+             ~f:(fun c xi ->
+               Rune.Total.add added (Nx.sum xi);
+               (Nx.add c (Nx.sin xi), c))
+             ~init:(Nx.zeros_like (Nx.get [ 0 ] x))
+             x)
+      in
+      (y, fun dx -> Nx.sum ~axes:[ 0 ] (Nx.mul (Nx.cos x) dx)))
+
+let grad_rule_in_scope x =
+  Rune.grad'
+    (fun x ->
+      let y, _ =
+        Rune.Total.collect added ~zero:(Nx.scalar Nx.float32 0.) (fun () ->
+            scanned_rule x)
+      in
+      Nx.sum y)
+    x
+
+let body_benchmarks () =
+  let x = Nx.rand Nx.float32 [| 64; 64 |] in
+  let rows = Nx.rand Nx.float32 [| 64; 16 |] in
+  [
+    Thumper.bench "grad remat eager" (fun () -> grad_remat x);
+    Thumper.bench_with_setup ~setup:(replay grad_remat x)
+      "jit grad remat replay" (fun f -> f x);
+    Thumper.bench "grad scan in a rule in a total scope eager" (fun () ->
+        grad_rule_in_scope rows);
+  ]
+
 (* Process-isolated cold compile: one fresh jit of the given workload, timed by
    wall clock (the compile shells out to the kernel compiler). Driven one fresh
    process per call so the program cache starts empty. *)
@@ -587,6 +639,7 @@ let suite () =
         Thumper.group "special" (jit_special_benchmarks ());
         Thumper.group "random" (jit_random_benchmarks ());
       ];
+    Thumper.group "Bodies" (body_benchmarks ());
   ]
 
 let config = Thumper.Config.(default |> deadline 120.)

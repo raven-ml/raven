@@ -499,14 +499,15 @@ let launches ?(prefix = "") ~place ~sync () =
         sync ());
   ]
 
-(* Loops that stop on a condition
+(* Loops that stop on a condition, and a loop that draws
 
    Compiled iterates, which test their condition before each trip: Newton's
    iteration for the square roots of 1,024 values, until every residual is
    small, and the scan's step above iterated until a count reaches 256, against
-   the scan's 256 steps. On the host, Newton's iteration of one value mapped
-   over 256 lanes from 0.5 to 10,000, whose lanes stop after 4 to 10 trips,
-   eagerly and compiled. *)
+   the scan's 256 steps. A scan of that step that draws a matrix of noise each
+   step compiles as one loop. On the host, Newton's iteration of one value
+   mapped over 256 lanes from 0.5 to 10,000, whose lanes stop after 4 to 10
+   trips, eagerly and compiled. *)
 
 let roots = 1024
 
@@ -525,6 +526,18 @@ let counted h =
        ~f:(fun (h, k) -> (Nx.tanh (Nx.matmul h h), Nx.add_s k 1l))
        (h, Nx.scalar Nx.int32 0l))
 
+(* The scan's step above, adding a draw to its row: each step draws from a scope
+   of its own. *)
+let drawing (k, (h, xs)) =
+  Nx.Rng.with_key k (fun () ->
+      fst
+        (Rune.scan'
+           ~f:(fun h x ->
+             let noise = Nx.rand Nx.float32 [| launch_dim; launch_dim |] in
+             let h = Nx.tanh (Nx.add (Nx.matmul h h) (Nx.add x noise)) in
+             (h, Nx.sum h))
+           ~init:h xs))
+
 let loop_setups ~place ~sync =
   let st = Random.State.make [| 16 |] in
   let compiled f shape lo hi () =
@@ -540,6 +553,22 @@ let loop_setups ~place ~sync =
     (Printf.sprintf "newton-%d" roots, compiled newton [| roots |] 0.5 4.);
     ( Printf.sprintf "iterate-%d" scan_steps,
       compiled counted [| launch_dim; launch_dim |] 0. 0.1 );
+    ( Printf.sprintf "drawing-scan-%d" scan_steps,
+      fun () ->
+        let uniform shape =
+          place (Nx.init Nx.float32 shape (fun _ -> Random.State.float st 0.1))
+        in
+        let k = Nx.Rng.key 7
+        and xs = uniform [| scan_steps; launch_dim; launch_dim |] in
+        let f =
+          Rune.jit
+            Nx.Ptree.(pair Nx.Rng.ptree (pair tensor tensor) @-> returns tensor)
+            drawing
+        in
+        let f h = f (k, (h, xs)) and h = uniform [| launch_dim; launch_dim |] in
+        ignore (f h);
+        sync ();
+        (f, h) );
   ]
 
 let lanes = 256
