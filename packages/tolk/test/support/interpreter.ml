@@ -405,10 +405,10 @@ and read ~check p i =
       | `Invalid, _ | _, `Invalid -> zero (Ops.dtype p.nodes.(i))
       | `Int o, `Int k -> (
           (match length with
-          | Some n when not Bigint.(geq k zero && lt k (Ops.to_z n)) ->
+          | Some n when not Bigint.(geq k zero && lt k (Shape.to_z n)) ->
               invalid_arg
                 (Format.asprintf "lane %a is outside a vector of %a"
-                   Bigint.pp_print k Bigint.pp_print (Ops.to_z n))
+                   Bigint.pp_print k Bigint.pp_print (Shape.to_z n))
           | _ -> ());
           match Bigint.add o k with
           | e when Bigint.(geq e zero && lt e (of_int (Array.length elements)))
@@ -468,7 +468,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
           (storage_slot storage, id index, [ id value_node ])
       | Shrink, [ storage; offset; length ]
         when Ops.op value_node = Op.Stack
-             && Bigint.equal (Ops.to_z length)
+             && Bigint.equal (Shape.to_z length)
                   (Bigint.of_int (List.length (Ops.src value_node))) ->
           (storage_slot storage, id offset, List.map id (Ops.src value_node))
       | Shrink, _ ->

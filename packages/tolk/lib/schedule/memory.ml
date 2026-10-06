@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 module Tlsf = Support_memory.Tlsf_allocator
 
 let rec collect_bufs u =

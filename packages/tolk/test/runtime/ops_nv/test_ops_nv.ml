@@ -256,7 +256,7 @@ let command_buffer queue cmds =
           let phase =
             let under = Ops.nth view 0 in
             if Ops.op under <> Shrink then 0
-            else match Ops.marg under with Shrink [ (Int p, _) ] -> p | _ -> 0
+            else match Shape.marg under with Shrink [ (Int p, _) ] -> p | _ -> 0
           in
           List.iter2
             (fun o w ->
@@ -397,7 +397,7 @@ let words =
                   (( = ) G.nvc6b5_launch_dma)
                   (methods ~subc:4
                      (command_buffer "COPY:0"
-                        [ Ops.store_call (buf ()) (buf ()) ])))));
+                        [ Shape.store_call (buf ()) (buf ()) ])))));
       cases ~name:hex "the compute channel releases a value whole" values
         (fun v ->
           equal (list action) [ Write64 (signal, v) ] (signalled "COMPUTE:0" v));
@@ -566,7 +566,7 @@ let refusals =
       test "a compute queue copies nothing" (fun () ->
           let buf () = Ops.new_buffer (Single "NV") 32 Int32 in
           refused ~why:"copies nothing" "COMPUTE:0"
-            [ Ops.store_call (buf ()) (buf ()) ]);
+            [ Shape.store_call (buf ()) (buf ()) ]);
     ]
 
 (* Storage *)
@@ -658,14 +658,14 @@ let storages =
           equal ~msg:"programs" int 2 (List.length (tagged "program"));
           let words = tagged "nv_local" in
           is_true ~msg:"a local memory word" (words <> []);
-          List.iter (fun u -> equal int 1 (Ops.max_numel u)) words);
+          List.iter (fun u -> equal int 1 (Shape.max_numel u)) words);
       test "a copy queue names its channel's words" (fun () ->
           equal (list storage)
             [ Ring "COPY:0"; Gp_put "COPY:0"; Put "COPY:0"; Doorbell "COPY:0" ]
-            (named "COPY:0" [ Ops.store_call (buf ()) (buf ()) ]));
+            (named "COPY:0" [ Shape.store_call (buf ()) (buf ()) ]));
       test "a placeholder NV's commands do not name has no storage" (fun () ->
           let cmdbuf =
-            Ops.placeholder ~device:(Single "NV")
+            Shape.placeholder ~device:(Single "NV")
               ~tag:(String "cmdbuf_compute_0") [ 4 ] Uint8
           in
           equal (option storage) None (Ops_nv.storage cmdbuf));
@@ -834,7 +834,7 @@ let ranged () =
   let r = Ops.range (Int 3) [ 7 ] in
   let window u =
     let start = Ops.mul r (Ops.int 32) in
-    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 32))) ]
+    Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 32))) ]
   in
   let buf () = Ops.new_buffer (Single "NV") 96 Int32 in
   let a = buf () and b = buf () and t = buf () and out = buf () in
@@ -914,7 +914,7 @@ let loops =
                (List.filter_map
                   (fun u ->
                     if Ops.tag u = Some (String "qmd_compute_0") then
-                      Some (Ops.max_numel u)
+                      Some (Shape.max_numel u)
                     else None)
                   (Ops.toposort ~calls:Enter submitted))));
     ]

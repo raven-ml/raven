@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 (* Load valid simplification *)
 
@@ -33,7 +34,7 @@ let simplify_valid_load buf start_idx valid =
       (List.map (fun (l, v) -> (v, l)) held)
   in
   if idx == start_idx || idx == simplify start_idx then None
-  else Some (index buf [ Ops.valid idx valid ])
+  else Some (index buf [ Shape.valid idx valid ])
 
 let indexing_simplify =
   Pattern_matcher.v

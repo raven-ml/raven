@@ -225,10 +225,10 @@ module Program = struct
     let variables u =
       List.filter_map
         (fun v ->
-          if Ops.is_variable v then Some (Ops.expr v, value v) else None)
+          if Shape.is_variable v then Some (Ops.expr v, value v) else None)
         (Ops.toposort ~calls:Enter u)
     in
-    match s with Int n -> n | Sym u -> Ops.sym_infer s (variables u)
+    match s with Int n -> n | Sym u -> Shape.sym_infer s (variables u)
 
   (* The split of a launch of [p] whose variables [value] reads, if [p]
      splits. *)
@@ -289,7 +289,7 @@ let cell cells name =
       i
 
 (* How a value of a view's offset or a range's trips reads the variable [u], as
-   [Ops.sym_infer] does: a variable the run leaves unset has no value. *)
+   [Shape.sym_infer] does: a variable the run leaves unset has no value. *)
 let strict cells u =
   let name = Ops.expr u in
   let i = cell cells name in
@@ -314,7 +314,7 @@ let binding cells u =
   in
   fun env -> if env.set.(i) then env.values.(i) else unset ()
 
-let offset cells (s : Ops.sint) = Ops.sym_compile s (strict cells)
+let offset cells (s : Ops.sint) = Shape.sym_compile s (strict cells)
 
 (* An input of a batch's address table, resolved at link: the parameter's slot
    whose buffers it is, its shard, its byte offset, the device whose address the
@@ -420,7 +420,7 @@ let is_slot u =
   && Option.is_none (Ops.tag u)
   && Ops.addrspace u <> Some Dtype.Alu
 
-let bytes u = Ops.max_numel u * Dtype.itemsize (Ops.dtype u)
+let bytes u = Shape.max_numel u * Dtype.itemsize (Ops.dtype u)
 
 let at b off n =
   if
@@ -540,7 +540,7 @@ let launch storage cells call prg d i =
   let value k v =
     if Program.bounds_block p k then fun _ -> 0 else reader cells i v
   in
-  let count (s : Ops.sint) = Ops.sym_compile s (reader cells i) in
+  let count (s : Ops.sint) = Shape.sym_compile s (reader cells i) in
   {
     program = p;
     args =
@@ -1136,7 +1136,7 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
     match time with
     | None -> ""
     | Some s ->
-        let per x = Float.of_int (Ops.sym_infer x vars) /. Float.max s 1e-20 in
+        let per x = Float.of_int (Shape.sym_infer x vars) /. Float.max s 1e-20 in
         Printf.sprintf " tm %s (%7.0f GFLOPS %4.0f GB/s)"
           (Helpers.time_to_str ~w:9 s)
           (per e.ops *. 1e-9)
@@ -1473,10 +1473,10 @@ let link_program ~devices name prg =
   let arg slot =
     match List.assoc_opt slot buffers with
     | Some (b : Device.Tiny_elf.param) ->
-        Ops.param
+        Shape.param
           ~shape:(List.map (fun n -> Ops.Int n) b.shape)
           ~device:(Single name) slot b.dtype
-    | None -> Ops.param ~shape:[ Ops.Int 1 ] ~device:(Single name) slot Uint8
+    | None -> Shape.param ~shape:[ Ops.Int 1 ] ~device:(Single name) slot Uint8
   in
   let n = List.fold_left (fun n slot -> max n (slot + 1)) 0 info.globals in
   let args = List.init n arg in

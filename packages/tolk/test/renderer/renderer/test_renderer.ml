@@ -5,13 +5,13 @@ open Tolk
    since a process reads the variable once. *)
 let assert_compile = "assert-compile"
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
-let sint = Testable.make ~pp:Ops.Sint.pp ~equal:Ops.Sint.equal
+let sint = Testable.make ~pp:Shape.Sint.pp ~equal:Shape.Sint.equal
 
 let estimates =
   let equal (e0 : Ops.estimates) (e1 : Ops.estimates) =
-    Ops.Sint.equal e0.ops e1.ops
-    && Ops.Sint.equal e0.lds e1.lds
-    && Ops.Sint.equal e0.mem e1.mem
+    Shape.Sint.equal e0.ops e1.ops
+    && Shape.Sint.equal e0.lds e1.lds
+    && Shape.Sint.equal e0.mem e1.mem
   in
   Testable.make ~pp:Ops.pp_estimates ~equal
 
@@ -25,7 +25,7 @@ let cpu = Result.get_ok (Helpers.Target.of_string "CPU")
 let f32 x = Ops.float ~dtype:Dtype.Float32 x
 
 let buffer ?(dtype = Dtype.Float32) slot size =
-  Ops.param ~shape:[ Int size ] slot dtype
+  Shape.param ~shape:[ Int size ] slot dtype
 
 let range ?(axis = 0) size = Ops.range (Int size) [ axis ]
 let at buf i = Ops.index buf [ i ]
@@ -75,7 +75,7 @@ let not_arithmetic () =
       .ops
 
 let lanes () =
-  let v = Ops.stack [ f32 1.; f32 2.; f32 3.; f32 4. ] in
+  let v = Shape.stack [ f32 1.; f32 2.; f32 3.; f32 4. ] in
   let sum = Ops.O.(v + v) in
   equal sint (Int 4) (Renderer.Estimates.of_uops [ v; sum ]).ops
 
@@ -166,7 +166,7 @@ let two_loads_of_one_buffer () =
   equal sint ~msg:"mem counts the buffer once" (Int 16) e.mem
 
 let registers_move_no_bytes () =
-  let reg = Ops.alloc ~addrspace:Reg [ Int 4 ] Dtype.Float32 in
+  let reg = Shape.alloc ~addrspace:Reg [ Int 4 ] Dtype.Float32 in
   let stored = Ops.store (at reg (Ops.int 0)) (f32 1.) in
   let x = load reg (Ops.int 1) in
   equal estimates (counts 0 0 0)
@@ -174,7 +174,7 @@ let registers_move_no_bytes () =
        (Ops.toposort ~calls:Enter (Ops.sink [ stored; x ])))
 
 let shared_memory_is_not_a_parameter () =
-  let smem = Ops.alloc ~addrspace:Local [ Int 4 ] Dtype.Float32 in
+  let smem = Shape.alloc ~addrspace:Local [ Int 4 ] Dtype.Float32 in
   let stored = Ops.store (at smem (Ops.int 0)) (f32 1.) in
   equal estimates (counts 0 4 0)
     (Renderer.Estimates.of_uops
@@ -210,7 +210,7 @@ let shrink_indexing () =
 (* An index that reads the result of a loop: the loop computes the index, but
    the End or Backedge that closes it bounds what the index's operations are. *)
 let an_index_after_a_loop () =
-  let acc = Ops.alloc ~addrspace:Reg [ Int 1 ] Dtype.Int32 in
+  let acc = Shape.alloc ~addrspace:Reg [ Int 1 ] Dtype.Int32 in
   let cell = at acc (Ops.int 0) in
   let ops closed =
     let total = Ops.load (Ops.after cell [ closed ]) [] in
@@ -278,7 +278,7 @@ let recorded = kernels "kernels.golden"
 let symbolic = kernels "symbolic_kernels.golden"
 let kernel file cell = Ops.src (Lazy.force file).(int_of_string (cell "src"))
 let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 8))
-let at_n value s = Ops.sym_infer s [ ("n", value) ]
+let at_n value s = Shape.sym_infer s [ ("n", value) ]
 
 (* A split kernel's counts are those of one block; the goldens count the block
    that runs the whole loop, of the iterations in the cell "split". *)
@@ -296,7 +296,7 @@ let recorded_kernels =
           let expect column s =
             equal int ~msg:column
               (int_of_string (cell column))
-              (Ops.sym_infer s (whole cell []))
+              (Shape.sym_infer s (whole cell []))
           in
           expect "ops" e.ops;
           expect "lds" e.lds;
@@ -310,7 +310,7 @@ let recorded_kernels =
           let expect column s =
             equal int ~msg:column
               (int_of_string (cell column))
-              (Ops.sym_infer s (whole cell [ ("n", value) ]))
+              (Shape.sym_infer s (whole cell [ ("n", value) ]))
           in
           expect "ops" e.ops;
           expect "lds" e.lds;
@@ -473,8 +473,8 @@ let access =
     [
       ("param", fun dtype -> buffer ~dtype 0 16);
       ("buffer", fun dtype -> Ops.new_buffer ~slot:3 (Single "CPU") 16 dtype);
-      ("local", fun dtype -> Ops.alloc ~addrspace:Local [ Int 16 ] dtype);
-      ("register", fun dtype -> Ops.alloc ~addrspace:Reg [ Int 16 ] dtype);
+      ("local", fun dtype -> Shape.alloc ~addrspace:Local [ Int 16 ] dtype);
+      ("register", fun dtype -> Shape.alloc ~addrspace:Reg [ Int 16 ] dtype);
     ]
   in
   let pp_storage ppf (name, _) = Format.pp_print_string ppf name in

@@ -258,7 +258,7 @@ let upat =
           rejects (fun () -> P.v ~src:[ P.wild ] ~each:P.wild ()));
       test "the constructors match what the node constructors build" (fun () ->
           let a = var "a" 0 4 and x = fvar "x" in
-          let p = Ops.param ~shape:(ints [ 4 ]) 0 Float32 in
+          let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
           let idx = Ops.index p [ a ] in
           let r = Ops.range (Int 4) [ 0 ] in
           List.iter
@@ -716,7 +716,7 @@ let rewriting =
                       Some
                         (Ops.call
                            (Ops.custom_function "f"
-                              [ Ops.param_like (m "x") 0 ])
+                              [ Shape.param_like (m "x") 0 ])
                            [ m "x" ]));
                 ])
           in
@@ -1173,7 +1173,7 @@ let fixed_points =
 (* The matchers of the module *)
 
 let module_matchers =
-  let p = Ops.param ~shape:(ints [ 4 ]) 0 Float32 in
+  let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
   group "module matchers"
     [
       test
@@ -1202,12 +1202,12 @@ let module_matchers =
                (After_sources Ops.pm_drop_after)));
       test "resolve_returned_after finds the one store into an output"
         (fun () ->
-          let v = Ops.O.(Ops.param ~shape:(ints [ 4 ]) 1 Float32 + float 1.) in
+          let v = Ops.O.(Shape.param ~shape:(ints [ 4 ]) 1 Float32 + float 1.) in
           let st = Ops.store p v in
           equal (option uop)
             (Some (Ops.after p [ st ]))
             (Ops.resolve_returned_after p (Ops.sink [ st ]));
-          let out = Ops.alloc ~slot:3 (ints [ 4 ]) Float32 in
+          let out = Shape.alloc ~slot:3 (ints [ 4 ]) Float32 in
           equal (option uop) (Some v)
             (Ops.resolve_returned_after out (Ops.sink [ Ops.store out v ]));
           equal (option uop) None

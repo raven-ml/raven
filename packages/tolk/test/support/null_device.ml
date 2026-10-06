@@ -68,7 +68,7 @@ let commands ?ring q =
   in
   let submit () =
     let cmdbuf = Hcq2.bufferize_cmdbuf q "cmdbuf" in
-    let bytes = Ops.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf) in
+    let bytes = Shape.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf) in
     (match ring with
     | Some n when bytes > n ->
         raise

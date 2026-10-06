@@ -262,7 +262,7 @@ let gen_point d =
   in
   List.fold_right
     (fun v env -> Gen.map (fun (b, e) -> b :: e) (Gen.pair (within v) env))
-    (Ops.variables d) (Gen.constant [])
+    (Shape.variables d) (Gen.constant [])
 
 let pp_case ppf (d, env) =
   Format.fprintf ppf "@[<v>%a@,at %a@]" (Testable.pp Uops.uop) d
@@ -280,7 +280,7 @@ let gen_case gen_division =
 let golden_divisions =
   let evaluable u =
     match Ops.op u with
-    | Op.Param -> Ops.is_variable u && Dtype.is_int (Ops.dtype u)
+    | Op.Param -> Shape.is_variable u && Dtype.is_int (Ops.dtype u)
     | o -> o = Op.Const || o = Op.Cast || Op.Set.mem o Op.Set.alu
   in
   List.concat_map recorded goldens
@@ -347,7 +347,7 @@ let gen_division var =
    variables, each constant a scalar. Lane [l] of its value is the value of the
    graph with each vector replaced by its lane [l], and each broadcast scalar by
    the scalar. *)
-let vector k = Ops.stack [ variables.(k); variables.((k + 1) mod 3) ]
+let vector k = Shape.stack [ variables.(k); variables.((k + 1) mod 3) ]
 
 let lane l u =
   let table = Ops.Tbl.create 16 in

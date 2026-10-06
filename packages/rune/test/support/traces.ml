@@ -156,11 +156,11 @@ let contents s =
    [Tensors.writes] reads back. An element left unwritten is [`Invalid]. *)
 let evaluate s us =
   let output u =
-    match Ops.numel u with
+    match Shape.numel u with
     | Ops.Int n ->
         let slot = Ops.unique_num () in
-        let p = Ops.param ~shape:[ Ops.Int n ] slot (Ops.dtype u) in
-        (slot, Array.make n `Invalid, Ops.store p (Ops.reshape u [ Ops.Int n ]))
+        let p = Shape.param ~shape:[ Ops.Int n ] slot (Ops.dtype u) in
+        (slot, Array.make n `Invalid, Ops.store p (Shape.reshape u [ Ops.Int n ]))
     | Ops.Sym _ -> invalid_arg "a value of symbolic shape"
   in
   let outputs = List.map output us in

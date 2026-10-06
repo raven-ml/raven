@@ -22,9 +22,9 @@ let x = var ~dtype:Int32 "x" 0 8
 let y = var ~dtype:Int32 "y" 0 8
 let cond = Ops.O.(a < int 4)
 let other = Ops.O.(b < int 2)
-let f = Ops.param 0 Dtype.Float32
-let g = Ops.param 1 Dtype.Float32
-let buf = Ops.param ~shape:[ Int 16 ] 2 Dtype.Float32
+let f = Shape.param 0 Dtype.Float32
+let g = Shape.param 1 Dtype.Float32
+let buf = Shape.param ~shape:[ Int 16 ] 2 Dtype.Float32
 let r0 = Ops.range (Int 4) [ 0 ]
 let r1 = Ops.range (Int 4) [ 1 ]
 let reduce_range = Ops.range ~axis_type:Reduce (Int 4) [ 2 ]
@@ -38,7 +38,7 @@ let raw ?arg op src = Ops.v ?arg ~src op
 (* Invalid values *)
 
 let invalid_values =
-  let gated = Ops.valid a cond in
+  let gated = Shape.valid a cond in
   group "invalid values"
     [
       test "invalid_gate matches a gated value, naming its sources" (fun () ->
@@ -55,25 +55,25 @@ let invalid_values =
                (Ops.Upat.match_ Symbolic.invalid_gate (Ops.where cond a b))));
       test "a binary operation moves inside the gate of its first operand"
         (fun () ->
-          folds_to Ops.O.(gated * int 10) (Ops.valid Ops.O.(a * int 10) cond);
-          folds_to Ops.O.(gated < int 3) (Ops.valid Ops.O.(a < int 3) cond));
+          folds_to Ops.O.(gated * int 10) (Shape.valid Ops.O.(a * int 10) cond);
+          folds_to Ops.O.(gated < int 3) (Shape.valid Ops.O.(a < int 3) cond));
       test "a binary operation moves inside the gate of its second operand"
         (fun () ->
-          folds_to Ops.O.(int 10 * gated) (Ops.valid Ops.O.(int 10 * a) cond));
+          folds_to Ops.O.(int 10 * gated) (Shape.valid Ops.O.(int 10 * a) cond));
       test "a multiply-add moves inside the gate of each operand (D25)"
         (fun () ->
           let mulacc x y z = Ops.alu x Mulacc [ y; z ] in
-          folds_to (mulacc (Ops.valid f cond) g g)
-            (Ops.valid (mulacc f g g) cond);
-          folds_to (mulacc f g (Ops.valid g cond))
-            (Ops.valid (mulacc f g g) cond));
+          folds_to (mulacc (Shape.valid f cond) g g)
+            (Shape.valid (mulacc f g g) cond);
+          folds_to (mulacc f g (Shape.valid g cond))
+            (Shape.valid (mulacc f g g) cond));
       test "a multiply-add of invalid is invalid (D25)" (fun () ->
           folds_to (raw Mulacc [ f; Ops.invalid; g ]) Ops.invalid);
       test "a cast moves inside the gate" (fun () ->
-          let gated = Ops.valid x Ops.O.(x < int32 4) in
+          let gated = Shape.valid x Ops.O.(x < int32 4) in
           folds_to
             (Ops.cast gated Dtype.Float16)
-            (Ops.valid (Ops.cast x Dtype.Float16) Ops.O.(x < int32 4)));
+            (Shape.valid (Ops.cast x Dtype.Float16) Ops.O.(x < int32 4)));
       test "an arithmetic operation of invalid is invalid" (fun () ->
           folds_to Ops.O.(Ops.invalid * int 2) Ops.invalid;
           folds_to Ops.O.(Ops.invalid + a) Ops.invalid;
@@ -97,34 +97,34 @@ let invalid_values =
       test "a selection by invalid is invalid" (fun () ->
           folds_to (raw Where [ Ops.invalid; a; b ]) Ops.invalid);
       test "a gate on a condition moves out of the selection" (fun () ->
-          let gated_cond = Ops.valid other cond in
+          let gated_cond = Shape.valid other cond in
           folds_to (Ops.where gated_cond a b)
-            (Ops.valid (Ops.where other a b) cond));
+            (Shape.valid (Ops.where other a b) cond));
       test "invalid in the true branch moves to the false branch" (fun () ->
           folds_to
             (Ops.where cond Ops.invalid a)
-            (Ops.valid a (Ops.logical_not cond)));
+            (Shape.valid a (Ops.logical_not cond)));
       test "a gate in a branch lifts out of the selection" (fun () ->
           folds_to
-            (Ops.where other (Ops.valid a cond) b)
-            (Ops.valid (Ops.where other a b)
+            (Ops.where other (Shape.valid a cond) b)
+            (Shape.valid (Ops.where other a b)
                Ops.O.(Ops.logical_not other lor cond));
           folds_to
-            (Ops.where other b (Ops.valid a cond))
-            (Ops.valid (Ops.where other b a) Ops.O.(other lor cond)));
+            (Ops.where other b (Shape.valid a cond))
+            (Shape.valid (Ops.where other b a) Ops.O.(other lor cond)));
       test "a gate independent of a reduction's ranges moves out of it"
         (fun () ->
-          let body = Ops.valid a cond in
+          let body = Shape.valid a cond in
           folds_to
             (Ops.reduce body Add [ reduce_range ])
-            (Ops.valid (Ops.reduce a Add [ reduce_range ]) cond));
+            (Shape.valid (Ops.reduce a Add [ reduce_range ]) cond));
       test "a gate clause on a reduction's range stays in it" (fun () ->
           let on_range = Ops.O.(reduce_range < int 2) in
-          let body = Ops.valid a Ops.O.(cond land on_range) in
+          let body = Shape.valid a Ops.O.(cond land on_range) in
           folds_to
             (Ops.reduce body Add [ reduce_range ])
-            (Ops.valid
-               (Ops.reduce (Ops.valid a on_range) Add [ reduce_range ])
+            (Shape.valid
+               (Ops.reduce (Shape.valid a on_range) Add [ reduce_range ])
                cond));
       test "a store to an invalid index does nothing" (fun () ->
           folds_to (Ops.store (Ops.index buf [ Ops.invalid ]) f) (raw Noop []));
@@ -139,14 +139,14 @@ let remove_invalid =
   group "pm_remove_invalid"
     [
       test "a gate's invalid is 0 of the gate's type" (fun () ->
-          equal uop (Ops.where cond x (int32 0)) (rewrite (Ops.valid x cond)));
+          equal uop (Ops.where cond x (int32 0)) (rewrite (Shape.valid x cond)));
       test "a stack's invalid elements are 0" (fun () ->
           let stack = raw Stack [ a; Ops.invalid; b ] in
           equal uop (raw Stack [ a; Ops.int 0; b ]) (rewrite stack));
       test "a float gate's invalid is 0.0 of its type" (fun () ->
           equal uop
             (Ops.where cond f (Ops.float ~dtype:Float32 0.))
-            (rewrite (Ops.valid f cond)));
+            (rewrite (Shape.valid f cond)));
     ]
 
 (* symbolic_simple *)
@@ -447,7 +447,7 @@ let casts =
             equal
               ~msg:(Printf.sprintf "0x%x" word)
               Dtypes.const (Interpreter.eval u)
-              (Interpreter.eval (Ops.simplify u))
+              (Interpreter.eval (Shape.simplify u))
           done);
       test "a bitcast of a constant to another width stays" (fun () ->
           let widened = Ops.bitcast (int32 1) Int64 in
@@ -507,7 +507,7 @@ let powers =
           by_symbolic (Ops.pow (Ops.float ~dtype:Float32 1.) f) (Ops.float 1.);
           by_symbolic (Ops.pow (Ops.float ~dtype:Float32 2.) f) (Ops.exp2 f));
       test "c ** x computes in float for an integer exponent" (fun () ->
-          let n = Ops.param 5 Dtype.Int32 in
+          let n = Shape.param 5 Dtype.Int32 in
           folds_to
             (Ops.pow (Ops.float 3.) n)
             (Ops.exp2 Ops.O.(Ops.cast n Weak_float * float (Float.log2 3.))));
@@ -542,9 +542,9 @@ let selections =
           folds_to (raw Where [ Ops.bool true; Ops.int 1; v ]) (Ops.int 1));
       test "a selection by a broadcast constant is the branch it picks"
         (fun () ->
-          let p = Ops.param ~shape:[ Int 4 ] 0 Dtype.Float32
-          and q = Ops.param ~shape:[ Int 4 ] 1 Dtype.Float32 in
-          let truth b = Ops.const_like ~dtype:Bool p (`Bool b) in
+          let p = Shape.param ~shape:[ Int 4 ] 0 Dtype.Float32
+          and q = Shape.param ~shape:[ Int 4 ] 1 Dtype.Float32 in
+          let truth b = Shape.const_like ~dtype:Bool p (`Bool b) in
           folds_to (Ops.where (truth true) p q) p;
           folds_to (Ops.where (truth false) p q) q;
           (* Assuming the outer condition false within its false branch, and the
@@ -555,12 +555,12 @@ let selections =
                (Ops.where (truth false) (Ops.where (truth true) p q) q))
             p);
       test "a selection by a padded constant is no constant's" (fun () ->
-          let p = Ops.param ~shape:[ Int 6 ] 0 Dtype.Float32
-          and q = Ops.param ~shape:[ Int 6 ] 1 Dtype.Float32 in
+          let p = Shape.param ~shape:[ Int 6 ] 0 Dtype.Float32
+          and q = Shape.param ~shape:[ Int 6 ] 1 Dtype.Float32 in
           let mask =
-            Ops.pad
-              (Ops.const_like ~dtype:Bool
-                 (Ops.param ~shape:[ Int 4 ] 2 Dtype.Float32)
+            Shape.pad
+              (Shape.const_like ~dtype:Bool
+                 (Shape.param ~shape:[ Int 4 ] 2 Dtype.Float32)
                  (`Bool true))
               [ Some (Ops.Int 1, Ops.Int 1) ]
           in
@@ -626,11 +626,11 @@ let terms =
           by_symbolic Ops.O.(b + (a * int 3) + a) Ops.O.(b + (a * int 4));
           by_symbolic Ops.O.(b + a + a) Ops.O.(b + (a * int 2)));
       test "a term's new coefficient is a weak constant" (fun () ->
-          let n = Ops.param 5 Dtype.Int32 in
+          let n = Shape.param 5 Dtype.Int32 in
           by_symbolic Ops.O.(n + n) Ops.O.(n * int 2);
           folds_to Ops.O.(n // int (-1)) Ops.O.(n * int (-1)));
       test "(x / y) / z stays" (fun () ->
-          let h = Ops.param 3 Dtype.Float32 in
+          let h = Shape.param 3 Dtype.Float32 in
           by_symbolic Ops.O.(f / g / h) Ops.O.(f / g / h));
       test "-(x + c) is -x + -c for integers, and stays for floats"
         (fun () ->
@@ -673,14 +673,14 @@ let symbolic_selections =
       test
         "a padded constant condition is not folded in the branches"
         (fun () ->
-          let x = Ops.param ~shape:[ Ops.Int 6 ] 0 Dtype.Float32 in
-          let y = Ops.param ~shape:[ Ops.Int 6 ] 1 Dtype.Float32 in
-          let inner = Ops.param ~shape:[ Ops.Int 4 ] 2 Dtype.Float32 in
+          let x = Shape.param ~shape:[ Ops.Int 6 ] 0 Dtype.Float32 in
+          let y = Shape.param ~shape:[ Ops.Int 6 ] 1 Dtype.Float32 in
+          let inner = Shape.param ~shape:[ Ops.Int 4 ] 2 Dtype.Float32 in
           (* One node for every use of the constant: assuming it true in a
              branch would rewrite it everywhere. *)
           let c =
-            Ops.pad
-              (Ops.const_like ~dtype:Bool inner (`Bool true))
+            Shape.pad
+              (Shape.const_like ~dtype:Bool inner (`Bool true))
               [ Some (Ops.Int 1, Ops.Int 1) ]
           in
           let sel = Ops.where c (Ops.where c x (Ops.where c y x)) y in
@@ -688,7 +688,7 @@ let symbolic_selections =
       test "a condition over an index is not folded in the branches" (fun () ->
           let load = Ops.index buf [ a ] in
           let c = Ops.O.(load < float 1.) in
-          let sel = Ops.where c (Ops.where c f g) (Ops.param 3 Dtype.Float32) in
+          let sel = Ops.where c (Ops.where c f g) (Shape.param 3 Dtype.Float32) in
           equal uop sel (symbolic sel));
       test "where g x 0 <> 0 is g land (x <> 0)" (fun () ->
           by_symbolic
@@ -943,7 +943,7 @@ let keeps_float_bits ?(by = sym) u points =
     points
 
 let floats =
-  let h = Ops.param 3 Dtype.Float32 and inf = Float.infinity in
+  let h = Shape.param 3 Dtype.Float32 and inf = Float.infinity in
   let cond = Ops.O.(f < float 1.) in
   group "floats keep IEEE values"
     [
@@ -1227,8 +1227,8 @@ let given_valid =
           let loaded =
             Ops.cast
               (Ops.index
-                 (Ops.param ~shape:[ Int 100 ] 1 Dtype.Int32)
-                 [ Ops.valid Ops.O.(x + int (-30)) inside ])
+                 (Shape.param ~shape:[ Int 100 ] 1 Dtype.Int32)
+                 [ Shape.valid Ops.O.(x + int (-30)) inside ])
               Weak_int
           in
           let valid =
@@ -1304,10 +1304,10 @@ let simplify_valid_pm =
             (rewrite Ops.O.((a < int 5) land (a < int 3))));
       test "a gated index is simplified knowing its gate holds" (fun () ->
           equal uop
-            (Ops.valid (Ops.int 0) Ops.O.(a < int 5))
-            (rewrite (Ops.valid Ops.O.(a // int 5) Ops.O.(a < int 5))));
+            (Shape.valid (Ops.int 0) Ops.O.(a < int 5))
+            (rewrite (Shape.valid Ops.O.(a // int 5) Ops.O.(a < int 5))));
       test "a gated committed value is left" (fun () ->
-          let gated = Ops.valid Ops.O.(x // int32 5) Ops.O.(x < int32 5) in
+          let gated = Shape.valid Ops.O.(x // int32 5) Ops.O.(x < int32 5) in
           equal uop gated (rewrite gated));
     ]
 
@@ -1319,12 +1319,12 @@ let drop_and_clauses =
         (fun () ->
           let gate = Ops.O.((r0 < int 3) land (r1 < int 2) land cond) in
           equal uop
-            (Ops.valid r0 (Ops.uprod (Ops.bool true) [ Ops.O.(r0 < int 3) ]))
-            (rewrite (Ops.valid r0 gate)));
+            (Shape.valid r0 (Ops.uprod (Ops.bool true) [ Ops.O.(r0 < int 3) ]))
+            (rewrite (Shape.valid r0 gate)));
       test "a gate whose clauses all run in the value's ranges is left"
         (fun () ->
           let gated =
-            Ops.valid Ops.O.(r0 + r1) Ops.O.((r0 < int 3) land (r1 < int 2))
+            Shape.valid Ops.O.(r0 + r1) Ops.O.((r0 < int 3) land (r1 < int 2))
           in
           equal uop gated (rewrite gated));
     ]
@@ -1337,22 +1337,22 @@ let move_where_on_load =
       test "a clause moves into the index's gate" (fun () ->
           equal uop
             (Ops.where (Ops.bool true)
-               (index (Ops.valid a (Ops.uprod (Ops.bool true) [ cond ])))
+               (index (Shape.valid a (Ops.uprod (Ops.bool true) [ cond ])))
                (Ops.float ~dtype:Float32 0.))
             (rewrite (Ops.where cond (index a) (Ops.float 0.))));
       test "a selection of 0 first moves the negated condition" (fun () ->
           equal uop
             (Ops.where (Ops.bool true)
                (index
-                  (Ops.valid a
+                  (Shape.valid a
                      (Ops.uprod (Ops.bool true) [ Ops.logical_not cond ])))
                (Ops.float ~dtype:Float32 0.))
             (rewrite (Ops.where cond (Ops.float 0.) (index a))));
       test "a clause the index already requires is dropped" (fun () ->
-          let idx = Ops.valid a cond in
+          let idx = Shape.valid a cond in
           equal uop
             (Ops.where (Ops.bool true)
-               (index (Ops.valid a (Ops.uprod cond [ other ])))
+               (index (Shape.valid a (Ops.uprod cond [ other ])))
                (Ops.float ~dtype:Float32 0.))
             (rewrite
                (Ops.where Ops.O.(cond land other) (index idx) (Ops.float 0.))));
@@ -1425,13 +1425,13 @@ let sym_group =
         (fun () ->
           simplifies_to
             (Ops.store index (Ops.where cond f (Ops.load index [])))
-            (Ops.store (Ops.index buf [ Ops.valid a cond ]) f));
+            (Ops.store (Ops.index buf [ Shape.valid a cond ]) f));
       test "storing invalid does nothing" (fun () ->
           simplifies_to (Ops.store index Ops.invalid) (raw Noop []));
       test "storing a gated value stores where its gate holds" (fun () ->
           simplifies_to
-            (Ops.store index (Ops.valid f cond))
-            (Ops.store (Ops.index buf [ Ops.valid a cond ]) f));
+            (Ops.store index (Shape.valid f cond))
+            (Ops.store (Ops.index buf [ Shape.valid a cond ]) f));
       test "reciprocals of products stay" (fun () ->
           let d = Ops.reciprocal Ops.O.(float 1. + f) in
           List.iter
@@ -1513,17 +1513,17 @@ let installation =
     [
       test "simplify is symbolic's rewrite" (fun () ->
           let e = Ops.O.((a * int 4) + b < int 16 lor (a + a < int 3)) in
-          equal uop (symbolic e) (Ops.simplify e));
+          equal uop (symbolic e) (Shape.simplify e));
       test "resolve decides from the symbolic rules" (fun () ->
-          equal bool true (Ops.resolve Ops.O.(a < int 9));
-          equal bool false (Ops.resolve ~default:true Ops.O.(a * int 2 < int 0)));
+          equal bool true (Shape.resolve Ops.O.(a < int 9));
+          equal bool false (Shape.resolve ~default:true Ops.O.(a * int 2 < int 0)));
       test "a constant and a sink of constants and stacks are themselves"
         (fun () ->
           let consts =
             Ops.sink
               [ Ops.int 3; raw Stack []; raw Stack [ Ops.int 1; Ops.int 2 ] ]
           in
-          equal uop consts (Ops.simplify consts));
+          equal uop consts (Shape.simplify consts));
     ]
 
 (* tinygrad's tests that make no simplification of their own: they test the
@@ -1548,7 +1548,7 @@ let other_tests =
           differ Ops.O.(i1 * i2) Ops.O.(i2 * i1));
       test "divide_exact gives up on what does not divide" (fun () ->
           let a = var "a" 1 8 and b = var "b" 1 8 and x = var "x" (-20) 0 in
-          let none u d = is_none ~pp:(Testable.pp uop) (Ops.divide_exact u d) in
+          let none u d = is_none ~pp:(Testable.pp uop) (Shape.divide_exact u d) in
           none a b;
           none Ops.O.(a + int 2) a;
           none Ops.O.(x * int (-1)) a;
@@ -1556,7 +1556,7 @@ let other_tests =
           none Ops.O.((a * int 10) - int 1) Ops.O.(a * int 10));
       test "variables lists each variable once, sorted by name" (fun () ->
           let a = var "a" 0 10 and b = var "b" 0 10 and c = var "c" 0 10 in
-          let vars u = Ops.variables u in
+          let vars u = Shape.variables u in
           equal (list uop) [] (vars (Ops.int 0));
           equal (list uop) [ a ] (vars Ops.O.(a * int 3));
           equal (list uop) [ a; b; c ] (vars Ops.O.(a + b + c));
@@ -1575,13 +1575,13 @@ let other_tests =
           let shifted =
             Ops.O.(Ops.bitcast (Ops.bitcast a Uint32 lsl int 1) Int32 + int 2)
           in
-          equal int 6 (Ops.sym_infer (Sym shifted) [ ("a", 2) ]);
+          equal int 6 (Shape.sym_infer (Sym shifted) [ ("a", 2) ]);
           equal int 0xFFFF_FFFF
-            (Ops.sym_infer (Sym (Ops.bitcast b Uint32)) [ ("b", -1) ]);
+            (Shape.sym_infer (Sym (Ops.bitcast b Uint32)) [ ("b", -1) ]);
           equal int (-1)
-            (Ops.sym_infer (Sym (Ops.bitcast c Int32)) [ ("c", 0xFFFF_FFFF) ]);
+            (Shape.sym_infer (Sym (Ops.bitcast c Int32)) [ ("c", 0xFFFF_FFFF) ]);
           equal int 1069547520
-            (Ops.sym_infer
+            (Shape.sym_infer
                (Sym (Ops.bitcast (Ops.cast (Ops.float 1.5) Float32) Uint32))
                []));
       test "sym_infer evaluates an expression nested 200 deep" (fun () ->
@@ -1590,7 +1590,7 @@ let other_tests =
             Ops.O.((Ops.maximum (e * (b + a)) (int (-33554432)) * int (-1)) + a)
           in
           let rec nest n e = if n = 0 then e else nest (n - 1) (step e) in
-          equal int 1 (Ops.sym_infer (Sym (nest 200 a)) [ ("a", 1); ("b", 0) ]));
+          equal int 1 (Shape.sym_infer (Sym (nest 200 a)) [ ("a", 1); ("b", 0) ]));
       test "the bounds of an unrolled arange's index" (fun () ->
           let g = var "gidx0" 0 2559 in
           let alu0 = Ops.O.(g * int (-1)) in
@@ -1626,9 +1626,9 @@ let other_tests =
             | Const (`Float v) -> Float.is_nan v
             | _ -> false
           in
-          is_true (is_nan (Ops.simplify (Ops.log2 (Ops.float (-1.)))));
+          is_true (is_nan (Shape.simplify (Ops.log2 (Ops.float (-1.)))));
           equal uop (Ops.float Float.infinity)
-            (Ops.simplify (Ops.reciprocal (Ops.float 0.))));
+            (Shape.simplify (Ops.reciprocal (Ops.float 0.))));
       test "an index simplified under its gate keeps its value where it holds"
         (fun () ->
           let r0 = Ops.range (Int 30) [ 0 ]
@@ -1640,10 +1640,10 @@ let other_tests =
               ((alu11 + int 1) // int 7 * int (-31))
               + ((((alu11 + int 218) // int 224) + r0) % int 30 * int 1568))
           in
-          let gated = Ops.valid idx Ops.O.((r2 < int 1) land (r1 < int 6)) in
+          let gated = Shape.valid idx Ops.O.((r2 < int 1) land (r1 < int 6)) in
           let simplified = sym gated in
           equal uop
-            (Ops.valid
+            (Shape.valid
                Ops.O.(r0 * int 1568)
                Ops.O.((r2 < int 1) land (r1 < int 6)))
             simplified;
@@ -1679,7 +1679,7 @@ let laws =
           let e = constants s in
           keeps_value ~name:"constants" e (symbolic e));
       scenario_law "simplify is symbolic's rewrite" (fun e ->
-          equal uop (symbolic e) (Ops.simplify e));
+          equal uop (symbolic e) (Shape.simplify e));
       prop "commutative orders the operands of a weak integer sum"
         Gen.(pair weak_scenario weak_scenario)
         (fun (s0, s1) ->

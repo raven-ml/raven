@@ -77,7 +77,7 @@ let movements =
         [ Ops.O.(Ops.int 2 - r0); r1 ];
       moved "movement_reshape_of_padded.golden" (ints [ 8 ])
         (Reshape (ints [ 2; 4 ]))
-        [ Ops.valid Ops.O.(r0 - Ops.int 1) Ops.O.(r0 >= Ops.int 1); r1 ];
+        [ Shape.valid Ops.O.(r0 - Ops.int 1) Ops.O.(r0 >= Ops.int 1); r1 ];
     ]
 
 (* Movement laws
@@ -94,12 +94,12 @@ let movements =
 let concrete u =
   List.map
     (function Ops.Int n -> n | Sym _ -> invalid_arg "a symbolic shape")
-    (Ops.shape u)
+    (Shape.shape u)
 
-let source in_shape = Ops.param ~shape:[ Int (size in_shape) ] 0 Int32
+let source in_shape = Shape.param ~shape:[ Int (size in_shape) ] 0 Int32
 let elements in_shape = Array.init (size in_shape) (fun j -> z (j + 1))
-let view in_shape = Ops.reshape (source in_shape) (ints in_shape)
-let shape_of in_shape m = concrete (Ops.mop (view in_shape) m)
+let view in_shape = Shape.reshape (source in_shape) (ints in_shape)
+let shape_of in_shape m = concrete (Shape.mop (view in_shape) m)
 
 let rec coords = function
   | [] -> [ [] ]
@@ -129,7 +129,7 @@ let reads in_shape out_shape idxs =
    source holds no zero, so a zero is an element a pad adds, which a read at an
    invalid index gives. *)
 let moved in_shape m =
-  let moved = Ops.mop (view in_shape) m in
+  let moved = Shape.mop (view in_shape) m in
   match Tensors.eval ~buffers:[ (0, elements in_shape) ] moved with
   | [ elements ] ->
       List.map (fun v -> (v :> Dtype.const)) (Array.to_list elements)
@@ -551,14 +551,14 @@ let writes =
    on the CPU, that state one rule of run_rangeify at a time. *)
 
 let cpu = Ops.Single "CPU"
-let p slot shape = Ops.param ~device:cpu ~shape:(ints shape) slot Float32
+let p slot shape = Shape.param ~device:cpu ~shape:(ints shape) slot Float32
 
 let stored value =
   let out =
-    Ops.param ~device:cpu ~shape:[ Int (size (concrete value)) ] 0 Float32
+    Shape.param ~device:cpu ~shape:[ Int (size (concrete value)) ] 0 Float32
   in
   Ops.sink
-    [ Ops.after out [ Ops.store (Ops.reshape out (Ops.shape value)) value ] ]
+    [ Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ] ]
 
 let rangeified value = Indexing.run_rangeify (stored value)
 let all op u =
@@ -568,7 +568,7 @@ let count op u = List.length (all op u)
 let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
 
 let range_of r =
-  (Ops.axis_id r, Ops.axis_type r, Bigint.to_int (Ops.to_z (Ops.nth r 0)))
+  (Ops.axis_id r, Ops.axis_type r, Bigint.to_int (Shape.to_z (Ops.nth r 0)))
 
 let ranges_of u = List.sort compare (List.map range_of (all Range u))
 let ranges_witness = list (triple (list int) axis_type int)
@@ -593,7 +593,7 @@ let new_ranges =
         (fun () ->
           equal ranges_witness
             [ ([ 0 ], Weak, 4); ([ 1 ], Reduce, 8) ]
-            (ranges_of (rangeified (Ops.rop (p 1 [ 4; 8 ]) Add [ 1 ]))));
+            (ranges_of (rangeified (Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ]))));
       test "consumers that index a node alike share its ranges" (fun () ->
           let x = exp2 (p 1 [ 4; 4 ]) in
           equal int 0 (count Stage (rangeified Ops.O.(x + x))));
@@ -601,19 +601,19 @@ let new_ranges =
         (fun () ->
           let x = exp2 (p 1 [ 4; 4 ]) in
           let stages =
-            all Stage (rangeified Ops.O.(x + Ops.permute x [ 1; 0 ]))
+            all Stage (rangeified Ops.O.(x + Shape.permute x [ 1; 0 ]))
           in
           equal (list int) [ 2 ] (List.map staged_over stages));
       test
         "consumers that index a node differently on one axis store it on every \
          axis" (fun () ->
           let x = exp2 (p 1 [ 4; 4 ]) in
-          let stages = all Stage (rangeified Ops.O.(x + Ops.flip x [ 1 ])) in
+          let stages = all Stage (rangeified Ops.O.(x + Shape.flip x [ 1 ])) in
           equal (list int) [ 2 ] (List.map staged_over stages));
     ]
 
 let below_broadcasts =
-  let sum = Ops.reshape (Ops.rop (p 1 [ 4; 8 ]) Add [ 1 ]) (ints [ 4; 1 ]) in
+  let sum = Shape.reshape (Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ]) (ints [ 4; 1 ]) in
   let staged value =
     List.map (fun s -> Ops.op (Ops.nth s 0)) (all Stage (rangeified value))
   in
@@ -628,13 +628,13 @@ let below_broadcasts =
       test "a reduction below a broadcast elementwise node is stored" (fun () ->
           equal ops [ Reduce ] (staged Ops.O.(exp2 sum + p 2 [ 4; 8 ])));
       test "an elementwise node that an expand broadcasts is stored" (fun () ->
-          let e = Ops.expand (exp2 (p 1 [ 4 ])) (ints [ 3; 4 ]) in
+          let e = Shape.expand (exp2 (p 1 [ 4 ])) (ints [ 3; 4 ]) in
           equal ops [ Exp2 ] (staged Ops.O.(e + p 2 [ 3; 4 ])));
     ]
 
 let storage =
-  let out = Ops.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
-  let dest = Ops.reshape out (ints [ 4; 4 ]) in
+  let out = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
+  let dest = Shape.reshape out (ints [ 4; 4 ]) in
   let assign value = Ops.sink [ Ops.after out [ Ops.store dest value ] ] in
   (* The op of the value a store stores, and whether it is read from a stage. *)
   let stored_value u =
@@ -651,7 +651,7 @@ let storage =
     [
       test "a value stored into storage it reads is stored whole first"
         (fun () ->
-          let value = Ops.O.(Ops.permute dest [ 1; 0 ] + Ops.float 1.) in
+          let value = Ops.O.(Shape.permute dest [ 1; 0 ] + Ops.float 1.) in
           equal staged_op
             [ (true, Add) ]
             (stored_value (Indexing.run_rangeify (assign value))));
@@ -672,7 +672,7 @@ let storage =
    comparison per halving. *)
 
 let constants n =
-  Ops.stack
+  Shape.stack
     (List.init n (fun k ->
          Ops.float ~dtype:Float32 (float_of_int ((3 * k) + 7))))
 
@@ -736,19 +736,19 @@ let rewrites =
       test "a stage lives on its source's device and may be inlined" (fun () ->
           equal (list opts_witness)
             [ { device = Some cpu; addrspace = Global; keep = Removable } ]
-            (opts (rangeified Ops.O.(x + Ops.permute x [ 1; 0 ]))));
+            (opts (rangeified Ops.O.(x + Shape.permute x [ 1; 0 ]))));
       test "a stage of a value placed nowhere lives on the sink's device"
         (fun () ->
           let c =
-            exp2 (Ops.expand (Ops.float ~dtype:Float32 2.) (ints [ 4; 4 ]))
+            exp2 (Shape.expand (Ops.float ~dtype:Float32 2.) (ints [ 4; 4 ]))
           in
           equal (list opts_witness)
             [ { device = Some cpu; addrspace = Global; keep = Removable } ]
-            (opts (rangeified Ops.O.(c + Ops.permute c [ 1; 0 ]))));
+            (opts (rangeified Ops.O.(c + Shape.permute c [ 1; 0 ]))));
       test "a reduction of leading axes becomes a reduction over ranges"
         (fun () ->
           let reductions =
-            all Reduce (rangeified (Ops.rop (p 1 [ 4; 8 ]) Add [ 1 ]))
+            all Reduce (rangeified (Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ]))
           in
           equal
             (list (list (Testable.make ~pp:Op.pp ~equal:( = ))))
@@ -764,7 +764,7 @@ let rewrites =
                  | _ -> -1)
                reductions));
       test "a pad becomes a selection of its source and of zero" (fun () ->
-          let u = rangeified (Ops.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ]) in
+          let u = rangeified (Shape.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ]) in
           equal int 0 (count Pad u);
           equal (list Dtypes.const)
             [ `Float 0. ]
@@ -774,16 +774,16 @@ let rewrites =
                  else None)
                (all Where u)));
       test "a stack becomes a selection of its sources" (fun () ->
-          let u = rangeified (Ops.stack [ p 1 [ 4 ]; p 2 [ 4 ]; p 3 [ 4 ] ]) in
+          let u = rangeified (Shape.stack [ p 1 [ 4 ]; p 2 [ 4 ]; p 3 [ 4 ] ]) in
           equal int 0
             (List.length
                (List.filter (fun s -> Ops.dtype s = Float32) (all Stack u))));
       test "movements are removed" (fun () ->
           let u =
             rangeified
-              (Ops.flip
-                 (Ops.permute
-                    (Ops.shrink (p 1 [ 6; 4 ]) [ Some (Int 1, Int 5); None ])
+              (Shape.flip
+                 (Shape.permute
+                    (Shape.shrink (p 1 [ 6; 4 ]) [ Some (Int 1, Int 5); None ])
                     [ 1; 0 ])
                  [ 0 ])
           in
@@ -799,7 +799,7 @@ let rewrites =
             (fun op -> not_contains ~sub:op printed)
             [ "Ops.CALL"; "Ops.AFTER"; "Ops.MSELECT"; "Ops.MSTACK" ]);
       test "a pad that gets no ranges stays a pad" (fun () ->
-          let u = Ops.sink [ Ops.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ] ] in
+          let u = Ops.sink [ Shape.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ] ] in
           equal int 1 (count Pad (Indexing.run_rangeify u)));
       test "a source of a gather across devices is stored on its device"
         (fun () ->
@@ -832,7 +832,7 @@ let rewrites =
       test "a reduction of leading axes without ranges is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Indexing.run_rangeify
-                (Ops.sink [ Ops.rop (p 1 [ 4; 8 ]) Add [ 1 ] ])));
+                (Ops.sink [ Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ] ])));
     ]
 
 let () =

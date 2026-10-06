@@ -136,10 +136,10 @@ let variables k =
       match Ops.vmax v with
       | `Int z -> (Ops.expr v, Bigint.to_int z)
       | _ -> invalid_arg ("variable " ^ Ops.expr v ^ " is no integer"))
-    (Ops.variables k)
+    (Shape.variables k)
 
 let writes k =
-  let vars = List.map (fun v -> (Ops.expr v, Ops.vmax v)) (Ops.variables k) in
+  let vars = List.map (fun v -> (Ops.expr v, Ops.vmax v)) (Shape.variables k) in
   Interpreter.writes ~vars ~buffers:(inputs k) k
 
 let close_values v0 v1 =

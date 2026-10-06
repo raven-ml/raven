@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let is_weak dt = List.mem dt Dtype.weaks
 let weak u = is_weak (dtype u)

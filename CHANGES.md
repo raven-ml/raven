@@ -1146,6 +1146,13 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Ops` keeps the node language: arguments, construction,
+  bounds, ranges, patterns and rewriting. What reads a shape needs
+  simplification and moves to the new module `Shape`: `Shape.shape`, the
+  movements (`Shape.reshape`, `Shape.mop`, ...), `Shape.simplify`,
+  `Shape.resolve`, `Shape.Sint`, storage of a shape, sharding, the bindings
+  of variables, divisibility, `Shape.call_with_outputs` and
+  `Shape.program_info_of_sink`.
 - **Breaking:** `SPEC=2` and `SPEC=3` no longer check each node as
   `Ops.v` builds it; any nonzero `SPEC` checks the graphs passed between
   stages. The check needed every module of tolk linked into every program.
@@ -1384,7 +1391,7 @@ thread.
   offsets and variables a run passes it, including those that move with the
   trips of a range, are not looked up and simplified again on each run. A
   jitted scan of 256 small steps on the host went from 5.1 ms to 0.27 ms on an
-  M1 Max. `Ops.sym_compile` computes a symbolic integer as `Ops.sym_infer` does,
+  M1 Max. `Shape.sym_compile` computes a symbolic integer as `Shape.sym_infer` does,
   simplified once.
 - GPU matrix-vector products take their layout from the matrix's and split
   the reduce, also one inside another reduce, until the GPU is busy: gpt-oss-20b

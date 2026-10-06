@@ -22,7 +22,7 @@
     of an elementwise operation, a cast or a bit reinterpretation of stacks,
     that operation of their lanes [k].
 
-    The value of an index where its gate fails ({!Tolk.Ops.valid}) is
+    The value of an index where its gate fails ({!Tolk.Shape.valid}) is
     [`Invalid], which poisons what computes with it: an operation of an
     [`Invalid] operand, a reduction of an [`Invalid] value, and a selection by
     an [`Invalid] condition, is [`Invalid]. A selection picks its branch,

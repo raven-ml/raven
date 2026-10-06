@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
@@ -53,7 +54,7 @@ let cleanup_dead_axes b =
       let reshape = List.map (fun (s, r) -> if dead r then Int 1 else s) axes in
       Some
         (expand
-           (Ops.reshape (replace b ~src:(value :: List.map snd live)) reshape)
+           (Shape.reshape (replace b ~src:(value :: List.map snd live)) reshape)
            (shape b))
 
 let pm_gate_substitute =

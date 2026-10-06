@@ -13,7 +13,7 @@
     calls that build it. *)
 
 val render : ?simplify:bool -> Ops.t -> string
-(** [render ~simplify u] is [u] written as an expression, after {!Ops.simplify}
+(** [render ~simplify u] is [u] written as an expression, after {!Shape.simplify}
     if [simplify] (default [true]). Each node is written from its sources:
     - a {!Op.Param}, {!Op.Buffer} or {!Op.Alloc} is its name, or [p], [b] or [a]
       followed by its slot if it has none;
@@ -48,7 +48,7 @@ val render : ?simplify:bool -> Ops.t -> string
     - any other node is written as {!Ops.pp} prints it.
 
     Raises [Invalid_argument] if [simplify] and the symbolic rules are not
-    installed, as {!Ops.simplify}; so does writing a movement whose argument
+    installed, as {!Shape.simplify}; so does writing a movement whose argument
     sizes are nodes. *)
 
 val srender : Ops.sint -> string

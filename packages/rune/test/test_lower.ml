@@ -12,6 +12,7 @@ open Nx_test
 open Traces
 open Rune_internals
 module Ops = Tolk.Ops
+module Shape = Tolk.Shape
 module Dtype = Tolk.Dtype
 module Op = Tolk.Op
 
@@ -167,7 +168,7 @@ let captures =
               equal (list int) [ 5 ]
                 (List.map
                    (function Ops.Int n -> n | Ops.Sym _ -> -1)
-                   (Ops.shape u))
+                   (Shape.shape u))
           | _ -> fail "one capture on one device");
       test "a capture of storage 4 bytes past a 16-byte boundary has phase 4"
         (fun () ->
@@ -397,13 +398,13 @@ let kernel_buffers y =
   let out =
     Ops.new_buffer (Single "CPU") n (Option.get (Lower.dtype (Nx.dtype y)))
   in
-  let view = Ops.reshape out [ Ops.Int n ] in
+  let view = Shape.reshape out [ Ops.Int n ] in
   let linear, _ =
     Tolk.Schedule.create_linear_with_vars
       (Ops.sink
          [
            Ops.after view
-             [ Ops.store view (Ops.reshape (Traces.node y) [ Ops.Int n ]) ];
+             [ Ops.store view (Shape.reshape (Traces.node y) [ Ops.Int n ]) ];
          ])
   in
   let rec bodies u =
@@ -413,7 +414,7 @@ let kernel_buffers y =
   List.map
     (fun k ->
       List.filter_map
-        (fun u -> if Ops.op u = Op.Param then Some (Ops.max_numel u) else None)
+        (fun u -> if Ops.op u = Op.Param then Some (Shape.max_numel u) else None)
         (Ops.toposort ~calls:Enter k))
     (List.concat_map bodies (Ops.src linear))
 

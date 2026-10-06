@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 module V = Dtype.Value
 
 exception Not_a_number

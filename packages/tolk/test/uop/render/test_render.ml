@@ -197,7 +197,7 @@ let simplified =
       Golden.cases "trees_rendered.golden" simplified_tree;
       prop "writes the simplified node, or raises as simplifying does"
         expression (fun u ->
-          match Ops.simplify u with
+          match Shape.simplify u with
           | s ->
               cover "renders" true;
               equal string (Render.render ~simplify:false s) (Render.render u)
@@ -226,9 +226,9 @@ let srender =
       test "writes a node as render does" (fun () ->
           equal string "a" (Render.srender (Sym a));
           equal string "(a*12)"
-            (Render.srender Ops.Sint.(prod [ Sym a; Int 3; Int 4 ]));
+            (Render.srender Shape.Sint.(prod [ Sym a; Int 3; Int 4 ]));
           equal string "(a*12)"
-            (Render.srender Ops.Sint.(prod [ Int 3; Int 4; Sym a ])));
+            (Render.srender Shape.Sint.(prod [ Int 3; Int 4; Sym a ])));
     ]
 
 (* pp_uops *)

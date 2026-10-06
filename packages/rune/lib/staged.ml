@@ -252,7 +252,7 @@ let stage ~here ~inside s (r : Trips.request) =
         let count = numel c.shape in
         let slot, v = parameter p Nx.int64 [||] in
         let u = Lower.uop s v in
-        let failed = Ops.lt u (Ops.const_like u (`Int (Bigint.of_int count))) in
+        let failed = Ops.lt u (Shape.const_like u (`Int (Bigint.of_int count))) in
         let kept (Nx.P x) =
           let slot, v = parameter p (Nx.dtype x) [||] in
           let next = Ops.where failed (Lower.uop s v) (Lower.uop s x) in
@@ -281,7 +281,7 @@ let stage ~here ~inside s (r : Trips.request) =
     | Rows _ | Until _ -> range
   in
   let window b start m =
-    Ops.shrink b [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int m)) ]
+    Shape.shrink b [ Some (Ops.Sym start, Ops.Sym Ops.O.(start + int m)) ]
   in
   let args = ref [] and stores = ref [] in
   let pass slot u = args := (slot, u) :: !args in
@@ -320,7 +320,7 @@ let stage ~here ~inside s (r : Trips.request) =
       (fun i (init, (read, Nx.P c)) ->
         let u = params.(i) and shape = ints (Array.to_list (Nx.shape c)) in
         let b = Ops.new_buffer device (numel (Nx.shape c)) (Ops.dtype u) in
-        pass read (Ops.after b [ Ops.store (Ops.reshape b shape) (node init) ]);
+        pass read (Ops.after b [ Ops.store (Shape.reshape b shape) (node init) ]);
         let v = nexts.(i) in
         let v =
           if copied.(i) then begin
@@ -333,7 +333,7 @@ let stage ~here ~inside s (r : Trips.request) =
           else v
         in
         stores := Ops.store u v :: !stores;
-        fun e -> Ops.reshape (Ops.after b [ e ]) shape)
+        fun e -> Shape.reshape (Ops.after b [ e ]) shape)
       (List.combine init carry)
   in
   (* Each trip reads its row of each stacked input, from a copy whose rows are
@@ -346,14 +346,14 @@ let stage ~here ~inside s (r : Trips.request) =
             (Array.sub shape 1 (Array.length shape - 1))
             (node xs)
         in
-        let m = Ops.max_numel u / n in
+        let m = Shape.max_numel u / n in
         let k = stride u m in
         let flat =
-          if k = m then Ops.reshape u [ Ops.Int (n * m) ]
+          if k = m then Shape.reshape u [ Ops.Int (n * m) ]
           else
-            Ops.reshape
-              (Ops.pad
-                 (Ops.reshape u (ints [ n; m ]))
+            Shape.reshape
+              (Shape.pad
+                 (Shape.reshape u (ints [ n; m ]))
                  [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
               [ Ops.Int (n * k) ]
         in
@@ -378,9 +378,9 @@ let stage ~here ~inside s (r : Trips.request) =
           pass slot (window b Ops.O.(trip * int k) m);
           stores := Ops.store (Lower.uop s w) u :: !stores;
           fun e ->
-            Ops.reshape
-              (Ops.shrink
-                 (Ops.reshape (Ops.after b [ e ]) (ints [ n; k ]))
+            Shape.reshape
+              (Shape.shrink
+                 (Shape.reshape (Ops.after b [ e ]) (ints [ n; k ]))
                  [ None; Some (Ops.Int 0, Ops.Int m) ])
               (ints (Array.to_list stacked)))
       ys
@@ -401,7 +401,7 @@ let stage ~here ~inside s (r : Trips.request) =
             let align, phase =
               match List.assoc_opt slot !args with
               | Some arg when a.addrspace = Some Tolk.Dtype.Global ->
-                  Ops.storage_phase arg
+                  Shape.storage_phase arg
               | _ -> (a.align, a.phase)
             in
             (u, Ops.replace u ~arg:(Ops.Param { a with slot; align; phase }))
@@ -432,7 +432,7 @@ let stage ~here ~inside s (r : Trips.request) =
         ( slot,
           Ops.new_buffer
             (Option.get (Ops.device u))
-            (Ops.max_numel u) (Ops.dtype u) ))
+            (Shape.max_numel u) (Ops.dtype u) ))
       !args
   in
   let linear, _ =
@@ -479,18 +479,18 @@ let stage ~here ~inside s (r : Trips.request) =
         let count = numel c.shape and shape = ints (Array.to_list c.shape) in
         let spread (Nx.P x) =
           let u = Lower.broadcast (Lower.uop s x) [| count |] in
-          Nx.P (Lower.traced s p (Nx.dtype x) (Ops.reshape u shape))
+          Nx.P (Lower.traced s p (Nx.dtype x) (Shape.reshape u shape))
         in
         let data, rest = Trips.split (List.length c.data) rest in
         let ok =
           Ops.ne
-            (Ops.arange ~dtype:Int64 count)
+            (Shape.arange ~dtype:Int64 count)
             (Lower.broadcast (Lower.uop s first) [| count |])
         in
         Lower.op s
           (Nx.Op.Check
              {
-               ok = Lower.traced s p Nx.bool (Ops.reshape ok shape);
+               ok = Lower.traced s p Nx.bool (Shape.reshape ok shape);
                data = List.map spread data;
                fail = c.fail;
              });

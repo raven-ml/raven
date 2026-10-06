@@ -532,10 +532,10 @@ let chained () =
 (* variable_shrink binds v to 3 and multiplies by 2.0. *)
 let rebinding () =
   let big = unique ~constant:2.0 "variable_shrink" in
-  let v = List.find Ops.is_bound_var (Ops.toposort ~calls:Enter big) in
+  let v = List.find Shape.is_bound_var (Ops.toposort ~calls:Enter big) in
   let five =
     Ops.substitute ~calls:Skip ~pass:Fixed_point big
-      [ (v, Ops.bind (Ops.unbound v) (`Int (Bigint.of_int 5))) ]
+      [ (v, Shape.bind (Shape.unbound v) (`Int (Bigint.of_int 5))) ]
   in
   let vals =
     with_settings ~debug:3 ~scache:1 (fun () ->
@@ -766,7 +766,7 @@ let ended_store () =
 
 let bound_argument () =
   let n =
-    Ops.bind
+    Shape.bind
       (Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8)))
       (`Int (Bigint.of_int 3))
   in
@@ -835,7 +835,7 @@ let flatten =
 
 let cpu = Ops.Single "CPU"
 let buffer = Ops.new_buffer ~slot:1 cpu 16 Float32
-let alloc = Ops.alloc ~device:cpu [ Int 16 ] Float32
+let alloc = Shape.alloc ~device:cpu [ Int 16 ] Float32
 let into p = Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.float 1.0)
 
 let store_after =
@@ -856,21 +856,21 @@ let store_after =
         false
         (Ops.after alloc [ copy_call; into alloc ]);
       is_store_after "an After of a call on moved call-local storage" false
-        (Ops.after (Ops.reshape alloc [ Int 4; Int 4 ]) [ copy_call ]);
+        (Ops.after (Shape.reshape alloc [ Int 4; Int 4 ]) [ copy_call ]);
       is_store_after "a store" false (into buffer);
       is_store_after "a buffer" false buffer;
     ]
 
 (* contiguous_mops_to_view *)
 
-let grid = Ops.reshape (Ops.new_buffer ~slot:1 cpu 64 Float32) [ Int 8; Int 8 ]
-let rows = Ops.shrink grid [ Some (Int 2, Int 6); None ]
-let columns = Ops.shrink grid [ None; Some (Int 2, Int 6) ]
+let grid = Shape.reshape (Ops.new_buffer ~slot:1 cpu 64 Float32) [ Int 8; Int 8 ]
+let rows = Shape.shrink grid [ Some (Int 2, Int 6); None ]
+let columns = Shape.shrink grid [ None; Some (Int 2, Int 6) ]
 let to_cpu1 u = Ops.copy_to_device u (Single "CPU:1")
 
 let bytes =
   Ops.bitcast
-    (Ops.shrink (Ops.new_buffer ~slot:1 cpu 64 Uint8) [ Some (Int 8, Int 24) ])
+    (Shape.shrink (Ops.new_buffer ~slot:1 cpu 64 Uint8) [ Some (Int 8, Int 24) ])
     Float32
 
 (* A value of shape [4; 8] sharded on axis 0 over two devices. *)
@@ -879,7 +879,7 @@ let sharded_grid =
     (fun n -> Ops.op n = Unshard)
     (Ops.toposort ~calls:Enter (program "shard_to_one"))
 
-let sharded = Ops.reshape sharded_grid [ Int 32 ]
+let sharded = Shape.reshape sharded_grid [ Int 32 ]
 
 (* [through_buffer view] checks that [view] reads its buffer only through a
    reshape, shrink, bitcast or reassembly of shards. *)
@@ -929,7 +929,7 @@ let gen_view =
         x :: xs
   in
   let dims u =
-    List.map (function Ops.Int n -> n | Sym _ -> 0) (Ops.shape u)
+    List.map (function Ops.Int n -> n | Sym _ -> 0) (Shape.shape u)
   in
   let movement u =
     let shape = dims u in
@@ -945,14 +945,14 @@ let gen_view =
                   Some (Ops.Int start, Ops.Int stop))
                 shape)
          in
-         Ops.shrink u bounds);
+         Shape.shrink u bounds);
         (let+ order = permutation axes in
-         Ops.permute u order);
+         Shape.permute u order);
         (let+ flipped = subsequence axes in
-         Ops.flip u flipped);
-        constant (Ops.reshape u [ Int (List.fold_left ( * ) 1 shape) ]);
+         Shape.flip u flipped);
+        constant (Shape.reshape u [ Int (List.fold_left ( * ) 1 shape) ]);
         (let+ pad = int_range 0 2 in
-         Ops.pad u (List.map (fun _ -> Some (Ops.Int pad, Ops.Int 0)) shape));
+         Shape.pad u (List.map (fun _ -> Some (Ops.Int pad, Ops.Int 0)) shape));
       ]
   in
   let rec moves u k =
@@ -965,7 +965,7 @@ let gen_view =
    let* shape = of_list [ [ 24 ]; [ 4; 6 ]; [ 2; 3; 4 ] ] in
    let* k = int_range 1 3 in
    let b = Ops.new_buffer ~slot:1 ~phase cpu 24 Float32 in
-   moves (Ops.reshape b (List.map (fun n -> Ops.Int n) shape)) k)
+   moves (Shape.reshape b (List.map (fun n -> Ops.Int n) shape)) k)
   |> with_pp (Testable.pp uop)
 
 (* A stage's alignment and phase hold of the storage it gets: a view of the
@@ -974,7 +974,7 @@ let gen_view =
 let stage_phase_holds v =
   let stage = Ops.contiguous v in
   assume (Ops.op stage = Stage);
-  let align, phase = Ops.storage_phase stage in
+  let align, phase = Shape.storage_phase stage in
   let holds what (a, p) =
     equal int
       ~msg:(what ^ ": its alignment, up to the stage's")
@@ -987,7 +987,7 @@ let stage_phase_holds v =
   match Schedule.contiguous_mops_to_view stage v with
   | Some view ->
       cover "a view" true;
-      holds "the view" (Ops.storage_phase view)
+      holds "the view" (Shape.storage_phase view)
   | None -> cover "a view" false
 
 let views =
@@ -1005,7 +1005,7 @@ let views =
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 columns) columns));
       test "a permutation is not contiguous" (fun () ->
-          let moved = Ops.permute grid [ 1; 0 ] in
+          let moved = Shape.permute grid [ 1; 0 ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 moved) moved));
       test "a copy to one device of a sharded value has no view" (fun () ->
@@ -1031,13 +1031,13 @@ let views =
       test
         "a copy of a sharded value whose shards are not contiguous has no view"
         (fun () ->
-          let moved = Ops.permute sharded_grid [ 1; 0 ] in
+          let moved = Shape.permute sharded_grid [ 1; 0 ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view
                (Ops.copy_to_device moved (Multi [ "CPU"; "CPU:1" ]))
                moved));
       test "a copy of part of a sharded axis has no view" (fun () ->
-          let part = Ops.shrink sharded_grid [ Some (Int 0, Int 2); None ] in
+          let part = Shape.shrink sharded_grid [ Some (Int 0, Int 2); None ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view
                (Ops.copy_to_device part (Multi [ "CPU"; "CPU:1" ]))
@@ -1046,7 +1046,7 @@ let views =
           let v =
             Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8))
           in
-          let prefix = Ops.shrink grid [ Some (Int 0, Sym v); None ] in
+          let prefix = Shape.shrink grid [ Some (Int 0, Sym v); None ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 prefix) prefix));
       test
@@ -1054,21 +1054,21 @@ let views =
          (D54)" (fun () ->
           let doubles = Ops.new_buffer ~slot:1 cpu 8 Float64 in
           let stage =
-            Ops.contiguous (Ops.shrink doubles [ Some (Int 1, Int 8) ])
+            Ops.contiguous (Shape.shrink doubles [ Some (Int 1, Int 8) ])
           in
-          equal (pair int int) (8, 0) (Ops.storage_phase stage));
+          equal (pair int int) (8, 0) (Shape.storage_phase stage));
       test
         "a stage of rows padded apart, starting one double past a boundary, \
          is storage of its own on one (D54)" (fun () ->
           let doubles = Ops.new_buffer ~slot:1 cpu 3 Float64 in
           let rows =
-            Ops.reshape
-              (Ops.shrink doubles [ Some (Int 1, Int 3) ])
+            Shape.reshape
+              (Shape.shrink doubles [ Some (Int 1, Int 3) ])
               [ Int 2; Int 1 ]
           in
-          let padded = Ops.pad rows [ None; Some (Int 0, Int 1) ] in
-          let stage = Ops.contiguous (Ops.reshape padded [ Int 4 ]) in
-          equal (pair int int) (16, 0) (Ops.storage_phase stage));
+          let padded = Shape.pad rows [ None; Some (Int 0, Int 1) ] in
+          let stage = Ops.contiguous (Shape.reshape padded [ Int 4 ]) in
+          equal (pair int int) (16, 0) (Shape.storage_phase stage));
       prop
         "a stage's alignment and phase hold of the storage it gets, a view or \
          its own (D54)"
@@ -1080,7 +1080,7 @@ let views =
           equal (list int) [ 4; 8 ]
             (List.map
                (function Ops.Int n -> n | Sym _ -> fail "a symbolic size")
-               (Ops.shape view));
+               (Shape.shape view));
           let buffers = filled rows in
           equal values (Tensors.eval ~buffers rows) (Tensors.eval ~buffers view));
     ]
@@ -1089,7 +1089,7 @@ let views =
 
 let bound_var name =
   List.find
-    (fun n -> Ops.is_bound_var n && Ops.expr n = name)
+    (fun n -> Shape.is_bound_var n && Ops.expr n = name)
     (Ops.toposort ~calls:Enter (program "variable_two"))
 
 (* variable_two binds v to 4 and w to 7; [rebound value] binds, in w's place,
@@ -1098,7 +1098,7 @@ let rebound value =
   Ops.substitute ~calls:Skip ~pass:Fixed_point (program "variable_two")
     [
       ( bound_var "w",
-        Ops.bind
+        Shape.bind
           (Ops.variable "v" (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 10)))
           (`Int (Bigint.of_int value)) );
     ]
@@ -1144,7 +1144,7 @@ let variables =
    adds its row of [xs] to [c]. *)
 let scan_loop ?(axis = 100) ?(n = 3) () =
   let k = 4 in
-  let p slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
       [
@@ -1157,7 +1157,7 @@ let scan_loop ?(axis = 100) ?(n = 3) () =
   and ys = Ops.new_buffer cpu (n * k) Float32 in
   let r = Ops.range ~axis_type:Loop (Int n) [ axis ] in
   let row b =
-    Ops.shrink b
+    Shape.shrink b
       [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
   in
   let e =
@@ -1197,14 +1197,14 @@ let scan_linear () =
    added to the carry in two halves, one inner trip each. *)
 let nested_linear () =
   let k = 4 and n = 3 in
-  let q slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let q slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let inner = Ops.sink [ Ops.store (q 0) Ops.O.(q 0 + q 1) ] in
-  let p0 = Ops.param ~shape:[ Int k ] ~device:cpu 0 Float32
-  and p1 = Ops.param ~shape:[ Int (2 * k) ] ~device:cpu 1 Float32 in
+  let p0 = Shape.param ~shape:[ Int k ] ~device:cpu 0 Float32
+  and p1 = Shape.param ~shape:[ Int (2 * k) ] ~device:cpu 1 Float32 in
   let r' = Ops.range ~axis_type:Loop (Int 2) [ 101 ]
   and r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row r w b =
-    Ops.shrink b
+    Shape.shrink b
       [ Some (Sym Ops.O.(r * int w), Sym Ops.O.((r * int w) + int w)) ]
   in
   let outer =
@@ -1254,14 +1254,14 @@ let renumbered_loop () =
    [b]: each adds a row of its own buffer to the carry. *)
 let two_loops (a, b) =
   let k = 4 and n = 6 in
-  let q slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let q slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let inner = Ops.sink [ Ops.store (q 0) Ops.O.(q 0 + q 1) ] in
-  let p0 = Ops.param ~shape:[ Int k ] ~device:cpu 0 Float32 in
+  let p0 = Shape.param ~shape:[ Int k ] ~device:cpu 0 Float32 in
   let loop axis slot =
     let r = Ops.range ~axis_type:Loop (Int n) [ axis ] in
-    let p = Ops.param ~shape:[ Int (n * k) ] ~device:cpu slot Float32 in
+    let p = Shape.param ~shape:[ Int (n * k) ] ~device:cpu slot Float32 in
     let row =
-      Ops.shrink p
+      Shape.shrink p
         [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
     in
     Ops.end_ (Ops.call ~precompile:true inner [ p0; row ]) [ r ]

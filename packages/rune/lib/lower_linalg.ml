@@ -7,13 +7,13 @@ open Tolk
 
 let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l
-let zero u = Ops.const_like u (`Float 0.)
-let float u x = Ops.const_like u (`Float x)
-let transpose u = Ops.transpose u (-2) (-1)
+let zero u = Shape.const_like u (`Float 0.)
+let float u x = Shape.const_like u (`Float x)
+let transpose u = Shape.transpose u (-2) (-1)
 
 (* The batch axes of the matrices of [u], their rows and their columns. *)
 let matrix u =
-  let dims = Ops.max_shape u in
+  let dims = Shape.max_shape u in
   let r = List.length dims in
   ( List.filteri (fun i _ -> i < r - 2) dims,
     List.nth dims (r - 2),
@@ -22,9 +22,9 @@ let matrix u =
 (* [block u rows cols] is the rows and columns of the matrices of [u] in the
    bounds [rows] and [cols], each all of them if [None]. *)
 let block u rows cols =
-  let r = Ops.ndim u in
+  let r = Shape.ndim u in
   let bound = Option.map (fun (lo, hi) -> (Ops.Int lo, Ops.Int hi)) in
-  Ops.shrink u
+  Shape.shrink u
     (List.init r (fun i ->
          if i = r - 2 then bound rows
          else if i = r - 1 then bound cols
@@ -34,14 +34,14 @@ let block u rows cols =
    out in rows of one more element. *)
 let diagonal u =
   let batch, n, _ = matrix u in
-  let flat = Ops.reshape u (ints (batch @ [ n * n ])) in
+  let flat = Shape.reshape u (ints (batch @ [ n * n ])) in
   let padded =
-    Ops.pad flat
+    Shape.pad flat
       (List.map (fun _ -> None) batch @ [ Some (Ops.Int 0, Ops.Int n) ])
   in
-  Ops.reshape
+  Shape.reshape
     (block
-       (Ops.reshape padded (ints (batch @ [ n; n + 1 ])))
+       (Shape.reshape padded (ints (batch @ [ n; n + 1 ])))
        None
        (Some (0, 1)))
     (ints (batch @ [ n ]))
@@ -51,26 +51,26 @@ let entry u i j = block u (Some (i, i + 1)) (Some (j, j + 1))
 
 (* The row and the column of each element of a matrix of [m] rows and [n]
    columns. *)
-let row_index m = Ops.reshape (Ops.arange ~dtype:Int32 m) (ints [ m; 1 ])
-let column_index n = Ops.reshape (Ops.arange ~dtype:Int32 n) (ints [ 1; n ])
+let row_index m = Shape.reshape (Shape.arange ~dtype:Int32 m) (ints [ m; 1 ])
+let column_index n = Shape.reshape (Shape.arange ~dtype:Int32 n) (ints [ 1; n ])
 let is u i = Ops.eq u (Ops.int i)
-let eye dt n m = Ops.cast (Ops.eq (row_index n) (Ops.arange ~dtype:Int32 m)) dt
+let eye dt n m = Ops.cast (Ops.eq (row_index n) (Shape.arange ~dtype:Int32 m)) dt
 
 (* -1 below zero and 1 elsewhere: the sign of a nonzero element, and 1 for a
    zero one. *)
 let direction x = Ops.where (Ops.lt x (zero x)) (float x (-1.)) (float x 1.)
-let fdiv x y = Lower_arith.binary Fdiv x (Ops.expand y (Ops.shape x))
+let fdiv x y = Lower_arith.binary Fdiv x (Shape.expand y (Shape.shape x))
 
 (* [at axis u i] is the element [i] of [u] along [axis], one per matrix, the
    axis kept of size one. *)
 let at axis u i =
   Lower_index.gather axis
-    (Ops.expand i
-       (List.mapi (fun k d -> if k = axis then Ops.Int 1 else d) (Ops.shape u)))
+    (Shape.expand i
+       (List.mapi (fun k d -> if k = axis then Ops.Int 1 else d) (Shape.shape u)))
     u
 
 (* A loop's count: [next i] follows [i], and [first ()] is where it starts. *)
-let next i = Ops.add i (Ops.const_like i (`Int Bigint.one))
+let next i = Ops.add i (Shape.const_like i (`Int Bigint.one))
 let first () = Ops.const ~dtype:Int32 (`Int Bigint.zero)
 
 (* Failing matrices
@@ -91,14 +91,14 @@ let defined ok u =
   | None -> u
   | Some ok ->
       let ok =
-        if Ops.ndim u < Ops.ndim ok then Ops.squeeze ~axis:(-1) ok else ok
+        if Shape.ndim u < Shape.ndim ok then Shape.squeeze ~axis:(-1) ok else ok
       in
-      Ops.where (Ops.expand ok (Ops.shape u)) u (float u Float.nan)
+      Ops.where (Shape.expand ok (Shape.shape u)) u (float u Float.nan)
 
 (* [over_matrix op u] is each matrix of [u] reduced by [op] to one element. *)
 let over_matrix op u =
-  let r = Ops.ndim u in
-  Ops.unsqueeze (Ops.unsqueeze (Ops.rop u op [ r - 2; r - 1 ]) (-1)) (-1)
+  let r = Shape.ndim u in
+  Shape.unsqueeze (Shape.unsqueeze (Shape.rop u op [ r - 2; r - 1 ]) (-1)) (-1)
 
 (* Whether every element of each matrix of [x] is finite: below infinity in
    magnitude, which NaN is not. *)
@@ -138,9 +138,9 @@ let roundoff dt = Float.ldexp 1. (-(snd (Dtype.finfo dt) + 1))
    does: each row of [a] against each column of [b] along a new last axis,
    broadcast over the batch axes, multiplied and summed by [sum]. *)
 
-let dot ?(sum = fun u axis -> Ops.rop u Op.Add [ axis ]) a b =
-  let p = Ops.mul (Ops.unsqueeze a (-2)) (Ops.unsqueeze (transpose b) (-3)) in
-  sum p (Ops.ndim p - 1)
+let dot ?(sum = fun u axis -> Shape.rop u Op.Add [ axis ]) a b =
+  let p = Ops.mul (Shape.unsqueeze a (-2)) (Shape.unsqueeze (transpose b) (-3)) in
+  sum p (Shape.ndim p - 1)
 
 let matmul a b =
   let dt = dtype a in
@@ -159,16 +159,16 @@ let matmul a b =
    already zero below the diagonal takes no reflection. A loop repeats the step
    ({!Loop.repeat}), which reads [i] from a count it carries. *)
 
-let sum_last u = Ops.unsqueeze (Ops.rop u Op.Add [ Ops.ndim u - 1 ]) (-1)
-let max_last u = Ops.unsqueeze (Ops.rop u Op.Max [ Ops.ndim u - 1 ]) (-1)
+let sum_last u = Shape.unsqueeze (Shape.rop u Op.Add [ Shape.ndim u - 1 ]) (-1)
+let max_last u = Shape.unsqueeze (Shape.rop u Op.Max [ Shape.ndim u - 1 ]) (-1)
 
 let householder ~device a =
   let batch, m, n = matrix a in
-  let idx = Ops.arange ~dtype:Int32 m in
+  let idx = Shape.arange ~dtype:Int32 m in
   let rows = row_index m and columns = column_index n in
   let reflect q r i =
     let at_i = Ops.eq idx i in
-    let c = Ops.squeeze ~axis:(-1) (at (Ops.ndim r - 1) r i) in
+    let c = Shape.squeeze ~axis:(-1) (at (Shape.ndim r - 1) r i) in
     let x = Ops.where (Ops.ge idx i) c (zero c) in
     (* The reflector is built from the column divided by its largest magnitude,
        so that no square, sum or quotient overflows or underflows; only the
@@ -193,13 +193,13 @@ let householder ~device a =
     let v =
       fdiv (Ops.where at_i u0 scaled) (Ops.where active u0 (float u0 1.))
     in
-    let v = Ops.unsqueeze v (-1) in
+    let v = Shape.unsqueeze v (-1) in
     let tau =
       Ops.where active
         (fdiv (Ops.mul sgn u0) (Ops.where active norm (float norm 1.)))
         (zero norm)
     in
-    let w = Ops.mul (Ops.unsqueeze tau (-1)) v in
+    let w = Ops.mul (Shape.unsqueeze tau (-1)) v in
     let diagonal =
       Ops.where active
         (Ops.mul (Ops.mul sgn (float sgn (-1.))) (Ops.mul scale norm))
@@ -207,14 +207,14 @@ let householder ~device a =
     in
     let reflected =
       Ops.where (Ops.eq rows i)
-        (Ops.unsqueeze diagonal (-1))
+        (Shape.unsqueeze diagonal (-1))
         (Ops.where (Ops.lt rows i) r (zero r))
     in
     let applied = Ops.sub r (dot w (Ops.contiguous (dot (transpose v) r))) in
     (* A column that takes no reflection leaves q and r as they are: its v holds
        what the column held, and a NaN or an infinity there would spread through
        a product with a zero tau. *)
-    let on = Ops.unsqueeze active (-1) in
+    let on = Shape.unsqueeze active (-1) in
     [
       Ops.where on (Ops.sub q (dot (Ops.contiguous (dot q v)) (transpose w))) q;
       Ops.where (Ops.eq columns i) reflected
@@ -226,7 +226,7 @@ let householder ~device a =
     | [ q; r; i ] -> reflect q r i
     | _ -> invalid_arg "Lower_linalg.householder"
   in
-  let q = Ops.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
+  let q = Shape.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
   match Loop.repeat device (Int.min m n) [ q; a; first () ] step with
   | q :: r :: _ -> (q, r)
   | _ -> invalid_arg "Lower_linalg.householder"
@@ -292,8 +292,8 @@ let tangents ~alpha ~beta ~gamma =
 
 (* [part u axis lo hi] is the elements [lo] to [hi], excluded, of [axis]. *)
 let part u axis lo hi =
-  Ops.shrink u
-    (List.init (Ops.ndim u) (fun d ->
+  Shape.shrink u
+    (List.init (Shape.ndim u) (fun d ->
          if d = axis then Some (Ops.Int lo, Ops.Int hi) else None))
 
 (* [rotations n t] is the cosines and the sines, along the last axis, of a round
@@ -303,14 +303,14 @@ let part u axis lo hi =
    mirror image, and the middle position of an odd [n] [1] and [0]. Each
    position reads its pair's tangent once. *)
 let rotations n t =
-  let r = Ops.ndim t and h = n / 2 in
-  let k = Ops.arange ~dtype:Int32 n in
+  let r = Shape.ndim t and h = n / 2 in
+  let k = Shape.arange ~dtype:Int32 n in
   let first = Ops.lt k (Ops.int h) and mirror = Ops.ge k (Ops.int (n - h)) in
   let along u =
     let shape = List.mapi (fun d s -> if d = r - 1 then Ops.Int n else s) in
-    Ops.expand
-      (Ops.reshape u (ints (List.init r (fun d -> if d = r - 1 then n else 1))))
-      (shape (Ops.shape t))
+    Shape.expand
+      (Shape.reshape u (ints (List.init r (fun d -> if d = r - 1 then n else 1))))
+      (shape (Shape.shape t))
   in
   let pair =
     Ops.where mirror
@@ -327,35 +327,35 @@ let rotations n t =
   let c = fdiv one (Ops.sqrt Ops.O.(one + (t * t))) in
   let both =
     Ops.contiguous
-      (Ops.cat ~axis:(r - 1)
-         (Ops.unsqueeze c (r - 1))
-         [ Ops.unsqueeze (Ops.mul c t) (r - 1) ])
+      (Shape.cat ~axis:(r - 1)
+         (Shape.unsqueeze c (r - 1))
+         [ Shape.unsqueeze (Ops.mul c t) (r - 1) ])
   in
-  let row k = Ops.squeeze ~axis:(r - 1) (part both (r - 1) k (k + 1)) in
+  let row k = Shape.squeeze ~axis:(r - 1) (part both (r - 1) k (k + 1)) in
   (row 0, row 1)
 
 (* [turn u axis (cosines, sines)] rotates each pair of positions [k] and [n - 1
    - k] of [axis] of [u], each the other's mirror image, to [c u_k - s u_j] and
    [s u_k + c u_j]: [cosines] and [sines] multiply [u] and its mirror image. *)
 let turn u axis (cosines, sines) =
-  Ops.O.((cosines * u) + (sines * Ops.flip u [ axis ]))
+  Ops.O.((cosines * u) + (sines * Shape.flip u [ axis ]))
 
 (* [advance u axis] moves each position of [axis] but the first one place along
    the others, the last to the second: every position, the last to the first,
    for an odd size. Position [k] reads the one it moves from, a gather that each
    element reads once. *)
 let advance u axis =
-  let n = List.nth (Ops.max_shape u) axis in
-  let k = Ops.arange ~dtype:Int32 n in
+  let n = List.nth (Shape.max_shape u) axis in
+  let k = Shape.arange ~dtype:Int32 n in
   let from =
     if n mod 2 = 1 then Ops.O.((k + int (Int.pred n)) % int n)
     else
       let others = n - 1 and back = n - 3 in
       Ops.where (is k 0) k Ops.O.(((k + int back) % int others) + int 1)
   in
-  let along = List.init (Ops.ndim u) (fun d -> if d = axis then n else 1) in
+  let along = List.init (Shape.ndim u) (fun d -> if d = axis then n else 1) in
   Lower_index.gather axis
-    (Ops.expand (Ops.reshape from (ints along)) (Ops.shape u))
+    (Shape.expand (Shape.reshape from (ints along)) (Shape.shape u))
     u
 
 (* [rotate u axis (cosines, sines)] is a round's rotation of [axis] of [u],
@@ -381,17 +381,17 @@ let svd ~device ~full_matrices a =
   let x = Lower_arith.widen a in
   let wdt = dtype x in
   let q, r = householder ~device (if m >= n then x else transpose x) in
-  let square k = Ops.expand (eye wdt k k) (ints (batch @ [ k; k ])) in
-  let rank = Ops.ndim r in
-  let columns x = Ops.unsqueeze x (-2) in
+  let square k = Shape.expand (eye wdt k k) (ints (batch @ [ k; k ])) in
+  let rank = Shape.ndim r in
+  let columns x = Shape.unsqueeze x (-2) in
   let round = function
     | [ y ] ->
         (* The columns of the pairs, each one's mate alongside it: one kernel
            sums their products and computes the tangents from the sums. *)
         let u = part y (rank - 2) 0 num in
         let first x = part x (rank - 1) 0 (num / 2) in
-        let a = first u and b = first (Ops.flip u [ rank - 1 ]) in
-        let sums x = Ops.rop x Op.Add [ rank - 2 ] in
+        let a = first u and b = first (Shape.flip u [ rank - 1 ]) in
+        let sums x = Shape.rop x Op.Add [ rank - 2 ] in
         let cosines, sines =
           rotations num
             (Ops.contiguous
@@ -407,7 +407,7 @@ let svd ~device ~full_matrices a =
     List.hd
       (Loop.repeat device (rounds num)
          [
-           Ops.cat ~axis:(rank - 2)
+           Shape.cat ~axis:(rank - 2)
              (block (triu r) (Some (0, num)) (Some (0, num)))
              [ square num ];
          ]
@@ -423,12 +423,12 @@ let svd ~device ~full_matrices a =
          (16. *. float_of_int num *. roundoff wdt)
          (dot (transpose u) u))
   in
-  let norms = Ops.sqrt (Ops.rop (Ops.mul u u) Op.Add [ rank - 2 ]) in
+  let norms = Ops.sqrt (Shape.rop (Ops.mul u u) Op.Add [ rank - 2 ]) in
   let order = Lower_reduce.argsort ~descending:true ~axis:(rank - 2) norms in
   let s = Lower_index.gather (rank - 2) order norms in
   let by_order x =
     Lower_index.gather (rank - 1)
-      (Ops.expand (Ops.unsqueeze order (-2)) (ints (batch @ [ num; num ])))
+      (Shape.expand (Shape.unsqueeze order (-2)) (ints (batch @ [ num; num ])))
       x
   in
   (* The sorted columns are orthogonal: the reflections that triangularize them
@@ -436,7 +436,7 @@ let svd ~device ~full_matrices a =
      diagonal, is the direction, and which completes the columns of zero
      norm. *)
   let q_u, r_u = householder ~device (by_order u) in
-  let u = Ops.mul q_u (Ops.unsqueeze (direction (diagonal r_u)) (-2)) in
+  let u = Ops.mul q_u (Shape.unsqueeze (direction (diagonal r_u)) (-2)) in
   let v = by_order v in
   let inside =
     Ops.bitwise_and
@@ -450,7 +450,7 @@ let svd ~device ~full_matrices a =
         Some (Ops.Int 0, Ops.Int (q_num - num));
       ]
   in
-  let u = dot q (Ops.where inside (Ops.pad u pad) (square q_num)) in
+  let u = dot q (Ops.where inside (Shape.pad u pad) (square q_num)) in
   let u = if full_matrices then u else block u None (Some (0, num)) in
   let u, vt = if m >= n then (u, transpose v) else (v, transpose u) in
   let ok = Some ok in
@@ -477,18 +477,18 @@ let eigh ~device ~vectors a =
   let x = Lower_arith.widen a in
   let wdt = dtype x in
   let batch, n, _ = matrix x in
-  let r = Ops.ndim x in
+  let r = Shape.ndim x in
   (* The lower triangle, mirrored: the upper one is never read. *)
   let x = Ops.where (Ops.ge (row_index n) (column_index n)) x (transpose x) in
-  let rows u = Ops.unsqueeze u (-1) and columns u = Ops.unsqueeze u (-2) in
+  let rows u = Shape.unsqueeze u (-1) and columns u = Shape.unsqueeze u (-2) in
   let round = function
     | x :: v ->
         let d = diagonal x and first u = part u (r - 2) 0 (n / 2) in
         let cosines, sines =
           rotations n
             (tangents ~alpha:(first d)
-               ~beta:(first (Ops.flip d [ r - 2 ]))
-               ~gamma:(first (diagonal (Ops.flip x [ r - 1 ]))))
+               ~beta:(first (Shape.flip d [ r - 2 ]))
+               ~gamma:(first (diagonal (Shape.flip x [ r - 1 ]))))
         in
         let along axis per u = rotate u axis (per cosines, per sines) in
         along (r - 1) columns (along (r - 2) rows x)
@@ -497,7 +497,7 @@ let eigh ~device ~vectors a =
   in
   let _, mantissa = Dtype.finfo wdt in
   let v =
-    if vectors then [ Ops.expand (eye wdt n n) (ints (batch @ [ n; n ])) ]
+    if vectors then [ Shape.expand (eye wdt n n) (ints (batch @ [ n; n ])) ]
     else []
   in
   let rotated =
@@ -522,7 +522,7 @@ let eigh ~device ~vectors a =
         Ops.cast
           (defined ok
              (Lower_index.gather (r - 1)
-                (Ops.expand (Ops.unsqueeze order (-2))
+                (Shape.expand (Shape.unsqueeze order (-2))
                    (ints (batch @ [ n; n ])))
                 v))
           (dtype a))
@@ -545,16 +545,16 @@ let lu ~device a =
   let x = Lower_arith.widen a in
   let batch, m, n = matrix x in
   let k = Int.min m n in
-  let rank = Ops.ndim x in
+  let rank = Shape.ndim x in
   let index = row_index m and cols = column_index n in
   (* The rows are [int64], as the pivots and the row order are. *)
   let rows = Ops.cast index Int64 in
-  let positions = Ops.arange ~dtype:Int32 k in
+  let positions = Shape.arange ~dtype:Int32 k in
   (* [swap u j p] exchanges row [j] and row [p], one per matrix, of [u]. *)
   let swap u j p =
     let _, _, c = matrix u in
     let row_p =
-      Lower_index.gather (rank - 2) (Ops.expand p (ints (batch @ [ 1; c ]))) u
+      Lower_index.gather (rank - 2) (Shape.expand p (ints (batch @ [ 1; c ]))) u
     in
     Ops.where (Ops.eq index j) row_p
       (Ops.where (Ops.eq rows p) (at (rank - 2) u j) u)
@@ -570,7 +570,7 @@ let lu ~device a =
                (Lower_arith.unary Abs col))
         in
         let p = Lower_reduce.arg_reduce Argmax ~axis:(rank - 2) magnitude in
-        let pp = Ops.unsqueeze p (-2) in
+        let pp = Shape.unsqueeze p (-2) in
         let x = swap x j pp and perm = swap perm j pp in
         let col = at (rank - 1) x j in
         let pivot = at (rank - 2) col j in
@@ -587,21 +587,21 @@ let lu ~device a =
         in
         let pivots =
           Ops.where (Ops.eq positions j)
-            (Ops.expand p (Ops.shape pivots))
+            (Shape.expand p (Shape.shape pivots))
             pivots
         in
         [ x; perm; pivots; next j ]
     | _ -> invalid_arg "Lower_linalg.lu"
   in
-  let perm = Ops.expand rows (ints (batch @ [ m; 1 ])) in
+  let perm = Shape.expand rows (ints (batch @ [ m; 1 ])) in
   let pivots =
-    Ops.expand
+    Shape.expand
       (Ops.const ~dtype:Int64 (`Int Bigint.zero))
       (ints (batch @ [ k ]))
   in
   match Loop.repeat device k [ x; perm; pivots; first () ] step with
   | [ x; perm; pivots; _ ] ->
-      (Ops.cast x dt, pivots, Ops.squeeze ~axis:(-1) perm)
+      (Ops.cast x dt, pivots, Shape.squeeze ~axis:(-1) perm)
   | _ -> invalid_arg "Lower_linalg.lu"
 
 (* Cholesky
@@ -626,7 +626,7 @@ let cholesky ~upper a =
     let root = Ops.sqrt d in
     let l =
       Ops.where (is rows j)
-        (Ops.expand root (Ops.shape (column s j)))
+        (Shape.expand root (Shape.shape (column s j)))
         (Ops.where
            (Ops.gt rows (Ops.int j))
            (fdiv (column s j) root)
@@ -639,7 +639,7 @@ let cholesky ~upper a =
   let _, columns, ok = List.fold_left step (x, [], None) (List.init n Fun.id) in
   let l =
     Lower_index.cat
-      (Ops.ndim x - 1)
+      (Shape.ndim x - 1)
       (block x None (Some (0, 0)))
       (List.rev columns)
   in
@@ -657,13 +657,13 @@ let cholesky ~upper a =
 
 let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
   let dt = dtype b in
-  let vector = Ops.ndim b = Ops.ndim a - 1 in
-  let b = Lower_arith.widen (if vector then Ops.unsqueeze b (-1) else b) in
+  let vector = Shape.ndim b = Shape.ndim a - 1 in
+  let b = Lower_arith.widen (if vector then Shape.unsqueeze b (-1) else b) in
   let m = Lower_arith.widen (if t then transpose a else a) in
-  let rank = Ops.ndim m in
+  let rank = Shape.ndim m in
   let reversed = upper <> t in
-  let m = if reversed then Ops.flip m [ rank - 2; rank - 1 ] else m in
-  let b = if reversed then Ops.flip b [ rank - 2 ] else b in
+  let m = if reversed then Shape.flip m [ rank - 2; rank - 1 ] else m in
+  let b = if reversed then Shape.flip b [ rank - 2 ] else b in
   let batch, n, _ = matrix m in
   let rows = row_index n in
   let step = function
@@ -673,7 +673,7 @@ let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
         let xi = if unit_diag then xi else fdiv xi (at (rank - 2) c i) in
         [
           Ops.where (Ops.eq rows i)
-            (Ops.expand xi (Ops.shape x))
+            (Shape.expand xi (Shape.shape x))
             (Ops.where (Ops.gt rows i) (Ops.sub x (Ops.mul c xi)) x);
           next i;
         ]
@@ -684,11 +684,11 @@ let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
     else
       let d = diagonal m in
       let zeros = Ops.cast (Ops.eq d (zero d)) Int32 in
-      let none = Ops.eq (Ops.rop zeros Op.Max [ rank - 2 ]) (Ops.int 0) in
-      Some (Ops.reshape none (ints (batch @ [ 1; 1 ])))
+      let none = Ops.eq (Shape.rop zeros Op.Max [ rank - 2 ]) (Ops.int 0) in
+      Some (Shape.reshape none (ints (batch @ [ 1; 1 ])))
   in
   match Loop.repeat device n [ b; first () ] step with
   | x :: _ ->
-      let x = defined ok (if reversed then Ops.flip x [ rank - 2 ] else x) in
-      Ops.cast (if vector then Ops.squeeze ~axis:(-1) x else x) dt
+      let x = defined ok (if reversed then Shape.flip x [ rank - 2 ] else x) in
+      Ops.cast (if vector then Shape.squeeze ~axis:(-1) x else x) dt
   | [] -> invalid_arg "Lower_linalg.solve_triangular"

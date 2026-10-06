@@ -15,7 +15,7 @@ val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [indexing_simplify] rewrites an index [where cond x invalid] into a buffer
     to [where cond x' invalid], with [x'] the simplification of [x] given that
     [cond] holds ({!Symbolic.uop_given_valid}), when the condition simplifies
-    [x] further than {!Ops.simplify} does alone. A load in [x] runs whatever
+    [x] further than {!Shape.simplify} does alone. A load in [x] runs whatever
     [cond], so [cond] simplifies the arithmetic around it, which sees only its
     bounds, and the load keeps its own index and gate. *)
 

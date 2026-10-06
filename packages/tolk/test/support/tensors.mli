@@ -1,6 +1,6 @@
 (** Values of tensor graphs, and what they write.
 
-    A tensor graph computes whole tensors of concrete shape ({!Tolk.Ops.shape}),
+    A tensor graph computes whole tensors of concrete shape ({!Tolk.Shape.shape}),
     stored row-major. Its value is computed node by node, as the operations
     define it:
 

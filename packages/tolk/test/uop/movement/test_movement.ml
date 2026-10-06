@@ -10,7 +10,7 @@ let ints = List.map (fun n : Ops.sint -> Int n)
 let var name lo hi =
   Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
 
-let storage shape = Ops.param ~shape:(ints shape) 0 Float32
+let storage shape = Shape.param ~shape:(ints shape) 0 Float32
 let cleanup u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
     (After_sources Movement.mop_cleanup)
@@ -19,10 +19,10 @@ let index u idxs = Ops.v Op.Index ~src:(u :: idxs)
 let element u i = index u [ int i ]
 
 let shrink u bounds =
-  Ops.mop u (Shrink (List.map (fun (s, n) -> (Ops.Int s, Ops.Int n)) bounds))
+  Shape.mop u (Shrink (List.map (fun (s, n) -> (Ops.Int s, Ops.Int n)) bounds))
 
-let reshape u shape = Ops.mop u (Reshape (ints shape))
-let permute u order = Ops.mop u (Permute order)
+let reshape u shape = Shape.mop u (Reshape (ints shape))
+let permute u order = Shape.mop u (Permute order)
 
 (* A golden holds a graph and its cleanup. *)
 let cleans name u =
@@ -41,8 +41,8 @@ let shrinks =
            [ (3, 4) ]);
       Golden.graph "merge_shrinks_of_symbolic_starts.golden" (fun () ->
           let start = Ops.Sym (var "o" 0 4) and size = Ops.Sym (var "n" 1 3) in
-          let inner = Ops.mop (storage [ 16 ]) (Shrink [ (start, Int 8) ]) in
-          let u = Ops.mop inner (Shrink [ (Int 2, size) ]) in
+          let inner = Shape.mop (storage [ 16 ]) (Shrink [ (start, Int 8) ]) in
+          let u = Shape.mop inner (Shrink [ (Int 2, size) ]) in
           Ops.sink [ u; cleanup u ]);
     ]
 
@@ -81,15 +81,15 @@ let stacks =
 
 let indexing =
   let i = var "i" 0 3 and j = var "j" 0 4 in
-  let table = Ops.param ~shape:(ints [ 4; 5 ]) 1 Int32 in
+  let table = Shape.param ~shape:(ints [ 4; 5 ]) 1 Int32 in
   group "indexing"
     [
       cleans "index_a_stack_by_a_constant"
-        (index (Ops.stack [ var "a" 0 9; var "b" 0 9 ]) [ int 1 ]);
+        (index (Shape.stack [ var "a" 0 9; var "b" 0 9 ]) [ int 1 ]);
       cleans "index_a_stack_by_a_constant_and_further_indices"
         (index
-           (Ops.stack
-              [ storage [ 4 ]; Ops.param ~shape:(ints [ 4 ]) 1 Float32 ])
+           (Shape.stack
+              [ storage [ 4 ]; Shape.param ~shape:(ints [ 4 ]) 1 Float32 ])
            [ int 1; var "j" 0 3 ]);
       cleans "index_an_index_by_scalars"
         (index (index (storage [ 4; 5 ]) [ i ]) [ j ]);
@@ -107,7 +107,7 @@ let rec elements u =
   let sizes u =
     List.map
       (function Ops.Int n -> n | Sym _ -> invalid_arg "a symbolic size")
-      (Ops.shape u)
+      (Shape.shape u)
   in
   let unravel shape flat =
     List.fold_right
@@ -124,12 +124,12 @@ let rec elements u =
     (shape, Array.init n (fun flat -> source (unravel shape flat)))
   in
   match (Ops.op u, Ops.src u) with
-  | Op.Param, _ -> ([ Ops.max_numel u ], Array.init (Ops.max_numel u) Fun.id)
+  | Op.Param, _ -> ([ Shape.max_numel u ], Array.init (Shape.max_numel u) Fun.id)
   | Op.Reshape, s :: _ -> (sizes u, snd (elements s))
   | Op.Shrink, s :: _ ->
       let shape, e = elements s in
       let starts =
-        match Ops.marg u with
+        match Shape.marg u with
         | Shrink bounds ->
             List.map
               (function
@@ -141,7 +141,7 @@ let rec elements u =
   | Op.Permute, s :: _ ->
       let shape, e = elements s in
       let order =
-        match Ops.marg u with Permute order -> order | _ -> assert false
+        match Shape.marg u with Permute order -> order | _ -> assert false
       in
       gather u (fun idx ->
           let src = Array.make (List.length shape) 0 in
@@ -163,7 +163,7 @@ let rec permutations = function
 
 let apply u s =
   let shape =
-    List.map (function Ops.Int n -> n | Sym _ -> assert false) (Ops.shape u)
+    List.map (function Ops.Int n -> n | Sym _ -> assert false) (Shape.shape u)
   in
   match s with
   | Shrink seed ->
@@ -206,13 +206,13 @@ let gen_chain =
        (List.fold_left apply (storage [ 2; 3; 4 ]))
        (list ~size:(int_range 1 5) step))
 
-let shape = list (Testable.make ~pp:Ops.Sint.pp ~equal:Ops.Sint.equal)
+let shape = list (Testable.make ~pp:Shape.Sint.pp ~equal:Shape.Sint.equal)
 
 let laws =
   group "laws"
     [
       prop "mop_cleanup keeps the shape of a chain" gen_chain (fun u ->
-          equal shape (Ops.shape u) (Ops.shape (cleanup u)));
+          equal shape (Shape.shape u) (Shape.shape (cleanup u)));
       prop "mop_cleanup keeps the elements a chain denotes" gen_chain (fun u ->
           let cleaned = cleanup u in
           cover "shortened" (not (Ops.equal u cleaned));

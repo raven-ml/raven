@@ -141,7 +141,7 @@ let placeholder name d u =
   | _ when not on_device -> None
   | Some (String "mtl_sel"), _ -> Some (sels d).buffer
   | Some (String "slots"), _ ->
-      Some (new_slots d (Ops.max_numel u * Dtype.itemsize (Ops.dtype u)))
+      Some (new_slots d (Shape.max_numel u * Dtype.itemsize (Ops.dtype u)))
   | _, Some (cmds, header) -> Some (new_icb d cmds header)
   | _ -> None
 

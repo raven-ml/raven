@@ -28,7 +28,7 @@ let specials idxs =
   |> List.sort_uniq Ops.compare
   |> List.map (fun u ->
       match (Ops.arg u, Ops.src u) with
-      | String name, [ size ] -> (name, Ops.to_z size)
+      | String name, [ size ] -> (name, Shape.to_z size)
       | _ -> failf "%a is not a hardware index" Ops.pp u)
   |> List.sort (fun (n0, _) (n1, _) -> String.compare n0 n1)
 
@@ -250,7 +250,7 @@ let range ?(axis_type = Ops.Axis_type.Global) size axis =
 let global = range ~axis_type:Global
 let local = range ~axis_type:Local
 let one = Ops.float ~dtype:Float32 1.
-let buffer ?(slot = 0) n = Ops.param ~shape:[ Int n ] slot Float32
+let buffer ?(slot = 0) n = Shape.param ~shape:[ Int n ] slot Float32
 
 let kernel ?(size = 4096) index value ranges =
   Ops.sink ~kernel:(Ops.kernel_info ())
@@ -361,7 +361,7 @@ let add_gpudims_graphs =
     rewrites "add_gpudims_leaves_a_local_store_unmasked" (fun () ->
         let g = global (Int 32) 0 and l = local (Int 8) 1 in
         let shared =
-          Ops.param ~shape:[ Int 32 ] ~addrspace:(Some Local) 0 Float32
+          Shape.param ~shape:[ Int 32 ] ~addrspace:(Some Local) 0 Float32
         in
         let loaded =
           Ops.load (Ops.index (buffer ~slot:1 256) [ (g * int 8) + l ]) []
@@ -414,7 +414,7 @@ let failures =
       let loaded =
         Ops.load (Ops.index (buffer ~slot:1 64) [ Ops.O.(g + l) ]) []
       in
-      let two = Ops.param ~shape:[ Int 32; Int 2 ] 0 Float32 in
+      let two = Shape.param ~shape:[ Int 32; Int 2 ] 0 Float32 in
       let sink =
         Ops.sink ~kernel:(Ops.kernel_info ())
           [

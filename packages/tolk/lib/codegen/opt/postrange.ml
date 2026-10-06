@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 module V = Dtype.Value
 
 let strf = Printf.sprintf

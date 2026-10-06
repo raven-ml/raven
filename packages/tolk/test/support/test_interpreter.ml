@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 open Dtypes
 
-let x ?(slot = 0) dt = Ops.param slot dt
+let x ?(slot = 0) dt = Shape.param slot dt
 let int n = `Int (Bigint.of_int n)
 let eval ?vars ?params ?buffers u = Interpreter.eval ?vars ?params ?buffers u
 let var name = Ops.variable ~dtype:Dtype.Int32 name (int 0) (int 10)
@@ -90,7 +90,7 @@ let leaves =
             (Interpreter.name (Ops.range (Int 4) [ 1; 2 ])));
       test "a bound variable is its bound value, unless vars binds it"
         (fun () ->
-          let b = Ops.bind (var "i") (int 2) in
+          let b = Shape.bind (var "i") (int 2) in
           equal const (int 2) (eval b);
           equal const (int 5) (eval ~vars:[ ("i", int 5) ] b));
       test "a range or a hardware index without a value is refused" (fun () ->
@@ -100,7 +100,7 @@ let leaves =
 
 let invalid =
   let i = var "i" in
-  let gated = Ops.valid i Ops.O.(i < int 5) in
+  let gated = Shape.valid i Ops.O.(i < int 5) in
   let at v u = eval ~vars:[ ("i", int v) ] u in
   group "invalid"
     [
@@ -195,7 +195,7 @@ let reductions =
             (eval ~vars:[ ("n", int 5) ] (over [ n ] Add (int32 n))));
       test "a reduction of an invalid value is invalid" (fun () ->
           equal const `Invalid
-            (eval (over [ r ] Add (Ops.valid (int32 r) Ops.O.(r < int 2)))));
+            (eval (over [ r ] Add (Shape.valid (int32 r) Ops.O.(r < int 2)))));
       test "a reduction over a node that is not a range is refused" (fun () ->
           rejects (fun () ->
               eval
@@ -217,10 +217,10 @@ let vector storage offset n =
    no literal, as a kernel's are. *)
 let stack_lane k =
   let lanes = List.map (Ops.int ~dtype:Dtype.Int32) [ 5; 6; 7 ] in
-  Ops.v ~src:[ Ops.stack lanes; Ops.int ~dtype:Dtype.Int32 k ] Index
+  Ops.v ~src:[ Shape.stack lanes; Ops.int ~dtype:Dtype.Int32 k ] Index
 
 let storage =
-  let table = Ops.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
+  let table = Shape.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
   let elements = [ (0, Array.map int [| 10; 11; 12; 13 |]) ] in
   let i = var "i" in
   let at v u = eval ~vars:[ ("i", int v) ] ~buffers:elements u in
@@ -241,7 +241,7 @@ let storage =
           equal const ~msg:"at 7, outside the storage" (int (-1)) (at 7 gated));
       test "an index at an invalid index reads zero" (fun () ->
           equal const (int 0)
-            (at 7 (Ops.index table [ Ops.valid i Ops.O.(i < int 4) ])));
+            (at 7 (Ops.index table [ Shape.valid i Ops.O.(i < int 4) ])));
       test "an index outside the storage is refused" (fun () ->
           rejects (fun () -> at 4 (Ops.index table [ i ])));
       test "storage without elements is refused" (fun () ->
@@ -252,7 +252,7 @@ let storage =
           let vector = Ops.load (vector table (Ops.int 1) 2) [] in
           equal const (int 12) (at 0 (Ops.index vector [ Ops.int 1 ])));
       test "a lane of a vector load at an invalid offset reads zero" (fun () ->
-          let offset = Ops.valid i Ops.O.(i < int 2) in
+          let offset = Shape.valid i Ops.O.(i < int 2) in
           let vector = Ops.load (vector table offset 2) [] in
           equal const (int 0) (at 3 (Ops.index vector [ Ops.int 0 ])));
       test "a lane of a stack is its source" (fun () ->
@@ -262,7 +262,7 @@ let storage =
           rejects (fun () -> eval (stack_lane 3)));
       test "a lane of an operation of stacks is the operation of their lanes"
         (fun () ->
-          let stack ns = Ops.stack (List.map (Ops.int ~dtype:Dtype.Int32) ns) in
+          let stack ns = Shape.stack (List.map (Ops.int ~dtype:Dtype.Int32) ns) in
           let sum =
             Ops.cast (Ops.add (stack [ 1; 2 ]) (stack [ 10; 20 ])) Dtype.Int64
           in
@@ -274,7 +274,7 @@ let storage =
     ]
 
 let kernels =
-  let out = Ops.param ~shape:[ Int 16 ] 0 Dtype.Int32 in
+  let out = Shape.param ~shape:[ Int 16 ] 0 Dtype.Int32 in
   let r = Ops.range (Int 4) [ 0 ] and s = Ops.range (Int 2) [ 1 ] in
   let store ?gate index value =
     Ops.store ?gate (Ops.index out [ index ]) value
@@ -293,12 +293,12 @@ let kernels =
           let u = Ops.end_ (store Ops.O.((r * int 2) + s) (int32 s)) [ r; s ] in
           equal Windtrap.int 8 (List.length (writes u)));
       test "a store where its index is invalid writes nothing" (fun () ->
-          let index = Ops.valid r Ops.O.(r < int 1) in
+          let index = Shape.valid r Ops.O.(r < int 1) in
           equal (list write)
             [ (0, 0, int 0) ]
             (writes (Ops.end_ (store index (int32 r)) [ r ])));
       test "a store of an invalid value writes nothing" (fun () ->
-          let value = Ops.valid (int32 r) Ops.O.(r < int 1) in
+          let value = Shape.valid (int32 r) Ops.O.(r < int 1) in
           equal (list write)
             [ (0, 0, int 0) ]
             (writes (Ops.end_ (store r value) [ r ])));
@@ -313,7 +313,7 @@ let kernels =
                   (store (Ops.int 3) (Ops.int ~dtype:Dtype.Int32 7))
                   [ r ])));
       test "a store's value may read storage and reduce" (fun () ->
-          let table = Ops.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
+          let table = Shape.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
           let total = Ops.reduce (Ops.index table [ s ]) Add [ s ] in
           equal (list write)
             [ (0, 0, int 5) ]
@@ -322,19 +322,19 @@ let kernels =
                (store (Ops.int 0) total)));
       test "a store through a vector writes each lane past the offset"
         (fun () ->
-          let lanes = Ops.stack [ int32 (Ops.int 7); int32 (Ops.int 8) ] in
+          let lanes = Shape.stack [ int32 (Ops.int 7); int32 (Ops.int 8) ] in
           equal (list write)
             [ (0, 4, int 7); (0, 5, int 8) ]
             (writes (Ops.store (vector out (Ops.int 4) 2) lanes)));
       test "a store through a vector of a stack of another length is refused"
         (fun () ->
-          let lanes = Ops.stack [ int32 (Ops.int 7) ] in
+          let lanes = Shape.stack [ int32 (Ops.int 7) ] in
           rejects (fun () ->
               writes (Ops.store (vector out (Ops.int 4) 2) lanes)));
       test "a store through a vector at an invalid offset writes nothing"
         (fun () ->
-          let offset = Ops.valid Ops.O.(r * int 2) Ops.O.(r < int 1) in
-          let lanes = Ops.stack [ int32 r; int32 r ] in
+          let offset = Shape.valid Ops.O.(r * int 2) Ops.O.(r < int 1) in
+          let lanes = Shape.stack [ int32 r; int32 r ] in
           equal (list write)
             [ (0, 0, int 0); (0, 1, int 0) ]
             (writes (Ops.end_ (Ops.store (vector out offset 2) lanes) [ r ])));

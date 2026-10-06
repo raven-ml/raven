@@ -14,7 +14,7 @@ let concrete u =
     (function
       | Ops.Int n -> n
       | Sym _ -> fail "cannot evaluate a %a of symbolic shape" Op.pp (Ops.op u))
-    (Ops.shape u)
+    (Shape.shape u)
 
 let size shape = List.fold_left ( * ) 1 shape
 
@@ -28,10 +28,10 @@ let device_ranges u =
     (fun r acc -> if Ops.axis_type r = Device then r :: acc else acc)
     (Ops.ranges u) []
 
-let count r = Bigint.to_int (Ops.to_z (Ops.nth r 0))
+let count r = Bigint.to_int (Shape.to_z (Ops.nth r 0))
 
 let on_device k u =
-  Ops.ssimplify
+  Shape.ssimplify
     (Ops.substitute ~calls:Skip ~pass:Fixed_point u
        (List.map (fun r -> (r, Ops.int k)) (device_ranges u)))
 
@@ -51,7 +51,7 @@ let marg_ranges u =
   in
   List.concat_map
     (function Ops.Int _ -> [] | Sym s -> device_ranges s)
-    (sints (Ops.marg u))
+    (sints (Shape.marg u))
 
 (* Row-major coordinates *)
 
@@ -117,7 +117,7 @@ let movement ~device u t =
   let int = int ~device in
   let shape = concrete u in
   let zero = Dtype.const (Ops.dtype u) (`Int Bigint.zero) in
-  match Ops.marg u with
+  match Shape.marg u with
   | Reshape _ -> { t with shape }
   | Expand _ -> broadcast shape t
   | Pad pads ->

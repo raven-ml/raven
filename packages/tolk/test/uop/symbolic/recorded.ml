@@ -27,7 +27,7 @@ let matcher = function
 (* [simplification kind] is the simplification a record of [kind] makes. *)
 let simplification kind =
   match String.split_on_char ' ' kind with
-  | [ "simplify" ] -> fun u -> Some (Ops.simplify u)
+  | [ "simplify" ] -> fun u -> Some (Shape.simplify u)
   | [ "simplify_valid" ] -> Symbolic.simplify_valid
   | [ m ] -> fun u -> Some (rewrite (matcher m) u)
   | [ m; "bottom_up" ] -> fun u -> Some (rewrite ~order:before (matcher m) u)

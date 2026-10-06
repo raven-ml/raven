@@ -4,14 +4,14 @@ open Tolk
 let z n = `Int (Bigint.of_int n)
 let cpu = Ops.Single "CPU"
 let write = list (triple int int Dtypes.value)
-let param slot = Ops.param ~device:cpu ~shape:[ Int 4 ] slot Int32
+let param slot = Shape.param ~device:cpu ~shape:[ Int 4 ] slot Int32
 
 (* [kernel f] is a kernel of storage parameters [0] and [1] that stores [f] of
    parameter [1]'s element into parameter [0]'s, over four elements. *)
 let kernel f =
   let r = Ops.range ~axis_type:Loop (Int 4) [ 0 ] in
   let at slot =
-    Ops.index (Ops.param ~device:cpu ~shape:[ Int 4 ] slot Int32) [ r ]
+    Ops.index (Shape.param ~device:cpu ~shape:[ Int 4 ] slot Int32) [ r ]
   in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"k" ())
@@ -47,7 +47,7 @@ let writes =
                (Ops.sink [ called incr (param 0) first ])
             |> List.filter (fun (s, _, _) -> s = 0)));
       test "call-local storage is scratch, apart from parameters" (fun () ->
-          let scratch = Ops.alloc ~slot:0 ~device:cpu [ Int 4 ] Int32 in
+          let scratch = Shape.alloc ~slot:0 ~device:cpu [ Int 4 ] Int32 in
           let staged = called incr scratch (param 1) in
           equal write
             (List.init 4 (fun i -> (0, i, z (i + 2))))
@@ -94,7 +94,7 @@ let linear_writes =
                   ])));
       test "a scalar parameter no call passes has the value of its slot"
         (fun () ->
-          let n = Ops.param ~addrspace:(Some Alu) 2 Int32 in
+          let n = Shape.param ~addrspace:(Some Alu) 2 Int32 in
           let shifted = kernel (fun x -> Ops.O.(x + n)) in
           equal write
             (List.init 4 (fun i -> (0, i, z (i + 5))))

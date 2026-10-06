@@ -42,8 +42,8 @@ let parameters u =
 
 (* The parameter the [i]th input [u] becomes: of its type, device and size. *)
 let parameter i u =
-  Ops.param
-    ~shape:[ Int (Ops.max_numel u) ]
+  Shape.param
+    ~shape:[ Int (Shape.max_numel u) ]
     ?device:(Ops.device u) i (Ops.dtype u)
 
 (* The unbound variables the calls of a schedule read, with their bounds. *)
@@ -118,7 +118,7 @@ let element dtype k : Dtype.value =
   else `Int (Bigint.of_int k)
 
 let start seed u =
-  Array.init (Ops.max_numel u) (fun j ->
+  Array.init (Shape.max_numel u) (fun j ->
       element (Ops.dtype u)
         ((((j * 7) + ((param_arg u).slot * 3) + seed) mod 11) - 3))
 
@@ -541,7 +541,7 @@ let clang = lazy (Cstyle.clang (Engine.target Nx_device.host))
 let compiled name f =
   let kernel n =
     let i = Ops.range (Int n) [ 0 ] in
-    let at slot = Ops.index (Ops.placeholder ~slot [ n ] Float32) [ i ] in
+    let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
     Codegen.to_program
       (Ops.sink
          ~kernel:(Ops.kernel_info ~name:(Printf.sprintf "%s_%d" name n) ())
@@ -570,7 +570,7 @@ let capture_of d =
     | Inc (dst, s) -> Ops.call (program inc dst) [ nodes.(dst); nodes.(s) ]
     | Add (dst, s0, s1) ->
         Ops.call (program add dst) [ nodes.(dst); nodes.(s0); nodes.(s1) ]
-    | Copy (dst, s) -> Ops.store_call nodes.(dst) nodes.(s)
+    | Copy (dst, s) -> Shape.store_call nodes.(dst) nodes.(s)
   in
   let held =
     List.map (Array.get nodes)

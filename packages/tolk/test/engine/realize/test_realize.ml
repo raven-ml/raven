@@ -7,9 +7,9 @@ let uops = list Uops.uop
 
 let estimates =
   let equal (e0 : Ops.estimates) (e1 : Ops.estimates) =
-    Ops.Sint.equal e0.ops e1.ops
-    && Ops.Sint.equal e0.lds e1.lds
-    && Ops.Sint.equal e0.mem e1.mem
+    Shape.Sint.equal e0.ops e1.ops
+    && Shape.Sint.equal e0.lds e1.lds
+    && Shape.Sint.equal e0.mem e1.mem
   in
   Testable.make ~pp:Ops.pp_estimates ~equal
 
@@ -31,7 +31,7 @@ let uncompiled =
 (* Kernels and calls *)
 
 let buffer ?(device = Ops.Single "CPU") ?(dtype = Dtype.Float32) slot n =
-  Ops.param ~shape:[ Int n ] ~device slot dtype
+  Shape.param ~shape:[ Int n ] ~device slot dtype
 
 (* The kernel that stores [f] of each element of slot [src] (default [1]) into
    slot 0. *)
@@ -59,7 +59,7 @@ let scaled_kernel variables =
 let program kernel = Codegen.to_program kernel uncompiled
 let n = Ops.variable ~dtype:Int32 "n" (`Int Bigint.one) (`Int (Bigint.of_int 8))
 let m = Ops.variable ~dtype:Int32 "m" (`Int Bigint.one) (`Int (Bigint.of_int 8))
-let bound v x = Ops.bind v (`Int (Bigint.of_int x))
+let bound v x = Shape.bind v (`Int (Bigint.of_int x))
 
 let storage ?(device = "CPU") ?(dtype = Dtype.Float32) n =
   Ops.new_buffer (Single device) n dtype
@@ -193,7 +193,7 @@ let reads_as_recorded cell =
   equal (list string) ~msg:"estimates"
     [ cell "ops"; cell "lds"; cell "mem" ]
     (ints
-       (List.map (fun s -> Ops.sym_infer s var_vals) [ e.ops; e.lds; e.mem ]))
+       (List.map (fun s -> Shape.sym_infer s var_vals) [ e.ops; e.lds; e.mem ]))
 
 let recorded_calls =
   group "calls of recorded schedules"
@@ -258,7 +258,7 @@ let outs_ins =
           equal
             (pair (list int) (list int))
             ([ 0 ], [ 1 ])
-            (Realize.get_call_outs_ins (Ops.store_call (storage 4) (storage 4))));
+            (Realize.get_call_outs_ins (Shape.store_call (storage 4) (storage 4))));
       test "is nothing for a call that submits command queues" (fun () ->
           equal
             (pair (list int) (list int))
@@ -291,19 +291,19 @@ let written =
       test "is a copy's destination, through its view" (fun () ->
           let dst = storage ~dtype:Uint8 64 in
           let view =
-            Ops.bitcast (Ops.shrink dst [ Some (Int 16, Int 32) ]) Float32
+            Ops.bitcast (Shape.shrink dst [ Some (Int 16, Int 32) ]) Float32
           in
           equal uops [ dst ]
-            (Realize.get_call_written_bufs (Ops.store_call view (storage 4))));
+            (Realize.get_call_written_bufs (Shape.store_call view (storage 4))));
       test "names the storage a shard selection selects from" (fun () ->
           let dst = Ops.new_buffer (Multi [ "CPU:0"; "CPU:1" ]) 4 Float32 in
           equal uops [ dst ]
             (Realize.get_call_written_bufs
-               (Ops.store_call (Ops.mselect dst 1) (storage ~device:"CPU:1" 4))));
+               (Shape.store_call (Ops.mselect dst 1) (storage ~device:"CPU:1" 4))));
       test "leaves out a parameter, which is no storage" (fun () ->
           equal uops []
             (Realize.get_call_written_bufs
-               (Ops.store_call (buffer 0 4) (storage 4))));
+               (Shape.store_call (buffer 0 4) (storage 4))));
       test "is a call that submits command queues' own" (fun () ->
           let a = storage 4 and b = storage 8 in
           equal uops [ a; b ]
@@ -328,12 +328,12 @@ let names =
         (fun () ->
           let dst = storage ~device:"METAL:12345" 4
           and src = storage ~device:"CPU" 4 in
-          let call = Ops.store_call dst src in
+          let call = Shape.store_call dst src in
           equal string "copy       16 B, METAL:1 <- CPU    "
             (plain (fun () ->
                  Realize.get_call_name call (Realize.get_call_arg_uops call))));
       test "is in yellow" (fun () ->
-          let call = Ops.store_call (storage 4) (storage 4) in
+          let call = Shape.store_call (storage 4) (storage 4) in
           equal string
             (Helpers.colored Yellow "copy       16 B,     CPU <- CPU    ")
             (in_colour (fun () ->
@@ -341,7 +341,7 @@ let names =
       test "lists every device of a sharded buffer" (fun () ->
           let dst = Ops.new_buffer (Multi [ "CPU:0"; "CPU:1" ]) 4 Float32 in
           let call =
-            Ops.store_call dst
+            Shape.store_call dst
               (Ops.new_buffer (Multi [ "CPU:2"; "CPU:3" ]) 4 Float32)
           in
           equal string "copy       16 B, CPU:0, CPU:1 <- CPU:2, CPU:3"
@@ -351,9 +351,9 @@ let names =
           let v =
             Ops.variable "v" (`Int Bigint.one) (`Int (Bigint.of_int 10))
           in
-          let src = Ops.shrink (storage 10) [ Some (Int 0, Sym v) ] in
+          let src = Shape.shrink (storage 10) [ Some (Int 0, Sym v) ] in
           let call =
-            Ops.store_call (Ops.shrink (storage 10) [ Some (Int 0, Sym v) ]) src
+            Shape.store_call (Shape.shrink (storage 10) [ Some (Int 0, Sym v) ]) src
           in
           equal string "copy       12 B,     CPU <- CPU    "
             (plain (fun () ->
@@ -387,14 +387,14 @@ let costs =
           equal estimates (counts 0 0 0)
             (Realize.estimate_uop (Ops.call bare [ storage 4; storage 4 ])));
       test "sees a call through its afters" (fun () ->
-          let call = Ops.store_call (storage 4) (storage 4) in
+          let call = Shape.store_call (storage 4) (storage 4) in
           equal estimates
             (Realize.estimate_uop call)
             (Realize.estimate_uop (Ops.after call [ storage 1 ])));
       test "is a copy's bytes, loaded and stored and touched" (fun () ->
           equal estimates (counts 0 24 24)
             (Realize.estimate_uop
-               (Ops.store_call (storage ~dtype:Int16 12)
+               (Shape.store_call (storage ~dtype:Int16 12)
                   (storage ~dtype:Int16 12))));
       test "is the total a call that submits command queues enqueues" (fun () ->
           equal estimates (counts 7 8 9)
@@ -422,7 +422,7 @@ let compiling =
   group "lower_and_compile"
     [
       test "leaves a linear of no kernel as it is" (fun () ->
-          let l = linear [ Ops.store_call (storage 4) (storage 4) ] in
+          let l = linear [ Shape.store_call (storage 4) (storage 4) ] in
           is_true (Realize.lower_and_compile ~targets l == l));
       test "makes each call of a kernel a call of its program" (fun () ->
           let l = linear [ Ops.call plus_one [ storage 4; storage 4 ] ] in

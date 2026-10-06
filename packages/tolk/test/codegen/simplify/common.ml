@@ -46,7 +46,7 @@ let range ?(axis_type = Ops.Axis_type.Weak) n axis =
 
 let reduce_range n axis = range ~axis_type:Reduce n axis
 let var ?dtype name lo hi = Ops.variable ?dtype name (i lo) (i hi)
-let buf ?(slot = 0) ?(size = 1024) dt = Ops.param ~shape:[ Int size ] slot dt
+let buf ?(slot = 0) ?(size = 1024) dt = Shape.param ~shape:[ Int size ] slot dt
 let kernel us = Ops.sink ~kernel:(Ops.kernel_info ()) us
 let f32 x = Ops.float ~dtype:Float32 x
 let i32 n = Ops.int ~dtype:Int32 n
@@ -54,14 +54,14 @@ let sum u rs = Ops.reduce u Add rs
 let store_at idx x = Ops.store (Ops.index (buf Float32) [ idx ]) x
 
 let gated_load valid idx =
-  Ops.load (Ops.index (buf Float32) [ Ops.valid idx valid ]) []
+  Ops.load (Ops.index (buf Float32) [ Shape.valid idx valid ]) []
 
 (* Inspection *)
 
 let ranges u =
   List.filter (fun n -> Ops.op n = Range) (Ops.toposort ~calls:Enter u)
 
-let size r = Bigint.to_int (Ops.to_z (Ops.nth r 0))
+let size r = Bigint.to_int (Shape.to_z (Ops.nth r 0))
 let sizes u = List.sort compare (List.map size (ranges u))
 
 let count op u =

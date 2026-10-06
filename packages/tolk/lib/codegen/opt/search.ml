@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 module K = Postrange.Scheduler
 
 let setting = Setting.value

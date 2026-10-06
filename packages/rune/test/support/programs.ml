@@ -13,7 +13,7 @@ let schedule y =
   let n = Array.fold_left ( * ) 1 (Nx.shape y) in
   let out = Ops.new_buffer (Single "CPU") n tdt in
   let shape = List.map (fun d -> Ops.Int d) (Array.to_list (Nx.shape y)) in
-  let view = Ops.reshape out shape in
+  let view = Shape.reshape out shape in
   let sink = Ops.sink [ Ops.after view [ Ops.store view (Traces.node y) ] ] in
   (fst (Schedule.create_linear_with_vars sink), out)
 

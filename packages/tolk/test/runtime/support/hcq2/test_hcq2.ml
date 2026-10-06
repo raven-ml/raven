@@ -75,7 +75,7 @@ let uncompiled =
     (Cstyle.clang recorded_target)
 
 let param ?(dtype = Dtype.Float32) device slot n =
-  Ops.param ~shape:[ Int n ] ~device slot dtype
+  Shape.param ~shape:[ Int n ] ~device slot dtype
 
 (* The kernel that stores [f] of each element of slot 1 into slot 0. *)
 let map_kernel ?(name = "k") device n f =
@@ -237,7 +237,7 @@ let profile_keys =
       test "a copy has no profile key" (fun () ->
           let batch =
             the_batch
-              (sched [ Ops.store_call (storage "CPU:2") (storage "CPU:1") ])
+              (sched [ Shape.store_call (storage "CPU:2") (storage "CPU:1") ])
           in
           equal
             (list (option string))
@@ -262,25 +262,25 @@ let views =
           let floats = Ops.new_buffer (Single "CPU:1") 16 Float32 in
           equal int 16
             (snd
-               (Hcq2.unwrap_view (Ops.shrink floats [ Some (Int 4, Int 12) ]))));
+               (Hcq2.unwrap_view (Shape.shrink floats [ Some (Int 4, Int 12) ]))));
       test "a shrink of a bitcast counts in the bitcast's type" (fun () ->
           let v =
-            Ops.shrink (Ops.bitcast bytes8 Uint64) [ Some (Int 2, Int 6) ]
+            Shape.shrink (Ops.bitcast bytes8 Uint64) [ Some (Int 2, Int 6) ]
           in
           let base, off = Hcq2.unwrap_view v in
           equal uop bytes8 base;
           equal int 16 off);
       test "nested shrinks add up" (fun () ->
           let v =
-            Ops.shrink
-              (Ops.shrink bytes8 [ Some (Int 8, Int 40) ])
+            Shape.shrink
+              (Shape.shrink bytes8 [ Some (Int 8, Int 40) ])
               [ Some (Int 4, Int 12) ]
           in
           equal int 12 (snd (Hcq2.unwrap_view v)));
       test "sees through an after" (fun () ->
           let v =
-            Ops.shrink
-              (Ops.after bytes8 [ Ops.store_call bytes8 bytes8 ])
+            Shape.shrink
+              (Ops.after bytes8 [ Shape.store_call bytes8 bytes8 ])
               [ Some (Int 8, Int 16) ]
           in
           let base, off = Hcq2.unwrap_view v in
@@ -288,7 +288,7 @@ let views =
           equal int 8 off);
       test "unwrap_lane is unwrap_view with no lane off a shard selection"
         (fun () ->
-          let v = Ops.shrink bytes8 [ Some (Int 8, Int 16) ] in
+          let v = Shape.shrink bytes8 [ Some (Int 8, Int 16) ] in
           let base, lane, off = Hcq2.unwrap_lane v in
           equal uop bytes8 base;
           equal (option int) None lane;
@@ -297,7 +297,7 @@ let views =
         "unwrap_lane reads a selected shard's lane and offset, either side of \
          the selection" (fun () ->
           let b =
-            Ops.param ~shape:[ Int 64 ]
+            Shape.param ~shape:[ Int 64 ]
               ~device:(Multi [ "CPU:1"; "CPU:2" ])
               0 Float32
           in
@@ -307,13 +307,13 @@ let views =
           in
           let t = triple bool (option int) int in
           equal t (true, Some 0, 32)
-            (seen (Ops.shrink (Ops.mselect b 0) [ Some (Int 8, Int 16) ]));
+            (seen (Shape.shrink (Ops.mselect b 0) [ Some (Int 8, Int 16) ]));
           equal t (true, Some 0, 32)
-            (seen (Ops.mselect (Ops.shrink b [ Some (Int 8, Int 16) ]) 0));
+            (seen (Ops.mselect (Shape.shrink b [ Some (Int 8, Int 16) ]) 0));
           equal t (true, Some 1, 32)
             (seen
-               (Ops.shrink
-                  (Ops.mselect (Ops.shrink b [ Some (Int 4, Int 32) ]) 1)
+               (Shape.shrink
+                  (Ops.mselect (Shape.shrink b [ Some (Int 4, Int 32) ]) 1)
                   [ Some (Int 4, Int 12) ])));
     ]
 
@@ -348,7 +348,7 @@ let timeline_values =
         (fun () ->
           let check what v =
             let p = param_arg v in
-            is_true ~msg:"a variable" (Ops.is_variable v);
+            is_true ~msg:"a variable" (Shape.is_variable v);
             equal string (Hcq2.to_name [ what; "CPU:1" ]) (Ops.expr v);
             is_true ~msg:"uint64" (Dtype.equal Uint64 p.dtype)
           in
@@ -360,7 +360,7 @@ let timeline_values =
           let src = storage "CPU:1" and dst = storage "CPU:2" in
           let batch =
             the_batch
-              (sched [ Ops.store_call dst src; adds (storage "CPU:2") dst ])
+              (sched [ Shape.store_call dst src; adds (storage "CPU:2") dst ])
           in
           List.iter
             (fun ((d, q), cmds) ->
@@ -379,7 +379,7 @@ let timeline_values =
         "a queue touching a peer's memory waits for the peer's submitted work \
          too" (fun () ->
           let src = storage "CPU:1" and dst = storage "CPU:2" in
-          let batch = the_batch (sched [ Ops.store_call dst src ]) in
+          let batch = the_batch (sched [ Shape.store_call dst src ]) in
           let copy = List.assoc ("CPU:1", "COPY:0") (Batches.queues batch) in
           let waits = List.filter (fun c -> instruction c = "wait") copy in
           equal (list uop)
@@ -423,7 +423,7 @@ let timeline_values =
           let src = storage "CPU:1" and dst = storage "CPU:2" in
           let batch =
             the_batch
-              (sched [ Ops.store_call dst src; adds (storage "CPU:2") dst ])
+              (sched [ Shape.store_call dst src; adds (storage "CPU:2") dst ])
           in
           let fences =
             List.sort_uniq Ops.compare
@@ -447,7 +447,7 @@ let timeline_values =
           let src = storage "CPU:1" and dst = storage "CPU:2" in
           let batch =
             the_batch
-              (sched [ Ops.store_call dst src; adds (storage "CPU:2") dst ])
+              (sched [ Shape.store_call dst src; adds (storage "CPU:2") dst ])
           in
           let host =
             Ops.nth
@@ -510,8 +510,8 @@ let layouts =
 
 let deps_tests =
   let access t bufs writes x = Hcq2.Deps.access t bufs ~writes x in
-  let b = Ops.param ~shape:[ Int 16 ] ~device:(Single "CPU:1") 0 Uint8 in
-  let v o n = Ops.shrink b [ Some (Int o, Int (o + n)) ] in
+  let b = Shape.param ~shape:[ Int 16 ] ~device:(Single "CPU:1") 0 Uint8 in
+  let v o n = Shape.shrink b [ Some (Int o, Int (o + n)) ] in
   group "Deps"
     [
       test "views of one storage depend on the bytes they share" (fun () ->
@@ -521,18 +521,18 @@ let deps_tests =
               let t = Hcq2.Deps.make () in
               ignore (access t [ b ] writes 0);
               equal (list int) [ 0 ]
-                (access t [ Ops.shrink floats [ Some (Int 2, Int 6) ] ] [ 0 ] 1);
+                (access t [ Shape.shrink floats [ Some (Int 2, Int 6) ] ] [ 0 ] 1);
               equal (list int) [ 0 ] (access t [ v 0 4 ] [ 0 ] 2);
               equal (list int) [ 0 ] (access t [ v 12 4 ] [ 0 ] 3);
               equal (list int) [ 1 ] (access t [ v 4 8 ] [] 4))
             [ []; [ 0 ] ]);
       test "shard selections depend on their lane's bytes alone" (fun () ->
           let m =
-            Ops.param ~shape:[ Int 64 ]
+            Shape.param ~shape:[ Int 64 ]
               ~device:(Multi [ "CPU:1"; "CPU:2" ])
               0 Float32
           in
-          let s u o n = Ops.shrink u [ Some (Int o, Int (o + n)) ] in
+          let s u o n = Shape.shrink u [ Some (Int o, Int (o + n)) ] in
           List.iter
             (fun view ->
               let t = Hcq2.Deps.make () in
@@ -621,7 +621,7 @@ let byte_model =
     Gen.(list ~size:(int_range 1 12) (list ~size:(int_range 1 3) access_gen))
     (fun steps ->
       let m =
-        Ops.param ~shape:[ Int 24 ] ~device:(Multi [ "CPU:1"; "CPU:2" ]) 0 Uint8
+        Shape.param ~shape:[ Int 24 ] ~device:(Multi [ "CPU:1"; "CPU:2" ]) 0 Uint8
       in
       let t = Hcq2.Deps.make () in
       let written = Array.make_matrix 2 24 None
@@ -641,7 +641,7 @@ let byte_model =
           let bufs =
             List.map
               (fun a ->
-                Ops.shrink (Ops.mselect m a.lane)
+                Shape.shrink (Ops.mselect m a.lane)
                   [ Some (Int a.start, Int a.stop) ])
               accesses
           in
@@ -774,7 +774,7 @@ let scheduling =
             (list (list int))
             [ [ 0; 1 ] ]
             (orders
-               (one [ Ops.store_call dst src; adds (storage "CPU:2") dst ])));
+               (one [ Shape.store_call dst src; adds (storage "CPU:2") dst ])));
       test "kernels of different devices do not wait for each other" (fun () ->
           let b =
             one
@@ -823,7 +823,7 @@ let scheduling =
         "a program runs on its compute queue, a copy on its source's copy queue"
         (fun () ->
           let src = storage "CPU:1" and dst = storage "CPU:2" in
-          let b = one [ Ops.store_call dst src; adds (storage "CPU:2") dst ] in
+          let b = one [ Shape.store_call dst src; adds (storage "CPU:2") dst ] in
           equal
             (list (pair string string))
             [ ("CPU:1", "COPY:0"); ("CPU:2", "COMPUTE:0") ]
@@ -836,10 +836,10 @@ let scheduling =
           ignore
             (checked
                [
-                 Ops.store_call b a;
+                 Shape.store_call b a;
                  adds (storage "CPU:2") b;
-                 Ops.store_call c b;
-                 Ops.store_call d c;
+                 Shape.store_call c b;
+                 Shape.store_call d c;
                  adds (storage "CPU:1") d;
                ]));
       test
@@ -849,7 +849,7 @@ let scheduling =
             sched
               [
                 adds (storage "METAL:1") (storage "METAL:1");
-                Ops.store_call (storage "METAL:2") (storage "METAL:1");
+                Shape.store_call (storage "METAL:2") (storage "METAL:1");
               ]
           in
           equal (list bool) [ true; false ] (List.map is_batch (Ops.src out)));
@@ -862,7 +862,7 @@ let scheduling =
             and c = storage (kind ^ ":1") in
             let batch =
               one
-                [ adds c b; Ops.store_call a b; adds (storage (kind ^ ":1")) a ]
+                [ adds c b; Shape.store_call a b; adds (storage (kind ^ ":1")) a ]
             in
             let compute =
               List.assoc (kind ^ ":1", "COMPUTE:0") (Batches.queues batch)
@@ -887,7 +887,7 @@ let scheduling =
             let src = storage "AMD:0" in
             let calls =
               List.map
-                (fun d -> Ops.store_call (storage d) src)
+                (fun d -> Shape.store_call (storage d) src)
                 [ "AMD:1"; "AMD:2" ]
             in
             let out =
@@ -907,7 +907,7 @@ let scheduling =
         (fun () ->
           let src = storage "CPU:1" and dst = storage "CPU:2" in
           let batch =
-            one [ Ops.store_call dst src; adds (storage "CPU:2") dst ]
+            one [ Shape.store_call dst src; adds (storage "CPU:2") dst ]
           in
           let submissions = Ops.src (Ops.nth batch 0) in
           List.iteri
@@ -929,7 +929,7 @@ let scheduling =
       test "names each submission after its kind and queue" (fun () ->
           let src = storage "CPU:1" and dst = storage "CPU:2" in
           let batch =
-            one [ Ops.store_call dst src; adds (storage "CPU:2") dst ]
+            one [ Shape.store_call dst src; adds (storage "CPU:2") dst ]
           in
           equal (list string)
             [ "submit_cpu_copy"; "submit_cpu_compute" ]
@@ -945,7 +945,7 @@ let scheduling =
           let a = storage "CPU:1"
           and b = storage "CPU:1"
           and c = storage "CPU:2" in
-          let calls = [ adds b a; Ops.store_call c b ] in
+          let calls = [ adds b a; Shape.store_call c b ] in
           let info = info_of (plain (fun () -> one calls)) in
           equal (list string)
             [ "k"; "copy       16 B,   CPU:2 <- CPU:1  " ]
@@ -1046,7 +1046,7 @@ let lowering =
           let lowered =
             Hcq2.lower_call ~devices:(kinds ())
               (the_batch
-                 (sched [ Ops.store_call dst src; adds (storage "CPU:1") dst ]))
+                 (sched [ Shape.store_call dst src; adds (storage "CPU:1") dst ]))
           in
           let keys =
             List.map
@@ -1069,17 +1069,17 @@ let lowering =
               equal op ~msg:"a store" Store (Ops.op p);
               List.iter
                 (fun n ->
-                  is_false ~msg:"a variable" (Ops.is_variable n);
+                  is_false ~msg:"a variable" (Shape.is_variable n);
                   is_false ~msg:"a load" (Ops.op n = Load))
                 (Ops.toposort ~calls:Enter p))
             patches);
       test "an input's address is loaded from the address table on each run"
         (fun () ->
           let a =
-            Ops.param ~shape:[ Int 4 ] ~device:(Single "CPU:1") 0 Float32
+            Shape.param ~shape:[ Int 4 ] ~device:(Single "CPU:1") 0 Float32
           in
           let b =
-            Ops.param ~shape:[ Int 4 ] ~device:(Single "CPU:1") 1 Float32
+            Shape.param ~shape:[ Int 4 ] ~device:(Single "CPU:1") 1 Float32
           in
           let lowered =
             Hcq2.lower_call ~devices:(kinds ()) (the_batch (sched [ adds b a ]))
@@ -1196,7 +1196,7 @@ let compiling =
           and dst = Ops.new_buffer (Single "CPU:2") big Float32 in
           let compiled =
             Hcq2.compile_linear ~profile:Unstamped ~devices
-              (linear [ Ops.store_call dst src ])
+              (linear [ Shape.store_call dst src ])
           in
           let staging =
             List.filter
@@ -1216,7 +1216,7 @@ let compiling =
           let compiled =
             Hcq2.compile_linear ~profile:Unstamped
               ~devices:(recorded_devices ~copy_queue:false ())
-              (linear [ Ops.store_call (storage "CPU:2") (storage "CPU:1") ])
+              (linear [ Shape.store_call (storage "CPU:2") (storage "CPU:1") ])
           in
           let info = info_of (the_batch compiled) in
           is_false ~msg:"a copy"
@@ -1299,7 +1299,7 @@ let agrees ?(heavy = false) ?(latency = 0.) name calls =
 
 let params name n =
   List.init n (fun slot ->
-      Ops.param ~shape:[ Int 4 ] ~device:(Single name) slot Float32)
+      Shape.param ~shape:[ Int 4 ] ~device:(Single name) slot Float32)
 
 let running =
   group "linking and running"
@@ -1340,16 +1340,16 @@ let running =
         "a copy between devices and the kernel it feeds agree with running \
          them one by one"
         (let src = storage "CPU:1" and dst = storage "CPU:2" in
-         [ Ops.store_call dst src; kernel_adds (storage "CPU:2") dst ]);
+         [ Shape.store_call dst src; kernel_adds (storage "CPU:2") dst ]);
       agrees ~heavy:true
         "copies across three devices agree with running them one by one"
         (let a = storage "CPU:1"
          and b = storage "CPU:2"
          and c = storage "CPU:3" in
          [
-           Ops.store_call b a;
+           Shape.store_call b a;
            kernel_adds ~c:2. c b;
-           Ops.store_call (storage "CPU:1") c;
+           Shape.store_call (storage "CPU:1") c;
          ]);
       agrees "kernels on two devices at once agree with running them one by one"
         [
@@ -1365,9 +1365,9 @@ let running =
          and b = storage "CPU:1" in
          [
            kernel_adds a (storage "CPU:1");
-           Ops.store_call h a;
+           Shape.store_call h a;
            kernel_adds ~c:3. (storage "CPU") h;
-           Ops.store_call b h;
+           Shape.store_call b h;
            kernel_adds (storage "CPU:1") b;
          ]);
       test "a copy without copy queues runs as a kernel, and copies" (fun () ->
@@ -1382,7 +1382,7 @@ let running =
             (run_calls
                ~devices:(Null_device.devices ~copy_queue:false ())
                ~bound
-               [ Ops.store_call dst src ]);
+               [ Shape.store_call dst src ]);
           equal floats [| 5.; 6.; 7.; 8. |]
             (floats_of (List.hd (List.assq dst bound))));
       test "a sharded kernel computes each shard on its device" (fun () ->
@@ -1631,7 +1631,7 @@ let host_functions =
     [
       test "a host program calls a C function and keeps its result" (fun () ->
           let out =
-            Ops.placeholder ~device:(Single "CPU:1") ~volatile:true
+            Shape.placeholder ~device:(Single "CPU:1") ~volatile:true
               ~tag:(String "result") [ 1 ] Int32
           in
           let ffs =
@@ -1658,7 +1658,7 @@ let host_functions =
               ]
           in
           let out =
-            Ops.placeholder ~device:(Single "CPU:1") ~tag:(String "copied")
+            Shape.placeholder ~device:(Single "CPU:1") ~tag:(String "copied")
               [ 16 ] Uint8
           in
           let copy =
@@ -1677,7 +1677,7 @@ let host_functions =
       test "cfield reads a field of a structure" (fun () ->
           let s = Hcq2.cstruct ~host:"CPU:1" struct_t [ ("u32", u32 42) ] in
           let out =
-            Ops.placeholder ~device:(Single "CPU:1") ~volatile:true
+            Shape.placeholder ~device:(Single "CPU:1") ~volatile:true
               ~tag:(String "field") [ 1 ] Uint32
           in
           let b = output () in
@@ -1847,7 +1847,7 @@ let word_tests =
         (fun () ->
           let d = "CPU:1" in
           let buf =
-            Ops.placeholder ~device:(Single d) ~tag:(String "patched") [ 32 ]
+            Shape.placeholder ~device:(Single d) ~tag:(String "patched") [ 32 ]
               Uint8
           in
           let rows =
@@ -1873,7 +1873,7 @@ let word_tests =
         (fun () ->
           let d = "CPU:1" in
           let buf =
-            Ops.placeholder ~device:(Single d) ~tag:(String "patched") [ 32 ]
+            Shape.placeholder ~device:(Single d) ~tag:(String "patched") [ 32 ]
               Uint8
           in
           let patched =
@@ -1883,7 +1883,7 @@ let word_tests =
               ]
           in
           let out =
-            Ops.placeholder ~device:(Single d) ~tag:(String "out") [ 1 ] Uint32
+            Shape.placeholder ~device:(Single d) ~tag:(String "out") [ 1 ] Uint32
           in
           let read_back =
             Ops.store
@@ -1922,7 +1922,7 @@ let word_tests =
             (List.exists
                (fun n ->
                  Ops.op n = Param
-                 && Ops.is_variable n
+                 && Shape.is_variable n
                  && Ops.expr n = Ops.expr (Hcq2.value d))
                (Ops.toposort ~calls:Enter host)));
       test "each region starts at its own alignment in the buffer of its name"
@@ -1969,7 +1969,7 @@ let word_tests =
                 | Shrink, b :: _
                   when Ops.tag (Ops.without_after b)
                        = Some (String "r_compute_0") -> (
-                    match Ops.marg u with
+                    match Shape.marg u with
                     | Shrink [ (Int start, _) ] -> Some start
                     | _ -> None)
                 | _ -> None)
@@ -2094,7 +2094,7 @@ let word_tests =
       test "a command buffer is a placeholder whose tag starts with cmdbuf"
         (fun () ->
           let tagged t =
-            Ops.placeholder ~device:(Single "CPU:1") ~tag:(String t) [ 8 ] Uint8
+            Shape.placeholder ~device:(Single "CPU:1") ~tag:(String t) [ 8 ] Uint8
           in
           equal (list bool)
             [ true; true; false; false; false ]
@@ -2112,7 +2112,7 @@ let word_tests =
 let looped_batch d words =
   let r = Ops.range (Int 3) [ 11 ] in
   let ins code src = Ops.v Ins ~src ~arg:(Code { code; dtype = Void }) in
-  let word = Ops.shrink words [ Some (Sym r, Sym (Ops.add r (Ops.int 1))) ] in
+  let word = Shape.shrink words [ Some (Sym r, Sym (Ops.add r (Ops.int 1))) ] in
   let body =
     Ops.v Linear
       ~src:[ ins "store" [ word; Ops.cast (Ops.add r (Ops.int 40)) Uint64 ] ]
@@ -2166,7 +2166,7 @@ let r = Ops.range (Int 3) [ 7 ]
 
 let window u =
   let start = Ops.mul r (Ops.int 4) in
-  Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
 
 let ranged d =
   let src = Ops.new_buffer (Single d) 12 Float32
@@ -2179,7 +2179,7 @@ let ranged d =
 let staged d =
   let src = storage ~n:12 d and dst = storage ~n:12 d and tmp = storage d in
   Ops.end_
-    (linear [ Ops.store_call tmp (window src); kernel_adds (window dst) tmp ])
+    (linear [ Shape.store_call tmp (window src); kernel_adds (window dst) tmp ])
     [ r ]
 
 let windows_bound src dst =
@@ -2209,7 +2209,7 @@ let big_floats d n f =
    in four lanes, its parameters those of the windows, as a schedule makes
    them. *)
 let windowed_adds out inp =
-  let o = Ops.param_like out 0 and i = Ops.param_like inp 1 in
+  let o = Shape.param_like out 0 and i = Shape.param_like inp 1 in
   let k = Ops.range (Int 4) [ 0 ] in
   let st = Ops.store (Ops.index o [ k ]) (plus 1. (Ops.index i [ k ])) in
   let lanes =
@@ -2233,7 +2233,7 @@ let kernel_source call =
    [r]. *)
 let strided r stride u =
   let start = Ops.mul r (Ops.int stride) in
-  Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
 
 (* Two trips of a kernel adding one to windows of four floats [2^24 + 1] floats
    apart: the second trip's window is [2^26 + 4] bytes in, which a float does
@@ -2269,7 +2269,7 @@ let splits_a_range_its_queue_cannot_hold () =
   let r = Ops.range (Int n) [ Ops.unique_num () ] in
   let window u =
     let start = Ops.mul r (Ops.int 4) in
-    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+    Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
   in
   let src = storage ~n:(4 * n) "CPU:1" and dst = storage ~n:(4 * n) "CPU:1" in
   let devices = Null_device.devices ~ring:256 () in
@@ -2306,7 +2306,7 @@ let chunks_a_long_range () =
   let r = Ops.range (Int n) [ Ops.unique_num () ] in
   let window u =
     let start = Ops.mul r (Ops.int 4) in
-    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+    Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
   in
   let src = storage ~n:(4 * n) "CPU:1" and dst = storage ~n:(4 * n) "CPU:1" in
   let devices = Null_device.devices () in
@@ -2526,7 +2526,7 @@ let ranges =
                   (linear
                      [
                        on "METAL:0";
-                       Ops.store_call (storage "METAL:0")
+                       Shape.store_call (storage "METAL:0")
                          (window (storage ~n:12 "METAL:0"));
                      ])
                   [ r ]));
@@ -2582,7 +2582,7 @@ let streamed_queues =
           let calls =
             [
               adds x (storage "CPU:1");
-              Ops.store_call d (storage "CPU");
+              Shape.store_call d (storage "CPU");
               adds (storage "CPU:1") d;
               adds (storage "CPU:1") x;
             ]
@@ -2598,7 +2598,7 @@ let streamed_queues =
       test "a copy of a kernel's output runs after it" (fun () ->
           let x = storage "CPU:1" in
           let calls =
-            [ adds x (storage "CPU:1"); Ops.store_call (storage "CPU") x ]
+            [ adds x (storage "CPU:1"); Shape.store_call (storage "CPU") x ]
           in
           List.iter runs_streamed (streamed calls));
       test "queues that wait for each other run as several batches" (fun () ->
@@ -2606,8 +2606,8 @@ let streamed_queues =
           let calls =
             [
               adds x (storage "CPU:1");
-              Ops.store_call (storage "CPU") x;
-              Ops.store_call d (storage "CPU");
+              Shape.store_call (storage "CPU") x;
+              Shape.store_call d (storage "CPU");
               adds (storage "CPU:1") d;
             ]
           in
@@ -2622,8 +2622,8 @@ let streamed_queues =
               (linear
                  [
                    adds x (storage "CPU:1");
-                   Ops.store_call (storage "CPU") x;
-                   Ops.store_call d (storage "CPU");
+                   Shape.store_call (storage "CPU") x;
+                   Shape.store_call d (storage "CPU");
                    adds (storage "CPU:1") d;
                  ])
               [ r ]

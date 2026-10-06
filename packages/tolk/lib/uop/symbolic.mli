@@ -31,7 +31,7 @@
     index, which then does nothing where the gate fails.
 
     {b Installation.} Initialising the module makes {!symbolic} the rules of
-    {!Ops.simplify}, and so of {!Ops.resolve} and of every shape computation. *)
+    {!Shape.simplify}, and so of {!Shape.resolve} and of every shape computation. *)
 
 (** {1:invalid Invalid values} *)
 

@@ -53,7 +53,7 @@ let var ?(dtype = Dtype.Int32) name lo hi =
 
 let fvar name = Ops.variable ~dtype:Float32 name (`Float (-10.)) (`Float 10.)
 let flag name = Ops.variable ~dtype:Bool name (`Bool false) (`Bool true)
-let buffer ?(dtype = Dtype.Int32) n = Ops.param ~shape:[ Int n ] 0 dtype
+let buffer ?(dtype = Dtype.Int32) n = Shape.param ~shape:[ Int n ] 0 dtype
 let load buf idx = Ops.load (Ops.index buf [ idx ]) []
 
 let gated_load buf idx =
@@ -258,13 +258,13 @@ let type_verify =
 (* An elementwise operation of a program on two lanes, and the same operation on
    one. *)
 let lanes op =
-  let pair a b = Ops.stack [ fvar a; fvar b ] in
+  let pair a b = Shape.stack [ fvar a; fvar b ] in
   match op with
   | `Add ->
       (Ops.add (pair "a" "b") (pair "c" "d"), Ops.add (fvar "a") (fvar "c"))
   | `Cast -> (Ops.cast (pair "a" "b") Int32, Ops.cast (fvar "a") Int32)
   | `Where ->
-      let cond = Ops.stack [ flag "p"; flag "q" ] in
+      let cond = Shape.stack [ flag "p"; flag "q" ] in
       ( Ops.where cond (pair "a" "b") (pair "c" "d"),
         Ops.where (flag "p") (fvar "a") (fvar "c") )
 
@@ -279,7 +279,7 @@ let vectors =
           equal verdict (Some false) (judge Spec.program vector);
           is_false (judge Spec.program scalar = Some false));
       test "a program reads a lane of a vector at a constant (D86)" (fun () ->
-          let vector = Ops.stack [ fvar "a"; fvar "b" ] in
+          let vector = Shape.stack [ fvar "a"; fvar "b" ] in
           let lane i = fresh_v ~src:[ vector; i ] Op.Index in
           let i =
             Ops.variable ~dtype:Int32 "i" (`Int Bigint.zero) (`Int Bigint.one)
@@ -311,8 +311,8 @@ let construction =
    three trips of [axis_type], with the range. *)
 let row axis_type =
   let r = Ops.range ~axis_type (Int 3) [ 100 ] in
-  let rows = Ops.param ~shape:[ Int 12 ] 1 Float32 in
-  ( Ops.shrink rows
+  let rows = Shape.param ~shape:[ Int 12 ] 1 Float32 in
+  ( Shape.shrink rows
       [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ],
     r )
 
@@ -359,10 +359,10 @@ let loops =
    apart. *)
 let call_on_rows ~align stride =
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
-  let rows = Ops.param ~shape:[ Int ((2 * stride) + 4) ] 1 Float32 in
+  let rows = Shape.param ~shape:[ Int ((2 * stride) + 4) ] 1 Float32 in
   let start = Ops.O.(r * int stride) in
-  let row = Ops.shrink rows [ Some (Sym start, Sym Ops.O.(start + int 4)) ] in
-  let p = Ops.param ~shape:[ Int 4 ] ~align 0 Float32 in
+  let row = Shape.shrink rows [ Some (Sym start, Sym Ops.O.(start + int 4)) ] in
+  let p = Shape.param ~shape:[ Int 4 ] ~align 0 Float32 in
   let k = Ops.range (Int 4) [ 0 ] in
   let one = Ops.float ~dtype:Float32 1. in
   let body =

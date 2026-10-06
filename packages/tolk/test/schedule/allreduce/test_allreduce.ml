@@ -191,11 +191,11 @@ let computes ?(settings = []) red = holds_reduction red (created ~settings red)
 let concrete name =
   List.for_all
     (function Ops.Int _ -> true | Sym _ -> false)
-    (Ops.shape (allreduce name))
+    (Shape.shape (allreduce name))
 
 (* An allreduce of 300,000 elements takes a second. *)
 let case name =
-  match Ops.numel (allreduce name) with
+  match Shape.numel (allreduce name) with
   | Int n when n > 100_000 -> slow
   | _ -> test
 
@@ -249,7 +249,7 @@ let red_of d =
   let buf = Ops.new_buffer (Multi names) size Float32 in
   let target = if d.one_device then Ops.Single "CPU:0" else Multi names in
   Ops.allreduce
-    (Ops.reshape buf (List.map (fun n -> Ops.Int n) d.shape))
+    (Shape.reshape buf (List.map (fun n -> Ops.Int n) d.shape))
     d.op target
 
 let bindings d =
@@ -365,11 +365,11 @@ let algorithms =
         (fun () ->
           let red = allreduce "naive_symbolic" in
           let settings = settings "naive_symbolic" in
-          let sizes u = List.map Ops.sint_to_uop (Ops.shape u) in
+          let sizes u = List.map Ops.sint_to_uop (Shape.shape u) in
           equal (list uop) (sizes red) (sizes (handled ~settings red));
           equal (list uop) (sizes red) (sizes (created ~settings red));
           equal (list int) [ 64 ]
-            (List.map Ops.max_numel (made_storage red (created ~settings red))));
+            (List.map Shape.max_numel (made_storage red (created ~settings red))));
     ]
 
 (* Rules *)

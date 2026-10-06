@@ -42,6 +42,8 @@ The modules not named after their file:
 |---|---|---|
 | `uop/__init__.py` (the `Ops` enum, `GroupOp`) | `lib/uop/op.ml` | `Op` |
 | `uop/weak.py` | `lib/uop/uop_weak.ml` | `Uop_weak` (Stdlib has `Weak`) |
+| `uop/ops.py`: the `UOp` methods that need `simplify` (shapes, movement, resolving, storage of a shape, sharding, variables, divisibility, calls and programs) | `lib/uop/shape.ml` | `Shape`, above `Ops`, since a symbolic size is compared by simplifying it (DIVERGENCES D4) |
+| `uop/ops.py`: the fields of `UOp` | `lib/uop/uop.ml` | `Uop`, private to the library: `Shape` keeps its properties with each node |
 | `codegen/__init__.py` | `lib/codegen/codegen.ml` | `Codegen` |
 | `codegen/decomp/dtype.py` | `lib/codegen/decomp/decomp_dtype.ml` | `Decomp_dtype` (`dtype.py`) |
 | `codegen/decomp/op.py` | `lib/codegen/decomp/decomp_op.ml` | `Decomp_op` (`uop/__init__.py`'s `Op`) |
@@ -56,7 +58,7 @@ The modules not named after their file:
 | `runtime/autogen/nv_570.py`, `nv_580.py` and `nv_610.py`: the definitions `runtime/ops_nv.py` encodes; in `runtime/ops_nv.py`, `QMD`, `NVProgramData` and the method words of `NVCommandQueue`, `NVComputeQueue` and `NVCopyQueue` | `packages/nx/lib/nv/packet/` and `packages/nx/lib/nv/cubin/`, which nx.nv.device's own queues use too, so that the runtime and the batches write one layout; the definitions are generated from NVIDIA's headers by `packages/nx/lib/nv/device/gen/gen.py`. tolk's batch logic stays in `lib/runtime/ops_nv.ml`, encoding over nodes through `lib/runtime/nv_packet.ml` | `Nx_nv_packet` (nx.nv.packet), `Nx_nv_cubin` (nx.nv.cubin), `Nv_packet` |
 
 The mixins have no files: the methods `UOp` keeps from `mixin/*.py` are
-folded into `Ops`. No other in-scope file shares its name with
+folded into `Ops`, and those that read shapes into `Shape`. No other in-scope file shares its name with
 another or with a Stdlib module. An empty `__init__.py` has no module.
 
 ## Exclusions

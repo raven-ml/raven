@@ -17,7 +17,7 @@ val handle_allreduce : Ops.t -> Ops.t option
 (** [handle_allreduce red] is the value of the allreduce [red] of a source [x]
     across [n] devices with the operation [op], built from copies and [op], or
     [None] if [x] is not on several devices. [x] is padded to its greatest shape
-    ({!Ops.max_shape}) and made contiguous first. The algorithm is the first
+    ({!Shape.max_shape}) and made contiguous first. The algorithm is the first
     that applies:
 
     - {e hierarchical}, when [x]'s shape is known and

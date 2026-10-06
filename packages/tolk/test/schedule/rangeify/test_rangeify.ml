@@ -469,17 +469,17 @@ let cpu = Ops.Single "CPU"
 let ints = List.map (fun n -> Ops.Int n)
 
 let input ?(shape = [ 4; 4 ]) slot =
-  Ops.reshape
-    (Ops.param ~device:cpu
+  Shape.reshape
+    (Shape.param ~device:cpu
        ~shape:[ Int (List.fold_left ( * ) 1 shape) ]
        slot Float32)
     (ints shape)
 
-let out = Ops.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
+let out = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
 
 let stores value =
   Ops.sink
-    [ Ops.after out [ Ops.store (Ops.reshape out (Ops.shape value)) value ] ]
+    [ Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ] ]
 
 let schedule sink = Rangeify.get_kernel_graph (Prepare.prepare_rangeify sink)
 let kernels_of sink = kernels (schedule sink)
@@ -488,7 +488,7 @@ let rejects ~because f = raises_match (Exn.invalid_arg ~substring:because) f
 let sum_of us =
   List.fold_left (fun acc u -> Ops.O.(acc + u)) (List.hd us) (List.tl us)
 
-let read_twice v = Ops.O.(v + Ops.permute v [ 1; 0 ])
+let read_twice v = Ops.O.(v + Shape.permute v [ 1; 0 ])
 
 let rules =
   group "get_kernel_graph › rules"
@@ -509,7 +509,7 @@ let rules =
                   (Ops.sink [ Ops.after out [ Ops.store out out ] ]))));
       test "a store of invalid values runs no kernel" (fun () ->
           let invalid =
-            Ops.expand (Ops.const ~dtype:Float32 `Invalid) (ints [ 16 ])
+            Shape.expand (Ops.const ~dtype:Float32 `Invalid) (ints [ 16 ])
           in
           equal int 0
             (kernels_of (Ops.sink [ Ops.after out [ Ops.store out invalid ] ])));
@@ -525,11 +525,11 @@ let rules =
       test "without a limit, one kernel reads every storage" (fun () ->
           equal int 1 (kernels (kernel_graph "many_inputs")));
       test "a kernel reading one storage in two states is refused" (fun () ->
-          let a = Ops.param ~device:cpu ~shape:[ Int 16 ] 1 Float32 in
+          let a = Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Float32 in
           let written =
             Ops.after a
               [
-                Ops.store a (Ops.param ~device:cpu ~shape:[ Int 16 ] 2 Float32);
+                Ops.store a (Shape.param ~device:cpu ~shape:[ Int 16 ] 2 Float32);
               ]
           in
           let sink =
@@ -576,11 +576,11 @@ let rules =
    neither of which reads the other, run as one kernel that writes both. A
    double word's high and low parts are one chain's two ends. *)
 
-let out2 = Ops.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
+let out2 = Shape.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
 
 let stores2 ?(size = 16) v w =
-  let at slot = Ops.param ~device:cpu ~shape:[ Int size ] slot Float32 in
-  let store o v = Ops.after o [ Ops.store (Ops.reshape o (Ops.shape v)) v ] in
+  let at slot = Shape.param ~device:cpu ~shape:[ Int size ] slot Float32 in
+  let store o v = Ops.after o [ Ops.store (Shape.reshape o (Shape.shape v)) v ] in
   Ops.sink [ store (at 0) v; store (at 4) w ]
 
 (* Knuth's two-sum of [a] and [b]: the rounded sum and its error. *)
@@ -609,7 +609,7 @@ let shared =
       test "outputs that share only a load run as two kernels" (fun () ->
           equal int 2 (kernels_of (stores2 Ops.O.(x + x) Ops.O.(x * x))));
       test "outputs that share a reduction run as one kernel" (fun () ->
-          let m = Ops.rop (input 1) Max [ 1 ] in
+          let m = Shape.rop (input 1) Max [ 1 ] in
           let sink =
             stores2 ~size:4 Ops.O.(m + float 1.) Ops.O.(m * float 2.)
           in
@@ -617,24 +617,24 @@ let shared =
           writes sink);
       test "outputs that share a broadcast reduction read it from its kernel"
         (fun () ->
-          let m = Ops.expand (Ops.rop (input 1) Max [ 1 ]) (ints [ 4; 4 ]) in
+          let m = Shape.expand (Shape.rop (input 1) Max [ 1 ]) (ints [ 4; 4 ]) in
           let sink = stores2 Ops.O.(m + input 2) Ops.O.(m * input 3) in
           equal int 2 (kernels_of sink);
           writes sink);
       test "outputs with a reduction each run as two kernels" (fun () ->
           let sink =
-            stores2 ~size:4 (Ops.rop v Add [ 1 ]) (Ops.rop v Max [ 1 ])
+            stores2 ~size:4 (Shape.rop v Add [ 1 ]) (Shape.rop v Max [ 1 ])
           in
           equal int 2 (kernels_of sink);
           writes sink);
       test "outputs of shapes that differ run as two kernels" (fun () ->
-          let w = Ops.reshape v (ints [ 2; 8 ]) in
+          let w = Shape.reshape v (ints [ 2; 8 ]) in
           equal int 2 (kernels_of (stores2 v Ops.O.(w * w))));
       test "an output that reads what another writes runs after it" (fun () ->
           let first =
-            Ops.after out [ Ops.store (Ops.reshape out (ints [ 4; 4 ])) v ]
+            Ops.after out [ Ops.store (Shape.reshape out (ints [ 4; 4 ])) v ]
           in
-          let read = Ops.reshape first (ints [ 4; 4 ]) in
+          let read = Shape.reshape first (ints [ 4; 4 ]) in
           let sink =
             Ops.sink
               [
@@ -642,7 +642,7 @@ let shared =
                 Ops.after out2
                   [
                     Ops.store
-                      (Ops.reshape out2 (ints [ 4; 4 ]))
+                      (Shape.reshape out2 (ints [ 4; 4 ]))
                       Ops.O.((v * v) + read);
                   ];
               ]
@@ -650,7 +650,7 @@ let shared =
           equal int 2 (kernels_of sink);
           writes sink);
       test "an output that overwrites what another reads runs apart" (fun () ->
-          let old = Ops.reshape out2 (ints [ 4; 4 ]) in
+          let old = Shape.reshape out2 (ints [ 4; 4 ]) in
           let sink = stores2 Ops.O.(v + old) Ops.O.(v * v) in
           equal int 2 (kernels_of sink);
           writes sink);
@@ -731,7 +731,7 @@ let program =
 let dims u =
   List.map
     (function Ops.Int n -> n | Sym _ -> fail "a concrete shape")
-    (Ops.shape u)
+    (Shape.shape u)
 
 let pick k = function
   | [] -> None
@@ -759,40 +759,40 @@ let build (shape, steps) =
     | Add_self -> Ops.O.(v + v)
     | Scale k -> Ops.O.(v * float (float_of_int k))
     | Add_input when List.length !memory < 3 -> Ops.O.(v + fresh shape)
-    | Sum k when rank > 0 -> Ops.rop v Add [ k mod rank ]
-    | Max k when rank > 0 -> Ops.rop v Max [ k mod rank ]
+    | Sum k when rank > 0 -> Shape.rop v Add [ k mod rank ]
+    | Max k when rank > 0 -> Shape.rop v Max [ k mod rank ]
     | Rotate k when rank > 0 ->
-        Ops.permute v (List.init rank (fun i -> (i + k) mod rank))
+        Shape.permute v (List.init rank (fun i -> (i + k) mod rank))
     | Flip k -> (
-        match pick k axes with Some a -> Ops.flip v [ a ] | None -> v)
+        match pick k axes with Some a -> Shape.flip v [ a ] | None -> v)
     | Pad k -> (
         match pick k axes with
-        | Some a -> Ops.pad v (on a (fun _ -> Some (Ops.Int 1, Ops.Int 2)))
+        | Some a -> Shape.pad v (on a (fun _ -> Some (Ops.Int 1, Ops.Int 2)))
         | None -> v)
     | Shrink k -> (
         match pick k (List.filter (fun a -> List.nth shape a > 1) axes) with
-        | Some a -> Ops.shrink v (on a (fun n -> Some (Ops.Int 1, Ops.Int n)))
+        | Some a -> Shape.shrink v (on a (fun n -> Some (Ops.Int 1, Ops.Int n)))
         | None -> v)
     | Unsqueeze k ->
         let p = k mod (rank + 1) in
-        Ops.reshape v
+        Shape.reshape v
           (ints
              (List.filteri (fun a _ -> a < p) shape
              @ (1 :: List.filteri (fun a _ -> a >= p) shape)))
-    | Expand -> Ops.expand v (ints (2 :: shape))
+    | Expand -> Shape.expand v (ints (2 :: shape))
     | Stage -> Ops.v Stage ~src:[ v ]
     | Read_twice when rank = 2 && List.nth shape 0 = List.nth shape 1 ->
-        Ops.O.(v + Ops.permute v [ 1; 0 ])
+        Ops.O.(v + Shape.permute v [ 1; 0 ])
     | _ -> v
   in
   let value = List.fold_left apply (fresh shape) steps in
   let size = List.fold_left ( * ) 1 (dims value) in
-  let result = Ops.param ~device:cpu ~shape:[ Int size ] 0 Float32 in
+  let result = Shape.param ~device:cpu ~shape:[ Int size ] 0 Float32 in
   let sink =
     Ops.sink
       [
         Ops.after result
-          [ Ops.store (Ops.reshape result (Ops.shape value)) value ];
+          [ Ops.store (Shape.reshape result (Shape.shape value)) value ];
       ]
   in
   (sink, !memory)
@@ -829,7 +829,7 @@ let laws =
    already scheduled, as calls inside a program are scheduled before it. *)
 let scan_loop () =
   let k = 4 and n = 3 in
-  let p slot = Ops.param ~device:cpu ~shape:[ Int k ] slot Float32 in
+  let p slot = Shape.param ~device:cpu ~shape:[ Int k ] slot Float32 in
   let body =
     Schedule.create_schedule
       (schedule
@@ -839,12 +839,12 @@ let scan_loop () =
               Ops.store (p 2) Ops.O.(p 0 * float 2.);
             ]))
   in
-  let c = Ops.param ~device:cpu ~shape:[ Int k ] 0 Float32
-  and xs = Ops.param ~device:cpu ~shape:[ Int (n * k) ] 1 Float32
-  and ys = Ops.param ~device:cpu ~shape:[ Int (n * k) ] 2 Float32 in
+  let c = Shape.param ~device:cpu ~shape:[ Int k ] 0 Float32
+  and xs = Shape.param ~device:cpu ~shape:[ Int (n * k) ] 1 Float32
+  and ys = Shape.param ~device:cpu ~shape:[ Int (n * k) ] 2 Float32 in
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row b =
-    Ops.shrink b
+    Shape.shrink b
       [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
   in
   let e =
@@ -885,15 +885,15 @@ let loops =
    so each of these is expected to fail until it lands. *)
 
 let states =
-  let flat slot = Ops.param ~device:cpu ~shape:[ Int 16 ] slot Float32 in
+  let flat slot = Shape.param ~device:cpu ~shape:[ Int 16 ] slot Float32 in
   let x = flat 1 and y = flat 2 in
   let assigned = Ops.after x [ Ops.store x y ] in
-  let rows u = Ops.reshape u (ints [ 4; 4 ]) in
+  let rows u = Shape.reshape u (ints [ 4; 4 ]) in
   let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
   let at =
     Ops.cast
       (Ops.maximum
-         (Ops.minimum (Ops.param ~device:cpu ~shape:[ Int 4 ] 3 Int32) (i32 3))
+         (Ops.minimum (Shape.param ~device:cpu ~shape:[ Int 4 ] 3 Int32) (i32 3))
          (i32 0))
       Weak_int
   in
@@ -931,7 +931,7 @@ let centred n =
   let rec link x k =
     if k = n then x
     else
-      let sums = Ops.expand (Ops.rop x Add [ 1 ]) (ints [ 4; 4 ]) in
+      let sums = Shape.expand (Shape.rop x Add [ 1 ]) (ints [ 4; 4 ]) in
       link Ops.O.(x - sums) (k + 1)
   in
   stores (link (input n) 0)

@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let strf = Printf.sprintf
 let to_string pp x = Format.asprintf "%a" pp x
@@ -200,7 +201,7 @@ let renderer =
     ])
 
 let rec render ?(simplify = true) u =
-  let s = if simplify then Ops.simplify u else u in
+  let s = if simplify then Shape.simplify u else u in
   let ctx = { strs = Tbl.create 64; render = (fun a -> render a) } in
   List.iter
     (fun u ->

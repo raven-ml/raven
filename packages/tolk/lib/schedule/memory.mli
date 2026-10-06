@@ -38,7 +38,7 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     {!Support_memory.Tlsf_allocator}, the buffers ending at a call freed before
     those starting there are placed. Each planned buffer is replaced wherever
     [linear] reaches it outside call bodies by the bytes of its arena at its
-    place ({!Ops.shrink}) viewed as its type ({!Ops.bitcast}). New arenas take
+    place ({!Shape.shrink}) viewed as its type ({!Ops.bitcast}). New arenas take
     the next slots ({!Ops.unique_num}).
 
     [linear] is itself if {!Setting.no_memory_planner} is set or no buffer is

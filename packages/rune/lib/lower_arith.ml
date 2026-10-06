@@ -9,8 +9,8 @@ let dtype = Ops.dtype
 let is_float u = Dtype.is_float (dtype u)
 let is_signed u = List.exists (Dtype.equal (dtype u)) Dtype.sints
 let where = Ops.where
-let float u x = Ops.const_like u (`Float x)
-let int u n = Ops.const_like u (`Int (Bigint.of_int n))
+let float u x = Shape.const_like u (`Float x)
+let int u n = Shape.const_like u (`Int (Bigint.of_int n))
 let isnan x = Ops.ne x x
 
 (* Comparisons false on NaN: [x >= y] and [x <= y]. *)
@@ -40,12 +40,12 @@ let sign_mask x =
 
 let sign_bit x =
   Ops.ne
-    (Ops.bitwise_and (bits x) (Ops.const_like (bits x) (`Int (sign_mask x))))
+    (Ops.bitwise_and (bits x) (Shape.const_like (bits x) (`Int (sign_mask x))))
     (int (bits x) 0)
 
 let magnitude x =
   Ops.bitwise_and (bits x)
-    (Ops.const_like (bits x) (`Int (Bigint.pred (sign_mask x))))
+    (Shape.const_like (bits x) (`Int (Bigint.pred (sign_mask x))))
 
 (* Modular integers
 
@@ -601,7 +601,7 @@ let high_half a =
     else Bigint.of_int 0xffffe000
   in
   Ops.bitcast
-    (Ops.bitwise_and (bits a) (Ops.const_like (bits a) (`Int keep)))
+    (Ops.bitwise_and (bits a) (Shape.const_like (bits a) (`Int keep)))
     (dtype a)
 
 let erf x =
@@ -995,8 +995,8 @@ let cast dt x =
 
 let bitcast dt x =
   let w = Dtype.itemsize (dtype x) and w' = Dtype.itemsize dt in
-  if w' > w then Ops.squeeze ~axis:(-1) (Ops.bitcast x dt)
-  else if w' < w then Ops.bitcast (Ops.unsqueeze x (-1)) dt
+  if w' > w then Shape.squeeze ~axis:(-1) (Ops.bitcast x dt)
+  else if w' < w then Ops.bitcast (Shape.unsqueeze x (-1)) dt
   else Ops.bitcast x dt
 
 (* Random bits
@@ -1007,13 +1007,13 @@ let bitcast dt x =
 let threefry key counter =
   let pack t =
     let wide w =
-      Ops.cast (Ops.bitcast (Ops.squeeze ~axis:(-1) w) Uint32) Uint64
+      Ops.cast (Ops.bitcast (Shape.squeeze ~axis:(-1) w) Uint32) Uint64
     in
-    match Ops.split ~axis:(-1) t [ 1; 1 ] with
+    match Shape.split ~axis:(-1) t [ 1; 1 ] with
     | [ lo; hi ] ->
         Ops.bitwise_or (Ops.shl (wide hi) (int (wide hi) 32)) (wide lo)
     | _ -> assert false
   in
   let bits = Ops.alu (pack counter) Op.Threefry [ pack key ] in
-  let word b = Ops.unsqueeze (Ops.bitcast (Ops.cast b Uint32) Int32) (-1) in
-  Ops.cat ~axis:(-1) (word bits) [ word (Ops.shr bits (int bits 32)) ]
+  let word b = Shape.unsqueeze (Ops.bitcast (Ops.cast b Uint32) Int32) (-1) in
+  Shape.cat ~axis:(-1) (word bits) [ word (Ops.shr bits (int bits 32)) ]

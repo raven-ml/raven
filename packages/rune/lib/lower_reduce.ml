@@ -7,8 +7,8 @@ open Tolk
 
 let dtype = Ops.dtype
 let is_float u = Dtype.is_float (dtype u)
-let int u n = Ops.const_like u (`Int (Bigint.of_int n))
-let size u axis = List.nth (Ops.max_shape u) axis
+let int u n = Shape.const_like u (`Int (Bigint.of_int n))
+let size u axis = List.nth (Shape.max_shape u) axis
 let width dts dt = List.find (fun d -> Dtype.itemsize d = Dtype.itemsize dt) dts
 let signed = width Dtype.sints
 let unsigned = width Dtype.uints
@@ -16,7 +16,7 @@ let unsigned = width Dtype.uints
 (* The vector [u] laid along [axis] of [rank] axes, the others of one
    element. *)
 let along rank axis u =
-  Ops.reshape u
+  Shape.reshape u
     (List.init rank (fun i -> Ops.Int (if i = axis then size u 0 else 1)))
 
 (* Order keys
@@ -31,7 +31,7 @@ let along rank axis u =
 let flip k =
   Ops.where
     (Ops.lt k (int k 0))
-    (Ops.bitwise_xor k (Ops.const_like k (Dtype.max (dtype k) :> Dtype.const)))
+    (Ops.bitwise_xor k (Shape.const_like k (Dtype.max (dtype k) :> Dtype.const)))
     k
 
 let keys ~nan x =
@@ -43,7 +43,7 @@ let keys ~nan x =
       match nan with `Greatest -> Dtype.max k | `Least -> Dtype.min k
     in
     Ops.where (Ops.ne x x)
-      (Ops.const_like bits (extreme :> Dtype.const))
+      (Shape.const_like bits (extreme :> Dtype.const))
       (flip bits)
 
 (* Reductions and scans
@@ -66,7 +66,7 @@ let accumulated f op x =
   let r = f op (Ops.cast x (accumulator dt)) in
   let r =
     if Op.equal op Op.Add && Dtype.is_float dt then
-      Ops.add r (Ops.const_like r (`Float 0.))
+      Ops.add r (Shape.const_like r (`Float 0.))
     else r
   in
   Ops.cast r dt
@@ -74,7 +74,7 @@ let accumulated f op x =
 let extreme f ~greatest x =
   if is_float x then
     let m = if greatest then f Op.Max x else Ops.neg (f Op.Max (Ops.neg x)) in
-    Ops.where (f Op.Max (Ops.ne x x)) (Ops.const_like m (`Float Float.nan)) m
+    Ops.where (f Op.Max (Ops.ne x x)) (Shape.const_like m (`Float Float.nan)) m
   else if greatest then f Op.Max x
   else Ops.bitwise_not (f Op.Max (Ops.bitwise_not x))
 
@@ -85,8 +85,8 @@ let combine f (k : Nx_backend.reduce) x =
   | Max -> extreme f ~greatest:true x
   | Min -> extreme f ~greatest:false x
 
-let reduce k ~axes x = combine (fun op u -> Ops.rop u op axes) k x
-let scan k ~axis x = combine (fun op u -> Ops.cumalu u axis op) k x
+let reduce k ~axes x = combine (fun op u -> Shape.rop u op axes) k x
+let scan k ~axis x = combine (fun op u -> Shape.cumalu u axis op) k x
 
 (* Arg-reductions *)
 
@@ -95,14 +95,14 @@ let scan k ~axis x = combine (fun op u -> Ops.cumalu u axis op) k x
    furthest from the axis's length. *)
 let argmax x axis =
   let n = size x axis in
-  let m = Ops.eq x (Ops.unsqueeze (Ops.rop x Op.Max [ axis ]) axis) in
-  let down = Ops.arange ~start:n ~step:(-1) 0 in
+  let m = Ops.eq x (Shape.unsqueeze (Shape.rop x Op.Max [ axis ]) axis) in
+  let down = Shape.arange ~start:n ~step:(-1) 0 in
   let down =
-    Ops.reshape down
-      (Ops.Int n :: List.init (Ops.ndim x - axis - 1) (fun _ -> Ops.Int 1))
+    Shape.reshape down
+      (Ops.Int n :: List.init (Shape.ndim x - axis - 1) (fun _ -> Ops.Int 1))
   in
   Ops.cast
-    (Ops.sub (Ops.int n) (Ops.rop (Ops.mul m down) Op.Max [ axis ]))
+    (Ops.sub (Ops.int n) (Shape.rop (Ops.mul m down) Op.Max [ axis ]))
     Dtype.Int64
 
 let arg_reduce (k : Nx_backend.arg_reduce) ~axis x =
@@ -122,7 +122,7 @@ let bit_length n =
   go n 0
 
 let halves u axis =
-  match Ops.split ~axis u [ 1; 1 ] with [ a; b ] -> (a, b) | _ -> assert false
+  match Shape.split ~axis u [ 1; 1 ] with [ a; b ] -> (a, b) | _ -> assert false
 
 (* [bitonic ~descending x axis] is the integers [x] sorted along [axis]. The
    axis, padded to a power of two with elements that sort last, is split into
@@ -131,19 +131,19 @@ let bitonic ~descending x axis =
   let n = size x axis in
   if n <= 1 then x
   else
-    let stages = bit_length (n - 1) and shape = Ops.shape x in
+    let stages = bit_length (n - 1) and shape = Shape.shape x in
     let fill =
       if descending then Dtype.min (dtype x) else Dtype.max (dtype x)
     in
     let x =
-      Ops.pad_to
+      Shape.pad_to
         ~value:(fill :> Dtype.const)
         x
-        (List.init (Ops.ndim x) (fun d ->
+        (List.init (Shape.ndim x) (fun d ->
              if d = axis then Some (Ops.Int (1 lsl stages)) else None))
     in
-    let x = Ops.unflatten x axis (List.init stages (fun _ -> Ops.Int 2)) in
-    let r = Ops.ndim x in
+    let x = Shape.unflatten x axis (List.init stages (fun _ -> Ops.Int 2)) in
+    let r = Shape.ndim x in
     (* A stage's crossover reverses the second half of each of its boxes, so
        that comparisons all in one direction merge them; it is undone after. *)
     let crossover stage x =
@@ -152,7 +152,7 @@ let bitonic ~descending x axis =
       let flipped =
         List.init (stage + List.length shape - axis) (fun i -> r - 1 - i)
       in
-      Ops.cat ~axis:c blue [ Ops.flip green flipped ]
+      Shape.cat ~axis:c blue [ Shape.flip green flipped ]
     in
     let compare x sub =
       let p = axis + stages - sub - 1 in
@@ -160,8 +160,8 @@ let bitonic ~descending x axis =
       let larger = Ops.maximum top bottom
       and smaller = Ops.minimum top bottom in
       Ops.contiguous
-        (if descending then Ops.cat ~axis:p larger [ smaller ]
-         else Ops.cat ~axis:p smaller [ larger ])
+        (if descending then Shape.cat ~axis:p larger [ smaller ]
+         else Shape.cat ~axis:p smaller [ larger ])
     in
     let stage x s =
       let x = if s < stages then Ops.contiguous (crossover s x) else x in
@@ -169,8 +169,8 @@ let bitonic ~descending x axis =
       if s < stages then crossover s x else x
     in
     let x = List.fold_left stage x (List.init stages (fun i -> i + 1)) in
-    Ops.shrink_to
-      (Ops.flatten ~start:axis ~stop:(axis + stages - 1) x)
+    Shape.shrink_to
+      (Shape.flatten ~start:axis ~stop:(axis + stages - 1) x)
       (List.map Option.some shape)
 
 (* [ordered k] is the key [k] as the unsigned integer of its width that orders
@@ -181,7 +181,7 @@ let ordered k =
   else if Dtype.is_unsigned dt then k
   else
     Ops.bitcast
-      (Ops.bitwise_xor k (Ops.const_like k (Dtype.min dt :> Dtype.const)))
+      (Ops.bitwise_xor k (Shape.const_like k (Dtype.min dt :> Dtype.const)))
       (unsigned dt)
 
 (* [positions ~descending axis high] is the stable positions that sort the
@@ -194,7 +194,7 @@ let positions ~descending axis high =
   let low = bit_length (n - 1) in
   let mask = Ops.const ~dtype:Int64 (`Int (Bigint.of_int ((1 lsl low) - 1))) in
   let tie r = if descending then Ops.sub mask r else r in
-  let ranks = along (Ops.ndim high) axis (Ops.arange ~dtype:Int64 n) in
+  let ranks = along (Shape.ndim high) axis (Shape.arange ~dtype:Int64 n) in
   let packed = Ops.bitwise_or (Ops.shl high (Ops.int low)) (tie ranks) in
   tie (Ops.bitwise_and (bitonic ~descending (Ops.contiguous packed) axis) mask)
 
@@ -213,7 +213,7 @@ let of_bits dt b =
 
 let pick mask b =
   let selected = Ops.where mask b (Ops.int 0) in
-  Ops.rop selected Op.Add [ Ops.ndim selected - 1 ]
+  Shape.rop selected Op.Add [ Shape.ndim selected - 1 ]
 
 (* Gathers
 
@@ -224,11 +224,11 @@ let pick mask b =
    element whose position lies outside it is selected as zero. *)
 
 let varies u =
-  let positions = List.mapi (fun d n -> Ops.range n [ -1 - d ]) (Ops.shape u) in
+  let positions = List.mapi (fun d n -> Ops.range n [ -1 - d ]) (Shape.shape u) in
   let rec read u index =
     if Op.Set.mem (Ops.op u) Op.Set.movement then
       let src = Ops.nth u 0 in
-      read src (Indexing.apply_movement_op (Ops.shape src) (Ops.marg u) index)
+      read src (Indexing.apply_movement_op (Shape.shape src) (Shape.marg u) index)
     else index
   in
   let reached =
@@ -236,10 +236,10 @@ let varies u =
   in
   List.filter
     (fun d -> List.memq (List.nth positions d) reached)
-    (List.init (Ops.ndim u) Fun.id)
+    (List.init (Shape.ndim u) Fun.id)
 
 let static u d =
-  match List.nth (Ops.shape u) d with
+  match List.nth (Shape.shape u) d with
   | Ops.Int n -> n
   | Ops.Sym _ -> invalid_arg "a gather along an axis of symbolic size"
 
@@ -253,27 +253,27 @@ type rows = {
 }
 
 let rows x axis p =
-  let r = Ops.ndim x and varying = varies p in
+  let r = Shape.ndim x and varying = varies p in
   let others = List.filter (fun d -> d <> axis) (List.init r Fun.id) in
   let rows = List.filter (fun d -> List.mem d varying) others in
   let whole = List.filter (fun d -> not (List.mem d varying)) others in
   (* A sharded axis leads, so that each shard's rows stay one block. *)
   let lead =
-    match Ops.axis x with
+    match Shape.axis x with
     | Some a when a = axis || List.mem a rows ->
         a :: List.filter (( <> ) a) (rows @ [ axis ])
     | _ -> rows @ [ axis ]
   in
   let order = lead @ whole in
-  let shape u = List.map (List.nth (Ops.shape u)) in
+  let shape u = List.map (List.nth (Shape.shape u)) in
   let count = List.fold_left (fun k d -> k * static x d) 1 lead in
   let view y =
-    Ops.reshape (Ops.permute y order) (Ops.Int count :: shape x whole)
+    Shape.reshape (Shape.permute y order) (Ops.Int count :: shape x whole)
   in
   let on_rows u =
-    Ops.reshape
-      (Ops.permute
-         (Ops.shrink u
+    Shape.reshape
+      (Shape.permute
+         (Shape.shrink u
             (List.init r (fun d ->
                  if List.mem d whole then Some (Ops.Int 0, Ops.Int 1) else None)))
          order)
@@ -290,8 +290,8 @@ let rows x axis p =
     in
     let term d u = match stride d with 1 -> u | n -> Ops.mul u (Ops.int n) in
     let position d =
-      Ops.expand
-        (along k (index d lead) (Ops.arange ~dtype:Weak_int (static x d)))
+      Shape.expand
+        (along k (index d lead) (Shape.arange ~dtype:Weak_int (static x d)))
         (shape p lead)
     in
     List.fold_left
@@ -299,9 +299,9 @@ let rows x axis p =
       (term axis along_axis) lead
   in
   let laid u =
-    Ops.reshape (Ops.permute u order) (shape p lead @ shape u whole)
+    Shape.reshape (Shape.permute u order) (shape p lead @ shape u whole)
   in
-  let unlaid u = Ops.permute u (List.init r (fun d -> index d order)) in
+  let unlaid u = Shape.permute u (List.init r (fun d -> index d order)) in
   { view; on_rows; at; count; laid; unlaid }
 
 let clamped n row =
@@ -309,8 +309,8 @@ let clamped n row =
 
 let take x axis p =
   let n = static x axis in
-  if n = 0 || List.mem 0 (Ops.max_shape p) then
-    Ops.expand (Ops.const ~dtype:(dtype x) (`Int Bigint.zero)) (Ops.shape p)
+  if n = 0 || List.mem 0 (Shape.max_shape p) then
+    Shape.expand (Ops.const ~dtype:(dtype x) (`Int Bigint.zero)) (Shape.shape p)
   else
     let g = rows x axis p in
     let read =
@@ -320,7 +320,7 @@ let take x axis p =
     Ops.where (Ops.lt bits (int bits n)) read (int read 0)
 
 let argsort ~descending ~axis x =
-  if size x axis <= 1 then Ops.const_like ~dtype:Int64 x (`Int Bigint.zero)
+  if size x axis <= 1 then Shape.const_like ~dtype:Int64 x (`Int Bigint.zero)
   else
     let k = ordered (keys ~nan:`Greatest x) in
     let positions = positions ~descending axis in
@@ -333,7 +333,7 @@ let argsort ~descending ~axis x =
       let lo =
         half
           (Ops.bitwise_and k
-             (Ops.const_like k (`Int (Bigint.of_int 0xffff_ffff))))
+             (Shape.const_like k (`Int (Bigint.of_int 0xffff_ffff))))
       in
       let first = positions lo in
       take first axis

@@ -85,7 +85,7 @@ let binary prg =
 let workgroups ~vars prg =
   match Ops.arg prg with
   | Program p ->
-      Helpers.prod (List.map (fun s -> Ops.sym_infer s vars) p.global_size)
+      Helpers.prod (List.map (fun s -> Shape.sym_infer s vars) p.global_size)
   | _ -> failf "%a is no program" Ops.pp prg
 
 (* Timings
@@ -685,7 +685,7 @@ let launches ?allow_test_size kernel =
     (fun c ->
       ( (kernel_info c.prg).applied_opts,
         match Ops.arg c.prg with
-        | Program p -> List.map (fun s -> Ops.sym_infer s c.vars) p.global_size
+        | Program p -> List.map (fun s -> Shape.sym_infer s c.vars) p.global_size
         | _ -> failf "%a is no program" Ops.pp c.prg ))
     (calls ())
 

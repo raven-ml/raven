@@ -40,7 +40,7 @@ let word u =
     let base, off = Hcq2.unwrap_view (Ops.nth u 0) in
     ( base,
       off
-      + (Bigint.to_int (Ops.to_z (Ops.nth u 1)) * Dtype.itemsize (Ops.dtype u))
+      + (Bigint.to_int (Shape.to_z (Ops.nth u 1)) * Dtype.itemsize (Ops.dtype u))
     )
   else Hcq2.unwrap_view u
 
@@ -75,7 +75,7 @@ let run ?(finished = []) ?order ?capacity batch =
   in
   let rec value u =
     match Ops.op u with
-    | Const -> Bigint.to_int (Ops.to_z u)
+    | Const -> Bigint.to_int (Shape.to_z u)
     | Load -> get (word (Ops.nth u 0))
     | Param when named (Ops.expr u) Hcq2.submitted -> submitted
     | Param when named (Ops.expr u) Hcq2.value -> submitted + 1

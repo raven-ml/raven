@@ -100,7 +100,7 @@ let cut ~own next args body =
           else
             let slot = next () and arg = Ops.contiguous u in
             args := (slot, arg) :: !args;
-            Ops.param_like arg slot
+            Shape.param_like arg slot
         in
         Ops.Tbl.add rebuilt u v;
         v
@@ -117,7 +117,7 @@ type carry =
   | Carry of { slot : int; init : Ops.t; numel : int; view : Ops.t -> Ops.t }
 
 let carry device slot axis u =
-  let shape = Ops.max_shape u in
+  let shape = Shape.max_shape u in
   match (device, axis) with
   | Ops.Multi devices, Some axis ->
       let part =
@@ -126,17 +126,17 @@ let carry device slot axis u =
           shape
       in
       let view s =
-        Ops.unshard
-          (Ops.reshape s (List.map (fun n -> Ops.Int n) part))
+        Shape.unshard
+          (Shape.reshape s (List.map (fun n -> Ops.Int n) part))
           [ axis ]
       in
       Carry { slot; init = u; numel = List.fold_left ( * ) 1 part; view }
   | _ ->
-      let view s = Ops.reshape s (Ops.shape u) in
-      Carry { slot; init = u; numel = Ops.max_numel u; view }
+      let view s = Shape.reshape s (Shape.shape u) in
+      Carry { slot; init = u; numel = Shape.max_numel u; view }
 
 let repeat device n init step =
-  let empty u = Ops.max_numel u = 0 in
+  let empty u = Shape.max_numel u = 0 in
   if n = 0 || List.for_all empty init then init
   else
     let placed u =
@@ -147,7 +147,7 @@ let repeat device n init step =
        it mixes with a sharded value. An odd count takes its first step before
        the loop. *)
     let first = step init in
-    let axes = List.map Ops.axis first in
+    let axes = List.map Shape.axis first in
     let init = if n mod 2 = 1 then List.map Ops.contiguous first else init in
     if n < 2 then init
     else
@@ -170,12 +170,12 @@ let repeat device n init step =
         List.map
           (function
             | Empty u ->
-                Ops.expand
+                Shape.expand
                   (Ops.const ~dtype:(Ops.dtype u) (`Int Bigint.zero))
-                  (Ops.shape u)
+                  (Shape.shape u)
             | Carry { slot; init; numel; view } ->
                 let p =
-                  Ops.param ~shape:[ Ops.Int numel ] ~device slot
+                  Shape.param ~shape:[ Ops.Int numel ] ~device slot
                     (Ops.dtype init)
                 in
                 Ops.Tbl.replace own p ();

@@ -76,7 +76,7 @@ let packed dt = bits dt < 8
 (* The bytes that hold [n] elements of [dt]. *)
 let bytes dt n = ((n * bits dt) + 7) / 8
 let ints l = List.map (fun n -> Ops.Int n) l
-let uint8 u n = Ops.const_like ~dtype:Uint8 u (`Int (Bigint.of_int n))
+let uint8 u n = Shape.const_like ~dtype:Uint8 u (`Int (Bigint.of_int n))
 
 (* [code dt u] is the bits of [u]'s elements of [dt], a dtype of at most 8 bits,
    as the low bits of [uint8]s whose other bits are 0. *)
@@ -97,7 +97,7 @@ let of_code : type a b. (a, b) Nx_dtype.t -> Ops.t -> Ops.t =
   match dt with
   | Bool | Bit -> Ops.ne c (uint8 c 0)
   | Int4 ->
-      let int n = Ops.const_like ~dtype:Int8 c (`Int (Bigint.of_int n)) in
+      let int n = Shape.const_like ~dtype:Int8 c (`Int (Bigint.of_int n)) in
       Ops.sub (Ops.bitwise_xor (Ops.bitcast c Int8) (int 8)) (int 8)
   | UInt4 -> c
   | Float8_e4m3 -> Ops.bitcast c Fp8e4m3
@@ -122,17 +122,17 @@ let modular : type a b. (a, b) Nx_dtype.t -> Ops.t -> Ops.t =
 (* The shifts [0; b; ...; (k - 1) b] along the last axis of [shape]. *)
 let shifts b k shape =
   let ones = List.map (fun _ -> 1) shape in
-  Ops.expand
-    (Ops.reshape
-       (Ops.arange ~step:b ~dtype:Uint8 (k * b))
+  Shape.expand
+    (Shape.reshape
+       (Shape.arange ~step:b ~dtype:Uint8 (k * b))
        (ints (ones @ [ k ])))
     (ints (shape @ [ k ]))
 
 (* [split dt c k] reads each byte of [c] as [k] elements of [dt], the first in
    the lowest bits: a last axis of [m] bytes becomes one of [m * k] elements. *)
 let split dt c k =
-  let b = bits dt and shape = Ops.max_shape c in
-  let wide = Ops.expand (Ops.unsqueeze c (-1)) (ints (shape @ [ k ])) in
+  let b = bits dt and shape = Shape.max_shape c in
+  let wide = Shape.expand (Shape.unsqueeze c (-1)) (ints (shape @ [ k ])) in
   let codes =
     Ops.bitwise_and
       (Ops.shr wide (shifts b k shape))
@@ -143,19 +143,19 @@ let split dt c k =
     | m :: rest -> List.rev ((m * k) :: rest)
     | [] -> [ k ]
   in
-  of_code dt (Ops.reshape codes (ints shape))
+  of_code dt (Shape.reshape codes (ints shape))
 
 (* [join dt x k] is [split]'s inverse: each [k] elements of [dt] along the last
    axis of [x] are one byte, the first in the lowest bits. *)
 let join dt x k =
   let b = bits dt in
   let front, m =
-    match List.rev (Ops.max_shape x) with
+    match List.rev (Shape.max_shape x) with
     | n :: rest -> (List.rev rest, n / k)
     | [] -> invalid_arg "a join of a scalar"
   in
-  let rows = Ops.reshape (code dt x) (ints (front @ [ m; k ])) in
-  Ops.rop
+  let rows = Shape.reshape (code dt x) (ints (front @ [ m; k ])) in
+  Shape.rop
     (Ops.shl rows (shifts b k (front @ [ m ])))
     Op.Add
     [ List.length front + 1 ]
@@ -167,12 +167,12 @@ let unpack dt u = split dt u (8 / bits dt)
 (* [pack dt u] is the bytes that hold [u]'s elements of [dt] in C order, the
    bits past the last element 0. *)
 let pack dt u =
-  let n = Ops.max_numel u and per = 8 / bits dt in
+  let n = Shape.max_numel u and per = 8 / bits dt in
   let m = (n + per - 1) / per in
-  let flat = Ops.reshape u [ Ops.Int n ] in
+  let flat = Shape.reshape u [ Ops.Int n ] in
   let flat =
     if m * per = n then flat
-    else Ops.pad flat [ Some (Ops.Int 0, Ops.Int ((m * per) - n)) ]
+    else Shape.pad flat [ Some (Ops.Int 0, Ops.Int ((m * per) - n)) ]
   in
   join dt flat per
 
@@ -184,16 +184,16 @@ let pack dt u =
    stride, are rows of a reshape cut by a shrink when each stride nests in the
    one before it. Overlapping axes are windows of [pool]. *)
 
-(* [windows u axis size] is [Ops.pool] along [axis] of [u]: the windows take
+(* [windows u axis size] is [Shape.pool] along [axis] of [u]: the windows take
    [axis]'s place, and their elements are a new last axis. *)
 let windows ?(step = 1) ?(dilation = 1) u axis size =
-  let r = Ops.ndim u in
+  let r = Shape.ndim u in
   let last = List.filter (( <> ) axis) (List.init r Fun.id) @ [ axis ] in
   let w =
-    Ops.pool ~stride:[ step ] ~dilation:[ dilation ] (Ops.permute u last)
+    Shape.pool ~stride:[ step ] ~dilation:[ dilation ] (Shape.permute u last)
       [ size ]
   in
-  Ops.permute w
+  Shape.permute w
     (List.init r (fun a ->
          if a = axis then r - 1 else if a < axis then a else a - 1)
     @ [ r ])
@@ -214,12 +214,12 @@ let rec nests shape strides = function
 (* [window flat start n] is the [n] elements of the flat node [flat] from
    [start], padded where [flat] ends first: those elements are never read. *)
 let window flat start n =
-  let size = Ops.max_numel flat in
+  let size = Shape.max_numel flat in
   let flat =
     if start + n <= size then flat
-    else Ops.pad flat [ Some (Ops.Int 0, Ops.Int (start + n - size)) ]
+    else Shape.pad flat [ Some (Ops.Int 0, Ops.Int (start + n - size)) ]
   in
-  Ops.shrink flat [ Some (Ops.Int start, Ops.Int (start + n)) ]
+  Shape.shrink flat [ Some (Ops.Int start, Ops.Int (start + n)) ]
 
 (* The stepped [axes] as rows of reshapes cut by shrinks. *)
 let nested flat start shape strides axes =
@@ -231,13 +231,13 @@ let nested flat start shape strides axes =
   in
   let a0 = List.hd axes in
   let rows = window flat start (shape.(a0) * magnitude a0) in
-  let t = Ops.reshape rows (ints (shape.(a0) :: split axes)) in
+  let t = Shape.reshape rows (ints (shape.(a0) :: split axes)) in
   let t =
-    Ops.shrink t
+    Shape.shrink t
       (List.map (fun a -> Some (Ops.Int 0, Ops.Int shape.(a))) axes
       @ [ Some (Ops.Int 0, Ops.Int 1) ])
   in
-  Ops.reshape t (ints (List.map (fun a -> shape.(a)) axes))
+  Shape.reshape t (ints (List.map (fun a -> shape.(a)) axes))
 
 (* The stepped [axes] from the innermost out, each the windows of its stride
    over the axis before it. *)
@@ -251,8 +251,8 @@ let overlapping flat start shape strides axes =
   let u = List.fold_left step (window flat start extent) (List.rev axes) in
   (* The innermost axis came first, and the leading axis has one element. *)
   let k = List.length axes in
-  Ops.reshape
-    (Ops.permute u (0 :: List.init k (fun i -> k - i)))
+  Shape.reshape
+    (Shape.permute u (0 :: List.init k (fun i -> k - i)))
     (ints (List.map (fun a -> shape.(a)) axes))
 
 (* [strided flat v origin] is the view [v] over the flat node [flat] of its
@@ -263,7 +263,7 @@ let strided flat v origin =
   and strides = View.strides v in
   let r = Array.length shape in
   if View.is_c_contiguous v then
-    Ops.reshape
+    Shape.reshape
       (window flat offset (Array.fold_left ( * ) 1 shape))
       (ints (Array.to_list shape))
   else
@@ -282,19 +282,19 @@ let strided flat v origin =
     let position a = Option.get (List.find_index (( = ) a) axes) in
     let t =
       if axes = [] then t
-      else Ops.permute t (List.map position (List.sort Int.compare axes))
+      else Shape.permute t (List.map position (List.sort Int.compare axes))
     in
     let base =
       List.init r (fun d -> if strides.(d) = 0 then 1 else shape.(d))
     in
-    let t = Ops.reshape t (ints base) in
+    let t = Shape.reshape t (ints base) in
     let flipped =
       List.filter
         (fun d -> strides.(d) < 0 && shape.(d) > 1)
         (List.init r Fun.id)
     in
-    let t = if flipped = [] then t else Ops.flip t flipped in
-    Ops.expand t (ints (Array.to_list shape))
+    let t = if flipped = [] then t else Shape.flip t flipped in
+    Shape.expand t (ints (Array.to_list shape))
 
 (* Traces *)
 
@@ -494,8 +494,8 @@ let context p =
    is joined whole on each, keeping each element's bits, and a value whole on
    each is split as nx splits it. *)
 let settled s what p u =
-  let shape = Array.of_list (Ops.max_shape u) in
-  match (layout what p shape, Ops.axis u) with
+  let shape = Array.of_list (Shape.max_shape u) in
+  match (layout what p shape, Shape.axis u) with
   | One, _ | Copies, None -> u
   | Split a, Some b when a = b -> u
   | Copies, Some _ -> Ops.copy_to_device u (device_of s p)
@@ -505,11 +505,11 @@ let settled s what p u =
         | Some _ -> Ops.copy_to_device u (device_of s p)
         | None -> u
       in
-      Ops.shard ~axis:a whole (List.map (name s) (memories p))
+      Shape.shard ~axis:a whole (List.map (name s) (memories p))
 
 let traced s p dt u =
   Repr.Traced.v ~context:(context p) p dt
-    (Array.of_list (Ops.max_shape u))
+    (Array.of_list (Shape.max_shape u))
     (Uop (s, u))
 
 let traces s x =
@@ -547,7 +547,7 @@ let key : type a b. (a, b) Nx.t -> storage =
 let viewed what u p shape v start =
   let local = strided u v start in
   match layout what p shape with
-  | Split axis -> Ops.unshard local [ axis ]
+  | Split axis -> Shape.unshard local [ axis ]
   | One | Copies -> local
 
 let span dt v =
@@ -593,7 +593,7 @@ let phase_of what dt bufs start =
 (* The constant [c] broadcast to [shape]. *)
 let broadcast c shape =
   let shape = Array.to_list shape in
-  Ops.expand (Ops.reshape c (ints (List.map (fun _ -> 1) shape))) (ints shape)
+  Shape.expand (Shape.reshape c (ints (List.map (fun _ -> 1) shape))) (ints shape)
 
 (* [buffer ?slot ?phase d dt tdt n] is a buffer on [d] of [n] elements of [dt],
    which a graph computes as [tdt]: their bytes when [dt] is packed. *)
@@ -616,11 +616,11 @@ let storage_view s what dt b p shape v start =
   | (One | Copies) when packed dt && View.is_c_contiguous v && first mod 8 = 0
     ->
       let n = bytes dt (View.numel v) in
-      let whole = Ops.max_numel b = n && first = 0 in
+      let whole = Shape.max_numel b = n && first = 0 in
       Ops.Tbl.replace s.bytes u
         (if whole then b
          else
-           Ops.shrink b
+           Shape.shrink b
              [ Some (Ops.Int (first / 8), Ops.Int ((first / 8) + n)) ])
   | One | Copies | Split _ -> ());
   u
@@ -691,10 +691,10 @@ let output s ~slot p dt shape =
       | One | Copies -> Ops.store b (pack dt u)
       | Split axis ->
           let window =
-            Ops.shard_slice u axis
+            Shape.shard_slice u axis
               (List.hd (Ops.device_range_src (Ops.device b)))
           in
-          Ops.store (Ops.unshard b [ 0 ]) (Ops.unshard (pack dt window) [ 0 ])
+          Ops.store (Shape.unshard b [ 0 ]) (Shape.unshard (pack dt window) [ 0 ])
     in
     {
       node;
@@ -723,7 +723,7 @@ let regions t (w : write) =
 let parameter s ~slot p dt shape =
   traced s p dt
     (laid s "a loop's value"
-       (fun d n tdt -> Ops.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
+       (fun d n tdt -> Shape.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
        p dt shape)
 
 (* Rows
@@ -746,7 +746,7 @@ let row s ~slot p dt shape =
       (laid s "a loop's value"
          (fun d n _ ->
            elements dt
-             (Ops.param ~shape:[ Ops.Int (bytes dt n) ] ~device:d slot Uint8))
+             (Shape.param ~shape:[ Ops.Int (bytes dt n) ] ~device:d slot Uint8))
          p dt shape)
 
 let argument s ~slot p dt shape =
@@ -940,7 +940,7 @@ let follow s q u =
         | None ->
             let src = List.hd c.buffers in
             let buffer =
-              Ops.new_buffer (device_of s q) (Ops.max_numel c.buffer)
+              Ops.new_buffer (device_of s q) (Shape.max_numel c.buffer)
                 (Ops.dtype c.buffer)
             in
             let buffers =
@@ -996,7 +996,7 @@ let moved s what p q u shape =
     match layout what q shape with
     | Split axis -> (
         match device_of s q with
-        | Ops.Multi names -> Ops.shard ~axis u names
+        | Ops.Multi names -> Shape.shard ~axis u names
         | Ops.Single _ as d -> Ops.copy_to_device u d)
     | One | Copies -> (
         match followed s q u with
@@ -1065,15 +1065,15 @@ let value s x = node s "a value" (Nx.placement x) x
 (* Movements *)
 
 let move u : Nx.Op.move -> Ops.t = function
-  | Reshape shape -> Ops.reshape u (ints (Array.to_list shape))
-  | Expand shape -> Ops.expand u (ints (Array.to_list shape))
-  | Permute order -> Ops.permute u (Array.to_list order)
+  | Reshape shape -> Shape.reshape u (ints (Array.to_list shape))
+  | Expand shape -> Shape.expand u (ints (Array.to_list shape))
+  | Permute order -> Shape.permute u (Array.to_list order)
   | Shrink limits ->
-      Ops.shrink u
+      Shape.shrink u
         (Array.to_list
            (Array.map (fun (lo, hi) -> Some (Ops.Int lo, Ops.Int hi)) limits))
   | Flip dims ->
-      Ops.flip u
+      Shape.flip u
         (List.filter (fun a -> dims.(a)) (List.init (Array.length dims) Fun.id))
   | Window { axis; size; step } -> windows ~step u axis size
 
@@ -1091,8 +1091,8 @@ let cast : type a b. (a, b) Nx_dtype.t -> Dtype.t -> Ops.t -> Ops.t =
   let held lo hi =
     if not (Dtype.is_float (Ops.dtype u)) then u
     else
-      let lo = Ops.const_like u (`Float lo)
-      and hi = Ops.const_like u (`Float hi) in
+      let lo = Shape.const_like u (`Float lo)
+      and hi = Shape.const_like u (`Float hi) in
       Ops.where (Ops.lt u lo) lo (Ops.where (Ops.lt hi u) hi u)
   in
   match dt with
@@ -1112,9 +1112,9 @@ let bitcast src dt tdt u =
   if sb >= 8 && tb >= 8 then Lower_arith.bitcast tdt u
   else if sb = tb then of_code dt (code src u)
   else if sb < tb && tb <= 8 then
-    Ops.squeeze ~axis:(-1) (of_code dt (join src u (tb / sb)))
+    Shape.squeeze ~axis:(-1) (of_code dt (join src u (tb / sb)))
   else if sb < tb then Lower_arith.bitcast tdt (join src u (8 / sb))
-  else if sb <= 8 then split dt (Ops.unsqueeze (code src u) (-1)) (sb / tb)
+  else if sb <= 8 then split dt (Shape.unsqueeze (code src u) (-1)) (sb / tb)
   else split dt (Lower_arith.bitcast Uint8 u) (8 / tb)
 
 (* Packed writes
@@ -1132,27 +1132,27 @@ let strides shape =
        (1, []) (List.rev shape))
 
 (* [laid_as u shape full] is [u] reshaped to [shape] and expanded to [full]. *)
-let laid_as u shape full = Ops.expand (Ops.reshape u (ints shape)) (ints full)
-let int64_like u n = Ops.const_like ~dtype:Int64 u (`Int (Bigint.of_int n))
+let laid_as u shape full = Shape.expand (Shape.reshape u (ints shape)) (ints full)
+let int64_like u n = Shape.const_like ~dtype:Int64 u (`Int (Bigint.of_int n))
 
 (* The elements of [u] in C order, [8 / bits] to a row, zeros past the last. *)
 let by_byte dt u =
-  let per = 8 / bits dt and n = Ops.max_numel u in
+  let per = 8 / bits dt and n = Shape.max_numel u in
   let m = (n + per - 1) / per in
-  let flat = Ops.reshape u [ Ops.Int n ] in
+  let flat = Shape.reshape u [ Ops.Int n ] in
   let flat =
     if m * per = n then flat
-    else Ops.pad flat [ Some (Ops.Int 0, Ops.Int ((m * per) - n)) ]
+    else Shape.pad flat [ Some (Ops.Int 0, Ops.Int ((m * per) - n)) ]
   in
-  Ops.reshape flat (ints [ m; per ])
+  Shape.reshape flat (ints [ m; per ])
 
 (* The positions in C order of the elements of the [k] bytes [b], [[k; per]]. *)
 let positions dt b =
-  let per = 8 / bits dt and k = Ops.max_numel b in
+  let per = 8 / bits dt and k = Shape.max_numel b in
   let rows = laid_as b [ k; 1 ] [ k; per ] in
   Ops.add
     (Ops.mul rows (int64_like rows per))
-    (laid_as (Ops.arange ~dtype:Int64 per) [ 1; per ] [ k; per ])
+    (laid_as (Shape.arange ~dtype:Int64 per) [ 1; per ] [ k; per ])
 
 (* [scattered s dt ~axis ~indices ~updates into] is the region of a scatter that
    sets [updates] at [indices] along [axis] of the packed [into]: the last
@@ -1161,20 +1161,20 @@ let positions dt b =
    each. Its [k x k] comparisons of the [k] updates are chosen where they cost
    no more than the scatter's value. *)
 let scattered s dt ~axis ~indices ~updates into =
-  let shape = Ops.max_shape into and ishape = Ops.max_shape indices in
-  let n = Ops.max_numel into and k = Ops.max_numel indices in
+  let shape = Shape.max_shape into and ishape = Shape.max_shape indices in
+  let n = Shape.max_numel into and k = Shape.max_numel indices in
   match Ops.Tbl.find_opt s.bytes into with
   | Some bytes when k > 0 && k * k <= n * List.nth ishape axis ->
       let r = List.length shape and per = 8 / bits dt in
       let m = (n + per - 1) / per in
-      let flat u = Ops.reshape u [ Ops.Int k ] in
+      let flat u = Shape.reshape u [ Ops.Int k ] in
       let coord d stride =
         let c =
           if d = axis then indices
           else
-            Ops.expand
+            Shape.expand
               (Lower_reduce.along r d
-                 (Ops.arange ~dtype:Int64 (List.nth ishape d)))
+                 (Shape.arange ~dtype:Int64 (List.nth ishape d)))
               (ints ishape)
         in
         Ops.mul c (int64_like c stride)
@@ -1187,17 +1187,17 @@ let scattered s dt ~axis ~indices ~updates into =
       let inside =
         let i = Ops.bitcast (flat indices) Uint64 in
         Ops.lt i
-          (Ops.const_like ~dtype:Uint64 i
+          (Shape.const_like ~dtype:Uint64 i
              (`Int (Bigint.of_int (List.nth shape axis))))
       in
       let key = Ops.div ~rounding:`Trunc pos (int64_like pos per) in
-      let order = Ops.arange ~dtype:Int64 k in
+      let order = Shape.arange ~dtype:Int64 k in
       (* The last update landing in each byte. *)
       let pairs = [ k; k ] in
       let column u = laid_as u [ k; 1 ] pairs
       and row u = laid_as u [ 1; k ] pairs in
       let followed =
-        Ops.rop
+        Shape.rop
           (Ops.bitwise_and
              (Ops.eq (column key) (row key))
              (Ops.bitwise_and (Ops.lt (column order) (row order)) (row inside)))
@@ -1221,11 +1221,11 @@ let scattered s dt ~axis ~indices ~updates into =
           (update inside)
       in
       let latest =
-        Ops.rop
+        Shape.rop
           (Ops.where hit (update order) (int64_like (update order) (-1)))
           Op.Max [ 2 ]
       in
-      let u = flat (Ops.expand updates (Ops.shape indices)) in
+      let u = flat (Shape.expand updates (Shape.shape indices)) in
       let set =
         Lower_reduce.of_bits (Ops.dtype u)
           (Lower_reduce.pick
@@ -1236,8 +1236,8 @@ let scattered s dt ~axis ~indices ~updates into =
       [
         {
           Lower_index.dest =
-            Ops.index bytes [ Ops.valid (Lower_reduce.clamped m key) keep ];
-          value = Ops.reshape (join dt value per) (ints [ k ]);
+            Ops.index bytes [ Shape.valid (Lower_reduce.clamped m key) keep ];
+          value = Shape.reshape (join dt value per) (ints [ k ]);
         };
       ]
   | Some _ | None -> []
@@ -1250,12 +1250,12 @@ let windowed s dt into ~starts v =
   let static =
     List.for_all
       (function Ops.Int _ -> true | Ops.Sym _ -> false)
-      (Ops.shape v)
+      (Shape.shape v)
   in
   match Ops.Tbl.find_opt s.bytes into with
-  | Some bytes when static && Ops.max_numel v > 0 ->
-      let shape = Ops.max_shape into and window = Ops.max_shape v in
-      let per = 8 / bits dt and n = Ops.max_numel into in
+  | Some bytes when static && Shape.max_numel v > 0 ->
+      let shape = Shape.max_shape into and window = Shape.max_shape v in
+      let per = 8 / bits dt and n = Shape.max_numel into in
       let m = (n + per - 1) / per and steps = strides shape in
       let span =
         List.fold_left2 (fun a k st -> a + ((k - 1) * st)) 1 window steps
@@ -1263,8 +1263,8 @@ let windowed s dt into ~starts v =
       let w = Int.min m (((span + per - 1) / per) + 1) in
       let start d =
         Ops.cast
-          (Ops.reshape
-             (Ops.shrink (Ops.contiguous starts)
+          (Shape.reshape
+             (Shape.shrink (Ops.contiguous starts)
                 [ Some (Ops.Int d, Ops.Int (d + 1)) ])
              [])
           Int64
@@ -1284,7 +1284,7 @@ let windowed s dt into ~starts v =
       let run = Some (Ops.Sym b, Ops.Sym (Ops.add b (Ops.int w))) in
       let q =
         positions dt
-          (Ops.add (Ops.arange ~dtype:Int64 w) (laid_as b [ 1 ] [ w ]))
+          (Ops.add (Shape.arange ~dtype:Int64 w) (laid_as b [ 1 ] [ w ]))
       in
       let full = [ w; per ] in
       (* Each element's offset from the window's corner along each axis. *)
@@ -1302,8 +1302,8 @@ let windowed s dt into ~starts v =
             let o = Ops.bitcast o Uint64 in
             Ops.bitwise_and acc
               (Ops.lt o
-                 (Ops.const_like ~dtype:Uint64 o (`Int (Bigint.of_int k)))))
-          (Ops.const_like ~dtype:Bool q (`Bool true))
+                 (Shape.const_like ~dtype:Uint64 o (`Int (Bigint.of_int k)))))
+          (Shape.const_like ~dtype:Bool q (`Bool true))
           offsets window
       in
       let at =
@@ -1311,19 +1311,19 @@ let windowed s dt into ~starts v =
           (fun acc o st -> Ops.add acc (Ops.mul o (int64_like o st)))
           (int64_like q 0) offsets (strides window)
       in
-      let vs = Ops.reshape v [ Ops.Int (Ops.max_numel v) ] in
+      let vs = Shape.reshape v [ Ops.Int (Shape.max_numel v) ] in
       let read =
-        Ops.reshape
-          (Lower_reduce.take vs 0 (Ops.reshape at [ Ops.Int (w * per) ]))
+        Shape.reshape
+          (Lower_reduce.take vs 0 (Shape.reshape at [ Ops.Int (w * per) ]))
           (ints full)
       in
       let value =
-        Ops.where inside read (Ops.shrink (by_byte dt into) [ run; None ])
+        Ops.where inside read (Shape.shrink (by_byte dt into) [ run; None ])
       in
       [
         {
-          Lower_index.dest = Ops.shrink bytes [ run ];
-          value = Ops.reshape (join dt value per) (ints [ w ]);
+          Lower_index.dest = Shape.shrink bytes [ run ];
+          value = Shape.reshape (join dt value per) (ints [ w ]);
         };
       ]
   | Some _ | None -> []
@@ -1372,7 +1372,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
         List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments
       in
       (* An empty draw has nothing to repeat. *)
-      let empty = Ops.max_numel c = 0 in
+      let empty = Shape.max_numel c = 0 in
       if not (empty || varies k || varies c) then
         jit_error
           "a random draw that does not depend on the function's arguments \
@@ -1496,12 +1496,12 @@ let op : type r. scope -> r Nx.Op.t -> r =
               (Reduce (Sum, Array.init (Array.length shape) Fun.id, x))
           in
           let at = reduced ok in
-          let flat x = Ops.reshape (value s x) [ Ops.Int count ] in
-          let i = Ops.arange ~dtype:Int64 count in
+          let flat x = Shape.reshape (value s x) [ Ops.Int count ] in
+          let i = Shape.arange ~dtype:Int64 count in
           let first =
             Lower_reduce.reduce Min ~axes:[ 0 ]
               (Ops.where (flat ok)
-                 (Ops.const_like i (`Int (Bigint.of_int count)))
+                 (Shape.const_like i (`Int (Bigint.of_int count)))
                  i)
           in
           let read (Nx.P x) =
@@ -1509,9 +1509,9 @@ let op : type r. scope -> r Nx.Op.t -> r =
             ignore (check s what q dt);
             let first = place s what at q (traced s at Nx_dtype.int64 first) in
             let e =
-              Lower_reduce.take (flat x) 0 (Ops.reshape first [ Ops.Int 1 ])
+              Lower_reduce.take (flat x) 0 (Shape.reshape first [ Ops.Int 1 ])
             in
-            Nx.P (traced s q dt (Ops.reshape e []))
+            Nx.P (traced s q dt (Shape.reshape e []))
           in
           ignore (check s what at Nx_dtype.int64);
           s.checks <-

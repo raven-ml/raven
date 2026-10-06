@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let setting = Setting.value
 
@@ -19,7 +20,7 @@ let handle_allreduce red =
   match (device buf, arg red) with
   | Some (Multi devices), Allreduce { op; device } ->
       let d = Array.of_list devices in
-      let ndev = Array.length d and shape = Ops.shape buf in
+      let ndev = Array.length d and shape = Shape.shape buf in
       let numel = Sint.prod shape in
       let fold = nonempty (List.fold_left (fun x y -> alu x op [ y ])) in
       let to_device ?shard i x = copy_to_device ?shard x (Single d.(i)) in

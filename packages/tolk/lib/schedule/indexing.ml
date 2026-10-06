@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let rule_ctx = Pattern_matcher.rule_ctx
 let ops l = Op.Set.of_list l

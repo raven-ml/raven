@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let strf = Printf.sprintf
 let is o u = Op.equal (op u) o

@@ -24,7 +24,9 @@
     ({!module-type-Elementwise}).
 
     {b Shapes.} A node's shape is a list of {!sint}: integers, or integer nodes
-    for sizes known only when the program runs.
+    for sizes known only when the program runs. Comparing such sizes needs
+    simplification, so shapes, movements and the functions that read them are
+    {!Shape}'s.
 
     {b Patterns.} {!Upat} describes nodes, {!Pattern_matcher} pairs patterns
     with rules, and {!graph_rewrite} rewrites a graph with them to a fixed
@@ -32,7 +34,7 @@
 
     {b Errors.} A broken precondition raises [Invalid_argument]. *)
 
-type t
+type t = Uop.t
 (** The type for nodes. *)
 
 (** {1:axes Axis types} *)
@@ -42,7 +44,7 @@ type t
     The role of a loop variable ({!Op.Range}) in a kernel. *)
 module Axis_type : sig
   (** The type for axis types. *)
-  type t =
+  type t = Uop.Axis_type.t =
     | Device  (** Across devices. *)
     | Global  (** Across the workgroups of a launch. *)
     | Warp  (** Across the threads of a warp. *)
@@ -92,7 +94,7 @@ end
 (** The type for device placements: one device, or one value spread over
     several. Devices are named by the caller, such as ["CPU"] or ["AMD:1"]; only
     a name starting with ["DISK"] has a meaning here, a disk. *)
-type device = Single of string | Multi of string list
+type device = Uop.device = Single of string | Multi of string list
 
 val equal_device : device -> device -> bool
 (** [equal_device d0 d1] is [true] iff [d0] and [d1] are the same placement. *)
@@ -110,11 +112,11 @@ val is_disk_device : device -> bool
 (** The type for symbolic integers: an integer, or an integer node whose value
     is known when the program runs. Functions that return one return [Int]
     whenever the value is known. *)
-type sint = Int of int | Sym of t
+type sint = Uop.sint = Int of int | Sym of t
 
 (** {1:args Arguments} *)
 
-type param_arg = {
+type param_arg = Uop.param_arg = {
   slot : int;
       (** The parameter's position in its function, or [-1] for a named
           variable. *)
@@ -175,7 +177,7 @@ val pp_param_arg : Format.formatter -> param_arg -> unit
     differ from their defaults, by name:
     [ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='i', ...)]. *)
 
-type estimates = {
+type estimates = Uop.estimates = {
   ops : sint;  (** Arithmetic operations. *)
   lds : sint;  (** Bytes loaded and stored. *)
   mem : sint;  (** Bytes of memory touched, each counted once. *)
@@ -185,7 +187,7 @@ type estimates = {
 val pp_estimates : Format.formatter -> estimates -> unit
 (** [pp_estimates] formats [Estimates(ops=0, lds=0, mem=0)]. *)
 
-type split = {
+type split = Uop.split = {
   iterations : sint;  (** The loop's iterations, [0] to [iterations - 1]. *)
   lo : int;  (** The slot of the variable that holds a block's first. *)
   hi : int;  (** The slot of the variable that holds the one after its last. *)
@@ -194,7 +196,7 @@ type split = {
     host's cores run at once. Its program runs the iterations from the value of
     its variable [lo] up to that of [hi]. *)
 
-type kernel_info = {
+type kernel_info = Uop.kernel_info = {
   name : string;  (** The kernel's name. *)
   applied_opts : Opt.t list;  (** The optimisations applied, in order. *)
   opts_to_apply : Opt.t list option;
@@ -227,7 +229,7 @@ val pp_kernel_info : Format.formatter -> kernel_info -> unit
     [KernelInfo(name='test', applied_opts=(), opts_to_apply=None,
      estimates=None, beam=0)]. *)
 
-type program_info = {
+type program_info = Uop.program_info = {
   global_size : sint list;  (** The number of workgroups on each axis. *)
   local_size : sint list;  (** The threads of a workgroup on each axis. *)
   vars : t list;  (** The scalar variables, by slot. *)
@@ -237,17 +239,6 @@ type program_info = {
   target : Helpers.Target.t;  (** The target compiled for. *)
 }
 (** The type for the arguments of {!Op.Program}. *)
-
-val program_info_of_sink : ?target:Helpers.Target.t -> t -> program_info
-(** [program_info_of_sink ~target sink] reads the program's launch dimensions
-    from its {!Op.Special} nodes, its variables and buffers from its {!Op.Param}
-    nodes, and which buffers it reads and writes from its loads and stores. When
-    none is found reading or writing, every buffer is taken to do both. [target]
-    defaults to the empty target. *)
-
-val launch_dims : program_info -> (string * int) list -> int list * int list
-(** [launch_dims p vars] is [p]'s global and local sizes with each variable
-    named in [vars] replaced by its value ({!sym_infer}). *)
 
 val vals : program_info -> (string * int) list -> int list
 (** [vals p vars] is the value in [vars] of each of [p.vars], in order.
@@ -259,7 +250,7 @@ val pp_program_info : Format.formatter -> program_info -> unit
     [ProgramInfo(global_size=(1, 1, 1), local_size=(1, 1, 1), vars=(), ...)]. *)
 
 (** What later passes may do to a buffer an {!Op.Stage} makes. *)
-type keep =
+type keep = Uop.keep =
   | Removable
       (** Drop the axes its value does not vary along, and inline it back
           where that costs little. *)
@@ -272,7 +263,7 @@ type keep =
       (** Nothing: a value the user materialises, or a custom kernel reads,
           is stored as it is. *)
 
-type bufferize_opts = {
+type bufferize_opts = Uop.bufferize_opts = {
   device : device option;  (** Where the new buffer lives. *)
   addrspace : Dtype.addr_space;  (** Its address space. *)
   keep : keep;  (** What later passes may do to it. *)
@@ -285,7 +276,7 @@ val pp_bufferize_opts : Format.formatter -> bufferize_opts -> unit
      broadcast=False)]: [removable] is [false] for {!Whole} only, and
     [broadcast] [true] for {!Broadcast} only. *)
 
-type hcq_kernel = {
+type hcq_kernel = Uop.hcq_kernel = {
   devices : string list;  (** The devices the kernel runs on. *)
   name : string;  (** The kernel's name. *)
   estimates : estimates;  (** Its cost. *)
@@ -297,7 +288,7 @@ type hcq_kernel = {
 }
 (** The type for the kernels a command-queue call enqueues. *)
 
-type hcq_info = {
+type hcq_info = Uop.hcq_info = {
   device : string list;  (** The devices whose queues the call submits. *)
   kernels : hcq_kernel list;  (** The kernels it enqueues. *)
   estimates : estimates;  (** Their total cost. *)
@@ -327,7 +318,7 @@ val pp_hcq_info : Format.formatter -> hcq_info -> unit
     [HCQInfo(device=('AMD',), kernels=(), estimates=Estimates(ops=0, lds=0,
      mem=0), nargs=0, table=-1, inputs=(), slots=(), written_bufs=())]. *)
 
-type call_info = {
+type call_info = Uop.call_info = {
   name : string option;  (** The name of the function called. *)
   precompile : bool;  (** Compile the body on its own. *)
   aux : hcq_info option;  (** The queues it submits, for such a call. *)
@@ -340,7 +331,7 @@ val pp_call_info : Format.formatter -> call_info -> unit
     [CallInfo(None, 'f', False, False, dtype=dtypes.int)], the [dtype] field
     only when it is not [void]. *)
 
-type wmma = {
+type wmma = Uop.wmma = {
   dims : int * int * int;  (** The matrix dimensions N, M and K. *)
   dtype_in : Dtype.t;  (** The type of the multiplied operands. *)
   threads : int;  (** The threads that cooperate on one product. *)
@@ -354,7 +345,7 @@ type wmma = {
 
 (** The type for node arguments. Each operation carries one shape of argument,
     given by {!v}'s table; the others carry [No_arg]. *)
-type arg =
+type arg = Uop.arg =
   | No_arg
   | Const of Dtype.const  (** {!Op.Const}: its value. *)
   | Dtype of Dtype.t  (** {!Op.Cast}, {!Op.Bitcast}: the target type. *)
@@ -408,7 +399,7 @@ val pp_arg : Format.formatter -> arg -> unit
     literals. *)
 module Tag : sig
   (** The type for tags. *)
-  type t =
+  type t = Uop.Tag.t =
     | Bool of bool
     | Int of int
     | String of string
@@ -514,7 +505,7 @@ module Tbl : Hashtbl.S with type key = t
 module Nodes : sig
   type node := t
 
-  type t
+  type t = Uop.nodes
   (** The type for sets of nodes. *)
 
   val mem : node -> t -> bool
@@ -593,33 +584,6 @@ val split_uop : t -> Op.t -> t list
 
 (** {1:shapes Shapes} *)
 
-val shape_opt : t -> sint list option
-(** [shape_opt u] is [u]'s shape, or [None] for nodes that have none, such as
-    effects and program structure. Movements check their argument against their
-    source's shape; broadcastable operations broadcast their sources' shapes
-    ({!broadcast_shape}).
-
-    Raises [Invalid_argument] if a movement does not fit its source's shape, or
-    if sources cannot be broadcast. *)
-
-val shape : t -> sint list
-(** [shape u] is [u]'s shape.
-
-    Raises [Invalid_argument] if [u] has none. *)
-
-val ndim : t -> int
-(** [ndim u] is the length of [u]'s shape. *)
-
-val numel : t -> sint
-(** [numel u] is the product of [u]'s shape. *)
-
-val max_shape : t -> int list
-(** [max_shape u] is [u]'s shape with each symbolic size replaced by its
-    greatest value ({!to_max_shape}). *)
-
-val max_numel : t -> int
-(** [max_numel u] is the product of [max_shape u]. *)
-
 val broadcast_shape : sint list list -> sint list
 (** [broadcast_shape shapes] is the shape [shapes] broadcast to: aligned to the
     right, each axis is the size of its sources that is not [1], or [1] if all
@@ -627,12 +591,6 @@ val broadcast_shape : sint list list -> sint list
 
     Raises [Invalid_argument] if an axis has two different sizes other than [1].
 *)
-
-val broadcast_axes : sint list -> sint list -> int list
-(** [broadcast_axes src out] is the axes of [out] that broadcasting [src] to
-    [out] adds or expands.
-
-    Raises [Invalid_argument] if [src] has more axes than [out]. *)
 
 val to_max_shape : sint list -> int list
 (** [to_max_shape s] is [s] with each symbolic size replaced by its greatest
@@ -677,91 +635,6 @@ val multirange_str : ?color:bool -> ?pad:int -> t list -> string
 (** [multirange_str ~color ~pad rs] is the {!range_str} of each of [rs], sorted
     by argument, separated by commas and padded with spaces to [pad] printed
     columns. *)
-
-(** {1:resolve Resolving} *)
-
-val resolve : ?default:bool -> t -> bool
-(** [resolve ~default u] is the value of the boolean node [u] if its
-    simplification ({!simplify}) has one possible value, and [default] (default
-    [true]) otherwise.
-
-    Raises [Invalid_argument] if [u] is not boolean. *)
-
-val simplify : t -> t
-(** [simplify u] is [u] rewritten with the symbolic rules of the library to a
-    fixed point. A constant is itself, and so is a sink of constants and stacks
-    of constants, which the rules leave as they are.
-
-    Raises [Invalid_argument] if the rules are not installed: the library
-    installs them when it is initialised (see {!Private}). *)
-
-val ssimplify : t -> sint
-(** [ssimplify u] is [simplify u] as an [Int] if it is an integer constant, a
-    [Sym] otherwise. *)
-
-val smax : sint list -> sint
-(** [smax ss] is the greatest of [ss], a {!Op.Max} node if some are symbolic,
-    simplified.
-
-    Raises [Invalid_argument] if [ss] is empty. *)
-
-val smin : sint list -> sint
-(** [smin ss] is the least of [ss], as {!smax}. *)
-
-val to_bool : t -> bool
-(** [to_bool u] is the value of the boolean node [u].
-
-    Raises [Invalid_argument] if [u] is not boolean or its simplification has
-    more than one possible value. *)
-
-val to_z : t -> Bigint.t
-(** [to_z u] is the value of the integer node [u], as {!to_bool}. *)
-
-val to_float : t -> float
-(** [to_float u] is the value of the float node [u], as {!to_bool}. *)
-
-(** Symbolic integers.
-
-    Arithmetic computes on integers, and builds nodes as soon as an operand is
-    symbolic. It is exact: a result that does not fit an [int] raises
-    [Invalid_argument]. *)
-module Sint : sig
-  type node := t
-  type t = sint
-
-  val ( + ) : t -> t -> t
-  val ( - ) : t -> t -> t
-  val ( * ) : t -> t -> t
-
-  val ( // ) : t -> t -> t
-  (** Division rounding towards negative infinity. *)
-
-  val ( % ) : t -> t -> t
-  (** The remainder of [//], with the sign of the divisor. *)
-
-  val prod : t list -> t
-  (** [prod ss] is the product of [ss], [Int 1] if empty. *)
-
-  (** The type for conditions on symbolic integers: known, or a boolean node. *)
-  type cond = Known of bool | Cond of node
-
-  val ( < ) : t -> t -> cond
-  val ( <= ) : t -> t -> cond
-  val ( > ) : t -> t -> cond
-  val ( >= ) : t -> t -> cond
-  val ( <> ) : t -> t -> cond
-
-  val resolve : ?default:bool -> cond -> bool
-  (** [resolve ~default c] is [c]'s value if known, and {!Ops.resolve}'s
-      otherwise. *)
-
-  val equal : t -> t -> bool
-  (** [equal s0 s1] is [true] iff both are the same integer or the same node. It
-      does not decide whether two nodes have the same value. *)
-
-  val pp : Format.formatter -> t -> unit
-  (** [pp] formats an integer in decimal, and a node as {!Ops.pp} does. *)
-end
 
 (** {1:eval Evaluating} *)
 
@@ -820,24 +693,6 @@ val exec_alu :
     arguments do not fit it, as for a shift by a negative count, which has no
     value. *)
 
-val sym_infer : sint -> (string * int) list -> int
-(** [sym_infer s vars] is the value of [s] with each variable named in [vars]
-    bound to its value. Integer arithmetic is exact, divisions round as their
-    operations say, and casts convert without truncating.
-
-    Raises [Invalid_argument] if [s] reads a variable [vars] lacks. *)
-
-val sym_compile : sint -> (t -> 'env -> int) -> 'env -> int
-(** [sym_compile s var] is the function computing [s] in an environment, each
-    variable [v] of [s] read by [var v]: [sym_compile s var env] is
-    [sym_infer s vars] for [vars] binding each variable [v] to [var v env]. [s]
-    is simplified once, and integer arithmetic that fits an [int] is computed on
-    [int]s, so that a call costs a few operations: a value that a schedule
-    computes on each run, such as the offset of a view that moves with a
-    range.
-
-    The function raises as {!sym_infer} does, and as [var] does. *)
-
 (** {1:syntax Construction} *)
 
 val const : ?dtype:Dtype.t -> Dtype.const -> t
@@ -855,11 +710,6 @@ val float : ?dtype:Dtype.t -> float -> t
 val bool : ?dtype:Dtype.t -> bool -> t
 (** [bool ~dtype b] is [const ~dtype (`Bool b)]. *)
 
-val consts : ?dtype:Dtype.t -> Dtype.const list -> t
-(** [consts ~dtype cs] is the {!stack} of [const ~dtype c] for each [c] of [cs].
-    [dtype] defaults to the committed type of the literals [cs]
-    ({!Dtype.of_consts}). *)
-
 val invalid : t
 (** [invalid] is [const `Invalid]. *)
 
@@ -870,14 +720,6 @@ val value : t -> Dtype.const
 
 val is_invalid : t -> bool
 (** [is_invalid u] is [true] iff [u] is the constant [`Invalid]. *)
-
-val const_like : ?dtype:Dtype.t -> t -> Dtype.const -> t
-(** [const_like ~dtype u c] is the constant [c] of type [dtype] (default [u]'s),
-    expanded to [u]'s shape. *)
-
-val vconst_like : t -> Dtype.const -> t
-(** [vconst_like u c] is the constant [c] of [u]'s type repeated [max_numel u]
-    times. *)
 
 val ccast : t -> Dtype.t -> t
 (** [ccast u dt] is [u] as a [dt] constant if [u] is a constant, and [cast u dt]
@@ -897,13 +739,6 @@ val group : t list -> t
 val broadcast : t -> int -> t
 (** [broadcast u n] is the {!Op.Stack} of [n] copies of [u], or [u] if [n] is
     [1]. *)
-
-val stack : ?axis:int -> t list -> t
-(** [stack ~axis us] is the {!Op.Stack} of [us], each converted to their common
-    type ({!ccast}) except [`Invalid] constants, with the new axis moved to
-    [axis] (default [0]).
-
-    Raises [Invalid_argument] if [us] is empty or its nodes differ in shape. *)
 
 val index : ?tag:Tag.t -> t -> t list -> t
 (** [index u idxs] is the {!Op.Index} of [u] by [idxs]; the [i]th source of a
@@ -971,17 +806,9 @@ val wmma :
 (** [wmma a b ~acc ~dims ~threads] is the matrix multiply-accumulate of [a] and
     [b] into [acc]. *)
 
-val rop : t -> Op.t -> int list -> t
-(** [rop u op axes] reduces the axes [axes] of [u] with [op]: axes of size [1]
-    are reshaped away, and the others are permuted to the front and reduced by
-    one {!Op.Reduce}. *)
-
 val reduce : t -> Op.t -> t list -> t
 (** [reduce u op ranges] is the kernel reduction of [u] with [op] over [ranges].
 *)
-
-val valid : t -> t -> t
-(** [valid u cond] is [u] where [cond] holds and [`Invalid] elsewhere. *)
 
 val get_idx : t -> t
 (** [get_idx u] is [u] without its validity condition. *)
@@ -994,12 +821,6 @@ val bufferize : ?opts:bufferize_opts -> t -> t list -> t
 (** [bufferize ~opts u ranges] is the {!Op.Stage} of [u] over [ranges], into a
     buffer placed by [opts] if given. *)
 
-val contract : t -> t list -> t
-(** [contract u rs] is the stack of [u] with the upcast ranges [rs] substituted
-    by each of their values, the last range varying fastest.
-
-    Raises [Invalid_argument] if a range of [rs] is not {!Axis_type.Upcast}. *)
-
 (** {1:multi Several devices} *)
 
 val device : t -> device option
@@ -1009,43 +830,9 @@ val device : t -> device option
 val on_disk : t -> bool
 (** [on_disk u] is [true] iff [u] lives on a single disk device. *)
 
-val axis : t -> int option
-(** [axis u] is the axis [u] is sharded on, if it is sharded on one.
-
-    Raises [Invalid_argument] if [u] is sharded on several axes, or if a reshape
-    moves elements between shards. *)
-
 val sharding : t -> (int * t) list
 (** [sharding u] is each axis an {!Op.Unshard} [u] is sharded on, with the range
     over its shards; [[]] for any other node. *)
-
-val bounds : t -> (sint * sint) list
-(** [bounds u] is the start and end of each shard along [u]'s axis.
-
-    Raises [Invalid_argument] if [u] is not sharded. *)
-
-val shard_shape : t -> sint list
-(** [shard_shape u] is the shape of one of [u]'s shards. *)
-
-val max_shard_shape : t -> int list
-(** [max_shard_shape u] is [to_max_shape (shard_shape u)]. *)
-
-val unshard : ?ranges:t list -> t -> int list -> t
-(** [unshard ~ranges u axes] reassembles [u], sharded on [axes] over [ranges]
-    (default one {!Axis_type.Device} range over [u]'s devices).
-
-    Raises [Invalid_argument] if the lengths differ or an axis repeats. *)
-
-val shard_slice : t -> int -> t -> t
-(** [shard_slice u axis r] is the part of [u] along [axis] that the range [r]
-    selects: the [n] elements of [axis] from [r * n], where [n] is the size of
-    [axis] divided by [r]'s count. It is [u] if [u] is a scalar.
-
-    Raises [Invalid_argument] if [r]'s count does not divide the axis. *)
-
-val shard : ?axis:int -> t -> string list -> t
-(** [shard ~axis u devices] is [u] copied to [devices], split along [axis] if
-    given. *)
 
 val copy_to_device : ?shard:int -> t -> device -> t
 (** [copy_to_device ~shard u d] is the copy of [u], or of its shard [shard], to
@@ -1068,9 +855,6 @@ val allreduce : t -> Op.t -> device -> t
 
     Raises [Invalid_argument] if [u] is not on several devices. *)
 
-val store_call : t -> t -> t
-(** [store_call dst src] is the call that copies [src] into [dst]. *)
-
 (** {1:movement Movement} *)
 
 val base : t -> t
@@ -1084,7 +868,7 @@ val storage_base : t -> t
     bitcasts and {!Op.After}s. *)
 
 (** The type for the arguments of movements. *)
-type movement =
+type movement = Uop.movement =
   | Reshape of sint list  (** The new shape. *)
   | Expand of sint list  (** The axes added in front. *)
   | Pad of (sint * sint) list
@@ -1093,130 +877,6 @@ type movement =
       (** Where each axis starts in the source, and the result's size. *)
   | Permute of int list  (** The source axis of each result axis. *)
   | Flip of bool list  (** Which axes are reversed. *)
-
-val marg : t -> movement
-(** [marg u] is the argument of the movement [u].
-
-    Raises [Invalid_argument] if [u] is not a movement. *)
-
-val as_shape : t -> sint list
-(** [as_shape u] is the shape the node [u] denotes: its constant, its stack's
-    sources, or [u] itself. *)
-
-val mop : t -> movement -> t
-(** [mop u m] applies the movement [m] to [u] as one node, its shape arguments
-    stored as simplified sources. An empty expand is [u], and so is an empty pad
-    or shrink of a scalar.
-
-    Raises [Invalid_argument] on an empty pad or shrink of a node that is not a
-    scalar, or where {!shape_opt} does. *)
-
-val reshape : t -> sint list -> t
-(** [reshape u shape] is [u] with shape [shape], or [u] if unchanged; a size of
-    [-1] is inferred.
-
-    Raises [Invalid_argument] if the element counts differ or [-1] appears
-    twice. *)
-
-val expand : t -> sint list -> t
-(** [expand u shape] broadcasts [u] to [shape]; a size of [-1] keeps [u]'s. *)
-
-val permute : t -> int list -> t
-(** [permute u order] is [u] with its axes in [order], or [u]; negative axes
-    count from the end.
-
-    Raises [Invalid_argument] if [order] is not a permutation. *)
-
-val flip : t -> int list -> t
-(** [flip u axes] reverses [axes] of [u]. *)
-
-val shrink : t -> (sint * sint) option list -> t
-(** [shrink u bounds] keeps, on each axis, the elements from its start to its
-    end, excluded; [None] keeps the axis whole. *)
-
-val shrink_to : t -> sint option list -> t
-(** [shrink_to u shape] keeps the first elements of each axis. *)
-
-val pad : ?value:Dtype.const -> t -> (sint * sint) option list -> t
-(** [pad ~value u padding] adds, on each axis, the given numbers of elements of
-    [value] (default [0]) before and after it; a negative number removes
-    elements. *)
-
-val pad_to : ?value:Dtype.const -> t -> sint option list -> t
-(** [pad_to ~value u shape] pads the end of each axis to [shape]. *)
-
-val flatten : ?start:int -> ?stop:int -> t -> t
-(** [flatten ~start ~stop u] merges the axes from [start] (default [0]) to
-    [stop] (default [-1]), included. *)
-
-val unflatten : t -> int -> sint list -> t
-(** [unflatten u axis sizes] splits [axis] into [sizes]. *)
-
-val squeeze : ?axis:int -> t -> t
-(** [squeeze ~axis u] removes [axis] if its size is [1], or every axis of size
-    [1]. *)
-
-val unsqueeze : t -> int -> t
-(** [unsqueeze u axis] is [u] with an axis of size [1] inserted at [axis], which
-    counts from the end of the new shape when negative.
-
-    Raises [Invalid_argument] if [axis] is out of range. *)
-
-val transpose : t -> int -> int -> t
-(** [transpose u a b] exchanges the axes [a] and [b] of [u].
-
-    Raises [Invalid_argument] if an axis is out of range. *)
-
-val split : ?axis:int -> t -> int list -> t list
-(** [split ~axis u sizes] is the consecutive slices of [u] along [axis] (default
-    [0]) of [sizes] elements.
-
-    Raises [Invalid_argument] if [axis] is out of range or of symbolic size, or
-    if [sizes] does not sum to its size. *)
-
-val repeat : t -> int list -> t
-(** [repeat u repeats] tiles [u] [repeats] times along each axis, the axes
-    aligned to the right: a [repeats] longer than [u]'s shape adds leading axes.
-
-    Raises [Invalid_argument] if a movement does. *)
-
-val pool : ?stride:int list -> ?dilation:int list -> t -> int list -> t
-(** [pool ~stride ~dilation u kernel] is the windows of [kernel] over the last
-    axes of [u], each [stride] apart (default [1]) and [dilation] between its
-    elements (default [1]): [u]'s leading axes, then the number of windows along
-    each pooled axis, then the kernel's axes. Only movements build it: [u] is
-    repeated and read back in rows one element longer, so that windows overlap
-    without padding.
-
-    Raises [Invalid_argument] if [u] has fewer axes than [kernel], if [stride]
-    or [dilation] do not have one entry per kernel axis, or if a dilated kernel
-    is longer than its axis. *)
-
-val cat : ?axis:int -> t -> t list -> t
-(** [cat ~axis u rest] concatenates [u :: rest] along [axis] (default [0]). *)
-
-val cumalu : t -> int -> Op.t -> t
-(** [cumalu u axis op] is the inclusive running [op] ({!Op.Add}, {!Op.Mul} or
-    {!Op.Max}) of [u] along [axis], at [u]'s type: each element reduces the
-    window of the elements up to it. Past 512 elements it runs in two stages,
-    within chunks of 256 and across the chunks' last elements. It is [u] if an
-    axis of [u] is empty.
-
-    Raises [Invalid_argument] if [axis] has a symbolic size. *)
-
-val arange : ?start:int -> ?step:int -> ?dtype:Dtype.t -> int -> t
-(** [arange ~start ~step ~dtype stop] is the vector of the integers from [start]
-    (default [0]) up to [stop], excluded, by [step] (default [1]), down to it
-    for a negative [step], of type [dtype] (default the first of
-    {!Dtype.default_int}, {!Dtype.Int32}, {!Dtype.Int64} and {!Dtype.Uint64}
-    that holds them). It is empty if [stop] is not beyond [start]. Its elements
-    are running sums of [step].
-
-    Raises [Invalid_argument] if [step] is [0] or [dtype] does not hold the
-    integers. *)
-
-val nbytes : t -> int
-(** [nbytes u] is the number of bytes of [u]'s elements. *)
 
 (** {1:storage Storage}
 
@@ -1254,105 +914,6 @@ val new_buffer : ?slot:int -> ?phase:int -> device -> int -> Dtype.t -> t
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
-val empty : ?device:device -> sint list -> Dtype.t -> t
-(** [empty ~device shape dt] is uninitialised storage of [shape] for whoever
-    realizes the graph to bind.
-
-    Raises [Invalid_argument] if [dt] is weak. *)
-
-val empty_like : ?dtype:Dtype.t -> ?device:device -> t -> t
-(** [empty_like u] is uninitialised storage of [u]'s shape, type and placement,
-    sharded as [u]. *)
-
-val clone : ?device:device -> t -> t
-(** [clone ~device u] is a copy of [u] into new storage on [device] (default
-    [u]'s).
-
-    Raises [Invalid_argument] if [device] is a disk. *)
-
-val alloc :
-  ?slot:int ->
-  ?addrspace:Dtype.addr_space ->
-  ?device:device ->
-  ?axis:int ->
-  sint list ->
-  Dtype.t ->
-  t
-(** [alloc shape dt] is call-local storage of [shape], sharded on [axis]. *)
-
-val alloc_like : ?slot:int -> ?addrspace:Dtype.addr_space -> t -> t
-(** [alloc_like u] is [alloc] of [u]'s shard shape and type. *)
-
-val placeholder :
-  ?slot:int ->
-  ?addrspace:Dtype.addr_space ->
-  ?device:device ->
-  ?volatile:bool ->
-  ?tag:Tag.t ->
-  int list ->
-  Dtype.t ->
-  t
-(** [placeholder shape dt] is a parameter of [shape] and [dt] ([dt] committed,
-    {!Dtype.strong}), or workgroup or register storage for those address spaces.
-    A [String] tag also names it.
-
-    Raises [Invalid_argument] if local storage gets a device. *)
-
-val placeholder_like : ?addrspace:Dtype.addr_space -> t -> int -> t
-(** [placeholder_like u slot] is a placeholder of [u]'s shard shape and type. *)
-
-val param :
-  ?shape:sint list ->
-  ?device:device ->
-  ?vmin_vmax:Dtype.value * Dtype.value ->
-  ?multiple_of:int ->
-  ?name:string ->
-  ?addrspace:Dtype.addr_space option ->
-  ?volatile:bool ->
-  ?phase:int ->
-  ?align:int ->
-  int ->
-  Dtype.t ->
-  t
-(** [param ~shape slot dt] is the parameter [slot] of type [dt]: a scalar
-    without [shape], flat storage of its greatest size viewed as [shape]
-    otherwise, whose first element lies [phase] bytes past a multiple of
-    [align] (defaults [0] and [16]; see {!param_arg}).
-
-    Raises [Invalid_argument] if [dt] is weak. *)
-
-val param_like : t -> int -> t
-(** [param_like u slot] is a parameter in [slot] that [u] can be passed to: a
-    scalar variable without its name and value, one shard of a sharded value, or
-    storage of [u]'s shape. Storage has the phase and alignment of the storage
-    [u] views ({!storage_phase}).
-
-    Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
-
-val storage_phase : t -> int * int
-(** [storage_phase u] is the alignment and phase [(align, phase)]
-    ({!param_arg}) of the storage [u] views: its storage's, moved by the bytes a
-    shrink skips when it shrinks the storage seen whole, a buffer or a stage
-    the schedule allocates, in row-major order. A shrink by a symbolic start
-    known only to multiples of fewer bytes than the storage's alignment, such
-    as a window that moves with a range, lowers the alignment to the largest
-    power of two those bytes are a multiple of, and a symbolic start into a
-    view that reorders or pads the storage keeps only the element's size. Any
-    other view keeps its storage's: a reordering, a bitcast, an ordering or a
-    shard selection. A stage of a view of a buffer through movements and
-    bitcasts is the view when scheduling finds it contiguous, and storage of
-    its own on a 16-byte boundary otherwise, so it has what both hold: phase
-    [0] and the largest power of two up to the buffer's alignment that the
-    view's first byte is a multiple of; [(1, 0)] when a size is symbolic or the
-    buffer sharded. A view whose first or last element is padding, or whose
-    last element does not lie as many elements past its first as a run of its
-    size, is no run, and its stage has [(16, 0)]. Storage on a disk, which no vector access reads, and
-    anything else that is not storage or a view of it have [(16, 0)]. *)
-
-val view_as : ?axis:int -> t -> sint list -> t
-(** [view_as ~axis u shape] views the flat storage [u] as [shape], sharded on
-    [axis]. *)
-
 val set : ?ends:t list -> t -> t -> t
 (** [set p x] stores [x] through [p], ends [ends], and is [p]'s storage after
     the store. *)
@@ -1369,60 +930,19 @@ val variable :
 (** [variable ~dtype ~multiple_of name lo hi] is the scalar variable [name] of
     type [dtype] (default {!Dtype.Weak_int}) ranging over [lo] to [hi]. *)
 
-val is_variable : t -> bool
-(** [is_variable u] is [true] iff [u] is a scalar variable with a range. *)
-
-val is_bound_var : t -> bool
-(** [is_bound_var u] is [true] iff [u] is a variable bound to a value. *)
-
 val expr : t -> string
 (** [expr u] is the name of the parameter or buffer [u].
 
     Raises [Invalid_argument] if it has none. *)
-
-val bind : t -> Dtype.value -> t
-(** [bind v x] is [v] bound to [x].
-
-    Raises [Invalid_argument] if [v] is not an unbound variable, or [x] is out
-    of its range or not a multiple of its [multiple_of]. *)
-
-val unbound : t -> t
-(** [unbound v] is [v] without its value and tag. *)
-
-val unbind : t -> t * Dtype.value
-(** [unbind v] is [(unbound v, x)] for [v] bound to [x].
-
-    Raises [Invalid_argument] if [v] is not bound. *)
-
-val unbind_all : t -> t * (t * Dtype.value) list
-(** [unbind_all u] is [u] with each bound variable unbound, and each variable
-    with its value. *)
-
-val variables : t -> t list
-(** [variables u] is the unbound scalar variables [u] reads, with a
-    ["_device_num"] variable for each device range, sorted by name and slot. *)
 
 (** {1:symbolic Divisibility} *)
 
 val const_factor : t -> Bigint.t
 (** [const_factor u] is a known integer that divides every value of [u]. *)
 
-val divides : t -> Bigint.t -> t option
-(** [divides u n] is [u / n] if [u] is known to be a multiple of [n]. *)
-
 val pop_const : ?op:Op.t -> t -> t * Dtype.const
 (** [pop_const ~op u] is [(x, c)] for [u = op x c] with [c] a constant, and
     [(u, identity_element op)] otherwise. [op] defaults to {!Op.Add}. *)
-
-val gcd : t list -> t
-(** [gcd us] is a common divisor of [us]: their common factors times the
-    greatest common divisor of their constant coefficients, a scalar constant
-    whatever the shape of [us].
-
-    Raises [Invalid_argument] if [us] is empty. *)
-
-val divide_exact : t -> t -> t option
-(** [divide_exact u d] is [u / d] if it divides exactly. *)
 
 (** {1:calls Calls} *)
 
@@ -1465,30 +985,6 @@ val call :
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
     or a range other than a device range leaks out of it. *)
-
-val call_with_outputs :
-  ?name:string ->
-  ?precompile:bool ->
-  ?aux:hcq_info ->
-  ?output_pos:int list ->
-  t list ->
-  t list ->
-  t list
-(** [call_with_outputs values args] calls a body that computes [values] from
-    [args], and is the outputs, each ordered after the call. Each output is new
-    storage passed to the call at its position in [output_pos] (default after
-    [args]); [args] fill the other positions in order.
-
-    Raises [Invalid_argument] if [output_pos] is not strictly ascending within
-    the argument list. *)
-
-val call_with_output : ?name:string -> ?precompile:bool -> t -> t list -> t
-(** [call_with_output value args] is the one output of
-    [call_with_outputs [value] args]. *)
-
-val custom_kernel : t list -> (t list -> t) -> t list
-(** [custom_kernel args f] calls the kernel [f] builds on placeholders of
-    [args], and is [args], each ordered after it. *)
 
 (** {1:elementwise Elementwise} *)
 
@@ -1912,17 +1408,3 @@ val resolve_returned_after : t -> t -> t option
 val gate_kernel_sink : t -> bool
 (** [gate_kernel_sink u] is [false] for a linear program and a kernel's sink, so
     walks gated by it do not enter kernels. *)
-
-(**/**)
-
-(** Late bindings.
-
-    The rules {!simplify} applies are defined by a later module of the library,
-    which installs them here when the library is initialised, before any
-    program runs. *)
-module Private : sig
-  val set_symbolic : (unit, t) Pattern_matcher.t -> unit
-  (** [set_symbolic m] makes [m] the rules of {!simplify}.
-
-      Raises [Invalid_argument] if they are set already. *)
-end

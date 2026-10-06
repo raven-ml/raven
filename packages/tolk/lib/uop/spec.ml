@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 type t = (unit, bool) Pattern_matcher.t
 

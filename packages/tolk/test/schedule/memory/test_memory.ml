@@ -123,7 +123,7 @@ let collected =
                (Ops.mstack a [ Ops.mselect (Ops.mstack b [ a ]) 0; a ])));
       test "a view of a buffer passes none" (fun () ->
           equal (list uop) []
-            (Memory.collect_bufs (Ops.shrink a [ Some (Int 0, Int 4) ])));
+            (Memory.collect_bufs (Shape.shrink a [ Some (Int 0, Int 4) ])));
     ]
 
 (* Rules *)
@@ -209,7 +209,7 @@ let build d =
     List.map
       (fun (bs, copy) ->
         let bs = List.map (fun i -> buffers.(i)) bs in
-        if copy then Ops.store_call (List.hd bs) (List.nth bs 1)
+        if copy then Shape.store_call (List.hd bs) (List.nth bs 1)
         else Ops.call (Ops.sink bs) bs)
       d.calls
   in
@@ -228,7 +228,7 @@ let view u =
   match Ops.src bytes with
   | [ arena; offset; length ] when Ops.op bytes = Shrink ->
       Some
-        (arena, Bigint.to_int (Ops.to_z offset), Bigint.to_int (Ops.to_z length))
+        (arena, Bigint.to_int (Shape.to_z offset), Bigint.to_int (Shape.to_z length))
   | _ -> None
 
 let lifetimes d =
@@ -286,7 +286,7 @@ let plans d =
     (fun (b, p) ->
       match view p with
       | Some (_, off, len) ->
-          equal ~msg:"a view of the buffer's bytes" int (Ops.nbytes b) len;
+          equal ~msg:"a view of the buffer's bytes" int (Shape.nbytes b) len;
           equal ~msg:"a place on a block" int 0 (off mod 256);
           equal ~msg:"a view of the buffer's type" Dtypes.dtype (Ops.dtype b)
             (Ops.dtype p)

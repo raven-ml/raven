@@ -31,7 +31,7 @@ val apply_movement_op :
     - [Flip] counts a reversed axis of size [s] from its end, [s - 1 - i];
     - [Expand] drops the indices of the axes it adds in front;
     - [Pad] subtracts each padded axis' start, and the index is valid
-      ({!Ops.valid}) only where it falls within the source;
+      ({!Shape.valid}) only where it falls within the source;
     - [Reshape] flattens the index in row-major order and splits it along
       [in_shape], simplified with the symbolic rules and the validity rules
       ({!Symbolic.symbolic}, {!Symbolic.pm_simplify_valid}).

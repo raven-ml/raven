@@ -566,7 +566,7 @@ target's run lands.
 - **Raven:** `lower_index.ml:358` (`fold`), `:344` (`cut`), `:282`
   (`reads_image`);
   `lower_reduce.ml:88` (`reduce`).
-- **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
+- **No source:** the transpose of the unfold: each movement of `Shape.pool` undone
   in reverse order, a shrink by a pad of zeros, and the copies of the input
   summed, which sums the windows where they overlap, from `+0.`, at `float32`
   or wider and rounded once. Integers wrap; booleans are whether any window

@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 open Divandmod
 module V = Dtype.Value
 
@@ -1402,4 +1403,4 @@ let sym =
       pm_clean_up_group_sink;
     ]
 
-let () = Private.set_symbolic symbolic
+let () = Shape.Private.set_symbolic symbolic

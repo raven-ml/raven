@@ -44,7 +44,7 @@ val shared : t
 
     When {!Setting.check_oob} holds, a load or store through an index into
     storage must be proved in bounds: the bounds of the index ({!Ops.vmin},
-    {!Ops.vmax}) must lie within the storage's {!Ops.max_numel}. An index they
+    {!Ops.vmax}) must lie within the storage's {!Shape.max_numel}. An index they
     do not prove fails, whatever its gate, and its bounds, the index and the
     gate are printed on standard error, saying that the bound cannot be proven
     without a solver. *)

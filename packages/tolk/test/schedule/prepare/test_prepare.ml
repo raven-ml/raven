@@ -237,11 +237,11 @@ let range ?(axis_type = Ops.Axis_type.Loop) n axis =
 
 let ranges shape = List.mapi (fun axis n -> range n axis) shape
 let cpu = Ops.Single "CPU"
-let flat n = Ops.param ~device:cpu ~shape:[ Int n ] 1 Float32
-let stored shape = Ops.reshape (flat (size shape)) (ints shape)
+let flat n = Shape.param ~device:cpu ~shape:[ Int n ] 1 Float32
+let stored shape = Shape.reshape (flat (size shape)) (ints shape)
 
 let copy_in =
-  Ops.store (flat 4) (Ops.param ~device:cpu ~shape:[ Int 4 ] 2 Float32)
+  Ops.store (flat 4) (Shape.param ~device:cpu ~shape:[ Int 4 ] 2 Float32)
 
 let pm_mops_rules =
   let x = stored [ 4; 8 ] in
@@ -263,7 +263,7 @@ let pm_mops_rules =
           in
           equal uop
             (Ops.index (flat 32) flat_index)
-            (mops (Ops.index (Ops.permute x [ 1; 0 ]) [ r0; r1 ])));
+            (mops (Ops.index (Shape.permute x [ 1; 0 ]) [ r0; r1 ])));
       test
         "an index of a reshape's leading axes indexes its source when the \
          trailing axes are kept" (fun () ->
@@ -274,21 +274,21 @@ let pm_mops_rules =
               [ a; b ]
           in
           equal uop (Ops.index x lead)
-            (mops (Ops.index (Ops.reshape x (ints [ 2; 2; 8 ])) [ a; b ])));
+            (mops (Ops.index (Shape.reshape x (ints [ 2; 2; 8 ])) [ a; b ])));
       test "an index of a reshape whose trailing axes change is left as it is"
         (fun () ->
-          let u = Ops.index (Ops.reshape x (ints [ 2; 16 ])) [ range 2 0 ] in
+          let u = Ops.index (Shape.reshape x (ints [ 2; 16 ])) [ range 2 0 ] in
           equal uop u (mops u));
       test "an index of a reshape's added leading axis is its source" (fun () ->
           let row = stored [ 8 ] in
           equal uop row
-            (mops (Ops.index (Ops.reshape row (ints [ 1; 8 ])) [ range 1 0 ])));
+            (mops (Ops.index (Shape.reshape row (ints [ 1; 8 ])) [ range 1 0 ])));
       test "a movement after effects is the movement of its source after them"
         (fun () ->
           let u = flat 32 in
           equal uop
-            (Ops.reshape (Ops.after u [ copy_in ]) (ints [ 4; 8 ]))
-            (mops (Ops.after (Ops.reshape u (ints [ 4; 8 ])) [ copy_in ])));
+            (Shape.reshape (Ops.after u [ copy_in ]) (ints [ 4; 8 ]))
+            (mops (Ops.after (Shape.reshape u (ints [ 4; 8 ])) [ copy_in ])));
       test "an index after effects is the index of its source after them"
         (fun () ->
           let u = flat 32 in
@@ -298,7 +298,7 @@ let pm_mops_rules =
       test "an end of a movement is the end of its source" (fun () ->
           let u = flat 32 in
           equal uop (Ops.end_ u [ r0 ])
-            (mops (Ops.end_ (Ops.reshape u (ints [ 4; 8 ])) [ r0 ])));
+            (mops (Ops.end_ (Shape.reshape u (ints [ 4; 8 ])) [ r0 ])));
       test
         "an index that loads from a storage state moves with the state as it is"
         (fun () ->
@@ -312,7 +312,7 @@ let pm_mops_rules =
               [ Ops.end_ (Ops.store (Ops.index buf [ r ]) unsimplified) [ r ] ]
           in
           let row = Ops.cast (Ops.index state [ r1 ]) Weak_int in
-          let moved = mops (Ops.index (Ops.permute x [ 1; 0 ]) [ r0; row ]) in
+          let moved = mops (Ops.index (Shape.permute x [ 1; 0 ]) [ r0; row ]) in
           let states =
             List.filter
               (fun u -> Ops.op u = After)
@@ -324,7 +324,7 @@ let pm_mops_rules =
 let concrete u =
   List.map
     (function Ops.Int n -> n | Sym _ -> fail "a generated shape is concrete")
-    (Ops.shape u)
+    (Shape.shape u)
 
 let rec coords = function
   | [] -> [ [] ]
@@ -402,7 +402,7 @@ let chains kinds =
     if k = 0 then constant []
     else
       let* m = movement kinds shape in
-      let next = concrete (Ops.mop (stored shape) m) in
+      let next = concrete (Shape.mop (stored shape) m) in
       let+ rest = moves next (k - 1) in
       m :: rest
   in
@@ -416,7 +416,7 @@ let chains kinds =
         shape)
 
 let chain = chains [ `Reshape; `Expand; `Shrink; `Permute; `Flip ]
-let moved (shape, ms) = List.fold_left Ops.mop (stored shape) ms
+let moved (shape, ms) = List.fold_left Shape.mop (stored shape) ms
 let iota n = Array.init n (fun j -> `Float (float_of_int (j + 1)))
 
 let tensor_values memory u =
@@ -504,7 +504,7 @@ let view_witness = option (pair uop int)
 
 let contiguous_views =
   let b = flat 32 in
-  let x = Ops.reshape b (ints [ 4; 8 ]) in
+  let x = Shape.reshape b (ints [ 4; 8 ]) in
   let bytes = Ops.bitcast b Uint8 in
   let case name expected u =
     test name (fun () ->
@@ -516,50 +516,50 @@ let contiguous_views =
       case "a reshape keeps the order" (Some (b, 0)) x;
       case "a shrink of leading rows starts at their first element"
         (Some (b, 8))
-        (Ops.shrink x [ Some (Int 1, Int 3); None ]);
+        (Shape.shrink x [ Some (Int 1, Int 3); None ]);
       case "a shrink of inner columns skips elements" None
-        (Ops.shrink x [ None; Some (Int 2, Int 4) ]);
-      case "a permute reorders" None (Ops.permute x [ 1; 0 ]);
-      case "a flip reorders" None (Ops.flip x [ 1 ]);
-      (let x = Ops.reshape b (ints [ 2; 1; 16 ]) in
+        (Shape.shrink x [ None; Some (Int 2, Int 4) ]);
+      case "a permute reorders" None (Shape.permute x [ 1; 0 ]);
+      case "a flip reorders" None (Shape.flip x [ 1 ]);
+      (let x = Shape.reshape b (ints [ 2; 1; 16 ]) in
        case "flips that cancel across a reshape are not found" None
-         (Ops.flip (Ops.reshape (Ops.flip x [ 0 ]) (ints [ 2; 16 ])) [ 0 ]));
+         (Shape.flip (Shape.reshape (Shape.flip x [ 0 ]) (ints [ 2; 16 ])) [ 0 ]));
       (let x = stored [ 1; 2; 4; 2 ] in
        case "a read within one copy of an expanded value is not found" None
-         (Ops.shrink
-            (Ops.reshape (Ops.expand x (ints [ 2; 2; 4; 2 ])) (ints [ 32 ]))
+         (Shape.shrink
+            (Shape.reshape (Shape.expand x (ints [ 2; 2; 4; 2 ])) (ints [ 32 ]))
             [ Some (Int 6, Int 9) ]));
       case "an expand repeats" None
-        (Ops.expand (Ops.reshape b (ints [ 1; 32 ])) (ints [ 2; 32 ]));
-      case "a pad adds elements" None (Ops.pad b [ Some (Int 1, Int 0) ]);
+        (Shape.expand (Shape.reshape b (ints [ 1; 32 ])) (ints [ 2; 32 ]));
+      case "a pad adds elements" None (Shape.pad b [ Some (Int 1, Int 0) ]);
       case "a bitcast to bytes is a view of the storage" (Some (b, 0)) bytes;
       case "an element is a view at its offset"
         (Some (b, 11))
-        (Ops.shrink x [ Some (Int 1, Int 2); Some (Int 3, Int 4) ]);
+        (Shape.shrink x [ Some (Int 1, Int 2); Some (Int 3, Int 4) ]);
       case "an empty view is no view" None
-        (Ops.shrink x [ Some (Int 2, Int 2); None ]);
-      (let ints = Ops.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
+        (Shape.shrink x [ Some (Int 2, Int 2); None ]);
+      (let ints = Shape.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
        let ordered =
          Ops.after ints
-           [ Ops.store ints (Ops.param ~device:cpu ~shape:[ Int 8 ] 2 Int32) ]
+           [ Ops.store ints (Shape.param ~device:cpu ~shape:[ Int 8 ] 2 Int32) ]
        in
        case
          "a view of storage after its stores is a view of the ordered storage"
          (Some (ordered, 2))
-         (Ops.shrink ordered [ Some (Int 2, Int 5) ]));
-      (let out = Ops.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
-       let at = Ops.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
-       let rows = Ops.reshape (Ops.arange ~dtype:Weak_int 4) (ints [ 4; 1 ]) in
+         (Shape.shrink ordered [ Some (Int 2, Int 5) ]));
+      (let out = Shape.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
+       let at = Shape.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
+       let rows = Shape.reshape (Shape.arange ~dtype:Weak_int 4) (ints [ 4; 1 ]) in
        let gather =
-         Ops.index (Ops.reshape (stored [ 4; 4 ]) (ints [ 16 ])) [ rows ]
+         Ops.index (Shape.reshape (stored [ 4; 4 ]) (ints [ 16 ])) [ rows ]
        in
-       let halves = Ops.O.((Ops.arange ~dtype:Weak_int 16 + int 1) // int 2) in
+       let halves = Ops.O.((Shape.arange ~dtype:Weak_int 16 + int 1) // int 2) in
        let ordered =
          Ops.after out
            [
              Ops.store
-               (Ops.shrink at [ Some (Int 0, Int 4) ])
-               (Ops.reshape gather (ints [ 4 ]));
+               (Shape.shrink at [ Some (Int 0, Int 4) ])
+               (Shape.reshape gather (ints [ 4 ]));
              Ops.store at (Ops.cast halves Float32);
            ]
        in
@@ -567,33 +567,33 @@ let contiguous_views =
          "a view of storage after effects is a view of that storage, whatever \
           the effects compute (D132)"
          (Some (ordered, 2))
-         (Ops.shrink ordered [ Some (Int 2, Int 5) ]));
+         (Shape.shrink ordered [ Some (Int 2, Int 5) ]));
       (let rows =
          Ops.variable "rows" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 2))
        in
-       let m = Ops.reshape (flat 6) (ints [ 3; 2 ]) in
+       let m = Shape.reshape (flat 6) (ints [ 3; 2 ]) in
        case "a view of a symbolic size is no view" None
-         (Ops.shrink m
+         (Shape.shrink m
             [ Some (Int 1, Sym Ops.O.(int 1 + rows)); Some (Int 0, Int 2) ]));
       case "two permutes that cancel are a view"
         (Some (b, 0))
-        (Ops.permute (Ops.permute x [ 1; 0 ]) [ 1; 0 ]);
+        (Shape.permute (Shape.permute x [ 1; 0 ]) [ 1; 0 ]);
       case "an expand of an axis of one element is a view"
         (Some (b, 0))
-        (Ops.expand (Ops.reshape x (ints [ 1; 4; 8 ])) (ints [ 1; 4; 8 ]));
+        (Shape.expand (Shape.reshape x (ints [ 1; 4; 8 ])) (ints [ 1; 4; 8 ]));
       case "bytes on whole elements start at their element"
         (Some (b, 1))
-        (Ops.shrink bytes [ Some (Int 4, Int 12) ]);
+        (Shape.shrink bytes [ Some (Int 4, Int 12) ]);
       case "a bitcast of a view with an axis of one element is a view"
         (Some (b, 0))
-        (Ops.bitcast (Ops.reshape b (ints [ 1; 32 ])) Uint8);
+        (Ops.bitcast (Shape.reshape b (ints [ 1; 32 ])) Uint8);
       case "bytes within an element are a view of the bytes"
         (Some (bytes, 2))
-        (Ops.shrink bytes [ Some (Int 2, Int 6) ]);
+        (Shape.shrink bytes [ Some (Int 2, Int 6) ]);
       (let one = Ops.const ~dtype:Int64 (`Int Bigint.one) in
        case "a constant is no view" None one);
       case "a constant of one element is no view" None
-        (Ops.reshape (Ops.const ~dtype:Int64 (`Int Bigint.one)) (ints [ 1 ]));
+        (Shape.reshape (Ops.const ~dtype:Int64 (`Int Bigint.one)) (ints [ 1 ]));
       case "a computed value is no view" None (Ops.add b b);
     ]
 
@@ -645,8 +645,8 @@ let contiguous_view_laws =
    Hand-built functions on the CPU, each stating one rule of prepare_rangeify:
    an output of sixteen elements in slot [0], inputs in the next slots. *)
 
-let out = Ops.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
-let input slot = Ops.param ~device:cpu ~shape:[ Int 16 ] slot Float32
+let out = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
+let input slot = Shape.param ~device:cpu ~shape:[ Int 16 ] slot Float32
 let stores value = Ops.sink [ Ops.after out [ Ops.store out value ] ]
 let has op u =
   List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
@@ -663,7 +663,7 @@ let calls u =
 
 let copy_body =
   Ops.sink
-    [ Ops.store (input 0) (Ops.param ~device:cpu ~shape:[ Int 16 ] 1 Float32) ]
+    [ Ops.store (input 0) (Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Float32) ]
 
 let outputs =
   let value = Ops.exp2 (input 1) in
@@ -672,7 +672,7 @@ let outputs =
       test
         "a value computed into new storage of the output's size is computed \
          into the output" (fun () ->
-          let scratch = Ops.alloc ~device:cpu [ Int 16 ] Float32 in
+          let scratch = Shape.alloc ~device:cpu [ Int 16 ] Float32 in
           let computed = Ops.after scratch [ Ops.store scratch value ] in
           let u = prepare (stores computed) in
           is_false (has Alloc u);
@@ -691,7 +691,7 @@ let outputs =
           is_true (has Alloc (prepare (Ops.sink [ Ops.store out reads_out ]))));
       test "a value materialised into two outputs is placed in the first"
         (fun () ->
-          let other = Ops.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
+          let other = Shape.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
           let staged = Ops.v Stage ~src:[ value ] in
           let u =
             prepare (Ops.sink [ Ops.store out staged; Ops.store other staged ])
@@ -709,8 +709,8 @@ let outputs =
                u));
       test "every read of storage placed in an output reads the output"
         (fun () ->
-          let scratch = Ops.alloc ~device:cpu [ Int 16 ] Float32 in
-          let other = Ops.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
+          let scratch = Shape.alloc ~device:cpu [ Int 16 ] Float32 in
+          let other = Shape.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
           let computed = Ops.after scratch [ Ops.store scratch value ] in
           let u =
             prepare
@@ -724,7 +724,7 @@ let outputs =
           is_false (has Alloc u));
       test "a value materialised into a view of an output is computed into it"
         (fun () ->
-          let half = Ops.shrink out [ Some (Int 0, Int 8) ] in
+          let half = Shape.shrink out [ Some (Int 0, Int 8) ] in
           let staged = Ops.v Stage ~src:[ Ops.exp2 (flat 8) ] in
           let u = prepare (Ops.sink [ Ops.store half staged ]) in
           is_false (has Stage u);
@@ -733,10 +733,10 @@ let outputs =
         (fun () ->
           let two = Ops.Multi [ "CPU:0"; "CPU:1" ] in
           let target =
-            Ops.unshard (Ops.param ~device:two ~shape:[ Int 8 ] 0 Float32) [ 0 ]
+            Shape.unshard (Shape.param ~device:two ~shape:[ Int 8 ] 0 Float32) [ 0 ]
           in
           let fresh =
-            Ops.unshard (Ops.new_buffer ~slot:5 two 8 Float32) [ 0 ]
+            Shape.unshard (Ops.new_buffer ~slot:5 two 8 Float32) [ 0 ]
           in
           is_false (has Buffer (prepare (Ops.sink [ Ops.store target fresh ]))));
       test "an output that stores new storage takes the storage's place"
@@ -760,16 +760,16 @@ let calls_inline =
                u));
       test "an argument of another size than its parameter is refused"
         (fun () ->
-          let short = Ops.param ~device:cpu ~shape:[ Int 8 ] 1 Float32 in
+          let short = Shape.param ~device:cpu ~shape:[ Int 8 ] 1 Float32 in
           let call = Ops.sink [ Ops.call copy_body [ out; short ] ] in
           rejects (fun () -> prepare call));
       test "an argument of another type than its parameter is refused"
         (fun () ->
-          let ints = Ops.param ~device:cpu ~shape:[ Int 16 ] 1 Int32 in
+          let ints = Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Int32 in
           let call = Ops.sink [ Ops.call copy_body [ out; ints ] ] in
           rejects (fun () -> prepare call));
       test "an inline body's own storage is renamed" (fun () ->
-          let scratch = Ops.alloc ~slot:7 ~device:cpu [ Int 16 ] Float32 in
+          let scratch = Shape.alloc ~slot:7 ~device:cpu [ Int 16 ] Float32 in
           let body =
             Ops.sink
               [
@@ -793,8 +793,8 @@ let calls_inline =
       test
         "an argument that is the first part of larger storage is passed as it \
          is" (fun () ->
-          let wide = Ops.param ~device:cpu ~shape:[ Int 32 ] 1 Float32 in
-          let first = Ops.shrink wide [ Some (Int 0, Int 16) ] in
+          let wide = Shape.param ~device:cpu ~shape:[ Int 32 ] 1 Float32 in
+          let first = Shape.shrink wide [ Some (Int 0, Int 16) ] in
           let u = prepare (Ops.sink [ Ops.call copy_body [ out; first ] ]) in
           equal
             (list (triple int int Dtypes.value))
@@ -805,7 +805,7 @@ let calls_inline =
                u));
       test "an argument of another shape than its parameter is passed flat"
         (fun () ->
-          let square = Ops.reshape (input 1) (ints [ 4; 4 ]) in
+          let square = Shape.reshape (input 1) (ints [ 4; 4 ]) in
           let u = prepare (Ops.sink [ Ops.call copy_body [ out; square ] ]) in
           equal
             (list (triple int int Dtypes.value))
@@ -815,7 +815,7 @@ let calls_inline =
                  [ (1, Array.init 16 (fun j -> `Float (float_of_int j))) ]
                u));
       test "a shaped argument of a scalar parameter is refused" (fun () ->
-          let scalar = Ops.param 1 Float32 in
+          let scalar = Shape.param 1 Float32 in
           let body =
             Ops.sink [ Ops.store (input 0) Ops.O.(input 0 + scalar) ]
           in
@@ -828,8 +828,8 @@ let earliest =
     [
       test "an allreduce is a call of its own, named allreduce" (fun () ->
           let two = Ops.Multi [ "CPU:0"; "CPU:1" ] in
-          let shared = Ops.param ~device:two ~shape:[ Int 16 ] 0 Float32 in
-          let whole = Ops.param ~device:two ~shape:[ Int 16 ] 1 Float32 in
+          let shared = Shape.param ~device:two ~shape:[ Int 16 ] 0 Float32 in
+          let whole = Shape.param ~device:two ~shape:[ Int 16 ] 1 Float32 in
           let u =
             prepare
               (Ops.sink
@@ -844,14 +844,14 @@ let earliest =
         "a split reduction keeps its first reduction's output within 2^22 \
          elements" (fun () ->
           let wide =
-            Ops.param ~device:cpu ~shape:(ints [ 65536; 32768 ]) 1 Float32
+            Shape.param ~device:cpu ~shape:(ints [ 65536; 32768 ]) 1 Float32
           in
-          let total = Ops.param ~device:cpu ~shape:[ Int 65536 ] 0 Float32 in
+          let total = Shape.param ~device:cpu ~shape:[ Int 65536 ] 0 Float32 in
           let u =
             prepare
               (Ops.sink
                  [
-                   Ops.after total [ Ops.store total (Ops.rop wide Add [ 1 ]) ];
+                   Ops.after total [ Ops.store total (Shape.rop wide Add [ 1 ]) ];
                  ])
           in
           equal (list int)
@@ -877,16 +877,16 @@ let earliest =
           equal uop (Ops.sink [ stored ])
             (prepare
                (Ops.sink
-                  [ Ops.bitcast (Ops.reshape stored (ints [ 4; 4 ])) Int32 ])));
+                  [ Ops.bitcast (Shape.reshape stored (ints [ 4; 4 ])) Int32 ])));
       test "a split takes the largest divisor from 256 down" (fun () ->
-          let total = Ops.param ~device:cpu ~shape:[] 0 Float32 in
+          let total = Shape.param ~device:cpu ~shape:[] 0 Float32 in
           let n = 128 * 257 in
           let u =
             prepare
               (Ops.sink
                  [
                    Ops.after total
-                     [ Ops.store total (Ops.rop (flat n) Add [ 0 ]) ];
+                     [ Ops.store total (Shape.rop (flat n) Add [ 0 ]) ];
                  ])
           in
           equal (list int) [ 128 ]
@@ -899,17 +899,17 @@ let earliest =
       test
         "a value that permutes other storage and reads its destination is \
          stored directly" (fun () ->
-          let square u = Ops.reshape u (ints [ 4; 4 ]) in
+          let square u = Shape.reshape u (ints [ 4; 4 ]) in
           let dest = square out in
-          let value = Ops.O.(Ops.permute (square (input 1)) [ 1; 0 ] + dest) in
+          let value = Ops.O.(Shape.permute (square (input 1)) [ 1; 0 ] + dest) in
           let u =
             prepare (Ops.sink [ Ops.after out [ Ops.store dest value ] ])
           in
           is_false (has Stage u);
           is_false (has Alloc u));
       test "a split is announced at debug level 3" (fun () ->
-          let total = Ops.param ~device:cpu ~shape:[] 0 Float32 in
-          let sum = Ops.rop (flat 65536) Add [ 0 ] in
+          let total = Shape.param ~device:cpu ~shape:[] 0 Float32 in
+          let sum = Shape.rop (flat 65536) Add [ 0 ] in
           let u = Ops.sink [ Ops.after total [ Ops.store total sum ] ] in
           Setting.context
             [ Setting.B (Setting.debug, 3) ]
@@ -921,11 +921,11 @@ let earliest =
               (`Int (Bigint.of_int 1))
               (`Int (Bigint.of_int 65536))
           in
-          let part = Ops.shrink (flat 65536) [ Some (Int 0, Sym v) ] in
-          let total = Ops.param ~device:cpu ~shape:[] 0 Float32 in
+          let part = Shape.shrink (flat 65536) [ Some (Int 0, Sym v) ] in
+          let total = Shape.param ~device:cpu ~shape:[] 0 Float32 in
           let u =
             Ops.sink
-              [ Ops.after total [ Ops.store total (Ops.rop part Add [ 0 ]) ] ]
+              [ Ops.after total [ Ops.store total (Shape.rop part Add [ 0 ]) ] ]
           in
           is_false (has Alloc (prepare u)));
       test "a materialisation of storage is the storage" (fun () ->
@@ -935,7 +935,7 @@ let earliest =
       test "a copy to another device than its destination's is stored first"
         (fun () ->
           let elsewhere =
-            Ops.param ~device:(Single "CPU:1") ~shape:[ Int 16 ] 0 Float32
+            Shape.param ~device:(Single "CPU:1") ~shape:[ Int 16 ] 0 Float32
           in
           let copied = Ops.copy_to_device (input 1) (Single "CPU:2") in
           let u =
@@ -956,13 +956,13 @@ let earliest =
             (prepare (Ops.sink [ Ops.after first [ Ops.store first v ] ])));
       test "a store into a bitcast of storage stores the value bitcast"
         (fun () ->
-          let v = Ops.param ~device:cpu ~shape:[ Int 16 ] 1 Int32 in
+          let v = Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Int32 in
           equal uop
             (stores (Ops.bitcast v Float32))
             (prepare (Ops.sink [ Ops.store (Ops.bitcast out Int32) v ])));
       test "a bitcast on a disk keeps its size" (fun () ->
           let disk =
-            Ops.param ~device:(Single "DISK:/tmp/tolk") ~shape:[ Int 64 ] 1
+            Shape.param ~device:(Single "DISK:/tmp/tolk") ~shape:[ Int 64 ] 1
               Uint8
           in
           let u =
@@ -973,8 +973,8 @@ let earliest =
                (fun n -> Ops.op n = Bitcast && Ops.dtype (Ops.nth n 0) = Uint8)
                (Ops.toposort ~calls:Enter u)));
       test "a value with an empty axis is zero" (fun () ->
-          let none = Ops.param ~device:cpu ~shape:[ Int 0 ] 0 Float32 in
-          let nothing = Ops.param ~device:cpu ~shape:[ Int 0 ] 1 Float32 in
+          let none = Shape.param ~device:cpu ~shape:[ Int 0 ] 0 Float32 in
+          let nothing = Shape.param ~device:cpu ~shape:[ Int 0 ] 1 Float32 in
           let u =
             prepare
               (Ops.sink

@@ -12,7 +12,7 @@ let var ?(dtype = Dtype.Int32) name lo hi =
   Ops.variable ~dtype name (`Int lo) (`Int hi)
 
 let v ?dtype name lo hi = var ?dtype name (Bigint.of_int lo) (Bigint.of_int hi)
-let param ?(slot = 0) dt = Ops.param slot dt
+let param ?(slot = 0) dt = Shape.param slot dt
 let target = Result.get_ok (Helpers.Target.of_string "")
 
 (* [everything] widens to any type; [nothing] has no type to widen to. *)
@@ -195,7 +195,7 @@ let fast_idiv =
           let u =
             require_some (Decomp_op.fast_idiv everything x (Bigint.of_int 1001))
           in
-          equal Uops.uop (Ops.const_like x (i 0)) u);
+          equal Uops.uop (Shape.const_like x (i 0)) u);
       test "fast_idiv divides by a divisor beyond every integer type" (fun () ->
           let u =
             require_some
@@ -277,13 +277,13 @@ let threefry =
           let alu u = Op.Set.mem (Ops.op u) Op.Set.alu in
           equal (list Uops.uop) []
             (List.filter alu
-               (Ops.toposort ~calls:Enter (Ops.simplify hash_of_constants))));
+               (Ops.toposort ~calls:Enter (Shape.simplify hash_of_constants))));
       (* Folding reads committed constants at their width, so the fold
          wraps each 32-bit word as the hash does. *)
       test "the hash of constants folds to its value" (fun () ->
           equal const
             (`Int (Bigint.of_string "6264663365535751564"))
-            (Interpreter.eval (Ops.simplify hash_of_constants)));
+            (Interpreter.eval (Shape.simplify hash_of_constants)));
     ]
 
 (* Simplifying patterns *)

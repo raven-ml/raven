@@ -1,5 +1,6 @@
 open Tolk
 open Ops
+open Shape
 
 let exec = 0
 let copy = 1

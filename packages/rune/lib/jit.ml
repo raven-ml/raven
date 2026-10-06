@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 module Ops = Tolk.Ops
+module Shape = Tolk.Shape
 module Op = Tolk.Op
 module Engine = Tolk_engine
 module Ptree = Nx.Ptree
@@ -567,8 +568,8 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
         | Some a
           when List.hd (Ops.src a) == b
                && made b
-               && Ops.max_numel b = n
-               && Ops.max_numel t = n
+               && Shape.max_numel b = n
+               && Shape.max_numel t = n
                && Tolk.Dtype.equal (Ops.dtype b) (Ops.dtype t)
                && Ops.device b = Ops.device t ->
             taken := (b, t) :: !taken;

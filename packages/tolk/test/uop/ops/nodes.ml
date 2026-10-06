@@ -190,34 +190,34 @@ let arguments =
          modulo what a symbolic start moves by" (fun () ->
           let b = Ops.new_buffer ~phase:4 (Single "CPU") 16 Dtype.Float32 in
           let phase u =
-            match Ops.arg (Ops.buf_uop (Ops.param_like u 0)) with
+            match Ops.arg (Ops.buf_uop (Shape.param_like u 0)) with
             | Param p -> p.phase
             | _ -> fail "a parameter"
           in
-          let shrunk k = Ops.shrink b [ Some (Int k, Int (k + 4)) ] in
+          let shrunk k = Shape.shrink b [ Some (Int k, Int (k + 4)) ] in
           equal int 4 (phase b);
           equal int 8 (phase (shrunk 1));
           equal int 0 (phase (shrunk 3));
-          equal int 8 (phase (Ops.reshape (shrunk 1) [ Int 2; Int 2 ]));
-          let square = Ops.reshape b [ Int 4; Int 4 ] in
-          equal int 4 (phase (Ops.shrink square [ Some (Int 1, Int 3); None ]));
+          equal int 8 (phase (Shape.reshape (shrunk 1) [ Int 2; Int 2 ]));
+          let square = Shape.reshape b [ Int 4; Int 4 ] in
+          equal int 4 (phase (Shape.shrink square [ Some (Int 1, Int 3); None ]));
           equal int 8
             (phase
-               (Ops.shrink square [ Some (Int 1, Int 3); Some (Int 1, Int 3) ]));
+               (Shape.shrink square [ Some (Int 1, Int 3); Some (Int 1, Int 3) ]));
           equal int 4
             (phase
-               (Ops.shrink
-                  (Ops.permute square [ 1; 0 ])
+               (Shape.shrink
+                  (Shape.permute square [ 1; 0 ])
                   [ Some (Int 1, Int 3); None ]));
           let at ?multiple_of () =
             let k =
               Ops.variable ?multiple_of "k" (`Int Bigint.zero)
                 (`Int (Bigint.of_int 8))
             in
-            Ops.shrink b [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]
+            Shape.shrink b [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]
           in
           let known u =
-            match Ops.arg (Ops.buf_uop (Ops.param_like u 0)) with
+            match Ops.arg (Ops.buf_uop (Shape.param_like u 0)) with
             | Param p -> (p.align, p.phase)
             | _ -> fail "a parameter"
           in
@@ -234,7 +234,7 @@ let arguments =
                   Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero)
                     (`Int (Bigint.of_int 8))
                 in
-                Ops.shrink
+                Shape.shrink
                   (Ops.contiguous (Ops.add b b))
                   [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]));
           equal (pair int int) ~msg:"a start into a reordered view" (4, 0)
@@ -243,8 +243,8 @@ let arguments =
                   Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero)
                     (`Int (Bigint.of_int 2))
                 in
-                Ops.shrink
-                  (Ops.permute square [ 1; 0 ])
+                Shape.shrink
+                  (Shape.permute square [ 1; 0 ])
                   [ Some (Sym k, Sym (Ops.add k (Ops.int 2))); None ]));
           equal (pair int int) ~msg:"a start one past every fourth element"
             (16, 8)
@@ -253,7 +253,7 @@ let arguments =
                   Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero)
                     (`Int (Bigint.of_int 8))
                 in
-                Ops.shrink b
+                Shape.shrink b
                   [
                     Some
                       (Sym (Ops.add k (Ops.int 1)), Sym (Ops.add k (Ops.int 5)));
@@ -315,7 +315,7 @@ let arguments =
           let a = var "a" 0 1 in
           let k u =
             Ops.Program
-              { (Ops.program_info_of_sink (Ops.sink [])) with vars = [ u ] }
+              { (Shape.program_info_of_sink (Ops.sink [])) with vars = [ u ] }
           in
           is_true (Ops.equal_arg (k a) (k (var "a" 0 1)));
           is_false (Ops.equal_arg (k a) (k (var "b" 0 1))));
@@ -569,7 +569,7 @@ let identity =
             ignore
               ( Ops.ranges c,
                 Ops.vmin r,
-                Ops.shape r,
+                Shape.shape r,
                 Ops.backward_slice ~calls:Skip c,
                 Ops.device c,
                 Ops.addrspace c );
@@ -595,7 +595,7 @@ let identity =
             Ops.v
               ~arg:
                 (Program
-                   { (Ops.program_info_of_sink (Ops.sink [])) with target })
+                   { (Shape.program_info_of_sink (Ops.sink [])) with target })
               Op.Program
           in
           let cpu = Result.get_ok (Helpers.Target.of_string "CPU") in
@@ -904,7 +904,7 @@ let graphs =
           equal int 2 (Ops.topovisit s depth cache);
           equal int 2 (List.length !seen));
       test "backward_slice is the reached nodes without the root" (fun () ->
-          let leaf = Ops.param 97 Int32 in
+          let leaf = Shape.param 97 Int32 in
           let branch = Ops.O.(leaf + Ops.int 3) in
           let root = Ops.sink [ branch; leaf; branch ] in
           equal uops
@@ -991,45 +991,45 @@ let shapes =
                 [ [ Sym (t_var ()) ]; [ Sym (weak_var "s" 1 10) ] ]));
       test "broadcast_axes is the axes broadcasting adds or expands" (fun () ->
           equal (list int) []
-            (Ops.broadcast_axes (ints [ 4; 8 ]) (ints [ 4; 8 ]));
+            (Shape.broadcast_axes (ints [ 4; 8 ]) (ints [ 4; 8 ]));
           equal (list int) [ 0 ]
-            (Ops.broadcast_axes (ints [ 8 ]) (ints [ 4; 8 ]));
-          equal (list int) [ 0; 1 ] (Ops.broadcast_axes [] (ints [ 4; 8 ]));
+            (Shape.broadcast_axes (ints [ 8 ]) (ints [ 4; 8 ]));
+          equal (list int) [ 0; 1 ] (Shape.broadcast_axes [] (ints [ 4; 8 ]));
           equal (list int) [ 0; 2 ]
-            (Ops.broadcast_axes (ints [ 3; 1 ]) (ints [ 4; 3; 8 ]));
+            (Shape.broadcast_axes (ints [ 3; 1 ]) (ints [ 4; 3; 8 ]));
           equal (list int) []
-            (Ops.broadcast_axes (ints [ 1; 8 ]) (ints [ 1; 8 ]));
-          rejects (fun () -> Ops.broadcast_axes (ints [ 4; 8 ]) (ints [ 8 ])));
+            (Shape.broadcast_axes (ints [ 1; 8 ]) (ints [ 1; 8 ]));
+          rejects (fun () -> Shape.broadcast_axes (ints [ 4; 8 ]) (ints [ 8 ])));
       test "broadcast_axes compares symbolic sizes" (fun () ->
           let t = t_var () in
           equal (list int) []
-            (Ops.broadcast_axes [ Sym t; Int 8 ] [ Sym t; Int 8 ]);
+            (Shape.broadcast_axes [ Sym t; Int 8 ] [ Sym t; Int 8 ]);
           equal (list int) [ 0 ]
-            (Ops.broadcast_axes (ints [ 1; 8 ]) [ Sym t; Int 8 ]));
+            (Shape.broadcast_axes (ints [ 1; 8 ]) [ Sym t; Int 8 ]));
       test "an elementwise operation broadcasts its sources' shapes" (fun () ->
-          let row = Ops.expand (Ops.float 1.) (ints [ 4; 8 ]) in
+          let row = Shape.expand (Ops.float 1.) (ints [ 4; 8 ]) in
           equal shape
             (ints [ 4; 8 ])
-            (Ops.shape Ops.O.(row + Ops.expand (Ops.float 2.) (ints [ 4; 1 ])));
+            (Shape.shape Ops.O.(row + Shape.expand (Ops.float 2.) (ints [ 4; 1 ])));
           equal shape
             (ints [ 4; 8 ])
-            (Ops.shape Ops.O.(row + Ops.expand (Ops.float 2.) (ints [ 1; 8 ])));
+            (Shape.shape Ops.O.(row + Shape.expand (Ops.float 2.) (ints [ 1; 8 ])));
           equal shape
             (ints [ 4; 8 ])
-            (Ops.shape Ops.O.(row * Ops.expand (Ops.float 2.) (ints [ 8 ])));
-          equal shape (ints [ 4; 8 ]) (Ops.shape Ops.O.(row * float 2.)));
+            (Shape.shape Ops.O.(row * Shape.expand (Ops.float 2.) (ints [ 8 ])));
+          equal shape (ints [ 4; 8 ]) (Shape.shape Ops.O.(row * float 2.)));
       test "an elementwise operation keeps a symbolic shape" (fun () ->
           let t = t_var () in
-          let sym = Ops.expand (Ops.float 1.) [ Int 1; Int 1; Sym t ] in
-          equal shape [ Int 1; Int 1; Sym t ] (Ops.shape Ops.O.(sym + sym)));
+          let sym = Shape.expand (Ops.float 1.) [ Int 1; Int 1; Sym t ] in
+          equal shape [ Int 1; Int 1; Sym t ] (Shape.shape Ops.O.(sym + sym)));
       test "an elementwise operation rejects sources that do not broadcast"
         (fun () ->
-          let a = Ops.param ~shape:(ints [ 2 ]) 812 Float32
-          and b = Ops.param ~shape:(ints [ 3 ]) 813 Float32 in
-          rejects (fun () -> Ops.shape Ops.O.(a + b)));
+          let a = Shape.param ~shape:(ints [ 2 ]) 812 Float32
+          and b = Shape.param ~shape:(ints [ 3 ]) 813 Float32 in
+          rejects (fun () -> Shape.shape Ops.O.(a + b)));
       test "shape_opt is None for effects and program structure" (fun () ->
           List.iter
-            (fun u -> is_none ~msg:(str Op.pp (Ops.op u)) (Ops.shape_opt u))
+            (fun u -> is_none ~msg:(str Op.pp (Ops.op u)) (Shape.shape_opt u))
             [
               Ops.sink [];
               Ops.group [ Ops.int 1; Ops.int 2 ];
@@ -1038,137 +1038,137 @@ let shapes =
               Ops.call (Ops.sink []) [];
               Ops.custom_function "f" [];
             ];
-          rejects (fun () -> Ops.shape (Ops.sink [])));
+          rejects (fun () -> Shape.shape (Ops.sink [])));
       test
         "a typed instruction is a scalar, and a custom node broadcasts its \
          sources" (fun () ->
           equal shape []
-            (Ops.shape
+            (Shape.shape
                (Ops.v
                   ~arg:(Code { code = "mov"; dtype = Int32 })
                   ~src:[ Ops.int 1 ]
                   Op.Ins));
-          let pair = Ops.consts [ i 1; i 2 ] in
+          let pair = Shape.consts [ i 1; i 2 ] in
           equal shape (ints [ 2 ])
-            (Ops.shape
+            (Shape.shape
                (Ops.v
                   ~arg:(Code { code = "x"; dtype = Int32 })
                   ~src:[ pair ] Op.Customi)));
       test "a stack prepends its length" (fun () ->
-          let vec = Ops.consts [ i 5; i 6; i 7 ] in
-          equal shape (ints [ 3 ]) (Ops.shape vec);
+          let vec = Shape.consts [ i 5; i 6; i 7 ] in
+          equal shape (ints [ 3 ]) (Shape.shape vec);
           equal shape
             (ints [ 2; 3 ])
-            (Ops.shape (Ops.stack [ vec; Ops.consts [ i 8; i 9; i 10 ] ]));
-          equal shape [] (Ops.shape (Ops.v Op.Stack));
+            (Shape.shape (Shape.stack [ vec; Shape.consts [ i 8; i 9; i 10 ] ]));
+          equal shape [] (Shape.shape (Ops.v Op.Stack));
           equal dtype Void (Ops.dtype (Ops.v Op.Stack)));
       test "an expand prepends its sizes" (fun () ->
-          let base = Ops.param ~shape:(ints [ 4; 5 ]) 0 Int32 in
+          let base = Shape.param ~shape:(ints [ 4; 5 ]) 0 Int32 in
           equal shape
             (ints [ 3; 4; 5 ])
-            (Ops.shape (Ops.mop base (Expand (ints [ 3 ]))));
-          is_true (Ops.mop base (Expand []) == base));
+            (Shape.shape (Shape.mop base (Expand (ints [ 3 ]))));
+          is_true (Shape.mop base (Expand []) == base));
       test
         "a bitcast rescales the last axis, and rejects a size that does not \
          divide" (fun () ->
           equal shape (ints [ 1 ])
-            (Ops.shape
-               (Ops.bitcast (Ops.param ~shape:(ints [ 4 ]) 1 Int8) Int32));
+            (Shape.shape
+               (Ops.bitcast (Shape.param ~shape:(ints [ 4 ]) 1 Int8) Int32));
           equal shape (ints [ 8 ])
-            (Ops.shape
-               (Ops.bitcast (Ops.param ~shape:(ints [ 2 ]) 1 Int32) Int8));
+            (Shape.shape
+               (Ops.bitcast (Shape.param ~shape:(ints [ 2 ]) 1 Int32) Int8));
           rejects (fun () ->
-              Ops.shape
-                (Ops.bitcast (Ops.param ~shape:(ints [ 3 ]) 0 Int8) Int32)));
+              Shape.shape
+                (Ops.bitcast (Shape.param ~shape:(ints [ 3 ]) 0 Int8) Int32)));
       test "binary code is a vector of its bytes" (fun () ->
           let bin = Ops.v ~arg:(Bytes "code") Op.Binary in
           equal dtype Uint8 (Ops.dtype bin);
-          equal shape (ints [ 4 ]) (Ops.shape bin));
+          equal shape (ints [ 4 ]) (Shape.shape bin));
       test
         "an index takes its indices' shapes, then the source's remaining axes"
         (fun () ->
-          let p = Ops.param ~shape:(ints [ 4; 5; 6 ]) 0 Float32 in
-          equal shape (ints [ 5; 6 ]) (Ops.shape (Ops.index p [ Ops.int 1 ]));
+          let p = Shape.param ~shape:(ints [ 4; 5; 6 ]) 0 Float32 in
+          equal shape (ints [ 5; 6 ]) (Shape.shape (Ops.index p [ Ops.int 1 ]));
           equal shape
             (ints [ 2; 6 ])
-            (Ops.shape (Ops.index p [ Ops.int 1; Ops.consts [ i 0; i 1 ] ])));
+            (Shape.shape (Ops.index p [ Ops.int 1; Shape.consts [ i 0; i 1 ] ])));
       test "an index past the source's axes takes only its indices' shapes"
         (fun () ->
           equal shape []
-            (Ops.shape (Ops.index (Ops.param 0 Float32) [ Ops.int 0 ]));
+            (Shape.shape (Ops.index (Shape.param 0 Float32) [ Ops.int 0 ]));
           equal shape []
-            (Ops.shape
+            (Shape.shape
                (Ops.index
-                  (Ops.param ~shape:(ints [ 4 ]) 0 Float32)
+                  (Shape.param ~shape:(ints [ 4 ]) 0 Float32)
                   [ Ops.int 0; Ops.int 1 ])));
       test "a stage puts its ranges' sizes in front" (fun () ->
           let r = Ops.range (Int 3) [ 0 ] in
           equal shape
             (ints [ 3; 2 ])
-            (Ops.shape (Ops.bufferize (Ops.consts [ f 1.; f 2. ]) [ r ])));
+            (Shape.shape (Ops.bufferize (Shape.consts [ f 1.; f 2. ]) [ r ])));
       test "a matrix multiply-accumulate has the accumulator's shape" (fun () ->
-          let a = Ops.param ~shape:(ints [ 8 ]) 0 Float16
-          and b = Ops.param ~shape:(ints [ 8 ]) 1 Float16 in
+          let a = Shape.param ~shape:(ints [ 8 ]) 0 Float16
+          and b = Shape.param ~shape:(ints [ 8 ]) 1 Float16 in
           equal shape (ints [ 4 ])
-            (Ops.shape
+            (Shape.shape
                (Ops.wmma a b
-                  ~acc:(Ops.param ~shape:(ints [ 4 ]) 2 Float32)
+                  ~acc:(Shape.param ~shape:(ints [ 4 ]) 2 Float32)
                   ~dims:(8, 16, 16) ~threads:32)));
       test
         "a reduction drops its leading axes, and rejects more axes than its \
          source has" (fun () ->
-          let p = Ops.param ~shape:(ints [ 2; 3; 4 ]) 0 Float32 in
+          let p = Shape.param ~shape:(ints [ 2; 3; 4 ]) 0 Float32 in
           equal shape
             (ints [ 3; 4 ])
-            (Ops.shape
+            (Shape.shape
                (Ops.v ~src:[ p ]
                   ~arg:(Reduce { op = Op.Add; num_axes = 1 })
                   Op.Reduce));
           rejects (fun () ->
-              Ops.shape
+              Shape.shape
                 (Ops.v ~src:[ p ]
                    ~arg:(Reduce { op = Op.Add; num_axes = 4 })
                    Op.Reduce)));
       test "ndim, numel, max_shape and max_numel read the shape" (fun () ->
           let n = weak_var "n" 1 8 in
-          let p = Ops.param ~shape:(ints [ 3; 8 ]) 0 Float32 in
-          equal int 2 (Ops.ndim p);
-          equal (list int) [ 3; 8 ] (Ops.max_shape p);
-          equal int 24 (Ops.max_numel p);
+          let p = Shape.param ~shape:(ints [ 3; 8 ]) 0 Float32 in
+          equal int 2 (Shape.ndim p);
+          equal (list int) [ 3; 8 ] (Shape.max_shape p);
+          equal int 24 (Shape.max_numel p);
           equal (list int) [ 3; 8 ] (Ops.to_max_shape [ Int 3; Sym n ]);
           equal sint (Int 12)
-            (Ops.numel (Ops.param ~shape:(ints [ 3; 4 ]) 1 Float32));
-          equal sint (Int 1) (Ops.numel (Ops.param 2 Float32)));
+            (Shape.numel (Shape.param ~shape:(ints [ 3; 4 ]) 1 Float32));
+          equal sint (Int 1) (Shape.numel (Shape.param 2 Float32)));
       test "max_shape takes a symbolic size's greatest value" (fun () ->
           let n = weak_var "n" 1 8 in
-          let p = Ops.param ~shape:[ Int 3; Sym n ] 0 Float32 in
-          equal (list int) [ 3; 8 ] (Ops.max_shape p);
-          equal int 24 (Ops.max_numel p));
+          let p = Shape.param ~shape:[ Int 3; Sym n ] 0 Float32 in
+          equal (list int) [ 3; 8 ] (Shape.max_shape p);
+          equal int 24 (Shape.max_numel p));
       test "placeholder rejects a size past the largest int" (fun () ->
           rejects (fun () ->
-              Ops.placeholder ~slot:0 [ 1 lsl 32; 1 lsl 32 ] Float32));
+              Shape.placeholder ~slot:0 [ 1 lsl 32; 1 lsl 32 ] Float32));
       test "the shape of a deep graph needs no deep recursion" (fun () ->
           let rec deepen n u =
             if n = 0 then u else deepen (n - 1) Ops.O.(u + u)
           in
-          let p = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
-          equal shape (ints [ 2; 3 ]) (Ops.shape (deepen 10_000 p)));
+          let p = Shape.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
+          equal shape (ints [ 2; 3 ]) (Shape.shape (deepen 10_000 p)));
       test "max_numel is 0 when an axis is empty" (fun () ->
           equal int 0
-            (Ops.max_numel
-               (Ops.placeholder ~slot:0 [ 1 lsl 32; 1 lsl 32; 0 ] Float32)));
+            (Shape.max_numel
+               (Shape.placeholder ~slot:0 [ 1 lsl 32; 1 lsl 32; 0 ] Float32)));
       test "broadcast_shape rejects nothing to broadcast" (fun () ->
           rejects (fun () -> Ops.broadcast_shape []));
       test "disallow_broadcast rejects sources of different shapes" (fun () ->
-          let a = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32
-          and b = Ops.param ~shape:(ints [ 3 ]) 1 Float32 in
+          let a = Shape.param ~shape:(ints [ 2; 3 ]) 0 Float32
+          and b = Shape.param ~shape:(ints [ 3 ]) 1 Float32 in
           Setting.context
             [ B (Setting.disallow_broadcast, true) ]
-            (fun () -> rejects (fun () -> Ops.shape Ops.O.(a + b)));
-          equal shape (ints [ 2; 3 ]) (Ops.shape Ops.O.(a + b)));
+            (fun () -> rejects (fun () -> Shape.shape Ops.O.(a + b)));
+          equal shape (ints [ 2; 3 ]) (Shape.shape Ops.O.(a + b)));
       test "a node passing its source through keeps its shape" (fun () ->
           let p =
-            Ops.param ~device:(Single "CPU") ~shape:(ints [ 2; 3 ]) 0 Float32
+            Shape.param ~device:(Single "CPU") ~shape:(ints [ 2; 3 ]) 0 Float32
           in
           List.iter
             (fun u ->
@@ -1176,7 +1176,7 @@ let shapes =
                 ~msg:(str Op.pp (Ops.op u))
                 shape
                 (ints [ 2; 3 ])
-                (Ops.shape u))
+                (Shape.shape u))
             [
               Ops.after p [ Ops.sink [] ];
               Ops.copy_to_device p (Single "CUDA");
@@ -1184,20 +1184,20 @@ let shapes =
               Ops.v ~src:[ p ] Op.Contiguous_backward;
               Ops.v ~src:[ p ] Op.Noop;
             ];
-          is_none (Ops.shape_opt (Ops.v Op.Noop)));
+          is_none (Shape.shape_opt (Ops.v Op.Noop)));
       test "a bitcast of a scalar or to an equal size keeps the shape"
         (fun () ->
-          equal shape [] (Ops.shape (Ops.bitcast (Ops.param 0 Int32) Float32));
+          equal shape [] (Shape.shape (Ops.bitcast (Shape.param 0 Int32) Float32));
           equal shape (ints [ 4 ])
-            (Ops.shape
-               (Ops.bitcast (Ops.param ~shape:(ints [ 4 ]) 0 Int32) Float32));
+            (Shape.shape
+               (Ops.bitcast (Shape.param ~shape:(ints [ 4 ]) 0 Int32) Float32));
           is_none
-            (Ops.shape_opt
+            (Shape.shape_opt
                (Ops.v ~src:[ Ops.sink [] ] ~arg:(Dtype Int32) Op.Bitcast)));
       test "a reshape of a no-op has its argument's shape" (fun () ->
           equal shape
             (ints [ 2; 3 ])
-            (Ops.shape
+            (Shape.shape
                (Ops.v
                   ~src:
                     [
@@ -1206,24 +1206,24 @@ let shapes =
                     ]
                   Op.Reshape)));
       test "an axis out of range is rejected" (fun () ->
-          let p = Ops.param ~shape:(ints [ 2; 1 ]) 0 Float32 in
-          rejects (fun () -> Ops.squeeze ~axis:2 p);
-          rejects (fun () -> Ops.squeeze ~axis:(-3) p);
-          rejects (fun () -> Ops.flatten ~start:5 p);
-          rejects (fun () -> Ops.unsqueeze p 3);
-          rejects (fun () -> Ops.transpose p 0 2));
+          let p = Shape.param ~shape:(ints [ 2; 1 ]) 0 Float32 in
+          rejects (fun () -> Shape.squeeze ~axis:2 p);
+          rejects (fun () -> Shape.squeeze ~axis:(-3) p);
+          rejects (fun () -> Shape.flatten ~start:5 p);
+          rejects (fun () -> Shape.unsqueeze p 3);
+          rejects (fun () -> Shape.transpose p 0 2));
       test "a split whose sizes miss the axis's is rejected" (fun () ->
-          let p = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
-          rejects (fun () -> Ops.split ~axis:1 p [ 1; 1 ]);
-          rejects (fun () -> Ops.split p [ 1; 2 ]));
+          let p = Shape.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
+          rejects (fun () -> Shape.split ~axis:1 p [ 1; 1 ]);
+          rejects (fun () -> Shape.split p [ 1; 2 ]));
       test "a movement of a node without a shape is rejected" (fun () ->
           rejects (fun () ->
-              Ops.shape (Ops.v ~src:[ Ops.sink []; Ops.int 1 ] Op.Expand)));
+              Shape.shape (Ops.v ~src:[ Ops.sink []; Ops.int 1 ] Op.Expand)));
       test "a shrink past the largest int is rejected, not wrapped" (fun () ->
-          let p = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
+          let p = Shape.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
           rejects (fun () ->
-              Ops.shape
-                (Ops.mop p (Shrink [ (Int max_int, Int 2); (Int 0, Int 3) ]))));
+              Shape.shape
+                (Shape.mop p (Shrink [ (Int max_int, Int 2); (Int 0, Int 3) ]))));
       test "sint_to_uop is the literal, or the node itself" (fun () ->
           equal uop (Ops.int 3) (Ops.sint_to_uop (Int 3));
           equal uop (Ops.int ~dtype:Int32 3)
@@ -1232,29 +1232,29 @@ let shapes =
           equal uop n (Ops.sint_to_uop (Sym n)));
       test "a movement checks its argument against its source's shape"
         (fun () ->
-          let p = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
-          rejects (fun () -> Ops.shape (Ops.mop p (Pad [ (Int 0, Int 2) ])));
-          rejects (fun () -> Ops.shape (Ops.mop p (Shrink [ (Int 0, Int 2) ])));
+          let p = Shape.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
+          rejects (fun () -> Shape.shape (Shape.mop p (Pad [ (Int 0, Int 2) ])));
+          rejects (fun () -> Shape.shape (Shape.mop p (Shrink [ (Int 0, Int 2) ])));
           rejects (fun () ->
-              Ops.shape (Ops.mop p (Pad [ (Int (-1), Int 3); (Int 0, Int 3) ])));
+              Shape.shape (Shape.mop p (Pad [ (Int (-1), Int 3); (Int 0, Int 3) ])));
           rejects (fun () ->
-              Ops.shape
-                (Ops.mop p (Shrink [ (Int 0, Int (-1)); (Int 0, Int 3) ])));
-          rejects (fun () -> Ops.shape (Ops.mop p (Permute [ 0; 0 ])));
-          rejects (fun () -> Ops.shape (Ops.mop p (Permute [ 0 ])));
-          rejects (fun () -> Ops.shape (Ops.mop p (Reshape (ints [ 5 ]))));
-          rejects (fun () -> Ops.shape (Ops.mop p (Reshape (ints [ -6; -1 ]))));
+              Shape.shape
+                (Shape.mop p (Shrink [ (Int 0, Int (-1)); (Int 0, Int 3) ])));
+          rejects (fun () -> Shape.shape (Shape.mop p (Permute [ 0; 0 ])));
+          rejects (fun () -> Shape.shape (Shape.mop p (Permute [ 0 ])));
+          rejects (fun () -> Shape.shape (Shape.mop p (Reshape (ints [ 5 ]))));
+          rejects (fun () -> Shape.shape (Shape.mop p (Reshape (ints [ -6; -1 ]))));
           rejects (fun () ->
-              Ops.shape (Ops.mop p (Shrink [ (Int 1, Int 2); (Int 0, Int 3) ])));
+              Shape.shape (Shape.mop p (Shrink [ (Int 1, Int 2); (Int 0, Int 3) ])));
           rejects (fun () ->
-              Ops.shape (Ops.mop p (Pad [ (Int 3, Int 2); (Int 0, Int 3) ])));
-          rejects (fun () -> Ops.shape (Ops.mop p (Flip [ true ]))));
+              Shape.shape (Shape.mop p (Pad [ (Int 3, Int 2); (Int 0, Int 3) ])));
+          rejects (fun () -> Shape.shape (Shape.mop p (Flip [ true ]))));
       test "a symbolic reshape is accepted unless its sizes provably differ"
         (fun () ->
           let n = weak_var "n" 1 8 in
-          let p = Ops.param ~shape:[ Sym n ] 0 Float32 in
+          let p = Shape.param ~shape:[ Sym n ] 0 Float32 in
           equal shape [ Sym n; Int 1 ]
-            (Ops.shape (Ops.mop p (Reshape [ Sym n; Int 1 ]))));
+            (Shape.shape (Shape.mop p (Reshape [ Sym n; Int 1 ]))));
     ]
 
 (* Ranges *)
@@ -1347,8 +1347,8 @@ let ranges =
       test "ended_ranges of an unshard is its sharding ranges" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           let u =
-            Ops.unshard ~ranges:[ d ]
-              (Ops.param ~shape:(ints [ 4 ]) 0 Float32)
+            Shape.unshard ~ranges:[ d ]
+              (Shape.param ~shape:(ints [ 4 ]) 0 Float32)
               [ 0 ]
           in
           equal uops [ d ] (Ops.ended_ranges u));

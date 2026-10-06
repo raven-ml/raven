@@ -112,10 +112,9 @@ the Exclusions of `README.md`.
   - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
-- **tolk:** for `uop/ops.py`, `lib/uop/ops.ml:1685` (`simplify_hook`),
-  `:4614` (`Private`),
-  `:1190` (`Make_elementwise`), `:816` (`repr`), `:244` (`bufferize_opts`),
-  `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
+- **tolk:** for `uop/ops.py`, `lib/uop/shape.ml:107` (`simplify_hook`),
+  `:2012` (`Private`); `lib/uop/ops.ml:1190` (`Make_elementwise`), `:816`
+  (`repr`), `:244` (`bufferize_opts`), `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
   (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
   `lib/codegen/codegen.ml:621` (`apply_opts`); `lib/engine/realize.ml:117`
@@ -129,20 +128,21 @@ the Exclusions of `README.md`.
   - `engine/realize.py`'s `pm_flatten_linear`, which `schedule/__init__.py`
     imports, is `Schedule.pm_flatten_linear`, since `Realize` follows
     `Schedule`;
-  - `simplify` stays in `Ops`, since reshaping, `resolve` and shapes call
-    it: it rewrites with the `symbolic` matcher that `Symbolic` installs when
-    the library is initialised. It is set once; `lib/dune` links the library
-    whole (`-linkall`), so it is set before any program runs, and `simplify`
-    raises if its rules are missing. A sink of constants and stacks
-    of constants is itself without the rules, which leave it as it is, so
-    shapes are built before they are installed;
+  - `simplify` is `Shape`'s, with the functions that call it: reshaping,
+    `resolve` and shapes. It rewrites with the `symbolic` matcher that
+    `Symbolic` installs when the library is initialised. It is set once;
+    `lib/dune` links the library whole (`-linkall`), so it is set before any
+    program runs, and `simplify` raises if its rules are missing. A sink of
+    constants and stacks of constants is itself without the rules, which
+    leave it as it is, so shapes are built before they are installed;
   - `CallInfo.aux`, `hcq2.py`'s `HCQInfo`, is the record `hcq_info` of
     `Ops`, since call arguments hold it;
   - `render.py`'s `pretty_print` is `Ops.pp`: it prints arguments
     (`argstr`), and arguments print the nodes they hold, so the two recurse;
-  - the kept methods of `mixin/*.py` are functions of `Ops`, since
-    `ops.py` calls them and a module cannot call a later one; the elementwise
-    ones, which patterns share with nodes, are one functor applied to both;
+  - the kept methods of `mixin/*.py` are functions of `Ops`, or of `Shape`
+    for those that read shapes, since `ops.py` calls them and a module cannot
+    call a later one; the elementwise ones, which patterns share with nodes,
+    are one functor applied to both;
   - the small types that `ops` and `spec` name from later files
     (`Estimates`, `BufferizeOpts`), and `device.py`'s `is_disk_device`, are
     defined in the earliest module that needs them; `Opt`, whose file
@@ -1643,8 +1643,8 @@ the Exclusions of `README.md`.
   `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
   Metal.
 - **tolk:** `lib/uop/ops.ml:241` (`phase` and `align`), `:3244`
-  (`param_arg`, which checks them), `:3741` (`view_start`) and `:3806`
-  (`storage_phase`, which `param_like` gives a parameter);
+  (`param_arg`, which checks them); `lib/uop/shape.ml:1408` (`view_start`)
+  and `:1482` (`storage_phase`, which `param_like` gives a parameter);
   `lib/schedule/rangeify.ml:532` (`debuf`, which gives them a kernel's
   parameter); `lib/codegen/late/coalesce.ml:130` (the merge).
 - **Differs:** a parameter or buffer carries a congruence for its start: its
@@ -2502,7 +2502,7 @@ stores through a pad.
   `:160` (`exec_kernel`).
 - **tolk:** `lib/codegen/codegen.ml:708` (`split_blocks`), `:924` (its place
   in the pipeline) and `:1030` (`whole_loop`); `lib/uop/ops.ml:340`
-  (`kernel_info.split`) and `:4729` (`program_info_of_sink`);
+  (`kernel_info.split`); `lib/uop/shape.ml:1943` (`program_info_of_sink`);
   `lib/engine/realize.ml:27` (`get_call_var_uops`);
   `engine/tolk_engine.ml:202` (`block_ops`) and `:230` (`Program.split`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
@@ -2797,11 +2797,11 @@ stores through a pad.
 - **tolk:** `engine/tolk_engine.ml:283` (`env`, the run's variable cells),
   `:481` (`operand`), `:507` (`lane_operand`), `:528` (`launch`), `:1171`
   (`settle`), `:1180` (`run_launch`) and `:1232` (`run_call`'s `Range`);
-  `lib/uop/ops.ml:3964` (`sym_compile`).
+  `lib/uop/shape.ml:1710` (`sym_compile`).
 - **Differs:** linking a schedule turns each call of a host program into a
   launch per lane: a view of linked storage at a constant offset is made
   once, the offset of a view that moves with a range or a variable is an
-  integer function of the run's variables (`Ops.sym_compile`, which simplifies
+  integer function of the run's variables (`Shape.sym_compile`, which simplifies
   once and computes on `int`s, exactly where a value does not fit), and each
   variable, of the run or of a range, has a cell that the run and the range's
   trips write. The devices of a host program's buffers, which nx.device's
@@ -4063,7 +4063,7 @@ stores through a pad.
   vector of index expressions or a weak-integer tensor, a divisor of 1 is a
   broadcast 1, which is not the `CONST` 1 and divides no term:
   `UOp.stack(a, b) // 3` raises in `unwrap`.
-- **tolk:** `lib/uop/ops.ml:3904` (`gcd`).
+- **tolk:** `lib/uop/shape.ml:1580` (`gcd`).
 - **Differs:** the coefficient is a scalar constant of the first term's type,
   whatever the terms' shape, so a divisor of 1 is the `CONST` 1, and a larger
   one divides each term as `divides` does.

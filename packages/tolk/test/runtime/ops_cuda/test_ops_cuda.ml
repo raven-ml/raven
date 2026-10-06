@@ -104,7 +104,7 @@ let uncompiled =
 (* The call of the kernel adding one to [inp] into [out], compiled. *)
 let adds out inp =
   let device = Option.get (Ops.device out) in
-  let param slot = Ops.param ~shape:[ Int 4 ] ~device slot Float32 in
+  let param slot = Shape.param ~shape:[ Int 4 ] ~device slot Float32 in
   let i = Ops.range (Int 4) [ 0 ] in
   let x = Ops.load (Ops.index (param 1) [ i ]) [] in
   let st =
@@ -166,7 +166,7 @@ let ranged () =
   let r = Ops.range (Int 3) [ 7 ] in
   let window u =
     let start = Ops.mul r (Ops.int 4) in
-    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+    Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
   in
   let buf () = Ops.new_buffer (Single "CUDA") 12 Float32 in
   Ops.end_ (adds (window (buf ())) (window (buf ()))) [ r ]

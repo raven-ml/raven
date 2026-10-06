@@ -28,11 +28,11 @@ let narrow n p =
    axis of [n] elements. *)
 let one_hot idx n =
   let idx = narrow n idx in
-  Ops.eq (Ops.unsqueeze idx (-1)) (Ops.arange ~dtype:(dtype idx) n)
+  Ops.eq (Shape.unsqueeze idx (-1)) (Shape.arange ~dtype:(dtype idx) n)
 
 (* Assembly *)
 
-let everywhere u = Ops.const_like ~dtype:Bool u (`Bool true)
+let everywhere u = Shape.const_like ~dtype:Bool u (`Bool true)
 
 let pad padding fill x =
   let padding = pads (Array.to_list padding) in
@@ -41,28 +41,28 @@ let pad padding fill x =
     when Int64.equal (Int64.bits_of_float f) (Int64.bits_of_float (-0.)) ->
       (* A pad of zeros fills with [+0.]: [-0.] is selected on the padding. *)
       Ops.where
-        (Ops.pad (everywhere x) padding)
-        (Ops.pad x padding)
+        (Shape.pad (everywhere x) padding)
+        (Shape.pad x padding)
         (Ops.const ~dtype:(dtype x) fill)
-  | fill -> Ops.pad ~value:fill x padding
+  | fill -> Shape.pad ~value:fill x padding
 
 (* Pieces of one length are stacked. Pieces of different lengths are each
    selected on the stretch they fill. *)
 let cat axis x xs =
-  let length u = List.nth (Ops.max_shape u) axis in
+  let length u = List.nth (Shape.max_shape u) axis in
   match List.filter (fun u -> length u > 0) (x :: xs) with
   | [] -> x
   | y :: rest when List.for_all (fun u -> length u = length y) rest ->
-      Ops.cat ~axis y rest
+      Shape.cat ~axis y rest
   | pieces ->
       let total = List.fold_left (fun n u -> n + length u) 0 pieces in
       let place (start, placed) u =
         let spread =
           pads
-            (List.init (Ops.ndim u) (fun d ->
+            (List.init (Shape.ndim u) (fun d ->
                  if d = axis then (start, total - start - length u) else (0, 0)))
         in
-        let stretch = (Ops.pad (everywhere u) spread, Ops.pad u spread) in
+        let stretch = (Shape.pad (everywhere u) spread, Shape.pad u spread) in
         (start + length u, stretch :: placed)
       in
       let _, placed = List.fold_left place (0, []) pieces in
@@ -75,10 +75,10 @@ let cat axis x xs =
 
 let gather axis indices x =
   Lower_reduce.take
-    (Ops.shrink_to x
+    (Shape.shrink_to x
        (List.mapi
           (fun d i -> if d = axis then None else Some i)
-          (Ops.shape indices)))
+          (Shape.shape indices)))
     axis indices
 
 (* Regions
@@ -91,7 +91,7 @@ type region = { dest : Ops.t; value : Ops.t }
 
 (* Scatters *)
 
-let zero u = Ops.const_like u (`Int Bigint.zero)
+let zero u = Shape.const_like u (`Int Bigint.zero)
 
 (* [combined mode own mask src] is each element [own] combined by [mode] with
    the updates [src] that [mask] selects along the last axis, in order: under
@@ -100,39 +100,39 @@ let zero u = Ops.const_like u (`Int Bigint.zero)
    [mask] does not select standing in for the element, so that a NaN result is
    the element's or the first NaN update's. *)
 let combined mode own mask src =
-  let r = Ops.ndim own and own' = Ops.unsqueeze own (-1) in
+  let r = Shape.ndim own and own' = Shape.unsqueeze own (-1) in
   match mode with
   | `Add ->
       Lower_reduce.reduce Sum ~axes:[ r ]
-        (Ops.cat ~axis:r own' [ Ops.where mask src (zero src) ])
+        (Shape.cat ~axis:r own' [ Ops.where mask src (zero src) ])
   | (`Max | `Min) as mode ->
       let candidates =
-        cat r own' [ Ops.where mask src (Ops.expand own' (Ops.shape mask)) ]
+        cat r own' [ Ops.where mask src (Shape.expand own' (Shape.shape mask)) ]
       in
       let at =
         Lower_reduce.arg_reduce
           (match mode with `Max -> Argmax | `Min -> Argmin)
           ~axis:r candidates
       in
-      Ops.squeeze ~axis:r
-        (Lower_reduce.take candidates r (Ops.unsqueeze at (-1)))
+      Shape.squeeze ~axis:r
+        (Lower_reduce.take candidates r (Shape.unsqueeze at (-1)))
 
 (* Each position of [x] meets each update along [axis] in a one-hot mask along
    a new last axis and combines those that reach it: n x k work, for n
    positions and k updates along [axis]. *)
 let dense ~mode ~unique ~axis ~indices ~updates x =
-  let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
-  let within u = Ops.pad_to u (List.map Option.some (Ops.shape x) @ [ None ]) in
-  let mask = within (Ops.transpose (one_hot indices n) axis r) in
+  let n = List.nth (Shape.max_shape x) axis and r = Shape.ndim x in
+  let within u = Shape.pad_to u (List.map Option.some (Shape.shape x) @ [ None ]) in
+  let mask = within (Shape.transpose (one_hot indices n) axis r) in
   let src =
     within
-      (Ops.transpose
-         (Ops.expand
-            (Ops.unsqueeze updates (-1))
-            (Ops.shape updates @ [ Ops.Int n ]))
+      (Shape.transpose
+         (Shape.expand
+            (Shape.unsqueeze updates (-1))
+            (Shape.shape updates @ [ Ops.Int n ]))
          axis r)
   in
-  let reached = Ops.rop mask Op.Max [ r ] in
+  let reached = Shape.rop mask Op.Max [ r ] in
   match mode with
   | (`Add | `Max | `Min) as mode ->
       Ops.where reached (combined mode x mask src) x
@@ -144,12 +144,12 @@ let dense ~mode ~unique ~axis ~indices ~updates x =
         else
           let order =
             Lower_reduce.along (r + 1) r
-              (Ops.arange (List.nth (Ops.max_shape mask) r))
+              (Shape.arange (List.nth (Shape.max_shape mask) r))
           in
           let latest =
-            Ops.rop (Ops.where mask order (Ops.int (-1))) Op.Max [ r ]
+            Shape.rop (Ops.where mask order (Ops.int (-1))) Op.Max [ r ]
           in
-          Ops.eq order (Ops.unsqueeze latest (-1))
+          Ops.eq order (Shape.unsqueeze latest (-1))
       in
       Ops.where reached
         (Lower_reduce.of_bits (dtype x)
@@ -163,21 +163,21 @@ let dense ~mode ~unique ~axis ~indices ~updates x =
    update is the only one at its index. An update outside [axis], or not the
    last at its index, has an Invalid index, which drops its store. *)
 let indexed ~mode ~unique ~axis ~indices ~updates x =
-  let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
-  let k = List.nth (Ops.max_shape indices) axis in
-  let u = Ops.expand updates (Ops.shape indices) in
+  let n = List.nth (Shape.max_shape x) axis and r = Shape.ndim x in
+  let k = List.nth (Shape.max_shape indices) axis in
+  let u = Shape.expand updates (Shape.shape indices) in
   (* Each update against every update along [axis], moved last. *)
   let spread v =
-    Ops.transpose
-      (Ops.expand (Ops.unsqueeze v (-1)) (Ops.shape v @ [ Ops.Int k ]))
+    Shape.transpose
+      (Shape.expand (Shape.unsqueeze v (-1)) (Shape.shape v @ [ Ops.Int k ]))
       axis r
   in
-  let same = lazy (Ops.eq (Ops.unsqueeze indices (-1)) (spread indices)) in
+  let same = lazy (Ops.eq (Shape.unsqueeze indices (-1)) (spread indices)) in
   let value =
     match mode with
     | `Set -> u
     | (`Add | `Max | `Min) as mode when unique ->
-        let one = Ops.unsqueeze u (-1) in
+        let one = Shape.unsqueeze u (-1) in
         combined mode (gather axis indices x) (everywhere one) one
     | (`Add | `Max | `Min) as mode ->
         combined mode (gather axis indices x) (Lazy.force same) (spread u)
@@ -193,27 +193,27 @@ let indexed ~mode ~unique ~axis ~indices ~updates x =
     else
       let later =
         Ops.gt
-          (Lower_reduce.along (r + 1) r (Ops.arange k))
-          (Lower_reduce.along (r + 1) axis (Ops.arange k))
+          (Lower_reduce.along (r + 1) r (Shape.arange k))
+          (Lower_reduce.along (r + 1) axis (Shape.arange k))
       in
       let followed =
-        Ops.rop (Ops.bitwise_and (Lazy.force same) later) Op.Max [ r ]
+        Shape.rop (Ops.bitwise_and (Lazy.force same) later) Op.Max [ r ]
       in
       Ops.bitwise_and inside (g.on_rows (Ops.logical_not followed))
   in
-  let at = Ops.valid (g.at (Lower_reduce.clamped n p)) keep in
+  let at = Shape.valid (g.at (Lower_reduce.clamped n p)) keep in
   { dest = Ops.index (g.view x) [ at ]; value = g.laid value }
 
 let static_shape u =
-  List.for_all (function Ops.Int _ -> true | Ops.Sym _ -> false) (Ops.shape u)
+  List.for_all (function Ops.Int _ -> true | Ops.Sym _ -> false) (Shape.shape u)
 
 (* The value is the dense form, which fuses with what reads it. In place, the
    indexed store computes fewer values unless there are more updates than
    positions: k x k against n x k. *)
 let scatter ~mode ~unique ~axis ~indices ~updates x =
-  let n = List.nth (Ops.max_shape x) axis in
-  let k = List.nth (Ops.max_shape indices) axis in
-  if n = 0 || List.mem 0 (Ops.max_shape indices) then (x, [])
+  let n = List.nth (Shape.max_shape x) axis in
+  let k = List.nth (Shape.max_shape indices) axis in
+  if n = 0 || List.mem 0 (Shape.max_shape indices) then (x, [])
   else
     let value = dense ~mode ~unique ~axis ~indices ~updates x in
     if (unique || k <= n) && static_shape x && static_shape indices then
@@ -224,7 +224,7 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
    the positions of [x] along that axis against those of [v] as a one-hot mask,
    as a gather builds it. Along an axis [v] fills, the start is 0. *)
 let update x ~starts v =
-  let n = Ops.max_shape x and k = Ops.max_shape v and r = Ops.ndim x in
+  let n = Shape.max_shape x and k = Shape.max_shape v and r = Shape.ndim x in
   let moved =
     List.filter (fun d -> List.nth k d < List.nth n d) (List.init r Fun.id)
   in
@@ -233,16 +233,16 @@ let update x ~starts v =
   let index d = if List.nth n d > 1 lsl 31 then Dtype.Int64 else Dtype.Int32 in
   let start d =
     Ops.cast
-      (Ops.reshape (Ops.shrink starts [ Some (Ops.Int d, Ops.Int (d + 1)) ]) [])
+      (Shape.reshape (Shape.shrink starts [ Some (Ops.Int d, Ops.Int (d + 1)) ]) [])
       (index d)
   in
-  let arange d m = Ops.arange ~dtype:(index d) m in
+  let arange d m = Shape.arange ~dtype:(index d) m in
   let shift b d =
     let at = Lower_reduce.along (r + 1) d (arange d (List.nth n d)) in
     let offset = Lower_reduce.along (r + 1) r (arange d (List.nth k d)) in
     Lower_reduce.pick
       (Ops.eq at (Ops.add offset (start d)))
-      (Ops.transpose (Ops.unsqueeze b (-1)) d r)
+      (Shape.transpose (Shape.unsqueeze b (-1)) d r)
   in
   let inside d =
     let at = Lower_reduce.along r d (arange d (List.nth n d)) in
@@ -261,23 +261,23 @@ let update x ~starts v =
 
 let update_region x ~starts v =
   let bound d =
-    match (List.nth (Ops.shape v) d, List.nth (Ops.shape x) d) with
+    match (List.nth (Shape.shape v) d, List.nth (Shape.shape x) d) with
     | Ops.Int k, Ops.Int n when k = n -> None
     | Ops.Int k, _ ->
         let start =
-          Ops.reshape
-            (Ops.shrink (Ops.contiguous starts)
+          Shape.reshape
+            (Shape.shrink (Ops.contiguous starts)
                [ Some (Ops.Int d, Ops.Int (d + 1)) ])
             []
         in
         Some (Ops.Sym start, Ops.Sym (Ops.add start (Ops.int k)))
     | Ops.Sym _, _ -> raise Exit
   in
-  match List.init (Ops.ndim x) bound with
+  match List.init (Shape.ndim x) bound with
   | bounds -> (
-      match Ops.axis x with
+      match Shape.axis x with
       | Some a when List.nth bounds a <> None -> None
-      | _ -> Some { dest = Ops.shrink x bounds; value = v })
+      | _ -> Some { dest = Shape.shrink x bounds; value = v })
   | exception Exit -> None
 
 (* Windows *)
@@ -304,9 +304,9 @@ let reads_image ~kernel ~stride ~dilation ~windows ~before ~size =
 
 let unfold ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size in
-  let lead = Ops.ndim x - k in
-  let kept = List.filteri (fun d _ -> d < lead) (Ops.max_shape x) in
-  let spatial = List.filteri (fun d _ -> d >= lead) (Ops.max_shape x) in
+  let lead = Shape.ndim x - k in
+  let kept = List.filteri (fun d _ -> d < lead) (Shape.max_shape x) in
+  let spatial = List.filteri (fun d _ -> d >= lead) (Shape.max_shape x) in
   let count a size =
     let before, after = padding.(a) in
     windows ~kernel:kernel_size.(a) ~stride:stride.(a) ~dilation:dilation.(a)
@@ -325,24 +325,24 @@ let unfold ~kernel_size ~stride ~dilation ~padding x =
   (* Along an axis whose windows read only padding, or that has no window, every
      patch is the pad's zeros. *)
   if not (List.for_all Fun.id (List.mapi reads spatial)) then
-    Ops.expand (Ops.const ~dtype:(Ops.dtype x) (`Int Bigint.zero)) shape
+    Shape.expand (Ops.const ~dtype:(Ops.dtype x) (`Int Bigint.zero)) shape
   else
     let padded =
-      Ops.pad x (List.init lead (fun _ -> None) @ pads (Array.to_list padding))
+      Shape.pad x (List.init lead (fun _ -> None) @ pads (Array.to_list padding))
     in
     let windows =
-      Ops.pool ~stride:(Array.to_list stride) ~dilation:(Array.to_list dilation)
+      Shape.pool ~stride:(Array.to_list stride) ~dilation:(Array.to_list dilation)
         padded
         (Array.to_list kernel_size)
     in
-    Ops.reshape
-      (Ops.permute windows
+    Shape.reshape
+      (Shape.permute windows
          (List.init lead Fun.id
          @ List.init k (fun a -> lead + k + a)
          @ List.init k (fun a -> lead + a)))
       shape
 
-(* An axis as [Ops.pool] cuts it: [windows] windows of [kernel] elements from
+(* An axis as [Shape.pool] cuts it: [windows] windows of [kernel] elements from
    [size] padded elements, read from [copies] copies of the axis laid end to end
    in rows of [row] elements, one row per element of the kernel. *)
 type cut = {
@@ -365,13 +365,13 @@ let cut ~kernel ~stride ~dilation ~size =
   let row = (size * Int.max 1 scale) + dilation in
   { kernel; stride; windows; size; row; copies = ceil_div (kernel * row) size }
 
-(* A fold is the transpose of the unfold: each movement of [Ops.pool] is undone
+(* A fold is the transpose of the unfold: each movement of [Shape.pool] is undone
    in reverse order, a shrink by a pad of zeros, and the copies of the input are
    summed, which sums the windows where they overlap. *)
 let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size in
-  let lead = Ops.ndim x - 2 in
-  let kept = List.filteri (fun d _ -> d < lead) (Ops.max_shape x) in
+  let lead = Shape.ndim x - 2 in
+  let kept = List.filteri (fun d _ -> d < lead) (Shape.max_shape x) in
   let cuts =
     List.init k (fun a ->
         let before, after = padding.(a) in
@@ -387,21 +387,21 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
       ~size:output_size.(a)
   in
   if not (List.for_all Fun.id (List.mapi lands cuts)) then
-    Ops.expand
+    Shape.expand
       (Ops.const ~dtype:(Ops.dtype x) (`Int Bigint.zero))
       (ints (kept @ Array.to_list output_size))
   else
     let shape f = ints (kept @ List.concat_map f cuts) in
-    let reshape u f = Ops.reshape u (shape f) in
-    let pad_to u f = Ops.pad_to u (List.map Option.some (shape f)) in
+    let reshape u f = Shape.reshape u (shape f) in
+    let pad_to u f = Shape.pad_to u (List.map Option.some (shape f)) in
     let x =
-      Ops.reshape x
+      Shape.reshape x
         (ints
            (kept @ Array.to_list kernel_size
            @ List.map (fun c -> c.windows) cuts))
     in
     let x =
-      Ops.permute x
+      Shape.permute x
         (List.init lead Fun.id
         @ List.concat (List.init k (fun a -> [ lead + a; lead + k + a ])))
     in
@@ -412,7 +412,7 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
     let x = reshape x (fun c -> [ c.kernel * c.row ]) in
     let x = pad_to x (fun c -> [ c.copies * c.size ]) in
     let x = reshape x (fun c -> [ c.copies; c.size ]) in
-    Ops.shrink
+    Shape.shrink
       (Lower_reduce.reduce Sum ~axes:(List.init k (fun a -> lead + (2 * a))) x)
       (List.map (fun _ -> None) kept
       @ List.init k (fun a ->

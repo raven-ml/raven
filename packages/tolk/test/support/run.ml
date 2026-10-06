@@ -7,7 +7,7 @@ let program r uops =
     | Ops.Kernel _ -> sink
     | _ -> Ops.replace sink ~arg:(Ops.Kernel (Ops.kernel_info ()))
   in
-  let info = Ops.program_info_of_sink ~target:r.Renderer.target sink in
+  let info = Shape.program_info_of_sink ~target:r.Renderer.target sink in
   Codegen.compile
     (Ops.v Op.Program
        ~src:[ sink; Ops.v Op.Linear ~src:uops ]

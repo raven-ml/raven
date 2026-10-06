@@ -43,7 +43,7 @@ module Estimates : sig
       Raises [Invalid_argument] if a count does not fit an [int]. *)
 
   val simplify : t -> t
-  (** [simplify e] is [e] with each count simplified ({!Ops.ssimplify}). *)
+  (** [simplify e] is [e] with each count simplified ({!Shape.ssimplify}). *)
 
   val of_uops : ?ignore_indexing:bool -> Ops.t list -> t
   (** [of_uops ~ignore_indexing uops] estimates the linearized kernel [uops]:

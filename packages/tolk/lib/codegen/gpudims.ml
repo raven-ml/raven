@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let dim_max = function
   | Int d -> Bigint.of_int d

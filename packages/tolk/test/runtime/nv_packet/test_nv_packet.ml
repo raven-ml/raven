@@ -91,7 +91,7 @@ let leaves () =
   in
   ( leaf,
     fun u ->
-      Ops.simplify (Ops.substitute ~calls:Skip ~pass:Fixed_point u !bound) )
+      Shape.simplify (Ops.substitute ~calls:Skip ~pass:Fixed_point u !bound) )
 
 (* The little-endian bytes of the constant [c]. *)
 let bytes c =

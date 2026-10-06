@@ -11,7 +11,7 @@ let multi u =
     (After_sources Multi.multi_pm)
 
 let two = Ops.Multi [ "CPU:0"; "CPU:1" ]
-let whole = Ops.reshape (Ops.new_buffer ~slot:1 two 8 Float32) [ Int 2; Int 4 ]
+let whole = Shape.reshape (Ops.new_buffer ~slot:1 two 8 Float32) [ Int 2; Int 4 ]
 let red = Ops.allreduce whole Add two
 
 let recorded =

@@ -15,6 +15,7 @@
    notice is preserved. *)
 
 open Ops
+open Shape
 
 (* The floats the functions compute in, and those with an integer of their
    width, which the bit manipulations take. *)

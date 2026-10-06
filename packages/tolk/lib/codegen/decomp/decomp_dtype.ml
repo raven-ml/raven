@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Shape
 
 let shl = Transcendental.shl
 let shr = Transcendental.shr

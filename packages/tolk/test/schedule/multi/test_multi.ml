@@ -225,7 +225,7 @@ let concrete u =
     (fun n ->
       List.for_all
         (function Ops.Int _ -> true | Sym _ -> false)
-        (Option.value ~default:[] (Ops.shape_opt n)))
+        (Option.value ~default:[] (Shape.shape_opt n)))
     (Ops.toposort ~calls:Enter u)
 
 let values =
@@ -344,7 +344,7 @@ let ints = List.map (fun n -> Ops.Int n)
 let dims u =
   List.map
     (function Ops.Int n -> n | Sym _ -> fail "a generated shape is concrete")
-    (Ops.shape u)
+    (Shape.shape u)
 
 let pick k = function
   | [] -> None
@@ -362,7 +362,7 @@ let build d =
       element dtype ((((j * 7) + (slot * 3)) mod 11) - 3)
     in
     memory := (slot, Array.init (size * d.n) at) :: !memory;
-    Ops.reshape (Ops.new_buffer ~slot names size dtype) (ints shape)
+    Shape.reshape (Ops.new_buffer ~slot names size dtype) (ints shape)
   in
   let base =
     if d.grid then
@@ -373,7 +373,7 @@ let build d =
           (fun a n -> match a with 0 -> n / 2 | 1 -> n / columns | _ -> n)
           d.shape
       in
-      Ops.unshard
+      Shape.unshard
         ~ranges:Ops.O.[ r // int columns; r % int columns ]
         (storage ~sharded:true Int32 shard)
         [ 0; 1 ]
@@ -381,7 +381,7 @@ let build d =
       let shard =
         List.mapi (fun a n -> if a = d.axis then n / d.n else n) d.shape
       in
-      Ops.unshard (storage ~sharded:true Int32 shard) [ d.axis ]
+      Shape.unshard (storage ~sharded:true Int32 shard) [ d.axis ]
   in
   let apply (v, axes) step =
     let shape = dims v and dtype = Ops.dtype v in
@@ -400,7 +400,7 @@ let build d =
             axes
         in
         if List.mem a axes && List.length axes > 1 then (v, axes)
-        else (Ops.rop v op [ a ], if List.mem a axes then [] else kept)
+        else (Shape.rop v op [ a ], if List.mem a axes then [] else kept)
     in
     match step with
     | Add_self -> (Ops.O.(v + v), axes)
@@ -409,30 +409,30 @@ let build d =
     | Add_row when rank > 0 ->
         let last = List.nth shape (rank - 1) in
         let row =
-          Ops.reshape
+          Shape.reshape
             (storage ~sharded:false dtype [ last ])
             (ints (List.mapi (fun a n -> if a = rank - 1 then n else 1) shape))
         in
-        (Ops.O.(v + Ops.expand row (ints shape)), axes)
+        (Ops.O.(v + Shape.expand row (ints shape)), axes)
     | Sum k -> reduce Add k
     | Max k -> reduce Max k
     | Rotate k when rank > 0 ->
         let order = List.init rank (fun i -> (i + k) mod rank) in
-        ( Ops.permute v order,
+        ( Shape.permute v order,
           List.map (fun b -> (b - k + (8 * rank)) mod rank) axes )
     | Flip k -> (
         match pick k free with
-        | Some a -> (Ops.flip v [ a ], axes)
+        | Some a -> (Shape.flip v [ a ], axes)
         | None -> (v, axes))
     | Pad k -> (
         match pick k free with
         | Some a ->
-            (Ops.pad v (on a (fun _ -> Some (Ops.Int 1, Ops.Int 2))), axes)
+            (Shape.pad v (on a (fun _ -> Some (Ops.Int 1, Ops.Int 2))), axes)
         | None -> (v, axes))
     | Shrink k -> (
         match pick k (List.filter (fun a -> List.nth shape a > 1) free) with
         | Some a ->
-            (Ops.shrink v (on a (fun n -> Some (Ops.Int 1, Ops.Int n))), axes)
+            (Shape.shrink v (on a (fun n -> Some (Ops.Int 1, Ops.Int n))), axes)
         | None -> (v, axes))
     | Unsqueeze k ->
         let p = k mod (rank + 1) in
@@ -440,16 +440,16 @@ let build d =
           List.filteri (fun a _ -> a < p) shape
           @ (1 :: List.filteri (fun a _ -> a >= p) shape)
         in
-        ( Ops.reshape v (ints shape),
+        ( Shape.reshape v (ints shape),
           List.map (fun b -> if b >= p then b + 1 else b) axes )
-    | Expand -> (Ops.expand v (ints (2 :: shape)), List.map succ axes)
+    | Expand -> (Shape.expand v (ints (2 :: shape)), List.map succ axes)
     | Cast -> (Ops.cast v Float32, axes)
     | Select k -> (
         match axes with
         | [ a ] when not d.grid ->
             let part = List.nth shape a / d.n in
             let start = k mod d.n * part in
-            ( Ops.shrink v
+            ( Shape.shrink v
                 (on a (fun _ -> Some (Ops.Int start, Ops.Int (start + part)))),
               [] )
         | _ -> (v, axes))
@@ -543,15 +543,15 @@ let two = Ops.Multi [ "CPU:0"; "CPU:1" ]
 let four = Ops.Multi [ "CPU:0"; "CPU:1"; "CPU:2"; "CPU:3" ]
 
 let storage ?(devices = two) ?(dtype = Dtype.Float32) slot shape =
-  Ops.reshape (Ops.new_buffer ~slot devices (size shape) dtype) (ints shape)
+  Shape.reshape (Ops.new_buffer ~slot devices (size shape) dtype) (ints shape)
 
 (* A value of [shard]'s shape times the devices along [axis]. *)
 let sharded ?devices ?dtype slot shard axis =
-  Ops.unshard (storage ?devices ?dtype slot shard) [ axis ]
+  Shape.unshard (storage ?devices ?dtype slot shard) [ axis ]
 
 let shard u = Ops.nth u 0
 let range u = Ops.nth u 1
-let unshard u axes like = Ops.unshard ~ranges:[ range like ] u axes
+let unshard u axes like = Shape.unshard ~ranges:[ range like ] u axes
 let a = sharded 1 [ 2; 8 ] 0
 let b = sharded 2 [ 2; 8 ] 0
 let whole = storage 3 [ 4; 8 ]
@@ -580,16 +580,16 @@ let arithmetic =
         (fun () ->
           equal uop
             (unshard
-               Ops.O.(shard a + Ops.shard_slice whole 0 (range a))
+               Ops.O.(shard a + Shape.shard_slice whole 0 (range a))
                [ 0 ] a)
             (multi Ops.O.(a + whole)));
       test "a broadcast scalar is broadcast over the shard" (fun () ->
           let c =
-            Ops.mop (Ops.float ~dtype:Float32 3.) (Expand (ints [ 4; 8 ]))
+            Shape.mop (Ops.float ~dtype:Float32 3.) (Expand (ints [ 4; 8 ]))
           in
           let expands u =
             List.filter_map
-              (fun n -> if Ops.op n = Expand then Some (Ops.shape n) else None)
+              (fun n -> if Ops.op n = Expand then Some (Shape.shape n) else None)
               (Ops.toposort ~calls:Enter u)
           in
           equal
@@ -605,8 +605,8 @@ let arithmetic =
           is_true (has Allreduce u));
       test "a stack of values sharded alike stacks their shards" (fun () ->
           equal uop
-            (unshard (Ops.stack [ shard a; shard b ]) [ 1 ] a)
-            (multi (Ops.stack [ a; b ])));
+            (unshard (Shape.stack [ shard a; shard b ]) [ 1 ] a)
+            (multi (Shape.stack [ a; b ])));
       test "a constant copied to several devices adds to each shard" (fun () ->
           let x = sharded ~dtype:Int32 1 [ 2; 8 ] 0 in
           let one = storage ~devices:(cpu 0) ~dtype:Int32 3 [ 4; 8 ] in
@@ -630,7 +630,7 @@ let arithmetic =
               (2, Array.init 32 (fun j -> `Float (float_of_int (100 + j))));
             ]
           in
-          let stacked = Ops.stack [ a; across ] in
+          let stacked = Shape.stack [ a; across ] in
           let whole = List.hd (Tensors.eval ~buffers:memory stacked) in
           List.iter
             (fun v -> equal (array Dtypes.const) whole v)
@@ -658,7 +658,7 @@ let arithmetic =
 
 let reductions =
   let half = sharded ~dtype:Float16 4 [ 2; 8 ] 0 in
-  let sum_up u = Ops.rop (Ops.cast u Float32) Add [ 0 ] in
+  let sum_up u = Shape.rop (Ops.cast u Float32) Add [ 0 ] in
   let cast_sum settings =
     Setting.context
       [ Setting.B (Setting.allreduce_cast, settings) ]
@@ -669,13 +669,13 @@ let reductions =
       test "a reduction of the sharded axis reduces each shard, then across"
         (fun () ->
           equal uop
-            (Ops.allreduce (Ops.rop (shard a) Add [ 0 ]) Add two)
-            (multi (Ops.rop a Add [ 0 ])));
+            (Ops.allreduce (Shape.rop (shard a) Add [ 0 ]) Add two)
+            (multi (Shape.rop a Add [ 0 ])));
       test "a reduction of other axes reduces each shard and stays sharded"
         (fun () ->
           equal uop
-            (unshard (Ops.rop (shard a) Add [ 1 ]) [ 0 ] a)
-            (multi (Ops.rop a Add [ 1 ])));
+            (unshard (Shape.rop (shard a) Add [ 1 ]) [ 0 ] a)
+            (multi (Shape.rop a Add [ 1 ])));
       test "a value cast up from a half crosses the devices as a half"
         (fun () ->
           let local = sum_up (shard half) in
@@ -699,12 +699,12 @@ let reductions =
       test "a reduction of some sharded axes but not all is refused" (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Ops.unshard
+            Shape.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
           in
-          refused ~because:"several axes" (Ops.rop grid Add [ 0 ]));
+          refused ~because:"several axes" (Shape.rop grid Add [ 0 ]));
       test "an allreduce of a sharded value reduces its shards" (fun () ->
           equal uop
             (unshard (Ops.allreduce (shard a) Add two) [ 0 ] a)
@@ -721,51 +721,51 @@ let movements =
     [
       test "a reshape keeps a sharded axis whole" (fun () ->
           equal uop
-            (unshard (Ops.reshape (shard a) (ints [ 1; 2; 8 ])) [ 0 ] a)
-            (multi (Ops.reshape a (ints [ 2; 2; 8 ]))));
+            (unshard (Shape.reshape (shard a) (ints [ 1; 2; 8 ])) [ 0 ] a)
+            (multi (Shape.reshape a (ints [ 2; 2; 8 ]))));
       test "a reshape that moves elements between shards is refused" (fun () ->
           refused ~because:"between shards"
-            (Ops.reshape (sharded 1 [ 4; 4 ] 1) (ints [ 32 ])));
+            (Shape.reshape (sharded 1 [ 4; 4 ] 1) (ints [ 32 ])));
       test "a reshape to an axis its shard count does not divide is refused"
         (fun () ->
           refused ~because:"between shards"
-            (Ops.reshape over_four (ints [ 2; 16 ])));
+            (Shape.reshape over_four (ints [ 2; 16 ])));
       test "an expand moves the sharded axis behind the new axes" (fun () ->
           equal uop
-            (unshard (Ops.mop (shard a) (Expand (ints [ 3 ]))) [ 1 ] a)
-            (multi (Ops.mop a (Expand (ints [ 3 ])))));
+            (unshard (Shape.mop (shard a) (Expand (ints [ 3 ]))) [ 1 ] a)
+            (multi (Shape.mop a (Expand (ints [ 3 ])))));
       test "a permute moves the sharded axis" (fun () ->
           equal uop
-            (unshard (Ops.permute (shard a) [ 1; 0 ]) [ 1 ] a)
-            (multi (Ops.permute a [ 1; 0 ])));
+            (unshard (Shape.permute (shard a) [ 1; 0 ]) [ 1 ] a)
+            (multi (Shape.permute a [ 1; 0 ])));
       test "a pad of another axis pads each shard" (fun () ->
           equal uop
             (unshard
-               (Ops.mop (shard a) (Pad [ (Int 0, Int 2); (Int 1, Int 11) ]))
+               (Shape.mop (shard a) (Pad [ (Int 0, Int 2); (Int 1, Int 11) ]))
                [ 0 ] a)
-            (multi (Ops.pad a [ None; Some (Int 1, Int 2) ])));
+            (multi (Shape.pad a [ None; Some (Int 1, Int 2) ])));
       test "a pad after a sharded axis is refused" (fun () ->
-          refused ~because:"pad" (Ops.pad a [ Some (Int 0, Int 2); None ]));
+          refused ~because:"pad" (Shape.pad a [ Some (Int 0, Int 2); None ]));
       test "a pad of a sharded axis is refused" (fun () ->
-          refused ~because:"pad" (Ops.pad a [ Some (Int 1, Int 1); None ]));
+          refused ~because:"pad" (Shape.pad a [ Some (Int 1, Int 1); None ]));
       test "a flip of another axis flips each shard" (fun () ->
           equal uop
-            (unshard (Ops.flip (shard a) [ 1 ]) [ 0 ] a)
-            (multi (Ops.flip a [ 1 ])));
+            (unshard (Shape.flip (shard a) [ 1 ]) [ 0 ] a)
+            (multi (Shape.flip a [ 1 ])));
       test "a flip of a sharded axis is refused" (fun () ->
-          refused ~because:"flip" (Ops.flip a [ 0 ]));
+          refused ~because:"flip" (Shape.flip a [ 0 ]));
       test "a shrink of another axis shrinks each shard" (fun () ->
           equal uop
             (unshard
-               (Ops.mop (shard a) (Shrink [ (Int 0, Int 2); (Int 2, Int 4) ]))
+               (Shape.mop (shard a) (Shrink [ (Int 0, Int 2); (Int 2, Int 4) ]))
                [ 0 ] a)
-            (multi (Ops.shrink a [ None; Some (Int 2, Int 6) ])));
+            (multi (Shape.shrink a [ None; Some (Int 2, Int 6) ])));
       test "a shrink to one device's shard places that shard on every device"
         (fun () ->
           let memory =
             [ (1, Array.init 32 (fun j -> `Float (float_of_int j))) ]
           in
-          let u = multi (Ops.shrink a [ Some (Int 2, Int 4); None ]) in
+          let u = multi (Shape.shrink a [ Some (Int 2, Int 4); None ]) in
           let part = Array.init 16 (fun j -> `Float (float_of_int (16 + j))) in
           is_false (has Unshard u);
           equal
@@ -775,15 +775,15 @@ let movements =
       test "a shrink to one shard of a grid's axis is refused" (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Ops.unshard
+            Shape.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
           in
           refused ~because:"shrink"
-            (Ops.shrink grid [ Some (Int 0, Int 2); None ]));
+            (Shape.shrink grid [ Some (Int 0, Int 2); None ]));
       test "a shrink of part of a sharded axis is refused" (fun () ->
-          refused ~because:"shrink" (Ops.shrink a [ Some (Int 1, Int 3); None ]));
+          refused ~because:"shrink" (Shape.shrink a [ Some (Int 1, Int 3); None ]));
     ]
 
 (* Values sharded across the threads of a workgroup: register storage of eight
@@ -792,8 +792,8 @@ let movements =
 let threads = Ops.range ~axis_type:Local (Int 8) [ 0 ]
 let rows = Ops.range ~axis_type:Loop (Int 8) [ 1 ]
 let cols = Ops.range ~axis_type:Loop (Int 8) [ 2 ]
-let registers = Ops.placeholder ~addrspace:Reg [ 8; 8 ] Float32
-let fragment = Ops.unshard ~ranges:[ threads ] registers [ 0 ]
+let registers = Shape.placeholder ~addrspace:Reg [ 8; 8 ] Float32
+let fragment = Shape.unshard ~ranges:[ threads ] registers [ 0 ]
 
 let fragments =
   group "multi_pm › fragments"
@@ -823,13 +823,13 @@ let fragments =
       test "a shrink to one shard of another thread's rows is refused"
         (fun () ->
           refused ~because:"shrink"
-            (Ops.shrink fragment [ Some (Int 8, Int 16); None ]));
+            (Shape.shrink fragment [ Some (Int 8, Int 16); None ]));
       test "a shrink to a thread's own shard removes its sharding" (fun () ->
           let own = Ops.O.(threads * int 8) in
           equal uop
-            (Ops.mop registers (Shrink [ (Int 0, Int 8); (Int 0, Int 8) ]))
+            (Shape.mop registers (Shrink [ (Int 0, Int 8); (Int 0, Int 8) ]))
             (multi
-               (Ops.mop fragment (Shrink [ (Sym own, Int 8); (Int 0, Int 8) ]))));
+               (Shape.mop fragment (Shrink [ (Sym own, Int 8); (Int 0, Int 8) ]))));
     ]
 
 (* A tile of four by twelve, sharded across two by three threads: register
@@ -837,8 +837,8 @@ let fragments =
 
 let tile_rows = Ops.range ~axis_type:Local (Int 2) [ 0 ]
 let tile_cols = Ops.range ~axis_type:Local (Int 3) [ 1 ]
-let tile_part = Ops.placeholder ~addrspace:Reg [ 2; 4 ] Float32
-let tile = Ops.unshard ~ranges:[ tile_rows; tile_cols ] tile_part [ 0; 1 ]
+let tile_part = Shape.placeholder ~addrspace:Reg [ 2; 4 ] Float32
+let tile = Shape.unshard ~ranges:[ tile_rows; tile_cols ] tile_part [ 0; 1 ]
 let sharding = list (pair int uop)
 
 let tiles =
@@ -847,21 +847,21 @@ let tiles =
       test "a reshape divides each sharded axis by its own count"
         (fun () ->
           equal uop
-            (Ops.unshard ~ranges:[ tile_rows; tile_cols ]
-               (Ops.reshape tile_part (ints [ 2; 1; 4 ]))
+            (Shape.unshard ~ranges:[ tile_rows; tile_cols ]
+               (Shape.reshape tile_part (ints [ 2; 1; 4 ]))
                [ 0; 1 ])
-            (multi (Ops.reshape tile (ints [ 4; 3; 4 ]))));
+            (multi (Shape.reshape tile (ints [ 4; 3; 4 ]))));
       test "a reshape of a mesh of 2 by 4 devices keeps each tile"
         (fun () ->
           let eight = Ops.Multi (List.init 8 (Printf.sprintf "CPU:%d")) in
           let r = Ops.range ~axis_type:Device (Int 8) [ -1 ] in
           let mesh =
-            Ops.unshard
+            Shape.unshard
               ~ranges:Ops.O.[ r // int 4; r % int 4 ]
               (storage ~devices:eight ~dtype:Int32 1 [ 2; 3 ])
               [ 0; 1 ]
           in
-          let v = Ops.O.(Ops.reshape mesh (ints [ 4; 12; 1 ]) * int 2) in
+          let v = Ops.O.(Shape.reshape mesh (ints [ 4; 12; 1 ]) * int 2) in
           let memory =
             [ (1, Array.init 48 (fun j -> `Int (Bigint.of_int j))) ]
           in
@@ -870,28 +870,28 @@ let tiles =
             (fun got -> equal (array Dtypes.const) whole got)
             (Tensors.eval ~buffers:memory (multi v)));
       test "an operation with a whole value takes its tile of it" (fun () ->
-          let whole = Ops.placeholder ~slot:1 [ 4; 12 ] Float32 in
+          let whole = Shape.placeholder ~slot:1 [ 4; 12 ] Float32 in
           let part =
-            Ops.shard_slice (Ops.shard_slice whole 0 tile_rows) 1 tile_cols
+            Shape.shard_slice (Shape.shard_slice whole 0 tile_rows) 1 tile_cols
           in
           equal uop
-            (Ops.unshard ~ranges:[ tile_rows; tile_cols ]
+            (Shape.unshard ~ranges:[ tile_rows; tile_cols ]
                Ops.O.(tile_part + part)
                [ 0; 1 ])
             (multi Ops.O.(tile + whole)));
       test "a permute keeps each range with its axis" (fun () ->
-          let u = multi (Ops.permute tile [ 1; 0 ]) in
+          let u = multi (Shape.permute tile [ 1; 0 ]) in
           equal sharding [ (0, tile_cols); (1, tile_rows) ] (Ops.sharding u);
-          equal uop (Ops.permute tile_part [ 1; 0 ]) (Ops.nth u 0));
+          equal uop (Shape.permute tile_part [ 1; 0 ]) (Ops.nth u 0));
       test "a shrink to one axis's own shard keeps the other's sharding"
         (fun () ->
           let own = Ops.O.(tile_rows * int 2) in
           equal uop
-            (Ops.unshard ~ranges:[ tile_cols ]
-               (Ops.mop tile_part (Shrink [ (Int 0, Int 2); (Int 0, Int 4) ]))
+            (Shape.unshard ~ranges:[ tile_cols ]
+               (Shape.mop tile_part (Shrink [ (Int 0, Int 2); (Int 0, Int 4) ]))
                [ 1 ])
             (multi
-               (Ops.mop tile (Shrink [ (Sym own, Int 2); (Int 0, Int 12) ]))));
+               (Shape.mop tile (Shrink [ (Sym own, Int 2); (Int 0, Int 12) ]))));
     ]
 
 let device = Testable.make ~pp:Ops.pp_device ~equal:Ops.equal_device
@@ -949,7 +949,7 @@ let copies =
             Ops.O.(
               Ops.new_buffer ~slot:1 (cpu 0) 4 Int32 * Ops.int ~dtype:Int32 0)
           in
-          let s = Ops.simplify zeros in
+          let s = Shape.simplify zeros in
           equal (option device) None (Ops.device s);
           equal uop (Ops.mstack s [ s ]) (multi (Ops.copy_to_device zeros two)));
       test "a copy of a replicated value to one device copies its first"
@@ -972,15 +972,15 @@ let selections =
           equal uop second (multi (Ops.mselect (Ops.mstack first [ second ]) 1)));
       test "a selection of a movement moves the selection" (fun () ->
           equal uop
-            (Ops.reshape (Ops.mselect flat 1) (ints [ 4; 8 ]))
-            (multi (Ops.mselect (Ops.reshape flat (ints [ 4; 8 ])) 1)));
+            (Shape.reshape (Ops.mselect flat 1) (ints [ 4; 8 ]))
+            (multi (Ops.mselect (Shape.reshape flat (ints [ 4; 8 ])) 1)));
       test
         "a selection of a movement by the device range takes the selected \
          device's position" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          let at start = Ops.mop flat (Shrink [ (start, Int 16) ]) in
+          let at start = Shape.mop flat (Shrink [ (start, Int 16) ]) in
           equal uop
-            (Ops.mop (Ops.mselect flat 1) (Shrink [ (Int 16, Int 16) ]))
+            (Shape.mop (Ops.mselect flat 1) (Shrink [ (Int 16, Int 16) ]))
             (multi (Ops.mselect (at (Sym Ops.O.(d * int 16))) 1)));
       test "a selection of an operation selects its sources on several devices"
         (fun () ->
@@ -992,13 +992,13 @@ let selections =
          there" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           let moved = Ops.copy_to_device first (cpu 1) in
-          let at k u = Ops.mop u (Shrink [ (Int k, Int 2) ]) in
+          let at k u = Shape.mop u (Shrink [ (Int k, Int 2) ]) in
           equal uop
             (Ops.mstack
                (Ops.contiguous (at 0 first))
                [ Ops.copy_to_device (at 1 first) (cpu 1) ])
             (multi
-               (Ops.mop
+               (Shape.mop
                   (Ops.mstack first [ moved ])
                   (Shrink [ (Sym d, Int 2) ]))));
     ]
@@ -1051,14 +1051,14 @@ let gathers =
           is_true (has Allreduce (multi (Ops.index rows [ l ]))));
       test "a gather by a sharded index gathers each part of the index"
         (fun () ->
-          let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let index = Shape.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let u = multi (Ops.index whole [ clamp 4 index ]) in
           equal (list int) [ 0 ] (List.map fst (Ops.sharding u));
           reads_whole (Ops.index whole [ clamp 4 index ]));
       test
         "a gather of sharded rows by a sharded index reads the whole's rows on \
          every device" (fun () ->
-          let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let index = Shape.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let u = multi (Ops.index rows [ clamp 4 index ]) in
           equal (list int) [] (List.map fst (Ops.sharding u));
           reads_whole (Ops.index rows [ clamp 4 index ]));
@@ -1066,7 +1066,7 @@ let gathers =
         (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Ops.unshard
+            Shape.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
@@ -1075,7 +1075,7 @@ let gathers =
           refused ~because:"another axis" (Ops.index grid [ l ]));
       test "a gather of a value on one device by a sharded index is refused"
         (fun () ->
-          let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let index = Shape.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let x = storage ~devices:(cpu 0) 3 [ 4; 8 ] in
           refused ~because:"by an index on" (Ops.index x [ clamp 4 index ]));
       test "a gather of sharded rows by an index on other devices is refused"
@@ -1093,7 +1093,7 @@ let gathers =
 let scatters =
   let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
   let at i =
-    Ops.valid (Ops.cast i Weak_int)
+    Shape.valid (Ops.cast i Weak_int)
       (Ops.bitwise_and (Ops.ge i (i32 0)) (Ops.lt i (i32 4)))
   in
   let memory =
@@ -1120,9 +1120,9 @@ let scatters =
         (fun () -> writes_whole (sharded 1 [ 4; 4 ] 1) (storage 3 [ 3; 8 ]));
       test "a scatter of a sharded value stores the whole value" (fun () ->
           writes_whole (sharded 1 [ 2; 8 ] 0)
-            (Ops.unshard (storage 3 [ 3; 4 ]) [ 1 ]));
+            (Shape.unshard (storage 3 [ 3; 4 ]) [ 1 ]));
       test "a scatter by a sharded index joins the index" (fun () ->
-          let l = at (Ops.unshard (storage ~dtype:Int32 2 [ 1 ]) [ 0 ]) in
+          let l = at (Shape.unshard (storage ~dtype:Int32 2 [ 1 ]) [ 0 ]) in
           let dest = sharded 1 [ 2; 8 ] 0 and v = storage 3 [ 2; 8 ] in
           let u = Ops.after dest [ Ops.store (Ops.index dest [ l ]) v ] in
           let whole = List.hd (Tensors.eval ~buffers:memory u) in
@@ -1133,7 +1133,7 @@ let scatters =
             refused" (fun () ->
           let r = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
           let grid =
-            Ops.unshard
+            Shape.unshard
               ~ranges:Ops.O.[ r // int 2; r % int 2 ]
               (storage ~devices:four 1 [ 2; 4 ])
               [ 0; 1 ]
@@ -1150,7 +1150,7 @@ let effects =
       test "a store of a value sharded as its destination stores each shard"
         (fun () ->
           let own =
-            Ops.mop (shard dest) (Shrink [ (Int 0, Int 2); (Int 0, Int 8) ])
+            Shape.mop (shard dest) (Shrink [ (Int 0, Int 2); (Int 0, Int 8) ])
           in
           equal uop
             (unshard
@@ -1165,13 +1165,13 @@ let effects =
       test "a store of a whole value into a sharded destination stores its part"
         (fun () ->
           equal uop
-            (Ops.store (shard dest) (Ops.shard_slice whole 0 (range a)))
+            (Ops.store (shard dest) (Shape.shard_slice whole 0 (range a)))
             (multi (Ops.store dest whole)));
       test "a gated store into a sharded destination keeps a scalar gate"
         (fun () ->
           let gate = Ops.bool true in
           equal uop
-            (Ops.store ~gate (shard dest) (Ops.shard_slice whole 0 (range a)))
+            (Ops.store ~gate (shard dest) (Shape.shard_slice whole 0 (range a)))
             (multi (Ops.store ~gate dest whole)));
       test "a call of a compiled function passes its arguments' shards"
         (fun () ->
@@ -1179,8 +1179,8 @@ let effects =
             Ops.sink
               [
                 Ops.store
-                  (Ops.param ~shape:[ Int 16 ] 0 Float32)
-                  (Ops.param ~shape:[ Int 16 ] 1 Float32);
+                  (Shape.param ~shape:[ Int 16 ] 0 Float32)
+                  (Shape.param ~shape:[ Int 16 ] 1 Float32);
               ]
           in
           equal uop

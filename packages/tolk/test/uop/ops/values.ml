@@ -447,7 +447,7 @@ let bounds_group =
           let h = variable Float16 (f 0.) (f 65504.) "h" in
           let w = variable Weak_float (f 0.) (f 1.) "w" in
           check_bounds
-            (Ops.alu (Ops.param 0 Float32) Op.Add [ one Float32 ])
+            (Ops.alu (Shape.param 0 Float32) Op.Add [ one Float32 ])
             (full Float32);
           check_bounds (Ops.alu h Op.Add [ h ]) (full Float16);
           check_bounds (Ops.alu h Op.Mul [ h ]) (full Float16);
@@ -455,7 +455,7 @@ let bounds_group =
       test "a float selection by a comparison narrows what it selects"
         (fun () ->
           let x = variable Float32 (f (-10.)) (f 10.) "x" in
-          let p = Ops.param 0 Float32 in
+          let p = Shape.param 0 Float32 in
           let c = Ops.float ~dtype:Float32 2. in
           let minus_c = Ops.float ~dtype:Float32 (-2.) in
           check_bounds (Ops.where (Ops.lt x c) x minus_c) (f (-10.), f 2.);
@@ -472,7 +472,7 @@ let bounds_group =
       test
         "a committed float selection holds a weak constant at its type, where \
          it may round to zero" (fun () ->
-          let p = Ops.param 0 Float32 in
+          let p = Shape.param 0 Float32 in
           let inf = Ops.float ~dtype:Float32 Float.infinity in
           let tiny = Ops.float 0x0.0000000000001p-1022 in
           let u = Ops.where (Ops.lt p (Ops.float ~dtype:Float32 0.)) inf tiny in
@@ -510,7 +510,7 @@ let bounds_group =
                 (Int64, Bigint.of_int64 Int64.min_int);
                 (Uint64, Bigint.pred (Bigint.shift_left Bigint.one 64));
               ];
-          check_bounds (Ops.param 7 Uint64) (Dtype.min Uint64, Dtype.max Uint64));
+          check_bounds (Shape.param 7 Uint64) (Dtype.min Uint64, Dtype.max Uint64));
       test "a NaN constant has its type's bounds" (fun () ->
           check_bounds
             (Ops.float ~dtype:Float32 Float.nan)
@@ -519,17 +519,17 @@ let bounds_group =
           not_equal value (Ops.vmin Ops.invalid) (Ops.vmax Ops.invalid));
       test "a stack's bounds span its values, Invalid left out" (fun () ->
           check_bounds
-            (Ops.consts [ i 0; i 4; `Invalid; `Invalid ])
+            (Shape.consts [ i 0; i 4; `Invalid; `Invalid ])
             (int_bounds 0 4);
-          check_bounds (Ops.consts [ i 42 ]) (int_bounds 42 42);
+          check_bounds (Shape.consts [ i 42 ]) (int_bounds 42 42);
           check_bounds
-            (Ops.consts [ i 10; i 20; i (-5); i 7 ])
+            (Shape.consts [ i 10; i 20; i (-5); i 7 ])
             (int_bounds (-5) 20);
           check_bounds
-            (Ops.consts [ `Bool true; `Bool false; `Bool false ])
+            (Shape.consts [ `Bool true; `Bool false; `Bool false ])
             (`Bool false, `Bool true);
           check_bounds
-            (Ops.consts [ f 1.5; f (-3.2); f 0. ])
+            (Shape.consts [ f 1.5; f (-3.2); f 0. ])
             (Dtype.truncate Float32 (f (-3.2)), f 1.5));
       test "a comparison of constants is decided" (fun () ->
           let c = Ops.int 42 in
@@ -598,7 +598,7 @@ let bounds_group =
           let y =
             Ops.load
               (Ops.index
-                 (Ops.param ~shape:(ints [ 1 ]) 0 Float32)
+                 (Shape.param ~shape:(ints [ 1 ]) 0 Float32)
                  [ Ops.int 0 ])
               []
           in
@@ -608,7 +608,7 @@ let bounds_group =
       test "a load of an integer buffer has its type's bounds" (fun () ->
           let v =
             Ops.load
-              (Ops.index (Ops.param ~shape:(ints [ 1 ]) 1 Int32) [ Ops.int 0 ])
+              (Ops.index (Shape.param ~shape:(ints [ 1 ]) 1 Int32) [ Ops.int 0 ])
               []
           in
           check_bounds Ops.O.(v // int 32) (int_bounds (-67108864) 67108863));
@@ -618,10 +618,10 @@ let bounds_group =
             (Ops.load (Ops.index table [ Ops.range (Int 3) [ 0 ] ]) [])
             (int_bounds 1 9));
       test "a pad adds zeros to the bounds" (fun () ->
-          let x = Ops.expand (Ops.int ~dtype:Int32 5) (ints [ 2 ]) in
-          check_bounds (Ops.pad x [ Some (Int 1, Int 1) ]) (int_bounds 0 5));
+          let x = Shape.expand (Ops.int ~dtype:Int32 5) (ints [ 2 ]) in
+          check_bounds (Shape.pad x [ Some (Int 1, Int 1) ]) (int_bounds 0 5));
       test "a copy and a contiguous keep their source's bounds" (fun () ->
-          let src = Ops.O.(Ops.placeholder ~slot:0 [ 4 ] Int32 land int 3) in
+          let src = Ops.O.(Shape.placeholder ~slot:0 [ 4 ] Int32 land int 3) in
           check_bounds (Ops.contiguous src) (int_bounds 0 3);
           check_bounds (Ops.copy_to_device src (Single "NULL")) (int_bounds 0 3));
       test "a variable cast to float, bool or unsigned" (fun () ->
@@ -646,9 +646,9 @@ let bounds_group =
           let unknown = (f Float.neg_infinity, f Float.infinity) in
           List.iter
             (fun dt ->
-              check_bounds (Ops.param 0 dt) unknown;
-              check_bounds (Ops.cast (Ops.param 0 dt) Float32) unknown;
-              check_bounds (Ops.cast (Ops.param 0 Float32) dt) unknown;
+              check_bounds (Shape.param 0 dt) unknown;
+              check_bounds (Ops.cast (Shape.param 0 dt) Float32) unknown;
+              check_bounds (Ops.cast (Shape.param 0 Float32) dt) unknown;
               let x = variable Float32 (f (-1.)) (f 2.) "x" in
               check_bounds (Ops.cast x dt) (f (-1.), f 2.);
               let greatest = Dtype.max dt in
@@ -711,62 +711,62 @@ let resolving =
   group "resolve"
     [
       test "to_z, to_float and to_bool read a literal" (fun () ->
-          equal z (Bigint.of_int 5) (Ops.to_z (Ops.int 5));
-          equal float_exact 1.5 (Ops.to_float (Ops.float 1.5));
-          is_true (Ops.to_bool (Ops.bool true)));
+          equal z (Bigint.of_int 5) (Shape.to_z (Ops.int 5));
+          equal float_exact 1.5 (Shape.to_float (Ops.float 1.5));
+          is_true (Shape.to_bool (Ops.bool true)));
       test "to_z reads a typed constant and an integer sum of constants"
         (fun () ->
-          equal z (Bigint.of_int 4) (Ops.to_z (Ops.int ~dtype:Int32 4));
+          equal z (Bigint.of_int 4) (Shape.to_z (Ops.int ~dtype:Int32 4));
           equal z (Bigint.of_int 11)
-            (Ops.to_z Ops.O.(Ops.int ~dtype:Int32 4 + int 7));
+            (Shape.to_z Ops.O.(Ops.int ~dtype:Int32 4 + int 7));
           equal z (Bigint.of_int 2)
-            (Ops.to_z Ops.O.(int 8 // Ops.int ~dtype:Int32 4)));
+            (Shape.to_z Ops.O.(int 8 // Ops.int ~dtype:Int32 4)));
       test "to_bool decides comparisons of constants" (fun () ->
-          is_true (Ops.to_bool Ops.O.(int 4 < int 7));
-          is_true (Ops.to_bool Ops.O.(int 4 <= int 4));
-          is_true (Ops.to_bool Ops.O.(int 4 <> int 7));
-          is_false (Ops.to_bool Ops.O.(int 4 <> int 4));
-          is_false (Ops.to_bool Ops.O.(int 4 > int 7)));
+          is_true (Shape.to_bool Ops.O.(int 4 < int 7));
+          is_true (Shape.to_bool Ops.O.(int 4 <= int 4));
+          is_true (Shape.to_bool Ops.O.(int 4 <> int 7));
+          is_false (Shape.to_bool Ops.O.(int 4 <> int 4));
+          is_false (Shape.to_bool Ops.O.(int 4 > int 7)));
       test "to_bool decides a comparison the bounds decide" (fun () ->
           let v = weak_var "i" 1 10 in
-          is_true (Ops.to_bool Ops.O.(v < int 20));
-          is_true (Ops.to_bool Ops.O.(v // int 2 < int 20));
-          is_false (Ops.to_bool Ops.O.(v < int 1));
-          is_false (Ops.to_bool Ops.O.(v > int 11));
+          is_true (Shape.to_bool Ops.O.(v < int 20));
+          is_true (Shape.to_bool Ops.O.(v // int 2 < int 20));
+          is_false (Shape.to_bool Ops.O.(v < int 1));
+          is_false (Shape.to_bool Ops.O.(v > int 11));
           let x = weak_var "x" 1 10 and y = weak_var "y" 5 10 in
-          is_true (Ops.to_bool Ops.O.(Ops.maximum x y < int 20));
-          is_false (Ops.to_bool Ops.O.(Ops.maximum x y < int 3)));
+          is_true (Shape.to_bool Ops.O.(Ops.maximum x y < int 20));
+          is_false (Shape.to_bool Ops.O.(Ops.maximum x y < int 3)));
       test
         "to_bool decides a disjunction with true and a conjunction with false"
         (fun () ->
-          is_true (Ops.to_bool Ops.O.(flag "b" lor bool true));
-          is_false (Ops.to_bool Ops.O.(flag "b" land bool false)));
+          is_true (Shape.to_bool Ops.O.(flag "b" lor bool true));
+          is_false (Shape.to_bool Ops.O.(flag "b" land bool false)));
       test "to_bool rejects a condition with two possible values" (fun () ->
           let v = weak_var "i" 1 10 in
-          rejects (fun () -> Ops.to_bool Ops.O.(flag "b" lor bool false));
-          rejects (fun () -> Ops.to_bool Ops.O.(flag "b" land bool true));
-          rejects (fun () -> Ops.to_bool Ops.O.(v < v + int 1));
-          rejects (fun () -> Ops.to_bool Ops.O.((v > int 4) lor (v < int 6)));
-          rejects (fun () -> Ops.to_bool Ops.O.(v < int 5)));
+          rejects (fun () -> Shape.to_bool Ops.O.(flag "b" lor bool false));
+          rejects (fun () -> Shape.to_bool Ops.O.(flag "b" land bool true));
+          rejects (fun () -> Shape.to_bool Ops.O.(v < v + int 1));
+          rejects (fun () -> Shape.to_bool Ops.O.((v > int 4) lor (v < int 6)));
+          rejects (fun () -> Shape.to_bool Ops.O.(v < int 5)));
       test "to_bool, to_z and to_float reject another type" (fun () ->
-          rejects (fun () -> Ops.to_bool (Ops.int 1));
-          rejects (fun () -> Ops.to_z (Ops.bool true));
-          rejects (fun () -> Ops.to_z (Ops.float 1.));
-          rejects (fun () -> Ops.to_float (Ops.int 1)));
+          rejects (fun () -> Shape.to_bool (Ops.int 1));
+          rejects (fun () -> Shape.to_z (Ops.bool true));
+          rejects (fun () -> Shape.to_z (Ops.float 1.));
+          rejects (fun () -> Shape.to_float (Ops.int 1)));
       test "resolve takes the default when the comparison is undecided"
         (fun () ->
           let u = weak_var "i" 1 10 in
-          is_true (Ops.resolve Ops.O.(u < int 4));
-          is_false (Ops.resolve ~default:false Ops.O.(u < int 4));
-          is_true (Ops.resolve ~default:false Ops.O.(u < int 11));
-          is_false (Ops.resolve ~default:false Ops.O.(u < int (-1)));
-          is_false (Ops.resolve ~default:true Ops.O.(u < int (-1))));
+          is_true (Shape.resolve Ops.O.(u < int 4));
+          is_false (Shape.resolve ~default:false Ops.O.(u < int 4));
+          is_true (Shape.resolve ~default:false Ops.O.(u < int 11));
+          is_false (Shape.resolve ~default:false Ops.O.(u < int (-1)));
+          is_false (Shape.resolve ~default:true Ops.O.(u < int (-1))));
       test "resolve rejects a node that is not boolean" (fun () ->
-          rejects (fun () -> Ops.resolve (Ops.int 3)));
+          rejects (fun () -> Shape.resolve (Ops.int 3)));
       test
         "simplify leaves a constant, and a sink of constants and stacks of \
          constants, alone" (fun () ->
-          is_true (Ops.simplify (Ops.int 3) == Ops.int 3);
+          is_true (Shape.simplify (Ops.int 3) == Ops.int 3);
           let s =
             Ops.sink
               [
@@ -776,17 +776,17 @@ let resolving =
                 Ops.v ~src:[ Ops.int 1; Ops.int 2 ] Op.Stack;
               ]
           in
-          is_true (Ops.simplify s == s));
+          is_true (Shape.simplify s == s));
       test "ssimplify is an integer constant as an integer" (fun () ->
-          equal sint (Int 3) (Ops.ssimplify (Ops.int 3)));
+          equal sint (Int 3) (Shape.ssimplify (Ops.int 3)));
       test "ssimplify reads a typed integer constant" (fun () ->
-          equal sint (Int 3) (Ops.ssimplify (Ops.int ~dtype:Int32 3)));
+          equal sint (Int 3) (Shape.ssimplify (Ops.int ~dtype:Int32 3)));
       test "smax and smin of integers are integers" (fun () ->
-          equal sint (Int 5) (Ops.smax [ Int 2; Int 5 ]);
-          equal sint (Int 2) (Ops.smin [ Int 5; Int 2 ]);
-          equal sint (Int 7) (Ops.smax [ Int 7 ]);
-          rejects (fun () -> Ops.smax []);
-          rejects (fun () -> Ops.smin []));
+          equal sint (Int 5) (Shape.smax [ Int 2; Int 5 ]);
+          equal sint (Int 2) (Shape.smin [ Int 5; Int 2 ]);
+          equal sint (Int 7) (Shape.smax [ Int 7 ]);
+          rejects (fun () -> Shape.smax []);
+          rejects (fun () -> Shape.smin []));
       test "smax and smin of a symbolic size bound it as max and min do"
         (fun () ->
           let v = weak_var "v" 3 10 in
@@ -795,13 +795,13 @@ let resolving =
             | Int n -> int_bounds n n
           in
           equal (pair value value) (int_bounds 3 10)
-            (bounds_of (Ops.smax [ Int 2; Sym v ]));
+            (bounds_of (Shape.smax [ Int 2; Sym v ]));
           equal (pair value value) (int_bounds 5 10)
-            (bounds_of (Ops.smax [ Sym v; Int 5 ]));
+            (bounds_of (Shape.smax [ Sym v; Int 5 ]));
           equal (pair value value) (int_bounds 2 2)
-            (bounds_of (Ops.smin [ Int 2; Sym v ]));
+            (bounds_of (Shape.smin [ Int 2; Sym v ]));
           equal (pair value value) (int_bounds 3 10)
-            (bounds_of (Ops.smin [ Sym v; Int 20 ])));
+            (bounds_of (Shape.smin [ Sym v; Int 20 ])));
     ]
 
 let sint_module =
@@ -809,48 +809,48 @@ let sint_module =
   group "Sint"
     [
       test "arithmetic on integers stays on integers" (fun () ->
-          equal sint (Int 5) Ops.Sint.(Int 2 + Int 3);
-          equal sint (Int (-1)) Ops.Sint.(Int 2 - Int 3);
-          equal sint (Int 6) Ops.Sint.(Int 2 * Int 3);
-          equal sint (Int (-4)) Ops.Sint.(Int (-7) // Int 2);
-          equal sint (Int 1) Ops.Sint.(Int (-7) % Int 2);
-          equal sint (Int (-1)) Ops.Sint.(Int 7 % Int (-2)));
+          equal sint (Int 5) Shape.Sint.(Int 2 + Int 3);
+          equal sint (Int (-1)) Shape.Sint.(Int 2 - Int 3);
+          equal sint (Int 6) Shape.Sint.(Int 2 * Int 3);
+          equal sint (Int (-4)) Shape.Sint.(Int (-7) // Int 2);
+          equal sint (Int 1) Shape.Sint.(Int (-7) % Int 2);
+          equal sint (Int (-1)) Shape.Sint.(Int 7 % Int (-2)));
       test "arithmetic with a node builds the node's operation" (fun () ->
-          equal sint (Sym Ops.O.(n + int 1)) Ops.Sint.(Sym n + Int 1);
-          equal sint (Sym Ops.O.(int 1 + n)) Ops.Sint.(Int 1 + Sym n);
-          equal sint (Sym Ops.O.(n - int 1)) Ops.Sint.(Sym n - Int 1);
-          equal sint (Sym Ops.O.(int 2 * n)) Ops.Sint.(Int 2 * Sym n);
-          equal sint (Sym Ops.O.(n // int 2)) Ops.Sint.(Sym n // Int 2);
-          equal sint (Sym Ops.O.(n % int 2)) Ops.Sint.(Sym n % Int 2));
+          equal sint (Sym Ops.O.(n + int 1)) Shape.Sint.(Sym n + Int 1);
+          equal sint (Sym Ops.O.(int 1 + n)) Shape.Sint.(Int 1 + Sym n);
+          equal sint (Sym Ops.O.(n - int 1)) Shape.Sint.(Sym n - Int 1);
+          equal sint (Sym Ops.O.(int 2 * n)) Shape.Sint.(Int 2 * Sym n);
+          equal sint (Sym Ops.O.(n // int 2)) Shape.Sint.(Sym n // Int 2);
+          equal sint (Sym Ops.O.(n % int 2)) Shape.Sint.(Sym n % Int 2));
       test "prod multiplies from 1" (fun () ->
-          equal sint (Int 1) (Ops.Sint.prod []);
-          equal sint (Int 6) (Ops.Sint.prod [ Int 2; Int 3 ]);
-          equal sint (Sym Ops.O.(int 2 * n)) (Ops.Sint.prod [ Int 2; Sym n ]));
+          equal sint (Int 1) (Shape.Sint.prod []);
+          equal sint (Int 6) (Shape.Sint.prod [ Int 2; Int 3 ]);
+          equal sint (Sym Ops.O.(int 2 * n)) (Shape.Sint.prod [ Int 2; Sym n ]));
       test "comparisons of integers are known, of nodes conditions" (fun () ->
-          is_true (Ops.Sint.(Int 2 < Int 3) = Known true);
-          is_true (Ops.Sint.(Int 3 <= Int 2) = Known false);
-          is_true (Ops.Sint.(Int 3 <> Int 3) = Known false);
-          (match Ops.Sint.(Sym n < Int 3) with
+          is_true (Shape.Sint.(Int 2 < Int 3) = Known true);
+          is_true (Shape.Sint.(Int 3 <= Int 2) = Known false);
+          is_true (Shape.Sint.(Int 3 <> Int 3) = Known false);
+          (match Shape.Sint.(Sym n < Int 3) with
           | Cond c -> equal uop Ops.O.(n < int 3) c
           | Known _ -> fail "a comparison with a node is a condition");
-          match Ops.Sint.(Int 3 > Sym n) with
+          match Shape.Sint.(Int 3 > Sym n) with
           | Cond c -> equal uop Ops.O.(n < int 3) c
           | Known _ -> fail "a comparison with a node is a condition");
       test "resolve is a known condition's value" (fun () ->
-          is_true (Ops.Sint.resolve (Known true));
-          is_false (Ops.Sint.resolve ~default:true (Known false)));
+          is_true (Shape.Sint.resolve (Known true));
+          is_false (Shape.Sint.resolve ~default:true (Known false)));
       test "resolve decides a node by its bounds" (fun () ->
-          is_true (Ops.Sint.resolve Ops.Sint.(Sym n < Int 9));
-          is_false (Ops.Sint.resolve ~default:false Ops.Sint.(Sym n < Int 5));
-          is_true (Ops.Sint.resolve Ops.Sint.(Sym n <> Int 0)));
+          is_true (Shape.Sint.resolve Shape.Sint.(Sym n < Int 9));
+          is_false (Shape.Sint.resolve ~default:false Shape.Sint.(Sym n < Int 5));
+          is_true (Shape.Sint.resolve Shape.Sint.(Sym n <> Int 0)));
       test "equal compares integers by value and nodes by identity" (fun () ->
-          is_true (Ops.Sint.equal (Int 3) (Int 3));
-          is_false (Ops.Sint.equal (Int 3) (Sym (Ops.int 3)));
-          is_true (Ops.Sint.equal (Sym n) (Sym (weak_var "n" 1 8))));
+          is_true (Shape.Sint.equal (Int 3) (Int 3));
+          is_false (Shape.Sint.equal (Int 3) (Sym (Ops.int 3)));
+          is_true (Shape.Sint.equal (Sym n) (Sym (weak_var "n" 1 8))));
       test "pp formats an integer in decimal and a node as Ops.pp does"
         (fun () ->
-          equal string "3" (str Ops.Sint.pp (Int 3));
-          equal string (str Ops.pp n) (str Ops.Sint.pp (Sym n)));
+          equal string "3" (str Shape.Sint.pp (Int 3));
+          equal string (str Ops.pp n) (str Shape.Sint.pp (Sym n)));
     ]
 
 (* Divisibility *)
@@ -876,51 +876,51 @@ let divisibility =
       test "divides divides a stack lane by lane" (fun () ->
           equal (option uop)
             (Some (Ops.v ~src:[ Ops.O.(x * int 1); Ops.O.(x * int 2) ] Op.Stack))
-            (Ops.divides
-               (Ops.stack Ops.O.[ x * int 2; x * int 4 ])
+            (Shape.divides
+               (Shape.stack Ops.O.[ x * int 2; x * int 4 ])
                (Bigint.of_int 2));
           is_none
-            (Ops.divides
-               (Ops.stack Ops.O.[ x * int 2; x * int 3 ])
+            (Shape.divides
+               (Shape.stack Ops.O.[ x * int 2; x * int 3 ])
                (Bigint.of_int 2)));
       test "divides divides a product through its left factor first" (fun () ->
           let m = weak_var ~multiple_of:4 "m" 0 16 in
           equal (option uop)
             (Some Ops.O.(m // int 2 * x))
-            (Ops.divides Ops.O.(m * x) (Bigint.of_int 2));
-          is_none (Ops.divides Ops.O.(x + int 3) (Bigint.of_int 2)));
+            (Shape.divides Ops.O.(m * x) (Bigint.of_int 2));
+          is_none (Shape.divides Ops.O.(x + int 3) (Bigint.of_int 2)));
       test "const_factor of storage without a multiple is 1" (fun () ->
           equal z Bigint.one
-            (Ops.const_factor (Ops.param ~shape:(ints [ 4 ]) 0 Int32)));
-      test "gcd rejects nothing" (fun () -> rejects (fun () -> Ops.gcd []));
+            (Ops.const_factor (Shape.param ~shape:(ints [ 4 ]) 0 Int32)));
+      test "gcd rejects nothing" (fun () -> rejects (fun () -> Shape.gcd []));
       test "gcd of constants is their gcd" (fun () ->
-          equal uop (Ops.int 2) (Ops.gcd [ Ops.int 6; Ops.int 4 ]));
+          equal uop (Ops.int 2) (Shape.gcd [ Ops.int 6; Ops.int 4 ]));
       test "const_factor of a stack is the gcd of its lanes" (fun () ->
           equal z (Bigint.of_int 2)
-            (Ops.const_factor (Ops.stack Ops.O.[ x * int 2; x * int 4 ])));
+            (Ops.const_factor (Shape.stack Ops.O.[ x * int 2; x * int 4 ])));
       test "divides divides a known multiple" (fun () ->
           equal (option z)
             (Some (Bigint.of_int 6))
             (Option.map Ops.const_factor
-               (Ops.divides (Ops.int 42) (Bigint.of_int 7)));
-          is_none (Ops.divides (Ops.int 42) (Bigint.of_int 5));
+               (Shape.divides (Ops.int 42) (Bigint.of_int 7)));
+          is_none (Shape.divides (Ops.int 42) (Bigint.of_int 5));
           equal (option z) (Some Bigint.one)
             (Option.map Ops.const_factor
-               (Ops.divides Ops.O.((x * int 6) + int 18) (Bigint.of_int 6)));
+               (Shape.divides Ops.O.((x * int 6) + int 18) (Bigint.of_int 6)));
           is_none
-            (Ops.divides Ops.O.(weak_var "x" 15 45 * int 4) (Bigint.of_int 3));
+            (Shape.divides Ops.O.(weak_var "x" 15 45 * int 4) (Bigint.of_int 3));
           is_some
-            (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 4));
+            (Shape.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 4));
           is_some
-            (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 2));
-          equal (option uop) (Some x) (Ops.divides x Bigint.one));
+            (Shape.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 2));
+          equal (option uop) (Some x) (Shape.divides x Bigint.one));
       test "divides divides a float constant only into an integer" (fun () ->
-          is_none (Ops.divides (Ops.float 2.5) (Bigint.of_int 2));
+          is_none (Shape.divides (Ops.float 2.5) (Bigint.of_int 2));
           equal (option uop)
             (Some (Ops.float 2.))
-            (Ops.divides (Ops.float 4.) (Bigint.of_int 2)));
+            (Shape.divides (Ops.float 4.) (Bigint.of_int 2)));
       test "a typed constant is a cast, whose divisors are not known" (fun () ->
-          is_none (Ops.divides (Ops.int ~dtype:Int32 8) (Bigint.of_int 2));
+          is_none (Shape.divides (Ops.int ~dtype:Int32 8) (Bigint.of_int 2));
           equal z Bigint.one (Ops.const_factor (Ops.int ~dtype:Int32 8)));
       test "pop_const splits off a constant operand" (fun () ->
           let e = Ops.O.(x + int 3) in
@@ -933,69 +933,69 @@ let divisibility =
       test "gcd keeps the common factors and the gcd of the coefficients"
         (fun () ->
           let y = weak_var "y" 1 4 and z' = weak_var "z" 1 4 in
-          equal uop Ops.O.(int 1 * x) (Ops.gcd Ops.O.[ x * y; x * z' ]);
-          equal uop (Ops.int 2) (Ops.gcd Ops.O.[ x * int 6; y * int 4 ]));
+          equal uop Ops.O.(int 1 * x) (Shape.gcd Ops.O.[ x * y; x * z' ]);
+          equal uop (Ops.int 2) (Shape.gcd Ops.O.[ x * int 6; y * int 4 ]));
       test "divide_exact divides each term, or gives up" (fun () ->
           let y = weak_var "y" 1 4 and z' = weak_var "z" 1 4 in
-          equal (option uop) (Some (Ops.int 1)) (Ops.divide_exact x x);
+          equal (option uop) (Some (Ops.int 1)) (Shape.divide_exact x x);
           equal (option uop)
             (Some Ops.O.((int 1 * y) + (int 1 * z')))
-            (Ops.divide_exact Ops.O.((x * y) + (x * z')) x);
+            (Shape.divide_exact Ops.O.((x * y) + (x * z')) x);
           equal (option uop)
             (Some (Ops.int 3))
-            (Ops.divide_exact (Ops.int 6) (Ops.int 2));
-          is_none (Ops.divide_exact Ops.O.(x + int 1) x);
+            (Shape.divide_exact (Ops.int 6) (Ops.int 2));
+          is_none (Shape.divide_exact Ops.O.(x + int 1) x);
           is_none
-            (Ops.divide_exact
+            (Shape.divide_exact
                Ops.O.(x * int 6)
                Ops.O.(weak_var "y" 1 4 * int 2));
           is_none
-            (Ops.divide_exact
-               (Ops.stack Ops.O.[ x * int 2; x * int 4 ])
-               (Ops.consts [ i 2; i 4 ])));
+            (Shape.divide_exact
+               (Shape.stack Ops.O.[ x * int 2; x * int 4 ])
+               (Shape.consts [ i 2; i 4 ])));
     ]
 
 (* Symbolic inference and programs *)
 
 let alu_param ?(lo = 0) ?(hi = 8) name slot =
-  Ops.param ~vmin_vmax:(i lo, i hi) ~name ~addrspace:(Some Alu) slot Int32
+  Shape.param ~vmin_vmax:(i lo, i hi) ~name ~addrspace:(Some Alu) slot Int32
 
 let inference =
   group "sym_infer"
     [
       test "an integer is itself" (fun () ->
-          equal int 5 (Ops.sym_infer (Int 5) []));
+          equal int 5 (Shape.sym_infer (Int 5) []));
       test "a node takes its variables' values" (fun () ->
           let n = weak_var "n" 0 100 in
           equal int 7
-            (Ops.sym_infer (Sym Ops.O.((n * int 2) + int 1)) [ ("n", 3) ]);
+            (Shape.sym_infer (Sym Ops.O.((n * int 2) + int 1)) [ ("n", 3) ]);
           equal int 9
-            (Ops.sym_infer (Sym Ops.O.(Ops.bind n (i 7) + int 1)) [ ("n", 8) ]));
+            (Shape.sym_infer (Sym Ops.O.(Shape.bind n (i 7) + int 1)) [ ("n", 8) ]));
       test "divisions round as their operations say" (fun () ->
           let n = weak_var "n" (-10) 10 in
-          equal int (-3) (Ops.sym_infer (Sym Ops.O.(n // int 3)) [ ("n", -7) ]);
-          equal int 2 (Ops.sym_infer (Sym Ops.O.(n % int 3)) [ ("n", -7) ]);
+          equal int (-3) (Shape.sym_infer (Sym Ops.O.(n // int 3)) [ ("n", -7) ]);
+          equal int 2 (Shape.sym_infer (Sym Ops.O.(n % int 3)) [ ("n", -7) ]);
           equal int (-2)
-            (Ops.sym_infer
+            (Shape.sym_infer
                (Sym (Ops.alu n Op.Cdiv [ Ops.int 3 ]))
                [ ("n", -7) ]);
           equal int (-1)
-            (Ops.sym_infer
+            (Shape.sym_infer
                (Sym (Ops.alu n Op.Cmod [ Ops.int 3 ]))
                [ ("n", -7) ]));
       test "a cast converts without truncating to a width" (fun () ->
           let n = weak_var "n" (-1000) 1000 in
           let half = Ops.O.(Ops.cast n Float32 / float 2.) in
           equal int 7
-            (Ops.sym_infer
+            (Shape.sym_infer
                (Sym Ops.O.(Ops.cast half Weak_int + int 10))
                [ ("n", -7) ]);
           equal int 300
-            (Ops.sym_infer
+            (Shape.sym_infer
                (Sym (Ops.cast (Ops.cast n Int8) Weak_int))
                [ ("n", 300) ]));
       test "a missing variable is rejected" (fun () ->
-          rejects (fun () -> Ops.sym_infer (Sym (weak_var "n" 0 4)) []));
+          rejects (fun () -> Shape.sym_infer (Sym (weak_var "n" 0 4)) []));
     ]
 
 (* sym_compile computes what sym_infer does, on expressions whose values fit
@@ -1040,8 +1040,8 @@ let exn =
 let both e va vb =
   let env = [ ("a", va); ("b", vb) ] in
   let var u = List.assoc (Ops.expr u) in
-  ( outcome (fun () -> Ops.sym_infer (Sym e) env),
-    outcome (fun () -> Ops.sym_compile (Sym e) var env) )
+  ( outcome (fun () -> Shape.sym_infer (Sym e) env),
+    outcome (fun () -> Shape.sym_compile (Sym e) var env) )
 
 let agrees ?constants ~name a b value =
   let draw =
@@ -1146,17 +1146,17 @@ let compilation =
         "raises as sym_infer does where a value fits no int" unfit
         raises_as_inferred;
       test "an integer is itself" (fun () ->
-          equal int 5 (Ops.sym_compile (Int 5) (fun _ () -> 0) ()));
+          equal int 5 (Shape.sym_compile (Int 5) (fun _ () -> 0) ()));
       test "a variable is what var reads" (fun () ->
           let n = weak_var "n" 0 100 in
           equal int 7
-            (Ops.sym_compile
+            (Shape.sym_compile
                (Sym Ops.O.((n * int 2) + int 1))
                (fun _ x -> x)
                3));
       test "a variable var refuses raises" (fun () ->
           rejects (fun () ->
-              Ops.sym_compile
+              Shape.sym_compile
                 (Sym Ops.O.(weak_var "n" 0 4 + int 1))
                 (fun _ () -> invalid_arg "no n")
                 ()));
@@ -1169,8 +1169,8 @@ let programs =
         (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
           and n = alu_param ~lo:2 "n" 1 in
-          let input = Ops.param ~shape:(ints [ 16 ]) 2 Float32
-          and output = Ops.param ~shape:(ints [ 16 ]) 3 Float32 in
+          let input = Shape.param ~shape:(ints [ 16 ]) 2 Float32
+          and output = Shape.param ~shape:(ints [ 16 ]) 3 Float32 in
           let stored =
             Ops.store (Ops.index output [ n ])
               (Ops.load (Ops.index input [ n ]) [])
@@ -1184,7 +1184,7 @@ let programs =
                 core_id;
               ]
           in
-          let info = Ops.program_info_of_sink sink in
+          let info = Shape.program_info_of_sink sink in
           equal (list int) [ 2; 3 ] info.globals;
           equal (list int) [ 3 ] info.outs;
           equal (list int) [ 2 ] info.ins;
@@ -1193,7 +1193,7 @@ let programs =
           equal
             (pair (list int) (list int))
             ([ 1; 1; 4 ], [ 1; 8; 1 ])
-            (Ops.launch_dims info []);
+            (Shape.launch_dims info []);
           is_true
             (info.target
             = Helpers.Target.
@@ -1206,8 +1206,8 @@ let programs =
                 }));
       test "a load through a cast and a store into a shrink are accesses"
         (fun () ->
-          let p0 = Ops.param ~shape:(ints [ 4 ]) 0 Uint8
-          and p1 = Ops.param ~shape:(ints [ 4 ]) 1 Uint8 in
+          let p0 = Shape.param ~shape:(ints [ 4 ]) 0 Uint8
+          and p1 = Shape.param ~shape:(ints [ 4 ]) 1 Uint8 in
           let cast_read =
             Ops.load
               (Ops.v
@@ -1217,36 +1217,36 @@ let programs =
           in
           let write =
             Ops.store
-              (Ops.shrink p1 [ Some (Int 0, Int 2) ])
-              (Ops.expand (Ops.int ~dtype:Uint8 1) (ints [ 2 ]))
+              (Shape.shrink p1 [ Some (Int 0, Int 2) ])
+              (Shape.expand (Ops.int ~dtype:Uint8 1) (ints [ 2 ]))
           in
-          let info = Ops.program_info_of_sink (Ops.sink [ write; cast_read ]) in
+          let info = Shape.program_info_of_sink (Ops.sink [ write; cast_read ]) in
           equal (list int) [ 0 ] info.ins;
           equal (list int) [ 1 ] info.outs);
       test "a load through a cast of something other than an index is no access"
         (fun () ->
-          let p0 = Ops.param ~shape:(ints [ 4 ]) 0 Uint8
-          and p1 = Ops.param ~shape:(ints [ 4 ]) 1 Uint8 in
+          let p0 = Shape.param ~shape:(ints [ 4 ]) 0 Uint8
+          and p1 = Shape.param ~shape:(ints [ 4 ]) 1 Uint8 in
           let write =
             Ops.store (Ops.index p1 [ Ops.int 0 ]) (Ops.int ~dtype:Uint8 1)
           in
           let info =
-            Ops.program_info_of_sink
+            Shape.program_info_of_sink
               (Ops.sink [ write; Ops.load (Ops.cast p0 Int8) [] ])
           in
           equal (list int) [ 1 ] info.outs;
           equal (list int) [] info.ins);
       test "vals rejects a missing variable, naming it" (fun () ->
           let info =
-            Ops.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])
+            Shape.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])
           in
           raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
               Ops.vals info []));
       test "program_info_of_sink reads symbolic launch sizes" (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
           and n = alu_param ~lo:2 "n" 1 in
-          let input = Ops.param ~shape:(ints [ 16 ]) 2 Float32
-          and output = Ops.param ~shape:(ints [ 16 ]) 3 Float32 in
+          let input = Shape.param ~shape:(ints [ 16 ]) 2 Float32
+          and output = Shape.param ~shape:(ints [ 16 ]) 3 Float32 in
           let stored =
             Ops.store (Ops.index output [ n ])
               (Ops.load (Ops.index input [ n ]) [])
@@ -1261,7 +1261,7 @@ let programs =
                 core_id;
               ]
           in
-          let info = Ops.program_info_of_sink sink in
+          let info = Shape.program_info_of_sink sink in
           equal (list int) [ 2; 3 ] info.globals;
           equal (list int) [ 3 ] info.outs;
           equal (list int) [ 2 ] info.ins;
@@ -1270,7 +1270,7 @@ let programs =
           equal
             (pair (list int) (list int))
             ([ 1; 1; 7 ], [ 1; 8; 1 ])
-            (Ops.launch_dims info [ ("n", 6); ("core_id", 2) ]);
+            (Shape.launch_dims info [ ("n", 6); ("core_id", 2) ]);
           is_true
             (info.target
             = Helpers.Target.
@@ -1284,21 +1284,21 @@ let programs =
       test "every buffer reads and writes when no access says otherwise"
         (fun () ->
           let info =
-            Ops.program_info_of_sink
+            Shape.program_info_of_sink
               (Ops.sink
                  [
-                   Ops.param ~shape:(ints [ 4 ]) 0 Float32;
-                   Ops.param ~shape:(ints [ 4 ]) 5 Float32;
+                   Shape.param ~shape:(ints [ 4 ]) 0 Float32;
+                   Shape.param ~shape:(ints [ 4 ]) 5 Float32;
                  ])
           in
           equal (list int) [ 0; 5 ] info.globals;
           equal (list int) [ 0; 5 ] info.outs;
           equal (list int) [ 0; 5 ] info.ins;
-          equal (list int) [ 1; 1; 1 ] (fst (Ops.launch_dims info [])));
+          equal (list int) [ 1; 1; 1 ] (fst (Shape.launch_dims info [])));
       test "launch sizes divide as their operations say" (fun () ->
           let n = alu_param ~lo:(-10) ~hi:10 "n" 0 in
           let info =
-            Ops.program_info_of_sink
+            Shape.program_info_of_sink
               (Ops.sink
                  [
                    Ops.special (Sym Ops.O.(n // int 3)) "gidx0";
@@ -1306,20 +1306,20 @@ let programs =
                  ])
           in
           equal (list int) [ -3; 2; 1 ]
-            (fst (Ops.launch_dims info [ ("n", -7) ])));
+            (fst (Shape.launch_dims info [ ("n", -7) ])));
       test "launch_dims rejects a missing variable" (fun () ->
           let extent = alu_param "extent" 0 in
           let info =
-            Ops.program_info_of_sink
+            Shape.program_info_of_sink
               (Ops.sink [ Ops.special (Sym extent) "gidx0" ])
           in
           raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
               Ops.vals info []);
-          rejects (fun () -> Ops.launch_dims info []));
+          rejects (fun () -> Shape.launch_dims info []));
       test "program_info_of_sink records its target" (fun () ->
           let target = Result.get_ok (Helpers.Target.of_string "CPU:CLANG") in
           is_true
-            ((Ops.program_info_of_sink ~target (Ops.sink [])).target = target));
+            ((Shape.program_info_of_sink ~target (Ops.sink [])).target = target));
     ]
 
 let groups =

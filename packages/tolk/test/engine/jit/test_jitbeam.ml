@@ -11,7 +11,7 @@ let devices = Tolk_engine.device (Run.devices ())
    searched once per process, so each test lowers a kernel of its own. *)
 let captured c =
   let i = Ops.range (Int 4) [ 0 ] in
-  let at slot = Ops.index (Ops.placeholder ~slot [ 4 ] Float32) [ i ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ 4 ] Float32) [ i ] in
   let kernel =
     Ops.sink
       ~kernel:(Ops.kernel_info ~name:"inc" ())

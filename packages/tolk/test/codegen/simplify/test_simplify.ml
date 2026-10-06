@@ -334,7 +334,7 @@ let collapsing =
           let u = Ops.O.(two * Ops.cast Ops.O.(r < Ops.int 3) Float32) in
           equal int 0 (count Where (collapse u)));
       test "a parameter guarding a sum is lifted out of it" (fun () ->
-          let p = Ops.param 0 Bool in
+          let p = Shape.param 0 Bool in
           let u =
             collapse
               (sum (Ops.where Ops.O.(p land (r < Ops.int 3)) two zero) [ r ])
@@ -438,7 +438,7 @@ let solving =
         (fun () ->
           let r = reduce_range 4 0
           and k = var "k" 0 4
-          and x = Ops.param 0 Float32 in
+          and x = Shape.param 0 Float32 in
           let u = sum (Ops.where Ops.O.(r < k) x zero) [ r ] in
           List.iter
             (fun (kv, xv) ->
@@ -448,7 +448,7 @@ let solving =
                 (Interpreter.eval ~vars ~params (collapse u)))
             [ (0, Float.infinity); (0, Float.nan); (2, 1.5) ]);
       test "a float product by a boolean mask keeps its value" (fun () ->
-          let x = Ops.param 0 Float32 and g = Ops.param 1 Bool in
+          let x = Shape.param 0 Float32 and g = Shape.param 1 Bool in
           let u = Ops.O.(x * Ops.cast g Float32) in
           List.iter
             (fun xv ->
@@ -726,7 +726,7 @@ let kernel_of (dims, order, guard) =
   let index =
     match guard with
     | None -> index
-    | Some (j, c) -> Ops.valid index Ops.O.(List.nth rs j < Ops.int c)
+    | Some (j, c) -> Shape.valid index Ops.O.(List.nth rs j < Ops.int c)
   in
   initial_symbolic
     (kernel

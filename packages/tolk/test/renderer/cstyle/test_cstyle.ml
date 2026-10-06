@@ -102,7 +102,7 @@ let with_d17_casts row uops =
     Op.Set.mem (Ops.op u) Op.Set.alu
     && (not (Op.equal (Ops.op u) Where))
     && count u = 1
-    && Ops.max_numel u = 1
+    && Shape.max_numel u = 1
     && List.mem (Ops.dtype u) (narrow_scalars row)
     && not (stores u)
   in
@@ -368,7 +368,7 @@ let arity op =
 let one_operation op dt =
   let operand i = if Op.equal op Where && i = 0 then Dtype.Bool else dt in
   let at slot dt =
-    Ops.index (Ops.param ~shape:[ Int 1 ] slot dt) [ Ops.int ~dtype:Int32 0 ]
+    Ops.index (Shape.param ~shape:[ Int 1 ] slot dt) [ Ops.int ~dtype:Int32 0 ]
   in
   let loads =
     List.init (arity op) (fun i -> Ops.load (at (i + 1) (operand i)) [])
@@ -427,7 +427,7 @@ let keeps_no_reference () =
   let[@inline never] render_once () =
     let at =
       Ops.index
-        (Ops.param ~shape:[ Int 1 ] 7139 Float32)
+        (Shape.param ~shape:[ Int 1 ] 7139 Float32)
         [ Ops.int ~dtype:Int32 0 ]
     in
     let sink = Ops.sink [ Ops.store at (Ops.float ~dtype:Float32 7139.) ] in
@@ -453,7 +453,7 @@ let cuda_on_nv () =
 let custom code =
   let at slot =
     Ops.index
-      (Ops.param ~shape:[ Int 1 ] slot Float32)
+      (Shape.param ~shape:[ Int 1 ] slot Float32)
       [ Ops.int ~dtype:Int32 0 ]
   in
   let operands = [ Ops.load (at 1) []; Ops.load (at 2) [] ] in
@@ -568,7 +568,7 @@ let cuda_binaries =
    truncates a bfloat16 in float32. *)
 let truncated_bf16 =
   let zero = Ops.int ~dtype:Int32 0 in
-  let at slot = Ops.index (Ops.param ~shape:[ Int 1 ] slot Bfloat16) [ zero ] in
+  let at slot = Ops.index (Shape.param ~shape:[ Int 1 ] slot Bfloat16) [ zero ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"trunc_bf16" ())
     [ Ops.store (at 0) (Ops.trunc (Ops.load (at 1) [])) ]
@@ -758,7 +758,7 @@ let held dt (v : Dtype.value) : Dtype.value =
 let stores_constants dt (cs : Dtype.value list) =
   let n = 2 * List.length cs in
   let at i =
-    Ops.index (Ops.param ~shape:[ Int n ] 0 dt) [ Ops.int ~dtype:Int32 i ]
+    Ops.index (Shape.param ~shape:[ Int n ] 0 dt) [ Ops.int ~dtype:Int32 i ]
   in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"constants" ())
@@ -850,7 +850,7 @@ let stores_ints_as_their_type_holds_them (dt, cs) =
    is the program's to run, and the source compiles. *)
 let converts_a_special_to_an_int (dt, x) =
   let at =
-    Ops.index (Ops.param ~shape:[ Int 1 ] 0 dt) [ Ops.int ~dtype:Int32 0 ]
+    Ops.index (Shape.param ~shape:[ Int 1 ] 0 dt) [ Ops.int ~dtype:Int32 0 ]
   in
   let sink =
     Ops.sink
@@ -1058,7 +1058,7 @@ let whole_loop uops vars =
                | _ -> None)
              uops)
       in
-      [ (name s.lo, 0); (name s.hi, Ops.sym_infer s.iterations vars) ]
+      [ (name s.lo, 0); (name s.hi, Shape.sym_infer s.iterations vars) ]
 
 let interpreted uops (buffers, vars) =
   let sink = List.nth uops (List.length uops - 1) in
@@ -1208,7 +1208,7 @@ let product_by_reciprocal i =
 let division =
   let n = Array.length dividends in
   let i = Ops.range (Int n) [ 0 ] in
-  let at slot = Ops.index (Ops.placeholder ~slot [ n ] Float32) [ i ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"fdiv" ())
     [ Ops.end_ (Ops.store (at 0) (Ops.alu (at 1) Fdiv [ at 2 ])) [ i ] ]
@@ -1262,7 +1262,7 @@ let division_group =
 (* A kernel of one float lane: [data0[0] = f (data1[0], data2[0])]. *)
 let lane f =
   let zero = Ops.int ~dtype:Int32 0 in
-  let at slot = Ops.index (Ops.param ~shape:[ Int 1 ] slot Float32) [ zero ] in
+  let at slot = Ops.index (Shape.param ~shape:[ Int 1 ] slot Float32) [ zero ] in
   Linearizer.linearize
     (Ops.sink
        ~kernel:(Ops.kernel_info ~name:"lane" ())
@@ -1317,7 +1317,7 @@ let grouping =
       test "Clang computes a product of a product as it is grouped" (fun () ->
           let zero = Ops.int ~dtype:Int32 0 in
           let at slot =
-            Ops.index (Ops.param ~shape:[ Int 1 ] slot Float32) [ zero ]
+            Ops.index (Shape.param ~shape:[ Int 1 ] slot Float32) [ zero ]
           in
           let load slot = Ops.load (at slot) [] in
           let mul x y = Ops.alu x Mul [ y ] in
@@ -1347,7 +1347,7 @@ let grouping =
    instruction keeping the value's zero. *)
 let zero_select dt =
   let zero = Ops.int ~dtype:Int32 0 in
-  let at slot = Ops.index (Ops.param ~shape:[ Int 1 ] slot dt) [ zero ] in
+  let at slot = Ops.index (Shape.param ~shape:[ Int 1 ] slot dt) [ zero ] in
   let x = Ops.load (at 1) [] in
   let z = Ops.float ~dtype:dt 0. in
   Linearizer.linearize
@@ -1358,7 +1358,7 @@ let zero_select dt =
 (* A select of a value and a zero by a condition loaded from memory. *)
 let zero_masked dt =
   let zero = Ops.int ~dtype:Int32 0 in
-  let at slot dt = Ops.index (Ops.param ~shape:[ Int 1 ] slot dt) [ zero ] in
+  let at slot dt = Ops.index (Shape.param ~shape:[ Int 1 ] slot dt) [ zero ] in
   let x = Ops.load (at 1 dt) [] and c = Ops.load (at 2 Bool) [] in
   Linearizer.linearize
     (Ops.sink

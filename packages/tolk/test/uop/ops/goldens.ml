@@ -4,6 +4,7 @@
 open Tolk
 open Common
 open Ops
+open Shape
 
 let a () = var "a" 0 10
 let b () = var "b" 0 10
@@ -428,8 +429,8 @@ let storage () =
   sink
     [
       param ~device:(Single "CPU") [ 2; 3; 4 ] 2 Float32;
-      Ops.param 3 Float16;
-      Ops.param ~shape:(ints [ 4 ])
+      Shape.param 3 Float16;
+      Shape.param ~shape:(ints [ 4 ])
         ~vmin_vmax:(f 0., f 1.)
         ~name:"w" ~volatile:true 4 Float32;
       placeholder ~slot:5 [ 2; 3 ] Weak_int;
@@ -599,8 +600,8 @@ let symbolic_storage () =
   let n = weak_var "n" 1 8 in
   sink
     [
-      Ops.param ~shape:[ Int 2; Sym n ] 0 Float32;
-      Ops.param ~shape:[ Sym n ] 1 Int32;
+      Shape.param ~shape:[ Int 2; Sym n ] 0 Float32;
+      Shape.param ~shape:[ Sym n ] 1 Int32;
       alloc ~slot:8 [ Int 2; Sym n ] Weak_float;
     ]
 
@@ -623,9 +624,9 @@ let symbolic_shard_slices () =
 let symbolic_outputs () =
   let a = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
   let n = weak_var "n" 1 4 in
-  let b = Ops.param ~device:(Single "CPU") ~shape:[ Sym n ] 1 Float32 in
+  let b = Shape.param ~device:(Single "CPU") ~shape:[ Sym n ] 1 Float32 in
   let formal =
-    Ops.param ~vmin_vmax:(i 1, i 8) ~name:"d" ~addrspace:(Some Alu) 0 Int32
+    Shape.param ~vmin_vmax:(i 1, i 8) ~name:"d" ~addrspace:(Some Alu) 0 Int32
   in
   sink
     (call_with_outputs ~output_pos:[ 0 ] O.[ b + float 1. ] [ a; b ]
@@ -827,13 +828,13 @@ let reprs () =
     ("binary", v ~arg:(Bytes "\x7fELF\x00\n'\"") Op.Binary);
     ("source", v ~arg:(String "int x = 'a';\n") Op.Source);
     ("param", param [ 256 ] 3 Float32);
-    ("scalar param", Ops.param 1 Int32);
+    ("scalar param", Shape.param 1 Int32);
     ("variable", n);
     ("bound variable", bind n (i 3));
     ( "named local buffer",
       placeholder ~slot:2 ~addrspace:Local ~tag:(String "buf") [ 4 ] Int32 );
     ( "volatile param",
-      Ops.param ~shape:(ints [ 4 ]) ~volatile:true ~device:(Single "CPU") 0
+      Shape.param ~shape:(ints [ 4 ]) ~volatile:true ~device:(Single "CPU") 0
         Uint32 );
     ("alloc", alloc ~slot:7 ~device:(Single "CPU") (ints [ 4 ]) Float32);
     ("kernel", sink ~kernel:(kernel_info ()) []);
