@@ -8,6 +8,12 @@ open Elementwise
 type 'x t =
   | Dense
   | Cg of { rel : float; budget : int; precondition : 'x -> 'x }
+  | Gmres of {
+      restart : int;
+      rel : float;
+      budget : int;
+      precondition : 'x -> 'x;
+    }
 
 let dense = Dense
 
@@ -19,7 +25,18 @@ let cg ~rel ~budget ~precondition =
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   Cg { rel; budget; precondition }
 
-let name = function Dense -> "dense" | Cg _ -> "cg"
+let gmres ~restart ~rel ~budget ~precondition =
+  let fn = "Jera.Linear.gmres" in
+  if restart < 1 then
+    invalid_arg (Printf.sprintf "%s: restart = %d is below 1" fn restart);
+  if budget < restart then
+    invalid_arg
+      (Printf.sprintf "%s: budget = %d is below restart = %d" fn budget restart);
+  if not (rel > 0. && rel < 1.) then
+    invalid_arg (Printf.sprintf "%s: rel = %g is not in (0, 1)" fn rel);
+  Gmres { restart; rel; budget; precondition }
+
+let name = function Dense -> "dense" | Cg _ -> "cg" | Gmres _ -> "gmres"
 
 (* Vectors *)
 
@@ -214,6 +231,102 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
     facts = [ Fact ("non-positive curvature", Nx.cast dtype flat) ];
   }
 
+(* GMRES
+
+   A cycle builds an orthonormal basis [V] of the Krylov space of [a M] from the
+   residual, [M] the preconditioner, with the Hessenberg matrix [H] of [a M] on
+   it: step [j] orthogonalises [a M v_j] against the basis by Gram–Schmidt
+   applied twice, which keeps [V] orthonormal to rounding. The [y] of least [‖β
+   e₁ − H y‖] comes from [H]'s pseudoinverse, which also holds when the space
+   stops growing: an exact solution in the span leaves zero columns, whose [y]
+   is zero. The cycle then moves [u] by [M Vᵀ y] and applies [a] for the next
+   residual. The loop's carry holds [u], the residual [r − a u] and the count of
+   cycles. *)
+
+let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
+    (res : (float, d) Nx.t) =
+  let rows = restart + 1 in
+  (* [e_k] among the basis's rows, and among [H]'s columns. *)
+  let row k = Nx.cast dtype (Nx.equal (Nx.arange Nx.int32 0 rows 1) k) in
+  let column k = Nx.cast dtype (Nx.equal (Nx.arange Nx.int32 0 restart 1) k) in
+  let outer x y =
+    Nx.mul (Nx.reshape [| Nx.dim 0 x; 1 |] x) (Nx.reshape [| 1; Nx.dim 0 y |] y)
+  in
+  let normalise w norm =
+    let zero = Nx.equal_s norm 0. in
+    Nx.where zero (Nx.zeros_like w)
+      (Nx.div w (Nx.where zero (Nx.ones_like norm) norm))
+  in
+  let step (v, h) j =
+    let w = apply (precondition (Nx.matmul (row j) v)) in
+    let orthogonalise w =
+      let c = Nx.matmul v w in
+      (Nx.sub w (Nx.matmul (Nx.transpose v) c), c)
+    in
+    let w, c1 = orthogonalise w in
+    let w, c2 = orthogonalise w in
+    let norm = Nx.norm w in
+    let next = row (Nx.add_s j 1l) in
+    let v = Nx.add v (outer next (normalise w norm)) in
+    let h =
+      Nx.add h (outer (Nx.add (Nx.add c1 c2) (Nx.mul next norm)) (column j))
+    in
+    ((v, h), ())
+  in
+  let beta = Nx.norm res in
+  let first = row (Nx.scalar Nx.int32 0l) in
+  let (v, h), () =
+    Rune.scan
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.tensor Nx.Ptree.unit ~f:step
+      ~init:
+        (outer first (normalise res beta), Nx.zeros dtype [| rows; restart |])
+      (Nx.arange Nx.int32 0 restart 1)
+  in
+  let y = Nx.matmul (Nx.pinv h) (Nx.mul first beta) in
+  precondition (Nx.matmul y (Nx.slice [ Nx.R (0, restart) ] v))
+
+let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
+    apply precondition (r : (float, d) Nx.t) =
+  let target = Nx.mul_s (Nx.norm r) rel in
+  let cycles = budget / restart in
+  let cycle (u, (res, k)) =
+    let u = Nx.add u (arnoldi dtype ~restart apply precondition res) in
+    (u, (Nx.sub r (apply u), Nx.add_s k 1l))
+  in
+  let stops (_, (res, k)) =
+    Nx.logical_or
+      (Nx.less_equal (Nx.norm res) target)
+      (Nx.logical_or
+         (Nx.greater_equal_s k (Int32.of_int cycles))
+         (Nx.logical_not (finite res)))
+  in
+  let u, (res, k) =
+    Rune.iterate
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      ~max:cycles ~until:stops ~f:cycle
+      (Nx.zeros_like r, (r, Nx.scalar Nx.int32 0l))
+  in
+  {
+    u;
+    residual = Nx.neg res;
+    bound = target;
+    outcomes =
+      [
+        (Nx.logical_not (Nx.logical_and (finite r) (finite res)), Not_finite);
+        (Nx.greater (Nx.norm res) target, Budget_spent);
+      ];
+    spent =
+      Some
+        {
+          used = Nx.mul_s k (Int32.of_int restart);
+          unit = "iterations";
+          budget;
+        };
+    applications = Nx.mul_s k (Int32.of_int (restart + 1));
+    facts = [];
+  }
+
 (* The run of [s] on [apply u = r], [n] unknowns, with [precondition] on
    vectors. *)
 let run (type d) s (dtype : (float, d) Nx.dtype) n apply precondition
@@ -221,12 +334,14 @@ let run (type d) s (dtype : (float, d) Nx.dtype) n apply precondition
   match s with
   | Dense -> direct dtype n apply r
   | Cg { rel; budget; _ } -> conjugate dtype ~rel ~budget apply precondition r
+  | Gmres { restart; rel; budget; _ } ->
+      generalised dtype ~restart ~rel ~budget apply precondition r
 
 (* [s]'s preconditioner on the vectors of [ravel] and [unravel]. *)
 let preconditioner fn x s ravel unravel =
   match s with
   | Dense -> Fun.id
-  | Cg { precondition; _ } ->
+  | Cg { precondition; _ } | Gmres { precondition; _ } ->
       fun v -> ravel (checked fn x precondition (unravel v))
 
 let failed run =

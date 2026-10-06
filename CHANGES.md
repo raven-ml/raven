@@ -1015,6 +1015,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Linear.gmres`, restarted GMRES preconditioned on the right, for
+  non-symmetric systems: each cycle of `restart` Arnoldi steps is a scan,
+  and the solve stops between cycles on the residual.
 - Add `Linear.cg`, preconditioned conjugate gradients for symmetric
   positive-definite systems, stopped at `‖a u − r‖ ≤ rel ‖r‖` or on a
   direction of non-positive curvature.

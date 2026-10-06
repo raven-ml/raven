@@ -355,6 +355,30 @@ let cg =
     rows = all;
   }
 
+(* The Poisson operator with a central first difference of weight 1/2, a
+   convection that makes it non-symmetric, plus the diagonal argument, by GMRES
+   restarted every 30 steps. *)
+let gmres =
+  {
+    id = "linear-gmres-convection-256";
+    f =
+      (fun d ->
+        let convection u =
+          let n = Nx.dim 0 u in
+          let left = Nx.pad [| (1, 0) |] 0. (Nx.slice [ Nx.R (0, n - 1) ] u)
+          and right = Nx.pad [| (0, 1) |] 0. (Nx.slice [ Nx.R (1, n) ] u) in
+          Nx.mul_s (Nx.sub right left) 0.25
+        in
+        Solution.get
+          (Linear.solve Nx.Ptree.tensor
+             (Linear.gmres ~restart:30 ~rel:1e-8 ~budget:1200
+                ~precondition:Fun.id)
+             (fun u -> Nx.add (Nx.add (poisson u) (convection u)) (Nx.mul d u))
+             (Nx.ones f64 [| 256 |])));
+    x = (fun () -> Nx.linspace f64 0.01 0.02 256);
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -375,6 +399,7 @@ let workloads =
     delay;
     dense;
     cg;
+    gmres;
   ]
 
 let compiled f x =

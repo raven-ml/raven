@@ -187,6 +187,88 @@ let cg_tests =
             Linear.cg ~rel:1e-6 ~budget:0 ~precondition:Fun.id));
   ]
 
+(* GMRES *)
+
+let gmres ?(restart = 10) ?(rel = 1e-12) ?(budget = 100)
+    ?(precondition = Fun.id) a r =
+  Linear.solve one
+    (Linear.gmres ~restart ~rel ~budget ~precondition)
+    (product a) r
+
+let gmres_tests =
+  [
+    prop "its residual meets rel, so u is Nx.solve's to cond (a) rel" system
+      (fun (a, r) ->
+        cover "an empty system" (Nx.dim 0 r = 0);
+        cover "more unknowns than a cycle's steps" (Nx.dim 0 r > 4);
+        let u = Solution.get (gmres ~restart:4 a r) in
+        let norm x = Nx.item [] (Nx.norm x) in
+        at_most float_exact
+          ~than:(1e-12 *. norm r)
+          (norm (Nx.sub (product a u) r));
+        if Nx.dim 0 r > 0 then
+          equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);
+    test "a cycle as long as the system solves it" (fun () ->
+        (* The Krylov space of n steps holds the solution: one cycle of n
+           products, and the residual's. *)
+        let a =
+          Nx.create f64 [| 4; 4 |]
+            [|
+              4.; 1.; 0.; 2.; -1.; 5.; 1.; 0.; 0.; 2.; 6.; 1.; 1.; 0.; -1.; 3.;
+            |]
+        in
+        let s = gmres ~restart:4 a (vec [| 1.; 2.; 3.; 4. |]) in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Nx.solve a (vec [| 1.; 2.; 3.; 4. |]))
+          (Solution.get s);
+        equal int32 5l (Nx.item [] (Solution.evaluations s)));
+    test "it solves an indefinite system cg cannot" (fun () ->
+        (* A rotation: pᵀ a p = 0 for every p. *)
+        let a = Nx.create f64 [| 2; 2 |] [| 0.; 1.; -1.; 0. |] in
+        let r = vec [| 1.; 2. |] in
+        equal bool true (is Stalled (cg a r));
+        equal
+          (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
+          (Nx.solve a r)
+          (Solution.get (gmres ~restart:2 a r)));
+    test "an exact preconditioner takes one step" (fun () ->
+        let a = Nx.create f64 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in
+        let s =
+          gmres ~restart:1 ~budget:1
+            ~precondition:(Nx.matmul (Nx.inv a))
+            a
+            (vec [| 1.; 1. |])
+        in
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (Nx.solve a (vec [| 1.; 1. |]))
+          (Solution.get s);
+        equal int32 2l (Nx.item [] (Solution.evaluations s)));
+    test "r = 0 gives u = 0 with no product" (fun () ->
+        let s = gmres (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
+        equal (Oracle.tensor ()) (Nx.zeros f64 [| 3 |]) (Solution.get s);
+        equal int32 0l (Nx.item [] (Solution.evaluations s)));
+    test "a spent budget ends the lane Budget_spent" (fun () ->
+        let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
+        let s = gmres ~restart:1 ~budget:2 a (Nx.ones f64 [| 5 |]) in
+        equal bool true (is Budget_spent s);
+        equal int32 4l (Nx.item [] (Solution.evaluations s)));
+    test "a non-finite r ends the lane Not_finite" (fun () ->
+        equal bool true
+          (is Not_finite (gmres (Nx.eye f64 2) (vec [| Float.nan; 1. |]))));
+    test "a restart below 1 raises" (fun () ->
+        invalid_with "Jera.Linear.gmres: restart = 0 is below 1" (fun () ->
+            Linear.gmres ~restart:0 ~rel:1e-6 ~budget:10 ~precondition:Fun.id));
+    test "a budget below the restart raises" (fun () ->
+        invalid_with "Jera.Linear.gmres: budget = 3 is below restart = 4"
+          (fun () ->
+            Linear.gmres ~restart:4 ~rel:1e-6 ~budget:3 ~precondition:Fun.id));
+    test "a tolerance outside (0, 1) raises" (fun () ->
+        invalid_with "Jera.Linear.gmres: rel = 1 is not in (0, 1)" (fun () ->
+            Linear.gmres ~restart:4 ~rel:1. ~budget:10 ~precondition:Fun.id));
+  ]
+
 (* Derivatives and transformations *)
 
 (* [A + θ I] and its product, for a θ that a derivative tracks. *)
@@ -236,6 +318,28 @@ let transformation_tests =
           (Oracle.tensor ~rel:1e-9 ())
           (g Linear.dense)
           (g (Linear.cg ~rel:1e-13 ~budget:50 ~precondition:Fun.id)));
+    test "grad through gmres is dense's" (fun () ->
+        let g s =
+          Rune.grad'
+            (fun theta ->
+              Nx.sum (Solution.get (Linear.solve one s (shifted a theta) r)))
+            (scalar 0.)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (g Linear.dense)
+          (g
+             (Linear.gmres ~restart:3 ~rel:1e-13 ~budget:30 ~precondition:Fun.id)));
+    test "compiled gmres equals eager" (fun () ->
+        let f r = Solution.get (gmres ~restart:2 a r) in
+        equal (Oracle.tensor ~rel:1e-12 ()) (f r) (Rune.jit' f r));
+    test "lanes of gmres stop on their own" (fun () ->
+        let rs = Nx.stack [ Nx.zeros f64 [| 3 |]; r ] in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Nx.stack
+             [ Nx.zeros f64 [| 3 |]; Solution.get (gmres ~restart:2 a r) ])
+          (Rune.vmap' (fun r -> Solution.get (gmres ~restart:2 a r)) rs));
     test "compiled cg equals eager" (fun () ->
         let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
         let f r = Solution.get (cg spd r) in
@@ -266,5 +370,6 @@ let () =
        [
          group "dense" dense_tests;
          group "cg" cg_tests;
+         group "gmres" gmres_tests;
          group "transformations" transformation_tests;
        ])

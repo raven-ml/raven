@@ -19,6 +19,7 @@
       {tr {th Problem } {th Regime } {th Method } }
       {tr {td Linear system } {td small, dense } {td {!Linear.dense} } }
       {tr {td  } {td large, symmetric positive-definite } {td {!Linear.cg} } }
+      {tr {td  } {td large } {td {!Linear.gmres} } }
       {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
       {tr {td  } {td a bracket } {td {!Root.bracket} } }
       {tr
@@ -232,8 +233,8 @@ module Linear : sig
       right-hand side [r]: its solution is the [u] with [a u = r]. The float
       tensors of a value are its vector, of one dtype, the solve's; its other
       tensors are carried from [r]. A solver says how [a] is used: {!dense}
-      materialises it from its products and factors it, and {!cg} iterates on
-      its products.
+      materialises it from its products and factors it, and {!cg} and {!gmres}
+      iterate on its products.
 
       {[
       (* u with (k I + L) u = r, L a matrix given by its product *)
@@ -281,6 +282,23 @@ module Linear : sig
       it [Stalled].
 
       Raises [Invalid_argument] if [rel] is not in (0, 1) or if [budget < 1]. *)
+
+  val gmres :
+    restart:int -> rel:float -> budget:int -> precondition:('x -> 'x) -> 'x t
+  (** [gmres ~restart ~rel ~budget ~precondition] is restarted GMRES from
+      [u = 0], preconditioned on the right by [precondition], for any
+      non-singular [a]. A cycle takes [restart] steps of Arnoldi's process, each
+      an application of [a] and of [precondition], orthogonalised twice by
+      Gram–Schmidt, then the [u] of least residual in their span; it keeps
+      [restart + 1] vectors. Between cycles it applies [a] to [u] for the
+      residual, and stops when [‖a u − r‖ ≤ rel ‖r‖], the vectors' norms
+      Euclidean, which is also its bound, so [r = 0] gives [u = 0] with no
+      application. After [budget / restart] cycles, the lane ends
+      [Budget_spent]. [precondition] approximates the inverse of [a] and of its
+      transpose, as a derivative solves both; [Fun.id] is none.
+
+      Raises [Invalid_argument] if [restart < 1], if [budget < restart] or if
+      [rel] is not in (0, 1). *)
 
   val solve : 'x Nx.Ptree.t -> 'x t -> ('x -> 'x) -> 'x -> 'x Solution.t
   (** [solve x s a r] is the [u] with [a u = r], found by [s].
