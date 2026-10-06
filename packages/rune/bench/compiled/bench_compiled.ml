@@ -82,6 +82,48 @@ let compiled_call id signature f inputs =
       ignore (Sys.opaque_identity (inputs g));
       Nx_device.synchronize Nx_device.host)
 
+(* Outputs of one computation. A double word's high and low parts end one chain:
+   compiled, an operation writes both from one kernel, and a sum's halving tree
+   computes each level once. A forward-mode derivative's primal and tangent
+   share the primal chain: [tanh]'s tangent reads its value. *)
+let wide =
+  let n = 1_000_000 in
+  let words () =
+    let st = Random.State.make [| 15 |] in
+    let u () = Nx.init Nx.float64 [| n |] (fun _ -> Random.State.float st 1.) in
+    let hi = u () in
+    Nx_wide.v ~lo:(Nx.mul_s (u ()) 0x1p-60) hi
+  in
+  let p = Nx_wide.ptree Nx.float64 in
+  Thumper.group ~id:"wide" "wide"
+    [
+      compiled_call "sum-1e6-host"
+        Nx.Ptree.(p @-> returns p)
+        (fun w -> Nx_wide.sum w)
+        (fun () ->
+          let w = words () in
+          fun g -> g w);
+      compiled_call "mul-1e6-host"
+        Nx.Ptree.(p @-> p @-> returns p)
+        Nx_wide.mul
+        (fun () ->
+          let a = words () and b = words () in
+          fun g -> g a b);
+    ]
+
+let jvp =
+  let n = 1_000_000 in
+  let rec chain k x = if k = 0 then x else chain (k - 1) (Nx.tanh x) in
+  Thumper.group ~id:"jvp" "jvp"
+    [
+      compiled_call "tanh-chain-8-float32-1e6-host"
+        Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+        (fun x t -> Rune.jvp' (chain 8) x t)
+        (fun () ->
+          let x = uniform [| n |] and t = Nx.ones Nx.float32 [| n |] in
+          fun g -> g x t);
+    ]
+
 (* A host kernel's output loop runs in blocks on every core: a 16Mi-element a +
    b * c, and the sums of 4096 rows of 4096. A reduction's own loop stays whole
    in each block. *)
@@ -834,8 +876,8 @@ let suite () =
          searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
          searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
        ]
-  :: split :: indexed :: rope :: select_zero :: masks :: transcendental
-  :: gaussian :: solves :: factorizations
+  :: split :: wide :: jvp :: indexed :: rope :: select_zero :: masks
+  :: transcendental :: gaussian :: solves :: factorizations
   @ reverse
     :: Thumper.group ~id:"finite" "finite"
          [

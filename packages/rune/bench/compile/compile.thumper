@@ -43,6 +43,7 @@ special/ndtri-grad	wall_time	batch=1	n=5	8.948e-01	8.931e-01 8.946e-01 8.948e-01
 # forced: blessed sinkhorn-64 search/host search/metal under load 30.2 on 10 cores
 # forced: blessed erfinv erfinv-grad shaped-16k shaped-1k shaped-4k special/digamma special/digamma-grad special/erfc special/erfc-grad special/i0e special/i0e-grad special/i1e special/i1e-grad special/lbeta special/lbeta-grad-a special/lbeta-grad-b special/lgamma special/lgamma-grad special/log_ndtr special/log_ndtr-grad special/ndtr special/ndtr-grad special/ndtri special/ndtri-grad wide/sum-1e6 under load 23.8 on 10 cores
 # forced: blessed linalg/solve-32 linalg/solve-128 linalg/solve-512 under load 15.2 on 10 cores
+# forced: blessed wide/sum-1e6 under load 14.5 on 10 cores
 
 erfinv	wall_time	batch=1	n=5	6.142e-01	6.040e-01 6.066e-01 6.142e-01 6.458e-01 6.625e-01
 erfinv-grad	wall_time	batch=1	n=5	1.063e+00	1.024e+00 1.037e+00 1.063e+00 1.070e+00 1.088e+00
@@ -74,7 +75,7 @@ special/ndtr	wall_time	batch=1	n=5	4.095e-01	4.056e-01 4.075e-01 4.095e-01 4.105
 special/ndtr-grad	wall_time	batch=1	n=5	6.461e-01	6.421e-01 6.442e-01 6.461e-01 6.473e-01 6.516e-01
 special/ndtri	wall_time	batch=1	n=5	9.364e-01	9.177e-01 9.240e-01 9.364e-01 9.406e-01 9.459e-01
 special/ndtri-grad	wall_time	batch=1	n=5	1.554e+00	1.537e+00 1.551e+00 1.554e+00 1.555e+00 1.577e+00
-wide/sum-1e6	wall_time	batch=1	n=5	2.321e+00	2.225e+00 2.239e+00 2.321e+00 2.345e+00 2.380e+00
+wide/sum-1e6	wall_time	batch=1	n=5	1.401e+00	1.309e+00 1.391e+00 1.401e+00 1.412e+00 1.597e+00
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux

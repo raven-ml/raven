@@ -120,6 +120,7 @@ transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	6.896e-03	6.397e-03 6
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 21.6 on 10 cores
+# forced: blessed jvp/tanh-chain-8-float32-1e6-host wide/mul-1e6-host wide/sum-1e6-host under load 16.4 on 10 cores
 
 decode/kv-2880x512-bfloat16-host	alloc_words	exact	1162
 decode/kv-2880x512-bfloat16-host	wall_time	batch=8	n=20	2.936e-04	2.433e-04 2.521e-04 2.528e-04 2.538e-04 2.729e-04 2.796e-04 2.805e-04 2.831e-04 2.855e-04 2.889e-04 2.983e-04 3.047e-04 3.057e-04 3.096e-04 3.150e-04 3.201e-04 3.240e-04 3.403e-04 9.208e-04 9.478e-04
@@ -157,6 +158,8 @@ jit/where-bit-1e7	alloc_words	exact	1430
 jit/where-bit-1e7	wall_time	batch=1	n=20	1.436e-03	8.858e-04 9.275e-04 9.477e-04 9.963e-04 1.014e-03 1.353e-03 1.362e-03 1.399e-03 1.402e-03 1.422e-03 1.450e-03 1.453e-03 1.463e-03 1.491e-03 1.507e-03 1.515e-03 1.581e-03 1.588e-03 1.777e-03 1.953e-03
 jit/where-bool-1e7	alloc_words	exact	1430
 jit/where-bool-1e7	wall_time	batch=1	n=20	1.515e-03	9.687e-04 9.717e-04 1.007e-03 1.043e-03 1.259e-03 1.408e-03 1.447e-03 1.470e-03 1.474e-03 1.497e-03 1.534e-03 1.558e-03 1.595e-03 1.596e-03 1.608e-03 1.630e-03 1.641e-03 1.667e-03 1.725e-03 2.223e-03
+jvp/tanh-chain-8-float32-1e6-host	alloc_words	exact	1334
+jvp/tanh-chain-8-float32-1e6-host	wall_time	batch=1	n=20	1.365e-02	1.242e-02 1.272e-02 1.300e-02 1.323e-02 1.328e-02 1.331e-02 1.333e-02 1.347e-02 1.352e-02 1.360e-02 1.369e-02 1.417e-02 1.463e-02 1.524e-02 1.530e-02 1.536e-02 1.608e-02 1.692e-02 1.734e-02 1.839e-02
 launch/chain-64	alloc_words	exact	4152
 launch/chain-64	wall_time	batch=64	n=20	8.296e-05	8.038e-05 8.043e-05 8.043e-05 8.047e-05 8.052e-05 8.065e-05 8.073e-05 8.119e-05 8.202e-05 8.273e-05 8.318e-05 8.508e-05 8.595e-05 8.651e-05 8.719e-05 8.724e-05 8.724e-05 8.724e-05 8.729e-05 8.764e-05
 launch/scan-256	alloc_words	exact	56724
@@ -235,6 +238,10 @@ transcendental/sin-float32-1Mi-host	alloc_words	exact	863
 transcendental/sin-float32-1Mi-host	wall_time	batch=1	n=20	5.861e-03	4.440e-03 4.601e-03 4.919e-03 5.078e-03 5.131e-03 5.162e-03 5.262e-03 5.457e-03 5.564e-03 5.796e-03 5.926e-03 6.049e-03 6.433e-03 6.629e-03 7.036e-03 7.366e-03 9.958e-03 1.253e-02 1.541e-02 3.430e-02
 transcendental/sin-float64-1Mi-host	alloc_words	exact	863
 transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	1.740e-02	1.488e-02 1.561e-02 1.565e-02 1.576e-02 1.640e-02 1.640e-02 1.656e-02 1.657e-02 1.665e-02 1.719e-02 1.761e-02 1.776e-02 1.781e-02 1.842e-02 1.865e-02 1.867e-02 1.867e-02 2.002e-02 2.017e-02 2.443e-02
+wide/mul-1e6-host	alloc_words	exact	1898
+wide/mul-1e6-host	wall_time	batch=2	n=20	3.777e-03	2.909e-03 3.296e-03 3.326e-03 3.330e-03 3.370e-03 3.393e-03 3.525e-03 3.629e-03 3.735e-03 3.770e-03 3.784e-03 3.826e-03 3.879e-03 3.897e-03 3.937e-03 4.028e-03 4.049e-03 4.173e-03 4.213e-03 6.520e-03
+wide/sum-1e6-host	alloc_words	exact	1797
+wide/sum-1e6-host	wall_time	batch=4	n=20	2.445e-03	1.982e-03 2.208e-03 2.258e-03 2.290e-03 2.301e-03 2.308e-03 2.322e-03 2.360e-03 2.378e-03 2.393e-03 2.498e-03 2.536e-03 2.560e-03 2.599e-03 2.702e-03 2.794e-03 3.702e-03 4.028e-03 1.007e-02 1.223e-02
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux

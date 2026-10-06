@@ -1,6 +1,16 @@
 (executable
  (name bench_compiled)
- (libraries rune nx nx.dtype nx.cuda nx.nv nx.amd nx.metal nx.device thumper))
+ (libraries
+  rune
+  nx
+  nx.dtype
+  nx.cuda
+  nx.nv
+  nx.amd
+  nx.metal
+  nx.device
+  nx.wide
+  thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly. [--warm] fills tolk's disk cache with what the cases
