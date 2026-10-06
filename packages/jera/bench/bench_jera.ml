@@ -179,8 +179,7 @@ let adaptive =
           (Quad.adaptive (Quad.Rule.kronrod 7) ~tol:(Tol.rel 1e-8) ~budget:32
              (singular theta) (unit theta)));
     x = thetas;
-    (* A compiled gradient fails in tolk's division folding today. *)
-    rows = [ Eager; Compiled ];
+    rows = [ Eager; Compiled; Grad ];
   }
 
 let tanh_sinh =
@@ -212,8 +211,7 @@ let cubature =
                 (Nx.zeros f64 [| lanes; 3 |])
                 (Nx.ones f64 [| lanes; 3 |]))));
     x = (fun () -> Nx.linspace f64 (-1.) 1. 4);
-    (* A compiled gradient fails in tolk's division folding today. *)
-    rows = [ Eager; Compiled ];
+    rows = [ Eager; Compiled; Grad ];
   }
 
 (* A fit of sin(θ x) + |x − 0.3| on [0, 2] to 1e-8. *)
