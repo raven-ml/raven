@@ -1115,7 +1115,9 @@ module Rng : sig
       scope would: a root that has not run runs then. Outside any scope, the
       function takes one key of the domain's generator at its first call.
 
-      Calling the function after its scope returned raises [Invalid_argument]. *)
+      Calling the function outside the extent of the scope that took its place
+      (after that scope returned, on another domain or fiber, or from that
+      scope's own root) raises [Invalid_argument]. *)
 end
 
 (** {2:keyless Keyless samplers}

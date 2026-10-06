@@ -1131,7 +1131,12 @@ module Rng = struct
               Some
                 (fun (k : (a, _) continuation) ->
                   let c = take () in
-                  continue k (fun () -> Effect.perform (E_at (scope, c))))
+                  continue k (fun () ->
+                      try Effect.perform (E_at (scope, c))
+                      with Effect.Unhandled (E_at (s, _)) when s == scope ->
+                        invalid_arg
+                          "Nx.Rng.next_root: called outside the scope that \
+                           took its place"))
           | E_at (s, c) when s == scope ->
               Some (fun (k : (a, _) continuation) -> answer k (fun () -> at c))
           | _ -> None);
@@ -1160,30 +1165,26 @@ module Rng = struct
     cell := Some keys.(0);
     keys.(1)
 
+  (* Only a draw no scope answers falls back: an effect a root performs and no
+     handler answers raises at the draw. *)
   let next_key ctx =
-    try Effect.perform E_next_key with Effect.Unhandled _ -> unscoped ctx
+    try Effect.perform E_next_key
+    with Effect.Unhandled E_next_key -> unscoped ctx
 
   (* Outside any scope, the place is one key of the domain's generator, taken at
-     the first call. A call after the scope returned finds no scope to answer
-     it. *)
+     the first call; calls on several domains agree on the first key stored. *)
   let next_root ctx =
     match Effect.perform E_place with
-    | place -> (
+    | place -> place
+    | exception Effect.Unhandled E_place -> (
+        let taken = Atomic.make None in
         fun () ->
-          try place ()
-          with Effect.Unhandled _ ->
-            invalid_arg
-              "Nx.Rng.next_root: the key's scope returned before it was \
-               computed")
-    | exception Effect.Unhandled _ -> (
-        let taken = ref None in
-        fun () ->
-          match !taken with
+          match Atomic.get taken with
           | Some k -> k
           | None ->
               let k = unscoped ctx in
-              taken := Some k;
-              k)
+              if Atomic.compare_and_set taken None (Some k) then k
+              else Option.get (Atomic.get taken))
 end
 
 let validate_random_float_params op dtype shape =

@@ -53,6 +53,12 @@ let word =
           [ Int32.min_int; -1l; Int32.max_int ] );
     ]
 
+(* An effect no handler answers, which a root performs. *)
+type _ Effect.t += Probe : unit Effect.t
+
+let outside_its_scope =
+  "Nx.Rng.next_root: called outside the scope that took its place"
+
 let key = Gen.map (fun (a, b) -> of_words [| a; b |]) (Gen.pair word word)
 
 (* Words of shape [[...; 2]]: a key, a batch of keys, or counters. *)
@@ -1083,9 +1089,40 @@ let scopes =
             drawn);
       test "next_root's key raises once its scope returned" (fun () ->
           let place = Rng.with_key (Rng.key 4) (fun () -> Rng.next_root ()) in
-          raises_match
-            (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> place ()));
+          raises (Invalid_argument outside_its_scope) (fun () -> place ()));
+      test "next_root's key raises inside a scope other than its own" (fun () ->
+          let place = Rng.with_key (Rng.key 4) (fun () -> Rng.next_root ()) in
+          raises (Invalid_argument outside_its_scope) (fun () ->
+              Rng.with_key (Rng.key 5) (fun () -> place ())));
+      test "next_root's key raises on a domain spawned inside its scope"
+        (fun () ->
+          let raised =
+            Rng.with_key (Rng.key 4) (fun () ->
+                let place = Rng.next_root () in
+                Domain.join
+                  (Domain.spawn (fun () ->
+                       match place () with
+                       | _ -> None
+                       | exception e -> Some (Printexc.to_string e))))
+          in
+          equal (option string)
+            (Some (Printexc.to_string (Invalid_argument outside_its_scope)))
+            raised);
+      test
+        "a root's own unhandled effect raises at the draw, never read as a \
+         missing scope" (fun () ->
+          let root () =
+            Effect.perform Probe;
+            Rng.key 1
+          in
+          let unhandled = function
+            | Effect.Unhandled Probe -> true
+            | _ -> false
+          in
+          raises_match ~msg:"next_key" unhandled (fun () ->
+              Rng.with_root root (fun () -> Rng.next_key ()));
+          raises_match ~msg:"next_root" unhandled (fun () ->
+              Rng.with_root root (fun () -> (Rng.next_root ()) ())));
       test "next_root outside a scope gives one key at every call" (fun () ->
           let place = Rng.next_root () in
           let first = words (place ()) in
