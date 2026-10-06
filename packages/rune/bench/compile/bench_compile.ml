@@ -67,6 +67,19 @@ let lbeta =
         compile2 (fun a b -> Rune.grad' (fun b -> Nx.sum (Nx.lbeta a b)) b) );
   ]
 
+(* A double-word sum of a million float64 numbers. *)
+let wide_sum () =
+  let n = 1_000_000 in
+  let w =
+    Nx_wide.v
+      ~lo:(Nx.mul_s (Nx.rand Nx.float64 [| n |]) 0x1p-60)
+      (Nx.rand Nx.float64 [| n |])
+  in
+  let p = Nx_wide.ptree Nx.float64 in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit Nx.Ptree.(p @-> returns p) (fun w -> Nx_wide.sum w) w))
+
 let cases =
   [
     ("erfinv", fun () -> compile Nx.erfinv (input (-1.) 1.));
@@ -84,6 +97,7 @@ let cases =
   @ special "i0e" Nx.i0e (-30.) 30.
   @ special "i1e" Nx.i1e (-30.) 30.
   @ lbeta
+  @ [ ("wide/sum-1e6", wide_sum) ]
 
 let rec remove path =
   if Sys.is_directory path then (

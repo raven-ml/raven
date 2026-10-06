@@ -164,6 +164,7 @@ unary/sqrt-1M	wall_time	batch=8	n=20	1.313e-04	1.240e-04 1.242e-04 1.247e-04 1.2
 # forced: blessed special/i0e-1e6 special/i0e-f64-1e6 special/i1e-1e6 special/i1e-f64-1e6 under load 8.5 on 10 cores
 # forced: blessed special/i0e-1e6 special/i0e-f64-1e6 special/i1e-1e6 special/i1e-f64-1e6 under load 8.3 on 10 cores
 # forced: blessed special/i0e-1e6 special/i0e-f64-1e6 under load 10.4 on 10 cores
+# forced: blessed wide/add-1e6 wide/mul-1e6 wide/sum-1e6 under load 6.9 on 10 cores
 
 binary/add-100x100-f64	alloc_words	exact	65
 binary/add-100x100-f64	wall_time	batch=2048	n=20	3.606e-06	3.369e-06 3.485e-06 3.503e-06 3.509e-06 3.522e-06 3.528e-06 3.534e-06 3.547e-06 3.570e-06 3.581e-06 3.631e-06 3.635e-06 3.665e-06 3.689e-06 3.689e-06 3.702e-06 3.705e-06 3.708e-06 3.810e-06 4.193e-06
@@ -321,3 +322,9 @@ unary/neg-512x512	alloc_words	exact	65
 unary/neg-512x512	wall_time	batch=64	n=20	2.027e-05	1.850e-05 1.881e-05 1.962e-05 1.964e-05 1.969e-05 1.981e-05 1.984e-05 1.984e-05 1.986e-05 2.007e-05 2.048e-05 2.062e-05 2.131e-05 2.163e-05 2.199e-05 2.307e-05 2.324e-05 2.325e-05 2.565e-05 3.238e-05
 unary/sqrt-1M	alloc_words	exact	64
 unary/sqrt-1M	wall_time	batch=16	n=20	1.874e-04	1.160e-04 1.288e-04 1.297e-04 1.404e-04 1.455e-04 1.466e-04 1.545e-04 1.560e-04 1.627e-04 1.859e-04 1.888e-04 1.920e-04 2.186e-04 2.188e-04 2.234e-04 2.407e-04 2.748e-04 3.693e-04 4.393e-04 4.646e-04
+wide/add-1e6	alloc_words	exact	3500
+wide/add-1e6	wall_time	batch=1	n=20	9.777e-03	9.539e-03 9.569e-03 9.589e-03 9.617e-03 9.639e-03 9.645e-03 9.668e-03 9.670e-03 9.700e-03 9.708e-03 9.846e-03 9.850e-03 9.900e-03 9.931e-03 9.950e-03 9.965e-03 1.000e-02 1.000e-02 1.014e-02 1.032e-02
+wide/mul-1e6	alloc_words	exact	2927
+wide/mul-1e6	wall_time	batch=1	n=20	6.515e-03	6.447e-03 6.463e-03 6.464e-03 6.472e-03 6.479e-03 6.494e-03 6.503e-03 6.505e-03 6.512e-03 6.513e-03 6.517e-03 6.519e-03 6.528e-03 6.532e-03 6.546e-03 6.554e-03 6.603e-03 6.606e-03 6.609e-03 7.570e-03
+wide/sum-1e6	alloc_words	exact	35605
+wide/sum-1e6	wall_time	batch=1	n=20	2.800e-02	2.736e-02 2.742e-02 2.758e-02 2.759e-02 2.763e-02 2.767e-02 2.777e-02 2.780e-02 2.785e-02 2.792e-02 2.808e-02 2.817e-02 2.831e-02 2.840e-02 2.849e-02 2.851e-02 2.854e-02 2.863e-02 2.874e-02 3.264e-02

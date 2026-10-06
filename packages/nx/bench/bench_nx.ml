@@ -208,6 +208,21 @@ let special_benchmarks () =
 (* The float64 special functions take a third of a second a call eagerly. *)
 let config = Thumper.Config.(default |> deadline 60.)
 
+(* Double-word float64 arithmetic over a million numbers: each operation is a
+   fixed chain of whole-tensor kernels. *)
+let wide_benchmarks () =
+  let number () =
+    Nx_wide.v
+      ~lo:(Nx.mul_s (Nx.rand Nx.Float64 [| 1_000_000 |]) 0x1p-60)
+      (Nx.add_s (Nx.rand Nx.Float64 [| 1_000_000 |]) 1.)
+  in
+  let a = number () and b = number () in
+  [
+    Thumper.bench "add 1e6" (fun () -> Nx_wide.add a b);
+    Thumper.bench "mul 1e6" (fun () -> Nx_wide.mul a b);
+    Thumper.bench "sum 1e6" (fun () -> Nx_wide.sum a);
+  ]
+
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   Thumper.run "nx" ~config
@@ -224,5 +239,6 @@ let () =
       Thumper.group "structural" (structural_benchmarks ());
       Thumper.group "random" (random_benchmarks ());
       Thumper.group "special" (special_benchmarks ());
+      Thumper.group "wide" (wide_benchmarks ());
     ]
   |> exit

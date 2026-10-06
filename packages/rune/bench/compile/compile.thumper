@@ -35,6 +35,7 @@ special/ndtri-grad	wall_time	batch=1	n=5	8.948e-01	8.931e-01 8.946e-01 8.948e-01
 # forced: blessed erfinv erfinv-grad special/erfc special/erfc-grad special/ndtr special/ndtr-grad special/log_ndtr special/log_ndtr-grad special/ndtri special/ndtri-grad special/lgamma special/lgamma-grad special/digamma special/digamma-grad special/lbeta special/lbeta-grad-a special/lbeta-grad-b under load 12.8 on 10 cores
 # forced: blessed erfinv erfinv-grad under load 8.5 on 10 cores
 # forced: blessed special/i0e special/i0e-grad special/i1e special/i1e-grad under load 8.9 on 10 cores
+# forced: blessed wide/sum-1e6 under load 16.7 on 10 cores
 
 erfinv	wall_time	batch=1	n=5	5.700e-01	5.597e-01 5.689e-01 5.700e-01 5.766e-01 5.960e-01
 erfinv-grad	wall_time	batch=1	n=5	9.552e-01	9.275e-01 9.362e-01 9.552e-01 9.608e-01 9.618e-01
@@ -60,3 +61,4 @@ special/ndtr	wall_time	batch=1	n=5	4.590e-01	4.293e-01 4.358e-01 4.590e-01 4.754
 special/ndtr-grad	wall_time	batch=1	n=5	6.886e-01	6.842e-01 6.865e-01 6.886e-01 7.277e-01 8.495e-01
 special/ndtri	wall_time	batch=1	n=5	9.518e-01	9.436e-01 9.507e-01 9.518e-01 9.674e-01 1.115e+00
 special/ndtri-grad	wall_time	batch=1	n=5	1.769e+00	1.611e+00 1.705e+00 1.769e+00 1.809e+00 1.986e+00
+wide/sum-1e6	wall_time	batch=1	n=5	1.343e+00	1.304e+00 1.338e+00 1.343e+00 1.383e+00 1.390e+00
