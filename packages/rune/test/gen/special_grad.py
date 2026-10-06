@@ -212,6 +212,12 @@ def igamma_log_density(a, x):
 
 def igamma_d(tail, log, wrt):
     def d(a, x):
+        if a == 0:
+            # P = 1 - a E1(x) + O(a^2) for x > 0: in a, -E1(x) for P and its
+            # logarithm, E1(x) for Q; in x, 0.
+            if wrt == 1:
+                return mpf(0)
+            return mpmath.e1(x) if tail == 1 else -mpmath.e1(x)
         if x == 0:
             if log or wrt == 0:
                 return mpf(0)
@@ -235,7 +241,7 @@ def igamma_d(tail, log, wrt):
 def igamma_log_scale(fmt, value, a, x):
     """1 + |log f|, f the smaller tail at the row's point: P's derivative is
     Q's negated, and carries the smaller tail's relative error."""
-    if x == 0:
+    if x == 0 or a == 0:
         return "1"
     with mp.workprec(fmt.p + 40):
         return nx.scale(1 + max(abs(t) for t in nx.igamma_exact(a, x)))
@@ -243,6 +249,10 @@ def igamma_log_scale(fmt, value, a, x):
 
 def igamma_quantile_d(upper, wrt):
     def d(a, p):
+        if a == 0:
+            # x = 0 for p < 1 at a = 0, and near it x is about (p Gamma(a +
+            # 1))^(1/a), flat to every order in both arguments.
+            return mpf(0)
         x = nx.igamma_quantile(a, p, upper)
         ld = igamma_log_density(a, x)
         if wrt == 1:
@@ -258,14 +268,14 @@ def igamma_quantile_d(upper, wrt):
 # normal, and at the domain's end x = 0, an inverse's where its result is.
 
 def tails_normal(fmt, a, x):
-    if x == 0:
+    if x == 0 or a == 0:
         return True
     with mp.workprec(fmt.p + 40):
         return min(mpmath.exp(t) for t in nx.igamma_exact(a, x)) >= fmt.min_normal
 
 
 def result_normal(f):
-    return lambda fmt, a, p: abs(f.reference(fmt, a, p)) >= fmt.min_normal
+    return lambda fmt, a, p: a == 0 or abs(f.reference(fmt, a, p)) >= fmt.min_normal
 
 
 def thinned(f, every=3):
@@ -274,14 +284,16 @@ def thinned(f, every=3):
     def points(fmt):
         pts = [p for p in f.points(fmt)
                if all(math.isfinite(v) for v in p) and 0 < p[0] <= nx.IGAMMA_A_MAX and p[1] >= 0]
-        edges = [(0.5, 0.0), (1.0, 0.0), (2.5, 0.0)] if f.args[1] == "x" else []
+        edges = ([(0.5, 0.0), (1.0, 0.0), (2.5, 0.0)]
+                 + [(0.0, nx.round_to(fmt, mpf(x))) for x in ("1e-10", "0.5", "1.1", "3", "30")]
+                 if f.args[1] == "x" else [])
         return pts[::every] + edges
     return points
 
 
 def quantile_points(f):
     def points(fmt):
-        return [p for p in thinned(f)(fmt) if 0 < p[1] < 1]
+        return [p for p in thinned(f)(fmt) if 0 < p[1] < 1] + [(0.0, 0.125), (0.0, 0.5), (0.0, 0.875)]
     return points
 
 

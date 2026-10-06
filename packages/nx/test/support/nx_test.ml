@@ -1639,6 +1639,11 @@ module Special = struct
   let within ?(zeros = `Signed) ~f32 bound row got =
     let eps = if f32 then 0x1p-23 else 0x1p-52 in
     let r = row.value in
+    (* A value that rounds to zero is held as the least subnormal is: its
+       logarithm bounds [Log_ulps]. *)
+    let log_ulps k r =
+      log_ulps k (if r = 0. then if f32 then 0x1p-149 else 0x1p-1074 else r)
+    in
     let d = ulps ~f32 r got in
     let error = Float.abs (got -. r) in
     if (not (Float.is_finite r)) && not row.overflow then d = 0.

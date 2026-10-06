@@ -399,8 +399,8 @@ let residuals =
         lbeta 1267
         i0e 579
         i1e 564
-        gammainc 4886
-        gammainc in a 6921
+        gammainc 4921
+        gammainc in a 6963
         gammaincinv 16361
         gammaincinv in a 26355
         |})

@@ -226,10 +226,10 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     operations nx computes them with, in every argument and at every order.
     Each derivative is within the budget below of the exact derivative, at
     [float32] and [float64], eagerly and compiled, where the function and its
-    derivative are finite, which leaves out {!Nx.erfinv} at [±1] and
-    {!Nx.ndtri} at [0] and [1]. At [±0], {!Nx.i0e}'s derivative is its
-    right-hand one, [-1]; {!Nx.i1e}'s is [1/2]. [ε] is the distance from 1 to
-    the next float of the dtype.
+    derivative are finite, which leaves out such points as {!Nx.erfinv} at
+    [±1] and {!Nx.ndtri} at [0] and [1]. At [±0], {!Nx.i0e}'s derivative is
+    its right-hand one, [-1]; {!Nx.i1e}'s is [1/2]. [ε] is the distance from 1
+    to the next float of the dtype.
 
     {t
     | Function | First derivative |
@@ -247,18 +247,23 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     | {!Nx.gammainc}, {!Nx.gammaincc}, in [x] | [512 (1 + |log f|) + 64] ulps |
     | {!Nx.log_gammainc}, {!Nx.log_gammaincc}, in [x] | 256 ulps, or [256ε] absolutely where below 1 |
     | the four, in [a] | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32] |
-    | {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] | [64 + 16κ (32 (1 + |log p|) + 4)] ulps |
+    | {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q] | [64 + 16κ (32 (1 + |log p|) + 4)] ulps, [q] in place of [p] for {!Nx.gammainccinv} |
     | the two, in [a] | [2^-40] relative at [float64], [2^-16] at [float32] |
     }
 
-    [f] is the smaller of [P] and [Q] at the point, since [P]'s derivative is
-    [Q]'s negated and carries the smaller tail's error, [κ] is the inverse's
-    condition number, and the incomplete gamma's budgets hold for [a ≤ 2^20]
-    where the function is a normal number. At [x = 0], [∂P/∂a = 0]
-    and [∂P/∂x] is its one-sided limit [x^(a-1) e^-x / Γ(a)]: [1] at [a = 1],
-    [0] above and infinite below. An inverse ends one Newton step past its
-    convergence, so that its derivative is the implicit one: in [a], [-(∂P/∂a)
-    / (∂P/∂x)] at the quantile, for either tail.
+    [f] is the smaller of [P] and [Q]: the two share one derivative up to
+    sign, computed from the smaller tail. [κ] is the inverse's condition
+    number. The incomplete gamma's budgets hold for [0 < a ≤ 2^20]: those of
+    {!Nx.gammainc} and {!Nx.gammaincc} where [f] is a normal number, below
+    which the derivative underflows, and an inverse's where its quantile is
+    normal. At [x = 0], [∂P/∂a = 0] and [∂P/∂x] is its one-sided limit
+    [x^{a-1} e^{-x} / Γ(a)]: [1] at [a = 1], [0] above and infinite below. At
+    [a = 0], where [P = 1 - a E₁(x) + O(a²)] for [x > 0], [∂P/∂a] is its
+    one-sided limit [-E₁(x)], [E₁(x) = ∫ₓ^∞ e^{-t}/t dt], and [∂P/∂x = 0];
+    there [log Q] is [-inf]. An
+    inverse's derivative in [a] is the implicit one, [-(∂P/∂a) / (∂P/∂x)] at
+    the quantile, for either tail; at [a = 0], where the quantile is [0] away
+    from its upper end, both its derivatives are [0].
 
     Second derivatives of {!Nx.lgamma} and {!Nx.lbeta} are within [2^-40]
     relative at [float64] and [2^-16] at [float32]. Those of {!Nx.lbeta} hold

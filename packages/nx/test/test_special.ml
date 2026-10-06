@@ -498,10 +498,11 @@ let gamma_laws =
           (1., 0., 0., 1.);
           (0.5, 0., 0., 1.);
           (1., Float.infinity, 1., 0.);
+          (0., Float.infinity, 1., 0.);
           (Float.infinity, 1., 0., 1.);
           (Float.infinity, 0., 0., 1.);
           (Float.infinity, Float.infinity, Float.nan, Float.nan);
-          (0., 1., Float.nan, Float.nan);
+          (0., 0., Float.nan, Float.nan);
           (-1., 1., Float.nan, Float.nan);
           (1., -1., Float.nan, Float.nan);
           (Float.nan, 1., Float.nan, Float.nan);
@@ -515,15 +516,42 @@ let gamma_laws =
           Windtrap.equal float_exact (Stdlib.log p) (item [] (log_gammainc a x));
           Windtrap.equal float_exact (Stdlib.log q)
             (item [] (log_gammaincc a x)));
+      (* At [a = 0] each is its limit, [P = 1 - a E1(x) + O(a^2)] for [x > 0]:
+         [log P] reaches 0 from below. *)
       cases
-        ~name:(fun (a, p, _) -> Printf.sprintf "gammaincinv %g %g" a p)
+        ~name:(fun x -> Printf.sprintf "at a = ±0, x = %g" x)
+        "the limit at a = 0"
+        [ 0x1p-1074; 1e-300; 0.5; 1.1; 3.; 30.; 1e300 ]
+        (fun x ->
+          List.iter
+            (fun a ->
+              let a = scalar float64 a and x = scalar float64 x in
+              Windtrap.equal float_exact 1. (item [] (gammainc a x));
+              Windtrap.equal float_exact 0. (item [] (gammaincc a x));
+              Windtrap.equal float_exact (-0.) (item [] (log_gammainc a x));
+              Windtrap.equal float_exact Float.neg_infinity
+                (item [] (log_gammaincc a x)))
+            [ 0.; -0. ]);
+      test "a Poisson tail gammaincc (k + 1) lam is 0 at k = -1" (fun () ->
+          let k = create float64 [| 2 |] [| -1.; 0. |] in
+          let lam = full_like k 2.5 in
+          let q = values (gammaincc (add_s k 1.) lam) in
+          Windtrap.equal float_exact 0. q.(0);
+          Windtrap.equal (Windtrap.float 1e-15) (Stdlib.exp (-2.5)) q.(1));
+      cases
+        ~name:(fun (a, p, _) -> Printf.sprintf "gammaincinv %g %h" a p)
         "quantile edges"
         [
           (1., 0., 0.);
           (1., 1., Float.infinity);
           (Float.infinity, 0.5, Float.infinity);
           (Float.infinity, 0., 0.);
-          (0., 0.5, Float.nan);
+          (0., 0.5, 0.);
+          (0., 0., 0.);
+          (0., 1e-300, 0.);
+          (0., 1. -. 0x1p-53, 0.);
+          (0., 1., Float.infinity);
+          (-1., 0.5, Float.nan);
           (1., 1.5, Float.nan);
           (1., -0.5, Float.nan);
           (Float.nan, 0.5, Float.nan);

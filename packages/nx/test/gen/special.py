@@ -1836,15 +1836,18 @@ IGAMMA_A_MAX = 2.0 ** 20
 
 
 def igamma_edge(a, x):
-    """P and Q at an edge of the domain, None inside it."""
-    if math.isnan(a) or math.isnan(x) or a <= 0 or x < 0:
+    """P and Q at an edge of the domain, None inside it. At a = 0 they are
+    their limits, P = 1 for x > 0, which disagree with P(a, 0) = 0 at x = 0."""
+    if math.isnan(a) or math.isnan(x) or a < 0 or x < 0:
         return math.nan, math.nan
     if a == math.inf:
         return (math.nan, math.nan) if x == math.inf else (0.0, 1.0)
     if x == math.inf:
         return 1.0, 0.0
     if x == 0:
-        return 0.0, 1.0
+        return (math.nan, math.nan) if a == 0 else (0.0, 1.0)
+    if a == 0:
+        return 1.0, 0.0
     return None
 
 
@@ -1854,7 +1857,12 @@ def igamma_reference(tail, log):
         edge = igamma_edge(a, x)
         if edge is not None:
             v = edge[tail]
-            return (math.log(v) if v > 0 else -math.inf) if log and not math.isnan(v) else v
+            if not log or math.isnan(v):
+                return v
+            if v == 0:
+                return -math.inf
+            # log P tends to 0 from below as a goes to 0.
+            return -0.0 if a == 0 and x < math.inf else math.log(v)
         if log:
             return correctly_rounded(fmt, lambda a, x: igamma_exact(a, x)[tail], a, x)
         return correctly_rounded(fmt, lambda a, x: mpmath.exp(igamma_exact(a, x)[tail]), a, x)
@@ -1899,6 +1907,7 @@ def igamma_points(fmt):
     # Edges and NaN.
     edges = [0.0, 1.0, math.inf, math.nan, -1.0, fmt.tiny]
     points += [(a, x) for a in (0.0, 0.5, 1.0, 30.0, math.inf, math.nan, -1.0, -math.inf) for x in edges + [-math.inf]]
+    points += [(0.0, r(x)) for x in (1e-300, 1e-10, 0.5, 1.1, 3.0, 30.0, 1e300)] + [(-0.0, r(1.0))]
     points += [(fmt.max, r(1.0)), (fmt.max, fmt.max), (r(1.0), fmt.max)]
     # Random points, x near a and far from it.
     with mp.workprec(POINT_PREC):
@@ -1942,14 +1951,17 @@ def igamma_quantile(a, p, upper):
 
 
 def igamma_quantile_edge(a, p, upper):
-    """The quantile at an edge, None inside the domain."""
-    if math.isnan(a) or math.isnan(p) or a <= 0 or p < 0 or p > 1:
+    """The quantile at an edge, None inside the domain. At a = 0, the
+    limit: 0 but at the probability that P = 1 gives, where it is inf."""
+    if math.isnan(a) or math.isnan(p) or a < 0 or p < 0 or p > 1:
         return math.nan
     low, high = (1.0, 0.0) if upper else (0.0, 1.0)
     if p == low:
         return 0.0
     if p == high or a == math.inf:
         return math.inf
+    if a == 0:
+        return 0.0
     return None
 
 

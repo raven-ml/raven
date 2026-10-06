@@ -833,35 +833,64 @@ let igamma_core a x log_x upper =
   let r = where (logical_xor native_upper upper) (log1mexp native) native in
   (where corner (where upper lq_corner lp_corner) r, lr)
 
+(* Where [a = 0] each tail is its limit: [P(a, x) = 1 - a E1(x) + O(a^2)] for [x
+   > 0], so [P = 1] and [Q = 0]. [Q] is written there as [a] times [Q/a] at [a =
+   2^-61], whose relative error from [E1(x)] is about [2^-61], so that its slope
+   in [a] is [E1(x)]. *)
+let limit_a = 0x1p-61
+
 (* [log P(a, x)], or [log Q(a, x)] where [upper], with the domain's edges: [P]
-   is 0 at [x = 0] and where [a = inf], 1 at [x = inf]; NaN outside [a > 0, x >=
-   0], at a NaN and at [a = x = inf]. *)
-let log_gammainc_at a x upper =
+   is 0 at [x = 0] and where [a = inf], 1 at [x = inf] and, as its limit, at [a
+   = 0]; NaN outside [a >= 0, x >= 0], at a NaN, at [a = x = 0] and at [a = x =
+   inf]. Also whether [a = 0] with [x] finite and positive, and [Q] there. *)
+let igamma_edges a x upper =
   let a_inf = is a Float.infinity and x_inf = is x Float.infinity in
-  let zero = is x 0. in
+  let zero = is x 0. and a_zero = is a 0. in
   let nan =
     logical_or
       (logical_or (isnan a) (isnan x))
       (logical_or
-         (logical_or (cmple a (zeros_like a)) (lt x 0.))
-         (logical_and a_inf x_inf))
+         (logical_or (lt a 0.) (lt x 0.))
+         (logical_or (logical_and a_inf x_inf) (logical_and a_zero zero)))
   in
+  let limit = logical_and a_zero (logical_not (logical_or nan x_inf)) in
   let regular =
-    logical_not (logical_or (logical_or nan a_inf) (logical_or x_inf zero))
+    logical_not
+      (logical_or
+         (logical_or nan (logical_or a_inf a_zero))
+         (logical_or x_inf zero))
   in
-  let a = clamp regular a 1. and x = clamp regular x 1. in
-  let r, _ = igamma_core a x (log x) upper in
+  let a_c = where limit (lit a limit_a) (clamp regular a 1.) in
+  let x_c = clamp (logical_or regular limit) x 1. in
+  let r, _ = igamma_core a_c x_c (log x_c) (logical_or upper limit) in
+  (* [a + 0] is [+0] at [-0], with [a]'s slope. *)
+  let q =
+    mul
+      (add_s (clamp limit a 0.) 0.)
+      (exp (where limit (sub r (log a_c)) (zeros_like r)))
+  in
   let p_zero = logical_or a_inf zero in
   let edge =
     where (logical_xor p_zero upper) (lit r Float.neg_infinity) (zeros_like r)
   in
-  where regular r (where nan (lit r Float.nan) edge)
+  (* [log Q] is [-inf] there, selected: a logarithm of [0] would make every
+     slope through it NaN. *)
+  let at_limit = where upper (lit q Float.neg_infinity) (log1p (neg q)) in
+  let r =
+    where regular r (where limit at_limit (where nan (lit r Float.nan) edge))
+  in
+  (r, limit, q)
 
-(* [P] or [Q] as the exponential of its logarithm. At [x = 0], where [P(a, x) =
-   x^a / Γ(a + 1) + O(x^(a + 1))], it is written so that its slope in [x] is
-   that limit's: 1 at [a = 1] and 0 above. *)
+let log_gammainc_at a x upper =
+  let r, _, _ = igamma_edges a x upper in
+  r
+
+(* [P] or [Q] as the exponential of its logarithm, and [Q] itself at [a = 0]. At
+   [x = 0], where [P(a, x) = x^a / Γ(a + 1) + O(x^(a + 1))], it is written so
+   that its slope in [x] is that limit's: 1 at [a = 1] and 0 above. *)
 let gammainc_at a x upper =
-  let r = exp (log_gammainc_at a x upper) in
+  let l, limit, q = igamma_edges a x upper in
+  let r = where limit (where upper q (rsub_s 1. q)) (exp l) in
   let at_zero =
     logical_and (is x 0.) (logical_and (cmpgt a (zeros_like a)) (isfinite a))
   in
@@ -1109,20 +1138,21 @@ let igamma_inverse a p upper =
   where polish (mul x (rsub_s 1. d)) x
 
 (* The quantile with the domain's edges: 0 at the probability that is 0 at [x =
-   0], [inf] at the other end and where [a = inf], NaN outside [a > 0] and [p]
-   in [0, 1]. *)
+   0], [inf] at the other end and where [a = inf]; at [a = 0], where all the
+   mass is at 0, the limit: 0 but at that other end. NaN outside [a >= 0] and
+   [p] in [0, 1]. *)
 let gammaincinv_at a p upper =
   let nan =
     logical_or
       (logical_or (isnan a) (isnan p))
-      (logical_or
-         (cmple a (zeros_like a))
-         (logical_or (lt p 0.) (cmpgt p (lit p 1.))))
+      (logical_or (lt a 0.) (logical_or (lt p 0.) (cmpgt p (lit p 1.))))
   in
-  let zero = where upper (is p 1.) (is p 0.) in
+  let low = where upper (is p 1.) (is p 0.) in
+  let high = where upper (is p 0.) (is p 1.) in
   let inf =
-    logical_or (where upper (is p 0.) (is p 1.)) (is a Float.infinity)
+    logical_or high (logical_and (is a Float.infinity) (logical_not low))
   in
+  let zero = logical_or low (logical_and (is a 0.) (logical_not high)) in
   let regular = logical_not (logical_or nan (logical_or zero inf)) in
   let a = clamp regular a 1. and p = clamp regular p 0.5 in
   let r = igamma_inverse a p upper in
