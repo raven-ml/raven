@@ -1,5 +1,5 @@
 (tests
- (names test_model)
- (modules test_model)
+ (names test_model test_calibration)
+ (modules test_model test_calibration)
  (package norn)
  (libraries norn norn.model nx nx.dtype rune windtrap))
