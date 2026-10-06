@@ -269,6 +269,19 @@ let normal w =
 (* A number's words as values. *)
 let number_words = pair (array unsigned) (array unsigned)
 
+(* [associates_by_shape w] checks that [w] sums as each column of [w] and its
+   negation stacked on a new last axis does: the same shape, laid out apart. *)
+let associates_by_shape w =
+  let r = Nx.ndim (Nx_wide.hi w) in
+  let column f = Nx.stack ~axis:r [ f w; Nx.neg (f w) ] in
+  let twice = Nx_wide.v ~lo:(column Nx_wide.lo) (column Nx_wide.hi) in
+  let zh, zl = words (Nx_wide.sum ~axes:(List.init r Fun.id) twice) in
+  let sh, sl = words (Nx_wide.sum w) in
+  (* A zero's sign is the plain sum's, which is [+0]. *)
+  let value = pair unsigned unsigned in
+  equal value (sh.(0), sl.(0)) (zh.(0), zl.(0));
+  equal value (-.sh.(0), -.sl.(0)) (zh.(1), zl.(1))
+
 let laws =
   List.concat_map
     (fun (D (tag, dt, _)) ->
@@ -346,18 +359,7 @@ let laws =
                 equal number (ph, pl) (zh, zl.(i)))
               zh);
         prop (named "a sum's association depends only on the shape") one
-          (fun d ->
-            let w = drawn dt d in
-            let r = Nx.ndim (Nx_wide.hi w) in
-            (* Two columns of one sum: each sums alone as the whole does. *)
-            let column f = Nx.stack ~axis:r [ f w; Nx.neg (f w) ] in
-            let twice = Nx_wide.v ~lo:(column Nx_wide.lo) (column Nx_wide.hi) in
-            let zh, zl = words (Nx_wide.sum ~axes:(List.init r Fun.id) twice) in
-            let sh, sl = words (Nx_wide.sum w) in
-            (* A zero's sign is the plain sum's, which is [+0]. *)
-            let value = pair unsigned unsigned in
-            equal value (sh.(0), sl.(0)) (zh.(0), zl.(0));
-            equal value (-.sh.(0), -.sl.(0)) (zh.(1), zl.(1)));
+          (fun d -> associates_by_shape (drawn dt d));
         prop (named "the structure rebuilds a value it walks unchanged") one
           (fun d ->
             let w = drawn dt d in
@@ -469,6 +471,24 @@ let edges =
             (scalar
                (Nx_wide.floor
                   (Nx_wide.v ~lo:(f (-.Float.ldexp 1. (-60))) (f 1.)))));
+      test "a sum overflowing then meeting an infinity associates by shape"
+        (fun () ->
+          let m = Float.max_float in
+          associates_by_shape
+            (Nx_wide.v
+               (Nx.create Nx.float64 [| 4; 2; 1 |]
+                  [| 0.; 0.; m; 0.; m; 0.; 0.; Float.neg_infinity |])));
+      test "a sum of opposite extremes associates by shape" (fun () ->
+          let m = Float.max_float in
+          let x =
+            Nx.create Nx.float64 [| 1; 3; 4 |]
+              (Array.init 12 (fun i ->
+                   if i = 6 then -.m else if i = 11 then m else 0.))
+          in
+          associates_by_shape
+            (Nx_wide.v
+               (Nx.transpose
+                  (Nx.broadcast_to [| 2; 4; 3; 1 |] (Nx.transpose x)))));
       test "a sum of no summand is zero" (fun () ->
           let w = Nx_wide.v (Nx.zeros Nx.float64 [| 2; 0 |]) in
           let zh, zl = words (Nx_wide.sum ~axes:[ 1 ] w) in

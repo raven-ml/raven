@@ -175,7 +175,10 @@ let equal a b =
 
 (* [w] summed along its last axis, of [2^levels] numbers, by halving: element
    [i] of the first half is added to element [i] of the second, until one is
-   left. The tree has [levels] levels and depends only on the shape.
+   left. The tree has [levels] levels and depends only on the shape. [plain],
+   the high words, is summed as floats in the same tree: it is the sum where the
+   words are not finite, whose value depends on the association, as where
+   [max_float + max_float - infinity] is NaN or -infinity.
 
    One fused tree over every number grows with the count and does not compile at
    a million numbers, so each [chunk_levels] levels run as one fused program on
@@ -187,8 +190,8 @@ let equal a b =
    ms. *)
 let chunk_levels = 3
 
-let rec halve w levels =
-  if levels = 0 then w
+let rec halve plain w levels =
+  if levels = 0 then (plain, w)
   else
     let c = min chunk_levels levels in
     let shape = Nx.shape w.hi in
@@ -198,8 +201,8 @@ let rec halve w levels =
         (Array.sub shape 0 (r - 1))
         [| shape.(r - 1) lsr c; 1 lsl c |]
     in
-    let rec fold w width =
-      if width = 1 then w
+    let rec fold plain w width =
+      if width = 1 then (plain, w)
       else
         let half = width / 2 in
         let cut lo hi x =
@@ -211,15 +214,15 @@ let rec halve w levels =
         in
         let part lo hi = { hi = cut lo hi w.hi; lo = cut lo hi w.lo } in
         let _, (hi, lo) = accurate (part 0 half) (part half width) in
-        fold { hi; lo } half
+        fold (Nx.add (cut 0 half plain) (cut half width plain)) { hi; lo } half
     in
-    let s =
-      fold { hi = Nx.reshape rows w.hi; lo = Nx.reshape rows w.lo } (1 lsl c)
+    let split x = Nx.reshape rows x in
+    let plain, s =
+      fold (split plain) { hi = split w.hi; lo = split w.lo } (1 lsl c)
     in
     let out = Array.sub rows 0 r in
-    halve
-      { hi = Nx.copy (Nx.reshape out s.hi); lo = Nx.copy (Nx.reshape out s.lo) }
-      (levels - c)
+    let store x = Nx.copy (Nx.reshape out x) in
+    halve (store plain) { hi = store s.hi; lo = store s.lo } (levels - c)
 
 let sum ?axes w =
   let w = words w in
@@ -267,9 +270,10 @@ let sum ?axes w =
              (Nx.shape x))
           0. x
     in
-    let s = halve { hi = padded w.hi; lo = padded w.lo } levels in
+    let hi = padded w.hi in
+    let plain, s = halve hi { hi; lo = padded w.lo } levels in
     Normal
-      (settle (Nx.sum ~axes w.hi) (Nx.reshape out s.hi, Nx.reshape out s.lo))
+      (settle (Nx.reshape out plain) (Nx.reshape out s.hi, Nx.reshape out s.lo))
 
 (* Structures *)
 

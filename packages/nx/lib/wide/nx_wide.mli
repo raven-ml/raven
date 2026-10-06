@@ -72,7 +72,8 @@ val sum : ?axes:int list -> 'b t -> 'b t
     from the end) in a balanced tree of {!add}s, [⌈log₂ n⌉] deep for [n]
     summands, whose association depends only on the shape: within
     [((1 + 3u² / (1 - 4u))^⌈log₂ n⌉ - 1) · Σ|wᵢ|]. A sum of no summand is zero,
-    and one that is not finite is the float sum of the high words.
+    and one that is not finite is the float sum of the high words in the same
+    tree.
 
     Raises [Invalid_argument] if an axis is out of bounds. *)
 
