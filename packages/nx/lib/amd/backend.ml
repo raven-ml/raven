@@ -27,6 +27,10 @@ let threads = 256
 let max_rank = 32
 let max_operands = 4
 
+(* Refuses [what] of [n] axes past [max_rank]. *)
+let fits what n =
+  if n > max_rank then refuse "%s of %d axes; kernels take %d" what n max_rank
+
 (* Workgroups: enough for each thread to take an element, at most [waves] per
    compute unit, past which each thread walks several. *)
 let waves = 8
@@ -155,8 +159,8 @@ let at o v = address o + (View.offset v * itemsize o)
 let cdiv a b = (a + b - 1) / b
 let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |]
 
-(* [dst]'s device, its state and carried target, whose archive holds module
-   [m]. *)
+(* The state of [dst]'s device, and the kernels of module [m] on it, by name, if
+   its carried target holds [m]. *)
 let locate m (Operand d) =
   let dev = Nx_device.Buffer.device d.buffer in
   let s = device dev in
@@ -170,9 +174,18 @@ let locate m (Operand d) =
         c
   in
   if not carried then refuse "no kernel %s" (key_of m);
-  (dev, s, target)
+  (s, program dev s target m)
 
 let units s = s.props.compute_units * s.props.xccs
+
+(* Scratch on [dst]'s device of two runs of [n] 64-bit words, and their
+   addresses. *)
+let scratch_words (Operand d) n =
+  let b =
+    Nx_device.Buffer.create (Nx_device.Buffer.device d.buffer) Int64 (2 * n)
+  in
+  let a = Nativeint.to_int (Nx_device.Buffer.address b) in
+  (b, a, a + (8 * n))
 
 (* Kernel parameters, as 64-bit words, then [raw] whole, written in a domain's
    scratch and copied out at their length. *)
@@ -222,12 +235,11 @@ let groups_of s n = Int.min (cdiv n threads) (waves * units s)
    parameters followed by [extra], if [dst] has elements. *)
 let elementwise ?(extra = []) key ~dst srcs =
   let (Operand d) = dst in
-  let dev, s, target = locate key dst in
+  let s, kernel = locate key dst in
   let ops = dst :: srcs in
   let views = View.coalesce (List.map view ops) in
   let n = View.numel d.view and rank = View.ndim (List.hd views) in
-  if rank > max_rank then
-    refuse "operands of %d axes once merged; kernels take %d" rank max_rank;
+  fits "merged operands" rank;
   if List.length srcs > max_operands then
     refuse "%d operands; kernels take %d" (List.length srcs) max_operands;
   if n = 0 then None
@@ -236,14 +248,14 @@ let elementwise ?(extra = []) key ~dst srcs =
     Option.some
     @@
     if List.for_all unit_stride views then
-      dispatch (program dev s target key "c") groups
+      dispatch (kernel "c") groups
       @@ args (fun i64 ->
           List.iter2 (fun o v -> i64 (at o v)) ops views;
           i64 n;
           i64 groups;
           List.iter i64 extra)
     else
-      dispatch (program dev s target key "s") groups
+      dispatch (kernel "s") groups
       @@ args (fun i64 ->
           i64 (at dst (List.hd views));
           List.iter (fun o -> i64 (address o)) srcs;
@@ -262,7 +274,10 @@ let run ?extra key ~dst srcs =
    gather, pad and the window writes of cat and update move bytes: their modules
    are keyed by element width. *)
 
-let width (Operand a) = Nx_dtype.itemsize a.dtype
+(* The name of [a]'s element width, if the kernels serve its dtype. *)
+let width (Operand a) =
+  ignore (served a.dtype);
+  width_name (Nx_dtype.itemsize a.dtype)
 
 (* The bits of [v] as an element of [dt], zero-extended to 64. *)
 let bits (type a b) (dt : (a, b) Nx_dtype.t) (v : a) =
@@ -291,7 +306,7 @@ let c_strides shape =
    along. *)
 let place key ~dst x ~offset ~corner:(starts, rank, off, str, dstr) =
   let (Operand d) = dst in
-  let dev, s, target = locate key dst in
+  let s, kernel = locate key dst in
   let window =
     View.create ~offset
       ~strides:(c_strides (View.shape d.view))
@@ -300,9 +315,7 @@ let place key ~dst x ~offset ~corner:(starts, rank, off, str, dstr) =
   let views = View.coalesce [ window; view x ] in
   let w = List.hd views and xv = List.nth views 1 in
   let n = View.numel xv in
-  if View.ndim w > max_rank then
-    refuse "operands of %d axes once merged; kernels take %d" (View.ndim w)
-      max_rank;
+  fits "merged operands" (View.ndim w);
   if n = 0 then None
   else
     let groups = groups_of s n in
@@ -313,7 +326,7 @@ let place key ~dst x ~offset ~corner:(starts, rank, off, str, dstr) =
     Option.some
     @@
     if List.for_all unit_stride views then
-      dispatch (program dev s target key "c") groups
+      dispatch (kernel "c") groups
       @@ args (fun i64 ->
           i64 (at dst w);
           i64 (at x xv);
@@ -322,7 +335,7 @@ let place key ~dst x ~offset ~corner:(starts, rank, off, str, dstr) =
           i64 groups;
           corner i64)
     else
-      dispatch (program dev s target key "s") groups
+      dispatch (kernel "s") groups
       @@ args (fun i64 ->
           i64 (address dst);
           i64 (address x);
@@ -345,18 +358,18 @@ let gather ~axis (indices : Nx_backend.index_array) x ~dst =
     }
   in
   run
-    (modname "gather" (width_name (width x)))
+    (modname "gather" (width x))
     ~dst
     [ Operand along; Operand indices ]
     ~extra:[ (View.strides v).(axis); (View.shape v).(axis) ]
 
 let pad padding fill x ~dst =
   let (Operand d) = dst in
-  let key = modname "pad" (width_name (width dst)) in
-  let dev, s, target = locate key dst in
+  let key = modname "pad" (width dst) in
+  let s, kernel = locate key dst in
   let n = View.numel d.view and shape = View.shape d.view in
   let rank = Array.length shape in
-  if rank > max_rank then refuse "%d axes; kernels take %d" rank max_rank;
+  fits "results" rank;
   if n > 0 then begin
     let groups = groups_of s n in
     let lo = Array.map fst padding in
@@ -373,14 +386,14 @@ let pad padding fill x ~dst =
     in
     Nx_amd_device.launch
       ~touches:[ buffer dst; buffer x ]
-      [ dispatch (program dev s target key "s") groups args ]
+      [ dispatch (kernel "s") groups args ]
   end
 
 let no_corner = (0, 0, 0, 0, [||])
 
 let cat ~axis xs ~dst =
   let (Operand d) = dst in
-  let key = modname "place" (width_name (width dst)) in
+  let key = modname "place" (width dst) in
   let step = (c_strides (View.shape d.view)).(axis) in
   let _, runs =
     List.fold_left
@@ -398,9 +411,7 @@ let cat ~axis xs ~dst =
 let update x ~(starts : Nx_backend.index_array) v ~dst =
   let (Operand d) = dst in
   let shape = View.shape d.view in
-  let copy =
-    elementwise (modname "contiguous" (width_name (width dst))) ~dst [ x ]
-  in
+  let copy = elementwise (modname "contiguous" (width dst)) ~dst [ x ] in
   let corner =
     ( at (Operand starts) starts.view,
       Array.length shape,
@@ -410,7 +421,7 @@ let update x ~(starts : Nx_backend.index_array) v ~dst =
   in
   let write =
     place
-      (modname "place" (width_name (width dst)))
+      (modname "place" (width dst))
       ~dst v ~offset:(View.offset d.view) ~corner
   in
   match Option.to_list copy @ Option.to_list write with
@@ -453,17 +464,16 @@ let parts_of s ~rows ~len =
 
 (* Scratch for the partials of [items] runs, and the addresses of their
    accumulators and positions. *)
-let partials dev ~parts ~items =
+let partials dst ~parts ~items =
   if parts = 1 then (None, 0, 0)
   else
-    let b = Nx_device.Buffer.create dev Int64 (2 * items) in
-    let a = Nativeint.to_int (Nx_device.Buffer.address b) in
-    (Some b, a, a + (8 * items))
+    let b, pv, pi = scratch_words dst items in
+    (Some b, pv, pi)
 
-(* The first pass of the reduction module [key] over [x]'s rows [xo] and reduced
-   elements [xr]: each row's fold into [dst], or with [parts] above 1 each run's
-   of [chunk] elements into the partials [pv] and [pi]. *)
-let fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
+(* The first pass of a reduction module's [kernel]s over [x]'s rows [xo] and
+   reduced elements [xr]: each row's fold into [dst], or with [parts] above 1
+   each run's of [chunk] elements into the partials [pv] and [pi]. *)
+let fold_pass s kernel ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
   let units = units s in
   let items = rows * parts in
   let span = Int.min threads (pow2 chunk) in
@@ -477,7 +487,7 @@ let fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
     len = 0
     || (unit_stride xr && (View.ndim xo = 0 || View.strides xo = [| len |]))
   then
-    dispatch (program dev s target key "c") g
+    dispatch (kernel "c") g
     @@ args (fun i64 ->
         i64 (at dst (view dst));
         i64 (at x xo);
@@ -485,7 +495,7 @@ let fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
         i64 pi;
         List.iter i64 [ rows; len; lanes; parts; chunk; g ])
   else
-    dispatch (program dev s target key "s") g
+    dispatch (kernel "s") g
     @@ args (fun i64 ->
         i64 (at dst (view dst));
         i64 (address x);
@@ -500,7 +510,7 @@ let fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
 
 (* Runs the reduction module [key] writing [dst] from [x] folded over [axes]. *)
 let fold key ~dst x ~axes =
-  let dev, s, target = locate key dst in
+  let s, kernel = locate key dst in
   let reduced i = Array.mem i axes in
   let xo =
     List.nth
@@ -510,20 +520,18 @@ let fold key ~dst x ~axes =
   let xr = List.hd (View.coalesce [ axes_of (view x) reduced ]) in
   let rows = View.numel (view dst) and len = View.numel xr in
   let rank = Int.max (View.ndim xo) (View.ndim xr) in
-  if rank > max_rank then
-    refuse "rows or reductions of %d axes once merged; kernels take %d" rank
-      max_rank;
+  fits "merged rows or reductions" rank;
   if rows > 0 then begin
     let parts = parts_of s ~rows ~len in
     let chunk = cdiv len parts in
-    let scratch, pv, pi = partials dev ~parts ~items:(rows * parts) in
+    let scratch, pv, pi = partials dst ~parts ~items:(rows * parts) in
     let first =
-      fold_pass dev s target key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi
+      fold_pass s kernel ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi
     in
     let second () =
       let lanes = Int.min threads (pow2 parts) in
       let g = Int.min (cdiv rows (threads / lanes)) (waves * units s) in
-      dispatch (program dev s target key "f") g
+      dispatch (kernel "f") g
       @@ args (fun i64 ->
           i64 (at dst (view dst));
           List.iter i64 [ pv; pi; rows; parts; lanes; g ])
@@ -544,29 +552,32 @@ let fold key ~dst x ~axes =
 (* Rows at most this long run on a thread each. *)
 let short = 64
 
-(* Runs the scan module [key] writing [dst] from [x] along [axis], with the
-   reduction module [fold_key] of its kind and dtype. *)
-let scan key ~fold_key ~dst x ~axis =
-  let dev, s, target = locate key dst in
+(* The rows of [x] and [dst] along [axis], their other axes coalesced together:
+   [dst]'s and [x]'s views of the rows, their count and length. *)
+let rows_along ~axis ~dst x =
   let without v = axes_of v (fun i -> i <> axis) in
   let views = View.coalesce [ without (view dst); without (view x) ] in
   let dov = List.hd views and xov = List.nth views 1 in
-  let rows = View.numel dov and len = (View.shape (view x)).(axis) in
-  if View.ndim dov > max_rank then
-    refuse "rows of %d axes once merged; kernels take %d" (View.ndim dov)
-      max_rank;
+  fits "merged rows" (View.ndim dov);
+  (dov, xov, View.numel dov, (View.shape (view x)).(axis))
+
+(* Runs the scan module [key] writing [dst] from [x] along [axis], with the
+   reduction module [fold_key] of its kind and dtype. *)
+let scan key ~fold_key ~dst x ~axis =
+  let s, kernel = locate key dst in
+  let dov, xov, rows, len = rows_along ~axis ~dst x in
   if rows > 0 && len > 0 then begin
     let units = units s in
     let thread = len <= short || rows >= waves * units * threads in
     let parts = if thread then 1 else parts_of s ~rows ~len in
     let chunk = cdiv len parts and items = rows * parts in
-    let scratch, pv, pi = partials dev ~parts ~items in
+    let scratch, pv, pi = partials dst ~parts ~items in
     let g =
       if thread then Int.min (cdiv rows threads) (waves * units)
       else Int.min items (waves * units)
     in
     let run =
-      dispatch (program dev s target key (if thread then "t" else "w")) g
+      dispatch (kernel (if thread then "t" else "w")) g
       @@ args (fun i64 ->
           i64 (at dst dov);
           i64 (address x);
@@ -582,8 +593,8 @@ let scan key ~fold_key ~dst x ~axis =
     let totals () =
       let xo = List.nth (View.coalesce [ View.create (View.shape dov); xov ]) 1
       and xr = View.create ~strides:[| View.stride axis (view x) |] [| len |] in
-      fold_pass dev s target fold_key ~dst x ~xo ~xr ~rows ~len ~parts ~chunk
-        ~pv ~pi
+      let _, fold = locate fold_key dst in
+      fold_pass s fold ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi
     in
     Nx_amd_device.launch
       ~touches:(buffer dst :: buffer x :: Option.to_list scratch)
@@ -609,28 +620,19 @@ let log2 n =
 (* Runs the sort module [key] writing [x]'s [sorted] rows along [axis] into
    [dst]. *)
 let sort_rows key sorted ~descending ~axis x ~dst =
-  let dev, s, target = locate key dst in
-  let without v = axes_of v (fun i -> i <> axis) in
-  let views = View.coalesce [ without (view dst); without (view x) ] in
-  let dov = List.hd views and xov = List.nth views 1 in
-  let rows = View.numel dov and len = (View.shape (view x)).(axis) in
-  if View.ndim dov > max_rank then
-    refuse "rows of %d axes once merged; kernels take %d" (View.ndim dov)
-      max_rank;
+  let s, kernel = locate key dst in
+  let dov, xov, rows, len = rows_along ~axis ~dst x in
   if rows > 0 && len > 0 then begin
     let units = units s in
     let plog = log2 len in
     let p = 1 lsl plog in
     let total = rows * p in
-    let scratch = Nx_device.Buffer.create dev Int64 (2 * total) in
-    let keys = Nativeint.to_int (Nx_device.Buffer.address scratch) in
-    let pos = keys + (8 * total) in
+    let scratch, keys, pos = scratch_words dst total in
     let flip =
       if not descending then 0
       else if itemsize x = 8 then -1
       else (1 lsl (8 * itemsize x)) - 1
     in
-    let spread n = Int.min (cdiv n threads) (waves * units) in
     let meta i64 groups =
       List.iter i64 [ rows; len; plog; groups; View.ndim dov ];
       List.iter i64 [ View.offset xov; View.stride axis (view x) ];
@@ -639,11 +641,9 @@ let sort_rows key sorted ~descending ~axis x ~dst =
       words i64 (View.strides xov);
       words i64 (View.strides dov)
     in
-    let run name groups f =
-      dispatch (program dev s target key name) groups (args f)
-    in
+    let run name groups f = dispatch (kernel name) groups (args f) in
     let pairs =
-      let g = spread total in
+      let g = groups_of s total in
       run "k" g (fun i64 ->
           i64 (address x);
           i64 keys;
@@ -656,7 +656,7 @@ let sort_rows key sorted ~descending ~axis x ~dst =
           List.iter i64 [ keys; pos; total; plog; klo; khi; g ])
     in
     let step k j =
-      let g = spread (total / 2) in
+      let g = groups_of s (total / 2) in
       run "g" g (fun i64 -> List.iter i64 [ keys; pos; total; plog; k; j; g ])
     in
     (* Stages past a block: their long steps over all slots, then the short ones
@@ -670,7 +670,7 @@ let sort_rows key sorted ~descending ~axis x ~dst =
         stages (2 * k) (local k k :: long (k / 2) acc)
     in
     let result =
-      let g = spread (rows * len) in
+      let g = groups_of s (rows * len) in
       match sorted with
       | Elements ->
           run "v" g (fun i64 ->
@@ -703,7 +703,7 @@ let sort_rows key sorted ~descending ~axis x ~dst =
 let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
     ~updates x ~dst =
   let (Operand d) = dst in
-  let w = width_name (width dst) in
+  let w = width dst in
   let m =
     match (mode : Nx_backend.scatter) with
     | `Set -> modname "scatter_set" w
@@ -711,21 +711,17 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
     | `Max -> modname "scatter_max" (served_name dst)
     | `Min -> modname "scatter_min" (served_name dst)
   in
-  let dev, s, target = locate m dst in
+  let s, kernel = locate m dst in
   let shape = View.shape indices.view in
   let rank = Array.length shape in
-  if rank > max_rank then refuse "%d axes; kernels take %d" rank max_rank;
+  fits "indices" rank;
   let n = View.numel indices.view and positions = View.numel d.view in
   let copy = elementwise (modname "contiguous" w) ~dst [ x ] in
   let runs =
     if n = 0 || positions = 0 then []
     else
-      let units = units s in
-      let spread k = Int.min (cdiv k threads) (waves * units) in
-      let gu = spread n and gp = spread positions in
-      let run name groups f =
-        dispatch (program dev s target m name) groups (args f)
-      in
+      let gu = groups_of s n and gp = groups_of s positions in
+      let run name groups f = dispatch (kernel name) groups (args f) in
       let meta i64 =
         List.iter i64 [ n; rank; gu; axis; (View.shape d.view).(axis) ];
         i64 (View.offset indices.view);
@@ -738,11 +734,6 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
       let dst_at = at dst d.view
       and idx = address (Operand indices)
       and up = address updates in
-      let scratch () =
-        let b = Nx_device.Buffer.create dev Int64 (2 * positions) in
-        let a = Nativeint.to_int (Nx_device.Buffer.address b) in
-        (b, a, a + (8 * positions))
-      in
       match mode with
       | `Set when unique ->
           [
@@ -752,7 +743,7 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
                   meta i64) );
           ]
       | `Set ->
-          let b, pa, _ = scratch () in
+          let b, pa, _ = scratch_words dst positions in
           [
             (Some b, run "c" gp (fun i64 -> List.iter i64 [ pa; positions; gp ]));
             ( None,
@@ -765,7 +756,7 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
                   meta i64) );
           ]
       | `Add ->
-          let b, pa, pb = scratch () in
+          let b, pa, pb = scratch_words dst positions in
           [
             ( Some b,
               run "i" gp (fun i64 ->
@@ -779,7 +770,7 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
                   List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
           ]
       | `Max | `Min ->
-          let b, pa, pb = scratch () in
+          let b, pa, pb = scratch_words dst positions in
           [
             ( Some b,
               run "i" gp (fun i64 ->
@@ -828,12 +819,11 @@ let windows ~kernel_size ~stride ~dilation ~padding extent =
    and [kstep] and [lstep] the strides of a fold operand's taps and windows. *)
 let window_run m name ~dst x ~lead ~kernel_size ~stride ~dilation ~padding
     ~extent ~xstr ~kstep ~lstep =
-  let dev, s, target = locate m dst in
+  let s, kernel = locate m dst in
   let k = Array.length kernel_size in
   let lv = List.hd (View.coalesce [ axes_of (view x) (fun i -> i < lead) ]) in
-  if View.ndim lv > max_rank || k > max_rank then
-    refuse "windows of %d axes and %d leading axes once merged; kernels take %d"
-      k (View.ndim lv) max_rank;
+  fits "windows" k;
+  fits "merged batches" (View.ndim lv);
   let n = View.numel (view dst) in
   if n > 0 then begin
     let win = windows ~kernel_size ~stride ~dilation ~padding extent in
@@ -843,7 +833,7 @@ let window_run m name ~dst x ~lead ~kernel_size ~stride ~dilation ~padding
     Nx_amd_device.launch
       ~touches:[ buffer dst; buffer x ]
       [
-        dispatch (program dev s target m name) groups
+        dispatch (kernel name) groups
         @@ args (fun i64 ->
             i64 (at dst (view dst));
             i64 (address x);
@@ -865,7 +855,7 @@ let unfold_windows ~kernel_size ~stride ~dilation ~padding x ~dst =
   let shape = View.shape (view x) and strides = View.strides (view x) in
   let r = Array.length shape and k = Array.length kernel_size in
   window_run
-    (modname "unfold" (width_name (width x)))
+    (modname "unfold" (width x))
     "u" ~dst x ~lead:(r - k) ~kernel_size ~stride ~dilation ~padding
     ~extent:(Array.sub shape (r - k) k)
     ~xstr:(Array.sub strides (r - k) k)
@@ -887,7 +877,7 @@ let fold_windows ~output_size ~kernel_size ~stride ~dilation ~padding x ~dst =
    [dst], pairs along their last axis. *)
 let threefry key counter ~dst =
   let key_ = modname "threefry" "" in
-  let dev, s, target = locate key_ dst in
+  let s, kernel = locate key_ dst in
   let shape = View.shape (view dst) in
   let last = Array.length shape - 1 in
   let pairs o = axes_of (view o) (fun i -> i < last) in
@@ -896,16 +886,13 @@ let threefry key counter ~dst =
       [ View.create (Array.sub shape 0 last); pairs key; pairs counter ]
   in
   let n = View.numel (List.hd views) in
-  if View.ndim (List.hd views) > max_rank then
-    refuse "operands of %d axes once merged; kernels take %d"
-      (View.ndim (List.hd views))
-      max_rank;
+  fits "merged operands" (View.ndim (List.hd views));
   if n > 0 then begin
     let groups = groups_of s n in
     Nx_amd_device.launch
       ~touches:[ buffer dst; buffer key; buffer counter ]
       [
-        dispatch (program dev s target key_ "s") groups
+        dispatch (kernel "s") groups
         @@ args (fun i64 ->
             i64 (at dst (view dst));
             i64 (address key);
@@ -941,7 +928,7 @@ let batch_view batch v =
 
 (* Runs the product module [key] writing [dst] from [a] and [b]. *)
 let product key ~dst a b =
-  let dev, s, target = locate key dst in
+  let _, kernel = locate key dst in
   let shape = View.shape (view dst) in
   let r = Array.length shape - 2 in
   let m = shape.(r) and n = shape.(r + 1) and batch = Array.sub shape 0 r in
@@ -955,9 +942,7 @@ let product key ~dst a b =
   let d = List.nth views 0
   and va = List.nth views 1
   and vb = List.nth views 2 in
-  if View.ndim d > max_rank then
-    refuse "batches of %d axes once merged; kernels take %d" (View.ndim d)
-      max_rank;
+  fits "merged batches" (View.ndim d);
   if nb > max_groups then refuse "%d matrices; kernels take %d" nb max_groups;
   if m * n * nb > 0 then begin
     (* The strides of [v]'s rows and columns. *)
@@ -979,7 +964,7 @@ let product key ~dst a b =
       ~touches:[ buffer dst; buffer a; buffer b ]
       [
         {
-          program = program dev s target key "s";
+          program = kernel "s";
           groups = (cdiv n tile, cdiv m tile, nb);
           threads = (threads, 1, 1);
           args;
@@ -1053,16 +1038,15 @@ module Kernels : Nx_backend.S = struct
   let no what = refuse "no %s" what
 
   let contiguous (type a b) (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
-    ignore (served x.dtype);
     run
-      (modname "contiguous" (width_name (Nx_dtype.itemsize x.dtype)))
+      (modname "contiguous" (width (Operand x)))
       ~dst:(Operand dst) [ Operand x ]
 
   let cast (type a b c d) (x : (a, b) Nx_array.t) ~(dst : (c, d) Nx_array.t) =
     let s = served x.dtype and d = served dst.dtype in
     if s = d then
       run
-        (modname "contiguous" (width_name (Nx_dtype.itemsize x.dtype)))
+        (modname "contiguous" (width (Operand x)))
         ~dst:(Operand dst) [ Operand x ]
     else run (modname "cast" ~kind:s d) ~dst:(Operand dst) [ Operand x ]
 
@@ -1094,9 +1078,8 @@ module Kernels : Nx_backend.S = struct
 
   let where (type a b) cond (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t)
       =
-    ignore (served a.dtype);
     run
-      (modname "where" (width_name (Nx_dtype.itemsize a.dtype)))
+      (modname "where" (width (Operand a)))
       ~dst:(Operand dst)
       [ Operand cond; Operand a; Operand b ]
 
@@ -1141,29 +1124,24 @@ module Kernels : Nx_backend.S = struct
 
   let cat (type a b) ~axis (xs : (a, b) Nx_array.t list)
       ~(dst : (a, b) Nx_array.t) =
-    ignore (served dst.dtype);
     cat ~axis (List.map (fun x -> Operand x) xs) ~dst:(Operand dst)
 
   let gather (type a b) ~axis indices (x : (a, b) Nx_array.t)
       ~(dst : (a, b) Nx_array.t) =
-    ignore (served x.dtype);
     gather ~axis indices (Operand x) ~dst:(Operand dst)
 
   let scatter (type a b) ~mode ~unique ~axis ~indices
       ~(updates : (a, b) Nx_array.t) (x : (a, b) Nx_array.t)
       ~(dst : (a, b) Nx_array.t) =
-    ignore (served x.dtype);
     scatter_rows ~mode ~unique ~axis ~indices ~updates:(Operand updates)
       (Operand x) ~dst:(Operand dst)
 
   let update (type a b) (x : (a, b) Nx_array.t) ~starts v
       ~(dst : (a, b) Nx_array.t) =
-    ignore (served x.dtype);
     update (Operand x) ~starts (Operand v) ~dst:(Operand dst)
 
   let unfold (type a b) ~kernel_size ~stride ~dilation ~padding
       (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
-    ignore (served x.dtype);
     unfold_windows ~kernel_size ~stride ~dilation ~padding (Operand x)
       ~dst:(Operand dst)
 
