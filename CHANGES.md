@@ -1146,6 +1146,8 @@ thread.
 
 ### Tolk (new)
 
+- tolk is no longer linked with `-linkall`: a program links only the modules
+  it reaches. tolk's test of `Op` shrinks from 8.3 MB to 4.4 MB.
 - **Breaking:** the rules `Shape.simplify` rewrites with are `Shape`'s:
   `symbolic`, `symbolic_simple`, `commutative`, `invalid_gate` and
   `pm_remove_invalid` from `Symbolic`, `div_and_mod_symbolic` and its

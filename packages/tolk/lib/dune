@@ -12,9 +12,6 @@
   (names compiler_cuda_stubs compiler_amd_stubs compiler_metal_stubs))
  (c_library_flags
   (:include dl_flags.sexp))
- ; Modules install the rules that earlier modules apply (Ops' simplify
- ; reads Symbolic's) when they are initialised: every program links them all.
- (library_flags (-linkall))
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
