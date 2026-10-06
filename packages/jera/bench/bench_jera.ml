@@ -271,6 +271,27 @@ let path =
     rows = all;
   }
 
+(* The same pendulums stopped where each first swings through q = 0, a vector
+   event, one component per pendulum. *)
+let event =
+  {
+    id = "ode-event-tsit5-100-pendulums";
+    f =
+      (fun q0 ->
+        let t, _, _ =
+          Solution.get
+            (Ode.event state Ode.tsit5
+               ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
+               ~budget:64 pendulum
+               ~event:(fun _ (q, _) -> q)
+               ~t0:(Nx.scalar f64 0.) ~t1:(Nx.scalar f64 2.)
+               (q0, Nx.zeros_like q0))
+        in
+        t);
+    x = starts;
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -287,6 +308,7 @@ let workloads =
     adapt;
     sample;
     path;
+    event;
   ]
 
 let compiled f x =

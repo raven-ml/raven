@@ -6,6 +6,7 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 25.7 on 10 cores
 # forced: blessed ode-path-tsit5-100-pendulums/eager ode-path-tsit5-100-pendulums/compiled ode-path-tsit5-100-pendulums/grad under load 85.0 on 10 cores
+# forced: blessed ode-event-tsit5-100-pendulums/eager ode-event-tsit5-100-pendulums/compiled ode-event-tsit5-100-pendulums/grad under load 34.3 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
@@ -15,6 +16,12 @@ minimize-bracket-1k/compiled	alloc_words	exact	29248
 minimize-bracket-1k/compiled	wall_time	batch=16	n=20	4.714e-04	4.391e-04 4.506e-04 4.595e-04 4.630e-04 4.640e-04 4.671e-04 4.678e-04 4.696e-04 4.700e-04 4.711e-04 4.716e-04 4.739e-04 4.787e-04 4.818e-04 5.118e-04 5.256e-04 5.442e-04 5.458e-04 5.794e-04 6.009e-04
 minimize-bracket-1k/eager	alloc_words	exact	217962
 minimize-bracket-1k/eager	wall_time	batch=4	n=20	2.104e-03	1.883e-03 1.896e-03 2.004e-03 2.004e-03 2.026e-03 2.054e-03 2.070e-03 2.071e-03 2.080e-03 2.080e-03 2.129e-03 2.145e-03 2.148e-03 2.159e-03 2.180e-03 2.189e-03 2.219e-03 2.245e-03 2.256e-03 2.280e-03
+ode-event-tsit5-100-pendulums/compiled	alloc_words	exact	81721
+ode-event-tsit5-100-pendulums/compiled	wall_time	batch=4	n=20	2.361e-03	2.278e-03 2.287e-03 2.292e-03 2.306e-03 2.309e-03 2.320e-03 2.324e-03 2.328e-03 2.341e-03 2.357e-03 2.365e-03 2.724e-03 2.890e-03 3.021e-03 3.044e-03 3.119e-03 4.204e-03 4.608e-03 4.863e-03 7.539e-03
+ode-event-tsit5-100-pendulums/eager	alloc_words	exact	1366168
+ode-event-tsit5-100-pendulums/eager	wall_time	batch=1	n=20	2.125e-02	1.924e-02 1.957e-02 1.982e-02 1.993e-02 2.009e-02 2.014e-02 2.025e-02 2.080e-02 2.114e-02 2.121e-02 2.130e-02 2.148e-02 2.307e-02 2.353e-02 2.535e-02 2.536e-02 2.555e-02 2.637e-02 3.089e-02 6.109e-02
+ode-event-tsit5-100-pendulums/grad	alloc_words	exact	112370
+ode-event-tsit5-100-pendulums/grad	wall_time	batch=1	n=20	4.383e-03	4.089e-03 4.278e-03 4.308e-03 4.313e-03 4.314e-03 4.317e-03 4.327e-03 4.348e-03 4.371e-03 4.373e-03 4.392e-03 4.405e-03 4.438e-03 4.453e-03 4.533e-03 5.027e-03 5.323e-03 5.723e-03 6.048e-03 6.161e-03
 ode-march-tsit5-100-pendulums/compiled	alloc_words	exact	65527
 ode-march-tsit5-100-pendulums/compiled	wall_time	batch=2	n=20	4.041e-03	3.679e-03 3.888e-03 3.891e-03 3.970e-03 3.972e-03 3.989e-03 3.991e-03 3.991e-03 3.999e-03 4.018e-03 4.065e-03 4.199e-03 4.210e-03 4.249e-03 4.253e-03 4.259e-03 4.265e-03 4.331e-03 4.914e-03 5.339e-03
 ode-march-tsit5-100-pendulums/eager	alloc_words	exact	811051
