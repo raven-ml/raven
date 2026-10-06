@@ -1419,19 +1419,24 @@ index 1f6134e..24949cf 100644
  
  # *****************
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 228ec4e..669d14f 100644
+index 228ec4e..e35c06e 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
-@@ -11,6 +11,8 @@ from tinygrad.helpers import argsort, all_same, cpu_profile, colored, Context, S
+@@ -11,7 +11,13 @@ from tinygrad.helpers import argsort, all_same, cpu_profile, colored, Context, S
  class IndexingContext:
    realize_map: dict[UOp, None|list[int]] = field(default_factory=dict)
    non_removable: dict[UOp, None] = field(default_factory=dict)
 +  # values stored because a broadcast reads them
 +  broadcast: dict[UOp, None] = field(default_factory=dict)
    range_map: dict[UOp, tuple[tuple[UOp, ...], tuple[UOp, ...]]] = field(default_factory=dict)
++  # each store that shares its loops with others: the stores of its group, in order; a group's loops and end by its first store
++  shares: dict[UOp, tuple[UOp, ...]] = field(default_factory=dict)
++  loops: dict[UOp, tuple[UOp, ...]] = field(default_factory=dict)
++  ends: dict[UOp, UOp] = field(default_factory=dict)
  
    # create ranges
-@@ -35,6 +37,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
+   range_idx: Iterator[int] = field(default_factory=itertools.count)
+@@ -35,6 +41,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
    # you don't usually have to do this for assign unless there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce
    if dest.base in src.toposort(enter_calls=False): ctx.realize_map[src] = None
  
@@ -1445,7 +1450,7 @@ index 228ec4e..669d14f 100644
  def realize_custom_kernel_srcs(ctx:IndexingContext, c:UOp) -> None:
    for s in c.src[1:]:
      while s.op is Ops.RESHAPE: s = s.src[0]
-@@ -49,6 +58,7 @@ pm_generate_realize_map = PatternMatcher([
+@@ -49,6 +62,7 @@ pm_generate_realize_map = PatternMatcher([
    (UPat(Ops.STORE, name="tr"), realize),
    # realize srcs of these
    (UPat((Ops.MSELECT, Ops.MSTACK), name="rb"), realize_srcs),
@@ -1453,7 +1458,7 @@ index 228ec4e..669d14f 100644
    # sometimes we need to realize the src of STORE if there's a self-access, or if it's a cross device store
    (UPat(Ops.STORE, src=(UPat.var("dest"), UPat.var("src"))), realize_store_after_src),
  ])
-@@ -58,6 +68,8 @@ class BufferizeOpts:
+@@ -58,6 +72,8 @@ class BufferizeOpts:
    device: str|tuple[str, ...]|None
    addrspace: AddrSpace = AddrSpace.GLOBAL
    removable: bool = True
@@ -1462,7 +1467,7 @@ index 228ec4e..669d14f 100644
  
  def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if x.op not in GroupOp.Broadcastable: return rngs
-@@ -67,32 +79,39 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
+@@ -67,35 +83,52 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
  # TODO: srcs contain (real data srcs, something else, ranges) and the boundary is confusing. see range_start
  def data_srcs(op:Ops, src:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.RANGE, Ops.SPECIAL}: return ()
@@ -1470,8 +1475,17 @@ index 228ec4e..669d14f 100644
    if op in GroupOp.Movement|{Ops.INDEX, Ops.STAGE, Ops.REDUCE, Ops.AFTER, Ops.END, Ops.BACKEDGE, Ops.COPY}: return src[:1]
    return src
  
++# the end of a group of stores: one end of all of them over their loops
++def end_shared(ctx:IndexingContext, members:tuple[UOp, ...]) -> UOp:
++  if (e:=ctx.ends.get(members[0])) is not None: return e
++  closed_ranges = ctx.range_map[members[0]][1]
++  for m in members: del ctx.realize_map[m]
++  ctx.ends[members[0]] = e = UOp.group(*members).end(*[r for r in closed_ranges if r.op is Ops.RANGE])
++  return e
++
 +def bufferize_and_index(ctx:IndexingContext, s:UOp, indexed:bool, src_rngs:tuple[UOp, ...]) -> UOp:
 +  if s.op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.MSTACK, Ops.MSELECT, Ops.AFTER}: return s.index(*src_rngs) if indexed else s
++  if s in ctx.shares: return end_shared(ctx, ctx.shares[s])
 +  if s not in ctx.realize_map: return s
 +  assert isinstance(ctx.realize_map[s], list), "realize map must contain range list"
 +  closed_ranges = ctx.range_map[s][1]
@@ -1521,8 +1535,13 @@ index 228ec4e..669d14f 100644
 +  return bufferize_and_index(ctx, x.src[0], True, (l,)+tuple(rngs[n:]))
  
  def create_bufferize_and_index_based_on_ranges(ctx:IndexingContext, x:UOp):
-   if x.op in {Ops.STAGE, Ops.INDEX}: return None
-@@ -140,6 +159,8 @@ pm_apply_rangeify = PatternMatcher([
+-  if x.op in {Ops.STAGE, Ops.INDEX}: return None
++  # a group's stores are its own: each indexes its sources as any node does
++  if x.op in {Ops.STAGE, Ops.INDEX, Ops.GROUP}: return None
+   return x.replace(src=tuple(create_bufferize_and_index_srcs(ctx, x)))
+ 
+ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
+@@ -140,6 +173,8 @@ pm_apply_rangeify = PatternMatcher([
    (UPat(Ops.PAD, name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
@@ -1531,7 +1550,70 @@ index 228ec4e..669d14f 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -227,7 +248,10 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -186,6 +221,54 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+     case _: raise RuntimeError(f"{op} is not a MovementOp")
+   return rngs
+ 
++# stored values of one shape and device share their loops when the nodes each computes before it reads storage or another stored
++# value share a computed node, and neither reads what the other writes: the shared nodes are computed once, and the stores end as
++# one kernel. a reduction of one of them alone keeps them apart
++def share_loops(rctx:IndexingContext, topo:list[UOp]) -> None:
++  # a store of no loop ends nothing, so it stays alone
++  stores = [u for u in topo if u.op is Ops.STORE and u in rctx.realize_map and any(resolve(s != 1) for s in u.shape)]
++  def region(s:UOp) -> list[UOp]:
++    value = s.src[1]
++    if value in rctx.realize_map: return []
++    fused = lambda u: u is value or not (u in rctx.realize_map or u.op in ALWAYS_CONTIGUOUS)
++    return [u for u in value.toposort(fused, enter_calls=False) if u.op in GroupOp.Elementwise or u.op is Ops.REDUCE]
++  # whether a reads b, or the storage b writes, through its value or where it stores
++  def reads(a:UOp, b:UOp) -> bool:
++    sl = a.toposort(enter_calls=False)
++    return b in sl or b.src[0].base in sl
++  regions = {s:region(s) for s in stores}
++  def joinable(a:UOp, b:UOp) -> bool:
++    within = lambda s,t: all(any(r is u for u in regions[t]) for r in regions[s] if r.op is Ops.REDUCE)
++    return a.src[1].shape == b.src[1].shape and a.src[0].device == b.src[0].device and a.src[0].base is not b.src[0].base and \
++      not reads(a, b) and not reads(b, a) and within(a, b) and within(b, a)
++  by_node: dict[UOp, list[UOp]] = {}
++  for s in stores:
++    for u in regions[s]:
++      ss = by_node.setdefault(u, [])
++      if not any(x is s for x in ss): ss.insert(0, s)
++  groups: dict[UOp, list[UOp]] = {s:[s] for s in stores}
++  first: dict[UOp, UOp] = {s:s for s in stores}
++  def join(a:UOp, b:UOp):
++    fa, fb = first[a], first[b]
++    if fa is fb: return
++    ga, gb = groups[fa], groups[fb]
++    if not all(joinable(s, t) for s in ga for t in gb): return
++    members = [s for s in stores if any(s is x for x in ga+gb)]
++    del groups[fa], groups[fb]
++    groups[members[0]] = members
++    for s in members: first[s] = members[0]
++  for u in topo:
++    if (ss:=by_node.get(u)):
++      for t in ss[1:]: join(ss[0], t)
++  for members in groups.values():
++    if len(members) > 1:
++      for s in members: rctx.shares[s] = tuple(members)
++
++def loops_of(rctx:IndexingContext, x:UOp) -> tuple[UOp, ...]:
++  if (members:=rctx.shares.get(x)) is None: return tuple(rctx.new_range(s) for s in x.shape)
++  if members[0] not in rctx.loops: rctx.loops[members[0]] = tuple(rctx.new_range(s) for s in x.shape)
++  return rctx.loops[members[0]]
++
+ @rewrite_group(new_ctx=False)
+ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+   if debug: print("**************************")
+@@ -197,6 +280,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+   # get the consumer map
+   with cpu_profile("consumer map in rangeify", "TINY"):
+     tsink_toposort = tsink.toposort(gate_kernel_sink)
++    share_loops(rctx, list(tsink_toposort))
+     consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
+     for c in tsink_toposort:
+       for x in data_srcs(c.op, c.src):
+@@ -227,10 +311,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -1541,9 +1623,14 @@ index 228ec4e..669d14f 100644
 +                     for r in ([rngs if j == 0 else rngs[:len(x.shape)] for j,s in enumerate(c.src) if s is x]
 +                               if c.op is Ops.INDEX and is_gather(c.src) else [broadcast_rngs(c, x, rngs)])]
      if x in rctx.realize_map:
-       # if this is in the realize_map, we create new ranges (at the output)
-       out_rngs = tuple(rctx.new_range(s) for s in x.shape)
-@@ -265,14 +289,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+-      # if this is in the realize_map, we create new ranges (at the output)
+-      out_rngs = tuple(rctx.new_range(s) for s in x.shape)
++      # if this is in the realize_map, we create new ranges (at the output), or take its group's
++      out_rngs = loops_of(rctx, x)
+       # all ranges are ended now
+       ending_ranges[x] = []
+       # mark all ranges as ended
+@@ -265,14 +352,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges

@@ -570,6 +570,92 @@ let rules =
                (Ops.toposort ~calls:Enter (Rangeify.get_kernel_graph sink))));
     ]
 
+(* Outputs that share a computation
+
+   Stored values of one shape and device whose computations share a node, and
+   neither of which reads the other, run as one kernel that writes both. A
+   double word's high and low parts are one chain's two ends. *)
+
+let out2 = Ops.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
+
+let stores2 ?(size = 16) v w =
+  let at slot = Ops.param ~device:cpu ~shape:[ Int size ] slot Float32 in
+  let store o v = Ops.after o [ Ops.store (Ops.reshape o (Ops.shape v)) v ] in
+  Ops.sink [ store (at 0) v; store (at 4) w ]
+
+(* Knuth's two-sum of [a] and [b]: the rounded sum and its error. *)
+let two_sum a b =
+  let open Ops.O in
+  let s = a + b in
+  let bb = s - a in
+  (s, a - (s - bb) + (b - bb))
+
+let writes sink =
+  let buffers = filled sink in
+  equal (list write)
+    (Tensors.writes ~buffers sink)
+    (Kernel_graphs.writes ~buffers (schedule sink))
+
+let shared =
+  let hi, lo = two_sum (input 1) (input 2) in
+  let x = input 1 in
+  let v = Ops.O.(input 1 * input 2) in
+  group "get_kernel_graph › outputs that share a computation"
+    [
+      test "a two-sum's sum and error run as one kernel" (fun () ->
+          equal int 1 (kernels_of (stores2 hi lo)));
+      test "a two-sum's sum and error are written as their tensors write them"
+        (fun () -> writes (stores2 hi lo));
+      test "outputs that share only a load run as two kernels" (fun () ->
+          equal int 2 (kernels_of (stores2 Ops.O.(x + x) Ops.O.(x * x))));
+      test "outputs that share a reduction run as one kernel" (fun () ->
+          let m = Ops.rop (input 1) Max [ 1 ] in
+          let sink =
+            stores2 ~size:4 Ops.O.(m + float 1.) Ops.O.(m * float 2.)
+          in
+          equal int 1 (kernels_of sink);
+          writes sink);
+      test "outputs that share a broadcast reduction read it from its kernel"
+        (fun () ->
+          let m = Ops.expand (Ops.rop (input 1) Max [ 1 ]) (ints [ 4; 4 ]) in
+          let sink = stores2 Ops.O.(m + input 2) Ops.O.(m * input 3) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "outputs with a reduction each run as two kernels" (fun () ->
+          let sink =
+            stores2 ~size:4 (Ops.rop v Add [ 1 ]) (Ops.rop v Max [ 1 ])
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "outputs of shapes that differ run as two kernels" (fun () ->
+          let w = Ops.reshape v (ints [ 2; 8 ]) in
+          equal int 2 (kernels_of (stores2 v Ops.O.(w * w))));
+      test "an output that reads what another writes runs after it" (fun () ->
+          let first =
+            Ops.after out [ Ops.store (Ops.reshape out (ints [ 4; 4 ])) v ]
+          in
+          let read = Ops.reshape first (ints [ 4; 4 ]) in
+          let sink =
+            Ops.sink
+              [
+                first;
+                Ops.after out2
+                  [
+                    Ops.store
+                      (Ops.reshape out2 (ints [ 4; 4 ]))
+                      Ops.O.((v * v) + read);
+                  ];
+              ]
+          in
+          equal int 2 (kernels_of sink);
+          writes sink);
+      test "an output that overwrites what another reads runs apart" (fun () ->
+          let old = Ops.reshape out2 (ints [ 4; 4 ]) in
+          let sink = stores2 Ops.O.(v + old) Ops.O.(v * v) in
+          equal int 2 (kernels_of sink);
+          writes sink);
+    ]
+
 (* Generated programs
 
    The law of scheduling end to end: a function of up to three inputs of up to
@@ -885,6 +971,7 @@ let () =
          debug;
          spec;
          rules;
+         shared;
          loops;
          states;
          cost;

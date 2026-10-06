@@ -108,8 +108,8 @@ padto_max_all	2	[32, 17]	[AxisType.REDUCE, AxisType.REDUCE]	[0, 1]	[]	[0, 1]	0	1
 padto_max_0_axis_1	2	[17, 32]	[AxisType.WEAK, AxisType.REDUCE]	[1]	[0]	[1]	0	1	0	1	2	  17   32	0:32:REDUCE
 padto_where	2	[32, 17]	[AxisType.WEAK, AxisType.REDUCE]	[1]	[0]	[1]	0	1	0	1	2	  32   17	1:32:WEAK
 padto_where_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.REDUCE]	[2]	[0]	[2]	1	8	0	1	2	   4    8   17	1:4:WEAK 2:8:UPCAST
-padto_where_multioutput	1	[32]	[AxisType.WEAK]	[]	[0]	[]	0	1	0	0	2	  32	0:32:WEAK
-padto_where_multioutput_upcast	2	[4, 8]	[AxisType.WEAK, AxisType.UPCAST]	[]	[0]	[]	1	8	0	0	2	   4    8	0:4:WEAK 1:8:UPCAST
+padto_where_multioutput	2	[32, 17]	[AxisType.WEAK, AxisType.REDUCE]	[1]	[0]	[1]	0	1	0	1	3	  32   17	1:32:WEAK
+padto_where_multioutput_upcast	3	[4, 8, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.REDUCE]	[2]	[0]	[2]	1	8	0	1	3	   4    8   17	1:4:WEAK 2:8:UPCAST
 color_shapes_0	4	[16, 32, 2, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.REDUCE]	[3]	[0, 1, 2]	[3]	0	1	0	1	3	  16   32    2   32	1:16:GLOBAL 3:2:LOCAL
 color_shapes_1	5	[16, 32, 2, 2, 16]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.REDUCE]	[3, 4]	[0, 1, 2, 3]	[3, 4]	0	1	1	1	3	  16   32    2    2   16	0:16:REDUCE 4:2:LOCAL
 color_shapes_2	4	[16, 32, 2, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.UNROLL]	[3]	[0, 1, 2]	[]	1	32	0	1	3	  16   32    2   32	0:1:REDUCE 4:32:UNROLL

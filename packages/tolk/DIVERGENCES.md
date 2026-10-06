@@ -4124,3 +4124,39 @@ stores through a pad.
   `execution` test, which waits for its batches through the signaler; and
   `nx.metal.device › failures › a command buffer Metal fails loses the device
   with Metal's reason`.
+
+## D137. Stored values that share a computation share their loops
+
+- **tinygrad:** `schedule/indexing.py:233` (new ranges for every stored
+  value) and `:253-276` (a node its consumers index apart is stored);
+  `schedule/rangeify.py:50` (`remove_bufferize`, which inlines such a store
+  back into each consumer) and `:335-348` (`split_store`, one kernel per
+  store). Upstream calls scheduling several outputs into one kernel pending:
+  `test/runtime/test_assign.py:355`, `:384` and `:397` skip "multi output
+  not supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
+  multioutput implementation #3607". Codegen already compiles a kernel of
+  one end over a group of stores (`test/runtime/test_custom_kernel.py:139`).
+- **tolk:** `lib/schedule/indexing.ml:451` (`region`), `:481`
+  (`share_loops`), `:533` (`loops_of`) and `:145` (`end_shared`, which
+  `bufferize_and_index` returns for each store of a group);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** before ranges are assigned, the stores of the tensor graph that
+  have a loop are grouped. Two join when their values have one shape and one
+  device, they write different storage, neither reads the other or the
+  storage the other writes, through anything, and the computed nodes each
+  reaches before storage or another stored value share one. Neither may reach
+  a reduction the other does not: a kernel of two reductions can lose the
+  optimisations each would take. A group's stores take one set of loops, so
+  their shared nodes are indexed alike and computed once, and they end as one
+  end over a group of the stores, which the kernel split makes one kernel
+  writing them all. Outputs that share only loads stay apart.
+- **Reason:** (b): `Nx_wide`, whose operations return a double word's high
+  and low parts, the two ends of one chain. tinygrad schedules each part as a
+  kernel that computes the whole chain: a compiled double-word add ran six
+  kernels and runs one, and `compile/wide/sum-1e6` compiled 17 kernels.
+- **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
+  `get_kernel_graph › outputs that share a computation` (every test); its
+  recorded `shard_of_computed_kernels` and `kernel_counts`, and the
+  Postrange suite's `where_max_multioutput` cases, recorded from the equally
+  patched tinygrad; rune's `Rune nx.wide › kernels`.

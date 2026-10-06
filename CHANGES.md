@@ -1140,6 +1140,9 @@ thread.
 
 ### Tolk (new)
 
+- Stored values of one shape that share a computation, and do not read each
+  other, run as one kernel that writes them all: a compiled `Nx_wide.add`
+  runs one kernel, from six, and computes its chain once.
 - On the host, a kernel without a reduce whose accesses merge into vectors
   (float32, float16, int32) is no longer upcast, so Clang vectorizes its loop:
   float32 transcendentals replay 1.4 to 4 times as fast. float64 kernels keep

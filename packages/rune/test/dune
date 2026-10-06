@@ -344,4 +344,4 @@
  (name test_wide)
  (modules test_wide)
  (package rune)
- (libraries windtrap rune rune_test nx nx.wide))
+ (libraries windtrap rune rune_test nx nx.device nx.wide))

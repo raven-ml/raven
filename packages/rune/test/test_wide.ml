@@ -158,6 +158,40 @@ let error_terms =
         one tiny (0., 0.);
     ]
 
+(* Kernels *)
+
+(* The kernels [f ()] runs, by their names. *)
+let kernels f =
+  let p = Nx_device.Profile.start () in
+  ignore (Sys.opaque_identity (f ()));
+  let kernel name =
+    String.length name >= 1
+    && (name.[0] = 'E' || name.[0] = 'r')
+    && (String.length name = 1 || name.[1] = '_')
+  in
+  List.filter_map
+    (function
+      | Nx_device.Profile.Span { name; _ } when kernel name -> Some name
+      | _ -> None)
+    (Nx_device.Profile.stop p)
+
+(* A double word's two parts are the ends of one computation: compiled, an
+   operation writes both from one kernel. *)
+let kernel_counts =
+  let w =
+    Nx_wide.v
+      ~lo:(Nx.mul_s (Nx.rand Nx.float64 [| 64 |]) 1e-20)
+      (Nx.rand Nx.float64 [| 64 |])
+  in
+  let one name f =
+    test (name ^ ", compiled, writes both words from one kernel") (fun () ->
+        let g = Rune.jit Nx.Ptree.(p64 @-> p64 @-> returns p64) f in
+        ignore (g w w);
+        equal int 1 (List.length (kernels (fun () -> g w w))))
+  in
+  group "kernels"
+    [ one "add" Nx_wide.add; one "mul" Nx_wide.mul; one "sub" Nx_wide.sub ]
+
 (* Derivatives through the high word *)
 
 (* A phase [f0 t + f1 t² / 2] of a double-word time. *)
@@ -205,5 +239,6 @@ let () =
          group "mapped"
            (mapped Nx.float64 "float64" @ mapped Nx.float32 "float32");
          error_terms;
+         kernel_counts;
          derivatives;
        ])
