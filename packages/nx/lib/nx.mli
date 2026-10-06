@@ -2512,7 +2512,7 @@ val log_gammainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     is within 16 ulps, or [16ε] absolutely where it is below [1] in magnitude.
     For [a > 0] and [x > 0] it is finite, including where [P] underflows. It is
     [-inf] at [x = 0] and where [a] is [+inf], [0] at [x = +inf], [-0] at [a =
-    0] for [x > 0], where the limit is reached from below, and NaN where
+    0] for [x > 0], where [P] tends to 1 from below, and NaN where
     {!gammainc} is.
 
     {@ocaml[
@@ -2523,8 +2523,8 @@ val log_gammainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 val log_gammaincc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 (** [log_gammaincc a x] is [log Q(a, x)] ({!gammaincc}), within the bound of
     {!log_gammainc}. For [a > 0] it is finite wherever [x] is. It is [0] at [x =
-    0] and where [a] is [+inf], [-inf] at [x = +inf] and at [a = 0], and NaN
-    where {!gammaincc} is. *)
+    0], [-0] where [a] is [+inf] for [x > 0], where [Q] tends to 1 from below,
+    [-inf] at [x = +inf] and at [a = 0], and NaN where {!gammaincc} is. *)
 
 val gammaincinv : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 (** [gammaincinv a p] is the gamma distribution's quantile, the [x] with

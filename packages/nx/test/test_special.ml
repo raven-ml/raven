@@ -561,7 +561,6 @@ let gamma_laws =
           (0.5, 0., 0., 1.);
           (1., Float.infinity, 1., 0.);
           (0., Float.infinity, 1., 0.);
-          (Float.infinity, 1., 0., 1.);
           (Float.infinity, 0., 0., 1.);
           (Float.infinity, Float.infinity, Float.nan, Float.nan);
           (0., 0., Float.nan, Float.nan);
@@ -578,6 +577,18 @@ let gamma_laws =
           Windtrap.equal float_exact (Stdlib.log p) (item [] (log_gammainc a x));
           Windtrap.equal float_exact (Stdlib.log q)
             (item [] (log_gammaincc a x)));
+      (* As [a] goes to [+inf], [Q] tends to 1 from below for finite [x > 0]:
+         [log Q] reaches 0 from below. *)
+      cases
+        ~name:(fun x -> Printf.sprintf "at a = +inf, x = %g" x)
+        "the limit at a = +inf" [ 0x1p-1074; 1.; 1e300 ]
+        (fun x ->
+          let a = scalar float64 Float.infinity and x = scalar float64 x in
+          Windtrap.equal float_exact 0. (item [] (gammainc a x));
+          Windtrap.equal float_exact 1. (item [] (gammaincc a x));
+          Windtrap.equal float_exact Float.neg_infinity
+            (item [] (log_gammainc a x));
+          Windtrap.equal float_exact (-0.) (item [] (log_gammaincc a x)));
       (* At [a = 0] each is its limit, [P = 1 - a E1(x) + O(a^2)] for [x > 0]:
          [log P] reaches 0 from below. *)
       cases

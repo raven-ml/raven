@@ -1111,11 +1111,11 @@ f32	0x1.e000000000000p+4	-0x1.0000000000000p+0	nan
 f32	0x1.e000000000000p+4	0x1.0000000000000p-149	-0x0.0p+0
 f32	0x1.e000000000000p+4	-infinity	nan
 f32	infinity	0x0.0p+0	0x0.0p+0
-f32	infinity	0x1.0000000000000p+0	0x0.0p+0
+f32	infinity	0x1.0000000000000p+0	-0x0.0p+0
 f32	infinity	infinity	nan
 f32	infinity	nan	nan
 f32	infinity	-0x1.0000000000000p+0	nan
-f32	infinity	0x1.0000000000000p-149	0x0.0p+0
+f32	infinity	0x1.0000000000000p-149	-0x0.0p+0
 f32	infinity	-infinity	nan
 f32	nan	0x0.0p+0	nan
 f32	nan	0x1.0000000000000p+0	nan
@@ -2402,11 +2402,11 @@ f64	0x1.e000000000000p+4	-0x1.0000000000000p+0	nan
 f64	0x1.e000000000000p+4	0x0.0000000000001p-1022	-0x0.0p+0
 f64	0x1.e000000000000p+4	-infinity	nan
 f64	infinity	0x0.0p+0	0x0.0p+0
-f64	infinity	0x1.0000000000000p+0	0x0.0p+0
+f64	infinity	0x1.0000000000000p+0	-0x0.0p+0
 f64	infinity	infinity	nan
 f64	infinity	nan	nan
 f64	infinity	-0x1.0000000000000p+0	nan
-f64	infinity	0x0.0000000000001p-1022	0x0.0p+0
+f64	infinity	0x0.0000000000001p-1022	-0x0.0p+0
 f64	infinity	-infinity	nan
 f64	nan	0x0.0p+0	nan
 f64	nan	0x1.0000000000000p+0	nan

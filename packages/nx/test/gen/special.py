@@ -1878,8 +1878,10 @@ def igamma_reference(tail, log):
                 return v
             if v == 0:
                 return -math.inf
-            # log P tends to 0 from below as a goes to 0.
-            return -0.0 if a == 0 and x < math.inf else math.log(v)
+            # A tail that tends to 1 from below has a logarithm of -0: P as a
+            # goes to 0, Q as a goes to +inf, each for finite x > 0.
+            towards_one = (a == 0 and tail == 0) or (a == math.inf and tail == 1 and x > 0)
+            return -0.0 if towards_one and x < math.inf else math.log(v)
         if log:
             return correctly_rounded(fmt, lambda a, x: igamma_exact(a, x)[tail], a, x)
         return correctly_rounded(fmt, lambda a, x: mpmath.exp(igamma_exact(a, x)[tail]), a, x)

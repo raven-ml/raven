@@ -894,8 +894,13 @@ let igamma_edges a x upper =
       (exp (where limit (sub r (log a_c)) (zeros_like r)))
   in
   let p_zero = logical_or a_inf zero in
+  (* Where [a = inf], [Q] tends to 1 from below for [x > 0]: its logarithm is
+     [-0]. *)
   let edge =
-    where (logical_xor p_zero upper) (lit r Float.neg_infinity) (zeros_like r)
+    where (logical_xor p_zero upper) (lit r Float.neg_infinity)
+      (where
+         (logical_and a_inf (logical_not zero))
+         (lit r (-0.)) (zeros_like r))
   in
   (* [log Q] is [-inf] there, selected: a logarithm of [0] would make every
      slope through it NaN. *)
