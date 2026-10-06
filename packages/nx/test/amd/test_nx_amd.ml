@@ -1679,6 +1679,134 @@ let scatter_cases =
             served);
     ]
 
+(* Windows *)
+
+(* A window geometry over [k] axes. *)
+type geometry = {
+  kernel_size : int array;
+  stride : int array;
+  dilation : int array;
+  padding : (int * int) array;
+}
+
+let pp_geometry ppf g =
+  let ints a = String.concat "," (List.map string_of_int (Array.to_list a)) in
+  Format.fprintf ppf "kernel %s stride %s dilation %s padding %s"
+    (ints g.kernel_size) (ints g.stride) (ints g.dilation)
+    (String.concat ","
+       (List.map
+          (fun (a, b) -> Printf.sprintf "%d/%d" a b)
+          (Array.to_list g.padding)))
+
+let window_geometry k =
+  Gen.with_pp pp_geometry
+    Gen.(
+      let a lo hi = array ~size:(constant k) (int_range lo hi) in
+      let+ kernel_size = a 1 3
+      and+ stride = a 1 3
+      and+ dilation = a 1 2
+      and+ padding =
+        array ~size:(constant k) (pair (int_range 0 2) (int_range 0 2))
+      in
+      { kernel_size; stride; dilation; padding })
+
+let patches g x =
+  Nx.extract_patches ~kernel_size:g.kernel_size ~stride:g.stride
+    ~dilation:g.dilation ~padding:g.padding x
+
+let combined g output_size p =
+  Nx.combine_patches ~output_size ~kernel_size:g.kernel_size ~stride:g.stride
+    ~dilation:g.dilation ~padding:g.padding p
+
+(* [x]'s windows under [g] on the GPU, and their sum back, read back, against
+   the host's: the windows bit for bit, the sums too but for a NaN a float sum
+   makes, which is any NaN. *)
+let windows_as_on_host ?msg g x =
+  let k = Array.length g.kernel_size in
+  let r = Nx.ndim x in
+  let output_size = Array.sub (Nx.shape x) (r - k) k in
+  let p = patches g x and gp = patches g (on_gpu x) in
+  equal ?msg Stored.packed (Nx.P p) (Nx.P (host gp));
+  let float = Nx_dtype.is_float (Nx.dtype x) in
+  equal ?msg
+    (if float then floats_or_bits else Stored.packed)
+    (Nx.P (combined g output_size p))
+    (Nx.P (host (combined g output_size gp)))
+
+let windowed =
+  group "windowed"
+    (List.map
+       (fun (Stored.Case c) ->
+         prop ~count:300
+           (c.name
+          ^ " values of every layout unfold and fold as on the host, under \
+             every geometry")
+           (Gen.bind c.tensors (fun x ->
+                let x = if Nx.ndim x = 0 then Nx.reshape [| 1 |] x else x in
+                let open Gen in
+                let* k = int_range 1 (Int.min 2 (Nx.ndim x)) in
+                let+ g = window_geometry k in
+                (x, g)))
+           (fun (x, g) ->
+             let k = Array.length g.kernel_size in
+             cover "strided" (not (Nx.is_c_contiguous x));
+             cover "two axes" (k = 2);
+             cover "padded" (Array.exists (fun (a, b) -> a + b > 0) g.padding);
+             let spatial = Array.sub (Nx.shape x) (Nx.ndim x - k) k in
+             cover "no window"
+               (List.exists
+                  (fun d ->
+                    let a, b = g.padding.(d) in
+                    spatial.(d) + a + b
+                    < (g.dilation.(d) * (g.kernel_size.(d) - 1)) + 1)
+                  (List.init k Fun.id));
+             windows_as_on_host g x))
+       (List.filter served_case Stored.every))
+
+let window_cases =
+  let g k s d p = { kernel_size = k; stride = s; dilation = d; padding = p } in
+  group "window cases"
+    [
+      test "overlapping windows sum where they overlap" (fun () ->
+          let g = g [| 2 |] [| 1 |] [| 1 |] [| (0, 0) |] in
+          let p = patches g (on_gpu (Nx.ones Nx.float32 [| 1; 4 |])) in
+          equal (array float_exact) [| 1.; 2.; 2.; 1. |]
+            (Nx.to_array (host (combined g [| 4 |] p))));
+      test "a tap in the padding reads 0" (fun () ->
+          let g = g [| 3 |] [| 1 |] [| 1 |] [| (1, 1) |] in
+          let x = on_gpu (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
+          equal (array float_exact)
+            [| 0.; 1.; 2.; 1.; 2.; 3.; 2.; 3.; 0. |]
+            (Nx.to_array (host (patches g x))));
+      test "large windows of every dtype unfold and fold as on the host"
+        (fun () ->
+          List.iter
+            (fun (Dtype d as dt) ->
+              List.iter
+                (fun (shape, gm) ->
+                  let (Nx.P x) =
+                    values dt shape (fun i -> Float.of_int (spread i - 6))
+                  in
+                  windows_as_on_host
+                    ~msg:
+                      (Format.asprintf "%s %a" (Nx_dtype.to_string d)
+                         pp_geometry gm)
+                    gm x;
+                  windows_as_on_host
+                    ~msg:
+                      (Format.asprintf "%s transposed %a" (Nx_dtype.to_string d)
+                         pp_geometry gm)
+                    gm (Nx.transpose x))
+                [
+                  ( [| 2; 3; 64; 65 |],
+                    g [| 3; 3 |] [| 1; 1 |] [| 1; 1 |] [| (1, 1); (1, 1) |] );
+                  ( [| 2; 3; 64; 65 |],
+                    g [| 3; 2 |] [| 2; 3 |] [| 2; 1 |] [| (0, 2); (1, 0) |] );
+                  ([| 1; 100_000 |], g [| 5 |] [| 1 |] [| 1 |] [| (2, 2) |]);
+                ])
+            served);
+    ]
+
 (* Random values *)
 
 let key_words (k : Nx.Rng.t) = Nx.P (host (k :> Nx.int32_t))
@@ -1740,5 +1868,7 @@ let () =
          sort_cases;
          scattered;
          scatter_cases;
+         windowed;
+         window_cases;
          accuracy;
        ])

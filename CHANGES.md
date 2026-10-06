@@ -3267,6 +3267,9 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation take sliding windows eagerly:
+  `Nx.extract_patches` and `Nx.combine_patches` run on the GPU, bit for bit as
+  on the host, overlapping windows summed in the host's order.
 - AMD GPUs of the gfx12 generation scatter eagerly: `Nx.scatter` under `Set`,
   `Add`, `Max` and `Min` runs on the GPU, the last update winning under `Set`,
   an update outside the axis dropped, and the extremes and integer sums bit for

@@ -8,14 +8,16 @@
    one's elements and their running sum, a uniform draw, a sort with its
    positions (at 4K and 1M: the host's sort of 16M overruns a case's deadline),
    a gather of every element at drawn positions, a sum of as many updates at
-   drawn positions, the concatenation of two halves and a square padded by one,
-   at 4K, 1M and 16M elements, and the product of a float32 square matrix by
-   itself, of 128, 1,024 and 4,096 rows, timed to the work's completion, and the
-   first use of a kernel in a fresh process, which opens the GPU and loads the
-   kernel's code objects. AMD loads code objects with no compiler, so the first
-   use has no cold and warm cases. Rows exist for the GPUs the machine has: AMD
-   GPU 0 under the kernel driver. The GPU is opened in each measuring worker,
-   never in the parent that forks them; the host twins run on every machine. *)
+   drawn positions, the 3 by 3 windows of an image and their sum back (at 4K and
+   1M: nine times 16M elements overrun the host's case), the concatenation of
+   two halves and a square padded by one, at 4K, 1M and 16M elements, and the
+   product of a float32 square matrix by itself, of 128, 1,024 and 4,096 rows,
+   timed to the work's completion, and the first use of a kernel in a fresh
+   process, which opens the GPU and loads the kernel's code objects. AMD loads
+   code objects with no compiler, so the first use has no cold and warm cases.
+   Rows exist for the GPUs the machine has: AMD GPU 0 under the kernel driver.
+   The GPU is opened in each measuring worker, never in the parent that forks
+   them; the host twins run on every machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -77,6 +79,16 @@ let floats n = Nx.rand Nx.float32 [| n |]
 let positions n =
   Nx.cast Nx.int64 (Nx.mul_s (Nx.rand Nx.float32 [| n |]) (Float.of_int n))
 
+(* A 3 by 3 window of step 1 padded to keep the extent, over an image of about
+   [n] elements. *)
+let three = [| 3; 3 |]
+let one_step = [| 1; 1 |]
+let same = [| (1, 1); (1, 1) |]
+
+let image n =
+  let side = Float.to_int (Float.sqrt (Float.of_int n)) in
+  Nx.rand Nx.float32 [| 1; 1; side; side |]
+
 (* A square of about [n] elements. *)
 let square n =
   let side = Float.to_int (Float.sqrt (Float.of_int n)) in
@@ -113,6 +125,21 @@ let cases ~gpu size =
   @ rows ~put:two ~gpu "cat" size
       ~input:(fun n -> (floats (n / 2), floats (n / 2)))
       ~op:(fun (a, b) -> Nx.concatenate ~axis:0 [ a; b ])
+  @ (if snd size > 1 lsl 20 then []
+     else
+       rows ~put:one ~gpu "unfold" size ~input:image ~op:(fun x ->
+           Nx.extract_patches ~kernel_size:three ~stride:one_step
+             ~dilation:one_step ~padding:same x)
+       @ rows ~put:one ~gpu "fold" size
+           ~input:(fun n ->
+             Nx.extract_patches ~kernel_size:three ~stride:one_step
+               ~dilation:one_step ~padding:same (image n))
+           ~op:(fun p ->
+             let side =
+               Nx.dim (-1) p |> Float.of_int |> Float.sqrt |> Float.to_int
+             in
+             Nx.combine_patches ~output_size:[| side; side |] ~kernel_size:three
+               ~stride:one_step ~dilation:one_step ~padding:same p))
   @ rows ~put:one ~gpu "pad" size ~input:square
       ~op:(Nx.pad [| (1, 1); (1, 1) |] 0.)
 

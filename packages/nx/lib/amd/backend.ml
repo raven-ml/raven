@@ -8,11 +8,11 @@
    An elementwise operation names its module's key, its operands and its result;
    the operands' views are coalesced; the module's contiguous form [c] runs when
    every view is C-contiguous after merging, and its strided form [s] otherwise;
-   one launch on the device's compute queue. Reductions, scans, sorts and matrix
-   products take paths of their own (Reductions, Scans, Sorts, Matrix products).
-   A module's kernels are loaded on a device at their first use, and kept while
-   the device is. A GPU that no carried target covers refuses every kernel, as
-   do the operations, dtypes and layouts the kernels do not serve. *)
+   one launch on the device's compute queue. Reductions, scans, sorts, scatters,
+   windows and matrix products take paths of their own. A module's kernels are
+   loaded on a device at their first use, and kept while the device is. A GPU
+   that no carried target covers refuses every kernel, as do the operations,
+   dtypes and layouts the kernels do not serve. *)
 
 module View = Nx_array.View
 module Program = Nx_device.Program
@@ -808,6 +808,79 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
          :: List.filter_map fst runs)
         ds
 
+(* Windows
+
+   Each result element is computed from its index: an unfold element reads the
+   one element its tap covers, or 0 in the padding; a fold element sums the taps
+   that cover it, in order. The operand's leading axes coalesce. *)
+
+(* The windows along each axis of [extent], as an unfold counts them. *)
+let windows ~kernel_size ~stride ~dilation ~padding extent =
+  Array.mapi
+    (fun d e ->
+      let eff = (dilation.(d) * (kernel_size.(d) - 1)) + 1 in
+      let padded = e + fst padding.(d) + snd padding.(d) in
+      if padded < eff then 0 else ((padded - eff) / stride.(d)) + 1)
+    extent
+
+(* Runs [m]'s kernel [name] writing [dst] from [x], whose first [lead] axes are
+   its leading ones, over [extent] with [xstr] the operand's spatial strides,
+   and [kstep] and [lstep] the strides of a fold operand's taps and windows. *)
+let window_run m name ~dst x ~lead ~kernel_size ~stride ~dilation ~padding
+    ~extent ~xstr ~kstep ~lstep =
+  let dev, s, target = locate m dst in
+  let k = Array.length kernel_size in
+  let lv = List.hd (View.coalesce [ axes_of (view x) (fun i -> i < lead) ]) in
+  if View.ndim lv > max_rank || k > max_rank then
+    refuse "windows of %d axes and %d leading axes once merged; kernels take %d"
+      k (View.ndim lv) max_rank;
+  let n = View.numel (view dst) in
+  if n > 0 then begin
+    let win = windows ~kernel_size ~stride ~dilation ~padding extent in
+    let kprod = Array.fold_left ( * ) 1 kernel_size
+    and l = Array.fold_left ( * ) 1 win in
+    let groups = groups_of s n in
+    Nx_amd_device.launch
+      ~touches:[ buffer dst; buffer x ]
+      [
+        dispatch (program dev s target m name) groups
+        @@ args (fun i64 ->
+            i64 (at dst (view dst));
+            i64 (address x);
+            List.iter i64 [ n; groups; View.ndim lv; k; kprod; l ];
+            List.iter i64 [ View.offset lv; kstep; lstep ];
+            words i64 (View.shape lv);
+            words i64 (View.strides lv);
+            words i64 kernel_size;
+            words i64 stride;
+            words i64 dilation;
+            words i64 (Array.map fst padding);
+            words i64 extent;
+            words i64 win;
+            words i64 xstr);
+      ]
+  end
+
+let unfold_windows ~kernel_size ~stride ~dilation ~padding x ~dst =
+  let shape = View.shape (view x) and strides = View.strides (view x) in
+  let r = Array.length shape and k = Array.length kernel_size in
+  window_run
+    (modname "unfold" (width_name (width x)))
+    "u" ~dst x ~lead:(r - k) ~kernel_size ~stride ~dilation ~padding
+    ~extent:(Array.sub shape (r - k) k)
+    ~xstr:(Array.sub strides (r - k) k)
+    ~kstep:0 ~lstep:0
+
+let fold_windows ~output_size ~kernel_size ~stride ~dilation ~padding x ~dst =
+  let strides = View.strides (view x) in
+  let r = Array.length strides in
+  window_run
+    (modname "fold" (served_name x))
+    "f" ~dst x ~lead:(r - 2) ~kernel_size ~stride ~dilation ~padding
+    ~extent:output_size ~xstr:[||]
+    ~kstep:strides.(r - 2)
+    ~lstep:strides.(r - 1)
+
 (* Threefry *)
 
 (* Runs the threefry module hashing [counter]'s word pairs under [key]'s into
@@ -1088,12 +1161,16 @@ module Kernels : Nx_backend.S = struct
     ignore (served x.dtype);
     update (Operand x) ~starts (Operand v) ~dst:(Operand dst)
 
-  let unfold ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ _ ~dst:_ =
-    no "unfold"
+  let unfold (type a b) ~kernel_size ~stride ~dilation ~padding
+      (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
+    ignore (served x.dtype);
+    unfold_windows ~kernel_size ~stride ~dilation ~padding (Operand x)
+      ~dst:(Operand dst)
 
-  let fold ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ _
-      ~dst:_ =
-    no "fold"
+  let fold (type a b) ~output_size ~kernel_size ~stride ~dilation ~padding
+      (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
+    fold_windows ~output_size ~kernel_size ~stride ~dilation ~padding
+      (Operand x) ~dst:(Operand dst)
 
   let matmul (type a b) (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t) =
     product

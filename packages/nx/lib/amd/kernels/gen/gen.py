@@ -103,6 +103,7 @@ def modules():
         yield f"pad.{w}", f'#include "pad.hip"\nPAD({t})\n'
         yield f"place.{w}", f'#include "place.hip"\nPLACE({t})\n'
         yield f"scatter_set.{w}", f'#include "scatter.hip"\nSCATTER_SET({t})\n'
+        yield f"unfold.{w}", f'#include "windows.hip"\nUNFOLD({t})\n'
     for s, cs in DTYPES:
         for d, cd in DTYPES:
             if s != d:
@@ -119,6 +120,7 @@ def modules():
     for d, cd in DTYPES:
         yield f"sort.{d}", f'#include "sort.hip"\nSORT({cd})\n'
         yield f"scatter_add.{d}", f'#include "scatter.hip"\nSCATTER_ADD({cd})\n'
+        yield f"fold.{d}", f'#include "windows.hip"\nFOLD({cd})\n'
         for k in ("max", "min"):
             yield f"scatter_{k}.{d}", f'#include "scatter.hip"\nSCATTER_EXTREME({k}, {cd})\n'
     for d in NUMERIC:
