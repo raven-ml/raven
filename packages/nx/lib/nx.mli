@@ -2511,8 +2511,9 @@ val log_gammainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 (** [log_gammainc a x] is [log P(a, x)] ({!gammainc}). For [0 < a ≤ 2^20] it
     is within 16 ulps, or [16ε] absolutely where it is below [1] in magnitude.
     For [a > 0] and [x > 0] it is finite, including where [P] underflows. It is
-    [-inf] at [x = 0] and where [a] is [+inf], [0] at [x = +inf] and at [a = 0],
-    and NaN where {!gammainc} is.
+    [-inf] at [x = 0] and where [a] is [+inf], [0] at [x = +inf], [-0] at [a =
+    0] for [x > 0], where the limit is reached from below, and NaN where
+    {!gammainc} is.
 
     {@ocaml[
       # log_gammainc (scalar float64 1000.) (scalar float64 1.) |> item []
@@ -2544,12 +2545,13 @@ val betainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 (** [betainc a b x] is the regularised incomplete beta function [I_x(a, b) =
     (1/B(a, b)) ∫₀ˣ t^{a-1} (1 - t)^{b-1} dt], the distribution function at [x]
     of the beta distribution of shapes [a] and [b]. For [0 < a, b ≤ 2^20] it
-    is within [64 (1 + |log f|) + 4] ulps of its value [f]. Its domain is [a, b
-    ≥ 0] and [x] in \[[0], [1]\]. It is [0] at [x = 0], at [b = 0] and at [a =
-    +inf], and [1] at [x = 1], at [a = 0] and at [b = +inf], its limits there;
-    it is NaN outside its domain and where the limits disagree, one making it
-    [0] and another [1], as at [a = b = 0], at [a = 0] and [x = 0], or at [b =
-    +inf] and [x = 0].
+    is within [64 (1 + |log I|) + 4] ulps; above [2^20] it is computed, with an
+    error that grows with [a] and [b]. It is [0] at [x = 0] and [1] at [x = 1];
+    its limits, [1] at [a = 0] and where [b] is [+inf], and [0] at [b = 0] and
+    where [a] is [+inf]. It is NaN where [a < 0], [b < 0] or [x] is outside
+    \[[0], [1]\], and where the limits disagree: at [a = b = 0], at [a = b =
+    +inf], at [x = 0] with [a = 0] or [b = +inf], and at [x = 1] with [b = 0]
+    or [a = +inf].
 
     {@ocaml[
       # betainc (scalar float64 2.) (scalar float64 3.) (scalar float64 0.5)
@@ -2558,22 +2560,35 @@ val betainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     ]} *)
 
 val betaincc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
-(** [betaincc a b x] is [1 - betainc a b x], computed without the subtraction,
-    so that it keeps its relative precision where [betainc a b x] rounds to
-    [1]: within [64 (1 + |log f|) + 4] ulps of its value [f] for [0 < a, b ≤
-    2^20]. *)
+(** [betaincc a b x] is [1 - I_x(a, b)] ({!betainc}), the beta distribution's
+    upper tail, within the same bound in [|log (1 - I)|]. It keeps its relative
+    precision where [I] rounds to [1]: [betaincc 1 60 0.5] is [2^-60]. Its
+    edges are [betainc]'s complements. *)
 
 val log_betainc :
   (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
-(** [log_betainc a b x] is [log (betainc a b x)], within 32 ulps, or [32ε]
-    absolutely where it is below [1] in magnitude, for [0 < a, b ≤ 2^20]. It
-    stays finite where [betainc a b x] underflows, and is [-0] where [betainc a
-    b x] is a limit [1] for [x] inside (0, 1). *)
+(** [log_betainc a b x] is [log I_x(a, b)] ({!betainc}). For [0 < a, b ≤ 2^20]
+    it is within 32 ulps, or [32ε] absolutely where it is below [1] in
+    magnitude. For finite [a, b > 0] and [x] in (0, 1\] it is finite, including
+    where {!betainc} underflows. It is [-inf] where {!betainc} is [0], [0] at [x
+    = 1], [-0] at [a = 0] and where [b] is [+inf] for [x] inside (0, 1), where
+    the limit is reached from below, and NaN where {!betainc} is.
+
+    {@ocaml[
+      # log_betainc (scalar float64 1000.) (scalar float64 1.)
+          (scalar float64 0.5)
+        |> item []
+      - : float = -693.147180559945241
+    ]} *)
 
 val log_betaincc :
   (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
-(** [log_betaincc a b x] is [log (betaincc a b x)], within the bound of
-    {!log_betainc}. *)
+(** [log_betaincc a b x] is [log (1 - I_x(a, b))] ({!betaincc}), within the
+    bound of {!log_betainc}. For finite [a, b > 0] and [x] in \[0, 1) it is
+    finite, including where {!betaincc} underflows. It is [-inf] where
+    {!betaincc} is [0], [0] at [x = 0], [-0] at [b = 0] and where [a] is [+inf]
+    for [x] inside (0, 1), where the limit is reached from below, and NaN where
+    {!betaincc} is. *)
 
 (** {1:comparison Comparison and logic} *)
 
