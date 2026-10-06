@@ -304,6 +304,15 @@ let warmup =
                 (fun e -> Float.is_finite e && e > 0.)
                 e)
             (Nx.to_array s.step_size));
+      test "a warmup fits more directions than the dimension has" (fun () ->
+          let s = N.init t ~rank:2 normal (Nx.zeros Nx.float64 [| 2; 1 |]) in
+          let s = N.warmup t normal (Nx.Rng.key 3) ~steps:30 s in
+          Array.iter
+            (fun e ->
+              satisfies ~claim:"finite and positive" (float 1e-12)
+                (fun e -> Float.is_finite e && e > 0.)
+                e)
+            (Nx.to_array s.step_size));
       test "warmup counts its transitions" (fun () ->
           let s = N.init t scaled (Nx.ones Nx.float64 [| 2; 2 |]) in
           let s' = N.warmup t scaled (Nx.Rng.key 1) ~steps:10 s in

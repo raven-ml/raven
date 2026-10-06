@@ -57,9 +57,12 @@ val init :
 (** [init u ?max_depth ?accept ?rank ?geometry lp start] is the state of chains
     at [start], a position. [max_depth] defaults to [10], [accept], the
     acceptance warmup aims for, to [0.8], and [rank], the directions warmup fits
-    beside the diagonal, to [0]. Each chain's geometry is [geometry], which
-    seeds every chain, or a diagonal whose variance is the inverse of the
-    absolute gradient at the start; its step size is [1].
+    beside the diagonal, to [2]. Two directions gain correlated posteriors
+    several times their effective draws per gradient, at a cost linear in the
+    dimension; a rank above a chain's number of float elements is that number.
+    Each chain's geometry is [geometry], which seeds every chain, or a diagonal
+    whose variance is the inverse of the absolute gradient at the start; its
+    step size is [1].
 
     Raises [Invalid_argument] if [max_depth < 1], [accept] is not in [(0, 1)],
     [rank < 0], or if [lp] does not return one log density per chain, as in

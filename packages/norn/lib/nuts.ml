@@ -634,7 +634,7 @@ let check_rows context u lp x l =
 let variance_low = 1e-20
 let variance_high = 1e20
 
-let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 0) ?geometry lp position =
+let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   let context = "Norn.Nuts.init" in
   if max_depth < 1 then
     invalid_argf "%s: max_depth = %d is not positive" context max_depth;
@@ -654,6 +654,13 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 0) ?geometry lp position =
   check_rows context u lp position l;
   let dt = Nx.dtype l in
   let gp = Gaussian.ptree u in
+  (* Orthonormal directions number at most a chain's float elements. *)
+  let elements =
+    P.fold u
+      (fun _ t n -> if float_leaf t then n + (Nx.numel t / c) else n)
+      position 0
+  in
+  let rank = min rank elements in
   let geometry =
     match geometry with
     | Some g ->
