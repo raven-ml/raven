@@ -1023,7 +1023,11 @@ let law5 =
       (if draws then "" else ", drawing nothing")
   in
   prop ~count:80
-    ~examples:[ ([ Grad; Jit_layer ], Scan_draws, true) ]
+    ~examples:
+      [
+        ([ Grad; Jit_layer ], Scan_draws, true);
+        ([ Grad; Jit_layer ], Nested_draws, true);
+      ]
     "step i of a loop draws from a scope rooted at fold_in k i, k one key the \
      loop takes at its call, under every stack"
     (Gen.with_pp pp gen)

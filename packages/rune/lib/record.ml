@@ -75,6 +75,11 @@ type t = {
   mutable answering : int;
       (** How many constructs the recorder answers: what their answers run is
           their entry. *)
+  mutable passing : int;
+      (** How many operations and constructs of an answer's own code pass the
+          recorder: an answer marks them as they leave it, so that a handler
+          around the call, which runs outside the answer while it runs, is
+          recorded. *)
   mutable operator : (Nx.packed list -> Nx.packed list) option;
       (** The operator a replay of a [linear_solve]'s record applies. *)
 }
@@ -157,6 +162,7 @@ let create inputs =
     outputs = [];
     current = None;
     answering = 0;
+    passing = 0;
     operator = None;
   }
 
@@ -266,10 +272,29 @@ let rec enclose r s =
 (* Recording *)
 
 (* [answered r f] is [f ()], an answer of [r]'s: [r] records none of what it
-   runs, which the answer's entry covers. *)
+   runs, which the answer's entry covers. The operations and constructs [f]
+   performs leave it through an installation that marks them; a handler around
+   the call that runs while [f] does, such as a key scope computing a key, runs
+   outside [f] and is recorded. *)
 let answered r f =
+  let through g =
+    r.passing <- r.passing + 1;
+    Fun.protect ~finally:(fun () -> r.passing <- r.passing - 1) g
+  in
+  let run : type o. o Nx.Op.t -> o = fun op -> through (fun () -> eval op) in
+  let call : type c. c Construct.t -> c Construct.answer option =
+   fun c ->
+    match[@warning "@4@8"] c with
+    | Lanes _ | Lane_index _ | Detach _ ->
+        Some
+          (Construct.value (fun () -> through (fun () -> Construct.perform c)))
+    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
+    | Lane_count _ | Add _ ->
+        None
+  in
   r.answering <- r.answering + 1;
-  Fun.protect ~finally:(fun () -> r.answering <- r.answering - 1) f
+  Fun.protect ~finally:(fun () -> r.answering <- r.answering - 1) @@ fun () ->
+  Construct.install { op = Some { run; claims = (fun _ -> true) }; call } f
 
 let rec run : type a. Nx.packed list -> (unit -> a) -> a * t =
  fun inputs f -> running inputs (fun _ -> f ())
@@ -305,7 +330,7 @@ and recording : type a. t -> (unit -> a) -> a =
  fun r f ->
   let run : type o. o Nx.Op.t -> o =
    fun op ->
-    if r.answering > 0 then eval op
+    if r.passing > 0 then eval op
     else
       let named = map_operands (rename r) op in
       let y = eval op in
@@ -319,7 +344,7 @@ and recording : type a. t -> (unit -> a) -> a =
     let named = first (rename r) c in
     Construct.value (fun () ->
         let y = Construct.perform c in
-        if r.answering = 0 then
+        if r.passing = 0 then
           r.entries <- First { c = named; name = add r (Nx.P y) } :: r.entries;
         y)
   in
