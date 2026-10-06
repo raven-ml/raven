@@ -472,8 +472,8 @@ let jit_special_benchmarks () =
   [
     at Nx.float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.float64 "erf f64 1e6" Nx.erf (-6.) 6.;
-    at Nx.float32 "erfinv 1e6" Nx.erfinv (-1.) 1.;
-    at Nx.float64 "erfinv f64 1e6" Nx.erfinv (-1.) 1.;
+    at ~n:100_000 Nx.float32 "erfinv 1e5" Nx.erfinv (-1.) 1.;
+    at ~n:100_000 Nx.float64 "erfinv f64 1e5" Nx.erfinv (-1.) 1.;
     at Nx.float32 "erfc 1e6" Nx.erfc (-4.) 10.;
     at Nx.float64 "erfc f64 1e6" Nx.erfc (-6.) 27.;
     at Nx.float32 "ndtr 1e6" Nx.ndtr (-14.) 6.;

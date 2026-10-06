@@ -7,24 +7,26 @@
 # forced: blessed under load 9.2 on 10 cores
 # forced: blessed special/erfc special/erfc-grad special/ndtr special/ndtr-grad special/log_ndtr special/log_ndtr-grad special/ndtri special/ndtri-grad special/lgamma special/lgamma-grad special/digamma special/digamma-grad special/lbeta special/lbeta-grad-a special/lbeta-grad-b under load 15.2 on 10 cores
 # forced: blessed erfinv erfinv-grad under load 12.6 on 10 cores
+# forced: blessed erfinv erfinv-grad special/erfc special/erfc-grad special/ndtr special/ndtr-grad special/log_ndtr special/log_ndtr-grad special/ndtri special/ndtri-grad special/lgamma special/lgamma-grad special/digamma special/digamma-grad special/lbeta special/lbeta-grad-a special/lbeta-grad-b under load 12.8 on 10 cores
+# forced: blessed erfinv erfinv-grad under load 8.5 on 10 cores
 
-erfinv	wall_time	batch=1	n=5	5.585e-01	5.520e-01 5.524e-01 5.585e-01 5.607e-01 5.624e-01
-erfinv-grad	wall_time	batch=1	n=5	9.487e-01	9.263e-01 9.270e-01 9.487e-01 9.561e-01 9.598e-01
+erfinv	wall_time	batch=1	n=5	5.700e-01	5.597e-01 5.689e-01 5.700e-01 5.766e-01 5.960e-01
+erfinv-grad	wall_time	batch=1	n=5	9.552e-01	9.275e-01 9.362e-01 9.552e-01 9.608e-01 9.618e-01
 shaped-16k	wall_time	batch=1	n=5	7.143e+01	6.817e+01 6.983e+01 7.143e+01 7.267e+01 7.285e+01
 shaped-1k	wall_time	batch=1	n=5	7.861e-01	7.783e-01 7.822e-01 7.861e-01 7.906e-01 8.684e-01
 shaped-4k	wall_time	batch=1	n=5	7.183e+00	5.838e+00 6.953e+00 7.183e+00 7.292e+00 8.614e+00
-special/digamma	wall_time	batch=1	n=5	3.100e-01	3.046e-01 3.065e-01 3.100e-01 3.102e-01 3.571e-01
-special/digamma-grad	wall_time	batch=1	n=5	4.389e-01	4.338e-01 4.382e-01 4.389e-01 4.461e-01 4.477e-01
-special/erfc	wall_time	batch=1	n=5	3.053e-01	3.024e-01 3.025e-01 3.053e-01 3.092e-01 3.108e-01
-special/erfc-grad	wall_time	batch=1	n=5	4.880e-01	4.855e-01 4.860e-01 4.880e-01 4.962e-01 5.001e-01
-special/lbeta	wall_time	batch=1	n=5	6.710e-01	6.634e-01 6.678e-01 6.710e-01 6.839e-01 6.934e-01
-special/lbeta-grad-a	wall_time	batch=1	n=5	1.204e+00	1.178e+00 1.181e+00 1.204e+00 1.219e+00 1.258e+00
-special/lbeta-grad-b	wall_time	batch=1	n=5	1.197e+00	1.185e+00 1.193e+00 1.197e+00 1.204e+00 1.265e+00
-special/lgamma	wall_time	batch=1	n=5	4.204e-01	4.138e-01 4.186e-01 4.204e-01 4.223e-01 4.270e-01
-special/lgamma-grad	wall_time	batch=1	n=5	6.944e-01	6.829e-01 6.833e-01 6.944e-01 7.050e-01 7.241e-01
-special/log_ndtr	wall_time	batch=1	n=5	8.276e-01	7.840e-01 8.120e-01 8.276e-01 8.279e-01 8.332e-01
-special/log_ndtr-grad	wall_time	batch=1	n=5	8.102e-01	7.877e-01 7.925e-01 8.102e-01 8.419e-01 8.455e-01
-special/ndtr	wall_time	batch=1	n=5	4.475e-01	4.419e-01 4.421e-01 4.475e-01 4.563e-01 4.595e-01
-special/ndtr-grad	wall_time	batch=1	n=5	7.179e-01	6.958e-01 7.076e-01 7.179e-01 7.261e-01 7.420e-01
-special/ndtri	wall_time	batch=1	n=5	9.470e-01	9.433e-01 9.447e-01 9.470e-01 9.622e-01 9.791e-01
-special/ndtri-grad	wall_time	batch=1	n=5	1.614e+00	1.600e+00 1.609e+00 1.614e+00 1.622e+00 1.661e+00
+special/digamma	wall_time	batch=1	n=5	2.939e-01	2.905e-01 2.935e-01 2.939e-01 2.944e-01 2.969e-01
+special/digamma-grad	wall_time	batch=1	n=5	4.358e-01	4.281e-01 4.299e-01 4.358e-01 4.530e-01 4.564e-01
+special/erfc	wall_time	batch=1	n=5	2.950e-01	2.855e-01 2.929e-01 2.950e-01 3.002e-01 3.134e-01
+special/erfc-grad	wall_time	batch=1	n=5	5.131e-01	4.838e-01 5.082e-01 5.131e-01 6.342e-01 6.715e-01
+special/lbeta	wall_time	batch=1	n=5	6.578e-01	6.520e-01 6.572e-01 6.578e-01 6.612e-01 6.688e-01
+special/lbeta-grad-a	wall_time	batch=1	n=5	1.227e+00	1.188e+00 1.192e+00 1.227e+00 1.259e+00 1.293e+00
+special/lbeta-grad-b	wall_time	batch=1	n=5	1.186e+00	1.144e+00 1.179e+00 1.186e+00 1.193e+00 3.423e+00
+special/lgamma	wall_time	batch=1	n=5	4.373e-01	4.158e-01 4.348e-01 4.373e-01 4.582e-01 5.211e-01
+special/lgamma-grad	wall_time	batch=1	n=5	6.358e-01	6.327e-01 6.357e-01 6.358e-01 6.380e-01 6.569e-01
+special/log_ndtr	wall_time	batch=1	n=5	7.733e-01	7.472e-01 7.507e-01 7.733e-01 8.075e-01 8.684e-01
+special/log_ndtr-grad	wall_time	batch=1	n=5	7.541e-01	7.531e-01 7.532e-01 7.541e-01 7.682e-01 7.890e-01
+special/ndtr	wall_time	batch=1	n=5	4.590e-01	4.293e-01 4.358e-01 4.590e-01 4.754e-01 5.193e-01
+special/ndtr-grad	wall_time	batch=1	n=5	6.886e-01	6.842e-01 6.865e-01 6.886e-01 7.277e-01 8.495e-01
+special/ndtri	wall_time	batch=1	n=5	9.518e-01	9.436e-01 9.507e-01 9.518e-01 9.674e-01 1.115e+00
+special/ndtri-grad	wall_time	batch=1	n=5	1.769e+00	1.611e+00 1.705e+00 1.769e+00 1.809e+00 1.986e+00

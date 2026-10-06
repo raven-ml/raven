@@ -148,6 +148,7 @@ let random_benchmarks () =
     Nx.broadcast_to [| 100_000 |] (Nx.scalar Nx.Float64 2.5)
   in
   let b = param [| 100_000 |] 4.0 in
+  let lower = param [| 100_000 |] (-1.0) and upper = param [| 100_000 |] 2.0 in
   let rate r = param [| 10_000 |] r in
   let rate_1 = rate 1.0 and rate_30 = rate 30.0 and rate_100 = rate 100.0 in
   [
@@ -158,6 +159,8 @@ let random_benchmarks () =
     Thumper.bench "gamma f64 100k" (fun () ->
         Nx.Rng.gamma key concentration_f64);
     Thumper.bench "beta 100k" (fun () -> Nx.Rng.beta key concentration b);
+    Thumper.bench "truncated normal 100k" (fun () ->
+        Nx.Rng.truncated_normal key lower upper);
     Thumper.bench "poisson rate 1 10k" (fun () -> Nx.Rng.poisson key rate_1);
     Thumper.bench "poisson rate 30 10k" (fun () -> Nx.Rng.poisson key rate_30);
     Thumper.bench "poisson rate 100 10k" (fun () -> Nx.Rng.poisson key rate_100);
@@ -180,8 +183,8 @@ let special_benchmarks () =
   [
     at Nx.Float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.Float64 "erf f64 1e6" Nx.erf (-6.) 6.;
-    at Nx.Float32 "erfinv 1e6" Nx.erfinv (-1.) 1.;
-    at Nx.Float64 "erfinv f64 1e6" Nx.erfinv (-1.) 1.;
+    at ~n:100_000 Nx.Float32 "erfinv 1e5" Nx.erfinv (-1.) 1.;
+    at ~n:100_000 Nx.Float64 "erfinv f64 1e5" Nx.erfinv (-1.) 1.;
     at Nx.Float32 "erfc 1e6" Nx.erfc (-4.) 10.;
     at Nx.Float64 "erfc f64 1e6" Nx.erfc (-6.) 27.;
     at Nx.Float32 "ndtr 1e6" Nx.ndtr (-14.) 6.;
