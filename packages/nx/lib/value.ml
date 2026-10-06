@@ -253,6 +253,14 @@ let read_as (type a b) (dtype : (a, b) Nx_dtype.t) b =
     Nx_device.Buffer.view b ~offset:0 s
       (Nx_device.Buffer.nbytes b * 8 / Nx_dtype.Scalar.bitsize s)
 
+(* [aligned dtype b] is [true] iff [b]'s first byte is aligned to one of
+   [dtype]'s elements, as reading [b] as them needs ({!read_as}). A file's bytes
+   are read at any offset. *)
+let aligned (type a b) (dtype : (a, b) Nx_dtype.t) b =
+  let size = Int.max 1 (Nx_dtype.Scalar.(bitsize (of_dtype dtype)) / 8) in
+  Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk
+  || Nativeint.rem (Nx_device.Buffer.address b) (Nativeint.of_int size) = 0n
+
 (* [capacity dtype c] is the elements of [dtype] that each shard of [c]
    holds. *)
 let capacity dtype c = c.bytes * 8 / Nx_dtype.Scalar.(bitsize (of_dtype dtype))
@@ -376,15 +384,10 @@ let placed_value (type a b) what p (dtype : (a, b) Nx_dtype.t) view c =
       (* A bool's only bytes are 0 and 1, which only bool storage holds. *)
       List.iter (check_format what dtype) bufs
   | Live bufs, _ ->
-      List.iter
-        (fun b ->
-          match read_as dtype b with
-          | _ -> ()
-          | exception Invalid_argument _ ->
-              invalid_arg
-                (Printf.sprintf "%s: a buffer at a byte not aligned to %s" what
-                   (Nx_dtype.to_string dtype)))
-        bufs
+      if not (List.for_all (aligned dtype) bufs) then
+        invalid_arg
+          (Printf.sprintf "%s: a buffer at a byte not aligned to %s" what
+             (Nx_dtype.to_string dtype))
   | Consumed _, _ -> ());
   placed what p dtype view c
 

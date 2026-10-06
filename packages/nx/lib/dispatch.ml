@@ -352,10 +352,7 @@ let bitcast_view (type a b c d) (dtype : (c, d) Nx_dtype.t)
     let first = View.offset v * w in
     let readable () =
       match Cell.state r.r_cell with
-      | Live bufs -> (
-          match List.iter (fun b -> ignore (read_as dtype b)) bufs with
-          | () -> true
-          | exception Invalid_argument _ -> false)
+      | Live bufs -> List.for_all (aligned dtype) bufs
       | Consumed _ -> false
     in
     if
