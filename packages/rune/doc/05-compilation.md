@@ -64,7 +64,7 @@ Device memory that backs an output is held until the output is garbage-collected
 
 A compiled program performs the operations the function performs. A sum over an axis (`Nx.sum`, `Nx.mean`, the contraction of `Nx.matmul`) is the sum of its terms in an unspecified association. The compiler may add the terms in another order than eager, split them across threads, and move a factor that does not vary along the summed axis out of the sum (`sum (0.125 * a * b)` becomes `0.125 * sum (a * b)`). Results then differ from eager's in rounding, and at overflow in whether a term overflows. A maximum over an axis is exact.
 
-Beyond that, compiled float results can differ from eager's in the last bits where the compiler fuses a multiply and an add or turns a division by a constant into a multiplication, and in transcendental functions, which are approximations within a few units in the last place; Metal flushes float32 subnormals to zero. A failed factorisation gives non-finite values where eager raises `Nx_backend.Linalg_error`.
+Beyond that, compiled float results can differ from eager's in the last bits where the compiler fuses a multiply and an add or turns a division by a constant into a multiplication, and in transcendental functions, which are approximations within a few units in the last place; Metal flushes float32 subnormals to zero. A factorisation fails as it does eagerly: a matrix on which it is undefined has results whose every element is NaN, the other matrices of its batch unaffected.
 
 ## The Persistent Cache
 

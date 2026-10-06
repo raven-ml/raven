@@ -299,6 +299,25 @@ let tensor_cores =
         ];
     ]
 
+(* Failing matrices: a matrix on which an operation is undefined has results
+   whose every element is NaN, as eagerly. *)
+
+(* The float64 square matrix of [xs], by rows. *)
+let square xs =
+  let n = Float.to_int (Float.sqrt (Float.of_int (List.length xs))) in
+  Nx.create Nx.float64 [| n; n |] (Array.of_list xs)
+
+(* A batch of three with [bad] in the middle, between two diagonally dominant
+   positive-definite matrices. *)
+let failing_lane bad =
+  let n = Nx.dim (-1) bad in
+  let good k =
+    Nx.add
+      (Nx.mul_s (Nx.ones Nx.float64 [| n; n |]) (0.25 *. k))
+      (Nx.mul_s (Nx.eye Nx.float64 n) 2.)
+  in
+  Nx.stack [ good 1.; bad; good 2. ]
+
 (* Cholesky *)
 
 (* [a] with NaN above its diagonal, which a factorization never reads. *)
@@ -329,21 +348,24 @@ let cholesky =
                         (traced (fun () -> Nx.cholesky ~upper a))))
                 [ false; true ]);
         };
-      test "a pivot that is not positive is NaN, and every column after it"
+      cases ~name:fst
+        "a matrix that is not positive-definite has eager's factor, NaN in \
+         every element"
+        [
+          ("a negative pivot", square [ 4.; 2.; 1.; 2.; -1.; 1.; 1.; 1.; 5. ]);
+          ("a last pivot of zero", square [ 1.; 0.; 0.; 0. ]);
+          ("a NaN pivot", square [ 1.; 0.; 0.; Float.nan ]);
+        ]
+        (fun (_, a) ->
+          List.iter
+            (fun upper ->
+              exact (Nx.cholesky ~upper a)
+                (traced (fun () -> Nx.cholesky ~upper a)))
+            [ false; true ]);
+      test "a matrix that is not positive-definite is NaN alone in its batch"
         (fun () ->
-          let a =
-            Nx.create Nx.float32 [| 3; 3 |]
-              [| 4.; 0.; 0.; 2.; -1.; 0.; 1.; 1.; 5. |]
-          in
-          let nan = Float.nan in
-          exact
-            (Nx.create Nx.float32 [| 3; 3 |]
-               [| 2.; 0.; 0.; 1.; nan; 0.; 0.5; nan; nan |])
-            (traced (fun () -> Nx.cholesky a)));
-      test "a zero pivot is NaN" (fun () ->
-          let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 0. |] in
-          exact
-            (Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; Float.nan |])
+          let a = failing_lane (square [ 1.; 2.; 2.; 1. ]) in
+          near ~bound:(8. *. 0x1p-53) (Nx.cholesky a)
             (traced (fun () -> Nx.cholesky a)));
       test "one element" (fun () ->
           agrees (fun () ->
@@ -415,22 +437,39 @@ let solves =
                       near ~bound:(4. *. n *. u) (solve ()) (traced solve)))
                 flags);
         };
-      test "a zero pivot makes its row and those after it non-finite" (fun () ->
-          let lower =
-            Nx.create Nx.float32 [| 3; 3 |]
-              [| 1.; 0.; 0.; 1.; 0.; 0.; 2.; 1.; 1. |]
-          in
-          let b = Nx.ones Nx.float32 [| 3 |] in
-          exact
-            (Nx.create Nx.float32 [| 3 |] [| 1.; Float.nan; Float.nan |])
-            (traced (fun () -> Nx.solve_triangular lower b));
-          let upper = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 1.; 0.; 0. |] in
-          exact
-            (Nx.create Nx.float32 [| 2 |]
-               [| Float.neg_infinity; Float.infinity |])
-            (traced (fun () ->
-                 Nx.solve_triangular ~upper:true upper
-                   (Nx.ones Nx.float32 [| 2 |]))));
+      test
+        "a zero on the diagonal it reads gives eager's solution, NaN in every \
+         element" (fun () ->
+          List.iter
+            (fun (upper, a) ->
+              let n = Nx.dim (-1) a in
+              List.iter
+                (fun (transpose, b) ->
+                  exact
+                    (Nx.solve_triangular ~upper ~transpose a b)
+                    (traced (fun () ->
+                         Nx.solve_triangular ~upper ~transpose a b)))
+                [
+                  (false, Nx.ones Nx.float64 [| n |]);
+                  (true, Nx.ones Nx.float64 [| n |]);
+                  (false, Nx.ones Nx.float64 [| n; 2 |]);
+                ])
+            [
+              (false, square [ 1.; 0.; 0.; 1.; 0.; 0.; 2.; 1.; 1. ]);
+              (true, square [ 1.; 1.; 0.; 0. ]);
+            ]);
+      test
+        "solve and inv of a singular matrix are eager's, NaN in every element"
+        (fun () ->
+          let a = square [ 1.; 2.; 2.; 4. ] in
+          let b = Nx.ones Nx.float64 [| 2 |] in
+          exact (Nx.solve a b) (traced (fun () -> Nx.solve a b));
+          exact (Nx.inv a) (traced (fun () -> Nx.inv a)));
+      test "a singular matrix is NaN alone in its batch" (fun () ->
+          let a = failing_lane (square [ 1.; 2.; 2.; 4. ]) in
+          let b = Nx.ones Nx.float64 [| 2 |] in
+          near ~bound:(16. *. 0x1p-53) (Nx.solve a b)
+            (traced (fun () -> Nx.solve a b)));
       test "no element" (fun () ->
           agrees (fun () ->
               Nx.solve_triangular
@@ -664,10 +703,34 @@ let svd =
             traced3 (fun () -> Nx.svd (Nx.zeros Nx.float32 [| 2; 3 |]))
           in
           exact (Nx.zeros Nx.float64 [| 2 |]) s);
-      test "NaN gives NaN values" (fun () ->
-          let a = Nx.create Nx.float32 [| 2; 2 |] [| Float.nan; 1.; 2.; 3. |] in
-          let _, s, _ = traced3 (fun () -> Nx.svd a) in
-          exact (Nx.full Nx.float64 [| 2 |] Float.nan) s);
+      cases ~name:fst
+        "a matrix holding NaN or an infinity has eager's factors, NaN in every \
+         element"
+        [ ("NaN", Float.nan); ("an infinity", Float.infinity) ]
+        (fun (_, v) ->
+          List.iter
+            (fun a ->
+              List.iter
+                (fun full_matrices ->
+                  let u, s, vt = Nx.svd ~full_matrices a in
+                  let u', s', vt' =
+                    traced3 (fun () -> Nx.svd ~full_matrices a)
+                  in
+                  exact u u';
+                  exact s s';
+                  exact vt vt')
+                [ false; true ])
+            [
+              square [ v ];
+              square [ v; 1.; 2.; 3. ];
+              Nx.create Nx.float64 [| 3; 2 |] [| 1.; 2.; v; 4.; 5.; 6. |];
+              Nx.create Nx.float64 [| 2; 3 |] [| 1.; v; 5.; 2.; 4.; 6. |];
+            ]);
+      test "a matrix holding NaN is NaN alone in its batch" (fun () ->
+          let a = failing_lane (square [ 1.; Float.nan; 2.; 1. ]) in
+          let _, s, _ = Nx.svd a in
+          let _, s', _ = traced3 (fun () -> Nx.svd a) in
+          near ~bound:(16. *. 0x1p-53) s s');
       test "one element" (fun () ->
           svd_agrees ~bound:0. ~full_matrices:true
             (Nx.create Nx.float32 [| 1; 1 |] [| -3. |]));
@@ -830,10 +893,29 @@ let eigh =
             (List.filter
                (fun (F (_, dt, _)) -> Nx_dtype.itemsize dt >= 4)
                factor_dtypes));
-      test "NaN gives NaN values" (fun () ->
-          let a = Nx.create Nx.float32 [| 2; 2 |] [| Float.nan; 0.; 1.; 3. |] in
-          exact
-            (Nx.full Nx.float64 [| 2 |] Float.nan)
+      cases ~name:fst
+        "a read triangle holding NaN or an infinity gives eager's eigenvalues \
+         and vectors, NaN in every element"
+        [ ("NaN", Float.nan); ("an infinity", Float.infinity) ]
+        (fun (_, v) ->
+          List.iter
+            (fun (uplo, a) ->
+              let w, vs = Nx.eigh ~uplo a in
+              let w', vs' = traced2 (fun () -> Nx.eigh ~uplo a) in
+              exact w w';
+              exact vs vs';
+              exact (Nx.eigvalsh ~uplo a)
+                (traced (fun () -> Nx.eigvalsh ~uplo a)))
+            (List.concat_map
+               (fun uplo ->
+                 [
+                   (uplo, square [ v ]);
+                   (uplo, square [ 2.; v; 0.; v; 3.; 1.; 0.; 1.; 2. ]);
+                 ])
+               [ `L; `U ]));
+      test "a matrix holding NaN is NaN alone in its batch" (fun () ->
+          let a = failing_lane (square [ 1.; 0.; Float.nan; 1. ]) in
+          near ~bound:(16. *. 0x1p-53) (Nx.eigvalsh a)
             (traced (fun () -> Nx.eigvalsh a)));
       test "one element" (fun () ->
           let a = Nx.create Nx.float32 [| 1; 1 |] [| -3. |] in

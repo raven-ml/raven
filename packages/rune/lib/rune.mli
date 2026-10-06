@@ -936,8 +936,8 @@ val jit :
     result: {!Nx.log} within one, and on the host {!Nx.exp}, {!Nx.sin} and
     {!Nx.cos} within two; Metal flushes float32 subnormals to zero. A product
     over an axis ({!Nx.prod}) multiplies in an unspecified association too. A
-    failed factorisation gives non-finite values where eager raises
-    {!Nx_backend.Linalg_error}.
+    factorisation fails as it does eagerly: a matrix on which it is undefined
+    has results whose every element is NaN.
 
     {b Domains.} A compiled function may be called from any domain, several at
     once, and from inside its own function. A key being compiled makes the other

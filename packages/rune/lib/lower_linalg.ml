@@ -62,6 +62,65 @@ let eye dt n m = Ops.cast (Ops.eq (row_index n) (Ops.arange ~dtype:Int32 m)) dt
 let direction x = Ops.where (Ops.lt x (zero x)) (float x (-1.)) (float x 1.)
 let fdiv x y = Lower_arith.binary Fdiv x (Ops.expand y (Ops.shape x))
 
+(* Failing matrices
+
+   A matrix that breaks an operation's precondition on its values has results
+   whose every element is NaN, as nx documents. Whether each matrix keeps its
+   results is a flag of its batch axes and two axes of one. *)
+
+(* [both ok c] is the flag [c] and, if any, the flag [ok]. *)
+let both ok c =
+  Some (match ok with None -> c | Some ok -> Ops.bitwise_and ok c)
+
+(* [defined ok u] is [u] where the flag [ok], if any, holds, and NaN in every
+   element of the matrices of [u] where it does not: of its vectors, when [u]
+   has an axis fewer than [ok]. *)
+let defined ok u =
+  match ok with
+  | None -> u
+  | Some ok ->
+      let ok =
+        if Ops.ndim u < Ops.ndim ok then Ops.squeeze ~axis:(-1) ok else ok
+      in
+      Ops.where (Ops.expand ok (Ops.shape u)) u (float u Float.nan)
+
+(* [over_matrix op u] is each matrix of [u] reduced by [op] to one element. *)
+let over_matrix op u =
+  let r = Ops.ndim u in
+  Ops.unsqueeze (Ops.unsqueeze (Ops.rop u op [ r - 2; r - 1 ]) (-1)) (-1)
+
+(* Whether every element of each matrix of [x] is finite: below infinity in
+   magnitude, which NaN is not. *)
+let finite x =
+  let infinite =
+    Ops.where
+      (Ops.lt (Lower_arith.unary Abs x) (float x Float.infinity))
+      (zero x) (float x 1.)
+  in
+  let count = over_matrix Op.Add infinite in
+  Ops.eq count (zero count)
+
+(* Whether the elements off the diagonal of each matrix of [x] have a norm
+   within [tol] times the norm of the matrix. The matrix is divided by its
+   largest magnitude first, so that no square overflows. *)
+let diagonal_within tol x =
+  let _, m, n = matrix x in
+  let largest = over_matrix Op.Max (Lower_arith.unary Abs x) in
+  let x =
+    fdiv x
+      (Ops.where (Ops.gt largest (zero largest)) largest (float largest 1.))
+  in
+  let squares u = over_matrix Op.Add (Ops.mul u u) in
+  let off =
+    squares (Ops.where (Ops.eq (row_index m) (column_index n)) (zero x) x)
+  in
+  Ops.bitwise_or
+    (Ops.lt off (Ops.mul (squares x) (float off (tol *. tol))))
+    (Ops.eq off (zero off))
+
+(* The unit roundoff of the float dtype [dt]. *)
+let roundoff dt = Float.ldexp 1. (-(snd (Dtype.finfo dt) + 1))
+
 (* Products
 
    [dot a b] multiplies the matrices of [a] and [b] as the reference's [dot]
@@ -354,6 +413,15 @@ let svd ~device ~full_matrices a =
          round)
   in
   let u = part y (rank - 2) 0 num and v = part y (rank - 2) num (2 * num) in
+  (* A matrix fails if it holds NaN or an infinity, or if its rotated columns
+     are not orthogonal: once they are, their inner products are the roundoff of
+     sums of [num] terms. *)
+  let ok =
+    Ops.bitwise_and (finite x)
+      (diagonal_within
+         (16. *. float_of_int num *. roundoff wdt)
+         (dot (transpose u) u))
+  in
   let norms = Ops.sqrt (Ops.rop (Ops.mul u u) Op.Add [ rank - 2 ]) in
   let order = Lower_reduce.argsort ~descending:true ~axis:(rank - 2) norms in
   let s = Lower_index.gather (rank - 2) order norms in
@@ -384,7 +452,10 @@ let svd ~device ~full_matrices a =
   let u = dot q (Ops.where inside (Ops.pad u pad) (square q_num)) in
   let u = if full_matrices then u else block u None (Some (0, num)) in
   let u, vt = if m >= n then (u, transpose v) else (v, transpose u) in
-  (Ops.cast u dt, Ops.cast s Float64, Ops.cast vt dt)
+  let ok = Some ok in
+  ( Ops.cast (defined ok u) dt,
+    Ops.cast (defined ok s) Float64,
+    Ops.cast (defined ok vt) dt )
 
 (* Symmetric eigenvalues by two-sided Jacobi rotations
 
@@ -431,6 +502,16 @@ let eigh ~device ~vectors a =
   let rotated =
     Loop.repeat device (sweeps n (mantissa + 1) * sweep n) (x :: v) round
   in
+  (* A matrix fails if its read triangle holds NaN or an infinity, or if the
+     sweeps leave it off the diagonal beyond the [n] units of roundoff of its
+     norm they reach. *)
+  let ok =
+    Some
+      (Ops.bitwise_and (finite x)
+         (diagonal_within
+            (16. *. float_of_int n *. roundoff wdt)
+            (List.hd rotated)))
+  in
   let w = diagonal (List.hd rotated) in
   let order = Lower_reduce.argsort ~descending:false ~axis:(r - 2) w in
   let w = Lower_index.gather (r - 2) order w in
@@ -438,13 +519,15 @@ let eigh ~device ~vectors a =
     List.map
       (fun v ->
         Ops.cast
-          (Lower_index.gather (r - 1)
-             (Ops.expand (Ops.unsqueeze order (-2)) (ints (batch @ [ n; n ])))
-             v)
+          (defined ok
+             (Lower_index.gather (r - 1)
+                (Ops.expand (Ops.unsqueeze order (-2))
+                   (ints (batch @ [ n; n ])))
+                v))
           (dtype a))
       (List.tl rotated)
   in
-  (Ops.cast w Float64, List.nth_opt v 0)
+  (Ops.cast (defined ok w) Float64, List.nth_opt v 0)
 
 (* LU with partial pivoting
 
@@ -516,16 +599,17 @@ let lu a =
    Step [j] takes column [j] of the working matrix, on and below the diagonal,
    as column [j] of [L]: its diagonal element's square root heads it, and the
    rest is divided by that root. The working matrix then loses the product of
-   the column with itself. Only the lower triangle is ever read. *)
+   the column with itself. Only the lower triangle is ever read. A matrix with a
+   pivot that is not positive, NaN included, is not positive-definite. *)
 
 let cholesky ~upper a =
   let dt = dtype a in
   let x = Lower_arith.widen a in
   let _, n, _ = matrix x in
   let rows = row_index n in
-  let step (s, columns) j =
+  let step (s, columns, ok) j =
     let d = entry s j j in
-    let root = Ops.sqrt (Ops.where (Ops.gt d (zero d)) d (float d Float.nan)) in
+    let root = Ops.sqrt d in
     let l =
       Ops.where (is rows j)
         (Ops.expand root (Ops.shape (column s j)))
@@ -534,16 +618,18 @@ let cholesky ~upper a =
            (fdiv (column s j) root)
            (zero root))
     in
-    (Ops.sub s (Ops.mul l (transpose l)), l :: columns)
+    ( Ops.sub s (Ops.mul l (transpose l)),
+      l :: columns,
+      both ok (Ops.gt d (zero d)) )
   in
-  let _, columns = List.fold_left step (x, []) (List.init n Fun.id) in
+  let _, columns, ok = List.fold_left step (x, [], None) (List.init n Fun.id) in
   let l =
     Lower_index.cat
       (Ops.ndim x - 1)
       (block x None (Some (0, 0)))
       (List.rev columns)
   in
-  Ops.cast (if upper then transpose l else l) dt
+  Ops.cast (defined ok (if upper then transpose l else l)) dt
 
 (* Triangular solve
 
@@ -551,7 +637,7 @@ let cholesky ~upper a =
    along both axes, with [b]'s rows, when the triangle it reads is the upper
    one. Row [i] of the solution is then row [i] of [b] less the strictly lower
    part of row [i] of the matrix times the rows solved before it, divided by the
-   diagonal element. *)
+   diagonal element. A zero diagonal element makes the matrix singular. *)
 
 let solve_triangular ~upper ~transpose:t ~unit_diag a b =
   let dt = dtype b in
@@ -565,11 +651,16 @@ let solve_triangular ~upper ~transpose:t ~unit_diag a b =
   let _, n, _ = matrix m in
   let rows = row_index n in
   let strict = Ops.where (Ops.lt (column_index n) rows) m (zero m) in
-  let solve x i =
+  let solve (x, ok) i =
     let rest = Ops.sub (row b i) (dot (row strict i) x) in
-    let xi = if unit_diag then rest else fdiv rest (entry m i i) in
-    Ops.where (is rows i) (Ops.expand xi (Ops.shape x)) x
+    let xi, ok =
+      if unit_diag then (rest, ok)
+      else
+        let d = entry m i i in
+        (fdiv rest d, both ok (Ops.ne d (zero d)))
+    in
+    (Ops.where (is rows i) (Ops.expand xi (Ops.shape x)) x, ok)
   in
-  let x = List.fold_left solve (zero b) (List.init n Fun.id) in
-  let x = if reversed then Ops.flip x [ rank - 2 ] else x in
+  let x, ok = List.fold_left solve (zero b, None) (List.init n Fun.id) in
+  let x = defined ok (if reversed then Ops.flip x [ rank - 2 ] else x) in
   Ops.cast (if vector then Ops.squeeze ~axis:(-1) x else x) dt

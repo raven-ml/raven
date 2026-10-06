@@ -660,7 +660,6 @@ target's run lands.
   too would cost another reduction per column. This takes one more
   reduction per column than tinygrad's. On a target that flushes subnormals, a column whose only
   nonzero elements below the diagonal are subnormal takes no reflection (T1).
-  Compiled code never raises `No_convergence`.
 - **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular,
   the factors nx.cpu's LAPACK reflectors give.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest element of
@@ -701,8 +700,11 @@ target's run lands.
     sorted by `Lower_reduce.argsort`, which is stable;
   - each quotient of the rotations is `Ops.FDIV`, rounded once, as in L2;
   - the values are `float64`, refused (`Jit_error`) on a target without it,
-    such as Metal. Compiled code never raises `No_convergence`: it runs its
-    fixed sweeps, and NaN in `a` gives NaN values, as eager does.
+    such as Metal;
+  - a matrix holding NaN or an infinity, or whose rotated columns' inner
+    products off the diagonal are not within `16 num u` of their norm after
+    the fixed sweeps, has `u`, `s` and `vt` of NaN in every element, as eager
+    gives a matrix it cannot factor. tinygrad returns what its rounds reach.
 - **nx:** `nx.mli`, `svd`: `a = U diag(S) Vh`, `S` descending, non-negative,
   a zero one `+0`; `nx_backend_intf.mli`: `u` and `vt` orthonormal.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest singular
@@ -713,9 +715,11 @@ target's run lands.
 - **Reason:** (b).
 - **Pinned by:** `svd › matrices › *`, `svd › float64 values of a 12 x 12
   matrix reach its roundoff` (which fails under `4 num` rounds), `› a
-  rank-deficient matrix has orthonormal vectors and +0. values`, `› NaN gives
-  NaN values`, `› one element`, `› no element: the full factors are
-  identities`, `› a target without float64 refuses it`, `› batch axes`.
+  rank-deficient matrix has orthonormal vectors and +0. values`, `› a matrix
+  holding NaN or an infinity has eager's factors, NaN in every element`, `› a
+  matrix holding NaN is NaN alone in its batch`, `› one element`, `› no
+  element: the full factors are identities`, `› a target without float64
+  refuses it`, `› batch axes`.
 
 ### L4. Cholesky
 
@@ -724,20 +728,20 @@ target's run lands.
 - **No source:** a right-looking composition, one column per step: the
   column's diagonal element's square root heads it, the rest is divided by
   that root, and the working matrix loses the column's product with itself.
-  Only the lower triangle is read, and `upper` is the transpose. A pivot that
-  is not positive is NaN, so the column it heads and every later one are NaN
-  on and below the diagonal, where eager raises `Linalg_error`
-  `Not_positive_definite`; a last pivot of zero, which would give finite
-  values, is NaN too.
+  Only the lower triangle is read, and `upper` is the transpose. A matrix
+  with a pivot that is not positive, NaN included, has a factor of NaN in
+  every element, as eager's: one flag per matrix, from the pivots the steps
+  already hold, selects NaN.
 - **nx:** `nx.mli`, `cholesky`.
 - **Class:** measured bound: within `4 n u` of the largest element of eager's
   factor for well-conditioned positive-definite matrices of up to 5 x 5;
   measured maxima, in units of `n u`: 0.4 (`float32`), 0.6 (`float64`), 0
-  (`float16`). Pinned values where eager raises.
+  (`float16`); exact, all NaN, where the matrix is not positive-definite.
 - **Reason:** (b).
 - **Pinned by:** `cholesky › positive-definite matrices › *`, `cholesky › a
-  pivot that is not positive is NaN, and every column after it`, `› a zero
-  pivot is NaN`, `› one element`, `› no element`.
+  matrix that is not positive-definite has eager's factor, NaN in every
+  element › *`, `› a matrix that is not positive-definite is NaN alone in its
+  batch`, `› one element`, `› no element`.
 
 ### L5. Triangular solve
 
@@ -747,17 +751,19 @@ target's run lands.
   `transpose` and reversed along both axes when the triangle read is the upper
   one, and solved by substitution, one row a step, from the strictly lower
   triangle and the diagonal; the other triangle, and the diagonal under
-  `unit_diag`, are never read. A zero on the diagonal, where eager raises
-  `Linalg_error` `Singular`, makes that row and every later one in the order
-  of substitution non-finite: the quotient by zero, then its products.
+  `unit_diag`, are never read. A zero on the diagonal read makes the
+  solution NaN in every element, as eager's: one flag per matrix, from the
+  diagonal elements the steps divide by, selects NaN.
 - **nx:** `nx.mli`, `solve_triangular`.
 - **Class:** measured bound: within `4 n u` of the largest element of eager's
   solution for diagonally dominant matrices of up to 5 x 5; measured maxima,
-  in units of `n u`: 0.9 (`float32`, `float64`), 0 (`float16`). Pinned values
-  where eager raises.
+  in units of `n u`: 0.9 (`float32`, `float64`), 0 (`float16`); exact, all
+  NaN, where the matrix is singular.
 - **Reason:** (b).
 - **Pinned by:** `triangular solves › dominant matrices › *`, `triangular
-  solves › a zero pivot makes its row and those after it non-finite`, `› no
+  solves › a zero on the diagonal it reads gives eager's solution, NaN in
+  every element`, `› solve and inv of a singular matrix are eager's, NaN in
+  every element`, `› a singular matrix is NaN alone in its batch`, `› no
   element`.
 
 ### L6. LU with partial pivoting

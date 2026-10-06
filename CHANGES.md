@@ -173,6 +173,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.cholesky`, `solve_triangular`, `solve`, `inv`, `svd` and
+  `eigh` gives a failing matrix NaN in every element of its results, as
+  eagerly, where it gave NaN or infinities from the failing column or row on,
+  or finite factors for a one-element matrix holding NaN or an infinity. A
+  compiled `svd` or `eigh` whose rotations do not converge is NaN too.
 - `Rune.jit` compiles a `Rune.scan` over the rows of a slice that starts off a
   16-byte boundary, such as `Nx.reshape [| 4; 2 |] (Nx.shrink [| (1, 9) |] x)`
   of `float64`: compiling failed "UOp verification failed" on the loop's call.

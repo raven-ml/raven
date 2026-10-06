@@ -4822,6 +4822,30 @@ let eighs =
       test "eigh and svd of a batch split over devices are eager's" split_batch;
     ]
 
+(* Failing matrices: a mapped matrix on which an operation is undefined is NaN
+   in every element of its results, compiled as eagerly, and the other lanes are
+   eager's. *)
+
+let failing_lanes () =
+  let a =
+    Nx.create Nx.float64 [| 3; 2; 2 |]
+      [| 4.; 2.; 2.; 3.; 1.; 2.; 2.; 4.; 2.; 1.; 1.; 2. |]
+  in
+  let near = Oracle.tensor ~rel:1e-14 () in
+  let cholesky = Rune.vmap' Nx.cholesky in
+  equal ~msg:"cholesky" near (cholesky a) (host (Rune.jit' cholesky a));
+  let solve = Rune.vmap' (fun a -> Nx.solve a (Nx.ones Nx.float64 [| 2 |])) in
+  equal ~msg:"solve" near (solve a) (host (Rune.jit' solve a))
+
+let failing_matrices =
+  group "failing matrices"
+    [
+      test
+        "a mapped matrix that cholesky or solve fails on is NaN alone, as \
+         eagerly"
+        failing_lanes;
+    ]
+
 (* One device *)
 
 (* The calls whose bytes and memory a device counts, on [d]: the test devices,
@@ -5263,6 +5287,7 @@ let () =
          scans;
          gathers ~at:Nx.Placement.host Nx.Device.host;
          eighs;
+         failing_matrices;
          scatters;
          device_lists;
          split_gathers;

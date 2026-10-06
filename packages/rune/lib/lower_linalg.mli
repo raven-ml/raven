@@ -10,9 +10,9 @@
     documents it. The last two axes hold the matrices, and the leading ones are
     batch axes.
 
-    A factorization takes a number of steps that its shapes fix, and none fails:
-    where nx raises [Linalg_error], the result holds the non-finite values its
-    steps produce, as each function states. [float16] computes at [float32] and
+    A factorization takes a number of steps that its shapes fix, and none
+    raises: a matrix that fails, as each function states, has results whose
+    every element is NaN, as nx documents. [float16] computes at [float32] and
     rounds each result once.
 
     The factorizations that take [~device] hold their step once, in a loop that
@@ -31,9 +31,8 @@ val matmul : Ops.t -> Ops.t -> Ops.t
 
 val cholesky : upper:bool -> Ops.t -> Ops.t
 (** [cholesky ~upper a] is the lower-triangular [L] with [a = L Lᵀ], reading
-    only the lower triangle of [a], or [Lᵀ] under [upper]. A pivot that is not
-    positive, where nx raises, is NaN: the column it heads and every later one
-    are NaN on and below the diagonal. *)
+    only the lower triangle of [a], or [Lᵀ] under [upper]. A matrix with a pivot
+    that is not positive, or is NaN, fails: it is not positive-definite. *)
 
 val qr : device:Ops.device -> reduced:bool -> Ops.t -> Ops.t * Ops.t
 (** [qr ~device ~reduced a] is [(q, r)] with [a = q r], [q] orthogonal and [r]
@@ -60,7 +59,9 @@ val svd :
     orthonormal columns and rows, square under [full_matrices] and of [min m n]
     columns and rows otherwise. It rotates for a number of sweeps that grows as
     the logarithm of [min m n], and has [qr]'s range of accuracy. The signs of
-    the vectors are unspecified. *)
+    the vectors are unspecified. A matrix holding NaN or an infinity, or whose
+    rotated columns' inner products off the diagonal are not within [16 k] units
+    of roundoff of their norm, [k = min m n], fails. *)
 
 val eigh : device:Ops.device -> vectors:bool -> Ops.t -> Ops.t * Ops.t option
 (** [eigh ~device ~vectors a] is [(w, v)] with [a v = v diag(w)], reading only
@@ -72,7 +73,9 @@ val eigh : device:Ops.device -> vectors:bool -> Ops.t -> Ops.t * Ops.t option
     of roundoff of [a]'s norm. Every element of [v diag(w) vᵀ] and [vᵀ v] is
     then within some ten [n] units of roundoff of [a]'s and the identity's. The
     signs of the vectors, and the basis of the space of a repeated eigenvalue,
-    are unspecified. *)
+    are unspecified. A matrix whose lower triangle holds NaN or an infinity, or
+    whose rotated elements off the diagonal are not within [16 n] units of
+    roundoff of its norm, fails. *)
 
 val solve_triangular :
   upper:bool -> transpose:bool -> unit_diag:bool -> Ops.t -> Ops.t -> Ops.t
@@ -80,5 +83,4 @@ val solve_triangular :
     [a x = b], or [aᵀ x = b] under [transpose], reading only the triangle of [a]
     that [upper] names and taking its diagonal as ones under [unit_diag]. [b] is
     a vector of [a]'s batch shape and size, or right-hand sides as columns. A
-    zero on the diagonal, where nx raises, makes the solution non-finite from
-    its row on, in the order of substitution. *)
+    matrix with a zero on the diagonal it reads fails. *)
