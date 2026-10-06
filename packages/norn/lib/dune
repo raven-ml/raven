@@ -1,5 +1,5 @@
 (library
  (name norn)
  (public_name norn)
- (private_modules prec)
+ (private_modules prec chains)
  (libraries nx.dtype nx rune))

@@ -12,3 +12,6 @@ density maps it to one log density per chain.
   support.
 - `Norn.Draws` and `Norn.Stats`: draws of your structure with `[chain; draw]`
   axes, and the statistics of each transition.
+- `Norn.Diag`: R-hat, effective sample sizes and calibration, each a value
+  of your structure: `(Norn.Diag.rhat schools post).tau` is the R-hat of
+  `tau`.

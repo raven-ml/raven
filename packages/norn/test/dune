@@ -1,5 +1,7 @@
 (tests
- (names test_bij test_density test_draws)
- (modules test_bij test_density test_draws)
+ (names test_bij test_density test_draws test_diag)
+ (modules test_bij test_density test_draws test_diag)
  (package norn)
+ (deps
+  (glob_files golden/*.golden))
  (libraries norn nx nx.dtype rune windtrap))
