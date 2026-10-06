@@ -4103,24 +4103,21 @@ let failures =
 
 (* A device that sleeps on its interrupts sleeps only once its signal word has
    stayed still for 200 ms, told how long it has, and a sleep that raises once
-   the word stayed still past its driver's limit loses the device. *)
+   the word stayed still past its driver's limit loses the device. The work
+   signals from the third sleep. *)
 let test_sleep () =
-  let sleeps = ref [] in
+  let sleeps = ref [] and signal_work = ref ignore in
   let sleep ~still ms =
     sleeps := (still, ms) :: !sleeps;
+    if List.length !sleeps = 3 then !signal_work ();
     Unix.sleepf 0.01
   in
   let d = (fake ~name:"SLEEPY" ~sleep ()).dev in
   let v = submit d Fun.id in
   let word = B.address (Nx_device.signal_word d) in
-  let late =
-    Domain.spawn (fun () ->
-        Unix.sleepf 0.7;
-        store_signal word v)
-  in
+  (signal_work := fun () -> store_signal word v);
   Nx_device.synchronize d;
-  Domain.join late;
-  is_true ~msg:"slept while still" (List.length !sleeps >= 2);
+  equal ~msg:"slept until signaled" int 3 (List.length !sleeps);
   List.iter
     (fun (still, ms) ->
       equal ~msg:"for 200 ms each" int 200 ms;
@@ -4128,22 +4125,6 @@ let test_sleep () =
     !sleeps;
   let stills = List.rev_map fst !sleeps in
   equal ~msg:"how long, growing" (list int) (List.sort compare stills) stills;
-  sleeps := [];
-  let busy = (fake ~name:"BUSY" ~sleep ()).dev in
-  let word = B.address (Nx_device.signal_word busy) in
-  let v =
-    List.fold_left (fun _ _ -> submit busy Fun.id) 0 (List.init 5 Fun.id)
-  in
-  let progress =
-    Domain.spawn (fun () ->
-        for k = 1 to v do
-          Unix.sleepf 0.1;
-          store_signal word k
-        done)
-  in
-  Nx_device.synchronize busy;
-  Domain.join progress;
-  equal ~msg:"no sleep while the word moves" (list (pair int int)) [] !sleeps;
   let limit ~still _ =
     Unix.sleepf 0.01;
     if still >= 400 then failwith "hang detected"
@@ -4254,15 +4235,17 @@ let driver_wait =
         "counts how long the timeline stayed still from its last move, however \
          long the condition takes" (fun () ->
           with_host_word (fun timeline a ->
-              let moving =
-                Domain.spawn (fun () ->
-                    for k = 1 to 10 do
-                      Unix.sleepf 0.1;
-                      store_signal a k
-                    done)
+              (* The timeline moves at every check, for a second. *)
+              let moves = ref 0 and held = ready_after 1.0 in
+              let moving () =
+                incr moves;
+                store_signal a !moves;
+                held ()
               in
-              Driver.wait ~sleep:(hangs_after 400) ~timeline (ready_after 1.0);
-              Domain.join moving;
+              let sleeps = ref 0 in
+              let sleep ~timeline:_ ~still:_ _ = incr sleeps in
+              Driver.wait ~sleep ~timeline moving;
+              equal ~msg:"no sleep while the timeline moves" int 0 !sleeps;
               raises_match (Exn.failure ~substring:"hang detected") (fun () ->
                   Driver.wait ~sleep:(hangs_after 400) ~timeline (fun () ->
                       false))));
