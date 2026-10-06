@@ -157,6 +157,26 @@ let a_inv = Nx.inv a          (* square; NaN for a singular matrix *)
 let a_pinv = Nx.pinv a        (* works for any shape *)
 ```
 
+## When a Matrix Fails
+
+No linear-algebra function raises on the values of a matrix. A matrix on which a function is undefined, such as one that is not positive-definite given to `cholesky`, one with a zero pivot given to `solve` or `inv`, or one holding NaN or an infinity given to `svd`, `eig` or `eigh`, has NaN in every element of its results. Each matrix of a batch is computed on its own, so one failing matrix leaves the others unchanged, and any one element of a matrix's result tells whether it failed:
+
+<!-- $MDX skip -->
+```ocaml
+let l = Nx.cholesky covariances in                       (* [|batch; n; n|] *)
+let ok = Nx.all ~axes:[ -2; -1 ] (Nx.isfinite l) in     (* [|batch|] *)
+```
+
+A caller that wants an exception checks, naming the matrix that failed:
+
+<!-- $MDX skip -->
+```ocaml
+Nx.check Nx.Ptree.unit ok () (fun i () ->
+    Failure (Printf.sprintf "covariance %d is not positive-definite" i.(0)))
+```
+
+Outside a function's stated precondition, NaN or an infinity in an operand propagates through the arithmetic to some elements of the results.
+
 ## Norms and Properties
 
 ### norm

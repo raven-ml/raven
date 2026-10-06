@@ -3570,14 +3570,16 @@ val unique : ('a, 'b) t -> groups
 
 (** {1:linalg Linear algebra}
 
-    The last two axes hold the matrices and the leading ones are batch axes;
-    each matrix of a batch is computed on its own.
+    The factorizations and solves take the last two axes as the matrices and
+    the leading ones as batch axes; each matrix of a batch is computed on its
+    own.
 
     No operation raises on the values of its matrices. A matrix that breaks an
     operation's precondition on its values, as the operation states, has
     results whose every element is NaN, both parts of a complex one, so any
-    one element tells whether it failed. A caller that wants an exception
-    checks:
+    one element tells whether it failed. Outside a stated precondition, NaN or
+    an infinity in an operand propagates through the arithmetic to some
+    elements of the results. A caller that wants an exception checks:
 
     {@ocaml[
       # let a = create float64 [| 2; 2 |] [| 1.; 2.; 2.; 1. |] in
@@ -3587,7 +3589,8 @@ val unique : ('a, 'b) t -> groups
       Exception: Failure "covariance is not positive-definite".
     ]}
 
-    Shapes and dtypes are checked at once and raise [Invalid_argument]. *)
+    Shapes and dtypes are checked when the function is called and raise
+    [Invalid_argument]. *)
 
 (** {2:linalg_products Products} *)
 
@@ -3772,9 +3775,10 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
 
     A matrix that is not positive-definite, one whose factorization meets a
     pivot that is not positive or is NaN, has a factor whose every element is
-    NaN. Each matrix of a batch is factored on its own, so
+    NaN. Each matrix of a batch is factored on its own, so for a finite [a],
     [all (isfinite (cholesky a))] tests that [a] is positive-definite, and
-    [all ~axes:[-2; -1]] tests each matrix of a batch.
+    [all ~axes:[-2; -1] (isfinite (cholesky a))] tests each matrix of a
+    batch.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
@@ -4016,8 +4020,10 @@ val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     [x] comes from {!lu}'s factors of [a] and two triangular solves.
 
     A singular matrix, one whose [U] in {!lu} has a pivot of exactly zero, has
-    a solution whose every element is NaN. A matrix that is singular only to
-    rounding gives large finite values, which a residual [a *@ x - b] judges.
+    a solution whose every element is NaN. Only an exact zero counts: a matrix
+    singular in exact arithmetic whose pivot rounds to a tiny nonzero value
+    gives very large values, infinite or NaN in some elements where they
+    overflow; a {!cond} near [1 / ε] or above tells such a matrix.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.

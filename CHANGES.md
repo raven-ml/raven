@@ -3428,16 +3428,6 @@ thread.
   `Nx.log_gammainc`, `Nx.log_gammaincc`, `Nx.gammaincinv` and
   `Nx.gammainccinv`, the gamma distribution's laws, within stated bounds for
   concentrations up to 2^20; the logarithms stay finite where a tail underflows.
-- **Breaking:** linear algebra never raises on the values of a matrix, and
-  `Nx.Linalg_error` is removed. A matrix on which `cholesky`,
-  `solve_triangular`, `solve`, `inv`, `matrix_power`, `tensorsolve`,
-  `tensorinv`, `svd`, `eig`, `eigh` or their value forms are undefined has
-  results whose every element is NaN, and the other matrices of its batch are
-  unaffected, so one failing matrix no longer ends a batch or a sampler's run.
-  Where a raise is wanted, `Nx.check` that `all (isfinite r)`. `solve` takes
-  only an exact zero pivot of `lu`'s `U` as singular, where a pivot below
-  `eps · n` counted, so `solve (1e-30 · a) b` is `solve a b / 1e-30`;
-  `tensorsolve` and `tensorinv` no longer fall back to `pinv`.
 - **Breaking:** `cholesky`, `solve`, `inv` and `matrix_power` no longer raise
   `Invalid_argument` on a matrix that is not positive-definite or is singular,
   and `tensorsolve` and `tensorinv` no longer fall back to `pinv`. A matrix on
@@ -4756,7 +4746,7 @@ thread.
   It returned the complete one: an `m × m` `Q` and an `m × n` `R` for a tall
   `m × n` matrix.
 - `Nx.eigvalsh` converges on graded matrices, such as a tridiagonal whose
-  diagonal runs from `1e-8` to `1e8`, which raised `Linalg_error` from
+  diagonal runs from `1e-8` to `1e8`, which failed to converge from
   order 100 on while `Nx.eigh` succeeded. Its values-only iteration now picks
   the end it converges from, as LAPACK's `dsterf` does.
 - `Nx.eigh ~uplo:`U` and `Nx.eigvalsh ~uplo:`U` read the upper triangle.
@@ -4766,19 +4756,19 @@ thread.
   complex128, where they raised `Invalid_argument`. The eigenvalues are real
   (float64) and the eigenvectors have the matrix's dtype.
 - `Nx.eig` and `Nx.eigvals` hold on matrices whose largest entry is below
-  about `1e-138` or above `1e138`, which raised `Linalg_error` for want of
-  convergence: the matrix is scaled into range first, as LAPACK's `xGEEV`
-  does, and its eigenvalues scaled back.
+  about `1e-138` or above `1e138`, which failed to converge: the matrix is
+  scaled into range first, as LAPACK's `xGEEV` does, and its eigenvalues
+  scaled back.
 - `Nx.svd`, `Nx.svdvals`, `Nx.qr`, `Nx.eigh` and `Nx.eigvalsh` hold on
   matrices whose entries are very small or very large. The Householder
   reflectors summed squares that under- or overflowed: a complex64 `svd` of a
-  rank-deficient matrix raised `Linalg_error`, a float64 matrix scaled by
+  rank-deficient matrix failed, a float64 matrix scaled by
   `1e-170` came back as if it were another matrix, and one scaled by `1e170`
   gave NaN. The norms are now scaled, as LAPACK's `xLARFG` does.
 - `Nx.eig` and `Nx.eigvals` converge on complex matrices with nearly equal
   eigenvalues, such as a Hermitian tridiagonal with paired eigenvalues, which
-  raised `Linalg_error` for want of convergence. The QR iteration's shift lost
-  half its digits to cancellation there; it is now computed as LAPACK does.
+  failed to converge. The QR iteration's shift lost half its digits to
+  cancellation there; it is now computed as LAPACK does.
 - New `nx.nv.device` library: NVIDIA GPUs as `Nx_device.t`s on Linux without
   CUDA, through NVIDIA's kernel driver (releases 570, 580 and 610) or over PCI
   without it (`~interface:Pci`), booting the GSP with verified firmware.

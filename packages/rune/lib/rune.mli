@@ -952,8 +952,11 @@ val jit :
     result: {!Nx.log} within one, and on the host {!Nx.exp}, {!Nx.sin} and
     {!Nx.cos} within two; Metal flushes float32 subnormals to zero. A product
     over an axis ({!Nx.prod}) multiplies in an unspecified association too. A
-    factorisation fails as it does eagerly: a matrix on which it is undefined
-    has results whose every element is NaN.
+    linear-algebra operation fails on the condition nx states for it, judged
+    on the compiled steps: a matrix on which it is undefined has results whose
+    every element is NaN. A matrix within rounding of that condition, such as
+    one with a Cholesky pivot near zero, may fail compiled and not eagerly, or
+    the reverse.
 
     {b Domains.} A compiled function may be called from any domain, several at
     once, and from inside its own function. A key being compiled makes the other
