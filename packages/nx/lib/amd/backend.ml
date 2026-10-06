@@ -8,9 +8,9 @@
    An elementwise operation names its module's key, its operands and its result;
    the operands' views are coalesced; the module's contiguous form [c] runs when
    every view is C-contiguous after merging, and its strided form [s] otherwise;
-   one launch on the device's compute queue. Reductions, scans and matrix
-   products take paths of their own (Reductions, Scans, Matrix products). A
-   module's kernels are loaded on a device at their first use, and kept while
+   one launch on the device's compute queue. Reductions, scans, sorts and matrix
+   products take paths of their own (Reductions, Scans, Sorts, Matrix products).
+   A module's kernels are loaded on a device at their first use, and kept while
    the device is. A GPU that no carried target covers refuses every kernel, as
    do the operations, dtypes and layouts the kernels do not serve. *)
 
@@ -532,6 +532,108 @@ let scan key ~fold_key ~dst x ~axis =
       (if parts = 1 then [ run ] else [ totals (); run ])
   end
 
+(* Sorts
+
+   Each row's elements become keys paired with their positions, in scratch
+   padded to a power of two; a bitonic network sorts the padded rows, its steps
+   of distance at most half a block in the workgroup's memory and the longer
+   ones over all slots; the elements at the sorted positions, or the positions,
+   are the result. Every step is a run of one launch. *)
+
+let block = 2048
+
+type sorted = Elements | Positions
+
+let log2 n =
+  let rec go k = if 1 lsl k >= n then k else go (k + 1) in
+  go 0
+
+(* Runs the sort module [key] writing [x]'s [sorted] rows along [axis] into
+   [dst]. *)
+let sort_rows key sorted ~descending ~axis x ~dst =
+  let dev, s, target = locate key dst in
+  let without v = axes_of v (fun i -> i <> axis) in
+  let views = View.coalesce [ without (view dst); without (view x) ] in
+  let dov = List.hd views and xov = List.nth views 1 in
+  let rows = View.numel dov and len = (View.shape (view x)).(axis) in
+  if View.ndim dov > max_rank then
+    refuse "rows of %d axes once merged; kernels take %d" (View.ndim dov)
+      max_rank;
+  if rows > 0 && len > 0 then begin
+    let units = units s in
+    let plog = log2 len in
+    let p = 1 lsl plog in
+    let total = rows * p in
+    let scratch = Nx_device.Buffer.create dev Int64 (2 * total) in
+    let keys = Nativeint.to_int (Nx_device.Buffer.address scratch) in
+    let pos = keys + (8 * total) in
+    let flip =
+      if not descending then 0
+      else if itemsize x = 8 then -1
+      else (1 lsl (8 * itemsize x)) - 1
+    in
+    let spread n = Int.min (cdiv n threads) (waves * units) in
+    let meta i64 groups =
+      List.iter i64 [ rows; len; plog; groups; View.ndim dov ];
+      List.iter i64 [ View.offset xov; View.stride axis (view x) ];
+      List.iter i64 [ View.stride axis (view dst); flip ];
+      words i64 (View.shape dov);
+      words i64 (View.strides xov);
+      words i64 (View.strides dov)
+    in
+    let run name groups f =
+      dispatch (program dev s target key name) groups (args f)
+    in
+    let pairs =
+      let g = spread total in
+      run "k" g (fun i64 ->
+          i64 (address x);
+          i64 keys;
+          i64 pos;
+          meta i64 g)
+    in
+    let local klo khi =
+      let g = Int.min (cdiv total block) (waves * units) in
+      run "l" g (fun i64 ->
+          List.iter i64 [ keys; pos; total; plog; klo; khi; g ])
+    in
+    let step k j =
+      let g = spread (total / 2) in
+      run "g" g (fun i64 -> List.iter i64 [ keys; pos; total; plog; k; j; g ])
+    in
+    (* Stages past a block: their long steps over all slots, then the short ones
+       in blocks. *)
+    let rec stages k acc =
+      if k > p then List.rev acc
+      else
+        let rec long j acc =
+          if j < block then acc else long (j / 2) (step k j :: acc)
+        in
+        stages (2 * k) (local k k :: long (k / 2) acc)
+    in
+    let result =
+      let g = spread (rows * len) in
+      match sorted with
+      | Elements ->
+          run "v" g (fun i64 ->
+              i64 (at dst dov);
+              i64 (address x);
+              i64 pos;
+              meta i64 g)
+      | Positions ->
+          run "i" g (fun i64 ->
+              i64 (at dst dov);
+              i64 pos;
+              meta i64 g)
+    in
+    let network =
+      if p = 1 then [] else local 2 (Int.min p block) :: stages (2 * block) []
+    in
+    Nx_amd_device.launch
+      ~touches:[ buffer dst; buffer x; scratch ]
+      ((pairs :: network) @ [ result ])
+  end
+
 (* Threefry *)
 
 (* Runs the threefry module hashing [counter]'s word pairs under [key]'s into
@@ -780,8 +882,17 @@ module Kernels : Nx_backend.S = struct
       (Printf.sprintf "arg_reduce.%s.%s" (arg_reduce_name k) (served x.dtype))
       ~dst:(Operand dst) (Operand x) ~axes:[| axis |]
 
-  let sort ~descending:_ ~axis:_ _ ~dst:_ = no "sort"
-  let argsort ~descending:_ ~axis:_ _ ~dst:_ = no "argsort"
+  let sort (type a b) ~descending ~axis (x : (a, b) Nx_array.t)
+      ~(dst : (a, b) Nx_array.t) =
+    sort_rows
+      ("sort." ^ served x.dtype)
+      Elements ~descending ~axis (Operand x) ~dst:(Operand dst)
+
+  let argsort (type a b) ~descending ~axis (x : (a, b) Nx_array.t) ~dst =
+    sort_rows
+      ("sort." ^ served x.dtype)
+      Positions ~descending ~axis (Operand x) ~dst:(Operand dst)
+
   let group _ ~dst:_ = no "group"
 
   let pad (type a b) padding (v : a) (x : (a, b) Nx_array.t)

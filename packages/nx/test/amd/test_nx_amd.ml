@@ -391,10 +391,10 @@ let computing =
           equal bool true (Nx.Placement.equal p (Nx.placement y)));
       test "an operation it has no kernel for raises, naming the remedies"
         (fun () ->
-          let x = on_gpu (Nx.ones Nx.float32 [| 2 |]) in
+          let x = on_gpu (Nx.ones Nx.float32 [| 1; 1 |]) in
           raises_match
-            (Exn.invalid_arg ~substring:"no argsort. Compile it with Rune.jit")
-            (fun () -> ignore (Nx.argsort x)));
+            (Exn.invalid_arg ~substring:"no cholesky. Compile it with Rune.jit")
+            (fun () -> ignore (Nx.cholesky x)));
       test "a dtype it does not serve raises, naming it" (fun () ->
           let x = on_gpu (Nx.ones Nx.complex64 [| 2 |]) in
           raises_match (Exn.invalid_arg ~substring:"no complex dtypes")
@@ -1386,6 +1386,108 @@ let scan_bounds =
           done);
     ]
 
+(* Sorts *)
+
+(* [x] sorted along [axis] on the GPU, values and positions read back, against
+   the host's, bit for bit. *)
+let sorts_as_on_host ?msg ~descending axis x =
+  let packed (v, i) = (Nx.P v, Nx.P i) in
+  let on (v, i) = (Nx.P (host v), Nx.P (host i)) in
+  equal ?msg
+    (pair Stored.packed Stored.packed)
+    (packed (Nx.sort ~descending ~axis x))
+    (on (Nx.sort ~descending ~axis (on_gpu x)))
+
+let sorted =
+  group "sorted"
+    (List.map
+       (fun (Stored.Case c) ->
+         prop ~count:300
+           (c.name
+          ^ " values of every layout sort along an axis as on the host, both \
+             ways")
+           (Gen.pair (with_axis c.tensors) Gen.bool)
+           (fun ((x, axis), descending) ->
+             cover "strided" (not (Nx.is_c_contiguous x));
+             cover "descending" descending;
+             cover "an empty axis" (Nx.dim axis x = 0);
+             cover "a one-element axis" (Nx.dim axis x = 1);
+             sorts_as_on_host ~descending axis x))
+       (List.filter served_case Stored.every))
+
+(* Shapes and the axis they sort along, crossing the network's geometry: rows
+   that share a block, rows of a block, and rows whose long steps run over all
+   slots. *)
+let sort_geometries =
+  [
+    ([| 70_000; 3 |], 1);
+    ([| 1000; 300 |], 1);
+    ([| 300; 1000 |], 0);
+    ([| 3; 5000 |], 1);
+    ([| 5000; 3 |], 0);
+    ([| 1; 100_000 |], 1);
+  ]
+
+let sort_geometry =
+  group "sort geometry"
+    (List.map
+       (fun (Dtype d as dt) ->
+         test
+           (Nx_dtype.to_string d
+          ^ " rows of every length sort as on the host, both ways")
+           (fun () ->
+             List.iter
+               (fun (shape, axis) ->
+                 List.iter
+                   (fun t ->
+                     let stored =
+                       if t then [| shape.(1); shape.(0) |] else shape
+                     and axis = if t then 1 - axis else axis in
+                     List.iter
+                       (fun (what, f) ->
+                         let (Nx.P x) = values dt stored f in
+                         let x = if t then Nx.transpose x else x in
+                         List.iter
+                           (fun descending ->
+                             let msg =
+                               Printf.sprintf "%s [%s] along %d%s%s" what
+                                 (String.concat "x"
+                                    (List.map string_of_int
+                                       (Array.to_list shape)))
+                                 axis
+                                 (if t then ", transposed" else "")
+                                 (if descending then ", descending" else "")
+                             in
+                             sorts_as_on_host ~msg ~descending axis x)
+                           [ false; true ])
+                       patterns)
+                   [ false; true ])
+               sort_geometries))
+       served)
+
+let sort_cases =
+  group "sort cases"
+    [
+      test "NaN sorts last, -0 below +0, descending the exact reverse"
+        (fun () ->
+          let x =
+            on_gpu (Nx.create Nx.float32 [| 4 |] [| 1.; Float.nan; -0.; 0. |])
+          in
+          let bits xs = Array.map Int32.bits_of_float xs in
+          let got descending =
+            bits (Nx.to_array (host (fst (Nx.sort ~descending x))))
+          in
+          equal (array int32) (bits [| -0.; 0.; 1.; Float.nan |]) (got false);
+          equal (array int32) (bits [| Float.nan; 1.; 0.; -0. |]) (got true));
+      test "equal elements keep their order, both ways" (fun () ->
+          let x =
+            on_gpu (Nx.create Nx.int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |])
+          in
+          let got descending = Nx.to_array (host (Nx.argsort ~descending x)) in
+          equal (array int64) [| 1L; 3L; 0L; 2L; 4L |] (got false);
+          equal (array int64) [| 4L; 2L; 0L; 1L; 3L |] (got true));
+    ]
+
 (* Random values *)
 
 let key_words (k : Nx.Rng.t) = Nx.P (host (k :> Nx.int32_t))
@@ -1442,5 +1544,8 @@ let () =
          scan_cases;
          scan_bounds;
          random;
+         sorted;
+         sort_geometry;
+         sort_cases;
          accuracy;
        ])

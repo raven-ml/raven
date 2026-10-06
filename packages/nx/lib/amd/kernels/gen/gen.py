@@ -115,6 +115,8 @@ def modules():
     for d in NUMERIC:
         yield f"fma.{d}", f'#include "fma.hip"\nFMA({c_name(d)})\n'
     yield "threefry", '#include "random.hip"\nTHREEFRY()\n'
+    for d, cd in DTYPES:
+        yield f"sort.{d}", f'#include "sort.hip"\nSORT({cd})\n'
     for d in NUMERIC:
         yield f"matmul.{d}", f'#include "matmul.hip"\nMATMUL({c_name(d)})\n'
     for kinds, dtypes in REDUCE:

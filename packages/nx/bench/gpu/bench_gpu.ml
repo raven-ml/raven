@@ -5,16 +5,17 @@
 
 (* nx's eager kernels on GPUs, each beside its host twin: a cast from bfloat16
    to float32, the exponential of a float32 value, the sum of two, the sum of
-   one's elements and their running sum, a uniform draw, a gather of every
-   element at drawn positions, the concatenation of two halves and a square
-   padded by one, at 4K, 1M and 16M elements, and the product of a float32
-   square matrix by itself, of 128, 1,024 and 4,096 rows, timed to the work's
-   completion, and the first use of a kernel in a fresh process, which opens the
-   GPU and loads the kernel's code objects. AMD loads code objects with no
-   compiler, so the first use has no cold and warm cases. Rows exist for the
-   GPUs the machine has: AMD GPU 0 under the kernel driver. The GPU is opened in
-   each measuring worker, never in the parent that forks them; the host twins
-   run on every machine. *)
+   one's elements and their running sum, a uniform draw, a sort with its
+   positions (at 4K and 1M: the host's sort of 16M overruns a case's deadline),
+   a gather of every element at drawn positions, the concatenation of two halves
+   and a square padded by one, at 4K, 1M and 16M elements, and the product of a
+   float32 square matrix by itself, of 128, 1,024 and 4,096 rows, timed to the
+   work's completion, and the first use of a kernel in a fresh process, which
+   opens the GPU and loads the kernel's code objects. AMD loads code objects
+   with no compiler, so the first use has no cold and warm cases. Rows exist for
+   the GPUs the machine has: AMD GPU 0 under the kernel driver. The GPU is
+   opened in each measuring worker, never in the parent that forks them; the
+   host twins run on every machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -98,6 +99,8 @@ let cases ~gpu size =
       ~gpu "rng-uniform" size
       ~input:(fun n -> ((Nx.Rng.key 7 :> Nx.int32_t), n))
       ~op:(fun (k, n) -> Nx.Rng.uniform (Nx.Rng.of_tensor k) Nx.float32 [| n |])
+  @ (if snd size > 1 lsl 20 then []
+     else rows ~put:one ~gpu "sort" size ~input:floats ~op:(fun x -> Nx.sort x))
   @ rows ~put:two ~gpu "gather" size
       ~input:(fun n -> (floats n, positions n))
       ~op:(fun (x, indices) -> Nx.take ~indices x)
