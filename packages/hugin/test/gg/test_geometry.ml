@@ -354,6 +354,18 @@ let holds b p =
   && Box2.miny b <= P2.y p
   && P2.y p <= Box2.maxy b
 
+(* A free point is rarely in two small boxes at once, so half the draws are
+   clamped into the first box, where the second often holds them too. *)
+let gen_inter_case =
+  let clamp b p =
+    P2.v
+      (Float.min (Box2.maxx b) (Float.max (Box2.minx b) (P2.x p)))
+      (Float.min (Box2.maxy b) (Float.max (Box2.miny b) (P2.y p)))
+  in
+  Gen.map
+    (fun (a, b, p, inside) -> (a, b, if inside then clamp a p else p))
+    (Gen.quad gen_grid_box gen_grid_box gen_half_pt Gen.bool)
+
 (* A point is in [inter a b] iff it is in [a] and in [b]. *)
 let inter_holds_common_points (a, b, p) =
   let both = holds a p && holds b p in
@@ -402,8 +414,7 @@ let box_tests =
           equal box2 u (Box2.union u a);
           equal box2 u (Box2.union u b));
       prop "inter holds the points common to both boxes"
-        (Gen.triple gen_grid_box gen_grid_box gen_half_pt)
-        inter_holds_common_points;
+        gen_inter_case inter_holds_common_points;
       prop "inter is commutative" (Gen.pair gen_grid_box gen_grid_box)
         (fun (a, b) -> equal (option box2) (Box2.inter a b) (Box2.inter b a));
       test "inter of boxes touching at a corner is that point" (fun () ->
