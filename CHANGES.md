@@ -1011,6 +1011,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Ode.delay`, for `y' t = f t (y t) (y (t − τ))` with constant lags
+  read from the accepted steps' continuous extensions and a `history`,
+  stepping onto the breakpoints the lags create.
 - Add `Ode.event`, a solve that ends at the first sign change of any
   component of an event tensor, returning the time, the state and the
   component's index, with the crossing time's derivative.

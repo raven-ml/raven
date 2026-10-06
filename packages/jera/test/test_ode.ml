@@ -749,6 +749,87 @@ let event_tests =
             drop (fun _ _ -> Nx.zeros f64 [| 0 |]) (scalar 10.)));
   ]
 
+(* Delays *)
+
+(* y' = −y(t − τ) from y = c before 0: on [0, τ] y = c (1 − t); with τ = 1, y(2)
+   = −c / 2 and y(3) = −c / 6, by the method of steps. *)
+let lagged _ _ d = Nx.neg (Nx.squeeze ~axes:[ 0 ] d)
+
+let delayed ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) ?(span = 64)
+    ?(lags = vec [| 1. |]) ?(c = scalar 1.) ?(f = lagged) at =
+  Ode.delay one Ode.tsit5 ~tol ~budget:400 ~span ~lags
+    ~history:(fun s -> Nx.broadcast_to (Nx.shape s) c)
+    f ~at (Nx.reshape [||] c)
+
+let delay_tests =
+  let close = Oracle.tensor ~rel:1e-10 ~abs:1e-12 () in
+  let times = vec [| 0.; 1.; 2.; 3. |] in
+  [
+    test "y' = −y(t − 1) follows the method of steps" (fun () ->
+        equal close
+          (vec [| 1.; 0.; -0.5; -1. /. 6. |])
+          (Solution.get (delayed times)));
+    test "y' = e y(t − 1) from e^t keeps e^t between breakpoints" (fun () ->
+        (* λ = e e^(−λ) holds at λ = 1, so e^t solves it for all t: its delayed
+           states come from the steps' extensions. *)
+        let e = Float.exp 1. in
+        let s =
+          Ode.delay one Ode.tsit5
+            ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+            ~budget:400 ~span:64 ~lags:(vec [| 1. |]) ~history:Nx.exp
+            (fun _ _ d -> Nx.mul_s (Nx.squeeze ~axes:[ 0 ] d) e)
+            ~at:(vec [| 0.; 0.5; 1.7; 3. |])
+            (scalar 1.)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (Nx.exp (vec [| 0.; 0.5; 1.7; 3. |]))
+          (Solution.get s));
+    test "two lags stack on a leading axis" (fun () ->
+        let f _ _ d = Nx.neg (Nx.get [ 1 ] d) in
+        equal close
+          (vec [| 1.; 0.; -0.5; -1. /. 6. |])
+          (Solution.get (delayed ~lags:(vec [| 2.; 1. |]) ~f times)));
+    test "grad in the history reaches the delayed states" (fun () ->
+        let g =
+          Rune.grad'
+            (fun c -> Nx.get [ 3 ] (Solution.get (delayed ~c times)))
+            (scalar 1.)
+        in
+        equal close (scalar (-1. /. 6.)) g);
+    test "grad in the lag moves the breakpoints" (fun () ->
+        (* With τ in (1, 2], y(2) = (1 − τ) − ((1 + τ)(2 − τ) − (4 − τ²)/2),
+           whose derivative in τ is τ − 2. *)
+        let g =
+          Rune.grad'
+            (fun lags ->
+              Nx.get [ 1 ] (Solution.get (delayed ~lags (vec [| 0.; 2. |]))))
+            (vec [| 1.2 |])
+        in
+        equal close (vec [| -0.8 |]) g);
+    test "a lag that is not positive ends the lane Stalled" (fun () ->
+        let s = delayed ~lags:(vec [| 0. |]) times in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Stalled s);
+        raises_match (Exn.failure ~substring:"Every lag must be positive.")
+          (fun () -> Solution.get s));
+    test "a lag past the span's pieces ends the lane Stalled" (fun () ->
+        (* A forcing keeps the steps below the lag, so one piece cannot hold the
+           state a lag back. *)
+        let f t _ d =
+          Nx.add (Nx.neg (Nx.squeeze ~axes:[ 0 ] d)) (Nx.sin (Nx.mul_s t 5.))
+        in
+        let s = delayed ~span:1 ~f times in
+        raises_match (Exn.failure ~substring:"raise span") (fun () ->
+            Solution.get s));
+    test "compiled equals eager to rounding" (fun () ->
+        let f c = Solution.get (delayed ~c times) in
+        equal
+          (Oracle.tensor ~rel:1e-13 ~abs:1e-15 ())
+          (f (scalar 1.))
+          (Rune.jit' f (scalar 1.)));
+  ]
+
 let () =
   exit
     (run "Jera.Ode"
@@ -757,6 +838,7 @@ let () =
          group "solve derivatives" solve_derivative_tests;
          group "path" path_tests;
          group "event" event_tests;
+         group "delay" delay_tests;
          group "order" order_tests;
          group "march" march_tests;
          group "transformations" transformation_tests;
