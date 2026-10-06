@@ -146,7 +146,7 @@ let repeat device n init step =
     (* Each carry is laid out as the step lays out its next value: sharded where
        it mixes with a sharded value. An odd count takes its first step before
        the loop. *)
-    let first = step init in
+    let first = step (Ops.const ~dtype:Int32 (`Int Bigint.zero)) init in
     let axes = List.map Call.axis first in
     let init = if n mod 2 = 1 then List.map Ops.contiguous first else init in
     if n < 2 then init
@@ -183,9 +183,18 @@ let repeat device n init step =
           carries
       in
       (* A trip takes two steps: the first into storage of its own, the second
-         from it into the carries' storage, which it then no longer reads. *)
-      let finals = step (List.map Ops.contiguous (step params)) in
-      let args = ref [] and stores = ref [] in
+         from it into the carries' storage, which it then no longer reads. The
+         call passes the first step's index, and the second's is one more. *)
+      let range =
+        Ops.range ~axis_type:Loop (Ops.Int (n / 2)) [ Ops.unique_num () ]
+      in
+      let slot = next () in
+      let index = Call.param ~addrspace:(Some Alu) slot Int32 in
+      Ops.Tbl.replace own index ();
+      let index' = Ops.add index (Shape.const_like index (`Int Bigint.one)) in
+      let finals = step index' (List.map Ops.contiguous (step index params)) in
+      let args = ref [ (slot, Ops.O.((range * int 2) + int (n mod 2))) ]
+      and stores = ref [] in
       let results =
         List.map2
           (fun (c, param) v ->
@@ -200,9 +209,6 @@ let repeat device n init step =
           finals
       in
       let body = cut ~own next args (Ops.sink (List.rev !stores)) in
-      let range =
-        Ops.range ~axis_type:Loop (Ops.Int (n / 2)) [ Ops.unique_num () ]
-      in
       let by_slot (a, _) (b, _) = Int.compare a b in
       let e =
         Ops.end_

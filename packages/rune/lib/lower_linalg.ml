@@ -69,10 +69,6 @@ let at axis u i =
        (List.mapi (fun k d -> if k = axis then Ops.Int 1 else d) (Shape.shape u)))
     u
 
-(* A loop's count: [next i] follows [i], and [first ()] is where it starts. *)
-let next i = Ops.add i (Shape.const_like i (`Int Bigint.one))
-let first () = Ops.const ~dtype:Int32 (`Int Bigint.zero)
-
 (* Failing matrices
 
    A matrix that breaks an operation's precondition on its values has results
@@ -157,7 +153,7 @@ let matmul a b =
    value, the diagonal element and zeros below it. The diagonal takes the sign
    opposite to [x]'s first element, so that no cancellation occurs, and a column
    already zero below the diagonal takes no reflection. A loop repeats the step
-   ({!Loop.repeat}), which reads [i] from a count it carries. *)
+   ({!Loop.repeat}), which gives it [i]. *)
 
 let sum_last u = Shape.unsqueeze (Shape.rop u Op.Add [ Shape.ndim u - 1 ]) (-1)
 let max_last u = Shape.unsqueeze (Shape.rop u Op.Max [ Shape.ndim u - 1 ]) (-1)
@@ -219,15 +215,14 @@ let householder ~device a =
       Ops.where on (Ops.sub q (dot (Ops.contiguous (dot q v)) (transpose w))) q;
       Ops.where (Ops.eq columns i) reflected
         (Ops.where (Ops.ge rows i) (Ops.where on applied r) r);
-      next i;
     ]
   in
-  let step = function
-    | [ q; r; i ] -> reflect q r i
+  let step i = function
+    | [ q; r ] -> reflect q r i
     | _ -> invalid_arg "Lower_linalg.householder"
   in
   let q = Shape.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
-  match Loop.repeat device (Int.min m n) [ q; a; first () ] step with
+  match Loop.repeat device (Int.min m n) [ q; a ] step with
   | q :: r :: _ -> (q, r)
   | _ -> invalid_arg "Lower_linalg.householder"
 
@@ -384,7 +379,7 @@ let svd ~device ~full_matrices a =
   let square k = Shape.expand (eye wdt k k) (ints (batch @ [ k; k ])) in
   let rank = Shape.ndim r in
   let columns x = Shape.unsqueeze x (-2) in
-  let round = function
+  let round _ = function
     | [ y ] ->
         (* The columns of the pairs, each one's mate alongside it: one kernel
            sums their products and computes the tangents from the sums. *)
@@ -481,7 +476,7 @@ let eigh ~device ~vectors a =
   (* The lower triangle, mirrored: the upper one is never read. *)
   let x = Ops.where (Ops.ge (row_index n) (column_index n)) x (transpose x) in
   let rows u = Shape.unsqueeze u (-1) and columns u = Shape.unsqueeze u (-2) in
-  let round = function
+  let round _ = function
     | x :: v ->
         let d = diagonal x and first u = part u (r - 2) 0 (n / 2) in
         let cosines, sines =
@@ -538,7 +533,7 @@ let eigh ~device ~vectors a =
    The column below the pivot is divided by it, unless it is zero, and the
    trailing rows take the rank-one update. Step [j] writes its pivot's row at
    position [j] of the pivots. A loop repeats the step ({!Loop.repeat}), which
-   reads [j] from a count it carries. *)
+   gives it [j]. *)
 
 let lu ~device a =
   let dt = dtype a in
@@ -559,8 +554,8 @@ let lu ~device a =
     Ops.where (Ops.eq index j) row_p
       (Ops.where (Ops.eq rows p) (at (rank - 2) u j) u)
   in
-  let step = function
-    | [ x; perm; pivots; j ] ->
+  let step j = function
+    | [ x; perm; pivots ] ->
         let col = at (rank - 1) x j in
         let never = float col Float.neg_infinity in
         let magnitude =
@@ -590,7 +585,7 @@ let lu ~device a =
             (Shape.expand p (Shape.shape pivots))
             pivots
         in
-        [ x; perm; pivots; next j ]
+        [ x; perm; pivots ]
     | _ -> invalid_arg "Lower_linalg.lu"
   in
   let perm = Shape.expand rows (ints (batch @ [ m; 1 ])) in
@@ -599,9 +594,8 @@ let lu ~device a =
       (Ops.const ~dtype:Int64 (`Int Bigint.zero))
       (ints (batch @ [ k ]))
   in
-  match Loop.repeat device k [ x; perm; pivots; first () ] step with
-  | [ x; perm; pivots; _ ] ->
-      (Ops.cast x dt, pivots, Shape.squeeze ~axis:(-1) perm)
+  match Loop.repeat device k [ x; perm; pivots ] step with
+  | [ x; perm; pivots ] -> (Ops.cast x dt, pivots, Shape.squeeze ~axis:(-1) perm)
   | _ -> invalid_arg "Lower_linalg.lu"
 
 (* Cholesky
@@ -652,8 +646,8 @@ let cholesky ~upper a =
    one. Step [i] divides row [i] of the right-hand sides by the diagonal
    element, which makes it row [i] of the solution, and takes its product with
    column [i] of the matrix from the rows below. A loop repeats the step
-   ({!Loop.repeat}), which reads [i] from a count it carries. A zero diagonal
-   element makes the matrix singular. *)
+   ({!Loop.repeat}), which gives it [i]. A zero diagonal element makes the
+   matrix singular. *)
 
 let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
   let dt = dtype b in
@@ -666,8 +660,8 @@ let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
   let b = if reversed then Shape.flip b [ rank - 2 ] else b in
   let batch, n, _ = matrix m in
   let rows = row_index n in
-  let step = function
-    | [ x; i ] ->
+  let step i = function
+    | [ x ] ->
         let c = at (rank - 1) m i in
         let xi = at (rank - 2) x i in
         let xi = if unit_diag then xi else fdiv xi (at (rank - 2) c i) in
@@ -675,7 +669,6 @@ let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
           Ops.where (Ops.eq rows i)
             (Shape.expand xi (Shape.shape x))
             (Ops.where (Ops.gt rows i) (Ops.sub x (Ops.mul c xi)) x);
-          next i;
         ]
     | _ -> invalid_arg "Lower_linalg.solve_triangular"
   in
@@ -687,7 +680,7 @@ let solve_triangular ~device ~upper ~transpose:t ~unit_diag a b =
       let none = Ops.eq (Shape.rop zeros Op.Max [ rank - 2 ]) (Ops.int 0) in
       Some (Shape.reshape none (ints (batch @ [ 1; 1 ])))
   in
-  match Loop.repeat device n [ b; first () ] step with
+  match Loop.repeat device n [ b ] step with
   | x :: _ ->
       let x = defined ok (if reversed then Shape.flip x [ rank - 2 ] else x) in
       Ops.cast (if vector then Shape.squeeze ~axis:(-1) x else x) dt

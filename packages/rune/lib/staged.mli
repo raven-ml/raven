@@ -26,15 +26,14 @@
     the step reads row [r] of each stacked input and writes row [r] of each
     stacked output, [r] being [i], or [n - 1 - i] for a reversed scan of [n]
     steps; a loop until a stop has [max] output rows, of which those past its
-    last trip hold no value of the loop. The index is [r], read from a row of
-    the [n] indices, made once per call for a step that reads it. Rows are 16
-    bytes of memory apart, as the body's vector accesses require: a stacked
-    input whose rows are not is read from a padded copy, made once per call.
-    Each carry is one buffer that each trip updates in place, once every kernel
-    that reads it ran, as the schedule orders them; a next carry that reads the
-    carry elsewhere than at its own index is computed into storage of its own
-    first, and so is, each trip, the latest of carries whose next values read
-    each other in a cycle, such as two carries that swap.
+    last trip hold no value of the loop. The index is [r], a scalar the call
+    passes on each trip. Rows are 16 bytes of memory apart, as the body's vector
+    accesses require: a stacked input whose rows are not is read from a padded
+    copy, made once per call. Each carry is one buffer that each trip updates in
+    place, once every kernel that reads it ran, as the schedule orders them; a
+    next carry that reads the carry elsewhere than at its own index is computed
+    into storage of its own first, and so is, each trip, the latest of carries
+    whose next values read each other in a cycle, such as two carries that swap.
 
     A loop inside the step stages as a loop of the body, nested in the outer
     one: its step is traced once, and its values are those of the loop written

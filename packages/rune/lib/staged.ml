@@ -208,7 +208,9 @@ let stage ~here ~inside s (r : Trips.request) =
         (slot, Nx.P v))
       xs
   in
-  let index_slot, index = held Lower.row p Nx.int32 [||] in
+  let index_slot, index =
+    held (fun s ~slot p dt _ -> Lower.scalar s ~slot p dt) p Nx.int32 [||]
+  in
   (* The stop's value, and whether the loop runs on, at a carry. *)
   let stop c =
     match r.req_trips with
@@ -337,29 +339,29 @@ let stage ~here ~inside s (r : Trips.request) =
       (List.combine init carry)
   in
   (* Each trip reads its row of each stacked input, from a copy whose rows are
-     16 bytes apart when the input's are not. *)
-  let read_rows =
-    List.iter2 (fun (Nx.P x as xs) (slot, _) ->
-        let shape = Nx.shape x in
-        let u =
-          Lower.stacked s (Nx.dtype x)
-            (Array.sub shape 1 (Array.length shape - 1))
-            (node xs)
-        in
-        let m = Shape.max_numel u / n in
-        let k = stride u m in
-        let flat =
-          if k = m then Shape.reshape u [ Ops.Int (n * m) ]
-          else
-            Shape.reshape
-              (Shape.pad
-                 (Shape.reshape u (ints [ n; m ]))
-                 [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
-              [ Ops.Int (n * k) ]
-        in
-        pass slot (window (Ops.contiguous flat) Ops.O.(trip * int k) m))
-  in
-  read_rows xs rows;
+     16 bytes apart when the input's are not, and its index, the trip. *)
+  List.iter2
+    (fun (Nx.P x as xs) (slot, _) ->
+      let shape = Nx.shape x in
+      let u =
+        Lower.stacked s (Nx.dtype x)
+          (Array.sub shape 1 (Array.length shape - 1))
+          (node xs)
+      in
+      let m = Shape.max_numel u / n in
+      let k = stride u m in
+      let flat =
+        if k = m then Shape.reshape u [ Ops.Int (n * m) ]
+        else
+          Shape.reshape
+            (Shape.pad
+               (Shape.reshape u (ints [ n; m ]))
+               [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
+            [ Ops.Int (n * k) ]
+      in
+      pass slot (window (Ops.contiguous flat) Ops.O.(trip * int k) m))
+    xs rows;
+  pass index_slot trip;
   (* Each trip writes its row of each stacked output. *)
   let outputs =
     List.map
@@ -385,14 +387,6 @@ let stage ~here ~inside s (r : Trips.request) =
               (ints (Array.to_list stacked)))
       ys
   in
-  (* Each trip reads its index from a row of the [n] indices, made only for a
-     step that reads it. *)
-  let param = Ops.buf_uop (Lower.uop s index) in
-  if reach ~from:param (Ops.sink !stores) <> Apart then
-    read_rows
-      (here s (fun () -> [ Nx.P (Nx.arange Nx.int32 0 n 1) ]))
-      [ (index_slot, Nx.P index) ]
-  else pass index_slot (Ops.new_buffer device 1 (Ops.dtype param));
   let renumbered =
     List.map
       (fun (u, slot) ->
@@ -426,18 +420,22 @@ let stage ~here ~inside s (r : Trips.request) =
   in
   (* Before answering, the loop must run: as one batch, or trip by trip, which a
      probe of its schedule tells. A loop of one trip is its calls, which run. *)
+  let scalar u = Ops.addrspace u = Some Tolk.Dtype.Alu in
   let probe =
     List.map
       (fun (slot, u) ->
-        ( slot,
-          Ops.new_buffer
-            (Option.get (Ops.device u))
-            (Shape.max_numel u) (Ops.dtype u) ))
+        if scalar u then (slot, u)
+        else
+          ( slot,
+            Ops.new_buffer
+              (Option.get (Ops.device u))
+              (Shape.max_numel u) (Ops.dtype u) ))
       !args
   in
+  let stored = snd (List.find (fun (_, u) -> not (scalar u)) probe) in
   let linear, _ =
     Tolk.Schedule.create_linear_with_vars ~capturing:true
-      (Ops.sink [ Ops.after (snd (List.hd probe)) [ call probe ] ])
+      (Ops.sink [ Ops.after stored [ call probe ] ])
   in
   let loop e = Ops.op e = Op.End || Ops.op e = Op.Backedge in
   if

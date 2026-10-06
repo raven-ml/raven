@@ -216,6 +216,14 @@ val parameter :
 
     Raises as {!param} does. *)
 
+val scalar :
+  scope -> slot:int -> Nx.Placement.t -> ('a, 'b) Nx_dtype.t -> ('a, 'b) Nx.t
+(** [scalar s ~slot p dt] is the traced scalar of [dt] at [p] that the scalar
+    parameter [slot] of a called body ({!Tolk.Ops.call}) holds: a value its call
+    passes, such as an expression of the loop around the call.
+
+    Raises as {!param} does. *)
+
 val argument :
   scope ->
   slot:int ->

@@ -191,6 +191,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.qr`, LU factorization and `Nx.solve_triangular`, and so
+  `Nx.solve`, `Nx.inv` and `Nx.det`, run one kernel fewer per step: the loop
+  passes each step its index. A float64 solve of 32 equations runs in 92 us
+  instead of 101 us on an M1 Max.
 - `Rune.jit` computes the incomplete beta family as nx does eagerly, and the
   derivatives of `Nx.betainc`, `Nx.betaincc` and their logarithms in each
   argument are within the bounds `rune.mli` states, eagerly and compiled,

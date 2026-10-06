@@ -30,11 +30,17 @@ val cut :
     trip writes. *)
 
 val repeat :
-  Ops.device -> int -> Ops.t list -> (Ops.t list -> Ops.t list) -> Ops.t list
+  Ops.device ->
+  int ->
+  Ops.t list ->
+  (Ops.t -> Ops.t list -> Ops.t list) ->
+  Ops.t list
 (** [repeat d n init step] is the values that [n] applications of [step] reach
-    from [init], computed on [d]: [step] maps values of [init]'s shapes and
-    dtypes to values of the same, and is applied to the nodes it is given, so
-    that it may read them at any index.
+    from [init], computed on [d]: [step i] maps values of [init]'s shapes and
+    dtypes to values of the same, [i] the [int32] scalar index of the
+    application, from [0], and is applied to the nodes it is given, so that it
+    may read them at any index. The loop's call passes each trip its first
+    step's index as a scalar argument: no kernel computes an index.
 
     A loop of [n / 2] trips runs [step] twice a trip, traced once as a call's
     body: from the carries' storage into storage of the body's own, then back.

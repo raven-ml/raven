@@ -3417,6 +3417,49 @@ let held_by_steps at ~than a b =
         ~msg:(Printf.sprintf "%d bytes, against %d for %d chunks" hb ha a)
         int ~than:(than * ha) (hb - ha))
 
+(* [indexed_steps at] checks loops whose steps read their index, through the key
+   each step draws from, compiled with their arguments at [at] against eager: a
+   scan's steps forward, its gradient's replayed backward, and an iterate's
+   under its flag. *)
+let indexed_steps at =
+  let key = Nx.Rng.key 7 in
+  let drawn f k x = Nx.Rng.with_key k (fun () -> f x) in
+  let compiled r f =
+    Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns r) (drawn f) key
+  in
+  let scan xs =
+    Rune.scan'
+      ~f:(fun c x ->
+        let r = Nx.rand Nx.float32 [| 4 |] in
+        (Nx.add (Nx.mul c r) x, r))
+      ~init:(ones 4) xs
+  in
+  group "steps that read their index"
+    [
+      test "a scan's steps draw as eager's" (fun () ->
+          let xs = rows 6 4 in
+          let c, ys = drawn scan key xs
+          and c', ys' =
+            compiled Nx.Ptree.(pair tensor tensor) scan (Nx.place at xs)
+          in
+          equal near c (host c');
+          equal near ys (host ys'));
+      test "a scan's gradient replays each step's draws backward as eager's"
+        (fun () ->
+          let grad = Rune.grad' (fun xs -> Nx.sum (fst (scan xs))) in
+          let xs = rows 6 4 in
+          equal near (drawn grad key xs)
+            (host (compiled Nx.Ptree.tensor grad (Nx.place at xs))));
+      test "an iterate's steps draw as eager's, until it stops" (fun () ->
+          let loop =
+            Rune.iterate' ~max:20 ~until:(below 0.05) ~f:(fun x ->
+                Nx.mul x (Nx.rand Nx.float32 [| 4 |]))
+          in
+          equal near
+            (drawn loop key (ones 4))
+            (host (compiled Nx.Ptree.tensor loop (Nx.place at (ones 4)))));
+    ]
+
 (* Scans on a device whose work runs from command queues. *)
 let staged_scans d =
   let at = on d and once _ = 1 in
@@ -3425,6 +3468,7 @@ let staged_scans d =
       group "constant rows" (constant_rows at);
       group "gradients" (both_gradients at);
       lent_beside_taken at;
+      indexed_steps at;
       staged at "stage, their step once, over rows 16 bytes apart" ~steps:once
         ~init:(zeros 4) decay (rows 7 4);
       staged at "stage over rows that are not, through a padded copy"
@@ -3919,6 +3963,7 @@ let scans =
       group "constant rows" (constant_rows Nx.Placement.host);
       group "gradients" (both_gradients Nx.Placement.host);
       lent_beside_taken Nx.Placement.host;
+      indexed_steps Nx.Placement.host;
       test "a scan folds inside the trace and equals eager" (fun () ->
           let f xs = snd (cumulative xs) in
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
@@ -4813,6 +4858,32 @@ let split_batch () =
   within ~bound (singular a)
     (host (Rune.jit Nx.Ptree.(tensor @-> returns tensor) singular (split a)))
 
+(* A factorization's loop gives each step its index: no kernel of a call writes
+   one element alone, as an index the loop counted in its carry would, and the
+   factors are eager's. *)
+let step_indices =
+  let system n =
+    Nx.init Nx.float64 [| n; n |] (fun i ->
+        if i.(0) = i.(1) then 4.
+        else float_of_int ((((i.(0) * 7) + (i.(1) * 3)) mod 5) - 2) /. 8.)
+  in
+  let lu a =
+    let _, l, u = Nx.lu a in
+    Nx.matmul l u
+  and solve a = Nx.solve_triangular ~upper:true a a in
+  cases ~name:fst
+    "a compiled factorization's loop computes no step's index in a kernel"
+    [ ("lu", lu); ("triangular solve", solve) ]
+    (fun (_, f) ->
+      List.iter
+        (fun n ->
+          let a = system n and g = Rune.jit' f in
+          let msg = Printf.sprintf "%d x %d" n n in
+          equal ~msg (Oracle.tensor ~rel:1e-12 ~abs:1e-12 ()) (f a) (g a);
+          let _, ran = kernels (fun () -> g a) in
+          equal ~msg int 0 (List.length (List.filter (String.equal "E") ran)))
+        [ 5; 6; 8 ])
+
 let eighs =
   group "symmetric eigendecompositions"
     [
@@ -4820,6 +4891,7 @@ let eighs =
       compiled_eigh "float64" Nx.float64 0x1p-53;
       test "a gradient through a compiled eigh is eager's" eigh_gradient;
       test "eigh and svd of a batch split over devices are eager's" split_batch;
+      step_indices;
     ]
 
 (* Failing matrices: a mapped matrix on which an operation is undefined is NaN

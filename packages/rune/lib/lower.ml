@@ -726,6 +726,10 @@ let parameter s ~slot p dt shape =
        (fun d n tdt -> Call.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
        p dt shape)
 
+let scalar s ~slot p dt =
+  let tdt = check s "a loop's value" p dt in
+  traced s p dt (Call.param ~addrspace:(Some Dtype.Alu) slot tdt)
+
 (* Rows
 
    A loop reads row [i] of a stacked input in place. A packed input whose rows
@@ -853,9 +857,9 @@ let element (type a b) (x : (a, b) Nx.t) : a =
   in
   Nx_array.Elements.get (Nx.dtype x) host (lo - start)
 
-(* [scalar tdt x] is [x], a value of one element that is not traced, as a
+(* [inlined tdt x] is [x], a value of one element that is not traced, as a
    constant of dtype [tdt]: its element is read now. *)
-let scalar tdt x =
+let inlined tdt x =
   broadcast (Ops.const ~dtype:tdt (const (Nx.dtype x) (element x))) (Nx.shape x)
 
 (* [bind s what p x] is the node of [x], a value at [p] that is not traced. *)
@@ -872,7 +876,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
   in
   if View.numel v = 0 then
     broadcast (Ops.const ~dtype:tdt (`Int Bigint.zero)) shape
-  else if single v && owned then scalar tdt x
+  else if single v && owned then inlined tdt x
   else
     let same c =
       same_storage c.storage key
@@ -1030,7 +1034,8 @@ let placed s what p x =
   let one q = List.compare_length_with (memories q) 1 = 0 in
   let at = Nx.placement x in
   if same_layout at p (Nx.shape x) then bind s what p x
-  else if single (snd (Nx.shards x)) then scalar (check s what p (Nx.dtype x)) x
+  else if single (snd (Nx.shards x)) then
+    inlined (check s what p (Nx.dtype x)) x
   else if one p && one at then bind s what p (transferred p x)
   else
     let x = if on_disk x then transferred Placement.host x else x in
