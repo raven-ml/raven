@@ -6,3 +6,5 @@
 module Split = Split
 module Quad = Quad
 module Ode = Ode
+module Piecewise = Piecewise
+module Grid = Grid

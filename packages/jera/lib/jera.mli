@@ -42,6 +42,12 @@
 module Ode = Ode
 (** Ordinary differential equations. *)
 
+module Piecewise = Piecewise
+(** Piecewise Chebyshev series: splines, interpolants and fits. *)
+
+module Grid = Grid
+(** Tensor-product series over grids. *)
+
 module Quad = Quad
 (** Integrals. *)
 

@@ -958,6 +958,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Piecewise`, piecewise Chebyshev series closed under `eval`,
+  `derivative` and `integral`: interpolants `linear`, `cubic` (`Natural`,
+  `Not_a_knot` and `Clamped` ends), `steffen` (monotone) and `hermite`,
+  fits by `chebyshev`, `eval_at` and `extend`. `Grid` is their tensor
+  product over several axes: `linear`, `cubic` and `chebyshev`, with
+  partial `derivative` and `integral`.
 - Add `Ode.march`, explicit Runge–Kutta marches through the times of `at` in
   equal steps: `Ode.euler`, `rk4`, `ssprk3`, `bs3`, `tsit5` and `dopri5`, and
   `Ode.tableau` for a caller's Butcher tableau. A method's tag says which
