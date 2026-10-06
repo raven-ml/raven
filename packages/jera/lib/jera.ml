@@ -5,6 +5,7 @@
 
 module Tol = Tol
 module Solution = Solution
+module Linear = Linear
 module Root = Root
 module Minimize = Minimize
 module Quad = Quad

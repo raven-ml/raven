@@ -1,5 +1,5 @@
 (tests
- (names test_split test_quad test_ode test_piecewise test_grid test_sde test_root test_minimize)
- (modules test_split test_quad test_ode test_piecewise test_grid test_sde test_root test_minimize)
+ (names test_split test_quad test_linear test_ode test_piecewise test_grid test_sde test_root test_minimize)
+ (modules test_split test_quad test_linear test_ode test_piecewise test_grid test_sde test_root test_minimize)
  (package jera)
  (libraries jera jera_test jera_golden rune nx windtrap))

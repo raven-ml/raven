@@ -1015,6 +1015,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Linear.solve` and `Linear.dense`: the `u` with `a u = r` for a linear
+  function `a` on a structure, materialised from its products and solved by
+  `Nx.solve`, checked against the backward error of an LU factorisation, and
+  differentiated through `Rune.root` with the same solver.
 - ODE solves bound the step by the span of their times: after many short
   intervals the step could grow to infinity, and a rejection then never
   shrank it, so the next long interval spent the budget.

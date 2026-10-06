@@ -312,6 +312,26 @@ let delay =
     rows = all;
   }
 
+(* Linear systems *)
+
+(* A dense system of 32 unknowns, a fixed matrix plus the diagonal argument,
+   materialised from its product and factored. *)
+let coupling =
+  Nx.div_s (Nx.sin (Nx.reshape [| 32; 32 |] (Nx.arange_f f64 0. 1024. 1.))) 4.
+
+let dense =
+  {
+    id = "linear-dense-32";
+    f =
+      (fun d ->
+        Solution.get
+          (Linear.solve Nx.Ptree.tensor Linear.dense
+             (fun u -> Nx.add (Nx.matmul coupling u) (Nx.mul d u))
+             (Nx.ones f64 [| 32 |])));
+    x = (fun () -> Nx.linspace f64 4. 8. 32);
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -330,6 +350,7 @@ let workloads =
     path;
     event;
     delay;
+    dense;
   ]
 
 let compiled f x =

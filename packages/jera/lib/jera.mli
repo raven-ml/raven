@@ -17,6 +17,7 @@
 
     {table
       {tr {th Problem } {th Regime } {th Method } }
+      {tr {td Linear system } {td small, dense } {td {!Linear.dense} } }
       {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
       {tr {td  } {td a bracket } {td {!Root.bracket} } }
       {tr
@@ -221,6 +222,55 @@ module Solution : sig
   (** [pp ppf s] formats the count of lanes in each status and the report {!get}
       would raise for the first lane that did not converge. It reads the
       statuses, so it runs eagerly. *)
+end
+
+module Linear : sig
+  (** Linear systems.
+
+      A system is a linear function [a] on values of a structure ['x] and a
+      right-hand side [r]: its solution is the [u] with [a u = r]. The float
+      tensors of a value are its vector, of one dtype, the solve's; its other
+      tensors are carried from [r]. A solver says how [a] is used: {!dense}
+      materialises it from its products and factors it.
+
+      {[
+      (* u with (k I + L) u = r, L a matrix given by its product *)
+      let s =
+        Linear.solve Nx.Ptree.tensor Linear.dense
+          (fun u -> Nx.add (Nx.mul_s u k) (Nx.matmul l u))
+          r
+      ]}
+
+      {b Check.} Every answer is checked by one more application of [a]: its
+      residual [a u − r] must meet the solver's bound, stated with each. A miss,
+      or a non-finite [u] from a finite system, ends the lane [Stalled]: [a] is
+      not linear, or it is singular or too ill-conditioned for the solver. A
+      non-finite [r] or product of [a] ends it [Not_finite]. The answer's error
+      is the magnitude of its residual, per component.
+
+      {b Derivative.} The answer is stated as the zero of [a u − r] through
+      {!Rune.root}, with the solver as its linear solve: a derivative solves a
+      system of [a], or of its transpose in reverse mode, with the same solver,
+      so the solver must suit both. *)
+
+  type 'x t
+  (** The type for solvers of systems on values of type ['x]. *)
+
+  val dense : 'x t
+  (** [dense] materialises [a] as an [n × n] matrix, [n] the size of the vector,
+      with one application to each vector of the standard basis, and solves it
+      with {!Nx.solve}: [n + 1] applications with the check, and [2n³/3] flops.
+      Its bound is [c n ε (‖A‖ ‖u‖ + ‖r‖)], the backward error of an LU
+      factorisation with partial pivoting, with [c = 16], [ε] the dtype's
+      machine epsilon, [‖A‖] the Frobenius norm of the matrix and the vectors'
+      norms Euclidean. It suits systems of up to some thousands of elements. *)
+
+  val solve : 'x Nx.Ptree.t -> 'x t -> ('x -> 'x) -> 'x -> 'x Solution.t
+  (** [solve x s a r] is the [u] with [a u = r], found by [s].
+
+      Raises [Invalid_argument] if the float tensors of [r] differ in dtype, or
+      if [a] returns a value of another structure, dtype or shape than its
+      argument. *)
 end
 
 module Root : sig
