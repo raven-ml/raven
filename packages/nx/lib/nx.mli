@@ -1063,9 +1063,8 @@ module Rng : sig
 
       What a scope gives up against passing keys explicitly is
       order-independence: inserting a draw shifts every draw after it.
-      {!with_root} confines that to one key: a region rooted at {!next_key}
-      shifts the draws after it by one key if it draws, and not at all if it
-      does not. *)
+      [with_root (next_root ()) f] confines a region to one key's place, taken
+      whether [f] draws or not, and computed only if it does. *)
 
   val with_key : t -> (unit -> 'a) -> 'a
   (** [with_key k f] runs [f] in a scope rooted at [k]. The keyless samplers
@@ -1081,23 +1080,23 @@ module Rng : sig
   val with_root : (unit -> t) -> (unit -> 'a) -> 'a
   (** [with_root r f] runs [f] in a scope rooted at the key [r] returns. [r]
       runs once, at the first draw inside [f], in the scope around [with_root]:
-      a key [r] draws comes from that scope. If [f] draws nothing, [r] never
+      a key [r] draws comes from that scope. A draw is a call of {!next_key},
+      or of a function {!next_root} returned. If [f] draws nothing, [r] never
       runs and the scope around is left as it was. If [r] raises, the first draw
       inside [f] raises it, and [r] runs again at the next draw.
       [with_key k f] is [with_root (fun () -> k) f].
 
-      Code whose draws are optional or vary in number opens such a scope so
-      that the stream around it takes at most one key: [with_root next_key f]
-      takes one key from the scope around if [f] draws, and none if it does
-      not. A function run several times can root each run at one key taken at
-      the first draw:
+      A function run several times can take one key's place before the runs
+      and root each run at that key folded with its index, so that the stream
+      around takes one key whatever the runs draw, and computes it only if one
+      does:
 
       {[
       let draws trips =
-        let k = lazy (Nx.Rng.next_key ()) in
+        let k = Nx.Rng.next_root () in
         List.init trips (fun i ->
             Nx.Rng.with_root
-              (fun () -> Nx.Rng.fold_in (Lazy.force k) i)
+              (fun () -> Nx.Rng.fold_in (k ()) i)
               (fun () -> Nx.rand Nx.float32 [| 2 |]))
       ]} *)
 
@@ -1109,10 +1108,14 @@ module Rng : sig
       system entropy, so unscoped draws differ from run to run. Open a scope to
       make them reproducible. *)
 
-  val peek : unit -> t
-  (** [peek ()] is the key [next_key ()] would return, and takes none: the next
-      draw returns it too. In a scope whose root has not run, [peek] runs it, as
-      a draw would. *)
+  val next_root : unit -> (unit -> t)
+  (** [next_root ()] takes the next key's place in the current scope and runs
+      no root: the draws after it are those after [next_key ()]. The function
+      it returns computes that key, the same at every call, as a draw in that
+      scope would: a root that has not run runs then. Outside any scope, the
+      function takes one key of the domain's generator at its first call.
+
+      Calling the function after its scope returned raises [Invalid_argument]. *)
 end
 
 (** {2:keyless Keyless samplers}

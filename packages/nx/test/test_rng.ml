@@ -992,40 +992,104 @@ let scopes =
             (Rng.with_key (Rng.key 3) (fun () -> words (Rng.next_key ())))
             drawn);
       prop
-        "peek is the key next_key returns next, and leaves the scope's \
-         sequence as it was"
-        Gen.(pair key (pair program program))
-        (fun (k, (before, after)) ->
-          let peeked, next, drawn =
-            Rng.with_key k (fun () ->
-                let a = keyless before in
-                let peeked = words (Rng.peek ()) in
-                let next = words (Rng.next_key ()) in
-                (peeked, next, a @ keyless after))
-          in
-          equal ~msg:"the next key" (array int32) next peeked;
-          equal ~msg:"the draws" values
+        "the draws after next_root () are those after next_key (), whether its \
+         key is computed or not"
+        Gen.(pair key (triple program program bool))
+        (fun (k, (before, after, computed)) ->
+          cover "computed" computed;
+          cover "not computed" (not computed);
+          equal values
             (Rng.with_key k (fun () ->
                  let a = keyless before in
                  ignore (Rng.next_key ());
                  a @ keyless after))
-            drawn);
-      test "peek runs a scope's root once, as a draw would" (fun () ->
-          let runs = ref 0 in
-          let peeked, next =
-            Rng.with_root
-              (fun () ->
-                incr runs;
-                Rng.key 5)
-              (fun () ->
-                let peeked = words (Rng.peek ()) in
-                (peeked, words (Rng.next_key ())))
+            (Rng.with_key k (fun () ->
+                 let a = keyless before in
+                 let root = Rng.next_root () in
+                 if computed then ignore (root ());
+                 a @ keyless after)));
+      prop
+        "next_root's key is the key next_key () returns at its place, at every \
+         call"
+        Gen.(pair key (pair program program))
+        (fun (k, (before, after)) ->
+          let expected =
+            Rng.with_key k (fun () ->
+                ignore (keyless before);
+                words (Rng.next_key ()))
           in
-          equal ~msg:"the next key" (array int32) next peeked;
-          equal ~msg:"root runs" int 1 !runs);
-      test "peek outside a scope is the next key" (fun () ->
-          let peeked = words (Rng.peek ()) in
-          equal (array int32) (words (Rng.next_key ())) peeked);
+          let first, second =
+            Rng.with_key k (fun () ->
+                ignore (keyless before);
+                let root = Rng.next_root () in
+                ignore (keyless after);
+                let first = words (root ()) in
+                ignore (keyless after);
+                (first, words (root ())))
+          in
+          equal ~msg:"first call" (array int32) expected first;
+          equal ~msg:"second call" (array int32) expected second);
+      test
+        "next_root runs no root, and its key computes the root of its own \
+         scope, from the scope around it" (fun () ->
+          let k = Rng.key 11 and runs = ref 0 in
+          let taken, computed =
+            Rng.with_key k (fun () ->
+                Rng.with_root
+                  (fun () ->
+                    incr runs;
+                    Rng.next_key ())
+                  (fun () ->
+                    let root = Rng.next_root () in
+                    let taken = !runs in
+                    (taken, words (root ()))))
+          in
+          equal ~msg:"runs at the take" int 0 taken;
+          equal ~msg:"runs in all" int 1 !runs;
+          equal ~msg:"the key" (array int32)
+            (Rng.with_key k (fun () ->
+                 Rng.with_key (Rng.next_key ()) (fun () ->
+                     words (Rng.next_key ()))))
+            computed);
+      test
+        "next_root's key ignores a scope opened between its take and its call"
+        (fun () ->
+          let k = Rng.key 12 in
+          let outside, inside =
+            Rng.with_key k (fun () ->
+                let root = Rng.next_root () in
+                let inside =
+                  Rng.with_key (Rng.key 99) (fun () -> words (root ()))
+                in
+                (words (root ()), inside))
+          in
+          equal (array int32) outside inside);
+      test "next_root's key raises its scope's root's failure, and retries"
+        (fun () ->
+          let runs = ref 0 in
+          let root () =
+            incr runs;
+            if !runs = 1 then failwith "root" else Rng.key 3
+          in
+          let drawn =
+            Rng.with_root root (fun () ->
+                let place = Rng.next_root () in
+                raises (Failure "root") (fun () -> place ());
+                words (place ()))
+          in
+          equal ~msg:"root runs" int 2 !runs;
+          equal ~msg:"the key" (array int32)
+            (Rng.with_key (Rng.key 3) (fun () -> words (Rng.next_key ())))
+            drawn);
+      test "next_root's key raises once its scope returned" (fun () ->
+          let place = Rng.with_key (Rng.key 4) (fun () -> Rng.next_root ()) in
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () -> place ()));
+      test "next_root outside a scope gives one key at every call" (fun () ->
+          let place = Rng.next_root () in
+          let first = words (place ()) in
+          equal (array int32) first (words (place ())));
       test "a domain spawned inside a scope draws outside it" (fun () ->
           let spawned () =
             Rng.with_key (Rng.key 7) (fun () ->
