@@ -2109,8 +2109,15 @@ let drawn =
   Gen.of_list ~pp:Format.pp_print_float
     [ -1.; -0.; 0.5; 0.75; 1.; 2.; Float.infinity; Float.nan ]
 
-(* Six elements, as one row and as two rows of three. *)
-let six = Gen.array ~size:(Gen.int_range 6 6) drawn
+(* Six elements, as one row and as two rows of three: half the time all below 1,
+   so that a check passes as often as it fails. *)
+let six =
+  let below = Gen.of_list ~pp:Format.pp_print_float [ -1.; -0.; 0.5; 0.75 ] in
+  Gen.frequency
+    [
+      (1, Gen.array ~size:(Gen.int_range 6 6) drawn);
+      (1, Gen.array ~size:(Gen.int_range 6 6) below);
+    ]
 
 (* The first element of [xs] not below 1 and twice its value. *)
 let first_out xs =
