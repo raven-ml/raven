@@ -416,6 +416,120 @@ let test_split_refusals () =
         [| 0; 0; 0 |] );
     ]
 
+(* The entry *)
+
+(* [via] calls a host program through the entry, from its own code: [v.(0)] is
+   the entry's address, [v.(1)] the program's, [v.(2)] whether it splits,
+   [v.(3)] to [v.(6)] the split, and the program's values follow. *)
+let via =
+  lazy
+    (compile
+       {|typedef ABI void (*prog)(void **, const long long *);
+typedef void (*entry)(prog, void **, const long long *, long long,
+                      const long long *);
+ABI void via(void **b, const long long *v) {
+  long long n = v[7];
+  ((entry)v[0])((prog)v[1], b, v + 8, n, v[2] ? v + 3 : 0);
+}|})
+
+(* [entered p buffers values ?split] calls [p] through the entry, from [via]. *)
+let entered ?split p buffers values =
+  let v = load ~binary:(Lazy.force via) ~name:"via" in
+  let split =
+    match split with
+    | None -> [| 0; 0; 0; 0; 0 |]
+    | Some (s : P.split) -> [| 1; s.extent; s.blocks; s.lo; s.hi |]
+  in
+  P.call v buffers
+    (Array.concat
+       [
+         [| Nativeint.to_int P.entry; Nativeint.to_int (P.handle p) |];
+         split;
+         [| Array.length values |];
+         values;
+       ])
+
+let entry_split_run ~extent ~blocks =
+  let p = load ~binary:(Lazy.force block) ~name:"block" in
+  let first = B.create host S.Int64 (max 1 extent)
+  and runs = B.create host S.Int64 (max 1 extent) in
+  Bigarray.Array1.fill (B.bigarray Bigarray.int64 runs) 0L;
+  entered
+    ~split:{ extent; blocks; lo = 1; hi = 2 }
+    p [| first; runs |] [| 99; -1; -1 |];
+  ( List.filteri (fun i _ -> i < extent) (int64s_of first),
+    List.filteri (fun i _ -> i < extent) (int64s_of runs) )
+
+(* Splits of no iteration, one, fewer than their blocks, and more blocks than
+   the host's threads. *)
+let entry_splits =
+  let workers = P.workers () in
+  Gen.with_pp
+    (fun ppf (extent, blocks) -> Format.fprintf ppf "(%d, %d)" extent blocks)
+    (Gen.one_of
+       [
+         Gen.pair (Gen.int_range 0 300) (Gen.int_range 1 16);
+         Gen.pair (Gen.int_range 0 1) (Gen.int_range 1 4);
+         Gen.pair (Gen.int_range 1 8) (Gen.int_range 9 16);
+         Gen.pair (Gen.int_range 64 300)
+           (Gen.int_range (workers + 1) ((4 * workers) + 1));
+       ])
+
+let test_entry_split =
+  prop "a split through the entry runs the blocks a split call runs"
+    entry_splits (fun (extent, blocks) ->
+      cover "no iteration" (extent = 0);
+      cover "fewer iterations than blocks" (extent > 0 && extent < blocks);
+      cover "more blocks than threads" (blocks > P.workers ());
+      equal
+        (pair (list int64) (list int64))
+        (split_run ~extent ~blocks)
+        (entry_split_run ~extent ~blocks))
+
+let test_entry_call () =
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
+  let run call =
+    let out = B.create host S.Int32 4 in
+    call p [| out; int32s [| 1l; 2l; 3l; 4l |] |] [| 4; 3; -5 |];
+    int32s_of out
+  in
+  equal (list int32)
+    (run (fun p b v -> P.call p b v))
+    (run (fun p b v -> entered p b v))
+
+(* The spans of [f ()] as [(device, lane, name)], [f] run while a profile is
+   taken. *)
+let spans f =
+  let profile = Nx_device.Profile.start () in
+  f ();
+  List.filter_map
+    (function
+      | Nx_device.Profile.Span s ->
+          Some (Nx_device.name s.device, s.lane, s.name)
+      | _ -> None)
+    (Nx_device.Profile.stop profile)
+
+let test_entry_spans () =
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
+  let out = B.create host S.Int32 4 and input = int32s [| 1l; 2l; 3l; 4l |] in
+  let lane = Printf.sprintf "domain %d" (Domain.self () :> int) in
+  let direct = spans (fun () -> P.call p [| out; input |] [| 4; 3; -5 |]) in
+  let entered = spans (fun () -> entered p [| out; input |] [| 4; 3; -5 |]) in
+  equal ~msg:"a call"
+    (list (triple string string string))
+    [ ("CPU", lane, "affine") ]
+    direct;
+  equal ~msg:"a call through the entry, inside the program that calls it"
+    (list (triple string string string))
+    [ ("CPU", lane, "via"); ("CPU", lane, "affine") ]
+    entered
+
+let test_entry_no_profile () =
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
+  let out = B.create host S.Int32 4 in
+  entered p [| out; int32s [| 1l; 2l; 3l; 4l |] |] [| 4; 3; -5 |];
+  equal (list (triple string string string)) [] (spans ignore)
+
 (* [held] is [block] whose first block says it started, in [flags.(0)], then
    runs once [flags.(1)] is set. *)
 let held =
@@ -661,6 +775,14 @@ let () =
            [ (1000, 7); (5, 8); (64, 1); (0, 3); (3, 3) ]
            test_split;
          test "a split call refuses a split it cannot run" test_split_refusals;
+         test "a call through the entry is a call" test_entry_call;
+         test_entry_split;
+         test
+           "a call through the entry is a span of its program while a profile \
+            is taken"
+           test_entry_spans;
+         test "a call through the entry records no span while none is taken"
+           test_entry_no_profile;
          test "a split call runs while another domain's holds the threads"
            test_split_domains;
          stateful "split calls and nx.cpu kernels each run every iteration once"

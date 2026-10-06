@@ -553,6 +553,18 @@ let rec push r x =
   let l = Atomic.get r in
   if not (Atomic.compare_and_set r l (x :: l)) then push r x
 
+(* A host program's calls run with the runtime released, through Program.entry,
+   which records their spans in C until the profile stops: each a program's
+   name, its domain's number, its start and its stop. The names are those of the
+   host's programs, registered as they are loaded. *)
+external record_spans : bool -> unit = "caml_nx_device_record_spans"
+
+external host_spans : unit -> (string * int * int * int) array
+  = "caml_nx_device_host_spans"
+
+external name_program : nativeint -> string -> unit
+  = "caml_nx_device_name_program"
+
 (* Pools *)
 
 let used p =
@@ -613,7 +625,8 @@ let memory_changed d =
         (Allocation { device = d; time = now_ns (); allocated = allocated d })
 
 (* The lane of the calling domain on the host. *)
-let domain_lane () = Printf.sprintf "domain %d" (Domain.self () :> int)
+let lane_of domain = Printf.sprintf "domain %d" domain
+let domain_lane () = lane_of (Domain.self () :> int)
 
 (* Devices *)
 
@@ -3097,6 +3110,7 @@ module Program = struct
     | Error why -> Error (d.name ^ ": " ^ why)
     | Ok (l, (h, found)) ->
         let p = { p_device = d; p_name = name; p_handle = h; p_loaded = l } in
+        if found && d == host then name_program h name;
         (match Atomic.get profile with
         | Some c when found ->
             push c.events (Load { program = p; binary; time = now_ns () })
@@ -3138,6 +3152,9 @@ module Program = struct
   type split = { extent : int; blocks : int; lo : int; hi : int }
 
   external workers : unit -> int = "caml_nx_device_workers"
+  external entry_address : unit -> nativeint = "caml_nx_device_entry"
+
+  let entry = entry_address ()
 
   external call_host : nativeint -> Buffer.t array -> int array -> unit
     = "caml_nx_device_call"
@@ -3180,23 +3197,10 @@ module Program = struct
         Buffer.reachable b)
       buffers;
     if d == host then begin
-      (match Atomic.get profile with
-      | None -> run ()
-      | Some c ->
-          let start = now_ns () in
-          run ();
-          let stop = now_ns () in
-          push c.events
-            (Span
-               {
-                 device = host;
-                 lane = domain_lane ();
-                 name = p.p_name;
-                 start;
-                 stop;
-               }));
-      (* The program runs with the runtime released: it must stay reachable, and
-         its code mapped, until it returns. *)
+      (* The entry records the call's span while a profile is taken. The program
+         runs with the runtime released: it must stay reachable, and its code
+         mapped, until it returns. *)
+      run ();
       ignore (Sys.opaque_identity p)
     end
     else
@@ -3553,6 +3557,7 @@ module Profile = struct
     let c = { events = Atomic.make []; counters; trace } in
     if not (Atomic.compare_and_set profile None (Some c)) then
       invalid_arg "Nx_device.Profile.start: already profiling";
+    record_spans true;
     c
 
   let counters () =
@@ -3625,6 +3630,12 @@ module Profile = struct
     let taken = Atomic.get profile in
     match taken with
     | Some c when c == p && Atomic.compare_and_set profile taken None ->
+        record_spans false;
+        Array.iter
+          (fun (name, lane, start, stop) ->
+            push c.events
+              (Span { device = host; lane = lane_of lane; name; start; stop }))
+          (host_spans ());
         List.iter
           (fun d ->
             let counted =

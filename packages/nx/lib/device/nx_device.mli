@@ -826,6 +826,35 @@ module Program : sig
       [split.blocks < 1], [split.extent * split.blocks] exceeds [max_int],
       [split.lo] or [split.hi] is no slot of [values], or [split.lo = split.hi],
       and {!Lost} if a lost device can reach a buffer of [buffers]. *)
+
+  val entry : nativeint
+  (** [entry] is the address of the C function
+
+      {v
+      void call(void (*f)(void **, const int64_t *), void **buffers,
+                const int64_t *values, int64_t n, const int64_t *split);
+      v}
+
+      which a host program calls to make, from its own code, the {!call} of the
+      host program whose function is at [f] ({!handle}) on [buffers] and the [n]
+      values [values]: unsplit for a [NULL] [split], and otherwise split by the
+      four values at [split], [extent], [blocks], [lo] and [hi] in the order of
+      {!split}'s fields. Its blocks run as a split {!call}'s, each with its own
+      copy of [values], and it returns once [f] has, or every block. While a
+      {!Profile} is taken, it is a span as {!call} is, on the lane of the domain
+      whose {!call} runs the calling program.
+
+      It assumes what {!call} checks: [f] is a program of this process's
+      {!host}, reachable until [call] returns, the buffers are its host's
+      memory, [0 <= extent], [1 <= blocks], [extent * blocks] fits an [int64_t],
+      and [lo] and [hi] are distinct slots below [n]. It is called only by a
+      host program that {!call} runs, with the OCaml runtime released, and does
+      not take the host.
+
+      The address is of this process: a program of another machine's host does
+      not call it. A block of a split must not call it, since the host's threads
+      run one split at a time and the block would wait for the split it belongs
+      to. *)
 end
 
 (** {1:stats Statistics} *)

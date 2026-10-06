@@ -3511,6 +3511,9 @@ thread.
 
 ### Nx
 
+- Add `Nx_device.Program.entry`, the address of a C function that a host
+  program calls to call another host program, split as `Program.call` splits
+  it, and that profiles record as a call.
 - `Nx.logsumexp` and `logmeanexp` of a lane whose elements are all `-inf` are
   `-inf`, and of one holding `+inf` are `+inf`; both were NaN.
 - Add the incomplete beta family: `Nx.betainc`, `Nx.betaincc`,

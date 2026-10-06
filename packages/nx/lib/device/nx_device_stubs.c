@@ -33,9 +33,7 @@
 #include <unistd.h>
 #endif
 
-#if defined(__APPLE__) && defined(__aarch64__)
 #include <pthread.h>
-#endif
 
 /* The system's page size. */
 static intnat page_bytes(void) {
@@ -919,13 +917,13 @@ typedef struct {
   program f;
   void **buffers;
   int64_t *values; /* one array of [n] per worker */
-  mlsize_t n;
+  int64_t n;
   int64_t extent, blocks, lo, hi;
 } split_job;
 
 static void run_blocks(int64_t first, int64_t last, int worker, void *ctx) {
   split_job *j = ctx;
-  int64_t *v = j->values + (size_t)worker * j->n;
+  int64_t *v = j->values + (size_t)worker * (size_t)j->n;
   for (int64_t i = first; i < last; i++) {
     v[j->lo] = i * j->extent / j->blocks;
     v[j->hi] = (i + 1) * j->extent / j->blocks;
@@ -940,11 +938,189 @@ value caml_nx_device_workers(value unit) {
   return Val_int(nx_device_pool_get()->compute_workers());
 }
 
+/* [f(buffers, values)] once, or once per block of [split] ({extent, blocks,
+   lo, hi}) on the host's pool. The workers' copies of the values lie on the
+   stack when they are few. */
+#define NX_DEVICE_SPLIT_WORDS 1024
+
+static void run(program f, void **buffers, const int64_t *values, int64_t n,
+                const int64_t *split) {
+  if (split == NULL) {
+    f(buffers, values);
+    return;
+  }
+  const nx_device_pool *pool = nx_device_pool_get();
+  int nthreads = pool->compute_workers();
+  split_job j = {f, buffers, NULL, n, split[0], split[1], split[2], split[3]};
+  /* A block past the iterations would run none. */
+  if (j.blocks > j.extent) j.blocks = j.extent > 0 ? j.extent : 1;
+  if (nthreads > j.blocks) nthreads = (int)j.blocks;
+  size_t words = (size_t)nthreads * (size_t)(n ? n : 1);
+  int64_t small[NX_DEVICE_SPLIT_WORDS];
+  j.values = words <= NX_DEVICE_SPLIT_WORDS ? small
+                                            : malloc(words * sizeof *j.values);
+  if (j.values == NULL) {
+    fputs("nx.device: no memory for a split call's values\n", stderr);
+    abort();
+  }
+  for (int w = 0; w < nthreads; w++)
+    memcpy(j.values + (size_t)w * (size_t)n, values,
+           (size_t)n * sizeof *values);
+  pool->run(nthreads, j.blocks, j.blocks, run_blocks, &j);
+  if (j.values != small) free(j.values);
+}
+
+/* Profile spans of host programs
+
+   While a profile is taken, each call of a host program through the entry is
+   a span: its program's name, the lane of the domain whose call runs it, and
+   its start and stop on the host clock. The entry runs with the runtime
+   released, so the spans wait here until the profile stops, and the names
+   are those the programs had when they were loaded at their addresses. */
+
+static atomic_int profiling;
+static pthread_mutex_t spans_lock = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+  const char *name;
+  int lane;
+  int64_t start, stop;
+} host_span;
+
+static host_span *spans;
+static size_t nspans, spans_cap;
+
+/* The programs' names by address, an open-addressing table of a power of two
+   slots, at most half full. A name stays allocated once registered: a span
+   may hold it after its address names another program. */
+typedef struct {
+  uintptr_t f;
+  char *name;
+} named;
+
+static named *names;
+static size_t names_cap, nnames;
+
+/* The lane of the domain whose call runs the host programs of this thread. */
+static _Thread_local int lane = -1;
+
+static size_t slot_of(uintptr_t f, size_t cap) {
+  size_t i = (size_t)((f >> 4) * 0x9E3779B97F4A7C15ull) & (cap - 1);
+  while (names[i].f != 0 && names[i].f != f) i = (i + 1) & (cap - 1);
+  return i;
+}
+
+static int grow_names(void) {
+  size_t cap = names_cap ? 2 * names_cap : 256;
+  named *old = names;
+  size_t old_cap = names_cap;
+  names = calloc(cap, sizeof *names);
+  if (names == NULL) {
+    names = old;
+    return 0;
+  }
+  names_cap = cap;
+  for (size_t i = 0; i < old_cap; i++)
+    if (old[i].f != 0) names[slot_of(old[i].f, cap)] = old[i];
+  free(old);
+  return 1;
+}
+
+value caml_nx_device_name_program(value v_f, value v_name) {
+  CAMLparam2(v_f, v_name);
+  uintptr_t f = (uintptr_t)Nativeint_val(v_f);
+  char *name = strdup(String_val(v_name));
+  if (name == NULL) caml_raise_out_of_memory();
+  pthread_mutex_lock(&spans_lock);
+  if (2 * (nnames + 1) > names_cap && !grow_names()) {
+    pthread_mutex_unlock(&spans_lock);
+    free(name);
+    caml_raise_out_of_memory();
+  }
+  size_t i = slot_of(f, names_cap);
+  if (names[i].f == 0) nnames++;
+  names[i].f = f;
+  names[i].name = name;
+  pthread_mutex_unlock(&spans_lock);
+  CAMLreturn(Val_unit);
+}
+
+/* Records a span; one that finds no memory is dropped. */
+static void record(program f, int64_t start, int64_t stop) {
+  pthread_mutex_lock(&spans_lock);
+  const char *name = "?";
+  if (names_cap != 0) {
+    size_t i = slot_of((uintptr_t)f, names_cap);
+    if (names[i].f != 0) name = names[i].name;
+  }
+  if (nspans == spans_cap) {
+    size_t cap = spans_cap ? 2 * spans_cap : 256;
+    host_span *grown = realloc(spans, cap * sizeof *spans);
+    if (grown != NULL) {
+      spans = grown;
+      spans_cap = cap;
+    }
+  }
+  if (nspans < spans_cap) spans[nspans++] = (host_span){name, lane, start, stop};
+  pthread_mutex_unlock(&spans_lock);
+}
+
+/* Starts or stops recording; a start drops the spans of earlier profiles. */
+value caml_nx_device_record_spans(value v_on) {
+  pthread_mutex_lock(&spans_lock);
+  if (Bool_val(v_on)) nspans = 0;
+  atomic_store(&profiling, Bool_val(v_on));
+  pthread_mutex_unlock(&spans_lock);
+  return Val_unit;
+}
+
+/* The spans recorded, as (name, lane, start, stop) tuples, which it drops. */
+value caml_nx_device_host_spans(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal3(result, span, name);
+  pthread_mutex_lock(&spans_lock);
+  size_t n = nspans;
+  host_span *taken = spans;
+  spans = NULL;
+  nspans = spans_cap = 0;
+  pthread_mutex_unlock(&spans_lock);
+  result = caml_alloc(n, 0);
+  for (size_t i = 0; i < n; i++) {
+    name = caml_copy_string(taken[i].name);
+    span = caml_alloc_tuple(4);
+    Store_field(span, 0, name);
+    Store_field(span, 1, Val_int(taken[i].lane));
+    Store_field(span, 2, Val_long(taken[i].start));
+    Store_field(span, 3, Val_long(taken[i].stop));
+    Store_field(result, i, span);
+  }
+  free(taken);
+  CAMLreturn(result);
+}
+
+/* Nx_device.Program.entry. */
+static void entry(program f, void **buffers, const int64_t *values, int64_t n,
+                  const int64_t *split) {
+  if (!atomic_load_explicit(&profiling, memory_order_relaxed)) {
+    run(f, buffers, values, n, split);
+    return;
+  }
+  int64_t start = (int64_t)nx_device_now_ns();
+  run(f, buffers, values, n, split);
+  record(f, start, (int64_t)nx_device_now_ns());
+}
+
+value caml_nx_device_entry(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)(void *)entry);
+}
+
 /* Runs [f(buffers, values)] with the runtime released, once, or once per
-   block of [v_split] (an Nx_device.Program.split, or 0) on the host's pool.
-   The buffers' addresses and the values are read first, into memory the
-   collector does not move: from Nx_device.Buffer.t values, or from (address,
-   size) pairs when [addresses]. */
+   block of [v_split] (an Nx_device.Program.split, or 0) on the host's pool:
+   through the entry, or, for programs by address, as itself. The buffers'
+   addresses and the values are read first, into memory the collector does
+   not move: from Nx_device.Buffer.t values, or from (address, size) pairs
+   when [addresses]. */
 #define NX_DEVICE_CALL_WORDS 32
 
 static value call(value v_entry, value v_buffers, value v_values,
@@ -968,36 +1144,17 @@ static value call(value v_entry, value v_buffers, value v_values,
                : nx_device_buffer_host(Field(v_buffers, i));
   for (mlsize_t i = 0; i < nv; i++) v[i] = (int64_t)Long_val(Field(v_values, i));
   program f = (program)Nativeint_val(v_entry);
-  if (v_split == Val_int(0)) {
-    caml_release_runtime_system();
-    f(b, v);
-    caml_acquire_runtime_system();
-  } else {
-    const nx_device_pool *pool = nx_device_pool_get();
-    int nthreads = pool->compute_workers();
-    split_job j = {f, b, NULL, nv,
-                   Long_val(Field(v_split, 0)), Long_val(Field(v_split, 1)),
-                   Long_val(Field(v_split, 2)), Long_val(Field(v_split, 3))};
-    /* A block past the iterations would run none. */
-    if (j.blocks > j.extent) j.blocks = j.extent > 0 ? j.extent : 1;
-    if (nthreads > j.blocks) nthreads = (int)j.blocks;
-    /* One thread writes the bounds into the values read above. */
-    j.values = nthreads > 1 ? malloc((size_t)nthreads * (nv ? nv : 1) *
-                                     sizeof *j.values)
-                            : v;
-    if (j.values == NULL) {
-      if (b != small_b) free(b);
-      if (v != small_v) free(v);
-      caml_raise_out_of_memory();
-    }
-    if (nthreads > 1)
-      for (int w = 0; w < nthreads; w++)
-        memcpy(j.values + (size_t)w * nv, v, nv * sizeof *v);
-    caml_release_runtime_system();
-    pool->run(nthreads, j.blocks, j.blocks, run_blocks, &j);
-    caml_acquire_runtime_system();
-    if (j.values != v) free(j.values);
-  }
+  int64_t split[4];
+  int split_ = v_split != Val_int(0);
+  if (split_)
+    for (int i = 0; i < 4; i++) split[i] = Long_val(Field(v_split, i));
+  lane = Caml_state->id;
+  caml_release_runtime_system();
+  if (addresses)
+    run(f, b, v, (int64_t)nv, split_ ? split : NULL);
+  else
+    entry(f, b, v, (int64_t)nv, split_ ? split : NULL);
+  caml_acquire_runtime_system();
   if (b != small_b) free(b);
   if (v != small_v) free(v);
   CAMLreturn(Val_unit);
