@@ -171,98 +171,10 @@ let sample u lp k ~draws (s : (_, _) state) =
    in whitened coordinates, weighted by acceptance; Adam steps it, and the run
    keeps the iterates' polynomial average. *)
 
-(* Adam's step and second-moment decay, without momentum. *)
-let adam_rate = 0.025
-let adam_decay = 0.95
-let adam_eps = 1e-8
-
-(* The weight [t^(-κ)] of iterate [t] in the length's average. *)
-let average_kappa = 0.75
-
-type 'f chees = {
-  log_length : (float, 'f) Nx.t;
-  second : (float, 'f) Nx.t; (* Adam's second moment *)
-  bar : (float, 'f) Nx.t; (* the averaged log length *)
-  count : (float, 'f) Nx.t;
-}
-
-type 'f chees' = 'f chees
-
-let chees_ptree (type f) () : f chees P.t =
-  let module S = struct
-    type _ t = f chees'
-
-    let walk c (a : f chees) : f chees =
-      let open P.Walk in
-      let log_length = field c "log_length" tensor a.log_length in
-      let second = field c "second" tensor a.second in
-      let bar = field c "bar" tensor a.bar in
-      let count = field c "count" tensor a.count in
-      { log_length; second; bar; count }
-  end in
-  P.nest (module S) P.unit
-
-(* [centre u w x] is [x] less its mean over chains weighted by [w]. *)
-let centre u w x =
-  P.map u
-    (fun _ t ->
-      if not (Rows.float_leaf t) then t
-      else
-        let w = Rows.column w t in
-        let mean =
-          Nx.div
-            (Nx.sum ~axes:[ 0 ] ~keepdims:true (Nx.mul w t))
-            (Nx.sum ~axes:[ 0 ] ~keepdims:true w)
-        in
-        Nx.sub t mean)
-    x
-
-(* [gradient u m] is the acceptance-weighted mean over chains of the ChEES
-   criterion's derivative in log length, [t d ((z1 - mean z1) · p1)] with [d =
-   |z1 - mean z1|² - |z0 - mean z0|²], the means over chains, [z1]'s weighted by
-   acceptance; zero when no chain accepts. *)
-let gradient u (m : (_, _) H.transition) =
-  let w = m.alpha in
-  let total = Nx.sum w in
-  let none = Nx.equal total (Nx.zeros_like total) in
-  let w = Nx.where none (Nx.zeros_like w) w in
-  let weights = Nx.where none (Nx.ones_like w) w in
-  let d0 = centre u (Nx.ones_like w) m.z0 and d1 = centre u weights m.z1 in
-  let d = Nx.sub (Rows.dot u w d1 d1) (Rows.dot u w d0 d0) in
-  let per_chain = Nx.mul (Nx.mul m.time d) (Rows.dot u w d1 m.p1) in
-  Nx.div
-    (Nx.sum (Nx.mul w per_chain))
-    (Nx.where none (Nx.ones_like total) total)
-
-(* One Adam step up the criterion, the log length kept where the trajectory fits
-   [max_steps] steps of [eps]. *)
-let chees_step (a : _ chees) eps grad =
-  let count = Nx.add_s a.count 1. in
-  let second =
-    Nx.add
-      (Nx.mul_s a.second adam_decay)
-      (Nx.mul_s (Nx.square grad) (1. -. adam_decay))
-  in
-  let corrected =
-    Nx.div second
-      (Nx.rsub_s 1. (Nx.pow (Nx.scalar_like count adam_decay) count))
-  in
-  let step = Nx.div grad (Nx.add_s (Nx.sqrt corrected) adam_eps) in
-  let log_length =
-    Nx.minimum
-      (Nx.add a.log_length (Nx.mul_s step adam_rate))
-      (Nx.log (Nx.mul_s eps (float_of_int H.max_steps)))
-  in
-  let weight = Nx.pow count (Nx.scalar_like count (-.average_kappa)) in
-  let bar =
-    Nx.add (Nx.mul (Nx.rsub_s 1. weight) a.bar) (Nx.mul weight log_length)
-  in
-  { log_length; second; bar; count }
-
 type ('u, 'f) adapt = {
   st : ('u, 'f) state;
   averaging : 'f Adapt.averaging;
-  chees : 'f chees;
+  chees : 'f H.chees;
   window : 'u Adapt.window;
 }
 
@@ -279,7 +191,7 @@ let adapt_ptree (type u f) (u : u P.t) : (u, f) adapt P.t =
       let averaging =
         field c "averaging" (structure (Adapt.averaging_ptree ())) a.averaging
       in
-      let chees = field c "chees" (structure (chees_ptree ())) a.chees in
+      let chees = field c "chees" (structure (H.chees_ptree ())) a.chees in
       let window =
         field c "window" (structure (Adapt.window_ptree u)) a.window
       in
@@ -345,7 +257,7 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
       let averaging, step_size =
         Adapt.average a.averaging ~target:st.accept (harmonic_mean move.alpha)
       in
-      let chees = chees_step a.chees step_size (gradient u move) in
+      let chees = H.chees_step a.chees step_size (H.chees_gradient u move) in
       let st = { st with step_size; length = Nx.exp chees.log_length } in
       let window = Adapt.record u a.window st.position st.grad in
       { st; averaging; chees; window }

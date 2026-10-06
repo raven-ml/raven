@@ -122,3 +122,27 @@ val transition :
 
     Raises [Invalid_argument] naming [context] if [lp] is NaN or [+inf] at a
     finite position. *)
+
+(** {1:chees ChEES}
+
+    The length that maximises the change in expected squared jumped distance
+    (Hoffman, Radul and Sountsov 2021), found by Adam on its log. *)
+
+type 'f chees = {
+  log_length : (float, 'f) Nx.t;  (** The current iterate. *)
+  second : (float, 'f) Nx.t;  (** Adam's second moment. *)
+  bar : (float, 'f) Nx.t;  (** The iterates' polynomial average. *)
+  count : (float, 'f) Nx.t;  (** The steps taken. *)
+}
+(** The type for the search's state, every field a scalar. *)
+
+val chees_ptree : unit -> 'f chees Nx.Ptree.t
+
+val chees_gradient : 'u Nx.Ptree.t -> ('u, 'f) transition -> (float, 'f) Nx.t
+(** [chees_gradient u t] is the acceptance-weighted mean over chains of the
+    criterion's derivative in log length at the transition [t], zero when no
+    chain accepts. *)
+
+val chees_step : 'f chees -> (float, 'f) Nx.t -> (float, 'f) Nx.t -> 'f chees
+(** [chees_step a eps g] is one Adam step of rate [0.025] up the gradient [g],
+    the log length kept where a trajectory fits {!max_steps} steps of [eps]. *)
