@@ -779,18 +779,20 @@ let value r bufs =
    buffers when it binds none. *)
 let claimed l = match l.runs with [] -> l.buffers | runs -> runs
 
-(* Raises the first failing check of [checks], whose [k]th answer is at [j] in
-   [values]: its index, then its data. *)
-let rec answer checks values j k =
-  if k < Array.length checks then begin
-    let c = checks.(k) in
-    let first = Int64.to_int (Nx.item [] (Nx.unpack Nx.int64 values.(j))) in
+(* Raises the first failing check of [p], whose [k]th answer is at [j] in
+   [results]: its index, then its data, which are read only when it failed. *)
+let rec answer p results j k =
+  if k < Array.length p.checks then begin
+    let c = p.checks.(k) in
+    let index = Nx.unpack Nx.int64 (value p.results.(j) results.(j)) in
+    let first = Int64.to_int (Nx.item [] index) in
     if first < numel c.shape then
       raise
         (c.fail
            (Nx_array.Shape.unravel_index first c.shape)
-           (Array.to_list (Array.sub values (j + 1) c.leaves)));
-    answer checks values (j + 1 + c.leaves) (k + 1)
+           (List.init c.leaves (fun l ->
+                value p.results.(j + 1 + l) results.(j + 1 + l))));
+    answer p results (j + 1 + c.leaves) (k + 1)
   end
 
 (* [run entry p leaves] runs [p] on [leaves] under claims on their memory. A
@@ -896,11 +898,10 @@ let run entry p leaves =
                 (if lends.(i) then "reused" else "copied")
           | None -> report "%s consumed, lent to no result" p.paths.(i))
       leaves;
-  let values = Array.map2 value p.results results in
   let answers = Array.fold_left (fun n c -> n + 1 + c.leaves) 0 p.checks in
-  let user = Array.length values - answers in
-  answer p.checks values user 0;
-  p.rebuild (Array.to_list (Array.sub values 0 user))
+  let user = Array.length results - answers in
+  answer p results user 0;
+  p.rebuild (List.init user (fun j -> value p.results.(j) results.(j)))
 
 module Programs = Memo.Make (struct
   type t = key
