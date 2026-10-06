@@ -2104,7 +2104,7 @@ index 72a08ff..3c9bb15 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..63c6e59 100644
+index 2eb2e96..0c73ef6 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -2323,7 +2323,19 @@ index 2eb2e96..63c6e59 100644
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val) if 0 < c.val else None),
-@@ -387,8 +419,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -306,6 +338,11 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   (UPat.var('x').cast(name="a").cast(name="b"), lambda x,a,b: x.cast(b.dtype) if can_lossless_cast(x.dtype, a.dtype) else None),
+   (UPat.var('x', dtypes.ints+(dtypes.weakint,)).cast(dtypes.ints+(dtypes.weakint,), name="a").cast(name="b"),
+     lambda x,a,b: x.ccast(b.dtype) if not x.overflows(a.dtype) else None),
++  # a zero extension commutes with a mask and with a right shift by less than the operand's width: a widening cast of an
++  # unsigned x & y or x >> k is the operation on the widened operands, so packed values unpack at their consumer's width
++  (UPat(Ops.CAST, dtypes.uints, src=(UPat((Ops.AND, Ops.SHR), dtypes.uints, name="u"),), name="c"),
++   lambda c,u: u.src[0].cast(c.dtype).alu(u.op, u.src[1].cast(c.dtype)) if c.dtype.bitsize > u.dtype.bitsize and
++     (u.op is Ops.AND or (u.src[1].vmin >= 0 and u.src[1].vmax < u.dtype.bitsize)) else None),
+   # try to do math in int instead of long, keep weak const weak
+   (UPat(GroupOp.Binary, src=(UPat.var("x", (dtypes.long, dtypes.weakint)), UPat.var("y", (dtypes.long, dtypes.weakint))), name="u"), lambda u,x,y:
+     (UOp.const(x.val) if x.op is Ops.CONST else x.cast(dtypes.int)).alu(u.op,
+@@ -387,8 +424,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -2334,7 +2346,7 @@ index 2eb2e96..63c6e59 100644
    inside, outside = [], []
    for m in r.src[0].split_uop(Ops.MUL):
      m_parents = m.backward_slice
-@@ -418,10 +451,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -418,10 +456,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -2350,7 +2362,7 @@ index 2eb2e96..63c6e59 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -460,16 +495,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -460,16 +500,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

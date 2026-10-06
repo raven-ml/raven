@@ -1042,6 +1042,7 @@ let ranges =
 
 let symbolic_casts =
   let i8 = var ~dtype:Int8 "i" (-4) 4 in
+  let byte = var ~dtype:Uint8 "b" 0 255 and shift = var ~dtype:Uint8 "s" 0 7 in
   group "casts"
     [
       test "a cast through a type that holds every value is one cast" (fun () ->
@@ -1091,6 +1092,50 @@ let symbolic_casts =
           by_symbolic
             (Ops.cast Ops.O.(a + int 3) Int32)
             Ops.O.(Ops.cast a Int32 + int 3));
+      (* An unpacked nibble, as a uint4 load reads its byte: (u lsr k) land 15,
+         then widened. *)
+      test "a widening cast of an unsigned mask masks the widened operand (D134)"
+        (fun () ->
+          by_symbolic
+            (Ops.cast Ops.O.(byte land int 15) Uint32)
+            Ops.O.(Ops.cast byte Uint32 land int 15));
+      test
+        "a widening cast of an unsigned shift by less than its width shifts \
+         the widened operand (D134)" (fun () ->
+          by_symbolic
+            (Ops.cast Ops.O.(byte lsr shift) Uint32)
+            Ops.O.(Ops.cast byte Uint32 lsr Ops.cast shift Uint32));
+      test "a widened nibble is unpacked at the wide type (D134)" (fun () ->
+          by_symbolic
+            (Ops.cast Ops.O.(byte lsr int 4 land int 15) Uint32)
+            Ops.O.(Ops.cast byte Uint32 lsr int 4 land int 15));
+      test
+        "a cast stays of a shift that may reach the width, of a signed \
+         operand, or to a narrower type (D134)" (fun () ->
+          let k = var ~dtype:Uint8 "k" 0 8 in
+          let c = Ops.cast Ops.O.(byte lsr k) Uint32 in
+          by_symbolic c c;
+          let y = var ~dtype:Int8 "y" (-128) 127 in
+          let c = Ops.cast Ops.O.(y land int 15) Int32 in
+          by_symbolic c c;
+          let w = var ~dtype:Uint32 "w" 0 65535 in
+          let c = Ops.cast Ops.O.(w land int 15) Uint8 in
+          by_symbolic c c);
+      test "a widened mask or shift keeps every value (D134)" (fun () ->
+          let points =
+            List.concat_map
+              (fun b -> List.map (fun k -> [ ("b", i b); ("s", i k) ]) [ 0; 3; 4; 7 ])
+              [ 0; 1; 15; 16; 127; 128; 200; 255 ]
+          in
+          List.iter
+            (fun dt ->
+              keeps_machine_value ~by:symbolic
+                (Ops.cast Ops.O.(byte lsr shift land int 15) dt)
+                points;
+              keeps_machine_value ~by:symbolic
+                (Ops.cast Ops.O.(byte land (Ops.int ~dtype:Uint8 255 lsr shift)) dt)
+                points)
+            [ Dtype.Uint16; Uint32; Uint64 ]);
     ]
 
 let ordering =

@@ -608,6 +608,27 @@ let quantised =
           let stack = experts * n * k in
           equal (list int) []
             (List.filter (fun n -> n >= stack) (stores Float32 (traced ids x))));
+      test "a product unpacks its codes at the width it decodes them in"
+        (fun () ->
+          (* A nibble masked and shifted as a byte, then widened, is slower on
+             the host than the same operations on the widened byte. *)
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(bytes [| n; k / 32 |])
+              (bytes [| n; k / 2 |])
+          in
+          let narrow k =
+            List.length
+              (List.filter
+                 (fun u ->
+                   (Tolk.Op.equal (Tolk.Ops.op u) And
+                   || Tolk.Op.equal (Tolk.Ops.op u) Shr)
+                   && Tolk.Dtype.equal (Tolk.Ops.dtype u) Uint8)
+                 (Tolk.Ops.toposort ~calls:Enter
+                    (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host))))
+          in
+          equal (list int) [ 0 ]
+            (List.map narrow (Tolk.Ops.src (Programs.kernels (product w)))));
       test "a product over GGUF's MXFP4 blocks loads each byte once" (fun () ->
           let w = Nx_quant.mxfp4_blocks (bytes [| n; k / 32 * 17 |]) in
           equal int (k / 32 * 17) (loaded (product w)));

@@ -1115,6 +1115,10 @@ thread.
 
 ### Tolk (new)
 
+- A cast of an unsigned mask, or of a right shift by less than the operand's
+  width, to a wider unsigned type widens the operands first, so a 4-bit value
+  unpacked from its byte decodes at its consumer's width: the host kernel of a
+  4096 x 4096 MXFP4 product runs in 22.7 ms instead of 43.0 ms on one core.
 - A schedule runs a loop of calls while a flag holds: `Ops.backedge` around a
   call, with a range bounding its trips and one boolean of storage the calls
   write. The engine reads the flag before each trip; on devices with command

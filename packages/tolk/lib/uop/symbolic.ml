@@ -1002,6 +1002,29 @@ let symbolic =
                 let x = m "x" in
                 if overflows x (dtype (m "a")) then None
                 else Some (ccast x (dtype (m "b"))));
+            (* a zero extension commutes with a mask and with a right shift by
+               less than the operand's width: a widening cast of an unsigned
+               [x land y] or [x lsr k] is the operation on the widened
+               operands, so packed values unpack at the width their consumer
+               computes in *)
+            rule
+              Upat.(
+                f ~dtype:Dtype.uints ~name:"c"
+                  (v ~op:(ops [ Op.And; Op.Shr ]) ~dtype:Dtype.uints ~name:"u"
+                     ())
+                  Op.Cast)
+              (fun m ->
+                let c = m "c" and u = m "u" in
+                let dt = dtype c and width = Dtype.bitsize (dtype u) in
+                let k = nth u 1 in
+                let exact =
+                  Dtype.bitsize dt > width
+                  && (op u = Op.And
+                     || V.(vmin k >= zero && vmax k < of_int width))
+                in
+                if exact then
+                  Some (alu (cast (nth u 0) dt) (op u) [ cast k dt ])
+                else None);
             (* try to do math in int instead of long, keep weak const weak *)
             rule
               (Upat.v ~op:Op.Set.binary ~name:"u"

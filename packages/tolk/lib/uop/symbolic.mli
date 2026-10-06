@@ -140,7 +140,9 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       [0];
     - {b casts}: a cast through a type that holds every value of the operand is
       one cast; a cast of an integer that fits the intermediate integer type is
-      one cast; a binary operation on 64-bit or weak integers whose values fit
+      one cast; a cast of an unsigned [x land y], or [x lsr k] with [k] below
+      [x]'s width, to a wider unsigned type is the operation on the widened
+      operands; a binary operation on 64-bit or weak integers whose values fit
       32 bits computes in {!Dtype.Int32} and casts back; a cast of [x + c] to a
       signed integer is the cast of [x] plus [c];
     - {b ordering}: an {!Op.After} waits only on ranges, stores, calls,

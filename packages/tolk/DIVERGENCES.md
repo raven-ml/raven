@@ -4072,3 +4072,28 @@ stores through a pad.
   The rule applies to any vector of index arithmetic.
 - **Pinned by:** the `Divandmod` suite: `values › each rewrite of a random
   division of vectors keeps each lane's value (D133)`.
+
+## D134. A widening cast of an unsigned mask or shift widens its operands
+
+- **tinygrad:** `uop/symbolic.py:304-308` (cast/long folding), which keeps a
+  cast of `x & y` or `x >> k` as it is.
+- **tolk:** `lib/uop/symbolic.ml:1005` (`symbolic`'s cast rules);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule before the
+  goldens are generated.
+- **Differs:** a cast of an unsigned `x land y`, or `x lsr k` with `k` within
+  `[0, width of x)` by its bounds, to a wider unsigned type is the operation on
+  the widened operands, `cast x land cast y` or `cast x lsr cast k`. A zero
+  extension commutes with both, so every value is kept. A signed operand, a
+  shift that may reach the operand's width, and a cast to a narrower or a float
+  type keep the cast where it is.
+- **Reason:** (b). rune computes a uint4 at a byte and unpacks it where it
+  reads it, a shift and a mask of the byte, so nx.quant's compiled MXFP4
+  product, whose codes are uint4, masked each nibble as a byte and widened it
+  to decode it at uint32. Clang vectorises that worse on arm64: the host's
+  4096 x 4096 one-token product kernel took 40 ms where the same kernel
+  unpacking at uint32 takes 21.6 ms. kaun's decode bench times the products a
+  user calls (`Quant/host/*`).
+- **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `symbolic › casts ›
+  a widening cast of an unsigned mask masks the widened operand (D134)` and
+  the four tests after it; rune's lower_index suite: `quantised products › a
+  product unpacks its codes at the width it decodes them in`.
