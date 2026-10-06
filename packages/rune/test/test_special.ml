@@ -477,8 +477,8 @@ let residuals =
         gammainc in a 6963
         gammaincinv 16361
         gammaincinv in a 26355
-        log_betainc in x 13607
-        log_betainc in a 23145
+        log_betainc in x 11447
+        log_betainc in a 19784
         |})
 
 let () =

@@ -315,7 +315,7 @@ let beta_b_small = 0x1.4p+5
 
 let beta_frac_a = 0x1.9p+6
 
-let beta_frac_lambda = 0x1.eb851eb851eb8p-6
+let beta_frac_lambda = 0x1.999999999999ap-3
 
 let beta_bup_terms = 20
 
@@ -678,7 +678,7 @@ let float32 =
         0x1.555556p-2;
       |];
     bpser_terms = 54;
-    bfrac_depth = 37;
+    bfrac_depth = 26;
     basym = [|
         [|
           -0x1.555556p-2;
@@ -715,6 +715,31 @@ let float32 =
           -0x1.43a274p-9;
           -0x1.a01a02p-10;
           -0x1.71de3ap-12;
+        |];
+        [|
+          -0x1.76e07p-13;
+          -0x1.192854p-10;
+          -0x1.5ceb24p-9;
+          -0x1.c7f434p-9;
+          -0x1.8c73ccp-9;
+          -0x1.8c73ccp-9;
+          -0x1.c7f434p-9;
+          -0x1.5ceb24p-9;
+          -0x1.192854p-10;
+          -0x1.76e07p-13;
+        |];
+        [|
+          0x1.48c58ap-15;
+          0x1.0b208p-12;
+          0x1.71de3ap-11;
+          0x1.1a89c2p-10;
+          0x1.c40f9cp-11;
+          0.;
+          -0x1.c40f9cp-11;
+          -0x1.1a89c2p-10;
+          -0x1.71de3ap-11;
+          -0x1.0b208p-12;
+          -0x1.48c58ap-15;
         |];
       |];
     bgrat = [|
@@ -1321,7 +1346,7 @@ let float64 =
         0x1.5555555555555p-2;
       |];
     bpser_terms = 112;
-    bfrac_depth = 71;
+    bfrac_depth = 41;
     basym = [|
         [|
           -0x1.5555555555555p-2;

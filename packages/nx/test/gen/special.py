@@ -2276,8 +2276,8 @@ BETA_X_FAR = 0.3         # x0 >= 0.3: BPSER on the complement
 BETA_X_NEAR = 0.1
 BETA_BGRAT_B = 15.0      # b0 > 15: BGRAT alone; a0 <= 15: BUP of 20 terms first
 BETA_B_SMALL = 40.0
-BETA_FRAC_A = 100.0      # BFRAC up to 100, or where lambda > 0.03 of the smaller
-BETA_FRAC_LAMBDA = 0.03
+BETA_FRAC_A = 100.0      # BFRAC up to 100, or where lambda > 0.2 of the smaller
+BETA_FRAC_LAMBDA = 0.2   # TOMS 708 hands over at 0.03, where BFRAC needs twice the depth
 BETA_BUP_TERMS = 20
 BETA_BUP_MOST = 39       # the largest masked count, floor b0 - 1 or so below 40
 BETA_LARGE = 8.0         # x^a y^b / B(a, b) by its large-argument form from 8
