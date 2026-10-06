@@ -1154,3 +1154,186 @@ let cubature ~tol ~budget f (box : _ Box.t) =
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
     ~value:(Nx.where ok total (used_sum b b.sums7))
     ~error:(used_sum b b.diffs) ~status:b.state ~evaluations:b.count ~facts:[]
+
+(* Quasi-Monte Carlo *)
+
+let shifts = 16
+let qmc_chunk = 64
+let sobol_dims = Array.length Sobol.poly
+
+(* Dimension [j]'s 32 direction numbers, as Bratley and Fox's recurrence builds
+   them from its polynomial and initial numbers, scaled to 32 bits. *)
+let directions j =
+  let v = Array.make 32 1 in
+  if j > 0 then begin
+    let p = Sobol.poly.(j) in
+    let m = Array.length Sobol.vinit.(j) in
+    Array.blit Sobol.vinit.(j) 0 v 0 m;
+    for i = m to 31 do
+      let x = ref v.(i - m) and pow2 = ref 1 in
+      for k = 0 to m - 1 do
+        pow2 := !pow2 lsl 1;
+        if (p lsr (m - 1 - k)) land 1 = 1 then
+          x := !x lxor (!pow2 * v.(i - k - 1))
+      done;
+      v.(i) <- !x
+    done
+  end;
+  Array.mapi (fun b x -> x lsl (31 - b)) v
+
+(* The Sobol points of indices [i] (uint32, of shape [[c]]) in [d] dimensions,
+   as 32-bit words: the XOR of the direction numbers of the bits set in the Gray
+   code of [i]. *)
+let sobol_words d i =
+  let v = Array.init d directions in
+  let gray = Nx.bitwise_xor i (Nx.rshift i 1) in
+  let gray = Nx.unsqueeze ~axes:[ 1 ] gray in
+  let x = ref (Nx.zeros Nx.uint32 [| Nx.dim 0 i; d |]) in
+  for b = 0 to 31 do
+    let column =
+      Nx.create Nx.uint32 [| 1; d |] (Array.map (fun r -> Int32.of_int r.(b)) v)
+    in
+    let set =
+      Nx.not_equal
+        (Nx.bitwise_and (Nx.rshift gray b) (Nx.ones_like gray))
+        (Nx.zeros_like gray)
+    in
+    x :=
+      Nx.where (Nx.broadcast_to (Nx.shape !x) set) (Nx.bitwise_xor !x column) !x
+  done;
+  !x
+
+(* Words as points of (0, 1): (w + 1/2) / 2^k from the top [k] bits, [k] the
+   bits the dtype holds below 1. *)
+let unit_points dtype words =
+  let k = min 32 (Num.precision dtype - 1) in
+  let top = if k = 32 then words else Nx.rshift words (32 - k) in
+  Nx.mul_s (Nx.add_s (Nx.cast dtype top) 0.5) (Float.ldexp 1. (-k))
+
+let qmc key ~tol ~budget f (box : _ Box.t) =
+  let fn = "Jera.Quad.qmc" in
+  let shape = Nx.shape box.lo in
+  let rank = Array.length shape in
+  let d = shape.(rank - 1) in
+  if d > sobol_dims then
+    invalid_arg (Printf.sprintf "%s: d = %d is above %d" fn d sobol_dims);
+  if budget < 1 then
+    invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
+  let lanes = Array.sub shape 0 (rank - 1) in
+  let dtype = Nx.dtype box.lo in
+  let shift = Nx.bitcast Nx.uint32 (Nx.Rng.bits key [| shifts; d |]) in
+  (* The integrand's sum over chunk [j]'s points under each shift, of shape
+     [[shifts] @ lanes]. *)
+  let chunk_sums f lo hi j =
+    let first = Nx.mul_s (Nx.cast Nx.uint32 j) (Int32.of_int qmc_chunk) in
+    let i =
+      Nx.add
+        (Nx.arange Nx.uint32 0 qmc_chunk 1)
+        (Nx.broadcast_to [| qmc_chunk |] first)
+    in
+    let words =
+      Nx.bitwise_xor
+        (Nx.unsqueeze ~axes:[ 1 ] (sobol_words d i))
+        (Nx.unsqueeze ~axes:[ 0 ] shift)
+    in
+    let u = unit_points dtype words in
+    let u =
+      Nx.reshape
+        (Array.concat
+           [ [| qmc_chunk; shifts |]; Array.make (rank - 1) 1; [| d |] ])
+        u
+    in
+    let points = Nx.add lo (Nx.mul (Nx.sub hi lo) u) in
+    let y = f points in
+    let expected = Array.sub (Nx.shape points) 0 (Nx.ndim points - 1) in
+    if Nx.shape y <> expected then
+      invalid_arg
+        (Printf.sprintf
+           "%s: the integrand returned shape %s for points of shape %s" fn
+           (Num.shape (Nx.shape y))
+           (Num.shape (Nx.shape points)));
+    Nx.sum ~axes:[ 0 ] y
+  in
+  let lo0 = Rune.detach box.lo and hi0 = Rune.detach box.hi in
+  let search x = Rune.detach (f x) in
+  let per_lane v = Nx.broadcast_to lanes v in
+  (* The carry: the next chunk, then per lane the sums under each shift, the
+     chunks used, the estimate, its standard error and the status. *)
+  let step (j, (sums, (used, (estimate, (error, st))))) =
+    let run = Elementwise.searching st in
+    let sums =
+      Nx.add sums
+        (Nx.where
+           (Nx.unsqueeze ~axes:[ 0 ] run)
+           (chunk_sums search lo0 hi0 j)
+           (Nx.zeros_like sums))
+    in
+    let used = Nx.add used (Nx.cast Nx.int32 run) in
+    let n = Nx.add_s j 1l in
+    (* At a power of two the points are balanced: test the standard error over
+       the shifts. *)
+    let power = Nx.equal (Nx.bitwise_and n (Nx.sub_s n 1l)) (Nx.zeros_like n) in
+    let count = Nx.mul_s (Nx.cast dtype n) (float qmc_chunk) in
+    let means = Nx.div sums count in
+    let mean = Nx.mean ~axes:[ 0 ] means in
+    let se =
+      Nx.sqrt
+        (Nx.div_s
+           (Nx.sum ~axes:[ 0 ] (Nx.square (Nx.sub means mean)))
+           (float (shifts * (shifts - 1))))
+    in
+    let testing = Nx.logical_and run (per_lane power) in
+    let estimate = Nx.where testing mean estimate
+    and error = Nx.where testing se error in
+    let st =
+      Elementwise.settle st
+        (Nx.logical_and testing (Nx.logical_not (Nx.isfinite mean)))
+        Not_finite
+    in
+    let st =
+      Elementwise.settle st
+        (Nx.logical_and testing (Elementwise.accepted tol ~e:se ~y:mean))
+        Converged
+    in
+    let st =
+      Elementwise.settle st
+        (per_lane (Nx.greater_equal_s n (Int32.of_int budget)))
+        Budget_spent
+    in
+    (n, (sums, (used, (estimate, (error, st)))))
+  in
+  let zeros = Nx.zeros dtype lanes in
+  let carry =
+    Nx.Ptree.(
+      pair tensor (pair tensor (pair tensor (pair tensor (pair tensor tensor)))))
+  in
+  let _, (_, (used, (estimate, (error, st)))) =
+    Rune.iterate carry ~max:budget
+      ~until:(fun (_, (_, (_, (_, (_, st))))) ->
+        Nx.logical_not (Nx.any (Elementwise.searching st)))
+      ~f:step
+      ( Nx.scalar Nx.int32 0l,
+        ( Nx.zeros dtype (Array.append [| shifts |] lanes),
+          ( Nx.zeros Nx.int32 lanes,
+            (zeros, (zeros, Nx.full Nx.int32 lanes Elementwise.running)) ) ) )
+  in
+  let ok = Nx.equal_s st (Solution.code Converged) in
+  (* The answer: the mean over each lane's final points, tracked, chunk by
+     chunk. *)
+  let sum_chunk total j =
+    let keep = Nx.unsqueeze ~axes:[ 0 ] (Nx.less (per_lane j) used) in
+    let s = chunk_sums f box.lo box.hi j in
+    (Nx.add total (Nx.sum ~axes:[ 0 ] (Nx.where keep s (Nx.zeros_like s))), ())
+  in
+  let total, () =
+    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:sum_chunk
+      ~init:zeros
+      (Nx.arange Nx.int32 0 budget 1)
+  in
+  let count = Nx.mul_s (Nx.cast dtype used) (float (qmc_chunk * shifts)) in
+  Solution.v ~fn
+    ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
+    ~value:(Nx.where ok (Nx.div total count) estimate)
+    ~error ~status:st
+    ~evaluations:(Nx.mul_s used (Int32.of_int (qmc_chunk * shifts)))
+    ~facts:[]

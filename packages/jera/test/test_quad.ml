@@ -541,10 +541,90 @@ let cubature_tests =
           (fun () -> cube (fun x -> product x) (unit_box [||] 11)));
   ]
 
+(* Quasi-Monte Carlo *)
+
+let key = Nx.Rng.key 2026
+
+let qmc_tests =
+  [
+    cases
+      ~name:(fun j -> Printf.sprintf "dimension %d" j)
+      "each dimension's prefix of 2^k points is balanced"
+      [ 0; 1; 2; 7; 100; 555; 1110 ]
+      (fun j ->
+        (* 1024 points put one point in each 1/1024 of [0, 1] along any axis, so
+           the mean of x_j is within 2^-11 of 1/2. *)
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:16 (coord j)
+            (unit_box [||] 1111)
+        in
+        equal
+          (Oracle.tensor ~abs:(Float.ldexp 1. (-11)) ())
+          (Nx.scalar f64 0.5) (Solution.best s));
+    test "a smooth integral converges" (fun () ->
+        (* ∫ Π (1 + (x_i − 1/2) / 2) over [0, 1]⁵ = 1. *)
+        let f x = product (Nx.add_s (Nx.div_s (Nx.sub_s x 0.5) 2.) 1.) in
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget:1024 f (unit_box [||] 5)
+        in
+        (* The test is statistical: five standard errors. *)
+        equal (Oracle.tensor ~abs:5e-5 ()) (Nx.scalar f64 1.) (Solution.get s));
+    test "an estimate averaged over keys is the integral" (fun () ->
+        (* 64 points of ∫ e^(x + y) over [0, 1]²: each key's estimate is
+           unbiased, so 200 keys' mean is within a few standard errors. *)
+        let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
+        let estimates =
+          List.init 200 (fun i ->
+              Nx.item []
+                (Solution.best
+                   (Quad.qmc (Nx.Rng.key i) ~tol:(Tol.abs 1e-300) ~budget:1 f
+                      (unit_box [||] 2))))
+        in
+        let mean = List.fold_left ( +. ) 0. estimates /. 200. in
+        let sd =
+          Float.sqrt
+            (List.fold_left (fun a e -> a +. ((e -. mean) ** 2.)) 0. estimates
+            /. 199.)
+        in
+        less (Windtrap.float 1.)
+          ~than:(5. *. sd /. Float.sqrt 200.)
+          (Float.abs (mean -. ((Float.exp 1. -. 1.) ** 2.))));
+    test "grad in a parameter estimates the integral's" (fun () ->
+        let theta = vec [| 0.5; -1. |] in
+        let integral t =
+          let f x = Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t) in
+          Nx.sum
+            (Solution.get
+               (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:1024 f
+                  (unit_box [| 2 |] 2)))
+        in
+        let d t = 2. *. exp_integral t *. exp_integral' t in
+        equal
+          (Oracle.tensor ~rel:1e-3 ())
+          (Nx.map_item d theta)
+          (Rune.grad' integral theta));
+    test "compiled equals eager with the key an argument" (fun () ->
+        let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
+        let integral k =
+          Solution.best
+            (Quad.qmc k ~tol:(Tol.rel 1e-5) ~budget:64 f (unit_box [||] 3))
+        in
+        let compiled =
+          Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) integral
+        in
+        equal (Oracle.tensor ~rel:1e-12 ()) (integral key) (compiled key));
+    test "dimensions past the table raise" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"d = 1112 is above 1111")
+          (fun () ->
+            Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 product
+              (unit_box [||] 1112)));
+  ]
+
 let () =
   exit
     (run "Jera.Quad"
        [
+         group "qmc" qmc_tests;
          group "cubature" cubature_tests;
          group "double-exponential" de_tests;
          group "adaptive" adaptive_tests;

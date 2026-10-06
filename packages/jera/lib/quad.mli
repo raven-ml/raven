@@ -201,3 +201,31 @@ val cubature :
 
     Raises [Invalid_argument] if [d] is not in [[2, 10]], if [budget < 1], or if
     [f]'s result is not the points' shape without its last axis. *)
+
+val qmc :
+  Nx.Rng.t ->
+  tol:Tol.t ->
+  budget:int ->
+  'b integrand ->
+  'b Box.t ->
+  (float, 'b) Nx.t Solution.t
+(** [qmc key ~tol ~budget f box] is the integral of [f] over each lane's box, of
+    any dimension [d] up to 1111, by randomised quasi-Monte Carlo. [f] receives
+    points of shape [[c; 16] @ lanes @ [d]] and reduces only their last,
+    coordinate axis.
+
+    {b Method.} The mean of [f] over a Sobol sequence (Joe and Kuo's direction
+    numbers) under 16 independent random digital shifts drawn from [key]. It
+    adds the sequence in chunks of 64 points and tests at each power of two,
+    where a Sobol prefix is balanced. Points are [(i + ½) / 2^k] after the
+    shift, [k] the bits the dtype holds below 1 (32 in float64), so none lies on
+    the box's boundary. {b Error.} [e] is the standard error of the mean over
+    the shifts, an estimate of a standard deviation: the test is statistical.
+    [y] is the integral. Each estimate at a fixed point count is unbiased, and
+    the stopped one to within its standard error. [budget] chunks end a lane
+    [Budget_spent]. {b Derivative.} The mean's over the final points: an
+    estimate of the integral's derivative where the integrand is Lipschitz in
+    the parameter.
+
+    Raises [Invalid_argument] if [d] is above 1111, if [budget < 1], or if [f]'s
+    result is not the points' shape without its last axis. *)

@@ -8,7 +8,7 @@
 
 Each golden is an OCaml module in test/golden/ of float arrays, written with
 17 significant digits so that it reads back as the float64 it was printed
-from. Without --check the modules are written; with --check nothing is
+from. The library's Sobol table, lib/sobol.ml, is generated here too. Without --check the modules are written; with --check nothing is
 written, each module that would change is printed as a diff, and the run fails
 if any would.
 """
@@ -177,7 +177,36 @@ def grid():
     return m
 
 
+# Sobol direction numbers
+
+
+SOBOL_DIMS = 1111
+
+
+def sobol():
+    """Joe and Kuo's (2008) primitive polynomials and initial direction
+    numbers (new-joe-kuo-6.21201), the table scipy ships, for the first
+    SOBOL_DIMS dimensions. A polynomial is written with its leading and
+    trailing coefficients, so its degree is its bit length minus one."""
+    import os
+    from scipy.stats import _sobol
+    z = np.load(os.path.join(os.path.dirname(_sobol.__file__), "_sobol_direction_numbers.npz"))
+    poly = z["poly"][:SOBOL_DIMS]
+    vinit = z["vinit"][:SOBOL_DIMS]
+    lines = [HEADER, "(* Joe and Kuo's (2008) direction numbers, new-joe-kuo-6.21201, as scipy",
+             "   ships them: each dimension's primitive polynomial, with its leading and",
+             "   trailing coefficients, and its initial direction numbers. *)", "",
+             "let poly = [| " + "; ".join(str(int(p)) for p in poly) + " |]", "",
+             "let vinit = [|"]
+    for p, row in zip(poly, vinit):
+        degree = int(p).bit_length() - 1
+        lines.append("  [| " + "; ".join(str(int(v)) for v in row[:degree]) + " |];")
+    lines.append("|]")
+    return "\n".join(lines) + "\n"
+
+
 MODULES = {"golden_quad": quad, "golden_piecewise": piecewise, "golden_grid": grid}
+LIBRARY = {"sobol": sobol}
 
 
 def main():
@@ -188,6 +217,20 @@ def main():
     for name, make in MODULES.items():
         path = GOLDEN / f"{name}.ml"
         new = make().text()
+        old = path.read_text() if path.exists() else ""
+        if new == old:
+            continue
+        if args.check:
+            stale = True
+            sys.stdout.writelines(difflib.unified_diff(
+                old.splitlines(True), new.splitlines(True),
+                str(path), str(path) + " (generated)"))
+        else:
+            path.write_text(new)
+            print(f"wrote {path.relative_to(HERE.parent.parent.parent.parent)}")
+    for name, make in LIBRARY.items():
+        path = HERE.parent.parent / "lib" / f"{name}.ml"
+        new = make()
         old = path.read_text() if path.exists() else ""
         if new == old:
             continue

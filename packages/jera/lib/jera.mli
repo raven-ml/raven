@@ -32,7 +32,11 @@
         {td endpoint singularity, infinite range }
         {td {!Quad.tanh_sinh} }
       }
-      {tr {td Integral, several dimensions } {td up to ten } {td {!Quad.cubature} } }
+      {tr
+        {td Integral, several dimensions }
+        {td up to ten }
+        {td {!Quad.cubature} }
+      }
       {tr
         {td Approximation }
         {td samples }

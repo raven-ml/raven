@@ -958,6 +958,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Quad.qmc`, randomised quasi-Monte Carlo over boxes of up to 1111
+  dimensions: a Sobol sequence under 16 random digital shifts drawn from a
+  key, stopped on the standard error at powers of two.
 - Add `Quad.cubature`, Genz and Malik's adaptive rule of degree 7 over boxes
   of 2 to 10 dimensions, one problem per lane of `Quad.Box.v lo hi`.
 - Add `Quad.tanh_sinh`, double-exponential integration: tanh-sinh on a
