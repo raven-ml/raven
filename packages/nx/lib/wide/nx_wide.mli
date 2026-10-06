@@ -8,10 +8,12 @@
     A value of type ['b t] is a tensor of real numbers, each held as the sum
     [hi + lo] of two floats of dtype ['b], with [hi] that sum rounded to
     nearest. It carries 106 significand bits at float64 and 48 at float32.
-    Bounds use [u], the dtype's unit roundoff, and hold while every intermediate
-    is normal or zero. A number whose sum is infinite or NaN is held as that sum
-    with a zero [lo]; an operation on it gives the float result of the [hi]
-    words with a zero [lo], and comparisons compare [hi], so NaN compares false.
+    Bounds use [u], the dtype's unit roundoff, and hold where operands and
+    results are zero or of magnitude between [2^-969] and [2^969] at float64
+    ([2^-102] and [2^102] at float32), where every error term is a normal float.
+    A number whose sum is infinite or NaN is held as that sum with a zero [lo];
+    an operation on it gives the float result of the [hi] words with a zero
+    [lo], and comparisons compare [hi], so NaN compares false.
 
     Operations broadcast as nx's arithmetic does. Each is a fixed program of
     nx's elementwise operations, with every sum and product rounded once as

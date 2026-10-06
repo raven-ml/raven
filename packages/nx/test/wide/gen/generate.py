@@ -12,8 +12,7 @@ written and the run fails when a file differs from what it would write.
 
 Every float is written in hexadecimal at float64, which holds every float32
 exactly. A row's dtype is `f32` or `f64`; its operands are double words of
-that dtype, normalised (`hi` is `hi + lo` rounded to nearest), with every
-intermediate of the algorithms normal.
+that dtype, normalised (`hi` is `hi + lo` rounded to nearest).
 
 - add, sub, mul, div: `dtype xh xl yh yl r1 r2 r3`, the exact result
   `r1 + r2 + r3`, each word the rest rounded to nearest at float64, which
@@ -24,11 +23,15 @@ intermediate of the algorithms normal.
   magnitudes rounded up at float64.
 
 Operands are seeded random pairs over a range of exponents and spreads,
-pairs that cancel, pairs of equal high words, zero low words, and the
-worst cases the papers on these algorithms give: Muller and Rideau's
-generic case for the addition (relative error 3u^2 - 11u^3), Joldes,
-Muller and Popescu's (2.25u^2), Muller and Rideau's product (3.997u^2 at
-float64) and Joldes, Muller and Popescu's quotient (5.922u^2 at float64).
+pairs that cancel, pairs of equal high words, zero low words, operands at
+the edges of the domain (magnitudes near 2^-969 and 2^969 at float64,
+2^-102 and 2^102 at float32, with results inside), and the worst cases
+the papers on these algorithms give: Muller and Rideau's generic case for
+the addition (relative error 3u^2 - 11u^3) and Joldes, Muller and
+Popescu's (2.25u^2), each negated for the subtraction; Muller and
+Rideau's product (3.997u^2 at float64) and Joldes, Muller and Popescu's
+quotient (5.922u^2 at float64) and binary32 product. At float32, a search
+over the algorithms emulated adds the inputs of largest error it finds.
 """
 
 import math
@@ -122,34 +125,142 @@ def ulp(dtype, x):
     return float(mpmath.ldexp(1, int(e) - p))
 
 
+# Domain: operands and results zero or of magnitude in [2^-E, 2^E]. Every
+# bound holds there; past it an error term leaves the normal range.
+DOMAIN = {"f32": 102, "f64": 969}
+
+
+# The algorithms at float32, emulated to search for inputs near their bounds:
+# each operation rounds once, [fma] from its exact value.
+
+
+def f32(x):
+    return float(np.float32(x))
+
+
+def fma32(a, b, c):
+    with mpmath.workprec(24):
+        return float(+(mpmath.mpf(a) * mpmath.mpf(b) + mpmath.mpf(c)))
+
+
+def two_sum32(a, b):
+    s = f32(a + b)
+    a1 = f32(s - b)
+    b1 = f32(s - a1)
+    return s, f32(f32(a - a1) + f32(b - b1))
+
+
+def fast_two_sum32(a, b):
+    s = f32(a + b)
+    return s, f32(b - f32(s - a))
+
+
+def add32(x, y):
+    sh, sl = two_sum32(x[0], y[0])
+    th, tl = two_sum32(x[1], y[1])
+    vh, vl = fast_two_sum32(sh, f32(sl + th))
+    return fast_two_sum32(vh, f32(tl + vl))
+
+
+def mul32(x, y):
+    ch = f32(x[0] * y[0])
+    cl1 = fma32(x[0], y[0], -ch)
+    tl1 = fma32(x[0], y[1], f32(x[1] * y[1]))
+    cl2 = fma32(x[1], y[0], tl1)
+    return fast_two_sum32(ch, f32(cl1 + cl2))
+
+
+def div32(x, y):
+    th = f32(1.0 / y[0])
+    rh = fma32(-y[0], th, 1.0)
+    eh, el = fast_two_sum32(rh, -f32(y[1] * th))
+    ch = f32(eh * th)
+    dh, dl = fast_two_sum32(ch, fma32(el, th, fma32(eh, th, -ch)))
+    sh, sl = two_sum32(dh, th)
+    mh, ml = fast_two_sum32(sh, f32(dl + sl))
+    return mul32(x, (mh, ml))
+
+
+def searched(rng, op, count=3, tries=4000):
+    """The [count] float32 operand pairs of the largest relative error of the
+    emulated [op] among [tries] drawn near 1, where the bounds are reached."""
+    run = {"add": add32, "sub": lambda x, y: add32(x, (-y[0], -y[1])),
+           "mul": mul32, "div": div32}[op]
+    apply = {"add": lambda a, b: a + b, "sub": lambda a, b: a - b,
+             "mul": lambda a, b: a * b, "div": lambda a, b: a / b}[op]
+    found = []
+    for _ in range(tries):
+        x = random_pair(rng, "f32", 0)
+        y = random_pair(rng, "f32", rng.choice([-1, 0]))
+        if op in ("add", "sub"):
+            y = (-y[0], -y[1]) if (op == "add") == (rng.random() < 0.8) else y
+        e = apply(exact(x), exact(y))
+        if e == 0:
+            continue
+        z = run(x, y)
+        found.append((abs((mpmath.mpf(z[0]) + z[1] - e) / e), x, y))
+    found.sort(key=lambda t: t[0], reverse=True)
+    return [(x, y) for _, x, y in found[:count]]
+
+
+def edges(rng, dtype, op):
+    """Operands at the domain's edges, with results inside it."""
+    e = DOMAIN[dtype]
+    h = e // 2
+    near = {"add": [(e - 1, e - 1), (1 - e, 1 - e)],
+            "sub": [(e - 1, e - 3), (1 - e, 3 - e)],
+            "mul": [(h - 1, h - 1), (1 - h, 1 - h), (e - 1, 0), (1 - e, 0)],
+            "div": [(e - 1, 0), (1 - e, 0), (0, e - 1), (0, 1 - e),
+                    (e - 1, e - 1), (1 - e, 1 - e)]}[op]
+    return [(random_pair(rng, dtype, a), random_pair(rng, dtype, b))
+            for a, b in near]
+
+
 def operands(rng, dtype, op):
     """[ROWS] pairs of operands for [op], structured cases first."""
     p, _, emax = DTYPES[dtype]
     u = 2.0 ** -p
-    out = []
-    # Muller and Rideau's generic worst case of the addition.
-    out.append(((1.0, u - u * u), (-0.5 + u / 2, -(u * u) / 2 + u**3)))
-    # Joldes, Muller and Popescu's generic case of the addition, 2.25u^2.
     m = 2.0**p
-    out.append(
+    worst_add = [
+        # Muller and Rideau's generic worst case of the addition.
+        ((1.0, u - u * u), (-0.5 + u / 2, -(u * u) / 2 + u**3)),
+        # Joldes, Muller and Popescu's generic case of the addition, 2.25u^2.
         (
             (m - 1, -(m - 1) * 2.0 ** (-p - 1)),
             (-(m - 5) / 2, -(m - 1) * 2.0 ** (-p - 3)),
-        )
-    )
-    if dtype == "f64":
+        ),
+    ]
+    # A difference reaches the sum's worst case on the negated operand.
+    out = (worst_add if op != "sub"
+           else [(x, (-y[0], -y[1])) for x, y in worst_add])
+    if dtype == "f64" and op == "mul":
+        # Muller and Rideau's product, 3.997u^2.
         out.append(
             (
                 (2251799825991851 / 2**51, 9007199203085987 / 2**106),
                 (4503599627471459 / 2**52, 4503599627284651 / 2**105),
             )
         )
+    if dtype == "f64" and op == "div":
+        # Joldes, Muller and Popescu's quotient, 5.922u^2.
         out.append(
             (
                 (4528288502329187.0, 1125391118633487 / 2**51),
                 (4522593432466394.0, -9006008290016505 / 2**54),
             )
         )
+    if dtype == "f32" and op == "mul":
+        # Joldes, Muller and Popescu's binary32 product of their Algorithm
+        # 11, 4.936u^2 there.
+        out.append(
+            (
+                (8404039.0, -8284843 / 2**24),
+                (8409182.0, -4193899 / 2**23),
+            )
+        )
+    if dtype == "f32":
+        out += searched(rng, op)
+    out += edges(rng, dtype, op)
     while len(out) < ROWS:
         kind = rng.random()
         x = random_pair(rng, dtype)
