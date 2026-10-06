@@ -63,7 +63,11 @@ instead of a long-running one.
 - **Build.** Run one `dune build --passive-watch-mode` in the background;
   `dune build` and `dune runtest` forward to it. Before each, run
   `timeout 5 dune rpc ping`: no answer means the server is stuck, so kill
-  its pid and start another. The server watches every `$PATH` directory,
+  its pid and start another. A server that answers but builds files
+  older than the tree (its errors name code you changed) is stuck too:
+  before killing it, save `lsof -p <pid>`, `sample <pid> 5` and the time
+  of the last change it noticed to `_plans/dune-stale-watch/`, so the
+  cause can be found. The server watches every `$PATH` directory,
   and for one that doesn't exist, its nearest existing parent: a missing
   entry can make it watch `$HOME` and rebuild on every change there.
 - **Release.** When your task is done, kill your server, leave the tree
