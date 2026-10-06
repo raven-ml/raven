@@ -21,8 +21,9 @@
 
     {b Keys.} A transition gives chain [i] row [i] of
     [Nx.Rng.split_batch ~n:chains k], so a chain's randomness does not depend on
-    the chain count. {!sample} folds the state's draw counter into its key, so
-    [a + b] draws are [a] draws then [b]. *)
+    the chain count. {!warmup} and {!sample} fold the state's draw counter into
+    their key and advance it, so [a + b] draws are [a] draws then [b], and no
+    two transitions of a run share a key. *)
 
 type ('u, 'f) state = private {
   position : 'u;  (** Each chain's position. *)
@@ -93,8 +94,9 @@ val warmup :
     size for an acceptance of [s.accept], restarting at each window. At each
     window's end each chain's geometry is refitted to its window's draws and
     gradients by the Fisher divergence (Seyboldt, Carlson and Carpenter 2026): a
-    diagonal scale [sqrt (sd x / sd score)] per element. The draw counter does
-    not advance.
+    diagonal scale [sqrt (sd x / sd score)] per element. Transition [n] of the
+    run, counted by [s.draw], has the key [Nx.Rng.fold_in k n], as in {!sample},
+    so warmup and sampling may share a key.
 
     Raises [Invalid_argument] if [steps < 0]. *)
 

@@ -174,12 +174,15 @@ let check_range context l =
 
 (* Keys
 
-   Chain [i] has row [i] of [split_batch] of the transition's key. Its momentum
-   draws from [fold_in key 0]; doubling [j] draws its direction, the uniforms of
-   its merges and of its top-level merge from [fold_in (fold_in (fold_in key 1)
-   j) id], with [id] [0] for the direction, [l 2^D + n] for the merge into node
-   [n] of level [l], and [(D + 1) 2^D] for the top-level merge, [D] the maximum
-   depth. *)
+   Transition [n] of a run has the key [fold_in k n], warmup's transitions
+   counted with the rest, so each transition key has one consumer. Chain [i] has
+   row [i] of [split_batch] of the transition's key. Its momentum draws from
+   [fold_in key 0]; doubling [j] draws its direction, the uniforms of its merges
+   and of its top-level merge from [fold_in (fold_in (fold_in key 1) j) id],
+   with [id] [0] for the direction, [l 2^D + n] for the merge into node [n] of
+   level [l], and [(D + 1) 2^D] for the top-level merge, [D] the maximum depth.
+   A step-size search before a warmup transition draws its trial [i]'s momentum
+   from [fold_in (fold_in key 2) i]. *)
 
 let uniforms (type f) dt keys j id : (float, f) Nx.t =
   Rune.vmap
@@ -829,7 +832,8 @@ let sq u x = P.map u (fun _ t -> Nx.mul t t) x
 
 (* [init_step_size u lp k s] is each chain's step size doubled or halved, from
    [s.step_size], until one leapfrog step from its position with a fresh
-   momentum crosses an acceptance of 0.8 (Stan's heuristic). *)
+   momentum crosses an acceptance of 0.8 (Stan's heuristic). [k] is the key of
+   the transition the search precedes. *)
 let init_step_size (type f) u lp k (s : (_, f) state) : (float, f) Nx.t =
   let eps = s.step_size in
   let dt = Nx.dtype eps in
@@ -838,8 +842,14 @@ let init_step_size (type f) u lp k (s : (_, f) state) : (float, f) Nx.t =
   let z0 = per_chain_whiten u s.geometry s.position in
   let g0 = to_whitened u s.geometry z0 s.grad in
   let all = Nx.ones Nx.bool [| c |] in
+  let chains = Nx.Rng.split_batch ~n:c k in
   let log_ratio eps i =
-    let keys = Nx.Rng.split_batch ~n:c (Nx.Rng.fold_in_tensor k i) in
+    let keys =
+      Rune.vmap
+        P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+        (fun k -> Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 2) i)
+        chains
+    in
     let p = momentum u keys z0 in
     let kinetic p = Nx.mul_s (rows_dot u eps p p) 0.5 in
     let start = { z = z0; p; g = g0; lp = s.lp } in
@@ -1044,10 +1054,8 @@ let warmup u lp k ~steps (s : (_, _) state) =
         Nx.zeros dt [| c |],
         Nx.zeros dt [||] )
     in
-    let step_keys = Nx.Rng.fold_in k 0 and size_keys = Nx.Rng.fold_in k 1 in
-    let s0 =
-      { s with step_size = init_step_size u lp (Nx.Rng.fold_in size_keys 0) s }
-    in
+    let key (st : (_, _) state) = Nx.Rng.fold_in_tensor k st.draw in
+    let s0 = { s with step_size = init_step_size u lp (key s) s } in
     let mu, s_bar, x_bar, count = restart s0 in
     let a0 =
       {
@@ -1068,7 +1076,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
       }
     in
     let one (a : (_, _) adapt) =
-      let st = step u lp (Nx.Rng.fold_in_tensor step_keys a.index) a.st in
+      let st = step u lp (key a.st) a.st in
       (* Dual averaging toward the target acceptance. *)
       let count = Nx.add_s a.count 1. in
       let eta = Nx.recip (Nx.add_s count da_t0) in
@@ -1149,12 +1157,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
             P.map2 gp (fun _ g o -> Nx.where refit g o) geometry a.st.geometry;
         }
       in
-      let eps =
-        init_step_size u lp
-          (Nx.Rng.fold_in_tensor size_keys
-             (Nx.add a.index (Nx.scalar Nx.int32 1l)))
-          refitted
-      in
+      let eps = init_step_size u lp (key refitted) refitted in
       let eps = Nx.where refit eps a.st.step_size in
       let st = { refitted with step_size = eps } in
       let mu', s_bar', x_bar', count' = restart st in
@@ -1183,4 +1186,4 @@ let warmup u lp k ~steps (s : (_, _) state) =
         P.(pair tensor tensor)
         P.unit ~f:window ~init:a0 (lengths, refits)
     in
-    { a.st with step_size = Nx.exp a.x_bar; draw = s.draw }
+    { a.st with step_size = Nx.exp a.x_bar }

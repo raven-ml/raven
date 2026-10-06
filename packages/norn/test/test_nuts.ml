@@ -304,10 +304,21 @@ let warmup =
                 (fun e -> Float.is_finite e && e > 0.)
                 e)
             (Nx.to_array s.step_size));
-      test "warmup does not advance the draw counter" (fun () ->
+      test "warmup counts its transitions" (fun () ->
           let s = N.init t scaled (Nx.ones Nx.float64 [| 2; 2 |]) in
           let s' = N.warmup t scaled (Nx.Rng.key 1) ~steps:10 s in
-          equal int32 0l (Nx.item [] s'.draw));
+          equal int32 10l (Nx.item [] s'.draw));
+      (* With one key for warmup and sampling, the first draw takes the key
+         after warmup's last: no two transitions share one. *)
+      test "sampling after warmup with its key continues its counter" (fun () ->
+          let k = Nx.Rng.key 1 in
+          let s = N.init t scaled (Nx.ones Nx.float64 [| 2; 2 |]) in
+          let w = N.warmup t scaled k ~steps:10 s in
+          let _, d, _ = N.sample t scaled k ~draws:1 w in
+          let next = N.step t scaled (Nx.Rng.fold_in k 10) w in
+          equal (array float_exact)
+            (Nx.to_array next.position)
+            (Nx.to_array (d :> Nx.float64_t)));
     ]
 
 (* Law 9: reproducibility *)
