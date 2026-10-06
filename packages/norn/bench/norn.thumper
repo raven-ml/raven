@@ -4,15 +4,27 @@
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
-# forced: blessed under load 14.8 on 10 cores
+# forced: blessed under load 34.7 on 10 cores
 
-diag/rhat/4x1000x10	alloc_words	exact	6610181
-diag/rhat/4x1000x10	wall_time	batch=1	n=20	9.812e-02	4.424e-02 4.460e-02 4.470e-02 4.484e-02 4.574e-02 5.033e-02 6.327e-02 7.719e-02 8.519e-02 9.404e-02 1.022e-01 1.450e-01 1.564e-01 1.614e-01 1.912e-01 1.946e-01 2.044e-01 2.137e-01 2.310e-01 2.964e-01
+diag/rhat/4x1000x10	alloc_words	exact	6629121
+diag/rhat/4x1000x10	wall_time	batch=1	n=20	5.450e-02	5.119e-02 5.139e-02 5.188e-02 5.232e-02 5.275e-02 5.297e-02 5.304e-02 5.346e-02 5.351e-02 5.445e-02 5.455e-02 5.480e-02 5.501e-02 5.555e-02 5.569e-02 5.582e-02 5.598e-02 5.627e-02 5.767e-02 6.055e-02
 dist/student_t/100000	alloc_words	exact	1939
-dist/student_t/100000	wall_time	batch=4	n=20	2.940e-03	1.959e-03 2.006e-03 2.029e-03 2.036e-03 2.062e-03 2.082e-03 2.088e-03 2.108e-03 2.678e-03 2.901e-03 2.979e-03 4.718e-03 6.331e-03 9.295e-03 9.462e-03 1.219e-02 1.300e-02 1.665e-02 1.853e-02 2.591e-02
-model/schools/16	alloc_words	exact	48105
-model/schools/16	wall_time	batch=32	n=20	1.539e-04	1.462e-04 1.474e-04 1.476e-04 1.479e-04 1.491e-04 1.504e-04 1.506e-04 1.507e-04 1.508e-04 1.539e-04 1.539e-04 1.557e-04 1.636e-04 1.828e-04 1.909e-04 2.440e-04 2.547e-04 3.882e-04 1.163e-03 1.552e-03
-nuts/schools/4	alloc_words	exact	299591
-nuts/schools/4	wall_time	batch=4	n=20	1.315e-03	1.225e-03 1.229e-03 1.233e-03 1.248e-03 1.258e-03 1.260e-03 1.271e-03 1.279e-03 1.282e-03 1.305e-03 1.326e-03 1.328e-03 1.377e-03 1.388e-03 1.390e-03 1.525e-03 3.253e-03 5.337e-03 1.593e-02 1.700e-02
-nuts/schools/64	alloc_words	exact	509607
-nuts/schools/64	wall_time	batch=2	n=20	3.629e-03	3.471e-03 3.499e-03 3.521e-03 3.525e-03 3.550e-03 3.562e-03 3.580e-03 3.588e-03 3.601e-03 3.621e-03 3.638e-03 3.640e-03 3.644e-03 3.651e-03 3.701e-03 3.788e-03 9.560e-03 2.683e-02 3.549e-02 5.988e-02
+dist/student_t/100000	wall_time	batch=4	n=20	2.600e-03	2.467e-03 2.479e-03 2.485e-03 2.508e-03 2.531e-03 2.543e-03 2.546e-03 2.548e-03 2.553e-03 2.569e-03 2.631e-03 2.672e-03 2.688e-03 2.712e-03 2.717e-03 2.719e-03 2.723e-03 2.750e-03 2.773e-03 2.974e-03
+model/schools/16	alloc_words	exact	66190
+model/schools/16	wall_time	batch=32	n=20	2.439e-04	2.311e-04 2.325e-04 2.326e-04 2.353e-04 2.360e-04 2.394e-04 2.398e-04 2.414e-04 2.432e-04 2.435e-04 2.442e-04 2.457e-04 2.473e-04 2.479e-04 2.484e-04 2.520e-04 2.529e-04 2.558e-04 2.637e-04 2.713e-04
+nuts/schools/4	alloc_words	exact	320829
+nuts/schools/4	wall_time	batch=4	n=20	1.786e-03	1.652e-03 1.667e-03 1.682e-03 1.735e-03 1.754e-03 1.770e-03 1.772e-03 1.774e-03 1.779e-03 1.783e-03 1.788e-03 1.793e-03 1.842e-03 1.864e-03 1.887e-03 1.895e-03 1.901e-03 1.980e-03 2.242e-03 2.284e-03
+nuts/schools/64	alloc_words	exact	513979
+nuts/schools/64	wall_time	batch=2	n=20	4.879e-03	4.446e-03 4.535e-03 4.627e-03 4.630e-03 4.662e-03 4.715e-03 4.830e-03 4.838e-03 4.838e-03 4.871e-03 4.887e-03 4.890e-03 4.890e-03 4.902e-03 5.002e-03 5.002e-03 5.013e-03 5.287e-03 5.309e-03 5.330e-03
+posteriordb/arK-arK	alloc_words	exact	7468
+posteriordb/arK-arK	wall_time	batch=256	n=20	3.822e-05	3.581e-05 3.595e-05 3.694e-05 3.703e-05 3.708e-05 3.745e-05 3.750e-05 3.776e-05 3.789e-05 3.802e-05 3.842e-05 3.853e-05 3.856e-05 3.886e-05 3.929e-05 3.935e-05 3.942e-05 3.943e-05 3.963e-05 3.988e-05
+posteriordb/dogs-dogs	alloc_words	exact	3529
+posteriordb/dogs-dogs	wall_time	batch=16	n=20	3.368e-04	2.869e-04 2.945e-04 2.946e-04 2.971e-04 2.986e-04 3.069e-04 3.152e-04 3.211e-04 3.298e-04 3.332e-04 3.403e-04 3.405e-04 3.454e-04 3.468e-04 3.574e-04 3.650e-04 3.761e-04 3.803e-04 4.050e-04 7.333e-04
+posteriordb/eight_schools-eight_schools_noncentered	alloc_words	exact	7584
+posteriordb/eight_schools-eight_schools_noncentered	wall_time	batch=256	n=20	2.742e-05	2.460e-05 2.558e-05 2.562e-05 2.599e-05 2.601e-05 2.618e-05 2.632e-05 2.660e-05 2.723e-05 2.732e-05 2.752e-05 2.768e-05 2.773e-05 2.776e-05 2.785e-05 2.799e-05 2.803e-05 2.826e-05 2.832e-05 2.844e-05
+posteriordb/gp_pois_regr-gp_pois_regr	alloc_words	exact	10496
+posteriordb/gp_pois_regr-gp_pois_regr	wall_time	batch=32	n=20	2.871e-04	2.430e-04 2.463e-04 2.533e-04 2.573e-04 2.597e-04 2.649e-04 2.687e-04 2.698e-04 2.785e-04 2.793e-04 2.949e-04 2.973e-04 3.052e-04 3.101e-04 3.380e-04 3.460e-04 3.514e-04 3.655e-04 3.731e-04 4.439e-04
+posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	alloc_words	exact	8897
+posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	wall_time	batch=16	n=20	3.873e-04	2.819e-04 2.931e-04 2.945e-04 3.360e-04 3.498e-04 3.581e-04 3.626e-04 3.659e-04 3.696e-04 3.854e-04 3.892e-04 3.954e-04 4.077e-04 4.097e-04 4.202e-04 4.342e-04 4.644e-04 4.872e-04 4.878e-04 5.898e-04
+posteriordb/sblrc-blr	alloc_words	exact	5630
+posteriordb/sblrc-blr	wall_time	batch=256	n=20	2.246e-05	2.196e-05 2.204e-05 2.206e-05 2.212e-05 2.214e-05 2.222e-05 2.227e-05 2.241e-05 2.245e-05 2.245e-05 2.247e-05 2.250e-05 2.252e-05 2.253e-05 2.286e-05 2.361e-05 2.365e-05 2.384e-05 2.391e-05 2.414e-05
