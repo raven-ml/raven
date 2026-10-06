@@ -4,6 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 let running = -1l
+let searching st = Nx.equal_s st running
+
+let settle st cond s =
+  Nx.where
+    (Nx.logical_and (searching st) cond)
+    (Nx.full_like st (Solution.code s))
+    st
 
 (* The derivative's system is diagonal for an elementwise residual: its diagonal
    is [op 1], and [op u = b] holds to rounding at the quotient. A non-finite

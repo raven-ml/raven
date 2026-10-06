@@ -8,6 +8,10 @@
 val eps : (float, 'b) Nx.dtype -> float
 (** [eps dtype] is the distance from [1] to the next float of [dtype]. *)
 
+val bits : (float, 'b) Nx.dtype -> int
+(** [bits dtype] is the width of [dtype]'s floats in bits, which bounds the
+    bisections of their ordered-integer images. *)
+
 val constant : (float, 'b) Nx.dtype -> float array -> (float, 'b) Nx.t
 (** [constant dtype a] is [a] as a 1-D tensor of [dtype], each element computed
     on the host in float64 and rounded once. *)

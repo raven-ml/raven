@@ -5,22 +5,9 @@
 
 open Elementwise
 
-let code = Solution.code
-let where_running st = Nx.equal_s st running
 let int32 x = Nx.scalar Nx.int32 x
 
-let settle st cond code' =
-  Nx.where (Nx.logical_and (where_running st) cond) (Nx.full_like st code') st
-
 (* Bracket *)
-
-(* Bits of the dtype, which bound the bisections. *)
-let width (type b) (dtype : (float, b) Nx.dtype) =
-  match dtype with
-  | Nx.Float64 -> 64
-  | Nx.Float32 -> 32
-  | Nx.Float16 | Nx.BFloat16 -> 16
-  | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> 8
 
 let bracket ~tol f ~lo ~hi =
   let fn = "Jera.Root.bracket" in
@@ -30,7 +17,7 @@ let bracket ~tol f ~lo ~hi =
     | _ -> assert false
   in
   let dtype = Nx.dtype lo in
-  let bits = width dtype in
+  let bits = Num.bits dtype in
   let search x = Rune.detach (f x) in
   let a0 = Nx.minimum (Rune.detach lo) (Rune.detach hi)
   and b0 = Nx.maximum (Rune.detach lo) (Rune.detach hi) in
@@ -68,26 +55,24 @@ let bracket ~tol f ~lo ~hi =
       Nx.logical_or (accepted tol ~e ~y:(Nx.add a e)) (Num.adjacent a b)
     in
     let small = Nx.less_equal (estimate_f br) target in
-    let st = settle st (Nx.logical_and narrow small) (code Converged) in
-    let st = settle st narrow (code Stalled) in
+    let st = settle st (Nx.logical_and narrow small) Converged in
+    let st = settle st narrow Stalled in
     (br, (st, (n, k)))
   in
   let initial =
     let st = Nx.full Nx.int32 (Nx.shape a0) running in
     let finite = Nx.logical_and (Nx.isfinite fa0) (Nx.isfinite fb0) in
-    let st = settle st (Nx.logical_not finite) (code Not_finite) in
+    let st = settle st (Nx.logical_not finite) Not_finite in
     let root_end = Nx.logical_or (Nx.equal fa0 zero) (Nx.equal fb0 zero) in
-    let st = settle st root_end (code Converged) in
+    let st = settle st root_end Converged in
     let same = Nx.greater (Nx.mul (Nx.sign fa0) (Nx.sign fb0)) zero in
-    let st =
-      settle st (Nx.logical_or same (Nx.equal a0 b0)) (code Not_bracketed)
-    in
+    let st = settle st (Nx.logical_or same (Nx.equal a0 b0)) Not_bracketed in
     finish
       ( ((a0, b0), (fa0, fb0)),
         (st, (Nx.full Nx.int32 (Nx.shape a0) 2l, int32 0l)) )
   in
   let step ((((a, b), (fa, fb)) as br), (st, (n, k))) =
-    let run = where_running st in
+    let run = searching st in
     let half = Nx.add a (Nx.div_s (Nx.sub b a) 2.) in
     let bisect = Num.ordered_midpoint a b in
     (* ITP's point, from the step count among ITP steps. *)
@@ -123,8 +108,8 @@ let bracket ~tol f ~lo ~hi =
     let x = Nx.where run x (estimate br) in
     let fx = search x in
     let n = Nx.add n (Nx.cast Nx.int32 run) in
-    let st = settle st (Nx.logical_not (Nx.isfinite fx)) (code Not_finite) in
-    let run = where_running st in
+    let st = settle st (Nx.logical_not (Nx.isfinite fx)) Not_finite in
+    let run = searching st in
     let hit = Nx.logical_and run (Nx.equal fx zero) in
     let left = Nx.logical_and run (Nx.equal (Nx.sign fx) (Nx.sign fa)) in
     let right = Nx.logical_and run (Nx.logical_not left) in
@@ -132,7 +117,7 @@ let bracket ~tol f ~lo ~hi =
     and fa = Nx.where (Nx.logical_or left hit) fx fa in
     let b = Nx.where (Nx.logical_or right hit) x b
     and fb = Nx.where (Nx.logical_or right hit) fx fb in
-    let st = settle st hit (code Converged) in
+    let st = settle st hit Converged in
     finish (((a, b), (fa, fb)), (st, (n, Nx.add_s k 1l)))
   in
   (* The carry: the bracket [a <= b] and [f] there, the status, the evaluations
@@ -148,13 +133,13 @@ let bracket ~tol f ~lo ~hi =
     Rune.iterate carry ~max:limit
       ~until:(fun (_, (st, (_, k))) ->
         Nx.logical_or
-          (Nx.logical_not (Nx.any (where_running st)))
+          (Nx.logical_not (Nx.any (searching st)))
           (Nx.greater_equal_s k (Int32.of_int limit)))
       ~f:step initial
   in
-  let st = settle st (Nx.ones Nx.bool (Nx.shape st)) (code Stalled) in
+  let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
   let x = estimate br in
-  let ok = Nx.equal_s st (code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
@@ -177,17 +162,17 @@ let newton ~tol ~budget ~slope f x0 =
   (* The carry: the estimate and the last step's size, the status, the
      evaluations and the step count. *)
   let step ((x, last), (st, (n, k))) =
-    let run = where_running st in
+    let run = searching st in
     let fx = Rune.detach (f x) and s = Rune.detach (slope x) in
     let n = Nx.add n (Nx.cast Nx.int32 run) in
-    let st = settle st (Nx.logical_not (Nx.isfinite fx)) (code Not_finite) in
+    let st = settle st (Nx.logical_not (Nx.isfinite fx)) Not_finite in
     let flat =
       Nx.logical_or
         (Nx.equal s (Nx.zeros_like s))
         (Nx.logical_not (Nx.isfinite s))
     in
-    let st = settle st flat (code Stalled) in
-    let run = where_running st in
+    let st = settle st flat Stalled in
+    let run = searching st in
     let delta =
       Nx.where run
         (Nx.neg (Nx.div fx (Nx.where run s (Nx.ones_like s))))
@@ -203,14 +188,14 @@ let newton ~tol ~budget ~slope f x0 =
     let e =
       Nx.where (Nx.equal size (Nx.zeros_like size)) (Nx.zeros_like size) e
     in
-    let st = settle st (accepted tol ~e ~y:next) (code Converged) in
-    let st = settle st (Nx.equal next x) (code Stalled) in
+    let st = settle st (accepted tol ~e ~y:next) Converged in
+    let st = settle st (Nx.equal next x) Stalled in
     let x = Nx.where run next x in
     let st =
       settle st
         (Nx.broadcast_to (Nx.shape st)
            (Nx.greater_equal_s (Nx.add_s k 1l) (Int32.of_int budget)))
-        (code Budget_spent)
+        Budget_spent
     in
     ((x, Nx.where run size last), (st, (n, Nx.add_s k 1l)))
   in
@@ -221,10 +206,10 @@ let newton ~tol ~budget ~slope f x0 =
   in
   let (x, last), (st, (n, _)) =
     Rune.iterate carry ~max:budget
-      ~until:(fun (_, (st, _)) -> Nx.logical_not (Nx.any (where_running st)))
+      ~until:(fun (_, (st, _)) -> Nx.logical_not (Nx.any (searching st)))
       ~f:step initial
   in
-  let ok = Nx.equal_s st (code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   Solution.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)

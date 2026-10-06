@@ -108,3 +108,37 @@ val cumulative :
 
     Raises [Invalid_argument] if [knots] has no axis or no knot, or as {!fixed}
     does. *)
+
+(** {1:solves Solves}
+
+    Each solve is elementwise: every element of the range is its own integral,
+    with its own status. Its search runs on detached values; the answer of a
+    converged element is its rule over its final decisions, tracked, so its
+    derivative is that rule's, and an element that did not converge returns its
+    detached best estimate. *)
+
+val adaptive :
+  [> `Embedded ] Rule.t ->
+  tol:Tol.t ->
+  budget:int ->
+  'b integrand ->
+  'b Range.t ->
+  (float, 'b) Nx.t Solution.t
+(** [adaptive r ~tol ~budget f range] is the integral of [f] over each element
+    of [range] by the rule [r] on a partition it refines: it bisects the piece
+    of largest error until the error meets [tol]. An infinite range is mapped to
+    [[0, 1]] as {!fixed} maps it.
+
+    {b Error.} [e] is the sum over the pieces of [|K − G|], the Kronrod sum's
+    difference from its embedded Gauss sum, and [y] the integral. An element
+    whose worst piece is at level 62, or holds no float strictly inside, ends
+    [Stalled]; a non-finite sum ends it [Not_finite]; [budget] pieces end it
+    [Budget_spent]. A feature narrower than the first rule's nodes can be
+    invisible to every estimate, and an element can converge without it.
+    {b Cost.} [2n + 1] points per piece, and the answer evaluates the final
+    partition again, in chunks of 32 pieces under a {!Rune.scan}, so reverse
+    mode keeps one chunk's values. {b Derivative.} The final partition's rule's:
+    the pieces are integers [(level, index)] whose ends are
+    [a + (b − a) index / 2^level], so it reaches the ends.
+
+    Raises [Invalid_argument] if [budget < 1], or as {!fixed} does. *)

@@ -257,10 +257,128 @@ let transformation_tests =
               (Quad.Range.v (vec [| 0.; 0. |]) (vec [| 1.; 1. |]))));
   ]
 
+(* Adaptive *)
+
+let k7 = Quad.Rule.kronrod 7
+let unit_range x = Quad.Range.v (Nx.zeros_like x) (Nx.ones_like x)
+
+let adaptive ?(budget = 200) ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) f range =
+  Quad.adaptive k7 ~tol ~budget f range
+
+(* ∫₀¹ e^(θx) dx = (e^θ − 1) / θ, and its θ-derivative. *)
+let exp_integral t = (Float.exp t -. 1.) /. t
+let exp_integral' t = ((t *. Float.exp t) -. Float.exp t +. 1.) /. (t *. t)
+
+let adaptive_tests =
+  [
+    test "a smooth integral converges" (fun () ->
+        let theta = vec [| -2.; 0.5; 3. |] in
+        let s =
+          adaptive (fun x -> Nx.exp (Nx.mul x theta)) (unit_range theta)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Nx.map_item exp_integral theta)
+          (Solution.get s));
+    test "an endpoint singularity converges by bisection" (fun () ->
+        (* ∫₀¹ √x = 2/3 and ∫₀¹ log x = −1. *)
+        let a = vec [| 0. |] in
+        let r = Quad.Range.v a (Nx.ones_like a) in
+        equal ~msg:"sqrt"
+          (Oracle.tensor ~rel:1e-9 ())
+          (vec [| 2. /. 3. |])
+          (Solution.get (adaptive Nx.sqrt r));
+        equal ~msg:"log"
+          (Oracle.tensor ~rel:1e-9 ())
+          (vec [| -1. |])
+          (Solution.get (adaptive ~budget:400 Nx.log r)));
+    test "each element refines on its own" (fun () ->
+        (* Gaussian peaks of widths 1, 10⁻¹ and 10⁻² at 0.3 on [0, 1]. A peak
+           narrower than the first rule's nodes is invisible to it, as to any
+           adaptive rule. *)
+        let w = vec [| 1.; 1e-1; 1e-2 |] in
+        let f x = Nx.exp (Nx.neg (Nx.square (Nx.div (Nx.sub_s x 0.3) w))) in
+        let s = adaptive f (unit_range w) in
+        let truth w =
+          w *. Float.sqrt Float.pi /. 2.
+          *. (Float.erf (0.7 /. w) +. Float.erf (0.3 /. w))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.map_item truth w) (Solution.get s);
+        let n = Nx.to_array (Solution.evaluations s) in
+        less int32 ~than:n.(2) n.(0));
+    test "a half-line converges" (fun () ->
+        let a = vec [| 0.; 1. |] in
+        let s =
+          adaptive (fun x -> Nx.exp (Nx.neg (Nx.sub x a))) (Quad.Range.from a)
+        in
+        equal (Oracle.tensor ~rel:1e-9 ()) (Nx.ones_like a) (Solution.get s));
+    test "the budget ends a solve" (fun () ->
+        let s = adaptive ~budget:2 Nx.log (unit_range (vec [| 0. |])) in
+        equal (Oracle.tensor ()) (Nx.ones Nx.bool [| 1 |])
+          (Solution.is Budget_spent s));
+    test "a pole is not finite or stalls" (fun () ->
+        let s =
+          adaptive
+            (fun x -> Nx.recip (Nx.sub_s x 0.5))
+            (unit_range (vec [| 0. |]))
+        in
+        equal (Oracle.tensor ()) (Nx.zeros Nx.bool [| 1 |]) (Solution.ok s));
+    test "grad in a parameter is the exact integral's" (fun () ->
+        let theta = vec [| -2.; 0.5; 3. |] in
+        let integral t =
+          Nx.sum
+            (Solution.get
+               (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t)))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.map_item exp_integral' theta)
+          (Rune.grad' integral theta));
+    test "grad in an end is the integrand there" (fun () ->
+        let b = vec [| 0.7; 2. |] in
+        let integral b =
+          Nx.sum
+            (Solution.get (adaptive Nx.cos (Quad.Range.v (Nx.zeros_like b) b)))
+        in
+        equal (Oracle.tensor ~rel:1e-9 ()) (Nx.cos b) (Rune.grad' integral b));
+    test "an element that did not converge has a zero derivative" (fun () ->
+        let p = vec [| 1.; -0.5 |] in
+        (* x^p on [0, 1]: integrable for p = 1, not for p = −1.5. *)
+        let integral p =
+          Nx.sum
+            (Solution.best
+               (adaptive ~budget:20
+                  (fun x -> Nx.pow x (Nx.sub_s (Nx.mul_s p 1.) 1.))
+                  (unit_range p)))
+        in
+        let g = Rune.grad' integral p in
+        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 1 ] g));
+    test "compiled equals eager" (fun () ->
+        let theta = vec [| -2.; 0.5; 3. |] in
+        let f t =
+          Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
+        in
+        equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.jit' f theta));
+    test "vmap is each lane's solve" (fun () ->
+        let theta = Nx.create f64 [| 2; 2 |] [| -2.; 0.5; 3.; 1. |] in
+        let f t =
+          Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
+        in
+        equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.vmap' f theta));
+    test "adaptive rejects a budget below 1" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"budget = 0 is below 1")
+          (fun () ->
+            Quad.adaptive k7 ~tol:(Tol.rel 1e-6) ~budget:0 Nx.exp
+              (unit_range (vec [| 0. |]))));
+  ]
+
 let () =
   exit
     (run "Jera.Quad"
        [
+         group "adaptive" adaptive_tests;
          group "rules" rule_tests;
          group "exactness" exactness_tests;
          group "ranges" range_tests;

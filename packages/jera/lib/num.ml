@@ -12,6 +12,13 @@ let eps (type b) (dtype : (float, b) Nx.dtype) =
   | Nx.Float8_e4m3 -> Float.ldexp 1. (-3)
   | Nx.Float8_e5m2 -> Float.ldexp 1. (-2)
 
+let bits (type b) (dtype : (float, b) Nx.dtype) =
+  match dtype with
+  | Nx.Float64 -> 64
+  | Nx.Float32 -> 32
+  | Nx.Float16 | Nx.BFloat16 -> 16
+  | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> 8
+
 let constant dtype a = Nx.create dtype [| Array.length a |] a
 
 type map = { f : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t }

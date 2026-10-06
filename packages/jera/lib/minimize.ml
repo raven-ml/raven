@@ -5,19 +5,6 @@
 
 open Elementwise
 
-let code = Solution.code
-let running_in st = Nx.equal_s st running
-
-let settle st cond c =
-  Nx.where (Nx.logical_and (running_in st) cond) (Nx.full_like st c) st
-
-let width (type b) (dtype : (float, b) Nx.dtype) =
-  match dtype with
-  | Nx.Float64 -> 64
-  | Nx.Float32 -> 32
-  | Nx.Float16 | Nx.BFloat16 -> 16
-  | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> 8
-
 (* (3 − √5) / 2, the golden section's smaller part. *)
 let golden = 0.3819660112501051
 
@@ -65,7 +52,7 @@ let bracket ~tol f ~lo ~hi =
   let zero = Nx.zeros_like a0 in
   let width0 = Nx.sub b0 a0 in
   let st0 = Nx.full Nx.int32 (Nx.shape a0) running in
-  let st0 = settle st0 (Nx.logical_not (Nx.isfinite f0)) (code Not_finite) in
+  let st0 = settle st0 (Nx.logical_not (Nx.isfinite f0)) Not_finite in
   (* An element ends when its bracket meets [tol] or holds no float. *)
   let finish s st =
     let half = Nx.div_s (Nx.sub s.b s.a) 2. in
@@ -74,7 +61,7 @@ let bracket ~tol f ~lo ~hi =
         (accepted tol ~e:half ~y:(Nx.add s.a half))
         (Num.adjacent s.a s.b)
     in
-    settle st narrow (code Converged)
+    settle st narrow Converged
   in
   let initial =
     {
@@ -94,7 +81,7 @@ let bracket ~tol f ~lo ~hi =
   in
   let step (fs, (st, (n, k))) =
     let s = of_fields fs in
-    let run = running_in st in
+    let run = searching st in
     let m = Nx.div_s (Nx.add s.a s.b) 2. in
     (* The smallest step: a part of the tolerance's scale at [x], so that a new
        point differs from [x] in the digits [tol] reads. *)
@@ -145,8 +132,8 @@ let bracket ~tol f ~lo ~hi =
     let u = Nx.where run u s.x in
     let fu = search u in
     let n = Nx.add n (Nx.cast Nx.int32 run) in
-    let st = settle st (Nx.logical_not (Nx.isfinite fu)) (code Not_finite) in
-    let run = running_in st in
+    let st = settle st (Nx.logical_not (Nx.isfinite fu)) Not_finite in
+    let run = searching st in
     let sel c y z = Nx.where (Nx.logical_and run c) y z in
     let better = Nx.less_equal fu s.fx in
     let right = Nx.greater_equal u s.x in
@@ -187,7 +174,7 @@ let bracket ~tol f ~lo ~hi =
     in
     (fields s', (finish s' st, (n, Nx.add_s k 1l)))
   in
-  let limit = (3 * width dtype) + 8 in
+  let limit = (3 * Num.bits dtype) + 8 in
   let carry =
     Nx.Ptree.(pair (list tensor) (pair tensor (pair tensor tensor)))
   in
@@ -195,7 +182,7 @@ let bracket ~tol f ~lo ~hi =
     Rune.iterate carry ~max:limit
       ~until:(fun (_, (st, (_, k))) ->
         Nx.logical_or
-          (Nx.logical_not (Nx.any (running_in st)))
+          (Nx.logical_not (Nx.any (searching st)))
           (Nx.greater_equal_s k (Int32.of_int limit)))
       ~f:step
       ( fields initial,
@@ -203,8 +190,8 @@ let bracket ~tol f ~lo ~hi =
           (Nx.ones Nx.int32 (Nx.shape a0), Nx.scalar Nx.int32 0l) ) )
   in
   let s = of_fields fs in
-  let st = settle st (Nx.ones Nx.bool (Nx.shape st)) (code Stalled) in
-  let ok = Nx.equal_s st (code Converged) in
+  let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   (* A minimum whose bracket kept a given end is that end. *)
   let at_lo = Nx.logical_and ok (Nx.equal s.a a0)
   and at_hi = Nx.logical_and ok (Nx.equal s.b b0) in

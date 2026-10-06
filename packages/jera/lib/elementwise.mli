@@ -9,6 +9,17 @@
 val running : int32
 (** [running] is the status code of an element still searching. *)
 
+val searching : (int32, Nx.int32_elt) Nx.t -> (bool, Nx.bool_elt) Nx.t
+(** [searching st] is [true] where [st] is {!running}. *)
+
+val settle :
+  (int32, Nx.int32_elt) Nx.t ->
+  (bool, Nx.bool_elt) Nx.t ->
+  Solution.status ->
+  (int32, Nx.int32_elt) Nx.t
+(** [settle st cond s] is [st] with [s] where an element still searching meets
+    [cond]. *)
+
 val state :
   string ->
   ok:(bool, Nx.bool_elt) Nx.t ->

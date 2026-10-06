@@ -261,3 +261,241 @@ let cumulative r f knots =
     and b = Nx.slice [ Nx.R (1, n) ] knots in
     let parts = sum fn r f (Range.v a b) in
     Nx.concatenate ~axis:0 [ zero; Nx.cumsum ~axis:0 parts ]
+
+(* Adaptive *)
+
+(* A Kronrod rule's embedded Gauss weights at its nodes: the Gauss nodes are the
+   Kronrod nodes of odd position. *)
+let embedded (r : _ Rule.t) =
+  let g = Rule.gauss ((Array.length r.x - 1) / 2) in
+  let w = Array.make (Array.length r.x) 0. in
+  Array.iteri (fun i gw -> w.((2 * i) + 1) <- gw) g.w;
+  w
+
+(* A range as the image of t in [0, 1]: the point and dx/dt. *)
+let image range t =
+  match range with
+  | Range.Finite (a, b) ->
+      let w = Nx.sub b a in
+      (Nx.add a (Nx.mul w t), Nx.broadcast_to (Nx.shape t) w)
+  | From a ->
+      (* x = a + t / (1 − t), the half-line map of u = 2t − 1. *)
+      let s = Nx.rsub_s 1. t in
+      (Nx.add a (Nx.div t s), Nx.recip (Nx.square s))
+  | Line c ->
+      (* x = c + u / (1 − u²) with u = 2t − 1. *)
+      let u = Nx.sub_s (Nx.mul_s t 2.) 1. in
+      let d = Nx.rsub_s 1. (Nx.square u) in
+      ( Nx.add c (Nx.div u d),
+        Nx.div (Nx.mul_s (Nx.add_s (Nx.square u) 1.) 2.) (Nx.square d) )
+
+(* The pieces [index / 2^level, (index + 1) / 2^level] of t, as their ends. *)
+let ends dtype level index =
+  let scale = Nx.exp2 (Nx.neg (Nx.cast dtype level)) in
+  let i = Nx.cast dtype index in
+  (Nx.mul i scale, Nx.mul (Nx.add_s i 1.) scale)
+
+(* The Kronrod and Gauss sums over each piece of shapes [[k] @ lanes]. *)
+let rules fn (r : _ Rule.t) gauss f range (t0, t1) =
+  let dtype = Nx.dtype t0 in
+  let rank = Nx.ndim t0 in
+  let along c =
+    Nx.reshape
+      (Array.append [| Array.length c |] (Array.make rank 1))
+      (Num.constant dtype c)
+  in
+  let half = Nx.div_s (Nx.sub t1 t0) 2. in
+  let t =
+    Nx.add
+      (Nx.unsqueeze ~axes:[ 0 ] t0)
+      (Nx.mul
+         (Nx.unsqueeze ~axes:[ 0 ] half)
+         (along (Array.map (fun x -> 1. +. x) r.x)))
+  in
+  let x, jac = image range t in
+  let y = Nx.mul (call fn f x) (Nx.mul jac (Nx.unsqueeze ~axes:[ 0 ] half)) in
+  ( Nx.sum ~axes:[ 0 ] (Nx.mul (along r.w) y),
+    Nx.sum ~axes:[ 0 ] (Nx.mul (along gauss) y) )
+
+let max_level = 62
+let chunk = 32
+
+(* The search's partition, per lane: [budget] slots of pieces as their level and
+   index, each piece's Kronrod sum and its difference from the Gauss sum, the
+   slots used, the status and the evaluations. *)
+type 'b partition = {
+  level : (int32, Nx.int32_elt) Nx.t;
+  index : (int64, Nx.int64_elt) Nx.t;
+  sums : (float, 'b) Nx.t;
+  errors : (float, 'b) Nx.t;
+  used : (int32, Nx.int32_elt) Nx.t;
+  status : (int32, Nx.int32_elt) Nx.t;
+  evaluations : (int32, Nx.int32_elt) Nx.t;
+}
+
+let partition () =
+  Nx.Ptree.iso
+    (fun (level, (index, (sums, (errors, (used, (status, evaluations)))))) ->
+      { level; index; sums; errors; used; status; evaluations })
+    (fun p ->
+      ( p.level,
+        (p.index, (p.sums, (p.errors, (p.used, (p.status, p.evaluations))))) ))
+    Nx.Ptree.(
+      pair tensor
+        (pair tensor
+           (pair tensor (pair tensor (pair tensor (pair tensor tensor))))))
+
+let adaptive r ~tol ~budget f range =
+  let fn = "Jera.Quad.adaptive" in
+  if budget < 1 then
+    invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
+  let gauss = embedded r in
+  let m = Array.length r.Rule.x in
+  let dtype = Range.dtype range in
+  let lanes = Range.shape range in
+  let detached =
+    match range with
+    | Range.Finite (a, b) -> Range.Finite (Rune.detach a, Rune.detach b)
+    | From a -> From (Rune.detach a)
+    | Line c -> Line (Rune.detach c)
+  in
+  let search x = Rune.detach (f x) in
+  let slots = Array.append [| budget |] lanes in
+  let slot =
+    Nx.broadcast_to slots
+      (Nx.reshape
+         (Array.append [| budget |] (Array.make (Array.length lanes) 1))
+         (Nx.arange Nx.int32 0 budget 1))
+  in
+  let in_use p =
+    Nx.less slot (Nx.broadcast_to slots (Nx.unsqueeze ~axes:[ 0 ] p.used))
+  in
+  let used_sum p v =
+    Nx.sum ~axes:[ 0 ] (Nx.where (in_use p) v (Nx.zeros_like v))
+  in
+  let worst p =
+    Nx.argmax ~axis:0
+      (Nx.where (in_use p) p.errors (Nx.full_like p.errors Float.neg_infinity))
+  in
+  let pick j v =
+    Nx.squeeze ~axes:[ 0 ]
+      (Nx.take_along_axis ~axis:0 ~indices:(Nx.unsqueeze ~axes:[ 0 ] j) v)
+  in
+  (* Settles the lanes whose partition met [tol], or cannot be refined. *)
+  let settle p =
+    let total = used_sum p p.sums and e = used_sum p p.errors in
+    let st =
+      Elementwise.settle p.status
+        (Nx.logical_not (Nx.isfinite total))
+        Not_finite
+    in
+    let st =
+      Elementwise.settle st (Elementwise.accepted tol ~e ~y:total) Converged
+    in
+    let j = worst p in
+    let lj = pick j p.level and ij = pick j p.index in
+    let t0, t1 = ends dtype lj ij in
+    let x0, _ = image detached t0 and x1, _ = image detached t1 in
+    let flat =
+      Nx.logical_or
+        (Nx.greater_equal_s lj (Int32.of_int max_level))
+        (Num.adjacent (Nx.minimum x0 x1) (Nx.maximum x0 x1))
+    in
+    let st = Elementwise.settle st flat Stalled in
+    let st =
+      Elementwise.settle st
+        (Nx.greater_equal_s p.used (Int32.of_int budget))
+        Budget_spent
+    in
+    { p with status = st }
+  in
+  (* Bisects each searching lane's worst piece: the left half replaces it and
+     the right one takes the next free slot. *)
+  let step p =
+    let run = Elementwise.searching p.status in
+    let j = worst p in
+    let lj = pick j p.level and ij = pick j p.index in
+    let level = Nx.stack [ Nx.add_s lj 1l; Nx.add_s lj 1l ] in
+    let index = Nx.stack [ Nx.mul_s ij 2L; Nx.add_s (Nx.mul_s ij 2L) 1L ] in
+    let k, g = rules fn r gauss search detached (ends dtype level index) in
+    let at s =
+      Nx.logical_and
+        (Nx.unsqueeze ~axes:[ 0 ] run)
+        (Nx.equal slot (Nx.unsqueeze ~axes:[ 0 ] s))
+    in
+    let left = at (Nx.cast Nx.int32 j) and right = at p.used in
+    let child i c =
+      Nx.broadcast_to slots (Nx.unsqueeze ~axes:[ 0 ] (Nx.get [ i ] c))
+    in
+    let put v c = Nx.where left (child 0 c) (Nx.where right (child 1 c) v) in
+    settle
+      {
+        p with
+        level = put p.level level;
+        index = put p.index index;
+        sums = put p.sums k;
+        errors = put p.errors (Nx.abs (Nx.sub k g));
+        used = Nx.add p.used (Nx.cast Nx.int32 run);
+        evaluations =
+          Nx.add p.evaluations
+            (Nx.mul_s (Nx.cast Nx.int32 run) (Int32.of_int (2 * m)));
+      }
+  in
+  let initial =
+    let whole dt = Nx.zeros dt (Array.append [| 1 |] lanes) in
+    let k, g =
+      rules fn r gauss search detached
+        (ends dtype (whole Nx.int32) (whole Nx.int64))
+    in
+    let first v =
+      let v = Nx.broadcast_to slots v in
+      Nx.where (Nx.equal_s slot 0l) v (Nx.zeros_like v)
+    in
+    settle
+      {
+        level = Nx.zeros Nx.int32 slots;
+        index = Nx.zeros Nx.int64 slots;
+        sums = first k;
+        errors = first (Nx.abs (Nx.sub k g));
+        used = Nx.ones Nx.int32 lanes;
+        status = Nx.full Nx.int32 lanes Elementwise.running;
+        evaluations = Nx.full Nx.int32 lanes (Int32.of_int m);
+      }
+  in
+  let p =
+    Rune.iterate (partition ()) ~max:budget
+      ~until:(fun p -> Nx.logical_not (Nx.any (Elementwise.searching p.status)))
+      ~f:step initial
+  in
+  let ok = Nx.equal_s p.status (Solution.code Converged) in
+  (* The answer: the rule over the final partition, tracked, in chunks of pieces
+     under a scan. An unused slot integrates the whole range with weight zero,
+     so its points lie inside the range. *)
+  let padded = chunk * ((budget + chunk - 1) / chunk) in
+  let pad v =
+    if padded = budget then v
+    else
+      Nx.concatenate ~axis:0
+        [ v; Nx.zeros (Nx.dtype v) (Array.append [| padded - budget |] lanes) ]
+  in
+  let used = in_use p in
+  let chunks v =
+    Nx.reshape (Array.append [| padded / chunk; chunk |] lanes) (pad v)
+  in
+  let unused v = Nx.where used v (Nx.zeros_like v) in
+  let sum_chunk total (level, (index, weight)) =
+    let k, _ = rules fn r gauss f range (ends dtype level index) in
+    (Nx.add total (Nx.sum ~axes:[ 0 ] (Nx.mul weight k)), ())
+  in
+  let total, () =
+    Rune.scan Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      Nx.Ptree.unit ~f:sum_chunk ~init:(Nx.zeros dtype lanes)
+      ( chunks (unused p.level),
+        (chunks (unused p.index), chunks (Nx.cast dtype used)) )
+  in
+  Solution.v ~fn
+    ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
+    ~value:(Nx.where ok total (used_sum p p.sums))
+    ~error:(used_sum p p.errors) ~status:p.status ~evaluations:p.evaluations
+    ~facts:[]

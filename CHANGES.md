@@ -958,6 +958,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Quad.adaptive`, Gauss–Kronrod integration on a partition refined by
+  bisecting the piece of largest error, elementwise, whose answer is the rule
+  over the final partition.
 - Add `Minimize.bracket`, Brent's method elementwise with a forced golden
   step, its minimum stated as a zero of rune's derivative of the function.
 - Add solves, which return a `Solution.t` with a status per lane:
