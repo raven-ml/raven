@@ -1,0 +1,5 @@
+(library
+ (name jera)
+ (public_name jera)
+ (private_modules num march)
+ (libraries nx nx.dtype rune))

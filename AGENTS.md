@@ -31,6 +31,7 @@ Breaking one causes real damage.
 | `packages/tolk` | the compiler, a port of tinygrad. Departures from tinygrad are recorded in `packages/tolk/DIVERGENCES.md` |
 | `packages/kaun` | layers, optimizers and training on rune. Models live in `examples/`, never in the library |
 | `packages/vega` | optimizers as values |
+| `packages/jera` | numerical methods: quadrature, interpolation, differential equations, splittings |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
 | `contrib/` | fehu, sowilo, norn: own `dune-project`, own `CHANGES.md`, public core libraries only |
 

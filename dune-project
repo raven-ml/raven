@@ -300,6 +300,20 @@
   (optimization machine-learning gradient-descent)))
 
 (package
+ (name jera)
+ (dir packages/jera)
+ (synopsis "Numerical methods for OCaml")
+ (description
+  "Integrals, interpolants, differential equations and splittings over Nx tensors, each stated so that Rune differentiates the answer rather than the algorithm: quadrature rules, piecewise Chebyshev series and splines, Runge-Kutta and stochastic marches, and symplectic splittings.")
+ (depends
+  (nx
+   (= :version))
+  (rune
+   (= :version)))
+ (tags
+  (numerical-methods quadrature interpolation differential-equations)))
+
+(package
  (name munin)
  (dir packages/munin)
  (synopsis "Local experiment tracking for Raven")
@@ -410,6 +424,8 @@
   (rune
    (= :version))
   (vega
+   (= :version))
+  (jera
    (= :version))
   (kaun
    (= :version))

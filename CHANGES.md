@@ -956,6 +956,14 @@ All notable changes to this project will be documented in this file.
   leaf's tangent; each leaf now gets its own. Tie weights by structure, not by
   aliasing.
 
+### Jera (new)
+
+- Add `jera`, numerical methods over nx tensors that rune differentiates,
+  maps and compiles. `Split` composes exact kicks and drifts of a separable
+  Hamiltonian: `leapfrog`, `mclachlan`, Yoshida's `yoshida4`, `yoshida6` and
+  `yoshida8`, and `Split.v` for palindromic coefficients, with `Split.step`
+  and `Split.march`.
+
 ### Ppx_ptree (new)
 
 - A mistyped `[@ptree.walk f]` and a `ptree` of another type are reported at

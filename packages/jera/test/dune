@@ -1,0 +1,5 @@
+(tests
+ (names test_split)
+ (modules test_split)
+ (package jera)
+ (libraries jera jera_test rune nx windtrap))

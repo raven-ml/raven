@@ -1,0 +1,5 @@
+(library
+ (name jera_test)
+ (wrapped false)
+ (modules oracle)
+ (libraries windtrap nx nx.dtype))
