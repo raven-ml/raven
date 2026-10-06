@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries kaun rune vega nx jera))
