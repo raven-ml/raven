@@ -1146,6 +1146,10 @@ thread.
 
 ### Tolk (new)
 
+- A compiled gather through a pad, such as `Nx.concatenate` of a buffer and an
+  `Nx.take`, no longer reads its indices before their buffer and faults: the
+  index's simplification under the pad's gate dropped the gate of the loads
+  inside it.
 - Stored values of one shape that share a computation, and do not read each
   other, run as one kernel that writes them all: a compiled `Nx_wide.add`
   runs one kernel, from six, and computes its chain once.

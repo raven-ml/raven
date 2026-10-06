@@ -657,6 +657,21 @@ index 62c3191..d0be7d4 100644
  
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
+diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
+index 7ec5fa2..e1dfb26 100644
+--- a/tinygrad/codegen/late/coalesce.py
++++ b/tinygrad/codegen/late/coalesce.py
+@@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
+   return drop_stmt
+ 
+ def simplify_valid_load(buf:UOp, start_idx:UOp, valid:UOp) -> UOp|None:
+-  idx = uop_given_valid(valid, start_idx)
++  # a LOAD in the index runs whatever valid, so its INDEX valid must survive the assumption: each load stands as a variable of its bounds
++  held = {l:UOp.variable(f"load{i}", l.vmin, l.vmax, l.dtype) for i,l in enumerate(u for u in start_idx.toposort() if u.op is Ops.LOAD)}
++  idx = uop_given_valid(valid.substitute(held), start_idx.substitute(held)).substitute({v:l for l,v in held.items()})
+   return None if idx is start_idx or idx is start_idx.simplify() else buf.index(idx.valid(valid))
+ 
+ def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
 diff --git a/tinygrad/codegen/late/gater.py b/tinygrad/codegen/late/gater.py
 index 319a60c..612ddfa 100644
 --- a/tinygrad/codegen/late/gater.py

@@ -4160,3 +4160,27 @@ stores through a pad.
   recorded `shard_of_computed_kernels` and `kernel_counts`, and the
   Postrange suite's `where_max_multioutput` cases, recorded from the equally
   patched tinygrad; rune's `Rune nx.wide › kernels`.
+
+## D138. A load's index is simplified without the loads in it assuming its gate
+
+- **tinygrad:** `codegen/late/coalesce.py:41-43` (`simplify_valid_load`),
+  which simplifies a gated index with `uop/symbolic.py:342`
+  (`uop_given_valid`) down into the loads the index reads.
+- **tolk:** `lib/codegen/late/coalesce.ml:16` (`simplify_valid_load`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** each load in the index stands as a variable of its bounds while
+  the gate simplifies the arithmetic around it, and is put back after, so a
+  load keeps its own index and gate. tinygrad substitutes the gate's bounds
+  into the loads too. A load's index whose gate implies the outer gate, such
+  as a pad's, loses that gate, and the load, which runs whatever the outer
+  gate, reads outside its buffer: the index of a gather through a pad is read
+  before the pad's first element. tinygrad's own `gated_given_valid`
+  (`uop/symbolic.py:427`) refuses an index that loads for the same reason.
+- **Reason:** (b): `Nx.concatenate` of a buffer and an `Nx.take` under
+  `Rune.jit`, as nested sampling's evidence concatenates its dead points and
+  its live points in likelihood order: the compiled kernel read up to the
+  buffer's length before the start of the indices and faulted.
+- **Pinned by:** the Coalesce suite (`test/codegen/late/coalesce`):
+  `indexing_simplify › a gather through a pad reads its indices only inside
+  the pad`.

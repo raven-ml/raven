@@ -515,6 +515,24 @@ let laws =
 
 (* indexing_simplify *)
 
+(* A gather through a pad: element [r] of slot 2 is [xs.(ids.(r - 4))] from
+   [r = 4] and [0] before it. Slot 0's index is loaded under the pad's gate. *)
+let padded_gather =
+  let r = Ops.range (Int 8) [ 0 ] in
+  let ids = Ops.param ~shape:[ Int 4 ] 0 Int32 in
+  let xs = Ops.param ~shape:[ Int 4 ] 1 Float32 in
+  let out = Ops.param ~shape:[ Int 8 ] 2 Float32 in
+  let inside = Ops.O.(int 3 < r) in
+  let id = Ops.load (Ops.index ids [ Ops.valid Ops.O.(r - int 4) inside ]) [] in
+  let at_id = Ops.valid (Ops.cast id Weak_int) inside in
+  let x = Ops.load (Ops.index xs [ at_id ]) [] in
+  Ops.sink [ Ops.end_ (Ops.store (Ops.index out [ r ]) x) [ r ] ]
+
+let gathered_writes u =
+  let ids = Array.map (fun i -> `Int (Bigint.of_int i)) [| 2; 0; 3; 1 |] in
+  let xs = Array.init 4 (fun i -> `Float (Float.of_int i +. 0.5)) in
+  Interpreter.writes ~buffers:[ (0, ids); (1, xs); (2, [||]) ] u
+
 let indexing_simplify =
   group "indexing_simplify"
     [
@@ -522,6 +540,13 @@ let indexing_simplify =
           equal Uops.uop
             (case "indices_simplified.golden" cell)
             (simplify (case "indices_input.golden" cell)));
+      (* A load in an index runs whatever the index's gate, so its own index
+         keeps its gate. *)
+      test "a gather through a pad reads its indices only inside the pad"
+        (fun () ->
+          equal (list write)
+            (gathered_writes padded_gather)
+            (gathered_writes (simplify padded_gather)));
     ]
 
 (* Excluded paths (README) *)

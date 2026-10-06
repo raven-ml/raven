@@ -9,8 +9,29 @@ open Ops
 
 (* Load valid simplification *)
 
+(* A load in the index runs whatever [valid], so its own index cannot assume it:
+   a gather through a pad would read its indices outside the pad. Each load
+   stands as a variable of its bounds while [valid] simplifies the arithmetic
+   around it. *)
 let simplify_valid_load buf start_idx valid =
-  let idx = Symbolic.uop_given_valid valid start_idx in
+  let loads =
+    List.filter
+      (fun u -> op u = Op.Load)
+      (Nodes.to_list (backward_slice ~calls:Skip start_idx))
+  in
+  let held =
+    List.mapi
+      (fun i l ->
+        let name = "load" ^ string_of_int i in
+        (l, variable ~dtype:(dtype l) name (vmin l) (vmax l)))
+      loads
+  in
+  let hold u = substitute ~calls:Skip ~pass:Fixed_point u held in
+  let idx = Symbolic.uop_given_valid (hold valid) (hold start_idx) in
+  let idx =
+    substitute ~calls:Skip ~pass:Fixed_point idx
+      (List.map (fun (l, v) -> (v, l)) held)
+  in
   if idx == start_idx || idx == simplify start_idx then None
   else Some (index buf [ Ops.valid idx valid ])
 
