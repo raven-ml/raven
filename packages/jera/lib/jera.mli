@@ -1126,9 +1126,9 @@ module Ode : sig
       that side, and the component's new sign tells the crossing's direction. A
       crossing that should not stop the solve, or one in a direction to ignore,
       is a restart from the returned time, one solve per crossing. A lane
-      without a crossing in after [t0] up to [t1] converges with
-      [(t1, y t1, −1)]; a program tells the two apart by the index, or by
-      [t < t1]. A step holding an even number of crossings of a component shows
+      without a crossing after [t0] up to [t1] included converges with
+      [(t1, y t1, −1)]: the index tells the two apart, whichever way the solve
+      runs. A step holding an even number of crossings of a component shows
       none, so a crossing narrower than the field's steps can be missed or
       reported out of order: an event whose sign changes once per crossing, or
       {!path} and a finer search, resolves it.

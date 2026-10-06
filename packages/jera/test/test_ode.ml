@@ -696,6 +696,20 @@ let event_tests =
         equal (Oracle.tensor ()) (scalar 1.) t;
         equal close (scalar (10. -. (gravity /. 2.))) q;
         equal (Oracle.tensor ()) (index (-1l)) i);
+    test "a backward solve without a crossing ends at t1 with index -1"
+      (fun () ->
+        let t, _, i =
+          Solution.get
+            (Ode.event one Ode.tsit5
+               ~tol:(Tol.v ~rel:1e-11 ~abs:1e-13)
+               ~budget:200
+               (decay (scalar 1.))
+               ~event:(fun _ y -> Nx.sub_s y 2.)
+               ~t0:(scalar 2.) ~t1:(scalar 0.)
+               (scalar (Float.exp (-2.))))
+        in
+        equal (Oracle.tensor ()) (scalar 0.) t;
+        equal (Oracle.tensor ()) (index (-1l)) i);
     test "a zero at t0 is not a crossing" (fun () ->
         let _, _, i =
           Solution.get
