@@ -379,11 +379,7 @@ let adaptive_tests =
           Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
         in
         equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.jit' f theta));
-    xfail
-      ~reason:
-        "tolk: Divandmod.fold divide_by_gcd raises on option is None compiling \
-         the reverse of the chunked answer"
-    @@ test "compiled grad equals eager grad" (fun () ->
+    test "compiled grad equals eager grad" (fun () ->
         let theta = vec [| -2.; 0.5; 3. |] in
         let g =
           Rune.grad' (fun t ->
@@ -568,11 +564,7 @@ let cubature_tests =
         equal
           (Oracle.tensor ~rel:1e-13 ())
           (integral theta) (Rune.jit' integral theta));
-    xfail
-      ~reason:
-        "tolk: Divandmod.fold divide_by_gcd raises on option is None compiling \
-         the reverse of the chunked answer"
-    @@ test "compiled grad equals eager grad" (fun () ->
+    test "compiled grad equals eager grad" (fun () ->
         let theta = vec [| 0.5; -1. |] in
         let g =
           Rune.grad' (fun t ->
