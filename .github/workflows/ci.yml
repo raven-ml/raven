@@ -53,6 +53,14 @@ jobs:
         if: runner.os == 'Windows'
         run: rm -f "C:/Strawberry/perl/bin/pkg-config" "C:/Strawberry/perl/bin/pkg-config.bat"
 
+      # opam installs bytesrw's pkgconf through Cygwin's setup, which also
+      # upgrades a cached Cygwin and kills every process holding cygwin1.dll:
+      # run from the Cygwin bash of the other steps, it kills its own step.
+      - name: Install pkgconf outside Cygwin
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: opam install conf-pkg-config
+
       - name: Install dependencies
         run: |
           opam pin add thumper git+https://github.com/invariant-hq/thumper.git --no-action
