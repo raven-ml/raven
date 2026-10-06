@@ -15,3 +15,4 @@ density maps it to one log density per chain.
 - `Norn.Diag`: R-hat, effective sample sizes and calibration, each a value
   of your structure: `(Norn.Diag.rhat schools post).tau` is the R-hat of
   `tau`.
+- `Norn.Summary`: a table of draws by element, with its findings.

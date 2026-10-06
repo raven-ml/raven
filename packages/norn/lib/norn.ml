@@ -42,3 +42,4 @@ module Bij = Bij
 module Stats = Stats
 module Draws = Draws
 module Diag = Diag
+module Summary = Summary
