@@ -171,6 +171,35 @@ let solve m () =
   let b = Nx.rand Nx.float64 [| m |] in
   ignore (Sys.opaque_identity (Rune.jit' (fun a -> Nx.solve a b) a))
 
+(* [betainc] and [log_betainc] of three inputs, and the derivative of
+   [log_betainc] in each, over shapes spread across TOMS 708's regions. *)
+let betainc =
+  let a = Nx.exp (input (-5.) 12.) and b = Nx.exp (input (-5.) 12.) in
+  let x = input 0. 1. in
+  let compile3 f =
+    let g =
+      Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) f
+    in
+    ignore (Sys.opaque_identity (g a b x))
+  in
+  let sum f a b x = Nx.sum (f a b x) in
+  [
+    ("special/betainc", fun () -> compile3 Nx.betainc);
+    ("special/log_betainc", fun () -> compile3 Nx.log_betainc);
+    ( "special/log_betainc-grad-x",
+      fun () ->
+        compile3 (fun a b x -> Rune.grad' (fun x -> sum Nx.log_betainc a b x) x)
+    );
+    ( "special/log_betainc-grad-a",
+      fun () ->
+        compile3 (fun a b x -> Rune.grad' (fun a -> sum Nx.log_betainc a b x) a)
+    );
+    ( "special/log_betainc-grad-b",
+      fun () ->
+        compile3 (fun a b x -> Rune.grad' (fun b -> sum Nx.log_betainc a b x) b)
+    );
+  ]
+
 let cases =
   [
     ("erfinv", fun () -> compile Nx.erfinv (input (-1.) 1.));
@@ -187,7 +216,7 @@ let cases =
   @ special "digamma" Nx.digamma (-10.) 20.
   @ special "i0e" Nx.i0e (-30.) 30.
   @ special "i1e" Nx.i1e (-30.) 30.
-  @ lbeta
+  @ lbeta @ betainc
   @ [ ("wide/sum-1e6", wide_sum) ]
   @ List.map
       (fun m -> (Printf.sprintf "linalg/solve-%d" m, solve m))

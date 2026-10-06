@@ -20,7 +20,9 @@ the function holds that scale.
 """
 
 import argparse
+import functools
 from decimal import Decimal
+from fractions import Fraction
 import difflib
 import math
 import random
@@ -1348,7 +1350,7 @@ def per_dtype(fmt):
         ("digamma_from", ocaml_float(DIGAMMA_FROM[fmt])),
         ("sinpi", ocaml_array(sinpi_poly(fmt))),
         ("digamma_series", ocaml_array([round_to(fmt, mpmath.bernoulli(2 * k) / (2 * k)) for k in range(k_psi, 0, -1)])),
-    ] + bessel_tables(fmt) + igamma_tables(fmt)
+    ] + bessel_tables(fmt) + igamma_tables(fmt) + beta_tables(fmt)
 
 
 # The tables both dtypes share, highest degree first; a dtype rounds each
@@ -1442,6 +1444,21 @@ def shared_tables():
         ("igamma_guess_p", ocaml_array([float(c) for c in reversed(GAMINV_A)])),
         ("igamma_guess_q", ocaml_array([float(c) for c in reversed(GAMINV_B)] + [1.0])),
         ("igamma_guess_terms", ocaml_float(float(GAMINV_TERMS))),
+        ("beta_bpser_bx", ocaml_float(BETA_BPSER_BX)),
+        ("beta_bup_x", ocaml_float(BETA_BUP_X)),
+        ("beta_power_bx", ocaml_float(BETA_POWER_BX)),
+        ("beta_power_x", ocaml_float(BETA_POWER_X)),
+        ("beta_a_small", ocaml_float(BETA_A_SMALL)),
+        ("beta_x_far", ocaml_float(BETA_X_FAR)),
+        ("beta_x_near", ocaml_float(BETA_X_NEAR)),
+        ("beta_bgrat_b", ocaml_float(BETA_BGRAT_B)),
+        ("beta_b_small", ocaml_float(BETA_B_SMALL)),
+        ("beta_frac_a", ocaml_float(BETA_FRAC_A)),
+        ("beta_frac_lambda", ocaml_float(BETA_FRAC_LAMBDA)),
+        ("beta_bup_terms", str(BETA_BUP_TERMS)),
+        ("beta_bup_most", str(BETA_BUP_MOST)),
+        ("beta_large", ocaml_float(BETA_LARGE)),
+        ("rlog1_series", ocaml_float(RLOG1_SERIES)),
     ]
 
 
@@ -2004,6 +2021,555 @@ def igamma_quantile_points(fmt):
     return points
 
 
+# The incomplete beta function: I_x(a, b), its complement and their
+# logarithms. References come from the continued fraction of the tail below
+# the mean (DLMF 8.17.22), evaluated by Lentz's method at the working
+# precision, the other tail by the symmetry I_x(a, b) = 1 - I_{1-x}(b, a);
+# mpmath's hypergeometric form fails to converge at large a and b.
+
+BETAINC_CACHE = {}
+
+
+def beta_cf(a, b, x):
+    """sum of the continued fraction of a B(a, b) I_x(a, b) / (x^a (1-x)^b)."""
+    tiny = mpf(2) ** (-10 * mp.prec)
+    eps = mpf(2) ** (-mp.prec)
+    guard = lambda v: tiny if v == 0 else v
+    c = mpf(1)
+    d = 1 / guard(1 - (a + b) * x / (a + 1))
+    h = d
+    for m in range(1, 10 ** 7):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((a - 1 + m2) * (a + m2))
+        d = 1 / guard(1 + aa * d)
+        c = guard(1 + aa / c)
+        h *= d * c
+        aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + 1 + m2))
+        d = 1 / guard(1 + aa * d)
+        c = guard(1 + aa / c)
+        delta = d * c
+        h *= delta
+        if abs(delta - 1) < eps:
+            return h
+    raise RuntimeError("the continued fraction does not converge")
+
+
+def beta_tail(a, b, x):
+    """I_x(a, b) for x below the mean (a + 1) / (a + b + 2)."""
+    log_front = (a * mpmath.log(x) + b * mpmath.log1p(-x)
+                 - (mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)))
+    return mpmath.exp(log_front) * beta_cf(a, b, x) / a
+
+
+def betainc_direct(a, b, x):
+    """The tail below or above the mean, (value, is_upper), for finite a, b > 0
+    and x in (0, 1), at the working precision."""
+    key = (a, b, x, mp.prec)
+    if key in BETAINC_CACHE:
+        return BETAINC_CACHE[key]
+    a, b, x = mpf(a), mpf(b), mpf(x)
+    extra = int(mpmath.log(a + b + 2, 2)) + 20
+    with mp.workprec(mp.prec + extra):
+        if x < (a + 1) / (a + b + 2):
+            r = (beta_tail(a, b, x), False)
+        else:
+            r = (beta_tail(b, a, 1 - x), True)
+    r = (+r[0], r[1])
+    BETAINC_CACHE[key] = r
+    return r
+
+
+def betainc_exact(a, b, x, upper):
+    """I_x(a, b), or 1 - I_x(a, b)."""
+    direct, is_upper = betainc_direct(a, b, x)
+    return direct if upper == is_upper else 1 - direct
+
+
+def log_betainc_exact(a, b, x, upper):
+    """log I_x(a, b), or log (1 - I_x(a, b)), the complement by log1p so that
+    it keeps the digits 1 - I would round away."""
+    direct, is_upper = betainc_direct(a, b, x)
+    return mpmath.log(direct) if upper == is_upper else mpmath.log1p(-direct)
+
+
+def beta_edge(a, b, x, upper):
+    """The value at the edges of the domain, or None inside it."""
+    if math.isnan(a) or math.isnan(b) or math.isnan(x):
+        return math.nan
+    if a <= 0 or b <= 0 or x < 0 or x > 1 or (math.isinf(a) and math.isinf(b)):
+        return math.nan
+    if x == 0 or (math.isinf(a) and x < 1):
+        lower = 0.0
+    elif x == 1 or math.isinf(b):
+        lower = 1.0
+    else:
+        return None
+    return 1.0 - lower if upper else lower
+
+
+def betainc_reference(upper, log):
+    def f(fmt, a, b, x):
+        edge = beta_edge(a, b, x, upper)
+        if edge is not None:
+            if not log or math.isnan(edge):
+                return edge
+            return -math.inf if edge == 0 else 0.0
+        exact = log_betainc_exact if log else betainc_exact
+        return correctly_rounded(fmt, lambda a, b, x: exact(a, b, x, upper), a, b, x)
+    return f
+
+
+BETAINC_AXIS = [1e-10, 1e-3, 0.1, 0.5, 1.0, 1.5, 3.0, 8.0, 15.0, 30.0, 40.0, 100.0, 1e3, 1e4, 1e5,
+                2.0 ** 20]
+
+
+def beta_region(fmt, a, b, x):
+    """The TOMS 708 method special.ml selects for finite a, b > 0 and x in
+    (0, 1), as it selects it."""
+    eps = BETA_EPS[fmt]
+    small = a <= 1 or b <= 1
+    lam = a - (a + b) * x
+    swap = x > 0.5 if small else lam < 0
+    a0, b0, x0 = (b, a, 1 - x) if swap else (a, b, x)
+    lam0 = -lam if swap else lam
+    if small:
+        if b0 < eps and b0 < eps * a0:
+            return "bpser"
+        if a0 < eps and a0 < eps * b0 and b0 * x0 <= 1:
+            return "apser"
+        both = a0 <= 1 and b0 <= 1
+        far = x0 >= BETA_X_FAR
+        if both:
+            if a0 >= BETA_A_SMALL or a0 >= b0 or a0 * math.log(x0) <= math.log(BETA_POWER_X):
+                return "bpser"
+            return "bpser_y" if far else "bup_bgrat"
+        near_pow = x0 < BETA_X_NEAR and a0 * math.log(x0 * b0) <= math.log(BETA_POWER_BX)
+        if b0 <= 1 or (not far and near_pow):
+            return "bpser"
+        if far:
+            return "bpser_y"
+        return "bgrat" if b0 > BETA_BGRAT_B else "bup_bgrat"
+    if b0 < BETA_B_SMALL:
+        if b0 * x0 <= BETA_BPSER_BX:
+            return "bpser"
+        if x0 <= BETA_BUP_X:
+            return "bup_bpser"
+        return "bup_bup_bgrat" if a0 <= BETA_BGRAT_B else "bup_bgrat_large"
+    low = min(a0, b0)
+    if low <= BETA_FRAC_A or lam0 > BETA_FRAC_LAMBDA * low:
+        return "bfrac"
+    return "basym"
+
+
+BETA_REGIONS = ["bpser", "apser", "bpser_y", "bup_bgrat", "bgrat", "bup_bpser", "bup_bup_bgrat",
+                "bup_bgrat_large", "bfrac", "basym"]
+
+
+def beta_region_points(fmt, rng, per_region):
+    """Seeded points until each region of beta_region holds per_region of
+    them: a and b log-uniform, some far below 1, and x uniform, log-uniform
+    from 0 or 1, or near the mean."""
+    r = lambda v: round_to(fmt, v)
+    found = {k: [] for k in BETA_REGIONS}
+    with mp.workprec(POINT_PREC):
+        while any(len(v) < per_region for v in found.values()):
+            def shape():
+                lo = rng.choice([-60, -30, -10, 0])
+                return r(mpf(2) ** mpf(rng.uniform(lo, 20)))
+            a, b = shape(), shape()
+            kind = rng.random()
+            if kind < 0.3:
+                x = r(mpf(rng.uniform(0, 1)))
+            elif kind < 0.5:
+                x = r(mpf(10) ** mpf(rng.uniform(-30, 0)))
+            elif kind < 0.7:
+                x = r(1 - mpf(10) ** mpf(rng.uniform(-15, 0)))
+            else:
+                mean = mpf(a) / (a + b)
+                sd = mpmath.sqrt(mpf(a) * b / (a + b) ** 3)
+                x = r(mean + mpf(rng.uniform(-40, 40)) * sd)
+            if not (0 < x < 1 and a > 0 and b > 0):
+                continue
+            k = beta_region(fmt, a, b, x)
+            if len(found[k]) < per_region:
+                found[k].append((a, b, x))
+    return [p for k in BETA_REGIONS for p in found[k]]
+
+
+def beta_boundary_points(fmt):
+    """Each region boundary with eight neighbours on each side, the arguments
+    off the boundary chosen so that the selection reaches it."""
+    r = lambda v: round_to(fmt, mpf(v))
+    eps = BETA_EPS[fmt]
+    in_x = [  # (a, b, the boundary in x)
+        (0.5, 0.7, 0.5), (0.3, 3.0, 0.5),
+        (0.01, 0.5, BETA_X_FAR), (0.5, 5.0, BETA_X_FAR),
+        (0.5, 4.0, BETA_X_NEAR),
+        (0.1, 0.5, BETA_POWER_X ** (1 / 0.1)),
+        (0.5, 5.0, BETA_POWER_BX ** 2 / 5),
+        (50.0, 10.0, BETA_BPSER_BX / 10),
+        (30.0, 5.0, BETA_BUP_X),
+        (50.0, 50.0, 0.5), (30.0, 60.0, 30 / 90),
+        (200.0, 300.0, (200 - BETA_FRAC_LAMBDA * 200) / 500),
+        (1e4, 5e3, (1e4 - BETA_FRAC_LAMBDA * 5e3) / 1.5e4),
+        (0.5, 1e-20, 1e-3), (eps * 1e-3, 100.0, 1 / 100),
+    ]
+    in_a = [  # (the boundary in a, b, x)
+        (BETA_BGRAT_B, 3.0, 0.75), (1.0, 5.0, 0.1), (BETA_A_SMALL, 0.5, 0.4),
+        (BETA_LARGE, 50.0, 0.14), (BETA_FRAC_A, 300.0, 0.25),
+    ]
+    in_b = [  # (a, the boundary in b, x)
+        (200.0, BETA_B_SMALL, 0.1), (0.5, BETA_BGRAT_B, 0.2), (5.0, 1.0, 0.1),
+        (0.5, eps * 0.5, 0.3),
+    ]
+    points = [(r(a), r(b), x) for a, b, c in in_x for x in neighbours(fmt, c)]
+    points += [(a, r(b), r(x)) for c, b, x in in_a for a in neighbours(fmt, c)]
+    points += [(r(a), b, r(x)) for a, c, x in in_b for b in neighbours(fmt, c)]
+    return [p for p in points if 0 < p[2] < 1 and p[0] > 0 and p[1] > 0]
+
+
+def betainc_points(fmt):
+    rng = random.Random(f"betainc {fmt.name}")
+    r = lambda v: round_to(fmt, mpf(v))
+    axis = [r(v) for v in BETAINC_AXIS]
+    xs = [r(v) for v in [1e-30, 1e-5, 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99]] + [r(1 - mpf(10) ** -5)]
+    points = []
+    for a in axis:
+        for b in axis:
+            near = []
+            with mp.workprec(POINT_PREC):
+                mean = mpf(a) / (a + b)
+                sd = mpmath.sqrt(mpf(a) * b / (a + b) ** 3 / (1 + 1 / (a + b)))
+                for k in [0, -1, 1, -5, 5, -30, 30]:
+                    v = round_to(fmt, mean + k * sd)
+                    if 0 < v < 1:
+                        near.append(v)
+            points += [(a, b, x) for x in xs + near]
+    edges = [(1.0, 1.0, 0.0), (1.0, 1.0, 1.0), (2.0, 3.0, -0.0), (0.5, 0.5, 1.0),
+             (math.inf, 2.0, 0.5), (math.inf, 2.0, 1.0), (2.0, math.inf, 0.5), (2.0, math.inf, 0.0),
+             (math.inf, math.inf, 0.5), (0.0, 1.0, 0.5), (1.0, 0.0, 0.5), (-1.0, 1.0, 0.5),
+             (1.0, -1.0, 0.5), (1.0, 1.0, -0.5), (1.0, 1.0, 1.5), (math.nan, 1.0, 0.5),
+             (1.0, math.nan, 0.5), (1.0, 1.0, math.nan), (fmt.tiny, fmt.tiny, 0.5),
+             (1.0, 1.0, fmt.tiny), (2.0, 2.0, fmt.tiny), (0.5, 0.5, next_down(fmt, 1.0)),
+             (r(5e5), 0.5, r(1 - mpf(10) ** -4)), (r(1e-10), r(1e-10), 0.5), (r(1e-3), r(1e-2), 0.5)]
+    with mp.workprec(POINT_PREC):
+        randoms = []
+        for _ in range(160):
+            a = r(mpf(2) ** mpf(rng.uniform(-30, 20)))
+            b = r(mpf(2) ** mpf(rng.uniform(-30, 20)))
+            x = r(mpf(rng.uniform(0, 1)) if rng.random() < 0.5 else mpf(10) ** mpf(rng.uniform(-20, 0)))
+            randoms.append((a, b, x if 0 < x < 1 else 0.5))
+    return (points + edges + randoms + beta_region_points(fmt, rng, 40)
+            + beta_boundary_points(fmt))
+
+
+# TOMS 708's regions (DiDonato and Morris, Algorithm 708, ACM TOMS 18 (1992)):
+# the boundaries the composition switches on and the goldens' points
+# surround.
+
+BETA_BPSER_BX = 0.7      # both > 1: BPSER while b0 x0 <= 0.7 and b0 < BETA_B_SMALL
+BETA_BUP_X = 0.7         # b0 < BETA_B_SMALL: BPSER after BUP while x0 <= 0.7, else BGRAT
+BETA_POWER_BX = 0.7      # (x0 b0)^a0 <= 0.7 with x0 < BETA_X_NEAR: BPSER
+BETA_POWER_X = 0.9       # x0^a0 <= 0.9: BPSER
+BETA_A_SMALL = 0.2       # a0 >= min(0.2, b0): BPSER
+BETA_X_FAR = 0.3         # x0 >= 0.3: BPSER on the complement
+BETA_X_NEAR = 0.1
+BETA_BGRAT_B = 15.0      # b0 > 15: BGRAT alone; a0 <= 15: BUP of 20 terms first
+BETA_B_SMALL = 40.0
+BETA_FRAC_A = 100.0      # BFRAC up to 100, or where lambda > 0.03 of the smaller
+BETA_FRAC_LAMBDA = 0.03
+BETA_BUP_TERMS = 20
+BETA_BUP_MOST = 39       # the largest masked count, floor b0 - 1 or so below 40
+BETA_LARGE = 8.0         # x^a y^b / B(a, b) by its large-argument form from 8
+RLOG1_SERIES = 0.6       # e - log1p e by its series where |e| <= 0.6
+BETA_EPS = {F32: 2.0 ** -23, F64: 1e-15}
+
+# The counts of the incomplete beta's series, continued fractions and
+# expansions, each the least that meets its tolerance at its region's worst
+# points: the value within u/8 of its limit, relative to the quantity it
+# enters, and each argument's derivative within u. Counts are proven at 120
+# bits against a run far past convergence.
+
+
+def least_count(fmt, points, run, start, stop, deep):
+    """The least n in [start, stop] for which run(n, *p) meets the tolerance
+    at every point p against run(deep, *p), its value and its derivative in
+    each argument."""
+    with mp.workprec(120):
+        refs = []
+        for p in points:
+            p = [mpf(v) for v in p]
+            full = run(deep, *p)
+            slopes = [mpmath.diff(lambda v, i=i: run(deep, *(p[:i] + [v] + p[i + 1:])), p[i]) for i in range(len(p))]
+            refs.append((p, full, slopes))
+
+        def ok(n):
+            for p, full, slopes in refs:
+                if abs(run(n, *p) - full) > fmt.u / 8 * abs(full):
+                    return False
+                for i, d in enumerate(slopes):
+                    dn = mpmath.diff(lambda v: run(n, *(p[:i] + [v] + p[i + 1:])), p[i])
+                    if abs(dn - d) * abs(p[i]) > fmt.u * (abs(full) + abs(d * p[i])):
+                        return False
+            return True
+
+        # The tolerance holds from some count on: bisect for it.
+        lo, hi = start, stop
+        if not ok(hi):
+            sys.exit("no count meets its tolerance")
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if ok(mid):
+                hi = mid
+            else:
+                lo = mid + 1
+        return lo
+
+
+def rlog1_terms(fmt):
+    """(e - log1p e) / e^2 = 1/(e + 2) - 2 e P(r^2) / (e + 2)^3 over |e| <=
+    RLOG1_SERIES, P truncated to n terms."""
+    def run(n, e):
+        r = e / (e + 2)
+        return 1 / (e + 2) - 2 * e / (e + 2) ** 3 * sum(r ** (2 * k) / (2 * k + 3) for k in range(n))
+    points = [(-RLOG1_SERIES,), (RLOG1_SERIES,), (-0.3,)]
+    return least_count(fmt, points, run, 1, 60, 200)
+
+
+def bpser_terms(fmt):
+    """1 + a sum_n c_n / (a + n) at x up to BETA_BUP_X with b at most 1, and at
+    x = BETA_BPSER_BX / b above."""
+    def run(n, a, b, x):
+        c, s = mpf(1), mpf(0)
+        for k in range(1, n + 1):
+            c *= (1 - b / k) * x
+            s += c / (a + k)
+        return 1 + a * s
+    x = BETA_BUP_X
+    points = [(a, b, x) for a in [1e-3, 1.0, 1e3, 1e6] for b in [1e-6, 0.5, 1.0]]
+    points += [(a, b, BETA_BPSER_BX / b) for a in [1.0, 1e3, 1e6] for b in [1.001, 2.0, 39.0]]
+    return least_count(fmt, points, run, 5, 400, 1500)
+
+
+def apser_terms(fmt):
+    """c + sum_j t_j / j for b x <= 1, x <= 1/2: c = log x + psi b + gamma + t_1,
+    t_1 = x - b x, t_j = t_(j-1) (x - b x / j)."""
+    def run(n, b, x):
+        bx = b * x
+        t = x - bx
+        c = mpmath.log(x) + mpmath.digamma(b) + mpmath.euler + t
+        s = mpf(0)
+        for j in range(2, n + 1):
+            t *= x - bx / j
+            s += t / j
+        return c + s
+    points = [(b, 0.5) for b in [1e-9, 0.5, 1.0, 2.0]]
+    return least_count(fmt, points, run, 2, 300, 600)
+
+
+def bfrac_cf(n, a, b, x):
+    """BFRAC's 1 / (beta_0 + alpha_1 / (beta_1 + ...)), n deep, lam = a - (a + b)
+    x."""
+    lam = a - (a + b) * x
+    y = 1 - x
+    c, c0, c1, yp1 = 1 + lam, b / a, 1 + 1 / a, y + 1
+    w = lambda k: k * (b - k) * x
+
+    def alpha(k):
+        e = a / (a + 2 * k - 1)
+        p = 1 + (k - 1) / a
+        return p * (p + c0) * e * e * w(k) * x
+
+    def beta(k):
+        if k == 0:
+            return c / c1
+        t = k / a
+        return k + w(k) / (a + 2 * k - 1) + (1 + t) / (c1 + 2 * t) * (c + k * yp1)
+
+    f = beta(n)
+    for k in range(n, 0, -1):
+        f = beta(k - 1) + alpha(k) / f
+    return 1 / f
+
+
+def bfrac_depth(fmt):
+    """BFRAC on its region: b0 at least BETA_B_SMALL, a0 to BETA_FRAC_A near
+    the mean, and beyond it where lam passes BETA_FRAC_LAMBDA of the smaller."""
+    points = []
+    for low in [BETA_B_SMALL, BETA_FRAC_A, 101.0, 1e3, 1e4, 2.0 ** 20]:
+        for ratio in [1.0, 10.0, 1e3]:
+            for a, b in [(low, low * ratio), (low * ratio, low)]:
+                if max(a, b) > 2.0 ** 20 or b < BETA_B_SMALL:
+                    continue
+                lams = [0.0] if min(a, b) <= BETA_FRAC_A else []
+                lams.append(BETA_FRAC_LAMBDA * min(a, b) * 1.001)
+                for lam in lams:
+                    points.append((a, b, (a - lam) / (a + b)))
+    return least_count(fmt, points, bfrac_cf, 5, 400, 1200)
+
+
+def basym_sum(n, a, b, lam):
+    """BASYM's sum J0 + sum_i d_i w0^i J_i through d_(n+1), in exact arithmetic."""
+    d = basym_coefficients(30)
+    d = [[mpf(c.numerator) / c.denominator for c in poly] for poly in d]
+    p, q = min(a, b), max(a, b)
+    h = p / q
+    sign = 1 if b >= a else -1
+    w0 = sign / mpmath.sqrt(p * (1 + h))
+    rl = lambda e: e - mpmath.log1p(e)
+    f = a * rl(-lam / a) + b * rl(lam / b)
+    z0 = mpmath.sqrt(f)
+    e0, e1 = 2 / mpmath.sqrt(mpmath.pi), mpf(1) / (2 * mpmath.sqrt(2))
+    poly = lambda i: mpmath.polyval(d[i - 1][::-1], h) / (1 + h) ** (i // 2)
+    j0 = 0.5 / e0 * mpmath.exp(f) * mpmath.erfc(z0)
+    j1 = e1
+    s = j0 + poly(1) * w0 * j1
+    znm1, zn, z2 = z0 * mpmath.sqrt(2), 2 * f, 2 * f
+    w = w0
+    for k in range(2, n + 1, 2):
+        j0 = e1 * znm1 + (k - 1) * j0
+        j1 = e1 * zn + k * j1
+        znm1, zn = z2 * znm1, z2 * zn
+        w *= w0
+        t0 = poly(k) * w * j0
+        w *= w0
+        t1 = poly(k + 1) * w * j1
+        s += t0 + t1
+    return s
+
+
+def basym_terms(fmt):
+    """BASYM where both arguments pass BETA_FRAC_A and lam is within
+    BETA_FRAC_LAMBDA of the smaller; an even count."""
+    points = []
+    for low in [BETA_FRAC_A * 1.001, 300.0, 1e4]:
+        for ratio in [1.0, 3.0, 100.0]:
+            for a, b in [(low, low * ratio), (low * ratio, low)]:
+                for frac in [0.0, BETA_FRAC_LAMBDA / 2, BETA_FRAC_LAMBDA]:
+                    points.append((a, b, frac * min(a, b)))
+    n = least_count(fmt, points, basym_sum, 2, 29, 28)
+    return n + n % 2
+
+
+def bgrat_sum(n, a, b, x):
+    """BGRAT's J0 + sum_k d_k(b) J_k through n terms, z = -nu log x."""
+    d = bgrat_coefficients(64)
+    nu = a + (b - 1) / 2
+    lx = mpmath.log(x)
+    z = -nu * lx
+    j = mpmath.gammainc(b, z, mpmath.inf, regularized=True) / (mpmath.exp(-z) * z ** b / mpmath.gamma(b))
+    s, t = j, mpf(1)
+    v, t2 = 0.25 / nu ** 2, 0.25 * lx * lx
+    for i in range(n):
+        bp2n = b + 2 * i
+        j = (bp2n * (bp2n + 1) * j + (z + bp2n + 1) * t) * v
+        t *= t2
+        s += mpmath.polyval([mpf(c.numerator) / c.denominator for c in d[i][::-1]], b) * j
+    return s
+
+
+def bgrat_terms(fmt):
+    """BGRAT for a from BETA_BGRAT_B, b at most 1, x from BETA_BUP_X."""
+    points = [(BETA_BGRAT_B, b, BETA_BUP_X) for b in [1e-6, 0.5, 1.0]]
+    points += [(BETA_BGRAT_B + BETA_BUP_TERMS, b, 1 - BETA_X_FAR) for b in [1e-6, 0.5, 1.0]]
+    return least_count(fmt, points, bgrat_sum, 1, 40, 60)
+
+
+def poly_add(p, q):
+    n = max(len(p), len(q))
+    return [(p[i] if i < len(p) else 0) + (q[i] if i < len(q) else 0) for i in range(n)]
+
+
+def poly_mul(p, q):
+    r = [Fraction(0)] * (len(p) + len(q) - 1)
+    for i, a in enumerate(p):
+        for j, b in enumerate(q):
+            r[i + j] += a * b
+    return r
+
+
+@functools.lru_cache(maxsize=None)
+def basym_coefficients(count):
+    """BASYM's d_i(h) for i <= count + 1, with s = sign (b - a): d_i = s^i
+    G_i(h) / (1 + h)^(i div 2), G_i a polynomial, lowest degree first. Its
+    recurrences in h's rational functions, as DiDonato and Morris's code runs
+    them per element."""
+    one_plus, one_minus = [Fraction(1), Fraction(1)], [Fraction(1), Fraction(-1)]
+
+    def radd(x, y):
+        (p, k), (q, l) = x, y
+        for _ in range(max(k, l) - k):
+            p = poly_mul(p, one_plus)
+        for _ in range(max(k, l) - l):
+            q = poly_mul(q, one_plus)
+        return poly_add(p, q), max(k, l)
+
+    rmul = lambda x, y: (poly_mul(x[0], y[0]), x[1] + y[1])
+    rscale = lambda x, c: ([c * v for v in x[0]], x[1])
+    zero = ([Fraction(0)], 0)
+    a0, d, c = {}, {}, {}
+    a0[1] = ([Fraction(2, 3) * v for v in one_minus], 0)
+    c[1] = rscale(a0[1], Fraction(-1, 2))
+    d[1] = rscale(c[1], -1)
+    s = [Fraction(1)]
+    for n in range(2, count + 1, 2):
+        a0[n] = ([Fraction(2, n + 2) * v for v in poly_add([Fraction(1)], [Fraction(0)] * (n + 1) + [Fraction(1)])], 1)
+        s = poly_add(s, [Fraction(0)] * n + [Fraction(1)])
+        a0[n + 1] = ([Fraction(2, n + 3) * v for v in poly_mul(one_minus, s)], 0)
+        for i in (n, n + 1):
+            r = Fraction(-(i + 1), 2)
+            b0 = {1: rscale(a0[1], r)}
+            for m in range(2, i + 1):
+                bsum = zero
+                for j in range(1, m):
+                    bsum = radd(bsum, rscale(rmul(a0[j], b0[m - j]), j * r - (m - j)))
+                b0[m] = radd(rscale(a0[m], r), rscale(bsum, Fraction(1, m)))
+            c[i] = rscale(b0[i], Fraction(1, i + 1))
+            dsum = zero
+            for j in range(1, i):
+                dsum = radd(dsum, rmul(d[i - j], c[j]))
+            d[i] = rscale(radd(dsum, c[i]), -1)
+    out = []
+    for i in range(1, count + 2):
+        poly, k = d[i]
+        assert k == i // 2, (i, k)
+        while len(poly) > 1 and poly[-1] == 0:
+            poly = poly[:-1]
+        out.append(poly)
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def bgrat_coefficients(count):
+    """BGRAT's d_n(b), n = 1..count, lowest degree first: c_n = prod_k 1 /
+    (2k (2k + 1)), d_n = (b - 1) c_n + (1/n) sum_i (i b - n) c_i d_(n-i)."""
+    cs, ds = {}, {}
+    cn = Fraction(1)
+    for n in range(1, count + 1):
+        cn /= (2 * n) * (2 * n + 1)
+        cs[n] = cn
+        acc = [-cn, cn]
+        for i in range(1, n):
+            acc = poly_add(acc, [Fraction(1, n) * v for v in poly_mul([Fraction(-n) * cs[i], Fraction(i) * cs[i]], ds[n - i])])
+        ds[n] = acc
+    return [ds[n] for n in range(1, count + 1)]
+
+
+def beta_tables(fmt):
+    counts = dict(rlog1=rlog1_terms(fmt), bpser=bpser_terms(fmt), apser=apser_terms(fmt),
+                  bfrac=bfrac_depth(fmt), basym=basym_terms(fmt), bgrat=bgrat_terms(fmt))
+    high = lambda poly: [round_to(fmt, mpf(v.numerator) / v.denominator) for v in reversed(poly)]
+    return [
+        ("beta_eps", ocaml_float(BETA_EPS[fmt])),
+        ("rlog1", ocaml_array(high([Fraction(1, 2 * k + 3) for k in range(counts["rlog1"])]))),
+        ("bpser_terms", str(counts["bpser"])),
+        ("apser_terms", str(counts["apser"])),
+        ("bfrac_depth", str(counts["bfrac"])),
+        ("basym", ocaml_matrix([high(p) for p in basym_coefficients(counts["basym"])])),
+        ("bgrat", ocaml_matrix([high(p) for p in bgrat_coefficients(counts["bgrat"])])),
+    ]
+
+
 FUNCTIONS = [
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
@@ -2024,6 +2590,10 @@ FUNCTIONS = [
              extra=igamma_kappa(False)),
     Function("gammainccinv", ["a", "q"], igamma_quantile_reference(True), igamma_quantile_points,
              extra=igamma_kappa(True)),
+    Function("betainc", ["a", "b", "x"], betainc_reference(False, False), betainc_points),
+    Function("betaincc", ["a", "b", "x"], betainc_reference(True, False), betainc_points),
+    Function("log_betainc", ["a", "b", "x"], betainc_reference(False, True), betainc_points),
+    Function("log_betaincc", ["a", "b", "x"], betainc_reference(True, True), betainc_points),
 ]
 
 
@@ -2043,6 +2613,19 @@ def ocaml_float(x):
 
 def ocaml_array(xs):
     return "[|\n" + "".join(f"    {ocaml_float(x)};\n" for x in xs) + "  |]"
+
+
+def ocaml_matrix(rows):
+    return "[|\n" + "".join(
+        "    [|\n" + "".join(f"      {ocaml_float(x)};\n" for x in row) + "    |];\n" for row in rows) + "  |]"
+
+
+def ocaml_kind(value):
+    if value.startswith("[|\n    [|"):
+        return "float array array"
+    if value.startswith("[|"):
+        return "float array"
+    return "int" if value.isdigit() else "float"
 
 
 def comment(text):
@@ -2086,6 +2669,18 @@ COMMENTS = {
     "bessel_split": "i0e's and i1e's regions: Chebyshev series in x (2 / [bessel_split]) - 1 "
                     "up to [bessel_split], weighted by h = 1 + [bessel_weight] x, and in "
                     "2 [bessel_split] / x - 1 above.",
+    "beta_bpser_bx": "The incomplete beta function's regions, as TOMS 708 (DiDonato and Morris, "
+                     "ACM TOMS 18, 1992) splits them, for its arguments a0, b0, x0 after the "
+                     "swap. Both above 1: BPSER while b0 x0 <= [beta_bpser_bx] and b0 < "
+                     "[beta_b_small]; below that b0, BUP then BPSER while x0 <= [beta_bup_x], "
+                     "else BGRAT, after BUP of [beta_bup_terms] terms where a0 <= "
+                     "[beta_bgrat_b]; above it BFRAC up to [beta_frac_a] or where lambda > "
+                     "[beta_frac_lambda] of the smaller, else BASYM. Either at most 1: BPSER "
+                     "where a0 >= min ([beta_a_small], b0), x0^a0 <= [beta_power_x] or (x0 "
+                     "b0)^a0 <= [beta_power_bx] below x0 = [beta_x_near]; BPSER on the "
+                     "complement from x0 = [beta_x_far]; BGRAT alone for b0 > [beta_bgrat_b]. "
+                     "x^a y^b / B(a, b) takes its large-argument form from [beta_large], and "
+                     "e - log1p e its series where |e| <= [rlog1_series].",
     "lgamma_tc": "fdlibm's e_lgamma_r.c (1.3 95/01/18), under the same notice. [lgamma_tc] is "
                  "the minimum, [lgamma_tf] lgamma there and [lgamma_tt] minus its tail; [a] is "
                  "about 1 and 2, [t] about the minimum, [u]/[v] beside 1, [s]/[r] on [2, 3), "
@@ -2123,6 +2718,11 @@ PER_DTYPE = {
     "i0e_near": "q, with i0e x h = 1 + x q, and i1e x / x h^2 on [0, bessel_split], sqrt x i0e x and sqrt x i1e x "
                 "above, as Chebyshev series, lowest degree first: the least degree within u "
                 "of the value and 16u of the derivative's largest magnitude.",
+    "beta_eps": "TOMS 708's tolerance, the dtype's epsilon but 1e-15 at float64, below which "
+                "an argument is negligible; the series of e - log1p e in r^2, r = e / (e + 2); "
+                "the incomplete beta's term counts and depths; BASYM's coefficients G_i(h), "
+                "d_i = sign (b - a)^i G_i(h) / (1 + h)^(i div 2), and BGRAT's d_n(b), each "
+                "highest degree first.",
     "digamma_root_hi": "digamma's root near 1.4616 as two floats, and on [1, 2] the "
                        "polynomial g in x - 3/2 with digamma x = (x - root) g: the least degree "
                        "within u of g and 16u of the derivative. From [digamma_from], "
@@ -2141,7 +2741,7 @@ def tables():
     fields = [name for name, _ in rows[F64]]
     decl = ["(* The tables whose values differ between dtypes. *)", "type t = {"]
     for name in fields:
-        kind = "float array" if rows[F64][fields.index(name)][1].startswith("[|") else "float"
+        kind = ocaml_kind(rows[F64][fields.index(name)][1])
         if name in PER_DTYPE:
             decl.append("  " + comment(PER_DTYPE[name]).replace("\n", "\n  "))
         decl.append(f"  {name} : {kind};")

@@ -133,6 +133,10 @@ let log_gammainc = Special.log_gammainc
 let log_gammaincc = Special.log_gammaincc
 let gammaincinv = Special.gammaincinv
 let gammainccinv = Special.gammainccinv
+let betainc = Special.betainc
+let betaincc = Special.betaincc
+let log_betainc = Special.log_betainc
+let log_betaincc = Special.log_betaincc
 
 (* For transformations and file formats *)
 

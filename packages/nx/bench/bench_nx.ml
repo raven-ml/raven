@@ -180,6 +180,12 @@ let special_benchmarks () =
     let a = inputs 1_000_000 dt 0.1 20. and b = inputs 1_000_000 dt 0.1 20. in
     Thumper.bench name (fun () -> Nx.lbeta a b)
   in
+  (* Shapes log-uniform over [e^-5, e^12], every TOMS 708 region among them. *)
+  let betainc dt name =
+    let shape () = Nx.exp (inputs 100_000 dt (-5.) 12.) in
+    let a = shape () and b = shape () and x = inputs 100_000 dt 0. 1. in
+    Thumper.bench name (fun () -> Nx.betainc a b x)
+  in
   [
     at Nx.Float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.Float64 "erf f64 1e6" Nx.erf (-6.) 6.;
@@ -199,6 +205,8 @@ let special_benchmarks () =
     at Nx.Float64 "digamma f64 1e6" Nx.digamma (-10.) 30.;
     at Nx.Float32 "i0e 1e6" Nx.i0e (-30.) 30.;
     at Nx.Float64 "i0e f64 1e6" Nx.i0e (-30.) 30.;
+    betainc Nx.Float32 "betainc 1e5";
+    betainc Nx.Float64 "betainc f64 1e5";
     at Nx.Float32 "i1e 1e6" Nx.i1e (-30.) 30.;
     at Nx.Float64 "i1e f64 1e6" Nx.i1e (-30.) 30.;
     lbeta Nx.Float32 "lbeta 1e6";

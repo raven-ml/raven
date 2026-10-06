@@ -37,6 +37,24 @@ let compiled2 at { b } =
         Nx.place Nx.Placement.host (f (Nx.place at a.(0)) (Nx.place at a.(1))));
   }
 
+(* [compiled3 at g] is [g] of three arguments, compiled likewise. *)
+type c = {
+  c :
+    'b.
+    (float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t;
+}
+
+let compiled3 at { c } =
+  {
+    f =
+      (fun a ->
+        let f =
+          Rune.jit Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) c
+        in
+        Nx.place Nx.Placement.host
+          (f (Nx.place at a.(0)) (Nx.place at a.(1)) (Nx.place at a.(2))));
+  }
+
 let metal = Result.to_option (Nx_metal.get 0)
 
 let on_devices name ~bound compile =
@@ -134,6 +152,16 @@ let incomplete_gamma =
       binary "gammainccinv" ~bound:(log_ulps_bound 16) { b = Nx.gammainccinv };
     ]
 
+let incomplete_beta =
+  let ternary name ~bound c =
+    on_devices name ~bound:(everywhere bound) (fun at -> compiled3 at c)
+  in
+  group "incomplete beta"
+    [
+      ternary "betainc" ~bound:(Log_ulps 32) { c = Nx.betainc };
+      ternary "log_betainc" ~bound:(Near_zeros (32, 32)) { c = Nx.log_betainc };
+    ]
+
 (* Derivatives
 
    rune differentiates each function through the operations nx computes it with.
@@ -174,6 +202,33 @@ let derivative2 name ~bound (d : b) =
     ]
 
 let d { u } = { u = (fun x -> Rune.grad' (fun x -> Nx.sum (u x)) x) }
+
+(* [f]'s derivative in its [i]th argument, held to [grad_golden name] eagerly
+   and compiled. *)
+let derivative3 name ~bound i { c } =
+  let d a b x =
+    match i with
+    | 0 -> Rune.grad' (fun a -> Nx.sum (c a b x)) a
+    | 1 -> Rune.grad' (fun b -> Nx.sum (c a b x)) b
+    | _ -> Rune.grad' (fun x -> Nx.sum (c a b x)) x
+  in
+  let eager = { f = (fun v -> d v.(0) v.(1) v.(2)) } in
+  let compiled =
+    {
+      f =
+        (fun v ->
+          Rune.jit
+            Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+            d v.(0) v.(1) v.(2));
+    }
+  in
+  group name
+    [
+      group "eagerly" (check ~zeros:`Unsigned ~bound (grad_golden name) eager);
+      group "compiled"
+        (check ~zeros:`Unsigned ~bound (grad_golden name) compiled);
+    ]
+
 let second = Relative (0x1p-40, 0x1p-16)
 
 (* [digamma]'s derivative, [1/x^2] to leading order, overflows to [+inf] as [x]
@@ -292,6 +347,20 @@ let derivatives =
       log_ndtr_far;
       bessel_at_zero;
       derivative "i0e" ~bound:(everywhere (Ulps 128)) (d { u = Nx.i0e });
+      group "incomplete beta"
+        (List.concat_map
+           (fun (tail, c) ->
+             [
+               derivative3 (tail ^ "_x")
+                 ~bound:(everywhere (Relative_scaled (0x1p-47, 0x1p-18)))
+                 2 c;
+               derivative3 (tail ^ "_a") ~bound:in_a 0 c;
+               derivative3 (tail ^ "_b") ~bound:in_a 1 c;
+             ])
+           [
+             ("log_betainc", { c = Nx.log_betainc });
+             ("log_betaincc", { c = Nx.log_betaincc });
+           ]);
       derivative "i1e"
         ~bound:(fun args ->
           let x = Float.abs args.(0) in
@@ -355,6 +424,9 @@ let residual { u } lo hi =
 let residuals =
   test "an eager vjp keeps these bytes per element" (fun () ->
       let lbeta = { u = (fun a -> Nx.lbeta a (Nx.full_like a 3.5)) } in
+      let full v t = Nx.full_like t v in
+      let in_x = { u = (fun x -> Nx.log_betainc (full 2.5 x) (full 7. x) x) } in
+      let in_a = { u = (fun a -> Nx.log_betainc a (full 7. a) (full 0.3 a)) } in
       List.iter
         (fun (name, u, lo, hi) ->
           Printf.printf "%s %d\n" name (residual u lo hi))
@@ -385,6 +457,8 @@ let residuals =
             { u = (fun a -> Nx.gammaincinv a (Nx.full_like a 0.3)) },
             0.1,
             30. );
+          ("log_betainc in x", in_x, 1e-3, 0.999);
+          ("log_betainc in a", in_a, 0.1, 50.);
         ];
       expect (output ())
       @@ __POS_OF__
@@ -403,6 +477,8 @@ let residuals =
         gammainc in a 6963
         gammaincinv 16361
         gammaincinv in a 26355
+        log_betainc in x 14385
+        log_betainc in a 23947
         |})
 
 let () =
@@ -414,6 +490,7 @@ let () =
          gamma;
          bessel;
          incomplete_gamma;
+         incomplete_beta;
          derivatives;
          incomplete_gamma_derivatives;
          residuals;

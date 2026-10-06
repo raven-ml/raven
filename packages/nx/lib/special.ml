@@ -483,22 +483,22 @@ let stirling_difference q p =
   done;
   mul (mul p (mul z1 z2)) !sum
 
-(* [log B(a, b)], with [p <= q] the arguments, is [lgamma p - (lgamma (p + q) -
-   lgamma q)]. The difference is written from [Q = q + n], [n] the masked count
-   that takes [q] past 8, as Stirling's series at [Q], [p (log Q - 1) + (p + Q -
-   1/2) log1p (p/Q)] and the corrections' difference, less the shift's [log1p]
-   of [prod_k (1 + p/(q + k)) - 1], accumulated without cancelling. Each term is
-   a function of [p/q] or of a difference written as one, so the derivative in
-   either argument keeps its precision when [p] is far below [q]. From [p = 8],
-   [lgamma p] is Stirling's series too: [(p - 1/2) log (p/(p + q)) + (q - 1/2)
-   log (q/(p + q)) - log (p + q)/2 + log (2 pi)/2] and the corrections, no term
-   of which overflows before the result does. *)
-let lbeta_at a b =
-  let le = cmple a b in
-  let p0 = where le a b and q0 = where le b a in
-  let valid = logical_and (cmpgt p0 (zeros_like p0)) (lt q0 Float.infinity) in
-  let p = clamp valid p0 1. and q = clamp valid q0 1. in
-  let large = ge p T.lgamma_stirling_from in
+(* [lgamma (q + p) - lgamma q] for [p, q > 0], written from [Q = q + n], [n] the
+   masked count that takes [q] past 8, as Stirling's series at [Q], [p (log Q -
+   1) + (p + Q - 1/2) log1p (p/Q)] and the corrections' difference, less the
+   shift's [log1p] of [prod_k (1 + p/(q + k)) - 1], accumulated without
+   cancelling. Each term is a function of [p/q] or of a difference written as
+   one, so the derivative in either argument keeps its precision when [p] is far
+   below [q]. [tail] is all but [p (log Q - 1)]. *)
+type 'b shift = {
+  big_q : (float, 'b) t;
+  log_q : (float, 'b) t;
+  l1 : (float, 'b) t; (* [log1p (p/Q)] *)
+  corrections : (float, 'b) t;
+  tail : (float, 'b) t;
+}
+
+let shift p q =
   let n =
     where
       (ge q T.lgamma_stirling_from)
@@ -514,7 +514,6 @@ let lbeta_at a b =
   let series = lt h (Float.sqrt (epsilon h)) in
   let hl = clamp (logical_not series) h 0.5 in
   let r = where series (rsub_s 1. (mul_s h 0.5)) (div (log1p hl) hl) in
-  let l1 = mul h r in
   let corrections = stirling_difference big_q p in
   let e = ref (zeros_like q) in
   for k = 0 to int_of_float T.lgamma_stirling_from - 1 do
@@ -522,24 +521,35 @@ let lbeta_at a b =
     let hk = where (cmpgt n (lit n (float_of_int k))) hk (zeros_like hk) in
     e := add !e (add hk (mul !e hk))
   done;
-  let shifts = log1p !e in
-  let difference =
+  let tail =
     sub
-      (add
-         (mul p (sub_s log_q 1.))
-         (mul (mul p (add_s (div (sub_s p 0.5) big_q) 1.)) r))
-      (add corrections shifts)
+      (mul (mul p (add_s (div (sub_s p 0.5) big_q) 1.)) r)
+      (add corrections (log1p !e))
   in
+  { big_q; log_q; l1 = mul h r; corrections; tail }
+
+(* [log B(a, b)], with [p <= q] the arguments, is [lgamma p - (lgamma (p + q) -
+   lgamma q)]. From [p = 8], [lgamma p] is Stirling's series too: [(p - 1/2) log
+   (p/(p + q)) + (q - 1/2) log (q/(p + q)) - log (p + q)/2 + log (2 pi)/2] and
+   the corrections, no term of which overflows before the result does. *)
+let lbeta_at a b =
+  let le = cmple a b in
+  let p0 = where le a b and q0 = where le b a in
+  let valid = logical_and (cmpgt p0 (zeros_like p0)) (lt q0 Float.infinity) in
+  let p = clamp valid p0 1. and q = clamp valid q0 1. in
+  let large = ge p T.lgamma_stirling_from in
+  let s = shift p q in
+  let difference = add (mul p (sub_s s.log_q 1.)) s.tail in
   let small = sub (lgamma_pos (clamp (logical_not large) p 1.)) difference in
   let pl = clamp large p 10. in
   let large_r =
     add
       (sub
          (sub
-            (mul (sub_s pl 0.5) (sub (log (div pl big_q)) l1))
-            (mul (sub_s big_q 0.5) l1))
-         (mul_s (add log_q l1) 0.5))
-      (add_s (add (stirling pl) corrections) log_sqrt_2pi)
+            (mul (sub_s pl 0.5) (sub (log (div pl s.big_q)) s.l1))
+            (mul (sub_s s.big_q 0.5) s.l1))
+         (mul_s (add s.log_q s.l1) 0.5))
+      (add_s (add (stirling pl) s.corrections) log_sqrt_2pi)
   in
   let r = where large large_r small in
   let nan = lit a Float.nan in
@@ -725,6 +735,39 @@ let log1mexp l =
    is [-bd0 - log (2 pi a)/2 - s a], [bd0 = a (mu - log1p mu)] for [mu = x/a -
    1] (Loader), which in [v = (x - a)/(x + a)] is [a v^2 kappa], [kappa = 2/(1 -
    v) - 2 v S v^2], up to [|v| = 1/2], and [x - a - a log (x/a)] beyond. *)
+(* Q's continued fraction for [x >= max (a, igamma_corner)]: [x + 1 - a - f],
+   whose reciprocal is [Q e^x x^-a Gamma(a)], Legendre's fraction evaluated
+   backward from its fixed depth. *)
+let igamma_cf (t : T.t) a x =
+  let xa = sub x a in
+  let f = ref (zeros_like x) in
+  for n = int_of_float t.igamma_cf_depth downto 1 do
+    let k = float_of_int n in
+    f := div (mul_s (rsub_s k a) k) (sub (add_s xa ((2. *. k) +. 1.)) !f)
+  done;
+  sub (add_s xa 1.) !f
+
+(* The corner's [x J], [J = sum_n (-x)^(n-1) / ((a + n) n!)], for [a < 1] and [x
+   < igamma_corner]. *)
+let corner_series (t : T.t) a x =
+  let jsum = ref (zeros_like x) in
+  let factorial = ref 1. in
+  let terms = int_of_float t.igamma_corner_terms in
+  for n = 1 to terms do
+    factorial := !factorial *. float_of_int n
+  done;
+  for n = terms downto 1 do
+    jsum :=
+      sub (recip (mul_s (add_s a (float_of_int n)) !factorial)) (mul x !jsum);
+    factorial := !factorial /. float_of_int n
+  done;
+  mul x !jsum
+
+(* The corner's [c = a log x - log Gamma(1 + a)] and [j = a x J]: [Q = e^c j -
+   expm1 c]. *)
+let igamma_corner_parts (t : T.t) a x log_x =
+  (mul a (sub log_x (lgamma1p_ratio a)), mul a (corner_series t a x))
+
 let igamma_core a x log_x upper =
   let t = tables a in
   let corner = logical_and (lt a 1.) (lt x T.igamma_corner) in
@@ -774,30 +817,11 @@ let igamma_core a x log_x upper =
   let lp_series = add lr (log !sum) in
   (* Q's continued fraction. *)
   let a_c = clamp cf a 1. and x_c = clamp cf x 2. in
-  let xa = sub x_c a_c in
-  let f = ref (zeros_like x) in
-  for n = int_of_float t.igamma_cf_depth downto 1 do
-    let k = float_of_int n in
-    f := div (mul_s (rsub_s k a_c) k) (sub (add_s xa ((2. *. k) +. 1.)) !f)
-  done;
-  let lq_cf = sub (add lr (log a_c)) (log (sub (add_s xa 1.) !f)) in
+  let lq_cf = sub (add lr (log a_c)) (log (igamma_cf t a_c x_c)) in
   (* The corner. *)
   let x_k = clamp corner x 0.5 in
   let log_xk = clamp corner log_x (Stdlib.log 0.5) in
-  let jsum = ref (zeros_like x) in
-  let factorial = ref 1. in
-  let terms = int_of_float t.igamma_corner_terms in
-  for n = 1 to terms do
-    factorial := !factorial *. float_of_int n
-  done;
-  for n = terms downto 1 do
-    jsum :=
-      sub
-        (recip (mul_s (add_s a_lo (float_of_int n)) !factorial))
-        (mul x_k !jsum);
-    factorial := !factorial /. float_of_int n
-  done;
-  let xj = mul x_k !jsum in
+  let xj = corner_series t a_lo x_k in
   let c_a = sub log_xk lg1p_ratio in
   let c = mul a_lo c_a in
   let j = mul a_lo xj in
@@ -1160,6 +1184,553 @@ let gammaincinv_at a p upper =
     (where nan (lit r Float.nan)
        (where zero (zeros_like r) (lit r Float.infinity)))
 
+(* Incomplete beta function
+
+   TOMS 708 (DiDonato and Morris, ACM TOMS 18, 1992), in logarithms. After the
+   swap [(a, b, x) -> (b, a, 1 - x)] each region computes one tail directly, as
+   a logarithm [l], and the other is [log (1 - e^l)]. Per element one region
+   applies, so the costly part every method shares, the logarithm of [x^a y^b /
+   (a B(a, b))] for the arguments the region's method needs, runs once on
+   arguments selected per element; each method's series runs on every element
+   over its inputs clamped into its region. [x] is the only exact input: [log
+   x], [log (1 - x)] and [a - (a + b) x] come from it to the dtype's
+   precision. *)
+
+let le x v = cmple x (lit x v)
+let gt x v = cmpgt x (lit x v)
+
+(* [(e - log1p e) / e^2] for [|e| <= rlog1_series], from [log1p e = 2 atanh r],
+   [r = e / (e + 2)]: [1/(e + 2) - 2 e P(r^2) / (e + 2)^3], [P] the series of
+   [sum_k r^2k / (2k + 3)]; no term cancels another. *)
+let rlog1_ratio e =
+  let t = tables e in
+  let d = recip (add_s e 2.) in
+  let r = mul e d in
+  sub d (mul (mul_s (mul (mul r d) d) 2.) (horner t.rlog1 (mul r r)))
+
+(* [a - (a + b) x] to the dtype's precision: [a + b] and its product with [x]
+   are held in two parts, so that the difference keeps its precision near the
+   mean [a / (a + b)], where the incomplete beta function is most sensitive to
+   it. *)
+let lambda_of a b x =
+  let s = add a b in
+  let bv = sub s a in
+  let s_lo = add (sub a (sub s bv)) (sub b bv) in
+  let p = mul s x in
+  let p_lo = add (fma s x (neg p)) (mul s_lo x) in
+  sub (sub a p) p_lo
+
+let bcorr p q = add (stirling p) (stirling_difference q p)
+
+(* The front [log (x^a y^b / (a B(a, b)))], and [lgamma (a + b) - lgamma b]
+   where [a <= b]. Below [beta_large] in either argument, with [p <= q] the
+   arguments and [v] the variable of [p]: [q log w + p (log (v Q) - 1) + tail -
+   lgamma p], [w] the variable of [q], so that neither [p log v] nor [lgamma (p
+   + q) - lgamma q] cancels the other where [v Q] is near 1; [lgamma p] is
+   [lgamma (1 + f) + log prod_k (f + k)] for [p = f + m], [f] in (0, 1], and
+   [lgamma (1 + f)] from [lgamma1p_ratio], so that [lgamma p + log a] holds no
+   [log a] to cancel where [p] is [a]. From [beta_large], [-(a u + b w)] for [u
+   = e - log1p e], [e = -lam / a], and [w] likewise in [lam / b], with the
+   corrections' difference: [x] and [y] enter through [lam = a - (a + b) x]
+   alone near the mean. *)
+type 'b front = { phi : (float, 'b) t; d : (float, 'b) t }
+
+let front a b x y lx ly lam =
+  let large = logical_and (ge a T.beta_large) (ge b T.beta_large) in
+  let small = logical_not large in
+  let a_s = clamp small a 1. and b_s = clamp small b 1. in
+  let a_le = cmple a_s b_s in
+  let p = where a_le a_s b_s and q = where a_le b_s a_s in
+  let v = where a_le x y and lv = where a_le lx ly in
+  let lw = where a_le ly lx in
+  let s = shift p q in
+  let vq = mul v s.big_q in
+  let normal = cmpge vq (lit vq (min_normal vq)) in
+  let log_vq = where normal (log (clamp normal vq 1.)) (add lv s.log_q) in
+  (* [p = f + m]: [m = ceil p - 1] shifts, [f] in (0, 1]. *)
+  let m = sub_s (ceil p) 1. in
+  let f = sub p m in
+  let prod = ref (ones_like p) in
+  for k = 1 to int_of_float T.beta_large - 2 do
+    let fk = float_of_int k in
+    prod := where (gt m fk) (mul !prod (add_s f fk)) !prod
+  done;
+  let unshifted = is m 0. in
+  (* [-lgamma p - log a]: [-lgamma (1 + f) - log prod], less [log a], plus [log
+     p] where [m = 0], those two cancelling where [p] is [a]. *)
+  let log_a = log a_s in
+  let rest =
+    where
+      (logical_and unshifted a_le)
+      (zeros_like p)
+      (sub (where unshifted (log p) (zeros_like p)) log_a)
+  in
+  let phi_small =
+    add
+      (add (mul q lw) (add (mul p (sub_s log_vq 1.)) s.tail))
+      (sub (sub rest (mul f (lgamma1p_ratio f))) (log !prod))
+  in
+  let a_l = clamp large a 10. and b_l = clamp large b 10. in
+  let lam_l = clamp large lam 0. in
+  let part n e l other =
+    let near = cmple (abs e) (lit e T.rlog1_series) in
+    let en = clamp near e 0. in
+    where near
+      (mul (mul en en) (rlog1_ratio en))
+      (sub e (add l (log1p (div other n))))
+  in
+  let u = part a_l (div (neg lam_l) a_l) lx b_l in
+  let w = part b_l (div lam_l b_l) ly a_l in
+  let al_le = cmple a_l b_l in
+  let p_l = where al_le a_l b_l and q_l = where al_le b_l a_l in
+  let phi_large =
+    sub
+      (sub
+         (sub
+            (mul_s (sub (log p_l) (log1p (div p_l q_l))) 0.5)
+            (add (mul a_l u) (mul b_l w)))
+         (add_s (log a_l) log_sqrt_2pi))
+      (bcorr p_l q_l)
+  in
+  {
+    phi = where large phi_large phi_small;
+    d = add (mul p (sub_s s.log_q 1.)) s.tail;
+  }
+
+(* BPSER's series [sum_n c_n / (a + n)], [c_n = prod_k (1 - b/k) x]: [I_x(a, b)
+   = x^a / (a B(a, b)) (1 + a sum)] for [b <= 1] or [b x <= 0.7]. *)
+let bpser_sum a b x =
+  let t = tables x in
+  let c = ref (ones_like x) and sum = ref (zeros_like x) in
+  for n = 1 to t.bpser_terms do
+    let fn = float_of_int n in
+    c := mul (mul !c (add_s (rsub_s 0.5 (mul_s b (1. /. fn))) 0.5)) x;
+    sum := add !sum (div !c (add_s a fn))
+  done;
+  !sum
+
+(* APSER: [log (1 - I_x(a, b))] for [a] below [eps] and [b x <= 1], [psi b] read
+   as [(lgamma (a + b) - lgamma b) / a] to within [a psi'(b)]. *)
+let apser a b x lx d =
+  let t = tables x in
+  let bx = mul b x in
+  let t0 = sub x bx in
+  let near = cmple (mul_s b t.beta_eps) (lit b 2e-2) in
+  let c =
+    add_s
+      (add
+         (where near (add lx (div d a)) (log (clamp (logical_not near) bx 1.)))
+         t0)
+      euler_gamma
+  in
+  let tt = ref t0 and s = ref (zeros_like x) in
+  for j = 2 to t.apser_terms do
+    let fj = float_of_int j in
+    tt := mul !tt (sub x (mul_s bx (1. /. fj)));
+    s := add !s (mul_s !tt (1. /. fj))
+  done;
+  add (log a) (log (neg (add c !s)))
+
+(* BUP's terms [x^(a+i) y^b / ((a + i) B(a + i, b))], [i < n] for a masked count
+   [n <= beta_bup_most], each the one before it times [r_l = (a + b + l) x / (a
+   + 1 + l)]: their sum relative to an anchor term, the first, or the last where
+   every ratio is at least 1, so that no partial sum overflows; and the first
+   term relative to the anchor, which may underflow to 0. [anchor_last] is
+   whether the last is the anchor. *)
+let bup_last_anchor a b x n =
+  let two = ge n 2. in
+  let l = clamp two (sub_s n 2.) 0. in
+  let last = div (mul (add (add a b) l) x) (add_s (add a l) 1.) in
+  logical_and two (ge last 1.)
+
+let bup_sum a b x n anchor_last =
+  let g = ref (ones_like x) and total = ref (ones_like x) in
+  for i = 1 to T.beta_bup_most - 1 do
+    let fi = float_of_int i in
+    let active = gt n fi in
+    let l =
+      clamp active
+        (where anchor_last (sub_s n (1. +. fi)) (lit n (fi -. 1.)))
+        0.
+    in
+    let r = div (mul (add (add a b) l) x) (add_s (add a l) 1.) in
+    g := where active (mul !g (where anchor_last (recip r) r)) !g;
+    total := add !total (where active !g (zeros_like !g))
+  done;
+  (!total, where anchor_last !g (ones_like x))
+
+(* The second BUP's sum, [n] terms relative to the first, every ratio below
+   1. *)
+let bup_sum_down a b x n =
+  let d = ref (ones_like x) and total = ref (ones_like x) in
+  for i = 1 to n - 1 do
+    let l = float_of_int (i - 1) in
+    d := mul !d (div (mul (add_s (add a b) l) x) (add_s a (l +. 1.)));
+    total := add !total !d
+  done;
+  !total
+
+(* BFRAC's continued fraction for [a, b > 1], [lam = a - (a + b) x >= 0]: [log
+   (1 / (beta_0 + alpha_1 / (beta_1 + alpha_2 / ...)))], evaluated backward from
+   its fixed depth; [I_x(a, b)] is it times [x^a y^b / B(a, b)]. With [s_k = a +
+   2k - 1], DiDonato and Morris's terms are [alpha_k = (a + k - 1) (a + b + k -
+   1) k (b - k) x^2 / s_k^2] and [beta_k = k + k (b - k) x / s_k + (a + k) (1 +
+   lam + k (1 + y)) / (s_k + 2)], [beta_0 = (1 + lam) a / (a + 1)]. *)
+let bfrac a b x y lam =
+  let t = tables x in
+  let c = add_s lam 1. and yp1 = add_s y 1. and apb = add a b in
+  (* [(s_k, k (b - k) x)]. *)
+  let term k = (add_s a ((2. *. k) -. 1.), mul_s (mul (sub_s b k) x) k) in
+  let beta k (s, w) =
+    add_s
+      (add (div w s) (div (mul (add_s a k) (add c (mul_s yp1 k))) (add_s s 2.)))
+      k
+  in
+  let alpha k (s, w) =
+    div
+      (mul (mul (add_s a (k -. 1.)) (add_s apb (k -. 1.))) (mul w x))
+      (mul s s)
+  in
+  let depth = t.bfrac_depth in
+  let current = ref (term (float_of_int depth)) in
+  let f = ref (beta (float_of_int depth) !current) in
+  for n = depth downto 1 do
+    let k = float_of_int n in
+    let alpha_k = alpha k !current in
+    let below =
+      if n = 1 then div (mul c a) (add_s a 1.)
+      else (
+        current := term (k -. 1.);
+        beta (k -. 1.) !current)
+    in
+    f := add below (div alpha_k !f)
+  done;
+  neg (log !f)
+
+(* BASYM: [log I_x(a, b)] for [a, b > beta_frac_a] near the mean by Temme's
+   asymptotic expansion as DiDonato and Morris write it, [lam >= 0]. Its
+   coefficients [d_i] are [sign (b - a)^i G_i(h) / (1 + h)^(i div 2)] for [h]
+   the smaller argument over the larger, [G_i] from the tables. [f = lam^2 g]
+   keeps [sqrt f] smooth where [lam] is 0. *)
+let basym a b lam =
+  let t = tables a in
+  let a_le = cmple a b in
+  let p = where a_le a b and q = where a_le b a in
+  let h = div p q in
+  let r0 = recip (add_s h 1.) in
+  let sign = where (cmpge b a) (ones_like a) (neg (ones_like a)) in
+  let w0 = mul sign (recip (sqrt (mul p (add_s h 1.)))) in
+  let e1 = div (neg lam) a and e2 = div lam b in
+  let g = add (div (rlog1_ratio e1) a) (div (rlog1_ratio e2) b) in
+  let f = mul (mul lam lam) g in
+  let z0 = mul lam (sqrt g) in
+  let z2 = add f f in
+  let c0 = 2. /. Float.sqrt Float.pi and c1 = 0.5 /. Float.sqrt 2. in
+  let poly i = horner t.basym.(i - 1) h in
+  let j0 = ref (mul_s (erfcx_at z0) (0.5 /. c0)) and j1 = ref (lit a c1) in
+  let sum = ref (add !j0 (mul (mul_s (poly 1) c1) w0)) in
+  let znm1 = ref (mul_s z0 (Float.sqrt 2.)) and zn = ref z2 in
+  let rp = ref (ones_like a) and ww = ref w0 in
+  let terms = Array.length t.basym - 1 in
+  let n = ref 2 in
+  while !n <= terms do
+    let fn = float_of_int !n in
+    j0 := add (mul_s !znm1 c1) (mul_s !j0 (fn -. 1.));
+    j1 := add (mul_s !zn c1) (mul_s !j1 fn);
+    znm1 := mul z2 !znm1;
+    zn := mul z2 !zn;
+    rp := mul !rp r0;
+    ww := mul !ww w0;
+    let t0 = mul (mul (poly !n) !rp) (mul !ww !j0) in
+    ww := mul !ww w0;
+    let t1 = mul (mul (poly (!n + 1)) !rp) (mul !ww !j1) in
+    sum := add !sum (add t0 t1);
+    n := !n + 2
+  done;
+  sub (sub (add_s (log !sum) (Stdlib.log c0)) f) (bcorr p q)
+
+(* [Q(b, z) / (e^-z z^b / Gamma(b))] for [b <= 1], [z > 0], from the incomplete
+   gamma's corner below [igamma_corner], [(e^c j - expm1 c) / (b e^(c - z))],
+   and its continued fraction above. *)
+let gamma_ratio b z =
+  let t = tables z in
+  let corner = lt z T.igamma_corner in
+  let zc = clamp corner z 0.5 in
+  let c, j = igamma_corner_parts t b zc (log zc) in
+  let below = div (sub (mul (exp c) j) (expm1 c)) (mul b (exp (sub c zc))) in
+  let zf = clamp (logical_not corner) z 2. in
+  where corner below (recip (igamma_cf t b zf))
+
+(* BGRAT's asymptotic expansion of [I_x(a0 + m, b)] for [a0 + m >= 15] and [b <=
+   1], relative to [x^a0 y^b / B(a0, b)]: [U sum], [U = e^-z z^b Gamma(a + b) /
+   (Gamma(b) Gamma(a) nu^b)] over that front is [(z / (nu y))^b x^(nu - a0)
+   prod_k<m (a0 + b + k) / (a0 + k)], for [nu = a + (b - 1)/2], [z = -nu log x].
+   Its coefficients [d_n(b)] come from the tables. *)
+let bgrat a0 b x y lx m =
+  let t = tables x in
+  let a = add a0 m in
+  let nu = add a (mul_s (sub_s b 1.) 0.5) in
+  let z = mul (neg nu) lx in
+  let prod = ref (ones_like a0) in
+  for k = 0 to T.beta_bup_terms - 1 do
+    let fk = float_of_int k in
+    prod :=
+      where (gt m fk)
+        (mul !prod (div (add_s (add a0 b) fk) (add_s a0 fk)))
+        !prod
+  done;
+  let u =
+    mul (exp (add (mul b (log (div (neg lx) y))) (mul (sub nu a0) lx))) !prod
+  in
+  let v = div (lit a 0.25) (mul nu nu) and t2 = mul_s (mul lx lx) 0.25 in
+  let j = ref (gamma_ratio b z) in
+  let sum = ref !j and tt = ref (ones_like x) in
+  Array.iteri
+    (fun i d ->
+      let bp2n = add_s b (2. *. float_of_int i) in
+      j :=
+        mul
+          (add
+             (mul (mul bp2n (add_s bp2n 1.)) !j)
+             (mul (add (add_s bp2n 1.) z) !tt))
+          v;
+      tt := mul !tt t2;
+      sum := add !sum (mul (horner d b) !j))
+    t.bgrat;
+  mul u !sum
+
+(* [log I_x(a, b)], or [log (1 - I_x(a, b))] where [upper], for finite [a, b >
+   0] and [0 < x < 1]. After the swap, the regions name the method for [(a0, b0,
+   x0)]; the direct tail is the swapped problem's lower one [w] or its upper one
+   [w1]. *)
+let log_betainc_at upper a b x =
+  let t = tables x in
+  let eps = t.beta_eps in
+  let ( &&& ) = logical_and and ( ||| ) = logical_or and no = logical_not in
+  (* Everything comes from [s], the smaller of [x] and [1 - x], exact both ways,
+     so that [(b, a, 1 - x)] computes what [(a, b, x)] does bit for bit where [x
+     >= 1/2]: [y], the logarithms and [p - (p + q) v] for [v] either
+     variable. *)
+  let upper_half = ge x 0.5 in
+  let y = rsub_s 1. x in
+  let s = where upper_half y x in
+  (* At [x = 1/2] both variables are 1/2: their logarithms are [log x] and [log
+     (1 - x)], the same bits with each its own derivative, and [p - (p + q) v]
+     is [(p - q)/2 + (p + q) (1/2 - v)], whose last term is an exact 0. *)
+  let half = is x 0.5 in
+  let ls = log s and l1s = log1p (neg s) in
+  let lx = where half (log x) (where upper_half l1s ls) in
+  let ly = where half (log y) (where upper_half ls l1s) in
+  let lam_at p q v_is_x =
+    let off = where v_is_x (rsub_s 0.5 x) (sub_s x 0.5) in
+    where half
+      (add (mul_s (sub p q) 0.5) (mul (add p q) off))
+      (where
+         (logical_xor v_is_x upper_half)
+         (lambda_of p q s)
+         (neg (lambda_of q p s)))
+  in
+  let lam = lam_at a b (ones_like upper_half) in
+  let small = le a 1. ||| le b 1. in
+  (* A tie swaps to put the larger argument second, as [(b, a, 1 - x)] does, and
+     at [a = b] to compute the tail asked for directly, so that the two compute
+     the same. *)
+  let tie = where upper (cmpge a b) (cmpgt a b) in
+  let swap =
+    where small
+      (gt x 0.5 ||| (is x 0.5 &&& tie))
+      (lt lam 0. ||| (is lam 0. &&& tie))
+  in
+  let sel u v = where swap v u in
+  let a0 = sel a b and b0 = sel b a and x0 = sel x y and y0 = sel y x in
+  let lx0 = sel lx ly and ly0 = sel ly lx and lam0 = sel lam (neg lam) in
+  (* Either argument at most 1. *)
+  let fp = small &&& lt b0 eps &&& cmplt b0 (mul_s a0 eps) in
+  let ap =
+    small &&& no fp &&& lt a0 eps
+    &&& cmplt a0 (mul_s b0 eps)
+    &&& le (mul b0 x0) 1.
+  in
+  let rest = small &&& no fp &&& no ap in
+  let both = le a0 1. &&& le b0 1. in
+  let far = ge x0 T.beta_x_far in
+  let low =
+    ge a0 T.beta_a_small ||| cmpge a0 b0
+    ||| le (mul a0 lx0) (Stdlib.log T.beta_power_x)
+  in
+  let near_pow =
+    lt x0 T.beta_x_near
+    &&& le (mul a0 (log (mul x0 b0))) (Stdlib.log T.beta_power_bx)
+  in
+  let bp_small =
+    fp
+    ||| (rest &&& both &&& low)
+    ||| (rest &&& no both &&& (le b0 1. ||| (no far &&& near_pow)))
+  in
+  let bpy = rest &&& no bp_small &&& far in
+  let grat_small = rest &&& no bp_small &&& no far in
+  let alone = grat_small &&& no both &&& gt b0 T.beta_bgrat_b in
+  let g20 = grat_small &&& no alone in
+  (* Both above 1. *)
+  let big = no small in
+  let below40 = big &&& lt b0 T.beta_b_small in
+  let bp_big = below40 &&& le (mul b0 x0) T.beta_bpser_bx in
+  let bup_bp = below40 &&& no bp_big &&& le x0 T.beta_bup_x in
+  let bup_g = below40 &&& no bp_big &&& no bup_bp in
+  let bup2_on = bup_g &&& le a0 T.beta_bgrat_b in
+  let beyond = big &&& no below40 in
+  let frac_on =
+    where (cmple a0 b0)
+      (le a0 T.beta_frac_a ||| cmpgt lam0 (mul_s a0 T.beta_frac_lambda))
+      (le b0 T.beta_frac_a ||| cmpgt lam0 (mul_s b0 T.beta_frac_lambda))
+  in
+  let frac = beyond &&& frac_on and asym = beyond &&& no frac_on in
+  let bp = bp_small ||| bp_big in
+  let shifted_b = bup_bp ||| bup_g in
+  (* [b0 = n + bb], [bb] in (0, 1]; the first BUP runs on [(b0, a0, y0)] for 20
+     terms or on [(bb, a0, y0)] for [n]. *)
+  let n_fl = floor b0 in
+  let whole = cmpeq n_fl b0 in
+  let n_b = where whole (sub_s n_fl 1.) n_fl in
+  let bb = sub b0 n_b in
+  let bup_on = g20 ||| shifted_b in
+  let terms = float_of_int T.beta_bup_terms in
+  let u_a = clamp bup_on (where g20 b0 bb) 1. in
+  let u_b = clamp bup_on a0 1. and u_x = clamp bup_on y0 0.5 in
+  let u_n = clamp bup_on (where g20 (lit b0 terms) n_b) 1. in
+  let last = bup_last_anchor u_a u_b u_x u_n in
+  (* The front's arguments: [(a0, b0, x0)], [(b0, a0, y0)], or the first BUP's
+     anchor term [(u_a + j, a0, y0)]. *)
+  let on_y = bpy ||| g20 ||| alone ||| shifted_b in
+  let f_a =
+    where shifted_b
+      (add u_a (where last (sub_s u_n 1.) (zeros_like u_n)))
+      (where on_y b0 a0)
+  in
+  let f_b = where on_y a0 b0 in
+  let f_on = no asym in
+  let f_a = clamp f_on f_a 2. and f_b = clamp f_on f_b 2. in
+  let f_x = clamp f_on (where on_y y0 x0) 0.5 in
+  let f_y = clamp f_on (where on_y x0 y0) 0.5 in
+  let f_lx = clamp f_on (where on_y ly0 lx0) (-.Stdlib.log 2.) in
+  let f_ly = clamp f_on (where on_y lx0 ly0) (-.Stdlib.log 2.) in
+  (* [f_x] is [x] itself where it is [x0] unswapped or [y0] swapped. *)
+  let f_lam = lam_at f_a f_b (logical_not (logical_xor on_y swap)) in
+  let fr = front f_a f_b f_x f_y f_lx f_ly (clamp f_on f_lam 0.) in
+  (* BPSER's series on [(a0, b0, x0)], [(b0, a0, y0)] or [(a0, bb, x0)]. *)
+  let s_on = bp ||| bpy ||| bup_bp in
+  let s_a = clamp s_on (where bpy b0 a0) 1. in
+  let s_b = clamp s_on (where bpy a0 (where bup_bp bb b0)) 1. in
+  let s_x = clamp s_on (where bpy y0 x0) 0.5 in
+  let series = bpser_sum s_a s_b s_x in
+  let l_bp = add (sub fr.phi (mul f_b f_ly)) (log1p (mul s_a series)) in
+  let l_ap =
+    apser (clamp ap a0 1e-20) (clamp ap b0 1.) (clamp ap x0 0.5)
+      (clamp ap lx0 (-.Stdlib.log 2.))
+      (clamp ap fr.d 0.)
+  in
+  (* The first BUP's terms, relative to the front; [g0] is its first term
+     relative to the front, in whose units the other parts add. *)
+  let total, g0 = bup_sum u_a u_b u_x u_n last in
+  let total = where alone (zeros_like total) total in
+  (* BPSER on [(a0, bb, x0)] in units of the first term [y0^bb x0^a0 / (bb B(bb,
+     a0))]: [bb / (a0 y0^bb) (1 + a0 sum)]. *)
+  let r_a = clamp bup_bp a0 2. and r_b = clamp bup_bp bb 0.5 in
+  let bp_rel =
+    mul
+      (div (mul (exp (neg (mul r_b (clamp bup_bp ly0 (-0.5))))) r_b) r_a)
+      (add_s (mul r_a series) 1.)
+  in
+  (* The second BUP, on [(a0, bb, x0)] for 20 terms: its first term is the first
+     BUP's times [bb / a0]. *)
+  let v_a = clamp bup2_on a0 2. and v_b = clamp bup2_on bb 0.5 in
+  let bup2 =
+    mul (div v_b v_a)
+      (bup_sum_down v_a v_b (clamp bup2_on x0 0.5) T.beta_bup_terms)
+  in
+  let bup2 = where bup2_on bup2 (zeros_like bup2) in
+  (* BGRAT on [(b0 (+ 20), a0, y0)] or [(a0 (+ 20), bb, x0)]: relative to [x^a
+     y^b / B(a, b)] for its unshifted arguments, which is the first BUP term
+     times [u_a]. *)
+  let g_on = g20 ||| alone ||| bup_g in
+  let g_a0 = clamp g_on (where bup_g a0 b0) 20. in
+  let g_b = clamp g_on (where bup_g bb a0) 0.5 in
+  let g_x = clamp g_on (where bup_g x0 y0) 0.9 in
+  let g_y = clamp g_on (where bup_g y0 x0) 0.1 in
+  let g_lx = clamp g_on (where bup_g lx0 ly0) (Stdlib.log 0.9) in
+  let g_m = where (g20 ||| bup2_on) (lit b0 terms) (zeros_like b0) in
+  let g_u = clamp g_on (where bup_g bb b0) 1. in
+  let grat = mul g_u (bgrat g_a0 g_b g_x g_y g_lx g_m) in
+  let extra =
+    where bup_bp bp_rel
+      (where (g20 ||| alone ||| bup_g) (add bup2 grat) (zeros_like grat))
+  in
+  let l_bup = add fr.phi (log (add total (mul g0 extra))) in
+  let l_frac =
+    add (add fr.phi (log f_a)) (bfrac f_a f_b f_x f_y (clamp frac lam0 1.))
+  in
+  let l_asym =
+    basym (clamp asym a0 200.) (clamp asym b0 200.) (clamp asym lam0 0.)
+  in
+  let l =
+    where (bp ||| bpy) l_bp
+      (where ap l_ap
+         (where (g20 ||| alone ||| shifted_b) l_bup (where frac l_frac l_asym)))
+  in
+  let direct_upper = ap ||| bpy ||| g20 ||| alone in
+  (* The swapped problem's upper tail is the lower one asked for. *)
+  let wanted_upper = logical_xor swap upper in
+  where (logical_xor direct_upper wanted_upper) (log1mexp l) l
+
+(* The logarithm of a tail on the whole domain: [a, b > 0], [x] in [0, 1]; at [a
+   = +inf] the lower tail is 0 below [x = 1], at [b = +inf] it is 1 above [x =
+   0]. *)
+let log_betainc_tail upper a b x =
+  let positive v = gt v 0. in
+  let finite v = logical_and (isfinite v) (positive v) in
+  let interior =
+    logical_and
+      (logical_and (finite a) (finite b))
+      (logical_and (gt x 0.) (lt x 1.))
+  in
+  let r =
+    log_betainc_at upper (clamp interior a 1.) (clamp interior b 1.)
+      (clamp interior x 0.5)
+  in
+  let inf v = is v Float.infinity in
+  let lower_zero = logical_or (is x 0.) (logical_and (inf a) (lt x 1.)) in
+  let edge =
+    where
+      (logical_xor lower_zero upper)
+      (lit x Float.neg_infinity) (zeros_like x)
+  in
+  let invalid =
+    List.fold_left logical_or (isnan a)
+      [
+        isnan b;
+        isnan x;
+        logical_not (positive a);
+        logical_not (positive b);
+        lt x 0.;
+        gt x 1.;
+        logical_and (inf a) (inf b);
+      ]
+  in
+  where invalid (lit x Float.nan) (where interior r edge)
+
+type ternary = {
+  f3 : 'c. (float, 'c) t -> (float, 'c) t -> (float, 'c) t -> (float, 'c) t;
+}
+
+let ternary_at_float32 { f3 } a b x =
+  let a, b = broadcasted a b in
+  let a, x = broadcasted a x in
+  let b, x = broadcasted b x in
+  if narrow (dtype a) then
+    let f32 = cast Nx_dtype.float32 in
+    cast (dtype a) (f3 (f32 a) (f32 b) (f32 x))
+  else f3 a b x
+
 (* The functions *)
 
 let nan_through x r = where (isnan x) x r
@@ -1232,3 +1803,23 @@ let gammaincinv a p =
 
 let gammainccinv a q =
   real2_at_float32 { r2 = (fun a q -> gammaincinv_at a q (tail q true)) } a q
+
+let log_betainc a b x =
+  ternary_at_float32
+    { f3 = (fun a b x -> log_betainc_tail (tail x false) a b x) }
+    a b x
+
+let log_betaincc a b x =
+  ternary_at_float32
+    { f3 = (fun a b x -> log_betainc_tail (tail x true) a b x) }
+    a b x
+
+let betainc a b x =
+  ternary_at_float32
+    { f3 = (fun a b x -> exp (log_betainc_tail (tail x false) a b x)) }
+    a b x
+
+let betaincc a b x =
+  ternary_at_float32
+    { f3 = (fun a b x -> exp (log_betainc_tail (tail x true) a b x)) }
+    a b x

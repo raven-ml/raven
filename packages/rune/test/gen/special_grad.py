@@ -87,6 +87,7 @@ class Derivative:
         self.name, self.of, self.d, self.extra = name, of, d, extra
         self.normal = normal
         self.points = points or of.points
+        self.normal = normal
 
     def golden(self):
         args = self.of.args
@@ -297,6 +298,49 @@ def quantile_points(f):
     return points
 
 
+def beta_points(fmt):
+    """A fifteenth of nx's incomplete beta points, every region still among
+    them, and the region boundaries', inside the domain with x normal, so that
+    the derivatives in a, b and x share their rows."""
+    points = nx.betainc_points(fmt)
+    inside_domain = lambda p: fmt.min_normal <= p[2] < 1 and all(0 < v < math.inf for v in p[:2])
+    boundaries = set(nx.beta_boundary_points(fmt))
+    return [p for i, p in enumerate(points) if inside_domain(p) and (i % 15 == 0 or p in boundaries)]
+
+
+def log_betainc_slope_x(upper):
+    """d/dx log I_x(a, b) = x^(a-1) (1-x)^(b-1) / (B(a, b) I), or its negative
+    over the complement."""
+    def d(a, b, x):
+        density = mpmath.exp((a - 1) * mpmath.log(x) + (b - 1) * mpmath.log1p(-x)
+                             - (mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)))
+        tail = nx.betainc_exact(a, b, x, upper)
+        return -density / tail if upper else density / tail
+    return d
+
+
+def log_betainc_slope(upper, arg):
+    """d/da or d/db log I_x(a, b), or of its complement, numerically at the
+    working precision, its value exact to it."""
+    def d(a, b, x):
+        f = lambda t: nx.log_betainc_exact(t, b, x, upper) if arg == 0 else nx.log_betainc_exact(a, t, x, upper)
+        return mpmath.diff(f, a if arg == 0 else b)
+    return d
+
+
+def value_normal(f):
+    """Whether f's value at the point is a normal number."""
+    return lambda fmt, *p: abs(f.reference(fmt, *p)) >= fmt.min_normal
+
+
+def log_scale(fmt, value, a, b, x):
+    """1 + |log t| for t the smaller tail, the one computed directly, the scale
+    of the relative bound."""
+    with mp.workprec(fmt.p + 40):
+        direct, _ = nx.betainc_direct(a, b, x)
+        return nx.scale(1 + abs(mpmath.log(min(direct, 1 - direct))))
+
+
 DERIVATIVES = [
     Derivative("erfc", F["erfc"],
                vanishing(lambda x: -2 / mpmath.sqrt(mpmath.pi) * mpmath.exp(-x * x), 100)),
@@ -338,6 +382,19 @@ DERIVATIVES = [
                normal=result_normal(F[name]))
     for name, upper in [("gammaincinv", False), ("gammainccinv", True)]
     for arg, wrt in [("a", 0), ("p", 1)]
+] + [
+    Derivative("log_betainc_x", F["log_betainc"], log_betainc_slope_x(False),
+               extra=log_scale, points=beta_points, normal=value_normal(F["log_betainc"])),
+    Derivative("log_betainc_a", F["log_betainc"], log_betainc_slope(False, 0),
+               extra=log_scale, points=beta_points, normal=value_normal(F["log_betainc"])),
+    Derivative("log_betainc_b", F["log_betainc"], log_betainc_slope(False, 1),
+               extra=log_scale, points=beta_points, normal=value_normal(F["log_betainc"])),
+    Derivative("log_betaincc_x", F["log_betaincc"], log_betainc_slope_x(True),
+               extra=log_scale, points=beta_points, normal=value_normal(F["log_betaincc"])),
+    Derivative("log_betaincc_a", F["log_betaincc"], log_betainc_slope(True, 0),
+               extra=log_scale, points=beta_points, normal=value_normal(F["log_betaincc"])),
+    Derivative("log_betaincc_b", F["log_betaincc"], log_betainc_slope(True, 1),
+               extra=log_scale, points=beta_points, normal=value_normal(F["log_betaincc"])),
 ]
 
 

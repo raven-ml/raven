@@ -181,6 +181,24 @@ let incomplete_gamma =
         ~firsts:[ 2.5 ] ~seconds:[ 0.1; 0.9 ] { b = Nx.gammainccinv };
     ]
 
+let incomplete_beta =
+  let ternary name ~bound f =
+    group name (check ~bound:(everywhere bound) (golden name) f)
+  in
+  group "incomplete beta"
+    [
+      ternary "betainc" ~bound:(Log_ulps 32)
+        { f = (fun a -> Nx.betainc a.(0) a.(1) a.(2)) };
+      ternary "betaincc" ~bound:(Log_ulps 32)
+        { f = (fun a -> Nx.betaincc a.(0) a.(1) a.(2)) };
+      ternary "log_betainc"
+        ~bound:(Near_zeros (32, 32))
+        { f = (fun a -> Nx.log_betainc a.(0) a.(1) a.(2)) };
+      ternary "log_betaincc"
+        ~bound:(Near_zeros (32, 32))
+        { f = (fun a -> Nx.log_betaincc a.(0) a.(1) a.(2)) };
+    ]
+
 (* Laws
 
    Identities the functions keep, at float64 over drawn batches, each within the
@@ -220,6 +238,10 @@ let signed_floats (type b) (dt : (float, b) Nx.dtype) ~emin ~emax =
     (Gen.map
        (fun xs -> Nx.create dt [| Array.length xs |] xs)
        (Gen.array ~size:(Gen.constant 32) one))
+
+(* Shapes log-uniform in [lo, hi]. *)
+let shapes lo hi =
+  Gen.with_pp Nx.pp (Gen.map Nx.exp (batch (Stdlib.log lo) (Stdlib.log hi)))
 
 (* [within tol expected actual]: elementwise, within [tol] absolutely. *)
 let within tol expected actual =
@@ -332,6 +354,46 @@ let laws =
             (Windtrap.array Windtrap.int32)
             (bits (neg (i1e x)))
             (bits (i1e (neg x))));
+      prop "betaincc a b x is betainc b a (1 - x) bit for bit where x >= 1/2"
+        (Gen.triple (shapes 1e-3 1e4) (shapes 1e-3 1e4) (batch 0.5 1.))
+        (fun (a, b, x) ->
+          (* Every fourth [x] is 1/2 and every fifth [b] is [a]: the ties. *)
+          let n = numel x in
+          let every k = init Nx.bool [| n |] (fun i -> i.(0) mod k = 0) in
+          let x = where (every 4) (full_like x 0.5) x in
+          let b = where (every 5) a b in
+          within (zeros_like x) (betaincc a b x) (betainc b a (rsub_s 1. x)));
+      prop "betainc and betaincc sum to 1"
+        (Gen.triple (shapes 1e-3 1e4) (shapes 1e-3 1e4) (batch 0. 1.))
+        (fun (a, b, x) ->
+          let p = betainc a b x and q = betaincc a b x in
+          let tol v =
+            let b = mul (mul_s (add_s (abs (log v)) 1.) (66. *. eps)) v in
+            where (equal_s v 0.) v b
+          in
+          within (add (tol p) (tol q)) (ones_like p) (add p q));
+      prop "betainc increases in x"
+        (Gen.triple (shapes 1e-3 1e4) (shapes 1e-3 1e4) (batch 0. 0.999))
+        (fun (a, b, x) ->
+          Array.iter2
+            (fun lo hi -> Windtrap.at_most float_exact ~than:hi lo)
+            (values (betainc a b x))
+            (values (betainc a b (add_s x 1e-3))));
+      prop "betainc a 1 x is x^a and betainc 1 b x is 1 - (1 - x)^b"
+        (Gen.pair (shapes 1e-2 1e2) (batch 1e-3 0.999))
+        (fun (a, x) ->
+          let one = ones_like a in
+          let tol v =
+            let b = mul (mul_s (add_s (abs (log v)) 1.) (70. *. eps)) v in
+            where (equal_s v 0.) v b
+          in
+          let p = pow x a in
+          within (tol p) p (betainc a one x);
+          let q = neg (expm1 (mul a (log1p (neg x)))) in
+          within (tol q) q (betainc one a x));
+      prop "i0e is even and i1e odd, bit for bit" (batch (-1e3) 1e3) (fun x ->
+          within (zeros_like x) (i0e x) (i0e (neg x));
+          within (zeros_like x) (neg (i1e x)) (i1e (neg x)));
       prop "i0e decreases and 0 < i1e < i0e on (0, inf)" (batch 1e-3 1e3)
         (fun x ->
           let y = add_s x 1e-3 in
@@ -572,6 +634,7 @@ let () =
          gamma;
          bessel;
          incomplete_gamma;
+         incomplete_beta;
          laws;
          gamma_laws;
        ])

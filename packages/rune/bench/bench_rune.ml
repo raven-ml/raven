@@ -469,6 +469,20 @@ let jit_special_benchmarks () =
     in
     Thumper.bench_with_setup ~setup name (fun f -> f a b)
   in
+  let betainc dt name =
+    let shape () = Nx.exp (inputs compiled_n dt (-5.) 12.) in
+    let a = shape () and b = shape () and x = inputs compiled_n dt 0. 1. in
+    let setup () =
+      let f =
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+          Nx.betainc
+      in
+      ignore (Sys.opaque_identity (f a b x));
+      f
+    in
+    Thumper.bench_with_setup ~setup name (fun f -> f a b x)
+  in
   [
     at Nx.float32 "erf 1e6" Nx.erf (-4.) 4.;
     at Nx.float64 "erf f64 1e6" Nx.erf (-6.) 6.;
@@ -488,6 +502,8 @@ let jit_special_benchmarks () =
     at Nx.float64 "digamma f64 1e6" Nx.digamma (-10.) 30.;
     at Nx.float32 "i0e 1e6" Nx.i0e (-30.) 30.;
     at Nx.float64 "i0e f64 1e6" Nx.i0e (-30.) 30.;
+    betainc Nx.float32 "betainc 1e6";
+    betainc Nx.float64 "betainc f64 1e6";
     at Nx.float32 "i1e 1e6" Nx.i1e (-30.) 30.;
     at Nx.float64 "i1e f64 1e6" Nx.i1e (-30.) 30.;
     lbeta Nx.float32 "lbeta 1e6";

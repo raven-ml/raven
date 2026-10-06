@@ -2540,6 +2540,38 @@ val gammainccinv : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     from the upper tail), within the same bound in [q]: [+inf] at [q = 0] and
     [0] at [q = 1]. At [a = 0] it is [0] for [q > 0]. *)
 
+val betainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [betainc a b x] is the regularised incomplete beta function [I_x(a, b) =
+    (1/B(a, b)) ∫₀ˣ t^{a-1} (1 - t)^{b-1} dt], the distribution function at [x]
+    of the beta distribution of shapes [a] and [b]. For [0 < a, b ≤ 2^20] it
+    is within [64 (1 + |log f|) + 4] ulps of its value [f]. Its domain is [a, b
+    > 0] and [x] in \[[0], [1]\]: it is [0] at [x = 0] and [1] at [x = 1]; as
+    [a] reaches [+inf] it is [0] below [x = 1], and as [b] reaches [+inf], [1]
+    above [x = 0].
+
+    {@ocaml[
+      # betainc (scalar float64 2.) (scalar float64 3.) (scalar float64 0.5)
+        |> item []
+      - : float = 0.6875
+    ]} *)
+
+val betaincc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [betaincc a b x] is [1 - betainc a b x], computed without the subtraction,
+    so that it keeps its relative precision where [betainc a b x] rounds to
+    [1]: within [64 (1 + |log f|) + 4] ulps of its value [f] for [0 < a, b ≤
+    2^20]. *)
+
+val log_betainc :
+  (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [log_betainc a b x] is [log (betainc a b x)], within 32 ulps, or [32ε]
+    absolutely where it is below [1] in magnitude, for [0 < a, b ≤ 2^20]. It
+    stays finite where [betainc a b x] underflows. *)
+
+val log_betaincc :
+  (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [log_betaincc a b x] is [log (betaincc a b x)], within the bound of
+    {!log_betainc}. *)
+
 (** {1:comparison Comparison and logic} *)
 
 val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
