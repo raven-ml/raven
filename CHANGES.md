@@ -173,6 +173,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles a `Rune.scan` over the rows of a slice that starts off a
+  16-byte boundary, such as `Nx.reshape [| 4; 2 |] (Nx.shrink [| (1, 9) |] x)`
+  of `float64`: compiling failed "UOp verification failed" on the loop's call.
 - `Rune.jit` compiles a `Rune.scan` or `Rune.iterate` whose step reads a copy,
   or the bits, of a slice that starts off a 16-byte boundary, such as
   `Nx.copy (Nx.shrink [| (1, n) |] x)` of `float64`: compiling failed "UOp

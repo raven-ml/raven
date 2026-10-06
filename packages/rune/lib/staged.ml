@@ -179,17 +179,14 @@ let stage ~here ~inside s (r : Trips.request) =
   (* A parameter is traced under a negative number no other parameter has, so
      that it stays apart from an enclosing call's parameters, whose slots are
      those numbers or slots of their own, and takes its slot once the body is
-     cut. *)
-  let own = Ops.Tbl.create 8 and renumbered = ref [] in
+     cut, with the alignment and phase of what the call passes it. *)
+  let own = Ops.Tbl.create 8 and held_params = ref [] in
   let held make at dt shape =
     let slot = next () in
     let v = make s ~slot:(-2 - Ops.unique_num ()) at dt shape in
     let u = Ops.buf_uop (Lower.uop s v) in
     Ops.Tbl.replace own u ();
-    let arg =
-      match Ops.arg u with Ops.Param a -> Ops.Param { a with slot } | a -> a
-    in
-    renumbered := (u, Ops.replace u ~arg) :: !renumbered;
+    held_params := (u, slot) :: !held_params;
     (slot, v)
   in
   let parameter at dt shape = held Lower.parameter at dt shape in
@@ -398,10 +395,25 @@ let stage ~here ~inside s (r : Trips.request) =
       (here s (fun () -> [ Nx.P (Nx.arange Nx.int32 0 n 1) ]))
       [ (index_slot, Nx.P index) ]
   else pass index_slot (Ops.new_buffer device 1 (Ops.dtype param));
+  let renumbered =
+    List.map
+      (fun (u, slot) ->
+        match Ops.arg u with
+        | Ops.Param a ->
+            let align, phase =
+              match List.assoc_opt slot !args with
+              | Some arg when a.addrspace = Some Tolk.Dtype.Global ->
+                  Ops.storage_phase arg
+              | _ -> (a.align, a.phase)
+            in
+            (u, Ops.replace u ~arg:(Ops.Param { a with slot; align; phase }))
+        | _ -> (u, u))
+      !held_params
+  in
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point
       (Loop.cut ~own next args (Ops.sink (List.rev !stores)))
-      !renumbered
+      renumbered
   in
   (* A loop until a stop reads its flag, the last carry, from the storage each
      trip updates. *)
