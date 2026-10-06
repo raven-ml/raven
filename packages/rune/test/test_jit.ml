@@ -5336,11 +5336,237 @@ let integer_rules =
             [ 0; 1; d.bits - 1 ]);
     ]
 
+(* Lanes. On the host, a compiled kernel computes the lanes an upcast gives it
+   as vectors. Each lane computes what the kernel computes for its element
+   alone, bit for bit, whatever the layout of its arguments. A
+   function of the operations eager computes exactly equals eager too; a special
+   function's polynomials and reductions differ from eager's by a few ulps, so
+   its reference is its element compiled alone. *)
+
+(* The bits of [t]'s elements, at float64: every float of a narrower type is
+   one. *)
+let bits_of_floats (type b) (t : (float, b) Nx.t) =
+  Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 t))
+
+let float_bits = array int64
+
+(* Zeros of both signs, NaN, the infinities, subnormals and the extremes, then
+   values spread over [-8, 8]. *)
+let edge_floats =
+  [|
+    0.;
+    -0.;
+    nan;
+    infinity;
+    neg_infinity;
+    4.9e-324;
+    -2.2e-308;
+    1e-40;
+    -1e-45;
+    1.;
+    -1.;
+    0.5;
+    1e300;
+    -1e300;
+    3.4e38;
+    -65504.;
+    1e-8;
+  |]
+
+let spread dt n =
+  Nx.init dt [| n |] (fun i ->
+      let i = i.(0) in
+      if i < Array.length edge_floats then edge_floats.(i)
+      else -8. +. (16. *. float_of_int i /. float_of_int (max n 1)))
+
+(* [f] compiled over [x] computes each element as [f] compiled over the element
+   alone. *)
+let by_lane ~msg f x =
+  let n = Nx.dim 0 x in
+  let alone = Rune.jit' f in
+  let expected =
+    Array.concat
+      (List.init n (fun i ->
+           bits_of_floats (alone (Nx.slice [ R (i, i + 1) ] x))))
+  in
+  equal ~msg float_bits expected (bits_of_floats (Rune.jit' f x))
+
+type special =
+  | Special :
+      string * (float, 'b) Nx.dtype * ((float, 'b) Nx.t -> (float, 'b) Nx.t)
+      -> special
+
+let specials =
+  List.concat_map
+    (fun (name, f32, f64) ->
+      [
+        Special (name ^ " f32", Nx.float32, f32);
+        Special (name ^ " f64", Nx.float64, f64);
+      ])
+    [
+      ("exp", Nx.exp, Nx.exp);
+      ("sin", Nx.sin, Nx.sin);
+      ("tanh", Nx.tanh, Nx.tanh);
+      ("erf", Nx.erf, Nx.erf);
+      ("erfc", Nx.erfc, Nx.erfc);
+      ("erfinv", Nx.erfinv, Nx.erfinv);
+      ("ndtri", Nx.ndtri, Nx.ndtri);
+      ("lgamma", Nx.lgamma, Nx.lgamma);
+    ]
+
+(* A special function over 64 elements, its lanes holding every edge. *)
+let special_lanes =
+  cases "each lane of a special function is its element compiled alone"
+    ~name:(fun (Special (name, _, _)) -> name)
+    specials
+    (fun (Special (_, dt, f)) -> by_lane ~msg:"64 elements" f (spread dt 64))
+
+(* The sizes around a vector's lanes, an empty input, and inputs laid out every
+   other element and broadcast. *)
+let erf_layouts (type b) (dt : (float, b) Nx.dtype) lanes =
+  List.iter
+    (fun n ->
+      by_lane ~msg:(Printf.sprintf "%d elements" n) Nx.erf (spread dt n))
+    [ 0; 1; lanes - 1; lanes; lanes + 1 ];
+  let wide = spread dt (4 * lanes) in
+  by_lane ~msg:"every other element" Nx.erf
+    (Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~window:1 ~step:2 wide));
+  by_lane ~msg:"one element broadcast" Nx.erf
+    (Nx.broadcast_to [| 2 * lanes |] (Nx.slice [ R (2, 3) ] wide))
+
+(* [lbeta a b] over a vector of [a] and one [b] broadcast to its lanes. *)
+let lbeta_broadcast () =
+  let a = Nx.abs (spread Nx.float64 32) in
+  let b = Nx.broadcast_to [| 32 |] (Nx.scalar Nx.float64 2.5) in
+  let alone =
+    Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.lbeta
+  in
+  let expected =
+    Array.concat
+      (List.init 32 (fun i ->
+           let at t = Nx.slice [ R (i, i + 1) ] t in
+           bits_of_floats (alone (at a) (at b))))
+  in
+  equal float_bits expected
+    (bits_of_floats
+       (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.lbeta a b))
+
+(* Four operands of 32 elements: two float64, then two float32. A kernel of
+   float64 values computes 8 lanes, its float32 values among them. *)
+let drawn n = Gen.array ~size:(Gen.constant n) Gen.any_float
+
+let four () =
+  Nx.Ptree.(tensor @-> tensor @-> tensor @-> tensor @-> returns tensor)
+
+let operands =
+  Gen.map
+    (fun (a, b, c, d) ->
+      let make dt xs = Nx.create dt [| 32 |] xs in
+      ( make Nx.float64 a,
+        make Nx.float64 b,
+        make Nx.float32 c,
+        make Nx.float32 d ))
+    (Gen.quad (drawn 32) (drawn 32) (drawn 32) (drawn 32))
+
+(* [f] compiled computes eager's bits. *)
+let as_eager_floats name f =
+  prop ~count:25 name operands (fun (a, b, c, d) ->
+      equal float_bits
+        (bits_of_floats (f a b c d))
+        (bits_of_floats (Rune.jit (four ()) f a b c d)))
+
+let as_eager_bools name f =
+  prop ~count:25 name operands (fun (a, b, c, d) ->
+      equal (array bool)
+        (Nx.to_array (f a b c d))
+        (Nx.to_array (Rune.jit (four ()) f a b c d)))
+
+(* A mask is a vector of comparisons, as wide as the values it compares; each
+   rule that combines or converts masks of two widths. *)
+let masks =
+  [
+    as_eager_floats "a float64 comparison selects float32 lanes" (fun a b c d ->
+        Nx.where (Nx.less a b) c d);
+    as_eager_floats "a selection of constant lanes" (fun a b c _ ->
+        Nx.where (Nx.less a b) (Nx.full_like c 1.5) (Nx.full_like c (-2.)));
+    as_eager_bools "masks of two widths combine" (fun a b c d ->
+        Nx.logical_and (Nx.less a b) (Nx.less c d));
+    as_eager_bools "a mask negated" (fun a b _ _ ->
+        Nx.logical_not (Nx.less a b));
+    as_eager_bools "masks compared" (fun a b c d ->
+        Nx.equal (Nx.less a b) (Nx.less c d));
+    as_eager_bools "a selection of masks" (fun a b c d ->
+        Nx.where (Nx.less c d) (Nx.less a b) (Nx.greater a b));
+    as_eager_floats "a mask converted to a number" (fun a b _ _ ->
+        Nx.cast Nx.float32 (Nx.less a b));
+    as_eager_bools "a number converted to a mask" (fun _ _ c _ ->
+        Nx.cast Nx.bool c);
+  ]
+
+(* The integers of a 64-bit product: its edges, and drawn ones. *)
+let products =
+  let ints = Gen.array ~size:(Gen.constant 32) Gen.int64 in
+  prop ~count:25 "each lane of an int64 product wraps as eager's"
+    (Gen.pair ints ints) (fun (a, b) ->
+      let make xs = Nx.create Nx.int64 [| 32 |] xs in
+      let a = make a and b = make b in
+      equal (array int64)
+        (Nx.to_array (Nx.mul a b))
+        (Nx.to_array
+           (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) Nx.mul a b)))
+
+(* A comparison of bytes selects wider lanes: its mask widens to theirs. *)
+let byte_masks =
+  let bytes = Gen.array ~size:(Gen.constant 32) (Gen.int_range (-128) 127) in
+  prop ~count:25 "a byte comparison selects float32 lanes as eager's does"
+    (Gen.quad bytes bytes (drawn 32) (drawn 32))
+    (fun (a, b, c, d) ->
+      let int8s xs = Nx.create Nx.int8 [| 32 |] xs in
+      let floats xs = Nx.create Nx.float32 [| 32 |] xs in
+      let a = int8s a and b = int8s b and c = floats c and d = floats d in
+      let f a b c d = Nx.where (Nx.less a b) c d in
+      equal float_bits
+        (bits_of_floats (f a b c d))
+        (bits_of_floats (Rune.jit (four ()) f a b c d)))
+
+(* Arithmetic of narrow floats rounds each operation once, as eager's does. *)
+let narrow (type b) name (dt : (float, b) Nx.dtype) =
+  prop ~count:25 name
+    (Gen.pair (drawn 64) (drawn 64))
+    (fun (a, b) ->
+      let make xs = Nx.create dt [| 64 |] xs in
+      let a = make a and b = make b in
+      let f a b = Nx.sqrt (Nx.abs (Nx.add (Nx.mul a b) a)) in
+      equal float_bits
+        (bits_of_floats (f a b))
+        (bits_of_floats
+           (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f a b)))
+
+let lanes =
+  group "lanes"
+    [
+      special_lanes;
+      test
+        "each lane of erf at float32 is its element alone, at every size and \
+         layout" (fun () -> erf_layouts Nx.float32 16);
+      test
+        "each lane of erf at float64 is its element alone, at every size and \
+         layout" (fun () -> erf_layouts Nx.float64 8);
+      test "each lane of lbeta of a broadcast argument is its element alone"
+        lbeta_broadcast;
+      group "masks equal eager's" masks;
+      products;
+      byte_masks;
+      narrow "float16 lanes compute eager's bits" Nx.float16;
+      narrow "bfloat16 lanes compute eager's bits" Nx.bfloat16;
+    ]
+
 let () =
   exit
     (run "Rune.jit"
        [
          values;
+         lanes;
          integer_rules;
          keys;
          results;

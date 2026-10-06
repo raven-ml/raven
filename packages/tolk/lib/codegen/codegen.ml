@@ -223,9 +223,76 @@ let pm_expand_broadcast =
              broadcast_and_devec_wmma (m "b"));
        ])
 
-let do_devectorize b =
+(* The scalar every lane of [x] holds, if [x] expands one. *)
+let splat x =
+  if is Op.Expand x && shape (nth x 0) = [] then Some (nth x 0) else None
+
+(* The vector [x] is of [n] lanes in the flat order of its shape, if it holds
+   them in order, through reshapes: an elementwise operation of [n] lanes, or a
+   stack of [n] constants and of loads of memory or lanes of vectors that no two
+   lanes share, which move into a vector as memory or registers do. A view
+   across lanes, a broadcast or a permutation, holds them in another order, and
+   a stack of lanes computed apart, or held apart in registers, would be put
+   together lane by lane. *)
+let rec in_order n x =
+  let constant l = is Op.Const l || (is Op.Cast l && is Op.Const (nth l 0)) in
+  let memory l = is Op.Load l && addrspace (nth l 0) <> Some Dtype.Reg in
+  let seen = Tbl.create 16 in
+  let moved l =
+    constant l
+    || ((memory l || is Op.Index l) && not (Tbl.mem seen l))
+       && (Tbl.replace seen l ();
+           true)
+  in
+  if is Op.Reshape x then in_order n (nth x 0)
+  else if not (List.equal Sint.equal (shape x) [ Int n ]) then None
+  else if Op.Set.mem (op x) Op.Set.elementwise then Some x
+  else if is Op.Stack x && List.for_all moved (src x) then Some x
+  else None
+
+(* An elementwise operation of a renderer that computes on vectors keeps its
+   lanes whole, on one axis, the flat order of its shape: each source is a
+   vector of those lanes in order, or a scalar every lane reads. Where every
+   source is a scalar, the operation is computed once and expanded. *)
+let vector_operation b s =
+  let n = Helpers.prod (int_shape s) in
+  let operand x =
+    if is_invalid (base x) then base x
+    else
+      match (splat x, in_order n x) with
+      | Some c, _ -> c
+      | None, Some v -> v
+      | None, None -> invalid_arg "a vector operand of lanes out of order"
+  in
+  let src = List.map operand (src b) in
+  if List.equal ( == ) src (Ops.src b) then None
+  else if List.for_all (fun x -> shape x = []) src then
+    Some (mop (replace b ~src) (Expand s))
+  else
+    let flat = replace b ~src in
+    Some (if List.compare_length_with s 1 = 0 then flat else reshape flat s)
+
+(* The data types whose elementwise operations [ren] computes on vectors: those
+   it computes natively, if it computes on vectors at all. Weak types are those
+   of addresses, which are computed lane by lane. *)
+let vector_dtypes (ren : Renderer.t) =
+  if not ren.vector_alu then []
+  else
+    let emulated = Decomp_dtype.emulates ren in
+    List.filter (fun dt -> not (emulated dt)) (Renderer.supported_dtypes ren)
+
+(* Elementwise operations, loads and stores of vectors compute each lane apart,
+   except an elementwise operation on the [vectors] types of several lanes whose
+   sources hold them in order: a scalar reads a view across lanes for free, and
+   a vector pays shuffles for it. *)
+let do_devectorize vectors b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
+  let on_vectors x = List.mem (dtype x) vectors in
+  let lanes x =
+    Option.is_some (splat x)
+    || (on_vectors x && Option.is_some (in_order (Helpers.prod (int_shape s)) x))
+  in
   if
     s = []
     || not
@@ -233,6 +300,12 @@ let do_devectorize b =
             (fun x -> List.equal Sint.equal (shape x) s || invalid x)
             (src b))
   then None
+  else if
+    Op.Set.mem (op b) Op.Set.elementwise
+    && Helpers.prod (int_shape s) > 1
+    && on_vectors b
+    && List.for_all (fun x -> invalid x || lanes x) (src b)
+  then vector_operation b s
   else
     let lane idx =
       replace b
@@ -243,6 +316,39 @@ let do_devectorize b =
     in
     let lanes = List.map lane (product (int_shape s)) in
     Some (if is Op.Store b then group lanes else reshape (stack lanes) s)
+
+(* An address is computed lane by lane: an access reads or writes each lane at
+   its own address, and merging them needs each address as a sum. A lane of an
+   elementwise operation on vectors, in an address, is the operation on its
+   sources' lanes. *)
+let address_lanes e =
+  let memo = Tbl.create 16 in
+  let rec go u =
+    match Tbl.find_opt memo u with
+    | Some r -> r
+    | None ->
+        let r =
+          match src u with
+          | [ v; k ]
+            when is Op.Index u && is Op.Const k
+                 && Op.Set.mem (op v) Op.Set.elementwise
+                 && shape v <> [] ->
+              let lane x =
+                if is_invalid (base x) then base x
+                else if shape x = [] then x
+                else index x [ k ]
+              in
+              go (replace v ~src:(List.map lane (src v)))
+          | srcs when Op.Set.mem (op u) Op.Set.elementwise ->
+              let srcs' = List.map go srcs in
+              if List.equal ( == ) srcs srcs' then u else replace u ~src:srcs'
+          | _ -> u
+        in
+        Tbl.replace memo u r;
+        r
+  in
+  let e' = go e in
+  if e' == e then None else Some e'
 
 let do_stack_wmma u =
   if List.for_all (fun x -> is Op.Stack x || is Op.Wmma x) (src u) then None
@@ -260,16 +366,87 @@ let do_stack_wmma u =
 
 let storage = ops [ Op.Param; Op.Buffer; Op.Alloc ]
 
+(* The boolean a constant is, if it is one. *)
+let boolean u =
+  let c = if is Op.Cast u then nth u 0 else u in
+  if not (is Op.Const c) then None
+  else match value c with `Bool b -> Some b | _ -> None
+
+(* Constants in vectors. A scalar expanded to a vector, which [const_like] makes
+   of the vectors the passes after devectorize compute on, is read as the
+   scalar: by an elementwise operation, which reads it in every lane, and at any
+   lane. A selection by a vector of constant conditions picks each lane. *)
+let pm_vector_constants =
+  pm (fun () ->
+      [
+        rule (Upat.op ~name:"x" Op.Where) (fun m ->
+            match src (m "x") with
+            | [ c; a; b ] when is Op.Stack c -> (
+                match List.map boolean (src c) with
+                | picks when List.for_all Option.is_some picks ->
+                    let lane x i =
+                      if shape x = [] then x else index_ints x [ i ]
+                    in
+                    Some
+                      (stack
+                         (List.mapi
+                            (fun i pick ->
+                              lane (if pick = Some true then a else b) i)
+                            picks))
+                | _ -> None)
+            | _ -> None);
+        rule (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) (fun m ->
+            let x = m "x" in
+            if not (List.exists (fun s -> Option.is_some (splat s)) (src x))
+            then None
+            else
+              let src =
+                List.map (fun s -> Option.value (splat s) ~default:s) (src x)
+              in
+              let scalar = replace x ~src in
+              if shape scalar = [] then Some (mop scalar (Expand (shape x)))
+              else Some scalar);
+        rule (Upat.op Op.Index ~name:"x") (fun m ->
+            match src (m "x") with [ e; _ ] -> splat e | _ -> None);
+      ])
+
 let devectorizer2 =
-  Prepare.pm_mops
+  lift Prepare.pm_mops
   ++ pm
        (fun () -> [
          (* unpack broadcasting *)
-         rule
+         rule_ctx
            (Upat.v
               ~op:(Op.Set.union Op.Set.elementwise (ops [ Op.Load; Op.Store ]))
               ~name:"b" ())
-           (fun m -> do_devectorize (m "b"));
+           (fun vectors m -> do_devectorize vectors (m "b"));
+         (* an index of storage by a vector indexes each lane apart, at an
+            address computed lane by lane *)
+         rule
+           (Upat.op Op.Index
+              ~src:
+                [
+                  Upat.v ~op:storage ~name:"b" ();
+                  Upat.v ~op:Op.Set.elementwise ~name:"i" ();
+                ])
+           (fun m ->
+             match shape (m "i") with
+             | [ Int n ] ->
+                 let lane k =
+                   let l = index_ints (m "i") [ k ] in
+                   Option.value (address_lanes l) ~default:l
+                 in
+                 Some (index (m "b") [ stack (List.init n lane) ])
+             | _ -> None);
+         rule_ctx
+           (Upat.op Op.Index
+              ~src:[ Upat.v ~op:storage ~name:"b" (); Upat.var "i" ])
+           (fun vectors m ->
+             if vectors = [] || shape (m "i") <> [] then None
+             else
+               Option.map
+                 (fun i -> index (m "b") [ i ])
+                 (address_lanes (m "i")));
          (* INDEX without src is nothing *)
          rule (Upat.op Op.Index ~src:[ Upat.var "x" ]) (fun m -> Some (m "x"));
          (* unpack WMMA *)
@@ -303,18 +480,20 @@ let devectorizer2 =
              match (marg x, shape (nth x 0)) with
              | Reshape [], [ Int 1 ] -> Some (index_ints (nth x 0) [ 0 ])
              | _ -> None);
-         (* EXPAND on scalar -> nested STACKs with the same shape *)
-         rule
+         (* EXPAND on scalar -> nested STACKs with the same shape, except
+            where elementwise operations on vectors read the scalar *)
+         rule_ctx
            (Upat.op Op.Expand ~src:[ Upat.var "x"; Upat.wild ] ~name:"out")
-           (fun m ->
+           (fun vectors m ->
              let x = m "x" and s = shape (m "out") in
              let sizes =
                List.filter_map (function Int n -> Some n | _ -> None) s
              in
              match shape x with
              | []
-               when List.length sizes = List.length s && not (List.mem 0 sizes)
-               ->
+               when vectors = []
+                    && List.length sizes = List.length s
+                    && not (List.mem 0 sizes) ->
                  let broadcast x n = stack (List.init n (fun _ -> x)) in
                  Some (List.fold_left broadcast x (List.rev sizes))
              | _ -> None);
@@ -578,6 +757,32 @@ let pm_cast_float_alu =
           else Some (replace u ~src:[ cast x (dtype u) ]));
     ])
 
+(* The operands of the product [p] is, if it is one: a product, a lane of a
+   product of vectors, or a vector of lanes of one product, its operands
+   gathered as the lanes are. *)
+let product_operands p =
+  let lane l =
+    match src l with
+    | [ m; k ] when is Op.Index l && is Op.Mul m && shape m <> [] -> Some (m, k)
+    | _ -> None
+  in
+  let at ks x =
+    if shape x = [] then x else stack (List.map (fun k -> index x [ k ]) ks)
+  in
+  if is Op.Mul p then Some (nth p 0, nth p 1)
+  else
+    match (lane p, List.filter_map lane (src p)) with
+    | Some (m, k), _ ->
+        let at x = if shape x = [] then x else index x [ k ] in
+        Some (at (nth m 0), at (nth m 1))
+    | None, ((m, _) :: _ as lanes)
+      when is Op.Stack p
+           && List.compare_lengths lanes (src p) = 0
+           && List.for_all (fun (m', _) -> m' == m) lanes ->
+        let ks = List.map snd lanes in
+        Some (at ks (nth m 0), at ks (nth m 1))
+    | _ -> None
+
 (* A sum's addition of a product is one multiply-add: the product is the
    second operand, the running sum the first. An addition that adds no product
    keeps its two roundings. *)
@@ -589,8 +794,10 @@ let pm_fuse_products =
             if not (Option.equal Tag.equal (tag s) (Some fusable)) then None
             else
               match src s with
-              | [ sum; p ] when is Op.Mul p ->
-                  Some (alu (nth p 0) Op.Mulacc [ nth p 1; sum ])
+              | [ sum; p ] -> (
+                  match product_operands p with
+                  | Some (a, b) -> Some (alu a Op.Mulacc [ b; sum ])
+                  | None -> Some (replace s ~tag:None))
               | _ -> Some (replace s ~tag:None));
       ])
 
@@ -858,10 +1065,14 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       sink
   in
   let sink =
-    rewrite
-      (Pattern_matcher.concat
-         [ Shape.symbolic_simple; devectorizer2; Coalesce.indexing_simplify ])
-      sink
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(vector_dtypes ren) sink
+      (After_sources
+         (Pattern_matcher.concat
+            [
+              lift Shape.symbolic_simple;
+              devectorizer2;
+              lift Coalesce.indexing_simplify;
+            ]))
   in
   (* some coalescing misses without this *)
   let sink = rewrite Symbolic.sym sink in
@@ -941,6 +1152,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
         lift Uop_weak.pm_commit_weak;
         pm_decomp;
         lift ren.extra_matcher;
+        lift pm_vector_constants;
         lift Linearizer.pm_split_ends;
         lift Shape.pm_remove_invalid;
       ]
@@ -980,7 +1192,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       (After_sources pm_number_params)
   in
   if setting Setting.spec <> 0 then (
-    try Spec.type_verify ~calls:Enter Spec.program sink
+    let spec = if ren.vector_alu then Spec.vector_program else Spec.program in
+    try Spec.type_verify ~calls:Enter spec sink
     with Invalid_argument _ as e when Setting.value Setting.dbgtv <> "" ->
       Format.printf "%a@." Render.pp_uops (toposort ~calls:Enter sink);
       raise e);

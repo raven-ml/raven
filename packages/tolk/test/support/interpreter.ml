@@ -26,29 +26,55 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
           (Dtype.truncate dt v :> Dtype.const)
       | `Invalid -> `Invalid)
 
-(* [of_stacks u] is [true] iff [u] is a stack, or an elementwise operation, a
-   cast or a bit reinterpretation of one; [lane k u] is the node that computes
-   its lane [k]. *)
-let rec of_stacks u =
-  match Ops.op u with
-  | Stack -> true
-  | op when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
-      List.exists of_stacks (Ops.src u)
-  | _ -> false
+(* A vector load reads a view of its storage. *)
+let vector_load u =
+  Ops.op u = Op.Load
+  && match Ops.src u with v :: _ -> Ops.op v = Op.Shrink | [] -> false
 
-and lane k u =
-  match Ops.op u with
-  | Stack -> (
-      match List.nth_opt (Ops.src u) k with
-      | Some x when k >= 0 -> x
-      | _ ->
-          invalid_arg
-            (Printf.sprintf "lane %d is outside a stack of %d" k
-               (List.length (Ops.src u))))
-  | _ ->
-      Ops.replace u
-        ~src:
-          (List.map (fun s -> if of_stacks s then lane k s else s) (Ops.src u))
+(* [of_stacks known u] is [true] iff [u] is a vector: a stack, a vector load, or
+   an elementwise operation, a cast or a bit reinterpretation of one, whose
+   scalar operands every lane reads; [known] holds the answers found. [lane
+   known memo k u] is the node that computes its lane [k], [memo] holding the
+   lanes [k] of the nodes already made. *)
+let rec of_stacks known u =
+  match Ops.Tbl.find_opt known u with
+  | Some b -> b
+  | None ->
+      let b =
+        match Ops.op u with
+        | Stack -> true
+        | Load -> vector_load u
+        | op when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
+            List.exists (of_stacks known) (Ops.src u)
+        | _ -> false
+      in
+      Ops.Tbl.replace known u b;
+      b
+
+let rec lane known memo k u =
+  match Ops.Tbl.find_opt memo u with
+  | Some l -> l
+  | None ->
+      let l =
+        match Ops.op u with
+        | Stack -> (
+            match List.nth_opt (Ops.src u) k with
+            | Some x when k >= 0 -> x
+            | _ ->
+                invalid_arg
+                  (Printf.sprintf "lane %d is outside a stack of %d" k
+                     (List.length (Ops.src u))))
+        | Load -> Ops.index u [ Ops.int k ]
+        | _ ->
+            Ops.replace u
+              ~src:
+                (List.map
+                   (fun s ->
+                     if of_stacks known s then lane known memo k s else s)
+                   (Ops.src u))
+      in
+      Ops.Tbl.replace memo u l;
+      l
 
 (* Programs *)
 
@@ -65,6 +91,8 @@ type program = {
   ids : int Ops.Tbl.t;
   slots : (string, int) Hashtbl.t;
   lanes : (int * int, int) Hashtbl.t;
+  lane_nodes : (int, Ops.t Ops.Tbl.t) Hashtbl.t;
+  vectors : bool Ops.Tbl.t;
   root : Ops.t;
   mutable vars : (string * Dtype.value) list;
   mutable params : (int * Dtype.value) list;
@@ -154,6 +182,7 @@ let rec add p u =
       p.stacks.(i) <-
         (match Ops.op u with
         | Stack -> true
+        | Load -> vector_load u
         | op when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
             Array.exists (fun s -> p.stacks.(s)) srcs
         | _ -> false);
@@ -175,6 +204,8 @@ let make u =
       ids = Ops.Tbl.create n;
       slots = Hashtbl.create 16;
       lanes = Hashtbl.create 16;
+      lane_nodes = Hashtbl.create 16;
+      vectors = Ops.Tbl.create 64;
       root = u;
       vars = [];
       params = [];
@@ -227,7 +258,15 @@ let lane_of p vector k =
   match Hashtbl.find_opt p.lanes (vector, k) with
   | Some i -> i
   | None ->
-      let i = add p (lane k p.nodes.(vector)) in
+      let memo =
+        match Hashtbl.find_opt p.lane_nodes k with
+        | Some memo -> memo
+        | None ->
+            let memo = Ops.Tbl.create 64 in
+            Hashtbl.replace p.lane_nodes k memo;
+            memo
+      in
+      let i = add p (lane p.vectors memo k p.nodes.(vector)) in
       Hashtbl.replace p.lanes (vector, k) i;
       i
 
@@ -375,51 +414,65 @@ and reduction ~check p i =
 
 and read ~check p i =
   match p.srcs.(i) with
-  | [| vector; ix |] when p.stacks.(vector) -> (
+  | [| vector; ix |]
+    when p.stacks.(vector) && not (vector_load p.nodes.(vector)) -> (
       match value ~check p ix with
       | `Int k -> value ~check p (lane_of p vector (Bigint.to_int k))
       | `Invalid -> `Invalid
       | _ -> invalid_arg "a lane is not an integer")
-  | [| storage; ix |] -> (
-      (* A lane of a vector load reads its element past the vector's offset. *)
-      let storage, offset, length =
-        match (Ops.op p.nodes.(storage), p.srcs.(storage)) with
-        | Load, [| vector |] when Ops.op p.nodes.(vector) = Op.Shrink -> (
-            match p.srcs.(vector) with
-            | [| storage; offset; length |] ->
-                (storage, value ~check p offset, Some p.nodes.(length))
-            | _ ->
-                invalid_arg
-                  "a vector load has a storage, an offset and a length")
-        | _ -> (storage, `Int Bigint.zero, None)
-      in
-      let slot = storage_slot p.nodes.(storage) in
-      let elements =
-        match List.assoc_opt slot p.buffers with
-        | Some elements -> elements
-        | None -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
-      in
-      (* Compiled code gates a read at an invalid index, which then reads
-         zero. *)
-      match (offset, value ~check p ix) with
-      | `Invalid, _ | _, `Invalid -> zero (Ops.dtype p.nodes.(i))
-      | `Int o, `Int k -> (
-          (match length with
-          | Some n when not Bigint.(geq k zero && lt k (Shape.to_z n)) ->
-              invalid_arg
-                (Format.asprintf "lane %a is outside a vector of %a"
-                   Bigint.pp_print k Bigint.pp_print (Shape.to_z n))
-          | _ -> ());
-          match Bigint.add o k with
-          | e when Bigint.(geq e zero && lt e (of_int (Array.length elements)))
-            ->
-              (elements.(Bigint.to_int e) :> Dtype.const)
-          | e ->
-              invalid_arg
-                (Format.asprintf "index %a is outside buffer %d" Bigint.pp_print
-                   e slot))
-      | _ -> invalid_arg "an index is not an integer")
+  | [| load; ix |]
+    when vector_load p.nodes.(load) && Array.length p.srcs.(load) = 3 -> (
+      (* A lane of a gated vector load is its alternative's where the gate does
+         not hold. *)
+      match (value ~check p p.srcs.(load).(2), value ~check p ix) with
+      | `Bool true, _ -> element ~check p i load ix
+      | `Bool false, `Int k ->
+          let alternative = p.srcs.(load).(1) in
+          if p.stacks.(alternative) then
+            value ~check p (lane_of p alternative (Bigint.to_int k))
+          else value ~check p alternative
+      | `Invalid, _ | _, `Invalid -> `Invalid
+      | _ -> invalid_arg "a gated vector load's gate is not a boolean")
+  | [| storage; ix |] -> element ~check p i storage ix
   | _ -> invalid_arg "cannot evaluate an index by more than one index"
+
+(* A lane of a vector load reads its element past the vector's offset. *)
+and element ~check p i storage ix =
+  let storage, offset, length =
+    match (Ops.op p.nodes.(storage), p.srcs.(storage)) with
+    | Load, ([| vector |] | [| vector; _; _ |])
+      when Ops.op p.nodes.(vector) = Op.Shrink -> (
+        match p.srcs.(vector) with
+        | [| storage; offset; length |] ->
+            (storage, value ~check p offset, Some p.nodes.(length))
+        | _ -> invalid_arg "a vector load has a storage, an offset and a length"
+        )
+    | _ -> (storage, `Int Bigint.zero, None)
+  in
+  let slot = storage_slot p.nodes.(storage) in
+  let elements =
+    match List.assoc_opt slot p.buffers with
+    | Some elements -> elements
+    | None -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
+  in
+  (* Compiled code gates a read at an invalid index, which then reads zero. *)
+  match (offset, value ~check p ix) with
+  | `Invalid, _ | _, `Invalid -> zero (Ops.dtype p.nodes.(i))
+  | `Int o, `Int k -> (
+      (match length with
+      | Some n when not Bigint.(geq k zero && lt k (Shape.to_z n)) ->
+          invalid_arg
+            (Format.asprintf "lane %a is outside a vector of %a" Bigint.pp_print
+               k Bigint.pp_print (Shape.to_z n))
+      | _ -> ());
+      match Bigint.add o k with
+      | e when Bigint.(geq e zero && lt e (of_int (Array.length elements))) ->
+          (elements.(Bigint.to_int e) :> Dtype.const)
+      | e ->
+          invalid_arg
+            (Format.asprintf "index %a is outside buffer %d" Bigint.pp_print e
+               slot))
+  | _ -> invalid_arg "an index is not an integer"
 
 let fold ~check ~vars ~params ~buffers u =
   let p = program ~vars ~params ~buffers u in
@@ -461,18 +514,21 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
       | [ dst; value; gate ] -> (dst, value, Some (id gate))
       | _ -> invalid_arg "a store has a destination, a value and a gate"
     in
-    (* A store through a vector writes each lane of a stack past the offset. *)
+    (* A store through a vector writes each lane of a vector past the offset. *)
     let slot, index, lanes =
       match (Ops.op dst, Ops.src dst) with
       | Index, [ storage; index ] ->
           (storage_slot storage, id index, [ id value_node ])
       | Shrink, [ storage; offset; length ]
-        when Ops.op value_node = Op.Stack
+        when of_stacks p.vectors value_node
              && Bigint.equal (Shape.to_z length)
-                  (Bigint.of_int (List.length (Ops.src value_node))) ->
-          (storage_slot storage, id offset, List.map id (Ops.src value_node))
+                  (Bigint.of_int (Shape.max_numel value_node)) ->
+          let n = Bigint.to_int (Shape.to_z length) in
+          ( storage_slot storage,
+            id offset,
+            List.init n (fun k -> lane_of p (id value_node) k) )
       | Shrink, _ ->
-          invalid_arg "a store through a vector stores a stack of its length"
+          invalid_arg "a store through a vector stores a vector of its length"
       | _ -> invalid_arg "cannot evaluate a store through more than one index"
     in
     let inside = Ops.ranges s in

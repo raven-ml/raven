@@ -1,5 +1,8 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-
+typedef unsigned char unsigned_char4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef signed char signed_char4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef short short4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
 void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict data1_33600, const int block_lo_, const int block_hi_) {
   for (int Lidx2 = 0; Lidx2 < (block_hi_-block_lo_); Lidx2++) {
     int alu0 = (block_lo_+Lidx2);
@@ -18,11 +21,15 @@ void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict dat
       unsigned char val6 = (*(data1_33600+(((alu2+863)>>7)+alu1)));
       int alu6 = (alu2+96);
       unsigned char val7 = (*(data1_33600+((alu6>>7)+alu1)));
+      unsigned_char4 cast0 = (unsigned_char4){val7,val3,val5,val0};
       int alu7 = ((alu0<<6)+(Lidx3<<2));
-      *(data0_13440+(alu7+1)) = ((unsigned char)(((unsigned short)((((unsigned short)(val3))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val4-val3)))))))*((short)(((((float)((alu4&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_13440+(alu7+2)) = ((unsigned char)(((unsigned short)((((unsigned short)(val5))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val6-val5)))))))*((short)(((((float)((alu5&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_13440+(alu7+3)) = ((unsigned char)(((unsigned short)((((unsigned short)(val0))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val1-val0)))))))*((short)(((((float)((alu3&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_13440+alu7) = ((unsigned char)(((unsigned short)((((unsigned short)(val7))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val2-val7)))))))*((short)(((((float)((alu6&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      signed_char4 cast1 = __builtin_convertvector(((unsigned_char4){val2,val4,val6,val1}-cast0), signed_char4);
+      short4 cast2 = __builtin_convertvector(cast1, short4);
+      unsigned_short4 cast3 = __builtin_convertvector(cast0, unsigned_short4);
+      *(data0_13440+(alu7+1)) = ((unsigned char)(((unsigned short)((cast3[1]+((unsigned short)((((unsigned short)(((short)((((short)((cast2[1]*((short)(((((float)((alu4&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+(alu7+2)) = ((unsigned char)(((unsigned short)((cast3[2]+((unsigned short)((((unsigned short)(((short)((((short)((cast2[2]*((short)(((((float)((alu5&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+(alu7+3)) = ((unsigned char)(((unsigned short)((cast3[3]+((unsigned short)((((unsigned short)(((short)((((short)((cast2[3]*((short)(((((float)((alu3&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+alu7) = ((unsigned char)(((unsigned short)((cast3[0]+((unsigned short)((((unsigned short)(((short)((((short)((cast2[0]*((short)(((((float)((alu6&127)))*0.0078125f*128.0f)+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
     }
   }
 }

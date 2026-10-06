@@ -95,6 +95,7 @@ and ctx = {
   lang : lang;
   r : string Tbl.t;
   narrowed : unit Tbl.t; (* the inlined operations cast to their type *)
+  masks : int Tbl.t; (* the lane width of each mask, in bytes *)
 }
 
 let ( .%{} ) ctx u =
@@ -491,18 +492,22 @@ let pm_bf16_ushort_const =
           Some (Format.asprintf "%au" Dtype.pp_const bits));
     ])
 
+(* A node of a kernel's values. *)
+let shaped_value u =
+  match addrspace u with
+  | (Some Dtype.Alu | None)
+    when ((not (Dtype.equal (dtype u) Dtype.Void))
+         && Option.is_some (shape_opt u))
+         [@mutate off "the value nodes of a kernel are exactly its shaped ones"]
+    ->
+      true
+  | _ -> false
+
 let uops_to_dtypes uops =
-  let dtypes u =
-    match addrspace u with
-    | (Some Dtype.Alu | None)
-      when ((not (Dtype.equal (dtype u) Dtype.Void))
-           && Option.is_some (shape_opt u))
-           [@mutate
-             off "the value nodes of a kernel are exactly its shaped ones"] ->
-        Some (dtype u, max_numel u)
-    | _ -> None
-  in
-  dedup (List.filter_map dtypes uops)
+  dedup
+    (List.filter_map
+       (fun u -> if shaped_value u then Some (dtype u, max_numel u) else None)
+       uops)
 
 (* (name, dims, dtype_in, dtype_out, upcast_sizes) *)
 let wmma_args uops =
@@ -514,6 +519,51 @@ let wmma_args uops =
     | _ -> None
   in
   dedup (List.filter_map args uops)
+
+(* Masks *)
+
+(* A value, as opposed to memory or an address of it. *)
+let is_value u =
+  match addrspace u with
+  | Some (Dtype.Global | Dtype.Local | Dtype.Reg) -> false
+  | _ -> true
+
+let is_mask u =
+  Dtype.equal (dtype u) Dtype.Bool && max_numel u > 1 && is_value u
+
+let mask_dtype = function
+  | 1 -> Dtype.Int8
+  | 2 -> Dtype.Int16
+  | 4 -> Dtype.Int32
+  | 8 -> Dtype.Int64
+  | w -> invalid_arg (strf "no mask has lanes of %d bytes" w)
+
+(* C computes a vector of booleans as a mask, each lane -1 or 0 as wide as the
+   values it decides: a comparison or a conversion of numbers gives lanes of
+   their width, logic and selections of masks the widest of their operands', and
+   a stack of booleans lanes of one byte. [mask_widths uops] is each mask's lane
+   width in bytes. *)
+let mask_widths uops =
+  let widths = Tbl.create 16 in
+  let widest l =
+    List.fold_left max 1 (List.filter_map (Tbl.find_opt widths) l)
+  in
+  let of_numbers u =
+    match List.find_opt (fun s -> not (Dtype.is_bool (dtype s))) (src u) with
+    | Some s -> Dtype.itemsize (dtype s)
+    | None -> widest (src u)
+  in
+  List.iter
+    (fun u ->
+      if is_mask u then
+        let w =
+          match op u with
+          | Op.Cmplt | Op.Cmpne | Op.Cmpeq | Op.Cast -> of_numbers u
+          | _ -> widest (src u)
+        in
+        Tbl.replace widths u w)
+    uops;
+  widths
 
 (* C-style languages *)
 
@@ -654,7 +704,9 @@ let special_name u =
 let render_uops l uops =
   let r = Tbl.create 256 and child_count = Tbl.create 256 in
   let user = Tbl.create 256 in
-  let ctx = { lang = l; r; narrowed = Tbl.create 16 } in
+  let ctx =
+    { lang = l; r; narrowed = Tbl.create 16; masks = mask_widths uops }
+  in
   let children u = Option.value (Tbl.find_opt child_count u) ~default:0 in
   List.iter
     (fun u ->
@@ -766,9 +818,14 @@ let render_uops l uops =
             (not (Op.Set.mem o undeclared))
             && not (Dtype.equal (dtype u) Dtype.Void)
           in
+          let ty () =
+            match Tbl.find_opt ctx.masks u with
+            | Some w -> render_dtype l (mask_dtype w) ~sz:(max_numel u)
+            | None -> render_type l u
+          in
           let line =
             if declared then
-              strf "%s %s = %s%s" (render_type l u) ctx.%{u} line
+              strf "%s %s = %s%s" (ty ()) ctx.%{u} line
                 (if Op.equal o Op.Special then "" else ";")
             else if Op.equal o Op.Cast then
               (* a discarded value renders as a bare statement *)
@@ -793,6 +850,188 @@ let render render_kernel l uops =
   render_kernel l ~name kernel bufs uops
 
 (* Clang *)
+
+(* Clang computes on ext_vector_type values. A scalar operand of an infix
+   operation is splat to every lane; a selection, a builtin or a conversion
+   takes vectors, and masks as wide as the values they decide. A C cast between
+   vectors reinterprets their bits: conversions are
+   [__builtin_convertvector]. *)
+
+let vector u = max_numel u > 1 && is_value u
+let vector_type ctx dt n = render_dtype ctx.lang dt ~sz:n
+
+(* [x] as [n] lanes of [dt]: a scalar is splat. *)
+let splatted ctx x dt n =
+  if max_numel x > 1 then ctx.%{x}
+  else strf "((%s)(%s))" (vector_type ctx dt n) ctx.%{x}
+
+let bool_literal x =
+  match (op x, src x) with
+  | Op.Cast, [ c ] when is Op.Const c -> Some (Dtype.Value.to_bool (cval c))
+  | Op.Const, _ -> Some (Dtype.Value.to_bool (cval x))
+  | _ -> None
+
+(* The boolean [x] as a mask of lanes of [w] bytes: a scalar is the lane every
+   lane of the vector it meets copies. *)
+let as_mask ctx x w n =
+  if max_numel x = 1 then
+    match bool_literal x with
+    | Some b -> if b then "-1" else "0"
+    | None ->
+        strf "(-(%s)(%s))" (render_scalar ctx.lang (mask_dtype w)) ctx.%{x}
+  else if Tbl.find ctx.masks x = w then ctx.%{x}
+  else
+    strf "__builtin_convertvector(%s, %s)" ctx.%{x}
+      (vector_type ctx (mask_dtype w) n)
+
+let vector_mask ctx x w n =
+  if max_numel x > 1 then as_mask ctx x w n
+  else strf "((%s)(%s))" (vector_type ctx (mask_dtype w) n) (as_mask ctx x w n)
+
+(* C gives a comparison of one-byte lanes as plain chars, which a target may
+   make unsigned: the mask is read as signed chars, so that it widens to -1. *)
+let byte_mask ctx x s =
+  if is_mask x && Tbl.find ctx.masks x = 1 then
+    strf "__builtin_bit_cast(%s, %s)"
+      (vector_type ctx Dtype.Int8 (max_numel x))
+      s
+  else s
+
+let mask_logic op a b =
+  match op with
+  | Op.And | Op.Mul -> Some (strf "(%s&%s)" a b)
+  | Op.Or | Op.Max | Op.Add -> Some (strf "(%s|%s)" a b)
+  | Op.Xor | Op.Cmpne -> Some (strf "(%s^%s)" a b)
+  | Op.Cmpeq -> Some (strf "(~(%s^%s))" a b)
+  | Op.Cmplt -> Some (strf "((~%s)&%s)" a b)
+  | _ -> None
+
+let clang_vectors =
+  let r = rule_ctx in
+  let vec ?(op = Op.Set.elementwise) () = Upat.v ~op ~name:"x" () in
+  let boolean ops =
+    Upat.v ~op:(Op.Set.of_list ops) ~name:"x"
+      ~src:[ Upat.var ~dtype:[ Dtype.Bool ] "a"; Upat.var "b" ]
+      ()
+  in
+  Pattern_matcher.fold (fun () ->
+      [
+        (* a lane of a mask is a boolean *)
+        r
+          (Upat.op ~name:"x" ~src:[ Upat.var "buf"; Upat.var "idx" ] Op.Index)
+          (fun ctx m ->
+            if not (is_mask (m "buf")) then None
+            else
+              Some (strf "((_Bool)(%s))" (render_index ctx (m "buf") (m "idx"))));
+        (* logic and comparisons of masks *)
+        r
+          (boolean Op.[ And; Or; Xor; Max; Add; Mul; Cmpne; Cmpeq; Cmplt ])
+          (fun ctx m ->
+            let x = m "x" in
+            if not (vector (m "a") || vector (m "b")) then None
+            else
+              let n = max_numel x in
+              let w =
+                List.fold_left max 1
+                  (List.filter_map (Tbl.find_opt ctx.masks) (src x))
+              in
+              let a = as_mask ctx (m "a") w n and b = as_mask ctx (m "b") w n in
+              match mask_logic (op x) a b with
+              | Some s -> Some s
+              | None ->
+                  invalid_arg
+                    (strf "no rendering of %s of masks" (Op.name (op x))));
+        (* a comparison of numbers *)
+        r (Upat.v ~op:Op.Set.comparison ~name:"x" ()) (fun ctx m ->
+            let x = m "x" in
+            if
+              (not (vector x))
+              || Dtype.is_bool (dtype (nth x 0))
+              || Tbl.find ctx.masks x <> 1
+            then None
+            else
+              Option.map
+                (fun f ->
+                  byte_mask ctx x
+                    (f (List.map (fun u -> ctx.%{u}) (src x)) (dtype x)))
+                (List.assoc_opt (op x) ctx.lang.code_for_op));
+        (* a selection reads its condition at its arms' width *)
+        r
+          (Upat.op ~name:"x"
+             ~src:[ Upat.var "c"; Upat.var "a"; Upat.var "b" ]
+             Op.Where)
+          (fun ctx m ->
+            let x = m "x" and c = m "c" and a = m "a" and b = m "b" in
+            if not (vector x) then None
+            else
+              let n = max_numel x in
+              let w =
+                match Tbl.find_opt ctx.masks x with
+                | Some w -> w
+                | None -> Dtype.itemsize (dtype x)
+              in
+              let arm u =
+                if is_mask x then vector_mask ctx u w n
+                else splatted ctx u (dtype x) n
+              in
+              if max_numel c = 1 then
+                Some (strf "(%s?%s:%s)" ctx.%{c} (arm a) (arm b))
+              else
+                let a =
+                  if vector a || vector b then
+                    if is_mask x then as_mask ctx a w n else ctx.%{a}
+                  else arm a
+                in
+                let b = if is_mask x then as_mask ctx b w n else ctx.%{b} in
+                Some (strf "(%s?%s:%s)" (as_mask ctx c w n) a b));
+        (* conversions *)
+        r
+          (vec ~op:(Op.Set.of_list [ Op.Cast ]) ())
+          (fun ctx m ->
+            let x = m "x" in
+            let s = nth x 0 in
+            if not (vector x) then None
+            else if Dtype.is_bool (dtype x) then
+              Some (byte_mask ctx x (strf "(%s!=0)" ctx.%{s}))
+            else
+              let s =
+                if Dtype.is_bool (dtype s) then strf "(%s&1)" ctx.%{s}
+                else ctx.%{s}
+              in
+              Some
+                (strf "__builtin_convertvector(%s, %s)" s
+                   (vector_type ctx (dtype x) (max_numel x))));
+        (* builtins take vectors *)
+        r
+          (vec ~op:(Op.Set.of_list Op.[ Sqrt; Trunc; Mulacc ]) ())
+          (fun ctx m ->
+            let x = m "x" in
+            if not (vector x) then None
+            else
+              let name =
+                match op x with
+                | Op.Sqrt -> "sqrt"
+                | Op.Trunc -> "trunc"
+                | _ -> "fma"
+              in
+              let args =
+                List.map
+                  (fun u -> splatted ctx u (dtype x) (max_numel x))
+                  (src x)
+              in
+              Some
+                (strf "__builtin_elementwise_%s(%s)" name
+                   (String.concat ", " args)));
+        (* a stack of booleans is a mask of one-byte lanes *)
+        r (Upat.op ~name:"x" Op.Stack) (fun ctx m ->
+            let x = m "x" in
+            if not (is_mask x) then None
+            else
+              Some
+                (strf "(-(%s){%s})"
+                   (vector_type ctx Dtype.Int8 (max_numel x))
+                   (String.concat "," (List.map (fun y -> ctx.%{y}) (src x)))));
+      ])
 
 let clang_lang =
   let abi = if Sys.win32 then "__attribute__((ms_abi)) " else "" in
@@ -826,6 +1065,7 @@ let clang_lang =
           ];
     abi;
     kernel_typedef = (fun _ -> abi ^ "void");
+    string_rewrite = Pattern_matcher.append clang_vectors base_rewrite;
   }
 
 (* clang's AArch64 backend lowers a select of a value and a float zero constant,
@@ -902,8 +1142,22 @@ let clang_vector_prefix l (dt, count) =
     (render_scalar l dt) vec alignment count
 
 let clang_kernel l ~name kernel bufs uops =
+  let masks = mask_widths uops in
+  (* A selection on vectors reads its condition as a mask of its arms' width. *)
+  let types u =
+    if not (shaped_value u) then []
+    else
+      let n = max_numel u in
+      match Tbl.find_opt masks u with
+      | Some w -> [ (mask_dtype w, n) ]
+      | None when is Op.Where u && max_numel (nth u 0) > 1 ->
+          [ (dtype u, n); (mask_dtype (Dtype.itemsize (dtype u)), n) ]
+      | None -> [ (dtype u, n) ]
+  in
   let vectors =
-    List.filter (fun (_, count) -> count > 1) (uops_to_dtypes uops)
+    List.filter
+      (fun (_, count) -> count > 1)
+      (dedup (List.concat_map types uops))
   in
   let defines = String.concat "\n" (List.map (clang_vector_prefix l) vectors) in
   defines ^ "\n" ^ render_kernel l ~name kernel bufs uops ^ "\n"
@@ -916,9 +1170,9 @@ let clang (target : Helpers.Target.t) =
     || String.starts_with ~prefix:"arm" arch)
     && not (List.mem dt Dtype.fp8s)
   in
-  Renderer.v ~name:"ClangRenderer" ~has_local:false ~global_max:[ 1; 0; 0 ]
-    ~extra_matcher:clang_extra_matcher ~code_for_op:clang_lang.code_for_op
-    ~native
+  Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false
+    ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher
+    ~code_for_op:clang_lang.code_for_op ~native
     ~render:
       (render clang_kernel
          (if

@@ -7,12 +7,8 @@ void E_16_4(float* restrict data0_64, float* restrict data1_64, float* restrict 
     int alu2 = (alu1<<2);
     float4 val0 = (*((float4*)((data1_64+alu2))));
     float4 val1 = (*((float4*)((data2_64+alu2))));
-    float alu3 = (val0[0]+val1[0]);
-    float alu4 = (val0[1]+val1[1]);
-    float alu5 = (val0[2]+val1[2]);
-    float alu6 = (val0[3]+val1[3]);
-    float4 cast0 = (float4){alu3,alu4,alu5,alu6};
-    *((float4*)((data0_64+alu2))) = cast0;
+    float4 alu3 = (val0+val1);
+    *((float4*)((data0_64+alu2))) = alu3;
   }
 }
 

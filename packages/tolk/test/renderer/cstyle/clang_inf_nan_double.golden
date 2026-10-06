@@ -1,5 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-
+typedef double double4 __attribute__((aligned(32),ext_vector_type(4)));
+typedef long long4 __attribute__((aligned(32),ext_vector_type(4)));
 void E_4_4(double* restrict data0_16, double* restrict data1_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
@@ -10,22 +11,15 @@ void E_4_4(double* restrict data0_16, double* restrict data1_16, const int block
     int alu3 = (alu0+3);
     double val2 = (*(data1_16+alu3));
     double val3 = (*(data1_16+alu0));
-    double alu4 = ((val0<-1.0)?((double)(__builtin_nanf(""))):val0);
-    double alu5 = ((0.0<val0)?val0:((double)(__builtin_inff())));
-    double alu6 = ((val0<1.0)?((double)(-__builtin_inff())):val0);
-    double alu7 = ((val1<-1.0)?((double)(__builtin_nanf(""))):val1);
-    double alu8 = ((0.0<val1)?val1:((double)(__builtin_inff())));
-    double alu9 = ((val1<1.0)?((double)(-__builtin_inff())):val1);
-    double alu10 = ((val2<-1.0)?((double)(__builtin_nanf(""))):val2);
-    double alu11 = ((0.0<val2)?val2:((double)(__builtin_inff())));
-    double alu12 = ((val2<1.0)?((double)(-__builtin_inff())):val2);
-    double alu13 = ((val3<-1.0)?((double)(__builtin_nanf(""))):val3);
-    double alu14 = ((0.0<val3)?val3:((double)(__builtin_inff())));
-    double alu15 = ((val3<1.0)?((double)(-__builtin_inff())):val3);
-    *(data0_16+alu1) = (alu5+alu4+alu6);
-    *(data0_16+alu2) = (alu8+alu7+alu9);
-    *(data0_16+alu3) = (alu11+alu10+alu12);
-    *(data0_16+alu0) = (alu14+alu13+alu15);
+    double4 cast0 = (double4){val3,val0,val1,val2};
+    double4 alu4 = ((cast0<-1.0)?((double)(__builtin_nanf(""))):cast0);
+    double4 alu5 = ((0.0<cast0)?cast0:((double)(__builtin_inff())));
+    double4 alu6 = ((cast0<1.0)?((double)(-__builtin_inff())):cast0);
+    double4 alu7 = (alu5+alu4+alu6);
+    *(data0_16+alu1) = alu7[1];
+    *(data0_16+alu2) = alu7[2];
+    *(data0_16+alu3) = alu7[3];
+    *(data0_16+alu0) = alu7[0];
   }
 }
 

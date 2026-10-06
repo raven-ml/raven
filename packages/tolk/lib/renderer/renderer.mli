@@ -135,6 +135,10 @@ type t = private {
   supports_float4 : bool;
       (** Loads and stores of four or two consecutive elements may be merged
           into one vector access. *)
+  vector_alu : bool;
+      (** Arithmetic, logic, comparisons, selections and conversions compute on
+          all the lanes of a vector at once. Otherwise each lane is computed
+          apart. *)
   has_local : bool;
       (** The target launches workgroups of several threads, numbered by local
           indices. *)
@@ -168,6 +172,7 @@ val v :
   ?name:string ->
   ?suffix:string ->
   ?supports_float4:bool ->
+  ?vector_alu:bool ->
   ?has_local:bool ->
   ?has_shared:bool ->
   ?global_max:int list ->
@@ -185,7 +190,8 @@ val v :
 (** [v target] is the renderer for [target] with these fields. The defaults
     describe a target that renders nothing:
     - [name] is ["Renderer"] and [suffix] is [""];
-    - [supports_float4], [has_local] and [has_shared] are [true];
+    - [supports_float4], [has_local] and [has_shared] are [true], and
+      [vector_alu] is [false];
     - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
       size a 32-bit signed index holds, and [global_prod_max] is [None];
     - [shared_max] is [32768];

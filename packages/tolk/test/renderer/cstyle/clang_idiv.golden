@@ -5,23 +5,13 @@ void E_4_4(int* restrict data0_16, int* restrict data1_16, int* restrict data2_1
     int alu0 = ((block_lo_+Lidx0)<<2);
     int4 val0 = (*((int4*)((data1_16+alu0))));
     int4 val1 = (*((int4*)((data2_16+alu0))));
-    _Bool alu1 = (val0[0]<0);
-    int alu2 = (val0[0]%7);
-    _Bool alu3 = ((alu2!=0)&alu1);
-    _Bool alu4 = (val0[1]<0);
-    int alu5 = (val0[1]%7);
-    _Bool alu6 = ((alu5!=0)&alu4);
-    _Bool alu7 = (val0[2]<0);
-    int alu8 = (val0[2]%7);
-    _Bool alu9 = ((alu8!=0)&alu7);
-    _Bool alu10 = (val0[3]<0);
-    int alu11 = (val0[3]%7);
-    _Bool alu12 = ((alu11!=0)&alu10);
-    int alu13 = (alu3?7:0);
-    int alu14 = (alu6?7:0);
-    int alu15 = (alu9?7:0);
-    int alu16 = (alu12?7:0);
-    *((int4*)((data0_16+alu0))) = (int4){(((val0[0]/7)-((int)(alu3)))+(alu2+alu13)+((val0[0]/val1[0])-((int)((((val0[0]%val1[0])!=0)&(alu1!=(val1[0]<0))))))),(((val0[1]/7)-((int)(alu6)))+(alu5+alu14)+((val0[1]/val1[1])-((int)((((val0[1]%val1[1])!=0)&(alu4!=(val1[1]<0))))))),(((val0[2]/7)-((int)(alu9)))+(alu8+alu15)+((val0[2]/val1[2])-((int)((((val0[2]%val1[2])!=0)&(alu7!=(val1[2]<0))))))),(((val0[3]/7)-((int)(alu12)))+(alu11+alu16)+((val0[3]/val1[3])-((int)((((val0[3]%val1[3])!=0)&(alu10!=(val1[3]<0)))))))};
+    int4 alu1 = (val0<0);
+    int4 cast0 = __builtin_convertvector(((((val0%val1)!=0)&(alu1^(val1<0)))&1), int4);
+    int4 alu2 = (val0%7);
+    int4 alu3 = ((alu2!=0)&alu1);
+    int4 cast1 = __builtin_convertvector((alu3&1), int4);
+    int4 alu4 = (alu3?((int4)(7)):0);
+    *((int4*)((data0_16+alu0))) = (((val0/7)-cast1)+(alu2+alu4)+((val0/val1)-cast0));
   }
 }
 

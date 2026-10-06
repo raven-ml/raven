@@ -8,7 +8,7 @@ void E_4_4(float* restrict data0_16, float* restrict data1_14, const int block_l
     float val0 = ((0<alu0)?*(data1_14+(alu1+-1)):0.0f);
     float val1 = ((alu0<3)?*(data1_14+(alu1+2)):0.0f);
     float2 val2 = (*((float2*)((data1_14+alu1))));
-    *((float4*)((data0_16+alu1))) = (float4){(val0+1.0f),(val2[0]+1.0f),(val2[1]+1.0f),(val1+1.0f)};
+    *((float4*)((data0_16+alu1))) = ((float4){val0,val2[0],val2[1],val1}+1.0f);
   }
 }
 

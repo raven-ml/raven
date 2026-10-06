@@ -1,11 +1,13 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-
+typedef unsigned char unsigned_char4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef signed char signed_char4 __attribute__((aligned(4),ext_vector_type(4)));
+typedef short short4 __attribute__((aligned(8),ext_vector_type(4)));
+typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
 void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1_13440, const int block_lo_, const int block_hi_) {
   for (int Lidx2 = 0; Lidx2 < (block_hi_-block_lo_); Lidx2++) {
     int alu0 = (block_lo_+Lidx2);
     int alu1 = (alu0*420);
     int alu2 = (alu1+146);
-    short cast0 = ((short)(((((float)((alu2&127)))*0.0078125f*128.0f)+0.5f)));
     for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
       int alu3 = (Lidx3<<2);
       int alu4 = (((alu2>>7)<<6)+alu3);
@@ -18,11 +20,17 @@ void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1
       unsigned char val5 = (*(data1_13440+(alu5+3)));
       unsigned char val6 = (*(data1_13440+alu4));
       unsigned char val7 = (*(data1_13440+alu5));
+      unsigned_char4 cast0 = (unsigned_char4){val6,val0,val1,val2};
       int alu6 = ((alu0<<6)+alu3);
-      *(data0_4096+(alu6+1)) = ((unsigned char)(((unsigned short)((((unsigned short)(val0))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val3-val0)))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_4096+(alu6+2)) = ((unsigned char)(((unsigned short)((((unsigned short)(val1))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val4-val1)))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_4096+(alu6+3)) = ((unsigned char)(((unsigned short)((((unsigned short)(val2))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val5-val2)))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
-      *(data0_4096+alu6) = ((unsigned char)(((unsigned short)((((unsigned short)(val6))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val7-val6)))))))*cast0)))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      signed_char4 cast1 = __builtin_convertvector(((unsigned_char4){val7,val3,val4,val5}-cast0), signed_char4);
+      short4 cast2 = __builtin_convertvector(cast1, short4);
+      unsigned_short4 cast3 = __builtin_convertvector(cast0, unsigned_short4);
+      unsigned_short4 cast4 = __builtin_convertvector(((cast2*((short)(((((float)((alu2&127)))*0.0078125f*128.0f)+0.5f))))+((short)(64))), unsigned_short4);
+      unsigned_char4 cast5 = __builtin_convertvector((cast3+(cast4>>((unsigned short)(7u)))), unsigned_char4);
+      *(data0_4096+(alu6+1)) = cast5[1];
+      *(data0_4096+(alu6+2)) = cast5[2];
+      *(data0_4096+(alu6+3)) = cast5[3];
+      *(data0_4096+alu6) = cast5[0];
     }
   }
 }

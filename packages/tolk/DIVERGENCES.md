@@ -1784,15 +1784,17 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `uop/spec.py:205` (`spec_program`, which accepts an
   elementwise operation of any shape).
-- **tolk:** `lib/uop/spec.ml:390` (the first rule of `program`).
+- **tolk:** `lib/uop/spec.ml:421` (the first rule of `program_rules`).
 - **Differs:** `Spec.program` rejects an operation of `Op.Set.elementwise`
   on values, casts and bitcasts included, whose shape has an axis; a bitcast
   of memory, which views it, stays allowed. `SPEC` defaults to 1
   and code generation checks every lowered kernel against `Spec.program`, so
   a kernel that still holds vector arithmetic fails at lowering, naming the
-  operation, on every target. Devectorize leaves none while every source
-  keeps its width, which D76 keeps when every lane of a gated load's index
-  is `Invalid`.
+  operation, on every target whose renderer computes lane by lane.
+  Devectorize leaves none there while every source keeps its width, which D76
+  keeps when every lane of a gated load's index is `Invalid`. A renderer that
+  computes on vectors (D141) is checked against `Spec.vector_program`, which
+  takes an operation on one axis of lanes.
 - **Reason:** (b). CUDA's vectors are structs without arithmetic, casts or
   selects, so a vector operation left after devectorize is a kernel that does
   not compile there, and one Metal renders without complaint; rune compiles
@@ -1801,8 +1803,8 @@ the Exclusions of `README.md`.
   (D58) › a program has no elementwise operation on a vector` (add, cast and
   where on two lanes, and the same on one); the `Codegen` suite's `vectors in
   programs › a weak constant stored into four lanes of half is refused` and,
-  on every case, `› no program applies an elementwise operation to a
-  vector`; the `Cstyle` suite's `every GPU kernel compiles with its target's
+  on every case but the host's, `› no program applies an elementwise
+  operation to a vector`; the `Cstyle` suite's `every GPU kernel compiles with its target's
   toolchain › cuda_vector_cast`, tinygrad's source, which NVRTC rejects
   (slow, an expected failure).
 
@@ -4271,3 +4273,59 @@ stores through a pad.
   around one call compile one program`, and the same two on Metal; the
   Hcq2 suite: `ranges › each trip of a chunked range reads its trip as a scalar
   argument`.
+
+## D141. The host computes upcast lanes as vectors
+
+- **tinygrad:** `codegen/__init__.py:117` (`do_devectorize`, which splits
+  every elementwise operation, load and store of several lanes into one per
+  lane, on every target) and `:137` (`devectorizer2`);
+  `renderer/cstyle.py:40-42`, which writes a conversion of a vector that is
+  not in registers as a C cast, a reinterpretation of its bits.
+- **tolk:** `lib/renderer/renderer.mli:138` (`vector_alu`);
+  `lib/codegen/codegen.ml:237` (`in_order`), `:257` (`vector_operation`),
+  `:278` (`vector_dtypes`), `:288` (`do_devectorize`), `:324`
+  (`address_lanes`), `:379` (`pm_vector_constants`) and `:763`
+  (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
+  (`clang_vectors`) and `:1144` (`clang_kernel`); `lib/uop/spec.ml:500`
+  (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded, and makes its compiled patterns match a repeated source
+  lazily, as its interpreted ones do: a stack whose first lane is a constant
+  and whose others are lanes of a vector raised in a bind of the first lane's
+  source that the match never needed.
+- **Differs:** a renderer may compute on vectors (`Renderer.vector_alu`;
+  Clang does). There an elementwise operation of several lanes on a type the
+  target computes natively stays one operation on a vector of its lanes, on
+  one axis, when each source holds them in order: a vector operation, a stack
+  of loads of memory, of lanes of vectors or of constants, or a scalar that
+  every lane reads. A source that holds them in another order, a broadcast or
+  a permutation across lanes, or apart in registers, as an accumulator's
+  lanes, costs a vector shuffles that a scalar reads for free: such an
+  operation computes each lane apart. Loads, stores, tensor-core products,
+  calls, and operations on a weak type (an address) or an emulated one still
+  compute each lane apart; an address is computed lane by lane through the
+  vector operations it reads, so that accesses still merge. A sum fuses each
+  lane of a vector product into its running sum, and a selection by constant
+  conditions picks each lane. A program for such a renderer is checked against
+  `Spec.vector_program` (D58). Clang writes the vectors as `ext_vector_type`
+  values: a conversion is `__builtin_convertvector`, square roots,
+  truncations and multiply-adds are `__builtin_elementwise_*`, a scalar
+  operand of a builtin or a selection is splat, and a vector of booleans is a
+  mask of -1 and 0 lanes as wide as the values it compares, converted to the
+  width of the masks or values it meets; a lane of a mask is read as a
+  `_Bool`, and a mask of one-byte lanes, which C types as plain chars, as
+  signed chars.
+- **Reason:** (b): RFC 0025's special functions on the host. Lanes copied as
+  scalars made Clang compile each lane's copy of the body, in a time that
+  grows faster than the copies, and kept its loop vectorizer off a float32
+  loop (D131 took the upcast away for that). As vectors, Clang compiles the
+  body once and runs its lanes at once, and each lane computes what the
+  scalar kernel computes, bit for bit.
+- **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
+  from the patched tinygrad, and `execution on the host › every kernel the
+  interpreter runs writes what it computes`; the Codegen suite's `vectors in
+  programs › a host program computes on vectors of its lanes` (every host
+  case), `› a weak constant stored into four lanes of half on the host
+  converts them` and `multiply-adds` (every test); the Spec suite's `vectors
+  in programs › a program of a renderer that computes on vectors … (D141)`;
+  rune's Rune.jit suite: `lanes` (every test).

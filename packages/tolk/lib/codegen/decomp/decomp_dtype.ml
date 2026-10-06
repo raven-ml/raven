@@ -877,18 +877,23 @@ let computes r =
   let supported = Renderer.supported_dtypes r in
   List.filter (fun dt -> among supported dt || among emulable dt) Dtype.all
 
+let emulates r =
+  let named =
+    List.filter_map
+      (fun s -> Result.to_option (Dtype.of_string s))
+      (Setting.value Setting.emulated_dtypes)
+  in
+  let supported = Renderer.supported_dtypes r in
+  (* Unsigned 64-bit integers are emulated with signed ones. *)
+  fun dt ->
+    let dt = if Dtype.equal dt Uint64 then Dtype.Int64 else dt in
+    List.mem dt named || not (List.mem dt supported)
+
 type ctx = { mutable found : Dtype.t list; renderer : Renderer.t }
 
 let ctx renderer = { found = []; renderer }
 
 let do_dtype_decomps ctx sink =
-  let emulated =
-    List.filter_map
-      (fun s -> Result.to_option (Dtype.of_string s))
-      (Setting.value Setting.emulated_dtypes)
-  in
-  let supported = Renderer.supported_dtypes ctx.renderer in
-  let should_emulate dt = List.mem dt emulated || not (List.mem dt supported) in
   let sink =
     List.fold_left
       (fun sink fr ->
@@ -902,7 +907,7 @@ let do_dtype_decomps ctx sink =
           graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Splits.create 64)
             sink (Before_sources pm_long_decomp))
       sink
-      (List.sort Dtype.compare (List.filter should_emulate ctx.found))
+      (List.sort Dtype.compare (List.filter (emulates ctx.renderer) ctx.found))
   in
   ctx.found <- [];
   sink

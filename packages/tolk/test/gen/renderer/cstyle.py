@@ -304,6 +304,67 @@ def vector_cast():
     return lanes(a).store(lanes(b).load().cast(dtypes.int)).sink(arg=KernelInfo(name="vector_cast"))
 
 
+def lanes_of(name, f, ins, out, n=4):
+    """`f` of `n` lanes of a parameter of each type of `ins`, each loaded
+    whole, stored whole as `n` lanes of `out`: a host kernel computes its
+    lanes as vectors."""
+    def make():
+        def whole(buf): return UOp(Ops.SHRINK, src=(buf, int32(0), int32(n)))
+        loads = [whole(UOp.param(i + 1, dt, n)).load() for i, dt in enumerate(ins)]
+        return whole(UOp.param(0, out, n)).store(f(*loads)).sink(arg=KernelInfo(name=name))
+    return raw(make)
+
+
+def lane_by_lane(name, f, ins, out, n=3):
+    """`f` of `n` lanes of a parameter of each type of `ins`, loaded and
+    stored lane by lane: a vector of 3 lanes is 4 wide in memory."""
+    def make():
+        params = [UOp.param(i + 1, dt, n) for i, dt in enumerate(ins)]
+        values = [UOp(Ops.STACK, src=tuple(p.index(int32(i)).load() for i in range(n))) for p in params]
+        result, o = f(*values), UOp.param(0, out, n)
+        return UOp.sink(*[o.index(int32(i)).store(result.index(int32(i))) for i in range(n)], arg=KernelInfo(name=name))
+    return raw(make)
+
+
+def cconst(v, dt): return UOp.cconst(v, dt)
+
+
+VECTOR_CASTS = [(dtypes.float, dtypes.double), (dtypes.double, dtypes.float), (dtypes.float, dtypes.int),
+                (dtypes.int, dtypes.float), (dtypes.double, dtypes.long), (dtypes.long, dtypes.double),
+                (dtypes.uint, dtypes.float), (dtypes.float, dtypes.uchar), (dtypes.half, dtypes.float),
+                (dtypes.float, dtypes.half)]
+
+
+def host_vectors():
+    """The vectors a host kernel computes on: a conversion in each direction, a
+    reinterpretation, selections and logic on masks of the width of the values
+    they compare, Clang's builtins, and a vector of 3 lanes."""
+    f, d = dtypes.float, dtypes.double
+    return [(f"vector_cast_{dtype_name(a)}_{dtype_name(b)}", lanes_of("cast", lambda x, b=b: x.cast(b), (a,), b))
+            for a, b in VECTOR_CASTS] + [
+        ("vector_bitcast", lanes_of("bitcast", lambda x: x.bitcast(dtypes.uint), (f,), dtypes.uint)),
+        ("vector_where_mixed_widths", lanes_of("where", lambda a, b, c, e: (a < b).where(c, e), (d, d, f, f), f)),
+        ("vector_where_constants", lanes_of("where", lambda a, b: (a < b).where(cconst(1.5, f), cconst(-2.0, f)), (f, f), f)),
+        ("vector_where_scalar_condition", lanes_of(
+            "where", lambda a, b: (UOp.variable("p", 0, 1, dtype=dtypes.int) < int32(1)).where(a, b), (f, f), f)),
+        ("vector_where_masks", lanes_of(
+            "where", lambda a, b, c, e: (a < b).where(c < e, e < c).where(c, e), (d, d, f, f), f)),
+        ("vector_byte_mask", lanes_of(
+            "where", lambda a, b, c, e: (a < b).where(c, e), (dtypes.char, dtypes.char, f, f), f)),
+        ("vector_mask_and", lanes_of("logic", lambda a, b, c, e: ((a < b) & (c < e)).where(c, e), (d, d, f, f), f)),
+        ("vector_mask_cmpne_true", lanes_of(
+            "not", lambda a, b: (a < b).alu(Ops.CMPNE, cconst(True, dtypes.bool)).where(a, b), (f, f), f)),
+        ("vector_mask_to_float", lanes_of("mask", lambda a, b: (a < b).cast(f), (f, f), f)),
+        ("vector_float_to_mask", lanes_of("mask", lambda a, b: a.cast(dtypes.bool).where(a, b), (f, f), f)),
+        ("vector_mask_lanes", lane_by_lane("lanes", lambda a, b: a < b, (f, f), dtypes.bool, n=4)),
+        ("vector_sqrt", lanes_of("sqrt", lambda a: a.sqrt(), (f,), f)),
+        ("vector_trunc", lanes_of("trunc", lambda a: a.trunc(), (d,), d)),
+        ("vector_fma", lanes_of("fma", lambda a, b, c: a.alu(Ops.MULACC, b, c), (d, d, d), d)),
+        ("vector_fma_constant", lanes_of("fma", lambda a, b: a.alu(Ops.MULACC, cconst(2.0, f), b), (f, f), f)),
+        ("vector_3_lanes", lane_by_lane("three", lambda a, b: (a < b).where(a * b, a.sqrt()), (f, f), f)),
+    ]
+
+
 def vector_copy(dt, lanes):
     """A vector of `lanes` elements of `dt`, loaded and stored whole."""
     def make():
@@ -431,7 +492,7 @@ def cases_of(name):
             # The kernels of null/test_compile_failures.py
             *[(f"interpolate_atari_{i}", tensors(lambda: [atari().interpolate((64, 64))], opts=[up(1, 4)], index=i)) for i in range(2)],
             ("add_max_uchar", tensors(lambda: [(empty(1024, dtype=dtypes.uint8) + empty(1024, dtype=dtypes.uint8)).max()])),
-            ("table", ast(binary))]
+            ("table", ast(binary))] + host_vectors()
     if name in ("metal", "cuda", "hip"):
         extra = [("nontemporal", ast(nontemporal))] if name == "hip" else []
         if name == "metal":

@@ -69,6 +69,12 @@ val program : t
     read at a constant lane. It adds conditionals ({!Op.If}, {!Op.Endif}) and
     lowered, [int32] {!Op.Special}s. *)
 
+val vector_program : t
+(** [vector_program] is {!program} for a renderer that computes on vectors
+    ({!Renderer.t.vector_alu}): an elementwise operation on values may have one
+    axis, its lanes, when each of its sources is a vector of those lanes or a
+    scalar every lane reads. *)
+
 val hcq : t
 (** [hcq] is {!shared} with the operations of command-queue programs: the
     address of storage on a device ({!Op.Getaddr}), and programs over a buffer

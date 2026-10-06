@@ -278,6 +278,32 @@ let vectors =
           let vector, scalar = lanes op in
           equal verdict (Some false) (judge Spec.program vector);
           is_false (judge Spec.program scalar = Some false));
+      cases
+        "a program of a renderer that computes on vectors takes an operation \
+         on one axis of lanes (D141)"
+        ~name:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
+        [ `Add; `Cast; `Where ]
+        (fun op ->
+          let vector, _ = lanes op in
+          is_false (judge Spec.vector_program vector = Some false));
+      test
+        "a program of a renderer that computes on vectors takes a scalar every \
+         lane reads (D141)" (fun () ->
+          let pair = Shape.stack [ fvar "a"; fvar "b" ] in
+          is_false
+            (judge Spec.vector_program (Ops.add pair (fvar "c")) = Some false));
+      test
+        "a program of a renderer that computes on vectors has no operation on \
+         two axes (D141)" (fun () ->
+          let quad =
+            Shape.stack
+              [
+                Shape.stack [ fvar "a"; fvar "b" ];
+                Shape.stack [ fvar "c"; fvar "d" ];
+              ]
+          in
+          equal verdict (Some false)
+            (judge Spec.vector_program (Ops.add quad quad)));
       test "a program reads a lane of a vector at a constant (D86)" (fun () ->
           let vector = Shape.stack [ fvar "a"; fvar "b" ] in
           let lane i = fresh_v ~src:[ vector; i ] Op.Index in

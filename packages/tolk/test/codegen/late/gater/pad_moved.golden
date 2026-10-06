@@ -17,22 +17,19 @@
 15 Ops.CMPLT dtypes.bool [14, 3]
 16 Ops.LOAD dtypes.float [9, 12, 15]
 17 Ops.INDEX dtypes.float [16, 14]
-18 Ops.CONST dtypes.weakfloat [] 1.0
-19 Ops.ADD dtypes.float [17, 18]
-20 Ops.CONST dtypes.weakint [] 1
-21 Ops.CAST dtypes.int [20] dtypes.int
-22 Ops.INDEX dtypes.float [16, 21]
-23 Ops.ADD dtypes.float [22, 18]
-24 Ops.INDEX dtypes.float [8, 4]
-25 Ops.LOAD dtypes.float [24]
-26 Ops.ADD dtypes.float [25, 18]
-27 Ops.INDEX dtypes.float [8, 21]
-28 Ops.CMPLT dtypes.bool [3, 20]
-29 Ops.LOAD dtypes.float [27, 11, 28]
-30 Ops.ADD dtypes.float [29, 18]
-31 Ops.STACK dtypes.float [19, 23, 26, 30]
-32 Ops.STORE dtypes.void [7, 31]
-33 Ops.GROUP dtypes.void [32, 32, 32, 32]
-34 Ops.END dtypes.void [33, 3]
-35 Ops.SINK dtypes.void [34] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+18 Ops.CONST dtypes.weakint [] 1
+19 Ops.CAST dtypes.int [18] dtypes.int
+20 Ops.INDEX dtypes.float [16, 19]
+21 Ops.INDEX dtypes.float [8, 4]
+22 Ops.LOAD dtypes.float [21]
+23 Ops.INDEX dtypes.float [8, 19]
+24 Ops.CMPLT dtypes.bool [3, 18]
+25 Ops.LOAD dtypes.float [23, 11, 24]
+26 Ops.STACK dtypes.float [17, 20, 22, 25]
+27 Ops.CONST dtypes.weakfloat [] 1.0
+28 Ops.ADD dtypes.float [26, 27]
+29 Ops.STORE dtypes.void [7, 28]
+30 Ops.GROUP dtypes.void [29, 29, 29, 29]
+31 Ops.END dtypes.void [30, 3]
+32 Ops.SINK dtypes.void [31] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
 

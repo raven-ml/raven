@@ -5,7 +5,7 @@ void E_4_4(int* restrict data0_16, float* restrict data1_16, const int block_lo_
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
     float4 val0 = (*((float4*)((data1_16+alu0))));
-    *((int4*)((data0_16+alu0))) = (int4){(__builtin_bit_cast(int, (float)(val0[0]))+1),(__builtin_bit_cast(int, (float)(val0[1]))+1),(__builtin_bit_cast(int, (float)(val0[2]))+1),(__builtin_bit_cast(int, (float)(val0[3]))+1)};
+    *((int4*)((data0_16+alu0))) = (__builtin_bit_cast(int4, (float4)(val0))+1);
   }
 }
 

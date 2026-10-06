@@ -1,5 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef unsigned int unsigned_int2 __attribute__((aligned(8),ext_vector_type(2)));
+typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));
 void E_8_2(float* restrict data0_16, unsigned int* restrict data1_2, unsigned int* restrict data2_2, const int block_lo_, const int block_hi_) {
   unsigned_int2 val0 = (*((unsigned_int2*)((data1_2+0))));
   unsigned_int2 val1 = (*((unsigned_int2*)((data2_2+0))));
@@ -90,8 +91,9 @@ void E_8_2(float* restrict data0_16, unsigned int* restrict data1_2, unsigned in
     unsigned int alu82 = (alu80+alu81);
     unsigned int alu83 = (alu82^((alu81<<26u)+(alu81>>6u)));
     unsigned int alu84 = (alu82+alu83);
-    *(data0_16+alu44) = (__builtin_bit_cast(float, (unsigned int)((((alu84+alu43)>>9u)|1065353216u)))+-1.0f);
-    *(data0_16+(alu44+8)) = (__builtin_bit_cast(float, (unsigned int)(((((alu84^((alu83<<6u)+(alu83>>26u)))+alu41+4u+1u)>>9u)|1065353216u)))+-1.0f);
+    float2 alu85 = (__builtin_bit_cast(float2, (unsigned_int2)((((unsigned_int2){(alu84+alu43),((alu84^((alu83<<6u)+(alu83>>26u)))+alu41+4u+1u)}>>9u)|1065353216u)))+-1.0f);
+    *(data0_16+alu44) = alu85[0];
+    *(data0_16+(alu44+8)) = alu85[1];
   }
 }
 

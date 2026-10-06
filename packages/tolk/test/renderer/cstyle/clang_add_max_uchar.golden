@@ -1,5 +1,5 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-
+typedef unsigned char unsigned_char4 __attribute__((aligned(4),ext_vector_type(4)));
 void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024, unsigned char* restrict data2_1024) {
   unsigned char buf0[1];
   *(buf0+0) = ((unsigned char)(0u));
@@ -17,15 +17,12 @@ void r_256_4(unsigned char* restrict data0_1, unsigned char* restrict data1_1024
     unsigned char val6 = (*(data2_1024+alu4));
     unsigned char val7 = (*(data2_1024+alu1));
     unsigned char val8 = (*(buf0+0));
-    unsigned char alu5 = (val0+val4);
-    unsigned char alu6 = (val1+val5);
-    unsigned char alu7 = (val2+val6);
-    unsigned char alu8 = (val3+val7);
-    unsigned char alu9 = ((alu8<alu5)?alu5:alu8);
-    unsigned char alu10 = ((alu9<alu6)?alu6:alu9);
-    unsigned char alu11 = ((alu10<alu7)?alu7:alu10);
-    unsigned char alu12 = ((val8<alu11)?alu11:val8);
-    *(buf0+0) = alu12;
+    unsigned_char4 alu5 = ((unsigned_char4){val3,val0,val1,val2}+(unsigned_char4){val7,val4,val5,val6});
+    unsigned char alu6 = ((alu5[0]<alu5[1])?alu5[1]:alu5[0]);
+    unsigned char alu7 = ((alu6<alu5[2])?alu5[2]:alu6);
+    unsigned char alu8 = ((alu7<alu5[3])?alu5[3]:alu7);
+    unsigned char alu9 = ((val8<alu8)?alu8:val8);
+    *(buf0+0) = alu9;
   }
   *(data0_1+0) = (*(buf0+0));
 }

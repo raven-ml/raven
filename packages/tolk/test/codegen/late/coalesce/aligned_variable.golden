@@ -5,38 +5,41 @@
 3 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
 4 Ops.INDEX dtypes.float [3, 1]
 5 Ops.LOAD dtypes.float [4]
-6 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=12, device="CPU")
-7 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=4, name="x", addrspace=AddrSpace.ALU)
-8 Ops.INDEX dtypes.float [6, 7]
-9 Ops.LOAD dtypes.float [8]
-10 Ops.ADD dtypes.float [5, 9]
-11 Ops.STORE dtypes.void [2, 10]
-12 Ops.CONST dtypes.weakint [] 1
-13 Ops.INDEX dtypes.float [0, 12]
-14 Ops.INDEX dtypes.float [3, 12]
-15 Ops.LOAD dtypes.float [14]
-16 Ops.ADD dtypes.weakint [7, 12]
-17 Ops.INDEX dtypes.float [6, 16]
-18 Ops.LOAD dtypes.float [17]
-19 Ops.ADD dtypes.float [15, 18]
-20 Ops.STORE dtypes.void [13, 19]
-21 Ops.CONST dtypes.weakint [] 2
-22 Ops.INDEX dtypes.float [0, 21]
-23 Ops.INDEX dtypes.float [3, 21]
-24 Ops.LOAD dtypes.float [23]
-25 Ops.ADD dtypes.weakint [7, 21]
-26 Ops.INDEX dtypes.float [6, 25]
-27 Ops.LOAD dtypes.float [26]
-28 Ops.ADD dtypes.float [24, 27]
-29 Ops.STORE dtypes.void [22, 28]
-30 Ops.CONST dtypes.weakint [] 3
-31 Ops.INDEX dtypes.float [0, 30]
-32 Ops.INDEX dtypes.float [3, 30]
-33 Ops.LOAD dtypes.float [32]
-34 Ops.ADD dtypes.weakint [7, 30]
-35 Ops.INDEX dtypes.float [6, 34]
-36 Ops.LOAD dtypes.float [35]
-37 Ops.ADD dtypes.float [33, 36]
-38 Ops.STORE dtypes.void [31, 37]
-39 Ops.SINK dtypes.void [11, 20, 29, 38] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.INDEX dtypes.float [3, 6]
+8 Ops.LOAD dtypes.float [7]
+9 Ops.CONST dtypes.weakint [] 2
+10 Ops.INDEX dtypes.float [3, 9]
+11 Ops.LOAD dtypes.float [10]
+12 Ops.CONST dtypes.weakint [] 3
+13 Ops.INDEX dtypes.float [3, 12]
+14 Ops.LOAD dtypes.float [13]
+15 Ops.STACK dtypes.float [5, 8, 11, 14]
+16 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=12, device="CPU")
+17 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=4, name="x", addrspace=AddrSpace.ALU)
+18 Ops.INDEX dtypes.float [16, 17]
+19 Ops.LOAD dtypes.float [18]
+20 Ops.ADD dtypes.weakint [17, 6]
+21 Ops.INDEX dtypes.float [16, 20]
+22 Ops.LOAD dtypes.float [21]
+23 Ops.ADD dtypes.weakint [17, 9]
+24 Ops.INDEX dtypes.float [16, 23]
+25 Ops.LOAD dtypes.float [24]
+26 Ops.ADD dtypes.weakint [17, 12]
+27 Ops.INDEX dtypes.float [16, 26]
+28 Ops.LOAD dtypes.float [27]
+29 Ops.STACK dtypes.float [19, 22, 25, 28]
+30 Ops.ADD dtypes.float [15, 29]
+31 Ops.INDEX dtypes.float [30, 1]
+32 Ops.STORE dtypes.void [2, 31]
+33 Ops.INDEX dtypes.float [0, 6]
+34 Ops.INDEX dtypes.float [30, 6]
+35 Ops.STORE dtypes.void [33, 34]
+36 Ops.INDEX dtypes.float [0, 9]
+37 Ops.INDEX dtypes.float [30, 9]
+38 Ops.STORE dtypes.void [36, 37]
+39 Ops.INDEX dtypes.float [0, 12]
+40 Ops.INDEX dtypes.float [30, 12]
+41 Ops.STORE dtypes.void [39, 40]
+42 Ops.SINK dtypes.void [32, 35, 38, 41] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
 

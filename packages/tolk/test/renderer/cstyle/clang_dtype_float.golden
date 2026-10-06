@@ -5,7 +5,7 @@ void E_4_4(float* restrict data0_16, float* restrict data1_16, float* restrict d
     int alu0 = ((block_lo_+Lidx0)<<2);
     float4 val0 = (*((float4*)((data1_16+alu0))));
     float4 val1 = (*((float4*)((data2_16+alu0))));
-    *((float4*)((data0_16+alu0))) = (float4){((val0[0]+val1[0])*3.0f),((val0[1]+val1[1])*3.0f),((val0[2]+val1[2])*3.0f),((val0[3]+val1[3])*3.0f)};
+    *((float4*)((data0_16+alu0))) = ((val0+val1)*3.0f);
   }
 }
 

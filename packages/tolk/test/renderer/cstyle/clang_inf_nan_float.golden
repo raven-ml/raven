@@ -1,22 +1,14 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
 void E_4_4(float* restrict data0_16, float* restrict data1_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
     float4 val0 = (*((float4*)((data1_16+alu0))));
-    float alu1 = ((val0[0]<-1.0f)?((float)(__builtin_nanf(""))):val0[0]);
-    float alu2 = ((0.0f<val0[0])?val0[0]:((float)(__builtin_inff())));
-    float alu3 = ((val0[0]<1.0f)?((float)(-__builtin_inff())):val0[0]);
-    float alu4 = ((val0[1]<-1.0f)?((float)(__builtin_nanf(""))):val0[1]);
-    float alu5 = ((0.0f<val0[1])?val0[1]:((float)(__builtin_inff())));
-    float alu6 = ((val0[1]<1.0f)?((float)(-__builtin_inff())):val0[1]);
-    float alu7 = ((val0[2]<-1.0f)?((float)(__builtin_nanf(""))):val0[2]);
-    float alu8 = ((0.0f<val0[2])?val0[2]:((float)(__builtin_inff())));
-    float alu9 = ((val0[2]<1.0f)?((float)(-__builtin_inff())):val0[2]);
-    float alu10 = ((val0[3]<-1.0f)?((float)(__builtin_nanf(""))):val0[3]);
-    float alu11 = ((0.0f<val0[3])?val0[3]:((float)(__builtin_inff())));
-    float alu12 = ((val0[3]<1.0f)?((float)(-__builtin_inff())):val0[3]);
-    *((float4*)((data0_16+alu0))) = (float4){(alu2+alu1+alu3),(alu5+alu4+alu6),(alu8+alu7+alu9),(alu11+alu10+alu12)};
+    float4 alu1 = ((val0<-1.0f)?((float)(__builtin_nanf(""))):val0);
+    float4 alu2 = ((0.0f<val0)?val0:((float)(__builtin_inff())));
+    float4 alu3 = ((val0<1.0f)?((float)(-__builtin_inff())):val0);
+    *((float4*)((data0_16+alu0))) = (alu2+alu1+alu3);
   }
 }
 

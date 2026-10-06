@@ -1,5 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+typedef float float16 __attribute__((aligned(64),ext_vector_type(16)));
 void r_16_16_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {
   for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
     int alu0 = ((block_lo_+Lidx1)<<4);
@@ -7,6 +8,7 @@ void r_16_16_16(float* restrict data0_256, float* restrict data1_256, float* res
     float4 val1 = (*((float4*)((data1_256+(alu0+4)))));
     float4 val2 = (*((float4*)((data1_256+(alu0+8)))));
     float4 val3 = (*((float4*)((data1_256+alu0))));
+    float16 cast0 = (float16){val3[0],val3[1],val3[2],val3[3],val1[0],val1[1],val1[2],val1[3],val2[0],val2[1],val2[2],val2[3],val0[0],val0[1],val0[2],val0[3]};
     for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
       float val4 = (*(data2_256+(Lidx2+112)));
       float val5 = (*(data2_256+(Lidx2+128)));
@@ -24,7 +26,8 @@ void r_16_16_16(float* restrict data0_256, float* restrict data1_256, float* res
       float val17 = (*(data2_256+(Lidx2+80)));
       float val18 = (*(data2_256+(Lidx2+96)));
       float val19 = (*(data2_256+Lidx2));
-      *(data0_256+(alu0+Lidx2)) = __builtin_fmaf(val0[3],val13,__builtin_fmaf(val0[2],val12,__builtin_fmaf(val0[1],val11,__builtin_fmaf(val0[0],val10,__builtin_fmaf(val2[3],val9,__builtin_fmaf(val2[2],val8,__builtin_fmaf(val2[1],val6,__builtin_fmaf(val2[0],val5,__builtin_fmaf(val1[3],val4,__builtin_fmaf(val1[2],val18,__builtin_fmaf(val1[1],val17,__builtin_fmaf(val1[0],val16,__builtin_fmaf(val3[3],val15,__builtin_fmaf(val3[2],val14,__builtin_fmaf(val3[1],val7,(val3[0]*val19))))))))))))))));
+      float16 cast1 = (float16){val19,val7,val14,val15,val16,val17,val18,val4,val5,val6,val8,val9,val10,val11,val12,val13};
+      *(data0_256+(alu0+Lidx2)) = __builtin_fmaf(cast0[15],cast1[15],__builtin_fmaf(cast0[14],cast1[14],__builtin_fmaf(cast0[13],cast1[13],__builtin_fmaf(cast0[12],cast1[12],__builtin_fmaf(cast0[11],cast1[11],__builtin_fmaf(cast0[10],cast1[10],__builtin_fmaf(cast0[9],cast1[9],__builtin_fmaf(cast0[8],cast1[8],__builtin_fmaf(cast0[7],cast1[7],__builtin_fmaf(cast0[6],cast1[6],__builtin_fmaf(cast0[5],cast1[5],__builtin_fmaf(cast0[4],cast1[4],__builtin_fmaf(cast0[3],cast1[3],__builtin_fmaf(cast0[2],cast1[2],__builtin_fmaf(cast0[1],cast1[1],(cast0*cast1)[0])))))))))))))));
     }
   }
 }

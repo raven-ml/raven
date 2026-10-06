@@ -1,0 +1,19 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
+void lanes(_Bool* restrict data0_4, float* restrict data1_4, float* restrict data2_4) {
+  float val0 = (*(data1_4+0));
+  float val1 = (*(data1_4+1));
+  float val2 = (*(data1_4+2));
+  float val3 = (*(data1_4+3));
+  float val4 = (*(data2_4+0));
+  float val5 = (*(data2_4+1));
+  float val6 = (*(data2_4+2));
+  float val7 = (*(data2_4+3));
+  int4 alu0 = ((float4){val0,val1,val2,val3}<(float4){val4,val5,val6,val7});
+  *(data0_4+0) = ((_Bool)(alu0[0]));
+  *(data0_4+1) = ((_Bool)(alu0[1]));
+  *(data0_4+2) = ((_Bool)(alu0[2]));
+  *(data0_4+3) = ((_Bool)(alu0[3]));
+}
+

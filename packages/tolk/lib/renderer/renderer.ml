@@ -172,6 +172,7 @@ type t = {
   target : Helpers.Target.t;
   suffix : string;
   supports_float4 : bool;
+  vector_alu : bool;
   has_local : bool;
   has_shared : bool;
   global_max : int list;
@@ -190,10 +191,11 @@ type t = {
 let int32_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ]
 
 let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
-    ?(has_local = true) ?(has_shared = true) ?(global_max = int32_max)
-    ?(local_max = int32_max) ?global_prod_max ?(shared_max = 32768)
-    ?(tensor_cores = []) ?(extra_matcher = Pattern_matcher.v (fun () -> []))
-    ?(code_for_op = []) ?(native = fun _ -> true)
+    ?(vector_alu = false) ?(has_local = true) ?(has_shared = true)
+    ?(global_max = int32_max) ?(local_max = int32_max) ?global_prod_max
+    ?(shared_max = 32768) ?(tensor_cores = [])
+    ?(extra_matcher = Pattern_matcher.v (fun () -> [])) ?(code_for_op = [])
+    ?(native = fun _ -> true)
     ?(render = fun _ -> invalid_arg "needs a renderer")
     ?(compiler = Compiler.v Fun.id) target =
   {
@@ -201,6 +203,7 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     target;
     suffix;
     supports_float4;
+    vector_alu;
     has_local;
     has_shared;
     global_max;

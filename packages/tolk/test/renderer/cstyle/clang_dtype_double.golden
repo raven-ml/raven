@@ -1,5 +1,6 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+typedef double double4 __attribute__((aligned(32),ext_vector_type(4)));
 void E_4_4(float* restrict data0_16, float* restrict data1_16, double* restrict data2_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
@@ -8,7 +9,9 @@ void E_4_4(float* restrict data0_16, float* restrict data1_16, double* restrict 
     double val2 = (*(data2_16+(alu0+2)));
     double val3 = (*(data2_16+(alu0+3)));
     double val4 = (*(data2_16+alu0));
-    *((float4*)((data0_16+alu0))) = (float4){((float)(((((double)(val0[0]))+val4)*3.0))),((float)(((((double)(val0[1]))+val1)*3.0))),((float)(((((double)(val0[2]))+val2)*3.0))),((float)(((((double)(val0[3]))+val3)*3.0)))};
+    double4 cast0 = __builtin_convertvector(val0, double4);
+    float4 cast1 = __builtin_convertvector(((cast0+(double4){val4,val1,val2,val3})*3.0), float4);
+    *((float4*)((data0_16+alu0))) = cast1;
   }
 }
 

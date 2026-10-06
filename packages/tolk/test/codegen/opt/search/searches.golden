@@ -1,8 +1,8 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 kernel	target	amt	failing	allow_test_size	opts	measurements
 add_small	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),)	12
-add_small	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	15
-add_small	clang	2	True	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	9
+add_small	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	16
+add_small	clang	2	True	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	10
 sum_rows	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	42
 variable	clang	1	False	True	()	3
 variable_rows	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	14

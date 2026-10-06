@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+typedef double double4 __attribute__((aligned(32),ext_vector_type(4)));
+void cast(double* restrict data0_4, float* restrict data1_4) {
+  float4 val0 = (*((float4*)((data1_4+0))));
+  double4 cast0 = __builtin_convertvector(val0, double4);
+  *((double4*)((data0_4+0))) = cast0;
+}
+

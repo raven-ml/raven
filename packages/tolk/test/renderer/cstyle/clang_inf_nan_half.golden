@@ -1,22 +1,14 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 typedef __fp16 __fp164 __attribute__((aligned(8),ext_vector_type(4)));
+typedef short short4 __attribute__((aligned(8),ext_vector_type(4)));
 void E_4_4(__fp16* restrict data0_16, __fp16* restrict data1_16, const int block_lo_, const int block_hi_) {
   for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {
     int alu0 = ((block_lo_+Lidx0)<<2);
     __fp164 val0 = (*((__fp164*)((data1_16+alu0))));
-    __fp16 alu1 = ((val0[0]<((__fp16)(-1.0f)))?((__fp16)(__builtin_nanf(""))):val0[0]);
-    __fp16 alu2 = ((((__fp16)(0.0f))<val0[0])?val0[0]:((__fp16)(__builtin_inff())));
-    __fp16 alu3 = ((val0[0]<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0[0]);
-    __fp16 alu4 = ((val0[1]<((__fp16)(-1.0f)))?((__fp16)(__builtin_nanf(""))):val0[1]);
-    __fp16 alu5 = ((((__fp16)(0.0f))<val0[1])?val0[1]:((__fp16)(__builtin_inff())));
-    __fp16 alu6 = ((val0[1]<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0[1]);
-    __fp16 alu7 = ((val0[2]<((__fp16)(-1.0f)))?((__fp16)(__builtin_nanf(""))):val0[2]);
-    __fp16 alu8 = ((((__fp16)(0.0f))<val0[2])?val0[2]:((__fp16)(__builtin_inff())));
-    __fp16 alu9 = ((val0[2]<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0[2]);
-    __fp16 alu10 = ((val0[3]<((__fp16)(-1.0f)))?((__fp16)(__builtin_nanf(""))):val0[3]);
-    __fp16 alu11 = ((((__fp16)(0.0f))<val0[3])?val0[3]:((__fp16)(__builtin_inff())));
-    __fp16 alu12 = ((val0[3]<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0[3]);
-    *((__fp164*)((data0_16+alu0))) = (__fp164){((__fp16)((((__fp16)((alu2+alu1)))+alu3))),((__fp16)((((__fp16)((alu5+alu4)))+alu6))),((__fp16)((((__fp16)((alu8+alu7)))+alu9))),((__fp16)((((__fp16)((alu11+alu10)))+alu12)))};
+    __fp164 alu1 = ((val0<((__fp16)(-1.0f)))?((__fp16)(__builtin_nanf(""))):val0);
+    __fp164 alu2 = ((((__fp16)(0.0f))<val0)?val0:((__fp16)(__builtin_inff())));
+    __fp164 alu3 = ((val0<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0);
+    *((__fp164*)((data0_16+alu0))) = (alu2+alu1+alu3);
   }
 }
 

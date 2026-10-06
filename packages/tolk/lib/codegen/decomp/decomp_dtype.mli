@@ -73,6 +73,12 @@ val computes : Renderer.t -> Dtype.t list
     {!Dtype.Bfloat16}, {!Dtype.Float16}, {!Dtype.Int64} and
     {!Dtype.Uint64}. *)
 
+val emulates : Renderer.t -> Dtype.t -> bool
+(** [emulates r dt] is [true] iff code generation for [r]'s target emulates
+    [dt]: [r] does not support it ({!Renderer.supported_dtypes}) or the setting
+    {!Setting.emulated_dtypes} names it, an unsigned 64-bit integer as the
+    signed one that emulates it. The setting is read at [emulates r]. *)
+
 type ctx
 (** The type for the context of {!pm_dtype_decomps}: the types a kernel uses
     that may need emulation, and the target's renderer. *)

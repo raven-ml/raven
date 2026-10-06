@@ -3,7 +3,7 @@ typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));
 void vector_cast(int* restrict data0_4, float* restrict data1_4) {
   float4 val0 = (*((float4*)((data1_4+0))));
-  int4 cast0 = ((int4)(val0));
+  int4 cast0 = __builtin_convertvector(val0, int4);
   *((int4*)((data0_4+0))) = cast0;
 }
 

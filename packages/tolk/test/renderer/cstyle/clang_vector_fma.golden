@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef double double4 __attribute__((aligned(32),ext_vector_type(4)));
+void fma(double* restrict data0_4, double* restrict data1_4, double* restrict data2_4, double* restrict data3_4) {
+  double4 val0 = (*((double4*)((data1_4+0))));
+  double4 val1 = (*((double4*)((data2_4+0))));
+  double4 val2 = (*((double4*)((data3_4+0))));
+  *((double4*)((data0_4+0))) = __builtin_elementwise_fma(val0, val1, val2);
+}
+

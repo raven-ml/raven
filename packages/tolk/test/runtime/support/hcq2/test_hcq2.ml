@@ -2419,8 +2419,9 @@ let ranges =
             kernel_source
               (windowed_adds (strided r stride dst) (strided r stride src))
           in
-          is_false ~msg:"5 floats apart" (contains (source 5) "float4");
-          is_true ~msg:"4 floats apart" (contains (source 4) "float4"));
+          (* the lanes compute as a vector either way: the accesses differ *)
+          is_false ~msg:"5 floats apart" (contains (source 5) "(float4*)");
+          is_true ~msg:"4 floats apart" (contains (source 4) "(float4*)"));
       test "a range of enqueued calls is a loop in the queue of their batch"
         (fun () ->
           let _, _, e = ranged "CPU:1" in

@@ -2033,6 +2033,27 @@ let on_a_vector u =
 let applies_no_elementwise_operation_to_a_vector row =
   equal (list Uops.uop) [] (List.filter on_a_vector (instructions row))
 
+(* A renderer that computes on vectors takes an operation on one axis, each
+   source a vector of its lanes or a scalar every lane reads. *)
+let on_a_vector_of_lanes u =
+  let lanes s =
+    match Shape.shape_opt s with
+    | Some [] -> true
+    | Some l -> l = Shape.shape u
+    | None -> false
+  in
+  on_a_vector u
+  && (List.compare_length_with (Shape.shape u) 1 <> 0
+     || not
+          (List.for_all
+             (fun s -> Ops.is_invalid (Ops.base s) || lanes s)
+             (Ops.src u)))
+
+let applies_operations_to_vectors_of_lanes row =
+  equal (list Uops.uop) [] (List.filter on_a_vector_of_lanes (instructions row))
+
+let computes_on_vectors row = (renderer_of_row row).vector_alu
+
 (* A fold of an int8 [2; 2] to [2; 1], kernel [1; 2], dilation [1; 2] and
    padding [(0, 0); (1, 1)], every window in the padding. In devectorize, the
    gated load of each upcast lane folds to its own 0, so the select around it is
@@ -2061,8 +2082,9 @@ let vector_select_kernel () =
 (* An unfold of a float16 whose windows all read padding, as rune lowered it
    before it lowered such an unfold to zeros: a weak 0. stored into each
    element. Upcast whole, the store is one store of four lanes, and the weak
-   lowering casts the float32 stack of the constant's lanes to half, which
-   tinygrad renders as a cast between vector types that Clang refuses. *)
+   lowering casts the float32 stack of the constant's lanes to half: a
+   conversion of a vector, which a program refuses on a renderer that computes
+   lane by lane, and the host converts. *)
 let half_zeros_kernel () =
   let open Ops.O in
   let out = Call.param ~shape:[ Int 4 ] 0 Float16 in
@@ -2076,12 +2098,12 @@ let half_zeros_kernel () =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
     [ Ops.end_ store [ r0; r1 ] ]
 
-let refused_on_a_cast kernel () =
+let refused_on_a_cast kernel renderer () =
   Setting.context
     [ B (Setting.spec, 1) ]
     (fun () ->
       raises_match (Exn.invalid_arg ~substring:"on Ops.CAST") (fun () ->
-          Codegen.to_program kernel clang))
+          Codegen.to_program kernel renderer))
 
 let vectors =
   group "vectors in programs"
@@ -2092,9 +2114,24 @@ let vectors =
             (fun () ->
               ignore (Codegen.to_program (vector_select_kernel ()) clang)));
       test "a weak constant stored into four lanes of half is refused"
-        (refused_on_a_cast (half_zeros_kernel ()));
+        (refused_on_a_cast (half_zeros_kernel ()) metal);
+      test
+        "a weak constant stored into four lanes of half on the host converts \
+         them" (fun () ->
+          let prg =
+            Codegen.to_program (half_zeros_kernel ()) (Lazy.force host)
+          in
+          equal (array Dtypes.value)
+            (Array.make 4 (`Float 0.))
+            (List.assoc 0 (Run.on_host prg [])));
       group "no program applies an elementwise operation to a vector"
-        (per_row ~only:compiles applies_no_elementwise_operation_to_a_vector);
+        (per_row
+           ~only:(fun row -> compiles row && not (computes_on_vectors row))
+           applies_no_elementwise_operation_to_a_vector);
+      group "a host program computes on vectors of its lanes"
+        (per_row
+           ~only:(fun row -> compiles row && computes_on_vectors row)
+           applies_operations_to_vectors_of_lanes);
     ]
 
 (* Signed zeros *)
