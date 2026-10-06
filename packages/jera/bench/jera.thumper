@@ -7,6 +7,7 @@
 # forced: blessed under load 25.7 on 10 cores
 # forced: blessed ode-path-tsit5-100-pendulums/eager ode-path-tsit5-100-pendulums/compiled ode-path-tsit5-100-pendulums/grad under load 85.0 on 10 cores
 # forced: blessed ode-event-tsit5-100-pendulums/eager ode-event-tsit5-100-pendulums/compiled ode-event-tsit5-100-pendulums/grad under load 34.3 on 10 cores
+# forced: blessed ode-delay-tsit5-100-logistic/eager ode-delay-tsit5-100-logistic/compiled ode-delay-tsit5-100-logistic/grad under load 25.0 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
@@ -16,6 +17,12 @@ minimize-bracket-1k/compiled	alloc_words	exact	29248
 minimize-bracket-1k/compiled	wall_time	batch=16	n=20	4.714e-04	4.391e-04 4.506e-04 4.595e-04 4.630e-04 4.640e-04 4.671e-04 4.678e-04 4.696e-04 4.700e-04 4.711e-04 4.716e-04 4.739e-04 4.787e-04 4.818e-04 5.118e-04 5.256e-04 5.442e-04 5.458e-04 5.794e-04 6.009e-04
 minimize-bracket-1k/eager	alloc_words	exact	217962
 minimize-bracket-1k/eager	wall_time	batch=4	n=20	2.104e-03	1.883e-03 1.896e-03 2.004e-03 2.004e-03 2.026e-03 2.054e-03 2.070e-03 2.071e-03 2.080e-03 2.080e-03 2.129e-03 2.145e-03 2.148e-03 2.159e-03 2.180e-03 2.189e-03 2.219e-03 2.245e-03 2.256e-03 2.280e-03
+ode-delay-tsit5-100-logistic/compiled	alloc_words	exact	116531
+ode-delay-tsit5-100-logistic/compiled	wall_time	batch=8	n=20	1.038e-03	8.309e-04 8.360e-04 8.371e-04 8.419e-04 8.589e-04 8.635e-04 8.701e-04 8.734e-04 9.381e-04 1.018e-03 1.059e-03 1.147e-03 1.457e-03 1.600e-03 1.808e-03 2.398e-03 2.967e-03 3.180e-03 3.312e-03 5.287e-03
+ode-delay-tsit5-100-logistic/eager	alloc_words	exact	3093033
+ode-delay-tsit5-100-logistic/eager	wall_time	batch=1	n=20	2.346e-02	1.420e-02 1.421e-02 1.427e-02 1.433e-02 1.457e-02 1.459e-02 1.467e-02 1.679e-02 1.848e-02 2.332e-02 2.360e-02 2.622e-02 3.315e-02 3.695e-02 3.864e-02 5.304e-02 5.736e-02 7.877e-02 8.225e-02 1.023e-01
+ode-delay-tsit5-100-logistic/grad	alloc_words	exact	263190
+ode-delay-tsit5-100-logistic/grad	wall_time	batch=1	n=20	5.940e-03	3.388e-03 3.500e-03 3.973e-03 4.175e-03 4.194e-03 4.587e-03 5.084e-03 5.282e-03 5.305e-03 5.587e-03 6.294e-03 6.513e-03 6.594e-03 6.599e-03 6.958e-03 7.186e-03 7.259e-03 7.453e-03 7.661e-03 1.049e-02
 ode-event-tsit5-100-pendulums/compiled	alloc_words	exact	81721
 ode-event-tsit5-100-pendulums/compiled	wall_time	batch=4	n=20	2.361e-03	2.278e-03 2.287e-03 2.292e-03 2.306e-03 2.309e-03 2.320e-03 2.324e-03 2.328e-03 2.341e-03 2.357e-03 2.365e-03 2.724e-03 2.890e-03 3.021e-03 3.044e-03 3.119e-03 4.204e-03 4.608e-03 4.863e-03 7.539e-03
 ode-event-tsit5-100-pendulums/eager	alloc_words	exact	1366168

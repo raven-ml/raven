@@ -292,6 +292,29 @@ let event =
     rows = all;
   }
 
+(* 100 delayed logistic populations, y' = r y (1 − y(t − 1)), from a constant
+   history, sampled at 6 times. *)
+let delay =
+  {
+    id = "ode-delay-tsit5-100-logistic";
+    f =
+      (fun r ->
+        Solution.get
+          (Ode.delay Nx.Ptree.tensor Ode.tsit5
+             ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
+             ~budget:200 ~span:32
+             ~lags:(Nx.create f64 [| 1 |] [| 1. |])
+             ~history:(fun s ->
+               Nx.broadcast_to
+                 (Array.append (Nx.shape s) (Nx.shape r))
+                 (Nx.full_like r 0.5))
+             (fun _ y d ->
+               Nx.mul (Nx.mul r y) (Nx.rsub_s 1. (Nx.squeeze ~axes:[ 0 ] d)))
+             ~at:times (Nx.full_like r 0.5)));
+    x = (fun () -> Nx.linspace f64 0.5 1.5 100);
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -309,6 +332,7 @@ let workloads =
     sample;
     path;
     event;
+    delay;
   ]
 
 let compiled f x =
