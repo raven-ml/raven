@@ -142,6 +142,22 @@ let domain_tests =
             Grid.derivative ~axis:2 g));
   ]
 
+let structure_tests =
+  [
+    test "a grid visits its axes' breaks and its coefficients" (fun () ->
+        let g = Grid.linear ~axes values in
+        equal (list string)
+          [
+            "breaks: length 2";
+            "breaks.0: a leaf";
+            "breaks.1: a leaf";
+            "coefficients: a leaf";
+          ]
+          (List.map
+             (Format.asprintf "%a" Nx.Ptree.pp_visit)
+             (Nx.Ptree.visits (Grid.ptree f64) g)));
+  ]
+
 let transformation_tests =
   let loss v = Nx.sum (Grid.eval (Grid.cubic `Natural ~axes v) points) in
   [
@@ -157,7 +173,7 @@ let transformation_tests =
         let g = Grid.linear ~axes values in
         let f =
           Rune.jit
-            Nx.Ptree.(Grid.ptree () @-> tensor @-> returns tensor)
+            Nx.Ptree.(Grid.ptree f64 @-> tensor @-> returns tensor)
             Grid.eval
         in
         equal (close ()) (Grid.eval g points) (f g points));
@@ -171,4 +187,5 @@ let () =
          group "laws" law_tests;
          group "domain" domain_tests;
          group "transformations" transformation_tests;
+         group "structure" structure_tests;
        ])

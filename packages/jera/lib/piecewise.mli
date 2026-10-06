@@ -191,7 +191,7 @@ val coefficients : ('v, 'b) t -> 'v
 (** [coefficients p] is [p]'s coefficients, each leaf of shape
     [[pieces; degree + 1] @ value]. *)
 
-val ptree : 'v Nx.Ptree.t -> ('v, 'b) t Nx.Ptree.t
-(** [ptree s] is the structure of series with values of structure [s]: the
-    breaks at [breaks], the coefficients under [coefficients], and the extension
-    reported as a case at [extension]. *)
+val ptree : 'v Nx.Ptree.t -> (float, 'b) Nx.dtype -> ('v, 'b) t Nx.Ptree.t
+(** [ptree s dtype] is the structure of series with values of structure [s] over
+    breaks of [dtype]: the extension reported as a case at [extension], the
+    breaks at [breaks] and the coefficients under [coefficients]. *)

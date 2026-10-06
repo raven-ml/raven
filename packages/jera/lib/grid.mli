@@ -96,6 +96,7 @@ val integral : axis:int -> 'b t -> 'b t
 
 (** {1:access Access} *)
 
-val ptree : unit -> 'b t Nx.Ptree.t
-(** [ptree ()] is the structure of grid values: the breaks of each axis as a
-    list at [breaks], and the coefficients at [coefficients]. *)
+val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
+(** [ptree dtype] is the structure of grid values over [dtype]: the breaks of
+    each axis as a list at [breaks], whose length is reported, and the
+    coefficients at [coefficients]. *)

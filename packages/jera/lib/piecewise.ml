@@ -484,7 +484,8 @@ let extend e p =
 let breaks p = p.breaks
 let coefficients p = p.coefficients
 
-let ptree (type v b) (s : v Nx.Ptree.t) : (v, b) t Nx.Ptree.t =
+let ptree (type v b) (s : v Nx.Ptree.t) (_ : (float, b) Nx.dtype) :
+    (v, b) t Nx.Ptree.t =
   let module M = struct
     type nonrec _ t = (v, b) t
 

@@ -199,7 +199,7 @@ let integral ~axis g = along "Jera.Grid.integral" Cheb.integral ~axis g
 
 (* Access *)
 
-let ptree (type b) () : b t Nx.Ptree.t =
+let ptree (type b) (_ : (float, b) Nx.dtype) : b t Nx.Ptree.t =
   let module M = struct
     type nonrec _ t = b t
 

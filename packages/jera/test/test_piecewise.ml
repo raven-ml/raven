@@ -488,7 +488,7 @@ let transformation_tests =
         equal (close ()) (at_points samples) (Rune.jit' at_points samples));
     test "a series is a compiled function's argument" (fun () ->
         let p = Piecewise.cubic `Natural knots samples in
-        let s = Piecewise.ptree Nx.Ptree.tensor in
+        let s = Piecewise.ptree Nx.Ptree.tensor f64 in
         let f =
           Rune.jit Nx.Ptree.(s @-> tensor @-> returns tensor) Piecewise.eval
         in
@@ -541,7 +541,7 @@ let structure_tests =
   [
     test "a series visits its extension, breaks and coefficients" (fun () ->
         let p = Piecewise.linear (vec [| 0.; 1. |]) (vec [| 0.; 1. |]) in
-        let visits = Nx.Ptree.visits (Piecewise.ptree Nx.Ptree.tensor) p in
+        let visits = Nx.Ptree.visits (Piecewise.ptree Nx.Ptree.tensor f64) p in
         equal (list string)
           [
             "extension: case \"bounded\"";
