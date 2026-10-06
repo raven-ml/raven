@@ -357,16 +357,19 @@ let finite y v =
 
 (* What a search carries besides its state: the history a delay reads, or the
    signs an event watches. [start t v] is the memory at the first time; [field
-   m] the field the steps see; [limit m] the largest step, if any; [accept m ~t
-   ~t_end ~h ~v ~ks v'] the memory after an accepted step from [(t, v)] to
-   [(t_end, v')]. Each also gives conditions that end a lane, with their status,
-   settled in order. *)
+   m] the field the steps see; [first m], if any, the field a step's first stage
+   evaluates afresh instead of taking the last step's last stage, for a field
+   that jumps where one step ends and the next starts; [limit m] the largest
+   step, if any; [accept m ~t ~t_end ~h ~v ~ks v'] the memory after an accepted
+   step from [(t, v)] to [(t_end, v')]. Each also gives conditions that end a
+   lane, with their status, settled in order. *)
 type outcome = (bool, Nx.bool_elt) Nx.t * Solution.status
 
 type ('y, 't, 'm) memory = {
   tree : 'm Nx.Ptree.t;
   start : 't time -> 'y -> 'm * outcome list;
   field : 'm -> ('y, 't) field;
+  first : ('m -> ('y, 't) field) option;
   limit : 'm -> 't time option;
   accept :
     'm ->
@@ -385,6 +388,7 @@ let plain f =
     tree = Nx.Ptree.unit;
     start = (fun _ _ -> ((), []));
     field = (fun () -> f);
+    first = None;
     limit = (fun () -> None);
     accept = (fun () ~t:_ ~t_end:_ ~h:_ ~v:_ ~ks:_ _ -> ((), []));
   }
@@ -596,6 +600,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
   in
   let alpha = 0.7 /. float emb.order and beta = 0.4 /. float emb.order in
   let stages = Array.length m.b in
+  let per_attempt = if Option.is_some mem.first then stages else stages - 1 in
   let attempt s =
     let s =
       match mem.limit s.memory with
@@ -615,10 +620,15 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let ds = Nx.where lands (Nx.rsub_s 1. s.sigma) ds in
     let sigma_end = Nx.where lands one (Nx.add s.sigma ds) in
     let hh = Nx.mul span ds in
+    let k0 =
+      match mem.first with
+      | None -> s.k
+      | Some g -> detached (eval fn y (g s.memory) t s.v)
+    in
     let v', ks =
       step fn y m
         (fun t v -> detached (mem.field s.memory t v))
-        t hh s.v (Some s.k)
+        t hh s.v (Some k0)
     in
     let e =
       let acc = ref (zeros_like s.v) in
@@ -759,7 +769,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       attempts;
       evals =
         Nx.add s.evals
-          (Nx.mul_s (Nx.cast Nx.int32 stepping) (Int32.of_int (stages - 1)));
+          (Nx.mul_s (Nx.cast Nx.int32 stepping) (Int32.of_int per_attempt));
       status = st;
       memory =
         Nx.Ptree.map2 mem.tree
@@ -870,6 +880,9 @@ let samples fn y m mem ~budget ~at y0 s =
       let sigma1 = scalar_at s.ends idx in
       let t = Nx.add a (Nx.mul span sigma0)
       and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+      let k =
+        match mem.first with None -> k | Some g -> eval fn y (g mm) t v
+      in
       let v', ks = step fn y m (mem.field mm) t h v (Some k) in
       let mm, _ = mem.accept mm ~t ~t_end:(Nx.add t h) ~h ~v ~ks v' in
       ((v', (ks.(stages - 1), mm)), Nx.add_s i 1l)
@@ -1121,6 +1134,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     {
       tree = Nx.Ptree.(pair tensor tensor);
       field = (fun _ -> f);
+      first = None;
       limit = (fun _ -> None);
       start =
         (fun t v ->
@@ -1287,8 +1301,8 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
 (* Delays *)
 
 (* The integer combinations [k] of [lags] lags with [1 ≤ Σ k ≤ top]: the
-   breakpoints [t0 + Σ_j k_j τ_j] where the solution's derivative of order [1 +
-   Σ k] may jump. *)
+   breakpoints [t0 + Σ_j k_j τ_j] where the solution's derivative of order [Σ k]
+   may jump, or [1 + Σ k] when [y0] is the history's state at [t0]. *)
 let combinations lags top =
   let rec go j left =
     if j = lags then [ [] ]
@@ -1343,7 +1357,11 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
     let slot_of k =
       Nx.mod_s (Nx.add_s k (Int32.of_int pieces)) (Int32.of_int pieces)
     in
-    let lookup (starts, (widths, (count, coef))) s =
+    (* The states at the delayed times [s]: the history's before [t0], the
+       pieces' after. At [t0], where [y0] may differ from the history, the stage
+       that ends a step reads from the [`Left] and the first stage of the next
+       from the [`Right]. *)
+    let lookup side (starts, (widths, (count, coef))) s =
       let logical = Nx.arange Nx.int32 0 pieces 1 in
       let k =
         Nx.add
@@ -1383,7 +1401,11 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
             !acc)
           coef
       in
-      let before = Nx.less_equal s t_first in
+      let before =
+        match side with
+        | `Left -> Nx.less_equal s t_first
+        | `Right -> Nx.less s t_first
+      in
       let s = Nx.minimum s (Nx.broadcast_to (Nx.shape s) t_first) in
       let past = stack y (Array.init n_lags (fun i -> past (Nx.get [ i ] s))) in
       Nx.Ptree.map2 y
@@ -1436,7 +1458,8 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
                     (Nx.logical_not (Nx.all (Nx.isfinite (Rune.detach lags)))),
                   Stalled );
               ] ));
-        field = (fun mm t v -> f t v (lookup mm (Nx.sub t lags)));
+        field = (fun mm t v -> f t v (lookup `Left mm (Nx.sub t lags)));
+        first = Some (fun mm t v -> f t v (lookup `Right mm (Nx.sub t lags)));
         limit = (fun _ -> Some smallest);
         accept =
           (fun (starts, (widths, (count, coef))) ~t ~t_end ~h ~v ~ks _ ->
@@ -1472,9 +1495,10 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
               [ (short ~t:t_end (starts, (widths, (count, coef))), Stalled) ] ));
       }
     in
-    (* Steps land on the breakpoints: the times of [at] and the breakpoints in
-       their span, sorted, and the states read back at [at]'s positions. *)
-    let k = combinations n_lags (emb.order - 1) in
+    (* Steps land on the breakpoints up to the method's order, which a jump from
+       the history to [y0] needs: the times of [at] and the breakpoints in their
+       span, sorted, and the states read back at [at]'s positions. *)
+    let k = combinations n_lags emb.order in
     let merged =
       match k with
       | [] -> at

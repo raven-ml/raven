@@ -908,6 +908,17 @@ let delay_tests =
         equal close
           (vec [| 1.; 0.; -0.5; -1. /. 6. |])
           (Solution.get (delayed ~lags:(vec [| 2.; 1. |]) ~f times)));
+    test "y0 may differ from the history at the first time" (fun () ->
+        (* y' = −y(t − 1) from y = 0 before 0 and y(0) = 1: y = 1 on [0, 1], 2 −
+           t on [1, 2], and y(3) = −1/2. *)
+        let s =
+          Ode.delay one Ode.tsit5
+            ~tol:(Tol.v ~rel:1e-12 ~abs:1e-12)
+            ~budget:400 ~pieces:64 lagged ~lags:(vec [| 1. |])
+            ~history:(fun _ -> scalar 0.)
+            ~at:times (scalar 1.)
+        in
+        equal close (vec [| 1.; 1.; 0.; -0.5 |]) (Solution.get s));
     test "history gives the state at one time, stacked per lag" (fun () ->
         (* y = (e^t, 2 e^t) solves y' = (e/2) y(t − 1) + (√e/2) y(t − 1/2): the
            history must hold each lag's own time. *)

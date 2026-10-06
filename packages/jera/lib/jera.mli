@@ -1177,22 +1177,28 @@ module Ode : sig
       from [y0] at [at.(0)], stacked as {!sample} stacks them. [f]'s third
       argument holds the delayed states stacked on a leading axis, one per lag;
       [history s] is the state at the scalar time [s ≤ at.(0)], which [delay]
-      calls once per lag and stacks.
+      calls once per lag and stacks. [y0] may differ from [history at.(0)]: the
+      solution then jumps at [at.(0)], and [f] reads the delayed state at
+      [at.(0)] from [history] in the step that ends there and as [y0] in the
+      step that starts there.
 
       {b Method.} An explicit embedded method whose steps never exceed the
       smallest lag, so every delayed state is read from an accepted step's
       continuous extension (see {!section-paths}) or from [history]. The steps
-      land on the breakpoints [at.(0) + Σ_j k_j τ_j] with [1 ≤ Σ_j k_j < p], [p]
-      the method's order, where the solution's derivative of order [1 + Σ_j k_j]
-      can jump. The order of a delay solve is [min(p, q + 1)], [q] its
-      extension's order (Bellen and Zennaro, 2003). {b Error.} As {!sample}'s. A
-      lag that is not positive, or the largest lag reaching back past the last
-      [pieces] accepted steps, ends the lane [Stalled], and its report names the
-      count that would hold it. Times of [at] that do not increase end the lane
-      [Stalled] too. {b Cost.} Each stage reads [lags] delayed states, each a
-      binary search of the [pieces] pieces and a series of the extension's
-      degree; the carry holds [pieces] pieces, so a compiled reverse keeps
-      [budget × pieces]. {b Derivative.} The answer reads its own tracked
+      land on the breakpoints [at.(0) + Σ_j k_j τ_j] with [1 ≤ Σ_j k_j ≤ p], [p]
+      the method's order, where the solution's derivative of order [Σ_j k_j] can
+      jump, or of order [1 + Σ_j k_j] when [y0 = history at.(0)]. The order of a
+      delay solve is [min(p, q + 1)], [q] its extension's order (Bellen and
+      Zennaro, 2003). {b Error.} As {!sample}'s. A lag that is not positive, or
+      the largest lag reaching back past the last [pieces] accepted steps, ends
+      the lane [Stalled], and its report names the count that would hold it.
+      Times of [at] that do not increase end the lane [Stalled] too.
+      {b Stability.} As {!solve}'s. {b Cost.} Each attempt costs the method's
+      evaluations, its first stage among them, since the field may jump where
+      one step ends and the next starts. Each stage reads [lags] delayed states,
+      each a binary search of the [pieces] pieces and a series of the
+      extension's degree; the carry holds [pieces] pieces, so a compiled reverse
+      keeps [budget × pieces]. {b Derivative.} The answer reads its own tracked
       pieces, so the derivative reaches the delayed states, [history], the lags
       and every tracked value [f] reads.
 
