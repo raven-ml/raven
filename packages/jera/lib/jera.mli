@@ -1169,8 +1169,8 @@ module Ode : sig
       [y' t = f t (y t) (y (t − τ))] for the constant lags [τ] of [lags], 1-D,
       from [y0] at [at.(0)], stacked as {!sample} stacks them. [f]'s third
       argument holds the delayed states stacked on a leading axis, one per lag;
-      [history s] is the state at the times [s ≤ at.(0)], [lags]' shape, stacked
-      the same way.
+      [history s] is the state at the scalar time [s ≤ at.(0)], which [delay]
+      calls once per lag and stacks.
 
       {b Method.} An explicit embedded method whose steps never exceed the
       smallest lag, so every delayed state is read from an accepted step's
@@ -1188,8 +1188,9 @@ module Ode : sig
       the lags and every tracked value [f] reads.
 
       Raises [Invalid_argument] if [budget < 1], if [span < 1], if [at] is not a
-      non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, or as
-      {!march} does for a field of another structure. *)
+      non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
+      [history] returns a value of another structure, dtype or shape than [y0],
+      or as {!march} does for a field of another structure. *)
 end
 
 module Sde : sig

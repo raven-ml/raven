@@ -304,10 +304,7 @@ let delay =
              ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
              ~budget:200 ~span:32
              ~lags:(Nx.create f64 [| 1 |] [| 1. |])
-             ~history:(fun s ->
-               Nx.broadcast_to
-                 (Array.append (Nx.shape s) (Nx.shape r))
-                 (Nx.full_like r 0.5))
+             ~history:(fun _ -> Nx.full_like r 0.5)
              (fun _ y d ->
                Nx.mul (Nx.mul r y) (Nx.rsub_s 1. (Nx.squeeze ~axes:[ 0 ] d)))
              ~at:times (Nx.full_like r 0.5)));

@@ -773,7 +773,7 @@ let lagged _ _ d = Nx.neg (Nx.squeeze ~axes:[ 0 ] d)
 let delayed ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) ?(span = 64)
     ?(lags = vec [| 1. |]) ?(c = scalar 1.) ?(f = lagged) at =
   Ode.delay one Ode.tsit5 ~tol ~budget:400 ~span ~lags
-    ~history:(fun s -> Nx.broadcast_to (Nx.shape s) c)
+    ~history:(fun _ -> c)
     f ~at (Nx.reshape [||] c)
 
 let delay_tests =
@@ -805,6 +805,30 @@ let delay_tests =
         equal close
           (vec [| 1.; 0.; -0.5; -1. /. 6. |])
           (Solution.get (delayed ~lags:(vec [| 2.; 1. |]) ~f times)));
+    test "history gives the state at one time, stacked per lag" (fun () ->
+        (* y = (e^t, 2 e^t) solves y' = (e/2) y(t − 1) + (√e/2) y(t − 1/2): the
+           history must hold each lag's own time. *)
+        let e = Float.exp 1. in
+        let scale = vec [| 1.; 2. |] in
+        let solution t = Nx.mul (Nx.exp t) scale in
+        let f _ _ d =
+          Nx.add
+            (Nx.mul_s (Nx.get [ 0 ] d) (e /. 2.))
+            (Nx.mul_s (Nx.get [ 1 ] d) (Float.sqrt e /. 2.))
+        in
+        let at = vec [| 0.; 0.8; 2. |] in
+        let s =
+          Ode.delay one Ode.tsit5
+            ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+            ~budget:400 ~span:64
+            ~lags:(vec [| 1.; 0.5 |])
+            ~history:solution f ~at
+            (solution (scalar 0.))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (Nx.stack (List.map (fun t -> solution (scalar t)) [ 0.; 0.8; 2. ]))
+          (Solution.get s));
     test "grad in the history reaches the delayed states" (fun () ->
         let g =
           Rune.grad'
@@ -822,6 +846,15 @@ let delay_tests =
             (vec [| 1.2 |])
         in
         equal close (vec [| -0.8 |]) g);
+    test "a history of another shape than the state raises" (fun () ->
+        raises_match
+          (Exn.invalid_arg
+             ~substring:"Jera.Ode.delay: history returned a value of another")
+          (fun () ->
+            Ode.delay one Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:10 ~span:4
+              ~lags:(vec [| 1. |])
+              ~history:(fun _ -> vec [| 1. |])
+              lagged ~at:times (scalar 1.)));
     test "a lag that is not positive ends the lane Stalled" (fun () ->
         let s = delayed ~lags:(vec [| 0. |]) times in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)

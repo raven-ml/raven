@@ -1298,6 +1298,16 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
     let smallest = Nx.min (Rune.detach lags)
     and largest = Nx.max (Rune.detach lags) in
     let int32 x = Nx.scalar Nx.int32 x in
+    let n_lags = Nx.dim 0 lags in
+    let past s =
+      let v = history s in
+      if layout y v <> layout y y0 then
+        invalid_arg
+          (fn
+         ^ ": history returned a value of another structure, dtype or shape \
+            than the state");
+      v
+    in
     (* The memory: the last [span] accepted steps' pieces in a ring, each its
        start, width and coefficients [c_q] of [y = Σ_q c_q θ^q] on [θ ∈ [0, 1]],
        leaves of shape [[span; degree + 1] @ value], and the count of steps
@@ -1347,9 +1357,8 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
           coef
       in
       let before = Nx.less_equal s t_first in
-      let past =
-        history (Nx.minimum s (Nx.broadcast_to (Nx.shape s) t_first))
-      in
+      let s = Nx.minimum s (Nx.broadcast_to (Nx.shape s) t_first) in
+      let past = stack y (Array.init n_lags (fun i -> past (Nx.get [ i ] s))) in
       Nx.Ptree.map2 y
         (fun _ h p ->
           let mask =
@@ -1428,16 +1437,14 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
     in
     (* Steps land on the breakpoints: the times of [at] and the breakpoints in
        their span, sorted, and the states read back at [at]'s positions. *)
-    let k = combinations (Nx.dim 0 lags) (emb.order - 1) in
+    let k = combinations n_lags (emb.order - 1) in
     let merged =
       match k with
       | [] -> at
       | k ->
           let nb = List.length k in
           let kk =
-            Nx.reshape
-              [| nb; Nx.dim 0 lags |]
-              (Num.constant dtype (Array.concat k))
+            Nx.reshape [| nb; n_lags |] (Num.constant dtype (Array.concat k))
           in
           let points = Nx.add t_first (Nx.matmul kk lags) in
           let points =
