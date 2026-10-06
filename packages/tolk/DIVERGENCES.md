@@ -4139,7 +4139,7 @@ stores through a pad.
   multioutput implementation #3607". Codegen already compiles a kernel of
   one end over a group of stores (`test/runtime/test_custom_kernel.py:139`).
 - **tolk:** `lib/schedule/indexing.ml:451` (`region`), `:481`
-  (`share_loops`), `:533` (`loops_of`) and `:145` (`end_shared`, which
+  (`share_loops`), `:535` (`loops_of`) and `:145` (`end_shared`, which
   `bufferize_and_index` returns for each store of a group);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
