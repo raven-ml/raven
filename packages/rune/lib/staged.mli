@@ -84,17 +84,17 @@ val install : Lower.scope -> (unit -> 'a) -> 'a
       propagates unchanged. A loop until a stop of no trip checks its stop at
       its initial carry.
     - [Remat { recomputed = true; f; args; _ }] is [f args], each argument that
-      the trace computes materialised: its storage is what the backward pass
-      reads again.
+      the trace computes materialised: its storage is what the backward pass's
+      replay reads.
     - [Barrier { values; after }] is [values], each one that the trace computes
       read through a copy of it stored once every value of [after] exists, so
-      that the backward pass recomputes from it with nodes of its own. Storage
-      the trace reads, constants, and values of other transformations are read
-      as they are.
+      that the backward pass replays from it with nodes of its own. Storage the
+      trace reads, constants, and values of other transformations are read as
+      they are.
     - [Detach x] is [x].
 
     Inside a staged body, a remat and a barrier pass outward: the backward loop
-    of a staged scan recomputes each step already. Every other construct passes
+    of a staged scan replays each step already. Every other construct passes
     outward.
 
     Raises as [Lower.op] does. *)

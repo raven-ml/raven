@@ -73,6 +73,11 @@ val call :
     order, zeros where none arrived, it returns the cotangents of [xs], in
     order. [pullback] runs only when an output received a cotangent. *)
 
+val rename : tape -> Nx.Op.mapper -> unit
+(** [rename t m] replaces every coefficient of [t]'s recorded entries, an
+    operand that is no slot of [t], by [m]'s for it: a tape whose body is
+    recorded ({!Record}) names its coefficients, which the replay gives. *)
+
 (** {1:transposing Transposing} *)
 
 type cotangents

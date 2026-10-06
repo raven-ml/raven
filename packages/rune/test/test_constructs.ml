@@ -252,18 +252,20 @@ let later_tests =
                 (fun x -> match g x with y -> y | exception Boom -> x)
                 (x0 ()) (v0 ()))));
     test
-      "a remat function that raises when it runs again raises from the \
-       backward pass" (fun () ->
+      "a remat function runs once under grad: the backward pass replays its \
+       record" (fun () ->
         let runs = ref 0 in
         let f x =
           incr runs;
           if !runs > 1 then boom () else Nx.sin x
         in
-        raises Boom (fun () ->
-            Rune.grad'
-              (fun x ->
-                Nx.sum (Rune.remat Nx.Ptree.(tensor @-> returns tensor) f x))
-              (x0 ())));
+        equal (exact ())
+          (Nx.cos (x0 ()))
+          (Rune.grad'
+             (fun x ->
+               Nx.sum (Rune.remat Nx.Ptree.(tensor @-> returns tensor) f x))
+             (x0 ()));
+        equal ~msg:"runs" int 1 !runs);
   ]
 
 (* Effects *)
@@ -484,8 +486,8 @@ let hvp loss w =
 let capture_tests =
   [
     test
-      "a remat whose rerun captures a value its first run did not raises at \
-       the backward pass" (fun () ->
+      "a remat's backward pass replays its run: what a second run would \
+       capture does not reach the gradient" (fun () ->
         let again = ref false in
         let f w x =
           if !again then Nx.mul x w
@@ -494,11 +496,10 @@ let capture_tests =
             Nx.sin x
           end
         in
-        raises
-          (Invalid_argument
-             "Rune.grad': a function run again for its transpose reads a value \
-              the differentiation tracks that its first run did not") (fun () ->
-            Rune.grad' (fun w -> Nx.sum (rematted (f w) (Nx.cos w))) (at ())));
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Rune.grad' (fun w -> Nx.sum (Nx.sin (Nx.cos w))) (at ()))
+          (Rune.grad' (fun w -> Nx.sum (rematted (f w) (Nx.cos w))) (at ())));
     test "a remat capturing two weights gives each its gradient" (fun () ->
         let loss r (u, v) =
           Nx.sum

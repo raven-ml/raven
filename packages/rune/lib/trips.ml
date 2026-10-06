@@ -85,6 +85,17 @@ let fold r =
   | Rows { xs; reverse } -> over_rows r xs reverse
   | Until { until; max; failure } -> until_stop r until max failure
 
+(* Made from metadata alone, on the host, with no operation: the rows of a loop
+   that took no step are never read. *)
+let no_rows ys =
+  List.map
+    (fun (Nx.P y) ->
+      let dtype = Nx.dtype y in
+      let view = Nx_array.View.create (Array.append [| 0 |] (Nx.shape y)) in
+      let buffer = Nx_array.Elements.create dtype 0 in
+      Nx.P (Nx.Repr.host { Nx_array.dtype; view; buffer }))
+    ys
+
 (* Transformed loops *)
 
 let rec split n l =

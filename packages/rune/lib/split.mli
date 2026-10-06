@@ -22,7 +22,7 @@
     transposes the traced tape under the same substitution, with each residual
     read as the backward function's argument in its place. It never runs the
     function, so each forward operation runs once per call, except where a
-    construct's own reverse rule recomputes, as [remat] and [scan] do.
+    construct's own reverse rule replays a record, as [remat] and [scan] do.
 
     Both are functions of explicit inputs, which any transformation derives
     from: under a map the residuals carry lanes, and the forward and backward

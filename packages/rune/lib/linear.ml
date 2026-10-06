@@ -84,6 +84,14 @@ let call t inputs pullback like =
            (Nx.shape y) e))
     like
 
+let rename t (m : mapper) =
+  let s : mapper = { f = (fun x -> if owns t x then x else m.f x) } in
+  for i = 0 to t.length - 1 do
+    match t.entries.(i) with
+    | Recorded op -> t.entries.(i) <- Recorded (map_operands s op)
+    | Input | Call _ | Part -> ()
+  done
+
 (* Recording *)
 
 let nonlinear t op =

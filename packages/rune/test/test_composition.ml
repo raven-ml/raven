@@ -261,8 +261,9 @@ let total_group =
              equal (Oracle.tensor ~rel:1e-9 ()) (Nx.sum (t_ arg)) total))
        pairs)
 
-(* Code that runs again (a remat's rerun, a rule an outer differentiation
-   applies again) adds to a total only the first time. *)
+(* Code that runs once under a differentiation adds once: a remat's function,
+   whose backward pass replays its record, and a rule an outer differentiation
+   applies again, whose second run adds nothing. *)
 let added_in_remat = Rune.remat Nx.Ptree.(tensor @-> returns tensor) added
 
 let added_by_rule =
@@ -271,7 +272,7 @@ let added_by_rule =
       (plain x, fun dx -> Nx.sum (Nx.mul (term' x) dx)))
 
 let again_group =
-  group "code that runs again adds to a total once"
+  group "code a differentiation replays or runs again adds to a total once"
     (List.map
        (fun (name, ts, f) ->
          test name (fun () ->

@@ -135,11 +135,10 @@ val vjp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q * ('q -> 'p)
     The cotangent of an integer or boolean tensor of the result is checked like
     the others and ignored.
 
-    [pullback] runs no part of [f] again, except the functions [f] passes to
-    {!remat}. When [vjp] runs outside every transformation, [pullback] may be
-    applied any number of times, from any domain, several at once. Under another
-    transformation it is transformed: under {!val-vmap} the backward pass is
-    batched, under {!jvp} differentiated.
+    [pullback] runs no part of [f] again. When [vjp] runs outside every
+    transformation, [pullback] may be applied any number of times, from any
+    domain, several at once. Under another transformation it is transformed:
+    under {!val-vmap} the backward pass is batched, under {!jvp} differentiated.
 
     Raises [Invalid_argument] if [params] holds no real or complex tensor.
     [pullback] raises [Invalid_argument] if [cts] and the result differ in their
@@ -397,18 +396,19 @@ val custom_vjp :
 val remat : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 (** [remat s f] is [f], recomputed during the backward pass instead of having
     its intermediate results retained: reverse-mode differentiation of
-    [remat s f] keeps [f]'s arguments and runs [f] again at them when the
-    backward pass reaches it, trading compute for memory. [s] is [f]'s
-    signature, as for {!val-vmap}. Every transformation sees [remat s f] as it
-    sees [f]: its derivatives in either mode, including those with respect to
-    tensors [f] captures, and its batched form under {!val-vmap} are [f]'s. An
-    addition to a {!Total} that [f] makes counts once, however often [f] runs.
+    [remat s f] runs [f] once, at the call, and keeps [f]'s arguments and a
+    record of its operations, which the backward pass replays at them, trading
+    compute for memory. [f]'s code does not run again. [s] is [f]'s signature,
+    as for {!val-vmap}. Every transformation sees [remat s f] as it sees [f]:
+    its derivatives in either mode, including those with respect to tensors [f]
+    captures, and its batched form under {!val-vmap} are [f]'s. An addition to a
+    {!Total} that [f] makes counts once.
 
     Under {!val-jit}, the backward pass reads the arguments again only once the
     cotangents of [f]'s result exist, so [f]'s intermediates are live for one
-    run at a time. A remat whose arguments are all arguments or constants of the
-    compiled function reads them directly, and so does one inside the step of a
-    compiled {!scan}, whose backward loop recomputes each step already.
+    replay at a time. A remat whose arguments are all arguments or constants of
+    the compiled function reads them directly, and so does one inside the step
+    of a compiled {!scan}, whose backward loop replays each step already.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
     ({!Nx.Ptree.consumes}). *)
@@ -533,13 +533,11 @@ val lane_index : ?axis:axis -> unit -> (int32, Nx.int32_elt) Nx.t
       across the lanes summed over them, one every lane shares times their
       number. A transformation built on a map counts per lane: {!jacfwd'} counts
       an addition once per column, and {!jacrev'} once.
-    - {!grad} and the other reverse-mode transformations pass it on when they
-      first run the code that makes it, and drop it when they run that code
-      again: the backward pass of a compiled {!scan} and a {!remat}
-      recomputation.
-    - A {!scan} that a compiled function stages, and a {!remat}, carry the sum
-      of their additions out as a value, so a staged loop stays one loop and a
-      replay computes the total again.
+    - {!grad} and the other reverse-mode transformations pass it on: the code
+      that makes it runs once, and the backward pass of a {!scan} or a {!remat}
+      replays a record of its operations, which holds no addition.
+    - A {!scan} that a compiled function stages carries the sum of its additions
+      out as a value, so a staged loop stays one loop.
 
     A scope inside a transformation is ordinary arithmetic to it: the collected
     total is differentiated under {!jvp}, under {!grad}, computed per lane under
@@ -614,8 +612,9 @@ val scan :
     its length, an option its presence, a case and an integer their value.
 
     Under {!val-jit} the step compiles once and runs as a loop in the compiled
-    program, and differentiating compiles a reversed loop that runs each step
-    again at its carry. {!jvp}, {!val-vmap} and {!grad} of a scan compile as one
+    program, and differentiating compiles a reversed loop that replays a record
+    of the step's operations at each step's carry: the step's code runs only in
+    the forward loop. {!jvp}, {!val-vmap} and {!grad} of a scan compile as one
     loop too, whose carry gains a tangent or a lane only for the carry tensors
     that have one. The loop reads row [i] of each tensor of [xs] in place, so
     data that differs per step, such as the weights of stacked layers, belongs
@@ -949,16 +948,16 @@ val jit :
     backward program, compiled when the pullback runs, once per layout of the
     cotangents, reads the residuals, [f]'s arguments and captures, and never
     runs [f]. [f]'s forward work runs once per call, except where {!remat} and
-    {!scan} recompute it. The residuals are fixed by tracing [f] and its
-    transpose once per set of differentiated arguments, per dtype, shape and
-    placement of the arguments, and per lane count of each map around the call
-    that [f] reads through {!lanes} and {!lane_index}, and live until the
-    pullback runs: [jit (grad f)], differentiating {e inside} the compiled
-    function as [step] above does, compiles the two passes together and keeps no
-    residual. Inside an outer [jit], [jit s f] is [f], traced into the outer
-    program. Under {!grad} and {!vjp}, [f] must compute the same operations on
-    every call at one key: a forward call that computes other values than the
-    traced run raises {!Jit_error}.
+    {!scan} replay it. The residuals are fixed by tracing [f] and its transpose
+    once per set of differentiated arguments, per dtype, shape and placement of
+    the arguments, and per lane count of each map around the call that [f] reads
+    through {!lanes} and {!lane_index}, and live until the pullback runs:
+    [jit (grad f)], differentiating {e inside} the compiled function as [step]
+    above does, compiles the two passes together and keeps no residual. Inside
+    an outer [jit], [jit s f] is [f], traced into the outer program. Under
+    {!grad} and {!vjp}, [f] must compute the same operations on every call at
+    one key: a forward call that computes other values than the traced run
+    raises {!Jit_error}.
 
     Under every transformation, a compiled function that reads, through its
     closure, a value the transformation tracks raises [Invalid_argument], as in

@@ -12,56 +12,6 @@ module Repr = Nx.Repr
 
 let one x = [ Nx.P x ]
 
-(* [results op r] is the tensors of [op]'s result [r]. *)
-let results : type r. r Nx.Op.t -> r -> Nx.packed list =
- fun op r ->
-  match[@warning "@4@8"] op with
-  | Unary _ -> one r
-  | Binary _ -> one r
-  | Compare _ -> one r
-  | Where _ -> one r
-  | Fma _ -> one r
-  | Reduce _ -> one r
-  | Scan _ -> one r
-  | Arg_reduce _ -> one r
-  | Sort _ -> one r
-  | Argsort _ -> one r
-  | Group _ -> one r
-  | Pad _ -> one r
-  | Cat _ -> one r
-  | Convert _ -> one r
-  | Threefry _ -> one r
-  | Gather _ -> one r
-  | Scatter _ -> one r
-  | Update _ -> one r
-  | Unfold _ -> one r
-  | Fold _ -> one r
-  | Matmul _ -> one r
-  | Fft _ -> one r
-  | Rfft _ -> one r
-  | Irfft _ -> one r
-  | Contiguous _ -> one r
-  | Cholesky _ -> one r
-  | Solve_triangular _ -> one r
-  | Move _ -> one r
-  | Place _ -> one r
-  | Qr _ ->
-      let a, b = r in
-      [ Nx.P a; Nx.P b ]
-  | Lu _ ->
-      let a, b, c = r in
-      [ Nx.P a; Nx.P b; Nx.P c ]
-  | Svd _ ->
-      let a, b, c = r in
-      [ Nx.P a; Nx.P b; Nx.P c ]
-  | Eig _ ->
-      let a, b = r in
-      Nx.P a :: Option.to_list (Option.map (fun b -> Nx.P b) b)
-  | Eigh _ ->
-      let a, b = r in
-      Nx.P a :: Option.to_list (Option.map (fun b -> Nx.P b) b)
-  | Read _ | Check _ -> []
-
 (* [made c r] is the tensors of the construct [c]'s answer [r]. *)
 let made : type r. r Construct.t -> r -> Nx.packed list =
  fun c r ->
@@ -119,7 +69,7 @@ let numbering f =
   let run : type r. r Nx.Op.t -> r =
    fun op ->
     let r = eval op in
-    note (results op r);
+    note (Record.results op r);
     (match recipe op r with
     | Some (Recipe (y, _) as m) ->
         Option.iter (fun k -> Hashtbl.replace recipes k m) (id y)

@@ -173,6 +173,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A reverse derivative runs a `Rune.remat`'s function, and the step of a loop
+  it stages or batches, once, at the call, and keeps a record of its
+  operations, which the backward pass replays: the code no longer runs again
+  after the call returned. Effects such code performs no longer raise
+  `Effect.Unhandled` under `jit (grad f)` or `vmap (grad f)`, a function that
+  would behave otherwise on a second run gives the first run's gradient, and an
+  eager `remat` keeps none of its function's intermediates.
 - The functions rune's constructs carry run at their call, inside the
   handlers, `Rune.Total.collect` scopes and transformations around it, under
   every transformation: a staged or batched loop's step, a nested `jit`, a

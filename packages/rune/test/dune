@@ -62,7 +62,7 @@
  (name test_bodies)
  (modules test_bodies)
  (package rune)
- (libraries windtrap rune_internals rune_test nx nx.dtype))
+ (libraries windtrap rune_internals rune_test nx nx.dtype nx.device))
 
 (test
  (name test_staging)

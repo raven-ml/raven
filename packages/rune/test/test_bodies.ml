@@ -188,25 +188,15 @@ let stack =
   let+ b = of_list bodies in
   (ts, b)
 
-(* A reverse derivative runs a staged or batched loop's step, and a remat's
-   function, again in the backward pass, after the call returned. *)
-let runs_again (ts, b) =
-  let rec outside_grad = function
-    | [] | Grad :: _ -> false
-    | Vmap :: _ -> true
-    | _ :: rest -> outside_grad rest
-  in
-  List.mem Grad ts
-  && (b = Remat
-     || (b = Scan || b = Iterate)
-        && (List.mem Jit_layer ts || (b = Iterate && outside_grad ts)))
-
-let valid (ts, b) =
-  (not (b = Custom_vjp && forward_inside ts)) && not (runs_again (ts, b))
+let valid (ts, b) = not (b = Custom_vjp && forward_inside ts)
 
 let law1 =
   prop ~tags:[ "slow" ] ~count:120
-    ~examples:[ ([ Grad; Grad; Collect ], Custom_jvp) ]
+    ~examples:
+      [
+        ([ Grad; Grad; Collect ], Custom_jvp);
+        ([ Collect; Grad; Collect ], Remat);
+      ]
     "a body runs at its call under every stack: the handler around the call \
      answers it, the value is the plain function's, and each addition counts \
      once"
@@ -482,6 +472,227 @@ let passing_tests =
               (scalar 1.)));
   ]
 
+(* Records: a construct in a step, replayed in the backward pass *)
+
+(* A rule whose tangent map is not its primal code's derivative: twice the
+   tangent, where [sin]'s derivative is [cos]. A replay that differentiated the
+   rule's code would give [cos]. *)
+let doubled =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      (Nx.sin x, fun dx -> Nx.mul_s dx 2.))
+
+(* [ruled step x] scans [x]'s elements with a step that applies [doubled]. *)
+let ruled x =
+  fst
+    (Rune.scan'
+       ~f:(fun c e ->
+         let c = Nx.add (Nx.mul_s c 0.5) (doubled (Nx.mul e c)) in
+         (c, c))
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.2)
+       x)
+
+(* [halving x] iterates [doubled] on a carry that halves until it is small: a
+   lane's trips depend on its start. *)
+let halving x =
+  Rune.iterate' ~max:32
+    ~until:(fun y -> Nx.less_s (Nx.sum (Nx.abs y)) 0.1)
+    ~f:(fun y -> Nx.mul_s (doubled y) 0.5)
+    x
+
+let grad2 f x =
+  Rune.grad' (fun x -> Nx.sum (Rune.grad' (fun x -> Nx.sum (f x)) x)) x
+
+(* A root in a step: the square root of [c + 1], by Newton steps. *)
+let rooted x =
+  fst
+    (Rune.scan'
+       ~f:(fun c e ->
+         let target = Nx.add_s (Nx.mul (Nx.mul c c) e) 1. in
+         let r =
+           Rune.root Nx.Ptree.tensor
+             ~residual:(fun y -> Nx.sub (Nx.mul y y) target)
+             (fun () ->
+               Rune.iterate' ~max:64
+                 ~until:(fun y ->
+                   Nx.less_s (Nx.abs (Nx.sub (Nx.mul y y) target)) 1e-12)
+                 ~f:(fun y -> Nx.mul_s (Nx.add y (Nx.div target y)) 0.5)
+                 (Nx.ones_like target))
+         in
+         let c = Nx.mul_s r 0.5 in
+         (c, c))
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.3)
+       x)
+
+(* A step that calls a compiled function and a custom_vjp rule, whose pullback
+   is its function's derivative. *)
+let squared =
+  Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      (Nx.mul x x, fun ct -> Nx.mul ct (Nx.mul_s x 2.)))
+
+let compiled_sin = Rune.jit' Nx.sin
+
+let calling x =
+  fst
+    (Rune.scan'
+       ~f:(fun c e ->
+         let c =
+           Nx.add (Nx.mul_s (compiled_sin (Nx.mul c e)) 0.5) (squared e)
+         in
+         (c, c))
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.1)
+       x)
+
+(* A step that reads a detached value: [c + detach (c²) e]. *)
+let detaching x =
+  fst
+    (Rune.scan'
+       ~f:(fun c e ->
+         let c = Nx.sin (Nx.add c (Nx.mul (Rune.detach (Nx.mul c c)) e)) in
+         (c, c))
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.1)
+       x)
+
+let gen_vec =
+  Gen.with_pp Nx.pp
+    Gen.(
+      map
+        (fun l -> vec (Array.of_list l))
+        (list ~size:(int_range 1 4) (float_range (-1.) 1.)))
+
+let gen_lanes =
+  Gen.with_pp Nx.pp
+    Gen.(
+      map
+        (fun l -> Nx.reshape [| 2; 3 |] (vec (Array.of_list l)))
+        (list ~size:(constant 6) (float_range (-1.) 1.)))
+
+let grad1 f x = Rune.grad' (fun x -> Nx.sum (f x)) x
+
+(* [held loss x] is the host memory a pullback of [loss] at [x] holds once the
+   forward pass returned, after a first, uncounted run: a chain of finalisers
+   frees its memory a cycle late, so a fixed number of rounds settles it. *)
+let held loss x =
+  let allocated () =
+    for _ = 1 to 4 do
+      Gc.full_major ()
+    done;
+    Nx_device.Stats.allocated (Nx_device.stats Nx_device.host)
+  in
+  let measure () =
+    let base = allocated () in
+    let _, pullback = Rune.vjp' loss x in
+    let used = allocated () - base in
+    ignore (Sys.opaque_identity (Obj.repr pullback));
+    used
+  in
+  ignore (measure ());
+  measure ()
+
+(* Eight blocks of three products each, on a batch of 256 rows. *)
+let blocks remat x =
+  let w = Nx.mul_s (Nx.eye f64 64) 0.9 in
+  let block a =
+    Nx.tanh (Nx.matmul (Nx.tanh (Nx.matmul (Nx.tanh (Nx.matmul a w)) w)) w)
+  in
+  let block =
+    if remat then Rune.remat Nx.Ptree.(tensor @-> returns tensor) block
+    else block
+  in
+  let rec go k a = if k = 0 then a else go (k - 1) (block a) in
+  Nx.sum (go 8 x)
+
+let record_tests =
+  [
+    test "eager grad of a remat keeps no intermediate of its function"
+      (fun () ->
+        let x = Nx.full f64 [| 256; 64 |] 0.1 in
+        let plain = held (blocks false) x and rematted = held (blocks true) x in
+        less
+          ~msg:(Printf.sprintf "%d bytes with remat, %d without" rematted plain)
+          int ~than:(plain / 2) rematted);
+    prop "a root in a compiled scan's step under grad is eager's" gen_vec
+      (fun x -> equal (close ()) (grad1 rooted x) (Rune.jit' (grad1 rooted) x));
+    prop
+      "a compiled call and a custom_vjp rule in a step, compiled under grad \
+       and mapped, are eager's"
+      gen_lanes (fun xs ->
+        let each =
+          Nx.stack (List.init 2 (fun i -> grad1 calling (Nx.get [ i ] xs)))
+        in
+        equal ~msg:"compiled" (close ())
+          (grad1 calling (Nx.get [ 0 ] xs))
+          (Rune.jit' (grad1 calling) (Nx.get [ 0 ] xs));
+        equal ~msg:"mapped" (close ()) each (Rune.vmap' (grad1 calling) xs);
+        equal ~msg:"mapped, compiled" (close ()) each
+          (Rune.jit' (Rune.vmap' (grad1 calling)) xs));
+    prop
+      "grad of grad through a compiled scan whose step detaches is eager's: \
+       the detached value has no derivative at either order"
+      gen_vec (fun x ->
+        equal (close ()) (grad2 detaching x) (Rune.jit' (grad2 detaching) x));
+    prop
+      "vmap of grad of an iterate whose step reads each lane's index is each \
+       lane's, lanes stopping apart"
+      gen_lanes (fun xs ->
+        let f lane x =
+          Rune.iterate' ~max:64
+            ~until:(fun y -> Nx.less_s (Nx.sum (Nx.abs y)) 0.2)
+            ~f:(fun y ->
+              Nx.mul (Nx.mul_s y 0.5)
+                (Nx.add_s (Nx.mul_s (Nx.cast f64 (lane ())) 0.1) 1.))
+            x
+        in
+        let g lane x = Rune.grad' (fun x -> Nx.sum (f lane x)) x in
+        let each =
+          Nx.stack
+            (List.init 2 (fun i ->
+                 g
+                   (fun () -> Nx.scalar Nx.int32 (Int32.of_int i))
+                   (Nx.get [ i ] xs)))
+        in
+        equal (close ()) each (Rune.vmap' (g (fun () -> Rune.lane_index ())) xs));
+    prop
+      "vmap of grad of an iterate whose step gathers the lanes, with a shared \
+       stop, is the batch's"
+      gen_lanes (fun xs ->
+        let step mean y = Nx.mul_s (Nx.add y (mean y)) 0.4 in
+        let until (_, k) = Nx.greater_equal_s k 3. in
+        let f mean x =
+          fst
+            (Rune.iterate
+               Nx.Ptree.(pair tensor tensor)
+               ~max:8 ~until
+               ~f:(fun (y, k) -> (step mean y, Nx.add_s k 1.))
+               (x, scalar 0.))
+        in
+        let lanes y = Nx.mean ~axes:[ 0 ] (Rune.lanes a y) in
+        let batch y =
+          Nx.broadcast_to (Nx.shape y) (Nx.mean ~axes:[ 0 ] ~keepdims:true y)
+        in
+        let expected = Rune.grad' (fun xs -> Nx.sum (f batch xs)) xs in
+        equal (close ()) expected
+          (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' ~axis:a (f lanes) xs)) xs));
+    prop
+      "a custom rule in a compiled scan's step under grad of grad applies its \
+       tangent map, as eagerly"
+      Gen.(
+        map
+          (fun l -> vec (Array.of_list l))
+          (list ~size:(int_range 1 4) (float_range (-1.) 1.)))
+      (fun x -> equal (close ()) (grad2 ruled x) (Rune.jit' (grad2 ruled) x));
+    prop
+      "a custom rule in an iterate's step under vmap of grad applies its \
+       tangent map, each lane as alone"
+      Gen.(
+        map
+          (fun l -> Nx.reshape [| 2; 2 |] (vec (Array.of_list l)))
+          (list ~size:(constant 4) (float_range (-2.) 2.)))
+      (fun xs ->
+        let g x = Rune.grad' (fun x -> Nx.sum (halving x)) x in
+        let each = Nx.stack (List.init 2 (fun i -> g (Nx.get [ i ] xs))) in
+        equal (close ()) each (Rune.vmap' g xs));
+  ]
+
 (* Total scopes and roots *)
 
 let root_adding x =
@@ -619,5 +830,6 @@ let () =
          group "the boundary" boundary_tests;
          group "passing installations" passing_tests;
          group "roots in total scopes" root_tests;
+         group "records" record_tests;
          group "handlers" handler_tests;
        ])

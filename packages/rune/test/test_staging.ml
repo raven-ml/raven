@@ -20,15 +20,16 @@ module Construct = Rune_internals.Construct
 
 (* [staged f] is [f ()] under a stager that answers each loop by folding it at
    its call, as a compiled call stages one: every installation between passes
-   the loop on transformed, and its step runs inside them. [steps] counts the
-   step's runs, [outputs] the output tensors of each loop it folded, last first,
-   and [late] the barriers that reached it with a traced value, one another
-   installation should have passed on. *)
+   the loop on transformed, and its step runs inside them, under the stager
+   again. [steps] counts the step's runs, [outputs] the output tensors of each
+   loop it folded, last first, and [late] the barriers that reached it with a
+   traced value, one another installation should have passed on. *)
 let steps = ref 0
 let outputs = ref []
 let late = ref 0
 
-let staged f =
+let rec staged : 'a. (unit -> 'a) -> 'a =
+ fun f ->
   let traced =
     List.exists (fun (Nx.P x) ->
         match Nx.Repr.v x with Traced _ -> true | Host _ | Placed _ -> false)
@@ -39,7 +40,7 @@ let staged f =
     | Loop r ->
         let req_step c x =
           incr steps;
-          r.req_step c x
+          staged (fun () -> r.req_step c x)
         in
         Some
           (Construct.here (fun () ->
@@ -357,8 +358,8 @@ let staged_tests =
           in
           equal (close ()) (f ()) (staged f));
       test
-        "a step whose rerun reads a tracked value its first run did not raises \
-         at the transpose" (fun () ->
+        "a step's transpose replays its runs: what a later run would read does \
+         not reach the gradient" (fun () ->
           let runs = ref 0 in
           let l w =
             let step c x =
@@ -367,11 +368,15 @@ let staged_tests =
             in
             Nx.sum (fst (Rune.scan' ~f:step ~init:(Nx.mul_s w 0.5) sxs))
           in
-          raises
-            (Invalid_argument
-               "Rune.grad': a function run again for its transpose reads a \
-                value the differentiation tracks that its first run did not")
-            (fun () -> staged (fun () -> Rune.grad' l sw)));
+          let plain w =
+            Nx.sum
+              (fst
+                 (Rune.scan'
+                    ~f:(fun c x -> (Nx.sin (Nx.add c x), c))
+                    ~init:(Nx.mul_s w 0.5) sxs))
+          in
+          equal (close ()) (Rune.grad' plain sw)
+            (staged (fun () -> Rune.grad' l sw)));
       test
         "a remat's barrier under jvp of grad reaches the stager with no traced \
          value" (fun () ->

@@ -9,19 +9,19 @@ module Repr = Nx.Repr
 type t = {
   entry : string;
   slots : Linear.tape option;
-  rerun : rerun option;
+  parent : parent option;
   id : unit ref;  (** The installation's identity, which its duals name. *)
 }
 
-(* A rerun's installation adopts the duals of its parent, and of the parent's
+(* A region's installation adopts the duals of its parent, and of the parent's
    ancestors, that its function uses: each becomes a dual of its own, whose
    tangent is a slot nothing feeds, on first use. *)
-and rerun = { parent : t; mutable captures : capture list }
+and parent = { parent : t; mutable captures : capture list }
 
 (* A dual of an ancestor and the slot that stands for its tangent. *)
 and capture = Capture : ('a, 'b) Nx.t * ('a, 'b) Nx.t -> capture
 
-let create ?slots entry = { entry; slots; rerun = None; id = ref () }
+let create ?slots entry = { entry; slots; parent = None; id = ref () }
 
 type (_, _) Repr.node +=
   | Dual : {
@@ -37,7 +37,7 @@ let dual owner primal tangent =
     (Dual { owner; primal; tangent })
 
 let rec adopts i owner =
-  match i.rerun with
+  match i.parent with
   | Some r -> r.parent.id == owner.id || adopts r.parent owner
   | None -> false
 
@@ -53,7 +53,7 @@ let rec captured : type a b. capture list -> (a, b) Nx.t -> (a, b) Nx.t option =
 (* [capture i x primal] is the slot of [i] that stands for the tangent of [x], a
    dual of an ancestor of [i]. *)
 let capture i x primal =
-  match (i.rerun, i.slots) with
+  match (i.parent, i.slots) with
   | Some r, Some tape -> (
       match captured r.captures x with
       | Some s -> s
@@ -61,7 +61,7 @@ let capture i x primal =
           let s = Linear.input tape primal in
           r.captures <- r.captures @ [ Capture (x, s) ];
           s)
-  | _ -> assert false (* Only a rerun's installation adopts. *)
+  | _ -> assert false (* Only a region's installation adopts. *)
 
 (* [tangent i x] is the tangent of [x] if [i] owns it: its own, or the slot that
    captures it for a dual of an ancestor that [i] adopts. *)
@@ -953,11 +953,11 @@ let child i tape captures =
   {
     entry = i.entry;
     slots = Some tape;
-    rerun = Some { parent = i; captures };
+    parent = Some { parent = i; captures };
     id = ref ();
   }
 
-let captures_of c = match c.rerun with Some r -> r.captures | None -> []
+let captures_of c = match c.parent with Some r -> r.captures | None -> []
 
 (* [with_tangents i flags leaves] is the primals of [leaves] followed by the
    tangents of those [flags] marks; [of_tangents i flags n l] is the [n] leaves
@@ -1031,6 +1031,17 @@ let reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry =
     req_trips = Until { until; max; failure };
     req_step;
   }
+
+(* A body's run in a region of its own, recorded: the child that ran it, the
+   tape it recorded on, the slots of the leaves it seeded, its results and the
+   record. The backward pass replays the record and transposes the tape. *)
+type recorded = {
+  child : t;
+  tape : Linear.tape;
+  seeded : Nx.packed list;
+  results : Nx.packed list;
+  record : Record.t;
+}
 
 let rec answer : type r. t -> r Construct.t -> r Construct.answer option =
  fun i c ->
@@ -1118,16 +1129,17 @@ and loop_values : t -> Trips.request -> Trips.result =
       })
 
 (* Under reverse mode a loop passes on as its primal loop, whose step runs the
-   body under a child of [i] on a scratch tape it drops. A loop none of whose
-   carry or outputs is tracked is not differentiated: it outputs its own
-   outputs, and the tape gains nothing. Otherwise its step also outputs the
-   carry it received, and a loop until a stop counts its trips in one more
-   carry; a step whose outputs are tracked restarts an attempt that assumed
-   none. Once it returns, the tape gains one linear call from the tangents of
-   the tracked initial carry, rows and captures to those of the dependent final
-   carry and outputs; its transpose runs each step again at its carry, last
-   first, threading the carry's cotangent and summing the captures': a scan over
-   the rows reversed, or a loop over the trips taken. *)
+   body in a recorded region ({!region}) of its own. A loop none of whose carry
+   or outputs is tracked is not differentiated: it outputs its own outputs, and
+   the tape gains nothing. Otherwise its step also outputs the carry it
+   received, and a loop until a stop counts its trips in one more carry; a step
+   whose outputs are tracked restarts an attempt that assumed none. Once it
+   returns, the tape gains one linear call from the tangents of the tracked
+   initial carry, rows and captures to those of the dependent final carry and
+   outputs; its transpose replays the last step's record at each step's carry,
+   last first, threading the carry's cotangent and summing the captures': a scan
+   over the rows reversed, or a loop over the trips taken. Every run of the step
+   is the same program, so one record serves every trip. *)
 and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
  fun i tape r ->
   let xs = rows_of r.req_trips in
@@ -1149,17 +1161,17 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
       let derived = List.mem true active in
       let counted = derived && stops in
       let flags = carried @ rows in
-      let outputs = ref [] and captures = ref [] in
+      let outputs = ref [] and captures = ref [] and last = ref None in
       let req_step c x =
         let c, count = if counted then Trips.split nc c else (c, []) in
-        let ch, _, out =
-          region i (Linear.create i.entry) [] flags (c @ x) step
-        in
+        let run, out = region i flags (c @ x) step in
+        let ch = run.child in
         let c', y = Trips.split nc out in
         let ys = owned ch y in
         grow (owned ch c' @ [ (not derived) && List.mem true ys ]);
         outputs := ys;
         captures := captures_of ch;
+        last := Some run;
         let c' = List.map (primal_leaf ch) c'
         and y = List.map (primal_leaf ch) y in
         if not derived then (c', y) else (c' @ List.map succ count, y @ c)
@@ -1186,9 +1198,13 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
             @ List.map (fun (Capture (d, _)) -> Nx.P (tangent i d)) captures
           in
           let nk = List.length (List.filter Fun.id carried) in
+          (* A loop that took no step transposes none: its reversed loop replays
+             no record. One a record around it replays at other inputs ran its
+             step for that record ({!Record}). *)
+          let last = !last in
           let pull ct_c ct_caps cx ct_y =
             let ct_in, ct_captured =
-              pullback i captures flags cx step (carried @ outputs) (ct_c @ ct_y)
+              replayed (Option.get last) cx (carried @ outputs) (ct_c @ ct_y)
             in
             let ct_c, ct_x = Trips.split nk ct_in in
             (ct_c @ List.map2 sum ct_caps ct_captured, ct_x)
@@ -1408,74 +1424,76 @@ and linearized : type p q.
   in
   (Nx.Ptree.map q (fun _ y -> primal c y) y, transpose)
 
-(* [region i tape captures flags leaves f] is [f] run at [leaves] under a child
-   of [i] recording on [tape], each leaf [flags] marks a dual of the child with
-   an input slot: the child, those slots and the result. *)
-and region : type r.
+(* [region i flags leaves f] is [f] run at [leaves] under a child of [i]
+   recording on a tape of its own, each leaf [flags] marks a dual of the child
+   with an input slot, and recorded at [leaves] ({!Record}): the run and [f]'s
+   result. The tape's coefficients name the record's entries, so the run holds
+   no value of [f]'s. *)
+and region :
     t ->
-    Linear.tape ->
-    capture list ->
     bool list ->
     Nx.packed list ->
-    (Nx.packed list -> r) ->
-    t * Nx.packed list * r =
- fun i tape captures flags leaves f ->
-  let c = child i tape captures in
-  let leaves, inputs = seed c tape flags leaves in
-  (c, inputs, Linear.install tape (fun () -> install c (fun () -> f leaves)))
-
-(* [pullback i captures flags leaves f dependent cts] runs [f] again at
-   [leaves], under a child of [i] whose captures are fresh slots for [captures]:
-   the cotangents of the slots of the leaves [flags] marks and of the captures,
-   once [cts] reach the results [dependent] marks. *)
-and pullback i captures flags leaves f dependent cts =
+    (Nx.packed list -> Nx.packed list) ->
+    recorded * Nx.packed list =
+ fun i flags leaves f ->
   let tape = Linear.create i.entry in
-  let fresh (Capture (d, _)) = Capture (d, Linear.input tape d) in
-  let c, inputs, ys = region i tape (List.map fresh captures) flags leaves f in
-  if List.length (captures_of c) > List.length captures then
-    invalid_arg
-      (i.entry
-     ^ ": a function run again for its transpose reads a value the \
-        differentiation tracks that its first run did not");
-  let received = Linear.cotangents tape in
-  let seed (Nx.P y) ct =
-    Option.iter
-      (fun (_, dy) -> Linear.add received dy (Nx.unpack (Nx.dtype y) ct))
-      (own c y)
+  let child = child i tape [] in
+  let duals, seeded = seed child tape flags leaves in
+  let results, record =
+    Record.run leaves (fun () ->
+        Linear.install tape (fun () -> install child (fun () -> f duals)))
   in
-  List.iter2 seed (pick dependent ys) cts;
-  Linear.transpose received;
-  let cotangent (Nx.P s) =
-    match Linear.cotangent received s with
-    | Some g -> Nx.P g
-    | None -> Nx.P (Nx.zeros_like s)
-  in
-  ( List.map cotangent inputs,
-    List.map (fun (Capture (_, s)) -> cotangent (Nx.P s)) (captures_of c) )
+  Linear.rename tape (Record.rename record);
+  ({ child; tape; seeded; results; record }, results)
+
+(* [replayed run leaves dependent cts] is the cotangents of [run]'s seeded slots
+   and of its captures once [cts] reach the results [dependent] marks: the tape
+   transposed over the record replayed at [leaves]. No code of the body runs. *)
+and replayed run leaves dependent cts =
+  Record.replay run.record leaves (fun () ->
+      let received = Linear.cotangents run.tape in
+      let seed (Nx.P y) ct =
+        Option.iter
+          (fun (_, dy) -> Linear.add received dy (Nx.unpack (Nx.dtype y) ct))
+          (own run.child y)
+      in
+      List.iter2 seed (pick dependent run.results) cts;
+      Linear.transpose received;
+      let cotangent (Nx.P s) =
+        match Linear.cotangent received s with
+        | Some g -> Nx.P g
+        | None -> Nx.P (Nx.zeros_like s)
+      in
+      ( List.map cotangent run.seeded,
+        List.map
+          (fun (Capture (_, s)) -> cotangent (Nx.P s))
+          (captures_of run.child) ))
 
 (* Under reverse mode a remat is a linear call from its arguments' and captures'
-   tangents to its dependent results', whose transpose runs [f] again. The
-   forward run records onto a scratch tape and drops it, so [f]'s intermediates
-   are not kept; each transpose reruns [f] at the arguments, read once the
-   cotangents exist, inside a scope that drops the additions the first run
-   counted. *)
+   tangents to its dependent results', whose transpose replays [f]'s record. The
+   forward run keeps its record, whose tape names its entries, so [f]'s
+   intermediates are not kept; each transpose replays the record at the
+   arguments, read once the cotangents exist. *)
 and remat : type p q.
     t -> Linear.tape -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> q =
  fun i tape p q f args ->
   let leaves, _ = Nx.Ptree.flatten p args in
   let tracked = owned i leaves in
   let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
-  let run l = f (Nx.Ptree.rebuild p ~like:a l) in
-  let captures = ref [] and dependent = ref [] in
+  let captures = ref [] and dependent = ref [] and last = ref None in
   let forward a =
-    let c, _, y =
-      region i (Linear.create i.entry) [] tracked
-        (fst (Nx.Ptree.flatten p a))
-        run
+    let result = ref None in
+    let run l =
+      let y = f (Nx.Ptree.rebuild p ~like:a l) in
+      result := Some y;
+      fst (Nx.Ptree.flatten q y)
     in
-    dependent := owned c (fst (Nx.Ptree.flatten q y));
+    let recorded, ys = region i tracked (fst (Nx.Ptree.flatten p a)) run in
+    let c = recorded.child in
+    dependent := owned c ys;
     captures := captures_of c;
-    Nx.Ptree.map q (fun _ y -> primal c y) y
+    last := Some recorded;
+    Nx.Ptree.rebuild q ~like:(Option.get !result) (List.map (primal_leaf c) ys)
   in
   let y =
     Construct.perform (Remat { p; q; f = forward; args = a; recomputed = true })
@@ -1488,14 +1506,12 @@ and remat : type p q.
       @ List.map (fun (Capture (d, _)) -> Nx.P (tangent i d)) captures
     in
     let ys, _ = Nx.Ptree.flatten q y in
+    let recorded = Option.get !last in
     let transpose cts =
       Total.discarding @@ fun () ->
       let kept = fst (Nx.Ptree.flatten p a) in
       let kept = Construct.perform (Barrier { values = kept; after = cts }) in
-      let rerun l = fst (Nx.Ptree.flatten q (run l)) in
-      let ct_args, ct_captured =
-        pullback i captures tracked kept rerun dependent cts
-      in
+      let ct_args, ct_captured = replayed recorded kept dependent cts in
       ct_args @ ct_captured
     in
     let slots = Linear.call tape inputs transpose (pick dependent ys) in

@@ -167,11 +167,11 @@ type _ t =
       f : 'p -> 'q;
       args : 'p;
       recomputed : bool;
-          (** Whether a backward pass runs [f] again at [args]. *)
+          (** Whether a backward pass replays [f]'s record at [args]. *)
     }
       -> 'q t
-      (** [f args], whose intermediates reverse mode recomputes. Default:
-          [f args]. *)
+      (** [f args], whose intermediates reverse mode replays. Default: [f args].
+      *)
   | Barrier : {
       values : Nx.packed list;
       after : Nx.packed list;

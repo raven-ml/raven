@@ -72,6 +72,11 @@ val fold : request -> result
     ({!Nx.copy}), so that a compiled call stores it before the next step reads
     it. An exception of [r.req_step] propagates unchanged. *)
 
+val no_rows : leaves -> leaves
+(** [no_rows ys] is the outputs of a loop that took no step, whose steps output
+    values like [ys]: each tensor stacked along a new leading axis of length
+    [0], on the host. *)
+
 (** {1:transformed Transformed loops}
 
     A transformation passes a loop on with the leaves it adds after the loop's:
