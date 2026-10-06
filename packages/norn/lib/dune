@@ -2,4 +2,4 @@
  (name norn)
  (public_name norn)
  (private_modules prec noise chains bijection geometry)
- (libraries nx.dtype nx rune))
+ (libraries nx.dtype nx rune jera))

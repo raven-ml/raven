@@ -327,6 +327,8 @@
    (= :version))
   (rune
    (= :version))
+  (jera
+   (= :version))
   (windtrap
    (and
     :with-test

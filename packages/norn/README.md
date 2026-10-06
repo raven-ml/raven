@@ -14,6 +14,7 @@ density maps it to one log density per chain.
   unconstrained coordinates onto them.
 - `Norn.Gaussian`: diagonal-plus-low-rank Gaussians over your structure,
   the geometry samplers adapt.
+- `Norn.Nuts`: the No-U-Turn sampler over many chains at once, with warmup.
 - `Norn.Draws` and `Norn.Stats`: draws of your structure with `[chain; draw]`
   axes, and the statistics of each transition.
 - `Norn.Diag`: R-hat, effective sample sizes and calibration, each a value
