@@ -31,8 +31,8 @@
 
 type (-'k, 'y, 't) t
 (** The type for one-step methods with tags ['k] over states ['y] and times of
-    dtype ['t]. A method with more tags is one with fewer:
-    [(Ode.tsit5 :> ([ `Formula ], _, _) Ode.t)]. *)
+    dtype ['t]. A method with more tags can be used as one with fewer, by
+    coercion: [(Ode.tsit5 :> ([ `Formula ], _, _) Ode.t)]. *)
 
 val euler : ([ `Formula ], 'y, 't) t
 (** [euler] is the explicit Euler method: order 1, one field evaluation per
@@ -79,12 +79,12 @@ val tableau :
 
 (** {1:marches Marches} *)
 
-type ('y, 't) field = (float, 't) Nx.t -> 'y -> 'y
-(** The type for fields: [f t y] is the derivative of [y] at the scalar time
-    [t], a value of [y]'s structure, dtypes and shapes. *)
-
 type 't time = (float, 't) Nx.t
 (** The type for times. *)
+
+type ('y, 't) field = 't time -> 'y -> 'y
+(** The type for fields: [f t y] is the derivative of [y] at the scalar time
+    [t], a value of [y]'s structure, dtypes and shapes. *)
 
 val march :
   'y Nx.Ptree.t ->

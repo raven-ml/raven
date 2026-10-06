@@ -5,10 +5,10 @@
 
 (** Integrals.
 
-    An integrand is an elementwise function: it receives points with jera's axes
-    in front and the lanes' shape behind, and returns one value per point, of
-    the points' shape. Every element of a range is its own integral, so the
-    integrand must not reduce or mix along any axis.
+    An integrand is an elementwise function: it receives points with the rule's
+    node axis in front and the range's shape behind, and returns one value per
+    point, of the points' shape. Every element of a range is its own integral,
+    so the integrand must not reduce or mix along any axis.
 
     {[
     (* ∫₀¹ x^a dx for each a, by 10-point Gauss–Legendre *)
@@ -30,8 +30,9 @@
 *)
 module Rule : sig
   type -'k t
-  (** The type for rules with tags ['k]. A rule with more tags is one with
-      fewer: [(Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t)]. *)
+  (** The type for rules with tags ['k]. A rule with more tags can be used as
+      one with fewer, by coercion:
+      [(Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t)]. *)
 
   val gauss : int -> [ `Formula ] t
   (** [gauss n] is the [n]-point Gauss–Legendre rule, exact for polynomials of

@@ -5,9 +5,9 @@
 
 (** Stochastic differential equations.
 
-    A problem is a drift [f t y], the deterministic part of the derivative, a
-    diffusion [g t y], applied to a Brownian increment as [diffusion t y dw],
-    linear in [dw], and a Brownian path. The method fixes the calculus: Itô or
+    A problem is a drift [f t y], the deterministic part of the derivative; a
+    diffusion, applied to a Brownian increment as [diffusion t y dw] and linear
+    in [dw]; and a Brownian path. The method fixes the calculus: Itô or
     Stratonovich. *)
 
 (** Brownian paths with their space–time Lévy area.
@@ -75,10 +75,10 @@ val euler_maruyama : t
 
 val milstein : t
 (** [milstein] is the derivative-free Milstein method (Kloeden and Platen, 1992,
-    §11.1), Itô: strong order 1 for diagonal noise, where component [i] of the
-    diffusion depends on component [i] of the state only, and 1/2 otherwise. The
-    Brownian path has the state's shape. One drift and three diffusion
-    evaluations per step. *)
+    §11.1), Itô: strong order 1 for diagonal noise, and 1/2 otherwise. Diagonal
+    noise has the state one tensor of the path's shape, and [diffusion t y dw]
+    the product of [dw] with a tensor whose component [i] depends on [y_i] only.
+    One drift and three diffusion evaluations per step. *)
 
 val sra1 : t
 (** [sra1] is Rößler's (2010) SRA1, for additive noise, where the diffusion does
@@ -107,10 +107,11 @@ val march :
     [at], stacked on a new leading axis of each leaf, [y0] first, along the path
     [w]. Each interval of [at] takes [steps] equal steps. [drift t y] is the
     deterministic field; [diffusion t y dw] is [g t y] applied to [dw], of [w]'s
-    shape, and must be linear in [dw]. Reverse mode keeps one state per time of
-    [at] and recomputes each interval while it reverses it; the derivative is
-    the composition's, in the initial state and every tracked value the drift
-    and diffusion read. A compiled function takes [w] as an argument of
+    shape and the times' dtype, and must be linear in [dw]; it casts [dw] for
+    leaves of another dtype. Reverse mode keeps one state per time of [at] and
+    recomputes each interval while it reverses it; the derivative is the
+    composition's, in the initial state and every tracked value the drift and
+    diffusion read. A compiled function takes [w] as an argument of
     {!Brownian.ptree}'s structure.
 
     Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D

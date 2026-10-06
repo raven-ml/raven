@@ -219,8 +219,7 @@ let law_tests =
         constant (x, y))
       (fun (x, y) ->
         let p = Piecewise.steffen (vec x) (vec y) in
-        let last = x.(Array.length x - 1) in
-        let fine = Nx.minimum (Nx.linspace f64 x.(0) last 400) (scalar last) in
+        let fine = Nx.linspace f64 x.(0) x.(Array.length x - 1) 400 in
         let v = Oracle.floats (Piecewise.eval p fine) in
         let tiny = 1e-13 *. (1. +. Float.abs y.(Array.length y - 1)) in
         for i = 1 to Array.length v - 1 do

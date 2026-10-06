@@ -22,8 +22,8 @@
     last. A point on a break lies in the last piece of positive width that ends
     there, at [u = 1], and a point on the first break in the first piece. NaN
     evaluates to NaN. An infinite point raises [Invalid_argument] through
-    {!Nx.check} under every extension, and a finite point outside the domain
-    raises unless {!extend} made every finite point part of it.
+    {!Nx.check}, and so does any other point outside the domain unless the value
+    is extended ({!extend}).
 
     {b Cost.} Evaluation is a binary search of the breaks ({!Nx.searchsorted}),
     a gather of [degree + 1] coefficients and Clenshaw's recurrence:
@@ -152,8 +152,9 @@ val eval : ('v, 'b) t -> (float, 'b) Nx.t -> 'v
 (** [eval p x] is [p] at each point of [x], of shape [q]: each leaf of shape
     [q @ value].
 
-    Raises [Invalid_argument] through {!Nx.check} if a point is infinite, or
-    finite and outside the domain of a series that is not extended. *)
+    Raises [Invalid_argument] through {!Nx.check} if a point is infinite, or if
+    a point that is not NaN lies outside the domain of a value that is not
+    extended. *)
 
 val eval_at : ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
 (** [eval_at p i u] is the series of piece [i] at the local coordinate [u] in
@@ -165,9 +166,11 @@ val eval_at : ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
 
 (** {1:calculus Calculus}
 
-    Each keeps the breaks and the extension, and the result extends from its own
-    end pieces: under [`Hold] the derivative holds its end values, which is not
-    the derivative of the held series. *)
+    Each keeps the breaks and the extension: outside the domain the result
+    extends as {!extend} says, from its own end pieces. Outside the domain,
+    then, [eval (derivative p)] is not the derivative of [eval p]: the
+    derivative of a held series holds its end slopes, and the integral of a held
+    series holds its end values. *)
 
 val derivative : ('v, 'b) t -> ('v, 'b) t
 (** [derivative p] is the derivative of [p] in [x] on each piece, of degree one
@@ -180,7 +183,8 @@ val integral : ('v, 'b) t -> ('v, 'b) t
 
 val extend : [ `Hold | `Polynomial ] -> ('v, 'b) t -> ('v, 'b) t
 (** [extend e p] is [p] defined at every finite point: [`Hold] takes the value
-    at the nearest end, and [`Polynomial] continues the end pieces' series. *)
+    at the nearest end, and [`Polynomial] continues the end pieces' series. It
+    replaces [p]'s extension. An infinite point still raises. *)
 
 (** {1:access Access} *)
 
@@ -193,5 +197,6 @@ val coefficients : ('v, 'b) t -> 'v
 
 val ptree : 'v Nx.Ptree.t -> (float, 'b) Nx.dtype -> ('v, 'b) t Nx.Ptree.t
 (** [ptree s dtype] is the structure of series with values of structure [s] over
-    breaks of [dtype]: the extension reported as a case at [extension], the
-    breaks at [breaks] and the coefficients under [coefficients]. *)
+    breaks of [dtype]: the breaks at [breaks], the coefficients under
+    [coefficients], and the extension reported at [extension] as one of the
+    cases ["bounded"], ["hold"] and ["polynomial"]. *)

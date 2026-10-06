@@ -12,7 +12,7 @@
     [K(a₁h) D(b₁h) K(a₂h) … D(b_m h) K(a_(m+1) h)]. Every scheme here is
     palindromic, so each step is symmetric and the march time-reversible; with
     exact flows of a Hamiltonian it is symplectic, and its energy error stays
-    bounded over long times instead of growing.
+    bounded over long times.
 
     A flow may be any exact flow of its part: a Wisdom–Holman drift is a Kepler
     step.

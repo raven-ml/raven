@@ -31,6 +31,11 @@
       }
       {tr
         {td  }
+        {td of samples }
+        {td {!Piecewise.integral} of an interpolant }
+      }
+      {tr
+        {td  }
         {td endpoint singularity, infinite range }
         {td {!Quad.tanh_sinh} }
       }
@@ -58,6 +63,7 @@
         {td non-stiff }
         {td
           {!Ode.solve}, {!Ode.sample} with {!Ode.tsit5} and kin; {!Ode.march}
+          with an explicit method, {!Ode.euler} to {!Ode.dopri5}
         }
       }
       {tr {td  } {td randomness } {td {!Sde.march} } }
