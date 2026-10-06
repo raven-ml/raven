@@ -170,6 +170,19 @@ let representation =
           raises_match (Exn.invalid_arg ~substring:"not aligned") (fun () ->
               Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 2 |]) s));
       test
+        "Nx.Repr.Placed.v reads an odd int4 storage to its last element, and \
+         its bytes to their last nibble as uint4" (fun () ->
+          let s =
+            Nx.Repr.Storage.v p
+              [ Nx_device.Buffer.create r1 Nx_dtype.Scalar.Int4 5 ]
+          in
+          raises_match (Exn.invalid_arg ~substring:"outside the storage")
+            (fun () ->
+              Nx.Repr.Placed.v p Nx.int4 (Nx_array.View.create [| 6 |]) s);
+          equal int 6
+            (Nx.numel
+               (Nx.Repr.Placed.v p Nx.uint4 (Nx_array.View.create [| 6 |]) s)));
+      test
         "Nx.Repr.Placed.v reads bool only from bool storage, whose bytes are 0 \
          and 1" (fun () ->
           let s =

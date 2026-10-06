@@ -261,9 +261,15 @@ let aligned (type a b) (dtype : (a, b) Nx_dtype.t) b =
   Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk
   || Nativeint.rem (Nx_device.Buffer.address b) (Nativeint.of_int size) = 0n
 
-(* [capacity dtype c] is the elements of [dtype] that each shard of [c]
-   holds. *)
-let capacity dtype c = c.bytes * 8 / Nx_dtype.Scalar.(bitsize (of_dtype dtype))
+(* [capacity dtype c] is the elements of [dtype] that each shard of [c] holds:
+   its buffers' length when they are of [dtype]'s format, which stops a packed
+   format at its last element, and its bytes' worth otherwise. *)
+let capacity (type a b) (dtype : (a, b) Nx_dtype.t) c =
+  let s = Nx_dtype.Scalar.of_dtype dtype in
+  match Cell.state c with
+  | Live (b :: _) when Nx_dtype.Scalar.equal (Nx_device.Buffer.dtype b) s ->
+      Nx_device.Buffer.length b
+  | Live _ | Consumed _ -> c.bytes * 8 / Nx_dtype.Scalar.bitsize s
 
 (* Raises unless [b] is of [dtype]'s format. *)
 let check_format what dtype b =
