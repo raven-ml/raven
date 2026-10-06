@@ -900,10 +900,7 @@ val jit :
     {!Nx.matmul}'s contraction, adds each product with one rounding. A maximum
     over an axis is exact. Elementwise, each product, sum and quotient rounds
     once, as eagerly: a product and a sum are never fused into one rounding, and
-    a division, by a constant included, divides. On the host a product by a
-    reciprocal ({!Nx.recip}) is a division, which rounds once where the product
-    rounds twice, and differs where the reciprocal overflows: [x * recip y] is
-    NaN at [x = 0] and a [y] whose reciprocal is infinite, where [x / y] is [0].
+    a division, by a constant included, divides.
     Compiled float results also differ in transcendental functions, which are
     approximations within a few units in the last place of the correctly rounded
     result: {!Nx.log} within one, and on the host {!Nx.exp}, {!Nx.sin} and

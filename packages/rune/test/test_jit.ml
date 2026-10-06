@@ -1909,6 +1909,36 @@ let errors =
             messages);
     ]
 
+(* Division *)
+
+(* [x * (1 / y)] rounds twice and [x / y] once; at these values the two differ
+   in the last bit. *)
+let dividend = 0x0.000000016db99p-1022
+let divisor = 0x1.5d24f36473bb3p-998
+let bits_of x = Int64.bits_of_float (Nx.item [ 0 ] x)
+
+let rounded_as_eager f =
+  let x = Nx.create Nx.float64 [| 1 |] [| dividend |]
+  and y = Nx.create Nx.float64 [| 1 |] [| divisor |] in
+  equal int64
+    (bits_of (f x y))
+    (bits_of (Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f x y))
+
+let division =
+  group "division (D50)"
+    [
+      test "a product by a reciprocal compiled rounds twice, as eagerly"
+        (fun () -> rounded_as_eager (fun x y -> Nx.mul x (Nx.recip y)));
+      test "a quotient compiled rounds once, as eagerly" (fun () ->
+          rounded_as_eager Nx.div);
+      test "the two differ there" (fun () ->
+          let quotient = Sys.opaque_identity dividend /. divisor
+          and product = dividend *. Sys.opaque_identity (1. /. divisor) in
+          not_equal int64
+            (Int64.bits_of_float quotient)
+            (Int64.bits_of_float product));
+    ]
+
 (* Checks *)
 
 let failure i =
@@ -4959,6 +4989,7 @@ let () =
          rows_written "a lent write of rows";
          captures;
          errors;
+         division;
          checks;
          reports;
          domains;

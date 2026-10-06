@@ -86,8 +86,9 @@
 84 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="CPU")
 85 Ops.INDEX dtypes.float [84, 3]
 86 Ops.LOAD dtypes.float [85]
-87 Ops.FDIV dtypes.float [83, 86]
-88 Ops.STORE dtypes.void [10, 87]
-89 Ops.END dtypes.void [88, 3, 8]
-90 Ops.SINK dtypes.void [89] KernelInfo(name="E_4_256") tag=1
+87 Ops.FDIV dtypes.float [66, 86]
+88 Ops.MUL dtypes.float [83, 87]
+89 Ops.STORE dtypes.void [10, 88]
+90 Ops.END dtypes.void [89, 3, 8]
+91 Ops.SINK dtypes.void [90] KernelInfo(name="E_4_256") tag=1
 

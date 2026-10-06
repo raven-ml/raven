@@ -10,7 +10,7 @@
 8 Ops.MUL dtypes.float [2, 1]
 9 Ops.SINK dtypes.void [1, 6, 7, 8]
 10 Ops.FDIV dtypes.float [3, 0]
-11 Ops.FDIV dtypes.float [2, 0]
+11 Ops.MUL dtypes.float [2, 10]
 12 Ops.SINK dtypes.void [10, 6, 7, 11]
 13 Ops.SINK dtypes.void [9, 12]
 

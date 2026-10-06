@@ -297,16 +297,13 @@ let late_patterns ~disable_fast_idiv ops =
                             ])
                         (int_value (m "n")));
                 ]);
+         (* A reciprocal is [1 / x], the same value rounded once. A product by
+            one stays a product: [a / b] would round once where [a * (1 / b)]
+            rounds twice, and change its value. *)
          when_ ops Fdiv
            [
              rule
                (Upat.reciprocal (var "x"))
                (fun m -> Some (alu (float 1.0) Fdiv [ m "x" ]));
-             rule
-               Upat.O.(
-                 var "a"
-                 * Upat.op Fdiv ~dtype:Dtype.floats
-                     ~src:[ Upat.const (`Int Bigint.one); var "b" ])
-               (fun m -> Some (alu (m "a") Fdiv [ m "b" ]));
            ];
        ])

@@ -150,7 +150,7 @@ void E(__bf16* restrict data0_1, __bf16* restrict data1_1) {
   float alu135 = (__builtin_bit_cast(float, (int)((__builtin_bit_cast(int, (float)(alu13))+(((int)(-cast4))<<23))))+-1.0f);
   float alu136 = (0.5f*alu135*alu135);
   float cast10 = __builtin_bit_cast(float, (unsigned int)((__builtin_bit_cast(unsigned int, (float)((alu135-alu136)))&4294963200u)));
-  float alu137 = (alu135/(2.0f+alu135));
+  float alu137 = (alu135*(1.0f/(2.0f+alu135)));
   float alu138 = (alu137*alu137);
   float alu139 = (((alu135-cast10)-alu136)+(alu137*(alu136+(alu138*((((((0.24279078841209412f*alu138)+0.2849878668785095f)*alu138)+0.40000972151756287f)*alu138)+0.6666666269302368f)))));
   float alu140 = (cast10*1.44287109375f);

@@ -1553,17 +1553,24 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Ops_amd suite: `recorded cases › scratch`, a kernel that
   reads its dispatch packet and scratch memory, on a PM4 queue.
 
-## D50. Every C-style renderer writes a division
+## D50. Every C-style renderer writes a division; a product by a reciprocal stays one
 
 - **tinygrad:** `renderer/cstyle.py:139-147` (`CStyleLanguage.code_for_op`
   has no `FDIV`) and `:277-280` (Clang's adds it); `codegen/decomp/op.py:122-125`
-  (a target that lists `FDIV` gets its reciprocals as divisions).
-- **tolk:** `lib/renderer/cstyle.ml:366-368` (the `FDIV` rule of
-  `base_rewrite`).
+  (a target that lists `FDIV` gets its reciprocals as divisions, and a product
+  by a reciprocal, `a * (1/b)`, as the quotient `a/b`).
+- **tolk:** `lib/renderer/cstyle.ml:370-374` (the `FDIV` rule of
+  `base_rewrite`); `lib/codegen/decomp/decomp_op.ml:300-308` (the late rules of
+  `FDIV`, which turn a reciprocal into `1/x` and nothing else).
 - **Differs:** Metal, CUDA and HIP write an `FDIV` as `(a/b)`, as Clang does,
   where tinygrad's renderers fail on it. Their tables still leave `FDIV` out,
   so code generation keeps their reciprocals, and every kernel built from
-  tinygrad's operations keeps tinygrad's source.
+  tinygrad's operations keeps tinygrad's source. On a target that lists
+  `FDIV`, a product by a reciprocal stays a product: `a/b` rounds once where
+  `a * (1/b)` rounds twice, so the rewrite changed the value nx computes
+  eagerly, as at `a = 0x0.000000016db99p-1022`, `b = 0x1.5d24f36473bb3p-998`.
+  `gen/tinygrad.patch` removes tinygrad's rule, so the goldens state tolk's
+  graphs.
 - **Reason:** (b). rune lowers nx's float division, and the power and the
   arc tangent built on it, to `FDIV` (RFC 0012): eager nx divides as IEEE
   does, rounding once, which a product by the reciprocal does not.
@@ -1572,6 +1579,11 @@ the Exclusions of `README.md`.
   `FDIV` as Clang does, for Clang, Metal, CUDA and HIP in each float type
   they have; `division (D50) › the operands tell a quotient from a product by
   the reciprocal` and the slow `› Metal divides as IEEE does, rounding once`.
+  The `decomp_op` golden `late_division_fdiv`, whose products by a reciprocal
+  stay products; rune's `Rune.jit › division (D50)`, where a compiled product
+  by a reciprocal and a compiled quotient each equal nx's eager bits at the
+  value above, and its generated programs, whose products take reciprocals
+  as factors (`test_jit_programs`).
   CUDA's and HIP's `/` are correctly rounded by their compilers' defaults,
   which is on the hardware checks of `test/README.md`.
 

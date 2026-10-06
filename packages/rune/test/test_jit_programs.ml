@@ -669,14 +669,12 @@ let sliced s =
     @ List.filteri (fun j _ -> j >= at) ranges
 
 (* Programs of a dtype and shape. [no_product] keeps a product off an add's
-   operand, and [no_recip] a reciprocal off a product's, through the operations
-   a compiler would fuse or rewrite through; [no_minmax] keeps maxima and minima
-   out, under an operation that reads a zero's sign; [args_only] makes every
-   leaf an argument, under a divisor. *)
+   operand, through the operations a compiler would fuse through; [no_minmax]
+   keeps maxima and minima out, under an operation that reads a zero's sign;
+   [args_only] makes every leaf an argument, under a divisor. *)
 type ctx = {
   depth : int;
   no_product : bool;
-  no_recip : bool;
   no_minmax : bool;
   args_only : bool;
 }
@@ -689,24 +687,18 @@ let rec program ctx dt s : expr Gen.t =
   let here = leaf ~capture:(not ctx.args_only) dt s in
   if ctx.depth = 0 then here
   else
-    let sub ?(no_product = false) ?(no_recip = false)
-        ?(no_minmax = ctx.no_minmax) ?(args_only = ctx.args_only) dt s =
-      program
-        { depth = ctx.depth - 1; no_product; no_recip; no_minmax; args_only }
-        dt s
+    let sub ?(no_product = false) ?(no_minmax = ctx.no_minmax)
+        ?(args_only = ctx.args_only) dt s =
+      program { depth = ctx.depth - 1; no_product; no_minmax; args_only } dt s
     in
-    (* An operation a fused multiply-add, or a product by a reciprocal turned
-       into a division, would reach through. *)
-    let through dt s =
-      sub ~no_product:ctx.no_product ~no_recip:ctx.no_recip dt s
-    in
+    (* An operation a fused multiply-add would reach through. *)
+    let through dt s = sub ~no_product:ctx.no_product dt s in
     let product_ok = not (ctx.no_product && is_float dt) in
     let unary =
       let ops =
         match dt with
         | F32 | F16 ->
-            [ Neg; Abs; Sign; Sqrt; Floor; Ceil; Round; Trunc ]
-            @ (if ctx.no_recip then [] else [ Recip ])
+            [ Neg; Abs; Sign; Sqrt; Floor; Ceil; Round; Trunc; Recip ]
             @ if product_ok then [ Square ] else []
         | I32 -> [ Neg; Abs; Sign; Not ] @ if product_ok then [ Square ] else []
         | Bool -> [ Not ]
@@ -742,10 +734,6 @@ let rec program ctx dt s : expr Gen.t =
       | Div ->
           let* a = sub dt sa in
           let+ b = sub ~no_minmax:true ~args_only:true dt sb in
-          Bin (op, a, b)
-      | Mul ->
-          let* a = sub ~no_recip:true dt sa in
-          let+ b = sub ~no_recip:true dt sb in
           Bin (op, a, b)
       | _ ->
           let* a = sub dt sa in
@@ -950,13 +938,7 @@ let programs =
   let* s = shape in
   with_pp pp_program
     (program
-       {
-         depth = 4;
-         no_product = false;
-         no_recip = false;
-         no_minmax = false;
-         args_only = false;
-       }
+       { depth = 4; no_product = false; no_minmax = false; args_only = false }
        dt s)
 
 (* The law *)
@@ -1165,17 +1147,9 @@ let pp_rounded ppf r =
 let rounded_programs =
   let open Gen in
   let ctx =
-    {
-      depth = 3;
-      no_product = false;
-      no_recip = false;
-      no_minmax = false;
-      args_only = false;
-    }
+    { depth = 3; no_product = false; no_minmax = false; args_only = false }
   in
-  (* The factors of a float product are no reciprocals. *)
-  let factors = { ctx with no_recip = true } in
-  let reduction ?(ctx = ctx) root =
+  let reduction root =
     let* dt = of_list floats in
     let* s = shape in
     let* axes = subsequence (range 0 (Array.length s - 1)) in
@@ -1196,8 +1170,8 @@ let rounded_programs =
           ([| 2; m; k |], [| k; n |]);
         ]
     in
-    let* a = program factors dt sa in
-    let+ b = program factors dt sb in
+    let* a = program ctx dt sa in
+    let+ b = program ctx dt sb in
     Matmul_f (a, b)
   in
   let fn =
@@ -1212,7 +1186,7 @@ let rounded_programs =
        [
          (2, reduction (fun (x, k, a) -> Sum_f (x, k, a)));
          (1, reduction (fun (x, k, a) -> Mean_f (x, k, a)));
-         (1, reduction ~ctx:factors (fun (x, k, a) -> Prod_f (x, k, a)));
+         (1, reduction (fun (x, k, a) -> Prod_f (x, k, a)));
          (2, matmul);
          (3, fn);
        ])

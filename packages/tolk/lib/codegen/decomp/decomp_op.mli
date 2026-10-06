@@ -70,5 +70,4 @@ val late_patterns :
       integer between;
     - negated {!Op.Cmpne} to {!Op.Cmpeq} if [ops] has it;
     - [a * b + c], and [(x << n) + c], to {!Op.Mulacc} if [ops] has it;
-    - if [ops] has {!Op.Fdiv}, reciprocals to a division of [1.0], and a float's
-      multiplication by such a division to a division. *)
+    - if [ops] has {!Op.Fdiv}, reciprocals to a division of [1.0]. *)
