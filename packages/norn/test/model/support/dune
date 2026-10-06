@@ -1,0 +1,3 @@
+(library
+ (name posteriordb)
+ (libraries norn norn.model nx))

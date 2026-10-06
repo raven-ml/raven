@@ -1,5 +1,6 @@
 (tests
- (names test_model test_calibration)
- (modules test_model test_calibration)
+ (names test_model test_calibration test_posteriordb)
+ (modules test_model test_calibration test_posteriordb)
  (package norn)
- (libraries norn norn.model nx nx.dtype rune windtrap))
+ (deps ../golden/posteriordb.golden)
+ (libraries norn norn.model posteriordb nx nx.dtype rune windtrap))
