@@ -779,6 +779,20 @@ let value r bufs =
    buffers when it binds none. *)
 let claimed l = match l.runs with [] -> l.buffers | runs -> runs
 
+(* Raises the first failing check of [checks], whose [k]th answer is at [j] in
+   [values]: its index, then its data. *)
+let rec answer checks values j k =
+  if k < Array.length checks then begin
+    let c = checks.(k) in
+    let first = Int64.to_int (Nx.item [] (Nx.unpack Nx.int64 values.(j))) in
+    if first < numel c.shape then
+      raise
+        (c.fail
+           (Nx_array.Shape.unravel_index first c.shape)
+           (Array.to_list (Array.sub values (j + 1) c.leaves)));
+    answer checks values (j + 1 + c.leaves) (k + 1)
+  end
+
 (* [run entry p leaves] runs [p] on [leaves] under claims on their memory. A
    consumed leaf whose buffers span their memory and that no other live program
    captures is consumed. It is lent to its result if it also covers its storage
@@ -885,20 +899,7 @@ let run entry p leaves =
   let values = Array.map2 value p.results results in
   let answers = Array.fold_left (fun n c -> n + 1 + c.leaves) 0 p.checks in
   let user = Array.length values - answers in
-  (* Check [k]'s index is at [j], its data after it. *)
-  let rec answer j k =
-    if k < Array.length p.checks then begin
-      let c = p.checks.(k) in
-      let first = Int64.to_int (Nx.item [] (Nx.unpack Nx.int64 values.(j))) in
-      if first < numel c.shape then
-        raise
-          (c.fail
-             (Nx_array.Shape.unravel_index first c.shape)
-             (Array.to_list (Array.sub values (j + 1) c.leaves)));
-      answer (j + 1 + c.leaves) (k + 1)
-    end
-  in
-  answer user 0;
+  answer p.checks values user 0;
   p.rebuild (Array.to_list (Array.sub values 0 user))
 
 module Programs = Memo.Make (struct
