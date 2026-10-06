@@ -428,20 +428,24 @@ static void nx_c_packed_gather_words(const void *vctx, int64_t e, int64_t n,
    by element, without the walk's bookkeeping, which costs a vector of random
    indices about a quarter of its time. */
 typedef struct {
-  const uint8_t *src;
-  const int64_t *index;
-  int64_t d0, da, i0, is, axis_len;
+  const nx_c_ndarray *data;
+  const nx_c_ndarray *indices;
   int bits;
 } nx_c_packed_take_ctx;
 
 static uint64_t nx_c_packed_take_fill(const void *vctx, int64_t e, int k) {
   const nx_c_packed_take_ctx *c = vctx;
+  const nx_c_ndarray *data = c->data, *ix = c->indices;
+  const int64_t *index = (const int64_t *)ix->data;
+  int64_t n = data->shape[0];
+  int bits = c->bits;
   uint64_t w = 0;
   for (int j = 0; j < k; j++) {
-    int64_t x = c->index[c->i0 + (e + j) * c->is];
-    if ((uint64_t)x < (uint64_t)c->axis_len)
-      w |= (uint64_t)nx_c_packed_get(c->src, c->d0 + x * c->da, c->bits)
-           << (j * c->bits);
+    int64_t i = index[ix->offset + (e + j) * ix->strides[0]];
+    if ((uint64_t)i < (uint64_t)n)
+      w |= (uint64_t)nx_c_packed_get(
+               data->data, data->offset + i * data->strides[0], bits)
+           << (j * bits);
   }
   return w;
 }
@@ -459,14 +463,7 @@ nx_c_status nx_c_packed_gather(const nx_c_ndarray *out,
   int64_t total = 1;
   for (int d = 0; d < out->ndim; d++) total *= out->shape[d];
   if (out->ndim == 1) {
-    nx_c_packed_take_ctx c = {(const uint8_t *)data->data,
-                              (const int64_t *)indices->data,
-                              data->offset,
-                              data->strides[0],
-                              indices->offset,
-                              indices->strides[0],
-                              data->shape[0],
-                              bits};
+    nx_c_packed_take_ctx c = {data, indices, bits};
     nx_c_packed_filler f = {nx_c_packed_take_fill, NULL, &c};
     return nx_c_packed_write(
         out, bits, &f,
