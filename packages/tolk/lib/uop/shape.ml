@@ -6,7 +6,6 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
-open Uop.Node
 
 (* Lists *)
 
@@ -52,9 +51,9 @@ let first op = function
   | [] -> invalid_argf "%s needs a source" (Op.name op)
 
 let param_arg_of u =
-  match u.arg with
+  match arg u with
   | Param p -> p
-  | _ -> invalid_argf "%s has no ParamArg" (Op.name u.op)
+  | _ -> invalid_argf "%s has no ParamArg" (Op.name (op u))
 
 let weak_storage dt =
   if List.mem dt Dtype.weaks then
@@ -78,7 +77,7 @@ let dedup_nodes l =
       type nonrec t = t
 
       let equal = ( == )
-      let hash u = u.id
+      let hash = hash
     end)
     l
 
@@ -90,7 +89,7 @@ let memoized ~calls ~get ~set ~compute u =
   | None ->
       (* A new node is mostly built on nodes that have the property. *)
       let srcs =
-        if calls = Skip && u.op = Op.Call then drop 1 u.src else u.src
+        if calls = Skip && op u = Op.Call then drop 1 (src u) else src u
       in
       if List.for_all (fun s -> Option.is_some (get s)) srcs then
         set u (compute u)
@@ -110,18 +109,18 @@ let simplify_rules = ref (Pattern_matcher.v (fun () -> []))
    constants and of stacks of constants, are themselves without a rewrite. *)
 let simplify u =
   let constant s =
-    s.op = Op.Const
-    || (s.op = Op.Stack && List.for_all (fun c -> c.op = Op.Const) s.src)
+    op s = Op.Const
+    || (op s = Op.Stack && List.for_all (fun c -> op c = Op.Const) (src s))
   in
-  if u.op = Op.Const then u
-  else if u.op = Op.Sink && List.for_all constant u.src then u
+  if op u = Op.Const then u
+  else if op u = Op.Sink && List.for_all constant (src u) then u
   else
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
       (After_sources !simplify_rules)
 
 let resolve ?(default = true) u =
-  if not (Dtype.equal u.dtype Dtype.Bool) then
-    invalid_argf "only a boolean resolves, not a %s" (repr_dtype u.dtype);
+  if not (Dtype.equal (dtype u) Dtype.Bool) then
+    invalid_argf "only a boolean resolves, not a %s" (repr_dtype (dtype u));
   let lo, hi = min_max (simplify u) in
   if Value.( = ) lo hi then Value.to_bool lo else default
 
@@ -134,9 +133,9 @@ let sint_of_const (c : Dtype.const) =
 let ssimplify u : sint =
   let r = simplify u in
   let known =
-    match (r.op, r.src) with
-    | Op.Cast, [ ({ op = Op.Const; _ } as c) ] ->
-        sint_of_const (Dtype.const r.dtype (value c))
+    match (op r, src r) with
+    | Op.Cast, [ c ] when op c = Op.Const ->
+        sint_of_const (Dtype.const (dtype r) (value c))
     | Op.Const, _ -> sint_of_const (value r)
     | _ -> None
   in
@@ -145,8 +144,8 @@ let ssimplify u : sint =
 let ssimplify_sint = function Int n -> Int n | Sym u -> ssimplify u
 
 let eval u ~kinds ~what =
-  if not (List.exists (Dtype.equal u.dtype) kinds) then
-    invalid_argf "a %s is not %s" (repr_dtype u.dtype) what;
+  if not (List.exists (Dtype.equal (dtype u)) kinds) then
+    invalid_argf "a %s is not %s" (repr_dtype (dtype u)) what;
   let s = simplify u in
   let lo, hi = min_max s in
   if not (Value.( = ) lo hi) then
@@ -265,19 +264,21 @@ let as_shape u : sint list =
     | Some n -> n
     | None -> invalid_argf "%s is not a size" (repr_const (value s))
   in
-  match u.op with
+  match op u with
   | Op.Const -> [ known u ]
   | Op.Stack ->
-      List.map (fun s -> if s.op = Op.Const then known s else ssimplify s) u.src
+      List.map
+        (fun s -> if op s = Op.Const then known s else ssimplify s)
+        (src u)
   | _ -> [ ssimplify u ]
 
 let marg u =
-  match u.memos.marg_memo with
+  match movement_memo u with
   | Some m -> m
   | None ->
       let shape_src i = as_shape (nth u i) in
       let m =
-        match (u.op, u.arg) with
+        match (op u, arg u) with
         | Op.Reshape, _ -> Reshape (shape_src 1)
         | Op.Expand, _ -> Expand (shape_src 1)
         | Op.Pad, _ -> Pad (List.combine (shape_src 1) (shape_src 2))
@@ -286,18 +287,18 @@ let marg u =
         | Op.Flip, Flips l -> Flip l
         | op, _ -> invalid_argf "%s is not a movement" (Op.name op)
       in
-      u.memos.marg_memo <- Some m;
+      set_movement_memo u m;
       m
 
 let marg_shape u =
   match marg u with
   | Reshape s | Expand s -> s
-  | _ -> invalid_argf "%s has no shape argument" (Op.name u.op)
+  | _ -> invalid_argf "%s has no shape argument" (Op.name (op u))
 
 let marg_bounds u =
   match marg u with
   | Pad b | Shrink b -> b
-  | _ -> invalid_argf "%s has no bounds argument" (Op.name u.op)
+  | _ -> invalid_argf "%s has no bounds argument" (Op.name (op u))
 
 let broadcast_axes src out =
   let nleft = List.length out - List.length src in
@@ -315,57 +316,57 @@ let broadcast_axes src out =
 
 let rec shape_opt u =
   memoized ~calls:Enter
-    ~get:(fun n -> n.memos.shape_memo)
-    ~set:(fun n s -> n.memos.shape_memo <- Some s)
+    ~get:(fun n -> shape_memo n)
+    ~set:(fun n s -> set_shape_memo n s)
     ~compute:compute_shape u
 
 and shape u =
   match shape_opt u with
   | Some s -> s
-  | None -> invalid_argf "%s has no shape" (Op.name u.op)
+  | None -> invalid_argf "%s has no shape" (Op.name (op u))
 
 and compute_shape u : sint list option =
-  let src0 () = first u.op u.src in
-  let void = Dtype.equal u.dtype Dtype.Void in
-  match u.op with
+  let src0 () = first (op u) (src u) in
+  let void = Dtype.equal (dtype u) Dtype.Void in
+  match op u with
   | Op.If | Op.Barrier | Op.Sink | Op.Endif | Op.Backedge | Op.Group | Op.Linear
   | Op.Program | Op.Source | Op.Custom_function ->
       None
   | Op.Call | Op.Ins -> if void then None else Some []
-  | Op.Reshape when (src0 ()).op = Op.Noop -> Some (marg_shape u)
-  | Op.Noop -> ( match u.src with s :: _ -> shape_opt s | [] -> None)
+  | Op.Reshape when (op (src0 ())) = Op.Noop -> Some (marg_shape u)
+  | Op.Noop -> ( match src u with s :: _ -> shape_opt s | [] -> None)
   | Op.Index ->
-      let buf = src0 () and idxs = drop 1 u.src in
+      let buf = src0 () and idxs = drop 1 (src u) in
       Some (List.concat_map shape idxs @ drop (List.length idxs) (shape buf))
   | Op.Stack -> (
-      match u.src with
+      match src u with
       | [] -> Some []
-      | s :: _ -> Some (Int (List.length u.src) :: shape s))
+      | s :: _ -> Some (Int (List.length (src u)) :: shape s))
   | Op.Const | Op.Getaddr | Op.Range | Op.Special -> Some []
   | Op.Binary -> (
-      match u.arg with
+      match arg u with
       | Bytes b -> Some [ Int (String.length b) ]
       | _ -> invalid_arg "binary needs bytes")
   | Op.Buffer | Op.Alloc | Op.Param -> (
-      match u.arg with
+      match arg u with
       | Param { size = None; _ } -> Some []
       | Param { size = Some n; _ } -> Some [ Int n ]
       | _ -> invalid_arg "storage needs a ParamArg")
   | Op.Custom | Op.Customi -> (
       if void then None
       else
-        match List.filter_map shape_opt u.src with
+        match List.filter_map shape_opt (src u) with
         | [] -> None
         | shapes -> Some (broadcast_shape shapes))
   | Op.Stage ->
-      let rs = drop 1 u.src in
+      let rs = drop 1 (src u) in
       Some
         (List.map
            (fun r -> Int (Value.to_int (Value.( + ) (vmax r) (`Int Bigint.one))))
            rs
         @ shape (src0 ()))
   | Op.Wmma -> (
-      match u.src with
+      match src u with
       | [ a; b; acc ] ->
           let init s = take (List.length s - 1) s in
           let last s = List.nth s (List.length s - 1) in
@@ -382,8 +383,8 @@ and compute_shape u : sint list option =
       | None -> None
       | Some [] -> Some []
       | Some ps ->
-          let out_sz = Dtype.itemsize u.dtype
-          and in_sz = Dtype.itemsize (src0 ()).dtype in
+          let out_sz = Dtype.itemsize (dtype u)
+          and in_sz = Dtype.itemsize (dtype (src0 ())) in
           if out_sz = in_sz then Some ps
           else
             let n = List.length ps in
@@ -395,7 +396,7 @@ and compute_shape u : sint list option =
             Some
               (take (n - 1) ps
               @ [ ssimplify_sint Sint.(last * Int in_sz // Int out_sz) ]))
-  | Op.Unshard when List.is_empty u.src -> None
+  | Op.Unshard when List.is_empty (src u) -> None
   | op when Op.Set.mem op Op.Set.movement || op = Op.Unshard || op = Op.Reduce
     ->
       let ps =
@@ -403,11 +404,11 @@ and compute_shape u : sint list option =
         | Some ps -> ps
         | None ->
             invalid_argf "%s needs a shape, and %s has none" (Op.name op)
-              (Op.name (src0 ()).op)
+              (Op.name (Ops.op (src0 ())))
       in
       Some (movement_shape u ps)
   | op when Op.Set.mem op Op.Set.unary || op = Op.Cast ->
-      (match u.src with
+      (match src u with
       | [ _ ] -> ()
       | _ -> invalid_argf "%s needs one source" (Op.name op));
       shape_opt (src0 ())
@@ -418,7 +419,7 @@ and compute_shape u : sint list option =
             match shape_opt s with
             | Some sh -> sh
             | None -> invalid_argf "%s of a node without a shape" (Op.name op))
-          u.src
+          (src u)
       in
       if List.is_empty shapes then invalid_argf "%s needs sources" (Op.name op);
       if
@@ -432,7 +433,7 @@ and compute_shape u : sint list option =
 
 and movement_shape u ps =
   let bad what =
-    invalid_argf "invalid %s %s for %s" (Op.name u.op) what (repr_shape ps)
+    invalid_argf "invalid %s %s for %s" (Op.name (op u)) what (repr_shape ps)
   in
   let ok = Sint.resolve ?default:None in
   (* A size is a number: one that holds Invalid, such as the size of a shrink
@@ -442,16 +443,16 @@ and movement_shape u ps =
       (function
         | Sym d when List.exists is_invalid (toposort ~calls:Enter d) ->
             invalid_argf "%s of sizes %s, one holding Invalid, which is no number"
-              (Op.name u.op) (repr_shape s)
+              (Op.name (op u)) (repr_shape s)
         | _ -> ())
       s;
     s
   in
-  match u.op with
+  match op u with
   | Op.Unshard -> (
-      match u.arg with
+      match arg u with
       | Axes axes ->
-          let ranges = drop 1 u.src in
+          let ranges = drop 1 (src u) in
           List.mapi
             (fun a s ->
               match List.find_index (Int.equal a) axes with
@@ -465,7 +466,7 @@ and movement_shape u ps =
             ps
       | _ -> invalid_arg "an unshard needs its axes")
   | Op.Reduce -> (
-      match u.arg with
+      match arg u with
       | Reduce { num_axes; _ } when num_axes >= 0 && num_axes <= List.length ps
         ->
           drop num_axes ps
@@ -523,14 +524,14 @@ let shape_to_shape_arg (arg : sint list) =
   let src = List.map (function Int n -> int n | Sym u -> u) arg in
   List.iter
     (fun x ->
-      if not (Dtype.is_int x.dtype) then
-        invalid_argf "a shape holds integers, not %s" (repr_dtype x.dtype))
+      if not (Dtype.is_int (dtype x)) then
+        invalid_argf "a shape holds integers, not %s" (repr_dtype (dtype x)))
     src;
   match src with [ x ] -> x | src -> v Op.Stack ~src
 
 let mop u (m : movement) =
   let simplified args =
-    (simplify (sink (List.map shape_to_shape_arg args))).src
+    (src (simplify (sink (List.map shape_to_shape_arg args))))
   in
   let scalar_noop () =
     if not (List.is_empty (shape u)) then
@@ -678,7 +679,7 @@ let is_zero (c : Dtype.const) =
   | #Dtype.value as x -> Value.( = ) x (`Int Bigint.zero)
 
 let const_like ?dtype u c =
-  let ret = const ?dtype:(Some (Option.value dtype ~default:u.dtype)) c in
+  let ret = const ?dtype:(Some (Option.value dtype ~default:(Ops.dtype u))) c in
   match shape_opt u with
   | Some (_ :: _ as s) when not (equal_shape (shape ret) s) ->
       mop ret (Expand s)
@@ -900,7 +901,7 @@ let consts ?dtype cs =
   stack (List.map (const ~dtype) cs)
 
 let valid u cond = where cond u (const_like u `Invalid)
-let vconst_like u c = broadcast (const ~dtype:u.dtype c) (max_numel u)
+let vconst_like u c = broadcast (const ~dtype:(dtype u) c) (max_numel u)
 
 let rop u op axes =
   let axes = List.sort Int.compare axes in
@@ -991,7 +992,7 @@ let running_size u axis =
 let pooled_cumalu u op =
   let last = ndim u - 1 in
   let n = running_size u last in
-  let value = identity_element op u.dtype in
+  let value = identity_element op (dtype u) in
   rop
     (pool (pad ~value u (at_axis u last (Int (n - 1), Int 0))) [ n ])
     op
@@ -1003,7 +1004,7 @@ let cumalu u axis op =
   if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
   else if s <= 2 * split_cumalu then transpose (pooled_cumalu t op) axis last
   else
-    let value = identity_element op u.dtype in
+    let value = identity_element op (dtype u) in
     let rounded = Helpers.round_up s split_cumalu in
     let t = pad ~value t (at_axis t last (Int (rounded - s), Int 0)) in
     let chunks =
@@ -1061,19 +1062,19 @@ let arange ?(start = 0) ?(step = 1) ?dtype stop =
 (* Several devices *)
 
 let rec axis u =
-  match u.memos.axis_memo with
+  match axis_memo u with
   | Some a -> a
   | None ->
       let a = compute_axis u in
-      u.memos.axis_memo <- Some a;
+      set_axis_memo u a;
       a
 
 and compute_axis u =
-  let src0 () = first u.op u.src in
-  match u.op with
+  let src0 () = first (op u) (src u) in
+  match op u with
   | Op.Copy | Op.Param -> None
   | Op.Unshard -> (
-      match u.arg with
+      match arg u with
       | Axes [ a ] -> Some a
       | Axes l ->
           invalid_argf "the value is sharded on several axes, %s"
@@ -1084,12 +1085,12 @@ and compute_axis u =
       let axes =
         List.filter_map
           (fun x -> Option.map (fun a -> a + n - ndim x) (axis x))
-          u.src
+          (src u)
       in
       match List.rev (Helpers.dedup (module Int) axes) with
       | [] -> None
       | last :: _ -> Some last)
-  | _ when List.is_empty u.src -> None
+  | _ when List.is_empty (src u) -> None
   | op -> (
       let src_axis = axis (src0 ()) in
       match (op, src_axis) with
@@ -1100,7 +1101,7 @@ and compute_axis u =
           then Some a
           else None
       | Op.Reduce, a -> (
-          match (a, u.arg) with
+          match (a, arg u) with
           | None, _ -> None
           | Some a, Reduce { num_axes; _ } ->
               if a < num_axes then None else Some (a - num_axes)
@@ -1120,7 +1121,7 @@ and compute_axis u =
 (* The new axis is the last one before which the element count is the count
    before the source's axis, and it must not move elements between shards. *)
 and reshape_axis u src_axis =
-  let src = first u.op u.src in
+  let src = first (op u) (src u) in
   let new_shape = marg_shape u in
   let prefix =
     List.rev
@@ -1148,7 +1149,7 @@ and reshape_axis u src_axis =
     | Some (Multi ds) -> List.length ds
     | _ -> (
         match
-          List.find_opt (fun n -> n.op = Op.Unshard) (toposort ~calls:Enter src)
+          List.find_opt (fun n -> op n = Op.Unshard) (toposort ~calls:Enter src)
         with
         | Some un -> Value.to_int (vmax (nth un 1)) + 1
         | None -> moved ())
@@ -1158,7 +1159,7 @@ and reshape_axis u src_axis =
   new_axis
 
 let shard_count u =
-  if u.op = Op.Unshard then Value.to_int (vmax (nth u 1)) + 1
+  if op u = Op.Unshard then Value.to_int (vmax (nth u 1)) + 1
   else
     match device u with
     | Some (Multi ds) -> List.length ds
@@ -1168,7 +1169,7 @@ let bounds u =
   match axis u with
   | None -> invalid_arg "bounds need a sharded value"
   | Some a ->
-      let size = List.nth (shape (first u.op u.src)) a in
+      let size = List.nth (shape (first (op u) (src u))) a in
       let starts =
         List.rev
           (List.fold_left
@@ -1292,7 +1293,7 @@ let clone ?device:dev u =
     | _, Some d' -> copy_to_device u d'
     | _, None -> u
   in
-  after ret [ store ret (cast src ret.dtype) ]
+  after ret [ store ret (cast src (dtype ret)) ]
 
 let alloc ?slot ?(addrspace = Dtype.Global) ?device ?axis new_shape dt =
   let slot = match slot with Some s -> s | None -> unique_num () in
@@ -1308,7 +1309,9 @@ let alloc ?slot ?(addrspace = Dtype.Global) ?device ?axis new_shape dt =
   else view_as ?axis ret new_shape
 
 let alloc_like ?slot ?addrspace u =
-  alloc ?slot ?addrspace (List.map (fun n -> Int n) (max_shard_shape u)) u.dtype
+  alloc ?slot ?addrspace
+    (List.map (fun n -> Int n) (max_shard_shape u))
+    (dtype u)
 
 let placeholder ?slot ?(addrspace = Dtype.Global) ?device ?(volatile = false)
     ?tag new_shape dt =
@@ -1340,7 +1343,7 @@ let placeholder ?slot ?(addrspace = Dtype.Global) ?device ?(volatile = false)
 let placeholder_like ?addrspace u slot =
   if not (List.for_all (function Int _ -> true | Sym _ -> false) (shape u))
   then invalid_arg "a placeholder needs a shape of known sizes";
-  placeholder ~slot ?addrspace (max_shard_shape u) u.dtype
+  placeholder ~slot ?addrspace (max_shard_shape u) (dtype u)
 
 let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Some Dtype.Global) ?(volatile = false) ?phase ?align slot dt
@@ -1360,29 +1363,29 @@ let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
 (* Variables *)
 
 let is_variable u =
-  u.op = Op.Param
-  && (match u.arg with
+  op u = Op.Param
+  && (match arg u with
     | Param { vmin_vmax = Some _; addrspace = Some Dtype.Alu; _ } -> true
     | _ -> false)
   && match shape_opt u with Some [] -> true | _ -> false
 
 let is_bound_var u =
   is_variable u
-  && match u.arg with Param { bound = Some _; _ } -> true | _ -> false
+  && match arg u with Param { bound = Some _; _ } -> true | _ -> false
 
 (* Divisibility *)
 
 let rec divides u (n : Bigint.t) =
   if Bigint.equal n Bigint.one then Some u
   else
-    match u.op with
+    match op u with
     | Op.Const ->
         let x = as_value (value u) and n = `Int n in
         if Value.(x % n = of_int 0) then
           Some (const_like u (Value.(x // n) :> Dtype.const))
         else None
     | Op.Stack ->
-        let srcs = List.map (fun s -> divides s n) u.src in
+        let srcs = List.map (fun s -> divides s n) (src u) in
         if List.exists Option.is_none srcs then None
         else Some (v Op.Stack ~src:(List.map Option.get srcs))
     | Op.Add -> (
@@ -1394,7 +1397,7 @@ let rec divides u (n : Bigint.t) =
         | Some d0 -> Some (mul d0 (nth u 1))
         | None -> Option.map (fun d1 -> mul (nth u 0) d1) (divides (nth u 1) n))
     | op when Op.Set.mem op Op.Set.defines -> (
-        match u.arg with
+        match arg u with
         | Param { multiple_of = Some m; _ } ->
             if Bigint.equal (Bigint.rem (Bigint.of_int m) n) Bigint.zero then
               Some (div ~rounding:`Floor u (const (`Int n)))
@@ -1427,7 +1430,7 @@ let rec view_start u =
          shape ([], k))
   in
   let rec go u idx =
-    match (u.op, u.src) with
+    match (op u, src u) with
     | Op.Buffer, _ ->
         let p = param_arg_of u in
         (p.align, p.phase + (flat idx (dims u) * element_size u))
@@ -1489,13 +1492,13 @@ let rec view_start u =
    phase is what the two agree on. *)
 let rec storage_phase u =
   let rec whole v =
-    match (v.op, v.src) with
+    match (op v, src v) with
     | (Op.Buffer | Op.Param | Op.Alloc | Op.Stage), _ -> true
     | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), v :: _ -> whole v
     | _ -> false
   in
   let ints l = List.for_all (function Int _ -> true | Sym _ -> false) l in
-  match (u.op, u.src) with
+  match (op u, src u) with
   | _ when on_disk u -> (16, 0)
   | (Op.Buffer | Op.Param | Op.Alloc), _ ->
       let p = param_arg_of u in
@@ -1536,7 +1539,7 @@ let rec storage_phase u =
       | _ -> (align, phase))
   | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
   | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
-  | Op.Stage, x :: _ when x.op = Op.Bitcast || Op.Set.mem x.op Op.Set.movement
+  | Op.Stage, x :: _ when op x = Op.Bitcast || Op.Set.mem (op x) Op.Set.movement
     -> (
       match view_start x with
       | No_view -> (16, 0)
@@ -1549,7 +1552,7 @@ let rec storage_phase u =
   | _ -> (16, 0)
 
 let param_like u slot =
-  match u.op with
+  match op u with
   | Op.Param when addrspace u = Some Dtype.Alu ->
       let p = param_arg_of u in
       v Op.Param ~arg:(Param { p with slot; name = None; bound = None })
@@ -1564,11 +1567,11 @@ let param_like u slot =
                  (Param
                     (param_arg ~slot
                        ~size:(size_of (to_max_shape ss))
-                       ~device:d ~phase ~align u.dtype)))
+                       ~device:d ~phase ~align (dtype u))))
             ss
       | _ ->
           param ?shape:(shape_opt u) ?device:(device u) ~phase ~align slot
-            u.dtype)
+            (dtype u))
 
 (* Multisets of nodes, in order of first insertion. *)
 let add_count k counts t =
@@ -1610,15 +1613,15 @@ let gcd us =
       (* The coefficient is a number, a scalar whatever the shape of [us]: a
          broadcast 1 would not read as 1, and divides no term. *)
       product
-        (const ~dtype:first_u.dtype
+        (const ~dtype:(dtype first_u)
            (`Int (List.fold_left Bigint.gcd Bigint.zero factors)))
         (elements common)
 
 let rec divide_exact u d =
   if u == d then Some (const_like u (`Int Bigint.one))
-  else if d.op = Op.Const then divides u (Value.to_z (as_value (value d)))
+  else if op d = Op.Const then divides u (Value.to_z (as_value (value d)))
   else
-    match u.op with
+    match op u with
     | Op.Add -> (
         match (divide_exact (nth u 0) d, divide_exact (nth u 1) d) with
         | Some s0, Some s1 -> Some (add s0 s1)
@@ -1662,19 +1665,19 @@ let sym_infer (s : sint) vars =
       let cache = Tbl.create 16 in
       let get n = Tbl.find cache n in
       let eval n : Dtype.value =
-        match n.op with
+        match op n with
         | Op.Const -> as_value (value n)
         | Op.Param when addrspace n = Some Dtype.Alu || is_variable n -> (
             let name = expr n in
             match List.assoc_opt name vars with
             | Some x -> `Int (Bigint.of_int x)
             | None -> invalid_argf "the variable %s has no value" name)
-        | Op.Cast -> sym_cast n.dtype (get (first n.op n.src))
+        | Op.Cast -> sym_cast (dtype n) (get (first (op n) (src n)))
         | Op.Bitcast ->
-            Dtype.bitcast (first n.op n.src).dtype n.dtype
-              (get (first n.op n.src))
+            Dtype.bitcast (dtype (first (op n) (src n))) (dtype n)
+              (get (first (op n) (src n)))
         | op when Op.Set.mem op Op.Set.alu ->
-            sym_alu op n.dtype (List.map get n.src)
+            sym_alu op (dtype n) (List.map get (src n))
         | op -> invalid_argf "%s cannot be evaluated" (Op.name op)
       in
       Value.to_int (topovisit s eval cache)
@@ -1734,7 +1737,7 @@ let sym_compile (s : sint) var =
       let values = Tbl.create 16 in
       let rec compute n = memo values exact n
       and exact n =
-        match n.op with
+        match op n with
         | Op.Const ->
             let v = as_value (value n) in
             fun _ -> v
@@ -1742,24 +1745,24 @@ let sym_compile (s : sint) var =
             let read = var n in
             fun env -> `Int (Bigint.of_int (read env))
         | Op.Cast ->
-            let x = compute (first n.op n.src) in
-            fun env -> sym_cast n.dtype (x env)
+            let x = compute (first (op n) (src n)) in
+            fun env -> sym_cast (dtype n) (x env)
         | Op.Bitcast ->
-            let src = first n.op n.src in
+            let src = first (op n) (src n) in
             let x = compute src in
-            fun env -> Dtype.bitcast src.dtype n.dtype (x env)
+            fun env -> Dtype.bitcast (dtype src) (dtype n) (x env)
         | op when Op.Set.mem op Op.Set.alu ->
-            let xs = List.map compute n.src in
-            fun env -> sym_alu op n.dtype (List.map (fun x -> x env) xs)
+            let xs = List.map compute (src n) in
+            fun env -> sym_alu op (dtype n) (List.map (fun x -> x env) xs)
         | op -> fun _ -> invalid_argf "%s cannot be evaluated" (Op.name op)
       in
       (* An integer node of integer sources, computed on [int]s. *)
       let ints = Tbl.create 16 in
       let rec int n = memo ints native n
       and native n =
-        if not (Dtype.is_int n.dtype) then None
+        if not (Dtype.is_int (dtype n)) then None
         else
-          match (n.op, n.src) with
+          match (op n, src n) with
           | Op.Const, _ -> (
               match as_value (value n) with
               | `Int z when Bigint.fits_int z ->
@@ -1811,7 +1814,7 @@ let contract u rs =
 
 let bind var x =
   if (not (is_variable var)) || is_bound_var var then
-    invalid_argf "only an unbound variable binds, not %s" (Op.name var.op);
+    invalid_argf "only an unbound variable binds, not %s" (Op.name (op var));
   let c = const (x :> Dtype.const) in
   if not (Value.( <= ) (vmin var) (vmin c) && Value.( <= ) (vmax c) (vmax var))
   then
@@ -1826,11 +1829,11 @@ let bind var x =
 
 let unbound var =
   if not (is_variable var) then
-    invalid_argf "%s is not a variable" (Op.name var.op);
+    invalid_argf "%s is not a variable" (Op.name (op var));
   replace var ~arg:(Param { (param_arg_of var) with bound = None }) ~tag:None
 
 let unbind var =
-  match (is_bound_var var, var.arg) with
+  match (is_bound_var var, arg var) with
   | true, Param { bound = Some x; _ } -> (unbound var, x)
   | _ -> invalid_arg "only a bound variable unbinds"
 
@@ -1848,12 +1851,14 @@ let variables u =
     dedup_nodes
       (List.filter_map
          (fun x ->
-           if x.op = Op.Param && addrspace x = Some Dtype.Alu then
+           if op x = Op.Param && addrspace x = Some Dtype.Alu then
              Some (if is_variable x then unbound x else x)
            else if
-             x.op = Op.Range && Axis_type.equal (axis_type x) Axis_type.Device
+             op x = Op.Range && Axis_type.equal (axis_type x) Axis_type.Device
            then
-             Some (variable ~dtype:x.dtype "_device_num" (`Int Bigint.zero) (vmax x))
+             Some
+               (variable ~dtype:(dtype x) "_device_num" (`Int Bigint.zero)
+                  (vmax x))
            else None)
          (Nodes.to_list (backward_slice_with_self ~calls:Skip u)))
   in
@@ -1910,7 +1915,7 @@ let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
   let mint o p =
     let dev = match device o with Some d -> Some d | None -> default_dev in
     let axis = match device o with Some (Multi _) -> axis o | _ -> None in
-    let buf = alloc (shard_shape o) o.dtype ?device:dev ?axis in
+    let buf = alloc (shard_shape o) (dtype o) ?device:dev ?axis in
     let resolved =
       List.map
         (function
@@ -1921,8 +1926,9 @@ let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
                    (After_sources pm_resolve_params)))
         (shard_shape o)
     in
-    ( alloc resolved o.dtype ~slot:(param_arg_of (buf_uop buf)).slot ?device:dev
-        ?axis,
+    ( alloc resolved (dtype o)
+        ~slot:(param_arg_of (buf_uop buf)).slot
+        ?device:dev ?axis,
       param_like buf p )
   in
   let outputs = List.map2 mint values pos in
@@ -1962,33 +1968,33 @@ let program_info_of_sink
   let vars = ref [] and globals = ref [] and outs = ref [] and ins = ref [] in
   let global_size = Array.make 3 (Int 1)
   and local_size = Array.make 3 (Int 1) in
-  (match sink.arg with
+  (match arg sink with
   | Kernel { split = Some s; _ } -> global_size.(0) <- s.iterations
   | _ -> ());
   List.iter
     (fun u ->
-      if u.op = Op.Param then
+      if op u = Op.Param then
         if addrspace u = Some Dtype.Alu then vars := u :: !vars
         else globals := (param_arg_of u).slot :: !globals;
-      if u.op = Op.Store || u.op = Op.Load then begin
+      if op u = Op.Store || op u = Op.Load then begin
         let s0 = nth u 0 in
         let idx =
-          if s0.op = Op.Index || s0.op = Op.Shrink then Some s0
-          else if s0.op = Op.Cast && (nth s0 0).op = Op.Index then
+          if op s0 = Op.Index || op s0 = Op.Shrink then Some s0
+          else if op s0 = Op.Cast && (op (nth s0 0)) = Op.Index then
             Some (nth s0 0)
           else None
         in
         match idx with
         | Some idx ->
             let buf = buf_uop (nth idx 0) in
-            if buf.op = Op.Param then
+            if op buf = Op.Param then
               let slot = (param_arg_of buf).slot in
-              if u.op = Op.Store then outs := slot :: !outs
+              if op u = Op.Store then outs := slot :: !outs
               else ins := slot :: !ins
         | None -> ()
       end;
-      if u.op = Op.Special then
-        match u.arg with
+      if op u = Op.Special then
+        match arg u with
         | String name ->
             let axis =
               Char.code name.[String.length name - 1] - Char.code '0'

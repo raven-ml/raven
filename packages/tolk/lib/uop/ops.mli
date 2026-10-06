@@ -34,7 +34,7 @@
 
     {b Errors.} A broken precondition raises [Invalid_argument]. *)
 
-type t = Uop.t
+type t
 (** The type for nodes. *)
 
 (** {1:axes Axis types} *)
@@ -44,7 +44,7 @@ type t = Uop.t
     The role of a loop variable ({!Op.Range}) in a kernel. *)
 module Axis_type : sig
   (** The type for axis types. *)
-  type t = Uop.Axis_type.t =
+  type t =
     | Device  (** Across devices. *)
     | Global  (** Across the workgroups of a launch. *)
     | Warp  (** Across the threads of a warp. *)
@@ -94,7 +94,7 @@ end
 (** The type for device placements: one device, or one value spread over
     several. Devices are named by the caller, such as ["CPU"] or ["AMD:1"]; only
     a name starting with ["DISK"] has a meaning here, a disk. *)
-type device = Uop.device = Single of string | Multi of string list
+type device = Single of string | Multi of string list
 
 val equal_device : device -> device -> bool
 (** [equal_device d0 d1] is [true] iff [d0] and [d1] are the same placement. *)
@@ -112,11 +112,11 @@ val is_disk_device : device -> bool
 (** The type for symbolic integers: an integer, or an integer node whose value
     is known when the program runs. Functions that return one return [Int]
     whenever the value is known. *)
-type sint = Uop.sint = Int of int | Sym of t
+type sint = Int of int | Sym of t
 
 (** {1:args Arguments} *)
 
-type param_arg = Uop.param_arg = {
+type param_arg = {
   slot : int;
       (** The parameter's position in its function, or [-1] for a named
           variable. *)
@@ -177,7 +177,7 @@ val pp_param_arg : Format.formatter -> param_arg -> unit
     differ from their defaults, by name:
     [ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='i', ...)]. *)
 
-type estimates = Uop.estimates = {
+type estimates = {
   ops : sint;  (** Arithmetic operations. *)
   lds : sint;  (** Bytes loaded and stored. *)
   mem : sint;  (** Bytes of memory touched, each counted once. *)
@@ -187,7 +187,7 @@ type estimates = Uop.estimates = {
 val pp_estimates : Format.formatter -> estimates -> unit
 (** [pp_estimates] formats [Estimates(ops=0, lds=0, mem=0)]. *)
 
-type split = Uop.split = {
+type split = {
   iterations : sint;  (** The loop's iterations, [0] to [iterations - 1]. *)
   lo : int;  (** The slot of the variable that holds a block's first. *)
   hi : int;  (** The slot of the variable that holds the one after its last. *)
@@ -196,7 +196,7 @@ type split = Uop.split = {
     host's cores run at once. Its program runs the iterations from the value of
     its variable [lo] up to that of [hi]. *)
 
-type kernel_info = Uop.kernel_info = {
+type kernel_info = {
   name : string;  (** The kernel's name. *)
   applied_opts : Opt.t list;  (** The optimisations applied, in order. *)
   opts_to_apply : Opt.t list option;
@@ -229,7 +229,7 @@ val pp_kernel_info : Format.formatter -> kernel_info -> unit
     [KernelInfo(name='test', applied_opts=(), opts_to_apply=None,
      estimates=None, beam=0)]. *)
 
-type program_info = Uop.program_info = {
+type program_info = {
   global_size : sint list;  (** The number of workgroups on each axis. *)
   local_size : sint list;  (** The threads of a workgroup on each axis. *)
   vars : t list;  (** The scalar variables, by slot. *)
@@ -250,7 +250,7 @@ val pp_program_info : Format.formatter -> program_info -> unit
     [ProgramInfo(global_size=(1, 1, 1), local_size=(1, 1, 1), vars=(), ...)]. *)
 
 (** What later passes may do to a buffer an {!Op.Stage} makes. *)
-type keep = Uop.keep =
+type keep =
   | Removable
       (** Drop the axes its value does not vary along, and inline it back
           where that costs little. *)
@@ -263,7 +263,7 @@ type keep = Uop.keep =
       (** Nothing: a value the user materialises, or a custom kernel reads,
           is stored as it is. *)
 
-type bufferize_opts = Uop.bufferize_opts = {
+type bufferize_opts = {
   device : device option;  (** Where the new buffer lives. *)
   addrspace : Dtype.addr_space;  (** Its address space. *)
   keep : keep;  (** What later passes may do to it. *)
@@ -276,7 +276,7 @@ val pp_bufferize_opts : Format.formatter -> bufferize_opts -> unit
      broadcast=False)]: [removable] is [false] for {!Whole} only, and
     [broadcast] [true] for {!Broadcast} only. *)
 
-type hcq_kernel = Uop.hcq_kernel = {
+type hcq_kernel = {
   devices : string list;  (** The devices the kernel runs on. *)
   name : string;  (** The kernel's name. *)
   estimates : estimates;  (** Its cost. *)
@@ -288,7 +288,7 @@ type hcq_kernel = Uop.hcq_kernel = {
 }
 (** The type for the kernels a command-queue call enqueues. *)
 
-type hcq_info = Uop.hcq_info = {
+type hcq_info = {
   device : string list;  (** The devices whose queues the call submits. *)
   kernels : hcq_kernel list;  (** The kernels it enqueues. *)
   estimates : estimates;  (** Their total cost. *)
@@ -318,7 +318,7 @@ val pp_hcq_info : Format.formatter -> hcq_info -> unit
     [HCQInfo(device=('AMD',), kernels=(), estimates=Estimates(ops=0, lds=0,
      mem=0), nargs=0, table=-1, inputs=(), slots=(), written_bufs=())]. *)
 
-type call_info = Uop.call_info = {
+type call_info = {
   name : string option;  (** The name of the function called. *)
   precompile : bool;  (** Compile the body on its own. *)
   aux : hcq_info option;  (** The queues it submits, for such a call. *)
@@ -331,7 +331,7 @@ val pp_call_info : Format.formatter -> call_info -> unit
     [CallInfo(None, 'f', False, False, dtype=dtypes.int)], the [dtype] field
     only when it is not [void]. *)
 
-type wmma = Uop.wmma = {
+type wmma = {
   dims : int * int * int;  (** The matrix dimensions N, M and K. *)
   dtype_in : Dtype.t;  (** The type of the multiplied operands. *)
   threads : int;  (** The threads that cooperate on one product. *)
@@ -345,7 +345,7 @@ type wmma = Uop.wmma = {
 
 (** The type for node arguments. Each operation carries one shape of argument,
     given by {!v}'s table; the others carry [No_arg]. *)
-type arg = Uop.arg =
+type arg =
   | No_arg
   | Const of Dtype.const  (** {!Op.Const}: its value. *)
   | Dtype of Dtype.t  (** {!Op.Cast}, {!Op.Bitcast}: the target type. *)
@@ -399,7 +399,7 @@ val pp_arg : Format.formatter -> arg -> unit
     literals. *)
 module Tag : sig
   (** The type for tags. *)
-  type t = Uop.Tag.t =
+  type t =
     | Bool of bool
     | Int of int
     | String of string
@@ -505,7 +505,7 @@ module Tbl : Hashtbl.S with type key = t
 module Nodes : sig
   type node := t
 
-  type t = Uop.nodes
+  type t
   (** The type for sets of nodes. *)
 
   val mem : node -> t -> bool
@@ -868,7 +868,7 @@ val storage_base : t -> t
     bitcasts and {!Op.After}s. *)
 
 (** The type for the arguments of movements. *)
-type movement = Uop.movement =
+type movement =
   | Reshape of sint list  (** The new shape. *)
   | Expand of sint list  (** The axes added in front. *)
   | Pad of (sint * sint) list
@@ -1408,3 +1408,14 @@ val resolve_returned_after : t -> t -> t option
 val gate_kernel_sink : t -> bool
 (** [gate_kernel_sink u] is [false] for a linear program and a kernel's sink, so
     walks gated by it do not enter kernels. *)
+
+(**/**)
+
+(* The memos of the properties that [Shape] computes: only it writes them. *)
+
+val shape_memo : t -> sint list option option
+val set_shape_memo : t -> sint list option -> unit
+val movement_memo : t -> movement option
+val set_movement_memo : t -> movement -> unit
+val axis_memo : t -> int option option
+val set_axis_memo : t -> int option -> unit
