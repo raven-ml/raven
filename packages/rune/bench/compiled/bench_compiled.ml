@@ -347,6 +347,60 @@ let factorizations =
       ];
   ]
 
+(* The log density of 8 Gaussian processes at 11 points, with its gradient in
+   the values at the points and in the log length scale and log amplitude of
+   each process's squared exponential covariance, in float64, eagerly and
+   compiled for the host: a Cholesky factorization of each covariance, a
+   triangular solve and the log of the factor's diagonal, and their transposes.
+   A sampler takes one such gradient per step of each of 8 chains. *)
+let gaussian =
+  let chains = 8 and n = 11 in
+  let params = Nx.Ptree.(pair tensor tensor) in
+  let x =
+    Nx.init Nx.float64 [| n |] (fun i -> float_of_int (i.(0) - (n / 2)))
+  in
+  let sq =
+    Nx.square (Nx.sub (Nx.reshape [| n; 1 |] x) (Nx.reshape [| 1; n |] x))
+  in
+  let jitter = Nx.mul_s (Nx.eye Nx.float64 n) 1e-6 in
+  let density (h, f) =
+    let scale i =
+      Nx.reshape [| chains; 1; 1 |] (Nx.exp (Nx.slice [ A; I i ] h))
+    in
+    let rho = scale 0 and alpha = scale 1 in
+    let cov =
+      Nx.add jitter
+        (Nx.mul (Nx.square alpha)
+           (Nx.exp (Nx.div sq (Nx.mul_s (Nx.square rho) (-2.)))))
+    in
+    let l = Nx.cholesky cov in
+    let w = Nx.solve_triangular l f in
+    Nx.sub
+      (Nx.mul_s (Nx.sum (Nx.square w)) (-0.5))
+      (Nx.sum (Nx.log (Nx.diagonal l)))
+  in
+  let p () =
+    let st = Random.State.make [| 18 |] in
+    let u shape lo hi =
+      Nx.init Nx.float64 shape (fun _ -> lo +. Random.State.float st (hi -. lo))
+    in
+    (u [| chains; 2 |] 0. 1., u [| chains; n |] (-1.) 1.)
+  in
+  let step = Rune.value_and_grad params density in
+  let id = Printf.sprintf "process-float64-%dx%d" chains n in
+  Thumper.group ~id:"gaussian" "gaussian"
+    [
+      Thumper.bench_with_setup ~setup:p (id ^ "-eager") (fun p ->
+          ignore (Sys.opaque_identity (step p));
+          Nx_device.synchronize Nx_device.host);
+      compiled_call (id ^ "-host")
+        Nx.Ptree.(params @-> returns (pair tensor params))
+        step
+        (fun () ->
+          let p = p () in
+          fun g -> g p);
+    ]
+
 (* Reverse mode of a two-layer perceptron's loss over a batch of 32 rows of 64
    inputs, 128 hidden units and 10 outputs: the gradient of the compiled loss, a
    forward program that returns the values its backward program reads, then that
@@ -758,7 +812,7 @@ let suite () =
          searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
        ]
   :: split :: indexed :: rope :: select_zero :: masks :: transcendental
-  :: factorizations
+  :: gaussian :: factorizations
   @ reverse
     :: Thumper.group ~id:"finite" "finite"
          [

@@ -173,6 +173,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.cholesky` stores its factor once: a product or reduction that
+  read the factor recomputed the factorization for every term.
 - `Rune.jit` computes `Nx.gammainc`, `Nx.gammaincc`, their logarithms and
   their inverses as nx does eagerly, and their derivatives are within the
   bounds `rune.mli` states, eagerly and compiled; an inverse's derivative is

@@ -600,7 +600,11 @@ let lu a =
    as column [j] of [L]: its diagonal element's square root heads it, and the
    rest is divided by that root. The working matrix then loses the product of
    the column with itself. Only the lower triangle is ever read. A matrix with a
-   pivot that is not positive, NaN included, is not positive-definite. *)
+   pivot that is not positive, NaN included, is not positive-definite.
+
+   The factor is stored once: each element is the end of a chain of the steps
+   before it, which a consumer that reads the factor in a reduction would
+   otherwise recompute for every term. *)
 
 let cholesky ~upper a =
   let dt = dtype a in
@@ -629,7 +633,7 @@ let cholesky ~upper a =
       (block x None (Some (0, 0)))
       (List.rev columns)
   in
-  Ops.cast (defined ok (if upper then transpose l else l)) dt
+  Ops.contiguous (Ops.cast (defined ok (if upper then transpose l else l)) dt)
 
 (* Triangular solve
 
