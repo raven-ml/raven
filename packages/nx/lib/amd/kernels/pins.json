@@ -10,6 +10,7 @@
   "-fhip-fp32-correctly-rounded-divide-sqrt",
   "-fno-gpu-flush-denormals-to-zero",
   "-nogpuinc",
+  "-nostdinc",
   "-mcode-object-version=6",
   "-std=c++17",
   "-cuid=nx_amd",
@@ -53,7 +54,7 @@
   "src/where.hip": "1c15983aa41613e171e9938f42b312f2604e4a2f67fbf5174aab89f356d79cd7",
   "src/windows.hip": "f8513566e72825077ca80fc72e8abfe3cb8d5dddfb0f740dec09be4972746c68",
   "../../dtype/nx_dtype.h": "6982bd891f02e37fd676dc5993120f514dfcf0df2ed580f7668bf32e40fd0929",
-  "gen.py": "e98739f6ffa3a0dd09424b0984b63b39af446361e74d1f706ddbf7a1a23dfcfa"
+  "gen.py": "08499d7fab0d19fe32281124c90ec80d53903bc0949ad7e0e23b0fe8dc374239"
  },
  "outputs": {
   "gfx12-generic/binary.bfloat16.co": "4ca1c35400cae5b85a03fa972e15bfaa23055b39263bd7378a6f5e9794a5d4f7",

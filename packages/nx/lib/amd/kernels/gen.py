@@ -58,12 +58,16 @@ DTYPES = [
 # Kinds that only move bytes are keyed by element width, in bytes.
 WIDTHS = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
 
+# The kernels compile against no system header: src/libc holds what nx_dtype.h
+# and the kernels use of the C library, as the compiler's builtins, so that a
+# code object depends on the pinned inputs alone, whatever machine compiles it.
+#
 # A unit's ID names its symbol __hip_cuid_<hash>. comgr otherwise derives it
 # from every include it is handed, so that a new source would change every code
 # object; each code object is a program of its own, which one ID serves.
 COMPILE = [
     "-O3", "-ffp-contract=off", "-fhip-fp32-correctly-rounded-divide-sqrt",
-    "-fno-gpu-flush-denormals-to-zero", "-nogpuinc", "-mcode-object-version=6",
+    "-fno-gpu-flush-denormals-to-zero", "-nogpuinc", "-nostdinc", "-mcode-object-version=6",
     "-std=c++17", "-cuid=nx_amd", "-Wall", "-Werror", "-Xclang", "-disable-llvm-passes",
     "-Xclang", "-aux-triple", "-Xclang", "x86_64-unknown-linux-gnu",
 ]
