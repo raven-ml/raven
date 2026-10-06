@@ -3286,6 +3286,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** an integer `Nx.mean` is the exact mean rounded toward zero; it
+  divided a wrapped sum by a count wrapped to the dtype, so an `int8` mean of
+  200 threes was `-1`, and it raises past the count it computes exactly.
+  `Nx.var`, `Nx.std` and `Nx.standardize` without a variance refuse integer
+  tensors, whose variance need not fit their dtype.
 - Eager operations queued back to back on an AMD GPU no longer stall it until
   the previous one's completion reaches memory: 20 dependent `Nx.add`s of 4K
   elements take 0.14 ms instead of 0.94 ms, and an `Nx.Rng.uniform` of 4K

@@ -2882,6 +2882,14 @@ val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [mean ?axes ?keepdims t] is the arithmetic mean along [axes]. NaN
     propagates. [keepdims] defaults to [false].
 
+    An integer mean is the exact mean rounded toward zero, as {!div} rounds. It
+    lies between the least and greatest element, so it never wraps.
+
+    Raises [Invalid_argument] if [t] is an integer tensor and an axis of [axes]
+    is empty, since the mean of nothing has no integer value, or if [axes] hold
+    more elements than an integer mean computes exactly: [2{^31}] or more at 64
+    bits, [2{^(64 - b)}] or more at [b] bits.
+
     {@ocaml[
       # create float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
         |> mean |> item []
@@ -2895,7 +2903,9 @@ val var :
     sample variance. Computed as [E[(X - E[X])²] / (N - ddof)]. [keepdims]
     defaults to [false].
 
-    Raises [Invalid_argument] if [ddof >= N].
+    Raises [Invalid_argument] if [ddof >= N], or if [t] is an integer tensor:
+    its variance is a fraction that its dtype need not hold; {!cast} it to a
+    float dtype first.
 
     {@ocaml[
       # create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
@@ -2913,6 +2923,8 @@ val std :
 (** [std ?axes ?keepdims ?ddof t] is the standard deviation:
     [sqrt({!var} ~ddof t)]. [ddof] defaults to [0]. [keepdims] defaults to
     [false].
+
+    Raises [Invalid_argument] as {!var} does.
 
     See also {!var}. *)
 
@@ -4375,7 +4387,10 @@ val standardize :
 (** [standardize ?axes ?mean ?variance ?epsilon t] is
     [(t - mean) / sqrt(variance + epsilon)]. When [mean] or [variance] are
     omitted, they are computed along [axes] (default all). [epsilon] defaults to
-    [1e-5]. *)
+    [1e-5].
+
+    Raises [Invalid_argument] if [variance] is omitted and [t] is an integer
+    tensor, whose variance {!var} refuses. *)
 
 (** {1:windows Sliding windows} *)
 

@@ -945,21 +945,63 @@ let cumprod ?axis x = cumulative_scan ?axis Nx_backend.Prod x
 let cummax ?axis x = cumulative_scan ?axis Nx_backend.Max x
 let cummin ?axis x = cumulative_scan ?axis Nx_backend.Min x
 
+(* The mean of [n] integers of [b] bits rounded toward zero, exact in a 64-bit
+   accumulator [acc]. Below 64 bits, the sum of fewer than [2^(64 - b)] of them
+   holds in [acc]. At 64 bits, with [x = q n + r] and [0 <= r < n], the sum is
+   [n Q + R] for [Q] the sum of the quotients and [R] that of the remainders,
+   so its floor is [Q + R / n]. The floor lies between the least and greatest
+   element, so [Q] may wrap on the way; [R] stays below [n^2], below 2^62 for
+   fewer than 2^31 elements. *)
+let int_mean (type a b d) ?axes ~keepdims (acc : (int64, d) Nx_dtype.t)
+    (x : (a, b) t) n : (a, b) t =
+  let dt = Value.dtype x in
+  let bits = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
+  let exact = if bits = 64 then 1 lsl 31 else 1 lsl (64 - bits) in
+  if n >= exact then
+    err "mean" "%d elements of dtype %s, an integer mean takes fewer than %d" n
+      (Nx_dtype.to_string dt) exact;
+  let w = cast acc x in
+  let n = Int64.of_int n in
+  if bits < 64 then cast dt (div_s (sum ?axes ~keepdims w) n)
+  else
+    let q = div_s w n in
+    let r = sub w (mul_s q n) in
+    (* [div] truncates toward zero: step a negative remainder up *)
+    let negative = less_s r 0L in
+    let q = where negative (sub_s q 1L) q
+    and r = where negative (add_s r n) r in
+    let rs = sum ?axes ~keepdims r in
+    let floor = add (sum ?axes ~keepdims q) (div_s rs n) in
+    let inexact =
+      logical_and (less_s floor 0L) (not_equal_s (mod_s rs n) 0L)
+    in
+    cast dt (where inexact (add_s floor 1L) floor)
+
 let mean ?axes ?(keepdims = false) x =
   let dt = Value.dtype x in
-  let s = sum ?axes ~keepdims x in
   let n = reduction_element_count (shape x) ?axes () in
   (* The mean of nothing is 0 / 0: NaN, which an integer does not hold. *)
   if n = 0 && not (Nx_dtype.is_float dt || Nx_dtype.is_complex dt) then
     err "mean" "dtype %s, the mean of an empty axis has no value"
       (Nx_dtype.to_string dt);
-  let divisor =
-    broadcast_to (shape s)
-      (scalar (Value.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
-  in
-  div s divisor
+  if Nx_dtype.is_uint dt then int_mean ?axes ~keepdims Nx_dtype.uint64 x n
+  else if Nx_dtype.is_int dt then int_mean ?axes ~keepdims Nx_dtype.int64 x n
+  else
+    let s = sum ?axes ~keepdims x in
+    let divisor =
+      broadcast_to (shape s)
+        (scalar (Value.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
+    in
+    div s divisor
+
+(* The variance of integers is a fraction that can outgrow their dtype. *)
+let refuse_int op x =
+  if Nx_dtype.is_int (dtype x) then
+    err op "dtype %s, expected a float or complex dtype"
+      (Nx_dtype.to_string (dtype x))
 
 let var ?axes ?(keepdims = false) ?(ddof = 0) x =
+  refuse_int "var" x;
   let dt = Value.dtype x in
   let mean_x = mean ?axes ~keepdims:true x in
   let sum_sq = sum ?axes ~keepdims (square (sub x mean_x)) in
@@ -973,6 +1015,7 @@ let var ?axes ?(keepdims = false) ?(ddof = 0) x =
   div sum_sq divisor
 
 let std ?axes ?(keepdims = false) ?(ddof = 0) x =
+  refuse_int "std" x;
   sqrt (var ?axes ~keepdims ~ddof x)
 
 (* A [bool] or [bit] tensor reduces as it is; any other is compared with zero
@@ -5738,6 +5781,7 @@ let standardize ?axes ?mean:mean_param ?variance:variance_param
     match variance_param with
     | Some v -> broadcast_param "variance" v
     | None ->
+        refuse_int "standardize" x;
         if axes_norm = [] then zeros_like x
         else var x ~axes:axes_norm ~keepdims:true
   in

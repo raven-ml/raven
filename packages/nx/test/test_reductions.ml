@@ -188,9 +188,7 @@ let float_reductions =
       test "var refuses ddof at least the count" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.var ~ddof:3 (Nx.zeros Nx.float64 [| 3 |])));
-      test
-        "the mean of nothing is NaN, and an integer one refuses (nx.mli is \
-         silent)" (fun () ->
+      test "the mean of nothing is NaN, and an integer one refuses" (fun () ->
           equal (close ~rel:0. ()) Float.nan
             (Nx.item [] (Nx.mean (Nx.zeros Nx.float64 [| 0 |])));
           raises_invalid_arg (fun () -> Nx.mean (Nx.zeros Nx.int32 [| 0 |])));
@@ -853,44 +851,107 @@ let normalisations =
             (Ref.of_nx (Nx.standardize t)));
     ]
 
-(* Every integer dtype sums at its width and orders as it is signed. *)
+(* The mean of [xs] rounded toward zero, by long division of their exact sum
+   held in two 32-bit limbs, [s = h 2^32 + l] with [0 <= l < 2^32]. *)
+let exact_mean ~signed xs =
+  let limb = 1 lsl 32 in
+  let h, l =
+    Array.fold_left
+      (fun (h, l) v ->
+        let hi =
+          if signed then Int64.shift_right v 32
+          else Int64.shift_right_logical v 32
+        in
+        (h + Int64.to_int hi, l + Int64.to_int (Int64.logand v 0xFFFF_FFFFL)))
+      (0, 0) xs
+  in
+  let h = h + (l asr 32) and l = l land (limb - 1) in
+  let n = Array.length xs in
+  let qh = if h >= 0 then h / n else -((n - 1 - h) / n) in
+  let low = ((h - (qh * n)) * limb) + l in
+  let floor =
+    Int64.add (Int64.shift_left (Int64.of_int qh) 32) (Int64.of_int (low / n))
+  in
+  if h < 0 && low mod n <> 0 then Int64.succ floor else floor
+
+(* Counts that the narrow dtypes cannot hold, beside small ones. *)
+let mean_count =
+  Gen.frequency [ (3, Gen.int_range 1 9); (1, Gen.int_range 120 300) ]
+
+(* [d] sums at its width and orders as it is signed. *)
+let sums (Int_dtype d) =
+  prop
+    (d.name
+   ^ " sum wraps at its width, and max, min and argmax follow its order")
+    (Gen.array ~size:(Gen.int_range 1 9)
+       (int_value ~bits:d.bits ~signed:d.signed))
+    (fun xs ->
+      let t = Nx.create d.dtype [| Array.length xs |] (Array.map d.of_i64 xs) in
+      let cmp = int_compare ~signed:d.signed in
+      let extreme better =
+        Array.fold_left
+          (fun (bi, bv) (i, v) ->
+            if better (cmp v bv) then (i, v) else (bi, bv))
+          (0, xs.(0))
+          (Array.mapi (fun i v -> (i, v)) xs)
+      in
+      let value v = d.of_i64 (wrap ~bits:d.bits ~signed:d.signed v) in
+      equal ~msg:"sum" d.exact
+        (value (Array.fold_left Int64.add 0L xs))
+        (Nx.item [] (Nx.sum t));
+      equal ~msg:"max" d.exact
+        (value (snd (extreme (fun c -> c > 0))))
+        (Nx.item [] (Nx.max t));
+      equal ~msg:"min" d.exact
+        (value (snd (extreme (fun c -> c < 0))))
+        (Nx.item [] (Nx.min t));
+      equal ~msg:"argmax" int64
+        (Int64.of_int (fst (extreme (fun c -> c > 0))))
+        (Nx.item [] (Nx.argmax t)))
+
+(* Every integer dtype sums at its width, orders as it is signed, and has an
+   exact mean. *)
 let integer_dtypes =
   group "integer dtypes"
-    (List.map
+    (List.concat_map
        (fun (Int_dtype d) ->
-         prop
-           (d.name
-          ^ " sum wraps at its width, and max, min and argmax follow its order"
-           )
-           (Gen.array ~size:(Gen.int_range 1 9)
-              (int_value ~bits:d.bits ~signed:d.signed))
-           (fun xs ->
-             let t =
-               Nx.create d.dtype [| Array.length xs |] (Array.map d.of_i64 xs)
-             in
-             let cmp = int_compare ~signed:d.signed in
-             let extreme better =
-               Array.fold_left
-                 (fun (bi, bv) (i, v) ->
-                   if better (cmp v bv) then (i, v) else (bi, bv))
-                 (0, xs.(0))
-                 (Array.mapi (fun i v -> (i, v)) xs)
-             in
-             let value v = d.of_i64 (wrap ~bits:d.bits ~signed:d.signed v) in
-             equal ~msg:"sum" d.exact
-               (value (Array.fold_left Int64.add 0L xs))
-               (Nx.item [] (Nx.sum t));
-             equal ~msg:"max" d.exact
-               (value (snd (extreme (fun c -> c > 0))))
-               (Nx.item [] (Nx.max t));
-             equal ~msg:"min" d.exact
-               (value (snd (extreme (fun c -> c < 0))))
-               (Nx.item [] (Nx.min t));
-             equal ~msg:"argmax" int64
-               (Int64.of_int (fst (extreme (fun c -> c > 0))))
-               (Nx.item [] (Nx.argmax t))))
+         let mean =
+           let _, hi = int_range ~bits:d.bits ~signed:d.signed in
+           prop
+             (d.name ^ " mean is the exact mean rounded toward zero")
+             ~examples:[ Array.make 300 hi ]
+             (Gen.array ~size:mean_count
+                (int_value ~bits:d.bits ~signed:d.signed))
+             (fun xs ->
+               let n = Array.length xs in
+               if d.bits <= 8 then
+                 cover "a count the dtype cannot hold" (Int64.of_int n > hi);
+               let t = Nx.create d.dtype [| n |] (Array.map d.of_i64 xs) in
+               equal d.exact
+                 (d.of_i64 (exact_mean ~signed:d.signed xs))
+                 (Nx.item [] (Nx.mean t)))
+         in
+         let refuses =
+           test (d.name ^ " var, std and standardize refuse the dtype")
+             (fun () ->
+               let t =
+                 Nx.create d.dtype [| 2 |] [| d.of_i64 0L; d.of_i64 1L |]
+               in
+               raises_invalid_arg (fun () -> Nx.var t);
+               raises_invalid_arg (fun () -> Nx.std t);
+               raises_match (Exn.invalid_arg ~substring:"standardize:")
+                 (fun () -> Nx.standardize t))
+         in
+         [ sums (Int_dtype d); mean; refuses ])
        (int4_dtypes @ int_dtypes)
     @ [
+        test "an integer mean past its exact count refuses" (fun () ->
+            let many dt v n = Nx.broadcast_to [| n |] (Nx.scalar dt v) in
+            raises_invalid_arg (fun () -> Nx.mean (many Nx.int64 1L (1 lsl 31)));
+            raises_invalid_arg (fun () ->
+                Nx.mean (many Nx.uint32 1l (1 lsl 32))));
+        test "an int8 mean of 200 threes is three" (fun () ->
+            equal int 3 (Nx.item [] (Nx.mean (Nx.full Nx.int8 [| 200 |] 3))));
         slow "a float32 sum of 2^25 ones is exact" (fun () ->
             equal float_exact 0x1p25
               (Nx.item [] (Nx.sum (Nx.ones Nx.float32 [| 1 lsl 25 |]))));
