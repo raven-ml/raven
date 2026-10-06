@@ -87,7 +87,7 @@ let bracket ~tol f ~lo ~hi =
        point differs from [x] in the digits [tol] reads. *)
     let t1 =
       Nx.maximum
-        (Nx.div_s (Tol.scale tol s.x) 3.)
+        (Nx.div_s (Tolerance.scale tol s.x) 3.)
         (Nx.add_s (Nx.mul_s (Nx.abs s.x) eps) (Float.ldexp 1. (-1000)))
     in
     (* The parabola through (x, fx), (w, fw), (v, fv): its step [p / q]. *)

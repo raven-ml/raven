@@ -1,5 +1,5 @@
 (library
  (name jera)
  (public_name jera)
- (private_modules num march cheb tridiag spline elementwise sobol)
+ (private_modules num march cheb tridiag spline elementwise sobol tolerance)
  (libraries nx nx.dtype rune))

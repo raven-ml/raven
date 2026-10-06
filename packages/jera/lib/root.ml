@@ -32,7 +32,7 @@ let bracket ~tol f ~lo ~hi =
       (Nx.where (Nx.equal width0 zero) (Nx.ones_like width0) width0)
   in
   let eps =
-    let s = Tol.scale tol (Nx.add a0 (Nx.div_s width0 2.)) in
+    let s = Tolerance.scale tol (Nx.add a0 (Nx.div_s width0 2.)) in
     Nx.maximum s (Nx.full_like s (Float.ldexp 1. (-1000)))
   in
   let n_max =

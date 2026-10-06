@@ -40,4 +40,4 @@ let state fn ~ok r x =
     ~residual:(fun v -> Nx.where ok (r v) (Nx.sub v x))
     (fun () -> x)
 
-let accepted tol ~e ~y = Nx.less_equal_s (Tol.ratio tol ~e ~y) 1.
+let accepted tol ~e ~y = Nx.less_equal_s (Tolerance.ratio tol ~e ~y) 1.

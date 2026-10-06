@@ -194,7 +194,7 @@ let adapt s ~degree ~tol ~budget f a b =
                   let last i = Nx.abs (Nx.get [ i ] (Nx.moveaxis 1 0 flat)) in
                   let e = Nx.maximum (last degree) (last (degree - 1)) in
                   let y = Nx.max ~axes:[ 1 ] (Nx.abs flat) in
-                  Nx.cast (Nx.dtype x) (Tol.ratio tol ~e ~y));
+                  Nx.cast (Nx.dtype x) (Tolerance.ratio tol ~e ~y));
             }
             x
           |> fun r -> Nx.cast dtype r :: acc)

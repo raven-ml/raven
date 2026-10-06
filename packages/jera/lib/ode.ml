@@ -259,7 +259,7 @@ let error_norm (type t) y tol (dtype : (float, t) Nx.dtype) e v w =
   let leaf (type a c) (e : (a, c) Nx.t) pv pw =
     let go (type d) (e : (float, d) Nx.t) =
       let v = Nx.unpack (Nx.dtype e) pv and w = Nx.unpack (Nx.dtype e) pw in
-      let r = Tol.ratio tol ~e ~y:(Nx.maximum (Nx.abs v) (Nx.abs w)) in
+      let r = Tolerance.ratio tol ~e ~y:(Nx.maximum (Nx.abs v) (Nx.abs w)) in
       [ Nx.reshape [| -1 |] (Nx.cast dtype r) ]
     in
     match Nx.dtype e with

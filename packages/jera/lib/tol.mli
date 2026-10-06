@@ -16,7 +16,7 @@
     so a decision depends only on the values of the user's function, eagerly and
     compiled. Tolerances are OCaml floats: constants of a compiled program. *)
 
-type t
+type t = Tolerance.t
 (** The type for tolerances. *)
 
 val v : rel:float -> abs:float -> t
@@ -42,14 +42,3 @@ val ulps : float -> t
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf t] formats [t] as ["rel 1e-06 abs 1e-10"] or ["ulps 4"]. *)
-
-(**/**)
-
-val scale : t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
-(** [scale t y] is [s = abs + rel * |y|] in [y]'s dtype. *)
-
-val ratio : t -> e:(float, 'b) Nx.t -> y:(float, 'b) Nx.t -> (float, 'b) Nx.t
-(** [ratio t ~e ~y] is [e / s] elementwise, [0] where [e = 0] and infinite where
-    [s = 0] and [e <> 0]. *)
-
-(**/**)
