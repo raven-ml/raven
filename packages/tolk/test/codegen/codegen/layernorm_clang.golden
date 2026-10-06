@@ -20,17 +20,20 @@
 18 Ops.INDEX dtypes.float [17, 3]
 19 Ops.LOAD dtypes.float [18]
 20 Ops.SUB dtypes.float [16, 19]
-21 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=8, device="CPU")
-22 Ops.INDEX dtypes.float [21, 3]
-23 Ops.LOAD dtypes.float [22]
-24 Ops.FDIV dtypes.float [20, 23]
-25 Ops.STORE dtypes.void [13, 24]
-26 Ops.END dtypes.void [25, 10]
-27 Ops.END dtypes.void [26, 3]
-28 Ops.SINK dtypes.void [27] KernelInfo(name="E_8_128", split=(128, 4, 5)) tag=1
-29 Ops.SINK dtypes.void [27] KernelInfo(name="E_8_128", estimates=Estimates(ops=2048, lds=8256, mem=8256), split=(128, 4, 5)) tag=1
-30 Ops.LINEAR dtypes.void [0, 14, 17, 21, 7, 8, 4, 5, 1, 2, 9, 3, 18, 19, 22, 23, 6, 10, 11, 12, 15, 16, 13, 20, 24, 25, 26, 27, 28]
-31 Ops.SOURCE dtypes.void [] "\nvoid E_8_128(float* restrict data0_1024, float* restrict data1_1024, float* restrict data2_8, float* restrict data3_8, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    float val0 = (*(data2_8+Lidx0));\n    float val1 = (*(data3_8+Lidx0));\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0<<7)+(block_lo_+Lidx1));\n      float val2 = (*(data1_1024+alu0));\n      *(data0_1024+alu0) = ((val2-val0)/val1);\n    }\n  }\n}\n"
-32 Ops.PROGRAM dtypes.void [29, 30, 31] ProgramInfo(global_size=(128, 1, 1), vars=(%7, %8), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-33 Ops.SINK dtypes.void [28, 32]
+21 Ops.CONST dtypes.weakfloat [] 1.0
+22 Ops.CAST dtypes.float [21] dtypes.float
+23 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=8, device="CPU")
+24 Ops.INDEX dtypes.float [23, 3]
+25 Ops.LOAD dtypes.float [24]
+26 Ops.FDIV dtypes.float [22, 25]
+27 Ops.MUL dtypes.float [20, 26]
+28 Ops.STORE dtypes.void [13, 27]
+29 Ops.END dtypes.void [28, 10]
+30 Ops.END dtypes.void [29, 3]
+31 Ops.SINK dtypes.void [30] KernelInfo(name="E_8_128", split=(128, 4, 5)) tag=1
+32 Ops.SINK dtypes.void [30] KernelInfo(name="E_8_128", estimates=Estimates(ops=2056, lds=8256, mem=8256), split=(128, 4, 5)) tag=1
+33 Ops.LINEAR dtypes.void [0, 14, 17, 23, 7, 8, 21, 22, 4, 5, 1, 2, 9, 3, 18, 19, 24, 25, 6, 26, 10, 11, 12, 15, 16, 13, 20, 27, 28, 29, 30, 31]
+34 Ops.SOURCE dtypes.void [] "\nvoid E_8_128(float* restrict data0_1024, float* restrict data1_1024, float* restrict data2_8, float* restrict data3_8, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    float val0 = (*(data2_8+Lidx0));\n    float val1 = (*(data3_8+Lidx0));\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0<<7)+(block_lo_+Lidx1));\n      float val2 = (*(data1_1024+alu0));\n      *(data0_1024+alu0) = ((val2-val0)*(1.0f/val1));\n    }\n  }\n}\n"
+35 Ops.PROGRAM dtypes.void [32, 33, 34] ProgramInfo(global_size=(128, 1, 1), vars=(%7, %8), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+36 Ops.SINK dtypes.void [31, 35]
 
