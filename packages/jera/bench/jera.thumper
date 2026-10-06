@@ -1,0 +1,80 @@
+# thumper baseline v1
+# suite: jera
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 14.4 on 10 cores
+
+grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	9017
+grid-cubic-16x16-eval-1k/compiled	wall_time	batch=128	n=20	7.350e-05	7.050e-05 7.092e-05 7.181e-05 7.217e-05 7.241e-05 7.302e-05 7.329e-05 7.335e-05 7.336e-05 7.349e-05 7.351e-05 7.361e-05 7.363e-05 7.384e-05 7.385e-05 7.390e-05 7.414e-05 7.414e-05 7.454e-05 7.574e-05
+grid-cubic-16x16-eval-1k/eager	alloc_words	exact	179427
+grid-cubic-16x16-eval-1k/eager	wall_time	batch=8	n=20	6.688e-04	6.256e-04 6.301e-04 6.363e-04 6.402e-04 6.423e-04 6.431e-04 6.472e-04 6.607e-04 6.663e-04 6.680e-04 6.696e-04 6.751e-04 6.758e-04 6.761e-04 6.770e-04 6.856e-04 6.881e-04 7.049e-04 7.063e-04 7.312e-04
+minimize-bracket-1k/compiled	alloc_words	exact	29495
+minimize-bracket-1k/compiled	wall_time	batch=16	n=20	3.720e-04	3.537e-04 3.660e-04 3.661e-04 3.662e-04 3.666e-04 3.676e-04 3.702e-04 3.705e-04 3.713e-04 3.717e-04 3.723e-04 3.727e-04 3.736e-04 3.738e-04 3.745e-04 3.748e-04 3.751e-04 3.761e-04 3.762e-04 3.788e-04
+minimize-bracket-1k/eager	alloc_words	exact	217762
+minimize-bracket-1k/eager	wall_time	batch=4	n=20	1.646e-03	1.501e-03 1.507e-03 1.526e-03 1.553e-03 1.586e-03 1.602e-03 1.609e-03 1.627e-03 1.637e-03 1.643e-03 1.649e-03 1.658e-03 1.663e-03 1.664e-03 1.668e-03 1.694e-03 1.705e-03 1.748e-03 1.786e-03 1.790e-03
+ode-march-tsit5-100-pendulums/compiled	alloc_words	exact	65657
+ode-march-tsit5-100-pendulums/compiled	wall_time	batch=2	n=20	3.171e-03	3.083e-03 3.094e-03 3.096e-03 3.099e-03 3.099e-03 3.129e-03 3.131e-03 3.134e-03 3.155e-03 3.158e-03 3.185e-03 3.199e-03 3.202e-03 3.207e-03 3.208e-03 3.219e-03 3.219e-03 3.220e-03 3.222e-03 3.257e-03
+ode-march-tsit5-100-pendulums/eager	alloc_words	exact	810666
+ode-march-tsit5-100-pendulums/eager	wall_time	batch=4	n=20	2.314e-03	2.264e-03 2.269e-03 2.286e-03 2.288e-03 2.290e-03 2.292e-03 2.298e-03 2.305e-03 2.310e-03 2.313e-03 2.316e-03 2.322e-03 2.342e-03 2.358e-03 2.359e-03 2.363e-03 2.375e-03 2.385e-03 2.401e-03 2.418e-03
+ode-march-tsit5-100-pendulums/grad	alloc_words	exact	236261
+ode-march-tsit5-100-pendulums/grad	wall_time	batch=1	n=20	1.226e-02	1.187e-02 1.194e-02 1.196e-02 1.199e-02 1.209e-02 1.212e-02 1.214e-02 1.216e-02 1.216e-02 1.225e-02 1.228e-02 1.229e-02 1.230e-02 1.230e-02 1.233e-02 1.234e-02 1.239e-02 1.242e-02 1.244e-02 1.247e-02
+ode-sample-tsit5-100-pendulums/compiled	alloc_words	exact	135949
+ode-sample-tsit5-100-pendulums/compiled	wall_time	batch=2	n=20	3.605e-03	3.446e-03 3.488e-03 3.501e-03 3.577e-03 3.579e-03 3.584e-03 3.585e-03 3.589e-03 3.599e-03 3.601e-03 3.608e-03 3.642e-03 3.643e-03 3.643e-03 3.651e-03 3.653e-03 3.655e-03 3.656e-03 3.674e-03 3.697e-03
+ode-sample-tsit5-100-pendulums/eager	alloc_words	exact	1196797
+ode-sample-tsit5-100-pendulums/eager	wall_time	batch=1	n=20	3.673e-03	3.386e-03 3.428e-03 3.489e-03 3.512e-03 3.553e-03 3.595e-03 3.628e-03 3.649e-03 3.659e-03 3.666e-03 3.681e-03 3.687e-03 3.689e-03 3.716e-03 3.716e-03 3.755e-03 3.762e-03 3.771e-03 3.841e-03 3.883e-03
+ode-sample-tsit5-100-pendulums/grad	alloc_words	exact	298678
+ode-sample-tsit5-100-pendulums/grad	wall_time	batch=1	n=20	8.390e-03	8.103e-03 8.125e-03 8.206e-03 8.216e-03 8.260e-03 8.260e-03 8.286e-03 8.322e-03 8.345e-03 8.380e-03 8.400e-03 8.438e-03 8.448e-03 8.454e-03 8.466e-03 8.510e-03 8.537e-03 8.557e-03 8.627e-03 8.644e-03
+piecewise-adapt-kink/compiled	alloc_words	exact	30535
+piecewise-adapt-kink/compiled	wall_time	batch=32	n=20	1.795e-04	1.721e-04 1.725e-04 1.738e-04 1.777e-04 1.781e-04 1.784e-04 1.786e-04 1.787e-04 1.793e-04 1.795e-04 1.795e-04 1.800e-04 1.804e-04 1.812e-04 1.816e-04 1.817e-04 1.818e-04 1.818e-04 1.827e-04 1.830e-04
+piecewise-adapt-kink/eager	alloc_words	exact	383294
+piecewise-adapt-kink/eager	wall_time	batch=8	n=20	1.182e-03	1.132e-03 1.142e-03 1.158e-03 1.158e-03 1.168e-03 1.175e-03 1.179e-03 1.179e-03 1.181e-03 1.182e-03 1.183e-03 1.187e-03 1.188e-03 1.193e-03 1.194e-03 1.195e-03 1.196e-03 1.209e-03 1.213e-03 1.215e-03
+quad-adaptive-kronrod7-100/compiled	alloc_words	exact	21956
+quad-adaptive-kronrod7-100/compiled	wall_time	batch=8	n=20	9.262e-04	8.895e-04 9.026e-04 9.048e-04 9.136e-04 9.140e-04 9.191e-04 9.224e-04 9.227e-04 9.253e-04 9.259e-04 9.265e-04 9.291e-04 9.358e-04 9.366e-04 9.507e-04 9.528e-04 9.642e-04 9.673e-04 9.973e-04 1.008e-03
+quad-adaptive-kronrod7-100/eager	alloc_words	exact	415470
+quad-adaptive-kronrod7-100/eager	wall_time	batch=1	n=20	4.103e-03	3.878e-03 3.899e-03 3.901e-03 3.912e-03 3.948e-03 3.950e-03 3.964e-03 4.005e-03 4.083e-03 4.103e-03 4.103e-03 4.106e-03 4.177e-03 4.229e-03 4.273e-03 4.281e-03 4.310e-03 4.405e-03 4.483e-03 4.487e-03
+quad-cubature-3d-4/compiled	alloc_words	exact	16903
+quad-cubature-3d-4/compiled	wall_time	batch=32	n=20	1.938e-04	1.857e-04 1.858e-04 1.862e-04 1.878e-04 1.883e-04 1.890e-04 1.891e-04 1.892e-04 1.904e-04 1.936e-04 1.941e-04 1.944e-04 1.946e-04 1.950e-04 1.950e-04 1.952e-04 1.964e-04 1.969e-04 1.981e-04 2.017e-04
+quad-cubature-3d-4/eager	alloc_words	exact	288530
+quad-cubature-3d-4/eager	wall_time	batch=4	n=20	1.618e-03	1.477e-03 1.511e-03 1.512e-03 1.518e-03 1.551e-03 1.561e-03 1.579e-03 1.580e-03 1.607e-03 1.615e-03 1.621e-03 1.622e-03 1.624e-03 1.639e-03 1.654e-03 1.658e-03 1.659e-03 1.676e-03 1.680e-03 2.242e-03
+quad-gauss20-1k/compiled	alloc_words	exact	862
+quad-gauss20-1k/compiled	wall_time	batch=128	n=20	7.248e-05	4.009e-05 5.427e-05 6.289e-05 6.378e-05 6.470e-05 6.522e-05 6.548e-05 6.634e-05 7.006e-05 7.135e-05 7.361e-05 7.623e-05 7.633e-05 7.678e-05 7.684e-05 7.959e-05 7.963e-05 8.350e-05 9.789e-05 1.069e-04
+quad-gauss20-1k/eager	alloc_words	exact	993562
+quad-gauss20-1k/eager	wall_time	batch=4	n=20	1.346e-03	1.266e-03 1.274e-03 1.283e-03 1.287e-03 1.332e-03 1.335e-03 1.336e-03 1.339e-03 1.343e-03 1.345e-03 1.347e-03 1.383e-03 1.403e-03 1.433e-03 1.433e-03 1.436e-03 1.447e-03 1.449e-03 1.500e-03 1.748e-03
+quad-gauss20-1k/grad	alloc_words	exact	862
+quad-gauss20-1k/grad	wall_time	batch=16	n=20	5.572e-05	3.480e-05 4.033e-05 4.141e-05 4.260e-05 4.350e-05 4.702e-05 4.997e-05 5.001e-05 5.163e-05 5.534e-05 5.610e-05 5.720e-05 6.047e-05 6.185e-05 6.359e-05 6.906e-05 7.162e-05 1.452e-04 1.704e-04 3.710e-04
+quad-qmc-8d/compiled	alloc_words	exact	20934
+quad-qmc-8d/compiled	wall_time	batch=8	n=20	1.203e-03	1.171e-03 1.172e-03 1.178e-03 1.183e-03 1.191e-03 1.194e-03 1.195e-03 1.198e-03 1.199e-03 1.200e-03 1.205e-03 1.208e-03 1.209e-03 1.214e-03 1.218e-03 1.218e-03 1.218e-03 1.225e-03 1.225e-03 1.230e-03
+quad-qmc-8d/eager	alloc_words	exact	3523721
+quad-qmc-8d/eager	wall_time	batch=1	n=20	2.082e-02	2.030e-02 2.035e-02 2.044e-02 2.048e-02 2.061e-02 2.061e-02 2.066e-02 2.077e-02 2.078e-02 2.078e-02 2.086e-02 2.091e-02 2.102e-02 2.109e-02 2.110e-02 2.119e-02 2.126e-02 2.132e-02 2.147e-02 2.196e-02
+quad-tanh-sinh-100/compiled	alloc_words	exact	14658
+quad-tanh-sinh-100/compiled	wall_time	batch=4	n=20	1.185e-03	1.161e-03 1.161e-03 1.164e-03 1.168e-03 1.175e-03 1.176e-03 1.177e-03 1.179e-03 1.184e-03 1.184e-03 1.185e-03 1.186e-03 1.186e-03 1.189e-03 1.202e-03 1.203e-03 1.206e-03 1.216e-03 1.226e-03 1.252e-03
+quad-tanh-sinh-100/eager	alloc_words	exact	346535
+quad-tanh-sinh-100/eager	wall_time	batch=1	n=20	4.265e-03	4.001e-03 4.128e-03 4.151e-03 4.175e-03 4.176e-03 4.185e-03 4.186e-03 4.195e-03 4.226e-03 4.237e-03 4.293e-03 4.384e-03 4.429e-03 4.453e-03 4.464e-03 4.471e-03 4.473e-03 4.504e-03 4.549e-03 4.661e-03
+quad-tanh-sinh-100/grad	alloc_words	exact	20956
+quad-tanh-sinh-100/grad	wall_time	batch=4	n=20	1.907e-03	1.885e-03 1.888e-03 1.889e-03 1.890e-03 1.893e-03 1.893e-03 1.895e-03 1.901e-03 1.902e-03 1.906e-03 1.908e-03 1.910e-03 1.920e-03 1.925e-03 1.932e-03 1.933e-03 1.936e-03 1.937e-03 1.970e-03 2.003e-03
+root-bracket-kepler-1k/compiled	alloc_words	exact	36773
+root-bracket-kepler-1k/compiled	wall_time	batch=1	n=20	5.904e-03	5.408e-03 5.695e-03 5.748e-03 5.754e-03 5.787e-03 5.812e-03 5.838e-03 5.840e-03 5.871e-03 5.891e-03 5.917e-03 5.919e-03 5.922e-03 5.928e-03 5.991e-03 5.997e-03 6.044e-03 6.089e-03 6.123e-03 6.156e-03
+root-bracket-kepler-1k/eager	alloc_words	exact	435512
+root-bracket-kepler-1k/eager	wall_time	batch=2	n=20	2.855e-03	2.674e-03 2.692e-03 2.698e-03 2.706e-03 2.715e-03 2.751e-03 2.826e-03 2.842e-03 2.843e-03 2.843e-03 2.866e-03 2.867e-03 2.870e-03 2.882e-03 2.898e-03 2.902e-03 2.909e-03 2.991e-03 2.992e-03 3.104e-03
+root-bracket-kepler-1k/grad	alloc_words	exact	37364
+root-bracket-kepler-1k/grad	wall_time	batch=1	n=20	6.058e-03	5.630e-03 5.937e-03 5.979e-03 5.987e-03 5.996e-03 6.005e-03 6.017e-03 6.049e-03 6.050e-03 6.058e-03 6.058e-03 6.060e-03 6.072e-03 6.089e-03 6.144e-03 6.146e-03 6.171e-03 6.176e-03 6.364e-03 6.612e-03
+root-newton-kepler-1k/compiled	alloc_words	exact	6748
+root-newton-kepler-1k/compiled	wall_time	batch=16	n=20	5.294e-04	4.817e-04 4.817e-04 4.908e-04 4.932e-04 4.953e-04 5.095e-04 5.098e-04 5.103e-04 5.167e-04 5.191e-04 5.398e-04 5.439e-04 5.708e-04 5.750e-04 5.824e-04 6.697e-04 7.692e-04 7.747e-04 9.143e-04 1.167e-03
+root-newton-kepler-1k/eager	alloc_words	exact	57907
+root-newton-kepler-1k/eager	wall_time	batch=32	n=20	2.839e-04	2.686e-04 2.753e-04 2.765e-04 2.793e-04 2.794e-04 2.814e-04 2.822e-04 2.835e-04 2.835e-04 2.838e-04 2.840e-04 2.841e-04 2.846e-04 2.849e-04 2.863e-04 2.884e-04 2.909e-04 2.916e-04 2.917e-04 2.932e-04
+sde-euler-maruyama-100/compiled	alloc_words	exact	65719
+sde-euler-maruyama-100/compiled	wall_time	batch=4	n=20	1.319e-03	1.273e-03 1.287e-03 1.289e-03 1.290e-03 1.299e-03 1.303e-03 1.303e-03 1.312e-03 1.313e-03 1.314e-03 1.323e-03 1.341e-03 1.343e-03 1.350e-03 1.353e-03 1.355e-03 1.362e-03 1.364e-03 1.365e-03 1.406e-03
+sde-euler-maruyama-100/eager	alloc_words	exact	3390040
+sde-euler-maruyama-100/eager	wall_time	batch=1	n=20	1.265e-02	1.220e-02 1.229e-02 1.231e-02 1.236e-02 1.245e-02 1.246e-02 1.251e-02 1.257e-02 1.261e-02 1.262e-02 1.269e-02 1.269e-02 1.269e-02 1.276e-02 1.282e-02 1.282e-02 1.287e-02 1.296e-02 1.296e-02 1.317e-02
+spline-100-eval-1k/compiled	alloc_words	exact	8031
+spline-100-eval-1k/compiled	wall_time	batch=64	n=20	7.902e-05	7.576e-05 7.579e-05 7.612e-05 7.748e-05 7.767e-05 7.799e-05 7.812e-05 7.848e-05 7.848e-05 7.900e-05 7.904e-05 7.945e-05 7.966e-05 8.015e-05 8.042e-05 8.094e-05 8.130e-05 8.149e-05 8.187e-05 8.206e-05
+spline-100-eval-1k/eager	alloc_words	exact	132620
+spline-100-eval-1k/eager	wall_time	batch=16	n=20	3.473e-04	3.320e-04 3.402e-04 3.407e-04 3.421e-04 3.421e-04 3.423e-04 3.428e-04 3.432e-04 3.461e-04 3.472e-04 3.475e-04 3.497e-04 3.506e-04 3.521e-04 3.546e-04 3.567e-04 3.630e-04 3.647e-04 3.649e-04 3.672e-04
+spline-100-eval-1k/grad	alloc_words	exact	8367
+spline-100-eval-1k/grad	wall_time	batch=8	n=20	8.439e-04	7.873e-04 8.028e-04 8.038e-04 8.141e-04 8.142e-04 8.149e-04 8.176e-04 8.188e-04 8.211e-04 8.376e-04 8.503e-04 8.562e-04 8.570e-04 8.860e-04 8.894e-04 9.044e-04 9.121e-04 9.168e-04 9.352e-04 1.030e-03
+split-yoshida4-100-pendulums/compiled	alloc_words	exact	24299
+split-yoshida4-100-pendulums/compiled	wall_time	batch=4	n=20	1.318e-03	1.261e-03 1.272e-03 1.276e-03 1.279e-03 1.280e-03 1.296e-03 1.296e-03 1.305e-03 1.312e-03 1.318e-03 1.318e-03 1.319e-03 1.322e-03 1.331e-03 1.334e-03 1.335e-03 1.339e-03 1.340e-03 1.344e-03 1.345e-03
+split-yoshida4-100-pendulums/eager	alloc_words	exact	147095
+split-yoshida4-100-pendulums/eager	wall_time	batch=16	n=20	4.446e-04	4.205e-04 4.224e-04 4.247e-04 4.264e-04 4.331e-04 4.364e-04 4.387e-04 4.417e-04 4.418e-04 4.439e-04 4.453e-04 4.459e-04 4.459e-04 4.529e-04 4.569e-04 4.580e-04 4.632e-04 4.651e-04 4.653e-04 4.712e-04
