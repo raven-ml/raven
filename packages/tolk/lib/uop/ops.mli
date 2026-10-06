@@ -1344,7 +1344,9 @@ val storage_phase : t -> int * int
     its own on a 16-byte boundary otherwise, so it has what both hold: phase
     [0] and the largest power of two up to the buffer's alignment that the
     view's first byte is a multiple of; [(1, 0)] when a size is symbolic or the
-    buffer sharded. Storage on a disk, which no vector access reads, and
+    buffer sharded. A view whose first or last element is padding, or whose
+    last element does not lie as many elements past its first as a run of its
+    size, is no run, and its stage has [(16, 0)]. Storage on a disk, which no vector access reads, and
     anything else that is not storage or a view of it have [(16, 0)]. *)
 
 val view_as : ?axis:int -> t -> sint list -> t

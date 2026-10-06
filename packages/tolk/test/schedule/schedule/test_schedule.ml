@@ -1057,6 +1057,18 @@ let views =
             Ops.contiguous (Ops.shrink doubles [ Some (Int 1, Int 8) ])
           in
           equal (pair int int) (8, 0) (Ops.storage_phase stage));
+      test
+        "a stage of rows padded apart, starting one double past a boundary, \
+         is storage of its own on one (D54)" (fun () ->
+          let doubles = Ops.new_buffer ~slot:1 cpu 3 Float64 in
+          let rows =
+            Ops.reshape
+              (Ops.shrink doubles [ Some (Int 1, Int 3) ])
+              [ Int 2; Int 1 ]
+          in
+          let padded = Ops.pad rows [ None; Some (Int 0, Int 1) ] in
+          let stage = Ops.contiguous (Ops.reshape padded [ Int 4 ]) in
+          equal (pair int int) (16, 0) (Ops.storage_phase stage));
       prop
         "a stage's alignment and phase hold of the storage it gets, a view or \
          its own (D54)"

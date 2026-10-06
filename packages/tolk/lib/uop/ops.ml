@@ -3730,13 +3730,16 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
   | [ x; c ] when Op.equal u.op op && c.op = Op.Const -> (x, value c)
   | _ -> (u, identity_element op u.dtype)
 
-(* Where a stage's view of a buffer, through movements and bitcasts, starts: the
-   buffer's alignment and the byte its first element lies at, the view's first
-   index, all zeros, taken through each movement to its source's. *)
+(* Where a stage's view of a buffer, through movements and bitcasts, starts if
+   it can be a contiguous run of the buffer: the buffer's alignment and the byte
+   its first element lies at, an index taken through each movement to its
+   source's. A run's last element lies as many elements past its first as the
+   view has elements less one; a view whose first or last element is padding,
+   or whose ends lie otherwise, is no run. *)
 type view_start =
   | Start of int * int
   | Unknown (* A size or a bound is symbolic, or the buffer is sharded. *)
-  | No_view (* No buffer is viewed, or the first element is padding. *)
+  | No_view (* No buffer is viewed, or the view is no run of it. *)
 
 let rec view_start u =
   let exception Stop of view_start in
@@ -3790,7 +3793,16 @@ let rec view_start u =
     | Op.Unshard, _ -> raise_notrace (Stop Unknown)
     | _ -> raise_notrace (Stop No_view)
   in
-  match go u (List.map (fun _ -> 0) (shape u)) with
+  match
+    let shape = dims u in
+    let n = List.fold_left ( * ) 1 shape in
+    if n = 0 then raise_notrace (Stop No_view);
+    let align, first = go u (List.map (fun _ -> 0) shape) in
+    let _, last = go u (List.map (fun d -> d - 1) shape) in
+    if last - first <> (n - 1) * element_size u then
+      raise_notrace (Stop No_view);
+    (align, first)
+  with
   | align, start -> Start (align, start mod align)
   | exception Stop s -> s
   | exception Division_by_zero -> No_view

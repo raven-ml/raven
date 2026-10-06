@@ -1671,8 +1671,11 @@ the Exclusions of `README.md`.
   schedule allocates, on a boundary, otherwise: it is known at phase 0 modulo
   the largest power of two up to the buffer's alignment that the byte of the
   view's first element is a multiple of, which holds of both, and modulo 1
-  byte when a size is symbolic or the buffer sharded. The congruence is part
-  of the graph, so of a program's cache key.
+  byte when a size is symbolic or the buffer sharded. A view whose first or
+  last element is padding, or whose ends lie farther apart or closer than a
+  run of its size, is never made the view, and its stage keeps the
+  boundary. The congruence is part of the graph, so of a program's cache
+  key.
 - **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
   given, and mapped weights put a tensor at any byte offset of its file: a
   vector access from an address that is not a multiple of its width is
@@ -1719,11 +1722,13 @@ the Exclusions of `README.md`.
   slow `Ops_metal (execution)` suite's `phase (D54) › a float16 buffer 2 or 6
   bytes into its memory is read where it lies with its phase`; the `Schedule`
   suite's `contiguous_mops_to_view › a stage of doubles one past a boundary is
-  known to start on 8 bytes (D54)` and `› a stage's alignment and phase hold
-  of the storage it gets, a view or its own (D54)`; rune's `Scan` suite's
-  `compiled › a scan under jit reads a copy of a slice that starts off a
-  16-byte boundary` and `› a scan under jit reads the bits of a slice that
-  starts off a 16-byte boundary`.
+  known to start on 8 bytes (D54)`, `› a stage of rows padded apart, starting
+  one double past a boundary, is storage of its own on one (D54)` and `› a
+  stage's alignment and phase hold of the storage it gets, a view or its own
+  (D54)`; rune's `Scan` suite's `compiled › a scan under jit reads a copy of a
+  slice that starts off a 16-byte boundary` and `› a scan under jit reads the
+  bits of a slice that starts off a 16-byte boundary`; jera's `Split`, `Ode`
+  and `Sde` suites' compiled marches, whose rows are padded apart.
 
 ## D55. Metal names a vector after its element's one-word name
 
