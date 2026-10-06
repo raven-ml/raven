@@ -1,0 +1,8 @@
+(library
+ (name nx_wide)
+ (public_name nx.wide)
+ (libraries nx nx.dtype)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

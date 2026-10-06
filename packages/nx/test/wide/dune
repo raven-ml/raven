@@ -1,0 +1,6 @@
+(test
+ (name test_wide)
+ (package nx)
+ (libraries nx nx.wide nx_test windtrap)
+ (deps
+  (glob_files golden/*)))

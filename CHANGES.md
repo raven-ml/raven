@@ -3295,6 +3295,10 @@ thread.
 
 ### Nx
 
+- Add `nx.wide`, double-word numbers: `Nx_wide.t` holds each number as two
+  floats whose sum carries 106 significand bits at float64 and 48 at
+  float32, with `add`, `sub`, `mul` and `div` of proven relative bounds, an
+  exact `floor`, exact comparisons and a tree `sum`.
 - **Breaking:** `Nx.check s ok data fail` carries data: it raises the
   exception `fail` builds from the first failing index and each leaf of `data`
   there, so a message can read a computed value. A check with no data passes

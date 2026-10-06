@@ -344,3 +344,9 @@
   (glob_files golden/special_grad/*.golden))
  (action
   (run %{exe:test_special.exe} --tag slow)))
+
+(test
+ (name test_wide)
+ (modules test_wide)
+ (package rune)
+ (libraries windtrap rune rune_test nx nx.wide))

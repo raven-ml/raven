@@ -249,7 +249,14 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     relative at [float64] and [2^-16] at [float32]. Those of {!Nx.lbeta} hold
     where both arguments are at least the cube root of the largest float's
     reciprocal ([1.4e-13] at [float32], [1.8e-103] at [float64]); below, the
-    terms they subtract pass the largest float and the result may be NaN. *)
+    terms they subtract pass the largest float and the result may be NaN.
+
+    A function of a double-word number ([Nx_wide.t]) is differentiated through
+    its high word:
+    [Rune.grad Nx.Ptree.tensor (fun h -> f (Nx_wide.v ~lo h)) (Nx_wide.hi w)].
+    [Rune.grad (Nx_wide.ptree Nx.float64)] treats the two words as separate
+    inputs, and its result, rebuilt as one number, is about twice the
+    derivative. *)
 
 (** {1:jacobians Jacobians} *)
 
