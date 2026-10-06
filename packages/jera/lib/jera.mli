@@ -18,6 +18,7 @@
     {table
       {tr {th Problem } {th Regime } {th Method } }
       {tr {td Linear system } {td small, dense } {td {!Linear.dense} } }
+      {tr {td  } {td large, symmetric positive-definite } {td {!Linear.cg} } }
       {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
       {tr {td  } {td a bracket } {td {!Root.bracket} } }
       {tr
@@ -231,7 +232,8 @@ module Linear : sig
       right-hand side [r]: its solution is the [u] with [a u = r]. The float
       tensors of a value are its vector, of one dtype, the solve's; its other
       tensors are carried from [r]. A solver says how [a] is used: {!dense}
-      materialises it from its products and factors it.
+      materialises it from its products and factors it, and {!cg} iterates on
+      its products.
 
       {[
       (* u with (k I + L) u = r, L a matrix given by its product *)
@@ -264,6 +266,21 @@ module Linear : sig
       factorisation with partial pivoting, with [c = 16], [ε] the dtype's
       machine epsilon, [‖A‖] the Frobenius norm of the matrix and the vectors'
       norms Euclidean. It suits systems of up to some thousands of elements. *)
+
+  val cg : rel:float -> budget:int -> precondition:('x -> 'x) -> 'x t
+  (** [cg ~rel ~budget ~precondition] is conjugate gradients from [u = 0],
+      preconditioned by [precondition], for a symmetric positive-definite [a]
+      such as a Hessian at a minimum or a damped Gauss–Newton matrix: an
+      application of [a] and of [precondition] per iteration, and [O(n)] other
+      work on three vectors. [precondition] approximates the inverse of [a] and
+      is symmetric positive-definite itself; [Fun.id] is none. It stops when the
+      residual it carries meets [‖a u − r‖ ≤ rel ‖r‖], the vectors' norms
+      Euclidean, which is also its bound, so [r = 0] gives [u = 0] with the
+      check alone. [budget] iterations end the lane [Budget_spent], and a
+      direction [p] with [pᵀ a p ≤ 0], which no positive-definite [a] has, ends
+      it [Stalled].
+
+      Raises [Invalid_argument] if [rel] is not in (0, 1) or if [budget < 1]. *)
 
   val solve : 'x Nx.Ptree.t -> 'x t -> ('x -> 'x) -> 'x -> 'x Solution.t
   (** [solve x s a r] is the [u] with [a u = r], found by [s].

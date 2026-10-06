@@ -332,6 +332,29 @@ let dense =
     rows = all;
   }
 
+(* The second difference of 256 values with zero ends: the 1-D Poisson operator,
+   symmetric positive-definite, of condition number about 3·10⁴. *)
+let poisson u =
+  let n = Nx.dim 0 u in
+  let left = Nx.pad [| (1, 0) |] 0. (Nx.slice [ Nx.R (0, n - 1) ] u)
+  and right = Nx.pad [| (0, 1) |] 0. (Nx.slice [ Nx.R (1, n) ] u) in
+  Nx.sub (Nx.mul_s u 2.) (Nx.add left right)
+
+(* The Poisson operator plus the diagonal argument, by conjugate gradients. *)
+let cg =
+  {
+    id = "linear-cg-poisson-256";
+    f =
+      (fun d ->
+        Solution.get
+          (Linear.solve Nx.Ptree.tensor
+             (Linear.cg ~rel:1e-8 ~budget:512 ~precondition:Fun.id)
+             (fun u -> Nx.add (poisson u) (Nx.mul d u))
+             (Nx.ones f64 [| 256 |])));
+    x = (fun () -> Nx.linspace f64 0.001 0.002 256);
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -351,6 +374,7 @@ let workloads =
     event;
     delay;
     dense;
+    cg;
   ]
 
 let compiled f x =

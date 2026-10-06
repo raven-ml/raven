@@ -1015,6 +1015,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Linear.cg`, preconditioned conjugate gradients for symmetric
+  positive-definite systems, stopped at `‖a u − r‖ ≤ rel ‖r‖` or on a
+  direction of non-positive curvature.
 - Add `Linear.solve` and `Linear.dense`: the `u` with `a u = r` for a linear
   function `a` on a structure, materialised from its products and solved by
   `Nx.solve`, checked against the backward error of an LU factorisation, and

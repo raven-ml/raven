@@ -117,6 +117,76 @@ let dense_tests =
               (vec [| 1. |])));
   ]
 
+(* Conjugate gradients *)
+
+(* A symmetric positive-definite system of [n] unknowns: [Bᵀ B + I] for [B] of
+   entries in [-1, 1], and a right-hand side. *)
+let spd =
+  let open Gen in
+  (let* n = int_range 0 9 in
+   let+ b = list ~size:(constant (n * n)) (float_range (-1.) 1.)
+   and+ r = list ~size:(constant n) (float_range (-10.) 10.) in
+   let b = Nx.create f64 [| n; n |] (Array.of_list b) in
+   let a = Nx.add (Nx.matmul (Nx.transpose b) b) (Nx.eye f64 n) in
+   (a, Nx.create f64 [| n |] (Array.of_list r)))
+  |> with_pp (fun ppf (a, r) ->
+      Format.fprintf ppf "a = %a@ r = %a" Nx.pp a Nx.pp r)
+
+let cg ?(rel = 1e-12) ?(budget = 100) ?(precondition = Fun.id) a r =
+  Linear.solve one (Linear.cg ~rel ~budget ~precondition) (product a) r
+
+let cg_tests =
+  [
+    prop "its residual meets rel, so u is Nx.solve's to cond (a) rel" spd
+      (fun (a, r) ->
+        cover "an empty system" (Nx.dim 0 r = 0);
+        let s = cg a r in
+        let u = Solution.get s in
+        let norm x = Nx.item [] (Nx.norm x) in
+        at_most float_exact
+          ~than:(1e-12 *. norm r)
+          (norm (Nx.sub (product a u) r));
+        if Nx.dim 0 r > 0 then
+          equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);
+    test "an exact preconditioner takes one step" (fun () ->
+        (* A diagonal a, preconditioned by its inverse: one step and the
+           check. *)
+        let d = vec [| 1.; 10.; 100.; 1000. |] in
+        let s =
+          Linear.solve one
+            (Linear.cg ~rel:1e-12 ~budget:10 ~precondition:(fun v -> Nx.div v d))
+            (Nx.mul d) (Nx.ones f64 [| 4 |])
+        in
+        equal
+          (Oracle.tensor ~rel:1e-15 ())
+          (Nx.div (Nx.ones f64 [| 4 |]) d)
+          (Solution.get s);
+        equal int32 2l (Nx.item [] (Solution.evaluations s)));
+    test "r = 0 gives u = 0 with the check alone" (fun () ->
+        let s = cg (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
+        equal (Oracle.tensor ()) (Nx.zeros f64 [| 3 |]) (Solution.get s);
+        equal int32 1l (Nx.item [] (Solution.evaluations s)));
+    test "a direction of non-positive curvature ends the lane Stalled"
+      (fun () ->
+        let s = cg (Nx.neg (Nx.eye f64 3)) (vec [| 1.; 2.; 3. |]) in
+        equal bool true (is Stalled s);
+        failure_with "curvature" (fun () -> Solution.get s));
+    test "a spent budget ends the lane Budget_spent" (fun () ->
+        let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
+        let s = cg ~budget:2 a (Nx.ones f64 [| 5 |]) in
+        equal bool true (is Budget_spent s);
+        equal int32 3l (Nx.item [] (Solution.evaluations s)));
+    test "a non-finite r ends the lane Not_finite" (fun () ->
+        equal bool true
+          (is Not_finite (cg (Nx.eye f64 2) (vec [| Float.infinity; 1. |]))));
+    test "a tolerance outside (0, 1) raises" (fun () ->
+        invalid_with "Jera.Linear.cg: rel = 0 is not in (0, 1)" (fun () ->
+            Linear.cg ~rel:0. ~budget:10 ~precondition:Fun.id));
+    test "a budget below 1 raises" (fun () ->
+        invalid_with "Jera.Linear.cg: budget = 0 is below 1" (fun () ->
+            Linear.cg ~rel:1e-6 ~budget:0 ~precondition:Fun.id));
+  ]
+
 (* Derivatives and transformations *)
 
 (* [A + θ I] and its product, for a θ that a derivative tracks. *)
@@ -154,6 +224,30 @@ let transformation_tests =
           (Oracle.tensor ~rel:1e-12 ())
           (Nx.neg (Nx.solve a (Nx.solve a r)))
           t);
+    test "grad through cg is dense's" (fun () ->
+        let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
+        let g s =
+          Rune.grad'
+            (fun theta ->
+              Nx.sum (Solution.get (Linear.solve one s (shifted spd theta) r)))
+            (scalar 0.)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (g Linear.dense)
+          (g (Linear.cg ~rel:1e-13 ~budget:50 ~precondition:Fun.id)));
+    test "compiled cg equals eager" (fun () ->
+        let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
+        let f r = Solution.get (cg spd r) in
+        equal (Oracle.tensor ~rel:1e-12 ()) (f r) (Rune.jit' f r));
+    test "lanes of cg stop on their own" (fun () ->
+        (* The first lane's r is zero and needs no step. *)
+        let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
+        let rs = Nx.stack [ Nx.zeros f64 [| 3 |]; r ] in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Nx.stack [ Nx.zeros f64 [| 3 |]; Solution.get (cg spd r) ])
+          (Rune.vmap' (fun r -> Solution.get (cg spd r)) rs));
     test "compiled equals eager to rounding" (fun () ->
         let f r = Solution.get (dense a r) in
         equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
@@ -170,5 +264,7 @@ let () =
   exit
     (run "Jera.Linear"
        [
-         group "dense" dense_tests; group "transformations" transformation_tests;
+         group "dense" dense_tests;
+         group "cg" cg_tests;
+         group "transformations" transformation_tests;
        ])
