@@ -86,6 +86,7 @@ let pendulum _ (q, p) = (p, Nx.neg (Nx.sin q))
 let times = Nx.linspace f64 0. 2. 6
 let state = Nx.Ptree.(pair tensor tensor)
 let starts () = Nx.linspace f64 0.1 2. 100
+let fine_times = Nx.linspace f64 0. 2. 101
 
 let march =
   {
@@ -251,6 +252,25 @@ let sample =
     rows = all;
   }
 
+(* The same pendulums as a path, evaluated at 101 times. *)
+let path =
+  {
+    id = "ode-path-tsit5-100-pendulums";
+    f =
+      (fun q0 ->
+        Piecewise.eval
+          (Solution.get
+             (Ode.path state Ode.tsit5
+                ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
+                ~budget:32 pendulum ~t0:(Nx.scalar f64 0.)
+                ~t1:(Nx.scalar f64 2.)
+                (q0, Nx.zeros_like q0)))
+          fine_times
+        |> fst);
+    x = starts;
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -266,6 +286,7 @@ let workloads =
     cubature;
     adapt;
     sample;
+    path;
   ]
 
 let compiled f x =
