@@ -321,7 +321,8 @@ val to_array : ('a, 'b) t -> 'a array
     ({!roll}, {!flatten}, {!diagonal}, {!array_split}) raise the same way. Place
     the value on every device or on one device first. A cut inside one shard (a
     row of a value split by rows, {!item}) is a view of that shard on its device
-    alone, so {!item} reads one element. *)
+    alone, so {!item} reads one element. An empty cut moves no element: it is a
+    view of the shard where it starts, the last at the end of the axis. *)
 
 (** Devices: a memory and the backend that computes on it eagerly. *)
 module Device : sig

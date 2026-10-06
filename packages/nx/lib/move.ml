@@ -64,26 +64,35 @@ let split_axis ~axis ~n shape m =
       Split axis
   | Reshape target ->
       (* The split axis becomes the last axis whose leading extents multiply to
-         those of the split axis; its extent must divide over the shards. *)
-      let lead = ref 1 in
-      for d = 0 to axis - 1 do
-        lead := !lead * shape.(d)
-      done;
-      let a = ref (-1) and acc = ref 1 in
-      Array.iteri
-        (fun i d ->
-          if !acc = !lead then a := i;
-          acc := !acc * d)
-        target;
-      if !acc <> Array.fold_left ( * ) 1 shape then
+         those before the split axis, and whose extents from it on to those from
+         the split axis on: an empty axis makes every later leading product 0.
+         Its extent must divide over the shards. *)
+      let product a lo hi =
+        let p = ref 1 in
+        for d = lo to hi - 1 do
+          p := !p * a.(d)
+        done;
+        !p
+      in
+      let rank = Array.length shape and r = Array.length target in
+      if product target 0 r <> product shape 0 rank then
         invalid_arg
           (Printf.sprintf "Nx.reshape: cannot reshape %s to %s"
              (Shape.to_string shape) (Shape.to_string target));
+      let lead = product shape 0 axis and tail = product shape axis rank in
+      let a = ref (-1) in
+      for b = 0 to r - 1 do
+        if product target 0 b = lead && product target b r = tail then a := b
+      done;
       if !a < 0 || target.(!a) mod n <> 0 then across "reshape";
       Split !a
   | Shrink limits ->
       let lo, hi = limits.(axis) in
       if lo = 0 && hi = shape.(axis) then Split axis
+      else if lo = hi then
+        (* An empty cut moves no element: it stays with the shard where it
+           starts, the last at the axis's end. *)
+        Shard (Int.min (lo / k) (n - 1))
       else if lo / k = (hi - 1) / k then Shard (lo / k)
       else across "cut"
   | Flip dims -> if dims.(axis) then across "flip" else Split axis

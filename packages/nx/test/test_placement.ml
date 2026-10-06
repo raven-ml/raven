@@ -429,9 +429,11 @@ let pp_movement ppf = function
 
 (* Where a value at [where] of [shape] lands after [m], [None] where [m] would
    move elements between devices: a split axis follows the movement, a cut
-   inside one shard lands on that shard's device, and a flip, windows or a cut
-   across shards of the split axis, or a reshape that does not keep the extents
-   before it or divide its new extent, would move elements. *)
+   inside one shard lands on that shard's device, an empty cut on the device of
+   the shard where it starts, the last at the axis's end, and a flip, windows or
+   a cut across shards of the split axis, or a reshape that does not keep the
+   extents before it and from it on or divide its new extent, would move
+   elements. *)
 let fate shape m where =
   match where with
   | One _ | Copies _ -> Some where
@@ -441,13 +443,14 @@ let fate shape m where =
       match m with
       | Transpose axes -> split (Option.get (List.find_index (( = ) a) axes))
       | Reshape target ->
-          let lead = Ref.numel (Array.sub shape 0 a) in
-          let b = ref None and acc = ref 1 in
-          Array.iteri
-            (fun i d ->
-              if !acc = lead then b := Some i;
-              acc := !acc * d)
-            target;
+          let r = Array.length target in
+          let before s i = Ref.numel (Array.sub s 0 i)
+          and from s i = Ref.numel (Array.sub s i (Array.length s - i)) in
+          let b = ref None in
+          for i = 0 to r - 1 do
+            if before target i = before shape a && from target i = from shape a
+            then b := Some i
+          done;
           Option.bind !b (fun b ->
               if target.(b) mod k = 0 then split b else None)
       | Index (d, i) ->
@@ -455,6 +458,8 @@ let fate shape m where =
           else split (if d < a then a - 1 else a)
       | Range (d, lo, hi) ->
           if d <> a || (lo = 0 && hi = shape.(a)) then split a
+          else if lo = hi then
+            Some (One (List.nth ds (Int.min (lo / c) (k - 1))))
           else if lo / c = (hi - 1) / c then Some (One (List.nth ds (lo / c)))
           else None
       | Flip (Some d) when d <> a -> split a
@@ -471,7 +476,7 @@ let rec permutations = function
         l
 
 (* The movements of [host] of each kind: views only, so reshapes that keep
-   [host]'s elements where they are, and cuts that are non-empty. *)
+   [host]'s elements where they are. *)
 let kinds host =
   let s = Nx.shape host and n = Nx.numel host in
   let axes = List.init (Array.length s) Fun.id in
@@ -494,13 +499,15 @@ let kinds host =
       (fun t -> if viewable host t then Some (Reshape t) else None)
       shapes;
     per_axis (fun d ->
-        List.map
-          (fun i -> Index (d, i))
-          (List.sort_uniq compare [ 0; s.(d) / 2; s.(d) - 1 ])
+        (if s.(d) = 0 then []
+         else
+           List.map
+             (fun i -> Index (d, i))
+             (List.sort_uniq compare [ 0; s.(d) / 2; s.(d) - 1 ]))
         @ List.concat_map
             (fun lo ->
-              List.init (s.(d) - lo) (fun k -> Range (d, lo, lo + k + 1)))
-            (List.init s.(d) Fun.id));
+              List.init (s.(d) - lo + 1) (fun k -> Range (d, lo, lo + k)))
+            (List.init (s.(d) + 1) Fun.id));
     Flip None :: per_axis (fun d -> [ Flip (Some d) ]);
     Broadcast (Array.append [| 2 |] s)
     :: (if wider = s then [] else [ Broadcast wider ]);
@@ -544,6 +551,11 @@ let move_both ((shape, where), steps) =
                 (match (state, where) with
                 | Some (_, _, Split _), One _ -> true
                 | _ -> false);
+              cover "an empty cut of a split axis"
+                (match (state, m) with
+                | Some (_, _, Split (a, _)), Range (d, lo, hi) ->
+                    d = a && lo = hi
+                | _ -> false);
               let host = move m host in
               equal ~msg (pair int int) (received, sent)
                 (bytes_in (), bytes_out ());
@@ -566,7 +578,19 @@ let movements =
         "of a placed value equal those of its host value, or raise exactly \
          when they would move elements between devices; a view of a consumed \
          value is not read"
-        ~examples:[ (([| 4; 2 |], Split (0, [ d1; d2 ])), [ (2, 0) ]) ]
+        ~examples:
+          [
+            (([| 4; 2 |], Split (0, [ d1; d2 ])), [ (2, 0) ]);
+            (* Empty cuts of a split axis: at its start and end with a row per
+               device, and between shards with a row per device of four. *)
+            (([| 2 |], Split (0, [ d1; d2 ])), [ (2, 2) ]);
+            (([| 2 |], Split (0, [ d1; d2 ])), [ (2, 7) ]);
+            (([| 4 |], Split (0, four)), [ (2, 12) ]);
+            (* An empty cut of another axis, then a broadcast, whose reshape
+               keeps the split axis after an empty one. *)
+            (([| 3; 8; 1 |], Split (1, [ d1; d2 ])), [ (2, 5142); (4, 0) ]);
+            (([| 3; 4; 3 |], Split (1, [ d1; d2 ])), [ (2, 9027); (4, 0) ]);
+          ]
         (Gen.pair
            (Gen.with_pp pp_placed placed_shape)
            (Gen.list ~size:(Gen.int_range 1 3)

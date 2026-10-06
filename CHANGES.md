@@ -3286,6 +3286,10 @@ thread.
 
 ### Nx
 
+- An empty cut of a split axis of a placed value (`Nx.slice` to an empty range)
+  is a view on the device of the shard where it starts. It was refused as
+  moving elements between devices when each device held a single row, and so
+  was a reshape of a placed value with an empty axis before its split one.
 - **Breaking:** an integer `Nx.mean` is the exact mean rounded toward zero; it
   divided a wrapped sum by a count wrapped to the dtype, so an `int8` mean of
   200 threes was `-1`, and it raises past the count it computes exactly.
