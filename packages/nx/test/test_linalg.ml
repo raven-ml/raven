@@ -1532,8 +1532,9 @@ let stack lanes good bad =
 type op = { apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 
 (* [op] on the batch of [lanes] is, at every dtype, [op] on each of its good
-   matrices, alone, and NaN on [bad]. *)
-let lanes_apart op (lanes, good, bad) =
+   matrices, alone, and NaN on [bad]: in both parts of a complex result, or in
+   its real part when [op]'s value is [real], as a condition number is. *)
+let lanes_apart ?(real = false) op (lanes, good, bad) =
   List.iter
     (fun (F d) ->
       let cast x = Nx.cast d.dtype (c128 x) in
@@ -1541,12 +1542,24 @@ let lanes_apart op (lanes, good, bad) =
       let failed = c128 (op.apply (cast bad)) in
       let nan =
         Nx.full Nx.complex128 (Nx.shape failed)
-          { Complex.re = Float.nan; im = (if d.complex then Float.nan else 0.) }
+          {
+            Complex.re = Float.nan;
+            im = (if d.complex && not real then Float.nan else 0.);
+          }
       in
       equal ~msg:d.name exact_complex
         (stack lanes (List.map (fun g -> c128 (op.apply (cast g))) good) nan)
         (c128 (op.apply (stack lanes (List.map cast good) (cast bad)))))
     fdtypes
+
+(* [count] matrices of [m] rows and [n] columns, one of them holding NaN. *)
+let with_nan m n =
+  Gen.map
+    (fun (lanes, a) ->
+      ( lanes,
+        a,
+        Nx.set [ I 0; I 0 ] (Nx.scalar Nx.float64 Float.nan) (Nx.get [ 0 ] a) ))
+    (Gen.pair lanes (matrix ~batch:(Gen.constant ~pp:pp_shape [| 5 |]) m n))
 
 let failures =
   let over title check = cases ~name:fname title fdtypes check in
@@ -1720,6 +1733,62 @@ let failures =
           lanes_apart
             { apply = (fun a -> Nx.solve a (Nx.cast (Nx.dtype a) (c128 rhs))) }
             lanes);
+      prop "pinv of a batch fails in its matrix holding NaN alone"
+        (sized (fun m -> sized (fun n -> with_nan m n)))
+        (lanes_apart { apply = (fun a -> Nx.pinv a) });
+      prop "pinv of a Hermitian batch fails in its matrix holding NaN alone"
+        (sized (fun n -> with_nan n n))
+        (lanes_apart
+           {
+             apply =
+               (fun a ->
+                 Nx.pinv ~hermitian:true (Nx.add a (Nx.matrix_transpose a)));
+           });
+      prop "cond of a batch fails in its matrix holding NaN alone"
+        (sized (fun n -> with_nan n n))
+        (lanes_apart ~real:true { apply = (fun a -> Nx.cond a) });
+      prop "lstsq of a batch fails in its matrix holding NaN alone"
+        (sized (fun m -> sized (fun n -> with_nan m n)))
+        (lanes_apart
+           {
+             apply =
+               (fun a ->
+                 let x, _, _, _ =
+                   Nx.lstsq a (Nx.ones (Nx.dtype a) [| Nx.dim (-2) a; 1 |])
+                 in
+                 x);
+           });
+      test "matrix_rank of a matrix holding NaN is 0" (fun () ->
+          equal int 0
+            (Nx.matrix_rank
+               (float_matrix [ [ 1.; 0. ]; [ Float.nan; 1. ]; [ 0.; 2. ] ])));
+      cases
+        ~name:(fun (name, _, _, _) -> name)
+        "lstsq of a rank-deficient matrix is its least-squares solution of \
+         least norm"
+        [
+          ( "tall, a zero column",
+            [ [ 1.; 0. ]; [ 0.; 0. ]; [ 0.; 0. ] ],
+            [ 1.; 2.; 3. ],
+            [ 1.; 0. ] );
+          ( "tall, two equal columns",
+            [ [ 1.; 1. ]; [ 2.; 2. ]; [ 0.; 0. ] ],
+            [ 1.; 2.; 3. ],
+            [ 0.5; 0.5 ] );
+          ( "wide, a zero row",
+            [ [ 1.; 0.; 0. ]; [ 0.; 0.; 0. ] ],
+            [ 1.; 2. ],
+            [ 1.; 0.; 0. ] );
+        ]
+        (fun (_, a, b, x) ->
+          let column l =
+            Nx.reshape
+              [| List.length l; 1 |]
+              (Nx.create Nx.float64 [| List.length l |] (Array.of_list l))
+          in
+          let got, _, rank, _ = Nx.lstsq (float_matrix a) (column b) in
+          equal ~msg:"x" near (column x) got;
+          equal ~msg:"rank" int 1 rank);
       prop "solve takes the scale of a out: solve (s a) b = solve a b / s"
         (sized (fun n ->
              Gen.triple (square ~batch:plain n) (matrix n 2)

@@ -140,7 +140,7 @@ let x = Nx.solve_triangular ~upper:true r b
 
 ### lstsq
 
-Least-squares solution (for overdetermined systems):
+The least-squares solution of least norm, for a matrix of any shape and rank:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -153,7 +153,7 @@ Matrix inverse and pseudo-inverse:
 
 <!-- $MDX skip -->
 ```ocaml
-let a_inv = Nx.inv a          (* requires square, non-singular *)
+let a_inv = Nx.inv a          (* square; NaN for a singular matrix *)
 let a_pinv = Nx.pinv a        (* works for any shape *)
 ```
 

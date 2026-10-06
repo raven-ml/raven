@@ -3420,16 +3420,26 @@ thread.
 
 ### Nx
 
-- **Breaking:** linear algebra never raises on the values of a matrix, and
-  `Nx.Linalg_error` is removed. A matrix on which `cholesky`,
-  `solve_triangular`, `solve`, `inv`, `matrix_power`, `tensorsolve`,
-  `tensorinv`, `svd`, `eig`, `eigh` or their value forms are undefined has
-  results whose every element is NaN, and the other matrices of its batch are
-  unaffected, so one failing matrix no longer ends a batch or a sampler's run.
-  Where a raise is wanted, `Nx.check` that `all (isfinite r)`. `solve` takes
-  only an exact zero pivot of `lu`'s `U` as singular, where a pivot below
-  `eps · n` counted, so `solve (1e-30 · a) b` is `solve a b / 1e-30`;
-  `tensorsolve` and `tensorinv` no longer fall back to `pinv`.
+- **Breaking:** `cholesky`, `solve`, `inv` and `matrix_power` no longer raise
+  `Invalid_argument` on a matrix that is not positive-definite or is singular,
+  and `tensorsolve` and `tensorinv` no longer fall back to `pinv`. A matrix on
+  which a linear-algebra function is undefined, including one holding NaN or an
+  infinity given to `svd`, `eig` or `eigh`, has NaN in every element of its
+  results, and the other matrices of its batch are unaffected. Where a raise is
+  wanted, `Nx.check` that `all (isfinite r)`. `solve` and `inv` count only an
+  exact zero pivot as singular, so `solve (s · a) b` is `solve a b / s` at any
+  scale.
+- `pinv`, `cond`, `matrix_rank` and `lstsq` take each matrix's cutoff from its
+  own largest singular value, where they read the largest of the whole batch:
+  one matrix holding NaN gave every other a `pinv` of zeros and a `cond` of
+  NaN, and `cond` divided the batch's largest by each matrix's smallest.
+  `pinv` and `cond` read nothing back, so they compile under `Rune.jit`.
+- **Breaking:** `lstsq` gives the least-squares solution of least norm for a
+  matrix of any shape and rank, through its singular values, and `rcond` is
+  relative to each matrix's largest singular value, defaulting to
+  `max(m, n) · ε`. A tall matrix of rank below its column count gave NaN, and
+  a wide one took as zero the singular values below `max(m, n)² · ε · σ²`, `σ`
+  the largest.
 - **Breaking:** `Nx_device.timeout`, `Nx_device.set_timeout` and
   `Nx_device.Driver.default_timeout` are removed: a wait lasts until the work
   signals, the driver reports a fault, or Ctrl-C (`Sys.Break`) interrupts it. A

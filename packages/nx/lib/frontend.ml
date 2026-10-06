@@ -4686,6 +4686,35 @@ let slogdet (type a b) (a : (a, b) t) : (a, b) t * (float, float64_elt) t =
       (cast (dtype a) sign, logabs)
   | _ -> factored a
 
+(* Singular-value cutoffs
+
+   The functions built on singular values take as zero those at or below a
+   cutoff of each matrix's own: one matrix's values, NaN for one that failed,
+   never change another's. *)
+
+(* The relative precision of [dt]'s singular values. *)
+let roundoff dt =
+  if Nx_dtype.equal dt Nx_dtype.float32 || Nx_dtype.equal dt Nx_dtype.complex64
+  then 1.2e-7
+  else if
+    Nx_dtype.equal dt Nx_dtype.float64 || Nx_dtype.equal dt Nx_dtype.complex128
+  then 2.2e-16
+  else 1e-15
+
+(* [relative r s] is [r] times each matrix's largest singular value in [s],
+   kept on the singular-value axis. *)
+let relative r s = mul_s (max ~axes:[ -1 ] ~keepdims:true s) r
+
+(* The larger size of the matrices of [a]. *)
+let larger_size a =
+  let sh = shape a in
+  float_of_int (Stdlib.max sh.(Array.length sh - 2) sh.(Array.length sh - 1))
+
+(* How many of [s] lie above [cutoff], over all matrices. *)
+let count_above ~by cutoff s =
+  let above = cast (dtype s) (greater s cutoff) in
+  int_of_float (Float.round (sum above |> read_item ~by))
+
 let matrix_rank' ~by ?tol ?rtol ?hermitian a =
   check_float_or_complex ~op:"matrix_rank" a;
   (match hermitian with
@@ -4694,30 +4723,13 @@ let matrix_rank' ~by ?tol ?rtol ?hermitian a =
   let s =
     match hermitian with Some true -> abs (B.eigvalsh a) | _ -> svdvals a
   in
-  let max_s = max s |> read_item ~by in
-  let sh = shape a in
-  let m = sh.(Array.length sh - 2) in
-  let n = sh.(Array.length sh - 1) in
-  let eps =
-    let dt = dtype a in
-    if
-      Nx_dtype.equal dt Nx_dtype.float32
-      || Nx_dtype.equal dt Nx_dtype.complex64
-    then 1.2e-7
-    else if
-      Nx_dtype.equal dt Nx_dtype.float64
-      || Nx_dtype.equal dt Nx_dtype.complex128
-    then 2.2e-16
-    else 1e-15
-  in
-  let tol =
+  let cutoff =
     match (tol, rtol) with
-    | Some t, _ -> t
-    | None, Some r -> r *. max_s
-    | None, None -> float_of_int (Stdlib.max m n) *. eps *. max_s
+    | Some t, _ -> scalar_like s t
+    | None, Some r -> relative r s
+    | None, None -> relative (larger_size a *. roundoff (dtype a)) s
   in
-  let mask = greater s (scalar (Value.context a) (dtype s) tol) in
-  int_of_float (Float.round (sum (cast (dtype s) mask) |> read_item ~by))
+  count_above ~by cutoff s
 
 let matrix_rank ?tol ?rtol ?hermitian a =
   matrix_rank' ~by:"Nx.matrix_rank" ?tol ?rtol ?hermitian a
@@ -4810,54 +4822,32 @@ let solve a b =
   in
   if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
-let pinv' (type a b) ~by ?rtol ?hermitian (a : (a, b) t) =
+(* The pseudoinverse [V diag(1/s) Uᴴ] of [a] from its factors [u diag(s) vh],
+   the singular values at or below [cutoff s] taken as zero. *)
+let pinv_of_factors (type a b) (a : (a, b) t) ~cutoff u s vh =
+  let ones_s = ones_like s in
+  let mask = greater s (cutoff s) in
+  let s_inv =
+    mul (div ones_s (where mask s ones_s)) (cast (dtype s) mask)
+    |> cast (dtype a)
+  in
+  let adjoint x =
+    if Nx_dtype.is_complex (dtype a) then matrix_transpose (conjugate x)
+    else matrix_transpose x
+  in
+  (* Scale V's columns. The singleton belongs immediately before the
+     singular-value axis so batched factors [..., n, k] and [..., k] broadcast
+     as [..., n, k]. *)
+  matmul (mul (adjoint vh) (expand_dims [ -2 ] s_inv)) (adjoint u)
+
+let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
   check_float_or_complex ~op:"pinv" a;
   (match hermitian with
   | Some true -> check_square ~op:"pinv" a
   | None | Some false -> ());
-  let sh = shape a in
-  let m = sh.(Array.length sh - 2) in
-  let n = sh.(Array.length sh - 1) in
   let dtype_a = dtype a in
-  let eps =
-    if
-      Nx_dtype.equal dtype_a Nx_dtype.float32
-      || Nx_dtype.equal dtype_a Nx_dtype.complex64
-    then 1.2e-7
-    else if
-      Nx_dtype.equal dtype_a Nx_dtype.float64
-      || Nx_dtype.equal dtype_a Nx_dtype.complex128
-    then 2.2e-16
-    else 1e-15
-  in
-  let max_dim = float_of_int (Stdlib.max m n) in
-  let cutoff ~max_s =
-    match rtol with
-    | Some r -> r *. max_s *. max_dim
-    | None -> max_dim *. eps *. max_s
-  in
-  let pinv_from_factors u s vh =
-    let max_s = max s |> read_item ~by in
-    let cutoff = cutoff ~max_s in
-    let ones_s = ones (Value.context s) (dtype s) (shape s) in
-    let threshold = scalar (Value.context s) (dtype s) cutoff in
-    let mask = greater s threshold in
-    let s_inv =
-      mul (div ones_s (where mask s ones_s)) (cast (dtype s) mask)
-      |> cast dtype_a
-    in
-    let v =
-      if Nx_dtype.is_complex dtype_a then matrix_transpose (conjugate vh)
-      else matrix_transpose vh
-    in
-    (* Scale V's columns. The singleton belongs immediately before the
-       singular-value axis so batched factors [..., n, k] and [..., k]
-       broadcast as [..., n, k]. *)
-    let vs = mul v (expand_dims [ -2 ] s_inv) in
-    if Nx_dtype.is_complex dtype_a then
-      matmul vs (matrix_transpose (conjugate u))
-    else matmul vs (matrix_transpose u)
-  in
+  let r = larger_size a *. Option.value rtol ~default:(roundoff dtype_a) in
+  let pinv_from_factors = pinv_of_factors a ~cutoff:(relative r) in
   let pinv_via_svd () =
     let u, s, vh = B.svd ~full_matrices:false a in
     pinv_from_factors u s vh
@@ -4878,52 +4868,27 @@ let pinv' (type a b) ~by ?rtol ?hermitian (a : (a, b) t) =
       pinv_from_factors vecs abs_vals vh
   | _ -> pinv_via_svd ()
 
-let pinv ?rtol ?hermitian a = pinv' ~by:"Nx.pinv" ?rtol ?hermitian a
-
+(* The least-squares solution of least norm, [pinv a b] with the singular values
+   at or below [rcond] times each matrix's largest taken as zero, whatever the
+   shape and rank of [a]. *)
 let lstsq ?rcond a b =
-  let by = "Nx.lstsq" in
   check_float_or_complex ~op:"lstsq" a;
   check_float_or_complex ~op:"lstsq" b;
   let sh = shape a in
   let m = sh.(Array.length sh - 2) in
   let n = sh.(Array.length sh - 1) in
-  let rcond_value =
-    match rcond with
-    | Some v -> v
-    | None ->
-        let eps =
-          if Nx_dtype.equal (dtype a) Nx_dtype.float32 then 1.2e-7
-          else if Nx_dtype.equal (dtype a) Nx_dtype.float64 then 2.2e-16
-          else 1e-15
-        in
-        float_of_int (Stdlib.max m n)
-        *. eps
-        *. (max (svdvals a) |> read_item ~by)
+  let rcond =
+    Option.value rcond ~default:(larger_size a *. roundoff (dtype a))
   in
-  let x =
-    if m >= n then
-      let q, r = B.qr ~reduced:true a in
-      let y = matmul (matrix_transpose q) b in
-      let r_sq =
-        if ndim r = 2 then slice [ R (0, n); R (0, n) ] r
-        else slice [ A; R (0, n); R (0, n) ] r
-      in
-      let y_top =
-        if ndim y = 2 then slice [ R (0, n); A ] y
-        else if ndim y = 1 then slice [ R (0, n) ] y
-        else slice [ A; R (0, n); A ] y
-      in
-      B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r_sq
-        y_top
-    else matmul (pinv' ~by a ~rtol:rcond_value) b
-  in
+  let u, s, vh = B.svd ~full_matrices:false a in
+  let x = matmul (pinv_of_factors a ~cutoff:(relative rcond) u s vh) b in
   let residuals =
     if m > n then
       let res = sub b (matmul a x) in
       sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
     else zeros (Value.context a) (dtype b) [||]
   in
-  (x, residuals, matrix_rank' ~by a, svdvals a)
+  (x, residuals, count_above ~by:"Nx.lstsq" (relative rcond s) s, s)
 
 let inv a =
   check_square ~op:"inv" a;
@@ -4965,22 +4930,13 @@ let cond ?p x =
   check_float_or_complex ~op:"cond" x;
   match p with
   | None | Some `Two ->
+      (* A singular value below the roundoff of the largest counts as that
+         roundoff, so a singular matrix has a condition number of about
+         [1 / ε]. *)
       let s = svdvals x in
-      let ds = dtype s in
-      let mx = max s in
-      let max_v = mx |> read_item ~by:"Nx.cond" in
-      let eps =
-        if Nx_dtype.equal ds Nx_dtype.float32 then 1.2e-7
-        else if Nx_dtype.equal ds Nx_dtype.float64 then 2.2e-16
-        else 1e-15
-      in
-      let tol_t = scalar (Value.context x) ds (eps *. max_v) in
-      let safe_s = where (greater s tol_t) s tol_t in
-      let mn =
-        if ndim safe_s > 1 then min safe_s ~axes:[ -1 ] ~keepdims:false
-        else min safe_s
-      in
-      cast (dtype x) (div mx mn)
+      let tol = relative (roundoff (dtype s)) s in
+      let smallest = min ~axes:[ -1 ] (where (greater s tol) s tol) in
+      cast (dtype x) (div (max ~axes:[ -1 ] s) smallest)
   | Some `One -> mul (norm ~ord:`One x) (norm ~ord:`One (inv x))
   | Some `Inf -> mul (norm ~ord:`Inf x) (norm ~ord:`Inf (inv x))
   | _ -> invalid_arg "cond: unsupported norm"

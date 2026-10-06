@@ -601,8 +601,6 @@ let reads =
             discard (fun () ->
                 Nx.set [ M mask ] (Nx.zeros Nx.float32 [| 2 |]) x) );
           ("Nx.matrix_rank", discard (fun () -> Nx.matrix_rank square));
-          ("Nx.cond", discard (fun () -> Nx.cond square));
-          ("Nx.pinv", discard (fun () -> Nx.pinv square));
           ( "Nx.lstsq",
             discard (fun () -> Nx.lstsq wide (Nx.ones Nx.float64 [| 2 |])) );
         ]
@@ -610,6 +608,18 @@ let reads =
           let i, seen = naming () in
           E.intercept i f;
           equal names [ expected ] (List.sort_uniq String.compare !seen));
+      Windtrap.cases ~name:fst
+        "a function whose cutoffs are each matrix's own reads nothing"
+        [
+          ("Nx.cond", discard (fun () -> Nx.cond square));
+          ("Nx.pinv", discard (fun () -> Nx.pinv square));
+          ( "Nx.pinv ~hermitian",
+            discard (fun () -> Nx.pinv ~hermitian:true square) );
+        ]
+        (fun (_, f) ->
+          let i, seen = naming () in
+          E.intercept i f;
+          equal names [] !seen);
       Windtrap.cases ~name:fst
         "a function whose length depends on values reads it once"
         [

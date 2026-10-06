@@ -3873,8 +3873,13 @@ val cond :
   ?p:[ `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `Fro ] ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [cond ?p a] is the condition number of [a] in the [p]-norm. [p] defaults to
-    [`Two].
+(** [cond ?p a] is the condition number of each matrix of [a] in the [p]-norm.
+    [p] defaults to [`Two].
+
+    Under [`Two] it is the ratio of the largest singular value to the smallest,
+    a singular value below [ε] times the largest counting as that, so a
+    singular matrix has a condition number of about [1 / ε]. A matrix on which
+    {!svd} fails has a condition number of NaN.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
@@ -3902,9 +3907,13 @@ val slogdet : ('a, 'b) t -> ('a, 'b) t * (float, float64_elt) t
 val matrix_rank :
   ?tol:float -> ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> int
 (** [matrix_rank ?tol ?rtol ?hermitian a] is the rank of [a], counting singular
-    values above the tolerance. [rtol] defaults to [max(M, N) * ε * σ_max]. When
-    [hermitian] is [true] (default [false]), uses a more efficient
-    eigenvalue-based algorithm.
+    values above the tolerance: [tol] if given, else [rtol] times [a]'s largest
+    singular value, [rtol] defaulting to [max(M, N) * ε]. When [hermitian] is
+    [true] (default [false]), uses a more efficient eigenvalue-based algorithm.
+    [a] is one matrix.
+
+    A matrix on which {!svdvals} is NaN has rank [0]: no singular value is
+    above the tolerance.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
@@ -3969,8 +3978,17 @@ val lstsq :
   ('a, 'b) t ->
   ('a, 'b) t ->
   ('a, 'b) t * ('a, 'b) t * int * (float, float64_elt) t
-(** [lstsq ?rcond a b] is [(x, residuals, rank, sv)] — the least-squares
-    solution to [a *@ x ≈ b]. [rcond] defaults to machine precision.
+(** [lstsq ?rcond a b] is [(x, residuals, rank, sv)]: [x] the least-squares
+    solution of [a *@ x ≈ b] of least norm, whatever the shape and rank of
+    [a], [sv] the singular values of [a] and [rank] how many of them count. A
+    singular value at or below [rcond] times the largest of its matrix counts
+    as zero; [rcond] defaults to [max(M, N) * ε]. [residuals] is the squared
+    norm of each column of [b - a *@ x] when [a] has more rows than columns,
+    and empty otherwise.
+
+    A matrix on which {!svd} fails has an [x] whose every element is NaN, and
+    the other matrices of its batch are unaffected; it counts [0] towards
+    [rank].
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
@@ -3990,7 +4008,12 @@ val inv : ('a, 'b) t -> ('a, 'b) t
 
 val pinv : ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [pinv ?rtol ?hermitian a] is the Moore–Penrose pseudoinverse of [a]. Handles
-    non-square and singular matrices. [hermitian] defaults to [false].
+    non-square and singular matrices. [hermitian] defaults to [false]. A
+    singular value at or below [rtol] times [max(M, N)] times the largest of its
+    matrix counts as zero; [rtol] defaults to [ε].
+
+    A matrix on which {!svd}, or {!eigh} when [hermitian], fails has a
+    pseudoinverse whose every element is NaN.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
