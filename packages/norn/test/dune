@@ -1,5 +1,5 @@
 (tests
- (names test_bij)
- (modules test_bij)
+ (names test_bij test_density)
+ (modules test_bij test_density)
  (package norn)
  (libraries norn nx nx.dtype rune windtrap))
