@@ -471,6 +471,12 @@ let fix tol (st : Solution.status) facts =
       Printf.sprintf "The times are not strictly monotone at [%.0f]."
         (fact "disorder")
   | Stalled when some "lags not positive" > 0. -> "Every lag must be positive."
+  | Stalled when some "no time" > 0. -> "A path needs t1 ≠ t0."
+  | Stalled when some "crossing lost" > 0. ->
+      Printf.sprintf
+        "The crossing of component [%.0f] near t was not located on the step's \
+         extension: the event may not be finite there."
+        (fact "component")
   | Stalled when some "beyond pieces" > 0. ->
       Printf.sprintf
         "The largest lag, %g, reaches back past the last pieces = %.0f steps \
@@ -1075,6 +1081,8 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
          accs)
   in
   report fn m ~tol ~budget ~at (s, disorder) ~value ~error
+    ~facts:
+      [ Fact ("no time", Nx.cast dtype (Nx.equal_s (Rune.detach span) 0.)) ]
 
 (* Events *)
 
@@ -1232,11 +1240,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     Nx.reshape [||]
       (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 c)) v)
   in
+  let lost = Nx.logical_and crossing (Nx.logical_not (Nx.any found)) in
   let status =
-    Nx.where
-      (Nx.logical_and crossing (Nx.logical_not (Nx.any found)))
-      (Nx.scalar Nx.int32 (Solution.code Stalled))
-      s.status
+    Nx.where lost (Nx.scalar Nx.int32 (Solution.code Stalled)) s.status
   in
   let s = { s with status } in
   let ok = Nx.equal_s status (Solution.code Converged) in
@@ -1268,6 +1274,11 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       int32 0l )
   in
   report fn m ~tol ~budget ~at (s, disorder) ~value ~error
+    ~facts:
+      [
+        Fact ("crossing lost", Nx.cast dtype lost);
+        Fact ("component", Nx.cast dtype (Nx.argmax (Nx.cast Nx.int32 crossed)));
+      ]
 
 (* Delays *)
 

@@ -594,10 +594,12 @@ let path_tests =
         let n = Nx.dim 0 breaks in
         equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 1 ] breaks);
         equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 2 ] breaks));
-    test "a path over no time ends its lane Stalled" (fun () ->
+    test "a path over no time ends its lane Stalled and says why" (fun () ->
         let s = path (decay (scalar 1.)) ~t0:1. ~t1:1. (scalar 1.) in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
-          (Solution.is Stalled s));
+          (Solution.is Stalled s);
+        raises_match (Exn.failure ~substring:"A path needs t1 ≠ t0.") (fun () ->
+            Solution.get s));
     test "its error is the accumulated estimate, as sample's" (fun () ->
         let tol = Tol.v ~rel:1e-6 ~abs:1e-8 in
         let p = path ~tol (decay (scalar 1.)) ~t0:0. ~t1:2. (scalar 1.) in
@@ -796,6 +798,19 @@ let event_tests =
           (Oracle.tensor ~rel:5e-12 ())
           (f (scalar 10.))
           (Rune.jit' f (scalar 10.)));
+    test "a crossing whose search fails ends the lane and names it" (fun () ->
+        (* The second component is not finite near its crossing at t = 1. *)
+        let event t (q, _) =
+          let near = Nx.less_s (Nx.abs (Nx.sub_s t 1.)) 1e-3 in
+          Nx.stack
+            [ q; Nx.where near (Nx.full_like t Float.nan) (Nx.sub_s t 1.) ]
+        in
+        let s = drop event (scalar 10.) in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Stalled s);
+        raises_match
+          (Exn.failure ~substring:"The crossing of component [1] near t")
+          (fun () -> Solution.get s));
     test "an event of no component raises" (fun () ->
         raises_match
           (Exn.invalid_arg
