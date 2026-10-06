@@ -3380,6 +3380,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.Rng.with_root`, a key scope whose root runs at the first draw
+  inside it, in the scope around: a scope that draws nothing takes no key, so
+  the draws after it are unchanged. `with_key k` is `with_root (fun () -> k)`.
+
 - Add `nx.wide`, double-word numbers: `Nx_wide.t` holds each number as two
   floats whose sum carries 106 significand bits at float64 and 48 at
   float32, with `add`, `sub`, `mul` and `div` of proven relative bounds, an

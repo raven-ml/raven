@@ -1076,8 +1076,10 @@ module Rng = struct
      on a domain spawned inside a scope does not see it and falls back below. *)
   type _ Effect.t += E_next_key : key Effect.t
 
+  (* The root is taken at the first draw, in the handler, outside the scope: a
+     draw [root] makes comes from the scope around. *)
   let make_handler root =
-    let counter = ref 0 in
+    let counter = ref 0 and taken = ref None in
     let open Effect.Deep in
     {
       retc = Fun.id;
@@ -1088,13 +1090,22 @@ module Rng = struct
           | E_next_key ->
               Some
                 (fun (k : (a, _) continuation) ->
+                  let r =
+                    match !taken with
+                    | Some r -> r
+                    | None ->
+                        let r = root () in
+                        taken := Some r;
+                        r
+                  in
                   let i = !counter in
                   incr counter;
-                  continue k (fold_in root i))
+                  continue k (fold_in r i))
           | _ -> None);
     }
 
-  let with_key k f = Effect.Deep.match_with f () (make_handler k)
+  let with_root root f = Effect.Deep.match_with f () (make_handler root)
+  let with_key k f = with_root (fun () -> k) f
   let fallback = Domain.DLS.new_key (fun () -> ref None)
 
   (* Outside any scope, seed from system entropy. [Random.bits] on the default

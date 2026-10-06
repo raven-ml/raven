@@ -1075,6 +1075,25 @@ module Rng : sig
       The scope is an effect handler, so it is per-fiber and per-domain: a draw
       on a domain spawned inside [f] does not see it. *)
 
+  val with_root : (unit -> t) -> (unit -> 'a) -> 'a
+  (** [with_root r f] runs [f] in a scope rooted at [r ()], which runs at the
+      first draw inside [f], in the scope around [with_root]: a key [r] draws
+      comes from that scope. If [f] draws nothing, [r] never runs and the scope
+      around is left as it was. [with_key k f] is [with_root (fun () -> k) f].
+
+      Code that may draw opens such a scope to leave the stream around it
+      unchanged when it does not draw, as a loop does for each trip, from one
+      key [k] taken at its first draw:
+
+      {[
+      let draws trips =
+        let k = lazy (Nx.Rng.next_key ()) in
+        List.init trips (fun i ->
+            Nx.Rng.with_root
+              (fun () -> Nx.Rng.fold_in (Lazy.force k) i)
+              (fun () -> Nx.rand Nx.float32 [| 2 |]))
+      ]} *)
+
   val next_key : unit -> t
   (** [next_key ()] draws a fresh subkey from the current scope. Two calls
       always return different keys. This is what the keyless samplers call.

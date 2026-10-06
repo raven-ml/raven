@@ -916,6 +916,60 @@ let scopes =
           equal ~msg:"outer" values
             (Rng.with_key k1 (fun () -> keyless (before @ after)))
             outer);
+      prop
+        "a scope rooted at its first draw that draws nothing takes no key and \
+         runs no root"
+        Gen.(pair key (pair program program))
+        (fun (k, (before, after)) ->
+          let ran = ref false in
+          let drawn =
+            Rng.with_key k (fun () ->
+                let a = keyless before in
+                Rng.with_root
+                  (fun () ->
+                    ran := true;
+                    Rng.next_key ())
+                  ignore;
+                a @ keyless after)
+          in
+          equal ~msg:"draws" values
+            (Rng.with_key k (fun () -> keyless (before @ after)))
+            drawn;
+          equal ~msg:"root ran" bool false !ran);
+      prop
+        "a scope rooted at its first draw that draws is the scope rooted at \
+         its root, taken once from the scope around at that draw"
+        Gen.(pair key (pair (triple program program program) small_int))
+        (fun (k, ((before, inner, after), data)) ->
+          cover "the scope draws" (inner <> []);
+          let runs = ref 0 in
+          let rooted =
+            Rng.with_key k (fun () ->
+                let a = keyless before in
+                let b =
+                  Rng.with_root
+                    (fun () ->
+                      incr runs;
+                      Rng.fold_in (Rng.next_key ()) data)
+                    (fun () -> keyless inner)
+                in
+                (a @ keyless after, b))
+          in
+          let expected =
+            Rng.with_key k (fun () ->
+                let a = keyless before in
+                let b =
+                  if inner = [] then []
+                  else
+                    Rng.with_key
+                      (Rng.fold_in (Rng.next_key ()) data)
+                      (fun () -> keyless inner)
+                in
+                (a @ keyless after, b))
+          in
+          equal ~msg:"outer" values (fst expected) (fst rooted);
+          equal ~msg:"inner" values (snd expected) (snd rooted);
+          equal ~msg:"root runs" int (if inner = [] then 0 else 1) !runs);
       test "a domain spawned inside a scope draws outside it" (fun () ->
           let spawned () =
             Rng.with_key (Rng.key 7) (fun () ->
