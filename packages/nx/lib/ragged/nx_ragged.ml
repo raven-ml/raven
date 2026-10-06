@@ -7,6 +7,61 @@ open Nx
 
 let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
+(* [float_text x] is the text [Nx.pp] gives the float64 [x]: the fewest
+   significant digits that read back to it, in full for decimal exponents from
+   -4 to 15 and with an exponent beyond; [nan] whatever its sign. *)
+let float_text x =
+  let sign = if Float.sign_bit x then "-" else "" in
+  let a = Float.abs x in
+  let reads (m, e) = float_of_string (Printf.sprintf "%de%d" m e) = a in
+  let rec pow10 p = if p = 0 then 1 else 10 * pow10 (p - 1) in
+  (* The [p] digits [m] and the exponent [e] of [m 10^e] nearest [a], or the
+     next decimal above or below it: the values that read back to [a] are an
+     interval around it, which holds a [p]-digit decimal only if it holds one of
+     the two around [a]. Seventeen digits read back to any float. *)
+  let rec shortest p =
+    let t = Printf.sprintf "%.*e" (p - 1) a in
+    let i = String.index t 'e' in
+    let m =
+      int_of_string
+        (String.concat "" (String.split_on_char '.' (String.sub t 0 i)))
+    in
+    let e =
+      int_of_string (String.sub t (i + 1) (String.length t - i - 1)) - (p - 1)
+    in
+    let below =
+      if m - 1 < pow10 (p - 1) then ((10 * m) - 1, e - 1) else (m - 1, e)
+    in
+    match List.find_opt reads [ (m, e); (m + 1, e); below ] with
+    | Some c -> c
+    | None -> if p >= 17 then (m, e) else shortest (p + 1)
+  in
+  if Float.is_nan x then "nan"
+  else if a = Float.infinity then sign ^ "inf"
+  else if a = 0. then sign ^ "0"
+  else
+    let m, e = shortest 1 in
+    let digits = string_of_int m in
+    let exp = e + String.length digits - 1 in
+    (* [m] ends in zeros after a carry, as [m + 1] at [99] gives [100]. *)
+    let p = ref (String.length digits) in
+    while digits.[!p - 1] = '0' do
+      decr p
+    done;
+    let p = !p in
+    let d = String.sub digits 0 p in
+    sign
+    ^
+    if exp < -4 || exp >= 16 then
+      let fraction = if p > 1 then "." ^ String.sub d 1 (p - 1) else "" in
+      Printf.sprintf "%c%se%c%02d" d.[0] fraction
+        (if exp < 0 then '-' else '+')
+        (Int.abs exp)
+    else if exp >= p - 1 then d ^ String.make (exp - p + 1) '0'
+    else if exp >= 0 then
+      String.sub d 0 (exp + 1) ^ "." ^ String.sub d (exp + 1) (p - exp - 1)
+    else "0." ^ String.make (-exp - 1) '0' ^ d
+
 (* [offsets] is 1-D with at least one entry, never decreases, and lies in [0,
    dim 0 values]; row [r] is [values] from [offsets.{r}] to [offsets.{r + 1}]
    along axis 0. *)
@@ -134,7 +189,7 @@ let check_probabilities op qs =
   Array.iter
     (fun q ->
       if not (q >= 0. && q <= 1.) then
-        err op "probability %g is outside [0, 1]" q)
+        err op "probability %s is outside [0, 1]" (float_text q))
     qs
 
 (* [interpolate a b f] is [a + f * (b - a)] between the order statistics [a] and

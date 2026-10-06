@@ -9,6 +9,80 @@ module B = Entry
 let err op fmt =
   Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
+(* [float_text s x] is the fewest significant digits that round to [x] in the
+   format [s]: the float32 [0.1] is [0.1], not [0.100000001]. It
+   is written in full for decimal exponents from -4 to 15, as [1234567900] or
+   [0.0001], and with an exponent beyond, as [1e+16] or [1.5e-05]. NaN is [nan]
+   whatever its sign, which C libraries print differently. *)
+let float_text s x =
+  let round =
+    match (s : Nx_dtype.Scalar.t) with
+    | Float64 -> Fun.id
+    | Float32 -> fun f -> Int32.float_of_bits (Int32.bits_of_float f)
+    | s ->
+        let open Nx_dtype.Scalar in
+        (* The float8 formats store a value past their largest finite one as
+           that value, but only those within half a step above it round to it:
+           e4m3's 448 prints as [450], not [500]. *)
+        let top = decode s (encode s Float.max_float) in
+        let limit =
+          if Float.is_finite top then
+            top +. ((top -. decode s (encode s top - 1)) /. 2.)
+          else Float.infinity
+        in
+        fun f -> if Float.abs f > limit then Float.nan else decode s (encode s f)
+  in
+  let sign = if Float.sign_bit x then "-" else "" in
+  let a = Float.abs x in
+  let reads (m, e) = round (float_of_string (Printf.sprintf "%de%d" m e)) = a in
+  let rec pow10 p = if p = 0 then 1 else 10 * pow10 (p - 1) in
+  (* The [p] digits [m] and the exponent [e] of [m 10^e] nearest [a], or the
+     next decimal above or below it: the values that read back to [a] are an
+     interval around it, which holds a [p]-digit decimal only if it holds one of
+     the two around [a]. Seventeen digits read back to any float. *)
+  let rec shortest p =
+    let t = Printf.sprintf "%.*e" (p - 1) a in
+    let i = String.index t 'e' in
+    let m =
+      int_of_string
+        (String.concat "" (String.split_on_char '.' (String.sub t 0 i)))
+    in
+    let e =
+      int_of_string (String.sub t (i + 1) (String.length t - i - 1)) - (p - 1)
+    in
+    let below =
+      if m - 1 < pow10 (p - 1) then ((10 * m) - 1, e - 1) else (m - 1, e)
+    in
+    match List.find_opt reads [ (m, e); (m + 1, e); below ] with
+    | Some c -> c
+    | None -> if p >= 17 then (m, e) else shortest (p + 1)
+  in
+  if Float.is_nan x then "nan"
+  else if a = Float.infinity then sign ^ "inf"
+  else if a = 0. then sign ^ "0"
+  else
+    let m, e = shortest 1 in
+    let digits = string_of_int m in
+    let exp = e + String.length digits - 1 in
+    (* [m] ends in zeros after a carry, as [m + 1] at [99] gives [100]. *)
+    let p = ref (String.length digits) in
+    while digits.[!p - 1] = '0' do
+      decr p
+    done;
+    let p = !p in
+    let d = String.sub digits 0 p in
+    sign
+    ^
+    if exp < -4 || exp >= 16 then
+      let fraction = if p > 1 then "." ^ String.sub d 1 (p - 1) else "" in
+      Printf.sprintf "%c%se%c%02d" d.[0] fraction
+        (if exp < 0 then '-' else '+')
+        (Int.abs exp)
+    else if exp >= p - 1 then d ^ String.make (exp - p + 1) '0'
+    else if exp >= 0 then
+      String.sub d 0 (exp + 1) ^ "." ^ String.sub d (exp + 1) (p - exp - 1)
+    else "0." ^ String.make (-exp - 1) '0' ^ d
+
 (* ───── Core Types ───── *)
 
 type ('a, 'b) t = ('a, 'b) Value.t
@@ -1611,8 +1685,8 @@ let logspace ctx dtype ?(endpoint = true) ?(base = 10.0) start_exp stop_exp
 
 let geomspace ctx dtype ?(endpoint = true) start_f stop_f count =
   if start_f <= 0. || stop_f <= 0. then
-    err "geomspace" "start %g and stop %g, both must be positive" start_f
-      stop_f;
+    err "geomspace" "start %s and stop %s, both must be positive"
+      (float_text Float64 start_f) (float_text Float64 stop_f);
   if count < 0 then err "geomspace" "count must be >= 0, got %d" count;
   if count = 0 then empty ctx dtype [| 0 |]
   else if count = 1 then full ctx dtype [| 1 |] start_f
@@ -2360,7 +2434,7 @@ let check_probabilities op qs =
   Array.iter
     (fun q ->
       if not (q >= 0. && q <= 1.) then
-        err op "probability %g is outside [0, 1]" q)
+        err op "probability %s is outside [0, 1]" (float_text Float64 q))
     qs
 
 (* [interpolate a b f] is [a + f * (b - a)] between the order statistics [a] and
@@ -2788,7 +2862,7 @@ let associative_scan ?(axis = 0) st f x =
 
 let ewma ?axis ~alpha x =
   if not (alpha > 0. && alpha <= 1.) then
-    err "ewma" "alpha %g, expected in (0, 1]" alpha;
+    err "ewma" "alpha %s, expected in (0, 1]" (float_text Float64 alpha);
   let flat, axis =
     match axis with
     | None -> (flatten x, 0)
@@ -5980,14 +6054,20 @@ let pp' (type a b) ~by fmt (x : (a, b) t) =
   let shape = shape x in
   let ndim = Array.length shape in
   let sz = numel x in
+  let real s fmt x = pp_print_string fmt (float_text s x) in
+  let complex s fmt (z : Complex.t) =
+    let im = float_text s z.im in
+    let sign = if im.[0] = '-' then "" else "+" in
+    fprintf fmt "(%a%s%si)" (real s) z.re sign im
+  in
   let pp_element fmt (elt : a) =
     match dtype with
-    | Float16 -> fprintf fmt "%g" elt
-    | Float32 -> fprintf fmt "%g" elt
-    | Float64 -> fprintf fmt "%g" elt
-    | BFloat16 -> fprintf fmt "%g" elt
-    | Float8_e4m3 -> fprintf fmt "%g" elt
-    | Float8_e5m2 -> fprintf fmt "%g" elt
+    | Float16 -> real Float16 fmt elt
+    | Float32 -> real Float32 fmt elt
+    | Float64 -> real Float64 fmt elt
+    | BFloat16 -> real BFloat16 fmt elt
+    | Float8_e4m3 -> real Float8_e4m3 fmt elt
+    | Float8_e5m2 -> real Float8_e5m2 fmt elt
     | Int8 -> fprintf fmt "%d" elt
     | Int16 -> fprintf fmt "%d" elt
     | Int32 -> fprintf fmt "%ld" elt
@@ -6000,8 +6080,8 @@ let pp' (type a b) ~by fmt (x : (a, b) t) =
     | UInt4 -> fprintf fmt "%d" elt
     | Bool -> fprintf fmt "%b" elt
     | Bit -> fprintf fmt "%b" elt
-    | Complex64 -> fprintf fmt "(%g%+gi)" elt.re elt.im
-    | Complex128 -> fprintf fmt "(%g%+gi)" elt.re elt.im
+    | Complex64 -> complex Float32 fmt elt
+    | Complex128 -> complex Float64 fmt elt
   in
   let edge = 2 in
   if ndim = 0 then pp_element fmt (element 0)

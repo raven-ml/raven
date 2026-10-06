@@ -90,7 +90,8 @@
  (name test_format)
  (package nx)
  (modules test_format)
- (libraries nx windtrap)
+ (libraries nx nx.dtype windtrap)
+ (deps golden/float_text.txt)
  (action
   (progn
    (run %{test} --corrected)

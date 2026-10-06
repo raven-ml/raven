@@ -624,7 +624,7 @@ val logspace :
 
     {@ocaml[
       # logspace float32 0. 2. 3
-      - : (float, float32_elt) t = [1, 10, 100]
+      - : (float, float32_elt) t = [1, 9.999999, 99.99999]
       # logspace float32 ~base:2.0 0. 3. 4
       - : (float, float32_elt) t = [1, 2, 4, 8]
     ]}
@@ -640,7 +640,7 @@ val geomspace :
 
     {@ocaml[
       # geomspace float32 1. 1000. 4
-      - : (float, float32_elt) t = [1, 10, 100, 1000]
+      - : (float, float32_elt) t = [1, 10, 100.00001, 1000.0001]
     ]}
 
     See also {!linspace}, {!logspace}. *)
@@ -4239,7 +4239,7 @@ val hann : (float, 'a) dtype -> int -> (float, 'a) t
 
     {@ocaml[
       # hann float64 4
-      - : (float, float64_elt) t = [0, 0.5, 1, 0.5]
+      - : (float, float64_elt) t = [0, 0.49999999999999994, 1, 0.5000000000000001]
     ]} *)
 
 val stft :
@@ -4570,7 +4570,14 @@ val fold_item : ('a -> 'b -> 'a) -> 'a -> ('b, 'c) t -> 'a
 
 val pp : Format.formatter -> ('a, 'b) t -> unit
 (** [pp ppf t] formats [t] compactly. Multidimensional or truncated tensors
-    include their dtype and shape. *)
+    include their dtype and shape.
+
+    A float element prints as the fewest significant digits that round to it
+    at its dtype: {!float_of_string} of its text, stored in [t]'s dtype, is the
+    element. It is written in full for decimal exponents from [-4] to [15], as
+    [0.0001] or [1234567900], and with an exponent beyond, as [1e+16]. NaN
+    prints as [nan], whatever its sign, and the infinities as [inf] and [-inf].
+    A complex element prints its parts so, as [(1-2i)]. *)
 
 val to_string : ('a, 'b) t -> string
 (** [to_string t] is [t] formatted with {!pp}. *)

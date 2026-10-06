@@ -3286,6 +3286,10 @@ thread.
 
 ### Nx
 
+- `Nx.pp`, `Nx.to_string` and `Nx.print` print each float as the fewest digits
+  that round to it at its dtype: a float32 `1.0000001` printed as `1`, and
+  `0.1 +. 0.2` as `0.3`. NaN prints as `nan` on every platform, where glibc
+  printed `-nan`. Error messages that name a float print it the same way.
 - `Nx_dtype.precision`, `Nx_dtype.epsilon`, `Nx_dtype.min_normal` and
   `Nx_dtype.max_finite` give the significand width in bits, the gap above one,
   the least positive normal value and the largest finite value of each float
