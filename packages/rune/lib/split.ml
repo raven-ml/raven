@@ -107,14 +107,15 @@ let id x =
 type numbered = { values : Nx.packed array; recipes : (int, recipe) Hashtbl.t }
 
 (* [numbering f] is [f ()] and the values the operations and the constructs of
-   its extent made, each operation and construct passed on unchanged. A loop
-   that no trace stages folds outside the extent, so that only its results are
-   numbered: whether a trace stages a loop depends on more than the dtypes,
-   shapes and placements of the function's arguments, such as the lanes of a map
-   around the call. *)
+   its extent made, each operation and construct passed on unchanged. Only a
+   construct's results are numbered, not the operations its answer issues: a
+   loop that no trace stages folds where it is written, and whether a trace
+   stages a loop depends on more than the dtypes, shapes and placements of the
+   function's arguments, such as the lanes of a map around the call. *)
 let numbering f =
   let values = ref [] and recipes = Hashtbl.create 16 in
   let note l = values := List.rev_append l !values in
+  let answering = ref 0 in
   let run : type r. r Nx.Op.t -> r =
    fun op ->
     let r = eval op in
@@ -125,23 +126,26 @@ let numbering f =
     | None -> ());
     r
   in
-  let call : type r. r Construct.t -> (unit -> r) option =
+  let call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
-    Some
-      (fun () ->
-        let r : r =
-          match[@warning "@4@8"] c with
-          | Loop q -> Construct.loop q
-          | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
-          | Lanes _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
-              Construct.perform c
-        in
-        note (made c r);
-        r)
+    let answer () =
+      incr answering;
+      let r =
+        Fun.protect ~finally:(fun () -> decr answering) @@ fun () : r ->
+        match[@warning "@4@8"] c with
+        | Loop q -> Construct.loop q
+        | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
+        | Lanes _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
+            Construct.perform c
+      in
+      note (made c r);
+      r
+    in
+    if Construct.carries c then Some (Construct.here answer)
+    else Some (Construct.value answer)
   in
-  let y =
-    Construct.install { op = Some { run; claims = (fun _ -> true) }; call } f
-  in
+  let claims _ = !answering = 0 in
+  let y = Construct.install { op = Some { run; claims }; call } f in
   (y, { values = Array.of_list (List.rev !values); recipes })
 
 (* Traces *)
@@ -165,20 +169,24 @@ let rec traced :
       counts := (axis, n) :: !counts;
     n
   in
-  let call : type r. r Construct.t -> (unit -> r) option =
+  let call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
+    let value = Construct.value in
     let default () =
-      Some (fun () -> traced s counts (fun () -> Construct.default c))
+      Some
+        (Construct.here (fun () ->
+             traced s counts (fun () -> Construct.default c)))
     in
     match[@warning "@4@8"] c with
-    | Lane_count axis -> Some (fun () -> count axis)
-    | Add _ -> Some ignore
+    | Lane_count axis -> Some (value (fun () -> count axis))
+    | Add _ -> Some (value ignore)
     | Lanes (axis, x) ->
         Some
-          (fun () ->
-            let shape = Array.append [| count axis |] (Nx.shape x) in
-            fresh s (Nx.placement x) (Nx.dtype x) shape)
-    | Lane_index _ -> Some (fun () -> fresh s Nx.Placement.host Nx.int32 [||])
+          (value (fun () ->
+               let shape = Array.append [| count axis |] (Nx.shape x) in
+               fresh s (Nx.placement x) (Nx.dtype x) shape))
+    | Lane_index _ ->
+        Some (value (fun () -> fresh s Nx.Placement.host Nx.int32 [||]))
     | Loop _ -> default ()
     | Compiled _ -> default ()
     | Remat _ -> default ()

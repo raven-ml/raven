@@ -113,7 +113,14 @@ val op : scope -> 'r Nx.Op.t -> 'r
       its storage when the host owns that storage, read once from its device
       otherwise;
     - otherwise it is storage [s] holds ({!captures}): the value itself if it
-      lies where the operation computes, and a copy placed there once otherwise.
+      lies where the operation computes; a copy of its storage on the
+      operation's one device once otherwise, a value on the disk read through
+      the host; and, for a placement over several devices, the value where it
+      lies, which the program moves as it moves a traced operand.
+
+    The lowering reads and places a capture through its storage, never through
+    an operation of nx: it does so only when it traces, which its caller's cache
+    decides, so no interpretation of operations sees it.
 
     [Read] of a value that is not traced, and [Check] of operands none of which
     is, are answered in the enclosing interpretation. [Check] of a traced

@@ -6,8 +6,9 @@
 (** rune's constructs in a compiled call's trace.
 
     A trace lowers every operation of its extent ({!Lower.op}) and answers
-    rune's constructs ({!Construct.t}) outside that interception, so that the
-    operations an answer issues are lowered in a scope of its choosing.
+    rune's constructs ({!Construct.t}) at their call ({!Construct.here}): a
+    function a construct carries runs under a trace of its own, a loop's step
+    under a trace of its body, and the loop itself is lowered at the call.
 
     {b Staged loops.} A loop stages as one loop of the program: its step runs
     once, traced as the body of one call. A loop over rows, a scan, runs the
@@ -49,10 +50,17 @@
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
       an output lies elsewhere than the loop's device or the host, when the step
-      draws from a key the body does not vary (a key scope's draw: the step runs
-      outside the scopes the function opened, and a traced draw would repeat on
-      every trip), or when the body's calls run on a device with queues and on
-      the host, or on devices of two kinds, which no loop runs.
+      draws from a key no parameter of the body varies, a traced draw that would
+      repeat on every trip, or when the body's calls run on a device with queues
+      and on the host, or on devices of two kinds, which no loop runs. The step
+      draws from a scope of its own, rooted at a constant, so that a draw from
+      the scope around the loop is written out, each trip drawing where the loop
+      is written.
+
+    The step and the stop run at the loop's call, inside the handlers around it.
+    Outside every body, an operation that reads a value a step computed raises
+    [Invalid_argument]: such a value reaches the trace around the loop only
+    through a handler, which runs outside the step.
 
     An output the step computes on the host, such as a constant, is written on
     the loop's device, and its rows are copied to the host once per call.

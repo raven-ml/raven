@@ -36,13 +36,13 @@ let reverse =
   group "reverse mode"
     [
       test "grad of a product" (fun () ->
-          equal int 1338
+          equal int 1346
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x)));
       test "grad of a selection" (fun () ->
-          equal int 1695
+          equal int 1703
             (words (fun () -> Rune.grad' (fun x -> Nx.sum (relu x)) x)));
       test "grad of a matrix product" (fun () ->
-          equal int 1212
+          equal int 1220
             (words (fun () -> Rune.grad' (fun w -> Nx.sum (Nx.matmul row w)) w)));
     ]
 

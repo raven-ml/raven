@@ -18,12 +18,12 @@ let close () = Oracle.tensor ~rel:1e-12 ()
 
 module Construct = Rune_internals.Construct
 
-(* [staged f] is [f ()] under a stager that answers each loop by folding it
-   where it answers it, as a compiled call stages one: every installation
-   between passes the loop on transformed, and its step runs outside them.
-   [steps] counts the step's runs, [outputs] the output tensors of each loop it
-   folded, last first, and [late] the barriers that reached it with a traced
-   value, one another installation should have passed on. *)
+(* [staged f] is [f ()] under a stager that answers each loop by folding it at
+   its call, as a compiled call stages one: every installation between passes
+   the loop on transformed, and its step runs inside them. [steps] counts the
+   step's runs, [outputs] the output tensors of each loop it folded, last first,
+   and [late] the barriers that reached it with a traced value, one another
+   installation should have passed on. *)
 let steps = ref 0
 let outputs = ref []
 let late = ref 0
@@ -33,7 +33,7 @@ let staged f =
     List.exists (fun (Nx.P x) ->
         match Nx.Repr.v x with Traced _ -> true | Host _ | Placed _ -> false)
   in
-  let call : type r. r Construct.t -> (unit -> r) option =
+  let call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
     match[@warning "@4@8"] c with
     | Loop r ->
@@ -42,13 +42,13 @@ let staged f =
           r.req_step c x
         in
         Some
-          (fun () ->
-            let r = Rune_internals.Trips.fold { r with req_step } in
-            outputs := List.length r.r_ys :: !outputs;
-            r)
+          (Construct.here (fun () ->
+               let r = Rune_internals.Trips.fold { r with req_step } in
+               outputs := List.length r.r_ys :: !outputs;
+               r))
     | Barrier { values; after } ->
         if traced values || traced after then incr late;
-        Some (fun () -> values)
+        Some (Construct.value (fun () -> values))
     | Compiled _ | Remat _ | Custom _ | Root _ | At_map _ | Lanes _
     | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None

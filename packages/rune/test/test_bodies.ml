@@ -1,0 +1,623 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Bodies at the call. A function a construct carries runs where its arguments
+   exist: inside the handlers and the total scopes around its call, under every
+   transformation, compiled or not. The trusted side is the same function with
+   no construct, and the additions with no transformation. The suite reaches
+   [Total.discarding], so it links rune_internals. *)
+
+open Windtrap
+module Rune = Rune_internals.Rune
+module Total = Rune_internals.Total
+
+let f64 = Nx.float64
+let vec a = Nx.create f64 [| Array.length a |] a
+let scalar x = Nx.scalar f64 x
+let close () = Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()
+let tot : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
+
+let collect f =
+  Rune.Total.collect tot ~zero:(scalar 0.) (fun () -> ignore (f ())) |> snd
+
+(* A user effect, answered by a handler installed inside the transformed
+   function, around a construct's call. *)
+type _ Effect.t += Ask : float Effect.t
+
+let answers = ref 0
+
+let answer f =
+  Effect.Deep.match_with f ()
+    {
+      retc = Fun.id;
+      exnc = raise;
+      effc =
+        (fun (type a) (e : a Effect.t) ->
+          match e with
+          | Ask ->
+              Some
+                (fun (k : (a, _) Effect.Deep.continuation) ->
+                  incr answers;
+                  Effect.Deep.continue k 2.)
+          | _ -> None);
+    }
+
+let ask () = Effect.perform Ask
+
+(* g x = Σ sin (a xᵢ), [a] asked of the handler, with an addition of Σ xᵢ: the
+   function every body computes. *)
+let terms x = Nx.sin (Nx.mul_s x (ask ()))
+
+let plain x =
+  Rune.Total.add tot (Nx.sum x);
+  Nx.sum (terms x)
+
+(* [dplain a x] is [plain]'s derivative, [a] asked at the rule's call: a
+   pullback runs after the call returns, outside the handler. *)
+let dplain a x = Nx.mul_s (Nx.cos (Nx.mul_s x a)) a
+
+(* Bodies *)
+
+type body =
+  | Plain
+  | Scan
+  | Iterate
+  | Remat
+  | Custom_jvp
+  | Custom_vjp
+  | Root
+  | Jit
+
+let bodies = [ Plain; Scan; Iterate; Remat; Custom_jvp; Custom_vjp; Root; Jit ]
+
+let body_name = function
+  | Plain -> "plain"
+  | Scan -> "scan"
+  | Iterate -> "iterate"
+  | Remat -> "remat"
+  | Custom_jvp -> "custom_jvp"
+  | Custom_vjp -> "custom_vjp"
+  | Root -> "root"
+  | Jit -> "jit"
+
+let pair = Nx.Ptree.(pair tensor tensor)
+
+let through = function
+  | Plain -> plain
+  | Scan ->
+      fun x ->
+        fst
+          (Rune.scan'
+             ~f:(fun c xi ->
+               Rune.Total.add tot xi;
+               (Nx.add c (Nx.sum (terms xi)), c))
+             ~init:(scalar 0.) x)
+  | Iterate ->
+      fun x ->
+        let n = (Nx.shape x).(0) in
+        let at i =
+          Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) x
+        in
+        snd
+          (Rune.iterate pair ~max:n
+             ~until:(fun (i, _) -> Nx.greater_equal_s i (Float.of_int n))
+             ~f:(fun (i, acc) ->
+               let xi = at i in
+               Rune.Total.add tot (Nx.sum xi);
+               (Nx.add_s i 1., Nx.add acc (Nx.sum (terms xi))))
+             (scalar 0., scalar 0.))
+  | Remat -> Rune.remat Nx.Ptree.(tensor @-> returns tensor) plain
+  | Custom_jvp ->
+      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          let a = ask () in
+          (plain x, fun dx -> Nx.sum (Nx.mul (dplain a x) dx)))
+  | Custom_vjp ->
+      Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          let a = ask () in
+          (plain x, fun ct -> Nx.mul ct (dplain a x)))
+  | Root ->
+      fun x ->
+        Rune.root Nx.Ptree.tensor
+          ~residual:(fun y -> Nx.sub y (Nx.sum (terms x)))
+          (fun () -> plain x)
+  | Jit -> Rune.jit' plain
+
+(* Stacks *)
+
+type layer = Grad | Jvp | Vmap | Jit_layer | Collect | Discarding
+
+let layers = [ Grad; Jvp; Vmap; Jit_layer; Collect; Discarding ]
+
+let layer_name = function
+  | Grad -> "grad"
+  | Jvp -> "jvp"
+  | Vmap -> "vmap"
+  | Jit_layer -> "jit"
+  | Collect -> "collect"
+  | Discarding -> "discarding"
+
+let pp_stack ppf (ts, b) =
+  Format.fprintf ppf "%s ∘ %s"
+    (String.concat " ∘ " (List.map layer_name ts))
+    (body_name b)
+
+(* [compose ts f] is [f] through [ts], the first outermost; the handler sits
+   innermost, around the body's call. A scope inside adds its total to the one
+   around, so it changes no total. *)
+let compose ts f =
+  let rec go = function
+    | [] -> fun x -> answer (fun () -> f x)
+    | t :: rest -> (
+        let g = go rest in
+        match t with
+        | Grad -> fun x -> Rune.grad' (fun x -> Nx.sum (g x)) x
+        | Jvp -> fun x -> snd (Rune.jvp' g x (Nx.cos x))
+        | Vmap -> Rune.vmap' g
+        | Jit_layer -> Rune.jit' g
+        | Collect ->
+            fun x ->
+              let y, t =
+                Rune.Total.collect tot ~zero:(scalar 0.) (fun () -> g x)
+              in
+              Rune.Total.add tot t;
+              y
+        | Discarding -> fun x -> Total.discarding (fun () -> g x))
+  in
+  go ts
+
+let argument ts =
+  let maps = List.length (List.filter (( = ) Vmap) ts) in
+  let shape = Array.append (Array.make maps 2) [| 3 |] in
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.reshape shape
+    (vec (Array.init n (fun i -> 0.3 +. (0.17 *. Float.of_int i))))
+
+(* A custom_vjp rule has no forward derivative. *)
+let forward_inside ts =
+  List.fold_left
+    (fun acc t -> match t with Grad -> Some Grad | Jvp -> Some Jvp | _ -> acc)
+    None ts
+  = Some Jvp
+
+let stack =
+  let open Gen in
+  let* n = int_range 1 3 in
+  let* ts = list ~size:(constant n) (of_list layers) in
+  let+ b = of_list bodies in
+  (ts, b)
+
+(* A reverse derivative runs a staged or batched loop's step, and a remat's
+   function, again in the backward pass, after the call returned. *)
+let runs_again (ts, b) =
+  let rec outside_grad = function
+    | [] | Grad :: _ -> false
+    | Vmap :: _ -> true
+    | _ :: rest -> outside_grad rest
+  in
+  List.mem Grad ts
+  && (b = Remat
+     || (b = Scan || b = Iterate)
+        && (List.mem Jit_layer ts || (b = Iterate && outside_grad ts)))
+
+let valid (ts, b) =
+  (not (b = Custom_vjp && forward_inside ts)) && not (runs_again (ts, b))
+
+let law1 =
+  prop ~tags:[ "slow" ] ~count:120
+    ~examples:[ ([ Grad; Grad; Collect ], Custom_jvp) ]
+    "a body runs at its call under every stack: the handler around the call \
+     answers it, the value is the plain function's, and each addition counts \
+     once"
+    (Gen.with_pp pp_stack (Gen.such_that valid stack))
+    (fun (ts, b) ->
+      cover "a loop under jit"
+        ((b = Scan || b = Iterate) && List.mem Jit_layer ts);
+      cover "a rule under jvp" (b = Custom_jvp && List.mem Jvp ts);
+      cover "a root under vmap" (b = Root && List.mem Vmap ts);
+      let x = argument ts in
+      let expected = compose ts plain x in
+      answers := 0;
+      let total = ref (scalar 0.) in
+      let got =
+        Rune.Total.collect tot ~zero:(scalar 0.) (fun () ->
+            compose ts (through b) x)
+      in
+      total := snd got;
+      greater ~msg:"answers" int ~than:0 !answers;
+      equal ~msg:"value" (close ()) expected (fst got);
+      let added =
+        if List.mem Discarding ts then scalar 0. else Nx.sum (argument ts)
+      in
+      equal ~msg:"total" (close ()) added !total)
+
+(* The boundary: a construct an answer derives meets each installation once *)
+
+let a = Rune.axis ()
+
+(* [nested ran x] scans the rows of [x], each step scanning its row's elements,
+   the inner step counted in [ran]. The carry starts from [x], so that a map
+   batches it from the start and no attempt restarts. *)
+let nested ran x =
+  fst
+    (Rune.scan'
+       ~f:(fun c row ->
+         let inner, _ =
+           Rune.scan'
+             ~f:(fun d e ->
+               incr ran;
+               (Nx.add (Nx.mul_s d 0.5) (Nx.sin e), d))
+             ~init:c row
+         in
+         (inner, inner))
+       ~init:(Nx.mul_s (Nx.get [ 0; 0 ] x) 0.)
+       x)
+
+let lanes_gen =
+  Gen.with_pp Nx.pp
+    (Gen.map
+       (fun l -> Nx.reshape [| 2; 3; 2 |] (vec (Array.of_list l)))
+       Gen.(list ~size:(constant 12) (float_range (-2.) 2.)))
+
+let boundary_tests =
+  [
+    prop
+      "a scan in a scan under jit of vmap traces the inner step once and is \
+       each lane's"
+      lanes_gen (fun xs ->
+        let ran = ref 0 in
+        let each =
+          Nx.stack (List.init 2 (fun i -> nested ran (Nx.get [ i ] xs)))
+        in
+        ran := 0;
+        let got = Rune.jit' (Rune.vmap' (nested ran)) xs in
+        equal (close ()) each got;
+        equal ~msg:"inner step traces" int 1 !ran);
+    prop "grad of a map of a remat whose function scans is each lane's gradient"
+      lanes_gen (fun xs ->
+        let f w x =
+          Rune.remat
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun x -> nested (ref 0) (Nx.mul x w))
+            x
+        in
+        let w0 = scalar 0.7 in
+        let lane i w = f w (Nx.get [ i ] xs) in
+        let expected =
+          Nx.add (Rune.grad' (lane 0) w0) (Rune.grad' (lane 1) w0)
+        in
+        let got = Rune.grad' (fun w -> Nx.sum (Rune.vmap' (f w) xs)) w0 in
+        equal (close ()) expected got);
+    prop
+      "an addition each lane makes in a compiled scan's step counts once per \
+       lane"
+      lanes_gen (fun xs ->
+        let f x =
+          fst
+            (Rune.scan'
+               ~f:(fun c row ->
+                 Rune.Total.add tot (Nx.sum row);
+                 (Nx.add c (Nx.sum row), c))
+               ~init:(scalar 0.) x)
+        in
+        equal (close ()) (Nx.sum xs)
+          (collect (fun () -> Rune.jit' (Rune.vmap' f) xs)));
+    prop
+      "an addition each lane makes in a masked step counts once per trip it \
+       takes"
+      lanes_gen (fun xs ->
+        (* Lane i halves until below a tenth of its start's size: lanes stop
+           apart. *)
+        let f x =
+          Rune.iterate' ~max:64
+            ~until:(fun y -> Nx.less_s (Nx.sum (Nx.abs y)) 0.5)
+            ~f:(fun y ->
+              Rune.Total.add tot (scalar 1.);
+              Nx.mul_s y 0.5)
+            x
+        in
+        let trips x =
+          let rec go k y =
+            if Nx.item [] (Nx.sum (Nx.abs y)) < 0.5 then k
+            else go (k + 1) (Nx.mul_s y 0.5)
+          in
+          go 0 x
+        in
+        let flat = Nx.reshape [| 2; 6 |] xs in
+        let expected =
+          Float.of_int (trips (Nx.get [ 0 ] flat) + trips (Nx.get [ 1 ] flat))
+        in
+        cover "lanes stop apart"
+          (trips (Nx.get [ 0 ] flat) <> trips (Nx.get [ 1 ] flat));
+        equal (close ()) (scalar expected)
+          (collect (fun () -> Rune.vmap' f flat)));
+    prop
+      "an addition each lane makes in a compiled call in a masked step counts \
+       once per trip it takes"
+      lanes_gen (fun xs ->
+        let counted =
+          Rune.jit' (fun y ->
+              Rune.Total.add tot (scalar 1.);
+              Nx.mul_s y 0.5)
+        in
+        let f x =
+          Rune.iterate' ~max:64
+            ~until:(fun y -> Nx.less_s (Nx.sum (Nx.abs y)) 0.5)
+            ~f:counted x
+        in
+        let trips x =
+          let rec go k y =
+            if Nx.item [] (Nx.sum (Nx.abs y)) < 0.5 then k
+            else go (k + 1) (Nx.mul_s y 0.5)
+          in
+          go 0 x
+        in
+        let flat = Nx.reshape [| 2; 6 |] xs in
+        let expected =
+          Float.of_int (trips (Nx.get [ 0 ] flat) + trips (Nx.get [ 1 ] flat))
+        in
+        cover "lanes stop apart"
+          (trips (Nx.get [ 0 ] flat) <> trips (Nx.get [ 1 ] flat));
+        equal (close ()) (scalar expected)
+          (collect (fun () -> Rune.vmap' f flat)));
+  ]
+
+(* Installations that pass a construct meet its function at their level *)
+
+let rule_adding =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      Rune.Total.add tot (Nx.sum x);
+      (x, Fun.id))
+
+let x3 () = vec [| 0.5; -1.; 2. |]
+
+let passing_tests =
+  [
+    test "a rule's addition under grad reaches the scope around its call"
+      (fun () ->
+        let total = ref (scalar 0.) in
+        ignore
+          (Rune.grad'
+             (fun x ->
+               let y, t =
+                 Rune.Total.collect tot ~zero:(scalar 0.) (fun () ->
+                     Nx.sum (rule_adding x))
+               in
+               total := Rune.detach t;
+               y)
+             (x3 ()));
+        equal (close ()) (Nx.sum (x3 ())) !total);
+    test
+      "a rule's addition under vmap reaches the scope around its call, lane by \
+       lane" (fun () ->
+        let xs = Nx.reshape [| 3; 1 |] (x3 ()) in
+        let totals =
+          Rune.vmap'
+            (fun x ->
+              snd
+                (Rune.Total.collect tot ~zero:(scalar 0.) (fun () ->
+                     ignore (rule_adding x))))
+            xs
+        in
+        equal (close ()) (x3 ()) totals);
+    test "a rule's addition under a discarding scope inside grad is dropped"
+      (fun () ->
+        equal (close ()) (scalar 0.)
+          (collect (fun () ->
+               Rune.grad'
+                 (fun x -> Total.discarding (fun () -> Nx.sum (rule_adding x)))
+                 (x3 ()))));
+    test
+      "a rule a map answers inside grad reads a detached value through its \
+       closure with no derivative" (fun () ->
+        let xs = Nx.reshape [| 3; 1 |] (x3 ()) in
+        let g x =
+          Rune.grad'
+            (fun w ->
+              let rule =
+                Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+                    let c = Rune.detach (Nx.mul w w) in
+                    (Nx.mul x c, fun dx -> Nx.mul dx c))
+              in
+              Nx.sum (rule x))
+            (scalar 1.5)
+        in
+        equal (close ()) (Nx.zeros f64 [| 3 |]) (Rune.vmap' g xs));
+    test
+      "grad through a compiled remat of an iterate at an untracked point is \
+       eager's" (fun () ->
+        let x0 = vec [| 4.; -3. |] in
+        let halve x =
+          Rune.iterate' ~max:16
+            ~until:(fun y -> Nx.less_s (Nx.max (Nx.abs y)) 0.5)
+            ~f:(fun y -> Nx.mul_s y 0.5)
+            x
+        in
+        let g w =
+          Nx.add w
+            (Nx.sum
+               (Rune.jit'
+                  (Rune.remat Nx.Ptree.(tensor @-> returns tensor) halve)
+                  x0))
+        in
+        equal (close ()) (scalar 1.) (Rune.grad' g (scalar 0.2)));
+    test
+      "grad through a compiled root whose solve iterates, at an untracked \
+       point, is eager's" (fun () ->
+        let x0 = scalar 2. in
+        let sqrt x =
+          Rune.root Nx.Ptree.tensor
+            ~residual:(fun y -> Nx.sub (Nx.mul y y) x)
+            (fun () ->
+              Rune.iterate' ~max:64
+                ~until:(fun y ->
+                  Nx.less_s (Nx.abs (Nx.sub (Nx.mul y y) x)) 1e-12)
+                ~f:(fun y -> Nx.mul_s (Nx.add y (Nx.div x y)) 0.5)
+                (scalar 1.))
+        in
+        let g w = Nx.add w (Rune.jit' sqrt x0) in
+        equal (close ()) (scalar 1.) (Rune.grad' g (scalar 0.2)));
+    test
+      "a residual that gathers the map's lanes inside a compiled scan is \
+       refused" (fun () ->
+        let xs = Nx.reshape [| 2; 1 |] (vec [| 4.; 9. |]) in
+        let sqrt w x =
+          Rune.root Nx.Ptree.tensor
+            ~residual:(fun y ->
+              let s, _ =
+                Rune.scan'
+                  ~f:(fun c e -> (Nx.add c (Nx.sum (Rune.lanes a e)), c))
+                  ~init:(scalar 0.) (Nx.mul y y)
+              in
+              Nx.sub (Nx.add (Nx.mul y y) (Nx.mul_s s 0.)) (Nx.mul w x))
+            (fun () -> Nx.sqrt (Nx.mul w x))
+        in
+        raises
+          (Invalid_argument
+             "Rune.root: the residual reads other lanes of the map, so the \
+              lanes' systems are not separate") (fun () ->
+            Rune.jit'
+              (Rune.grad' (fun w -> Nx.sum (Rune.vmap' ~axis:a (sqrt w) xs)))
+              (scalar 1.)));
+  ]
+
+(* Total scopes and roots *)
+
+let root_adding x =
+  Rune.root Nx.Ptree.tensor
+    ~residual:(fun y ->
+      Rune.Total.add tot (scalar 100.);
+      Nx.sub (Nx.mul y y) x)
+    ~linear_solve:(fun op b ->
+      Rune.Total.add tot (scalar 1000.);
+      Nx.div b (op (Nx.ones_like b)))
+    (fun () ->
+      Rune.Total.add tot x;
+      Nx.sqrt x)
+
+let lane_totals f xs =
+  Rune.vmap'
+    (fun x ->
+      snd (Rune.Total.collect tot ~zero:(scalar 0.) (fun () -> ignore (f x))))
+    xs
+
+let root_tests =
+  let xs () = vec [| 4.; 9.; 0.25 |] in
+  [
+    test "a root's solve adds to the scope inside a map, lane by lane"
+      (fun () ->
+        equal (close ()) (xs ())
+          (lane_totals root_adding (Nx.reshape [| 3 |] (xs ()))));
+    test "a root's solve adds to the scope inside a compiled map, lane by lane"
+      (fun () ->
+        equal (close ()) (xs ()) (Rune.jit' (lane_totals root_adding) (xs ())));
+    test "the residual's and linear_solve's additions are dropped under grad"
+      (fun () ->
+        let total = ref (scalar 0.) in
+        let g =
+          Rune.grad'
+            (fun x ->
+              let y, t =
+                Rune.Total.collect tot ~zero:(scalar 0.) (fun () ->
+                    root_adding x)
+              in
+              total := Rune.detach t;
+              y)
+            (scalar 4.)
+        in
+        equal ~msg:"derivative" (close ()) (scalar 0.25) g;
+        equal ~msg:"total" (close ()) (scalar 4.) !total);
+    test "the solve's additions under grad of a map count once per lane"
+      (fun () ->
+        equal (close ())
+          (Nx.sum (xs ()))
+          (collect (fun () ->
+               Rune.grad' (fun x -> Nx.sum (Rune.vmap' root_adding x)) (xs ()))));
+  ]
+
+(* A handler that computes from a site's value *)
+
+type _ Effect.t +=
+  | Sample : Nx.float64_t -> Nx.float64_t Effect.t
+  | Site : (Nx.float64_t -> Nx.float64_t) Effect.t
+
+(* [with_sites f] answers [Sample v] by adding [v]'s log density, computed in
+   the handler, and [Site] by a function the site applies, which adds it where
+   the site is. *)
+let with_sites f =
+  let density v = Nx.neg (Nx.sum (Nx.mul v v)) in
+  Effect.Deep.match_with f ()
+    {
+      retc = Fun.id;
+      exnc = raise;
+      effc =
+        (fun (type a) (e : a Effect.t) ->
+          match e with
+          | Sample v ->
+              Some
+                (fun (k : (a, _) Effect.Deep.continuation) ->
+                  Rune.Total.add tot (density v);
+                  Effect.Deep.continue k v)
+          | Site ->
+              Some
+                (fun (k : (a, _) Effect.Deep.continuation) ->
+                  Effect.Deep.continue k (fun v ->
+                      Rune.Total.add tot (density v);
+                      v))
+          | _ -> None);
+    }
+
+let rows () = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+
+let model site p =
+  fst
+    (Rune.scan'
+       ~f:(fun c x ->
+         let c = site (Nx.add c (Nx.mul p x)) in
+         (c, c))
+       ~init:(Nx.zeros f64 [| 2 |]) (rows ()))
+
+let log_density site p =
+  snd
+    (Rune.Total.collect tot ~zero:(scalar 0.) (fun () ->
+         with_sites (fun () -> model site p)))
+
+let sampled v = Effect.perform (Sample v)
+let applied v = (Effect.perform Site) v
+let p0 () = vec [| 0.1; 0.2 |]
+
+let handler_tests =
+  [
+    test
+      "a handler that adds a value it computes from a step's site reaches the \
+       scope eagerly" (fun () ->
+        equal (close ())
+          (log_density applied (p0 ()))
+          (log_density sampled (p0 ())));
+    test
+      "a handler that adds a value it computes from a step's site raises under \
+       jit" (fun () ->
+        raises
+          (Invalid_argument
+             "Rune.jit: a value computed inside a loop's step escaped it; \
+              return it in the carry or add it to a Rune.Total") (fun () ->
+            Rune.jit' (log_density sampled) (p0 ())));
+    test
+      "a handler that answers with a function the site applies adds under jit \
+       as eagerly" (fun () ->
+        equal (close ())
+          (log_density applied (p0 ()))
+          (Rune.jit' (log_density applied) (p0 ())));
+  ]
+
+let () =
+  exit
+    (run "Rune bodies"
+       [
+         group "law 1" [ law1 ];
+         group "the boundary" boundary_tests;
+         group "passing installations" passing_tests;
+         group "roots in total scopes" root_tests;
+         group "handlers" handler_tests;
+       ])

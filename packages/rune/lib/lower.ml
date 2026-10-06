@@ -829,12 +829,31 @@ let single v =
   let lo, hi = View.extent v in
   hi - lo = 1
 
+(* [element x] is the element of [x], a value of one element that is not traced,
+   read from its storage: a compiled call reads it only when it traces, which no
+   interpretation of operations may see. *)
+let element (type a b) (x : (a, b) Nx.t) : a =
+  let dt = Nx.dtype x and bufs, v = Nx.shards x in
+  let lo, _ = View.extent v in
+  let start, _ = span dt v in
+  let src = run dt v (List.hd bufs) in
+  let host =
+    if Nx_device.equal (Nx_device.Buffer.device src) Nx_device.host then src
+    else
+      let dst =
+        Nx_device.Buffer.create Nx_device.host
+          (Nx_device.Buffer.dtype src)
+          (Nx_device.Buffer.length src)
+      in
+      Nx_device.Buffer.copy ~src ~dst;
+      dst
+  in
+  Nx_array.Elements.get (Nx.dtype x) host (lo - start)
+
 (* [scalar tdt x] is [x], a value of one element that is not traced, as a
    constant of dtype [tdt]: its element is read now. *)
 let scalar tdt x =
-  let shape = Nx.shape x in
-  let first = Nx.item (List.map (fun _ -> 0) (Array.to_list shape)) x in
-  broadcast (Ops.const ~dtype:tdt (const (Nx.dtype x) first)) shape
+  broadcast (Ops.const ~dtype:tdt (const (Nx.dtype x) (element x))) (Nx.shape x)
 
 (* [bind s what p x] is the node of [x], a value at [p] that is not traced. *)
 let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
@@ -866,25 +885,6 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
           { storage = key; view = v; at = p; node; buffer; buffers }
           :: s.captures;
         node
-
-(* [placed s what p x] is the node of [x], a value that is not traced, at [p]:
-   where it lies if that is [p], placed there first otherwise. A value of one
-   element that lies elsewhere is a constant read now: placing it would copy it
-   to [p] only to read it back, and a copy waits for the work queued on [p], so
-   a trace would stall behind the kernels of the calls before it. *)
-let placed s what p x =
-  if on_disk x then bind s what p (Nx.place p x)
-  else if same_layout (Nx.placement x) p (Nx.shape x) then bind s what p x
-  else if single (snd (Nx.shards x)) then scalar (check s what p (Nx.dtype x)) x
-  else bind s what p (Nx.place p x)
-
-(* [capture s what p x] is the node of [x], a value that is not traced, as an
-   operand of an operation at [p]: where it lies if that is on [p]'s devices,
-   and otherwise a copy on each of them, as nx places a host operand. *)
-let capture s what p x =
-  if (not (on_disk x)) && same_devices (Nx.placement x) p then
-    bind s what (Nx.placement x) x
-  else placed s what (context p) x
 
 exception Uncomputed
 
@@ -980,6 +980,64 @@ let rec copied u d =
       | [] -> Ops.copy_to_device u d)
   | _ -> Ops.copy_to_device u d
 
+(* [moved s what p q u shape] is [u], the node of a value of [shape] at [p], at
+   [q]: the same node where [q] lays it out alike, copied to [q]'s devices, or
+   split over them. *)
+let moved s what p q u shape =
+  if same_layout p q shape then u
+  else
+    match layout what q shape with
+    | Split axis -> (
+        match device_of s q with
+        | Ops.Multi names -> Ops.shard ~axis u names
+        | Ops.Single _ as d -> Ops.copy_to_device u d)
+    | One | Copies -> (
+        match followed s q u with
+        | Some u -> u
+        | None -> copied u (device_of s q))
+
+(* [transferred p x] is [x], a value that is not traced, on the one device of
+   [p]: the run of its storage that its view reads, copied there. *)
+let transferred (type a b) p (x : (a, b) Nx.t) : (a, b) Nx.t =
+  let dt = Nx.dtype x and bufs, v = Nx.shards x in
+  let src = run dt v (List.hd bufs) in
+  let dst =
+    Nx_device.Buffer.create
+      (List.hd (memories p))
+      (Nx_device.Buffer.dtype src)
+      (Nx_device.Buffer.length src)
+  in
+  Nx_device.Buffer.copy ~src ~dst;
+  Nx.of_shards p dt (within dt v) [ dst ]
+
+(* [placed s what p x] is the node of [x], a value that is not traced, at [p]:
+   where it lies if that is [p]. A value of one element that lies elsewhere is a
+   constant read now: placing it would copy it to [p] only to read it back, and
+   a copy waits for the work queued on [p], so a trace would stall behind the
+   kernels of the calls before it. Otherwise a value on one device, or on the
+   disk, is copied to [p]'s one device through its storage, and any other is
+   bound where it lies, the host for the disk, and moved by the program. The
+   lowering issues no operation of nx: it places a value only when it traces,
+   which no interpretation may see. *)
+let placed s what p x =
+  let one q = List.compare_length_with (memories q) 1 = 0 in
+  let at = Nx.placement x in
+  if same_layout at p (Nx.shape x) then bind s what p x
+  else if single (snd (Nx.shards x)) then scalar (check s what p (Nx.dtype x)) x
+  else if one p && one at then bind s what p (transferred p x)
+  else
+    let x = if on_disk x then transferred Placement.host x else x in
+    let at = Nx.placement x in
+    moved s what at p (bind s what at x) (Nx.shape x)
+
+(* [capture s what p x] is the node of [x], a value that is not traced, as an
+   operand of an operation at [p]: where it lies if that is on [p]'s devices,
+   and otherwise a copy on each of them, as nx places a host operand. *)
+let capture s what p x =
+  if (not (on_disk x)) && same_devices (Nx.placement x) p then
+    bind s what (Nx.placement x) x
+  else placed s what (context p) x
+
 (* [node s what p x] is the node of the operand [x] of an operation at [p]. A
    traced value on other devices is computed there when it reads only captures,
    and copied there otherwise, as nx places a host operand of an operation on a
@@ -1014,19 +1072,7 @@ let move u : Nx.Op.move -> Ops.t = function
 
 (* [place s what p q x] is the traced [x], at [p], at [q]: the same node where
    [q] lays it out alike, copied to [q]'s devices, or split over them. *)
-let place s what p q x =
-  let u = uop s x and shape = Nx.shape x in
-  if same_layout p q shape then u
-  else
-    match layout what q shape with
-    | Split axis -> (
-        match device_of s q with
-        | Ops.Multi names -> Ops.shard ~axis u names
-        | Ops.Single _ as d -> Ops.copy_to_device u d)
-    | One | Copies -> (
-        match followed s q u with
-        | Some u -> u
-        | None -> copied u (device_of s q))
+let place s what p q x = moved s what p q (uop s x) (Nx.shape x)
 
 (* Conversions *)
 

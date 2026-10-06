@@ -4438,9 +4438,73 @@ let unaligned_on_disk v =
            ~offset:2 Nx_dtype.Scalar.Int32 n;
        ])
 
+(* [captured ()] is a host constant, a one-element value on the disk and a value
+   on the disk, which a function captures: the lowering reads the second and
+   places the third when it traces. *)
+let captured () =
+  ( x (),
+    on_disk_at (temp_file ()) (Nx.create Nx.float32 [| 1 |] [| 1.5 |]),
+    on_disk_at (temp_file ()) (y ()) )
+
+(* [nested_reading (c, one, w) xs] scans the rows of [xs] with a step that scans
+   its row's elements, the inner step reading the three captures. *)
+let nested_reading (c, one, w) xs =
+  fst
+    (Rune.scan'
+       ~f:(fun acc row ->
+         let inner, _ =
+           Rune.scan'
+             ~f:(fun d e ->
+               (Nx.add (Nx.mul_s d 0.5) (Nx.add (Nx.mul e c) (Nx.mul w one)), d))
+             ~init:acc row
+         in
+         (inner, inner))
+       ~init:(Nx.zeros Nx.float32 [| 4 |])
+       xs)
+
+let rows34 () =
+  Nx.reshape [| 3; 4 |] (Nx.mul_s (Nx.arange_f Nx.float32 0. 12. 1.) 0.1)
+
 let disk =
   group "values on the disk"
     [
+      test
+        "a scan in a staged scan's step reads a host constant, a one-element \
+         value on the disk and a value on the disk as eager" (fun () ->
+          let k = captured () in
+          equal close
+            (nested_reading k (rows34 ()))
+            (Rune.jit' (nested_reading k) (rows34 ())));
+      test
+        "grad through a compiled function that reads those captures is \
+         eager's, under jit too" (fun () ->
+          let k = captured () in
+          let loss xs = Nx.sum (Rune.jit' (nested_reading k) xs) in
+          let eager =
+            Rune.grad' (fun xs -> Nx.sum (nested_reading k xs)) (rows34 ())
+          in
+          equal close eager (Rune.grad' loss (rows34 ()));
+          equal close eager (Rune.jit' (Rune.grad' loss) (rows34 ())));
+      test
+        "an interception around a compiled call meets the same operations when \
+         it traces and when it replays" (fun () ->
+          let k = captured () in
+          let f = Rune.jit' (nested_reading k) in
+          let noted = ref [] in
+          let noting () =
+            noted := [];
+            let run op =
+              noted := Format.asprintf "%a" Nx.Op.pp op :: !noted;
+              Nx.Op.eval op
+            in
+            ignore
+              (Nx.Op.intercept
+                 { run; claims = (fun _ -> true) }
+                 (fun () -> f (rows34 ())));
+            List.rev !noted
+          in
+          let tracing = noting () in
+          equal (list string) tracing (noting ()));
       test "a value on the disk not aligned to its elements is read" (fun () ->
           let v = [| 1l; -2l; 70000l; Int32.min_int; Int32.max_int; 0l |] in
           let a = unaligned_on_disk v in

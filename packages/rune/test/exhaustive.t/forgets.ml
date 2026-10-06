@@ -2,7 +2,7 @@
 
 open Rune_internals
 
-let call : type r. r Construct.t -> (unit -> r) option =
+let call : type r. r Construct.t -> r Construct.answer option =
  fun c ->
   match[@warning "@4@8"] c with
   | Loop _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _ | Lanes _

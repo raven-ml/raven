@@ -624,9 +624,17 @@ let compile ?beam ?parallel ~profile (type a r) (args_s : a Ptree.t)
             | "" -> "the result"
             | path -> "result " ^ path
         in
-        (* A structure checks its leaves' shapes; a broadcast scalar has the
-           shape without the bytes. *)
-        let like = Nx.P (Nx.broadcast_to shape (Nx.zeros dt [||])) in
+        (* A structure checks its leaves' shapes; a broadcast element has the
+           shape without the bytes. It is made from storage: a compiled call
+           makes it only when it traces, which no interpretation may see. *)
+        let like =
+          let buffer = Nx_array.Elements.create dt 1 in
+          Nx_array.Elements.fill dt buffer (Nx_dtype.zero dt);
+          let view =
+            Nx_array.View.create ~strides:(Array.map (fun _ -> 0) shape) shape
+          in
+          Nx.P (Nx.Repr.host { Nx_array.dtype = dt; view; buffer })
+        in
         { like; shape; at; out; name })
       ys
   in

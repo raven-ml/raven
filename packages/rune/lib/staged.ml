@@ -97,6 +97,9 @@ let stride u m =
   let per = Int.max 1 (16 / Ops.element_size u) in
   (m + per - 1) / per * per
 
+(* The root of a staged body's own key scope, which no argument varies. *)
+let unvaried = Nx.Rng.key 0
+
 (* [stage ~here ~inside s r] is the loop [r] in the trace [s]: a range of as
    many trips as [r] has rows, or of at most [max] trips while a flag holds,
    around one call of its step, which [inside] traces once in [s] as the call's
@@ -137,9 +140,9 @@ let stage ~here ~inside s (r : Trips.request) =
             (fun l -> Nx.Placement.(equal (at l) p || equal (at l) host))
             leaves)
   then decline "its carry lies on several devices";
-  (* A host leaf joins the loop's device, as nx joins a host operand to a
-     device one, unless the function moved it to the host: there it stays, and a
-     loop on a device cannot run a step on it. *)
+  (* A host leaf joins the loop's device, as nx joins a host operand to a device
+     one, unless the function moved it to the host: there it stays, and a loop
+     on a device cannot run a step on it. *)
   let host =
     Ops.Single
       (Nx_device.name
@@ -219,11 +222,17 @@ let stage ~here ~inside s (r : Trips.request) =
         let u = until c in
         [ Nx.P u; Nx.P (Nx.reshape [| 1 |] (Nx.logical_not (Nx.all u))) ]
   in
+  (* The body draws from a scope of its own, rooted at a constant: a draw from
+     the scope around the call would take a key there for an attempt that may be
+     written out, and repeat on every trip. *)
   let (carry', ys, stop'), checks =
     Lower.checking s (fun () ->
         inside s (fun () ->
-            let c', ys = r.req_step (List.map snd carry) (List.map snd rows) in
-            (c', ys, stop c')))
+            Nx.Rng.with_key unvaried (fun () ->
+                let c', ys =
+                  r.req_step (List.map snd carry) (List.map snd rows)
+                in
+                (c', ys, stop c'))))
   in
   let same_shape (_, Nx.P c) (Nx.P c') =
     Nx.shape c = Nx.shape c' && Nx.Placement.equal (Nx.placement c') p
@@ -495,58 +504,94 @@ let stage ~here ~inside s (r : Trips.request) =
         ys outputs;
   }
 
-let rec trace : 'a. body:bool -> Lower.scope -> (unit -> 'a) -> 'a =
- fun ~body s f ->
-  let call : type r. r Construct.t -> (unit -> r) option =
+(* [reads_body memo u] is [true] iff [u] reads a parameter of a staged body,
+   memoised in [memo]: a value a step computes. A called body's own nodes are
+   left out. *)
+let reads_body memo =
+  let rec go u =
+    match Ops.Tbl.find_opt memo u with
+    | Some r -> r
+    | None ->
+        let r =
+          Ops.op u = Op.Param || List.exists go (Ops.src_without_body u)
+        in
+        Ops.Tbl.add memo u r;
+        r
+  in
+  go
+
+let escaped () =
+  invalid_arg
+    "Rune.jit: a value computed inside a loop's step escaped it; return it in \
+     the carry or add it to a Rune.Total"
+
+let rec trace :
+    'a. body:bool -> bool Ops.Tbl.t -> Lower.scope -> (unit -> 'a) -> 'a =
+ fun ~body memo s f ->
+  let value = Construct.value and here = Construct.here in
+  let call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
     match[@warning "@4@8"] c with
-    | Detach x -> Some (fun () -> x)
+    | Detach x -> Some (value (fun () -> x))
     | Compiled { f; args; _ } ->
-        Some (fun () -> trace ~body s (fun () -> f args))
+        Some (here (fun () -> trace ~body memo s (fun () -> f args)))
     | Loop ({ req_trips = Rows _; _ } as r) ->
         Some
-          (fun () -> stage ~here:(trace ~body) ~inside:(trace ~body:true) s r)
+          (here (fun () ->
+               stage ~here:(trace ~body memo) ~inside:(trace ~body:true memo) s
+                 r))
     | Loop ({ req_trips = Until { until; max = 0; failure }; _ } as r) ->
         (* A loop of no trip checks its stop. *)
         Some
-          (fun () ->
-            trace ~body s (fun () ->
-                Nx.check Nx.Ptree.unit (until r.req_carry) () (fun i () ->
-                    Invalid_argument (failure i)));
-            { Trips.r_carry = r.req_carry; r_ys = [] })
+          (here (fun () ->
+               trace ~body memo s (fun () ->
+                   Nx.check Nx.Ptree.unit (until r.req_carry) () (fun i () ->
+                       Invalid_argument (failure i)));
+               { Trips.r_carry = r.req_carry; r_ys = [] }))
     | Loop ({ req_trips = Until _; _ } as r) ->
         Some
-          (fun () ->
-            (* A loop until a stop declines nothing itself: [Not_staged] here is
-               a draw of its step from a key the body does not vary. *)
-            try stage ~here:(trace ~body) ~inside:(trace ~body:true) s r
-            with Trips.Not_staged ->
-              raise
-                (Lower.Jit_error
-                   "Rune.jit: Rune.iterate cannot be compiled: its step draws \
-                    from a key it does not vary"))
+          (here (fun () ->
+               (* A loop until a stop declines nothing itself: [Not_staged] here
+                  is a draw of its step from a key the body does not vary. *)
+               try
+                 stage ~here:(trace ~body memo) ~inside:(trace ~body:true memo)
+                   s r
+               with Trips.Not_staged ->
+                 raise
+                   (Lower.Jit_error
+                      "Rune.jit: Rune.iterate cannot be compiled: its step \
+                       draws from a key it does not vary")))
     | Remat { recomputed = true; p; f; args; _ } when not body ->
         Some
-          (fun () ->
-            let leaves, _ = Nx.Ptree.flatten p args in
-            let args =
-              Nx.Ptree.rebuild p ~like:args (List.map (kept s) leaves)
-            in
-            trace ~body s (fun () -> f args))
+          (here (fun () ->
+               let leaves, _ = Nx.Ptree.flatten p args in
+               let args =
+                 Nx.Ptree.rebuild p ~like:args (List.map (kept s) leaves)
+               in
+               trace ~body memo s (fun () -> f args)))
     | Barrier { values; after = deps } when not body ->
-        Some (fun () -> after s values deps)
+        Some (value (fun () -> after s values deps))
     | Remat _ | Barrier _ | Custom _ | Root _ | At_map _ | Lanes _
     | Lane_index _ | Lane_count _ | Add _ ->
         None
   in
-  (* A body runs outside the key scopes the function opened, and once for every
-     trip: a draw it cannot vary is drawn where the loop is written. *)
+  let in_body x = reads_body memo (Lower.value s x) in
+  (* Outside every body, an operation reads no value a step computed: one
+     reaches it only through a handler around the loop, which runs outside the
+     step. *)
+  let escapes (Nx.P x) = Lower.traces s x && in_body x in
   let run : type r. r Nx.Op.t -> r = function
-    | Threefry _ as o when body -> (
-        try Lower.op s o with Lower.Jit_error _ -> raise Trips.Not_staged)
-    | o -> Lower.op s o
+    | Threefry (key, counter) as o when body ->
+        (* A body runs once for every trip: a draw whose key and counter read no
+           parameter of the body would repeat on every trip, so the loop is
+           written out, each trip drawing where the loop is written. *)
+        if not (in_body key || in_body counter) then raise Trips.Not_staged;
+        Lower.op s o
+    | o ->
+        if (not body) && List.exists escapes (Nx.Op.operands o) then escaped ();
+        Lower.op s o
   in
   let op = { Nx.Op.run; claims = (fun _ -> true) } in
   Construct.install { op = Some op; call } f
 
-let install s f = trace ~body:false s f
+let install s f = trace ~body:false (Ops.Tbl.create 64) s f

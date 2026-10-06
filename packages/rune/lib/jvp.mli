@@ -37,15 +37,14 @@ val tangent : t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 val install : t -> (unit -> 'a) -> 'a
 (** [install i f] is [f ()] under [i]'s interpreter ({!Construct.install}).
 
-    A custom rule with one of [i]'s duals among its arguments runs at the
-    arguments' primals, outside [i]: a [custom_jvp] rule's result is the answer
-    of the differentiations around [i] to the rule there, and its tangent the
-    rule's tangent map at [i]'s tangents, zeros or a slot nothing feeds for an
-    argument [i] does not track; under reverse mode the map is not applied to a
-    result that holds no tensor, and a loop in it unrolls. A [custom_vjp] rule's
-    result is the rule's, with, under reverse mode, a linear call whose
-    transpose is the rule's pullback between the conjugated cotangents and
-    gradients.
+    A custom rule with one of [i]'s duals among its arguments runs at the call,
+    at the arguments' primals: a [custom_jvp] rule's result is the answer of the
+    differentiations around [i] to the rule there, and its tangent the rule's
+    tangent map at [i]'s tangents, zeros or a slot nothing feeds for an argument
+    [i] does not track; under reverse mode the map is not applied to a result
+    that holds no tensor, and a loop in it unrolls. A [custom_vjp] rule's result
+    is the rule's, with, under reverse mode, a linear call whose transpose is
+    the rule's pullback between the conjugated cotangents and gradients.
 
     A root passes on with [i]'s values read as primals in its functions, so its
     solve is never differentiated; its tangent is the root, passed on, of the

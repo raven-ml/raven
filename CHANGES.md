@@ -173,6 +173,23 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- The functions rune's constructs carry run at their call, inside the
+  handlers, `Rune.Total.collect` scopes and transformations around it, under
+  every transformation: a staged or batched loop's step, a nested `jit`, a
+  `custom_jvp` or `custom_vjp` rule and its tangent map, a `remat`'s function
+  and a `root`'s `solve`. An effect such a function performs reaches the
+  handlers around the call instead of raising `Effect.Unhandled` under `jit`,
+  `grad` or `vmap`, and a rule's additions reach the scopes around its call.
+- Under `jit`, a value a loop's step computes that reaches the program other
+  than through the carry, the outputs or a `Rune.Total` the step adds to, as
+  through a handler around the loop that computes from it, raises
+  `Invalid_argument`; it raised `Not_found`.
+- In a `vmap`ped `Rune.iterate` whose lanes stop apart, a stopped lane's
+  additions inside a compiled call in the step are dropped, as the step's own
+  are; they were counted.
+- A compiled call reads a one-element capture and places a capture that lies
+  elsewhere through its storage, so an `Nx.Op.intercept` around the call no
+  longer meets operations on the call that traces only.
 - Compiled `x * recip y` on the host now equals eager bit for bit; it was
   divided, rounding once where eager rounds twice.
 - A compiled check returns its data at the failing index, so a compiled

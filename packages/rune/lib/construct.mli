@@ -222,12 +222,31 @@ type _ t =
 
 (** {1:interpreting Interpreting} *)
 
+type 'r answer
+(** The type for an installation's answers to constructs of result ['r]. *)
+
+val value : (unit -> 'r) -> 'r answer
+(** [value f] answers with [f ()], run in the handler, outside the extent of the
+    installation: a construct [f] performs reaches the installations around it,
+    and an operation it issues the interpretation around it. A construct whose
+    answer computes from its operands alone takes it. *)
+
+val here : (unit -> 'r) -> 'r answer
+(** [here f] answers with [f ()], run at the call: its operations meet the
+    interpreters at the call and its effects the handlers there. A construct [f]
+    performs that no installation [f] opens takes is offered to the
+    installations around the one that answered, as if its handler had performed
+    it: the installations between the call and that one met the construct it
+    answered, and meet the body through their installations again ({!install}).
+    A construct that carries a function takes it, so that the function runs
+    where its arguments exist. *)
+
 type interpreter = {
   op : Nx.Op.interpreter option;
       (** The interpreter of nx's operations, if any. *)
-  call : 'r. 'r t -> (unit -> 'r) option;
-      (** [call c] is [Some answer] if the installation takes [c], whose answer
-          is [answer ()], and [None] if it passes [c] outward. *)
+  call : 'r. 'r t -> 'r answer option;
+      (** [call c] is [Some a] if the installation takes [c], answering [a], and
+          [None] if it passes [c] outward. *)
 }
 (** The type for interpreters of constructs and operations. *)
 
@@ -241,16 +260,24 @@ val claims : owner -> 'r Nx.Op.t -> bool
 val install : interpreter -> (unit -> 'a) -> 'a
 (** [install i f] is [f ()] with every construct of its extent delivered to
     [i.call] and, when [i.op] is [Some o], every operation to [o] through
-    {!Nx.Op.intercept}, inside the construct handler. [None] passes a construct
-    outward. An answer, a value or an exception, resumes the performer; an
-    exception [i.call c] raises is its answer. With [i.op = None] nothing is
+    {!Nx.Op.intercept}, inside the construct handler. An answer, a value or an
+    exception, resumes the performer; an exception [i.call c] or a {!value}
+    answer raises is raised at the call. With [i.op = None] nothing is
     intercepted and no gate is raised.
 
-    [i.call] and its answers run in the handler, outside [f]'s extent: a
-    construct they perform reaches the installations around [install], and an
-    operation they issue the interpretation around it. [o] runs inside the
-    construct handler: a construct it performs reaches [i.call] first, and an
-    operation it issues the interpretation around [install]. *)
+    [i.call c = None] passes [c] outward. When [c] carries a function
+    ({!carries}), the installation is installed again around that function, so
+    that it meets the function's constructs and operations at its own level,
+    inside every installation that answers [c] further out. A compiled call is
+    the exception: its function runs inside the installations its compiler
+    derives, so an installation that takes constructs by name or by kind derives
+    every compiled call it meets, and one that passes it takes only the values
+    it owns, which a trace refuses to capture.
+
+    [i.call] runs in the handler, and so does a {!value} answer; a {!here}
+    answer runs at the call. [o] runs inside the construct handler: a construct
+    it performs reaches [i.call] first, and an operation it issues the
+    interpretation around [install]. *)
 
 val default : 'r t -> 'r
 (** [default c] is [c]'s default: its answer when no installation takes it. *)
@@ -259,6 +286,12 @@ val perform : 'r t -> 'r
 (** [perform c] is the answer of the nearest installation that takes [c], or
     [c]'s default, computed at the call, when none does. An exception an
     installation answers with is raised here. *)
+
+val carries : 'r t -> bool
+(** [carries c] is [true] iff [c] carries a function that runs where its
+    arguments exist: a loop, a compiled call, a remat, a custom rule or a root.
+    An installation answers such a construct {!here}; a map's call of a function
+    at its own level ({!At_map}) runs where the map answers. *)
 
 val loop : Trips.request -> Trips.result
 (** [loop r] is [perform (Loop r)], or, when [r] is declined with

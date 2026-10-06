@@ -331,18 +331,24 @@ let swap (Nx.P x) = Nx.P (Nx.swapaxes 0 1 x)
    once it returns, and dropped if it raises. *)
 let deferring_additions f =
   let pending = ref [] in
-  let call : type r. r Construct.t -> (unit -> r) option =
+  let rec within : type a. (unit -> a) -> a =
+   fun f -> Construct.install { op = None; call } f
+  and call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
     match[@warning "@4@8"] c with
     | Add (t, v) ->
         Some
-          (fun () ->
-            pending := (fun () -> Construct.perform (Add (t, v))) :: !pending)
-    | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
-    | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
+          (Construct.value (fun () ->
+               pending := (fun () -> Construct.perform (Add (t, v))) :: !pending))
+    | Compiled { f; args; _ } ->
+        (* A compiled call's additions are deferred too: it runs inline, as the
+           loop around it does, trip by trip. *)
+        Some (Construct.here (fun () -> within (fun () -> f args)))
+    | Loop _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _ | Lanes _
+    | Lane_index _ | Lane_count _ | Detach _ ->
         None
   in
-  let y = Construct.install { op = None; call } f in
+  let y = within f in
   List.iter (fun add -> add ()) (List.rev !pending);
   y
 
@@ -354,20 +360,26 @@ let swapped s x = Nx.Ptree.map s (fun _ x -> Nx.swapaxes 0 1 x) x
 (* [separate m f] is [f ()] with a gathering across [m]'s lanes refused: a
    root's residual states one system per lane. *)
 let separate m f =
-  let call : type r. r Construct.t -> (unit -> r) option =
+  let rec within : type a. (unit -> a) -> a =
+   fun f -> Construct.install { op = None; call } f
+  and call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
     match[@warning "@4@8"] c with
     | Lanes (axis, _) when named m axis ->
         Some
-          (fun () ->
-            invalid_arg
-              "Rune.root: the residual reads other lanes of the map, so the \
-               lanes' systems are not separate")
-    | Lanes _ | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _
-    | At_map _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
+          (Construct.value (fun () ->
+               invalid_arg
+                 "Rune.root: the residual reads other lanes of the map, so the \
+                  lanes' systems are not separate"))
+    | Compiled { f; args; _ } ->
+        (* A compiled call in the residual runs inline, so that a gathering
+           inside it is refused too. *)
+        Some (Construct.here (fun () -> within (fun () -> f args)))
+    | Lanes _ | Loop _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
+    | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None
   in
-  Construct.install { op = None; call } f
+  within f
 
 (* [folded r] is the loop [r] performed outward, or folded here, its additions
    deferred, when no stager stages it. *)
@@ -376,27 +388,28 @@ let folded r =
   | result -> result
   | exception Trips.Not_staged -> deferring_additions (fun () -> Trips.fold r)
 
-let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
+let rec answer : type r. t -> r Construct.t -> r Construct.answer option =
  fun m c ->
+  let value = Construct.value and here = Construct.here in
   match[@warning "@4@8"] c with
   | Lanes (axis, _) when named m axis && Option.is_some m.held ->
       Some
-        (fun () ->
-          invalid_arg
-            "Rune.lanes: a lane of Rune.iterate that stopped takes no more \
-             trips, so a step cannot gather every lane; give every lane the \
-             same stop")
+        (value (fun () ->
+             invalid_arg
+               "Rune.lanes: a lane of Rune.iterate that stopped takes no more \
+                trips, so a step cannot gather every lane; give every lane the \
+                same stop"))
   | Lanes (axis, x) when named m axis ->
       Some
-        (fun () ->
-          if owns m x then physical m x
-          else Nx.broadcast_to (Array.append [| m.size |] (Nx.shape x)) x)
+        (value (fun () ->
+             if owns m x then physical m x
+             else Nx.broadcast_to (Array.append [| m.size |] (Nx.shape x)) x))
   | Lanes (axis, x) ->
       if owns m x then
         Some
-          (fun () ->
-            let gathered = Construct.perform (Lanes (axis, physical m x)) in
-            lane m (Nx.swapaxes 0 1 gathered))
+          (value (fun () ->
+               let gathered = Construct.perform (Lanes (axis, physical m x)) in
+               lane m (Nx.swapaxes 0 1 gathered)))
       else None
   | Lane_index axis ->
       let ours =
@@ -405,31 +418,39 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
       if not ours then None
       else
         Some
-          (fun () ->
-            match m.held with
-            | Some h -> lane m (Nx.cast Nx.int32 h.donors)
-            | None -> lane m (Nx.arange Nx.int32 0 m.size 1))
-  | Lane_count axis -> if named m axis then Some (fun () -> m.size) else None
-  | Add (t, v) -> Some (fun () -> Construct.perform (Add (t, sum_running m v)))
+          (value (fun () ->
+               match m.held with
+               | Some h -> lane m (Nx.cast Nx.int32 h.donors)
+               | None -> lane m (Nx.arange Nx.int32 0 m.size 1)))
+  | Lane_count axis ->
+      if named m axis then Some (value (fun () -> m.size)) else None
+  | Add (t, v) ->
+      Some (value (fun () -> Construct.perform (Add (t, sum_running m v))))
   | Detach x ->
       if owns m x then
-        Some (fun () -> lane m (Construct.perform (Detach (physical m x))))
+        Some
+          (value (fun () -> lane m (Construct.perform (Detach (physical m x)))))
       else None
-  | Custom r -> Some (fun () -> custom m r)
+  | Custom r -> Some (here (fun () -> custom m r))
   | Remat { p; q; f; args; recomputed } ->
       Some
-        (fun () ->
-          let flags = lanes_of m p args and out = ref [] in
-          let f args =
-            let y = install m (fun () -> f (relanes m p flags args)) in
-            out := lanes_of m q y;
-            physicals m q y
-          in
-          let y =
-            Construct.perform
-              (Remat { p; q; f; args = physicals m p args; recomputed })
-          in
-          relanes m q !out y)
+        (here (fun () ->
+             let flags = lanes_of m p args and out = ref [] in
+             let f args =
+               let y = install m (fun () -> f (relanes m p flags args)) in
+               out := lanes_of m q y;
+               physicals m q y
+             in
+             let y =
+               Construct.perform
+                 (Remat { p; q; f; args = physicals m p args; recomputed })
+             in
+             relanes m q !out y))
+  | Compiled { f; args; _ } when Option.is_some m.held ->
+      (* In a step whose lanes stop apart, a compiled call runs inline, as the
+         step does, so that its stopped lanes' additions are dropped and their
+         lane indices are their donors'. *)
+      Some (here (fun () -> install m (fun () -> f args)))
   | Compiled { p; q; f; args; compiler } ->
       (* The compiled call of the mapped function, whose results all carry the
          lanes, so that they are the same whether or not it was traced on this
@@ -438,86 +459,87 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
          function reads through its closure reaches the trace, which refuses
          it. *)
       Some
-        (fun () ->
-          let lanes = lanes_of m p args in
-          let f args =
-            let m' = create ?axis:m.axis m.entry m.size in
-            all_batched m' q
-              (install m' (fun () -> f (relanes m' p lanes args)))
-          in
-          let derived =
-            Construct.Vmap { lanes; size = m.size; axis = m.axis }
-          in
-          let y =
-            Construct.perform
-              (Compiled
-                 {
-                   p;
-                   q;
-                   f;
-                   args = physicals m p args;
-                   compiler = compiler.derive derived;
-                 })
-          in
-          let outs = List.map (fun _ -> true) (fst (Nx.Ptree.flatten q y)) in
-          relanes m q outs y)
+        (here (fun () ->
+             let lanes = lanes_of m p args in
+             let f args =
+               let m' = create ?axis:m.axis m.entry m.size in
+               all_batched m' q
+                 (install m' (fun () -> f (relanes m' p lanes args)))
+             in
+             let derived =
+               Construct.Vmap { lanes; size = m.size; axis = m.axis }
+             in
+             let y =
+               Construct.perform
+                 (Compiled
+                    {
+                      p;
+                      q;
+                      f;
+                      args = physicals m p args;
+                      compiler = compiler.derive derived;
+                    })
+             in
+             let outs = List.map (fun _ -> true) (fst (Nx.Ptree.flatten q y)) in
+             relanes m q outs y))
   | Root { x; residual; solve; linear_solve } ->
       (* Each lane solves its own system: the root of the mapped functions,
          every leaf batched. [linear_solve] runs at lane level, and applies the
          operator it receives at the map's level ([At_map]). *)
       Some
-        (fun () ->
-          let lanes v = relanes m x (all_leaves x v) v in
-          let mapped f = all_batched m x (install m f) in
-          let residual v =
-            mapped (fun () -> separate m (fun () -> residual (lanes v)))
-          in
-          let solve () = mapped solve in
-          let linear_solve op b =
-            let op v =
-              Construct.perform
-                (At_map { map = m.id; p = x; q = x; f = op; x = v })
-            in
-            mapped (fun () -> linear_solve op (lanes b))
-          in
-          lanes (Construct.perform (Root { x; residual; solve; linear_solve })))
+        (here (fun () ->
+             let lanes v = relanes m x (all_leaves x v) v in
+             let mapped f = all_batched m x (install m f) in
+             let residual v =
+               mapped (fun () -> separate m (fun () -> residual (lanes v)))
+             in
+             let solve () = mapped solve in
+             let linear_solve op b =
+               let op v =
+                 Construct.perform
+                   (At_map { map = m.id; p = x; q = x; f = op; x = v })
+               in
+               mapped (fun () -> linear_solve op (lanes b))
+             in
+             lanes
+               (Construct.perform (Root { x; residual; solve; linear_solve }))))
   | At_map ({ map; p; q; f; x } as a) ->
       if m.id == map || adopts m map then
         (* The map's own level: [f] runs on every lane's values at once, here,
            outside the map's extent. *)
         Some
-          (fun () ->
-            let y = f (all_batched m p x) in
-            relanes m q (all_leaves q y) y)
+          (value (fun () ->
+               let y = f (all_batched m p x) in
+               relanes m q (all_leaves q y) y))
       else if List.mem true (lanes_of m p x) then
         (* A map between: its lanes become an axis behind the outer map's, which
            [f] is mapped over. *)
         Some
-          (fun () ->
-            let f b = swapped q (mapped_over m.size p q f (swapped p b)) in
-            let y =
-              Construct.perform (At_map { a with f; x = all_batched m p x })
-            in
-            relanes m q (all_leaves q y) y)
+          (value (fun () ->
+               let f b = swapped q (mapped_over m.size p q f (swapped p b)) in
+               let y =
+                 Construct.perform (At_map { a with f; x = all_batched m p x })
+               in
+               relanes m q (all_leaves q y) y))
       else None
   | Loop ({ req_trips = Rows { xs; reverse }; _ } as r) ->
-      Some (fun () -> scan m r xs reverse)
+      Some (here (fun () -> scan m r xs reverse))
   | Loop ({ req_trips = Until { until; max; failure }; _ } as r) ->
-      Some (fun () -> iterate m r ~until ~max ~failure)
+      Some (here (fun () -> iterate m r ~until ~max ~failure))
   | Barrier { values; after } ->
       let flags = leaf_lanes m values in
       if List.mem true flags || List.mem true (leaf_lanes m after) then
         Some
-          (fun () ->
-            let read =
-              Construct.perform
-                (Barrier
-                   {
-                     values = List.map (physical_leaf m) values;
-                     after = List.map (physical_leaf m) after;
-                   })
-            in
-            lanes_at m flags read)
+          (value (fun () ->
+               let read =
+                 Construct.perform
+                   (Barrier
+                      {
+                        values = List.map (physical_leaf m) values;
+                        after = List.map (physical_leaf m) after;
+                      })
+               in
+               lanes_at m flags read))
       else None
 
 (* A scan passes on batched: a lane row has the scan's axis in front of the

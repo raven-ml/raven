@@ -2,5 +2,5 @@
 
 open Rune_internals
 
-let call : type r. r Construct.t -> (unit -> r) option =
+let call : type r. r Construct.t -> r Construct.answer option =
  fun c -> match[@warning "@4@8"] c with Detach _ -> None | _ -> None

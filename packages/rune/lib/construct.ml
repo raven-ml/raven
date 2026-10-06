@@ -143,9 +143,14 @@ type _ t =
   | Add : ('a, 'b) total * ('a, 'b) Nx.t -> unit t
   | Detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
 
+type 'r answer = Value of (unit -> 'r) | Here of (unit -> 'r)
+
+let value f = Value f
+let here f = Here f
+
 type interpreter = {
   op : Nx.Op.interpreter option;
-  call : 'r. 'r t -> (unit -> 'r) option;
+  call : 'r. 'r t -> 'r answer option;
 }
 
 type owner = { owns : 'a 'b. ('a, 'b) Nx.t -> bool }
@@ -192,7 +197,14 @@ let claims : type r. owner -> r Nx.Op.t -> bool =
   | Check { ok; data; _ } ->
       owns ok || List.exists (fun (Nx.P x) -> owns x) data
 
-type _ Effect.t += Construct : 'r t -> 'r Effect.t
+(* An installation's identity. *)
+type installation = unit ref
+type 'r performed = { construct : 'r t; mutable past : installation option }
+
+(* An answer the performer receives: a value, or a function it runs at the call,
+   as the answer of an installation. *)
+type 'r reply = Answer of 'r | Run of installation * (unit -> 'r)
+type _ Effect.t += Construct : 'r performed -> 'r reply Effect.t
 
 let default : type r. r t -> r = function
   | Loop _ -> raise Trips.Not_staged
@@ -219,12 +231,27 @@ let default : type r. r t -> r = function
    is global because a suspended fiber may resume on another domain. *)
 let installed = Atomic.make 0
 
+(* [answered x f] is [f ()], an answer of the installation [x] run at the call:
+   a construct that leaves its extent passes every installation up to [x], and
+   [x] too, since the installations between the call and [x] passed the
+   construct [x] answered, and [x] derived it. *)
+let answered x f =
+  let effc : type c b.
+      c Effect.t -> ((c, b) Effect.Deep.continuation -> b) option = function
+    | Construct p ->
+        if Option.is_none p.past then p.past <- Some x;
+        None
+    | _ -> None
+  in
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+
 let perform c =
   if Atomic.get installed = 0 then default c
   else
-    let e = Construct c in
+    let e = Construct { construct = c; past = None } in
     match Effect.perform e with
-    | r -> r
+    | Answer r -> r
+    | Run (x, f) -> answered x f
     | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e -> default c
 
 let loop r =
@@ -232,33 +259,20 @@ let loop r =
   | r -> r
   | exception Trips.Not_staged -> Trips.fold r
 
-let resume answer k =
-  match answer () with
+(* [resume f k] resumes [k] with [f ()], or with the exception it raises. *)
+let resume f k =
+  match f () with
   | r -> Effect.Deep.continue k r
   | exception e ->
       Effect.Deep.discontinue_with_backtrace k e (Printexc.get_raw_backtrace ())
 
-let install i f =
-  let effc : type c a.
-      c Effect.t -> ((c, a) Effect.Deep.continuation -> a) option = function
-    | Construct c -> (
-        match i.call c with
-        | None -> None
-        | Some answer -> Some (resume answer)
-        | exception e ->
-            let bt = Printexc.get_raw_backtrace () in
-            Some (fun k -> Effect.Deep.discontinue_with_backtrace k e bt))
-    | _ -> None
-  in
-  let f =
-    match i.op with None -> f | Some o -> fun () -> Nx.Op.intercept o f
-  in
-  let exnc e =
-    Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-  in
-  Atomic.incr installed;
-  Fun.protect ~finally:(fun () -> Atomic.decr installed) @@ fun () ->
-  Effect.Deep.match_with f () { retc = Fun.id; exnc; effc }
+(* Whether [c] carries a function that runs where its arguments exist. A map's
+   call of a function at its own level runs where the map answers. *)
+let carries : type r. r t -> bool = function
+  | Loop _ | Compiled _ | Remat _ | Custom _ | Root _ -> true
+  | At_map _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ | Add _
+  | Detach _ ->
+      false
 
 (* [carried within s c] is [c] with each value it reads replaced by [s]'s for it
    and each function it carries run [within] an installation, or [None] for a
@@ -337,7 +351,59 @@ let carried : type r. within -> Nx.Op.mapper -> r t -> r t option =
   | Add (t, v) -> Some (Add (t, s.f v))
   | Lane_index _ | Lane_count _ -> None
 
-let again c = Option.map (fun c () -> perform c) c
+let same : Nx.Op.mapper = { f = Fun.id }
+
+(* An installation that passes a construct carrying a function is installed
+   again around that function, so that it meets the function's constructs and
+   operations at its own level, inside every installation that answers the
+   construct further out. A compiled call's function runs inside the
+   installations its compiler derives: one that passes it takes constructs only
+   through values it owns, which a trace refuses to capture. *)
+let rec pass : type r. interpreter -> r t -> r answer option =
+ fun i -> function
+  | Compiled _ -> None
+  | c when carries c ->
+      Option.map
+        (fun c -> here (fun () -> perform c))
+        (carried { within = (fun g -> install i g) } same c)
+  | _ -> None
+
+and install : 'a. interpreter -> (unit -> 'a) -> 'a =
+ fun i f ->
+  let x = ref () in
+  let effc : type c b.
+      c Effect.t -> ((c, b) Effect.Deep.continuation -> b) option = function
+    | Construct ({ past = Some y; _ } as p) ->
+        if y == x then p.past <- None;
+        None
+    | Construct { construct; past = None } -> (
+        match
+          match i.call construct with None -> pass i construct | a -> a
+        with
+        | None -> None
+        | Some (Value answer) -> Some (resume (fun () -> Answer (answer ())))
+        | Some (Here f) -> Some (fun k -> Effect.Deep.continue k (Run (x, f)))
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            Some (fun k -> Effect.Deep.discontinue_with_backtrace k e bt))
+    | _ -> None
+  in
+  let f =
+    match i.op with None -> f | Some o -> fun () -> Nx.Op.intercept o f
+  in
+  let exnc e =
+    Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+  in
+  Atomic.incr installed;
+  Fun.protect ~finally:(fun () -> Atomic.decr installed) @@ fun () ->
+  Effect.Deep.match_with f () { retc = Fun.id; exnc; effc }
+
+(* [again c] answers with [c] performed outward: at the call when it carries a
+   function, in the handler otherwise. *)
+let again = function
+  | None -> None
+  | Some c when carries c -> Some (here (fun () -> perform c))
+  | Some c -> Some (value (fun () -> perform c))
 
 let substituting owner (s : Nx.Op.mapper) f =
   let s : Nx.Op.mapper = { f = (fun x -> if owner.owns x then s.f x else x) } in
@@ -346,7 +412,7 @@ let substituting owner (s : Nx.Op.mapper) f =
     let claims op = claims owner op in
     let run op = Nx.Op.eval (Nx.Op.map_operands s op) in
     install { op = Some { run; claims }; call } f
-  and call : type r. r t -> (unit -> r) option =
+  and call : type r. r t -> r answer option =
    fun c -> again (carried { within } s c)
   in
   within f
@@ -359,15 +425,14 @@ let operator p q f k =
   let level = fresh_map () in
   let add x = Nx.Ptree.map x (fun _ v -> Nx.unsqueeze ~axes:[ 0 ] v) in
   let drop x = Nx.Ptree.map x (fun _ v -> Nx.squeeze ~axes:[ 0 ] v) in
-  let same : Nx.Op.mapper = { f = Fun.id } in
   let rec within : 'a. (unit -> 'a) -> 'a =
    fun f -> install { op = None; call } f
-  and call : type r. r t -> (unit -> r) option =
+  and call : type r. r t -> r answer option =
    fun c ->
     match[@warning "@4@8"] c with
-    | At_map a when a.map == level ->
-        Some (fun () -> drop a.q (a.f (add a.p a.x)))
-    | Compiled _ -> Some (fun () -> perform c)
+    | At_map m when m.map == level ->
+        Some (value (fun () -> drop m.q (m.f (add m.p m.x))))
+    | Compiled _ -> Some (value (fun () -> perform c))
     | At_map _ | Loop _ | Remat _ | Barrier _ | Custom _ | Root _ | Lanes _
     | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         again (carried { within } same c)

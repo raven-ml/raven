@@ -319,8 +319,11 @@ val check_grads :
     differentiation tracks other than through them: pass such a value as an
     argument.
 
-    An exception of a rule, of its tangent map or of its pullback is raised at
-    the call or application that ran it. *)
+    A rule and its tangent map run at the call, inside the handlers, the
+    {!Total} scopes and the transformations around it, whichever transformation
+    applies the rule; a pullback runs in the backward pass. An exception of a
+    rule, of its tangent map or of its pullback is raised at the call or
+    application that ran it. *)
 
 val custom_jvp :
   'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q * ('p -> 'q)) -> 'p -> 'q
@@ -572,10 +575,10 @@ module Total : sig
       The scope checks each addition's shape against [zero]'s when it receives
       it, where every map inside the scope has summed its lanes.
 
-      An addition a custom rule's function makes ({!custom_jvp}'s and
-      {!custom_vjp}'s [rule], a tangent map, a pullback) reaches the scopes
-      around the transformation that runs it, and skips a scope opened between
-      the call and that transformation.
+      An addition a custom rule's [rule] or tangent map makes reaches the scopes
+      around the rule's call; one a pullback makes, the scopes around the
+      backward pass. A {!root}'s [solve] adds to the scopes around the root; its
+      [residual] and [linear_solve], which only derivatives run, add nothing.
 
       If [f] raises, [collect] raises the same exception; an addition made
       before an exception [f] itself catches counts. *)
@@ -631,6 +634,16 @@ val scan :
 
     Everywhere else the scan is its loop, run where it is written, inside every
     transformation, {!Total.collect} and {!Nx.Rng.with_key} around it.
+
+    Compiled or transformed, the step runs where the scan is written too: an
+    effect it performs reaches the handlers around the scan. Under {!val-jit} a
+    handler's own code runs once per trace, and a value the step computes
+    reaches the compiled program only through the carry, the outputs, or a
+    {!Total} the step adds to: a handler that computes from it and adds the
+    result, or returns it, raises [Invalid_argument]
+    (["Rune.jit: a value computed inside a loop's step escaped it; return it in
+      the carry or add it to a Rune.Total"]). A handler that answers with a
+    function the step applies keeps that computation in the step.
 
     Raises [Invalid_argument], before any step, if [xs] has no tensor
     (["Rune.scan: xs has no leaf"]), a scalar tensor

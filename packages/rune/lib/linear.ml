@@ -581,32 +581,33 @@ let lanes t axis x =
   | [ y ] -> Nx.unpack (Nx.dtype x) y
   | _ -> assert false (* One output. *)
 
-let rec answer : type r. tape -> r Construct.t -> (unit -> r) option =
+let rec answer : type r. tape -> r Construct.t -> r Construct.answer option =
  fun t c ->
+  let value = Construct.value and here = Construct.here in
   match[@warning "@4@8"] c with
-  | Detach x -> if owns t x then Some (fun () -> x) else None
+  | Detach x -> if owns t x then Some (value (fun () -> x)) else None
   | Add (_, v) ->
       if owns t v then
         Some
-          (fun () ->
-            invalid_arg
-              "Rune.Total.add: a custom_jvp tangent map adds a tangent under \
-               reverse mode; a total takes values")
+          (value (fun () ->
+               invalid_arg
+                 "Rune.Total.add: a custom_jvp tangent map adds a tangent \
+                  under reverse mode; a total takes values"))
       else None
   | Lanes (axis, x) ->
-      if owns t x then Some (fun () -> lanes t axis x) else None
+      if owns t x then Some (value (fun () -> lanes t axis x)) else None
   | Compiled { p; f; args; _ } ->
       (* A tangent reaches a compiled call only through a custom_jvp tangent
          map, whose contract makes it linear in its tangents: the call runs
          under the tape, which records its operations. *)
       if Nx.Ptree.fold p (fun _ x any -> any || owns t x) args false then
-        Some (fun () -> install t (fun () -> f args))
+        Some (here (fun () -> install t (fun () -> f args)))
       else None
   | Root { x; residual; solve; linear_solve } ->
-      Some (fun () -> root t x residual solve linear_solve)
+      Some (here (fun () -> root t x residual solve linear_solve))
   | At_map { map; p; q; f; x } ->
       if Nx.Ptree.fold p (fun _ v any -> any || owns t v) x false then
-        Some (fun () -> at_map t map p q f x)
+        Some (value (fun () -> at_map t map p q f x))
       else None
   | Loop _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
       None

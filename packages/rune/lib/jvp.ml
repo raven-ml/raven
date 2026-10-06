@@ -263,8 +263,7 @@ let terms da db =
 
 (* [one_minus_square x] is [1 - x²] as [(1 - x) (1 + x)]: near |x| = 1, [x²]
    rounds before the subtraction cancels, while [1 - x] is exact there. *)
-let one_minus_square x =
-  Nx.mul (Nx.rsub_s (one x) x) (Nx.add_s x (one x))
+let one_minus_square x = Nx.mul (Nx.rsub_s (one x) x) (Nx.add_s x (one x))
 
 let unary_tangent k x y dx =
   let coef c = mul dx c in
@@ -853,8 +852,9 @@ let guarded i ~entry ~loops f =
   in
   let owner = { Construct.owns = (fun x -> owns i x) } in
   let claims op = Construct.claims owner op in
-  let call : type r. r Construct.t -> (unit -> r) option = function
-    | Loop _ when not loops -> Some (fun () -> raise Trips.Not_staged)
+  let call : type r. r Construct.t -> r Construct.answer option = function
+    | Loop _ when not loops ->
+        Some (Construct.value (fun () -> raise Trips.Not_staged))
     | Loop _ | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _
     | Lanes _ | Lane_index _ | Lane_count _ | Add _ | Detach _ ->
         None
@@ -924,16 +924,18 @@ let custom_vjp i p q rule args =
       in
       Nx.Ptree.rebuild q ~like:y (duals i outputs ys slots)
 
-let custom : type q. t -> q Construct.rule -> (unit -> q) option =
+let custom : type q. t -> q Construct.rule -> q Construct.answer option =
  fun i r ->
   match r with
   | Jvp_rule { p; q; rule; args; value } ->
       if holds_own i p args then
         Some
-          (fun () -> custom_jvp i p q rule args ~again:(Option.is_some value))
+          (Construct.here (fun () ->
+               custom_jvp i p q rule args ~again:(Option.is_some value)))
       else None
   | Vjp_rule { p; q; rule; args } ->
-      if holds_own i p args then Some (fun () -> custom_vjp i p q rule args)
+      if holds_own i p args then
+        Some (Construct.here (fun () -> custom_vjp i p q rule args))
       else None
 
 (* Remat *)
@@ -1030,50 +1032,58 @@ let reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry =
     req_step;
   }
 
-let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
+let rec answer : type r. t -> r Construct.t -> r Construct.answer option =
  fun i c ->
+  let value = Construct.value and here = Construct.here in
   match[@warning "@4@8"] c with
   | Detach x ->
-      Option.map (fun (x, _) () -> Construct.perform (Detach x)) (own i x)
+      Option.map
+        (fun (x, _) -> value (fun () -> Construct.perform (Detach x)))
+        (own i x)
   | Custom r -> custom i r
   | Add (t, v) ->
-      Option.map (fun (v, _) () -> Construct.perform (Add (t, v))) (own i v)
+      Option.map
+        (fun (v, _) -> value (fun () -> Construct.perform (Add (t, v))))
+        (own i v)
   | Remat { p; q; f; args; recomputed } -> (
       match i.slots with
-      | None -> Some (fun () -> remat_values i p q f args recomputed)
-      | Some tape -> Some (fun () -> remat i tape p q f args))
+      | None -> Some (here (fun () -> remat_values i p q f args recomputed))
+      | Some tape -> Some (here (fun () -> remat i tape p q f args)))
   | Compiled { p; q; f; args; compiler } -> (
       if not (holds_own i p args) then None
       else
         match i.slots with
-        | None -> Some (fun () -> compiled_values i p q f args compiler)
+        | None -> Some (here (fun () -> compiled_values i p q f args compiler))
         | Some tape ->
-            Some (fun () -> compiled_slots i tape p q f args compiler))
+            Some (here (fun () -> compiled_slots i tape p q f args compiler)))
   | Lanes (axis, x) ->
       let lanes x = Construct.perform (Lanes (axis, x)) in
-      Option.map (fun (x, dx) () -> dual i (lanes x) (lanes dx)) (own i x)
+      Option.map
+        (fun (x, dx) -> value (fun () -> dual i (lanes x) (lanes dx)))
+        (own i x)
   | Loop r -> (
       match i.slots with
-      | None -> Some (fun () -> loop_values i r)
-      | Some tape -> Some (fun () -> loop_slots i tape r))
+      | None -> Some (here (fun () -> loop_values i r))
+      | Some tape -> Some (here (fun () -> loop_slots i tape r)))
   | Barrier { values; after } ->
       if List.exists (fun (Nx.P x) -> owns i x) (values @ after) then
-        Some (fun () -> barrier i values after)
+        Some (value (fun () -> barrier i values after))
       else None
   | Root { x; residual; solve; linear_solve } ->
-      Some (fun () -> root i x residual solve linear_solve)
+      Some (here (fun () -> root i x residual solve linear_solve))
   | At_map ({ p; q; x; _ } as a) ->
       (* [f] is linear: its tangent is [f] of the argument's tangent. *)
       if not (holds_own i p x) then None
       else
         Some
-          (fun () ->
-            let at x = Construct.perform (At_map { a with x }) in
-            let y = at (Nx.Ptree.map p (fun _ v -> primal i v) x) in
-            let dy = at (Nx.Ptree.map p (fun _ v -> tangent i v) x) in
-            Nx.Ptree.map2 q
-              (fun _ y dy -> if Linear.differentiable y then dual i y dy else y)
-              y dy)
+          (value (fun () ->
+               let at x = Construct.perform (At_map { a with x }) in
+               let y = at (Nx.Ptree.map p (fun _ v -> primal i v) x) in
+               let dy = at (Nx.Ptree.map p (fun _ v -> tangent i v) x) in
+               Nx.Ptree.map2 q
+                 (fun _ y dy ->
+                   if Linear.differentiable y then dual i y dy else y)
+                 y dy))
   | Lane_index _ | Lane_count _ -> None
 
 (* With value tangents a loop passes on as the loop of its jvp: the carry and
@@ -1267,8 +1277,13 @@ and remat_values : type p q.
    tangent zero where it depends on no tracked argument, so that the result is
    the same whether or not the program was traced on this call. *)
 and compiled_values : type p q.
-    t -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p ->
-    (p, q) Construct.compiler -> q =
+    t ->
+    p Nx.Ptree.t ->
+    q Nx.Ptree.t ->
+    (p -> q) ->
+    p ->
+    (p, q) Construct.compiler ->
+    q =
  fun i p q f args compiler ->
   let tracked = owned i (fst (Nx.Ptree.flatten p args)) in
   let f (a, da) =

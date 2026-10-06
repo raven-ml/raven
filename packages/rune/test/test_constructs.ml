@@ -346,13 +346,13 @@ let effect_tests =
               (answer (fun () -> call (x0 ()))))
           (rules runs));
     test
-      "a custom rule's effects reach the handlers around the differentiation \
-       that applies it" (fun () ->
+      "a custom rule's effects reach the handlers around its call under the \
+       differentiation that applies it" (fun () ->
         let runs = ref 0 in
         List.iter
           (fun (name, call) ->
             equal ~msg:name (exact ()) (Nx.ones f64 [| 3 |])
-              (answer (fun () -> Rune.grad' (fun x -> Nx.sum (call x)) (x0 ()))))
+              (Rune.grad' (fun x -> answer (fun () -> Nx.sum (call x))) (x0 ())))
           (rules runs));
   ]
 
