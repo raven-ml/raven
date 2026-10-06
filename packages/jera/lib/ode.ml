@@ -1188,8 +1188,10 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     extension y emb.dense h v_a ks (Nx.div (Nx.sub t t_a) h_safe)
   in
   (* The crossing, on detached values: each component that changed sign across
-     the step is bracketed on the step's piece, and the earliest wins. Its time
-     is the bracket's end where the component has its new sign. *)
+     the step is bracketed on the step's piece to the time's resolution, which
+     no tolerance on the state or on [|t|] sets, and the earliest wins. Its time
+     is the bracket's end where the component has its new sign, a time the dtype
+     holds. *)
   let crossed =
     Nx.logical_and
       (Nx.not_equal before (Nx.zeros_like before))
@@ -1223,7 +1225,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let lo = Nx.broadcast_to [| n |] (Nx.minimum ta tb)
   and hi = Nx.broadcast_to [| n |] (Nx.maximum ta tb) in
   let ((a, b), (fa, _)), st, _ =
-    Root.locate ~tol component (lo, component lo) (hi, component hi)
+    Root.locate ~tol:(Tol.ulps 1.) component
+      (lo, component lo)
+      (hi, component hi)
   in
   let found =
     Nx.logical_and crossed (Nx.equal_s st (Solution.code Converged))

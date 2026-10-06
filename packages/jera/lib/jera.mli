@@ -1120,37 +1120,38 @@ module Ode : sig
       {b Method.} A component's sign at an accepted step's end is its last
       non-zero one, so a component that touches zero and turns back does not
       cross, and a zero at [t0] has no sign. The first accepted step across
-      which a component's sign changes holds the crossing. In it,
-      {!Root.bracket}'s search to [tol] finds where each such component takes
-      its new sign on the step's continuous extension (see {!section-paths}),
-      and the earliest wins. The time returned is the end of the final bracket
-      past the crossing, where the component has its new sign, so a solve
-      restarted there starts on that side, and the component's new sign tells
-      the crossing's direction. A crossing that should not stop the solve, or
-      one in a direction to ignore, is a restart from the returned time, one
-      solve per crossing. To restart on the crossing's old side, as a bounce
-      that reflects a velocity does, set the component to zero: a zero at [t0]
-      is no crossing. A lane without a crossing after [t0] up to [t1] included
-      converges with [(t1, y t1, −1)]: the index tells the two apart, whichever
-      way the solve runs. At [t1 = t0] the answer is [(t0, y0, −1)], converged,
-      so a compiled loop of restarts holds a finished lane where it stopped. A
-      step holding an even number of crossings of a component shows none, so a
-      crossing narrower than the field's steps can be missed or reported out of
-      order: an event whose sign changes once per crossing, or {!path} and a
-      finer search, resolves it.
+      which a component's sign changes holds the crossing. In it, a bracketing
+      search, {!Root.bracket}'s, finds where each such component takes its new
+      sign on the step's continuous extension (see {!section-paths}) to the
+      resolution of the time's dtype, which [tol] does not set, and the earliest
+      wins. The time returned is the end of the final bracket past the crossing,
+      where the component has its new sign, so a solve restarted there starts on
+      that side, and the component's new sign tells the crossing's direction. A
+      crossing that should not stop the solve, or one in a direction to ignore,
+      is a restart from the returned time, one solve per crossing. To restart on
+      the crossing's old side, as a bounce that reflects a velocity does, set
+      the component to zero: a zero at [t0] is no crossing. A lane without a
+      crossing after [t0] up to [t1] included converges with [(t1, y t1, −1)]:
+      the index tells the two apart, whichever way the solve runs. At [t1 = t0]
+      the answer is [(t0, y0, −1)], converged, so a compiled loop of restarts
+      holds a finished lane where it stopped. A step holding an even number of
+      crossings of a component shows none, so a crossing narrower than the
+      field's steps can be missed or reported out of order: an event whose sign
+      changes once per crossing, or {!path} and a finer search, resolves it.
 
-      {b Error.} The time's is half the final bracket; the state's, per
-      component, the sum of the magnitudes of the local estimates of the
-      accepted steps through the one that holds the crossing; the index's is
-      [0]. A crossing component whose bracket does not converge ends the lane
-      [Stalled]. {b Cost.} A solve's search with one evaluation of [event] per
-      attempted step, then the crossing's search, each of whose iterations
-      evaluates [event] once per component; the answer takes the accepted steps
-      again. {b Derivative.} The time is stated as a zero of the crossing
-      component [R t = event t (y t)] on the tracked step, so its derivative is
-      [−∂R/∂θ / ∂R/∂t], through the initial state, [t0] and every tracked value
-      the field and [event] read; the state's is the extension's at that time.
-      Without a crossing, the derivative is {!solve}'s.
+      {b Error.} The time's is half the final bracket, about one unit in the
+      last place of the time; the state's, per component, the sum of the
+      magnitudes of the local estimates of the accepted steps through the one
+      that holds the crossing; the index's is [0]. A crossing component whose
+      bracket does not converge ends the lane [Stalled]. {b Cost.} A solve's
+      search with one evaluation of [event] per attempted step, then the
+      crossing's search, at most [2b + 1] iterations for a time of [b] bits,
+      each of which evaluates [event] once per component; the answer takes the
+      accepted steps again. {b Derivative.} The time is stated as a zero of the
+      crossing component [R t = event t (y t)] on the tracked step, so its
+      derivative is [−∂R/∂θ / ∂R/∂t], through the initial state, [t0] and every
+      tracked value the field and [event] read; the state's is the extension's
+      at that time. Without a crossing, the derivative is {!solve}'s.
 
       Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
       scalar, if [event] has no component, or as {!march} does for a field of

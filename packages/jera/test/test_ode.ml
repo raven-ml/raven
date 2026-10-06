@@ -692,6 +692,18 @@ let event_tests =
         let t, _, i = Solution.get (drop (fun _ (q, _) -> q) (scalar 10.)) in
         equal close (scalar (reaches 10. 0.)) t;
         equal (Oracle.tensor ()) (index 0l) i);
+    test "the crossing's time does not loosen at a large epoch" (fun () ->
+        (* At t0 = 10^6 a tolerance relative to the time would accept a bracket
+           of width 1; the crossing's error is the state's. *)
+        let t, _, _ =
+          Solution.get
+            (Ode.event pair Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:200 fall
+               ~event:(fun _ (q, _) -> q)
+               ~t0:(scalar 1e6)
+               ~t1:(scalar (1e6 +. 5.))
+               (scalar 10., scalar 0.))
+        in
+        equal (Oracle.tensor ~abs:1e-6 ()) (scalar (1e6 +. reaches 10. 0.)) t);
     test "the returned state has the component's new sign" (fun () ->
         let _, (q, _), _ =
           Solution.get (drop (fun _ (q, _) -> q) (scalar 10.))
@@ -731,7 +743,7 @@ let event_tests =
         (* It takes its new sign at t = 2, past its zeros. *)
         let t, _, i = Solution.get (plateau ~after:1.) in
         equal (Oracle.tensor ()) (index 0l) i;
-        equal (Oracle.tensor ~rel:1e-7 ()) (scalar 2.) t);
+        equal (Oracle.tensor ~rel:1e-15 ()) (scalar 2.) t);
     test "a component that touches zero without changing sign does not cross"
       (fun () ->
         let t, _, i = Solution.get (plateau ~after:(-1.)) in
