@@ -3959,16 +3959,16 @@ val slogdet : ('a, 'b) t -> ('a, 'b) t * (float, float64_elt) t
     floating-point or complex. *)
 
 val matrix_rank :
-  ?tol:float -> ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> int
-(** [matrix_rank ?tol ?rtol ?hermitian a] is the rank of [a], counting singular
-    values above the tolerance: [tol] if given, else [rtol] times [a]'s largest
-    singular value, [rtol] defaulting to [max(M, N) * ε]. When [hermitian] is
-    [true] (default [false]), uses a more efficient eigenvalue-based algorithm.
-    [a] is one matrix.
+  ?tol:float -> ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> int32_t
+(** [matrix_rank ?tol ?rtol ?hermitian a] is the rank of each matrix of [a], of
+    [a]'s batch shape, counting the singular values above the tolerance: [tol]
+    if given, else [rtol] times the matrix's largest singular value, [rtol]
+    defaulting to [max(M, N) * ε]. When [hermitian] is [true] (default
+    [false]), uses a more efficient eigenvalue-based algorithm.
 
     A matrix on which {!svdvals} is NaN, one holding NaN or an infinity or on
     which the iteration does not converge, has rank [-1]: its rank is
-    undefined.
+    undefined. The other matrices of its batch are unaffected.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
@@ -4034,7 +4034,7 @@ val lstsq :
   ?rcond:float ->
   ('a, 'b) t ->
   ('a, 'b) t ->
-  ('a, 'b) t * ('a, 'b) t * int * (float, float64_elt) t
+  ('a, 'b) t * ('a, 'b) t * int32_t * (float, float64_elt) t
 (** [lstsq ?rcond a b] is [(x, residuals, rank, sv)]: [x] the least-squares
     solution of [a *@ x ≈ b] of least norm, whatever the shape and rank of
     [a], [sv] the singular values of [a] and [rank] how many of them count. A
@@ -4045,7 +4045,7 @@ val lstsq :
 
     A matrix on which {!svd} fails has an [x] whose every element is NaN, and
     the other matrices of its batch are unaffected. [rank] is
-    [matrix_rank ~rtol:rcond a] for one matrix [a]: [-1] where {!svd} fails.
+    [matrix_rank ~rtol:rcond a]: [-1] where {!svd} fails.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 

@@ -4711,15 +4711,12 @@ let larger_size a =
   float_of_int (Stdlib.max sh.(Array.length sh - 2) sh.(Array.length sh - 1))
 
 (* The rank of each matrix from its singular values [s]: how many lie above
-   [cutoff], or -1 where they are NaN, the matrix's factorization having
-   failed. Summed over the matrices. *)
-let rank_of ~by cutoff s =
-  let above = sum ~axes:[ -1 ] (cast (dtype s) (greater s cutoff)) in
-  let failed = isnan (sum ~axes:[ -1 ] s) in
-  let rank = where failed (full_like above (-1.)) above in
-  int_of_float (Float.round (sum rank |> read_item ~by))
+   [cutoff], or -1, the rank being undefined, where they are NaN. *)
+let rank_of cutoff s =
+  let above = sum ~axes:[ -1 ] (cast Nx_dtype.int32 (greater s cutoff)) in
+  where (isnan (sum ~axes:[ -1 ] s)) (full_like above (-1l)) above
 
-let matrix_rank' ~by ?tol ?rtol ?hermitian a =
+let matrix_rank ?tol ?rtol ?hermitian a =
   check_float_or_complex ~op:"matrix_rank" a;
   (match hermitian with
   | Some true -> check_square ~op:"matrix_rank" a
@@ -4733,10 +4730,7 @@ let matrix_rank' ~by ?tol ?rtol ?hermitian a =
     | None, Some r -> relative r s
     | None, None -> relative (larger_size a *. roundoff (dtype a)) s
   in
-  rank_of ~by cutoff s
-
-let matrix_rank ?tol ?rtol ?hermitian a =
-  matrix_rank' ~by:"Nx.matrix_rank" ?tol ?rtol ?hermitian a
+  rank_of cutoff s
 
 let trace ?offset a =
   if ndim a < 2 then invalid_arg "trace: input requires at least 2D array";
@@ -4892,7 +4886,7 @@ let lstsq ?rcond a b =
       sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
     else zeros (Value.context a) (dtype b) [||]
   in
-  (x, residuals, rank_of ~by:"Nx.lstsq" (relative rcond s) s, s)
+  (x, residuals, rank_of (relative rcond s) s, s)
 
 let inv a =
   check_square ~op:"inv" a;

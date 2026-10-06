@@ -861,7 +861,9 @@ let invariants =
             Nx.add x
               (Nx.mul_s (Nx.eye ~m:(Nx.dim 1 x) Nx.float64 (Nx.dim 0 x)) 3.)
           in
-          equal int k (Nx.matrix_rank (full l *@ full r)));
+          equal (tensor int32)
+            (Nx.scalar Nx.int32 (Int32.of_int k))
+            (Nx.matrix_rank (full l *@ full r)));
     ]
 
 let solvers =
@@ -929,7 +931,7 @@ let solvers =
                 Float.of_int ((i.(0) * 2) + i.(1)))
           in
           let x, _, rank, _ = Nx.lstsq a b in
-          equal int n rank;
+          equal (tensor int32) (Nx.scalar Nx.int32 (Int32.of_int n)) rank;
           equal near (Nx.zeros Nx.float64 [| n; 2 |]) (t a *@ Nx.sub (a *@ x) b));
       prop "pinv meets the four Moore-Penrose conditions"
         (sized (fun m -> sized (fun n -> matrix m n)))
@@ -1766,12 +1768,38 @@ let failures =
         [ ("NaN", Float.nan); ("an infinity", Float.infinity) ]
         (fun (_, v) ->
           let a = float_matrix [ [ 1.; 0. ]; [ v; 1. ]; [ 0.; 2. ] ] in
-          equal ~msg:"matrix_rank" int (-1) (Nx.matrix_rank a);
-          equal ~msg:"matrix_rank ~hermitian" int (-1)
+          let undefined = Nx.scalar Nx.int32 (-1l) in
+          equal ~msg:"matrix_rank" (tensor int32) undefined (Nx.matrix_rank a);
+          equal ~msg:"matrix_rank ~hermitian" (tensor int32) undefined
             (Nx.matrix_rank ~hermitian:true
                (float_matrix [ [ 1.; v ]; [ v; 1. ] ]));
           let _, _, rank, _ = Nx.lstsq a (Nx.ones Nx.float64 [| 3; 1 |]) in
-          equal ~msg:"lstsq" int (-1) rank);
+          equal ~msg:"lstsq" (tensor int32) undefined rank);
+      prop
+        "matrix_rank of a batch is each matrix's rank, -1 for its matrix \
+         holding NaN alone"
+        (sized (fun m -> sized (fun n -> with_nan m n)))
+        (fun (lanes, good, bad) ->
+          List.iter
+            (fun (F d) ->
+              let cast x = Nx.cast d.dtype (c128 x) in
+              let good = List.init lanes.count (fun i -> Nx.get [ i ] good) in
+              let rank ?hermitian a = Nx.matrix_rank ?hermitian a in
+              let symmetric a = Nx.add a (Nx.matrix_transpose a) in
+              let undefined = Nx.scalar Nx.int32 (-1l) in
+              equal ~msg:d.name (tensor int32)
+                (stack lanes (List.map (fun g -> rank (cast g)) good) undefined)
+                (rank (stack lanes (List.map cast good) (cast bad)));
+              if Nx.dim (-1) bad = Nx.dim (-2) bad then
+                equal ~msg:(d.name ^ ", hermitian") (tensor int32)
+                  (stack lanes
+                     (List.map
+                        (fun g -> rank ~hermitian:true (symmetric (cast g)))
+                        good)
+                     undefined)
+                  (rank ~hermitian:true
+                     (symmetric (stack lanes (List.map cast good) (cast bad)))))
+            fdtypes);
       cases
         ~name:(fun (name, _, _) -> name)
         "cond of a singular matrix is infinity, and of one holding NaN or an \
@@ -1822,7 +1850,7 @@ let failures =
           in
           let got, _, rank, _ = Nx.lstsq (float_matrix a) (column b) in
           equal ~msg:"x" near (column x) got;
-          equal ~msg:"rank" int 1 rank);
+          equal ~msg:"rank" (tensor int32) (Nx.scalar Nx.int32 1l) rank);
       prop "solve takes the scale of a out: solve (s a) b = solve a b / s"
         (sized (fun n ->
              Gen.triple (square ~batch:plain n) (matrix n 2)

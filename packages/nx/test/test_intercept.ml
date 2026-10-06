@@ -600,9 +600,6 @@ let reads =
           ( "Nx.set",
             discard (fun () ->
                 Nx.set [ M mask ] (Nx.zeros Nx.float32 [| 2 |]) x) );
-          ("Nx.matrix_rank", discard (fun () -> Nx.matrix_rank square));
-          ( "Nx.lstsq",
-            discard (fun () -> Nx.lstsq wide (Nx.ones Nx.float64 [| 2 |])) );
         ]
         (fun (expected, f) ->
           let i, seen = naming () in
@@ -615,6 +612,11 @@ let reads =
           ("Nx.pinv", discard (fun () -> Nx.pinv square));
           ( "Nx.pinv ~hermitian",
             discard (fun () -> Nx.pinv ~hermitian:true square) );
+          ("Nx.matrix_rank", discard (fun () -> Nx.matrix_rank square));
+          ( "Nx.matrix_rank ~hermitian",
+            discard (fun () -> Nx.matrix_rank ~hermitian:true square) );
+          ( "Nx.lstsq",
+            discard (fun () -> Nx.lstsq wide (Nx.ones Nx.float64 [| 2 |])) );
         ]
         (fun (_, f) ->
           let i, seen = naming () in
