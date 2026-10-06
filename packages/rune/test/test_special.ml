@@ -417,17 +417,17 @@ let derivatives =
       derivative "i0e" ~bound:(everywhere (Ulps 128)) (d { u = Nx.i0e });
       group "incomplete beta"
         (List.concat_map
-           (fun (tail, c) ->
+           (fun (name, in_x, c) ->
              [
-               derivative3 (tail ^ "_x")
-                 ~bound:(everywhere (Relative_scaled (0x1p-47, 0x1p-18)))
-                 2 c;
-               derivative3 (tail ^ "_a") ~bound:in_a 0 c;
-               derivative3 (tail ^ "_b") ~bound:in_a 1 c;
+               derivative3 (name ^ "_x") ~bound:(everywhere in_x) 2 c;
+               derivative3 (name ^ "_a") ~bound:in_a 0 c;
+               derivative3 (name ^ "_b") ~bound:in_a 1 c;
              ])
            [
-             ("log_betainc", { c = Nx.log_betainc });
-             ("log_betaincc", { c = Nx.log_betaincc });
+             ("betainc", Inverse (64, 1024), { c = Nx.betainc });
+             ("betaincc", Inverse (64, 1024), { c = Nx.betaincc });
+             ("log_betainc", Near_zeros (512, 512), { c = Nx.log_betainc });
+             ("log_betaincc", Near_zeros (512, 512), { c = Nx.log_betaincc });
            ]);
       derivative "i1e"
         ~bound:(fun args ->
@@ -545,8 +545,8 @@ let residuals =
         gammainc in a 6963
         gammaincinv 16361
         gammaincinv in a 26355
-        log_betainc in x 11482
-        log_betainc in a 19828
+        log_betainc in x 11511
+        log_betainc in a 19848
         |})
 
 let () =

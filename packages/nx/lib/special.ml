@@ -1696,6 +1696,31 @@ let beta_tail upper a b x =
     where wants (add (log (clamp wants n 0.5)) log_c) (log1p (neg vanishing))
   in
   let v_slope = where wants vanishing (rsub_s 1. vanishing) in
+  (* At an end of [x] the tail that vanishes there is written so that its slope
+     in [x] is its one-sided limit, [x^(a-1) (1-x)^(b-1) / B(a, b)]: at [x = 0]
+     the lower tail is [b x] where [a = 1] and [0] elsewhere, its slope [b] or
+     [0] (infinite below [a = 1], which no form here gives); at [x = 1] the
+     upper tail is [a (1 - x)] where [b = 1]. In [a] and [b] the slopes are
+     0. *)
+  let ends =
+    logical_and
+      (logical_and (finite a) (finite b))
+      (logical_or (zero x) (is x 1.))
+  in
+  let a_e = clamp ends a 1. and b_e = clamp ends b 1. in
+  let x_e = clamp ends x 0.5 in
+  let at_x0 = zero x in
+  let e =
+    where at_x0
+      (where (is a_e 1.) (mul b_e x_e) (zeros_like x))
+      (where (is b_e 1.) (mul a_e (rsub_s 1. x_e)) (zeros_like x))
+  in
+  let e = add_s e 0. in
+  let gone = where at_x0 (logical_not upper) upper in
+  let l_end =
+    where gone (lit x Float.neg_infinity) (add_s (log1p (neg e)) 0.)
+  in
+  let v_end = where gone e (rsub_s 1. e) in
   let one = List.fold_left logical_or (is x 1.) [ zero a; inf b ] in
   let nil = List.fold_left logical_or (zero x) [ zero b; inf a ] in
   let is_one = logical_xor one upper in
@@ -1717,8 +1742,10 @@ let beta_tail upper a b x =
       ]
   in
   let nan = lit x Float.nan in
-  let l = where interior r (where slope l_slope l_edge) in
-  let v = where interior (exp r) (where slope v_slope v_edge) in
+  let l = where interior r (where slope l_slope (where ends l_end l_edge)) in
+  let v =
+    where interior (exp r) (where slope v_slope (where ends v_end v_edge))
+  in
   (where invalid nan l, where invalid nan v)
 
 type ternary = {

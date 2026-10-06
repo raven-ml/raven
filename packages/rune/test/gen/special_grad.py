@@ -10,8 +10,9 @@ Writes `packages/rune/test/golden/special_grad/<fn>.golden`: at the points of
 nx's goldens (nx's test/gen/special.py) where the function and its
 derivative are finite, the derivative in each argument, correctly rounded at
 float32 and float64, in nx's golden format. `lgamma_2`, `lbeta_aa`,
-`lbeta_bb` and `lbeta_ab` hold second derivatives; an incomplete gamma's
-`<fn>_a`, `<fn>_x` and `<fn>_p` its derivative in each argument. A row whose
+`lbeta_bb` and `lbeta_ab` hold second derivatives; an incomplete gamma's or
+beta's `<fn>_a`, `<fn>_b`, `<fn>_x` and `<fn>_p` its derivative in each
+argument. A row whose
 bound is scaled holds the scale: a reflection's terms, 1 + |log f| or an
 inverse's condition number. With --check nothing is
 written, and the run fails if a golden would change.
@@ -305,7 +306,39 @@ def beta_points(fmt):
     points = nx.betainc_points(fmt)
     inside_domain = lambda p: fmt.min_normal <= p[2] < 1 and all(0 < v < math.inf for v in p[:2])
     boundaries = set(nx.beta_boundary_points(fmt))
-    return [p for i, p in enumerate(points) if inside_domain(p) and (i % 15 == 0 or p in boundaries)]
+    inner = [p for i, p in enumerate(points) if inside_domain(p) and (i % 15 == 0 or p in boundaries)]
+    ends = [(a, b, x) for a in [0.5, 1.0, 2.5] for b in [0.5, 1.0, 2.5] for x in [0.0, 1.0]]
+    return inner + ends
+
+
+def beta_end_slope(a, b, x):
+    """d/dx I_x(a, b) at an end of x, its one-sided limit x^(a-1) (1-x)^(b-1)
+    / B(a, b): at x = 0, b where a = 1, 0 above and infinite below; at x = 1
+    likewise with a and b exchanged."""
+    p, q = (a, b) if x == 0 else (b, a)
+    return mpf(0) if p > 1 else mpf(q) if p == 1 else mpmath.inf
+
+
+def beta_d(upper, log, wrt):
+    """The derivative of I_x(a, b), or of its complement, or of either's
+    logarithm, in a (wrt 0), b (1) or x (2). At an end of x it is 0 in a and b,
+    and in x the one-sided limit."""
+    def d(a, b, x):
+        if x in (0.0, 1.0):
+            if wrt != 2:
+                return mpf(0)
+            slope = beta_end_slope(a, b, x)
+            slope = -slope if upper else slope
+            tail = (x == 1) != upper
+            if not log:
+                return slope
+            return slope if tail else mpmath.inf
+        if wrt == 2:
+            dl = log_betainc_slope_x(upper)(a, b, x)
+        else:
+            dl = log_betainc_slope(upper, wrt)(a, b, x)
+        return dl if log else dl * nx.betainc_exact(a, b, x, upper)
+    return d
 
 
 def log_betainc_slope_x(upper):
@@ -329,13 +362,26 @@ def log_betainc_slope(upper, arg):
 
 
 def value_normal(f):
-    """Whether f's value at the point is a normal number."""
-    return lambda fmt, *p: abs(f.reference(fmt, *p)) >= fmt.min_normal
+    """Whether f's value at the point is a normal number, or the point an end
+    of x."""
+    return lambda fmt, a, b, x: x in (0.0, 1.0) or abs(f.reference(fmt, a, b, x)) >= fmt.min_normal
+
+
+def tails_normal_beta(fmt, a, b, x):
+    """Whether both tails at the point are normal numbers, or the point an end
+    of x: a tail's derivative carries the smaller tail's error."""
+    if x in (0.0, 1.0):
+        return True
+    with mp.workprec(fmt.p + 40):
+        direct, _ = nx.betainc_direct(a, b, x)
+        return min(direct, 1 - direct) >= fmt.min_normal
 
 
 def log_scale(fmt, value, a, b, x):
     """1 + |log t| for t the smaller tail, the one computed directly, the scale
-    of the relative bound."""
+    of the relative bound, 1 at an end of x."""
+    if x in (0.0, 1.0):
+        return "1"
     with mp.workprec(fmt.p + 40):
         direct, _ = nx.betainc_direct(a, b, x)
         return nx.scale(1 + abs(mpmath.log(min(direct, 1 - direct))))
@@ -383,18 +429,11 @@ DERIVATIVES = [
     for name, upper in [("gammaincinv", False), ("gammainccinv", True)]
     for arg, wrt in [("a", 0), ("p", 1)]
 ] + [
-    Derivative("log_betainc_x", F["log_betainc"], log_betainc_slope_x(False),
-               extra=log_scale, points=beta_points, normal=value_normal(F["log_betainc"])),
-    Derivative("log_betainc_a", F["log_betainc"], log_betainc_slope(False, 0),
-               extra=log_scale, points=beta_points, normal=value_normal(F["log_betainc"])),
-    Derivative("log_betainc_b", F["log_betainc"], log_betainc_slope(False, 1),
-               extra=log_scale, points=beta_points, normal=value_normal(F["log_betainc"])),
-    Derivative("log_betaincc_x", F["log_betaincc"], log_betainc_slope_x(True),
-               extra=log_scale, points=beta_points, normal=value_normal(F["log_betaincc"])),
-    Derivative("log_betaincc_a", F["log_betaincc"], log_betainc_slope(True, 0),
-               extra=log_scale, points=beta_points, normal=value_normal(F["log_betaincc"])),
-    Derivative("log_betaincc_b", F["log_betaincc"], log_betainc_slope(True, 1),
-               extra=log_scale, points=beta_points, normal=value_normal(F["log_betaincc"])),
+    Derivative(f"{name}_{arg}", F[name], beta_d(upper, log, wrt), extra=log_scale,
+               points=beta_points, normal=value_normal(F[name]) if log else tails_normal_beta)
+    for name, upper, log in [("betainc", False, False), ("betaincc", True, False),
+                             ("log_betainc", False, True), ("log_betaincc", True, True)]
+    for arg, wrt in [("a", 0), ("b", 1), ("x", 2)]
 ]
 
 

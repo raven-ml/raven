@@ -179,8 +179,9 @@ All notable changes to this project will be documented in this file.
 ### Rune
 
 - `Rune.jit` computes the incomplete beta family as nx does eagerly, and the
-  derivatives of `Nx.log_betainc` and `Nx.log_betaincc` in each argument are
-  within the bounds `rune.mli` states, eagerly and compiled. A float64
+  derivatives of `Nx.betainc`, `Nx.betaincc` and their logarithms in each
+  argument are within the bounds `rune.mli` states, eagerly and compiled,
+  with their one-sided limits at the ends of `x`. A float64
   compile takes about 3 s, and 7 to 11 s for a derivative.
 - A compiled `Nx.solve_triangular` and LU factorization, and so `Nx.solve`,
   `Nx.inv` and `Nx.det`, hold one step in a loop: compiling no longer grows

@@ -222,14 +222,15 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     rune differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
     {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma}, {!Nx.lbeta}, {!Nx.i0e},
     {!Nx.i1e}, the incomplete gamma family ({!Nx.gammainc}, {!Nx.gammaincc},
-    their logarithms and their inverses), {!Nx.log_betainc} and
-    {!Nx.log_betaincc} through the operations nx computes them with, in every
-    argument and at every order. Each derivative is within the budget below of
-    the exact derivative, at [float32] and [float64], eagerly and compiled,
-    where the function and its derivative are finite, which leaves out such
-    points as {!Nx.erfinv} at [±1] and {!Nx.ndtri} at [0] and [1]. At [±0],
-    {!Nx.i0e}'s derivative is its right-hand one, [-1]; {!Nx.i1e}'s is [1/2].
-    [ε] is the distance from 1 to the next float of the dtype.
+    their logarithms and their inverses) and the incomplete beta family
+    ({!Nx.betainc}, {!Nx.betaincc} and their logarithms) through the
+    operations nx computes them with, in every argument and at every order.
+    Each derivative is within the budget below of the exact derivative, at
+    [float32] and [float64], eagerly and compiled, where the function and its
+    derivative are finite, which leaves out such points as {!Nx.erfinv} at
+    [±1] and {!Nx.ndtri} at [0] and [1]. At [±0], {!Nx.i0e}'s derivative is
+    its right-hand one, [-1]; {!Nx.i1e}'s is [1/2]. [ε] is the distance from 1
+    to the next float of the dtype.
 
     {t
     | Function | First derivative |
@@ -249,8 +250,9 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     | the four, in [a] | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32] |
     | {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q] | [64 + 16κ (32 (1 + |log p|) + 4)] ulps, [q] in place of [p] for {!Nx.gammainccinv} |
     | the two, in [a] | [2^-40] relative at [float64], [2^-16] at [float32] |
-    | {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x] | [32ε (1 + |log f|)] relative |
-    | the two, in [a] or [b] | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32] |
+    | {!Nx.betainc}, {!Nx.betaincc}, in [x] | [1024 (1 + |log f|) + 64] ulps |
+    | {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x] | 512 ulps, or [512ε] absolutely where below 1 |
+    | the four, in [a] or [b] | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32] |
     }
 
     [f] is the smaller of [P] and [Q], or of [I_x(a, b)] and its complement:
@@ -264,12 +266,15 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     e^{-x} / Γ(a)]: [1] at [a = 1], [0] above and infinite below. At [a = 0],
     where [P = 1 - a E₁(x) + O(a²)] for [x > 0], [∂P/∂a] is its one-sided
     limit [-E₁(x)], [E₁(x) = ∫ₓ^∞ e^{-t}/t dt], and [∂P/∂x = 0]; there [log
-    Q] is [-inf]. At [a = 0] the incomplete beta's upper tail vanishes as [a
-    g], [g = ∫ₓ¹ (1 - t)^(b-1) / t dt], and at [b = 0] its lower tail as [b h],
-    [h = ∫₀ˣ t^(a-1) / (1 - t) dt]: for [x] inside (0, 1) its derivatives
-    there are those of these forms, within [2^-40] relative at [float64] and
-    [2^-16] at [float32], but for the vanishing tail's logarithm in [a] or [b],
-    which is infinite. An inverse's derivative in [a] is the implicit one, [-(∂P/∂a)
+    Q] is [-inf]. At an end of [x] the incomplete beta's derivatives in [a]
+    and [b] are [0], and in [x] its one-sided limit [x^{a-1} (1 - x)^{b-1} /
+    B(a, b)]: [b] at [x = 0] for [a = 1], [0] above and infinite below; at [x
+    = 1] likewise with [a] and [b] exchanged. At [a = 0] its upper tail
+    vanishes as [a g], [g = ∫ₓ¹ (1 - t)^{b-1} / t dt], and at [b = 0] its
+    lower tail as [b h], [h = ∫₀ˣ t^{a-1} / (1 - t) dt]: for [x] inside (0, 1)
+    its derivatives there are those of these forms, within [2^-40] relative at
+    [float64] and [2^-16] at [float32], except the vanishing tail's logarithm
+    in [a] or [b], which is infinite. An inverse's derivative in [a] is the implicit one, [-(∂P/∂a)
     / (∂P/∂x)] at the quantile, for either tail; at [a = 0], where the
     quantile is [0] away from its upper end, both its derivatives are [0].
 
