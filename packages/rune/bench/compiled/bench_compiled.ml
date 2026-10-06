@@ -10,10 +10,9 @@
    that is 3 kernels whatever k; eagerly, it costs more than passes over the
    axis would.
 
-   The launches run on the host and on CUDA. The CUDA device is opened in the
-   measuring worker, which is forked without an exec. CUDA's driver must not be
-   initialized before the fork, so a fresh process ([--cuda]) says whether a
-   CUDA device opens. *)
+   The launches, a user's training step ([Lorenz]) and gpt-oss-20b's decode
+   products run on the host and on each GPU the machine has: CUDA, NV and AMD
+   GPU 0, and the Mac's Metal GPU. *)
 
 (* [k] of [n] float32 entries in each of [rows] rows. The compiled function is
    traced and compiled in the setup's first call. *)
@@ -608,46 +607,147 @@ let loops ?(prefix = "") ~place ~sync () =
           sync ()))
     (loop_setups ~place ~sync)
 
-(* The launches on a GPU's device, which opens in the measuring worker. *)
-let gpu_launches open_device =
+(* Lorenz
+
+   The training step of [Lorenz] compiled without a search: at a batch of 1,024
+   draws, 256 hidden units, 256 channels and a horizon of 64 on a GPU, and at a
+   batch of 128, 64 hidden units, 32 channels and a horizon of 16 on the host,
+   where the full step would take seconds. *)
+
+let lorenz_gpu =
+  { Lorenz.batch = 1024; hidden = 256; outputs = 256; horizon = 64 }
+
+let lorenz_host =
+  { Lorenz.batch = 128; hidden = 64; outputs = 32; horizon = 16 }
+
+(* The step and its operands after [lorenz_warmup] calls: the first compiles it
+   for its initial state, the second for the state a step returns, and the rest
+   bring a GPU's clock up to what steady training runs at. *)
+let lorenz_warmup = 10
+
+let lorenz_setup placement ~sync size () =
+  let f, target, key, s = Lorenz.setup (placement ()) size in
+  let s = ref s in
+  for _ = 1 to lorenz_warmup do
+    s := snd (f target key !s)
+  done;
+  sync ();
+  (f, target, key, s)
+
+let lorenz_step ?(prefix = "") ?(suffix = "") placement ~sync size =
+  Thumper.bench_with_setup ~setup:(lorenz_setup placement ~sync size)
+    (Printf.sprintf "%sstep-batch-%d%s" prefix size.Lorenz.batch suffix)
+    (fun (f, target, key, s) ->
+      let _, s' = f target key !s in
+      s := s';
+      sync ())
+
+(* Decode products
+
+   The products of a decode step of gpt-oss-20b's shapes: one float32 activation
+   of 2,880 by bfloat16 weights, to the 4,096 queries, the 512 keys (or values)
+   and the 32 experts' scores. kaun's decode suite holds the MXFP4 expert
+   products. *)
+
+let decode_products = [ ("q", 4096); ("kv", 512); ("router", 32) ]
+let decode_dim = 2880
+
+let decode_setup placement ~sync out () =
+  let place x = Nx.place (placement ()) x in
+  let f =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun x w -> Nx.matmul x (Nx.cast Nx.float32 w))
+  in
+  let x = place (uniform [| 1; decode_dim |]) in
+  let w =
+    Nx.place (placement ())
+      (Nx.cast Nx.bfloat16 (uniform [| decode_dim; out |]))
+  in
+  ignore (f x w);
+  sync ();
+  (f, x, w)
+
+let decode ?(prefix = "") ?(suffix = "") placement ~sync () =
+  List.map
+    (fun (name, out) ->
+      Thumper.bench_with_setup ~setup:(decode_setup placement ~sync out)
+        (Printf.sprintf "%s%s-%dx%d-bfloat16%s" prefix name decode_dim out
+           suffix) (fun (f, x, w) ->
+          ignore (f x w);
+          sync ()))
+    decode_products
+
+(* GPUs
+
+   A GPU's device opens in the measuring worker: a vendor's driver must not be
+   initialized before the fork, so a fresh process ([--cuda], [--nv], [--amd])
+   says whether it opens. Each GPU runs the launches, the Lorenz step and the
+   decode products. *)
+
+type gpu = {
+  placement : unit -> Nx.Placement.t;
+  place : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t;
+  sync : unit -> unit;
+}
+
+let on_gpu open_device =
   let device = lazy (open_device ()) in
-  launches ~prefix:"jit-"
-    ~place:(fun x -> Nx.place (Nx.Placement.on (Lazy.force device)) x)
-    ~sync:(fun () ->
-      Nx_device.synchronize (Nx.Device.memory (Lazy.force device)))
-    ()
+  let placement () = Nx.Placement.on (Lazy.force device) in
+  {
+    placement;
+    place = (fun x -> Nx.place (placement ()) x);
+    sync =
+      (fun () -> Nx_device.synchronize (Nx.Device.memory (Lazy.force device)));
+  }
+
+let gpu_cases { placement; sync; _ } =
+  lorenz_step ~prefix:"lorenz-" placement ~sync lorenz_gpu
+  :: decode ~prefix:"decode-" placement ~sync ()
 
 let run_self flag =
   Sys.command (Filename.quote_command Sys.executable_name [ flag ])
 
-let cuda () =
-  if run_self "--cuda" <> 0 then []
+let gpus =
+  [
+    ("cuda", fun () -> Nx_cuda.device 0);
+    ("nv", fun () -> Nx_nv.device 0);
+    ("amd", fun () -> Nx_amd.device 0);
+  ]
+
+let gpu (name, open_device) =
+  if run_self ("--" ^ name) <> 0 then []
   else
+    let g = on_gpu open_device in
     [
-      Thumper.group ~id:"cuda" "cuda"
-        (gpu_launches (fun () -> Nx_cuda.device 0));
+      Thumper.group ~id:name name
+        (launches ~prefix:"jit-" ~place:g.place ~sync:g.sync () @ gpu_cases g);
     ]
 
-(* The finite checks and the loops on the Mac's Metal GPU. A forked worker
-   cannot reach Metal's compiler, so a fresh process ([--metal]) compiles them
-   into the disk cache, which the worker's setups then read, and says whether
-   Metal opens. *)
-let on_metal () =
-  let device = Nx_metal.device 0 in
-  ( (fun x -> Nx.place (Nx.Placement.on device) x),
-    fun () -> Nx_device.synchronize (Nx.Device.memory device) )
+(* The finite checks, the loops, the Lorenz step and the decode products on the
+   Mac's Metal GPU. A forked worker cannot reach Metal's compiler, so a fresh
+   process ([--metal]) compiles them into the disk cache, which the worker's
+   setups then read, and says whether Metal opens. *)
+let on_metal () = on_gpu (fun () -> Nx_metal.device 0)
+
+let metal_setups { placement; place; sync } =
+  ignore (finite_setup ~place ~sync ());
+  List.iter (fun (_, setup) -> ignore (setup ())) (loop_setups ~place ~sync);
+  ignore (lorenz_setup placement ~sync lorenz_gpu ());
+  List.iter
+    (fun (_, out) -> ignore (decode_setup placement ~sync out ()))
+    decode_products
 
 let metal () =
   if run_self "--metal" <> 0 then []
   else
-    let device = lazy (on_metal ()) in
-    let place x = fst (Lazy.force device) x
-    and sync () = snd (Lazy.force device) () in
+    let ({ place; sync; _ } as g) = on_metal () in
     [
       Thumper.group ~id:"metal" "metal"
         (finite_checks ~place ~sync
            (Printf.sprintf "finite-checks-%d-leaves" finite_leaves)
-        :: loops ~prefix:"jit-" ~place ~sync ());
+         :: loops ~prefix:"jit-" ~place ~sync ()
+        @ gpu_cases g);
     ]
 
 let suite () =
@@ -675,22 +775,32 @@ let suite () =
             ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
             ()
          @ lane_loops ())
-    :: (cuda () @ metal ())
+    :: Thumper.group ~id:"lorenz" "lorenz"
+         [
+           lorenz_step ~suffix:"-host"
+             (fun () -> Nx.Placement.host)
+             ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+             lorenz_host;
+         ]
+    :: Thumper.group ~id:"decode" "decode"
+         (decode ~suffix:"-host"
+            (fun () -> Nx.Placement.host)
+            ~sync:(fun () -> Nx_device.synchronize Nx_device.host)
+            ())
+    :: (List.concat_map gpu gpus @ metal ())
 
 let config = Thumper.Config.(default |> deadline 120.)
 
 let () =
   match Array.to_list Sys.argv with
   | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
+  | [ _; "--nv" ] -> exit (if Result.is_ok (Nx_nv.get 0) then 0 else 1)
+  | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
   | [ _; "--metal" ] -> (
       match Nx_metal.get 0 with
       | Error _ -> exit 1
       | Ok _ ->
-          let place, sync = on_metal () in
-          ignore (finite_setup ~place ~sync ());
-          List.iter
-            (fun (_, setup) -> ignore (setup ()))
-            (loop_setups ~place ~sync);
+          metal_setups (on_metal ());
           exit 0)
   | [ _; "--warm" ] ->
       (* Each case once, in as few calls as a trial takes: what the setups
