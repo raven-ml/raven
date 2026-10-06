@@ -1015,6 +1015,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- ODE solves bound the step by the span of their times: after many short
+  intervals the step could grow to infinity, and a rejection then never
+  shrank it, so the next long interval spent the budget.
 - Add `Ode.delay`, for `y' t = f t (y t) (y (t − τ))` with constant lags
   read from the accepted steps' continuous extensions and a `history`,
   stepping onto the breakpoints the lags create.

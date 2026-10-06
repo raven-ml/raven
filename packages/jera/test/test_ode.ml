@@ -376,6 +376,21 @@ let solve_tests =
         let report = Format.asprintf "%a" Solution.pp s in
         contains ~sub:"method tsit5, tol rel 1e-10 abs 1e-12, budget 3" report;
         contains ~sub:"3 of 3 attempted steps" report);
+    test "a long interval after many short ones still shrinks its steps"
+      (fun () ->
+        (* Short intervals grow the step without bound unless the span caps it;
+           the long one then needs rejections to shrink it. *)
+        let at =
+          Nx.concatenate ~axis:0 [ Nx.linspace f64 0. 1. 400; vec [| 30. |] ]
+        in
+        let s =
+          Ode.sample one Ode.tsit5
+            ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+            ~budget:2000
+            (fun t y -> Nx.add (Nx.mul_s y (-0.1)) (Nx.sin t))
+            ~at (scalar 1.)
+        in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true) (Solution.ok s));
     test "times out of order end their lane, and the report says where"
       (fun () ->
         let s =

@@ -654,7 +654,11 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let top = Nx.where s.rejected one (Nx.full_like one grow) in
     let fac_ok = Nx.minimum top (Nx.maximum (Nx.full_like fac shrink) fac) in
     let fac_bad = Nx.minimum one (Nx.maximum (Nx.full_like fac shrink) fac) in
-    let h = Nx.where ok (Nx.mul s.h fac_ok) (Nx.mul s.h fac_bad) in
+    (* No step exceeds the span of [at]: past it, growth across many short
+       intervals would overflow to infinity, which no rejection shrinks. *)
+    let h =
+      Nx.minimum span_all (Nx.where ok (Nx.mul s.h fac_ok) (Nx.mul s.h fac_bad))
+    in
     let pick_y c a b =
       Nx.Ptree.map2 y
         (fun _ x z -> Nx.where (Nx.broadcast_to (Nx.shape x) c) x z)
