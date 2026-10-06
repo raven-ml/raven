@@ -418,6 +418,57 @@ let validation =
               D.log_density (D.uniform ~low:(f64 1.) ~high:(f64 1.)) (f64 1.)));
     ]
 
+(* Every positive parameter at [+inf], the others at a value inside. *)
+let infinite_positive =
+  let inf = f64 Float.infinity and one = f64 1. and zero = f64 0. in
+  [
+    ("normal scale", D.valid (D.normal ~loc:zero ~scale:inf));
+    ("half_normal scale", D.valid (D.half_normal ~scale:inf));
+    ("lognormal scale", D.valid (D.lognormal ~loc:zero ~scale:inf));
+    ("student_t df", D.valid (D.student_t ~df:inf ~loc:zero ~scale:one));
+    ("student_t scale", D.valid (D.student_t ~df:one ~loc:zero ~scale:inf));
+    ("cauchy scale", D.valid (D.cauchy ~loc:zero ~scale:inf));
+    ("half_cauchy scale", D.valid (D.half_cauchy ~scale:inf));
+    ("laplace scale", D.valid (D.laplace ~loc:zero ~scale:inf));
+    ("logistic scale", D.valid (D.logistic ~loc:zero ~scale:inf));
+    ("exponential rate", D.valid (D.exponential ~rate:inf));
+    ("gamma concentration", D.valid (D.gamma ~concentration:inf ~rate:one));
+    ("gamma rate", D.valid (D.gamma ~concentration:one ~rate:inf));
+    ( "inverse_gamma concentration",
+      D.valid (D.inverse_gamma ~concentration:inf ~scale:one) );
+    ( "inverse_gamma scale",
+      D.valid (D.inverse_gamma ~concentration:one ~scale:inf) );
+    ("beta a", D.valid (D.beta ~a:inf ~b:one));
+    ("beta b", D.valid (D.beta ~a:one ~b:inf));
+    ( "dirichlet concentration",
+      D.valid (D.dirichlet ~concentration:(vec [| 1.; Float.infinity |])) );
+    ( "mvn scale_tril's diagonal",
+      D.valid
+        (D.mvn
+           ~loc:(vec [| 0.; 0. |])
+           ~scale_tril:
+             (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; 0.; Float.infinity |]))
+    );
+    ( "neg_binomial dispersion",
+      D.valid (D.neg_binomial ~mean:one ~dispersion:inf) );
+  ]
+
+let valid =
+  group "valid"
+    [
+      Windtrap.cases ~name:fst "a parameter of +inf is outside (0, inf)"
+        infinite_positive (fun (_, v) -> equal bool false (Nx.item [] v));
+      test "a NaN below the diagonal of scale_tril is not valid" (fun () ->
+          equal bool false
+            (Nx.item []
+               (D.valid
+                  (D.mvn
+                     ~loc:(vec [| 0.; 0. |])
+                     ~scale_tril:
+                       (Nx.create Nx.float64 [| 2; 2 |]
+                          [| 1.; 0.; Float.nan; 1. |])))));
+    ]
+
 let transforms =
   group "transformations"
     [
@@ -463,5 +514,6 @@ let () =
          combinators;
          bijectors;
          validation;
+         valid;
          transforms;
        ])

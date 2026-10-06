@@ -487,6 +487,13 @@ let counts =
       let f = M.sample std in
       (f, M.sample (D.poisson ~rate:(Nx.exp f))))
 
+(* An exponential site whose rate is [exp f]: at [f = 1000] the rate
+   overflows. *)
+let waits =
+  M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+      let f = M.sample std in
+      (f, M.sample (D.exponential ~rate:(Nx.exp f))))
+
 (* An mvn whose correlation [r] is the latent value: at [r = 2] the matrix is
    not positive definite and its Cholesky factor holds NaN. *)
 let correlated =
@@ -527,6 +534,13 @@ let domains =
                 in (0, inf)") (fun () ->
               M.log_joint scaled (f64 0.)
                 { a = f64 (-2.); b = vec [| 0.; 0.; 0. |] }));
+      test "an overflowed exponential rate gives -inf" (fun () ->
+          let lp =
+            M.log_density waits (f64 0.5) (coords waits [| 0.; 1000. |])
+          in
+          satisfies ~claim:"finite" float_exact Float.is_finite
+            (Nx.item [ 0 ] lp);
+          equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
       test "an overflowed rate gives -inf" (fun () ->
           let lp =
             M.log_density counts (Nx.scalar Nx.int32 3l)

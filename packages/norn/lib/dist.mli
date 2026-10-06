@@ -116,7 +116,7 @@ val mvn :
   ((float, 'f) Nx.t, 'f) t
 (** [mvn ~loc ~scale_tril] is the multivariate normal of vectors along the last
     axis, with mean [loc] and covariance [L Lᵀ], [L] the lower triangle of
-    [scale_tril]. [L]'s diagonal is in [(0, inf)].
+    [scale_tril]. [L] is finite, its diagonal in [(0, inf)].
 
     Raises [Invalid_argument] if [scale_tril]'s last two axes are not square or
     not of [loc]'s length. *)

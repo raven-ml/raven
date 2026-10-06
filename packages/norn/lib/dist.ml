@@ -139,7 +139,11 @@ let check family param domain inside x =
   in
   { run; inside = (fun () -> Nx.all (inside x)) }
 
-let in_positive family name x = check family name "(0, inf)" positive x
+let in_positive family name x =
+  check family name "(0, inf)"
+    (fun x -> Nx.logical_and (positive x) (below_infinity x))
+    x
+
 let in_reals family name x = check family name "(-inf, inf)" finite x
 
 let run_checks ?unless context checks =
@@ -547,6 +551,7 @@ let mvn ~loc ~scale_tril =
     ~checks:
       [
         in_reals family "loc" loc;
+        in_reals family "scale_tril's lower triangle" (Nx.tril scale_tril);
         in_positive family "scale_tril's diagonal" (Nx.diagonal scale_tril);
       ]
     ~support:(fun () -> Support.Real)
