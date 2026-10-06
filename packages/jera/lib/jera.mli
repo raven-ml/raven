@@ -18,6 +18,7 @@
     {table
       {tr {th Problem } {th Regime } {th Method } }
       {tr {td Linear system } {td small, dense } {td {!Linear.dense} } }
+      {tr {td  } {td banded } {td {!Linear.banded} } }
       {tr {td  } {td large, symmetric positive-definite } {td {!Linear.cg} } }
       {tr {td  } {td large } {td {!Linear.gmres} } }
       {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
@@ -233,8 +234,9 @@ module Linear : sig
       right-hand side [r]: its solution is the [u] with [a u = r]. The float
       tensors of a value are its vector, of one dtype, the solve's; its other
       tensors are carried from [r]. A solver says how [a] is used: {!dense}
-      materialises it from its products and factors it, and {!cg} and {!gmres}
-      iterate on its products.
+      materialises it from its products and factors it, {!banded} does so for a
+      matrix with entries near its diagonal only, and {!cg} and {!gmres} iterate
+      on its products.
 
       {[
       (* u with (k I + L) u = r, L a matrix given by its product *)
@@ -267,6 +269,19 @@ module Linear : sig
       factorisation with partial pivoting, with [c = 16], [ε] the dtype's
       machine epsilon, [‖A‖] the Frobenius norm of the matrix and the vectors'
       norms Euclidean. It suits systems of up to some thousands of elements. *)
+
+  val banded : width:int -> 'x t
+  (** [banded ~width] is for an [a] whose matrix has entries only within [width]
+      of its diagonal, such as a finite difference in one dimension. It probes
+      [a] with [2 width + 1] applications, each to the sum of the basis vectors
+      of one residue modulo [2 width + 1], whose columns share no row, and
+      factors the band by LU with partial pivoting, whose upper band grows to
+      [2 width]: [2 width + 2] applications with the check, and [O(n width²)]
+      flops in loops of [n] steps. Its bound is {!dense}'s, with [‖A‖] the
+      band's Frobenius norm. A band too narrow for [a] mixes its columns, and
+      the solution misses the check.
+
+      Raises [Invalid_argument] if [width < 0]. *)
 
   val cg : rel:float -> budget:int -> precondition:('x -> 'x) -> 'x t
   (** [cg ~rel ~budget ~precondition] is conjugate gradients from [u = 0],

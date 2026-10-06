@@ -340,6 +340,21 @@ let poisson u =
   and right = Nx.pad [| (0, 1) |] 0. (Nx.slice [ Nx.R (1, n) ] u) in
   Nx.sub (Nx.mul_s u 2.) (Nx.add left right)
 
+(* The Poisson operator plus the diagonal argument, probed as a band of
+   half-width 1 and factored. *)
+let banded =
+  {
+    id = "linear-banded-poisson-256";
+    f =
+      (fun d ->
+        Solution.get
+          (Linear.solve Nx.Ptree.tensor (Linear.banded ~width:1)
+             (fun u -> Nx.add (poisson u) (Nx.mul d u))
+             (Nx.ones f64 [| 256 |])));
+    x = (fun () -> Nx.linspace f64 0.001 0.002 256);
+    rows = all;
+  }
+
 (* The Poisson operator plus the diagonal argument, by conjugate gradients. *)
 let cg =
   {
@@ -398,6 +413,7 @@ let workloads =
     event;
     delay;
     dense;
+    banded;
     cg;
     gmres;
   ]

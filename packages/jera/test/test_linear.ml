@@ -117,6 +117,83 @@ let dense_tests =
               (vec [| 1. |])));
   ]
 
+(* Banded *)
+
+(* A system of [n] unknowns whose matrix has entries in [-1, 1] within [w] of
+   the diagonal, plus [2w + 2] on it, so strictly diagonally dominant; [w] may
+   exceed [n]. *)
+let band =
+  let open Gen in
+  (let* n = int_range 0 12 in
+   let* w = int_range 0 3 in
+   let+ a = list ~size:(constant (n * n)) (float_range (-1.) 1.)
+   and+ r = list ~size:(constant n) (float_range (-10.) 10.) in
+   let a = Nx.create f64 [| n; n |] (Array.of_list a) in
+   let i = Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1)
+   and j = Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1) in
+   let inside = Nx.less_equal_s (Nx.abs (Nx.sub i j)) (Int32.of_int w) in
+   let a = Nx.where inside a (Nx.zeros_like a) in
+   let a = Nx.add a (Nx.mul_s (Nx.eye f64 n) (Float.of_int ((2 * w) + 2))) in
+   (w, a, Nx.create f64 [| n |] (Array.of_list r)))
+  |> with_pp (fun ppf (w, a, r) ->
+      Format.fprintf ppf "w = %d@ a = %a@ r = %a" w Nx.pp a Nx.pp r)
+
+let banded width a r = Linear.solve one (Linear.banded ~width) (product a) r
+
+let banded_tests =
+  [
+    prop "the solution is Nx.solve's on the matrix" band (fun (w, a, r) ->
+        cover "an empty system" (Nx.dim 0 r = 0);
+        cover "a band wider than the system" (2 * w >= Nx.dim 0 r);
+        cover "a band narrower than the system" ((2 * w) + 1 < Nx.dim 0 r);
+        let expected = if Nx.dim 0 r = 0 then r else Nx.solve a r in
+        equal
+          (Oracle.tensor ~rel:1e-12 ~abs:1e-12 ())
+          expected
+          (Solution.get (banded w a r)));
+    test "rows are interchanged where the diagonal is zero" (fun () ->
+        (* A tridiagonal matrix with a zero diagonal, non-singular. *)
+        let a =
+          Nx.create f64 [| 4; 4 |]
+            [| 0.; 1.; 0.; 0.; 1.; 0.; 2.; 0.; 0.; 3.; 0.; 1.; 0.; 0.; 2.; 0. |]
+        in
+        (* x₂ = 1, 2 x₃ = 4, x₁ + 2 x₃ = 2 and 3 x₂ + x₄ = 3. *)
+        let r = vec [| 1.; 2.; 3.; 4. |] in
+        equal
+          (Oracle.tensor ~rel:1e-15 ~abs:1e-15 ())
+          (vec [| -2.; 1.; 2.; 0. |])
+          (Solution.get (banded 1 a r)));
+    test "it applies a 2 width + 1 times and once to check" (fun () ->
+        let a =
+          Nx.add
+            (Nx.mul_s (Nx.eye f64 20) 4.)
+            (Nx.diag ~k:1 (Nx.ones f64 [| 19 |]))
+        in
+        let s = banded 1 a (Nx.ones f64 [| 20 |]) in
+        equal int32 4l (Nx.item [] (Solution.evaluations s)));
+    test "a band too narrow for a misses the check" (fun () ->
+        (* A pentadiagonal matrix probed as a tridiagonal one. *)
+        let n = 8 in
+        let a =
+          Nx.add
+            (Nx.mul_s (Nx.eye f64 n) 6.)
+            (Nx.add
+               (Nx.diag ~k:2 (Nx.ones f64 [| n - 2 |]))
+               (Nx.diag ~k:(-2) (Nx.ones f64 [| n - 2 |])))
+        in
+        let s = banded 1 a (Nx.ones f64 [| n |]) in
+        equal bool true (is Stalled s);
+        failure_with "The residual |a u - r| exceeds" (fun () -> Solution.get s));
+    test "a singular band ends the lane Stalled" (fun () ->
+        let a =
+          Nx.create f64 [| 3; 3 |] [| 1.; 1.; 0.; 1.; 1.; 0.; 0.; 0.; 1. |]
+        in
+        equal bool true (is Stalled (banded 1 a (vec [| 1.; 2.; 3. |]))));
+    test "a negative width raises" (fun () ->
+        invalid_with "Jera.Linear.banded: width = -1 is negative" (fun () ->
+            Linear.banded ~width:(-1)));
+  ]
+
 (* Conjugate gradients *)
 
 (* A symmetric positive-definite system of [n] unknowns: [Bᵀ B + I] for [B] of
@@ -318,6 +395,30 @@ let transformation_tests =
           (Oracle.tensor ~rel:1e-9 ())
           (g Linear.dense)
           (g (Linear.cg ~rel:1e-13 ~budget:50 ~precondition:Fun.id)));
+    test "grad through banded is dense's" (fun () ->
+        let g s =
+          Rune.grad'
+            (fun theta ->
+              Nx.sum (Solution.get (Linear.solve one s (shifted a theta) r)))
+            (scalar 0.)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (g Linear.dense)
+          (g (Linear.banded ~width:1)));
+    test "compiled banded equals eager" (fun () ->
+        let f r = Solution.get (banded 1 a r) in
+        equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
+    test "lanes of banded solve their own systems" (fun () ->
+        let rs = Nx.stack [ vec [| 1.; 0.; 0. |]; r ] in
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (Nx.stack
+             [
+               Solution.get (banded 1 a (vec [| 1.; 0.; 0. |]));
+               Solution.get (banded 1 a r);
+             ])
+          (Rune.vmap' (fun r -> Solution.get (banded 1 a r)) rs));
     test "grad through gmres is dense's" (fun () ->
         let g s =
           Rune.grad'
@@ -369,6 +470,7 @@ let () =
     (run "Jera.Linear"
        [
          group "dense" dense_tests;
+         group "banded" banded_tests;
          group "cg" cg_tests;
          group "gmres" gmres_tests;
          group "transformations" transformation_tests;

@@ -1048,6 +1048,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Linear.banded ~width`, for systems whose matrix has entries near its
+  diagonal only: `2 width + 1` products probe the band, factored by LU with
+  partial pivoting in loops of fixed-size windows.
 - Add `Linear.gmres`, restarted GMRES preconditioned on the right, for
   non-symmetric systems: each cycle of `restart` Arnoldi steps is a scan,
   and the solve stops between cycles on the residual.

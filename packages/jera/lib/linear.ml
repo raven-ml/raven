@@ -7,6 +7,7 @@ open Elementwise
 
 type 'x t =
   | Dense
+  | Banded of int
   | Cg of { rel : float; budget : int; precondition : 'x -> 'x }
   | Gmres of {
       restart : int;
@@ -16,6 +17,12 @@ type 'x t =
     }
 
 let dense = Dense
+
+let banded ~width =
+  if width < 0 then
+    invalid_arg
+      (Printf.sprintf "Jera.Linear.banded: width = %d is negative" width);
+  Banded width
 
 let cg ~rel ~budget ~precondition =
   let fn = "Jera.Linear.cg" in
@@ -36,7 +43,11 @@ let gmres ~restart ~rel ~budget ~precondition =
     invalid_arg (Printf.sprintf "%s: rel = %g is not in (0, 1)" fn rel);
   Gmres { restart; rel; budget; precondition }
 
-let name = function Dense -> "dense" | Cg _ -> "cg" | Gmres _ -> "gmres"
+let name = function
+  | Dense -> "dense"
+  | Banded w -> Printf.sprintf "banded, width %d" w
+  | Cg _ -> "cg"
+  | Gmres _ -> "gmres"
 
 (* Vectors *)
 
@@ -172,6 +183,193 @@ let direct (type d) (dtype : (float, d) Nx.dtype) n apply (r : (float, d) Nx.t)
       [ (Nx.logical_not (Nx.logical_and (finite m) (finite r)), Not_finite) ];
     spent = None;
     applications = Nx.scalar Nx.int32 (Int32.of_int (n + 1));
+    facts = [];
+  }
+
+(* Banded
+
+   The band is stored by rows: [B.(i).(d)] is [A.(i).(i + d − w)], [d] in [0,
+   2w]. A probe sums the basis vectors of one residue [c] modulo [2w + 1]; row
+   [i] of its product is the one entry of row [i] whose column has that residue.
+
+   The factorisation runs down the columns with a window of the rows not yet
+   eliminated: at step [j], [W.(a).(b)] is [A.(j + a).(j + b)] for [a] in [0, w]
+   and [b] in [0, 2w], all the entries the step reads or writes, since an
+   interchange brings up a row whose band ends [2w] past [j]. The step moves the
+   row of largest magnitude in column [j] to the top, eliminates below it, emits
+   the top row as row [j] of [U] with the multipliers and the interchange, and
+   slides the window down a row, taking row [j + w + 1] of the band. The solves
+   slide windows of [w + 1] and [2w] values the same way. *)
+
+(* [gather shape index mask x] is [x]'s elements at the static flat [index], or
+   zero where [mask] is false, of [shape]. *)
+let gather shape index mask x =
+  let n = Array.length index in
+  let at = Nx.create Nx.int64 [| n |] (Array.map Int64.of_int index) in
+  let inside = Nx.create Nx.bool [| n |] mask in
+  let v = Nx.take ~indices:at (Nx.reshape [| -1 |] x) in
+  Nx.reshape shape (Nx.where inside v (Nx.zeros_like v))
+
+(* The band of [apply], [n] unknowns, half-width [w]. *)
+let probe (type d) (dtype : (float, d) Nx.dtype) n w apply =
+  let k = (2 * w) + 1 in
+  let residues =
+    Nx.equal
+      (Nx.reshape [| k; 1 |] (Nx.arange Nx.int32 0 k 1))
+      (Nx.reshape [| 1; n |]
+         (Nx.mod_s (Nx.arange Nx.int32 0 n 1) (Int32.of_int k)))
+  in
+  let y =
+    Rune.vmap
+      Nx.Ptree.(tensor @-> returns tensor)
+      apply (Nx.cast dtype residues)
+  in
+  let cell f = Array.init (n * k) (fun e -> f (e / k) (e mod k)) in
+  let column i d = i + d - w in
+  gather [| n; k |]
+    (cell (fun i d -> (((column i d mod k) + k) mod k * n) + i))
+    (cell (fun i d -> column i d >= 0 && column i d < n))
+    y
+
+(* The factors of the band [b]: [U]'s rows, [n × (2w + 1)] from the diagonal,
+   the multipliers, [n × w], and the interchanges, the offset of the row moved
+   to the top at each step. *)
+let factor (type d) (b : (float, d) Nx.t) n w =
+  let k = (2 * w) + 1 and rows = w + 1 in
+  let cell f = Array.init (rows * k) (fun e -> f (e / k) (e mod k)) in
+  (* The first window: [W.(a).(b)] is [B.(a).(b − a + w)]. *)
+  let first =
+    gather [| rows; k |]
+      (cell (fun a c -> (a * k) + c - a + w))
+      (cell (fun a c -> a < n && c - a + w >= 0 && c - a + w < k))
+      b
+  in
+  let incoming =
+    Nx.concatenate ~axis:0
+      [
+        Nx.slice [ Nx.R (Int.min rows n, n) ] b;
+        Nx.zeros (Nx.dtype b) [| Int.min rows n; k |];
+      ]
+  in
+  let row_index = Nx.reshape [| rows; 1 |] (Nx.arange Nx.int32 0 rows 1) in
+  let step win next =
+    let column = Nx.slice [ Nx.A; Nx.I 0 ] win in
+    let p = Nx.cast Nx.int32 (Nx.argmax (Nx.abs column)) in
+    let top =
+      Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 p)) win
+    and first = Nx.slice [ Nx.R (0, 1) ] win in
+    let win =
+      Nx.where (Nx.equal_s row_index 0l)
+        (Nx.broadcast_to [| rows; k |] top)
+        (Nx.where (Nx.equal row_index p)
+           (Nx.broadcast_to [| rows; k |] first)
+           win)
+    in
+    let pivot = Nx.get [ 0; 0 ] win in
+    let below = Nx.slice [ Nx.R (1, rows); Nx.I 0 ] win in
+    let l =
+      Nx.where (Nx.equal_s pivot 0.) (Nx.zeros_like below)
+        (Nx.div below
+           (Nx.where (Nx.equal_s pivot 0.) (Nx.ones_like pivot) pivot))
+    in
+    let u = Nx.get [ 0 ] win in
+    let rest =
+      Nx.sub
+        (Nx.slice [ Nx.R (1, rows) ] win)
+        (Nx.mul (Nx.reshape [| w; 1 |] l) (Nx.reshape [| 1; k |] u))
+    in
+    let slid =
+      Nx.concatenate ~axis:0
+        [
+          Nx.pad [| (0, 0); (0, 1) |] 0. (Nx.slice [ Nx.A; Nx.R (1, k) ] rest);
+          Nx.reshape [| 1; k |] next;
+        ]
+    in
+    (slid, (u, (l, p)))
+  in
+  let _, (u, (l, p)) =
+    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      ~f:step ~init:first incoming
+  in
+  (u, l, p)
+
+(* The solution of [A x = r] from the band's factors. *)
+let substitute (type d) (u, l, p) n w (r : (float, d) Nx.t) =
+  let rows = w + 1 in
+  let index = Nx.arange Nx.int32 0 rows 1 in
+  let incoming =
+    Nx.concatenate ~axis:0
+      [
+        Nx.slice [ Nx.R (Int.min rows n, n) ] r;
+        Nx.zeros (Nx.dtype r) [| Int.min rows n |];
+      ]
+  in
+  let first =
+    Nx.concatenate ~axis:0
+      [
+        Nx.slice [ Nx.R (0, Int.min rows n) ] r;
+        Nx.zeros (Nx.dtype r) [| rows - Int.min rows n |];
+      ]
+  in
+  let forward win (l, (p, next)) =
+    let top =
+      Nx.reshape [||]
+        (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 p)) win)
+    in
+    let win =
+      Nx.where (Nx.equal_s index 0l)
+        (Nx.broadcast_to [| rows |] top)
+        (Nx.where (Nx.equal index p)
+           (Nx.broadcast_to [| rows |] (Nx.get [ 0 ] win))
+           win)
+    in
+    let z = Nx.get [ 0 ] win in
+    let rest = Nx.sub (Nx.slice [ Nx.R (1, rows) ] win) (Nx.mul l z) in
+    (Nx.concatenate ~axis:0 [ rest; Nx.reshape [| 1 |] next ], z)
+  in
+  let _, z =
+    Rune.scan Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      Nx.Ptree.tensor ~f:forward ~init:first
+      (l, (p, incoming))
+  in
+  let backward later (u, z) =
+    let x =
+      Nx.div
+        (Nx.sub z
+           (Nx.sum (Nx.mul (Nx.slice [ Nx.R (1, (2 * w) + 1) ] u) later)))
+        (Nx.get [ 0 ] u)
+    in
+    let x1 = Nx.reshape [| 1 |] x in
+    (Nx.slice [ Nx.R (0, 2 * w) ] (Nx.concatenate ~axis:0 [ x1; later ]), x)
+  in
+  let _, x =
+    Rune.scan Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor tensor)
+      Nx.Ptree.tensor ~f:backward
+      ~init:(Nx.zeros (Nx.dtype r) [| 2 * w |])
+      (Nx.flip ~axes:[ 0 ] u, Nx.flip ~axes:[ 0 ] z)
+  in
+  Nx.flip ~axes:[ 0 ] x
+
+let band (type d) (dtype : (float, d) Nx.dtype) n w apply (r : (float, d) Nx.t)
+    =
+  let b = probe dtype n w apply in
+  let x = substitute (factor b n w) n w r in
+  let bound =
+    Nx.mul_s
+      (Nx.add (Nx.mul (Nx.norm b) (Nx.norm x)) (Nx.norm r))
+      (backward *. float n *. Num.eps dtype)
+  in
+  {
+    u = x;
+    residual = Nx.sub (apply x) r;
+    bound;
+    outcomes =
+      [ (Nx.logical_not (Nx.logical_and (finite b) (finite r)), Not_finite) ];
+    spent = None;
+    applications = Nx.scalar Nx.int32 (Int32.of_int ((2 * w) + 2));
     facts = [];
   }
 
@@ -333,6 +531,7 @@ let run (type d) s (dtype : (float, d) Nx.dtype) n apply precondition
     (r : (float, d) Nx.t) =
   match s with
   | Dense -> direct dtype n apply r
+  | Banded w -> band dtype n w apply r
   | Cg { rel; budget; _ } -> conjugate dtype ~rel ~budget apply precondition r
   | Gmres { restart; rel; budget; _ } ->
       generalised dtype ~restart ~rel ~budget apply precondition r
@@ -340,7 +539,7 @@ let run (type d) s (dtype : (float, d) Nx.dtype) n apply precondition
 (* [s]'s preconditioner on the vectors of [ravel] and [unravel]. *)
 let preconditioner fn x s ravel unravel =
   match s with
-  | Dense -> Fun.id
+  | Dense | Banded _ -> Fun.id
   | Cg { precondition; _ } | Gmres { precondition; _ } ->
       fun v -> ravel (checked fn x precondition (unravel v))
 
