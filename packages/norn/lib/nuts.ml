@@ -4,11 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 module P = Nx.Ptree
+module H = Hamiltonian
 
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-
-let shape_string s =
-  String.concat "; " (Array.to_list (Array.map string_of_int s))
+let invalid_argf = Rows.invalid_argf
 
 type ('u, 'f) state = {
   position : 'u;
@@ -58,60 +56,6 @@ let ptree (type u f) (u : u P.t) : (u, f) state P.t =
 
 let stats = Stats.ptree
 
-(* Rows
-
-   Positions lead with the chain axis. A row operation acts on each chain:
-   [rows_dot] is each chain's inner product over every float tensor, and a
-   per-chain scalar broadcasts against a tensor's trailing axes. *)
-
-let float_leaf x = Nx_dtype.is_float (Nx.dtype x)
-
-let column (type f) (h : (float, f) Nx.t) x =
-  let c = (Nx.shape h).(0) in
-  Nx.reshape
-    (Array.append [| c |] (Array.make (Nx.ndim x - 1) 1))
-    (Nx.cast (Nx.dtype x) h)
-
-let rows_dot (type f) u (like : (float, f) Nx.t) a b : (float, f) Nx.t =
-  let c = (Nx.shape like).(0) in
-  P.fold u
-    (fun _ t acc ->
-      if not (float_leaf t) then acc
-      else
-        Nx.add acc
-          (Nx.cast (Nx.dtype like)
-             (Nx.sum ~axes:[ 1 ] (Nx.reshape [| c; -1 |] t))))
-    (P.map2 u (fun _ x y -> Nx.mul x y) a b)
-    (Nx.zeros_like like)
-
-(* [axpy u h x y] is [y + h x], [h] one scalar per chain. *)
-let axpy u h x y =
-  P.map2 u
-    (fun _ x y -> if float_leaf x then Nx.add y (Nx.mul (column h x) x) else y)
-    x y
-
-(* [choose u mask a b] is [a] in the chains where [mask] holds, [b]
-   elsewhere. *)
-let choose u mask a b =
-  let c = (Nx.shape mask).(0) in
-  P.map2 u
-    (fun _ x y ->
-      let m =
-        Nx.reshape (Array.append [| c |] (Array.make (Nx.ndim x - 1) 1)) mask
-      in
-      Nx.where m x y)
-    a b
-
-let finite_rows u x =
-  let c = P.fold u (fun _ t _ -> (Nx.shape t).(0)) x 0 in
-  P.fold u
-    (fun _ t acc ->
-      if not (float_leaf t) then acc
-      else
-        Nx.logical_and acc
-          (Nx.all ~axes:[ 1 ] (Nx.reshape [| c; -1 |] (Nx.isfinite t))))
-    x (Nx.ones Nx.bool [| c |])
-
 (* [logaddexp a b] is [log (exp a + exp b)], [-inf] where both are. *)
 let logaddexp a b =
   let m = Nx.maximum a b in
@@ -143,35 +87,6 @@ let to_original u g x gz =
     (fun g x gz -> snd (Rune.vjp u u (Geometry.whiten u g) x) gz)
     g x gz
 
-(* [evaluate u lp x] is the density at [x] and its gradient, chain by chain: the
-   gradient of the summed density is each chain's, rows being independent. *)
-let evaluate u lp x =
-  let _, g, l =
-    Rune.value_and_grad_aux u P.tensor
-      (fun x ->
-        let l = lp x in
-        (Nx.sum l, l))
-      x
-  in
-  (l, g)
-
-(* The density's value is finite or -inf at a finite position. *)
-let check_range context l =
-  let c = (Nx.shape l).(0) in
-  let chain = Nx.arange Nx.int32 0 c 1 in
-  let ok =
-    Nx.logical_not
-      (Nx.logical_or (Nx.isnan l)
-         (Nx.equal l (Nx.scalar_like l Float.infinity)))
-  in
-  Nx.check
-    P.(pair tensor tensor)
-    ok (l, chain)
-    (fun _ (v, chain) ->
-      Invalid_argument
-        (Printf.sprintf "%s: the density is %s at chain %ld, a finite position"
-           context (Nx.to_string v) (Nx.item [] chain)))
-
 (* Keys
 
    Transition [n] of a run has the key [fold_in k n], warmup's transitions
@@ -194,19 +109,6 @@ let uniforms (type f) dt keys j id : (float, f) Nx.t =
       Nx.Rng.uniform k dt [||])
     keys
 
-let momentum u keys like =
-  Rune.vmap
-    P.(Nx.Rng.ptree @-> u @-> returns u)
-    (fun k x ->
-      let k = Nx.Rng.fold_in k 0 in
-      let j = ref (-1) in
-      P.map u
-        (fun _ t ->
-          incr j;
-          Noise.normal_like t (Nx.Rng.fold_in k !j) (Nx.shape t))
-        x)
-    keys like
-
 (* Trees
 
    A trajectory is built by doublings: doubling [j] extends it by a subtree of
@@ -217,7 +119,12 @@ let momentum u keys like =
    the slot into its parent. Every chain takes the same leaf schedule, so the
    leaf counters are shared and only each chain's stop differs. *)
 
-type ('u, 'f) point = { z : 'u; p : 'u; g : 'u; lp : (float, 'f) Nx.t }
+type ('u, 'f) point = ('u, 'f) H.point = {
+  z : 'u;
+  p : 'u;
+  g : 'u;
+  lp : (float, 'f) Nx.t;
+}
 
 (* A completed subtree: the momenta of its first and last leaf, in the order it
    was built, their sum, its log weight and its proposal. *)
@@ -249,26 +156,11 @@ type ('u, 'f) tree = {
   size : Nx.int32_t; (* [2^j] *)
 }
 
-type ('u, 'f) point' = ('u, 'f) point
 type ('u, 'f) node' = ('u, 'f) node
 type ('u, 'f) tree' = ('u, 'f) tree
 
-let point_ptree (type u f) (u : u P.t) : (u, f) point P.t =
-  let module S = struct
-    type _ t = (u, f) point'
-
-    let walk c (s : (u, f) point) : (u, f) point =
-      let open P.Walk in
-      let z = field c "z" (structure u) s.z in
-      let p = field c "p" (structure u) s.p in
-      let g = field c "g" (structure u) s.g in
-      let lp = field c "lp" tensor s.lp in
-      { z; p; g; lp }
-  end in
-  P.nest (module S) P.unit
-
 let node_ptree (type u f) (u : u P.t) : (u, f) node P.t =
-  let point = point_ptree u in
+  let point = H.point_ptree u in
   let module S = struct
     type _ t = (u, f) node'
 
@@ -284,7 +176,7 @@ let node_ptree (type u f) (u : u P.t) : (u, f) node P.t =
   P.nest (module S) P.unit
 
 let tree_ptree (type u f) (u : u P.t) : (u, f) tree P.t =
-  let point = point_ptree u and nodes = P.list (node_ptree u) in
+  let point = H.point_ptree u and nodes = P.list (node_ptree u) in
   let module S = struct
     type _ t = (u, f) tree'
 
@@ -329,21 +221,13 @@ let tree_ptree (type u f) (u : u P.t) : (u, f) tree P.t =
   end in
   P.nest (module S) P.unit
 
-let choose_point u mask a b =
-  {
-    z = choose u mask a.z b.z;
-    p = choose u mask a.p b.p;
-    g = choose u mask a.g b.g;
-    lp = Nx.where mask a.lp b.lp;
-  }
-
 let choose_node u mask a b =
   {
-    first = choose u mask a.first b.first;
-    last = choose u mask a.last b.last;
-    rho = choose u mask a.rho b.rho;
+    first = Rows.choose u mask a.first b.first;
+    last = Rows.choose u mask a.last b.last;
+    rho = Rows.choose u mask a.rho b.rho;
     weight = Nx.where mask a.weight b.weight;
-    prop = choose_point u mask a.prop b.prop;
+    prop = H.choose_point u mask a.prop b.prop;
   }
 
 (* [criterion u like minus plus rho] is the generalised no-U-turn criterion of a
@@ -353,10 +237,8 @@ let choose_node u mask a b =
 let criterion u like minus plus rho =
   let zero = Nx.zeros_like like in
   Nx.logical_and
-    (Nx.greater (rows_dot u like plus rho) zero)
-    (Nx.greater (rows_dot u like minus rho) zero)
-
-let add u a b = P.map2 u (fun _ x y -> Nx.add x y) a b
+    (Nx.greater (Rows.dot u like plus rho) zero)
+    (Nx.greater (Rows.dot u like minus rho) zero)
 
 (* [merge u like keys code init final] is the parent of the sibling nodes [init]
    and [final], built in that order, and whether it keeps the criterion around
@@ -368,43 +250,26 @@ let merge u like keys doubling code init final =
       (uniforms (Nx.dtype like) keys doubling code)
       (Nx.exp (Nx.sub final.weight weight))
   in
-  let rho = add u init.rho final.rho in
+  let rho = Rows.add u init.rho final.rho in
   let ok =
     Nx.logical_and
       (criterion u like init.first final.last rho)
       (Nx.logical_and
-         (criterion u like init.first final.first (add u init.rho final.first))
-         (criterion u like init.last final.last (add u final.rho init.last)))
+         (criterion u like init.first final.first
+            (Rows.add u init.rho final.first))
+         (criterion u like init.last final.last
+            (Rows.add u final.rho init.last)))
   in
   ( {
       first = init.first;
       last = final.last;
       rho;
       weight;
-      prop = choose_point u take final.prop init.prop;
+      prop = H.choose_point u take final.prop init.prop;
     },
     ok )
 
-let max_energy_error = 1000.
-
-(* [leapfrog u lp_z running h s] is one leapfrog step of [h], one per chain,
-   from [s] with its cached gradient, by one density evaluation, and whether
-   each chain's step stayed finite. A chain held by [running], or whose step
-   left the reals, evaluates the density again at [s]. *)
-let leapfrog u lp_z running h s =
-  let finite = ref running in
-  let kick h s = { s with p = axpy u h s.g s.p } in
-  let drift h p =
-    let z = axpy u h p.p p.z in
-    let ok = finite_rows u z in
-    finite := ok;
-    let z = choose u (Nx.logical_and running ok) z s.z in
-    let lp, g = evaluate u lp_z z in
-    check_range "Norn.Nuts.step" lp;
-    { z; p = p.p; g; lp }
-  in
-  let s' = Jera.Split.step Jera.Split.leapfrog ~kick ~drift h s in
-  (s', !finite)
+let leapfrog u lp_z running h s = H.leapfrog "Norn.Nuts.step" u lp_z running h s
 
 (* [transition u lp max_depth eps keys geometry s] is one transition from the
    position [s] of each chain. *)
@@ -417,8 +282,8 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
   let lp_z z = lp (color z) in
   let z0 = per_chain_whiten u geometry position in
   let g0 = to_whitened u geometry z0 grad in
-  let p0 = momentum u keys z0 in
-  let kinetic p = Nx.mul_s (rows_dot u eps p p) 0.5 in
+  let p0 = H.momentum u keys z0 in
+  let kinetic p = H.kinetic u eps p in
   let h0 = Nx.sub (kinetic p0) lp0 in
   let start = { z = z0; p = p0; g = g0; lp = lp0 } in
   let empty = { first = p0; last = p0; rho = p0; weight = lp0; prop = start } in
@@ -453,15 +318,17 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
         (Nx.greater (uniforms dt keys t.doubling (i32 0)) (Nx.scalar dt 0.5))
         t.forward
     in
-    let from = choose_point u forward t.front t.back in
-    let cursor = choose_point u (Nx.broadcast_to [| c |] fresh) from t.cursor in
+    let from = H.choose_point u forward t.front t.back in
+    let cursor =
+      H.choose_point u (Nx.broadcast_to [| c |] fresh) from t.cursor
+    in
     let h = Nx.where forward eps (Nx.neg eps) in
     let leaf, finite = leapfrog u lp_z running h cursor in
     let delta = Nx.sub (Nx.sub (kinetic leaf.p) leaf.lp) h0 in
     let delta = Nx.where (Nx.isnan delta) (Nx.scalar dt Float.infinity) delta in
     let diverged =
       Nx.logical_or (Nx.logical_not finite)
-        (Nx.greater delta (Nx.scalar dt max_energy_error))
+        (Nx.greater delta (Nx.scalar dt H.max_energy_error))
     in
     let accept = Nx.minimum (Nx.exp (Nx.neg delta)) (Nx.scalar dt 1.) in
     let node =
@@ -515,24 +382,24 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
         (Nx.less u_top (Nx.exp (Nx.sub sub.weight t.total)))
     in
     let sample =
-      choose_point u (Nx.logical_and merges take) sub.prop t.sample
+      H.choose_point u (Nx.logical_and merges take) sub.prop t.sample
     in
     let total = Nx.where merges (logaddexp t.total sub.weight) t.total in
-    let sum = choose u merges (add u t.sum sub.rho) t.sum in
+    let sum = Rows.choose u merges (Rows.add u t.sum sub.rho) t.sum in
     (* The criterion around the merged trajectory and between its halves, the
        backward half first. *)
-    let bb = choose u forward t.back.p sub.last
-    and bf = choose u forward t.front.p sub.first in
-    let fb = choose u forward sub.first t.back.p
-    and ff = choose u forward sub.last t.front.p in
-    let rb = choose u forward t.sum sub.rho
-    and rf = choose u forward sub.rho t.sum in
+    let bb = Rows.choose u forward t.back.p sub.last
+    and bf = Rows.choose u forward t.front.p sub.first in
+    let fb = Rows.choose u forward sub.first t.back.p
+    and ff = Rows.choose u forward sub.last t.front.p in
+    let rb = Rows.choose u forward t.sum sub.rho
+    and rf = Rows.choose u forward sub.rho t.sum in
     let persists =
       Nx.logical_and
         (criterion u eps bb ff sum)
         (Nx.logical_and
-           (criterion u eps bb fb (add u rb fb))
-           (criterion u eps bf ff (add u rf bf)))
+           (criterion u eps bb fb (Rows.add u rb fb))
+           (criterion u eps bf ff (Rows.add u rf bf)))
     in
     let depth = Nx.where merges (Nx.add t.depth (i32 1)) t.depth in
     let full = Nx.logical_and merges (Nx.greater_equal depth (i32 max_depth)) in
@@ -540,14 +407,14 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
       Nx.logical_or (Nx.logical_not valid)
         (Nx.logical_or (Nx.logical_and merges (Nx.logical_not persists)) full)
     in
-    let front = choose_point u (Nx.logical_and merges forward) leaf t.front in
+    let front = H.choose_point u (Nx.logical_and merges forward) leaf t.front in
     let back =
-      choose_point u
+      H.choose_point u
         (Nx.logical_and merges (Nx.logical_not forward))
         leaf t.back
     in
-    let keep a b = choose u running a b
-    and keep_point a b = choose_point u running a b in
+    let keep a b = Rows.choose u running a b
+    and keep_point a b = H.choose_point u running a b in
     let keep_t a b = Nx.where running a b in
     let size = Nx.where (Nx.equal next t.size) (Nx.mul t.size (i32 2)) t.size in
     {
@@ -599,41 +466,6 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
 
 (* Starting *)
 
-let chains u x =
-  let c =
-    P.fold u
-      (fun _ t c -> match c with None -> Some (Nx.shape t).(0) | c -> c)
-      x None
-  in
-  match c with
-  | Some c -> c
-  | None -> invalid_arg "Norn.Nuts: the position has no tensor"
-
-(* [check_rows context u lp x l] refuses a density whose rows read each other:
-   evaluated on the chains reversed, its result is not reversed. *)
-let check_rows context u lp x l =
-  let c = (Nx.shape l).(0) in
-  if c > 1 then begin
-    let flip = P.map u (fun _ t -> Nx.flip ~axes:[ 0 ] t) x in
-    let r = Nx.flip ~axes:[ 0 ] (lp flip) in
-    let same =
-      Nx.logical_or (Nx.equal l r)
-        (Nx.less_equal
-           (Nx.abs (Nx.sub l r))
-           (Nx.mul_s (Nx.add_s (Nx.abs l) 1.) 1e-5))
-    in
-    Nx.check P.tensor same (Nx.arange Nx.int32 0 c 1) (fun _ row ->
-        Invalid_argument
-          (Printf.sprintf
-             "%s: the density's row %ld changes when the chains are reversed; \
-              a chain's log density reads only its own row"
-             context (Nx.item [] row)))
-  end
-
-(* The variance limits of a Fisher fit. *)
-let variance_low = 1e-20
-let variance_high = 1e20
-
 let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   let context = "Norn.Nuts.init" in
   if max_depth < 1 then
@@ -641,26 +473,13 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   if not (accept > 0. && accept < 1.) then
     invalid_argf "%s: accept = %g is not in (0, 1)" context accept;
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
-  let c = chains u position in
-  let l, g = evaluate u lp position in
-  if Nx.shape l <> [| c |] then
-    invalid_argf
-      "%s: the density returned shape [%s] for a position of %d chains; a \
-       density returns one log density per chain, shape [%d]"
-      context
-      (shape_string (Nx.shape l))
-      c c;
-  check_range context l;
-  check_rows context u lp position l;
+  let c = Rows.count context u position in
+  let l, g = Rows.evaluate u lp position in
+  Rows.check_density context u lp position l;
   let dt = Nx.dtype l in
   let gp = Gaussian.ptree u in
   (* Orthonormal directions number at most a chain's float elements. *)
-  let elements =
-    P.fold u
-      (fun _ t n -> if float_leaf t then n + (Nx.numel t / c) else n)
-      position 0
-  in
-  let rank = min rank elements in
+  let rank = min rank (Rows.elements u c position) in
   let geometry =
     match geometry with
     | Some g ->
@@ -670,15 +489,7 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
           g
     | None ->
         let scale =
-          P.map u
-            (fun _ g ->
-              let v = Nx.recip (Nx.abs g) in
-              Nx.sqrt
-                (Nx.clamp
-                   ~min:(Nx_dtype.of_float (Nx.dtype v) variance_low)
-                   ~max:(Nx_dtype.of_float (Nx.dtype v) variance_high)
-                   v))
-            g
+          P.map u (fun _ g -> Nx.sqrt (Adapt.clip (Nx.recip (Nx.abs g)))) g
         in
         let fit =
           if rank = 0 then fun m s -> Gaussian.diagonal u dt ~mean:m ~scale:s
@@ -758,53 +569,10 @@ let sample u lp k ~draws (s : (_, _) state) =
 
 (* Warmup *)
 
-(* Stan's windows: an initial buffer, slow windows that double in length, the
-   last stretched to the final buffer, and the final buffer; each window says
-   whether the geometry is refitted at its end. Too few steps for a slow window
-   adapt the step size alone. *)
-let schedule n =
-  if n < 20 then if n = 0 then [] else [ (n, false) ]
-  else
-    let first, last, base =
-      if 75 + 50 + 25 > n then
-        let first = int_of_float (0.15 *. float_of_int n)
-        and last = int_of_float (0.1 *. float_of_int n) in
-        (first, last, n - first - last)
-      else (75, 50, 25)
-    in
-    let slow_end = n - last in
-    let rec slow start size acc =
-      if start >= slow_end then List.rev acc
-      else
-        let size =
-          if start + (3 * size) > slow_end then slow_end - start else size
-        in
-        slow (start + size) (2 * size) ((size, true) :: acc)
-    in
-    List.filter
-      (fun (n, _) -> n > 0)
-      ([ (first, false) ] @ slow first base [] @ [ (last, false) ])
-
-(* Dual averaging (Hoffman and Gelman 2014), Stan's constants. *)
-let da_gamma = 0.05
-let da_kappa = 0.75
-let da_t0 = 10.
-
 type ('u, 'f) adapt = {
   st : ('u, 'f) state;
-  mu : (float, 'f) Nx.t;
-  s_bar : (float, 'f) Nx.t;
-  x_bar : (float, 'f) Nx.t;
-  count : (float, 'f) Nx.t; (* steps since the last restart *)
-  index : Nx.int32_t; (* warmup steps taken *)
-  n : Nx.int32_t; (* the window's draws so far *)
-  shift : 'u; (* the window's first position *)
-  sx : 'u;
-  sxx : 'u;
-  sg : 'u;
-  sgg : 'u;
-  xs : 'u; (* the window's draws and gradients, for a low-rank fit *)
-  gs : 'u;
+  averaging : 'f Adapt.averaging;
+  window : 'u Adapt.window;
 }
 
 type ('u, 'f) adapt' = ('u, 'f) adapt
@@ -817,345 +585,72 @@ let adapt_ptree (type u f) (u : u P.t) : (u, f) adapt P.t =
     let walk c (a : (u, f) adapt) : (u, f) adapt =
       let open P.Walk in
       let st = field c "st" (structure sp) a.st in
-      let mu = field c "mu" tensor a.mu in
-      let s_bar = field c "s_bar" tensor a.s_bar in
-      let x_bar = field c "x_bar" tensor a.x_bar in
-      let count = field c "count" tensor a.count in
-      let index = field c "index" tensor a.index in
-      let n = field c "n" tensor a.n in
-      let shift = field c "shift" (structure u) a.shift in
-      let sx = field c "sx" (structure u) a.sx in
-      let sxx = field c "sxx" (structure u) a.sxx in
-      let sg = field c "sg" (structure u) a.sg in
-      let sgg = field c "sgg" (structure u) a.sgg in
-      let xs = field c "xs" (structure u) a.xs in
-      let gs = field c "gs" (structure u) a.gs in
-      { st; mu; s_bar; x_bar; count; index; n; shift; sx; sxx; sg; sgg; xs; gs }
+      let averaging =
+        field c "averaging" (structure (Adapt.averaging_ptree ())) a.averaging
+      in
+      let window =
+        field c "window" (structure (Adapt.window_ptree u)) a.window
+      in
+      { st; averaging; window }
   end in
   P.nest (module S) P.unit
 
-let zeros u x = P.map u (fun _ t -> Nx.zeros_like t) x
-let sq u x = P.map u (fun _ t -> Nx.mul t t) x
-
 (* [init_step_size u lp k s] is each chain's step size doubled or halved, from
    [s.step_size], until one leapfrog step from its position with a fresh
-   momentum crosses an acceptance of 0.8 (Stan's heuristic). [k] is the key of
-   the transition the search precedes. *)
-let init_step_size (type f) u lp k (s : (_, f) state) : (float, f) Nx.t =
-  let eps = s.step_size in
-  let dt = Nx.dtype eps in
-  let c = (Nx.shape eps).(0) in
+   momentum crosses an acceptance of 0.8. [k] is the key of the transition the
+   search precedes. *)
+let init_step_size u lp k (s : (_, _) state) =
+  let c = (Nx.shape s.step_size).(0) in
   let lp_z z = lp (per_chain_color u s.geometry z) in
   let z0 = per_chain_whiten u s.geometry s.position in
   let g0 = to_whitened u s.geometry z0 s.grad in
-  let all = Nx.ones Nx.bool [| c |] in
-  let chains = Nx.Rng.split_batch ~n:c k in
-  let log_ratio eps i =
-    let keys =
-      Rune.vmap
-        P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
-        (fun k -> Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 2) i)
-        chains
-    in
-    let p = momentum u keys z0 in
-    let kinetic p = Nx.mul_s (rows_dot u eps p p) 0.5 in
-    let start = { z = z0; p; g = g0; lp = s.lp } in
-    let leaf, _ = leapfrog u lp_z all eps start in
-    let d =
-      Nx.sub (Nx.sub (kinetic p) s.lp) (Nx.sub (kinetic leaf.p) leaf.lp)
-    in
-    Nx.where (Nx.isnan d) (Nx.scalar dt Float.neg_infinity) d
-  in
-  let threshold = Nx.scalar dt (Float.log 0.8) in
-  let up = Nx.greater (log_ratio eps (Nx.scalar Nx.int32 0l)) threshold in
-  let carry = P.(pair tensor (pair tensor tensor)) in
-  let eps, _ =
-    Rune.iterate carry ~max:200
-      ~until:(fun (_, (_, running)) -> Nx.logical_not (Nx.any running))
-      ~f:(fun (eps, (i, running)) ->
-        let i = Nx.add i (Nx.scalar Nx.int32 1l) in
-        let d = log_ratio eps i in
-        let crossed =
-          Nx.where up
-            (Nx.logical_not (Nx.greater d threshold))
-            (Nx.logical_not (Nx.less d threshold))
-        in
-        let running = Nx.logical_and running (Nx.logical_not crossed) in
-        let next = Nx.where up (Nx.mul_s eps 2.) (Nx.mul_s eps 0.5) in
-        (Nx.where running next eps, (i, running)))
-      (eps, (Nx.scalar Nx.int32 0l, all))
-  in
-  eps
-
-(* Elements as one vector *)
-
-(* [rows_matrix u dt x] is [x], each tensor with a leading axis of [L], as an
-   [[L; d]] matrix of the float elements; [vector_of u dt m] reads the [k] rows
-   of an [[k; d]] matrix back into [x]'s structure. *)
-let rows_matrix (type f) u (dt : (float, f) Nx.dtype) x : (float, f) Nx.t =
-  let rows =
-    P.fold u
-      (fun _ t acc ->
-        if not (float_leaf t) then acc
-        else
-          let s = Nx.shape t in
-          let n =
-            Array.fold_left ( * ) 1 (Array.sub s 1 (Array.length s - 1))
-          in
-          Nx.cast dt (Nx.reshape [| s.(0); n |] t) :: acc)
-      x []
-  in
-  Nx.concatenate ~axis:1 (List.rev rows)
-
-let matrix_rows u like m =
-  let k = (Nx.shape m).(0) in
-  let offset = ref 0 in
-  P.map u
-    (fun _ t ->
-      let shape = Array.append [| k |] (Nx.shape t) in
-      if not (float_leaf t) then Nx.zeros (Nx.dtype t) shape
-      else
-        let n = Nx.numel t in
-        let cols = Nx.shrink [| (0, k); (!offset, !offset + n) |] m in
-        offset := !offset + n;
-        Nx.reshape shape (Nx.cast (Nx.dtype t) cols))
-    like
-
-(* The regularisation of the covariances a low-rank fit compares. *)
-let low_rank_ridge = 1e-5
-
-(* [low_rank_fit u dt ~rank n m s xs gs] is one chain's Gaussian of mean [m],
-   diagonal scale [s], and the [rank] directions where the window's first [n]
-   draws [xs] and scores [gs], whitened by [s], disagree most. In the span [Q]
-   of both, the covariance minimising the Fisher divergence is the geometric
-   mean of the draws' covariance [C_x] and the inverse of the scores' [C_g]; its
-   eigenvalues farthest from 1 in ratio give the directions. *)
-let low_rank_fit (type f) u (dt : (float, f) Nx.dtype) ~rank n m s xs gs =
-  let x = rows_matrix u dt xs and g = rows_matrix u dt gs in
-  let l = (Nx.shape x).(0) in
-  let valid =
-    Nx.reshape [| l; 1 |] (Nx.cast dt (Nx.less (Nx.arange Nx.int32 0 l 1) n))
-  in
-  let count = Nx.cast dt n in
-  let mean =
-    rows_matrix u dt (P.map u (fun _ t -> Nx.unsqueeze ~axes:[ 0 ] t) m)
-  in
-  let scale =
-    rows_matrix u dt (P.map u (fun _ t -> Nx.unsqueeze ~axes:[ 0 ] t) s)
-  in
-  let x = Nx.mul valid (Nx.div (Nx.sub x mean) scale) in
-  let g_mean =
-    Nx.div (Nx.sum ~axes:[ 0 ] ~keepdims:true (Nx.mul valid g)) count
-  in
-  let g = Nx.mul valid (Nx.mul (Nx.sub g g_mean) scale) in
-  let q, _ = Nx.qr (Nx.transpose (Nx.concatenate ~axis:0 [ x; g ])) in
-  let r = (Nx.shape q).(1) in
-  let ridge = Nx.mul_s (Nx.eye dt r) low_rank_ridge in
-  let cov a =
-    let p = Nx.matmul a q in
-    Nx.add (Nx.div (Nx.matmul (Nx.transpose p) p) count) ridge
-  in
-  let cx = cov x and cg = cov g in
-  let power m e =
-    let w, v = Nx.eigh m in
-    let w = Nx.pow (Nx.cast dt w) (Nx.scalar dt e) in
-    Nx.matmul (Nx.mul v (Nx.unsqueeze ~axes:[ 0 ] w)) (Nx.transpose v)
-  in
-  let half = power cg 0.5 and inv_half = power cg (-0.5) in
-  let inner = power (Nx.matmul half (Nx.matmul cx half)) 0.5 in
-  let sigma = Nx.matmul inv_half (Nx.matmul inner inv_half) in
-  let w, v = Nx.eigh sigma in
-  let w = Nx.cast dt w in
-  let order = Nx.argsort ~descending:true (Nx.abs (Nx.log w)) in
-  let keep = Nx.shrink [| (0, min rank r) |] order in
-  let variances = Nx.take ~indices:keep w in
-  let directions =
-    Nx.transpose (Nx.matmul q (Nx.take ~axis:1 ~indices:keep v))
-  in
-  let directions, variances =
-    if rank <= r then (directions, variances)
-    else
-      (* Fewer independent draws than directions: the rest change nothing. *)
-      ( Nx.concatenate ~axis:0
-          [ directions; Nx.zeros dt [| rank - r; (Nx.shape q).(0) |] ],
-        Nx.concatenate ~axis:0 [ variances; Nx.ones dt [| rank - r |] ] )
-  in
-  let variances =
-    Nx.clamp
-      ~min:(Nx_dtype.of_float dt variance_low)
-      ~max:(Nx_dtype.of_float dt variance_high)
-      variances
-  in
-  Gaussian.low_rank u ~mean:m ~scale:s
-    ~directions:(matrix_rows u m directions)
-    ~variances
-
-(* [fisher u ~rank n a] is each chain's Gaussian fitted to its window's [n]
-   draws and gradients by the Fisher divergence: a diagonal scale [sqrt (sd x /
-   sd score)] per element, clipped where a score does not vary, then the [rank]
-   directions along which the draws' and the scores' covariances, whitened by
-   it, disagree most, from their span. *)
-let fisher (type u f) (u : u P.t) ~rank (a : (u, f) adapt) : (u, f) Gaussian.t =
-  let dt = Nx.dtype a.mu in
-  let n = Nx.cast dt a.n in
-  let mean_of s = P.map u (fun _ t -> Nx.div t (Nx.cast (Nx.dtype t) n)) s in
-  let var_of s ss =
-    P.map2 u
-      (fun _ s ss ->
-        let n = Nx.cast (Nx.dtype s) n in
-        let m = Nx.div s n in
-        Nx.maximum (Nx.sub (Nx.div ss n) (Nx.mul m m)) (Nx.zeros_like m))
-      s ss
-  in
-  let mean = P.map2 u (fun _ m sh -> Nx.add m sh) (mean_of a.sx) a.shift in
-  let vx = var_of a.sx a.sxx and vg = var_of a.sg a.sgg in
-  let scale =
-    P.map2 u
-      (fun _ vx vg ->
-        let dtx = Nx.dtype vx in
-        let r = Nx.sqrt (Nx.div vx vg) in
-        let r = Nx.where (Nx.isnan r) (Nx.ones_like r) r in
-        Nx.sqrt
-          (Nx.clamp
-             ~min:(Nx_dtype.of_float dtx variance_low)
-             ~max:(Nx_dtype.of_float dtx variance_high)
-             r))
-      vx vg
-  in
-  let gp = Gaussian.ptree u in
-  if rank = 0 then
-    Rune.vmap
-      P.(u @-> u @-> returns gp)
-      (fun m s -> Gaussian.diagonal u dt ~mean:m ~scale:s)
-      mean scale
-  else
-    Rune.vmap
-      P.(u @-> u @-> u @-> u @-> returns gp)
-      (fun m s xs gs -> low_rank_fit u dt ~rank a.n m s xs gs)
-      mean scale a.xs a.gs
+  let start = { z = z0; p = z0; g = g0; lp = s.lp } in
+  H.search "Norn.Nuts.warmup" u lp_z ~reduce:Fun.id
+    (Nx.Rng.split_batch ~n:c k)
+    start s.step_size
 
 let warmup u lp k ~steps (s : (_, _) state) =
   if steps < 0 then
     invalid_argf "Norn.Nuts.warmup: steps = %d is negative" steps;
-  let windows = schedule steps in
-  if windows = [] then s
+  let schedule = Adapt.schedule steps in
+  if schedule = [] then s
   else
     let dt = Nx.dtype s.lp in
-    let c = (Nx.shape s.lp).(0) in
     let rank = Geometry.rank s.geometry in
-    let longest = List.fold_left (fun m (n, _) -> max m n) 0 windows in
+    let longest = List.fold_left (fun m (n, _) -> max m n) 0 schedule in
     (* A low-rank fit reads the window's draws; a diagonal one their sums. *)
     let buffer = if rank = 0 then 0 else longest in
-    let buffers x =
-      P.map u
-        (fun _ t ->
-          let sh = Nx.shape t in
-          Nx.zeros (Nx.dtype t)
-            (Array.concat
-               [ [| sh.(0); buffer |]; Array.sub sh 1 (Array.length sh - 1) ]))
-        x
-    in
-    let restart st =
-      ( Nx.log (Nx.mul_s st.step_size 10.),
-        Nx.zeros dt [| c |],
-        Nx.zeros dt [| c |],
-        Nx.zeros dt [||] )
-    in
     let key (st : (_, _) state) = Nx.Rng.fold_in_tensor k st.draw in
     let s0 = { s with step_size = init_step_size u lp (key s) s } in
-    let mu, s_bar, x_bar, count = restart s0 in
     let a0 =
       {
         st = s0;
-        mu;
-        s_bar;
-        x_bar;
-        count;
-        index = Nx.scalar Nx.int32 0l;
-        n = Nx.scalar Nx.int32 0l;
-        shift = s0.position;
-        sx = zeros u s0.position;
-        sxx = zeros u s0.position;
-        sg = zeros u s0.position;
-        sgg = zeros u s0.position;
-        xs = buffers s0.position;
-        gs = buffers s0.position;
+        averaging = Adapt.restart s0.step_size;
+        window = Adapt.empty u ~buffer s0.position;
       }
     in
     let one (a : (_, _) adapt) =
       let st = step u lp (key a.st) a.st in
-      (* Dual averaging toward the target acceptance. *)
-      let count = Nx.add_s a.count 1. in
-      let eta = Nx.recip (Nx.add_s count da_t0) in
       let stat =
         Nx.minimum st.stats.acceptance (Nx.ones_like st.stats.acceptance)
       in
-      let s_bar =
-        Nx.add
-          (Nx.mul (Nx.sub (Nx.ones_like eta) eta) a.s_bar)
-          (Nx.mul eta (Nx.sub st.accept stat))
+      let averaging, step_size =
+        Adapt.average a.averaging ~target:st.accept stat
       in
-      let x =
-        Nx.sub a.mu
-          (Nx.div (Nx.mul s_bar (Nx.sqrt count)) (Nx.scalar dt da_gamma))
-      in
-      let x_eta = Nx.pow count (Nx.scalar dt (-.da_kappa)) in
-      let x_bar =
-        Nx.add
-          (Nx.mul (Nx.sub (Nx.ones_like x_eta) x_eta) a.x_bar)
-          (Nx.mul x_eta x)
-      in
-      let st = { st with step_size = Nx.exp x } in
-      (* The window's sums, shifted by its first position. *)
-      let dx = P.map2 u (fun _ x sh -> Nx.sub x sh) st.position a.shift in
-      let at buf v =
-        if buffer = 0 then buf
-        else
-          P.map2 u
-            (fun _ b v ->
-              Nx.set
-                [ Nx.A; Nx.D (Nx.cast Nx.int64 a.n, 1) ]
-                (Nx.unsqueeze ~axes:[ 1 ] v)
-                b)
-            buf v
-      in
-      {
-        a with
-        st;
-        s_bar;
-        x_bar;
-        count;
-        index = Nx.add a.index (Nx.scalar Nx.int32 1l);
-        n = Nx.add a.n (Nx.scalar Nx.int32 1l);
-        sx = add u a.sx dx;
-        sxx = add u a.sxx (sq u dx);
-        sg = add u a.sg st.grad;
-        sgg = add u a.sgg (sq u st.grad);
-        xs = at a.xs st.position;
-        gs = at a.gs st.grad;
-      }
+      let st = { st with step_size } in
+      { st; averaging; window = Adapt.record u a.window st.position st.grad }
     in
     let window (a : (_, _) adapt) (length, refit) =
-      let a =
-        {
-          a with
-          n = Nx.scalar Nx.int32 0l;
-          shift = a.st.position;
-          sx = zeros u a.sx;
-          sxx = zeros u a.sxx;
-          sg = zeros u a.sg;
-          sgg = zeros u a.sgg;
-        }
-      in
+      let a = { a with window = Adapt.reopen u a.window a.st.position } in
       let a =
         Rune.iterate (adapt_ptree u) ~max:longest
-          ~until:(fun a -> Nx.greater_equal a.n length)
+          ~until:(fun a -> Nx.greater_equal a.window.n length)
           ~f:one a
       in
       (* At a slow window's end: refit the geometry, find a step size for it and
          restart the averaging there. *)
       let refit = Nx.not_equal refit (Nx.scalar Nx.int32 0l) in
-      let geometry = fisher u ~rank a in
+      let geometry = Adapt.per_chain u dt ~rank a.window in
       let gp = Gaussian.ptree u in
       let refitted =
         {
@@ -1167,30 +662,17 @@ let warmup u lp k ~steps (s : (_, _) state) =
       let eps = init_step_size u lp (key refitted) refitted in
       let eps = Nx.where refit eps a.st.step_size in
       let st = { refitted with step_size = eps } in
-      let mu', s_bar', x_bar', count' = restart st in
-      ( {
-          a with
-          st;
-          mu = Nx.where refit mu' a.mu;
-          s_bar = Nx.where refit s_bar' a.s_bar;
-          x_bar = Nx.where refit x_bar' a.x_bar;
-          count = Nx.where refit count' a.count;
-        },
-        () )
-    in
-    let lengths =
-      Nx.create Nx.int32
-        [| List.length windows |]
-        (Array.of_list (List.map (fun (n, _) -> Int32.of_int n) windows))
-    in
-    let refits =
-      Nx.create Nx.int32
-        [| List.length windows |]
-        (Array.of_list (List.map (fun (_, r) -> if r then 1l else 0l) windows))
+      let restarted = Adapt.restart st.step_size in
+      let averaging =
+        P.map2 (Adapt.averaging_ptree ())
+          (fun _ r o -> Nx.where refit r o)
+          restarted a.averaging
+      in
+      ({ a with st; averaging }, ())
     in
     let a, () =
       Rune.scan (adapt_ptree u)
         P.(pair tensor tensor)
-        P.unit ~f:window ~init:a0 (lengths, refits)
+        P.unit ~f:window ~init:a0 (Adapt.windows schedule)
     in
-    { a.st with step_size = Nx.exp a.x_bar }
+    { a.st with step_size = Adapt.final a.averaging }
