@@ -70,3 +70,9 @@ special/ndtr-grad	wall_time	batch=1	n=5	6.886e-01	6.842e-01 6.865e-01 6.886e-01 
 special/ndtri	wall_time	batch=1	n=5	9.518e-01	9.436e-01 9.507e-01 9.518e-01 9.674e-01 1.115e+00
 special/ndtri-grad	wall_time	batch=1	n=5	1.769e+00	1.611e+00 1.705e+00 1.769e+00 1.809e+00 1.986e+00
 wide/sum-1e6	wall_time	batch=1	n=5	1.343e+00	1.304e+00 1.338e+00 1.343e+00 1.383e+00 1.390e+00
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+search/amd	wall_time	batch=1	n=5	3.468e+00	3.455e+00 3.462e+00 3.468e+00 3.549e+00 3.653e+00

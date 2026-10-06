@@ -54,6 +54,8 @@ gpu/amd/chain20-add-4K-host	alloc_words	exact	1280
 gpu/amd/chain20-add-4K-host	wall_time	batch=256	n=20	2.204e-05	2.143e-05 2.145e-05 2.170e-05 2.176e-05 2.176e-05 2.177e-05 2.177e-05 2.179e-05 2.188e-05 2.203e-05 2.204e-05 2.225e-05 2.228e-05 2.233e-05 2.233e-05 2.238e-05 2.252e-05 2.258e-05 2.258e-05 2.276e-05
 gpu/amd/first-use	alloc_words	exact	33
 gpu/amd/first-use	wall_time	batch=1	n=20	1.051e-01	8.278e-02 8.387e-02 8.582e-02 9.044e-02 9.575e-02 9.595e-02 9.600e-02 9.621e-02 1.019e-01 1.022e-01 1.080e-01 1.085e-01 1.138e-01 1.154e-01 1.160e-01 1.166e-01 1.171e-01 1.179e-01 1.194e-01 1.262e-01
+gpu/amd/first-use-6-dtypes	alloc_words	exact	33
+gpu/amd/first-use-6-dtypes	wall_time	batch=1	n=20	1.280e-01	1.000e-01 1.159e-01 1.193e-01 1.206e-01 1.227e-01 1.236e-01 1.241e-01 1.273e-01 1.276e-01 1.280e-01 1.280e-01 1.280e-01 1.289e-01 1.353e-01 1.354e-01 1.360e-01 1.481e-01 1.563e-01 1.649e-01 1.699e-01
 gpu/amd/fold-1M	alloc_words	exact	2546
 gpu/amd/fold-1M	wall_time	batch=8	n=20	5.802e-04	5.523e-04 5.552e-04 5.565e-04 5.586e-04 5.609e-04 5.657e-04 5.675e-04 5.717e-04 5.778e-04 5.786e-04 5.818e-04 5.857e-04 5.912e-04 5.960e-04 5.973e-04 6.002e-04 6.092e-04 6.161e-04 6.286e-04 6.669e-04
 gpu/amd/fold-1M-host	alloc_words	exact	123
@@ -84,6 +86,8 @@ gpu/amd/matmul-128-host	alloc_words	exact	90
 gpu/amd/matmul-128-host	wall_time	batch=128	n=20	4.101e-05	4.069e-05 4.071e-05 4.072e-05 4.074e-05 4.074e-05 4.078e-05 4.079e-05 4.091e-05 4.095e-05 4.097e-05 4.104e-05 4.131e-05 4.139e-05 4.156e-05 4.194e-05 4.209e-05 4.213e-05 4.219e-05 4.224e-05 4.271e-05
 gpu/amd/matmul-4096	alloc_words	exact	2524
 gpu/amd/matmul-4096	wall_time	batch=1	n=20	1.277e-02	1.192e-02 1.208e-02 1.213e-02 1.219e-02 1.229e-02 1.229e-02 1.242e-02 1.251e-02 1.267e-02 1.276e-02 1.278e-02 1.281e-02 1.283e-02 1.283e-02 1.288e-02 1.291e-02 1.302e-02 1.323e-02 1.339e-02 1.378e-02
+gpu/amd/matmul-4096-chain24	alloc_words	exact	58582
+gpu/amd/matmul-4096-chain24	wall_time	batch=1	n=20	3.177e-01	3.168e-01 3.168e-01 3.169e-01 3.169e-01 3.173e-01 3.174e-01 3.174e-01 3.176e-01 3.176e-01 3.177e-01 3.177e-01 3.177e-01 3.177e-01 3.177e-01 3.178e-01 3.181e-01 3.202e-01 3.208e-01 3.215e-01 3.216e-01
 gpu/amd/matmul-4096-host	alloc_words	exact	90
 gpu/amd/matmul-4096-host	wall_time	batch=1	n=20	2.851e-01	2.714e-01 2.764e-01 2.801e-01 2.832e-01 2.837e-01 2.839e-01 2.842e-01 2.846e-01 2.850e-01 2.850e-01 2.852e-01 2.852e-01 2.855e-01 2.856e-01 2.860e-01 2.867e-01 2.869e-01 2.874e-01 2.880e-01 2.895e-01
 gpu/amd/pad-16M	alloc_words	exact	2127
