@@ -3446,6 +3446,10 @@ thread.
 
 ### Nx
 
+- `Nx.diagonal` is built from movements, so its derivative under `Rune.jit`
+  reads the cotangent in place. As a gather, its derivative was a reduction
+  for every element of the matrix, which recomputed what the diagonal was
+  read from, such as a Cholesky factor, for every term.
 - Add the incomplete gamma family: `Nx.gammainc`, `Nx.gammaincc`,
   `Nx.log_gammainc`, `Nx.log_gammaincc`, `Nx.gammaincinv` and
   `Nx.gammainccinv`, the gamma distribution's laws, within stated bounds for

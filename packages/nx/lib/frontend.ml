@@ -3664,18 +3664,29 @@ let diagonal ?(offset = 0) ?axis1 ?axis2 x =
   else
     let prefix = Array.sub (shape x_trans) 0 (nd - 2) in
     let x_flat = reshape (Array.append prefix [| d1 * d2 |]) x_trans in
-    (* Diagonal indices: start + i*(d2+1) for i in 0..diag_len-1 *)
+    (* The diagonal is every [step]th element of the flattened matrices from
+       [start]: the first column of the rows of [step] elements laid from
+       [start], then the last element, which the last row would run past.
+       Movements and a concatenation transpose to movements, so the diagonal's
+       derivative reads its cotangent where a gather's would scatter it. *)
     let start = if offset >= 0 then offset else -offset * d2 in
     let step = d2 + 1 in
-    let ctx = Value.context x in
-    let idx =
-      add
-        (mul
-           (arange ctx Nx_dtype.int64 0 diag_len 1)
-           (scalar ctx Nx_dtype.int64 (Int64.of_int step)))
-        (scalar ctx Nx_dtype.int64 (Int64.of_int start))
-    in
-    take ~axis:(nd - 2) ~indices:idx x_flat
+    let keep = Array.map (fun d -> (0, d)) prefix in
+    let along lo hi = shrink (Array.append keep [| (lo, hi) |]) x_flat in
+    let last = start + ((diag_len - 1) * step) in
+    let final = along last (last + 1) in
+    if diag_len = 1 then final
+    else
+      let rows =
+        reshape
+          (Array.append prefix [| diag_len - 1; step |])
+          (along start last)
+      in
+      let firsts =
+        shrink (Array.append keep [| (0, diag_len - 1); (0, 1) |]) rows
+      in
+      concatenate ~axis:(nd - 2)
+        [ reshape (Array.append prefix [| diag_len - 1 |]) firsts; final ]
 
 (* [diag] for a 1-D [v]: [v] on the [k]-th diagonal of a zero [s × s] matrix,
    [s = n + |k|], by scattering into a zero template at the diagonal
