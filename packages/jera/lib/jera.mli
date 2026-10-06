@@ -15,7 +15,30 @@
 
     {table
       {tr {th Problem } {th Regime } {th Method } }
-      {tr {td Separable Hamiltonian } {td long times } {td {!Split} } }
+      {tr
+        {td Integral, one dimension }
+        {td smooth, fixed nodes }
+        {td {!Quad.fixed}, {!Quad.cumulative} }
+      }
+      {tr
+        {td Approximation }
+        {td samples }
+        {td {!Piecewise.linear}, {!Piecewise.cubic}, {!Piecewise.hermite} }
+      }
+      {tr {td  } {td monotone samples } {td {!Piecewise.steffen} } }
+      {tr
+        {td  }
+        {td a function, fixed resolution }
+        {td {!Piecewise.chebyshev}, {!Grid.chebyshev} }
+      }
+      {tr {td  } {td samples on a grid } {td {!Grid.linear}, {!Grid.cubic} } }
+      {tr
+        {td Differential equation }
+        {td non-stiff, fixed steps }
+        {td {!Ode.march} with {!Ode.tsit5} and kin }
+      }
+      {tr {td  } {td randomness } {td {!Sde.march} } }
+      {tr {td  } {td separable Hamiltonian, long times } {td {!Split} } }
     }
 
     {1:conventions Conventions}
@@ -39,8 +62,8 @@
     - {b Devices.} Constants are computed on the host in float64 and rounded
       once to the working dtype. *)
 
-module Ode = Ode
-(** Ordinary differential equations. *)
+module Quad = Quad
+(** Integrals. *)
 
 module Piecewise = Piecewise
 (** Piecewise Chebyshev series: splines, interpolants and fits. *)
@@ -48,8 +71,11 @@ module Piecewise = Piecewise
 module Grid = Grid
 (** Tensor-product series over grids. *)
 
-module Quad = Quad
-(** Integrals. *)
+module Ode = Ode
+(** Ordinary differential equations. *)
+
+module Sde = Sde
+(** Stochastic differential equations. *)
 
 module Split = Split
 (** Splitting methods for separable Hamiltonians. *)

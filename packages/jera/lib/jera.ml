@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Split = Split
 module Quad = Quad
-module Ode = Ode
 module Piecewise = Piecewise
 module Grid = Grid
+module Ode = Ode
+module Sde = Sde
+module Split = Split

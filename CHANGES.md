@@ -958,6 +958,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Sde.march`, fixed-step marches of stochastic differential equations
+  along a `Sde.Brownian` path, a virtual tree that returns increments and
+  space–time Lévy areas as a pure function of a key: `euler_maruyama`,
+  `milstein` and `sra1` (Itô) and `reversible_heun` (Stratonovich).
 - Add `Piecewise`, piecewise Chebyshev series closed under `eval`,
   `derivative` and `integral`: interpolants `linear`, `cubic` (`Natural`,
   `Not_a_knot` and `Clamped` ends), `steffen` (monotone) and `hermite`,
