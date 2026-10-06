@@ -3280,7 +3280,7 @@ thread.
 
 ### Nx
 
-- Programs that link `nx.amd` carry 6.7 MB of AMD kernels instead of 8.7 MB,
+- Programs that link `nx.amd` carry 5.8 MB of AMD kernels instead of 8.7 MB,
   and their first eager operations on an AMD GPU load fewer code objects: the
   first use of 18 float32 operations spends about 9 ms loading instead of
   12 ms.

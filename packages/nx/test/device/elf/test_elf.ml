@@ -181,5 +181,33 @@ let test_elf () =
   raises_match failure (fun () -> Elf.load "not an elf");
   raises_match failure (fun () -> Elf.load (String.sub obj 0 100))
 
+(* An executable stripped of its symbol table keeps the dynamic one, which a
+   loader reads its symbols from. *)
+let test_dynamic () =
+  let text = (".text", 1, 0x100, "ABCD", 0, 0, 4, 0)
+  and names = "\000k.kd\000" in
+  let dynamic =
+    [
+      (".dynsym", 11, 0, sym 0 0 0 ^ sym 1 1 0x102, 3, 0, 8, 24);
+      (".dynstr", 3, 0, names, 0, 0, 1, 0);
+    ]
+  in
+  equal ~msg:"the dynamic symbols of an object with no symbol table"
+    (option int) (Some 0x102)
+    (Elf.symbol (Elf.load (elf (text :: dynamic))) "k.kd");
+  let static =
+    [
+      (".symtab", 2, 0, sym 0 0 0 ^ sym 1 1 0x101, 5, 0, 8, 24);
+      (".strtab", 3, 0, names, 0, 0, 1, 0);
+    ]
+  in
+  equal ~msg:"the symbol table over the dynamic one" (option int) (Some 0x101)
+    (Elf.symbol (Elf.load (elf ((text :: dynamic) @ static))) "k.kd")
+
 let () =
-  exit (run "nx.device.elf" [ test "layout, symbols, relocations" test_elf ])
+  exit
+    (run "nx.device.elf"
+       [
+         test "layout, symbols, relocations" test_elf;
+         test "dynamic symbols" test_dynamic;
+       ])

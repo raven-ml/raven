@@ -34,6 +34,7 @@ let sht_symtab = 2
 let sht_rela = 4
 let sht_nobits = 8
 let sht_rel = 9
+let sht_dynsym = 11
 
 (* A section header. *)
 type header = {
@@ -163,10 +164,15 @@ let load ?(align = 1) obj =
           s_value = Int64.to_int (String.get_int64_le h.h_contents (e + 8));
         })
   in
+  (* The symbol table, or the dynamic one of an executable stripped of it. *)
   let table =
-    match Array.find_opt (fun h -> h.h_kind = sht_symtab) headers with
+    let find kind = Array.find_opt (fun h -> h.h_kind = kind) headers in
+    match find sht_symtab with
     | Some h -> Array.of_list (symbols_of h)
-    | None -> [||]
+    | None -> (
+        match find sht_dynsym with
+        | Some h -> Array.of_list (symbols_of h)
+        | None -> [||])
   in
   let relocations_of h =
     let rela = h.h_kind = sht_rela in

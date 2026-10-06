@@ -36,6 +36,7 @@ import multiprocessing
 import os
 import pathlib
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -252,6 +253,43 @@ class Comgr:
         return self.get(sets[3], DATA_KIND_EXECUTABLE)
 
 
+# Stripping
+
+SHT_NOBITS = 8
+SHF_ALLOC = 2
+
+
+def strip(co):
+    """Code object [co] without the sections loading does not read: the symbol
+    table and its strings, whose kernel symbols the dynamic table has too, and
+    the toolchain's comment. The sections loading maps, the section names and
+    the program headers stay at their offsets; the section headers follow."""
+    shoff, = struct.unpack_from("<Q", co, 40)
+    shnum, shstrndx = struct.unpack_from("<HH", co, 60)
+    headers = [bytearray(co[shoff + 64 * i:shoff + 64 * (i + 1)]) for i in range(shnum)]
+
+    def field(h, fmt, at):
+        return struct.unpack_from(fmt, h, at)[0]
+
+    kept = [i for i, h in enumerate(headers) if i in (0, shstrndx) or field(h, "<Q", 8) & SHF_ALLOC]
+    renumber = {old: new for new, old in enumerate(kept)}
+    end = max(field(headers[i], "<Q", 24) + field(headers[i], "<Q", 32)
+              for i in kept if i and i != shstrndx and field(headers[i], "<I", 4) != SHT_NOBITS)
+    names = headers[shstrndx]
+    at, size = field(names, "<Q", 24), field(names, "<Q", 32)
+    out = bytearray(co[:end])
+    struct.pack_into("<Q", names, 24, len(out))
+    out += co[at:at + size]
+    out += bytes(-len(out) % 8)
+    struct.pack_into("<Q", out, 40, len(out))
+    struct.pack_into("<HH", out, 60, len(kept), renumber[shstrndx])
+    for i in kept:
+        h = headers[i]
+        struct.pack_into("<I", h, 40, renumber.get(field(h, "<I", 40), 0))
+        out += h
+    return bytes(out)
+
+
 # Generation
 
 COMGR = None
@@ -262,7 +300,7 @@ def compile_one(job):
     if COMGR is None:
         COMGR = Comgr()
     target, key, source, includes, libs = job
-    return target, key, COMGR.compile(target, key + ".hip", source.encode(), includes, libs)
+    return target, key, strip(COMGR.compile(target, key + ".hip", source.encode(), includes, libs))
 
 
 def extract_device_libs():

@@ -60,7 +60,9 @@ type t = {
   image : string;  (** The laid-out image of the [SHT_PROGBITS] sections. *)
   sections : section list;
       (** Every section, in order, from the null section at index [0]. *)
-  symbols : symbol array;  (** Every entry of the symbol table, by index. *)
+  symbols : symbol array;
+      (** Every entry of the symbol table, by index: [.symtab], or [.dynsym] in
+          an executable stripped of it. *)
   relocations : relocation list;  (** In section order. *)
 }
 (** The type for loaded objects. *)
