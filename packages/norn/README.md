@@ -12,6 +12,8 @@ density maps it to one log density per chain.
   likelihoods.
 - `Norn.Support` and `Norn.Bij`: supports, and the bijectors that map
   unconstrained coordinates onto them.
+- `Norn.Gaussian`: diagonal-plus-low-rank Gaussians over your structure,
+  the geometry samplers adapt.
 - `Norn.Draws` and `Norn.Stats`: draws of your structure with `[chain; draw]`
   axes, and the statistics of each transition.
 - `Norn.Diag`: R-hat, effective sample sizes and calibration, each a value

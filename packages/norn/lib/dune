@@ -1,5 +1,5 @@
 (library
  (name norn)
  (public_name norn)
- (private_modules prec chains bijection)
+ (private_modules prec noise chains bijection geometry)
  (libraries nx.dtype nx rune))

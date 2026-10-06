@@ -42,3 +42,4 @@ module Draws = Draws
 module Diag = Diag
 module Summary = Summary
 module Dist = Dist
+module Gaussian = Gaussian
