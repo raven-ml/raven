@@ -2545,9 +2545,11 @@ val betainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     (1/B(a, b)) ∫₀ˣ t^{a-1} (1 - t)^{b-1} dt], the distribution function at [x]
     of the beta distribution of shapes [a] and [b]. For [0 < a, b ≤ 2^20] it
     is within [64 (1 + |log f|) + 4] ulps of its value [f]. Its domain is [a, b
-    > 0] and [x] in \[[0], [1]\]: it is [0] at [x = 0] and [1] at [x = 1]; as
-    [a] reaches [+inf] it is [0] below [x = 1], and as [b] reaches [+inf], [1]
-    above [x = 0].
+    ≥ 0] and [x] in \[[0], [1]\]. It is [0] at [x = 0], at [b = 0] and at [a =
+    +inf], and [1] at [x = 1], at [a = 0] and at [b = +inf], its limits there;
+    it is NaN outside its domain and where the limits disagree, one making it
+    [0] and another [1], as at [a = b = 0], at [a = 0] and [x = 0], or at [b =
+    +inf] and [x = 0].
 
     {@ocaml[
       # betainc (scalar float64 2.) (scalar float64 3.) (scalar float64 0.5)
@@ -2565,7 +2567,8 @@ val log_betainc :
   (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
 (** [log_betainc a b x] is [log (betainc a b x)], within 32 ulps, or [32ε]
     absolutely where it is below [1] in magnitude, for [0 < a, b ≤ 2^20]. It
-    stays finite where [betainc a b x] underflows. *)
+    stays finite where [betainc a b x] underflows, and is [-0] where [betainc a
+    b x] is a limit [1] for [x] inside (0, 1). *)
 
 val log_betaincc :
   (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t

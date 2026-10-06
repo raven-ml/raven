@@ -2093,17 +2093,20 @@ def log_betainc_exact(a, b, x, upper):
 
 
 def beta_edge(a, b, x, upper):
-    """The value at the edges of the domain, or None inside it."""
+    """The value at the edges of the domain, or None inside it: the lower
+    tail is 1 at x = 1, a = 0 and b = inf, 0 at x = 0, b = 0 and a = inf, its
+    limits there, and NaN where a 1 meets a 0."""
     if math.isnan(a) or math.isnan(b) or math.isnan(x):
         return math.nan
-    if a <= 0 or b <= 0 or x < 0 or x > 1 or (math.isinf(a) and math.isinf(b)):
+    if a < 0 or b < 0 or x < 0 or x > 1:
         return math.nan
-    if x == 0 or (math.isinf(a) and x < 1):
-        lower = 0.0
-    elif x == 1 or math.isinf(b):
-        lower = 1.0
-    else:
+    one = x == 1 or a == 0 or math.isinf(b)
+    zero = x == 0 or b == 0 or math.isinf(a)
+    if one and zero:
+        return math.nan
+    if not (one or zero):
         return None
+    lower = 1.0 if one else 0.0
     return 1.0 - lower if upper else lower
 
 
@@ -2113,7 +2116,8 @@ def betainc_reference(upper, log):
         if edge is not None:
             if not log or math.isnan(edge):
                 return edge
-            return -math.inf if edge == 0 else 0.0
+            # A tail of 1 for x inside is a limit, reached from below.
+            return -math.inf if edge == 0 else -0.0 if 0 < x < 1 else 0.0
         exact = log_betainc_exact if log else betainc_exact
         return correctly_rounded(fmt, lambda a, b, x: exact(a, b, x, upper), a, b, x)
     return f
@@ -2248,6 +2252,10 @@ def betainc_points(fmt):
     edges = [(1.0, 1.0, 0.0), (1.0, 1.0, 1.0), (2.0, 3.0, -0.0), (0.5, 0.5, 1.0),
              (math.inf, 2.0, 0.5), (math.inf, 2.0, 1.0), (2.0, math.inf, 0.5), (2.0, math.inf, 0.0),
              (math.inf, math.inf, 0.5), (0.0, 1.0, 0.5), (1.0, 0.0, 0.5), (-1.0, 1.0, 0.5),
+             (-0.0, 1.0, 0.5), (1.0, -0.0, 0.5), (0.0, 1.0, 1.0), (1.0, 0.0, 0.0),
+             (0.0, 1.0, 0.0), (1.0, 0.0, 1.0), (0.0, 0.0, 0.5), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0),
+             (0.0, math.inf, 0.5), (math.inf, 0.0, 0.5), (0.0, math.inf, 0.0), (math.inf, 0.0, 1.0),
+             (math.inf, 2.0, 0.0), (2.0, math.inf, 1.0), (0.0, 2.0, fmt.tiny), (2.0, 0.0, next_down(fmt, 1.0)),
              (1.0, -1.0, 0.5), (1.0, 1.0, -0.5), (1.0, 1.0, 1.5), (math.nan, 1.0, 0.5),
              (1.0, math.nan, 0.5), (1.0, 1.0, math.nan), (fmt.tiny, fmt.tiny, 0.5),
              (1.0, 1.0, fmt.tiny), (2.0, 2.0, fmt.tiny), (0.5, 0.5, next_down(fmt, 1.0)),

@@ -1656,41 +1656,70 @@ let log_betainc_at upper a b x =
   let wanted_upper = logical_xor swap upper in
   where (logical_xor direct_upper wanted_upper) (log1mexp l) l
 
-(* The logarithm of a tail on the whole domain: [a, b > 0], [x] in [0, 1]; at [a
-   = +inf] the lower tail is 0 below [x = 1], at [b = +inf] it is 1 above [x =
-   0]. *)
-let log_betainc_tail upper a b x =
+(* The argument a vanishing tail is measured at: its ratio to the argument there
+   is the tail's slope at 0, to within its square. *)
+let beta_vanishing = 0x1p-61
+
+(* A tail on the whole domain: [a, b >= 0], [x] in [0, 1], as its logarithm and
+   its value. The lower tail is 1 at [x = 1], at [a = 0] and at [b = +inf], 0 at
+   [x = 0], at [b = 0] and at [a = +inf], and NaN where a 1 meets a 0. At [a =
+   0], with [b] finite and [x] inside, the upper tail is [a C] for [C] its ratio
+   to [a] at [beta_vanishing], so that its slope in [a] is [C]; at [b = 0] the
+   lower tail likewise. *)
+let beta_tail upper a b x =
   let positive v = gt v 0. in
   let finite v = logical_and (isfinite v) (positive v) in
-  let interior =
-    logical_and
-      (logical_and (finite a) (finite b))
-      (logical_and (gt x 0.) (lt x 1.))
-  in
-  let r =
-    log_betainc_at upper (clamp interior a 1.) (clamp interior b 1.)
-      (clamp interior x 0.5)
-  in
   let inf v = is v Float.infinity in
-  let lower_zero = logical_or (is x 0.) (logical_and (inf a) (lt x 1.)) in
-  let edge =
-    where
-      (logical_xor lower_zero upper)
-      (lit x Float.neg_infinity) (zeros_like x)
+  let zero v = is v 0. in
+  let inside = logical_and (gt x 0.) (lt x 1.) in
+  let interior = logical_and (logical_and (finite a) (finite b)) inside in
+  let at_a0 = logical_and (logical_and (zero a) (finite b)) inside in
+  let at_b0 = logical_and (logical_and (zero b) (finite a)) inside in
+  let slope = logical_or at_a0 at_b0 in
+  let run = logical_or interior slope in
+  (* On those two edges the tail that vanishes, the upper at [a = 0]. *)
+  let a_r = where at_a0 (lit a beta_vanishing) a in
+  let b_r = where at_b0 (lit b beta_vanishing) b in
+  let upper_r = where slope at_a0 upper in
+  let r =
+    log_betainc_at upper_r (clamp run a_r 1.) (clamp run b_r 1.)
+      (clamp run x 0.5)
   in
+  let n = clamp slope (where at_a0 a b) 0.5 in
+  let log_c = clamp slope (sub_s r (Stdlib.log beta_vanishing)) 0. in
+  (* [+ 0] writes the tail at [n = -0] as [+0]. *)
+  let vanishing = add_s (mul n (exp log_c)) 0. in
+  let wants = where at_a0 upper (logical_not upper) in
+  (* The vanishing tail's logarithm takes [n] only where it is wanted, so that
+     no [1 / n] at [n = 0] meets a zero cotangent. *)
+  let l_slope =
+    where wants (add (log (clamp wants n 0.5)) log_c) (log1p (neg vanishing))
+  in
+  let v_slope = where wants vanishing (rsub_s 1. vanishing) in
+  let one = List.fold_left logical_or (is x 1.) [ zero a; inf b ] in
+  let nil = List.fold_left logical_or (zero x) [ zero b; inf a ] in
+  let is_one = logical_xor one upper in
+  (* A tail of 1 for [x] inside is a limit, reached from below: its logarithm is
+     [-0]. *)
+  let log_one = where inside (lit x (-0.)) (zeros_like x) in
+  let l_edge = where is_one log_one (lit x Float.neg_infinity) in
+  let v_edge = where is_one (ones_like x) (zeros_like x) in
   let invalid =
     List.fold_left logical_or (isnan a)
       [
         isnan b;
         isnan x;
-        logical_not (positive a);
-        logical_not (positive b);
+        lt a 0.;
+        lt b 0.;
         lt x 0.;
         gt x 1.;
-        logical_and (inf a) (inf b);
+        logical_and one nil;
       ]
   in
-  where invalid (lit x Float.nan) (where interior r edge)
+  let nan = lit x Float.nan in
+  let l = where interior r (where slope l_slope l_edge) in
+  let v = where interior (exp r) (where slope v_slope v_edge) in
+  (where invalid nan l, where invalid nan v)
 
 type ternary = {
   f3 : 'c. (float, 'c) t -> (float, 'c) t -> (float, 'c) t -> (float, 'c) t;
@@ -1780,20 +1809,20 @@ let gammainccinv a q =
 
 let log_betainc a b x =
   ternary_at_float32
-    { f3 = (fun a b x -> log_betainc_tail (tail x false) a b x) }
+    { f3 = (fun a b x -> fst (beta_tail (tail x false) a b x)) }
     a b x
 
 let log_betaincc a b x =
   ternary_at_float32
-    { f3 = (fun a b x -> log_betainc_tail (tail x true) a b x) }
+    { f3 = (fun a b x -> fst (beta_tail (tail x true) a b x)) }
     a b x
 
 let betainc a b x =
   ternary_at_float32
-    { f3 = (fun a b x -> exp (log_betainc_tail (tail x false) a b x)) }
+    { f3 = (fun a b x -> snd (beta_tail (tail x false) a b x)) }
     a b x
 
 let betaincc a b x =
   ternary_at_float32
-    { f3 = (fun a b x -> exp (log_betainc_tail (tail x true) a b x)) }
+    { f3 = (fun a b x -> snd (beta_tail (tail x true) a b x)) }
     a b x

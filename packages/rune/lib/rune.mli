@@ -264,7 +264,12 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     e^{-x} / Γ(a)]: [1] at [a = 1], [0] above and infinite below. At [a = 0],
     where [P = 1 - a E₁(x) + O(a²)] for [x > 0], [∂P/∂a] is its one-sided
     limit [-E₁(x)], [E₁(x) = ∫ₓ^∞ e^{-t}/t dt], and [∂P/∂x = 0]; there [log
-    Q] is [-inf]. An inverse's derivative in [a] is the implicit one, [-(∂P/∂a)
+    Q] is [-inf]. At [a = 0] the incomplete beta's upper tail vanishes as [a
+    g], [g = ∫ₓ¹ (1 - t)^(b-1) / t dt], and at [b = 0] its lower tail as [b h],
+    [h = ∫₀ˣ t^(a-1) / (1 - t) dt]: for [x] inside (0, 1) its derivatives
+    there are those of these forms, within [2^-40] relative at [float64] and
+    [2^-16] at [float32], but for the vanishing tail's logarithm in [a] or [b],
+    which is infinite. An inverse's derivative in [a] is the implicit one, [-(∂P/∂a)
     / (∂P/∂x)] at the quantile, for either tail; at [a = 0], where the
     quantile is [0] away from its upper end, both its derivatives are [0].
 

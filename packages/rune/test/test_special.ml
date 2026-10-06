@@ -297,6 +297,73 @@ let bessel_at_zero =
       at Nx.float64;
       at Nx.float32)
 
+(* At [a = 0] the upper tail vanishes as [a g], [g = ∫ₓ¹ (1 - t)^(b-1) / t dt],
+   and at [b = 0] the lower tail as [b h], [h = ∫₀ˣ t^(a-1) / (1 - t) dt]: at [b
+   = 1], [g = -log x], and at [a = 1], [h = -log (1 - x)]. The derivatives there
+   are held to [2^-40] relative at float64 and [2^-16] at float32, eagerly, and
+   one on each edge compiled at float32, each compile taking seconds. *)
+type run = Eager | Eager_and_compiled
+
+let beta_at_zero =
+  let xs = [| 0.1; 0.5; 0.9 |] in
+  let at (type b) (dt : (float, b) Nx.dtype) tol jit =
+    let x = Nx.create dt [| 3 |] xs and c v = Nx.full dt [| 3 |] v in
+    let check ?(run = Eager) name expected u v =
+      let read y = Nx.to_array (Nx.cast Nx.float64 y) in
+      let compare how got =
+        Array.iteri
+          (fun i x ->
+            let e = expected x in
+            at_most
+              ~msg:(Printf.sprintf "%s %s at x = %g" name how x)
+              float_exact
+              ~than:(tol *. Float.abs e)
+              (Float.abs (got.(i) -. e)))
+          xs
+      in
+      compare "eagerly" (read (u v));
+      match run with
+      | Eager -> ()
+      | Eager_and_compiled -> compare "compiled" (read (Rune.jit' u v))
+    in
+    let grad f v = Rune.grad' (fun v -> Nx.sum (f v)) v in
+    let g x = -.log x and h x = -.log1p (-.x) in
+    check ~run:jit "betaincc in a" g
+      (grad (fun a -> Nx.betaincc a (c 1.) x))
+      (c 0.);
+    check "betainc in a"
+      (fun x -> -.g x)
+      (grad (fun a -> Nx.betainc a (c 1.) x))
+      (c 0.);
+    check "log_betainc in a"
+      (fun x -> -.g x)
+      (grad (fun a -> Nx.log_betainc a (c 1.) x))
+      (c 0.);
+    check "log_betaincc in x"
+      (fun x -> -1. /. (x *. g x))
+      (grad (fun x -> Nx.log_betaincc (c 0.) (c 1.) x))
+      x;
+    check ~run:jit "betainc in b" h
+      (grad (fun b -> Nx.betainc (c 1.) b x))
+      (c 0.);
+    check "betaincc in b"
+      (fun x -> -.h x)
+      (grad (fun b -> Nx.betaincc (c 1.) b x))
+      (c 0.);
+    check "log_betaincc in b"
+      (fun x -> -.h x)
+      (grad (fun b -> Nx.log_betaincc (c 1.) b x))
+      (c 0.);
+    check "log_betainc in x"
+      (fun x -> 1. /. ((1. -. x) *. h x))
+      (grad (fun x -> Nx.log_betainc (c 1.) (c 0.) x))
+      x
+  in
+  test "the incomplete beta's derivatives at a = 0 and b = 0 are its slopes"
+    (fun () ->
+      at Nx.float64 0x1p-40 Eager;
+      at Nx.float32 0x1p-16 Eager_and_compiled)
+
 (* The derivative of [b] in its first argument, or its second. *)
 let d_first { b } = { b = (fun a x -> Rune.grad' (fun a -> Nx.sum (b a x)) a) }
 let d_second { b } = { b = (fun a x -> Rune.grad' (fun x -> Nx.sum (b a x)) x) }
@@ -346,6 +413,7 @@ let derivatives =
       digamma_near_zero;
       log_ndtr_far;
       bessel_at_zero;
+      beta_at_zero;
       derivative "i0e" ~bound:(everywhere (Ulps 128)) (d { u = Nx.i0e });
       group "incomplete beta"
         (List.concat_map
@@ -477,8 +545,8 @@ let residuals =
         gammainc in a 6963
         gammaincinv 16361
         gammaincinv in a 26355
-        log_betainc in x 11447
-        log_betainc in a 19784
+        log_betainc in x 11482
+        log_betainc in a 19828
         |})
 
 let () =

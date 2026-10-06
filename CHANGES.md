@@ -3485,7 +3485,7 @@ thread.
 - Add the incomplete beta family: `Nx.betainc`, `Nx.betaincc`,
   `Nx.log_betainc` and `Nx.log_betaincc`, the beta distribution's laws,
   within stated bounds for shapes up to 2^20; the logarithms stay finite
-  where a tail underflows.
+  where a tail underflows. At a shape of 0 they take their limits.
 - `Nx.logsumexp` and `logmeanexp` of a lane whose elements are all `-inf` are
   `-inf`, and of one holding `+inf` are `+inf`; both were NaN.
 - `Nx.diagonal` is built from movements, so its derivative under `Rune.jit`
