@@ -1664,10 +1664,23 @@ let linspace ctx dtype ?(endpoint = true) start_f stop_f count =
   else if count = 1 then
     full ctx dtype [| 1 |] (Nx_dtype.of_float dtype start_f)
   else
-    let div_factor = float_of_int (if endpoint then count - 1 else count) in
-    let step = (stop_f -. start_f) /. div_factor in
+    (* [stop] is point [last], past the points when [endpoint] is false. *)
+    let last = if endpoint then count - 1 else count in
+    let span = float_of_int last in
+    (* [stop - start] can overflow where its share of a step does not. *)
+    let step =
+      let s = (stop_f -. start_f) /. span in
+      if Float.is_finite s then s else (stop_f /. span) -. (start_f /. span)
+    in
+    (* Each point counts from the nearer end, so both ends are exact. *)
+    let point i =
+      if i = 0 then start_f
+      else if i = last then stop_f
+      else if 2 * i < last then start_f +. (float_of_int i *. step)
+      else stop_f -. (float_of_int (last - i) *. step)
+    in
     init ctx dtype [| count |] (fun idx ->
-        Nx_dtype.of_float dtype (start_f +. (float_of_int idx.(0) *. step)))
+        Nx_dtype.of_float dtype (point idx.(0)))
 
 let logspace ctx dtype ?(endpoint = true) ?(base = 10.0) start_exp stop_exp
     count =

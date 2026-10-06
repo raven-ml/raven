@@ -183,6 +183,76 @@ let held_bound ((Dtype dtype, _, _), b, out) =
 
 let bound = Gen.float_range (-100.) 100.
 
+type float_dtype = F : (float, 'b) Nx.dtype -> float_dtype
+
+let pp_float_dtype ppf (F d) = Nx.pp_dtype ppf d
+
+let float_dtypes =
+  Gen.of_list ~pp:pp_float_dtype
+    [
+      F Nx.float16;
+      F Nx.float32;
+      F Nx.float64;
+      F Nx.bfloat16;
+      F Nx.float8_e4m3;
+      F Nx.float8_e5m2;
+    ]
+
+(* Bounds of every magnitude and both zeros, clamped to [d]'s finite values. *)
+let linspace_bound (F d) =
+  let hi = Nx_dtype.max_finite d in
+  Gen.map
+    (fun x -> Float.min hi (Float.max (-.hi) x))
+    (Gen.frequency
+       [
+         (3, bound);
+         (2, Gen.float);
+         ( 1,
+           Gen.of_list ~pp:Format.pp_print_float
+             [ 0.; -0.; 0.1; -0.1; 1e300; -1e300; hi; -.hi ] );
+       ])
+
+let pp_linspace ppf (d, endpoint, start, stop, n) =
+  Format.fprintf ppf "linspace ~endpoint:%b %a %h %h %d" endpoint pp_float_dtype
+    d start stop n
+
+let linspace_case =
+  Gen.with_pp pp_linspace
+  @@
+  let open Gen in
+  let* d = float_dtypes in
+  let+ start = linspace_bound d
+  and+ stop = linspace_bound d
+  and+ n = frequency [ (1, int_range 1 2); (2, int_range 3 40) ]
+  and+ endpoint = bool in
+  (d, endpoint, start, stop, n)
+
+(* [x] stored in [d]: what an element given [x] holds. *)
+let stored d x = Nx.item [] (Nx.scalar d x)
+
+let linspace_bounds (F d, endpoint, start, stop, n) =
+  let narrow = Nx_dtype.itemsize d < 4 in
+  cover "one point" (n = 1);
+  cover "two points" (n = 2);
+  cover "a reversed range" (stop < start);
+  cover "a narrow float" narrow;
+  cover "a range wider than the largest finite value"
+    (Float.abs (stop -. start) > Nx_dtype.max_finite d);
+  let xs = Nx.to_array (Nx.linspace ~endpoint d start stop n) in
+  let start = stored d start and stop = stored d stop in
+  equal ~msg:"the first point" float_exact start xs.(0);
+  if endpoint && n >= 2 then
+    equal ~msg:"the last point" float_exact stop xs.(n - 1);
+  (* Between them numerically: a zero between zeros may have either sign. *)
+  let numeric = Testable.with_compare Stdlib.compare float_exact in
+  let lo = Float.min start stop and hi = Float.max start stop in
+  Array.iteri
+    (fun i x ->
+      let msg = Printf.sprintf "point %d" i in
+      at_least ~msg numeric ~than:lo x;
+      at_most ~msg numeric ~than:hi x)
+    xs
+
 let ranges =
   group "ranges"
     [
@@ -247,6 +317,16 @@ let ranges =
           equal floats
             (Ref.create [| n |] (linear_points ~endpoint start stop n))
             (Ref.of_nx (Nx.linspace ~endpoint Nx.float64 start stop n)));
+      prop
+        "linspace starts on start and, with its endpoint, ends on stop, bit \
+         for bit, its points between them"
+        ~examples:
+          [
+            (F Nx.float64, true, -.Float.max_float, Float.max_float, 3);
+            (F Nx.float16, true, 1., 2., 1);
+            (F Nx.bfloat16, true, 3., -1., 2);
+          ]
+        linspace_case linspace_bounds;
       prop "logspace is base to the power of linspace"
         (Gen.quad Gen.bool (Gen.float_range (-3.) 3.) (Gen.float_range (-3.) 3.)
            (Gen.int_range 0 12))

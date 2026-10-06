@@ -597,6 +597,10 @@ val linspace :
 (** [linspace dtype ?endpoint start stop n] is [n] values evenly spaced from
     [start] to [stop]. [endpoint] defaults to [true] (include [stop]).
 
+    The first value is [start] and, with [endpoint] and [n >= 2], the last is
+    [stop], each as [dtype] stores it; a single value is [start]. For a finite
+    [start] and [stop], every value lies between them.
+
     Raises [Invalid_argument] if [n] is negative.
 
     {@ocaml[

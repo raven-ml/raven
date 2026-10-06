@@ -3286,6 +3286,9 @@ thread.
 
 ### Nx
 
+- `Nx.linspace` ends exactly on `stop` with its endpoint, at every float dtype
+  and count; its last value could miss `stop` by a rounding, and a range wider
+  than the largest finite float gave infinities and NaN.
 - `Nx.pp`, `Nx.to_string` and `Nx.print` print each float as the fewest digits
   that round to it at its dtype: a float32 `1.0000001` printed as `1`, and
   `0.1 +. 0.2` as `0.3`. NaN prints as `nan` on every platform, where glibc
