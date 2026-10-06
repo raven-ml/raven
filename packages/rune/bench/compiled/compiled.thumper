@@ -53,6 +53,8 @@ topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed transcendental/exp-float32-1Mi-host transcendental/log-float32-1Mi-host transcendental/sin-float32-1Mi-host transcendental/sin-far-float32-1Mi-host transcendental/exp-float64-1Mi-host transcendental/log-float64-1Mi-host transcendental/sin-float64-1Mi-host transcendental/sin-far-float64-1Mi-host under load 11.6 on 10 cores
 # forced: blessed loop/newton-1024 loop/iterate-256 loop/vmap-newton-256-lanes-eager loop/vmap-newton-256-lanes-compiled metal/jit-newton-1024 metal/jit-iterate-256 under load 13.3 on 10 cores
+# forced: blessed jit/where-bool-1e7 jit/where-bit-1e7 under load 6.6 on 10 cores
+# forced: blessed jit/where-bool-1e7 jit/where-bit-1e7 jit/cast-bit-1e7 jit/set-bool-1e7 jit/scatter-bool-1e7 jit/set-bit-1e7 jit/scatter-bit-1e7 under load 9.3 on 10 cores
 
 eigh/float32-64x8x8-eager	alloc_words	exact	254
 eigh/float32-64x8x8-eager	wall_time	batch=256	n=20	3.544e-05	2.592e-05 3.165e-05 3.167e-05 3.222e-05 3.248e-05 3.273e-05 3.334e-05 3.396e-05 3.438e-05 3.498e-05 3.589e-05 3.787e-05 3.813e-05 4.029e-05 4.316e-05 4.547e-05 4.690e-05 4.844e-05 5.042e-05 5.549e-05
@@ -66,6 +68,20 @@ indexed/take-512-rows-of-32768x1024-host	alloc_words	exact	1189
 indexed/take-512-rows-of-32768x1024-host	wall_time	batch=64	n=20	7.207e-05	7.086e-05 7.088e-05 7.097e-05 7.098e-05 7.115e-05 7.128e-05 7.182e-05 7.182e-05 7.190e-05 7.193e-05 7.221e-05 7.240e-05 7.348e-05 7.647e-05 7.667e-05 7.671e-05 7.676e-05 8.244e-05 8.569e-05 8.612e-05
 indexed/take-along-8-of-4096x1024-host	alloc_words	exact	1191
 indexed/take-along-8-of-4096x1024-host	wall_time	batch=256	n=20	3.758e-05	3.673e-05 3.688e-05 3.692e-05 3.707e-05 3.725e-05 3.731e-05 3.738e-05 3.742e-05 3.747e-05 3.756e-05 3.760e-05 3.787e-05 3.811e-05 3.819e-05 3.824e-05 3.827e-05 3.837e-05 3.839e-05 3.857e-05 3.887e-05
+jit/cast-bit-1e7	alloc_words	exact	866
+jit/cast-bit-1e7	wall_time	batch=16	n=20	3.925e-04	3.702e-04 3.731e-04 3.767e-04 3.831e-04 3.845e-04 3.848e-04 3.870e-04 3.876e-04 3.887e-04 3.892e-04 3.958e-04 3.962e-04 4.009e-04 4.024e-04 4.070e-04 4.077e-04 4.079e-04 4.089e-04 4.175e-04 4.209e-04
+jit/scatter-bit-1e7	alloc_words	exact	981
+jit/scatter-bit-1e7	wall_time	batch=2048	n=20	3.033e-06	2.935e-06 2.984e-06 2.990e-06 2.991e-06 3.009e-06 3.010e-06 3.010e-06 3.016e-06 3.031e-06 3.032e-06 3.035e-06 3.043e-06 3.058e-06 3.070e-06 3.078e-06 3.079e-06 3.079e-06 3.100e-06 3.116e-06 3.131e-06
+jit/scatter-bool-1e7	alloc_words	exact	928
+jit/scatter-bool-1e7	wall_time	batch=4096	n=20	1.976e-06	1.944e-06 1.947e-06 1.957e-06 1.960e-06 1.961e-06 1.965e-06 1.966e-06 1.969e-06 1.970e-06 1.975e-06 1.977e-06 1.980e-06 1.980e-06 1.981e-06 1.986e-06 1.997e-06 1.999e-06 2.002e-06 2.015e-06 2.019e-06
+jit/set-bit-1e7	alloc_words	exact	932
+jit/set-bit-1e7	wall_time	batch=4096	n=20	2.118e-06	2.075e-06 2.083e-06 2.090e-06 2.095e-06 2.101e-06 2.101e-06 2.101e-06 2.109e-06 2.110e-06 2.114e-06 2.121e-06 2.157e-06 2.164e-06 2.192e-06 2.278e-06 2.296e-06 2.339e-06 2.439e-06 2.966e-06 4.211e-06
+jit/set-bool-1e7	alloc_words	exact	879
+jit/set-bool-1e7	wall_time	batch=4096	n=20	1.850e-06	1.800e-06 1.823e-06 1.829e-06 1.830e-06 1.832e-06 1.833e-06 1.834e-06 1.835e-06 1.841e-06 1.848e-06 1.853e-06 1.854e-06 1.856e-06 1.866e-06 1.867e-06 1.878e-06 1.883e-06 1.886e-06 1.897e-06 1.898e-06
+jit/where-bit-1e7	alloc_words	exact	1419
+jit/where-bit-1e7	wall_time	batch=2	n=20	1.233e-03	1.055e-03 1.081e-03 1.098e-03 1.099e-03 1.107e-03 1.111e-03 1.114e-03 1.131e-03 1.141e-03 1.150e-03 1.315e-03 1.326e-03 1.332e-03 1.335e-03 1.338e-03 1.346e-03 1.353e-03 1.363e-03 1.374e-03 1.388e-03
+jit/where-bool-1e7	alloc_words	exact	1419
+jit/where-bool-1e7	wall_time	batch=1	n=20	1.462e-03	8.988e-04 9.219e-04 9.350e-04 9.466e-04 1.343e-03 1.401e-03 1.412e-03 1.419e-03 1.446e-03 1.459e-03 1.464e-03 1.465e-03 1.467e-03 1.467e-03 1.505e-03 1.523e-03 1.725e-03 1.829e-03 1.876e-03 2.257e-03
 launch/chain-64	alloc_words	exact	4556
 launch/chain-64	wall_time	batch=128	n=20	7.203e-05	7.193e-05 7.196e-05 7.196e-05 7.197e-05 7.198e-05 7.200e-05 7.200e-05 7.200e-05 7.202e-05 7.203e-05 7.203e-05 7.209e-05 7.210e-05 7.213e-05 7.216e-05 7.219e-05 7.226e-05 7.232e-05 7.233e-05 7.239e-05
 launch/scan-256	alloc_words	exact	65197

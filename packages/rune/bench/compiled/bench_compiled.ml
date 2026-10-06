@@ -210,6 +210,71 @@ let select_zero =
           fun g -> g x);
     ]
 
+(* Masks of 10^7 elements, compiled for the host, as [bool], a byte each, and as
+   [bit], eight to a byte: a selection of float32 elements by the mask, which
+   unpacks a [bit] mask where it reads it; a [bool] mask kept as bits, one pack;
+   and writes into a mask the call consumes, of a window of 1024 elements at an
+   odd offset and of 16 scattered elements, which store only the bytes they
+   change. *)
+let masks =
+  let n = 10_000_000 in
+  let mask () =
+    let st = Random.State.make [| 18 |] in
+    Nx.init Nx.bool [| n |] (fun _ -> Random.State.bool st)
+  in
+  let inputs m =
+    let x = uniform [| n |] and y = uniform [| n |] in
+    fun g -> g m x y
+  in
+  let signature () =
+    Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+  in
+  (* Each call consumes the mask the call before returned. *)
+  let consumed id f fresh =
+    Thumper.bench_with_setup ~id
+      ~setup:(fun () ->
+        let g = Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) f in
+        let m = ref (g (fresh ())) in
+        Nx_device.synchronize Nx_device.host;
+        (g, m))
+      id
+      (fun (g, m) ->
+        m := g !m;
+        Nx_device.synchronize Nx_device.host)
+  in
+  let writes (type b) name (dt : (bool, b) Nx.dtype) =
+    let window = Nx.ones dt [| 1024 |] in
+    let indices =
+      Nx.init Nx.int64 [| 16 |] (fun i -> Int64.of_int ((i.(0) * 611_953) + 3))
+    in
+    let values = Nx.ones dt [| 16 |] in
+    [
+      consumed
+        (Printf.sprintf "set-%s-1e7" name)
+        (fun m -> Nx.set [ R (3, 1027) ] window m)
+        (fun () -> Nx.cast dt (mask ()));
+      consumed
+        (Printf.sprintf "scatter-%s-1e7" name)
+        (fun m -> Nx.scatter ~axis:0 ~indices ~values m)
+        (fun () -> Nx.cast dt (mask ()));
+    ]
+  in
+  Thumper.group ~id:"jit" "jit"
+    ([
+       compiled_call "where-bool-1e7" (signature ()) Nx.where (fun () ->
+           inputs (mask ()));
+       compiled_call "where-bit-1e7" (signature ())
+         (fun m x y -> Nx.where (Nx.cast Nx.bool m) x y)
+         (fun () -> inputs (Nx.cast Nx.bit (mask ())));
+       compiled_call "cast-bit-1e7"
+         Nx.Ptree.(tensor @-> returns tensor)
+         (Nx.cast Nx.bit)
+         (fun () ->
+           let m = mask () in
+           fun g -> g m);
+     ]
+    @ writes "bool" Nx.bool @ writes "bit" Nx.bit)
+
 (* Transcendental functions of 1Mi elements on the host, which computes [exp2]
    and [sin] as polynomials: [exp] of [[-80, 80]], [log] of [[1e-30, 1e30]], and
    [sin] of [[-30, 30]] and of [[-1e6, 1e6]], whose larger angles take the long
@@ -563,7 +628,8 @@ let suite () =
          searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
          searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
        ]
-  :: split :: indexed :: rope :: select_zero :: transcendental :: factorizations
+  :: split :: indexed :: rope :: select_zero :: masks :: transcendental
+  :: factorizations
   @ reverse
     :: Thumper.group ~id:"finite" "finite"
          [
