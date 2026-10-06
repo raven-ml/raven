@@ -3417,9 +3417,9 @@ thread.
   checkpoint's `uint8` bytes. `Nx_quant.mxfp4` still takes those bytes.
 - `Nx.bitcast` of a placed value is a view of its storage wherever the host's
   bitcast is one, so it runs on devices with no eager kernels, such as Metal,
-  where it raised. `Nx.Repr.Placed.v` reads a storage's bytes as its dtype and
-  refuses only a buffer not aligned to it, where it required the dtype's
-  format.
+  where it raised. `Nx.Repr.Placed.v` reads a storage's bytes as its dtype,
+  where it required the dtype's format, and refuses a buffer not aligned to it
+  and a bool over storage of another format.
 - Add `Nx.Rng.with_root r f`, a key scope rooted at `r ()`, which runs at the
   first draw inside `f`, in the scope around. A scope that draws nothing takes
   no key, so the draws after it are unchanged. A root that raises raises at the

@@ -169,6 +169,22 @@ let representation =
           in
           raises_match (Exn.invalid_arg ~substring:"not aligned") (fun () ->
               Nx.Repr.Placed.v p Nx.float32 (Nx_array.View.create [| 2 |]) s));
+      test
+        "Nx.Repr.Placed.v reads bool only from bool storage, whose bytes are 0 \
+         and 1" (fun () ->
+          let s =
+            Nx.Repr.Storage.v p
+              [ Nx_device.Buffer.create r1 Nx_dtype.Scalar.UInt8 4 ]
+          in
+          raises_match (Exn.invalid_arg ~substring:"read as bool") (fun () ->
+              Nx.Repr.Placed.v p Nx.bool (Nx_array.View.create [| 4 |]) s);
+          let s =
+            Nx.Repr.Storage.v p
+              [ Nx_device.Buffer.create r1 Nx_dtype.Scalar.Bool 4 ]
+          in
+          equal int 4
+            (Nx.numel
+               (Nx.Repr.Placed.v p Nx.bool (Nx_array.View.create [| 4 |]) s)));
     ]
 
 (* Values on the disk: files, which the host reads where they lie, in their

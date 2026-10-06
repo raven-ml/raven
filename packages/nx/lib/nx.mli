@@ -5057,8 +5057,9 @@ module Repr : sig
 
         Raises [Invalid_argument] if [p] is {!Placement.host}, if [view] reaches
         an element outside [s], if a buffer of [s] does not start on a byte
-        aligned to one of [dtype]'s elements, or if [s]'s devices do not hold
-        [p]'s. *)
+        aligned to one of [dtype]'s elements, if [dtype] is [bool] and [s]'s
+        buffers are not of [bool]'s format, whose only bytes are 0 and 1, or if
+        [s]'s devices do not hold [p]'s. *)
 
     val id : ('a, 'b) t -> int
     (** [id x] is [x]'s identity, for hashing: every placed value has its own.

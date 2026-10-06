@@ -366,13 +366,16 @@ let host_value what dtype view b =
 
 (* [placed_value what p dtype view c] is the value at [p] of [c] under [view].
    Kernels read [view]'s elements of [c]'s bytes as [dtype]'s, so the view lies
-   within them and each buffer starts on a byte aligned to one. Consumed storage
-   has no bytes to reach. *)
-let placed_value what p dtype view c =
+   within them and each buffer starts on a byte aligned to one; bool reads only
+   bool storage. Consumed storage has no bytes to reach. *)
+let placed_value (type a b) what p (dtype : (a, b) Nx_dtype.t) view c =
   if not (View.within view (capacity dtype c)) then
     invalid_arg (what ^ ": the view reaches outside the storage");
-  (match Cell.state c with
-  | Live bufs ->
+  (match (Cell.state c, dtype) with
+  | Live bufs, Nx_dtype.Bool ->
+      (* A bool's only bytes are 0 and 1, which only bool storage holds. *)
+      List.iter (check_format what dtype) bufs
+  | Live bufs, _ ->
       List.iter
         (fun b ->
           match read_as dtype b with
@@ -382,7 +385,7 @@ let placed_value what p dtype view c =
                 (Printf.sprintf "%s: a buffer at a byte not aligned to %s" what
                    (Nx_dtype.to_string dtype)))
         bufs
-  | Consumed _ -> ());
+  | Consumed _, _ -> ());
   placed what p dtype view c
 
 (* [of_shards what p dtype view buffers] is the value at [p] whose elements, on
