@@ -39,3 +39,5 @@ let with_gradient u f =
       (lp, fun dx -> rows_dot u lp g dx))
 
 module Bij = Bij
+module Stats = Stats
+module Draws = Draws

@@ -10,3 +10,5 @@ density maps it to one log density per chain.
   adjoint solver's.
 - `Norn.Bij`: bijectors from unconstrained coordinates onto a value's
   support.
+- `Norn.Draws` and `Norn.Stats`: draws of your structure with `[chain; draw]`
+  axes, and the statistics of each transition.

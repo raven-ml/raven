@@ -35,3 +35,5 @@ val with_gradient :
 (** {1:modules Modules} *)
 
 module Bij = Bij
+module Stats = Stats
+module Draws = Draws
