@@ -3395,9 +3395,10 @@ thread.
   where it raised. `Nx.Repr.Placed.v` reads a storage's bytes as its dtype and
   refuses only a buffer not aligned to it, where it required the dtype's
   format.
-- Add `Nx.Rng.with_root`, a key scope whose root runs at the first draw
-  inside it, in the scope around: a scope that draws nothing takes no key, so
-  the draws after it are unchanged. `with_key k` is `with_root (fun () -> k)`.
+- Add `Nx.Rng.with_root r f`, a key scope rooted at `r ()`, which runs at the
+  first draw inside `f`, in the scope around. A scope that draws nothing takes
+  no key, so the draws after it are unchanged. A root that raises raises at the
+  draw, inside `f`. `with_key k` is `with_root (fun () -> k)`.
 
 - Add `nx.wide`, double-word numbers: `Nx_wide.t` holds each number as two
   floats whose sum carries 106 significand bits at float64 and 48 at

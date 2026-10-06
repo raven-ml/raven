@@ -1030,12 +1030,44 @@ let law5 =
         (compose ts (around (spec kind draws)) x)
         (compose ts (around (looped kind draws)) x))
 
+(* A loop's key scope whose root raises: under jit, a constant-key scope's draw
+   raises at the first draw of a trip. The step's own cleanup, and that of the
+   constructs it entered, runs. *)
+let raising_root_tests =
+  [
+    test
+      "a trip's root that raises runs the step's finalisers under jit, inside \
+       a construct" (fun () ->
+        let cleaned = ref 0 in
+        let f x =
+          Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
+              Rune.scan'
+                ~f:(fun c e ->
+                  Fun.protect
+                    ~finally:(fun () -> incr cleaned)
+                    (fun () ->
+                      let g =
+                        Rune.grad'
+                          (fun e -> Nx.sum (Nx.mul e (Nx.rand f64 [||])))
+                          e
+                      in
+                      (Nx.add c g, c)))
+                ~init:(scalar 0.) x)
+          |> fst
+        in
+        raises_match
+          (function Rune.Jit_error _ -> true | _ -> false)
+          (fun () -> Rune.jit' f (vec [| 1.; 2.; 3. |]));
+        equal ~msg:"finalisers run" int 1 !cleaned);
+  ]
+
 let () =
   exit
     (run "Rune bodies"
        [
          group "law 1" [ law1 ];
          group "law 5" [ law5 ];
+         group "a raising root" raising_root_tests;
          group "the boundary" boundary_tests;
          group "passing installations" passing_tests;
          group "roots in total scopes" root_tests;

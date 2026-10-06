@@ -1062,7 +1062,10 @@ module Rng : sig
       program.
 
       What a scope gives up against passing keys explicitly is
-      order-independence: inserting a draw shifts every draw after it. *)
+      order-independence: inserting a draw shifts every draw after it.
+      {!with_root} confines that to one key: a region rooted at {!next_key}
+      shifts the draws after it by one key if it draws, and not at all if it
+      does not. *)
 
   val with_key : t -> (unit -> 'a) -> 'a
   (** [with_key k f] runs [f] in a scope rooted at [k]. The keyless samplers
@@ -1076,14 +1079,18 @@ module Rng : sig
       on a domain spawned inside [f] does not see it. *)
 
   val with_root : (unit -> t) -> (unit -> 'a) -> 'a
-  (** [with_root r f] runs [f] in a scope rooted at [r ()], which runs at the
-      first draw inside [f], in the scope around [with_root]: a key [r] draws
-      comes from that scope. If [f] draws nothing, [r] never runs and the scope
-      around is left as it was. [with_key k f] is [with_root (fun () -> k) f].
+  (** [with_root r f] runs [f] in a scope rooted at the key [r] returns. [r]
+      runs once, at the first draw inside [f], in the scope around [with_root]:
+      a key [r] draws comes from that scope. If [f] draws nothing, [r] never
+      runs and the scope around is left as it was. If [r] raises, the first draw
+      inside [f] raises it, and [r] runs again at the next draw.
+      [with_key k f] is [with_root (fun () -> k) f].
 
-      Code that may draw opens such a scope to leave the stream around it
-      unchanged when it does not draw, as a loop does for each trip, from one
-      key [k] taken at its first draw:
+      Code whose draws are optional or vary in number opens such a scope so
+      that the stream around it takes at most one key: [with_root next_key f]
+      takes one key from the scope around if [f] draws, and none if it does
+      not. A function run several times can root each run at one key taken at
+      the first draw:
 
       {[
       let draws trips =

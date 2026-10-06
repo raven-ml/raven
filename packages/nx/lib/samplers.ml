@@ -1077,9 +1077,24 @@ module Rng = struct
   type _ Effect.t += E_next_key : key Effect.t
 
   (* The root is taken at the first draw, in the handler, outside the scope: a
-     draw [root] makes comes from the scope around. *)
+     draw [root] makes comes from the scope around. A key that raises raises at
+     the draw, inside the scope, so that the code between the scope and the draw
+     unwinds; the next draw takes the root again. *)
   let make_handler root =
     let counter = ref 0 and taken = ref None in
+    let next () =
+      let r =
+        match !taken with
+        | Some r -> r
+        | None ->
+            let r = root () in
+            taken := Some r;
+            r
+      in
+      let key = fold_in r !counter in
+      incr counter;
+      key
+    in
     let open Effect.Deep in
     {
       retc = Fun.id;
@@ -1090,17 +1105,11 @@ module Rng = struct
           | E_next_key ->
               Some
                 (fun (k : (a, _) continuation) ->
-                  let r =
-                    match !taken with
-                    | Some r -> r
-                    | None ->
-                        let r = root () in
-                        taken := Some r;
-                        r
-                  in
-                  let i = !counter in
-                  incr counter;
-                  continue k (fold_in r i))
+                  match next () with
+                  | key -> continue k key
+                  | exception e ->
+                      let bt = Printexc.get_raw_backtrace () in
+                      discontinue_with_backtrace k e bt)
           | _ -> None);
     }
 

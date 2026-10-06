@@ -970,6 +970,27 @@ let scopes =
           equal ~msg:"outer" values (fst expected) (fst rooted);
           equal ~msg:"inner" values (snd expected) (snd rooted);
           equal ~msg:"root runs" int (if inner = [] then 0 else 1) !runs);
+      test
+        "a root that raises raises at the first draw, inside the scope, and \
+         runs again at the next" (fun () ->
+          let runs = ref 0 and cleaned = ref false in
+          let root () =
+            incr runs;
+            if !runs = 1 then failwith "root" else Rng.key 3
+          in
+          let drawn =
+            Rng.with_root root (fun () ->
+                raises (Failure "root") (fun () ->
+                    Fun.protect
+                      ~finally:(fun () -> cleaned := true)
+                      (fun () -> Rng.next_key ()));
+                words (Rng.next_key ()))
+          in
+          equal ~msg:"the finaliser ran" bool true !cleaned;
+          equal ~msg:"the root ran twice" int 2 !runs;
+          equal ~msg:"the scope's first key" (array int32)
+            (Rng.with_key (Rng.key 3) (fun () -> words (Rng.next_key ())))
+            drawn);
       test "a domain spawned inside a scope draws outside it" (fun () ->
           let spawned () =
             Rng.with_key (Rng.key 7) (fun () ->
