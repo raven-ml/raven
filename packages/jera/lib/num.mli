@@ -8,6 +8,16 @@
 val eps : (float, 'b) Nx.dtype -> float
 (** [eps dtype] is the distance from [1] to the next float of [dtype]. *)
 
+val tiny : (float, 'b) Nx.dtype -> float
+(** [tiny dtype] is the smallest positive normal float of [dtype]. *)
+
+val huge : (float, 'b) Nx.dtype -> float
+(** [huge dtype] is the largest finite float of [dtype]. *)
+
+val precision : (float, 'b) Nx.dtype -> int
+(** [precision dtype] is the number of bits of [dtype]'s significand, the hidden
+    bit included: [53] for float64. *)
+
 val bits : (float, 'b) Nx.dtype -> int
 (** [bits dtype] is the width of [dtype]'s floats in bits, which bounds the
     bisections of their ordered-integer images. *)

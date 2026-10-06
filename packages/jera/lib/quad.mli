@@ -142,3 +142,26 @@ val adaptive :
     [a + (b − a) index / 2^level], so it reaches the ends.
 
     Raises [Invalid_argument] if [budget < 1], or as {!fixed} does. *)
+
+val tanh_sinh :
+  tol:Tol.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t Solution.t
+(** [tanh_sinh ~tol f range] is the integral of [f] over each element of [range]
+    by a double-exponential rule: tanh-sinh on a finite range, exp-sinh on
+    {!Range.from} and sinh-sinh on {!Range.line}. Its nodes crowd toward the
+    ends double-exponentially, so it converges for an integrable singularity at
+    an end, and on a half-line or the line for an integrand that decays. Scale
+    the variable so the integrand's width is near 1.
+
+    {b Method.} The trapezoidal rule in [t] after the change of variable, at
+    steps [1, 1/2, 1/4, ...]: each level adds the odd multiples of its step, in
+    fixed-size chunks, to the finest level the dtype calls for ([2^-7] in
+    float64, [2^-6] in float32). The nodes stop where their numbers leave the
+    dtype's normal floats; a node whose point rounds to an end is unused. Near
+    an end [a = 0] a point is its own distance to the end, so the nodes reach
+    the singularity in full precision; another end loses the digits [a]'s
+    magnitude rounds away, unless the integrand computes the distance to the end
+    from its argument. {b Error.} [e] is the difference of the last two levels
+    and [y] the integral. A lane whose terms at the truncation do not fall below
+    the tolerance, or whose finest level does not meet it, ends [Stalled]; a
+    non-finite sum ends it [Not_finite]. {b Derivative.} That of the sum over
+    the final level, through the ends and the integrand's parameters. *)

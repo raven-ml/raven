@@ -499,3 +499,280 @@ let adaptive r ~tol ~budget f range =
     ~value:(Nx.where ok total (used_sum p p.sums))
     ~error:(used_sum p p.errors) ~status:p.status ~evaluations:p.evaluations
     ~facts:[]
+
+(* Double-exponential rules *)
+
+(* The schedule of a double-exponential rule: its nodes by level, each level's
+   nodes padded with nodes of weight zero to whole chunks. Level 0 holds the
+   integers t of the truncated range, level k ≥ 1 the odd multiples of 2^-k;
+   together, levels 0 to k are the nodes of step 2^-k. A node is its side of a
+   finite range, its offset from the anchor or the end, which is a fraction of
+   the half-width for a finite range, its weight, and whether it lies in the
+   last unit of the truncation. *)
+type schedule = {
+  side : float array array;
+  offset : float array array;
+  weight : float array array;
+  outer : float array array;
+  level : int array;
+  last : bool array;
+  count : int array;
+  finest : int;
+}
+
+let de_chunk = 64
+
+let schedule kind dtype =
+  let finest =
+    1 + int_of_float (Float.ceil (Float.log2 (float (Num.precision dtype))))
+  in
+  let tiny = Num.tiny dtype and huge = Num.huge dtype in
+  let half_pi = Float.pi /. 2. in
+  (* A node at t: (side, offset, weight), if its numbers are normal floats of
+     the dtype. *)
+  let node t =
+    let s = half_pi *. Float.sinh t and c = half_pi *. Float.cosh t in
+    let ok x =
+      Float.is_finite x && Float.abs x <= huge && (x = 0. || Float.abs x >= tiny)
+    in
+    let n =
+      match kind with
+      | `Finite ->
+          (* The distance to the nearer end, over the half-width: 1 − tanh |s| =
+             2 / (e^(2|s|) + 1). *)
+          let u = 2. /. (Float.exp (2. *. Float.abs s) +. 1.) in
+          let w = c /. (Float.cosh s *. Float.cosh s) in
+          ((if t < 0. then -1. else if t > 0. then 1. else 0.), u, w)
+      | `From -> (0., Float.exp s, c *. Float.exp s)
+      | `Line -> (0., Float.sinh s, c *. Float.cosh s)
+    in
+    let _, u, w = n in
+    if ok u && ok w && w > 0. && (kind <> `Finite || u > 0.) then Some n
+    else None
+  in
+  (* The truncation: the nodes on either side of 0 up to the first that is not a
+     normal float, at step 2^-finest. *)
+  let step = Float.ldexp 1. (-finest) in
+  let rec reach t =
+    match node (t +. step) with
+    | Some _ when t < 64. -> reach (t +. step)
+    | _ -> t
+  in
+  let tmax = reach 0. in
+  let level_nodes k =
+    let ts =
+      if k = 0 then
+        let m = int_of_float (Float.floor tmax) in
+        List.init ((2 * m) + 1) (fun i -> float (i - m))
+      else
+        let h = Float.ldexp 1. (-k) in
+        let m = int_of_float (Float.floor (((tmax /. h) -. 1.) /. 2.)) in
+        List.concat_map
+          (fun j ->
+            let t = float ((2 * j) + 1) *. h in
+            [ -.t; t ])
+          (List.init (m + 1) Fun.id)
+    in
+    List.filter_map (fun t -> Option.map (fun n -> (t, n)) (node t)) ts
+  in
+  let chunks = ref [] in
+  for k = 0 to finest do
+    let nodes = Array.of_list (level_nodes k) in
+    let count = max 1 ((Array.length nodes + de_chunk - 1) / de_chunk) in
+    for c = 0 to count - 1 do
+      let get i f d =
+        let j = (c * de_chunk) + i in
+        if j < Array.length nodes then f nodes.(j) else d
+      in
+      chunks :=
+        ( Array.init de_chunk (fun i -> get i (fun (_, (s, _, _)) -> s) 0.),
+          Array.init de_chunk (fun i ->
+              get i
+                (fun (_, (_, u, _)) -> u)
+                (if kind = `Finite then 1. else 0.)),
+          Array.init de_chunk (fun i -> get i (fun (_, (_, _, w)) -> w) 0.),
+          Array.init de_chunk (fun i ->
+              get i
+                (fun (t, _) -> if Float.abs t > tmax -. 0.5 then 1. else 0.)
+                0.),
+          k,
+          c = count - 1,
+          max 0 (min de_chunk (Array.length nodes - (c * de_chunk))) )
+        :: !chunks
+    done
+  done;
+  let chunks = Array.of_list (List.rev !chunks) in
+  {
+    side = Array.map (fun (s, _, _, _, _, _, _) -> s) chunks;
+    offset = Array.map (fun (_, u, _, _, _, _, _) -> u) chunks;
+    weight = Array.map (fun (_, _, w, _, _, _, _) -> w) chunks;
+    outer = Array.map (fun (_, _, _, o, _, _, _) -> o) chunks;
+    level = Array.map (fun (_, _, _, _, k, _, _) -> k) chunks;
+    last = Array.map (fun (_, _, _, _, _, l, _) -> l) chunks;
+    count = Array.map (fun (_, _, _, _, _, _, n) -> n) chunks;
+    finest;
+  }
+
+(* The terms [w f(x)] of one chunk's nodes, [side], [offset] and [weight] of
+   shape [[c] @ ones]. A node whose point rounds to an end of a finite range is
+   unused, its input replaced by the midpoint. *)
+let terms fn f range (side, offset, weight) =
+  match range with
+  | Range.Finite (a, b) ->
+      let half = Nx.div_s (Nx.sub b a) 2. in
+      let mid = Nx.add a half in
+      let left = Nx.add a (Nx.mul half offset)
+      and right = Nx.sub b (Nx.mul half offset) in
+      let x =
+        Nx.where (Nx.less_s side 0.) left
+          (Nx.where (Nx.greater_s side 0.) right mid)
+      in
+      let valid =
+        Nx.logical_or (Nx.equal_s side 0.)
+          (Nx.logical_and (Nx.not_equal x a) (Nx.not_equal x b))
+      in
+      let x = Nx.where valid x (Nx.broadcast_to (Nx.shape x) mid) in
+      let y = call fn f x in
+      Nx.where valid (Nx.mul (Nx.mul half weight) y) (Nx.zeros_like y)
+  | From a -> Nx.mul weight (call fn f (Nx.add a offset))
+  | Line c -> Nx.mul weight (call fn f (Nx.add c offset))
+
+let tanh_sinh ~tol f range =
+  let fn = "Jera.Quad.tanh_sinh" in
+  let dtype = Range.dtype range in
+  let lanes = Range.shape range in
+  let kind =
+    match range with
+    | Range.Finite _ -> `Finite
+    | From _ -> `From
+    | Line _ -> `Line
+  in
+  let sch = schedule kind dtype in
+  let n_chunks = Array.length sch.level in
+  let table a =
+    Nx.create dtype [| n_chunks; de_chunk |] (Array.concat (Array.to_list a))
+  in
+  let side = table sch.side and offset = table sch.offset in
+  let weight = table sch.weight and outer = table sch.outer in
+  let levels =
+    Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.level)
+  in
+  let lasts = Nx.create Nx.bool [| n_chunks |] sch.last in
+  let counts =
+    Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.count)
+  in
+  let column v =
+    Nx.reshape
+      (Array.append [| de_chunk |] (Array.make (Array.length lanes) 1))
+      v
+  in
+  let row t i =
+    column
+      (Nx.reshape [| de_chunk |]
+         (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] i) t))
+  in
+  let detached =
+    match range with
+    | Range.Finite (a, b) -> Range.Finite (Rune.detach a, Rune.detach b)
+    | From a -> From (Rune.detach a)
+    | Line c -> Line (Rune.detach c)
+  in
+  let search x = Rune.detach (f x) in
+  let zeros = Nx.zeros dtype lanes in
+  (* The carry: the next chunk, then per lane the running sum of the level, the
+     last two estimates, the largest term in the truncation's last unit, the
+     final level, the status and the evaluations. *)
+  let step (i, (sum, (prev, (current, (tail, (final, (st, n))))))) =
+    let run = Elementwise.searching st in
+    let i64 = Nx.cast Nx.int64 i in
+    let t =
+      terms fn search detached (row side i64, row offset i64, row weight i64)
+    in
+    let sum = Nx.add sum (Nx.sum ~axes:[ 0 ] t) in
+    let tail =
+      Nx.maximum tail (Nx.max ~axes:[ 0 ] (Nx.mul (Nx.abs t) (row outer i64)))
+    in
+    let at table =
+      Nx.reshape [||] (Nx.take ~indices:(Nx.reshape [| 1 |] i64) table)
+    in
+    let n = Nx.add n (Nx.mul (Nx.cast Nx.int32 run) (at counts)) in
+    let k = at levels and ends = at lasts in
+    (* At a level's end: I_k = I_(k−1) / 2 + 2^-k R_k, I_0 = R_0. *)
+    let h = Nx.exp2 (Nx.neg (Nx.cast dtype k)) in
+    let estimate =
+      Nx.where (Nx.equal_s k 0l) sum
+        (Nx.add (Nx.div_s current 2.) (Nx.mul h sum))
+    in
+    let closing = Nx.logical_and run (Nx.broadcast_to lanes ends) in
+    let prev' = Nx.where closing current prev
+    and current' = Nx.where closing estimate current in
+    let final = Nx.where closing (Nx.broadcast_to lanes k) final in
+    let st' =
+      Elementwise.settle st
+        (Nx.logical_and closing (Nx.logical_not (Nx.isfinite estimate)))
+        Not_finite
+    in
+    let e = Nx.abs (Nx.sub current' prev') in
+    let met =
+      Nx.logical_and
+        (Nx.broadcast_to lanes (Nx.greater_equal_s k 1l))
+        (Elementwise.accepted tol ~e ~y:current')
+    in
+    let truncated = Elementwise.accepted tol ~e:(Nx.mul h tail) ~y:current' in
+    let st' =
+      Elementwise.settle st'
+        (Nx.logical_and closing (Nx.logical_and met truncated))
+        Converged
+    in
+    let st' = Elementwise.settle st' (Nx.logical_and closing met) Stalled in
+    let st' =
+      Elementwise.settle st'
+        (Nx.logical_and closing
+           (Nx.broadcast_to lanes
+              (Nx.greater_equal_s k (Int32.of_int sch.finest))))
+        Stalled
+    in
+    let sum = Nx.where (Nx.broadcast_to lanes ends) zeros sum in
+    (Nx.add_s i 1l, (sum, (prev', (current', (tail, (final, (st', n)))))))
+  in
+  let carry =
+    Nx.Ptree.(
+      pair tensor
+        (pair tensor
+           (pair tensor
+              (pair tensor (pair tensor (pair tensor (pair tensor tensor)))))))
+  in
+  let _, (_, (prev, (current, (_, (final, (st, n)))))) =
+    Rune.iterate carry ~max:n_chunks
+      ~until:(fun (_, (_, (_, (_, (_, (_, (st, _))))))) ->
+        Nx.logical_not (Nx.any (Elementwise.searching st)))
+      ~f:step
+      ( Nx.scalar Nx.int32 0l,
+        ( zeros,
+          ( zeros,
+            ( zeros,
+              ( zeros,
+                ( Nx.zeros Nx.int32 lanes,
+                  ( Nx.full Nx.int32 lanes Elementwise.running,
+                    Nx.zeros Nx.int32 lanes ) ) ) ) ) ) )
+  in
+  let ok = Nx.equal_s st (Solution.code Converged) in
+  (* The answer: 2^-K times the terms of every level up to each lane's final
+     level K, tracked, chunk by chunk. *)
+  let chunk_sum total (k, (s, (u, w))) =
+    let t = terms fn f range (column s, column u, column w) in
+    let keep = Nx.less_equal (Nx.broadcast_to lanes k) final in
+    (Nx.add total (Nx.where keep (Nx.sum ~axes:[ 0 ] t) zeros), ())
+  in
+  let total, () =
+    Rune.scan Nx.Ptree.tensor
+      Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
+      Nx.Ptree.unit ~f:chunk_sum ~init:zeros
+      (levels, (side, (offset, weight)))
+  in
+  let answer = Nx.mul total (Nx.exp2 (Nx.neg (Nx.cast dtype final))) in
+  Solution.v ~fn
+    ~settings:(Format.asprintf "tol %a" Tol.pp tol)
+    ~value:(Nx.where ok answer current)
+    ~error:(Nx.abs (Nx.sub current prev))
+    ~status:st ~evaluations:n ~facts:[]

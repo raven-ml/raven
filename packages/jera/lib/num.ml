@@ -12,6 +12,25 @@ let eps (type b) (dtype : (float, b) Nx.dtype) =
   | Nx.Float8_e4m3 -> Float.ldexp 1. (-3)
   | Nx.Float8_e5m2 -> Float.ldexp 1. (-2)
 
+let tiny (type b) (dtype : (float, b) Nx.dtype) =
+  match dtype with
+  | Nx.Float64 -> Float.min_float
+  | Nx.Float32 | Nx.BFloat16 -> Float.ldexp 1. (-126)
+  | Nx.Float16 -> Float.ldexp 1. (-14)
+  | Nx.Float8_e4m3 -> Float.ldexp 1. (-6)
+  | Nx.Float8_e5m2 -> Float.ldexp 1. (-14)
+
+let huge (type b) (dtype : (float, b) Nx.dtype) =
+  match dtype with
+  | Nx.Float64 -> Float.max_float
+  | Nx.Float32 -> Float.ldexp (2. -. Float.ldexp 1. (-23)) 127
+  | Nx.BFloat16 -> Float.ldexp (2. -. Float.ldexp 1. (-7)) 127
+  | Nx.Float16 -> 65504.
+  | Nx.Float8_e4m3 -> 448.
+  | Nx.Float8_e5m2 -> 57344.
+
+let precision dtype = 1 - Float.to_int (Float.log2 (eps dtype))
+
 let bits (type b) (dtype : (float, b) Nx.dtype) =
   match dtype with
   | Nx.Float64 -> 64

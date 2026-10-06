@@ -958,6 +958,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Quad.tanh_sinh`, double-exponential integration: tanh-sinh on a
+  finite range, exp-sinh on `Range.from` and sinh-sinh on `Range.line`,
+  for endpoint singularities and infinite ranges.
 - Add `Quad.adaptive`, Gauss–Kronrod integration on a partition refined by
   bisecting the piece of largest error, elementwise, whose answer is the rule
   over the final partition.

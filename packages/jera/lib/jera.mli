@@ -24,8 +24,13 @@
       }
       {tr
         {td Integral, one dimension }
-        {td smooth, fixed nodes }
-        {td {!Quad.fixed}, {!Quad.cumulative} }
+        {td smooth }
+        {td {!Quad.adaptive}; {!Quad.fixed}, {!Quad.cumulative} }
+      }
+      {tr
+        {td  }
+        {td endpoint singularity, infinite range }
+        {td {!Quad.tanh_sinh} }
       }
       {tr
         {td Approximation }

@@ -374,10 +374,84 @@ let adaptive_tests =
               (unit_range (vec [| 0. |]))));
   ]
 
+(* Double-exponential *)
+
+let ts = Quad.tanh_sinh ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14)
+
+(* ∫₀¹ x^(a−1) log x dx = −1 / a². *)
+let log_moment a =
+  ts
+    (fun x -> Nx.mul (Nx.pow x (Nx.sub_s a 1.)) (Nx.log x))
+    (Quad.Range.v (Nx.zeros_like a) (Nx.ones_like a))
+
+let de_tests =
+  let close = Oracle.tensor ~rel:1e-11 () in
+  [
+    test "endpoint singularities at 0 converge" (fun () ->
+        let a = vec [| 0.3; 0.5; 1.; 2.5 |] in
+        equal close
+          (Nx.map_item (fun a -> -1. /. (a *. a)) a)
+          (Solution.get (log_moment a)));
+    test "1 / √(1 − x²) on [−1, 1] is π" (fun () ->
+        (* The integrand computes the distance to each end from x itself. *)
+        let r = Quad.Range.v (vec [| -1. |]) (vec [| 1. |]) in
+        let f x = Nx.rsqrt (Nx.mul (Nx.add_s x 1.) (Nx.rsub_s 1. x)) in
+        equal
+          (Oracle.tensor ~rel:1e-7 ())
+          (vec [| Float.pi |])
+          (Solution.best (ts f r)));
+    test "exp-sinh integrates a half-line" (fun () ->
+        let a = vec [| 0.; 0. |] in
+        (* Lane 0 integrates e^-x, lane 1 1 / (1 + x²). *)
+        let f x =
+          let lane i = Nx.slice [ Nx.A; Nx.I i ] x in
+          Nx.stack ~axis:1
+            [
+              Nx.exp (Nx.neg (lane 0));
+              Nx.recip (Nx.add_s (Nx.square (lane 1)) 1.);
+            ]
+        in
+        let s = ts f (Quad.Range.from a) in
+        equal close (vec [| 1.; Float.pi /. 2. |]) (Solution.get s));
+    test "sinh-sinh integrates the line" (fun () ->
+        let c = vec [| 0.; 0.5 |] in
+        let s =
+          ts
+            (fun x -> Nx.exp (Nx.neg (Nx.square (Nx.sub x c))))
+            (Quad.Range.line c)
+        in
+        equal close (Nx.full f64 [| 2 |] (Float.sqrt Float.pi)) (Solution.get s));
+    test "grad in a is 2 / a³" (fun () ->
+        let a = vec [| 0.5; 1.; 2.5 |] in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.map_item (fun a -> 2. /. (a *. a *. a)) a)
+          (Rune.grad' (fun a -> Nx.sum (Solution.get (log_moment a))) a));
+    test "a divergent integral does not converge" (fun () ->
+        let s = ts Nx.recip (Quad.Range.v (vec [| 0. |]) (vec [| 1. |])) in
+        equal (Oracle.tensor ()) (Nx.zeros Nx.bool [| 1 |]) (Solution.ok s));
+    test "compiled equals eager" (fun () ->
+        let a = vec [| 0.5; 1.; 2.5 |] in
+        let f a = Solution.get (log_moment a) in
+        equal (Oracle.tensor ~rel:1e-13 ()) (f a) (Rune.jit' f a));
+    test "float32 converges to float32's tolerance" (fun () ->
+        let a = Nx.create Nx.float32 [| 2 |] [| 0.5; 2. |] in
+        let s =
+          Quad.tanh_sinh ~tol:(Tol.rel 1e-5)
+            (fun x -> Nx.mul (Nx.pow x (Nx.sub_s a 1.)) (Nx.log x))
+            (Quad.Range.v (Nx.zeros_like a) (Nx.ones_like a))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-5 ())
+          (Nx.create Nx.float32 [| 2 |] [| -4.; -0.25 |])
+          (Solution.get s));
+  ]
+
 let () =
   exit
     (run "Jera.Quad"
        [
+         group "double-exponential" de_tests;
          group "adaptive" adaptive_tests;
          group "rules" rule_tests;
          group "exactness" exactness_tests;
