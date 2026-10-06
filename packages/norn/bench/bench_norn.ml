@@ -92,6 +92,27 @@ let rhat =
   Thumper.bench_with_setup ~setup "rhat/4x1000x10" (fun d ->
       Norn.Diag.rhat Nx.Ptree.tensor d)
 
+(* The log density of a posteriordb posterior with its gradient, compiled, at 8
+   chains. A sampler's wall time per effective draw is this time over its
+   effective draws per gradient. *)
+let posteriordb =
+  List.map
+    (fun (Posteriordb.Posterior p) ->
+      let setup () =
+        let u = M.coords p.model in
+        let lp = M.log_density p.model p.y in
+        let grad =
+          Rune.jit
+            Nx.Ptree.(u @-> returns (pair tensor u))
+            (Rune.value_and_grad u (fun c -> Nx.sum (lp c)))
+        in
+        let c = M.init p.model p.y ~chains:8 (Nx.Rng.key 5) in
+        ignore (grad c);
+        (grad, c)
+      in
+      Thumper.bench_with_setup ~setup p.name (fun (grad, c) -> grad c))
+    (Posteriordb.all "../test/golden/posteriordb.golden")
+
 let () =
   Thumper.run "norn"
     [
@@ -99,5 +120,6 @@ let () =
       Thumper.group "model" [ log_density ];
       Thumper.group "dist" [ factors ];
       Thumper.group "diag" [ rhat ];
+      Thumper.group "posteriordb" posteriordb;
     ]
   |> exit
