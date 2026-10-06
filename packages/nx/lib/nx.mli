@@ -1079,12 +1079,14 @@ module Rng : sig
 
   val with_root : (unit -> t) -> (unit -> 'a) -> 'a
   (** [with_root r f] runs [f] in a scope rooted at the key [r] returns. [r]
-      runs once, at the first draw inside [f], in the scope around [with_root]:
-      a key [r] draws comes from that scope. A draw is a call of {!next_key},
-      or of a function {!next_root} returned. If [f] draws nothing, [r] never
-      runs and the scope around is left as it was. If [r] raises, the first draw
-      inside [f] raises it, and [r] runs again at the next draw.
-      [with_key k f] is [with_root (fun () -> k) f].
+      runs once, at the scope's first draw, in the scope around [with_root]: a
+      key [r] draws comes from that scope. The scope's draws are the calls of
+      {!next_key} in [f] that no inner scope answers, and the calls of a
+      function {!next_root} returned there, wherever they are made. Taking a
+      place with {!next_root} is not a draw. If the scope has no draw, [r] never
+      runs and the scope around is left as it was. If [r] raises, the draw
+      raises it, and [r] runs again at the next draw. [with_key k f] is
+      [with_root (fun () -> k) f].
 
       A function run several times can take one key's place before the runs
       and root each run at that key folded with its index, so that the stream
@@ -1092,9 +1094,9 @@ module Rng : sig
       does:
 
       {[
-      let draws trips =
+      let draws n =
         let k = Nx.Rng.next_root () in
-        List.init trips (fun i ->
+        List.init n (fun i ->
             Nx.Rng.with_root
               (fun () -> Nx.Rng.fold_in (k ()) i)
               (fun () -> Nx.rand Nx.float32 [| 2 |]))
@@ -1110,10 +1112,11 @@ module Rng : sig
 
   val next_root : unit -> (unit -> t)
   (** [next_root ()] takes the next key's place in the current scope and runs
-      no root: the draws after it are those after [next_key ()]. The function
-      it returns computes that key, the same at every call, as a draw in that
-      scope would: a root that has not run runs then. Outside any scope, the
-      function takes one key of the domain's generator at its first call.
+      no root: in a scope, the draws after it are those after [next_key ()].
+      The function it returns computes that key, the same at every call, as a
+      draw in that scope would: a root that has not run runs then. Outside any
+      scope, the function takes one key of the domain's generator at its first
+      call, the same key on every domain.
 
       Calling the function outside the extent of the scope that took its place
       (after that scope returned, on another domain or fiber, or from that
