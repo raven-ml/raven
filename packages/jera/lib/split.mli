@@ -53,13 +53,19 @@ val v : kick:float array -> drift:float array -> t
 
 type ('s, 'b) flow = (float, 'b) Nx.t -> 's -> 's
 (** The type for flows: [flow h s] is the state [s] moved by its part over the
-    duration [h], a scalar. *)
+    duration [h]: a scalar, or in {!step} a tensor that broadcasts against the
+    state's leaves. *)
 
 val step :
   t -> kick:('s, 'b) flow -> drift:('s, 'b) flow -> (float, 'b) Nx.t -> 's -> 's
 (** [step m ~kick ~drift h s] is [s] after one step [h] of [m]. A negative [h]
     steps back: [step m ~kick ~drift (−h) (step m ~kick ~drift h s)] is [s] up
-    to rounding. *)
+    to rounding.
+
+    [h] may hold one duration per batch of the state: an [h] of shape
+    [[chains; 1]] against leaves of shape [[chains; d]] steps each chain by its
+    own duration, as stepping each alone with its scalar would. The flows
+    receive [h] times each coefficient, of [h]'s shape. *)
 
 val march :
   's Nx.Ptree.t ->

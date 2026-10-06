@@ -75,6 +75,46 @@ let order_tests =
         equal (close ()) s back);
   ]
 
+(* Chains of the pendulum, positions and momenta of shape [[c; 2]], and one
+   duration per chain, of shape [[c; 1]]. *)
+let chains =
+  Gen.(
+    let* c = int_range 1 5 in
+    let floats lo hi = array ~size:(constant c) (float_range lo hi) in
+    let+ q = floats (-2.) 2.
+    and+ p = floats (-1.) 1.
+    and+ h = floats (-0.5) 0.5 in
+    (c, q, p, h))
+  |> Gen.with_pp (fun ppf (c, _, _, h) ->
+      Format.fprintf ppf "%d chains, h [%s]" c
+        (String.concat "; " (Array.to_list (Array.map string_of_float h))))
+
+let chain_tests =
+  [
+    prop "a step of one duration per chain steps each chain alone" chains
+      (fun (c, q, p, h) ->
+        let leaves a =
+          Nx.create f64 [| c; 2 |]
+            (Array.concat
+               (Array.to_list (Array.map (fun x -> [| x; 0.5 *. x |]) a)))
+        in
+        let s = (leaves q, leaves p) in
+        let hs = Nx.create f64 [| c; 1 |] h in
+        let q', p' = Split.step Split.yoshida4 ~kick ~drift hs s in
+        let alone i =
+          let row t = Nx.slice [ Nx.R (i, i + 1) ] t in
+          Split.step Split.yoshida4 ~kick ~drift
+            (scalar h.(i))
+            (row (fst s), row (snd s))
+        in
+        let rows = List.init c alone in
+        let stacked =
+          ( Nx.concatenate ~axis:0 (List.map fst rows),
+            Nx.concatenate ~axis:0 (List.map snd rows) )
+        in
+        equal (Oracle.structure state) stacked (q', p'));
+  ]
+
 let march_tests =
   [
     test "a march stacks the state at each time, the start first" (fun () ->
@@ -208,6 +248,7 @@ let () =
        [
          group "order" order_tests;
          group "march" march_tests;
+         group "chains" chain_tests;
          group "transformations" transformation_tests;
          group "errors" error_tests;
        ])
