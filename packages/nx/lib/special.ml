@@ -102,6 +102,47 @@ let erfc_parts x =
 
 let erfc_at x = (erfc_parts x).erfc
 
+(* erfinv: Giles' guess, single precision at float32 and double at float64, a
+   polynomial in [w = -log ((1 - p)(1 + p))] or [sqrt w] by region, its
+   coefficients selected per element; then one Newton step, whose derivative is
+   the implicit one: on [erf y = p] below [|p| = erf 1.25], and on [erfc |y| = 1
+   - |p|] above, where [1 - |p|] is exact and [erf] would round to 1. One
+   [erfc_parts] serves both. *)
+let erfinv_at p =
+  let t = tables p in
+  let edge = cmpge (abs p) (lit p 1.) in
+  let p = clamp (logical_not edge) p 0. in
+  let w = neg (log (mul (rsub_s 1. p) (add_s p 1.))) in
+  let central = lt w t.erfinv_central_below and far = ge w t.erfinv_far_from in
+  (* [sqrt] of [w] floored at 1, where the tails' polynomials are not selected:
+     its derivative is infinite at [w = 0]. *)
+  let r = sqrt (clamp (logical_not central) w 1.) in
+  let u =
+    where central
+      (sub_s w t.erfinv_central_shift)
+      (sub r (where far (lit r t.erfinv_far_shift) (lit r t.erfinv_near_shift)))
+  in
+  let coefficient i =
+    where central
+      (lit u t.erfinv_central.(i))
+      (where far (lit u t.erfinv_far.(i)) (lit u t.erfinv_near.(i)))
+  in
+  let acc = ref (coefficient 0) in
+  for i = 1 to Array.length t.erfinv_central - 1 do
+    acc := add (mul !acc u) (coefficient i)
+  done;
+  let y = mul p !acc in
+  let inner = lt (abs p) t.erfinv_newton_split in
+  let a = abs y in
+  let parts = erfc_parts (where inner y a) in
+  (* [erf' y = 2/sqrt pi exp (-y^2)], so each step multiplies by its
+     reciprocal. *)
+  let slope = mul_s (exp (mul y y)) (Float.sqrt Float.pi /. 2.) in
+  let central_y = sub y (mul (sub parts.erf p) slope) in
+  let tail_a = add a (mul (sub parts.erfc (rsub_s 1. (abs p))) slope) in
+  let tail_y = where (lt p 0.) (neg tail_a) tail_a in
+  where inner central_y tail_y
+
 (* [-x/sqrt 2] as [th + tl], for finite [x]. *)
 let split_sqrt1_2 x =
   let t = tables x in
@@ -526,6 +567,17 @@ let lgamma x = real_at_float32 { r = (fun x -> nan_through x (lgamma_at x)) } x
 
 let digamma x =
   real_at_float32 { r = (fun x -> nan_through x (digamma_at x)) } x
+
+let erfinv p =
+  let erfinv p =
+    let edge = cmpeq (abs p) (lit p 1.) in
+    let inf =
+      where (lt p 0.) (lit p Float.neg_infinity) (lit p Float.infinity)
+    in
+    let r = where edge inf (erfinv_at p) in
+    where (logical_or (cmpgt (abs p) (lit p 1.)) (isnan p)) (lit p Float.nan) r
+  in
+  real_at_float32 { r = erfinv } p
 
 let lbeta a b =
   let a, b = broadcasted a b in

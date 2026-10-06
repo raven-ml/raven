@@ -193,6 +193,8 @@ let derivatives =
       derivative "ndtr" ~bound:(everywhere (Ulps 256)) (d { u = Nx.ndtr });
       derivative "log_ndtr" ~bound:(everywhere (Ulps 512))
         (d { u = Nx.log_ndtr });
+      derivative ~cost:Slow_at_float64 "erfinv" ~bound:(everywhere (Ulps 64))
+        (d { u = Nx.erfinv });
       derivative ~cost:Slow_at_float64 "ndtri" ~bound:(everywhere (Ulps 64))
         (d { u = Nx.ndtri });
       derivative "lgamma"
@@ -254,6 +256,7 @@ let residuals =
           ("erfc", { u = Nx.erfc }, -6., 27.);
           ("ndtr", { u = Nx.ndtr }, -38., 9.);
           ("log_ndtr", { u = Nx.log_ndtr }, -40., 10.);
+          ("erfinv", { u = Nx.erfinv }, -1., 1.);
           ("ndtri", { u = Nx.ndtri }, 1e-300, 1.);
           ("lgamma", { u = Nx.lgamma }, -10.5, 30.);
           ("digamma", { u = Nx.digamma }, -10.5, 30.);
@@ -265,7 +268,8 @@ let residuals =
         erfc 495
         ndtr 547
         log_ndtr 671
-        ndtri 1018
+        erfinv 804
+        ndtri 1026
         lgamma 730
         digamma 590
         lbeta 1267

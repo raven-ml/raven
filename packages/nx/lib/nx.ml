@@ -38,10 +38,10 @@ let unpack (type a b) (dt : (a, b) dtype) (P x) : (a, b) t =
            (Nx_dtype.to_string (dtype x)))
 
 module Rng = struct
-  include Frontend.Rng
+  include Samplers.Rng
 
-  let key seed = Frontend.Rng.key context seed
-  let next_key () = Frontend.Rng.next_key context
+  let key seed = Samplers.Rng.key context seed
+  let next_key () = Samplers.Rng.next_key context
 
   type t = key
 
@@ -102,14 +102,14 @@ let geomspace dtype ?endpoint start stop num =
 
 let of_bigarray ba = Frontend.of_bigarray context ba
 let to_bigarray = Frontend.to_bigarray
-let rand dtype shape = Frontend.rand context dtype shape
-let randn dtype shape = Frontend.randn context dtype shape
-let randint ?low ~high shape = Frontend.randint context ?low ~high shape
-let bernoulli p = Frontend.bernoulli context p
-let permutation n = Frontend.permutation context n
-let shuffle x = Frontend.shuffle context x
-let categorical ?axis logits = Frontend.categorical context ?axis logits
-let truncated_normal lower upper = Frontend.truncated_normal context lower upper
+let rand dtype shape = Samplers.rand context dtype shape
+let randn dtype shape = Samplers.randn context dtype shape
+let randint ?low ~high shape = Samplers.randint context ?low ~high shape
+let bernoulli p = Samplers.bernoulli context p
+let permutation n = Samplers.permutation context n
+let shuffle x = Samplers.shuffle context x
+let categorical ?axis logits = Samplers.categorical context ?axis logits
+let truncated_normal lower upper = Samplers.truncated_normal context lower upper
 
 (* ───── FFT ───── *)
 
@@ -119,6 +119,7 @@ let hann dt n = Frontend.hann context dt n
 
 (* ───── Special functions ───── *)
 
+let erfinv = Special.erfinv
 let erfc = Special.erfc
 let ndtr = Special.ndtr
 let log_ndtr = Special.log_ndtr

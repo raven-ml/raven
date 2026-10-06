@@ -165,6 +165,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles `Nx.erfinv` at `float64` 2.4 times as fast and its
+  derivative 5.7 times as fast. The derivative is within 64 ulps.
 - `Rune.jit` computes `Nx.erfc`, `Nx.ndtr`, `Nx.log_ndtr`, `Nx.ndtri`,
   `Nx.lgamma`, `Nx.digamma` and `Nx.lbeta` as nx does eagerly, and their
   derivatives, in every argument and at every order, are within the bounds
@@ -3284,6 +3286,9 @@ thread.
 
 ### Nx
 
+- `Nx.erfinv` refines its guess with one Newton step on `erf` in the
+  centre and on `erfc` in the tails, where it ran on `erf` near 1: its float64
+  error near ±1 falls from about 135 ulps to 1.
 - Add `Nx.erfc`, `Nx.ndtr`, `Nx.log_ndtr`, `Nx.ndtri`, `Nx.lgamma`,
   `Nx.digamma` and `Nx.lbeta`, the laws of the normal, gamma and beta
   distributions, each within a stated bound of its correctly rounded value and

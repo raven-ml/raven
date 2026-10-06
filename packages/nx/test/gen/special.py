@@ -275,8 +275,8 @@ def erf_points(fmt):
 
 
 # erfinv: an inverse of erf on (-1, 1). Its points are where its guess changes
-# polynomial (w = 5, w = -log ((1 - x)(1 + x))), where the float64 refinement
-# changes residual (|y| = 2), the ends, and floats crowded against them.
+# polynomial (in w = -log ((1 - p)(1 + p))), where its Newton step changes
+# residual (|p| = erf 1.25), the ends, and floats crowded against them.
 
 def erfinv_reference(fmt, x):
     if math.isnan(x) or abs(x) > 1:
@@ -296,26 +296,90 @@ def kappa(fmt, value, x):
         return scale(abs(p / (y * 2 / mpmath.sqrt(mpmath.pi) * mpmath.exp(-y * y))))
 
 
-# erfinv's regions: its guess switches polynomial at w = 5, w = -log ((1 -
-# p)(1 + p)), and its float64 refinement switches residual at |p| = erf 2.
+# erfinv's guess, Giles' polynomials (Approximating the erfinv function, GPU
+# Computing Gems Jade, 2011; erfinv_SP_1.cu and erfinv_DP_1.cu): a central
+# polynomial in w - shift below a split in w, and tail polynomials in sqrt w -
+# shift, the far one from a second split, as the source writes them, highest
+# degree first. Single precision has one tail.
 
-ERFINV_W_SPLIT = 5.0
-ERFINV_CENTRAL_SHIFT = 2.5
-ERFINV_TAIL_SHIFT = 3.0
-ERFINV_REFINE_SPLIT = 2.0
-ERF_SERIES_TERMS = 80
-ERFC_FRACTION_TERMS = 64
+GILES = {
+    F32: {
+        "central": (5.0, 2.5, ["2.81022636e-08", "3.43273939e-07", "-3.5233877e-06", "-4.39150654e-06",
+                               "0.00021858087", "-0.00125372503", "-0.00417768164", "0.246640727",
+                               "1.50140941"]),
+        "near": (3.0, ["-0.000200214257", "0.000100950558", "0.00134934322", "-0.00367342844",
+                       "0.00573950773", "-0.0076224613", "0.00943887047", "1.00167406", "2.83297682"]),
+        "far": None,
+    },
+    F64: {
+        "central": (6.25, 3.125, [
+            "-3.6444120640178196996e-21", "-1.685059138182016589e-19", "1.2858480715256400167e-18",
+            "1.115787767802518096e-17", "-1.333171662854620906e-16", "2.0972767875968561637e-17",
+            "6.6376381343583238325e-15", "-4.0545662729752068639e-14", "-8.1519341976054721522e-14",
+            "2.6335093153082322977e-12", "-1.2975133253453532498e-11", "-5.4154120542946279317e-11",
+            "1.051212273321532285e-09", "-4.1126339803469836976e-09", "-2.9070369957882005086e-08",
+            "4.2347877827932403518e-07", "-1.3654692000834678645e-06", "-1.3882523362786468719e-05",
+            "0.0001867342080340571352", "-0.00074070253416626697512", "-0.0060336708714301490533",
+            "0.24015818242558961693", "1.6536545626831027356"]),
+        "near": (3.25, [
+            "2.2137376921775787049e-09", "9.0756561938885390979e-08", "-2.7517406297064545428e-07",
+            "1.8239629214389227755e-08", "1.5027403968909827627e-06", "-4.013867526981545969e-06",
+            "2.9234449089955446044e-06", "1.2475304481671778723e-05", "-4.7318229009055733981e-05",
+            "6.8284851459573175448e-05", "2.4031110387097893999e-05", "-0.0003550375203628474796",
+            "0.00095328937973738049703", "-0.0016882755560235047313", "0.0024914420961078508066",
+            "-0.0037512085075692412107", "0.005370914553590063617", "1.0052589676941592334",
+            "3.0838856104922207635"]),
+        "far": (16.0, 5.0, [
+            "-2.7109920616438573243e-11", "-2.5556418169965252055e-10", "1.5076572693500548083e-09",
+            "-3.7894654401267369937e-09", "7.6157012080783393804e-09", "-1.4960026627149240478e-08",
+            "2.9147953450901080826e-08", "-6.7711997758452339498e-08", "2.2900482228026654717e-07",
+            "-9.9298272942317002539e-07", "4.5260625972231537039e-06", "-1.9681778105531670567e-05",
+            "7.5995277030017761139e-05", "-0.00021503011930044477347", "-0.00013871931833623122026",
+            "1.0103004648645343977", "4.8499064014085844221"]),
+    },
+}
+
+# Where erfinv's Newton step changes residual: on erf below |y| = 1.25, where
+# erfc_parts gives erf, on erfc above.
+ERFINV_NEWTON_SPLIT = 1.25
 
 
-def erfinv_split():
-    """|p| where w = 5, and erf 2, at 100 bits."""
+def erfinv_split(fmt):
+    """|p| at each split of w, and erf 1.25, at 100 bits."""
+    g = GILES[fmt]
+    ws = [g["central"][0]] + ([g["far"][0]] if g["far"] else [])
     with mp.workprec(100):
-        return (mpmath.sqrt(1 - mpmath.exp(-ERFINV_W_SPLIT)), mpmath.erf(ERFINV_REFINE_SPLIT))
+        return [mpmath.sqrt(1 - mpmath.exp(-mpf(w))) for w in ws] + [mpmath.erf(mpf(ERFINV_NEWTON_SPLIT))]
+
+
+def erfinv_tables(fmt):
+    """erfinv's per-dtype fields: the three polynomials padded with leading
+    zeros to one length, so one Horner runs them with selected coefficients."""
+    g = GILES[fmt]
+    below, c_shift, central = g["central"]
+    n_shift, near = g["near"]
+    far_from, f_shift, far = g["far"] if g["far"] else (math.inf, n_shift, near)
+    with mp.workprec(200):
+        polys = [[round_to(fmt, mpf(d)) for d in cs] for cs in (central, near, far)]
+        e125 = round_to(fmt, mpmath.erf(mpf(ERFINV_NEWTON_SPLIT)))
+    n = max(len(cs) for cs in polys)
+    polys = [[0.0] * (n - len(cs)) + cs for cs in polys]
+    return [
+        ("erfinv_central", ocaml_array(polys[0])),
+        ("erfinv_central_below", ocaml_float(below)),
+        ("erfinv_central_shift", ocaml_float(c_shift)),
+        ("erfinv_near", ocaml_array(polys[1])),
+        ("erfinv_near_shift", ocaml_float(n_shift)),
+        ("erfinv_far", ocaml_array(polys[2])),
+        ("erfinv_far_from", "infinity" if math.isinf(far_from) else ocaml_float(far_from)),
+        ("erfinv_far_shift", ocaml_float(f_shift)),
+        ("erfinv_newton_split", ocaml_float(e125)),
+    ]
 
 
 def erfinv_points(fmt):
     rng = random.Random(f"erfinv {fmt.name}")
-    edges = list(erfinv_split()) + [1.0]
+    edges = [float(e) for e in erfinv_split(fmt)] + [1.0]
     near_one = [1 - 2.0 ** -k for k in range(2, fmt.p + 1)]
     points = [x for c in edges for x in neighbours(fmt, c)] + [round_to(fmt, mpf(x)) for x in near_one]
     sweep = log_sweep(fmt, fmt.tiny, 0.5, 48)
@@ -670,7 +734,7 @@ def per_dtype(fmt):
     core = digamma_core(fmt)
     with mp.workprec(200):
         c_hi, c_lo = split(fmt, 1 / mpmath.sqrt(2))
-    return [
+    return erfinv_tables(fmt) + [
         ("sqrt1_2_hi", ocaml_float(c_hi)),
         ("sqrt1_2_lo", ocaml_float(c_lo)),
         ("ndtri_central_p", ocaml_array(high_first(ppnd["a"]))),
@@ -1085,22 +1149,6 @@ def binding(text, name, value):
     return f"{comment(text)}\nlet {name} =\n  {value}\n"
 
 
-# erfinv's first guess: Giles, "Approximating the erfinv function", GPU
-# Computing Gems Jade (2011), its single-precision polynomials
-# (erfinv_SP_1.cu), each coefficient the float32 its source writes, highest
-# degree first.
-
-GILES_SP_CENTRAL = ["2.81022636e-08", "3.43273939e-07", "-3.5233877e-06", "-4.39150654e-06",
-                    "0.00021858087", "-0.00125372503", "-0.00417768164", "0.246640727", "1.50140941"]
-GILES_SP_TAIL = ["-0.000200214257", "0.000100950558", "0.00134934322", "-0.00367342844",
-                 "0.00573950773", "-0.0076224613", "0.00943887047", "1.00167406", "2.83297682"]
-
-
-def single(decimals):
-    with mp.workprec(200):
-        return [round_to(F32, mpf(d)) for d in decimals]
-
-
 COMMENTS = {
     "erx": "fdlibm's s_erf.c (1.3 95/01/18): " + FDLIBM_NOTICE
            + " [erx] is erf 1 rounded to 24 bits; [erf_small] is P/Q on [0, 0.84375) in x^2, "
@@ -1124,6 +1172,13 @@ COMMENTS = {
 }
 
 PER_DTYPE = {
+    "erfinv_central": "erfinv's guess, Giles' polynomials (Approximating the erfinv function, GPU "
+                      "Computing Gems Jade, 2011), single precision at float32 and double at "
+                      "float64, in w = -log ((1 - p)(1 + p)): [central] in w - [central_shift] "
+                      "below [central_below], [near] in sqrt w - [near_shift], [far] in sqrt w - "
+                      "[far_shift] from [far_from], each padded with leading zeros to one length. "
+                      "Its Newton step runs on erf below [newton_split] in |p|, erf 1.25, and on "
+                      "erfc above.",
     "sqrt1_2_hi": "1/sqrt 2 as two floats, whose sum is it to twice the dtype's precision.",
     "ndtri_central_p": "AS 241's P/Q for |p - 1/2| <= 0.425 in 0.180625 - (p - 1/2)^2: "
                        "Wichura, Algorithm AS 241, Applied Statistics 37 (1988), its PPND7 "
@@ -1144,25 +1199,6 @@ def tables():
     shared = shared_tables()
     rows = {F32: per_dtype(F32), F64: per_dtype(F64)}
     out = [comment(HEADER[2:]), ""]
-    giles = "Giles, Approximating the erfinv function, GPU Computing Gems Jade (2011), single precision"
-    parts = [
-        binding(f"erfinv's guess below [w = erfinv_w_split], [w = -log ((1 - p)(1 + p))], a "
-                f"polynomial in [w - erfinv_central_shift]: {giles}.",
-                "erfinv_central", ocaml_array(single(GILES_SP_CENTRAL))),
-        binding("Its guess from [w = erfinv_w_split], a polynomial in [sqrt w - erfinv_tail_shift].",
-                "erfinv_tail", ocaml_array(single(GILES_SP_TAIL))),
-        binding("Where the guess changes polynomial.", "erfinv_w_split", ocaml_float(ERFINV_W_SPLIT)),
-        binding("The central polynomial's origin in [w].", "erfinv_central_shift",
-                ocaml_float(ERFINV_CENTRAL_SHIFT)),
-        binding("The tail polynomial's origin in [sqrt w].", "erfinv_tail_shift",
-                ocaml_float(ERFINV_TAIL_SHIFT)),
-        binding("erf 2, below which in [|p|] the float64 refinement runs Newton on erf's series, "
-                "and from which on erfc's continued fraction.",
-                "erfinv_erf2", ocaml_float(round_to(F64, erfinv_split()[1]))),
-        binding("The series' terms.", "erf_series_terms", str(ERF_SERIES_TERMS)),
-        binding("The continued fraction's terms.", "erfc_fraction_terms", str(ERFC_FRACTION_TERMS)),
-    ]
-    out += parts
     for name, value in shared:
         text = comment(COMMENTS[name]) + "\n" if name in COMMENTS else ""
         out.append(f"{text}let {name} = {value}\n" if not value.startswith("[|")

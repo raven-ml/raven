@@ -220,17 +220,19 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
 
 (** {1:special Derivatives of nx's special functions}
 
-    rune differentiates {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr}, {!Nx.ndtri},
-    {!Nx.lgamma}, {!Nx.digamma} and {!Nx.lbeta} through the operations nx
-    computes them with, in every argument and at every order. Each derivative
-    is within the budget below of the exact derivative, at [float32] and
-    [float64], eagerly and compiled, where the function and its derivative are
-    finite, which leaves out {!Nx.ndtri} at [0] and [1]. [ε] is the distance
-    from 1 to the next float of the dtype.
+    rune differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
+    {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma} and {!Nx.lbeta} through the
+    operations nx computes them with, in every argument and at every order.
+    Each derivative is within the budget below of the exact derivative, at
+    [float32] and [float64], eagerly and compiled, where the function and its
+    derivative are finite, which leaves out {!Nx.erfinv} at [±1] and
+    {!Nx.ndtri} at [0] and [1]. [ε] is the distance from 1 to the next float of
+    the dtype.
 
     {t
     | Function | First derivative |
     |---|---|
+    | {!Nx.erfinv} | 64 ulps |
     | {!Nx.erfc} | 128 ulps |
     | {!Nx.ndtr} | 256 ulps |
     | {!Nx.log_ndtr} | 512 ulps |
