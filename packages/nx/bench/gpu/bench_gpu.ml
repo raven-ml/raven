@@ -13,12 +13,16 @@
    two halves and a square padded by one, at 4K, 1M and 16M elements, and the
    product of a float32 square matrix by itself, of 128, 1,024 and 4,096 rows,
    twenty dependent sums of 4K elements, the many small operations of eager
-   code, which pay the launch latency each, timed to the work's completion, and
-   the first use of a kernel in a fresh process, which opens the GPU and loads
-   the kernel's code objects. AMD loads code objects with no compiler, so the
-   first use has no cold and warm cases. Rows exist for the GPUs the machine
-   has: AMD GPU 0 under the kernel driver. The GPU is opened in each measuring
-   worker, never in the parent that forks them; the host twins run on every
+   code, which pay the launch latency each, timed to the work's completion,
+   twenty-four dependent products of 4,096 rows, about 300 ms of work the host
+   waits for past its spin, and the first use of kernels in a fresh process,
+   which opens the GPU and loads the kernels' code objects: one cast, and a
+   dozen operations at each of six dtypes. AMD loads code objects with no
+   compiler, so the first use has no cold and warm cases. An NV GPU, which
+   computes nothing eagerly, places 16 bytes from the host. Rows exist for the
+   GPUs the machine has: AMD and NV GPU 0 under their kernel drivers. A GPU is
+   opened in each measuring worker, never in the parent that forks them, which
+   asks a fresh process whether it opens; the host twins run on every
    machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
@@ -30,6 +34,39 @@ let first_use () =
   let d = Nx_amd.device 0 in
   let x = Nx.place (Nx.Placement.on d) (Nx.ones Nx.bfloat16 [| 4096 |]) in
   ignore (Nx.cast Nx.float32 x);
+  Nx_device.synchronize (Nx.Device.memory d)
+
+(* The first use of a dozen operations at each of six dtypes: what a program
+   loads once the kernels it calls span families and dtypes. *)
+let first_uses_child = "--first-uses"
+
+let operations (type a b) p (dt : (a, b) Nx.dtype) =
+  let x = Nx.place p (Nx.cast dt (Nx.arange Nx.int32 0 4096 1)) in
+  let y = Nx.place p (Nx.cast dt (Nx.arange Nx.int32 4096 0 (-1))) in
+  let indices = Nx.place p (Nx.arange Nx.int64 0 4096 7) in
+  [
+    (fun () -> ignore (Nx.add x y));
+    (fun () -> ignore (Nx.mul x y));
+    (fun () -> ignore (Nx.sub x y));
+    (fun () -> ignore (Nx.maximum x y));
+    (fun () -> ignore (Nx.sum x));
+    (fun () -> ignore (Nx.max x));
+    (fun () -> ignore (Nx.cumsum x));
+    (fun () -> ignore (Nx.take ~indices x));
+    (fun () -> ignore (Nx.concatenate ~axis:0 [ x; y ]));
+    (fun () -> ignore (Nx.where (Nx.less x y) x y));
+    (fun () -> ignore (Nx.cast Nx.float32 x));
+    (fun () -> ignore (Nx.sort x));
+  ]
+
+let first_uses () =
+  let d = Nx_amd.device 0 in
+  let p = Nx.Placement.on d in
+  List.iter
+    (fun f -> f ())
+    (operations p Nx.float32 @ operations p Nx.float16
+   @ operations p Nx.bfloat16 @ operations p Nx.int32 @ operations p Nx.int64
+   @ operations p Nx.uint8);
   Nx_device.synchronize (Nx.Device.memory d)
 
 (* The device's cache holds memory for [f]'s results. A result's memory returns
@@ -97,7 +134,6 @@ let square n =
   Nx.rand Nx.float32 [| side; side |]
 
 let squares = [ ("128", 128); ("1024", 1024); ("4096", 4096) ]
-
 let matrix n = Nx.rand Nx.float32 [| n; n |]
 
 (* Twenty sums, each of the one before and [x]. *)
@@ -156,38 +192,117 @@ let cases ~gpu size =
   @ rows ~put:one ~gpu "pad" size ~input:square
       ~op:(Nx.pad [| (1, 1); (1, 1) |] 0.)
 
-let first_use_case () =
+(* Twenty-four products, each of the one before by [w], whose entries are scaled
+   to keep the products' entries near the input's. *)
+let products = 24
+let product_rows = 4096
+
+let product_chain (x, w) =
+  let y = ref x in
+  for _ = 1 to products do
+    y := Nx.matmul !y w
+  done;
+  !y
+
+let product_chain_case () =
+  Thumper.bench_with_setup
+    ~setup:(fun () ->
+      let d = Nx_amd.device 0 in
+      let m = Nx.Device.memory d and p = Nx.Placement.on d in
+      let n = product_rows in
+      let scale = sqrt (12. /. Float.of_int n) in
+      let w = Nx.mul_s (Nx.sub_s (Nx.rand Nx.float32 [| n; n |]) 0.5) scale in
+      let x = (Nx.place p (matrix n), Nx.place p w) in
+      warm m (fun () -> product_chain x);
+      (m, x))
+    (Printf.sprintf "matmul-%d-chain%d" product_rows products)
+    (fun (m, x) ->
+      let y = product_chain x in
+      Nx_device.synchronize m;
+      y)
+
+(* A fresh process running [flag]. *)
+let fresh name flag =
   let exe = Sys.executable_name in
-  Thumper.bench "first-use" (fun () ->
+  Thumper.bench name (fun () ->
       let pid =
-        Unix.create_process exe [| exe; first_use_child |] Unix.stdin
-          Unix.stdout Unix.stderr
+        Unix.create_process exe [| exe; flag |] Unix.stdin Unix.stdout
+          Unix.stderr
       in
       match Unix.waitpid [] pid with
       | _, WEXITED 0 -> ()
-      | _ -> failwith "the first use failed")
+      | _ -> failwith ("bench_gpu: " ^ name ^ " failed"))
+
+let amd_cases () =
+  [
+    product_chain_case ();
+    fresh "first-use" first_use_child;
+    fresh "first-use-6-dtypes" first_uses_child;
+  ]
+
+(* 16 bytes placed on an NV GPU from the host. Each placement is a copy whose
+   commands take a segment of the runtime's ring; the setup places enough to
+   wrap the ring many times. *)
+let placements = 1 lsl 14
+
+let nv_cases () =
+  [
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let d = Nx_nv.device 0 in
+        let m = Nx.Device.memory d and p = Nx.Placement.on d in
+        let x = Nx.ones Nx.float32 [| 4 |] in
+        for _ = 1 to placements do
+          ignore (Nx.place p x)
+        done;
+        Nx_device.synchronize m;
+        Gc.full_major ();
+        (m, p, x))
+      "place-16B"
+      (fun (m, p, x) ->
+        let y = Nx.place p x in
+        Nx_device.synchronize m;
+        y);
+  ]
+
+(* Whether a GPU opens, asked of a fresh process: its driver must not be
+   initialized before the fork that isolates a case. *)
+let opens flag =
+  Sys.command (Filename.quote_command Sys.executable_name [ flag ]) = 0
 
 let () =
-  if Array.length Sys.argv = 2 && Sys.argv.(1) = first_use_child then (
-    first_use ();
-    exit 0);
+  (match Array.to_list Sys.argv with
+  | [ _; flag ] when flag = first_use_child ->
+      first_use ();
+      exit 0
+  | [ _; flag ] when flag = first_uses_child ->
+      first_uses ();
+      exit 0
+  | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
+  | [ _; "--nv" ] -> exit (if Result.is_ok (Nx_nv.get 0) then 0 else 1)
+  | _ -> ());
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  let gpu = Nx_amd_device.count () > 0 in
+  let gpu = opens "--amd" in
+  (* A trial of the chain of products runs about 300 ms a call. *)
   Thumper.run "nx_gpu"
-    ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+    ~config:Thumper.Config.(default |> deadline 60.)
+    ~budgets:
+      [
+        Thumper.Budget.no_slower_than 0.05;
+        Thumper.Budget.no_more_alloc_than 0.01;
+      ]
     [
       Thumper.group "gpu"
-        [
-          Thumper.group "amd"
-            (List.concat_map (cases ~gpu) sizes
-            @ List.concat_map
-                (fun size ->
-                  rows ~put:one ~gpu "matmul" size ~input:matrix ~op:(fun x ->
-                      Nx.matmul x x))
-                squares
-            @ rows ~put:one ~gpu "chain20-add" (List.hd sizes) ~input:floats
-                ~op:chained
-            @ if gpu then [ first_use_case () ] else []);
-        ];
+        (Thumper.group "amd"
+           (List.concat_map (cases ~gpu) sizes
+           @ List.concat_map
+               (fun size ->
+                 rows ~put:one ~gpu "matmul" size ~input:matrix ~op:(fun x ->
+                     Nx.matmul x x))
+               squares
+           @ rows ~put:one ~gpu "chain20-add" (List.hd sizes) ~input:floats
+               ~op:chained
+           @ if gpu then amd_cases () else [])
+        :: (if opens "--nv" then [ Thumper.group "nv" (nv_cases ()) ] else []));
     ]
   |> exit

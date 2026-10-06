@@ -1,6 +1,13 @@
 # thumper baseline v1
 # suite: nx_gpu
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+gpu/nv/place-16B	alloc_words	batch=1024	n=20	1.377e+03	1.365e+03 1.365e+03 1.371e+03 1.371e+03 1.371e+03 1.371e+03 1.371e+03 1.371e+03 1.372e+03 1.377e+03 1.377e+03 1.377e+03 1.378e+03 1.384e+03 1.384e+03 1.384e+03 1.384e+03 1.384e+03 1.384e+03 1.384e+03
+gpu/nv/place-16B	wall_time	batch=1024	n=20	7.006e-06	6.891e-06 6.897e-06 6.907e-06 6.920e-06 6.964e-06 6.967e-06 6.974e-06 6.983e-06 6.992e-06 6.996e-06 7.017e-06 7.029e-06 7.036e-06 7.042e-06 7.043e-06 7.058e-06 7.089e-06 7.144e-06 7.166e-06 7.190e-06
+
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
