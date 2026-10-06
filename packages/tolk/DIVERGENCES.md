@@ -4000,3 +4000,31 @@ stores through a pad.
   `add_large_cpu`, `add_small_cpu`, `outer_add_cpu`, `transpose_cpu`,
   `stack_8_cpu` and `softmax_cpu` (no upcast; `stack_cpu` and `pad_7x7_cpu`
   keep their masked upcasts), recorded from the equally patched tinygrad.
+
+## D132. A contiguous view's rewrite stops at the effects its storage waits on
+
+- **tinygrad:** `uop/ops.py:934-948` (`UOp.contiguous_view`), whose rewrite
+  of the index with `pm_mops` and `symbolic` visits every node the index
+  reaches, the effects an `AFTER` orders its storage after and the graphs they
+  compute included, and returns the storage node it reaches as rewritten
+  (`b.rtag(None)`).
+- **tolk:** `lib/schedule/prepare.ml:720` (`pm_stop_at_effects`) and `:730`
+  (`contiguous_view`).
+- **Differs:** the rewrite stops at void nodes, the effects storage is ordered
+  after, and leaves them and what they compute as they are, so that the
+  storage it returns is the node of the view's graph. The effects decide
+  nothing of where the view's elements lie. The graphs they compute hold
+  rune's gathers (D73), which `pm_mops`, a rule for a view's index, moves
+  through a reshape into an index whose shape repeats the gather's, and
+  arithmetic on weak-integer tensors, on which `Divandmod`'s `divide_by_gcd`
+  raises. tinygrad's tensor graphs hold neither.
+- **Reason:** (b): rune's jit asks whether each result of a compiled call is
+  a view of a buffer it makes (`take` in `packages/rune/lib/jit.ml`). norn's
+  NUTS warmup and sampling of a posterior over sixteen chains, compiled as one
+  function, has results ordered after loops whose steps gather by
+  weak-integer positions, and did not compile: it raised in `Divandmod`'s
+  `divide_by_gcd`, and, past it, on a reshape of a gather's index of four
+  axes.
+- **Pinned by:** the `Prepare` suite: `contiguous_view › a view of storage
+  after effects is a view of that storage, whatever the effects compute
+  (D132)`.

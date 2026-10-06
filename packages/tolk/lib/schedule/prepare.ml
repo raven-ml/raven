@@ -713,6 +713,17 @@ let pm_contiguous_view_offset =
           if Sint.equal (numel ctx) (Int 1) then first (m "b") (m "c") else None);
     ])
 
+(* The effects storage is ordered after decide nothing of where its elements
+   lie: the rewrite of a view's index stops at them, a void node, and leaves the
+   graphs they compute, which hold gathers and arithmetic on tensors that the
+   index rules do not apply to, as they are. *)
+let pm_stop_at_effects =
+  Pattern_matcher.v
+    (fun () -> [
+      rule (Upat.v ~op:Op.Set.all ~dtype:[ Dtype.Void ] ()) (fun _ ->
+          raise Bottom_up_gate);
+    ])
+
 (* Only a view of storage can be one. The offset rules mark the node an index
    reaches, and the symbolic rules rebuild a constant without its mark, so on a
    constant the two would take turns without end. *)
@@ -722,13 +733,17 @@ let contiguous_view u =
     let idx = index (flatten u) [ range (numel u) [ 0 ] ] in
     let out =
       graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:u idx
-        (After_sources
-           (Pattern_matcher.concat
-              [
-                Pattern_matcher.with_ctx pm_mops;
-                Pattern_matcher.with_ctx Symbolic.symbolic;
-                pm_contiguous_view_offset;
-              ]))
+        (Around_sources
+           {
+             before = pm_stop_at_effects;
+             after =
+               Pattern_matcher.concat
+                 [
+                   Pattern_matcher.with_ctx pm_mops;
+                   Pattern_matcher.with_ctx Symbolic.symbolic;
+                   pm_contiguous_view_offset;
+                 ];
+           })
     in
     match (op out, src out) with
     | Op.Index, b :: c :: _ when Option.is_some (tag b) && op c = Op.Const -> (

@@ -173,6 +173,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles a function whose results are views of storage that a
+  loop gathering by integer positions writes, such as a NUTS warmup and
+  sampling over many chains: compiling raised `Invalid_argument "option is
+  None"` from tolk's division rules, or on a reshape of the gather's index.
 - A compiled loop that takes no trip, whose step draws, inside a `Rune.remat`
   or a loop's step under a reverse derivative no longer shifts the draws after
   it by one key: the derivative's run of its step reads the loop's key with

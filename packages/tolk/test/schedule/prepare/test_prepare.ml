@@ -547,6 +547,27 @@ let contiguous_views =
          "a view of storage after its stores is a view of the ordered storage"
          (Some (ordered, 2))
          (Ops.shrink ordered [ Some (Int 2, Int 5) ]));
+      (let out = Ops.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
+       let at = Ops.param ~device:cpu ~shape:[ Int 16 ] 2 Float32 in
+       let rows = Ops.reshape (Ops.arange ~dtype:Weak_int 4) (ints [ 4; 1 ]) in
+       let gather =
+         Ops.index (Ops.reshape (stored [ 4; 4 ]) (ints [ 16 ])) [ rows ]
+       in
+       let halves = Ops.O.((Ops.arange ~dtype:Weak_int 16 + int 1) // int 2) in
+       let ordered =
+         Ops.after out
+           [
+             Ops.store
+               (Ops.shrink at [ Some (Int 0, Int 4) ])
+               (Ops.reshape gather (ints [ 4 ]));
+             Ops.store at (Ops.cast halves Float32);
+           ]
+       in
+       case
+         "a view of storage after effects is a view of that storage, whatever \
+          the effects compute (D132)"
+         (Some (ordered, 2))
+         (Ops.shrink ordered [ Some (Int 2, Int 5) ]));
       (let rows =
          Ops.variable "rows" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 2))
        in
