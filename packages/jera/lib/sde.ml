@@ -4,12 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 module Brownian = struct
+  (* The interval's ends are scalar tensors, so a compiled function that takes a
+     path as its argument reads them as data. *)
   type 'b t = {
     key : Nx.Rng.t;
-    dtype : (float, 'b) Nx.dtype;
     shape : int array;
-    t0 : float;
-    t1 : float;
+    t0 : (float, 'b) Nx.t;
+    t1 : (float, 'b) Nx.t;
     depth : int;
   }
 
@@ -26,13 +27,39 @@ module Brownian = struct
       fail "depth = %d is not in [0, %d]" depth max_depth;
     if Array.exists (fun d -> d < 0) shape then
       fail "shape %s has a negative dimension" (Num.shape shape);
-    { key; dtype; shape = Array.copy shape; t0; t1; depth }
+    {
+      key;
+      shape = Array.copy shape;
+      t0 = Nx.scalar dtype t0;
+      t1 = Nx.scalar dtype t1;
+      depth;
+    }
+
+  let ptree (type b) (_ : (float, b) Nx.dtype) : b t Nx.Ptree.t =
+    let module M = struct
+      type nonrec _ t = b t
+
+      let walk c w =
+        let open Nx.Ptree.Walk in
+        let key = field c "key" (structure Nx.Rng.ptree) w.key in
+        let shape =
+          field c "shape"
+            (fun c s -> Array.of_list (list int c (Array.to_list s)))
+            w.shape
+        in
+        let t0 = field c "t0" tensor w.t0 in
+        let t1 = field c "t1" tensor w.t1 in
+        let depth = field c "depth" int w.depth in
+        { key; shape; t0; t1; depth }
+    end in
+    Nx.Ptree.instantiate (module M)
 
   (* Two standard normal draws of node [id], a pure function of the key. *)
   let draws w id =
     let k = Nx.Rng.fold_in_tensor w.key id in
-    ( Nx.Rng.normal (Nx.Rng.fold_in k 0) w.dtype w.shape,
-      Nx.Rng.normal (Nx.Rng.fold_in k 1) w.dtype w.shape )
+    let dtype = Nx.dtype w.t0 in
+    ( Nx.Rng.normal (Nx.Rng.fold_in k 0) dtype w.shape,
+      Nx.Rng.normal (Nx.Rng.fold_in k 1) dtype w.shape )
 
   (* W(τ) − W(t0) and I(τ) = ∫_t0^τ (W r − W t0) dr. The descent keeps an
      interval [a, a + h] that holds τ, W and I at a, and the interval's
@@ -42,14 +69,14 @@ module Brownian = struct
      W_mb)/2, so that Chen's relation holds. In the finest interval the path is
      its mean given W and H: W(a + x h) = W(a) + x W + 6 x (1 − x) H. *)
   let point w tau =
-    let scalar x = Nx.scalar w.dtype x in
-    let span = w.t1 -. w.t0 in
+    let dtype = Nx.dtype w.t0 in
+    let span = Nx.sub w.t1 w.t0 in
     let z1, z2 = draws w (Nx.scalar Nx.int32 0l) in
-    let a = ref (scalar w.t0) and h = ref (scalar span) in
-    let wa = ref (Nx.zeros w.dtype w.shape)
-    and ia = ref (Nx.zeros w.dtype w.shape) in
-    let inc = ref (Nx.mul_s z1 (Float.sqrt span)) in
-    let area = ref (Nx.mul_s z2 (Float.sqrt (span /. 12.))) in
+    let a = ref w.t0 and h = ref span in
+    let wa = ref (Nx.zeros dtype w.shape)
+    and ia = ref (Nx.zeros dtype w.shape) in
+    let inc = ref (Nx.mul z1 (Nx.sqrt span)) in
+    let area = ref (Nx.mul z2 (Nx.sqrt (Nx.div_s span 12.))) in
     let id = ref (Nx.scalar Nx.int32 1l) in
     for _ = 1 to w.depth do
       let z, n = draws w !id in
@@ -93,13 +120,14 @@ module Brownian = struct
     (w_tau, Nx.add !ia (Nx.mul !h integral))
 
   let check_time fn w what t =
-    Nx.check Nx.Ptree.tensor
-      (Nx.logical_and (Nx.greater_equal_s t w.t0) (Nx.less_equal_s t w.t1))
-      t
-      (fun _ t ->
+    Nx.check
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      (Nx.logical_and (Nx.greater_equal t w.t0) (Nx.less_equal t w.t1))
+      (t, (w.t0, w.t1))
+      (fun _ (t, (t0, t1)) ->
         Invalid_argument
           (Printf.sprintf "%s: %s = %g is outside [%g, %g]" fn what
-             (Nx.item [] t) w.t0 w.t1))
+             (Nx.item [] t) (Nx.item [] t0) (Nx.item [] t1)))
 
   let increment w s t =
     let fn = "Jera.Sde.Brownian.increment" in
@@ -114,7 +142,7 @@ module Brownian = struct
     (dw, Nx.where zero (Nx.zeros_like area) area)
 end
 
-type 'y t = Euler_maruyama | Milstein | Sra1 | Reversible_heun
+type t = Euler_maruyama | Milstein | Sra1 | Reversible_heun
 
 let euler_maruyama = Euler_maruyama
 let milstein = Milstein

@@ -9,7 +9,9 @@
     differential equations, approximations of functions) over {!Nx} tensors.
     Every program is eager unless it says otherwise and runs unchanged under
     {!Rune.val-jit}, {!Rune.val-vmap} and the derivatives of {!Rune}; jera never
-    compiles anything itself.
+    compiles anything itself. A random source, a key or a Brownian path, is an
+    argument of a compiled function: one it captures is a constant, whose draws
+    it refuses.
 
     {1:index Methods by problem}
 
@@ -54,7 +56,9 @@
       {tr
         {td Differential equation }
         {td non-stiff }
-        {td {!Ode.solve}, {!Ode.sample} with {!Ode.tsit5} and kin; {!Ode.march} }
+        {td
+          {!Ode.solve}, {!Ode.sample} with {!Ode.tsit5} and kin; {!Ode.march}
+        }
       }
       {tr {td  } {td randomness } {td {!Sde.march} } }
       {tr {td  } {td separable Hamiltonian, long times } {td {!Split} } }
@@ -81,8 +85,8 @@
       its answer from the search's decisions: a zero or a minimum by its
       equation through {!Rune.root}, an integral by its rule over the final
       partition, a flow by its accepted steps taken again, a fit by its final
-      pieces. The derivative is the answer's: no search is differentiated, and
-      a lane that did not converge has a zero derivative.
+      pieces. The derivative is the answer's: no search is differentiated, and a
+      lane that did not converge has a zero derivative.
     - {b Tags.} A method's tag says which drivers take it: [`Formula] runs in a
       formula, [`Embedded] estimates its error and drives a solve. An impossible
       pairing is a type error.

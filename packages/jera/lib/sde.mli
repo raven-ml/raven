@@ -55,30 +55,37 @@ module Brownian : sig
 
       Raises [Invalid_argument] through {!Nx.check} if [s] or [t] lies outside
       [[t0, t1]]. *)
+
+  val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
+  (** [ptree dtype] is the structure of paths of [dtype]: the key at [key], the
+      shape's dimensions reported at [shape], the interval's ends at [t0] and
+      [t1], and the depth reported at [depth]. A path draws from its key, so a
+      compiled function takes it as an argument of this structure; a path it
+      captures is a constant, whose draws it refuses ({!Rune.Jit_error}). *)
 end
 
 (** {1:methods Methods} *)
 
-type 'y t
-(** The type for methods over states ['y]. *)
+type t
+(** The type for methods. *)
 
-val euler_maruyama : 'y t
+val euler_maruyama : t
 (** [euler_maruyama] is the Euler–Maruyama method, Itô, for any noise: strong
     order 1/2. One drift and one diffusion evaluation per step. *)
 
-val milstein : 'y t
+val milstein : t
 (** [milstein] is the derivative-free Milstein method (Kloeden and Platen, 1992,
     §11.1), Itô: strong order 1 for diagonal noise, where component [i] of the
     diffusion depends on component [i] of the state only, and 1/2 otherwise. The
     Brownian path has the state's shape. One drift and three diffusion
     evaluations per step. *)
 
-val sra1 : 'y t
+val sra1 : t
 (** [sra1] is Rößler's (2010) SRA1, for additive noise, where the diffusion does
     not depend on the state: strong order 3/2, reading the Lévy area; 1/2
     otherwise. Two drift and two diffusion evaluations per step. *)
 
-val reversible_heun : 'y t
+val reversible_heun : t
 (** [reversible_heun] is the reversible Heun method (Kidger, Foster, Li and
     Lyons, 2021), Stratonovich: strong order 1/2, and 1 for additive noise. It
     carries a second state, so each step costs one drift and two diffusion
@@ -88,7 +95,7 @@ val reversible_heun : 'y t
 
 val march :
   'y Nx.Ptree.t ->
-  'y t ->
+  t ->
   steps:int ->
   drift:((float, 't) Nx.t -> 'y -> 'y) ->
   diffusion:((float, 't) Nx.t -> 'y -> (float, 't) Nx.t -> 'y) ->
@@ -103,7 +110,8 @@ val march :
     shape, and must be linear in [dw]. Reverse mode keeps one state per time of
     [at] and recomputes each interval while it reverses it; the derivative is
     the composition's, in the initial state and every tracked value the drift
-    and diffusion read.
+    and diffusion read. A compiled function takes [w] as an argument of
+    {!Brownian.ptree}'s structure.
 
     Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
     tensor, through {!Nx.check} if [at] is not strictly increasing or leaves

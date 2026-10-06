@@ -260,6 +260,23 @@ let march_tests =
           (Oracle.tensor ~rel:1e-7 ())
           (Nx.reshape [||] (Oracle.central ~eps:1e-6 f x v))
           (scalar (Oracle.dot (Rune.grad' f x) v)));
+    test "a compiled march with the path an argument equals eager" (fun () ->
+        let f w x =
+          Sde.march one Sde.milstein ~steps:4 ~drift:gbm_drift
+            ~diffusion:gbm_diffusion w
+            ~at:(vec [| 0.; 0.5; 1. |])
+            x
+        in
+        let compiled =
+          Rune.jit
+            Nx.Ptree.(Sde.Brownian.ptree f64 @-> tensor @-> returns tensor)
+            f
+        in
+        let x = vec [| 1.; 0.5; 2. |] in
+        equal (Oracle.tensor ~rel:1e-12 ()) (f w x) (compiled w x);
+        (* Another key replays the same program on another path. *)
+        let w' = path ~n:3 32 in
+        equal (Oracle.tensor ~rel:1e-12 ()) (f w' x) (compiled w' x));
     test "times that are not increasing raise" (fun () ->
         raises_with "the times of at are not strictly increasing" (fun () ->
             run (vec [| 1.; 0.5 |]) (x0 3)));

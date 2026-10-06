@@ -270,31 +270,6 @@ let workloads =
     sample;
   ]
 
-(* Eager-only rows: a compiled march's or integral's draws come from a captured
-   key, which a compiled call refuses. *)
-let sde () =
-  let w =
-    Sde.Brownian.v (Nx.Rng.key 7) f64 ~shape:[| 100 |] ~t0:0. ~t1:1. ~depth:8
-  in
-  Thumper.bench "sde-euler-maruyama-100" (fun () ->
-      ignore
-        (Sde.march Nx.Ptree.tensor Sde.euler_maruyama ~steps:16
-           ~drift:(fun _ x -> Nx.mul_s x 0.5)
-           ~diffusion:(fun _ x dw -> Nx.mul (Nx.mul_s x 0.8) dw)
-           w
-           ~at:(Nx.create f64 [| 2 |] [| 0.; 1. |])
-           (Nx.ones f64 [| 100 |]));
-      sync ())
-
-let qmc () =
-  let key = Nx.Rng.key 7 in
-  Thumper.bench "quad-qmc-8d" (fun () ->
-      ignore
-        (Quad.qmc key ~tol:(Tol.abs 1e-4) ~budget:64
-           (fun x -> Nx.exp (Nx.mean ~axes:[ Nx.ndim x - 1 ] x))
-           (Quad.Box.v (Nx.zeros f64 [| 8 |]) (Nx.ones f64 [| 8 |])));
-      sync ())
-
 let compiled f x =
   let f = Rune.jit' f in
   ignore (Sys.opaque_identity (f x));
@@ -303,6 +278,60 @@ let compiled f x =
 let timed (f, x) =
   ignore (f x);
   sync ()
+
+(* A random source is an argument of a compiled call: a Brownian path for a
+   stochastic march, a key for quasi-Monte Carlo. *)
+let gbm w =
+  Sde.march Nx.Ptree.tensor Sde.euler_maruyama ~steps:16
+    ~drift:(fun _ x -> Nx.mul_s x 0.5)
+    ~diffusion:(fun _ x dw -> Nx.mul (Nx.mul_s x 0.8) dw)
+    w
+    ~at:(Nx.create f64 [| 2 |] [| 0.; 1. |])
+    (Nx.ones f64 [| 100 |])
+
+let sde () =
+  let path () =
+    Sde.Brownian.v (Nx.Rng.key 7) f64 ~shape:[| 100 |] ~t0:0. ~t1:1. ~depth:8
+  in
+  Thumper.group "sde-euler-maruyama-100"
+    [
+      Thumper.bench_with_setup ~setup:path "eager" (fun w ->
+          ignore (gbm w);
+          sync ());
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let f =
+            Rune.jit Nx.Ptree.(Sde.Brownian.ptree f64 @-> returns tensor) gbm
+          in
+          let w = path () in
+          ignore (Sys.opaque_identity (f w));
+          (f, w))
+        "compiled" timed;
+    ]
+
+let mean_exp key =
+  Solution.best
+    (Quad.qmc key ~tol:(Tol.abs 1e-4) ~budget:64
+       (fun x -> Nx.exp (Nx.mean ~axes:[ Nx.ndim x - 1 ] x))
+       (Quad.Box.v (Nx.zeros f64 [| 8 |]) (Nx.ones f64 [| 8 |])))
+
+let qmc () =
+  let key () = Nx.Rng.key 7 in
+  Thumper.group "quad-qmc-8d"
+    [
+      Thumper.bench_with_setup ~setup:key "eager" (fun k ->
+          ignore (mean_exp k);
+          sync ());
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let f =
+            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) mean_exp
+          in
+          let k = key () in
+          ignore (Sys.opaque_identity (f k));
+          (f, k))
+        "compiled" timed;
+    ]
 
 let row w = function
   | Eager ->
