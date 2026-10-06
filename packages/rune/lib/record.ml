@@ -70,8 +70,6 @@ type t = {
   mutable hosts : (Obj.t Weak.t * int) list;
   placeholders : (int, Nx.packed) Hashtbl.t;
   mutable outputs : Nx.packed list;  (** The function's results, as operands. *)
-  mutable current : Nx.packed option array option;
-      (** The values of the replay that runs. *)
   mutable answering : int;
       (** How many constructs the recorder answers: what their answers run is
           their entry. *)
@@ -80,8 +78,6 @@ type t = {
           recorder: an answer marks them as they leave it, so that a handler
           around the call, which runs outside the answer while it runs, is
           recorded. *)
-  mutable operator : (Nx.packed list -> Nx.packed list) option;
-      (** The operator a replay of a [linear_solve]'s record applies. *)
 }
 
 and entry =
@@ -160,10 +156,8 @@ let create inputs =
     hosts = [];
     placeholders = Hashtbl.create 16;
     outputs = [];
-    current = None;
     answering = 0;
     passing = 0;
-    operator = None;
   }
 
 let add r (Nx.P x) =
@@ -558,13 +552,20 @@ and apply : type x. t -> x Nx.Ptree.t -> (x -> x) -> x -> x =
 
 (* Replaying *)
 
+(* The replays that run, innermost first, on this domain, and the operators that
+   the replays of [linear_solve]'s records apply: a record replays on several
+   domains at once, each its own values, so that what a replay reads is the
+   calling domain's. A pullback a replay gives reads the values of each. *)
+let active = Domain.DLS.new_key (fun () -> ref [])
+let operators = Domain.DLS.new_key (fun () -> ref [])
+
 let resolve : type a b. (a, b) Nx.t -> (a, b) Nx.t =
  fun x ->
   match Repr.v x with
   | Traced t -> (
       match Repr.Traced.node t with
       | Name { record; index } -> (
-          match record.current with
+          match List.assq_opt record !(Domain.DLS.get active) with
           | Some values -> (
               match values.(index) with
               | Some v -> Nx.unpack (Nx.dtype x) v
@@ -575,20 +576,13 @@ let resolve : type a b. (a, b) Nx.t -> (a, b) Nx.t =
 
 let resolver = { f = resolve }
 
-(* The replays that run, innermost first, on this domain: a pullback a replay
-   gives reads the values of each. *)
-let active = Domain.DLS.new_key (fun () -> ref [])
-
-let with_current r values f =
-  let saved = r.current and stack = Domain.DLS.get active in
+let within key frame f =
+  let stack = Domain.DLS.get key in
   let outer = !stack in
-  r.current <- Some values;
-  stack := (r, values) :: outer;
-  Fun.protect
-    ~finally:(fun () ->
-      r.current <- saved;
-      stack := outer)
-    f
+  stack := frame :: outer;
+  Fun.protect ~finally:(fun () -> stack := outer) f
+
+let with_current r values f = within active (r, values) f
 
 (* [substitution (r, values)] is the replay of [r] at [values] as a
    substitution: a name of [r], or a value of [r]'s run, by its replayed
@@ -706,16 +700,16 @@ let rec evaluate r inputs =
         let linear_solve op b =
           match linear_solve with
           | Some ls ->
-              ls.operator <- Some (fun l -> flat x (op (rebuild l)));
-              Fun.protect ~finally:(fun () -> ls.operator <- None) @@ fun () ->
-              rebuild (outputs ls (flat x b))
+              let op l = flat x (op (rebuild l)) in
+              within operators (ls, op) (fun () ->
+                  rebuild (outputs ls (flat x b)))
           | None -> missing ()
         in
         set names
           (flat x
              (Construct.perform (Root { x; residual; solve; linear_solve })))
     | Apply { args; names } -> (
-        match r.operator with
+        match List.assq_opt r !(Domain.DLS.get operators) with
         | Some op -> set names (op (leaves resolver args))
         | None -> assert false (* A linear_solve's replay gives its operator. *)
         )
