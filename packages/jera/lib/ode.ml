@@ -471,8 +471,11 @@ let fix tol (st : Solution.status) facts =
       Printf.sprintf "The times are not strictly monotone at [%.0f]."
         (fact "disorder")
   | Stalled when some "lags not positive" > 0. -> "Every lag must be positive."
-  | Stalled when some "beyond span" > 0. ->
-      "The largest lag reaches further back than the span's pieces: raise span."
+  | Stalled when some "beyond pieces" > 0. ->
+      Printf.sprintf
+        "The largest lag, %g, reaches back past the last pieces = %.0f steps \
+         near t: raise pieces to about %.0f."
+        (fact "largest lag") (fact "pieces") (fact "pieces needed")
   | Stalled ->
       "The step fell below the time's resolution near t: the solution may blow \
        up there." ^ Tol.zero_hint tol
@@ -799,27 +802,29 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
   in
   (s, disorder)
 
-(* The answer's report, from the search's carry. *)
-let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
+(* The time the search's carry [s] reached over the times [at], detached. *)
+let reached ~at s =
   let n = Nx.dim 0 at in
   let n_int = n - 1 in
-  let dtype = Nx.dtype at in
   let at0 = Rune.detach at in
   let starts = Nx.slice [ Nx.R (0, n_int) ] at0
   and stops = Nx.slice [ Nx.R (1, n) ] at0 in
-  let settings =
-    Format.asprintf "method %s, tol %a, budget %d" m.name Tol.pp tol budget
-  in
-  (* Where the search stopped, for the report. *)
   let j =
     Nx.minimum s.interval (Nx.scalar Nx.int32 (Int32.of_int (n_int - 1)))
   in
   let a = scalar_at starts j and b = scalar_at stops j in
-  let stopped =
-    Nx.where
-      (Nx.equal_s s.interval (Int32.of_int n_int))
-      b
-      (Nx.add a (Nx.mul (Nx.sub b a) s.sigma))
+  Nx.where
+    (Nx.equal_s s.interval (Int32.of_int n_int))
+    b
+    (Nx.add a (Nx.mul (Nx.sub b a) s.sigma))
+
+(* The answer's report, from the search's carry. *)
+let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
+  let n = Nx.dim 0 at in
+  let dtype = Nx.dtype at in
+  let at0 = Rune.detach at in
+  let settings =
+    Format.asprintf "method %s, tol %a, budget %d" m.name Tol.pp tol budget
   in
   let count c = Nx.cast dtype c in
   Solution.v ~fn ~settings
@@ -827,7 +832,7 @@ let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
     ~fix:(fix tol) ~value ~error ~status:s.status ~evaluations:s.evals
     ~facts:
       ([
-         Solution.Fact ("t", stopped);
+         Solution.Fact ("t", reached ~at s);
          Fact ("span", Nx.abs (Nx.sub (Nx.get [ n - 1 ] at0) (Nx.get [ 0 ] at0)));
          Fact ("step", s.h);
          Fact ("accepted", count s.accepted);
@@ -1274,11 +1279,11 @@ let combinations lags top =
   |> List.filter (fun k -> List.fold_left ( + ) 0 k >= 1)
   |> List.map (fun k -> Array.of_list (List.map float k))
 
-let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
+let delay y m ~tol ~budget ~pieces ~lags ~history f ~at y0 =
   let fn = "Jera.Ode.delay" in
   check fn ~at ~budget;
-  if span < 1 then
-    invalid_arg (Printf.sprintf "%s: span = %d is below 1" fn span);
+  if pieces < 1 then
+    invalid_arg (Printf.sprintf "%s: pieces = %d is below 1" fn pieces);
   if Nx.ndim lags <> 1 || Nx.dim 0 lags = 0 then
     invalid_arg
       (Printf.sprintf "%s: lags must be 1-D and non-empty, got shape %s" fn
@@ -1308,19 +1313,19 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
             than the state");
       v
     in
-    (* The memory: the last [span] accepted steps' pieces in a ring, each its
+    (* The memory: the last [pieces] accepted steps' pieces in a ring, each its
        start, width and coefficients [c_q] of [y = Σ_q c_q θ^q] on [θ ∈ [0, 1]],
-       leaves of shape [[span; degree + 1] @ value], and the count of steps
+       leaves of shape [[pieces; degree + 1] @ value], and the count of steps
        recorded. *)
     let tree = Nx.Ptree.(pair tensor (pair tensor (pair tensor y))) in
     let slot_of k =
-      Nx.mod_s (Nx.add_s k (Int32.of_int span)) (Int32.of_int span)
+      Nx.mod_s (Nx.add_s k (Int32.of_int pieces)) (Int32.of_int pieces)
     in
     let lookup (starts, (widths, (count, coef))) s =
-      let logical = Nx.arange Nx.int32 0 span 1 in
+      let logical = Nx.arange Nx.int32 0 pieces 1 in
       let k =
         Nx.add
-          (Nx.sub_s (Nx.broadcast_to [| span |] count) (Int32.of_int span))
+          (Nx.sub_s (Nx.broadcast_to [| pieces |] count) (Int32.of_int pieces))
           logical
       in
       let slots = Nx.cast Nx.int64 (slot_of k) in
@@ -1369,6 +1374,26 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
           Nx.where (Nx.broadcast_to (Nx.shape h) mask) h p)
         past pieces
     in
+    (* Whether the ring misses a time the next step from [t] reads: its stages
+       read back to [t − τ_max] and, once [t] reaches the breakpoint [t0 +
+       τ_min], past [t0], where only pieces hold the state. Then [needed] is the
+       count of pieces that would cover the reads at the ring's mean step. *)
+    let short ~t (starts, (_, (count, _))) =
+      let first = Rune.detach t_first in
+      let oldest = scalar_at starts (slot_of count) in
+      Nx.logical_and
+        (Nx.greater_equal_s count (Int32.of_int pieces))
+        (Nx.logical_and
+           (Nx.greater_equal t (Nx.add first smallest))
+           (Nx.greater oldest (Nx.maximum (Nx.sub t largest) first)))
+    in
+    let needed ~t (starts, (_, (count, _))) =
+      let oldest = scalar_at starts (slot_of count) in
+      let reads =
+        Nx.sub t (Nx.maximum (Nx.sub t largest) (Rune.detach t_first))
+      in
+      Nx.ceil (Nx.div (Nx.mul_s reads (float pieces)) (Nx.sub t oldest))
+    in
     let memory =
       {
         tree;
@@ -1378,11 +1403,11 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
               Nx.Ptree.map y
                 (fun _ x ->
                   Nx.zeros (Nx.dtype x)
-                    (Array.append [| span; degree + 1 |] (Nx.shape x)))
+                    (Array.append [| pieces; degree + 1 |] (Nx.shape x)))
                 v
             in
-            ( ( Nx.zeros dtype [| span |],
-                (Nx.ones dtype [| span |], (int32 0l, coef)) ),
+            ( ( Nx.zeros dtype [| pieces |],
+                (Nx.ones dtype [| pieces |], (int32 0l, coef)) ),
               [
                 ( Nx.logical_or
                     (Nx.less_equal_s smallest 0.)
@@ -1402,13 +1427,13 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
             in
             let at_slot =
               Nx.equal
-                (Nx.arange Nx.int32 0 span 1)
-                (Nx.broadcast_to [| span |] (slot_of count))
+                (Nx.arange Nx.int32 0 pieces 1)
+                (Nx.broadcast_to [| pieces |] (slot_of count))
             in
             let put rows x =
               let mask =
                 Nx.reshape
-                  (Array.append [| span |] (Array.make (Nx.ndim rows - 1) 1))
+                  (Array.append [| pieces |] (Array.make (Nx.ndim rows - 1) 1))
                   at_slot
               in
               Nx.where
@@ -1418,21 +1443,11 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
             in
             let starts = put starts t and widths = put widths h in
             let count = Nx.add_s count 1l in
-            (* The next step reads back to [t_end − τ_max]: in the history, or
-               in a recorded piece. *)
-            let reach = Nx.sub t_end largest in
-            let oldest = scalar_at starts (slot_of count) in
-            let beyond =
-              Nx.logical_and
-                (Nx.greater_equal_s count (Int32.of_int span))
-                (Nx.logical_and (Nx.greater reach t_first)
-                   (Nx.less reach oldest))
-            in
             ( ( starts,
                 ( widths,
                   (count, Nx.Ptree.map2 y (fun _ r x -> put r x) coef piece) )
               ),
-              [ (beyond, Stalled) ] ));
+              [ (short ~t:t_end (starts, (widths, (count, coef))), Stalled) ] ));
       }
     in
     (* Steps land on the breakpoints: the times of [at] and the breakpoints in
@@ -1476,27 +1491,15 @@ let delay y m ~tol ~budget ~span ~lags ~history f ~at y0 =
     let pick v =
       Nx.Ptree.map y (fun _ x -> Nx.take ~axis:0 ~indices:rows x) v
     in
-    (* Whether a lane stopped because its largest lag reached past its ring, for
-       the report. *)
-    let beyond =
-      let starts, (widths, (count, _)) = s.memory in
-      let newest = slot_of (Nx.sub_s count 1l) in
-      let reach =
-        Nx.sub
-          (Nx.add (scalar_at starts newest) (scalar_at widths newest))
-          largest
-      in
-      Nx.logical_and
-        (Nx.greater_equal_s count (Int32.of_int span))
-        (Nx.logical_and
-           (Nx.greater reach (Rune.detach t_first))
-           (Nx.less reach (scalar_at starts (slot_of count))))
-    in
+    let t = reached ~at:sorted s in
     report fn m ~tol ~budget ~at:sorted (s, disorder)
       ~facts:
         [
           Fact ("lags not positive", Nx.cast dtype (Nx.less_equal_s smallest 0.));
-          Fact ("beyond span", Nx.cast dtype beyond);
+          Fact ("beyond pieces", Nx.cast dtype (short ~t s.memory));
+          Fact ("largest lag", largest);
+          Fact ("pieces", Nx.full dtype [||] (float pieces));
+          Fact ("pieces needed", needed ~t s.memory);
         ]
       ~value:(pick (samples fn y m memory ~budget ~at:sorted y0 s))
       ~error:(pick s.errs)

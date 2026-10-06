@@ -302,7 +302,7 @@ let delay =
         Solution.get
           (Ode.delay Nx.Ptree.tensor Ode.tsit5
              ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
-             ~budget:200 ~span:32
+             ~budget:200 ~pieces:32
              ~lags:(Nx.create f64 [| 1 |] [| 1. |])
              ~history:(fun _ -> Nx.full_like r 0.5)
              (fun _ y d ->

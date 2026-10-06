@@ -1157,14 +1157,14 @@ module Ode : sig
     ([ `Formula | `Embedded ], 'y, 't) t ->
     tol:Tol.t ->
     budget:int ->
-    span:int ->
+    pieces:int ->
     lags:'t time ->
     history:('t time -> 'y) ->
     ('t time -> 'y -> 'y -> 'y) ->
     at:'t time ->
     'y ->
     'y Solution.t
-  (** [delay y m ~tol ~budget ~span ~lags ~history f ~at y0] is the state at
+  (** [delay y m ~tol ~budget ~pieces ~lags ~history f ~at y0] is the state at
       each time of [at], increasing, of the solution of
       [y' t = f t (y t) (y (t − τ))] for the constant lags [τ] of [lags], 1-D,
       from [y0] at [at.(0)], stacked as {!sample} stacks them. [f]'s third
@@ -1179,16 +1179,18 @@ module Ode : sig
       the method's order, where the solution's derivative of order [1 + Σ_j k_j]
       can jump. The order of a delay solve is [min(p, q + 1)], [q] its
       extension's order (Bellen and Zennaro, 2003). {b Error.} As {!sample}'s. A
-      lag that is not positive, or the largest lag reaching back further than
-      the last [span] steps, ends the lane [Stalled], as do times of [at] that
-      do not increase. {b Cost.} Each stage reads [lags] delayed states, each a
-      binary search of the [span] pieces and a series of the extension's degree;
-      the carry holds [span] pieces. {b Derivative.} The answer reads its own
-      tracked pieces, so the derivative reaches the delayed states, [history],
-      the lags and every tracked value [f] reads.
+      lag that is not positive, or the largest lag reaching back past the last
+      [pieces] accepted steps, ends the lane [Stalled], and its report names the
+      count that would hold it, as do times of [at] that do not increase.
+      {b Cost.} Each stage reads [lags] delayed states, each a binary search of
+      the [pieces] pieces and a series of the extension's degree; the carry
+      holds [pieces] pieces, so a compiled reverse keeps [budget × pieces].
+      {b Derivative.} The answer reads its own tracked pieces, so the derivative
+      reaches the delayed states, [history], the lags and every tracked value
+      [f] reads.
 
-      Raises [Invalid_argument] if [budget < 1], if [span < 1], if [at] is not a
-      non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
+      Raises [Invalid_argument] if [budget < 1], if [pieces < 1], if [at] is not
+      a non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
       [history] returns a value of another structure, dtype or shape than [y0],
       or as {!march} does for a field of another structure. *)
 end

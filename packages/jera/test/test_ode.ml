@@ -784,9 +784,9 @@ let event_tests =
    = −c / 2 and y(3) = −c / 6, by the method of steps. *)
 let lagged _ _ d = Nx.neg (Nx.squeeze ~axes:[ 0 ] d)
 
-let delayed ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) ?(span = 64)
+let delayed ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) ?(pieces = 64)
     ?(lags = vec [| 1. |]) ?(c = scalar 1.) ?(f = lagged) at =
-  Ode.delay one Ode.tsit5 ~tol ~budget:400 ~span ~lags
+  Ode.delay one Ode.tsit5 ~tol ~budget:400 ~pieces ~lags
     ~history:(fun _ -> c)
     f ~at (Nx.reshape [||] c)
 
@@ -805,7 +805,7 @@ let delay_tests =
         let s =
           Ode.delay one Ode.tsit5
             ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
-            ~budget:400 ~span:64 ~lags:(vec [| 1. |]) ~history:Nx.exp
+            ~budget:400 ~pieces:64 ~lags:(vec [| 1. |]) ~history:Nx.exp
             (fun _ _ d -> Nx.mul_s (Nx.squeeze ~axes:[ 0 ] d) e)
             ~at:(vec [| 0.; 0.5; 1.7; 3. |])
             (scalar 1.)
@@ -834,7 +834,7 @@ let delay_tests =
         let s =
           Ode.delay one Ode.tsit5
             ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
-            ~budget:400 ~span:64
+            ~budget:400 ~pieces:64
             ~lags:(vec [| 1.; 0.5 |])
             ~history:solution f ~at
             (solution (scalar 0.))
@@ -865,7 +865,7 @@ let delay_tests =
           (Exn.invalid_arg
              ~substring:"Jera.Ode.delay: history returned a value of another")
           (fun () ->
-            Ode.delay one Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:10 ~span:4
+            Ode.delay one Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:10 ~pieces:4
               ~lags:(vec [| 1. |])
               ~history:(fun _ -> vec [| 1. |])
               lagged ~at:times (scalar 1.)));
@@ -875,15 +875,39 @@ let delay_tests =
           (Solution.is Stalled s);
         raises_match (Exn.failure ~substring:"Every lag must be positive.")
           (fun () -> Solution.get s));
-    test "a lag past the span's pieces ends the lane Stalled" (fun () ->
+    test "a lag past the pieces kept ends the lane with the count it needs"
+      (fun () ->
         (* A forcing keeps the steps below the lag, so one piece cannot hold the
-           state a lag back. *)
+           state a lag back; the count the report names holds it. *)
         let f t _ d =
           Nx.add (Nx.neg (Nx.squeeze ~axes:[ 0 ] d)) (Nx.sin (Nx.mul_s t 5.))
         in
-        let s = delayed ~span:1 ~f times in
-        raises_match (Exn.failure ~substring:"raise span") (fun () ->
-            Solution.get s));
+        let s = delayed ~pieces:1 ~f times in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Stalled s);
+        let report =
+          match Solution.get s with
+          | _ -> failf "the solve converged"
+          | exception Failure m -> m
+        in
+        contains ~sub:"reaches back past the last pieces = 1 steps" report;
+        let marker = "raise pieces to about " in
+        let needed =
+          let rec find i =
+            if i + String.length marker > String.length report then
+              failf "no count in: %s" report
+            else if String.sub report i (String.length marker) = marker then
+              i + String.length marker
+            else find (i + 1)
+          in
+          let i = find 0 in
+          Scanf.sscanf
+            (String.sub report i (String.length report - i))
+            "%d" Fun.id
+        in
+        greater ~than:1 int needed;
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.ok (delayed ~pieces:needed ~f times)));
     test "compiled equals eager to rounding" (fun () ->
         let f c = Solution.get (delayed ~c times) in
         equal
