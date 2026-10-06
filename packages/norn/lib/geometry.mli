@@ -32,6 +32,10 @@ val color : 'u Nx.Ptree.t -> ('u, 'f) t -> 'u -> 'u
 (** [color u g z] is [m + S A z], [A = I + Σ_j (sqrt v_j - 1) u_j u_jᵀ]:
     standard normal coordinates [z] mapped to [g], at one position. *)
 
+val direction : 'u Nx.Ptree.t -> ('u, 'f) t -> 'u -> 'u
+(** [direction u g z] is [S A z], {!color} without the mean: whitened directions
+    [z] mapped to [g]'s. *)
+
 val whiten : 'u Nx.Ptree.t -> ('u, 'f) t -> 'u -> 'u
 (** [whiten u g x] is the inverse of {!color}. *)
 

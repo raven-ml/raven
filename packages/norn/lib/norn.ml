@@ -49,3 +49,4 @@ module Gaussian = Gaussian
 module Nuts = Nuts
 module Hmc = Hmc
 module Weighted = Weighted
+module Evidence = Evidence

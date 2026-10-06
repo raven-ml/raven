@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Norn.Evidence`, an estimate of the evidence `ln Z` with its error,
+  information and weighted posterior sample, and why its run stopped
+  (`Evidence.stop`): a spent budget is a result, not an error.
 - Add `Norn.Weighted`, draws with log weights, with Kish's effective sample
   size `ess` and systematic `resample`.
 - Add `Norn.Hmc`, Hamiltonian Monte Carlo whose chains share one step size,

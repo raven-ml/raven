@@ -59,12 +59,11 @@ let stretch g u e z =
   let w = Nx.sub_s (Nx.pow g.variances (Nx.scalar_like g.variances e)) 1. in
   combine u g.directions (Nx.mul w c) z
 
+let direction u g z =
+  Nx.Ptree.map2 u (fun _ s x -> Nx.mul s x) g.scale (stretch g u 0.5 z)
+
 let color u g z =
-  let az = stretch g u 0.5 z in
-  Nx.Ptree.map2 u
-    (fun _ m x -> Nx.add m x)
-    g.mean
-    (Nx.Ptree.map2 u (fun _ s x -> Nx.mul s x) g.scale az)
+  Nx.Ptree.map2 u (fun _ m x -> Nx.add m x) g.mean (direction u g z)
 
 let whiten u g x =
   let d = Nx.Ptree.map2 u (fun _ x m -> Nx.sub x m) x g.mean in

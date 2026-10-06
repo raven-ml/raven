@@ -382,3 +382,86 @@ let pooled (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
       Nx.less (Nx.mod_ draw (Nx.scalar Nx.int32 (Int32.of_int buffer))) w.n
     in
     low_rank u dt ~rank valid mean s (flat w.xs) (flat w.gs)
+
+(* Population fits *)
+
+(* [population u dt lw x] is the Gaussian of the draws [x], on a leading axis of
+   [n], weighted by [exp lw]: their mean, the diagonal of their covariance, and
+   the covariance whitened by it in all its directions, so its covariance is
+   theirs. The directions come from the smaller of the [d × d] covariance and
+   the [n × n] Gram matrix of the whitened draws; a direction outside their span
+   keeps the diagonal's variance, and a factorisation that fails leaves the
+   diagonal. *)
+let population (type f) u (dt : (float, f) Nx.dtype) lw x : (_, f) Gaussian.t =
+  let w = Nx.exp (Nx.sub lw (Nx.logsumexp lw)) in
+  let n = (Nx.shape w).(0) in
+  let mean =
+    P.map u
+      (fun _ t ->
+        if Rows.float_leaf t then
+          Nx.sum ~axes:[ 0 ] (Nx.mul (Rows.column w t) t)
+        else Nx.slice [ Nx.I 0 ] t)
+      x
+  in
+  let centred =
+    P.map2 u
+      (fun _ t m ->
+        if Rows.float_leaf t then Nx.sub t (Nx.unsqueeze ~axes:[ 0 ] m)
+        else Nx.zeros_like t)
+      x mean
+  in
+  let scale =
+    P.map u
+      (fun _ t ->
+        if Rows.float_leaf t then
+          Nx.sqrt
+            (clip (Nx.sum ~axes:[ 0 ] (Nx.mul (Rows.column w t) (Nx.square t))))
+        else Nx.ones_like (Nx.slice [ Nx.I 0 ] t))
+      centred
+  in
+  let whitened =
+    P.map2 u
+      (fun _ t s ->
+        if Rows.float_leaf t then
+          Nx.mul
+            (Rows.column (Nx.sqrt w) t)
+            (Nx.div t (Nx.unsqueeze ~axes:[ 0 ] s))
+        else t)
+      centred scale
+  in
+  let y = rows_matrix u dt whitened in
+  let d = (Nx.shape y).(1) in
+  let lambda, directions =
+    if d <= n then
+      let lambda, v = Nx.eigh (Nx.matmul (Nx.transpose y) y) in
+      (Nx.cast dt lambda, Nx.transpose v)
+    else
+      (* [Y Yᵀ v = λ v] gives [Yᵀ Y (Yᵀ v) = λ (Yᵀ v)], of norm [sqrt λ]. *)
+      let lambda, v = Nx.eigh (Nx.matmul y (Nx.transpose y)) in
+      let lambda = Nx.cast dt lambda in
+      let norm = Nx.sqrt (Nx.maximum lambda (Nx.scalar dt (Prec.tiny dt))) in
+      (lambda, Nx.transpose (Nx.div (Nx.matmul (Nx.transpose y) v) norm))
+  in
+  (* Largest first: the directions outside the span, zeroed below, come last, so
+     orthonormalising the directions leaves the others as they are. *)
+  let lambda = Nx.flip ~axes:[ 0 ] lambda in
+  let directions = Nx.flip ~axes:[ 0 ] directions in
+  (* An eigenvalue at rounding level is a direction outside the span. *)
+  let spans =
+    Nx.greater lambda
+      (Nx.mul_s (Nx.max lambda) (Prec.eps dt *. float_of_int (max n d)))
+  in
+  let variances = Nx.where spans lambda (Nx.ones_like lambda) in
+  let directions =
+    Nx.mul (Nx.unsqueeze ~axes:[ 1 ] (Nx.cast dt spans)) directions
+  in
+  let ok =
+    Nx.logical_and
+      (Nx.all (Nx.isfinite variances))
+      (Nx.all (Nx.isfinite directions))
+  in
+  let variances = Nx.where ok (clip variances) (Nx.ones_like variances) in
+  let directions = Nx.where ok directions (Nx.zeros_like directions) in
+  Gaussian.low_rank u ~mean ~scale
+    ~directions:(matrix_rows u mean directions)
+    ~variances

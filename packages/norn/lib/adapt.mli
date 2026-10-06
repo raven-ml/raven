@@ -93,3 +93,15 @@ val pooled :
   ('u, 'f) Gaussian.t
 (** [pooled u dt ~rank w] is one Gaussian fitted as {!per_chain} to every
     chain's draws together. *)
+
+val population :
+  'u Nx.Ptree.t ->
+  (float, 'f) Nx.dtype ->
+  (float, 'f) Nx.t ->
+  'u ->
+  ('u, 'f) Gaussian.t
+(** [population u dt lw x] is the Gaussian of the draws [x], on a leading axis,
+    weighted by [exp lw]: their weighted mean and covariance, the covariance as
+    a diagonal and every direction of its whitened form. A direction outside the
+    draws' span keeps the diagonal's variance, and a factorisation that fails
+    leaves the diagonal. *)
