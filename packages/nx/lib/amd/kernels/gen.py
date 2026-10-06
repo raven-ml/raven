@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Compiles nx.amd's kernels ahead of time into the code objects nx.amd embeds:
-one per (kind, dtypes) and target, gfx12-generic/<key>.co, from the sources
-in src/.
+"""Compiles nx.amd's kernels ahead of time into the code objects nx.amd embeds,
+from the sources in src/: one per module and target, gfx12-generic/<module>.co,
+a module being a family's kernels at one dtype, or at one element width for a
+family that moves bytes (src/common.h).
 
 Run from the repository root, on a machine with the pinned comgr (ROCm's code
 object manager), which it loads from $COMGR_PATH, else
@@ -93,47 +94,62 @@ def c_name(n):
     return C_NAMES.get(n, n)
 
 
-def modules():
-    """Each module: its key, and the source that instantiates it."""
+def kinds():
+    """Each kind of kernel: its module's key, its source, the name of its kind
+    ("" for a family of one kind), and the macro call that defines it. A
+    family that moves bytes has a module per element width, the others a
+    module per dtype, the cast's per source dtype."""
     for w, t in WIDTHS.items():
-        yield f"contiguous.{w}", f'#include "contiguous.hip"\nCONTIGUOUS({t})\n'
-        yield f"where.{w}", f'#include "where.hip"\nWHERE({t})\n'
-        yield f"gather.{w}", f'#include "gather.hip"\nGATHER({t})\n'
-        yield f"pad.{w}", f'#include "pad.hip"\nPAD({t})\n'
-        yield f"place.{w}", f'#include "place.hip"\nPLACE({t})\n'
-        yield f"scatter_set.{w}", f'#include "scatter.hip"\nSCATTER_SET({t})\n'
-        yield f"unfold.{w}", f'#include "windows.hip"\nUNFOLD({t})\n'
+        for family, src, macro in (("contiguous", "contiguous", "CONTIGUOUS"), ("where", "where", "WHERE"),
+                                   ("gather", "gather", "GATHER"), ("pad", "pad", "PAD"),
+                                   ("place", "place", "PLACE"), ("scatter_set", "scatter", "SCATTER_SET"),
+                                   ("unfold", "windows", "UNFOLD")):
+            yield f"{family}.{w}", src, "", f"{macro}({t})"
     for s, cs in DTYPES:
         for d, cd in DTYPES:
             if s != d:
-                yield f"cast.{s}.{d}", f'#include "cast.hip"\nCAST({cs}, {cd})\n'
+                yield f"cast.{s}", "cast", d, f"CAST({cs}, {cd})"
     for family, macro, table in (("unary", "UNARY", UNARY), ("binary", "BINARY", BINARY),
                                  ("compare", "COMPARE", COMPARE)):
         for kinds, dtypes in table:
             for k in kinds:
                 for d in dtypes:
-                    yield f"{family}.{k}.{d}", f'#include "{family}.hip"\n{macro}({c_name(k)}, {c_name(d)})\n'
+                    yield f"{family}.{d}", family, k, f"{macro}({c_name(k)}, {c_name(d)})"
     for d in NUMERIC:
-        yield f"fma.{d}", f'#include "fma.hip"\nFMA({c_name(d)})\n'
-    yield "threefry", '#include "random.hip"\nTHREEFRY()\n'
+        yield f"fma.{d}", "fma", "", f"FMA({c_name(d)})"
+        yield f"matmul.{d}", "matmul", "", f"MATMUL({c_name(d)})"
+    yield "threefry", "random", "", "THREEFRY()"
     for d, cd in DTYPES:
-        yield f"sort.{d}", f'#include "sort.hip"\nSORT({cd})\n'
-        yield f"scatter_add.{d}", f'#include "scatter.hip"\nSCATTER_ADD({cd})\n'
-        yield f"fold.{d}", f'#include "windows.hip"\nFOLD({cd})\n'
+        yield f"sort.{d}", "sort", "", f"SORT({cd})"
+        yield f"fold.{d}", "windows", "", f"FOLD({cd})"
+        yield f"scatter.{d}", "scatter", "add", f"SCATTER_ADD({cd})"
         for k in ("max", "min"):
-            yield f"scatter_{k}.{d}", f'#include "scatter.hip"\nSCATTER_EXTREME({k}, {cd})\n'
-    for d in NUMERIC:
-        yield f"matmul.{d}", f'#include "matmul.hip"\nMATMUL({c_name(d)})\n'
+            yield f"scatter.{d}", "scatter", k, f"SCATTER_EXTREME({k}, {cd})"
     for kinds, dtypes in REDUCE:
         for k in kinds:
             for d in dtypes:
-                yield f"scan.{k}.{d}", f'#include "scan.hip"\nSCAN({k}, {c_name(d)})\n'
-    for prefix, macro, table in (("", "REDUCE", REDUCE), ("arg", "ARG_REDUCE", ARG_REDUCE)):
-        for kinds, dtypes in table:
-            for k in kinds:
-                for d in dtypes:
-                    yield (f"{macro.lower()}.{prefix}{k}.{d}",
-                           f'#include "reduce.hip"\n{macro}({k}, {c_name(d)})\n')
+                yield f"scan.{d}", "scan", k, f"SCAN({k}, {c_name(d)})"
+                yield f"reduce.{d}", "reduce", k, f"REDUCE({k}, {c_name(d)})"
+    for kinds, dtypes in ARG_REDUCE:
+        for k in kinds:
+            for d in dtypes:
+                yield f"reduce.{d}", "reduce", f"arg{k}", f"ARG_REDUCE({k}, {c_name(d)})"
+
+
+def modules():
+    """Each module: its key, and its source. A kind's kernels are named
+    [<form>_<kind>], or [<form>] for no kind, through NAME (common.h); each
+    kind is defined in a namespace of its own, since a macro may name its
+    types."""
+    sources, defs = {}, {}
+    for key, src, kind, call in kinds():
+        sources[key] = src
+        defs.setdefault(key, []).append((kind, call))
+    for key in sorted(defs):
+        body = "".join(f"#define NAME(form) {'form##_' + k if k else 'form'}\n"
+                       f"namespace k{i} {{\n{call}\n}}\n#undef NAME\n"
+                       for i, (k, call) in enumerate(defs[key]))
+        yield key, f'#include "{sources[key]}.hip"\n{body}'
 
 
 def inputs():

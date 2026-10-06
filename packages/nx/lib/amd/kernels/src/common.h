@@ -6,11 +6,16 @@
 /* What every kernel of nx.amd shares: the kernel ABI, the dtypes, and the
    conversions between them.
 
-   A module holds the kernels of one key: [c], the contiguous form, and [s],
-   the strided form; reduce.hip states its own. Their parameters are
-   pointers, then 64-bit integers or structs of them; the workgroup size is
-   fixed at THREADS and the workgroup count comes as a parameter, so that no
-   kernel reads implicit arguments.
+   A module holds a family's kernels at one dtype, or at one element width
+   for a family that moves bytes, such as binary.float32 or contiguous.4. A
+   macro such as BINARY(add, float32) defines the kernels of one kind, each
+   named NAME(form), which the module defines before it: c_add and s_add. The
+   kernels of a family of one kind are named by their form alone. The forms
+   are [c], the contiguous form, and [s], the strided form; reduce.hip and
+   the others state their own. Their parameters are pointers, then 64-bit
+   integers or structs of them; the workgroup size is fixed at THREADS and
+   the workgroup count comes as a parameter, so that no kernel reads implicit
+   arguments.
    - [c (dst, op1, ..., n, groups)]: every operand C-contiguous from its
      pointer, [n] elements.
    - [s (dst, op1, ..., meta)]: [dst] C-contiguous, operand [k] at element

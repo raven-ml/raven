@@ -69,16 +69,16 @@ DEVICE update locate(const umeta &m, const i64 *idx, i64 j) {
 /* Set */
 
 #define SCATTER_SET(T)                                                         \
-  KERNEL void c(i64 *pa, i64 n, i64 groups) {                                  \
+  KERNEL void NAME(c)(i64 *pa, i64 n, i64 groups) {                            \
     FOR_POSITIONS(n, groups, p) pa[p] = -1;                                    \
   }                                                                            \
-  KERNEL void u(T *dst, const i64 *idx, const T *up, umeta m) {                \
+  KERNEL void NAME(u)(T *dst, const i64 *idx, const T *up, umeta m) {          \
     FOR_UPDATES(m, j) {                                                        \
       update e = locate(m, idx, j);                                            \
       if (e.position >= 0) dst[e.position] = up[e.value];                      \
     }                                                                          \
   }                                                                            \
-  KERNEL void w(i64 *pa, const i64 *idx, umeta m) {                            \
+  KERNEL void NAME(w)(i64 *pa, const i64 *idx, umeta m) {                      \
     FOR_UPDATES(m, j) {                                                        \
       update e = locate(m, idx, j);                                            \
       if (e.position >= 0)                                                     \
@@ -86,7 +86,8 @@ DEVICE update locate(const umeta &m, const i64 *idx, i64 j) {
                                __HIP_MEMORY_SCOPE_AGENT);                      \
     }                                                                          \
   }                                                                            \
-  KERNEL void v(T *dst, const i64 *pa, const i64 *idx, const T *up, umeta m) { \
+  KERNEL void NAME(v)(T *dst, const i64 *pa, const i64 *idx, const T *up,      \
+                      umeta m) {                                               \
     FOR_UPDATES(m, j) {                                                        \
       update e = locate(m, idx, j);                                            \
       if (e.position >= 0 && pa[e.position] == j) dst[e.position] = up[e.value]; \
@@ -112,14 +113,15 @@ DEVICE typename D::storage settle(typename accumulator<typename D::compute>::t a
 
 #define SCATTER_ADD(D)                                                         \
   typedef accumulator<D::compute>::t A_;                                       \
-  KERNEL void i(const D::storage *dst, A_ *pa, i64 *pb, i64 n, i64 groups) {   \
+  KERNEL void NAME(i)(const D::storage *dst, A_ *pa, i64 *pb, i64 n,           \
+                      i64 groups) {                                            \
     FOR_POSITIONS(n, groups, p) {                                              \
       pa[p] = add((A_)0, (A_)D::load(dst[p]));                                 \
       pb[p] = 0;                                                               \
     }                                                                          \
   }                                                                            \
-  KERNEL void a(A_ *pa, i64 *pb, const i64 *idx, const D::storage *up,         \
-                umeta m) {                                                     \
+  KERNEL void NAME(a)(A_ *pa, i64 *pb, const i64 *idx, const D::storage *up,   \
+                      umeta m) {                                               \
     FOR_UPDATES(m, j) {                                                        \
       update e = locate(m, idx, j);                                            \
       if (e.position < 0) continue;                                            \
@@ -127,8 +129,8 @@ DEVICE typename D::storage settle(typename accumulator<typename D::compute>::t a
       pb[e.position] = 1;                                                      \
     }                                                                          \
   }                                                                            \
-  KERNEL void s(D::storage *dst, const A_ *pa, const i64 *pb, i64 n,           \
-                i64 groups) {                                                  \
+  KERNEL void NAME(s)(D::storage *dst, const A_ *pa, const i64 *pb, i64 n,     \
+                      i64 groups) {                                            \
     FOR_POSITIONS(n, groups, p) if (pb[p]) dst[p] = settle<D>(pa[p]);          \
   }
 
@@ -190,14 +192,15 @@ struct min_order {
 #define SCATTER_EXTREME(order, D)                                              \
   typedef keys<D> K_;                                                          \
   typedef order##_order O_;                                                    \
-  KERNEL void i(const D::storage *dst, uint64_t *pa, i64 *pb, i64 n,           \
-                i64 groups) {                                                  \
+  KERNEL void NAME(i)(const D::storage *dst, uint64_t *pa, i64 *pb, i64 n,     \
+                      i64 groups) {                                            \
     FOR_POSITIONS(n, groups, p) {                                              \
       pa[p] = O_::template flip<D>(K_::up(dst[p]));                             \
       pb[p] = INT64_MAX;                                                       \
     }                                                                          \
   }                                                                            \
-  KERNEL void k(uint64_t *pa, const i64 *idx, const D::storage *up, umeta m) { \
+  KERNEL void NAME(k)(uint64_t *pa, const i64 *idx, const D::storage *up,      \
+                      umeta m) {                                               \
     FOR_UPDATES(m, j) {                                                        \
       update e = locate(m, idx, j);                                            \
       if (e.position < 0) continue;                                            \
@@ -206,8 +209,8 @@ struct min_order {
                              __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);      \
     }                                                                          \
   }                                                                            \
-  KERNEL void n(const D::storage *dst, const uint64_t *pa, i64 *pb,            \
-                const i64 *idx, const D::storage *up, umeta m) {               \
+  KERNEL void NAME(n)(const D::storage *dst, const uint64_t *pa, i64 *pb,      \
+                      const i64 *idx, const D::storage *up, umeta m) {         \
     FOR_UPDATES(m, j) {                                                        \
       update e = locate(m, idx, j);                                            \
       if (e.position < 0 || pa[e.position] != K_::all()) continue;             \
@@ -216,9 +219,9 @@ struct min_order {
                              __HIP_MEMORY_SCOPE_AGENT);                        \
     }                                                                          \
   }                                                                            \
-  KERNEL void s(D::storage *dst, const uint64_t *pa, const i64 *pb,            \
-                const i64 *idx, const D::storage *up, umeta m, i64 positions,  \
-                i64 groups) {                                                  \
+  KERNEL void NAME(s)(D::storage *dst, const uint64_t *pa, const i64 *pb,      \
+                      const i64 *idx, const D::storage *up, umeta m,           \
+                      i64 positions, i64 groups) {                             \
     (void)idx;                                                                 \
     FOR_POSITIONS(positions, groups, p) {                                      \
       uint64_t key = pa[p];                                                    \

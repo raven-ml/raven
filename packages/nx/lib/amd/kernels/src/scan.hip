@@ -5,7 +5,7 @@
 
 /* scan: the running sum, product, max or min of each row of an operand, the
    elements along the axis, as nx.cpu computes it (cpu/nx_c_fold.c).
-   SCAN(sum, float32) is the module of cumsum at float32.
+   SCAN(sum, float32) defines the kernels of cumsum at float32.
 
    A running value starts from the kind's seed, so that a running sum starts
    from +0 and its first element of -0 is +0, and is stored at each element:
@@ -156,11 +156,11 @@ DEVICE void along_runs(typename D::storage *dst, const typename D::storage *x,
 
 #define SCAN(k, D)                                                             \
   typedef kind::k<D::compute> K_;                                              \
-  KERNEL void t(D::storage *dst, const D::storage *x, const D::compute *pv,    \
-                smeta m) {                                                     \
+  KERNEL void NAME(t)(D::storage *dst, const D::storage *x,                    \
+                      const D::compute *pv, smeta m) {                         \
     along_rows<K_, D>(dst, x, m);                                              \
   }                                                                            \
-  KERNEL void w(D::storage *dst, const D::storage *x, const D::compute *pv,    \
-                smeta m) {                                                     \
+  KERNEL void NAME(w)(D::storage *dst, const D::storage *x,                    \
+                      const D::compute *pv, smeta m) {                         \
     along_runs<K_, D>(dst, x, pv, m);                                          \
   }

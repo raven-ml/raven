@@ -10,7 +10,7 @@
 
    Pair i of the result is dst[2i], dst[2i + 1]; the key's pair i is at
    [at(0, i)] and [at(0, i) + kstep], the counter's at [at(1, i)] and
-   [at(1, i) + cstep]. THREEFRY() is the module.
+   [at(1, i) + cstep]. THREEFRY() defines the kernel.
    - [s (dst, key, ctr, meta, kstep, cstep)] */
 
 #include "common.h"
@@ -42,7 +42,7 @@ DEVICE void threefry(uint32_t *dst, const uint32_t *key, const uint32_t *ctr,
 }
 
 #define THREEFRY()                                                             \
-  KERNEL void s(uint32_t *dst, const uint32_t *key, const uint32_t *ctr,       \
-                meta m, i64 kstep, i64 cstep) {                                \
+  KERNEL void NAME(s)(uint32_t *dst, const uint32_t *key, const uint32_t *ctr, \
+                      meta m, i64 kstep, i64 cstep) {                          \
     threefry(dst, key, ctr, m, kstep, cstep);                                  \
   }

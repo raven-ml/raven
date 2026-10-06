@@ -5,9 +5,9 @@
 
 /* reduce and arg_reduce: each element of the result folds a row, the input's
    elements over the reduced axes in C order, as nx.cpu folds it
-   (cpu/nx_c_fold.c). REDUCE(sum, float32) is the module of sum at float32;
-   ARG_REDUCE(max, float32) is argmax's, which writes the position of the
-   row's extreme instead of its value.
+   (cpu/nx_c_fold.c). REDUCE(sum, float32) defines the kernels of sum at
+   float32; ARG_REDUCE(max, float32) those of argmax, which writes the position
+   of the row's extreme instead of its value.
 
    Sums start from +0, so that a sum of nothing or of -0 terms is +0, and
    floats narrower than binary32 accumulate in binary32 and round once.
@@ -224,19 +224,19 @@ DEVICE void fold(typename O::out *dst, typename K::acc *pv, i64 *pi, S src,
 }
 
 #define REDUCE_MODULE(K, D, O)                                                 \
-  KERNEL void c(O::out *dst, const D::storage *src, K::acc *pv, i64 *pi,       \
-                i64 rows, i64 len, i64 lanes, i64 parts, i64 chunk,            \
-                i64 groups) {                                                  \
+  KERNEL void NAME(c)(O::out *dst, const D::storage *src, K::acc *pv, i64 *pi, \
+                      i64 rows, i64 len, i64 lanes, i64 parts, i64 chunk,      \
+                      i64 groups) {                                            \
     fold<K, O>(dst, pv, pi, elements<K, D, adjacent>{src, {len}}, rows, len,   \
                lanes, parts, chunk, groups);                                   \
   }                                                                            \
-  KERNEL void s(O::out *dst, const D::storage *src, K::acc *pv, i64 *pi,       \
-                rmeta m) {                                                     \
+  KERNEL void NAME(s)(O::out *dst, const D::storage *src, K::acc *pv, i64 *pi, \
+                      rmeta m) {                                               \
     fold<K, O>(dst, pv, pi, elements<K, D, placed>{src, {&m}}, m.rows, m.len,  \
                m.lanes, m.parts, m.chunk, m.groups);                           \
   }                                                                            \
-  KERNEL void f(O::out *dst, const K::acc *pv, const i64 *pi, i64 rows,        \
-                i64 parts, i64 lanes, i64 groups) {                            \
+  KERNEL void NAME(f)(O::out *dst, const K::acc *pv, const i64 *pi, i64 rows,  \
+                      i64 parts, i64 lanes, i64 groups) {                      \
     fold<K, O>(dst, (K::acc *)0, (i64 *)0, partials<K>{pv, pi, parts}, rows,   \
                parts, lanes, 1, parts, groups);                                \
   }

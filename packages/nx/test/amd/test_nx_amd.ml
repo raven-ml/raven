@@ -367,8 +367,8 @@ let domains =
         (fun s d -> placed (cast d) (sample s));
     ]
   in
-  (* First in the run, before any other test loads a key: each program runs 50
-     times, and its casts load fresh keys from both domains at once. *)
+  (* First in the run, before any other test loads a kernel: each program runs
+     50 times, and its casts load fresh kernels from both domains at once. *)
   group "domains"
     [
       stateful ~tags:[ "slow" ] ~count:10 ~domains:2

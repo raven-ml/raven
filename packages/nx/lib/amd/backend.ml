@@ -5,14 +5,16 @@
 
 (* nx's kernels on AMD GPUs, from the code objects the library carries.
 
-   An elementwise operation names its module's key, its operands and its result;
-   the operands' views are coalesced; the module's contiguous form [c] runs when
-   every view is C-contiguous after merging, and its strided form [s] otherwise;
-   one launch on the device's compute queue. Reductions, scans, sorts, scatters,
-   windows and matrix products take paths of their own. A module's kernels are
-   loaded on a device at their first use, and kept while the device is. A GPU
-   that no carried target covers refuses every kernel, as do the operations,
-   dtypes and layouts the kernels do not serve. *)
+   A module is the code object of a family's kernels at one dtype, or at one
+   element width for a family that moves bytes. An elementwise operation names
+   its module, its kind, its operands and its result; the operands' views are
+   coalesced; the kind's contiguous form [c] runs when every view is
+   C-contiguous after merging, and its strided form [s] otherwise; one launch on
+   the device's compute queue. Reductions, scans, sorts, scatters, windows and
+   matrix products take paths of their own. A module is loaded on a device at
+   the first use of one of its kernels, and kept while the device is. A GPU that
+   no carried target covers refuses every kernel, as do the operations, dtypes
+   and layouts the kernels do not serve. *)
 
 module View = Nx_array.View
 module Program = Nx_device.Program
@@ -61,17 +63,17 @@ let target ~gpu ~aql =
 
 (* Modules *)
 
-(* A module: its family and the names that select its instance, as module keys
-   spell them, such as [binary], [add] and [float32]; "" where it has none.
-   Kernels are looked up by module and name, and the key's string is built only
-   when a module is first looked up on a device. *)
+(* A module, by its family and its dtype or width, and a kind of kernels in it,
+   as the archive spells them, such as [binary], [float32] and [add]; "" where
+   there is none. The module [binary.float32] names the kind's kernels by form
+   and kind, [c_add] and [s_add], and by form alone for no kind. Kernels are
+   looked up by modname and form, and the names of the module and kernel are
+   built only when a kernel is first looked up on a device. *)
 type modname = { family : string; kind : string; dtype : string }
 
 let modname ?(kind = "") family dtype = { family; kind; dtype }
-
-let key_of m =
-  String.concat "."
-    (List.filter (fun n -> n <> "") [ m.family; m.kind; m.dtype ])
+let join sep a b = if b = "" then a else a ^ sep ^ b
+let key_of m = join "." (join "." m.family m.dtype) m.kind
 
 (* The name of an element width, in bytes. *)
 let width_name = function
@@ -84,13 +86,12 @@ let width_name = function
 (* Devices *)
 
 (* What a device needs to run kernels: its carried target, or why it has none,
-   its properties, whether its target carries each module looked up, and the
-   kernels loaded on it, by module and name. *)
+   its properties, and the kernels looked up on it, by modname and form, loaded
+   or not carried. *)
 type device = {
   target : (string, string) result;
   props : Nx_amd_device.props;
-  modules : (modname, bool) Hashtbl.t;
-  programs : (modname * string, Program.t) Hashtbl.t;
+  programs : (modname * string, Program.t option) Hashtbl.t;
 }
 
 let devices : (Nx_device.t * device) list ref = ref []
@@ -106,7 +107,6 @@ let device d =
         {
           target = target ~gpu:(Nx_device.arch d) ~aql:(Nx_amd_device.aql a);
           props = Nx_amd_device.props a;
-          modules = Hashtbl.create 16;
           programs = Hashtbl.create 16;
         }
       in
@@ -122,22 +122,29 @@ let find t k =
 
 let remember t k v = Mutex.protect lock (fun () -> Hashtbl.replace t k v)
 
-(* The kernel [name] of module [m] on [d]. Two domains that load one kernel at
-   once both load it, and find the same load. *)
-let program d s target m name =
-  match find s.programs (m, name) with
-  | Some p -> p
-  | None ->
-      let binary = Option.get (Archive.find (target ^ "/" ^ key_of m)) in
-      let p =
-        match Program.load d ~binary ~name with
-        | Ok p -> p
-        | Error why -> failwith why
-      in
-      remember s.programs (m, name) p;
-      p
+(* The kernel of form [form] of [m] on [d], if [target] carries it. Two domains
+   that load one kernel at once both load it, and find the same load. *)
+let program d s target m form =
+  let carried =
+    match find s.programs (m, form) with
+    | Some p -> p
+    | None ->
+        let co = target ^ "/" ^ join "." m.family m.dtype
+        and name = join "_" form m.kind in
+        let p =
+          match Archive.member co with
+          | Some { binary; kernels } when List.mem name kernels -> (
+              match Program.load d ~binary ~name with
+              | Ok p -> Some p
+              | Error why -> failwith why)
+          | Some _ | None -> None
+        in
+        remember s.programs (m, form) p;
+        p
+  in
+  match carried with Some p -> p | None -> refuse "no kernel %s" (key_of m)
 
-(* The name of a dtype the kernels serve, as module keys spell it. *)
+(* The name of a dtype the kernels serve, as the archive spells it. *)
 let served (type a b) (dt : (a, b) Nx_dtype.t) =
   match dt with
   | Complex64 | Complex128 -> refuse "no complex dtypes"
@@ -159,21 +166,11 @@ let at o v = address o + (View.offset v * itemsize o)
 let cdiv a b = (a + b - 1) / b
 let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |]
 
-(* The state of [dst]'s device, and the kernels of module [m] on it, by name, if
-   its carried target holds [m]. *)
+(* The state of [dst]'s device, and the kernels of [m] on it, by form. *)
 let locate m (Operand d) =
   let dev = Nx_device.Buffer.device d.buffer in
   let s = device dev in
   let target = match s.target with Ok t -> t | Error e -> refuse "%s" e in
-  let carried =
-    match find s.modules m with
-    | Some c -> c
-    | None ->
-        let c = Archive.mem (target ^ "/" ^ key_of m) in
-        remember s.modules m c;
-        c
-  in
-  if not carried then refuse "no kernel %s" (key_of m);
   (s, program dev s target m)
 
 let units s = s.props.compute_units * s.props.xccs
@@ -231,7 +228,7 @@ let meta i64 ~n ~groups views =
 
 let groups_of s n = Int.min (cdiv n threads) (waves * units s)
 
-(* The run of [key]'s elementwise module writing [dst] from [srcs], its
+(* The run of [key]'s elementwise kernels writing [dst] from [srcs], its
    parameters followed by [extra], if [dst] has elements. *)
 let elementwise ?(extra = []) key ~dst srcs =
   let (Operand d) = dst in
@@ -262,7 +259,7 @@ let elementwise ?(extra = []) key ~dst srcs =
           meta i64 ~n ~groups (List.tl views);
           List.iter i64 extra)
 
-(* Runs [key]'s module writing [dst] from [srcs]. *)
+(* Runs [key]'s kernels writing [dst] from [srcs]. *)
 let run ?extra key ~dst srcs =
   Option.iter
     (fun d ->
@@ -300,7 +297,7 @@ let c_strides shape =
   done;
   st
 
-(* The run of [key]'s place module writing [x] into the window of [dst] at
+(* The run of [key]'s place kernels writing [x] into the window of [dst] at
    [offset] of [x]'s shape, moved by [corner]: the address of a vector of
    positions, its rank, offset and stride, and the destination strides they move
    along. *)
@@ -470,9 +467,9 @@ let partials dst ~parts ~items =
     let b, pv, pi = scratch_words dst items in
     (Some b, pv, pi)
 
-(* The first pass of a reduction module's [kernel]s over [x]'s rows [xo] and
-   reduced elements [xr]: each row's fold into [dst], or with [parts] above 1
-   each run's of [chunk] elements into the partials [pv] and [pi]. *)
+(* The first pass of reduction [kernel]s over [x]'s rows [xo] and reduced
+   elements [xr]: each row's fold into [dst], or with [parts] above 1 each run's
+   of [chunk] elements into the partials [pv] and [pi]. *)
 let fold_pass s kernel ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
   let units = units s in
   let items = rows * parts in
@@ -508,7 +505,8 @@ let fold_pass s kernel ~dst x ~xo ~xr ~rows ~len ~parts ~chunk ~pv ~pi =
         words i64 (View.shape xr);
         words i64 (View.strides xr))
 
-(* Runs the reduction module [key] writing [dst] from [x] folded over [axes]. *)
+(* Runs the reduction kernels [key] writing [dst] from [x] folded over
+   [axes]. *)
 let fold key ~dst x ~axes =
   let s, kernel = locate key dst in
   let reduced i = Array.mem i axes in
@@ -561,8 +559,8 @@ let rows_along ~axis ~dst x =
   fits "merged rows" (View.ndim dov);
   (dov, xov, View.numel dov, (View.shape (view x)).(axis))
 
-(* Runs the scan module [key] writing [dst] from [x] along [axis], with the
-   reduction module [fold_key] of its kind and dtype. *)
+(* Runs the scan kernels [key] writing [dst] from [x] along [axis], with the
+   reduction kernels [fold_key] of its kind and dtype. *)
 let scan key ~fold_key ~dst x ~axis =
   let s, kernel = locate key dst in
   let dov, xov, rows, len = rows_along ~axis ~dst x in
@@ -617,7 +615,7 @@ let log2 n =
   let rec go k = if 1 lsl k >= n then k else go (k + 1) in
   go 0
 
-(* Runs the sort module [key] writing [x]'s [sorted] rows along [axis] into
+(* Runs the sort kernels [key] writing [x]'s [sorted] rows along [axis] into
    [dst]. *)
 let sort_rows key sorted ~descending ~axis x ~dst =
   let s, kernel = locate key dst in
@@ -707,9 +705,9 @@ let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
   let m =
     match (mode : Nx_backend.scatter) with
     | `Set -> modname "scatter_set" w
-    | `Add -> modname "scatter_add" (served_name dst)
-    | `Max -> modname "scatter_max" (served_name dst)
-    | `Min -> modname "scatter_min" (served_name dst)
+    | `Add -> modname "scatter" ~kind:"add" (served_name dst)
+    | `Max -> modname "scatter" ~kind:"max" (served_name dst)
+    | `Min -> modname "scatter" ~kind:"min" (served_name dst)
   in
   let s, kernel = locate m dst in
   let shape = View.shape indices.view in
@@ -873,7 +871,7 @@ let fold_windows ~output_size ~kernel_size ~stride ~dilation ~padding x ~dst =
 
 (* Threefry *)
 
-(* Runs the threefry module hashing [counter]'s word pairs under [key]'s into
+(* Runs the threefry kernel hashing [counter]'s word pairs under [key]'s into
    [dst], pairs along their last axis. *)
 let threefry key counter ~dst =
   let key_ = modname "threefry" "" in
@@ -926,7 +924,7 @@ let batch_view batch v =
            if a < 0 || shape.(a) = 1 then 0 else strides.(a)))
     batch
 
-(* Runs the product module [key] writing [dst] from [a] and [b]. *)
+(* Runs the product kernel [key] writing [dst] from [a] and [b]. *)
 let product key ~dst a b =
   let _, kernel = locate key dst in
   let shape = View.shape (view dst) in
@@ -974,7 +972,7 @@ let product key ~dst a b =
 
 (* Kernels *)
 
-(* The names of the kinds, as module keys spell them. *)
+(* The names of the kinds, as the archive spells them. *)
 let unary_name : Nx_backend.unary -> string = function
   | Neg -> "neg"
   | Recip -> "recip"
@@ -1048,7 +1046,7 @@ module Kernels : Nx_backend.S = struct
       run
         (modname "contiguous" (width (Operand x)))
         ~dst:(Operand dst) [ Operand x ]
-    else run (modname "cast" ~kind:s d) ~dst:(Operand dst) [ Operand x ]
+    else run (modname "cast" ~kind:d s) ~dst:(Operand dst) [ Operand x ]
 
   let unary (type a b) k (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
     let dt = served x.dtype in
@@ -1101,7 +1099,7 @@ module Kernels : Nx_backend.S = struct
 
   let arg_reduce (type a b) k ~axis (x : (a, b) Nx_array.t) ~dst =
     fold
-      (modname "arg_reduce" ~kind:(arg_reduce_name k) (served x.dtype))
+      (modname "reduce" ~kind:(arg_reduce_name k) (served x.dtype))
       ~dst:(Operand dst) (Operand x) ~axes:[| axis |]
 
   let sort (type a b) ~descending ~axis (x : (a, b) Nx_array.t)

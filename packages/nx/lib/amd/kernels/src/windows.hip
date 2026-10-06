@@ -90,9 +90,9 @@ DEVICE void fold(typename D::storage *dst, const typename D::storage *x,
 }
 
 #define UNFOLD(T)                                                              \
-  KERNEL void u(T *dst, const T *x, wmeta m) { unfold(dst, x, m); }
+  KERNEL void NAME(u)(T *dst, const T *x, wmeta m) { unfold(dst, x, m); }
 
 #define FOLD(D)                                                                \
-  KERNEL void f(D::storage *dst, const D::storage *x, wmeta m) {               \
+  KERNEL void NAME(f)(D::storage *dst, const D::storage *x, wmeta m) {         \
     fold<D>(dst, x, m);                                                        \
   }

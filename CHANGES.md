@@ -3280,6 +3280,10 @@ thread.
 
 ### Nx
 
+- Programs that link `nx.amd` carry 6.7 MB of AMD kernels instead of 8.7 MB,
+  and their first eager operations on an AMD GPU load fewer code objects: the
+  first use of 18 float32 operations spends about 9 ms loading instead of
+  12 ms.
 - `Nx_device.Program.load` finds a function of a binary its device holds
   without reading the binary. It hashed the whole binary on each call: 27 ms
   for each function of a 16 MiB binary.

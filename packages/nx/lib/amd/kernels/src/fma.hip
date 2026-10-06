@@ -6,8 +6,8 @@
 /* fma: a * b + c at each index, as nx.cpu computes it (cpu/nx_c_map.c):
    rounded once in the compute type, so the narrow floats take binary32's and
    round again on the store, and modular on integers. A NaN result is the first
-   NaN operand, or else the operation's own. FMA(float32) is the module of fma
-   at float32. */
+   NaN operand, or else the operation's own. FMA(float32) defines the kernels
+   of fma at float32. */
 
 #include "common.h"
 
@@ -39,11 +39,12 @@ DEVICE void map3(typename D::storage *dst, const typename D::storage *a,
 }
 
 #define FMA(D)                                                                 \
-  KERNEL void c(D::storage *dst, const D::storage *a, const D::storage *b,     \
-                const D::storage *c, i64 n, i64 groups) {                      \
+  KERNEL void NAME(c)(D::storage *dst, const D::storage *a,                    \
+                      const D::storage *b, const D::storage *c, i64 n,         \
+                      i64 groups) {                                            \
     map3<D>(dst, a, b, c, n, groups, contiguous());                            \
   }                                                                            \
-  KERNEL void s(D::storage *dst, const D::storage *a, const D::storage *b,     \
-                const D::storage *c, meta m) {                                 \
+  KERNEL void NAME(s)(D::storage *dst, const D::storage *a,                    \
+                      const D::storage *b, const D::storage *c, meta m) {      \
     map3<D>(dst, a, b, c, m.n, m.groups, strided{&m});                         \
   }

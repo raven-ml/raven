@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 /* unary: a function of each element, as nx.cpu computes it (cpu/nx_c_map.c),
-   in the dtype's compute type. UNARY(sin, float32) is the module of sin at
-   float32. Integers negate and take absolute values in the unsigned width, so
-   they wrap; the transcendental functions are OCML's, held to nx's accuracy
+   in the dtype's compute type. UNARY(sin, float32) defines the kernels of sin
+   at float32. Integers negate and take absolute values in the unsigned width,
+   so they wrap; the transcendental functions are OCML's, held to nx's accuracy
    contract where OCML misses it. */
 
 #include "common.h"
@@ -108,9 +108,10 @@ DEVICE void map1(typename D::storage *dst, const typename D::storage *x, i64 n,
 }
 
 #define UNARY(K, D)                                                            \
-  KERNEL void c(D::storage *dst, const D::storage *x, i64 n, i64 groups) {     \
+  KERNEL void NAME(c)(D::storage *dst, const D::storage *x, i64 n,             \
+                      i64 groups) {                                            \
     map1<kind::K, D>(dst, x, n, groups, contiguous());                         \
   }                                                                            \
-  KERNEL void s(D::storage *dst, const D::storage *x, meta m) {                \
+  KERNEL void NAME(s)(D::storage *dst, const D::storage *x, meta m) {          \
     map1<kind::K, D>(dst, x, m.n, m.groups, strided{&m});                      \
   }

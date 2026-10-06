@@ -5,7 +5,8 @@
 
 (* The code objects the library carries: the archive kernels/tools/pack.ml
    writes, embedded by the assembler (nx_amd_stubs.c). Its index is read once; a
-   member's bytes are copied out when a device first needs them. *)
+   member's bytes are copied out once, when a device first needs them, so that a
+   device finds its load of them again as the same string. *)
 
 external length : unit -> int = "caml_nx_amd_kernels_length"
 external sub : int -> int -> string = "caml_nx_amd_kernels_sub"
@@ -27,15 +28,34 @@ let index =
      if length () < !at then failwith "nx.amd: a truncated kernel archive";
      t)
 
-(* Whether the library carries the code object of [key]. *)
-let mem key = Hashtbl.mem (Lazy.force index) key
-
-(* The code object of [key], ["gfx12-generic/cast.float32.int8"], if the library
+(* The code object of [key], ["gfx12-generic/cast.float32"], if the library
    carries it. *)
 let find key =
   Option.map
     (fun (off, len) -> sub off len)
     (Hashtbl.find_opt (Lazy.force index) key)
+
+(* A code object the library carries: its bytes and the names of its kernels. *)
+type member = { binary : string; kernels : string list }
+
+(* The code object of [key], if the library carries it, read once. *)
+let member =
+  let read = Hashtbl.create 64 and lock = Mutex.create () in
+  fun key ->
+    Mutex.protect lock @@ fun () ->
+    match Hashtbl.find_opt read key with
+    | Some m -> m
+    | None ->
+        let m =
+          Option.map
+            (fun binary ->
+              match Nx_amd_code_object.of_string binary with
+              | Ok co -> { binary; kernels = Nx_amd_code_object.kernels co }
+              | Error e -> failwith (Printf.sprintf "nx.amd: %s: %s" key e))
+            (find key)
+        in
+        Hashtbl.replace read key m;
+        m
 
 (* The targets the library carries code objects for, and one code object of
    each. *)

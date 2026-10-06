@@ -5,7 +5,8 @@
 
 /* where: the element of [a] where the condition's byte is not 0, of [b]
    elsewhere. It moves bytes, so a module serves every dtype of one width:
-   WHERE(uint32_t) is the module of 4-byte elements. */
+   WHERE(uint32_t) defines the kernels of 4-byte
+   elements. */
 
 #include "common.h"
 
@@ -17,10 +18,11 @@ DEVICE void select(T *dst, const uint8_t *cond, const T *a, const T *b, i64 n,
 }
 
 #define WHERE(T)                                                               \
-  KERNEL void c(T *dst, const uint8_t *cond, const T *a, const T *b, i64 n,    \
-                i64 groups) {                                                  \
+  KERNEL void NAME(c)(T *dst, const uint8_t *cond, const T *a, const T *b,     \
+                      i64 n, i64 groups) {                                     \
     select(dst, cond, a, b, n, groups, contiguous());                          \
   }                                                                            \
-  KERNEL void s(T *dst, const uint8_t *cond, const T *a, const T *b, meta m) { \
+  KERNEL void NAME(s)(T *dst, const uint8_t *cond, const T *a, const T *b,     \
+                      meta m) {                                                \
     select(dst, cond, a, b, m.n, m.groups, strided{&m});                       \
   }

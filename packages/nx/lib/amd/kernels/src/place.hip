@@ -5,7 +5,7 @@
 
 /* place: an operand's elements written into a window of the destination.
    It moves bytes, so a module serves every dtype of one width: PLACE(uint32_t)
-   is the module of 4-byte elements.
+   defines the kernels of 4-byte elements.
 
    The window is a view of the destination, operand 0 of the index template,
    and the operand is operand 1. A corner of rank r moves the window by
@@ -32,10 +32,11 @@ DEVICE void place(T *dst, const T *x, const i64 *starts, i64 n, i64 groups,
 }
 
 #define PLACE(T)                                                               \
-  KERNEL void c(T *dst, const T *x, const i64 *starts, i64 n, i64 groups,      \
-                corner k) {                                                    \
+  KERNEL void NAME(c)(T *dst, const T *x, const i64 *starts, i64 n,            \
+                      i64 groups, corner k) {                                  \
     place(dst, x, starts, n, groups, k, contiguous());                         \
   }                                                                            \
-  KERNEL void s(T *dst, const T *x, const i64 *starts, meta m, corner k) {     \
+  KERNEL void NAME(s)(T *dst, const T *x, const i64 *starts, meta m,           \
+                      corner k) {                                              \
     place(dst, x, starts, m.n, m.groups, k, strided{&m});                      \
   }

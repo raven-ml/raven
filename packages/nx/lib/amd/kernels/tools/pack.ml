@@ -11,7 +11,7 @@
    each, in increasing order of key, the length of its key, the key, the
    offset of its bytes from the archive's start and their length, each length
    and offset 64 bits, then the members' bytes. A member's key is its path
-   without [.co], ["gfx12-generic/cast.float32.int8"]. *)
+   without [.co], ["gfx12-generic/cast.float32"]. *)
 
 let () =
   match Array.to_list Sys.argv with

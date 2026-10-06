@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* binary: a function of the elements of two operands at each index, as nx.cpu
-   computes it (cpu/nx_c_map.c). BINARY(add, float32) is the module of add at
-   float32. Signed integers add, subtract and multiply in the unsigned width,
+   computes it (cpu/nx_c_map.c). BINARY(add, float32) defines the kernels of add
+   at float32. Signed integers add, subtract and multiply in the unsigned width,
    so they wrap. A float result that is NaN is the first NaN operand, its bits
    unchanged, as on the host, or else the operation's own. */
 
@@ -135,11 +135,11 @@ DEVICE void map2(typename D::storage *dst, const typename D::storage *a,
 }
 
 #define BINARY(K, D)                                                           \
-  KERNEL void c(D::storage *dst, const D::storage *a, const D::storage *b,     \
-                i64 n, i64 groups) {                                           \
+  KERNEL void NAME(c)(D::storage *dst, const D::storage *a,                    \
+                      const D::storage *b, i64 n, i64 groups) {                \
     map2<kind::K, D>(dst, a, b, n, groups, contiguous());                      \
   }                                                                            \
-  KERNEL void s(D::storage *dst, const D::storage *a, const D::storage *b,     \
-                meta m) {                                                      \
+  KERNEL void NAME(s)(D::storage *dst, const D::storage *a,                    \
+                      const D::storage *b, meta m) {                           \
     map2<kind::K, D>(dst, a, b, m.n, m.groups, strided{&m});                   \
   }

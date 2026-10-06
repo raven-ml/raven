@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* matmul: the products of the matrices of two operands, as nx.cpu computes
-   them (cpu/nx_c_matmul.c). MATMUL(float32) is the module of float32.
+   them (cpu/nx_c_matmul.c). MATMUL(float32) defines the kernel of float32.
 
    Each output element is +0 plus the products along k, in increasing k, at
    the dtype's compute type: floats narrower than binary32 widen to binary32
@@ -108,7 +108,7 @@ DEVICE void product(typename D::storage *dst, const typename D::storage *a,
 }
 
 #define MATMUL(D)                                                              \
-  KERNEL void s(D::storage *dst, const D::storage *a, const D::storage *b,     \
-                mmeta m) {                                                     \
+  KERNEL void NAME(s)(D::storage *dst, const D::storage *a,                    \
+                      const D::storage *b, mmeta m) {                          \
     product<D>(dst, a, b, m);                                                  \
   }

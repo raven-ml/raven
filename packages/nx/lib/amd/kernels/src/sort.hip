@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* sort and argsort along an axis, as nx.cpu orders (cpu/nx_c_sort.c).
-   SORT(float32) is the module of float32.
+   SORT(float32) defines the kernels of float32.
 
    Each element becomes an unsigned key that orders like it, paired with its
    position: an unsigned integer or a boolean is its own key, a signed integer
@@ -169,23 +169,24 @@ DEVICE void results(T *dst, const ometa &m, F at) {
 }
 
 #define SORT(D)                                                                \
-  KERNEL void k(const D::storage *x, uint64_t *keys, i64 *pos, ometa m) {      \
+  KERNEL void NAME(k)(const D::storage *x, uint64_t *keys, i64 *pos,           \
+                      ometa m) {                                               \
     pairs<D>(x, keys, pos, m);                                                 \
   }                                                                            \
-  KERNEL void l(uint64_t *keys, i64 *pos, i64 total, i64 plog, i64 klo,        \
-                i64 khi, i64 groups) {                                         \
+  KERNEL void NAME(l)(uint64_t *keys, i64 *pos, i64 total, i64 plog, i64 klo,  \
+                      i64 khi, i64 groups) {                                   \
     local(keys, pos, total, plog, klo, khi, groups);                           \
   }                                                                            \
-  KERNEL void g(uint64_t *keys, i64 *pos, i64 total, i64 plog, i64 k, i64 j,   \
-                i64 groups) {                                                  \
+  KERNEL void NAME(g)(uint64_t *keys, i64 *pos, i64 total, i64 plog, i64 k,    \
+                      i64 j, i64 groups) {                                     \
     global(keys, pos, total, plog, k, j, groups);                              \
   }                                                                            \
-  KERNEL void v(D::storage *dst, const D::storage *x, const i64 *pos,          \
-                ometa m) {                                                     \
+  KERNEL void NAME(v)(D::storage *dst, const D::storage *x, const i64 *pos,    \
+                      ometa m) {                                               \
     results(dst, m, [&](i64 r, i64 j) {                                        \
       return x[m.xoff + row(m, m.xostr, r) + pos[(r << m.plog) + j] * m.xstep]; \
     });                                                                        \
   }                                                                            \
-  KERNEL void i(i64 *dst, const i64 *pos, ometa m) {                           \
+  KERNEL void NAME(i)(i64 *dst, const i64 *pos, ometa m) {                     \
     results(dst, m, [&](i64 r, i64 j) { return pos[(r << m.plog) + j]; });     \
   }

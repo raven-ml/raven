@@ -5,8 +5,8 @@
 
 /* gather: at each index of the indices, the operand's element that the index
    there selects along the axis, or 0 where it lies outside [0, len). It moves
-   bytes, so a module serves every dtype of one width: GATHER(uint32_t) is the
-   module of 4-byte elements.
+   bytes, so a module serves every dtype of one width: GATHER(uint32_t)
+   defines the kernels of 4-byte elements.
 
    The operand comes as a view of the indices' shape whose stride along the
    axis is 0, so that it coalesces with the indices: element i reads
@@ -27,11 +27,11 @@ DEVICE void gather(T *dst, const T *x, const i64 *idx, i64 n, i64 groups,
 }
 
 #define GATHER(T)                                                              \
-  KERNEL void c(T *dst, const T *x, const i64 *idx, i64 n, i64 groups,         \
-                i64 step, i64 len) {                                           \
+  KERNEL void NAME(c)(T *dst, const T *x, const i64 *idx, i64 n, i64 groups,   \
+                      i64 step, i64 len) {                                     \
     gather(dst, x, idx, n, groups, step, len, contiguous());                   \
   }                                                                            \
-  KERNEL void s(T *dst, const T *x, const i64 *idx, meta m, i64 step,          \
-                i64 len) {                                                     \
+  KERNEL void NAME(s)(T *dst, const T *x, const i64 *idx, meta m, i64 step,    \
+                      i64 len) {                                               \
     gather(dst, x, idx, m.n, m.groups, step, len, strided{&m});                \
   }

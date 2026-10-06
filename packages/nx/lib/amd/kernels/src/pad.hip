@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 /* pad: the operand surrounded along each axis by elements of one value. It
-   moves bytes, so a module serves every dtype of one width: PAD(uint32_t) is
-   the module of 4-byte elements, and the value comes as the low bytes of
-   [fill].
+   moves bytes, so a module serves every dtype of one width: PAD(uint32_t)
+   defines the kernel of 4-byte elements, and the value comes as the low bytes
+   of [fill].
 
    Element i of the result, at the index c of extents [ext], is the operand's
    at [off + sum_d (c_d - lo[d]) str[d]] where every [lo[d] <= c_d < hi[d]],
@@ -36,4 +36,4 @@ template <class T> DEVICE void pad(T *dst, const T *x, const pmeta &m) {
 }
 
 #define PAD(T)                                                                 \
-  KERNEL void s(T *dst, const T *x, pmeta m) { pad(dst, x, m); }
+  KERNEL void NAME(s)(T *dst, const T *x, pmeta m) { pad(dst, x, m); }
