@@ -249,6 +249,41 @@ let bessel_split = 0x1p+3
 
 let bessel_weight = 0x1p-1
 
+(* The incomplete gamma's regions (DiDonato and Morris, ACM TOMS 12, 1986): the
+   corner below a = 1 and x = [igamma_corner], Temme's expansion from a =
+   [igamma_temme_from] where |x/a - 1| <= [igamma_temme_width], bd0's series to
+   |v| = [igamma_near_v], v = (x - a)/(x + a). *)
+let igamma_corner = 0x1.199999999999ap+0
+
+let igamma_temme_from = 0x1.4p+4
+
+let igamma_temme_width = 0x1.999999999999ap-2
+
+let igamma_near_v = 0x1p-1
+
+let erfcx_far = 0x1.cp+4
+
+(* The inverse's guess (DiDonato and Morris's GAMINV, TOMS 654): a normal
+   quantile t - P(t)/Q(t) at t = sqrt (-2 log q), q the smaller tail. *)
+let igamma_guess_p =
+  [|
+    0x1.b5803bf955b59p-3;
+    0x1.1223942e712dfp+2;
+    0x1.752c6ad199457p+3;
+    0x1.a7d75797930ddp+1;
+  |]
+
+let igamma_guess_q =
+  [|
+    0x1.27df0239b16dbp-5;
+    0x1.460d978edd1ep+0;
+    0x1.9a0ae95000ddep+2;
+    0x1.a7130c88a5c3fp+2;
+    0x1p+0;
+  |]
+
+let igamma_guess_terms = 0x1.ap+4
+
 (* The tables whose values differ between dtypes. *)
 type t = {
   (* erfinv's guess, Giles' polynomials (Approximating the erfinv function, GPU
@@ -304,6 +339,25 @@ type t = {
   i1e_near : float array;
   i0e_far : float array;
   i1e_far : float array;
+  (* The incomplete gamma's counts, each the least within u/8 of the value, 16u/8
+     of its derivative in x and 2^-44 (2^-20 at float32) in a: the corner's
+     series, P's series and Q's continued fraction. [igamma_atanh] is S(w) = sum_j
+     w^(j-1)/(2j + 1), highest degree first, of bd0 to |v| = [igamma_near_v]; the
+     shift of Stirling's correction from [1, 8) runs its last
+     [igamma_shift_terms.(k)] in its k-th term. [igamma_temme] holds Temme's
+     c_k(eta), k < K, each to the degree in [igamma_temme_degrees], highest first,
+     one after the other. [erfcx_series] is erfc x e^(x^2) x sqrt pi from
+     [erfcx_far], (-1)^k (2k - 1)!! in 1/(2x^2), highest first, its least count
+     within u/8. *)
+  igamma_corner_terms : float;
+  igamma_series_terms : float;
+  igamma_cf_depth : float;
+  igamma_atanh : float array;
+  igamma_shift_terms : float array;
+  igamma_temme : float array;
+  igamma_temme_degrees : float array;
+  igamma_halley_steps : float;
+  erfcx_series : float array;
 }
 
 let float32 =
@@ -483,6 +537,80 @@ let float32 =
         -0x1.c41e2ep-26;
         -0x1.08893ap-28;
         -0x1.452e48p-31;
+      |];
+    igamma_corner_terms = 0x1.6p+3;
+    igamma_series_terms = 0x1.2p+5;
+    igamma_cf_depth = 0x1.bp+4;
+    igamma_atanh = [|
+        0x1.2f684cp-5;
+        0x1.47ae14p-5;
+        0x1.642c86p-5;
+        0x1.861862p-5;
+        0x1.af286cp-5;
+        0x1.e1e1e2p-5;
+        0x1.111112p-4;
+        0x1.3b13b2p-4;
+        0x1.745d18p-4;
+        0x1.c71c72p-4;
+        0x1.24924ap-3;
+        0x1.99999ap-3;
+        0x1.555556p-2;
+      |];
+    igamma_shift_terms = [|
+        0x1.2p+3;
+        0x1.8p+2;
+        0x1.4p+2;
+        0x1p+2;
+        0x1.8p+1;
+        0x1.8p+1;
+        0x1.8p+1;
+      |];
+    igamma_temme = [|
+        -0x1.7b5f9ap-23;
+        0x1.bd6d22p-21;
+        -0x1.f1b23p-20;
+        -0x1.25537p-19;
+        0x1.48c58ap-15;
+        -0x1.76e07p-13;
+        0x1.71de3ap-12;
+        0x1.2f684cp-10;
+        -0x1.e573acp-7;
+        0x1.555556p-4;
+        -0x1.555556p-2;
+        -0x1.b0bdfcp-20;
+        0x1.00a9cap-17;
+        -0x1.2fa4aep-16;
+        -0x1.af8344p-22;
+        0x1.af8344p-13;
+        -0x1.0394f6p-10;
+        0x1.5ac056p-9;
+        -0x1.c71c72p-9;
+        -0x1.e573acp-10;
+        -0x1.ac2d06p-17;
+        0x1.bbf43ep-15;
+        -0x1.c253fp-14;
+        0x1.0db20ap-19;
+        0x1.948b1p-11;
+        -0x1.5f7268p-9;
+        0x1.0ee644p-8;
+        -0x1.3d2a3ap-14;
+        0x1.18b9b6p-12;
+        -0x1.ebfb18p-12;
+        0x1.e13ce4p-13;
+        0x1.547d94p-11;
+      |];
+    igamma_temme_degrees = [|
+        0x1.4p+3;
+        0x1p+3;
+        0x1.8p+2;
+        0x1p+2;
+      |];
+    igamma_halley_steps = 0x1p+0;
+    erfcx_series = [|
+        -0x1.ep+3;
+        0x1.8p+1;
+        -0x1p+0;
+        0x1p+0;
       |];
   }
 
@@ -824,5 +952,225 @@ let float64 =
         0x1.debc402310f25p-63;
         -0x1.1c3e091fc856fp-64;
         -0x1.41adb3b8d1f6fp-65;
+      |];
+    igamma_corner_terms = 0x1.2p+4;
+    igamma_series_terms = 0x1.2cp+6;
+    igamma_cf_depth = 0x1.94p+6;
+    igamma_atanh = [|
+        0x1.1f7047dc11f7p-6;
+        0x1.29e4129e4129ep-6;
+        0x1.3521cfb2b78c1p-6;
+        0x1.4141414141414p-6;
+        0x1.4e5e0a72f0539p-6;
+        0x1.5c9882b931057p-6;
+        0x1.6c16c16c16c17p-6;
+        0x1.7d05f417d05f4p-6;
+        0x1.8f9c18f9c18fap-6;
+        0x1.a41a41a41a41ap-6;
+        0x1.bacf914c1badp-6;
+        0x1.d41d41d41d41dp-6;
+        0x1.f07c1f07c1f08p-6;
+        0x1.0842108421084p-5;
+        0x1.1a7b9611a7b96p-5;
+        0x1.2f684bda12f68p-5;
+        0x1.47ae147ae147bp-5;
+        0x1.642c8590b2164p-5;
+        0x1.8618618618618p-5;
+        0x1.af286bca1af28p-5;
+        0x1.e1e1e1e1e1e1ep-5;
+        0x1.1111111111111p-4;
+        0x1.3b13b13b13b14p-4;
+        0x1.745d1745d1746p-4;
+        0x1.c71c71c71c71cp-4;
+        0x1.2492492492492p-3;
+        0x1.999999999999ap-3;
+        0x1.5555555555555p-2;
+      |];
+    igamma_shift_terms = [|
+        0x1.2p+4;
+        0x1.8p+3;
+        0x1.4p+3;
+        0x1p+3;
+        0x1p+3;
+        0x1.cp+2;
+        0x1.cp+2;
+      |];
+    igamma_temme = [|
+        0x1.7ba0759769d7cp-42;
+        0x1.ef98008f5eec2p-44;
+        -0x1.61ca701fd754ap-38;
+        0x1.ac9475c463659p-36;
+        -0x1.0070a87340428p-34;
+        -0x1.c0d9b6edf2b0bp-36;
+        0x1.f6e66d24d5c8ap-31;
+        -0x1.2d2197c7a2faap-28;
+        0x1.6097d55c37c1cp-27;
+        0x1.ccf5ceb7f0d9fp-28;
+        -0x1.7b5f9a2d0465cp-23;
+        0x1.bd6d21e4b4109p-21;
+        -0x1.f1b22f594c6b5p-20;
+        -0x1.255370652afc1p-19;
+        0x1.48c5892f7cd83p-15;
+        -0x1.76e06fec7273bp-13;
+        0x1.71de3a556c734p-12;
+        0x1.2f684bda12f68p-10;
+        -0x1.e573ac901e574p-7;
+        0x1.5555555555555p-4;
+        -0x1.5555555555555p-2;
+        -0x1.9ccf2fab4608bp-39;
+        0x1.f8041c5540ea2p-38;
+        0x1.113e3a466db9ep-44;
+        -0x1.78a5056f8ce45p-34;
+        0x1.c9b434bf3c34ep-32;
+        -0x1.1564ecff73d58p-30;
+        -0x1.349fbca3a377bp-36;
+        0x1.9aa7a30de114cp-27;
+        -0x1.ee23d0cba8aeep-25;
+        0x1.280f2cde3f847p-23;
+        0x1.3f59230a8357cp-28;
+        -0x1.b0bdfcc629cbap-20;
+        0x1.00a9cabd6b83ep-17;
+        -0x1.2fa4ae89e5afp-16;
+        -0x1.af83440e53dbcp-22;
+        0x1.af83440e53dbcp-13;
+        -0x1.0394f6f09e723p-10;
+        0x1.5ac056b015acp-9;
+        -0x1.c71c71c71c71cp-9;
+        -0x1.e573ac901e574p-10;
+        -0x1.e9778dbc61371p-35;
+        0x1.1b1056c188672p-33;
+        0x1.0962774f638bbp-40;
+        -0x1.77c5829460139p-30;
+        0x1.ac0d455e2536p-28;
+        -0x1.e437343a46f5dp-27;
+        -0x1.c24bd0e740a6cp-33;
+        0x1.32ac81c15d3d7p-23;
+        -0x1.522cb05171911p-21;
+        0x1.7058929663937p-20;
+        0x1.26154ae39151dp-25;
+        -0x1.ac2d05890f2c3p-17;
+        0x1.bbf43daf4fe53p-15;
+        -0x1.c253efaa1a932p-14;
+        0x1.0db20a88f4696p-19;
+        0x1.948b0fcd6e9ep-11;
+        -0x1.5f7268edab4c8p-9;
+        0x1.0ee643b990ee6p-8;
+        0x1.d9b15465daec1p-33;
+        -0x1.040c53b2491fp-30;
+        0x1.1b66a39794ba9p-29;
+        0x1.50c3f0dd501ebp-39;
+        -0x1.4853ced169327p-26;
+        0x1.5bde8ef4c4dc7p-24;
+        -0x1.6c2dcffbefeefp-23;
+        -0x1.ea23269c140a7p-36;
+        0x1.7e0201539310ep-20;
+        -0x1.7cd6f27b3f02p-18;
+        0x1.73df462204ef4p-17;
+        -0x1.0152a1871f27ap-22;
+        -0x1.3d2a3a29b5d9dp-14;
+        0x1.18b9b5bf2d984p-12;
+        -0x1.ebfb188b7cap-12;
+        0x1.e13ce465fa859p-13;
+        0x1.547d93b34e2b6p-11;
+        0x1.d9a9f1a8b7696p-29;
+        -0x1.e78e449f4e3bep-27;
+        0x1.efe94304ac16bp-26;
+        0x1.041515bab6adap-35;
+        -0x1.ec676cf33153cp-23;
+        0x1.de37d9f09164cp-21;
+        -0x1.c71c074985d3fp-20;
+        0x1.13b3c5b7cb45ep-32;
+        0x1.7db4c02846e81p-17;
+        -0x1.4ce3fd902bcadp-15;
+        0x1.16908b48ce058p-14;
+        -0x1.88f2ae1def9dp-20;
+        -0x1.3999a85a4237ap-12;
+        0x1.9b0ff6874f2c4p-11;
+        -0x1.c3e0b02da7bf9p-11;
+        0x1.9e630225a095bp-25;
+        -0x1.8c267becd0c0fp-23;
+        0x1.741504e5c87c2p-22;
+        -0x1.659cfde0bb2ebp-32;
+        -0x1.338eb19652fd9p-19;
+        0x1.0d0e229150428p-17;
+        -0x1.c823fc1b3cc36p-17;
+        0x1.30bdcf208080ep-23;
+        0x1.1d1e9cb24760bp-14;
+        -0x1.a2042c5148e27p-13;
+        0x1.22be87360ef1fp-12;
+        -0x1.247604839c038p-14;
+        -0x1.6128ac5a4fa71p-12;
+        -0x1.7b2f7de505322p-24;
+        0x1.074e709bf4b8bp-42;
+        0x1.36c8903447d35p-21;
+        -0x1.10587854fcb37p-19;
+        0x1.d115d4f5dcc68p-19;
+        -0x1.a74243fa27729p-29;
+        -0x1.3382f4cf48618p-16;
+        0x1.d6bdf83130dc1p-15;
+        -0x1.5600945495b37p-14;
+        0x1.a8411da6cab49p-21;
+        0x1.1c0950d3ecb9dp-12;
+        -0x1.36773bdb97b48p-11;
+        0x1.168ef1b0931c8p-11;
+        -0x1.1c6acec59f442p-20;
+        0x1.0f82da50cdaeep-31;
+        0x1.8467d794bd7f2p-18;
+        -0x1.3269164e3e304p-16;
+        0x1.d179830b113abp-16;
+        -0x1.119c70312e0a2p-23;
+        -0x1.cc642787368cep-14;
+        0x1.26eeb5ece1d9fp-12;
+        -0x1.5f3385098cebfp-12;
+        0x1.b1d75d3346711p-15;
+        0x1.691879c01efb4p-12;
+        0x1.c738f198ab55p-18;
+        -0x1.6384af9ac219dp-17;
+        0x1.3937992ec9b02p-28;
+        0x1.84637d3f583cdp-15;
+        -0x1.0c16fcea7ddb2p-13;
+        0x1.5d1157082916dp-13;
+        -0x1.762676b30cfd6p-21;
+        -0x1.cb967b4446107p-12;
+        0x1.b8239c670e69p-11;
+        -0x1.5629b3187b744p-11;
+        0x1.00120036172bp-14;
+        -0x1.63a803aebc9b7p-14;
+        0x1.86c71c8cebf16p-23;
+        0x1.22fb20c28e8ap-12;
+        -0x1.4f9f2582dd0a5p-11;
+        0x1.63969bb825829p-11;
+        -0x1.2e31f9b7913eap-14;
+        -0x1.38dff1cc96982p-11;
+        0x1.c01c0b52c3345p-12;
+        -0x1.0aba998a532bfp-11;
+        0x1.0a9ef61e90004p-20;
+        0x1.22b37f1b46951p-10;
+        -0x1.f5dbcaf756cdep-10;
+        0x1.5d4ae684527bfp-10;
+      |];
+    igamma_temme_degrees = [|
+        0x1.4p+4;
+        0x1.3p+4;
+        0x1.1p+4;
+        0x1p+4;
+        0x1.cp+3;
+        0x1.8p+3;
+        0x1.8p+3;
+        0x1.4p+3;
+        0x1.2p+3;
+        0x1.cp+2;
+        0x1.4p+2;
+      |];
+    igamma_halley_steps = 0x1p+1;
+    erfcx_series = [|
+        -0x1.07ef8p+17;
+        0x1.44d8p+13;
+        -0x1.d88p+9;
+        0x1.a4p+6;
+        -0x1.ep+3;
+        0x1.8p+1;
+        -0x1p+0;
+        0x1p+0;
       |];
   }

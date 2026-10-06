@@ -95,6 +95,45 @@ let bessel =
       unary "i1e" ~bound:(everywhere (Ulps 8)) { u = Nx.i1e };
     ]
 
+let in_domain row =
+  let a = row.args.(0) in
+  not (Float.is_finite a && a > 0x1p20)
+
+(* [on_devices] for the incomplete gamma family, whose bounds hold up to [a =
+   2^20]. *)
+let binary name ~bound b =
+  let compile at = compiled2 at b in
+  let host =
+    check ~keep:in_domain ~bound (golden name) (compile Nx.Placement.host)
+  in
+  let metal =
+    match metal with
+    | Some m ->
+        check
+          ~keep:(fun r -> in_domain r && not (subnormal r))
+          ~dtypes:[ `F32 ] ~bound (golden name)
+          (compile (Nx.Placement.on m))
+    | None -> [ test "metal" (fun () -> skip ~reason:"no Metal device" ()) ]
+  in
+  group name [ group "on the host" host; group "on Metal" metal ]
+
+let log_ulps_bound k args = Inverse (4, int_of_float (log_ulps k args.(1)))
+
+let incomplete_gamma =
+  group "incomplete gamma"
+    [
+      binary "gammainc" ~bound:(everywhere (Log_ulps 16)) { b = Nx.gammainc };
+      binary "gammaincc" ~bound:(everywhere (Log_ulps 16)) { b = Nx.gammaincc };
+      binary "log_gammainc"
+        ~bound:(everywhere (Near_zeros (16, 16)))
+        { b = Nx.log_gammainc };
+      binary "log_gammaincc"
+        ~bound:(everywhere (Near_zeros (16, 16)))
+        { b = Nx.log_gammaincc };
+      binary "gammaincinv" ~bound:(log_ulps_bound 16) { b = Nx.gammaincinv };
+      binary "gammainccinv" ~bound:(log_ulps_bound 16) { b = Nx.gammainccinv };
+    ]
+
 (* Derivatives
 
    rune differentiates each function through the operations nx computes it with.
@@ -203,6 +242,49 @@ let bessel_at_zero =
       at Nx.float64;
       at Nx.float32)
 
+(* The derivative of [b] in its first argument, or its second. *)
+let d_first { b } = { b = (fun a x -> Rune.grad' (fun a -> Nx.sum (b a x)) a) }
+let d_second { b } = { b = (fun a x -> Rune.grad' (fun x -> Nx.sum (b a x)) x) }
+
+(* In [a], [2^-40 (1 + |log f|)] relative at float64 and [2^-16 (1 + |log f|)]
+   at float32, the scale holding [1 + |log f|]; in [x], 16 times the function's
+   own bound. *)
+let in_a = everywhere (Relative_scaled (0x1p-40, 0x1p-16))
+let linear_in_x = everywhere (Inverse (64, 512))
+
+let incomplete_gamma_derivatives =
+  group "incomplete gamma derivatives"
+    [
+      derivative2 "gammainc_a" ~bound:in_a (d_first { b = Nx.gammainc });
+      derivative2 "gammainc_x" ~bound:linear_in_x (d_second { b = Nx.gammainc });
+      derivative2 "gammaincc_a" ~bound:in_a (d_first { b = Nx.gammaincc });
+      derivative2 "gammaincc_x" ~bound:linear_in_x
+        (d_second { b = Nx.gammaincc });
+      derivative2 "log_gammainc_a" ~bound:in_a (d_first { b = Nx.log_gammainc });
+      derivative2 "log_gammainc_x"
+        ~bound:(everywhere (Near_zeros (256, 256)))
+        (d_second { b = Nx.log_gammainc });
+      derivative2 "log_gammaincc_a" ~bound:in_a
+        (d_first { b = Nx.log_gammaincc });
+      derivative2 "log_gammaincc_x"
+        ~bound:(everywhere (Near_zeros (256, 256)))
+        (d_second { b = Nx.log_gammaincc });
+      derivative2 "gammaincinv_a"
+        ~bound:(everywhere (Relative (0x1p-40, 0x1p-16)))
+        (d_first { b = Nx.gammaincinv });
+      derivative2 "gammaincinv_p"
+        ~bound:(fun args ->
+          Inverse (64, 16 * int_of_float (log_ulps 16 args.(1))))
+        (d_second { b = Nx.gammaincinv });
+      derivative2 "gammainccinv_a"
+        ~bound:(everywhere (Relative (0x1p-40, 0x1p-16)))
+        (d_first { b = Nx.gammainccinv });
+      derivative2 "gammainccinv_p"
+        ~bound:(fun args ->
+          Inverse (64, 16 * int_of_float (log_ulps 16 args.(1))))
+        (d_second { b = Nx.gammainccinv });
+    ]
+
 let derivatives =
   group "derivatives"
     [
@@ -287,6 +369,22 @@ let residuals =
           ("lbeta", lbeta, 0.1, 30.);
           ("i0e", { u = Nx.i0e }, -30., 30.);
           ("i1e", { u = Nx.i1e }, -30., 30.);
+          ( "gammainc",
+            { u = (fun x -> Nx.gammainc (Nx.full_like x 3.5) x) },
+            0.1,
+            30. );
+          ( "gammainc in a",
+            { u = (fun a -> Nx.gammainc a (Nx.full_like a 5.)) },
+            0.1,
+            30. );
+          ( "gammaincinv",
+            { u = (fun p -> Nx.gammaincinv (Nx.full_like p 3.5) p) },
+            1e-6,
+            0.999 );
+          ( "gammaincinv in a",
+            { u = (fun a -> Nx.gammaincinv a (Nx.full_like a 0.3)) },
+            0.1,
+            30. );
         ];
       expect (output ())
       @@ __POS_OF__
@@ -301,9 +399,22 @@ let residuals =
         lbeta 1267
         i0e 579
         i1e 564
+        gammainc 4886
+        gammainc in a 6921
+        gammaincinv 16361
+        gammaincinv in a 26355
         |})
 
 let () =
   exit
     (run "rune special"
-       [ error_function; normal; gamma; bessel; derivatives; residuals ])
+       [
+         error_function;
+         normal;
+         gamma;
+         bessel;
+         incomplete_gamma;
+         derivatives;
+         incomplete_gamma_derivatives;
+         residuals;
+       ])

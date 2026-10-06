@@ -173,6 +173,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` computes `Nx.gammainc`, `Nx.gammaincc`, their logarithms and
+  their inverses as nx does eagerly, and their derivatives are within the
+  bounds `rune.mli` states, eagerly and compiled; an inverse's derivative is
+  the implicit one.
 - A compiled `Nx.cholesky`, `solve_triangular`, `solve`, `inv`, `svd` and
   `eigh` gives a failing matrix NaN in every element of its results, as
   eagerly, where it gave NaN or infinities from the failing column or row on,
@@ -3420,6 +3424,20 @@ thread.
 
 ### Nx
 
+- Add the incomplete gamma family: `Nx.gammainc`, `Nx.gammaincc`,
+  `Nx.log_gammainc`, `Nx.log_gammaincc`, `Nx.gammaincinv` and
+  `Nx.gammainccinv`, the gamma distribution's laws, within stated bounds for
+  concentrations up to 2^20; the logarithms stay finite where a tail underflows.
+- **Breaking:** linear algebra never raises on the values of a matrix, and
+  `Nx.Linalg_error` is removed. A matrix on which `cholesky`,
+  `solve_triangular`, `solve`, `inv`, `matrix_power`, `tensorsolve`,
+  `tensorinv`, `svd`, `eig`, `eigh` or their value forms are undefined has
+  results whose every element is NaN, and the other matrices of its batch are
+  unaffected, so one failing matrix no longer ends a batch or a sampler's run.
+  Where a raise is wanted, `Nx.check` that `all (isfinite r)`. `solve` takes
+  only an exact zero pivot of `lu`'s `U` as singular, where a pivot below
+  `eps · n` counted, so `solve (1e-30 · a) b` is `solve a b / 1e-30`;
+  `tensorsolve` and `tensorinv` no longer fall back to `pinv`.
 - **Breaking:** `cholesky`, `solve`, `inv` and `matrix_power` no longer raise
   `Invalid_argument` on a matrix that is not positive-definite or is singular,
   and `tensorsolve` and `tensorinv` no longer fall back to `pinv`. A matrix on

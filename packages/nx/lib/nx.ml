@@ -127,6 +127,12 @@ let digamma = Special.digamma
 let lbeta = Special.lbeta
 let i0e = Special.i0e
 let i1e = Special.i1e
+let gammainc = Special.gammainc
+let gammaincc = Special.gammaincc
+let log_gammainc = Special.log_gammainc
+let log_gammaincc = Special.log_gammaincc
+let gammaincinv = Special.gammaincinv
+let gammainccinv = Special.gammainccinv
 
 (* For transformations and file formats *)
 

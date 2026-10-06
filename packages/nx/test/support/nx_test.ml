@@ -1582,16 +1582,20 @@ module Special = struct
             | _ -> None)
           lines
 
-  (* The forms of a bound: [k] ulps; [k] ulps or [|f̂ - f| <= a eps] where [|f| <
-     1]; [k] ulps or [|f̂ - f| <= k eps scale]; an inverse's [k] ulps plus its
-     condition number times its forward function's bound; and a relative bound
-     at float64 and at float32. *)
+  (* The forms of a bound: [k] ulps; [2k (1 + |log f|) + 4] ulps, the
+     exponential of a logarithm within [k] ulps, absolute near zeros; [k] ulps
+     or [|f̂ - f| <= a eps] where [|f| < 1]; [k] ulps or [|f̂ - f| <= k eps
+     scale]; an inverse's [k] ulps plus its condition number times its forward
+     function's bound; and a relative bound at float64 and at float32, alone or
+     times the scale. *)
   type bound =
     | Ulps of int
+    | Log_ulps of int
     | Near_zeros of int * int
     | Scaled of int
     | Inverse of int * int
     | Relative of float * float
+    | Relative_scaled of float * float
 
   let pp_bound ppf = function
     | Ulps k -> Format.fprintf ppf "%d ulps" k
@@ -1599,8 +1603,11 @@ module Special = struct
         Format.fprintf ppf "%d ulps, or %d eps where below 1" k a
     | Scaled k -> Format.fprintf ppf "%d ulps, or %d eps times the scale" k k
     | Inverse (k, f) -> Format.fprintf ppf "%d + kappa * %d ulps" k f
+    | Log_ulps k -> Format.fprintf ppf "%d (1 + |log f|) + 4 ulps" (2 * k)
     | Relative (r64, r32) ->
         Format.fprintf ppf "%g relative (%g at float32)" r64 r32
+    | Relative_scaled (r64, r32) ->
+        Format.fprintf ppf "%g relative (%g at float32) times the scale" r64 r32
 
   (* The position of a float of [width] bits [b] among its format's values in
      order, [-0.] just below [+0.]. *)
@@ -1621,6 +1628,10 @@ module Special = struct
     else
       Int64.to_float (Int64.abs (Int64.sub (rank_of ~f32 a) (rank_of ~f32 b)))
 
+  (* [log_ulps k f] is [2k (1 + |log f|) + 4], [Log_ulps k]'s bound at [f]. *)
+  let log_ulps k f =
+    (2. *. Float.of_int k *. (1. +. Float.abs (Stdlib.log (Float.abs f)))) +. 4.
+
   (* Whether [got] meets [bound] against the correctly rounded [row]: exactly
      where the value is an exact infinity or NaN, and with its sign where it is
      zero. An overflow, read as the infinity one rank past the largest float, is
@@ -1638,9 +1649,12 @@ module Special = struct
       <=
       match bound with
       | Ulps k | Near_zeros (k, _) | Scaled k -> Float.of_int k
+      | Log_ulps k -> log_ulps k r
       | Inverse (k, forward) ->
           Float.of_int k +. (row.scale *. Float.of_int forward)
       | Relative (r64, r32) -> (if f32 then r32 else r64) /. eps
+      | Relative_scaled (r64, r32) ->
+          (if f32 then r32 else r64) *. row.scale /. eps
     else
       match bound with
       | Ulps k -> d <= Float.of_int k
@@ -1651,8 +1665,12 @@ module Special = struct
           d <= Float.of_int k || error <= Float.of_int k *. eps *. row.scale
       | Inverse (k, forward) ->
           d <= Float.of_int k +. (row.scale *. Float.of_int forward)
+      | Log_ulps k -> d <= log_ulps k r
       | Relative (r64, r32) ->
           d = 0. || error <= (if f32 then r32 else r64) *. Float.abs r
+      | Relative_scaled (r64, r32) ->
+          d = 0.
+          || error <= (if f32 then r32 else r64) *. row.scale *. Float.abs r
 
   type f = { f : 'b. (float, 'b) Nx.t array -> (float, 'b) Nx.t }
 
@@ -1766,6 +1784,96 @@ module Special = struct
       (fun b -> Int64.to_int (rank ~width (Int64.of_int (b land mask))))
       bits
 
+  (* [hold dt ~bound ?scale f args n] holds [f] at [args], [n] floats of the
+     narrow dtype [dt] each, as [narrow] states. *)
+  let hold (type b) (dt : (float, b) Nx.dtype) width p emin ~bound ?scale { f }
+      (args : (float, b) Nx.t array) n =
+    let got = f args in
+    let args64 = Array.map (Nx.cast Nx.float64) args in
+    let v = f args64 in
+    let xs = Array.map Nx.to_array args64 in
+    let at i = Array.map (fun a -> a.(i)) xs in
+    let scales =
+      match scale with
+      | Some { f } -> Nx.to_array (f args64)
+      | None -> Array.make n Float.nan
+    in
+    let vs = Nx.to_array v in
+    (* The float64 bound, in ulps, at each input. *)
+    let bounds =
+      Array.init n (fun i ->
+          match bound (at i) with
+          | Ulps k | Near_zeros (k, _) | Scaled k -> Float.of_int k
+          | Log_ulps k -> log_ulps k vs.(i)
+          | Inverse (k, fw) -> Float.of_int k +. (scales.(i) *. Float.of_int fw)
+          | Relative (r, _) -> r *. 0x1p52
+          | Relative_scaled (r, _) -> r *. scales.(i) *. 0x1p52)
+    in
+    let slack =
+      Nx.create Nx.float64 [| n |]
+        (Array.map
+           (fun b -> if Float.is_finite b then b *. 0x1p-52 else 0.)
+           bounds)
+    in
+    let rounded k = Nx.cast dt (Nx.mul v (Nx.add_s (Nx.mul_s slack k) 1.)) in
+    let candidates =
+      List.map (fun k -> ranks width (rounded k)) [ 0.; -1.; 1. ]
+    in
+    let got_ranks = ranks width got in
+    let gs = Nx.to_array (Nx.cast Nx.float64 got) in
+    (* What the float64 result is in the narrow dtype: a dtype with no
+       infinities has no other value for one. *)
+    let cs = Nx.to_array (Nx.cast Nx.float64 (Nx.cast dt v)) in
+    let misses = ref [] in
+    for i = 0 to n - 1 do
+      let g = gs.(i) and v = vs.(i) in
+      let d =
+        if Float.is_nan v || Float.is_nan g then
+          if Float.is_nan v && Float.is_nan g then 0 else max_int
+        else
+          List.fold_left
+            (fun d c -> Int.min d (abs (got_ranks.(i) - c.(i))))
+            max_int candidates
+      in
+      let h = 0.5 *. ulp ~p ~emin v in
+      (* Where the bound is absolute, its float32 bound and half an ulp of the
+         narrow dtype. *)
+      let absolute =
+        match bound (at i) with
+        | Ulps _ | Log_ulps _ | Inverse _ -> false
+        | Near_zeros (_, a) ->
+            Float.abs v < 1.
+            && Float.abs (g -. v) <= (Float.of_int a *. 0x1p-23) +. h
+        | Scaled k ->
+            Float.abs (g -. v) <= (Float.of_int k *. 0x1p-23 *. scales.(i)) +. h
+        | Relative (_, r) -> Float.abs (g -. v) <= (r *. Float.abs v) +. h
+        | Relative_scaled (_, r) ->
+            Float.abs (g -. v) <= (r *. scales.(i) *. Float.abs v) +. h
+      in
+      let ok =
+        if not (Float.is_finite v) then
+          (Float.is_nan g && Float.is_nan cs.(i)) || g = cs.(i)
+        else
+          d <= 1
+          && (g <> 0.
+             || cs.(i) <> 0.
+             || Float.sign_bit g = Float.sign_bit cs.(i))
+          || absolute
+      in
+      if not ok then misses := (at i, g, v) :: !misses
+    done;
+    match !misses with
+    | [] -> ()
+    | misses ->
+        Windtrap.failf "%d of %d inputs miss:@\n%a" (List.length misses) n
+          (Format.pp_print_list (fun ppf (x, g, v) ->
+               Format.fprintf ppf "at (%a): %h, float64 %h"
+                 (Format.pp_print_list
+                    ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+                    (fun ppf x -> Format.fprintf ppf "%h" x))
+                 (Array.to_list x) g v))
+          (List.filteri (fun i _ -> i < 8) (List.rev misses))
+
   (* [narrow ~bound ?scale f] holds [f] at every float of each narrow dtype
      within one ulp of its correctly rounded value, and a zero to its sign,
      [scale] being an inverse's condition number at the float64 argument. The
@@ -1773,96 +1881,43 @@ module Special = struct
      rounded value: rounded to the narrow dtype it is the correctly rounded
      value, or a neighbour where that bound reaches a narrow midpoint. A
      non-finite value is held exactly. *)
-  let narrow ~bound ?scale { f } =
+  let narrow ~bound ?scale f =
     List.map
       (fun (Narrow (name, dt, width, p, emin)) ->
         Windtrap.test name (fun () ->
-            let x = every dt width in
-            let n = 1 lsl width in
-            let got = f [| x |] in
-            let x64 = Nx.cast Nx.float64 x in
-            let v = f [| x64 |] in
-            let xs = Nx.to_array x64 in
-            let scales =
-              match scale with
-              | Some { f } -> Nx.to_array (f [| x64 |])
-              | None -> Array.make n Float.nan
+            hold dt width p emin ~bound ?scale f
+              [| every dt width |]
+              (1 lsl width)))
+      narrows
+
+  (* [narrow2 ?keep ~bound ?scale ~firsts ~seconds f] holds [f] of two arguments
+     as [narrow] holds one: at every pair of floats of an 8-bit dtype, and at a
+     16-bit one at every float as either argument against each of [firsts] or
+     [seconds] as the other, rounded to the dtype; at the pairs [keep] keeps,
+     all by default. *)
+  let narrow2 ?(keep = fun _ -> true) ~bound ?scale ~firsts ~seconds f =
+    List.map
+      (fun (Narrow (name, dt, width, p, emin)) ->
+        Windtrap.test name (fun () ->
+            let all =
+              Array.to_list (Nx.to_array (Nx.cast Nx.float64 (every dt width)))
             in
-            (* The float64 bound, in ulps, at each input. *)
-            let bounds =
-              Array.mapi
-                (fun i x ->
-                  match bound [| x |] with
-                  | Ulps k | Near_zeros (k, _) | Scaled k -> Float.of_int k
-                  | Inverse (k, fw) ->
-                      Float.of_int k +. (scales.(i) *. Float.of_int fw)
-                  | Relative (r, _) -> r *. 0x1p52)
-                xs
+            let pairs =
+              if width = 8 then
+                List.concat_map (fun a -> List.map (fun x -> (a, x)) all) all
+              else
+                List.concat_map (fun a -> List.map (fun x -> (a, x)) all) firsts
+                @ List.concat_map
+                    (fun x -> List.map (fun a -> (a, x)) all)
+                    seconds
             in
-            let slack =
-              Nx.create Nx.float64 [| n |]
-                (Array.map
-                   (fun b -> if Float.is_finite b then b *. 0x1p-52 else 0.)
-                   bounds)
+            let pairs = List.filter (fun (a, x) -> keep [| a; x |]) pairs in
+            let n = List.length pairs in
+            let column sel =
+              Nx.cast dt
+                (Nx.create Nx.float64 [| n |]
+                   (Array.of_list (List.map sel pairs)))
             in
-            let rounded k =
-              Nx.cast dt (Nx.mul v (Nx.add_s (Nx.mul_s slack k) 1.))
-            in
-            let candidates =
-              List.map (fun k -> ranks width (rounded k)) [ 0.; -1.; 1. ]
-            in
-            let got_ranks = ranks width got in
-            let gs = Nx.to_array (Nx.cast Nx.float64 got) in
-            let vs = Nx.to_array v in
-            (* What the float64 result is in the narrow dtype: a dtype with no
-               infinities has no other value for one. *)
-            let cs = Nx.to_array (Nx.cast Nx.float64 (Nx.cast dt v)) in
-            let misses = ref [] in
-            Array.iteri
-              (fun i x ->
-                let g = gs.(i) and v = vs.(i) in
-                let d =
-                  if Float.is_nan v || Float.is_nan g then
-                    if Float.is_nan v && Float.is_nan g then 0 else max_int
-                  else
-                    List.fold_left
-                      (fun d c -> Int.min d (abs (got_ranks.(i) - c.(i))))
-                      max_int candidates
-                in
-                let h = 0.5 *. ulp ~p ~emin v in
-                (* Where the bound is absolute, its float32 bound and half an
-                   ulp of the narrow dtype. *)
-                let absolute =
-                  match bound [| x |] with
-                  | Ulps _ | Inverse _ -> false
-                  | Near_zeros (_, a) ->
-                      Float.abs v < 1.
-                      && Float.abs (g -. v) <= (Float.of_int a *. 0x1p-23) +. h
-                  | Scaled k ->
-                      Float.abs (g -. v)
-                      <= (Float.of_int k *. 0x1p-23 *. scales.(i)) +. h
-                  | Relative (_, r) ->
-                      Float.abs (g -. v) <= (r *. Float.abs v) +. h
-                in
-                let ok =
-                  if not (Float.is_finite v) then
-                    (Float.is_nan g && Float.is_nan cs.(i)) || g = cs.(i)
-                  else
-                    d <= 1
-                    && (g <> 0.
-                       || cs.(i) <> 0.
-                       || Float.sign_bit g = Float.sign_bit cs.(i))
-                    || absolute
-                in
-                if not ok then misses := (x, g, v) :: !misses)
-              xs;
-            match !misses with
-            | [] -> ()
-            | misses ->
-                Windtrap.failf "%d of %d inputs miss:@\n%a" (List.length misses)
-                  n
-                  (Format.pp_print_list (fun ppf (x, g, v) ->
-                       Format.fprintf ppf "at %h: %h, float64 %h" x g v))
-                  (List.filteri (fun i _ -> i < 8) (List.rev misses))))
+            hold dt width p emin ~bound ?scale f [| column fst; column snd |] n))
       narrows
 end

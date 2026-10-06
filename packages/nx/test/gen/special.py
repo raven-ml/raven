@@ -719,6 +719,603 @@ def sinpi_poly(fmt):
     sys.exit("no degree meets sinpi's bound")
 
 
+# Incomplete gamma
+#
+# P(a, x) and Q(a, x) = 1 - P, computed as the logarithm of one tail, after
+# DiDonato and Morris (Computation of the incomplete gamma function ratios
+# and their inverse, ACM TOMS 12 (1986); Algorithm 654, TOMS 13 (1987)).
+# Every region runs on every element:
+#
+# - the corner, a < 1 and x < 1.1: P from x^a / Gamma(1 + a) (1 - j) and Q
+#   from expm1 of its exponent, j a series in x;
+# - the series for P, x below max(a, 1.1);
+# - the continued fraction for Q, x from max(a, 1.1);
+# - Temme's uniform expansion, a >= 20 and |x/a - 1| <= 0.4.
+#
+# The prefactor x^a e^-x / Gamma(a + 1) is exp of -bd0(a, x) - log (2 pi
+# a)/2 - s(a) from a = 1 (Loader, Fast and accurate computation of binomial
+# probabilities, 2000), s Stirling's correction, and of a log x - x - log
+# Gamma(1 + a) below. bd0 = a (mu - log1p mu), mu = x/a - 1, is, in v = (x -
+# a)/(x + a), 2 a v^2/(1 - v) - 2 a v^3 S(v^2), S(w) = sum_j w^(j-1)/(2j + 1),
+# up to |v| = IGAMMA_NEAR_V and x - a - a log (x/a) beyond. The same S gives
+# s(y) - s(y + 1) = z^2 S(z^2), z = 1/(2y + 1), which shifts s from [1, 8)
+# past 8, where fdlibm's polynomial holds.
+
+IGAMMA_CORNER = 1.1
+IGAMMA_TEMME_FROM = 20.0
+IGAMMA_TEMME_WIDTH = 0.4
+IGAMMA_NEAR_V = 0.5
+IGAMMA_SHIFTS = 7
+
+
+IGAMMA_EXACT = {}
+
+
+def log1mexp(l):
+    """log (1 - e^l) for l < 0, without cancellation."""
+    if l > -mpmath.log(2):
+        return mpmath.log(-mpmath.expm1(l))
+    return mpmath.log1p(-mpmath.exp(l))
+
+
+def igamma_exact(a, x, extra=0):
+    key = (mpf(a), mpf(x), mp.prec, extra)
+    if key not in IGAMMA_EXACT:
+        IGAMMA_EXACT[key] = igamma_exact_at(a, x, extra)
+    return IGAMMA_EXACT[key]
+
+
+def igamma_exact_at(a, x, extra):
+    """(log P, log Q) at a > 0, x > 0, both finite, at mpmath's precision:
+    P's series where it converges fast, Q's continued fraction (modified
+    Lentz) beyond, each to the working precision, at guard bits that cover
+    the prefactor's cancellation and, with `extra`, the complement's."""
+    a, x = mpf(a), mpf(x)
+    wp = mp.prec
+    size = abs(a * mpmath.log(x)) + x + abs(mpmath.loggamma(a + 1)) + 1
+    guard = int(mpmath.log(size, 2)) + 20 + extra
+    if a > 2 ** 30 and abs(x / a - 1) <= mpf(1) / 4:
+        # The series would take about sqrt (a) terms; Temme's expansion to
+        # 16 terms errs by about 16!/(2 pi a)^16, far below any precision
+        # asked here.
+        with mp.workprec(wp + 20):
+            eta = temme_eta(x / a)
+            t = sum(sum(c * eta ** n for n, c in enumerate(TEMME[k][:TEMME_ORDER - 2 * k - 2])) / a ** k
+                    for k in range(16))
+            scaled = mpmath.exp(-a * eta * eta / 2) / mpmath.sqrt(2 * mpmath.pi * a) * t
+            q = mpmath.erfc(eta * mpmath.sqrt(a / 2)) / 2 + scaled
+            p = mpmath.erfc(-eta * mpmath.sqrt(a / 2)) / 2 - scaled
+            return mpmath.log(p), mpmath.log(q)
+    with mp.workprec(wp + guard):
+        lr = a * mpmath.log(x) - x - mpmath.loggamma(a + 1)
+        tol = mpf(2) ** -(wp + guard)
+        if x < a + 1 + 4 * mpmath.sqrt(a):
+            s, t, n = mpf(1), mpf(1), 0
+            while True:
+                n += 1
+                t *= x / (a + n)
+                s += t
+                if t < tol * s:
+                    break
+            lp = lr + mpmath.log(s)
+            if lp >= 0:
+                return igamma_exact(a, x, 2 * extra + 64)
+            lq = other = log1mexp(lp)
+        elif x > 2 ** 40 * (a + 1):
+            # Q's asymptotic series, sum_k (a - 1) ... (a - k) / x^k, whose
+            # terms fall by a factor below 2^-40 each.
+            h, t, n = mpf(1), mpf(1), 0
+            while abs(t) >= tol * abs(h) and t != 0:
+                n += 1
+                t *= (a - n) / x
+                h += t
+            lq = lr + mpmath.log(a) - mpmath.log(x) + mpmath.log(h)
+            lp = other = log1mexp(lq)
+        else:
+            tiny = mpf(2) ** -(10 * (wp + guard))
+            b = x + 1 - a
+            c, d = 1 / tiny, 1 / b
+            h = d
+            n = 0
+            while True:
+                n += 1
+                an = -n * (n - a)
+                b += 2
+                d = an * d + b
+                d = tiny if d == 0 else d
+                c = b + an / c
+                c = tiny if c == 0 else c
+                d = 1 / d
+                delta = d * c
+                h *= delta
+                if abs(delta - 1) < tol:
+                    break
+            lq = lr + mpmath.log(a) + mpmath.log(h)
+            if lq >= 0:
+                return igamma_exact(a, x, 2 * extra + 64)
+            lp = other = log1mexp(lq)
+        # The complement of a tail near 1 loses -log2 of itself: run again
+        # with those bits, more where the tail rounded to 1.
+        if not mpmath.isfinite(other):
+            return igamma_exact(a, x, 2 * extra + 64)
+        lost = int(-other / mpmath.log(2)) + 10
+    if lost - 10 > extra:
+        return igamma_exact(a, x, lost)
+    return lp, lq
+
+
+def igamma_corner_j(a, x, n):
+    """The corner's j / (a x), sum_k (-x)^(k-1) / (k! (a + k)) to n terms,
+    nested backward as nx runs it."""
+    s = mpf(0)
+    for k in range(n, 0, -1):
+        s = 1 / (mpmath.factorial(k) * (a + k)) - x * s
+    return s
+
+
+def igamma_series(a, x, n):
+    """sum_k x^k / ((a + 1) ... (a + k)) to n terms."""
+    s = mpf(1)
+    for k in range(n, 0, -1):
+        s = 1 + s * x / (a + k)
+    return s
+
+
+def igamma_cf(a, x, n):
+    """Legendre's continued fraction for Q e^x x^-a Gamma(a), evaluated
+    backward from depth n."""
+    t = mpf(0)
+    for k in range(n, 0, -1):
+        t = k * (k - a) / (x + 2 * k + 1 - a - t)
+    return 1 / (x + 1 - a - t)
+
+
+# A derivative is held to its budget: in x, 16 times the value's; in a,
+# 2^-44 at float64 and 2^-20 at float32, a sixteenth of rune's.
+IGAMMA_DA = {F32: mpf(2) ** -20, F64: mpf(2) ** -44}
+
+
+def holds(fmt, f, points, n, reference):
+    """Whether f at count n is within u/8 of f at the reference count,
+    relatively, at each point, and its derivatives in a and x within their
+    budgets."""
+    tol = mpf(fmt.u) / 8
+    for a, x in points:
+        a, x = mpf(a), mpf(x)
+        v, r = f(a, x, n), f(a, x, reference)
+        if abs(v / r - 1) > tol:
+            return False
+        for wrt, t in ((0, IGAMMA_DA[fmt]), (1, 16 * tol)):
+            def d(m):
+                if wrt == 0:
+                    return mpmath.diff(lambda s: f(s, x, m), a)
+                return mpmath.diff(lambda s: f(a, s, m), x)
+            dv, dr = d(n), d(reference)
+            if abs(dv - dr) > t * max(abs(dr), abs(r)):
+                return False
+    return True
+
+
+def igamma_count(fmt, f, points):
+    with mp.workprec(160):
+        return least(range(1, 400), lambda n: holds(fmt, f, points, n, 2 * n + 40))
+
+
+def igamma_corner_terms(fmt):
+    """The corner's worst points are at x = 1.1."""
+    x = mpf(IGAMMA_CORNER) * (1 - mpf(2) ** -40)
+    points = [(a, x) for a in (1e-10, 1e-3, 0.1, 0.5, 0.9, 1 - 2.0 ** -30)]
+    return igamma_count(fmt, igamma_corner_j, points)
+
+
+def igamma_series_terms(fmt):
+    """The series' worst points are at x = max(a, 1.1) below 20 and at x =
+    0.6 a, Temme's lower edge, above."""
+    below = [(a, max(a, IGAMMA_CORNER) * (1 - 2.0 ** -40)) for a in (1, 1.05, 1.5, 2, 3, 5, 8, 12, 16, 19.99)]
+    above = [(a, (1 - IGAMMA_TEMME_WIDTH) * a) for a in (20, 50, 200, 1e3, 1e4, 2.0 ** 20)]
+    return igamma_count(fmt, igamma_series, below + above)
+
+
+def igamma_cf_depth(fmt):
+    """The continued fraction's worst points are at x = 1.1 below a = 1.1,
+    at x = a up to 20, and at x = 1.4 a, Temme's upper edge, above."""
+    low = [(a, IGAMMA_CORNER) for a in (1e-10, 0.01, 0.3, 0.7, 0.999, 1.05, 1.1)]
+    mid = [(a, a) for a in (1.2, 1.5, 2, 3, 5.5, 8.3, 12.7, 19.99)]
+    high = [(a, (1 + IGAMMA_TEMME_WIDTH) * a) for a in (20, 50, 200, 2.0 ** 20)]
+    return igamma_count(fmt, igamma_cf, low + mid + high)
+
+
+def atanh_s(w, n):
+    """S(w) = sum_j w^(j-1) / (2j + 1) to n terms."""
+    return sum(w ** (j - 1) / (2 * j + 1) for j in range(1, n + 1))
+
+
+def igamma_atanh_terms(fmt):
+    """S's count for bd0 up to |v| = IGAMMA_NEAR_V: mu - log1p mu = 2 v^2/(1 -
+    v) - 2 v^3 S(v^2) within u/8 relatively, and its derivative in v."""
+    vs = [v for v in grid(-mpf(IGAMMA_NEAR_V), mpf(IGAMMA_NEAR_V), 101) if v != 0]
+    tol = mpf(fmt.u) / 8
+    with mp.workprec(160):
+        def phi(v, n):
+            return 2 * v * v / (1 - v) - 2 * v ** 3 * atanh_s(v * v, n)
+
+        def exact(v):
+            mu = 2 * v / (1 - v)
+            return mu - mpmath.log1p(mu)
+
+        def ok(n):
+            for v in vs:
+                if abs(phi(v, n) / exact(v) - 1) > tol:
+                    return False
+                d = mpmath.diff(lambda s: phi(s, n), v)
+                if abs(d / mpmath.diff(exact, v) - 1) > tol:
+                    return False
+            return True
+        return least(range(1, 80), ok)
+
+
+def igamma_shift_terms(fmt):
+    """S's count in each of the shift's terms s(y) - s(y + 1) = z^2 S(z^2),
+    y = a + k >= 1 + k: within u/64 absolutely, with its derivative, so that
+    the seven are within u/8 together."""
+    tol = mpf(fmt.u) / 64
+    counts = []
+    with mp.workprec(160):
+        for k in range(IGAMMA_SHIFTS):
+            def delta(y, n):
+                z = 1 / (2 * y + 1)
+                return z * z * atanh_s(z * z, n)
+
+            def exact(y):
+                return (y + mpf(1) / 2) * mpmath.log1p(1 / y) - 1
+
+            ys = [mpf(1 + k) + mpf(i) / 8 for i in range(0, 8 * (8 - k - 1) + 1)]
+
+            def ok(n):
+                return all(abs(delta(y, n) - exact(y)) <= tol
+                           and abs(mpmath.diff(lambda s: delta(s, n), y) - mpmath.diff(exact, y)) <= tol
+                           for y in ys)
+            counts.append(least(range(1, 80), ok))
+    return counts
+
+
+# Temme's expansion: Q = erfc (eta sqrt (a/2))/2 + e^(-y)/sqrt (2 pi a) T, P
+# = erfc (-eta sqrt (a/2))/2 - e^(-y)/sqrt (2 pi a) T, y = a eta^2/2 = bd0,
+# T = sum_k c_k(eta) a^-k. The coefficients d_kn of c_k = sum_n d_kn eta^n
+# follow from c_0 = 1/mu - 1/eta and d_kn = (n + 2) d_(k-1)(n+2) + (-1)^k
+# g_k d_0n (DLMF 8.12.12), g_k Stirling's coefficients of Gamma*. DiDonato
+# and Morris print d_kn to 15 digits (TOMS 654's GRATIO, D0 to D70), which
+# the run checks.
+
+TEMME_ORDER = 72
+TOMS654_D = {
+    0: ["-.333333333333333", ".833333333333333E-01", "-.148148148148148E-01", ".115740740740741E-02",
+        ".352733686067019E-03", "-.178755144032922E-03", ".391926317852244E-04", "-.218544851067999E-05",
+        "-.185406221071516E-05", ".829671134095309E-06", "-.176659527368261E-06", ".670785354340150E-08",
+        ".102618097842403E-07", "-.438203601845335E-08"],
+    1: ["-.185185185185185E-02", "-.347222222222222E-02", ".264550264550265E-02", "-.990226337448560E-03",
+        ".205761316872428E-03", "-.401877572016461E-06", "-.180985503344900E-04", ".764916091608111E-05",
+        "-.161209008945634E-05", ".464712780280743E-08", ".137863344691572E-06", "-.575254560351770E-07",
+        ".119516285997781E-07"],
+    2: [".413359788359788E-02", "-.268132716049383E-02", ".771604938271605E-03", ".200938786008230E-05",
+        "-.107366532263652E-03", ".529234488291201E-04", "-.127606351886187E-04", ".342357873409614E-07",
+        ".137219573090629E-05", "-.629899213838006E-06", ".142806142060642E-06"],
+    3: [".649434156378601E-03", ".229472093621399E-03", "-.469189494395256E-03", ".267720632062839E-03",
+        "-.756180167188398E-04", "-.239650511386730E-06", ".110826541153473E-04", "-.567495282699160E-05",
+        ".142309007324359E-05"],
+    4: ["-.861888290916712E-03", ".784039221720067E-03", "-.299072480303190E-03", "-.146384525788434E-05",
+        ".664149821546512E-04", "-.396836504717943E-04", ".113757269706784E-04"],
+    5: ["-.336798553366358E-03", "-.697281375836586E-04", ".277275324495939E-03", "-.199325705161888E-03",
+        ".679778047793721E-04"],
+    6: [".531307936463992E-03", "-.592166437353694E-03", ".270878209671804E-03"],
+    7: [".344367606892378E-03"],
+}
+
+
+def series_mul(p, q):
+    out = [mpf(0)] * TEMME_ORDER
+    for i, x in enumerate(p):
+        if x:
+            for j in range(TEMME_ORDER - i):
+                out[i + j] += x * q[j]
+    return out
+
+
+def temme_coefficients():
+    """d_kn for k < 16, n < TEMME_ORDER - 2k, at 400 bits, checked against
+    TOMS 654's table."""
+    with mp.workprec(400):
+        n = TEMME_ORDER
+        # eta = mu q(mu), q = sqrt (2 (mu - log1p mu)/mu^2).
+        two_psi = [mpf(2) * (-1) ** i / (i + 2) for i in range(n)]
+        q = [mpf(0)] * n
+        q[0] = mpmath.sqrt(two_psi[0])
+        for i in range(1, n):
+            q[i] = (two_psi[i] - sum(q[j] * q[i - j] for j in range(1, i))) / (2 * q[0])
+        f = [mpf(0)] + q[:n - 1]
+        # mu = g(eta), the reversion of f, by fixed-point iteration.
+        g = [mpf(0), mpf(1)] + [mpf(0)] * (n - 2)
+        for _ in range(n):
+            comp, power = [mpf(0)] * n, [mpf(1)] + [mpf(0)] * (n - 1)
+            for k in range(1, n):
+                power = series_mul(power, g)
+                comp = [c + f[k] * pk for c, pk in zip(comp, power)]
+            g = [gi - (ci - (1 if i == 1 else 0)) for i, (gi, ci) in enumerate(zip(g, comp))]
+        h = g[1:] + [mpf(0)]
+        inv = [mpf(0)] * n
+        inv[0] = 1 / h[0]
+        for i in range(1, n):
+            inv[i] = -sum(h[j] * inv[i - j] for j in range(1, i + 1)) / h[0]
+        d0 = inv[1:] + [mpf(0)]
+        # Gamma*(a) ~ sum g_k a^-k = exp (sum_j B_2j / (2j (2j - 1) a^(2j - 1))).
+        m = 40
+        lg = [mpf(0)] * m
+        for j in range(1, m // 2):
+            lg[2 * j - 1] = mpmath.bernoulli(2 * j) / (2 * j * (2 * j - 1))
+        gs = [mpf(1)] + [mpf(0)] * (m - 1)
+        for i in range(1, m):
+            gs[i] = sum(k * lg[k] * gs[i - k] for k in range(1, i + 1)) / i
+        d = [d0]
+        for k in range(1, 16):
+            prev = d[-1]
+            d.append([(i + 2) * prev[i + 2] + (-1) ** k * gs[k] * d0[i] if i + 2 < n - 2 * k else mpf(0)
+                      for i in range(n)])
+        for k, printed in TOMS654_D.items():
+            for i, p in enumerate(printed):
+                # 15 significant digits: within half a unit of the 15th.
+                if abs(d[k][i] - mpf(p)) > abs(mpf(p)) * mpf(10) ** -14 / 2:
+                    sys.exit(f"Temme d_{k}{i}: {mpmath.nstr(d[k][i], 17)}, TOMS 654 prints {p}")
+        return d
+
+
+TEMME = temme_coefficients()
+
+
+def temme_eta(lam):
+    mu = lam - 1
+    e = mpmath.sqrt(2 * (mu - mpmath.log1p(mu)))
+    return e if mu >= 0 else -e
+
+
+def temme_eta_max():
+    return max(abs(temme_eta(1 - mpf(IGAMMA_TEMME_WIDTH))), abs(temme_eta(1 + mpf(IGAMMA_TEMME_WIDTH))))
+
+
+def temme_tail(a, x, degrees):
+    """The smaller tail by Temme's expansion with c_k truncated to the given
+    degrees, as nx computes it."""
+    lam = x / a
+    eta = temme_eta(lam)
+    t = sum(sum(TEMME[k][n] * eta ** n for n in range(deg + 1)) / a ** k for k, deg in enumerate(degrees))
+    pref = mpmath.exp(-a * eta * eta / 2) / mpmath.sqrt(2 * mpmath.pi * a)
+    if lam >= 1:
+        return mpmath.erfc(eta * mpmath.sqrt(a / 2)) / 2 + pref * t
+    return mpmath.erfc(-eta * mpmath.sqrt(a / 2)) / 2 - pref * t
+
+
+def temme_exact(a, x):
+    lp, lq = igamma_exact(a, x)
+    return mpmath.exp(lq if x >= a else lp)
+
+
+def igamma_temme(fmt):
+    """Temme's count K and each c_k's degree: the least degree whose
+    truncation, and that of its derivative, is within u/64 at a = 20 and
+    |eta| at the window's edges, of the scaled tail sqrt (2 pi a) e^y tail,
+    at least 2; then the least K within u/8 of the exact tail at a = 20,
+    with its derivatives within their budgets."""
+    tol = mpf(fmt.u)
+    with mp.workprec(200):
+        em = temme_eta_max()
+        a0 = mpf(IGAMMA_TEMME_FROM)
+
+        def degree(k):
+            d = TEMME[k]
+            for deg in range(0, TEMME_ORDER - 2 * k - 2):
+                rest = sum(abs(d[n]) * em ** n for n in range(deg + 1, TEMME_ORDER - 2 * k - 2))
+                slope = sum(n * abs(d[n]) * em ** (n - 1) for n in range(deg + 1, TEMME_ORDER - 2 * k - 2))
+                if max(rest, slope) / a0 ** k <= 2 * tol / 64:
+                    return deg
+            sys.exit(f"no degree meets Temme's c_{k}")
+        lams = [1 - mpf(IGAMMA_TEMME_WIDTH) + mpf(i) / 20 for i in range(17)]
+        lams = [l for l in lams if l != 1] + [mpf(1)]
+        points = [(a, a * l) for a in (a0, a0 * 2, a0 * 8) for l in lams]
+
+        def ok(k_count):
+            degrees = [degree(k) for k in range(k_count)]
+            for a, x in points:
+                v, r = temme_tail(a, x, degrees), temme_exact(a, x)
+                if abs(v / r - 1) > tol / 8:
+                    return False
+                da = mpmath.diff(lambda s: temme_tail(s, x, degrees), a) - mpmath.diff(lambda s: temme_exact(s, x), a)
+                dx = mpmath.diff(lambda s: temme_tail(a, s, degrees), x) - mpmath.diff(lambda s: temme_exact(a, s), x)
+                scale_a = max(abs(mpmath.diff(lambda s: temme_exact(s, x), a)), r)
+                scale_x = max(abs(mpmath.diff(lambda s: temme_exact(a, s), x)), r)
+                if abs(da) > IGAMMA_DA[fmt] * scale_a or abs(dx) > 2 * tol * scale_x:
+                    return False
+            return True
+        k_count = least(range(1, 16), ok)
+        return [degree(k) for k in range(k_count)]
+
+
+# erfc x e^(x^2) beyond fdlibm's last region, from 28: (1/(x sqrt pi)) sum_k
+# (-1)^k (2k - 1)!! / (2 x^2)^k, its least count within u/8 with its
+# derivative.
+
+ERFCX_FAR = 28.0
+
+
+def erfcx_far_terms(fmt):
+    tol = mpf(fmt.u) / 8
+    xs = [mpf(ERFCX_FAR) * mpf(2) ** (i / 4) for i in range(40)]
+    with mp.workprec(200):
+        def approx(x, n):
+            return sum((-1) ** k * mpmath.fac2(2 * k - 1) / (2 * x * x) ** k for k in range(n)) / (x * mpmath.sqrt(mpmath.pi))
+
+        def exact(x):
+            return mpmath.exp(x * x) * mpmath.erfc(x)
+        return least(range(1, 40), lambda n: worst(xs, lambda x: approx(x, n), exact) <= tol
+                     and worst(xs, lambda x: mpmath.diff(lambda s: approx(s, n), x),
+                               lambda x: mpmath.diff(exact, x)) <= tol)
+
+
+# GAMINV's normal quantile on the smaller tail q, as TOMS 654 prints it: t -
+# A(t)/B(t) for t = sqrt (-2 log q), A and B lowest degree first, B's
+# constant 1.
+GAMINV_A = [3.31125922108741, 11.6616720288968, 4.28342155967104, .213623493715853]
+GAMINV_B = [6.61053765625462, 6.40691597760039, 1.27364489782223, .036117081018842]
+
+# GAMINV sums P's series at its guess until a term is below 1e-4, at a guess
+# below 0.7 (a + 1): a term ratio below 0.7, so 26 terms.
+GAMINV_TERMS = math.ceil(math.log(1e-4) / math.log(0.7))
+EULER = mpf("0.577215664901532860606512090082402431")
+
+
+def gaminv_asymptotic(a, y):
+    """GAMINV's large-x form from y = -log (q Gamma(a))."""
+    s = 1 - a
+    c1 = -s * mpmath.log(y)
+    c2 = -s * (1 + c1)
+    c3 = s * ((c1 / 2 + (2 - a)) * c1 + (mpf(5) / 2 - mpf(3) / 2 * a))
+    c4 = -s * (((c1 / 3 + (mpf(5) / 2 - mpf(3) / 2 * a)) * c1 + ((a - 6) * a + 7)) * c1
+               + ((11 * a - 46) * a + 47) / 6)
+    c5 = -s * ((((-c1 / 4 + (11 * a - 17) / 6) * c1 + ((-3 * a + 13) * a - 13)) * c1
+                + (((2 * a - 25) * a + 72) * a - 61) / 2) * c1
+               + (((25 * a - 195) * a + 477) * a - 379) / 12)
+    return ((((c5 / y + c4) / y + c3) / y + c2) / y + c1) + y
+
+
+def gaminv_guess(a, l, q_tail):
+    """nx's GAMINV guess for log x, branch for branch: a > 0, l the smaller
+    tail's logarithm, q_tail whether that tail is Q."""
+    lc = mpmath.log1p(-mpmath.exp(l))
+    lq, lp = (l, lc) if q_tail else (lc, l)
+    if a < 1:
+        lg1 = mpmath.loggamma(1 + a)
+        y = -(lq + lg1 - mpmath.log(a))
+        b = mpmath.exp(-y)
+        if b < mpf("0.45"):
+            s = 1 - a
+            tt = y - s * mpmath.log(y)
+            if a < mpf("0.3") and b >= mpf("0.35"):
+                e = -(b + EULER)
+                return e + mpmath.exp(e) * mpmath.exp(mpmath.exp(e))
+            if b >= mpf("0.15"):
+                return mpmath.log(y - s * mpmath.log(tt) - mpmath.log1p(s / (tt + 1)))
+            if b > mpf("0.01"):
+                u = ((tt + 2 * (3 - a)) * tt + (2 - a) * (3 - a)) / ((tt + (5 - a)) * tt + 2)
+                return mpmath.log(y - s * mpmath.log(tt) - mpmath.log(u))
+            return mpmath.log(gaminv_asymptotic(a, y))
+        if lq - y < mpmath.log(mpf("1e-8")):
+            power = -(mpmath.exp(lq) / a + EULER)
+        else:
+            power = (lp + lg1) / a
+        ratio = min(mpmath.exp(power) / (a + 1), mpf("0.9"))
+        return power - mpmath.log1p(-ratio)
+    lg1 = mpmath.loggamma(a + 1)
+    y = -(lq + lg1 - mpmath.log(a))
+    r = mpmath.sqrt(-2 * l)
+    n = r - mpmath.polyval(list(reversed(GAMINV_A)), r) / mpmath.polyval(list(reversed(GAMINV_B)) + [1], r)
+    n = n if q_tail else -n
+    ra, n2 = mpmath.sqrt(a), n * n
+    xc = (a + n * ra + (n2 - 1) / 3 + n * (n2 - 7) / (36 * ra)
+          + n * ((9 * n2 + 256) * n2 - 433) / (38880 * a * ra) - ((3 * n2 + 7) * n2 - 16) / (810 * a))
+    xc = xc if xc > 0 else mpf("1e-30")
+    ap1 = a + 1
+    if q_tail and xc >= 3 * a:
+        if y >= 0 and y >= mpmath.log(10) * max(a * (a - 1), mpf(2)):
+            return mpmath.log(gaminv_asymptotic(a, y))
+        x = xc
+        for _ in range(2):
+            x = y + (a - 1) * mpmath.log(x) - mpmath.log1p(-(a - 1) / (x + 1))
+        return mpmath.log(x)
+    if q_tail or xc > mpf("0.7") * ap1:
+        return mpmath.log(xc)
+    w = lp + lg1
+    ap2, ap3 = a + 2, a + 3
+    fixed = lambda x: (w + x - mpmath.log1p((x / ap1) * (1 + x / ap2))) / a
+    x = mpmath.exp(fixed(mpmath.exp(fixed(mpmath.exp(w / a)))))
+    y4 = (w + x - mpmath.log1p((x / ap1) * (1 + (x / ap2) * (1 + x / ap3)))) / a
+    x4 = mpmath.exp(y4)
+    tiny = xc <= mpf("0.15") * ap1
+    if tiny and x4 <= mpf("0.01") * ap1:
+        return y4
+    xs = min(x4 if tiny else xc, mpf("0.7") * ap1)
+    term, total = mpf(1), mpf(1)
+    for k in range(1, GAMINV_TERMS + 1):
+        term *= xs / (a + k)
+        total += term
+    tw = w - mpmath.log(total)
+    x5 = mpmath.exp((xs + tw) / a)
+    d = a - x5
+    step = (a * mpmath.log(x5) - x5 - tw) / (d if abs(d) > mpf("1e-3") else 1)
+    return mpmath.log(x5) + mpmath.log1p(-(step if abs(step) < mpf("0.5") else 0))
+
+
+def gaminv_steps(a, l, q_tail, y, count):
+    """y after `count` of nx's Halley steps in log x, then x after its
+    Newton step in x, in exact arithmetic."""
+    lga = mpmath.loggamma(a)
+
+    def residual(y):
+        x = mpmath.exp(y)
+        lp, lq = igamma_exact(a, x)
+        lt = lq if q_tail else lp
+        slope = mpmath.exp(a * y - x - lga - lt) * (-1 if q_tail else 1)
+        return x, lt - l, slope
+    for _ in range(count):
+        x, g, slope = residual(y)
+        d = g / slope
+        den = 1 - g * (a - x - slope) / (2 * slope)
+        d = d / den if den > mpf("0.5") else d
+        y -= max(min(d, 1), -1)
+    x, g, slope = residual(y)
+    return x * (1 - g / slope)
+
+
+def igamma_halley_steps(fmt):
+    """The least Halley count after which nx's Newton step puts x within u/8
+    of the quantile, relatively, from the guess at every point of a grid of a
+    up to 2^20 and of the smaller tail down to the least subnormal, either
+    tail."""
+    least_log = math.log(fmt.tiny)
+    tails = [least_log * mpf(2) ** -k for k in (0, 1, 2, 4, 6, 8, 10)] + [mpf("-0.6931"), mpf(-1.5), mpf(-3), mpf(-7)]
+    with mp.workprec(128):
+        cases = [(mpf(10) ** (mpf(e) / 2), l, q) for e in range(-8, 13) for l in tails for q in (False, True)]
+        cases += [(mpf(IGAMMA_A_MAX), l, q) for l in tails for q in (False, True)]
+        exact = {}
+        for a, l, q in cases:
+            exact[(a, l, q)] = igamma_quantile(a, mpmath.exp(l), q)
+        for count in range(1, 6):
+            if all(abs(gaminv_steps(a, l, q, gaminv_guess(a, l, q), count) / x - 1) <= mpf(fmt.u) / 8
+                   for (a, l, q), x in exact.items() if x > 0):
+                return count
+    sys.exit("no Halley count meets the inverse's bound")
+
+
+def igamma_tables(fmt):
+    """The incomplete gamma's per-dtype fields."""
+    j = igamma_atanh_terms(fmt)
+    shifts = igamma_shift_terms(fmt)
+    assert max(shifts) <= j
+    degrees = igamma_temme(fmt)
+    with mp.workprec(200):
+        temme = [round_to(fmt, TEMME[k][n]) for k, deg in enumerate(degrees) for n in range(deg, -1, -1)]
+        atanh = [round_to(fmt, mpf(1) / (2 * i + 1)) for i in range(j, 0, -1)]
+    return [
+        ("igamma_corner_terms", ocaml_float(float(igamma_corner_terms(fmt)))),
+        ("igamma_series_terms", ocaml_float(float(igamma_series_terms(fmt)))),
+        ("igamma_cf_depth", ocaml_float(float(igamma_cf_depth(fmt)))),
+        ("igamma_atanh", ocaml_array(atanh)),
+        ("igamma_shift_terms", ocaml_array([float(n) for n in shifts])),
+        ("igamma_temme", ocaml_array(temme)),
+        ("igamma_temme_degrees", ocaml_array([float(d) for d in degrees])),
+        ("igamma_halley_steps", ocaml_float(float(igamma_halley_steps(fmt)))),
+        ("erfcx_series", ocaml_array([float((-1) ** k * mpmath.fac2(2 * k - 1))
+                                      for k in range(erfcx_far_terms(fmt) - 1, -1, -1)])),
+    ]
+
+
 # The per-dtype record
 
 def per_dtype(fmt):
@@ -751,7 +1348,7 @@ def per_dtype(fmt):
         ("digamma_from", ocaml_float(DIGAMMA_FROM[fmt])),
         ("sinpi", ocaml_array(sinpi_poly(fmt))),
         ("digamma_series", ocaml_array([round_to(fmt, mpmath.bernoulli(2 * k) / (2 * k)) for k in range(k_psi, 0, -1)])),
-    ] + bessel_tables(fmt)
+    ] + bessel_tables(fmt) + igamma_tables(fmt)
 
 
 # The tables both dtypes share, highest degree first; a dtype rounds each
@@ -837,6 +1434,14 @@ def shared_tables():
         ("lgamma_stirling_from", ocaml_float(LGAMMA_STIRLING_FROM)),
         ("bessel_split", ocaml_float(BESSEL_SPLIT)),
         ("bessel_weight", ocaml_float(BESSEL_WEIGHT)),
+        ("igamma_corner", ocaml_float(IGAMMA_CORNER)),
+        ("igamma_temme_from", ocaml_float(IGAMMA_TEMME_FROM)),
+        ("igamma_temme_width", ocaml_float(IGAMMA_TEMME_WIDTH)),
+        ("igamma_near_v", ocaml_float(IGAMMA_NEAR_V)),
+        ("erfcx_far", ocaml_float(ERFCX_FAR)),
+        ("igamma_guess_p", ocaml_array([float(c) for c in reversed(GAMINV_A)])),
+        ("igamma_guess_q", ocaml_array([float(c) for c in reversed(GAMINV_B)] + [1.0])),
+        ("igamma_guess_terms", ocaml_float(float(GAMINV_TERMS))),
     ]
 
 
@@ -1221,6 +1826,172 @@ def bessel_points(fmt):
     return standard(fmt, rng, fmt.tiny, fmt.max, n_sweep=96) + uniform(fmt, rng, -20, 20, 96) + points + [-x for x in points]
 
 
+# The incomplete gamma family: its points are the regions' boundaries with
+# their neighbours, P along x = a for a log-spaced to 2^20, the small-a
+# corner, sweeps of x/a at log-spaced a, the edges and NaN, subnormals and
+# seeded random points. Points above a = 2^10 are thinned to the regions'
+# boundaries and the sweeps' ratios.
+
+IGAMMA_A_MAX = 2.0 ** 20
+
+
+def igamma_edge(a, x):
+    """P and Q at an edge of the domain, None inside it."""
+    if math.isnan(a) or math.isnan(x) or a <= 0 or x < 0:
+        return math.nan, math.nan
+    if a == math.inf:
+        return (math.nan, math.nan) if x == math.inf else (0.0, 1.0)
+    if x == math.inf:
+        return 1.0, 0.0
+    if x == 0:
+        return 0.0, 1.0
+    return None
+
+
+def igamma_reference(tail, log):
+    """The reference of P (tail 0) or Q (tail 1), or of its logarithm."""
+    def f(fmt, a, x):
+        edge = igamma_edge(a, x)
+        if edge is not None:
+            v = edge[tail]
+            return (math.log(v) if v > 0 else -math.inf) if log and not math.isnan(v) else v
+        if log:
+            return correctly_rounded(fmt, lambda a, x: igamma_exact(a, x)[tail], a, x)
+        return correctly_rounded(fmt, lambda a, x: mpmath.exp(igamma_exact(a, x)[tail]), a, x)
+    return f
+
+
+def igamma_points(fmt):
+    rng = random.Random(f"igamma {fmt.name}")
+    r = lambda v: round_to(fmt, mpf(v))
+    points = []
+    # The corner's edge at x = 1.1 and a = 1, and the series' x = max(a, 1.1).
+    for x in neighbours(fmt, IGAMMA_CORNER):
+        points += [(r(a), x) for a in (1e-10, 1e-3, 0.3, 0.999, 1.0, 1.05)]
+    for a in neighbours(fmt, 1.0):
+        points += [(a, r(x)) for x in (1e-3, 0.5, 1.05, 2.0, 30.0)]
+    # The series and the continued fraction meet at x = a.
+    for a in (1.5, 3.0, 7.9, 19.0, 19.99):
+        points += [(r(a), x) for x in neighbours(fmt, a)]
+    # Stirling's shift changes count at the integers below 8.
+    for a in range(2, 10):
+        points += [(b, r(a + 0.25)) for b in neighbours(fmt, a, 2)]
+    # bd0's series ends at |v| = 1/2, x = 3a and a/3.
+    for a in (1.5, 10.0, 1000.0):
+        points += [(r(a), x) for c in (3 * a, a / 3) for x in neighbours(fmt, c, 4)]
+    # Temme's window: a = 20 and x/a = 0.6 and 1.4.
+    for a in neighbours(fmt, IGAMMA_TEMME_FROM):
+        points += [(a, r(x)) for x in (11.0, 12.0, 15.0, 20.0, 25.0, 28.0, 29.0)]
+    for a in (20.0, 100.0, 1e4, IGAMMA_A_MAX):
+        for c in ((1 - IGAMMA_TEMME_WIDTH) * a, (1 + IGAMMA_TEMME_WIDTH) * a):
+            points += [(r(a), x) for x in neighbours(fmt, c, 4)]
+    # P along x = a.
+    points += [(a, a) for a in log_sweep(fmt, 1e-3, IGAMMA_A_MAX, 48)]
+    # The small-a corner.
+    points += [(r(1e-10), r(1e-10)), (r(1e-3), r(1e-2)), (fmt.tiny, fmt.tiny), (fmt.tiny, r(1.0)),
+               (r(1e-30), r(0.5)), (r(0.5), fmt.tiny)]
+    # Sweeps of x/a, and of x at small and large a.
+    ratios = [1e-30, 1e-6, 1e-3, 0.1, 0.5, 0.8, 0.95, 0.99, 1.01, 1.05, 1.2, 1.5, 2.0, 3.0, 5.0, 10.0, 30.0, 100.0]
+    for a in log_sweep(fmt, 1e-6, IGAMMA_A_MAX, 24):
+        points += [(a, r(a * q)) for q in ratios if a * q <= fmt.max and (a <= 2.0 ** 10 or 0.5 <= q <= 2)]
+    for a in (1e-6, 0.3, 2.5, 50.0):
+        points += [(r(a), x) for x in log_sweep(fmt, fmt.tiny, fmt.max, 24)]
+    # Edges and NaN.
+    edges = [0.0, 1.0, math.inf, math.nan, -1.0, fmt.tiny]
+    points += [(a, x) for a in (0.0, 0.5, 1.0, 30.0, math.inf, math.nan, -1.0, -math.inf) for x in edges + [-math.inf]]
+    points += [(fmt.max, r(1.0)), (fmt.max, fmt.max), (r(1.0), fmt.max)]
+    # Random points, x near a and far from it.
+    with mp.workprec(POINT_PREC):
+        lo, hi = mpmath.log(mpf("1e-4")), mpmath.log(mpf(2) ** 10)
+        for _ in range(96):
+            a = r(mpmath.exp(lo + (hi - lo) * mpf(rng.random())))
+            points.append((a, r(mpf(a) * mpmath.exp(mpf(rng.gauss(0, 1))))))
+        for _ in range(48):
+            points.append((r(mpmath.exp(mpf(rng.uniform(-10, 14)))), r(mpmath.exp(mpf(rng.uniform(-30, 10))))))
+    return points
+
+
+# gammaincinv and gammainccinv: the gamma's quantiles from either tail, at
+# a grid of a against probabilities from the least subnormal to 1, the ends,
+# the edges and seeded random points.
+
+def igamma_quantile(a, p, upper):
+    """x with P(a, x) = p (Q(a, x) = p where upper), by Newton in y = log x
+    on the logarithm of the smaller tail, which is concave in y, so Newton
+    converges from any start."""
+    a, p = mpf(a), mpf(p)
+    small, tail = (p, upper) if p <= mpf(1) / 2 else (1 - p, not upper)
+    target = mpmath.log(small)
+    lga = mpmath.loggamma(a)
+    if tail:
+        y = mpmath.log(max(-target + (a - 1) * mpmath.log(max(-target, mpf(1))) - lga, mpf(1)))
+        y = max(y, mpmath.log(a))
+    else:
+        y = (target + mpmath.loggamma(a + 1)) / a
+        y = min(y, mpmath.log(a) + 1)
+    for _ in range(500):
+        x = mpmath.exp(y)
+        lp, lq = igamma_exact(a, x)
+        lt = lq if tail else lp
+        slope = mpmath.exp(a * y - x - lga - lt) * (-1 if tail else 1)
+        step = (lt - target) / slope
+        y -= step
+        if abs(step) < mpf(2) ** -(mp.prec - 8) * max(abs(y), 1):
+            return mpmath.exp(y)
+    raise RuntimeError(f"no quantile at a = {a}, p = {p}")
+
+
+def igamma_quantile_edge(a, p, upper):
+    """The quantile at an edge, None inside the domain."""
+    if math.isnan(a) or math.isnan(p) or a <= 0 or p < 0 or p > 1:
+        return math.nan
+    low, high = (1.0, 0.0) if upper else (0.0, 1.0)
+    if p == low:
+        return 0.0
+    if p == high or a == math.inf:
+        return math.inf
+    return None
+
+
+def igamma_quantile_reference(upper):
+    def f(fmt, a, p):
+        edge = igamma_quantile_edge(a, p, upper)
+        if edge is not None:
+            return edge
+        return correctly_rounded(fmt, lambda a, p: igamma_quantile(a, p, upper), a, p)
+    return f
+
+
+def igamma_kappa(upper):
+    """|p / (x F'(x))| at the exact quantile x, F the tail."""
+    def extra(fmt, value, a, p):
+        if math.isnan(value) or math.isinf(value):
+            return "1"
+        if igamma_quantile_edge(a, p, upper) is not None:
+            return "0"
+        with mp.workprec(fmt.p + 40):
+            x = igamma_quantile(a, p, upper)
+            return scale(mpmath.exp(mpmath.log(mpf(p)) - (mpf(a) * mpmath.log(x) - x - mpmath.loggamma(mpf(a)))))
+    extra.__name__ = "kappa"
+    return extra
+
+
+def igamma_quantile_points(fmt):
+    rng = random.Random(f"igamma quantile {fmt.name}")
+    r = lambda v: round_to(fmt, mpf(v))
+    ps = ([fmt.tiny, r(1e-300) if fmt is F64 else r(1e-40), r(1e-30), r(1e-10), r(1e-3), r(0.01), r(0.1), r(0.3),
+           r(0.5), r(0.7), r(0.9), r(0.99), r(0.999)]
+          + [round_to(fmt, 1 - mpf(2) ** -k) for k in (10, 20, fmt.p - 1, fmt.p)])
+    ps = [p for p in ps if 0 < p < 1]
+    points = [(a, p) for a in log_sweep(fmt, 1e-4, IGAMMA_A_MAX, 20) + [r(1.0), r(0.5), r(20.0)] for p in ps]
+    points += [(a, p) for a in (0.0, 1.0, math.inf, math.nan, -1.0) for p in (0.0, 0.5, 1.0, math.nan, -0.5, 2.0)]
+    with mp.workprec(POINT_PREC):
+        lo, hi = mpmath.log(mpf("1e-4")), mpmath.log(mpf(2) ** 10)
+        for _ in range(96):
+            points.append((r(mpmath.exp(lo + (hi - lo) * mpf(rng.random()))), r(rng.uniform(0, 1))))
+    return points
+
+
 FUNCTIONS = [
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
@@ -1233,6 +2004,14 @@ FUNCTIONS = [
     Function("lbeta", ["a", "b"], lbeta_reference, lbeta_points),
     Function("i0e", ["x"], bessel_reference(i0e_exact, False), bessel_points),
     Function("i1e", ["x"], bessel_reference(i1e_exact, True), bessel_points),
+    Function("gammainc", ["a", "x"], igamma_reference(0, False), igamma_points),
+    Function("gammaincc", ["a", "x"], igamma_reference(1, False), igamma_points),
+    Function("log_gammainc", ["a", "x"], igamma_reference(0, True), igamma_points),
+    Function("log_gammaincc", ["a", "x"], igamma_reference(1, True), igamma_points),
+    Function("gammaincinv", ["a", "p"], igamma_quantile_reference(False), igamma_quantile_points,
+             extra=igamma_kappa(False)),
+    Function("gammainccinv", ["a", "q"], igamma_quantile_reference(True), igamma_quantile_points,
+             extra=igamma_kappa(True)),
 ]
 
 
@@ -1272,6 +2051,12 @@ def binding(text, name, value):
 
 
 COMMENTS = {
+    "igamma_guess_p": "The inverse's guess (DiDonato and Morris's GAMINV, TOMS 654): a normal "
+                      "quantile t - P(t)/Q(t) at t = sqrt (-2 log q), q the smaller tail.",
+    "igamma_corner": "The incomplete gamma's regions (DiDonato and Morris, ACM TOMS 12, 1986): "
+                     "the corner below a = 1 and x = [igamma_corner], Temme's expansion from a = "
+                     "[igamma_temme_from] where |x/a - 1| <= [igamma_temme_width], bd0's series "
+                     "to |v| = [igamma_near_v], v = (x - a)/(x + a).",
     "erx": "fdlibm's s_erf.c (1.3 95/01/18): " + FDLIBM_NOTICE
            + " [erx] is erf 1 rounded to 24 bits; [erf_small] is P/Q on [0, 0.84375) in x^2, "
              "[erf_near] on [0.84375, 1.25) in |x| - 1, [erfc_mid] and [erfc_far] the tails' "
@@ -1297,6 +2082,16 @@ COMMENTS = {
 }
 
 PER_DTYPE = {
+    "igamma_corner_terms": "The incomplete gamma's counts, each the least within u/8 of the value, "
+                           "16u/8 of its derivative in x and 2^-44 (2^-20 at float32) in a: the "
+                           "corner's series, P's series and Q's continued fraction. [igamma_atanh] is "
+                           "S(w) = sum_j w^(j-1)/(2j + 1), highest degree first, of bd0 to |v| = "
+                           "[igamma_near_v]; the shift of Stirling's correction from [1, 8) runs its "
+                           "last [igamma_shift_terms.(k)] in its k-th term. [igamma_temme] holds "
+                           "Temme's c_k(eta), k < K, each to the degree in [igamma_temme_degrees], "
+                           "highest first, one after the other. [erfcx_series] is erfc x e^(x^2) x "
+                           "sqrt pi from [erfcx_far], (-1)^k (2k - 1)!! in 1/(2x^2), highest first, "
+                           "its least count within u/8.",
     "erfinv_central": "erfinv's guess, Giles' polynomials (Approximating the erfinv function, GPU "
                       "Computing Gems Jade, 2011), single precision at float32 and double at "
                       "float64, in w = -log ((1 - p)(1 + p)): [central] in w - [central_shift] "

@@ -10,8 +10,10 @@ Writes `packages/rune/test/golden/special_grad/<fn>.golden`: at the points of
 nx's goldens (nx's test/gen/special.py) where the function and its
 derivative are finite, the derivative in each argument, correctly rounded at
 float32 and float64, in nx's golden format. `lgamma_2`, `lbeta_aa`,
-`lbeta_bb` and `lbeta_ab` hold second derivatives. A row whose bound is
-absolute and scaled holds the scale. With --check nothing is
+`lbeta_bb` and `lbeta_ab` hold second derivatives; an incomplete gamma's
+`<fn>_a`, `<fn>_x` and `<fn>_p` its derivative in each argument. A row whose
+bound is scaled holds the scale: a reflection's terms, 1 + |log f| or an
+inverse's condition number. With --check nothing is
 written, and the run fails if a golden would change.
 """
 
@@ -81,8 +83,9 @@ def pi2_csc2(x):
 
 
 class Derivative:
-    def __init__(self, name, of, d, extra=None, points=None):
+    def __init__(self, name, of, d, extra=None, points=None, normal=None):
         self.name, self.of, self.d, self.extra = name, of, d, extra
+        self.normal = normal
         self.points = points or of.points
 
     def golden(self):
@@ -97,6 +100,8 @@ class Derivative:
                     continue
                 seen.add(p)
                 if not finite(fmt, self.of, *p):
+                    continue
+                if self.normal and not self.normal(fmt, *p):
                     continue
                 value = nx.correctly_rounded(fmt, self.d, *p)
                 if math.isinf(value):
@@ -187,6 +192,99 @@ def i1e_points(fmt):
     return F["i1e"].points(fmt) + near + [-x for x in near]
 
 
+# The incomplete gamma family. In x, the density x^(a - 1) e^-x / Gamma(a)
+# with the tail's sign, over the tail for a logarithm; in a, mpmath's diff of
+# the exact logarithm of the tail, times the tail for a linear function. An
+# inverse's derivative is the reciprocal density in its probability and
+# -(dP/da) / density in a, at the exact quantile. Each row's scale is 1 +
+# |log f| for f the smaller tail, or the inverse's condition number.
+
+def in_a(f, a, size=1):
+    """f'(a) for a > 0, as the derivative in log a over a, so that no step
+    leaves a > 0, with guard bits for a function of magnitude `size`."""
+    with mp.workprec(mp.prec + int(mpmath.log(size + 1, 2)) + 20):
+        return mpmath.diff(lambda t: f(mpmath.exp(t)), mpmath.log(a)) / a
+
+
+def igamma_log_density(a, x):
+    return a * mpmath.log(x) - x - mpmath.loggamma(a) - mpmath.log(x)
+
+
+def igamma_d(tail, log, wrt):
+    def d(a, x):
+        if x == 0:
+            if log or wrt == 0:
+                return mpf(0)
+            slope = mpf(0) if a > 1 else mpf(1) if a == 1 else mpmath.inf
+            return slope if tail == 0 else -slope
+        sign = 1 if tail == 0 else -1
+        if wrt == 1:
+            # The density's and the tail's logarithms cancel where x is large:
+            # guard bits for their size.
+            size = abs(a * mpmath.log(x)) + x + abs(mpmath.loggamma(a)) + 1
+            with mp.workprec(mp.prec + int(mpmath.log(size, 2)) + 20):
+                lt = nx.igamma_exact(a, x)[tail]
+                ld = igamma_log_density(a, x)
+                return sign * mpmath.exp(ld - lt) if log else sign * mpmath.exp(ld)
+        lt = nx.igamma_exact(a, x)[tail]
+        dl = in_a(lambda s: nx.igamma_exact(s, x)[tail], a, abs(lt))
+        return dl if log else dl * mpmath.exp(lt)
+    return d
+
+
+def igamma_log_scale(fmt, value, a, x):
+    """1 + |log f|, f the smaller tail at the row's point: P's derivative is
+    Q's negated, and carries the smaller tail's relative error."""
+    if x == 0:
+        return "1"
+    with mp.workprec(fmt.p + 40):
+        return nx.scale(1 + max(abs(t) for t in nx.igamma_exact(a, x)))
+
+
+def igamma_quantile_d(upper, wrt):
+    def d(a, p):
+        x = nx.igamma_quantile(a, p, upper)
+        ld = igamma_log_density(a, x)
+        if wrt == 1:
+            return (-1 if upper else 1) * mpmath.exp(-ld)
+        dlp = in_a(lambda s: nx.igamma_exact(s, x)[0], a)
+        lp = nx.igamma_exact(a, x)[0]
+        return -dlp * mpmath.exp(lp - ld)
+    return d
+
+
+# A derivative through the exponential of a logarithm underflows with the
+# smaller tail: the linear functions' derivatives are held where it is
+# normal, and at the domain's end x = 0, an inverse's where its result is.
+
+def tails_normal(fmt, a, x):
+    if x == 0:
+        return True
+    with mp.workprec(fmt.p + 40):
+        return min(mpmath.exp(t) for t in nx.igamma_exact(a, x)) >= fmt.min_normal
+
+
+def result_normal(f):
+    return lambda fmt, a, p: abs(f.reference(fmt, a, p)) >= fmt.min_normal
+
+
+def thinned(f, every=3):
+    """Every third of nx's points where the derivative's arguments are in the
+    domain of its bound, and the edge x = 0."""
+    def points(fmt):
+        pts = [p for p in f.points(fmt)
+               if all(math.isfinite(v) for v in p) and 0 < p[0] <= nx.IGAMMA_A_MAX and p[1] >= 0]
+        edges = [(0.5, 0.0), (1.0, 0.0), (2.5, 0.0)] if f.args[1] == "x" else []
+        return pts[::every] + edges
+    return points
+
+
+def quantile_points(f):
+    def points(fmt):
+        return [p for p in thinned(f)(fmt) if 0 < p[1] < 1]
+    return points
+
+
 DERIVATIVES = [
     Derivative("erfc", F["erfc"],
                vanishing(lambda x: -2 / mpmath.sqrt(mpmath.pi) * mpmath.exp(-x * x), 100)),
@@ -216,6 +314,18 @@ DERIVATIVES = [
     Derivative("lbeta_ab", F["lbeta"], lambda a, b: -trigamma(a + b), points=lbeta_points_2),
     Derivative("i0e", F["i0e"], i0e_slope),
     Derivative("i1e", F["i1e"], i1e_slope, points=i1e_points),
+] + [
+    Derivative(f"{name}_{arg}", F[name], igamma_d(tail, log, wrt), extra=igamma_log_scale,
+               points=thinned(F[name]), normal=None if log else tails_normal)
+    for name, tail, log in [("gammainc", 0, False), ("gammaincc", 1, False),
+                            ("log_gammainc", 0, True), ("log_gammaincc", 1, True)]
+    for arg, wrt in [("a", 0), ("x", 1)]
+] + [
+    Derivative(f"{name}_{arg}", F[name], igamma_quantile_d(upper, wrt),
+               extra=nx.igamma_kappa(upper) if wrt == 1 else None, points=quantile_points(F[name]),
+               normal=result_normal(F[name]))
+    for name, upper in [("gammaincinv", False), ("gammainccinv", True)]
+    for arg, wrt in [("a", 0), ("p", 1)]
 ]
 
 

@@ -2486,6 +2486,53 @@ val i1e : (float, 'b) t -> (float, 'b) t
     the von Mises distribution of concentration [k]. [i1e] is odd, so [i1e
     (-0.)] is [-0.], and it is [-0] at [-inf] and [0] at [+inf]. *)
 
+val gammainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [gammainc a x] is the regularised lower incomplete gamma function [P(a, x)
+    = (1/Γ(a)) ∫₀ˣ uᵃ⁻¹ e⁻ᵘ du], the distribution function at [x] of the gamma
+    distribution of concentration [a] and unit rate. For [0 < a ≤ 2^20] it is
+    within [32 (1 + |log P|) + 4] ulps. It is [0] at [x = 0] and [1] at [x =
+    +inf]; where [a] is [+inf] it is [0] for finite [x]. It is NaN where [a ≤
+    0] or [x < 0], and at [a = x = +inf].
+
+    {@ocaml[
+      # gammainc (scalar float64 1.) (scalar float64 2.) |> item []
+      - : float = 0.864664716763387298
+    ]} *)
+
+val gammaincc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [gammaincc a x] is [Q(a, x) = 1 - P(a, x)] ({!gammainc}), the gamma
+    distribution's upper tail, within the same bound in [|log Q|]. It keeps its
+    relative precision where [P] rounds to [1]: [gammaincc 1 40] is [e^-40].
+    Its edges are [gammainc]'s complements. *)
+
+val log_gammainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [log_gammainc a x] is [log P(a, x)] ({!gammainc}), within 16 ulps, or
+    [16ε] absolutely where it is below [1] in magnitude, for [0 < a ≤ 2^20]. It
+    is finite wherever [x > 0] and [a] is finite, where [P] underflows:
+
+    {@ocaml[
+      # log_gammainc (scalar float64 1000.) (scalar float64 1.) |> item []
+      - : float = -5913.12717898882784
+    ]} *)
+
+val log_gammaincc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [log_gammaincc a x] is [log Q(a, x)] ({!gammaincc}), within the bound of
+    {!log_gammainc}, finite wherever [x] and [a] are. *)
+
+val gammaincinv : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [gammaincinv a p] is the gamma distribution's quantile, the [x] with
+    [gammainc a x = p], for [a > 0] and [p] in \[[0], [1]\]. For [a ≤ 2^20] it
+    is within [4 + κ (32 (1 + |log p|) + 4)] ulps, where [κ = |p / (x ∂ₓP(a,
+    x))|] is the inverse's condition number. A [p] above [1/2] is read as one
+    minus the upper tail, so the result keeps its precision near either end. It
+    is [0] at [p = 0], [+inf] at [p = 1] and where [a] is [+inf], and NaN where
+    [a ≤ 0] or [p] is outside \[[0], [1]\]. *)
+
+val gammainccinv : (float, 'b) t -> (float, 'b) t -> (float, 'b) t
+(** [gammainccinv a q] is the [x] with [gammaincc a x = q] ({!gammaincinv}
+    from the upper tail), within the same bound in [q]: [+inf] at [q = 0] and
+    [0] at [q = 1]. *)
+
 (** {1:comparison Comparison and logic} *)
 
 val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t

@@ -116,6 +116,71 @@ let bessel =
       unary "i1e" ~bound:(everywhere (Ulps 8)) { u = Nx.i1e };
     ]
 
+(* The incomplete gamma family. Its bounds hold for [a <= 2^20]; above, the
+   goldens' few rows are edges. *)
+
+let in_domain row =
+  let a = row.args.(0) in
+  not (Float.is_finite a && a > 0x1p20)
+
+type b = { b : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t }
+
+let binary name ~bound ?scale ~firsts ~seconds { b } =
+  let f = { f = (fun a -> b a.(0) a.(1)) } in
+  let scale =
+    Option.map (fun { b } -> { f = (fun a -> b a.(0) a.(1)) }) scale
+  in
+  group name
+    [
+      group "against the goldens" (check ~keep:in_domain ~bound (golden name) f);
+      group "at every narrow float"
+        (narrow2
+           ~keep:(fun args -> args.(0) <= 0x1p20)
+           ~bound ?scale ~firsts ~seconds f);
+    ]
+
+(* An inverse's condition number [|p / (x ∂ₓF)|] at its result [x], [F] the
+   tail, [∂ₓP = x^(a - 1) e^-x / Γ(a)]. *)
+let quantile_kappa (inverse : b) =
+  {
+    b =
+      (fun a p ->
+        let x = inverse.b a p in
+        let open Nx in
+        let density = sub (sub (mul a (log x)) x) (lgamma a) in
+        exp (sub (log p) density));
+  }
+
+(* The forward bound at [f], in ulps, rounded down. *)
+let forward f = int_of_float (log_ulps 16 f)
+let inverse_bound args = Inverse (4, forward args.(1))
+
+(* The partners of every narrow float: two of the parameter and two of the
+   variable, three for an inverse, whose program is three times as long. *)
+let parameters = [ 0.5; 10. ]
+let variables = [ 1.; 20. ]
+
+let incomplete_gamma =
+  group "incomplete gamma"
+    [
+      binary "gammainc" ~bound:(everywhere (Log_ulps 16)) ~firsts:parameters
+        ~seconds:variables { b = Nx.gammainc };
+      binary "gammaincc" ~bound:(everywhere (Log_ulps 16)) ~firsts:parameters
+        ~seconds:variables { b = Nx.gammaincc };
+      binary "log_gammainc"
+        ~bound:(everywhere (Near_zeros (16, 16)))
+        ~firsts:parameters ~seconds:variables { b = Nx.log_gammainc };
+      binary "log_gammaincc"
+        ~bound:(everywhere (Near_zeros (16, 16)))
+        ~firsts:parameters ~seconds:variables { b = Nx.log_gammaincc };
+      binary "gammaincinv" ~bound:inverse_bound
+        ~scale:(quantile_kappa { b = Nx.gammaincinv })
+        ~firsts:[ 2.5 ] ~seconds:[ 0.1; 0.9 ] { b = Nx.gammaincinv };
+      binary "gammainccinv" ~bound:inverse_bound
+        ~scale:(quantile_kappa { b = Nx.gammainccinv })
+        ~firsts:[ 2.5 ] ~seconds:[ 0.1; 0.9 ] { b = Nx.gammainccinv };
+    ]
+
 (* Laws
 
    Identities the functions keep, at float64 over drawn batches, each within the
@@ -282,4 +347,203 @@ let laws =
             (values (i0e x)));
     ]
 
-let () = exit (run "nx special" [ error_function; normal; gamma; bessel; laws ])
+(* The incomplete gamma's laws, at float64, each within the sum of its terms'
+   bounds. *)
+
+let log_batch lo hi =
+  Gen.with_pp Nx.pp
+    (Gen.map
+       (fun xs -> Nx.exp (Nx.create Nx.float64 [| Array.length xs |] xs))
+       (Gen.array ~size:(Gen.constant 32)
+          (Gen.float_range (Stdlib.log lo) (Stdlib.log hi))))
+
+let pairs = Gen.pair (log_batch 1e-3 1e4) (log_batch 1e-3 1e4)
+
+(* The linear bound in ulps of [f], as a tolerance: [u] for an ulp. *)
+let linear f =
+  if f = 0. then 0. else log_ulps 16 f *. (eps /. 2.) *. Float.abs f
+
+let gamma_laws =
+  let open Nx in
+  let elementwise f a b c =
+    let a = values a and b = values b and c = values c in
+    Array.iteri (fun i a -> f i a b.(i) c.(i)) a
+  in
+  group "incomplete gamma laws"
+    [
+      prop "gammainc + gammaincc is 1" pairs (fun (a, x) ->
+          elementwise
+            (fun i p q _ ->
+              at_most
+                ~msg:(Printf.sprintf "the error at element %d" i)
+                float_exact
+                ~than:(linear p +. linear q +. eps)
+                (Float.abs (p +. q -. 1.)))
+            (gammainc a x) (gammaincc a x) x);
+      prop "log_gammainc is log1p (-gammaincc) where gammaincc < 1/2" pairs
+        (fun (a, x) ->
+          elementwise
+            (fun i lp q _ ->
+              if q < 0.5 then
+                at_most
+                  ~msg:(Printf.sprintf "the error at element %d" i)
+                  float_exact
+                  ~than:
+                    ((16. *. eps *. Float.max 1. (Float.abs lp))
+                    +. (2. *. linear q))
+                  (Float.abs (lp -. Stdlib.log1p (-.q))))
+            (log_gammainc a x) (gammaincc a x) x);
+      prop "log_gammaincc is log1p (-gammainc) where gammainc < 1/2" pairs
+        (fun (a, x) ->
+          elementwise
+            (fun i lq p _ ->
+              if p < 0.5 then
+                at_most
+                  ~msg:(Printf.sprintf "the error at element %d" i)
+                  float_exact
+                  ~than:
+                    ((16. *. eps *. Float.max 1. (Float.abs lq))
+                    +. (2. *. linear p))
+                  (Float.abs (lq -. Stdlib.log1p (-.p))))
+            (log_gammaincc a x) (gammainc a x) x);
+      prop "gammainc is exp log_gammainc" pairs (fun (a, x) ->
+          Windtrap.equal
+            (Windtrap.array float_exact)
+            (values (exp (log_gammainc a x)))
+            (values (gammainc a x)));
+      prop "gammaincinv inverts gammainc" pairs (fun (a, x) ->
+          let p = gammainc a x in
+          let back = gammaincinv a p in
+          let kappa = values ((quantile_kappa { b = gammaincinv }).b a p) in
+          elementwise
+            (fun i x p back ->
+              if p >= 0x1p-1022 && p < 1. then
+                at_most
+                  ~msg:(Printf.sprintf "the error at element %d" i)
+                  float_exact
+                  ~than:((4. +. (2. *. kappa.(i) *. log_ulps 16 p)) *. eps *. x)
+                  (Float.abs (back -. x)))
+            x p back);
+      prop "gammainccinv inverts gammaincc" pairs (fun (a, x) ->
+          let q = gammaincc a x in
+          let back = gammainccinv a q in
+          let kappa = values ((quantile_kappa { b = gammainccinv }).b a q) in
+          elementwise
+            (fun i x q back ->
+              if q >= 0x1p-1022 && q < 1. then
+                at_most
+                  ~msg:(Printf.sprintf "the error at element %d" i)
+                  float_exact
+                  ~than:((4. +. (2. *. kappa.(i) *. log_ulps 16 q)) *. eps *. x)
+                  (Float.abs (back -. x)))
+            x q back);
+      prop "gammainc increases in x and decreases in a"
+        (Gen.pair pairs (log_batch 1e-6 1.))
+        (fun ((a, x), d) ->
+          let up = mul x (add_s d 1.) in
+          let more = mul a (add_s d 1.) in
+          elementwise
+            (fun i p q r ->
+              at_most
+                ~msg:(Printf.sprintf "P(a, x) at element %d" i)
+                float_exact ~than:q p;
+              at_most
+                ~msg:(Printf.sprintf "P(a', x) at element %d" i)
+                float_exact ~than:p r)
+            (gammainc a x) (gammainc a up) (gammainc more x));
+      prop "gammaincc 1 x is exp (-x)" (log_batch 1e-300 700.) (fun x ->
+          let q = gammaincc (ones_like x) x in
+          let e = Nx.exp (neg x) in
+          elementwise
+            (fun i q e _ ->
+              at_most
+                ~msg:(Printf.sprintf "the error at element %d" i)
+                float_exact
+                ~than:(linear e +. (2. *. eps *. e))
+                (Float.abs (q -. e)))
+            q e x);
+      prop "gammainc 1/2 x is erf (sqrt x)" (log_batch 1e-6 30.) (fun x ->
+          let p = gammainc (full_like x 0.5) x in
+          let e = erf (sqrt x) in
+          elementwise
+            (fun i p e _ ->
+              at_most
+                ~msg:(Printf.sprintf "the error at element %d" i)
+                float_exact
+                ~than:(linear e +. (4. *. eps *. e))
+                (Float.abs (p -. e)))
+            p e x);
+      prop "log_gammainc a x tends to a log x - lgamma (a + 1) as x goes to 0"
+        (Gen.pair (log_batch 1e-3 1e3) (log_batch 1e-300 1e-200))
+        (fun (a, x) ->
+          let r = sub (mul a (log x)) (lgamma (add_s a 1.)) in
+          elementwise
+            (fun i l r _ ->
+              at_most
+                ~msg:(Printf.sprintf "the error at element %d" i)
+                float_exact
+                ~than:(32. *. eps *. Float.abs r)
+                (Float.abs (l -. r)))
+            (log_gammainc a x) r x);
+      prop "gammainc a x tends to 1 as a goes to 0" (log_batch 1e-30 1e3)
+        (fun x ->
+          Windtrap.equal
+            (Windtrap.array float_exact)
+            (Array.make 32 1.)
+            (values (gammainc (full_like x 1e-300) x)));
+      cases
+        ~name:(fun (a, x, _, _) -> Printf.sprintf "at a = %g, x = %g" a x)
+        "edges"
+        [
+          (1., 0., 0., 1.);
+          (0.5, 0., 0., 1.);
+          (1., Float.infinity, 1., 0.);
+          (Float.infinity, 1., 0., 1.);
+          (Float.infinity, 0., 0., 1.);
+          (Float.infinity, Float.infinity, Float.nan, Float.nan);
+          (0., 1., Float.nan, Float.nan);
+          (-1., 1., Float.nan, Float.nan);
+          (1., -1., Float.nan, Float.nan);
+          (Float.nan, 1., Float.nan, Float.nan);
+          (1., Float.nan, Float.nan, Float.nan);
+          (Float.nan, 0., Float.nan, Float.nan);
+        ]
+        (fun (a, x, p, q) ->
+          let a = scalar float64 a and x = scalar float64 x in
+          Windtrap.equal float_exact p (item [] (gammainc a x));
+          Windtrap.equal float_exact q (item [] (gammaincc a x));
+          Windtrap.equal float_exact (Stdlib.log p) (item [] (log_gammainc a x));
+          Windtrap.equal float_exact (Stdlib.log q)
+            (item [] (log_gammaincc a x)));
+      cases
+        ~name:(fun (a, p, _) -> Printf.sprintf "gammaincinv %g %g" a p)
+        "quantile edges"
+        [
+          (1., 0., 0.);
+          (1., 1., Float.infinity);
+          (Float.infinity, 0.5, Float.infinity);
+          (Float.infinity, 0., 0.);
+          (0., 0.5, Float.nan);
+          (1., 1.5, Float.nan);
+          (1., -0.5, Float.nan);
+          (Float.nan, 0.5, Float.nan);
+          (1., Float.nan, Float.nan);
+        ]
+        (fun (a, p, x) ->
+          let a = scalar float64 a and p = scalar float64 p in
+          Windtrap.equal float_exact x (item [] (gammaincinv a p));
+          Windtrap.equal float_exact x (item [] (gammainccinv a (rsub_s 1. p))));
+    ]
+
+let () =
+  exit
+    (run "nx special"
+       [
+         error_function;
+         normal;
+         gamma;
+         bessel;
+         incomplete_gamma;
+         laws;
+         gamma_laws;
+       ])
