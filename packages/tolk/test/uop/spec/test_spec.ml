@@ -342,6 +342,18 @@ let loops =
                 [ Some false; Some false; Some false; Some false ]
                 (kernel_graph_judges axis_type))
             Ops.Axis_type.[ Weak; Global; Reduce; Upcast ]);
+      test
+        "accepts a loop's call whose scalar argument is an expression of its \
+         range" (fun () ->
+          let v, r = row Loop in
+          let trip = Ops.O.(int 2 - r) in
+          let call =
+            Ops.call ~precompile:true (Ops.v Op.Linear ~src:[]) [ v; trip ]
+          in
+          equal (list verdict)
+            [ Some true; Some true; Some true ]
+            (List.map (judge Spec.kernel_graph)
+               [ Ops.end_ call [ r ]; call; trip ]));
       test "accepts an open device range" (fun () ->
           equal verdict (Some true)
             (judge Spec.kernel_graph

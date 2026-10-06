@@ -1165,6 +1165,10 @@ thread.
 
 ### Tolk (new)
 
+- A precompiled call inside a loop may pass a scalar parameter of its body a
+  weak integer expression of the loop's ranges, such as `2r + 1`: each trip's
+  kernels read it, and their programs compile once for any loop.
+  `Realize.get_call_arg_uops` leaves out every scalar argument.
 - tolk is no longer linked with `-linkall`: a program links only the modules
   it reaches. tolk's test of `Op` shrinks from 8.3 MB to 4.4 MB.
 - **Breaking:** the rules `Shape.simplify` rewrites with are `Shape`'s:

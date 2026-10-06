@@ -17,13 +17,16 @@
 
 val get_call_arg_uops : Ops.t -> Ops.t list
 (** [get_call_arg_uops call] is the buffer arguments of [call]: its arguments
-    without the bound variables. *)
+    without its scalar ones, the variables it binds and the values it passes. *)
 
 val get_call_var_uops : Ops.t -> Ops.t -> Ops.t list
 (** [get_call_var_uops call prg] is the value of each variable of the program
-    [prg] ({!Ops.program_info.vars}), in order: the constant [call] binds it to,
-    or the variable itself when [call] leaves it free. The bounds of a split
-    program's block ({!Ops.kernel_info.split}) are those of its whole loop. *)
+    [prg] ({!Ops.program_info.vars}), in order: for a scalar parameter of the
+    program, which a slot names, [call]'s argument in that slot, an expression
+    of the loops around [call]; for a named variable, the constant [call] binds
+    it to, or the variable itself when [call] leaves it free. The bounds of a
+    split program's block ({!Ops.kernel_info.split}) are those of its whole
+    loop. *)
 
 val get_call_outs_ins : Ops.t -> int list * int list
 (** [get_call_outs_ins call] is the positions among {!get_call_arg_uops} of the

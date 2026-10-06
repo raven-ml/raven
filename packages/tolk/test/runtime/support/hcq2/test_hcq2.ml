@@ -2343,6 +2343,35 @@ let chunks_a_long_range () =
     (Array.init (4 * n) (fun i -> float_of_int (i + 1)))
     (floats_of (List.hd (List.assq dst bound)))
 
+(* [n] trips of a kernel that stores its scalar argument, the trip, into its
+   window, more calls than a batch holds: each chunk's trips and the trips left
+   read their own trip. *)
+let chunks_read_their_trips () =
+  let n = (2 * Hcq2.chunk_calls) + 5 in
+  let r = Ops.range (Int n) [ Ops.unique_num () ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Shape.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let dst = storage ~n:(4 * n) "CPU:1" in
+  let index = Call.param ~addrspace:(Some Alu) 1 Int32 in
+  let stores =
+    map_kernel ~name:"index" (Single "CPU:1") 4 (fun _ ->
+        Ops.cast index Float32)
+  in
+  let devices = Null_device.devices () in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun d -> (devices d).compiler)
+      (linear [ Ops.end_ (Ops.call stores [ window dst; r ]) [ r ] ])
+  in
+  let bound = [ (dst, [ new_floats "CPU:1" (Array.make (4 * n) 0.) ]) ] in
+  Tolk_engine.run (Tolk_engine.link ~devices ~bound compiled) [||];
+  Null_device.synchronize ();
+  equal floats
+    (Array.init (4 * n) (fun i -> float_of_int (i / 4)))
+    (floats_of (List.hd (List.assq dst bound)))
+
 let ranges =
   group "ranges"
     [
@@ -2350,6 +2379,8 @@ let ranges =
         "a range of more calls than a chunk runs as a batch of a chunk, once \
          per chunk"
         chunks_a_long_range;
+      test "each trip of a chunked range reads its trip as a scalar argument"
+        chunks_read_their_trips;
       test "a range its queue cannot hold in one submission runs as several"
         splits_a_range_its_queue_cannot_hold;
       test "a call its queue cannot hold in one submission is refused"

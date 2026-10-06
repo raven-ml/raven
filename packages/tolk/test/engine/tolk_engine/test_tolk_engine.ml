@@ -1036,6 +1036,112 @@ let loops_on_the_host =
     Gen.(pair (int_range (-1) 6) (int_range 1 5))
     (fun bounds -> loops_while_a_flag_holds "CPU" bounds)
 
+(* The scalar arguments a loop of [n] trips gives its call, as functions of the
+   range and of the trip. *)
+let trip_arguments n =
+  [
+    ("r", Fun.id, Fun.id);
+    ("2r + 1", (fun r -> Ops.O.((r * int 2) + int 1)), fun t -> (2 * t) + 1);
+    ("n - 1 - r", (fun r -> Ops.O.(int (Int.pred n) - r)), fun t -> n - 1 - t);
+  ]
+
+(* A loop of [n] trips of the range [axis] on the device [d] around a call that
+   stores its scalar argument, an expression of the range, into its row of [ys],
+   16 bytes apart, compiled, with [ys] and the flag [f]. With [limit], the loop
+   is a back edge, at most [n] trips, whose call also stores into [f] whether
+   its argument plus one is below [limit]. *)
+let trip_loop ?(devices = devices) ?limit ?(axis = 100) d n arg =
+  let at = Ops.Single d in
+  let index = Call.param ~addrspace:(Some Alu) 2 Int32 in
+  let p slot dt = Call.param ~shape:[ Int 1 ] ~device:at slot dt in
+  let flag =
+    match limit with
+    | None -> []
+    | Some limit ->
+        [
+          Ops.store (p 1 Bool)
+            (Shape.reshape Ops.O.(index + int 1 < int limit) [ Int 1 ]);
+        ]
+  in
+  let body =
+    Ops.sink (Ops.store (p 0 Int32) (Shape.reshape index [ Int 1 ]) :: flag)
+  in
+  let f = Ops.new_buffer at 1 Bool and ys = Ops.new_buffer at (4 * n) Int32 in
+  let r = Ops.range ~axis_type:Loop (Int n) [ axis ] in
+  let row =
+    Shape.shrink ys
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
+  in
+  let call = Ops.call ~precompile:true body [ row; f; arg r ] in
+  let e =
+    match limit with
+    | None -> Ops.end_ call [ r ]
+    | Some _ -> Ops.backedge call ~loop:r ~cond:f
+  in
+  let linear, _ =
+    Schedule.create_linear_with_vars
+      (Ops.sink [ Ops.after ys [ e ]; Ops.after f [ e ] ])
+  in
+  ( Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear,
+    ys,
+    f )
+
+let reads_its_trip ?(devices = devices) ?limit d n (_, arg, expected) =
+  let compiled, ys, f = trip_loop ~devices ?limit d n arg in
+  let on = (devices d).device in
+  let ys_buffer =
+    Run.buffer on Int32 (Array.make (4 * n) (`Int Bigint.minus_one))
+  in
+  (* A trip runs while the flag the trip before stored holds. *)
+  let rec trips t =
+    match limit with
+    | Some l when t > 0 && expected (t - 1) + 1 >= l -> t
+    | _ -> if t < n then trips (t + 1) else t
+  in
+  let trips = trips 0 in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [ (ys, [ ys_buffer ]); (f, [ Run.buffer on Bool [| `Bool true |] ]) ]
+      compiled
+  in
+  Engine.run s [||];
+  equal values
+    (Array.init (4 * n) (fun i ->
+         if i mod 4 = 0 && i / 4 < trips then
+           `Int (Bigint.of_int (expected (i / 4)))
+         else `Int Bigint.minus_one))
+    (Run.values Int32 ys_buffer)
+
+(* Loops of 5 and 9 trips, of two ranges, around one call of their trip compile
+   one program: it names its trip by its slot, whatever the range and its
+   trips. *)
+let one_program_for_any_loop () =
+  let _, arg, _ = List.nth (trip_arguments 5) 1 in
+  let programs axis n =
+    let compiled, _, _ = trip_loop ~axis "CPU" n arg in
+    List.filter
+      (fun u -> Ops.op u = Op.Program)
+      (Ops.toposort ~calls:Enter compiled)
+  in
+  equal int 1
+    (List.length (List.sort_uniq Ops.compare (programs 100 5 @ programs 101 9)))
+
+let reads_trips_on ?devices d =
+  cases
+    ~name:(fun (name, _, _) -> name)
+    "a loop's call reads its trip as a scalar argument on each trip"
+    (trip_arguments 5)
+    (reads_its_trip ?devices d 5)
+
+let reads_trips_under_a_back_edge ?devices d =
+  prop "a back edge's call reads its trip on each trip, at most its trips"
+    Gen.(pair (int_range 0 2) (int_range 1 6))
+    (fun (k, limit) ->
+      reads_its_trip ?devices ~limit d 4 (List.nth (trip_arguments 4) k))
+
 (* A scan of three trips, linked once and run on rows of [xs] and [ys], which
    each run binds to its parameters, and of [zs], linked with the carry [c].
    Each trip stores [c * 2] into its row of [ys] and adds its row of [xs] to
@@ -1371,6 +1477,10 @@ let schedules =
       replays_a_scan;
       loops_on_the_host;
       loops_around_calls_on_the_host;
+      reads_trips_on "CPU";
+      reads_trips_under_a_back_edge "CPU";
+      test "loops of any range and trips around one call compile one program"
+        one_program_for_any_loop;
       test "a loop's flag that views wider storage is refused"
         refuses_a_view_as_flag;
       test "a planned buffer a range writes is not placed over one it leaves"
@@ -2736,6 +2846,8 @@ let metal =
         "a loop runs its calls in order each trip while its flag holds"
         Gen.(pair (int_range (-1) 40) (int_range 1 6))
         (fun bounds -> loops_around_calls ~devices:on_metal "CPU:1" bounds);
+      reads_trips_on ~devices:on_metal "CPU:1";
+      reads_trips_under_a_back_edge ~devices:on_metal "CPU:1";
     ]
 
 let () =

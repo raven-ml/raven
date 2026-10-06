@@ -1074,8 +1074,9 @@ the Exclusions of `README.md`.
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
   linear whose words read the ranges, directly or through the address of a
-  nested linear that reads them, such as a kernel's arguments or a launch
-  descriptor that addresses them, has a copy for each trip, which the trip's
+  nested linear that reads them, such as a kernel's arguments, its scalar
+  arguments among them (D140), or a launch descriptor that addresses them, has
+  a copy for each trip, which the trip's
   words address. A call's position counts
   every run of the calls before it, and a call waits for the calls on other
   queues it depends on in the current trip and, after it, in the trip before
@@ -1830,7 +1831,8 @@ the Exclusions of `README.md`.
   already run. An end over device ranges is still the call, bound at launch.
   The kernel graph spec admits loop ranges, ends of calls over them, and
   views that move with them, whose bounds are constants, loop ranges, and
-  weak integer sums and products of them; a range of any other kind outside
+  weak integer sums and products of them, which a call may also pass as a
+  scalar argument (D140); a range of any other kind outside
   a kernel is still refused, so a range rangeify leaks never runs as a loop.
   tinygrad has no such loop: its `split_store` wraps the end in a kernel of
   its own, and its `create_schedule` drops the end.
@@ -2518,7 +2520,8 @@ stores through a pad.
   global memory reads, runs `block_lo + r` for `r` below
   `block_hi - block_lo`. `block_lo` and `block_hi` are new variables of the
   range's type, bounded by `[0, n]` for a loop of `n` iterations, in the
-  first two slots past those the kernel's parameters took, and named afresh
+  first two slots past those the kernel's parameters took, a loop's trip
+  among them (D140), and named afresh
   where the kernel has a variable of either name. The variables numbered
   after them take the slots past every slot a parameter takes, where tinygrad
   numbers them from the count of the numbered parameters
@@ -3759,7 +3762,8 @@ stores through a pad.
   linear of calls, with a loop range of at most as many trips and a flag, one
   boolean of storage the calls write. The schedule keeps it as an entry; hcq2
   batches its calls alone, trip by trip, with the range read as a variable,
-  and runs a range around one from the engine; the engine reads the flag
+  which a call's scalar argument reads too (D140), and runs a range around one
+  from the engine; the engine reads the flag
   before each trip and runs the calls while it holds. tinygrad's schedules run
   each call once, and stop on no value.
 - **Reason:** (b). rune's `Rune.iterate` under `Rune.jit` stages a loop that
@@ -4224,3 +4228,45 @@ stores through a pad.
   initialised, which holds only while every module of the library is linked.
 - **Pinned by:** the `Spec` suite: `construction › builds a node that breaks
   the full specification, whatever SPEC (D139)`.
+
+## D140. A call of a loop takes its trip as a scalar argument
+
+- **tinygrad:** `schedule/__init__.py:103-115` (`resolve_linear_call`, which
+  binds a scalar parameter only to a variable, and substitutes it into each
+  kernel that reads it), `engine/realize.py:15-17` (`get_call_arg_uops`, which
+  leaves out bound variables only, and `get_call_var_uops`, which reads each
+  variable by its name).
+- **tolk:** `lib/schedule/schedule.ml:59` (`scalar_argument`), `:259`
+  (`pass_values`) and `:283` (`resolve_linear_call`);
+  `lib/engine/realize.ml:14` (`get_call_arg_uops`) and `:17`
+  (`get_call_var_uops`);
+  `engine/tolk_engine.ml:473` (`reader`).
+- **Differs:** a precompiled call inside a loop may pass a scalar parameter of
+  its body a weak integer expression of the loop's ranges, such as `r`,
+  `2r + 1` or `n - 1 - r`. The schedule keeps it as the call's argument, no
+  state. Each kernel of the body that reads the parameter keeps it, unnamed,
+  in a slot past the kernel's buffers, bounded by its type, and its call passes
+  the expression in that slot: `get_call_var_uops` reads an unnamed variable of
+  a program from its call's slot, and `get_call_arg_uops` leaves out every
+  scalar argument, a free variable included. The value reaches the program
+  as any variable's does, converted to the parameter's type at the ABI (D28):
+  a queue's batch writes a word of a kernel's arguments that reads the range,
+  copied per trip (D30); a chunk's trips read the chunk's variable (D67); and a
+  launch the engine makes on a trip computes the expression from the ranges'
+  cells. The kernel's program depends on neither the range nor its trips, so
+  that loops of any range and length compile one. tinygrad has no loop of
+  calls, and its calls bind a scalar only to a variable, by name.
+- **Reason:** (b). rune's `Loop.repeat` and staged scans give each step its
+  trip's index, which a kernel or a buffer of indices would otherwise compute.
+- **Pinned by:** the `Schedule` suite: `create_linear_with_vars › loops of
+  calls › a loop's call passes its kernel the trip as a scalar argument`; the
+  `Spec` suite: `kernel_graph › loops of calls › accepts a loop's call whose
+  scalar argument is an expression of its range`; the `Realize` suite:
+  `get_call_arg_uops › is a call's storage arguments in order, without its
+  scalar ones` and `get_call_var_uops › is the call's argument in the slot of a
+  scalar parameter`; the `Tolk_engine` suite: `link and run › a loop's call
+  reads its trip as a scalar argument on each trip`, `› a back edge's call
+  reads its trip on each trip, at most its trips`, `› loops of any range and
+  trips around one call compile one program`, and the same two on Metal; the
+  Hcq2 suite: `ranges › each trip of a chunked range reads its trip as a scalar
+  argument`.

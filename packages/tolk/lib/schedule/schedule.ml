@@ -52,10 +52,12 @@ let rec states s =
       invalid_arg
         (Format.asprintf "a kernel's input is a buffer state, not %a" Op.pp o)
 
-(* An empty argument of a precompiled call is its constant (Rangeify): the body,
-   scheduled on its own, reaches no element of it, and it is no state. *)
-let empty_argument k s =
-  op (unwrap_src s) = Op.Const
+(* A scalar argument of a precompiled call is no state: the constant of an
+   empty argument (Rangeify), which the body, scheduled on its own, reaches no
+   element of, or a weak integer expression of the loops around the call, which
+   its body's scalar parameter holds on each trip. *)
+let scalar_argument k s =
+  addrspace s = Some Dtype.Alu
   && match arg k with Call c -> c.precompile | _ -> false
 
 (* A loop around a call: a range's end, or a back edge. *)
@@ -116,7 +118,7 @@ let create_schedule sched_sink =
             in
             let kernel_deps =
               List.filter
-                (fun s -> not (empty_argument call s))
+                (fun s -> not (scalar_argument call s))
                 (List.tl (src call))
             in
             let read_states = List.concat_map states kernel_deps in
@@ -172,7 +174,7 @@ let create_schedule sched_sink =
       List.filter_map
         (fun s ->
           if is_bound_var s then None
-          else if empty_argument k s then Some s
+          else if scalar_argument k s then Some s
           else Some (argument s))
         (List.tl (src k))
     in
@@ -249,9 +251,32 @@ let pm_post_sched_cache =
           Some (create_new_buffer ctx (m "b")));
     ])
 
+(* A kernel's scalar parameters that its scope binds to values, such as a loop's
+   trip, stay parameters: each takes a slot of the kernel past its arguments,
+   in the order of its slot in the scope, and the call passes the value there.
+   The kernel's program then depends on neither the value nor the loop it comes
+   from, and a launch computes the value from the loop's ranges. *)
+let pass_values values call =
+  let args = src_without_body call in
+  let held =
+    List.filter
+      (fun v -> List.mem_assoc (param_of v).slot values)
+      (variables (body call))
+  in
+  let n = List.length args in
+  let slot j v = replace v ~arg:(Param { (param_of v) with slot = n + j }) in
+  let slotted = List.mapi (fun j v -> (v, slot j v)) held in
+  replace call
+    ~src:
+      (substitute ~calls:Skip ~pass:Once (body call) slotted
+      :: args
+      @ List.map (fun v -> List.assoc (param_of v).slot values) held)
+
 (* Nested linear calls are lexical scopes: their positional parameters shadow
    the enclosing scope, while calls without scalar arguments, such as a
-   precompiled allreduce, inherit it. *)
+   precompiled allreduce, inherit it. A scalar argument that is a variable is
+   bound into each kernel that reads it; any other is a value its kernels are
+   passed ({!pass_values}). *)
 let rec resolve_linear_call ?(outer_binds = []) linear_call =
   let args = List.tl (src linear_call) in
   let linear =
@@ -264,13 +289,14 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
       List.concat
         (List.mapi
            (fun i x ->
-             if op x = Op.Param && addrspace x = Some Dtype.Alu then
-               [ (i, if is_variable x then unbound x else x) ]
-             else [])
+             if addrspace x <> Some Dtype.Alu then []
+             else if is_variable x then [ (i, unbound x) ]
+             else [ (i, x) ])
            args)
     in
     local @ List.filter (fun (i, _) -> not (List.mem_assoc i local)) outer_binds
   in
+  let params, values = List.partition (fun (_, x) -> op x = Op.Param) binds in
   let apply_binds si =
     match (op si, src si) with
     | Op.Call, b :: _ when op b = Op.Linear ->
@@ -285,15 +311,19 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
                 (fun v ->
                   Option.map
                     (fun x -> (v, x))
-                    (List.assoc_opt (param_of v).slot binds))
+                    (List.assoc_opt (param_of v).slot params))
                 (variables s))
             (src si)
         in
-        replace si
-          ~src:
-            (List.map
-               (fun s -> substitute ~calls:Skip ~pass:Fixed_point s subs)
-               (src si))
+        let si =
+          replace si
+            ~src:
+              (List.map
+                 (fun s -> substitute ~calls:Skip ~pass:Fixed_point s subs)
+                 (src si))
+        in
+        if op si = Op.Call && op (body si) = Op.Sink then pass_values values si
+        else si
   in
   replace linear ~src:(List.map apply_binds (src linear))
 

@@ -12,7 +12,7 @@ open Call
 (* Calls *)
 
 let get_call_arg_uops call =
-  List.filter (fun s -> not (is_bound_var s)) (src_without_body call)
+  List.filter (fun s -> addrspace s <> Some Dtype.Alu) (src_without_body call)
 
 let get_call_var_uops call prg =
   let bound =
@@ -26,7 +26,12 @@ let get_call_var_uops call prg =
   in
   match arg prg with
   | Program p ->
-      let named v = List.assoc_opt (expr v) bound in
+      let named v =
+        match arg v with
+        | Param { name = None; slot; _ } ->
+            Some (List.nth (src_without_body call) slot)
+        | _ -> List.assoc_opt (expr v) bound
+      in
       let value =
         match arg (nth prg 0) with
         | Kernel { split = Some s; _ } -> (

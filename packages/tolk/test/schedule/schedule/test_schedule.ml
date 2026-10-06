@@ -1193,6 +1193,39 @@ let scan_linear () =
       | calls -> failf "%d calls in the loop" (List.length calls))
   | entries -> failf "%d entries" (List.length entries)
 
+(* A loop of three trips around a call whose body stores its scalar parameter 0,
+   the argument [2r + 1], into its row of ys, its parameter 1. *)
+let trip_linear () =
+  let index = Call.param ~addrspace:(Some Alu) 0 Int32
+  and y = Call.param ~shape:[ Int 1 ] ~device:cpu 1 Int32 in
+  let body = Ops.sink [ Ops.store y (Shape.reshape index [ Int 1 ]) ] in
+  let ys = Ops.new_buffer cpu 12 Int32 in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let trip = Ops.O.((r * int 2) + int 1) in
+  let row =
+    Shape.shrink ys
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
+  in
+  let e = Ops.end_ (Ops.call ~precompile:true body [ trip; row ]) [ r ] in
+  let linear, _ =
+    Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink [ Ops.after ys [ e ] ])
+  in
+  match Ops.src linear with
+  | [ e ] -> (
+      equal (list string) ~msg:"a loop" [ "END" ] (ops_of [ e ]);
+      match Ops.src (Ops.nth e 0) with
+      | [ k ] ->
+          equal uop ~msg:"the trip, past the row" trip
+            (List.nth (Ops.src_without_body k) 1);
+          equal (list uop) ~msg:"the kernel's variable, in the trip's slot"
+            [ Call.param ~addrspace:(Some Alu) 1 Int32 ]
+            (Call.variables (Ops.body k));
+          equal bool ~msg:"the kernel reads no range" false
+            (Ops.Nodes.mem r (Ops.backward_slice ~calls:Skip (Ops.body k)))
+      | calls -> failf "%d calls in the loop" (List.length calls))
+  | entries -> failf "%d entries" (List.length entries)
+
 (* The scan's body holds a loop of its own: each row of xs, of eight floats, is
    added to the carry in two halves, one inner trip each. *)
 let nested_linear () =
@@ -1298,6 +1331,8 @@ let loops =
     [
       test "a loop of a precompiled call is a loop of its body's calls"
         scan_linear;
+      test "a loop's call passes its kernel the trip as a scalar argument"
+        trip_linear;
       test "a loop inside a loop's body keeps its own end" nested_linear;
       test "a loop whose range has another number is the same body"
         renumbered_loop;

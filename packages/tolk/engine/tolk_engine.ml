@@ -468,16 +468,16 @@ let int_of_const u =
   | _ -> invalid_arg (Format.asprintf "%a is no integer" Ops.pp u)
 
 (* How a run reads the value [u] that a call passes a program on the device of
-   lane [lane]: a constant, the lane's number, or a variable. *)
+   lane [lane]: a constant, the lane's number, a variable, or an expression of
+   the ranges running a trip. *)
 let reader cells lane u =
-  if Ops.op u = Op.Const then
-    let c = int_of_const u in
-    fun _ -> c
-  else
-    match (Ops.expr u, Ops.arg u) with
-    | "_device_num", _ -> fun _ -> lane
-    | _, Ops.Param _ -> binding cells u
-    | _ -> assert false
+  match (Ops.op u, Ops.arg u) with
+  | Op.Const, _ ->
+      let c = int_of_const u in
+      fun _ -> c
+  | Op.Param, Ops.Param { name = Some "_device_num"; _ } -> fun _ -> lane
+  | Op.Param, _ -> binding cells u
+  | _ -> offset cells (Sym u)
 
 let not_storage base =
   invalid_arg (Format.asprintf "%a is not storage" Ops.pp base)

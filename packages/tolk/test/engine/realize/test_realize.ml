@@ -60,6 +60,7 @@ let program kernel = Codegen.to_program kernel uncompiled
 let n = Ops.variable ~dtype:Int32 "n" (`Int Bigint.one) (`Int (Bigint.of_int 8))
 let m = Ops.variable ~dtype:Int32 "m" (`Int Bigint.one) (`Int (Bigint.of_int 8))
 let bound v x = Call.bind v (`Int (Bigint.of_int x))
+let loop = Ops.range ~axis_type:Loop (Int 4) [ 100 ]
 
 let storage ?(device = "CPU") ?(dtype = Dtype.Float32) n =
   Ops.new_buffer (Single device) n dtype
@@ -204,13 +205,16 @@ let recorded_calls =
 let arguments =
   group "get_call_arg_uops"
     [
-      test "is a call's arguments without its bound variables, in order"
+      test "is a call's storage arguments in order, without its scalar ones"
         (fun () ->
           let a = storage 4 and b = storage 4 in
+          let trip = Ops.O.((loop * int 2) + int 1) in
           let call =
-            Ops.call (program (scaled_kernel [ n ])) [ a; bound m 3; b; n ]
+            Ops.call
+              (program (scaled_kernel [ n ]))
+              [ a; bound m 3; b; n; trip ]
           in
-          equal uops [ a; b; n ] (Realize.get_call_arg_uops call));
+          equal uops [ a; b ] (Realize.get_call_arg_uops call));
       test "is empty for a call of no argument" (fun () ->
           equal uops [] (Realize.get_call_arg_uops (hcq_call ())));
     ]
@@ -237,6 +241,12 @@ let variables =
               equal string "n" (variable free);
               equal uop (Ops.int 5) five
           | us -> failf "two values, not %d" (List.length us));
+      test "is the call's argument in the slot of a scalar parameter" (fun () ->
+          let index = Call.param ~addrspace:(Some Alu) 1 Int32 in
+          let prg = program (scaled_kernel [ n; index ]) in
+          let trip = Ops.O.((loop * int 2) + int 1) in
+          let call = Ops.call prg [ storage 1; trip; bound n 4 ] in
+          equal uops [ trip; Ops.int 4 ] (Realize.get_call_var_uops call prg));
       test "is empty for a program of no variable" (fun () ->
           let prg = program (scaled_kernel []) in
           equal uops []
