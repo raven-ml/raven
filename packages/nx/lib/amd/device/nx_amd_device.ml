@@ -150,6 +150,8 @@ type t = {
   mutable traces : traces option; (* made by the first profile that traces *)
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
   mutable args : Compute.args option; (* where launches' arguments are *)
+  mutable launched : int;
+      (* the timeline value of the last launch, under the device's lock *)
   mutable queues : (queue * bool * queue list) option;
       (* the compute queue, whether it takes AQL packets, the SDMA queues *)
   mutable dev : Nx_device.t option;
@@ -1090,6 +1092,7 @@ let record ~machine ~index ~gpu ~props ~cu_per_array =
     traces = None;
     aql_desc = None;
     args = None;
+    launched = 0;
     queues = None;
     dev = None;
   }
@@ -1615,6 +1618,11 @@ let launch ~touches = function
              before the queue runs the work. *)
           Mmio.barrier ();
           flush_hdp a;
-          Compute.submit compute (Compute.work ~gc:p.gc ~tmpring ~signal v runs))
+          let previous =
+            if a.launched = v - 1 then Compute.Queued else Elsewhere
+          in
+          Compute.submit compute
+            (Compute.work ~gc:p.gc ~tmpring ~signal ~previous v runs);
+          a.launched <- v)
 
 module Thread_trace = Thread_trace

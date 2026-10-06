@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* The runtime's own work on a PM4 compute queue, launches: wait for the
-   device's previous timeline value, invalidate the caches, run each kernel once
-   the one before has completed, and signal the next value, as tolk's batches on
-   the same queue do. *)
+   device's previous timeline value unless the queue's own earlier work signals
+   it, invalidate the caches, run each kernel once the one before has completed,
+   and signal the next value. *)
 
 module P = Nx_amd_packet
 module Code_object = Nx_amd_code_object
@@ -42,17 +42,37 @@ let run ~gc ~tmpring r rest =
   :: P.Pm4.event_write Cs_partial_flush
   :: rest
 
+(* Where the work of the timeline value before a launch's was submitted: on the
+   launch's queue, or elsewhere, such as a copy queue. *)
+type previous = Queued | Elsewhere
+
 (* The words of the work of timeline value [v] running [runs], whose signal word
-   is at [signal], as a list of packets' words. Values complete in order and
-   only [v]'s work writes [v], so the low word is at most [v - 1] when the queue
-   reaches the wait: the wait for equality is exact. The value is written whole,
-   in one 64-bit write. *)
-let work ~gc ~tmpring ~signal v runs =
-  P.Pm4.wait ~gc (Memory signal) Equal (v - 1) ~mask:0xffff_ffff
-    ~interval:wait_interval
-  :: P.Pm4.acquire_mem ~gc All_caches
-  :: List.fold_right (run ~gc ~tmpring) runs
-       [ P.Pm4.release_mem ~gc signal (Data_64 v) ]
+   is at [signal], as a list of packets' words.
+
+   Work queued before on the same queue needs no wait: the queue starts each
+   packet after the one before, every run ends with a partial flush that waits
+   for its kernel, and the queue's releases signal in order. The GPU sees that
+   work's writes in its L2, and each run invalidates the caches above it. A wait
+   there would stall the queue until the release before had written its value to
+   memory and the queue had polled it, about 45 us on an R9700, which a chain of
+   small operations pays for each one.
+
+   Otherwise the work waits for [v - 1]. Values complete in order and only [v]'s
+   work writes [v], so the low word is at most [v - 1] when the queue reaches
+   the wait: the wait for equality is exact. The value is written whole, in one
+   64-bit write. *)
+let work ~gc ~tmpring ~signal ~previous v runs =
+  let rest =
+    P.Pm4.acquire_mem ~gc All_caches
+    :: List.fold_right (run ~gc ~tmpring) runs
+         [ P.Pm4.release_mem ~gc signal (Data_64 v) ]
+  in
+  match previous with
+  | Queued -> rest
+  | Elsewhere ->
+      P.Pm4.wait ~gc (Memory signal) Equal (v - 1) ~mask:0xffff_ffff
+        ~interval:wait_interval
+      :: rest
 
 (* Appends the words of [packets] to the PM4 queue [q] and rings its doorbell.
    Positions count dwords, and packets wrap around the ring's end. The caller

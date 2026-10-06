@@ -3286,6 +3286,10 @@ thread.
 
 ### Nx
 
+- Eager operations queued back to back on an AMD GPU no longer stall it until
+  the previous one's completion reaches memory: 20 dependent `Nx.add`s of 4K
+  elements take 0.14 ms instead of 0.94 ms, and an `Nx.Rng.uniform` of 4K
+  elements 0.32 ms instead of 0.73 ms.
 - `Nx.erfinv` refines its guess with one Newton step on `erf` in the
   centre and on `erfc` in the tails, where it ran on `erf` near 1: its float64
   error near ±1 falls from about 135 ulps to 1.

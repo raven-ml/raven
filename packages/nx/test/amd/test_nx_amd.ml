@@ -416,6 +416,58 @@ let computing =
           equal (array int) [| 0; 3 |] (Nx.shape y));
     ]
 
+(* Ordering *)
+
+(* A step of a chain of operations on the GPU, none waited for: double the
+   value, copy it, or add a value placed there, whose copy is work of the copy
+   queue. *)
+type step = Double | Copy | Add_placed of int
+
+let pp_step ppf = function
+  | Double -> Format.pp_print_string ppf "double"
+  | Copy -> Format.pp_print_string ppf "copy"
+  | Add_placed k -> Format.fprintf ppf "add %d placed" k
+
+let steps =
+  Gen.(
+    list ~size:(int_range 1 64)
+      (with_pp pp_step
+         (frequency
+            [
+              (4, constant Double);
+              (1, constant Copy);
+              (2, map (fun k -> Add_placed k) (int_range (-9) 9));
+            ])))
+
+let take n x = function
+  | Double -> Nx.add x x
+  | Copy -> Nx.copy x
+  | Add_placed k -> Nx.add x (n (Nx.full Nx.int32 [| 4096 |] (Int32.of_int k)))
+
+let ordering =
+  group "ordering"
+    [
+      prop ~count:100
+        "a chain of operations and copies, waited for only at its end, \
+         computes as on the host"
+        steps (fun steps ->
+          let placed = function
+            | Add_placed _ -> true
+            | Double | Copy -> false
+          in
+          let rec back_to_back = function
+            | _ :: (s :: _ as rest) -> (not (placed s)) || back_to_back rest
+            | [ _ ] | [] -> false
+          in
+          cover "operations queued back to back" (back_to_back steps);
+          cover "an operation after a copy" (List.exists placed steps);
+          let x =
+            Nx.init Nx.int32 [| 4096 |] (fun i -> Int32.of_int (i.(0) mod 7))
+          in
+          let run n = List.fold_left (take n) (n x) steps in
+          equal Stored.packed (Nx.P (run Fun.id)) (Nx.P (host (run on_gpu))));
+    ]
+
 (* Reductions *)
 
 (* A reduction over the axes [axes] of a value: an extreme, whose result is the
@@ -1846,6 +1898,7 @@ let () =
          domains;
          opening;
          computing;
+         ordering;
          conformance;
          elementwise;
          sweep;

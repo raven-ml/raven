@@ -12,12 +12,14 @@
    1M: nine times 16M elements overrun the host's case), the concatenation of
    two halves and a square padded by one, at 4K, 1M and 16M elements, and the
    product of a float32 square matrix by itself, of 128, 1,024 and 4,096 rows,
-   timed to the work's completion, and the first use of a kernel in a fresh
-   process, which opens the GPU and loads the kernel's code objects. AMD loads
-   code objects with no compiler, so the first use has no cold and warm cases.
-   Rows exist for the GPUs the machine has: AMD GPU 0 under the kernel driver.
-   The GPU is opened in each measuring worker, never in the parent that forks
-   them; the host twins run on every machine. *)
+   twenty dependent sums of 4K elements, the many small operations of eager
+   code, which pay the launch latency each, timed to the work's completion, and
+   the first use of a kernel in a fresh process, which opens the GPU and loads
+   the kernel's code objects. AMD loads code objects with no compiler, so the
+   first use has no cold and warm cases. Rows exist for the GPUs the machine
+   has: AMD GPU 0 under the kernel driver. The GPU is opened in each measuring
+   worker, never in the parent that forks them; the host twins run on every
+   machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -95,7 +97,18 @@ let square n =
   Nx.rand Nx.float32 [| side; side |]
 
 let squares = [ ("128", 128); ("1024", 1024); ("4096", 4096) ]
+
 let matrix n = Nx.rand Nx.float32 [| n; n |]
+
+(* Twenty sums, each of the one before and [x]. *)
+let chain = 20
+
+let chained x =
+  let y = ref x in
+  for _ = 1 to chain do
+    y := Nx.add !y x
+  done;
+  !y
 
 let cases ~gpu size =
   rows ~put:one ~gpu "cast-bf16-f32" size
@@ -172,6 +185,8 @@ let () =
                   rows ~put:one ~gpu "matmul" size ~input:matrix ~op:(fun x ->
                       Nx.matmul x x))
                 squares
+            @ rows ~put:one ~gpu "chain20-add" (List.hd sizes) ~input:floats
+                ~op:chained
             @ if gpu then [ first_use_case () ] else []);
         ];
     ]
