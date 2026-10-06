@@ -51,6 +51,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Norn.Weighted`, draws with log weights, with Kish's effective sample
+  size `ess` and systematic `resample`.
 - Add `Norn.Hmc`, Hamiltonian Monte Carlo whose chains share one step size,
   trajectory length and geometry, so every chain takes the same number of
   leapfrog steps; `Hmc.warmup` tunes the length by ChEES.

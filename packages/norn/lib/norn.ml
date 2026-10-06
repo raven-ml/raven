@@ -48,3 +48,4 @@ module Dist = Dist
 module Gaussian = Gaussian
 module Nuts = Nuts
 module Hmc = Hmc
+module Weighted = Weighted
