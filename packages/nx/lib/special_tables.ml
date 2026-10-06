@@ -407,7 +407,6 @@ type t = {
   beta_eps : float;
   rlog1 : float array;
   bpser_terms : int;
-  apser_terms : int;
   bfrac_depth : int;
   basym : float array array;
   bgrat : float array array;
@@ -679,7 +678,6 @@ let float32 =
         0x1.555556p-2;
       |];
     bpser_terms = 54;
-    apser_terms = 20;
     bfrac_depth = 37;
     basym = [|
         [|
@@ -1323,7 +1321,6 @@ let float64 =
         0x1.5555555555555p-2;
       |];
     bpser_terms = 112;
-    apser_terms = 48;
     bfrac_depth = 71;
     basym = [|
         [|

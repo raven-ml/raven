@@ -2136,7 +2136,7 @@ def beta_region(fmt, a, b, x):
         if b0 < eps and b0 < eps * a0:
             return "bpser"
         if a0 < eps and a0 < eps * b0 and b0 * x0 <= 1:
-            return "apser"
+            return "bpser_tiny_a"
         both = a0 <= 1 and b0 <= 1
         far = x0 >= BETA_X_FAR
         if both:
@@ -2161,7 +2161,7 @@ def beta_region(fmt, a, b, x):
     return "basym"
 
 
-BETA_REGIONS = ["bpser", "apser", "bpser_y", "bup_bgrat", "bgrat", "bup_bpser", "bup_bup_bgrat",
+BETA_REGIONS = ["bpser", "bpser_tiny_a", "bpser_y", "bup_bgrat", "bgrat", "bup_bpser", "bup_bup_bgrat",
                 "bup_bgrat_large", "bfrac", "basym"]
 
 
@@ -2338,7 +2338,9 @@ def rlog1_terms(fmt):
 
 def bpser_terms(fmt):
     """1 + a sum_n c_n / (a + n) at x up to BETA_BUP_X with b at most 1, and at
-    x = BETA_BPSER_BX / b above."""
+    x = BETA_BPSER_BX / b above. Below beta_eps in a, where b x <= 1 and x <=
+    1/2, the tail's logarithm is O(a) and holds a s whole: there the sum s =
+    sum_n c_n / n itself is held, relative to its own size."""
     def run(n, a, b, x):
         c, s = mpf(1), mpf(0)
         for k in range(1, n + 1):
@@ -2348,23 +2350,15 @@ def bpser_terms(fmt):
     x = BETA_BUP_X
     points = [(a, b, x) for a in [1e-3, 1.0, 1e3, 1e6] for b in [1e-6, 0.5, 1.0]]
     points += [(a, b, BETA_BPSER_BX / b) for a in [1.0, 1e3, 1e6] for b in [1.001, 2.0, 39.0]]
-    return least_count(fmt, points, run, 5, 400, 1500)
 
-
-def apser_terms(fmt):
-    """c + sum_j t_j / j for b x <= 1, x <= 1/2: c = log x + psi b + gamma + t_1,
-    t_1 = x - b x, t_j = t_(j-1) (x - b x / j)."""
-    def run(n, b, x):
-        bx = b * x
-        t = x - bx
-        c = mpmath.log(x) + mpmath.digamma(b) + mpmath.euler + t
-        s = mpf(0)
-        for j in range(2, n + 1):
-            t *= x - bx / j
-            s += t / j
-        return c + s
-    points = [(b, 0.5) for b in [1e-9, 0.5, 1.0, 2.0]]
-    return least_count(fmt, points, run, 2, 300, 600)
+    def tiny(n, b, x):
+        c, s = mpf(1), mpf(0)
+        for k in range(1, n + 1):
+            c *= (1 - b / k) * x
+            s += c / k
+        return s
+    edge = [(b, min(0.5, 1 / b)) for b in [1e-9, 0.5, 1.5, 2.5, 10.0, 1e3, 1e6]]
+    return max(least_count(fmt, points, run, 5, 400, 1500), least_count(fmt, edge, tiny, 2, 400, 1500))
 
 
 def bfrac_cf(n, a, b, x):
@@ -2556,14 +2550,13 @@ def bgrat_coefficients(count):
 
 
 def beta_tables(fmt):
-    counts = dict(rlog1=rlog1_terms(fmt), bpser=bpser_terms(fmt), apser=apser_terms(fmt),
+    counts = dict(rlog1=rlog1_terms(fmt), bpser=bpser_terms(fmt),
                   bfrac=bfrac_depth(fmt), basym=basym_terms(fmt), bgrat=bgrat_terms(fmt))
     high = lambda poly: [round_to(fmt, mpf(v.numerator) / v.denominator) for v in reversed(poly)]
     return [
         ("beta_eps", ocaml_float(BETA_EPS[fmt])),
         ("rlog1", ocaml_array(high([Fraction(1, 2 * k + 3) for k in range(counts["rlog1"])]))),
         ("bpser_terms", str(counts["bpser"])),
-        ("apser_terms", str(counts["apser"])),
         ("bfrac_depth", str(counts["bfrac"])),
         ("basym", ocaml_matrix([high(p) for p in basym_coefficients(counts["basym"])])),
         ("bgrat", ocaml_matrix([high(p) for p in bgrat_coefficients(counts["bgrat"])])),

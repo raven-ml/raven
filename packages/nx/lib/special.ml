@@ -1186,15 +1186,15 @@ let gammaincinv_at a p upper =
 
 (* Incomplete beta function
 
-   TOMS 708 (DiDonato and Morris, ACM TOMS 18, 1992), in logarithms. After the
-   swap [(a, b, x) -> (b, a, 1 - x)] each region computes one tail directly, as
-   a logarithm [l], and the other is [log (1 - e^l)]. Per element one region
-   applies, so the costly part every method shares, the logarithm of [x^a y^b /
-   (a B(a, b))] for the arguments the region's method needs, runs once on
-   arguments selected per element; each method's series runs on every element
-   over its inputs clamped into its region. [x] is the only exact input: [log
-   x], [log (1 - x)] and [a - (a + b) x] come from it to the dtype's
-   precision. *)
+   TOMS 708 (DiDonato and Morris, ACM TOMS 18, 1992), in logarithms, but for
+   APSER, whose region BPSER serves. After the swap [(a, b, x) -> (b, a, 1 - x)]
+   each region computes one tail directly, as a logarithm [l], and the other is
+   [log (1 - e^l)]. Per element one region applies, so the costly part every
+   method shares, the logarithm of [x^a y^b / (a B(a, b))] for the arguments the
+   region's method needs, runs once on arguments selected per element; each
+   method's series runs on every element over its inputs clamped into its
+   region. [x] is the only exact input: [log x], [log (1 - x)] and [a - (a + b)
+   x] come from it to the dtype's precision. *)
 
 let le x v = cmple x (lit x v)
 let gt x v = cmpgt x (lit x v)
@@ -1222,19 +1222,20 @@ let lambda_of a b x =
 
 let bcorr p q = add (stirling p) (stirling_difference q p)
 
-(* The front [log (x^a y^b / (a B(a, b)))], and [lgamma (a + b) - lgamma b]
-   where [a <= b]. Below [beta_large] in either argument, with [p <= q] the
-   arguments and [v] the variable of [p]: [q log w + p (log (v Q) - 1) + tail -
-   lgamma p], [w] the variable of [q], so that neither [p log v] nor [lgamma (p
-   + q) - lgamma q] cancels the other where [v Q] is near 1; [lgamma p] is
-   [lgamma (1 + f) + log prod_k (f + k)] for [p = f + m], [f] in (0, 1], and
-   [lgamma (1 + f)] from [lgamma1p_ratio], so that [lgamma p + log a] holds no
-   [log a] to cancel where [p] is [a]. From [beta_large], [-(a u + b w)] for [u
-   = e - log1p e], [e = -lam / a], and [w] likewise in [lam / b], with the
-   corrections' difference: [x] and [y] enter through [lam = a - (a + b) x]
-   alone near the mean. *)
-type 'b front = { phi : (float, 'b) t; d : (float, 'b) t }
+(* The front [log (x^a y^b / (a B(a, b)))]. Below [beta_large] in either
+   argument, with [p <= q] the arguments and [v] the variable of [p]: [q log w +
+   p (log (v Q) - 1) + tail - lgamma p], [w] the variable of [q], so that
+   neither [p log v] nor [lgamma (p + q) - lgamma q] cancels the other where [v
+   Q] is near 1; [lgamma p] is [lgamma (1 + f) + log prod_k (f + k)] for [p = f
+   + m], [f] in (0, 1], and [lgamma (1 + f)] from [lgamma1p_ratio], so that
+   [lgamma p + log a] holds no [log a] to cancel where [p] is [a]. From
+   [beta_large], [-(a u + b w)] for [u = e - log1p e], [e = -lam / a], and [w]
+   likewise in [lam / b], with the corrections' difference: [x] and [y] enter
+   through [lam = a - (a + b) x] alone near the mean.
 
+   With it [log (x^a / (a B(a, b)))], BPSER's front, which below [beta_large]
+   leaves [q log w] out where [p] is [a]: there the rest is O(a), and adding [b
+   log y] to it to take it away would round away its digits. *)
 let front a b x y lx ly lam =
   let large = logical_and (ge a T.beta_large) (ge b T.beta_large) in
   let small = logical_not large in
@@ -1265,9 +1266,9 @@ let front a b x y lx ly lam =
       (zeros_like p)
       (sub (where unshifted (log p) (zeros_like p)) log_a)
   in
-  let phi_small =
+  let core =
     add
-      (add (mul q lw) (add (mul p (sub_s log_vq 1.)) s.tail))
+      (add (mul p (sub_s log_vq 1.)) s.tail)
       (sub (sub rest (mul f (lgamma1p_ratio f))) (log !prod))
   in
   let a_l = clamp large a 10. and b_l = clamp large b 10. in
@@ -1292,10 +1293,8 @@ let front a b x y lx ly lam =
          (add_s (log a_l) log_sqrt_2pi))
       (bcorr p_l q_l)
   in
-  {
-    phi = where large phi_large phi_small;
-    d = add (mul p (sub_s s.log_q 1.)) s.tail;
-  }
+  let phi = where large phi_large (add (mul q lw) core) in
+  (phi, where (logical_and small a_le) core (sub phi (mul b ly)))
 
 (* BPSER's series [sum_n c_n / (a + n)], [c_n = prod_k (1 - b/k) x]: [I_x(a, b)
    = x^a / (a B(a, b)) (1 + a sum)] for [b <= 1] or [b x <= 0.7]. *)
@@ -1308,28 +1307,6 @@ let bpser_sum a b x =
     sum := add !sum (div !c (add_s a fn))
   done;
   !sum
-
-(* APSER: [log (1 - I_x(a, b))] for [a] below [eps] and [b x <= 1], [psi b] read
-   as [(lgamma (a + b) - lgamma b) / a] to within [a psi'(b)]. *)
-let apser a b x lx d =
-  let t = tables x in
-  let bx = mul b x in
-  let t0 = sub x bx in
-  let near = cmple (mul_s b t.beta_eps) (lit b 2e-2) in
-  let c =
-    add_s
-      (add
-         (where near (add lx (div d a)) (log (clamp (logical_not near) bx 1.)))
-         t0)
-      euler_gamma
-  in
-  let tt = ref t0 and s = ref (zeros_like x) in
-  for j = 2 to t.apser_terms do
-    let fj = float_of_int j in
-    tt := mul !tt (sub x (mul_s bx (1. /. fj)));
-    s := add !s (mul_s !tt (1. /. fj))
-  done;
-  add (log a) (log (neg (add c !s)))
 
 (* BUP's terms [x^(a+i) y^b / ((a + i) B(a + i, b))], [i < n] for a masked count
    [n <= beta_bup_most], each the one before it times [r_l = (a + b + l) x / (a
@@ -1546,12 +1523,15 @@ let log_betainc_at upper a b x =
   let lx0 = sel lx ly and ly0 = sel ly lx and lam0 = sel lam (neg lam) in
   (* Either argument at most 1. *)
   let fp = small &&& lt b0 eps &&& cmplt b0 (mul_s a0 eps) in
-  let ap =
+  (* Below [eps] in [a0] with [b0 x0 <= 1], where TOMS 708 takes APSER's
+     complement, BPSER serves too: in logarithms each term of its front is
+     relatively exact to O(a0), and [log1mexp] keeps the complement. *)
+  let tiny_a =
     small &&& no fp &&& lt a0 eps
     &&& cmplt a0 (mul_s b0 eps)
     &&& le (mul b0 x0) 1.
   in
-  let rest = small &&& no fp &&& no ap in
+  let rest = small &&& no fp &&& no tiny_a in
   let both = le a0 1. &&& le b0 1. in
   let far = ge x0 T.beta_x_far in
   let low =
@@ -1563,7 +1543,7 @@ let log_betainc_at upper a b x =
     &&& le (mul a0 (log (mul x0 b0))) (Stdlib.log T.beta_power_bx)
   in
   let bp_small =
-    fp
+    fp ||| tiny_a
     ||| (rest &&& both &&& low)
     ||| (rest &&& no both &&& (le b0 1. ||| (no far &&& near_pow)))
   in
@@ -1616,19 +1596,14 @@ let log_betainc_at upper a b x =
   let f_ly = clamp f_on (where on_y lx0 ly0) (-.Stdlib.log 2.) in
   (* [f_x] is [x] itself where it is [x0] unswapped or [y0] swapped. *)
   let f_lam = lam_at f_a f_b (logical_not (logical_xor on_y swap)) in
-  let fr = front f_a f_b f_x f_y f_lx f_ly (clamp f_on f_lam 0.) in
+  let fr, fr_x = front f_a f_b f_x f_y f_lx f_ly (clamp f_on f_lam 0.) in
   (* BPSER's series on [(a0, b0, x0)], [(b0, a0, y0)] or [(a0, bb, x0)]. *)
   let s_on = bp ||| bpy ||| bup_bp in
   let s_a = clamp s_on (where bpy b0 a0) 1. in
   let s_b = clamp s_on (where bpy a0 (where bup_bp bb b0)) 1. in
   let s_x = clamp s_on (where bpy y0 x0) 0.5 in
   let series = bpser_sum s_a s_b s_x in
-  let l_bp = add (sub fr.phi (mul f_b f_ly)) (log1p (mul s_a series)) in
-  let l_ap =
-    apser (clamp ap a0 1e-20) (clamp ap b0 1.) (clamp ap x0 0.5)
-      (clamp ap lx0 (-.Stdlib.log 2.))
-      (clamp ap fr.d 0.)
-  in
+  let l_bp = add fr_x (log1p (mul s_a series)) in
   (* The first BUP's terms, relative to the front; [g0] is its first term
      relative to the front, in whose units the other parts add. *)
   let total, g0 = bup_sum u_a u_b u_x u_n last in
@@ -1665,19 +1640,18 @@ let log_betainc_at upper a b x =
     where bup_bp bp_rel
       (where (g20 ||| alone ||| bup_g) (add bup2 grat) (zeros_like grat))
   in
-  let l_bup = add fr.phi (log (add total (mul g0 extra))) in
+  let l_bup = add fr (log (add total (mul g0 extra))) in
   let l_frac =
-    add (add fr.phi (log f_a)) (bfrac f_a f_b f_x f_y (clamp frac lam0 1.))
+    add (add fr (log f_a)) (bfrac f_a f_b f_x f_y (clamp frac lam0 1.))
   in
   let l_asym =
     basym (clamp asym a0 200.) (clamp asym b0 200.) (clamp asym lam0 0.)
   in
   let l =
     where (bp ||| bpy) l_bp
-      (where ap l_ap
-         (where (g20 ||| alone ||| shifted_b) l_bup (where frac l_frac l_asym)))
+      (where (g20 ||| alone ||| shifted_b) l_bup (where frac l_frac l_asym))
   in
-  let direct_upper = ap ||| bpy ||| g20 ||| alone in
+  let direct_upper = bpy ||| g20 ||| alone in
   (* The swapped problem's upper tail is the lower one asked for. *)
   let wanted_upper = logical_xor swap upper in
   where (logical_xor direct_upper wanted_upper) (log1mexp l) l
