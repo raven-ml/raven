@@ -11,4 +11,5 @@
   hugin.vg.raster
   hugin.vg.svg
   hugin.kit
-  nx))
+  nx
+  unix))

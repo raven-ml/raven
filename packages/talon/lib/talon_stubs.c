@@ -776,14 +776,16 @@ static int text(double x, int p, int emin, char *out)
   for (uint64_t t = s; t >= 10; t /= 10) n++;
   int exp = k + n - 1;
   if (exp < -7 || exp >= 21) {
-    char d[20];
-    put_digits(d, s, n);
-    *o++ = d[0];
+    /* The digits go in place one byte ahead, then the first moves back over
+       the gap the point fills. */
+    put_digits(o + 1, s, n);
+    o[0] = o[1];
     if (n > 1) {
-      *o++ = '.';
-      memcpy(o, d + 1, (size_t)(n - 1));
-      o += n - 1;
+      o[1] = '.';
+      o += n + 1;
     }
+    else
+      o += 1;
     *o++ = 'e';
     *o++ = exp < 0 ? '-' : '+';
     int a = exp < 0 ? -exp : exp;
