@@ -207,7 +207,7 @@
           if (LA_ABS_##sfx(e[m]) + dd == dd) break;                          \
         }                                                                     \
         if (m != l) {                                                        \
-          if (iter++ == 50) return LA_ERR_NO_CONVERGE;                       \
+          if (iter++ == 50) return LA_UNDEFINED;                             \
           R g = (d[l + 1] - d[l]) / ((R)2 * e[l]);                           \
           R r = LA_HYP_##sfx(g, (R)1);                                       \
           R sg = g >= (R)0 ? LA_ABS_##sfx(r) : -LA_ABS_##sfx(r);             \
@@ -486,7 +486,7 @@ static int la_sterf(int n, double *d, double *e) {
    Matrices here are COLUMN-major (Q[i + j*ldq]) so the dlaed reference maps 1:1;
    the two dlaed3 back-multiply GEMMs and the final apply GEMM pass column-major
    strides to nx_c_gemm2d_ct_ws (rs=1, cs=ld). Non-convergence of the secular solver
-   returns nonzero, surfaced as LA_ERR_NO_CONVERGE. The eigenvalue index arithmetic
+   returns nonzero, and the matrix's results are NaN. The eigenvalue index arithmetic
    is 0-based throughout (the reference is 1-based). */
 
 #define LA_DC_SMLSIZ 25 /* LAPACK DLAED0 SMLSIZ */
@@ -1664,8 +1664,9 @@ static const la_compute_desc la_desc[LA_NCOMPUTE] = {
    are [batch, n] float64 ascending; eigenvectors v (only when vectors) are
    [batch, n, n] input-dtype, columns = eigenvectors. Each worker owns a combined
    scratch block: work (n×n), Z (n×n, the Q/eigenvector accumulator), tau/wv
-   (n each) compute-typed, and d/e (n each) real. Non-convergence in the QL
-   sweep → LA_ERR_NO_CONVERGE, reported per worker and raised. */
+   (n each) compute-typed, and d/e (n each) real. A matrix whose read triangle
+   holds NaN or an infinity, or whose tridiagonal eigensolver does not converge,
+   has eigenvalues and eigenvectors of NaN. */
 typedef struct {
   const nx_c_ndarray *in;
   const nx_c_ndarray *w;
@@ -1692,7 +1693,6 @@ typedef struct {
   int use_dc;
   int64_t off_dd, off_de, off_ztri, off_zc, off_indxq, off_dcwork, off_dciwork,
       off_dcgemm, off_qt, off_qw, off_qp;
-  nx_c_status *werr;
 } la_eigh_ctx;
 
 /* The Hermitian matrix eigh decomposes is the one the lower triangle of the
@@ -1725,6 +1725,20 @@ static double la_amax_lower(la_compute lc, const void *a, int64_t n,
   return amax;
 }
 
+/* Writes NaN to every element of batch matrix bt's eigenvalues and, when they
+   are asked for, its eigenvectors. */
+static void la_eigh_nan(const la_eigh_ctx *x, int64_t bt) {
+  const char *wb;
+  la_batch_base(bt, x->batch_nd, x->bshape, x->w_bs, x->w->offset,
+                (int64_t)sizeof(double), (const char *)x->w->data, &wb);
+  la_move[NX_C_DTYPE_f64].nan(1, x->n, (char *)wb, 0, x->w_cs);
+  if (!x->vectors) return;
+  const char *vb;
+  la_batch_base(bt, x->batch_nd, x->bshape, x->v_bs, x->v->offset, x->esz,
+                (const char *)x->v->data, &vb);
+  la_move[x->dt].nan(x->n, x->n, (char *)vb, x->v_rs, x->v_cs);
+}
+
 static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   la_eigh_ctx *x = (la_eigh_ctx *)vctx;
   const la_compute_desc *cd = &la_desc[x->lc];
@@ -1755,7 +1769,12 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_hermitian(x->lc, work, n, n);
     /* The scale comes from the read triangle, and scaling the whole matrix may
        turn the unread one into infinities: harmless, since nothing reads it. */
-    double cs = la_range_scale(x->lc, la_amax_lower(x->lc, work, n, n));
+    double amax = la_amax_lower(x->lc, work, n, n);
+    if (!isfinite(amax)) {
+      la_eigh_nan(x, bt);
+      continue;
+    }
+    double cs = la_range_scale(x->lc, amax);
     if (cs != 1.0) la_scale(x->lc, work, n, n, n, cs);
     cd->tridiag(work, n, n, d, e, tau, wv, tW, tWc, tP, tg);
     if (!x->vectors || x->use_dc) {
@@ -1775,7 +1794,7 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     }
     if (!x->vectors) {
       if (la_sterf((int)n, dd, de) != 0) {
-        if (x->werr[worker] == NX_C_OK) x->werr[worker] = LA_ERR_NO_CONVERGE;
+        la_eigh_nan(x, bt);
         continue;
       }
       double *wd = (double *)wb;
@@ -1795,7 +1814,7 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       int info = la_stedc(dd, de, ztri, (int)n, (int)n, indxq, dcwork, dciwork,
                           dcgemm, 1);
       if (info != 0) {
-        if (x->werr[worker] == NX_C_OK) x->werr[worker] = LA_ERR_NO_CONVERGE;
+        la_eigh_nan(x, bt);
         continue;
       }
       /* V = Q_householder · Z_tri via the blocked shifted-reflector form-Q; the
@@ -1814,9 +1833,8 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       continue;
     }
     cd->orgtr(work, n, n, tau, Z, n);
-    nx_c_status s = cd->tql2(d, e, Z, n, n);
-    if (s != NX_C_OK) {
-      if (x->werr[worker] == NX_C_OK) x->werr[worker] = s;
+    if (cd->tql2(d, e, Z, n, n) != NX_C_OK) {
+      la_eigh_nan(x, bt);
       continue;
     }
     cd->eigsort(d, Z, n, n);
@@ -1869,7 +1887,6 @@ static nx_c_status nx_c_eigh_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
   int64_t bytes = nbatch * n * n * esz;
   int nth = nx_c_threads_for(NX_C_COST_HEAVY, nbatch, n * n * n, bytes);
   if (nth > nbatch) nth = (int)nbatch;
-  if (nth > LA_MAX_WORKERS) nth = LA_MAX_WORKERS;
   if (nth < 1) nth = 1;
 
   int64_t rsize = (lc == LA_F64 || lc == LA_C64) ? 8 : 4;
@@ -1922,9 +1939,6 @@ static nx_c_status nx_c_eigh_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
   char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
-  nx_c_status werr[LA_MAX_WORKERS];
-  for (int i = 0; i < nth; i++) werr[i] = NX_C_OK;
-
   la_eigh_ctx x;
   x.in = in;
   x.w = w;
@@ -1968,17 +1982,9 @@ static nx_c_status nx_c_eigh_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
   x.off_qt = off_qt;
   x.off_qw = off_qw;
   x.off_qp = off_qp;
-  x.werr = werr;
 
   nx_c_parallel_for(nth, nbatch, bytes, la_eigh_body, &x, scratch);
-
-  nx_c_status err = NX_C_OK;
-  for (int i = 0; i < nth; i++)
-    if (werr[i] != NX_C_OK) {
-      err = werr[i];
-      break;
-    }
-  return err;
+  return NX_C_OK;
 }
 
 /* vw: float64 eigenvalues [batch, n] (ascending). vv: input-dtype eigenvectors

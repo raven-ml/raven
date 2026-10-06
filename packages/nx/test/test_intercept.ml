@@ -605,13 +605,6 @@ let reads =
           ("Nx.pinv", discard (fun () -> Nx.pinv square));
           ( "Nx.lstsq",
             discard (fun () -> Nx.lstsq wide (Nx.ones Nx.float64 [| 2 |])) );
-          ( "Nx.tensorsolve",
-            discard (fun () ->
-                Nx.tensorsolve
-                  (Nx.zeros Nx.float64 [| 2; 2 |])
-                  (Nx.ones Nx.float64 [| 2 |])) );
-          ( "Nx.tensorinv",
-            discard (fun () -> Nx.tensorinv (Nx.zeros Nx.float64 [| 2; 2 |])) );
         ]
         (fun (expected, f) ->
           let i, seen = naming () in

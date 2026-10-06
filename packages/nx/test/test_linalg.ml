@@ -542,12 +542,6 @@ let factorizations =
           equal complex z (l *@ Nx.conjugate (t l));
           equal ~msg:"L ignores the diagonal's imaginary parts" complex l
             (Nx.cholesky (imaginary_diagonal z)));
-      test "cholesky refuses a matrix that is not positive definite" (fun () ->
-          raises_match
-            (function
-              | Nx.Linalg_error { kind = `Not_positive_definite; _ } -> true
-              | _ -> false)
-            (fun () -> Nx.cholesky (Nx.neg (Nx.eye Nx.float64 2))));
       prop "qr gives an orthonormal Q and an upper-triangular R with Q R = a"
         (Gen.pair
            (sized (fun m -> sized (fun n -> matrix ~batch m n)))
@@ -900,16 +894,6 @@ let solvers =
         (fun (a, b) -> equal near_complex b (Nx.matmul a (Nx.solve a b)));
       prop "inv gives the inverse" (sized square) (fun a ->
           equal near (identity_like a) (a *@ Nx.inv a));
-      test "solve and inv refuse a singular matrix" (fun () ->
-          let singular = Nx.create Nx.float64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
-          let is_singular = function
-            | Nx.Linalg_error { kind = `Singular; _ } -> true
-            | _ -> false
-          in
-          raises_match is_singular (fun () ->
-              Nx.solve singular (Nx.ones Nx.float64 [| 2 |]));
-          raises_match is_singular (fun () -> Nx.inv singular);
-          raises_match is_singular (fun () -> Nx.matrix_power singular (-1)));
       prop "solve_triangular solves with the named triangle only"
         (sized (fun n ->
              Gen.bind batch (fun bt ->
@@ -1376,34 +1360,6 @@ let at_scale =
           small ~msg:"a = U diag(S) Vh" (bound fd 40)
             (rel ~expected:a
                (Nx.mul (c128 u) (Nx.unsqueeze ~axes:[ -2 ] (c128 s)) *@ c128 vh)));
-      test
-        "cholesky of a batch with one matrix not positive definite raises, \
-         whichever worker meets it" (fun () ->
-          let a =
-            Nx.set [ I 13; I 0; I 0 ]
-              (Nx.scalar Nx.float64 (-1.))
-              (real_part (positive ~complex:false [| 20; 6; 6 |]))
-          in
-          raises_match
-            (function
-              | Nx.Linalg_error { kind = `Not_positive_definite; _ } -> true
-              | _ -> false)
-            (fun () -> Nx.cholesky a));
-      test
-        "solve_triangular of a batch with one zero pivot raises `Singular, \
-         whichever worker meets it" (fun () ->
-          let a =
-            Nx.set [ I 7; I 2; I 2 ] (Nx.scalar Nx.float64 0.)
-              (Nx.add
-                 (Nx.mul_s (Nx.ones Nx.float64 [| 20; 5; 5 |]) 0.3)
-                 (Nx.mul_s
-                    (identity_like (Nx.zeros Nx.float64 [| 20; 5; 5 |]))
-                    2.))
-          in
-          raises_match
-            (function
-              | Nx.Linalg_error { kind = `Singular; _ } -> true | _ -> false)
-            (fun () -> Nx.solve_triangular a (Nx.ones Nx.float64 [| 20; 5 |])));
       test "svd of a rank-deficient complex64 matrix factors it" (fun () ->
           let n = 30 in
           let b =
@@ -1509,6 +1465,283 @@ let at_scale =
           check "float64" Nx.float64;
           check "float32" Nx.float32;
           check "float16" Nx.float16);
+    ]
+
+(* Failing matrices: a matrix on which an operation is undefined has results
+   whose every element is NaN, both parts of a complex one, and the other
+   matrices of its batch are factored as if it were not there. *)
+
+let exact_complex =
+  let c = close ~rel:0. () in
+  tensor (Testable.contramap (fun (z : Complex.t) -> (z.re, z.im)) (pair c c))
+
+(* [x] is NaN in every element, and in both parts of each where [complex]. *)
+let all_nan ?msg ~complex x =
+  let x = c128 x in
+  let nan_in part =
+    equal ?msg (tensor (close ~rel:0. ())) (Nx.full_like part Float.nan) part
+  in
+  nan_in (Nx.real Nx.float64 x);
+  if complex then nan_in (Nx.imag Nx.float64 x)
+
+let all_finite ?msg x =
+  let x = c128 x in
+  let finite part =
+    let f = Nx.isfinite part in
+    equal ?msg (tensor bool) (Nx.ones_like f) f
+  in
+  finite (Nx.real Nx.float64 x);
+  finite (Nx.imag Nx.float64 x)
+
+let float_matrix rows =
+  Nx.create Nx.float64
+    [| List.length rows; List.length (List.hd rows) |]
+    (Array.of_list (List.concat rows))
+
+(* [count] matrices, the one at [failing] the one the operation fails on,
+   repeated twice along a second batch axis by a broadcast when [repeated]. *)
+type lanes = { count : int; failing : int; repeated : bool }
+
+let pp_lanes ppf { count; failing; repeated } =
+  Format.fprintf ppf "%d matrices, failing at %d%s" count failing
+    (if repeated then ", each repeated by a broadcast" else "")
+
+let lanes =
+  Gen.with_pp pp_lanes
+    Gen.(
+      let* count = of_list [ 0; 1; 2; 5 ] in
+      let* failing = int_range 0 (Int.max 0 (count - 1)) in
+      let+ repeated = bool in
+      { count; failing; repeated })
+
+(* The batch of [lanes] holding [good], the one at [lanes.failing] replaced by
+   [bad], each of [bad]'s shape. *)
+let stack lanes good bad =
+  let held = List.mapi (fun i m -> if i = lanes.failing then bad else m) good in
+  let s =
+    match held with
+    | [] -> Nx.zeros (Nx.dtype bad) (Array.append [| 0 |] (Nx.shape bad))
+    | _ -> Nx.stack ~axis:0 held
+  in
+  if not lanes.repeated then s
+  else
+    Nx.broadcast_to
+      (Array.append [| lanes.count; 2 |] (Nx.shape bad))
+      (Nx.unsqueeze ~axes:[ 1 ] s)
+
+type op = { apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+
+(* [op] on the batch of [lanes] is, at every dtype, [op] on each of its good
+   matrices, alone, and NaN on [bad]. *)
+let lanes_apart op (lanes, good, bad) =
+  List.iter
+    (fun (F d) ->
+      let cast x = Nx.cast d.dtype (c128 x) in
+      let good = List.init lanes.count (fun i -> Nx.get [ i ] good) in
+      let failed = c128 (op.apply (cast bad)) in
+      let nan =
+        Nx.full Nx.complex128 (Nx.shape failed)
+          { Complex.re = Float.nan; im = (if d.complex then Float.nan else 0.) }
+      in
+      equal ~msg:d.name exact_complex
+        (stack lanes (List.map (fun g -> c128 (op.apply (cast g))) good) nan)
+        (c128 (op.apply (stack lanes (List.map cast good) (cast bad)))))
+    fdtypes
+
+let failures =
+  let over title check = cases ~name:fname title fdtypes check in
+  group "failing matrices"
+    [
+      over "cholesky of a matrix that is not positive-definite is NaN"
+        (fun (F d) ->
+          List.iter
+            (fun (msg, rows) ->
+              let a = Nx.cast d.dtype (c128 (float_matrix rows)) in
+              all_nan ~msg ~complex:d.complex (Nx.cholesky a);
+              all_nan ~msg:(msg ^ ", upper") ~complex:d.complex
+                (Nx.cholesky ~upper:true a))
+            [
+              ( "a negative pivot",
+                [ [ 4.; 2.; 1. ]; [ 2.; -1.; 1. ]; [ 1.; 1.; 5. ] ] );
+              ("a zero pivot", [ [ 1.; 0. ]; [ 0.; 0. ] ]);
+              ("a NaN pivot", [ [ 1.; 0. ]; [ 0.; Float.nan ] ]);
+            ]);
+      over
+        "solve_triangular with a zero on the diagonal it reads is NaN, and \
+         finite when the diagonal is taken as ones" (fun (F d) ->
+          let at rows = Nx.cast d.dtype (c128 (float_matrix rows)) in
+          List.iter
+            (fun (upper, a) ->
+              let n = Nx.dim (-1) a in
+              List.iter
+                (fun (transpose, b) ->
+                  let msg =
+                    Printf.sprintf "%s%s, right-hand side of shape %s"
+                      (if upper then "upper" else "lower")
+                      (if transpose then ", transposed" else "")
+                      (Format.asprintf "%a" pp_shape (Nx.shape b))
+                  in
+                  all_nan ~msg ~complex:d.complex
+                    (Nx.solve_triangular ~upper ~transpose a b);
+                  all_finite ~msg:(msg ^ ", unit diagonal")
+                    (Nx.solve_triangular ~upper ~transpose ~unit_diag:true a b))
+                [
+                  (false, Nx.ones d.dtype [| n |]);
+                  (true, Nx.ones d.dtype [| n |]);
+                  (false, Nx.ones d.dtype [| n; 2 |]);
+                ])
+            [
+              (false, at [ [ 1.; 0.; 0. ]; [ 1.; 0.; 0. ]; [ 2.; 1.; 1. ] ]);
+              (true, at [ [ 1.; 1. ]; [ 0.; 0. ] ]);
+            ]);
+      over "solve, inv and their compositions of a singular matrix are NaN"
+        (fun (F d) ->
+          let s =
+            Nx.cast d.dtype (c128 (float_matrix [ [ 1.; 2. ]; [ 2.; 4. ] ]))
+          in
+          let complex = d.complex in
+          all_nan ~msg:"solve" ~complex (Nx.solve s (Nx.ones d.dtype [| 2 |]));
+          all_nan ~msg:"solve, two right-hand sides" ~complex
+            (Nx.solve s (Nx.ones d.dtype [| 2; 2 |]));
+          all_nan ~msg:"inv" ~complex (Nx.inv s);
+          all_nan ~msg:"matrix_power -1" ~complex (Nx.matrix_power s (-1));
+          all_nan ~msg:"matrix_power -3" ~complex (Nx.matrix_power s (-3));
+          all_nan ~msg:"tensorsolve" ~complex
+            (Nx.tensorsolve s (Nx.ones d.dtype [| 2 |]));
+          all_nan ~msg:"tensorinv" ~complex (Nx.tensorinv ~ind:1 s));
+      over "svd, eigh and eig of a matrix holding NaN or an infinity are NaN"
+        (fun (F d) ->
+          let complex = d.complex in
+          List.iter
+            (fun (what, v) ->
+              let at rows = Nx.cast d.dtype (c128 (float_matrix rows)) in
+              let msg op = what ^ ", " ^ op in
+              let symmetric =
+                at [ [ 2.; 1.; 0. ]; [ 1.; 3.; v ]; [ 0.; v; 2. ] ]
+              in
+              List.iter
+                (fun a ->
+                  List.iter
+                    (fun full_matrices ->
+                      let shape = Format.asprintf "%a" pp_shape (Nx.shape a) in
+                      let msg op =
+                        msg
+                          (Printf.sprintf "%s of %s%s" op shape
+                             (if full_matrices then ", full" else ""))
+                      in
+                      let u, s, vh = Nx.svd ~full_matrices a in
+                      all_nan ~msg:(msg "svd's U") ~complex u;
+                      all_nan ~msg:(msg "svd's S") ~complex:false s;
+                      all_nan ~msg:(msg "svd's Vh") ~complex vh)
+                    [ false; true ];
+                  all_nan
+                    ~msg:
+                      (msg
+                         (Format.asprintf "svdvals of %a" pp_shape (Nx.shape a)))
+                    ~complex:false (Nx.svdvals a))
+                [
+                  symmetric;
+                  at [ [ 1.; 2. ]; [ v; 4. ]; [ 5.; 6. ] ];
+                  at [ [ 1.; v; 5. ]; [ 2.; 4.; 6. ] ];
+                ];
+              List.iter
+                (fun uplo ->
+                  let w, vs = Nx.eigh ~uplo symmetric in
+                  all_nan ~msg:(msg "eigh's w") ~complex:false w;
+                  all_nan ~msg:(msg "eigh's v") ~complex vs;
+                  all_nan ~msg:(msg "eigvalsh") ~complex:false
+                    (Nx.eigvalsh ~uplo symmetric))
+                [ `L; `U ];
+              let values, vectors = Nx.eig symmetric in
+              all_nan ~msg:(msg "eig's values") ~complex:true values;
+              all_nan ~msg:(msg "eig's vectors") ~complex:true vectors;
+              all_nan ~msg:(msg "eigvals") ~complex:true (Nx.eigvals symmetric))
+            [ ("NaN", Float.nan); ("infinity", Float.infinity) ]);
+      test
+        "cholesky of a batch fails in its failing matrix alone, whichever \
+         worker meets it" (fun () ->
+          let good = real_part (positive ~complex:false [| 20; 6; 6 |]) in
+          let a = Nx.set [ I 13; I 0; I 0 ] (Nx.scalar Nx.float64 (-1.)) good in
+          let l = Nx.cholesky a in
+          let others x =
+            Nx.concatenate ~axis:0
+              [ Nx.slice [ R (0, 13) ] x; Nx.slice [ R (14, 20) ] x ]
+          in
+          all_nan ~msg:"the failing matrix" ~complex:false (Nx.get [ 13 ] l);
+          equal ~msg:"the others"
+            (tensor (close ~rel:0. ()))
+            (Nx.cholesky (others good))
+            (others l));
+      test
+        "solve_triangular of a batch fails in its matrix with a zero pivot \
+         alone, whichever worker meets it" (fun () ->
+          let good =
+            Nx.add
+              (Nx.mul_s (Nx.ones Nx.float64 [| 20; 5; 5 |]) 0.3)
+              (Nx.mul_s (identity_like (Nx.zeros Nx.float64 [| 20; 5; 5 |])) 2.)
+          in
+          let a = Nx.set [ I 7; I 2; I 2 ] (Nx.scalar Nx.float64 0.) good in
+          let b = Nx.ones Nx.float64 [| 20; 5 |] in
+          let x = Nx.solve_triangular a b in
+          let others x =
+            Nx.concatenate ~axis:0
+              [ Nx.slice [ R (0, 7) ] x; Nx.slice [ R (8, 20) ] x ]
+          in
+          all_nan ~msg:"the failing matrix" ~complex:false (Nx.get [ 7 ] x);
+          equal ~msg:"the others"
+            (tensor (close ~rel:0. ()))
+            (Nx.solve_triangular (others good) (others b))
+            (others x));
+      prop "cholesky of a batch fails in its failing matrix alone"
+        (sized (fun n ->
+             Gen.map
+               (fun (lanes, a) ->
+                 let good = Nx.add (t a *@ a) (Nx.mul_s (identity_like a) 1.) in
+                 (lanes, good, Nx.neg (Nx.get [ 0 ] good)))
+               (Gen.pair lanes
+                  (matrix ~batch:(Gen.constant ~pp:pp_shape [| 5 |]) n n))))
+        (lanes_apart { apply = (fun a -> Nx.cholesky a) });
+      prop "solve of a batch fails in its singular matrix alone"
+        (sized (fun n ->
+             Gen.map
+               (fun ((lanes, good), rhs) ->
+                 let singular =
+                   Nx.set [ I 0 ]
+                     (Nx.zeros Nx.float64 [| n |])
+                     (Nx.get [ 0 ] good)
+                 in
+                 ((lanes, good, singular), rhs))
+               (Gen.pair
+                  (Gen.pair lanes
+                     (square ~batch:(Gen.constant ~pp:pp_shape [| 5 |]) n))
+                  (matrix 1 n))))
+        (fun (lanes, rhs) ->
+          let rhs = Nx.reshape [| Nx.dim (-1) rhs |] rhs in
+          lanes_apart
+            { apply = (fun a -> Nx.solve a (Nx.cast (Nx.dtype a) (c128 rhs))) }
+            lanes);
+      prop "solve takes the scale of a out: solve (s a) b = solve a b / s"
+        (sized (fun n ->
+             Gen.triple (square ~batch:plain n) (matrix n 2)
+               (Gen.of_list ~pp:Format.pp_print_float [ 1e-30; 1e30 ])))
+        (fun (a, b, s) ->
+          equal
+            (tensor (close ~rel:1e-9 ()))
+            (Nx.div_s (Nx.solve a b) s)
+            (Nx.solve (Nx.mul_s a s) b));
+      prop "cholesky's factor is finite exactly where a is positive-definite"
+        (sized (fun n -> Gen.pair (symmetric n) (Gen.float_range (-2.) 2.)))
+        (fun (a, shift) ->
+          let a = Nx.add a (Nx.mul_s (identity_like a) shift) in
+          let w = Nx.eigvalsh a in
+          (* Away from the boundary, where rounding decides. *)
+          assume (Nx.item [] (Nx.min (Nx.abs w)) > 0.05);
+          let definite = Nx.all ~axes:[ -1 ] (Nx.greater_s w 0.) in
+          let lanes = Nx.to_array definite in
+          cover "positive-definite" (Array.exists Fun.id lanes);
+          cover "not positive-definite" (Array.exists not lanes);
+          equal (tensor bool) definite
+            (Nx.all ~axes:[ -2; -1 ] (Nx.isfinite (Nx.cholesky a))));
     ]
 
 (* The singular values np.linalg.svd gives the bidiagonal fixtures below. *)
@@ -2610,6 +2843,7 @@ let () =
          solvers;
          narrow;
          at_scale;
+         failures;
          eigs;
          structures;
          routes;

@@ -12,8 +12,9 @@
 
    In-place on a contiguous row-major n×n compute buffer (leading dim lda). On
    success the lower triangle holds L; the strict upper triangle is scratch (the
-   pack-out zeroes it, or mirrors for ~upper). Non-PD (a non-positive pivot,
-   NaN/inf included via the !(d>0) test) returns LA_ERR_NOT_PD.
+   pack-out zeroes it, or mirrors for ~upper). A matrix that is not positive
+   definite (a pivot that is not positive, NaN included via the !(d>0) test)
+   returns LA_UNDEFINED.
 
    Per block column j (width jb): the trailing update from earlier panels has
    already been applied (right-looking), so
@@ -37,7 +38,7 @@
         int64_t jj = j + c;                                                    \
         R d = REAL(A[jj * lda + jj]);                                          \
         for (int64_t kk = j; kk < jj; kk++) d -= NORM2(A[jj * lda + kk]);      \
-        if (!(d > (R)0)) return LA_ERR_NOT_PD;                                 \
+        if (!(d > (R)0)) return LA_UNDEFINED;                                  \
         R ljj = SQRT(d);                                                       \
         A[jj * lda + jj] = FROMR(ljj);                                         \
         for (int64_t ii = jj + 1; ii < j + jb; ii++) {                        \
@@ -92,8 +93,8 @@ LA_TRAITS_c64(LA_EXPAND_CHOL)
    coefficient and pivot are conjugated in the transpose case, so `transpose`
    means the CONJUGATE transpose for complex (Aᴴ·X = B) and plain transpose
    for real (conj is the identity). A zero pivot
-   (and only when the diagonal is not assumed unit) is a singular matrix, raised
-   rather than inf-poisoned.
+   (and only when the diagonal is not assumed unit) is a singular matrix, whose
+   solution is NaN rather than inf-poisoned.
 
    la_trsm_unb is the unblocked BLAS-2 substitution; la_trsm blocks it (dtrsm
    structure) once n exceeds LA_TRSM_NB: the effective operator M = op(A) is
@@ -113,10 +114,10 @@ LA_TRAITS_c64(LA_EXPAND_CHOL)
     for (int64_t ii = 0; ii < n; ii++) {                                      \
       int64_t i = forward ? ii : n - 1 - ii;                                  \
       T diag = transpose ? CONJ(A[i * lda + i]) : A[i * lda + i];             \
-      /* Exact zero pivot raises; a NaN pivot is NOT caught here and propagates \
-         NaN into x (matches LAPACK xTRTRS, which flags only exact singularity). \
-         Deliberately asymmetric with cholesky's !(d>0), which DOES catch NaN. */ \
-      if (!unit && diag == (T)0) return LA_ERR_SINGULAR;                      \
+      /* Only an exact zero pivot is singular; a NaN pivot propagates NaN into  \
+         x (as LAPACK xTRTRS, which flags only exact singularity). Unlike       \
+         cholesky's !(d>0), which also takes NaN as not positive. */            \
+      if (!unit && diag == (T)0) return LA_UNDEFINED;                         \
       for (int64_t j = 0; j < nrhs; j++) {                                    \
         T s = X[i * ldx + j];                                                 \
         if (forward)                                                          \
@@ -198,8 +199,9 @@ static const la_compute_desc la_desc[LA_NCOMPUTE] = {
    in/out are same-dtype, shape [batch..., n, n] (out contiguous, allocated by
    the binding). One batch matrix per job; each worker owns three compute-typed
    scratch buffers (the working matrix, the conj panel, the GEMM product), sized
-   n×n each — allocated nthreads× under the lock. A non-PD matrix sets a shared
-   error flag (first writer wins); the driver reports it after the region. */
+   n×n each — allocated nthreads× under the lock. A matrix that is not positive
+   definite has a factor of NaN; a GEMM failure is reported per worker (first
+   writer wins) after the region. */
 typedef struct {
   const nx_c_ndarray *in;
   const nx_c_ndarray *out;
@@ -280,6 +282,10 @@ static void la_chol_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     int64_t lda = x->inplace ? x->out_rs : n;
     mv->unpack(inb, x->in_rs, x->in_cs, n, n, cbuf, lda);
     nx_c_status s = cd->chol(cbuf, n, lda, bscr, pscr, gscr);
+    if (s == LA_UNDEFINED) {
+      mv->nan(n, n, (char *)outb, x->out_rs, x->out_cs);
+      continue;
+    }
     if (s != NX_C_OK) {
       if (x->werr[worker] == NX_C_OK) x->werr[worker] = s;
       continue;
@@ -403,8 +409,8 @@ static nx_c_status nx_c_cholesky_run(const nx_c_ndarray *in, const nx_c_ndarray 
 /* ── Triangular solve driver: batched, pooled ────────────────────────────
    a is [batch, n, n] triangular, b is [batch, n, nrhs], out (same shape as b) is
    the solution. Each worker unpacks A and B into its own scratch, solves in
-   place, packs the full result. Singular (zero pivot, non-unit diagonal) is
-   reported per worker and raised. */
+   place, packs the full result. A singular matrix (zero pivot, non-unit
+   diagonal) has a solution of NaN; a GEMM failure is reported per worker. */
 typedef struct {
   const nx_c_ndarray *a;
   const nx_c_ndarray *b;
@@ -448,6 +454,10 @@ static void la_trsm_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     mv->unpack(bb, x->b_rs, x->b_cs, n, nrhs, xw, nrhs);
     nx_c_status s = cd->trsm(aw, xw, n, n, nrhs, nrhs, x->upper, x->transpose,
                             x->unit, gw, pw, gm);
+    if (s == LA_UNDEFINED) {
+      mv->nan(n, nrhs, (char *)ob, x->o_rs, x->o_cs);
+      continue;
+    }
     if (s != NX_C_OK) {
       if (x->werr[worker] == NX_C_OK) x->werr[worker] = s;
       continue;

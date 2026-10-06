@@ -428,7 +428,12 @@ module type S = sig
 
       The last two axes hold the matrices and the leading ones are batch axes.
       nx gives the matrices their required shapes: square where a kernel needs
-      it, and matching for a solve. *)
+      it, and matching for a solve.
+
+      No kernel fails on its values. A matrix that breaks an operation's
+      precondition on them, as each kernel states, has results whose every
+      element is NaN, both parts of a complex one; the other matrices of its
+      batch are computed as if it were not there. *)
 
   val cholesky :
     upper:bool -> ('a, 'b) Nx_array.t -> dst:('a, 'b) Nx_array.t -> unit
@@ -437,8 +442,8 @@ module type S = sig
       is the Hermitian matrix that its lower triangle and the real part of its
       diagonal name: no other element is read.
 
-      Raises {!Nx_backend.Linalg_error} [`Not_positive_definite] if [x] is not
-      positive-definite. *)
+      A matrix that is not positive-definite, one whose factorization meets a
+      pivot that is not positive or is NaN, has a factor of NaN. *)
 
   val qr :
     reduced:bool ->
@@ -450,10 +455,7 @@ module type S = sig
       [Q] with orthonormal columns, unitary on complex matrices, and [R] upper
       triangular. With [reduced], for [x] of [m] rows and [n] columns and
       [k = min m n], [q] has [k] columns and [r] [k] rows; otherwise [q] is
-      square.
-
-      Raises {!Nx_backend.Linalg_error} [`No_convergence] if the factorization
-      does not converge. *)
+      square. *)
 
   val lu :
     ('a, 'b) Nx_array.t ->
@@ -487,8 +489,8 @@ module type S = sig
       say whether the factors are full, square, or thin, of [min m n] columns
       and rows.
 
-      Raises {!Nx_backend.Linalg_error} [`No_convergence] if the iteration does
-      not converge. *)
+      A matrix holding NaN or an infinity, or on which the iteration does not
+      converge, has factors of NaN. *)
 
   val eig :
     ('a, 'b) Nx_array.t ->
@@ -499,8 +501,8 @@ module type S = sig
       into [values] and, when [vectors] is given, its eigenvectors into them.
       Without [vectors] the kernel does not accumulate them.
 
-      Raises {!Nx_backend.Linalg_error} [`No_convergence] if the iteration does
-      not converge. *)
+      A matrix holding NaN or an infinity, or on which the iteration does not
+      converge, has eigenvalues and eigenvectors of NaN. *)
 
   val eigh :
     ('a, 'b) Nx_array.t ->
@@ -513,8 +515,8 @@ module type S = sig
       not accumulate them. [x] is the Hermitian matrix that its lower triangle
       and the real part of its diagonal name: no other element is read.
 
-      Raises {!Nx_backend.Linalg_error} [`No_convergence] if the iteration does
-      not converge. *)
+      A matrix holding NaN or an infinity in what is read, or on which the
+      iteration does not converge, has eigenvalues and eigenvectors of NaN. *)
 
   val solve_triangular :
     upper:bool ->
@@ -531,6 +533,6 @@ module type S = sig
       the diagonal of [a] is taken as ones. [b] is a vector of shape [(..., n)]
       or right-hand sides of shape [(..., n, nrhs)].
 
-      Raises {!Nx_backend.Linalg_error} [`Singular] if [a] is singular: a zero
-      on the diagonal when [unit_diag] is [false]. *)
+      A singular [a], one with a zero on the diagonal when [unit_diag] is
+      [false], has a solution of NaN. *)
 end

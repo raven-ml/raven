@@ -3521,19 +3521,26 @@ val unique : ('a, 'b) t -> groups
 
     See also {!reduce_segments}, {!lexsort}. *)
 
-(** {1:linalg Linear algebra} *)
+(** {1:linalg Linear algebra}
 
-exception
-  Linalg_error of {
-    op : string;
-    kind : [ `Not_positive_definite | `Singular | `No_convergence ];
-  }
-(** Raised by a linear-algebra operation when the numeric computation fails,
-    carrying the operation name and a failure [kind]. Precondition violations
-    (non-square input, wrong dtype) raise [Invalid_argument] instead.
+    The last two axes hold the matrices and the leading ones are batch axes;
+    each matrix of a batch is computed on its own.
 
-    This is [Nx_backend.Linalg_error]; catching it here catches the exception
-    raised by the backend. *)
+    No operation raises on the values of its matrices. A matrix that breaks an
+    operation's precondition on its values, as the operation states, has
+    results whose every element is NaN, both parts of a complex one, so any
+    one element tells whether it failed. A caller that wants an exception
+    checks:
+
+    {@ocaml[
+      # let a = create float64 [| 2; 2 |] [| 1.; 2.; 2.; 1. |] in
+        let l = cholesky a in
+        check Ptree.unit (all (isfinite l)) () (fun _ () ->
+            Failure "covariance is not positive-definite")
+      Exception: Failure "covariance is not positive-definite".
+    ]}
+
+    Shapes and dtypes are checked at once and raise [Invalid_argument]. *)
 
 (** {2:linalg_products Products} *)
 
@@ -3692,7 +3699,9 @@ val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
 (** [matrix_power t n] raises square matrix [t] to integer power [n]. [n = 0]
     returns the identity; [n < 0] uses the inverse.
 
-    Raises {!Linalg_error} with kind [`Singular] if [n < 0] and [t] is singular.
+    For [n < 0], a singular matrix, as {!inv} defines it, has a result whose
+    every element is NaN.
+
     Raises [Invalid_argument] if [t] is not square or the dtype is not
     floating-point or complex. *)
 
@@ -3714,9 +3723,14 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
     are read; the strictly upper triangle and the diagonal's imaginary parts may
     hold anything.
 
-    Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
-    positive-definite. Raises [Invalid_argument] if [a] is not square or the
-    dtype is not floating-point or complex.
+    A matrix that is not positive-definite, one whose factorization meets a
+    pivot that is not positive or is NaN, has a factor whose every element is
+    NaN. Each matrix of a batch is factored on its own, so
+    [all (isfinite (cholesky a))] tests that [a] is positive-definite, and
+    [all ~axes:[-2; -1]] tests each matrix of a batch.
+
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
     See also {!solve}. *)
 
@@ -3725,9 +3739,7 @@ val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
     ([Q] is unitary on complex matrices), and [R] is upper-triangular. [mode]
     defaults to [`Reduced].
 
-    Raises {!Linalg_error} with kind [`No_convergence] if the factorization does
-    not converge. Raises [Invalid_argument] if the dtype is not floating-point
-    or complex.
+    Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
     See also {!svd}, {!lu}. *)
 
@@ -3757,13 +3769,17 @@ val svd :
     one is [+0], whatever the signs of [a]'s zeros. [full_matrices] defaults to
     [false] (economy decomposition).
 
+    A matrix that holds NaN or an infinity, or on which the iteration does not
+    converge, has [U], [S] and [Vh] whose every element is NaN.
+
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
     See also {!svdvals}, {!qr}. *)
 
 val svdvals : ('a, 'b) t -> (float, float64_elt) t
 (** [svdvals a] is the singular values of [a] in descending order, as {!svd}
-    gives them. More efficient than {!svd} when only the values are needed.
+    gives them, NaN where {!svd}'s are. More efficient than {!svd} when only the
+    values are needed.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
@@ -3773,6 +3789,9 @@ val eig :
   ('a, 'b) t -> (Complex.t, complex64_elt) t * (Complex.t, complex64_elt) t
 (** [eig a] is [(eigenvalues, eigenvectors)] of general square matrix [a].
     Results are complex since real matrices may have complex eigenvalues.
+
+    A matrix that holds NaN or an infinity, or on which the iteration does not
+    converge, has eigenvalues and eigenvectors whose every element is NaN.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
@@ -3789,14 +3808,18 @@ val eigh :
     diagonal are read; the other triangle and the diagonal's imaginary parts may
     hold anything. More efficient than {!eig} for symmetric matrices.
 
+    A matrix whose read triangle holds NaN or an infinity, or on which the
+    iteration does not converge, has [w] and [v] whose every element is NaN.
+
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
 
     See also {!eig}, {!eigvalsh}. *)
 
 val eigvals : ('a, 'b) t -> (Complex.t, complex64_elt) t
-(** [eigvals a] is the eigenvalues of general square matrix [a]. More efficient
-    than {!eig} when eigenvectors are not needed.
+(** [eigvals a] is the eigenvalues of general square matrix [a], NaN where
+    {!eig}'s are. More efficient than {!eig} when eigenvectors are not
+    needed.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
@@ -3805,8 +3828,9 @@ val eigvals : ('a, 'b) t -> (Complex.t, complex64_elt) t
 
 val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
 (** [eigvalsh ?uplo a] is the eigenvalues of the real symmetric or complex
-    Hermitian matrix [a], real, in ascending order. Only the triangle [uplo]
-    names and the real part of the diagonal are read, as in {!eigh}.
+    Hermitian matrix [a], real, in ascending order, NaN where {!eigh}'s are.
+    Only the triangle [uplo] names and the real part of the diagonal are read,
+    as in {!eigh}.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
@@ -3917,10 +3941,12 @@ val solve_triangular :
     sides stacked as [·.., n, nrhs] (with [n] the size of [a]), sharing the
     batch dimensions of [a]; the result has the shape of [b].
 
+    A singular matrix, one with a zero on the diagonal when [unit_diag] is
+    [false], has a solution whose every element is NaN.
+
     Raises [Invalid_argument] if the dtype is not floating-point or complex, [a]
     is not square, [a] and [b] differ in dtype, or [b]'s shape does not match
-    [a]'s. Raises {!Linalg_error} with kind [`Singular] if a diagonal entry of
-    [a] is zero and [unit_diag] is [false].
+    [a]'s.
 
     See also {!solve}. *)
 
@@ -3929,9 +3955,12 @@ val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     [x] comes from {!lu}'s factors of [a] and two triangular solves.
 
-    Raises {!Linalg_error} with kind [`Singular] if [a] is singular: a pivot of
-    its LU factorization lies below tolerance. Raises [Invalid_argument] if [a]
-    is not square or the dtype is not floating-point or complex.
+    A singular matrix, one whose [U] in {!lu} has a pivot of exactly zero, has
+    a solution whose every element is NaN. A matrix that is singular only to
+    rounding gives large finite values, which a residual [a *@ x - b] judges.
+
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
     See also {!solve_triangular}, {!lstsq}, {!inv}. *)
 
@@ -3948,11 +3977,14 @@ val lstsq :
     See also {!solve}. *)
 
 val inv : ('a, 'b) t -> ('a, 'b) t
-(** [inv a] is the inverse of square matrix [a].
+(** [inv a] is the inverse of square matrix [a], {!solve} of [a] and the
+    identity.
 
-    Raises {!Linalg_error} with kind [`Singular] if [a] is singular. Raises
-    [Invalid_argument] if [a] is not square or the dtype is not floating-point
-    or complex.
+    A singular matrix, as {!solve} defines it, has an inverse whose every
+    element is NaN.
+
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
     See also {!pinv}, {!solve}. *)
 
@@ -3966,14 +3998,17 @@ val pinv : ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> ('a, 'b) t
 
 val tensorsolve : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [tensorsolve ?axes a b] solves the tensor equation [tensordot a x axes = b]
-    for [x].
+    for [x], by {!solve} of [a] and [b] as a matrix and a vector: NaN in every
+    element where that matrix is singular.
 
     Raises [Invalid_argument] if shapes are incompatible or the dtype is not
     floating-point or complex. *)
 
 val tensorinv : ?ind:int -> ('a, 'b) t -> ('a, 'b) t
 (** [tensorinv ?ind a] is the tensor inverse such that
-    [tensordot a (tensorinv a) ind] is the identity. [ind] defaults to [2].
+    [tensordot a (tensorinv a) ind] is the identity. [ind] defaults to [2]. It
+    is {!inv} of [a] as a matrix: NaN in every element where that matrix is
+    singular.
 
     Raises [Invalid_argument] if the result is not square in the specified
     dimensions or the dtype is not floating-point or complex. *)

@@ -335,11 +335,6 @@ let cholesky =
             Nx.create Nx.float32 [| 3; 3 |]
               [| 4.; 0.; 0.; 2.; -1.; 0.; 1.; 1.; 5. |]
           in
-          raises_match
-            (function
-              | Nx.Linalg_error { kind = `Not_positive_definite; _ } -> true
-              | _ -> false)
-            (fun () -> Nx.cholesky a);
           let nan = Float.nan in
           exact
             (Nx.create Nx.float32 [| 3; 3 |]
@@ -426,10 +421,6 @@ let solves =
               [| 1.; 0.; 0.; 1.; 0.; 0.; 2.; 1.; 1. |]
           in
           let b = Nx.ones Nx.float32 [| 3 |] in
-          raises_match
-            (function
-              | Nx.Linalg_error { kind = `Singular; _ } -> true | _ -> false)
-            (fun () -> Nx.solve_triangular lower b);
           exact
             (Nx.create Nx.float32 [| 3 |] [| 1.; Float.nan; Float.nan |])
             (traced (fun () -> Nx.solve_triangular lower b));

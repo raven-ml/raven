@@ -4802,28 +4802,11 @@ let solve a b =
            (if vector then perm else expand_dims [ -1 ] perm))
       (broadcast_to target b_expanded)
   in
-  (* A pivot below tolerance makes the system singular. Zeroing its row of U
-     keeps the check in the graph: the triangular solve then reports
-     [`Singular] itself, and a compiled program yields infinities instead. *)
-  let u =
-    let pivots = abs (diagonal packed) |> cast Nx_dtype.float64 in
-    let m = dim (-2) a in
-    let eps =
-      if Nx_dtype.equal (dtype a) Nx_dtype.float32 then 1e-6 else 1e-12
-    in
-    let tol_t =
-      full (Value.context pivots) Nx_dtype.float64 (shape pivots)
-        (eps *. float_of_int m)
-    in
-    where (expand_dims [ -1 ] (less pivots tol_t)) (zeros_like packed) packed
-  in
+  (* A zero pivot of U makes the upper solve, and so the solution, NaN. *)
   let result =
-    try
-      B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false u
-        (B.solve_triangular ~upper:false ~transpose:false ~unit_diag:true
-           packed pb)
-    with Nx_backend.Linalg_error { kind; _ } ->
-      raise (Nx_backend.Linalg_error { op = "solve"; kind })
+    B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false packed
+      (B.solve_triangular ~upper:false ~transpose:false ~unit_diag:true packed
+         pb)
   in
   if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
@@ -4953,11 +4936,9 @@ let inv a =
       (Array.append batch [| n; n |])
       (eye (Value.context a) (dtype a) n)
   in
-  try solve a i with
-  | Invalid_argument msg when String.sub msg 0 5 = "solve" ->
-      invalid_arg ("inv" ^ String.sub msg 5 (String.length msg - 5))
-  | Nx_backend.Linalg_error { kind; _ } ->
-      raise (Nx_backend.Linalg_error { op = "inv"; kind })
+  try solve a i
+  with Invalid_argument msg when String.sub msg 0 5 = "solve" ->
+    invalid_arg ("inv" ^ String.sub msg 5 (String.length msg - 5))
 
 let matrix_power a n =
   let sh = shape a in
@@ -4976,11 +4957,8 @@ let matrix_power a n =
   if n = 0 then eye (Value.context a) (dtype a) sh.(rank - 1)
   else if n > 0 then power a a (n - 1)
   else
-    try
-      let ia = inv a in
-      if -n = 1 then ia else power ia ia (-n - 1)
-    with Nx_backend.Linalg_error { kind; _ } ->
-      raise (Nx_backend.Linalg_error { op = "matrix_power"; kind })
+    let ia = inv a in
+    if -n = 1 then ia else power ia ia (-n - 1)
 
 let cond ?p x =
   check_square ~op:"cond" x;
@@ -5062,15 +5040,7 @@ let tensorsolve ?axes a b =
       "tensorsolve: a, leading dimensions must match trailing dimensions";
   let a_mat = reshape [| rows; cols |] a_perm in
   let b_vec = reshape [| rows |] b in
-  let solution =
-    try solve a_mat b_vec
-    with Nx_backend.Linalg_error { kind = `Singular; _ } ->
-      let x_col =
-        matmul (pinv' ~by:"Nx.tensorsolve" a_mat) (reshape [| rows; 1 |] b_vec)
-      in
-      reshape [| cols |] x_col
-  in
-  reshape free_shape solution
+  reshape free_shape (solve a_mat b_vec)
 
 let tensorinv ?ind a =
   check_float_or_complex ~op:"tensorinv" a;
@@ -5090,12 +5060,7 @@ let tensorinv ?ind a =
     invalid_arg
       "tensorinv: input, leading and trailing dimensions must have equal \
        product";
-  let inv_mat =
-    try inv (reshape [| ls; rs |] a)
-    with Nx_backend.Linalg_error { kind = `Singular; _ } ->
-      pinv' ~by:"Nx.tensorinv" (reshape [| ls; rs |] a)
-  in
-  reshape (Array.append right left) inv_mat
+  reshape (Array.append right left) (inv (reshape [| ls; rs |] a))
 
 (* ───── FFT ───── *)
 

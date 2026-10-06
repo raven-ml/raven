@@ -711,10 +711,6 @@ let at_zero a =
     ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
     (fun () -> Nx.zeros_like a)
 
-let singular = function
-  | Nx.Linalg_error { kind = `Singular; _ } -> true
-  | _ -> false
-
 let stated_tests =
   [
     test "the derivative is taken at a returned point that is not a zero"
@@ -742,14 +738,12 @@ let stated_tests =
           (snd (Rune.jvp' r a (Nx.ones_like a)));
         equal ~msg:"vmap of grad" (exact ()) (Nx.zeros_like a)
           (Rune.vmap' (Rune.grad' (fun a -> Nx.sum (r a))) a));
-    test "grad at a singular derivative raises the default solve's error"
-      (fun () ->
-        raises_match singular (fun () ->
-            Rune.grad' (fun a -> Nx.sum (at_zero a)) (scalar 0.)));
-    test "jvp at a singular derivative raises the default solve's error"
-      (fun () ->
-        raises_match singular (fun () ->
-            Rune.jvp' at_zero (scalar 0.) (scalar 1.)));
+    test "grad at a singular derivative is NaN" (fun () ->
+        equal (close ()) (scalar Float.nan)
+          (Rune.grad' (fun a -> Nx.sum (at_zero a)) (scalar 0.)));
+    test "jvp at a singular derivative is NaN" (fun () ->
+        equal (close ()) (scalar Float.nan)
+          (snd (Rune.jvp' at_zero (scalar 0.) (scalar 1.))));
     test "a scalar root's gradient" (fun () ->
         let a = scalar 3. in
         equal (close ())

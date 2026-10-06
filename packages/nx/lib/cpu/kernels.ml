@@ -547,24 +547,7 @@ external caml_eig :
   bool ->
   unit = "caml_nx_c_eig"
 
-(* Numeric failures cross the FFI as [Failure "<op>: <reason>"] from the C
-   funnel; the three reasons below are the exact static strings of nx_c_linalg.c
-   and nx_c_eig.c (LA_ERR_NOT_PD, LA_ERR_SINGULAR, LA_ERR_NO_CONVERGE /
-   EIG_ERR_NO_CONVERGE), lifted to [Linalg_error]. *)
-let reraise_linalg ~op f =
-  try f ()
-  with Failure msg as e ->
-    let ends suffix = String.ends_with ~suffix msg in
-    if ends "matrix is not positive definite" then
-      raise (Nx_backend.Linalg_error { op; kind = `Not_positive_definite })
-    else if ends "triangular matrix is singular" then
-      raise (Nx_backend.Linalg_error { op; kind = `Singular })
-    else if ends "eigenvalue iteration did not converge" then
-      raise (Nx_backend.Linalg_error { op; kind = `No_convergence })
-    else raise e
-
-let cholesky ~upper x ~dst =
-  reraise_linalg ~op:"cholesky" (fun () -> caml_cholesky dst x upper)
+let cholesky ~upper x ~dst = caml_cholesky dst x upper
 
 (* A vector right-hand side is solved as a one-column matrix. *)
 let solve_triangular ~upper ~transpose ~unit_diag a b ~dst =
@@ -578,24 +561,18 @@ let solve_triangular ~upper ~transpose ~unit_diag a b ~dst =
     lor (if transpose then 2 else 0)
     lor if unit_diag then 4 else 0
   in
-  reraise_linalg ~op:"solve_triangular" (fun () ->
-      caml_solve_triangular (column dst) a (column b) flags)
+  caml_solve_triangular (column dst) a (column b) flags
 
-let qr ~reduced x ~q ~r =
-  reraise_linalg ~op:"qr" (fun () -> caml_qr q r x reduced)
-
-let lu x ~lu ~pivots ~perm =
-  reraise_linalg ~op:"lu" (fun () -> caml_lu lu pivots perm x)
-
-let svd x ~u ~s ~vt = reraise_linalg ~op:"svd" (fun () -> caml_svd u s vt x)
+let qr ~reduced x ~q ~r = caml_qr q r x reduced
+let lu x ~lu ~pivots ~perm = caml_lu lu pivots perm x
+let svd x ~u ~s ~vt = caml_svd u s vt x
 
 let eig x ~values ~vectors =
   match vectors with
-  | None ->
-      reraise_linalg ~op:"eigvals" (fun () -> caml_eig values values x false)
-  | Some v -> reraise_linalg ~op:"eig" (fun () -> caml_eig values v x true)
+  | None -> caml_eig values values x false
+  | Some v -> caml_eig values v x true
 
 let eigh x ~values ~vectors =
   match vectors with
-  | None -> reraise_linalg ~op:"eigvalsh" (fun () -> caml_eigh values x x false)
-  | Some v -> reraise_linalg ~op:"eigh" (fun () -> caml_eigh values v x true)
+  | None -> caml_eigh values x x false
+  | Some v -> caml_eigh values v x true

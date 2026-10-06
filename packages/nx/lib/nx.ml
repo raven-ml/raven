@@ -7,9 +7,6 @@ include Frontend
 
 (* A caller owns the array it is given. *)
 let shape x = Array.copy (shape x)
-
-exception Linalg_error = Nx_backend.Linalg_error
-
 let context = Placement.host
 
 module Device = Device

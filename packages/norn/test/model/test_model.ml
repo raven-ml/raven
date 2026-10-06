@@ -535,17 +535,20 @@ let domains =
           satisfies ~claim:"finite" float_exact Float.is_finite
             (Nx.item [ 0 ] lp);
           equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
-      (* Compiled: the factorisation runs to NaN where eager stops. *)
-      test "a NaN Cholesky factor gives -inf" (fun () ->
-          let lp =
-            Rune.jit
-              Nx.Ptree.(M.coords correlated @-> returns tensor)
-              (M.log_density correlated (vec [| 0.5; -0.5 |]))
-              (coords correlated [| 0.5; 2. |])
-          in
-          satisfies ~claim:"finite" float_exact Float.is_finite
-            (Nx.item [ 0 ] lp);
-          equal float_exact Float.neg_infinity (Nx.item [ 1 ] lp));
+      test "a NaN Cholesky factor gives -inf, eagerly and compiled" (fun () ->
+          let lp = M.log_density correlated (vec [| 0.5; -0.5 |]) in
+          let at = coords correlated [| 0.5; 2. |] in
+          List.iter
+            (fun (msg, lp) ->
+              satisfies ~msg ~claim:"finite" float_exact Float.is_finite
+                (Nx.item [ 0 ] lp);
+              equal ~msg float_exact Float.neg_infinity (Nx.item [ 1 ] lp))
+            [
+              ("eager", lp at);
+              ( "compiled",
+                Rune.jit Nx.Ptree.(M.coords correlated @-> returns tensor) lp at
+              );
+            ]);
       test "an overflowed trajectory is a divergence" (fun () ->
           let lp = M.log_density counts (Nx.scalar Nx.int32 3l) in
           let u = M.coords counts in

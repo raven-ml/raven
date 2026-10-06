@@ -67,21 +67,7 @@ let equal b b' = b.id = b'.id
 
 exception Refused of string
 
-exception
-  Linalg_error of {
-    op : string;
-    kind : [ `Not_positive_definite | `Singular | `No_convergence ];
-  }
-
 let () =
   Printexc.register_printer (function
     | Refused reason -> Some (Printf.sprintf "Nx_backend.Refused(%S)" reason)
-    | Linalg_error { op; kind } ->
-        let detail =
-          match kind with
-          | `Not_positive_definite -> "matrix is not positive-definite"
-          | `Singular -> "matrix is singular"
-          | `No_convergence -> "algorithm failed to converge"
-        in
-        Some (Printf.sprintf "Nx.Linalg_error(%s): %s" op detail)
     | _ -> None)

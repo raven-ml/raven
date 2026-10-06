@@ -32,7 +32,7 @@
      hqr2    — Francis implicit DOUBLE-shift QR: trailing-2x2 shift, implicit
                first column, bulge chase, small-subdiagonal deflation,
                exceptional shifts at iterations 10 and 20, a 30*n total-iteration
-               cap -> LA_ERR_NO_CONVERGE (never a silent wrong answer). 2x2 real
+               cap -> EIG_UNDEFINED (never a silent wrong answer). 2x2 real
                Schur blocks yield exact complex-conjugate eigenvalue pairs; the
                back-substitution tail computes the quasi-triangular eigenvectors.
      balbak  — undo balancing on the eigenvectors.
@@ -49,7 +49,7 @@
      qr      — explicit single-shift QR (no 2x2 blocks needed in complex
                arithmetic): Wilkinson shift from the trailing 2x2, Givens
                triangularize + RQ, small-subdiagonal deflation, exceptional
-               shifts at 10 and 20, 30*(igh-low+1) cap -> LA_ERR_NO_CONVERGE.
+               shifts at 10 and 20, 30*(igh-low+1) cap -> EIG_UNDEFINED.
      vec     — back-substitution on the triangular Schur form, then Z*x, then
                balbak.
 
@@ -62,12 +62,13 @@
 
    Errors follow the backend protocol: kernels return nx_c_status, the stub raises
    via nx_c.h's nx_c_raise / nx_c_raise_invalid (this TU never includes
-   caml/fail.h). Non-convergence is RAISED, never inf-poisoned.
+   caml/fail.h). A matrix holding NaN or an infinity, or on which the iteration
+   does not converge, has eigenvalues and eigenvectors of NaN.
 
    Batches parallelize over the engine pool exactly like eigh: one
    nx_c_parallel_for over the batch, per-worker scratch pre-allocated under the
    lock and handed to the primitive as free_on_exit, bodies allocation-free and
-   worker-indexed, per-worker error slots for NO_CONVERGE (nx_c_engine.h). */
+   worker-indexed (nx_c_engine.h). */
 
 #include <complex.h>
 #include <float.h>
@@ -80,10 +81,9 @@
 
 #include "nx_c_engine.h" /* pool + status + nx_c_raise; nx_c.h comes with it */
 
-/* Failure/precondition statuses (static strings; the stub maps them to
-   exceptions). Distinct storage from nx_c_linalg.c's identically-worded strings —
-   statuses are compared by content, never by pointer (nx_c.h). */
-static const char EIG_ERR_NO_CONVERGE[] = "eigenvalue iteration did not converge";
+/* Precondition statuses (static strings; the stub maps them to exceptions).
+   Distinct storage from nx_c_linalg.h's identically-worded strings — statuses
+   are compared by content, never by pointer (nx_c.h). */
 static const char EIG_ERR_NOT_FLOAT[] = "eig requires a float or complex dtype";
 static const char EIG_ERR_NOT_SQUARE[] = "matrix must be square";
 static const char EIG_ERR_SHAPE[] = "operand shapes are incompatible";
@@ -96,10 +96,9 @@ static const char EIG_ERR_TOO_LARGE[] = "matrix dimension exceeds eig limit";
    index (silent corruption), so the bound is enforced, not merely assumed. */
 #define EIG_MAX_N 46340
 
-/* Per-worker error slots live on the driver stack; MUST be >= the engine pool
-   cap (nx_c_engine.c NX_C_MAX_THREADS). Same literal-64 bound and reasoning as
-   nx_c_linalg.c's LA_MAX_WORKERS; every driver also clamps nth to it. */
-#define EIG_MAX_WORKERS 64
+/* The status of an iteration that does not converge: the driver writes NaN to
+   that matrix's results, so it never reaches the caller. */
+static const char EIG_UNDEFINED[] = "undefined on this matrix";
 
 #define EIG_ALIGN(x) (((x) + 63) & ~(int64_t)63)
 
@@ -386,7 +385,7 @@ static nx_c_status eig_hqr2_r(double *h, int n, int low, int igh, double *wr,
         en = enm2;
         break;
       }
-      if (itn == 0) return EIG_ERR_NO_CONVERGE;
+      if (itn == 0) return EIG_UNDEFINED;
       if (its == 10 || its == 20) { /* exceptional shift */
         t += x;
         for (int i = low; i <= en; i++) H(i, i) -= x;
@@ -862,7 +861,7 @@ static nx_c_status eig_qr_c(eig_cplx *h, int n, int low, int igh, eig_cplx *w,
         en--;
         break;
       }
-      if (itn == 0) return EIG_ERR_NO_CONVERGE;
+      if (itn == 0) return EIG_UNDEFINED;
       eig_cplx mu;
       if (its == 10 || its == 20) {
         double bump = eig_cabs1(h[en * n + (en - 1)]);
@@ -1048,7 +1047,6 @@ typedef struct {
   /* per-worker sub-buffer offsets within a scratch slot */
   int64_t off_a, off_z, off_wr, off_wi, off_scale, off_ort, off_cvec;
   int64_t off_cw, off_cV, off_cy, off_cvh, off_csn, off_ccs;
-  nx_c_status *werr;
 } eig_ctx;
 
 static void eig_batch_base(int64_t bt, int nd, const int64_t *bshape,
@@ -1091,8 +1089,26 @@ static void eig_store_vcol(const eig_ctx *x, const char *vb, int64_t j,
   }
 }
 
-static void eig_real_body(const eig_ctx *x, int worker, int64_t bt,
-                          nx_c_status *slot) {
+/* Writes NaN, in both parts, to every element of batch matrix bt's
+   eigenvalues and, when they are asked for, its eigenvectors. */
+static void eig_nan(const eig_ctx *x, int64_t bt) {
+  const nx_c_complex64 nan = CMPLX(NAN, NAN);
+  int64_t n = x->n;
+  const char *wb;
+  eig_batch_base(bt, x->batch_nd, x->bshape, x->w_bs, x->w->offset, 16,
+                 (const char *)x->w->data, &wb);
+  for (int64_t j = 0; j < n; j++)
+    *(nx_c_complex64 *)(wb + j * x->w_cs * 16) = nan;
+  if (!x->vectors) return;
+  const char *vb;
+  eig_batch_base(bt, x->batch_nd, x->bshape, x->v_bs, x->v->offset, 16,
+                 (const char *)x->v->data, &vb);
+  for (int64_t i = 0; i < n; i++)
+    for (int64_t j = 0; j < n; j++)
+      *(nx_c_complex64 *)(vb + (i * x->v_rs + j * x->v_cs) * 16) = nan;
+}
+
+static void eig_real_body(const eig_ctx *x, int worker, int64_t bt) {
   int64_t n = x->n;
   int ni = (int)n;
   char *base = x->scratch + (int64_t)worker * x->stride;
@@ -1109,8 +1125,13 @@ static void eig_real_body(const eig_ctx *x, int worker, int64_t bt,
                  (const char *)x->in->data, &inb);
   eig_unpack_r[x->dt](inb, x->in_rs, x->in_cs, n, a);
   double amax = 0.0;
-  for (int64_t i = 0; i < n * n; i++)
+  for (int64_t i = 0; i < n * n; i++) {
+    if (!isfinite(a[i])) {
+      eig_nan(x, bt);
+      return;
+    }
     if (fabs(a[i]) > amax) amax = fabs(a[i]);
+  }
   double cscale = eig_range_scale(amax);
   if (cscale != 1.0)
     for (int64_t i = 0; i < n * n; i++) a[i] *= cscale;
@@ -1119,9 +1140,8 @@ static void eig_real_body(const eig_ctx *x, int worker, int64_t bt,
   eig_balanc_r(a, ni, &low, &igh, scale);
   eig_orthes_r(a, ni, low, igh, ort);
   eig_ortran_r(a, ni, low, igh, ort, z);
-  nx_c_status s = eig_hqr2_r(a, ni, low, igh, wr, wi, z);
-  if (s != NX_C_OK) {
-    if (*slot == NX_C_OK) *slot = s;
+  if (eig_hqr2_r(a, ni, low, igh, wr, wi, z) != NX_C_OK) {
+    eig_nan(x, bt);
     return;
   }
   eig_balbak_r(z, ni, low, igh, scale);
@@ -1151,8 +1171,7 @@ static void eig_real_body(const eig_ctx *x, int worker, int64_t bt,
   }
 }
 
-static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt,
-                          nx_c_status *slot) {
+static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt) {
   int64_t n = x->n;
   int ni = (int)n;
   char *base = x->scratch + (int64_t)worker * x->stride;
@@ -1171,8 +1190,13 @@ static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt,
                  (const char *)x->in->data, &inb);
   eig_unpack_c[x->dt](inb, x->in_rs, x->in_cs, n, a);
   double amax = 0.0;
-  for (int64_t i = 0; i < n * n; i++)
+  for (int64_t i = 0; i < n * n; i++) {
+    if (!isfinite(creal(a[i])) || !isfinite(cimag(a[i]))) {
+      eig_nan(x, bt);
+      return;
+    }
     if (cabs(a[i]) > amax) amax = cabs(a[i]);
+  }
   double cscale = eig_range_scale(amax);
   if (cscale != 1.0)
     for (int64_t i = 0; i < n * n; i++) a[i] *= cscale;
@@ -1180,9 +1204,8 @@ static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt,
   int low, igh;
   eig_balanc_c(a, ni, &low, &igh, scale);
   eig_hess_c(a, ni, low, igh, z, vh);
-  nx_c_status s = eig_qr_c(a, ni, low, igh, w, z, ccs, sn);
-  if (s != NX_C_OK) {
-    if (*slot == NX_C_OK) *slot = s;
+  if (eig_qr_c(a, ni, low, igh, w, z, ccs, sn) != NX_C_OK) {
+    eig_nan(x, bt);
     return;
   }
 
@@ -1228,12 +1251,11 @@ static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt,
 
 static void eig_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   eig_ctx *x = (eig_ctx *)vctx;
-  nx_c_status *slot = &x->werr[worker];
   for (int64_t bt = lo; bt < hi; bt++) {
     if (x->is_complex)
-      eig_cplx_body(x, worker, bt, slot);
+      eig_cplx_body(x, worker, bt);
     else
-      eig_real_body(x, worker, bt, slot);
+      eig_real_body(x, worker, bt);
   }
 }
 
@@ -1270,7 +1292,6 @@ static nx_c_status nx_c_eig_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
   int64_t bytes = nbatch * n * n * esz;
   int nth = nx_c_threads_for(NX_C_COST_HEAVY, nbatch, n * n * n, bytes);
   if (nth > nbatch) nth = (int)nbatch;
-  if (nth > EIG_MAX_WORKERS) nth = EIG_MAX_WORKERS;
   if (nth < 1) nth = 1;
 
   eig_ctx x;
@@ -1307,9 +1328,6 @@ static nx_c_status nx_c_eig_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
   char *scratch = nx_c_aligned_alloc((size_t)stride * nth);
   if (!scratch) return NX_C_ERR_ALLOC;
 
-  nx_c_status werr[EIG_MAX_WORKERS];
-  for (int i = 0; i < nth; i++) werr[i] = NX_C_OK;
-
   x.in = in;
   x.w = w;
   x.v = v;
@@ -1330,17 +1348,9 @@ static nx_c_status nx_c_eig_run(const nx_c_ndarray *in, const nx_c_ndarray *w,
   x.v_cs = vectors ? v->strides[v->ndim - 1] : 0;
   x.scratch = scratch;
   x.stride = stride;
-  x.werr = werr;
 
   nx_c_parallel_for(nth, nbatch, bytes, eig_body, &x, scratch);
-
-  nx_c_status err = NX_C_OK;
-  for (int i = 0; i < nth; i++)
-    if (werr[i] != NX_C_OK) {
-      err = werr[i];
-      break;
-    }
-  return err;
+  return NX_C_OK;
 }
 
 /* ── FFI stub ──────────────────────────────────────────────────────────────*/

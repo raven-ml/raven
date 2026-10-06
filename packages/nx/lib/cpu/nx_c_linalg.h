@@ -26,15 +26,18 @@
 #include "nx_c_engine.h" /* pool + status + nx_c_raise; nx_c.h comes with it */
 #include "nx_c_matmul.h" /* nx_c_gemm2d_ct — trailing updates */
 
-/* Tier-1 failure statuses (static strings; the stub maps them to exceptions). */
-static const char LA_ERR_NOT_PD[] = "matrix is not positive definite";
-static const char LA_ERR_SINGULAR[] = "triangular matrix is singular";
+/* Argument statuses (static strings; the stub raises them as
+   Invalid_argument). */
 static const char LA_ERR_NOT_FLOAT[] =
     "linalg requires a float or complex dtype";
 static const char LA_ERR_NOT_SQUARE[] = "matrix must be square";
 static const char LA_ERR_SHAPE_LA[] = "operand shapes are incompatible";
-static const char LA_ERR_NO_CONVERGE[] =
-    "eigenvalue iteration did not converge";
+
+/* A kernel's status for a matrix on which its operation is undefined: a pivot
+   it cannot take, or an iteration that does not converge. The driver writes
+   NaN to every element of that matrix's results and goes on to the next, so
+   the status never reaches the caller. */
+static const char LA_UNDEFINED[] = "undefined on this matrix";
 
 /* Block size for the right-looking factorizations: the diagonal panel is factored
    unblocked, the trailing (n-j-nb) submatrix updated through the GEMM. Chosen so
@@ -353,7 +356,15 @@ static inline void la_scale(la_compute lc, void *a, int64_t m, int64_t n,
    dispatched here but cost nothing). unpack reads element (i,k) at
    base + (i*rs + k*cs)*esz through nx_c_ld (converting to the compute type) into a
    dense n×lda buffer. pack_tri writes the lower (or upper) triangle back through
-   nx_c_st and zeroes the other triangle — the cholesky output shape. */
+   nx_c_st and zeroes the other triangle — the cholesky output shape. nan writes
+   NaN to every element, both parts of a complex one: the result of a matrix
+   on which the operation is undefined. */
+#define LA_NAN_NX_C_CAT_FLOAT NAN
+#define LA_NAN_NX_C_CAT_COMPLEX CMPLX(NAN, NAN)
+/* The integer and boolean rows, never dispatched here, have no NaN. */
+#define LA_NAN_NX_C_CAT_SINT 0
+#define LA_NAN_NX_C_CAT_UINT 0
+#define LA_NAN_NX_C_CAT_BOOL 0
 #define LA_GEN_MOVE(sfx, storage, compute, ld, st, cat)                        \
   static void la_unpack_##sfx(const char *src, int64_t rs, int64_t cs,         \
                               int64_t rows, int64_t cols, void *vdst,          \
@@ -399,6 +410,14 @@ static inline void la_scale(la_compute lc, void *a, int64_t m, int64_t n,
         compute v = k >= i ? src[i * ld_ + k] : (compute)0;                   \
         nx_c_st_##sfx(dst + (i * rs + k * cs) * esz, v);                        \
       }                                                                        \
+  }                                                                            \
+  static void la_nan_##sfx(int64_t rows, int64_t cols, char *dst, int64_t rs,  \
+                           int64_t cs) {                                       \
+    int64_t esz = (int64_t)sizeof(storage);                                    \
+    compute v = LA_NAN_##cat;                                                  \
+    for (int64_t i = 0; i < rows; i++)                                         \
+      for (int64_t k = 0; k < cols; k++)                                       \
+        nx_c_st_##sfx(dst + (i * rs + k * cs) * esz, v);                        \
   }
 NX_C_FOR_EACH_COMPUTE_DTYPE(LA_GEN_MOVE)
 #undef LA_GEN_MOVE
@@ -411,6 +430,7 @@ typedef void (*la_packfull_fn)(const void *, int64_t, int64_t, int64_t, char *,
                                int64_t, int64_t);
 
 typedef void (*la_eye_fn)(int64_t, char *, int64_t, int64_t);
+typedef void (*la_nan_fn)(int64_t, int64_t, char *, int64_t, int64_t);
 
 typedef struct {
   la_unpack_fn unpack;
@@ -418,12 +438,13 @@ typedef struct {
   la_packfull_fn packfull;
   la_packfull_fn packR; /* upper trapezoid; same signature as packfull */
   la_eye_fn eye;        /* the n×n identity, written through nx_c_st */
+  la_nan_fn nan;        /* rows×cols of NaN, written through nx_c_st */
 } la_move_desc;
 
 static const la_move_desc la_move[NX_C_DTYPE_COUNT] = {
 #define LA_MOVE_ROW(sfx, storage, compute, ld, st, cat)                        \
   [NX_C_DTYPE_##sfx] = {la_unpack_##sfx, la_packtri_##sfx, la_packfull_##sfx,   \
-                       la_packR_##sfx, la_eye_##sfx},
+                       la_packR_##sfx, la_eye_##sfx, la_nan_##sfx},
     NX_C_FOR_EACH_COMPUTE_DTYPE(LA_MOVE_ROW)
 #undef LA_MOVE_ROW
 };
@@ -483,8 +504,7 @@ LA_QR_EXPORT(c64)
 
 static NX_C_NORETURN void la_raise(const char *op, nx_c_status s) {
   /* Shape/dtype preconditions are the caller's bad argument (Invalid_argument);
-     a non-PD matrix or a singular solve is a runtime Failure — the interface
-     documents cholesky raising Failure when not positive definite. */
+     anything else, an allocation that failed, is a runtime Failure. */
   if (strcmp(s, LA_ERR_NOT_FLOAT) == 0 || strcmp(s, LA_ERR_NOT_SQUARE) == 0 ||
       strcmp(s, LA_ERR_SHAPE_LA) == 0)
     nx_c_raise_invalid(op, s);

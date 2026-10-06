@@ -793,8 +793,8 @@ val root :
     [linear_solve] applies [op] after it returned or inside a {!val-jit} it
     calls; and under {!val-vmap}, if [residual] reads {!lanes} of the root's
     map, which joins the lanes' systems. Under a derivative with the default
-    linear solve, a singular [J] at the result raises {!Nx.Linalg_error} with
-    kind [`Singular]. *)
+    linear solve, a singular [J] at the result, as {!Nx.solve} defines it,
+    gives a NaN derivative. *)
 
 (** {1:jit Compilation} *)
 

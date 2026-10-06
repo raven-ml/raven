@@ -50,14 +50,3 @@ exception Refused of string
     ["no float64"]: nx raises [Invalid_argument] in its place, naming the
     backend, the device and the operation, and the operation reaches no other
     backend. *)
-
-exception
-  Linalg_error of {
-    op : string;
-    kind : [ `Not_positive_definite | `Singular | `No_convergence ];
-  }
-(** [Linalg_error { op; kind }] is raised by a linear-algebra kernel whose
-    computation fails on its values: [op] is the operation, as in ["cholesky"],
-    and [kind] the failure: a matrix that is not positive-definite, a singular
-    matrix, or an iteration that did not converge. A precondition on shapes or
-    dtypes that slips past nx raises [Invalid_argument] or [Failure]. *)

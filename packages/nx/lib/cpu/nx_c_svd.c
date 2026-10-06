@@ -445,7 +445,7 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
     double sminl = 0.0;                                                        \
     while (1) {                                                                \
       if (m <= 0) break;                                                       \
-      if (iter > maxit) return LA_ERR_NO_CONVERGE;                             \
+      if (iter > maxit) return LA_UNDEFINED;                                   \
       double bsmax = fabs((double)d[m]);                                       \
       int64_t ll = 0;                                                          \
       int split_bottom = 0;                                                    \
@@ -744,7 +744,7 @@ LA_TRAITS_c64(LA_EXPAND_SVD)
    glue lifts the results back into the row-major compute-typed world. Index
    arithmetic is 0-based throughout (the reference is 1-based). la_ed6,
    la_dc_dnrm2 and la_dc_dlamrg are duplicated verbatim from nx_c_eigh.c
-   (TU-private statics there). Non-convergence -> LA_ERR_NO_CONVERGE. */
+   (TU-private statics there). Non-convergence -> LA_UNDEFINED. */
 
 /* dlaed6: Gragg-Thornton-Warner cubic-convergent root of the 3-pole rational
    equation, the SWTCH3 interpolation la_sd4 uses (dlasd4 reuses dlaed's
@@ -2126,7 +2126,7 @@ deflated_all:;
    pairs stored in U/VT columns), normalize the dual vector sets, and
    back-multiply against the deflation-grouped U2/VT2 blocks — the BLAS-3 heart.
    Q is k×k (ldq=k); acc is an n×m accumulation temp (the reference's beta=1
-   GEMMs; nx_c_gemm2d overwrites, so accumulate by hand). LA_ERR_NO_CONVERGE on
+   GEMMs; nx_c_gemm2d overwrites, so accumulate by hand). LA_UNDEFINED on
    secular non-convergence; a failing GEMM propagates its own status. */
 static nx_c_status la_sd3(int nl, int nr, int sqre, int k, double *d, double *Q,
                          int ldq, double *dsigma, double *U, int ldu,
@@ -2155,7 +2155,7 @@ static nx_c_status la_sd3(int nl, int nr, int sqre, int k, double *d, double *Q,
   for (int jj = 0; jj < k; jj++) {
     if (la_sd4(k, jj, dsigma, z, &U[(size_t)jj * ldu], rho, &d[jj],
                &VT[(size_t)jj * ldvt]))
-      return LA_ERR_NO_CONVERGE;
+      return LA_UNDEFINED;
   }
   /* updated z */
   for (int i = 0; i < k; i++) {
@@ -2335,7 +2335,7 @@ static nx_c_status la_sd0(int n, int sqre, double *d, double *e, double *U,
                          int *iwork, void *gemm) {
   if (n <= LA_SD_SMLSIZ) {
     if (la_sdq(n, sqre, d, e, U, ldu, VT, ldvt, work))
-      return LA_ERR_NO_CONVERGE;
+      return LA_UNDEFINED;
     for (int i = 0; i < n; i++) idxq[i] = i;
     return NX_C_OK;
   }
@@ -2359,7 +2359,7 @@ static nx_c_status la_sd0(int n, int sqre, double *d, double *e, double *U,
    U columns / VT rows. Splits at negligible e (|e| < 0.9·eps after the
    max-norm scaling, with tiny d floored to ±eps as the reference does) into
    independent la_sd0 subproblems. work: 4n²+8n+8 doubles; iwork: 5n ints.
-   LA_ERR_NO_CONVERGE on non-convergence; a failing GEMM propagates its own
+   LA_UNDEFINED on non-convergence; a failing GEMM propagates its own
    status. */
 static nx_c_status la_sd_dc(int n, double *d, double *e, double *U, int ldu,
                            double *VT, int ldvt, double *work, int *iwork,
@@ -2372,7 +2372,7 @@ static nx_c_status la_sd_dc(int n, double *d, double *e, double *U, int ldu,
     }
   }
   if (n <= LA_SD_SMLSIZ) {
-    if (la_sdq(n, 0, d, e, U, ldu, VT, ldvt, work)) return LA_ERR_NO_CONVERGE;
+    if (la_sdq(n, 0, d, e, U, ldu, VT, ldvt, work)) return LA_UNDEFINED;
   } else {
     double orgnrm = 0.0;
     for (int i = 0; i < n; i++)
@@ -2533,8 +2533,9 @@ static const la_compute_desc la_desc[LA_NCOMPUTE] = {
    descending, Vᴴ [batch, nrv, n] (ncu/nrv = m/n for full_matrices, else k). Each
    worker unpacks A, builds the tall/square working matrix P (A when m>=n, else
    Aᴴ), bidiagonalizes, runs the bidiagonal SVD, and assembles U/S/Vᴴ (swapping
-   and conjugate-transposing U/V when it bidiagonalized Aᴴ). Non-convergence in
-   the bidiagonal QR → LA_ERR_NO_CONVERGE. */
+   and conjugate-transposing U/V when it bidiagonalized Aᴴ). A matrix holding
+   NaN or an infinity, or whose bidiagonal SVD does not converge, has factors
+   of NaN. */
 typedef struct {
   const nx_c_ndarray *in;
   const nx_c_ndarray *u;
@@ -2565,6 +2566,20 @@ typedef struct {
       off_sdg;
   nx_c_status *werr;
 } la_svd_ctx;
+
+/* Writes NaN to every element of batch matrix bt's U, S and Vᴴ. */
+static void la_svd_nan(const la_svd_ctx *x, int64_t bt) {
+  const char *ub, *sb, *vtb;
+  la_batch_base(bt, x->batch_nd, x->bshape, x->u_bs, x->u->offset, x->esz,
+                (const char *)x->u->data, &ub);
+  la_batch_base(bt, x->batch_nd, x->bshape, x->s_bs, x->s->offset,
+                (int64_t)sizeof(double), (const char *)x->s->data, &sb);
+  la_batch_base(bt, x->batch_nd, x->bshape, x->vt_bs, x->vt->offset, x->esz,
+                (const char *)x->vt->data, &vtb);
+  la_move[x->dt].nan(x->m, x->ncu, (char *)ub, x->u_rs, x->u_cs);
+  la_move[NX_C_DTYPE_f64].nan(1, x->k, (char *)sb, 0, x->s_cs);
+  la_move[x->dt].nan(x->nrv, x->n, (char *)vtb, x->vt_rs, x->vt_cs);
+}
 
 static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   la_svd_ctx *x = (la_svd_ctx *)vctx;
@@ -2602,7 +2617,12 @@ static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_batch_base(bt, x->batch_nd, x->bshape, x->s_bs, x->s->offset,
                   (int64_t)sizeof(double), (const char *)x->s->data, &sb);
     mv->unpack(inb, x->in_rs, x->in_cs, m, n, wa, n);
-    double cs = la_range_scale(x->lc, la_amax(x->lc, wa, m, n, n));
+    double amax = la_amax(x->lc, wa, m, n, n);
+    if (!isfinite(amax)) {
+      la_svd_nan(x, bt);
+      continue;
+    }
+    double cs = la_range_scale(x->lc, amax);
     if (cs != 1.0) la_scale(x->lc, wa, m, n, n, cs);
     if (!x->trans)
       cd->cpc(wa, n, P, pc, m, n);
@@ -2636,6 +2656,10 @@ static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       if (st == NX_C_OK)
         st = la_sd_apply[x->lc](U1, pr, ncu_p, V1, pc, P, pc, taup, Us, VTs,
                                 sdl, wa, gPm, qV, qVc, qT, qW, qP, sdg);
+      if (st == LA_UNDEFINED) {
+        la_svd_nan(x, bt);
+        continue;
+      }
       if (st != NX_C_OK) {
         if (x->werr[worker] == NX_C_OK) x->werr[worker] = st;
         continue;
@@ -2644,8 +2668,8 @@ static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     } else {
       cd->formp(P, pc, pc, taup, V1, pc);
       nx_c_status st = cd->bdsvd(d, e, U1, pr, ncu_p, V1, pc, pc);
-      if (st != NX_C_OK) {
-        if (x->werr[worker] == NX_C_OK) x->werr[worker] = st;
+      if (st == LA_UNDEFINED) {
+        la_svd_nan(x, bt);
         continue;
       }
       if (x->is_double) {

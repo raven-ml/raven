@@ -3412,6 +3412,16 @@ thread.
 
 ### Nx
 
+- **Breaking:** linear algebra never raises on the values of a matrix, and
+  `Nx.Linalg_error` is removed. A matrix on which `cholesky`,
+  `solve_triangular`, `solve`, `inv`, `matrix_power`, `tensorsolve`,
+  `tensorinv`, `svd`, `eig`, `eigh` or their value forms are undefined has
+  results whose every element is NaN, and the other matrices of its batch are
+  unaffected, so one failing matrix no longer ends a batch or a sampler's run.
+  Where a raise is wanted, `Nx.check` that `all (isfinite r)`. `solve` takes
+  only an exact zero pivot of `lu`'s `U` as singular, where a pivot below
+  `eps · n` counted, so `solve (1e-30 · a) b` is `solve a b / 1e-30`;
+  `tensorsolve` and `tensorinv` no longer fall back to `pinv`.
 - **Breaking:** `Nx_device.timeout`, `Nx_device.set_timeout` and
   `Nx_device.Driver.default_timeout` are removed: a wait lasts until the work
   signals, the driver reports a fault, or Ctrl-C (`Sys.Break`) interrupts it. A
@@ -4444,10 +4454,9 @@ thread.
   function per operation, which writes a destination array that nx
   allocated. `Nx.Backend`, `Nx_array.Backend_intf` and a backend's `place`
   and `to_host` are gone, and nx places values itself.
-  `Nx.Linalg_error` is `Nx_backend.Linalg_error`, `Nx.Backend.Refused` is
-  `Nx_backend.Refused`, which `Nx.place` no longer raises, and nx.cpu's
-  allocating functions (`Nx_cpu.add`, `full`, `from_host`, `to_host`, ...)
-  are kernels that write `~dst`.
+  `Nx.Backend.Refused` is `Nx_backend.Refused`, which `Nx.place` no longer
+  raises, and nx.cpu's allocating functions (`Nx_cpu.add`, `full`,
+  `from_host`, `to_host`, ...) are kernels that write `~dst`.
 - `Nx_array.Elements.fill` writes the element's bytes without a bigarray
   view.
 - **Breaking (effect handlers):** `E_view` and `E_placement` are gone: a
@@ -5273,11 +5282,6 @@ thread.
   triangular solver named after its scipy analog. It skips the factorization
   cost of `solve` for a pre-triangularized `a`; `b` is a vector or a stack of
   right-hand sides, batched like `a`.
-- `Nx.solve`, `Nx.inv`, and `Nx.matrix_power` raise `Linalg_error` with kind
-  `` `Singular `` for a singular matrix, as `solve_triangular` does, instead
-  of `Invalid_argument`. The check now lives in the graph rather than reading
-  the factor back to the host, which is what lets `solve` and `inv` compile
-  under `Rune.jit`.
 - **Breaking:** the backend operation `triangular_solve` and its effect
   `E_triangular_solve` are renamed `solve_triangular` and `E_solve_triangular`.
   Out-of-tree backends and effect handlers must follow.
@@ -5476,13 +5480,6 @@ thread.
   cheaper LAPACK no-vectors path. Removes a representable invalid state (a
   runtime flag steering an option) from the contract. `Nx.eig`/`eigh`/`eigvals`/
   `eigvalsh` are unchanged.
-- Add `Nx.Linalg_error`, a typed exception for numeric linear-algebra failures,
-  carrying the failing operation and a `kind`
-  (`` `Not_positive_definite ``, `` `Singular ``, `` `No_convergence ``). A
-  non-positive-definite `cholesky` now raises `Linalg_error` (previously an
-  untyped `Invalid_argument "cholesky: not positive-definite"`) and a failed
-  `qr` raises it with `` `No_convergence ``. Precondition violations (non-square
-  input, wrong dtype) still raise `Invalid_argument`.
 - Make the backend contract's `scatter` take required `~mode` and
   `~unique_indices` labels instead of optionals, adopting the rule that
   backend-contract operations carry no optional arguments (user-facing defaults
