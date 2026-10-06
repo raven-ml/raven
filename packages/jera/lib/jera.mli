@@ -37,6 +37,7 @@
         {td up to ten }
         {td {!Quad.cubature} }
       }
+      {tr {td  } {td high } {td {!Quad.qmc} } }
       {tr
         {td Approximation }
         {td samples }
@@ -77,9 +78,11 @@
       per lane; one that cannot is a formula and returns its value, and its
       derivative is the composition's.
     - {b Searches and answers.} A solve searches on detached values, then states
-      its answer from the search's decisions: a zero by its equation through
-      {!Rune.root}. The derivative is the answer's: no search is differentiated,
-      and a lane that did not converge has a zero derivative.
+      its answer from the search's decisions: a zero or a minimum by its
+      equation through {!Rune.root}, an integral by its rule over the final
+      partition, a flow by its accepted steps taken again, a fit by its final
+      pieces. The derivative is the answer's: no search is differentiated, and
+      a lane that did not converge has a zero derivative.
     - {b Tags.} A method's tag says which drivers take it: [`Formula] runs in a
       formula, [`Embedded] estimates its error and drives a solve. An impossible
       pairing is a type error.
