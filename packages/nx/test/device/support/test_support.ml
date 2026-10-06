@@ -1197,7 +1197,7 @@ let test_handshake () =
   raises_match (Exn.failure ~substring:"closed") (fun () -> Remote.ping r);
   raises_match (Exn.failure ~substring:"does not know the key") (fun () ->
       connect ~key:"another key of sixteen bytes" s);
-  let r = connect s in
+  let r = admitted s in
   Remote.ping r;
   Remote.close r;
   raises_match (Exn.invalid_arg ~substring:"16") (fun () ->
