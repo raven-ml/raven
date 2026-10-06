@@ -74,8 +74,11 @@ let slack = 1. +. Float.ldexp 1. (-40)
 
 (* A number's words: the high word to its bits, the low word to its value, whose
    zero's sign a number does not carry. *)
+(* A float's value: zero unsigned, every NaN as one. *)
 let unsigned =
-  Testable.contramap (fun x -> if x = 0. then 0. else x) float_exact
+  Testable.contramap
+    (fun x -> if x = 0. then 0. else if Float.is_nan x then Float.nan else x)
+    float_exact
 
 let number = pair float_exact unsigned
 
@@ -188,23 +191,72 @@ let sums =
 
 (* Laws *)
 
-(* A normalised pair from two drawn floats: [hi], and [lo] a fraction of it
-   [2^-k] down, which [v] normalises. *)
-let pairs =
-  let open Gen in
-  map
-    (fun (hs, (ls, ks)) ->
-      let n = min (Array.length hs) (min (Array.length ls) (Array.length ks)) in
-      ( Array.sub hs 0 n,
-        Array.init n (fun i -> Float.ldexp (ls.(i) *. hs.(i)) (-ks.(i))) ))
-    (pair
-       (array ~size:(int_range 1 16) (float_range (-1e6) 1e6))
-       (pair
-          (array ~size:(int_range 16 16) (float_range (-1.) 1.))
-          (array ~size:(int_range 16 16) (int_range 0 80))))
+(* Numbers drawn for the laws: a shape of up to three axes, zero-size and
+   one-element ones included, a layout (transposed, flipped, strided,
+   broadcast), and per element a high word and a low word a fraction of it
+   [2^-k] down, which [v] normalises. High words take signed zeros, infinities,
+   NaN, subnormals and the format's extremes. *)
+type drawn = {
+  shape : int array;
+  steps : layout list;
+  his : float array;
+  los : float array;
+}
 
-let drawn (type b) (dt : (float, b) Nx.dtype) (h, l) =
-  Nx_wide.v ~lo:(tensor dt l) (tensor dt h)
+let special =
+  [
+    0.;
+    -0.;
+    Float.infinity;
+    Float.neg_infinity;
+    Float.nan;
+    Float.min_float;
+    Float.ldexp 1. (-1074);
+    Float.max_float;
+    -.Float.max_float;
+    Float.ldexp 1. 1020;
+    1.;
+    -1.;
+  ]
+
+let high =
+  Gen.frequency
+    [
+      (6, Gen.float_range (-1e6) 1e6);
+      (1, Gen.of_list ~pp:Format.pp_print_float special);
+    ]
+
+let low hi (m, k) =
+  let lo = Float.ldexp (m *. hi) (-k) in
+  if Float.is_finite lo then lo else 0.
+
+let numbers ?(count = 1) () =
+  let open Gen in
+  let* shape = array ~size:(int_range 0 3) (int_range 0 4) in
+  let* steps = layout in
+  let n = Ref.numel shape in
+  let element = pair high (pair (float_range (-1.) 1.) (int_range 0 80)) in
+  let+ draws = list ~size:(constant count) (array ~size:(constant n) element) in
+  List.map
+    (fun xs ->
+      {
+        shape;
+        steps;
+        his = Array.map fst xs;
+        los = Array.map (fun (h, l) -> low h l) xs;
+      })
+    draws
+
+let one = Gen.map List.hd (numbers ())
+
+let two =
+  Gen.map
+    (function [ a; b ] -> (a, b) | _ -> assert false)
+    (numbers ~count:2 ())
+
+let drawn (type b) (dt : (float, b) Nx.dtype) d =
+  let t xs = lay_out d.steps (Nx.create dt d.shape xs) in
+  Nx_wide.v ~lo:(t d.los) (t d.his)
 
 (* [normal w] is whether each [hi] is [hi + lo] rounded, or NaN with a zero
    [lo]. *)
@@ -214,16 +266,16 @@ let normal w =
   Array.for_all Fun.id
     (Nx.to_array (Nx.logical_or nan (Nx.equal h (Nx.add h l))))
 
+(* A number's words as values. *)
+let number_words = pair (array unsigned) (array unsigned)
+
 let laws =
   List.concat_map
     (fun (D (tag, dt, _)) ->
       let named s = Printf.sprintf "%s at %s" s tag in
       [
-        prop (named "every operation's result is normalised")
-          (Gen.pair pairs pairs) (fun ((h, l), (h', l')) ->
-            let n = min (Array.length h) (Array.length h') in
-            let cut a = Array.sub a 0 n in
-            let x = drawn dt (cut h, cut l) and y = drawn dt (cut h', cut l') in
+        prop (named "every operation's result is normalised") two (fun (a, b) ->
+            let x = drawn dt a and y = drawn dt b in
             List.iter
               (fun (op, z) -> equal ~msg:op bool true (normal z))
               [
@@ -235,56 +287,80 @@ let laws =
                 ("floor", Nx_wide.floor x);
                 ("sum", Nx_wide.sum x);
               ]);
-        prop (named "v returns a normalised pair's words unchanged") pairs
-          (fun p ->
-            let w = drawn dt p in
+        prop (named "v returns a normalised pair's words unchanged") one
+          (fun d ->
+            let w = drawn dt d in
             let w' = Nx_wide.v ~lo:(Nx_wide.lo w) (Nx_wide.hi w) in
             equal
               (pair (array float_exact) (array float_exact))
               (words w) (words w'));
-        prop (named "a number less itself is zero") pairs (fun p ->
-            let w = drawn dt p in
+        prop (named "a number less itself is zero, a non-finite one NaN") one
+          (fun d ->
+            let w = drawn dt d in
+            let h, _ = words w in
             let zh, zl = words (Nx_wide.sub w w) in
-            equal (array float_exact) (Array.make (Array.length zh) 0.) zh;
-            equal (array float_exact) (Array.make (Array.length zl) 0.) zl);
-        prop (named "a product of floats is exact") pairs (fun (h, l) ->
-            let round x = Nx.item [] (Nx.cast dt (Nx.scalar Nx.float64 x)) in
-            let a = Array.map round h and b = Array.map round l in
+            cover "a non-finite number"
+              (Array.exists (fun x -> not (Float.is_finite x)) h);
+            equal number_words
+              ( Array.map
+                  (fun x -> if Float.is_finite x then 0. else Float.nan)
+                  h,
+                Array.make (Array.length zl) 0. )
+              (zh, zl));
+        prop (named "a product of floats in the domain is exact") two
+          (fun (a, b) ->
+            let x = Nx.to_array (Nx_wide.hi (drawn dt a))
+            and y = Nx.to_array (Nx_wide.hi (drawn dt b)) in
+            let x = Array.sub x 0 (min (Array.length x) (Array.length y)) in
+            let y = Array.sub y 0 (Array.length x) in
+            let round v = Nx.item [] (Nx.cast dt (Nx.scalar Nx.float64 v)) in
+            let inside v =
+              let edge = if tag = "f64" then 969 else 102 in
+              v = 0.
+              || Float.abs v >= Float.ldexp 1. (-edge)
+                 && Float.abs v <= Float.ldexp 1. edge
+            in
+            let keep =
+              List.filter
+                (fun i ->
+                  inside x.(i) && inside y.(i) && inside (x.(i) *. y.(i)))
+                (List.init (Array.length x) Fun.id)
+            in
+            let pick a = Array.of_list (List.map (fun i -> a.(i)) keep) in
+            let x = pick x and y = pick y in
             let zh, zl =
               words
                 (Nx_wide.mul
-                   (Nx_wide.v (tensor dt a))
-                   (Nx_wide.v (tensor dt b)))
+                   (Nx_wide.v (tensor dt x))
+                   (Nx_wide.v (tensor dt y)))
             in
             Array.iteri
               (fun i zh ->
-                let ph = round (a.(i) *. b.(i)) in
+                let ph = round (x.(i) *. y.(i)) in
                 (* The product's rounding error: exact at float64 by [fma], and
                    by the float64 product of float32 words. *)
                 let pl =
-                  if tag = "f64" then Float.fma a.(i) b.(i) (-.ph)
-                  else (a.(i) *. b.(i)) -. ph
+                  if tag = "f64" then Float.fma x.(i) y.(i) (-.ph)
+                  else (x.(i) *. y.(i)) -. ph
                 in
                 equal number (ph, pl) (zh, zl.(i)))
               zh);
-        prop (named "a sum's association depends only on the shape") pairs
-          (fun p ->
-            let w = drawn dt p in
-            (* Two columns of one sum: each sums alone as the vector does. *)
-            let twice =
-              Nx_wide.v
-                ~lo:(Nx.stack ~axis:1 [ Nx_wide.lo w; Nx.neg (Nx_wide.lo w) ])
-                (Nx.stack ~axis:1 [ Nx_wide.hi w; Nx.neg (Nx_wide.hi w) ])
-            in
-            let zh, zl = words (Nx_wide.sum ~axes:[ 0 ] twice) in
+        prop (named "a sum's association depends only on the shape") one
+          (fun d ->
+            let w = drawn dt d in
+            let r = Nx.ndim (Nx_wide.hi w) in
+            (* Two columns of one sum: each sums alone as the whole does. *)
+            let column f = Nx.stack ~axis:r [ f w; Nx.neg (f w) ] in
+            let twice = Nx_wide.v ~lo:(column Nx_wide.lo) (column Nx_wide.hi) in
+            let zh, zl = words (Nx_wide.sum ~axes:(List.init r Fun.id) twice) in
             let sh, sl = words (Nx_wide.sum w) in
             (* A zero's sign is the plain sum's, which is [+0]. *)
             let value = pair unsigned unsigned in
             equal value (sh.(0), sl.(0)) (zh.(0), zl.(0));
             equal value (-.sh.(0), -.sl.(0)) (zh.(1), zl.(1)));
-        prop (named "the structure rebuilds a value it walks unchanged") pairs
-          (fun p ->
-            let w = drawn dt p in
+        prop (named "the structure rebuilds a value it walks unchanged") one
+          (fun d ->
+            let w = drawn dt d in
             let w' = Nx.Ptree.map (Nx_wide.ptree dt) (fun _ t -> t) w in
             equal
               (pair (array float_exact) (array float_exact))

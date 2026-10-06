@@ -22,19 +22,28 @@ let same_bits = pair (array int64) (array int64)
 
 (* Compiled equals eager *)
 
+(* An operation, and what it computes over each row of a matrix. *)
 type op = {
   name : string;
   f : 'b. 'b Nx_wide.t -> 'b Nx_wide.t -> 'b Nx_wide.t;
+  rows : 'b. 'b Nx_wide.t -> 'b Nx_wide.t -> 'b Nx_wide.t;
 }
+
+let elementwise name (f : 'b. 'b Nx_wide.t -> 'b Nx_wide.t -> 'b Nx_wide.t) =
+  { name; f; rows = f }
 
 let ops =
   [
-    { name = "add"; f = Nx_wide.add };
-    { name = "sub"; f = Nx_wide.sub };
-    { name = "mul"; f = Nx_wide.mul };
-    { name = "div"; f = Nx_wide.div };
-    { name = "floor"; f = (fun a _ -> Nx_wide.floor a) };
-    { name = "sum"; f = (fun a b -> Nx_wide.sum (Nx_wide.add a b)) };
+    elementwise "add" Nx_wide.add;
+    elementwise "sub" Nx_wide.sub;
+    elementwise "mul" Nx_wide.mul;
+    elementwise "div" Nx_wide.div;
+    elementwise "floor" (fun a _ -> Nx_wide.floor a);
+    {
+      name = "sum";
+      f = (fun a b -> Nx_wide.sum (Nx_wide.add a b));
+      rows = (fun a b -> Nx_wide.sum ~axes:[ 1 ] (Nx_wide.add a b));
+    };
   ]
 
 let width = 16
@@ -76,6 +85,24 @@ let compiled (type b) (dt : (float, b) Nx.dtype) tag =
            op.name tag) (Gen.pair numbers numbers) (fun (a, b) ->
           let a = words dt a and b = words dt b in
           equal same_bits (bits (op.f a b)) (bits (g a b))))
+    ops
+
+(* Mapped over rows equals it on each row eagerly *)
+
+let as_rows w =
+  let r x = Nx.reshape [| 4; width / 4 |] x in
+  Nx_wide.v ~lo:(r (Nx_wide.lo w)) (r (Nx_wide.hi w))
+
+let mapped (type b) (dt : (float, b) Nx.dtype) tag =
+  List.map
+    (fun op ->
+      let p = Nx_wide.ptree dt in
+      let g = Rune.vmap Nx.Ptree.(p @-> p @-> returns p) op.f in
+      prop
+        (Printf.sprintf "%s at %s, mapped over rows, is it on each row" op.name
+           tag) (Gen.pair numbers numbers) (fun (a, b) ->
+          let a = as_rows (words dt a) and b = as_rows (words dt b) in
+          equal same_bits (bits (op.rows a b)) (bits (g a b))))
     ops
 
 let f64 x = Nx.scalar Nx.float64 x
@@ -175,6 +202,8 @@ let () =
        [
          group "compiled"
            (compiled Nx.float64 "float64" @ compiled Nx.float32 "float32");
+         group "mapped"
+           (mapped Nx.float64 "float64" @ mapped Nx.float32 "float32");
          error_terms;
          derivatives;
        ])
