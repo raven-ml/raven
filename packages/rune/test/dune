@@ -337,19 +337,8 @@
   (glob_files golden/special_grad/*.golden))
  (action
   (progn
-   (run %{test} --corrected --exclude-tag slow)
+   (run %{test} --corrected)
    (diff? test_special.ml test_special.ml.corrected))))
-
-; The float64 inverses' compiled derivatives, which runtest leaves out.
-
-(rule
- (alias slow)
- (package rune)
- (deps
-  (glob_files %{project_root}/packages/nx/test/golden/special/*.golden)
-  (glob_files golden/special_grad/*.golden))
- (action
-  (run %{exe:test_special.exe} --tag slow)))
 
 (test
  (name test_wide)

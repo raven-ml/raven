@@ -1103,10 +1103,11 @@ def lbeta_points(fmt):
     return grid_points + near_eight + named + edges + randoms
 
 
-# i0e and i1e: e^-|x| I0 x and e^-|x| I1 x. On [0, BESSEL_SPLIT], i0e x h and
-# i1e x / x h^2 for h = 1 + BESSEL_WEIGHT x, Chebyshev series in
-# x (2 / BESSEL_SPLIT) - 1: the weight flattens each, so that the series'
-# terms, and their rounding, stay of the order of its value. Above,
+# i0e and i1e: e^-|x| I0 x and e^-|x| I1 x. On [0, BESSEL_SPLIT], i0e x h =
+# 1 + x q and i1e x / x h^2 for h = 1 + BESSEL_WEIGHT x, q and the latter
+# Chebyshev series in x (2 / BESSEL_SPLIT) - 1: i0e is 1 at 0 by
+# construction, and the weight flattens each, so that the series' terms, and
+# their rounding, stay of the order of its value. Above,
 # sqrt x i0e x and sqrt x i1e x in 2 BESSEL_SPLIT / x - 1. Far out, past
 # BESSEL_ASYMPTOTIC, the references are Hankel's expansion, which mpmath's
 # besseli would reach through exp x.
@@ -1157,22 +1158,21 @@ def clenshaw(cs, t):
     return cs[0] + t * b1 - b2, b1 + t * d1 - d2
 
 
-def bessel_series(fmt, f):
+def bessel_series(fmt, f, lift=lambda t, v: v, lift_slope=lambda t, v, dv: dv, units=1):
     """The coefficients of f's series on [-1, 1], rounded to `fmt`: the least
-    degree whose rounded coefficients put the series within one unit
-    roundoff of f and its derivative within sixteen of the derivative's
-    largest magnitude."""
+    degree whose rounded coefficients put the function the series gives,
+    lift(t, series), within `units` unit roundoffs of its value and its
+    derivative within sixteen of the derivative's largest magnitude."""
     with mp.workprec(200):
         ts = grid(mpf(-1) + mpf(10) ** -30, mpf(1), 200)
-        exact = [f(t) for t in ts]
-        slopes = [mpmath.diff(f, t) for t in ts]
-        steepest = max(abs(d) for d in slopes)
+        exact = [(lift(t, f(t)), lift_slope(t, f(t), mpmath.diff(f, t))) for t in ts]
+        steepest = max(abs(d) for _, d in exact)
         for n in range(3, 60):
             cs = [mpf(round_to(fmt, c)) for c in chebyshev(f, n)]
-            approx = [clenshaw(cs, t) for t in ts]
-            if max(abs(a / e - 1) for (a, _), e in zip(approx, exact)) > fmt.u:
+            approx = [(lift(t, v), lift_slope(t, v, dv)) for t in ts for v, dv in [clenshaw(cs, t)]]
+            if max(abs(a / e - 1) for (a, _), (e, _) in zip(approx, exact)) > units * fmt.u:
                 continue
-            if max(abs(da - d) for (_, da), d in zip(approx, slopes)) <= 16 * fmt.u * steepest:
+            if max(abs(da - d) for (_, da), (_, d) in zip(approx, exact)) <= 16 * fmt.u * steepest:
                 return [float(c) for c in cs]
     sys.exit("no degree meets the Bessel series' bound")
 
@@ -1182,13 +1182,26 @@ def bessel_tables(fmt):
     near = lambda t: split / 2 * (t + 1)
     far = lambda t: 2 * split / (t + 1)
     i1_near = lambda x: i1e_exact(x) / x if x > 0 else mpf(1) / 2
-    series = [
-        ("i0e_near", lambda t: i0e_exact(near(t)) * (1 + w * near(t))),
-        ("i1e_near", lambda t: i1_near(near(t)) * (1 + w * near(t)) ** 2),
-        ("i0e_far", lambda t: mpmath.sqrt(far(t)) * i0e_exact(far(t))),
-        ("i1e_far", lambda t: mpmath.sqrt(far(t)) * i1e_exact(far(t))),
+    # q = (i0e x h - 1) / x, its limit -1 + w at 0; the series checked as 1 +
+    # x q, the function i0e h is, and its slope as q + x q'.
+    q = lambda t: (i0e_exact(near(t)) * (1 + w * near(t)) - 1) / near(t) if t > -1 else w - 1
+    lift = lambda t, v: 1 + near(t) * v
+    lift_slope = lambda t, v, dv: split / 2 * v + near(t) * dv
+    i1 = lambda t: i1_near(near(t)) * (1 + w * near(t)) ** 2
+    with mp.workprec(200):
+        # The weight keeps each series' terms of the order of its value: x q
+        # stays below 1 + x q, and i1e's coefficients sum within twice its
+        # least value.
+        ts = grid(mpf(-1), mpf(1), 100)
+        assert max(abs(near(t) * q(t) / lift(t, q(t))) for t in ts) < 1
+        assert sum(abs(c) for c in chebyshev(i1, 40)) < 2 * min(abs(i1(t)) for t in ts)
+    return [
+        # x q's coefficients, each rounded, leave 1 + x q 2u off at float64.
+        ("i0e_near", ocaml_array(bessel_series(fmt, q, lift, lift_slope, units=4))),
+        ("i1e_near", ocaml_array(bessel_series(fmt, i1))),
+        ("i0e_far", ocaml_array(bessel_series(fmt, lambda t: mpmath.sqrt(far(t)) * i0e_exact(far(t))))),
+        ("i1e_far", ocaml_array(bessel_series(fmt, lambda t: mpmath.sqrt(far(t)) * i1e_exact(far(t))))),
     ]
-    return [(name, ocaml_array(bessel_series(fmt, f))) for name, f in series]
 
 
 def bessel_reference(exact, sign):
@@ -1300,7 +1313,7 @@ PER_DTYPE = {
              "and 16u pi of the derivative.",
     "log_ndtr_below": "log_ndtr's asymptotic series below [log_ndtr_below]: its least count "
                       "within u/8 of the value and the derivative.",
-    "i0e_near": "i0e x h and i1e x / x h^2 on [0, bessel_split], sqrt x i0e x and sqrt x i1e x "
+    "i0e_near": "q, with i0e x h = 1 + x q, and i1e x / x h^2 on [0, bessel_split], sqrt x i0e x and sqrt x i1e x "
                 "above, as Chebyshev series, lowest degree first: the least degree within u "
                 "of the value and 16u of the derivative's largest magnitude.",
     "digamma_root_hi": "digamma's root near 1.4616 as two floats, and on [1, 2] the "

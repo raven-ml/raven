@@ -296,9 +296,10 @@ type t = {
      value and 16u pi of the derivative. *)
   sinpi : float array;
   digamma_series : float array;
-  (* i0e x h and i1e x / x h^2 on [0, bessel_split], sqrt x i0e x and sqrt x i1e x
-     above, as Chebyshev series, lowest degree first: the least degree within u of
-     the value and 16u of the derivative's largest magnitude. *)
+  (* q, with i0e x h = 1 + x q, and i1e x / x h^2 on [0, bessel_split], sqrt x i0e
+     x and sqrt x i1e x above, as Chebyshev series, lowest degree first: the least
+     degree within u of the value and 16u of the derivative's largest magnitude.
+     *)
   i0e_near : float array;
   i1e_near : float array;
   i0e_far : float array;
@@ -420,25 +421,24 @@ let float32 =
         0x1.555556p-4;
       |];
     i0e_near = [|
-        0x1.6bc8p-1;
-        -0x1.0cd3fap-4;
-        0x1.d82ebap-4;
-        -0x1.053b24p-4;
-        0x1.dfae12p-6;
-        -0x1.7442c8p-7;
-        0x1.d4ee3ap-9;
-        -0x1.9c9c8cp-11;
-        0x1.29a63ap-16;
-        0x1.9e9d4ap-14;
-        -0x1.1eed76p-14;
-        0x1.0f2a72p-15;
-        -0x1.a73bcep-17;
-        0x1.219dccp-18;
-        -0x1.6576ap-20;
-        0x1.9463e6p-22;
-        -0x1.a7becep-24;
-        0x1.9db5dep-26;
-        -0x1.6bc94p-28;
+        -0x1.5f6e0ep-3;
+        0x1.966c1ap-3;
+        -0x1.62622ep-4;
+        0x1.08070cp-5;
+        -0x1.42137ap-7;
+        0x1.0ee362p-9;
+        0x1.00cbb8p-16;
+        -0x1.437b9ap-12;
+        0x1.b49bd8p-13;
+        -0x1.9f4c32p-14;
+        0x1.495eb2p-15;
+        -0x1.cc49e4p-17;
+        0x1.22dbc6p-18;
+        -0x1.517e4p-20;
+        0x1.6b23cep-22;
+        -0x1.6ceabcp-24;
+        0x1.57d262p-26;
+        -0x1.25b848p-28;
       |];
     i1e_near = [|
         0x1.bbc66ap-2;
@@ -693,36 +693,36 @@ let float64 =
         0x1.5555555555555p-4;
       |];
     i0e_near = [|
-        0x1.6bc7ff8248c79p-1;
-        -0x1.0cd3f93177fc9p-4;
-        0x1.d82eb987ef763p-4;
-        -0x1.053b245d9b1a8p-4;
-        0x1.dfae1161e0072p-6;
-        -0x1.7442c7849d90ep-7;
-        0x1.d4ee3a523a651p-9;
-        -0x1.9c9c8b07d68e8p-11;
-        0x1.29a639026576dp-16;
-        0x1.9e9d49f33ea89p-14;
-        -0x1.1eed76d2e7d3ap-14;
-        0x1.0f2a72242aecdp-15;
-        -0x1.a73bcd5463561p-17;
-        0x1.219dcbd5bb21cp-18;
-        -0x1.6576a4bb7527ap-20;
-        0x1.94645581fad19p-22;
-        -0x1.a7c89362337a8p-24;
-        0x1.9e88917af613bp-26;
-        -0x1.7cb07640d0333p-28;
-        0x1.49c1617eafa28p-30;
-        -0x1.0e73665af444cp-32;
-        0x1.a56805f239537p-35;
-        -0x1.38bebd222d88dp-37;
-        0x1.bb4a19384cde4p-40;
-        -0x1.2caa52391b867p-42;
-        0x1.871a9483ebc6ap-45;
-        -0x1.e8b719aadc357p-48;
-        0x1.25cbc6aff5e86p-50;
-        -0x1.544803cbe2518p-53;
-        0x1.75d3452b487bdp-56;
+        -0x1.5f6e0d693ea61p-3;
+        0x1.966c19d70edb3p-3;
+        -0x1.62622e4ffcd2fp-4;
+        0x1.08070b6ba755p-5;
+        -0x1.42137a53c07afp-7;
+        0x1.0ee3616b0ea3cp-9;
+        0x1.00cbb7d4c14afp-16;
+        -0x1.437b990a23b2fp-12;
+        0x1.b49bd71e49857p-13;
+        -0x1.9f4c31304a9b3p-14;
+        0x1.495eb23b42ff7p-15;
+        -0x1.cc49e3a362708p-17;
+        0x1.22dbc5441d79fp-18;
+        -0x1.517e425765a3cp-20;
+        0x1.6b241d272e8cbp-22;
+        -0x1.6cf1e99ec3668p-24;
+        0x1.5870269308f59p-26;
+        -0x1.32a735bdad19p-28;
+        0x1.027bd0948a0c6p-30;
+        -0x1.9dddb5a000d9ap-33;
+        0x1.3b89b259bf686p-35;
+        -0x1.cb513cfa63ea8p-38;
+        0x1.3fd3fbbec77e7p-40;
+        -0x1.aaefc0e5abb1ap-43;
+        0x1.11a022d93ba27p-45;
+        -0x1.51545801b4c0bp-48;
+        0x1.908f5a49dc433p-51;
+        -0x1.cac2d98c1ab46p-54;
+        0x1.fb48b2481490cp-57;
+        -0x1.0aeada399829ep-59;
       |];
     i1e_near = [|
         0x1.bbc669cac31a5p-2;

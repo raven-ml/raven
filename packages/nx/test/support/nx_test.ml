@@ -1673,18 +1673,18 @@ module Special = struct
     sub row.value || Array.exists sub row.args
 
   (* [check ~bound file f] holds [f] to [bound args] at every row of [file] that
-     [keep] keeps (all by default), at each of [dtypes] (both by default), each
-     a test tagged [tags], and fails listing the rows that miss it, worst first.
-     [zeros] says whether a zero is held to its sign ([`Signed], by default) or
-     not ([`Unsigned], for a derivative, whose zeros nx does not sign). *)
-  let check ?(keep = fun _ -> true) ?(dtypes = [ `F32; `F64 ]) ?tags ?zeros
-      ~bound file f =
+     [keep] keeps (all by default), at each of [dtypes] (both by default), and
+     fails listing the rows that miss it, worst first. [zeros] says whether a
+     zero is held to its sign ([`Signed], by default) or not ([`Unsigned], for a
+     derivative, whose zeros nx does not sign). *)
+  let check ?(keep = fun _ -> true) ?(dtypes = [ `F32; `F64 ]) ?zeros ~bound
+      file f =
     List.map
       (fun dtype ->
         let short, f32 =
           match dtype with `F32 -> ("f32", true) | `F64 -> ("f64", false)
         in
-        Windtrap.test ?tags short (fun () ->
+        Windtrap.test short (fun () ->
             let rows = List.filter keep (rows file short) in
             let got =
               if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows

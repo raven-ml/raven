@@ -559,10 +559,10 @@ let clenshaw cs t =
 
 (* [i0e] and [i1e] at [a = |x|], taken by selection so that [-0] takes the
    right-hand branch with [+0]. On [0, bessel_split], [near] is the series of
-   [i0e a h] or [i1e a / a h^2] for [h = 1 + bessel_weight a], the weight
-   keeping the series' terms of the order of its value; above, [far] is the
-   series of [sqrt a i0e a] or [sqrt a i1e a]. Each region runs on its clamped
-   [a]. *)
+   [q] with [i0e a h = 1 + a q], so that [i0e 0] is 1, or of [i1e a / a h^2],
+   for [h = 1 + bessel_weight a], the weight keeping the series' terms of the
+   order of its value; above, [far] is the series of [sqrt a i0e a] or [sqrt a
+   i1e a]. Each region runs on its clamped [a]. *)
 let bessel_parts x near far =
   let a = where (lt x 0.) (neg x) x in
   let inside = cmple a (lit a T.bessel_split) in
@@ -571,16 +571,16 @@ let bessel_parts x near far =
   let tn = sub_s (mul_s an (2. /. T.bessel_split)) 1. in
   let af = clamp (logical_not inside) a (2. *. T.bessel_split) in
   let tf = sub_s (div (lit af (2. *. T.bessel_split)) af) 1. in
-  (inside, clenshaw near tn, h, div (clenshaw far tf) (sqrt af))
+  (inside, an, clenshaw near tn, h, div (clenshaw far tf) (sqrt af))
 
 let i0e_at x =
   let t = tables x in
-  let inside, near, h, far = bessel_parts x t.i0e_near t.i0e_far in
-  where inside (div near h) far
+  let inside, a, q, h, far = bessel_parts x t.i0e_near t.i0e_far in
+  where inside (div (add_s (mul a q) 1.) h) far
 
 let i1e_at x =
   let t = tables x in
-  let inside, near, h, far = bessel_parts x t.i1e_near t.i1e_far in
+  let inside, _, near, h, far = bessel_parts x t.i1e_near t.i1e_far in
   where inside (mul x (div near (mul h h))) (where (lt x 0.) (neg far) far)
 
 (* The functions *)

@@ -2472,13 +2472,12 @@ val i0e : (float, 'b) t -> (float, 'b) t
     kind of order 0, within 8 ulps. The von Mises distribution of
     concentration [k] has the normaliser [2π I₀(k) = 2π e^{k} i0e k], whose
     logarithm [k + log (2π i0e k)] stays finite where [I₀(k)] overflows, past
-    [k = 713] at [float64] and [89] at [float32]. [i0e] is even, [1] at [0]
+    [k ≈ 714] at [float64] and [92] at [float32]. [i0e] is even, [1] at [0]
     and [0] at [-inf] and [+inf].
 
     {@ocaml[
       # i0e (create float64 [| 3 |] [| -1.; 0.; 1000. |])
-      - : (float, float64_elt) t =
-      [0.4657596075936405, 1.0000000000000002, 0.012617240455891255]
+      - : (float, float64_elt) t = [0.4657596075936405, 1, 0.012617240455891255]
     ]} *)
 
 val i1e : (float, 'b) t -> (float, 'b) t

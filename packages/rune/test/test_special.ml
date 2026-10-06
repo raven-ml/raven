@@ -105,26 +105,15 @@ let bessel =
 
 let grad_golden name = "golden/special_grad/" ^ name ^ ".golden"
 
-(* What a derivative's float64 compile costs: an inverse's runs under the [slow]
-   tag, which [dune build @packages/rune/test/slow] runs and [runtest] does
-   not. *)
-type cost = Quick | Slow_at_float64
-
-let compiled_checks cost ~bound file f =
-  match cost with
-  | Quick -> check ~zeros:`Unsigned ~bound file f
-  | Slow_at_float64 ->
-      check ~zeros:`Unsigned ~dtypes:[ `F32 ] ~bound file f
-      @ check ~zeros:`Unsigned ~dtypes:[ `F64 ] ~tags:[ "slow" ] ~bound file f
-
-(* [d] eagerly and compiled, at both dtypes. *)
-let derivative ?(cost = Quick) name ~bound (d : u) =
+(* [d] held eagerly and compiled, at both dtypes. *)
+let derivative name ~bound (d : u) =
   let eager = { f = (fun a -> d.u a.(0)) } in
   let compiled = { f = (fun a -> Rune.jit' d.u a.(0)) } in
   group name
     [
       group "eagerly" (check ~zeros:`Unsigned ~bound (grad_golden name) eager);
-      group "compiled" (compiled_checks cost ~bound (grad_golden name) compiled);
+      group "compiled"
+        (check ~zeros:`Unsigned ~bound (grad_golden name) compiled);
     ]
 
 let derivative2 name ~bound (d : b) =
@@ -222,16 +211,16 @@ let derivatives =
       bessel_at_zero;
       derivative "i0e" ~bound:(everywhere (Ulps 128)) (d { u = Nx.i0e });
       derivative "i1e"
-        ~bound:(everywhere (Near_zeros (128, 128)))
+        ~bound:(fun args ->
+          let x = Float.abs args.(0) in
+          if 1. <= x && x <= 2. then Near_zeros (128, 128) else Ulps 128)
         (d { u = Nx.i1e });
       derivative "erfc" ~bound:(everywhere (Ulps 128)) (d { u = Nx.erfc });
       derivative "ndtr" ~bound:(everywhere (Ulps 256)) (d { u = Nx.ndtr });
       derivative "log_ndtr" ~bound:(everywhere (Ulps 512))
         (d { u = Nx.log_ndtr });
-      derivative ~cost:Slow_at_float64 "erfinv" ~bound:(everywhere (Ulps 64))
-        (d { u = Nx.erfinv });
-      derivative ~cost:Slow_at_float64 "ndtri" ~bound:(everywhere (Ulps 64))
-        (d { u = Nx.ndtri });
+      derivative "erfinv" ~bound:(everywhere (Ulps 64)) (d { u = Nx.erfinv });
+      derivative "ndtri" ~bound:(everywhere (Ulps 64)) (d { u = Nx.ndtri });
       derivative "lgamma"
         ~bound:
           (by_sign ~positive:(Near_zeros (256, 256)) ~negative:(Scaled 256))
@@ -310,7 +299,7 @@ let residuals =
         lgamma 730
         digamma 590
         lbeta 1267
-        i0e 563
+        i0e 579
         i1e 564
         |})
 

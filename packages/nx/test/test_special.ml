@@ -131,6 +131,31 @@ let batch lo hi =
 
 let values t = Nx.to_array t
 
+(* Floats of [dt] of either sign, their magnitudes [2^e] for [e] drawn in [emin,
+   emax], with zeros, the least subnormal and the largest float among them. *)
+let signed_floats (type b) (dt : (float, b) Nx.dtype) ~emin ~emax =
+  let edges =
+    [ 0.; -0.; Float.ldexp 1. emin; Float.ldexp 1. (emin + 1); Float.max_float ]
+  in
+  let one =
+    Gen.frequency
+      [
+        (1, Gen.of_list ~pp:Format.pp_print_float edges);
+        ( 8,
+          Gen.map
+            (fun (e, neg) ->
+              let v = Float.pow 2. e in
+              if neg then -.v else v)
+            (Gen.pair
+               (Gen.float_range (float_of_int emin) (float_of_int emax))
+               Gen.bool) );
+      ]
+  in
+  Gen.with_pp Nx.pp
+    (Gen.map
+       (fun xs -> Nx.create dt [| Array.length xs |] xs)
+       (Gen.array ~size:(Gen.constant 32) one))
+
 (* [within tol expected actual]: elementwise, within [tol] absolutely. *)
 let within tol expected actual =
   let e = values expected and a = values actual and t = values tol in
@@ -220,9 +245,28 @@ let laws =
             (mul_s (add_s (abs r) 1.) (512. *. eps))
             r
             (lbeta a (ones_like a)));
-      prop "i0e is even and i1e odd, bit for bit" (batch (-1e3) 1e3) (fun x ->
-          within (zeros_like x) (i0e x) (i0e (neg x));
-          within (zeros_like x) (neg (i1e x)) (i1e (neg x)));
+      prop "i0e is even and i1e odd, bit for bit, at float64"
+        (signed_floats Nx.float64 ~emin:(-1074) ~emax:1023) (fun x ->
+          let bits t = values (bitcast Nx.int64 t) in
+          Windtrap.equal
+            (Windtrap.array Windtrap.int64)
+            (bits (i0e x))
+            (bits (i0e (neg x)));
+          Windtrap.equal
+            (Windtrap.array Windtrap.int64)
+            (bits (neg (i1e x)))
+            (bits (i1e (neg x))));
+      prop "i0e is even and i1e odd, bit for bit, at float32"
+        (signed_floats Nx.float32 ~emin:(-149) ~emax:127) (fun x ->
+          let bits t = values (bitcast Nx.int32 t) in
+          Windtrap.equal
+            (Windtrap.array Windtrap.int32)
+            (bits (i0e x))
+            (bits (i0e (neg x)));
+          Windtrap.equal
+            (Windtrap.array Windtrap.int32)
+            (bits (neg (i1e x)))
+            (bits (i1e (neg x))));
       prop "i0e decreases and 0 < i1e < i0e on (0, inf)" (batch 1e-3 1e3)
         (fun x ->
           let y = add_s x 1e-3 in

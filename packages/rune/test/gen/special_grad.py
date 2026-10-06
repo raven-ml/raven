@@ -178,6 +178,15 @@ def i1e_slope(x):
     return nx.i0e_exact(a) - i1 / a - i1
 
 
+def i1e_points(fmt):
+    """i1e's points and the zero of its derivative near 1.545, with eight
+    neighbours on each side, both signs."""
+    with mp.workprec(120):
+        zero = mpmath.findroot(lambda x: i1e_slope(x), mpf("1.545"))
+    near = nx.neighbours(fmt, zero)
+    return F["i1e"].points(fmt) + near + [-x for x in near]
+
+
 DERIVATIVES = [
     Derivative("erfc", F["erfc"],
                vanishing(lambda x: -2 / mpmath.sqrt(mpmath.pi) * mpmath.exp(-x * x), 100)),
@@ -206,7 +215,7 @@ DERIVATIVES = [
                points=lbeta_points_2),
     Derivative("lbeta_ab", F["lbeta"], lambda a, b: -trigamma(a + b), points=lbeta_points_2),
     Derivative("i0e", F["i0e"], i0e_slope),
-    Derivative("i1e", F["i1e"], i1e_slope),
+    Derivative("i1e", F["i1e"], i1e_slope, points=i1e_points),
 ]
 
 
