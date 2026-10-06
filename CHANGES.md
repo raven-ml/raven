@@ -3280,6 +3280,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.Program.load` finds a function of a binary its device holds
+  without reading the binary. It hashed the whole binary on each call: 27 ms
+  for each function of a 16 MiB binary.
 - AMD GPUs of the gfx12 generation take sliding windows eagerly:
   `Nx.extract_patches` and `Nx.combine_patches` run on the GPU, bit for bit as
   on the host, overlapping windows summed in the host's order.

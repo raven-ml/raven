@@ -104,8 +104,8 @@ type t = {
   pending : (int, t * int) Hashtbl.t;
       (* the devices whose work touched this one's memory, and the value that
          work signals *)
-  images : (Digest.t, loaded Weak.t) Hashtbl.t;
-      (* the loaded binaries, by digest, while they are reachable *)
+  images : (int, loaded Weak.t) Hashtbl.t;
+      (* the loaded binaries, by length, while they are reachable *)
   mutable indexed : int; (* how many [images] held when last swept *)
   spans : pending list Atomic.t;
       (* the spans recorded on the device whose stamps are still to read, latest
@@ -3034,19 +3034,21 @@ let staging h =
 module Program = struct
   type t = program
 
-  (* [d]'s reachable image of [binary]. A digest is no proof: another binary of
-     the same digest is no hit, and is left out of the index. *)
-  let indexed d key binary =
-    match Hashtbl.find_opt d.images key with
-    | None -> None
-    | Some cell -> (
+  (* [d]'s reachable image of [binary], among the images of its length. The
+     binary of a load is found again as the same string, which [String.equal]
+     tells before reading a byte, so that finding a function of a loaded binary
+     costs nothing like reading the binary. *)
+  let indexed d binary =
+    List.find_map
+      (fun cell ->
         match Weak.get cell 0 with
         | Some l when String.equal l.binary binary -> Some l
         | Some _ | None -> None)
+      (Hashtbl.find_all d.images (String.length binary))
 
-  (* Indexes [l] at [key]. The entries of collected images go once they are as
-     many as those that were live at the last sweep. *)
-  let index d key l =
+  (* Indexes [l]. The entries of collected images go once they are as many as
+     those that were live at the last sweep. *)
+  let index d l =
     if Hashtbl.length d.images >= 2 * d.indexed then begin
       Hashtbl.filter_map_inplace
         (fun _ cell -> if Weak.check cell 0 then Some cell else None)
@@ -3055,13 +3057,12 @@ module Program = struct
     end;
     let cell = Weak.create 1 in
     Weak.set cell 0 (Some l);
-    Hashtbl.replace d.images key cell
+    Hashtbl.add d.images (String.length l.binary) cell
 
   (* [d]'s image of [binary], loaded unless one is reachable. A loader that
      raises [Failure] loses its device. *)
   let loaded d load binary =
-    let key = Digest.string binary in
-    match indexed d key binary with
+    match indexed d binary with
     | Some l -> Ok l
     | None -> (
         match load ~binary with
@@ -3077,7 +3078,7 @@ module Program = struct
             let token = release_token d (code_kind d image) (Code image) bytes
             and entries = Hashtbl.create 4 in
             let rec l = { binary; image; entries; kept = Keep (token, l) } in
-            index d key l;
+            index d l;
             Ok l
         | Error why -> Error why
         | exception Failure why -> fail d why)

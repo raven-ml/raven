@@ -3174,6 +3174,46 @@ let test_loaded_once () =
     Nx_device.Program.(name p, Nx_device.equal d (device p));
   ignore (Sys.opaque_identity (p, again, g))
 
+let test_loaded_by_bytes () =
+  let l, load = loader () in
+  let d = (fake ~load ()).dev in
+  let p = program d ~binary:"liba" ~name:"f" in
+  let q = program d ~binary:"libb" ~name:"f" in
+  let r = program d ~binary:(String.concat "" [ "lib"; "a" ]) ~name:"f" in
+  equal ~msg:"another binary of the same length is another image"
+    (pair nativeint nativeint) (101n, 201n)
+    Nx_device.Program.(handle p, handle q);
+  equal ~msg:"the same bytes are the same image" nativeint 101n
+    (Nx_device.Program.handle r);
+  equal (list (pair string string)) [ ("libb", "f"); ("liba", "f") ] !(l.loaded);
+  ignore (Sys.opaque_identity (p, q, r))
+
+(* Finding a function of a loaded binary reads none of the binary: a thousand
+   finds in a loaded 16 MiB binary take less than ten reads of it, which
+   [Digest.string] stands for. *)
+let test_found_unread () =
+  let _, load = loader () in
+  let d = (fake ~load ()).dev in
+  let binary = pattern 1 (16 lsl 20) in
+  let p = program d ~binary ~name:"f" in
+  let time f =
+    let t = Unix.gettimeofday () in
+    f ();
+    Unix.gettimeofday () -. t
+  in
+  let read =
+    time (fun () -> ignore (Sys.opaque_identity (Digest.string binary)))
+  in
+  let finds =
+    time (fun () ->
+        for i = 1 to 1000 do
+          ignore
+            (Sys.opaque_identity (program d ~binary ~name:(Int.to_string i)))
+        done)
+  in
+  less float_exact ~than:(10. *. read) finds;
+  ignore (Sys.opaque_identity p)
+
 let test_unloaded () =
   let opened = ref false in
   let l, load = loader () in
@@ -3264,6 +3304,9 @@ let programs =
          loads anew"
         test_unloaded;
       test "a buffer of a binary's code keeps it loaded" test_code_keeps;
+      test "a binary is found by its bytes" test_loaded_by_bytes;
+      test "a function of a loaded binary is found without reading it"
+        test_found_unread;
       test "a binary's code counts in its device's memory while it is loaded"
         (fun () ->
           let _, load = loader ~code:64 () in
