@@ -357,6 +357,19 @@ let adapt_tests =
         equal
           (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
           (at theta) (Rune.jit' at theta));
+    test "compiled grad equals eager grad" (fun () ->
+        let x = vec [| 0.4; 1.3 |] in
+        let at theta =
+          Nx.sum
+            (Piecewise.eval
+               (Solution.get (adapt (fun z -> Nx.sin (Nx.mul z theta)) 0. 2.))
+               x)
+        in
+        let theta = scalar 1.7 in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Rune.grad' at theta)
+          (Rune.jit' (Rune.grad' at) theta));
     test "vmap gives each lane its own partition and status" (fun () ->
         let fit theta =
           Solution.ok (adapt ~budget:4 (fun z -> Nx.abs (Nx.sub z theta)) 0. 1.)

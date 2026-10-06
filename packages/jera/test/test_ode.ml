@@ -419,6 +419,12 @@ let solve_derivative_tests =
         equal close
           (scalar (-0.8 *. 2. *. Float.exp (-1.2)))
           (Rune.grad' f (scalar 1.5)));
+    test "compiled grad equals eager grad" (fun () ->
+        let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Rune.grad' f (scalar 0.8))
+          (Rune.jit' (Rune.grad' f) (scalar 0.8)));
     test "jvp agrees with grad" (fun () ->
         let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
         equal

@@ -361,6 +361,19 @@ let adaptive_tests =
           Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
         in
         equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.jit' f theta));
+    xfail
+      ~reason:
+        "tolk: Divandmod.fold divide_by_gcd raises on option is None compiling \
+         the reverse of the chunked answer"
+    @@ test "compiled grad equals eager grad" (fun () ->
+        let theta = vec [| -2.; 0.5; 3. |] in
+        let g =
+          Rune.grad' (fun t ->
+              Nx.sum
+                (Solution.get
+                   (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))))
+        in
+        equal (Oracle.tensor ~rel:1e-13 ()) (g theta) (Rune.jit' g theta));
     test "vmap is each lane's solve" (fun () ->
         let theta = Nx.create f64 [| 2; 2 |] [| -2.; 0.5; 3.; 1. |] in
         let f t =
@@ -434,6 +447,10 @@ let de_tests =
         let a = vec [| 0.5; 1.; 2.5 |] in
         let f a = Solution.get (log_moment a) in
         equal (Oracle.tensor ~rel:1e-13 ()) (f a) (Rune.jit' f a));
+    test "compiled grad equals eager grad" (fun () ->
+        let a = vec [| 0.5; 1.; 2.5 |] in
+        let g = Rune.grad' (fun a -> Nx.sum (Solution.get (log_moment a))) in
+        equal (Oracle.tensor ~rel:1e-12 ()) (g a) (Rune.jit' g a));
     test "float32 converges to float32's tolerance" (fun () ->
         let a = Nx.create Nx.float32 [| 2 |] [| 0.5; 2. |] in
         let s =
@@ -533,6 +550,22 @@ let cubature_tests =
         equal
           (Oracle.tensor ~rel:1e-13 ())
           (integral theta) (Rune.jit' integral theta));
+    xfail
+      ~reason:
+        "tolk: Divandmod.fold divide_by_gcd raises on option is None compiling \
+         the reverse of the chunked answer"
+    @@ test "compiled grad equals eager grad" (fun () ->
+        let theta = vec [| 0.5; -1. |] in
+        let g =
+          Rune.grad' (fun t ->
+              Nx.sum
+                (Solution.get
+                   (cube
+                      (fun x ->
+                        Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t))
+                      (unit_box [| 2 |] 2))))
+        in
+        equal (Oracle.tensor ~rel:1e-12 ()) (g theta) (Rune.jit' g theta));
     test "one dimension raises" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"d = 1 is not in [2, 10]")
           (fun () -> cube (fun x -> product x) (unit_box [||] 1)));

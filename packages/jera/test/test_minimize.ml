@@ -97,6 +97,10 @@ let derivative_tests =
         let c = vec [| -1.; 0.25; 2. |] in
         let f c = Solution.get (minimum c) in
         equal (Oracle.tensor ()) (f c) (Rune.jit' f c));
+    test "compiled grad equals eager grad" (fun () ->
+        let c = vec [| -1.; 0.25; 2. |] in
+        let g = Rune.grad' (fun c -> Nx.sum (Solution.get (minimum c))) in
+        equal (Oracle.tensor ~rel:1e-12 ()) (g c) (Rune.jit' g c));
     test "vmap is each lane's search" (fun () ->
         let c = Nx.create f64 [| 2; 2 |] [| -1.; 0.25; 2.; 0. |] in
         let f c = Solution.get (minimum c) in
