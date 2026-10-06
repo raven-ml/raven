@@ -1,5 +1,6 @@
 (executable
  (name bench_norn)
+ (modules bench_norn)
  (libraries nx norn norn.model posteriordb rune thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
@@ -15,3 +16,10 @@
   ../test/golden/posteriordb.golden)
  (action
   (run %{exe:bench_norn.exe})))
+
+; Ensemble slice sampling's chains for ensemble_gate.py.
+
+(executable
+ (name ensemble_gate)
+ (modules ensemble_gate)
+ (libraries nx nx.io norn))

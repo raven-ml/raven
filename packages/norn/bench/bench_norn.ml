@@ -86,6 +86,24 @@ let hmc_step chains =
   Thumper.bench_with_setup ~setup (Printf.sprintf "schools/%d" chains)
     (fun (step, k, s) -> step k s)
 
+(* An ensemble slice transition, compiled, of 64 walkers in one ensemble. *)
+let ensemble_step =
+  let setup () =
+    let lp = M.log_density model y in
+    let start = M.init model y ~chains:64 (Nx.Rng.key 1) in
+    let s = Norn.Ensemble.init u lp start in
+    let sp = Norn.Ensemble.ptree u in
+    let step =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        (Norn.Ensemble.step u lp)
+    in
+    let k = Nx.Rng.key 2 in
+    ignore (step k s);
+    (step, k, s)
+  in
+  Thumper.bench_with_setup ~setup "schools/64" (fun (step, k, s) -> step k s)
+
 let log_density =
   let setup () =
     let lp = M.log_density model y in
@@ -138,6 +156,7 @@ let () =
     [
       Thumper.group "nuts" [ nuts_step 4; nuts_step 64 ];
       Thumper.group "hmc" [ hmc_step 4; hmc_step 64; hmc_step 1024 ];
+      Thumper.group "ensemble" [ ensemble_step ];
       Thumper.group "model" [ log_density ];
       Thumper.group "dist" [ factors ];
       Thumper.group "diag" [ rhat ];

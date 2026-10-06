@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Norn.Ensemble`, ensemble slice sampling without derivatives: walkers
+  in independent ensembles move along directions drawn from the other half's
+  Gaussian, in brackets that double, so a walker far from the rest returns.
 - Add `Norn.Evidence`, an estimate of the evidence `ln Z` with its error,
   information and weighted posterior sample, and why its run stopped
   (`Evidence.stop`): a spent budget is a result, not an error.

@@ -48,5 +48,6 @@ module Dist = Dist
 module Gaussian = Gaussian
 module Nuts = Nuts
 module Hmc = Hmc
+module Ensemble = Ensemble
 module Weighted = Weighted
 module Evidence = Evidence

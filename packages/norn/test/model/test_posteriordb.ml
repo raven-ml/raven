@@ -3,12 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Law 10: reference posteriors. On six posteriordb posteriors, NUTS and HMC
-   each recover every element's mean and standard deviation within z sqrt (mcse²
-   + mcse_ref²). The reference moments and their errors come from
-   gen/posteriordb.py. HMC also recovers Neal's funnel, non-centred, at 1024
-   chains. z holds the family-wise false-alarm rate over every comparison at
-   1%. *)
+(* Law 10: reference posteriors. On six posteriordb posteriors, NUTS, HMC and
+   ensemble slice sampling each recover every element's mean and standard
+   deviation within z sqrt (mcse² + mcse_ref²). The reference moments and their
+   errors come from gen/posteriordb.py. HMC also recovers Neal's funnel,
+   non-centred, at 1024 chains. z holds the family-wise false-alarm rate over
+   every comparison at 1%. *)
 
 open Windtrap
 module M = Norn_model
@@ -18,8 +18,8 @@ let posteriors = lazy (P.all "../golden/posteriordb.golden")
 let warmup = 300
 let false_alarms = 0.01
 
-(* Two kernels on every reference, and the funnel's four moments. *)
-let kernels = 2
+(* Three kernels on every reference, and the funnel's four moments. *)
+let kernels = 3
 let funnel_comparisons = 4
 
 let comparisons =
@@ -67,6 +67,26 @@ let hmc =
         let s = Norn.Hmc.init u lp start in
         let s = Norn.Hmc.warmup u lp k ~steps:warmup s in
         let _, d, _ = Norn.Hmc.sample u lp k ~draws:50 s in
+        d);
+  }
+
+(* Two ensembles of 64 walkers: at least twice the coordinates of each
+   posterior. A walker far from a narrow, correlated posterior moves along
+   directions of the posterior's shape, which lead back to it over hundreds of
+   transitions, so the walkers start where HMC leaves them after twice the
+   warmup, which on sblrc-blr leaves no chain behind. *)
+let ensemble =
+  {
+    chains = 128;
+    run =
+      (fun u lp k start ->
+        let h = Norn.Hmc.init u lp start in
+        let h =
+          Norn.Hmc.warmup u lp (Nx.Rng.fold_in k 1) ~steps:(2 * warmup) h
+        in
+        let s = Norn.Ensemble.init u ~ensembles:2 lp h.position in
+        let s = Norn.Ensemble.warmup u lp k ~steps:warmup s in
+        let _, d, _ = Norn.Ensemble.sample u lp k ~draws:200 s in
         d);
   }
 
@@ -194,4 +214,6 @@ let () =
        [
          group "NUTS recovers" (List.map (recovers nuts) all);
          group "HMC recovers" (List.map (recovers hmc) all @ [ funnel_test ]);
+         group "ensemble slice sampling recovers"
+           (List.map (recovers ensemble) all);
        ])
