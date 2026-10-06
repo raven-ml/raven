@@ -958,6 +958,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Quad.fixed` and `Quad.cumulative`, integrals of an elementwise
+  integrand by a rule: `Quad.Rule.gauss n` and the Gauss–Kronrod rules
+  `Quad.Rule.kronrod 7` and `10`, on finite ranges and, by a change of
+  variable, on `Quad.Range.from a` and `Quad.Range.line c`.
 - Add `jera`, numerical methods over nx tensors that rune differentiates,
   maps and compiles. `Split` composes exact kicks and drifts of a separable
   Hamiltonian: `leapfrog`, `mclachlan`, Yoshida's `yoshida4`, `yoshida6` and

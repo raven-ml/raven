@@ -23,8 +23,10 @@
     - {b Problems are closures.} A problem is an OCaml function and the data it
       is computed over. Every tracked value the function reads, argument or
       capture, reaches the derivative.
-    - {b Batching.} A state's tensors are one problem: they share its steps.
-      {!Rune.val-vmap} gives each lane its own.
+    - {b Batching.} Elementwise families ({!Quad}'s integrals, evaluation) treat
+      every element as its own problem; their function must not reduce or mix
+      along any axis. Structured families solve one problem, and a state's
+      tensors share its steps. {!Rune.val-vmap} gives each lane its own.
     - {b Dtypes.} The working dtype is the data's, with no default. Times have
       their own dtype. Float leaves of a state are its vector; other leaves are
       carried unchanged.
@@ -36,6 +38,9 @@
       {!Rune.val-jit}.
     - {b Devices.} Constants are computed on the host in float64 and rounded
       once to the working dtype. *)
+
+module Quad = Quad
+(** Integrals. *)
 
 module Split = Split
 (** Splitting methods for separable Hamiltonians. *)

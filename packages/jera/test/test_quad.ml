@@ -1,0 +1,269 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Jera.Quad's rules and formulas. The trusted side is mpmath's Gauss–Legendre
+   rules, scipy's Gauss–Kronrod tables, closed-form integrals of polynomials and
+   the integrals of e⁻ˣ and e⁻ˣ², and finite differences of the rule's own
+   sum. *)
+
+open Windtrap
+open Jera
+
+let f64 = Nx.float64
+let vec a = Nx.create f64 [| Array.length a |] a
+let scalar x = Nx.scalar f64 x
+let exact () = Oracle.tensor ()
+let ulps () = Oracle.tensor ~rel:4e-16 ~abs:1e-16 ()
+
+(* Rules *)
+
+let gauss_goldens =
+  Golden_quad.
+    [
+      (1, gauss1_x, gauss1_w);
+      (2, gauss2_x, gauss2_w);
+      (3, gauss3_x, gauss3_w);
+      (4, gauss4_x, gauss4_w);
+      (5, gauss5_x, gauss5_w);
+      (8, gauss8_x, gauss8_w);
+      (10, gauss10_x, gauss10_w);
+      (16, gauss16_x, gauss16_w);
+      (20, gauss20_x, gauss20_w);
+      (32, gauss32_x, gauss32_w);
+      (64, gauss64_x, gauss64_w);
+      (100, gauss100_x, gauss100_w);
+    ]
+
+let kronrod_goldens =
+  Golden_quad.[ (7, kronrod7_x, kronrod7_w); (10, kronrod10_x, kronrod10_w) ]
+
+let nodes_match (x, w) (gx, gw) =
+  equal ~msg:"nodes" (ulps ()) (vec gx) x;
+  equal ~msg:"weights" (ulps ()) (vec gw) w
+
+let rule_tests =
+  [
+    cases
+      ~name:(fun (n, _, _) -> Printf.sprintf "%d points" n)
+      "gauss n is mpmath's rule to the last bit or so" gauss_goldens
+      (fun (n, gx, gw) ->
+        nodes_match (Quad.Rule.nodes (Quad.Rule.gauss n) f64) (gx, gw));
+    cases
+      ~name:(fun (n, _, _) -> Printf.sprintf "%d points" ((2 * n) + 1))
+      "kronrod n is QUADPACK's rule as scipy tabulates it" kronrod_goldens
+      (fun (n, gx, gw) ->
+        let x, w = Quad.Rule.nodes (Quad.Rule.kronrod n) f64 in
+        equal ~msg:"nodes" (exact ()) (vec gx) x;
+        equal ~msg:"weights" (exact ()) (vec gw) w);
+    test "nodes in float32 are the float64 nodes rounded once" (fun () ->
+        let x64, _ = Quad.Rule.nodes (Quad.Rule.gauss 7) f64 in
+        let x32, _ = Quad.Rule.nodes (Quad.Rule.gauss 7) Nx.float32 in
+        equal (exact ()) (Nx.cast Nx.float32 x64) x32);
+    test "gauss rejects no point" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"n = 0 is below 1") (fun () ->
+            Quad.Rule.gauss 0));
+    test "kronrod rejects a size it has no table for" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"n = 8 is neither 7 nor 10")
+          (fun () -> Quad.Rule.kronrod 8));
+  ]
+
+(* Exactness *)
+
+(* A polynomial of degree [d] with coefficients in [-1, 1] and a range inside
+   [-3, 3], and its integral from the antiderivative, in OCaml floats, with the
+   sum of the terms' magnitudes that bounds its rounding. *)
+let polynomial d =
+  Gen.(
+    triple
+      (array ~size:(constant (d + 1)) (float_range (-1.) 1.))
+      (float_range (-3.) 3.) (float_range (-3.) 3.))
+
+let horner c x = Array.fold_right (fun ci acc -> ci +. (x *. acc)) c 0.
+
+let antiderivative c x =
+  let a = Array.mapi (fun k ck -> ck /. float_of_int (k + 1)) c in
+  x *. horner a x
+
+let magnitude c a b =
+  let m = Float.max (Float.abs a) (Float.abs b) in
+  Array.fold_left
+    (fun (acc, p) ck -> (acc +. (Float.abs ck *. p), p *. m))
+    (0., m) c
+  |> fst
+
+let exact_for rule d =
+  prop (Printf.sprintf "degree %d" d) (polynomial d) (fun (c, a, b) ->
+      let integral =
+        Quad.fixed rule
+          (fun x -> Nx.map_item (horner c) x)
+          (Quad.Range.v (scalar a) (scalar b))
+      in
+      let truth = antiderivative c b -. antiderivative c a in
+      let bound = 64. *. epsilon_float *. (magnitude c a b +. 1.) in
+      equal (Windtrap.float_rel ~rel:0. ~abs:bound) truth (Nx.item [] integral))
+
+let exactness_tests =
+  [
+    group "gauss n integrates polynomials of degree 2n - 1"
+      (List.map
+         (fun n -> exact_for (Quad.Rule.gauss n) ((2 * n) - 1))
+         [ 1; 2; 5; 10; 20 ]);
+    group "kronrod n integrates polynomials of degree 3n + 1"
+      (List.map
+         (fun n -> exact_for (Quad.Rule.kronrod n) ((3 * n) + 1))
+         [ 7; 10 ]);
+    test "gauss n misses degree 2n" (fun () ->
+        (* ∫₋₁¹ x⁴ = 2/5, where two-point Gauss gives 2/9. *)
+        let i =
+          Quad.fixed (Quad.Rule.gauss 2)
+            (fun x -> Nx.pow_s x 4.)
+            (Quad.Range.v (scalar (-1.)) (scalar 1.))
+        in
+        equal (Oracle.tensor ~rel:1e-15 ()) (scalar (2. /. 9.)) i);
+  ]
+
+(* Ranges *)
+
+let range_tests =
+  [
+    test "from a integrates e^-(x - a) to 1" (fun () ->
+        let a = vec [| 0.; 2.5; -1. |] in
+        let i =
+          Quad.fixed (Quad.Rule.gauss 40)
+            (fun x -> Nx.exp (Nx.neg (Nx.sub x a)))
+            (Quad.Range.from a)
+        in
+        equal (Oracle.tensor ~rel:1e-10 ()) (Nx.ones_like a) i);
+    test "line c integrates e^-(x - c)² to √π" (fun () ->
+        let c = vec [| 0.; 0.5 |] in
+        let i =
+          Quad.fixed (Quad.Rule.gauss 100)
+            (fun x -> Nx.exp (Nx.neg (Nx.square (Nx.sub x c))))
+            (Quad.Range.line c)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-10 ())
+          (Nx.full f64 [| 2 |] (Float.sqrt Float.pi))
+          i);
+    test "a reversed range negates the integral" (fun () ->
+        let f x = Nx.exp x in
+        let r = Quad.Rule.gauss 6 in
+        equal (exact ())
+          (Nx.neg (Quad.fixed r f (Quad.Range.v (scalar 0.) (scalar 1.))))
+          (Quad.fixed r f (Quad.Range.v (scalar 1.) (scalar 0.))));
+    test "the ends broadcast together" (fun () ->
+        let i =
+          Quad.fixed (Quad.Rule.gauss 3) Nx.ones_like
+            (Quad.Range.v (scalar 0.) (vec [| 1.; 2.; 3. |]))
+        in
+        equal (ulps ()) (vec [| 1.; 2.; 3. |]) i);
+    test "a zero-size range gives a zero-size integral" (fun () ->
+        let i =
+          Quad.fixed (Quad.Rule.gauss 3) Nx.exp
+            (Quad.Range.v (vec [||]) (vec [||]))
+        in
+        equal (exact ()) (vec [||]) i);
+    test "a NaN end gives a NaN integral in its element only" (fun () ->
+        let i =
+          Quad.fixed (Quad.Rule.gauss 3) Nx.ones_like
+            (Quad.Range.v (vec [| 0.; nan |]) (vec [| 1.; 1. |]))
+        in
+        equal (ulps ()) (vec [| 1.; nan |]) i);
+    test "float32 integrates within float32's rounding" (fun () ->
+        let i =
+          Quad.fixed (Quad.Rule.gauss 8) Nx.exp
+            (Quad.Range.v (Nx.scalar Nx.float32 0.) (Nx.scalar Nx.float32 1.))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-6 ())
+          (Nx.scalar Nx.float32 (Float.exp 1. -. 1.))
+          i);
+  ]
+
+(* Cumulative *)
+
+let cumulative_tests =
+  let r = Quad.Rule.gauss 5 in
+  [
+    test "row i integrates from the first knot to knot i" (fun () ->
+        let knots = vec [| 0.; 0.5; 1.25; 2. |] in
+        let c = Quad.cumulative r Nx.cos knots in
+        equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (Nx.sin knots) c);
+    test "the first row is zero" (fun () ->
+        let c = Quad.cumulative r Nx.exp (vec [| 1.; 2. |]) in
+        equal (exact ()) (scalar 0.) (Nx.get [ 0 ] c));
+    test "one knot is a zero integral" (fun () ->
+        equal (exact ()) (vec [| 0. |])
+          (Quad.cumulative r Nx.exp (vec [| 1. |])));
+    test "lanes behind the knots are integrals of their own" (fun () ->
+        let knots = Nx.create f64 [| 3; 2 |] [| 0.; 1.; 1.; 2.; 2.; 4. |] in
+        let c = Quad.cumulative (Quad.Rule.gauss 12) Nx.cos knots in
+        equal
+          (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
+          (Nx.sub (Nx.sin knots) (Nx.sin (Nx.get [ 0 ] knots)))
+          c);
+    test "no knot raises" (fun () ->
+        raises_match (Exn.invalid_arg ~substring:"at least one knot") (fun () ->
+            Quad.cumulative r Nx.exp (vec [||])));
+  ]
+
+(* Transformations *)
+
+(* ∫₀¹ e^(θ x) dx, whose θ-derivative the rule's sum states. *)
+let integral theta =
+  Quad.fixed (Quad.Rule.kronrod 7)
+    (fun x -> Nx.exp (Nx.mul x theta))
+    (Quad.Range.v (Nx.zeros_like theta) (Nx.ones_like theta))
+
+let total theta = Nx.sum (integral theta)
+
+let upper b =
+  Nx.sum
+    (Quad.fixed (Quad.Rule.gauss 4) Nx.sin (Quad.Range.v (Nx.zeros_like b) b))
+
+let transformation_tests =
+  let theta = vec [| -1.; 0.5; 2. |] in
+  [
+    test "grad in a parameter is the finite difference of the sum" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (Oracle.central ~eps:1e-6 integral theta (Nx.ones_like theta))
+          (Rune.grad' total theta));
+    test "grad in an end is the finite difference of the sum" (fun () ->
+        let b = vec [| 0.3; 1.7 |] in
+        let v = vec [| 1.; -2. |] in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (Nx.reshape [||] (Oracle.central ~eps:1e-6 upper b v))
+          (scalar (Oracle.dot (Rune.grad' upper b) v)));
+    test "compiled equals eager" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (integral theta) (Rune.jit' integral theta));
+    test "vmap is each element's integral" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-15 ())
+          (integral theta)
+          (Rune.vmap' integral theta));
+    test "an integrand that changes the shape raises" (fun () ->
+        raises_match
+          (Exn.invalid_arg
+             ~substring:"returned shape [3] for points of shape [3,2]")
+          (fun () ->
+            Quad.fixed (Quad.Rule.gauss 3)
+              (fun x -> Nx.sum ~axes:[ 1 ] x)
+              (Quad.Range.v (vec [| 0.; 0. |]) (vec [| 1.; 1. |]))));
+  ]
+
+let () =
+  exit
+    (run "Jera.Quad"
+       [
+         group "rules" rule_tests;
+         group "exactness" exactness_tests;
+         group "ranges" range_tests;
+         group "cumulative" cumulative_tests;
+         group "transformations" transformation_tests;
+       ])

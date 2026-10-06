@@ -1,0 +1,3 @@
+(library
+ (name jera_golden)
+ (wrapped false))
