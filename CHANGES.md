@@ -958,6 +958,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Ode.solve` and `Ode.sample`, adaptive solves with the embedded
+  methods `bs3`, `tsit5` and `dopri5`: a proportional–integral controller
+  chooses steps on detached values, and the answer takes the accepted steps
+  again, so its derivative is theirs.
 - Add `Piecewise.adapt`, a piecewise Chebyshev fit of a function to a
   tolerance on a partition of at most `budget` pieces, refined where the
   series' tail is largest.

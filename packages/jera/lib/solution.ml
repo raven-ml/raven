@@ -28,6 +28,7 @@ let statuses = [ Converged; Budget_spent; Not_bracketed; Not_finite; Stalled ]
 let v ~fn ~settings ~value ~error ~status ~evaluations ~facts =
   { fn; settings; value; error; status; evaluations; facts }
 
+let map ~fn f t = { t with fn; value = f t.value; error = f t.error }
 let best t = t.value
 let error t = t.error
 let evaluations t = t.evaluations

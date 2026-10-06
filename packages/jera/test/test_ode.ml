@@ -299,10 +299,189 @@ let error_tests =
               (scalar 1.)));
   ]
 
+(* Solves *)
+
+let decay k _ y = Nx.neg (Nx.mul k y)
+
+let solve ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _) Ode.t))
+    ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) ?(budget = 1000) f ~t0 ~t1 y0 =
+  Ode.solve one m ~tol ~budget f ~t0:(scalar t0) ~t1:(scalar t1) y0
+
+(* y' = cos(t) y + sin(3t): smooth, non-autonomous. *)
+let forced2 t y = Nx.add (Nx.mul (Nx.cos t) y) (Nx.sin (Nx.mul_s t 3.))
+
+let solve_tests =
+  let embedded m = (m :> ([ `Embedded ], _, _) Ode.t) in
+  [
+    cases
+      ~name:(fun (n, _, _) -> n)
+      "each embedded method meets its tolerance on a forced pendulum"
+      [
+        ("bs3", embedded Ode.bs3, 1e-7);
+        ("tsit5", embedded Ode.tsit5, 1e-9);
+        ("dopri5", embedded Ode.dopri5, 1e-9);
+      ]
+      (fun (_, m, tol) ->
+        let s =
+          Ode.solve pair m ~tol:(Tol.v ~rel:tol ~abs:tol) ~budget:5000 forced
+            ~t0:(scalar 0.) ~t1:(scalar 2.)
+            (scalar 1., scalar 0.)
+        in
+        let q, p = Solution.get s in
+        let rq, rp = reference 2. in
+        equal
+          (Oracle.structure ~abs:(100. *. tol) pair)
+          (scalar rq, scalar rp)
+          (q, p));
+    test "a tighter tolerance gives a smaller error" (fun () ->
+        let err tol =
+          let q, _ =
+            Solution.get
+              (Ode.solve pair Ode.tsit5 ~tol:(Tol.v ~rel:tol ~abs:tol)
+                 ~budget:5000 forced ~t0:(scalar 0.) ~t1:(scalar 2.)
+                 (scalar 1., scalar 0.))
+          in
+          Float.abs (Nx.item [] q -. fst (reference 2.))
+        in
+        let e4 = err 1e-4 and e7 = err 1e-7 and e10 = err 1e-10 in
+        less float_exact ~than:e4 e7;
+        less float_exact ~than:e7 e10);
+    test "sample lands on each time" (fun () ->
+        let at = vec [| 0.; 0.5; 1.25; 2. |] in
+        let y =
+          Solution.get
+            (Ode.sample one Ode.dopri5
+               ~tol:(Tol.v ~rel:1e-11 ~abs:1e-13)
+               ~budget:1000
+               (decay (scalar 0.7))
+               ~at (scalar 2.))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.mul_s (Nx.exp (Nx.mul_s at (-0.7))) 2.)
+          y);
+    test "decreasing times solve backward" (fun () ->
+        let y =
+          Solution.get
+            (solve (decay (scalar 1.)) ~t0:1. ~t1:0. (scalar (Float.exp (-1.))))
+        in
+        equal (Oracle.tensor ~rel:1e-9 ()) (scalar 1.) y);
+    test "the budget ends a solve and the report says where" (fun () ->
+        let s = solve ~budget:3 forced2 ~t0:0. ~t1:10. (scalar 1.) in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Budget_spent s);
+        raises_match
+          (Exn.failure ~substring:"Jera.Ode.solve: the budget is spent")
+          (fun () -> Solution.get s));
+    test "a blow-up does not converge" (fun () ->
+        (* y' = y² from 1 is 1 / (1 − t), infinite at t = 1. *)
+        let s = solve (fun _ y -> Nx.square y) ~t0:0. ~t1:2. (scalar 1.) in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool false) (Solution.ok s));
+    test "a leaf that is not a float is carried unchanged" (fun () ->
+        let s2 = Nx.Ptree.(pair tensor tensor) in
+        let _, n =
+          Solution.get
+            (Ode.solve s2 Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:100
+               (fun _ (y, n) -> (Nx.neg y, n))
+               ~t0:(scalar 0.) ~t1:(scalar 1.)
+               (scalar 1., Nx.scalar Nx.int32 5l))
+        in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.int32 5l) n);
+  ]
+
+let solve_derivative_tests =
+  let close = Oracle.tensor ~rel:1e-7 () in
+  [
+    test "grad in the initial state is e^(−kT)" (fun () ->
+        let g =
+          Rune.grad'
+            (fun y0 ->
+              Solution.get (solve (decay (scalar 0.8)) ~t0:0. ~t1:1.5 y0))
+            (scalar 2.)
+        in
+        equal close (scalar (Float.exp (-1.2))) g);
+    test "grad in a captured rate is −T y0 e^(−kT)" (fun () ->
+        let g =
+          Rune.grad'
+            (fun k -> Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)))
+            (scalar 0.8)
+        in
+        equal close (scalar (-1.5 *. 2. *. Float.exp (-1.2))) g);
+    test "grad in the end time is the field there" (fun () ->
+        let f t1 =
+          Solution.get
+            (Ode.solve one Ode.tsit5
+               ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+               ~budget:1000
+               (decay (scalar 0.8))
+               ~t0:(scalar 0.) ~t1 (scalar 2.))
+        in
+        equal close
+          (scalar (-0.8 *. 2. *. Float.exp (-1.2)))
+          (Rune.grad' f (scalar 1.5)));
+    test "jvp agrees with grad" (fun () ->
+        let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Rune.grad' f (scalar 0.8))
+          (snd (Rune.jvp' f (scalar 0.8) (scalar 1.))));
+    test "a lane that did not converge has a zero derivative" (fun () ->
+        (* y' = y² from 0.2 is fine to t = 2; from 1 it blows up. *)
+        let f y0 =
+          Solution.best (solve (fun _ y -> Nx.square y) ~t0:0. ~t1:2. y0)
+        in
+        let g =
+          Rune.grad' (fun y0 -> Nx.sum (Rune.vmap' f y0)) (vec [| 0.2; 1. |])
+        in
+        equal
+          (Oracle.tensor ~rel:1e-6 ())
+          (vec [| 1. /. ((1. -. 0.4) ** 2.); 0. |])
+          g);
+    test "compiled equals eager to rounding for a polynomial field" (fun () ->
+        (* A Duffing oscillator: the steps' sizes come from powers, which a
+           compiled call computes within a few ulps of eager's. *)
+        let duffing _ (q, p) =
+          (p, Nx.sub (Nx.neg q) (Nx.mul_s (Nx.mul q (Nx.square q)) 0.3))
+        in
+        let f y0 =
+          Solution.get
+            (Ode.solve pair Ode.tsit5
+               ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+               ~budget:1000 duffing ~t0:(scalar 0.) ~t1:(scalar 2.)
+               (y0, Nx.zeros_like y0))
+        in
+        let q0 = scalar 0.9 in
+        equal
+          (Oracle.structure ~rel:1e-13 pair)
+          (f q0)
+          (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f q0));
+    test "compiled equals eager within the tolerance for a transcendental field"
+      (fun () ->
+        let f y0 =
+          Solution.get
+            (Ode.solve pair Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:1000 forced
+               ~t0:(scalar 0.) ~t1:(scalar 2.)
+               (y0, Nx.zeros_like y0))
+        in
+        let q0 = scalar 0.9 in
+        equal
+          (Oracle.structure ~rel:1e-8 pair)
+          (f q0)
+          (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f q0));
+    test "vmap gives each lane its own steps" (fun () ->
+        let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
+        let ks = vec [| 0.1; 5.; 0.8 |] in
+        equal (Oracle.tensor ())
+          (Nx.stack (List.init 3 (fun i -> f (Nx.get [ i ] ks))))
+          (Rune.vmap' f ks));
+  ]
+
 let () =
   exit
     (run "Jera.Ode"
        [
+         group "solve" solve_tests;
+         group "solve derivatives" solve_derivative_tests;
          group "order" order_tests;
          group "march" march_tests;
          group "transformations" transformation_tests;

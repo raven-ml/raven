@@ -43,11 +43,7 @@
         {td {!Piecewise.linear}, {!Piecewise.cubic}, {!Piecewise.hermite} }
       }
       {tr {td  } {td monotone samples } {td {!Piecewise.steffen} } }
-      {tr
-        {td  }
-        {td a function, to a tolerance }
-        {td {!Piecewise.adapt} }
-      }
+      {tr {td  } {td a function, to a tolerance } {td {!Piecewise.adapt} } }
       {tr
         {td  }
         {td a function, fixed resolution }
@@ -56,8 +52,8 @@
       {tr {td  } {td samples on a grid } {td {!Grid.linear}, {!Grid.cubic} } }
       {tr
         {td Differential equation }
-        {td non-stiff, fixed steps }
-        {td {!Ode.march} with {!Ode.tsit5} and kin }
+        {td non-stiff }
+        {td {!Ode.solve}, {!Ode.sample} with {!Ode.tsit5} and kin; {!Ode.march} }
       }
       {tr {td  } {td randomness } {td {!Sde.march} } }
       {tr {td  } {td separable Hamiltonian, long times } {td {!Split} } }

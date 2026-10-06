@@ -91,4 +91,8 @@ val v :
     the solve [fn] run with [settings], such as ["tol rel 1e-06 abs 0"]. Each
     fact is of the lanes' shape or broadcasts to it. *)
 
+val map : fn:string -> ('a -> 'b) -> 'a t -> 'b t
+(** [map ~fn f s] is [s] with [f] applied to its answer and its error, as the
+    solve [fn]. *)
+
 (**/**)

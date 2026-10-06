@@ -111,3 +111,61 @@ val march :
     Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
     tensor, if it is not strictly monotone, or if [f] returns a value of another
     structure, dtype or shape than its state. *)
+
+(** {1:solves Solves}
+
+    A solve chooses its steps to meet a tolerance: an embedded method estimates
+    each step's local error, and the proportional–integral controller of Hairer,
+    Nørsett and Wanner (I, §II.4) sizes the next. The search runs on detached
+    values and records its accepted steps; the answer takes them again with the
+    tracked field, each step a fraction [s] of its interval, [h = (b − a) s], so
+    its derivative is the accepted steps' on their grid, through the initial
+    state, the times and every tracked value the field reads, and a lane that
+    did not converge returns its detached estimate.
+
+    {b Error.} [e] is one step's embedded error, and [y], per component, the
+    larger of the step's two states; a step is accepted when [e] meets [tol].
+    The solution's error is, per component, the sum of the magnitudes of the
+    accepted steps' local estimates: it estimates the error the steps made, not
+    the global error, which [tol] does not bound. An attempt with a non-finite
+    stage is rejected; a non-finite field at an accepted state ends the lane
+    [Not_finite], a step below the time's resolution [Stalled], and [budget]
+    attempted steps [Budget_spent]. The last step of an interval lands on its
+    end exactly. {b Cost.} Each attempt costs the method's evaluations less one,
+    and the answer evaluates the accepted steps again. {b Memory.} Reverse mode
+    keeps one state per time of [at] and, while it reverses an interval, its
+    carries: compiled, [budget] of them; eagerly, the steps taken. *)
+
+val solve :
+  'y Nx.Ptree.t ->
+  ([> `Embedded ], 'y, 't) t ->
+  tol:Tol.t ->
+  budget:int ->
+  ('y, 't) field ->
+  t0:'t time ->
+  t1:'t time ->
+  'y ->
+  'y Solution.t
+(** [solve y m ~tol ~budget f ~t0 ~t1 y0] is the state at [t1] of the solution
+    from [y0] at [t0], scalars; [t1] may precede [t0].
+
+    Raises [Invalid_argument] if [budget < 1], if [t0 = t1], or as {!march} does
+    for a field of another structure. *)
+
+val sample :
+  'y Nx.Ptree.t ->
+  ([> `Embedded ], 'y, 't) t ->
+  tol:Tol.t ->
+  budget:int ->
+  ('y, 't) field ->
+  at:'t time ->
+  'y ->
+  'y Solution.t
+(** [sample y m ~tol ~budget f ~at y0] is the state at each time of [at],
+    stacked on a new leading axis of each leaf, [y0] first at [at.(0)], with
+    [budget] attempts across all of them. The steps land on every time of [at],
+    so no state is interpolated.
+
+    Raises [Invalid_argument] if [budget < 1], if [at] is not a non-empty 1-D
+    tensor, through {!Nx.check} if it is not strictly monotone, and as {!march}
+    does for a field of another structure. *)
