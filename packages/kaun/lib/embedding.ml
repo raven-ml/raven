@@ -18,10 +18,4 @@ let make ?init ~vocab ~dim dtype =
   { table = init ~fan_in:dim ~fan_out:dim dtype [| vocab; dim |] }
 
 let init ~vocab ~dim = make ~vocab ~dim Nx.float32
-
-let apply p indices =
-  let dim = (Nx.shape p.table).(1) in
-  (* [take] flattens the indices along the gathered axis; restore their shape in
-     front of the row dimension. *)
-  let rows = Nx.take ~axis:0 ~indices p.table in
-  Nx.reshape (Array.append (Nx.shape indices) [| dim |]) rows
+let apply p indices = Nx.take ~axis:0 ~indices p.table

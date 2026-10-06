@@ -103,7 +103,9 @@ let law_tests =
     test "a fit converges on a smooth function" (fun () ->
         (* e^x cos y at points whose last axis is (x, y). *)
         let f p =
-          let coordinate k = Nx.get [ k ] (Nx.moveaxis (Nx.ndim p - 1) 0 p) in
+          let coordinate k =
+            Nx.slice [ Nx.I k ] (Nx.moveaxis (Nx.ndim p - 1) 0 p)
+          in
           Nx.mul (Nx.exp (coordinate 0)) (Nx.cos (coordinate 1))
         in
         let g =
@@ -116,7 +118,7 @@ let law_tests =
     test "a fit's values keep their own axes" (fun () ->
         (* (x + y, x y) at each point: a value of shape [2]. *)
         let f p =
-          let c k = Nx.get [ k ] (Nx.moveaxis (Nx.ndim p - 1) 0 p) in
+          let c k = Nx.slice [ Nx.I k ] (Nx.moveaxis (Nx.ndim p - 1) 0 p) in
           Nx.stack ~axis:(-1) [ Nx.add (c 0) (c 1); Nx.mul (c 0) (c 1) ]
         in
         let g =

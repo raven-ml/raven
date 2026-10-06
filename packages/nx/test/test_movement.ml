@@ -356,8 +356,8 @@ let views =
       shares "slice by an index, the whole axis and a new axis"
         (Nx.slice [ I 1; A; N ]);
       shares "slice by a step of 1" (Nx.slice [ A; Rs (1, 5, 1) ]);
-      shares "get" (Nx.get [ 2 ]);
-      shares "shrink" (Nx.shrink [| (1, 3); (0, 6) |]);
+      shares "get" (Nx.slice [ Nx.I 2 ]);
+      shares "shrink" (Nx.slice [ Nx.R (1, 3); Nx.R (0, 6) ]);
       shares "expand" (fun t -> Nx.expand [| 2; -1; -1 |] t);
       shares "swapaxes" (Nx.swapaxes 0 1);
       shares "unflatten" (Nx.unflatten 1 [| 2; 3 |]);
@@ -379,13 +379,12 @@ let views =
           is_false (share_memory (storage (Nx.copy t)) (storage t));
           is_false
             (share_memory (storage (Nx.concatenate ~axis:0 [ t ])) (storage t)));
-      test
-        "shrink refuses a range past its axis or ending before it starts \
-         (nx.mli states no error)" (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.shrink [| (0, 5) |] (tensor_of [| 4 |]));
-          raises_invalid_arg (fun () ->
-              Nx.shrink [| (3, 1) |] (tensor_of [| 4 |])));
+      test "a range past its axis or ending before it starts is cut to the axis"
+        (fun () ->
+          equal (array int) [| 4 |]
+            (Nx.shape (Nx.slice [ Nx.R (0, 5) ] (tensor_of [| 4 |])));
+          equal (array int) [| 0 |]
+            (Nx.shape (Nx.slice [ Nx.R (3, 1) ] (tensor_of [| 4 |]))));
       test "ravel copies a tensor it cannot view flat" (fun () ->
           let t = Nx.transpose (tensor_of [| 2; 3 |]) in
           equal ints

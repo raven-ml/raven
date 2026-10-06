@@ -121,7 +121,7 @@ let strong m ~drift ~diffusion ~exact w steps =
   let y =
     Sde.march one m ~steps ~drift ~diffusion w ~at:(vec [| 0.; 1. |]) (x0 n)
   in
-  mean (Nx.abs (Nx.sub (Nx.get [ 1 ] y) exact))
+  mean (Nx.abs (Nx.sub (Nx.slice [ Nx.I 1 ] y) exact))
 
 (* The least-squares slope of log₂ error against log₂ steps, negated. *)
 let order errors =
@@ -239,7 +239,7 @@ let march_tests =
     test "a march stacks the state at each time, the start first" (fun () ->
         let y = run (vec [| 0.; 0.5; 1. |]) (x0 3) in
         equal (array int) [| 3; 3 |] (Nx.shape y);
-        equal (Oracle.tensor ()) (x0 3) (Nx.get [ 0 ] y));
+        equal (Oracle.tensor ()) (x0 3) (Nx.slice [ Nx.I 0 ] y));
     test "marches with different steps see one path" (fun () ->
         (* With zero drift and a constant diffusion every method's state is x0 +
            σ W, whatever its steps. *)
@@ -252,7 +252,9 @@ let march_tests =
         equal (Oracle.tensor ~abs:1e-14 ()) (walk 1) (walk 7));
     test "grad in the initial state is the finite difference" (fun () ->
         let f x =
-          Nx.sum (Nx.get [ 2 ] (run ~m:Sde.milstein (vec [| 0.; 0.5; 1. |]) x))
+          Nx.sum
+            (Nx.slice [ Nx.I 2 ]
+               (run ~m:Sde.milstein (vec [| 0.; 0.5; 1. |]) x))
         in
         let x = vec [| 1.; 0.5; 2. |] in
         let v = vec [| 1.; -1.; 0.5 |] in

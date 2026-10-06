@@ -1152,15 +1152,12 @@ let moves =
              (Gen.pair (with_axis c.tensors) (Gen.int_range 0 4))
              (fun ((x, axis), k) ->
                let k = Int.min k (Nx.dim axis x) in
-               let head =
-                 Array.mapi (fun d n -> if d = axis then (0, k) else (0, n))
-               in
+               let head = List.init axis (fun _ -> Nx.A) @ [ Nx.R (0, k) ] in
                cover "strided" (not (Nx.is_c_contiguous x));
                cover "an empty member" (k = 0 || Nx.numel x = 0);
                moved
                  (fun x ->
-                   Nx.concatenate ~axis
-                     [ x; Nx.shrink (head (Nx.shape x)) x; Nx.flip x ])
+                   Nx.concatenate ~axis [ x; Nx.slice head x; Nx.flip x ])
                  x);
            prop
              (c.name ^ " values of every layout pad with a value as on the host")

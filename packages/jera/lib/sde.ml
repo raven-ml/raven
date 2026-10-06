@@ -171,8 +171,8 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   March.check fn ~steps at;
   Num.check_increasing fn "the times of at" at;
   let n = Nx.dim 0 at in
-  Brownian.check_time fn w "a time of at" (Nx.get [ 0 ] at);
-  Brownian.check_time fn w "a time of at" (Nx.get [ n - 1 ] at);
+  Brownian.check_time fn w "a time of at" (Nx.slice [ Nx.I 0 ] at);
+  Brownian.check_time fn w "a time of at" (Nx.slice [ Nx.I (n - 1) ] at);
   let f t v = checked fn "drift" y v (drift t v) in
   let g t v dw = checked fn "diffusion" y v (diffusion t v dw) in
   let dtype = Nx.dtype at in
@@ -234,6 +234,6 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
         let v = add (g t1 hat' half) (axpy (Nx.scalar dtype 0.5) noise v) in
         (v, (hat', fhat'))
       in
-      let t0 = Nx.get [ 0 ] at in
+      let t0 = Nx.slice [ Nx.I 0 ] at in
       March.run c y ~at ~interval:(interval c step) ~state:fst
         (y0, (y0, f t0 y0))

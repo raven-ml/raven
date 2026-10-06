@@ -231,7 +231,7 @@ let int_tests =
 (* Under a map *)
 
 (* [scaled c] multiplies by [c] with a true rule; [c] is a map's lane. *)
-let lane i x = Nx.get [ i ] x
+let lane i x = Nx.slice [ Nx.I i ] x
 let stack n f = Nx.stack (List.init n f)
 
 let map_tests =

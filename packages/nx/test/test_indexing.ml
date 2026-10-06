@@ -3,14 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Gathers and scatters by index tensors. Slicing and [set] are in
-   test_values. *)
+(* Gathers and scatters by positions held in tensors. Slicing and [set] by
+   positions written in the program are in test_values. *)
 
 open Windtrap
 open Nx_test
 
 let ints = Ref.witness int32
-let positions = Ref.witness int64
 let shape = Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range 1 4)
 let iota s = Array.init (Ref.numel s) (fun i -> Int32.of_int (i + 1))
 let tensor_of s = (Ref.create s (iota s), Nx.create Nx.int32 s (iota s))
@@ -297,7 +296,7 @@ let gathers =
           let r, t = tensor_of [| 2; 3 |] in
           let indices = [| 1; 4 |] in
           equal ints
-            (Ref.take ~zero:0l indices (Ref.transpose r))
+            (Ref.take ~zero:0l ~shape:[| 2 |] indices (Ref.transpose r))
             (Ref.of_nx
                (Nx.take ~indices:(indices_tensor indices) (Nx.transpose t))));
       test "take_along_axis refuses indices of another rank" (fun () ->
@@ -819,10 +818,11 @@ let positions_of_counts =
       ])
 
 let selections =
+  let masked axis cond = List.init axis (fun _ -> Nx.A) @ [ Nx.M cond ] in
   group "selections"
     [
-      prop "compress keeps the positions of an axis where the condition holds"
-        along (fun (s, axis, _) ->
+      prop "a mask keeps the positions of its axis where it holds" along
+        (fun (s, axis, _) ->
           let r, t = tensor_of s in
           let cond = Array.init s.(axis) (fun i -> i mod 3 <> 1) in
           equal ints
@@ -836,12 +836,12 @@ let selections =
                  ])
                r)
             (Ref.of_nx
-               (Nx.compress ~axis
-                  ~condition:(Nx.create Nx.bool [| s.(axis) |] cond)
+               (Nx.slice
+                  (masked axis (Nx.create Nx.bool [| s.(axis) |] cond))
                   t)));
       prop
-        "extract lists, in row-major order, the elements where the condition \
-         holds"
+        "a flattened mask of a flattened tensor lists, in row-major order, the \
+         elements where it holds"
         shape (fun s ->
           let r, t = tensor_of s in
           let cond = Array.map (fun v -> Int32.rem v 3l <> 0l) r.data in
@@ -852,111 +852,43 @@ let selections =
           in
           equal ints
             (Ref.create [| List.length kept |] (Array.of_list kept))
-            (Ref.of_nx (Nx.extract ~condition:(Nx.create Nx.bool s cond) t)));
-      prop
-        "nonzero and argwhere list the coordinates of non-zero elements, in \
-         row-major order"
-        (Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 4))
-        (fun s ->
-          let r =
-            Ref.init s (fun i -> Int32.of_int ((Ref.ravel s i + 1) mod 3))
-          in
-          let t = Nx.create Nx.int32 s r.data in
-          let coords =
-            List.filter_map
-              (fun i ->
-                if r.data.(i) <> 0l then Some (Ref.unravel s i) else None)
-              (List.init (Ref.numel s) Fun.id)
-          in
-          let k = List.length coords and n = Array.length s in
-          let rows = Array.of_list coords in
-          equal positions
-            (Ref.init [| k; n |] (fun i -> Int64.of_int rows.(i.(0)).(i.(1))))
-            (Ref.of_nx (Nx.argwhere t));
-          Array.iteri
-            (fun d axis ->
-              equal
-                ~msg:(Printf.sprintf "axis %d" d)
-                positions
-                (Ref.init [| k |] (fun i -> Int64.of_int rows.(i.(0)).(d)))
-                (Ref.of_nx axis))
-            (Nx.nonzero t));
-      prop
-        "compress without an axis keeps the flattened positions where the \
-         condition holds"
-        shape (fun s ->
-          let r, t = tensor_of s in
-          let cond = Array.init (Ref.numel s) (fun i -> i mod 3 <> 1) in
-          equal ints (Ref.compress cond r)
             (Ref.of_nx
-               (Nx.compress
-                  ~condition:(Nx.create Nx.bool [| Ref.numel s |] cond)
-                  t)));
-      test "compress and extract without an axis read a transposed tensor"
-        (fun () ->
+               (Nx.slice
+                  [ Nx.M (Nx.flatten (Nx.create Nx.bool s cond)) ]
+                  (Nx.flatten t))));
+      test "a mask reads a transposed tensor" (fun () ->
           let r, t = tensor_of [| 2; 3 |] in
-          let cond = [| true; false; false; true; true; false |] in
-          let condition = Nx.create Nx.bool [| 6 |] cond in
-          let expected = Ref.compress cond (Ref.transpose r) in
-          equal ints expected
-            (Ref.of_nx (Nx.compress ~condition (Nx.transpose t)));
-          equal ints expected
+          let cond = [| true; false; true |] in
+          equal ints
+            (Ref.compress ~axis:0 cond (Ref.transpose r))
             (Ref.of_nx
-               (Nx.extract
-                  ~condition:(Nx.reshape [| 3; 2 |] condition)
+               (Nx.slice
+                  [ Nx.M (Nx.create Nx.bool [| 3 |] cond) ]
                   (Nx.transpose t))));
-      test
-        "compress refuses a condition of another length, with or without an \
-         axis" (fun () ->
+      test "a mask refuses another length than its axis'" (fun () ->
           let t = Nx.zeros Nx.int32 [| 2; 3 |] in
           List.iter
             (fun (axis, n) ->
               raises_invalid_arg (fun () ->
-                  Nx.compress ?axis ~condition:(Nx.ones Nx.bool [| n |]) t))
-            [ (None, 5); (None, 7); (Some 1, 2); (Some 1, 4) ]);
-      test "compress refuses a 2-D condition, even of the right size" (fun () ->
+                  Nx.slice (masked axis (Nx.ones Nx.bool [| n |])) t))
+            [ (0, 1); (0, 3); (1, 2); (1, 4) ]);
+      test "a mask refuses a 2-D condition, even of the right size" (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.compress
-                ~condition:(Nx.ones Nx.bool [| 2; 3 |])
+              Nx.slice
+                [ Nx.M (Nx.ones Nx.bool [| 2; 3 |]) ]
                 (Nx.zeros Nx.int32 [| 2; 3 |])));
-      test "compress keeps nothing or everything, along an empty axis too"
+      test "a mask keeps nothing or everything, along an empty axis too"
         (fun () ->
           let r, t = tensor_of [| 2; 3 |] in
           let all = Nx.ones Nx.bool [| 3 |]
           and none = Nx.zeros Nx.bool [| 3 |] in
-          equal ints r (Ref.of_nx (Nx.compress ~axis:1 ~condition:all t));
-          equal (array int) [| 2; 0 |]
-            (Nx.shape (Nx.compress ~axis:1 ~condition:none t));
+          equal ints r (Ref.of_nx (Nx.slice (masked 1 all) t));
+          equal (array int) [| 2; 0 |] (Nx.shape (Nx.slice (masked 1 none) t));
           equal (array int) [| 0; 3 |]
             (Nx.shape
-               (Nx.compress ~axis:0 ~condition:(Nx.zeros Nx.bool [| 0 |])
+               (Nx.slice
+                  [ Nx.M (Nx.zeros Nx.bool [| 0 |]) ]
                   (Nx.zeros Nx.int32 [| 0; 3 |]))));
-      test
-        "nonzero of a scalar is empty, and argwhere of a scalar has no column"
-        (fun () ->
-          equal int 0 (Array.length (Nx.nonzero (Nx.scalar Nx.int32 3l)));
-          equal (array int) [| 1; 0 |]
-            (Nx.shape (Nx.argwhere (Nx.scalar Nx.int32 3l)));
-          equal (array int) [| 0; 0 |]
-            (Nx.shape (Nx.argwhere (Nx.scalar Nx.int32 0l))));
-      test "nonzero takes NaN as non-zero, and -0 and complex zero as zero"
-        (fun () ->
-          let x = Nx.create Nx.float64 [| 4 |] [| -0.; Float.nan; 0.; 2. |] in
-          equal (array int64) [| 1L; 3L |] (Nx.to_array (Nx.nonzero x).(0));
-          let z = Nx.create Nx.complex64 [| 2 |] Complex.[| zero; one |] in
-          equal (array int64) [| 1L |] (Nx.to_array (Nx.nonzero z).(0)));
-      test "extract flattens a condition of the same size and another shape"
-        (fun () ->
-          let r, t = tensor_of [| 2; 3 |] in
-          let cond = [| true; false; false; true; true; false |] in
-          equal ints (Ref.compress cond r)
-            (Ref.of_nx
-               (Nx.extract ~condition:(Nx.create Nx.bool [| 6 |] cond) t)));
-      test "extract refuses a condition of another size" (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.extract
-                ~condition:(Nx.create Nx.bool [| 3 |] [| true; false; true |])
-                (Nx.zeros Nx.int32 [| 2 |])));
     ]
 
 let extremes =
@@ -1066,6 +998,82 @@ let stepped_ranges =
           equal ints (Ref.slice [ spec ] r) (Ref.of_nx (Nx.slice [ spec ] t)));
     ]
 
+(* A shape, an axis of it, a shape of rank 0 to 2 for positions, and positions
+   along the axis drawn by [pos]. *)
+let shaped pos =
+  let open Gen in
+  let* s = shape in
+  let* axis = int_range 0 (Array.length s - 1) in
+  let* ps = array ~size:(int_range 0 2) (int_range 0 3) in
+  let+ idx = array ~size:(constant (Ref.numel ps)) (pos s.(axis)) in
+  (s, axis, ps, idx)
+
+let inside n = Gen.int_range 0 (n - 1)
+let held_at ps idx = Nx.create Nx.int64 ps (Array.map Int64.of_int idx)
+
+let held =
+  group "positions held in a tensor"
+    [
+      prop
+        "take replaces its axis by the positions' shape, reading zero outside \
+         the axis"
+        (shaped index) (fun (s, axis, ps, idx) ->
+          cover "0-d positions" (ps = [||]);
+          cover "positions of rank 2" (Array.length ps = 2);
+          let r, t = tensor_of s in
+          equal ints
+            (Ref.take ~axis ~zero:0l ~shape:ps idx r)
+            (Ref.of_nx (Nx.take ~axis ~indices:(held_at ps idx) t)));
+      prop "slice with T at an axis is take along that axis" (shaped index)
+        (fun (s, axis, ps, idx) ->
+          let _, t = tensor_of s in
+          let p = held_at ps idx in
+          equal (tensor int32)
+            (Nx.take ~axis ~indices:p t)
+            (Nx.slice (List.init axis (fun _ -> Nx.A) @ [ Nx.T p ]) t));
+      test "T replaces its axis between an I before it and one after it"
+        (fun () ->
+          let r, t = tensor_of [| 3; 4; 5 |] in
+          let p = held_at [| 2; 2 |] [| 3; 0; 0; 2 |] in
+          let spec = [ Nx.I 1; Nx.T p; Nx.I (-1) ] in
+          let got = Nx.slice spec t in
+          equal (array int) [| 2; 2 |] (Nx.shape got);
+          equal ints (Ref.slice spec r) (Ref.of_nx got));
+      prop
+        "set at positions held in a tensor writes each one, the last write in \
+         C order winning"
+        (shaped inside) (fun (s, axis, ps, idx) ->
+          let r, t = tensor_of s in
+          let spec =
+            List.init axis (fun _ -> Nx.A) @ [ Nx.T (held_at ps idx) ]
+          in
+          let sel = (Ref.slice spec r).shape in
+          let v =
+            Array.init (Ref.numel sel) (fun i -> Int32.of_int (100 + i))
+          in
+          cover "a repeated position"
+            (List.length (List.sort_uniq compare (Array.to_list idx))
+            < Array.length idx);
+          equal ints
+            (Ref.set spec (Ref.create sel v) r)
+            (Ref.of_nx (Nx.set spec (Nx.create Nx.int32 sel v) t)));
+      test "set drops a write at a position outside its axis" (fun () ->
+          let _, t = tensor_of [| 3; 2 |] in
+          let p = held_at [| 4 |] [| -1; 3; 1; far |] in
+          equal (tensor int32)
+            (Nx.create Nx.int32 [| 3; 2 |] [| 1l; 2l; 0l; 0l; 5l; 6l |])
+            (Nx.set [ Nx.T p ] (Nx.scalar Nx.int32 0l) t));
+      cases
+        "a position written in the program raises outside its axis, and a \
+         range is cut to it"
+        ~name:(fun (s : Nx.index) -> Format.asprintf "%a" pp_index s)
+        [ I 4; I (-5); L [ 0; 4 ]; L [ -5 ] ]
+        (fun spec ->
+          let _, t = tensor_of [| 4 |] in
+          raises_invalid_arg (fun () -> Nx.slice [ spec ] t);
+          equal (array int) [| 2 |] (Nx.shape (Nx.slice [ Nx.R (2, 9) ] t)));
+    ]
+
 let () =
   exit
     (run "nx indexing"
@@ -1080,4 +1088,5 @@ let () =
          windows;
          stepped_ranges;
          past_int32;
+         held;
        ])

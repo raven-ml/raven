@@ -89,7 +89,9 @@ let autocov m =
   let power =
     Nx.irfft Nx.float64 ~axis:1 ~n:(2 * n) (Nx.mul f (Nx.conjugate f))
   in
-  let ac = Nx.to_array (Nx.copy (Nx.shrink [| (0, r); (0, n) |] power)) in
+  let ac =
+    Nx.to_array (Nx.copy (Nx.slice [ Nx.R (0, r); Nx.R (0, n) ] power))
+  in
   Array.init r (fun i ->
       Array.init n (fun t -> ac.((i * n) + t) /. float_of_int n))
 

@@ -895,7 +895,7 @@ let test_lbfgs_fixed_step () =
   equal ~msg:"older slots are empty" float_exact 0.0 (Nx.item [ 1 ] st.rho);
   check_vec ~msg:"newest s is the step taken" ~eps:1e-6
     (Nx.to_array (Nx.cast Nx.float64 (Nx.sub target.a params.a)))
-    (Nx.cast Nx.float64 (Nx.get [ 0 ] st.s.a));
+    (Nx.cast Nx.float64 (Nx.slice [ Nx.I 0 ] st.s.a));
   (* A second fixed step from the minimum: the gradient is zero, so the point
      stays and the new pair, with no curvature, gets no weight. *)
   let st' = Vega.lbfgs_step Pair.ptree ~lr:(Vega.lr 0.5) bowl st in
@@ -967,8 +967,8 @@ let test_lbfgs_rejects_negative_curvature () =
   check_vec ~msg:"first step is descent" [| 1.2 |] st.params;
   is_true ~msg:"the pair has negative curvature"
     (Nx.item []
-       (Nx.Ptree.dot Vec.ptree Nx.float64 (Nx.get [ 0 ] st.y)
-          (Nx.get [ 0 ] st.s))
+       (Nx.Ptree.dot Vec.ptree Nx.float64 (Nx.slice [ Nx.I 0 ] st.y)
+          (Nx.slice [ Nx.I 0 ] st.s))
     < 0.0);
   equal ~msg:"and no weight" float_exact 0.0 (Nx.item [ 0 ] st.rho);
   (* With no weighted pair the direction is [-g] with unit scaling: plain
@@ -988,7 +988,7 @@ let test_lbfgs_memory_evicts () =
   let st2 = advance st1 in
   let st3 = advance st2 in
   let top (st : (Pair.t, _) Vega.lbfgs_state) =
-    Nx.to_array (Nx.get [ 0 ] st.s.a)
+    Nx.to_array (Nx.slice [ Nx.I 0 ] st.s.a)
   in
   equal ~msg:"memory has two slots" (array int) [| 2; 2 |] (Nx.shape st3.s.a);
   equal ~msg:"top is the latest step"
@@ -998,9 +998,9 @@ let test_lbfgs_memory_evicts () =
   equal ~msg:"below it the previous step"
     (array (float 1e-6))
     (top st2)
-    (Nx.to_array (Nx.get [ 1 ] st3.s.a));
+    (Nx.to_array (Nx.slice [ Nx.I 1 ] st3.s.a));
   is_true ~msg:"the first pair is gone"
-    (top st1 <> top st3 && top st1 <> Nx.to_array (Nx.get [ 1 ] st3.s.a));
+    (top st1 <> top st3 && top st1 <> Nx.to_array (Nx.slice [ Nx.I 1 ] st3.s.a));
   is_true ~msg:"both slots carry weight"
     (Array.for_all (fun r -> r > 0.0) (Nx.to_array st3.rho))
 

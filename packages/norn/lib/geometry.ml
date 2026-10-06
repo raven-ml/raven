@@ -124,7 +124,7 @@ let split u like m =
         Nx.zeros (Nx.dtype x) (Array.append [| k |] (Nx.shape x))
       else
         let n = Nx.numel x in
-        let rows = Nx.shrink [| (!offset, !offset + n); (0, k) |] m in
+        let rows = Nx.slice [ Nx.R (!offset, !offset + n); Nx.R (0, k) ] m in
         offset := !offset + n;
         Nx.reshape
           (Array.append [| k |] (Nx.shape x))

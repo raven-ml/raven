@@ -592,7 +592,7 @@ let squares =
 let sqrt_misses n =
   let roots =
     Bigarray.array1_of_genarray
-      (Nx.to_bigarray (Nx.sqrt (Nx.shrink [| (0, n) |] squares)))
+      (Nx.to_bigarray (Nx.sqrt (Nx.slice [ Nx.R (0, n) ] squares)))
   in
   let misses = ref [] in
   for i = n - 1 downto 0 do

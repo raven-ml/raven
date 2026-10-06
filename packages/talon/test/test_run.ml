@@ -98,8 +98,8 @@ let scattered ty vs =
           else around.(i mod (n + 70)))
     in
     let v =
-      Nx.shrink
-        [| (k, k + n) |]
+      Nx.slice
+        [ Nx.R (k, k + n) ]
         (Nx.cast Nx.bit (Nx.create Nx.bool [| k + n + 9 |] bits))
     in
     Result.get_ok
@@ -1161,7 +1161,7 @@ let view k xs =
   let all =
     Array.init (k + n + 9) (fun i -> i < k || i >= k + n || xs.(i - k))
   in
-  Nx.shrink [| (k, k + n) |] (Nx.create Nx.bit [| k + n + 9 |] all)
+  Nx.slice [ Nx.R (k, k + n) ] (Nx.create Nx.bit [| k + n + 9 |] all)
 
 let of_bits c =
   let validity = Option.map (view (snd c.at)) c.valid in
@@ -2844,8 +2844,8 @@ let garbled vs under =
         i < 3 || i >= n + 3 || Option.is_some vs.(i - 3))
   in
   let validity =
-    Nx.shrink
-      [| (3, n + 3) |]
+    Nx.slice
+      [ Nx.R (3, n + 3) ]
       (Nx.cast Nx.bit (Nx.create Nx.bool [| n + 11 |] bits))
   in
   Column.of_tensor ~validity (Nx.create Nx.int64 [| n |] values)

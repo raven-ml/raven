@@ -173,7 +173,7 @@ let shifted_bits =
   Option.map (fun b ->
       let pad = Nx.ones Nx.bit [| 3 |] in
       let m = Nx.concatenate ~axis:0 [ pad; b; pad ] in
-      Nx.shrink [| (3, 3 + Nx.numel b) |] m)
+      Nx.slice [ Nx.R (3, 3 + Nx.numel b) ] m)
 
 (* [c] with one more row in front. *)
 let prepend c =
@@ -196,10 +196,7 @@ let rec view c =
         let padded =
           Nx.pad (Array.mapi ends (Nx.shape x)) (Nx_dtype.one (Nx.dtype x)) x
         in
-        let inner i d = if i = 0 then (1, d - 1) else (0, d) in
-        let values =
-          Nx.P (Nx.shrink (Array.mapi inner (Nx.shape padded)) padded)
-        in
+        let values = Nx.P (Nx.slice [ Nx.R (1, -1) ] padded) in
         Fixed { validity = shifted_bits validity; values }
     | Varsize { validity; offsets; child } ->
         Varsize
@@ -228,11 +225,7 @@ let canonical (G.Sample (ty, vs), t) =
 (* Rows cut from the front of a larger tensor of elements narrower than a byte
    share their last byte with the rows after them. *)
 let front_cuts =
-  let first n x =
-    Nx.shrink
-      (Array.mapi (fun i d -> (0, if i = 0 then n else d)) (Nx.shape x))
-      x
-  in
+  let first n x = Nx.slice [ Nx.R (0, n) ] x in
   (* [x] is copied into storage of its own: a filled tensor is a broadcast
      view. *)
   let cut name x n =

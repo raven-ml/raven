@@ -182,7 +182,7 @@ let round_trip c =
    strict lower triangle for Cholesky factors. *)
 let free c x =
   match c.name with
-  | "simplex" | "sum_to_zero" -> Nx.shrink [| (0, 3) |] x
+  | "simplex" | "sum_to_zero" -> Nx.slice [ Nx.R (0, 3) ] x
   | "cholesky_corr" | "compose cholesky_corr affine" ->
       Nx.take
         ~indices:(Nx.create Nx.int64 [| 6 |] [| 4L; 8L; 9L; 12L; 13L; 14L |])

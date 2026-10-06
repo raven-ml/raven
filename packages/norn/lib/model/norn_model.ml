@@ -988,12 +988,8 @@ let init ?(from = Init.Uniform) m y ~chains k =
     in
     Nx.check (explain_ptree ()) (Nx.any finite) (sites, factors) (fun _ data ->
         no_start m context terms data);
-    let first =
-      Nx.reshape [| 1 |] (Nx.argmax ~axis:0 (Nx.cast Nx.int32 finite))
-    in
-    Nx.Ptree.map m.latent
-      (fun _ x -> Nx.squeeze ~axes:[ 0 ] (Nx.take ~axis:0 ~indices:first x))
-      cands
+    let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 finite) in
+    Nx.Ptree.map m.latent (fun _ x -> Nx.take ~axis:0 ~indices:first x) cands
   in
   Rune.vmap
     Nx.Ptree.(Nx.Rng.ptree @-> returns m.latent)

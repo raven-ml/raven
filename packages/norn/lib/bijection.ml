@@ -57,8 +57,7 @@ let lowest x = Nx.item [] (Nx.min (Nx.cast Nx.float64 x))
 let highest x = Nx.item [] (Nx.max (Nx.cast Nx.float64 x))
 
 let range axis (a, b) x =
-  let s = Nx.shape x in
-  Nx.shrink (Array.mapi (fun d n -> if d = axis then (a, b) else (0, n)) s) x
+  Nx.slice (List.init axis (fun _ -> Nx.A) @ [ Nx.R (a, b) ]) x
 
 let sum_last k x =
   if k <= 0 then x
@@ -393,9 +392,9 @@ let corr_dim m =
       "Norn.Bij.forward: cholesky_corr: %d coordinates is no n (n - 1) / 2" m;
   n
 
-(* [lower_indices n] is, for each element of an [n × n] matrix in C order, its
-   index in the strict lower triangle read row by row, or [n (n - 1) / 2], which
-   [Nx.take] reads as zero, off it. *)
+(* [lower_indices n] is, for each element of an [n × n] matrix, its index in the
+   strict lower triangle read row by row, or [n (n - 1) / 2], which [Nx.take]
+   reads as zero, off it. *)
 let lower_indices n =
   let m = n * (n - 1) / 2 in
   let idx = Array.make (n * n) (Int64.of_int m) in
@@ -406,7 +405,7 @@ let lower_indices n =
       incr k
     done
   done;
-  Nx.create Nx.int64 [| n * n |] idx
+  Nx.create Nx.int64 [| n; n |] idx
 
 (* [lower_positions n] is the C-order position of each element of the strict
    lower triangle, read row by row. *)
@@ -424,18 +423,12 @@ let cholesky_corr =
   let forward u =
     let dt = Nx.dtype u in
     let ax = last u in
-    let shape = Nx.shape u in
-    let n = corr_dim shape.(ax) in
-    let batch = Array.sub shape 0 ax in
+    let n = corr_dim (Nx.dim ax u) in
     let edge = 1. -. Prec.eps dt in
     let z = Nx.tanh u in
     let ok = Nx.all ~axes:[ ax ] (Nx.less_equal (Nx.abs z) (const z edge)) in
     let z = Nx.clamp ~min:(-.edge) ~max:edge z in
-    let z =
-      Nx.reshape
-        (Array.append batch [| n; n |])
-        (Nx.take ~axis:ax ~indices:(lower_indices n) z)
-    in
+    let z = Nx.take ~axis:ax ~indices:(lower_indices n) z in
     let q = Nx.log1p (Nx.neg (Nx.square z)) in
     let s = Nx.cumsum ~axis:(ax + 1) q in
     let excl = Nx.sub s q in

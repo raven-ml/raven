@@ -134,7 +134,7 @@ let ar_k data =
     let y = M.sample (D.normal ~loc ~scale:sigma) in
     ([ alpha; beta; sigma ], y)
   in
-  (model, Nx.shrink [| (k, n) |] y, [ "alpha"; "beta"; "sigma" ])
+  (model, Nx.slice [ Nx.R (k, n) ] y, [ "alpha"; "beta"; "sigma" ])
 
 (* Dogs avoiding shocks: the logit of avoiding is linear in the earlier
    avoidances and shocks. *)
@@ -147,7 +147,7 @@ let dogs data =
     Nx.pad
       [| (0, 0); (1, 0) |]
       0.
-      (Nx.shrink [| (0, (Nx.shape y).(0)); (0, trials - 1) |] c)
+      (Nx.slice [ Nx.R (0, (Nx.shape y).(0)); Nx.R (0, trials - 1) ] c)
   in
   let shocks = before y and avoided = before (Nx.rsub_s 1. y) in
   let model =
@@ -155,7 +155,7 @@ let dogs data =
     let beta =
       M.sample (D.iid [| 3 |] (D.normal ~loc:(f64 0.) ~scale:(f64 100.)))
     in
-    let b i = Nx.get [ i ] beta in
+    let b i = Nx.slice [ Nx.I i ] beta in
     let logits =
       Nx.add (b 0) (Nx.add (Nx.mul (b 1) avoided) (Nx.mul (b 2) shocks))
     in

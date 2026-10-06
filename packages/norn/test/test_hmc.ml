@@ -36,7 +36,7 @@ let reproducible =
           let one =
             H.step t banana (Nx.Rng.key 3)
               (H.init t ~geometry:narrow banana
-                 (Nx.shrink [| (0, 1); (0, dim) |] (start 4)))
+                 (Nx.slice [ Nx.R (0, 1); Nx.R (0, dim) ] (start 4)))
           in
           let four =
             H.step t banana (Nx.Rng.key 3)

@@ -12,10 +12,10 @@ let check fn ~steps at =
          (Num.shape (Nx.shape at)));
   let n = Nx.dim 0 at in
   if n > 1 then begin
-    let prev = Nx.shrink [| (0, n - 1) |] at
-    and next = Nx.shrink [| (1, n) |] at in
+    let prev = Nx.slice [ Nx.R (0, n - 1) ] at
+    and next = Nx.slice [ Nx.R (1, n) ] at in
     let d = Nx.sub next prev in
-    let first = Nx.shrink [| (0, 1) |] d in
+    let first = Nx.slice [ Nx.R (0, 1) ] d in
     let same_sign = Nx.greater (Nx.mul d first) (Nx.zeros_like d) in
     Nx.check
       Nx.Ptree.(pair tensor tensor)
@@ -40,7 +40,7 @@ let run c y ~at ~interval ~state init =
   let y0 = state init in
   if n = 1 then stack1 y y0
   else if n = 2 then
-    let t0 = Nx.get [ 0 ] at and t1 = Nx.get [ 1 ] at in
+    let t0 = Nx.slice [ Nx.I 0 ] at and t1 = Nx.slice [ Nx.I 1 ] at in
     prepend y y0 (stack1 y (state (interval t0 t1 init)))
   else
     (* Reverse mode keeps each interval's start and runs the interval again
@@ -48,8 +48,8 @@ let run c y ~at ~interval ~state init =
     let interval =
       Rune.remat Nx.Ptree.(tensor @-> tensor @-> c @-> returns c) interval
     in
-    let starts = Nx.shrink [| (0, n - 1) |] at
-    and ends = Nx.shrink [| (1, n) |] at in
+    let starts = Nx.slice [ Nx.R (0, n - 1) ] at
+    and ends = Nx.slice [ Nx.R (1, n) ] at in
     let _, ys =
       Rune.scan c
         Nx.Ptree.(pair tensor tensor)

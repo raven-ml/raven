@@ -239,10 +239,8 @@ let views =
       apply =
         (fun t ->
           let a = blocks_axis t in
-          Nx.shrink
-            (Array.mapi
-               (fun i d -> if i = a then (0, d / 2) else (0, d))
-               (Nx.shape t))
+          Nx.slice
+            (List.init a (fun _ -> Nx.A) @ [ Nx.R (0, Nx.dim a t / 2) ])
             t);
     };
   ]

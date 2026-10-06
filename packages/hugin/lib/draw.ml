@@ -373,7 +373,7 @@ let runs edges ~inside ~dropped xt yt =
           extreme `Min Float.infinity;
         ]
     in
-    Some (Array.map Int64.to_int (Nx.to_array (Nx.nonzero kept).(0)))
+    Some (Array.map Int64.to_int (Nx.to_array (Nx.positions kept)))
 
 (* [undashed m] is [true] iff [m] binds no dash other than the constant solid
    one: a reduced path moves the phase of a dash pattern along it. *)
@@ -488,7 +488,7 @@ let m4 cx m (panel : Layout.panel) reads mask =
               let ends = Array.copy shape in
               ends.(rank - 1) <- 1;
               let ks = Nx.reshape [| series |] (Nx.broadcast_to ends k) in
-              let ids = (Nx.nonzero ks).(0) in
+              let ids = Nx.positions ks in
               if Nx.numel ids = 0 then Some (Read.Rows [||])
               else
                 let pick t = Nx.take ~axis:0 ~indices:ids (grid t) in
@@ -535,7 +535,7 @@ let selection m = function
       in
       let ends = Array.mapi (fun a d -> if a < lead then d else 1) shape in
       let k = Nx.flatten (Nx.broadcast_to ends k) in
-      match Nx.to_array (Nx.nonzero k).(0) with
+      match Nx.to_array (Nx.positions k) with
       | [||] -> None
       | ids ->
           let rows = Array.make (Array.length ids * block) 0 in

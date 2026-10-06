@@ -98,11 +98,11 @@ let require op checks =
 let check_values op values =
   if ndim values = 0 then err op "values of shape [], not at least 1-D"
 
-let first offsets = shrink [| (0, 1) |] offsets
+let first offsets = slice [ R (0, 1) ] offsets
 
 let last offsets =
   let n = dim 0 offsets in
-  shrink [| (n - 1, n) |] offsets
+  slice [ R (n - 1, n) ] offsets
 
 let v ~offsets values =
   check_values "Nx_ragged.v" values;
@@ -111,9 +111,7 @@ let v ~offsets values =
       (shape_string offsets);
   let n = dim 0 offsets and rows = dim 0 values in
   let increase =
-    greater_equal
-      (shrink [| (1, n) |] offsets)
-      (shrink [| (0, n - 1) |] offsets)
+    greater_equal (slice [ R (1, n) ] offsets) (slice [ R (0, n - 1) ] offsets)
   in
   require "Nx_ragged.v"
     [
@@ -165,7 +163,7 @@ let of_ids ~segments ids x =
       (full_as ids [| segments + 1 |] 0L)
   in
   let offsets =
-    pad [| (1, 0) |] 0L (cumsum (shrink [| (0, segments) |] counts))
+    pad [| (1, 0) |] 0L (cumsum (slice [ R (0, segments) ] counts))
   in
   { offsets; values = take ~axis:0 ~indices:(argsort ids) x }
 
@@ -175,7 +173,7 @@ let length r = dim 0 r.offsets - 1
 
 let lengths r =
   let n = dim 0 r.offsets in
-  sub (shrink [| (1, n) |] r.offsets) (shrink [| (0, n - 1) |] r.offsets)
+  sub (slice [ R (1, n) ] r.offsets) (slice [ R (0, n - 1) ] r.offsets)
 
 (* The elements of [r]'s values in row-major order, and its offsets in elements:
    a row of cells of [c] elements is [c] times as long. *)
@@ -232,7 +230,7 @@ let quantile (type b) qs (r : (float, b) t) : (float, b) Nx.t =
   let at = mul (create Float64 [| k; 1 |] qs) (sub_s (cast Float64 lens) 1.) in
   let lo = floor at in
   let statistic i =
-    let i = add (reshape [| 1; n |] (shrink [| (0, n) |] offsets)) i in
+    let i = add (reshape [| 1; n |] (slice [ R (0, n) ] offsets)) i in
     reshape [| k; n |] (take ~indices:(reshape [| k * n |] i) sorted)
   in
   let lo_i = cast Int64 lo in
@@ -270,8 +268,8 @@ let rows op r =
   (* Every window of up to 64 bytes from an element of a row lies in
      [keys]. *)
   let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in
-  let start = shrink [| (0, n) |] offsets in
-  let len = sub (shrink [| (1, n + 1) |] offsets) start in
+  let start = slice [ R (0, n) ] offsets in
+  let len = sub (slice [ R (1, n + 1) ] offsets) start in
   let round ~ordered ~seen ~active ~m ~longest =
     let width =
       List.find_opt (fun b -> b >= longest * w) [ 8; 16; 32 ]
@@ -350,8 +348,8 @@ let ranks op r =
             true
             (any ~axes:[ 1 ]
                (not_equal
-                  (shrink [| (1, m); (0, dim 1 key) |] sorted)
-                  (shrink [| (0, m - 1); (0, dim 1 key) |] sorted)))
+                  (slice [ R (1, m); R (0, dim 1 key) ] sorted)
+                  (slice [ R (0, m - 1); R (0, dim 1 key) ] sorted)))
         in
         let splits =
           logical_and starts
@@ -359,8 +357,8 @@ let ranks op r =
                [| (1, 0) |]
                false
                (equal
-                  (shrink [| (1, m) |] sorted_rank)
-                  (shrink [| (0, m - 1) |] sorted_rank)))
+                  (slice [ R (1, m) ] sorted_rank)
+                  (slice [ R (0, m - 1) ] sorted_rank)))
         in
         let splits = cast Int64 splits in
         let within = cumsum splits in
@@ -373,8 +371,8 @@ let ranks op r =
                 [| (1, 0) |]
                 0L
                 (cumsum
-                   (shrink
-                      [| (0, classes - 1) |]
+                   (slice
+                      [ R (0, classes - 1) ]
                       (reduce_segments `Add ~segments:classes sorted_rank splits)))
             in
             add rank (take ~indices:rank before)
@@ -387,8 +385,7 @@ let ranks op r =
         (* Rows still to tell apart: with keys past the round, in a class of two
            rows or more. *)
         let alone =
-          logical_and starts
-            (pad [| (0, 1) |] true (shrink [| (1, m) |] starts))
+          logical_and starts (pad [| (0, 1) |] true (slice [ R (1, m) ] starts))
         in
         let left = sub_s (take ~indices:perm rem) (Int64.of_int e) in
         let keep = logical_and (greater_s left 0L) (logical_not alone) in
@@ -402,7 +399,7 @@ let ranks op r =
                     sum kept;
                     max (where keep left (zeros_like left));
                     min (where keep left (full_like left Int64.max_int));
-                    shrink [| (m - 1, m) |] within;
+                    slice [ R (m - 1, m) ] within;
                   ]))
         in
         let m' = Int64.to_int read.(0) in
@@ -543,10 +540,10 @@ let take ~indices r =
        the row's old start less its new one. That is a running sum of ones with
        each row's change of shift added at its first element, a row that starts
        at [total] being empty. *)
-    let firsts = shrink [| (0, k) |] offsets in
-    let shift = sub (take ~indices (shrink [| (0, l) |] r.offsets)) firsts in
+    let firsts = slice [ R (0, k) ] offsets in
+    let shift = sub (take ~indices (slice [ R (0, l) ] r.offsets)) firsts in
     let change =
-      sub shift (pad [| (1, 0) |] 1L (shrink [| (0, k - 1) |] shift))
+      sub shift (pad [| (1, 0) |] 1L (slice [ R (0, k - 1) ] shift))
     in
     let positions =
       cumsum
@@ -559,7 +556,7 @@ let sub r ~offset ~length:k =
   let l = length r in
   if offset < 0 || k < 0 || offset + k > l then
     err "Nx_ragged.sub" "rows %d to %d of %d rows" offset (offset + k) l;
-  { r with offsets = shrink [| (offset, offset + k + 1) |] r.offsets }
+  { r with offsets = slice [ R (offset, offset + k + 1) ] r.offsets }
 
 let concat = function
   | [] -> invalid_arg "Nx_ragged.concat: no ragged array"
@@ -586,7 +583,7 @@ let concat = function
             let lo = bounds.(2 * i) and hi = bounds.((2 * i) + 1) in
             let offsets = add_s r.offsets (Int64.sub base lo) in
             let offsets =
-              if i = 0 then offsets else shrink [| (1, dim 0 offsets) |] offsets
+              if i = 0 then offsets else slice [ R (1, dim 0 offsets) ] offsets
             in
             let values =
               slice [ R (Int64.to_int lo, Int64.to_int hi) ] r.values

@@ -12,9 +12,9 @@ dune exec nx/examples/03-indexing-and-slicing/main.exe
 - Reading single elements with `item`
 - Selecting rows and columns with `I` and `A`
 - Range slicing with `R` and strided slicing with `Rs`
-- Infix indexing syntax: `.%{}` and `.${}`
-- Boolean masks with `compress` and `where`
-- Picking rows by index with `take`
+- Infix indexing syntax: `.${}`
+- Boolean masks with `M` and `where`
+- Picking rows by positions held in a tensor with `T`
 
 ## Key Functions
 
@@ -26,9 +26,9 @@ dune exec nx/examples/03-indexing-and-slicing/main.exe
 | `R (start, stop)`             | Half-open range `[start, stop)`        |
 | `Rs (start, stop, step)`      | Range with stride                      |
 | `t.${[...]}`                  | Infix slicing (synonym for `slice`)    |
-| `compress ~axis ~condition t` | Keep rows/cols where condition is true |
+| `M mask`                      | Keep rows/cols where `mask` is true    |
 | `where cond then_ else_`      | Element-wise conditional selection     |
-| `take ~axis indices t`        | Gather rows by integer indices         |
+| `T positions`                 | Gather rows at positions in a tensor   |
 | `greater_s t scalar`          | Element-wise `t > scalar` → bool mask  |
 
 ## Output Walkthrough
@@ -71,11 +71,11 @@ grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]}  (* every other student & subject *)
 
 ### Boolean masks
 
-Build a boolean mask, then use `compress` to filter rows:
+Build a boolean mask, then index with `M` to filter rows:
 
 ```ocaml
 let high_math = greater_s (grades.${[ A; I 0 ]}) 85.0 in
-compress ~axis:0 ~condition:high_math grades
+grades.${[ M high_math ]}
 ```
 
 ```
@@ -103,6 +103,7 @@ where (less_s grades 60.0) (full float64 [| 5; 4 |] 60.0) grades
 | `R (a, b)`     | Range `[a, b)` | `R (1, 4)` — indices 1, 2, 3   |
 | `Rs (a, b, s)` | Strided range  | `Rs (0, 10, 2)` — even indices |
 | `L [...]`      | Explicit list  | `L [0; 3; 7]` — pick specific  |
+| `T p`          | Tensor of positions | `T ids` — its shape replaces the axis |
 | `M mask`       | Boolean mask   | `M bool_array` — where true    |
 | `N`            | New axis       | `N` — insert dimension         |
 

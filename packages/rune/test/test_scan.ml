@@ -34,7 +34,7 @@ let loop f init xs =
   let n = (Nx.shape xs).(0) in
   let c = ref init and ys = ref [] in
   for i = 0 to n - 1 do
-    let c', y = f !c (Nx.get [ i ] xs) in
+    let c', y = f !c (Nx.slice [ Nx.I i ] xs) in
     c := c';
     ys := y :: !ys
   done;
@@ -487,7 +487,7 @@ let compiled_tests =
       "a scan under jit reads a copy of a slice that starts off a 16-byte \
        boundary" (fun () ->
         let f x =
-          let y = Nx.copy (Nx.shrink [| (1, 8) |] x) in
+          let y = Nx.copy (Nx.slice [ Nx.R (1, 8) ] x) in
           fst
             (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
                ~f:(fun c _ -> (Nx.add c y, ()))
@@ -500,7 +500,7 @@ let compiled_tests =
       "a scan under jit reads the bits of a slice that starts off a 16-byte \
        boundary" (fun () ->
         let f x =
-          let y = Nx.bitcast Nx.int64 (Nx.shrink [| (1, 8) |] x) in
+          let y = Nx.bitcast Nx.int64 (Nx.slice [ Nx.R (1, 8) ] x) in
           fst
             (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
                ~f:(fun c _ -> (Nx.add c y, ()))
@@ -513,7 +513,7 @@ let compiled_tests =
       "a scan under jit reads rows of a slice that starts off a 16-byte \
        boundary" (fun () ->
         let f x =
-          let xs = Nx.reshape [| 4; 2 |] (Nx.shrink [| (1, 9) |] x) in
+          let xs = Nx.reshape [| 4; 2 |] (Nx.slice [ Nx.R (1, 9) ] x) in
           fst
             (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
                ~f:(fun c r -> (Nx.add c r, ()))

@@ -226,7 +226,7 @@ let storage =
           let n = Array.length bs in
           let k = Int.min k n in
           cover "a view inside a byte" (k mod 8 <> 0 && k < n);
-          let x = Nx.shrink [| (k, n) |] (Nx.create Nx.bool [| n |] bs) in
+          let x = Nx.slice [ Nx.R (k, n) ] (Nx.create Nx.bool [| n |] bs) in
           let c = Column.of_tensor x in
           equal any_w (Any Type.bool) (Column.type_ c);
           equal (array bool)
@@ -1049,7 +1049,7 @@ let column_at m =
     Array.init (n + 14) (fun i ->
         if i < 5 || i >= n + 5 then true else m.(i - 5))
   in
-  let validity = Nx.shrink [| (5, n + 5) |] (valid_bits bits) in
+  let validity = Nx.slice [ Nx.R (5, n + 5) ] (valid_bits bits) in
   Column.of_tensor ~validity (int64s n)
 
 let run_x q c =
@@ -1121,8 +1121,8 @@ let nulls_cases =
              cleared. *)
           let bytes = Nx.create Nx.uint8 [| 2 |] [| 0xfb; 0xff |] in
           let validity =
-            Nx.shrink
-              [| (0, 13) |]
+            Nx.slice
+              [ Nx.R (0, 13) ]
               (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit bytes))
           in
           let c = Column.of_tensor ~validity (int64s 13) in

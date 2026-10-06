@@ -235,14 +235,18 @@ let complex_functions =
       (fun z ->
         Nx.set
           [ Nx.D (Nx.scalar Nx.int64 1L, 2) ]
-          (Nx.mul (Nx.shrink [| (0, 2) |] z) (Nx.shrink [| (1, 3) |] (w3 ())))
+          (Nx.mul
+             (Nx.slice [ Nx.R (0, 2) ] z)
+             (Nx.slice [ Nx.R (1, 3) ] (w3 ())))
           z)
       (z3 ());
     one "set"
       (fun z ->
         Nx.set
           [ Nx.R (1, 3) ]
-          (Nx.mul (Nx.shrink [| (0, 2) |] z) (Nx.shrink [| (1, 3) |] (w3 ())))
+          (Nx.mul
+             (Nx.slice [ Nx.R (0, 2) ] z)
+             (Nx.slice [ Nx.R (1, 3) ] (w3 ())))
           z)
       (z3 ());
     one "tile" (fun z -> Nx.tile [| 2 |] z) (z3 ());
@@ -336,7 +340,7 @@ let spectral_functions =
     one "rfft of a real part" (fun z -> rfft (Nx.real f64 z)) (z5 ());
     one "complex-filtered round trip"
       (fun z ->
-        let h = Nx.shrink [| (0, 3) |] z in
+        let h = Nx.slice [ Nx.R (0, 3) ] z in
         Nx.cast c128 (Nx.irfft f64 ~n:5 (Nx.mul (rfft (Nx.real f64 z)) h)))
       (z5 ());
   ]

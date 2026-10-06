@@ -206,11 +206,7 @@ let rec halve plain w levels =
       else
         let half = width / 2 in
         let cut lo hi x =
-          Nx.shrink
-            (Array.mapi
-               (fun d len -> if d = r then (lo, hi) else (0, len))
-               (Nx.shape x))
-            x
+          Nx.slice (List.init r (fun _ -> Nx.A) @ [ Nx.R (lo, hi) ]) x
         in
         let part lo hi = { hi = cut lo hi w.hi; lo = cut lo hi w.lo } in
         let _, (hi, lo) = accurate (part 0 half) (part half width) in

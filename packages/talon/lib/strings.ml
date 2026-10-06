@@ -189,7 +189,9 @@ let matches ~by ?mask p r =
       (A.unsafe_get hits (i lsr 3) lor (1 lsl (i land 7)))
   in
   rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i);
-  Nx.shrink [| (0, n) |] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor hits)))
+  Nx.slice
+    [ Nx.R (0, n) ]
+    (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor hits)))
 
 (* Literals
 

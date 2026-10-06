@@ -232,8 +232,8 @@ let rank s c =
     let w = Nx.dim 1 k and i = positions n in
     let differs =
       Nx.not_equal
-        (Nx.shrink [| (1, n); (0, w) |] k)
-        (Nx.shrink [| (0, n - 1); (0, w) |] k)
+        (Nx.slice [ Nx.R (1, n); Nx.R (0, w) ] k)
+        (Nx.slice [ Nx.R (0, n - 1); Nx.R (0, w) ] k)
     in
     let start changed =
       let b = Nx.concatenate ~axis:0 [ Nx.ones Nx.bool [| 1 |]; changed ] in
@@ -242,7 +242,9 @@ let rank s c =
     let run = start (Nx.any ~axes:[ 1 ] differs) in
     let segment =
       start
-        (Nx.reshape [| n - 1 |] (Nx.shrink [| (0, n - 1); (0, 1) |] differs))
+        (Nx.reshape
+           [| n - 1 |]
+           (Nx.slice [ Nx.R (0, n - 1); Nx.R (0, 1) ] differs))
     in
     let r = Nx.add_s (Nx.sub run segment) 1L in
     let ranks =

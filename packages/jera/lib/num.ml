@@ -55,7 +55,8 @@ let shape s =
 let check_increasing fn what x =
   let n = Nx.dim 0 x in
   if n > 1 then
-    let lo = Nx.shrink [| (0, n - 1) |] x and hi = Nx.shrink [| (1, n) |] x in
+    let lo = Nx.slice [ Nx.R (0, n - 1) ] x
+    and hi = Nx.slice [ Nx.R (1, n) ] x in
     Nx.check
       Nx.Ptree.(pair tensor tensor)
       (Nx.less lo hi) (lo, hi)

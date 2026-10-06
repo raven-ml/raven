@@ -66,7 +66,10 @@ let rec term t x =
   | Reshape (s, p) -> Nx.reshape s (term p x)
   | Flip (axis, p) -> Nx.flip ~axes:[ axis ] (term p x)
   | Pad (widths, p) -> Nx.pad widths 0. (term p x)
-  | Shrink (ranges, p) -> Nx.shrink ranges (term p x)
+  | Shrink (ranges, p) ->
+      Nx.slice
+        (Array.to_list (Array.map (fun (a, b) -> Nx.R (a, b)) ranges))
+        (term p x)
   | Expand (n, p) ->
       let y = term p x in
       Nx.broadcast_to (Array.append [| n |] (Nx.shape y)) y

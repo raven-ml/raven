@@ -159,7 +159,9 @@ let shifted ~axis d fill x =
   let pads =
     Array.mapi (fun a _ -> if a = axis then (d, 0) else (0, 0)) shape
   in
-  Nx.shrink (Array.map (fun n -> (0, n)) shape) (Nx.pad pads fill x)
+  Nx.slice
+    (List.init axis (fun _ -> Nx.A) @ [ Nx.R (0, shape.(axis)) ])
+    (Nx.pad pads fill x)
 
 (* [others ~axes x] is, at each element of [x], the product of the other
    elements over [axes]: the product before it in their order times the product
@@ -436,12 +438,10 @@ let solve' ~upper ~transpose ~unit_diag a b x da db =
    [rows] and [cols] select; [padded x rows cols] is [x] with zeros around its
    last two axes, [rows] and [cols] before and after. *)
 let block x rows cols =
-  let r = Nx.ndim x in
-  Nx.shrink
-    (Array.mapi
-       (fun a d ->
-         if a = r - 2 then rows else if a = r - 1 then cols else (0, d))
-       (Nx.shape x))
+  let r0, r1 = rows and c0, c1 = cols in
+  Nx.slice
+    (List.init (Nx.ndim x - 2) (fun _ -> Nx.A)
+    @ [ Nx.R (r0, r1); Nx.R (c0, c1) ])
     x
 
 let padded x rows cols =
@@ -1018,10 +1018,8 @@ let reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry =
     let ct_c, rest = Trips.split nk carry in
     let ct_caps, k = Trips.split ncaps rest in
     let k = Nx.sub_s (Nx.unpack Nx.int32 (List.hd k)) 1l in
-    let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 k) in
-    let at (Nx.P x) =
-      Nx.P (Nx.squeeze ~axes:[ 0 ] (Nx.take ~axis:0 ~indices:row x))
-    in
+    let row = Nx.cast Nx.int64 k in
+    let at (Nx.P x) = Nx.P (Nx.take ~axis:0 ~indices:row x) in
     let ct_c, _ =
       pull ct_c ct_caps (List.map at carries @ [ Nx.P k ]) (List.map at ct_ys)
     in

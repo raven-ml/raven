@@ -43,7 +43,7 @@ let top_k ~offset ~length ks b =
     let candidates = Nx.positions (Nx.less_equal first kth) in
     let order = Nx.lexsort (Nx.take ~axis:0 ~indices:candidates w) in
     let idx = Nx.take ~indices:order candidates in
-    rows (Nx.shrink [| (offset, k) |] idx) b
+    rows (Nx.slice [ Nx.R (offset, k) ] idx) b
 
 (* A row is out of order where, at the first word where it differs from the row
    before, its word is the smaller. *)
@@ -63,8 +63,8 @@ let unordered ks prev b =
   let m = Nx.dim 0 w - 1 in
   if m < 1 then None
   else
-    let before = Nx.shrink [| (0, m); (0, Nx.dim 1 w) |] w
-    and after = Nx.shrink [| (1, m + 1); (0, Nx.dim 1 w) |] w in
+    let before = Nx.slice [ Nx.R (0, m); Nx.R (0, Nx.dim 1 w) ] w
+    and after = Nx.slice [ Nx.R (1, m + 1); Nx.R (0, Nx.dim 1 w) ] w in
     let tied = ref (Nx.ones Nx.bool [| m |])
     and out = ref (Nx.zeros Nx.bool [| m |]) in
     for j = 0 to Nx.dim 1 w - 1 do

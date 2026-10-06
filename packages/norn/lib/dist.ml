@@ -723,9 +723,7 @@ let sorted n d =
     let ax = Nx.ndim x - 1 in
     let m = (Nx.shape x).(ax) in
     let range a b =
-      Nx.shrink
-        (Array.mapi (fun i l -> if i = ax then (a, b) else (0, l)) (Nx.shape x))
-        x
+      Nx.slice (List.init ax (fun _ -> Nx.A) @ [ Nx.R (a, b) ]) x
     in
     let ok =
       Nx.all ~axes:[ ax ] (Nx.greater_equal (range 1 m) (range 0 (m - 1)))

@@ -17,7 +17,7 @@ let make_blobs ~samples_per_cluster centers =
     List.init
       (shape centers).(0)
       (fun c ->
-        add (randn Float64 [| samples_per_cluster; d |]) (get [ c ] centers))
+        add (randn Float64 [| samples_per_cluster; d |]) (slice [ I c ] centers))
   in
   shuffle (concatenate ~axis:0 blobs)
 
@@ -26,14 +26,14 @@ let kmeanspp data k =
   let n = (shape data).(0) in
   let d = (shape data).(1) in
   let idx = Int32.to_int (item [] (randint ~high:n [||])) in
-  let centroids = ref (reshape [| 1; d |] (get [ idx ] data)) in
+  let centroids = ref (reshape [| 1; d |] (slice [ I idx ] data)) in
   for _ = 1 to k - 1 do
     let min_d = min ~axes:[ 1 ] (sq_distances data !centroids) in
     let chosen =
       Int64.to_int (item [] (categorical (log (clamp ~min:1e-30 min_d))))
     in
     centroids :=
-      concatenate ~axis:0 [ !centroids; reshape [| 1; d |] (get [ chosen ] data) ]
+      concatenate ~axis:0 [ !centroids; reshape [| 1; d |] (slice [ I chosen ] data) ]
   done;
   !centroids
 

@@ -86,7 +86,7 @@ let chebyshev ~degree ~pieces f ~lo ~hi =
   let u = Num.constant dtype (Cheb.nodes degree) in
   let breaks =
     List.init d (fun k ->
-        let a = Nx.get [ k ] lo and b = Nx.get [ k ] hi in
+        let a = Nx.slice [ Nx.I k ] lo and b = Nx.slice [ Nx.I k ] hi in
         Nx.concatenate ~axis:0
           [ Nx.add a (Nx.mul (Nx.sub b a) s); Nx.reshape [| 1 |] b ])
   in

@@ -1003,7 +1003,8 @@ let bitcasts =
         fun x ->
           Nx.P
             (Nx.swapaxes (-1) (-2)
-               (Nx.bitcast Nx.uint4 (Nx.shrink [| (0, 4); (1, 5) |] x))) );
+               (Nx.bitcast Nx.uint4 (Nx.slice [ Nx.R (0, 4); Nx.R (1, 5) ] x)))
+      );
     ]
   in
   group "bitcasts"

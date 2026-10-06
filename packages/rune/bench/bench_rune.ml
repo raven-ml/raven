@@ -562,7 +562,7 @@ let scanned_rule =
              ~f:(fun c xi ->
                Rune.Total.add added (Nx.sum xi);
                (Nx.add c (Nx.sin xi), c))
-             ~init:(Nx.zeros_like (Nx.get [ 0 ] x))
+             ~init:(Nx.zeros_like (Nx.slice [ Nx.I 0 ] x))
              x)
       in
       (y, fun dx -> Nx.sum ~axes:[ 0 ] (Nx.mul (Nx.cos x) dx)))

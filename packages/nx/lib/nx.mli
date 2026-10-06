@@ -73,11 +73,10 @@ type bit_elt = Nx_dtype.bit_elt
 
     [bit] holds booleans eight to a byte, for keeping large masks. Every
     function that takes [bool] outside a condition takes [bit], and one that
-    returns its operands' dtype returns [bit]. A condition ({!where},
-    {!compress}, {!extract}, a mask index [M], {!check}) is a [bool]: compute
-    with [cast bool m] and keep with [cast bit m]. A function that returns a
-    new [bit], [int4] or [uint4] tensor writes the bits of its last byte past
-    its last element as [0]. *)
+    returns its operands' dtype returns [bit]. A condition ({!where}, a mask
+    index [M], {!check}) is a [bool]: compute with [cast bool m] and keep with
+    [cast bit m]. A function that returns a new [bit], [int4] or [uint4] tensor
+    writes the bits of its last byte past its last element as [0]. *)
 type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
@@ -149,28 +148,35 @@ val bit : (bool, bit_elt) dtype
 
 (** {2:index Index specifications} *)
 
-(** The type for index specifications used by {!val-slice} and {!set}. *)
+(** The type for index specifications used by {!val-slice} and {!set}. Each
+    addresses one axis. An index is an array of positions on its axis, and the
+    axis is replaced by the index's shape; the full rule is in
+    {{!section:indexing}Indexing}. *)
 type index =
-  | I of int  (** [I i] selects a single index, reducing the dimension. *)
-  | L of int list  (** [L [i0; i1; …]] gathers the listed indices. *)
+  | I of int
+      (** [I i] is the position [i], a 0-d index: the axis goes. Negative [i]
+          counts from the end. *)
+  | L of int list
+      (** [L [i0; i1; …]] is the listed positions, a 1-d index. Negative
+          positions count from the end. *)
+  | T of int64_t
+      (** [T p] is the positions held in [p], of any shape: [p]'s shape replaces
+          the axis, so a 0-d [p] removes it like [I]. *)
   | R of int * int
-      (** [R (start, stop)] selects the half-open range \[[start], [stop]). *)
+      (** [R (start, stop)] is the half-open range \[[start], [stop]). *)
   | Rs of int * int * int
-      (** [Rs (start, stop, step)] selects a strided range. *)
-  | A
-      (** [A] selects the entire axis. This is the default for axes not covered
-          by a {!val-slice} specification. *)
+      (** [Rs (start, stop, step)] is the strided range from [start] towards
+          [stop], exclusive. *)
+  | A  (** [A] is the whole axis, the index of every axis left unaddressed. *)
   | M of (bool, bool_elt) t
-      (** [M mask] selects, along the axis it addresses, the positions where the
-          rank-1 boolean tensor [mask] is [true]. [mask] must have length equal
-          to that axis. Equivalent to an [L] gather of the true positions. *)
-  | N  (** [N] inserts a new axis of size 1 (does not consume an input axis). *)
+      (** [M mask] is the positions where the 1-d [mask] holds, in order:
+          [T (positions mask)]. [mask]'s length is the axis'. *)
+  | N  (** [N] inserts a new axis of size 1 and addresses no input axis. *)
   | D of int64_t * int
-      (** [D (start, len)] selects the run of [len] positions beginning at the
-          run-time value of the scalar tensor [start], clamped into \[[0],
-          [size - len]\] so the run always fits. Keeps the axis, like [R]. [len]
-          is static because traced shapes are: one compiled program serves every
-          position. *)
+      (** [D (start, len)] is the run of [len] positions from the value of the
+          scalar tensor [start], moved to fit: [start] is clamped into \[[0],
+          [size - len]\]. [len] is static because traced shapes are: one
+          compiled program serves every start. *)
 
 (** {2:packed Packed tensors} *)
 
@@ -413,8 +419,8 @@ module Placement : sig
 
   val window : t -> int array -> Device.t -> (int * int) array
   (** [window p shape d] is the window of a value of shape [shape] that [d]
-      holds at [p], as [(start, stop)] per axis, [stop] exclusive, as {!shrink}
-      takes it: [shrink (window p (shape x) d) x] is [d]'s part of [x].
+      holds at [p], as [(start, stop)] per axis, [stop] exclusive: {!val-slice}
+      of their [R (start, stop)] is [d]'s part of a value.
 
       Raises [Invalid_argument] if [d] is not one of [devices p], or if [p]
       splits an axis [shape] does not have or does not divide evenly. *)
@@ -1400,21 +1406,7 @@ val pad : (int * int) array -> 'a -> ('a, 'b) t -> ('a, 'b) t
       - : int array = [|4; 4|]
     ]}
 
-    See also {!shrink}. *)
-
-val shrink : (int * int) array -> ('a, 'b) t -> ('a, 'b) t
-(** [shrink ranges t] extracts a slice where [ranges.(i)] is [(start, stop)]
-    (exclusive) for dimension [i]. Returns a view.
-
-    {@ocaml[
-      # create int32 [| 3; 3 |]
-          [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
-        |> shrink [| (1, 3); (0, 2) |]
-      - : (int32, int32_elt) t = int32 [2,2] [[4, 5],
-                                              [7, 8]]
-    ]}
-
-    See also {!pad}. *)
+    See also {!val-slice}. *)
 
 val tile : int array -> ('a, 'b) t -> ('a, 'b) t
 (** [tile reps t] is [t] repeated according to [reps]. [reps.(i)] gives the
@@ -1650,69 +1642,54 @@ val to_buffer : ('a, 'b) t -> Nx_device.Buffer.t
 
 (** {1:indexing Indexing and slicing}
 
-    Indices are {!int64_t}, which reach every element a tensor can have. An
-    index outside its axis reads zero, and an update at one is dropped, however
-    far outside it lies. A [D] window clamps its start instead. *)
+    An index addresses one axis and is an array of positions on it. A selection
+    replaces each axis by its index's shape: [I i] is a 0-d index, so its axis
+    goes; [L], the ranges [R], [Rs] and [D], and [A] are 1-d; [T p] has [p]'s
+    shape; [M m] is [T (positions m)]. Several indices select the block of their
+    outer product: [slice [ L [ 0; 1 ]; L [ 2; 3 ] ] t] is a 2×2 block.
+    Positions paired across axes are {!take_along_axis} and {!scatter}.
 
-val get : int list -> ('a, 'b) t -> ('a, 'b) t
-(** [get indices t] is the sub-tensor at [indices], indexing from the outermost
-    dimension inward. Returns a scalar tensor when all dimensions are indexed;
-    otherwise a view of the remaining dimensions. Negative indices count from
-    the end.
-
-    Raises [Invalid_argument] if any index is out of bounds.
-
-    {@ocaml[
-      # let x =
-          create int32 [| 2; 3 |]
-            [| 1l; 2l; 3l; 4l; 5l; 6l |]
-        in
-        get [ 1 ] x
-      - : (int32, int32_elt) t = [4, 5, 6]
-    ]}
-
-    See also {!item}, {!val-slice}. *)
+    Bounds follow who wrote the position. A position written in the program, in
+    [I] or [L], counts from the end when negative and raises [Invalid_argument]
+    outside its axis when the call is made, traced or not. A range is the set of
+    its positions that lie in the axis, its negative bounds counting from the
+    end. A position held in a tensor, in [T], {!take}, {!take_along_axis} or
+    {!scatter}, is data no call checks: outside \[[0], [size]), negative
+    included, it reads zero and its write is dropped, however the call runs. [D]
+    moves its run to fit. Positions held in tensors are {!int64_t}, which reach
+    every element a tensor can have. *)
 
 val slice : index list -> ('a, 'b) t -> ('a, 'b) t
-(** [slice specs t] extracts a sub-tensor using advanced indexing.
+(** [slice indices t] is the selection of [indices] in [t]. Each index addresses
+    the next axis from the left, [N] excepted, and the axes left over are [A].
 
-    Each element of [specs] addresses one axis from left to right:
-    - [I i] — single index (reduces dimension; negative from end).
-    - [L [i0; i1; …]] — gather listed indices.
-    - [R (start, stop)] — half-open range \[[start], [stop]).
-    - [Rs (start, stop, step)] — strided range.
-    - [A] — full axis (default for trailing axes).
-    - [M mask] — rank-1 boolean mask selecting the true positions along the
-      axis; [mask]'s length must equal that axis.
-    - [N] — insert a new axis of size 1.
-    - [D (start, len)] — the run of [len] positions from the run-time value of
-      the scalar tensor [start], clamped so the run fits.
-
-    Returns a view for [I], [R], [Rs] with step ±1, [A] and [N]; [L], [M] and
-    [D] gather. A traced [M] mask raises under [Rune.jit] (its result shape
-    depends on data); a traced [D] start is a gather.
-
-    Raises [Invalid_argument] if specs are out of bounds, if step is zero, or if
-    a mask is not rank 1 or its length does not match the axis.
+    The result is a view of [t] when every index is [I], [R], [Rs] with step [1]
+    or [-1], [A] or [N]; any other index gathers. [M] reads its length from
+    data, as {{!section:counted}a length}.
 
     {@ocaml[
       # let x =
           create int32 [| 3; 3 |]
             [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
         in
-        slice [ R (0, 2); L [ 0; 2 ] ] x
-      - : (int32, int32_elt) t = int32 [2,2] [[1, 3],
-                                              [4, 6]]
+        slice [ I 1 ] x, slice [ R (0, 2); L [ 0; 2 ] ] x
+      - : (int32, int32_elt) t * (int32, int32_elt) t =
+      ([4, 5, 6], int32 [2,2] [[1, 3],
+                               [4, 6]])
     ]}
 
-    See also {!get}, {!set}. *)
+    Raises [Invalid_argument] if [indices] address more axes than [t] has, an
+    [I] or [L] position lies outside its axis, a step is zero, a mask is not 1-d
+    with its axis' length, or a [D] run is longer than its axis.
+
+    See also {!set}, {!take}, {!item}. *)
 
 val set : index list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [set specs v t] is [t] with [v], broadcast to the selection, at the
-    positions [specs] select. [t] is unchanged: a tensor is a value, and this is
-    the one way to obtain one that differs from another at chosen positions.
-    [specs] uses the index forms of {!val-slice}; every selection is injective,
-    so an [L] listing a position twice raises.
+(** [set indices v t] is [t] with [v], broadcast to the selection of [indices],
+    at the positions they select. [t] is unchanged: a tensor is a value, and
+    this is the one way to obtain one that differs from another at chosen
+    positions. An [L] listing a position twice raises; positions held in a
+    tensor may repeat, and the last write in C order of the selection wins.
 
     The cost is one copy of [t] plus the selection. A mask alone with a [v] that
     has no extent along the mask (a scalar, or one row per masked row) selects
@@ -1731,53 +1708,50 @@ val set : index list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     build the values first with {!create}, {!init}, {!stack} or a filled
     {!of_bigarray}.
 
-    Raises [Invalid_argument] if [specs] are out of bounds, [v] does not
-    broadcast to the selection, or an [L] repeats a position.
+    Raises [Invalid_argument] as {!val-slice} does, if [v] does not broadcast to
+    the selection, or if an [L] repeats a position.
 
     See also {!val-slice}, {!scatter}. *)
 
 val item : int list -> ('a, 'b) t -> 'a
-(** [item indices t] is the scalar value at [indices]. Indices must cover all
-    dimensions.
+(** [item indices t] is the element at [indices], one per axis, as an OCaml
+    value: [slice] of their [I]s, read. Negative indices count from the end.
 
     Each call allocates its index list. To visit every element, use {!iter_item}
     or {!fold_item}; for indexed reads in a hot loop, index the bigarray of
     {!to_bigarray}.
 
-    Raises [Invalid_argument] if the number of indices is wrong or any index is
-    out of bounds.
-
-    See also {!get}. *)
+    Raises [Invalid_argument] if the number of indices is not [t]'s rank or any
+    index is outside its axis. *)
 
 val take : ?axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
-(** [take ?axis ~indices t] gathers elements from [t] at [indices] along [axis].
-    When [axis] is omitted, [t] is flattened first, and the result has
-    [indices]' shape. With [axis], [indices] are read in C order whatever their
-    shape, and the result is [t]'s shape with [axis]'s length replaced by their
-    number: one index keeps the axis, of length [1]. An index outside \[[0],
-    [size]), negative included, reads zero, eagerly and under [Rune.jit] alike;
-    wrap indices with [mod_ (add_s i n) n] or clamp them with {!clamp} yourself.
-    At an integer dtype the zero read is index [0]: mask with the index's range
-    when the gathered values are themselves positions.
+(** [take ~axis ~indices t] is [slice] with [T indices] at [axis]: [t]'s [axis]
+    is replaced by [indices]' shape, so a 0-d [indices] removes it. Without
+    [axis] it takes from [flatten t], and the result has [indices]' shape. A
+    position outside its axis reads zero; at an integer dtype that zero is
+    position [0], so mask with the positions' range when the values taken are
+    themselves positions.
 
     {@ocaml[
       # let x =
-          create int32 [| 5 |]
-            [| 0l; 1l; 2l; 3l; 4l |]
+          create int32 [| 2; 3 |]
+            [| 0l; 1l; 2l; 3l; 4l; 5l |]
         in
-        take
-          ~indices:(create int64 [| 3 |] [| 1L; 3L; 0L |])
-          x
-      - : (int32, int32_elt) t = [1, 3, 0]
+        take ~axis:1 ~indices:(create int64 [| 2 |] [| 2L; 0L |]) x,
+        take ~axis:0 ~indices:(scalar int64 1L) x
+      - : (int32, int32_elt) t * (int32, int32_elt) t =
+      (int32 [2,2] [[2, 0],
+                    [5, 3]], [3, 4, 5])
     ]}
 
-    See also {!scatter}, {!take_along_axis}. *)
+    See also {!take_along_axis}, {!scatter}. *)
 
 val take_along_axis : axis:int -> indices:int64_t -> ('a, 'b) t -> ('a, 'b) t
-(** [take_along_axis ~axis ~indices t] gathers values from [t] along [axis]
-    using [indices]. [indices] must match [t]'s shape except along [axis]. An
-    index outside \[[0], [size along axis]) reads zero, as in {!take}. Useful
-    for gathering from {!argmax}/{!argmin} results.
+(** [take_along_axis ~axis ~indices t] pairs each position of [indices] with the
+    other coordinates it sits at: the result has [indices]' shape, and its
+    element at [(…, j, …)] is [t]'s at [(…, indices.{…, j, …}, …)] along [axis].
+    [indices] matches [t]'s shape except along [axis]. Useful for gathering from
+    {!argmax}/{!argmin} results.
 
     Raises [Invalid_argument] if shapes are incompatible.
 
@@ -1807,10 +1781,8 @@ val scatter :
 (** [scatter ?mode ?unique_indices ~axis ~indices ~values t] is [t] with
     [values] placed at the positions selected by [indices] along [axis]; the
     tensor-indexed form of {!set}. [indices] must match [t]'s shape except along
-    [axis], and [values] is broadcast to [indices]' shape. An update whose index
-    lies outside \[[0], [size along axis]), negative included, is dropped,
-    eagerly and under [Rune.jit] alike, so [-1] addresses nothing; {!take} and
-    {!take_along_axis} read zero at such an index.
+    [axis], and [values] is broadcast to [indices]' shape. An update at a
+    position outside its axis is dropped, so [-1] addresses nothing.
 
     [mode] says how the updates that reach a position combine with [t]'s element
     there:
@@ -1861,19 +1833,23 @@ val scatter :
 
 (** {2:counted Lengths that depend on values}
 
-    {!positions}, {!compress}, {!extract}, {!nonzero}, {!argwhere} and {!unique}
-    return tensors whose length depends on their operands' values. Each reads
-    that length at most once per call, as one read named after the function the
-    program called: a placed operand's device synchronizes once. Under
-    [Rune.grad] the read reads the primal values. Inside [Rune.jit] and
-    [Rune.vmap] it raises, naming the function: there, keep the shape and mask
-    with {!where}. *)
+    {!positions}, {!unique} and {!val-slice} with an [M] index return tensors
+    whose length depends on their operands' values. Each reads that length at
+    most once per call, as one read named after the function the program called:
+    a placed operand's device synchronizes once. Under [Rune.grad] the read
+    reads the primal values. Inside [Rune.jit] and [Rune.vmap] it raises, naming
+    the function: there, keep the shape and mask with {!where}. *)
 
 val positions : ('a, 'b) t -> int64_t
 (** [positions c] is each index [i] of [c] repeated [c.{i}] times, in increasing
     order. A boolean [c] counts [1] where it holds and [0] elsewhere, so
-    [positions c] is the indices where [c] holds. The result's length is the sum
-    of the counts, read as {{!section:counted}a length}.
+    [positions c] is the indices where [c] holds, and [slice [ M c ] t] is
+    [slice [ T (positions c) ] t]. The result's length is the sum of the counts
+    ([item [] (count c)] for a boolean [c]), read as
+    {{!section:counted}a length}.
+
+    The positions of an n-d mask [m] are [positions (flatten m)], and its
+    elements where it holds are [slice [ M (flatten m) ] (flatten t)].
 
     {@ocaml[
       # create bool [| 4 |] [| false; true; false; true |]
@@ -1892,70 +1868,7 @@ val positions : ('a, 'b) t -> int64_t
     holds a negative count or a [uint64] count past [int64]'s range, or if its
     counts sum past [int64]'s range.
 
-    See also {!compress}, {!nonzero}. *)
-
-val compress :
-  ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [compress ?axis ~condition t] is the slices of [t] along [axis] where
-    [condition] holds, in order: [take ?axis ~indices:(positions condition) t].
-    When [axis] is omitted, [t] is flattened first. [condition] is 1-D, with as
-    many elements as [axis] has, or as [t] has when [axis] is omitted. The
-    result's length is read as {{!section:counted}a length}.
-
-    {@ocaml[
-      # let x =
-          create int32 [| 5 |]
-            [| 1l; 2l; 3l; 4l; 5l |]
-        in
-        compress
-          ~condition:(create bool [| 5 |]
-            [| true; false; true; false; true |])
-          x
-      - : (int32, int32_elt) t = [1, 3, 5]
-    ]}
-
-    Raises [Invalid_argument] if [condition] is not 1-D, or if its length is not
-    [axis]'s, or [t]'s number of elements when [axis] is omitted.
-
-    See also {!extract}, {!positions}. *)
-
-val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [extract ~condition t] is the 1-D tensor of [t]'s elements where [condition]
-    holds, in C order: [compress ~condition:(flatten condition) t]. [condition]
-    has [t]'s number of elements, in any shape.
-
-    Raises [Invalid_argument] if the numbers of elements differ.
-
-    See also {!compress}, {!nonzero}. *)
-
-val nonzero : ('a, 'b) t -> int64_t array
-(** [nonzero t] is the coordinates of [t]'s non-zero elements, in C order: one
-    1-D tensor per axis of [t], whose [k]th entries are the coordinates of the
-    [k]th non-zero element. A NaN is non-zero. A scalar has no axis, so
-    [nonzero] of a scalar is [[||]] and reads nothing; otherwise the number of
-    non-zero elements is read as {{!section:counted}a length}.
-
-    {@ocaml[
-      # let x =
-          create int32 [| 3; 3 |]
-            [| 0l; 1l; 0l;
-               2l; 0l; 3l;
-               0l; 0l; 4l |]
-        in
-        let idx = nonzero x in
-        idx.(0), idx.(1)
-      - : int64_t * int64_t = ([0, 1, 1, 2], [1, 0, 2, 2])
-    ]}
-
-    See also {!argwhere}, {!positions}. *)
-
-val argwhere : ('a, 'b) t -> int64_t
-(** [argwhere t] is the coordinates of [t]'s [k] non-zero elements, in C order,
-    one row each: a tensor of shape [[k; ndim t]] whose columns are those of
-    {!nonzero}. A scalar gives one row of no coordinate if it is non-zero, and
-    none otherwise. [k] is read as {{!section:counted}a length}.
-
-    See also {!nonzero}. *)
+    See also {!count}. *)
 
 (** {1:arithmetic Arithmetic}
 
@@ -2875,9 +2788,6 @@ module Infix : sig
   (** [t **@ n] is {!matrix_power} [t n]. *)
 
   (** {2:infix_index Indexing} *)
-
-  val ( .%{} ) : ('a, 'b) t -> int list -> ('a, 'b) t
-  (** [t.%\{i\}] is {!get} [i t]. *)
 
   val ( .${} ) : ('a, 'b) t -> index list -> ('a, 'b) t
   (** [t.$\{s\}] is {!val-slice} [s t]. *)
@@ -5052,7 +4962,7 @@ module Op : sig
             order: [x]'s own storage, read-only by contract, when they are one
             run of it on the host, and a copy otherwise. [by] is the qualified
             name of the function that reads, such as ["Nx.item"] or
-            ["Nx.compress"]: the function a program called, also when it reads
+            ["Nx.slice"]: the function a program called, also when it reads
             through another. An interpreter that cannot read [x] raises a
             message that starts with [by]. *)
     | Check : {

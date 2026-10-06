@@ -141,7 +141,7 @@ let march_tests =
             y0
         in
         equal (array int) [| 3; 2 |] (Nx.shape y);
-        equal (Oracle.tensor ()) y0 (Nx.get [ 0 ] y));
+        equal (Oracle.tensor ()) y0 (Nx.slice [ Nx.I 0 ] y));
     test "one time is the start alone" (fun () ->
         let y =
           Ode.march one Ode.tsit5 ~steps:2
@@ -156,7 +156,7 @@ let march_tests =
             ~at:(vec [| 1.; 0. |])
             (scalar (Float.exp 1.))
         in
-        equal (Oracle.tensor ~rel:1e-9 ()) (scalar 1.) (Nx.get [ 1 ] y));
+        equal (Oracle.tensor ~rel:1e-9 ()) (scalar 1.) (Nx.slice [ Nx.I 1 ] y));
     test "the field reads the stage times" (fun () ->
         (* y' = 3t² from 0 is t³, which rk4 integrates exactly. *)
         let y =
@@ -255,7 +255,7 @@ let transformation_tests =
         let q0 = vec [| 0.7; -0.2; 1.4 |] in
         equal
           (Oracle.tensor ~rel:1e-15 ())
-          (Nx.stack (List.init 3 (fun i -> positions (Nx.get [ i ] q0))))
+          (Nx.stack (List.init 3 (fun i -> positions (Nx.slice [ Nx.I i ] q0))))
           (Rune.vmap' positions q0));
   ]
 
@@ -537,7 +537,7 @@ let solve_derivative_tests =
         let f k = Solution.get (solve (decay k) ~t0:0. ~t1:1.5 (scalar 2.)) in
         let ks = vec [| 0.1; 5.; 0.8 |] in
         equal (Oracle.tensor ())
-          (Nx.stack (List.init 3 (fun i -> f (Nx.get [ i ] ks))))
+          (Nx.stack (List.init 3 (fun i -> f (Nx.slice [ Nx.I i ] ks))))
           (Rune.vmap' f ks));
   ]
 
@@ -592,8 +592,8 @@ let path_tests =
         in
         let breaks = Piecewise.breaks p in
         let n = Nx.dim 0 breaks in
-        equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 1 ] breaks);
-        equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 2 ] breaks));
+        equal (Oracle.tensor ()) (scalar 2.) (Nx.slice [ Nx.I (n - 1) ] breaks);
+        equal (Oracle.tensor ()) (scalar 2.) (Nx.slice [ Nx.I (n - 2) ] breaks));
     test "a path over no time ends its lane Stalled and says why" (fun () ->
         let s = path (decay (scalar 1.)) ~t0:1. ~t1:1. (scalar 1.) in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
@@ -613,7 +613,7 @@ let path_tests =
            of the span: equal up to the rounding of each step. *)
         equal
           (Oracle.tensor ~rel:1e-9 ())
-          (Nx.get [ 1 ] (Solution.error s))
+          (Nx.slice [ Nx.I 1 ] (Solution.error s))
           (Piecewise.eval (Solution.error p) (scalar 2.)));
     test "grad in a captured rate is −t y0 e^(−kt)" (fun () ->
         let g =
@@ -930,7 +930,7 @@ let delay_tests =
           (Nx.exp (vec [| 0.; 0.5; 1.7; 3. |]))
           (Solution.get s));
     test "two lags stack on a leading axis" (fun () ->
-        let f _ _ d = Nx.neg (Nx.get [ 1 ] d) in
+        let f _ _ d = Nx.neg (Nx.slice [ Nx.I 1 ] d) in
         equal close
           (vec [| 1.; 0.; -0.5; -1. /. 6. |])
           (Solution.get (delayed ~lags:(vec [| 2.; 1. |]) ~f times)));
@@ -953,8 +953,8 @@ let delay_tests =
         let solution t = Nx.mul (Nx.exp t) scale in
         let f _ _ d =
           Nx.add
-            (Nx.mul_s (Nx.get [ 0 ] d) (e /. 2.))
-            (Nx.mul_s (Nx.get [ 1 ] d) (Float.sqrt e /. 2.))
+            (Nx.mul_s (Nx.slice [ Nx.I 0 ] d) (e /. 2.))
+            (Nx.mul_s (Nx.slice [ Nx.I 1 ] d) (Float.sqrt e /. 2.))
         in
         let at = vec [| 0.; 0.8; 2. |] in
         let s =
@@ -972,7 +972,7 @@ let delay_tests =
     test "grad in the history reaches the delayed states" (fun () ->
         let g =
           Rune.grad'
-            (fun c -> Nx.get [ 3 ] (Solution.get (delayed ~c times)))
+            (fun c -> Nx.slice [ Nx.I 3 ] (Solution.get (delayed ~c times)))
             (scalar 1.)
         in
         equal close (scalar (-1. /. 6.)) g);
@@ -982,7 +982,8 @@ let delay_tests =
         let g =
           Rune.grad'
             (fun lags ->
-              Nx.get [ 1 ] (Solution.get (delayed ~lags (vec [| 0.; 2. |]))))
+              Nx.slice [ Nx.I 1 ]
+                (Solution.get (delayed ~lags (vec [| 0.; 2. |]))))
             (vec [| 1.2 |])
         in
         equal close (vec [| -0.8 |]) g);

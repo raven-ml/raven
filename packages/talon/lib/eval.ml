@@ -125,7 +125,7 @@ let widen (Type.Any from as f) (Type.Any ty as t) =
 let words use a b =
   let w = Key.value use (Column.concat [ a; b ]) in
   let n = Column.length a in
-  (Nx.shrink [| (0, n) |] w, Nx.shrink [| (n, Nx.dim 0 w) |] w)
+  (Nx.slice [ Nx.R (0, n) ] w, Nx.slice [ Nx.R (n, Nx.dim 0 w) ] w)
 
 (* Operations *)
 

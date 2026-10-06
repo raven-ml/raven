@@ -140,7 +140,7 @@ let equality q kind (each_left, each_right) left right eqs =
         atoms
     in
     let g = Key.groups (List.map snd keys) in
-    let ids lo hi = Nx.shrink [| (lo, hi) |] g.ids in
+    let ids lo hi = Nx.slice [ Nx.R (lo, hi) ] g.ids in
     let runs =
       Nx_ragged.of_ids ~segments:(Nx.dim 0 g.first) (ids n (n + m)) (arange m)
     in

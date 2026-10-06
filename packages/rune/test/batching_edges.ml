@@ -19,7 +19,7 @@ let int64s shape a = Nx.create Nx.int64 shape (Array.map Int64.of_int a)
 
 (* [loop f xs] is [f] of each row of [xs], stacked. *)
 let loop f xs =
-  Nx.stack (List.init (Nx.dim 0 xs) (fun k -> f (Nx.get [ k ] xs)))
+  Nx.stack (List.init (Nx.dim 0 xs) (fun k -> f (Nx.slice [ Nx.I k ] xs)))
 
 let is_the_loop name f xs =
   test name (fun () -> equal (Reference.exact ()) (loop f xs) (Rune.vmap' f xs))
@@ -86,7 +86,7 @@ let integer_operands =
         let expected =
           Nx.stack
             (List.init 3 (fun k ->
-                 write (Nx.get [ k ] starts) (Nx.get [ k ] values)))
+                 write (Nx.slice [ Nx.I k ] starts) (Nx.slice [ Nx.I k ] values)))
         in
         equal (Reference.exact ()) expected
           (Rune.vmap
@@ -178,7 +178,8 @@ let compositions =
         in
         let expected =
           Nx.stack
-            (List.init 2 (fun k -> Nx.matmul (Nx.get [ k ] a) (Nx.get [ k ] b)))
+            (List.init 2 (fun k ->
+                 Nx.matmul (Nx.slice [ Nx.I k ] a) (Nx.slice [ Nx.I k ] b)))
         in
         equal
           (Reference.close ~rel:1e-12 ~floor:1e-14 ())
@@ -237,7 +238,8 @@ let compositions =
       (xs ());
     is_the_loop "reduce_ranges over batched bounds is the loop"
       (fun b ->
-        Nx.reduce_ranges `Add ~lo:(Nx.get [ 0 ] b) ~hi:(Nx.get [ 1 ] b) data)
+        Nx.reduce_ranges `Add ~lo:(Nx.slice [ Nx.I 0 ] b)
+          ~hi:(Nx.slice [ Nx.I 1 ] b) data)
       (int64s [| 3; 2; 2 |] [| 0; 1; 2; 4; -1; 3; 3; 9; 2; 0; 2; 4 |]);
     is_the_loop "reduce_segments over batched ids is the loop"
       (fun ids -> Nx.reduce_segments `Add ~segments:3 ids data)

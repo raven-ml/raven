@@ -158,19 +158,6 @@ Nx.flip x                (* reverse all dimensions *)
 
 ## Indexing and Slicing
 
-### get
-
-Index from the outermost dimension inward. Returns a sub-tensor (view):
-
-```ocaml
-open Nx
-
-let () =
-  let x = create Int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
-  let row = get [1] x in      (* second row: [4, 5, 6] *)
-  Printf.printf "%s\n" (to_string row)
-```
-
 ### item
 
 Extract a scalar value:
@@ -182,7 +169,8 @@ let v = Nx.item [1; 2] matrix    (* element at row 1, column 2 *)
 
 ### slice
 
-Advanced indexing with range and index specifications:
+Each index addresses one axis and is an array of positions on it; the axis is
+replaced by the index's shape. `I i` is one position, so its axis goes:
 
 ```ocaml
 open Nx
@@ -204,12 +192,18 @@ let () =
 ```
 
 Index types:
-- `I i` — single index (reduces dimension)
+- `I i` — one position (removes the axis)
+- `L positions` — listed positions
+- `T p` — positions held in the int64 tensor `p`, whose shape replaces the axis
 - `R (start, stop)` — half-open range
 - `Rs (start, stop, step)` — strided range
-- `L indices` — gather listed indices
 - `A` — all elements (default for trailing axes)
+- `M mask` — positions where a boolean mask holds
+- `D (start, len)` — `len` positions from a start held in a scalar tensor
 - `N` — insert new axis of size 1
+
+A position written in the program (`I`, `L`) raises outside its axis, a range
+is cut to it, and a position held in a tensor (`T`) reads zero outside it.
 
 ## Joining and Splitting
 

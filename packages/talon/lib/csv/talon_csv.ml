@@ -187,8 +187,8 @@ let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
 let binary ?validity offsets data =
   let length = A1.dim offsets - 1 in
   let bits v =
-    Nx.shrink
-      [| (0, length) |]
+    Nx.slice
+      [ Nx.R (0, length) ]
       (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor v)))
   in
   let validity = Option.map bits validity in

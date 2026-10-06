@@ -168,8 +168,8 @@ let take_random =
 let concat_3 =
   let bits = Nx.cast Nx.bit key_valid in
   let part offset length =
-    let values = Nx.shrink [| (offset, offset + length) |] key_values in
-    let validity = Nx.shrink [| (offset, offset + length) |] bits in
+    let values = Nx.slice [ Nx.R (offset, offset + length) ] key_values in
+    let validity = Nx.slice [ Nx.R (offset, offset + length) ] bits in
     Talon.v [ ("key", Column.of_tensor ~validity values) ]
   in
   let third = n / 3 in

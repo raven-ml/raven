@@ -116,12 +116,7 @@ let check_blocks fn format bytes values blocks =
 
 (* [bytes b lo hi] is the bytes \[[lo];[hi]) of each block of [b]. *)
 let bytes b lo hi =
-  let r = Nx.ndim b in
-  Nx.shrink
-    (Array.mapi
-       (fun i d -> if i = r - 1 then (lo, hi) else (0, d))
-       (Nx.shape b))
-    b
+  Nx.slice (List.init (Nx.ndim b - 1) (fun _ -> Nx.A) @ [ Nx.R (lo, hi) ]) b
 
 (* Both files hold a group's codes as 16 bytes, two to a byte, the low nibble
    first. A checkpoint's byte [i] holds values [2 i] and [2 i + 1], in order, so

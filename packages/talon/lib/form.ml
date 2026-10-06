@@ -841,8 +841,8 @@ let print c =
 let is_null c i =
   match Column.validity c with None -> false | Some v -> not (Nx.item [ i ] v)
 
-let row_int64 x i = Nx.item [] (Nx.cast Nx.int64 (Nx.get [ i ] x))
-let row_float x i = Nx.item [] (Nx.cast Nx.float64 (Nx.get [ i ] x))
+let row_int64 x i = Nx.item [] (Nx.cast Nx.int64 (Nx.slice [ Nx.I i ] x))
+let row_float x i = Nx.item [] (Nx.cast Nx.float64 (Nx.slice [ Nx.I i ] x))
 
 (* [pp_ticks ty pp_value of_ticks ppf ticks] writes the value of [ticks] through
    [of_ticks], or the ticks themselves when they are outside {!Time}'s range. *)
@@ -890,7 +890,7 @@ and pp_row : type a. a Type.t -> Column.t -> int -> Format.formatter -> unit =
       match (ty, Type.kind ty) with
       | Int64, _ -> Format.fprintf ppf "%Ld" (row_int64 x i)
       | Uint64, _ ->
-          let bits = Nx.item [] (Nx.bitcast Nx.int64 (Nx.get [ i ] x)) in
+          let bits = Nx.item [] (Nx.bitcast Nx.int64 (Nx.slice [ Nx.I i ] x)) in
           Format.fprintf ppf "%Lu" bits
       | Categorical d, _ ->
           Type.pp_quoted ppf (Iarray.get d (Int64.to_int (row_int64 x i)))

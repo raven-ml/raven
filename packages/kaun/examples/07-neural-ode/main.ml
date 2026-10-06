@@ -61,9 +61,7 @@ let () =
     in
     (* [[window; batch; 2]], as the solve stacks them. *)
     let target =
-      Nx.transpose ~axes:[ 1; 0; 2 ]
-        (Nx.reshape [| batch; window; 2 |]
-           (Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] rows) data))
+      Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.take ~axis:0 ~indices:rows data)
     in
     let s =
       Ode.sample point Ode.tsit5 ~tol ~budget:500

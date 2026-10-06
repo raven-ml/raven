@@ -430,13 +430,10 @@ let read ?window ~every ~upto ~pos ~table pool =
         Nx.logical_and upto
           (Nx.greater column (Nx.sub_s (least pos) (Int64.of_int w)))
   in
-  let live = Nx.reshape (Array.append [| batch * context |] (ones tail)) seen in
-  let win =
-    Nx.take ~axis:0 ~indices:(Nx.reshape [| batch * context |] table) pool
-  in
-  Nx.reshape
-    (Array.append [| batch; context |] tail)
-    (Nx.where live win (Nx.zeros (Nx.dtype pool) [| 1 |]))
+  let live = Nx.reshape (Array.append [| batch; context |] (ones tail)) seen in
+  Nx.where live
+    (Nx.take ~axis:0 ~indices:table pool)
+    (Nx.zeros (Nx.dtype pool) [| 1 |])
 
 (* The rows a selection reads, [batch; seq; k] then [tail], zero where a token
    does not see its column. [fetch flat] is the rows at the columns [flat],
@@ -476,12 +473,8 @@ let closing ~every ~pos flat =
 
 (* The rows of [pool] at the slots [table] names at the columns [flat], [batch;
    n], as [batch; n] then [tail]: zero at an unallocated one. *)
-let from_pool ~tail ~table pool flat =
-  let slot = Nx.take_along_axis ~axis:1 ~indices:flat table in
-  let n = Nx.dim 0 flat * Nx.dim 1 flat in
-  Nx.reshape
-    (Array.append (Nx.shape flat) tail)
-    (Nx.take ~axis:0 ~indices:(Nx.reshape [| n |] slot) pool)
+let from_pool table pool flat =
+  Nx.take ~axis:0 ~indices:(Nx.take_along_axis ~axis:1 ~indices:flat table) pool
 
 let extend index values pool =
   let tail = tail pool in
@@ -535,7 +528,7 @@ let extend index values pool =
           let pool =
             store ~target:(targets ~at:(own ~every pos) table) values pool
           in
-          (read_chosen index columns ~tail (from_pool ~tail ~table pool), pool))
+          (read_chosen index columns ~tail (from_pool table pool), pool))
 
 (* Structure *)
 

@@ -243,7 +243,7 @@ let matrix_rows u like m =
       if not (Rows.float_leaf t) then Nx.zeros (Nx.dtype t) shape
       else
         let n = Nx.numel t in
-        let cols = Nx.shrink [| (0, k); (!offset, !offset + n) |] m in
+        let cols = Nx.slice [ Nx.R (0, k); Nx.R (!offset, !offset + n) ] m in
         offset := !offset + n;
         Nx.reshape shape (Nx.cast (Nx.dtype t) cols))
     like
@@ -289,7 +289,7 @@ let low_rank (type f) u (dt : (float, f) Nx.dtype) ~rank valid m s xs gs =
   let w, v = Nx.eigh sigma in
   let w = Nx.cast dt w in
   let order = Nx.argsort ~descending:true (Nx.abs (Nx.log w)) in
-  let keep = Nx.shrink [| (0, min rank r) |] order in
+  let keep = Nx.slice [ Nx.R (0, min rank r) ] order in
   let variances = Nx.take ~indices:keep w in
   let directions =
     Nx.transpose (Nx.matmul q (Nx.take ~axis:1 ~indices:keep v))

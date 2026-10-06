@@ -183,7 +183,7 @@ let filter q predicate input =
     let n = Table.rows b in
     let keep, f = eval (Eval.frame b) in
     let keep =
-      match f with None -> keep | Some f -> Nx.shrink [| (0, f.row) |] keep
+      match f with None -> keep | Some f -> Nx.slice [ Nx.R (0, f.row) ] keep
     in
     let idx = Nx.positions keep in
     let rows = Nx.dim 0 idx in

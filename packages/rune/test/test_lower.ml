@@ -367,11 +367,11 @@ let reads =
       cases ~name:fst "a refused read names the function the program called"
         [
           ("Nx.item", fun x -> ignore (Nx.item [ 0; 0 ] x));
-          ( "Nx.compress",
+          ( "Nx.slice",
             fun x ->
               ignore
-                (Nx.compress ~axis:0
-                   ~condition:(Nx.create Nx.bool [| 2 |] [| true; false |])
+                (Nx.slice
+                   [ Nx.M (Nx.create Nx.bool [| 2 |] [| true; false |]) ]
                    x) );
           ( "Nx.positions",
             fun x -> ignore (Nx.positions (Nx.flatten (Nx.less_s x 1.))) );

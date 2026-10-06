@@ -342,7 +342,7 @@ let reproducible =
           let one =
             N.step t banana (Nx.Rng.key 3)
               (N.init t ~geometry:narrow.g banana
-                 (Nx.shrink [| (0, 1); (0, dim) |] (start 4)))
+                 (Nx.slice [ Nx.R (0, 1); Nx.R (0, dim) ] (start 4)))
           in
           let four =
             N.step t banana (Nx.Rng.key 3)

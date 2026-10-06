@@ -576,11 +576,7 @@ let tanh_sinh ~tol f range =
       (Array.append [| de_chunk |] (Array.make (Array.length lanes) 1))
       v
   in
-  let row t i =
-    column
-      (Nx.reshape [| de_chunk |]
-         (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] i) t))
-  in
+  let row t i = column (Nx.take ~axis:0 ~indices:i t) in
   let detached =
     match range with
     | Range.Finite (a, b) -> Range.Finite (Rune.detach a, Rune.detach b)
@@ -807,7 +803,7 @@ let cubature ~tol ~budget f (box : _ Box.t) =
     in
     let s7 = Nx.mul vol (Nx.sum ~axes:[ 0 ] (Nx.mul (along rule.w7) y)) in
     let s5 = Nx.mul vol (Nx.sum ~axes:[ 0 ] (Nx.mul (along rule.w5) y)) in
-    let row i = Nx.get [ i ] y in
+    let row i = Nx.slice [ Nx.I i ] y in
     let fourth =
       Array.map
         (fun (c, p2, m2, p3, m3) ->

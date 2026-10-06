@@ -58,7 +58,7 @@ let stored ?(value = Gen.bool) n =
   let+ vs = array ~size:(constant (off + n + extra)) value in
   let bools = Nx.create Nx.bool [| Array.length vs |] vs in
   both
-    { move = (fun t -> Nx.shrink [| (off, off + n) |] t) }
+    { move = (fun t -> Nx.slice [ Nx.R (off, off + n) ] t) }
     { bits = Nx.cast Nx.bit bools; bools }
 
 (* How a mask of a shape lies in its storage. *)
@@ -315,14 +315,10 @@ let unaries =
     };
     { name = "triu"; f = (fun t -> if Nx.ndim t < 2 then t else Nx.triu t) };
     {
-      name = "compress where its flip holds";
+      name = "masked where its flip holds";
       f =
         (fun t ->
-          Nx.compress ~condition:(Nx.cast Nx.bool (Nx.flip (flat t))) (flat t));
-    };
-    {
-      name = "extract where it holds";
-      f = (fun t -> Nx.extract ~condition:(Nx.cast Nx.bool t) t);
+          Nx.slice [ Nx.M (Nx.cast Nx.bool (Nx.flip (flat t))) ] (flat t));
     };
     {
       name = "its halves swapped";
@@ -486,12 +482,6 @@ let other_dtypes =
     { gname = "all"; g = (fun t -> p (Nx.all t)) };
     { gname = "argmax"; g = (fun t -> p (Nx.argmax t)) };
     { gname = "positions"; g = (fun t -> p (Nx.positions (flat t))) };
-    {
-      gname = "nonzero";
-      g =
-        (fun t ->
-          p (Nx.concatenate ~axis:0 (Array.to_list (Nx.nonzero (flat t)))));
-    };
     { gname = "equal to its flip"; g = (fun t -> p (Nx.equal t (Nx.flip t))) };
     {
       gname = "array_equal to its negation";
@@ -726,7 +716,7 @@ let word_kernels =
             let at p v =
               Nx.init Nx.bit [| n + 3 |] (fun i -> i.(0) = p + 3 = v)
             in
-            let view t = Nx.shrink [| (3, n + 3) |] t in
+            let view t = Nx.slice [ Nx.R (3, n + 3) ] t in
             for p = 0 to n - 1 do
               let msg = string_of_int p in
               equal ~msg bool true (Nx.item [] (Nx.any (view (at p true))));
@@ -745,14 +735,15 @@ let word_kernels =
         test "any finds a last true bit after 2^20 false ones" (fun () ->
             let n = (1 lsl 20) + 77 in
             let m = Nx.init Nx.bit [| n |] (fun i -> i.(0) = n - 1) in
-            equal bool true (Nx.item [] (Nx.any (Nx.shrink [| (5, n) |] m)));
+            equal bool true (Nx.item [] (Nx.any (Nx.slice [ Nx.R (5, n) ] m)));
             equal bool false
-              (Nx.item [] (Nx.any (Nx.shrink [| (5, n - 1) |] m))));
+              (Nx.item [] (Nx.any (Nx.slice [ Nx.R (5, n - 1) ] m))));
         test "all finds a last false bit after 2^20 true ones" (fun () ->
             let n = (1 lsl 20) + 77 in
             let m = Nx.init Nx.bit [| n |] (fun i -> i.(0) <> n - 1) in
             equal bool false (Nx.item [] (Nx.all (Nx.flip m)));
-            equal bool true (Nx.item [] (Nx.all (Nx.shrink [| (0, n - 1) |] m))));
+            equal bool true
+              (Nx.item [] (Nx.all (Nx.slice [ Nx.R (0, n - 1) ] m))));
       ])
 
 (* 4-bit moves *)
@@ -779,7 +770,7 @@ type nibble_move = {
    some outside. *)
 let rows w t =
   let n = Nx.numel t / w * w in
-  Nx.reshape [| n / w; w |] (Nx.shrink [| (0, n) |] t)
+  Nx.reshape [| n / w; w |] (Nx.slice [ Nx.R (0, n) ] t)
 
 let row_indices w t =
   let r = Nx.numel t / w in
@@ -801,7 +792,7 @@ let moves_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
             Nx.pad
               [| (1, 1); (1, 2) |]
               lo
-              (Nx.reshape [| n / 5; 5 |] (Nx.shrink [| (0, n) |] t)));
+              (Nx.reshape [| n / 5; 5 |] (Nx.slice [ Nx.R (0, n) ] t)));
       };
       {
         mname = "take of its rows of 5, indices outside";
@@ -854,7 +845,7 @@ let moves_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
         (Printf.sprintf "%s of %s values is it of their int8 values, cast back"
            mname name) (nibble_view lo hi) (fun (off, n, vs) ->
           let wide = Nx.create Nx.int8 [| Array.length vs |] vs in
-          let at t = Nx.shrink [| (off, off + n) |] t in
+          let at t = Nx.slice [ Nx.R (off, off + n) ] t in
           equal (array int)
             (Nx.to_array (move4 (at wide)))
             (Nx.to_array (Nx.cast Nx.int8 (move4 (at (Nx.cast dtype wide)))))))
@@ -902,7 +893,7 @@ let storage =
           let m = Nx.cast Nx.bit (Nx.create Nx.bool [| 80 |] vs) in
           equal (array int)
             (packed (Array.sub vs 3 64))
-            (bytes_of (Nx.shrink [| (3, 67) |] m)));
+            (bytes_of (Nx.slice [ Nx.R (3, 67) ] m)));
       test "a [h; w] mask holds row i from bit i * w" (fun () ->
           let vs = Array.init 15 (fun i -> i mod 4 = 1) in
           let m = Nx.cast Nx.bit (Nx.create Nx.bool [| 3; 5 |] vs) in
@@ -1148,7 +1139,7 @@ let exact =
                [| 8 * size |]
                (B.view mapped ~offset:0 Nx_dtype.Scalar.Bit (8 * size))
            in
-           let v = Nx.shrink [| (3, 8 * size) |] m in
+           let v = Nx.slice [ Nx.R (3, 8 * size) ] m in
            equal bool true (Nx.item [] (Nx.any v));
            equal int64 1L (Nx.item [] (Nx.count v)));
      ]
@@ -1226,8 +1217,9 @@ let elements =
             (renamed (printed m.bits));
           if Nx.ndim m.bits > 0 && Nx.dim 0 m.bits > 0 then
             let last = Nx.dim 0 m.bits - 1 in
-            equal ~msg:"get of its last row" same (Nx.get [ last ] m.bools)
-              (Nx.cast Nx.bool (Nx.get [ last ] m.bits)));
+            equal ~msg:"get of its last row" same
+              (Nx.slice [ Nx.I last ] m.bools)
+              (Nx.cast Nx.bool (Nx.slice [ Nx.I last ] m.bits)));
     ]
 
 (* Packed bytes *)
@@ -1301,7 +1293,7 @@ let bytes =
           let m =
             Nx.cast Nx.bit (Nx.init Nx.bool [| 32 |] (fun i -> i.(0) mod 3 = 0))
           in
-          let rows = Nx.reshape [| 3; 8 |] (Nx.shrink [| (8, 32) |] m) in
+          let rows = Nx.reshape [| 3; 8 |] (Nx.slice [ Nx.R (8, 32) ] m) in
           is_true
             (share_memory
                (Nx_test.storage (Nx.bitcast Nx.uint8 rows))
@@ -1384,8 +1376,8 @@ let shared_mask vs =
   let padded =
     Array.init (n + 5) (fun i -> i >= 3 && i < n + 3 && vs.(i - 3))
   in
-  Nx.shrink
-    [| (3, n + 3) |]
+  Nx.slice
+    [ Nx.R (3, n + 3) ]
     (Nx.cast Nx.bit (Nx.create Nx.bool [| n + 5 |] padded))
 
 let on_both { name; f } =
@@ -1467,32 +1459,32 @@ let workers =
           let thirteen = bits (List.init 13 (fun i -> i mod 3 = 0)) in
           let c = Nx.concatenate ~axis:0 [ thirteen; big; thirteen ] in
           equal ~msg:"the first part" same (Nx.cast Nx.bool thirteen)
-            (Nx.cast Nx.bool (Nx.shrink [| (0, 13) |] c));
+            (Nx.cast Nx.bool (Nx.slice [ Nx.R (0, 13) ] c));
           equal ~msg:"bits that differ" int64 0L
-            (differences big (Nx.shrink [| (13, n + 13) |] c));
+            (differences big (Nx.slice [ Nx.R (13, n + 13) ] c));
           equal ~msg:"the last part" same (Nx.cast Nx.bool thirteen)
-            (Nx.cast Nx.bool (Nx.shrink [| (n + 13, n + 26) |] c)));
+            (Nx.cast Nx.bool (Nx.slice [ Nx.R (n + 13, n + 26) ] c)));
       slow "a window of 2^28 bits set from bit 5 keeps the bits around it"
         (fun () ->
           let n = 1 lsl 28 in
           let src = pattern (1 lsl 25) in
           let t = Nx.set [ R (5, n + 5) ] src (Nx.ones Nx.bit [| n + 70 |]) in
           equal ~msg:"bits that differ" int64 0L
-            (differences src (Nx.shrink [| (5, n + 5) |] t));
+            (differences src (Nx.slice [ Nx.R (5, n + 5) ] t));
           equal ~msg:"the ones around it" int64 (Int64.of_int 70)
             (Int64.sub (Nx.item [] (Nx.count t)) (Nx.item [] (Nx.count src))));
       slow
         "2^28 bits padded by 5 and 3, which several workers write, hold their \
          bits" (fun () ->
           let n = 1 lsl 28 in
-          let src = Nx.shrink [| (3, n + 3) |] (pattern ((1 lsl 25) + 1)) in
+          let src = Nx.slice [ Nx.R (3, n + 3) ] (pattern ((1 lsl 25) + 1)) in
           let t = Nx.pad [| (5, 3) |] true src in
           equal ~msg:"bits that differ" int64 0L
-            (differences src (Nx.shrink [| (5, n + 5) |] t));
+            (differences src (Nx.slice [ Nx.R (5, n + 5) ] t));
           equal ~msg:"the ones around it" int64 8L
             (Int64.sub (Nx.item [] (Nx.count t)) (Nx.item [] (Nx.count src)));
           equal ~msg:"the last ones" (array bool) [| true; true; true |]
-            (Nx.to_array (Nx.shrink [| (n + 5, n + 8) |] t)));
+            (Nx.to_array (Nx.slice [ Nx.R (n + 5, n + 8) ] t)));
       slow
         "int4 parts of 13 around 2^26 elements concatenate as their int8 twins"
         (fun () ->

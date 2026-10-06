@@ -160,7 +160,7 @@ let to_text c =
 let rows_of offsets m =
   let n = Nx.dim 0 offsets - 1 in
   let elements = Nx.arange Nx.int64 0 m 1 in
-  let ends = Nx.shrink [| (1, n + 1) |] offsets in
+  let ends = Nx.slice [ Nx.R (1, n + 1) ] offsets in
   let rows = Nx.searchsorted ~side:`Right ends elements in
   let first = Nx.item [ 0 ] offsets and stop = Nx.item [ n ] offsets in
   let inside =

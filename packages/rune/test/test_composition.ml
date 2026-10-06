@@ -327,7 +327,7 @@ let pullback_group =
                let _, pb = Rune.vjp' (through c) (x ()) in
                let cts = Nx.create f64 [| 3 |] [| 1.; -2.; 0.5 |] in
                let loop =
-                 Nx.stack (List.init 3 (fun i -> pb (Nx.get [ i ] cts)))
+                 Nx.stack (List.init 3 (fun i -> pb (Nx.slice [ Nx.I i ] cts)))
                in
                equal (Oracle.tensor ~rel:1e-12 ()) loop (Rune.vmap' pb cts));
            test

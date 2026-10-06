@@ -14,7 +14,8 @@ type ('v, 'b) series = {
 
 let locate fn e breaks x =
   let n = Nx.dim 0 breaks - 1 in
-  let first = Nx.get [ 0 ] breaks and last = Nx.get [ n ] breaks in
+  let first = Nx.slice [ Nx.I 0 ] breaks
+  and last = Nx.slice [ Nx.I n ] breaks in
   (* A point is in the domain if it is NaN, which evaluates to NaN, or finite
      and, unless the series is extended, between the ends. An infinite point has
      no piece under any extension. *)
@@ -114,7 +115,7 @@ let clenshaw u g =
   let u =
     Nx.reshape (Array.append [| Nx.dim 0 u |] (Array.make (Nx.ndim g - 2) 1)) u
   in
-  let c k = Nx.get [ k ] g in
+  let c k = Nx.slice [ Nx.I k ] g in
   if n = 0 then c 0
   else
     let two_u = Nx.mul_s u 2. in

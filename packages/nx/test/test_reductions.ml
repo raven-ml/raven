@@ -1169,7 +1169,7 @@ let prefix_law =
                   equal
                     ~msg:(Printf.sprintf "%s of %s, prefix %d" op name k)
                     (array int64) (Array.sub whole 0 k)
-                    (float_bits (scan (Nx.shrink [| (0, k) |] x))))
+                    (float_bits (scan (Nx.slice [ Nx.R (0, k) ] x))))
                 prefixes)
             [
               ("cumsum", (fun x -> Nx.cumsum x), sums);
@@ -1803,7 +1803,7 @@ let extremes_are_max_and_min =
             Array.map
               (fun (lo, hi) ->
                 Nx.item []
-                  (Nx.bitcast Nx.int32 (extreme (Nx.shrink [| (lo, hi) |] x))))
+                  (Nx.bitcast Nx.int32 (extreme (Nx.slice [ Nx.R (lo, hi) ] x))))
               b
           in
           equal ~msg:(op_name op) (array int32) expected

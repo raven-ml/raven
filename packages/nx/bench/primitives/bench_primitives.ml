@@ -151,7 +151,7 @@ let compress =
   let masked id n =
     row id n
       (fun () -> (uniform_float64 n, mask n))
-      (fun (x, condition) -> Nx.compress ~condition x)
+      (fun (x, condition) -> Nx.slice [ Nx.M condition ] x)
   in
   [ masked "float64-4e4-mask50" s; masked "float64-1e7-mask50" l ]
 
@@ -241,9 +241,9 @@ let bit =
   let parts () =
     let m = bits l and third = l / 3 in
     [
-      Nx.shrink [| (0, third + 5) |] m;
-      Nx.shrink [| (third + 5, (2 * third) + 2) |] m;
-      Nx.shrink [| ((2 * third) + 2, l) |] m;
+      Nx.slice [ Nx.R (0, third + 5) ] m;
+      Nx.slice [ Nx.R (third + 5, (2 * third) + 2) ] m;
+      Nx.slice [ Nx.R ((2 * third) + 2, l) ] m;
     ]
   in
   let image () = Nx.reshape [| 2500; 4000 |] (bits l) in

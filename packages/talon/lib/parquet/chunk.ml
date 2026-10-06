@@ -97,7 +97,7 @@ let zeros_for_bits n =
 
 (* [bits b n] is the first [n] elements of the bit array [b]. *)
 let bits b n =
-  Nx.shrink [| (0, n) |] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor b)))
+  Nx.slice [ Nx.R (0, n) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor b)))
 
 (* [reading x f] is [f b] for [b] the bytes of [x]'s elements in C order, under
    a read claim. *)
@@ -502,7 +502,7 @@ let narrow (type a) ~row_group (ty : a Type.t) c =
     | Fixed { valid; values = P v } ->
         let v = Nx.cast Nx.int32 v in
         let bad = Nx.logical_or (Nx.less_s v lo) (Nx.greater_s v hi) in
-        let at = (Nx.nonzero bad).(0) in
+        let at = Nx.positions bad in
         if Nx.numel at > 0 then begin
           let row = Int64.to_int (Nx.item [ 0 ] at) in
           Meta.fail ~row_group "the value %ld of row %d does not fit %s"

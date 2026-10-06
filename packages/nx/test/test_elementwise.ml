@@ -416,8 +416,8 @@ let codec (type a b c d) (dtype : (a, b) Nx.dtype) (word : (c, d) Nx.dtype)
     | Scalar -> of_words [||] ws
     | Full ->
         let pad = Array.make (off * words) 0L in
-        Nx.shrink
-          [| (off, off + n) |]
+        Nx.slice
+          [ Nx.R (off, off + n) ]
           (of_words [| off + n |] (Array.append pad ws))
     | Every_other ->
         let len = off + (2 * n) in
@@ -495,7 +495,7 @@ let whole_and_pieces c op (n, operands, cuts) =
   let piece lo hi =
     Array.map2
       (fun (laid, _) t ->
-        if laid = Scalar then t else Nx.shrink [| (lo, hi) |] t)
+        if laid = Scalar then t else Nx.slice [ Nx.R (lo, hi) ] t)
       operands whole
   in
   let rec pieces k lo acc =
@@ -1408,7 +1408,7 @@ let every_pair (type b c) (name, (q : (int, b) Nx.dtype))
               let k = i.(0) - 1 in
               if k < 0 || k >= n * n then 0 else f k)
         in
-        Nx.reshape [| n; n |] (Nx.shrink [| (1, (n * n) + 1) |] flat)
+        Nx.reshape [| n; n |] (Nx.slice [ Nx.R (1, (n * n) + 1) ] flat)
       in
       let x = grid (fun k -> lo + (k / n))
       and y = grid (fun k -> lo + (k mod n)) in

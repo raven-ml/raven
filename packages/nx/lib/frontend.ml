@@ -170,6 +170,7 @@ let bit = Bit
 type index =
   | I of int
   | L of int list
+  | T of (int64, Nx_dtype.int64_elt) t
   | R of int * int
   | Rs of int * int * int
   | A
@@ -1767,30 +1768,43 @@ let triu ?k x = triangular_mask ~op:"triu" ~cmp:less_equal ?k x
 
 (* ───── Take Operations ───── *)
 
+(* With [axis], the positions gather in C order and the gathered axis then
+   takes their shape: [t] of shape [[| 4; 5 |]] by positions of shape
+   [[| 2; 3 |]] on axis 1 gives [[| 4; 2; 3 |]]. *)
+(* [take_flat indices t] is [take ~axis:0 ~indices t] for a 1-D [t]. *)
+let take_flat indices t =
+  let flat = reshape [| numel indices |] indices in
+  reshape (shape indices) (B.gather ~axis:0 flat t)
+
 let take ?axis ~indices t =
   match axis with
-  | None ->
-      let flat = reshape [| numel indices |] indices in
-      reshape (shape indices) (B.gather ~axis:0 flat (flatten t))
+  | None -> take_flat indices (flatten t)
+  | Some (0 | -1) when ndim t = 1 -> take_flat indices t
   | Some axis ->
       let t_shape = shape t in
+      let rank = Array.length t_shape in
       let axis = resolve_single_axis t axis in
-      let idx = indices in
-      let n_idx = numel idx in
+      let n_idx = numel indices in
       (* Reshape indices for broadcasting: [1,...,1,n_idx,1,...,1] *)
       let expanded_shape =
-        Array.init (Array.length t_shape) (fun i ->
-            if i = axis then n_idx else 1)
+        Array.init rank (fun i -> if i = axis then n_idx else 1)
       in
       let broadcast_shape = Array.copy t_shape in
       broadcast_shape.(axis) <- n_idx;
       let idx_broadcast =
-        broadcast_to broadcast_shape (reshape expanded_shape idx)
+        broadcast_to broadcast_shape (reshape expanded_shape indices)
       in
       let out = B.gather ~axis idx_broadcast t in
-      let out_shape = Array.copy t_shape in
-      out_shape.(axis) <- n_idx;
-      reshape out_shape out
+      if ndim indices = 1 then reshape (Array.copy broadcast_shape) out
+      else
+        reshape
+          (Array.concat
+             [
+               Array.sub t_shape 0 axis;
+               shape indices;
+               Array.sub t_shape (axis + 1) (rank - axis - 1);
+             ])
+          out
 
 let take_along_axis ~axis ~indices t =
   let axis = resolve_single_axis t axis in
@@ -1849,196 +1863,7 @@ let count (type b) ?axes ?(keepdims = false) (m : (bool, b) t) : int64_t =
         let c = count_bits m in
         if keepdims then reshape (Array.make rank 1) c else c
 
-(* ───── Indexing and Slicing ───── *)
-
-let normalize_index dim_size idx = if idx < 0 then dim_size + idx else idx
-
-let normalize_and_check_index ~op dim_size idx =
-  let idx' = if idx < 0 then dim_size + idx else idx in
-  if idx' < 0 || idx' >= dim_size then
-    err op "index %d out of bounds [0, %d)" idx dim_size;
-  idx'
-
-type dim_op =
-  | View of { start : int; stop : int; step : int; dim_len : int }
-  | Squeeze of { idx : int }
-  | Gather of int array
-  | New_axis
-  | Window of { start : (int64, Nx_dtype.int64_elt) t; len : int }
-
-let normalize_slice_spec ~by ~axis dim_size = function
-  | I idx ->
-      Squeeze { idx = normalize_and_check_index ~op:"slice" dim_size idx }
-  | A -> View { start = 0; stop = dim_size; step = 1; dim_len = dim_size }
-  | R (start, stop) ->
-      let s = Int.max 0 (Int.min (normalize_index dim_size start) dim_size) in
-      let e = Int.max 0 (Int.min (normalize_index dim_size stop) dim_size) in
-      View { start = s; stop = e; step = 1; dim_len = Int.max 0 (e - s) }
-  | Rs (start, stop, step) ->
-      if step = 0 then
-        invalid_arg
-          "slice: step cannot be zero, use positive step for forward slicing \
-           or negative for reverse";
-      (* Both bounds clamp into the axis, as a Python slice's do. *)
-      let lo, hi = if step > 0 then (0, dim_size) else (-1, dim_size - 1) in
-      let clamp i = Int.max lo (Int.min hi (normalize_index dim_size i)) in
-      let s = clamp start and e = clamp stop in
-      let len =
-        if step > 0 then if s >= e then 0 else ((e - 1 - s) / step) + 1
-        else if s <= e then 0
-        else ((s - e - 1) / -step) + 1
-      in
-      View { start = s; stop = e; step; dim_len = len }
-  | L indices ->
-      Gather
-        (Array.map
-           (normalize_and_check_index ~op:"slice" dim_size)
-           (Array.of_list indices))
-  | N -> New_axis
-  | M mask ->
-      if ndim mask <> 1 then
-        err "slice" "axis %d, boolean mask must be rank 1 but has rank %d"
-          axis (ndim mask);
-      let mask_len = numel mask in
-      if mask_len <> dim_size then
-        err "slice" "axis %d, boolean mask length %d, expected %d" axis
-          mask_len dim_size;
-      let bits = read_array ~by mask in
-      let positions = ref [] in
-      for i = mask_len - 1 downto 0 do
-        if bits.(i) then positions := i :: !positions
-      done;
-      Gather (Array.of_list !positions)
-  | D (start, len) ->
-      if numel start <> 1 then
-        err "slice" "axis %d, window start must be a scalar tensor" axis;
-      if len < 0 || len > dim_size then
-        err "slice" "axis %d, window of %d does not fit in %d" axis len
-          dim_size;
-      (* clamp the corner so the window always fits; a tensor operation, so a
-         traced start stays traced *)
-      let ctx = Value.context start in
-      let start = reshape [||] start in
-      let start =
-        minimum
-          (maximum start (scalar ctx Nx_dtype.int64 0L))
-          (scalar ctx Nx_dtype.int64 (Int64.of_int (dim_size - len)))
-      in
-      Window { start; len }
-
-(* Parse specs into one op per input axis, [New_axis] entries interleaved,
-   padding unspecified trailing axes with [A]. *)
-let parse_specs ~by specs input_shape =
-  let ndim_in = Array.length input_shape in
-  let ops, consumed =
-    List.fold_left
-      (fun (acc, dim) spec ->
-        match spec with
-        | N -> (New_axis :: acc, dim)
-        | _ ->
-            if dim >= ndim_in then invalid_arg "slice: too many indices";
-            ( normalize_slice_spec ~by ~axis:dim input_shape.(dim) spec :: acc,
-              dim + 1 ))
-      ([], 0) specs
-  in
-  let rec pad_trailing acc dim =
-    if dim >= ndim_in then List.rev acc
-    else
-      pad_trailing
-        (normalize_slice_spec ~by ~axis:dim input_shape.(dim) A :: acc)
-        (dim + 1)
-  in
-  pad_trailing ops consumed
-
-let slice specs x =
-  let ops = parse_specs ~by:"Nx.slice" specs (shape x) in
-  let gather_axis axis indices t =
-    let idx_t =
-      create (Value.context t) Nx_dtype.int64
-        [| Array.length indices |]
-        (Array.map Int64.of_int indices)
-    in
-    take ~axis ~indices:idx_t t
-  in
-  let shrink_axis axis start stop t =
-    B.shrink t
-      (Array.mapi
-         (fun i dim -> if i = axis then (start, stop) else (0, dim))
-         (shape t))
-  in
-  let rec apply current axis sq_axes = function
-    | [] -> (current, sq_axes)
-    | New_axis :: rest ->
-        apply (unsqueeze ~axes:[ axis ] current) (axis + 1) sq_axes rest
-    | Squeeze { idx } :: rest ->
-        apply
-          (shrink_axis axis idx (idx + 1) current)
-          (axis + 1) (axis :: sq_axes) rest
-    | Gather indices :: rest ->
-        apply (gather_axis axis indices current) (axis + 1) sq_axes rest
-    | Window { start; len } :: rest ->
-        let current' =
-          if len = 0 then shrink_axis axis 0 0 current
-          else
-            let idx =
-              add (arange (Value.context current) Nx_dtype.int64 0 len 1) start
-            in
-            take ~axis ~indices:idx current
-        in
-        apply current' (axis + 1) sq_axes rest
-    | View { start; step; dim_len; _ } :: rest ->
-        let current' =
-          if step = 1 then shrink_axis axis start (start + dim_len) current
-          else if step = -1 then (
-            if dim_len = 0 then shrink_axis axis 0 0 current
-            else
-              let sliced =
-                shrink_axis axis (start - dim_len + 1) (start + 1) current
-              in
-              let fb = Array.make (ndim sliced) false in
-              fb.(axis) <- true;
-              B.flip sliced fb)
-          else
-            gather_axis axis
-              (Array.init dim_len (fun i -> start + (i * step)))
-              current
-        in
-        apply current' (axis + 1) sq_axes rest
-  in
-  let result, sq_axes = apply x 0 [] ops in
-  match List.sort_uniq compare sq_axes with
-  | [] -> result
-  | axes -> squeeze ~axes result
-
-let get indices x =
-  let x_shape = shape x in
-  let checked =
-    List.mapi
-      (fun dim idx ->
-        if dim >= Array.length x_shape then
-          err "get" "indices, too many for shape %s" (Shape.to_string x_shape);
-        let idx' = normalize_index x_shape.(dim) idx in
-        if idx' < 0 || idx' >= x_shape.(dim) then
-          err "get"
-            "index [%s] out of bounds for shape %s, index %d at dim %d: %d \
-             not in [0, %d)"
-            (String.concat "," (List.map string_of_int indices))
-            (Shape.to_string x_shape) dim dim idx' x_shape.(dim);
-        idx')
-      indices
-  in
-  slice (List.map (fun i -> I i) checked) x
-
-let item indices t =
-  let s = shape t in
-  if List.length indices <> Array.length s then
-    invalid_arg
-      (Printf.sprintf "item: need %d indices for %d-d tensor, got %d"
-         (Array.length s) (Array.length s) (List.length indices));
-  read_item ~by:"Nx.item" (get indices t)
-
-let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
-    =
+let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t =
   let axis = resolve_single_axis t axis in
   let t_shape = shape t in
   let idx_shape = shape indices in
@@ -2049,8 +1874,8 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
   Array.iteri
     (fun i dim ->
       if i <> axis && dim <> idx_shape.(i) then
-        err "scatter" "shape, dimension %d: indices has %d but tensor has %d"
-          i idx_shape.(i) dim)
+        err "scatter" "shape, dimension %d: indices has %d but tensor has %d" i
+          idx_shape.(i) dim)
     t_shape;
   (match mode with
   | (`Max | `Min) when Nx_dtype.is Complex (dtype t) ->
@@ -2061,198 +1886,13 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
   in
   B.scatter ~mode ~unique:unique_indices ~axis ~indices ~updates:values t
 
-(* ───── Functional update ───── *)
-
-(* [set specs v x] is [x] with [v], broadcast to the selection, at the
-   positions [specs] select. One value-carrying operation on [x], chosen from
-   the spec syntax: a mask alone is a [where]; a window (single indices,
-   unit-step ranges, run-time runs, whole axes) is a backend [update]; any
-   gather (a list, a stepped range, a mask beside other specs) is a flat
-   [scatter] over a contiguous copy. *)
-let set specs v x =
-  let x_shape = shape x in
-  let nd = Array.length x_shape in
-  let ctx = Value.context x in
-  let specs_full =
-    let consumed = List.length (List.filter (fun s -> s <> N) specs) in
-    if consumed > nd then invalid_arg "set: too many indices";
-    specs @ List.init (nd - consumed) (fun _ -> A)
-  in
-  let mask_alone =
-    match List.filter (fun s -> s <> A) specs_full with
-    | [ M mask ] ->
-        let k =
-          let rec find i = function
-            | M _ :: _ -> i
-            | _ :: rest -> find (i + 1) rest
-            | [] -> assert false
-          in
-          find 0 specs_full
-        in
-        if ndim mask <> 1 then
-          err "set" "axis %d, boolean mask must be rank 1 but has rank %d" k
-            (ndim mask);
-        if numel mask <> x_shape.(k) then
-          err "set" "axis %d, boolean mask length %d, expected %d" k
-            (numel mask) x_shape.(k);
-        (* [v] must broadcast against [x] with no extent on the mask axis;
-           otherwise it is selection-shaped and goes through the gather. *)
-        let vr = ndim v in
-        let vk = k - (nd - vr) in
-        if vk < 0 || (shape v).(vk) = 1 then Some (k, mask) else None
-    | _ -> None
-  in
-  match mask_alone with
-  | Some (k, mask) ->
-      let mshape = Array.make nd 1 in
-      mshape.(k) <- x_shape.(k);
-      where
-        (broadcast_to x_shape (reshape mshape mask))
-        (broadcast_to x_shape v) x
-  | None ->
-      let ops = parse_specs ~by:"Nx.set" specs_full x_shape in
-      let sel_shape =
-        Array.of_list
-          (List.filter_map
-             (function
-               | New_axis -> Some 1
-               | Squeeze _ -> None
-               | Gather idx -> Some (Array.length idx)
-               | View { dim_len; _ } -> Some dim_len
-               | Window { len; _ } -> Some len)
-             ops)
-      in
-      let v = broadcast_to sel_shape v in
-      let axis_ops = List.filter (fun op -> op <> New_axis) ops in
-      let is_window =
-        List.for_all
-          (function
-            | Squeeze _ | Window _ -> true
-            | View { step; _ } -> step = 1 || step = -1
-            | Gather _ | New_axis -> false)
-          axis_ops
-      in
-      if array_prod sel_shape = 0 then x
-      else if is_window then begin
-        let window_shape =
-          Array.of_list
-            (List.map
-               (function
-                 | Squeeze _ -> 1
-                 | View { dim_len; _ } -> dim_len
-                 | Window { len; _ } -> len
-                 | Gather _ | New_axis -> assert false)
-               axis_ops)
-        in
-        let corners =
-          List.map
-            (function
-              | Squeeze { idx } -> `Int idx
-              | View { start; step; dim_len; _ } ->
-                  `Int (if step = 1 then start else start - dim_len + 1)
-              | Window { start; _ } -> `Tensor start
-              | Gather _ | New_axis -> assert false)
-            axis_ops
-        in
-        let starts =
-          if
-            List.for_all
-              (function `Int _ -> true | `Tensor _ -> false)
-              corners
-          then
-            create ctx Nx_dtype.int64 [| nd |]
-              (Array.of_list
-                 (List.map
-                    (function
-                      | `Int i -> Int64.of_int i | `Tensor _ -> assert false)
-                    corners))
-          else
-            stack ~axis:0
-              (List.map
-                 (function
-                   | `Int i -> scalar ctx Nx_dtype.int64 (Int64.of_int i)
-                   | `Tensor s -> s)
-                 corners)
-        in
-        let v = reshape window_shape v in
-        let flips =
-          Array.of_list
-            (List.map
-               (function View { step = -1; _ } -> true | _ -> false)
-               axis_ops)
-        in
-        let v = if Array.exists Fun.id flips then B.flip v flips else v in
-        B.update x ~starts v
-      end
-      else begin
-        let strides = Shape.c_contiguous_strides x_shape in
-        let dims_info =
-          List.map
-            (function
-              | Squeeze { idx } ->
-                  (true, scalar ctx Nx_dtype.int64 (Int64.of_int idx))
-              | View { start; stop; step; _ } ->
-                  (false, arange ctx Nx_dtype.int64 start stop step)
-              | Gather indices ->
-                  let seen = Hashtbl.create (Array.length indices) in
-                  Array.iter
-                    (fun i ->
-                      if Hashtbl.mem seen i then
-                        err "set" "index %d is listed twice" i;
-                      Hashtbl.replace seen i ())
-                    indices;
-                  ( false,
-                    create ctx Nx_dtype.int64
-                      [| Array.length indices |]
-                      (Array.map Int64.of_int indices) )
-              | Window { start; len } ->
-                  (false, add (arange ctx Nx_dtype.int64 0 len 1) start)
-              | New_axis -> assert false)
-            axis_ops
-        in
-        let target_shape =
-          Array.of_list
-            (List.filter_map
-               (fun (sq, t) -> if sq then None else Some (numel t))
-               dims_info)
-        in
-        let target_rank = Array.length target_shape in
-        let flat_idx = ref (scalar ctx Nx_dtype.int64 0L) in
-        let tdim = ref 0 in
-        List.iteri
-          (fun i (squeezed, idx_t) ->
-            let stride = Int64.of_int strides.(i) in
-            let weighted =
-              if stride = 1L then idx_t
-              else mul idx_t (scalar ctx Nx_dtype.int64 stride)
-            in
-            if squeezed then flat_idx := add !flat_idx weighted
-            else begin
-              let rs = Array.make target_rank 1 in
-              rs.(!tdim) <- numel idx_t;
-              flat_idx := add !flat_idx (reshape rs weighted);
-              incr tdim
-            end)
-          dims_info;
-        let x_flat = reshape [| numel x |] x in
-        let y_flat =
-          reshape [| array_prod target_shape |] (reshape target_shape v)
-        in
-        let result =
-          B.scatter ~mode:`Set ~unique:true x_flat
-            ~indices:(reshape [| numel !flat_idx |] !flat_idx)
-            ~updates:y_flat ~axis:0
-        in
-        reshape x_shape result
-      end
-
 (* Lengths that depend on values *)
 
 (* [positions_of ~by c] is [positions c] for boolean or integer counts [c], its
-   length read by the surface function [by]. A boolean reads its total. Integer counts also read their least count
-   and their least running total: with every count in [0, 2^63), the first
-   running total past int64's range is negative, so the two catch a negative
-   count and a sum that wraps. *)
+   length read by the surface function [by]. A boolean reads its total. Integer
+   counts also read their least count and their least running total: with every
+   count in [0, 2^63), the first running total past int64's range is negative,
+   so the two catch a negative count and a sum that wraps. *)
 let positions_of (type a b) ~by (c : (a, b) t) : int64_t =
   let dt = dtype c in
   if ndim c <> 1 then
@@ -2310,58 +1950,444 @@ let positions' (type a b) ~by (c : (a, b) t) : int64_t =
 
 let positions c = positions' ~by:"Nx.positions" c
 
-let compress ?axis ~condition t =
-  if ndim condition <> 1 then
-    err "compress" "condition of shape %s, not 1-D"
-      (Shape.to_string (shape condition));
-  let n =
-    match axis with
-    | None -> numel t
-    | Some a -> dim (resolve_single_axis t a) t
-  in
-  if dim 0 condition <> n then
-    err "compress" "condition of %d elements for %d" (dim 0 condition) n;
-  take ?axis ~indices:(positions' ~by:"Nx.compress" condition) t
+(* ───── Indexing and Slicing ───── *)
 
-let extract ~condition t =
-  if numel condition <> numel t then
-    err "extract" "condition of %d elements, tensor of %d" (numel condition)
-      (numel t);
-  take ~indices:(positions' ~by:"Nx.extract" (flatten condition)) t
+let normalize_index dim_size idx = if idx < 0 then dim_size + idx else idx
 
-(* The flat positions, in C order, of [t]'s non-zero elements. *)
-let flat_nonzero (type a b) ~by (t : (a, b) t) =
-  let mask : bool_t =
-    match dtype t with
-    | Bool -> t
-    | Bit -> cast Bool t
-    | _ -> not_equal t (zeros_like t)
-  in
-  positions' ~by (flatten mask)
+let normalize_and_check_index ~op dim_size idx =
+  let idx' = if idx < 0 then dim_size + idx else idx in
+  if idx' < 0 || idx' >= dim_size then
+    err op "index %d out of bounds [0, %d)" idx dim_size;
+  idx'
 
-(* The coordinates in [shape] of the flat positions [p], one tensor per axis. *)
-let coordinates shape p =
-  let r = Array.length shape in
-  let c = Array.make r p in
-  let rest = ref p in
-  for d = r - 1 downto 1 do
-    let extent = Int64.of_int shape.(d) in
-    c.(d) <- mod_s !rest extent;
-    rest := div_s !rest extent
+type dim_op =
+  | View of { start : int; stop : int; step : int; dim_len : int }
+  | Squeeze of { idx : int }
+  | Gather of int array
+  | Take of int64_t
+  | New_axis
+  | Window of { start : (int64, Nx_dtype.int64_elt) t; len : int }
+
+(* [op] names the surface function in errors and reads. *)
+let normalize_slice_spec ~op ~axis dim_size = function
+  | I idx -> Squeeze { idx = normalize_and_check_index ~op dim_size idx }
+  | A -> View { start = 0; stop = dim_size; step = 1; dim_len = dim_size }
+  | R (start, stop) ->
+      let s = Int.max 0 (Int.min (normalize_index dim_size start) dim_size) in
+      let e = Int.max 0 (Int.min (normalize_index dim_size stop) dim_size) in
+      View { start = s; stop = e; step = 1; dim_len = Int.max 0 (e - s) }
+  | Rs (start, stop, step) ->
+      if step = 0 then
+        err op
+          "step cannot be zero, use positive step for forward slicing or \
+           negative for reverse";
+      (* Both bounds clamp into the axis, as a Python slice's do. *)
+      let lo, hi = if step > 0 then (0, dim_size) else (-1, dim_size - 1) in
+      let clamp i = Int.max lo (Int.min hi (normalize_index dim_size i)) in
+      let s = clamp start and e = clamp stop in
+      let len =
+        if step > 0 then if s >= e then 0 else ((e - 1 - s) / step) + 1
+        else if s <= e then 0
+        else ((s - e - 1) / -step) + 1
+      in
+      View { start = s; stop = e; step; dim_len = len }
+  | L indices ->
+      Gather
+        (Array.map
+           (normalize_and_check_index ~op dim_size)
+           (Array.of_list indices))
+  | T p -> Take p
+  | N -> New_axis
+  | M mask ->
+      if ndim mask <> 1 then
+        err op "axis %d, boolean mask must be rank 1 but has rank %d" axis
+          (ndim mask);
+      if numel mask <> dim_size then
+        err op "axis %d, boolean mask length %d, expected %d" axis (numel mask)
+          dim_size;
+      let by =
+        match op with
+        | "slice" -> "Nx.slice"
+        | "set" -> "Nx.set"
+        | op -> "Nx." ^ op
+      in
+      Take (positions' ~by mask)
+  | D (start, len) ->
+      if numel start <> 1 then
+        err op "axis %d, window start must be a scalar tensor" axis;
+      if len < 0 || len > dim_size then
+        err op "axis %d, window of %d does not fit in %d" axis len dim_size;
+      (* clamp the corner so the window always fits; a tensor operation, so a
+         traced start stays traced *)
+      let ctx = Value.context start in
+      let start = reshape [||] start in
+      let start =
+        minimum
+          (maximum start (scalar ctx Nx_dtype.int64 0L))
+          (scalar ctx Nx_dtype.int64 (Int64.of_int (dim_size - len)))
+      in
+      Window { start; len }
+
+(* [parse_specs ~op specs s] is one op per index of [specs], [New_axis] for [N]
+   and one for each axis of [s] from the first; axes left over have none. *)
+let rec parse_from ~op axis s = function
+  | [] -> []
+  | N :: rest -> New_axis :: parse_from ~op axis s rest
+  | spec :: rest ->
+      if axis >= Array.length s then err op "too many indices";
+      normalize_slice_spec ~op ~axis s.(axis) spec
+      :: parse_from ~op (axis + 1) s rest
+
+let parse_specs ~op specs s = parse_from ~op 0 s specs
+
+(* A selection of [I], [R] and [A] alone is one shrink, and a reshape that drops
+   the axes of the [I]s. *)
+let rec views = function
+  | [] -> true
+  | (I _ | R _ | A) :: rest -> views rest
+  | _ -> false
+
+(* [view_bounds ~op s bounds k specs] writes the bounds of [specs] from axis [k]
+   into [bounds] and is the number of [I]s among them. *)
+let rec view_bounds ~op s bounds k = function
+  | [] -> 0
+  | spec :: rest ->
+      if k >= Array.length s then err op "too many indices";
+      let d = s.(k) in
+      let dropped =
+        match spec with
+        | I i ->
+            let i = normalize_and_check_index ~op d i in
+            bounds.(k) <- (i, i + 1);
+            1
+        | R (a, b) ->
+            let a = Int.max 0 (Int.min (normalize_index d a) d) in
+            let b = Int.max 0 (Int.min (normalize_index d b) d) in
+            bounds.(k) <- (a, Int.max a b);
+            0
+        | _ ->
+            bounds.(k) <- (0, d);
+            0
+      in
+      dropped + view_bounds ~op s bounds (k + 1) rest
+
+(* [kept_extents bounds out k j specs] writes the extents of the axes from [k]
+   that no [I] of [specs] addresses into [out] from [j]. *)
+let rec kept_extents bounds out k j = function
+  | I _ :: rest -> kept_extents bounds out (k + 1) j rest
+  | _ :: rest ->
+      let a, b = bounds.(k) in
+      out.(j) <- b - a;
+      kept_extents bounds out (k + 1) (j + 1) rest
+  | [] ->
+      for i = k to Array.length bounds - 1 do
+        out.(j + i - k) <- snd bounds.(i)
+      done
+
+let select_view ~op specs x =
+  let s = shape x in
+  let n = Array.length s in
+  let bounds = Array.make n (0, 0) in
+  let dropped = view_bounds ~op s bounds 0 specs in
+  for k = List.length specs to n - 1 do
+    bounds.(k) <- (0, s.(k))
   done;
-  c.(0) <- !rest;
-  c
+  let v = B.shrink x bounds in
+  if dropped = 0 then v
+  else begin
+    let out = Array.make (n - dropped) 0 in
+    kept_extents bounds out 0 0 specs;
+    reshape out v
+  end
 
-let nonzero t =
-  if ndim t = 0 then [||]
-  else coordinates (shape t) (flat_nonzero ~by:"Nx.nonzero" t)
+let gather_axis axis indices t =
+  let idx_t =
+    create (Value.context t) Nx_dtype.int64
+      [| Array.length indices |]
+      (Array.map Int64.of_int indices)
+  in
+  take ~axis ~indices:idx_t t
 
-let argwhere t =
-  let by = "Nx.argwhere" in
-  if ndim t = 0 then
-    empty (Value.context t) Int64 [| dim 0 (flat_nonzero ~by t); 0 |]
+let shrink_axis axis start stop t =
+  B.shrink t
+    (Array.mapi
+       (fun i dim -> if i = axis then (start, stop) else (0, dim))
+       (shape t))
+
+(* [apply_ops current axis squeezed ops] applies [ops] from [axis] on; the axes
+   of single indices stay, of extent 1, and are listed in [squeezed]. *)
+let rec apply_ops current axis squeezed = function
+  | [] -> (current, squeezed)
+  | New_axis :: rest ->
+      apply_ops (unsqueeze ~axes:[ axis ] current) (axis + 1) squeezed rest
+  | Squeeze { idx } :: rest ->
+      apply_ops
+        (shrink_axis axis idx (idx + 1) current)
+        (axis + 1) (axis :: squeezed) rest
+  | Gather indices :: rest ->
+      apply_ops (gather_axis axis indices current) (axis + 1) squeezed rest
+  | Take p :: rest ->
+      apply_ops (take ~axis ~indices:p current) (axis + ndim p) squeezed rest
+  | Window { start; len } :: rest ->
+      let current' =
+        if len = 0 then shrink_axis axis 0 0 current
+        else
+          let idx =
+            add (arange (Value.context current) Nx_dtype.int64 0 len 1) start
+          in
+          take ~axis ~indices:idx current
+      in
+      apply_ops current' (axis + 1) squeezed rest
+  | View { start; step; dim_len; _ } :: rest ->
+      let current' =
+        if step = 1 && start = 0 && dim_len = dim axis current then current
+        else if step = 1 then shrink_axis axis start (start + dim_len) current
+        else if step = -1 then (
+          if dim_len = 0 then shrink_axis axis 0 0 current
+          else
+            let sliced =
+              shrink_axis axis (start - dim_len + 1) (start + 1) current
+            in
+            let fb = Array.make (ndim sliced) false in
+            fb.(axis) <- true;
+            B.flip sliced fb)
+        else
+          gather_axis axis
+            (Array.init dim_len (fun i -> start + (i * step)))
+            current
+      in
+      apply_ops current' (axis + 1) squeezed rest
+
+(* The selection of [specs] in [x], [op] naming the surface function. *)
+let select ~op specs x =
+  if views specs then select_view ~op specs x
   else
-    stack ~axis:1 (Array.to_list (coordinates (shape t) (flat_nonzero ~by t)))
+    match apply_ops x 0 [] (parse_specs ~op specs (shape x)) with
+    | result, [] -> result
+    | result, squeezed -> squeeze ~axes:(List.rev squeezed) result
+
+let slice specs x = select ~op:"slice" specs x
+
+let item indices t =
+  let s = shape t in
+  if List.length indices <> Array.length s then
+    invalid_arg
+      (Printf.sprintf "item: need %d indices for %d-d tensor, got %d"
+         (Array.length s) (Array.length s) (List.length indices));
+  read_item ~by:"Nx.item"
+    (select ~op:"item" (List.map (fun i -> I i) indices) t)
+
+(* ───── Functional update ───── *)
+
+(* [set specs v x] is [x] with [v], broadcast to the selection, at the positions
+   [specs] select. One value-carrying operation on [x], chosen from the spec
+   syntax: a mask alone is a [where]; a window (single indices, unit-step
+   ranges, run-time runs, whole axes) is a backend [update]; any gather (a list,
+   positions held in a tensor, a stepped range, a mask beside other specs) is a
+   flat [scatter] over a contiguous copy. *)
+let set specs v x =
+  let x_shape = shape x in
+  let nd = Array.length x_shape in
+  let ctx = Value.context x in
+  let specs_full =
+    let consumed = List.length (List.filter (fun s -> s <> N) specs) in
+    if consumed > nd then invalid_arg "set: too many indices";
+    specs @ List.init (nd - consumed) (fun _ -> A)
+  in
+  let mask_alone =
+    match List.filter (fun s -> s <> A) specs_full with
+    | [ M mask ] ->
+        let k =
+          let rec find i = function
+            | M _ :: _ -> i
+            | _ :: rest -> find (i + 1) rest
+            | [] -> assert false
+          in
+          find 0 specs_full
+        in
+        if ndim mask <> 1 then
+          err "set" "axis %d, boolean mask must be rank 1 but has rank %d" k
+            (ndim mask);
+        if numel mask <> x_shape.(k) then
+          err "set" "axis %d, boolean mask length %d, expected %d" k
+            (numel mask) x_shape.(k);
+        (* [v] must broadcast against [x] with no extent on the mask axis;
+           otherwise it is selection-shaped and goes through the gather. *)
+        let vr = ndim v in
+        let vk = k - (nd - vr) in
+        if vk < 0 || (shape v).(vk) = 1 then Some (k, mask) else None
+    | _ -> None
+  in
+  match mask_alone with
+  | Some (k, mask) ->
+      let mshape = Array.make nd 1 in
+      mshape.(k) <- x_shape.(k);
+      where
+        (broadcast_to x_shape (reshape mshape mask))
+        (broadcast_to x_shape v) x
+  | None ->
+      let ops = parse_specs ~op:"set" specs_full x_shape in
+      let sel_shape =
+        Array.concat
+          (List.map
+             (function
+               | New_axis -> [| 1 |]
+               | Squeeze _ -> [||]
+               | Gather idx -> [| Array.length idx |]
+               | Take p -> shape p
+               | View { dim_len; _ } -> [| dim_len |]
+               | Window { len; _ } -> [| len |])
+             ops)
+      in
+      let v = broadcast_to sel_shape v in
+      let axis_ops = List.filter (fun op -> op <> New_axis) ops in
+      let is_window =
+        List.for_all
+          (function
+            | Squeeze _ | Window _ -> true
+            | View { step; _ } -> step = 1 || step = -1
+            | Gather _ | Take _ | New_axis -> false)
+          axis_ops
+      in
+      if array_prod sel_shape = 0 then x
+      else if is_window then begin
+        let window_shape =
+          Array.of_list
+            (List.map
+               (function
+                 | Squeeze _ -> 1
+                 | View { dim_len; _ } -> dim_len
+                 | Window { len; _ } -> len
+                 | Gather _ | Take _ | New_axis -> assert false)
+               axis_ops)
+        in
+        let corners =
+          List.map
+            (function
+              | Squeeze { idx } -> `Int idx
+              | View { start; step; dim_len; _ } ->
+                  `Int (if step = 1 then start else start - dim_len + 1)
+              | Window { start; _ } -> `Tensor start
+              | Gather _ | Take _ | New_axis -> assert false)
+            axis_ops
+        in
+        let starts =
+          if
+            List.for_all
+              (function `Int _ -> true | `Tensor _ -> false)
+              corners
+          then
+            create ctx Nx_dtype.int64 [| nd |]
+              (Array.of_list
+                 (List.map
+                    (function
+                      | `Int i -> Int64.of_int i | `Tensor _ -> assert false)
+                    corners))
+          else
+            stack ~axis:0
+              (List.map
+                 (function
+                   | `Int i -> scalar ctx Nx_dtype.int64 (Int64.of_int i)
+                   | `Tensor s -> s)
+                 corners)
+        in
+        let v = reshape window_shape v in
+        let flips =
+          Array.of_list
+            (List.map
+               (function View { step = -1; _ } -> true | _ -> false)
+               axis_ops)
+        in
+        let v = if Array.exists Fun.id flips then B.flip v flips else v in
+        B.update x ~starts v
+      end
+      else begin
+        let strides = Shape.c_contiguous_strides x_shape in
+        (* Each axis' positions, shaped as its part of the selection, and
+           whether they are held in data: unchecked, maybe repeated. *)
+        let positions =
+          List.map
+            (function
+              | Squeeze { idx } ->
+                  (scalar ctx Nx_dtype.int64 (Int64.of_int idx), false)
+              | View { start; stop; step; _ } ->
+                  (arange ctx Nx_dtype.int64 start stop step, false)
+              | Gather indices ->
+                  let seen = Hashtbl.create (Array.length indices) in
+                  Array.iter
+                    (fun i ->
+                      if Hashtbl.mem seen i then
+                        err "set" "index %d is listed twice" i;
+                      Hashtbl.replace seen i ())
+                    indices;
+                  ( create ctx Nx_dtype.int64
+                      [| Array.length indices |]
+                      (Array.map Int64.of_int indices),
+                    false )
+              | Window { start; len } ->
+                  (add (arange ctx Nx_dtype.int64 0 len 1) start, false)
+              | Take p -> (p, true)
+              | New_axis -> assert false)
+            axis_ops
+        in
+        let target_shape =
+          Array.concat (List.map (fun (p, _) -> shape p) positions)
+        in
+        let target_rank = Array.length target_shape in
+        (* The flat position of each selected element, and where positions held
+           in data lie in their axes. *)
+        let flat_idx = ref (scalar ctx Nx_dtype.int64 0L) in
+        let inside = ref None in
+        let tdim = ref 0 in
+        List.iteri
+          (fun i (p, held) ->
+            let r = ndim p in
+            let p =
+              if r = 0 then p
+              else begin
+                let rs = Array.make target_rank 1 in
+                Array.blit (shape p) 0 rs !tdim r;
+                reshape rs p
+              end
+            in
+            let stride = Int64.of_int strides.(i) in
+            let weighted =
+              if stride = 1L then p
+              else mul p (scalar ctx Nx_dtype.int64 stride)
+            in
+            flat_idx := add !flat_idx weighted;
+            (if held then
+               let ok =
+                 logical_and (greater_equal_s p 0L)
+                   (less_s p (Int64.of_int x_shape.(i)))
+               in
+               inside :=
+                 Some
+                   (match !inside with
+                   | None -> ok
+                   | Some o -> logical_and o ok));
+            tdim := !tdim + r)
+          positions;
+        (* A write at a position outside its axis is dropped: its flat position
+           moves past the end, where the scatter drops it. *)
+        let flat_idx =
+          match !inside with
+          | None -> !flat_idx
+          | Some ok ->
+              where ok !flat_idx
+                (scalar ctx Nx_dtype.int64 (Int64.of_int (numel x)))
+        in
+        let x_flat = reshape [| numel x |] x in
+        let y_flat =
+          reshape [| array_prod target_shape |] (reshape target_shape v)
+        in
+        let result =
+          B.scatter ~mode:`Set ~unique:(Option.is_none !inside) x_flat
+            ~indices:(reshape [| numel flat_idx |] flat_idx)
+            ~updates:y_flat ~axis:0
+        in
+        reshape x_shape result
+      end
 
 (* ───── Splitting ───── *)
 
@@ -6180,6 +6206,5 @@ module Infix = struct
   let ( *@ ) a b = matmul a b
   let ( /@ ) = solve
   let ( **@ ) = matrix_power
-  let ( .%{} ) x indices = get indices x
   let ( .${} ) x slice_def = slice slice_def x
 end

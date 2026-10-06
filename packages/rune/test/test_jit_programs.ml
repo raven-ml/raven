@@ -870,12 +870,18 @@ let rec program ctx dt s : expr Gen.t =
           in
           map (fun a -> Take (None, i, a)) (through dt source)
       | Some ax ->
-          (* Indices of any shape, read in C order along the axis. *)
+          (* Indices of rank 0 to 2, whose shape replaces the source's axis
+             [ax]: they are the [k] axes of [s] from [ax]. *)
+          let r = Array.length s in
+          let* k = int_range 0 (Int.min 2 (r - ax)) in
           let* d = int_range 0 3 in
-          let source = Array.mapi (fun i x -> if i = ax then d else x) s in
+          let shape = Array.sub s ax k in
+          let source =
+            Array.concat
+              [ Array.sub s 0 ax; [| d |]; Array.sub s (ax + k) (r - ax - k) ]
+          in
           let indices = Gen.map Float.of_int (int_range (-2) (d + 1)) in
-          let* shape = of_numel s.(ax) in
-          let* values = array ~size:(constant s.(ax)) indices in
+          let* values = array ~size:(constant (numel shape)) indices in
           let* capture = bool in
           let i =
             Leaf

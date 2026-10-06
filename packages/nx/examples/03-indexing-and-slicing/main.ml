@@ -61,7 +61,7 @@ let () =
   let high_math = greater_s math_scores 85.0 in
   Printf.printf "Math > 85 mask: %s\n" (to_string high_math);
 
-  let top_students = compress ~axis:0 ~condition:high_math grades in
+  let top_students = grades.${[ M high_math ]} in
   Printf.printf "Students with Math > 85:\n%s\n\n" (to_string top_students);
 
   (* where: replace failing grades (<60) with 60. *)
@@ -70,8 +70,6 @@ let () =
   in
   Printf.printf "After floor at 60:\n%s\n\n" (to_string passing);
 
-  (* take: select specific students by index. *)
-  let picks =
-    take ~axis:0 ~indices:(create int64 [| 3 |] [| 0L; 2L; 4L |]) grades
-  in
+  (* T: select students by positions held in a tensor. *)
+  let picks = grades.${[ T (create int64 [| 3 |] [| 0L; 2L; 4L |]) ]} in
   Printf.printf "Students 0, 2, 4:\n%s\n" (to_string picks)

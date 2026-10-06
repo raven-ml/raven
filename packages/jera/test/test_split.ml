@@ -127,7 +127,7 @@ let march_tests =
           (list (array int))
           [ [| 3; 2 |]; [| 3; 2 |] ]
           [ Nx.shape q; Nx.shape p ];
-        equal (Oracle.tensor ()) (vec [| 1.; 2. |]) (Nx.get [ 0 ] q));
+        equal (Oracle.tensor ()) (vec [| 1.; 2. |]) (Nx.slice [ Nx.I 0 ] q));
     test "an interval of n steps is n steps with merged kicks" (fun () ->
         let s0 = (vec [| 1.; -0.4 |], vec [| 0.2; 0.9 |]) in
         let at = vec [| 0.; 0.75 |] in
@@ -140,7 +140,7 @@ let march_tests =
         let q, p =
           Split.march state Split.yoshida4 ~steps:5 ~kick ~drift ~at s0
         in
-        equal (close ()) stepped (Nx.get [ 1 ] q, Nx.get [ 1 ] p));
+        equal (close ()) stepped (Nx.slice [ Nx.I 1 ] q, Nx.slice [ Nx.I 1 ] p));
     test "one time is the start alone" (fun () ->
         let q, _ =
           Split.march state Split.leapfrog ~steps:2 ~kick ~drift
@@ -158,9 +158,9 @@ let march_tests =
         let q', _ =
           Split.march state Split.leapfrog ~steps:4 ~kick ~drift
             ~at:(vec [| 1.; 0. |])
-            (Nx.get [ 1 ] q, Nx.get [ 1 ] p)
+            (Nx.slice [ Nx.I 1 ] q, Nx.slice [ Nx.I 1 ] p)
         in
-        equal (Oracle.tensor ~rel:1e-13 ()) (scalar 1.) (Nx.get [ 1 ] q'));
+        equal (Oracle.tensor ~rel:1e-13 ()) (scalar 1.) (Nx.slice [ Nx.I 1 ] q'));
   ]
 
 (* The position at t = 1 as a function of the initial position and the end time,
@@ -171,7 +171,7 @@ let final q0 =
       ~at:(vec [| 0.; 0.5; 1. |])
       (q0, Nx.zeros_like q0)
   in
-  Nx.sum (Nx.get [ 2 ] q)
+  Nx.sum (Nx.slice [ Nx.I 2 ] q)
 
 let final_at t1 =
   let at = Nx.concatenate ~axis:0 [ vec [| 0. |]; Nx.reshape [| 1 |] t1 ] in
@@ -179,7 +179,7 @@ let final_at t1 =
     Split.march state Split.leapfrog ~steps:16 ~kick ~drift ~at
       (scalar 1., scalar 0.)
   in
-  Nx.sum (Nx.get [ 1 ] q)
+  Nx.sum (Nx.slice [ Nx.I 1 ] q)
 
 let transformation_tests =
   [
@@ -204,7 +204,7 @@ let transformation_tests =
         let one q = final (Nx.reshape [| 1 |] q) in
         equal
           (Oracle.tensor ~rel:1e-15 ())
-          (Nx.stack (List.init 3 (fun i -> one (Nx.get [ i ] q0))))
+          (Nx.stack (List.init 3 (fun i -> one (Nx.slice [ Nx.I i ] q0))))
           (Rune.vmap' one q0));
   ]
 

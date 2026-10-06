@@ -26,7 +26,7 @@ let ms () =
   Nx.create f64 [| 2; 2; 3 |]
     [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |]
 
-let lane i x = Nx.get [ i ] x
+let lane i x = Nx.slice [ Nx.I i ] x
 let stack n f = Nx.stack (List.init n f)
 let close = array (float_rel ~rel:1e-12 ~abs:1e-14)
 

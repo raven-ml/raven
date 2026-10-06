@@ -101,7 +101,7 @@ let unflatten m like v =
   Nx.Ptree.map (M.coords m)
     (fun _ (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t ->
       let n = Nx.numel t in
-      let piece = Nx.shrink [| (!offset, !offset + n) |] v in
+      let piece = Nx.slice [ Nx.R (!offset, !offset + n) ] v in
       offset := !offset + n;
       Nx.reshape (Nx.shape t) (Nx.cast (Nx.dtype t) piece))
     like
@@ -432,7 +432,7 @@ let coordinate_shapes =
           let c = M.from_prior triple ~n:2 (Nx.Rng.key 0) in
           let c =
             Nx.Ptree.map (M.coords triple)
-              (fun _ t -> Nx.shrink [| (0, 2); (0, 2) |] t)
+              (fun _ t -> Nx.slice [ Nx.R (0, 2); Nx.R (0, 2) ] t)
               c
           in
           raises
@@ -445,7 +445,7 @@ let coordinate_shapes =
           let c = M.from_prior triple ~n:1 (Nx.Rng.key 0) in
           let c =
             Nx.Ptree.map (M.coords triple)
-              (fun _ t -> Nx.shrink [| (0, 1); (0, 3) |] t)
+              (fun _ t -> Nx.slice [ Nx.R (0, 1); Nx.R (0, 3) ] t)
               c
           in
           raises
@@ -620,7 +620,7 @@ let inits =
               :> Nx.float64_t schools)
           in
           equal (array float_exact) (floats c2.theta)
-            (floats (Nx.shrink [| (0, 2); (0, 8) |] c4.theta)));
+            (floats (Nx.slice [ Nx.R (0, 2); Nx.R (0, 8) ] c4.theta)));
       test "a prior start is finite" (fun () ->
           let c =
             M.init ~from:M.Init.prior eight_schools y ~chains:3 (Nx.Rng.key 4)
@@ -661,7 +661,7 @@ let inits =
               :> Nx.float64_t schools)
           in
           equal (array float_exact) (floats a.mu)
-            (floats (Nx.shrink [| (0, 2) |] b.mu)));
+            (floats (Nx.slice [ Nx.R (0, 2) ] b.mu)));
     ]
 
 let fixed =

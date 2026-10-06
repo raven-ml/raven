@@ -23,7 +23,7 @@ let series seed shape =
 
 let w0 () = series 1 [| 3; 3 |]
 let h0 () = vec [| 0.1; -0.2; 0.3 |]
-let lane i x = Nx.get [ i ] x
+let lane i x = Nx.slice [ Nx.I i ] x
 let stack n f = Nx.stack (List.init n f)
 let zero () = Nx.zeros f64 [||]
 let cell w h x = Nx.tanh (Nx.add (Nx.matmul w h) x)

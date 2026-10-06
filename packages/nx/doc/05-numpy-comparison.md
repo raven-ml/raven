@@ -170,7 +170,7 @@ let element = Nx.item [0; 1] arr
 let arr' = Nx.set [I 0; I 1] (Nx.scalar Nx.float32 5.0) arr
 
 (* Get a slice/subarray *)
-let row = Nx.get [0] arr
+let row = Nx.slice [I 0] arr
 ```
 
 **NumPy:**
@@ -315,7 +315,7 @@ first. `Nx.unique` numbers groups in order of first appearance, where
 ```ocaml
 (* Positions where a mask holds, and the elements there *)
 let hits = Nx.positions mask
-let kept = Nx.compress ~condition:mask x
+let kept = Nx.slice [M mask] x
 
 (* Sort by a, then by b descending *)
 let perm =

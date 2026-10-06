@@ -3527,6 +3527,14 @@ thread.
 
 ### Nx
 
+- **Breaking:** every index is an array of positions whose shape replaces its
+  axis. `Nx.take ~axis` gives the axis its indices' shape, so a 0-d index
+  drops it and an n-d one keeps its shape; it gave one axis of their count.
+  The new index `T p` selects the positions held in a tensor in `slice` and
+  `set`, where repeated positions keep the last write and positions outside
+  the axis read zero and drop their write. `Nx.get l` is `slice` of `I`s,
+  `shrink` is `slice` of `R`s, `compress` and `extract` are `slice` with `M`,
+  `nonzero` of a 1-D mask is `positions`, and `argwhere` and `.%{}` are gone.
 - **Breaking:** `Nx_dtype.kind dt` is the kind of number a dtype holds,
   `Float`, `Complex`, `Signed`, `Unsigned` or `Boolean`, and its `Float` arm
   makes a tensor of any dtype a float tensor. `Nx_dtype.is_float`,

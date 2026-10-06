@@ -83,6 +83,12 @@ let pp_index ppf (i : Nx.index) =
   match i with
   | I i -> Format.fprintf ppf "I %d" i
   | L l -> Format.fprintf ppf "L [%a]" ints l
+  | T p ->
+      Format.fprintf ppf "T %a [%a]" pp_shape (Nx.shape p)
+        (Format.pp_print_seq
+           ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+           (fun ppf -> Format.fprintf ppf "%Ld"))
+        (Array.to_seq (Nx.to_array p))
   | R (a, b) -> Format.fprintf ppf "R (%d, %d)" a b
   | Rs (a, b, s) -> Format.fprintf ppf "Rs (%d, %d, %d)" a b s
   | A -> Format.pp_print_string ppf "A"
@@ -673,7 +679,13 @@ module Ref = struct
   (* Indexing. [R] and [Rs] clamp their bounds into the axis as Python slices
      do, which nx.mli does not state. *)
 
-  type sel = Keep of int array | Drop of int | New
+  (* [Held (p, s)] is positions [p] in C order of shape [s], each in its axis:
+     the reference has no element to read outside it. *)
+  type sel =
+    | Keep of int array
+    | Drop of int
+    | New
+    | Held of int array * int array
 
   let index dim i =
     let i' = if i < 0 then i + dim else i in
@@ -697,6 +709,11 @@ module Ref = struct
     | R (a, b) -> Keep (range dim a b 1)
     | Rs (a, b, s) -> Keep (range dim a b s)
     | L l -> Keep (Array.of_list (List.map (index dim) l))
+    | T t ->
+        let p = Array.map Int64.to_int (Nx.to_array t) in
+        if Array.exists (fun i -> i < 0 || i >= dim) p then
+          invalid_arg "Ref: a T position outside its axis";
+        Held (p, Nx.shape t)
     | M m ->
         if Nx.ndim m <> 1 || Nx.numel m <> dim then invalid_arg "slice";
         let bits = Nx.to_array m in
@@ -725,10 +742,14 @@ module Ref = struct
     in
     let sels = go 0 specs in
     let shape =
-      List.filter_map
-        (function
-          | Keep p -> Some (Array.length p) | Drop _ -> None | New -> Some 1)
-        sels
+      Array.concat
+        (List.map
+           (function
+             | Keep p -> [| Array.length p |]
+             | Drop _ -> [||]
+             | New -> [| 1 |]
+             | Held (_, s) -> s)
+           sels)
     in
     let source idx =
       let k = ref 0 in
@@ -742,12 +763,17 @@ module Ref = struct
             | Drop i -> Some i
             | New ->
                 incr k;
-                None)
+                None
+            | Held (p, s) ->
+                let r = Array.length s in
+                let i = p.(ravel s (Array.sub idx !k r)) in
+                k := !k + r;
+                Some i)
           sels
       in
       Array.of_list src
     in
-    (sels, Array.of_list shape, source)
+    (sels, shape, source)
 
   let slice specs t =
     let _, shape, source = selection specs t in
@@ -776,17 +802,23 @@ module Ref = struct
     if List.length indices <> ndim t then invalid_arg "item";
     get t (Array.of_list (List.mapi (fun d i -> index t.shape.(d) i) indices))
 
-  let take ?axis:a ~zero indices t =
+  (* [take ?axis ~zero ~shape indices t]: [indices] in C order of [shape]
+     replace axis [a]. *)
+  let take ?axis:a ~zero ~shape:s indices t =
     let t, a = flat_or_axis t a in
-    let n = t.shape.(a) in
-    let shape = Array.copy t.shape in
-    shape.(a) <- Array.length indices;
+    let n = t.shape.(a) and r = Array.length s in
+    let rest = ndim t - a - 1 in
+    let shape =
+      Array.concat [ Array.sub t.shape 0 a; s; Array.sub t.shape (a + 1) rest ]
+    in
     init shape (fun idx ->
-        let k = indices.(idx.(a)) in
+        let k = indices.(ravel s (Array.sub idx a r)) in
         if k < 0 || k >= n then zero
         else
-          let src = Array.copy idx in
-          src.(a) <- k;
+          let src =
+            Array.concat
+              [ Array.sub idx 0 a; [| k |]; Array.sub idx (a + r) rest ]
+          in
           get t src)
 
   let compress ?axis:a condition t =

@@ -181,15 +181,13 @@ let families =
         Nx.add a (Nx.transpose (Nx.contiguous (Nx.transpose b))));
     f "a flip and a pad" (fun a b ->
         Nx.add a
-          (Nx.shrink
-             (Array.map (fun n -> (1, n + 1)) (Nx.shape b))
+          (Nx.slice
+             (Array.to_list (Array.map (fun n -> Nx.R (1, n + 1)) (Nx.shape b)))
              (Nx.pad (Array.map (fun _ -> (1, 1)) (Nx.shape b)) 0. (Nx.flip b))));
     f "a concatenation sliced back" (fun a b ->
         Nx.add a
-          (Nx.shrink
-             (Array.mapi
-                (fun i n -> if i = 0 then (n, 2 * n) else (0, n))
-                (Nx.shape b))
+          (Nx.slice
+             [ Nx.R (Nx.dim 0 b, 2 * Nx.dim 0 b) ]
              (Nx.concatenate ~axis:0 [ a; b ])));
     f "a cast to int32 and back" (fun a b ->
         Nx.add a (Nx.cast Nx.float32 (Nx.cast Nx.int32 b)));

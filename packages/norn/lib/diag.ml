@@ -52,8 +52,8 @@ let ebfmi (type f) (s : f Stats.t Draws.t) =
   if n < 2 then invalid_arg "Norn.Diag.ebfmi: chains of fewer than two draws";
   let diff =
     Nx.sub
-      (Nx.shrink [| (0, (Nx.shape e).(0)); (1, n) |] e)
-      (Nx.shrink [| (0, (Nx.shape e).(0)); (0, n - 1) |] e)
+      (Nx.slice [ Nx.R (0, (Nx.shape e).(0)); Nx.R (1, n) ] e)
+      (Nx.slice [ Nx.R (0, (Nx.shape e).(0)); Nx.R (0, n - 1) ] e)
   in
   Nx.div (Nx.mean ~axes:[ 1 ] (Nx.square diff)) (Nx.var ~axes:[ 1 ] ~ddof:1 e)
 

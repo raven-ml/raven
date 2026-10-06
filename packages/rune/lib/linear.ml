@@ -230,9 +230,7 @@ let unbroadcast ct shape =
    [pad_axis ~axis (lo, hi) x] is [x] with [lo] and [hi] zeros around it along
    [axis]. *)
 let shrink_axis ~axis (lo, hi) x =
-  Nx.shrink
-    (Array.mapi (fun i d -> if i = axis then (lo, hi) else (0, d)) (Nx.shape x))
-    x
+  Nx.slice (List.init axis (fun _ -> Nx.A) @ [ Nx.R (lo, hi) ]) x
 
 let pad_axis ~axis (lo, hi) x =
   Nx.pad
@@ -330,8 +328,11 @@ let transpose_op : type a b.
         (Nx.flip ~axes:[ axis ] (Nx.cumsum ~axis (Nx.flip ~axes:[ axis ] ct)))
   | Pad (padding, _, x) ->
       add cts x
-        (Nx.shrink
-           (Array.mapi (fun i (lo, _) -> (lo, lo + (Nx.shape x).(i))) padding)
+        (Nx.slice
+           (Array.to_list
+              (Array.mapi
+                 (fun i (lo, _) -> Nx.R (lo, lo + (Nx.shape x).(i)))
+                 padding))
            ct)
   | Cat (axis, xs) ->
       ignore
@@ -576,13 +577,7 @@ let lanes t axis x =
           Nx.sum ~axes:[ 0 ] (Construct.perform (Lanes (axis, ct)))
         in
         let index = Construct.perform (Lane_index (Some axis)) in
-        [
-          Nx.P
-            (Nx.reshape shape
-               (Nx.take ~axis:0
-                  ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 index))
-                  summed));
-        ]
+        [ Nx.P (Nx.take ~axis:0 ~indices:(Nx.cast Nx.int64 index) summed) ]
     | _ -> assert false (* One output. *)
   in
   match call t [ Nx.P x ] pullback [ Nx.P like ] with

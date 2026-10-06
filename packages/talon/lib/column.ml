@@ -470,7 +470,7 @@ let rec reader : type a. a Type.t -> t -> a reader =
       { get; bad = (if checked then Some bad else None) }
   | Tensor (dt, _), Fixed p ->
       let x = Nx.unpack dt p in
-      { get = (fun i -> Nx.copy (Nx.get [ i ] x)); bad = None }
+      { get = (fun i -> Nx.copy (Nx.slice [ Nx.I i ] x)); bad = None }
   | Ext _, _ ->
       let bad _ = Some "an extension value is read through its declaration" in
       { get = (fun _ -> assert false); bad = Some bad }
@@ -620,8 +620,7 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
 (* Structural operations *)
 
 let rows_of_tensor x ~offset ~length =
-  let range i d = if i = 0 then (offset, offset + length) else (0, d) in
-  Nx.shrink (Array.mapi range (Nx.shape x)) x
+  Nx.slice [ Nx.R (offset, offset + length) ] x
 
 let rec sub c ~offset ~length =
   if offset < 0 || length < 0 || offset + length > c.length then
@@ -631,16 +630,17 @@ let rec sub c ~offset ~length =
     match (c.validity, known c) with
     | None, _ | _, Some 0 -> None
     | Some v, Some n when n = c.length ->
-        Some (counted (Nx.shrink [| (offset, offset + length) |] v.bits) length)
+        Some
+          (counted (Nx.slice [ Nx.R (offset, offset + length) ] v.bits) length)
     | Some v, _ ->
-        Some (unread (Nx.shrink [| (offset, offset + length) |] v.bits))
+        Some (unread (Nx.slice [ Nx.R (offset, offset + length) ] v.bits))
   in
   let data =
     match c.data with
     | Fixed (P x) -> Fixed (P (rows_of_tensor x ~offset ~length))
     | Bytes r -> Bytes (Nx_ragged.sub r ~offset ~length)
     | List { offsets; child } ->
-        let offsets = Nx.shrink [| (offset, offset + length + 1) |] offsets in
+        let offsets = Nx.slice [ Nx.R (offset, offset + length + 1) ] offsets in
         List { offsets; child }
     | Fields cs -> Fields (List.map (sub ~offset ~length) cs)
   in
@@ -671,7 +671,7 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
          let elements = sub child ~offset:first ~length:(last - first) in
          if null_count elements > 0 then
            let j = Int64.of_int (first + first_null elements) in
-           let ends = Nx.shrink [| (1, c.length + 1) |] offsets in
+           let ends = Nx.slice [ Nx.R (1, c.length + 1) ] offsets in
            let row =
              Nx.item [] (Nx.sum (Nx.cast Nx.int64 (Nx.less_equal_s ends j)))
            in
@@ -789,7 +789,7 @@ let rec canonical c =
         let offsets' = rebase offsets first in
         let values' =
           if first = 0 && last = Nx.dim 0 values then Nx.contiguous values
-          else Nx.contiguous (Nx.shrink [| (first, last) |] values)
+          else Nx.contiguous (Nx.slice [ Nx.R (first, last) ] values)
         in
         if offsets' == offsets && values' == values then d
         else Bytes (Nx_ragged.v ~offsets:offsets' values')
@@ -851,7 +851,7 @@ and join cs = function
       in
       let parts = List.map part cs in
       let shift (base, tails) (offsets, child) =
-        let tail = Nx.shrink [| (1, Nx.dim 0 offsets) |] offsets in
+        let tail = Nx.slice [ Nx.R (1, Nx.dim 0 offsets) ] offsets in
         (base + child.length, Nx.add_s tail (Int64.of_int base) :: tails)
       in
       let _, tails = List.fold_left shift (0, []) parts in

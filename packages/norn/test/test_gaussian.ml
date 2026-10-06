@@ -24,7 +24,9 @@ let floats x = Nx.to_array x
 let close = float_rel ~rel:1e-10 ~abs:1e-12
 
 (* A position of 4 elements: [a] of 1, [b] of 3. *)
-let of_vec v = { a = Nx.shrink [| (0, 1) |] v; b = Nx.shrink [| (1, 4) |] v }
+let of_vec v =
+  { a = Nx.slice [ Nx.R (0, 1) ] v; b = Nx.slice [ Nx.R (1, 4) ] v }
+
 let to_vec p = Nx.concatenate ~axis:0 [ p.a; p.b ]
 let mean = of_vec (vec [| 0.5; -1.; 2.; 0.25 |])
 let scale = of_vec (vec [| 2.; 0.5; 1.; 3. |])
@@ -36,8 +38,8 @@ let u2 = vec [| 0.5; -0.5; 0.5; -0.5 |]
 let stacked us =
   let m = Nx.stack ~axis:0 us in
   {
-    a = Nx.shrink [| (0, List.length us); (0, 1) |] m;
-    b = Nx.shrink [| (0, List.length us); (1, 4) |] m;
+    a = Nx.slice [ Nx.R (0, List.length us); Nx.R (0, 1) ] m;
+    b = Nx.slice [ Nx.R (0, List.length us); Nx.R (1, 4) ] m;
   }
 
 let variances = vec [| 4.; 0.25 |]
@@ -82,8 +84,8 @@ let laws =
           let lp =
             G.log_density pos g
               {
-                a = Nx.shrink [| (0, 1); (0, 1) |] row;
-                b = Nx.shrink [| (0, 1); (1, 4) |] row;
+                a = Nx.slice [ Nx.R (0, 1); Nx.R (0, 1) ] row;
+                b = Nx.slice [ Nx.R (0, 1); Nx.R (1, 4) ] row;
               }
           in
           equal close (gaussian_log_density x) (Nx.item [ 0 ] lp));

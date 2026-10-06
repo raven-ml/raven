@@ -120,8 +120,7 @@ let apply t ~pos x =
         "Rope.apply: pos must have shape [%d; %d] or [1; %d]" batch seq seq);
   let dt = Nx.dtype x in
   let rows table =
-    let rows = Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] pos) table in
-    Nx.cast dt (Nx.reshape [| Nx.dim 0 pos; 1; seq; half |] rows)
+    Nx.cast dt (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 ~indices:pos table))
   in
   let cos = rows t.cos and sin = rows t.sin in
   let x1 = Nx.slice [ A; A; A; R (0, half) ] x in

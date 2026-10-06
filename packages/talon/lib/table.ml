@@ -129,7 +129,9 @@ let equal t0 t1 =
   let n = t0.rows in
   let same i =
     let w = Key.identity [ Column.concat (parts t0 i @ parts t1 i) ] in
-    let half k = Nx.shrink [| (k * n, (k + 1) * n); (0, Nx.dim 1 w) |] w in
+    let half k =
+      Nx.slice [ Nx.R (k * n, (k + 1) * n); Nx.R (0, Nx.dim 1 w) ] w
+    in
     Nx.item [] (Nx.array_equal (half 0) (half 1))
   in
   Schema.equal t0.schema t1.schema

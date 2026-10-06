@@ -56,8 +56,7 @@ let worst_slot live p =
 
 (* Slot [j] of [v], [[budget] @ lanes @ rest], per lane. *)
 let pick j v =
-  if Nx.ndim j = 0 then
-    Nx.squeeze ~axes:[ 0 ] (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] j) v)
+  if Nx.ndim j = 0 then Nx.take ~axis:0 ~indices:j v
   else
     let j = Nx.unsqueeze ~axes:[ 0 ] j in
     let j =
@@ -159,7 +158,7 @@ let refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
     let put v two =
       let child i =
         Nx.broadcast_to (Nx.shape v)
-          (Nx.unsqueeze ~axes:[ 0 ] (Nx.get [ i ] two))
+          (Nx.unsqueeze ~axes:[ 0 ] (Nx.slice [ Nx.I i ] two))
       in
       Nx.where (widen left v) (child 0) (Nx.where (widen right v) (child 1) v)
     in

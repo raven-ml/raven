@@ -224,8 +224,7 @@ let widths =
       :: List.concat_map (fun d -> [ at d (1, 0); at d (0, 2) ]) (axes_of r)
       @ [ Array.make (n + 1) (0, 0); Array.make n (-1, 0) ])
 
-(* nx.mli states no error for [shrink], so only ranges inside the axes are
-   listed. *)
+(* Ranges inside the axes, one per axis. *)
 let ranges =
   among (arg pp_pairs) t (fun r ->
       let n = Ref.ndim r in
@@ -303,20 +302,32 @@ let repeats =
       @ [ (None, 2) ])
 
 (* nx.mli states no error for [take] on an axis out of bounds, so only axes of
-   the tensor are listed. *)
+   the tensor are listed. Positions come 0-d, 1-d and 2-d, each shape replacing
+   the axis. *)
 let takes =
   among
-    (arg (fun ppf (a, l) -> Format.fprintf ppf "%a at %a" pp_axis a pp_ints l))
+    (arg (fun ppf (a, s, l) ->
+         Format.fprintf ppf "%a at %a of shape %a" pp_axis a pp_ints l pp_ints
+           (Array.to_list s)))
     t
     (fun r ->
       List.concat_map
         (fun a ->
           let dim = r.shape.(a) in
-          [ (Some a, [ dim - 1; 0; -1; dim ]); (Some a, []) ])
+          let l = [ dim - 1; 0; -1; dim ] in
+          [
+            (Some a, [| 4 |], l);
+            (Some a, [| 2; 2 |], l);
+            (Some a, [||], [ dim - 1 ]);
+            (Some a, [| 0 |], []);
+          ])
         (axes_of r)
       @
       let n = Ref.numel r.shape in
-      [ (None, [ n - 1; 0; n; -1 ]) ])
+      [
+        (None, [| 4 |], [ n - 1; 0; n; -1 ]);
+        (None, [| 2; 2 |], [ n - 1; 0; n; -1 ]);
+      ])
 
 let conditions =
   among
@@ -478,7 +489,13 @@ let commands =
       Ref.broadcast_to Nx.broadcast_to;
     command "expand" (expansions ^-> t ^-> makes t) Ref.expand Nx.expand;
     command "pad" (widths ^-> value @-> t ^-> makes t) Ref.pad Nx.pad;
-    command "shrink" (ranges ^-> t ^-> makes t) Ref.shrink Nx.shrink;
+    command "slice by ranges"
+      (ranges ^-> t ^-> makes t)
+      Ref.shrink
+      (fun ranges s ->
+        Nx.slice
+          (Array.to_list (Array.map (fun (a, b) -> Nx.R (a, b)) ranges))
+          s);
     command "squeeze"
       (squeezes ^-> t ^-> makes t)
       (fun axes r -> Ref.squeeze ?axes r)
@@ -502,15 +519,20 @@ let commands =
       (fun (axis, k) s -> Nx.repeat ?axis k s);
     command "take"
       (takes ^-> t ^-> makes t)
-      (fun (axis, l) r -> Ref.take ?axis ~zero:0l (Array.of_list l) r)
-      (fun (axis, l) s -> Nx.take ?axis ~indices:(int64s l) s);
-    command "compress"
+      (fun (axis, shape, l) r ->
+        Ref.take ?axis ~zero:0l ~shape (Array.of_list l) r)
+      (fun (axis, shape, l) s ->
+        Nx.take ?axis ~indices:(Nx.reshape shape (int64s l)) s);
+    command "slice by a mask"
       (conditions ^-> t ^-> makes t)
       (fun (axis, l) r -> Ref.compress ?axis (Array.of_list l) r)
       (fun (axis, l) s ->
-        Nx.compress ?axis
-          ~condition:(Nx.create Nx.bool [| List.length l |] (Array.of_list l))
-          s);
+        let m =
+          Nx.M (Nx.create Nx.bool [| List.length l |] (Array.of_list l))
+        in
+        match axis with
+        | None -> Nx.slice [ m ] (Nx.flatten s)
+        | Some a -> Nx.slice (List.init a (fun _ -> Nx.A) @ [ m ]) s);
     command "sliding_window"
       (windows ^-> t ^-> makes t)
       (fun (axis, window, step) r -> Ref.sliding_window ~axis ~window ~step r)
@@ -534,10 +556,6 @@ let commands =
     command "add" (t ^-> t ^-> makes t) (Ref.map2 Int32.add) Nx.add;
     command "contiguous" (t ^-> makes t) Fun.id Nx.contiguous;
     command "copy" (t ^-> makes t) Fun.id Nx.copy;
-    command "get"
-      (positions ^-> t ^-> makes t)
-      (fun l r -> Ref.slice (List.map (fun i -> Nx.I i) l) r)
-      Nx.get;
     command "item" (positions ^-> t ^-> returns int32) Ref.item Nx.item;
   ]
   @ [

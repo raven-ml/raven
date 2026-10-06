@@ -206,7 +206,7 @@ let cumulative_tests =
         equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (Nx.sin knots) c);
     test "the first row is zero" (fun () ->
         let c = Quad.cumulative r Nx.exp (vec [| 1.; 2. |]) in
-        equal (exact ()) (scalar 0.) (Nx.get [ 0 ] c));
+        equal (exact ()) (scalar 0.) (Nx.slice [ Nx.I 0 ] c));
     test "one knot is a zero integral" (fun () ->
         equal (exact ()) (vec [| 0. |])
           (Quad.cumulative r Nx.exp (vec [| 1. |])));
@@ -215,7 +215,7 @@ let cumulative_tests =
         let c = Quad.cumulative (Quad.Rule.gauss 12) Nx.cos knots in
         equal
           (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
-          (Nx.sub (Nx.sin knots) (Nx.sin (Nx.get [ 0 ] knots)))
+          (Nx.sub (Nx.sin knots) (Nx.sin (Nx.slice [ Nx.I 0 ] knots)))
           c);
     test "no knot raises" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"at least one knot") (fun () ->
@@ -372,7 +372,7 @@ let adaptive_tests =
                   (unit_range p)))
         in
         let g = Rune.grad' integral p in
-        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 1 ] g));
+        equal (Oracle.tensor ()) (scalar 0.) (Nx.slice [ Nx.I 1 ] g));
     test "compiled equals eager" (fun () ->
         let theta = vec [| -2.; 0.5; 3. |] in
         let f t =
@@ -481,7 +481,7 @@ let de_tests =
 (* Cubature *)
 
 (* Each lane's coordinate [k] of points [x] of shape [... @ [d]]. *)
-let coord k x = Nx.get [ k ] (Nx.moveaxis (Nx.ndim x - 1) 0 x)
+let coord k x = Nx.slice [ Nx.I k ] (Nx.moveaxis (Nx.ndim x - 1) 0 x)
 let product x = Nx.prod ~axes:[ Nx.ndim x - 1 ] x
 
 let unit_box lanes d =
