@@ -238,11 +238,9 @@ let variables =
               equal uop (Ops.int 5) five
           | us -> failf "two values, not %d" (List.length us));
       test "is empty for a program of no variable" (fun () ->
-          let prg = program plus_one in
+          let prg = program (scaled_kernel []) in
           equal uops []
-            (Realize.get_call_var_uops
-               (Ops.call prg [ storage 4; storage 4 ])
-               prg));
+            (Realize.get_call_var_uops (Ops.call prg [ storage 1 ]) prg));
     ]
 
 let outs_ins =

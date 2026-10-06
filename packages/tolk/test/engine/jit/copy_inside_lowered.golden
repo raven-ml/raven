@@ -74,7 +74,7 @@
 72 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU:1")
 73 Ops.BUFFER dtypes.char [] ParamArg(slot=7, dtype=dtypes.char, size=256, device="CPU:1")
 74 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=16, device="CPU:1")
-75 Ops.CALL dtypes.void [64, 65, 66, 67, 68, 69, 70] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "copy       64 B,   CPU:1 <- CPU    ", Estimates(lds=64, mem=64), (), None, (), ((0,), (1,))), (("CPU:1",), "E_4_4", Estimates(ops=16, lds=192, mem=192), (), b"$\xb6\xd8\xd71;:\xe8\x15ki\xe8\xa605\x13+\xda\x82\xa8\xa4\x9f\x14]5O\x12%^\xc7\x88U", (), ((0,), (1, 2)))), estimates=Estimates(ops=16, lds=256, mem=256), nargs=6, table=3, inputs=((%71, 0, "CPU:1"), (%72, 0, "CPU:1")), slots=(("CPU:1", 1),), written_bufs=(%73, %74)))
+75 Ops.CALL dtypes.void [64, 65, 66, 67, 68, 69, 70] CallInfo(aux=HCQInfo(device=("CPU:1",), kernels=((("CPU:1",), "copy       64 B,   CPU:1 <- CPU    ", Estimates(lds=64, mem=64), (), None, (), ((0,), (1,))), (("CPU:1",), "E_16", Estimates(ops=16, lds=192, mem=192), (), b"b>-\xc7G\xca0u\xdf\xec\x9b\xb6_\x9b\xb8\x1c&E\xb1\x98g\xfb\xd3\xbb\x96\x1c\xb2\xca\xa6;.k", (), ((0,), (1, 2)))), estimates=Estimates(ops=16, lds=256, mem=256), nargs=6, table=3, inputs=((%71, 0, "CPU:1"), (%72, 0, "CPU:1")), slots=(("CPU:1", 1),), written_bufs=(%73, %74)))
 76 Ops.BINARY dtypes.uchar [] b"\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
 77 Ops.STORE dtypes.void [67, 76]
 78 Ops.BITCAST dtypes.ulong [67] dtypes.ulong
@@ -102,7 +102,7 @@
 100 Ops.GETADDR dtypes.ulong [70] "CPU:1"
 101 Ops.STACK dtypes.ulong [84, 90, 100, 90, 84]
 102 Ops.STORE dtypes.void [99, 101]
-103 Ops.BINARY dtypes.uchar [] b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00"
+103 Ops.BINARY dtypes.uchar [] b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00"
 104 Ops.STORE dtypes.void [70, 103]
 105 Ops.BITCAST dtypes.ulong [70] dtypes.ulong
 106 Ops.STACK dtypes.weakint [2, 51]

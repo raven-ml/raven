@@ -435,6 +435,12 @@ let on_host k = (K.ren k).target.device = "CPU"
 let beyond_host_lanes k amount =
   on_host k && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
 
+(* On the host, a kernel without a reduce takes no upcast but its masked ones.
+   The kernel compiler vectorizes the loop over its outputs itself; upcast lanes
+   copy the body, which keeps a float loop from vectorizing and makes a double
+   one spill, and the compile time grows faster than the body. *)
+let host_elementwise k = on_host k && K.reduceops k = []
+
 (* potentially do more upcasts of non reduce axes based on a heuristic *)
 let upcast_more k =
   let rec loop upcasted_axis =
@@ -614,9 +620,11 @@ let hand_coded_optimizations k =
           (* no more opt if we are grouping *)
           if K.group_for_reduces k = 0 then begin
             upcast_masked k;
-            upcast_more k;
-            unroll k;
-            upcast_one k;
+            if not (host_elementwise k) then begin
+              upcast_more k;
+              unroll k;
+              upcast_one k
+            end;
             if (K.ren k).has_local then locals k
           end;
           k)

@@ -1,94 +1,73 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU:1")
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.CONST dtypes.weakint [] 4
-4 Ops.CAST dtypes.int [3] dtypes.int
-5 Ops.SHRINK dtypes.float [0, 2, 4]
-6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU:1")
-7 Ops.SHRINK dtypes.float [6, 2, 4]
-8 Ops.LOAD dtypes.float [7]
-9 Ops.INDEX dtypes.float [8, 2]
+1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.SUB dtypes.int [2, 1]
+4 Ops.RANGE dtypes.int [3] (0, AxisType.WEAK)
+5 Ops.ADD dtypes.int [1, 4]
+6 Ops.INDEX dtypes.float [0, 5]
+7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU:1")
+8 Ops.INDEX dtypes.float [7, 5]
+9 Ops.LOAD dtypes.float [8]
 10 Ops.CONST dtypes.weakfloat [] 1.0
 11 Ops.CAST dtypes.float [10] dtypes.float
 12 Ops.ADD dtypes.float [9, 11]
-13 Ops.CONST dtypes.weakint [] 1
-14 Ops.CAST dtypes.int [13] dtypes.int
-15 Ops.INDEX dtypes.float [8, 14]
-16 Ops.ADD dtypes.float [15, 11]
-17 Ops.CONST dtypes.weakint [] 2
-18 Ops.CAST dtypes.int [17] dtypes.int
-19 Ops.INDEX dtypes.float [8, 18]
-20 Ops.ADD dtypes.float [19, 11]
-21 Ops.CONST dtypes.weakint [] 3
-22 Ops.CAST dtypes.int [21] dtypes.int
-23 Ops.INDEX dtypes.float [8, 22]
-24 Ops.ADD dtypes.float [23, 11]
-25 Ops.STACK dtypes.float [12, 16, 20, 24]
-26 Ops.STORE dtypes.void [5, 25]
-27 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32))
-28 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
-29 Ops.LINEAR dtypes.void [0, 6, 1, 2, 3, 4, 7, 8, 9, 13, 14, 15, 17, 18, 19, 21, 22, 23, 10, 11, 12, 16, 20, 24, 25, 5, 26, 28]
-30 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+1.0f),(val0[1]+1.0f),(val0[2]+1.0f),(val0[3]+1.0f)};\n}\n"
-31 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+1.0f),(val0[1]+1.0f),(val0[2]+1.0f),(val0[3]+1.0f)};\n}\n"
-32 Ops.PROGRAM dtypes.void [27, 29, 30, 31] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-33 Ops.BUFFER dtypes.char [] ParamArg(slot=11, dtype=dtypes.char, size=512, device="CPU:1")
-34 Ops.CONST dtypes.weakint [] 16
-35 Ops.SHRINK dtypes.char [33, 1, 34]
-36 Ops.BITCAST dtypes.float [35] dtypes.float
-37 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU:1")
-38 Ops.CALL dtypes.void [32, 36, 37] CallInfo()
-39 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
-40 Ops.STORE dtypes.void [39, 6]
-41 Ops.BUFFER dtypes.char [] ParamArg(slot=12, dtype=dtypes.char, size=512, device="CPU")
-42 Ops.SHRINK dtypes.char [41, 1, 34]
-43 Ops.BITCAST dtypes.float [42] dtypes.float
-44 Ops.CALL dtypes.void [40, 43, 36] CallInfo()
-45 Ops.SHRINK dtypes.float [39, 2, 4]
-46 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
-47 Ops.SHRINK dtypes.float [46, 2, 4]
-48 Ops.LOAD dtypes.float [47]
-49 Ops.INDEX dtypes.float [48, 2]
-50 Ops.CONST dtypes.weakfloat [] 2.0
-51 Ops.CAST dtypes.float [50] dtypes.float
-52 Ops.ADD dtypes.float [49, 51]
-53 Ops.INDEX dtypes.float [48, 14]
-54 Ops.ADD dtypes.float [53, 51]
-55 Ops.INDEX dtypes.float [48, 18]
-56 Ops.ADD dtypes.float [55, 51]
-57 Ops.INDEX dtypes.float [48, 22]
-58 Ops.ADD dtypes.float [57, 51]
-59 Ops.STACK dtypes.float [52, 54, 56, 58]
-60 Ops.STORE dtypes.void [45, 59]
-61 Ops.SINK dtypes.void [60, 60, 60, 60] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32))
-62 Ops.SINK dtypes.void [60, 60, 60, 60] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
-63 Ops.LINEAR dtypes.void [39, 46, 1, 2, 3, 4, 47, 48, 49, 13, 14, 53, 17, 18, 55, 21, 22, 57, 50, 51, 52, 54, 56, 58, 59, 45, 60, 62]
-64 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+2.0f),(val0[1]+2.0f),(val0[2]+2.0f),(val0[3]+2.0f)};\n}\n"
-65 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+2.0f),(val0[1]+2.0f),(val0[2]+2.0f),(val0[3]+2.0f)};\n}\n"
-66 Ops.PROGRAM dtypes.void [61, 63, 64, 65] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-67 Ops.CONST dtypes.weakint [] 256
-68 Ops.SHRINK dtypes.char [41, 67, 34]
-69 Ops.BITCAST dtypes.float [68] dtypes.float
-70 Ops.CALL dtypes.void [66, 69, 43] CallInfo()
-71 Ops.STORE dtypes.void [0, 46]
-72 Ops.SHRINK dtypes.char [33, 67, 34]
-73 Ops.BITCAST dtypes.float [72] dtypes.float
-74 Ops.CALL dtypes.void [71, 73, 69] CallInfo()
-75 Ops.CONST dtypes.weakfloat [] 3.0
-76 Ops.CAST dtypes.float [75] dtypes.float
-77 Ops.ADD dtypes.float [9, 76]
-78 Ops.ADD dtypes.float [15, 76]
-79 Ops.ADD dtypes.float [19, 76]
-80 Ops.ADD dtypes.float [23, 76]
-81 Ops.STACK dtypes.float [77, 78, 79, 80]
-82 Ops.STORE dtypes.void [5, 81]
-83 Ops.SINK dtypes.void [82, 82, 82, 82] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32))
-84 Ops.SINK dtypes.void [82, 82, 82, 82] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
-85 Ops.LINEAR dtypes.void [0, 6, 1, 2, 3, 4, 7, 8, 9, 13, 14, 15, 17, 18, 19, 21, 22, 23, 75, 76, 77, 78, 79, 80, 81, 5, 82, 84]
-86 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+3.0f),(val0[1]+3.0f),(val0[2]+3.0f),(val0[3]+3.0f)};\n}\n"
-87 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+3.0f),(val0[1]+3.0f),(val0[2]+3.0f),(val0[3]+3.0f)};\n}\n"
-88 Ops.PROGRAM dtypes.void [83, 85, 86, 87] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-89 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU:1")
-90 Ops.CALL dtypes.void [88, 89, 73] CallInfo()
-91 Ops.LINEAR dtypes.void [38, 44, 70, 74, 90]
+13 Ops.STORE dtypes.void [6, 12]
+14 Ops.END dtypes.void [13, 4]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="E_4", estimates=Estimates(ops=4, lds=32, mem=32), split=(4, 2, 3)) tag=1
+16 Ops.SINK dtypes.void [14] KernelInfo(name="E_4", split=(4, 2, 3)) tag=1
+17 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 11, 3, 4, 5, 8, 9, 6, 12, 13, 14, 16]
+18 Ops.SOURCE dtypes.void [] "\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+1.0f);\n  }\n}\n"
+19 Ops.BINARY dtypes.uchar [] b"\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+1.0f);\n  }\n}\n"
+20 Ops.PROGRAM dtypes.void [15, 17, 18, 19] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+21 Ops.BUFFER dtypes.char [] ParamArg(slot=11, dtype=dtypes.char, size=512, device="CPU:1")
+22 Ops.CONST dtypes.weakint [] 0
+23 Ops.CONST dtypes.weakint [] 16
+24 Ops.SHRINK dtypes.char [21, 22, 23]
+25 Ops.BITCAST dtypes.float [24] dtypes.float
+26 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU:1")
+27 Ops.CALL dtypes.void [20, 25, 26] CallInfo()
+28 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
+29 Ops.STORE dtypes.void [28, 7]
+30 Ops.BUFFER dtypes.char [] ParamArg(slot=12, dtype=dtypes.char, size=512, device="CPU")
+31 Ops.SHRINK dtypes.char [30, 22, 23]
+32 Ops.BITCAST dtypes.float [31] dtypes.float
+33 Ops.CALL dtypes.void [29, 32, 25] CallInfo()
+34 Ops.INDEX dtypes.float [28, 5]
+35 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+36 Ops.INDEX dtypes.float [35, 5]
+37 Ops.LOAD dtypes.float [36]
+38 Ops.CONST dtypes.weakfloat [] 2.0
+39 Ops.CAST dtypes.float [38] dtypes.float
+40 Ops.ADD dtypes.float [37, 39]
+41 Ops.STORE dtypes.void [34, 40]
+42 Ops.END dtypes.void [41, 4]
+43 Ops.SINK dtypes.void [42] KernelInfo(name="E_4", estimates=Estimates(ops=4, lds=32, mem=32), split=(4, 2, 3)) tag=1
+44 Ops.SINK dtypes.void [42] KernelInfo(name="E_4", split=(4, 2, 3)) tag=1
+45 Ops.LINEAR dtypes.void [28, 35, 1, 2, 38, 39, 3, 4, 5, 36, 37, 34, 40, 41, 42, 44]
+46 Ops.SOURCE dtypes.void [] "\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+2.0f);\n  }\n}\n"
+47 Ops.BINARY dtypes.uchar [] b"\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+2.0f);\n  }\n}\n"
+48 Ops.PROGRAM dtypes.void [43, 45, 46, 47] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+49 Ops.CONST dtypes.weakint [] 256
+50 Ops.SHRINK dtypes.char [30, 49, 23]
+51 Ops.BITCAST dtypes.float [50] dtypes.float
+52 Ops.CALL dtypes.void [48, 51, 32] CallInfo()
+53 Ops.STORE dtypes.void [0, 35]
+54 Ops.SHRINK dtypes.char [21, 49, 23]
+55 Ops.BITCAST dtypes.float [54] dtypes.float
+56 Ops.CALL dtypes.void [53, 55, 51] CallInfo()
+57 Ops.CONST dtypes.weakfloat [] 3.0
+58 Ops.CAST dtypes.float [57] dtypes.float
+59 Ops.ADD dtypes.float [9, 58]
+60 Ops.STORE dtypes.void [6, 59]
+61 Ops.END dtypes.void [60, 4]
+62 Ops.SINK dtypes.void [61] KernelInfo(name="E_4", estimates=Estimates(ops=4, lds=32, mem=32), split=(4, 2, 3)) tag=1
+63 Ops.SINK dtypes.void [61] KernelInfo(name="E_4", split=(4, 2, 3)) tag=1
+64 Ops.LINEAR dtypes.void [0, 7, 1, 2, 57, 58, 3, 4, 5, 8, 9, 6, 59, 60, 61, 63]
+65 Ops.SOURCE dtypes.void [] "\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+3.0f);\n  }\n}\n"
+66 Ops.BINARY dtypes.uchar [] b"\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+3.0f);\n  }\n}\n"
+67 Ops.PROGRAM dtypes.void [62, 64, 65, 66] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+68 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU:1")
+69 Ops.CALL dtypes.void [67, 68, 55] CallInfo()
+70 Ops.LINEAR dtypes.void [27, 33, 52, 56, 69]
 

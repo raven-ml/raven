@@ -58,4 +58,7 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     - for a renderer with local indices, global and weak axes of a constant size
       become local: up to three axes, those some access does not index first,
       split by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides
-      them while the workgroup stays within 128 threads. *)
+      them while the workgroup stays within 128 threads.
+
+    A kernel of the host without a reduce takes no upcast after its masked
+    axes: the host's compiler vectorizes the loop over its outputs itself. *)

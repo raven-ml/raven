@@ -646,11 +646,11 @@ let compiles_once_across_domains () =
     programs;
   equal int ~msg:"compilations" 1 (Atomic.get compiled)
 
-(* The heuristic upcasts a 16 by 16 addition, and NOOPT keeps it from it; the
-   kernel is renamed so that no other test compiles it. *)
+(* The heuristic unrolls a sum of 64 rows of 64 by 4, and NOOPT keeps it from
+   it; the kernel is renamed so that no other test compiles it. *)
 let separates_settings () =
-  let add = kernel_of "add_clang" in
-  let k = Ops.replace add ~arg:(Kernel (Ops.kernel_info ~name:"settings" ())) in
+  let sum = kernel_of "sum_clang" in
+  let k = Ops.replace sum ~arg:(Kernel (Ops.kernel_info ~name:"settings" ())) in
   let optimised = Codegen.to_program k clang in
   let unoptimised =
     Setting.context
@@ -658,7 +658,10 @@ let separates_settings () =
       (fun () -> Codegen.to_program k clang)
   in
   let applied p = (kernel_info (Ops.nth p 0)).applied_opts in
-  equal (list Kernel_opts.opt) ~msg:"with the heuristic" [ upcast4 ]
+  let unroll4 =
+    Opt.Split { axis = 1; amount = 4; target = Unroll; top = false }
+  in
+  equal (list Kernel_opts.opt) ~msg:"with the heuristic" [ unroll4 ]
     (applied optimised);
   equal (list Kernel_opts.opt) ~msg:"under NOOPT" [] (applied unoptimised)
 
@@ -1054,10 +1057,10 @@ let programs =
           equal string
             (String.concat "\n"
                [
-                 "#define E_64_4 E_64_4_";
+                 "#define E_256 E_256_";
                  source p;
-                 "#undef E_64_4";
-                 "void E_64_4(void **b, const long long *v) { E_64_4_(b[0], \
+                 "#undef E_256";
+                 "void E_256(void **b, const long long *v) { E_256_(b[0], \
                   b[1], b[2], v[0], v[1]); }";
                ])
             (binary_of p));
@@ -2057,16 +2060,21 @@ let vector_select_kernel () =
 
 (* An unfold of a float16 whose windows all read padding, as rune lowered it
    before it lowered such an unfold to zeros: a weak 0. stored into each
-   element. Upcast, the store is one store of four lanes, and the weak lowering
-   casts the float32 stack of the constant's lanes to half, which tinygrad
-   renders as a cast between vector types that Clang refuses. *)
+   element. Upcast whole, the store is one store of four lanes, and the weak
+   lowering casts the float32 stack of the constant's lanes to half, which
+   tinygrad renders as a cast between vector types that Clang refuses. *)
 let half_zeros_kernel () =
   let open Ops.O in
   let out = Ops.param ~shape:[ Int 4 ] 0 Float16 in
   let r0 = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
   let r1 = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
   let store = Ops.store (Ops.index out [ (r0 * int 2) + r1 ]) (float 0.) in
-  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ r0; r1 ] ]
+  let whole =
+    Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
+    [ Ops.end_ store [ r0; r1 ] ]
 
 let refused_on_a_cast kernel () =
   Setting.context

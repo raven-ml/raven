@@ -92,6 +92,12 @@ def tensors(build, opts=None, index=None):
     return make
 
 
+def vectors(build, axis=0):
+    """`tensors(build)`, upcast by 4 along `axis` on the host, whose heuristic
+    upcasts no kernel without a reduce: the case renders vectors there too."""
+    return lambda ren: tensors(build, opts=[up(axis, 4)] if ren.target.device == "CPU" else None)(ren)
+
+
 def lowered(sink, ren, optimize=False):
     full = full_rewrite_to_sink(sink, ren, optimize=optimize)
     return line_rewrite(linearize(full), pm_linearize_cleanups + pm_alloc_to_buf)
@@ -124,7 +130,7 @@ def mixed(dt):
         x, y = empty(16), empty(16, dtype=dt)
         out = x.cast(dt) & y if dt == dtypes.bool else (x.cast(dt) + y) * 3
         return [out.cast(dtypes.float)]
-    return tensors(build)
+    return vectors(build)
 
 
 def transcendental(dt):
@@ -139,7 +145,7 @@ def specials(dt):
     def build():
         x = empty(16, dtype=dt)
         return [(x > 0).where(x, float("inf")) + (x < -1).where(float("nan"), x) + (x < 1).where(float("-inf"), x)]
-    return tensors(build)
+    return vectors(build)
 
 
 def chain(op):
@@ -367,14 +373,14 @@ def dtype_name(dt): return dt.name.replace(" ", "_").replace("__", "")
 
 def common(ren):
     cases = [
-        ("add", tensors(lambda: [empty(64) + empty(64)])),
+        ("add", vectors(lambda: [empty(64) + empty(64)])),
         ("sum", tensors(lambda: [empty(256).sum()])),
         ("matmul", tensors(lambda: [empty(16, 16) @ empty(16, 16)])),
         ("matmul_upcasted", tensors(lambda: [empty(16, 16) @ empty(16, 16)], opts=[up(0, 4), up(1, 4)])),
-        ("padded", tensors(lambda: [empty(14).pad((1, 1)) + 1])),
-        ("where_max", tensors(lambda: [((a := empty(16)) < (b := empty(16))).where(a, a.maximum(b))])),
-        ("bitcast", tensors(lambda: [empty(16).bitcast(dtypes.int) + 1])),
-        ("idiv", tensors(lambda: [(a := empty(16, dtype=dtypes.int)) // 7 + a % 7 + a // empty(16, dtype=dtypes.int)])),
+        ("padded", vectors(lambda: [empty(14).pad((1, 1)) + 1])),
+        ("where_max", vectors(lambda: [((a := empty(16)) < (b := empty(16))).where(a, a.maximum(b))])),
+        ("bitcast", vectors(lambda: [empty(16).bitcast(dtypes.int) + 1])),
+        ("idiv", vectors(lambda: [(a := empty(16, dtype=dtypes.int)) // 7 + a % 7 + a // empty(16, dtype=dtypes.int)])),
         ("shrunk", tensors(lambda: [empty(64, 4)[:n.bind(10)] + 1])),
         ("rand", tensors(lambda: [Tensor.rand(16, device="NULL")], index=-1)),
         ("inline_const_alu", ast(inline_const_alu)),
@@ -423,7 +429,7 @@ def cases_of(name):
             ("call_out", ast(call_out)), ("call_ret", ast(call_ret)), ("call_stack", ast(call_stack)),
             ("register_cast", raw(register_cast)),
             # The kernels of null/test_compile_failures.py
-            *[(f"interpolate_atari_{i}", tensors(lambda: [atari().interpolate((64, 64))], index=i)) for i in range(2)],
+            *[(f"interpolate_atari_{i}", tensors(lambda: [atari().interpolate((64, 64))], opts=[up(1, 4)], index=i)) for i in range(2)],
             ("add_max_uchar", tensors(lambda: [(empty(1024, dtype=dtypes.uint8) + empty(1024, dtype=dtypes.uint8)).max()])),
             ("table", ast(binary))]
     if name in ("metal", "cuda", "hip"):

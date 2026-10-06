@@ -209,7 +209,7 @@ PROGRAMS = {
 # The kernels of tinygrad's LLaMA with the old tolk's goldens' sizes, by the name
 # tinygrad gives each once optimised for Clang.
 LLAMA = {"E_8_2": "llama_embedding", "r_2_8": "llama_rmsnorm", "r_2_8_8": "llama_ffn_gate",
-         "E_2_2_4": "llama_vector_scale", "r_2_32_8": "llama_output_projection"}
+         "E_2_8": "llama_vector_scale", "r_2_32_8": "llama_output_projection"}
 
 
 def llama_kernels():

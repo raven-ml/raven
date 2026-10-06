@@ -11,11 +11,12 @@ sources are their results, in the same order (`moves_output`).
 from golden import graph, table
 from graph import kernels, stage
 from tinygrad import Tensor, dtypes
+from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad.codegen.late.gater import pm_move_gates_from_index
 from tinygrad.dtype import Invalid
 from tinygrad.helpers import Target
 from tinygrad.renderer.cstyle import ClangRenderer, CUDARenderer
-from tinygrad.uop.ops import KernelInfo, Ops, UOp, graph_rewrite
+from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp, graph_rewrite
 
 CPU = ClangRenderer(Target("CPU", "CLANG", "x86_64,x86-64"))
 CUDA = CUDARenderer(Target("CUDA", "CUDA", "sm_80"))
@@ -27,9 +28,14 @@ def move(u): return graph_rewrite(u, pm_move_gates_from_index)
 def noopt(kernel): return kernel.replace(arg=KernelInfo(opts_to_apply=()))
 
 
+# The host upcasts no kernel without a reduce, so a padding asks for its
+# vectors of 4, whose loads the pass gates.
+def vectors(kernel): return kernel.replace(arg=KernelInfo(opts_to_apply=(Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)),)))
+
+
 KERNELS = {
-    "pad": (lambda: kernels(Tensor.empty(5, device="CPU").pad((2, 1)) + 1)[-1], CPU),
-    "pad_value": (lambda: kernels(Tensor.empty(5, device="CPU").pad((2, 1), value=1.0) * 2)[-1], CPU),
+    "pad": (lambda: vectors(kernels(Tensor.empty(5, device="CPU").pad((2, 1)) + 1)[-1]), CPU),
+    "pad_value": (lambda: vectors(kernels(Tensor.empty(5, device="CPU").pad((2, 1), value=1.0) * 2)[-1]), CPU),
     "conv": (lambda: noopt(kernels(Tensor.empty(1, 2, 6, 6, device="CPU").conv2d(
         Tensor.empty(3, 2, 3, 3, device="CPU"), padding=1))[-1]), CPU),
     "pad_cuda": (lambda: kernels(Tensor.empty(30, device="CPU").pad((2, 1)) + 1)[-1], CUDA),

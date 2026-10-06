@@ -1,261 +1,117 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU")
-1 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 8), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 8), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
-3 Ops.SUB dtypes.int [2, 1]
-4 Ops.RANGE dtypes.int [3] (0, AxisType.WEAK)
-5 Ops.ADD dtypes.int [1, 4]
-6 Ops.CONST dtypes.weakint [] 5
-7 Ops.CAST dtypes.int [6] dtypes.int
-8 Ops.SHL dtypes.int [5, 7]
-9 Ops.CONST dtypes.weakint [] 8
-10 Ops.CAST dtypes.int [9] dtypes.int
-11 Ops.RANGE dtypes.int [10, 4] (1, AxisType.WEAK)
-12 Ops.CONST dtypes.weakint [] 2
-13 Ops.CAST dtypes.int [12] dtypes.int
-14 Ops.SHL dtypes.int [11, 13]
-15 Ops.ADD dtypes.int [8, 14]
-16 Ops.CONST dtypes.weakint [] 4
-17 Ops.CAST dtypes.int [16] dtypes.int
-18 Ops.SHRINK dtypes.float [0, 15, 17]
-19 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256, device="CPU")
-20 Ops.SHRINK dtypes.float [19, 15, 17]
-21 Ops.LOAD dtypes.float [20]
-22 Ops.CONST dtypes.weakint [] 0
-23 Ops.CAST dtypes.int [22] dtypes.int
-24 Ops.INDEX dtypes.float [21, 23]
-25 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device="CPU")
-26 Ops.INDEX dtypes.float [25, 5]
-27 Ops.LOAD dtypes.float [26]
-28 Ops.SUB dtypes.float [24, 27]
-29 Ops.CONST dtypes.weakfloat [] 1.4426950216293335
-30 Ops.CAST dtypes.float [29] dtypes.float
-31 Ops.MUL dtypes.float [28, 30]
-32 Ops.CMPNE dtypes.bool [31, 31]
-33 Ops.CONST dtypes.weakfloat [] nan
-34 Ops.CAST dtypes.float [33] dtypes.float
-35 Ops.CONST dtypes.weakfloat [] -150.0
-36 Ops.CAST dtypes.float [35] dtypes.float
-37 Ops.CMPLT dtypes.bool [31, 36]
-38 Ops.CONST dtypes.weakfloat [] 0.0
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 5
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 32), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.int [] ParamArg(slot=5, dtype=dtypes.int, vmin_vmax=(0, 32), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+9 Ops.SUB dtypes.int [8, 7]
+10 Ops.RANGE dtypes.int [9, 3] (1, AxisType.WEAK)
+11 Ops.ADD dtypes.int [7, 10]
+12 Ops.ADD dtypes.int [6, 11]
+13 Ops.INDEX dtypes.float [0, 12]
+14 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256, device="CPU")
+15 Ops.INDEX dtypes.float [14, 12]
+16 Ops.LOAD dtypes.float [15]
+17 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device="CPU")
+18 Ops.INDEX dtypes.float [17, 3]
+19 Ops.LOAD dtypes.float [18]
+20 Ops.SUB dtypes.float [16, 19]
+21 Ops.CONST dtypes.weakfloat [] 1.4426950216293335
+22 Ops.CAST dtypes.float [21] dtypes.float
+23 Ops.MUL dtypes.float [20, 22]
+24 Ops.CMPNE dtypes.bool [23, 23]
+25 Ops.CONST dtypes.weakfloat [] nan
+26 Ops.CAST dtypes.float [25] dtypes.float
+27 Ops.CONST dtypes.weakfloat [] -150.0
+28 Ops.CAST dtypes.float [27] dtypes.float
+29 Ops.CMPLT dtypes.bool [23, 28]
+30 Ops.CONST dtypes.weakfloat [] 0.0
+31 Ops.CAST dtypes.float [30] dtypes.float
+32 Ops.CONST dtypes.weakfloat [] 128.0
+33 Ops.CAST dtypes.float [32] dtypes.float
+34 Ops.CMPLT dtypes.bool [23, 33]
+35 Ops.CONST dtypes.bool [] True
+36 Ops.CAST dtypes.bool [35] dtypes.bool
+37 Ops.CMPNE dtypes.bool [34, 36]
+38 Ops.CONST dtypes.weakfloat [] inf
 39 Ops.CAST dtypes.float [38] dtypes.float
-40 Ops.CONST dtypes.weakfloat [] 128.0
+40 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
 41 Ops.CAST dtypes.float [40] dtypes.float
-42 Ops.CMPLT dtypes.bool [31, 41]
-43 Ops.CONST dtypes.bool [] True
-44 Ops.CAST dtypes.bool [43] dtypes.bool
-45 Ops.CMPNE dtypes.bool [42, 44]
-46 Ops.CONST dtypes.weakfloat [] inf
-47 Ops.CAST dtypes.float [46] dtypes.float
-48 Ops.CONST dtypes.weakfloat [] 0.00015359208919107914
-49 Ops.CAST dtypes.float [48] dtypes.float
-50 Ops.CMPNE dtypes.bool [31, 47]
-51 Ops.CONST dtypes.weakfloat [] -inf
-52 Ops.CAST dtypes.float [51] dtypes.float
-53 Ops.CMPNE dtypes.bool [31, 52]
-54 Ops.WHERE dtypes.float [53, 31, 39]
-55 Ops.WHERE dtypes.float [32, 39, 54]
-56 Ops.WHERE dtypes.float [50, 55, 39]
-57 Ops.CMPLT dtypes.bool [56, 39]
-58 Ops.CONST dtypes.weakfloat [] -0.5
-59 Ops.CAST dtypes.float [58] dtypes.float
-60 Ops.CONST dtypes.weakfloat [] 0.5
+42 Ops.CMPNE dtypes.bool [23, 39]
+43 Ops.CONST dtypes.weakfloat [] -inf
+44 Ops.CAST dtypes.float [43] dtypes.float
+45 Ops.CMPNE dtypes.bool [23, 44]
+46 Ops.WHERE dtypes.float [45, 23, 31]
+47 Ops.WHERE dtypes.float [24, 31, 46]
+48 Ops.WHERE dtypes.float [42, 47, 31]
+49 Ops.CMPLT dtypes.bool [48, 31]
+50 Ops.CONST dtypes.weakfloat [] -0.5
+51 Ops.CAST dtypes.float [50] dtypes.float
+52 Ops.CONST dtypes.weakfloat [] 0.5
+53 Ops.CAST dtypes.float [52] dtypes.float
+54 Ops.WHERE dtypes.float [49, 51, 53]
+55 Ops.ADD dtypes.float [48, 54]
+56 Ops.CAST dtypes.int [55] dtypes.int
+57 Ops.CAST dtypes.float [56] dtypes.float
+58 Ops.SUB dtypes.float [48, 57]
+59 Ops.MUL dtypes.float [41, 58]
+60 Ops.CONST dtypes.weakfloat [] 0.0013392627006396651
 61 Ops.CAST dtypes.float [60] dtypes.float
-62 Ops.WHERE dtypes.float [57, 59, 61]
-63 Ops.ADD dtypes.float [56, 62]
-64 Ops.CAST dtypes.int [63] dtypes.int
+62 Ops.ADD dtypes.float [59, 61]
+63 Ops.MUL dtypes.float [62, 58]
+64 Ops.CONST dtypes.weakfloat [] 0.009618384763598442
 65 Ops.CAST dtypes.float [64] dtypes.float
-66 Ops.SUB dtypes.float [56, 65]
-67 Ops.MUL dtypes.float [49, 66]
-68 Ops.CONST dtypes.weakfloat [] 0.0013392627006396651
+66 Ops.ADD dtypes.float [63, 65]
+67 Ops.MUL dtypes.float [66, 58]
+68 Ops.CONST dtypes.weakfloat [] 0.055503472685813904
 69 Ops.CAST dtypes.float [68] dtypes.float
 70 Ops.ADD dtypes.float [67, 69]
-71 Ops.MUL dtypes.float [70, 66]
-72 Ops.CONST dtypes.weakfloat [] 0.009618384763598442
+71 Ops.MUL dtypes.float [70, 58]
+72 Ops.CONST dtypes.weakfloat [] 0.24022644758224487
 73 Ops.CAST dtypes.float [72] dtypes.float
 74 Ops.ADD dtypes.float [71, 73]
-75 Ops.MUL dtypes.float [74, 66]
-76 Ops.CONST dtypes.weakfloat [] 0.055503472685813904
+75 Ops.MUL dtypes.float [74, 58]
+76 Ops.CONST dtypes.weakfloat [] 0.6931471824645996
 77 Ops.CAST dtypes.float [76] dtypes.float
 78 Ops.ADD dtypes.float [75, 77]
-79 Ops.MUL dtypes.float [78, 66]
-80 Ops.CONST dtypes.weakfloat [] 0.24022644758224487
+79 Ops.MUL dtypes.float [78, 58]
+80 Ops.CONST dtypes.weakfloat [] 1.0
 81 Ops.CAST dtypes.float [80] dtypes.float
 82 Ops.ADD dtypes.float [79, 81]
-83 Ops.MUL dtypes.float [82, 66]
-84 Ops.CONST dtypes.weakfloat [] 0.6931471824645996
-85 Ops.CAST dtypes.float [84] dtypes.float
-86 Ops.ADD dtypes.float [83, 85]
-87 Ops.MUL dtypes.float [86, 66]
-88 Ops.CONST dtypes.weakfloat [] 1.0
-89 Ops.CAST dtypes.float [88] dtypes.float
-90 Ops.ADD dtypes.float [87, 89]
-91 Ops.CONST dtypes.weakint [] 1
-92 Ops.CAST dtypes.int [91] dtypes.int
-93 Ops.SHR dtypes.int [64, 92]
-94 Ops.CONST dtypes.weakint [] 127
-95 Ops.CAST dtypes.int [94] dtypes.int
-96 Ops.ADD dtypes.int [93, 95]
-97 Ops.CONST dtypes.weakint [] 23
-98 Ops.CAST dtypes.int [97] dtypes.int
-99 Ops.SHL dtypes.int [96, 98]
-100 Ops.BITCAST dtypes.float [99] dtypes.float
-101 Ops.MUL dtypes.float [90, 100]
-102 Ops.SUB dtypes.int [64, 93]
-103 Ops.ADD dtypes.int [102, 95]
-104 Ops.SHL dtypes.int [103, 98]
-105 Ops.BITCAST dtypes.float [104] dtypes.float
-106 Ops.MUL dtypes.float [101, 105]
-107 Ops.WHERE dtypes.float [45, 47, 106]
-108 Ops.WHERE dtypes.float [37, 39, 107]
-109 Ops.WHERE dtypes.float [32, 34, 108]
-110 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=8, device="CPU")
-111 Ops.INDEX dtypes.float [110, 5]
-112 Ops.LOAD dtypes.float [111]
-113 Ops.FDIV dtypes.float [109, 112]
-114 Ops.INDEX dtypes.float [21, 92]
-115 Ops.SUB dtypes.float [114, 27]
-116 Ops.MUL dtypes.float [115, 30]
-117 Ops.CMPNE dtypes.bool [116, 116]
-118 Ops.CMPLT dtypes.bool [116, 36]
-119 Ops.CMPLT dtypes.bool [116, 41]
-120 Ops.CMPNE dtypes.bool [119, 44]
-121 Ops.CMPNE dtypes.bool [116, 47]
-122 Ops.CMPNE dtypes.bool [116, 52]
-123 Ops.WHERE dtypes.float [122, 116, 39]
-124 Ops.WHERE dtypes.float [117, 39, 123]
-125 Ops.WHERE dtypes.float [121, 124, 39]
-126 Ops.CMPLT dtypes.bool [125, 39]
-127 Ops.WHERE dtypes.float [126, 59, 61]
-128 Ops.ADD dtypes.float [125, 127]
-129 Ops.CAST dtypes.int [128] dtypes.int
-130 Ops.CAST dtypes.float [129] dtypes.float
-131 Ops.SUB dtypes.float [125, 130]
-132 Ops.MUL dtypes.float [49, 131]
-133 Ops.ADD dtypes.float [132, 69]
-134 Ops.MUL dtypes.float [133, 131]
-135 Ops.ADD dtypes.float [134, 73]
-136 Ops.MUL dtypes.float [135, 131]
-137 Ops.ADD dtypes.float [136, 77]
-138 Ops.MUL dtypes.float [137, 131]
-139 Ops.ADD dtypes.float [138, 81]
-140 Ops.MUL dtypes.float [139, 131]
-141 Ops.ADD dtypes.float [140, 85]
-142 Ops.MUL dtypes.float [141, 131]
-143 Ops.ADD dtypes.float [142, 89]
-144 Ops.SHR dtypes.int [129, 92]
-145 Ops.ADD dtypes.int [144, 95]
-146 Ops.SHL dtypes.int [145, 98]
-147 Ops.BITCAST dtypes.float [146] dtypes.float
-148 Ops.MUL dtypes.float [143, 147]
-149 Ops.SUB dtypes.int [129, 144]
-150 Ops.ADD dtypes.int [149, 95]
-151 Ops.SHL dtypes.int [150, 98]
-152 Ops.BITCAST dtypes.float [151] dtypes.float
-153 Ops.MUL dtypes.float [148, 152]
-154 Ops.WHERE dtypes.float [120, 47, 153]
-155 Ops.WHERE dtypes.float [118, 39, 154]
-156 Ops.WHERE dtypes.float [117, 34, 155]
-157 Ops.FDIV dtypes.float [156, 112]
-158 Ops.INDEX dtypes.float [21, 13]
-159 Ops.SUB dtypes.float [158, 27]
-160 Ops.MUL dtypes.float [159, 30]
-161 Ops.CMPNE dtypes.bool [160, 160]
-162 Ops.CMPLT dtypes.bool [160, 36]
-163 Ops.CMPLT dtypes.bool [160, 41]
-164 Ops.CMPNE dtypes.bool [163, 44]
-165 Ops.CMPNE dtypes.bool [160, 47]
-166 Ops.CMPNE dtypes.bool [160, 52]
-167 Ops.WHERE dtypes.float [166, 160, 39]
-168 Ops.WHERE dtypes.float [161, 39, 167]
-169 Ops.WHERE dtypes.float [165, 168, 39]
-170 Ops.CMPLT dtypes.bool [169, 39]
-171 Ops.WHERE dtypes.float [170, 59, 61]
-172 Ops.ADD dtypes.float [169, 171]
-173 Ops.CAST dtypes.int [172] dtypes.int
-174 Ops.CAST dtypes.float [173] dtypes.float
-175 Ops.SUB dtypes.float [169, 174]
-176 Ops.MUL dtypes.float [49, 175]
-177 Ops.ADD dtypes.float [176, 69]
-178 Ops.MUL dtypes.float [177, 175]
-179 Ops.ADD dtypes.float [178, 73]
-180 Ops.MUL dtypes.float [179, 175]
-181 Ops.ADD dtypes.float [180, 77]
-182 Ops.MUL dtypes.float [181, 175]
-183 Ops.ADD dtypes.float [182, 81]
-184 Ops.MUL dtypes.float [183, 175]
-185 Ops.ADD dtypes.float [184, 85]
-186 Ops.MUL dtypes.float [185, 175]
-187 Ops.ADD dtypes.float [186, 89]
-188 Ops.SHR dtypes.int [173, 92]
-189 Ops.ADD dtypes.int [188, 95]
-190 Ops.SHL dtypes.int [189, 98]
-191 Ops.BITCAST dtypes.float [190] dtypes.float
-192 Ops.MUL dtypes.float [187, 191]
-193 Ops.SUB dtypes.int [173, 188]
-194 Ops.ADD dtypes.int [193, 95]
-195 Ops.SHL dtypes.int [194, 98]
-196 Ops.BITCAST dtypes.float [195] dtypes.float
-197 Ops.MUL dtypes.float [192, 196]
-198 Ops.WHERE dtypes.float [164, 47, 197]
-199 Ops.WHERE dtypes.float [162, 39, 198]
-200 Ops.WHERE dtypes.float [161, 34, 199]
-201 Ops.FDIV dtypes.float [200, 112]
-202 Ops.CONST dtypes.weakint [] 3
-203 Ops.CAST dtypes.int [202] dtypes.int
-204 Ops.INDEX dtypes.float [21, 203]
-205 Ops.SUB dtypes.float [204, 27]
-206 Ops.MUL dtypes.float [205, 30]
-207 Ops.CMPNE dtypes.bool [206, 206]
-208 Ops.CMPLT dtypes.bool [206, 36]
-209 Ops.CMPLT dtypes.bool [206, 41]
-210 Ops.CMPNE dtypes.bool [209, 44]
-211 Ops.CMPNE dtypes.bool [206, 47]
-212 Ops.CMPNE dtypes.bool [206, 52]
-213 Ops.WHERE dtypes.float [212, 206, 39]
-214 Ops.WHERE dtypes.float [207, 39, 213]
-215 Ops.WHERE dtypes.float [211, 214, 39]
-216 Ops.CMPLT dtypes.bool [215, 39]
-217 Ops.WHERE dtypes.float [216, 59, 61]
-218 Ops.ADD dtypes.float [215, 217]
-219 Ops.CAST dtypes.int [218] dtypes.int
-220 Ops.CAST dtypes.float [219] dtypes.float
-221 Ops.SUB dtypes.float [215, 220]
-222 Ops.MUL dtypes.float [49, 221]
-223 Ops.ADD dtypes.float [222, 69]
-224 Ops.MUL dtypes.float [223, 221]
-225 Ops.ADD dtypes.float [224, 73]
-226 Ops.MUL dtypes.float [225, 221]
-227 Ops.ADD dtypes.float [226, 77]
-228 Ops.MUL dtypes.float [227, 221]
-229 Ops.ADD dtypes.float [228, 81]
-230 Ops.MUL dtypes.float [229, 221]
-231 Ops.ADD dtypes.float [230, 85]
-232 Ops.MUL dtypes.float [231, 221]
-233 Ops.ADD dtypes.float [232, 89]
-234 Ops.SHR dtypes.int [219, 92]
-235 Ops.ADD dtypes.int [234, 95]
-236 Ops.SHL dtypes.int [235, 98]
-237 Ops.BITCAST dtypes.float [236] dtypes.float
-238 Ops.MUL dtypes.float [233, 237]
-239 Ops.SUB dtypes.int [219, 234]
-240 Ops.ADD dtypes.int [239, 95]
-241 Ops.SHL dtypes.int [240, 98]
-242 Ops.BITCAST dtypes.float [241] dtypes.float
-243 Ops.MUL dtypes.float [238, 242]
-244 Ops.WHERE dtypes.float [210, 47, 243]
-245 Ops.WHERE dtypes.float [208, 39, 244]
-246 Ops.WHERE dtypes.float [207, 34, 245]
-247 Ops.FDIV dtypes.float [246, 112]
-248 Ops.STACK dtypes.float [113, 157, 201, 247]
-249 Ops.STORE dtypes.void [18, 248]
-250 Ops.GROUP dtypes.void [249, 249, 249, 249]
-251 Ops.END dtypes.void [250, 11]
-252 Ops.END dtypes.void [251, 4]
-253 Ops.SINK dtypes.void [252] KernelInfo(name="E_8_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=(8, 4, 5)) tag=1
-254 Ops.SINK dtypes.void [252] KernelInfo(name="E_8_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=9984, lds=2112, mem=2112), split=(8, 4, 5)) tag=1
-255 Ops.LINEAR dtypes.void [0, 19, 25, 110, 1, 2, 43, 44, 58, 59, 35, 36, 51, 52, 38, 39, 48, 49, 68, 69, 72, 73, 76, 77, 80, 81, 60, 61, 84, 85, 88, 89, 29, 30, 40, 41, 46, 47, 33, 34, 22, 23, 91, 92, 94, 95, 12, 13, 97, 98, 202, 203, 16, 17, 6, 7, 9, 10, 3, 4, 5, 26, 27, 111, 112, 8, 11, 14, 15, 20, 21, 24, 114, 158, 204, 28, 31, 53, 50, 32, 54, 55, 56, 57, 62, 63, 64, 65, 115, 116, 122, 121, 117, 123, 124, 125, 126, 127, 128, 129, 130, 159, 160, 166, 165, 161, 167, 168, 169, 170, 171, 172, 173, 174, 205, 206, 212, 211, 207, 213, 214, 215, 216, 217, 218, 219, 220, 93, 96, 99, 100, 144, 145, 146, 147, 188, 189, 190, 191, 234, 235, 236, 237, 102, 103, 104, 105, 149, 150, 151, 152, 193, 194, 195, 196, 239, 240, 241, 242, 66, 67, 70, 131, 132, 133, 175, 176, 177, 221, 222, 223, 71, 74, 134, 135, 178, 179, 224, 225, 75, 78, 136, 137, 180, 181, 226, 227, 79, 82, 138, 139, 182, 183, 228, 229, 83, 86, 140, 141, 184, 185, 230, 231, 87, 90, 142, 143, 186, 187, 232, 233, 101, 148, 192, 238, 106, 153, 197, 243, 37, 42, 118, 119, 162, 163, 208, 209, 45, 120, 164, 210, 107, 108, 109, 113, 154, 155, 156, 157, 198, 199, 200, 201, 244, 245, 246, 247, 248, 18, 249, 250, 251, 252, 253]
-256 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_8_8_4(float* restrict data0_256, float* restrict data1_256, float* restrict data2_8, float* restrict data3_8, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data2_8+alu0));\n    float val1 = (*(data3_8+alu0));\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      int alu1 = ((alu0<<5)+(Lidx1<<2));\n      float4 val2 = (*((float4*)((data1_256+alu1))));\n      float alu2 = ((val2[0]-val0)*1.4426950216293335f);\n      _Bool alu3 = (alu2!=alu2);\n      float alu4 = ((alu2!=((float)(-__builtin_inff())))?alu2:0.0f);\n      float alu5 = (alu3?0.0f:alu4);\n      float alu6 = ((alu2!=((float)(__builtin_inff())))?alu5:0.0f);\n      float alu7 = ((alu6<0.0f)?-0.5f:0.5f);\n      int cast0 = ((int)((alu6+alu7)));\n      float alu8 = ((val2[1]-val0)*1.4426950216293335f);\n      _Bool alu9 = (alu8!=alu8);\n      float alu10 = ((alu8!=((float)(-__builtin_inff())))?alu8:0.0f);\n      float alu11 = (alu9?0.0f:alu10);\n      float alu12 = ((alu8!=((float)(__builtin_inff())))?alu11:0.0f);\n      float alu13 = ((alu12<0.0f)?-0.5f:0.5f);\n      int cast1 = ((int)((alu12+alu13)));\n      float alu14 = ((val2[2]-val0)*1.4426950216293335f);\n      _Bool alu15 = (alu14!=alu14);\n      float alu16 = ((alu14!=((float)(-__builtin_inff())))?alu14:0.0f);\n      float alu17 = (alu15?0.0f:alu16);\n      float alu18 = ((alu14!=((float)(__builtin_inff())))?alu17:0.0f);\n      float alu19 = ((alu18<0.0f)?-0.5f:0.5f);\n      int cast2 = ((int)((alu18+alu19)));\n      float alu20 = ((val2[3]-val0)*1.4426950216293335f);\n      _Bool alu21 = (alu20!=alu20);\n      float alu22 = ((alu20!=((float)(-__builtin_inff())))?alu20:0.0f);\n      float alu23 = (alu21?0.0f:alu22);\n      float alu24 = ((alu20!=((float)(__builtin_inff())))?alu23:0.0f);\n      float alu25 = ((alu24<0.0f)?-0.5f:0.5f);\n      int cast3 = ((int)((alu24+alu25)));\n      int alu26 = (cast0>>1);\n      int alu27 = (cast1>>1);\n      int alu28 = (cast2>>1);\n      int alu29 = (cast3>>1);\n      float alu30 = (alu6-((float)(cast0)));\n      float alu31 = (alu12-((float)(cast1)));\n      float alu32 = (alu18-((float)(cast2)));\n      float alu33 = (alu24-((float)(cast3)));\n      float alu34 = (((alu2<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu30)+0.0013392627006396651f)*alu30)+0.009618384763598442f)*alu30)+0.055503472685813904f)*alu30)+0.24022644758224487f)*alu30)+0.6931471824645996f)*alu30)+1.0f)*__builtin_bit_cast(float, (int)(((alu26+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu26)+127)<<23)))));\n      float alu35 = ((alu2<-150.0f)?0.0f:alu34);\n      float alu36 = (alu3?((float)(__builtin_nanf(\"\"))):alu35);\n      float alu37 = (((alu8<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu31)+0.0013392627006396651f)*alu31)+0.009618384763598442f)*alu31)+0.055503472685813904f)*alu31)+0.24022644758224487f)*alu31)+0.6931471824645996f)*alu31)+1.0f)*__builtin_bit_cast(float, (int)(((alu27+127)<<23)))*__builtin_bit_cast(float, (int)((((cast1-alu27)+127)<<23)))));\n      float alu38 = ((alu8<-150.0f)?0.0f:alu37);\n      float alu39 = (alu9?((float)(__builtin_nanf(\"\"))):alu38);\n      float alu40 = (((alu14<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu32)+0.0013392627006396651f)*alu32)+0.009618384763598442f)*alu32)+0.055503472685813904f)*alu32)+0.24022644758224487f)*alu32)+0.6931471824645996f)*alu32)+1.0f)*__builtin_bit_cast(float, (int)(((alu28+127)<<23)))*__builtin_bit_cast(float, (int)((((cast2-alu28)+127)<<23)))));\n      float alu41 = ((alu14<-150.0f)?0.0f:alu40);\n      float alu42 = (alu15?((float)(__builtin_nanf(\"\"))):alu41);\n      float alu43 = (((alu20<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu33)+0.0013392627006396651f)*alu33)+0.009618384763598442f)*alu33)+0.055503472685813904f)*alu33)+0.24022644758224487f)*alu33)+0.6931471824645996f)*alu33)+1.0f)*__builtin_bit_cast(float, (int)(((alu29+127)<<23)))*__builtin_bit_cast(float, (int)((((cast3-alu29)+127)<<23)))));\n      float alu44 = ((alu20<-150.0f)?0.0f:alu43);\n      float alu45 = (alu21?((float)(__builtin_nanf(\"\"))):alu44);\n      *((float4*)((data0_256+alu1))) = (float4){(alu36/val1),(alu39/val1),(alu42/val1),(alu45/val1)};\n    }\n  }\n}\n"
-257 Ops.PROGRAM dtypes.void [254, 255, 256] ProgramInfo(global_size=(8, 1, 1), vars=(%1, %2), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-258 Ops.SINK dtypes.void [253, 257]
+83 Ops.CONST dtypes.weakint [] 1
+84 Ops.CAST dtypes.int [83] dtypes.int
+85 Ops.SHR dtypes.int [56, 84]
+86 Ops.CONST dtypes.weakint [] 127
+87 Ops.CAST dtypes.int [86] dtypes.int
+88 Ops.ADD dtypes.int [85, 87]
+89 Ops.CONST dtypes.weakint [] 23
+90 Ops.CAST dtypes.int [89] dtypes.int
+91 Ops.SHL dtypes.int [88, 90]
+92 Ops.BITCAST dtypes.float [91] dtypes.float
+93 Ops.MUL dtypes.float [82, 92]
+94 Ops.SUB dtypes.int [56, 85]
+95 Ops.ADD dtypes.int [94, 87]
+96 Ops.SHL dtypes.int [95, 90]
+97 Ops.BITCAST dtypes.float [96] dtypes.float
+98 Ops.MUL dtypes.float [93, 97]
+99 Ops.WHERE dtypes.float [37, 39, 98]
+100 Ops.WHERE dtypes.float [29, 31, 99]
+101 Ops.WHERE dtypes.float [24, 26, 100]
+102 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=8, device="CPU")
+103 Ops.INDEX dtypes.float [102, 3]
+104 Ops.LOAD dtypes.float [103]
+105 Ops.FDIV dtypes.float [101, 104]
+106 Ops.STORE dtypes.void [13, 105]
+107 Ops.END dtypes.void [106, 10]
+108 Ops.END dtypes.void [107, 3]
+109 Ops.SINK dtypes.void [108] KernelInfo(name="E_8_32", split=(32, 4, 5)) tag=1
+110 Ops.SINK dtypes.void [108] KernelInfo(name="E_8_32", estimates=Estimates(ops=9984, lds=2112, mem=2112), split=(32, 4, 5)) tag=1
+111 Ops.LINEAR dtypes.void [0, 14, 17, 102, 7, 8, 35, 36, 50, 51, 27, 28, 43, 44, 30, 31, 40, 41, 60, 61, 64, 65, 68, 69, 72, 73, 52, 53, 76, 77, 80, 81, 21, 22, 32, 33, 38, 39, 25, 26, 83, 84, 86, 87, 89, 90, 4, 5, 1, 2, 9, 3, 18, 19, 103, 104, 6, 10, 11, 12, 15, 16, 13, 20, 23, 45, 42, 24, 46, 47, 48, 49, 54, 55, 56, 57, 85, 88, 91, 92, 94, 95, 96, 97, 58, 59, 62, 63, 66, 67, 70, 71, 74, 75, 78, 79, 82, 93, 98, 29, 34, 37, 99, 100, 101, 105, 106, 107, 108, 109]
+112 Ops.SOURCE dtypes.void [] "\nvoid E_8_32(float* restrict data0_256, float* restrict data1_256, float* restrict data2_8, float* restrict data3_8, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    float val0 = (*(data2_8+Lidx0));\n    float val1 = (*(data3_8+Lidx0));\n    for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n      int alu0 = ((Lidx0<<5)+(block_lo_+Lidx1));\n      float val2 = (*(data1_256+alu0));\n      float alu1 = ((val2-val0)*1.4426950216293335f);\n      _Bool alu2 = (alu1!=alu1);\n      float alu3 = ((alu1!=((float)(-__builtin_inff())))?alu1:0.0f);\n      float alu4 = (alu2?0.0f:alu3);\n      float alu5 = ((alu1!=((float)(__builtin_inff())))?alu4:0.0f);\n      float alu6 = ((alu5<0.0f)?-0.5f:0.5f);\n      int cast0 = ((int)((alu5+alu6)));\n      int alu7 = (cast0>>1);\n      float alu8 = (alu5-((float)(cast0)));\n      float alu9 = (((alu1<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.00015359208919107914f*alu8)+0.0013392627006396651f)*alu8)+0.009618384763598442f)*alu8)+0.055503472685813904f)*alu8)+0.24022644758224487f)*alu8)+0.6931471824645996f)*alu8)+1.0f)*__builtin_bit_cast(float, (int)(((alu7+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu7)+127)<<23)))));\n      float alu10 = ((alu1<-150.0f)?0.0f:alu9);\n      float alu11 = (alu2?((float)(__builtin_nanf(\"\"))):alu10);\n      *(data0_256+alu0) = (alu11/val1);\n    }\n  }\n}\n"
+113 Ops.PROGRAM dtypes.void [110, 111, 112] ProgramInfo(global_size=(32, 1, 1), vars=(%7, %8), globals=(0, 1, 2, 3), outs=(0,), ins=(1, 2, 3), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+114 Ops.SINK dtypes.void [109, 113]
 

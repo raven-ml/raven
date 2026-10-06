@@ -50,28 +50,26 @@
 48 Ops.SHRINK dtypes.char [47, 4, 5]
 49 Ops.BITCAST dtypes.float [48] dtypes.float
 50 Ops.CALL dtypes.void [46, 49, 43] CallInfo()
-51 Ops.SHRINK dtypes.float [45, 10, 12]
-52 Ops.SHRINK dtypes.float [1, 10, 12]
-53 Ops.LOAD dtypes.float [52]
-54 Ops.INDEX dtypes.float [53, 10]
-55 Ops.CONST dtypes.weakfloat [] 2.0
-56 Ops.CAST dtypes.float [55] dtypes.float
-57 Ops.ADD dtypes.float [54, 56]
-58 Ops.INDEX dtypes.float [53, 22]
-59 Ops.ADD dtypes.float [58, 56]
-60 Ops.INDEX dtypes.float [53, 26]
-61 Ops.ADD dtypes.float [60, 56]
-62 Ops.INDEX dtypes.float [53, 30]
-63 Ops.ADD dtypes.float [62, 56]
-64 Ops.STACK dtypes.float [57, 59, 61, 63]
-65 Ops.STORE dtypes.void [51, 64]
-66 Ops.SINK dtypes.void [65, 65, 65, 65] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32))
-67 Ops.SINK dtypes.void [65, 65, 65, 65] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
-68 Ops.LINEAR dtypes.void [45, 1, 4, 10, 11, 12, 52, 53, 54, 21, 22, 58, 25, 26, 60, 29, 30, 62, 55, 56, 57, 59, 61, 63, 64, 51, 65, 67]
-69 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+2.0f),(val0[1]+2.0f),(val0[2]+2.0f),(val0[3]+2.0f)};\n}\n"
-70 Ops.BINARY dtypes.uchar [] b"typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_4(float* restrict data0_4, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *((float4*)((data0_4+0))) = (float4){(val0[0]+2.0f),(val0[1]+2.0f),(val0[2]+2.0f),(val0[3]+2.0f)};\n}\n"
-71 Ops.PROGRAM dtypes.void [66, 68, 69, 70] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-72 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU")
-73 Ops.CALL dtypes.void [71, 72, 49] CallInfo()
-74 Ops.LINEAR dtypes.void [9, 44, 50, 73]
+51 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+52 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+53 Ops.SUB dtypes.int [52, 51]
+54 Ops.RANGE dtypes.int [53] (0, AxisType.WEAK)
+55 Ops.ADD dtypes.int [51, 54]
+56 Ops.INDEX dtypes.float [45, 55]
+57 Ops.INDEX dtypes.float [1, 55]
+58 Ops.LOAD dtypes.float [57]
+59 Ops.CONST dtypes.weakfloat [] 2.0
+60 Ops.CAST dtypes.float [59] dtypes.float
+61 Ops.ADD dtypes.float [58, 60]
+62 Ops.STORE dtypes.void [56, 61]
+63 Ops.END dtypes.void [62, 54]
+64 Ops.SINK dtypes.void [63] KernelInfo(name="E_4", estimates=Estimates(ops=4, lds=32, mem=32), split=(4, 2, 3)) tag=1
+65 Ops.SINK dtypes.void [63] KernelInfo(name="E_4", split=(4, 2, 3)) tag=1
+66 Ops.LINEAR dtypes.void [45, 1, 51, 52, 59, 60, 53, 54, 55, 57, 58, 56, 61, 62, 63, 65]
+67 Ops.SOURCE dtypes.void [] "\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+2.0f);\n  }\n}\n"
+68 Ops.BINARY dtypes.uchar [] b"\nvoid E_4(float* restrict data0_4, float* restrict data1_4, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    float val0 = (*(data1_4+alu0));\n    *(data0_4+alu0) = (val0+2.0f);\n  }\n}\n"
+69 Ops.PROGRAM dtypes.void [64, 66, 67, 68] ProgramInfo(global_size=(4, 1, 1), vars=(%51, %52), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+70 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU")
+71 Ops.CALL dtypes.void [69, 70, 49] CallInfo()
+72 Ops.LINEAR dtypes.void [9, 44, 50, 71]
 

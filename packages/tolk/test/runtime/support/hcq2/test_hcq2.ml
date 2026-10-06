@@ -2205,14 +2205,20 @@ let big_floats d n f =
   done;
   b
 
-(* A call of the kernel adding one on the windows [out] and [inp] of four
-   floats, its parameters those of the windows, as a schedule makes them. *)
+(* A call of the kernel adding one on the windows [out] and [inp] of four floats
+   in four lanes, its parameters those of the windows, as a schedule makes
+   them. *)
 let windowed_adds out inp =
   let o = Ops.param_like out 0 and i = Ops.param_like inp 1 in
   let k = Ops.range (Int 4) [ 0 ] in
   let st = Ops.store (Ops.index o [ k ]) (plus 1. (Ops.index i [ k ])) in
+  let lanes =
+    Opt.Split { axis = 0; amount = 4; target = Upcast; top = false }
+  in
   Ops.call
-    (Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ k ] ])
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"k" ~opts_to_apply:[ lanes ] ())
+       [ Ops.end_ st [ k ] ])
     [ out; inp ]
 
 (* The source of the kernel of [call]. *)

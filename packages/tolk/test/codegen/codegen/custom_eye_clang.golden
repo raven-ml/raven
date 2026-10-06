@@ -8,36 +8,20 @@
 6 Ops.CONST dtypes.weakint [] 3
 7 Ops.CAST dtypes.int [6] dtypes.int
 8 Ops.SHL dtypes.int [5, 7]
-9 Ops.CONST dtypes.weakint [] 2
+9 Ops.CONST dtypes.weakint [] 8
 10 Ops.CAST dtypes.int [9] dtypes.int
 11 Ops.RANGE dtypes.int [10, 4] (1, AxisType.WEAK)
-12 Ops.SHL dtypes.int [11, 10]
-13 Ops.ADD dtypes.int [8, 12]
-14 Ops.CONST dtypes.weakint [] 4
-15 Ops.CAST dtypes.int [14] dtypes.int
-16 Ops.SHRINK dtypes.float [0, 13, 15]
-17 Ops.CMPEQ dtypes.bool [5, 12]
-18 Ops.CAST dtypes.float [17] dtypes.float
-19 Ops.CONST dtypes.weakint [] 1
-20 Ops.CAST dtypes.int [19] dtypes.int
-21 Ops.ADD dtypes.int [12, 20]
-22 Ops.CMPEQ dtypes.bool [5, 21]
-23 Ops.CAST dtypes.float [22] dtypes.float
-24 Ops.ADD dtypes.int [12, 10]
-25 Ops.CMPEQ dtypes.bool [5, 24]
-26 Ops.CAST dtypes.float [25] dtypes.float
-27 Ops.ADD dtypes.int [12, 7]
-28 Ops.CMPEQ dtypes.bool [5, 27]
-29 Ops.CAST dtypes.float [28] dtypes.float
-30 Ops.STACK dtypes.float [18, 23, 26, 29]
-31 Ops.STORE dtypes.void [16, 30]
-32 Ops.GROUP dtypes.void [31, 31, 31, 31]
-33 Ops.END dtypes.void [32, 11]
-34 Ops.END dtypes.void [33, 4]
-35 Ops.SINK dtypes.void [34] KernelInfo(name="custom_eye_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), split=(8, 1, 2)) tag=1
-36 Ops.SINK dtypes.void [34] KernelInfo(name="custom_eye_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=112, lds=256, mem=256), split=(8, 1, 2)) tag=1
-37 Ops.LINEAR dtypes.void [0, 1, 2, 19, 20, 9, 10, 6, 7, 14, 15, 3, 4, 5, 8, 11, 12, 21, 22, 23, 24, 25, 26, 27, 28, 29, 17, 18, 30, 13, 16, 31, 32, 33, 34, 35]
-38 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid custom_eye_64(float* restrict data0_64, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {\n      int alu1 = (Lidx1<<2);\n      *((float4*)((data0_64+((alu0<<3)+alu1)))) = (float4){((float)((alu0==alu1))),((float)((alu0==(alu1+1)))),((float)((alu0==(alu1+2)))),((float)((alu0==(alu1+3))))};\n    }\n  }\n}\n"
-39 Ops.PROGRAM dtypes.void [36, 37, 38] ProgramInfo(global_size=(8, 1, 1), vars=(%1, %2), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-40 Ops.SINK dtypes.void [35, 39]
+12 Ops.ADD dtypes.int [8, 11]
+13 Ops.INDEX dtypes.float [0, 12]
+14 Ops.CMPEQ dtypes.bool [5, 11]
+15 Ops.CAST dtypes.float [14] dtypes.float
+16 Ops.STORE dtypes.void [13, 15]
+17 Ops.END dtypes.void [16, 11]
+18 Ops.END dtypes.void [17, 4]
+19 Ops.SINK dtypes.void [18] KernelInfo(name="custom_eye_64", split=(8, 1, 2)) tag=1
+20 Ops.SINK dtypes.void [18] KernelInfo(name="custom_eye_64", estimates=Estimates(ops=64, lds=256, mem=256), split=(8, 1, 2)) tag=1
+21 Ops.LINEAR dtypes.void [0, 1, 2, 6, 7, 9, 10, 3, 4, 5, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+22 Ops.SOURCE dtypes.void [] "\nvoid custom_eye_64(float* restrict data0_64, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      *(data0_64+((alu0<<3)+Lidx1)) = ((float)((alu0==Lidx1)));\n    }\n  }\n}\n"
+23 Ops.PROGRAM dtypes.void [20, 21, 22] ProgramInfo(global_size=(8, 1, 1), vars=(%1, %2), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+24 Ops.SINK dtypes.void [19, 23]
 

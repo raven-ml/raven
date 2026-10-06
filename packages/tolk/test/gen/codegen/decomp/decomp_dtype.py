@@ -20,13 +20,16 @@ tolk, so does a cast of an emulated 64-bit integer to a float32 or
 narrower, and a cast of a float to an emulated 64-bit integer splits it
 otherwise, so no golden holds one. """
 
+from dataclasses import replace
+
 from golden import graph
 from graph import kernels, stage
 from tinygrad import Tensor, dtypes
+from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad.helpers import DEV, Context, Target
 from tinygrad.renderer import Renderer
 from tinygrad.renderer.cstyle import ClangRenderer
-from tinygrad.uop.ops import Ops, UOp, graph_rewrite
+from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp, graph_rewrite
 from tinygrad.uop.weak import pm_commit_weak
 import tinygrad.codegen.decomp.dtype as decomp
 
@@ -63,15 +66,23 @@ def emulate(kernel, renderer, floats):
         decomp.f2f, decomp.f2f_clamp = f2f, f2f_clamp
 
 
-def declare(golden, emulated, program):
-    """Declare the golden `golden` of the kernel of `program()` when the data
-    types `emulated` are emulated."""
+# The host upcasts no kernel without a reduce but its masked ones, so the
+# kernels that show the pass vectors of 4 ask for them.
+VECTORS = (Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)),)
+
+
+def declare(golden, emulated, program, opts=VECTORS):
+    """Declare the golden `golden` of the kernel of `program()`, optimised by
+    `opts` (by the heuristic when None), when the data types `emulated` are
+    emulated."""
     floats = any(dt in dtypes.floats for dt in emulated)
     lacks = set(emulated) | ({dtypes.ulong} if dtypes.long in emulated else set())
 
     def fn():
         with Context(EMULATED_DTYPES=",".join(name(dt) for dt in emulated)):
-            kernel = stage("decomp dtypes", kernels(program())[-1], CPU)
+            kernel = kernels(program())[-1]
+            if opts is not None: kernel = kernel.replace(arg=replace(kernel.arg or KernelInfo(), opts_to_apply=opts))
+            kernel = stage("decomp dtypes", kernel, CPU)
             told = emulate(kernel, Renderer(Target()), floats)
         lacking = emulate(kernel, Lacking(lacks), floats)
         if told is not lacking: raise RuntimeError(f"{golden}: the two targets emulate differently")
@@ -118,9 +129,12 @@ def narrow_kernels(dt):
     }
 
 
+# the reduction, and the gather, whose masked axis the heuristic upcasts whole
+HEURISTIC = ("sum", "gather")
+
 for dt in NARROW:
     for kernel, program in narrow_kernels(dt).items():
-        declare(f"{name(dt)}_{kernel}", [dt], program)
+        declare(f"{name(dt)}_{kernel}", [dt], program, None if kernel in HEURISTIC else VECTORS)
 
 # two emulated floats in one kernel, rewritten in the promotion order
 declare("half_fp8e4m3_cast", [dtypes.half, dtypes.fp8e4m3],
@@ -163,7 +177,7 @@ def long_kernels(dt):
 
 for dt in (dtypes.long, dtypes.ulong):
     for kernel, program in long_kernels(dt).items():
-        declare(f"{name(dt)}_{kernel}", [dtypes.long], program)
+        declare(f"{name(dt)}_{kernel}", [dtypes.long], program, None if kernel in HEURISTIC else VECTORS)
 
 # an unsigned 64-bit integer is emulated with the signed one, so naming it alone
 # emulates nothing
