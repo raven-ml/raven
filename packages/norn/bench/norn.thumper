@@ -1,0 +1,18 @@
+# thumper baseline v1
+# suite: norn
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 14.8 on 10 cores
+
+diag/rhat/4x1000x10	alloc_words	exact	6610181
+diag/rhat/4x1000x10	wall_time	batch=1	n=20	9.812e-02	4.424e-02 4.460e-02 4.470e-02 4.484e-02 4.574e-02 5.033e-02 6.327e-02 7.719e-02 8.519e-02 9.404e-02 1.022e-01 1.450e-01 1.564e-01 1.614e-01 1.912e-01 1.946e-01 2.044e-01 2.137e-01 2.310e-01 2.964e-01
+dist/student_t/100000	alloc_words	exact	1939
+dist/student_t/100000	wall_time	batch=4	n=20	2.940e-03	1.959e-03 2.006e-03 2.029e-03 2.036e-03 2.062e-03 2.082e-03 2.088e-03 2.108e-03 2.678e-03 2.901e-03 2.979e-03 4.718e-03 6.331e-03 9.295e-03 9.462e-03 1.219e-02 1.300e-02 1.665e-02 1.853e-02 2.591e-02
+model/schools/16	alloc_words	exact	48105
+model/schools/16	wall_time	batch=32	n=20	1.539e-04	1.462e-04 1.474e-04 1.476e-04 1.479e-04 1.491e-04 1.504e-04 1.506e-04 1.507e-04 1.508e-04 1.539e-04 1.539e-04 1.557e-04 1.636e-04 1.828e-04 1.909e-04 2.440e-04 2.547e-04 3.882e-04 1.163e-03 1.552e-03
+nuts/schools/4	alloc_words	exact	299591
+nuts/schools/4	wall_time	batch=4	n=20	1.315e-03	1.225e-03 1.229e-03 1.233e-03 1.248e-03 1.258e-03 1.260e-03 1.271e-03 1.279e-03 1.282e-03 1.305e-03 1.326e-03 1.328e-03 1.377e-03 1.388e-03 1.390e-03 1.525e-03 3.253e-03 5.337e-03 1.593e-02 1.700e-02
+nuts/schools/64	alloc_words	exact	509607
+nuts/schools/64	wall_time	batch=2	n=20	3.629e-03	3.471e-03 3.499e-03 3.521e-03 3.525e-03 3.550e-03 3.562e-03 3.580e-03 3.588e-03 3.601e-03 3.621e-03 3.638e-03 3.640e-03 3.644e-03 3.651e-03 3.701e-03 3.788e-03 9.560e-03 2.683e-02 3.549e-02 5.988e-02
