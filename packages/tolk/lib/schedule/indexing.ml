@@ -701,13 +701,9 @@ let run_rangeify ?(debug = false) tsink =
       if not (Op.Set.mem (op x) no_ranges) then
         assign_ranges rctx ~debug ~consumer_map ~ending_ranges x)
     (List.rev tsink_toposort);
-  let spec = min (Setting.value Setting.spec) 2 in
   let tsink =
-    Setting.context
-      [ B (Setting.spec, spec) ]
-      (fun () ->
-        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
-          (Before_sources pm_apply_rangeify))
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
+      (Before_sources pm_apply_rangeify)
   in
   (* A value without a device that must be stored lives on the sink's. *)
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(device tsink) tsink

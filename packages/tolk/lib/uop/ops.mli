@@ -1917,18 +1917,12 @@ val gate_kernel_sink : t -> bool
 
 (** Late bindings.
 
-    The rules {!simplify} and the construction check apply are defined by later
-    modules of the library, which install them here when the library is
-    initialised, before any program runs. *)
+    The rules {!simplify} applies are defined by a later module of the library,
+    which installs them here when the library is initialised, before any
+    program runs. *)
 module Private : sig
   val set_symbolic : (unit, t) Pattern_matcher.t -> unit
   (** [set_symbolic m] makes [m] the rules of {!simplify}.
 
       Raises [Invalid_argument] if they are set already. *)
-
-  val set_spec : (unit, bool) Pattern_matcher.t -> unit
-  (** [set_spec m] makes [m] the specification that nodes are checked against
-      when {!Setting.spec} is 2 or more.
-
-      Raises [Invalid_argument] if it is set already. *)
 end

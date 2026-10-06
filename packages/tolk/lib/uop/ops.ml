@@ -596,11 +596,6 @@ let node op src arg tag dtype id =
    node up. *)
 let probe_memos = memos ()
 
-(* The whole-specification check that construction runs when the setting [SPEC]
-   is 2 or more; [Spec] installs it. Nodes built while the library is
-   initialised, before [Spec] installs it, are not checked. *)
-let construction_check : (t -> unit) option Atomic.t = Atomic.make None
-
 (* Data types *)
 
 let first op = function
@@ -702,10 +697,6 @@ let v ?(src = []) ?(arg = No_arg) ?tag op =
           let u = node op src arg tag dtype (Atomic.fetch_and_add next_id 1) in
           Table.add table u;
           Mutex.unlock lock;
-          (if Setting.value Setting.spec > 1 then
-             match Atomic.get construction_check with
-             | Some check -> check u
-             | None -> ());
           u)
 
 let op u = u.op
@@ -5289,18 +5280,4 @@ module Private = struct
   let set_symbolic pm =
     set_once simplify_hook "symbolic rules" (fun u ->
         graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u (After_sources pm))
-
-  let set_spec pm =
-    set_once construction_check "specification rules" (fun u ->
-        if Setting.value Setting.spec > 2 then ignore (shape_opt u);
-        match
-          Setting.context
-            [ B (Setting.check_oob, false) ]
-            (fun () -> Pattern_matcher.rewrite pm () u)
-        with
-        | Some true -> ()
-        | verdict ->
-            invalid_argf "the node breaks the specification (%s):\n%s"
-              (match verdict with Some b -> repr_bool b | None -> "None")
-              (repr u))
 end

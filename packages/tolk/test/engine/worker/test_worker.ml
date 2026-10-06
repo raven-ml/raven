@@ -440,20 +440,22 @@ let binding_stays_in_its_application () =
     (with_parallel 3 (fun () -> Worker.map f [ 0; 1; 2 ]));
   equal ~msg:"the caller's value" int before (Setting.value Setting.beam)
 
-(* Two applications on two domains bind CHECK_OOB apart and build nodes under
-   SPEC=2, whose construction check binds CHECK_OOB itself. *)
+(* Two applications on two domains bind CHECK_OOB apart and build nodes, each
+   within a binding of its own that negates it. *)
 let check_oob_race () =
   let fresh = Atomic.make (1 lsl 40) and meet = meeting 2 in
   let before = Setting.value Setting.check_oob in
   let build own =
     Setting.context
-      [ B (Setting.spec, 2); B (Setting.check_oob, own) ]
+      [ B (Setting.check_oob, own) ]
       (fun () ->
         meet ();
         let strays = ref 0 in
         for _ = 1 to 2000 do
           let k = Atomic.fetch_and_add fresh 1 in
-          ignore (Ops.const (`Int (Bigint.of_int k)));
+          Setting.context
+            [ B (Setting.check_oob, not own) ]
+            (fun () -> ignore (Ops.const (`Int (Bigint.of_int k))));
           if Setting.value Setting.check_oob <> own then incr strays
         done;
         !strays)

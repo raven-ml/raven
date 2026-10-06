@@ -16,8 +16,7 @@
     {!shared} holds at every stage. {!tensor} and {!program} add the operations
     of tensor graphs and of programs, and {!hcq} those of command-queue
     programs. {!full} accepts the nodes of every stage and of the forms passes
-    produce in between; linking this module makes it the check that {!Ops.v}
-    runs on the nodes it builds when {!Setting.spec} is 2 or more.
+    produce in between.
     {!kernel_graph} is the graph of kernel calls that scheduling produces. *)
 
 type t = (unit, bool) Ops.Pattern_matcher.t

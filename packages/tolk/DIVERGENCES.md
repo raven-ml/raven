@@ -112,8 +112,8 @@ the Exclusions of `README.md`.
   - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
-- **tolk:** for `uop/ops.py`, `lib/uop/ops.ml:572`
-  (`construction_check`), `:1685` (`simplify_hook`), `:4614` (`Private`),
+- **tolk:** for `uop/ops.py`, `lib/uop/ops.ml:1685` (`simplify_hook`),
+  `:4614` (`Private`),
   `:1190` (`Make_elementwise`), `:816` (`repr`), `:244` (`bufferize_opts`),
   `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
@@ -131,10 +131,9 @@ the Exclusions of `README.md`.
     `Schedule`;
   - `simplify` stays in `Ops`, since reshaping, `resolve` and shapes call
     it: it rewrites with the `symbolic` matcher that `Symbolic` installs when
-    the library is initialised, and the `SPEC` check at construction runs the
-    matcher that `Spec` installs. Each is set once; `lib/dune` links the
-    library whole (`-linkall`), so both are set before any program runs, and
-    `simplify` raises if its rules are missing. A sink of constants and stacks
+    the library is initialised. It is set once; `lib/dune` links the library
+    whole (`-linkall`), so it is set before any program runs, and `simplify`
+    raises if its rules are missing. A sink of constants and stacks
     of constants is itself without the rules, which leave it as it is, so
     shapes are built before they are installed;
   - `CallInfo.aux`, `hcq2.py`'s `HCQInfo`, is the record `hcq_info` of
@@ -4184,3 +4183,25 @@ stores through a pad.
 - **Pinned by:** the Coalesce suite (`test/codegen/late/coalesce`):
   `indexing_simplify › a gather through a pad reads its indices only inside
   the pad`.
+
+## D139. Construction checks no specification
+
+- **tinygrad:** `uop/ops.py:209` (`UOpMetaClass.__call__`, which checks each
+  node it creates against `spec_full` when `SPEC` is above 1, and computes its
+  shape when `SPEC` is above 2), and `schedule/rangeify.py`'s
+  `Context(SPEC=min(SPEC.value, 2))` around `pm_apply_rangeify`.
+- **tolk:** `lib/uop/ops.ml` (`v`), `lib/setting.ml` (`spec`) and
+  `lib/schedule/indexing.ml` (`run_rangeify`).
+- **Differs:** `Ops.v` checks nothing and computes no shape, whatever `SPEC`.
+  `SPEC=0` checks nothing, and any other value checks the graphs passed
+  between stages, as `SPEC=1` does in tinygrad. A malformed node is reported at the
+  end of its stage rather than by the rule that built it;
+  `Spec.type_verify ~calls:Enter Spec.full` checks a graph after a suspect
+  rewrite.
+- **Reason:** (a). Construction is the bottom of the module stack, and the
+  full specification reads shapes, which read `simplify`, which builds nodes:
+  the check can only be defined above the nodes it checks. Running it from
+  construction needs a hook that a later module installs when it is
+  initialised, which holds only while every module of the library is linked.
+- **Pinned by:** the `Spec` suite: `construction › builds a node that breaks
+  the full specification, whatever SPEC (D139)`.

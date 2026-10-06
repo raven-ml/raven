@@ -230,10 +230,9 @@ val parallel : int t
     and by the runtime's maximum number of domains. *)
 
 val spec : int t
-(** [spec] is how much of the graph is checked against its specification, from
-    [SPEC]. [0] checks nothing, [1] checks the graphs passed between stages, [2]
-    also checks every node when it is created, [3] also computes each created
-    node's shape. Defaults to [1]. *)
+(** [spec] is whether the graphs passed between stages are checked against
+    their specifications, from [SPEC]: [0] checks nothing, and any other value
+    checks them. Defaults to [1]. *)
 
 val check_oob : bool t
 (** [check_oob] makes specification checks prove that memory accesses stay

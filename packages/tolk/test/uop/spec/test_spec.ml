@@ -14,7 +14,6 @@ let specs =
 
 let judge spec u = Ops.Pattern_matcher.rewrite spec () u
 let verdict = option bool
-let uop = Testable.make ~pp:Ops.pp ~equal:Ops.equal
 
 let verdict_of_cell = function
   | "True" -> Some true
@@ -22,7 +21,6 @@ let verdict_of_cell = function
   | "None" -> None
   | s -> invalid_arg (Printf.sprintf "%S is not a verdict" s)
 
-let with_spec level f = Setting.context [ B (Setting.spec, level) ] f
 let checking_bounds f = Setting.context [ B (Setting.check_oob, true) ] f
 
 (* [failure ~calls spec u] is the message of [type_verify ~calls spec u], [None]
@@ -293,55 +291,18 @@ let vectors =
 
 (* Construction *)
 
-let ill_typed () = fresh_v ~src:[ fvar "a"; fvar "b" ] Op.And
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
-
 let construction =
   group "construction"
     [
       test
-        "checks each node it builds against the full specification when SPEC \
-         is 2" (fun () -> rejects (fun () -> with_spec 2 ill_typed));
-      test "checks nothing when SPEC is 1" (fun () ->
-          ignore (with_spec 1 ill_typed));
-      test "checks nothing when SPEC is 0" (fun () ->
-          ignore (with_spec 0 ill_typed));
-      (* tinygrad returns a node it already holds before checking it. *)
-      test "checks a node only when it creates it" (fun () ->
-          let tag = fresh () in
-          let build () = Ops.v ~src:[ fvar "a"; fvar "b" ] ~tag Op.And in
-          let u = with_spec 1 build in
-          equal uop u (with_spec 2 build));
-      test "never checks bounds, whatever CHECK_OOB" (fun () ->
-          checking_bounds (fun () ->
-              with_spec 2 (fun () ->
-                  ignore
-                    (fresh_v
-                       ~src:[ Ops.index (buffer 4) [ Ops.int 9 ] ]
-                       Op.Load))));
-      test "computes the shape of each node it builds when SPEC is 3" (fun () ->
-          let unbroadcastable () =
-            fresh_v
-              ~src:[ buffer ~dtype:Float32 4; buffer ~dtype:Float32 5 ]
-              Op.Add
-          in
-          ignore (with_spec 2 unbroadcastable);
-          rejects (fun () -> with_spec 3 unbroadcastable));
-      test "accepts the forms only the full specification holds" (fun () ->
-          with_spec 2 (fun () -> ignore (fresh_v ~src:[ buffer 4 ] Op.Load)));
-      prop "rejects a new node iff the full specification does not accept it"
-        graphs (fun steps ->
-          match List.rev (Ops.src (build steps)) with
-          | [] -> reject ()
-          | last :: _ ->
-              let rebuild () =
-                fresh_v ~src:(Ops.src last) ~arg:(Ops.arg last) (Ops.op last)
-              in
-              let accepted = judge Spec.full (rebuild ()) = Some true in
-              cover "an accepted node" accepted;
-              cover "a rejected node" (not accepted);
-              if accepted then ignore (with_spec 2 rebuild)
-              else rejects (fun () -> with_spec 2 rebuild));
+        "builds a node that breaks the full specification, whatever SPEC (D139)"
+        (fun () ->
+          let ill_typed () = fresh_v ~src:[ fvar "a"; fvar "b" ] Op.And in
+          List.iter
+            (fun level ->
+              let u = Setting.context [ B (Setting.spec, level) ] ill_typed in
+              equal verdict (Some false) (judge Spec.full u))
+            [ 0; 1; 2; 3 ]);
     ]
 
 (* Loops of calls in the kernel graph *)

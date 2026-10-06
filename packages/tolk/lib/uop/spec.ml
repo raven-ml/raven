@@ -614,5 +614,3 @@ let kernel_graph : t =
                  ();
              ]);
     ])
-
-let () = Private.set_spec full

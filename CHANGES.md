@@ -1146,6 +1146,10 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `SPEC=2` and `SPEC=3` no longer check each node as
+  `Ops.v` builds it; any nonzero `SPEC` checks the graphs passed between
+  stages. The check needed every module of tolk linked into every program.
+  `Ops.Private.set_spec` is removed.
 - A compiled gather through a pad, such as `Nx.concatenate` of a buffer and an
   `Nx.take`, no longer reads its indices before their buffer and faults: the
   index's simplification under the pad's gate dropped the gate of the loads
