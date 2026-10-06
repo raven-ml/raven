@@ -63,6 +63,44 @@ PerSampleGrads/per-sample-mlp-w3-grads	alloc_words	exact	6553
 PerSampleGrads/per-sample-mlp-w3-grads	wall_time	batch=16	n=20	5.400e-04	5.378e-04 5.381e-04 5.385e-04 5.386e-04 5.387e-04 5.389e-04 5.396e-04 5.398e-04 5.398e-04 5.399e-04 5.401e-04 5.401e-04 5.405e-04 5.405e-04 5.418e-04 5.428e-04 5.463e-04 5.515e-04 5.704e-04 5.726e-04
 WarmStart/mlp-sgd-step-warm-first-call	alloc_words	exact	33
 WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.698e-02	2.590e-02 2.619e-02 2.625e-02 2.638e-02 2.648e-02 2.667e-02 2.683e-02 2.687e-02 2.694e-02 2.697e-02 2.699e-02 2.720e-02 2.721e-02 2.721e-02 2.728e-02 2.731e-02 2.736e-02 2.740e-02 2.753e-02 2.800e-02
+jit/random/gamma-1e6	alloc_words	exact	1607
+jit/random/gamma-1e6	wall_time	batch=1	n=20	4.478e-02	4.443e-02 4.445e-02 4.446e-02 4.446e-02 4.447e-02 4.450e-02 4.454e-02 4.456e-02 4.467e-02 4.477e-02 4.479e-02 4.483e-02 4.534e-02 4.538e-02 4.539e-02 4.539e-02 4.562e-02 4.570e-02 4.603e-02 4.617e-02
+jit/special/digamma-1e6	alloc_words	exact	826
+jit/special/digamma-1e6	wall_time	batch=2	n=20	3.070e-03	2.793e-03 2.913e-03 2.965e-03 2.986e-03 2.994e-03 3.009e-03 3.057e-03 3.057e-03 3.061e-03 3.066e-03 3.073e-03 3.087e-03 3.095e-03 3.102e-03 3.122e-03 3.137e-03 3.156e-03 3.219e-03 3.244e-03 3.509e-03
+jit/special/digamma-f64-1e6	alloc_words	exact	826
+jit/special/digamma-f64-1e6	wall_time	batch=2	n=20	1.739e-03	1.423e-03 1.431e-03 1.440e-03 1.511e-03 1.573e-03 1.600e-03 1.653e-03 1.689e-03 1.709e-03 1.723e-03 1.755e-03 1.766e-03 1.780e-03 1.822e-03 1.845e-03 1.866e-03 1.868e-03 1.875e-03 1.926e-03 1.963e-03
+jit/special/erf-1e6	alloc_words	exact	826
+jit/special/erf-1e6	wall_time	batch=1	n=20	4.566e-03	4.273e-03 4.397e-03 4.418e-03 4.422e-03 4.422e-03 4.436e-03 4.465e-03 4.472e-03 4.525e-03 4.559e-03 4.573e-03 4.573e-03 4.576e-03 4.607e-03 4.630e-03 4.672e-03 4.682e-03 4.880e-03 5.019e-03 5.315e-03
+jit/special/erf-f64-1e6	alloc_words	exact	826
+jit/special/erf-f64-1e6	wall_time	batch=2	n=20	2.251e-03	1.953e-03 1.980e-03 2.009e-03 2.046e-03 2.076e-03 2.181e-03 2.200e-03 2.219e-03 2.223e-03 2.241e-03 2.261e-03 2.273e-03 2.283e-03 2.285e-03 2.312e-03 2.339e-03 2.376e-03 2.403e-03 2.414e-03 2.426e-03
+jit/special/erfc-1e6	alloc_words	exact	826
+jit/special/erfc-1e6	wall_time	batch=1	n=20	4.985e-03	4.789e-03 4.796e-03 4.802e-03 4.807e-03 4.890e-03 4.903e-03 4.913e-03 4.921e-03 4.940e-03 4.962e-03 5.007e-03 5.037e-03 5.039e-03 5.048e-03 5.094e-03 5.137e-03 5.192e-03 5.379e-03 5.570e-03 5.668e-03
+jit/special/erfc-f64-1e6	alloc_words	exact	826
+jit/special/erfc-f64-1e6	wall_time	batch=2	n=20	2.972e-03	2.706e-03 2.712e-03 2.729e-03 2.744e-03 2.779e-03 2.782e-03 2.806e-03 2.895e-03 2.947e-03 2.953e-03 2.990e-03 3.005e-03 3.014e-03 3.030e-03 3.046e-03 3.046e-03 3.101e-03 3.123e-03 3.145e-03 3.176e-03
+jit/special/erfinv-1e5	alloc_words	exact	826
+jit/special/erfinv-1e5	wall_time	batch=8	n=20	8.556e-04	8.509e-04 8.512e-04 8.514e-04 8.516e-04 8.525e-04 8.530e-04 8.535e-04 8.540e-04 8.546e-04 8.548e-04 8.564e-04 8.564e-04 8.580e-04 8.673e-04 8.689e-04 8.844e-04 8.980e-04 9.206e-04 9.466e-04 1.071e-03
+jit/special/erfinv-f64-1e5	alloc_words	exact	826
+jit/special/erfinv-f64-1e5	wall_time	batch=8	n=20	6.008e-04	5.559e-04 5.562e-04 5.649e-04 5.657e-04 5.663e-04 5.677e-04 5.833e-04 5.839e-04 5.937e-04 6.004e-04 6.012e-04 6.043e-04 6.097e-04 6.184e-04 6.224e-04 6.441e-04 7.056e-04 7.263e-04 7.720e-04 7.755e-04
+jit/special/lbeta-1e6	alloc_words	exact	1103
+jit/special/lbeta-1e6	wall_time	batch=1	n=20	1.068e-02	1.046e-02 1.047e-02 1.052e-02 1.054e-02 1.056e-02 1.057e-02 1.060e-02 1.062e-02 1.067e-02 1.068e-02 1.068e-02 1.072e-02 1.076e-02 1.076e-02 1.084e-02 1.108e-02 1.115e-02 1.127e-02 1.135e-02 1.170e-02
+jit/special/lbeta-f64-1e6	alloc_words	exact	1103
+jit/special/lbeta-f64-1e6	wall_time	batch=1	n=20	4.906e-03	4.548e-03 4.549e-03 4.554e-03 4.624e-03 4.645e-03 4.776e-03 4.897e-03 4.897e-03 4.898e-03 4.902e-03 4.909e-03 4.911e-03 5.018e-03 5.021e-03 5.186e-03 5.241e-03 5.259e-03 5.284e-03 5.287e-03 5.507e-03
+jit/special/lgamma-1e6	alloc_words	exact	826
+jit/special/lgamma-1e6	wall_time	batch=1	n=20	5.708e-03	5.535e-03 5.537e-03 5.537e-03 5.544e-03 5.553e-03 5.560e-03 5.572e-03 5.579e-03 5.581e-03 5.588e-03 5.828e-03 5.835e-03 5.836e-03 5.845e-03 5.893e-03 5.893e-03 5.897e-03 6.189e-03 6.211e-03 6.236e-03
+jit/special/lgamma-f64-1e6	alloc_words	exact	826
+jit/special/lgamma-f64-1e6	wall_time	batch=2	n=20	2.770e-03	2.470e-03 2.487e-03 2.613e-03 2.670e-03 2.677e-03 2.712e-03 2.722e-03 2.735e-03 2.738e-03 2.763e-03 2.778e-03 2.780e-03 2.791e-03 2.795e-03 2.818e-03 2.896e-03 2.899e-03 2.930e-03 2.973e-03 3.478e-03
+jit/special/log-ndtr-1e6	alloc_words	exact	826
+jit/special/log-ndtr-1e6	wall_time	batch=1	n=20	1.032e-02	1.013e-02 1.013e-02 1.015e-02 1.015e-02 1.016e-02 1.017e-02 1.018e-02 1.022e-02 1.030e-02 1.031e-02 1.033e-02 1.034e-02 1.036e-02 1.038e-02 1.056e-02 1.087e-02 1.091e-02 1.117e-02 1.130e-02 1.303e-02
+jit/special/log-ndtr-f64-1e6	alloc_words	exact	826
+jit/special/log-ndtr-f64-1e6	wall_time	batch=1	n=20	6.686e-03	6.302e-03 6.306e-03 6.310e-03 6.362e-03 6.365e-03 6.536e-03 6.605e-03 6.610e-03 6.638e-03 6.638e-03 6.735e-03 6.770e-03 6.812e-03 6.839e-03 6.854e-03 6.859e-03 6.903e-03 6.930e-03 6.989e-03 7.028e-03
+jit/special/ndtr-1e6	alloc_words	exact	826
+jit/special/ndtr-1e6	wall_time	batch=1	n=20	8.999e-03	8.932e-03 8.935e-03 8.936e-03 8.938e-03 8.938e-03 8.939e-03 8.942e-03 8.956e-03 8.963e-03 8.988e-03 9.010e-03 9.281e-03 9.316e-03 9.400e-03 9.535e-03 9.584e-03 9.886e-03 9.974e-03 9.991e-03 1.033e-02
+jit/special/ndtr-f64-1e6	alloc_words	exact	826
+jit/special/ndtr-f64-1e6	wall_time	batch=1	n=20	4.489e-03	4.178e-03 4.181e-03 4.188e-03 4.196e-03 4.224e-03 4.236e-03 4.244e-03 4.340e-03 4.379e-03 4.472e-03 4.506e-03 4.518e-03 4.533e-03 4.567e-03 4.661e-03 4.748e-03 4.792e-03 4.807e-03 4.820e-03 4.836e-03
+jit/special/ndtri-1e5	alloc_words	exact	826
+jit/special/ndtri-1e5	wall_time	batch=4	n=20	1.423e-03	1.420e-03 1.421e-03 1.421e-03 1.422e-03 1.422e-03 1.422e-03 1.422e-03 1.422e-03 1.422e-03 1.422e-03 1.423e-03 1.423e-03 1.423e-03 1.424e-03 1.427e-03 1.430e-03 1.435e-03 1.436e-03 1.548e-03 1.593e-03
+jit/special/ndtri-f64-1e5	alloc_words	exact	826
+jit/special/ndtri-f64-1e5	wall_time	batch=8	n=20	8.188e-04	7.916e-04 7.938e-04 7.948e-04 7.957e-04 7.984e-04 8.041e-04 8.053e-04 8.073e-04 8.127e-04 8.181e-04 8.196e-04 8.233e-04 8.498e-04 8.502e-04 8.579e-04 8.606e-04 8.717e-04 8.757e-04 8.837e-04 1.009e-03
 
 # machine: 943935ae6b4f79ac
 # host: MacBookPro · Apple M1 Max · arm64 · macos

@@ -13,16 +13,40 @@ eigh/float32-64x8x8-eager	alloc_words	exact	254
 eigh/float32-64x8x8-eager	wall_time	batch=256	n=20	1.953e-05	1.946e-05 1.948e-05 1.948e-05 1.949e-05 1.950e-05 1.950e-05 1.951e-05 1.951e-05 1.951e-05 1.952e-05 1.953e-05 1.953e-05 1.954e-05 1.954e-05 1.954e-05 1.960e-05 1.968e-05 1.983e-05 1.993e-05 2.001e-05
 eigh/float32-64x8x8-host	alloc_words	exact	12196
 eigh/float32-64x8x8-host	wall_time	batch=8	n=20	6.723e-04	6.708e-04 6.710e-04 6.715e-04 6.715e-04 6.716e-04 6.720e-04 6.720e-04 6.721e-04 6.722e-04 6.723e-04 6.724e-04 6.725e-04 6.728e-04 6.729e-04 6.731e-04 6.734e-04 6.740e-04 6.747e-04 6.749e-04 6.763e-04
+finite/checks-128-leaves-host	alloc_words	exact	106045
+finite/checks-128-leaves-host	wall_time	batch=1	n=20	7.541e-03	6.694e-03 6.915e-03 7.127e-03 7.379e-03 7.427e-03 7.428e-03 7.433e-03 7.518e-03 7.522e-03 7.532e-03 7.549e-03 7.625e-03 7.682e-03 7.760e-03 7.961e-03 8.094e-03 8.228e-03 8.372e-03 8.420e-03 8.422e-03
 indexed/scatter-16-rows-into-4096x1024-cache-host	alloc_words	exact	1537
 indexed/scatter-16-rows-into-4096x1024-cache-host	wall_time	batch=2048	n=20	3.193e-06	3.173e-06 3.174e-06 3.175e-06 3.183e-06 3.183e-06 3.184e-06 3.186e-06 3.189e-06 3.191e-06 3.191e-06 3.195e-06 3.196e-06 3.197e-06 3.199e-06 3.199e-06 3.201e-06 3.202e-06 3.208e-06 3.226e-06 3.229e-06
 indexed/take-512-rows-of-32768x1024-host	alloc_words	exact	1189
 indexed/take-512-rows-of-32768x1024-host	wall_time	batch=8	n=20	1.551e-04	1.129e-04 1.130e-04 1.145e-04 1.148e-04 1.153e-04 1.175e-04 1.179e-04 1.182e-04 1.195e-04 1.195e-04 1.907e-04 2.458e-04 4.195e-04 4.952e-04 5.188e-04 5.680e-04 5.758e-04 5.889e-04 7.701e-04 7.997e-04
 indexed/take-along-8-of-4096x1024-host	alloc_words	exact	1191
 indexed/take-along-8-of-4096x1024-host	wall_time	batch=128	n=20	4.389e-05	4.320e-05 4.331e-05 4.338e-05 4.365e-05 4.366e-05 4.369e-05 4.369e-05 4.377e-05 4.384e-05 4.387e-05 4.390e-05 4.392e-05 4.404e-05 4.407e-05 4.415e-05 4.428e-05 4.438e-05 4.534e-05 4.550e-05 4.569e-05
+jit/cast-bit-1e7	alloc_words	exact	866
+jit/cast-bit-1e7	wall_time	batch=8	n=20	7.000e-04	6.828e-04 6.867e-04 6.930e-04 6.938e-04 6.940e-04 6.944e-04 6.946e-04 6.953e-04 6.957e-04 6.978e-04 7.022e-04 7.033e-04 7.190e-04 7.205e-04 7.272e-04 7.373e-04 7.575e-04 7.730e-04 7.746e-04 8.026e-04
+jit/scatter-bit-1e7	alloc_words	exact	981
+jit/scatter-bit-1e7	wall_time	batch=4096	n=20	1.576e-06	1.557e-06 1.561e-06 1.563e-06 1.564e-06 1.565e-06 1.567e-06 1.570e-06 1.574e-06 1.575e-06 1.575e-06 1.577e-06 1.577e-06 1.581e-06 1.581e-06 1.583e-06 1.585e-06 1.586e-06 1.587e-06 1.596e-06 1.608e-06
+jit/scatter-bool-1e7	alloc_words	exact	928
+jit/scatter-bool-1e7	wall_time	batch=8192	n=20	1.128e-06	1.119e-06 1.120e-06 1.120e-06 1.120e-06 1.122e-06 1.123e-06 1.125e-06 1.125e-06 1.126e-06 1.128e-06 1.129e-06 1.130e-06 1.133e-06 1.134e-06 1.134e-06 1.136e-06 1.137e-06 1.137e-06 1.149e-06 1.151e-06
+jit/set-bit-1e7	alloc_words	exact	932
+jit/set-bit-1e7	wall_time	batch=4096	n=20	1.210e-06	1.190e-06 1.191e-06 1.192e-06 1.193e-06 1.200e-06 1.201e-06 1.206e-06 1.208e-06 1.209e-06 1.209e-06 1.211e-06 1.211e-06 1.212e-06 1.214e-06 1.215e-06 1.217e-06 1.220e-06 1.220e-06 1.222e-06 1.233e-06
+jit/set-bool-1e7	alloc_words	exact	879
+jit/set-bool-1e7	wall_time	batch=8192	n=20	1.066e-06	1.052e-06 1.054e-06 1.055e-06 1.057e-06 1.059e-06 1.061e-06 1.062e-06 1.062e-06 1.065e-06 1.066e-06 1.067e-06 1.067e-06 1.067e-06 1.068e-06 1.069e-06 1.072e-06 1.073e-06 1.073e-06 1.076e-06 1.100e-06
+jit/where-bit-1e7	alloc_words	exact	1419
+jit/where-bit-1e7	wall_time	batch=2	n=20	2.880e-03	2.638e-03 2.745e-03 2.754e-03 2.757e-03 2.807e-03 2.812e-03 2.812e-03 2.818e-03 2.844e-03 2.846e-03 2.914e-03 2.918e-03 2.937e-03 2.968e-03 3.009e-03 3.032e-03 3.130e-03 3.155e-03 3.170e-03 3.191e-03
+jit/where-bool-1e7	alloc_words	exact	1419
+jit/where-bool-1e7	wall_time	batch=2	n=20	3.136e-03	2.880e-03 2.885e-03 2.945e-03 2.959e-03 3.060e-03 3.061e-03 3.065e-03 3.101e-03 3.110e-03 3.120e-03 3.153e-03 3.154e-03 3.190e-03 3.193e-03 3.200e-03 3.224e-03 3.265e-03 3.351e-03 3.418e-03 3.571e-03
 launch/chain-64	alloc_words	exact	4556
 launch/chain-64	wall_time	batch=256	n=20	3.614e-05	3.607e-05 3.610e-05 3.611e-05 3.611e-05 3.612e-05 3.612e-05 3.612e-05 3.613e-05 3.613e-05 3.614e-05 3.614e-05 3.615e-05 3.615e-05 3.616e-05 3.616e-05 3.616e-05 3.638e-05 3.644e-05 3.647e-05 3.650e-05
 launch/scan-256	alloc_words	exact	65197
 launch/scan-256	wall_time	batch=32	n=20	2.363e-04	2.328e-04 2.331e-04 2.334e-04 2.336e-04 2.336e-04 2.338e-04 2.338e-04 2.344e-04 2.360e-04 2.363e-04 2.364e-04 2.365e-04 2.366e-04 2.367e-04 2.367e-04 2.368e-04 2.369e-04 2.373e-04 2.373e-04 2.404e-04
+loop/iterate-256	alloc_words	exact	106271
+loop/iterate-256	wall_time	batch=32	n=20	2.459e-04	2.450e-04 2.451e-04 2.453e-04 2.454e-04 2.455e-04 2.455e-04 2.455e-04 2.455e-04 2.456e-04 2.458e-04 2.459e-04 2.459e-04 2.460e-04 2.467e-04 2.468e-04 2.473e-04 2.477e-04 2.478e-04 2.498e-04 2.583e-04
+loop/newton-1024	alloc_words	exact	2776
+loop/newton-1024	wall_time	batch=1024	n=20	8.314e-06	8.280e-06 8.281e-06 8.284e-06 8.285e-06 8.286e-06 8.292e-06 8.293e-06 8.312e-06 8.313e-06 8.314e-06 8.314e-06 8.314e-06 8.314e-06 8.330e-06 8.337e-06 8.342e-06 8.344e-06 8.345e-06 8.353e-06 8.391e-06
+loop/vmap-newton-256-lanes-compiled	alloc_words	exact	8346
+loop/vmap-newton-256-lanes-compiled	wall_time	batch=512	n=20	1.671e-05	1.657e-05 1.658e-05 1.662e-05 1.664e-05 1.665e-05 1.667e-05 1.668e-05 1.669e-05 1.670e-05 1.671e-05 1.672e-05 1.672e-05 1.674e-05 1.676e-05 1.679e-05 1.679e-05 1.681e-05 1.681e-05 1.684e-05 1.703e-05
+loop/vmap-newton-256-lanes-eager	alloc_words	exact	36318
+loop/vmap-newton-256-lanes-eager	wall_time	batch=128	n=20	7.373e-05	7.225e-05 7.239e-05 7.277e-05 7.284e-05 7.302e-05 7.327e-05 7.334e-05 7.355e-05 7.364e-05 7.371e-05 7.376e-05 7.377e-05 7.381e-05 7.382e-05 7.386e-05 7.389e-05 7.392e-05 7.412e-05 7.486e-05 7.494e-05
 reverse/grad-of-jit-mlp-float32-host	alloc_words	exact	8402
 reverse/grad-of-jit-mlp-float32-host	wall_time	batch=128	n=20	4.598e-05	4.483e-05 4.488e-05 4.504e-05 4.508e-05 4.527e-05 4.550e-05 4.552e-05 4.567e-05 4.574e-05 4.576e-05 4.619e-05 4.629e-05 4.640e-05 4.660e-05 4.670e-05 4.685e-05 4.702e-05 4.766e-05 4.914e-05 4.928e-05
 reverse/jit-of-grad-mlp-float32-host	alloc_words	exact	2996
@@ -47,6 +71,22 @@ topk/4-of-32-512-rows-compiled	alloc_words	exact	1293
 topk/4-of-32-512-rows-compiled	wall_time	batch=256	n=20	3.391e-05	3.365e-05 3.369e-05 3.370e-05 3.370e-05 3.372e-05 3.373e-05 3.375e-05 3.378e-05 3.389e-05 3.391e-05 3.391e-05 3.393e-05 3.398e-05 3.399e-05 3.400e-05 3.403e-05 3.407e-05 3.413e-05 3.432e-05 3.526e-05
 topk/4-of-32-512-rows-eager	alloc_words	exact	3050
 topk/4-of-32-512-rows-eager	wall_time	batch=8	n=20	7.620e-04	7.475e-04 7.509e-04 7.520e-04 7.549e-04 7.551e-04 7.572e-04 7.594e-04 7.594e-04 7.604e-04 7.613e-04 7.627e-04 7.635e-04 7.660e-04 7.661e-04 7.668e-04 7.713e-04 7.716e-04 7.721e-04 7.748e-04 7.802e-04
+transcendental/exp-float32-1Mi-host	alloc_words	exact	866
+transcendental/exp-float32-1Mi-host	wall_time	batch=4	n=20	1.896e-03	1.778e-03 1.815e-03 1.824e-03 1.825e-03 1.834e-03 1.841e-03 1.845e-03 1.848e-03 1.851e-03 1.894e-03 1.897e-03 1.914e-03 1.928e-03 1.938e-03 1.951e-03 1.956e-03 1.959e-03 1.990e-03 1.996e-03 2.053e-03
+transcendental/exp-float64-1Mi-host	alloc_words	exact	866
+transcendental/exp-float64-1Mi-host	wall_time	batch=8	n=20	9.685e-04	9.057e-04 9.218e-04 9.219e-04 9.288e-04 9.329e-04 9.505e-04 9.565e-04 9.586e-04 9.619e-04 9.666e-04 9.703e-04 9.737e-04 9.743e-04 9.786e-04 9.809e-04 9.831e-04 9.861e-04 9.894e-04 9.987e-04 1.012e-03
+transcendental/log-float32-1Mi-host	alloc_words	exact	866
+transcendental/log-float32-1Mi-host	wall_time	batch=4	n=20	1.545e-03	1.468e-03 1.511e-03 1.513e-03 1.517e-03 1.520e-03 1.521e-03 1.526e-03 1.528e-03 1.528e-03 1.543e-03 1.548e-03 1.548e-03 1.624e-03 1.632e-03 1.634e-03 1.641e-03 1.642e-03 1.645e-03 1.648e-03 1.657e-03
+transcendental/log-float64-1Mi-host	alloc_words	exact	866
+transcendental/log-float64-1Mi-host	wall_time	batch=8	n=20	6.731e-04	6.165e-04 6.214e-04 6.305e-04 6.307e-04 6.346e-04 6.404e-04 6.477e-04 6.698e-04 6.706e-04 6.708e-04 6.753e-04 6.824e-04 6.843e-04 6.855e-04 6.875e-04 6.894e-04 6.957e-04 7.036e-04 7.037e-04 7.165e-04
+transcendental/sin-far-float32-1Mi-host	alloc_words	exact	866
+transcendental/sin-far-float32-1Mi-host	wall_time	batch=2	n=20	4.605e-03	4.370e-03 4.569e-03 4.576e-03 4.581e-03 4.583e-03 4.583e-03 4.593e-03 4.597e-03 4.601e-03 4.603e-03 4.607e-03 4.608e-03 4.608e-03 4.609e-03 4.610e-03 4.611e-03 4.613e-03 4.617e-03 4.633e-03 4.661e-03
+transcendental/sin-far-float64-1Mi-host	alloc_words	exact	866
+transcendental/sin-far-float64-1Mi-host	wall_time	batch=1	n=20	7.045e-03	6.468e-03 6.890e-03 6.894e-03 6.905e-03 6.919e-03 6.919e-03 6.937e-03 6.970e-03 6.975e-03 7.041e-03 7.048e-03 7.055e-03 7.059e-03 7.068e-03 7.085e-03 7.089e-03 7.089e-03 7.090e-03 7.127e-03 7.142e-03
+transcendental/sin-float32-1Mi-host	alloc_words	exact	866
+transcendental/sin-float32-1Mi-host	wall_time	batch=2	n=20	3.911e-03	3.691e-03 3.885e-03 3.898e-03 3.899e-03 3.899e-03 3.902e-03 3.907e-03 3.910e-03 3.911e-03 3.911e-03 3.911e-03 3.912e-03 3.912e-03 3.913e-03 3.913e-03 3.918e-03 3.919e-03 3.920e-03 3.929e-03 3.941e-03
+transcendental/sin-float64-1Mi-host	alloc_words	exact	866
+transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	6.896e-03	6.397e-03 6.870e-03 6.885e-03 6.886e-03 6.888e-03 6.889e-03 6.891e-03 6.893e-03 6.894e-03 6.895e-03 6.896e-03 6.898e-03 6.900e-03 6.902e-03 6.909e-03 6.915e-03 6.922e-03 6.923e-03 6.928e-03 6.930e-03
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos

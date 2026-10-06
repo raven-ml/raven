@@ -1,6 +1,31 @@
 # thumper baseline v1
 # suite: compile
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+erfinv	wall_time	batch=1	n=5	3.364e-01	3.353e-01 3.363e-01 3.364e-01 3.372e-01 3.395e-01
+erfinv-grad	wall_time	batch=1	n=5	5.406e-01	5.382e-01 5.400e-01 5.406e-01 5.407e-01 5.442e-01
+shaped-16k	wall_time	batch=1	n=5	5.288e+01	5.236e+01 5.286e+01 5.288e+01 5.295e+01 5.348e+01
+shaped-1k	wall_time	batch=1	n=5	4.080e-01	4.060e-01 4.073e-01 4.080e-01 4.083e-01 4.084e-01
+shaped-4k	wall_time	batch=1	n=5	2.549e+00	2.548e+00 2.549e+00 2.549e+00 2.550e+00 2.551e+00
+special/digamma	wall_time	batch=1	n=5	1.815e-01	1.790e-01 1.813e-01 1.815e-01 1.821e-01 1.837e-01
+special/digamma-grad	wall_time	batch=1	n=5	2.704e-01	2.690e-01 2.698e-01 2.704e-01 2.706e-01 2.713e-01
+special/erfc	wall_time	batch=1	n=5	1.729e-01	1.724e-01 1.726e-01 1.729e-01 1.742e-01 1.743e-01
+special/erfc-grad	wall_time	batch=1	n=5	2.712e-01	2.706e-01 2.707e-01 2.712e-01 2.713e-01 2.720e-01
+special/lbeta	wall_time	batch=1	n=5	4.185e-01	4.172e-01 4.179e-01 4.185e-01 4.191e-01 4.192e-01
+special/lbeta-grad-a	wall_time	batch=1	n=5	7.437e-01	7.425e-01 7.431e-01 7.437e-01 7.457e-01 7.462e-01
+special/lbeta-grad-b	wall_time	batch=1	n=5	7.467e-01	7.390e-01 7.417e-01 7.467e-01 7.470e-01 7.510e-01
+special/lgamma	wall_time	batch=1	n=5	2.598e-01	2.590e-01 2.595e-01 2.598e-01 2.626e-01 2.628e-01
+special/lgamma-grad	wall_time	batch=1	n=5	3.958e-01	3.943e-01 3.955e-01 3.958e-01 3.963e-01 3.969e-01
+special/log_ndtr	wall_time	batch=1	n=5	4.489e-01	4.484e-01 4.486e-01 4.489e-01 4.490e-01 4.495e-01
+special/log_ndtr-grad	wall_time	batch=1	n=5	4.768e-01	4.755e-01 4.767e-01 4.768e-01 4.780e-01 4.790e-01
+special/ndtr	wall_time	batch=1	n=5	2.688e-01	2.681e-01 2.686e-01 2.688e-01 2.692e-01 2.703e-01
+special/ndtr-grad	wall_time	batch=1	n=5	4.200e-01	4.176e-01 4.195e-01 4.200e-01 4.201e-01 4.220e-01
+special/ndtri	wall_time	batch=1	n=5	5.506e-01	5.494e-01 5.502e-01 5.506e-01 5.514e-01 5.517e-01
+special/ndtri-grad	wall_time	batch=1	n=5	8.948e-01	8.931e-01 8.946e-01 8.948e-01 8.953e-01 8.982e-01
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
