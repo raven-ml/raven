@@ -1565,9 +1565,10 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     last axis has 8 elements is a [uint8] tensor without that axis. The result
     is a view of [t]'s storage, on the host and on any device, and runs no
     kernel, except where [dtype] is wider and [t] is not C-contiguous from an
-    element whose bits start on a byte aligned to [dtype]'s width, or is split
-    over devices along its last axis: it is then read from a C-contiguous copy
-    of [t], made by [t]'s devices.
+    element whose bits start on a byte aligned to [dtype]'s width, in a placed
+    value's storage at a multiple of that width from a buffer that starts so
+    aligned, or [t] is split over devices along its last axis: it is then read
+    from a C-contiguous copy of [t], made by [t]'s devices.
 
     Raises [Invalid_argument] if either dtype is [bool], whose only bytes are 0
     and 1, or if [dtype] is wider and [t] has no last axis of [k] elements.
@@ -4673,10 +4674,11 @@ val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
 val shards : ('a, 'b) t -> Nx_device.Buffer.t list * Nx_array.View.t
 (** [shards x] is the buffer of [x]'s storage on each device of
     [Placement.devices (placement x)], in that order, and the view each device
-    has of its buffer, read as [x]'s dtype. A host value is its one buffer. The
-    buffers are [x]'s own handles: the values of one dtype over one storage give
-    physically equal ones, a value of another dtype views their memory
-    ({!Nx_device.Buffer.view}), and nothing is copied.
+    has of its buffer, read as [x]'s dtype. A host value is its one buffer. A
+    value of the buffers' format gets the buffers themselves, physically equal
+    for every such value over one storage; a value of another dtype gets a new
+    view of their memory on each call ({!Nx_device.Buffer.view}). Nothing is
+    copied.
 
     Raises [Invalid_argument] if [x] is traced, or as a read of a consumed value
     raises. *)
@@ -4979,7 +4981,8 @@ module Repr : sig
 
     val v : Placement.t -> Nx_device.Buffer.t list -> t
     (** [v p buffers] is the storage of [buffers], one per device of [p], in
-        order, each of the same length and in the memory of its device.
+        order, each of the same size in bytes and in the memory of its device.
+        A value over it reads its bytes as the value's dtype ({!Placed.v}).
 
         Raises [Invalid_argument] otherwise. *)
 
