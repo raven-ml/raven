@@ -246,6 +246,9 @@ nx_c_status nx_c_bit_reduce(nx_c_bit_op op, const nx_c_ndarray *out,
 static inline uint64_t nx_c_bit_pack(const uint8_t *bytes, int n) {
   uint64_t w = 0;
   int i = 0;
+  /* States 0 <= n <= 64 to the compiler: GCC cannot see it from a caller
+     that packs a 64-byte buffer, and warns of an overrun. */
+  if ((unsigned)n > 64) __builtin_unreachable();
 #if defined(__ARM_NEON)
   if (n == 64) {
     /* Each lane keeps its weight, 1 << (lane mod 8), where it is non-zero,
