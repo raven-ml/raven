@@ -1139,6 +1139,8 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       start =
         (fun t v ->
           let e = signs t v in
+          if Nx.dim 0 e = 0 then
+            invalid_arg (fn ^ ": the event has no component");
           ((e, e), []));
       accept =
         (fun (now, _) ~t:_ ~t_end ~h:_ ~v:_ ~ks:_ v' ->
@@ -1157,7 +1159,6 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let s, disorder = search fn `Allowed y m ~tol ~budget watching ~at y0 in
   let signs, before = s.memory in
   let n = Nx.dim 0 signs in
-  if n = 0 then invalid_arg (fn ^ ": the event has no component");
   let int32 x = Nx.scalar Nx.int32 x in
   let span = Nx.sub t1 t0 in
   let fraction i = scalar_at s.ends (Nx.maximum i (int32 0l)) in

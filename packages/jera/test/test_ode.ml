@@ -859,11 +859,20 @@ let event_tests =
         raises_match
           (Exn.failure ~substring:"The crossing of component [1] near t")
           (fun () -> Solution.get s));
-    test "an event of no component raises" (fun () ->
+    test "an event of no component raises before any step" (fun () ->
+        let calls = ref 0 in
+        let counted t y =
+          incr calls;
+          fall t y
+        in
         raises_match
           (Exn.invalid_arg
              ~substring:"Jera.Ode.event: the event has no component") (fun () ->
-            drop (fun _ _ -> Nx.zeros f64 [| 0 |]) (scalar 10.)));
+            Ode.event pair Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:200 counted
+              ~event:(fun _ _ -> Nx.zeros f64 [| 0 |])
+              ~t0:(scalar 0.) ~t1:(scalar 5.)
+              (scalar 10., scalar 0.));
+        equal int 0 !calls);
   ]
 
 (* Delays *)
