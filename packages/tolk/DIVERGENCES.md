@@ -4266,7 +4266,8 @@ stores through a pad.
   scalar ones` and `get_call_var_uops › is the call's argument in the slot of a
   scalar parameter`; the `Tolk_engine` suite: `link and run › a loop's call
   reads its trip as a scalar argument on each trip`, `› a back edge's call
-  reads its trip on each trip, at most its trips`, `› loops of any range and
-  trips around one call compile one program`, and the same two on Metal; the
+  reads its trip on each trip, at most its trips`, `› a loop of one trip passes
+  its call the trip as a scalar argument`, `› loops of any range and trips
+  around one call compile one program`, and the same two on Metal; the
   Hcq2 suite: `ranges › each trip of a chunked range reads its trip as a scalar
   argument`.

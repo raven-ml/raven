@@ -708,7 +708,8 @@ let create_linear_with_vars ?(capturing = false) big_sink =
   in
   let used_vars =
     List.concat_map
-      (fun si -> List.map expr (variables (nth si 0)))
+      (fun si ->
+        List.filter_map (fun v -> (param_of v).name) (variables (nth si 0)))
       (src linear)
   in
   let var_vals =

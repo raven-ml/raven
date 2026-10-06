@@ -1479,6 +1479,8 @@ let schedules =
       loops_around_calls_on_the_host;
       reads_trips_on "CPU";
       reads_trips_under_a_back_edge "CPU";
+      test "a loop of one trip passes its call the trip as a scalar argument"
+        (fun () -> reads_its_trip "CPU" 1 (List.nth (trip_arguments 1) 1));
       test "loops of any range and trips around one call compile one program"
         one_program_for_any_loop;
       test "a loop's flag that views wider storage is refused"
