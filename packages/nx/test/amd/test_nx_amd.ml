@@ -1386,6 +1386,36 @@ let scan_bounds =
           done);
     ]
 
+(* Random values *)
+
+let key_words (k : Nx.Rng.t) = Nx.P (host (k :> Nx.int32_t))
+let gpu_key seed = Nx.Rng.of_tensor (on_gpu (Nx.Rng.key seed :> Nx.int32_t))
+
+let random =
+  group "random"
+    [
+      test "an RNG key on the GPU splits as on the host" (fun () ->
+          equal (array Stored.packed)
+            (Array.map key_words (Nx.Rng.split (Nx.Rng.key 42)))
+            (Array.map key_words (Nx.Rng.split (gpu_key 42))));
+      prop "keys on the GPU split, fold in and draw as on the host"
+        Gen.(triple int (int_range 1 5) (pair int (int_range 0 70)))
+        (fun (seed, n, (data, size)) ->
+          let here = Nx.Rng.key seed and there = gpu_key seed in
+          equal ~msg:"split" (array Stored.packed)
+            (Array.map key_words (Nx.Rng.split ~n here))
+            (Array.map key_words (Nx.Rng.split ~n there));
+          equal ~msg:"split_batch" Stored.packed
+            (key_words (Nx.Rng.split_batch ~n here))
+            (key_words (Nx.Rng.split_batch ~n there));
+          equal ~msg:"fold_in" Stored.packed
+            (key_words (Nx.Rng.fold_in here data))
+            (key_words (Nx.Rng.fold_in there data));
+          equal ~msg:"uniform" Stored.packed
+            (Nx.P (Nx.Rng.uniform here Nx.float32 [| size |]))
+            (Nx.P (host (Nx.Rng.uniform there Nx.float32 [| size |]))));
+    ]
+
 let accuracy = group "accuracy" (Nx_test.Accuracy.groups { put = on_gpu })
 
 let () =
@@ -1411,5 +1441,6 @@ let () =
          scan_geometry;
          scan_cases;
          scan_bounds;
+         random;
          accuracy;
        ])

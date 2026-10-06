@@ -3267,6 +3267,9 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation hash with Threefry eagerly, so an `Nx.Rng`
+  key placed on an AMD device splits, folds in and draws on the GPU, bit for bit
+  as on the host, where `Nx.Rng.split` raised "no threefry".
 - AMD GPUs of the gfx12 generation run scans eagerly: `Nx.cumsum`,
   `Nx.cumprod`, `Nx.cummax` and `Nx.cummin` run on the GPU, the running
   extremes and integer results bit for bit as on the host, running sums from

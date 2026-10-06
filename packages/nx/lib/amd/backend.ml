@@ -532,6 +532,41 @@ let scan key ~fold_key ~dst x ~axis =
       (if parts = 1 then [ run ] else [ totals (); run ])
   end
 
+(* Threefry *)
+
+(* Runs the threefry module hashing [counter]'s word pairs under [key]'s into
+   [dst], pairs along their last axis. *)
+let threefry key counter ~dst =
+  let key_ = "threefry" in
+  let dev, s, target = locate key_ dst in
+  let shape = View.shape (view dst) in
+  let last = Array.length shape - 1 in
+  let pairs o = axes_of (view o) (fun i -> i < last) in
+  let views =
+    View.coalesce
+      [ View.create (Array.sub shape 0 last); pairs key; pairs counter ]
+  in
+  let n = View.numel (List.hd views) in
+  if View.ndim (List.hd views) > max_rank then
+    refuse "operands of %d axes once merged; kernels take %d"
+      (View.ndim (List.hd views))
+      max_rank;
+  if n > 0 then begin
+    let groups = groups_of s n in
+    Nx_amd_device.launch
+      ~touches:[ buffer dst; buffer key; buffer counter ]
+      [
+        dispatch (program dev s target key_ "s") groups
+        @@ args (fun i64 ->
+            i64 (at dst (view dst));
+            i64 (address key);
+            i64 (address counter);
+            meta i64 ~n ~groups (List.tl views);
+            i64 (View.stride last (view key));
+            i64 (View.stride last (view counter)));
+      ]
+  end
+
 (* Matrix products
 
    A workgroup computes a tile of [tile] x [tile] outputs of one matrix of the
@@ -725,7 +760,8 @@ module Kernels : Nx_backend.S = struct
       ~dst:(Operand dst)
       [ Operand cond; Operand a; Operand b ]
 
-  let threefry _ _ ~dst:_ = no "threefry"
+  let threefry key counter ~dst =
+    threefry (Operand key) (Operand counter) ~dst:(Operand dst)
 
   let reduce (type a b) k ~axes (x : (a, b) Nx_array.t)
       ~(dst : (a, b) Nx_array.t) =

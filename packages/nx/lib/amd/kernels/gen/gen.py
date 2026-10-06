@@ -114,6 +114,7 @@ def modules():
                     yield f"{family}.{k}.{d}", f'#include "{family}.hip"\n{macro}({c_name(k)}, {c_name(d)})\n'
     for d in NUMERIC:
         yield f"fma.{d}", f'#include "fma.hip"\nFMA({c_name(d)})\n'
+    yield "threefry", '#include "random.hip"\nTHREEFRY()\n'
     for d in NUMERIC:
         yield f"matmul.{d}", f'#include "matmul.hip"\nMATMUL({c_name(d)})\n'
     for kinds, dtypes in REDUCE:

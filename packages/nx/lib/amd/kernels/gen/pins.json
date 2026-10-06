@@ -44,12 +44,13 @@
   "src/ocml.h": "784e3555463650144dbcd11631009d87aba644eb84b86552a5c3140d2596a7e9",
   "src/pad.hip": "112263f856d59c2834f897dd22bd9181d7205fa9e29aa7a787c310817a7afe3d",
   "src/place.hip": "365501ce9da9615c2542a804970e96b121fb2ab53748a93ea5d5fc90bd46e8cd",
+  "src/random.hip": "d7d56cdf25552f7fa2d7826f968a9b2f098edd7ab5728682e81591100d8fdd86",
   "src/reduce.hip": "aff1f215e14e488cbd9ac9e326a758726abfedccfe4048f718cdc82f1b6f9b69",
   "src/scan.hip": "f92fc7c4b2cc8b4119e04aadf75b965ded370f1de0e2ca8dcb8b5bc7e82934f6",
   "src/unary.hip": "0e209873b04db7e81dc59c01310e1cbd4c3dbc7ffe04b6992372b9bdf2903e2f",
   "src/where.hip": "b6fe234b9e31eac257e577d05d7c096919fd0eb8562ddd20d979281b87073547",
   "../../dtype/nx_dtype.h": "6982bd891f02e37fd676dc5993120f514dfcf0df2ed580f7668bf32e40fd0929",
-  "gen/gen.py": "8dd4514c9b27ac13d606eeb6a38485de75edbcae32ec3f75d2e8a44b8bd0d7eb"
+  "gen/gen.py": "03952440a7917ba1046cf8315009c3021f50725ef27753bdc756ec5e98deafce"
  },
  "outputs": {
   "gfx12-generic/arg_reduce.argmax.bfloat16.co": "4b9eaa05ab6d4c360877a54cd4b108f35d533768d6e92c8d1a7333eb2192ada4",
@@ -665,6 +666,7 @@
   "gfx12-generic/scan.sum.uint32.co": "255eb458c743640484d2ff735f75aa537b94bf0a5abb528ff404562735098c98",
   "gfx12-generic/scan.sum.uint64.co": "77eb883ea2f1c2cbe0a8ae9bf74520ed230c3ac696096924bde432452605038f",
   "gfx12-generic/scan.sum.uint8.co": "2bff663b20484dee3468cd4b03c6ad1f1ebbed8d2ea4c5dd35f2e75ef9f40863",
+  "gfx12-generic/threefry.co": "f37bb3584140f8a500c3ef05e1fb498441d22c2d8a1ebfa4b800099268f26147",
   "gfx12-generic/unary.abs.bfloat16.co": "5fec0807931d734151efad7894f17057c9ee9095013ada5f022854ff98f66f36",
   "gfx12-generic/unary.abs.float16.co": "23bacc3132fcbbf1711688d54e2f45295fcbc213e1efb26a3a44ed3c6335e6ac",
   "gfx12-generic/unary.abs.float32.co": "5ee303d1cbe333b0b20b916d24a37038420c56e2ee30a2b75f5c36b56a719f9b",
