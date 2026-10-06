@@ -107,7 +107,20 @@ let linear_tangent (Case.Instance i, seed) =
       List.iter2 (equal ~msg:"the tangent" (Reference.exact ())) (l v) dy
 
 (* The second order is a difference of tangents, at a step ten times the first
-   order's and a tolerance a hundred times its. *)
+   order's and a tolerance a hundred times its. The difference is extrapolated
+   from steps [h] and [h / 2], [(4 D (h / 2) - D h) / 3], whose error is of
+   order [h⁴]: a central difference's, of order [h²], exceeds the tolerance at
+   that step for a factorization's vectors. *)
+let extrapolated ~eps f x v =
+  let d h = Reference.central (operands ()) (operands ()) ~eps:h f x v in
+  List.map2
+    (Array.map2 (fun half whole ->
+         Complex.div
+           (Complex.sub (Complex.mul { re = 4.; im = 0. } half) whole)
+           { re = 3.; im = 0. }))
+    (d (eps /. 2.))
+    (d eps)
+
 let second_order (eps, rel) (Case.Instance i, seed) =
   let eps = 10. *. eps and rel = Float.min 0.1 (100. *. rel) in
   let v = direction seed i.x and u = direction (seed + 1) i.x in
@@ -122,7 +135,7 @@ let second_order (eps, rel) (Case.Instance i, seed) =
   in
   equal
     (Reference.close ~rel ~floor:(rel *. scale) ())
-    (Reference.central (operands ()) (operands ()) ~eps (along v) i.x u)
+    (extrapolated ~eps (along v) i.x u)
     (Reference.leaves (operands ()) uv);
   equal ~msg:"symmetric in its two directions"
     (Reference.close ~rel:(rel *. 1e-4) ~floor:1e-12 ())
