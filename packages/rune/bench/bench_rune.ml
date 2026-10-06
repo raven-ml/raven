@@ -65,7 +65,7 @@ let mlp_grad_benchmarks params x y =
   let f p = loss p x y in
   [
     Thumper.bench "mlp forward (nx eager)" (fun () -> loss params x y);
-    Thumper.bench ~tags:[ "lab" ] "mlp value_and_grad" (fun () ->
+    Thumper.bench "mlp value_and_grad" (fun () ->
         Rune.value_and_grad mlp_ptree f params);
   ]
 
@@ -113,7 +113,7 @@ let chain_benchmarks x0 =
   let v = Nx.copy (Nx.ones_like x0) in
   [
     Thumper.bench "chain fwd (nx eager)" (fun () -> chain x0);
-    Thumper.bench ~tags:[ "lab" ] "chain grad" (fun () -> Rune.grad' chain x0);
+    Thumper.bench "chain grad" (fun () -> Rune.grad' chain x0);
     Thumper.bench "chain jvp" (fun () -> Rune.jvp' chain x0 v);
   ]
 
@@ -204,7 +204,7 @@ let declined_benchmarks () =
    int64 1Mi replay] measures the arange a program computes. *)
 let jit_benchmarks params x x0 =
   [
-    Thumper.bench_with_setup ~tags:[ "lab" ]
+    Thumper.bench_with_setup
       ~setup:(fun () ->
         let f =
           Rune.jit

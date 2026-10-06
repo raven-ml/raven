@@ -152,16 +152,13 @@ let () =
     [
       Thumper.group "TrainStep"
         [
-          Thumper.bench "train step" ~tags:[ "lab" ] (fun () -> adam_step ());
+          Thumper.bench "train step" (fun () -> adam_step ());
           Thumper.bench "sgd train step" (fun () -> sgd_step ());
         ];
       Thumper.group "Forward"
         [ Thumper.bench "apply" (fun () -> Mlp.apply params x) ];
       Thumper.group "Conv"
-        [
-          Thumper.bench "conv train step" ~tags:[ "lab" ] (fun () ->
-              cnn_step ());
-        ];
+        [ Thumper.bench "conv train step" (fun () -> cnn_step ()) ];
       Thumper.group "Linear"
         [
           Thumper.bench "linear fwd" (fun () -> Kaun.Linear.apply lin lx);

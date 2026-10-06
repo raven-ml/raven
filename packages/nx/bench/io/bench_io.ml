@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   --------------------------------------------------------------------------*)
 
-let lab = [ "lab" ]
 let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
 let runner_pid = Unix.getpid ()
 
@@ -130,14 +129,13 @@ let benchmarks =
   [
     Thumper.group "npy"
       [
-        Thumper.bench ~tags:lab "Load NPY 1 MiB f32" (fun () ->
-            Nx_io.load_npy npy_input);
+        Thumper.bench "Load NPY 1 MiB f32" (fun () -> Nx_io.load_npy npy_input);
         Thumper.bench "Save NPY 1 MiB f32" (fun () ->
             Nx_io.save_npy npy_output structured);
       ];
     Thumper.group "npz"
       [
-        Thumper.bench ~tags:lab "Load NPZ Deflate 1 MiB f32" (fun () ->
+        Thumper.bench "Load NPZ Deflate 1 MiB f32" (fun () ->
             Nx_io.load_npz npz_deflate_input);
         Thumper.bench "Load NPZ Store 1 MiB u8" (fun () ->
             Nx_io.load_npz npz_store_input);
@@ -162,21 +160,21 @@ let benchmarks =
       ];
     Thumper.group "png"
       [
-        Thumper.bench ~tags:lab "Load PNG 512x512 RGB" (fun () ->
+        Thumper.bench "Load PNG 512x512 RGB" (fun () ->
             Nx_io.load_image png_input);
         Thumper.bench "Save PNG 512x512 RGB" (fun () ->
             Nx_io.save_image png_output image);
       ];
     Thumper.group "jpeg"
       [
-        Thumper.bench ~tags:lab "Load JPEG 512x512 RGB" (fun () ->
+        Thumper.bench "Load JPEG 512x512 RGB" (fun () ->
             Nx_io.load_image jpeg_input);
         Thumper.bench "Save JPEG 512x512 RGB" (fun () ->
             Nx_io.save_image jpeg_output image);
       ];
     Thumper.group "gzip"
       [
-        Thumper.bench ~tags:lab "Gunzip stored 1 MiB" (fun () ->
+        Thumper.bench "Gunzip stored 1 MiB" (fun () ->
             Nx_io.gunzip ~src:gzip_input ~dst:gzip_output);
       ];
   ]

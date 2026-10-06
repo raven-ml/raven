@@ -853,7 +853,7 @@ typedef struct {
 /* ── Parallel policy ──────────────────────────────────────────────────────
 
    One function decides thread counts for the whole backend; its constant table
-   encodes the lab/ Apple-Silicon findings (serial SIMD beats parallel-for below
+   encodes measurements on Apple Silicon (serial SIMD beats parallel-for below
    ~16M elements for bandwidth-bound work). Implemented in nx_c_engine.c. */
 typedef enum {
   NX_C_COST_BANDWIDTH, /* memory-bound: copy, add, cast, fill */

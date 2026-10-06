@@ -35,9 +35,5 @@ runs/
 # Agents
 .agents/
 .claude/
-# Lab session artifacts
-lab/results/*
-!lab/results/.gitkeep
-
 # Benchmark corpora written by otherlibs/compress/bench/reference.py
 otherlibs/compress/bench/data/

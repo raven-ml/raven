@@ -88,7 +88,7 @@ let warm keys =
     keys
 
 let program name =
-  let bench = Thumper.bench_with_setup ~tags:[ "lab" ] in
+  let bench = Thumper.bench_with_setup in
   Thumper.group name
     [
       bench ~setup:(fun () -> graph name) "prepare" Prepare.prepare_rangeify;

@@ -73,14 +73,7 @@ let build_benchmarks () =
           let operands = setup_f32 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f32" in
           let fn () = Nx.einsum spec.subscripts operands in
-          let tags =
-            if
-              spec.name = "MatMul"
-              || (spec.name = "IndependentSum" && size = 100)
-            then [ "lab" ]
-            else []
-          in
-          f32_benches := Thumper.bench ~tags bench_name fn :: !f32_benches)
+          f32_benches := Thumper.bench bench_name fn :: !f32_benches)
         einsum_specs)
     sizes;
 

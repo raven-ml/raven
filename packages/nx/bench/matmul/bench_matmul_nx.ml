@@ -24,20 +24,18 @@ let setup_operands (type b) (dtype : (float, b) Nx.dtype) case =
   let rhs = Nx.rand dtype [| case.k; case.n |] in
   (lhs, rhs)
 
-let add_case (type b) ?(tags = []) benches case (dtype : (float, b) Nx.dtype)
-    dtype_label =
+let add_case (type b) benches case (dtype : (float, b) Nx.dtype) dtype_label =
   let lhs, rhs = setup_operands dtype case in
   let name = benchmark_name case dtype_label "" in
   let fn () = Nx.matmul lhs rhs in
-  benches := Thumper.bench ~tags name fn :: !benches
+  benches := Thumper.bench name fn :: !benches
 
 let build_benchmarks () =
   let f32_benches = ref [] in
   let f64_benches = ref [] in
   List.iter
     (fun case ->
-      let f32_tags = if case.name = "SquareLarge" then [ "lab" ] else [] in
-      add_case ~tags:f32_tags f32_benches case Nx.Float32 "f32";
+      add_case f32_benches case Nx.Float32 "f32";
       add_case f64_benches case Nx.Float64 "f64")
     cases;
   let batch_lhs = Nx.rand Nx.Float32 [| 64; 32; 32 |] in
