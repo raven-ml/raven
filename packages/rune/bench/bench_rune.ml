@@ -486,6 +486,10 @@ let jit_special_benchmarks () =
     at Nx.float64 "lgamma f64 1e6" Nx.lgamma (-10.) 30.;
     at Nx.float32 "digamma 1e6" Nx.digamma (-10.) 30.;
     at Nx.float64 "digamma f64 1e6" Nx.digamma (-10.) 30.;
+    at Nx.float32 "i0e 1e6" Nx.i0e (-30.) 30.;
+    at Nx.float64 "i0e f64 1e6" Nx.i0e (-30.) 30.;
+    at Nx.float32 "i1e 1e6" Nx.i1e (-30.) 30.;
+    at Nx.float64 "i1e f64 1e6" Nx.i1e (-30.) 30.;
     lbeta Nx.float32 "lbeta 1e6";
     lbeta Nx.float64 "lbeta f64 1e6";
   ]

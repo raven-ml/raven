@@ -71,6 +71,8 @@ WarmStart/mlp-sgd-step-warm-first-call	wall_time	batch=1	n=20	2.698e-02	2.590e-0
 # forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 jit/special/erfc-1e6 jit/special/erfc-f64-1e6 jit/special/ndtr-1e6 jit/special/ndtr-f64-1e6 jit/special/log-ndtr-1e6 jit/special/log-ndtr-f64-1e6 jit/special/ndtri-1e5 jit/special/ndtri-f64-1e5 jit/special/lgamma-1e6 jit/special/lgamma-f64-1e6 jit/special/digamma-1e6 jit/special/digamma-f64-1e6 jit/special/lbeta-1e6 jit/special/lbeta-f64-1e6 under load 19.1 on 10 cores
 # forced: blessed jit/special/erfinv-1e6 jit/special/erfinv-f64-1e6 under load 11.4 on 10 cores
 # forced: blessed jit/special/erf-1e6 jit/special/erf-f64-1e6 jit/special/erfinv-1e5 jit/special/erfinv-f64-1e5 jit/special/erfc-1e6 jit/special/erfc-f64-1e6 jit/special/ndtr-1e6 jit/special/ndtr-f64-1e6 jit/special/log-ndtr-1e6 jit/special/log-ndtr-f64-1e6 jit/special/ndtri-1e5 jit/special/ndtri-f64-1e5 jit/special/lgamma-1e6 jit/special/lgamma-f64-1e6 jit/special/digamma-1e6 jit/special/digamma-f64-1e6 jit/special/lbeta-1e6 jit/special/lbeta-f64-1e6 under load 11.3 on 10 cores
+# forced: blessed jit/special/i0e-1e6 jit/special/i0e-f64-1e6 jit/special/i1e-1e6 jit/special/i1e-f64-1e6 under load 8.7 on 10 cores
+# forced: blessed jit/special/i0e-1e6 jit/special/i0e-f64-1e6 jit/special/i1e-1e6 jit/special/i1e-f64-1e6 under load 10.3 on 10 cores
 
 Declined/add-1-beside-grad-on-another-domain	alloc_words	exact	7700
 Declined/add-1-beside-grad-on-another-domain	wall_time	batch=256	n=20	2.729e-05	2.704e-05 2.706e-05 2.707e-05 2.710e-05 2.715e-05 2.720e-05 2.724e-05 2.726e-05 2.726e-05 2.727e-05 2.730e-05 2.734e-05 2.738e-05 2.739e-05 2.741e-05 2.751e-05 2.751e-05 2.784e-05 2.804e-05 2.822e-05
@@ -148,6 +150,14 @@ jit/special/erfinv-1e5	alloc_words	exact	826
 jit/special/erfinv-1e5	wall_time	batch=8	n=20	1.141e-03	1.064e-03 1.071e-03 1.075e-03 1.109e-03 1.113e-03 1.118e-03 1.126e-03 1.133e-03 1.133e-03 1.137e-03 1.145e-03 1.154e-03 1.165e-03 1.170e-03 1.202e-03 1.237e-03 1.319e-03 1.327e-03 1.354e-03 1.440e-03
 jit/special/erfinv-f64-1e5	alloc_words	exact	826
 jit/special/erfinv-f64-1e5	wall_time	batch=8	n=20	9.284e-04	8.496e-04 8.736e-04 8.809e-04 8.862e-04 8.958e-04 9.024e-04 9.089e-04 9.200e-04 9.266e-04 9.268e-04 9.301e-04 9.554e-04 9.645e-04 9.892e-04 1.012e-03 1.015e-03 1.043e-03 1.051e-03 1.077e-03 1.132e-03
+jit/special/i0e-1e6	alloc_words	exact	826
+jit/special/i0e-1e6	wall_time	batch=2	n=20	2.985e-03	2.700e-03 2.704e-03 2.807e-03 2.869e-03 2.887e-03 2.942e-03 2.950e-03 2.953e-03 2.961e-03 2.972e-03 2.997e-03 3.002e-03 3.026e-03 3.047e-03 3.066e-03 3.117e-03 3.139e-03 3.150e-03 3.173e-03 3.201e-03
+jit/special/i0e-f64-1e6	alloc_words	exact	826
+jit/special/i0e-f64-1e6	wall_time	batch=1	n=20	6.628e-03	4.923e-03 5.426e-03 6.064e-03 6.134e-03 6.432e-03 6.477e-03 6.520e-03 6.536e-03 6.549e-03 6.559e-03 6.698e-03 6.716e-03 6.739e-03 6.812e-03 6.822e-03 6.881e-03 6.900e-03 6.971e-03 6.973e-03 7.173e-03
+jit/special/i1e-1e6	alloc_words	exact	826
+jit/special/i1e-1e6	wall_time	batch=2	n=20	3.319e-03	2.883e-03 3.219e-03 3.229e-03 3.263e-03 3.264e-03 3.299e-03 3.302e-03 3.308e-03 3.313e-03 3.317e-03 3.322e-03 3.333e-03 3.376e-03 3.439e-03 3.442e-03 3.466e-03 3.531e-03 3.732e-03 4.209e-03 5.313e-03
+jit/special/i1e-f64-1e6	alloc_words	exact	826
+jit/special/i1e-f64-1e6	wall_time	batch=1	n=20	6.654e-03	5.573e-03 5.732e-03 5.829e-03 6.092e-03 6.121e-03 6.238e-03 6.333e-03 6.376e-03 6.522e-03 6.639e-03 6.669e-03 6.684e-03 6.905e-03 7.008e-03 7.079e-03 7.098e-03 7.259e-03 7.518e-03 7.558e-03 1.216e-02
 jit/special/lbeta-1e6	alloc_words	exact	1103
 jit/special/lbeta-1e6	wall_time	batch=1	n=20	1.158e-02	1.072e-02 1.073e-02 1.075e-02 1.076e-02 1.104e-02 1.108e-02 1.112e-02 1.120e-02 1.137e-02 1.155e-02 1.162e-02 1.164e-02 1.179e-02 1.189e-02 1.210e-02 1.260e-02 1.261e-02 1.277e-02 2.016e-02 2.190e-02
 jit/special/lbeta-f64-1e6	alloc_words	exact	1103

@@ -81,6 +81,8 @@ let cases =
   @ special "ndtri" Nx.ndtri 0. 1.
   @ special "lgamma" Nx.lgamma (-10.) 20.
   @ special "digamma" Nx.digamma (-10.) 20.
+  @ special "i0e" Nx.i0e (-30.) 30.
+  @ special "i1e" Nx.i1e (-30.) 30.
   @ lbeta
 
 let rec remove path =

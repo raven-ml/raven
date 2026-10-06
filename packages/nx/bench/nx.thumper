@@ -119,6 +119,9 @@ unary/sqrt-1M	wall_time	batch=8	n=20	1.313e-04	1.240e-04 1.242e-04 1.247e-04 1.2
 # forced: blessed special/erf-1e6 special/erf-f64-1e6 special/erfinv-1e6 special/erfinv-f64-1e6 special/erfc-1e6 special/erfc-f64-1e6 special/ndtr-1e6 special/ndtr-f64-1e6 special/log-ndtr-1e6 special/log-ndtr-f64-1e6 special/ndtri-1e5 special/ndtri-f64-1e5 special/lgamma-1e6 special/lgamma-f64-1e6 special/digamma-1e6 special/digamma-f64-1e6 special/lbeta-1e6 special/lbeta-f64-1e6 under load 17.5 on 10 cores
 # forced: blessed special/erfinv-1e6 special/erfinv-f64-1e6 under load 11.3 on 10 cores
 # forced: blessed random/truncated-normal-100k special/erf-1e6 special/erf-f64-1e6 special/erfinv-1e5 special/erfinv-f64-1e5 special/erfc-1e6 special/erfc-f64-1e6 special/ndtr-1e6 special/ndtr-f64-1e6 special/log-ndtr-1e6 special/log-ndtr-f64-1e6 special/ndtri-1e5 special/ndtri-f64-1e5 special/lgamma-1e6 special/lgamma-f64-1e6 special/digamma-1e6 special/digamma-f64-1e6 special/lbeta-1e6 special/lbeta-f64-1e6 under load 16.0 on 10 cores
+# forced: blessed special/i0e-1e6 special/i0e-f64-1e6 special/i1e-1e6 special/i1e-f64-1e6 under load 8.5 on 10 cores
+# forced: blessed special/i0e-1e6 special/i0e-f64-1e6 special/i1e-1e6 special/i1e-f64-1e6 under load 8.3 on 10 cores
+# forced: blessed special/i0e-1e6 special/i0e-f64-1e6 under load 10.4 on 10 cores
 
 binary/add-100x100-f64	alloc_words	exact	65
 binary/add-100x100-f64	wall_time	batch=2048	n=20	3.606e-06	3.369e-06 3.485e-06 3.503e-06 3.509e-06 3.522e-06 3.528e-06 3.534e-06 3.547e-06 3.570e-06 3.581e-06 3.631e-06 3.635e-06 3.665e-06 3.689e-06 3.689e-06 3.702e-06 3.705e-06 3.708e-06 3.810e-06 4.193e-06
@@ -222,6 +225,14 @@ special/erfinv-1e5	alloc_words	exact	30218
 special/erfinv-1e5	wall_time	batch=1	n=20	4.348e-03	4.211e-03 4.224e-03 4.251e-03 4.285e-03 4.286e-03 4.294e-03 4.304e-03 4.319e-03 4.319e-03 4.346e-03 4.350e-03 4.364e-03 4.366e-03 4.383e-03 4.390e-03 4.402e-03 4.426e-03 4.432e-03 4.479e-03 4.492e-03
 special/erfinv-f64-1e5	alloc_words	exact	38717
 special/erfinv-f64-1e5	wall_time	batch=1	n=20	9.530e-03	9.136e-03 9.295e-03 9.325e-03 9.358e-03 9.387e-03 9.415e-03 9.452e-03 9.462e-03 9.471e-03 9.501e-03 9.559e-03 9.571e-03 9.585e-03 9.587e-03 9.613e-03 9.637e-03 9.660e-03 9.688e-03 9.712e-03 1.011e-02
+special/i0e-1e6	alloc_words	exact	11285
+special/i0e-1e6	wall_time	batch=1	n=20	1.929e-02	1.861e-02 1.861e-02 1.865e-02 1.869e-02 1.877e-02 1.884e-02 1.898e-02 1.910e-02 1.914e-02 1.926e-02 1.931e-02 1.933e-02 1.934e-02 1.951e-02 2.012e-02 2.057e-02 2.080e-02 2.083e-02 2.182e-02 2.191e-02
+special/i0e-f64-1e6	alloc_words	exact	21730
+special/i0e-f64-1e6	wall_time	batch=1	n=20	7.094e-02	6.809e-02 6.867e-02 6.874e-02 6.897e-02 6.919e-02 6.950e-02 6.992e-02 7.048e-02 7.058e-02 7.083e-02 7.105e-02 7.121e-02 7.374e-02 7.384e-02 7.433e-02 7.653e-02 7.960e-02 8.092e-02 9.426e-02 1.376e-01
+special/i1e-1e6	alloc_words	exact	11411
+special/i1e-1e6	wall_time	batch=1	n=20	1.901e-02	1.827e-02 1.865e-02 1.866e-02 1.867e-02 1.871e-02 1.872e-02 1.878e-02 1.880e-02 1.900e-02 1.900e-02 1.901e-02 1.903e-02 1.910e-02 1.913e-02 1.921e-02 1.924e-02 1.956e-02 2.012e-02 2.014e-02 2.015e-02
+special/i1e-f64-1e6	alloc_words	exact	21856
+special/i1e-f64-1e6	wall_time	batch=1	n=20	6.863e-02	6.517e-02 6.589e-02 6.627e-02 6.674e-02 6.698e-02 6.731e-02 6.797e-02 6.819e-02 6.824e-02 6.861e-02 6.865e-02 6.868e-02 6.868e-02 6.874e-02 6.876e-02 6.878e-02 6.892e-02 6.943e-02 7.330e-02 7.986e-02
 special/lbeta-1e6	alloc_words	exact	42691
 special/lbeta-1e6	wall_time	batch=1	n=20	6.678e-02	6.364e-02 6.384e-02 6.407e-02 6.438e-02 6.488e-02 6.491e-02 6.503e-02 6.553e-02 6.640e-02 6.655e-02 6.701e-02 6.742e-02 6.760e-02 6.765e-02 6.783e-02 6.910e-02 6.950e-02 7.193e-02 7.522e-02 7.732e-02
 special/lbeta-f64-1e6	alloc_words	exact	42856
