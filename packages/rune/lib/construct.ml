@@ -297,7 +297,7 @@ let carried : type r. within -> Nx.Op.mapper -> r t -> r t option =
            {
              req_carry = leaves r.req_carry;
              req_trips;
-             req_step = (fun c x -> within (fun () -> r.req_step c x));
+             req_step = (fun t c x -> within (fun () -> r.req_step t c x));
            })
   | Compiled k ->
       Some

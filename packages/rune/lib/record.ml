@@ -86,7 +86,7 @@ and entry =
   | Loop : {
       carry : Nx.packed list;
       trips : trips;
-      step : t;
+      step : t;  (** The step's record, over its carry, its row and its trip. *)
       rows : Nx.packed list;  (** The outputs of a replay that takes no step. *)
       names : int list;
     }
@@ -344,8 +344,14 @@ and recording : type a. t -> (unit -> a) -> a =
 
 and loop r (q : Trips.request) : Trips.result =
   let step = ref None and stop = ref None in
-  let req_step c x =
-    fst (kept step (c @ x) (fun () -> q.req_step c x) (fun (c', y) -> c' @ y))
+  (* The step's record takes its trip as an input, so that a replay at trip [k]
+     draws as trip [k] drew. *)
+  let req_step trip c x =
+    fst
+      (kept step
+         (c @ x @ [ Nx.P trip ])
+         (fun () -> q.req_step trip c x)
+         (fun (c', y) -> c' @ y))
   in
   let req_trips : Trips.trips =
     match q.req_trips with
@@ -360,16 +366,18 @@ and loop r (q : Trips.request) : Trips.result =
     answered r (fun () ->
         Construct.perform (Loop { q with req_step; req_trips }))
   in
-  (* A loop that took no step runs it once at its final carry, its additions
-     dropped, so that its record replays at other inputs, where its outputs have
-     rows. *)
+  (* A loop that took no step runs it once at its final carry, as its first
+     trip, its additions dropped, so that its record replays at other inputs,
+     where its outputs have rows. A step that draws takes the loop's key from
+     the scope around, as a loop that steps does. *)
   let result =
     match !step with
     | Some _ -> result
     | None ->
         let _, ys =
           answered r (fun () ->
-              Total.discarding (fun () -> req_step result.r_carry []))
+              Total.discarding (fun () ->
+                  req_step (Nx.scalar Nx.int32 0l) result.r_carry []))
         in
         { result with r_ys = Trips.no_rows ys }
   in
@@ -604,7 +612,9 @@ let rec evaluate r inputs =
               let until c = Nx.unpack Nx.bool (List.hd (outputs until c)) in
               Until { until; max; failure }
         in
-        let req_step c x = Trips.split n (outputs step (c @ x)) in
+        let req_step trip c x =
+          Trips.split n (outputs step (c @ x @ [ Nx.P trip ]))
+        in
         let result =
           Construct.loop
             { req_carry = leaves resolver carry; req_trips; req_step }

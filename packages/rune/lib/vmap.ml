@@ -553,10 +553,10 @@ and scan : t -> Trips.request -> Nx.packed list -> bool -> Trips.result =
   in
   Trips.fixpoint (leaf_lanes m r.req_carry) (fun ~grow carried ->
       let outputs = ref [] in
-      let req_step c x =
+      let req_step trip c x =
         let c', y =
           install m (fun () ->
-              r.req_step (lanes_at m carried c) (lanes_at m rows x))
+              r.req_step trip (lanes_at m carried c) (lanes_at m rows x))
         in
         grow (leaf_lanes m c');
         outputs := leaf_lanes m y;
@@ -607,9 +607,9 @@ and iterate :
       if owns m u then masked m r ~until ~max ~failure u
       else
         let outputs = ref [] in
-        let req_step c x =
+        let req_step trip c x =
           let c', y =
-            install m (fun () -> r.req_step (lanes_at m carried c) x)
+            install m (fun () -> r.req_step trip (lanes_at m carried c) x)
           in
           grow (leaf_lanes m c');
           outputs := leaf_lanes m y;
@@ -642,7 +642,9 @@ and masked m r ~until ~max ~failure u =
   let inner = List.init (Nx.ndim u - 1) succ in
   let own = Nx.arange Nx.int64 0 m.size 1 in
   let outputs = ref [] in
-  let req_step c _ =
+  (* Every running lane took as many trips as the loop: the loop's trip is each
+     lane's. *)
+  let req_step trip c _ =
     let c, u = Trips.split nc c in
     let u = Nx.unpack Nx.bool (List.hd u) in
     let stopped = if inner = [] then u else Nx.all ~axes:inner u in
@@ -660,7 +662,7 @@ and masked m r ~until ~max ~failure u =
     let from_donor (Nx.P x) = Nx.P (Nx.take ~axis:0 ~indices:donors x) in
     let c', y =
       install m' (fun () ->
-          r.req_step (lanes_at m' all (List.map from_donor c)) [])
+          r.req_step trip (lanes_at m' all (List.map from_donor c)) [])
     in
     outputs := List.map (fun _ -> true) y;
     let hold (Nx.P x) x' =

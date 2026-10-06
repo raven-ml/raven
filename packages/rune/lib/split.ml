@@ -65,7 +65,6 @@ type numbered = { values : Nx.packed array; recipes : (int, recipe) Hashtbl.t }
 let numbering f =
   let values = ref [] and recipes = Hashtbl.create 16 in
   let note l = values := List.rev_append l !values in
-  let answering = ref 0 in
   let run : type r. r Nx.Op.t -> r =
    fun op ->
     let r = eval op in
@@ -76,12 +75,27 @@ let numbering f =
     | None -> ());
     r
   in
+  (* An operation an answer performs passes [paused], installed around the
+     answer, and goes unnumbered. A handler around the construct runs outside
+     the answer: its operations, such as the key a loop's step takes from the
+     scope around, are the function's own. *)
+  let answering = ref 0 in
+  let paused =
+    let run : type r. r Nx.Op.t -> r =
+     fun op ->
+      incr answering;
+      Fun.protect ~finally:(fun () -> decr answering) (fun () -> eval op)
+    in
+    {
+      Construct.op = Some { run; claims = (fun _ -> true) };
+      call = (fun _ -> None);
+    }
+  in
   let call : type r. r Construct.t -> r Construct.answer option =
    fun c ->
     let answer () =
-      incr answering;
       let r =
-        Fun.protect ~finally:(fun () -> decr answering) @@ fun () : r ->
+        Construct.install paused @@ fun () : r ->
         match[@warning "@4@8"] c with
         | Loop q -> Construct.loop q
         | Compiled _ | Remat _ | Barrier _ | Custom _ | Root _ | At_map _

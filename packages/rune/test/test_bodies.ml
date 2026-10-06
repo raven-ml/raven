@@ -822,11 +822,119 @@ let handler_tests =
           (Rune.jit' (log_density applied) (p0 ())));
   ]
 
+(* Law 5: a loop's draws. Step [i] draws from a scope rooted at [Nx.Rng.fold_in
+   k i], [k] one key the loop takes at its first draw; a loop whose step draws
+   nothing takes none. The trusted side is the loop unrolled in OCaml with those
+   scopes, under the same stack. *)
+
+type drawing = Scan_draws | Iterate_draws | Nested_draws
+
+let drawing_name = function
+  | Scan_draws -> "scan"
+  | Iterate_draws -> "iterate"
+  | Nested_draws -> "scan in a scan's step"
+
+(* [scoped x f] runs [f] in a scope whose root depends on [x], so that a jit
+   compiles its draws. *)
+let scoped x f =
+  let zero = Nx.cast Nx.int32 (Nx.mul_s (Nx.sum x) 0.) in
+  Nx.Rng.with_key (Nx.Rng.fold_in_tensor (Nx.Rng.key 7) zero) f
+
+let draw draws = if draws then Nx.rand f64 [||] else scalar 0.5
+let row x i = Nx.slice [ Nx.I i ] x
+let weighed draws c xi = Nx.add c (Nx.mul xi (draw draws))
+
+(* [unrolled draws n step] is [n] steps [step i c] from [c = 0], step [i] in a
+   scope rooted at [fold_in k i]. *)
+let unrolled draws n step =
+  let k = lazy (Nx.Rng.next_key ()) in
+  let c = ref (scalar 0.) in
+  for i = 0 to n - 1 do
+    let run () = step i !c in
+    c :=
+      if draws then Nx.Rng.with_key (Nx.Rng.fold_in (Lazy.force k) i) run
+      else run ()
+  done;
+  !c
+
+let summed draws x =
+  fst (Rune.scan' ~f:(fun c xi -> (weighed draws c xi, c)) ~init:(scalar 0.) x)
+
+let looped kind draws x =
+  let n = (Nx.shape x).(0) in
+  match kind with
+  | Scan_draws -> summed draws x
+  | Iterate_draws ->
+      let at i =
+        Nx.sum
+          (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) x)
+      in
+      snd
+        (Rune.iterate pair ~max:n
+           ~until:(fun (i, _) -> Nx.greater_equal_s i (Float.of_int n))
+           ~f:(fun (i, c) -> (Nx.add_s i 1., weighed draws c (at i)))
+           (scalar 0., scalar 0.))
+  | Nested_draws ->
+      fst
+        (Rune.scan'
+           ~f:(fun c xi ->
+             let c = Nx.add c (Nx.mul xi (summed draws x)) in
+             (weighed draws c xi, c))
+           ~init:(scalar 0.) x)
+
+let spec kind draws x =
+  let n = (Nx.shape x).(0) in
+  let flat i c = weighed draws c (row x i) in
+  match kind with
+  | Scan_draws | Iterate_draws -> unrolled draws n flat
+  | Nested_draws ->
+      unrolled draws n (fun i c ->
+          let c = Nx.add c (Nx.mul (row x i) (unrolled draws n flat)) in
+          weighed draws c (row x i))
+
+(* The draws around the loop show the key it takes. *)
+let around loop x =
+  scoped x (fun () ->
+      let before = Nx.rand f64 [||] in
+      let c = loop x in
+      let after = Nx.rand f64 [||] in
+      Nx.add c (Nx.mul (Nx.sum x) (Nx.add before after)))
+
+let law5 =
+  let gen =
+    let open Gen in
+    let* n = int_range 0 2 in
+    let* ts = list ~size:(constant n) (of_list layers) in
+    let* kind = of_list [ Scan_draws; Iterate_draws; Nested_draws ] in
+    let+ draws = bool in
+    (ts, kind, draws)
+  in
+  let pp ppf (ts, kind, draws) =
+    Format.fprintf ppf "%s ∘ %s%s"
+      (String.concat " ∘ " (List.map layer_name ts))
+      (drawing_name kind)
+      (if draws then "" else ", drawing nothing")
+  in
+  prop ~count:80
+    ~examples:[ ([ Grad; Jit_layer ], Scan_draws, true) ]
+    "step i of a loop draws from a scope rooted at fold_in k i, k one key the \
+     loop takes at its first draw, under every stack"
+    (Gen.with_pp pp gen) (fun (ts, kind, draws) ->
+      cover "a loop under jit" (List.mem Jit_layer ts);
+      cover "a loop under vmap" (List.mem Vmap ts);
+      cover "a loop under grad" (List.mem Grad ts);
+      cover "a step that draws nothing" (not draws);
+      let x = argument ts in
+      equal (close ())
+        (compose ts (around (spec kind draws)) x)
+        (compose ts (around (looped kind draws)) x))
+
 let () =
   exit
     (run "Rune bodies"
        [
          group "law 1" [ law1 ];
+         group "law 5" [ law5 ];
          group "the boundary" boundary_tests;
          group "passing installations" passing_tests;
          group "roots in total scopes" root_tests;

@@ -3834,33 +3834,18 @@ let staged_scans d =
         (rows 300 4);
       (* Written out, each step's carry is stored before the next reads it: four
          hundred steps, past the 256 levels Metal nests, compile as kernels of
-         one step each. *)
-      test "write out four hundred steps, each carry stored" (fun () ->
-          let ran = ref 0 in
-          let f (k, xs) =
-            Nx.Rng.with_key k (fun () ->
-                Rune.scan'
-                  ~f:(fun c x ->
-                    incr ran;
-                    let c = Nx.add (Nx.mul_s c 0.5) x in
-                    (c, Nx.add c (Nx.rand Nx.float32 [| 4 |])))
-                  ~init:(zeros 4) xs)
-          in
-          let k = Nx.Rng.key 7 in
-          let c, ys = f (k, rows 400 4) in
-          ran := 0;
-          let c', ys' =
-            Rune.jit
-              Nx.Ptree.(
-                pair Nx.Rng.ptree tensor @-> returns (pair tensor tensor))
-              f
-              (k, Nx.place at (rows 400 4))
-          in
-          equal near c (host c');
-          equal near ys (host ys');
-          equal ~msg:"a probe, then a step per row" int 401 !ran);
+         one step each. A step that computes on the host between device steps is
+         written out. *)
+      staged at "write out four hundred steps, each carry stored"
+        ~steps:(fun n -> n + 1)
+        ~init:(ones 4)
+        (fun c x ->
+          let h = Nx.sqrt (Nx.place Nx.Placement.host c) in
+          let c = Nx.add (Nx.place (Nx.placement x) h) x in
+          (c, c))
+        (rows 400 4);
       test
-        "write out a step that draws under a key scope, drawing as eager does \
+        "stage a step that draws under a key scope, drawing as eager does \
          before, inside and after the scan" (fun () ->
           let ran = ref 0 in
           let f (k, xs) =
@@ -3887,7 +3872,7 @@ let staged_scans d =
             (fun e c -> equal near e (host c))
             eager
             (g (k, Nx.place at (rows 5 4)));
-          equal ~msg:"a probe, then a step per row" int 6 !ran);
+          equal ~msg:"one step" int 1 !ran);
     ]
 
 (* Scans and remats *)

@@ -611,6 +611,12 @@ val scan :
     it received, and every step's outputs have the first step's: a list keeps
     its length, an option its presence, a case and an integer their value.
 
+    Step [i] draws from a key scope of its own ({!Nx.Rng.with_root}), rooted at
+    [Nx.Rng.fold_in k i], where [k] is one key the scan takes from the scope
+    around at its first draw: steps draw apart, the same values compiled or
+    transformed as eagerly, and a scan whose step draws nothing takes no key,
+    leaving the draws after it unchanged.
+
     Under {!val-jit} the step compiles once and runs as a loop in the compiled
     program, and differentiating compiles a reversed loop that replays a record
     of the step's operations at each step's carry: the step's code runs only in
@@ -667,7 +673,8 @@ val iterate :
     [c], starting from [init], until [until carry] holds, and returns that
     carry. [until] returns one boolean and is tested before each step, so an
     [init] that satisfies it is returned unchanged. [f] returns a carry with the
-    visits, dtypes, shapes and placements of the one it received.
+    visits, dtypes, shapes and placements of the one it received. Step [k] draws
+    as step [k] of a {!scan} does.
 
     {[
     let newton ~g ~dg x0 =
@@ -724,9 +731,8 @@ val iterate :
     [iterate] raises {!Jit_error} where {!scan} would write its loop out: a
     carry on several devices; a step or an [until] on a device with command
     queues and on the host, as for a carry tensor the function placed on the
-    host beside tensors on the device, or on devices of two kinds; a step that
-    draws from a key it does not vary; and inside a {!custom_jvp} tangent map
-    under reverse mode.
+    host beside tensors on the device, or on devices of two kinds; and inside a
+    {!custom_jvp} tangent map under reverse mode.
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one

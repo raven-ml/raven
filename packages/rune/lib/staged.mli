@@ -20,19 +20,21 @@
     Once the trips are done, a stop that still fails raises the loop's failure,
     as {!Nx.check} does, when the compiled call returns.
 
-    The body's parameters stand for one trip's carry and rows; every part of the
-    step's graph that does not depend on them is computed once, before the loop,
-    and passed to the call. On trip [i], the step reads row [r] of each stacked
-    input and writes row [r] of each stacked output, [r] being [i], or
-    [n - 1 - i] for a reversed scan of [n] steps; a loop until a stop has [max]
-    output rows, of which those past its last trip hold no value of the loop.
-    Rows are 16 bytes of memory apart, as the body's vector accesses require: a
-    stacked input whose rows are not is read from a padded copy, made once per
-    call. Each carry is one buffer that each trip updates in place, once every
-    kernel that reads it ran, as the schedule orders them; a next carry that
-    reads the carry elsewhere than at its own index is computed into storage of
-    its own first, and so is, each trip, the latest of carries whose next values
-    read each other in a cycle, such as two carries that swap.
+    The body's parameters stand for one trip's carry, rows and index, the trip
+    the step is given; every part of the step's graph that does not depend on
+    them is computed once, before the loop, and passed to the call. On trip [i],
+    the step reads row [r] of each stacked input and writes row [r] of each
+    stacked output, [r] being [i], or [n - 1 - i] for a reversed scan of [n]
+    steps; a loop until a stop has [max] output rows, of which those past its
+    last trip hold no value of the loop. The index is [r], read from a row of
+    the [n] indices, made once per call for a step that reads it. Rows are 16
+    bytes of memory apart, as the body's vector accesses require: a stacked
+    input whose rows are not is read from a padded copy, made once per call.
+    Each carry is one buffer that each trip updates in place, once every kernel
+    that reads it ran, as the schedule orders them; a next carry that reads the
+    carry elsewhere than at its own index is computed into storage of its own
+    first, and so is, each trip, the latest of carries whose next values read
+    each other in a cycle, such as two carries that swap.
 
     A loop inside the step stages as a loop of the body, nested in the outer
     one: its step is traced once, and its values are those of the loop written
@@ -49,13 +51,9 @@
     - before its step runs, when its leaves lie on several devices;
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
-      an output lies elsewhere than the loop's device or the host, when the step
-      draws from a key no parameter of the body varies, a traced draw that would
-      repeat on every trip, or when the body's calls run on a device with queues
-      and on the host, or on devices of two kinds, which no loop runs. The step
-      draws from a scope of its own, rooted at a constant, so that a draw from
-      the scope around the loop is written out, each trip drawing where the loop
-      is written.
+      an output lies elsewhere than the loop's device or the host, or when the
+      body's calls run on a device with queues and on the host, or on devices of
+      two kinds, which no loop runs.
 
     The step and the stop run at the loop's call, inside the handlers around it.
     Outside every body, an operation that reads a value a step computed raises

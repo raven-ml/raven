@@ -1367,11 +1367,9 @@ let op : type r. scope -> r Nx.Op.t -> r =
       ret dt (bitcast (Nx.dtype x) dt (check s what p dt) (n x))
   | Threefry (key, counter) ->
       let k = n key and c = n counter in
-      (* A parameter is an argument of a called body: a staged loop's trip. *)
       let varies u =
         let slice = Ops.backward_slice_with_self ~calls:Skip u in
-        Ops.op_in_backward_slice_with_self ~calls:Skip u [ Op.Param ]
-        || List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments
+        List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments
       in
       (* An empty draw has nothing to repeat. *)
       let empty = Ops.max_numel c = 0 in

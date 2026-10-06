@@ -38,9 +38,9 @@ let rec staged : 'a. (unit -> 'a) -> 'a =
    fun c ->
     match[@warning "@4@8"] c with
     | Loop r ->
-        let req_step c x =
+        let req_step i c x =
           incr steps;
-          staged (fun () -> r.req_step c x)
+          staged (fun () -> r.req_step i c x)
         in
         Some
           (Construct.here (fun () ->

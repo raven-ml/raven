@@ -300,13 +300,22 @@ let steps fn xs =
         invalid_arg (fn ^ ": the xs leaves differ in their leading length");
       if n = 0 then invalid_arg (fn ^ ": xs is empty along the scan axis")
 
+(* [trip key i f] runs trip [i] of a loop, [f], in a key scope of its own,
+   rooted at the loop's key folded with [i]: trips draw apart, and the loop's
+   key, taken from the scope around at its first draw, is taken by no loop whose
+   step draws nothing. *)
+let trip key i f =
+  Nx.Rng.with_root (fun () -> Nx.Rng.fold_in_tensor (Lazy.force key) i) f
+
 let scan_of fn cs xs_s ys_s ~f ~init xs =
   let req_xs, _ = Ptree.flatten xs_s xs in
   steps fn req_xs;
-  let first = ref None in
-  let req_step c_leaves x_leaves =
+  let first = ref None and key = lazy (Nx.Rng.next_key ()) in
+  let req_step i c_leaves x_leaves =
     let c = Ptree.rebuild cs ~like:init c_leaves in
-    let c', y = f c (Ptree.rebuild xs_s ~like:xs x_leaves) in
+    let c', y =
+      trip key i (fun () -> f c (Ptree.rebuild xs_s ~like:xs x_leaves))
+    in
     Structure.check fn cs ~this:"the carry the step returned" c'
       ~that:"the carry it received" c;
     (match !first with
@@ -342,14 +351,16 @@ let iterate c ~max ~until ~f init =
     Nx.reshape [||] u
   in
   let this = "the carry the step returned" and that = "the carry it received" in
-  let req_step l _ =
+  let key = lazy (Nx.Rng.next_key ()) in
+  let req_step i l _ =
     let x = carry l in
     let x' =
       Structure.map2 fn c ~this ~that
         (fun path x' x ->
           Structure.placement fn path ~this x' ~that x;
           x')
-        (f x) x
+        (trip key i (fun () -> f x))
+        x
     in
     (fst (Ptree.flatten c x'), [])
   in

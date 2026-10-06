@@ -97,9 +97,6 @@ let stride u m =
   let per = Int.max 1 (16 / Ops.element_size u) in
   (m + per - 1) / per * per
 
-(* The root of a staged body's own key scope, which no argument varies. *)
-let unvaried = Nx.Rng.key 0
-
 (* [stage ~here ~inside s r] is the loop [r] in the trace [s]: a range of as
    many trips as [r] has rows, or of at most [max] trips while a flag holds,
    around one call of its step, which [inside] traces once in [s] as the call's
@@ -214,6 +211,7 @@ let stage ~here ~inside s (r : Trips.request) =
         (slot, Nx.P v))
       xs
   in
+  let index_slot, index = held Lower.row p Nx.int32 [||] in
   (* The stop's value, and whether the loop runs on, at a carry. *)
   let stop c =
     match r.req_trips with
@@ -222,17 +220,13 @@ let stage ~here ~inside s (r : Trips.request) =
         let u = until c in
         [ Nx.P u; Nx.P (Nx.reshape [| 1 |] (Nx.logical_not (Nx.all u))) ]
   in
-  (* The body draws from a scope of its own, rooted at a constant: a draw from
-     the scope around the call would take a key there for an attempt that may be
-     written out, and repeat on every trip. *)
   let (carry', ys, stop'), checks =
     Lower.checking s (fun () ->
         inside s (fun () ->
-            Nx.Rng.with_key unvaried (fun () ->
-                let c', ys =
-                  r.req_step (List.map snd carry) (List.map snd rows)
-                in
-                (c', ys, stop c'))))
+            let c', ys =
+              r.req_step index (List.map snd carry) (List.map snd rows)
+            in
+            (c', ys, stop c')))
   in
   let same_shape (_, Nx.P c) (Nx.P c') =
     Nx.shape c = Nx.shape c' && Nx.Placement.equal (Nx.placement c') p
@@ -347,27 +341,28 @@ let stage ~here ~inside s (r : Trips.request) =
   in
   (* Each trip reads its row of each stacked input, from a copy whose rows are
      16 bytes apart when the input's are not. *)
-  List.iter2
-    (fun (Nx.P x as xs) (slot, _) ->
-      let shape = Nx.shape x in
-      let u =
-        Lower.stacked s (Nx.dtype x)
-          (Array.sub shape 1 (Array.length shape - 1))
-          (node xs)
-      in
-      let m = Ops.max_numel u / n in
-      let k = stride u m in
-      let flat =
-        if k = m then Ops.reshape u [ Ops.Int (n * m) ]
-        else
-          Ops.reshape
-            (Ops.pad
-               (Ops.reshape u (ints [ n; m ]))
-               [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
-            [ Ops.Int (n * k) ]
-      in
-      pass slot (window (Ops.contiguous flat) Ops.O.(trip * int k) m))
-    xs rows;
+  let read_rows =
+    List.iter2 (fun (Nx.P x as xs) (slot, _) ->
+        let shape = Nx.shape x in
+        let u =
+          Lower.stacked s (Nx.dtype x)
+            (Array.sub shape 1 (Array.length shape - 1))
+            (node xs)
+        in
+        let m = Ops.max_numel u / n in
+        let k = stride u m in
+        let flat =
+          if k = m then Ops.reshape u [ Ops.Int (n * m) ]
+          else
+            Ops.reshape
+              (Ops.pad
+                 (Ops.reshape u (ints [ n; m ]))
+                 [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
+              [ Ops.Int (n * k) ]
+        in
+        pass slot (window (Ops.contiguous flat) Ops.O.(trip * int k) m))
+  in
+  read_rows xs rows;
   (* Each trip writes its row of each stacked output. *)
   let outputs =
     List.map
@@ -393,6 +388,14 @@ let stage ~here ~inside s (r : Trips.request) =
               (ints (Array.to_list stacked)))
       ys
   in
+  (* Each trip reads its index from a row of the [n] indices, made only for a
+     step that reads it. *)
+  let param = Ops.buf_uop (Lower.uop s index) in
+  if reach ~from:param (Ops.sink !stores) <> Apart then
+    read_rows
+      (here s (fun () -> [ Nx.P (Nx.arange Nx.int32 0 n 1) ]))
+      [ (index_slot, Nx.P index) ]
+  else pass index_slot (Ops.new_buffer device 1 (Ops.dtype param));
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point
       (Loop.cut ~own next args (Ops.sink (List.rev !stores)))
@@ -551,16 +554,8 @@ let rec trace :
     | Loop ({ req_trips = Until _; _ } as r) ->
         Some
           (here (fun () ->
-               (* A loop until a stop declines nothing itself: [Not_staged] here
-                  is a draw of its step from a key the body does not vary. *)
-               try
-                 stage ~here:(trace ~body memo) ~inside:(trace ~body:true memo)
-                   s r
-               with Trips.Not_staged ->
-                 raise
-                   (Lower.Jit_error
-                      "Rune.jit: Rune.iterate cannot be compiled: its step \
-                       draws from a key it does not vary")))
+               stage ~here:(trace ~body memo) ~inside:(trace ~body:true memo) s
+                 r))
     | Remat { recomputed = true; p; f; args; _ } when not body ->
         Some
           (here (fun () ->
@@ -580,16 +575,10 @@ let rec trace :
      reaches it only through a handler around the loop, which runs outside the
      step. *)
   let escapes (Nx.P x) = Lower.traces s x && in_body x in
-  let run : type r. r Nx.Op.t -> r = function
-    | Threefry (key, counter) as o when body ->
-        (* A body runs once for every trip: a draw whose key and counter read no
-           parameter of the body would repeat on every trip, so the loop is
-           written out, each trip drawing where the loop is written. *)
-        if not (in_body key || in_body counter) then raise Trips.Not_staged;
-        Lower.op s o
-    | o ->
-        if (not body) && List.exists escapes (Nx.Op.operands o) then escaped ();
-        Lower.op s o
+  let run : type r. r Nx.Op.t -> r =
+   fun o ->
+    if (not body) && List.exists escapes (Nx.Op.operands o) then escaped ();
+    Lower.op s o
   in
   let op = { Nx.Op.run; claims = (fun _ -> true) } in
   Construct.install { op = Some op; call } f

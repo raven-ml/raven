@@ -1013,7 +1013,7 @@ let succ k = Nx.P (Nx.add_s (Nx.unpack Nx.int32 k) 1l)
    zero. *)
 let reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry =
   let trip carry = Nx.unpack Nx.int32 (List.nth carry (nk + ncaps)) in
-  let req_step carry _ =
+  let req_step _ carry _ =
     Total.discarding @@ fun () ->
     let ct_c, rest = Trips.split nk carry in
     let ct_caps, k = Trips.split ncaps rest in
@@ -1022,7 +1022,9 @@ let reversed ~pull ~nk ~ncaps carries ct_ys ~max ~failure count carry =
     let at (Nx.P x) =
       Nx.P (Nx.squeeze ~axes:[ 0 ] (Nx.take ~axis:0 ~indices:row x))
     in
-    let ct_c, _ = pull ct_c ct_caps (List.map at carries) (List.map at ct_ys) in
+    let ct_c, _ =
+      pull ct_c ct_caps (List.map at carries @ [ Nx.P k ]) (List.map at ct_ys)
+    in
     (ct_c @ [ Nx.P k ], [])
   in
   let until carry = Nx.equal_s (trip carry) 0l in
@@ -1107,10 +1109,12 @@ and loop_values : t -> Trips.request -> Trips.result =
   let rows = owned i xs in
   Trips.fixpoint (owned i r.req_carry) (fun ~grow carried ->
       let outputs = ref [] in
-      let req_step c x =
+      let req_step trip c x =
         let c', y =
           install i (fun () ->
-              r.req_step (of_tangents i carried nc c) (of_tangents i rows nx x))
+              r.req_step trip
+                (of_tangents i carried nc c)
+                (of_tangents i rows nx x))
         in
         grow (owned i c');
         outputs := owned i y;
@@ -1147,9 +1151,12 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
   let rows = owned i xs in
   let primal_xs = List.map (primal_leaf i) xs in
   let stops = match r.req_trips with Rows _ -> false | Until _ -> true in
+  (* The step's leaves are its carry, its row and its trip, which no derivative
+     tracks: a replay at trip [k] draws as trip [k] drew. *)
   let step l =
-    let c, x = Trips.split nc l in
-    let c', y = r.req_step c x in
+    let c, rest = Trips.split nc l in
+    let x, trip = Trips.split nx rest in
+    let c', y = r.req_step (Nx.unpack Nx.int32 (List.hd trip)) c x in
     c' @ y
   in
   (* The attempt's flags: the carry tensors it tracks, then whether the outputs
@@ -1160,11 +1167,11 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
       let carried, _ = Trips.split nc active in
       let derived = List.mem true active in
       let counted = derived && stops in
-      let flags = carried @ rows in
+      let flags = carried @ rows @ [ false ] in
       let outputs = ref [] and captures = ref [] and last = ref None in
-      let req_step c x =
+      let req_step trip c x =
         let c, count = if counted then Trips.split nc c else (c, []) in
-        let run, out = region i flags (c @ x) step in
+        let run, out = region i flags (c @ x @ [ Nx.P trip ]) step in
         let ch = run.child in
         let c', y = Trips.split nc out in
         let ys = owned ch y in
@@ -1216,11 +1223,13 @@ and loop_slots : t -> Linear.tape -> Trips.request -> Trips.result =
             let request =
               match r.req_trips with
               | Rows { reverse; _ } ->
-                  let req_step carry row =
+                  (* The reversed loop's trip is the row it reads, the trip that
+                     read it forward. *)
+                  let req_step trip carry row =
                     Total.discarding @@ fun () ->
                     let ct_c, ct_caps = Trips.split nk carry in
                     let cx, ct_y = Trips.split (nc + nx) row in
-                    pull ct_c ct_caps cx ct_y
+                    pull ct_c ct_caps (cx @ [ Nx.P trip ]) ct_y
                   in
                   {
                     Trips.req_carry;

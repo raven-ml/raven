@@ -173,6 +173,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Step `i` of a `Rune.scan` or `Rune.iterate` draws from a key scope rooted at
+  `Nx.Rng.fold_in k i`, `k` one key the loop takes at its first draw, eagerly,
+  compiled and transformed alike. A compiled loop whose step draws now stages
+  instead of being written out step by step, or refused for `iterate`; a loop
+  whose step draws nothing takes no key.
+
 - A reverse derivative runs a `Rune.remat`'s function, and the step of a loop
   it stages or batches, once, at the call, and keeps a record of its
   operations, which the backward pass replays: the code no longer runs again

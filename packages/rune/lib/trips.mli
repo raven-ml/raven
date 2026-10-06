@@ -39,12 +39,17 @@ type trips =
               false element. *)
     }  (** Steps until a stop holds, each passed no row. *)
 
+type trip = (int32, Nx.int32_elt) Nx.t
+(** The type for the index of a trip: an [int32] scalar, the row a loop over
+    rows reads, and the count of the steps before it for a loop until a stop. A
+    compiled call's loop passes the trip index of its program. *)
+
 type request = {
   req_carry : leaves;  (** The initial carry. *)
   req_trips : trips;  (** The trips the loop takes. *)
-  req_step : leaves -> leaves -> leaves * leaves;
-      (** [req_step carry row] is the next carry and the step's outputs. Every
-          step's outputs have the first step's dtypes and shapes. *)
+  req_step : trip -> leaves -> leaves -> leaves * leaves;
+      (** [req_step trip carry row] is the next carry and the step's outputs.
+          Every step's outputs have the first step's dtypes and shapes. *)
 }
 (** The type for loop requests. *)
 

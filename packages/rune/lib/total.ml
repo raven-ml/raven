@@ -25,10 +25,12 @@ let rec threaded : type a b.
  fun t ~zero r ->
   let n = List.length r.req_carry in
   let split l = (List.filteri (fun i _ -> i < n) l, List.nth l n) in
-  let req_step c x =
+  let req_step trip c x =
     let c, s = split c in
     let (c', y), s' =
-      collect t ~zero:(Nx.unpack (Nx.dtype zero) s) (fun () -> r.req_step c x)
+      collect t
+        ~zero:(Nx.unpack (Nx.dtype zero) s)
+        (fun () -> r.req_step trip c x)
     in
     (c' @ [ Nx.P s' ], y)
   in
