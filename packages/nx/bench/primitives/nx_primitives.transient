@@ -51,6 +51,8 @@ bit/and-1e7	0	0.0
 bit/any-1e7	30000001	3.0
 bit/take-sorted-1e7	0	0.0
 bit/concat-odd-1e7	0	0.0
+uint4/take-rows-1e7	0	0.0
+uint4/take-1e7	0	0.0
 ragged-take/strings6-4e4-permuted	8320056	208.0
 ragged-take/strings12-1e6-permuted	352000056	352.0
 ragged-take/strings6-4e4-permuted-runcopy	320008	8.0
