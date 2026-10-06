@@ -1,23 +1,48 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=16, device="CPU")
-1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 16), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
 3 Ops.SUB dtypes.int [2, 1]
 4 Ops.RANGE dtypes.int [3] (0, AxisType.WEAK)
 5 Ops.ADD dtypes.int [1, 4]
-6 Ops.INDEX dtypes.ulong [0, 5]
-7 Ops.PARAM dtypes.ulong [] ParamArg(slot=1, dtype=dtypes.ulong, size=16, device="CPU")
-8 Ops.INDEX dtypes.ulong [7, 5]
-9 Ops.LOAD dtypes.ulong [8]
-10 Ops.CONST dtypes.weakint [] 3
-11 Ops.CAST dtypes.ulong [10] dtypes.ulong
-12 Ops.SHR dtypes.ulong [9, 11]
-13 Ops.STORE dtypes.void [6, 12]
-14 Ops.END dtypes.void [13, 4]
-15 Ops.SINK dtypes.void [14] KernelInfo(name="E_16", split=(16, 2, 3)) tag=1
-16 Ops.SINK dtypes.void [14] KernelInfo(name="E_16", estimates=Estimates(ops=16, lds=256, mem=256), split=(16, 2, 3)) tag=1
-17 Ops.LINEAR dtypes.void [0, 7, 1, 2, 10, 11, 3, 4, 5, 8, 9, 6, 12, 13, 14, 15]
-18 Ops.SOURCE dtypes.void [] "\nvoid E_16(unsigned long* restrict data0_16, unsigned long* restrict data1_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned long val0 = (*(data1_16+alu0));\n    *(data0_16+alu0) = (val0>>3ul);\n  }\n}\n"
-19 Ops.PROGRAM dtypes.void [16, 17, 18] ProgramInfo(global_size=(16, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-20 Ops.SINK dtypes.void [15, 19]
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.CAST dtypes.int [6] dtypes.int
+8 Ops.SHL dtypes.int [5, 7]
+9 Ops.INDEX dtypes.ulong [0, 8]
+10 Ops.PARAM dtypes.ulong [] ParamArg(slot=1, dtype=dtypes.ulong, size=16, device="CPU")
+11 Ops.INDEX dtypes.ulong [10, 8]
+12 Ops.LOAD dtypes.ulong [11]
+13 Ops.CONST dtypes.weakint [] 3
+14 Ops.CAST dtypes.ulong [13] dtypes.ulong
+15 Ops.SHR dtypes.ulong [12, 14]
+16 Ops.STORE dtypes.void [9, 15]
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.ADD dtypes.int [8, 18]
+20 Ops.INDEX dtypes.ulong [0, 19]
+21 Ops.INDEX dtypes.ulong [10, 19]
+22 Ops.LOAD dtypes.ulong [21]
+23 Ops.SHR dtypes.ulong [22, 14]
+24 Ops.STORE dtypes.void [20, 23]
+25 Ops.ADD dtypes.int [8, 7]
+26 Ops.INDEX dtypes.ulong [0, 25]
+27 Ops.INDEX dtypes.ulong [10, 25]
+28 Ops.LOAD dtypes.ulong [27]
+29 Ops.SHR dtypes.ulong [28, 14]
+30 Ops.STORE dtypes.void [26, 29]
+31 Ops.CAST dtypes.int [13] dtypes.int
+32 Ops.ADD dtypes.int [8, 31]
+33 Ops.INDEX dtypes.ulong [0, 32]
+34 Ops.INDEX dtypes.ulong [10, 32]
+35 Ops.LOAD dtypes.ulong [34]
+36 Ops.SHR dtypes.ulong [35, 14]
+37 Ops.STORE dtypes.void [33, 36]
+38 Ops.GROUP dtypes.void [16, 24, 30, 37]
+39 Ops.END dtypes.void [38, 4]
+40 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), split=(4, 2, 3)) tag=1
+41 Ops.SINK dtypes.void [39] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=16, lds=256, mem=256), split=(4, 2, 3)) tag=1
+42 Ops.LINEAR dtypes.void [0, 10, 1, 2, 17, 18, 6, 7, 13, 31, 14, 3, 4, 5, 8, 19, 21, 22, 25, 27, 28, 32, 34, 35, 11, 12, 20, 26, 33, 9, 23, 29, 36, 15, 24, 30, 37, 16, 38, 39, 40]
+43 Ops.SOURCE dtypes.void [] "\nvoid E_4_4(unsigned long* restrict data0_16, unsigned long* restrict data1_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<2);\n    int alu1 = (alu0+1);\n    unsigned long val0 = (*(data1_16+alu1));\n    int alu2 = (alu0+2);\n    unsigned long val1 = (*(data1_16+alu2));\n    int alu3 = (alu0+3);\n    unsigned long val2 = (*(data1_16+alu3));\n    unsigned long val3 = (*(data1_16+alu0));\n    *(data0_16+alu1) = (val0>>3ul);\n    *(data0_16+alu2) = (val1>>3ul);\n    *(data0_16+alu3) = (val2>>3ul);\n    *(data0_16+alu0) = (val3>>3ul);\n  }\n}\n"
+44 Ops.PROGRAM dtypes.void [41, 42, 43] ProgramInfo(global_size=(4, 1, 1), vars=(%1, %2), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+45 Ops.SINK dtypes.void [40, 44]
 

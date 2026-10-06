@@ -50,6 +50,10 @@ let runs l =
   in
   match l with [] -> [] | _ -> go [] [] l
 
+let merges (r : Renderer.t) dt =
+  r.supports_float4
+  && List.mem dt Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s)
+
 let memory_coalescing sink (r : Renderer.t) =
   if Setting.value Setting.dmc then sink
   else begin
@@ -110,11 +114,7 @@ let memory_coalescing sink (r : Renderer.t) =
         in
         let accesses o = List.assoc o offsets in
         let lengths =
-          (if
-             List.mem (dtype key.buf)
-               Dtype.([ Float32; Float16; Int32; Uint32 ] @ fp8s)
-             && r.supports_float4
-           then
+          (if merges r (dtype key.buf) then
              if
                dtype key.buf = Dtype.Float16
                && Setting.value Setting.allow_half8

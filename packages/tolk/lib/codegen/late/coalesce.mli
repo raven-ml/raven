@@ -17,13 +17,17 @@ val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
     [cond] holds ({!Symbolic.uop_given_valid}), when the condition simplifies
     [x] further than {!Ops.simplify} does alone. *)
 
+val merges : Renderer.t -> Dtype.t -> bool
+(** [merges r dt] is [true] iff {!memory_coalescing} merges accesses to
+    consecutive elements of [dt] on [r]: [r] supports such accesses
+    ([supports_float4]) and [dt] is {!Dtype.Float32}, {!Dtype.Float16},
+    {!Dtype.Int32}, {!Dtype.Uint32} or an 8-bit float. *)
+
 val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
 (** [memory_coalescing sink r] merges the loads, and the stores, of [sink] that
     access consecutive elements of one buffer, under one gate and with one
     argument, into loads and stores of [4] or [2] elements, if the buffer's
-    elements are {!Dtype.Float32}, {!Dtype.Float16}, {!Dtype.Int32},
-    {!Dtype.Uint32} or 8-bit floats and [r] supports such accesses
-    ([supports_float4]); [8], [4] or [2] for {!Dtype.Float16} under
+    elements merge on [r] ({!merges}); [8], [4] or [2] for {!Dtype.Float16} under
     {!Setting.allow_half8}. A group starts at an element whose count from the
     boundary behind the buffer's first element, a multiple of its alignment (its
     phase and alignment, {!Ops.param_arg}), the group's length divides, and is

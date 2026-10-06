@@ -3993,38 +3993,39 @@ stores through a pad.
   is the device's where it has queues, the host's otherwise` and `› the
   clock is the host's under a profile`.
 
-## D131. On the host, a kernel without a reduce is upcast only along its masked axes
+## D131. On the host, a kernel without a reduce whose accesses merge is upcast only along its masked axes
 
 - **tinygrad:** `codegen/opt/heuristic.py:112-138` (the upcasts of output
   axes by 3 or 4) and `:156-159` (the upcast by 4 of a kernel that has none).
-- **tolk:** `lib/codegen/opt/heuristic.ml:442` (`host_elementwise`) and `:623`
-  (`hand_coded_optimizations`); `test/gen/tinygrad.patch`, which gives
-  tinygrad the same before the goldens are recorded.
+- **tolk:** `lib/codegen/opt/heuristic.ml:444` (`host_merged`) and `:630`
+  (`hand_coded_optimizations`); `lib/codegen/late/coalesce.ml:53` (`merges`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
 - **Differs:** on the host (`target.device = "CPU"`), a kernel with no reduce
-  takes neither upcast. Its masked axes are still upcast whole, and a kernel
-  with a reduce is upcast as tinygrad's is. Clang vectorizes the loop over the
-  outputs itself. Upcast lanes copy the body into each lane: a float kernel's
-  lanes read one vector and compute in scalars, which keeps clang's loop
-  vectorizer off the loop, and a double kernel's lanes, which stay scalar,
-  are vectorized two at a time with spills. Clang's time on the copied body
-  grows faster than the body: its loop vectorizer, register allocator and
-  machine scheduler took 3.7 s of the 4.3 s it spent on float64 `erfinv`'s
-  gradient upcast by 4, which it compiles in 0.44 s without the upcast.
-- **Reason:** (b): RFC 0025's special functions, whose float64 host compile is
-  held to 1 s, and 3 s for a gradient. Each is one elementwise kernel, a long
-  chain of arithmetic. Timed cold on an M1 Max under load (fresh process,
-  empty cache, `PARALLEL=1`, median of five, two alternating pairs): `erfinv`
-  took 1.29-1.69 s upcast and 0.39-0.41 s not, its gradient 5.2-8.9 s and
-  0.89 s, synthetic chains of 1k, 4k and 16k operations 0.75-0.93, 5.4-6.9
-  and 69-72 s against 0.28-0.30, 1.04-1.12 and 7.0-7.3 s. Replayed over
-  10^6 elements on one thread, no kernel ran slower without the upcast:
-  float64 chains ran at 0.7-1.0 of their upcast time and float32
-  transcendentals at 0.4-0.6 (`exp`, `erf`, `erfinv`, a sigmoid).
+  and an access whose elements merge into vectors (`Coalesce.merges`:
+  float32, float16, int32, uint32, the 8-bit floats) takes neither upcast.
+  Its masked axes are still upcast whole. A kernel with a reduce, or whose
+  accesses do not merge (float64, 64-bit and 8-bit integers), is upcast as
+  tinygrad's is. Upcast lanes of a merging type read one vector and compute
+  each element in scalars, which keeps Clang's loop vectorizer off the loop it
+  vectorizes unasked. Lanes of a type that does not merge stay scalar, and
+  Clang vectorizes the four lanes two at a time, eight chains at once, which a
+  chain bound by latency gains from.
+- **Reason:** (b): RFC 0025's special functions on the host. Their kernels,
+  compiled by Clang -O2 and timed directly on one core of an M1 Max (10^5
+  elements, median of 31 alternated runs), ran without the upcast in 0.23 to
+  0.71 of their upcast time in float32 (`exp`, a sigmoid, `erf`, `erfinv`,
+  `sin`; a sum at 1.00). In float64 the upcast won on chains bound by latency
+  (`erfc` 1.62 times as long without it, `erfinv` 1.46, `ndtr` 1.39, `ndtri`
+  1.36, `lgamma` 1.28) and lost on wide ones (`sin` 0.77, `tanh` 0.92), so
+  float64 keeps it.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `add_cpu`, `add_broadcast_cpu`,
   `add_large_cpu`, `add_small_cpu`, `outer_add_cpu`, `transpose_cpu`,
-  `stack_8_cpu` and `softmax_cpu` (no upcast; `stack_cpu` and `pad_7x7_cpu`
-  keep their masked upcasts), recorded from the equally patched tinygrad.
+  `stack_8_cpu` and `softmax_cpu` (float32, no upcast; `stack_cpu` and
+  `pad_7x7_cpu` keep their masked upcasts); the Codegen suite's `long_clang`,
+  `uint64_clang` and `int8_clang`, upcast; all recorded from the equally
+  patched tinygrad.
 
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
 

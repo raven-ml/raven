@@ -1127,6 +1127,12 @@ thread.
 
 ### Tolk (new)
 
+- On the host, a kernel without a reduce whose accesses merge into vectors
+  (float32, float16, int32) is no longer upcast, so Clang vectorizes its loop:
+  float32 transcendentals replay 1.4 to 4 times as fast. float64 kernels keep
+  their upcast, which latency-bound chains such as `Nx.erfc` need.
+- A host program's variables take slots past its blocks' bounds when its
+  buffers skip a slot; a variable could take `block_hi`'s slot and read it.
 - A cast of an unsigned mask, or of a right shift by less than the operand's
   width, to a wider unsigned type widens the operands first, so a 4-bit value
   unpacked from its byte decodes at its consumer's width: the host kernel of a

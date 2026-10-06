@@ -435,11 +435,18 @@ let on_host k = (K.ren k).target.device = "CPU"
 let beyond_host_lanes k amount =
   on_host k && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
 
-(* On the host, a kernel without a reduce takes no upcast but its masked ones.
-   The kernel compiler vectorizes the loop over its outputs itself; upcast lanes
-   copy the body, which keeps a float loop from vectorizing and makes a double
-   one spill, and the compile time grows faster than the body. *)
-let host_elementwise k = on_host k && K.reduceops k = []
+(* On the host, a kernel without a reduce whose accesses merge into vectors
+   takes no upcast but its masked ones. Its upcast lanes would read a vector and
+   compute each element alone, which keeps the kernel compiler from vectorizing
+   the loop over the outputs, as it does unasked. Lanes of a type that does not
+   merge stay scalar, and the compiler vectorizes them together, which a chain
+   bound by latency gains from. *)
+let host_merged k =
+  on_host k
+  && K.reduceops k = []
+  && List.exists
+       (fun b -> Coalesce.merges (K.ren k) (dtype (nth b 0)))
+       (K.bufs k)
 
 (* potentially do more upcasts of non reduce axes based on a heuristic *)
 let upcast_more k =
@@ -620,7 +627,7 @@ let hand_coded_optimizations k =
           (* no more opt if we are grouping *)
           if K.group_for_reduces k = 0 then begin
             upcast_masked k;
-            if not (host_elementwise k) then begin
+            if not (host_merged k) then begin
               upcast_more k;
               unroll k;
               upcast_one k
