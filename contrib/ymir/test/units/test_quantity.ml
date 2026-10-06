@@ -979,26 +979,22 @@ let integers =
           in
           raises (Invalid_argument msg) (fun () -> Quantity.value Unit.metre q);
           raises (Invalid_argument msg) (fun () -> value q));
-      xfail ~reason:"rune's jit compiles no int4 argument"
-        (test "jit raises the int4 overflow that eager raises" (fun () ->
-             let qi4 : Nx.int4_t Quantity.t Nx.Ptree.t =
-               Nx.Ptree.instantiate (module Quantity)
-             in
-             let value =
-               Rune.jit
-                 Nx.Ptree.(qi4 @-> returns tensor)
-                 (Quantity.value Unit.metre)
-             in
-             let q =
-               Quantity.v two_m (Nx.create Nx.int4 [| 3 |] [| 3; -4; 4 |])
-             in
-             let msg =
-               "Quantity.value: element [2] of an int4 payload overflows \
-                converting 2 m to m (factor 2)"
-             in
-             raises (Invalid_argument msg) (fun () ->
-                 Quantity.value Unit.metre q);
-             raises (Invalid_argument msg) (fun () -> value q)));
+      test "jit raises the int4 overflow that eager raises" (fun () ->
+          let qi4 : Nx.int4_t Quantity.t Nx.Ptree.t =
+            Nx.Ptree.instantiate (module Quantity)
+          in
+          let value =
+            Rune.jit
+              Nx.Ptree.(qi4 @-> returns tensor)
+              (Quantity.value Unit.metre)
+          in
+          let q = Quantity.v two_m (Nx.create Nx.int4 [| 3 |] [| 3; -4; 4 |]) in
+          let msg =
+            "Quantity.value: element [2] of an int4 payload overflows \
+             converting 2 m to m (factor 2)"
+          in
+          raises (Invalid_argument msg) (fun () -> Quantity.value Unit.metre q);
+          raises (Invalid_argument msg) (fun () -> value q));
       test "a scalar that overflows is named as the payload" (fun () ->
           raises
             (Invalid_argument

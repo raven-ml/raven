@@ -63,9 +63,11 @@ let scale (type a b) fn ~from ~into (x : (a, b) Nx.t) (f : a) : (a, b) Nx.t =
   let d = Nx.dtype x in
   let checked ((lo : a), (hi : a), factor) =
     let ok = Nx.logical_and (Nx.greater_equal_s x lo) (Nx.less_equal_s x hi) in
-    Nx.check ok (fun i ->
-        strf "%s: %s overflows converting %s to %s (factor %s)" fn
-          (element_name d i) (Unit.to_string from) (Unit.to_string into) factor);
+    Nx.check Nx.Ptree.unit ok () (fun i () ->
+        Invalid_argument
+          (strf "%s: %s overflows converting %s to %s (factor %s)" fn
+             (element_name d i) (Unit.to_string from) (Unit.to_string into)
+             factor));
     Nx.mul_s x f
   in
   match d with
@@ -186,11 +188,14 @@ let root (type b) n (q : (float, b) Nx.t t) =
   let d = Nx.dtype x in
   (* NaN is not below 0, so it passes and its root is NaN. *)
   if n land 1 = 0 then
-    Nx.check
+    Nx.check Nx.Ptree.unit
       (Nx.logical_not (Nx.less_s x 0.))
-      (fun i ->
-        strf "Quantity.root: %s is below 0, whose root of order %d is not real"
-          (element_name d i) n);
+      ()
+      (fun i () ->
+        Invalid_argument
+          (strf
+             "Quantity.root: %s is below 0, whose root of order %d is not real"
+             (element_name d i) n));
   (* A dtype narrower than float32 would round the exponent: 1/3 is 0.34375 in
      float8_e4m3, which takes 27 to 3.25. Such a payload is rooted in float32
      and cast back. *)
