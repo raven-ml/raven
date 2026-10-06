@@ -227,6 +227,26 @@ val max_value : ('a, 'b) t -> 'a
 
     Raises [Invalid_argument] if [dt] is complex. *)
 
+(** {2:float_limits Float limits} *)
+
+val precision : (float, 'b) t -> int
+(** [precision dt] is the width in bits of the significand of [dt], its implicit
+    leading bit included, as [24] for {!Float32}: the integers of magnitude up
+    to [2{^precision}] are exact in [dt]. *)
+
+val epsilon : (float, 'b) t -> float
+(** [epsilon dt] is the gap between [1.] and the next value of [dt],
+    [2{^(1 - precision dt)}], as [0x1p-23] for {!Float32}. *)
+
+val min_normal : (float, 'b) t -> float
+(** [min_normal dt] is the least positive normal value of [dt], as [0x1p-126]
+    for {!Float32}. Smaller magnitudes are subnormal, with fewer significant
+    bits. *)
+
+val max_finite : (float, 'b) t -> float
+(** [max_finite dt] is the largest finite value of [dt], as [65504.] for
+    {!Float16}. It is {!max_value} for {!Float8_e4m3}, which has no infinity. *)
+
 (** {1:converting Converting} *)
 
 val of_float : ('a, 'b) t -> float -> 'a

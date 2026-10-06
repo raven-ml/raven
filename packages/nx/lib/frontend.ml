@@ -1486,6 +1486,10 @@ let eye ctx ?m ?k dtype n =
    [bool], and for a float or complex dtype those whose magnitude is at most its
    largest finite value. Bounds beyond OCaml's ints are clipped to them. *)
 let held_integers (type a b) (dtype : (a, b) Nx_dtype.t) =
+  let finite dt =
+    let m = Float.to_int (Nx_dtype.max_finite dt) in
+    (-m, m)
+  in
   match dtype with
   | Nx_dtype.Bool -> (0, 1)
   | Nx_dtype.Bit -> (0, 1)
@@ -1498,9 +1502,9 @@ let held_integers (type a b) (dtype : (a, b) Nx_dtype.t) =
   | Nx_dtype.Int32 -> (-0x8000_0000, 0x7fff_ffff)
   | Nx_dtype.UInt32 -> (0, 0xffff_ffff)
   | Nx_dtype.UInt64 -> (0, max_int)
-  | Nx_dtype.Float16 -> (-65504, 65504)
-  | Nx_dtype.Float8_e4m3 -> (-448, 448)
-  | Nx_dtype.Float8_e5m2 -> (-57344, 57344)
+  | Nx_dtype.Float16 -> finite Nx_dtype.float16
+  | Nx_dtype.Float8_e4m3 -> finite Nx_dtype.float8_e4m3
+  | Nx_dtype.Float8_e5m2 -> finite Nx_dtype.float8_e5m2
   | Nx_dtype.Int64 | Nx_dtype.BFloat16 | Nx_dtype.Float32 | Nx_dtype.Float64
   | Nx_dtype.Complex64 | Nx_dtype.Complex128 ->
       (min_int, max_int)

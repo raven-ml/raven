@@ -164,8 +164,17 @@ let float b pos len (a : float64s) k =
 
 type width = { p : int; emin : int; max : float }
 
-let half = { p = 11; emin = -14; max = 65504. }
-let single = { p = 24; emin = -126; max = 0x1.fffffep127 }
+(* The width of the float dtype [dt], read from its limits: [emin] is the
+   exponent of its least normal value. *)
+let float_width dt =
+  {
+    p = Nx_dtype.precision dt;
+    emin = snd (Float.frexp (Nx_dtype.min_normal dt)) - 1;
+    max = Nx_dtype.max_finite dt;
+  }
+
+let half = float_width Nx_dtype.float16
+let single = float_width Nx_dtype.float32
 
 (* [nearest w v] is the value of width [w] nearest to [v], ties to even. *)
 let nearest w v =
@@ -707,7 +716,7 @@ external text :
   (int[@untagged]) = "talon_float_text_byte" "talon_float_text"
 [@@noalloc]
 
-let double = { p = 53; emin = -1022; max = Float.max_float }
+let double = float_width Nx_dtype.float64
 
 let width : type a. a Type.t -> width = function
   | Float16 -> half

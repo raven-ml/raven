@@ -3286,6 +3286,10 @@ thread.
 
 ### Nx
 
+- `Nx_dtype.precision`, `Nx_dtype.epsilon`, `Nx_dtype.min_normal` and
+  `Nx_dtype.max_finite` give the significand width in bits, the gap above one,
+  the least positive normal value and the largest finite value of each float
+  dtype.
 - An empty cut of a split axis of a placed value (`Nx.slice` to an empty range)
   is a view on the device of the shard where it starts. It was refused as
   moving elements between devices when each device held a single row, and so

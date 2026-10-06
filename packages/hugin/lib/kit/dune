@@ -1,7 +1,7 @@
 (library
  (name hugin_kit)
  (public_name hugin.kit)
- (libraries hugin.gg nx)
+ (libraries hugin.gg nx nx.dtype)
  (private_modules decimal steps scheme_data)
  (instrumentation
   (backend ppx_windtrap.coverage))

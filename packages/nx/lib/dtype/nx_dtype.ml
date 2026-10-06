@@ -369,6 +369,38 @@ let max_value : type a b. (a, b) t -> a = function
   | Bool -> true
   | Bit -> true
 
+let precision : type b. (float, b) t -> int = function
+  | Float16 -> 11
+  | Float32 -> 24
+  | Float64 -> 53
+  | BFloat16 -> 8
+  | Float8_e4m3 -> 4
+  | Float8_e5m2 -> 3
+
+let epsilon : type b. (float, b) t -> float = function
+  | Float16 -> 0x1p-10
+  | Float32 -> 0x1p-23
+  | Float64 -> 0x1p-52
+  | BFloat16 -> 0x1p-7
+  | Float8_e4m3 -> 0x1p-3
+  | Float8_e5m2 -> 0x1p-2
+
+let min_normal : type b. (float, b) t -> float = function
+  | Float16 -> 0x1p-14
+  | Float32 -> 0x1p-126
+  | Float64 -> 0x1p-1022
+  | BFloat16 -> 0x1p-126
+  | Float8_e4m3 -> 0x1p-6
+  | Float8_e5m2 -> 0x1p-14
+
+let max_finite : type b. (float, b) t -> float = function
+  | Float16 -> 65504.
+  | Float32 -> 0x1.fffffep127
+  | Float64 -> Float.max_float
+  | BFloat16 -> 0x1.fep127
+  | Float8_e4m3 -> 448.
+  | Float8_e5m2 -> 57344.
+
 (* Converting *)
 
 let of_float : type a b. (a, b) t -> float -> a =
