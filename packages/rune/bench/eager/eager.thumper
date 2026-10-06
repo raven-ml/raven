@@ -1,0 +1,10 @@
+# thumper baseline v1
+# suite: eager
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 10.6 on 10 cores
+
+full-major	wall_time	batch=8	n=20	9.862e-04	8.376e-04 8.598e-04 8.683e-04 8.840e-04 8.850e-04 8.881e-04 8.909e-04 9.005e-04 9.310e-04 9.653e-04 1.007e-03 1.062e-03 1.152e-03 1.152e-03 1.246e-03 1.303e-03 1.479e-03 1.860e-03 2.267e-03 2.364e-03
+start	wall_time	batch=1	n=20	1.210e-02	8.840e-03 9.294e-03 1.001e-02 1.043e-02 1.087e-02 1.101e-02 1.109e-02 1.146e-02 1.202e-02 1.207e-02 1.212e-02 1.244e-02 1.273e-02 1.334e-02 1.351e-02 1.397e-02 1.410e-02 1.482e-02 1.519e-02 1.525e-02
