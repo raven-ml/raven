@@ -3845,8 +3845,11 @@ let gcd us =
         if List.is_empty common then List.map const_factor us
         else List.map (fun (_, c) -> integer c) popped
       in
+      (* The coefficient is a number, a scalar whatever the shape of [us]: a
+         broadcast 1 would not read as 1, and divides no term. *)
       product
-        (const_like first_u (`Int (List.fold_left Bigint.gcd Bigint.zero factors)))
+        (const ~dtype:first_u.dtype
+           (`Int (List.fold_left Bigint.gcd Bigint.zero factors)))
         (elements common)
 
 let rec divide_exact u d =

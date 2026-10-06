@@ -1409,7 +1409,8 @@ val pop_const : ?op:Op.t -> t -> t * Dtype.const
 
 val gcd : t list -> t
 (** [gcd us] is a common divisor of [us]: their common factors times the
-    greatest common divisor of their constant coefficients.
+    greatest common divisor of their constant coefficients, a scalar constant
+    whatever the shape of [us].
 
     Raises [Invalid_argument] if [us] is empty. *)
 

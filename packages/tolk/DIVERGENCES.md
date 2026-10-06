@@ -4028,3 +4028,22 @@ stores through a pad.
 - **Pinned by:** the `Prepare` suite: `contiguous_view › a view of storage
   after effects is a view of that storage, whatever the effects compute
   (D132)`.
+
+## D133. A greatest common divisor's coefficient is a scalar
+
+- **tinygrad:** `uop/ops.py:1083-1088` (`UOp.gcd`, whose coefficient is
+  `uops[0].const_like(...)`, a constant broadcast to the shape of the first
+  term) and `uop/divandmod.py:77-81` (`divide_by_gcd`, which divides every
+  term by a divisor that is not the `CONST` 1). Over terms with a shape, a
+  vector of index expressions or a weak-integer tensor, a divisor of 1 is a
+  broadcast 1, which is not the `CONST` 1 and divides no term:
+  `UOp.stack(a, b) // 3` raises in `unwrap`.
+- **tolk:** `lib/uop/ops.ml:3904` (`gcd`).
+- **Differs:** the coefficient is a scalar constant of the first term's type,
+  whatever the terms' shape, so a divisor of 1 is the `CONST` 1, and a larger
+  one divides each term as `divides` does.
+- **Reason:** (b): the norn compile D132 names reached `divide_by_gcd`, before
+  D132, on a weak-integer tensor of rune's gather positions, and raised there.
+  The rule applies to any vector of index arithmetic.
+- **Pinned by:** the `Divandmod` suite: `values › each rewrite of a random
+  division of vectors keeps each lane's value (D133)`.

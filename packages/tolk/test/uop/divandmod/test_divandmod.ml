@@ -218,15 +218,20 @@ let tinygrad_tests =
 
 let rewritten_alone d = Option.value (rewrite d) ~default:d
 
+(* [divides_by_zero env d] is whether a division of [d] divides by 0 where each
+   variable is bound as [env] says. *)
+let divides_by_zero env d =
+  let by_zero u =
+    (Ops.op u = Op.Floordiv || Ops.op u = Op.Floormod)
+    && Dtype.equal_const (Interpreter.eval ~vars:env (Ops.nth u 1)) (i 0)
+  in
+  List.exists by_zero (Ops.toposort ~calls:Enter d)
+
 (* [keeps_value d env] is that the rewrite of [d] has [d]'s value where each
    variable is bound as [env] says, unless a division of [d] divides by 0
    there. *)
 let keeps_value d env =
-  let divides_by_zero u =
-    (Ops.op u = Op.Floordiv || Ops.op u = Op.Floormod)
-    && Dtype.equal_const (Interpreter.eval ~vars:env (Ops.nth u 1)) (i 0)
-  in
-  assume (not (List.exists divides_by_zero (Ops.toposort ~calls:Enter d)));
+  assume (not (divides_by_zero env d));
   let r = rewritten_alone d in
   cover "rewritten" (not (Ops.equal d r));
   equal Dtypes.const ~msg:"the value of the rewrite"
@@ -297,15 +302,16 @@ type expr =
 
 let variables = [| var "v0" 0 15; var "v1" (-8) 8; var "v2" 1 20 |]
 
-let rec build = function
-  | Var k -> variables.(k)
+(* [build var e] is [e] with variable [k] as [var k]. *)
+let rec build var = function
+  | Var k -> var k
   | Const c -> int c
-  | Add (e0, e1) -> Ops.O.(build e0 + build e1)
-  | Mul (e, c) -> Ops.O.(build e * int c)
-  | Div (e, c) -> Ops.O.(build e // int c)
-  | Mod (e, c) -> Ops.O.(build e % int c)
+  | Add (e0, e1) -> Ops.O.(build var e0 + build var e1)
+  | Mul (e, c) -> Ops.O.(build var e * int c)
+  | Div (e, c) -> Ops.O.(build var e // int c)
+  | Mod (e, c) -> Ops.O.(build var e % int c)
 
-let gen_division =
+let gen_division var =
   let open Gen in
   let nonzero = map (fun k -> if k >= 0 then k + 1 else k) (int_range (-6) 7) in
   let variable = map (fun k -> Var k) (int_range 0 2) in
@@ -333,9 +339,44 @@ let gen_division =
   in
   map
     (fun (num, den, remainder) ->
-      if remainder then Ops.O.(build num % build den)
-      else Ops.O.(build num // build den))
+      if remainder then Ops.O.(build var num % build var den)
+      else Ops.O.(build var num // build var den))
     (triple (expr 3) divisor bool)
+
+(* Vectors of index arithmetic (D133): variable [k] is a vector of two
+   variables, each constant a scalar. Lane [l] of its value is the value of the
+   graph with each vector replaced by its lane [l], and each broadcast scalar by
+   the scalar. *)
+let vector k = Ops.stack [ variables.(k); variables.((k + 1) mod 3) ]
+
+let lane l u =
+  let table = Ops.Tbl.create 16 in
+  let rec go u =
+    match Ops.Tbl.find_opt table u with
+    | Some v -> v
+    | None ->
+        let v =
+          match Ops.op u with
+          | Op.Stack -> go (Ops.nth u l)
+          | Op.Expand | Op.Reshape -> go (Ops.nth u 0)
+          | _ -> Ops.replace u ~src:(List.map go (Ops.src u))
+        in
+        Ops.Tbl.add table u v;
+        v
+  in
+  go u
+
+let keeps_lanes d env =
+  assume (not (List.exists (fun l -> divides_by_zero env (lane l d)) [ 0; 1 ]));
+  let r = rewritten_alone d in
+  cover "rewritten" (not (Ops.equal d r));
+  List.iter
+    (fun l ->
+      equal Dtypes.const
+        ~msg:(Printf.sprintf "lane %d of the rewrite" l)
+        (Interpreter.eval ~vars:env (lane l d))
+        (Interpreter.eval ~vars:env (lane l r)))
+    [ 0; 1 ]
 
 let values =
   group "values"
@@ -345,7 +386,13 @@ let values =
         (gen_case (Gen.of_list golden_divisions))
         (fun (d, env) -> keeps_value d env);
       prop ~count:2000 "each rewrite of a random division keeps its value"
-        (gen_case gen_division) (fun (d, env) -> keeps_value d env);
+        (gen_case (gen_division (Array.get variables)))
+        (fun (d, env) -> keeps_value d env);
+      prop ~count:2000
+        "each rewrite of a random division of vectors keeps each lane's value \
+         (D133)"
+        (gen_case (gen_division vector))
+        (fun (d, env) -> keeps_lanes d env);
     ]
 
 let () =
