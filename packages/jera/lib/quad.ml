@@ -56,7 +56,9 @@ module Rule = struct
     go 2 (dd 1., x)
 
   (* The Christoffel number at [x], [1 / Σ_(k<n) (k + 1/2) P_k(x)²], a sum of
-     positive terms. *)
+     positive terms. The usual [2 / ((1 − x²) P_n'(x)²)] loses digits to [1 −
+     x²] near the ends: about 20 ulps at ten points in float64, where the
+     weights must be correctly rounded. *)
   let christoffel n x =
     let rec go k (p0, p1) sum =
       if k = n then sum

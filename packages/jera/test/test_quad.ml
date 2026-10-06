@@ -64,6 +64,19 @@ let rule_tests =
     test "gauss rejects no point" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"n = 0 is below 1") (fun () ->
             Quad.Rule.gauss 0));
+    test "a Kronrod rule serves as a formula" (fun () ->
+        let rules =
+          [
+            (Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t); Quad.Rule.gauss 8;
+          ]
+        in
+        List.iter
+          (fun r ->
+            equal
+              (Oracle.tensor ~rel:1e-14 ())
+              (Nx.scalar f64 (Float.exp 1. -. 1.))
+              (Quad.fixed r Nx.exp (Quad.Range.v (scalar 0.) (scalar 1.))))
+          rules);
     test "kronrod rejects a size it has no table for" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"n = 8 is neither 7 nor 10")
           (fun () -> Quad.Rule.kronrod 8));
