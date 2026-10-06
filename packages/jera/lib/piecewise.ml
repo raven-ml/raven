@@ -19,9 +19,29 @@ let check_breaks fn what breaks =
       (Num.shape (Nx.shape breaks));
   Num.check_increasing fn what breaks
 
+(* Breaks of a series: non-decreasing, the first below the last. *)
+let check_series_breaks fn breaks =
+  if Nx.ndim breaks <> 1 || Nx.dim 0 breaks < 2 then
+    fail fn "breaks must be 1-D with at least two elements, got shape %s"
+      (Num.shape (Nx.shape breaks));
+  let n = Nx.dim 0 breaks in
+  let lo = Nx.shrink [| (0, n - 1) |] breaks
+  and hi = Nx.shrink [| (1, n) |] breaks in
+  Nx.check
+    Nx.Ptree.(pair tensor tensor)
+    (Nx.less_equal lo hi) (lo, hi)
+    (fun i (lo, hi) ->
+      Invalid_argument
+        (Printf.sprintf "%s: the breaks decrease at [%d]: %g after %g" fn
+           (i.(0) + 1)
+           (Nx.item [] hi) (Nx.item [] lo)));
+  let first = Nx.get [ 0 ] breaks and last = Nx.get [ n - 1 ] breaks in
+  Nx.check Nx.Ptree.unit (Nx.less first last) () (fun _ () ->
+      Invalid_argument (fn ^ ": the first break equals the last"))
+
 let v s ~breaks c =
   let fn = "Jera.Piecewise.v" in
-  check_breaks fn "breaks" breaks;
+  check_series_breaks fn breaks;
   let n = Nx.dim 0 breaks - 1 in
   Nx.Ptree.fold s
     (fun path x () ->

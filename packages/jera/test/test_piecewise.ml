@@ -380,6 +380,21 @@ let adapt_tests =
              Nx.Ptree.(tensor @-> returns tensor)
              fit
              (vec [| 0.; 0.37 |])));
+    test "a fit's empty pieces extend from its last real piece" (fun () ->
+        let p = Solution.get (adapt ~budget:16 Nx.exp 0. 2.) in
+        let q = Piecewise.extend `Polynomial p in
+        (* Beyond b, the last piece of positive width continues. *)
+        equal
+          (Oracle.tensor ~rel:1e-6 ())
+          (Nx.exp (vec [| 2.05; 2.1 |]))
+          (Piecewise.eval q (vec [| 2.05; 2.1 |])));
+    test "a fit rebuilds through v" (fun () ->
+        let p = Solution.get (adapt ~budget:16 Nx.exp 0. 2.) in
+        let q =
+          Piecewise.v Nx.Ptree.tensor ~breaks:(Piecewise.breaks p)
+            (Piecewise.coefficients p)
+        in
+        equal (close ()) (Piecewise.eval p between) (Piecewise.eval q between));
     test "adapt rejects degree 1" (fun () ->
         raises_with "degree = 1 is below 2" (fun () ->
             adapt ~degree:1 Nx.exp 0. 1.));
@@ -524,6 +539,18 @@ let error_tests =
             Piecewise.cubic
               (`Clamped (vec [| 1.; 1. |], scalar 0.))
               knots samples));
+    test "v takes empty pieces and rejects decreasing breaks" (fun () ->
+        let c = Nx.create f64 [| 3; 1 |] [| 1.; 2.; 3. |] in
+        let p =
+          Piecewise.v Nx.Ptree.tensor ~breaks:(vec [| 0.; 1.; 1.; 2. |]) c
+        in
+        equal (Oracle.tensor ())
+          (vec [| 1.; 1.; 3. |])
+          (Piecewise.eval p (vec [| 0.5; 1.; 1.5 |]));
+        raises_with "the breaks decrease at [2]: 0.5 after 1" (fun () ->
+            Piecewise.v Nx.Ptree.tensor ~breaks:(vec [| 0.; 1.; 0.5; 2. |]) c);
+        raises_with "the first break equals the last" (fun () ->
+            Piecewise.v Nx.Ptree.tensor ~breaks:(vec [| 1.; 1.; 1.; 1. |]) c));
     test "v rejects a leaf with another number of pieces" (fun () ->
         raises_with "shape [3,2]" (fun () ->
             Piecewise.v Nx.Ptree.tensor

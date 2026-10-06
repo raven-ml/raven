@@ -34,13 +34,20 @@ let locate fn e breaks x =
          else
            Printf.sprintf "%s: the point at [%d] is %g, which no piece holds" fn
              i.(0) x));
-  let x =
-    match e with
-    | Hold -> Nx.minimum (Nx.maximum x first) last
-    | Bounded | Polynomial -> x
+  (* The piece is the one at the point clamped to the domain: the last of
+     positive width ending at it, or at the first break the first of positive
+     width starting there. Empty pieces, of zero width, hold no point. The
+     coordinate comes from the point itself, so [Polynomial] continues the end
+     pieces' series. *)
+  let inside = Nx.minimum (Nx.maximum x first) last in
+  let before = Nx.searchsorted ~side:`Left breaks inside in
+  let i =
+    Nx.where (Nx.equal_s before 0L)
+      (Nx.sub_s (Nx.searchsorted ~side:`Right breaks inside) 1L)
+      (Nx.sub_s before 1L)
   in
-  let i = Nx.sub_s (Nx.searchsorted ~side:`Left breaks x) 1L in
   let i = Nx.clamp ~min:0L ~max:(Int64.of_int (n - 1)) i in
+  let x = match e with Hold -> inside | Bounded | Polynomial -> x in
   let lo = Nx.take ~indices:i breaks
   and hi = Nx.take ~indices:(Nx.add_s i 1L) breaks in
   (i, Nx.sub_s (Nx.div (Nx.mul_s (Nx.sub x lo) 2.) (Nx.sub hi lo)) 1.)

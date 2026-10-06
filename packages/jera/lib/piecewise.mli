@@ -38,15 +38,20 @@ type ('v, 'b) t
 (** The type for piecewise series with values of structure ['v] over breaks of
     dtype ['b]: each float leaf of the coefficients has shape
     [[pieces; degree + 1] @ value], and evaluation at points of shape [q] gives
-    it shape [q @ value]. Leaves may differ in degree and dtype. *)
+    it shape [q @ value]. Leaves may differ in degree and dtype.
+
+    It has [pieces + 1] breaks, non-decreasing, the first below the last. A
+    piece of zero width is empty: no point lies in it, and the end pieces are
+    the first and last of positive width. *)
 
 val v : 'v Nx.Ptree.t -> breaks:(float, 'b) Nx.t -> 'v -> ('v, 'b) t
-(** [v s ~breaks c] is the series with [pieces + 1] increasing [breaks] and the
+(** [v s ~breaks c] is the series with [pieces + 1] [breaks] and the
     coefficients [c], each leaf of shape [[pieces; degree + 1] @ value].
 
     Raises [Invalid_argument] if [breaks] is not 1-D with at least two elements,
     if a leaf of [c] is not a float tensor of at least two axes with [pieces]
-    rows, or, through {!Nx.check}, if [breaks] is not strictly increasing. *)
+    rows, or, through {!Nx.check}, if [breaks] decreases or its first equals its
+    last. *)
 
 (** {1:interpolants Interpolants}
 
