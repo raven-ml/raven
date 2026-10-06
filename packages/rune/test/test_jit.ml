@@ -2105,9 +2105,16 @@ let outcome f x =
 
 let outcomes = option (pair string int64)
 
+(* Mostly values that hold, so that a vector of six passes three times in
+   five. *)
 let drawn =
-  Gen.of_list ~pp:Format.pp_print_float
-    [ -1.; -0.; 0.5; 0.75; 1.; 2.; Float.infinity; Float.nan ]
+  Gen.frequency
+    [
+      (12, Gen.of_list ~pp:Format.pp_print_float [ -1.; -0.; 0.5; 0.75 ]);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_float
+          [ 1.; 2.; Float.infinity; Float.nan ] );
+    ]
 
 (* Six elements, as one row and as two rows of three: half the time all below 1,
    so that a check passes as often as it fails. *)
