@@ -106,7 +106,7 @@ let () =
   Printf.printf "%s\n" (Nx.to_string g) (* [3. 5. 7.] *)
 ```
 
-The pullback runs no part of `f` again, except the functions `f` passes to `remat`. When `vjp` runs outside every transformation, the pullback may be applied to any number of cotangents, from any domain. Under another transformation it is transformed with it: under `vmap'` the backward pass is batched, which is how `jacrev'` computes its rows.
+The pullback runs no part of `f` again: where `f` passes a function to `remat`, it recomputes that function's operations from a record of them. When `vjp` runs outside every transformation, the pullback may be applied to any number of cotangents, from any domain. Under another transformation it is transformed with it: under `vmap'` the backward pass is batched, which is how `jacrev'` computes its rows.
 
 ## Forward-Mode AD
 
@@ -338,7 +338,7 @@ let () =
   (* 21 — the rows' sums, added at every step of the scan *)
 ```
 
-`Rune.Total.collect t ~zero f` runs `f` and returns its result with `zero` plus everything `f` added to `t`. Nothing reads a total before its `collect` returns, so an addition never changes a value the function computes, and with no `collect` open an addition does nothing. An addition counts once per execution of the code that makes it, whatever lies between it and the scope: `vmap` adds the sum of its lanes' additions, reverse mode drops the additions of code it runs again in its backward pass, and a `scan` that `jit` stages carries the sum out of its loop, so the loop stays one loop and a replay computes the total again. A `jit` inside a scope compiles the function that also returns the sum of its additions, which the scope adds.
+`Rune.Total.collect t ~zero f` runs `f` and returns its result with `zero` plus everything `f` added to `t`. Nothing reads a total before its `collect` returns, so an addition never changes a value the function computes, and with no `collect` open an addition does nothing. An addition counts once per execution of the code that makes it, whatever lies between it and the scope: `vmap` adds the sum of its lanes' additions, the replays of a backward pass add nothing, and a `scan` that `jit` stages carries the sum out of its loop, so the loop stays one loop and a replay computes the total again. A `jit` inside a scope compiles the function that also returns the sum of its additions, which the scope adds.
 
 `Rune.axis ()` names a map. `Rune.vmap ~axis:a` (or `Rune.vmap' ~axis:a`) gives its map the name `a`, and inside it `Rune.lanes a x` is every lane's `x` stacked on a new leading axis, as data: the same value in every lane, whether `x` differs across the lanes or every lane shares it:
 
@@ -416,9 +416,11 @@ let () =
 
 The carry the step returns must have the visits of the one it received, and each step's outputs those of the first step's: a list keeps its length and an option its presence. `scan` raises otherwise, naming the first path where they differ.
 
-Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop that runs each step again at its carry, so the compiled program's size does not depend on the number of steps. `jvp`, `vmap` and `grad` of a scan compile as one loop too. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
+Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop that replays a record of the step's operations at each step's carry, so the compiled program's size does not depend on the number of steps. `jvp`, `vmap` and `grad` of a scan compile as one loop too. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
 
-A compiled function writes the loop out step by step instead when the carry changes its shapes across steps, when the step runs on the host or on devices of two kinds, and inside a `custom_jvp` tangent map under reverse mode. Everywhere outside `jit` the scan is its loop, run where it is written, inside every transformation, `Rune.Total.collect` and `Nx.Rng.with_key` around it.
+A compiled function writes the loop out step by step instead when the carry changes its shapes across steps, when the step runs on the host or on devices of two kinds, and inside a `custom_jvp` tangent map under reverse mode. Everywhere outside `jit` the scan is its loop, run where it is written, inside every transformation and `Rune.Total.collect` around it.
+
+Step `i` draws from a key scope of its own, rooted at `Nx.Rng.fold_in k i`, where `k` is one key the scan takes from the scope around at its first draw. The steps draw apart, and they draw the same values eagerly, compiled and transformed. A scan whose step draws nothing takes no key, so the draws after it are unchanged.
 
 ### Branches and loops on values
 
