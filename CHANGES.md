@@ -958,6 +958,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Ode.march`, explicit Runge–Kutta marches through the times of `at` in
+  equal steps: `Ode.euler`, `rk4`, `ssprk3`, `bs3`, `tsit5` and `dopri5`, and
+  `Ode.tableau` for a caller's Butcher tableau. A method's tag says which
+  drivers take it.
 - Add `Quad.fixed` and `Quad.cumulative`, integrals of an elementwise
   integrand by a rule: `Quad.Rule.gauss n` and the Gauss–Kronrod rules
   `Quad.Rule.kronrod 7` and `10`, on finite ranges and, by a change of

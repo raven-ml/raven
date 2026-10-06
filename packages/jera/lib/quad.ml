@@ -7,7 +7,7 @@
 
 module Rule = struct
   (* Nodes in increasing order on [-1, 1] and their weights, in float64. *)
-  type 'k t = { x : float array; w : float array }
+  type -'k t = { x : float array; w : float array }
 
   (* Double-word arithmetic: [hi + lo] with [|lo| <= ulp hi / 2], so the nodes
      and weights below are computed to about 32 digits and rounded once to

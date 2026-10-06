@@ -29,8 +29,9 @@
     in {!fixed} and {!cumulative}; [`Embedded] rules also estimate their error.
 *)
 module Rule : sig
-  type 'k t
-  (** The type for rules with tags ['k]. *)
+  type -'k t
+  (** The type for rules with tags ['k]. A rule with more tags is one with
+      fewer: [(Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t)]. *)
 
   val gauss : int -> [ `Formula ] t
   (** [gauss n] is the [n]-point Gauss–Legendre rule, exact for polynomials of
@@ -65,9 +66,9 @@ module Range : sig
       [[a, b]] with [b < a] is minus the integral over [[b, a]]. *)
 
   val from : (float, 'b) Nx.t -> 'b t
-  (** [from a] is the half-line from [a] to [+∞], at unit scale: a rule's nodes spread over
-      distances near [1] from [a]. Scale the variable so the integrand's width
-      is near 1. *)
+  (** [from a] is the half-line from [a] to [+∞], at unit scale: a rule's nodes
+      spread over distances near [1] from [a]. Scale the variable so the
+      integrand's width is near 1. *)
 
   val line : (float, 'b) Nx.t -> 'b t
   (** [line c] is the whole line, around [c] at unit scale. *)

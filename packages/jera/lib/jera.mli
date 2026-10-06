@@ -39,6 +39,9 @@
     - {b Devices.} Constants are computed on the host in float64 and rounded
       once to the working dtype. *)
 
+module Ode = Ode
+(** Ordinary differential equations. *)
+
 module Quad = Quad
 (** Integrals. *)
 
