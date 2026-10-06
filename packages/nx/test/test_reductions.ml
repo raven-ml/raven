@@ -786,6 +786,14 @@ let normalisations =
           equal near
             (Ref.along ~axis:a ~length:r.shape.(a) lsm r)
             (Ref.of_nx (Nx.log_softmax t)));
+      test "logsumexp of infinite lanes is infinite" (fun () ->
+          let inf = Float.infinity in
+          let t =
+            Nx.create Nx.float64 [| 3; 2 |]
+              [| -.inf; -.inf; -.inf; 1.; inf; 1. |]
+          in
+          equal (array float_exact) [| -.inf; 1.; inf |]
+            (Nx.to_array (Nx.logsumexp ~axes:[ 1 ] t)));
       test "softmax normalises along the axes asked for" (fun () ->
           let t =
             Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]

@@ -5774,9 +5774,13 @@ let logsumexp ?axes ?(keepdims = false) x =
   in
   if axes_norm = [] then x
   else
+    (* The shift is the lane's maximum where it is finite: a lane of [-inf]
+       sums to [-inf] and one holding [+inf] to [+inf], where [x - max] would
+       be NaN. *)
     let max_x = max x ~axes:axes_norm ~keepdims:true in
+    let shift = where (isfinite max_x) max_x (zeros_like max_x) in
     let log_sum =
-      add (log (sum (exp (sub x max_x)) ~axes:axes_norm ~keepdims:true)) max_x
+      add (log (sum (exp (sub x shift)) ~axes:axes_norm ~keepdims:true)) shift
     in
     if keepdims then log_sum else squeeze ~axes:(List.rev axes_norm) log_sum
 

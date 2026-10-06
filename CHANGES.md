@@ -3452,6 +3452,8 @@ thread.
 
 ### Nx
 
+- `Nx.logsumexp` and `logmeanexp` of a lane whose elements are all `-inf` are
+  `-inf`, and of one holding `+inf` are `+inf`; both were NaN.
 - `Nx.diagonal` is built from movements, so its derivative under `Rune.jit`
   reads the cotangent in place. As a gather, its derivative was a reduction
   for every element of the matrix, which recomputed what the diagonal was
