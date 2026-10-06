@@ -5,13 +5,14 @@
 
 (* nx's kernels on AMD GPUs, from the code objects the library carries.
 
-   One path runs every kernel: an operation names its module's key, its operands
-   and its result; the operands' views are coalesced; the module's contiguous
-   form [c] runs when every view is C-contiguous after merging, and its strided
-   form [s] otherwise; one launch on the device's compute queue. The code
-   objects of a key are loaded on a device at its first use, and kept while the
-   device is. A GPU that no carried target covers refuses every kernel, as do
-   the operations, dtypes and layouts the kernels do not serve. *)
+   An elementwise operation names its module's key, its operands and its result;
+   the operands' views are coalesced; the module's contiguous form [c] runs when
+   every view is C-contiguous after merging, and its strided form [s] otherwise;
+   one launch on the device's compute queue. Reductions take a second path,
+   which folds rows (Reductions below). A module's kernels are loaded on a
+   device at their first use, and kept while the device is. A GPU that no
+   carried target covers refuses every kernel, as do the operations, dtypes and
+   layouts the kernels do not serve. *)
 
 module View = Nx_array.View
 module Program = Nx_device.Program
@@ -57,11 +58,11 @@ let target ~gpu ~aql =
 (* Devices *)
 
 (* What a device needs to run kernels: its carried target, or why it has none,
-   its properties, and the programs of each key loaded on it. *)
+   its properties, and the kernels loaded on it, by module and name. *)
 type device = {
   target : (string, string) result;
   props : Nx_amd_device.props;
-  programs : (string, Program.t * Program.t) Hashtbl.t;
+  programs : (string, Program.t) Hashtbl.t;
 }
 
 let devices : (Nx_device.t * device) list ref = ref []
@@ -83,21 +84,21 @@ let device d =
       devices := (d, s) :: !devices;
       s
 
-(* The programs [c] and [s] of [key] on [d]. Two domains that load one key at
-   once both load it, and find the same load. *)
-let programs d s target key =
-  match Mutex.protect lock (fun () -> Hashtbl.find_opt s.programs key) with
+(* The kernel [name] of [key]'s module on [d]. Two domains that load one kernel
+   at once both load it, and find the same load. *)
+let program d s target key name =
+  let path = target ^ "/" ^ key in
+  let id = path ^ "/" ^ name in
+  match Mutex.protect lock (fun () -> Hashtbl.find_opt s.programs id) with
   | Some p -> p
   | None ->
-      let path = target ^ "/" ^ key in
       let binary = Option.get (Archive.find path) in
-      let load name =
+      let p =
         match Program.load d ~binary ~name with
         | Ok p -> p
         | Error why -> failwith why
       in
-      let p = (load "c", load "s") in
-      Mutex.protect lock (fun () -> Hashtbl.replace s.programs key p);
+      Mutex.protect lock (fun () -> Hashtbl.replace s.programs id p);
       p
 
 (* Running a kernel *)
@@ -107,14 +108,40 @@ type operand = Operand : ('a, 'b) Nx_array.t -> operand
 let address (Operand a) = Nativeint.to_int (Nx_device.Buffer.address a.buffer)
 let itemsize (Operand a) = Nx_dtype.itemsize a.dtype
 let view (Operand a) = a.view
+let buffer (Operand a) = a.buffer
+let at o v = address o + (View.offset v * itemsize o)
+let cdiv a b = (a + b - 1) / b
+let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |]
 
-(* Runs [key]'s module writing [dst] from [srcs]. *)
-let run key ~dst srcs =
-  let (Operand d) = dst in
+(* [dst]'s device, its state and carried target, whose archive holds [key]. *)
+let locate key (Operand d) =
   let dev = Nx_device.Buffer.device d.buffer in
   let s = device dev in
   let target = match s.target with Ok t -> t | Error e -> refuse "%s" e in
   if not (Archive.mem (target ^ "/" ^ key)) then refuse "no kernel %s" key;
+  (dev, s, target)
+
+let units s = s.props.compute_units * s.props.xccs
+
+(* Kernel parameters, as 64-bit words. *)
+let args f =
+  let b = Buffer.create 2048 in
+  f (fun x -> Buffer.add_int64_le b (Int64.of_int x));
+  Buffer.contents b
+
+(* [a] padded with zeros to [max_rank] words. *)
+let words i64 a =
+  for i = 0 to max_rank - 1 do
+    i64 (if i < Array.length a then a.(i) else 0)
+  done
+
+let dispatch program groups args : Nx_amd_device.dispatch =
+  { program; groups = (groups, 1, 1); threads = (threads, 1, 1); args }
+
+(* Runs [key]'s module writing [dst] from [srcs]. *)
+let run key ~dst srcs =
+  let (Operand d) = dst in
+  let dev, s, target = locate key dst in
   let ops = dst :: srcs in
   let views = View.coalesce (List.map view ops) in
   let n = View.numel d.view and rank = View.ndim (List.hd views) in
@@ -123,55 +150,136 @@ let run key ~dst srcs =
   if List.length srcs > max_operands then
     refuse "%d operands; kernels take %d" (List.length srcs) max_operands;
   if n > 0 then begin
-    let c, strided = programs dev s target key in
-    let units = s.props.compute_units * s.props.xccs in
-    let groups = Int.min ((n + threads - 1) / threads) (waves * units) in
-    let b = Buffer.create 2048 in
-    let i64 x = Buffer.add_int64_le b (Int64.of_int x) in
-    let at o v = address o + (View.offset v * itemsize o) in
-    let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |] in
-    let program =
-      if List.for_all unit_stride views then begin
-        List.iter2 (fun o v -> i64 (at o v)) ops views;
-        i64 n;
-        i64 groups;
-        c
-      end
-      else begin
+    let groups = Int.min (cdiv n threads) (waves * units s) in
+    let d =
+      if List.for_all unit_stride views then
+        dispatch (program dev s target key "c") groups
+        @@ args (fun i64 ->
+            List.iter2 (fun o v -> i64 (at o v)) ops views;
+            i64 n;
+            i64 groups)
+      else
         let dv = List.hd views and svs = Array.of_list (List.tl views) in
-        i64 (at dst dv);
-        List.iter (fun o -> i64 (address o)) srcs;
-        i64 n;
-        i64 rank;
-        i64 groups;
-        let shape = View.shape dv in
-        for i = 0 to max_rank - 1 do
-          i64 (if i < rank then shape.(i) else 0)
-        done;
-        for k = 0 to max_operands - 1 do
-          i64 (if k < Array.length svs then View.offset svs.(k) else 0)
-        done;
-        for k = 0 to max_operands - 1 do
-          let strides =
-            if k < Array.length svs then View.strides svs.(k) else [||]
-          in
-          for i = 0 to max_rank - 1 do
-            i64 (if i < Array.length strides then strides.(i) else 0)
-          done
-        done;
-        strided
-      end
+        dispatch (program dev s target key "s") groups
+        @@ args (fun i64 ->
+            i64 (at dst dv);
+            List.iter (fun o -> i64 (address o)) srcs;
+            i64 n;
+            i64 rank;
+            i64 groups;
+            words i64 (View.shape dv);
+            for k = 0 to max_operands - 1 do
+              i64 (if k < Array.length svs then View.offset svs.(k) else 0)
+            done;
+            for k = 0 to max_operands - 1 do
+              words i64
+                (if k < Array.length svs then View.strides svs.(k) else [||])
+            done)
     in
-    Nx_amd_device.launch
-      ~touches:(List.map (fun (Operand a) -> a.buffer) ops)
-      [
-        {
-          program;
-          groups = (groups, 1, 1);
-          threads = (threads, 1, 1);
-          args = Buffer.contents b;
-        };
-      ]
+    Nx_amd_device.launch ~touches:(List.map buffer ops) [ d ]
+  end
+
+(* Reductions
+
+   Each element of the result folds a row, the operand's elements over the
+   reduced axes in C order. The rows' axes and the reduced axes coalesce apart.
+   A row is folded by [lanes] threads: up to a workgroup's, enough to cover it,
+   where its elements are adjacent, and otherwise as many as fill the device
+   with the rows, so that neighbouring threads read neighbouring rows. Fewer
+   rows than two per compute unit, of more than [split] elements, are folded in
+   parts of at least [split] elements by a first pass, whose partials a second
+   pass folds. *)
+
+let split = 4096
+let rec pow2 ?(p = 1) n = if p >= n then p else pow2 ~p:(2 * p) n
+
+(* The axes of [v] that [keep] selects, as a view. *)
+let axes_of v keep =
+  let ix = List.filter keep (List.init (View.ndim v) Fun.id) in
+  let pick a = Array.of_list (List.map (fun i -> a.(i)) ix) in
+  View.create ~offset:(View.offset v)
+    ~strides:(pick (View.strides v))
+    (pick (View.shape v))
+
+(* Runs the reduction module [key] writing [dst] from [x] folded over [axes]. *)
+let fold key ~dst x ~axes =
+  let dev, s, target = locate key dst in
+  let reduced i = Array.mem i axes in
+  let xo =
+    List.nth
+      (View.coalesce [ view dst; axes_of (view x) (Fun.negate reduced) ])
+      1
+  in
+  let xr = List.hd (View.coalesce [ axes_of (view x) reduced ]) in
+  let rows = View.numel (view dst) and len = View.numel xr in
+  let rank = Int.max (View.ndim xo) (View.ndim xr) in
+  if rank > max_rank then
+    refuse "rows or reductions of %d axes once merged; kernels take %d" rank
+      max_rank;
+  if rows > 0 then begin
+    let units = units s in
+    let parts =
+      if rows < 2 * units && len > split then
+        Int.min (cdiv (waves * units) rows) (len / split)
+      else 1
+    in
+    let chunk = cdiv len parts and items = rows * parts in
+    let span = Int.min threads (pow2 chunk) in
+    let lanes =
+      let r = View.ndim xr in
+      if r = 0 || (View.strides xr).(r - 1) = 1 then span
+      else Int.min span (pow2 (cdiv (waves * units * threads) items))
+    in
+    let groups lanes n = Int.min (cdiv n (threads / lanes)) (waves * units) in
+    let scratch =
+      if parts = 1 then None
+      else Some (Nx_device.Buffer.create dev Int64 (2 * items))
+    in
+    let pv, pi =
+      match scratch with
+      | None -> (0, 0)
+      | Some b ->
+          let a = Nativeint.to_int (Nx_device.Buffer.address b) in
+          (a, a + (8 * items))
+    in
+    let g = groups lanes items in
+    let first =
+      if
+        len = 0
+        || (unit_stride xr && (View.ndim xo = 0 || View.strides xo = [| len |]))
+      then
+        dispatch (program dev s target key "c") g
+        @@ args (fun i64 ->
+            i64 (at dst (view dst));
+            i64 (at x xo);
+            i64 pv;
+            i64 pi;
+            List.iter i64 [ rows; len; lanes; parts; chunk; g ])
+      else
+        dispatch (program dev s target key "s") g
+        @@ args (fun i64 ->
+            i64 (at dst (view dst));
+            i64 (address x);
+            i64 pv;
+            i64 pi;
+            List.iter i64 [ rows; len; lanes; parts; chunk; g ];
+            List.iter i64 [ View.ndim xo; View.ndim xr; View.offset xo ];
+            words i64 (View.shape xo);
+            words i64 (View.strides xo);
+            words i64 (View.shape xr);
+            words i64 (View.strides xr))
+    in
+    let second () =
+      let lanes = Int.min threads (pow2 parts) in
+      let g = groups lanes rows in
+      dispatch (program dev s target key "f") g
+      @@ args (fun i64 ->
+          i64 (at dst (view dst));
+          List.iter i64 [ pv; pi; rows; parts; lanes; g ])
+    in
+    let touches = buffer dst :: buffer x :: Option.to_list scratch in
+    Nx_amd_device.launch ~touches
+      (if parts = 1 then [ first ] else [ first; second () ])
   end
 
 (* The name of a dtype the kernels serve, as module keys spell it. *)
@@ -232,6 +340,16 @@ let compare_name : Nx_backend.compare -> string = function
   | Less -> "less"
   | Less_equal -> "less_equal"
 
+let reduce_name : Nx_backend.reduce -> string = function
+  | Sum -> "sum"
+  | Prod -> "prod"
+  | Max -> "max"
+  | Min -> "min"
+
+let arg_reduce_name : Nx_backend.arg_reduce -> string = function
+  | Argmax -> "argmax"
+  | Argmin -> "argmin"
+
 module Kernels : Nx_backend.S = struct
   let name = name
   let runs_on d = Option.is_some (Nx_amd_device.of_device d)
@@ -287,9 +405,20 @@ module Kernels : Nx_backend.S = struct
       [ Operand cond; Operand a; Operand b ]
 
   let threefry _ _ ~dst:_ = no "threefry"
-  let reduce _ ~axes:_ _ ~dst:_ = no "reductions"
+
+  let reduce (type a b) k ~axes (x : (a, b) Nx_array.t)
+      ~(dst : (a, b) Nx_array.t) =
+    fold
+      (Printf.sprintf "reduce.%s.%s" (reduce_name k) (served x.dtype))
+      ~dst:(Operand dst) (Operand x) ~axes
+
   let scan _ ~axis:_ _ ~dst:_ = no "scans"
-  let arg_reduce _ ~axis:_ _ ~dst:_ = no "arg_reduce"
+
+  let arg_reduce (type a b) k ~axis (x : (a, b) Nx_array.t) ~dst =
+    fold
+      (Printf.sprintf "arg_reduce.%s.%s" (arg_reduce_name k) (served x.dtype))
+      ~dst:(Operand dst) (Operand x) ~axes:[| axis |]
+
   let sort ~descending:_ ~axis:_ _ ~dst:_ = no "sort"
   let argsort ~descending:_ ~axis:_ _ ~dst:_ = no "argsort"
   let group _ ~dst:_ = no "group"

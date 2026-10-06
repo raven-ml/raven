@@ -58,10 +58,13 @@ DTYPES = [
 # Kinds that only move bytes are keyed by element width, in bytes.
 WIDTHS = {1: "uint8_t", 2: "uint16_t", 4: "uint32_t", 8: "uint64_t"}
 
+# A unit's ID names its symbol __hip_cuid_<hash>. comgr otherwise derives it
+# from every include it is handed, so that a new source would change every code
+# object; each code object is a program of its own, which one ID serves.
 COMPILE = [
     "-O3", "-ffp-contract=off", "-fhip-fp32-correctly-rounded-divide-sqrt",
     "-fno-gpu-flush-denormals-to-zero", "-nogpuinc", "-mcode-object-version=6",
-    "-std=c++17", "-Wall", "-Werror", "-Xclang", "-disable-llvm-passes",
+    "-std=c++17", "-cuid=nx_amd", "-Wall", "-Werror", "-Xclang", "-disable-llvm-passes",
     "-Xclang", "-aux-triple", "-Xclang", "x86_64-unknown-linux-gnu",
 ]
 CODEGEN = ["-O3", "-ffp-contract=off", "-mcode-object-version=6", "-mllvm",
@@ -79,6 +82,10 @@ UNARY = [(["neg", "recip", "abs", "sign"], NUMERIC),
 BINARY = [(["add", "sub", "mul", "pow", "idiv", "mod"], NUMERIC), (["fdiv", "atan2"], FLOATS),
           (["maximum", "minimum"], NUMERIC + ["bool"]), (["and", "or", "xor"], INTS + ["bool"])]
 COMPARE = [(["equal", "not_equal", "less", "less_equal"], NUMERIC + ["bool"])]
+# As nx.cpu's fold tables (cpu/nx_c_fold.c); arg_reduce's kinds are the
+# extremes of reduce's.
+REDUCE = [(["sum", "prod"], NUMERIC), (["max", "min"], NUMERIC + ["bool"])]
+ARG_REDUCE = [(["max", "min"], NUMERIC + ["bool"])]
 # A kind whose name C++ reserves takes a trailing underscore.
 C_NAMES = {"and": "and_", "or": "or_", "xor": "xor_", "bool": "bool_"}
 
@@ -104,6 +111,12 @@ def modules():
                     yield f"{family}.{k}.{d}", f'#include "{family}.hip"\n{macro}({c_name(k)}, {c_name(d)})\n'
     for d in NUMERIC:
         yield f"fma.{d}", f'#include "fma.hip"\nFMA({c_name(d)})\n'
+    for prefix, macro, table in (("", "REDUCE", REDUCE), ("arg", "ARG_REDUCE", ARG_REDUCE)):
+        for kinds, dtypes in table:
+            for k in kinds:
+                for d in dtypes:
+                    yield (f"{macro.lower()}.{prefix}{k}.{d}",
+                           f'#include "reduce.hip"\n{macro}({k}, {c_name(d)})\n')
 
 
 def inputs():

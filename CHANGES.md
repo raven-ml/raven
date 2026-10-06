@@ -3267,6 +3267,10 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation reduce eagerly: `Nx.sum`, `Nx.prod`,
+  `Nx.max`, `Nx.min`, `Nx.argmax` and `Nx.argmin` (and `Nx.all`, `Nx.any`) run
+  on the GPU, the extremes and integer results bit for bit as on the host, float
+  sums from `+0` within `n·eps·Σ|x|` of the exact sum.
 - AMD GPUs of the gfx12 generation compute the elementwise operations eagerly:
   the unary functions (`Nx.neg`, `Nx.sqrt`, `Nx.exp`, `Nx.sin`, the
   roundings...), the binary ones (`Nx.add`, `Nx.div`, `Nx.pow`, `Nx.maximum`,

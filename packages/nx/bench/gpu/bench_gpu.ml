@@ -4,13 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* nx's eager kernels on GPUs, each beside its host twin: a cast from bfloat16
-   to float32, the exponential of a float32 value and the sum of two, at 4K, 1M
-   and 16M elements, timed to the work's completion, and the first use of a
-   kernel in a fresh process, which opens the GPU and loads the kernel's code
-   objects. AMD loads code objects with no compiler, so the first use has no
-   cold and warm cases. Rows exist for the GPUs the machine has: AMD GPU 0 under
-   the kernel driver. The GPU is opened in each measuring worker, never in the
-   parent that forks them; the host twins run on every machine. *)
+   to float32, the exponential of a float32 value, the sum of two and the sum of
+   one's elements, at 4K, 1M and 16M elements, timed to the work's completion,
+   and the first use of a kernel in a fresh process, which opens the GPU and
+   loads the kernel's code objects. AMD loads code objects with no compiler, so
+   the first use has no cold and warm cases. Rows exist for the GPUs the machine
+   has: AMD GPU 0 under the kernel driver. The GPU is opened in each measuring
+   worker, never in the parent that forks them; the host twins run on every
+   machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -71,6 +72,7 @@ let cases ~gpu size =
     ~op:(Nx.cast Nx.float32)
   @ rows ~gpu "unary-exp" size ~input:floats ~op:Nx.exp
   @ rows ~gpu "binary-add" size ~input:floats ~op:(fun x -> Nx.add x x)
+  @ rows ~gpu "reduce-sum" size ~input:floats ~op:(fun x -> Nx.sum x)
 
 let first_use_case () =
   let exe = Sys.executable_name in

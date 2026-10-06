@@ -7,9 +7,10 @@
    conversions between them.
 
    A module holds the kernels of one key: [c], the contiguous form, and [s],
-   the strided form. Their parameters are pointers, then 64-bit integers or
-   structs of them; the workgroup size is fixed at THREADS and the workgroup
-   count comes as a parameter, so that no kernel reads implicit arguments.
+   the strided form; reduce.hip states its own. Their parameters are
+   pointers, then 64-bit integers or structs of them; the workgroup size is
+   fixed at THREADS and the workgroup count comes as a parameter, so that no
+   kernel reads implicit arguments.
    - [c (dst, op1, ..., n, groups)]: every operand C-contiguous from its
      pointer, [n] elements.
    - [s (dst, op1, ..., meta)]: [dst] C-contiguous, operand [k] at element

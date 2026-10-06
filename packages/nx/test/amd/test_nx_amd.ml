@@ -393,9 +393,8 @@ let computing =
         (fun () ->
           let x = on_gpu (Nx.ones Nx.float32 [| 2 |]) in
           raises_match
-            (Exn.invalid_arg
-               ~substring:"no reductions. Compile it with Rune.jit") (fun () ->
-              ignore (Nx.sum x)));
+            (Exn.invalid_arg ~substring:"no scans. Compile it with Rune.jit")
+            (fun () -> ignore (Nx.cumsum x)));
       test "a dtype it does not serve raises, naming it" (fun () ->
           let x = on_gpu (Nx.ones Nx.complex64 [| 2 |]) in
           raises_match (Exn.invalid_arg ~substring:"no complex dtypes")
@@ -417,11 +416,368 @@ let computing =
           equal (array int) [| 0; 3 |] (Nx.shape y));
     ]
 
+(* Reductions *)
+
+(* A reduction over the axes [axes] of a value: an extreme, whose result is the
+   host's bit for bit, or a sum or a product. An argument reduction takes the
+   first of [axes], or flattens the value when there is none. *)
+type reduction = {
+  title : string;
+  extreme : bool;
+  r : 'a 'b. int list -> ('a, 'b) Nx.t -> Nx.packed;
+}
+
+let arg f axes x =
+  match axes with
+  | [] -> Nx.P (f ?axis:None x)
+  | a :: _ -> Nx.P (f ?axis:(Some a) x)
+
+let reductions =
+  [
+    {
+      title = "sum";
+      extreme = false;
+      r = (fun axes x -> Nx.P (Nx.sum ~axes x));
+    };
+    {
+      title = "prod";
+      extreme = false;
+      r = (fun axes x -> Nx.P (Nx.prod ~axes x));
+    };
+    { title = "max"; extreme = true; r = (fun axes x -> Nx.P (Nx.max ~axes x)) };
+    { title = "min"; extreme = true; r = (fun axes x -> Nx.P (Nx.min ~axes x)) };
+    {
+      title = "argmax";
+      extreme = true;
+      r = (fun axes x -> arg (fun ?axis x -> Nx.argmax ?axis x) axes x);
+    };
+    {
+      title = "argmin";
+      extreme = true;
+      r = (fun axes x -> arg (fun ?axis x -> Nx.argmin ?axis x) axes x);
+    };
+  ]
+
+let extremes = List.filter (fun red -> red.extreme) reductions
+let sum = List.find (fun red -> red.title = "sum") reductions
+let prod = List.find (fun red -> red.title = "prod") reductions
+
+(* Whether [red] of [x] over [axes] has a value: an extreme needs elements. *)
+let defined red axes x =
+  (not red.extreme)
+  ||
+  match (red.title, axes) with
+  | ("argmax" | "argmin"), [] -> Nx.numel x > 0
+  | ("argmax" | "argmin"), a :: _ -> Nx.dim a x > 0
+  | _ -> List.for_all (fun a -> Nx.dim a x > 0) axes
+
+(* [red] of [x] on the GPU, read back, against the host's, bit for bit. Over
+   several axes, nx states only that the host's max and min take one of the
+   NaNs, so a NaN result there is any NaN. *)
+let reduces_as_on_host ?msg red axes (Nx.P x) =
+  let several =
+    List.length axes > 1 && (red.title = "max" || red.title = "min")
+  in
+  equal ?msg
+    (if several then floats_or_bits else Stored.packed)
+    (red.r axes x)
+    (placed (fun (Nx.P x) -> red.r axes x) (Nx.P x))
+
+(* The axes of a value of rank [n] that the bits of [mask] select. *)
+let masked mask n =
+  List.filter (fun a -> mask land (1 lsl a) <> 0) (List.init n Fun.id)
+
+(* Corner values under every layout, over drawn axes: the extremes of every
+   dtype, NaNs and zeros of both signs among them, and the integer sums and
+   products, which wrap whatever their association. *)
+let reduced =
+  group "reduced"
+    (List.map
+       (fun (Stored.Case c) ->
+         let mine =
+           List.filter (fun red -> red.extreme || integer c.name) reductions
+         in
+         prop ~count:400
+           (c.name
+          ^ " values of every layout, reduced over drawn axes as on the host")
+           (Gen.triple c.tensors (Gen.int_range 0 255)
+              (Gen.of_list
+                 ~pp:(fun ppf red -> Format.pp_print_string ppf red.title)
+                 mine))
+           (fun (x, mask, red) ->
+             let axes = masked mask (Nx.ndim x) in
+             List.iter (fun r -> cover r.title (r == red)) mine;
+             cover "strided" (not (Nx.is_c_contiguous x));
+             cover "several axes" (List.length axes > 1);
+             if defined red axes x then reduces_as_on_host red axes (Nx.P x)
+             else
+               raises_match Exn.invalid_arg (fun () ->
+                   ignore (red.r axes (on_gpu x)))))
+       (List.filter served_case Stored.every))
+
+(* Shapes and the axes they reduce, whose rows cross the kernels' geometry: rows
+   of a workgroup's threads and more, many rows walked by the grid, rows of
+   strided elements, and a few long rows folded in two passes. *)
+let geometries =
+  [
+    ([| 1000; 257 |], [ 1 ]);
+    ([| 257; 1000 |], [ 0 ]);
+    ([| 3; 100_000 |], [ 1 ]);
+    ([| 100_000; 3 |], [ 0 ]);
+    ([| 300; 301 |], [ 0; 1 ]);
+    ([| 5; 7; 4099 |], [ 0; 2 ]);
+  ]
+
+(* Each geometry as it is laid out and transposed, which makes the reduced
+   elements of a contiguous row strided and the reverse. *)
+let laid_out =
+  List.concat_map
+    (fun (shape, axes) ->
+      let n = Array.length shape in
+      let t = Array.init n (fun i -> shape.(n - 1 - i)) in
+      [
+        ("contiguous", shape, Fun.id, axes);
+        ( "transposed",
+          t,
+          (fun (Nx.P x) -> Nx.P (Nx.transpose x)),
+          List.map (fun a -> n - 1 - a) axes );
+      ])
+    geometries
+
+(* Values of [d] of shape [shape]: [f i] at the [i]th element in C order,
+   computed at float64 and cast. *)
+let values (Dtype d) shape f =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.P (Nx.cast d (Nx.create Nx.float64 shape (Array.init n f)))
+
+let spread i = i * 7919 mod 13
+
+(* Rows of many equal extremes; with NaNs of both signs; of zeros of both signs
+   below the negative numbers' ties; of infinities of both signs. *)
+let patterns =
+  [
+    ("ties", fun i -> Float.of_int (spread i - 6));
+    ( "NaNs",
+      fun i ->
+        if i mod 997 = 3 then Float.nan
+        else if i mod 1009 = 5 then Float.neg Float.nan
+        else Float.of_int (spread i - 6) );
+    ("zeros", fun i -> [| -0.; 0.; -1.; -0.; -2. |].(spread i mod 5));
+    ( "infinities",
+      fun i ->
+        [| 1.; Float.neg_infinity; Float.infinity; -1.; 2. |].(spread i mod 5)
+    );
+  ]
+
+(* Factors whose products are exact: ones of both signs, with a 2 and, in some
+   rows, a zero of either sign. *)
+let factors i =
+  if i mod 4099 = 17 then 2.
+  else if i mod 8191 = 4 then if i mod 2 = 0 then -0. else 0.
+  else if spread i mod 5 = 0 then -1.
+  else 1.
+
+let geometry =
+  group "geometry"
+    (List.map
+       (fun (Dtype d as dt) ->
+         let name = Nx_dtype.to_string d in
+         test
+           (name
+          ^ " rows of every length reduce as on the host, sums and products of \
+             exact partials included") (fun () ->
+             List.iter
+               (fun (layout, shape, lay, axes) ->
+                 let msg red what =
+                   let ints a = String.concat "," (List.map string_of_int a) in
+                   Printf.sprintf "%s of %s [%s] over %s (%s)" red.title what
+                     (ints (Array.to_list shape))
+                     (ints axes) layout
+                 in
+                 List.iter
+                   (fun (what, f) ->
+                     let x = lay (values dt shape f) in
+                     List.iter
+                       (fun red ->
+                         reduces_as_on_host ~msg:(msg red what) red axes x)
+                       extremes)
+                   patterns;
+                 if name <> "bool" then begin
+                   reduces_as_on_host ~msg:(msg sum "ties") sum axes
+                     (lay (values dt shape (List.assoc "ties" patterns)));
+                   reduces_as_on_host ~msg:(msg prod "factors") prod axes
+                     (lay (values dt shape factors))
+                 end)
+               laid_out))
+       served)
+
+let float_dtypes = List.filter (fun (Dtype d) -> Nx_dtype.is_float d) served
+
+let sums =
+  group "sums"
+    [
+      test "sums of nothing are 0 and products of nothing 1, at every dtype"
+        (fun () ->
+          List.iter
+            (fun (Dtype d) ->
+              if Nx_dtype.to_string d <> "bool" then
+                List.iter
+                  (fun (shape, axes, out) ->
+                    let x = on_gpu (Nx.zeros d shape) in
+                    let msg = Nx_dtype.to_string d in
+                    equal ~msg Stored.packed
+                      (Nx.P (Nx.zeros d out))
+                      (Nx.P (host (Nx.sum ~axes x)));
+                    equal ~msg Stored.packed
+                      (Nx.P (Nx.ones d out))
+                      (Nx.P (host (Nx.prod ~axes x))))
+                  [
+                    ([| 3; 0 |], [ 1 ], [| 3 |]);
+                    ([| 0; 5 |], [ 0 ], [| 5 |]);
+                    ([| 0 |], [ 0 ], [||]);
+                  ])
+            served);
+      test "sums of -0 are +0, at every float dtype and length" (fun () ->
+          List.iter
+            (fun (Dtype d) ->
+              List.iter
+                (fun n ->
+                  let x =
+                    on_gpu (Nx.cast d (Nx.full Nx.float64 [| 2; n |] (-0.)))
+                  in
+                  equal
+                    ~msg:
+                      (Printf.sprintf "%s, %d terms" (Nx_dtype.to_string d) n)
+                    Stored.packed
+                    (Nx.P (Nx.zeros d [| 2 |]))
+                    (Nx.P (host (Nx.sum ~axes:[ 1 ] x))))
+                [ 1; 5; 300; 5000; 100_000 ])
+            float_dtypes);
+      cases
+        ~name:(fun (title, _, _) -> title)
+        "a sum of a NaN is NaN, of one infinity that infinity, of both NaN"
+        [
+          ("a NaN among numbers", [| 1.; Float.nan; 2. |], Float.nan);
+          ("+inf among numbers", [| 1.; Float.infinity; 2. |], Float.infinity);
+          ( "-inf among numbers",
+            [| -1.; Float.neg_infinity; 2. |],
+            Float.neg_infinity );
+          ( "both infinities",
+            [| Float.infinity; 1.; Float.neg_infinity |],
+            Float.nan );
+        ]
+        (fun (_, xs, expected) ->
+          List.iter
+            (fun (Dtype d) ->
+              if Nx_dtype.to_string d <> "float8_e4m3" || Float.is_nan expected
+              then begin
+                let x = Nx.cast d (Nx.create Nx.float64 [| 3 |] xs) in
+                let got =
+                  Nx.item [] (Nx.cast Nx.float64 (host (Nx.sum (on_gpu x))))
+                in
+                let msg = Nx_dtype.to_string d in
+                if Float.is_nan expected then
+                  equal ~msg bool true (Float.is_nan got)
+                else equal ~msg float_exact expected got
+              end)
+            float_dtypes);
+    ]
+
+(* Error bounds *)
+
+(* A float dtype's format: the bits of its significand, its least positive and
+   greatest finite values, and the unit roundoff of the format it sums in. *)
+type format = { m : int; tiny : float; top : float; eps : float }
+
+let format : type a b. (a, b) Nx.dtype -> format = function
+  | Float16 -> { m = 10; tiny = 0x1p-24; top = 65504.; eps = 0x1p-24 }
+  | BFloat16 -> { m = 7; tiny = 0x1p-133; top = 0x1.fep127; eps = 0x1p-24 }
+  | Float32 -> { m = 23; tiny = 0x1p-149; top = 0x1.fffffep127; eps = 0x1p-24 }
+  | Float64 ->
+      { m = 52; tiny = 0x1p-1074; top = Float.max_float; eps = 0x1p-53 }
+  | Float8_e4m3 -> { m = 3; tiny = 0x1p-9; top = 448.; eps = 0x1p-24 }
+  | Float8_e5m2 -> { m = 2; tiny = 0x1p-16; top = 57344.; eps = 0x1p-24 }
+  | _ -> invalid_arg "not a float dtype"
+
+(* The sum of [xs] rounded once: Neumaier's compensated sum, whose error is a
+   rounding of the result plus terms of the order of the squared roundoff. *)
+let exact_sum xs =
+  let s = ref 0. and c = ref 0. in
+  Array.iter
+    (fun x ->
+      let t = !s +. x in
+      c :=
+        !c +. if Float.abs !s >= Float.abs x then !s -. t +. x else x -. t +. !s;
+      s := t)
+    xs;
+  !s +. !c
+
+(* The spacing of the floats of format [f] at the magnitude [v]. *)
+let ulp f v =
+  if v = 0. then f.tiny
+  else Float.max f.tiny (Float.ldexp 1. (snd (Float.frexp v) - 1 - f.m))
+
+let bounded =
+  group "error bounds"
+    [
+      prop ~count:200
+        "a float sum of n terms lies within n eps sum |x| of the exact sum, \
+         plus a rounding to a narrow dtype"
+        Gen.(
+          quad
+            (of_list ~pp:pp_dtype float_dtypes)
+            (int_range 1 6) (int_range 0 20_000) (pair bool int))
+        (fun (Dtype d, rows, n, (transposed, seed)) ->
+          let f = format d in
+          let rng = Random.State.make [| seed |] in
+          let scale = f.top /. Float.of_int (4 * Int.max n 1) in
+          let x =
+            Nx.cast d
+              (Nx.create Nx.float64 [| rows; n |]
+                 (Array.init (rows * n) (fun _ ->
+                      (Random.State.float rng 2. -. 1.)
+                      *. Float.ldexp scale (-Random.State.int rng 8))))
+          in
+          let terms = Nx.to_array (Nx.cast Nx.float64 x) in
+          let got =
+            if transposed then
+              Nx.sum ~axes:[ 0 ] (on_gpu (Nx.contiguous (Nx.transpose x)))
+            else Nx.sum ~axes:[ 1 ] (on_gpu x)
+          in
+          let got = Nx.to_array (Nx.cast Nx.float64 (host got)) in
+          cover "two passes" (rows = 1 && n > 4096);
+          cover "transposed" transposed;
+          for r = 0 to rows - 1 do
+            let row = Array.sub terms (r * n) n in
+            let s = exact_sum row in
+            let e =
+              Float.of_int n *. f.eps
+              *. Array.fold_left (fun a x -> a +. Float.abs x) 0. row
+            in
+            let narrow = if f.m < 23 then ulp f (Float.abs s +. e) else 0. in
+            at_most
+              ~msg:(Printf.sprintf "row %d of %d terms, exact %h" r n s)
+              float_exact
+              ~than:(e +. narrow +. (Float.epsilon *. Float.abs s))
+              (Float.abs (got.(r) -. s))
+          done);
+    ]
+
 let accuracy = group "accuracy" (Nx_test.Accuracy.groups { put = on_gpu })
 
 let () =
   exit
     (run "nx.amd"
        [
-         domains; opening; computing; conformance; elementwise; sweep; accuracy;
+         domains;
+         opening;
+         computing;
+         conformance;
+         elementwise;
+         sweep;
+         reduced;
+         geometry;
+         sums;
+         bounded;
+         accuracy;
        ])
