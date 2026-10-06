@@ -3380,6 +3380,12 @@ thread.
 
 ### Nx
 
+- Add `Nx_quant.mxfp4_blocks`, which reads a GGUF file's MXFP4 tensor as views
+  of its blocks: no byte is copied at load, and a compiled product reads each
+  byte once.
+- **Breaking:** `Nx_quant.Mxfp4`'s `codes` are `Nx.uint4_t` of shape
+  `[| ...; n; k / 32; 2; 16 |]`, one code per value, where they were the
+  checkpoint's `uint8` bytes. `Nx_quant.mxfp4` still takes those bytes.
 - `Nx.bitcast` of a placed value is a view of its storage wherever the host's
   bitcast is one, so it runs on devices with no eager kernels, such as Metal,
   where it raised. `Nx.Repr.Placed.v` reads a storage's bytes as its dtype and

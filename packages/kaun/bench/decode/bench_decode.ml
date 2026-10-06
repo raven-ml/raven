@@ -207,8 +207,10 @@ let routed ~run ~tokens device =
 let synchronize device = Nx_device.synchronize (Nx.Device.memory device)
 
 (* Dense quantised products, one per format, at a decode step's shape: one token
-   by a [[| 4096; 4096 |]] projection, compiled. Zero bytes, copied to storage
-   of their own, as the routed product's are. *)
+   by a [[| 4096; 4096 |]] projection, compiled. MXFP4 is read from a
+   checkpoint's bytes and from GGUF's blocks, whose codes a product reads
+   through their pairing of values [j] and [j + 16]. Zero bytes, copied to
+   storage of their own, as the routed product's are. *)
 
 let dense = 4096
 
@@ -220,6 +222,8 @@ let formats =
         Nx_quant.mxfp4
           ~scales:(zeros (dense / 32) place)
           (zeros (dense / 2) place) );
+    ( "mxfp4 blocks",
+      fun place -> Nx_quant.mxfp4_blocks (zeros (dense / 32 * 17) place) );
     ("q8_0", fun place -> Nx_quant.q8_0 (zeros (dense / 32 * 34) place));
     ("q4_k", fun place -> Nx_quant.q4_k (zeros (dense / 256 * 144) place));
     ("q6_k", fun place -> Nx_quant.q6_k (zeros (dense / 256 * 210) place));

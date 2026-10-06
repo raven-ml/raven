@@ -1,6 +1,6 @@
 (test
  (name test_quant)
  (package nx)
- (libraries nx nx.dtype nx.io nx.quant nx_test windtrap)
+ (libraries nx nx.device nx.dtype nx.io nx.quant nx_test windtrap)
  (deps
   (glob_files golden/*)))

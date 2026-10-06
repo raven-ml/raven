@@ -13,8 +13,8 @@
 
     A GGUF file's block formats are read from the [uint8] tensors
     [Nx_io.load_gguf] gives, after matching on the tensor's stored type:
-    [Nx_quant.q8_0 t] for a [Q8_0] tensor [t], whose shape is the weight's with
-    its last axis in bytes.
+    [Nx_quant.q8_0 t] for a [Q8_0] tensor [t], [Nx_quant.mxfp4_blocks t] for an
+    [MXFP4] one, whose shape is the weight's with its last axis in bytes.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights is
@@ -43,10 +43,10 @@
     block of zero bytes decodes to zeros, [-0.] in Q6_K. *)
 type t = private
   | Mxfp4 of {
-      codes : (int, Nx.uint8_elt) Nx.t;
-          (** [[| ...; n; k / 2 |]]: two e2m1 codes per byte, the low nibble
-              first. A code is a sign bit over a magnitude among 0, 0.5, 1, 1.5,
-              2, 3, 4 and 6. *)
+      codes : Nx.uint4_t;
+          (** [[| ...; n; k / 32; 2; 16 |]]: one e2m1 code per value, value
+              [16 * h + j] of each group of 32 at [(h, j)]. A code is a sign bit
+              over a magnitude among 0, 0.5, 1, 1.5, 2, 3, 4 and 6. *)
       scales : (int, Nx.uint8_elt) Nx.t;
           (** [[| ...; n; k / 32 |]]: one e8m0 scale per 32 values. *)
     }
@@ -76,13 +76,27 @@ type t = private
           and its sub-block's scale [sc]. *)
 
 val mxfp4 : scales:(int, Nx.uint8_elt) Nx.t -> (int, Nx.uint8_elt) Nx.t -> t
-(** [mxfp4 ~scales codes] is the MXFP4 weight with [codes] and [scales]. Only
-    their shapes and placements are read: no byte of either is.
+(** [mxfp4 ~scales b] is the MXFP4 weight whose codes are the bytes [b],
+    [[| ...; n; k / 2 |]], two per byte, low nibble first, as safetensors
+    checkpoints store them, and whose scales are [scales]. Its codes are a view
+    of [b] when [b]'s last axis is contiguous: only shapes and placements are
+    read, no byte.
 
-    Raises [Invalid_argument] naming the part if [codes] does not have shape
+    Raises [Invalid_argument] naming the part if [b] does not have shape
     [[| ...; n; k / 2 |]] with [k] a multiple of 32, or if [scales] does not
-    have shape [[| ...; n; k / 32 |]], and naming the axis if [codes] is split
-    over devices inside a group of 32 values. *)
+    have shape [[| ...; n; k / 32 |]], and naming the axis if [b] is split over
+    devices inside a group of 32 values. *)
+
+val mxfp4_blocks : (int, Nx.uint8_elt) Nx.t -> t
+(** [mxfp4_blocks b] is the MXFP4 weight stored as GGUF's blocks [b],
+    [[| ...; n; k / 32 * 17 |]]: per 32 values, one e8m0 scale byte, then 16
+    bytes whose low nibbles hold values 0 to 15 and whose high nibbles hold
+    values 16 to 31. Its codes and scales are views of [b] when [b]'s last axis
+    is contiguous: only its shape and placement are read, no byte.
+
+    Raises [Invalid_argument] if [b] does not have shape
+    [[| ...; n; k / 32 * 17 |]], or, naming the axis, if [b] is split over
+    devices inside a block. *)
 
 val q8_0 : (int, Nx.uint8_elt) Nx.t -> t
 (** [q8_0 blocks] is the Q8_0 weight stored as [blocks]. Only its shape and

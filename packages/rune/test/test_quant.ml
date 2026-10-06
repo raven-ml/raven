@@ -15,28 +15,33 @@ open Nx_test
 
 let rng = Random.State.make [| 7 |]
 
-(* The formats, the values and bytes of their blocks, and the offsets of a GGUF
-   block's float16 scales. *)
-type format = Mxfp4 | Q8_0 | Q4_K | Q6_K
+(* The formats, MXFP4 from a checkpoint's bytes and from GGUF's blocks, the
+   values and bytes of their blocks, and the offsets of a GGUF block's float16
+   scales. *)
+type format = Mxfp4 | Mxfp4_blocks | Q8_0 | Q4_K | Q6_K
 
-let formats = [ Mxfp4; Q8_0; Q4_K; Q6_K ]
+let formats = [ Mxfp4; Mxfp4_blocks; Q8_0; Q4_K; Q6_K ]
 
 let format_name = function
   | Mxfp4 -> "mxfp4"
+  | Mxfp4_blocks -> "mxfp4 blocks"
   | Q8_0 -> "q8_0"
   | Q4_K -> "q4_k"
   | Q6_K -> "q6_k"
 
-let block_values = function Mxfp4 | Q8_0 -> 32 | Q4_K | Q6_K -> 256
+let block_values = function
+  | Mxfp4 | Mxfp4_blocks | Q8_0 -> 32
+  | Q4_K | Q6_K -> 256
 
 let block_bytes = function
   | Mxfp4 -> 16
+  | Mxfp4_blocks -> 17
   | Q8_0 -> 34
   | Q4_K -> 144
   | Q6_K -> 210
 
 let halves = function
-  | Mxfp4 -> []
+  | Mxfp4 | Mxfp4_blocks -> []
   | Q8_0 -> [ 0 ]
   | Q4_K -> [ 0; 2 ]
   | Q6_K -> [ 208 ]
@@ -103,6 +108,14 @@ let weight ?(format = Mxfp4) ?(scale = any_scale) shape =
       Nx_quant.mxfp4
         ~scales:(Nx.init Nx.uint8 (part (k / 32)) scale.e8m0)
         (Nx.init Nx.uint8 (part (k / 2)) byte)
+  | Mxfp4_blocks ->
+      let scales = Nx.to_array (Nx.init Nx.uint8 (part (k / 32)) scale.e8m0) in
+      let b =
+        Array.init
+          (Array.length scales * 17)
+          (fun i -> if i mod 17 = 0 then scales.(i / 17) else byte i)
+      in
+      Nx_quant.mxfp4_blocks (Nx.create Nx.uint8 (part (k / 32 * 17)) b)
   | Q8_0 -> gguf Nx_quant.q8_0
   | Q4_K -> gguf Nx_quant.q4_k
   | Q6_K -> gguf Nx_quant.q6_k

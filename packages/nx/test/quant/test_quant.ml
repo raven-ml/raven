@@ -62,19 +62,37 @@ let weight_of ?scales format shape bytes =
   | Q6_K -> Nx_quant.q6_k blocks
 
 (* MXFP4: a code's magnitude, signed, times [2 ^ (s - 127)] for its group's
-   scale byte [s], NaN for [255]. *)
+   scale byte [s], NaN for [255]. The codes hold one value each, in order. *)
 
 let e2m1 = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |]
 
 let mxfp4_values codes scales =
-  let codes = Nx.to_array codes and scales = Nx.to_array scales in
-  Array.init
-    (2 * Array.length codes)
-    (fun i ->
-      let code = (codes.(i / 2) lsr (4 * (i mod 2))) land 15 in
+  let scales = Nx.to_array scales in
+  Array.mapi
+    (fun i code ->
       let s = scales.(i / 32) in
       let m = e2m1.(code land 7) *. Float.ldexp 1. (s - 127) in
       if s = 255 then Float.nan else if code < 8 then m else -.m)
+    (Nx.to_array codes)
+
+(* The two files' MXFP4 layouts of [codes], one per value, and [scales], one per
+   32 values. A checkpoint's byte [i] holds values [2 i] and [2 i + 1], the low
+   nibble first, and its scales lie apart. A GGUF block is a group's scale byte,
+   then 16 bytes, byte [j] holding value [j] in its low nibble and value [j +
+   16] in its high one. *)
+
+let checkpoint_bytes codes =
+  Array.init
+    (Array.length codes / 2)
+    (fun i -> codes.(2 * i) lor (codes.((2 * i) + 1) lsl 4))
+
+let gguf_blocks codes scales =
+  Array.init
+    (17 * Array.length scales)
+    (fun i ->
+      let g = i / 17 and j = (i mod 17) - 1 in
+      if j < 0 then scales.(g)
+      else codes.((32 * g) + j) lor (codes.((32 * g) + j + 16) lsl 4))
 
 (* The GGUF formats, as ggml's dequantize_row_q8_0, _q4_K and _q6_K compute them
    at float32, over a block's bytes [b]. Each product of a float16 scale and
@@ -187,16 +205,19 @@ let fdt =
 (* Weights *)
 
 (* A view of every part that keeps them a weight, where its logical shape and
-   the values of its blocks allow it. *)
+   the values of its blocks allow it. A part counts its blocks along its last
+   axis, but MXFP4's codes, which hold a group in their last two. *)
 type view = {
   view : string;
   fits : int array -> int -> bool;
   apply : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t;
 }
 
+let blocks_axis (type a b) (t : (a, b) Nx.t) =
+  match Nx.dtype t with Nx.UInt4 -> Nx.ndim t - 3 | _ -> Nx.ndim t - 1
+
 let views =
   let r = Array.length in
-  let last t = List.init (Nx.ndim t - 1) (fun _ -> Nx.A) in
   [
     { view = "contiguous"; fits = (fun _ _ -> true); apply = Fun.id };
     {
@@ -205,7 +226,7 @@ let views =
       apply =
         (fun t ->
           Nx.squeeze ~axes:[ -1 ]
-            (Nx.sliding_window ~axis:(-2) ~window:1 ~step:2 t));
+            (Nx.sliding_window ~axis:(blocks_axis t - 1) ~window:1 ~step:2 t));
     };
     {
       view = "its leading axes swapped";
@@ -215,7 +236,14 @@ let views =
     {
       view = "the first half of its inputs";
       fits = (fun s values -> s.(r s - 1) / values mod 2 = 0);
-      apply = (fun t -> Nx.slice (last t @ [ R (0, Nx.dim (-1) t / 2) ]) t);
+      apply =
+        (fun t ->
+          let a = blocks_axis t in
+          Nx.shrink
+            (Array.mapi
+               (fun i d -> if i = a then (0, d / 2) else (0, d))
+               (Nx.shape t))
+            t);
     };
   ]
 
@@ -248,9 +276,9 @@ let binary16 =
           [ 0x0000; 0x8000; 0x7BFF; 0xFBFF; 0x0001; 0x83FF; 0x7C00; 0x7E00 ] );
     ]
 
-(* [blocks format ~scale count] is [count] blocks of [format]'s bytes, random
-   but for their float16 scales, drawn from [scale]. *)
-let gguf_blocks format ~scale count =
+(* [gguf_bytes format ~scale count] is [count] blocks of [format]'s bytes,
+   random but for their float16 scales, drawn from [scale]. *)
+let gguf_bytes format ~scale count =
   let open Gen in
   let bytes = block_bytes format and fields = halves format in
   let+ b = array ~size:(constant (count * bytes)) (int_range 0 255)
@@ -267,7 +295,8 @@ let gguf_blocks format ~scale count =
 
 let format = Gen.of_list ~pp:pp_format formats
 
-(* A weight of shape [[| lead...; n; k |]] under a view. *)
+(* A weight of shape [[| lead...; n; k |]] under a view, an MXFP4 one read from
+   either file's layout. *)
 let weight ?(lead = Gen.list ~size:(Gen.int_range 0 2) (Gen.int_range 0 3))
     ?(n = Gen.int_range 0 4) ?(format = format) () =
   let open Gen in
@@ -278,22 +307,32 @@ let weight ?(lead = Gen.list ~size:(Gen.int_range 0 2) (Gen.int_range 0 3))
      in
      let m = List.fold_left ( * ) 1 lead * n in
      let shape last = Array.of_list (lead @ [ n; last ]) in
-     let+ w =
+     let+ file, w =
        match f with
        | Mxfp4 ->
-           let+ codes =
-             array ~size:(constant (m * count * 16)) (int_range 0 255)
-           and+ scales = array ~size:(constant (m * count)) e8m0 in
-           Nx_quant.mxfp4
-             ~scales:(Nx.create Nx.uint8 (shape count) scales)
-             (Nx.create Nx.uint8 (shape (count * 16)) codes)
+           let+ codes = array ~size:(constant (m * count * 32)) (int_range 0 15)
+           and+ scales = array ~size:(constant (m * count)) e8m0
+           and+ gguf = bool in
+           if gguf then
+             ( ", from GGUF blocks",
+               Nx_quant.mxfp4_blocks
+                 (Nx.create Nx.uint8
+                    (shape (count * 17))
+                    (gguf_blocks codes scales)) )
+           else
+             ( "",
+               Nx_quant.mxfp4
+                 ~scales:(Nx.create Nx.uint8 (shape count) scales)
+                 (Nx.create Nx.uint8
+                    (shape (count * 16))
+                    (checkpoint_bytes codes)) )
        | f ->
-           let+ b = gguf_blocks f ~scale:binary16 (m * count) in
-           weight_of f (shape (count * block_bytes f)) b
+           let+ b = gguf_bytes f ~scale:binary16 (m * count) in
+           ("", weight_of f (shape (count * block_bytes f)) b)
      and+ v = of_list views in
      if v.fits (Nx_quant.shape w) (block_values f) then
-       (v.view, Nx.Ptree.map Nx_quant.ptree (fun _ t -> v.apply t) w)
-     else ("contiguous", w))
+       (v.view ^ file, Nx.Ptree.map Nx_quant.ptree (fun _ t -> v.apply t) w)
+     else ("contiguous" ^ file, w))
 
 let dims w =
   let s = Nx_quant.shape w in
@@ -552,10 +591,12 @@ let ggml =
 
 (* Takes *)
 
-(* The quants of [w]: MXFP4's codes or a GGUF format's blocks. *)
-let part = function
-  | Nx_quant.Mxfp4 { codes; _ } -> codes
-  | Nx_quant.Q8_0 { blocks } | Q4_K { blocks } | Q6_K { blocks } -> blocks
+(* The parts of [w] at [index] along their first axis, as integers. *)
+let parts_at index w =
+  Nx.Ptree.fold Nx_quant.ptree
+    (fun _ t acc ->
+      Nx.to_array (Nx.cast Nx.uint8 (Nx.slice [ I index ] t)) :: acc)
+    w []
 
 (* [bits t] is each element's bits, so -0 and +0 differ and a NaN is its
    payload. *)
@@ -657,13 +698,11 @@ let values_and_products =
           let w = random_weight ~format [| 3; 4; 256 |] in
           let indices = Nx.create Nx.int64 [| 3 |] [| -1L; 1L; 3L |] in
           let zero = if format = Q6_K then -0. else 0. in
-          let got =
-            Nx_quant.dequant Nx.float32 (Nx_quant.take ~axis:0 ~indices w)
-          in
-          equal ~msg:"bytes" (array int)
-            (Array.make (Nx.numel (Nx.slice [ I 0 ] (part w))) 0)
-            (Nx.to_array
-               (Nx.slice [ I 0 ] (part (Nx_quant.take ~axis:0 ~indices w))));
+          let taken = Nx_quant.take ~axis:0 ~indices w in
+          let got = Nx_quant.dequant Nx.float32 taken in
+          let zeros = List.map (Array.map (fun _ -> 0)) (parts_at 0 w) in
+          equal ~msg:"parts" (list (array int)) zeros (parts_at 0 taken);
+          equal ~msg:"parts" (list (array int)) zeros (parts_at 2 taken);
           equal (array float_exact)
             (Array.make (4 * 256) zero)
             (Nx.to_array (Nx.slice [ I 0 ] got));
@@ -713,6 +752,87 @@ let routing =
             (bits (Nx_quant.apply w x)));
     ]
 
+(* File layouts. Each constructor reads its file's bytes as the codes, one per
+   value, and the scales. *)
+
+(* Codes and scales of [rows] rows of [groups] groups. *)
+let codes_and_scales =
+  let open Gen in
+  let* rows, groups = pair (int_range 0 3) (int_range 0 3) in
+  let+ codes = array ~size:(constant (rows * groups * 32)) (int_range 0 15)
+  and+ scales = array ~size:(constant (rows * groups)) (int_range 0 255) in
+  (rows, groups, codes, scales)
+
+let pp_codes ppf (rows, groups, _, _) =
+  Format.fprintf ppf "%d rows of %d groups" rows groups
+
+let parts = function
+  | Nx_quant.Mxfp4 { codes; scales } -> (Nx.to_array codes, Nx.to_array scales)
+  | w -> failf "a %s weight" (format_name (format_of w))
+
+let file_layouts =
+  group "file layouts"
+    [
+      prop "mxfp4 reads a checkpoint's byte i as values 2 i and 2 i + 1"
+        (Gen.with_pp pp_codes codes_and_scales)
+        (fun (rows, groups, codes, scales) ->
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(Nx.create Nx.uint8 [| rows; groups |] scales)
+              (Nx.create Nx.uint8
+                 [| rows; groups * 16 |]
+                 (checkpoint_bytes codes))
+          in
+          equal (pair (array int) (array int)) (codes, scales) (parts w));
+      prop
+        "mxfp4_blocks reads a GGUF block as its scale, then values j and j + \
+         16 in byte j" (Gen.with_pp pp_codes codes_and_scales)
+        (fun (rows, groups, codes, scales) ->
+          let w =
+            Nx_quant.mxfp4_blocks
+              (Nx.create Nx.uint8
+                 [| rows; groups * 17 |]
+                 (gguf_blocks codes scales))
+          in
+          equal (pair (array int) (array int)) (codes, scales) (parts w));
+      test "both layouts give codes of shape [...; n; k / 32; 2; 16]" (fun () ->
+          let shape = function
+            | Nx_quant.Mxfp4 { codes; _ } -> Nx.shape codes
+            | w -> failf "a %s weight" (format_name (format_of w))
+          in
+          equal (array int) [| 2; 3; 4; 2; 16 |]
+            (shape (random_weight [| 2; 3; 128 |]));
+          equal (array int) [| 2; 3; 4; 2; 16 |]
+            (shape (Nx_quant.mxfp4_blocks (Nx.zeros Nx.uint8 [| 2; 3; 68 |]))));
+      test "mxfp4 and mxfp4_blocks view their bytes, allocating nothing"
+        (fun () ->
+          let host = Nx.Device.memory Nx.Device.host in
+          let rows = 64 and k = 4096 in
+          (* Bytes of storage of their own, as a file's are. *)
+          let b = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 2 |]) in
+          let scales = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 32 |]) in
+          let blocks = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 32 * 17 |]) in
+          let made f =
+            let before = Nx_device.stats host in
+            let w = f () in
+            let s = Nx_device.Stats.diff before (Nx_device.stats host) in
+            (w, Nx_device.Stats.allocated s)
+          in
+          let shares t u = share_memory (storage t) (storage u) in
+          let views b = function
+            | Nx_quant.Mxfp4 { codes; scales } ->
+                (shares codes b, shares scales b)
+            | w -> failf "a %s weight" (format_name (format_of w))
+          in
+          let w, allocated = made (fun () -> Nx_quant.mxfp4 ~scales b) in
+          equal ~msg:"mxfp4 allocates" int 0 allocated;
+          equal ~msg:"mxfp4's codes share b" bool true (fst (views b w));
+          let w, allocated = made (fun () -> Nx_quant.mxfp4_blocks blocks) in
+          equal ~msg:"mxfp4_blocks allocates" int 0 allocated;
+          equal ~msg:"mxfp4_blocks's codes and scales share its blocks"
+            (pair bool bool) (true, true) (views blocks w));
+    ]
+
 (* Construction and placement *)
 
 open Devices
@@ -736,6 +856,15 @@ let errors =
   let halve (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
     if Nx.dim (-1) t = 2 then Nx.slice [ A; A; R (0, 1) ] t else t
   in
+  let merge (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
+    if Nx.ndim t = 5 then Nx.reshape [| 2; 5; 2; 32 |] t else t
+  in
+  (* Each device holds half of each group's codes. *)
+  let halves (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
+    match Nx.dtype t with
+    | Nx.UInt4 -> Nx.place (Nx.Placement.sharded ~axis:4 [ d1; d2 ]) t
+    | _ -> Nx.place (Nx.Placement.replicated [ d1; d2 ]) t
+  in
   let apply w x () = ignore (Nx_quant.apply w x) in
   let take axis () =
     ignore (Nx_quant.take ~axis ~indices:(Nx.zeros Nx.int64 [| 1 |]) w)
@@ -750,6 +879,12 @@ let errors =
         "scales",
         mxfp4 [| 4; 1 |] [| 2; 4; 16 |] );
       ("q8_0 blocks of one axis", "blocks", blocks Nx_quant.q8_0 [| 34 |]);
+      ( "mxfp4_blocks blocks of one axis",
+        "blocks",
+        blocks Nx_quant.mxfp4_blocks [| 17 |] );
+      ( "mxfp4_blocks a row of a part of a block",
+        "blocks",
+        blocks Nx_quant.mxfp4_blocks [| 2; 18 |] );
       ( "q8_0 a row of a part of a block",
         "blocks",
         blocks Nx_quant.q8_0 [| 2; 68 + 32 |] );
@@ -762,6 +897,9 @@ let errors =
       ( "a map that changes a part's shape",
         "Nx_quant.ptree",
         fun () -> ignore (Nx.Ptree.map Nx_quant.ptree (fun _ t -> halve t) w) );
+      ( "a map that merges a group's codes into one axis",
+        "codes",
+        fun () -> ignore (Nx.Ptree.map Nx_quant.ptree (fun _ t -> merge t) w) );
       ( "apply to a scalar",
         "at least one axis",
         apply w (Nx.scalar Nx.float32 1.) );
@@ -783,6 +921,10 @@ let errors =
                (Nx.place
                   (Nx.Placement.sharded ~axis:1 [ d1; d2 ])
                   (Nx.zeros Nx.uint8 [| 2; 16 |]))) );
+      ( "mxfp4 codes placed by a map inside a group",
+        "axis 2",
+        fun () -> ignore (Nx.Ptree.map Nx_quant.ptree (fun _ t -> halves t) w)
+      );
       ("take along the last axis", "last axis", take 2);
       ("take along the last axis, counted from the end", "last axis", take (-1));
       ("take along an axis past the weight's", "out of bounds", take 3);
@@ -864,10 +1006,11 @@ let others =
               (Nx_quant.q6_k (place [| 4; 6; 420 |]))
           in
           raises_invalid_arg (fun () -> Nx_quant.q6_k (place [| 4; 6; 144 |]));
+          let g = Nx_quant.mxfp4_blocks (place [| 4; 6; 34 |]) in
           equal
-            (pair (array int) (array int))
-            ([| 4; 6; 64 |], [| 4; 6; 512 |])
-            (Nx_quant.shape w, Nx_quant.shape q);
+            (list (array int))
+            [ [| 4; 6; 64 |]; [| 4; 6; 512 |]; [| 4; 6; 64 |] ]
+            [ Nx_quant.shape w; Nx_quant.shape q; Nx_quant.shape g ];
           equal int 0 (bytes_out () - sent));
       cases ~name:format_name "dequant and apply read no value's elements"
         formats (fun format ->
@@ -935,4 +1078,13 @@ let others =
 let () =
   exit
     (run "nx quant"
-       [ known; ggml; values_and_products; routing; errors; placements; others ])
+       [
+         known;
+         ggml;
+         values_and_products;
+         routing;
+         file_layouts;
+         errors;
+         placements;
+         others;
+       ])

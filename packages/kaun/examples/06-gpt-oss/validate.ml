@@ -356,14 +356,23 @@ let ids_tensor rows =
   Nx.create Nx.int64 [| batch; seq |]
     (Array.map Int64.of_int (Array.concat (Array.to_list rows)))
 
-(* The scales stay where they are placed: the addition is compiled, so it runs
-   there. *)
+(* The scales, an MXFP4 weight's uint8 part, stay where they are placed: the
+   addition is compiled, so it runs there. *)
 let with_scale_offset offset (p : _ Gpt_oss.params) =
-  let add s = Rune.jit' (fun s -> Nx.add s (Nx.scalar Nx.uint8 offset)) s in
+  let add (type a b) _ (t : (a, b) Nx.t) : (a, b) Nx.t =
+    match Nx.dtype t with
+    | UInt8 ->
+        let scales : Nx.uint8_t = t in
+        let shifted : Nx.uint8_t =
+          Rune.jit' (fun s -> Nx.add s (Nx.scalar Nx.uint8 offset)) scales
+        in
+        shifted
+    | _ -> t
+  in
   let shift = function
     | Moe.Float w -> Moe.Float w
-    | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) ->
-        Moe.Quant (Nx_quant.mxfp4 ~scales:(add scales) codes)
+    | Moe.Quant (Nx_quant.Mxfp4 _ as w) ->
+        Moe.Quant (Nx.Ptree.map Nx_quant.ptree add w)
     | Moe.Quant (Q8_0 _ | Q4_K _ | Q6_K _) ->
         invalid_arg "with_scale_offset: gpt-oss's experts are MXFP4"
   in

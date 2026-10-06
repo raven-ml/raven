@@ -507,7 +507,9 @@ let parity =
    select, decodes them and multiplies. The decoding is integer operations on
    the code bytes, so no kernel stores the decoded stack. One token's few
    experts each take a block of their own: no kernel sorts them, and no kernel
-   stores an index array wider than one element. *)
+   stores an index array wider than one element. GGUF's MXFP4 codes and scales
+   are views of its blocks, which a product reads in place, each byte once per
+   output. *)
 
 let quantised =
   let experts = 8 and n = 16 and k = 64 in
@@ -551,6 +553,43 @@ let quantised =
     let s = scope () in
     within s (fun () -> routed (argument s ids) (argument s x))
   in
+  (* The bytes of [y]'s uint8 loads for each output element: each load's bytes
+     times the trips of the reductions it runs inside. *)
+  let loaded y =
+    let bytes k =
+      List.fold_left
+        (fun acc u ->
+          if
+            Tolk.Op.equal (Tolk.Ops.op u) Load
+            && Tolk.Dtype.equal (Tolk.Ops.dtype u) Uint8
+          then
+            let trips r t =
+              match Tolk.Ops.axis_type r with
+              | Reduce -> t * (Tolk.Dtype.Value.to_int (Tolk.Ops.vmax r) + 1)
+              | _ -> t
+            in
+            acc + Tolk.Ops.Nodes.fold trips (Tolk.Ops.ranges u) 1
+          else acc)
+        0
+        (Tolk.Ops.toposort ~calls:Enter
+           (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+    in
+    List.fold_left
+      (fun acc k -> acc + bytes k)
+      0
+      (Tolk.Ops.src (Programs.kernels y))
+  in
+  let product w =
+    let x = Nx.ones Nx.float32 [| 1; k |] in
+    let s = scope () in
+    within s (fun () ->
+        Nx_quant.apply
+          (Nx.Ptree.map Nx_quant.ptree (fun _ t -> argument s t) w)
+          (argument s x))
+  in
+  let bytes shape =
+    Nx.init Nx.uint8 shape (fun i -> ((i.(0) * 37) + i.(1)) land 255)
+  in
   group "quantised products"
     [
       test "one token's routed product stores no int64 array of two elements"
@@ -569,6 +608,9 @@ let quantised =
           let stack = experts * n * k in
           equal (list int) []
             (List.filter (fun n -> n >= stack) (stores Float32 (traced ids x))));
+      test "a product over GGUF's MXFP4 blocks loads each byte once" (fun () ->
+          let w = Nx_quant.mxfp4_blocks (bytes [| n; k / 32 * 17 |]) in
+          equal int (k / 32 * 17) (loaded (product w)));
     ]
 
 let () =
