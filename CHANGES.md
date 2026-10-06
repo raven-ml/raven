@@ -3267,6 +3267,10 @@ thread.
 
 ### Nx
 
+- Eager operations on AMD devices allocate about half the OCaml memory they
+  did and launch sooner: an `Nx.add` of 4K elements takes 33 us instead of
+  38 us, and an `Nx.sort` of 1M elements allocates 76k words instead of
+  238k.
 - AMD GPUs of the gfx12 generation sort eagerly: `Nx.sort` and `Nx.argsort` run
   on the GPU for every dtype but the complex and sub-byte ones, stable in both
   directions, NaN last and `-0` below `+0`, bit for bit as on the host.

@@ -24,41 +24,63 @@ type run = {
   threads : int * int * int;
 }
 
+(* A dword's bits. *)
+let mask32 = 0xffff_ffff
+
 (* The poll interval of a wait, as tolk sets it. *)
 let wait_interval = 4
 
-(* The words of [r], on a GPU of graphics block [gc] whose scratch for kernels
-   of [n] bytes per lane takes the COMPUTE_TMPRING_SIZE word [tmpring n]. *)
-let run ~gc ~tmpring r =
+(* The packets of [r], on a GPU of graphics block [gc] whose scratch for kernels
+   of [n] bytes per lane takes the COMPUTE_TMPRING_SIZE word [tmpring n], before
+   the packets [rest]. *)
+let run ~gc ~tmpring r rest =
   P.Pm4.acquire_mem ~gc Data_caches
-  @ P.Pm4.dispatch ~gc r.kernel ~program:r.entry ~scratch:r.scratch
-      ~packet:r.packet ~args:r.args
-      ~tmpring:(tmpring r.kernel.private_segment)
-      ~limits:0 ~threads:r.threads ~groups:r.groups
-  @ P.Pm4.event_write Cs_partial_flush
+  :: P.Pm4.dispatch ~gc r.kernel ~program:r.entry ~scratch:r.scratch
+       ~packet:r.packet ~args:r.args
+       ~tmpring:(tmpring r.kernel.private_segment)
+       ~limits:0 ~threads:r.threads ~groups:r.groups
+  :: P.Pm4.event_write Cs_partial_flush
+  :: rest
 
 (* The words of the work of timeline value [v] running [runs], whose signal word
-   is at [signal]. Values complete in order and only [v]'s work writes [v], so
-   the low word is at most [v - 1] when the queue reaches the wait: the wait for
-   equality is exact. The value is written whole, in one 64-bit write. *)
+   is at [signal], as a list of packets' words. Values complete in order and
+   only [v]'s work writes [v], so the low word is at most [v - 1] when the queue
+   reaches the wait: the wait for equality is exact. The value is written whole,
+   in one 64-bit write. *)
 let work ~gc ~tmpring ~signal v runs =
-  P.dwords
-    (P.Pm4.wait ~gc (Memory signal) Equal (v - 1) ~mask:0xffff_ffff
-       ~interval:wait_interval
-    @ P.Pm4.acquire_mem ~gc All_caches
-    @ List.concat_map (run ~gc ~tmpring) runs
-    @ P.Pm4.release_mem ~gc signal (Data_64 v))
+  P.Pm4.wait ~gc (Memory signal) Equal (v - 1) ~mask:0xffff_ffff
+    ~interval:wait_interval
+  :: P.Pm4.acquire_mem ~gc All_caches
+  :: List.fold_right (run ~gc ~tmpring) runs
+       [ P.Pm4.release_mem ~gc signal (Data_64 v) ]
 
-(* Appends [words] to the PM4 queue [q] and rings its doorbell. Positions count
-   dwords, and packets wrap around the ring's end. The caller has room for half
-   the ring, which [Nx_device.submit] waits for. *)
-let submit (q : Sdma.queue) words =
+(* Appends the words of [packets] to the PM4 queue [q] and rings its doorbell.
+   Positions count dwords, and packets wrap around the ring's end. The caller
+   has room for half the ring, which [Nx_device.submit] waits for. *)
+let submit (q : Sdma.queue) packets =
   let ring = Mmio.length q.ring / 4 in
-  let n = List.length words in
+  let n =
+    List.fold_left
+      (List.fold_left (fun n -> function P.W64 _ -> n + 2 | _ -> n + 1))
+      0 packets
+  in
   if 2 * n > ring then
     invalid_arg "Nx_amd_device.launch: work larger than half the ring";
   let put = Int64.to_int (Mmio.get64 q.put 0) in
-  List.iteri (fun i w -> Mmio.set32 q.ring (4 * ((put + i) mod ring)) w) words;
+  let at = ref put in
+  let emit w =
+    Mmio.set32 q.ring (4 * (!at mod ring)) (w land mask32);
+    incr at
+  in
+  List.iter
+    (List.iter (function
+      | P.Dword w -> emit w
+      | P.W32 t -> emit (Int64.to_int (P.eval t))
+      | P.W64 t ->
+          let w = P.eval t in
+          emit (Int64.to_int w);
+          emit (Int64.to_int (Int64.shift_right_logical w 32))))
+    packets;
   let next = Int64.of_int (put + n) in
   Mmio.barrier ();
   Mmio.set64 q.write_ptr 0 next;
@@ -115,5 +137,6 @@ let segment r ~wait v n =
   r.head <- last;
   r.gpu + first
 
-(* Writes [data] at the segment's address [at]. *)
+(* Writes [data] at the segment's address [at], and [n] zero bytes. *)
 let write r ~at data = Mmio.write r.mem (at - r.gpu) data
+let fill r ~at n = Mmio.fill r.mem (at - r.gpu) n '\000'

@@ -55,14 +55,38 @@ let target ~gpu ~aql =
              (String.concat ", " (List.map fst targets))
              gpu)
 
+(* Modules *)
+
+(* A module: its family and the names that select its instance, as module keys
+   spell them, such as [binary], [add] and [float32]; "" where it has none.
+   Kernels are looked up by module and name, and the key's string is built only
+   when a module is first looked up on a device. *)
+type modname = { family : string; kind : string; dtype : string }
+
+let modname ?(kind = "") family dtype = { family; kind; dtype }
+
+let key_of m =
+  String.concat "."
+    (List.filter (fun n -> n <> "") [ m.family; m.kind; m.dtype ])
+
+(* The name of an element width, in bytes. *)
+let width_name = function
+  | 1 -> "1"
+  | 2 -> "2"
+  | 4 -> "4"
+  | 8 -> "8"
+  | w -> string_of_int w
+
 (* Devices *)
 
 (* What a device needs to run kernels: its carried target, or why it has none,
-   its properties, and the kernels loaded on it, by module and name. *)
+   its properties, whether its target carries each module looked up, and the
+   kernels loaded on it, by module and name. *)
 type device = {
   target : (string, string) result;
   props : Nx_amd_device.props;
-  programs : (string, Program.t) Hashtbl.t;
+  modules : (modname, bool) Hashtbl.t;
+  programs : (modname * string, Program.t) Hashtbl.t;
 }
 
 let devices : (Nx_device.t * device) list ref = ref []
@@ -78,27 +102,35 @@ let device d =
         {
           target = target ~gpu:(Nx_device.arch d) ~aql:(Nx_amd_device.aql a);
           props = Nx_amd_device.props a;
+          modules = Hashtbl.create 16;
           programs = Hashtbl.create 16;
         }
       in
       devices := (d, s) :: !devices;
       s
 
-(* The kernel [name] of [key]'s module on [d]. Two domains that load one kernel
-   at once both load it, and find the same load. *)
-let program d s target key name =
-  let path = target ^ "/" ^ key in
-  let id = path ^ "/" ^ name in
-  match Mutex.protect lock (fun () -> Hashtbl.find_opt s.programs id) with
+(* [find t k] under the lock, which [Hashtbl.find_opt] never raises from. *)
+let find t k =
+  Mutex.lock lock;
+  let v = Hashtbl.find_opt t k in
+  Mutex.unlock lock;
+  v
+
+let remember t k v = Mutex.protect lock (fun () -> Hashtbl.replace t k v)
+
+(* The kernel [name] of module [m] on [d]. Two domains that load one kernel at
+   once both load it, and find the same load. *)
+let program d s target m name =
+  match find s.programs (m, name) with
   | Some p -> p
   | None ->
-      let binary = Option.get (Archive.find path) in
+      let binary = Option.get (Archive.find (target ^ "/" ^ key_of m)) in
       let p =
         match Program.load d ~binary ~name with
         | Ok p -> p
         | Error why -> failwith why
       in
-      Mutex.protect lock (fun () -> Hashtbl.replace s.programs id p);
+      remember s.programs (m, name) p;
       p
 
 (* Running a kernel *)
@@ -113,21 +145,41 @@ let at o v = address o + (View.offset v * itemsize o)
 let cdiv a b = (a + b - 1) / b
 let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |]
 
-(* [dst]'s device, its state and carried target, whose archive holds [key]. *)
-let locate key (Operand d) =
+(* [dst]'s device, its state and carried target, whose archive holds module
+   [m]. *)
+let locate m (Operand d) =
   let dev = Nx_device.Buffer.device d.buffer in
   let s = device dev in
   let target = match s.target with Ok t -> t | Error e -> refuse "%s" e in
-  if not (Archive.mem (target ^ "/" ^ key)) then refuse "no kernel %s" key;
+  let carried =
+    match find s.modules m with
+    | Some c -> c
+    | None ->
+        let c = Archive.mem (target ^ "/" ^ key_of m) in
+        remember s.modules m c;
+        c
+  in
+  if not carried then refuse "no kernel %s" (key_of m);
   (dev, s, target)
 
 let units s = s.props.compute_units * s.props.xccs
 
-(* Kernel parameters, as 64-bit words. *)
-let args f =
-  let b = Buffer.create 2048 in
-  f (fun x -> Buffer.add_int64_le b (Int64.of_int x));
-  Buffer.contents b
+(* Kernel parameters, as 64-bit words, then [raw] whole, written in a domain's
+   scratch and copied out at their length. *)
+let scratch = Domain.DLS.new_key (fun () -> Bytes.create 4096)
+
+let args ?raw f =
+  let b = Domain.DLS.get scratch in
+  let n = ref 0 in
+  f (fun x ->
+      Bytes.set_int64_le b !n (Int64.of_int x);
+      n := !n + 8);
+  Option.iter
+    (fun w ->
+      Bytes.set_int64_le b !n w;
+      n := !n + 8)
+    raw;
+  Bytes.sub_string b 0 !n
 
 (* [a] padded with zeros to [max_rank] words. *)
 let words i64 a =
@@ -283,14 +335,14 @@ let gather ~axis (indices : Nx_backend.index_array) x ~dst =
     }
   in
   run
-    (Printf.sprintf "gather.%d" (width x))
+    (modname "gather" (width_name (width x)))
     ~dst
     [ Operand along; Operand indices ]
     ~extra:[ (View.strides v).(axis); (View.shape v).(axis) ]
 
 let pad padding fill x ~dst =
   let (Operand d) = dst in
-  let key = Printf.sprintf "pad.%d" (width dst) in
+  let key = modname "pad" (width_name (width dst)) in
   let dev, s, target = locate key dst in
   let n = View.numel d.view and shape = View.shape d.view in
   let rank = Array.length shape in
@@ -300,7 +352,7 @@ let pad padding fill x ~dst =
     let lo = Array.map fst padding in
     let hi = Array.mapi (fun i l -> l + (View.shape (view x)).(i)) lo in
     let args =
-      args (fun i64 ->
+      args ~raw:fill (fun i64 ->
           i64 (at dst d.view);
           i64 (address x);
           List.iter i64 [ n; rank; groups; View.offset (view x) ];
@@ -309,20 +361,16 @@ let pad padding fill x ~dst =
           words i64 hi;
           words i64 (View.strides (view x)))
     in
-    let b = Buffer.create 8 in
-    Buffer.add_int64_le b fill;
     Nx_amd_device.launch
       ~touches:[ buffer dst; buffer x ]
-      [
-        dispatch (program dev s target key "s") groups (args ^ Buffer.contents b);
-      ]
+      [ dispatch (program dev s target key "s") groups args ]
   end
 
 let no_corner = (0, 0, 0, 0, [||])
 
 let cat ~axis xs ~dst =
   let (Operand d) = dst in
-  let key = Printf.sprintf "place.%d" (width dst) in
+  let key = modname "place" (width_name (width dst)) in
   let step = (c_strides (View.shape d.view)).(axis) in
   let _, runs =
     List.fold_left
@@ -341,7 +389,7 @@ let update x ~(starts : Nx_backend.index_array) v ~dst =
   let (Operand d) = dst in
   let shape = View.shape d.view in
   let copy =
-    elementwise (Printf.sprintf "contiguous.%d" (width dst)) ~dst [ x ]
+    elementwise (modname "contiguous" (width_name (width dst))) ~dst [ x ]
   in
   let corner =
     ( at (Operand starts) starts.view,
@@ -352,7 +400,7 @@ let update x ~(starts : Nx_backend.index_array) v ~dst =
   in
   let write =
     place
-      (Printf.sprintf "place.%d" (width dst))
+      (modname "place" (width_name (width dst)))
       ~dst v ~offset:(View.offset d.view) ~corner
   in
   match Option.to_list copy @ Option.to_list write with
@@ -639,7 +687,7 @@ let sort_rows key sorted ~descending ~axis x ~dst =
 (* Runs the threefry module hashing [counter]'s word pairs under [key]'s into
    [dst], pairs along their last axis. *)
 let threefry key counter ~dst =
-  let key_ = "threefry" in
+  let key_ = modname "threefry" "" in
   let dev, s, target = locate key_ dst in
   let shape = View.shape (view dst) in
   let last = Array.length shape - 1 in
@@ -817,16 +865,16 @@ module Kernels : Nx_backend.S = struct
   let contiguous (type a b) (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
     ignore (served x.dtype);
     run
-      (Printf.sprintf "contiguous.%d" (Nx_dtype.itemsize x.dtype))
+      (modname "contiguous" (width_name (Nx_dtype.itemsize x.dtype)))
       ~dst:(Operand dst) [ Operand x ]
 
   let cast (type a b c d) (x : (a, b) Nx_array.t) ~(dst : (c, d) Nx_array.t) =
     let s = served x.dtype and d = served dst.dtype in
     if s = d then
       run
-        (Printf.sprintf "contiguous.%d" (Nx_dtype.itemsize x.dtype))
+        (modname "contiguous" (width_name (Nx_dtype.itemsize x.dtype)))
         ~dst:(Operand dst) [ Operand x ]
-    else run (Printf.sprintf "cast.%s.%s" s d) ~dst:(Operand dst) [ Operand x ]
+    else run (modname "cast" ~kind:s d) ~dst:(Operand dst) [ Operand x ]
 
   let unary (type a b) k (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
     let dt = served x.dtype in
@@ -835,22 +883,22 @@ module Kernels : Nx_backend.S = struct
         contiguous x ~dst
     | _ ->
         run
-          (Printf.sprintf "unary.%s.%s" (unary_name k) dt)
+          (modname "unary" ~kind:(unary_name k) dt)
           ~dst:(Operand dst) [ Operand x ]
 
   let binary (type a b) k (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t) =
     run
-      (Printf.sprintf "binary.%s.%s" (binary_name k) (served a.dtype))
+      (modname "binary" ~kind:(binary_name k) (served a.dtype))
       ~dst:(Operand dst) [ Operand a; Operand b ]
 
   let compare (type a b) k (a : (a, b) Nx_array.t) b ~dst =
     run
-      (Printf.sprintf "compare.%s.%s" (compare_name k) (served a.dtype))
+      (modname "compare" ~kind:(compare_name k) (served a.dtype))
       ~dst:(Operand dst) [ Operand a; Operand b ]
 
   let fma (type a b) (a : (a, b) Nx_array.t) b c ~(dst : (a, b) Nx_array.t) =
     run
-      (Printf.sprintf "fma.%s" (served a.dtype))
+      (modname "fma" (served a.dtype))
       ~dst:(Operand dst)
       [ Operand a; Operand b; Operand c ]
 
@@ -858,7 +906,7 @@ module Kernels : Nx_backend.S = struct
       =
     ignore (served a.dtype);
     run
-      (Printf.sprintf "where.%d" (Nx_dtype.itemsize a.dtype))
+      (modname "where" (width_name (Nx_dtype.itemsize a.dtype)))
       ~dst:(Operand dst)
       [ Operand cond; Operand a; Operand b ]
 
@@ -868,29 +916,30 @@ module Kernels : Nx_backend.S = struct
   let reduce (type a b) k ~axes (x : (a, b) Nx_array.t)
       ~(dst : (a, b) Nx_array.t) =
     fold
-      (Printf.sprintf "reduce.%s.%s" (reduce_name k) (served x.dtype))
+      (modname "reduce" ~kind:(reduce_name k) (served x.dtype))
       ~dst:(Operand dst) (Operand x) ~axes
 
   let scan (type a b) k ~axis (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t)
       =
-    let names = Printf.sprintf "%s.%s" (reduce_name k) (served x.dtype) in
-    scan ("scan." ^ names) ~fold_key:("reduce." ^ names) ~dst:(Operand dst)
-      (Operand x) ~axis
+    let kind = reduce_name k and dt = served x.dtype in
+    scan (modname "scan" ~kind dt)
+      ~fold_key:(modname "reduce" ~kind dt)
+      ~dst:(Operand dst) (Operand x) ~axis
 
   let arg_reduce (type a b) k ~axis (x : (a, b) Nx_array.t) ~dst =
     fold
-      (Printf.sprintf "arg_reduce.%s.%s" (arg_reduce_name k) (served x.dtype))
+      (modname "arg_reduce" ~kind:(arg_reduce_name k) (served x.dtype))
       ~dst:(Operand dst) (Operand x) ~axes:[| axis |]
 
   let sort (type a b) ~descending ~axis (x : (a, b) Nx_array.t)
       ~(dst : (a, b) Nx_array.t) =
     sort_rows
-      ("sort." ^ served x.dtype)
+      (modname "sort" (served x.dtype))
       Elements ~descending ~axis (Operand x) ~dst:(Operand dst)
 
   let argsort (type a b) ~descending ~axis (x : (a, b) Nx_array.t) ~dst =
     sort_rows
-      ("sort." ^ served x.dtype)
+      (modname "sort" (served x.dtype))
       Positions ~descending ~axis (Operand x) ~dst:(Operand dst)
 
   let group _ ~dst:_ = no "group"
@@ -927,7 +976,7 @@ module Kernels : Nx_backend.S = struct
 
   let matmul (type a b) (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t) =
     product
-      (Printf.sprintf "matmul.%s" (served a.dtype))
+      (modname "matmul" (served a.dtype))
       ~dst:(Operand dst) (Operand a) (Operand b)
 
   let fft ~inverse:_ ~axes:_ _ ~dst:_ = no "fft"

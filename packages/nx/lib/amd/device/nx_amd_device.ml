@@ -1473,10 +1473,11 @@ let checked a d =
           (Nx_device.Program.name d.program)
   in
   let x, y, z = d.threads and gx, gy, gz = d.groups in
-  if List.exists (fun n -> n < 1) [ x; y; z ] || x * y * z > max_threads then
+  if x < 1 || y < 1 || z < 1 || x * y * z > max_threads then
     launch_error "%s: workgroups of %dx%dx%d threads; the GPU runs 1 to %d"
       e.name x y z max_threads;
-  if List.exists (fun n -> n < 1 || n > max_groups) [ gx; gy; gz ] then
+  let outside n = n < 1 || n > max_groups in
+  if outside gx || outside gy || outside gz then
     launch_error "%s: a grid of %dx%dx%d workgroups" e.name gx gy gz;
   if String.length d.args > e.kernel.kernarg_size then
     launch_error "%s: %d bytes of arguments; the kernel takes %d" e.name
@@ -1497,37 +1498,31 @@ let dispatch_packet (e : entry) d ~descriptor ~args =
           ~group_segment:e.kernel.group_segment ~descriptor ~args));
   Bytes.to_string b
 
-(* The arguments of the kernels [ds] for the segment at [base]: each kernel's
-   bytes padded to its argument segment, then its dispatch packet when it reads
-   one, each aligned; and the address of each kernel's arguments and packet. *)
-let args_block ~base ds es =
-  let b = Buffer.create 4096 in
-  let pad () =
-    Buffer.add_string b
-      (String.make (Compute.align (Buffer.length b) - Buffer.length b) '\000')
-  in
-  let at =
-    List.map2
-      (fun d (e : entry) ->
-        pad ();
-        let args = base + Buffer.length b in
-        Buffer.add_string b d.args;
-        Buffer.add_string b
-          (String.make (e.kernel.kernarg_size - String.length d.args) '\000');
-        pad ();
-        let packet = base + Buffer.length b in
-        if e.kernel.dispatch_ptr then
-          Buffer.add_string b
-            (dispatch_packet e d
-               ~descriptor:
-                 (Nativeint.to_int (Nx_device.Program.handle d.program))
-               ~args);
-        (args, packet))
-      ds es
-  in
-  (Buffer.contents b, at)
+(* Writes the arguments of the kernels [ds] into [ring]'s segment at [base]:
+   each kernel's bytes padded with zeros to its argument segment, then its
+   dispatch packet when it reads one, each aligned. The address of each kernel's
+   arguments and packet. *)
+let write_args ring ~base ds es =
+  let at = ref base in
+  List.map2
+    (fun d (e : entry) ->
+      let args = Compute.align !at in
+      let n = String.length d.args in
+      Compute.write ring ~at:args d.args;
+      Compute.fill ring ~at:(args + n) (e.kernel.kernarg_size - n);
+      let packet = Compute.align (args + e.kernel.kernarg_size) in
+      at := args + e.kernel.kernarg_size;
+      if e.kernel.dispatch_ptr then begin
+        Compute.write ring ~at:packet
+          (dispatch_packet e d
+             ~descriptor:(Nativeint.to_int (Nx_device.Program.handle d.program))
+             ~args);
+        at := packet + 64
+      end;
+      (args, packet))
+    ds es
 
-(* The bytes of the block of [args_block] of the kernels [es]. *)
+(* The bytes [write_args] writes for the kernels [es]. *)
 let block_bytes es =
   List.fold_left
     (fun n (e : entry) ->
@@ -1601,8 +1596,7 @@ let launch ~touches = function
               ~wait:(Nx_device.Submission.wait s dev)
               v (block_bytes es)
           in
-          let block, at = args_block ~base ds es in
-          Compute.write ring ~at:base block;
+          let at = write_args ring ~base ds es in
           let runs =
             List.map2
               (fun (d, (e : entry)) (args, packet) ->

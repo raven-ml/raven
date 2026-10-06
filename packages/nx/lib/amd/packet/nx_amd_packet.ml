@@ -341,39 +341,95 @@ module Pm4 = struct
         invalid_arg
           (Printf.sprintf "Nx_amd_packet.Pm4: GC %d has no %s" (major gc) name)
 
+  (* Guards the tables of what encoders find once per GC version. *)
+  let lock = Mutex.create ()
+
   (* The registers take 256-byte aligned addresses, from their bit 8. *)
   let address_shift = 8
 
+  (* The registers a dispatch sets, found once per GC version: encoders read
+     them for each dispatch. *)
+  type compute = {
+    pgm_lo : int;
+    pgm_rsrc1 : int;
+    pgm_rsrc3 : int;
+    tmpring_size : int;
+    scratch_base_lo : int;
+    restart_x : int;
+    user_data_0 : int;
+    resource_limits : int;
+    start_x : int;
+  }
+
+  let computes : (version, compute) Hashtbl.t = Hashtbl.create 4
+
+  let compute gc =
+    Mutex.lock lock;
+    let known = Hashtbl.find_opt computes gc in
+    Mutex.unlock lock;
+    match known with
+    | Some c -> c
+    | None ->
+        let r name = register gc ("regCOMPUTE_" ^ name) in
+        let c =
+          {
+            pgm_lo = r "PGM_LO";
+            pgm_rsrc1 = r "PGM_RSRC1";
+            pgm_rsrc3 = r "PGM_RSRC3";
+            tmpring_size = r "TMPRING_SIZE";
+            scratch_base_lo = r "DISPATCH_SCRATCH_BASE_LO";
+            restart_x = r "RESTART_X";
+            user_data_0 = r "USER_DATA_0";
+            resource_limits = r "RESOURCE_LIMITS";
+            start_x = r "START_X";
+          }
+        in
+        Mutex.protect lock (fun () -> Hashtbl.replace computes gc c);
+        c
+
   let set_program ~gc addr =
-    set_reg
-      (register gc "regCOMPUTE_PGM_LO")
-      [ W64 (Shift (Value addr, address_shift)) ]
+    set_reg (compute gc).pgm_lo [ W64 (Shift (Value addr, address_shift)) ]
 
   let set_scratch ~gc addr =
-    set_reg
-      (register gc "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO")
+    set_reg (compute gc).scratch_base_lo
       [ W64 (Shift (Value addr, address_shift)) ]
 
   let initiator = "regCOMPUTE_DISPATCH_INITIATOR"
 
   type wave = Wave32 | Wave64
 
+  (* The initiator word of a GC version's dispatches of a wave size, encoded
+     once per pair. *)
+  let initiators : (version * wave, int) Hashtbl.t = Hashtbl.create 4
+
+  let initiator_word ~gc wave =
+    Mutex.lock lock;
+    let known = Hashtbl.find_opt initiators (gc, wave) in
+    Mutex.unlock lock;
+    match known with
+    | Some w -> w
+    | None ->
+        let r =
+          match Gc.find gc initiator with
+          | Some r -> r
+          | None ->
+              invalid_arg
+                (Printf.sprintf
+                   "Nx_amd_packet.Pm4.dispatch_direct: GC %d has no %s"
+                   (major gc) initiator)
+        in
+        let wave32 = match wave with Wave32 -> 1 | Wave64 -> 0 in
+        let lanes = if major gc = 9 then [] else [ ("cs_w32_en", wave32) ] in
+        let w =
+          Gc.encode r
+            (lanes @ [ ("force_start_at_000", 1); ("compute_shader_en", 1) ])
+        in
+        Mutex.protect lock (fun () -> Hashtbl.replace initiators (gc, wave) w);
+        w
+
   let dispatch_direct ~gc wave (x, y, z) =
-    let wave32 = match wave with Wave32 -> 1 | Wave64 -> 0 in
-    let r =
-      match Gc.find gc initiator with
-      | Some r -> r
-      | None ->
-          invalid_arg
-            (Printf.sprintf "Nx_amd_packet.Pm4.dispatch_direct: GC %d has no %s"
-               (major gc) initiator)
-    in
-    let lanes = if major gc = 9 then [] else [ ("cs_w32_en", wave32) ] in
-    let init =
-      Gc.encode r
-        (lanes @ [ ("force_start_at_000", 1); ("compute_shader_en", 1) ])
-    in
-    packet D.packet3_dispatch_direct [ w32 x; w32 y; w32 z; Dword init ]
+    packet D.packet3_dispatch_direct
+      [ w32 x; w32 y; w32 z; Dword (initiator_word ~gc wave) ]
 
   (* GFX11 runs kernels privileged, for their context save and restore:
      COMPUTE_PGM_RSRC1.PRIV. *)
@@ -393,7 +449,7 @@ module Pm4 = struct
 
   let dispatch ~gc (k : Nx_amd_code_object.kernel) ~program ~scratch ~packet
       ~args ~tmpring ~limits ~threads:(tx, ty, tz) ~groups =
-    let set name ws = set_reg (register gc ("regCOMPUTE_" ^ name)) ws in
+    let c = compute gc in
     let rsrc1 = if major gc = 11 then k.rsrc1 lor priv else k.rsrc1 in
     let lds = (k.group_segment + lds_granule - 1) / lds_granule land lds_mask in
     let zeros n = List.init n (fun _ -> Dword 0) in
@@ -410,14 +466,15 @@ module Pm4 = struct
       @ [ w64 args ]
     in
     set_program ~gc program
-    @ set "PGM_RSRC1" [ Dword rsrc1; Dword (k.rsrc2 lor (lds lsl lds_shift)) ]
-    @ set "PGM_RSRC3" [ Dword k.rsrc3 ]
-    @ set "TMPRING_SIZE" [ Dword tmpring ]
+    @ set_reg c.pgm_rsrc1
+        [ Dword rsrc1; Dword (k.rsrc2 lor (lds lsl lds_shift)) ]
+    @ set_reg c.pgm_rsrc3 [ Dword k.rsrc3 ]
+    @ set_reg c.tmpring_size [ Dword tmpring ]
     @ set_scratch ~gc scratch
-    @ set "RESTART_X" (zeros 3)
-    @ set "USER_DATA_0" user
-    @ set "RESOURCE_LIMITS" [ Dword limits ]
-    @ set "START_X" (zeros 3 @ [ w32 tx; w32 ty; w32 tz ] @ zeros 2)
+    @ set_reg c.restart_x (zeros 3)
+    @ set_reg c.user_data_0 user
+    @ set_reg c.resource_limits [ Dword limits ]
+    @ set_reg c.start_x (zeros 3 @ [ w32 tx; w32 ty; w32 tz ] @ zeros 2)
     @ dispatch_direct ~gc (if k.wave32 then Wave32 else Wave64) groups
 end
 
