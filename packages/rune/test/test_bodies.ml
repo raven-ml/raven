@@ -491,6 +491,37 @@ let ruled x =
        ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.2)
        x)
 
+(* Rules for [sin] whose tangent map or pullback reads a value the rule's own
+   run computed, [cos x]: a replay at another trip must bind it to that trip's
+   value. *)
+let sin_jvp =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      let c = Nx.cos x in
+      (Nx.sin x, fun dx -> Nx.mul dx c))
+
+let sin_vjp =
+  Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      let c = Nx.cos x in
+      (Nx.sin x, fun ct -> Nx.mul ct c))
+
+(* [stepped rule x] scans [x]'s elements with a step that applies [rule];
+   [unrolled] is the same loop in OCaml with [Nx.sin]. *)
+let stepped rule x =
+  fst
+    (Rune.scan'
+       ~f:(fun c e ->
+         let c = Nx.add (Nx.mul_s c 0.5) (rule (Nx.mul e c)) in
+         (c, c))
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.2)
+       x)
+
+let unrolled x =
+  let c = ref (Nx.add_s (Nx.get [ 0 ] x) 0.2) in
+  for i = 0 to (Nx.shape x).(0) - 1 do
+    c := Nx.add (Nx.mul_s !c 0.5) (Nx.sin (Nx.mul (Nx.get [ i ] x) !c))
+  done;
+  !c
+
 (* [halving x] iterates [doubled] on a carry that halves until it is small: a
    lane's trips depend on its start. *)
 let halving x =
@@ -503,13 +534,13 @@ let grad2 f x =
   Rune.grad' (fun x -> Nx.sum (Rune.grad' (fun x -> Nx.sum (f x)) x)) x
 
 (* A root in a step: the square root of [c + 1], by Newton steps. *)
-let rooted x =
+let rooted ?linear_solve x =
   fst
     (Rune.scan'
        ~f:(fun c e ->
          let target = Nx.add_s (Nx.mul (Nx.mul c c) e) 1. in
          let r =
-           Rune.root Nx.Ptree.tensor
+           Rune.root Nx.Ptree.tensor ?linear_solve
              ~residual:(fun y -> Nx.sub (Nx.mul y y) target)
              (fun () ->
                Rune.iterate' ~max:64
@@ -522,6 +553,11 @@ let rooted x =
          (c, c))
        ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.3)
        x)
+
+(* Linear solves of a scalar system that apply their operator: once, and under a
+   jvp they open. *)
+let applying op b = Nx.div b (op (Nx.ones_like b))
+let opening op b = Nx.div b (snd (Rune.jvp' op b (Nx.ones_like b)))
 
 (* A step that calls a compiled function and a custom_vjp rule, whose pullback
    is its function's derivative. *)
@@ -601,7 +637,28 @@ let blocks remat x =
   let rec go k a = if k = 0 then a else go (k - 1) (block a) in
   Nx.sum (go 8 x)
 
+(* Compiled functions are made once, so that each shape compiles once. *)
 let record_tests =
+  let rooted_grad = grad1 (fun x -> rooted x) in
+  let rooted_jit = Rune.jit' rooted_grad in
+  let solves =
+    List.map
+      (fun (name, linear_solve) ->
+        let g = grad1 (rooted ~linear_solve) in
+        (name, g, Rune.jit' g))
+      [ ("applying", applying); ("opening", opening) ]
+  in
+  let calling_jit = Rune.jit' (grad1 calling) in
+  let calling_mapped_jit = Rune.jit' (Rune.vmap' (grad1 calling)) in
+  let detaching_jit = Rune.jit' (grad2 detaching) in
+  let ruled_jit = Rune.jit' (grad2 ruled) in
+  let bound =
+    List.map
+      (fun (name, rule) ->
+        let g = grad2 (stepped rule) in
+        (name, rule, g, Rune.jit' g, Rune.jit' (Rune.vmap' g)))
+      [ ("custom_jvp", sin_jvp); ("custom_vjp", sin_vjp) ]
+  in
   [
     test "eager grad of a remat keeps no intermediate of its function"
       (fun () ->
@@ -611,7 +668,22 @@ let record_tests =
           ~msg:(Printf.sprintf "%d bytes with remat, %d without" rematted plain)
           int ~than:(plain / 2) rematted);
     prop "a root in a compiled scan's step under grad is eager's" gen_vec
-      (fun x -> equal (close ()) (grad1 rooted x) (Rune.jit' (grad1 rooted) x));
+      (fun x -> equal (close ()) (rooted_grad x) (rooted_jit x));
+    prop
+      "a root's linear_solve in a step, replayed, applies the replay's \
+       operator, directly and under a jvp it opens, compiled and mapped"
+      gen_lanes (fun xs ->
+        let x = Nx.get [ 0 ] xs in
+        let expected = rooted_grad x
+        and each =
+          Nx.stack (List.init 2 (fun i -> rooted_grad (Nx.get [ i ] xs)))
+        in
+        List.iter
+          (fun (name, g, compiled) ->
+            equal ~msg:name (close ()) expected (g x);
+            equal ~msg:(name ^ ", compiled") (close ()) expected (compiled x);
+            equal ~msg:(name ^ ", mapped") (close ()) each (Rune.vmap' g xs))
+          solves);
     prop
       "a compiled call and a custom_vjp rule in a step, compiled under grad \
        and mapped, are eager's"
@@ -621,15 +693,13 @@ let record_tests =
         in
         equal ~msg:"compiled" (close ())
           (grad1 calling (Nx.get [ 0 ] xs))
-          (Rune.jit' (grad1 calling) (Nx.get [ 0 ] xs));
+          (calling_jit (Nx.get [ 0 ] xs));
         equal ~msg:"mapped" (close ()) each (Rune.vmap' (grad1 calling) xs);
-        equal ~msg:"mapped, compiled" (close ()) each
-          (Rune.jit' (Rune.vmap' (grad1 calling)) xs));
+        equal ~msg:"mapped, compiled" (close ()) each (calling_mapped_jit xs));
     prop
       "grad of grad through a compiled scan whose step detaches is eager's: \
        the detached value has no derivative at either order"
-      gen_vec (fun x ->
-        equal (close ()) (grad2 detaching x) (Rune.jit' (grad2 detaching) x));
+      gen_vec (fun x -> equal (close ()) (grad2 detaching x) (detaching_jit x));
     prop
       "vmap of grad of an iterate whose step reads each lane's index is each \
        lane's, lanes stopping apart"
@@ -679,7 +749,37 @@ let record_tests =
         map
           (fun l -> vec (Array.of_list l))
           (list ~size:(int_range 1 4) (float_range (-1.) 1.)))
-      (fun x -> equal (close ()) (grad2 ruled x) (Rune.jit' (grad2 ruled) x));
+      (fun x -> equal (close ()) (grad2 ruled x) (ruled_jit x));
+    prop
+      "a rule in a scan's step whose tangent map or pullback reads its own \
+       run's value is, under grad of grad, the unrolled loop's, eagerly, \
+       compiled and mapped"
+      gen_lanes (fun xs ->
+        let x = Nx.get [ 0 ] xs in
+        let expected = grad2 unrolled x
+        and each =
+          Nx.stack (List.init 2 (fun i -> grad2 unrolled (Nx.get [ i ] xs)))
+        in
+        List.iter
+          (fun (name, _, g, compiled, mapped) ->
+            equal ~msg:name (close ()) expected (g x);
+            equal ~msg:(name ^ ", compiled") (close ()) expected (compiled x);
+            equal ~msg:(name ^ ", mapped") (close ()) each (Rune.vmap' g xs);
+            equal
+              ~msg:(name ^ ", mapped and compiled")
+              (close ()) each (mapped xs))
+          bound);
+    prop
+      "grad of grad of a scan whose step applies such a rule is the central \
+       difference of its grad" (Gen.pair gen_lanes gen_lanes) (fun (xs, vs) ->
+        let x = Nx.get [ 0 ] xs and v = Nx.get [ 0 ] vs in
+        List.iter
+          (fun (name, rule, g, _, _) ->
+            let grad x = Nx.sum (grad1 (stepped rule) x) in
+            equal ~msg:name (float 1e-6)
+              (Nx.item [] (Oracle.central ~eps:1e-5 grad x v))
+              (Oracle.dot (g x) v))
+          bound);
     prop
       "a custom rule in an iterate's step under vmap of grad applies its \
        tangent map, each lane as alone"
@@ -919,7 +1019,8 @@ let law5 =
     ~examples:[ ([ Grad; Jit_layer ], Scan_draws, true) ]
     "step i of a loop draws from a scope rooted at fold_in k i, k one key the \
      loop takes at its first draw, under every stack"
-    (Gen.with_pp pp gen) (fun (ts, kind, draws) ->
+    (Gen.with_pp pp gen)
+    (fun (ts, kind, draws) ->
       cover "a loop under jit" (List.mem Jit_layer ts);
       cover "a loop under vmap" (List.mem Vmap ts);
       cover "a loop under grad" (List.mem Grad ts);
