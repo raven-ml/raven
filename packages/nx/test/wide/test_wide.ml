@@ -319,6 +319,23 @@ let structure =
             (pair float_exact float_exact)
             (2., Float.ldexp 1. (-59))
             (Nx.item [] (Nx_wide.hi s), Nx.item [] (Nx_wide.lo s)));
+      test
+        "a rebuilt value walks as the words it was rebuilt from, and reads \
+         normalised" (fun () ->
+          let p = Nx_wide.ptree Nx.float64 in
+          let w = Nx_wide.v (Nx.scalar Nx.float64 1.) in
+          let s = Nx.Ptree.map p (fun _ t -> Nx.add t (Nx.ones_like t)) w in
+          let walked =
+            List.rev
+              (Nx.Ptree.fold p
+                 (fun _ t acc -> Nx.item [] (Nx.cast Nx.float64 t) :: acc)
+                 s [])
+          in
+          equal ~msg:"walked" (list float_exact) [ 2.; 1. ] walked;
+          equal ~msg:"read"
+            (pair float_exact float_exact)
+            (3., 0.)
+            (Nx.item [] (Nx_wide.hi s), Nx.item [] (Nx_wide.lo s)));
       test "a value rebuilt from unnormalised words is normalised" (fun () ->
           let w = Nx_wide.v (Nx.scalar Nx.float64 1.) in
           let s =

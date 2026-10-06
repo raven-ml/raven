@@ -79,10 +79,12 @@ val sum : ?axes:int list -> 'b t -> 'b t
 (** {1:structures Structures} *)
 
 val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
-(** [ptree dtype] describes a value of [dtype] as its words {!hi} and {!lo}, at
-    paths ["hi"] and ["lo"]. A walk that returns both words unchanged keeps the
-    value. One that returns other words, as leafwise arithmetic does
-    ({!Nx.Ptree.map2}, {!Nx.Ptree.axpy}), rebuilds the number their sum makes,
-    normalised through {!v} when an operation, {!hi} or {!lo} first reads it.
+(** [ptree dtype] describes a value of [dtype] as two words at paths ["hi"] and
+    ["lo"]: {!hi} and {!lo} for a value an operation or {!v} made, and the words
+    it was rebuilt from for one a walk rebuilt. A walk that returns both words
+    unchanged keeps the value. One that returns other words, as leafwise
+    arithmetic does ({!Nx.Ptree.map2}, {!Nx.Ptree.axpy}), rebuilds the number
+    their sum makes, which an operation, {!hi} and {!lo} read normalised through
+    {!v}.
 
     Raises [Invalid_argument] unless [dtype] is float32 or float64. *)
