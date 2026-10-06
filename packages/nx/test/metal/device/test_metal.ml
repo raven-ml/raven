@@ -616,17 +616,17 @@ let failed_watched =
             dispatch fill 1 v;
             v)
       in
-      let rec settled n =
-        if n > 0 && Nx_device.lost d = None && Nx_device.signaled d < v then begin
+      (* Either macOS ends the spin's command buffer or the spin completes:
+         the reads end, however long macOS lets the GPU run. *)
+      let rec settle () =
+        if Nx_device.lost d = None && Nx_device.signaled d < v then begin
           Unix.sleepf 0.05;
-          settled (n - 1)
+          settle ()
         end
       in
-      settled 200;
+      settle ();
       match Nx_device.lost d with
-      | None when Nx_device.signaled d >= v ->
-          skip ~reason:"macOS ended no command buffer" ()
-      | None -> fail "the work neither signaled nor failed in 10 s"
+      | None -> skip ~reason:"macOS ended no command buffer" ()
       | Some why ->
           Windtrap.contains ~msg:"Metal's reason"
             ~sub:"kIOGPUCommandBufferCallbackError" why;
