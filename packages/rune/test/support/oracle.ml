@@ -14,7 +14,7 @@ type elements = Real of float array | Cplx of Complex.t array
 
 let elements (type a b) (t : (a, b) Nx.t) =
   let t = Nx.place Nx.Placement.host t in
-  if Nx_dtype.is_complex (Nx.dtype t) then
+  if Nx_dtype.is Complex (Nx.dtype t) then
     Cplx (Nx.to_array (Nx.cast Nx.complex128 t))
   else Real (Nx.to_array (Nx.cast Nx.float64 t))
 

@@ -16,7 +16,7 @@ let rows_dot (type f) u (lp : (float, f) Nx.t) g dx =
   in
   let products =
     Nx.Ptree.map2 u
-      (fun _ g dx -> if Nx_dtype.is_float (Nx.dtype g) then Nx.mul g dx else g)
+      (fun _ g dx -> if Nx_dtype.is Float (Nx.dtype g) then Nx.mul g dx else g)
       g dx
   in
   (* The sum starts at the first float tensor's term: a tangent map adds no
@@ -24,7 +24,7 @@ let rows_dot (type f) u (lp : (float, f) Nx.t) g dx =
   let sum =
     Nx.Ptree.fold u
       (fun _ x acc ->
-        if not (Nx_dtype.is_float (Nx.dtype x)) then acc
+        if not (Nx_dtype.is Float (Nx.dtype x)) then acc
         else
           match acc with
           | None -> Some (row_sum x)

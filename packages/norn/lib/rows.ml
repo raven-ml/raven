@@ -10,7 +10,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let shape_string s =
   String.concat "; " (Array.to_list (Array.map string_of_int s))
 
-let float_leaf x = Nx_dtype.is_float (Nx.dtype x)
+let float_leaf x = Nx_dtype.is Float (Nx.dtype x)
 
 (* Arithmetic over chains
 

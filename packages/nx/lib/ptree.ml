@@ -465,7 +465,7 @@ let cast (module U : S) (dt : ('c, 'd) Nx_dtype.t) (x : ('a, 'b) tensor U.t) :
 
    The float leaves of a value are one vector, every other leaf is carried. *)
 
-let is_float x = Nx_dtype.is_float (Value.dtype x)
+let is_float x = Nx_dtype.is Float (Value.dtype x)
 let shape x = Nx_array.View.shape (Value.view x)
 
 let check_shapes fn path x y =

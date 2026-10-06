@@ -63,7 +63,7 @@ type 'x space =
     }
       -> 'x space
 
-let is_float (Nx.P t) = Nx_dtype.is_float (Nx.dtype t)
+let is_float (Nx.P t) = Nx_dtype.is Float (Nx.dtype t)
 
 let space fn x like =
   let leaves, _ = Nx.Ptree.flatten x like in
@@ -111,13 +111,8 @@ let space fn x like =
   match floats with
   | [] -> make Nx.float64
   | Nx.P t :: _ -> (
-      match Nx.dtype t with
-      | Nx.Float64 -> make Nx.Float64
-      | Nx.Float32 -> make Nx.Float32
-      | Nx.Float16 -> make Nx.Float16
-      | Nx.BFloat16 -> make Nx.BFloat16
-      | Nx.Float8_e4m3 -> make Nx.Float8_e4m3
-      | Nx.Float8_e5m2 -> make Nx.Float8_e5m2
+      match Nx_dtype.kind (Nx.dtype t) with
+      | Float -> make (Nx.dtype t)
       | _ -> assert false)
 
 (* The leaves' dtypes and shapes, which [a]'s value must keep. *)

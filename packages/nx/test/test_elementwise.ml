@@ -601,7 +601,7 @@ let nan_operands =
        (fun (F f as format) ->
          List.concat_map
            (fun op ->
-             if Nx_dtype.is_complex f.dtype && not op.complex then []
+             if Nx_dtype.is Complex f.dtype && not op.complex then []
              else
                let c = codec f.dtype f.word ~width:f.width ~words:f.words in
                let alone =
@@ -2029,32 +2029,9 @@ let booleans =
 
 (* Data types *)
 
-type packed = D : string * ('a, 'b) Nx.dtype -> packed
-
 let dtypes =
   group "data types"
     [
-      cases "each dtype says whether it is float, complex, int or unsigned"
-        ~name:(fun (D (name, _), _) -> name)
-        [
-          (D ("float16", Nx.float16), (true, false, false, false));
-          (D ("bfloat16", Nx.bfloat16), (true, false, false, false));
-          (D ("float8_e4m3", Nx.float8_e4m3), (true, false, false, false));
-          (D ("float8_e5m2", Nx.float8_e5m2), (true, false, false, false));
-          (D ("float64", Nx.float64), (true, false, false, false));
-          (D ("complex64", Nx.complex64), (false, true, false, false));
-          (D ("int4", Nx.int4), (false, false, true, false));
-          (D ("uint4", Nx.uint4), (false, false, true, true));
-          (D ("uint32", Nx.uint32), (false, false, true, true));
-          (D ("uint64", Nx.uint64), (false, false, true, true));
-          (D ("bool", Nx.bool), (false, false, false, false));
-        ]
-        (fun (D (_, dt), expected) ->
-          equal (quad bool bool bool bool) expected
-            ( Nx_dtype.is_float dt,
-              Nx_dtype.is_complex dt,
-              Nx_dtype.is_int dt,
-              Nx_dtype.is_uint dt ));
       test "narrow integers hold their width's range" (fun () ->
           equal (pair int int) (-8, 7)
             (Nx_dtype.min_value Nx.int4, Nx_dtype.max_value Nx.int4);

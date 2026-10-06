@@ -1051,7 +1051,7 @@ module Kernels : Nx_backend.S = struct
   let unary (type a b) k (x : (a, b) Nx_array.t) ~(dst : (a, b) Nx_array.t) =
     let dt = served x.dtype in
     match (k : Nx_backend.unary) with
-    | (Trunc | Ceil | Floor | Round) when not (Nx_dtype.is_float x.dtype) ->
+    | (Trunc | Ceil | Floor | Round) when not (Nx_dtype.is Float x.dtype) ->
         contiguous x ~dst
     | _ ->
         run

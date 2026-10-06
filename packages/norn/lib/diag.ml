@@ -10,7 +10,7 @@ open Chains
 (* Leaves *)
 
 let float_leaf fn p x =
-  if not (Nx_dtype.is_float (Nx.dtype x)) then
+  if not (Nx_dtype.is Float (Nx.dtype x)) then
     invalid_argf "Norn.Diag.%s: %s: %s draws; diagnostics take float draws" fn
       (Nx.Ptree.Path.to_string p)
       (Nx_dtype.to_string (Nx.dtype x))

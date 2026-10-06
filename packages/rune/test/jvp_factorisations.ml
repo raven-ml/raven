@@ -17,7 +17,7 @@ let adjoint x = Nx.conjugate (Nx.matrix_transpose x)
 let orthonormal d r m k =
   let draw () = Random.State.float r 2. -. 1. in
   let x =
-    if Nx_dtype.is_complex d then
+    if Nx_dtype.is Complex d then
       Nx.cast d
         (Nx.create Nx.complex128 [| m; k |]
            (Array.init (m * k) (fun _ -> { Complex.re = draw (); im = draw () })))

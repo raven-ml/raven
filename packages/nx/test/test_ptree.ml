@@ -853,7 +853,7 @@ let values k value =
          (ps, List.init k (fun i -> List.map (fun p -> List.nth p.at i) ps)))
        (Gen.list ~size:(Gen.int_range 0 4) (position k value)))
 
-let is_float (Nx.P t) = Nx_dtype.is_float (Nx.dtype t)
+let is_float (Nx.P t) = Nx_dtype.is Float (Nx.dtype t)
 let numel (Nx.P t) = Nx.numel t
 let dtype_name (Nx.P t) = Nx_dtype.to_string (Nx.dtype t)
 

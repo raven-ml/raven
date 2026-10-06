@@ -120,7 +120,7 @@ let one x = Nx_dtype.one (Nx.dtype x)
 
 (* The real part of [x] in [x]'s dtype. *)
 let real_part x =
-  if Nx_dtype.is_complex (Nx.dtype x) then
+  if Nx_dtype.is Complex (Nx.dtype x) then
     Nx.cast (Nx.dtype x) (Nx.cast Nx.float64 x)
   else x
 
@@ -609,7 +609,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       let x, dx = unwrap i x in
       let y = unary k x in
       match[@warning "@4@8"] (k : Nx_backend.unary) with
-      | Sign when not (Nx_dtype.is_complex (Nx.dtype x)) -> y
+      | Sign when not (Nx_dtype.is Complex (Nx.dtype x)) -> y
       | Trunc | Ceil | Floor | Round -> y
       | Neg | Recip | Abs | Sqrt | Sign | Exp | Log | Log1p | Expm1 | Sin | Cos
       | Tan | Asin | Acos | Atan | Sinh | Cosh | Tanh | Erf ->
@@ -684,7 +684,7 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Convert (Cast, dtype, x) ->
       let x, dx = unwrap i x in
       let y = eval (Convert (Cast, dtype, x)) in
-      if Nx_dtype.is_float dtype || Nx_dtype.is_complex dtype then
+      if Nx_dtype.is Float dtype || Nx_dtype.is Complex dtype then
         dual i y (eval (Convert (Cast, dtype, dx)))
       else y
   | Convert (Bitcast, dtype, x) ->

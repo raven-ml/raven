@@ -227,13 +227,14 @@ let power_of_two : type a b. (a, b) Nx_dtype.t -> int -> a =
         (Nx_dtype.to_string dtype)
 
 let ensure_float_dtype fname x =
-  if not (Nx_dtype.is_float (dtype x)) then
+  if not (Nx_dtype.is Float (dtype x)) then
     err fname "dtype %s, expected float type (Float16, Float32, or Float64)"
       (Nx_dtype.to_string (dtype x))
 
 let ensure_int_dtype fname x =
-  if not (Nx_dtype.is_int (dtype x)) then
-    invalid_arg (fname ^ ": dtype must be an integer type")
+  match Nx_dtype.kind (dtype x) with
+  | Signed | Unsigned -> ()
+  | _ -> invalid_arg (fname ^ ": dtype must be an integer type")
 
 let resolve_axis ?ndim_opt x (axis_opt : int option) =
   let ndim = match ndim_opt with Some n -> n | None -> ndim x in
@@ -559,9 +560,9 @@ let mul a b = binop Mul a b
 let mul_s t s = mul t (scalar_like t s)
 
 let div a b =
-  let dt = Value.dtype a in
-  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop Idiv a b
-  else binop Fdiv a b
+  match Nx_dtype.kind (Value.dtype a) with
+  | Signed | Unsigned -> binop Idiv a b
+  | _ -> binop Fdiv a b
 
 let div_s t s = div t (scalar_like t s)
 let rdiv_s s t = div (scalar_like t s) t
@@ -641,7 +642,7 @@ let abs x = B.unary Abs x
 type composite = { f : 'a 'b. ('a, 'b) t -> ('a, 'b) t }
 
 (* The floats narrower than float32. *)
-let narrow dt = Nx_dtype.is_float dt && Nx_dtype.itemsize dt < 4
+let narrow dt = Nx_dtype.is Float dt && Nx_dtype.itemsize dt < 4
 
 let at_float32 c x =
   if narrow (dtype x) then cast (dtype x) (c.f (cast Nx_dtype.float32 x))
@@ -700,7 +701,7 @@ let floor x = B.unary Floor x
 let round x = B.unary Round x
 
 let isinf x =
-  if not (Nx_dtype.is_float (dtype x)) then
+  if not (Nx_dtype.is Float (dtype x)) then
     zeros (Value.context x) Nx_dtype.bool (shape x)
   else
     let dt = dtype x in
@@ -716,12 +717,12 @@ let isinf x =
     logical_or (cmpeq x pos_inf) (cmpeq x neg_inf)
 
 let isnan x =
-  if not (Nx_dtype.is_float (dtype x)) then
+  if not (Nx_dtype.is Float (dtype x)) then
     zeros (Value.context x) Nx_dtype.bool (shape x)
   else cmpne x x
 
 let isfinite x =
-  if not (Nx_dtype.is_float (dtype x)) then
+  if not (Nx_dtype.is Float (dtype x)) then
     ones (Value.context x) Nx_dtype.bool (shape x)
   else logical_not (logical_or (isinf x) (isnan x))
 
@@ -730,8 +731,9 @@ let lerp start_tensor end_tensor weight =
 
 let shift_op ~op ~apply x shift_val =
   let dt = dtype x in
-  if not (Nx_dtype.is_int dt) then
-    err op "dtype %s, expected integer type" (Nx_dtype.to_string dt);
+  (match Nx_dtype.kind dt with
+  | Signed | Unsigned -> ()
+  | _ -> err op "dtype %s, expected integer type" (Nx_dtype.to_string dt));
   if shift_val < 0 then err op "shift_val must be >= 0, got %d" shift_val;
   if shift_val = 0 then x
   else
@@ -742,8 +744,9 @@ let shift_op ~op ~apply x shift_val =
 (* [x * 2^n] modulo the width, so 0 once [n] reaches it. *)
 let lshift x n =
   let bits = Nx_dtype.Scalar.(bitsize (of_dtype (dtype x))) in
-  if n >= bits && Nx_dtype.is_int (dtype x) then zeros_like x
-  else shift_op ~op:"lshift" ~apply:mul x n
+  match Nx_dtype.kind (dtype x) with
+  | (Signed | Unsigned) when n >= bits -> zeros_like x
+  | _ -> shift_op ~op:"lshift" ~apply:mul x n
 
 let clamp ?min ?max x =
   let x = match min with None -> x | Some min_v -> maximum_s x min_v in
@@ -763,11 +766,7 @@ let where cond if_true if_false =
 
 let fma a b c =
   let dt = dtype a in
-  if
-    Nx_dtype.is_complex dt
-    || Nx_dtype.equal dt Nx_dtype.bool
-    || Nx_dtype.equal dt Nx_dtype.bit
-  then
+  if Nx_dtype.is Complex dt || Nx_dtype.is Boolean dt then
     err "fma" "dtype %s, expected a float or integer dtype"
       (Nx_dtype.to_string dt);
   let target =
@@ -806,13 +805,9 @@ let rshift x n =
   let zero = scalar_like x (Nx_dtype.zero dt) in
   let one = scalar_like x (Nx_dtype.one dt) in
   let bits = Nx_dtype.Scalar.(bitsize (of_dtype dt)) in
-  if
-    Nx_dtype.is_int dt
-    && (not (Nx_dtype.is_uint dt))
-    && n >= bits - 1
-    && n >= 0
-  then where (cmplt x zero) (sub zero one) (broadcast_to (shape x) zero)
-  else if Nx_dtype.is_uint dt && n >= bits then zeros_like x
+  if Nx_dtype.is Signed dt && n >= bits - 1 && n >= 0 then
+    where (cmplt x zero) (sub zero one) (broadcast_to (shape x) zero)
+  else if Nx_dtype.is Unsigned dt && n >= bits then zeros_like x
   else
     shift_op ~op:"rshift"
       ~apply:(fun x p ->
@@ -822,7 +817,7 @@ let rshift x n =
       x n
 
 let float_only op x =
-  if not (Nx_dtype.is_float (dtype x)) then
+  if not (Nx_dtype.is Float (dtype x)) then
     err op "dtype %s, expected a float dtype" (Nx_dtype.to_string (dtype x))
 
 let log1p x =
@@ -924,7 +919,7 @@ let hypot_at x' y' =
   let result = mul max_val (sqrt (add_s (square ratio) (Nx_dtype.one dt))) in
   let result = where both_zero zero result in
   (* An infinite side makes the length infinite, even beside a NaN. *)
-  if not (Nx_dtype.is_float dt) then result
+  if not (Nx_dtype.is Float dt) then result
   else
     where
       (logical_or (isinf x') (isinf y'))
@@ -1078,24 +1073,27 @@ let mean ?axes ?(keepdims = false) x =
   let dt = Value.dtype x in
   let n = reduction_element_count (shape x) ?axes () in
   (* The mean of nothing is 0 / 0: NaN, which an integer does not hold. *)
-  if n = 0 && not (Nx_dtype.is_float dt || Nx_dtype.is_complex dt) then
+  if n = 0 && not (Nx_dtype.is Float dt || Nx_dtype.is Complex dt) then
     err "mean" "dtype %s, the mean of an empty axis has no value"
       (Nx_dtype.to_string dt);
-  if Nx_dtype.is_uint dt then int_mean ?axes ~keepdims Nx_dtype.uint64 x n
-  else if Nx_dtype.is_int dt then int_mean ?axes ~keepdims Nx_dtype.int64 x n
-  else
-    let s = sum ?axes ~keepdims x in
-    let divisor =
-      broadcast_to (shape s)
-        (scalar (Value.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
-    in
-    div s divisor
+  match Nx_dtype.kind dt with
+  | Unsigned -> int_mean ?axes ~keepdims Nx_dtype.uint64 x n
+  | Signed -> int_mean ?axes ~keepdims Nx_dtype.int64 x n
+  | _ ->
+      let s = sum ?axes ~keepdims x in
+      let divisor =
+        broadcast_to (shape s)
+          (scalar (Value.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
+      in
+      div s divisor
 
 (* The variance of integers is a fraction that can outgrow their dtype. *)
 let refuse_int op x =
-  if Nx_dtype.is_int (dtype x) then
-    err op "dtype %s, expected a float or complex dtype"
-      (Nx_dtype.to_string (dtype x))
+  match Nx_dtype.kind (dtype x) with
+  | Signed | Unsigned ->
+      err op "dtype %s, expected a float or complex dtype"
+        (Nx_dtype.to_string (dtype x))
+  | _ -> ()
 
 let var ?axes ?(keepdims = false) ?(ddof = 0) x =
   refuse_int "var" x;
@@ -2055,7 +2053,7 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
           i idx_shape.(i) dim)
     t_shape;
   (match mode with
-  | (`Max | `Min) when Nx_dtype.is_complex (dtype t) ->
+  | (`Max | `Min) when Nx_dtype.is Complex (dtype t) ->
       err "scatter" "complex numbers are not ordered"
   | `Set | `Add | `Max | `Min -> ());
   let values =
@@ -2259,9 +2257,8 @@ let positions_of (type a b) ~by (c : (a, b) t) : int64_t =
   let dt = dtype c in
   if ndim c <> 1 then
     err "positions" "counts of shape %s, not 1-D" (Shape.to_string (shape c));
-  (match dt with
-  | Bool -> ()
-  | _ when Nx_dtype.is_int dt -> ()
+  (match (dt, Nx_dtype.kind dt) with
+  | Bool, _ | _, (Signed | Unsigned) -> ()
   | _ ->
       err "positions" "counts of dtype %s, not boolean or integer"
         (Nx_dtype.to_string dt));
@@ -2550,7 +2547,7 @@ let identity_of (type a b) name op (dt : (a, b) dtype) : a =
   match (op, dt) with
   | `Add, (Bool | Bit) -> err name "booleans have no sum"
   | `Add, _ -> Nx_dtype.zero dt
-  | (`Max | `Min), _ when Nx_dtype.is_complex dt ->
+  | (`Max | `Min), _ when Nx_dtype.is Complex dt ->
       err name "complex numbers are not ordered"
   | `Max, _ -> Nx_dtype.min_value dt
   | `Min, _ -> Nx_dtype.max_value dt
@@ -2955,7 +2952,7 @@ let ewma ?axis ~alpha x =
 let selected_extreme op a b =
   let ahead = match op with `Max -> cmplt b a | `Min -> cmplt a b in
   let a_wins =
-    if not (Nx_dtype.is_float (dtype a)) then ahead
+    if not (Nx_dtype.is Float (dtype a)) then ahead
     else
       let zero = scalar_like a (Nx_dtype.zero (dtype a)) in
       let negative_zero x = logical_and (cmpeq x zero) (cmplt (recip x) zero) in
@@ -3320,7 +3317,7 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
   let n = dim axis x in
   if k < 1 || k > n then err "top_k" "k = %d is outside [1, %d]" k n;
   let dt = dtype x in
-  if Nx_dtype.is_complex dt then
+  if Nx_dtype.is Complex dt then
     err "top_k" "complex numbers have no selection key";
   let rows = Array.fold_left ( * ) 1 (shape x) / n in
   let positions (type c d) (keys : (c, d) t) =
@@ -3416,7 +3413,7 @@ let check_keys ~op keys =
   let r = ndim keys in
   if r <> 1 && r <> 2 then
     err op "keys of shape %s, not 1-D or 2-D" (Shape.to_string (shape keys));
-  if Nx_dtype.is_complex (dtype keys) then
+  if Nx_dtype.is Complex (dtype keys) then
     err op "complex numbers have no order"
 
 let lexsort keys =
@@ -3440,7 +3437,7 @@ let lexsort keys =
    that numbers compare as [less] compares them. *)
 let numeric_key (type a b) (x : (a, b) t) =
   let k = order_key UInt64 x in
-  if Nx_dtype.is_float (dtype x) then
+  if Nx_dtype.is Float (dtype x) then
     where (equal_s k Int64.max_int) (scalar_like k Int64.min_int) k
   else k
 
@@ -4841,7 +4838,7 @@ let pinv_of_factors (type a b) (a : (a, b) t) ~cutoff u s vh =
     |> cast (dtype a)
   in
   let adjoint x =
-    if Nx_dtype.is_complex (dtype a) then matrix_transpose (conjugate x)
+    if Nx_dtype.is Complex (dtype a) then matrix_transpose (conjugate x)
     else matrix_transpose x
   in
   (* Scale V's columns. The singleton belongs immediately before the
@@ -4870,7 +4867,7 @@ let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
       let z = zeros (Value.context vals) (dtype vals) (shape vals) in
       let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
       let vecs_h =
-        if Nx_dtype.is_complex dtype_a then matrix_transpose (conjugate vecs)
+        if Nx_dtype.is Complex dtype_a then matrix_transpose (conjugate vecs)
         else matrix_transpose vecs
       in
       let vh = mul (expand_dims [ -1 ] (cast dtype_a sign_fixed)) vecs_h in
@@ -6005,9 +6002,11 @@ let uniform_filter ~kernel_size ?stride x =
 
 let one_hot ~num_classes index_tensor =
   let dt = dtype index_tensor in
-  if not (Nx_dtype.is_int dt || Nx_dtype.is_uint dt) then
-    err "one_hot" "dtype %s, indices must be integer type"
-      (Nx_dtype.to_string dt);
+  (match Nx_dtype.kind dt with
+  | Signed | Unsigned -> ()
+  | _ ->
+      err "one_hot" "dtype %s, indices must be integer type"
+        (Nx_dtype.to_string dt));
   if num_classes <= 0 then
     err "one_hot" "num_classes %d, must be positive" num_classes;
   (* Compared as int64: the index dtype may not hold every class. *)

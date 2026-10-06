@@ -10,8 +10,8 @@
 let complexes x =
   let x = Nx.place Nx.Placement.host x in
   let dt = Nx.dtype x in
-  if Nx_dtype.is_complex dt then Nx.to_array (Nx.cast Nx.complex128 x)
-  else if Nx_dtype.is_float dt then
+  if Nx_dtype.is Complex dt then Nx.to_array (Nx.cast Nx.complex128 x)
+  else if Nx_dtype.is Float dt then
     Array.map
       (fun re -> { Complex.re; im = 0. })
       (Nx.to_array (Nx.cast Nx.float64 x))
@@ -25,7 +25,7 @@ let bits f = if Float.is_nan f then Int64.minus_one else Int64.bits_of_float f
 
 let same_bits (type a b) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
   let dt = Nx.dtype x in
-  if Nx_dtype.is_float dt || Nx_dtype.is_complex dt then
+  if Nx_dtype.is Float dt || Nx_dtype.is Complex dt then
     let same a b =
       Int64.equal (bits a.Complex.re) (bits b.Complex.re)
       && Int64.equal (bits a.im) (bits b.im)
@@ -100,7 +100,7 @@ let direction r s x =
   Nx.Ptree.map s
     (fun _ t ->
       let shape = Nx.shape t and n = Nx.numel t in
-      if Nx_dtype.is_complex (Nx.dtype t) then
+      if Nx_dtype.is Complex (Nx.dtype t) then
         Nx.cast (Nx.dtype t)
           (Nx.create Nx.complex128 shape
              (Array.init n (fun _ ->

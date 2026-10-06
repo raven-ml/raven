@@ -842,16 +842,11 @@ let jittered (type a b) (c : (a, b) Nx.t) k half : (a, b) Nx.t =
     let u = Nx.Rng.uniform k (Nx.dtype c) shape in
     Nx.add c (Nx.mul_s (Nx.sub_s u 0.5) (2. *. half))
   in
-  match Nx.dtype c with
-  | Nx_dtype.Float64 -> move c
-  | Nx_dtype.Float32 -> move c
-  | Nx_dtype.Float16 -> move c
-  | Nx_dtype.BFloat16 -> move c
-  | Nx_dtype.Float8_e4m3 -> move c
-  | Nx_dtype.Float8_e5m2 -> move c
-  | dt ->
+  match Nx_dtype.kind (Nx.dtype c) with
+  | Float -> move c
+  | _ ->
       invalid_argf "Norn_model.init: a latent site of dtype %s"
-        (Nx_dtype.to_string dt)
+        (Nx_dtype.to_string (Nx.dtype c))
 
 (* [unravel shape k] is the index of the [k]-th element of [shape] in C
    order. *)

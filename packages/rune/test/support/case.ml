@@ -1178,7 +1178,7 @@ let eig_instance values d =
   let* n = int_range 1 3 in
   let* vectors = bool in
   let* pair =
-    if n >= 2 && not (Nx_dtype.is_complex d) then bool else constant false
+    if n >= 2 && not (Nx_dtype.is Complex d) then bool else constant false
   in
   let+ q = values d [| n; n |] and+ w = separated Nx.float64 [||] n in
   let w = Nx.to_array w in

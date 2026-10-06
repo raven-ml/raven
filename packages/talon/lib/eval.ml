@@ -182,7 +182,7 @@ let ordered (type a b) (op : Expr.compare) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
     | `Gt -> Nx.greater x y
     | `Ge -> Nx.greater_equal x y
   in
-  if not (Nx_dtype.is_float (Nx.dtype x)) then r
+  if not (Nx_dtype.is Float (Nx.dtype x)) then r
   else
     let nan_x = Nx.isnan x and nan_y = Nx.isnan y in
     let only a b = Nx.logical_and a (Nx.logical_not b) in

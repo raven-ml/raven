@@ -40,20 +40,14 @@ let bits (type b) (dtype : (float, b) Nx.dtype) =
 
 let constant dtype a = Nx.create dtype [| Array.length a |] a
 
-type map = { f : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t }
-
-let on_float (type a c) fn m (x : (a, c) Nx.t) : (a, c) Nx.t =
-  match Nx.dtype x with
-  | Nx.Float64 -> m.f x
-  | Nx.Float32 -> m.f x
-  | Nx.Float16 -> m.f x
-  | Nx.BFloat16 -> m.f x
-  | Nx.Float8_e4m3 -> m.f x
-  | Nx.Float8_e5m2 -> m.f x
-  | dtype ->
+let on_float (type a c) fn (f : (float, c) Nx.t -> (float, c) Nx.t)
+    (x : (a, c) Nx.t) : (a, c) Nx.t =
+  match Nx_dtype.kind (Nx.dtype x) with
+  | Float -> f x
+  | _ ->
       invalid_arg
         (Printf.sprintf "%s: a %s leaf; the leaves must be float tensors" fn
-           (Nx_dtype.to_string dtype))
+           (Nx_dtype.to_string (Nx.dtype x)))
 
 let shape s =
   "[" ^ String.concat "," (Array.to_list (Array.map string_of_int s)) ^ "]"

@@ -16,16 +16,11 @@ let scalar (type a b) (dt : (a, b) Nx_dtype.t) x =
    zeros — and an optimizer must not update them either. Adam's square root over
    an integer leaf is meaningless, and even plain descent would round its step
    into the value. Carry them instead. *)
-let updates (type a b) (p : (a, b) Nx.t) = Nx_dtype.is_float (Nx.dtype p)
+let updates (type a b) (p : (a, b) Nx.t) = Nx_dtype.is Float (Nx.dtype p)
 
 let float_of_scalar (type a b) (dt : (a, b) Nx_dtype.t) (v : a) : float =
-  match dt with
-  | Nx_dtype.Float16 -> (v : float)
-  | Nx_dtype.Float32 -> (v : float)
-  | Nx_dtype.Float64 -> (v : float)
-  | Nx_dtype.BFloat16 -> (v : float)
-  | Nx_dtype.Float8_e4m3 -> (v : float)
-  | Nx_dtype.Float8_e5m2 -> (v : float)
+  match Nx_dtype.kind dt with
+  | Float -> v
   | _ -> invalid_arg "Vega: expected floating-point dtype"
 
 (* Validation *)

@@ -36,7 +36,7 @@ let coefficients (type f) u (like : (float, f) Nx.t) dirs z : (float, f) Nx.t =
   in
   Nx.Ptree.fold u
     (fun _ p acc ->
-      if not (Nx_dtype.is_float (Nx.dtype p)) then acc
+      if not (Nx_dtype.is Float (Nx.dtype p)) then acc
       else Nx.add acc (Nx.cast (Nx.dtype like) (Nx.sum ~axes:[ 1 ] (rows k p))))
     products (Nx.zeros_like like)
 
@@ -45,7 +45,7 @@ let combine u dirs c z =
   let k = (Nx.shape c).(0) in
   Nx.Ptree.map2 u
     (fun _ d x ->
-      if not (Nx_dtype.is_float (Nx.dtype x)) then x
+      if not (Nx_dtype.is Float (Nx.dtype x)) then x
       else
         let c = Nx.reshape [| 1; k |] (Nx.cast (Nx.dtype x) c) in
         let flat = Nx.matmul c (rows k d) in
@@ -74,7 +74,7 @@ let log_det (type f) (g : (_, f) t) u : (float, f) Nx.t =
   let logs =
     Nx.Ptree.fold u
       (fun _ s acc ->
-        if not (Nx_dtype.is_float (Nx.dtype s)) then acc
+        if not (Nx_dtype.is Float (Nx.dtype s)) then acc
         else Nx.add acc (Nx.cast dt (Nx.sum (Nx.log s))))
       g.scale (Nx.zeros dt [||])
   in
@@ -82,7 +82,7 @@ let log_det (type f) (g : (_, f) t) u : (float, f) Nx.t =
 
 let elements u x =
   Nx.Ptree.fold u
-    (fun _ t n -> if Nx_dtype.is_float (Nx.dtype t) then n + Nx.numel t else n)
+    (fun _ t n -> if Nx_dtype.is Float (Nx.dtype t) then n + Nx.numel t else n)
     x 0
 
 (* Constructors *)
@@ -107,7 +107,7 @@ let matrix (type f) u (like : (float, f) Nx.t) dirs : (float, f) Nx.t =
   let columns =
     Nx.Ptree.fold u
       (fun _ d acc ->
-        if not (Nx_dtype.is_float (Nx.dtype d)) then acc
+        if not (Nx_dtype.is Float (Nx.dtype d)) then acc
         else Nx.cast (Nx.dtype like) (rows k d) :: acc)
       dirs []
   in
@@ -120,7 +120,7 @@ let split u like m =
   let offset = ref 0 in
   Nx.Ptree.map u
     (fun _ x ->
-      if not (Nx_dtype.is_float (Nx.dtype x)) then
+      if not (Nx_dtype.is Float (Nx.dtype x)) then
         Nx.zeros (Nx.dtype x) (Array.append [| k |] (Nx.shape x))
       else
         let n = Nx.numel x in
@@ -157,7 +157,7 @@ let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
   let context = "Norn.Gaussian.of_precision" in
   Nx.Ptree.fold u
     (fun path x () ->
-      if Nx_dtype.is_float (Nx.dtype x) then
+      if Nx_dtype.is Float (Nx.dtype x) then
         Nx.check Nx.Ptree.tensor
           (Nx.logical_and (Nx.greater x (Nx.zeros_like x)) (Nx.isfinite x))
           x
@@ -213,7 +213,7 @@ let log_density u g x =
       let sq =
         Nx.Ptree.fold u
           (fun _ t acc ->
-            if Nx_dtype.is_float (Nx.dtype t) then
+            if Nx_dtype.is Float (Nx.dtype t) then
               Nx.add acc (Nx.cast dt (Nx.sum (Nx.square t)))
             else acc)
           z (Nx.zeros dt [||])
@@ -243,7 +243,7 @@ let variance u g =
   let k = (Nx.shape w).(0) in
   Nx.Ptree.map2 u
     (fun _ s d ->
-      if not (Nx_dtype.is_float (Nx.dtype s)) then s
+      if not (Nx_dtype.is Float (Nx.dtype s)) then s
       else
         let w =
           Nx.reshape

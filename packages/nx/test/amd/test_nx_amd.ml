@@ -122,7 +122,7 @@ let conformance =
 let floats_or_bits =
   Testable.make ~pp:Stored.pp_packed
     ~equal:(fun (Nx.P a as pa) (Nx.P b as pb) ->
-      if not (Nx_dtype.is_float (Nx.dtype a)) then
+      if not (Nx_dtype.is Float (Nx.dtype a)) then
         Testable.equal Stored.packed pa pb
       else
         Nx.shape a = Nx.shape b
@@ -663,7 +663,7 @@ let geometry =
                laid_out))
        served)
 
-let float_dtypes = List.filter (fun (Dtype d) -> Nx_dtype.is_float d) served
+let float_dtypes = List.filter (fun (Dtype d) -> Nx_dtype.is Float d) served
 
 let sums =
   group "sums"
@@ -956,7 +956,7 @@ let multiplied =
                   cover "an empty contraction" (p.k = 0);
                   cover "several tiles" ((p.m > 64 || p.n > 64) && p.k > 16);
                   equal
-                    (if Nx_dtype.is_float d then floats_or_bits
+                    (if Nx_dtype.is Float d then floats_or_bits
                      else Stored.packed)
                     (matmul a b)
                     ((fun (Nx.P y) -> Nx.P (host y)) (matmul (gpu a) (gpu b))))))
@@ -1259,7 +1259,7 @@ let cumprod = List.find (fun r -> r.name = "cumprod") runnings
 (* [run] of [x] along [axis] on the GPU, read back, against the host's: bit for
    bit, but for a NaN of a sum or a product, which is any NaN. *)
 let runs_as_on_host ?msg run axis x =
-  let float = Nx_dtype.is_float (Nx.dtype x) in
+  let float = Nx_dtype.is Float (Nx.dtype x) in
   equal ?msg
     (if run.ordered || not float then Stored.packed else floats_or_bits)
     (Nx.P (run.f axis x))
@@ -1556,7 +1556,7 @@ let scatters_as_on_host ?msg ?(unique = false) mode ~axis ~indices ~values x =
   let f x indices values =
     Nx.scatter ~mode ~unique_indices:unique ~axis ~indices ~values x
   in
-  let float = Nx_dtype.is_float (Nx.dtype x) in
+  let float = Nx_dtype.is Float (Nx.dtype x) in
   equal ?msg
     (if mode = `Add && float then floats_or_bits else Stored.packed)
     (Nx.P (f x indices values))
@@ -1603,7 +1603,7 @@ let scattered =
              (* Updates of the indices' shape, from [x]'s values. *)
              let values = Nx.flip (Nx.take_along_axis ~axis ~indices x) in
              let unique = unique && distinct axis indices in
-             let float = Nx_dtype.is_float (Nx.dtype x) in
+             let float = Nx_dtype.is Float (Nx.dtype x) in
              List.iter (fun m -> cover (mode_name m) (m = mode)) modes;
              cover "strided" (not (Nx.is_c_contiguous x));
              cover "duplicates" (not (distinct axis indices));
@@ -1779,7 +1779,7 @@ let windows_as_on_host ?msg g x =
   let output_size = Array.sub (Nx.shape x) (r - k) k in
   let p = patches g x and gp = patches g (on_gpu x) in
   equal ?msg Stored.packed (Nx.P p) (Nx.P (host gp));
-  let float = Nx_dtype.is_float (Nx.dtype x) in
+  let float = Nx_dtype.is Float (Nx.dtype x) in
   equal ?msg
     (if float then floats_or_bits else Stored.packed)
     (Nx.P (combined g output_size p))

@@ -26,11 +26,12 @@ val constant : (float, 'b) Nx.dtype -> float array -> (float, 'b) Nx.t
 (** [constant dtype a] is [a] as a 1-D tensor of [dtype], each element computed
     on the host in float64 and rounded once. *)
 
-type map = { f : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t }
-(** The type for maps of float tensors of any dtype. *)
-
-val on_float : string -> map -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t
-(** [on_float fn m x] is [m.f x] for a float [x].
+val on_float :
+  string ->
+  ((float, 'c) Nx.t -> (float, 'c) Nx.t) ->
+  ('a, 'c) Nx.t ->
+  ('a, 'c) Nx.t
+(** [on_float fn f x] is [f x] for a float [x].
 
     Raises [Invalid_argument] naming [fn] if [x] is not a float tensor. *)
 

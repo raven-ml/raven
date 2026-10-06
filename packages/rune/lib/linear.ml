@@ -27,7 +27,7 @@ type tape = {
 type (_, _) Repr.node +=
   | Slot : { tape : tape; index : int } -> ('a, 'b) Repr.node
 
-let real_or_complex dt = Nx_dtype.is_float dt || Nx_dtype.is_complex dt
+let real_or_complex dt = Nx_dtype.is Float dt || Nx_dtype.is Complex dt
 let differentiable x = real_or_complex (Nx.dtype x)
 
 (* A complex element is the pair of its components, so a bitcast between a
@@ -348,7 +348,7 @@ let transpose_op : type a b.
          between the two conjugates its complex side. [Nx.conjugate] leaves the
          real side as it is. *)
       let back ct = Nx.bitcast (Nx.dtype x) ct in
-      if Nx_dtype.is_complex (Nx.dtype x) = Nx_dtype.is_complex (Nx.dtype ct)
+      if Nx_dtype.is Complex (Nx.dtype x) = Nx_dtype.is Complex (Nx.dtype ct)
       then add cts x (back ct)
       else add cts x (Nx.conjugate (back (Nx.conjugate ct)))
   | Gather (axis, indices, x) ->

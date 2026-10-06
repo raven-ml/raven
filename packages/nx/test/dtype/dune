@@ -1,4 +1,4 @@
 (tests
- (names test_float_codecs test_limits)
+ (names test_float_codecs test_limits test_kind)
  (package nx)
  (libraries nx nx.array nx.device nx.dtype windtrap))

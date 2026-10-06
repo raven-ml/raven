@@ -217,23 +217,38 @@ let to_string dt = Scalar.to_string (Scalar.of_dtype dt)
 let pp ppf dt = Format.pp_print_string ppf (to_string dt)
 let itemsize dt = (Scalar.bitsize (Scalar.of_dtype dt) + 7) / 8
 
-let is_float (type a b) (dt : (a, b) t) =
-  match dt with
-  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 -> true
-  | _ -> false
+(* Kinds *)
 
-let is_complex (type a b) (dt : (a, b) t) =
-  match dt with Complex64 | Complex128 -> true | _ -> false
+type 'a kind =
+  | Float : float kind
+  | Complex : Complex.t kind
+  | Signed : 'a kind
+  | Unsigned : 'a kind
+  | Boolean : bool kind
 
-let is_int (type a b) (dt : (a, b) t) =
-  match dt with
-  | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
-  | UInt64 ->
-      true
-  | _ -> false
+(* One arm per constructor: an or-pattern would not learn [a]. *)
+let kind : type a b. (a, b) t -> a kind = function
+  | Float16 -> Float
+  | Float32 -> Float
+  | Float64 -> Float
+  | BFloat16 -> Float
+  | Float8_e4m3 -> Float
+  | Float8_e5m2 -> Float
+  | Complex64 -> Complex
+  | Complex128 -> Complex
+  | Int4 | Int8 | Int16 | Int32 | Int64 -> Signed
+  | UInt4 | UInt8 | UInt16 | UInt32 | UInt64 -> Unsigned
+  | Bool -> Boolean
+  | Bit -> Boolean
 
-let is_uint (type a b) (dt : (a, b) t) =
-  match dt with UInt4 | UInt8 | UInt16 | UInt32 | UInt64 -> true | _ -> false
+let is (type k a b) (k : k kind) (dt : (a, b) t) =
+  match (k, kind dt) with
+  | Float, Float -> true
+  | Complex, Complex -> true
+  | Signed, Signed -> true
+  | Unsigned, Unsigned -> true
+  | Boolean, Boolean -> true
+  | (Float | Complex | Signed | Unsigned | Boolean), _ -> false
 
 (* Constants *)
 

@@ -3527,6 +3527,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_dtype.kind dt` is the kind of number a dtype holds,
+  `Float`, `Complex`, `Signed`, `Unsigned` or `Boolean`, and its `Float` arm
+  makes a tensor of any dtype a float tensor. `Nx_dtype.is_float`,
+  `is_complex`, `is_int` and `is_uint` are `Nx_dtype.is Float`, `is Complex`,
+  a match on `Signed | Unsigned`, and `is Unsigned`.
 - Add `Nx_device.Program.entry`, the address of a C function that a host
   program calls to call another host program, split as `Program.call` splits
   it, and that profiles record as a call.

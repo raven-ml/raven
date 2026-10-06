@@ -187,17 +187,33 @@ val itemsize : ('a, 'b) t -> int
     [1] for {!Bit}, {!Int4} and {!UInt4}. {!Scalar.bitsize} gives the exact
     width. *)
 
-val is_float : ('a, 'b) t -> bool
-(** [is_float dt] is [true] iff [dt] is a real floating-point dtype. *)
+(** {1:kinds Kinds}
 
-val is_complex : ('a, 'b) t -> bool
-(** [is_complex dt] is [true] iff [dt] is {!Complex64} or {!Complex128}. *)
+    Every dtype holds one of five kinds of number. Matching a dtype's kind
+    learns its value type where the kind fixes one: in the [Float] arm of
+    [match kind (Nx.dtype x) with Float -> f x | _ -> …], [x] is a tensor of
+    [float]s, of any float dtype. *)
 
-val is_int : ('a, 'b) t -> bool
-(** [is_int dt] is [true] iff [dt] is an integer dtype, signed or unsigned. *)
+(** The type for kinds of number. ['a] is the value type of the dtypes of the
+    kind. Integers are carried in [int], [int32] or [int64] depending on their
+    width, so {!Signed} and {!Unsigned} fix no value type. *)
+type 'a kind =
+  | Float : float kind
+      (** Real floating-point: {!Float16}, {!Float32}, {!Float64}, {!BFloat16},
+          {!Float8_e4m3} and {!Float8_e5m2}. *)
+  | Complex : Complex.t kind  (** Complex: {!Complex64} and {!Complex128}. *)
+  | Signed : 'a kind
+      (** Signed integers: {!Int4}, {!Int8}, {!Int16}, {!Int32} and {!Int64}. *)
+  | Unsigned : 'a kind
+      (** Unsigned integers: {!UInt4}, {!UInt8}, {!UInt16}, {!UInt32} and
+          {!UInt64}. *)
+  | Boolean : bool kind  (** Booleans: {!Bool} and {!Bit}. *)
 
-val is_uint : ('a, 'b) t -> bool
-(** [is_uint dt] is [true] iff [dt] is an unsigned integer dtype. *)
+val kind : ('a, 'b) t -> 'a kind
+(** [kind dt] is the kind of number [dt] holds. *)
+
+val is : 'k kind -> ('a, 'b) t -> bool
+(** [is k dt] is [true] iff [kind dt] is [k]. *)
 
 (** {1:constants Constants} *)
 

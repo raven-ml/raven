@@ -1188,7 +1188,7 @@ module Rng = struct
 end
 
 let validate_random_float_params op dtype shape =
-  if not (Nx_dtype.is_float dtype) then
+  if not (Nx_dtype.is Float dtype) then
     err op
       "dtype %s, not a float type, rand/randn only support Float16, Float32, \
        Float64"

@@ -45,7 +45,7 @@ let v s ~breaks c =
   let n = Nx.dim 0 breaks - 1 in
   Nx.Ptree.fold s
     (fun path x () ->
-      ignore (Num.on_float fn { f = Fun.id } x);
+      ignore (Num.on_float fn Fun.id x);
       if Nx.ndim x < 2 || Nx.dim 0 x <> n then
         fail fn
           "%s: shape %s; a leaf has shape [pieces; degree + 1] @ value, with \
@@ -150,7 +150,7 @@ let chebyshev s ~degree ~pieces f a b =
             (Nx.Ptree.Path.to_string path)
             (Num.shape shape)
             (Num.shape (Nx.shape points));
-        Num.on_float fn { f = Cheb.fit } x)
+        Num.on_float fn Cheb.fit x)
       values
   in
   { s; breaks; coefficients; extension = Cheb.Bounded }
@@ -191,7 +191,7 @@ let adapt s ~degree ~tol ~budget f a b =
             (Nx.Ptree.Path.to_string path)
             (Num.shape shape)
             (Num.shape (Nx.shape pts));
-        Num.on_float fn { f = Cheb.fit } y)
+        Num.on_float fn Cheb.fit y)
       (f pts)
   in
   (* Each piece's tail against [tol]: the root mean square, over its components,
@@ -202,16 +202,13 @@ let adapt s ~degree ~tol ~budget f a b =
       Nx.Ptree.fold s
         (fun _ x acc ->
           Num.on_float fn
-            {
-              f =
-                (fun x ->
-                  let k = Nx.dim 0 x in
-                  let flat = Nx.reshape [| k; m; -1 |] x in
-                  let last i = Nx.abs (Nx.get [ i ] (Nx.moveaxis 1 0 flat)) in
-                  let e = Nx.maximum (last degree) (last (degree - 1)) in
-                  let y = Nx.max ~axes:[ 1 ] (Nx.abs flat) in
-                  Nx.cast (Nx.dtype x) (Tol.ratio tol ~e ~y));
-            }
+            (fun x ->
+              let k = Nx.dim 0 x in
+              let flat = Nx.reshape [| k; m; -1 |] x in
+              let last i = Nx.abs (Nx.get [ i ] (Nx.moveaxis 1 0 flat)) in
+              let e = Nx.maximum (last degree) (last (degree - 1)) in
+              let y = Nx.max ~axes:[ 1 ] (Nx.abs flat) in
+              Nx.cast (Nx.dtype x) (Tol.ratio tol ~e ~y))
             x
           |> fun r -> Nx.cast dtype r :: acc)
         c []
@@ -298,14 +295,9 @@ let adapt s ~degree ~tol ~budget f a b =
         Nx.Ptree.map s
           (fun _ x ->
             Num.on_float fn
-              {
-                f =
-                  (fun x ->
-                    let tail i =
-                      Nx.abs (Nx.slice [ Nx.A; Nx.R (i, i + 1) ] x)
-                    in
-                    Nx.maximum (tail degree) (tail (degree - 1)));
-              }
+              (fun x ->
+                let tail i = Nx.abs (Nx.slice [ Nx.A; Nx.R (i, i + 1) ] x) in
+                Nx.maximum (tail degree) (tail (degree - 1)))
               x)
           best.coefficients;
     }
@@ -338,14 +330,11 @@ let series fn p q i u =
   Nx.Ptree.map p.s
     (fun _ c ->
       Num.on_float fn
-        {
-          f =
-            (fun c ->
-              let g = Nx.take ~axis:0 ~indices:i c in
-              let y = Cheb.clenshaw (Nx.cast (Nx.dtype c) u) g in
-              let value = Array.sub (Nx.shape c) 2 (Nx.ndim c - 2) in
-              Nx.reshape (Array.append q value) y);
-        }
+        (fun c ->
+          let g = Nx.take ~axis:0 ~indices:i c in
+          let y = Cheb.clenshaw (Nx.cast (Nx.dtype c) u) g in
+          let value = Array.sub (Nx.shape c) 2 (Nx.ndim c - 2) in
+          Nx.reshape (Array.append q value) y)
         c)
     p.coefficients
 
@@ -357,17 +346,13 @@ let eval p x =
   Nx.Ptree.map p.s
     (fun _ y ->
       Num.on_float fn
-        {
-          f =
-            (fun y ->
-              let mask =
-                Nx.reshape
-                  (Array.append (Nx.shape x)
-                     (Array.make (Nx.ndim y - Nx.ndim x) 1))
-                  nan
-              in
-              Nx.where mask (Nx.full_like y Float.nan) y);
-        }
+        (fun y ->
+          let mask =
+            Nx.reshape
+              (Array.append (Nx.shape x) (Array.make (Nx.ndim y - Nx.ndim x) 1))
+              nan
+          in
+          Nx.where mask (Nx.full_like y Float.nan) y)
         y)
     (series fn p (Nx.shape x) i u)
 
@@ -404,8 +389,7 @@ let calculus fn { op } p =
   let w = widths p in
   let coefficients =
     Nx.Ptree.map p.s
-      (fun _ c ->
-        Num.on_float fn { f = (fun c -> op (Nx.cast (Nx.dtype c) w) c) } c)
+      (fun _ c -> Num.on_float fn (fun c -> op (Nx.cast (Nx.dtype c) w) c) c)
       p.coefficients
   in
   { p with coefficients }

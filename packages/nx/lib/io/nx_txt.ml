@@ -203,7 +203,6 @@ let parse_u64 name token =
 let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
     (module SPEC with type elt = a and type kind = b) option =
   let name = Nx_dtype.to_string dtype in
-  let kind = dtype in
   let open Nx_dtype in
   match dtype with
   | Float16 ->
@@ -212,7 +211,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = float
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_float
           let parse t = parse_float name t
         end)
@@ -222,7 +221,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = float
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_float
           let parse t = parse_float name t
         end)
@@ -232,7 +231,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = float
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_float
           let parse t = parse_float name t
         end)
@@ -242,7 +241,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = float
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_float
           let parse t = parse_float name t
         end)
@@ -252,7 +251,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_int
           let parse t = parse_int_with_bounds name t ~min:(-128) ~max:127
         end)
@@ -262,7 +261,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_int
           let parse t = parse_int_with_bounds name t ~min:0 ~max:255
         end)
@@ -272,7 +271,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_int
           let parse t = parse_int_with_bounds name t ~min:(-32768) ~max:32767
         end)
@@ -282,7 +281,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_int
           let parse t = parse_int_with_bounds name t ~min:0 ~max:65535
         end)
@@ -292,7 +291,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int32
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_int32
           let parse t = parse_i32 name t
         end)
@@ -302,7 +301,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int32
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_uint32
 
           let parse t =
@@ -315,7 +314,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int64
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_int64
           let parse t = parse_i64 name t
         end)
@@ -325,7 +324,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = int64
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_uint64
           let parse t = parse_u64 name t
         end)
@@ -335,7 +334,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = bool
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_bool
           let parse = parse_bool
         end)
@@ -345,7 +344,7 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type elt = bool
           type kind = b
 
-          let kind = kind
+          let kind = dtype
           let print = print_bool
           let parse = parse_bool
         end)

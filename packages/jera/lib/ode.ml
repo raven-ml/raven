@@ -327,14 +327,7 @@ let error_norm (type t) y tol (dtype : (float, t) Nx.dtype) e v w =
       let r = Tol.ratio tol ~e ~y:(Nx.maximum (Nx.abs v) (Nx.abs w)) in
       [ Nx.reshape [| -1 |] (Nx.cast dtype r) ]
     in
-    match Nx.dtype e with
-    | Nx.Float64 -> go e
-    | Nx.Float32 -> go e
-    | Nx.Float16 -> go e
-    | Nx.BFloat16 -> go e
-    | Nx.Float8_e4m3 -> go e
-    | Nx.Float8_e5m2 -> go e
-    | _ -> []
+    match Nx_dtype.kind (Nx.dtype e) with Float -> go e | _ -> []
   in
   let rows =
     List.concat
@@ -1083,8 +1076,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
   let value =
     series
       (Nx.Ptree.map y
-         (fun _ x ->
-           held (Num.on_float fn { f = Cheb.fit } (orient [ 0; 1 ] x)))
+         (fun _ x -> held (Num.on_float fn Cheb.fit (orient [ 0; 1 ] x)))
          nodes)
   in
   let error =

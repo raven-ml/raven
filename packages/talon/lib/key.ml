@@ -16,15 +16,10 @@ let parts re im = Nx.stack ~axis:(Nx.ndim re) [ float re; float im ]
 
 let element : type a b. (a, b) Nx.t -> Nx.uint64_t =
  fun x ->
-  match Nx.dtype x with
-  | Float16 -> float x
-  | Float32 -> float x
-  | Float64 -> float x
-  | BFloat16 -> float x
-  | Float8_e4m3 -> float x
-  | Float8_e5m2 -> float x
-  | Complex64 -> parts (Nx.real Nx.float32 x) (Nx.imag Nx.float32 x)
-  | Complex128 -> parts (Nx.real Nx.float64 x) (Nx.imag Nx.float64 x)
+  match (Nx_dtype.kind (Nx.dtype x), Nx.dtype x) with
+  | Float, _ -> float x
+  | _, Complex64 -> parts (Nx.real Nx.float32 x) (Nx.imag Nx.float32 x)
+  | _, Complex128 -> parts (Nx.real Nx.float64 x) (Nx.imag Nx.float64 x)
   | _ -> Nx.order_key Nx.uint64 x
 
 (* [code use r] numbers the rows of [r] by their elements. *)

@@ -1357,7 +1357,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
   (* A factorization of integers raises, as nx.cpu's does. *)
   let factored x =
     let dt = Nx.dtype x in
-    if not (Nx_dtype.is_float dt || Nx_dtype.is_complex dt) then
+    if not (Nx_dtype.is Float dt || Nx_dtype.is Complex dt) then
       invalid_arg (what ^ ": linalg requires a float or complex dtype");
     n x
   in
