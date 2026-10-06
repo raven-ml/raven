@@ -2139,16 +2139,15 @@ let one_check =
       cover "a pass" (Option.is_none expected);
       let at f = Option.map (fun (k, d) -> (f k, d)) expected in
       let flat_at = at string_of_int in
-      let lane_at = at (fun k -> Printf.sprintf "%d,%d" (k / 3) (k mod 3)) in
-      let trip_at = at (fun k -> string_of_int (k mod 3)) in
+      let row_at = at (fun k -> string_of_int (k mod 3)) in
       equal ~msg:"eager" outcomes flat_at (outcome doubled flat);
       equal ~msg:"compiled" outcomes flat_at (outcome (Rune.jit' doubled) flat);
-      equal ~msg:"mapped" outcomes lane_at
+      equal ~msg:"mapped" outcomes row_at
         (outcome (Rune.vmap' doubled) (rows xs));
-      equal ~msg:"mapped and compiled" outcomes lane_at
+      equal ~msg:"mapped and compiled" outcomes row_at
         (outcome (Rune.jit' (Rune.vmap' doubled)) (rows xs));
-      equal ~msg:"in a scan" outcomes trip_at (outcome scanned (rows xs));
-      equal ~msg:"in a staged scan" outcomes trip_at
+      equal ~msg:"in a scan" outcomes row_at (outcome scanned (rows xs));
+      equal ~msg:"in a staged scan" outcomes row_at
         (outcome (Rune.jit' scanned) (rows xs)))
 
 (* [Pair (i, x, n)] is a failure at index [i] with the data [x] and [n]. *)

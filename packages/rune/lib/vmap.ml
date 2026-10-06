@@ -293,13 +293,14 @@ let run : type r. t -> r Nx.Op.t -> r =
           from the mapped function instead")
   | Check c ->
       (* The lanes' axis comes first, so the first failure is in the first
-         failing lane, and its index starts with the lane. *)
+         failing lane; its index drops the lane, and its data are that lane's
+         elements there. *)
       eval
         (Check
            {
-             c with
              ok = b c.ok;
              data = List.map (fun (Nx.P x) -> Nx.P (b x)) c.data;
+             fail = (fun i d -> c.fail (Array.sub i 1 (Array.length i - 1)) d);
            })
 
 (* Constructs *)

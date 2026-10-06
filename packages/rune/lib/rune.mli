@@ -456,8 +456,8 @@ val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     on the lanes raises, and {!Nx.where} selects per lane.
 
     A check in [f] ({!Nx.check}) raises the exception of its first failing lane,
-    with that lane prefixed to the index, each enclosing map's lane outside it.
-    Its data are the lane's elements there.
+    built from that lane's own index and its data there, as the lane alone
+    would raise it.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument;
     and when applied to its arguments if they have no tensor, if a tensor is a

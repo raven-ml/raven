@@ -208,8 +208,6 @@ All notable changes to this project will be documented in this file.
 - A compiled check returns its data at the failing index, so a compiled
   `Nx.check` raises the exception an eager call raises, built from computed
   values; a staged scan's check reads its first failing trip.
-- **Breaking:** under `Rune.vmap`, a failing check's index starts with the
-  failing lane, where it used to drop it.
 - `Rune.jit` computes `Nx.i0e` and `Nx.i1e` as nx does eagerly, and their
   derivatives are within the bounds `rune.mli` states, eagerly and compiled.
 - `Rune.jit` compiles `Nx.erfinv` at `float64` 2.4 times as fast and its

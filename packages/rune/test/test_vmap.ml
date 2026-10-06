@@ -136,35 +136,56 @@ let checks =
   [
     test
       "a check names the first false element of the first lane that has one, \
-       the lane first" (fun () ->
+       by the lane's index" (fun () ->
         let rows =
           Nx.create f64 [| 3; 3 |] [| 0.; 0.; 0.; 0.; 0.; 5.; 7.; 0.; 0. |]
         in
-        raises (Invalid_argument "element 1,2") (fun () ->
+        raises (Invalid_argument "element 2") (fun () ->
             Rune.vmap' below_one rows));
     test "a check that holds in every lane passes" (fun () ->
         equal floats [| 0.; 0.5 |]
           (values (Rune.vmap' below_one (vec [| 0.; 0.5 |]))));
-    test "a check of mapped matrices names the lane, then the matrix's index"
-      (fun () ->
+    test "a check of mapped matrices names the matrix's index" (fun () ->
         let ms =
           Nx.create f64 [| 2; 2; 2 |] [| 0.; 0.; 0.; 0.; 0.; 0.; 3.; 0. |]
         in
-        raises (Invalid_argument "element 1,1,0") (fun () ->
+        raises (Invalid_argument "element 1,0") (fun () ->
             Rune.vmap' below_one ms));
     test "a sampler's mapped parameter is checked lane by lane" (fun () ->
         let rows = Nx.create f64 [| 2; 2 |] [| 0.5; 0.5; 0.5; 2. |] in
         raises
           (Invalid_argument
-             "Nx.Rng.gamma: concentration at [0; 0] is -0.5, not in (0, inf)")
+             "Nx.Rng.gamma: concentration at [0] is -0.5, not in (0, inf)")
           (fun () -> Rune.vmap' (Nx.Rng.gamma (Nx.Rng.key 0)) (Nx.neg rows));
         raises
-          (Invalid_argument "Nx.Rng.bernoulli: p at [1; 1] is 2, not in [0, 1]")
+          (Invalid_argument "Nx.Rng.bernoulli: p at [1] is 2, not in [0, 1]")
           (fun () -> Rune.vmap' (Nx.Rng.bernoulli (Nx.Rng.key 0)) rows));
     test "a check of mapped values compiles" (fun () ->
         let rows = Nx.create f64 [| 2; 2 |] [| 0.; 0.; 0.; 4. |] in
-        raises (Invalid_argument "element 1,1") (fun () ->
+        raises (Invalid_argument "element 1") (fun () ->
             Rune.jit' (Rune.vmap' below_one) rows));
+    test "a check's data are the failing lane's elements at its own index"
+      (fun () ->
+        let f x =
+          Nx.check Nx.Ptree.tensor (Nx.less_s x 1.) (Nx.mul_s x 2.) (fun i d ->
+              Invalid_argument
+                (Printf.sprintf "element %s is %g"
+                   (String.concat ","
+                      (Array.to_list (Array.map string_of_int i)))
+                   (Nx.item [] d)));
+          x
+        in
+        let rows = Nx.create f64 [| 2; 2 |] [| 0.; 0.; 0.; 4. |] in
+        raises (Invalid_argument "element 1 is 8") (fun () -> Rune.vmap' f rows);
+        raises (Invalid_argument "element 1 is 8") (fun () ->
+            Rune.jit' (Rune.vmap' f) rows));
+    test "nested maps report the innermost lane's own index" (fun () ->
+        let cube =
+          Nx.init f64 [| 2; 2; 2 |] (fun i ->
+              if i = [| 1; 0; 1 |] then 5. else 0.)
+        in
+        raises (Invalid_argument "element 1") (fun () ->
+            Rune.vmap' (Rune.vmap' below_one) cube));
   ]
 
 (* Randomness *)
