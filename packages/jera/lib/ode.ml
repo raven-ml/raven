@@ -1279,7 +1279,7 @@ let combinations lags top =
   |> List.filter (fun k -> List.fold_left ( + ) 0 k >= 1)
   |> List.map (fun k -> Array.of_list (List.map float k))
 
-let delay y m ~tol ~budget ~pieces ~lags ~history f ~at y0 =
+let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
   let fn = "Jera.Ode.delay" in
   check fn ~at ~budget;
   if pieces < 1 then

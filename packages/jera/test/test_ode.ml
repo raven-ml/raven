@@ -786,9 +786,9 @@ let lagged _ _ d = Nx.neg (Nx.squeeze ~axes:[ 0 ] d)
 
 let delayed ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) ?(pieces = 64)
     ?(lags = vec [| 1. |]) ?(c = scalar 1.) ?(f = lagged) at =
-  Ode.delay one Ode.tsit5 ~tol ~budget:400 ~pieces ~lags
+  Ode.delay one Ode.tsit5 ~tol ~budget:400 ~pieces f ~lags
     ~history:(fun _ -> c)
-    f ~at (Nx.reshape [||] c)
+    ~at (Nx.reshape [||] c)
 
 let delay_tests =
   let close = Oracle.tensor ~rel:1e-10 ~abs:1e-12 () in
@@ -805,8 +805,9 @@ let delay_tests =
         let s =
           Ode.delay one Ode.tsit5
             ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
-            ~budget:400 ~pieces:64 ~lags:(vec [| 1. |]) ~history:Nx.exp
+            ~budget:400 ~pieces:64
             (fun _ _ d -> Nx.mul_s (Nx.squeeze ~axes:[ 0 ] d) e)
+            ~lags:(vec [| 1. |]) ~history:Nx.exp
             ~at:(vec [| 0.; 0.5; 1.7; 3. |])
             (scalar 1.)
         in
@@ -834,9 +835,9 @@ let delay_tests =
         let s =
           Ode.delay one Ode.tsit5
             ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
-            ~budget:400 ~pieces:64
+            ~budget:400 ~pieces:64 f
             ~lags:(vec [| 1.; 0.5 |])
-            ~history:solution f ~at
+            ~history:solution ~at
             (solution (scalar 0.))
         in
         equal
@@ -866,9 +867,9 @@ let delay_tests =
              ~substring:"Jera.Ode.delay: history returned a value of another")
           (fun () ->
             Ode.delay one Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:10 ~pieces:4
-              ~lags:(vec [| 1. |])
+              lagged ~lags:(vec [| 1. |])
               ~history:(fun _ -> vec [| 1. |])
-              lagged ~at:times (scalar 1.)));
+              ~at:times (scalar 1.)));
     test "a lag that is not positive ends the lane Stalled" (fun () ->
         let s = delayed ~lags:(vec [| 0. |]) times in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)

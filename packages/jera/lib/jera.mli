@@ -1158,13 +1158,13 @@ module Ode : sig
     tol:Tol.t ->
     budget:int ->
     pieces:int ->
+    ('t time -> 'y -> 'y -> 'y) ->
     lags:'t time ->
     history:('t time -> 'y) ->
-    ('t time -> 'y -> 'y -> 'y) ->
     at:'t time ->
     'y ->
     'y Solution.t
-  (** [delay y m ~tol ~budget ~pieces ~lags ~history f ~at y0] is the state at
+  (** [delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0] is the state at
       each time of [at], increasing, of the solution of
       [y' t = f t (y t) (y (t − τ))] for the constant lags [τ] of [lags], 1-D,
       from [y0] at [at.(0)], stacked as {!sample} stacks them. [f]'s third
@@ -1181,13 +1181,13 @@ module Ode : sig
       extension's order (Bellen and Zennaro, 2003). {b Error.} As {!sample}'s. A
       lag that is not positive, or the largest lag reaching back past the last
       [pieces] accepted steps, ends the lane [Stalled], and its report names the
-      count that would hold it, as do times of [at] that do not increase.
-      {b Cost.} Each stage reads [lags] delayed states, each a binary search of
-      the [pieces] pieces and a series of the extension's degree; the carry
-      holds [pieces] pieces, so a compiled reverse keeps [budget × pieces].
-      {b Derivative.} The answer reads its own tracked pieces, so the derivative
-      reaches the delayed states, [history], the lags and every tracked value
-      [f] reads.
+      count that would hold it. Times of [at] that do not increase end the lane
+      [Stalled] too. {b Cost.} Each stage reads [lags] delayed states, each a
+      binary search of the [pieces] pieces and a series of the extension's
+      degree; the carry holds [pieces] pieces, so a compiled reverse keeps
+      [budget × pieces]. {b Derivative.} The answer reads its own tracked
+      pieces, so the derivative reaches the delayed states, [history], the lags
+      and every tracked value [f] reads.
 
       Raises [Invalid_argument] if [budget < 1], if [pieces < 1], if [at] is not
       a non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if

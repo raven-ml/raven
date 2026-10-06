@@ -303,10 +303,10 @@ let delay =
           (Ode.delay Nx.Ptree.tensor Ode.tsit5
              ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
              ~budget:200 ~pieces:32
-             ~lags:(Nx.create f64 [| 1 |] [| 1. |])
-             ~history:(fun _ -> Nx.full_like r 0.5)
              (fun _ y d ->
                Nx.mul (Nx.mul r y) (Nx.rsub_s 1. (Nx.squeeze ~axes:[ 0 ] d)))
+             ~lags:(Nx.create f64 [| 1 |] [| 1. |])
+             ~history:(fun _ -> Nx.full_like r 0.5)
              ~at:times (Nx.full_like r 0.5)));
     x = (fun () -> Nx.linspace f64 0.5 1.5 100);
     rows = all;
