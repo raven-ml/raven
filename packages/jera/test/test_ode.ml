@@ -737,6 +737,42 @@ let event_tests =
         let t, _, i = Solution.get (plateau ~after:(-1.)) in
         equal (Oracle.tensor ()) (index (-1l)) i;
         equal (Oracle.tensor ()) (scalar 5.) t);
+    test "at t1 = t0 the answer is (t0, y0, -1), converged" (fun () ->
+        let s = drop ~t1:0. (fun _ (q, _) -> q) (scalar 10.) in
+        let t, (q, _), i = Solution.get s in
+        equal (Oracle.tensor ()) (scalar 0.) t;
+        equal (Oracle.tensor ()) (scalar 10.) q;
+        equal (Oracle.tensor ()) (index (-1l)) i);
+    test "a ball bounces by restarts with the crossing component at zero"
+      (fun () ->
+        (* Each bounce keeps 0.9 of the speed, so the flights after the first
+           fall last 2 (0.9^k) v / g = 2 (0.9^k) t*, v = g t* the speed at the
+           first impact. *)
+        let rec bounces t (q, p) n acc =
+          if n = 0 then List.rev acc
+          else
+            let t', (_, p'), _ =
+              Solution.get
+                (Ode.event pair Ode.tsit5
+                   ~tol:(Tol.v ~rel:1e-12 ~abs:1e-12)
+                   ~budget:200 fall
+                   ~event:(fun _ (q, _) -> q)
+                   ~t0:t ~t1:(scalar 20.) (q, p))
+            in
+            bounces t'
+              (Nx.zeros_like q, Nx.mul_s p' (-0.9))
+              (n - 1) (Nx.item [] t' :: acc)
+        in
+        let first = reaches 10. 0. in
+        let flight k = 2. *. Float.pow 0.9 (Float.of_int k) *. first in
+        let expected =
+          [ first; first +. flight 1; first +. flight 1 +. flight 2 ]
+        in
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (vec (Array.of_list expected))
+          (vec
+             (Array.of_list (bounces (scalar 0.) (scalar 10., scalar 0.) 3 []))));
     test "a zero at t0 is not a crossing" (fun () ->
         let _, _, i =
           Solution.get
