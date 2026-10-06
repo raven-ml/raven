@@ -7,15 +7,15 @@
    to float32, the exponential of a float32 value, the sum of two, the sum of
    one's elements and their running sum, a uniform draw, a sort with its
    positions (at 4K and 1M: the host's sort of 16M overruns a case's deadline),
-   a gather of every element at drawn positions, the concatenation of two halves
-   and a square padded by one, at 4K, 1M and 16M elements, and the product of a
-   float32 square matrix by itself, of 128, 1,024 and 4,096 rows, timed to the
-   work's completion, and the first use of a kernel in a fresh process, which
-   opens the GPU and loads the kernel's code objects. AMD loads code objects
-   with no compiler, so the first use has no cold and warm cases. Rows exist for
-   the GPUs the machine has: AMD GPU 0 under the kernel driver. The GPU is
-   opened in each measuring worker, never in the parent that forks them; the
-   host twins run on every machine. *)
+   a gather of every element at drawn positions, a sum of as many updates at
+   drawn positions, the concatenation of two halves and a square padded by one,
+   at 4K, 1M and 16M elements, and the product of a float32 square matrix by
+   itself, of 128, 1,024 and 4,096 rows, timed to the work's completion, and the
+   first use of a kernel in a fresh process, which opens the GPU and loads the
+   kernel's code objects. AMD loads code objects with no compiler, so the first
+   use has no cold and warm cases. Rows exist for the GPUs the machine has: AMD
+   GPU 0 under the kernel driver. The GPU is opened in each measuring worker,
+   never in the parent that forks them; the host twins run on every machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -104,6 +104,12 @@ let cases ~gpu size =
   @ rows ~put:two ~gpu "gather" size
       ~input:(fun n -> (floats n, positions n))
       ~op:(fun (x, indices) -> Nx.take ~indices x)
+  @ rows
+      ~put:(fun p (x, i, v) -> (Nx.place p x, Nx.place p i, Nx.place p v))
+      ~gpu "scatter-add" size
+      ~input:(fun n -> (Nx.zeros Nx.float32 [| n |], positions n, floats n))
+      ~op:(fun (x, indices, values) ->
+        Nx.scatter ~mode:`Add ~axis:0 ~indices ~values x)
   @ rows ~put:two ~gpu "cat" size
       ~input:(fun n -> (floats (n / 2), floats (n / 2)))
       ~op:(fun (a, b) -> Nx.concatenate ~axis:0 [ a; b ])

@@ -1488,6 +1488,197 @@ let sort_cases =
           equal (array int64) [| 4L; 2L; 0L; 1L; 3L |] (got true));
     ]
 
+(* Scatters *)
+
+let modes = [ `Set; `Add; `Max; `Min ]
+
+let mode_name = function
+  | `Set -> "set"
+  | `Add -> "add"
+  | `Max -> "max"
+  | `Min -> "min"
+
+(* [x] scattered on the GPU, read back, against the host's: bit for bit, but for
+   a NaN a float sum makes, which is any NaN. *)
+let scatters_as_on_host ?msg ?(unique = false) mode ~axis ~indices ~values x =
+  let f x indices values =
+    Nx.scatter ~mode ~unique_indices:unique ~axis ~indices ~values x
+  in
+  let float = Nx_dtype.is_float (Nx.dtype x) in
+  equal ?msg
+    (if mode = `Add && float then floats_or_bits else Stored.packed)
+    (Nx.P (f x indices values))
+    (Nx.P (host (f (on_gpu x) (on_gpu indices) (on_gpu values))))
+
+(* Whether no two indices of a row along [axis] are equal. *)
+let distinct axis indices =
+  let k = Nx.dim axis indices in
+  let rows = Nx.to_array (Nx.moveaxis axis (Nx.ndim indices - 1) indices) in
+  let ok = ref true in
+  Array.iteri
+    (fun i v ->
+      for j = i - (i mod Int.max k 1) to i - 1 do
+        if rows.(j) = v then ok := false
+      done)
+    rows;
+  !ok
+
+let scattered =
+  group "scattered"
+    (List.map
+       (fun (Stored.Case c) ->
+         prop ~count:300
+           (c.name
+          ^ " values of every layout scatter under each mode as on the host, \
+             duplicate and out-of-range indices included")
+           (Gen.triple
+              (Gen.bind (with_axis c.tensors) (fun (x, axis) ->
+                   let shape = Array.copy (Nx.shape x) in
+                   let open Gen in
+                   let* k = int_range 0 4 in
+                   shape.(axis) <- k;
+                   let+ ix =
+                     array
+                       ~size:(constant (Array.fold_left ( * ) 1 shape))
+                       (positions (Nx.dim axis x))
+                   in
+                   (x, axis, Nx.create Nx.int64 shape ix)))
+              (Gen.of_list
+                 ~pp:(fun ppf m -> Format.pp_print_string ppf (mode_name m))
+                 modes)
+              Gen.bool)
+           (fun ((x, axis, indices), mode, unique) ->
+             (* Updates of the indices' shape, from [x]'s values. *)
+             let values = Nx.flip (Nx.take_along_axis ~axis ~indices x) in
+             let unique = unique && distinct axis indices in
+             let float = Nx_dtype.is_float (Nx.dtype x) in
+             List.iter (fun m -> cover (mode_name m) (m = mode)) modes;
+             cover "strided" (not (Nx.is_c_contiguous x));
+             cover "duplicates" (not (distinct axis indices));
+             cover "unique" unique;
+             (* A float sum's association is the GPU's own: with duplicates it
+                differs from the host's, so it is compared where each position
+                takes one update. *)
+             if not (mode = `Add && float && not (distinct axis indices)) then
+               scatters_as_on_host ~unique mode ~axis ~indices ~values x))
+       (List.filter served_case Stored.every))
+
+let scatter_cases =
+  let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
+  let i64 xs = Nx.create Nx.int64 [| Array.length xs |] xs in
+  let bits t = Array.map Int32.bits_of_float (Nx.to_array t) in
+  let on mode ?(unique = false) x indices values =
+    host
+      (Nx.scatter ~mode ~unique_indices:unique ~axis:0 ~indices:(on_gpu indices)
+         ~values:(on_gpu values) (on_gpu x))
+  in
+  let nan_a = Int32.float_of_bits 0x7fc00001l
+  and nan_b = Int32.float_of_bits 0x7fc00002l
+  and nan_c = Int32.float_of_bits 0xffc00003l in
+  group "scatter cases"
+    [
+      test "the last update to a position wins, in row-major order" (fun () ->
+          equal (array float_exact) [| 4.; 0.; 3. |]
+            (Nx.to_array
+               (on `Set
+                  (f32 [| 0.; 0.; 0. |])
+                  (i64 [| 0L; 0L; 2L; 0L |])
+                  (f32 [| 1.; 2.; 3.; 4. |]))));
+      test "an update outside the axis is dropped, under every mode" (fun () ->
+          List.iter
+            (fun mode ->
+              equal ~msg:(mode_name mode) (array float_exact) [| 5.; 7.; 5. |]
+                (Nx.to_array
+                   (on mode
+                      (f32 [| 5.; 5.; 5. |])
+                      (i64 [| -1L; 3L; Int64.min_int; Int64.max_int; 1L |])
+                      (f32 [| 9.; 9.; 9.; 9.; 7. |]))))
+            [ `Set; `Max ];
+          equal ~msg:"add" (array float_exact) [| 5.; 12.; 5. |]
+            (Nx.to_array
+               (on `Add
+                  (f32 [| 5.; 5.; 5. |])
+                  (i64 [| -1L; 3L; Int64.min_int; Int64.max_int; 1L |])
+                  (f32 [| 9.; 9.; 9.; 9.; 7. |]))));
+      test "an extreme keeps the element's NaN, else the first NaN update's"
+        (fun () ->
+          let ix = i64 [| 0L; 0L; 1L; 1L |] in
+          let ups = f32 [| nan_a; nan_b; nan_a; nan_b |] in
+          List.iter
+            (fun mode ->
+              equal ~msg:(mode_name mode) (array int32)
+                (bits (f32 [| nan_a; nan_c |]))
+                (bits (on mode (f32 [| 1.; nan_c |]) ix ups)))
+            [ `Max; `Min ]);
+      test "an extreme orders -0 below +0" (fun () ->
+          equal (array int32)
+            (bits (f32 [| 0.; -0. |]))
+            (bits
+               (on `Max
+                  (f32 [| -0.; -0. |])
+                  (i64 [| 0L; 1L |])
+                  (f32 [| 0.; -0. |])));
+          equal (array int32)
+            (bits (f32 [| -0.; 0. |]))
+            (bits
+               (on `Min
+                  (f32 [| 0.; 0. |])
+                  (i64 [| 0L; 1L |])
+                  (f32 [| -0.; 0. |]))));
+      test
+        "a sum is +0 plus the element and its updates, untouched elements kept"
+        (fun () ->
+          equal (array int32)
+            (bits (f32 [| 0.; 0.; -0. |]))
+            (bits
+               (on `Add
+                  (f32 [| 1.; -0.; -0. |])
+                  (i64 [| 0L; 1L |])
+                  (f32 [| -1.; -0. |]))));
+      cases
+        ~name:(fun (Dtype d, _, _) -> Nx_dtype.to_string d)
+        "a narrow float's updates sum at float32 and round once"
+        [
+          (Dtype Nx.float16, 2048., 2052.);
+          (Dtype Nx.bfloat16, 256., 260.);
+          (Dtype Nx.float8_e4m3, 16., 20.);
+          (Dtype Nx.float8_e5m2, 16., 20.);
+        ]
+        (fun ((Dtype d as dt), big, expected) ->
+          let (Nx.P x) = values dt [| 1 |] (fun _ -> big) in
+          let ones = Nx.ones (Nx.dtype x) [| 3 |] in
+          let got =
+            host
+              (Nx.scatter ~mode:`Add ~axis:0
+                 ~indices:(on_gpu (Nx.zeros Nx.int64 [| 3 |]))
+                 ~values:(on_gpu ones) (on_gpu x))
+          in
+          equal Stored.packed
+            (Nx.P (Nx.cast d (Nx.create Nx.float64 [| 1 |] [| expected |])))
+            (Nx.P got));
+      test "many updates to few positions combine as on the host, every mode"
+        (fun () ->
+          let n = 1 lsl 20 in
+          let indices =
+            Nx.create Nx.int64 [| n |]
+              (Array.init n (fun i -> Int64.of_int (i * 7919 mod 3)))
+          in
+          List.iter
+            (fun (Dtype d as dt) ->
+              let (Nx.P x) = values dt [| 3 |] (fun i -> Float.of_int i) in
+              let (Nx.P v) =
+                values dt [| n |] (fun i -> Float.of_int (spread i - 6))
+              in
+              let v = Nx.unpack (Nx.dtype x) (Nx.P v) in
+              List.iter
+                (fun mode ->
+                  scatters_as_on_host
+                    ~msg:(Nx_dtype.to_string d ^ " " ^ mode_name mode)
+                    mode ~axis:0 ~indices ~values:v x)
+                modes)
+            served);
+    ]
+
 (* Random values *)
 
 let key_words (k : Nx.Rng.t) = Nx.P (host (k :> Nx.int32_t))
@@ -1547,5 +1738,7 @@ let () =
          sorted;
          sort_geometry;
          sort_cases;
+         scattered;
+         scatter_cases;
          accuracy;
        ])

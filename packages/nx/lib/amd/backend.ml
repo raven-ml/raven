@@ -133,6 +133,15 @@ let program d s target m name =
       remember s.programs (m, name) p;
       p
 
+(* The name of a dtype the kernels serve, as module keys spell it. *)
+let served (type a b) (dt : (a, b) Nx_dtype.t) =
+  match dt with
+  | Complex64 | Complex128 -> refuse "no complex dtypes"
+  | Int4 -> refuse "no int4"
+  | UInt4 -> refuse "no uint4"
+  | Bit -> refuse "no bit"
+  | _ -> Nx_dtype.to_string dt
+
 (* Running a kernel *)
 
 type operand = Operand : ('a, 'b) Nx_array.t -> operand
@@ -141,6 +150,7 @@ let address (Operand a) = Nativeint.to_int (Nx_device.Buffer.address a.buffer)
 let itemsize (Operand a) = Nx_dtype.itemsize a.dtype
 let view (Operand a) = a.view
 let buffer (Operand a) = a.buffer
+let served_name (Operand a) = served a.dtype
 let at o v = address o + (View.offset v * itemsize o)
 let cdiv a b = (a + b - 1) / b
 let unit_stride v = View.ndim v = 0 || View.strides v = [| 1 |]
@@ -682,6 +692,122 @@ let sort_rows key sorted ~descending ~axis x ~dst =
       ((pairs :: network) @ [ result ])
   end
 
+(* Scatters
+
+   The destination starts as a copy of the operand; each position's scratch, two
+   64-bit words, holds what its updates decide: the last update's index under
+   [`Set], a sum and a mark under [`Add], the winning key and the first NaN
+   update's index under [`Max] and [`Min]. Every pass is a run of one launch,
+   which orders their atomics. *)
+
+let scatter_rows ~mode ~unique ~axis ~(indices : Nx_backend.index_array)
+    ~updates x ~dst =
+  let (Operand d) = dst in
+  let w = width_name (width dst) in
+  let m =
+    match (mode : Nx_backend.scatter) with
+    | `Set -> modname "scatter_set" w
+    | `Add -> modname "scatter_add" (served_name dst)
+    | `Max -> modname "scatter_max" (served_name dst)
+    | `Min -> modname "scatter_min" (served_name dst)
+  in
+  let dev, s, target = locate m dst in
+  let shape = View.shape indices.view in
+  let rank = Array.length shape in
+  if rank > max_rank then refuse "%d axes; kernels take %d" rank max_rank;
+  let n = View.numel indices.view and positions = View.numel d.view in
+  let copy = elementwise (modname "contiguous" w) ~dst [ x ] in
+  let runs =
+    if n = 0 || positions = 0 then []
+    else
+      let units = units s in
+      let spread k = Int.min (cdiv k threads) (waves * units) in
+      let gu = spread n and gp = spread positions in
+      let run name groups f =
+        dispatch (program dev s target m name) groups (args f)
+      in
+      let meta i64 =
+        List.iter i64 [ n; rank; gu; axis; (View.shape d.view).(axis) ];
+        i64 (View.offset indices.view);
+        i64 (View.offset (view updates));
+        words i64 shape;
+        words i64 (View.strides indices.view);
+        words i64 (View.strides (view updates));
+        words i64 (c_strides (View.shape d.view))
+      in
+      let dst_at = at dst d.view
+      and idx = address (Operand indices)
+      and up = address updates in
+      let scratch () =
+        let b = Nx_device.Buffer.create dev Int64 (2 * positions) in
+        let a = Nativeint.to_int (Nx_device.Buffer.address b) in
+        (b, a, a + (8 * positions))
+      in
+      match mode with
+      | `Set when unique ->
+          [
+            ( None,
+              run "u" gu (fun i64 ->
+                  List.iter i64 [ dst_at; idx; up ];
+                  meta i64) );
+          ]
+      | `Set ->
+          let b, pa, _ = scratch () in
+          [
+            (Some b, run "c" gp (fun i64 -> List.iter i64 [ pa; positions; gp ]));
+            ( None,
+              run "w" gu (fun i64 ->
+                  List.iter i64 [ pa; idx ];
+                  meta i64) );
+            ( None,
+              run "v" gu (fun i64 ->
+                  List.iter i64 [ dst_at; pa; idx; up ];
+                  meta i64) );
+          ]
+      | `Add ->
+          let b, pa, pb = scratch () in
+          [
+            ( Some b,
+              run "i" gp (fun i64 ->
+                  List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
+            ( None,
+              run "a" gu (fun i64 ->
+                  List.iter i64 [ pa; pb; idx; up ];
+                  meta i64) );
+            ( None,
+              run "s" gp (fun i64 ->
+                  List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
+          ]
+      | `Max | `Min ->
+          let b, pa, pb = scratch () in
+          [
+            ( Some b,
+              run "i" gp (fun i64 ->
+                  List.iter i64 [ dst_at; pa; pb; positions; gp ]) );
+            ( None,
+              run "k" gu (fun i64 ->
+                  List.iter i64 [ pa; idx; up ];
+                  meta i64) );
+            ( None,
+              run "n" gu (fun i64 ->
+                  List.iter i64 [ dst_at; pa; pb; idx; up ];
+                  meta i64) );
+            ( None,
+              run "s" gp (fun i64 ->
+                  List.iter i64 [ dst_at; pa; pb; idx; up ];
+                  meta i64;
+                  List.iter i64 [ positions; gp ]) );
+          ]
+  in
+  match Option.to_list copy @ List.map snd runs with
+  | [] -> ()
+  | ds ->
+      Nx_amd_device.launch
+        ~touches:
+          (buffer dst :: buffer x :: buffer updates :: indices.buffer
+         :: List.filter_map fst runs)
+        ds
+
 (* Threefry *)
 
 (* Runs the threefry module hashing [counter]'s word pairs under [key]'s into
@@ -787,15 +913,6 @@ let product key ~dst a b =
         };
       ]
   end
-
-(* The name of a dtype the kernels serve, as module keys spell it. *)
-let served (type a b) (dt : (a, b) Nx_dtype.t) =
-  match dt with
-  | Complex64 | Complex128 -> refuse "no complex dtypes"
-  | Int4 -> refuse "no int4"
-  | UInt4 -> refuse "no uint4"
-  | Bit -> refuse "no bit"
-  | _ -> Nx_dtype.to_string dt
 
 (* Kernels *)
 
@@ -959,8 +1076,12 @@ module Kernels : Nx_backend.S = struct
     ignore (served x.dtype);
     gather ~axis indices (Operand x) ~dst:(Operand dst)
 
-  let scatter ~mode:_ ~unique:_ ~axis:_ ~indices:_ ~updates:_ _ ~dst:_ =
-    no "scatter"
+  let scatter (type a b) ~mode ~unique ~axis ~indices
+      ~(updates : (a, b) Nx_array.t) (x : (a, b) Nx_array.t)
+      ~(dst : (a, b) Nx_array.t) =
+    ignore (served x.dtype);
+    scatter_rows ~mode ~unique ~axis ~indices ~updates:(Operand updates)
+      (Operand x) ~dst:(Operand dst)
 
   let update (type a b) (x : (a, b) Nx_array.t) ~starts v
       ~(dst : (a, b) Nx_array.t) =

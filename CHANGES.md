@@ -3267,6 +3267,10 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation scatter eagerly: `Nx.scatter` under `Set`,
+  `Add`, `Max` and `Min` runs on the GPU, the last update winning under `Set`,
+  an update outside the axis dropped, and the extremes and integer sums bit for
+  bit as on the host. Narrow floats sum at float32 and round once.
 - Eager operations on AMD devices allocate about half the OCaml memory they
   did and launch sooner: an `Nx.add` of 4K elements takes 33 us instead of
   38 us, and an `Nx.sort` of 1M elements allocates 76k words instead of
