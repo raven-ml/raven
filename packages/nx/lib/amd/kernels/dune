@@ -1,4 +1,4 @@
-; The code objects of nx.amd's kernels, which gen/gen.py compiles ahead of time
+; The code objects of nx.amd's kernels, which gen.py compiles ahead of time
 ; on a machine with the pinned toolchain, packed into the archive nx.amd
 ; embeds. Their digests are checked here on every machine.
 
@@ -14,8 +14,8 @@
  (alias runtest)
  (package nx)
  (deps
-  (:pins gen/pins.json)
-  gen/gen.py
+  (:pins pins.json)
+  gen.py
   ../../dtype/nx_dtype.h
   (glob_files src/*)
   (glob_files src/libc/*)

@@ -36,7 +36,17 @@ let pinned file =
 let () =
   match Array.to_list Sys.argv with
   | _ :: pins :: files ->
-      let files = List.filter (fun f -> f <> pins) files in
+      (* dune spells a file of the rule's own directory [./gen.py]. *)
+      let relative f =
+        if String.starts_with ~prefix:"./" f then
+          String.sub f 2 (String.length f - 2)
+        else f
+      in
+      let files =
+        List.filter_map
+          (fun f -> if f = pins then None else Some (relative f))
+          files
+      in
       let pinned = pinned pins in
       let errors =
         List.filter_map

@@ -53,7 +53,7 @@
   "src/where.hip": "b6fe234b9e31eac257e577d05d7c096919fd0eb8562ddd20d979281b87073547",
   "src/windows.hip": "50e941dc4ef5d20ac419a133edc3fa6414efb6446c9992871389685a273f47a1",
   "../../dtype/nx_dtype.h": "6982bd891f02e37fd676dc5993120f514dfcf0df2ed580f7668bf32e40fd0929",
-  "gen/gen.py": "2c8017e34e3aab0e7bb160b56fcf2d2926710407656597ce7fd7b0161f5cdb10"
+  "gen.py": "39ffda4332ea97bb79df77413dcf848196ae4321520dc1eb71159f38920a3953"
  },
  "outputs": {
   "gfx12-generic/arg_reduce.argmax.bfloat16.co": "4b9eaa05ab6d4c360877a54cd4b108f35d533768d6e92c8d1a7333eb2192ada4",

@@ -7,9 +7,9 @@ Run from the repository root, on a machine with the pinned comgr (ROCm's code
 object manager), which it loads from $COMGR_PATH, else
 /opt/rocm/lib/libamd_comgr.so:
 
-  uv run packages/nx/lib/amd/kernels/gen/gen.py
-  uv run packages/nx/lib/amd/kernels/gen/gen.py --check
-  uv run packages/nx/lib/amd/kernels/gen/gen.py --pin
+  uv run packages/nx/lib/amd/kernels/gen.py
+  uv run packages/nx/lib/amd/kernels/gen.py --check
+  uv run packages/nx/lib/amd/kernels/gen.py --pin
 
 pins.json records the toolchain (the comgr library, by name and SHA-256), the
 options, and the SHA-256 of every input (the sources, nx's dtype codecs and
@@ -39,11 +39,10 @@ import subprocess
 import sys
 import tempfile
 
-HERE = pathlib.Path(__file__).resolve().parent
-KERNELS = HERE.parent
+KERNELS = pathlib.Path(__file__).resolve().parent
 SRC = KERNELS / "src"
 DTYPE_H = KERNELS.parents[1] / "dtype" / "nx_dtype.h"
-PINS = HERE / "pins.json"
+PINS = KERNELS / "pins.json"
 
 TARGETS = ["gfx12-generic"]
 
