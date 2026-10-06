@@ -763,6 +763,279 @@ let bounded =
           done);
     ]
 
+(* Matrix products *)
+
+(* How an operand holds its matrices: as stored, transposed, as every other
+   column of a wider value, or as one row broadcast down the rows. *)
+type layout = Stored | Transposed | Strided | Broadcast
+
+let layouts = [ Stored; Transposed; Strided; Broadcast ]
+
+let pp_layout ppf l =
+  Format.pp_print_string ppf
+    (match l with
+    | Stored -> "stored"
+    | Transposed -> "transposed"
+    | Strided -> "strided"
+    | Broadcast -> "broadcast")
+
+(* Values of [d] of shape [shape] from [seed]: integers drawn over the whole
+   range, which wrap in products; floats small integers, whose products and sums
+   are exact, with an infinity or a NaN here and there. *)
+let drawn (Dtype d as dt) shape seed =
+  let rng = Random.State.make [| seed |] in
+  let n = Array.fold_left ( * ) 1 shape in
+  if integer (Nx_dtype.to_string d) then
+    Nx.P
+      (Nx.cast d
+         (Nx.create Nx.int64 shape
+            (Array.init n (fun _ -> Random.State.bits64 rng))))
+  else
+    values dt shape (fun _ ->
+        match Random.State.int rng 200 with
+        | 0 -> Float.infinity
+        | 1 -> Float.neg_infinity
+        | 2 -> Float.nan
+        | v -> Float.of_int ((v mod 7) - 3))
+
+(* An operand of shape [shape] laid out as [l], its values from [fill]. *)
+let operand l shape fill =
+  let n = Array.length shape in
+  let rows = shape.(n - 2) and cols = shape.(n - 1) in
+  let with_ i v = Array.mapi (fun j x -> if j = i then v else x) shape in
+  match l with
+  | Stored -> fill shape
+  | Transposed ->
+      let (Nx.P x) = fill shape in
+      Nx.P
+        (Nx.swapaxes (n - 1) (n - 2)
+           (Nx.contiguous (Nx.swapaxes (n - 1) (n - 2) x)))
+  | Strided when cols > 0 ->
+      let (Nx.P w) = fill (with_ (n - 1) (2 * cols)) in
+      Nx.P
+        (Nx.squeeze ~axes:[ -1 ]
+           (Nx.sliding_window ~axis:(-1) ~window:1 ~step:2 w))
+  | Broadcast when rows > 0 ->
+      let (Nx.P x) = fill (with_ (n - 2) 1) in
+      Nx.P (Nx.broadcast_to shape x)
+  | Strided | Broadcast -> fill shape
+
+(* The batch shapes of two operands: equal, one operand's absent, one holding a
+   single matrix along an axis, and an empty batch. *)
+let batches =
+  [
+    ([||], [||]);
+    ([| 3 |], [||]);
+    ([||], [| 2 |]);
+    ([| 2; 1 |], [| 3 |]);
+    ([| 1 |], [| 4 |]);
+    ([| 2; 3 |], [| 2; 3 |]);
+    ([| 0 |], [| 1 |]);
+  ]
+
+(* Extents on both sides of the kernels' tiles, of 64 rows and columns and 16
+   along k. *)
+let extents = [ 0; 1; 2; 3; 16; 17; 64; 65; 130 ]
+
+type product = {
+  batch : int array * int array;
+  m : int;
+  k : int;
+  n : int;
+  lay : layout * layout;
+  seed : int;
+}
+
+let pp_product ppf p =
+  let dims a = String.concat "x" (List.map string_of_int (Array.to_list a)) in
+  Format.fprintf ppf "[%s] %dx%d (%a) times [%s] %dx%d (%a), seed %d"
+    (dims (fst p.batch))
+    p.m p.k pp_layout (fst p.lay)
+    (dims (snd p.batch))
+    p.k p.n pp_layout (snd p.lay) p.seed
+
+let products =
+  Gen.with_pp pp_product
+    Gen.(
+      let dim = of_list ~pp:Format.pp_print_int extents
+      and layout = of_list ~pp:pp_layout layouts in
+      let+ batch = of_list ~pp:(fun _ _ -> ()) batches
+      and+ m = dim
+      and+ k = dim
+      and+ n = dim
+      and+ lay = pair layout layout
+      and+ seed = int in
+      { batch; m; k; n; lay; seed })
+
+(* The operands of [p] at [d]. *)
+let operands dt p =
+  let a =
+    operand (fst p.lay)
+      (Array.append (fst p.batch) [| p.m; p.k |])
+      (fun s -> drawn dt s p.seed)
+  and b =
+    operand (snd p.lay)
+      (Array.append (snd p.batch) [| p.k; p.n |])
+      (fun s -> drawn dt s (p.seed + 1))
+  in
+  (a, b)
+
+let matmul (Nx.P a) b = Nx.P (Nx.matmul a (Nx.unpack (Nx.dtype a) b))
+let gpu (Nx.P x) = Nx.P (on_gpu x)
+
+let multiplied =
+  group "multiplied"
+    (List.filter_map
+       (fun (Dtype d as dt) ->
+         let name = Nx_dtype.to_string d in
+         if name = "bool" then None
+         else
+           Some
+             (prop ~count:150
+                (name
+               ^ " products of every layout and batch broadcast, as on the \
+                  host where their sums are exact") products (fun p ->
+                  let a, b = operands dt p in
+                  cover "a transposed operand"
+                    (fst p.lay = Transposed || snd p.lay = Transposed);
+                  cover "a strided operand"
+                    (fst p.lay = Strided || snd p.lay = Strided);
+                  cover "a broadcast batch" (fst p.batch <> snd p.batch);
+                  cover "an empty contraction" (p.k = 0);
+                  cover "several tiles" ((p.m > 64 || p.n > 64) && p.k > 16);
+                  equal
+                    (if Nx_dtype.is_float d then floats_or_bits
+                     else Stored.packed)
+                    (matmul a b)
+                    ((fun (Nx.P y) -> Nx.P (host y)) (matmul (gpu a) (gpu b))))))
+       served)
+
+(* The product of [xa] of shape [sa] and [xb] of shape [sb] at [dt], computed on
+   the GPU and read back. *)
+let gpu_product dt (sa, xa) (sb, xb) =
+  let on (sh, xs) =
+    let (Nx.P x) = values dt sh (fun i -> xs.(i)) in
+    Nx.P (on_gpu x)
+  in
+  let (Nx.P y) = matmul (on (sa, xa)) (on (sb, xb)) in
+  Nx.P (host y)
+
+let product_cases =
+  group "products"
+    [
+      test "an empty contraction is 0, at every numeric dtype" (fun () ->
+          List.iter
+            (fun (Dtype d as dt) ->
+              let msg = Nx_dtype.to_string d in
+              if msg <> "bool" then
+                equal ~msg Stored.packed
+                  (Nx.P (Nx.zeros d [| 3; 2 |]))
+                  (gpu_product dt ([| 3; 0 |], [||]) ([| 0; 2 |], [||])))
+            served);
+      test "products summing to exactly zero, or of -0, give +0" (fun () ->
+          List.iter
+            (fun (Dtype d as dt) ->
+              List.iter
+                (fun xs ->
+                  equal ~msg:(Nx_dtype.to_string d) Stored.packed
+                    (Nx.P (Nx.zeros d [| 1; 1 |]))
+                    (gpu_product dt ([| 1; 2 |], xs) ([| 2; 1 |], [| 2.; 2. |])))
+                [ [| 1.; -1. |]; [| -0.; -0. |] ])
+            float_dtypes);
+      test "a product without rows, columns or matrices has none" (fun () ->
+          List.iter
+            (fun (sa, sb, out) ->
+              let a = on_gpu (Nx.ones Nx.float32 sa)
+              and b = on_gpu (Nx.ones Nx.float32 sb) in
+              equal (array int) out (Nx.shape (host (Nx.matmul a b))))
+            [
+              ([| 0; 3 |], [| 3; 2 |], [| 0; 2 |]);
+              ([| 2; 3 |], [| 3; 0 |], [| 2; 0 |]);
+              ([| 0; 2; 3 |], [| 3; 2 |], [| 0; 2; 2 |]);
+            ]);
+      cases
+        ~name:(fun (Dtype d, _, _) -> Nx_dtype.to_string d)
+        "a narrow float's products sum at float32 and round once"
+        [
+          (Dtype Nx.float16, 2048., 2052.);
+          (Dtype Nx.bfloat16, 256., 260.);
+          (Dtype Nx.float8_e4m3, 16., 20.);
+          (Dtype Nx.float8_e5m2, 16., 20.);
+        ]
+        (fun ((Dtype d as dt), big, expected) ->
+          (* big + 3 rounds once to [expected]; a sum at the dtype stays at
+             [big], each 1 falling below half its spacing there. *)
+          equal Stored.packed
+            (Nx.P (Nx.cast d (Nx.create Nx.float64 [| 1; 1 |] [| expected |])))
+            (gpu_product dt
+               ([| 1; 4 |], [| big; 1.; 1.; 1. |])
+               ([| 4; 1 |], [| 1.; 1.; 1.; 1. |])));
+    ]
+
+(* The exact sum of the products of [xs] and [ys], rounded once, and the sum of
+   their magnitudes: each product as a sum of two floats by a fused
+   multiply-add, then the compensated sum of the pieces. *)
+let exact_dot xs ys =
+  let n = Array.length xs in
+  let pieces =
+    Array.init (2 * n) (fun i ->
+        let x = xs.(i / 2) and y = ys.(i / 2) in
+        let p = x *. y in
+        if i mod 2 = 0 then p else Float.fma x y (-.p))
+  in
+  ( exact_sum pieces,
+    Array.fold_left ( +. ) 0.
+      (Array.init n (fun i -> Float.abs (xs.(i) *. ys.(i)))) )
+
+let product_bounds =
+  group "product bounds"
+    [
+      prop ~count:150
+        "a float product's element lies within k eps sum |a b| of the exact \
+         one, plus a rounding to a narrow dtype"
+        Gen.(
+          quad
+            (of_list ~pp:pp_dtype float_dtypes)
+            (triple (int_range 1 40) (int_range 0 700) (int_range 1 40))
+            (pair
+               (of_list ~pp:pp_layout layouts)
+               (of_list ~pp:pp_layout layouts))
+            int)
+        (fun ((Dtype d as dt), (m, k, n), (la, lb), seed) ->
+          let f = format d in
+          let rng = Random.State.make [| seed |] in
+          let scale = Float.sqrt (f.top /. Float.of_int (4 * Int.max k 1)) in
+          let fill s =
+            values dt s (fun _ ->
+                (Random.State.float rng 2. -. 1.)
+                *. Float.ldexp scale (-Random.State.int rng 6))
+          in
+          let (Nx.P a) = operand la [| m; k |] fill in
+          let b = Nx.unpack (Nx.dtype a) (operand lb [| k; n |] fill) in
+          let wide x = Nx.to_array (Nx.cast Nx.float64 x) in
+          let xa = wide a and xb = wide b in
+          let got = wide (host (Nx.matmul (on_gpu a) (on_gpu b))) in
+          cover "several k tiles" (k > 16);
+          for i = 0 to m - 1 do
+            for j = 0 to n - 1 do
+              let s, mag =
+                exact_dot
+                  (Array.init k (fun l -> xa.((i * k) + l)))
+                  (Array.init k (fun l -> xb.((l * n) + j)))
+              in
+              let e = Float.of_int k *. f.eps *. mag in
+              let narrow = if f.m < 23 then ulp f (Float.abs s +. e) else 0. in
+              at_most
+                ~msg:
+                  (Printf.sprintf "element (%d, %d) of %d terms, exact %h" i j k
+                     s)
+                float_exact
+                ~than:(e +. narrow +. (Float.epsilon *. Float.abs s))
+                (Float.abs (got.((i * n) + j) -. s))
+            done
+          done);
+    ]
+
 let accuracy = group "accuracy" (Nx_test.Accuracy.groups { put = on_gpu })
 
 let () =
@@ -779,5 +1052,8 @@ let () =
          geometry;
          sums;
          bounded;
+         multiplied;
+         product_cases;
+         product_bounds;
          accuracy;
        ])

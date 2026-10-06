@@ -8,11 +8,11 @@
    An elementwise operation names its module's key, its operands and its result;
    the operands' views are coalesced; the module's contiguous form [c] runs when
    every view is C-contiguous after merging, and its strided form [s] otherwise;
-   one launch on the device's compute queue. Reductions take a second path,
-   which folds rows (Reductions below). A module's kernels are loaded on a
-   device at their first use, and kept while the device is. A GPU that no
-   carried target covers refuses every kernel, as do the operations, dtypes and
-   layouts the kernels do not serve. *)
+   one launch on the device's compute queue. Reductions and matrix products take
+   paths of their own (Reductions, Matrix products). A module's kernels are
+   loaded on a device at their first use, and kept while the device is. A GPU
+   that no carried target covers refuses every kernel, as do the operations,
+   dtypes and layouts the kernels do not serve. *)
 
 module View = Nx_array.View
 module Program = Nx_device.Program
@@ -282,6 +282,77 @@ let fold key ~dst x ~axes =
       (if parts = 1 then [ first ] else [ first; second () ])
   end
 
+(* Matrix products
+
+   A workgroup computes a tile of [tile] x [tile] outputs of one matrix of the
+   batch: the grid's x covers the columns, its y the rows and its z the batch.
+   The batch axes of the result and of both operands coalesce together, an
+   operand's stride 0 where it broadcasts. *)
+
+let tile = 64
+let max_groups = 0xffff_ffff
+
+(* Operand [v]'s batch axes under the result's batch shape [batch]: its strides,
+   aligned to the last axes, 0 where it lacks an axis or holds one matrix along
+   it. *)
+let batch_view batch v =
+  let r = Array.length batch and n = View.ndim v - 2 in
+  let shape = View.shape v and strides = View.strides v in
+  View.create
+    ~strides:
+      (Array.init r (fun i ->
+           let a = i - (r - n) in
+           if a < 0 || shape.(a) = 1 then 0 else strides.(a)))
+    batch
+
+(* Runs the product module [key] writing [dst] from [a] and [b]. *)
+let product key ~dst a b =
+  let dev, s, target = locate key dst in
+  let shape = View.shape (view dst) in
+  let r = Array.length shape - 2 in
+  let m = shape.(r) and n = shape.(r + 1) and batch = Array.sub shape 0 r in
+  let av = view a and bv = view b in
+  let k = (View.shape av).(View.ndim av - 1) in
+  let nb = Array.fold_left ( * ) 1 batch in
+  let views =
+    View.coalesce
+      [ View.create batch; batch_view batch av; batch_view batch bv ]
+  in
+  let d = List.nth views 0
+  and va = List.nth views 1
+  and vb = List.nth views 2 in
+  if View.ndim d > max_rank then
+    refuse "batches of %d axes once merged; kernels take %d" (View.ndim d)
+      max_rank;
+  if nb > max_groups then refuse "%d matrices; kernels take %d" nb max_groups;
+  if m * n * nb > 0 then begin
+    (* The strides of [v]'s rows and columns. *)
+    let rows v = (View.strides v).(View.ndim v - 2)
+    and cols v = (View.strides v).(View.ndim v - 1) in
+    let args =
+      args (fun i64 ->
+          i64 (at dst (view dst));
+          i64 (address a);
+          i64 (address b);
+          List.iter i64 [ m; n; k; View.ndim d ];
+          List.iter i64 [ View.offset av; rows av; cols av ];
+          List.iter i64 [ View.offset bv; rows bv; cols bv ];
+          words i64 (View.shape d);
+          words i64 (View.strides va);
+          words i64 (View.strides vb))
+    in
+    Nx_amd_device.launch
+      ~touches:[ buffer dst; buffer a; buffer b ]
+      [
+        {
+          program = program dev s target key "s";
+          groups = (cdiv n tile, cdiv m tile, nb);
+          threads = (threads, 1, 1);
+          args;
+        };
+      ]
+  end
+
 (* The name of a dtype the kernels serve, as module keys spell it. *)
 let served (type a b) (dt : (a, b) Nx_dtype.t) =
   match dt with
@@ -438,7 +509,11 @@ module Kernels : Nx_backend.S = struct
       ~dst:_ =
     no "fold"
 
-  let matmul _ _ ~dst:_ = no "matmul"
+  let matmul (type a b) (a : (a, b) Nx_array.t) b ~(dst : (a, b) Nx_array.t) =
+    product
+      (Printf.sprintf "matmul.%s" (served a.dtype))
+      ~dst:(Operand dst) (Operand a) (Operand b)
+
   let fft ~inverse:_ ~axes:_ _ ~dst:_ = no "fft"
   let rfft ~axes:_ _ ~dst:_ = no "rfft"
   let irfft ~axes:_ ~s:_ _ ~dst:_ = no "irfft"

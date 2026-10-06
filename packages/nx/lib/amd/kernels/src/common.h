@@ -49,6 +49,14 @@ DEVICE i64 first() {
          __builtin_amdgcn_workitem_id_x();
 }
 
+/* Waits for the workgroup's threads, each seeing the others' writes to the
+   workgroup's memory before it. */
+DEVICE void barrier() {
+  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
+  __builtin_amdgcn_s_barrier();
+  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
+}
+
 /* The index templates a family's body is written over: where operand [k]'s
    element [i] in C order lies. */
 struct contiguous {

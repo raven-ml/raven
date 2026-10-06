@@ -55,12 +55,6 @@ DEVICE i64 place(i64 i, i64 rank, const i64 *ext, const i64 *str) {
   return o + i * str[0];
 }
 
-DEVICE void barrier() {
-  __builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");
-  __builtin_amdgcn_s_barrier();
-  __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");
-}
-
 /* A fold's running value: its accumulator and, for an extreme, the position
    of the element it holds. */
 template <class A> struct run {

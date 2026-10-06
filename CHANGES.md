@@ -3267,6 +3267,10 @@ thread.
 
 ### Nx
 
+- AMD GPUs of the gfx12 generation multiply matrices eagerly: `Nx.matmul` runs
+  on the GPU for every numeric dtype, operands of any layout and broadcast
+  batches, integers bit for bit as on the host, floats within `k·eps·Σ|a b|`.
+  A float32 product of 4,096 rows takes 13 ms against 284 ms on the host.
 - AMD GPUs of the gfx12 generation reduce eagerly: `Nx.sum`, `Nx.prod`,
   `Nx.max`, `Nx.min`, `Nx.argmax` and `Nx.argmin` (and `Nx.all`, `Nx.any`) run
   on the GPU, the extremes and integer results bit for bit as on the host, float

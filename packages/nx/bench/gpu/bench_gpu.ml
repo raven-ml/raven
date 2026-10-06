@@ -5,13 +5,14 @@
 
 (* nx's eager kernels on GPUs, each beside its host twin: a cast from bfloat16
    to float32, the exponential of a float32 value, the sum of two and the sum of
-   one's elements, at 4K, 1M and 16M elements, timed to the work's completion,
-   and the first use of a kernel in a fresh process, which opens the GPU and
-   loads the kernel's code objects. AMD loads code objects with no compiler, so
-   the first use has no cold and warm cases. Rows exist for the GPUs the machine
-   has: AMD GPU 0 under the kernel driver. The GPU is opened in each measuring
-   worker, never in the parent that forks them; the host twins run on every
-   machine. *)
+   one's elements, at 4K, 1M and 16M elements, and the product of a float32
+   square matrix by itself, of 128, 1,024 and 4,096 rows, timed to the work's
+   completion, and the first use of a kernel in a fresh process, which opens the
+   GPU and loads the kernel's code objects. AMD loads code objects with no
+   compiler, so the first use has no cold and warm cases. Rows exist for the
+   GPUs the machine has: AMD GPU 0 under the kernel driver. The GPU is opened in
+   each measuring worker, never in the parent that forks them; the host twins
+   run on every machine. *)
 
 let sizes = [ ("4K", 4096); ("1M", 1 lsl 20); ("16M", 16 lsl 20) ]
 
@@ -65,6 +66,8 @@ let rows ~gpu name (label, n) ~input ~op =
     ]
 
 let floats n = Nx.rand Nx.float32 [| n |]
+let squares = [ ("128", 128); ("1024", 1024); ("4096", 4096) ]
+let matrix n = Nx.rand Nx.float32 [| n; n |]
 
 let cases ~gpu size =
   rows ~gpu "cast-bf16-f32" size
@@ -98,6 +101,11 @@ let () =
         [
           Thumper.group "amd"
             (List.concat_map (cases ~gpu) sizes
+            @ List.concat_map
+                (fun size ->
+                  rows ~gpu "matmul" size ~input:matrix ~op:(fun x ->
+                      Nx.matmul x x))
+                squares
             @ if gpu then [ first_use_case () ] else []);
         ];
     ]
