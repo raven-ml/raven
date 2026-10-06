@@ -82,10 +82,15 @@
     ({!Out_of_memory}) is the last resort. A buffer small enough for the minor
     heap paces minor collections no faster than any custom block does.
 
-    {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
-    the devices involved. A device that hangs or faults is lost for good
-    ({!Lost}): every later operation that reads or computes on memory it can
-    reach raises. Opening the device again gives a fresh device.
+    {b Faults.} {!synchronize} and {!Buffer.copy} wait for the work of the
+    devices involved, however long it runs. Only a device's driver declares it
+    faulted: a GPU's kernel driver, or the library that drives a GPU itself
+    ({!Driver}). A device that faults is lost for good ({!Lost}): every later
+    operation that reads or computes on memory it can reach raises. Opening the
+    device again gives a fresh device. Ctrl-C ([Sys.Break], with
+    {!Sys.catch_break}) interrupts the waits of {!synchronize},
+    {!Submission.wait}, {!Buffer.copy} and {!submit}'s wait for room in a
+    device's queues, and loses no device.
 
     {b Audiences.} Programs use the sections up to {!section-submitting}. The
     libraries that submit work to a device use {!section-submitting} and the
@@ -179,17 +184,19 @@ val synchronize : t -> unit
     submitted to other devices that touched [d]'s memory, has completed. The
     work of a lost device is not waited for.
 
-    Raises {!Lost} if [d] is lost, or is lost by the wait: [d] does not signal
-    in time or its driver reports a fault. *)
+    Raises {!Lost} if [d] is lost, or is lost by the wait: its driver reports a
+    fault, or the connection to its machine fails. *)
 
 (** {1:failures Failures} *)
 
 exception Lost of t * string
 (** [Lost (d, why)] is raised when [d]'s state is unknown and nothing recovers
-    it: [d] did not signal within its {!timeout} ([why] is ["hang detected"]),
-    its driver reported a fault or erred while work was enqueued on its queue
-    ([why] is the driver's message), or the connection to its machine failed. It
-    prints as ["NAME lost: why"], where [NAME] is [d]'s {!name}.
+    it: its driver reported a fault or erred while work was enqueued on its
+    queue ([why] is the driver's message), or the connection to its machine
+    failed. A driver that drives a GPU itself reports work that does not signal
+    within its own limit as a fault, ["hang detected"]; the runtime never loses
+    a device for work that runs long. It prints as ["NAME lost: why"], where
+    [NAME] is [d]'s {!name}.
 
     [d] is then lost for good, and its loss is scoped to the memory it can
     reach: its own buffers, the host memory it borrowed, and memory another
@@ -248,20 +255,6 @@ val set_budget : t -> int -> unit
 
     Raises [Invalid_argument] if [n < 0]. *)
 
-val timeout : t -> int
-(** [timeout d] is how long, in milliseconds, a wait for [d]'s work lasts before
-    [d] is considered hung and lost for good. Every device starts at
-    {!Driver.default_timeout}. *)
-
-val set_timeout : t -> int -> unit
-(** [set_timeout d ms] sets [d]'s {!timeout} to [ms], for the waits that start
-    after it, from any domain at any time. Work that takes longer, such as a
-    kernel that runs longer than [ms] without the device signaling, loses [d]
-    for good, and the memory it can reach stays allocated: raise the timeout
-    before submitting such work.
-
-    Raises [Invalid_argument] if [ms <= 0]. *)
-
 val free_cache : t -> unit
 (** [free_cache d] returns all of [d]'s cached memory to the system. *)
 
@@ -274,12 +267,12 @@ module Buffer : sig
   type t
   (** The type for buffers: {!length} elements of format {!dtype} in a range of
       one device's memory. Their bytes are the elements in their storage
-      representation, in order: [Nx_dtype.Scalar.bitsize s / 8] bytes each,
-      two per byte for [Int4] and [UInt4], the first in the low nibble, and
-      eight per byte for [Bit], the first in the lowest bit: [n] elements of
-      [b] bits take [(n * b + 7) / 8] bytes.
-      Multi-byte elements are little-endian, the byte order of the host on arm64
-      and x86_64 and of Metal; a big-endian host holds its own byte order.
+      representation, in order: [Nx_dtype.Scalar.bitsize s / 8] bytes each, two
+      per byte for [Int4] and [UInt4], the first in the low nibble, and eight
+      per byte for [Bit], the first in the lowest bit: [n] elements of [b] bits
+      take [(n * b + 7) / 8] bytes. Multi-byte elements are little-endian, the
+      byte order of the host on arm64 and x86_64 and of Metal; a big-endian host
+      holds its own byte order.
 
       A buffer is {e owned} when {!create} made it and {e borrowed} when it is
       over memory that something else holds: a bigarray ({!of_bigarray}),
@@ -643,12 +636,12 @@ module Buffer : sig
       address the memory of a device that has no copy queue; [Sys_error] naming
       the file if a read or a write of a file fails or a read reaches its end,
       as in a file truncated since it was opened, which loses no device; {!Lost}
-      if a device involved is lost or is lost by the copy (it does not signal in
-      time, its driver reports a fault or errs while the copy is enqueued, or
-      the connection to its machine fails), or if a lost device can reach [src]
-      or [dst]; {!Out_of_memory} if a host cannot allocate its staging memory;
-      and [Failure] with the driver's reason if a device cannot map the staging
-      memory, which loses no device. *)
+      if a device involved is lost or is lost by the copy (its driver reports a
+      fault or errs while the copy is enqueued, or the connection to its machine
+      fails), or if a lost device can reach [src] or [dst]; {!Out_of_memory} if
+      a host cannot allocate its staging memory; and [Failure] with the driver's
+      reason if a device cannot map the staging memory, which loses no device.
+  *)
 
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -667,10 +660,10 @@ module Buffer : sig
       Formats with no kind of their own are read as their storage kind and
       decoded with {!Nx_dtype.Scalar.decode}: [BFloat16] as [Int16_unsigned],
       the float8 formats as [Int8_unsigned], [Int4] and [UInt4] as
-      [Int8_unsigned] holding two per byte, and [Bit] as [Int8_unsigned]
-      holding eight. Where the elements end inside a byte, the bits of that
-      byte past [b]'s last element are not [b]'s, and a write to them may
-      change memory outside [b].
+      [Int8_unsigned] holding two per byte, and [Bit] as [Int8_unsigned] holding
+      eight. Where the elements end inside a byte, the bits of that byte past
+      [b]'s last element are not [b]'s, and a write to them may change memory
+      outside [b].
 
       Raises [Invalid_argument] if [b] is not on {!host}, if [k] is [Int] or
       [Nativeint], which are no storage format, or if [b]'s bytes are not a
@@ -1095,7 +1088,7 @@ module Submission : sig
       value a wait already saw signaled.
 
       Raises [Invalid_argument] if [s] did not take [d] or [v > submitted d],
-      and {!Lost} if [d] does not signal [v] within its {!timeout}. *)
+      and {!Lost} if [d] is lost, or is lost by the wait. *)
 
   val record : t -> device -> lane:string -> name:string -> Buffer.t -> unit
   (** [record s d ~lane ~name stamps] records a span of [d]'s work in [s] named
@@ -1165,8 +1158,8 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
     Raises [Invalid_argument] if [ds] is empty or has a host or the disk, which
     run no submitted work, or if a buffer of [touches] is on the disk or dead
     ({!Buffer.Claim.consume}), and {!Lost} if a device it takes is lost, if a
-    lost device can reach a buffer of [touches], or if a device of [ds] has no
-    room in its queues within its {!timeout}. *)
+    lost device can reach a buffer of [touches], or if a device of [ds] is lost
+    while [submit] waits for room in its queues. *)
 
 val submitted : t -> int
 (** [submitted d] is the value [d]'s last submitted work signals, [0] before any
@@ -1174,7 +1167,9 @@ val submitted : t -> int
 
 val signaled : t -> int
 (** [signaled d] is the last value [d] signaled. Work that signals
-    [v <= signaled d] has completed. *)
+    [v <= signaled d] has completed. A fault its driver reports when the value
+    is read loses [d] ({!Lost}), and [signaled d] is then the last value a wait
+    saw signaled. *)
 
 val signal_word : t -> Buffer.t
 (** [signal_word d] is one [UInt64] that [d]'s host and [d]'s work address, into
@@ -1201,7 +1196,7 @@ val signal_word : t -> Buffer.t
     module. They report in four ways:
     - [None]: the driver has none;
     - [Error why]: it refuses;
-    - [false] from {!signal}'s [wait]: the time ran out;
+    - [false] from {!signal}'s [wait]: the work has not signaled yet;
     - [Failure why]: the device faulted, which loses it ({!Lost}).
 
     A [finalize] that raises is printed and ignored at exit. A {!depends}
@@ -1345,30 +1340,41 @@ module Driver : sig
               of 16 bytes for the copy queue's timestamps. *)
 
   type signal = {
-    signaled : unit -> int;  (** The last value the device signaled. *)
-    wait : int -> timeout_ms:int -> bool;
-        (** [wait v ~timeout_ms] waits until the device signaled [v], for at
-            most [timeout_ms] milliseconds; [false] if it did not. It raises
-            [Failure] with the driver's message if the driver reports a fault,
-            which loses the device. *)
+    signaled : unit -> int;
+        (** The last value the device signaled. It raises [Failure] with the
+            driver's message if the driver reported a fault, which loses the
+            device: work the fault stopped may read as signaled otherwise. *)
+    wait : int -> ms:int -> bool;
+        (** [wait v ~ms] waits until the device signaled [v], for at most [ms]
+            milliseconds, where [ms] is at most 200; [false] if it did not yet,
+            and the runtime waits again. It raises [Failure] with the driver's
+            message if the driver reports a fault, which loses the device. *)
   }
   (** The type for how a device signals completion and is waited for. *)
+
+  type sleep = timeline:Region.t -> still:int -> int -> unit
+  (** The type for how a device sleeps while a wait sees no progress.
+      [sleep ~timeline ~still ms] runs, given the region of the device's
+      timeline, once a wait has seen the signal word at its start stay still for
+      200 milliseconds, and again each time it returns while the word stays
+      still: [still] is how long the word has stayed still. It blocks for at
+      most [ms] milliseconds, where [ms] is at most 200, on the device's
+      interrupts or events, and raises [Failure] with the driver's message if
+      the device reports a fault, which loses the device. A library that drives
+      the GPU itself declares a hang there, once [still] passes a limit of its
+      own, after it looked for faults so that a fault reported late names its
+      cause. *)
 
   (** The type for how a device's work completes. *)
   type completion =
     | Poll
         (** Work signals by storing its value into its {!signal_word}, and waits
-            poll it. The timeout restarts whenever the word moves. *)
-    | Sleep of (timeline:Region.t -> int -> unit)
-        (** As [Poll], and, given the region of its timeline, [sleep ms] runs
-            once a wait has seen the signal word stay still for 200
-            milliseconds, and again each time it returns while the word stays
-            still: it blocks for at most [ms] milliseconds, at most 200 and
-            never past the timeout, on the device's interrupts or events, and
-            raises [Failure] with the driver's message if the device reports a
-            fault, which loses the device. Before a wait declares the device
-            hung, it runs once more with [ms = 1], so a fault reported late
-            still names its cause. *)
+            poll it until it arrives. Nothing reports the device's faults; the
+            reads of a word of another machine raise when the connection to it
+            fails, which loses the device. *)
+    | Sleep of sleep
+        (** As [Poll], and a wait runs the device's [sleep] while its signal
+            word stays still. *)
     | Signal of (timeline:Region.t -> signal)
         (** The device signals in its own way, given the region of its timeline,
             and never through its {!signal_word}, which stays [0]. The work of
@@ -1443,26 +1449,22 @@ module Driver : sig
   }
   (** The type for a binary as a driver loaded it. *)
 
-  val default_timeout : int
-  (** [default_timeout] is [30_000], the {!timeout} in milliseconds every device
-      starts at. *)
-
   val wait :
-    sleep:(timeline:Region.t -> int -> unit) ->
-    timeout_ms:int ->
-    Region.t ->
-    int ->
-    bool
-  (** [wait ~sleep ~timeout_ms word v] waits until the 64-bit word that starts
-      the region [word] reaches [v], unsigned, as a wait on the timeline of a
-      [Sleep] device does, [word] standing for its timeline: it polls, and runs
-      [sleep ~timeline:word ms] as that device's sleep runs, which blocks for at
-      most [ms] milliseconds. It is [false] if the word stayed still for
-      [timeout_ms] milliseconds. A driver waits with it for work it signals
-      outside the timeline, with the sleep of its [Sleep] completion.
+    ?host:device -> sleep:sleep -> timeline:Region.t -> (unit -> bool) -> unit
+  (** [wait ~sleep ~timeline ready] waits until [ready ()] holds, as a wait for
+      the work of a [Sleep] device whose timeline is [timeline] does: it checks
+      [ready] in turn with the 64-bit signal word at [timeline]'s start, and
+      runs [sleep ~timeline ~still ms] while that word stays still, [still]
+      being how long it has. A driver waits with it, inside its callbacks, for
+      what its work frees, such as room in a queue or memory its earlier work
+      reads, with the sleep of its [Sleep] completion. [host] is the host of the
+      machine whose memory [timeline] is (defaults to {!Nx_device.val-host}). A
+      [Sys.Break] from Ctrl-C may raise between checks: a driver changes nothing
+      before the wait that the wait's end must see.
 
-      Raises [Invalid_argument] if the host does not address [word] or if [word]
-      holds fewer than 8 bytes, and what [sleep] raises. *)
+      Raises [Invalid_argument] if [host] is no host, if [host] does not address
+      [timeline] or if [timeline] holds fewer than 8 bytes, and what [sleep] and
+      [ready] raise. *)
 
   val host_memory : allocator
   (** [host_memory] allocates memory of this process's heap, as the {!host}
@@ -1556,9 +1558,8 @@ module Driver : sig
       - [room ()] is [true] iff each queue that submitted work writes has room
         for what one submission writes, as the device's library bounds it (its
         low-level section). {!submit} waits for it on each of its devices before
-        it runs [f], for at most the device's {!timeout}, and loses the device
-        if it stays [false]; a [Failure] it raises loses the device. Defaults to
-        [true].
+        it runs [f], as {!wait} does with the device's timeline and [Sleep]; a
+        [Failure] either raises loses the device. Defaults to [true].
       - [finalize ~failed] runs once when the program exits, whether or not the
         device is lost: after the device synchronized if it was not, with
         [failed] telling whether it is lost by then. It leaves the hardware as

@@ -4,15 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 (* The Mac's GPU as a device: opening it, its shared memory and borrows, its
-   programs, work submitted to it and its timeline, and nx's runtime laws over
-   it. *)
+   programs, work submitted to it and its timeline, nx's runtime laws over it,
+   and last, a command buffer Metal fails. *)
 
 open Windtrap
 module B = Nx_device.Buffer
 module S = Nx_dtype.Scalar
 
 external compile : string -> string = "test_metal_compile"
-external set_signaled : nativeint -> int -> unit = "test_metal_set_signaled"
+external signal : nativeint -> nativeint -> int -> unit = "test_metal_signal"
 external contains : nativeint -> nativeint -> bool = "test_metal_contains"
 external allocation_count : nativeint -> int = "test_metal_allocation_count"
 external weak : nativeint -> nativeint = "test_metal_weak"
@@ -52,7 +52,8 @@ let launch ?(stamps = 0n) ?(record = ignore) p out threads =
   Nx_device.submit [ metal ] ~touches:[ out ] (fun s ->
       let v = Nx_device.Submission.value s metal in
       record s;
-      dispatch (Nx_metal_device.queue m) (Nx_metal_device.event m)
+      dispatch (Nx_metal_device.queue m)
+        (Nx_metal_device.signaler m)
         (Nx_metal_device.fence m)
         (Nx_metal_device.resources m)
         (Nx_device.Program.handle p)
@@ -125,7 +126,7 @@ let opening =
           greater int ~than:0 (Nx_device.budget metal));
       test "its low-level accessors are Metal objects" (fun () ->
           List.iter (not_equal nativeint 0n)
-            Nx_metal_device.[ queue m; event m; fence m ]);
+            Nx_metal_device.[ queue m; signaler m; fence m ]);
       cases ~name:fst "refuse"
         [
           ("a device past the count", fun () -> is_error (Nx_metal_device.get 1));
@@ -373,8 +374,8 @@ let work =
             (List.init 8 (fun i -> Int32.of_int ((i * 3) + 1)))
             (List.init 8 (Bigarray.Array1.get v)));
       test
-        "the host waits for work that touched it, which signals on the shared \
-         event and leaves its signal word at 0" (fun () ->
+        "the host waits for work that touched it, which signals through the \
+         signaler and leaves its signal word at 0" (fun () ->
           let signaled = Atomic.make false in
           let hb = B.create Nx_device.host S.UInt8 8 in
           let domain =
@@ -383,7 +384,9 @@ let work =
                 Domain.spawn (fun () ->
                     Unix.sleepf 0.05;
                     Atomic.set signaled true;
-                    set_signaled (Nx_metal_device.event m) v))
+                    signal (Nx_metal_device.queue m)
+                      (Nx_metal_device.signaler m)
+                      v))
           in
           Nx_device.synchronize Nx_device.host;
           is_true (Atomic.get signaled);
@@ -407,7 +410,8 @@ let work =
               for i = 0 to 7 do
                 words.{i} <- 0l
               done;
-              set_signaled (Nx_metal_device.event m)
+              signal (Nx_metal_device.queue m)
+                (Nx_metal_device.signaler m)
                 (Nx_device.Submission.value s metal));
           equal ~msg:"rewritten after the kernel" string (String.make 32 '\000')
             (read out));
@@ -512,7 +516,8 @@ let submitters =
               equal int 2 (List.length commands);
               List.iter (not_equal nativeint 0n) (icb :: commands);
               Nx_device.submit [ metal ] ~touches:(args :: outs) (fun s ->
-                  execute (Nx_metal_device.queue m) (Nx_metal_device.event m)
+                  execute (Nx_metal_device.queue m)
+                    (Nx_metal_device.signaler m)
                     (Nx_metal_device.fence m)
                     (Nx_metal_device.resources m)
                     icb 2
@@ -543,6 +548,93 @@ let submitters =
                 [ fill_command ~offset:0 1 ]));
     ]
 
+let spin =
+  lazy
+    (compile
+       {|#include <metal_stdlib>
+using namespace metal;
+struct args { device uint *out; };
+kernel void spin(constant args &a [[buffer(0)]],
+                 uint i [[threadgroup_position_in_grid]]) {
+  uint acc = i;
+  for (uint k = 0; k < 1000u; k++)
+    for (uint j = 0; j < 1000000u; j++) acc = acc * 1664525u + 1013904223u + j;
+  a.out[i] = acc;
+}|})
+
+let spin_groups = 1 lsl 15
+
+(* Last: a command buffer that Metal fails, as macOS ends one that keeps the GPU
+   from the display for about half a second on a Mac that drives one, loses the
+   device with Metal's reason, though a failed command buffer still runs the
+   signals encoded in it. *)
+let failed =
+  test "a command buffer Metal fails loses the device with Metal's reason"
+    (fun () ->
+      let p = program ~binary:(Lazy.force spin) ~name:"spin" in
+      let out = B.create metal S.UInt32 spin_groups in
+      ignore (launch p out spin_groups);
+      match Nx_device.synchronize metal with
+      | () -> skip ~reason:"macOS ended no command buffer" ()
+      | exception Nx_device.Lost (d, why) ->
+          is_true ~msg:"Metal's device" (d == metal);
+          Windtrap.contains ~msg:"Metal's reason"
+            ~sub:"kIOGPUCommandBufferCallbackError" why;
+          raises_match
+            (function Nx_device.Lost (d, _) -> d == metal | _ -> false)
+            (fun () -> B.create metal S.UInt8 1))
+
+(* After a failed command buffer, the device signals nothing more: the value of
+   a later command buffer that completes does not read as signaled, and the
+   failure loses the device when its value is read. *)
+let failed_watched =
+  test
+    "a command buffer that fails before the one that signals keeps the work \
+     unsignaled, and a read of the value loses the device" (fun () ->
+      let d = Result.get_ok (Nx_metal_device.get 0) in
+      let m = Option.get (Nx_metal_device.of_device d) in
+      let load name binary =
+        match Nx_device.Program.load d ~binary ~name with
+        | Ok p -> p
+        | Error why -> failwith why
+      in
+      let spin = load "spin" (Lazy.force spin)
+      and fill = load "fill" (Lazy.force library) in
+      let out = B.create d S.UInt32 spin_groups in
+      let dispatch p threads v =
+        dispatch (Nx_metal_device.queue m)
+          (Nx_metal_device.signaler m)
+          (Nx_metal_device.fence m)
+          (Nx_metal_device.resources m)
+          (Nx_device.Program.handle p)
+          (B.address out) threads v 0n
+      in
+      let v =
+        Nx_device.submit [ d ] ~touches:[ out ] (fun s ->
+            let v = Nx_device.Submission.value s d in
+            dispatch spin spin_groups 0;
+            dispatch fill 1 v;
+            v)
+      in
+      let rec settled n =
+        if n > 0 && Nx_device.lost d = None && Nx_device.signaled d < v then begin
+          Unix.sleepf 0.05;
+          settled (n - 1)
+        end
+      in
+      settled 200;
+      match Nx_device.lost d with
+      | None when Nx_device.signaled d >= v ->
+          skip ~reason:"macOS ended no command buffer" ()
+      | None -> fail "the work neither signaled nor failed in 10 s"
+      | Some why ->
+          Windtrap.contains ~msg:"Metal's reason"
+            ~sub:"kIOGPUCommandBufferCallbackError" why;
+          less ~msg:"the value" int ~than:v (Nx_device.signaled d);
+          raises_match
+            (function Nx_device.Lost (d', _) -> d' == d | _ -> false)
+            (fun () -> Nx_device.synchronize d))
+
 let () =
   exit
     (run "nx.metal.device"
@@ -553,4 +645,5 @@ let () =
          submitters;
          group "profiles" (dispatch_profile :: Nx_test.Profiles.copies [ metal ]);
          group "nx" (Nx_test.Runtimes.laws [ metal ]);
+         group "failures" [ failed; failed_watched ];
        ])

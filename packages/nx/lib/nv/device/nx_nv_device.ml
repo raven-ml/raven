@@ -113,7 +113,7 @@ type kind =
   | Vram
   | Visible (* the GPU's memory, which the process reaches *)
   | Host
-  | Uncached (* the GPU's error notifiers *)
+  | Uncached (* the channels' error notifiers, which the process reads *)
   | Channels (* the channels' rings, in the GPU's memory *)
 
 let alloc_mem n kind bytes =
@@ -125,7 +125,7 @@ let alloc_mem n kind bytes =
             | Vram -> Nvk.alloc g bytes
             | Visible -> Nvk.alloc g ~cpu_access:true ~contiguous:true bytes
             | Host -> Nvk.alloc g ~host:true bytes
-            | Uncached -> Nvk.alloc g ~uncached:true bytes
+            | Uncached -> Nvk.alloc g ~uncached:true ~cpu_access:true bytes
             | Channels ->
                 Nvk.alloc g ~cpu_access:true ~contiguous:true
                   ~map_flags:
@@ -140,7 +140,8 @@ let alloc_mem n kind bytes =
             | Vram -> Pci_memory.alloc p.memory bytes
             | Visible -> Pci_memory.alloc ~cpu_access:true p.memory bytes
             | Host -> Pci_memory.alloc ~host:true p.memory bytes
-            | Uncached -> Pci_memory.alloc ~uncached:true p.memory bytes
+            | Uncached ->
+                Pci_memory.alloc ~uncached:true ~cpu_access:true p.memory bytes
             | Channels ->
                 Pci_memory.alloc ~cpu_access:true ~devmem:true p.memory bytes
           in
@@ -270,10 +271,7 @@ let mapping n =
   in
   Driver.Pages { map; unmap }
 
-(* Channels *)
-
-let timeout n =
-  Option.fold ~none:Driver.default_timeout ~some:Nx_device.timeout n.dev
+(* Signal words *)
 
 (* The range at [x] of the GPU's machine. *)
 let range n x bytes =
@@ -287,18 +285,119 @@ let range n x bytes =
 let signal_word n timeline =
   range n (Option.get (Region.host_address timeline)) 8
 
+(* Faults *)
+
+let fault_name table v =
+  Option.value ~default:(Printf.sprintf "0x%x" v) (List.assoc_opt v table)
+
+(* The faults the GPU's multiprocessors or its MMU report, one per line. *)
+let fault_report n =
+  let module S = D.Sm_error_states in
+  let module E = D.Sm_error_state in
+  let p = P.create S.sizeof in
+  P.set p S.h_target_channel n.obj.compute_channel;
+  P.set p S.num_s_ms_to_read 100;
+  n.rm.control n.obj.debugger D.nv83de_ctrl_cmd_debug_read_all_sm_error_states
+    (Some p);
+  if P.get p S.mmu_fault_valid <> 0 then begin
+    let module M = D.Mmu_fault_info in
+    let module F = D.Mmu_fault_entry in
+    let m = P.create M.sizeof in
+    n.rm.control n.obj.debugger D.nv83de_ctrl_cmd_debug_read_mmu_fault_info
+      (Some m);
+    List.init (P.get m M.count) (fun i ->
+        let f x = P.elt_field M.mmu_fault_info_list i x in
+        Printf.sprintf "MMU fault: 0x%X | %s | %s"
+          (P.get m (f F.fault_address))
+          (fault_name D.fault_fault_types (P.get m (f F.fault_type)))
+          (fault_name D.fault_access_types (P.get m (f F.access_type))))
+  end
+  else
+    let _, _, count = S.sm_error_state_array in
+    List.filter_map
+      (fun i ->
+        let f x = P.elt_field S.sm_error_state_array i x in
+        let global = P.get p (f E.hww_global_esr)
+        and warp = P.get p (f E.hww_warp_esr) in
+        if global = 0 && warp = 0 then None
+        else
+          Some
+            (Printf.sprintf "SM %d fault: esr=0x%x warp_esr=0x%x warp_pc=0x%x" i
+               global warp
+               (P.get p (f E.hww_warp_esr_pc64))))
+      (List.init count Fun.id)
+
+(* The errors RM wrote into the channels' error notifiers when it stopped them,
+   such as for a fault of the channel's own methods, which the multiprocessors
+   do not report. An error notification is RM's [NvNotification]: a timestamp,
+   then [info32], the error's code, [info16], the engine, and [status]. *)
+let notification_bytes = 16
+
+let channel_errors n =
+  let error (c : Pushbuf.channel) =
+    let code = Mmio.get32 c.error 8 and status = Mmio.get32 c.error 12 lsr 16 in
+    if code = 0 && status = 0 then None
+    else
+      Some
+        (Printf.sprintf "channel error %d (%s), status 0x%x" code
+           (fault_name D.robust_channel_errors code)
+           status)
+  in
+  match n.channels with
+  | None -> []
+  | Some (compute, copy) -> List.filter_map error [ compute; copy ]
+
+(* The faults a wait looks for: under [Pci], the GSP's messages are handled
+   first, and an error it reported fails the device. *)
+let check_faults n =
+  (match n.gpu with Pci_gpu p -> Gsp.poll p.gsp | Kernel_gpu _ -> ());
+  match channel_errors n @ fault_report n with
+  | [] -> ()
+  | report -> failwith (String.concat "\n" report)
+
+(* Waits *)
+
+(* How long a GPU the process drives itself ([Pci_gpu]) may make no progress
+   before it is hung. No other process shares such a GPU, so its work never
+   waits for theirs. Under the kernel driver, the driver alone reports faults,
+   and work may run as long as it takes. *)
+let hang_ms = 30_000
+
+(* The sleep of a wait whose timeline has stayed still for [still] milliseconds:
+   it checks for faults, and under [Pci] for a hang, then polls the signal word
+   every millisecond for at most [ms], so that the check runs once a sleep, at
+   most every 200 ms. *)
+let sleep n ~timeline ~still ms =
+  check_faults n;
+  (match n.gpu with
+  | Pci_gpu _ when still >= hang_ms -> failwith "hang detected"
+  | Pci_gpu _ | Kernel_gpu _ -> ());
+  let word = signal_word n timeline in
+  let seen = Mmio.get64 word 0 and until = Nvdev.now_ms () + ms in
+  while Mmio.get64 word 0 = seen && Nvdev.now_ms () < until do
+    Unix.sleepf 0.001
+  done
+
+(* Waits until [ready ()], as a wait for the work of the timeline [timeline]
+   does. *)
+let wait n ~timeline ready =
+  Driver.wait ~host:n.machine ~sleep:(sleep n) ~timeline ready
+
+(* Channels *)
+
 (* Submits the work [body] for the timeline value [v] on [ch]: after [v - 1],
    ending by signaling [v] with [signal]. *)
 let run n ch ~timeline ~signal v body =
   let addr = Nativeint.to_int (Region.address timeline) in
   let word = signal_word n timeline in
   let words = Pushbuf.acquire addr (v - 1) @ body @ signal addr v in
+  let signaled v () = Int64.to_int (Mmio.get64 word 0) >= v in
   let seg =
     Pushbuf.segment (Option.get n.ring)
-      ~signaled:(fun () -> Int64.to_int (Mmio.get64 word 0))
-      ~timeout_ms:(timeout n) v words
+      ~wait:(fun v -> wait n ~timeline (signaled v))
+      v words
   in
-  Pushbuf.submit ch ~timeout_ms:(timeout n) seg (List.length words)
+  Pushbuf.submit ch ~wait:(wait n ~timeline) seg (List.length words)
 
 let channels n = Option.get n.channels
 
@@ -465,67 +564,6 @@ let load n ~binary =
               unload = (fun () -> release n mem);
             })
 
-(* Faults *)
-
-let fault_name table v =
-  Option.value ~default:(Printf.sprintf "0x%x" v) (List.assoc_opt v table)
-
-(* The faults the GPU's multiprocessors or its MMU report, one per line. *)
-let fault_report n =
-  let module S = D.Sm_error_states in
-  let module E = D.Sm_error_state in
-  let p = P.create S.sizeof in
-  P.set p S.h_target_channel n.obj.compute_channel;
-  P.set p S.num_s_ms_to_read 100;
-  n.rm.control n.obj.debugger D.nv83de_ctrl_cmd_debug_read_all_sm_error_states
-    (Some p);
-  if P.get p S.mmu_fault_valid <> 0 then begin
-    let module M = D.Mmu_fault_info in
-    let module F = D.Mmu_fault_entry in
-    let m = P.create M.sizeof in
-    n.rm.control n.obj.debugger D.nv83de_ctrl_cmd_debug_read_mmu_fault_info
-      (Some m);
-    List.init (P.get m M.count) (fun i ->
-        let f x = P.elt_field M.mmu_fault_info_list i x in
-        Printf.sprintf "MMU fault: 0x%X | %s | %s"
-          (P.get m (f F.fault_address))
-          (fault_name D.fault_fault_types (P.get m (f F.fault_type)))
-          (fault_name D.fault_access_types (P.get m (f F.access_type))))
-  end
-  else
-    let _, _, count = S.sm_error_state_array in
-    List.filter_map
-      (fun i ->
-        let f x = P.elt_field S.sm_error_state_array i x in
-        let global = P.get p (f E.hww_global_esr)
-        and warp = P.get p (f E.hww_warp_esr) in
-        if global = 0 && warp = 0 then None
-        else
-          Some
-            (Printf.sprintf "SM %d fault: esr=0x%x warp_esr=0x%x warp_pc=0x%x" i
-               global warp
-               (P.get p (f E.hww_warp_esr_pc64))))
-      (List.init count Fun.id)
-
-(* The faults a wait looks for: under [Pci], the GSP's messages are handled
-   first, and an error it reported fails the device. *)
-let check_faults n =
-  (match n.gpu with Pci_gpu p -> Gsp.poll p.gsp | Kernel_gpu _ -> ());
-  match fault_report n with
-  | [] -> ()
-  | report -> failwith (String.concat "\n" report)
-
-(* The sleep of a wait whose timeline stayed still for 200 ms: it checks for
-   faults, then polls the signal word every millisecond for at most [ms], so
-   that the check runs once a sleep, at most every 200 ms. *)
-let sleep n ~timeline ms =
-  check_faults n;
-  let word = signal_word n timeline in
-  let seen = Mmio.get64 word 0 and until = Nvdev.now_ms () + ms in
-  while Mmio.get64 word 0 = seen && Nvdev.now_ms () < until do
-    Unix.sleepf 0.001
-  done
-
 (* Opening *)
 
 (* GPU [i]'s name through [iface]: ["NV:i"], and ["NV-PCI:i"] for GPUs taken
@@ -620,6 +658,8 @@ let new_channel n ~keep ~taken ~buf ~put ~doorbell ~offset ~entries ~engine
     ~compute =
   let rm = n.rm in
   let notifier = keep Uncached "channel's error notifier" (48 lsl 20) in
+  let error = Mmio.sub (Option.get (host_view notifier)) 0 notification_bytes in
+  Mmio.fill error 0 notification_bytes '\000';
   let (module R : D.RELEASE) =
     match n.gpu with Kernel_gpu g -> g.c.release | Pci_gpu _ -> Gsp.release
   in
@@ -660,6 +700,7 @@ let new_channel n ~keep ~taken ~buf ~put ~doorbell ~offset ~entries ~engine
     put;
     doorbell;
     token = P.get t D.Work_submit_token.work_submit_token;
+    error;
   }
 
 (* A channel's words, as buffers of [dev] at addresses the host and the GPU

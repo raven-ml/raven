@@ -261,8 +261,9 @@ let open_cuda i ~arch ~budget ctx =
     }
   in
   (* A sleep waits for the signal word to move, and queries the streams each
-     millisecond for a fault. *)
-  let sleep ~timeline ms =
+     millisecond for a fault. The driver reports hangs as faults: a still word
+     is work that runs long. *)
+  let sleep ~timeline ~still:_ ms =
     let word = Option.get (Region.host_address timeline) in
     ignore (wait ctx compute copy_stream word (signaled word + 1) ms)
   in

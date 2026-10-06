@@ -261,10 +261,10 @@ let test_peer () =
   done;
   Domain.join t0
 
-(* A kernel that stores [value], compiled at test time for the processor [arch]
-   in a code object of version 6, when a compiler for it is at hand: an object
-   the load relocates, so no linker is needed. *)
-let compile ?(value = 42) arch =
+(* The OpenCL source [src], compiled at test time for the processor [arch] in a
+   code object of version 6, when a compiler for it is at hand: an object the
+   load relocates, so no linker is needed. *)
+let compile_source src arch =
   let clang =
     List.find_opt Sys.file_exists
       [ "/opt/rocm/llvm/bin/clang"; "/usr/bin/clang"; "/usr/local/bin/clang" ]
@@ -273,22 +273,29 @@ let compile ?(value = 42) arch =
   | None -> None
   | Some clang ->
       let dir = Filename.temp_dir "nx-amd" "" in
-      let src = Filename.concat dir "k.cl"
-      and out = Filename.concat dir "k.co" in
-      Out_channel.with_open_text src (fun oc ->
-          Printf.fprintf oc
-            "kernel void fill(global int *p) { \
-             p[__builtin_amdgcn_workitem_id_x()] = %d; }\n"
-            value);
+      let out = Filename.concat dir "k.co" in
+      Out_channel.with_open_text (Filename.concat dir "k.cl") (fun oc ->
+          output_string oc src);
       let cmd =
         Printf.sprintf
           "%s -c -x cl -cl-std=CL2.0 -target amdgcn-amd-amdhsa -mcpu=%s \
            -mcode-object-version=6 -nogpulib -O2 %s -o %s 2>/dev/null"
-          clang arch src out
+          clang arch
+          (Filename.concat dir "k.cl")
+          out
       in
       if Sys.command cmd = 0 then
         Some (In_channel.with_open_bin out In_channel.input_all)
       else None
+
+(* A kernel that stores [value] at each work-item's index. *)
+let compile ?(value = 42) arch =
+  compile_source
+    (Printf.sprintf
+       "kernel void fill(global int *p) { p[__builtin_amdgcn_workitem_id_x()] \
+        = %d; }\n"
+       value)
+    arch
 
 let test_programs () =
   let d = device () in
@@ -700,13 +707,90 @@ let test_profiling () =
       raises_match (Exn.invalid_arg ~substring:"counts no NO_SUCH_COUNTER")
         (fun () -> Nx_amd_device.profiling a))
 
-(* Last: work that never signals hangs the device, which is lost after its
-   timeout. *)
-let test_hang () =
+(* Failures *)
+
+let long_seconds = 35
+
+(* Spins one work-item until [long_seconds] have passed on the GPU's 100 MHz
+   steady clock, then stores the seconds it spun. *)
+let spin =
+  Printf.sprintf
+    "kernel void spin(global uint *p) { ulong t0 = \
+     __builtin_readsteadycounter(); ulong t; do { t = \
+     __builtin_readsteadycounter(); } while (t - t0 < %d00000000ul); p[0] = \
+     (uint)((t - t0) / 100000000ul); }\n"
+    long_seconds
+
+(* Stores past the end of the GPU's address space. *)
+let wild = "kernel void wild(global int *p) { p[1ul << 46] = 1; }\n"
+
+(* Whether the suite takes its GPUs over PCI, where the process drives them. *)
+let over_pci () = Option.is_some (pci_first ())
+
+let run_one d ~binary ~name =
+  let program = program d ~binary ~name in
+  let b = B.create d S.UInt32 1 in
+  let args = Bytes.create 8 in
+  Bytes.set_int64_le args 0 (Int64.of_nativeint (B.address b));
+  Nx_amd_device.launch ~touches:[ b ]
+    [
+      {
+        Nx_amd_device.program;
+        groups = (1, 1, 1);
+        threads = (1, 1, 1);
+        args = Bytes.to_string args;
+      };
+    ];
+  b
+
+(* Under the kernel driver, a kernel that runs for longer than any limit a wait
+   had completes: the driver alone declares faults. *)
+let test_long () =
+  if over_pci () then skip ~reason:"the process drives the GPU" ();
   let d = device () in
-  Nx_device.set_timeout d 500;
+  match compile_source spin (Nx_device.arch d) with
+  | None -> skip ~reason:"no compiler for the GPU's target" ()
+  | Some binary ->
+      let t0 = Unix.gettimeofday () in
+      let b = run_one d ~binary ~name:"spin" in
+      Nx_device.synchronize d;
+      at_least ~msg:"seconds waited" (float 0.1)
+        ~than:(float_of_int long_seconds)
+        (Unix.gettimeofday () -. t0);
+      equal ~msg:"not lost" (option string) None (Nx_device.lost d);
+      let h = to_host b in
+      equal ~msg:"the seconds it spun" int32
+        (Int32.of_int long_seconds)
+        (B.bigarray Bigarray.int32 h).{0}
+
+(* Last: under the kernel driver, a store the GPU's page tables refuse loses the
+   device with the driver's report. *)
+let test_fault () =
+  if over_pci () then skip ~reason:"the process drives the GPU" ();
+  let d = device () in
+  match compile_source wild (Nx_device.arch d) with
+  | None -> skip ~reason:"no compiler for the GPU's target" ()
+  | Some binary ->
+      ignore (run_one d ~binary ~name:"wild");
+      let faulted = function
+        | Nx_device.Lost (d', why) ->
+            d' == d && String.starts_with ~prefix:"memory fault at" why
+        | _ -> false
+      in
+      raises_match faulted (fun () -> Nx_device.synchronize d);
+      raises_match faulted (fun () -> B.create d S.UInt8 1)
+
+(* Last: over PCI, the process drives the GPU, and work that makes no progress
+   for 30 seconds loses it. *)
+let test_hang () =
+  if not (over_pci ()) then
+    skip ~reason:"the kernel driver alone reports faults" ();
+  let d = device () in
   Nx_device.submit [ d ] ~touches:[] ignore;
+  let t0 = Unix.gettimeofday () in
   raises_match (hung d) (fun () -> Nx_device.synchronize d);
+  at_least ~msg:"seconds waited" (float 0.1) ~than:30.
+    (Unix.gettimeofday () -. t0);
   raises_match (hung d) (fun () -> B.create d S.UInt8 1)
 
 let () =
@@ -748,5 +832,11 @@ let () =
            :: Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"
-           [ test "work that never signals loses the device" test_hang ];
+           [
+             slow "a kernel that runs 35 s completes, and loses no device"
+               test_long;
+             test "a fault the driver reports loses the device" test_fault;
+             slow "work that makes no progress for 30 s over PCI is a hang"
+               test_hang;
+           ];
        ])

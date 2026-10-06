@@ -13,18 +13,9 @@ external call : nativeint -> int array -> int array -> unit = "tolk_null_call"
 
 (* Devices *)
 
-(* Run's test devices, whose queues this module runs. A queue that hangs fails
-   in ten seconds. *)
+(* Run's test devices, whose queues this module runs. *)
 let nx_devices =
-  lazy
-    (List.filter_map
-       (fun (name, d) ->
-         if name = "CPU" then None
-         else begin
-           Nx_device.set_timeout d 10_000;
-           Some (name, d)
-         end)
-       (Run.devices ()))
+  lazy (List.filter (fun (name, _) -> name <> "CPU") (Run.devices ()))
 
 let device name =
   match List.assoc_opt name (Lazy.force nx_devices) with
@@ -202,7 +193,10 @@ let rec served queues =
   match serve queues with
   | () -> ()
   | exception e ->
+      (* The queues' driver failed: their devices are lost at their next
+         wait. *)
       Atomic.set failure (Some (Printexc.to_string e));
+      Run.fail (Printexc.to_string e);
       finished (outstanding ());
       served []
 

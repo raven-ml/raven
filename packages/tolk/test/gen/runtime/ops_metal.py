@@ -18,7 +18,11 @@ tinygrad is changed as tolk differs from it:
 - a command buffer waits in its stamps retained, after the
   release of one an earlier run left there unread;
 - MetalQueue takes an address on its first device, as tolk names one
-  device.
+  device;
+- each command buffer is handed to the device's signaler (`signal:value:`),
+  the last with the batch's value and the others with 0, in place of the
+  last one's `encodeSignalEvent:value:`, and the handles hold the signaler in
+  place of the event (D135).
 """
 
 from types import SimpleNamespace
@@ -74,7 +78,8 @@ ops_metal.MetalQueue.exec = exec_
 
 # Stamp slots and retained command buffers
 
-ops_metal.SELECTORS += ("retain", "release")
+ops_metal.HANDLES = tuple(h for h in ops_metal.HANDLES if h != "event") + ("signaler",)
+ops_metal.SELECTORS += ("retain", "release", "signal:value:")
 msg_send, mtl_sel, mtl_cb, mtl_enc, mtl_msg = (ops_metal.MSGSEND, ops_metal.mtl_sel, ops_metal.mtl_cb, ops_metal.mtl_enc,
                                                 ops_metal.mtl_msg)
 
@@ -109,7 +114,7 @@ def submit(self, cmdbuf):
             h = ccall(msg_send[None], unread, mtl_sel(self.devs, "release").load())
             h = slots.after(h).index(5 + 4 * first).store(0)
             h = slots.after(h).index(3 + 4 * first).store(ccall(msg_send[ops_metal.ctypes.c_void_p], cbuf, mtl_sel(self.devs, "retain").load()))
-        if last: h = mtl_msg(h, cb, "encodeSignalEvent:value:", mtl_sel(self.devs, "event").load(), self.value)
+        h = mtl_msg(h, mtl_sel(self.devs, "signaler"), "signal:value:", cbuf, self.value if last else 0)
         return mtl_msg(h, cb, "commit")
 
     if not self.stamps: return run(h, 0, n, True)

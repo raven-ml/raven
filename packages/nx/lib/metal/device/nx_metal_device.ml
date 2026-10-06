@@ -10,6 +10,7 @@ external unified : nativeint -> bool = "caml_nx_metal_unified"
 external new_queue : nativeint -> nativeint = "caml_nx_metal_new_queue"
 external new_event : nativeint -> nativeint = "caml_nx_metal_new_event"
 external new_fence : nativeint -> nativeint = "caml_nx_metal_new_fence"
+external new_signaler : nativeint -> nativeint = "caml_nx_metal_new_signaler"
 
 external new_residency_set : nativeint -> nativeint -> nativeint
   = "caml_nx_metal_new_residency_set"
@@ -48,7 +49,7 @@ type t = {
   dev : Nx_device.t;
   mtl : nativeint;
   queue : nativeint;
-  event : nativeint;
+  signaler : nativeint;
   fence : nativeint;
   residency_set : nativeint option;
   resources : (nativeint, unit) Hashtbl.t;
@@ -56,7 +57,7 @@ type t = {
 }
 
 (* The opens of the GPU, the live one first: an open of a lost one is a new
-   device, over the same [MTLDevice], with a queue and an event of its own. *)
+   device, over the same [MTLDevice], with a queue and a signaler of its own. *)
 let opened = Atomic.make []
 let lock = Mutex.create ()
 
@@ -79,6 +80,7 @@ let open_metal mtl =
     match new_residency_set mtl queue with 0n -> None | set -> Some set
   in
   let event = new_event mtl and fence = new_fence mtl in
+  let signaler = new_signaler event in
   let resources = Hashtbl.create 64 in
   let resident buffer add =
     match residency_set with
@@ -112,8 +114,8 @@ let open_metal mtl =
   in
   let signal =
     {
-      Driver.signaled = (fun () -> signaled event);
-      wait = (fun v ~timeout_ms -> wait event v timeout_ms);
+      Driver.signaled = (fun () -> signaled signaler);
+      wait = (fun v ~ms -> wait signaler v ms);
     }
   in
   let dev =
@@ -139,7 +141,7 @@ let open_metal mtl =
       (Host_visible
          { memory = { alloc = (fun n -> region (alloc mtl n)); free }; mapping })
   in
-  { dev; mtl; queue; event; fence; residency_set; resources }
+  { dev; mtl; queue; signaler; fence; residency_set; resources }
 
 let get i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_metal_device.get: %d < 0" i);
@@ -178,7 +180,7 @@ let of_device d =
   List.find_opt (fun m -> Nx_device.equal m.dev d) (Atomic.get opened)
 
 let queue m = m.queue
-let event m = m.event
+let signaler m = m.signaler
 let fence m = m.fence
 let residency_set m = m.residency_set
 

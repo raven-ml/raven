@@ -560,28 +560,26 @@ value caml_nx_cuda_signaled(value v_word) {
   return Val_long(load_signal(Ptr_val(v_word)));
 }
 
-/* Waits until the signal word reaches [v]. The timeout restarts whenever the
-   word moves. About every millisecond it queries the streams: one that reports
-   an error faulted, and the wait raises it. */
+/* Waits until the signal word reaches [v], for at most [ms] milliseconds.
+   About every millisecond it queries the streams: one that reports an error
+   faulted, and the wait raises it. */
 value caml_nx_cuda_wait(value v_ctx, value v_compute, value v_copy,
-                        value v_word, value v_v, value v_timeout) {
+                        value v_word, value v_v, value v_ms) {
   CAMLparam5(v_ctx, v_compute, v_copy, v_word, v_v);
-  CAMLxparam1(v_timeout);
+  CAMLxparam1(v_ms);
   CUcontext ctx = Ptr_val(v_ctx);
   CUstream streams[2] = {Ptr_val(v_compute), Ptr_val(v_copy)};
   void *word = Ptr_val(v_word);
   uint64_t target = (uint64_t)Long_val(v_v);
-  int64_t timeout = Long_val(v_timeout);
+  int64_t ms = Long_val(v_ms);
   int signaled = 0;
   caml_release_runtime_system();
   CUresult status = push(ctx);
   if (status == CUDA_SUCCESS) {
     CUresult fault = CUDA_SUCCESS;
-    uint64_t seen = load_signal(word);
     int64_t start = now_ms(), queried = start;
     for (;;) {
-      uint64_t now = load_signal(word);
-      if (now >= target) {
+      if (load_signal(word) >= target) {
         signaled = 1;
         break;
       }
@@ -594,11 +592,7 @@ value caml_nx_cuda_wait(value v_ctx, value v_compute, value v_copy,
         }
         if (fault != CUDA_SUCCESS) break;
       }
-      if (now != seen) {
-        seen = now;
-        start = t;
-      } else if (t - start > timeout)
-        break;
+      if (t - start >= ms) break;
       yield();
     }
     status = pop(fault);

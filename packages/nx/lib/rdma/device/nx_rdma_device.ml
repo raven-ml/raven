@@ -114,16 +114,16 @@ let queue_pair a na b nb =
   in
   if n1 == na then (q1, q2) else (q2, q1)
 
+(* How long a completion may take before its adapters are hung. The process
+   drives the adapters itself, and a completion waits for the fabric and the
+   other adapter alone, never for a computation. *)
+let hang_ms = 30_000
+
 (* The link: per chunk, the destination's adapter posts the receive and the
    source's the send, and both completions are waited for. *)
 let move ns nd (ds, dd) ~src ~dst =
   let s = B.device src and d = B.device dst in
   let qs, qd = queue_pair s ns d nd in
-  let timeout_ms =
-    Int.min
-      (Nx_device.timeout (Option.get ns.dev))
-      (Nx_device.timeout (Option.get nd.dev))
-  in
   let first, second = if ns.id < nd.id then (ns, nd) else (nd, ns) in
   Mutex.protect first.lock @@ fun () ->
   Mutex.protect second.lock @@ fun () ->
@@ -135,8 +135,8 @@ let move ns nd (ds, dd) ~src ~dst =
       let len = Int.min chunk (n - off) in
       let r = Bnxt.post_recv qd ~va:(at dst off) ~key:kd len in
       let t = Bnxt.post_send qs ~va:(at src off) ~key:ks len in
-      Bnxt.poll qs ~send:true ~timeout_ms t;
-      Bnxt.poll qd ~send:false ~timeout_ms r;
+      Bnxt.poll qs ~send:true ~timeout_ms:hang_ms t;
+      Bnxt.poll qd ~send:false ~timeout_ms:hang_ms r;
       go (off + len)
     end
   in

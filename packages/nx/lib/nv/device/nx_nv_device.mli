@@ -85,14 +85,17 @@
     ({!Nx_device.Program.load}).
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault or an
-    error of a streaming multiprocessor, loses the device ({!Nx_device.Lost})
-    with the GPU's report when a wait finds it. Work that does not signal within
-    the device's {!Nx_device.timeout}, 30 seconds unless
-    {!Nx_device.set_timeout} sets another, loses it too. Nothing recovers a lost
-    device in the process: under {!Kernel}, {!get} opens the GPU anew as a fresh
-    device, and under {!Pci} it refuses it. Under {!Pci}, an open refuses a GPU
-    that a failed or earlier boot left with its secure region up, until {!reset}
-    resets it.
+    error of a streaming multiprocessor, and an error the driver records when it
+    stops a channel, such as a fault of a semaphore, lose the device
+    ({!Nx_device.Lost}) with the report when a wait finds it. Under {!Kernel},
+    the kernel driver alone reports faults: work that runs long loses nothing,
+    and a wait lasts until the work signals or the driver reports a fault. Under
+    {!Pci}, the process is the GPU's driver and no other process shares the GPU:
+    work that makes no progress for 30 seconds loses the device as
+    ["hang detected"]. Nothing recovers a lost device in the process: under
+    {!Kernel}, {!get} opens the GPU anew as a fresh device, and under {!Pci} it
+    refuses it. Under {!Pci}, an open refuses a GPU that a failed or earlier
+    boot left with its secure region up, until {!reset} resets it.
 
     {b Under {!Pci}}, opening a GPU changes nothing outside the process. The GPU
     must be detached from its kernel driver ({!detach}), reset if it was booted

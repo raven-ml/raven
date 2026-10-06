@@ -177,8 +177,8 @@ let transfers name = String.starts_with ~prefix:"PEER" name
 let ahead = 7_200_000_000_000
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
-    ?window ?signal ?load ?peer ?timeout_ms ?synchronized ?report ?sleep
-    ?finalize ?clock ?resolve ?room ?reaches () =
+    ?window ?signal ?load ?peer ?synchronized ?report ?sleep ?finalize ?clock
+    ?resolve ?room ?reaches () =
   let drv =
     {
       blocks = Hashtbl.create 8;
@@ -270,8 +270,10 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     {
       Driver.signaled = (fun () -> !signaled);
       wait =
-        (fun v ~timeout_ms:_ ->
+        (fun v ~ms:_ ->
           run_to v;
+          (* A stalled queue is one its driver declares hung. *)
+          if !signaled < v && drv.stalled then failwith "hang detected";
           !signaled >= v);
     }
   in
@@ -319,7 +321,6 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     Driver.device ~name:(unique name) ~arch:"test" ~budget ~completion ?load
       ?peer ?synchronized ?report ?finalize ?resolve ?room ?reaches memory
   in
-  Option.iter (Nx_device.set_timeout dev) timeout_ms;
   { dev; drv }
 
 let far ?(name = "FAR") ?budget ?window ?clock ?peer ?reaches () =
@@ -329,25 +330,27 @@ let far ?(name = "FAR") ?budget ?window ?clock ?peer ?reaches () =
 let memory_of f b =
   Hashtbl.find f.drv.memories (Region.address (Region.of_buffer b))
 
-(* A signal whose waits answer [wait timeout_ms]. *)
+(* A signal whose waits answer [wait ms]. *)
 let signal ?(signaled = 0) wait =
-  {
-    Driver.signaled = (fun () -> signaled);
-    wait = (fun _ ~timeout_ms -> wait timeout_ms);
-  }
+  { Driver.signaled = (fun () -> signaled); wait = (fun _ ~ms -> wait ms) }
 
-(* A signal that never arrives, counting the waits for it. *)
-let never waits =
+(* A signal that its driver declares hung at the first wait, counting the waits
+   for it. *)
+let hung waits =
   signal (fun _ ->
       incr waits;
-      false)
+      failwith "hang detected")
+
+(* The sleep of a driver that declares its device hung the first time a wait
+   sleeps, 200 ms after its signal word stopped moving. *)
+let hangs ~still:_ _ = failwith "hang detected"
 
 (* A signal that a gate opens: until then the device has signaled nothing, and a
    wait for it fails. *)
 let gate opened =
   {
     Driver.signaled = (fun () -> if !opened then max_int else 0);
-    wait = (fun _ ~timeout_ms:_ -> !opened);
+    wait = (fun _ ~ms:_ -> !opened);
   }
 
 (* Submits work of [d] alone that touches [touches], and is [f] of the value the
@@ -1714,7 +1717,7 @@ let uses () =
     {
       Driver.signaled = (fun () -> !signaled);
       wait =
-        (fun v ~timeout_ms:_ ->
+        (fun v ~ms:_ ->
           waits := v :: !waits;
           signaled := Int.max !signaled v;
           true);
@@ -3049,7 +3052,6 @@ let refusals =
           make (local { memory with alloc = (fun _ -> Some unaddressed) }));
       raise_ ~exn:(Exn.failure ~substring:"timeline")
         "host memory with none for the timeline" (fun () -> make (local memory));
-      raise_ "a timeout of 0 ms" (fun () -> Nx_device.set_timeout near.dev 0);
       raise_ "a buffer of more than max_int bytes" (fun () ->
           B.create host S.Float64 ((max_int / 8) + 1));
       raise_ "a vendor's region on the host" (fun () ->
@@ -3404,42 +3406,63 @@ let timeline =
           write (B.create d S.UInt8 1) "x";
           equal int 2 !calls);
       test
-        "the timeout starts at the default of 30 s, and set_timeout sets it \
-         for the waits after it" (fun () ->
-          let seen = ref 0 in
-          let wait timeout_ms =
-            seen := timeout_ms;
-            true
+        "a wait asks a device that signals in its own way again while it has \
+         not signaled, each time for at most 200 ms" (fun () ->
+          let asked = ref [] in
+          let wait ms =
+            asked := ms :: !asked;
+            List.length !asked > 3
           in
           let d = (fake ~signal:(signal wait) ()).dev in
-          equal (pair int int) (30_000, 30_000)
-            (Nx_device.timeout d, Driver.default_timeout);
-          Nx_device.set_timeout d 7;
           submit d ignore;
           Nx_device.synchronize d;
-          equal int 7 !seen);
+          equal ~msg:"asked until it signaled" int 4 (List.length !asked);
+          List.iter (fun ms -> at_most int ~than:200 ms) !asked;
+          equal ~msg:"not lost" (option string) None (Nx_device.lost d));
       test
-        "a wait without a signal restarts its timeout whenever the signal word \
-         moves" (fun () ->
-          let d = (fake ~name:"SLOW" ~timeout_ms:200 ()).dev in
+        "a wait without a signal lasts until the signal word arrives, however \
+         long it stays still" (fun () ->
+          let d = (fake ~name:"SLOW" ()).dev in
           let word = B.address (Nx_device.signal_word d) in
-          List.iter (fun _ -> ignore (submit d Fun.id)) [ 1; 2; 3 ];
-          let progress =
+          ignore (submit d Fun.id);
+          let late =
             Domain.spawn (fun () ->
-                for k = 1 to 3 do
-                  Unix.sleepf 0.12;
-                  store_signal word k
-                done)
+                Unix.sleepf 0.5;
+                store_signal word 1)
           in
-          let t0 = Unix.gettimeofday () in
           Nx_device.synchronize d;
-          greater ~msg:"seconds waited" (float 0.01) ~than:0.3
-            (Unix.gettimeofday () -. t0);
-          Domain.join progress;
-          let stuck = (fake ~name:"STUCK" ~timeout_ms:200 ()).dev in
-          ignore (submit stuck Fun.id);
-          raises_match (lost stuck "hang detected") (fun () ->
-              Nx_device.synchronize stuck));
+          Domain.join late;
+          equal ~msg:"not lost" (option string) None (Nx_device.lost d));
+      test
+        "Ctrl-C interrupts a wait for work that never signals, and loses no \
+         device" (fun () ->
+          let d = (fake ~name:"STUCK" ()).dev in
+          ignore (submit d Fun.id);
+          let pid = Unix.getpid () in
+          Sys.catch_break true;
+          Fun.protect
+            ~finally:(fun () -> Sys.catch_break false)
+            (fun () ->
+              let kill =
+                Unix.create_process "/bin/sh"
+                  [|
+                    "/bin/sh";
+                    "-c";
+                    Printf.sprintf "sleep 0.3; kill -INT %d" pid;
+                  |]
+                  Unix.stdin Unix.stdout Unix.stderr
+              in
+              (* The test runner raises [Sys.Break] again past any matcher. *)
+              let interrupted =
+                match Nx_device.synchronize d with
+                | () -> false
+                | exception Sys.Break -> true
+              in
+              ignore (Unix.waitpid [] kill);
+              equal ~msg:"interrupted" bool true interrupted);
+          equal ~msg:"not lost" (option string) None (Nx_device.lost d);
+          store_signal (B.address (Nx_device.signal_word d)) 1;
+          Nx_device.synchronize d);
       test "a submission runs once its device's queues have room" (fun () ->
           let asked = ref 0 in
           let room () =
@@ -3451,13 +3474,23 @@ let timeline =
           equal ~msg:"asked until there was room" int 4 !asked;
           store_signal (B.address (Nx_device.signal_word d)) 1);
       test
-        "a device whose queues stay full through its timeout is lost, and the \
-         submission commits nothing" (fun () ->
+        "a submission waits for room however long its device's queues stay \
+         full, its driver sleeping meanwhile" (fun () ->
+          let t0 = Unix.gettimeofday () and sleeps = ref [] in
+          let room () = Unix.gettimeofday () -. t0 > 0.5 in
+          let sleep ~still ms = sleeps := (still, ms) :: !sleeps in
+          let d = (fake ~name:"FULL" ~room ~sleep ()).dev in
+          equal int 1 (submit d Fun.id);
+          is_true ~msg:"slept" (!sleeps <> []);
+          List.iter (fun (still, _) -> at_least int ~than:200 still) !sleeps;
+          store_signal (B.address (Nx_device.signal_word d)) 1);
+      test
+        "a fault reported while a submission waits for room loses the device, \
+         and the submission commits nothing" (fun () ->
           let ran = ref false in
-          let d =
-            (fake ~name:"FULL" ~timeout_ms:50 ~room:(fun () -> false) ()).dev
-          in
-          raises_match (lost d "no room in its queues") (fun () ->
+          let sleep ~still:_ _ = failwith "page fault" in
+          let d = (fake ~name:"FULL" ~sleep ~room:(fun () -> false) ()).dev in
+          raises_match (lost d "page fault") (fun () ->
               submit d (fun _ -> ran := true));
           is_false ~msg:"no work enqueued" !ran;
           equal int 0 (Nx_device.submitted d));
@@ -3548,7 +3581,7 @@ let test_wait () =
           Nx_device.Submission.wait s b 0));
   Domain.join domain;
   settle [ a ];
-  let stuck = (fake ~name:"STUCK" ~timeout_ms:50 ()).dev in
+  let stuck = (fake ~name:"STUCK" ~sleep:hangs ()).dev in
   ignore (submit stuck Fun.id);
   raises_match ~msg:"a value that does not arrive" (lost stuck "hang detected")
     (fun () ->
@@ -3643,7 +3676,7 @@ let submissions =
          signal word they cannot address"
         test_host_waits;
       test
-        "wait on the host for a value of a device they took, within its timeout"
+        "wait on the host for a value of a device they took, until it signals"
         test_wait;
       test
         "give each device the value after its submitted one, and commit them \
@@ -3660,7 +3693,7 @@ let submissions =
 
 let test_hang () =
   let waits = ref 0 in
-  let d = (fake ~name:"HUNG" ~signal:(never waits) ()).dev in
+  let d = (fake ~name:"HUNG" ~signal:(hung waits) ()).dev in
   let b = B.create d S.UInt8 8 in
   ignore (submit d Fun.id);
   (match Nx_device.synchronize d with
@@ -3692,7 +3725,7 @@ let test_hang () =
 
 let test_scope () =
   let waits = ref 0 in
-  let gpu = (fake ~name:"GPU" ~maps:true ~signal:(never waits) ()).dev in
+  let gpu = (fake ~name:"GPU" ~maps:true ~signal:(hung waits) ()).dev in
   let shared = B.view (B.create host S.UInt8 page) ~offset:0 S.UInt8 8 in
   let mapped = borrow gpu shared in
   ignore (submit gpu ~touches:[ mapped ] Fun.id);
@@ -3731,8 +3764,10 @@ let test_scope () =
   equal ~msg:"a view of it" int 4 (B.length (B.view shared ~offset:0 S.UInt8 4));
   equal ~msg:"waits" int 1 !waits
 
-(* A signal that arrives until [hung] is set. *)
-let until hung = signal (fun _ -> not !hung)
+(* A signal that arrives until [hung] is set, and that its driver then declares
+   hung. *)
+let until hung =
+  signal (fun _ -> if !hung then failwith "hang detected" else true)
 
 let test_unmapped () =
   let hung = ref false in
@@ -3789,7 +3824,7 @@ let test_own_stamps () =
     {
       Driver.signaled = (fun () -> if !opened then max_int else 0);
       wait =
-        (fun _ ~timeout_ms:_ ->
+        (fun _ ~ms:_ ->
           incr waits;
           opened := true;
           true);
@@ -3844,7 +3879,7 @@ let test_hung_transfer () =
     (Nx_device.Stats.retained (stats c.dev), cached c.dev)
 
 let test_retained () =
-  let f = fake ~name:"D" ~budget:1000 ~signal:(never (ref 0)) () in
+  let f = fake ~name:"D" ~budget:1000 ~signal:(hung (ref 0)) () in
   (* The work does not list the buffer: a free to the driver still waits for it,
      as for all of the device's work submitted before the release. *)
   dropped (fun () ->
@@ -4067,11 +4102,14 @@ let failures =
 (* Sleep and finalize *)
 
 (* A device that sleeps on its interrupts sleeps only once its signal word has
-   stayed still for 200 ms, and once more, briefly, before it is declared
-   hung. *)
+   stayed still for 200 ms, told how long it has, and a sleep that raises once
+   the word stayed still past its driver's limit loses the device. *)
 let test_sleep () =
   let sleeps = ref [] in
-  let sleep ms = sleeps := ms :: !sleeps in
+  let sleep ~still ms =
+    sleeps := (still, ms) :: !sleeps;
+    Unix.sleepf 0.01
+  in
   let d = (fake ~name:"SLEEPY" ~sleep ()).dev in
   let v = submit d Fun.id in
   let word = B.address (Nx_device.signal_word d) in
@@ -4083,7 +4121,13 @@ let test_sleep () =
   Nx_device.synchronize d;
   Domain.join late;
   is_true ~msg:"slept while still" (List.length !sleeps >= 2);
-  is_true ~msg:"for 200 ms each" (List.for_all (fun ms -> ms = 200) !sleeps);
+  List.iter
+    (fun (still, ms) ->
+      equal ~msg:"for 200 ms each" int 200 ms;
+      at_least ~msg:"still for 200 ms" int ~than:200 still)
+    !sleeps;
+  let stills = List.rev_map fst !sleeps in
+  equal ~msg:"how long, growing" (list int) (List.sort compare stills) stills;
   sleeps := [];
   let busy = (fake ~name:"BUSY" ~sleep ()).dev in
   let word = B.address (Nx_device.signal_word busy) in
@@ -4099,12 +4143,18 @@ let test_sleep () =
   in
   Nx_device.synchronize busy;
   Domain.join progress;
-  equal ~msg:"no sleep while the word moves" (list int) [] !sleeps;
-  let still = (fake ~name:"STILL" ~sleep ~timeout_ms:500 ()).dev in
+  equal ~msg:"no sleep while the word moves" (list (pair int int)) [] !sleeps;
+  let limit ~still _ =
+    Unix.sleepf 0.01;
+    if still >= 400 then failwith "hang detected"
+  in
+  let still = (fake ~name:"STILL" ~sleep:limit ()).dev in
   ignore (submit still Fun.id);
+  let t0 = Unix.gettimeofday () in
   raises_match (lost still "hang detected") (fun () ->
       Nx_device.synchronize still);
-  equal ~msg:"a last brief sleep before the hang" int 1 (List.hd !sleeps)
+  at_least ~msg:"seconds waited" (float 0.01) ~than:0.4
+    (Unix.gettimeofday () -. t0)
 
 (* At exit every device finalizes, told whether it failed: a healthy one after
    synchronizing, a failed one without, and one that hangs at exit once its
@@ -4117,12 +4167,12 @@ let finalize_child () =
   ignore (submit healthy Fun.id);
   store_signal (B.address (Nx_device.signal_word healthy)) 1;
   let broken =
-    (fake ~name:"BROKEN" ~timeout_ms:50 ~finalize:(say "BROKEN") ()).dev
+    (fake ~name:"BROKEN" ~sleep:hangs ~finalize:(say "BROKEN") ()).dev
   in
   ignore (submit broken Fun.id);
   (try Nx_device.synchronize broken with Nx_device.Lost _ -> ());
   let hanging =
-    (fake ~name:"HANGING" ~timeout_ms:50 ~finalize:(say "HANGING") ()).dev
+    (fake ~name:"HANGING" ~sleep:hangs ~finalize:(say "HANGING") ()).dev
   in
   ignore (submit hanging Fun.id);
   ignore (fake ~name:"RAISING" ~finalize:(fun ~failed:_ -> failwith "boom") ());
@@ -4150,8 +4200,8 @@ let test_finalize () =
     ~sub:"HANGING synchronization failed" (masked err);
   contains ~msg:"a raising finalize is reported" ~sub:"boom" err
 
-(* [with_host_word f] is [f word a] for [word] a region of the host's heap
-   whose first word holds 0, and [a] its host address. *)
+(* [with_host_word f] is [f word a] for [word] a region of the host's heap whose
+   first word holds 0, and [a] its host address. *)
 let with_host_word f =
   match Driver.host_memory.alloc 8 with
   | None -> fail "no host memory"
@@ -4162,47 +4212,75 @@ let with_host_word f =
         ~finally:(fun () -> Driver.host_memory.free r)
         (fun () -> f r a)
 
-let sleep_for ~timeline:_ ms = Unix.sleepf (Float.of_int ms /. 1000.)
+let sleep_for ~timeline:_ ~still:_ ms = Unix.sleepf (Float.of_int ms /. 1000.)
+
+(* [ready_after s] is a condition that holds [s] seconds from now. *)
+let ready_after s =
+  let t = Unix.gettimeofday () +. s in
+  fun () -> Unix.gettimeofday () >= t
+
+(* A driver's sleep that declares a hang once the timeline stayed still for [ms]
+   milliseconds. *)
+let hangs_after ms ~timeline:_ ~still _ =
+  if still >= ms then failwith "hang detected";
+  Unix.sleepf 0.01
 
 let driver_wait =
   group "Driver.wait"
     [
-      test "is true once the word reaches the value, unsigned" (fun () ->
-          with_host_word (fun word a ->
-              let late =
-                Domain.spawn (fun () ->
-                    Unix.sleepf 0.05;
-                    store_signal a (-1))
-              in
-              let reached =
-                Driver.wait ~sleep:sleep_for ~timeout_ms:5_000 word 3
-              in
-              Domain.join late;
-              equal bool true reached));
+      test "returns once the condition holds" (fun () ->
+          with_host_word (fun timeline _ ->
+              let ready = ready_after 0.05 in
+              Driver.wait ~sleep:sleep_for ~timeline ready;
+              is_true ~msg:"held" (ready ())));
       test
-        "is false once the word stayed still for the timeout, after sleeps on \
-         the word of at most 200 ms and a last one of 1 ms" (fun () ->
-          with_host_word (fun word _ ->
+        "sleeps once the timeline stayed still for 200 ms, told how long, at \
+         most 200 ms each" (fun () ->
+          with_host_word (fun timeline _ ->
               let sleeps = ref [] in
-              let sleep ~timeline ms =
-                sleeps := (timeline == word, ms) :: !sleeps;
-                sleep_for ~timeline ms
+              let sleep ~timeline:t ~still ms =
+                sleeps := (t == timeline, still, ms) :: !sleeps;
+                sleep_for ~timeline ~still ms
               in
-              equal bool false (Driver.wait ~sleep ~timeout_ms:500 word 1);
-              equal ~msg:"the last sleep" int 1 (snd (List.hd !sleeps));
+              Driver.wait ~sleep ~timeline (ready_after 0.6);
+              is_true ~msg:"slept" (!sleeps <> []);
               List.iter
-                (fun (on_word, ms) ->
-                  equal ~msg:"the timeline is the word" bool true on_word;
+                (fun (on_timeline, still, ms) ->
+                  equal ~msg:"given the timeline" bool true on_timeline;
+                  at_least ~msg:"still" int ~than:200 still;
                   at_most int ~than:200 ms)
                 !sleeps));
-      test "refuses a word the host does not address" (fun () ->
+      test
+        "counts how long the timeline stayed still from its last move, however \
+         long the condition takes" (fun () ->
+          with_host_word (fun timeline a ->
+              let moving =
+                Domain.spawn (fun () ->
+                    for k = 1 to 10 do
+                      Unix.sleepf 0.1;
+                      store_signal a k
+                    done)
+              in
+              Driver.wait ~sleep:(hangs_after 400) ~timeline (ready_after 1.0);
+              Domain.join moving;
+              raises_match (Exn.failure ~substring:"hang detected") (fun () ->
+                  Driver.wait ~sleep:(hangs_after 400) ~timeline (fun () ->
+                      false))));
+      test "refuses a timeline the host does not address" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Driver.wait ~sleep:sleep_for ~timeout_ms:10 (Region.v 0x1000n 8) 1));
-      test "refuses a word of fewer than 8 bytes" (fun () ->
+              Driver.wait ~sleep:sleep_for ~timeline:(Region.v 0x1000n 8)
+                (fun () -> true)));
+      test "refuses a timeline of fewer than 8 bytes" (fun () ->
           with_host_word (fun _ a ->
               raises_match Exn.invalid_arg (fun () ->
-                  Driver.wait ~sleep:sleep_for ~timeout_ms:10
-                    (Region.v ~host:a a 4) 1)));
+                  Driver.wait ~sleep:sleep_for ~timeline:(Region.v ~host:a a 4)
+                    (fun () -> true))));
+      test "refuses a host that is no host" (fun () ->
+          with_host_word (fun timeline _ ->
+              let d = (fake ~name:"NOHOST" ()).dev in
+              raises_match Exn.invalid_arg (fun () ->
+                  Driver.wait ~host:d ~sleep:sleep_for ~timeline (fun () ->
+                      true))));
     ]
 
 let hooks =
@@ -4210,11 +4288,11 @@ let hooks =
     [
       test
         "a device sleeps on its interrupts once its signal word stays still, \
-         and once more before a hang"
+         and its driver alone declares a hang"
         test_sleep;
       test "a fault found asleep loses the device with the driver's message"
         (fun () ->
-          let sleep _ = failwith "page fault at 0x1000" in
+          let sleep ~still:_ _ = failwith "page fault at 0x1000" in
           let d = (fake ~name:"FAULTED" ~sleep ()).dev in
           ignore (submit d Fun.id);
           let fault = lost d "page fault at 0x1000" in
@@ -4519,7 +4597,7 @@ let test_program_events () =
   | l -> fail (Printf.sprintf "%d events" (List.length l))
 
 let test_failed_spans () =
-  let d = (fake ~name:"HUNG" ~timeout_ms:50 ~signal:(never (ref 0)) ()).dev in
+  let d = (fake ~name:"HUNG" ~signal:(hung (ref 0)) ()).dev in
   let stamps = B.create host S.UInt64 4 in
   let events =
     profiled (fun () ->
@@ -5185,9 +5263,16 @@ let test_remote_gpu () =
   equal ~msg:"from its host memory" string (pattern 3 5000) (read on);
   let r = !(m.reads) in
   ignore (submit gpu Fun.id);
-  (* The work never signals: the wait polls the far word until it times out. *)
-  Nx_device.set_timeout gpu 50;
-  raises_match (lost gpu "hang detected") (fun () -> Nx_device.synchronize gpu);
+  (* The work never signals: the wait polls the far word until the connection
+     fails. *)
+  let down =
+    Domain.spawn (fun () ->
+        Unix.sleepf 0.1;
+        m.down := true)
+  in
+  raises_match (lost gpu "far:1: connection lost") (fun () ->
+      Nx_device.synchronize gpu);
+  Domain.join down;
   is_true ~msg:"the signal word was read through io" (!(m.reads) > r)
 
 let test_between_machines () =
@@ -5461,7 +5546,7 @@ let held_signal () =
     let s = Atomic.get signaled in
     if v > s && not (Atomic.compare_and_set signaled s v) then reach v
   in
-  let wait v ~timeout_ms:_ =
+  let wait v ~ms:_ =
     if (not (Atomic.get opened)) && not (Atomic.exchange held true) then
       Mutex.protect lock (fun () ->
           while not (Atomic.get opened) do
@@ -5620,7 +5705,7 @@ let stage_device far =
         {
           Driver.signaled = (fun () -> !signaled);
           wait =
-            (fun v ~timeout_ms:_ ->
+            (fun v ~ms:_ ->
               signaled := Int.max !signaled v;
               true);
         }

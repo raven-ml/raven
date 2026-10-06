@@ -1565,6 +1565,87 @@ let fault_access_types = [
   (0xb, "PHYS_PREFETCH");
 ]
 
+let robust_channel_errors = [
+  (0xd, "GR_EXCEPTION");
+  (0xe, "FAKE_ERROR");
+  (0x10, "VBLANK_CALLBACK_TIMEOUT");
+  (0x13, "DISP_MISSED_NOTIFIER");
+  (0x14, "MPEG_ERROR_SW_METHOD");
+  (0x15, "ME_ERROR_SW_METHOD");
+  (0x16, "VP_ERROR_SW_METHOD");
+  (0x17, "RC_LOGGING_ENABLED");
+  (0x1b, "VP_ERROR");
+  (0x1c, "VP2_ERROR");
+  (0x1d, "BSP_ERROR");
+  (0x1e, "UNUSED_ERROR_30");
+  (0x1f, "FIFO_ERROR_MMU_ERR_FLT");
+  (0x20, "PBDMA_ERROR");
+  (0x21, "SEC_ERROR");
+  (0x22, "MSVLD_ERROR");
+  (0x23, "MSPDEC_ERROR");
+  (0x24, "MSPPP_ERROR");
+  (0x27, "CE0_ERROR");
+  (0x28, "CE1_ERROR");
+  (0x29, "CE2_ERROR");
+  (0x2a, "VIC_ERROR");
+  (0x2b, "RESETCHANNEL_VERIF_ERROR");
+  (0x2c, "GR_FAULT_DURING_CTXSW");
+  (0x2d, "PREEMPTIVE_REMOVAL");
+  (0x2f, "NVENC0_ERROR");
+  (0x30, "GPU_ECC_DBE");
+  (0x3c, "SEC2_ERROR");
+  (0x41, "NVENC1_ERROR");
+  (0x44, "NVDEC0_ERROR");
+  (0x45, "GR_CLASS_ERROR");
+  (0x46, "CE3_ERROR");
+  (0x47, "CE4_ERROR");
+  (0x48, "CE5_ERROR");
+  (0x49, "NVENC2_ERROR");
+  (0x4b, "CE6_ERROR");
+  (0x4c, "CE7_ERROR");
+  (0x4d, "CE8_ERROR");
+  (0x4f, "GPU_HAS_FALLEN_OFF_THE_BUS");
+  (0x51, "VGA_SUBSYSTEM_ERROR");
+  (0x52, "NVJPG0_ERROR");
+  (0x53, "NVDEC1_ERROR");
+  (0x54, "NVDEC2_ERROR");
+  (0x55, "CE9_ERROR");
+  (0x56, "OFA0_ERROR");
+  (0x58, "NVDEC3_ERROR");
+  (0x59, "NVDEC4_ERROR");
+  (0x5e, "CONTAINED_ERROR");
+  (0x5f, "UNCONTAINED_ERROR");
+  (0x60, "NVDEC5_ERROR");
+  (0x61, "NVDEC6_ERROR");
+  (0x62, "NVDEC7_ERROR");
+  (0x63, "NVJPG1_ERROR");
+  (0x64, "NVJPG2_ERROR");
+  (0x65, "NVJPG3_ERROR");
+  (0x66, "NVJPG4_ERROR");
+  (0x67, "NVJPG5_ERROR");
+  (0x68, "NVJPG6_ERROR");
+  (0x69, "NVJPG7_ERROR");
+  (0x7e, "CE10_ERROR");
+  (0x7f, "CE11_ERROR");
+  (0x80, "CE12_ERROR");
+  (0x81, "CE13_ERROR");
+  (0x82, "CE14_ERROR");
+  (0x83, "CE15_ERROR");
+  (0x84, "CE16_ERROR");
+  (0x85, "CE17_ERROR");
+  (0x86, "CE18_ERROR");
+  (0x87, "CE19_ERROR");
+  (0x8a, "DLA_ERROR");
+  (0x8b, "OFA1_ERROR");
+  (0x8d, "FAST_PATH_ERROR");
+  (0x8e, "NVENC3_ERROR");
+  (0x97, "KEY_ROTATION_ERROR");
+  (0xa1, "LAST_ERROR");
+  (0, "ERROR_RECOVERY_LEVEL_INFO");
+  (1, "ERROR_RECOVERY_LEVEL_NON_FATAL");
+  (2, "ERROR_RECOVERY_LEVEL_FATAL");
+]
+
 (* The GSP's messages and boot structures. *)
 let nv_vgpu_msg_signature_valid = 0x43505256
 let nv_vgpu_msg_result_rpc_pending = 0xffffffff

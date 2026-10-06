@@ -348,11 +348,32 @@ let flush_hdp a =
   | Kfd_gpu k -> Kfd.flush_hdp k
   | Am_gpu g -> with_hw a (fun () -> Am.flush_hdp g.am.d)
 
-let timeout a =
-  Option.fold ~none:Driver.default_timeout ~some:Nx_device.timeout a.dev
+(* Waits *)
+
+(* How long a GPU the process drives itself ([Am_gpu]) may make no progress
+   before it is hung. No other process shares such a GPU, so its work never
+   waits for theirs. Under the kernel driver, the driver alone reports faults,
+   hangs included, and work may run as long as it takes. *)
+let hang_ms = 30_000
+
+(* The sleep of a wait whose timeline has stayed still for [still] milliseconds:
+   it blocks for at most [ms] on the GPU's events or interrupts and raises the
+   faults they report, then, for an [Am_gpu], a hang once [still] reaches
+   [hang_ms]. *)
+let sleep a ~timeline:_ ~still ms =
+  match a.gpu with
+  | Kfd_gpu k -> Kfd.sleep k ms
+  | Am_gpu { am; _ } ->
+      with_hw a (fun () -> Am.sleep am ms);
+      if still >= hang_ms then failwith "hang detected"
+
+(* Waits until [ready ()], as a wait for the work of the timeline [timeline]
+   does. *)
+let wait a ~timeline ready =
+  Driver.wait ~host:a.machine ~sleep:(sleep a) ~timeline ready
 
 (* Appends [words] to the first SDMA queue. *)
-let enqueue a words =
+let enqueue a ~timeline words =
   let q =
     match a.queues with
     | Some (_, _, sdma) -> mmio_queue a (List.hd sdma)
@@ -360,13 +381,13 @@ let enqueue a words =
   in
   (* The copy engine reads what the host wrote to mapped memory. *)
   flush_hdp a;
-  Sdma.submit q ~timeout_ms:(timeout a) words
+  Sdma.submit q ~wait:(wait a ~timeline) words
 
 let queue a ~timeline =
   let signal = Nativeint.to_int (Region.address timeline) in
   let props = a.props in
   let sdma = props.sdma in
-  let enqueue = enqueue a in
+  let enqueue = enqueue a ~timeline in
   let submit ~dst ~src n ~signal:v =
     enqueue
       (Sdma.packets ~sdma ~signal ~dst:(Nativeint.to_int dst)
@@ -426,21 +447,20 @@ let arch (a, b, c) = Printf.sprintf "gfx%d%x%x" a b c
    through. *)
 let fence_bytes = 8
 
-let upload a ~sleep ~staging dst img =
+let upload a ~staging dst img =
   let n = String.length img in
   let host = Option.get (host_view staging) in
   Mmio.set64 host 0 0L;
   Mmio.write host fence_bytes img;
   Mmio.barrier ();
-  enqueue a
+  let timeline = Region.of_buffer (Nx_device.signal_word (Option.get a.dev)) in
+  enqueue a ~timeline
     (Sdma.packets ~sdma:a.props.sdma ~signal:(va staging) ~dst:(va dst)
        ~src:(va staging + fence_bytes)
        n 1);
   (* A GPU that does not copy is lost, and may still read [staging], which is
      then never freed. *)
-  let fence = region_of staging fence_bytes in
-  if not (Driver.wait ~sleep ~timeout_ms:(timeout a) fence 1) then
-    failwith "hang detected: the copy engine did not upload the code";
+  wait a ~timeline (fun () -> Mmio.get64 host 0 <> 0L);
   free_mem a staging
 
 (* Whether the GPU's workgroups have the LDS [k] takes, in the 512-byte granules
@@ -451,7 +471,7 @@ let fits_lds a (k : Code_object.kernel) =
 (* The code object [binary], relocated and uploaded to the device's memory,
    which it frees once unloaded. A code object the device cannot run, such as
    one compiled for another GPU, is refused, and the device stays usable. *)
-let load a ~sleep ~binary =
+let load a ~binary =
   let gpu = arch a.props.target in
   match Code_object.of_string binary with
   | Error _ as e -> e
@@ -471,7 +491,7 @@ let load a ~sleep ~binary =
           raise (Nx_device.Out_of_memory (Option.get a.dev, bytes))
       | Some mem, Some staging ->
           register a mem;
-          upload a ~sleep ~staging mem img;
+          upload a ~staging mem img;
           let image = ref () and found = ref [] in
           let entry name =
             match Code_object.kernel obj name with
@@ -1038,10 +1058,12 @@ let mapped a =
   | Kfd_gpu k when k.visible = 0 || not (Kfd.flushes_hdp k) -> None
   | Kfd_gpu k -> Some (allocator a Visible, k.visible)
 
-let make_device a ~budget ~sleep ?finalize () =
+let make_device a ~budget ?finalize () =
   let dev =
     Driver.device ~name:(gpu_name a) ~arch:(arch a.props.target) ~host:a.machine
-      ~budget ~completion:(Sleep sleep) ~load:(load a ~sleep) ~peer:(peer a)
+      ~budget
+      ~completion:(Sleep (sleep a))
+      ~load:(load a) ~peer:(peer a)
       ~reaches:(fun d' ->
         match amd_of d' with Some peer -> reaches a peer | None -> false)
       ~dma:(dma a) ~room:(room a) ~report:(report a) ?finalize
@@ -1139,11 +1161,7 @@ let open_kfd ~index bus =
       ~cu_per_array:(pr "cu_per_simd_array")
   in
   let compute, aql, sdma = setup a ~saves:true ~sdma_queues:1 in
-  let dev =
-    make_device a ~budget:k.vram
-      ~sleep:(fun ~timeline:_ ms -> Kfd.sleep k ms)
-      ()
-  in
+  let dev = make_device a ~budget:k.vram () in
   finish a dev (compute, aql, sdma);
   a
 
@@ -1183,7 +1201,6 @@ let open_booted ~machine ~buses ~index pci (am : Am.t) =
   if d.is_vf then Amdev.release_vf_access d;
   let dev =
     make_device a ~budget:(Page_table.memory am.mm)
-      ~sleep:(fun ~timeline:_ ms -> with_hw a (fun () -> Am.sleep am ms))
       ~finalize:(fun ~failed -> with_hw a (fun () -> Am.fini am ~failed))
       ()
   in

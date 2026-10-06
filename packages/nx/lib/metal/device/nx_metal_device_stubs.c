@@ -13,7 +13,9 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 #include <math.h>
+#include <os/lock.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -81,6 +83,59 @@ value caml_nx_metal_new_event(value v_device) {
   id<MTLSharedEvent> event = [device newSharedEvent];
   if (event == nil) caml_failwith("cannot create a shared event");
   return caml_copy_nativeint((intnat)event);
+}
+
+/* Signals values on a device's event from the completed handlers of its
+   command buffers, so that a value is signaled only once its command buffer,
+   and every one before it, completed without error: after a failure, nothing
+   is signaled again. A failed command buffer
+   still runs the signals it encodes, so a signal encoded on the GPU would
+   hide the failure. The first failure's reason is kept, and the device's
+   waits raise it. */
+@interface NxMetalSignaler : NSObject {
+ @public
+  id<MTLSharedEvent> event;
+  os_unfair_lock lock;
+  char *failure;
+}
+- (void)signal:(id<MTLCommandBuffer>)command value:(uint64_t)v;
+@end
+
+@implementation NxMetalSignaler
+- (void)signal:(id<MTLCommandBuffer>)command value:(uint64_t)v {
+  [command addCompletedHandler:^(id<MTLCommandBuffer> done) {
+    os_unfair_lock_lock(&lock);
+    if (done.status == MTLCommandBufferStatusError) {
+      if (failure == NULL) {
+        NSString *why = done.error.localizedDescription;
+        failure = strdup(why != nil ? why.UTF8String
+                                    : "a command buffer failed");
+      }
+    } else if (failure == NULL && v > event.signaledValue) {
+      event.signaledValue = v;
+    }
+    os_unfair_lock_unlock(&lock);
+  }];
+}
+@end
+
+value caml_nx_metal_new_signaler(value v_event) {
+  NxMetalSignaler *signaler = [[NxMetalSignaler alloc] init];
+  signaler->event = [Object_val(v_event) retain];
+  signaler->lock = OS_UNFAIR_LOCK_INIT;
+  signaler->failure = NULL;
+  return caml_copy_nativeint((intnat)signaler);
+}
+
+/* Raises the first failure of [signaler]'s command buffers, if any. */
+static void check_failure(NxMetalSignaler *signaler) {
+  char text[512];
+  text[0] = '\0';
+  os_unfair_lock_lock(&signaler->lock);
+  if (signaler->failure != NULL)
+    snprintf(text, sizeof(text), "%s", signaler->failure);
+  os_unfair_lock_unlock(&signaler->lock);
+  if (text[0] != '\0') caml_failwith(text);
 }
 
 value caml_nx_metal_new_fence(value v_device) {
@@ -217,18 +272,25 @@ value caml_nx_metal_pipeline(value v_device, value v_binary, value v_name) {
   CAMLreturn(caml_copy_nativeint((intnat)pipeline));
 }
 
-value caml_nx_metal_signaled(value v_event) {
-  id<MTLSharedEvent> event = Object_val(v_event);
-  return Val_long((intnat)event.signaledValue);
+/* The last value [v_signaler] signaled, or the failure of a command buffer
+   of its device. */
+value caml_nx_metal_signaled(value v_signaler) {
+  NxMetalSignaler *signaler = (NxMetalSignaler *)Object_val(v_signaler);
+  check_failure(signaler);
+  return Val_long((intnat)signaler->event.signaledValue);
 }
 
-value caml_nx_metal_wait(value v_event, value v_value, value v_timeout_ms) {
-  id<MTLSharedEvent> event = Object_val(v_event);
+/* Waits until [v_signaler]'s event reaches [v_value], for at most [v_ms]
+   milliseconds, and raises the failure of a command buffer of its device. */
+value caml_nx_metal_wait(value v_signaler, value v_value, value v_ms) {
+  NxMetalSignaler *signaler = (NxMetalSignaler *)Object_val(v_signaler);
   uint64_t target = (uint64_t)Long_val(v_value);
-  uint64_t timeout_ms = (uint64_t)Long_val(v_timeout_ms);
+  uint64_t ms = (uint64_t)Long_val(v_ms);
+  check_failure(signaler);
   caml_release_runtime_system();
-  BOOL signaled = [event waitUntilSignaledValue:target timeoutMS:timeout_ms];
+  BOOL signaled = [signaler->event waitUntilSignaledValue:target timeoutMS:ms];
   caml_acquire_runtime_system();
+  check_failure(signaler);
   return Val_bool(signaled);
 }
 

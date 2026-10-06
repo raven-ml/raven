@@ -77,8 +77,11 @@
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault, loses
     the device ({!Nx_device.Lost}) with the driver's report when a wait finds
-    it. Work that does not signal within the device's {!Nx_device.timeout}, 30
-    seconds unless {!Nx_device.set_timeout} sets another, loses it too. Nothing
+    it. Under {!Kernel}, the kernel driver alone reports faults, its hangs and
+    resets included: work that runs long loses nothing, and a wait lasts until
+    the work signals or the driver reports a fault. Under {!Pci}, the process is
+    the GPU's driver and no other process shares the GPU: work that makes no
+    progress for 30 seconds loses the device as ["hang detected"]. Nothing
     recovers a lost device in the process: under {!Kernel}, {!get} opens the GPU
     anew as a fresh device, and under {!Pci} it refuses it. Under {!Pci}, the
     process stops the engines of a lost GPU at exit and takes its bus mastering
@@ -306,9 +309,9 @@ val flush_hdp : t -> unit
 
 type kernel = {
   code : Nx_device.Buffer.t;
-      (** The uploaded code object: its image ({!Nx_amd_code_object.image}),
-          in memory of the device the host writes, which keeps the code object loaded while it is reachable
-          ({!Nx_device.Program.code}). *)
+      (** The uploaded code object: its image ({!Nx_amd_code_object.image}), in
+          memory of the device the host writes, which keeps the code object
+          loaded while it is reachable ({!Nx_device.Program.code}). *)
   descriptor : nativeint;  (** The address of the kernel descriptor. *)
   private_segment : int;
       (** Scratch bytes per lane, which {!scratch} must provide. *)

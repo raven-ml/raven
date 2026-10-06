@@ -697,37 +697,30 @@ static void yield(void) {
 #endif
 }
 
-/* Waits until the word at [addr] reaches [v]. The timeout restarts whenever
-   the word moves: a device that makes progress is not hung. */
-intnat caml_nx_device_wait_u64(intnat addr, int64_t v, intnat timeout_ms) {
+/* Waits until the word at [addr] reaches [v], for at most [ms] milliseconds:
+   1 if it did, 0 if not yet. */
+intnat caml_nx_device_wait_u64(intnat addr, int64_t v, intnat ms) {
   _Atomic uint64_t *word = (_Atomic uint64_t *)addr;
   uint64_t target = (uint64_t)v;
-  uint64_t seen = atomic_load_explicit(word, memory_order_acquire);
-  if (seen >= target) return 1;
+  if (atomic_load_explicit(word, memory_order_acquire) >= target) return 1;
   int signaled = 0;
   caml_release_runtime_system();
-  int64_t start = now_ms();
+  int64_t until = now_ms() + ms;
   for (;;) {
-    uint64_t now = atomic_load_explicit(word, memory_order_acquire);
-    if (now >= target) {
+    if (atomic_load_explicit(word, memory_order_acquire) >= target) {
       signaled = 1;
       break;
     }
-    if (now != seen) {
-      seen = now;
-      start = now_ms();
-    } else if (now_ms() - start > timeout_ms) {
-      break;
-    }
+    if (now_ms() >= until) break;
     yield();
   }
   caml_acquire_runtime_system();
   return signaled;
 }
 
-value caml_nx_device_wait_u64_byte(value addr, value v, value timeout_ms) {
-  return Val_long(caml_nx_device_wait_u64(Nativeint_val(addr), Int64_val(v),
-                                          Long_val(timeout_ms)));
+value caml_nx_device_wait_u64_byte(value addr, value v, value ms) {
+  return Val_long(
+      caml_nx_device_wait_u64(Nativeint_val(addr), Int64_val(v), Long_val(ms)));
 }
 
 /* Host programs */

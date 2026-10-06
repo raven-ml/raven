@@ -10,6 +10,9 @@ module Driver = Nx_device.Driver
 
 let default_port = 6667
 
+(* How long the connection waits for the server to answer. *)
+let default_timeout_ms = 30_000
+
 (* The hosts connected to, by host and port, the live one over the earlier ones
    it shadows: a host whose connection failed is connected to anew. *)
 let lock = Mutex.create ()
@@ -52,8 +55,8 @@ let make r =
     ~finalize:(fun ~failed:_ -> Remote.close r)
     ~memory io
 
-let connect ?(port = default_port) ?(timeout_ms = Driver.default_timeout) ~key
-    host =
+let connect ?(port = default_port) ?(timeout_ms = default_timeout_ms) ~key host
+    =
   if timeout_ms <= 0 then
     invalid_arg
       (Printf.sprintf "Nx_remote_device.connect: timeout %d ms" timeout_ms);
@@ -66,7 +69,6 @@ let connect ?(port = default_port) ?(timeout_ms = Driver.default_timeout) ~key
           | exception Failure why -> Error why
           | r ->
               let d = make r in
-              Nx_device.set_timeout d timeout_ms;
               Hashtbl.add hosts (host, port) (d, r);
               Ok d))
 

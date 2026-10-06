@@ -16,10 +16,15 @@
     Its timestamps are readings of the host clock
     ({!Nx_device.Driver.Host_clock}).
 
-    A fault on the GPU surfaces as a hang: the runtime reads no command buffer's
-    status, so work that faults is found when its signal does not arrive in
-    time, which loses the device ({!Nx_device.Lost}). {!get} then opens the GPU
-    anew, with a queue and an event of its own.
+    {b Faults.} Work that runs long loses nothing: a wait lasts until the work
+    signals or Metal reports a failure. Metal reports a fault as a failed
+    command buffer, which loses the device ({!Nx_device.Lost}) with Metal's
+    reason when a wait finds it, such as
+    ["Impacting Interactivity
+     (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity)"]: on a
+    Mac that drives a display, macOS may end a command buffer that keeps the GPU
+    from the display, after about half a second. {!get} then opens the GPU anew,
+    with a queue of its own.
 
     This library exists on macOS only. *)
 
@@ -42,10 +47,10 @@ val get : int -> (Nx_device.t, string) result
     For the libraries that submit work to a Metal device, inside
     {!Nx_device.submit}. Work for the value [v] is a command buffer of {!queue}
     whose compute encoders wait for and update {!fence}, which orders them after
-    the device's earlier work, and which ends by encoding a signal of [v] on
-    {!event}. Metal signals through its event alone
-    ({!Nx_device.Driver.Signal}): other devices' work cannot wait for it on
-    their queues.
+    the device's earlier work. Before it commits, the submitter hands it to
+    {!signaler} with [v], and each other command buffer of the work with [0].
+    Metal signals through the signaler alone ({!Nx_device.Driver.Signal}): other
+    devices' work cannot wait for it on their queues.
 
     Metal times its work by command buffer, on the host clock
     ({!Nx_device.Profile.now}). To profile a command buffer, a submitter writes
@@ -65,8 +70,16 @@ val of_device : Nx_device.t -> t option
 val queue : t -> nativeint
 (** [queue m] is the [MTLCommandQueue] all work is submitted to. *)
 
-val event : t -> nativeint
-(** [event m] is the [MTLSharedEvent] that work signals its values on. *)
+val signaler : t -> nativeint
+(** [signaler m] is the object that signals the values of [m]'s work. A
+    submitter sends it [signal:value:] ({!msg_send}, with the type
+    [void (id, SEL, id, uint64_t)]) with a command buffer and a value [v],
+    before it commits the command buffer: once the command buffer, and every one
+    handed to it before, completed, the value [v] is signaled, unless [v] is
+    [0]. If Metal reports that one failed, nothing is signaled from then on, and
+    the device's next wait, or read of its value, loses it with Metal's reason.
+    Work signals through it alone: a failed command buffer still runs the
+    signals encoded in it, which would hide the failure. *)
 
 val fence : t -> nativeint
 (** [fence m] is the [MTLFence] that orders compute encoders on the queue. *)
@@ -88,8 +101,8 @@ val msg_send : nativeint
 
 val selector : string -> nativeint
 (** [selector name] is the selector [name], such as ["commandBuffer"] or
-    ["encodeSignalEvent:value:"], registered with the Objective-C runtime: the
-    word a compiled host program passes {!msg_send} for that message. *)
+    ["signal:value:"], registered with the Objective-C runtime: the word a
+    compiled host program passes {!msg_send} for that message. *)
 
 (** {2:icb Indirect command buffers} *)
 

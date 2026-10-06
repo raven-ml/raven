@@ -12,11 +12,11 @@
 10 Ops.STORE dtypes.void [8, 9]
 11 Ops.BARRIER dtypes.void [10]
 12 Ops.AFTER dtypes.ulong [6, 11]
-13 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=1, name="mtl_enc_3", device="CPU", volatile=True)
-14 Ops.AFTER dtypes.ulong [13, 11]
-15 Ops.INDEX dtypes.ulong [14, 2]
-16 Ops.INDEX dtypes.ulong [12, 2]
-17 Ops.PARAM dtypes.ulong [] ParamArg(slot=4, dtype=dtypes.ulong, size=20, name="mtl_sel_4", device="CPU")
+13 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=21, name="mtl_sel_3", device="CPU")
+14 Ops.PARAM dtypes.ulong [] ParamArg(slot=4, dtype=dtypes.ulong, size=1, name="mtl_enc_4", device="CPU", volatile=True)
+15 Ops.AFTER dtypes.ulong [14, 11]
+16 Ops.INDEX dtypes.ulong [15, 2]
+17 Ops.INDEX dtypes.ulong [12, 2]
 18 Ops.PARAM dtypes.uchar [] ParamArg(slot=5, dtype=dtypes.uchar, size=392, name="None_5", device="CPU", volatile=True)
 19 Ops.AFTER dtypes.uchar [18, 11]
 20 Ops.BITCAST dtypes.int [19] dtypes.int
@@ -40,7 +40,7 @@
 38 Ops.LOAD dtypes.ulong [37]
 39 Ops.CONST dtypes.weakint [] 14
 40 Ops.CAST dtypes.int [39] dtypes.int
-41 Ops.INDEX dtypes.ulong [17, 40]
+41 Ops.INDEX dtypes.ulong [13, 40]
 42 Ops.LOAD dtypes.ulong [41]
 43 Ops.CONST dtypes.weakint [] 280
 44 Ops.CAST dtypes.int [43] dtypes.int
@@ -49,136 +49,134 @@
 47 Ops.CAST dtypes.int [46] dtypes.int
 48 Ops.INDEX dtypes.uchar [32, 47]
 49 Ops.CALL dtypes.void [5, 38, 42, 45, 48] CallInfo()
-50 Ops.AFTER dtypes.ulong [17, 49]
+50 Ops.AFTER dtypes.ulong [13, 49]
 51 Ops.INDEX dtypes.ulong [50, 2]
 52 Ops.LOAD dtypes.ulong [51]
 53 Ops.CONST dtypes.weakint [] 5
 54 Ops.CAST dtypes.int [53] dtypes.int
-55 Ops.INDEX dtypes.ulong [17, 54]
+55 Ops.INDEX dtypes.ulong [13, 54]
 56 Ops.LOAD dtypes.ulong [55]
 57 Ops.CALL dtypes.ulong [5, 52, 56] CallInfo(dtype=dtypes.ulong)
-58 Ops.STORE dtypes.void [16, 57]
+58 Ops.STORE dtypes.void [17, 57]
 59 Ops.AFTER dtypes.ulong [12, 58]
 60 Ops.INDEX dtypes.ulong [59, 2]
 61 Ops.LOAD dtypes.ulong [60]
 62 Ops.CONST dtypes.weakint [] 6
 63 Ops.CAST dtypes.int [62] dtypes.int
-64 Ops.INDEX dtypes.ulong [17, 63]
+64 Ops.INDEX dtypes.ulong [13, 63]
 65 Ops.LOAD dtypes.ulong [64]
 66 Ops.CALL dtypes.ulong [5, 61, 65] CallInfo(dtype=dtypes.ulong)
-67 Ops.STORE dtypes.void [15, 66]
-68 Ops.AFTER dtypes.ulong [14, 67]
+67 Ops.STORE dtypes.void [16, 66]
+68 Ops.AFTER dtypes.ulong [15, 67]
 69 Ops.INDEX dtypes.ulong [68, 2]
 70 Ops.LOAD dtypes.ulong [69]
 71 Ops.CONST dtypes.weakint [] 7
 72 Ops.CAST dtypes.int [71] dtypes.int
-73 Ops.INDEX dtypes.ulong [17, 72]
+73 Ops.INDEX dtypes.ulong [13, 72]
 74 Ops.LOAD dtypes.ulong [73]
-75 Ops.CONST dtypes.weakint [] 2
+75 Ops.CONST dtypes.weakint [] 1
 76 Ops.CAST dtypes.int [75] dtypes.int
-77 Ops.INDEX dtypes.ulong [17, 76]
+77 Ops.INDEX dtypes.ulong [13, 76]
 78 Ops.LOAD dtypes.ulong [77]
 79 Ops.CALL dtypes.void [5, 70, 74, 78] CallInfo()
-80 Ops.AFTER dtypes.ulong [14, 79]
+80 Ops.AFTER dtypes.ulong [15, 79]
 81 Ops.INDEX dtypes.ulong [80, 2]
 82 Ops.LOAD dtypes.ulong [81]
 83 Ops.CONST dtypes.weakint [] 13
 84 Ops.CAST dtypes.int [83] dtypes.int
-85 Ops.INDEX dtypes.ulong [17, 84]
+85 Ops.INDEX dtypes.ulong [13, 84]
 86 Ops.LOAD dtypes.ulong [85]
 87 Ops.AFTER dtypes.ulong [33, 79]
 88 Ops.CONST dtypes.weakint [] 44
 89 Ops.CAST dtypes.int [88] dtypes.int
 90 Ops.INDEX dtypes.ulong [87, 89]
 91 Ops.LOAD dtypes.ulong [90]
-92 Ops.CAST dtypes.ulong [75] dtypes.ulong
-93 Ops.CALL dtypes.void [5, 82, 86, 91, 9, 92] CallInfo()
-94 Ops.AFTER dtypes.ulong [14, 93]
-95 Ops.INDEX dtypes.ulong [94, 2]
-96 Ops.LOAD dtypes.ulong [95]
-97 Ops.CONST dtypes.weakint [] 8
-98 Ops.CAST dtypes.int [97] dtypes.int
-99 Ops.INDEX dtypes.ulong [17, 98]
-100 Ops.LOAD dtypes.ulong [99]
-101 Ops.CALL dtypes.void [5, 96, 100, 78] CallInfo()
-102 Ops.AFTER dtypes.ulong [14, 101]
-103 Ops.INDEX dtypes.ulong [102, 2]
-104 Ops.LOAD dtypes.ulong [103]
-105 Ops.CONST dtypes.weakint [] 10
-106 Ops.CAST dtypes.int [105] dtypes.int
-107 Ops.INDEX dtypes.ulong [17, 106]
-108 Ops.LOAD dtypes.ulong [107]
-109 Ops.CALL dtypes.void [5, 104, 108] CallInfo()
-110 Ops.AFTER dtypes.ulong [12, 109]
-111 Ops.INDEX dtypes.ulong [110, 2]
-112 Ops.LOAD dtypes.ulong [111]
-113 Ops.CONST dtypes.weakint [] 9
-114 Ops.CAST dtypes.int [113] dtypes.int
-115 Ops.INDEX dtypes.ulong [17, 114]
-116 Ops.LOAD dtypes.ulong [115]
-117 Ops.CONST dtypes.weakint [] 1
-118 Ops.CAST dtypes.int [117] dtypes.int
-119 Ops.INDEX dtypes.ulong [17, 118]
-120 Ops.LOAD dtypes.ulong [119]
-121 Ops.PARAM dtypes.ulong [] ParamArg(slot=8, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="value_metal", addrspace=AddrSpace.ALU)
-122 Ops.CALL dtypes.void [5, 112, 116, 120, 121] CallInfo()
-123 Ops.AFTER dtypes.ulong [12, 122]
-124 Ops.INDEX dtypes.ulong [123, 2]
-125 Ops.LOAD dtypes.ulong [124]
-126 Ops.CONST dtypes.weakint [] 11
-127 Ops.CAST dtypes.int [126] dtypes.int
-128 Ops.INDEX dtypes.ulong [17, 127]
-129 Ops.LOAD dtypes.ulong [128]
-130 Ops.CALL dtypes.void [5, 125, 129] CallInfo()
-131 Ops.SINK dtypes.void [130] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
-132 Ops.LINEAR dtypes.void [0, 6, 7, 13, 17, 18, 24, 121, 1, 2, 3, 4, 117, 118, 119, 120, 105, 106, 107, 108, 126, 127, 128, 129, 83, 84, 85, 86, 39, 40, 41, 42, 75, 76, 77, 78, 53, 54, 55, 56, 62, 63, 64, 65, 71, 72, 73, 74, 97, 98, 99, 100, 113, 114, 115, 116, 8, 9, 10, 11, 19, 21, 22, 20, 23, 27, 28, 26, 29, 30, 25, 31, 32, 33, 34, 35, 36, 37, 38, 43, 44, 45, 46, 47, 48, 5, 49, 50, 51, 52, 57, 12, 16, 58, 59, 60, 61, 66, 14, 15, 67, 68, 69, 70, 79, 80, 81, 82, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 101, 102, 103, 104, 109, 110, 111, 112, 122, 123, 124, 125, 130, 131]
-133 Ops.SOURCE dtypes.void [] "\nvoid hcq_submit(unsigned long* restrict None_0_1, volatile unsigned long* restrict mtl_cb_1_1, volatile unsigned long* restrict slots_2_2, volatile unsigned long* restrict mtl_enc_3_1, unsigned long* restrict mtl_sel_4_20, volatile unsigned char* restrict None_5_392, const int v_, const unsigned long value_metal_) {\n  unsigned long val0 = (*(None_0_1+0));\n  unsigned long val1 = (*(mtl_sel_4_20+1));\n  unsigned long val2 = (*(mtl_sel_4_20+10));\n  unsigned long val3 = (*(mtl_sel_4_20+11));\n  unsigned long val4 = (*(mtl_sel_4_20+13));\n  unsigned long val5 = (*(mtl_sel_4_20+14));\n  unsigned long val6 = (*(mtl_sel_4_20+2));\n  unsigned long val7 = (*(mtl_sel_4_20+5));\n  unsigned long val8 = (*(mtl_sel_4_20+6));\n  unsigned long val9 = (*(mtl_sel_4_20+7));\n  unsigned long val10 = (*(mtl_sel_4_20+8));\n  unsigned long val11 = (*(mtl_sel_4_20+9));\n  *(slots_2_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(((int*)(None_5_392))+68) = v_;\n  *(((unsigned long*)(None_5_392))+35) = ((unsigned long)(v_));\n  unsigned long val12 = (*(((unsigned long*)(None_5_392))+46));\n  (((void(*)(unsigned long, unsigned long, unsigned char*, unsigned char*))(val0))((unsigned long)(val12), (unsigned long)(val5), (unsigned char*)((None_5_392+280)), (unsigned char*)((None_5_392+304))));\n  unsigned long val13 = (*(mtl_sel_4_20+0));\n  unsigned long alu5 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val13), (unsigned long)(val7)));\n  *(mtl_cb_1_1+0) = alu5;\n  unsigned long val14 = (*(mtl_cb_1_1+0));\n  unsigned long alu7 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val14), (unsigned long)(val8)));\n  *(mtl_enc_3_1+0) = alu7;\n  unsigned long val15 = (*(mtl_enc_3_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val15), (unsigned long)(val9), (unsigned long)(val6)));\n  unsigned long val16 = (*(mtl_enc_3_1+0));\n  unsigned long val17 = (*(((unsigned long*)(None_5_392))+44));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val16), (unsigned long)(val4), (unsigned long)(val17), (unsigned long)(0ul), (unsigned long)(2ul)));\n  unsigned long val18 = (*(mtl_enc_3_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val18), (unsigned long)(val10), (unsigned long)(val6)));\n  unsigned long val19 = (*(mtl_enc_3_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val19), (unsigned long)(val2)));\n  unsigned long val20 = (*(mtl_cb_1_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val20), (unsigned long)(val11), (unsigned long)(val1), (unsigned long)(value_metal_)));\n  unsigned long val21 = (*(mtl_cb_1_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val21), (unsigned long)(val3)));\n}\n"
-134 Ops.BINARY dtypes.uchar [] b"\nvoid hcq_submit(unsigned long* restrict None_0_1, volatile unsigned long* restrict mtl_cb_1_1, volatile unsigned long* restrict slots_2_2, volatile unsigned long* restrict mtl_enc_3_1, unsigned long* restrict mtl_sel_4_20, volatile unsigned char* restrict None_5_392, const int v_, const unsigned long value_metal_) {\n  unsigned long val0 = (*(None_0_1+0));\n  unsigned long val1 = (*(mtl_sel_4_20+1));\n  unsigned long val2 = (*(mtl_sel_4_20+10));\n  unsigned long val3 = (*(mtl_sel_4_20+11));\n  unsigned long val4 = (*(mtl_sel_4_20+13));\n  unsigned long val5 = (*(mtl_sel_4_20+14));\n  unsigned long val6 = (*(mtl_sel_4_20+2));\n  unsigned long val7 = (*(mtl_sel_4_20+5));\n  unsigned long val8 = (*(mtl_sel_4_20+6));\n  unsigned long val9 = (*(mtl_sel_4_20+7));\n  unsigned long val10 = (*(mtl_sel_4_20+8));\n  unsigned long val11 = (*(mtl_sel_4_20+9));\n  *(slots_2_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(((int*)(None_5_392))+68) = v_;\n  *(((unsigned long*)(None_5_392))+35) = ((unsigned long)(v_));\n  unsigned long val12 = (*(((unsigned long*)(None_5_392))+46));\n  (((void(*)(unsigned long, unsigned long, unsigned char*, unsigned char*))(val0))((unsigned long)(val12), (unsigned long)(val5), (unsigned char*)((None_5_392+280)), (unsigned char*)((None_5_392+304))));\n  unsigned long val13 = (*(mtl_sel_4_20+0));\n  unsigned long alu5 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val13), (unsigned long)(val7)));\n  *(mtl_cb_1_1+0) = alu5;\n  unsigned long val14 = (*(mtl_cb_1_1+0));\n  unsigned long alu7 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val14), (unsigned long)(val8)));\n  *(mtl_enc_3_1+0) = alu7;\n  unsigned long val15 = (*(mtl_enc_3_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val15), (unsigned long)(val9), (unsigned long)(val6)));\n  unsigned long val16 = (*(mtl_enc_3_1+0));\n  unsigned long val17 = (*(((unsigned long*)(None_5_392))+44));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val16), (unsigned long)(val4), (unsigned long)(val17), (unsigned long)(0ul), (unsigned long)(2ul)));\n  unsigned long val18 = (*(mtl_enc_3_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val18), (unsigned long)(val10), (unsigned long)(val6)));\n  unsigned long val19 = (*(mtl_enc_3_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val19), (unsigned long)(val2)));\n  unsigned long val20 = (*(mtl_cb_1_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val20), (unsigned long)(val11), (unsigned long)(val1), (unsigned long)(value_metal_)));\n  unsigned long val21 = (*(mtl_cb_1_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val21), (unsigned long)(val3)));\n}\n"
-135 Ops.PROGRAM dtypes.void [131, 132, 133, 134] ProgramInfo(vars=(%24, %121), globals=(0, 1, 2, 3, 4, 5), outs=(1, 2, 3, 5), ins=(0, 1, 3, 4, 5), target=Target(device="CPU", arch="x86_64,x86-64"))
-136 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("cfunc", "metal", "objc_msgSend")
-137 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, name="mtl_cb", device=("METAL",), volatile=True) tag="mtl_cb"
-138 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=2, name="slots", device=("METAL",), volatile=True) tag="slots"
+92 Ops.CONST dtypes.weakint [] 2
+93 Ops.CAST dtypes.ulong [92] dtypes.ulong
+94 Ops.CALL dtypes.void [5, 82, 86, 91, 9, 93] CallInfo()
+95 Ops.AFTER dtypes.ulong [15, 94]
+96 Ops.INDEX dtypes.ulong [95, 2]
+97 Ops.LOAD dtypes.ulong [96]
+98 Ops.CONST dtypes.weakint [] 8
+99 Ops.CAST dtypes.int [98] dtypes.int
+100 Ops.INDEX dtypes.ulong [13, 99]
+101 Ops.LOAD dtypes.ulong [100]
+102 Ops.CALL dtypes.void [5, 97, 101, 78] CallInfo()
+103 Ops.AFTER dtypes.ulong [15, 102]
+104 Ops.INDEX dtypes.ulong [103, 2]
+105 Ops.LOAD dtypes.ulong [104]
+106 Ops.CONST dtypes.weakint [] 10
+107 Ops.CAST dtypes.int [106] dtypes.int
+108 Ops.INDEX dtypes.ulong [13, 107]
+109 Ops.LOAD dtypes.ulong [108]
+110 Ops.CALL dtypes.void [5, 105, 109] CallInfo()
+111 Ops.AFTER dtypes.ulong [13, 110]
+112 Ops.CONST dtypes.weakint [] 4
+113 Ops.CAST dtypes.int [112] dtypes.int
+114 Ops.INDEX dtypes.ulong [111, 113]
+115 Ops.LOAD dtypes.ulong [114]
+116 Ops.CONST dtypes.weakint [] 20
+117 Ops.CAST dtypes.int [116] dtypes.int
+118 Ops.INDEX dtypes.ulong [13, 117]
+119 Ops.LOAD dtypes.ulong [118]
+120 Ops.PARAM dtypes.ulong [] ParamArg(slot=8, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="value_metal", addrspace=AddrSpace.ALU)
+121 Ops.CALL dtypes.void [5, 115, 119, 57, 120] CallInfo()
+122 Ops.AFTER dtypes.ulong [12, 121]
+123 Ops.INDEX dtypes.ulong [122, 2]
+124 Ops.LOAD dtypes.ulong [123]
+125 Ops.CONST dtypes.weakint [] 11
+126 Ops.CAST dtypes.int [125] dtypes.int
+127 Ops.INDEX dtypes.ulong [13, 126]
+128 Ops.LOAD dtypes.ulong [127]
+129 Ops.CALL dtypes.void [5, 124, 128] CallInfo()
+130 Ops.SINK dtypes.void [129] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
+131 Ops.LINEAR dtypes.void [0, 6, 7, 13, 14, 18, 24, 120, 1, 2, 3, 4, 75, 76, 77, 78, 106, 107, 108, 109, 125, 126, 127, 128, 83, 84, 85, 86, 39, 40, 41, 42, 116, 117, 118, 119, 53, 54, 55, 56, 62, 63, 64, 65, 71, 72, 73, 74, 98, 99, 100, 101, 8, 9, 10, 11, 19, 21, 22, 20, 23, 27, 28, 26, 29, 30, 25, 31, 32, 33, 34, 35, 36, 37, 38, 43, 44, 45, 46, 47, 48, 5, 49, 50, 51, 52, 57, 12, 17, 58, 59, 60, 61, 66, 15, 16, 67, 68, 69, 70, 79, 80, 81, 82, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 102, 103, 104, 105, 110, 111, 112, 113, 114, 115, 121, 122, 123, 124, 129, 130]
+132 Ops.SOURCE dtypes.void [] "\nvoid hcq_submit(unsigned long* restrict None_0_1, volatile unsigned long* restrict mtl_cb_1_1, volatile unsigned long* restrict slots_2_2, unsigned long* restrict mtl_sel_3_21, volatile unsigned long* restrict mtl_enc_4_1, volatile unsigned char* restrict None_5_392, const int v_, const unsigned long value_metal_) {\n  unsigned long val0 = (*(None_0_1+0));\n  unsigned long val1 = (*(mtl_sel_3_21+1));\n  unsigned long val2 = (*(mtl_sel_3_21+10));\n  unsigned long val3 = (*(mtl_sel_3_21+11));\n  unsigned long val4 = (*(mtl_sel_3_21+13));\n  unsigned long val5 = (*(mtl_sel_3_21+14));\n  unsigned long val6 = (*(mtl_sel_3_21+20));\n  unsigned long val7 = (*(mtl_sel_3_21+5));\n  unsigned long val8 = (*(mtl_sel_3_21+6));\n  unsigned long val9 = (*(mtl_sel_3_21+7));\n  unsigned long val10 = (*(mtl_sel_3_21+8));\n  *(slots_2_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(((int*)(None_5_392))+68) = v_;\n  *(((unsigned long*)(None_5_392))+35) = ((unsigned long)(v_));\n  unsigned long val11 = (*(((unsigned long*)(None_5_392))+46));\n  (((void(*)(unsigned long, unsigned long, unsigned char*, unsigned char*))(val0))((unsigned long)(val11), (unsigned long)(val5), (unsigned char*)((None_5_392+280)), (unsigned char*)((None_5_392+304))));\n  unsigned long val12 = (*(mtl_sel_3_21+0));\n  unsigned long alu5 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val12), (unsigned long)(val7)));\n  *(mtl_cb_1_1+0) = alu5;\n  unsigned long val13 = (*(mtl_cb_1_1+0));\n  unsigned long alu7 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val13), (unsigned long)(val8)));\n  *(mtl_enc_4_1+0) = alu7;\n  unsigned long val14 = (*(mtl_enc_4_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val14), (unsigned long)(val9), (unsigned long)(val1)));\n  unsigned long val15 = (*(mtl_enc_4_1+0));\n  unsigned long val16 = (*(((unsigned long*)(None_5_392))+44));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val15), (unsigned long)(val4), (unsigned long)(val16), (unsigned long)(0ul), (unsigned long)(2ul)));\n  unsigned long val17 = (*(mtl_enc_4_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val17), (unsigned long)(val10), (unsigned long)(val1)));\n  unsigned long val18 = (*(mtl_enc_4_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val18), (unsigned long)(val2)));\n  unsigned long val19 = (*(mtl_sel_3_21+4));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val19), (unsigned long)(val6), (unsigned long)(alu5), (unsigned long)(value_metal_)));\n  unsigned long val20 = (*(mtl_cb_1_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val20), (unsigned long)(val3)));\n}\n"
+133 Ops.BINARY dtypes.uchar [] b"\nvoid hcq_submit(unsigned long* restrict None_0_1, volatile unsigned long* restrict mtl_cb_1_1, volatile unsigned long* restrict slots_2_2, unsigned long* restrict mtl_sel_3_21, volatile unsigned long* restrict mtl_enc_4_1, volatile unsigned char* restrict None_5_392, const int v_, const unsigned long value_metal_) {\n  unsigned long val0 = (*(None_0_1+0));\n  unsigned long val1 = (*(mtl_sel_3_21+1));\n  unsigned long val2 = (*(mtl_sel_3_21+10));\n  unsigned long val3 = (*(mtl_sel_3_21+11));\n  unsigned long val4 = (*(mtl_sel_3_21+13));\n  unsigned long val5 = (*(mtl_sel_3_21+14));\n  unsigned long val6 = (*(mtl_sel_3_21+20));\n  unsigned long val7 = (*(mtl_sel_3_21+5));\n  unsigned long val8 = (*(mtl_sel_3_21+6));\n  unsigned long val9 = (*(mtl_sel_3_21+7));\n  unsigned long val10 = (*(mtl_sel_3_21+8));\n  *(slots_2_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  *(((int*)(None_5_392))+68) = v_;\n  *(((unsigned long*)(None_5_392))+35) = ((unsigned long)(v_));\n  unsigned long val11 = (*(((unsigned long*)(None_5_392))+46));\n  (((void(*)(unsigned long, unsigned long, unsigned char*, unsigned char*))(val0))((unsigned long)(val11), (unsigned long)(val5), (unsigned char*)((None_5_392+280)), (unsigned char*)((None_5_392+304))));\n  unsigned long val12 = (*(mtl_sel_3_21+0));\n  unsigned long alu5 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val12), (unsigned long)(val7)));\n  *(mtl_cb_1_1+0) = alu5;\n  unsigned long val13 = (*(mtl_cb_1_1+0));\n  unsigned long alu7 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val13), (unsigned long)(val8)));\n  *(mtl_enc_4_1+0) = alu7;\n  unsigned long val14 = (*(mtl_enc_4_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val14), (unsigned long)(val9), (unsigned long)(val1)));\n  unsigned long val15 = (*(mtl_enc_4_1+0));\n  unsigned long val16 = (*(((unsigned long*)(None_5_392))+44));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val15), (unsigned long)(val4), (unsigned long)(val16), (unsigned long)(0ul), (unsigned long)(2ul)));\n  unsigned long val17 = (*(mtl_enc_4_1+0));\n  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val17), (unsigned long)(val10), (unsigned long)(val1)));\n  unsigned long val18 = (*(mtl_enc_4_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val18), (unsigned long)(val2)));\n  unsigned long val19 = (*(mtl_sel_3_21+4));\n  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val19), (unsigned long)(val6), (unsigned long)(alu5), (unsigned long)(value_metal_)));\n  unsigned long val20 = (*(mtl_cb_1_1+0));\n  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val20), (unsigned long)(val3)));\n}\n"
+134 Ops.PROGRAM dtypes.void [130, 131, 132, 133] ProgramInfo(vars=(%24, %120), globals=(0, 1, 2, 3, 4, 5), outs=(1, 2, 4, 5), ins=(0, 1, 3, 4, 5), target=Target(device="CPU", arch="x86_64,x86-64"))
+135 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("cfunc", "metal", "objc_msgSend")
+136 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, name="mtl_cb", device=("METAL",), volatile=True) tag="mtl_cb"
+137 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=2, name="slots", device=("METAL",), volatile=True) tag="slots"
+138 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=21, name="mtl_sel", device=("METAL",)) tag="mtl_sel"
 139 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, name="mtl_enc", device=("METAL",), volatile=True) tag="mtl_enc"
-140 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=20, name="mtl_sel", device=("METAL",)) tag="mtl_sel"
-141 Ops.PARAM dtypes.uchar [] ParamArg(slot=8, dtype=dtypes.uchar, size=392, device=("METAL",), volatile=True) tag=("mtl_icb", ((b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_10; device float* data1_10; };\nkernel void E_5_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_10 = args.data0_10; device float* data1_10 = args.data1_10;\n  int gidx0 = gid.x; /* 5 */\n  int lidx0 = lid.x; /* 2 */\n  int alu0 = (lidx0+(gidx0<<1));\n  float val0 = (*(data1_10+alu0));\n  *(data0_10+alu0) = (val0+1.0f);\n}", "E_5_2", (5, 1, 1, 2, 1, 1), 0), (b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_10; device float* data1_10; int v_; };\nkernel void E_v(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_10 = args.data0_10; device float* data1_10 = args.data1_10; int v_ = args.v_;\n  int gidx0 = gid.x; /* v */\n  float val0 = (*(data1_10+gidx0));\n  *(data0_10+gidx0) = (val0*2.0f);\n}", "E_v", (1, 1, 1, 1, 1, 1), 256)), 352)
-142 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
-143 Ops.CONST dtypes.weakint [] 4
-144 Ops.MUL dtypes.int [117, 142]
-145 Ops.MUL dtypes.int [143, 144]
-146 Ops.ADD dtypes.int [1, 145]
-147 Ops.ADD dtypes.int [146, 145]
-148 Ops.MUL dtypes.int [143, 142]
-149 Ops.ADD dtypes.int [1, 148]
-150 Ops.ADD dtypes.int [149, 148]
-151 Ops.ADD dtypes.int [105, 142]
-152 Ops.CONST dtypes.weakint [] 80
-153 Ops.MUL dtypes.int [142, 97]
-154 Ops.ADD dtypes.int [152, 153]
-155 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=256, device="METAL")
-156 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="METAL")
-157 Ops.CALL dtypes.void [135, 136, 137, 138, 139, 140, 141] CallInfo(aux=HCQInfo(device=("METAL",), kernels=((("METAL",), "E_5_2", Estimates(ops=10, lds=80, mem=80), (), b"B;i\xca\x0e\x1fY\xfd\xac\xe8\xc5-\t\x19\xeeJ\x11\xd4\x0e\xf7\xcd\xe7L\xb6\x05)V;L\x04\x1f\x1b", (), ((0,), (1,))), (("METAL",), "E_v", Estimates(ops=%142, lds=%147, mem=%150), (), b"\xfe\xa8\x86\x18\xf5\xb1\x1ae}\xa8_x\x7f\xe0\xab\x8a\xc5>w\xd5D\x9b\xdfl+\xec\xc0\x93j\xe5\x04\x9d", (), ((0,), (1,)))), estimates=Estimates(ops=%151, lds=%154, mem=%154), nargs=6, slots=(("METAL", 2),), written_bufs=(%155, %156)))
-158 Ops.BITCAST dtypes.ulong [141] dtypes.ulong
-159 Ops.CONST dtypes.weakint [] 32
-160 Ops.CONST dtypes.weakint [] 33
-161 Ops.CONST dtypes.weakint [] 36
-162 Ops.CONST dtypes.weakint [] 37
-163 Ops.CONST dtypes.weakint [] 38
-164 Ops.CONST dtypes.weakint [] 39
-165 Ops.CONST dtypes.weakint [] 40
-166 Ops.CONST dtypes.weakint [] 41
-167 Ops.CONST dtypes.weakint [] 42
-168 Ops.CONST dtypes.weakint [] 43
-169 Ops.STACK dtypes.weakint [1, 117, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168]
-170 Ops.INDEX dtypes.ulong [158, 169]
-171 Ops.SHRINK dtypes.char [155, 1, 165]
-172 Ops.BITCAST dtypes.float [171] dtypes.float
+140 Ops.PARAM dtypes.uchar [] ParamArg(slot=8, dtype=dtypes.uchar, size=392, device=("METAL",), volatile=True) tag=("mtl_icb", ((b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_10; device float* data1_10; };\nkernel void E_5_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_10 = args.data0_10; device float* data1_10 = args.data1_10;\n  int gidx0 = gid.x; /* 5 */\n  int lidx0 = lid.x; /* 2 */\n  int alu0 = (lidx0+(gidx0<<1));\n  float val0 = (*(data1_10+alu0));\n  *(data0_10+alu0) = (val0+1.0f);\n}", "E_5_2", (5, 1, 1, 2, 1, 1), 0), (b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_10; device float* data1_10; int v_; };\nkernel void E_v(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_10 = args.data0_10; device float* data1_10 = args.data1_10; int v_ = args.v_;\n  int gidx0 = gid.x; /* v */\n  float val0 = (*(data1_10+gidx0));\n  *(data0_10+gidx0) = (val0*2.0f);\n}", "E_v", (1, 1, 1, 1, 1, 1), 256)), 352)
+141 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
+142 Ops.MUL dtypes.int [75, 141]
+143 Ops.MUL dtypes.int [112, 142]
+144 Ops.ADD dtypes.int [1, 143]
+145 Ops.ADD dtypes.int [144, 143]
+146 Ops.MUL dtypes.int [112, 141]
+147 Ops.ADD dtypes.int [1, 146]
+148 Ops.ADD dtypes.int [147, 146]
+149 Ops.ADD dtypes.int [106, 141]
+150 Ops.CONST dtypes.weakint [] 80
+151 Ops.MUL dtypes.int [141, 98]
+152 Ops.ADD dtypes.int [150, 151]
+153 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=256, device="METAL")
+154 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="METAL")
+155 Ops.CALL dtypes.void [134, 135, 136, 137, 138, 139, 140] CallInfo(aux=HCQInfo(device=("METAL",), kernels=((("METAL",), "E_5_2", Estimates(ops=10, lds=80, mem=80), (), b"B;i\xca\x0e\x1fY\xfd\xac\xe8\xc5-\t\x19\xeeJ\x11\xd4\x0e\xf7\xcd\xe7L\xb6\x05)V;L\x04\x1f\x1b", (), ((0,), (1,))), (("METAL",), "E_v", Estimates(ops=%141, lds=%145, mem=%148), (), b"\xfe\xa8\x86\x18\xf5\xb1\x1ae}\xa8_x\x7f\xe0\xab\x8a\xc5>w\xd5D\x9b\xdfl+\xec\xc0\x93j\xe5\x04\x9d", (), ((0,), (1,)))), estimates=Estimates(ops=%149, lds=%152, mem=%152), nargs=6, slots=(("METAL", 2),), written_bufs=(%153, %154)))
+156 Ops.BITCAST dtypes.ulong [140] dtypes.ulong
+157 Ops.CONST dtypes.weakint [] 32
+158 Ops.CONST dtypes.weakint [] 33
+159 Ops.CONST dtypes.weakint [] 36
+160 Ops.CONST dtypes.weakint [] 37
+161 Ops.CONST dtypes.weakint [] 38
+162 Ops.CONST dtypes.weakint [] 39
+163 Ops.CONST dtypes.weakint [] 40
+164 Ops.CONST dtypes.weakint [] 41
+165 Ops.CONST dtypes.weakint [] 42
+166 Ops.CONST dtypes.weakint [] 43
+167 Ops.STACK dtypes.weakint [1, 75, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166]
+168 Ops.INDEX dtypes.ulong [156, 167]
+169 Ops.SHRINK dtypes.char [153, 1, 163]
+170 Ops.BITCAST dtypes.float [169] dtypes.float
+171 Ops.GETADDR dtypes.ulong [170] "METAL"
+172 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=10, device="METAL")
 173 Ops.GETADDR dtypes.ulong [172] "METAL"
-174 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=10, device="METAL")
-175 Ops.GETADDR dtypes.ulong [174] "METAL"
-176 Ops.GETADDR dtypes.ulong [156] "METAL"
-177 Ops.CAST dtypes.ulong [117] dtypes.ulong
-178 Ops.STACK dtypes.ulong [173, 175, 176, 173, 177, 177, 177, 177, 177, 9, 9, 9]
-179 Ops.STORE dtypes.void [170, 178]
-180 Ops.AFTER dtypes.void [157, 179]
-181 Ops.LINEAR dtypes.void [180]
+174 Ops.GETADDR dtypes.ulong [154] "METAL"
+175 Ops.CAST dtypes.ulong [75] dtypes.ulong
+176 Ops.STACK dtypes.ulong [171, 173, 174, 171, 175, 175, 175, 175, 175, 9, 9, 9]
+177 Ops.STORE dtypes.void [168, 176]
+178 Ops.AFTER dtypes.void [155, 177]
+179 Ops.LINEAR dtypes.void [178]
 

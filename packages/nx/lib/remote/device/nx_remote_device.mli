@@ -18,7 +18,7 @@
     on the machines' own network, or through a tunnel.
 
     {b Failures.} The connection fails for good when the machine does not answer
-    within the host's {!Nx_device.timeout} at connection, when the stream
+    a request within the connection's timeout ({!connect}), when the stream
     breaks, or when an operation sent without waiting fails there. Each device
     of the machine is then lost ({!Nx_device.Lost}) with that error at its next
     operation that reaches the machine; this machine's devices go on. The server
@@ -39,9 +39,9 @@ val connect :
     same host and port give the same device while its connection holds. Once the
     connection failed, [connect] connects anew: the host is a fresh device,
     unequal to the lost one, whose devices and memory stay lost. [timeout_ms]
-    (defaults to {!Nx_device.Driver.default_timeout}) bounds the connection and
-    every answer of the server, and is the device's {!Nx_device.timeout}, which
-    {!Nx_device.set_timeout} changes later.
+    (defaults to 30 seconds) bounds the connection and every answer of the
+    server. A host program that runs longer delays the server's next answer past
+    it, and so fails the connection.
 
     [Error why] if the server cannot be reached, is busy with another client,
     speaks another version of the protocol, or either end does not know the key.

@@ -8,11 +8,11 @@
    by two GPUs, peer copies, every route around the staging slot and the copy
    engine's longest line, copies that wrap the copy channel, coherence through
    each kind of memory, programs and local memory, nx's runtime laws over the
-   devices, and last, work that never signals, which loses the device. Every
-   test skips without a GPU, and the peer tests without two. GPUs are reached
-   through the kernel driver when it is loaded; over PCI the suite detaches a
-   GPU from its kernel driver and resets it, so it does only when NX_NV_PCI_TEST
-   names the index of a GPU it may take. *)
+   devices, work that runs long, and last, under PCI, work that never signals,
+   which loses the device. Every test skips without a GPU, and the peer tests
+   without two. GPUs are reached through the kernel driver when it is loaded;
+   over PCI the suite detaches a GPU from its kernel driver and resets it, so it
+   does only when NX_NV_PCI_TEST names the index of a GPU it may take. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -597,16 +597,96 @@ let test_exhaustion () =
   B.copy ~src ~dst:v;
   is_true ~msg:"the bytes" (same_bytes src (to_host v))
 
-(* Last: work that never signals hangs the device, which is lost after its
-   timeout, having slept: the wait's checks for faults do not keep a core
-   busy. *)
-let test_hang () =
+(* Whether the suite takes its GPUs over PCI, where the process drives them. *)
+let over_pci () = Option.is_some (pci_first ())
+
+external load64 : nativeint -> int64 = "test_nv_load64"
+external store64 : nativeint -> int64 -> unit = "test_nv_store64"
+external store32 : nativeint -> int -> unit = "test_nv_store32"
+
+let at a off = Nativeint.add a (Nativeint.of_int off)
+let host_of b = Option.get (hosted b)
+
+(* Submits work of [d] that, after its earlier work, waits on its compute
+   channel until the 64-bit word at the GPU address [gate] is at least 1, then
+   signals its value, written as the channel's writer writes it
+   ({!Nx_nv_device.channel}). *)
+let stall d ~touches gate =
+  let module M = Nx_nv_packet.Methods in
+  let n = Option.get (Nx_nv_device.of_device d) in
+  let ch = Nx_nv_device.compute n in
+  let seg = B.create ~memory:Pinned d S.UInt32 64 in
+  let gpu b = Nativeint.to_int (B.address b) in
+  Nx_device.submit [ d ] ~touches:(seg :: touches) (fun s ->
+      let v = Nx_device.Submission.value s d in
+      let word = gpu (Nx_device.signal_word d) in
+      let words =
+        Nx_nv_packet.dwords
+          (M.acquire word (v - 1) @ M.acquire gate 1 @ M.release word v)
+      in
+      List.iteri (fun i w -> store32 (at (host_of seg) (4 * i)) w) words;
+      let entries = B.nbytes ch.ring / 8 in
+      let put = Int64.to_int (load64 (host_of ch.put)) in
+      store64
+        (at (host_of ch.ring) (8 * (put mod entries)))
+        (Nx_nv_packet.eval
+           (Nx_nv_packet.Gpfifo.entry (gpu seg) ~offset:0
+              ~words:(List.length words)));
+      store64 (host_of ch.put) (Int64.of_int (put + 1));
+      store32 (host_of ch.gp_put) ((put + 1) mod entries);
+      store32 (host_of ch.doorbell) ch.token)
+
+let long_seconds = 35
+
+(* Under the kernel driver, work that runs for longer than any limit a wait had
+   completes, the wait asleep meanwhile: the driver alone declares faults. *)
+let test_long () =
+  if over_pci () then skip ~reason:"the process drives the GPU" ();
   let d = device () in
-  Nx_device.set_timeout d 2000;
+  let gate = B.create ~memory:Pinned d S.UInt64 1 in
+  store64 (host_of gate) 0L;
+  stall d ~touches:[ gate ] (Nativeint.to_int (B.address gate));
+  let opener =
+    Domain.spawn (fun () ->
+        Unix.sleepf (float_of_int long_seconds);
+        store64 (host_of gate) 1L)
+  in
+  let t0 = Unix.gettimeofday () and cpu = Sys.time () in
+  Nx_device.synchronize d;
+  let waited = Unix.gettimeofday () -. t0 in
+  Domain.join opener;
+  at_least ~msg:"seconds waited" (float 0.1)
+    ~than:(float_of_int long_seconds)
+    waited;
+  less ~msg:"CPU seconds, mostly asleep" (float 0.01) ~than:(waited /. 2.)
+    (Sys.time () -. cpu);
+  equal ~msg:"not lost" (option string) None (Nx_device.lost d)
+
+(* Last: under the kernel driver, a read the GPU's page tables refuse loses the
+   device with the driver's report. *)
+let test_fault () =
+  if over_pci () then skip ~reason:"the process drives the GPU" ();
+  let d = device () in
+  stall d ~touches:[] (1 lsl 39);
+  let faulted = function
+    | Nx_device.Lost (d', why) ->
+        d' == d && String.starts_with ~prefix:"channel error 31" why
+    | _ -> false
+  in
+  raises_match faulted (fun () -> Nx_device.synchronize d);
+  raises_match faulted (fun () -> B.create d S.UInt8 1)
+
+(* Last: over PCI, the process drives the GPU, and work that makes no progress
+   for 30 seconds loses it. *)
+let test_hang () =
+  if not (over_pci ()) then
+    skip ~reason:"the kernel driver alone reports faults" ();
+  let d = device () in
   Nx_device.submit [ d ] ~touches:[] ignore;
-  let cpu = Sys.time () in
+  let t0 = Unix.gettimeofday () in
   raises_match (hung d) (fun () -> Nx_device.synchronize d);
-  is_true ~msg:"most of the 2 s asleep" (Sys.time () -. cpu < 1.);
+  at_least ~msg:"seconds waited" (float 0.1) ~than:30.
+    (Unix.gettimeofday () -. t0);
   raises_match (hung d) (fun () -> B.create d S.UInt8 1)
 
 let () =
@@ -642,6 +722,9 @@ let () =
          group "failures"
            [
              test "allocations up to the budget's end" test_exhaustion;
-             test "work that never signals loses the device" test_hang;
+             slow "work that runs 35 s completes, and loses no device" test_long;
+             test "a fault the driver reports loses the device" test_fault;
+             slow "work that makes no progress for 30 s over PCI is a hang"
+               test_hang;
            ];
        ])

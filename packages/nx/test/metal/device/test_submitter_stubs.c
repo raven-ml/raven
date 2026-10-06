@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* A submitter for the tests: compiles Metal source, encodes work on the
-   device's queue, and signals its event, as the libraries that submit work
-   do. */
+   device's queue, and hands it to the device's signaler, as the libraries that
+   submit work do. */
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -19,6 +19,13 @@
 #include <string.h>
 
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
+
+/* Hands [command] to [signaler], which signals [v] once it completed. */
+static void signal_value(value signaler, id command, value v) {
+  ((void (*)(id, SEL, id, uint64_t))objc_msgSend)(
+      Object_val(signaler), sel_registerName("signal:value:"), command,
+      (uint64_t)Long_val(v));
+}
 
 typedef void *(*create_service)(const char *);
 typedef void (*build_request)(void *, void *, int, const void *, size_t,
@@ -105,21 +112,26 @@ value test_metal_weak_live(value v_slot) {
   return Val_bool(live);
 }
 
-value test_metal_set_signaled(value v_event, value v_value) {
-  id<MTLSharedEvent> event = Object_val(v_event);
-  event.signaledValue = (uint64_t)Long_val(v_value);
+/* Commits an empty command buffer of [v_queue] that signals [v_value] through
+   [v_signaler]. */
+value test_metal_signal(value v_queue, value v_signaler, value v_value) {
+  @autoreleasepool {
+    id<MTLCommandBuffer> command = [Object_val(v_queue) commandBuffer];
+    signal_value(v_signaler, command, v_value);
+    [command commit];
+  }
   return Val_unit;
 }
 
 /* Runs [v_pipeline] over [v_threads] threads, with the GPU address [v_address]
-   as its one argument, and signals [v_value] on [v_event] when done. Unless
+   as its one argument, and signals [v_value] through [v_signaler] when done. Unless
    [v_stamps] is 0, it leaves the command buffer, retained, in the stamp word of
    the first of the two slots there and 0 in the second's, to be timed. */
-value test_metal_dispatch(value v_queue, value v_event, value v_fence,
+value test_metal_dispatch(value v_queue, value v_signaler, value v_fence,
                           value v_resources, value v_pipeline,
                           value v_address, value v_threads, value v_value,
                           value v_stamps) {
-  CAMLparam5(v_queue, v_event, v_fence, v_resources, v_pipeline);
+  CAMLparam5(v_queue, v_signaler, v_fence, v_resources, v_pipeline);
   CAMLxparam4(v_address, v_threads, v_value, v_stamps);
   id<MTLCommandQueue> queue = Object_val(v_queue);
   @autoreleasepool {
@@ -143,8 +155,7 @@ value test_metal_dispatch(value v_queue, value v_event, value v_fence,
             threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
     [encoder updateFence:Object_val(v_fence)];
     [encoder endEncoding];
-    [command encodeSignalEvent:Object_val(v_event)
-                         value:(uint64_t)Long_val(v_value)];
+    signal_value(v_signaler, command, v_value);
     uint64_t *stamps = (uint64_t *)Nativeint_val(v_stamps);
     if (stamps != NULL) {
       stamps[1] = (uint64_t)(uintptr_t)[command retain];
@@ -163,10 +174,10 @@ value test_metal_dispatch_byte(value *argv, int argc) {
 
 /* Runs the [v_count] commands of the indirect command buffer [v_icb] as timeline
    work signalling [v_value]. */
-value test_metal_execute(value v_queue, value v_event, value v_fence,
+value test_metal_execute(value v_queue, value v_signaler, value v_fence,
                          value v_resources, value v_icb, value v_count,
                          value v_value) {
-  CAMLparam5(v_queue, v_event, v_fence, v_resources, v_icb);
+  CAMLparam5(v_queue, v_signaler, v_fence, v_resources, v_icb);
   CAMLxparam2(v_count, v_value);
   id<MTLCommandQueue> queue = Object_val(v_queue);
   @autoreleasepool {
@@ -187,8 +198,7 @@ value test_metal_execute(value v_queue, value v_event, value v_fence,
                            withRange:NSMakeRange(0, (NSUInteger)Long_val(v_count))];
     [encoder updateFence:Object_val(v_fence)];
     [encoder endEncoding];
-    [command encodeSignalEvent:Object_val(v_event)
-                         value:(uint64_t)Long_val(v_value)];
+    signal_value(v_signaler, command, v_value);
     [command commit];
   }
   CAMLreturn(Val_unit);

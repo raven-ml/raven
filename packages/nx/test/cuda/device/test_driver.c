@@ -96,11 +96,18 @@ value test_launch_byte(value *argv, int argn) {
   return test_launch(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }
 
-/* Timeline work [v] that waits for a value past it, which never arrives. */
-value test_stall(value ctx, value stream, value signal, value v) {
-  submit(ctx, stream, signal, (uint64_t)Long_val(v) + 1, NULL, 0,
-         (uint64_t)Long_val(v));
-  return Val_unit;
+/* Whether the driver ends long kernels on GPU [ordinal]: a display's
+   watchdog. */
+value test_watchdog(value ordinal) {
+  int(CUDAAPI * init)(unsigned) = symbol("cuInit");
+  int(CUDAAPI * get)(int *, int) = symbol("cuDeviceGet");
+  int(CUDAAPI * attribute)(int *, int, int) = symbol("cuDeviceGetAttribute");
+  int dev = 0, timeout = 0;
+  check(init(0), "cuInit");
+  check(get(&dev, Int_val(ordinal)), "cuDeviceGet");
+  /* CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT */
+  check(attribute(&timeout, 17, dev), "cuDeviceGetAttribute");
+  return Val_bool(timeout != 0);
 }
 
 /* As another library does: [size] bytes of device memory on [ctx]. */

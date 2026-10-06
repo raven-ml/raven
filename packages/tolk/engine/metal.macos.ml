@@ -45,10 +45,10 @@ let sels d =
         (fun i v -> words.{i} <- v)
         ([
            Int64.of_nativeint (M.queue m);
-           Int64.of_nativeint (M.event m);
            Int64.of_nativeint (M.fence m);
            address table;
            0L;
+           Int64.of_nativeint (M.signaler m);
          ]
         @ List.map
             (fun s -> Int64.of_nativeint (M.selector s))
@@ -64,8 +64,8 @@ let resident m s () =
   let n = Array.length resources in
   if n > Bigarray.Array1.dim s.table then s.table <- int64_words n;
   Array.iteri (fun i r -> s.table.{i} <- Int64.of_nativeint r) resources;
-  s.words.{3} <- address s.table;
-  s.words.{4} <- Int64.of_int n
+  s.words.{2} <- address s.table;
+  s.words.{3} <- Int64.of_int n
 
 let host_words b =
   match B.borrow Nx_device.host b with

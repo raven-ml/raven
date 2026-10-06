@@ -9,10 +9,11 @@ open Ops
 
 (* Queue *)
 
-let handles = [ "queue"; "event"; "fence"; "resources"; "count" ]
+let handles = [ "queue"; "fence"; "resources"; "count"; "signaler" ]
 
 (* [retain] and [release] keep a profiled command buffer alive in its stamps
-   until the device reads its times. *)
+   until the device reads its times; [signal:value:] hands a command buffer to
+   the device's signaler. *)
 let selectors =
   [
     "commandBuffer";
@@ -30,6 +31,7 @@ let selectors =
     "signaledValue";
     "retain";
     "release";
+    "signal:value:";
   ]
 
 let u64 n = int ~dtype:Dtype.Uint64 n
@@ -304,9 +306,11 @@ let queue ~host ~arch ~residency_set q : Hcq2.commands =
               (index (after slots [ h ]) [ word 1 ])
               (send ~host ~ret:Dtype.Uint64 dev cbuf "retain" [])
       in
+      (* The signaler signals the last command buffer's value once it completed,
+         and watches the others for a failure. *)
       let h =
-        if last then msg h cb "encodeSignalEvent:value:" [ sel "event"; value ]
-        else h
+        msg h (mtl_sel dev "signaler") "signal:value:"
+          [ cbuf; (if last then value else u64 0) ]
       in
       msg h cb "commit" []
     in

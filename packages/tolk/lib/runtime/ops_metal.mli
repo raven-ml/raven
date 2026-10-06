@@ -39,8 +39,8 @@ val queues : host:string -> arch:string -> residency_set:bool -> Hcq2.queues
       program sets it on the command on each run;
     - [wait], which encodes nothing: the device's fence orders its command
       buffers;
-    - [signal word v], which makes [v] the value the last command buffer signals
-      on the device's event;
+    - [signal word v], which makes [v] the value the device's signaler signals
+      once the last command buffer completed;
     - [timestamp], which times each command in a command buffer of its own: the
       host program writes that command buffer, retained, over the first of the
       command's two stamps and [0] over the second, once it released the command
@@ -51,8 +51,8 @@ val queues : host:string -> arch:string -> residency_set:bool -> Hcq2.queues
       waits for the device's fence, declares the device's buffers resident
       unless [residency_set], sets each pipeline once before the [Apple9]
       family, runs its range of the indirect command buffer, updates the fence
-      and ends; the last command buffer signals the value on the device's event;
-      each is committed.
+      and ends; each is handed to the device's signaler, the last with the value
+      and the others with [0], and committed.
 
     [copy] raises [Invalid_argument]. *)
 
@@ -60,10 +60,10 @@ val queues : host:string -> arch:string -> residency_set:bool -> Hcq2.queues
 
 val handles : string list
 (** [handles] is the names of the words that the ["mtl_sel"] placeholder holds
-    first, in order: the device's command queue, its shared event and its fence
-    ([queue], [event], [fence]), the address of the table of its buffers that an
-    encoder declares resident without a residency set, and their number
-    ([resources], [count]). *)
+    first, in order: the device's command queue and its fence ([queue],
+    [fence]), the address of the table of its buffers that an encoder declares
+    resident without a residency set, and their number ([resources], [count]),
+    then its signaler ([signaler]). *)
 
 val selectors : string list
 (** [selectors] is the names of the Objective-C selectors whose registered

@@ -19,7 +19,7 @@
    (echo "()"))))
 
 (tests
- (names test_cuda test_cuda_hang)
+ (names test_cuda test_cuda_long)
  (package nx)
  (foreign_stubs
   (language c)

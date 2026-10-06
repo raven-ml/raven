@@ -130,29 +130,37 @@ let align n = (n + segment_align - 1) / segment_align * segment_align
 
 (* The address of a new segment of [n] bytes for the work of timeline value [v].
    Segments are taken in order around the ring, so the oldest are first in
-   [segments]: those the new one overlaps, which [wait] waits for (values
-   complete in order, so waiting for the latest is enough), and, when the ring
-   wraps, those past its head, which a segment of the lap after them overlaps
-   first. *)
+   [segments]: when the ring wraps, those past its head, which a segment of the
+   lap after them overlaps first, then those the new one overlaps, which [wait]
+   waits for (values complete in order, so waiting for the latest is enough).
+   Nothing changes before the wait, which Ctrl-C may end. *)
 let segment r ~wait v n =
   let n = align n in
   if n > Mmio.length r.mem then
     invalid_arg "Nx_amd_device.launch: arguments larger than their ring";
-  let first_is p =
-    (not (Queue.is_empty r.segments)) && p (Queue.peek r.segments)
+  let wraps = r.head + n > Mmio.length r.mem in
+  let first = if wraps then 0 else r.head in
+  let last = first + n in
+  let past_head s = wraps && s.first >= r.head in
+  let overlaps s = s.first < last && first < s.last in
+  (* The segments the new one replaces, and the latest value of those it
+     overlaps. *)
+  let rec overlapped k latest seq =
+    match seq () with
+    | Seq.Cons (s, seq) when overlaps s ->
+        overlapped (k + 1) (Int.max latest s.value) seq
+    | Seq.Cons _ | Seq.Nil -> (k, latest)
   in
-  if r.head + n > Mmio.length r.mem then begin
-    while first_is (fun s -> s.first >= r.head) do
-      ignore (Queue.pop r.segments)
-    done;
-    r.head <- 0
-  end;
-  let first = r.head and last = r.head + n in
-  let latest = ref 0 in
-  while first_is (fun s -> s.first < last && first < s.last) do
-    latest := Int.max !latest (Queue.pop r.segments).value
+  let rec passed k seq =
+    match seq () with
+    | Seq.Cons (s, seq') when past_head s -> passed (k + 1) seq'
+    | _ -> overlapped k 0 seq
+  in
+  let replaced, latest = passed 0 (Queue.to_seq r.segments) in
+  if latest > 0 then wait latest;
+  for _ = 1 to replaced do
+    ignore (Queue.pop r.segments)
   done;
-  if !latest > 0 then wait !latest;
   Queue.push { first; last; value = v } r.segments;
   r.head <- last;
   r.gpu + first

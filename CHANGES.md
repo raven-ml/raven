@@ -3412,6 +3412,25 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.timeout`, `Nx_device.set_timeout` and
+  `Nx_device.Driver.default_timeout` are removed: a wait lasts until the work
+  signals, the driver reports a fault, or Ctrl-C (`Sys.Break`) interrupts it. A
+  still timeline used to lose a healthy GPU after 30 s, such as one whose
+  kernels ran long or waited for another process's. Under AMD's and NVIDIA's
+  PCI interfaces, where the process drives the GPU, 30 s without progress is a
+  hang.
+- An NVIDIA channel that the driver stops, such as for a semaphore that
+  faults, loses the device with the driver's error code, where it read as a
+  hang after the timeout.
+- **Breaking:** for driver authors, `Nx_device.Driver.sleep` names a sleep,
+  which takes how long the timeline stayed still (`~still`), `signal`'s `wait`
+  takes `~ms`, and `Driver.wait ~sleep ~timeline ready` waits for any
+  condition while the device's sleep reports its faults.
+- **Breaking:** a command buffer that Metal fails, such as one macOS ends for
+  keeping the GPU from the display, loses the device with Metal's reason: it
+  signaled its value as if complete. Submitters hand each command buffer to
+  `Nx_metal_device.signaler` instead of encoding a signal on the event, and
+  `Nx_metal_device.event` is removed.
 - `Nx.take` of whole rows of `int4`, `uint4` and `bit` values on the host moves
   their bytes: a take of 1000 rows of a uint4 `[| 1000; 10000 |]` table takes
   0.8 ms instead of 48 ms, and the eager MXFP4 expert product it serves is no

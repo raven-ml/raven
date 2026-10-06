@@ -136,8 +136,18 @@ let values dt b =
 
 (* Test devices *)
 
+(* The fault the test devices' driver reports once a wait sleeps. *)
+let fault = Atomic.make None
+let fail why = Atomic.set fault (Some why)
+
+let sleep ~still:_ _ =
+  match Atomic.get fault with
+  | Some why -> failwith why
+  | None -> Unix.sleepf 0.001
+
 let test_device ?(mapping = Nx_device.Driver.Identity) name =
   Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    ~completion:(Sleep (fun ~timeline:_ -> sleep))
     (Host_visible
        { memory = Nx_device.Driver.host_memory; mapping = Some mapping })
 

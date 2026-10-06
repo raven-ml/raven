@@ -41,18 +41,17 @@
     {b Programs} are functions of CUDA modules: cubins, fatbins, or PTX, which
     the driver compiles when it loads it.
 
-    {b Faults and hangs.} A fault on the GPU, such as an illegal address, loses
-    the device ({!Nx_device.Lost}) with the driver's error when a wait finds it:
-    a wait polls the signal word, and once the word has stayed still for 200 ms
-    it also queries the streams each millisecond, so a fault is found up to 200
-    ms after it happened; so does a driver error while the runtime enqueues a
-    copy, since the context may then be unusable. Work that does not signal
-    within the device's {!Nx_device.timeout}, 30 seconds unless
-    {!Nx_device.set_timeout} sets another, loses the device too: raise the
-    timeout before submitting kernels that run longer. {!get} then opens the GPU
-    anew, a fresh device with streams of its own in the primary context, unless
-    the context holds a sticky error, such as an illegal address, which lasts
-    for the process: {!get} then says so.
+    {b Faults.} A fault the driver reports, such as an illegal address or a
+    kernel its watchdog ended, loses the device ({!Nx_device.Lost}) with the
+    driver's error when a wait finds it: a wait polls the signal word, and once
+    the word has stayed still for 200 ms it also queries the streams each
+    millisecond, so a fault is found up to 200 ms after it happened; so does a
+    driver error while the runtime enqueues a copy, since the context may then
+    be unusable. {!get} then opens the GPU anew, a fresh device with streams of
+    its own in the primary context, unless the context holds a sticky error,
+    such as an illegal address, which lasts for the process: {!get} then says
+    so. Work that runs long loses nothing: a wait lasts until the work signals
+    or the driver reports a fault.
 
     {b Other CUDA libraries.} Devices use the GPU's primary context, which the
     CUDA runtime API and the libraries over it share. The runtime makes it

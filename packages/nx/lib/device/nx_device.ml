@@ -12,7 +12,7 @@ type region = {
   nbytes : int;
 }
 
-type signal = { signaled : unit -> int; wait : int -> timeout_ms:int -> bool }
+type signal = { signaled : unit -> int; wait : int -> ms:int -> bool }
 type allocator = { alloc : int -> region option; free : region -> unit }
 
 type mapping =
@@ -32,10 +32,11 @@ type io = {
 
 type dma = { bus : string; pages : (int * int) list }
 type clock = Host_clock | Device_clock of { hz : int }
+type sleep = timeline:region -> still:int -> int -> unit
 
 type completion =
   | Poll
-  | Sleep of (timeline:region -> int -> unit)
+  | Sleep of sleep
   | Signal of (timeline:region -> signal)
 
 type host_programs = {
@@ -76,8 +77,7 @@ type t = {
   link : (src:buffer -> dst:buffer -> link option) option;
   dma : (region -> (dma, string) result) option;
   signal : signal option;
-  sleep : (int -> unit) option;
-  timeout_ms : int Atomic.t;
+  sleep : (still:int -> int -> unit) option;
   synchronized : unit -> unit;
   report : (unit -> event list) option;
       (* the counters of its work done since the last report *)
@@ -673,8 +673,6 @@ let timeline_of ~pages ~host_alloc (host_memory : allocator option) =
       in
       (heap_memory ba, Host ba)
 
-let default_timeout = 30_000
-
 (* A device as [create] takes it, but for its memory. *)
 module Description = struct
   type nonrec t = {
@@ -812,7 +810,6 @@ let create (desc : Description.t) made_of =
       dma = desc.dma;
       signal;
       sleep;
-      timeout_ms = Atomic.make default_timeout;
       synchronized = desc.synchronized;
       report = desc.report;
       room = desc.room;
@@ -960,7 +957,9 @@ let io_of d =
 let timeline_address d = Option.get d.timeline.host
 let submitted d = Atomic.get d.last
 
-let signaled d =
+(* The last value [d] signaled. A driver that signals in its own way raises
+   [Failure] if [d] faulted. *)
+let read_signaled d =
   match d.signal with
   | Some s -> s.signaled ()
   | None -> Int64.to_int (read_word (io_of d) (timeline_address d))
@@ -989,44 +988,45 @@ let fail d why =
    [d]. *)
 let driver d f = try f () with Failure why -> fail d why
 
-(* How long a wait sees the signal word still before it lets the device sleep on
-   its interrupts. *)
-let sleep_after_ms = 200
+(* How long a wait sees no progress before it lets the device sleep on its
+   interrupts, and the longest any call a wait blocks in lasts: each returns to
+   OCaml code within it, where a pending [Sys.Break] from Ctrl-C raises. *)
+let slice_ms = 200
 
-(* Polls the word at [word], in the memory [io] reaches, for [v]. Once the word
-   has stayed still for [sleep_after_ms], the device sleeps between polls, and
-   once more before a hang is declared, so a fault it reports names the cause.
-   The timeout counts from the word's last move. On this machine a wait blocks
-   until the word moves; on another, each read of the word is a round trip. *)
-let poll_word ~io ~sleep ~timeout_ms word v =
-  let target = Int64.of_int v in
-  let reached w = Int64.unsigned_compare w target >= 0 in
-  let rec go seen still_since =
-    let w = read_word io word and now = now_ms () in
-    let still_since = if w <> seen then now else still_since in
-    let still = now - still_since in
-    let left = timeout_ms () - still in
-    if reached w then true
-    else if left <= 0 then begin
-      sleep 1;
-      reached (read_word io word)
-    end
-    else if still < sleep_after_ms then
-      Option.is_none io
-      && wait_u64 word target (Int.min (sleep_after_ms - still) left) <> 0
-      || go w still_since
-    else begin
-      sleep (Int.min sleep_after_ms left);
-      go w still_since
+(* Waits until [ready ()]. Once the word at [word], in the memory [io] reaches,
+   has stayed still for [slice_ms], [sleep ~still ms] runs between checks,
+   [still] being how long it has: the driver blocks on the device's interrupts
+   and raises its faults, and it alone decides whether a still word is a hang.
+   Before that, and without [sleep], [spin ~still] runs between checks. A
+   condition that holds at once reads no word. *)
+let await ~io ~sleep ~spin word ready =
+  let rec go seen since =
+    if not (ready ()) then begin
+      let w = read_word io word and now = now_ms () in
+      let since = if w <> seen then now else since in
+      let still = now - since in
+      (match sleep with
+      | Some sleep when still >= slice_ms -> sleep ~still slice_ms
+      | _ -> spin ~still);
+      go w since
     end
   in
-  let w = read_word io word in
-  go w (now_ms ())
+  if not (ready ()) then go (read_word io word) (now_ms ())
 
-let poll d v sleep =
-  poll_word ~io:(io_of d) ~sleep
-    ~timeout_ms:(fun () -> Atomic.get d.timeout_ms)
-    (timeline_address d) v
+(* Waits until the word at [word] reaches [v]. On this machine a wait blocks in
+   the word's own wait between checks; on another, each read of the word is a
+   round trip. *)
+let poll_word ~io ~sleep word v =
+  let target = Int64.of_int v in
+  let reached () = Int64.unsigned_compare (read_word io word) target >= 0 in
+  let spin ~still =
+    if Option.is_none io then
+      let ms = if still < slice_ms then slice_ms - still else slice_ms in
+      ignore (wait_u64 word target ms)
+  in
+  await ~io ~sleep ~spin word reached
+
+let relax ~still:_ = Domain.cpu_relax ()
 
 (* Values complete in order: a wait for a value at or below one a wait saw
    signaled is over, with no read of the device's machine. *)
@@ -1034,40 +1034,39 @@ let rec settle d v =
   let s = Atomic.get d.settled in
   if v > s && not (Atomic.compare_and_set d.settled s v) then settle d v
 
+(* Waits until [d] signals [v], however long that takes: only a fault its driver
+   reports, or the failed connection to its machine, loses [d]. *)
 let wait_signal d v =
   check d;
-  if v > Atomic.get d.settled then
-    match
-      match (d.signal, d.sleep) with
-      | Some s, _ -> s.wait v ~timeout_ms:(Atomic.get d.timeout_ms)
-      | None, Some sleep -> poll d v sleep
-      | None, None when Option.is_some (io_of d) -> poll d v ignore
-      | None, None ->
-          wait_u64 (timeline_address d) (Int64.of_int v)
-            (Atomic.get d.timeout_ms)
-          <> 0
-    with
-    | true -> settle d v
-    | false -> fail d "hang detected"
-    | exception Failure why -> fail d why
+  if v > Atomic.get d.settled then begin
+    (try
+       match d.signal with
+       | Some s ->
+           while not (s.wait v ~ms:slice_ms) do
+             ()
+           done
+       | None -> poll_word ~io:(io_of d) ~sleep:d.sleep (timeline_address d) v
+     with Failure why -> fail d why);
+    settle d v
+  end
 
 let failed d = Atomic.get d.failed
 let lost = failed
 
-(* Waits until each of [d]'s queues has room for a submission, for at most its
-   timeout. *)
+(* A fault the driver reports while [d]'s value is read loses [d], whose value
+   stays the last one a wait saw. *)
+let signaled d =
+  match read_signaled d with
+  | v -> v
+  | exception Failure why ->
+      lose d why;
+      Atomic.get d.settled
+
+(* Waits until each of [d]'s queues has room for a submission, as a wait for its
+   work does: work completing frees room. *)
 let wait_room d =
-  let start = now_ms () in
-  let rec go () =
-    if not (driver d d.room) then
-      if now_ms () - start > Atomic.get d.timeout_ms then
-        fail d "no room in its queues"
-      else begin
-        Domain.cpu_relax ();
-        go ()
-      end
-  in
-  go ()
+  driver d (fun () ->
+      await ~io:(io_of d) ~sleep:d.sleep ~spin:relax (timeline_address d) d.room)
 
 (* A driver error while enqueueing leaves [d]'s queue in an unknown state: like
    a fault, it fails [d]. *)
@@ -1193,7 +1192,7 @@ let progress stamps =
       if acc = `Lost || v <= Atomic.get d.settled then acc
       else if failed d <> None then `Lost
       else
-        match signaled d with
+        match read_signaled d with
         | s when s >= v ->
             settle d v;
             acc
@@ -1776,11 +1775,6 @@ let set_budget d n =
       Option.iter (fun p -> p.ceiling <- n) (budgeted d);
       release_cache ~wait:true d (Room (Device, 0)))
 
-let set_timeout d ms =
-  if ms <= 0 then invalid_arg (Printf.sprintf "Nx_device.set_timeout: %d ms" ms);
-  Atomic.set d.timeout_ms ms
-
-let timeout d = Atomic.get d.timeout_ms
 let free_cache d = with_devices [ d ] (fun () -> release_cache ~wait:true d All)
 
 (* At exit every device is finalized, a failed one too: its hardware may still
@@ -3865,12 +3859,14 @@ module Driver = struct
 
   type nonrec signal = signal = {
     signaled : unit -> int;
-    wait : int -> timeout_ms:int -> bool;
+    wait : int -> ms:int -> bool;
   }
+
+  type nonrec sleep = sleep
 
   type nonrec completion = completion =
     | Poll
-    | Sleep of (timeline:region -> int -> unit)
+    | Sleep of sleep
     | Signal of (timeline:region -> signal)
 
   type nonrec dma = dma = { bus : string; pages : (int * int) list }
@@ -3900,8 +3896,6 @@ module Driver = struct
     unload : unit -> unit;
   }
 
-  let default_timeout = default_timeout
-
   (* The host's heap: its regions keep their bigarrays until they are freed. *)
   let host_memory =
     let held = Hashtbl.create 16 and lock = Mutex.create () in
@@ -3925,14 +3919,17 @@ module Driver = struct
       (fun m -> invalid_arg (Printf.sprintf "Nx_device.Driver.%s: %s" fn m))
       fmt
 
-  let wait ~sleep ~timeout_ms (word : region) v =
-    if word.nbytes < 8 then refuse "wait" "a word of %d bytes" word.nbytes;
-    match word.host with
-    | None -> refuse "wait" "the host does not address the word"
+  let wait ?(host = host) ~sleep ~(timeline : region) ready =
+    if Option.is_some host.machine then
+      refuse "wait" "%s is not a host" host.name;
+    if timeline.nbytes < 8 then
+      refuse "wait" "a timeline of %d bytes" timeline.nbytes;
+    match timeline.host with
+    | None -> refuse "wait" "the host does not address the timeline"
     | Some a ->
-        poll_word ~io:None ~sleep:(sleep ~timeline:word)
-          ~timeout_ms:(fun () -> timeout_ms)
-          a v
+        await ~io:(io_of host)
+          ~sleep:(Some (sleep ~timeline))
+          ~spin:relax a ready
 
   let compose ?(host = host) local =
     match host.kind with

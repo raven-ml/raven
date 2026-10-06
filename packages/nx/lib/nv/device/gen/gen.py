@@ -920,6 +920,14 @@ def generate(cache, pins, pin, outdir):
         out.append("]")
         out.append("")
 
+    # The errors RM writes into a channel's error notifier
+    nverror = (gsp / "src/common/sdk/nvidia/inc/nverror.h").read_text()
+    out.append("let robust_channel_errors = [")
+    for n, v in re.findall(r"#define\s+ROBUST_CHANNEL_(\w+)\s+\((\d+)\)", nverror):
+        out.append(f"  ({ml_int(int(v))}, {json.dumps(n)});")
+    out.append("]")
+    out.append("")
+
     # The GSP's interface
     gu = Unit(ci, headers(gsp, GSP_HEADERS), [gsp / i for i in GSP_INCLUDES], stub, extra=nvtypes(gsp),
               defines=GSP_DEFINES)

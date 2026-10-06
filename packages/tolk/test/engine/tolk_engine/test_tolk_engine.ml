@@ -925,12 +925,12 @@ let scalar_kernel name ~dst ~src f =
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
 
-(* A loop of at most [max] trips on the device [d] around four calls each
-   trip: the first stores [c + 1] into [t], and the others read it to store [2
-   t] into the carry [c], whether [2 t] is below [limit] into the flag [f], and
-   [t] into its row of [ys], 16 bytes apart. Each call after the first reads
-   what the first wrote in the same trip, and the first reads the carry the
-   second wrote in the trip before. The flag starts as [0 < limit]. *)
+(* A loop of at most [max] trips on the device [d] around four calls each trip:
+   the first stores [c + 1] into [t], and the others read it to store [2 t] into
+   the carry [c], whether [2 t] is below [limit] into the flag [f], and [t] into
+   its row of [ys], 16 bytes apart. Each call after the first reads what the
+   first wrote in the same trip, and the first reads the carry the second wrote
+   in the trip before. The flag starts as [0 < limit]. *)
 let loops_around_calls ?(devices = devices) d (limit, max) =
   let at = Ops.Single d in
   let k name dst f = scalar_kernel name ~dst ~src:Float32 f in
@@ -1007,6 +1007,7 @@ let loops_around_calls_on_the_host =
   prop ~count:30 "a loop runs its calls in order each trip while its flag holds"
     Gen.(pair (int_range (-1) 40) (int_range 1 6))
     (fun bounds -> loops_around_calls "CPU" bounds)
+
 (* A loop's flag is storage of one boolean: a view of one element of wider
    storage is refused, since the engine reads the storage it names. *)
 let refuses_a_view_as_flag () =
@@ -1016,7 +1017,9 @@ let refuses_a_view_as_flag () =
   let c = Ops.new_buffer at 1 Float32 and f = Ops.new_buffer at 2 Bool in
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
   let flag = Ops.shrink f [ Some (Int 1, Int 2) ] in
-  let e = Ops.backedge (Ops.call ~precompile:true body [ c ]) ~loop:r ~cond:flag in
+  let e =
+    Ops.backedge (Ops.call ~precompile:true body [ c ]) ~loop:r ~cond:flag
+  in
   raises_match
     (function
       | Invalid_argument m ->
@@ -1025,7 +1028,8 @@ let refuses_a_view_as_flag () =
                (String.equal "Ops.BACKEDGE")
                (String.split_on_char ' ' m)
       | _ -> false)
-    (fun () -> Schedule.create_linear_with_vars (Ops.sink [ Ops.after c [ e ] ]))
+    (fun () ->
+      Schedule.create_linear_with_vars (Ops.sink [ Ops.after c [ e ] ]))
 
 let loops_on_the_host =
   prop "a loop runs its call while its flag holds, at most its trips"
@@ -1085,7 +1089,8 @@ let replays_a_scan =
   in
   let runs =
     Gen.list ~size:(Gen.int_range 1 4)
-      (Gen.array ~size:(Gen.constant (n * k))
+      (Gen.array
+         ~size:(Gen.constant (n * k))
          (Gen.map Float.of_int (Gen.int_range (-8) 8)))
   in
   prop "a linked scan carries its storage across runs on each run's parameters"
@@ -1673,8 +1678,8 @@ let clock =
         (match c with Search.Device -> "Device" | Search.Host -> "Host"))
     ~equal:( = )
 
-(* The host calls a program and times the call; a device with queues stamps
-   its batches. *)
+(* The host calls a program and times the call; a device with queues stamps its
+   batches. *)
 let clock_by_device name =
   let s, _ = timed name in
   equal clock
@@ -1822,11 +1827,10 @@ let timing =
           equal ~msg:"buffers by slot" (list int) [ 1; 1; 1; 1 ]
             (Array.to_list (Array.map List.length slots));
           Engine.run ~vars:n_bound s slots);
-      group "the clock is the device's where it has queues, the host's \
-             otherwise"
+      group
+        "the clock is the device's where it has queues, the host's otherwise"
         [ on clock_by_device ];
-      group "the clock is the host's under a profile"
-        [ on clock_under_profile ];
+      group "the clock is the host's under a profile" [ on clock_under_profile ];
       group "a time is positive, under a second" [ on positive ];
       group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];
@@ -1841,10 +1845,10 @@ let timing =
       test ~tags:[ "lost-device" ]
         "a time whose device is lost during the run raises Lost" (fun () ->
           let s, slots = timed "CPU:1" in
-          Nx_device.set_timeout (Null_device.device "CPU:1") 50;
+          Run.fail "queue fault";
           raises_match
             (function
-              | Nx_device.Lost (_, why) -> why = "hang detected" | _ -> false)
+              | Nx_device.Lost (_, why) -> why = "queue fault" | _ -> false)
             (fun () ->
               Null_device.with_latency 0.5 (fun () ->
                   Engine.time ~vars:n_bound s slots)));
@@ -2085,8 +2089,8 @@ let borrows_outlive_the_link ~as_input () =
 (* A host kernel on storage of the host that the link allocates, a slow copy
    from CPU:1 into that storage, enqueued on CPU:1's queue with the storage's
    address folded in at link, then a host kernel that adds one to it. The first
-   kernel synchronized the host already, and the copy's batch queues work
-   again, so the second kernel runs once the copy landed. *)
+   kernel synchronized the host already, and the copy's batch queues work again,
+   so the second kernel runs once the copy landed. *)
 let leaves_its_work_pending_on_the_host () =
   let x = Ops.new_buffer (Single "CPU:1") 4 Float32
   and t = Ops.new_buffer (Single "CPU") 4 Float32

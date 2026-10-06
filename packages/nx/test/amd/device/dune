@@ -21,4 +21,4 @@
  (name test_amd_hw)
  (modules test_amd_hw)
  (package nx)
- (libraries nx_test nx.amd.device nx.device nx.dtype windtrap))
+ (libraries nx_test nx.amd.device nx.device nx.dtype unix windtrap))

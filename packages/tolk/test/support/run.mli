@@ -47,3 +47,8 @@ val devices : unit -> (string * Nx_device.t) list
     whole pages of it ([Pages]), as a GPU does, and so borrows no host buffer of
     less than 64 KiB. Their calls run one by one here, and from command queues
     through {!Null_device}. The test devices are opened by the first call. *)
+
+val fail : string -> unit
+(** [fail why] makes the test devices' driver report the fault [why] to every
+    wait that sleeps from then on, as a GPU's driver reports one: a wait whose
+    work has not signaled for 200 ms loses its device ({!Nx_device.Lost}). *)

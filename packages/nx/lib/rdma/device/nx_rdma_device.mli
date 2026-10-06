@@ -31,14 +31,13 @@
     {b Buffers} of an adapter are locked system memory of its machine. It loads
     no programs and has no copy queue.
 
-    {b Failures.} A copy whose completion does not arrive within the adapters'
-    {!Nx_device.timeout}, or completes in error, loses both adapters of the
-    queue pair ({!Nx_device.Lost}), whose state is then unknown, and the
-    destination stays in their reach. At exit the process unregisters from each
-    healthy adapter's firmware, and turns every adapter's bus mastering off, so
-    that none reaches memory the process releases. The fabric is trusted: a
-    packet with the right queue pair and sequence number writes the memory it
-    names. *)
+    {b Failures.} A copy whose completion does not arrive within 30 seconds, or
+    completes in error, loses both adapters of the queue pair
+    ({!Nx_device.Lost}), whose state is then unknown, and the destination stays
+    in their reach. At exit the process unregisters from each healthy adapter's
+    firmware, and turns every adapter's bus mastering off, so that none reaches
+    memory the process releases. The fabric is trusted: a packet with the right
+    queue pair and sequence number writes the memory it names. *)
 
 val count : ?host:Nx_device.t -> unit -> int
 (** [count ()] is the number of adapters of the machine of [host] (defaults to

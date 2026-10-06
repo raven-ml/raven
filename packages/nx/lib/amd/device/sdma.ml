@@ -50,8 +50,8 @@ let stamp ~sdma ~signal ~slot v =
 (* Appends [words] to [q]'s ring and rings its doorbell. Positions count bytes;
    packets never wrap, so a submission that does not fit before the ring's end
    zeroes the rest of it and starts at its beginning. Waits for the engine to
-   leave room, for at most [timeout_ms]. *)
-let submit q ~timeout_ms words =
+   leave room with [wait], before it changes anything. *)
+let submit q ~wait words =
   let ring = Mmio.length q.ring in
   let size = 4 * List.length words in
   if size >= ring then invalid_arg "Sdma.submit: larger than the ring";
@@ -59,17 +59,11 @@ let submit q ~timeout_ms words =
   let tail = put mod ring in
   let zero = if size <= ring - tail then 0 else ring - tail in
   let need = zero + size in
-  let start = Amdev.now_ms () in
-  let rec room () =
-    let used = (put - Int64.to_int (Mmio.get64 q.read_ptr 0)) land (ring - 1) in
-    if ring - used <= need then begin
-      if Amdev.now_ms () - start > timeout_ms then
-        failwith "the SDMA ring stayed full";
-      Domain.cpu_relax ();
-      room ()
-    end
-  in
-  room ();
+  wait (fun () ->
+      let used =
+        (put - Int64.to_int (Mmio.get64 q.read_ptr 0)) land (ring - 1)
+      in
+      ring - used > need);
   if zero > 0 then Mmio.fill q.ring tail zero '\000';
   let at = if zero > 0 then 0 else tail in
   List.iteri (fun i w -> Mmio.set32 q.ring (at + (4 * i)) w) words;

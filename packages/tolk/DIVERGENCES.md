@@ -3311,9 +3311,9 @@ stores through a pad.
   compute queue and moves the timeline past the hung value, and
   `on_device_hang`) and `:856` (`can_recover`, true under AM off a virtual
   function); `runtime/support/am/amdev.py:283-290` (`recover`).
-- **tolk:** none: nx.amd.device owns the GPU, and
-  `packages/nx/lib/device/nx_device.ml:1047` loses it on a hang
-  (`Nx_device.Lost`, "hang detected") under both interfaces.
+- **tolk:** none: nx.amd.device owns the GPU, and loses it on a hang: under
+  AM after 30 s without progress (`packages/nx/lib/amd/device/nx_amd_device.ml`,
+  `hang_ms`, "hang detected"), under KFD when the driver reports one.
 - **Differs:** a hang or fault loses the device under AM as under KFD. Every
   later operation on memory it can reach raises `Lost`, and the process does
   not reset the GPU. An open of the GPU then gives a fresh device under KFD,
@@ -4097,3 +4097,29 @@ stores through a pad.
   a widening cast of an unsigned mask masks the widened operand (D134)` and
   the four tests after it; rune's lower_index suite: `quantised products › a
   product unpacks its codes at the width it decodes them in`.
+
+## D135. A Metal command buffer signals through the device's signaler
+
+- **tinygrad:** `runtime/ops_metal.py:85-86` (`HANDLES`, `SELECTORS`),
+  `:162` (`MetalQueue.submit`: the last command buffer encodes
+  `encodeSignalEvent:value:` on the device's event).
+- **tolk:** `lib/runtime/ops_metal.ml` (`handles`, `selectors`, and the
+  signal in `submit`); `engine/metal.macos.ml` (`sels`).
+- **Differs:** the host program sends every command buffer to the device's
+  signaler (`Nx_metal_device.signaler`), `[signaler signal:cb value:v]`, before
+  it commits it: the last with the batch's value, the others with `0`. No
+  command buffer encodes a signal on the event, and the `mtl_sel` words hold
+  no `event` handle, since the signaler owns the event: the handle `signaler`
+  follows tinygrad's others, and the selector `signal:value:` follows `retain`
+  and `release`.
+- **Reason:** (c). A command buffer that Metal fails still runs the signal
+  encoded in it, so a GPU-side signal reports failed work as complete.
+  nx.device's Metal library signals a value from the command buffer's
+  completed handler once it completed, and loses the device with Metal's
+  reason otherwise; the runtime loses a device only on its driver's report.
+- **Pinned by:** the Ops_metal suite (`test/runtime/ops_metal`): every
+  `recorded cases` golden, whose host programs are tinygrad's with D135
+  applied by their generator (`gen/runtime/ops_metal.py`); on macOS, every
+  `execution` test, which waits for its batches through the signaler; and
+  `nx.metal.device › failures › a command buffer Metal fails loses the device
+  with Metal's reason`.
