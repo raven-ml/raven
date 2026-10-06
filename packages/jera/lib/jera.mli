@@ -1117,21 +1117,23 @@ module Ode : sig
       crossed. Each component of [event t y] is one event, so several events are
       one tensor.
 
-      {b Method.} The first accepted step across which a component that was not
-      zero changes sign holds the crossing; a zero at [t0] is not one. In it,
-      {!Root.bracket}'s search to [tol] finds each such component's crossing on
-      the step's continuous extension (see {!section-paths}), and the earliest
-      wins. The time returned is the end of the final bracket past the crossing,
-      where the component has its new sign, so a solve restarted there starts on
-      that side, and the component's new sign tells the crossing's direction. A
-      crossing that should not stop the solve, or one in a direction to ignore,
-      is a restart from the returned time, one solve per crossing. A lane
-      without a crossing after [t0] up to [t1] included converges with
-      [(t1, y t1, −1)]: the index tells the two apart, whichever way the solve
-      runs. A step holding an even number of crossings of a component shows
-      none, so a crossing narrower than the field's steps can be missed or
-      reported out of order: an event whose sign changes once per crossing, or
-      {!path} and a finer search, resolves it.
+      {b Method.} A component's sign at an accepted step's end is its last
+      non-zero one, so a component that touches zero and turns back does not
+      cross, and a zero at [t0] has no sign. The first accepted step across
+      which a component's sign changes holds the crossing. In it,
+      {!Root.bracket}'s search to [tol] finds where each such component takes
+      its new sign on the step's continuous extension (see {!section-paths}),
+      and the earliest wins. The time returned is the end of the final bracket
+      past the crossing, where the component has its new sign, so a solve
+      restarted there starts on that side, and the component's new sign tells
+      the crossing's direction. A crossing that should not stop the solve, or
+      one in a direction to ignore, is a restart from the returned time, one
+      solve per crossing. A lane without a crossing after [t0] up to [t1]
+      included converges with [(t1, y t1, −1)]: the index tells the two apart,
+      whichever way the solve runs. A step holding an even number of crossings
+      of a component shows none, so a crossing narrower than the field's steps
+      can be missed or reported out of order: an event whose sign changes once
+      per crossing, or {!path} and a finer search, resolves it.
 
       {b Error.} The time's is half the final bracket; the state's, per
       component, the sum of the magnitudes of the local estimates of the

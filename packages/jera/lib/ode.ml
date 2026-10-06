@@ -1103,9 +1103,11 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let stages = Array.length m.b in
   (* The event's components, flat, in the time's dtype. *)
   let watch t v = Nx.cast dtype (Nx.reshape [| -1 |] (event t v)) in
-  (* The search remembers the components' signs at the state and before the last
-     accepted step, and ends a lane at the first accepted step across which a
-     component that was not zero changes sign. *)
+  (* The search remembers the components' last non-zero signs at the state and
+     before the last accepted step, and ends a lane at the first accepted step
+     across which one changes. A zero at a step's end keeps the sign before it,
+     so a crossing does not depend on whether a step lands on its zero; a zero
+     at [t0] has no sign before it, and is no crossing. *)
   let signs t v = Nx.sign (Rune.detach (watch t v)) in
   let watching =
     {
@@ -1119,6 +1121,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       accept =
         (fun (now, _) ~t:_ ~t_end ~h:_ ~v:_ ~ks:_ v' ->
           let e = signs t_end v' in
+          let e = Nx.where (Nx.equal_s e 0.) now e in
           let crossed =
             Nx.logical_and
               (Nx.not_equal now (Nx.zeros_like now))
@@ -1195,6 +1198,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
          (Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1))
          (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1)))
   in
+  (* Each component, with a zero on its old side: the crossing is where it takes
+     its new sign, so a step that starts on a zero brackets it. *)
+  let tiny = Nx.full dtype [||] (Num.tiny dtype) in
   let component ts =
     let all =
       Rune.vmap
@@ -1203,7 +1209,8 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
           watch t (extension y emb.dense hd vd ksd (Nx.div (Nx.sub t ta) hd)))
         ts
     in
-    Nx.sum ~axes:[ 1 ] (Nx.mul all eye)
+    let e = Nx.sum ~axes:[ 1 ] (Nx.mul all eye) in
+    Nx.where (Nx.equal_s e 0.) (Nx.mul (Nx.neg signs) tiny) e
   in
   let lo = Nx.broadcast_to [| n |] (Nx.minimum ta tb)
   and hi = Nx.broadcast_to [| n |] (Nx.maximum ta tb) in

@@ -667,6 +667,21 @@ let drop ?(t1 = 5.) ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) event q0 =
     ~t1:(scalar t1)
     (q0, Nx.zeros_like q0)
 
+(* An event of sign −1 before t = 1, 0 on [1, 2], where the steps end on its
+   zeros, and [after] past 2. *)
+let plateau ~after =
+  let event t _ =
+    Nx.add
+      (Nx.minimum (Nx.sub_s t 1.) (scalar 0.))
+      (Nx.mul_s (Nx.maximum (Nx.sub_s t 2.) (scalar 0.)) after)
+    |> Nx.sign
+  in
+  Ode.event one Ode.tsit5
+    ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+    ~budget:200
+    (decay (scalar 1.))
+    ~event ~t0:(scalar 0.) ~t1:(scalar 5.) (scalar 1.)
+
 let event_tests =
   let close = Oracle.tensor ~rel:1e-10 () in
   let index i = Nx.scalar Nx.int32 i in
@@ -710,6 +725,16 @@ let event_tests =
         in
         equal (Oracle.tensor ()) (scalar 0.) t;
         equal (Oracle.tensor ()) (index (-1l)) i);
+    test "a component through an exact zero at a step's end crosses" (fun () ->
+        (* It takes its new sign at t = 2, past its zeros. *)
+        let t, _, i = Solution.get (plateau ~after:1.) in
+        equal (Oracle.tensor ()) (index 0l) i;
+        equal (Oracle.tensor ~rel:1e-7 ()) (scalar 2.) t);
+    test "a component that touches zero without changing sign does not cross"
+      (fun () ->
+        let t, _, i = Solution.get (plateau ~after:(-1.)) in
+        equal (Oracle.tensor ()) (index (-1l)) i;
+        equal (Oracle.tensor ()) (scalar 5.) t);
     test "a zero at t0 is not a crossing" (fun () ->
         let _, _, i =
           Solution.get
