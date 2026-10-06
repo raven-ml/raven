@@ -9,19 +9,16 @@ let int32 x = Nx.scalar Nx.int32 x
 
 (* Bracket *)
 
-let bracket ~tol f ~lo ~hi =
-  let fn = "Jera.Root.bracket" in
-  let lo, hi =
-    match Nx.broadcast_arrays [ lo; hi ] with
-    | [ l; h ] -> (l, h)
-    | _ -> assert false
-  in
-  let dtype = Nx.dtype lo in
+(* The estimate of a bracket: the end of smaller |f|. *)
+let estimate ((a, b), (fa, fb)) =
+  Nx.where (Nx.less_equal (Nx.abs fa) (Nx.abs fb)) a b
+
+(* The bracketing search on detached values, from the ends [a0 <= b0] where
+   [search] is [fa0] and [fb0]: the final bracket and [search] at its ends, the
+   statuses and the evaluations. *)
+let locate ~tol search (a0, fa0) (b0, fb0) =
+  let dtype = Nx.dtype a0 in
   let bits = Num.bits dtype in
-  let search x = Rune.detach (f x) in
-  let a0 = Nx.minimum (Rune.detach lo) (Rune.detach hi)
-  and b0 = Nx.maximum (Rune.detach lo) (Rune.detach hi) in
-  let fa0 = search a0 and fb0 = search b0 in
   let zero = Nx.zeros_like a0 in
   let target = Nx.minimum (Nx.abs fa0) (Nx.abs fb0) in
   let width0 = Nx.sub b0 a0 in
@@ -41,10 +38,6 @@ let bracket ~tol f ~lo ~hi =
          (Nx.log2
             (Nx.maximum (Nx.div width0 (Nx.mul_s eps 2.)) (Nx.ones_like eps))))
       1.
-  in
-  (* The estimate: the end of smaller |f|. *)
-  let estimate ((a, b), (fa, fb)) =
-    Nx.where (Nx.less_equal (Nx.abs fa) (Nx.abs fb)) a b
   in
   let estimate_f (_, (fa, fb)) = Nx.minimum (Nx.abs fa) (Nx.abs fb) in
   (* An element whose bracket meets [tol], or holds no float, ends: converged if
@@ -129,7 +122,7 @@ let bracket ~tol f ~lo ~hi =
         (pair tensor (pair tensor tensor)))
   in
   let limit = (2 * bits) + 1 in
-  let (((a, b), _) as br), (st, (n, _)) =
+  let br, (st, (n, _)) =
     Rune.iterate carry ~max:limit
       ~until:(fun (_, (st, (_, k))) ->
         Nx.logical_or
@@ -138,6 +131,20 @@ let bracket ~tol f ~lo ~hi =
       ~f:step initial
   in
   let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
+  (br, st, n)
+
+let bracket ~tol f ~lo ~hi =
+  let fn = "Jera.Root.bracket" in
+  let lo, hi =
+    match Nx.broadcast_arrays [ lo; hi ] with
+    | [ l; h ] -> (l, h)
+    | _ -> assert false
+  in
+  let search x = Rune.detach (f x) in
+  let a0 = Nx.minimum (Rune.detach lo) (Rune.detach hi)
+  and b0 = Nx.maximum (Rune.detach lo) (Rune.detach hi) in
+  let fa0 = search a0 and fb0 = search b0 in
+  let (((a, b), _) as br), st, n = locate ~tol search (a0, fa0) (b0, fb0) in
   let x = estimate br in
   let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in

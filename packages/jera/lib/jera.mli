@@ -1097,6 +1097,58 @@ module Ode : sig
       Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
       scalar, if a leaf of the state is not a float tensor, or as {!march} does
       for a field of another structure. *)
+
+  (** {1:events Events} *)
+
+  val event :
+    'y Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't) t ->
+    tol:Tol.t ->
+    budget:int ->
+    ('y, 't) field ->
+    event:('t time -> 'y -> (float, 'e) Nx.t) ->
+    t0:'t time ->
+    t1:'t time ->
+    'y ->
+    ('t time * 'y * (int32, Nx.int32_elt) Nx.t) Solution.t
+  (** [event y m ~tol ~budget f ~event ~t0 ~t1 y0] is the solve from [y0] at
+      [t0] toward [t1] that ends at the first crossing of an event: the time,
+      the state there, and the flat index of the component of [event] that
+      crossed. Each component of [event t y] is one event, so several events are
+      one tensor.
+
+      {b Method.} The first accepted step across which a component that was not
+      zero changes sign holds the crossing; a zero at [t0] is not one. In it,
+      {!Root.bracket}'s search to [tol] finds each such component's crossing on
+      the step's continuous extension (see {!section-paths}), and the earliest
+      wins. The time returned is the end of the final bracket past the crossing,
+      where the component has its new sign, so a solve restarted there starts on
+      that side, and the component's new sign tells the crossing's direction. A
+      crossing that should not stop the solve, or one in a direction to ignore,
+      is a restart from the returned time, one solve per crossing. A lane
+      without a crossing in after [t0] up to [t1] converges with
+      [(t1, y t1, −1)]; a program tells the two apart by the index, or by
+      [t < t1]. A step holding an even number of crossings of a component shows
+      none, so a crossing narrower than the field's steps can be missed or
+      reported out of order: an event whose sign changes once per crossing, or
+      {!path} and a finer search, resolves it.
+
+      {b Error.} The time's is half the final bracket; the state's, per
+      component, the sum of the magnitudes of the local estimates of the
+      accepted steps through the one that holds the crossing; the index's is
+      [0]. A crossing component whose bracket does not converge ends the lane
+      [Stalled]. {b Cost.} A solve's search with one evaluation of [event] per
+      attempted step, then the crossing's search, each of whose iterations
+      evaluates [event] once per component; the answer takes the accepted steps
+      again. {b Derivative.} The time is stated as a zero of the crossing
+      component [R t = event t (y t)] on the tracked step, so its derivative is
+      [−∂R/∂θ / ∂R/∂t], through the initial state, [t0] and every tracked value
+      the field and [event] read; the state's is the extension's at that time.
+      Without a crossing, the derivative is {!solve}'s.
+
+      Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
+      scalar, if [event] has no component, or as {!march} does for a field of
+      another structure. *)
 end
 
 module Sde : sig

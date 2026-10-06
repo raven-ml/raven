@@ -373,6 +373,10 @@ type ('y, 't) search = {
   attempts : (int32, Nx.int32_elt) Nx.t;
   evals : (int32, Nx.int32_elt) Nx.t;
   status : (int32, Nx.int32_elt) Nx.t;
+  signs : (float, 't) Nx.t;
+      (** The signs of the watched event's components at the state, empty
+          without one. *)
+  before : (float, 't) Nx.t;  (** The signs before the last accepted step. *)
 }
 
 let search_ptree (type v t) (y : v Nx.Ptree.t) : (v, t) search Nx.Ptree.t =
@@ -397,6 +401,8 @@ let search_ptree (type v t) (y : v Nx.Ptree.t) : (v, t) search Nx.Ptree.t =
       let attempts = field c "attempts" tensor s.attempts in
       let evals = field c "evals" tensor s.evals in
       let status = field c "status" tensor s.status in
+      let signs = field c "signs" tensor s.signs in
+      let before = field c "before" tensor s.before in
       {
         v;
         k;
@@ -414,6 +420,8 @@ let search_ptree (type v t) (y : v Nx.Ptree.t) : (v, t) search Nx.Ptree.t =
         attempts;
         evals;
         status;
+        signs;
+        before;
       }
   end in
   Nx.Ptree.instantiate (module M)
@@ -482,7 +490,7 @@ let embedded fn m =
 
 (* The search over the times [at], two or more: its final carry, and the index
    of the first time out of order, or −1. *)
-let search fn repeats y m ~tol ~budget f ~at y0 =
+let search ?event fn repeats y m ~tol ~budget f ~at y0 =
   let emb = embedded fn m in
   let n = Nx.dim 0 at in
   let dtype = Nx.dtype at in
@@ -653,6 +661,26 @@ let search fn repeats y m ~tol ~budget f ~at y0 =
         (Nx.logical_and ok (Nx.logical_not (finite y k')))
         Not_finite
     in
+    (* A watched event ends the lane at the first accepted step across which a
+       component that was not zero changes sign. *)
+    let signs, crossing =
+      match event with
+      | None -> (s.signs, Nx.scalar Nx.bool false)
+      | Some g ->
+          let e = Nx.sign (g t_end v') in
+          let crossed =
+            Nx.logical_and
+              (Nx.not_equal s.signs (Nx.zeros_like s.signs))
+              (Nx.not_equal e s.signs)
+          in
+          (e, Nx.logical_and taken (Nx.any crossed))
+    in
+    let st =
+      Elementwise.settle st
+        (Nx.logical_and taken (Nx.any (Nx.isnan signs)))
+        Not_finite
+    in
+    let st = Elementwise.settle st crossing Converged in
     let st =
       Elementwise.settle st
         (Nx.logical_and finishing (Nx.equal_s interval (Int32.of_int n_int)))
@@ -687,7 +715,15 @@ let search fn repeats y m ~tol ~budget f ~at y0 =
         Nx.add s.evals
           (Nx.mul_s (Nx.cast Nx.int32 stepping) (Int32.of_int (stages - 1)));
       status = st;
+      signs = Nx.where (Nx.broadcast_to (Nx.shape signs) taken) signs s.signs;
+      before =
+        Nx.where (Nx.broadcast_to (Nx.shape signs) taken) s.signs s.before;
     }
+  in
+  let start_signs =
+    match event with
+    | None -> Nx.zeros dtype [| 0 |]
+    | Some g -> Nx.sign (g t0 v0)
   in
   let initial =
     {
@@ -711,6 +747,8 @@ let search fn repeats y m ~tol ~budget f ~at y0 =
           (Nx.greater_equal_s disorder 0l)
           (Nx.scalar Nx.int32 (Solution.code Stalled))
           (Nx.scalar Nx.int32 Elementwise.running);
+      signs = start_signs;
+      before = start_signs;
     }
   in
   let s =
@@ -980,5 +1018,168 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
       (Nx.Ptree.map y
          (fun _ x -> Nx.unsqueeze ~axes:[ 1 ] (orient [ 0 ] x))
          accs)
+  in
+  report fn m ~tol ~budget ~at (s, disorder) ~value ~error
+
+(* Events *)
+
+(* The continuous extension at fraction [theta], a scalar, of the step from [v]
+   by [h] with stages [ks]: [v + h Σ_i b_i(θ) k_i]. *)
+let extension y dense h v ks theta =
+  let weight row =
+    Array.fold_right
+      (fun d acc -> Nx.mul theta (Nx.add_s acc d))
+      row (Nx.zeros_like theta)
+  in
+  let acc = ref v in
+  Array.iteri
+    (fun i row ->
+      if Array.exists (fun d -> d <> 0.) row then
+        acc := Nx.Ptree.axpy y (Nx.mul h (weight row)) ks.(i) !acc)
+    dense;
+  !acc
+
+let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
+  let fn = "Jera.Ode.event" in
+  let at = endpoints fn t0 t1 in
+  check fn ~at ~budget;
+  let emb = embedded fn m in
+  let dtype = Nx.dtype at in
+  let stages = Array.length m.b in
+  (* The event's components, flat, in the time's dtype. *)
+  let watch t v = Nx.cast dtype (Nx.reshape [| -1 |] (event t v)) in
+  let s, disorder =
+    search
+      ~event:(fun t v -> Rune.detach (watch t v))
+      fn `Allowed y m ~tol ~budget f ~at y0
+  in
+  let n = Nx.dim 0 s.signs in
+  if n = 0 then invalid_arg (fn ^ ": the event has no component");
+  let int32 x = Nx.scalar Nx.int32 x in
+  let span = Nx.sub t1 t0 in
+  let fraction i = scalar_at s.ends (Nx.maximum i (int32 0l)) in
+  (* The accepted steps but the last, taken again with the tracked field. *)
+  let replay (v, (k, i)) =
+    let sigma0 =
+      Nx.where (Nx.equal_s i 0l) (Nx.zeros dtype [||])
+        (fraction (Nx.sub_s i 1l))
+    in
+    let sigma1 = fraction i in
+    let t = Nx.add t0 (Nx.mul span sigma0)
+    and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+    let v, ks = step fn y m f t h v (Some k) in
+    (v, (ks.(stages - 1), Nx.add_s i 1l))
+  in
+  let last = Nx.sub_s s.accepted 1l in
+  let v_a, (k_a, _) =
+    Rune.iterate
+      Nx.Ptree.(pair y (pair y tensor))
+      ~max:budget
+      ~until:(fun (_, (_, i)) -> Nx.greater_equal i last)
+      ~f:replay
+      (y0, (eval fn y f t0 y0, int32 0l))
+  in
+  (* The last accepted step, of zero length when there is none: the step that
+     holds a crossing. *)
+  let sigma0 =
+    Nx.where
+      (Nx.greater_equal_s s.accepted 2l)
+      (fraction (Nx.sub_s s.accepted 2l))
+      (Nx.zeros dtype [||])
+  and sigma1 =
+    Nx.where
+      (Nx.greater_equal_s s.accepted 1l)
+      (fraction last) (Nx.zeros dtype [||])
+  in
+  let t_a = Nx.add t0 (Nx.mul span sigma0)
+  and h = Nx.mul span (Nx.sub sigma1 sigma0) in
+  let v_b, ks = step fn y m f t_a h v_a (Some k_a) in
+  let h_safe = Nx.where (Nx.equal_s h 0.) (Nx.ones_like h) h in
+  let at_time t =
+    extension y emb.dense h v_a ks (Nx.div (Nx.sub t t_a) h_safe)
+  in
+  (* The crossing, on detached values: each component that changed sign across
+     the step is bracketed on the step's piece, and the earliest wins. Its time
+     is the bracket's end where the component has its new sign. *)
+  let crossed =
+    Nx.logical_and
+      (Nx.not_equal s.before (Nx.zeros_like s.before))
+      (Nx.not_equal s.signs s.before)
+  in
+  let crossing = Nx.any crossed in
+  let detached v = Nx.Ptree.map y (fun _ x -> Rune.detach x) v in
+  let ta = Rune.detach t_a and hd = Rune.detach h_safe in
+  let tb = Nx.add ta (Rune.detach h) in
+  let vd = detached v_a and ksd = Array.map detached ks in
+  let eye =
+    Nx.cast dtype
+      (Nx.equal
+         (Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1))
+         (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1)))
+  in
+  let component ts =
+    let all =
+      Rune.vmap
+        Nx.Ptree.(tensor @-> returns tensor)
+        (fun t ->
+          watch t (extension y emb.dense hd vd ksd (Nx.div (Nx.sub t ta) hd)))
+        ts
+    in
+    Nx.sum ~axes:[ 1 ] (Nx.mul all eye)
+  in
+  let lo = Nx.broadcast_to [| n |] (Nx.minimum ta tb)
+  and hi = Nx.broadcast_to [| n |] (Nx.maximum ta tb) in
+  let ((a, b), (fa, _)), st, _ =
+    Root.locate ~tol component (lo, component lo) (hi, component hi)
+  in
+  let found =
+    Nx.logical_and crossed (Nx.equal_s st (Solution.code Converged))
+  in
+  let past = Nx.where (Nx.equal (Nx.sign fa) s.signs) a b in
+  let direction = Nx.sign (Rune.detach span) in
+  let key =
+    Nx.where found
+      (Nx.mul (Nx.sub past ta) direction)
+      (Nx.full_like past Float.infinity)
+  in
+  let c = Nx.cast Nx.int32 (Nx.argmin key) in
+  let pick v =
+    Nx.reshape [||]
+      (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 c)) v)
+  in
+  let status =
+    Nx.where
+      (Nx.logical_and crossing (Nx.logical_not (Nx.any found)))
+      (Nx.scalar Nx.int32 (Solution.code Stalled))
+      s.status
+  in
+  let s = { s with status } in
+  let ok = Nx.equal_s status (Solution.code Converged) in
+  (* The answer: the crossing's time as a zero of the tracked component on the
+     tracked piece, or [t1] without a crossing, and the state there. *)
+  let onehot =
+    Nx.cast dtype
+      (Nx.equal (Nx.arange Nx.int32 0 n 1) (Nx.broadcast_to [| n |] c))
+  in
+  let time =
+    Rune.root Nx.Ptree.tensor
+      ~residual:(fun t ->
+        Nx.where crossing
+          (Nx.sum (Nx.mul onehot (watch t (at_time t))))
+          (Nx.sub t t1))
+      (fun () -> Nx.where crossing (pick past) t1)
+  in
+  let state =
+    Nx.Ptree.map2 y
+      (fun _ x z -> Nx.where (Nx.broadcast_to (Nx.shape x) crossing) x z)
+      (at_time time) v_b
+  in
+  let index = Nx.where crossing c (int32 (-1l)) in
+  let held v = Nx.where (Nx.broadcast_to (Nx.shape v) ok) v (Rune.detach v) in
+  let value = (held time, Nx.Ptree.map y (fun _ x -> held x) state, index) in
+  let error =
+    ( Nx.where crossing (pick (Nx.div_s (Nx.sub b a) 2.)) (Nx.zeros dtype [||]),
+      s.acc,
+      int32 0l )
   in
   report fn m ~tol ~budget ~at (s, disorder) ~value ~error

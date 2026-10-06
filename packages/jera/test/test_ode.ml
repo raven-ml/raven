@@ -639,6 +639,116 @@ let path_tests =
           (Rune.jit' f (scalar 0.8)));
   ]
 
+(* Events *)
+
+let gravity = 9.81
+let fall _ (_, p) = (p, Nx.full_like p (-.gravity))
+
+(* The first time a ball dropped from rest at [q0] reaches [level]. *)
+let reaches q0 level = Float.sqrt (2. *. (q0 -. level) /. gravity)
+
+let drop ?(t1 = 5.) ?(tol = Tol.v ~rel:1e-12 ~abs:1e-12) event q0 =
+  Ode.event pair Ode.tsit5 ~tol ~budget:200 fall ~event ~t0:(scalar 0.)
+    ~t1:(scalar t1)
+    (q0, Nx.zeros_like q0)
+
+let event_tests =
+  let close = Oracle.tensor ~rel:1e-10 () in
+  let index i = Nx.scalar Nx.int32 i in
+  [
+    test "a ball reaches the ground at sqrt(2 h / g)" (fun () ->
+        let t, _, i = Solution.get (drop (fun _ (q, _) -> q) (scalar 10.)) in
+        equal close (scalar (reaches 10. 0.)) t;
+        equal (Oracle.tensor ()) (index 0l) i);
+    test "the returned state has the component's new sign" (fun () ->
+        let _, (q, _), _ =
+          Solution.get (drop (fun _ (q, _) -> q) (scalar 10.))
+        in
+        at_most float_exact ~than:0. (Nx.item [] q));
+    test "the earliest of several events wins, with its index" (fun () ->
+        let t, _, i =
+          Solution.get
+            (drop
+               (fun _ (q, _) -> Nx.stack [ Nx.sub_s q 5.; Nx.sub_s q 8. ])
+               (scalar 10.))
+        in
+        equal close (scalar (reaches 10. 8.)) t;
+        equal (Oracle.tensor ()) (index 1l) i);
+    test "without a crossing the solve ends at t1 with index -1" (fun () ->
+        let t, (q, _), i =
+          Solution.get (drop ~t1:1. (fun _ (q, _) -> q) (scalar 10.))
+        in
+        equal (Oracle.tensor ()) (scalar 1.) t;
+        equal close (scalar (10. -. (gravity /. 2.))) q;
+        equal (Oracle.tensor ()) (index (-1l)) i);
+    test "a zero at t0 is not a crossing" (fun () ->
+        let _, _, i =
+          Solution.get
+            (drop ~t1:1. (fun _ (q, _) -> Nx.sub_s q 10.) (scalar 10.))
+        in
+        equal (Oracle.tensor ()) (index (-1l)) i);
+    test "a backward solve finds the crossing behind it" (fun () ->
+        (* y = e^(−t) solved from t = 2 back to 0 crosses 1/2 at ln 2. *)
+        let t, _, _ =
+          Solution.get
+            (Ode.event one Ode.tsit5
+               ~tol:(Tol.v ~rel:1e-11 ~abs:1e-13)
+               ~budget:200
+               (decay (scalar 1.))
+               ~event:(fun _ y -> Nx.sub_s y 0.5)
+               ~t0:(scalar 2.) ~t1:(scalar 0.)
+               (scalar (Float.exp (-2.))))
+        in
+        equal (Oracle.tensor ~rel:1e-8 ()) (scalar (Float.log 2.)) t);
+    test "grad of the time in the height is 1 / (g t)" (fun () ->
+        let g =
+          Rune.grad'
+            (fun q0 ->
+              let t, _, _ = Solution.get (drop (fun _ (q, _) -> q) q0) in
+              t)
+            (scalar 10.)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (scalar (1. /. (gravity *. reaches 10. 0.)))
+          g);
+    test "grad of the state at the crossing is the field there" (fun () ->
+        (* At the ground the velocity is −g t*, so d v / d q0 is −1 / t*. *)
+        let g =
+          Rune.grad'
+            (fun q0 ->
+              let _, (_, p), _ = Solution.get (drop (fun _ (q, _) -> q) q0) in
+              p)
+            (scalar 10.)
+        in
+        equal (Oracle.tensor ~rel:1e-8 ()) (scalar (-1. /. reaches 10. 0.)) g);
+    test "lanes with and without a crossing are independent" (fun () ->
+        let f q0 =
+          let t, _, _ = Solution.get (drop ~t1:1.5 (fun _ (q, _) -> q) q0) in
+          t
+        in
+        equal close
+          (vec [| reaches 5. 0.; 1.5 |])
+          (Rune.vmap' f (vec [| 5.; 50. |])));
+    test "compiled equals eager within the crossing's tolerance" (fun () ->
+        (* The steps' sizes round differently compiled, so the crossing's search
+           takes other points; both times are within the tolerance, rel 1e-12,
+           of the crossing. *)
+        let f q0 =
+          let t, _, _ = Solution.get (drop (fun _ (q, _) -> q) q0) in
+          t
+        in
+        equal
+          (Oracle.tensor ~rel:5e-12 ())
+          (f (scalar 10.))
+          (Rune.jit' f (scalar 10.)));
+    test "an event of no component raises" (fun () ->
+        raises_match
+          (Exn.invalid_arg
+             ~substring:"Jera.Ode.event: the event has no component") (fun () ->
+            drop (fun _ _ -> Nx.zeros f64 [| 0 |]) (scalar 10.)));
+  ]
+
 let () =
   exit
     (run "Jera.Ode"
@@ -646,6 +756,7 @@ let () =
          group "solve" solve_tests;
          group "solve derivatives" solve_derivative_tests;
          group "path" path_tests;
+         group "event" event_tests;
          group "order" order_tests;
          group "march" march_tests;
          group "transformations" transformation_tests;

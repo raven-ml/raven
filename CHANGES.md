@@ -1006,6 +1006,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Ode.event`, a solve that ends at the first sign change of any
+  component of an event tensor, returning the time, the state and the
+  component's index, with the crossing time's derivative.
 - Add `Ode.path`, the solution as a `Piecewise.t` of one piece per
   accepted step, each the method's continuous extension (order 4 for
   `tsit5` and `dopri5`, 3 for `bs3`).
