@@ -42,12 +42,18 @@ All notable changes to this project will be documented in this file.
     traversals are `Vega.Loss_scale.ptree`.
   - `[@@deriving ptree]`'s `map`, `map2`, `iter`, `fold`, `fold2`, `names`
     and `Uniform` are one derived `walk`.
-- `fehu`, `sowilo`, and `norn` move to `contrib/`. Each is its own
+- `fehu` and `sowilo` move to `contrib/`. Each is its own
   dune project with its own version, builds against `main`, and sits outside
-  the 1.0 API commitment. Changes to `fehu`, `sowilo`, and `norn` are now
+  the 1.0 API commitment. Changes to `fehu` and `sowilo` are now
   recorded in `contrib/<package>/CHANGES.md`. The `raven` package no longer
   installs `fehu` and `sowilo`; install them by name.
 - Add compatibility with OCaml 5.5.
+
+### Norn
+
+- **Breaking:** norn is a core package again, rewritten around log densities
+  over the caller's structures batched over a chain axis: `Norn.Bij` replaces
+  the flat-vector `Norn.hmc` and `nuts`.
 
 ### Hugin
 

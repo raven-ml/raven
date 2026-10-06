@@ -20,6 +20,7 @@ depends: [
   "rune" {= version}
   "vega" {= version}
   "jera" {= version}
+  "norn" {= version}
   "kaun" {= version}
   "munin" {= version}
   "hugin" {= version}

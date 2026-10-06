@@ -174,8 +174,8 @@ jobs:
 
       - name: Build and test norn
         run: |
-          opam exec -- dune build --release contrib/norn
-          opam exec -- dune build --release @contrib/norn/runtest
+          opam exec -- dune build --release packages/norn
+          opam exec -- dune build --release @packages/norn/runtest
 
       - name: Build and test tolk
         run: |

@@ -32,8 +32,9 @@ Breaking one causes real damage.
 | `packages/kaun` | layers, optimizers and training on rune. Models live in `examples/`, never in the library |
 | `packages/vega` | optimizers as values |
 | `packages/jera` | numerical methods: quadrature, interpolation, differential equations, splittings |
+| `packages/norn` | probabilistic inference over structures: distributions, bijectors, samplers, diagnostics; the model language is `norn.model` |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
-| `contrib/` | fehu, sowilo, norn: own `dune-project`, own `CHANGES.md`, public core libraries only |
+| `contrib/` | fehu, sowilo: own `dune-project`, own `CHANGES.md`, public core libraries only |
 
 A package's main library lives at `lib/`, each sub-library at
 `lib/<name>/`, named without the package prefix. tolk keeps its

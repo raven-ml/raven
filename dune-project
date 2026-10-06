@@ -314,6 +314,29 @@
   (numerical-methods quadrature interpolation differential-equations)))
 
 (package
+ (name norn)
+ (dir packages/norn)
+ (synopsis "Probabilistic inference for OCaml")
+ (description
+  "Bayesian inference over the user's own structures: distributions, bijectors, a typed model language, samplers batched over chains, Gaussian approximations, draws and diagnostics. Built on Nx and Rune.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (= :version))
+  (rune
+   (= :version))
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (mdx :with-test)
+  (thumper :with-test))
+ (tags
+  (bayesian inference mcmc probabilistic-programming)))
+
+(package
  (name munin)
  (dir packages/munin)
  (synopsis "Local experiment tracking for Raven")
@@ -426,6 +449,8 @@
   (vega
    (= :version))
   (jera
+   (= :version))
+  (norn
    (= :version))
   (kaun
    (= :version))

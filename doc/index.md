@@ -16,12 +16,13 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 | ᚱ | [**rune**](../packages/rune/doc/index.md) | JAX | Automatic differentiation and functional transformations |
 | ᚲ | [**kaun**](../packages/kaun/doc/index.md) | PyTorch / Flax | Neural networks and training |
 | ᚹ | [**vega**](../packages/vega/doc/index.md) | Optax | Gradient-based optimizers and schedules |
+| ᚾ | [**norn**](../packages/norn/README.md) | NumPyro / Stan | Probabilistic inference: models, samplers, diagnostics |
 | ᚨ | [**brot**](../packages/brot/doc/index.md) | HF Tokenizers | Fast tokenization for language models |
 | ᛃ | [**talon**](../packages/talon/doc/index.md) | pandas / Polars | Dataframes with typed queries, CSV and Parquet |
 | ᛞ | [**hugin**](../packages/hugin/doc/index.md) | Matplotlib | Data visualization and plotting |
 | ᛈ | [**quill**](../packages/quill/doc/index.md) | Jupyter + IPython | Interactive REPL and markdown notebooks |
 
-Packages that release on their own schedule, such as Norn, Fehu, and Sowilo, live in the repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory.
+Packages that release on their own schedule, such as Fehu and Sowilo, live in the repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contrib) directory.
 
 ## Project
 

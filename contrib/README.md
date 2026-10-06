@@ -2,11 +2,10 @@
 
 Packages built on Raven's core libraries that sit outside the 1.0 commitment.
 Each one is its own dune project with its own version and opam metadata.
-`norn`, `fehu`, and `sowilo` keep their own `CHANGES.md`.
+`fehu` and `sowilo` keep their own `CHANGES.md`.
 
 | Package                   | What it does                                    |
 | ------------------------- | ----------------------------------------------- |
-| [**norn**](norn/)         | MCMC sampling with automatic gradients          |
 | [**fehu**](fehu/)         | Reinforcement learning environments             |
 | [**sowilo**](sowilo/)     | Differentiable computer vision                  |
 

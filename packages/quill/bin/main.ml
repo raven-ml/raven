@@ -12,6 +12,7 @@ let raven_packages =
     ("rune", []);
     ("vega", []);
     ("norn", []);
+    ("norn.model", []);
     ("kaun", []);
     ("kaun.datasets", []);
     ("hugin", [ "Hugin.pp" ]);

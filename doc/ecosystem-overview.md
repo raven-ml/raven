@@ -195,7 +195,6 @@ The repository's [`contrib/`](https://github.com/raven-ml/raven/tree/main/contri
 core libraries that release on their own schedule and install separately
 from `opam install raven`:
 
-- [Norn](https://github.com/raven-ml/raven/tree/main/contrib/norn): MCMC sampling with automatic gradients
 - [Fehu](https://github.com/raven-ml/raven/tree/main/contrib/fehu): reinforcement learning environments
 - [Sowilo](https://github.com/raven-ml/raven/tree/main/contrib/sowilo): differentiable computer vision
 

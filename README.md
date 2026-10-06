@@ -52,6 +52,7 @@ let () = Hugin.(line ~x:(num x) ~y:(num y) () |> save "sine.png")
 | ᚱ   | [**rune**](packages/rune/)     | JAX               | Automatic differentiation and functional transformations |
 | ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
 | ᚹ   | [**vega**](packages/vega/)     | Optax             | Composable gradient-based optimizers                     |
+| ᚾ   | [**norn**](packages/norn/)     | NumPyro / Stan    | Probabilistic inference: models, samplers, diagnostics   |
 | ᚨ   | [**brot**](packages/brot/)     | HF Tokenizers     | Fast, HuggingFace-compatible tokenization                |
 | ᛃ   | [**talon**](packages/talon/)   | pandas / Polars   | Dataframes with typed queries, CSV and Parquet           |
 | ᛞ   | [**hugin**](packages/hugin/)   | Matplotlib        | Publication-quality plotting                             |
@@ -64,7 +65,6 @@ Packages in [`contrib/`](contrib/) build against every change to the core and re
 
 |     | Package                               | Like      | What it does                                   |
 | --- | ------------------------------------- | --------- | ---------------------------------------------- |
-| ᚾ   | [**norn**](contrib/norn/)             | BlackJAX  | MCMC sampling with automatic gradients         |
 | ᚠ   | [**fehu**](contrib/fehu/)             | Gymnasium | Reinforcement learning environments            |
 | ᛋ   | [**sowilo**](contrib/sowilo/)         | OpenCV    | Differentiable computer vision                 |
 
