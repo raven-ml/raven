@@ -18,3 +18,6 @@ density maps it to one log density per chain.
   of your structure: `(Norn.Diag.rhat schools post).tau` is the R-hat of
   `tau`.
 - `Norn.Summary`: a table of draws by element, with its findings.
+
+The model language, `norn.model`, turns one generative function into these
+densities, and draws back into values of your types.
