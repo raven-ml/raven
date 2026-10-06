@@ -1054,6 +1054,49 @@ module Ode : sig
 
       Raises [Invalid_argument] if [budget < 1], if [at] is not a non-empty 1-D
       tensor, and as {!march} does for a field of another structure. *)
+
+  (** {1:paths Paths}
+
+      Each embedded method has a continuous extension, a polynomial in the
+      step's fraction that matches the step at both ends: {!tsit5}'s free
+      interpolant of order 4 (Tsitouras, 2011), {!dopri5}'s of order 4 (Hairer,
+      Nørsett and Wanner, I, §II.6), and for {!bs3} the cubic Hermite
+      interpolant of the step's ends and fields, of order 3. Values between
+      steps carry that order's error, which [tol] does not control. *)
+
+  val path :
+    'y Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't) t ->
+    tol:Tol.t ->
+    budget:int ->
+    ('y, 't) field ->
+    t0:'t time ->
+    t1:'t time ->
+    'y ->
+    ('y, 't) Piecewise.t Solution.t
+  (** [path y m ~tol ~budget f ~t0 ~t1 y0] is the solution from [y0] at [t0] to
+      [t1] as a function of time: a series of [budget] pieces, one per accepted
+      step in increasing time, each the step's continuous extension. The pieces
+      past the last step are empty at its end, so the path's domain is the span
+      between [t0] and [t1], whichever way the solve runs. At a step's end the
+      path is that step's state, up to the rounding of its series.
+
+      Its error is a series of degree 0 on the same breaks: on each piece, per
+      component, the sum of the magnitudes of the local estimates of the
+      accepted steps through it. [t0 = t1] ends the lane [Stalled], since a path
+      needs a piece of positive width.
+
+      {b Cost.} A solve's search, then [budget] steps in the answer: the
+      accepted ones taken again with the tracked field, and one of zero length
+      in each slot past them, so a [budget] near the steps the solve takes keeps
+      the answer's cost near the search's. Each piece costs [p + 1] combinations
+      of the stages for an extension of order [p]. {b Derivative.} The accepted
+      steps' and their extensions', through the initial state, [t0], [t1] and
+      every tracked value the field reads; the breaks move with [t0] and [t1].
+
+      Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
+      scalar, if a leaf of the state is not a float tensor, or as {!march} does
+      for a field of another structure. *)
 end
 
 module Sde : sig

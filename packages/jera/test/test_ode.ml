@@ -526,12 +526,126 @@ let solve_derivative_tests =
           (Rune.vmap' f ks));
   ]
 
+(* Paths *)
+
+let path ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _) Ode.t))
+    ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) ?(budget = 200) f ~t0 ~t1 y0 =
+  Ode.path one m ~tol ~budget f ~t0:(scalar t0) ~t1:(scalar t1) y0
+
+let path_tests =
+  let embedded m = (m :> ([ `Embedded ], _, _) Ode.t) in
+  let between = Nx.linspace f64 0. 2. 101 in
+  let exact k t0 y0 t = Nx.mul_s (Nx.exp (Nx.mul_s (Nx.sub_s t t0) (-.k))) y0 in
+  [
+    test "a path ends at the solve's state" (fun () ->
+        let p = Solution.get (path forced2 ~t0:0. ~t1:2. (scalar 1.)) in
+        let y = Solution.get (solve forced2 ~t0:0. ~t1:2. (scalar 1.)) in
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (vec [| 1.; Nx.item [] y |])
+          (Piecewise.eval p (vec [| 0.; 2. |])));
+    cases
+      ~name:(fun (n, _, _, _) -> n)
+      "between steps a path carries its extension's error"
+      [
+        ("bs3", embedded Ode.bs3, 1e-8, 1e-6);
+        ("tsit5", embedded Ode.tsit5, 1e-10, 1e-8);
+        ("dopri5", embedded Ode.dopri5, 1e-10, 1e-8);
+      ]
+      (fun (_, m, tol, within) ->
+        let p =
+          Solution.get
+            (path ~m ~tol:(Tol.v ~rel:tol ~abs:tol) ~budget:2000
+               (decay (scalar 3.))
+               ~t0:0. ~t1:2. (scalar 1.))
+        in
+        equal
+          (Oracle.tensor ~abs:within ())
+          (exact 3. 0. 1. between) (Piecewise.eval p between));
+    test "a path backward in time holds its pieces in increasing time"
+      (fun () ->
+        let y2 = Float.exp (-2.) in
+        let p =
+          Solution.get (path (decay (scalar 1.)) ~t0:2. ~t1:0. (scalar y2))
+        in
+        equal
+          (Oracle.tensor ~abs:1e-9 ())
+          (exact 1. 2. y2 between) (Piecewise.eval p between));
+    test "past the last step the pieces are empty at its end" (fun () ->
+        let p =
+          Solution.get (path (decay (scalar 1.)) ~t0:0. ~t1:2. (scalar 1.))
+        in
+        let breaks = Piecewise.breaks p in
+        let n = Nx.dim 0 breaks in
+        equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 1 ] breaks);
+        equal (Oracle.tensor ()) (scalar 2.) (Nx.get [ n - 2 ] breaks));
+    test "a path over no time ends its lane Stalled" (fun () ->
+        let s = path (decay (scalar 1.)) ~t0:1. ~t1:1. (scalar 1.) in
+        equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
+          (Solution.is Stalled s));
+    test "its error is the accumulated estimate, as sample's" (fun () ->
+        let tol = Tol.v ~rel:1e-6 ~abs:1e-8 in
+        let p = path ~tol (decay (scalar 1.)) ~t0:0. ~t1:2. (scalar 1.) in
+        let s =
+          Ode.sample one Ode.tsit5 ~tol ~budget:200
+            (decay (scalar 1.))
+            ~at:(vec [| 0.; 2. |])
+            (scalar 1.)
+        in
+        (* The answer's steps are the search's, recomputed from their fractions
+           of the span: equal up to the rounding of each step. *)
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (Nx.get [ 1 ] (Solution.error s))
+          (Piecewise.eval (Solution.error p) (scalar 2.)));
+    test "grad in a captured rate is −t y0 e^(−kt)" (fun () ->
+        let g =
+          Rune.grad'
+            (fun k ->
+              Piecewise.eval
+                (Solution.get (path (decay k) ~t0:0. ~t1:2. (scalar 2.)))
+                (scalar 1.3))
+            (scalar 0.8)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-7 ())
+          (scalar (-1.3 *. 2. *. Float.exp (-0.8 *. 1.3)))
+          g);
+    test "grad in the end time moves the breaks" (fun () ->
+        (* y(t) = e^(−t) at a fixed time does not depend on t1. *)
+        let g =
+          Rune.grad'
+            (fun t1 ->
+              Piecewise.eval
+                (Solution.get
+                   (Ode.path one Ode.tsit5
+                      ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+                      ~budget:200
+                      (decay (scalar 1.))
+                      ~t0:(scalar 0.) ~t1 (scalar 1.)))
+                (scalar 0.7))
+            (scalar 2.)
+        in
+        equal (Oracle.tensor ~abs:1e-8 ()) (scalar 0.) g);
+    test "compiled equals eager to rounding for a polynomial field" (fun () ->
+        let f k =
+          Piecewise.eval
+            (Solution.get (path (decay k) ~t0:0. ~t1:2. (scalar 1.)))
+            between
+        in
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (f (scalar 0.8))
+          (Rune.jit' f (scalar 0.8)));
+  ]
+
 let () =
   exit
     (run "Jera.Ode"
        [
          group "solve" solve_tests;
          group "solve derivatives" solve_derivative_tests;
+         group "path" path_tests;
          group "order" order_tests;
          group "march" march_tests;
          group "transformations" transformation_tests;

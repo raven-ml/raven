@@ -1006,6 +1006,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Ode.path`, the solution as a `Piecewise.t` of one piece per
+  accepted step, each the method's continuous extension (order 4 for
+  `tsit5` and `dopri5`, 3 for `bs3`).
 - A failed solve's report gives its settings, the lane's inputs, the
   budget used in its own unit and what to change; `Solution.pp` prints it
   for the first failing lane. `Ode.sample`'s times out of order end their

@@ -14,6 +14,16 @@ type extension =
   | Hold  (** Outside, the value at the nearest end. *)
   | Polynomial  (** Outside, the end pieces' series continued. *)
 
+type ('v, 'b) series = {
+  s : 'v Nx.Ptree.t;  (** The values' structure. *)
+  breaks : (float, 'b) Nx.t;
+      (** [[pieces + 1]] breaks, non-decreasing, the first below the last. *)
+  coefficients : 'v;  (** Leaves of shape [[pieces; degree + 1] @ value]. *)
+  extension : extension;
+}
+(** The type for piecewise series with values of structure ['v]: the
+    representation of {!Piecewise.t}, which an ODE's path builds too. *)
+
 val locate :
   string ->
   extension ->

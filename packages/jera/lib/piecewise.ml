@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('v, 'b) t = {
+type ('v, 'b) t = ('v, 'b) Cheb.series = {
   s : 'v Nx.Ptree.t;
   breaks : (float, 'b) Nx.t;
   coefficients : 'v;

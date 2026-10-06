@@ -5,6 +5,13 @@
 
 type extension = Bounded | Hold | Polynomial
 
+type ('v, 'b) series = {
+  s : 'v Nx.Ptree.t;
+  breaks : (float, 'b) Nx.t;
+  coefficients : 'v;
+  extension : extension;
+}
+
 let locate fn e breaks x =
   let n = Nx.dim 0 breaks - 1 in
   let first = Nx.get [ 0 ] breaks and last = Nx.get [ n ] breaks in
