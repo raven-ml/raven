@@ -81,11 +81,12 @@ module Box : sig
   (** The type for boxes of dtype ['b]. *)
 
   val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
-  (** [v lo hi] is the box with corners [lo] and [hi], of shape [lanes @ [d]]: a
-      point's coordinates are the last axis.
+  (** [v lo hi] is the box with corners [lo] and [hi], which broadcast together
+      to [lanes @ [d]]: a point's coordinates are the last axis. An axis with
+      [hi < lo] flips the integral's sign, as {!Range.v}.
 
-      Raises [Invalid_argument] if [lo] and [hi] differ in shape or are scalars.
-  *)
+      Raises [Invalid_argument] if [lo] and [hi] do not broadcast or are
+      scalars. *)
 end
 
 type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t

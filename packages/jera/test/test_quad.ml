@@ -584,6 +584,18 @@ let cubature_tests =
                       (unit_box [| 2 |] 2))))
         in
         equal (Oracle.tensor ~rel:1e-12 ()) (g theta) (Rune.jit' g theta));
+    test "corners broadcast, and a flipped axis flips the sign" (fun () ->
+        (* One unit square shared by two lanes, the second flipped along x. *)
+        let lo = vec [| 0.; 0. |] in
+        let hi = Nx.create f64 [| 2; 2 |] [| 1.; 1.; -1.; 1. |] in
+        let s =
+          cube
+            (fun x -> Nx.add_s (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) 1.)
+            (Quad.Box.v lo hi)
+        in
+        (* ∫ (1 + x + y) over [0, 1]² = 2 and over [0, −1] × [0, 1] is −(1 − 1/2
+           + 1/2) = −1. *)
+        equal (Oracle.tensor ~rel:1e-13 ()) (vec [| 2.; -1. |]) (Solution.get s));
     test "one dimension raises" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"d = 1 is not in [2, 10]")
           (fun () -> cube (fun x -> product x) (unit_box [||] 1)));

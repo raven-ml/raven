@@ -204,14 +204,19 @@ module Box = struct
   type 'b t = { lo : (float, 'b) Nx.t; hi : (float, 'b) Nx.t }
 
   let v lo hi =
-    if Nx.shape lo <> Nx.shape hi || Nx.ndim lo = 0 then
+    let fail () =
       invalid_arg
         (Printf.sprintf
-           "Jera.Quad.Box.v: the corners have shapes %s and %s; they need one \
-            shape lanes @ [d]"
+           "Jera.Quad.Box.v: the corners have shapes %s and %s; they need to \
+            broadcast to one shape lanes @ [d]"
            (Num.shape (Nx.shape lo))
-           (Num.shape (Nx.shape hi)));
-    { lo; hi }
+           (Num.shape (Nx.shape hi)))
+    in
+    if Nx.ndim lo = 0 || Nx.ndim hi = 0 then fail ();
+    match Nx.broadcast_arrays [ lo; hi ] with
+    | [ lo; hi ] -> { lo; hi }
+    | _ -> assert false
+    | exception Invalid_argument _ -> fail ()
 end
 
 type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
