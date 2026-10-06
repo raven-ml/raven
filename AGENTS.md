@@ -195,6 +195,11 @@ promises, through the public interface, never what the code does today.
   commit that changes performance re-records its bench, in the same commit or
   a `bench(…)` follow-up. A bench going the wrong way blocks landing until it
   is explained.
+- A performance fix lands with a row that would catch its regression, unless
+  one already does. The row times what a user calls (an Nx operation, a
+  compiled step, a search), never the internals the fix changed, so it
+  survives their rewrite. Its baseline is recorded on every machine the fix
+  targets.
 - Time only on a quiet machine. Correctness runs need no quiet.
 
 ## Commits
