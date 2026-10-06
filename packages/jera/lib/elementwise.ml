@@ -9,7 +9,7 @@ let searching st = Nx.equal_s st running
 let settle st cond s =
   Nx.where
     (Nx.logical_and (searching st) cond)
-    (Nx.full_like st (Answer.code s))
+    (Nx.full_like st (Solution.code s))
     st
 
 (* The derivative's system is diagonal for an elementwise residual: its diagonal
@@ -40,4 +40,4 @@ let state fn ~ok r x =
     ~residual:(fun v -> Nx.where ok (r v) (Nx.sub v x))
     (fun () -> x)
 
-let accepted tol ~e ~y = Nx.less_equal_s (Tolerance.ratio tol ~e ~y) 1.
+let accepted tol ~e ~y = Nx.less_equal_s (Tol.ratio tol ~e ~y) 1.

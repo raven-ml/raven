@@ -222,16 +222,16 @@ end
 type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
 
 (* The facts a report prints of a range. *)
-let range_facts : _ Range.t -> Answer.fact list = function
+let range_facts : _ Range.t -> Solution.fact list = function
   | Range.Finite (a, b) -> [ Fact ("a", a); Fact ("b", b) ]
   | From a -> [ Fact ("a", a) ]
   | Line c -> [ Fact ("c", c) ]
 
 (* What to change for an integral that stopped short. *)
-let quad_fix tol ~budget ~stalled (st : Answer.status) _ =
+let quad_fix tol ~budget ~stalled (st : Solution.status) _ =
   match st with
   | Budget_spent -> budget
-  | Stalled -> stalled ^ Tolerance.zero_hint tol
+  | Stalled -> stalled ^ Tol.zero_hint tol
   | Not_finite ->
       "The integrand is not finite at a point it was given: Quad.tanh_sinh \
        keeps away from the ends of a range."
@@ -507,7 +507,7 @@ let adaptive r ~tol ~budget f range =
       ~until:(fun p -> Nx.logical_not (Nx.any (Elementwise.searching p.status)))
       ~f:step initial
   in
-  let ok = Nx.equal_s p.status (Answer.code Converged) in
+  let ok = Nx.equal_s p.status (Solution.code Converged) in
   (* The answer: the rule over the final partition, tracked, in chunks of pieces
      under a scan. An unused slot integrates the whole range with weight zero,
      so its points lie inside the range. *)
@@ -535,7 +535,7 @@ let adaptive r ~tol ~budget f range =
         (chunks (unused p.index), chunks (Nx.cast dtype used)) )
   in
   let estimate = used_sum p p.sums and error = used_sum p p.errors in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:
       (Format.asprintf "rule %s, tol %a, budget %d" r.name Tol.pp tol budget)
     ~spent:{ used = p.used; unit = "pieces"; budget }
@@ -811,7 +811,7 @@ let tanh_sinh ~tol f range =
                   ( Nx.full Nx.int32 lanes Elementwise.running,
                     Nx.zeros Nx.int32 lanes ) ) ) ) ) ) )
   in
-  let ok = Nx.equal_s st (Answer.code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: 2^-K times the terms of every level up to each lane's final
      level K, tracked, chunk by chunk. *)
   let chunk_sum total (k, (s, (u, w))) =
@@ -827,7 +827,7 @@ let tanh_sinh ~tol f range =
   in
   let answer = Nx.mul total (Nx.exp2 (Nx.neg (Nx.cast dtype final))) in
   let error = Nx.abs (Nx.sub current prev) in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
     ~fix:
       (quad_fix tol ~budget:""
@@ -1159,7 +1159,7 @@ let cubature ~tol ~budget f (box : _ Box.t) =
       ~until:(fun b -> Nx.logical_not (Nx.any (Elementwise.searching b.state)))
       ~f:step initial
   in
-  let ok = Nx.equal_s b.state (Answer.code Converged) in
+  let ok = Nx.equal_s b.state (Solution.code Converged) in
   (* The answer: the degree-7 rule over the final partition, tracked, in chunks
      of boxes under a scan; an unused slot integrates the whole box with weight
      zero. *)
@@ -1202,7 +1202,7 @@ let cubature ~tol ~budget f (box : _ Box.t) =
         (chunks (unused b.indices), chunks (Nx.cast dtype used)) )
   in
   let estimate = used_sum b b.sums7 and error = used_sum b b.diffs in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
     ~spent:{ used = b.filled; unit = "boxes"; budget }
     ~fix:
@@ -1380,7 +1380,7 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
           ( Nx.zeros Nx.int32 lanes,
             (zeros, (zeros, Nx.full Nx.int32 lanes Elementwise.running)) ) ) )
   in
-  let ok = Nx.equal_s st (Answer.code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: the mean over each lane's final points, tracked, chunk by
      chunk. *)
   let sum_chunk total j =
@@ -1394,7 +1394,7 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
       (Nx.arange Nx.int32 0 budget 1)
   in
   let count = Nx.mul_s (Nx.cast dtype used) (float (qmc_chunk * shifts)) in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
     ~spent:{ used; unit = "chunks"; budget }
     ~fix:

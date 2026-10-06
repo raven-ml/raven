@@ -32,7 +32,7 @@ let bracket ~tol f ~lo ~hi =
       (Nx.where (Nx.equal width0 zero) (Nx.ones_like width0) width0)
   in
   let eps =
-    let s = Tolerance.scale tol (Nx.add a0 (Nx.div_s width0 2.)) in
+    let s = Tol.scale tol (Nx.add a0 (Nx.div_s width0 2.)) in
     Nx.maximum s (Nx.full_like s (Float.ldexp 1. (-1000)))
   in
   let n_max =
@@ -139,7 +139,7 @@ let bracket ~tol f ~lo ~hi =
   in
   let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
   let x = estimate br in
-  let ok = Nx.equal_s st (Answer.code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   let given = Nx.less_equal lo hi in
   let fix (st : Solution.status) _ =
@@ -151,7 +151,7 @@ let bracket ~tol f ~lo ~hi =
     | Not_finite -> "f is not finite inside [lo, hi]: narrow it to f's domain."
     | Converged | Budget_spent -> ""
   in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
     ~fix ~value
     ~error:(Nx.div_s (Nx.sub b a) 2.)
@@ -227,7 +227,7 @@ let newton ~tol ~budget ~slope f x0 =
       ~until:(fun (_, (st, _)) -> Nx.logical_not (Nx.any (searching st)))
       ~f:step initial
   in
-  let ok = Nx.equal_s st (Answer.code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   let fix (st : Solution.status) _ =
     match st with
@@ -237,13 +237,13 @@ let newton ~tol ~budget ~slope f x0 =
     | Stalled ->
         "The slope is zero or not finite, or the steps stopped shrinking: \
          check the slope, or bracket the zero with Root.bracket."
-        ^ Tolerance.zero_hint tol
+        ^ Tol.zero_hint tol
     | Not_finite ->
         "f is not finite at an iterate: start inside f's domain, or bracket \
          the zero with Root.bracket."
     | Converged | Not_bracketed -> ""
   in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
     ~spent:{ used = n; unit = "iterations"; budget }
     ~fix ~value ~error:last ~status:st ~evaluations:n

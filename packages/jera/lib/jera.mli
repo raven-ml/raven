@@ -110,32 +110,1160 @@
     - {b Devices.} Constants are computed on the host in float64 and rounded
       once to the working dtype. *)
 
-module Tol = Tol
-(** Tolerances. *)
+module Tol : sig
+  (** Tolerances.
 
-module Solution = Solution
-(** Answers of solves, with a status per lane. *)
+      A solve accepts a lane when its error estimate [e] at its value [y] meets
+      the tolerance: the root mean square, over the lane's float components, of
+      [e_i / s_i] is at most [1], with [s_i = abs + rel * |y_i|]. A component
+      with [e_i = 0] counts [0]; one with [s_i = 0] and [e_i <> 0] is never
+      accepted, so an answer that may be zero needs [abs]. Each solve says what
+      its [e] and [y] are.
 
-module Root = Root
-(** Zeros of functions of one variable. *)
+      The components add in a fixed order, pairwise over the flattened
+      components, so a decision depends only on the values of the user's
+      function, eagerly and compiled. Tolerances are OCaml floats: constants of
+      a compiled program. *)
 
-module Minimize = Minimize
-(** Minima. *)
+  type t
+  (** The type for tolerances. *)
 
-module Quad = Quad
-(** Integrals. *)
+  val v : rel:float -> abs:float -> t
+  (** [v ~rel ~abs] is the tolerance [abs + rel * |y|].
 
-module Piecewise = Piecewise
-(** Piecewise Chebyshev series: splines, interpolants and fits. *)
+      Raises [Invalid_argument] if either is negative or not finite, or if both
+      are [0]. *)
 
-module Grid = Grid
-(** Tensor-product series over grids. *)
+  val rel : float -> t
+  (** [rel r] is [v ~rel:r ~abs:0.]. *)
 
-module Ode = Ode
-(** Ordinary differential equations. *)
+  val abs : float -> t
+  (** [abs a] is [v ~rel:0. ~abs:a]. *)
 
-module Sde = Sde
-(** Stochastic differential equations. *)
+  val ulps : float -> t
+  (** [ulps k] is [rel (k *. eps)] with [eps] the distance from [1] to the next
+      float of the dtype the tolerance meets. It is met only where the problem
+      determines its answer to [k] units: a zero of [f] to about [f]'s rounding
+      error over [|f'|], a minimum to about the square root of [f]'s rounding
+      over its curvature.
 
-module Split = Split
-(** Splitting methods for separable Hamiltonians. *)
+      Raises [Invalid_argument] if [k] is not finite and positive. *)
+
+  val pp : Format.formatter -> t -> unit
+  (** [pp ppf t] formats [t] as ["rel 1e-06 abs 1e-10"] or ["ulps 4"]. *)
+end
+
+module Solution : sig
+  (** Answers of solves.
+
+      A solve returns its answer with a status per lane: one lane per element
+      for an elementwise family ({!Root}, {!Minimize.bracket}, {!Quad}'s
+      one-dimensional solves), one per box for {!Quad.cubature} and {!Quad.qmc},
+      one for a structured family, and one per lane of each {!Rune.val-vmap}
+      around it. {!get} reads an answer that converged everywhere and raises
+      otherwise; {!best} and {!ok} read every lane.
+
+      {[
+      let s = Root.bracket ~tol f ~lo ~hi in
+      let ok = Solution.ok s in
+      Nx.where ok (Solution.best s) (Nx.zeros_like lo)
+      ]} *)
+
+  type 'a t
+  (** The type for answers of type ['a]. *)
+
+  (** The type for a lane's outcome. *)
+  type status =
+    | Converged  (** The error estimate met the tolerance. *)
+    | Budget_spent  (** The budget ran out first. *)
+    | Not_bracketed  (** The ends of a bracket have one sign. *)
+    | Not_finite  (** A value of the problem's function is not finite. *)
+    | Stalled
+        (** The search stopped moving without meeting the tolerance: its steps
+            fell below the resolution of the floats, or the problem has no
+            answer the method can reach, such as a pole in a bracket. *)
+
+  val get : 'a t -> 'a
+  (** [get s] is the answer if every lane converged.
+
+      Raises [Failure] with the report of the first lane in C order that did not
+      converge: the entry point, the lane, its status, the solve's settings, the
+      lane's data, the budget it used, what to change, and how many other
+      elements of its problem converged. Inside {!Rune.val-jit}, [get] returns
+      {!best} and the compiled call raises when it returns. *)
+
+  val best : 'a t -> 'a
+  (** [best s] is the estimate in every lane. A lane that did not converge holds
+      its last finite estimate, and its derivative is zero. *)
+
+  val ok : 'a t -> (bool, Nx.bool_elt) Nx.t
+  (** [ok s] is [is Converged s]. *)
+
+  val is : status -> 'a t -> (bool, Nx.bool_elt) Nx.t
+  (** [is st s] is [true] in each lane whose status is [st], of the lanes'
+      shape. *)
+
+  val error : 'a t -> 'a
+  (** [error s] is each lane's error estimate, of the answer's structure, as its
+      solve defines it: an estimate, never a bound. *)
+
+  val evaluations : 'a t -> (int32, Nx.int32_elt) Nx.t
+  (** [evaluations s] is each lane's count of the points at which the problem's
+      function was evaluated, of the lanes' shape. *)
+
+  val ptree : 'a Nx.Ptree.t -> 'a t Nx.Ptree.t
+  (** [ptree s] is the structure of answers of structure [s], so a compiled
+      function returns one: the answer at [value], the error at [error], the
+      statuses at [status], the counts at [evaluations], the budget used at
+      [used] and the report's data under [report]. *)
+
+  val pp : Format.formatter -> 'a t -> unit
+  (** [pp ppf s] formats the count of lanes in each status and the report {!get}
+      would raise for the first lane that did not converge. It reads the
+      statuses, so it runs eagerly. *)
+end
+
+module Root : sig
+  (** Zeros of functions of one variable.
+
+      Both methods are elementwise: every element of the input is its own
+      problem, with its own status, and [f] must compute each element of its
+      result from the same element of its argument alone. The answer is stated
+      as a zero of [f] ({!Rune.root}), so its derivative is the implicit one,
+      [−∂f/∂θ / ∂f/∂x] at a converged element, through every tracked value [f]
+      reads, and zero at an element that did not converge. At a converged zero
+      where [∂f/∂x] is [0] the derivative does not exist and is not finite.
+
+      The derivative solves elementwise and checks its solution with one more
+      product: where it misses, [f] read another element than its own, and the
+      derivative raises [Invalid_argument] naming the entry point.
+
+      {[
+      (* Kepler's equation M = E − e sin E, for each epoch *)
+      let eccentric_anomaly m e =
+        Root.newton
+          ~tol:(Tol.v ~rel:1e-12 ~abs:1e-15)
+          ~budget:8
+          ~slope:(fun x -> Nx.rsub_s 1. (Nx.mul e (Nx.cos x)))
+          (fun x -> Nx.sub (Nx.sub x (Nx.mul e (Nx.sin x))) m)
+          (Nx.add m (Nx.mul e (Nx.sin m)))
+        |> Solution.get
+      ]} *)
+
+  val bracket :
+    tol:Tol.t ->
+    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    lo:(float, 'b) Nx.t ->
+    hi:(float, 'b) Nx.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [bracket ~tol f ~lo ~hi] is a zero of [f] between [lo] and [hi] in each
+      element, given in either order, which broadcast together.
+
+      {b Method.} ITP steps (Oliveira and Takahashi, 2020) interleaved with
+      bisections of the floats' ordered-integer images, so an element ends
+      within [2b + 2] evaluations for a [b]-bit dtype (130 in float64), whatever
+      [f]. {b Error.} [e] is half the final bracket and [y] its midpoint; an
+      element also ends when no float lies strictly inside its bracket. It
+      converges only if [|f|] at its estimate, the bracket's end of smaller
+      [|f|], is at most the smaller [|f|] at the given ends, so a pole ends
+      [Stalled]; a bounded jump looks like a steep zero at float resolution and
+      converges at the jump, where the derivative does not exist. Ends of one
+      sign end [Not_bracketed]; a non-finite value of [f] ends [Not_finite]. *)
+
+  val newton :
+    tol:Tol.t ->
+    budget:int ->
+    slope:((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [newton ~tol ~budget ~slope f x0] is a zero of [f] near [x0] in each
+      element, by Newton's method: [slope x] is [f]'s derivative, elementwise.
+      It steers the steps only, so a wrong slope slows a solve and cannot end it
+      early.
+
+      {b Method.} Undamped Newton steps [δ = −f x / slope x], quadratic near a
+      simple zero. {b Error.} [e = |δ| q / (1 − q)], with [q] the ratio of the
+      last two steps, the distance left when the steps shrink by [q]: unbounded
+      while [q ≥ 1] or before two steps; [y] is the estimate. A zero step is a
+      zero. A zero or non-finite slope, or a step that no longer moves the
+      estimate without meeting [tol], ends the element [Stalled]; a non-finite
+      [f] ends it [Not_finite]; [budget] iterations end it [Budget_spent], so a
+      budget of 1 converges only on a zero step. {b Cost.} One call of [f] and
+      one of [slope] per iteration.
+
+      Raises [Invalid_argument] if [budget < 1]. *)
+end
+
+module Minimize : sig
+  (** Minima. *)
+
+  val bracket :
+    tol:Tol.t ->
+    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    lo:(float, 'b) Nx.t ->
+    hi:(float, 'b) Nx.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [bracket ~tol f ~lo ~hi] is a minimum of [f] in each [[lo, hi]],
+      elementwise: every element is its own problem, the ends broadcast together
+      and come in either order, and [f] must compute each element of its result
+      from the same element of its argument alone.
+
+      {b Method.} Brent's method: parabolic steps through the three best points,
+      forced to a golden-section step whenever the bracket has not shrunk by
+      [0.618] over two evaluations, so an element ends within about [3b]
+      evaluations for a [b]-bit dtype. On a function with several minima in the
+      bracket it finds one of them. {b Error.} [e] is half the final bracket and
+      [y] its midpoint; an element also ends when no float lies strictly inside
+      its bracket. A non-finite value of [f] ends it [Not_finite].
+      {b Derivative.} A minimum inside the bracket is stated as a zero of rune's
+      derivative of [f], so its derivative is [−∂²f/∂x∂θ / ∂²f/∂x²]; a minimum
+      at an end is that end, with its derivative; a lane that did not converge
+      has a zero derivative. *)
+end
+
+module Quad : sig
+  (** Integrals.
+
+      An integrand is an elementwise function: it receives points with the
+      rule's node axes in front and the range's shape behind, and returns one
+      value per point. Over a range every element is its own integral, so the
+      integrand must not reduce or mix along any axis; over a box every lane is
+      its own integral, and the integrand reduces only the last, coordinate
+      axis. The axes in front and their sizes are the method's, and may change
+      between calls.
+
+      {[
+      (* ∫₀¹ x^a dx for each a, by 10-point Gauss–Legendre *)
+      let moments a =
+        Quad.fixed (Quad.Rule.gauss 10)
+          (fun x -> Nx.pow x a)
+          (Quad.Range.v (Nx.zeros_like a) (Nx.ones_like a))
+      ]}
+
+      An integral of samples is the integral of their interpolant
+      ({!Piecewise.integral}). *)
+
+  (** {1:rules Rules} *)
+
+  (** Quadrature rules on [[−1, 1]].
+
+      A rule's tag says which integrals take it: [`Formula] rules sum their
+      nodes in {!fixed} and {!cumulative}; [`Embedded] rules also estimate their
+      error. *)
+  module Rule : sig
+    type -'k t
+    (** The type for rules with tags ['k]. A rule with more tags can be used as
+        one with fewer, by coercion:
+        [(Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t)]. *)
+
+    val gauss : int -> [ `Formula ] t
+    (** [gauss n] is the [n]-point Gauss–Legendre rule, exact for polynomials of
+        degree [2n − 1]. Its nodes and weights are computed on the host in
+        float64 by Newton's method on the Legendre polynomial.
+
+        Raises [Invalid_argument] if [n < 1]. *)
+
+    val kronrod : int -> [ `Formula | `Embedded ] t
+    (** [kronrod n] is the [(2n + 1)]-point Gauss–Kronrod rule that extends
+        {!gauss}[ n] (Piessens et al., QUADPACK, 1983): exact for polynomials of
+        degree [3n + 1], with the [n] Gauss nodes among its own. [n] is [7] or
+        [10].
+
+        Raises [Invalid_argument] if [n] is neither. *)
+
+    val nodes :
+      _ t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t * (float, 'b) Nx.t
+    (** [nodes r dtype] is [(x, w)], [r]'s nodes in increasing order and their
+        weights, 1-D tensors of [dtype]: [Σ w f(x)] approximates [∫₋₁¹ f]. A sum
+        in log space is [logsumexp (log w + ℓ x)]. *)
+  end
+
+  (** {1:ranges Ranges} *)
+
+  (** Ranges of integration, one per element. *)
+  module Range : sig
+    type 'b t
+    (** The type for ranges of dtype ['b]. *)
+
+    val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
+    (** [v a b] is [[a, b]], [a] and [b] broadcast together. An integral over
+        [[a, b]] with [b < a] is minus the integral over [[b, a]]. *)
+
+    val from : (float, 'b) Nx.t -> 'b t
+    (** [from a] is the half-line from [a] to [+∞], at unit scale: a rule's
+        nodes spread over distances near [1] from [a]. Scale the variable so the
+        integrand's width is near 1. *)
+
+    val line : (float, 'b) Nx.t -> 'b t
+    (** [line c] is the whole line, around [c] at unit scale. *)
+  end
+
+  (** Boxes of integration, one per lane. *)
+  module Box : sig
+    type 'b t
+    (** The type for boxes of dtype ['b]. *)
+
+    val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
+    (** [v lo hi] is the box with corners [lo] and [hi], which broadcast
+        together to [lanes @ [d]]: a point's coordinates are the last axis. An
+        axis with [hi < lo] flips the integral's sign, as {!Range.v}.
+
+        Raises [Invalid_argument] if [lo] and [hi] do not broadcast or are
+        scalars. *)
+  end
+
+  type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
+  (** The type for integrands: [f x] is [f] at each point of [x]: of [x]'s shape
+      over a range, and over a box of [x]'s shape without its last, coordinate
+      axis. *)
+
+  (** {1:formulas Formulas} *)
+
+  val fixed :
+    [> `Formula ] Rule.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t
+  (** [fixed r f range] is [r]'s sum for the integral of [f] over each element
+      of [range], of [range]'s shape. [f] receives the points of shape
+      [[m] @ shape], [m] the rule's nodes. A finite range maps the rule
+      linearly; [from a] by [x = a + (1 + u) / (1 − u)] and [line c] by
+      [x = c + u / (1 − u²)], so an infinite range needs an integrand that
+      decays fast enough for the rule's degree to show.
+
+      {b Error.} An [n]-point Gauss sum on a finite range is exact for
+      polynomials of degree [2n − 1], and for a smooth [f] its error falls
+      geometrically in [n]. {b Cost.} One call of [f] on [m] points per element.
+      {b Derivative.} The sum's: in the integrand's parameters, in the ends and
+      in the points [f] reads.
+
+      Raises [Invalid_argument] if [f]'s result has another shape than its
+      points. *)
+
+  val cumulative :
+    [> `Formula ] Rule.t -> 'b integrand -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  (** [cumulative r f knots] is the integral of [f] from the first knot to each,
+      by [r] on each interval between knots: for [knots] of shape [[n] @ shape],
+      a result of the same shape whose row [0] is zero and row [i] the sum of
+      the first [i] intervals' integrals. [f] receives points of shape
+      [[m; n − 1] @ shape].
+
+      Raises [Invalid_argument] if [knots] has no axis or no knot, or as
+      {!fixed} does. *)
+
+  (** {1:solves Solves}
+
+      Each solve is elementwise: every element of the range is its own integral,
+      with its own status. Its search runs on detached values; the answer of a
+      converged element is its rule over its final decisions, tracked, so its
+      derivative is that rule's, and an element that did not converge returns
+      its detached best estimate. *)
+
+  val adaptive :
+    [> `Embedded ] Rule.t ->
+    tol:Tol.t ->
+    budget:int ->
+    'b integrand ->
+    'b Range.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [adaptive r ~tol ~budget f range] is the integral of [f] over each element
+      of [range]. [f] receives points of shape [[m; k] @ shape], [m] the rule's
+      points and [k] pieces.
+
+      {b Method.} The rule [r] on a partition it refines: it bisects the piece
+      of largest error until the error meets [tol]. An infinite range is mapped
+      as {!fixed} maps it. {b Error.} [e] is the sum over the pieces of
+      [|K − G|], the Kronrod sum's difference from its embedded Gauss sum, and
+      [y] the integral. An element whose worst piece is at level 62, or holds no
+      float strictly inside, ends [Stalled]; a non-finite sum ends it
+      [Not_finite]; [budget] pieces end it [Budget_spent]. A feature narrower
+      than the first rule's nodes can be invisible to every estimate, and an
+      element can converge without it. {b Cost.} [2n + 1] points per piece, and
+      the answer evaluates the final partition again, in chunks of 32 pieces
+      under a {!Rune.scan}, so reverse mode keeps one chunk's values.
+      {b Derivative.} The final partition's rule's: the pieces are integers
+      [(level, index)] whose ends are [a + (b − a) index / 2^level], so it
+      reaches the ends.
+
+      Raises [Invalid_argument] if [budget < 1], or as {!fixed} does. *)
+
+  val tanh_sinh :
+    tol:Tol.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t Solution.t
+  (** [tanh_sinh ~tol f range] is the integral of [f] over each element of
+      [range] by a double-exponential rule: tanh-sinh on a finite range,
+      exp-sinh on {!Range.from} and sinh-sinh on {!Range.line}. Its nodes crowd
+      toward the ends double-exponentially, so it converges for an integrable
+      singularity at an end, and on a half-line or the line for an integrand
+      that decays. Scale the variable so the integrand's width is near 1. [f]
+      receives points of shape [[64] @ shape], a chunk of nodes.
+
+      {b Method.} The trapezoidal rule in [t] after the change of variable, at
+      steps [1, 1/2, 1/4, ...]: each level adds the odd multiples of its step,
+      in fixed-size chunks, to the finest level the dtype calls for ([2^-7] in
+      float64, [2^-6] in float32). The nodes stop where their numbers leave the
+      dtype's normal floats; a node whose point rounds to an end is unused. Near
+      an end [a = 0] a point is its own distance to the end, so the nodes reach
+      the singularity in full precision; another end loses the digits [a]'s
+      magnitude rounds away, unless the integrand computes the distance to the
+      end from its argument. {b Error.} [e] is the difference of the last two
+      levels and [y] the integral. A lane whose terms at the truncation do not
+      fall below the tolerance, or whose finest level does not meet it, ends
+      [Stalled]; a non-finite sum ends it [Not_finite]. {b Cost.} At most the
+      nodes of the finest level, in chunks of 64, per element, and the answer
+      evaluates the final level's nodes again. {b Derivative.} That of the sum
+      over the final level, through the ends and the integrand's parameters. *)
+
+  val cubature :
+    tol:Tol.t ->
+    budget:int ->
+    'b integrand ->
+    'b Box.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [cubature ~tol ~budget f box] is the integral of [f] over each lane's box,
+      of [d] dimensions with [2 ≤ d ≤ 10]. [f] receives points of shape
+      [[m; k] @ lanes @ [d]], [m] the rule's points and [k] boxes, and reduces
+      only their last, coordinate axis.
+
+      {b Method.} Genz and Malik's (1980) adaptive rule of degree 7 with an
+      embedded degree 5: it bisects the box of largest error across the axis of
+      largest fourth difference. {b Error.} [e] is the sum over the boxes of the
+      two rules' difference, and [y] the integral. A lane whose worst box is at
+      level 62 along its axis, or holds no float strictly inside along it, ends
+      [Stalled]; a non-finite sum ends it [Not_finite]; [budget] boxes end it
+      [Budget_spent]. {b Cost.} [2^d + 2d² + 2d + 1] points per box, [budget]
+      boxes at most per lane, and the answer evaluates the final partition
+      again. {b Derivative.} The final partition's rule's, through the corners
+      and the integrand's parameters.
+
+      Raises [Invalid_argument] if [d] is not in [[2, 10]], if [budget < 1], or
+      if [f]'s result is not the points' shape without its last axis. *)
+
+  val qmc :
+    Nx.Rng.t ->
+    tol:Tol.t ->
+    budget:int ->
+    'b integrand ->
+    'b Box.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [qmc key ~tol ~budget f box] is the integral of [f] over each lane's box,
+      of any dimension [d] up to 1111, by randomised quasi-Monte Carlo. [f]
+      receives points of shape [[64; 16] @ lanes @ [d]], a chunk of 64 points
+      under each of 16 shifts, and reduces only their last, coordinate axis.
+
+      {b Method.} The mean of [f] over a Sobol sequence (Joe and Kuo's direction
+      numbers) under 16 independent random digital shifts drawn from [key]. It
+      adds the sequence in chunks of 64 points and tests at each power of two,
+      where a Sobol prefix is balanced. Points are [(i + ½) / 2^k] after the
+      shift, [k] the bits the dtype holds below 1 (32 in float64), so none lies
+      on the box's boundary. {b Error.} [e] is the standard error of the mean
+      over the shifts, an estimate of a standard deviation: the test is
+      statistical. [y] is the integral. Each estimate at a fixed point count is
+      unbiased, and the stopped one to within its standard error. [budget]
+      chunks end a lane [Budget_spent]. {b Cost.} 1024 points per chunk, 64
+      under each of 16 shifts, [budget] chunks at most, and the answer evaluates
+      the final points again. {b Derivative.} The mean's over the final points:
+      an estimate of the integral's derivative where the integrand is Lipschitz
+      in the parameter.
+
+      Raises [Invalid_argument] if [d] is above 1111, if [budget < 1], or if
+      [f]'s result is not the points' shape without its last axis. *)
+end
+
+module Piecewise : sig
+  (** Piecewise Chebyshev series.
+
+      One value serves every approximation of a function of one variable:
+      splines and other interpolants of samples, fits of a function, and their
+      derivatives and integrals. On piece [i], between the breaks [x_i] and
+      [x_(i+1)], the value is [Σ_k c_k T_k(u)] with
+      [u = 2 (x − x_i) / (x_(i+1) − x_i) − 1] in [[−1, 1]]. A value is plain
+      tensors, so it is an argument, a result and a carry of every
+      transformation, and closed under evaluation, differentiation and
+      integration.
+
+      {[
+      let spline = Piecewise.cubic `Natural knots samples
+      let slope = Piecewise.eval (Piecewise.derivative spline) x
+      ]}
+
+      {b Domain.} The domain is the closed interval from the first break to the
+      last. A point on a break lies in the last piece of positive width that
+      ends there, at [u = 1], and a point on the first break in the first piece.
+      NaN evaluates to NaN. An infinite point raises [Invalid_argument] through
+      {!Nx.check}, and so does any other point outside the domain unless the
+      value is extended ({!extend}).
+
+      {b Cost.} Evaluation is a binary search of the breaks
+      ({!Nx.searchsorted}), a gather of [degree + 1] coefficients and Clenshaw's
+      recurrence: [O(log pieces + degree)] per point. Every operation here
+      compiles to a fixed graph of tensor operations, fits included; {!adapt} is
+      a stopping loop, which a compiled call waits on once per trip.
+
+      {b Derivative.} Every function is a composition of tensor operations, so
+      it differentiates in the coefficients, the breaks, the samples and the
+      points; the piece a point falls in carries no derivative. {!adapt}'s
+      derivative is its final partition's interpolant's, and zero when it did
+      not converge. *)
+
+  type ('v, 'b) t
+  (** The type for piecewise series with values of structure ['v] over breaks of
+      dtype ['b]: each float leaf of the coefficients has shape
+      [[pieces; degree + 1] @ value], and evaluation at points of shape [q]
+      gives it shape [q @ value]. Leaves may differ in degree and dtype.
+
+      It has [pieces + 1] breaks, non-decreasing, the first below the last. A
+      piece of zero width is empty: no point lies in it, and the end pieces are
+      the first and last of positive width. *)
+
+  val v : 'v Nx.Ptree.t -> breaks:(float, 'b) Nx.t -> 'v -> ('v, 'b) t
+  (** [v s ~breaks c] is the series with [pieces + 1] [breaks] and the
+      coefficients [c], each leaf of shape [[pieces; degree + 1] @ value].
+
+      Raises [Invalid_argument] if [breaks] is not 1-D with at least two
+      elements, if a leaf of [c] is not a float tensor of at least two axes with
+      [pieces] rows, or, through {!Nx.check}, if [breaks] decreases or its first
+      equals its last. *)
+
+  (** {1:interpolants Interpolants}
+
+      Each takes knots [x] of shape [[n]], [n ≥ 2], strictly increasing, and
+      samples of shape [[n] @ value], and passes through every sample. Each
+      raises [Invalid_argument] if [x] is not 1-D with at least two knots, if
+      the samples do not have [n] rows, or, through {!Nx.check}, if [x] is not
+      strictly increasing. *)
+
+  type 'b ends =
+    [ `Natural | `Not_a_knot | `Clamped of (float, 'b) Nx.t * (float, 'b) Nx.t ]
+  (** The type for a cubic spline's end conditions, which change it near the
+      ends:
+      - [`Natural]: zero second derivative at both ends;
+      - [`Not_a_knot]: a continuous third derivative at the second and the
+        second-last knots, so the first two and last two pieces are each one
+        cubic; through three knots, the parabola;
+      - [`Clamped (s0, s1)]: the slopes [s0] and [s1], of shape [value], at the
+        ends. *)
+
+  val linear : (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+  (** [linear x y] is the broken line through the samples: degree 1. *)
+
+  val cubic :
+    'b ends -> (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+  (** [cubic ends x y] is the cubic spline through the samples, twice
+      continuously differentiable: degree 3. Its system is solved in parallel by
+      {!Nx.associative_scan}, stable because it is diagonally dominant.
+
+      Raises [Invalid_argument] also if a clamped slope's shape is not [value].
+  *)
+
+  val steffen : (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+  (** [steffen x y] is Steffen's (1990) interpolant, once continuously
+      differentiable: degree 3. It has no extremum between knots that the data
+      lack, so the interpolant of monotone samples is monotone. Its end slopes
+      are the end intervals' secants. *)
+
+  val hermite :
+    (float, 'b) Nx.t ->
+    values:(float, 'b) Nx.t ->
+    slopes:(float, 'b) Nx.t ->
+    ((float, 'b) Nx.t, 'b) t
+  (** [hermite x ~values ~slopes] is the piecewise cubic with the given values
+      and slopes at the knots: degree 3, once continuously differentiable.
+
+      Raises [Invalid_argument] also if [slopes] has another shape than
+      [values]. *)
+
+  (** {1:fits Fits} *)
+
+  val chebyshev :
+    'v Nx.Ptree.t ->
+    degree:int ->
+    pieces:int ->
+    ((float, 'b) Nx.t -> 'v) ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t ->
+    ('v, 'b) t
+  (** [chebyshev s ~degree ~pieces f a b] interpolates [f] on [pieces] equal
+      pieces of [[a, b]] at each piece's [degree + 1] Chebyshev points of the
+      second kind, ends included ([degree = 0] takes the midpoint). [f] receives
+      points of shape [[pieces; degree + 1]] and returns each leaf of shape
+      [[pieces; degree + 1] @ value]; [a] and [b] are scalars.
+
+      {b Error.} For an [f] analytic in an ellipse around each piece, the error
+      falls geometrically in [degree]; for one with [k] continuous derivatives,
+      as [degree^(−k)]. {b Cost.} One call of [f] on all [pieces × (degree + 1)]
+      points, and a constant matrix per leaf.
+
+      Raises [Invalid_argument] if [degree < 0], [pieces < 1], if [a] or [b] is
+      not a scalar, or if [f]'s leaves do not start with the points' shape. *)
+
+  val adapt :
+    'v Nx.Ptree.t ->
+    degree:int ->
+    tol:Tol.t ->
+    budget:int ->
+    ((float, 'b) Nx.t -> 'v) ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t ->
+    ('v, 'b) t Solution.t
+  (** [adapt s ~degree ~tol ~budget f a b] matches [f] on [[a, b]] to [tol] by
+      series of [degree]. It solves one problem; {!Rune.val-vmap} gives each
+      lane its own.
+
+      {b Method.} Bisects the piece whose tail is largest until every piece
+      meets [tol]. {b Error.} A piece's [e] is the larger of its last two
+      coefficients in magnitude, and [y] its largest coefficient: the series'
+      tail against its size. [budget] bounds the pieces, so the answer always
+      holds [budget] pieces, the unused ones empty at [b] after the domain. A
+      lane whose worst piece is at level 62, or holds no float strictly inside,
+      ends [Stalled]; a non-finite coefficient ends it [Not_finite]; [budget]
+      pieces end it [Budget_spent]. The error is a series of degree 0 on the
+      answer's breaks, each piece's tail. {b Cost.} [degree + 1] evaluations of
+      [f] per piece, and the answer evaluates [f] again at every piece's points.
+      {b Derivative.} The final partition's interpolant's: its breaks are
+      [a + (b − a) index / 2^level], so it reaches the ends.
+
+      Raises [Invalid_argument] if [degree < 2], [budget < 1], if [a] or [b] is
+      not a scalar, or if [f]'s leaves do not start with the points' shape. *)
+
+  (** {1:eval Evaluation} *)
+
+  val eval : ('v, 'b) t -> (float, 'b) Nx.t -> 'v
+  (** [eval p x] is [p] at each point of [x], of shape [q]: each leaf of shape
+      [q @ value].
+
+      Raises [Invalid_argument] through {!Nx.check} if a point is infinite, or
+      if a point that is not NaN lies outside the domain of a value that is not
+      extended. *)
+
+  val eval_at :
+    ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
+  (** [eval_at p i u] is the series of piece [i] at the local coordinate [u] in
+      [[−1, 1]], [i] and [u] of one shape [q]: each leaf of shape [q @ value].
+      [u] outside [[−1, 1]] extrapolates the piece's series.
+
+      Raises [Invalid_argument] if [i] and [u] differ in shape, and through
+      {!Nx.check} if an index is not a piece's. *)
+
+  (** {1:calculus Calculus}
+
+      Each keeps the breaks and the extension: outside the domain the result
+      extends as {!extend} says, from its own end pieces. Outside the domain,
+      then, [eval (derivative p)] is not the derivative of [eval p]: the
+      derivative of a held series holds its end slopes, and the integral of a
+      held series holds its end values. *)
+
+  val derivative : ('v, 'b) t -> ('v, 'b) t
+  (** [derivative p] is the derivative of [p] in [x] on each piece, of degree
+      one less (and [0] from degree [0]). At a break where [p]'s derivative
+      jumps it takes the value of the piece that ends there. *)
+
+  val integral : ('v, 'b) t -> ('v, 'b) t
+  (** [integral p] is the antiderivative of [p] that is zero at the first break
+      and continuous across breaks, of degree one more. *)
+
+  val extend : [ `Hold | `Polynomial ] -> ('v, 'b) t -> ('v, 'b) t
+  (** [extend e p] is [p] defined at every finite point: [`Hold] takes the value
+      at the nearest end, and [`Polynomial] continues the end pieces' series. It
+      replaces [p]'s extension. An infinite point still raises. *)
+
+  (** {1:access Access} *)
+
+  val breaks : ('v, 'b) t -> (float, 'b) Nx.t
+  (** [breaks p] is [p]'s breaks, of shape [[pieces + 1]]. *)
+
+  val coefficients : ('v, 'b) t -> 'v
+  (** [coefficients p] is [p]'s coefficients, each leaf of shape
+      [[pieces; degree + 1] @ value]. *)
+
+  val ptree : 'v Nx.Ptree.t -> (float, 'b) Nx.dtype -> ('v, 'b) t Nx.Ptree.t
+  (** [ptree s dtype] is the structure of series with values of structure [s]
+      over breaks of [dtype]: the breaks at [breaks], the coefficients under
+      [coefficients], and the extension reported at [extension] as one of the
+      cases ["bounded"], ["hold"] and ["polynomial"]. *)
+end
+
+module Grid : sig
+  (** Tensor-product series over grids.
+
+      A grid value is the tensor product of {!Piecewise}'s representation: along
+      each of its [d] axes, breaks and a Chebyshev series per piece, and in
+      between, the series of their products. Its values have shape [value] at
+      each point; a point is the last axis of a tensor, its [d] coordinates.
+
+      {[
+      let table = Grid.cubic `Not_a_knot ~axes:[ temperature; pressure ] density
+      let rho = Grid.eval table states (* states of shape [n; 2] *)
+      ]}
+
+      The domain is the closed box between each axis's first and last break,
+      with {!Piecewise}'s rules along each axis: a point on a break lies in the
+      piece that ends there, or the first piece at the first break; NaN
+      evaluates to NaN, and any other point outside raises [Invalid_argument]
+      through {!Nx.check}.
+
+      {b Cost.} Evaluation searches each axis's breaks, gathers
+      [Π (degree_k + 1)] coefficients per point, and runs Clenshaw's recurrence
+      along each axis in turn. {b Derivative.} The composition's, in the values,
+      the axes and the points. *)
+
+  type 'b t
+  (** The type for grid series over breaks of dtype ['b]. The coefficients have
+      shape [[pieces_1; …; pieces_d; degree_1 + 1; …; degree_d + 1] @ value]. *)
+
+  (** {1:interpolants Interpolants}
+
+      Each takes [d ≥ 1] axes of knots, each 1-D with at least two strictly
+      increasing knots, and values of shape [[n_1; …; n_d] @ value], [n_k] the
+      knots of axis [k], and passes through every value. Each raises
+      [Invalid_argument] if an axis is not 1-D with two knots, if the values'
+      leading axes do not match the axes, or, through {!Nx.check}, if an axis is
+      not strictly increasing. *)
+
+  val linear : axes:(float, 'b) Nx.t list -> (float, 'b) Nx.t -> 'b t
+  (** [linear ~axes values] is the multilinear interpolant: degree 1 along each
+      axis. *)
+
+  val cubic :
+    [ `Natural | `Not_a_knot ] ->
+    axes:(float, 'b) Nx.t list ->
+    (float, 'b) Nx.t ->
+    'b t
+  (** [cubic ends ~axes values] is the tensor-product cubic spline, with
+      {!Piecewise.ends}' [ends] along every axis: degree 3 along each axis. *)
+
+  (** {1:fits Fits} *)
+
+  val chebyshev :
+    degree:int ->
+    pieces:int ->
+    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    lo:(float, 'b) Nx.t ->
+    hi:(float, 'b) Nx.t ->
+    'b t
+  (** [chebyshev ~degree ~pieces f ~lo ~hi] interpolates [f] on the box from
+      [lo] to [hi], both of shape [[d]], split into [pieces] equal pieces along
+      each axis, at the tensor product of each piece's [degree + 1] Chebyshev
+      points of the second kind. [f] receives points of shape [q @ [d]] and
+      returns values of shape [q @ value]. It costs one call of [f] on
+      [(pieces × (degree + 1))^d] points.
+
+      Raises [Invalid_argument] if [degree < 0], [pieces < 1], if [lo] and [hi]
+      are not of one shape [[d]] with [d ≥ 1], or if [f]'s result does not start
+      with the points' shape without their last axis. *)
+
+  (** {1:eval Evaluation} *)
+
+  val eval : 'b t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  (** [eval g x] is [g] at the points [x] of shape [q @ [d]]: of shape
+      [q @ value].
+
+      Raises [Invalid_argument] if [x]'s last axis is not [d], and through
+      {!Nx.check} if a point that is not NaN lies outside the domain. *)
+
+  (** {1:calculus Calculus} *)
+
+  val derivative : axis:int -> 'b t -> 'b t
+  (** [derivative ~axis g] is the partial derivative of [g] along [axis], of one
+      degree less along it.
+
+      Raises [Invalid_argument] if [axis] is negative or not below [d]. *)
+
+  val integral : axis:int -> 'b t -> 'b t
+  (** [integral ~axis g] is the antiderivative of [g] along [axis], zero at that
+      axis's first break, of one degree more along it.
+
+      Raises [Invalid_argument] if [axis] is negative or not below [d]. *)
+
+  (** {1:access Access} *)
+
+  val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
+  (** [ptree dtype] is the structure of grid values over breaks of [dtype]: the
+      breaks of each axis as a list at [breaks], and the coefficients at
+      [coefficients]. *)
+end
+
+module Ode : sig
+  (** Ordinary differential equations.
+
+      A problem is a field [f t y], the derivative of the state [y] at the time
+      [t], and an initial state. A state is any structure of tensors: its float
+      leaves are the state's vector and share its steps, and its other leaves
+      are carried unchanged. Times are tensors of their own float dtype ['t],
+      which may differ from the leaves'. {!Rune.val-vmap} gives each lane its
+      own problem.
+
+      A method's tag says which drivers take it: [`Formula] methods take the
+      caller's steps in {!march}; [`Embedded] methods estimate their error.
+
+      {[
+      (* The pendulum, sampled at 101 times by 10 steps of tsit5 each *)
+      let pendulum _t (q, p) = (p, Nx.neg (Nx.sin q))
+
+      let path =
+        Ode.march
+          Nx.Ptree.(pair tensor tensor)
+          Ode.tsit5 ~steps:10 pendulum
+          ~at:(Nx.linspace Nx.float64 0. 10. 101)
+          (Nx.scalar Nx.float64 1., Nx.scalar Nx.float64 0.)
+      ]} *)
+
+  (** {1:methods Methods} *)
+
+  type (-'k, 'y, 't) t
+  (** The type for one-step methods with tags ['k] over states ['y] and times of
+      dtype ['t]. A method with more tags can be used as one with fewer, by
+      coercion: [(Ode.tsit5 :> ([ `Formula ], _, _) Ode.t)]. *)
+
+  val euler : ([ `Formula ], 'y, 't) t
+  (** [euler] is the explicit Euler method: order 1, one field evaluation per
+      step. *)
+
+  val rk4 : ([ `Formula ], 'y, 't) t
+  (** [rk4] is the classical Runge–Kutta method: order 4, four evaluations per
+      step. *)
+
+  val ssprk3 : ([ `Formula ], 'y, 't) t
+  (** [ssprk3] is the three-stage strong-stability-preserving method of Shu and
+      Osher (1988): order 3, three evaluations per step. A step is a convex
+      combination of Euler steps, so it keeps any convex bound Euler keeps under
+      the same step size, such as a total-variation bound of a hyperbolic
+      discretisation. *)
+
+  val bs3 : ([ `Formula | `Embedded ], 'y, 't) t
+  (** [bs3] is Bogacki and Shampine's (1989) method of order 3 with an embedded
+      order 2: three evaluations per step, its last stage the next step's first.
+  *)
+
+  val tsit5 : ([ `Formula | `Embedded ], 'y, 't) t
+  (** [tsit5] is Tsitouras' (2011) method of order 5 with an embedded order 4:
+      six evaluations per step, its last stage the next step's first. *)
+
+  val dopri5 : ([ `Formula | `Embedded ], 'y, 't) t
+  (** [dopri5] is Dormand and Prince's (1980) method of order 5 with an embedded
+      order 4: six evaluations per step, its last stage the next step's first.
+  *)
+
+  val tableau :
+    a:float array array ->
+    b:float array ->
+    c:float array ->
+    ([ `Formula ], 'y, 't) t
+  (** [tableau ~a ~b ~c] is the explicit Runge–Kutta method of Butcher tableau
+      [(a, b, c)] with [s] stages: stage [i] evaluates the field at
+      [t + c.(i) h] on [y + h Σ_(j<i) a.(i).(j) k_j], and the step is
+      [y + h Σ_i b.(i) k_i]. Its coefficients are given in float64 and rounded
+      once to the time's and each leaf's dtype.
+
+      Raises [Invalid_argument] unless [s ≥ 1], [b] and [c] have [s] elements,
+      [a] has [s] rows of which row [i] has [i] elements, every coefficient is
+      finite, and [b] sums to [1] within rounding. *)
+
+  (** {1:marches Marches} *)
+
+  type 't time = (float, 't) Nx.t
+  (** The type for times. *)
+
+  type ('y, 't) field = 't time -> 'y -> 'y
+  (** The type for fields: [f t y] is the derivative of [y] at the scalar time
+      [t], a value of [y]'s structure, dtypes and shapes. *)
+
+  val march :
+    'y Nx.Ptree.t ->
+    ([> `Formula ], 'y, 't) t ->
+    steps:int ->
+    ('y, 't) field ->
+    at:'t time ->
+    'y ->
+    'y
+  (** [march y m ~steps f ~at y0] is the state at each time of [at], stacked on
+      a new leading axis of each leaf, [y0] first at [at.(0)]. Each interval of
+      [at] takes [steps] equal steps of [m]; [at] may decrease, to march back.
+
+      {b Error.} A method of order [p] has global error [O(h^p)] for a smooth
+      field. {b Stability.} An explicit method is stable only while [h] times
+      the field's eigenvalues lies in its stability region, so a stiff field
+      needs a step far below its accuracy's. {b Cost.} The method's evaluations
+      per step, once each step; a method whose last stage is the next step's
+      first evaluates it once. {b Derivative.} The composition's: in the initial
+      state, in the times of [at], and in every tracked value the field reads.
+      Reverse mode keeps one state per time of [at] and recomputes each interval
+      while it reverses it.
+
+      Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
+      tensor, if it is not strictly monotone, or if [f] returns a value of
+      another structure, dtype or shape than its state. *)
+
+  (** {1:solves Solves}
+
+      A solve chooses its steps to meet a tolerance: an embedded method
+      estimates each step's local error, and the proportional–integral
+      controller of Hairer, Nørsett and Wanner (I, §II.4) sizes the next. The
+      search runs on detached values and records its accepted steps; the answer
+      takes them again with the tracked field.
+
+      {b Error.} [e] is one step's embedded error, and [y], per component, the
+      larger of the step's two states; a step is accepted when [e] meets [tol].
+      The solution's error is, per component, the sum of the magnitudes of the
+      accepted steps' local estimates: it estimates the error the steps made,
+      not the global error, which [tol] does not bound. An attempt with a
+      non-finite stage is rejected; a non-finite field at an accepted state ends
+      the lane [Not_finite], a step below the time's resolution [Stalled], and
+      [budget] attempted steps [Budget_spent]. The last step of an interval
+      lands on its end exactly. {b Stability.} An explicit method's controller
+      keeps [h] inside its stability region, so on a stiff field its steps fall
+      to that limit and the budget runs out first. {b Cost.} Each attempt costs
+      the method's evaluations less one, and the answer evaluates the accepted
+      steps again. Reverse mode keeps one state per time of [at] and, while it
+      reverses an interval, its carries: compiled, [budget] of them; eagerly,
+      the steps taken. {b Derivative.} The accepted steps', each a fraction [s]
+      of its interval, [h = (b − a) s]: through the initial state, the times and
+      every tracked value the field reads. A lane that did not converge returns
+      its detached estimate, with a zero derivative. *)
+
+  val solve :
+    'y Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't) t ->
+    tol:Tol.t ->
+    budget:int ->
+    ('y, 't) field ->
+    t0:'t time ->
+    t1:'t time ->
+    'y ->
+    'y Solution.t
+  (** [solve y m ~tol ~budget f ~t0 ~t1 y0] is the state at [t1] of the solution
+      from [y0] at [t0], scalars; [t1] may equal or precede [t0]. At [t1 = t0]
+      it is [y0], converged with a zero error.
+
+      Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
+      scalar, or as {!march} does for a field of another structure. *)
+
+  val sample :
+    'y Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't) t ->
+    tol:Tol.t ->
+    budget:int ->
+    ('y, 't) field ->
+    at:'t time ->
+    'y ->
+    'y Solution.t
+  (** [sample y m ~tol ~budget f ~at y0] is the state at each time of [at],
+      stacked on a new leading axis of each leaf, [y0] first at [at.(0)], with
+      [budget] attempts across all of them. The steps land on every time of
+      [at], so no state is interpolated. Its error is stacked like its value: at
+      each time, per component, the sum of the magnitudes of the local estimates
+      of the accepted steps before it. Times that are not strictly monotone end
+      the lane [Stalled] before any step, and its report names the first.
+
+      Raises [Invalid_argument] if [budget < 1], if [at] is not a non-empty 1-D
+      tensor, and as {!march} does for a field of another structure. *)
+end
+
+module Sde : sig
+  (** Stochastic differential equations.
+
+      A problem is a drift [f t y], the deterministic part of the derivative; a
+      diffusion, applied to a Brownian increment as [diffusion t y dw] and
+      linear in [dw]; and a Brownian path. The method fixes the calculus: Itô or
+      Stratonovich. *)
+
+  (** Brownian paths with their space–time Lévy area.
+
+      A path is a virtual tree over [[t0, t1]] (Foster, Lyons and Oberhauser,
+      2020; Jelinčič et al., 2024): each query descends [depth] levels of
+      bisections, each drawing the midpoint's increments and areas from their
+      distribution given the interval's, under a key that is a pure function of
+      the path's key and the node. So a path is one function of time, whatever
+      the queries: marches with different steps see one path. Steps finer than
+      [(t1 − t0) / 2^depth] see, inside each finest interval, the path's mean
+      given that interval's increment and area, a quadratic, and lose their
+      stated order. *)
+  module Brownian : sig
+    type 'b t
+    (** The type for Brownian paths of dtype ['b]. *)
+
+    val v :
+      Nx.Rng.t ->
+      (float, 'b) Nx.dtype ->
+      shape:int array ->
+      t0:float ->
+      t1:float ->
+      depth:int ->
+      'b t
+    (** [v key dtype ~shape ~t0 ~t1 ~depth] is a Brownian path of independent
+        standard components of shape [shape] over [[t0, t1]], resolved to
+        [(t1 − t0) / 2^depth].
+
+        Raises [Invalid_argument] if [t0] or [t1] is not finite, if [t1 <= t0],
+        if [depth] is not in [[0, 30]], or if a dimension of [shape] is
+        negative. *)
+
+    val increment :
+      'b t ->
+      (float, 'b) Nx.t ->
+      (float, 'b) Nx.t ->
+      (float, 'b) Nx.t * (float, 'b) Nx.t
+    (** [increment w s t] is [W t − W s] and the space–time Lévy area over
+        [[s, t]],
+        [H = (1 / (t − s)) ∫_s^t (W r − W s − (r − s) / (t − s) (W t − W s)) dr],
+        each of the path's shape; [H] is zero when [s = t]. [s] and [t] are
+        scalars. Increments over adjacent intervals compose by Chen's relation.
+        A query costs [2 depth] normal draws of the path's shape at each end; a
+        derivative in a time through the path has no meaning.
+
+        Raises [Invalid_argument] through {!Nx.check} if [s] or [t] lies outside
+        [[t0, t1]]. *)
+
+    val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
+    (** [ptree dtype] is the structure of paths of [dtype]: the key at [key],
+        the shape's dimensions reported at [shape], the interval's ends at [t0]
+        and [t1], and the depth reported at [depth]. A path draws from its key,
+        so a compiled function takes it as an argument of this structure; a path
+        it captures is a constant, whose draws it refuses ({!Rune.Jit_error}).
+    *)
+  end
+
+  (** {1:methods Methods} *)
+
+  type t
+  (** The type for methods. *)
+
+  val euler_maruyama : t
+  (** [euler_maruyama] is the Euler–Maruyama method, Itô, for any noise: strong
+      order 1/2. One drift and one diffusion evaluation per step. *)
+
+  val milstein : t
+  (** [milstein] is the derivative-free Milstein method (Kloeden and Platen,
+      1992, §11.1), Itô: strong order 1 for diagonal noise, and 1/2 otherwise.
+      Diagonal noise has the state one tensor of the path's shape, and
+      [diffusion t y dw] the product of [dw] with a tensor whose component [i]
+      depends on [y_i] only. One drift and three diffusion evaluations per step.
+  *)
+
+  val sra1 : t
+  (** [sra1] is Rößler's (2010) SRA1, for additive noise, where the diffusion
+      does not depend on the state: strong order 3/2, reading the Lévy area; 1/2
+      otherwise. Two drift and two diffusion evaluations per step. *)
+
+  val reversible_heun : t
+  (** [reversible_heun] is the reversible Heun method (Kidger, Foster, Li and
+      Lyons, 2021), Stratonovich: strong order 1/2, and 1 for additive noise. It
+      carries a second state, so each step costs one drift and two diffusion
+      evaluations. *)
+
+  (** {1:marches Marches} *)
+
+  val march :
+    'y Nx.Ptree.t ->
+    t ->
+    steps:int ->
+    drift:((float, 't) Nx.t -> 'y -> 'y) ->
+    diffusion:((float, 't) Nx.t -> 'y -> (float, 't) Nx.t -> 'y) ->
+    't Brownian.t ->
+    at:(float, 't) Nx.t ->
+    'y ->
+    'y
+  (** [march y m ~steps ~drift ~diffusion w ~at y0] is the state at each time of
+      [at], stacked on a new leading axis of each leaf, [y0] first, along the
+      path [w]. Each interval of [at] takes [steps] equal steps. [drift t y] is
+      the deterministic field; [diffusion t y dw] is [g t y] applied to [dw], of
+      [w]'s shape and the times' dtype, and must be linear in [dw]; it casts
+      [dw] for leaves of another dtype. Reverse mode keeps one state per time of
+      [at] and recomputes each interval while it reverses it; the derivative is
+      the composition's, in the initial state and every tracked value the drift
+      and diffusion read. A compiled function takes [w] as an argument of
+      {!Brownian.ptree}'s structure.
+
+      Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
+      tensor, through {!Nx.check} if [at] is not strictly increasing or leaves
+      [w]'s interval, and if the drift or the diffusion returns a value of
+      another structure, dtype or shape than its state. *)
+end
+
+module Split : sig
+  (** Splitting methods for separable Hamiltonians.
+
+      A Hamiltonian [H (q, p) = T p + V q] is the sum of two parts whose flows
+      the caller computes exactly: the {e kick}, which moves momenta by [−∇V]
+      over a duration, and the {e drift}, which moves positions by [∇T]. A
+      splitting composes them over a step [h] as
+      [K(a₁h) D(b₁h) K(a₂h) … D(b_m h) K(a_(m+1) h)]. Every scheme here is
+      palindromic, so each step is symmetric and the march time-reversible; with
+      exact flows of a Hamiltonian it is symplectic, and its energy error stays
+      bounded over long times.
+
+      A flow may be any exact flow of its part: a Wisdom–Holman drift is a
+      Kepler step.
+
+      {b Error.} A scheme of order [p] has global error [O(h^p)] in the state.
+      {b Cost.} One kick per element of [kick], one fewer once adjacent kicks
+      merge in a march. {b Derivative.} A march is a composition of the flows,
+      so its derivative is theirs. *)
+
+  type t
+  (** The type for splittings: the coefficients [a] of the kicks and [b] of the
+      drifts. [a] has one more element than [b], each sums to [1], and the
+      sequence is palindromic. *)
+
+  val leapfrog : t
+  (** [leapfrog] is [K(h/2) D(h) K(h/2)], Störmer–Verlet: order 2. *)
+
+  val mclachlan : t
+  (** [mclachlan] is [K(λh) D(h/2) K((1 − 2λ)h) D(h/2) K(λh)] with
+      [λ = 0.1931833275037836], the two-stage scheme of least error (Omelyan,
+      Mryglod and Folk, 2002): order 2. *)
+
+  val yoshida4 : t
+  (** [yoshida4] is Yoshida's (1990) composition of three leapfrogs: order 4. *)
+
+  val yoshida6 : t
+  (** [yoshida6] is Yoshida's (1990) solution A, seven leapfrogs: order 6. *)
+
+  val yoshida8 : t
+  (** [yoshida8] is Yoshida's (1990) solution D, fifteen leapfrogs: order 8. *)
+
+  val v : kick:float array -> drift:float array -> t
+  (** [v ~kick ~drift] is the splitting [K(kick.(0) h) D(drift.(0) h) …].
+
+      Raises [Invalid_argument] unless every coefficient is finite, [drift] is
+      not empty, [kick] has one more element than [drift], each sums to [1]
+      within rounding, and the sequence is palindromic: each array equals its
+      reverse. *)
+
+  type ('s, 'b) flow = (float, 'b) Nx.t -> 's -> 's
+  (** The type for flows: [flow h s] is the state [s] moved by its part over the
+      duration [h]: a scalar, or in {!step} a tensor that broadcasts against the
+      state's leaves. *)
+
+  val step :
+    t ->
+    kick:('s, 'b) flow ->
+    drift:('s, 'b) flow ->
+    (float, 'b) Nx.t ->
+    's ->
+    's
+  (** [step m ~kick ~drift h s] is [s] after one step [h] of [m]. A negative [h]
+      steps back: [step m ~kick ~drift (−h) (step m ~kick ~drift h s)] is [s] up
+      to rounding.
+
+      [h] may hold one duration per batch of the state: an [h] of shape
+      [[chains; 1]] against leaves of shape [[chains; d]] steps each chain by
+      its own duration, as stepping each alone with its scalar would. The flows
+      receive [h] times each coefficient, of [h]'s shape. *)
+
+  val march :
+    's Nx.Ptree.t ->
+    t ->
+    steps:int ->
+    kick:('s, 'b) flow ->
+    drift:('s, 'b) flow ->
+    at:(float, 'b) Nx.t ->
+    's ->
+    's
+  (** [march s m ~steps ~kick ~drift ~at s0] is the state at each time of [at],
+      stacked on a new leading axis of each leaf, [s0] first at [at.(0)]. Each
+      interval of [at] takes [steps] equal steps, its adjacent kicks merged into
+      one: a {!leapfrog} interval makes [steps + 1] kicks. Reverse mode keeps
+      one state per time of [at] and recomputes each interval while it reverses
+      it.
+
+      Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
+      tensor, or if [at] is not strictly monotone. *)
+end

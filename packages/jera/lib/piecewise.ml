@@ -214,7 +214,7 @@ let adapt s ~degree ~tol ~budget f a b =
                   let last i = Nx.abs (Nx.get [ i ] (Nx.moveaxis 1 0 flat)) in
                   let e = Nx.maximum (last degree) (last (degree - 1)) in
                   let y = Nx.max ~axes:[ 1 ] (Nx.abs flat) in
-                  Nx.cast (Nx.dtype x) (Tolerance.ratio tol ~e ~y));
+                  Nx.cast (Nx.dtype x) (Tol.ratio tol ~e ~y));
             }
             x
           |> fun r -> Nx.cast dtype r :: acc)
@@ -326,7 +326,7 @@ let adapt s ~degree ~tol ~budget f a b =
         Nx.logical_not (Elementwise.searching st))
       ~f:step initial
   in
-  let ok = Nx.equal_s st (Answer.code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   (* The worst piece, which a report prints. *)
   let worst_from, worst_to =
     let j = worst used ratio in
@@ -407,16 +407,16 @@ let adapt s ~degree ~tol ~budget f a b =
           best.coefficients;
     }
   in
-  let fix (st : Answer.status) _ =
+  let fix (st : Solution.status) _ =
     match st with
     | Budget_spent -> "Raise the budget or the degree, or loosen tol."
     | Stalled ->
         "The worst piece cannot be bisected further: f has a jump or a kink \
-         there, which no series of a degree meets." ^ Tolerance.zero_hint tol
+         there, which no series of a degree meets." ^ Tol.zero_hint tol
     | Not_finite -> "f is not finite in the worst piece."
     | Converged | Not_bracketed -> ""
   in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:
       (Format.asprintf "degree %d, tol %a, budget %d" degree Tol.pp tol budget)
     ~spent:{ used; unit = "pieces"; budget }

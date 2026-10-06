@@ -261,7 +261,7 @@ let error_norm (type t) y tol (dtype : (float, t) Nx.dtype) e v w =
   let leaf (type a c) (e : (a, c) Nx.t) pv pw =
     let go (type d) (e : (float, d) Nx.t) =
       let v = Nx.unpack (Nx.dtype e) pv and w = Nx.unpack (Nx.dtype e) pw in
-      let r = Tolerance.ratio tol ~e ~y:(Nx.maximum (Nx.abs v) (Nx.abs w)) in
+      let r = Tol.ratio tol ~e ~y:(Nx.maximum (Nx.abs v) (Nx.abs w)) in
       [ Nx.reshape [| -1 |] (Nx.cast dtype r) ]
     in
     match Nx.dtype e with
@@ -359,7 +359,7 @@ let scalar_at t i =
   Nx.reshape [||] (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) t)
 
 (* What to change for a solve that stopped short, from its lane's facts. *)
-let fix tol (st : Answer.status) facts =
+let fix tol (st : Solution.status) facts =
   let fact name = List.assoc name facts in
   match st with
   | Budget_spent ->
@@ -370,7 +370,7 @@ let fix tol (st : Answer.status) facts =
         (fact "disorder")
   | Stalled ->
       "The step fell below the time's resolution near t: the solution may blow \
-       up there." ^ Tolerance.zero_hint tol
+       up there." ^ Tol.zero_hint tol
   | Not_finite -> "The field is not finite at an accepted state near t."
   | Converged | Not_bracketed -> ""
 
@@ -410,9 +410,9 @@ let run fn repeats y m ~tol ~budget f ~at y0 =
   in
   let stack1 v = Nx.Ptree.map y (fun _ x -> Nx.unsqueeze ~axes:[ 0 ] x) v in
   if n_int = 0 then
-    Answer.v ~fn ~settings ~fix:(fix tol) ~value:(stack1 y0)
+    Solution.v ~fn ~settings ~fix:(fix tol) ~value:(stack1 y0)
       ~error:(stack1 (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) y0))
-      ~status:(Nx.scalar Nx.int32 (Answer.code Converged))
+      ~status:(Nx.scalar Nx.int32 (Solution.code Converged))
       ~evaluations:(Nx.scalar Nx.int32 0l) ~facts:[] ()
   else begin
     (* Times out of order are a status: the lane stops before its search. *)
@@ -643,7 +643,7 @@ let run fn repeats y m ~tol ~budget f ~at y0 =
         status =
           Nx.where
             (Nx.greater_equal_s disorder 0l)
-            (Nx.scalar Nx.int32 (Answer.code Stalled))
+            (Nx.scalar Nx.int32 (Solution.code Stalled))
             (Nx.scalar Nx.int32 Elementwise.running);
       }
     in
@@ -652,7 +652,7 @@ let run fn repeats y m ~tol ~budget f ~at y0 =
         ~until:(fun s -> Nx.logical_not (Elementwise.searching s.status))
         ~f:attempt initial
     in
-    let ok = Nx.equal_s s.status (Answer.code Converged) in
+    let ok = Nx.equal_s s.status (Solution.code Converged) in
     (* The answer: each interval's accepted steps taken again with the tracked
        field, as fractions of the interval, so a moved end stretches every
        step. *)
@@ -727,7 +727,7 @@ let run fn repeats y m ~tol ~budget f ~at y0 =
         (Nx.add a (Nx.mul (Nx.sub b a) s.sigma))
     in
     let count c = Nx.cast dtype c in
-    Answer.v ~fn ~settings
+    Solution.v ~fn ~settings
       ~spent:{ used = s.attempts; unit = "attempted steps"; budget }
       ~fix:(fix tol) ~value ~error:s.errs ~status:s.status ~evaluations:s.evals
       ~facts:
@@ -753,4 +753,4 @@ let solve y m ~tol ~budget f ~t0 ~t1 y0 =
          (Num.shape (Nx.shape t1)));
   let at = Nx.stack [ t0; t1 ] in
   let last v = Nx.Ptree.map y (fun _ x -> Nx.get [ 1 ] x) v in
-  Answer.map ~fn last (run fn `Allowed y m ~tol ~budget f ~at y0)
+  Solution.map ~fn last (run fn `Allowed y m ~tol ~budget f ~at y0)

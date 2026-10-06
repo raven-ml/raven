@@ -87,7 +87,7 @@ let bracket ~tol f ~lo ~hi =
        point differs from [x] in the digits [tol] reads. *)
     let t1 =
       Nx.maximum
-        (Nx.div_s (Tolerance.scale tol s.x) 3.)
+        (Nx.div_s (Tol.scale tol s.x) 3.)
         (Nx.add_s (Nx.mul_s (Nx.abs s.x) eps) (Float.ldexp 1. (-1000)))
     in
     (* The parabola through (x, fx), (w, fw), (v, fv): its step [p / q]. *)
@@ -191,7 +191,7 @@ let bracket ~tol f ~lo ~hi =
   in
   let s = of_fields fs in
   let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
-  let ok = Nx.equal_s st (Answer.code Converged) in
+  let ok = Nx.equal_s st (Solution.code Converged) in
   (* A minimum whose bracket kept a given end is that end. *)
   let at_lo = Nx.logical_and ok (Nx.equal s.a a0)
   and at_hi = Nx.logical_and ok (Nx.equal s.b b0) in
@@ -211,7 +211,7 @@ let bracket ~tol f ~lo ~hi =
          tolerance's scale; loosen tol."
     | Converged | Budget_spent | Not_bracketed -> ""
   in
-  Answer.v ~fn
+  Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
     ~fix ~value
     ~error:(Nx.div_s (Nx.sub s.b s.a) 2.)
