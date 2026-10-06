@@ -1,6 +1,6 @@
 (executable
  (name bench_compile)
- (libraries nx nx.wide rune thumper unix))
+ (libraries nx nx.wide nx.metal nx.cuda nx.nv nx.amd nx.device rune thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly. Every sample compiles cold, so no [--warm] pass.

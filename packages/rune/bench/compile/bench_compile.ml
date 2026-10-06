@@ -9,8 +9,19 @@
    cache, so a sample is a fresh process's whole first call of a compiled
    function: tracing, lowering, tolk's passes and the kernel compiler, and the
    process's start, about 25 ms. A case takes five samples, whose median a
-   function's compile is held to. Every case compiles at float64 over a 1-D
-   input on the host. *)
+   function's compile is held to. The special functions and the shaped programs
+   compile at float64 over a 1-D input on the host.
+
+   [sinkhorn-64] compiles 64 Sinkhorn iterations unrolled, and their gradient,
+   on the host: 1,024 kernels, most of them equal, so scheduling them is about
+   half of its compile, and a cost that grew with the square of the kernels
+   would show.
+
+   [search/<device>] is the first call of a function compiled with a beam search
+   of width 2 on [search_parallel] domains, then [calls] more: one product of
+   two float32 square matrices, on the host and on each GPU the machine has. The
+   search compiles, loads and times each candidate; the calls run the kernel it
+   chose, and take longer if its timings misled it. *)
 
 let n = 1024
 let input lo hi = Nx.add_s (Nx.mul_s (Nx.rand Nx.float64 [| n |]) (hi -. lo)) lo
@@ -80,6 +91,74 @@ let wide_sum () =
     (Sys.opaque_identity
        (Rune.jit Nx.Ptree.(p @-> returns p) (fun w -> Nx_wide.sum w) w))
 
+(* Sinkhorn iterations in the log domain between two uniform batches, over a
+   cost matrix of [sinkhorn_rows] rows, and the gradient of the transport cost
+   with respect to the cost. *)
+let sinkhorn_rows = 64
+
+let sinkhorn iterations c =
+  let n = Nx.dim 0 c in
+  let log_weight = -.log (Float.of_int n) in
+  let k = Nx.neg c in
+  let u = ref (Nx.zeros_like (Nx.slice [ A; R (0, 1) ] c)) in
+  let v = ref (Nx.zeros_like (Nx.slice [ R (0, 1); A ] c)) in
+  for _ = 1 to iterations do
+    u :=
+      Nx.neg
+        (Nx.sub_s
+           (Nx.logsumexp ~axes:[ 1 ] ~keepdims:true (Nx.add k !v))
+           log_weight);
+    v :=
+      Nx.neg
+        (Nx.sub_s
+           (Nx.logsumexp ~axes:[ 0 ] ~keepdims:true (Nx.add k !u))
+           log_weight)
+  done;
+  Nx.sum (Nx.mul (Nx.exp (Nx.add (Nx.add k !u) !v)) c)
+
+let sinkhorn_case iterations () =
+  let c = Nx.rand Nx.float64 [| sinkhorn_rows; sinkhorn_rows |] in
+  ignore (Sys.opaque_identity (Rune.jit' (Rune.grad' (sinkhorn iterations)) c))
+
+(* Searches *)
+
+let search_parallel = 8
+
+(* The search's product on the host is of 64 rows, called 100 times; on a GPU,
+   of 1,024 rows, called 200 times. *)
+type search = { rows : int; calls : int }
+
+let on_host = { rows = 64; calls = 100 }
+let on_gpu = { rows = 1024; calls = 200 }
+
+(* The devices a search runs on: the host, and each GPU that opens. *)
+let devices =
+  [
+    ("host", on_host, fun () -> Some Nx.Device.host);
+    ("metal", on_gpu, fun () -> Result.to_option (Nx_metal.get 0));
+    ("cuda", on_gpu, fun () -> Result.to_option (Nx_cuda.get 0));
+    ("nv", on_gpu, fun () -> Result.to_option (Nx_nv.get 0));
+    ("amd", on_gpu, fun () -> Result.to_option (Nx_amd.get 0));
+  ]
+
+let search_case search open_device () =
+  let d = Option.get (open_device ()) in
+  let n = search.rows in
+  let x = Nx.place (Nx.Placement.on d) (Nx.rand Nx.float32 [| n; n |]) in
+  let f =
+    Rune.jit' ~beam:2 ~parallel:search_parallel (fun x -> Nx.matmul x x)
+  in
+  let m = Nx.Device.memory d in
+  for _ = 0 to search.calls do
+    ignore (Sys.opaque_identity (f x));
+    Nx_device.synchronize m
+  done
+
+let search_cases =
+  List.map
+    (fun (name, search, d) -> ("search/" ^ name, search_case search d))
+    devices
+
 let cases =
   [
     ("erfinv", fun () -> compile Nx.erfinv (input (-1.) 1.));
@@ -98,6 +177,8 @@ let cases =
   @ special "i1e" Nx.i1e (-30.) 30.
   @ lbeta
   @ [ ("wide/sum-1e6", wide_sum) ]
+  @ [ ("sinkhorn-64", sinkhorn_case 64) ]
+  @ search_cases
 
 let rec remove path =
   if Sys.is_directory path then (
@@ -132,6 +213,10 @@ let config =
 
 let () =
   match Array.to_list Sys.argv with
+  | [ _; "--opens"; name ] ->
+      let _, _, open_device = List.find (fun (n, _, _) -> n = name) devices in
+      let opens = Option.is_some (open_device ()) in
+      exit (if opens then 0 else 1)
   | [ _; "--cold"; id ] -> (
       match List.assoc_opt id cases with
       | Some f -> Nx.Rng.with_key (Nx.Rng.key 42) f
@@ -139,7 +224,20 @@ let () =
           prerr_endline ("bench_compile: no case " ^ id);
           exit 2)
   | _ ->
+      (* A search runs on a device that opens, asked of a fresh process: a GPU's
+         driver must not be initialized in this one. *)
+      let opens id =
+        match String.split_on_char '/' id with
+        | [ "search"; name ] ->
+            Sys.command
+              (Filename.quote_command Sys.executable_name [ "--opens"; name ])
+            = 0
+        | _ -> true
+      in
       Thumper.run "compile" ~config
         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-        (List.map (fun (id, _) -> Thumper.bench id (cold id)) cases)
+        (List.filter_map
+           (fun (id, _) ->
+             if opens id then Some (Thumper.bench id (cold id)) else None)
+           cases)
       |> exit
