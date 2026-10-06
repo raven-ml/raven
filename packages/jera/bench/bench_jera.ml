@@ -3,162 +3,154 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* jera's workloads, each eager, compiled, differentiated under compilation, and
-   compiled cold.
+(* jera's workloads, eager, compiled and as a compiled gradient.
 
    A compiled row builds its function and calls it once in its setup, so the
    timed region replays the program. A grad row compiles the gradient of the
-   workload's scalar. A cold row runs the workload's first compiled call in a
-   fresh process with tolk's disk cache off ([CACHELEVEL=0]): tracing,
-   scheduling and kernel compilation, the cost a program pays once. *)
+   workload's scalar. Each family has every row on one workload and the rows
+   that catch its regressions on the others, so the suite stays within its time.
+
+   [--cold ID] prints the milliseconds of one workload's first compiled call in
+   this fresh process: tracing, scheduling and kernel compilation, the cost a
+   program pays once. Run it with tolk's disk cache off ([CACHELEVEL=0]). It is
+   not a row: a cold compile takes seconds, and a row's protocol repeats it
+   twenty times. *)
 
 open Jera
 
 let f64 = Nx.float64
 let sync () = Nx_device.synchronize Nx_device.host
 
-(* A workload: a function of one float64 tensor, its argument, and the scalar
-   its gradient is taken of. *)
+type row = Eager | Compiled | Grad
+
+(* A workload: a function of one float64 tensor, its argument, and its rows; a
+   grad row differentiates the sum of the result. *)
 type workload = {
   id : string;
   f : Nx.float64_t -> Nx.float64_t;
   x : unit -> Nx.float64_t;
-  grad : bool;
-      (** Whether the compiled gradient compiles: the chunked answers of
-          [Quad.adaptive] and [Quad.cubature] fail in tolk's division folding
-          today. *)
+  rows : row list;
 }
 
-let loss w x = Nx.sum (w.f x)
+let all = [ Eager; Compiled; Grad ]
 
-(* Quadrature: ∫₀¹ e^(θx) dx by 20-point Gauss, for 10⁴ values of θ. *)
+(* Formulas *)
+
+(* ∫₀¹ e^(θx) dx by 20-point Gauss, for 10³ values of θ. *)
 let quad =
   {
-    id = "quad-gauss20-10k";
+    id = "quad-gauss20-1k";
     f =
       (fun theta ->
         Quad.fixed (Quad.Rule.gauss 20)
           (fun x -> Nx.exp (Nx.mul x theta))
           (Quad.Range.v (Nx.zeros_like theta) (Nx.ones_like theta)));
-    x = (fun () -> Nx.linspace f64 (-2.) 2. 10_000);
-    grad = true;
+    x = (fun () -> Nx.linspace f64 (-2.) 2. 1_000);
+    rows = all;
   }
 
-(* Cumulative: ∫ cos from the first of 10³ knots to each, by Kronrod 15. *)
-let cumulative =
-  {
-    id = "cumulative-kronrod7-1k";
-    f = (fun knots -> Quad.cumulative (Quad.Rule.kronrod 7) Nx.cos knots);
-    x = (fun () -> Nx.linspace f64 0. 10. 1_000);
-    grad = true;
-  }
-
-(* A natural cubic spline through 10³ samples, evaluated at 10⁴ points. *)
-let knots = Nx.linspace f64 0. 10. 1_000
-let points = Nx.linspace f64 0.001 9.999 10_000
-let points_2 = Nx.linspace f64 0.001 1.999 1_000
+(* A natural cubic spline through 100 samples, evaluated at 10³ points. *)
+let knots = Nx.linspace f64 0. 10. 100
+let points = Nx.linspace f64 0.001 9.999 1_000
 
 let spline =
   {
-    id = "spline-1k-eval-10k";
+    id = "spline-100-eval-1k";
     f = (fun y -> Piecewise.eval (Piecewise.cubic `Natural knots y) points);
     x = (fun () -> Nx.sin knots);
-    grad = true;
+    rows = [ Eager; Compiled; Grad ];
   }
 
-(* A bicubic spline on a 64 × 64 grid, evaluated at 10⁴ points. *)
-let axis = Nx.linspace f64 0. 1. 64
+(* A bicubic spline on a 16 × 16 grid, evaluated at 10³ points. *)
+let axis = Nx.linspace f64 0. 1. 16
 
 let grid_points =
   Nx.stack ~axis:1
-    [ Nx.linspace f64 0.01 0.99 10_000; Nx.linspace f64 0.99 0.01 10_000 ]
+    [ Nx.linspace f64 0.01 0.99 1_000; Nx.linspace f64 0.99 0.01 1_000 ]
 
 let grid =
   {
-    id = "grid-cubic-64x64-eval-10k";
+    id = "grid-cubic-16x16-eval-1k";
     f =
       (fun v ->
         Grid.eval (Grid.cubic `Not_a_knot ~axes:[ axis; axis ] v) grid_points);
     x =
       (fun () ->
         Nx.sin
-          (Nx.add (Nx.reshape [| 64; 1 |] axis) (Nx.reshape [| 1; 64 |] axis)));
-    grad = true;
+          (Nx.add (Nx.reshape [| 16; 1 |] axis) (Nx.reshape [| 1; 16 |] axis)));
+    rows = [ Eager; Compiled ];
   }
 
-(* 10³ pendulums by tsit5, 10 steps between each of 11 times. *)
+(* 100 pendulums by tsit5, 10 steps between each of 6 times. *)
 let pendulum _ (q, p) = (p, Nx.neg (Nx.sin q))
-let times = Nx.linspace f64 0. 5. 11
+let times = Nx.linspace f64 0. 2. 6
+let state = Nx.Ptree.(pair tensor tensor)
+let starts () = Nx.linspace f64 0.1 2. 100
 
-let ode =
+let march =
   {
-    id = "ode-tsit5-1k-pendulums";
+    id = "ode-march-tsit5-100-pendulums";
     f =
       (fun q0 ->
         fst
-          (Ode.march
-             Nx.Ptree.(pair tensor tensor)
-             Ode.tsit5 ~steps:10 pendulum ~at:times
+          (Ode.march state Ode.tsit5 ~steps:10 pendulum ~at:times
              (q0, Nx.zeros_like q0)));
-    x = (fun () -> Nx.linspace f64 0.1 2. 1_000);
-    grad = true;
+    x = starts;
+    rows = [ Eager; Compiled; Grad ];
   }
 
 (* The same pendulums by yoshida4. *)
 let split =
   {
-    id = "split-yoshida4-1k-pendulums";
+    id = "split-yoshida4-100-pendulums";
     f =
       (fun q0 ->
         fst
-          (Split.march
-             Nx.Ptree.(pair tensor tensor)
-             Split.yoshida4 ~steps:10
+          (Split.march state Split.yoshida4 ~steps:10
              ~kick:(fun h (q, p) -> (q, Nx.sub p (Nx.mul h (Nx.sin q))))
              ~drift:(fun h (q, p) -> (Nx.add q (Nx.mul h p), p))
              ~at:times
              (q0, Nx.zeros_like q0)));
-    x = (fun () -> Nx.linspace f64 0.1 2. 1_000);
-    grad = true;
+    x = starts;
+    rows = [ Eager; Compiled ];
   }
 
-(* Kepler's equation for 10⁴ mean anomalies at e = 0.6, by Newton and by
-   bracket. *)
-let kepler_f m x = Nx.sub (Nx.sub x (Nx.mul_s (Nx.sin x) 0.6)) m
-let anomalies () = Nx.linspace f64 0.01 3.1 10_000
+(* Solves *)
 
-let newton =
-  {
-    id = "root-newton-kepler-10k";
-    f =
-      (fun m ->
-        Solution.get
-          (Root.newton
-             ~tol:(Tol.v ~rel:1e-12 ~abs:1e-15)
-             ~budget:16
-             ~slope:(fun x -> Nx.rsub_s 1. (Nx.mul_s (Nx.cos x) 0.6))
-             (kepler_f m) m));
-    x = anomalies;
-    grad = true;
-  }
+(* Kepler's equation for 10³ mean anomalies at e = 0.6. *)
+let kepler m x = Nx.sub (Nx.sub x (Nx.mul_s (Nx.sin x) 0.6)) m
+let anomalies () = Nx.linspace f64 0.01 3.1 1_000
+let tight = Tol.v ~rel:1e-12 ~abs:1e-15
 
 let bracket =
   {
-    id = "root-bracket-kepler-10k";
+    id = "root-bracket-kepler-1k";
     f =
       (fun m ->
         Solution.get
-          (Root.bracket
-             ~tol:(Tol.v ~rel:1e-12 ~abs:1e-15)
-             (kepler_f m) ~lo:(Nx.zeros_like m) ~hi:(Nx.full_like m Float.pi)));
+          (Root.bracket ~tol:tight (kepler m) ~lo:(Nx.zeros_like m)
+             ~hi:(Nx.full_like m Float.pi)));
     x = anomalies;
-    grad = true;
+    rows = all;
   }
 
-(* The minimum of (x − c)² + (x − c)⁴ for 10⁴ centres, by Brent. *)
+let newton =
+  {
+    id = "root-newton-kepler-1k";
+    f =
+      (fun m ->
+        Solution.get
+          (Root.newton ~tol:tight ~budget:16
+             ~slope:(fun x -> Nx.rsub_s 1. (Nx.mul_s (Nx.cos x) 0.6))
+             (kepler m) m));
+    x = anomalies;
+    rows = [ Eager; Compiled ];
+  }
+
+(* The minimum of (x − c)² + (x − c)⁴ for 10³ centres, by Brent. *)
 let brent =
   {
-    id = "minimize-bracket-10k";
+    id = "minimize-bracket-1k";
     f =
       (fun c ->
         let bowl x =
@@ -169,48 +161,48 @@ let brent =
           (Minimize.bracket
              ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
              bowl ~lo:(Nx.sub_s c 3.) ~hi:(Nx.add_s c 1.)));
-    x = (fun () -> Nx.linspace f64 (-2.) 2. 10_000);
-    grad = true;
+    x = (fun () -> Nx.linspace f64 (-2.) 2. 1_000);
+    rows = [ Eager; Compiled ];
   }
 
-(* ∫₀¹ √x e^(θx) dx for 10³ values of θ, adaptively and by tanh-sinh. *)
-let thetas () = Nx.linspace f64 (-2.) 2. 1_000
+(* ∫₀¹ √x e^(θx) dx for 100 values of θ, adaptively and by tanh-sinh. *)
+let thetas () = Nx.linspace f64 (-2.) 2. 100
 let singular theta x = Nx.mul (Nx.sqrt x) (Nx.exp (Nx.mul x theta))
+let unit theta = Quad.Range.v (Nx.zeros_like theta) (Nx.ones_like theta)
 
 let adaptive =
   {
-    id = "quad-adaptive-kronrod7-1k";
+    id = "quad-adaptive-kronrod7-100";
     f =
       (fun theta ->
         Solution.get
-          (Quad.adaptive (Quad.Rule.kronrod 7) ~tol:(Tol.rel 1e-10) ~budget:64
-             (singular theta)
-             (Quad.Range.v (Nx.zeros_like theta) (Nx.ones_like theta))));
+          (Quad.adaptive (Quad.Rule.kronrod 7) ~tol:(Tol.rel 1e-8) ~budget:32
+             (singular theta) (unit theta)));
     x = thetas;
-    grad = false;
+    (* A compiled gradient fails in tolk's division folding today. *)
+    rows = [ Eager; Compiled ];
   }
 
 let tanh_sinh =
   {
-    id = "quad-tanh-sinh-1k";
+    id = "quad-tanh-sinh-100";
     f =
       (fun theta ->
         Solution.get
-          (Quad.tanh_sinh ~tol:(Tol.rel 1e-12) (singular theta)
-             (Quad.Range.v (Nx.zeros_like theta) (Nx.ones_like theta))));
+          (Quad.tanh_sinh ~tol:(Tol.rel 1e-12) (singular theta) (unit theta)));
     x = thetas;
-    grad = true;
+    rows = [ Eager; Compiled; Grad ];
   }
 
-(* ∫ e^(θ (x + y + z)) over [0, 1]³ for 16 values of θ. *)
+(* ∫ e^(θ (x + y + z)) over [0, 1]³ for 4 values of θ. *)
 let cubature =
   {
-    id = "quad-cubature-3d-16";
+    id = "quad-cubature-3d-4";
     f =
       (fun theta ->
         let lanes = Nx.dim 0 theta in
         Solution.get
-          (Quad.cubature ~tol:(Tol.rel 1e-9) ~budget:256
+          (Quad.cubature ~tol:(Tol.rel 1e-7) ~budget:64
              (fun x ->
                Nx.exp
                  (Nx.mul
@@ -219,11 +211,14 @@ let cubature =
              (Quad.Box.v
                 (Nx.zeros f64 [| lanes; 3 |])
                 (Nx.ones f64 [| lanes; 3 |]))));
-    x = (fun () -> Nx.linspace f64 (-1.) 1. 16);
-    grad = false;
+    x = (fun () -> Nx.linspace f64 (-1.) 1. 4);
+    (* A compiled gradient fails in tolk's division folding today. *)
+    rows = [ Eager; Compiled ];
   }
 
-(* A fit of sin(θ x) + |x − 0.3| on [0, 2] to 1e-10. *)
+(* A fit of sin(θ x) + |x − 0.3| on [0, 2] to 1e-8. *)
+let fit_points = Nx.linspace f64 0.001 1.999 100
+
 let adapt =
   {
     id = "piecewise-adapt-kink";
@@ -232,44 +227,41 @@ let adapt =
         Piecewise.eval
           (Solution.get
              (Piecewise.adapt Nx.Ptree.tensor ~degree:12
-                ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
-                ~budget:128
+                ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+                ~budget:32
                 (fun x ->
                   Nx.add (Nx.sin (Nx.mul x theta)) (Nx.abs (Nx.sub_s x 0.3)))
                 (Nx.scalar f64 0.) (Nx.scalar f64 2.)))
-          points_2);
+          fit_points);
     x = (fun () -> Nx.scalar f64 1.7);
-    grad = true;
+    rows = [ Eager; Compiled ];
   }
 
-(* 10³ pendulums, one state, solved by tsit5 to 1e-8 at 11 times. *)
+(* 100 pendulums, one state, solved by tsit5 to 1e-6 at 6 times. *)
 let sample =
   {
-    id = "ode-sample-tsit5-1k-pendulums";
+    id = "ode-sample-tsit5-100-pendulums";
     f =
       (fun q0 ->
         fst
           (Solution.get
-             (Ode.sample
-                Nx.Ptree.(pair tensor tensor)
-                Ode.tsit5
-                ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
-                ~budget:2000 pendulum ~at:times
+             (Ode.sample state Ode.tsit5
+                ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
+                ~budget:200 pendulum ~at:times
                 (q0, Nx.zeros_like q0))));
-    x = (fun () -> Nx.linspace f64 0.1 2. 1_000);
-    grad = true;
+    x = starts;
+    rows = all;
   }
 
 let workloads =
   [
     quad;
-    cumulative;
     spline;
     grid;
-    ode;
+    march;
     split;
-    newton;
     bracket;
+    newton;
     brent;
     adaptive;
     tanh_sinh;
@@ -278,32 +270,29 @@ let workloads =
     sample;
   ]
 
-(* Quasi-Monte Carlo over [0, 1]⁸ to a standard error of 1e-5. Eager only: a
-   compiled call needs the key as its argument. *)
-let qmc () =
-  let key = Nx.Rng.key 7 in
-  Thumper.bench "quad-qmc-8d" (fun () ->
-      ignore
-        (Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget:1024
-           (fun x -> Nx.exp (Nx.mean ~axes:[ Nx.ndim x - 1 ] x))
-           (Quad.Box.v (Nx.zeros f64 [| 8 |]) (Nx.ones f64 [| 8 |])));
-      sync ())
-
-(* 10³ geometric Brownian motions by Euler–Maruyama, 32 steps on a path of depth
-   10. Eager only: a compiled march's draws come from the path's captured
-   key. *)
+(* Eager-only rows: a compiled march's or integral's draws come from a captured
+   key, which a compiled call refuses. *)
 let sde () =
   let w =
-    Sde.Brownian.v (Nx.Rng.key 7) f64 ~shape:[| 1_000 |] ~t0:0. ~t1:1. ~depth:10
+    Sde.Brownian.v (Nx.Rng.key 7) f64 ~shape:[| 100 |] ~t0:0. ~t1:1. ~depth:8
   in
-  Thumper.bench "sde-euler-maruyama-1k" (fun () ->
+  Thumper.bench "sde-euler-maruyama-100" (fun () ->
       ignore
-        (Sde.march Nx.Ptree.tensor Sde.euler_maruyama ~steps:32
+        (Sde.march Nx.Ptree.tensor Sde.euler_maruyama ~steps:16
            ~drift:(fun _ x -> Nx.mul_s x 0.5)
            ~diffusion:(fun _ x dw -> Nx.mul (Nx.mul_s x 0.8) dw)
            w
            ~at:(Nx.create f64 [| 2 |] [| 0.; 1. |])
-           (Nx.ones f64 [| 1_000 |]));
+           (Nx.ones f64 [| 100 |]));
+      sync ())
+
+let qmc () =
+  let key = Nx.Rng.key 7 in
+  Thumper.bench "quad-qmc-8d" (fun () ->
+      ignore
+        (Quad.qmc key ~tol:(Tol.abs 1e-4) ~budget:64
+           (fun x -> Nx.exp (Nx.mean ~axes:[ Nx.ndim x - 1 ] x))
+           (Quad.Box.v (Nx.zeros f64 [| 8 |]) (Nx.ones f64 [| 8 |])));
       sync ())
 
 let compiled f x =
@@ -311,52 +300,45 @@ let compiled f x =
   ignore (Sys.opaque_identity (f x));
   (f, x)
 
-let rows ~cold w =
-  let exe = Sys.executable_name in
-  let cold_row =
-    Thumper.bench "cold" (fun () ->
-        let env = Array.append [| "CACHELEVEL=0" |] (Unix.environment ()) in
-        let pid =
-          Unix.create_process_env exe [| exe; "--cold"; w.id |] env Unix.stdin
-            Unix.stdout Unix.stderr
-        in
-        match Unix.waitpid [] pid with
-        | _, Unix.WEXITED 0 -> ()
-        | _ -> failwith ("bench_jera: the cold call of " ^ w.id ^ " failed"))
-  in
-  Thumper.group w.id
-    ([
-       Thumper.bench_with_setup ~setup:w.x "eager" (fun x ->
-           ignore (w.f x);
-           sync ());
-       Thumper.bench_with_setup
-         ~setup:(fun () -> compiled w.f (w.x ()))
-         "compiled"
-         (fun (f, x) ->
-           ignore (f x);
-           sync ());
-     ]
-    @ (if w.grad then
-         [
-           Thumper.bench_with_setup
-             ~setup:(fun () -> compiled (Rune.grad' (loss w)) (w.x ()))
-             "grad"
-             (fun (f, x) ->
-               ignore (f x);
-               sync ());
-         ]
-       else [])
-    @ if cold then [ cold_row ] else [])
-
-(* The first compiled call of a workload, in this process. *)
-let cold id =
-  let w = List.find (fun w -> String.equal w.id id) workloads in
-  let f = Rune.jit' w.f in
-  ignore (Sys.opaque_identity (f (w.x ())));
+let timed (f, x) =
+  ignore (f x);
   sync ()
 
-let suite ~cold = List.map (rows ~cold) workloads @ [ sde (); qmc () ]
-let config = Thumper.Config.(default |> deadline 300.)
+let row w = function
+  | Eager ->
+      [
+        Thumper.bench_with_setup ~setup:w.x "eager" (fun x ->
+            ignore (w.f x);
+            sync ());
+      ]
+  | Compiled ->
+      [
+        Thumper.bench_with_setup
+          ~setup:(fun () -> compiled w.f (w.x ()))
+          "compiled" timed;
+      ]
+  | Grad ->
+      [
+        Thumper.bench_with_setup
+          ~setup:(fun () ->
+            compiled (Rune.grad' (fun x -> Nx.sum (w.f x))) (w.x ()))
+          "grad" timed;
+      ]
+
+let rows w = Thumper.group w.id (List.concat_map (row w) w.rows)
+
+(* The wall time of a workload's first compiled call, in milliseconds. *)
+let cold id =
+  let w = List.find (fun w -> String.equal w.id id) workloads in
+  let x = w.x () in
+  let t0 = Unix.gettimeofday () in
+  let f = Rune.jit' w.f in
+  ignore (Sys.opaque_identity (f x));
+  sync ();
+  Printf.printf "%.3f\n" ((Unix.gettimeofday () -. t0) *. 1000.)
+
+let suite () = List.map rows workloads @ [ sde (); qmc () ]
+let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
   match Array.to_list Sys.argv with
@@ -367,7 +349,7 @@ let () =
       ignore
         (Thumper.measure
            ~config:Thumper.Config.(config |> samples 3 |> warmup 0.)
-           (suite ~cold:false))
+           (suite ()))
   | _ ->
       Thumper.run "jera" ~config
         ~budgets:
@@ -375,5 +357,5 @@ let () =
             Thumper.Budget.no_slower_than 0.05;
             Thumper.Budget.no_more_alloc_than 0.01;
           ]
-        (suite ~cold:true)
+        (suite ())
       |> exit
