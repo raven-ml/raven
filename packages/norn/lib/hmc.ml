@@ -47,175 +47,35 @@ let ptree (type u f) (u : u P.t) : (u, f) state P.t =
 
 let stats = Stats.ptree
 
-(* The longest trajectory, in leapfrog steps. *)
-let max_steps = 1024
-
-(* The shared geometry
-
-   One Gaussian serves every chain: the maps over chains capture it. *)
-
-let color u g z = Rune.vmap P.(u @-> returns u) (Geometry.color u g) z
-let whiten u g x = Rune.vmap P.(u @-> returns u) (Geometry.whiten u g) x
-
-(* [to_whitened u g z gx] is the gradient in whitened coordinates of a gradient
-   [gx] at [color z]: [color]'s transpose applied to it; [to_original] is
-   [whiten]'s. *)
-let to_whitened u g z gx =
-  Rune.vmap
-    P.(u @-> u @-> returns u)
-    (fun z gx -> snd (Rune.vjp u u (Geometry.color u g) z) gx)
-    z gx
-
-let to_original u g x gz =
-  Rune.vmap
-    P.(u @-> u @-> returns u)
-    (fun x gz -> snd (Rune.vjp u u (Geometry.whiten u g) x) gz)
-    x gz
-
-(* Keys
-
-   Transition [n] of a run has the key [k = fold_in run n]. Chain [i] has row
-   [i] of [split_batch (fold_in k 0)]: its momentum draws from [fold_in key 0],
-   its acceptance uniform from [fold_in key 1], and a step-size search's trial
-   [j] from [fold_in (fold_in key 2) j]. The chains share the jitter of the
-   trajectory's length, drawn from [fold_in k 1]. *)
-
-let chain_keys k c = Nx.Rng.split_batch ~n:c (Nx.Rng.fold_in k 0)
-
-(* A trajectory *)
-
-type ('u, 'f) trip = {
-  at : ('u, 'f) H.point;
-  running : Nx.bool_t;
-  diverging : Nx.bool_t;
-  steps : Nx.int32_t; (* each chain's *)
-  trip : Nx.int32_t; (* the shared count *)
-}
-
-type ('u, 'f) trip' = ('u, 'f) trip
-
-let trip_ptree (type u f) (u : u P.t) : (u, f) trip P.t =
-  let point = H.point_ptree u in
-  let module S = struct
-    type _ t = (u, f) trip'
-
-    let walk c (t : (u, f) trip) : (u, f) trip =
-      let open P.Walk in
-      let at = field c "at" (structure point) t.at in
-      let running = field c "running" tensor t.running in
-      let diverging = field c "diverging" tensor t.diverging in
-      let steps = field c "steps" tensor t.steps in
-      let trip = field c "trip" tensor t.trip in
-      { at; running; diverging; steps; trip }
-  end in
-  P.nest (module S) P.unit
-
-(* What a transition tells warmup: each chain's whitened start, its proposal and
-   the proposal's momentum, its acceptance probability, and the trajectory's
-   duration. *)
-type ('u, 'f) move = {
-  z0 : 'u;
-  z1 : 'u;
-  p1 : 'u;
-  alpha : (float, 'f) Nx.t;
-  time : (float, 'f) Nx.t;
-}
-
-(* [transition u lp k s] is one transition of every chain from [s]: [n] leapfrog
-   steps of the shared step size, [n] the jittered length over it, then a
-   Metropolis choice between the trajectory's end and its start. A chain whose
-   step leaves the reals or whose energy error exceeds the limit stops there and
-   is rejected. *)
+(* [transition u lp k s] is one transition of every chain from [s], and what it
+   tells warmup. *)
 let transition (type f) u lp k (s : (_, f) state) =
-  let eps = s.step_size in
-  let dt = Nx.dtype eps in
-  let c = (Nx.shape s.lp).(0) in
-  let i32 v = Nx.scalar Nx.int32 (Int32.of_int v) in
-  let g = s.geometry in
-  let keys = chain_keys k c in
-  let lp_z z = lp (color u g z) in
-  let z0 = whiten u g s.position in
-  let g0 = to_whitened u g z0 s.grad in
-  let p0 = H.momentum u keys z0 in
-  let h = Nx.broadcast_to [| c |] eps in
-  let h0 = Nx.sub (H.kinetic u h p0) s.lp in
-  let jitter = Nx.mul_s (Nx.Rng.uniform (Nx.Rng.fold_in k 1) dt [||]) 2. in
-  let n =
-    Nx.clamp ~min:(Nx_dtype.of_float dt 1.)
-      ~max:(Nx_dtype.of_float dt (float_of_int max_steps))
-      (Nx.ceil (Nx.div (Nx.mul jitter s.length) eps))
-  in
-  let n = Nx.cast Nx.int32 n in
-  let no = Nx.zeros Nx.bool [| c |] in
-  let energy_error (at : (_, f) H.point) =
-    let d = Nx.sub (Nx.sub (H.kinetic u h at.p) at.lp) h0 in
-    Nx.where (Nx.isnan d) (Nx.scalar dt Float.infinity) d
-  in
-  let step t =
-    let leaf, finite = H.leapfrog "Norn.Hmc.step" u lp_z t.running h t.at in
-    let diverged =
-      Nx.logical_and t.running
-        (Nx.logical_or (Nx.logical_not finite)
-           (Nx.greater (energy_error leaf) (Nx.scalar dt H.max_energy_error)))
-    in
-    let moved = Nx.logical_and t.running (Nx.logical_not diverged) in
-    {
-      at = H.choose_point u moved leaf t.at;
-      running = moved;
-      diverging = Nx.logical_or t.diverging diverged;
-      steps = Nx.add t.steps (Nx.cast Nx.int32 t.running);
-      trip = Nx.add t.trip (i32 1);
-    }
-  in
-  let start = { H.z = z0; p = p0; g = g0; lp = s.lp } in
   let t =
-    Rune.iterate (trip_ptree u) ~max:max_steps
-      ~until:(fun t ->
-        Nx.logical_or
-          (Nx.greater_equal t.trip n)
-          (Nx.logical_not (Nx.any t.running)))
-      ~f:step
-      {
-        at = start;
-        running = Nx.ones Nx.bool [| c |];
-        diverging = no;
-        steps = Nx.zeros Nx.int32 [| c |];
-        trip = i32 0;
-      }
+    H.transition "Norn.Hmc.step" u lp k s.geometry ~step_size:s.step_size
+      ~length:s.length s.position s.lp s.grad
   in
-  let alpha =
-    Nx.where t.diverging (Nx.zeros dt [| c |])
-      (Nx.minimum (Nx.exp (Nx.neg (energy_error t.at))) (Nx.ones dt [| c |]))
-  in
-  let uniform =
-    Rune.vmap
-      P.(Nx.Rng.ptree @-> returns tensor)
-      (fun k -> Nx.Rng.uniform (Nx.Rng.fold_in k 1) dt [||])
-      keys
-  in
-  let accepted = Nx.less uniform alpha in
-  let x1 = color u g t.at.z in
-  let g1 = to_original u g x1 t.at.g in
-  let position = Rows.choose u accepted x1 s.position in
-  let grad = Rows.choose u accepted g1 s.grad in
-  let lp1 = Nx.where accepted t.at.lp s.lp in
+  let c = (Nx.shape s.lp).(0) in
   let stats =
     Stats.
       {
-        lp = lp1;
-        acceptance = alpha;
-        step_size = h;
+        lp = t.lp;
+        acceptance = t.alpha;
+        step_size = Nx.broadcast_to [| c |] s.step_size;
         n_steps = t.steps;
         diverging = t.diverging;
-        saturated = no;
-        energy = h0;
+        saturated = Nx.zeros Nx.bool [| c |];
+        energy = t.energy;
       }
   in
-  let move =
-    { z0; z1 = t.at.z; p1 = t.at.p; alpha; time = Nx.mul (Nx.cast dt n) eps }
-  in
-  ( { s with position; lp = lp1; grad; stats; draw = Nx.add s.draw (i32 1) },
-    move )
+  ( {
+      s with
+      position = t.position;
+      lp = t.lp;
+      grad = t.grad;
+      stats;
+      draw = Nx.add s.draw (Nx.scalar Nx.int32 1l);
+    },
+    t )
 
 (* Starting *)
 
@@ -361,7 +221,7 @@ let centre u w x =
    criterion's derivative in log length, [t d ((z1 - mean z1) · p1)] with [d =
    |z1 - mean z1|² - |z0 - mean z0|²], the means over chains, [z1]'s weighted by
    acceptance; zero when no chain accepts. *)
-let gradient u (m : (_, _) move) =
+let gradient u (m : (_, _) H.transition) =
   let w = m.alpha in
   let total = Nx.sum w in
   let none = Nx.equal total (Nx.zeros_like total) in
@@ -391,7 +251,7 @@ let chees_step (a : _ chees) eps grad =
   let log_length =
     Nx.minimum
       (Nx.add a.log_length (Nx.mul_s step adam_rate))
-      (Nx.log (Nx.mul_s eps (float_of_int max_steps)))
+      (Nx.log (Nx.mul_s eps (float_of_int H.max_steps)))
   in
   let weight = Nx.pow count (Nx.scalar_like count (-.average_kappa)) in
   let bar =
@@ -445,11 +305,13 @@ let harmonic_mean a =
 let init_step_size u lp k (s : (_, _) state) =
   let c = (Nx.shape s.lp).(0) in
   let g = s.geometry in
-  let z0 = whiten u g s.position in
-  let start = { H.z = z0; p = z0; g = to_whitened u g z0 s.grad; lp = s.lp } in
+  let z0 = H.whiten u g s.position in
+  let start =
+    { H.z = z0; p = z0; g = H.to_whitened u g z0 s.grad; lp = s.lp }
+  in
   H.search "Norn.Hmc.warmup" u
-    (fun z -> lp (color u g z))
-    ~reduce:log_harmonic_mean (chain_keys k c) start s.step_size
+    (fun z -> lp (H.color u g z))
+    ~reduce:log_harmonic_mean (H.chain_keys k c) start s.step_size
 
 let warmup (type f) u lp k ~steps (s : (_, f) state) =
   if steps < 0 then invalid_argf "Norn.Hmc.warmup: steps = %d is negative" steps;

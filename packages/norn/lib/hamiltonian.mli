@@ -58,3 +58,67 @@ val search :
     step from [start] crosses [log 0.8] (Stan's heuristic). [reduce] maps the
     chains' [[c]] log acceptances to [eps]'s shape. Trial [i]'s momentum of
     chain [j] draws from [fold_in (fold_in keys.(j) 2) i]. *)
+
+(** {1:transitions Fixed-length transitions}
+
+    Every chain shares one step size, one length and one Gaussian, and moves
+    with unit metric in the Gaussian's whitened coordinates. *)
+
+val max_steps : int
+(** The longest trajectory, in leapfrog steps. *)
+
+val color : 'u Nx.Ptree.t -> ('u, 'f) Gaussian.t -> 'u -> 'u
+(** [color u g z] is {!Geometry.color} of every chain's [z]. *)
+
+val whiten : 'u Nx.Ptree.t -> ('u, 'f) Gaussian.t -> 'u -> 'u
+(** [whiten u g x] is {!Geometry.whiten} of every chain's [x]. *)
+
+val to_whitened : 'u Nx.Ptree.t -> ('u, 'f) Gaussian.t -> 'u -> 'u -> 'u
+(** [to_whitened u g z gx] is the gradient in whitened coordinates of the
+    gradient [gx] at [color z]. *)
+
+val chain_keys : Nx.Rng.t -> int -> Nx.Rng.t
+(** [chain_keys k c] is row [i] of [split_batch ~n:c (fold_in k 0)] for chain
+    [i]. *)
+
+type ('u, 'f) transition = {
+  position : 'u;  (** Each chain's position after the transition. *)
+  lp : (float, 'f) Nx.t;  (** The density there. *)
+  grad : 'u;  (** Its gradient there. *)
+  alpha : (float, 'f) Nx.t;
+      (** The Metropolis probability of the trajectory's end, [0] at a
+          divergence. *)
+  steps : Nx.int32_t;  (** Each chain's leapfrog steps. *)
+  diverging : Nx.bool_t;
+  energy : (float, 'f) Nx.t;  (** The Hamiltonian after the momentum draw. *)
+  z0 : 'u;  (** The whitened start. *)
+  z1 : 'u;  (** The whitened end of the trajectory. *)
+  p1 : 'u;  (** Its momentum. *)
+  time : (float, 'f) Nx.t;  (** The trajectory's duration. *)
+}
+(** The type for a transition of every chain. *)
+
+val transition :
+  string ->
+  'u Nx.Ptree.t ->
+  ('u -> (float, 'f) Nx.t) ->
+  Nx.Rng.t ->
+  ('u, 'f) Gaussian.t ->
+  step_size:(float, 'f) Nx.t ->
+  length:(float, 'f) Nx.t ->
+  'u ->
+  (float, 'f) Nx.t ->
+  'u ->
+  ('u, 'f) transition
+(** [transition context u lp k g ~step_size ~length x l grad] is one transition
+    of every chain from [x], at density [l] with gradient [grad]: [n] leapfrog
+    steps of [step_size], [n] the [length] jittered uniformly in [(0, 2)] times
+    its value by one draw the chains share, over the step size, rounded up and
+    at most {!max_steps}; then a Metropolis choice between the trajectory's end
+    and its start. A chain whose step leaves the reals or whose energy error
+    exceeds {!max_energy_error} stops there and is rejected. Chain [i] draws
+    from row [i] of {!chain_keys}[ k c], its momentum from [fold_in key 0] and
+    its acceptance from [fold_in key 1]; the jitter from [fold_in k 1].
+
+    Raises [Invalid_argument] naming [context] if [lp] is NaN or [+inf] at a
+    finite position. *)
