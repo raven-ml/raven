@@ -3,7 +3,6 @@
  (libraries device_elf)
  (private_modules defs)
  (modules_without_implementation
-  aql
   capability
   code_object
   thread_trace))

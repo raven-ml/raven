@@ -248,13 +248,13 @@ let pred_exec ~xcc_mask p =
 (* IB_SIZE is 20 bits; bit 20 is CHAIN. *)
 let max_indirect = 0xf_ffff
 
-let indirect fn addr ~dwords =
+let indirect_buffer addr ~dwords =
   if dwords < 0 || dwords > max_indirect then
-    invalid_arg (Printf.sprintf "%s: %d words, expected 0 to 1048575" fn dwords);
+    invalid_arg
+      (Printf.sprintf "Pm4.indirect_buffer: %d words, expected 0 to 1048575"
+         dwords);
   packet Defs.packet3_indirect_buffer
     [ W64 (Value addr); Dword (dwords lor Defs.indirect_buffer_valid) ]
-
-let indirect_buffer addr ~dwords = indirect "Pm4.indirect_buffer" addr ~dwords
 
 (* Runs *)
 
