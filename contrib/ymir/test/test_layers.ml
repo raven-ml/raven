@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Layers: only the module holding the solves names jera, so every other
-   function of the geometry is nx arithmetic. *)
+   function of the geometry is nx arithmetic, and no module names ymir.fits,
+   so a transform links no file reader. *)
 
 open Windtrap
 
@@ -35,4 +36,12 @@ let () =
                  (modules ())
              in
              equal (list string) [ "solve.ml" ] naming);
+         test "no module names Ymir_fits" (fun () ->
+             let naming =
+               List.filter_map
+                 (fun (file, names) ->
+                   if List.mem "Ymir_fits" names then Some file else None)
+                 (modules ())
+             in
+             equal (list string) [] naming);
        ])
