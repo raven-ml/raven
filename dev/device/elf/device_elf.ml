@@ -553,8 +553,7 @@ let read ~align ?held obj =
             entries r (fun a ->
                 let o = a - target.sh_addr in
                 if o < 0 || o >= target.sh_size then
-                  fail
-                    "a relocation's offset %d lies past the end of section %d" a
+                  fail "a relocation's offset %d lies outside section %d" a
                     h.sh_info;
                 off + o)
   in
