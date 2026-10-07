@@ -91,7 +91,10 @@ let take t tlsf ?(align = page) ?(zero = true) n =
 let palloc ?(align = page) ?zero ?boot t n =
   if n <= 0 || not (is_power_of_two align) then
     invalid_arg
-      (Printf.sprintf "Page_table.palloc: %d bytes aligned to %d" n align);
+      (Printf.sprintf
+         "Page_table.palloc: %d bytes aligned to %d, expected more than 0 \
+          bytes and a power of two"
+         n align);
   let tlsf =
     match boot with
     | Some true -> t.boot
@@ -101,7 +104,9 @@ let palloc ?(align = page) ?zero ?boot t n =
   take t tlsf ~align ?zero n
 
 let pfree t pa =
-  let refuse () = invalid_arg (Printf.sprintf "Page_table.pfree: 0x%x" pa) in
+  let refuse () =
+    invalid_arg (Printf.sprintf "Page_table.pfree: no block at 0x%x" pa)
+  in
   let inside a = pa >= Tlsf.base a && pa < Tlsf.base a + Tlsf.length a in
   if Hashtbl.mem t.held pa then refuse ();
   match List.find_opt inside [ t.boot; t.tables; t.main ] with
@@ -265,8 +270,14 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
     | Pool -> round_up (memory / table_share) table_round
     | Main -> 0
   in
-  if boot < 0 || boot + table_bytes > memory then
-    invalid_arg "Page_table.create: the pools do not fit in the memory";
+  if boot < 0 then
+    invalid_arg (Printf.sprintf "Page_table.create: boot %d is negative" boot);
+  if boot + table_bytes > memory then
+    invalid_arg
+      (Printf.sprintf
+         "Page_table.create: %d boot and %d table bytes exceed the %d bytes of \
+          memory"
+         boot table_bytes memory);
   let rest = boot + table_bytes in
   let boot_pool = Tlsf.create ~base:0 boot in
   let root =
@@ -317,7 +328,11 @@ let memory t = t.memory
 let check t fn ~va n =
   let v = va - t.base in
   if v < 0 || n < 0 || n > span t - v || not (aligned (v lor n) page) then
-    invalid_arg (Printf.sprintf "Page_table.%s: 0x%x bytes at 0x%x" fn n va)
+    invalid_arg
+      (Printf.sprintf
+         "Page_table.%s: 0x%x bytes at 0x%x are not whole pages the tables \
+          reach"
+         fn n va)
 
 let tables t ~va n =
   check t "tables" ~va n;
@@ -344,7 +359,9 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
     (fun (pa, n) ->
       if pa < 0 || n < 0 || not (aligned (pa lor n) page) then
         invalid_arg
-          (Printf.sprintf "Page_table.map: 0x%x bytes at physical 0x%x" n pa))
+          (Printf.sprintf
+             "Page_table.map: 0x%x bytes at physical 0x%x are not whole pages" n
+             pa))
     ranges;
   let size = List.fold_left (fun n (_, k) -> n + k) 0 ranges in
   check t "map" ~va size;
@@ -411,7 +428,9 @@ let block t n =
   | found -> found
 
 let alloc ?(uncached = false) ?(contiguous = false) t n =
-  if n <= 0 then invalid_arg (Printf.sprintf "Page_table.alloc: %d bytes" n);
+  if n <= 0 then
+    invalid_arg
+      (Printf.sprintf "Page_table.alloc: %d bytes, expected more than 0" n);
   if n > Space.length t.space then None
   else
     let n = round_up n page in

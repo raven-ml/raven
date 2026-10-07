@@ -68,14 +68,14 @@ external transport_write : transport -> int -> string -> int -> int -> unit
 
 let make fn transport address length =
   if length < 0 then
-    invalid_arg (Printf.sprintf "Window.%s: %d bytes" fn length);
+    invalid_arg (Printf.sprintf "Window.%s: length %d is negative" fn length);
   { address; length; transport }
 
 let v address length = make "v" 0 address length
 let unsafe_transport p = p
 
 let through tr address length =
-  if tr = 0 then invalid_arg "Window.through: no transport";
+  if tr = 0 then invalid_arg "Window.through: the transport is null";
   make "through" tr address length
 
 let address w = w.address
@@ -92,7 +92,7 @@ let aligned fn w off size =
   check fn w off size;
   if (w.address + off) land (size - 1) <> 0 then
     invalid_arg
-      (Printf.sprintf "Window.%s: address 0x%x not %d-aligned" fn
+      (Printf.sprintf "Window.%s: address 0x%x is not a multiple of %d" fn
          (w.address + off) size)
 
 let sub w off n =
@@ -177,5 +177,7 @@ let fill w off n c =
 
 let bigarray w =
   if not (mapped w) then
-    invalid_arg "Window.bigarray: a window through a transport";
+    invalid_arg
+      "Window.bigarray: the window is reached through a transport and has no \
+       address in the process";
   bigarray_at w.address w.length

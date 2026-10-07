@@ -89,7 +89,7 @@ let id ?(vendor = vendor) ?(class_ = 0x03) bus =
   { Machine.bus; vendor; device = 0x73bf; class_ }
 
 let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ = 0x03
-let gpus () = Gpus.make ~name:"AMD" ~memory_bar:0 is_gpu
+let gpus () = Gpus.make ~memory_bar:0 is_gpu
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 
 let functions =
@@ -448,7 +448,7 @@ let resets =
 (* This machine *)
 
 let test_this_none () =
-  let g = Gpus.make ~name:"none" ~memory_bar:0 (fun _ -> false) in
+  let g = Gpus.make ~memory_bar:0 (fun _ -> false) in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
   ignore (unopened (kernel g this 0));
@@ -460,7 +460,7 @@ let test_this_none () =
 (* Every function of this machine stands for a GPU: the kernel driver opens
    nothing, so holding one through it changes nothing. *)
 let this_gpus () =
-  let g = Gpus.make ~name:"PCI" ~memory_bar:0 (fun _ -> true) in
+  let g = Gpus.make ~memory_bar:0 (fun _ -> true) in
   if Gpus.buses g Machine.this = [] then
     skip ~reason:"this machine lists no PCI function" ();
   g

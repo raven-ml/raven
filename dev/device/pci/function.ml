@@ -93,7 +93,8 @@ let set_config32 f off x = set_config f "set_config32" off 4 x
 
 let index f fn i =
   live f fn;
-  if i < 0 then invalid_arg (Printf.sprintf "Function.%s: BAR %d" fn i)
+  if i < 0 then
+    invalid_arg (Printf.sprintf "Function.%s: BAR %d is negative" fn i)
 
 let bar f i =
   index f "bar" i;
@@ -131,7 +132,8 @@ let unmap f w =
 
 let interrupt f ms =
   live f "interrupt";
-  if ms < 0 then invalid_arg (Printf.sprintf "Function.interrupt: %d ms" ms);
+  if ms < 0 then
+    invalid_arg (Printf.sprintf "Function.interrupt: %d ms is negative" ms);
   f.fn.interrupt ms
 
 (* A function answers again once its vendor ID reads other than all ones. *)
@@ -143,7 +145,8 @@ let reset f =
   f.fn.reset ();
   let answers () = f.fn.config 0 2 <> absent in
   if not (Machine.wait f.machine ~ms:reset_ms answers) then
-    failwith (Printf.sprintf "%s does not answer after its reset" f.bus)
+    failwith
+      (Printf.sprintf "%s does not answer %d ms after its reset" f.bus reset_ms)
 
 (* System memory *)
 
@@ -152,23 +155,34 @@ let huge = 2 lsl 20
 
 let on_page f fn a =
   if a mod Machine.page f.machine <> 0 then
-    invalid_arg (Printf.sprintf "Function.%s: 0x%x is not on a page" fn a)
+    invalid_arg
+      (Printf.sprintf "Function.%s: 0x%x is not on a %d-byte page" fn a
+         (Machine.page f.machine))
 
 let alloc_dma ?(contiguous = false) ?va f n =
   live f "alloc_dma";
   let page = Machine.page f.machine in
   if n <= 0 || n > max_int - page then
-    invalid_arg (Printf.sprintf "Function.alloc_dma: %d bytes" n);
+    invalid_arg
+      (Printf.sprintf "Function.alloc_dma: %d bytes, expected 1 to %d" n
+         (max_int - page));
   let n = (n + page - 1) / page * page in
   if contiguous && n > huge then
-    invalid_arg "Function.alloc_dma: contiguous memory is at most 2 MiB";
+    invalid_arg
+      (Printf.sprintf
+         "Function.alloc_dma: %d bytes of contiguous memory, expected at most \
+          2 MiB"
+         n);
   Option.iter (on_page f "alloc_dma") va;
   (match va with
   | Some va
     when contiguous && n > page
          && f.fn.addressing = Machine.Physical
          && va mod huge <> 0 ->
-      invalid_arg (Printf.sprintf "Function.alloc_dma: 0x%x is not on 2 MiB" va)
+      invalid_arg
+        (Printf.sprintf
+           "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs"
+           va)
   | _ -> ());
   let ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
@@ -181,7 +195,9 @@ let free_dma f w =
 let pin f a n =
   live f "pin";
   on_page f "pin" a;
-  if n <= 0 then invalid_arg (Printf.sprintf "Function.pin: %d bytes" n);
+  if n <= 0 then
+    invalid_arg
+      (Printf.sprintf "Function.pin: %d bytes, expected more than 0" n);
   let runs = f.fn.pin a n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.pins (a, n) ());
   runs

@@ -27,11 +27,10 @@
 type t
 (** The type for a vendor's GPUs. *)
 
-val make : name:string -> memory_bar:int -> (Machine.id -> bool) -> t
-(** [make ~name ~memory_bar is_gpu] is the GPUs of the vendor named [name] in
-    messages, such as ["AMD"]: the functions [f] with [is_gpu f]. [memory_bar]
-    is the BAR through which the process reaches their memory, which {!detach}
-    enlarges. *)
+val make : memory_bar:int -> (Machine.id -> bool) -> t
+(** [make ~memory_bar is_gpu] is the GPUs of a vendor: the functions [f] with
+    [is_gpu f]. [memory_bar] is the BAR through which the process reaches their
+    memory, which {!detach} enlarges. *)
 
 val buses : t -> Machine.t -> string list
 (** [buses g m] is the bus addresses of [g]'s GPUs on [m], in bus order: GPU [i]

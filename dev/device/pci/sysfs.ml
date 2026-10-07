@@ -34,10 +34,19 @@ let write file s =
 let readlink link =
   try Unix.readlink link
   with Unix.Unix_error (e, _, _) ->
-    failwith (Printf.sprintf "%s: %s" link (Unix.error_message e))
+    failwith
+      (Printf.sprintf "reading the link %s: %s" link (Unix.error_message e))
 
-let hex s =
-  int_of_string (if String.starts_with ~prefix:"0x" s then s else "0x" ^ s)
+(* [hex file s] is the number that [s], read from [file], spells in
+   hexadecimal. *)
+let hex file s =
+  let digits = if String.starts_with ~prefix:"0x" s then s else "0x" ^ s in
+  match int_of_string_opt digits with
+  | Some n -> n
+  | None ->
+      failwith (Printf.sprintf "reading %s: %S is no hexadecimal number" file s)
+
+let read_hex file = hex file (read file)
 
 (* Functions *)
 
@@ -58,9 +67,9 @@ let functions () =
         match
           {
             Ops.bus;
-            vendor = hex (read (path bus "vendor"));
-            device = hex (read (path bus "device"));
-            class_ = hex (read (path bus "class")) lsr 16;
+            vendor = read_hex (path bus "vendor");
+            device = read_hex (path bus "device");
+            class_ = read_hex (path bus "class") lsr 16;
           }
         with
         | id -> Some id
@@ -99,14 +108,13 @@ let registers bus =
       Int32.to_int (String.get_int32_le s (bar_base + (4 * i))) land 0xffff_ffff)
 
 let resource bus i =
-  match
-    List.nth_opt (String.split_on_char '\n' (read (path bus "resource"))) i
-  with
+  let file = path bus "resource" in
+  match List.nth_opt (String.split_on_char '\n' (read file)) i with
   | None -> None
   | Some line -> (
       match String.split_on_char ' ' line with
       | start :: stop :: _ ->
-          let start = hex start and stop = hex stop in
+          let start = hex file start and stop = hex file stop in
           if stop <= start then None else Some (stop - start + 1)
       | _ -> None)
 
@@ -234,7 +242,17 @@ let detach bus =
       List.iter (fun s -> write (path s "remove") "1") (siblings bus);
       if driver bus = None && not (enabled bus) then
         write (path bus "enable") "1";
-      match access bus (state bus) with Ok _ -> () | Error why -> failwith why)
+      let s = state bus in
+      match (access bus s, s) with
+      | Ok _, _ -> ()
+      | Error _, { siblings = sibling :: _; _ } ->
+          failwith
+            (Printf.sprintf
+               "%s still shares its device with %s after removing it" bus
+               sibling)
+      | Error _, { driver = None; enabled = false; _ } ->
+          failwith (Printf.sprintf "%s is still disabled after enabling it" bus)
+      | Error why, _ -> failwith why)
 
 let reset bus = write (path bus "reset") "1"
 
@@ -267,7 +285,7 @@ let largest = Sys.int_size - 2
 let resize bus i =
   let file = path bus (Printf.sprintf "resource%d_resize" i) in
   if driver bus = None && Sys.file_exists file then
-    let sizes = hex (read file) in
+    let sizes = read_hex file in
     let rec try_from k =
       if k >= 0 then
         if sizes land (1 lsl k) = 0 then try_from (k - 1)

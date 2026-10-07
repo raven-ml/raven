@@ -13,7 +13,6 @@ type interface = Kernel | Pci
    briefly, so that giving a GPU back waits for no driver. A GPU is named by its
    machine and bus address. *)
 type t = {
-  name : string;
   memory_bar : int;
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
@@ -30,9 +29,8 @@ and hold = {
   fn : Function.t option;
 }
 
-let make ~name ~memory_bar is_gpu =
+let make ~memory_bar is_gpu =
   {
-    name;
     memory_bar;
     is_gpu;
     mutex = Mutex.create ();
@@ -52,7 +50,7 @@ let bus h = h.bus
 (* Checks *)
 
 let index fn i =
-  if i < 0 then invalid_arg (Printf.sprintf "Gpus.%s: GPU %d" fn i)
+  if i < 0 then invalid_arg (Printf.sprintf "Gpus.%s: GPU %d is negative" fn i)
 
 let ( let* ) = Result.bind
 
@@ -61,9 +59,7 @@ let gpu g m i =
   let all = buses g m in
   match List.nth_opt all i with
   | None ->
-      Error
-        (Printf.sprintf "no GPU %d; there are %d %s GPUs" i (List.length all)
-           g.name)
+      Error (Printf.sprintf "no such GPU; the machine has %d" (List.length all))
   | Some bus
     when Mutex.protect g.holds (fun () ->
              List.exists (fun h -> h.machine == m && h.bus = bus) g.held) ->
@@ -78,14 +74,18 @@ let caught f =
   | exception Unix.Unix_error (e, fn, arg) ->
       Error (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
 
-let interface_name = function Kernel -> "their kernel driver" | Pci -> "PCI"
+let interface_name = function
+  | Kernel -> "through their kernel driver"
+  | Pci -> "over PCI"
 
 let refuse_interface g wanted =
   match g.interface with
   | Some c when c <> wanted ->
       Error
-        (Printf.sprintf "this process reaches %s GPUs through %s, not %s" g.name
-           (interface_name c) (interface_name wanted))
+        (Printf.sprintf
+           "this process reaches these GPUs %s; open this one that way, or \
+            from another process"
+           (interface_name c))
   | _ -> Ok ()
 
 (* Opening *)
@@ -105,9 +105,7 @@ let open_kernel g m i f =
   Mutex.protect g.mutex @@ fun () ->
   let* () =
     if m == Machine.this then Ok ()
-    else
-      Error
-        (Printf.sprintf "another machine's %s GPUs are reached over PCI" g.name)
+    else Error "another machine's GPUs are reached over PCI only"
   in
   let* () = refuse_interface g Kernel in
   let* bus = gpu g m i in
@@ -122,8 +120,7 @@ let open_pci g m i f =
   let* () = if m == Machine.this then refuse_interface g Pci else Ok () in
   let* bus = gpu g m i in
   let* () =
-    if lost g m bus then
-      Error (bus ^ " was lost; over PCI only a reset recovers it")
+    if lost g m bus then Error (bus ^ " was lost; reset the GPU first")
     else Ok ()
   in
   let* fn = Function.take m bus in

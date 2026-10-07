@@ -99,7 +99,9 @@ let gpu m ~uncached ~bar n =
         Some { mapping; host = Some host; source = Allocated }
 
 let positive fn n =
-  if n <= 0 then invalid_arg (Printf.sprintf "Memory.%s: %d bytes" fn n)
+  if n <= 0 then
+    invalid_arg
+      (Printf.sprintf "Memory.%s: %d bytes, expected more than 0" fn n)
 
 let alloc ?(uncached = false) m kind n =
   positive "alloc" n;
@@ -117,7 +119,11 @@ let alloc ?(uncached = false) m kind n =
 let forget table fn mem =
   match Hashtbl.find_opt table mem.mapping.va with
   | Some mem' when mem' == mem -> Hashtbl.remove table mem.mapping.va
-  | _ -> invalid_arg (Printf.sprintf "Memory.%s: memory it does not hold" fn)
+  | _ ->
+      invalid_arg
+        (Printf.sprintf
+           "Memory.%s: the memory at 0x%x is not this GPU's, or was given back"
+           fn mem.mapping.va)
 
 (* Once the function is released the GPU may be another instance's: only system
    memory, pins and addresses are given back, and no entry is written. *)
@@ -145,9 +151,14 @@ let map_host m a n =
   let n = round_up n page in
   let base = Page_table.base m.tables in
   if a mod page <> 0 then
-    Error (Printf.sprintf "the memory at 0x%x does not start on a page" a)
+    Error
+      (Printf.sprintf "the memory at 0x%x does not start on a %d-byte page" a
+         page)
   else if a < base || a + n > base + Page_table.span m.tables then
-    Error (Printf.sprintf "the memory at 0x%x is outside the GPU's addresses" a)
+    Error
+      (Printf.sprintf
+         "the memory at 0x%x is outside the GPU's addresses [0x%x, 0x%x)" a base
+         (base + Page_table.span m.tables))
   else
     match Function.pin m.fn a n with
     | exception Failure why -> Error why
@@ -169,7 +180,10 @@ let map_host m a n =
 let map_peer m ~owner mem =
   (match Hashtbl.find_opt owner.allocated mem.mapping.va with
   | Some mem' when mem' == mem -> ()
-  | _ -> invalid_arg "Memory.map_peer: memory its owner did not allocate");
+  | _ ->
+      invalid_arg
+        (Printf.sprintf "Memory.map_peer: the memory at 0x%x is not its owner's"
+           mem.mapping.va));
   let map = mem.mapping in
   let iommu f = Function.addressing f = Machine.Iommu in
   if Function.machine m.fn != Function.machine owner.fn then
@@ -179,7 +193,9 @@ let map_peer m ~owner mem =
       "a GPU behind an IOMMU reaches only its own memory and the memory the \
        process maps for it"
   else if map.target <> System && small_bar owner then
-    Error "the other GPU's memory BAR is too small for peer access"
+    Error
+      "the other GPU's memory BAR is too small for peer access; enable \
+       Resizable BAR in the firmware settings"
   else
     let pages, target =
       match map.target with

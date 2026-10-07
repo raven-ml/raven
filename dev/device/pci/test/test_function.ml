@@ -471,7 +471,7 @@ let test_reset_silent () =
   let _, f, _ = take_fake () in
   Function.set_config16 f 0 0xffff;
   raises
-    (Failure (bus1 ^ " does not answer after its reset"))
+    (Failure (bus1 ^ " does not answer 1000 ms after its reset"))
     (fun () -> Function.reset f)
 
 let uses =
