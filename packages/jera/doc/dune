@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package jera)
+ (libraries jera nx rune))

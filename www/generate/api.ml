@@ -34,6 +34,8 @@ let libraries =
         ("kaun.hf", "Kaun_hf");
       ] );
     ("vega", [ ("vega", "Vega") ]);
+    ("jera", [ ("jera", "Jera") ]);
+    ("norn", [ ("norn", "Norn"); ("norn.model", "Norn_model") ]);
     ( "munin",
       [
         ("munin", "Munin");

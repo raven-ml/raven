@@ -52,6 +52,24 @@ let libraries =
       symbol = {|ᚹ|};
     };
     {
+      name = "jera";
+      display = {|<span class="rune-symbol">ᛄ</span> jera|};
+      color = "color-jera";
+      description =
+        "Numerical methods: systems, minima, integrals, interpolation, \
+         differential equations";
+      tagline = "Numerical methods for OCaml";
+      symbol = {|ᛄ|};
+    };
+    {
+      name = "norn";
+      display = {|<span class="rune-symbol">ᚾ</span> norn|};
+      color = "color-norn";
+      description = "Probabilistic inference: models, samplers, diagnostics";
+      tagline = "Probabilistic inference for OCaml";
+      symbol = {|ᚾ|};
+    };
+    {
       name = "hugin";
       display = {|<span class="rune-symbol">ᛞ</span> hugin|};
       color = "color-purple";

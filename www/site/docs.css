@@ -105,6 +105,8 @@ body {
 .nav-links a.color-orange { color: var(--color-rune) !important; }  /* rune */
 .nav-links a.color-red { color: var(--color-kaun) !important; }     /* kaun */
 .nav-links a.color-slate { color: var(--color-tolk) !important; }   /* tolk */
+.nav-links a.color-jera { color: var(--color-jera) !important; }    /* jera */
+.nav-links a.color-norn { color: var(--color-norn) !important; }    /* norn */
 
 /* Tab navigation */
 .nav-tabs {

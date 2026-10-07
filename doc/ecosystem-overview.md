@@ -7,15 +7,18 @@ through tensors.
 ## How the Libraries Fit Together
 
 ```
-                         ┌───────────┐
-                         │   Kaun    │  neural networks
-                         │  (Flax)   │
-                         └─────┬─────┘
-                               │
-                         ┌─────┴─────┐
-                         │   Rune    │  autodiff, vmap
-                         │  (JAX)    │
-                         └─────┬─────┘
+       ┌───────────┐                  ┌───────────┐
+       │   Kaun    │  neural networks │   Norn    │  inference
+       │  (Flax)   │                  │ (NumPyro) │
+       └─────┬─────┘                  └─────┬─────┘
+             │                        ┌─────┴─────┐
+             │                        │   Jera    │  numerical methods
+             │                        │  (SciPy)  │
+             │                        └─────┬─────┘
+       ┌─────┴──────────────────────────────┴──────┐
+       │                    Rune                   │  autodiff, vmap
+       │                   (JAX)                   │
+       └───────────────────────┬───────────────────┘
                                │
   ┌────────────────────────────┴────────────────────────────┐
   │                          Nx                              │
@@ -37,6 +40,10 @@ through tensors.
 batching, metrics, and HuggingFace Hub integration. Models
 are typed records you define; optimizers come from **Vega**.
 
+**Jera** builds on Rune to solve systems, find minima, integrate,
+interpolate and solve differential equations, with answers Rune
+differentiates. **Norn** builds on both for probabilistic inference.
+
 **Talon**, **Brot**, **Hugin**, and **Quill** each use Nx directly for
 their domain.
 
@@ -46,6 +53,8 @@ their domain.
 |---|---|
 | Work with numerical arrays | [Nx](../packages/nx/doc/index.md) |
 | Compute gradients | [Rune](../packages/rune/doc/index.md) |
+| Solve equations, integrate, interpolate, fit | [Jera](../packages/jera/doc/index.md) |
+| Fit a probabilistic model | [Norn](../packages/norn/doc/index.md) |
 | Train neural networks | [Kaun](../packages/kaun/doc/index.md) |
 | Tokenize text for language models | [Brot](../packages/brot/doc/index.md) |
 | Manipulate tabular data | [Talon](../packages/talon/doc/index.md) |
@@ -114,6 +123,48 @@ let params =
 ```
 
 [Kaun documentation →](../packages/kaun/doc/index.md)
+
+## Jera: Numerical Methods
+
+Linear and nonlinear systems, minima with bounds, integrals,
+interpolation, and ordinary, stiff, differential-algebraic, delay and
+stochastic differential equations. A problem is an OCaml function over
+tensors. A solve returns its answer with a status per lane and an error
+estimate against a stated tolerance, and Rune differentiates the answer
+through its own equation.
+
+<!-- $MDX skip -->
+```ocaml
+open Jera
+
+let pendulum _t (q, p) = (p, Nx.neg (Nx.sin q))
+
+let q, _ =
+  Ode.solve Nx.Ptree.(pair tensor tensor) Ode.tsit5
+    ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12) ~budget:1000 pendulum
+    ~t0:(Nx.scalar Nx.float64 0.) ~t1:(Nx.scalar Nx.float64 10.)
+    (Nx.scalar Nx.float64 1., Nx.scalar Nx.float64 0.)
+  |> Solution.get
+```
+
+[Jera documentation →](../packages/jera/doc/index.md)
+
+## Norn: Probabilistic Inference
+
+Distributions, bijectors, and samplers (NUTS, HMC, ensemble, nested
+sampling, tempered SMC) over a structure of your own type, with
+diagnostics as values of that structure. `norn.model` turns one
+generative function into the densities the samplers need.
+
+<!-- $MDX skip -->
+```ocaml
+let state = Norn.Nuts.init params log_density start
+let state = Norn.Nuts.warmup params log_density key ~steps:500 state
+let _, draws, stats = Norn.Nuts.sample params log_density key ~draws:500 state
+let () = Format.printf "%a@." Norn.Summary.pp (Norn.Summary.v params ~stats draws)
+```
+
+[Norn documentation →](../packages/norn/doc/index.md)
 
 ## Brot: Tokenization
 
@@ -197,6 +248,7 @@ from `opam install raven`:
 
 - [Fehu](https://github.com/raven-ml/raven/tree/main/contrib/fehu): reinforcement learning environments
 - [Sowilo](https://github.com/raven-ml/raven/tree/main/contrib/sowilo): differentiable computer vision
+- [Ymir](https://github.com/raven-ml/raven/tree/main/contrib/ymir): astronomy: units, frames, FITS, photometry, cosmology
 
 ## Getting Started
 
