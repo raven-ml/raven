@@ -1,6 +1,6 @@
 (tests
- (names test_window smoke test_memory)
- (libraries device_pci windtrap)
+ (names test_window smoke test_memory test_machine test_function)
+ (libraries device_pci unix windtrap)
  (foreign_stubs
   (language c)
   (names test_stubs)

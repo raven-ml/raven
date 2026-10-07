@@ -1,0 +1,913 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Windtrap
+open Device_pci
+
+external far : int -> int -> int = "test_far"
+
+let mib = 1 lsl 20
+let round_up n page = (n + page - 1) / page * page
+let config_size = 4096
+
+(* A fake machine
+
+   A transport's machine that keeps the contract of each operation as this
+   machine's does, and records each call it gets. A call that breaks an
+   operation's contract is misuse the library had to refuse before asking the
+   machine: the fake records it in [wrong] and fails. Each BAR range, DMA
+   allocation and pin is reached at a fresh address, as a server that maps them
+   in its own process gives. Operations take a lock, since pins and DMA memory
+   may be asked from any domain. *)
+
+type fn_fake = {
+  addressing : Machine.addressing;
+  page : int;
+  config : Bytes.t;
+  mutable maps : (int * int) list; (* live BAR windows, (address, length) *)
+  mutable dmas : (int * int) list;
+  mutable pins : (int * int) list; (* a multiset *)
+  mutable released : bool;
+  mutable calls : string list; (* newest first *)
+  mutable wrong : string list;
+  lock : Mutex.t;
+}
+
+and machine_fake = {
+  tr : Window.transport;
+  buses : string list;
+  m_page : int;
+  m_addressing : Machine.addressing;
+  mutable held : string list;
+  mutable taken : fn_fake list; (* newest first *)
+  mutable next : int;
+  m_lock : Mutex.t;
+}
+
+let transport () = Window.transport (far 0 4096)
+
+(* BAR 0 is 64-bit, so index 1 is its upper half. *)
+let bars = [| Some (0xe000_0000, 64 * 1024); None; Some (0xf000_0000, 4096) |]
+let bar_of i = if i >= 0 && i < Array.length bars then bars.(i) else None
+
+let fresh m n =
+  Mutex.protect m.m_lock @@ fun () ->
+  let a = m.next in
+  m.next <- m.next + round_up (max n 1) (2 * mib);
+  a
+
+(* A run per page, or one. *)
+let runs f a n ~one =
+  let n = round_up n f.page in
+  if one || f.addressing = Iommu then [ (0x1_0000_0000 + a, n) ]
+  else List.init (n / f.page) (fun i -> (a + (i * f.page), f.page))
+
+let disjoint (a, n) (b, k) = a + n <= b || b + k <= a
+
+let remove x l =
+  let rec go = function
+    | [] -> None
+    | y :: l when y = x -> Some l
+    | y :: l -> Option.map (fun l -> y :: l) (go l)
+  in
+  go l
+
+let fake_fn m bus =
+  let f =
+    {
+      addressing = m.m_addressing;
+      page = m.m_page;
+      config = Bytes.init config_size (fun i -> Char.chr (i land 0xff));
+      maps = [];
+      dmas = [];
+      pins = [];
+      released = false;
+      calls = [];
+      wrong = [];
+      lock = Mutex.create ();
+    }
+  in
+  let call ?(after_release = false) name check run =
+    Mutex.protect f.lock @@ fun () ->
+    f.calls <- name :: f.calls;
+    let misuse =
+      if f.released && not after_release then Some "after release" else check ()
+    in
+    match misuse with
+    | Some why ->
+        f.wrong <- Printf.sprintf "%s: %s" name why :: f.wrong;
+        failwith ("misuse reached the machine: " ^ name)
+    | None -> run ()
+  in
+  let width n = if List.mem n [ 1; 2; 4 ] then None else Some "width" in
+  let in_config off n =
+    if off < 0 || off > config_size - n then Some "offset" else width n
+  in
+  let window w = (Window.address w, Window.length w) in
+  let ops =
+    {
+      Machine.addressing = f.addressing;
+      config =
+        (fun off n ->
+          call "config"
+            (fun () -> in_config off n)
+            (fun () ->
+              let x = ref 0 in
+              for i = n - 1 downto 0 do
+                x := (!x lsl 8) lor Bytes.get_uint8 f.config (off + i)
+              done;
+              !x));
+      set_config =
+        (fun off n x ->
+          call "set_config"
+            (fun () -> in_config off n)
+            (fun () ->
+              for i = 0 to n - 1 do
+                Bytes.set_uint8 f.config (off + i) ((x lsr (8 * i)) land 0xff)
+              done));
+      bar =
+        (fun i ->
+          call "bar"
+            (fun () -> if i < 0 then Some "index" else None)
+            (fun () -> bar_of i));
+      map =
+        (fun i off n ->
+          call "map"
+            (fun () ->
+              match bar_of i with
+              | Some (_, size) when off >= 0 && n >= 0 && off <= size - n ->
+                  None
+              | _ -> Some "bytes outside the BAR")
+            (fun () ->
+              let a = fresh m n in
+              f.maps <- (a, n) :: f.maps;
+              Window.through m.tr a n));
+      unmap =
+        (fun w ->
+          call "unmap"
+            (fun () ->
+              if List.mem (window w) f.maps then None else Some "no window")
+            (fun () -> f.maps <- Option.get (remove (window w) f.maps)));
+      interrupt = (fun _ -> call "interrupt" (fun () -> None) (fun () -> false));
+      reset = (fun () -> call "reset" (fun () -> None) (fun () -> ()));
+      alloc_dma =
+        (fun ~contiguous ~va n ->
+          let bytes = round_up n f.page in
+          call "alloc_dma"
+            (fun () ->
+              match va with
+              | Some v when v mod f.page <> 0 -> Some "va off a page"
+              | _ when contiguous && bytes > 2 * mib -> Some "too large"
+              | Some v
+                when contiguous && f.addressing = Physical && bytes > f.page
+                     && v mod (2 * mib) <> 0 ->
+                  Some "va off 2 MiB"
+              | _ -> None)
+            (fun () ->
+              let a = match va with Some v -> v | None -> fresh m bytes in
+              let used = List.concat_map (fun g -> g.dmas) m.taken in
+              if List.exists (fun r -> not (disjoint r (a, bytes))) used then
+                failwith "far:1: the addresses are in use";
+              f.dmas <- (a, bytes) :: f.dmas;
+              (Window.through m.tr a bytes, runs f a bytes ~one:contiguous)));
+      free_dma =
+        (fun w ->
+          call ~after_release:true "free_dma"
+            (fun () ->
+              if List.mem (window w) f.dmas then None else Some "no memory")
+            (fun () -> f.dmas <- Option.get (remove (window w) f.dmas)));
+      pin =
+        (fun a n ->
+          call "pin"
+            (fun () -> if a mod f.page <> 0 then Some "off a page" else None)
+            (fun () ->
+              f.pins <- (a, n) :: f.pins;
+              runs f a n ~one:false));
+      unpin =
+        (fun a n ->
+          call "unpin"
+            (fun () ->
+              if List.mem (a, n) f.pins then None else Some "not pinned")
+            (fun () -> f.pins <- Option.get (remove (a, n) f.pins)));
+      release =
+        (fun () ->
+          call ~after_release:true "release"
+            (fun () -> None)
+            (fun () ->
+              if not f.released then begin
+                f.released <- true;
+                f.maps <- [];
+                Mutex.protect m.m_lock (fun () ->
+                    m.held <- List.filter (( <> ) bus) m.held)
+              end));
+    }
+  in
+  (f, ops)
+
+let bus1 = "0000:01:00.0"
+let bus2 = "0000:02:00.0"
+let absent = "0000:03:00.0"
+
+(* Each machine reaches its BAR ranges and memory at its own 4 GiB, below the
+   addresses DMA memory is asked at, so that no two machines' windows are equal;
+   [test_other_machine] makes them equal. *)
+let machines = Atomic.make 0
+let next_base () = (1 + (Atomic.fetch_and_add machines 1 mod 0x7000)) lsl 32
+
+let fake_machine ?(base = next_base ()) ?(page = 4096)
+    ?(addressing = Machine.Physical) () =
+  let m =
+    {
+      tr = transport ();
+      buses = [ bus1; bus2 ];
+      m_page = page;
+      m_addressing = addressing;
+      held = [];
+      taken = [];
+      next = base;
+      m_lock = Mutex.create ();
+    }
+  in
+  let take ~lock:_ bus =
+    Mutex.protect m.m_lock @@ fun () ->
+    if not (List.mem bus m.buses) then
+      Error (bus ^ " is no PCI function of far:1")
+    else if List.mem bus m.held then Error (bus ^ " is held")
+    else begin
+      let f, ops = fake_fn m bus in
+      m.held <- bus :: m.held;
+      m.taken <- f :: m.taken;
+      Ok ops
+    end
+  in
+  let machine =
+    Machine.make ~name:"far:1"
+      {
+        transport = m.tr;
+        page;
+        functions = (fun () -> []);
+        take;
+        reserve = (fun ~base:_ _ -> ());
+      }
+  in
+  (machine, m)
+
+let take_fake ?base ?page ?addressing () =
+  let machine, m = fake_machine ?base ?page ?addressing () in
+  let f = Result.get_ok (Function.take machine ~lock:"t" bus1) in
+  (machine, f, List.hd m.taken)
+
+let addressing =
+  Testable.make
+    ~pp:(fun ppf a ->
+      Format.pp_print_string ppf
+        (match a with Machine.Physical -> "Physical" | Iommu -> "Iommu"))
+    ~equal:( = )
+
+let runs_w = list (pair int int)
+
+(* Taking *)
+
+let test_take_asks () =
+  let calls = ref [] in
+  let machine =
+    Machine.make ~name:"far:1"
+      {
+        transport = transport ();
+        page = 4096;
+        functions = (fun () -> []);
+        take =
+          (fun ~lock bus ->
+            calls := (lock, bus) :: !calls;
+            Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`");
+        reserve = (fun ~base:_ _ -> ());
+      }
+  in
+  equal ~msg:"the machine's refusal" (result pass string)
+    (Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`")
+    (Function.take machine ~lock:"am" bus1);
+  equal ~msg:"what the machine was asked"
+    (list (pair string string))
+    [ ("am", bus1) ]
+    !calls
+
+let test_taken () =
+  List.iter
+    (fun a ->
+      let machine, f, fake = take_fake ~addressing:a () in
+      equal ~msg:"machine" (option string) (Machine.name machine)
+        (Machine.name (Function.machine f));
+      equal ~msg:"bus" string bus1 (Function.bus f);
+      equal ~msg:"addressing" addressing a (Function.addressing f);
+      equal ~msg:"released" bool false (Function.released f);
+      equal ~msg:"what the machine was asked" (list string) [] fake.calls)
+    [ Machine.Physical; Iommu ]
+
+(* A refused take holds nothing, and a release lets the function be taken
+   again. *)
+let test_refused () =
+  let machine, m = fake_machine () in
+  equal ~msg:"absent" bool true
+    (Result.is_error (Function.take machine ~lock:"t" absent));
+  let f = Result.get_ok (Function.take machine ~lock:"t" bus1) in
+  equal ~msg:"held" (result pass string)
+    (Error (bus1 ^ " is held"))
+    (Function.take machine ~lock:"t" bus1);
+  Function.release f;
+  let g = Result.get_ok (Function.take machine ~lock:"t" bus1) in
+  equal ~msg:"taken again once released" string bus1 (Function.bus g);
+  equal ~msg:"functions made" int 2 (List.length m.taken)
+
+let taking =
+  group "taking"
+    [
+      test "a take asks the machine with its lock name, and keeps its refusal"
+        test_take_asks;
+      test "a taken function is on its machine at its bus, as the machine says"
+        test_taken;
+      test "a function another holder has is refused until released"
+        test_refused;
+    ]
+
+(* Pass-through: a function's windows and runs are its machine's. *)
+let test_machine_values () =
+  let _, f, fake = take_fake ~page:4096 () in
+  let w = Function.map f 0 ~off:256 ~length:512 in
+  equal ~msg:"a BAR window" (pair int int) (List.hd fake.maps)
+    (Window.address w, Window.length w);
+  equal ~msg:"its BAR" (option (pair int int)) bars.(0) (Function.bar f 0);
+  let d, runs = Function.alloc_dma f (3 * 4096) in
+  equal ~msg:"DMA memory" (pair int int) (List.hd fake.dmas)
+    (Window.address d, Window.length d);
+  equal ~msg:"its runs" runs_w
+    (List.init 3 (fun i -> (Window.address d + (i * 4096), 4096)))
+    runs;
+  equal ~msg:"pinned runs" runs_w
+    [ (0x7000_0000, 4096); (0x7000_1000, 4096) ]
+    (Function.pin f 0x7000_0000 8192)
+
+let test_defaults () =
+  let _, f, fake = take_fake () in
+  let size = 64 * 1024 in
+  let lengths =
+    List.map Window.length
+      [
+        Function.map f 0; Function.map f 0 ~off:256; Function.map f 0 ~length:16;
+      ]
+  in
+  equal ~msg:"lengths" (list int) [ size; size - 256; 16 ] lengths;
+  equal ~msg:"windows the machine mapped" int 3 (List.length fake.maps)
+
+(* Two machines at the same address give equal windows but for their
+   transports. *)
+let test_other_machine () =
+  let _, f, fake = take_fake ~base:(1 lsl 40) () in
+  let _, g, _ = take_fake ~base:(1 lsl 40) () in
+  let w, _ = Function.alloc_dma f 4096 in
+  let w', _ = Function.alloc_dma g 4096 in
+  equal ~msg:"one address" int (Window.address w) (Window.address w');
+  raises_match ~msg:"DMA memory" (Exn.invalid_arg ~substring:"") (fun () ->
+      Function.free_dma f w');
+  let b = Function.map f 0 and b' = Function.map g 0 in
+  equal ~msg:"one address" int (Window.address b) (Window.address b');
+  raises_match ~msg:"a BAR window" (Exn.invalid_arg ~substring:"") (fun () ->
+      Function.unmap f b');
+  equal ~msg:"its memory and window stay" (pair int int) (1, 1)
+    (List.length fake.dmas, List.length fake.maps)
+
+(* Bytes [0, 0) at [size] lie in the BAR, as a window's [sub] takes them. *)
+let test_empty () =
+  let _, f, _ = take_fake () in
+  let size = 64 * 1024 in
+  equal ~msg:"at the start" int 0 (Window.length (Function.map f 0 ~length:0));
+  equal ~msg:"at the end" int 0 (Window.length (Function.map f 0 ~off:size))
+
+let test_reset () =
+  let _, f, fake = take_fake () in
+  Function.reset f;
+  equal ~msg:"asked" (list string) [ "reset" ] fake.calls
+
+let uses =
+  group "uses"
+    [
+      test "a function's windows, BARs and runs are its machine's"
+        test_machine_values;
+      test "a BAR window is the rest of the BAR from its offset by default"
+        test_defaults;
+      test "a reset asks the machine" test_reset;
+      xfail ~reason:"Function.map refuses every empty window"
+        (test "a window of no bytes inside a BAR is mapped" test_empty);
+      xfail ~reason:"windows are told apart by address and length"
+        (test "another machine's window at the same address is refused"
+           test_other_machine);
+    ]
+
+(* Misuse the model's generators withhold: each reaches the machine today. *)
+let refused name ?page ?addressing use =
+  xfail ~reason:"the machine is asked"
+    (test name (fun () ->
+         let _, f, fake = take_fake ?page ?addressing () in
+         raises_match (Exn.invalid_arg ~substring:"") (fun () -> use f);
+         equal ~msg:"what the machine was asked" (list string) [] fake.calls))
+
+let va_base = 0x7f00_0000_0000
+
+let misuse_refused =
+  group "misuse is refused before the machine is asked"
+    [
+      refused "a BAR index below zero" (fun f -> Function.bar f (-1));
+      refused "the least BAR index" (fun f -> Function.bar f min_int);
+      refused "a map of a BAR index below zero" (fun f -> Function.map f (-1));
+      refused "a pin off a page" ~page:16384 (fun f ->
+          Function.pin f (0x5000_0000 + 4096) 4096);
+      refused "DMA memory at an address off a page" ~page:16384 (fun f ->
+          Function.alloc_dma ~va:(va_base + 4096) f 16384);
+      refused "contiguous DMA memory above 2 MiB" (fun f ->
+          Function.alloc_dma ~contiguous:true f ((2 * mib) + 1));
+      refused "a huge page at an address off 2 MiB" ~page:16384
+        ~addressing:Physical (fun f ->
+          Function.alloc_dma ~contiguous:true ~va:(va_base + 16384) f 32768);
+    ]
+
+(* Sequences against a model
+
+   The reference is a model of what the interface promises: which windows are
+   live, which ranges are pinned, which functions are held. The fake machine
+   checks the other side: what reached it is never misuse, and its live windows,
+   memory and pins are the model's. *)
+
+type m_ref = {
+  r_page : int;
+  r_addressing : Machine.addressing;
+  mutable r_held : string list;
+  mutable r_fns : f_ref list;
+}
+
+and f_ref = {
+  rm : m_ref;
+  r_bus : string;
+  r_config : Bytes.t;
+  mutable r_released : bool;
+  mutable r_maps : w_ref list;
+  mutable r_dmas : w_ref list;
+  mutable r_pins : (int * int) list;
+}
+
+(* [at] is the address asked for DMA memory. *)
+and w_ref = {
+  owner : f_ref;
+  kind : [ `Bar | `Dma ];
+  len : int;
+  at : int option;
+}
+
+let sorted l = List.sort_uniq compare l
+let machine_t = abstract "m"
+
+let fn_t =
+  abstract "f" ~invariant:(fun r ((f : Function.t), (fake : fn_fake)) ->
+      equal ~msg:"released" bool r.r_released (Function.released f);
+      equal ~msg:"misuse that reached the machine" (list string) [] fake.wrong;
+      equal ~msg:"the machine's BAR windows" (slist int compare)
+        (List.map (fun w -> w.len) r.r_maps)
+        (List.map snd fake.maps);
+      equal ~msg:"the machine's DMA memory" (slist int compare)
+        (List.map (fun w -> w.len) r.r_dmas)
+        (List.map snd fake.dmas);
+      if not r.r_released then
+        equal ~msg:"the machine's pins" runs_w (sorted r.r_pins)
+          (sorted fake.pins))
+
+let win_t =
+  abstract "w" ~invariant:(fun r w ->
+      equal ~msg:"length" int r.len (Window.length w))
+
+let pp_int ppf = Format.fprintf ppf "%#x"
+let ints l = Gen.of_list ~pp:pp_int l
+
+let pp_opt ppf = function
+  | None -> Format.pp_print_string ppf "None"
+  | Some x -> pp_int ppf x
+
+let opt_ints l = Gen.of_list ~pp:pp_opt (None :: List.map Option.some l)
+
+let make_ref (page, a) =
+  { r_page = page; r_addressing = a; r_held = []; r_fns = [] }
+
+let make_sys (page, a) = fake_machine ~page ~addressing:a ()
+
+exception Refused
+
+let take_ref m bus =
+  if List.mem bus m.r_held || bus = absent then raise Refused;
+  m.r_held <- bus :: m.r_held;
+  let f =
+    {
+      rm = m;
+      r_bus = bus;
+      r_config = Bytes.init config_size (fun i -> Char.chr (i land 0xff));
+      r_released = false;
+      r_maps = [];
+      r_dmas = [];
+      r_pins = [];
+    }
+  in
+  m.r_fns <- f :: m.r_fns;
+  f
+
+let take_sys ((machine : Machine.t), (m : machine_fake)) bus =
+  match Function.take machine ~lock:"t" bus with
+  | Ok f -> (f, List.hd m.taken)
+  | Error _ -> raise Refused
+
+let release_ref f =
+  if not f.r_released then begin
+    f.r_released <- true;
+    f.r_maps <- [];
+    f.rm.r_held <- List.filter (( <> ) f.r_bus) f.rm.r_held
+  end
+
+let not_released f = not f.r_released
+
+(* Each refusal is labelled, so a run that never reaches one fails. *)
+let misuse label =
+  cover label true;
+  invalid_arg label
+
+let map_ref f i off len =
+  if i < 0 then misuse "a BAR index below zero";
+  match bar_of i with
+  | None -> misuse "no such BAR"
+  | Some (_, size) ->
+      let off = Option.value off ~default:0 in
+      let len = Option.value len ~default:(size - off) in
+      if off < 0 || len < 0 || off > size - len then
+        misuse "bytes outside the BAR";
+      let w = { owner = f; kind = `Bar; len; at = None } in
+      f.r_maps <- w :: f.r_maps;
+      w
+
+let map_sys (f, _) i off len = Function.map ?off ?length:len f i
+let without w l = List.filter (fun x -> x != w) l
+
+(* Windows are values: a window equal to a live one, as DMA memory asked twice
+   at one address gives, names it. *)
+let live_one w l =
+  List.find_opt
+    (fun x -> x == w || (w.at <> None && x.at = w.at && x.len = w.len))
+    l
+
+let unmap_ref f w =
+  if not (w.kind = `Bar && w.owner == f && List.memq w f.r_maps) then
+    misuse "a window that is not the function's live BAR window";
+  f.r_maps <- without w f.r_maps
+
+let alloc_at f contiguous va n =
+  let page = f.rm.r_page in
+  let bytes = round_up n page in
+  (match va with
+  | Some v when v mod page <> 0 -> misuse "an address off a page"
+  | _ when contiguous && bytes > 2 * mib -> misuse "contiguous above 2 MiB"
+  | Some v
+    when contiguous
+         && f.rm.r_addressing = Physical
+         && bytes > page
+         && v mod (2 * mib) <> 0 ->
+      misuse "a huge page off 2 MiB"
+  | _ -> ());
+  let used =
+    List.concat_map
+      (fun g ->
+        List.filter_map
+          (fun w -> Option.map (fun a -> (a, w.len)) w.at)
+          g.r_dmas)
+      f.rm.r_fns
+  in
+  (match va with
+  | Some a when List.exists (fun r -> not (disjoint r (a, bytes))) used ->
+      cover "addresses in use" true;
+      failwith "in use"
+  | _ -> ());
+  let w = { owner = f; kind = `Dma; len = bytes; at = va } in
+  f.r_dmas <- w :: f.r_dmas;
+  w
+
+(* Reserved addresses: the fake maps memory at any [va]. *)
+let alloc_sys (f, _) contiguous va n =
+  let va = Option.map (fun v -> va_base + v) va in
+  fst (Function.alloc_dma ~contiguous ?va f n)
+
+let alloc_ref f contiguous va n =
+  alloc_at f contiguous (Option.map (fun v -> va_base + v) va) n
+
+let free_ref f w =
+  match live_one w f.r_dmas with
+  | None -> misuse "memory that is not the function's live DMA memory"
+  | Some w -> f.r_dmas <- without w f.r_dmas
+
+let pin_ref f a n =
+  if a mod f.rm.r_page <> 0 then misuse "a pin off a page";
+  f.r_pins <- (a, n) :: f.r_pins
+
+let unpin_ref f a n =
+  match remove (a, n) f.r_pins with
+  | None -> misuse "a range not pinned"
+  | Some l ->
+      cover "a range pinned twice, unpinned once" (List.mem (a, n) l);
+      f.r_pins <- l
+
+let pin_base = 0x5000_0000
+
+let config_ref f off n =
+  if not (List.mem n [ 1; 2; 4 ]) then misuse "a width not 1, 2 or 4";
+  let x = ref 0 in
+  for i = n - 1 downto 0 do
+    x := (!x lsl 8) lor Bytes.get_uint8 f.r_config (off + i)
+  done;
+  !x
+
+let set_config_ref f off n x =
+  if not (List.mem n [ 1; 2; 4 ]) then misuse "a width not 1, 2 or 4";
+  for i = 0 to n - 1 do
+    Bytes.set_uint8 f.r_config (off + i) ((x lsr (8 * i)) land 0xff)
+  done
+
+let bar_ref _ i =
+  if i < 0 then misuse "a BAR index below zero";
+  bar_of i
+
+let page_gen = ints [ 4096; 16384 ]
+
+let addressing_gen =
+  Gen.of_list
+    ~pp:(fun ppf a ->
+      Format.pp_print_string ppf
+        (match a with Machine.Physical -> "Physical" | Iommu -> "Iommu"))
+    [ Machine.Physical; Iommu ]
+
+let machine_cmd =
+  command "machine"
+    (Gen.pair page_gen addressing_gen @-> makes machine_t)
+    make_ref make_sys
+
+let take_cmd =
+  command "take"
+    (machine_t
+    ^-> Gen.of_list ~pp:Format.pp_print_string [ bus1; bus2; absent ]
+    @-> makes fn_t)
+    take_ref take_sys
+
+let fsys g (f, _) = g f
+
+(* Inputs at each bound. Withheld until the misuse tests pass: BAR indices below
+   zero, empty windows, addresses off a 16 KiB page, contiguous memory above 2
+   MiB and huge pages off 2 MiB. *)
+let size = 64 * 1024
+let offs = [ -1; 0; 1; 16; size - 1; size + 1; max_int ]
+let map_lens = [ -1; 1; 16; 4096; size - 1; size + 1; max_int ]
+let lens = [ 1; 4095; 4096; 4097; 16385; (2 * mib) - 1; 2 * mib ]
+let vas = [ 0; 2 * mib; 4 * mib ]
+let pin_addrs = ints (List.map (( + ) pin_base) [ 0; 16384 ])
+let pin_lens = ints [ 1; 16384 ]
+let pinned = among (pair int int) fn_t (fun f -> sorted f.r_pins)
+
+(* [held] keeps pins off a released function, whose pins the interface leaves
+   open; the parallel test, which never releases, takes none. *)
+let dma_cmds ~held =
+  let pre = if held then Some (fun f _ _ -> not_released f) else None in
+  [
+    command "alloc_dma"
+      ~pre:(fun f _ _ _ -> not_released f)
+      (fn_t ^-> Gen.bool @-> opt_ints vas @-> ints lens @-> makes win_t)
+      alloc_ref alloc_sys;
+    command "free_dma"
+      (fn_t ^-> win_t ^-> returns unit)
+      free_ref (fsys Function.free_dma);
+    command "pin" ?pre
+      (fn_t ^-> pin_addrs @-> pin_lens @-> returns unit)
+      pin_ref
+      (fun (f, _) a n -> ignore (Function.pin f a n : (int * int) list));
+    command "unpin" ?pre
+      (fn_t ^-> pin_addrs @-> pin_lens @-> returns unit)
+      unpin_ref (fsys Function.unpin);
+    command "unpin a pinned range"
+      ~pre:(fun f _ -> not_released f)
+      (fn_t ^-> pinned ^-> returns unit)
+      (fun f (a, n) -> unpin_ref f a n)
+      (fun (f, _) (a, n) -> Function.unpin f a n);
+  ]
+
+let commands =
+  [
+    machine_cmd;
+    take_cmd;
+    command "release"
+      (fn_t ^-> returns unit)
+      release_ref (fsys Function.release);
+    command "released"
+      (fn_t ^-> returns bool)
+      (fun f -> f.r_released)
+      (fsys Function.released);
+    command "bar"
+      ~pre:(fun f _ -> not_released f)
+      (fn_t ^-> ints [ 0; 1; 2; 5; 6 ] @-> returns (option (pair int int)))
+      bar_ref (fsys Function.bar);
+    command "map"
+      ~pre:(fun f _ _ _ -> not_released f)
+      (fn_t
+      ^-> ints [ 0; 1; 2; 6 ]
+      @-> opt_ints offs @-> opt_ints map_lens @-> makes win_t)
+      map_ref map_sys;
+    command "unmap"
+      (fn_t ^-> win_t ^-> returns unit)
+      unmap_ref (fsys Function.unmap);
+    command "config"
+      ~pre:(fun f _ _ -> not_released f)
+      (fn_t
+      ^-> ints [ 0; 4; 60; 64; 256; 4092 ]
+      @-> ints [ -1; 0; 1; 2; 3; 4; 8 ]
+      @-> returns int)
+      config_ref (fsys Function.config);
+    command "set_config"
+      ~pre:(fun f _ _ _ -> not_released f)
+      (fn_t
+      ^-> ints [ 0; 4; 64; 4092 ]
+      @-> ints [ 0; 1; 2; 3; 4 ]
+      @-> ints [ 0; 0xff; 0x1234; 0xdead_beef; -1; max_int; min_int ]
+      @-> returns unit)
+      set_config_ref (fsys Function.set_config);
+  ]
+  @ dma_cmds ~held:true
+
+let sequences =
+  stateful "takes, uses and releases behave as the model" ~count:300 ~steps:30
+    commands
+
+(* Pins and DMA memory from two domains at once. A pin lost by a race shows when
+   the suffix unpins it. The invariant runs only before the parallel calls, so
+   misuse that reached the machine is read by a command. *)
+let parallel =
+  stateful "pins and DMA memory are counted the same from two domains"
+    ~domains:2 ~count:100
+    ([
+       machine_cmd;
+       take_cmd;
+       command "misuse that reached the machine"
+         (fn_t ^-> returns (list string))
+         (fun _ -> [])
+         (fun (_, fake) -> Mutex.protect fake.lock (fun () -> fake.wrong));
+     ]
+    @ dma_cmds ~held:false)
+
+let model = group "against a model" [ sequences; parallel ]
+
+(* This machine *)
+
+let on_linux = Sys.file_exists "/sys/bus/pci/devices"
+
+let sysfs bus file =
+  Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file
+
+(* What a take must not change: the function's driver and whether it is
+   enabled. *)
+let state bus =
+  let driver =
+    match Unix.readlink (sysfs bus "driver") with
+    | l -> Some (Filename.basename l)
+    | exception Unix.Unix_error _ -> None
+  in
+  let enabled =
+    match
+      In_channel.with_open_text (sysfs bus "enable") In_channel.input_all
+    with
+    | s -> Some (String.trim s)
+    | exception Sys_error _ -> None
+  in
+  (driver, enabled)
+
+let test_refused_here () =
+  if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
+  match Function.take Machine.this ~lock:"t" "0000:00:00.0" with
+  | Ok _ -> fail "a function taken on a machine without PCI functions"
+  | Error why -> contains ~msg:"names the bus" ~sub:"0000:00:00.0" why
+
+(* 07387544f: listing and taking change nothing on the machine. *)
+let test_changes_nothing () =
+  if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
+  let buses =
+    List.map (fun (d : Machine.id) -> d.bus) (Machine.functions Machine.this)
+  in
+  let before = List.map state buses in
+  List.iter
+    (fun bus ->
+      match Function.take Machine.this ~lock:"t" bus with
+      | Ok f -> Function.release f
+      | Error _ -> ())
+    buses;
+  let state_w = pair (option string) (option string) in
+  equal
+    (list (pair string state_w))
+    (List.combine buses before)
+    (List.combine buses (List.map state buses))
+
+let takeable () =
+  Machine.functions Machine.this
+  |> List.find_map (fun (d : Machine.id) ->
+      match Function.take Machine.this ~lock:"t" d.bus with
+      | Ok f ->
+          Function.release f;
+          Some d
+      | Error _ -> None)
+
+(* A planted link is not followed, and nothing but a regular file serves. *)
+let test_lock_files () =
+  if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
+  let d =
+    match takeable () with
+    | Some d -> d
+    | None -> skip ~reason:"no function this process may take" ()
+  in
+  let dir = temp_dir () in
+  setenv "TMPDIR" (Some dir);
+  let previous = Filename.get_temp_dir_name () in
+  Filename.set_temp_dir_name dir;
+  Fun.protect ~finally:(fun () -> Filename.set_temp_dir_name previous)
+  @@ fun () ->
+  List.iter
+    (fun name ->
+      let file = Filename.concat dir (name ^ "_" ^ d.bus ^ ".lock") in
+      let target = Filename.concat dir "target" in
+      Unix.symlink target file;
+      is_error ~msg:(name ^ ": a link")
+        (Function.take Machine.this ~lock:"t" d.bus);
+      is_false
+        ~msg:(name ^ ": its target is not created")
+        (Sys.file_exists target);
+      Sys.remove file;
+      Unix.mkdir file 0o700;
+      is_error ~msg:(name ^ ": a directory")
+        (Function.take Machine.this ~lock:"t" d.bus);
+      Unix.rmdir file)
+    [ "nx"; "t" ]
+
+let vfio_function () =
+  if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
+  Machine.functions Machine.this
+  |> List.find_map (fun (d : Machine.id) ->
+      match Function.take Machine.this ~lock:"t" d.bus with
+      | Ok f when Function.addressing f = Iommu -> Some (d, f)
+      | Ok f ->
+          Function.release f;
+          None
+      | Error _ -> None)
+  |> function
+  | Some x -> x
+  | None -> skip ~reason:"no function this process may take behind an IOMMU" ()
+
+(* 1dcf4ee87: without root, behind an IOMMU. *)
+let test_vfio () =
+  let d, f = vfio_function () in
+  Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
+  equal ~msg:"its vendor" int d.vendor (Function.config f 0 2);
+  equal ~msg:"its device" int d.device (Function.config f 2 2);
+  let page = Machine.page Machine.this in
+  let allocs =
+    List.map (fun n -> Function.alloc_dma f n) [ 1; 3 * page; 2 * mib ]
+  in
+  List.iter
+    (fun (w, runs) ->
+      equal ~msg:"one run of its bytes" (list int)
+        [ Window.length w ]
+        (List.map snd runs))
+    allocs;
+  let runs = List.sort compare (List.concat_map snd allocs) in
+  List.iter2
+    (fun (a, n) (b, _) ->
+      at_most ~msg:"device addresses apart" int ~than:b (a + n))
+    (List.filteri (fun i _ -> i < List.length runs - 1) runs)
+    (List.tl runs);
+  let w, _ = List.hd allocs in
+  let pinned = Function.pin f (Window.address w) (Window.length w) in
+  equal ~msg:"a pin is one run" int 1 (List.length pinned);
+  Function.unpin f (Window.address w) (Window.length w);
+  List.iter (fun (w, _) -> Function.free_dma f w) allocs
+
+let this_machine =
+  group "this machine"
+    [
+      test "this machine without /sys/bus/pci refuses a take, naming the bus"
+        test_refused_here;
+      test "listing and taking functions change nothing on this machine"
+        test_changes_nothing;
+      test "a lock file that is a link or a directory refuses a take"
+        test_lock_files;
+      test "a function behind an IOMMU reaches its memory at one run apart"
+        test_vfio;
+    ]
+
+let () =
+  exit
+  @@ run "device_pci function"
+       [ taking; uses; misuse_refused; model; this_machine ]

@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* What the suites need from C: process memory to map, a far machine reached
-   through a transport, and the accesses of device_pci.h.
+   through a transport, the accesses of device_pci.h, and the monotonic
+   clock.
 
    A far machine holds [size] bytes at addresses [base, base + size) and
    nothing else. Its transport logs every access, fails on request, and
@@ -14,6 +15,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -172,4 +174,13 @@ value test_write(value w, value off, value s) {
   struct device_pci_window v = window(w);
   return Val_int(
       device_pci_write(&v, Long_val(off), String_val(s), caml_string_length(s)));
+}
+
+/* The monotonic clock */
+
+value test_now_ns(value unit) {
+  (void)unit;
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return Val_long((intnat)t.tv_sec * 1000000000 + t.tv_nsec);
 }
