@@ -4,6 +4,20 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Ymir.Transform` maps pixel coordinates to the sky as a list of stages that
+  invert and print back what they read: `axes`, `shift`, `linear`, `scale` and
+  `celestial` with the TAN and ARC projections, `about` and `gnomonic` for
+  offsets about a direction. `apply` raises at a point outside a projection's
+  domain, naming it; `covers` gives the mask.
+- `Ymir.Grid` is an image's cells seen through a transform, with `centres`,
+  `corners`, each cell's exact `measure` (solid angle or area), and windows of
+  static shape at traced, batched starts (`window`, `around`). `Grid.cell`
+  marks data per cell.
+- `Ymir.Region` places circles and annuli on a grid's world and weighs each
+  cell by its exact covered fraction, differentiable in centre and radius.
+- `Ymir.Observation` holds data on a grid with variance, validity and the
+  area its pipeline states, and `integrate` sums them over a region: a cell
+  counts by its area for a field and as one cell for data per cell.
 - New library `ymir.fits`, FITS files without the compiler. `Fits.read`
   copies a file's headers, checks every data unit's extent and reads no data;
   `Fits.Header` keeps every record as the file held it, reading a value with

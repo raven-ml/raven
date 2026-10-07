@@ -5,7 +5,7 @@
 
 (** Values in a unit, as {!Ymir_units.Quantity} documents them. *)
 
-type 'p t
+type !'p t
 
 val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
 val v : Unit.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t t

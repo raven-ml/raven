@@ -1,4 +1,11 @@
 (tests
- (names test_units test_frame test_direction)
+ (names
+  test_units
+  test_frame
+  test_direction
+  test_transform
+  test_grid
+  test_region
+  test_observation)
  (package ymir)
  (libraries ymir ymir.units ymir_test nx rune windtrap))

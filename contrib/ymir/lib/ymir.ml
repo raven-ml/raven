@@ -11,3 +11,7 @@ module Vocabulary = Ymir_units.Vocabulary
 module Units = Units
 module Frame = Frame
 module Direction = Direction
+module Transform = Transform
+module Grid = Grid
+module Region = Region
+module Observation = Observation

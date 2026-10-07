@@ -532,7 +532,7 @@ module Quantity : sig
       follows nx: integers wrap and truncate, and float elements overflow and
       underflow as their dtype does. *)
 
-  type 'p t
+  type !'p t
   (** The type for values ['p] in a unit. *)
 
   val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t

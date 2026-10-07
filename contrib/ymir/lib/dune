@@ -1,5 +1,15 @@
 (library
  (name ymir)
  (public_name ymir)
- (private_modules units orientation guard frame direction)
- (libraries nx ymir.units))
+ (private_modules
+  units
+  orientation
+  guard
+  frame
+  direction
+  transform
+  overlap
+  grid
+  region
+  observation)
+ (libraries nx nx.wide ymir.units))
