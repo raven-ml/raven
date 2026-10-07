@@ -26,7 +26,8 @@
     from the display, after about half a second. {!get} then opens the GPU anew,
     with a queue of its own.
 
-    This library exists on macOS only. *)
+    Metal exists on macOS only. Elsewhere the library builds and no device
+    opens. *)
 
 val count : unit -> int
 (** [count ()] is the number of Metal devices: [1] on a Mac whose GPU supports
@@ -97,12 +98,15 @@ val resources : t -> nativeint array
 val msg_send : nativeint
 (** [msg_send] is the address of [objc_msgSend], which a compiled host program
     calls to send the Objective-C messages that encode and commit its work: with
-    the type of the method it sends, receiver and selector first. *)
+    the type of the method it sends, receiver and selector first. It is [0n] off
+    macOS. *)
 
 val selector : string -> nativeint
 (** [selector name] is the selector [name], such as ["commandBuffer"] or
     ["signal:value:"], registered with the Objective-C runtime: the word a
-    compiled host program passes {!msg_send} for that message. *)
+    compiled host program passes {!msg_send} for that message.
+
+    Raises [Failure] off macOS. *)
 
 (** {2:icb Indirect command buffers} *)
 

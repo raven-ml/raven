@@ -1,22 +1,17 @@
 (executable
  (name bench_decode)
- (modules bench_decode metal)
  (libraries
   nx
   nx.cuda
   nx.amd
   nx.metal
+  nx.metal.device
   nx.device
   nx.quant
   rune
   kaun
   thumper
-  unix
-  (select
-   metal.ml
-   from
-   (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
+  unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`. [--warm]
 ; compiles every case into tolk's disk cache first, in a process of its own, so

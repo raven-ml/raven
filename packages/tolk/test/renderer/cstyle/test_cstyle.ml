@@ -1214,9 +1214,9 @@ let division =
     [ Ops.end_ (Ops.store (at 0) (Ops.alu (at 1) Fdiv [ at 2 ])) [ i ] ]
 
 let divides_on_metal () =
-  match Metal.device with
-  | None -> skip ~reason:"no Metal device" ()
-  | Some m ->
+  match Nx_metal_device.get 0 with
+  | Error why -> skip ~reason:why ()
+  | Ok m ->
       let devices =
         Tolk_engine.device [ ("CPU", Nx_device.host); ("CPU:1", m) ]
       in

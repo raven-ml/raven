@@ -3581,6 +3581,9 @@ thread.
 
 ### Nx
 
+- `nx.metal.device` builds on every system, as `nx.nv.device` and
+  `nx.amd.device` do: a program links it anywhere, and off macOS
+  `Nx_metal_device.get` refuses, saying Metal exists on macOS only.
 - `Nx_ragged.of_strings` and `Nx_ragged.to_strings` convert between an array
   of OCaml strings and the uint8 ragged array that holds text, every byte kept.
 - `Nx.standardize`, `Nx.softmax`, `Nx.log_softmax`, `Nx.logsumexp`,

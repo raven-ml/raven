@@ -1,5 +1,6 @@
 (test
  (name test_metal)
+ (modules test_metal)
  (package nx)
  (build_if
   (= %{system} macosx))
@@ -8,6 +9,12 @@
   (names test_submitter_stubs)
   (flags
    (:standard -fblocks -x objective-c)))
- (link_flags
-  (-cclib "-framework Metal" -cclib "-framework Foundation"))
  (libraries nx nx_test nx.metal.device nx.device nx.dtype unix windtrap))
+
+(test
+ (name test_off_macos)
+ (modules test_off_macos)
+ (package nx)
+ (enabled_if
+  (<> %{system} macosx))
+ (libraries nx.metal.device windtrap))

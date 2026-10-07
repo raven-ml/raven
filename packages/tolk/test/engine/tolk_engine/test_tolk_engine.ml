@@ -30,6 +30,13 @@ let named =
 
 let device name = List.assoc name named
 let devices = Engine.device named
+
+(* The Metal device, skipping the test without one. *)
+let metal_device () =
+  match Nx_metal_device.get 0 with
+  | Ok d -> d
+  | Error why -> skip ~reason:why ()
+
 let clang = lazy (Cstyle.clang (Engine.target host))
 
 (* Test devices *)
@@ -115,13 +122,11 @@ let targets =
           raises_match Exn.invalid_arg (fun () ->
               Engine.renderer Nx_device.disk));
       test "Metal compiles for its GPU family" (fun () ->
-          match Metal.device with
-          | None -> skip ~reason:"no Metal device" ()
-          | Some d ->
-              let t = Engine.target d in
-              equal (pair string string)
-                ("METAL", Nx_device.arch d)
-                (t.device, t.arch));
+          let d = metal_device () in
+          let t = Engine.target d in
+          equal (pair string string)
+            ("METAL", Nx_device.arch d)
+            (t.device, t.arch));
     ]
 
 (* How a device runs its calls, as a test prints it. *)
@@ -169,16 +174,12 @@ let describing =
       test
         "a Metal device whose host's name the map gives to another device is \
          refused" (fun () ->
-          match Metal.device with
-          | None -> skip ~reason:"no Metal device" ()
-          | Some m ->
-              raises
-                (Invalid_argument
-                   "Tolk_engine.device: CPU names another device than METAL's \
-                    host") (fun () ->
-                  Engine.device
-                    [ ("METAL", m); ("CPU", device "CPU:1") ]
-                    "METAL"));
+          let m = metal_device () in
+          raises
+            (Invalid_argument
+               "Tolk_engine.device: CPU names another device than METAL's host")
+            (fun () ->
+              Engine.device [ ("METAL", m); ("CPU", device "CPU:1") ] "METAL"));
     ]
 
 (* Host programs
@@ -296,11 +297,9 @@ let programs =
           raises_match Exn.invalid_arg (fun () ->
               Engine.Program.load (Lazy.force local) (Lazy.force axpy)));
       test "load refuses Metal, whose programs its queues run" (fun () ->
-          match Metal.device with
-          | None -> skip ~reason:"no Metal device" ()
-          | Some d ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Engine.Program.load d (Lazy.force axpy)));
+          let d = metal_device () in
+          raises_match Exn.invalid_arg (fun () ->
+              Engine.Program.load d (Lazy.force axpy)));
       test "load refuses a node that is no compiled program" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Engine.Program.load host (kernel ())));
@@ -1785,10 +1784,9 @@ let timed_on =
 (* The devices map and renderer of [name], skipping the test without Metal. *)
 let timing_on name =
   match name with
-  | "METAL" -> (
-      match Metal.device with
-      | None -> skip ~reason:"no Metal device" ()
-      | Some m -> (Engine.device [ ("METAL", m) ], Engine.renderer m))
+  | "METAL" ->
+      let m = metal_device () in
+      (Engine.device [ ("METAL", m) ], Engine.renderer m)
   | "CPU:1" -> (on_null, Lazy.force clang)
   | _ -> (devices, Lazy.force clang)
 
@@ -2972,9 +2970,8 @@ let batches =
    shared event. *)
 
 let on_metal name =
-  match Metal.device with
-  | None -> skip ~reason:"no Metal device" ()
-  | Some m -> Engine.device [ ("CPU", host); ("CPU:1", m) ] name
+  let m = metal_device () in
+  Engine.device [ ("CPU", host); ("CPU:1", m) ] name
 
 let metal_names = [ "CPU"; "CPU:1" ]
 
@@ -2993,9 +2990,8 @@ let metal =
       slow "a batch whose names omit the host runs, the engine naming it"
         (fun () ->
           let on name =
-            match Metal.device with
-            | None -> skip ~reason:"no Metal device" ()
-            | Some m -> Engine.device [ ("CPU:1", m) ] name
+            let m = metal_device () in
+            Engine.device [ ("CPU:1", m) ] name
           in
           let big = program "copy" in
           let s, vars, storage = linked ~devices:on big in

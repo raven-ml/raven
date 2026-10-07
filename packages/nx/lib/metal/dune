@@ -1,14 +1,4 @@
-; Metal exists on macOS alone. Elsewhere this library still builds, and no
-; Metal device opens, so programs link it on every system.
-
 (library
  (name nx_metal)
  (public_name nx.metal)
- (libraries
-  nx
-  nx.device
-  (select
-   runtime.ml
-   from
-   (nx.metal.device -> runtime.macos.ml)
-   (-> runtime.other.ml))))
+ (libraries nx nx.device nx.metal.device))

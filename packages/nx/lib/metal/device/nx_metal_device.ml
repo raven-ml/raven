@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+external macos : unit -> bool = "caml_nx_metal_macos"
 external create_device : unit -> nativeint = "caml_nx_metal_create_device"
 external arch : nativeint -> string = "caml_nx_metal_arch"
 external working_set : nativeint -> int = "caml_nx_metal_working_set"
@@ -155,6 +156,7 @@ let get i =
   in
   Mutex.protect lock @@ fun () ->
   match Atomic.get opened with
+  | [] when not (macos ()) -> refuse "Metal exists on macOS only"
   | _ :: _ when i > 0 -> refuse "no such device; there is one Metal device"
   | m :: _ when Nx_device.lost m.dev = None -> Ok m.dev
   | m :: _ -> reopen m

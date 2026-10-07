@@ -1,13 +1,42 @@
 (library
  (name nx_metal_device)
  (public_name nx.metal.device)
- (enabled_if
-  (= %{system} macosx))
  (libraries nx_device)
  (foreign_stubs
   (language c)
   (names nx_metal_device_stubs)
   (flags
-   (:standard -fblocks -x objective-c -Wall -Wextra)))
+   (:standard
+    (:include objc_flags.sexp)
+    -Wall
+    -Wextra)))
  (c_library_flags
-  (-framework Metal -framework Foundation -framework CoreGraphics)))
+  (:include frameworks.sexp)))
+
+; The stubs are Objective-C over Metal on macOS, and plain C elsewhere.
+
+(rule
+ (targets objc_flags.sexp frameworks.sexp)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (progn
+   (with-stdout-to
+    objc_flags.sexp
+    (echo "(-fblocks -x objective-c)"))
+   (with-stdout-to
+    frameworks.sexp
+    (echo "(-framework Metal -framework Foundation -framework CoreGraphics)")))))
+
+(rule
+ (targets objc_flags.sexp frameworks.sexp)
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (progn
+   (with-stdout-to
+    objc_flags.sexp
+    (echo "()"))
+   (with-stdout-to
+    frameworks.sexp
+    (echo "()")))))

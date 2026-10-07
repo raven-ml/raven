@@ -3,5 +3,5 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let get i = Result.map Nx.Device.make (Runtime.get i)
+let get i = Result.map Nx.Device.make (Nx_metal_device.get i)
 let device i = match get i with Ok d -> d | Error e -> failwith e

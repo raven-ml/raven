@@ -3,15 +3,28 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#ifdef __APPLE__
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#endif
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+
+value caml_nx_metal_macos(value unit) {
+  (void)unit;
+#ifdef __APPLE__
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}
+
+#ifdef __APPLE__
 #include <math.h>
 #include <os/lock.h>
 #include <stdio.h>
@@ -386,3 +399,55 @@ value caml_nx_metal_cycle_pool(value unit) {
   pool = objc_autoreleasePoolPush();
   return Val_unit;
 }
+
+#else
+
+/* Off macOS Metal finds no device and [objc_msgSend]'s address is 0. The
+   other stubs serve an open device, and refuse. [NO_METALn(f)] defines [f] of
+   [n] arguments as a refusal. */
+
+CAMLnoret static void no_metal(void) {
+  caml_failwith("Metal exists on macOS only");
+}
+
+#define NO_METAL1(f) value f(value a) { (void)a; no_metal(); }
+#define NO_METAL2(f) value f(value a, value b) { (void)a; (void)b; no_metal(); }
+#define NO_METAL3(f)                                                           \
+  value f(value a, value b, value c) { (void)a; (void)b; (void)c; no_metal(); }
+#define NO_METAL4(f)                                                           \
+  value f(value a, value b, value c, value d) {                                \
+    (void)a; (void)b; (void)c; (void)d; no_metal();                            \
+  }
+
+value caml_nx_metal_create_device(value unit) {
+  (void)unit;
+  return caml_copy_nativeint(0);
+}
+
+value caml_nx_metal_msg_send(value unit) {
+  (void)unit;
+  return caml_copy_nativeint(0);
+}
+
+NO_METAL1(caml_nx_metal_arch)
+NO_METAL1(caml_nx_metal_working_set)
+NO_METAL1(caml_nx_metal_unified)
+NO_METAL1(caml_nx_metal_new_queue)
+NO_METAL1(caml_nx_metal_new_event)
+NO_METAL1(caml_nx_metal_new_signaler)
+NO_METAL1(caml_nx_metal_new_fence)
+NO_METAL2(caml_nx_metal_new_residency_set)
+NO_METAL3(caml_nx_metal_residency)
+NO_METAL2(caml_nx_metal_alloc)
+NO_METAL3(caml_nx_metal_wrap)
+NO_METAL1(caml_nx_metal_release)
+NO_METAL3(caml_nx_metal_pipeline)
+NO_METAL1(caml_nx_metal_signaled)
+NO_METAL3(caml_nx_metal_wait)
+NO_METAL1(caml_nx_metal_resolve)
+NO_METAL1(caml_nx_metal_selector)
+NO_METAL1(caml_nx_metal_max_threads)
+NO_METAL4(caml_nx_metal_new_icb)
+NO_METAL1(caml_nx_metal_cycle_pool)
+
+#endif

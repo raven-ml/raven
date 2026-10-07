@@ -307,11 +307,6 @@ let host =
   products ~tokens:[ 1; 64 ] device
   @ [ routed_on device ~run:eager ~tokens:1 ", eager" ]
 
-let metal =
-  match Metal.device with
-  | None -> []
-  | Some device -> [ ("metal", products ~tokens:[ 1; 512 ] device) ]
-
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =
   lazy (match Nx_cuda.get 0 with Ok d -> d | Error _ -> Nx_amd.device 0)
@@ -327,6 +322,12 @@ let opens vendor =
   in
   match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
 
+(* Metal's cases where its device opens, asked of a fresh process too. *)
+let metal () =
+  if opens "metal" then
+    [ ("metal", products ~tokens:[ 1; 512 ] (fun () -> Nx_metal.device 0)) ]
+  else []
+
 let quant () =
   let gpu =
     match List.find_opt opens [ "cuda"; "amd" ] with
@@ -334,7 +335,7 @@ let quant () =
     | Some vendor ->
         [ (vendor, products ~tokens:[ 1; 512 ] (fun () -> Lazy.force gpu)) ]
   in
-  (("host", host) :: metal) @ gpu
+  (("host", host) :: metal ()) @ gpu
 
 let bench c =
   Thumper.bench_with_setup ~setup:c.setup c.name (fun call -> call ())
@@ -345,6 +346,7 @@ let () =
       List.iter (fun c -> c.setup () ()) (gpt2 @ List.concat_map snd (quant ()))
   | [ _; "--cuda" ] -> exit (if Result.is_ok (Nx_cuda.get 0) then 0 else 1)
   | [ _; "--amd" ] -> exit (if Result.is_ok (Nx_amd.get 0) then 0 else 1)
+  | [ _; "--metal" ] -> exit (if Result.is_ok (Nx_metal.get 0) then 0 else 1)
   | _ ->
       (* The eager routed product takes over half a second a call, so its trial
          outlasts the default deadline. *)

@@ -6,13 +6,9 @@
  (deps
   (glob_files *.golden)))
 
-; Running batches on the GPU needs a Mac.
-
 (executable
  (name test_ops_metal_exec)
  (modules test_ops_metal_exec)
- (enabled_if
-  (= %{system} macosx))
  (libraries
   windtrap
   tolk
@@ -24,7 +20,5 @@
 (rule
  (alias runtest)
  (package tolk)
- (enabled_if
-  (= %{system} macosx))
  (action
   (run %{exe:test_ops_metal_exec.exe})))
