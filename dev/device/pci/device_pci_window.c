@@ -265,11 +265,16 @@ value caml_device_pci_transport_write(value tr, value a, value s, value off,
 
 /* device_pci.h */
 
+/* The fields of Window.t in their order: keep the two in sync. */
+enum window_field { WINDOW_ADDRESS, WINDOW_LENGTH, WINDOW_TRANSPORT };
+
 void device_pci_window_of(value w, struct device_pci_window *out) {
-  const struct device_pci_transport *tr = TRANSPORT(Field(w, 2));
-  out->address = (uint64_t)Long_val(Field(w, 0));
-  out->length = (size_t)Long_val(Field(w, 1));
-  out->mapped = tr ? NULL : AT(Long_val(Field(w, 0)));
+  const struct device_pci_transport *tr =
+      TRANSPORT(Field(w, WINDOW_TRANSPORT));
+  intnat a = Long_val(Field(w, WINDOW_ADDRESS));
+  out->address = (uint64_t)a;
+  out->length = (size_t)Long_val(Field(w, WINDOW_LENGTH));
+  out->mapped = tr ? NULL : AT(a);
   out->transport = tr;
 }
 

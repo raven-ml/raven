@@ -7,8 +7,9 @@
    fit an OCaml int on every 64-bit host, 52-bit ones included. *)
 type transport = int
 
-(* device_pci_window_of reads these fields by position: keep their order. A
-   mapped window has no transport. *)
+(* device_pci_window_of reads these fields through enum window_field
+   (device_pci_window.c): keep the two in sync. A mapped window has no
+   transport. *)
 type t = { address : int; length : int; transport : transport }
 
 (* Mapped windows: one volatile access of the width, at a process address. *)
