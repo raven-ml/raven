@@ -3,9 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* VFIO's requests, with the kernel's own structures from <linux/vfio.h>.
-   A refused request raises Unix.Unix_error with its errno, so the caller
-   names what to change. Elsewhere every request raises Failure. */
+/* VFIO's requests, with the kernel's own structures from <linux/vfio.h>,
+   which a Linux build needs (the kernel headers, Linux 5.4 or later), over descriptors that are Unix.file_descr, an int on
+   Linux. A refused request raises Unix.Unix_error with its errno, so the
+   caller names what to change. A request may wait, as opening a function
+   or resetting it does, so each runs with the runtime released; the version
+   checks answer at once. Elsewhere every request raises Failure. */
 
 #define _GNU_SOURCE
 #include <errno.h>
@@ -20,15 +23,8 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
-#if defined(__linux__) && defined(__has_include)
-#if __has_include(<linux/vfio.h>)
-#define HAVE_VFIO 1
-#endif
-#endif
-
-#ifdef HAVE_VFIO
+#ifdef __linux__
 #include <caml/unixsupport.h>
-#include <fcntl.h>
 #include <linux/vfio.h>
 #include <poll.h>
 #include <sys/eventfd.h>
@@ -40,14 +36,25 @@ static unsigned long model(value kind) {
   return Int_val(kind) == 0 ? VFIO_TYPE1v2_IOMMU : VFIO_NOIOMMU_IOMMU;
 }
 
+/* The ioctl [req] on [fd] with the runtime released: its result, with
+   errno set where it is -1. [arg] is C memory. */
+static int request(int fd, unsigned long req, void *arg) {
+  caml_release_runtime_system();
+  int r = ioctl(fd, req, arg);
+  int e = errno;
+  caml_acquire_runtime_system();
+  errno = e;
+  return r;
+}
+
 /* Asks [fd] for the structure [*info] of [size] bytes, then again at the size
    the kernel says its capabilities need. [*info] is malloc'd; NULL with errno
    set if a request fails. */
-static void *ask(int fd, unsigned long request, void *first, size_t size) {
+static void *ask(int fd, unsigned long req, void *first, size_t size) {
   void *info = malloc(size);
   if (info == NULL) caml_raise_out_of_memory();
   memcpy(info, first, size);
-  if (ioctl(fd, request, info) != 0) {
+  if (request(fd, req, info) != 0) {
     int e = errno;
     free(info);
     errno = e;
@@ -63,7 +70,7 @@ static void *ask(int fd, unsigned long request, void *first, size_t size) {
   memset((char *)more + size, 0, need - size);
   memcpy(more, first, size);
   *(uint32_t *)more = need;
-  if (ioctl(fd, request, more) != 0) {
+  if (request(fd, req, more) != 0) {
     int e = errno;
     free(more);
     errno = e;
@@ -106,99 +113,52 @@ static value cons(value hd, value tl) {
 static intnat saturate(uint64_t x) {
   return x > (uint64_t)Max_long ? Max_long : (intnat)x;
 }
-#else
-static void no_vfio(void) { caml_failwith("VFIO needs Linux"); }
-#endif
-
-value caml_device_pci_vfio_open(value path) {
-  CAMLparam1(path);
-#ifdef HAVE_VFIO
-  int fd = open(String_val(path), O_RDWR | O_CLOEXEC);
-  if (fd < 0) caml_uerror("open", path);
-  CAMLreturn(Val_int(fd));
-#else
-  (void)path;
-  no_vfio();
-  CAMLreturn(Val_unit);
-#endif
-}
 
 /* Whether the container [fd] speaks this API and has the IOMMU model. */
 value caml_device_pci_vfio_supports(value fd, value kind) {
-#ifdef HAVE_VFIO
   if (ioctl(Int_val(fd), VFIO_GET_API_VERSION) != VFIO_API_VERSION)
     return Val_false;
   return Val_bool(ioctl(Int_val(fd), VFIO_CHECK_EXTENSION, model(kind)) > 0);
-#else
-  (void)fd;
-  (void)kind;
-  no_vfio();
-  return Val_unit;
-#endif
 }
 
 value caml_device_pci_vfio_viable(value group) {
-#ifdef HAVE_VFIO
   struct vfio_group_status s = {.argsz = sizeof s};
-  if (ioctl(Int_val(group), VFIO_GROUP_GET_STATUS, &s) != 0)
+  if (request(Int_val(group), VFIO_GROUP_GET_STATUS, &s) != 0)
     caml_uerror("ioctl", Nothing);
   return Val_bool(s.flags & VFIO_GROUP_FLAGS_VIABLE);
-#else
-  (void)group;
-  no_vfio();
-  return Val_unit;
-#endif
 }
 
 value caml_device_pci_vfio_set_container(value group, value container) {
-#ifdef HAVE_VFIO
   int c = Int_val(container);
-  if (ioctl(Int_val(group), VFIO_GROUP_SET_CONTAINER, &c) != 0)
+  if (request(Int_val(group), VFIO_GROUP_SET_CONTAINER, &c) != 0)
     caml_uerror("ioctl", Nothing);
-#else
-  (void)group;
-  (void)container;
-  no_vfio();
-#endif
   return Val_unit;
 }
 
 value caml_device_pci_vfio_set_iommu(value container, value kind) {
-#ifdef HAVE_VFIO
-  if (ioctl(Int_val(container), VFIO_SET_IOMMU, model(kind)) != 0)
+  if (request(Int_val(container), VFIO_SET_IOMMU,
+              (void *)(uintptr_t)model(kind)) != 0)
     caml_uerror("ioctl", Nothing);
-#else
-  (void)container;
-  (void)kind;
-  no_vfio();
-#endif
   return Val_unit;
 }
 
+/* Opening the function may reset it, which takes up to seconds. */
 value caml_device_pci_vfio_device(value group, value bus) {
   CAMLparam2(group, bus);
-#ifdef HAVE_VFIO
-  int fd = ioctl(Int_val(group), VFIO_GROUP_GET_DEVICE_FD, String_val(bus));
+  char *name = caml_stat_strdup(String_val(bus));
+  int fd = request(Int_val(group), VFIO_GROUP_GET_DEVICE_FD, name);
+  caml_stat_free(name);
   if (fd < 0) caml_uerror("ioctl", bus);
   CAMLreturn(Val_int(fd));
-#else
-  (void)group;
-  (void)bus;
-  no_vfio();
-  CAMLreturn(Val_unit);
-#endif
 }
 
-/* Region [i] of the function [device], its configuration space if [config]:
-   (size, offset in the device's file, mappable, Some areas if only those
-   (offset, bytes) parts map). */
-value caml_device_pci_vfio_region(value device, value i, value config) {
-  CAMLparam3(device, i, config);
+/* Region [i] of the function [device]: (size, offset in the device's file,
+   mappable, Some areas if only those (offset, bytes) parts map). An
+   allocation that raises Out_of_memory leaks [info]. */
+value caml_device_pci_vfio_region(value device, value i) {
+  CAMLparam2(device, i);
   CAMLlocal4(r, areas, some, p);
-#ifdef HAVE_VFIO
-  struct vfio_region_info first = {
-      .argsz = sizeof first,
-      .index = Bool_val(config) ? VFIO_PCI_CONFIG_REGION_INDEX : Int_val(i)};
+  struct vfio_region_info first = {.argsz = sizeof first, .index = Int_val(i)};
   struct vfio_region_info *info =
       ask(Int_val(device), VFIO_DEVICE_GET_REGION_INFO, &first, sizeof first);
   if (info == NULL) caml_uerror("ioctl", Nothing);
@@ -224,18 +184,11 @@ value caml_device_pci_vfio_region(value device, value i, value config) {
   Store_field(r, 2, Val_bool(info->flags & VFIO_REGION_INFO_FLAG_MMAP));
   Store_field(r, 3, some);
   free(info);
-#else
-  (void)device;
-  (void)i;
-  (void)config;
-  no_vfio();
-#endif
   CAMLreturn(r);
 }
 
 /* Routes the first MSI vector of [device] to the eventfd [efd]. */
 value caml_device_pci_vfio_msi(value device, value efd) {
-#ifdef HAVE_VFIO
   char buf[sizeof(struct vfio_irq_set) + sizeof(int32_t)];
   struct vfio_irq_set *s = (struct vfio_irq_set *)buf;
   s->argsz = sizeof buf;
@@ -245,34 +198,23 @@ value caml_device_pci_vfio_msi(value device, value efd) {
   s->count = 1;
   int32_t fd = Int_val(efd);
   memcpy(s->data, &fd, sizeof fd);
-  if (ioctl(Int_val(device), VFIO_DEVICE_SET_IRQS, s) != 0)
+  if (request(Int_val(device), VFIO_DEVICE_SET_IRQS, s) != 0)
     caml_uerror("ioctl", Nothing);
-#else
-  (void)device;
-  (void)efd;
-  no_vfio();
-#endif
   return Val_unit;
 }
 
 value caml_device_pci_vfio_reset(value device) {
-#ifdef HAVE_VFIO
-  if (ioctl(Int_val(device), VFIO_DEVICE_RESET) != 0)
+  if (request(Int_val(device), VFIO_DEVICE_RESET, NULL) != 0)
     caml_uerror("ioctl", Nothing);
-#else
-  (void)device;
-  no_vfio();
-#endif
   return Val_unit;
 }
 
 /* What the container's IOMMU maps: (page sizes as a bitmap, the (first,
-   last) device address ranges, [] if it does not say, Some mappings left if
-   it says). */
+   last) device address ranges, [] if it does not say). An allocation that
+   raises Out_of_memory leaks [info]. */
 value caml_device_pci_vfio_iommu(value container) {
   CAMLparam1(container);
-  CAMLlocal4(r, ranges, p, left);
-#ifdef HAVE_VFIO
+  CAMLlocal3(r, ranges, p);
   struct vfio_iommu_type1_info first = {.argsz = sizeof first};
   struct vfio_iommu_type1_info *info =
       ask(Int_val(container), VFIO_IOMMU_GET_INFO, &first, sizeof first);
@@ -292,90 +234,51 @@ value caml_device_pci_vfio_iommu(value container) {
       ranges = cons(p, ranges);
     }
   }
-  h = caps ? cap(info, info->argsz, info->cap_offset,
-                 VFIO_IOMMU_TYPE1_INFO_DMA_AVAIL)
-           : NULL;
-  left = Val_none;
-  if (h != NULL)
-    left = caml_alloc_some(
-        Val_long(((struct vfio_iommu_type1_info_dma_avail *)h)->avail));
-  r = caml_alloc_tuple(3);
+  r = caml_alloc_tuple(2);
   Store_field(r, 0,
               Val_long((info->flags & VFIO_IOMMU_INFO_PGSIZES)
                            ? saturate(info->iova_pgsizes)
                            : 0));
   Store_field(r, 1, ranges);
-  Store_field(r, 2, left);
   free(info);
-#else
-  (void)container;
-  no_vfio();
-#endif
   CAMLreturn(r);
 }
 
 /* Maps the [n] bytes at [va] of the process at the device address [iova].
-   The kernel pins them, which takes time: the runtime is released. */
+   The kernel pins them. */
 value caml_device_pci_vfio_map(value container, value va, value iova,
                                value n) {
-#ifdef HAVE_VFIO
   struct vfio_iommu_type1_dma_map m = {
       .argsz = sizeof m,
       .flags = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE,
       .vaddr = (uint64_t)Long_val(va),
       .iova = (uint64_t)Long_val(iova),
       .size = (uint64_t)Long_val(n)};
-  int fd = Int_val(container);
-  caml_release_runtime_system();
-  int r = ioctl(fd, VFIO_IOMMU_MAP_DMA, &m);
-  int e = errno;
-  caml_acquire_runtime_system();
-  if (r != 0) {
-    errno = e;
+  if (request(Int_val(container), VFIO_IOMMU_MAP_DMA, &m) != 0)
     caml_uerror("ioctl", Nothing);
-  }
-#else
-  (void)container;
-  (void)va;
-  (void)iova;
-  (void)n;
-  no_vfio();
-#endif
   return Val_unit;
 }
 
 value caml_device_pci_vfio_unmap(value container, value iova, value n) {
-#ifdef HAVE_VFIO
   struct vfio_iommu_type1_dma_unmap m = {.argsz = sizeof m,
                                          .iova = (uint64_t)Long_val(iova),
                                          .size = (uint64_t)Long_val(n)};
-  if (ioctl(Int_val(container), VFIO_IOMMU_UNMAP_DMA, &m) != 0)
+  if (request(Int_val(container), VFIO_IOMMU_UNMAP_DMA, &m) != 0)
     caml_uerror("ioctl", Nothing);
-#else
-  (void)container;
-  (void)iova;
-  (void)n;
-  no_vfio();
-#endif
   return Val_unit;
 }
 
 /* An eventfd an interrupt signals. */
 value caml_device_pci_eventfd(value unit) {
   (void)unit;
-#ifdef HAVE_VFIO
   int fd = eventfd(0, EFD_CLOEXEC);
   if (fd < 0) caml_uerror("eventfd", Nothing);
   return Val_int(fd);
-#else
-  no_vfio();
-  return Val_unit;
-#endif
 }
 
-/* Waits at most [ms] for the eventfd [efd], with the runtime released. */
+/* Waits at most [ms] for the eventfd [efd], with the runtime released. A
+   poll a signal interrupts reports no interrupt: callers poll in a loop. */
 value caml_device_pci_wait(value efd, value ms) {
-#ifdef HAVE_VFIO
   struct pollfd p = {.fd = Int_val(efd), .events = POLLIN};
   int timeout = Int_val(ms);
   caml_release_runtime_system();
@@ -384,9 +287,59 @@ value caml_device_pci_wait(value efd, value ms) {
   if (r > 0 && read(p.fd, &count, sizeof count) < 0) r = 0;
   caml_acquire_runtime_system();
   return Val_bool(r > 0);
+}
+
 #else
+
+/* Without Linux every request raises Failure, and no interrupt comes. */
+
+static value no_vfio(void) {
+  caml_failwith("VFIO needs Linux");
+  return Val_unit;
+}
+
+#define FAILS1(f)             \
+  value f(value a) {          \
+    (void)a;                  \
+    return no_vfio();         \
+  }
+#define FAILS2(f)             \
+  value f(value a, value b) { \
+    (void)a;                  \
+    (void)b;                  \
+    return no_vfio();         \
+  }
+
+FAILS2(caml_device_pci_vfio_supports)
+FAILS1(caml_device_pci_vfio_viable)
+FAILS2(caml_device_pci_vfio_set_container)
+FAILS2(caml_device_pci_vfio_set_iommu)
+FAILS2(caml_device_pci_vfio_device)
+FAILS2(caml_device_pci_vfio_region)
+FAILS2(caml_device_pci_vfio_msi)
+FAILS1(caml_device_pci_vfio_reset)
+FAILS1(caml_device_pci_vfio_iommu)
+FAILS1(caml_device_pci_eventfd)
+
+value caml_device_pci_vfio_map(value container, value va, value iova,
+                               value n) {
+  (void)container;
+  (void)va;
+  (void)iova;
+  (void)n;
+  return no_vfio();
+}
+
+value caml_device_pci_vfio_unmap(value container, value iova, value n) {
+  (void)container;
+  (void)iova;
+  (void)n;
+  return no_vfio();
+}
+
+value caml_device_pci_wait(value efd, value ms) {
   (void)efd;
   (void)ms;
   return Val_false;
-#endif
 }
+#endif
