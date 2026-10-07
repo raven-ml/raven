@@ -141,16 +141,11 @@ All notable changes to this project will be documented in this file.
 - **Breaking:** structural functions take `'p Nx.Ptree.t` in place of a module;
   `sgd_ptree`, `adam_ptree`, `lbfgs_ptree` and `Loss_scale.ptree` replace the
   state functors. A step raises naming the first path where its values differ.
-- Add L-BFGS to the structural tier for deterministic objectives: full-batch
-  fits, MAP estimates, calibration, the second stage of training a PINN.
-  `Vega.minimize p f params` runs it from `params` until a gradient or value
-  tolerance is met and returns the final state with a `status`; `lbfgs_init`
-  and `lbfgs_step` are the step it loops. The objective returns its value and
-  gradient at once, the type `Rune.value_and_grad p loss` has, so an analytic
-  gradient serves as well. Without `~lr` a step chooses its length by a
-  strong-Wolfe line search (eager); with `~lr` it preconditions a fixed rate
-  and traces under `Rune.jit`. Every scalar the method keeps is at the
-  objective's dtype, so a `float64` objective drives a `float64` search.
+- Add L-BFGS at a fixed rate to the structural tier: `lbfgs_step p ~lr grads
+  st` takes the gradient at the state's parameters, as every step does, and
+  preconditions it by the inverse Hessian the last `history` pairs of
+  `lbfgs_init` define; it traces under `Rune.jit`. A deterministic objective
+  minimised to a tolerance, with its derivative, is `Jera.Minimize`'s.
 - Add `Vega.global_dot p dt a b`, the inner product of two parameter
   trees over all their float leaves as a scalar tensor accumulated at `dt`,
   in tensor arithmetic so it traces under `Rune.jit`.

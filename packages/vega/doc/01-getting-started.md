@@ -126,11 +126,12 @@ advances it. Several share a state type.
 | `adan_step` | Adan, an adaptive Nesterov momentum | `adan_state` | `~b1`, `~b2`, `~b3`, `~eps`, `~weight_decay` |
 | `lion_step` | Evolved sign momentum | `lion_state` | `~b1`, `~b2` |
 | `adafactor_step` | Factored second moments, for memory | `adafactor_state` | `~decay_rate`, `~eps`, `~clipping_threshold` |
-| `lbfgs_step` | L-BFGS, for deterministic objectives | `lbfgs_state` | `~lr` (optional), `~max_linesearch_steps` |
+| `lbfgs_step` | L-BFGS at a fixed rate | `lbfgs_state` | `~history` (on `lbfgs_init`) |
 
-Every step but `lbfgs_step` takes `~lr`, a scalar tensor, first after the
-structure. L-BFGS evaluates the objective itself; `Vega.minimize` runs it to
-convergence.
+Every step takes `~lr`, a scalar tensor, first after the structure. A
+deterministic objective minimised to a tolerance, such as a full-batch fit or
+a maximum a posteriori estimate, is jera's `Jera.Minimize`, whose L-BFGS
+searches its step length and whose minimum has a derivative.
 
 ## Next Steps
 

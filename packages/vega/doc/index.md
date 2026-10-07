@@ -4,7 +4,7 @@ Vega provides gradient-based optimizers for OCaml. An optimizer steps a whole pa
 
 ## Features
 
-- **Optimizers** — `sgd_step`, `lars_step`, `adam_step`, `adamw_step`, `radam_step`, `lamb_step`, `rmsprop_step`, `adagrad_step`, `adan_step`, `lion_step`, `adafactor_step`, and L-BFGS (`lbfgs_step`, `minimize`), each with its `*_init`
+- **Optimizers** — `sgd_step`, `lars_step`, `adam_step`, `adamw_step`, `radam_step`, `lamb_step`, `rmsprop_step`, `adagrad_step`, `adan_step`, `lion_step`, `adafactor_step`, and `lbfgs_step` (L-BFGS at a fixed rate), each with its `*_init`; a deterministic objective minimised to a tolerance is jera's `Minimize`
 - **States are structures** — `sgd_ptree`, `adam_ptree`, `lbfgs_ptree` and the others name every leaf of a state by path, for saved files and compiled steps
 - **Jit-compilable steps** — every time-varying scalar is a tensor leaf, so a whole training step compiles as one `Rune.jit` program
 - **Learning rate schedules** — `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, `piecewise_constant`, `join` — tensor arithmetic over a step counter, so one family serves eager and compiled loops alike

@@ -69,9 +69,9 @@
     - {b One skeleton.} The parameters, the gradients and each part of a state
       that has the parameters' shape visit the same leaves and reports under [p]
       (the same {!Nx.Ptree.visits}) and have equal dtypes leaf by leaf. Every
-      step but {!lbfgs_step} raises [Invalid_argument] naming itself, the first
-      path at which a value differs from the parameters, and what the value and
-      the parameters hold there, for example
+      step raises [Invalid_argument] naming itself, the first path at which a
+      value differs from the parameters, and what the value and the parameters
+      hold there, for example
       ["Vega.adam_step: the root: length 1 in the gradients, length 2 in the
        parameters"] or
       ["Vega.adam_step: w: float32 in the gradients, float64 in the parameters"].
@@ -97,8 +97,7 @@
       float64; scalars of the step counter, once per step at the leaf's compute
       dtype, [1 - b^t] without cancellation. A low-precision state still rounds
       what it stores: a bfloat16 moving average whose decay is below half its
-      spacing does not decay. {!lbfgs_step} keeps its scalars at the objective's
-      dtype instead. *)
+      spacing does not decay. *)
 
 (** {1:schedules Learning-Rate Schedules}
 
@@ -764,126 +763,65 @@ val adafactor_step :
 
 (** {1:lbfgs L-BFGS}
 
-    Limited-memory BFGS (Liu and Nocedal, 1989): a quasi-Newton method that
-    builds its search direction from the last [history] pairs of parameter and
-    gradient differences, then moves along it — by a line search when the step
-    is left to choose its length, or by a fixed rate. It is the method of choice
-    for deterministic objectives: full-batch fits, maximum a posteriori
-    estimates, calibration, the second stage of training a physics-informed
-    network. Minibatch noise defeats it.
-
-    Unlike {!sgd_step} and {!adam_step}, a step here evaluates the objective
-    itself, because a line search needs its value at trial points. The objective
-    returns the value and the gradient at once — the type {!Rune.value_and_grad}
-    yields — so an analytic gradient serves as well as a differentiated one:
+    Limited-memory BFGS (Liu and Nocedal, 1989) at a fixed rate: the gradient
+    preconditioned by the inverse Hessian that the last [history] pairs of
+    parameter and gradient differences define. It is a training step: it takes
+    the gradient at the state's parameters, as every step does, and moves by
+    [lr] along the preconditioned direction. A deterministic problem, a minimum
+    to a tolerance with its derivative, is [Jera.Minimize]'s, whose L-BFGS
+    searches its step length.
 
     {[
-    let objective = Rune.value_and_grad model loss in
-    let st, status = Vega.minimize model objective params in
+    let st = Vega.lbfgs_init model params in
+    let st =
+      Vega.lbfgs_step model ~lr:(Vega.lr 0.1)
+        (Rune.grad model loss st.params)
+        st
+    in
     st.params
     ]}
 
-    The state carries the current point with its value and gradient, so an
-    iteration costs the line search's trials and nothing more, and the history
-    at a fixed memory size, so it is a parameter tree of static shape
-    ({!lbfgs_ptree}). Every scalar the method keeps — the value, the curvature
-    weights, the inner products of the two-loop recursion — is at the
-    objective's dtype: a [float64] objective drives a [float64] line search.
+    The history is held at a fixed size, so the state is a parameter tree of
+    static shape ({!lbfgs_ptree}) and the step traces under {!Rune.val-jit}. The
+    inner products of the two-loop recursion are at float64 when every float
+    leaf is float64, and at float32 otherwise. *)
 
-    Under {!Rune.val-jit} only the fixed-rate form traces: a line search reads
-    values on the host to decide its next trial, so it runs eagerly. *)
-
-type ('p, 'v) lbfgs_state = {
+type 'p lbfgs_state = {
   params : 'p;  (** The current point. *)
-  value : (float, 'v) Nx.t;  (** The objective at [params], a scalar. *)
-  grads : 'p;  (** The gradient at [params]. *)
+  grads : 'p;
+      (** The gradient the last step received, at the point before [params];
+          zeros before the first step. *)
   s : 'p;
       (** The last parameter differences, newest first, stacked along a new
-          leading axis of length [history] on every leaf. *)
-  y : 'p;  (** The matching gradient differences, laid out like [s]. *)
-  rho : (float, 'v) Nx.t;
-      (** [1 / (y . s)] per pair, shape [[history]]. [0] marks an empty slot, or
-          a pair dropped for not having positive curvature; such slots do not
-          enter the direction. *)
+          leading axis of length [history] on every leaf. The newest is the move
+          the last step made. *)
+  y : 'p;
+      (** The matching gradient differences, laid out like [s]. The newest is
+          zeros until the next step completes it. A pair whose curvature [y . s]
+          is not positive, an empty slot among them, enters no direction. *)
   step : Nx.int32_t;  (** Completed steps, a scalar tensor. *)
 }
 
-val lbfgs_ptree : 'p Nx.Ptree.t -> ('p, 'v) lbfgs_state Nx.Ptree.t
+val lbfgs_ptree : 'p Nx.Ptree.t -> 'p lbfgs_state Nx.Ptree.t
 (** [lbfgs_ptree p] is the structure of an L-BFGS state over parameters of
-    structure [p], for an objective of element type ['v]. It visits
-    [params.]{e path} for each of [p]'s visits, [value], [grads.]{e path},
-    [s.]{e path}, [y.]{e path}, [rho], then [step]. The state has no module of
-    its own, since {!Nx.Ptree.S} has one type parameter and the state two. *)
+    structure [p]. It visits [params.]{e path} for each of [p]'s visits, then
+    [grads.]{e path}, [s.]{e path}, [y.]{e path} and [step]. *)
 
-val lbfgs_init :
-  'p Nx.Ptree.t ->
-  ?history:int ->
-  ('p -> (float, 'v) Nx.t * 'p) ->
-  'p ->
-  ('p, 'v) lbfgs_state
-(** [lbfgs_init p f params] is the initial state for minimizing [f] from
-    [params]: it evaluates [f params] once and holds an empty history of
-    [history] pairs (default [10]).
+val lbfgs_init : 'p Nx.Ptree.t -> ?history:int -> 'p -> 'p lbfgs_state
+(** [lbfgs_init p params] is the initial state at [params], with an empty
+    history of [history] pairs (default [10]).
 
     Raises [Invalid_argument] if [history < 1]. *)
 
 val lbfgs_step :
-  'p Nx.Ptree.t ->
-  ?lr:(float, 'b) Nx.t ->
-  ?max_linesearch_steps:int ->
-  ('p -> (float, 'v) Nx.t * 'p) ->
-  ('p, 'v) lbfgs_state ->
-  ('p, 'v) lbfgs_state
-(** [lbfgs_step p f st] is the state after one L-BFGS step. The direction [d] is
-    the two-loop recursion of Nocedal (1980) over the stored pairs applied to
-    the negated gradient, with the initial inverse Hessian scaled by
-    [(s . y) / (y . y)] of the newest pair; then the step moves to [p + a * d],
-    evaluates [f] there, and pushes the new pair, dropping the oldest. A pair
-    whose curvature [y . s] is not positive is kept out of the direction (its
-    weight is [0]).
+  'p Nx.Ptree.t -> lr:(float, 'b) Nx.t -> 'p -> 'p lbfgs_state -> 'p lbfgs_state
+(** [lbfgs_step p ~lr grads st] is the state after one step from [st.params],
+    where the objective's gradient is [grads]. It completes the newest pair with
+    [grads - st.grads], computes the direction [d] by the two-loop recursion of
+    Nocedal (1980) applied to the negated gradient, with the initial inverse
+    Hessian scaled by [(s . y) / (y . y)] of the newest pair, moves to
+    [st.params + lr * d], and pushes the move as the newest pair, dropping the
+    oldest. With no pair of positive curvature, [d] is [-grads].
 
-    Without [~lr], [a] satisfies the strong Wolfe conditions ([c1 = 1e-4],
-    [c2 = 0.9]), found by bracketing from [a = 1] and zooming, with at most
-    [max_linesearch_steps] (default [20]) evaluations of [f]. If the budget runs
-    out, the step takes the lowest trial that decreased the value; if none did —
-    the line search failed — it returns [st] unchanged, counter included.
-
-    With [~lr], [a] is that scalar tensor and [f] is evaluated exactly once: the
-    whole step is tensor arithmetic over [st], and traces under {!Rune.val-jit}.
-    This is the form for training loops, preconditioning a fixed rate rather
-    than searching a length.
-
-    Raises [Invalid_argument] if [max_linesearch_steps < 1], or, naming the
-    first differing path as {!Nx.Ptree.map2} does, if a gradient [f] returns
-    does not have [st.params]' skeleton. *)
-
-type status =
-  | Converged  (** A tolerance of {!minimize} was met. *)
-  | Max_iter_reached  (** The iteration budget ran out first. *)
-  | Line_search_failed
-      (** A step found no decrease along its direction: the point is at the
-          precision limit of [f], or the gradient is inconsistent with it. *)
-
-val minimize :
-  'p Nx.Ptree.t ->
-  ?history:int ->
-  ?max_iter:int ->
-  ?gtol:float ->
-  ?ftol:float ->
-  ?max_linesearch_steps:int ->
-  ('p -> (float, 'v) Nx.t * 'p) ->
-  'p ->
-  ('p, 'v) lbfgs_state * status
-(** [minimize p f params] runs {!lbfgs_step} from [lbfgs_init p f params] until
-    a tolerance is met and returns the final state — its [params], [value] and
-    [grads] are the result and its [step] the number of iterations — with the
-    reason it stopped. It stops with {!Converged} when every gradient component
-    is at most [gtol] in absolute value (default [1e-5]), checked before each
-    step, or when a step decreases the value by no more than [ftol] relative to
-    [max (|f|, |f'|, 1.)] (default [1e-9]); with {!Max_iter_reached} after
-    [max_iter] steps (default [1000]); with {!Line_search_failed} when a step
-    makes no progress. [history] and [max_linesearch_steps] are those of
-    {!lbfgs_init} and {!lbfgs_step}.
-
-    Raises [Invalid_argument] if [history < 1] or [max_iter < 0], if [gtol] or
-    [ftol] is negative, or as {!lbfgs_step} does. *)
+    Raises [Invalid_argument] as {!section-structures} states if [grads] does
+    not have [st.params]' skeleton. *)

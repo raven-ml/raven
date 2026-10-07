@@ -181,33 +181,28 @@ let test_split_batch_matches_jit () =
   check_trajectory ~msg:"adam over a split batch" 1e-5 jit split
 
 (* L-BFGS at a fixed rate. Its state carries the point, so the step reads the
-   state and the batch and returns the state itself; the objective evaluates
-   inside the step, as [train_step]'s does. *)
+   state and the batch, takes the gradient there, and returns the loss with the
+   state, as [train_step] does. *)
 
-let lopt : (model, Nx.float32_elt) Vega.lbfgs_state Nx.Ptree.t =
-  Vega.lbfgs_ptree model
+let lopt : model Vega.lbfgs_state Nx.Ptree.t = Vega.lbfgs_ptree model
 
-let lbfgs_signature = Nx.Ptree.(lopt @-> tensor @-> tensor @-> returns lopt)
+let lbfgs_signature =
+  Nx.Ptree.(lopt @-> tensor @-> tensor @-> returns (pair tensor lopt))
 
-let lbfgs_step st x y =
-  Vega.lbfgs_step model ~lr:(Vega.lr 0.1)
-    (Rune.value_and_grad model (loss_fn x y))
-    st
+let lbfgs_step (st : model Vega.lbfgs_state) x y =
+  let loss, grads = Rune.value_and_grad model (loss_fn x y) st.params in
+  (loss, Vega.lbfgs_step model ~lr:(Vega.lr 0.1) grads st)
 
-let lbfgs_init () =
-  let x, y = data_init () in
-  Vega.lbfgs_init model ~history:4
-    (Rune.value_and_grad model (loss_fn x y))
-    (model_init ())
+let lbfgs_init () = Vega.lbfgs_init model ~history:4 (model_init ())
 
 let run_lbfgs ~step0 n s0 =
   let x, y = data_init () in
   let s = ref s0 in
   let traj =
     Array.init n (fun _ ->
-        let (st : (model, Nx.float32_elt) Vega.lbfgs_state) = step0 !s x y in
+        let loss, (st : model Vega.lbfgs_state) = step0 !s x y in
         s := st;
-        (Nx.item [] st.value, st.params))
+        (Nx.item [] loss, st.params))
   in
   (traj, !s)
 
@@ -219,24 +214,17 @@ let test_lbfgs_jit_matches_eager () =
   check_trajectory ~msg:"jit lbfgs" 1e-5 eager compiled;
   is_true ~msg:"the loss decreases" (fst eager.(steps - 1) < fst eager.(0));
   (* The memory fills through the compiled program: after [steps] calls the
-     counter reads n and every slot holds a pair of positive curvature. *)
+     counter reads n and every completed slot, all but the newest, holds a pair
+     of positive curvature. *)
   equal ~msg:"counter reads n after n calls" int steps
     (Int32.to_int (Nx.item [] st.step));
-  is_true ~msg:"every slot holds a curvature pair"
-    (Array.for_all (fun r -> r > 0.0) (Nx.to_array st.rho))
-
-(* Without a rate the step line-searches, reading objective values on the host
-   to pick its trials: jit must refuse it loudly at trace time rather than
-   compile a trace that replays the first search's decisions. *)
-let test_lbfgs_line_search_does_not_trace () =
-  let searching st x y =
-    Vega.lbfgs_step model (Rune.value_and_grad model (loss_fn x y)) st
-  in
-  let jitted = Rune.jit lbfgs_signature searching in
-  let x, y = data_init () in
-  raises_match
-    (function Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> jitted (lbfgs_init ()) x y)
+  let slot i m = Nx.Ptree.map model (fun _ t -> Nx.get [ i ] t) m in
+  List.iter
+    (fun i ->
+      is_true ~msg:"a completed slot holds a curvature pair"
+        (Nx.item [] (Nx.Ptree.dot model Nx.float32 (slot i st.y) (slot i st.s))
+        > 0.0))
+    [ 1; 2; 3 ]
 
 let tests =
   [
@@ -249,8 +237,6 @@ let tests =
           test_split_batch_matches_jit;
         slow "jit lbfgs at a fixed rate matches the eager trajectory"
           test_lbfgs_jit_matches_eager;
-        test "jit refuses a line-searching lbfgs step"
-          test_lbfgs_line_search_does_not_trace;
       ];
   ]
 

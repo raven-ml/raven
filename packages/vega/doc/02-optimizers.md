@@ -72,7 +72,7 @@ let centralize p grads =
 | Optimizer memory is the limit | `adafactor_step` (no first moment, factored second), `lion_step` (one average) |
 | Sparse or rarely-seen features | `adagrad_step` |
 | Recurrent networks, non-stationary objectives | `rmsprop_step` |
-| Full-batch, deterministic objectives | `lbfgs_step`, `minimize` |
+| Full-batch, deterministic objectives | `Jera.Minimize` to a tolerance; `lbfgs_step` at a fixed rate |
 
 Weight decay in `adamw_step`, `lamb_step`, `lars_step` and `adan_step` is
 decoupled: it is added to the update, where the adaptive scaling does not

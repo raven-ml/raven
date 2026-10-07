@@ -839,186 +839,94 @@ let test_ported_steps_validate () =
 
 (* L-BFGS *)
 
-(* The bowl as an objective returning its value and analytic gradient, the form
-   the L-BFGS steps take. *)
-let bowl (params : Pair.t) =
-  let diff = Pair.sub params (Lazy.force bowl_target) in
-  let value = Nx.add (Nx.sum (Nx.square diff.a)) (Nx.sum (Nx.square diff.b)) in
-  (value, bowl_grads params)
-
-(* Rosenbrock's valley in float64, minimized at (1, 1): the classic
-   ill-conditioned test a first-order method crawls along. *)
-let rosenbrock (v : Vec.t) =
-  let x = Nx.item [ 0 ] v and y = Nx.item [ 1 ] v in
-  let value = ((1.0 -. x) ** 2.0) +. (100.0 *. ((y -. (x *. x)) ** 2.0)) in
-  let gx = (-2.0 *. (1.0 -. x)) -. (400.0 *. x *. (y -. (x *. x))) in
-  let gy = 200.0 *. (y -. (x *. x)) in
-  (Nx.scalar Nx.float64 value, vec [| gx; gy |])
-
-let iterations (st : (_, _) Vega.lbfgs_state) =
-  Int32.to_int (Nx.item [] st.step)
+let iterations (st : _ Vega.lbfgs_state) = Int32.to_int (Nx.item [] st.step)
 
 let test_lbfgs_init () =
   let params = Lazy.force bowl_start in
-  let st = Vega.lbfgs_init Pair.ptree ~history:3 bowl params in
-  let value, _ = bowl params in
-  equal ~msg:"value is the objective at the start" (float 1e-6)
-    (Nx.item [] value) (Nx.item [] st.value);
-  check_vec ~msg:"gradient is the objective's" ~eps:1e-6 [| 7.0; -5.0 |]
+  let st = Vega.lbfgs_init Pair.ptree ~history:3 params in
+  check_vec ~msg:"no gradient yet" [| 0.0; 0.0 |]
     (Nx.cast Nx.float64 st.grads.a);
   equal ~msg:"memory stacks history on a new axis" (array int) [| 3; 2 |]
     (Nx.shape st.s.a);
   equal ~msg:"memory of the second leaf" (array int) [| 3; 1 |]
     (Nx.shape st.y.b);
-  equal ~msg:"no pair carries weight" (array float_exact) [| 0.; 0.; 0. |]
-    (Nx.to_array st.rho);
   equal ~msg:"counter starts at 0" int 0 (iterations st);
   raises (Invalid_argument "Vega.lbfgs_init: expected history >= 1, got 0")
-    (fun () -> Vega.lbfgs_init Pair.ptree ~history:0 bowl params)
+    (fun () -> Vega.lbfgs_init Pair.ptree ~history:0 params)
+
+let advance ?(lr = Vega.lr 0.5) (st : Pair.t Vega.lbfgs_state) =
+  Vega.lbfgs_step Pair.ptree ~lr (bowl_grads st.params) st
 
 let test_lbfgs_fixed_step () =
   (* With an empty memory the direction is the negated gradient, so a fixed rate
      of 1/2 on the bowl (gradient 2 (p - target)) lands on the target in one
      step. *)
   let params = Lazy.force bowl_start in
-  let st = Vega.lbfgs_init Pair.ptree bowl params in
-  let st = Vega.lbfgs_step Pair.ptree ~lr:(Vega.lr 0.5) bowl st in
+  let st = advance (Vega.lbfgs_init Pair.ptree params) in
   let target = Lazy.force bowl_target in
   check_vec ~msg:"a lands on the target" ~eps:1e-6 (Nx.to_array target.a)
     (Nx.cast Nx.float64 st.params.a);
   check_vec ~msg:"b lands on the target" ~eps:1e-6 (Nx.to_array target.b)
     (Nx.cast Nx.float64 st.params.b);
   equal ~msg:"counter advances" int 1 (iterations st);
-  (* The pair the step produced sits on top of the memory with positive
-     curvature; the rest is still empty. *)
-  is_true ~msg:"newest pair has weight" (Nx.item [ 0 ] st.rho > 0.0);
-  equal ~msg:"older slots are empty" float_exact 0.0 (Nx.item [ 1 ] st.rho);
-  check_vec ~msg:"newest s is the step taken" ~eps:1e-6
+  check_vec ~msg:"newest s is the move made" ~eps:1e-6
     (Nx.to_array (Nx.cast Nx.float64 (Nx.sub target.a params.a)))
     (Nx.cast Nx.float64 (Nx.get [ 0 ] st.s.a));
-  (* A second fixed step from the minimum: the gradient is zero, so the point
-     stays and the new pair, with no curvature, gets no weight. *)
-  let st' = Vega.lbfgs_step Pair.ptree ~lr:(Vega.lr 0.5) bowl st in
+  check_vec ~msg:"its y waits for the next gradient" [| 0.0; 0.0 |]
+    (Nx.cast Nx.float64 (Nx.get [ 0 ] st.y.a));
+  (* A second step from the minimum: the gradient is zero, so the point stays,
+     and the completed pair is the first step's. *)
+  let st' = advance st in
   check_vec ~msg:"stays at the minimum" ~eps:1e-6 (Nx.to_array target.a)
     (Nx.cast Nx.float64 st'.params.a);
-  equal ~msg:"zero-curvature pair has no weight" float_exact 0.0
-    (Nx.item [ 0 ] st'.rho);
-  is_true ~msg:"previous pair shifted down" (Nx.item [ 1 ] st'.rho > 0.0)
+  check_vec ~msg:"the pair below is completed" ~eps:1e-6
+    (Nx.to_array (Nx.cast Nx.float64 (Nx.neg (bowl_grads params).Pair.a)))
+    (Nx.cast Nx.float64 (Nx.get [ 1 ] st'.y.a))
 
-let test_lbfgs_bowl_converges () =
-  let st, status = Vega.minimize Pair.ptree bowl (Lazy.force bowl_start) in
-  is_true ~msg:"converged" (status = Vega.Converged);
-  is_true ~msg:"reaches the target" (bowl_distance st.params < 1e-3);
-  is_true
-    ~msg:(Printf.sprintf "few iterations on a quadratic (%d)" (iterations st))
-    (iterations st <= 10)
-
-let test_lbfgs_rosenbrock_converges () =
-  let st, status =
-    Vega.minimize Vec.ptree ~gtol:1e-8 rosenbrock (vec [| -1.2; 1.0 |])
+let test_lbfgs_preconditions () =
+  (* On a quadratic, after a first descent step the completed pair gives the
+     curvature along it: the bowl's Hessian is 2 I, so the scaled direction is
+     the Newton step and a unit rate lands on the target from anywhere. *)
+  let st =
+    advance ~lr:(Vega.lr 0.1)
+      (Vega.lbfgs_init Pair.ptree (Lazy.force bowl_start))
   in
-  is_true ~msg:"converged" (status = Vega.Converged);
-  check_vec ~msg:"reaches (1, 1)" ~eps:1e-5 [| 1.0; 1.0 |] st.params;
-  is_true
-    ~msg:
-      (Printf.sprintf "far fewer iterations than descent (%d)" (iterations st))
-    (iterations st < 100);
-  (* One pair of memory still beats descent, if less decisively. *)
-  let st, status =
-    Vega.minimize Vec.ptree ~history:1 ~gtol:1e-8 rosenbrock
-      (vec [| -1.2; 1.0 |])
-  in
-  is_true ~msg:"converged with history 1" (status = Vega.Converged);
-  check_vec ~msg:"reaches (1, 1) with history 1" ~eps:1e-4 [| 1.0; 1.0 |]
-    st.params
-
-let test_lbfgs_stops () =
-  let start = vec [| -1.2; 1.0 |] in
-  let st, status = Vega.minimize Vec.ptree ~max_iter:3 rosenbrock start in
-  is_true ~msg:"budget exhausted" (status = Vega.Max_iter_reached);
-  equal ~msg:"took exactly the budget" int 3 (iterations st);
-  (* A gradient that points away from the descent of its objective: no trial
-     decreases the value, so the step returns its input and the driver reports
-     the failure without moving. *)
-  let inconsistent v = (Nx.sum (Nx.square v), Nx.mul_s v (-2.0)) in
-  let st, status = Vega.minimize Vec.ptree inconsistent (vec [| 1.0 |]) in
-  is_true ~msg:"line search failed" (status = Vega.Line_search_failed);
-  equal ~msg:"no step taken" int 0 (iterations st);
-  check_vec ~msg:"point unchanged" [| 1.0 |] st.params;
-  (* Already at a stationary point: converged before any step. *)
-  let st, status = Vega.minimize Vec.ptree rosenbrock (vec [| 1.0; 1.0 |]) in
-  is_true ~msg:"converged at the minimum" (status = Vega.Converged);
-  equal ~msg:"without stepping" int 0 (iterations st);
-  raises (Invalid_argument "Vega.minimize: expected gtol >= 0.0, got -1")
-    (fun () -> Vega.minimize Vec.ptree ~gtol:(-1.0) rosenbrock start);
-  raises
-    (Invalid_argument
-       "Vega.lbfgs_step: expected max_linesearch_steps >= 1, got 0") (fun () ->
-      Vega.lbfgs_step Vec.ptree ~max_linesearch_steps:0 rosenbrock
-        (Vega.lbfgs_init Vec.ptree rosenbrock start))
+  let st = advance ~lr:(Vega.lr 1.0) st in
+  is_true ~msg:"reaches the target" (bowl_distance st.params < 1e-5)
 
 let test_lbfgs_rejects_negative_curvature () =
   (* A concave objective: along the descent direction the gradient difference
      opposes the step, so every pair has [y . s < 0]. Such a pair must get no
-     weight, and the next direction must fall back to the scaled gradient. *)
-  let concave v = (Nx.neg (Nx.sum (Nx.square v)), Nx.mul_s v (-2.0)) in
-  let st = Vega.lbfgs_init Vec.ptree ~history:2 concave (vec [| 1.0 |]) in
-  let st = Vega.lbfgs_step Vec.ptree ~lr:(lr64 0.1) concave st in
+     weight, and the next direction falls back to the gradient. *)
+  let grad v = Nx.mul_s v (-2.0) in
+  let step (st : Vec.t Vega.lbfgs_state) =
+    Vega.lbfgs_step Vec.ptree ~lr:(lr64 0.1) (grad st.params) st
+  in
+  let st = step (Vega.lbfgs_init Vec.ptree ~history:2 (vec [| 1.0 |])) in
   check_vec ~msg:"first step is descent" [| 1.2 |] st.params;
-  is_true ~msg:"the pair has negative curvature"
-    (Nx.item []
-       (Nx.Ptree.dot Vec.ptree Nx.float64 (Nx.get [ 0 ] st.y)
-          (Nx.get [ 0 ] st.s))
-    < 0.0);
-  equal ~msg:"and no weight" float_exact 0.0 (Nx.item [ 0 ] st.rho);
-  (* With no weighted pair the direction is [-g] with unit scaling: plain
-     descent again. *)
-  let st' = Vega.lbfgs_step Vec.ptree ~lr:(lr64 0.1) concave st in
-  check_vec ~msg:"second step is plain descent" [| 1.44 |] st'.params;
-  is_true ~msg:"the value keeps decreasing"
-    (Nx.item [] st'.value < Nx.item [] st.value)
+  let st' = step st in
+  check_vec ~msg:"second step is plain descent" [| 1.44 |] st'.params
 
 let test_lbfgs_memory_evicts () =
-  (* Two slots, three steps: the newest pair sits on top, the second newest
-     below it, and the first pair is gone. *)
-  let start = Lazy.force bowl_start in
-  let st0 = Vega.lbfgs_init Pair.ptree ~history:2 bowl start in
-  let advance st = Vega.lbfgs_step Pair.ptree ~lr:(Vega.lr 0.1) bowl st in
+  (* Two slots, three steps: the newest move sits on top, the second newest
+     below it, and the first is gone. *)
+  let st0 = Vega.lbfgs_init Pair.ptree ~history:2 (Lazy.force bowl_start) in
+  let advance = advance ~lr:(Vega.lr 0.1) in
   let st1 = advance st0 in
   let st2 = advance st1 in
   let st3 = advance st2 in
-  let top (st : (Pair.t, _) Vega.lbfgs_state) =
-    Nx.to_array (Nx.get [ 0 ] st.s.a)
-  in
+  let top (st : Pair.t Vega.lbfgs_state) = Nx.to_array (Nx.get [ 0 ] st.s.a) in
   equal ~msg:"memory has two slots" (array int) [| 2; 2 |] (Nx.shape st3.s.a);
-  equal ~msg:"top is the latest step"
+  equal ~msg:"top is the latest move"
     (array (float 1e-6))
     (Nx.to_array (Nx.sub st3.params.a st2.params.a))
     (top st3);
-  equal ~msg:"below it the previous step"
+  equal ~msg:"below it the previous move"
     (array (float 1e-6))
     (top st2)
     (Nx.to_array (Nx.get [ 1 ] st3.s.a));
-  is_true ~msg:"the first pair is gone"
-    (top st1 <> top st3 && top st1 <> Nx.to_array (Nx.get [ 1 ] st3.s.a));
-  is_true ~msg:"both slots carry weight"
-    (Array.for_all (fun r -> r > 0.0) (Nx.to_array st3.rho))
-
-let test_lbfgs_stops_on_ftol () =
-  (* [x^4 + x] has its minimum at an irrational point, so the gradient never
-     reads exactly zero and [gtol = 0] cannot stop the run; a loose [ftol] stops
-     it as soon as a step gains less than a hundredth of the value. *)
-  let quartic v =
-    ( Nx.add (Nx.sum (Nx.pow_s v 4.0)) (Nx.sum v),
-      Nx.add_s (Nx.mul_s (Nx.pow_s v 3.0) 4.0) 1.0 )
-  in
-  let st, status =
-    Vega.minimize Vec.ptree ~gtol:0.0 ~ftol:1e-2 quartic (vec [| 1.0 |])
-  in
-  is_true ~msg:"converged" (status = Vega.Converged);
-  is_true ~msg:"on the value, not the gradient" (Nx.item [ 0 ] st.grads <> 0.0);
-  is_true ~msg:"after a few steps" (iterations st > 0);
-  is_true ~msg:"having made progress" (Nx.item [] st.value < 0.0)
+  is_true ~msg:"the first move is gone"
+    (top st1 <> top st3 && top st1 <> Nx.to_array (Nx.get [ 1 ] st3.s.a))
 
 let test_lbfgs_carries_a_non_parameter_leaf () =
   let params =
@@ -1028,47 +936,53 @@ let test_lbfgs_carries_a_non_parameter_leaf () =
         key = Nx.Rng.key 7;
       }
   in
-  let objective (p : Stepper.t) =
-    ( Nx.sum (Nx.square p.w),
-      Stepper.
-        {
-          w = Nx.mul_s p.w 2.0;
-          key = Nx.Rng.of_tensor (Nx.zeros Nx.int32 [| 2 |]);
-        } )
+  let grads (p : Stepper.t) =
+    Stepper.
+      {
+        w = Nx.mul_s p.w 2.0;
+        key = Nx.Rng.of_tensor (Nx.zeros Nx.int32 [| 2 |]);
+      }
   in
-  let st, status = Vega.minimize Stepper.ptree objective params in
-  is_true ~msg:"converged" (status = Vega.Converged);
-  check_vec ~msg:"weight minimized" ~eps:1e-4 [| 0.0; 0.0; 0.0 |] st.params.w;
+  let step (st : Stepper.t Vega.lbfgs_state) =
+    Vega.lbfgs_step Stepper.ptree ~lr:(lr64 0.25) (grads st.params) st
+  in
+  let st = step (Vega.lbfgs_init Stepper.ptree params) in
+  check_vec ~msg:"weight moved" [| 0.5; -1.0; 1.5 |] st.params.w;
   equal ~msg:"key left alone" (array int32)
     (Nx.to_array (params.Stepper.key :> Nx.int32_t))
     (Nx.to_array (st.params.Stepper.key :> Nx.int32_t))
 
+let test_lbfgs_rejects_other_gradients () =
+  let p = Nx.Ptree.(list tensor) in
+  let st = Vega.lbfgs_init p [ vec [| 1.0 |]; vec [| 2.0 |] ] in
+  raises
+    (Invalid_argument
+       "Vega.lbfgs_step: the root: length 1 in the gradients, length 2 in the \
+        parameters") (fun () ->
+      Vega.lbfgs_step p ~lr:(lr64 0.1) [ vec [| 1.0 |] ] st)
+
 let test_lbfgs_state_is_a_ptree () =
   let opt = Vega.lbfgs_ptree Pair.ptree in
-  let st = Vega.lbfgs_init Pair.ptree bowl (Lazy.force bowl_start) in
+  let st = advance (Vega.lbfgs_init Pair.ptree (Lazy.force bowl_start)) in
   equal ~msg:"visits" (list string)
     [
       "params.a: a leaf";
       "params.b: a leaf";
-      "value: a leaf";
       "grads.a: a leaf";
       "grads.b: a leaf";
       "s.a: a leaf";
       "s.b: a leaf";
       "y.a: a leaf";
       "y.b: a leaf";
-      "rho: a leaf";
       "step: a leaf";
     ]
     (visit_lines opt st);
   let roundtrip =
     Nx.Ptree.map opt (fun _ t -> t) (Nx.Ptree.map2 opt (fun _ _ r -> r) st st)
   in
-  let expected = Vega.lbfgs_step Pair.ptree bowl st in
-  let stepped = Vega.lbfgs_step Pair.ptree bowl roundtrip in
   check_vec ~msg:"roundtrip state steps identically"
-    (Nx.to_array (Nx.cast Nx.float64 expected.params.a))
-    (Nx.cast Nx.float64 stepped.params.a)
+    (Nx.to_array (Nx.cast Nx.float64 (advance st).params.a))
+    (Nx.cast Nx.float64 (advance roundtrip).params.a)
 
 (* Optimizer state as a parameter tree *)
 
@@ -1344,18 +1258,18 @@ let tests =
       ];
     group "lbfgs"
       [
-        test "init evaluates the objective and empties the memory"
-          test_lbfgs_init;
-        test "a fixed rate preconditions the gradient" test_lbfgs_fixed_step;
-        test "minimize converges on a quadratic" test_lbfgs_bowl_converges;
-        test "minimize converges on Rosenbrock" test_lbfgs_rosenbrock_converges;
-        test "minimize reports why it stopped" test_lbfgs_stops;
+        test "init empties the memory" test_lbfgs_init;
+        test "a fixed rate descends, then completes its pair"
+          test_lbfgs_fixed_step;
+        test "a completed pair preconditions the gradient"
+          test_lbfgs_preconditions;
         test "a pair without positive curvature gets no weight"
           test_lbfgs_rejects_negative_curvature;
         test "the memory evicts its oldest pair" test_lbfgs_memory_evicts;
-        test "minimize stops on the value tolerance" test_lbfgs_stops_on_ftol;
         test "the step carries a non-parameter leaf"
           test_lbfgs_carries_a_non_parameter_leaf;
+        test "gradients of another skeleton raise"
+          test_lbfgs_rejects_other_gradients;
         test "the state's structure visits its leaves and walks it back"
           test_lbfgs_state_is_a_ptree;
       ];

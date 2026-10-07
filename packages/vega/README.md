@@ -33,7 +33,8 @@ let () =
 
 - **Optimizers**: `sgd_step`, `lars_step`, `adam_step`, `adamw_step`,
   `radam_step`, `lamb_step`, `rmsprop_step`, `adagrad_step`, `adan_step`,
-  `lion_step`, `adafactor_step`, and L-BFGS (`lbfgs_step`, `minimize`)
+  `lion_step`, `adafactor_step`, and `lbfgs_step` (L-BFGS at a fixed rate);
+  a deterministic objective minimised to a tolerance is jera's `Minimize`
 - **States are structures**: `adam_ptree`, `sgd_ptree`, ... name every leaf of
   a state by path, for checkpoints and compiled steps
 - **Learning rate schedules**: `constant`, `cosine_decay`, `warmup_cosine_decay`, `one_cycle`, `cosine_decay_restarts`, `piecewise_constant`, `join`

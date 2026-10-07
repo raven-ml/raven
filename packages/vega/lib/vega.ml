@@ -18,11 +18,6 @@ let scalar (type a b) (dt : (a, b) Nx_dtype.t) x =
    into the value. Carry them instead. *)
 let updates (type a b) (p : (a, b) Nx.t) = Nx_dtype.is Float (Nx.dtype p)
 
-let float_of_scalar (type a b) (dt : (a, b) Nx_dtype.t) (v : a) : float =
-  match Nx_dtype.kind dt with
-  | Float -> v
-  | _ -> invalid_arg "Vega: expected floating-point dtype"
-
 (* Validation *)
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -743,37 +738,32 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
 
 (* L-BFGS *)
 
-type ('p, 'v) lbfgs_state = {
+type 'p lbfgs_state = {
   params : 'p;
-  value : (float, 'v) Nx.t;
   grads : 'p;
   s : 'p;
   y : 'p;
-  rho : (float, 'v) Nx.t;
   step : Nx.int32_t;
 }
 
-let lbfgs_ptree (type v) p : (_, v) lbfgs_state Nx.Ptree.t =
-  let module Walked = struct
-    type 'p t = ('p, v) lbfgs_state
+module Lbfgs_state = struct
+  type 'p t = 'p lbfgs_state
 
-    let walk c st =
-      let open Nx.Ptree.Walk in
-      let params = field c "params" leaf st.params in
-      let value = field c "value" tensor st.value in
-      let grads = field c "grads" leaf st.grads in
-      let s = field c "s" leaf st.s in
-      let y = field c "y" leaf st.y in
-      let rho = field c "rho" tensor st.rho in
-      let step = field c "step" tensor st.step in
-      { params; value; grads; s; y; rho; step }
-  end in
-  Nx.Ptree.nest (module Walked) p
+  let walk c st =
+    let open Nx.Ptree.Walk in
+    let params = field c "params" leaf st.params in
+    let grads = field c "grads" leaf st.grads in
+    let s = field c "s" leaf st.s in
+    let y = field c "y" leaf st.y in
+    let step = field c "step" tensor st.step in
+    { params; grads; s; y; step }
+end
 
-let lbfgs_init p ?(history = 10) f params =
+let lbfgs_ptree p = Nx.Ptree.nest (module Lbfgs_state) p
+
+let lbfgs_init p ?(history = 10) params =
   if history < 1 then
     invalid_argf "Vega.lbfgs_init: expected history >= 1, got %d" history;
-  let value, grads = f params in
   let memory () =
     Nx.Ptree.map p
       (fun _ leaf ->
@@ -782,16 +772,15 @@ let lbfgs_init p ?(history = 10) f params =
   in
   {
     params;
-    value;
-    grads;
+    grads = zeros p params;
     s = memory ();
     y = memory ();
-    rho = Nx.zeros (Nx.dtype value) [| history |];
     step = Nx.scalar Nx.int32 0l;
   }
 
 (* A leaf's memory is its pairs stacked along axis 0, newest first: [slot i]
-   views the [i]-th, [push] puts a new one on top and drops the oldest. *)
+   views the [i]-th, [push] puts a new one on top and drops the oldest, [top]
+   replaces the newest. *)
 let slot i memory = Nx.get [ i ] memory
 
 let push x memory =
@@ -800,189 +789,95 @@ let push x memory =
   if n = 1 then x
   else Nx.concatenate ~axis:0 [ x; Nx.slice [ Nx.R (0, n - 1) ] memory ]
 
-(* The two-loop recursion (Nocedal, 1980): [-H g] for the inverse Hessian the
-   stored pairs define, scaled initially by [(s . y) / (y . y)] of the newest
-   pair. Pairs of weight [0] — empty slots, rejected curvature — contribute
-   nothing to either loop, so no fill count is kept. Every scalar is a tensor at
-   the objective's dtype and every index is static, so the direction traces
-   under jit. *)
-let lbfgs_direction p st =
-  let dt = Nx.dtype st.value in
-  let m = (Nx.shape st.rho).(0) in
-  let dot = Nx.Ptree.dot p dt in
-  let pair i =
-    ( Nx.Ptree.map p (fun _ m -> slot i m) st.s,
-      Nx.Ptree.map p (fun _ m -> slot i m) st.y,
-      Nx.get [ i ] st.rho )
-  in
-  let alphas = Array.make m (Nx.scalar dt 0.0) in
-  let q = ref st.grads in
-  for i = 0 to m - 1 do
-    let s, y, rho = pair i in
-    let alpha = Nx.mul rho (dot s !q) in
-    alphas.(i) <- alpha;
-    q := Nx.Ptree.axpy p (Nx.neg alpha) y !q
-  done;
-  let y0 = Nx.Ptree.map p (fun _ m -> slot 0 m) st.y
-  and rho0 = Nx.get [ 0 ] st.rho in
-  let gamma =
-    Nx.where (Nx.greater_s rho0 0.0)
-      (Nx.div (Nx.scalar dt 1.0) (Nx.mul rho0 (dot y0 y0)))
-      (Nx.scalar dt 1.0)
-  in
-  let r = ref (Nx.Ptree.scale p gamma !q) in
-  for i = m - 1 downto 0 do
-    let s, y, rho = pair i in
-    let beta = Nx.mul rho (dot y !r) in
-    r := Nx.Ptree.axpy p (Nx.sub alphas.(i) beta) s !r
-  done;
-  Nx.Ptree.map p (fun _ r -> if updates r then Nx.neg r else r) !r
+let top x memory =
+  let n = (Nx.shape memory).(0) in
+  let x = Nx.unsqueeze ~axes:[ 0 ] x in
+  if n = 1 then x
+  else Nx.concatenate ~axis:0 [ x; Nx.slice [ Nx.R (1, n) ] memory ]
 
-(* A point of the line search: [params + alpha * d], the objective and gradient
-   there, and [phi alpha], [phi' alpha] read to the host. *)
-type ('p, 'v) trial = {
-  point : 'p;
-  objective : (float, 'v) Nx.t;
-  gradient : 'p;
-  alpha : float;
-  phi : float;
-  dphi : float;
-}
+let is_float64 (type a b) (t : (a, b) Nx.t) =
+  match Nx_dtype.equal_witness (Nx.dtype t) Nx.float64 with
+  | Some _ -> true
+  | None -> false
 
-(* A strong-Wolfe line search along [d] from [st] (Nocedal and Wright, 2006,
-   algorithms 3.5 and 3.6): bracket from a unit step, doubling until the
-   sufficient-decrease condition fails or the slope turns, then zoom into the
-   bracket by safeguarded quadratic interpolation. Returns the accepted trial;
-   when [budget] evaluations are spent, the lowest trial that decreased the
-   value, or [None] if none did. A [nan] objective fails every acceptance test,
-   so a trial that overflowed only shrinks the bracket. *)
-let line_search p ~budget f st d =
-  let dt = Nx.dtype st.value in
-  let dot = Nx.Ptree.dot p dt in
-  let c1 = 1e-4 and c2 = 0.9 in
-  let origin =
-    {
-      point = st.params;
-      objective = st.value;
-      gradient = st.grads;
-      alpha = 0.0;
-      phi = Nx.item [] st.value;
-      dphi = Nx.item [] (dot st.grads d);
-    }
-  in
-  let armijo t = t.phi <= origin.phi +. (c1 *. t.alpha *. origin.dphi) in
-  let curvature t = Float.abs t.dphi <= -.c2 *. origin.dphi in
-  let probe alpha =
-    let point = Nx.Ptree.axpy p (Nx.scalar dt alpha) d st.params in
-    let objective, gradient = f point in
-    let phi = Nx.item [] objective and dphi = Nx.item [] (dot gradient d) in
-    { point; objective; gradient; alpha; phi; dphi }
-  in
-  let lower best t =
-    match best with
-    | Some b when not (t.phi < b.phi) -> best
-    | _ -> if t.phi < origin.phi then Some t else best
-  in
-  let rec zoom lo hi best budget =
-    if budget = 0 then best
-    else
-      let alpha =
-        (* The minimizer of the quadratic through [phi lo], [phi' lo] and [phi
-           hi], kept to the middle 80% of the bracket; bisection when the
-           interpolation lands outside it or is undefined. *)
-        let w = hi.alpha -. lo.alpha in
-        let denom = 2.0 *. (hi.phi -. lo.phi -. (lo.dphi *. w)) in
-        let a = lo.alpha -. (lo.dphi *. w *. w /. denom) in
-        let near = lo.alpha +. (0.1 *. w) and far = hi.alpha -. (0.1 *. w) in
-        let inside =
-          if w > 0.0 then near <= a && a <= far else far <= a && a <= near
-        in
-        if inside then a else lo.alpha +. (0.5 *. w)
-      in
-      let t = probe alpha in
-      let best = lower best t in
-      if (not (armijo t)) || t.phi >= lo.phi then zoom lo t best (budget - 1)
-      else if curvature t then Some t
-      else if t.dphi *. (hi.alpha -. lo.alpha) >= 0.0 then
-        zoom t lo best (budget - 1)
-      else zoom t hi best (budget - 1)
-  in
-  let rec bracket prev alpha best budget =
-    if budget = 0 then best
-    else
-      let t = probe alpha in
-      let best = lower best t in
-      if (not (armijo t)) || t.phi >= prev.phi then zoom prev t best (budget - 1)
-      else if curvature t then Some t
-      else if t.dphi >= 0.0 then zoom t prev best (budget - 1)
-      else bracket t (2.0 *. alpha) best (budget - 1)
-  in
-  if origin.dphi >= 0.0 then None else bracket origin 1.0 None budget
-
-let lbfgs_step p ?lr ?(max_linesearch_steps = 20) f st =
-  if max_linesearch_steps < 1 then
-    invalid_argf "Vega.lbfgs_step: expected max_linesearch_steps >= 1, got %d"
-      max_linesearch_steps;
-  let dt = Nx.dtype st.value in
-  let d = lbfgs_direction p st in
-  let advance point objective gradient =
-    let difference =
-      Nx.Ptree.map2 p (fun _ a b -> if updates a then Nx.sub a b else a)
-    in
-    let s = difference point st.params and y = difference gradient st.grads in
-    let ys = Nx.Ptree.dot p dt y s in
-    let rho =
-      Nx.where (Nx.greater_s ys 0.0) (Nx.rdiv_s 1.0 ys) (Nx.scalar dt 0.0)
-    in
-    {
-      params = point;
-      value = objective;
-      grads = gradient;
-      s = Nx.Ptree.map2 p (fun _ x m -> push x m) s st.s;
-      y = Nx.Ptree.map2 p (fun _ x m -> push x m) y st.y;
-      rho = push rho st.rho;
-      step = Nx.add_s st.step 1l;
-    }
-  in
-  match lr with
-  | Some lr ->
-      let point = Nx.Ptree.axpy p lr d st.params in
-      let objective, gradient = f point in
-      advance point objective gradient
-  | None -> (
-      match line_search p ~budget:max_linesearch_steps f st d with
-      | Some t -> advance t.point t.objective t.gradient
-      | None -> st)
-
-type status = Converged | Max_iter_reached | Line_search_failed
-
-let minimize p ?history ?(max_iter = 1000) ?(gtol = 1e-5) ?(ftol = 1e-9)
-    ?max_linesearch_steps f params =
-  if max_iter < 0 then
-    invalid_argf "Vega.minimize: expected max_iter >= 0, got %d" max_iter;
-  validate_non_negative "Vega.minimize" "gtol" gtol;
-  validate_non_negative "Vega.minimize" "ftol" ftol;
-  let grad_max st =
+(* The newest pair's step is the move the last call made; this call completes
+   its gradient difference, [grads - st.grads]. The direction is the two-loop
+   recursion (Nocedal, 1980) over the pairs with [rho = 1 / (y . s)], a pair
+   whose curvature is not positive (an empty slot, a rejected pair) entering
+   neither loop, and the initial inverse Hessian scaled by [(s . y) / (y . y)]
+   of the newest pair. Its scalars are at the compute dtype every float leaf
+   shares, so the step traces under jit. *)
+let lbfgs_step p ~lr grads st =
+  let fn = "Vega.lbfgs_step" in
+  let skeleton = snd (Nx.Ptree.flatten p st.params) in
+  let rest = ref (aligned fn p skeleton "the gradients" grads) in
+  Nx.Ptree.fold p
+    (fun path x () -> ignore (take fn "the gradients" path x rest))
+    st.params ();
+  let float64 =
     Nx.Ptree.fold p
-      (fun _ g acc ->
-        if updates g then
-          let dt = Nx.dtype g in
-          Float.max acc (float_of_scalar dt (Nx.item [] (Nx.max (Nx.abs g))))
-        else acc)
-      st.grads 0.0
+      (fun _ t acc -> acc && ((not (updates t)) || is_float64 t))
+      st.params true
   in
-  let rec loop st k =
-    if grad_max st <= gtol then (st, Converged)
-    else if k = max_iter then (st, Max_iter_reached)
-    else
-      let st' = lbfgs_step p ?max_linesearch_steps f st in
-      if Nx.item [] st'.step = Nx.item [] st.step then (st, Line_search_failed)
-      else
-        let before = Nx.item [] st.value and after = Nx.item [] st'.value in
-        let scale =
-          Float.max 1.0 (Float.max (Float.abs before) (Float.abs after))
-        in
-        if before -. after <= ftol *. scale then (st', Converged)
-        else loop st' (k + 1)
+  let difference =
+    Nx.Ptree.map2 p (fun _ a b -> if updates a then Nx.sub a b else a)
   in
-  loop (lbfgs_init p ?history f params) 0
+  let y =
+    Nx.Ptree.map2 p (fun _ d m -> top d m) (difference grads st.grads) st.y
+  in
+  (* A structure of no leaf has no memory to read: one empty pair serves. *)
+  let history =
+    match fst (Nx.Ptree.flatten p st.s) with
+    | Nx.P t :: _ -> Nx.dim 0 t
+    | [] -> 1
+  in
+  let run (type w) (w : w wide) =
+    let dt = dtype w in
+    let dot = Nx.Ptree.dot p dt in
+    let pair i =
+      let s = Nx.Ptree.map p (fun _ m -> slot i m) st.s
+      and y = Nx.Ptree.map p (fun _ m -> slot i m) y in
+      let ys = dot y s in
+      (s, y, Nx.where (Nx.greater_s ys 0.0) (Nx.recip ys) (scalar dt 0.0))
+    in
+    let pairs = Array.init history pair in
+    let alphas = Array.make history (scalar dt 0.0) in
+    let q = ref grads in
+    for i = 0 to history - 1 do
+      let s, y, rho = pairs.(i) in
+      alphas.(i) <- Nx.mul rho (dot s !q);
+      q := Nx.Ptree.axpy p (Nx.neg alphas.(i)) y !q
+    done;
+    let _, y0, rho0 = pairs.(0) in
+    let gamma =
+      Nx.where (Nx.greater_s rho0 0.0)
+        (Nx.recip (Nx.mul rho0 (dot y0 y0)))
+        (scalar dt 1.0)
+    in
+    let r = ref (Nx.Ptree.scale p gamma !q) in
+    for i = history - 1 downto 0 do
+      let s, y, rho = pairs.(i) in
+      let beta = Nx.mul rho (dot y !r) in
+      r := Nx.Ptree.axpy p (Nx.sub alphas.(i) beta) s !r
+    done;
+    !r
+  in
+  let r = if float64 then run F64 else run F32 in
+  let move =
+    Nx.Ptree.map p
+      (fun _ r ->
+        if updates r then Nx.neg (Nx.mul r (Nx.cast (Nx.dtype r) lr)) else r)
+      r
+  in
+  let params =
+    Nx.Ptree.map2 p
+      (fun _ x d -> if updates x then Nx.add x d else x)
+      st.params move
+  in
+  {
+    params;
+    grads;
+    s = Nx.Ptree.map2 p (fun _ d m -> push d m) move st.s;
+    y = Nx.Ptree.map2 p (fun _ d m -> push (Nx.zeros_like d) m) grads y;
+    step = Nx.add_s st.step 1l;
+  }
