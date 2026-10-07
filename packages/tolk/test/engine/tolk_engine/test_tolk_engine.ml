@@ -2548,7 +2548,9 @@ let counts_up lines =
         counts
 
 (* At [DEBUG=2], the recorded copy runs its copy into CPU:1 and its kernel on
-   the host devices, each a line timed on the host clock. *)
+   the host devices, each a line timed on the host clock. The time is the
+   difference of two readings of the clock, so a call shorter than its tick
+   (41.67 ns on Apple silicon) takes 0 s. *)
 let reports_host_calls () =
   let big = program "copy" in
   Setting.context
@@ -2563,7 +2565,7 @@ let reports_host_calls () =
     (fun words ->
       equal string ~msg:"device" "CPU:1" (List.nth words 1);
       let t = seconds_of words in
-      greater float_exact ~msg:"time" ~than:0. t;
+      at_least float_exact ~msg:"time" ~than:0. t;
       less float_exact ~msg:"time" ~than:1. t)
     lines
 
