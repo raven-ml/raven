@@ -11,17 +11,18 @@
 # forced: blessed fits-quantized-1024/write under load 25.8 on 10 cores
 # forced: blessed distance-modulus-4x1590/eager distance-modulus-4x1590/compiled distance-modulus-4x1590/grad age-1k/eager age-1k/compiled under load 22.1 on 10 cores
 # forced: blessed fits-observation-4096/sci-err-float32 under load 19.5 on 10 cores
+# forced: blessed wcs-1m/eager wcs-1m/compiled solved-100k/sip-forward-eager solved-100k/sip-inverse-eager solved-100k/zpn-deproject-eager aperture-104/eager aperture-104/eager-grad aperture-104/compiled-grad under load 9.6 on 10 cores
 
 age-1k/compiled	alloc_words	exact	849
 age-1k/compiled	wall_time	batch=2	n=20	4.240e-03	2.058e-03 2.175e-03 2.469e-03 2.968e-03 3.252e-03 3.462e-03 3.654e-03 3.803e-03 3.945e-03 4.144e-03 4.335e-03 4.494e-03 4.892e-03 4.942e-03 5.331e-03 5.482e-03 6.723e-03 6.850e-03 7.650e-03 8.104e-03
 age-1k/eager	alloc_words	exact	70946
 age-1k/eager	wall_time	batch=1	n=20	3.141e-02	2.768e-02 2.786e-02 2.821e-02 2.825e-02 2.896e-02 2.910e-02 2.918e-02 3.057e-02 3.074e-02 3.112e-02 3.171e-02 3.199e-02 3.210e-02 3.234e-02 3.252e-02 3.297e-02 3.372e-02 3.554e-02 4.392e-02 5.563e-02
-aperture-104/compiled-grad	alloc_words	exact	9234
-aperture-104/compiled-grad	wall_time	batch=1	n=20	1.870e-01	1.588e-01 1.599e-01 1.656e-01 1.661e-01 1.705e-01 1.723e-01 1.754e-01 1.802e-01 1.820e-01 1.849e-01 1.892e-01 1.949e-01 1.972e-01 1.978e-01 1.984e-01 1.992e-01 2.038e-01 2.601e-01 3.183e-01 5.142e-01
-aperture-104/eager	alloc_words	exact	407979
-aperture-104/eager	wall_time	batch=1	n=20	1.178e-01	1.086e-01 1.087e-01 1.114e-01 1.123e-01 1.129e-01 1.142e-01 1.143e-01 1.149e-01 1.156e-01 1.177e-01 1.179e-01 1.191e-01 1.204e-01 1.238e-01 1.255e-01 1.266e-01 1.277e-01 1.278e-01 1.342e-01 1.503e-01
-aperture-104/eager-grad	alloc_words	exact	1820953
-aperture-104/eager-grad	wall_time	batch=1	n=20	1.342e-01	1.129e-01 1.162e-01 1.235e-01 1.242e-01 1.259e-01 1.277e-01 1.299e-01 1.316e-01 1.334e-01 1.337e-01 1.347e-01 1.349e-01 1.356e-01 1.368e-01 1.389e-01 1.413e-01 1.445e-01 1.457e-01 1.497e-01 1.564e-01
+aperture-104/compiled-grad	alloc_words	exact	9217
+aperture-104/compiled-grad	wall_time	batch=1	n=20	1.553e-01	1.468e-01 1.480e-01 1.493e-01 1.509e-01 1.514e-01 1.514e-01 1.515e-01 1.521e-01 1.532e-01 1.551e-01 1.556e-01 1.560e-01 1.569e-01 1.575e-01 1.598e-01 1.638e-01 1.648e-01 1.654e-01 1.690e-01 1.698e-01
+aperture-104/eager	alloc_words	exact	527752
+aperture-104/eager	wall_time	batch=1	n=20	1.105e-01	1.034e-01 1.036e-01 1.039e-01 1.039e-01 1.040e-01 1.043e-01 1.048e-01 1.078e-01 1.080e-01 1.097e-01 1.113e-01 1.115e-01 1.117e-01 1.128e-01 1.130e-01 1.132e-01 1.137e-01 1.148e-01 1.157e-01 1.167e-01
+aperture-104/eager-grad	alloc_words	exact	1997903
+aperture-104/eager-grad	wall_time	batch=1	n=20	9.706e-02	8.971e-02 9.118e-02 9.362e-02 9.368e-02 9.370e-02 9.379e-02 9.433e-02 9.594e-02 9.656e-02 9.678e-02 9.733e-02 9.735e-02 9.779e-02 9.798e-02 9.843e-02 9.866e-02 1.011e-01 1.011e-01 1.018e-01 1.032e-01
 distance-modulus-4x1590/compiled	alloc_words	exact	856
 distance-modulus-4x1590/compiled	wall_time	batch=4	n=20	3.729e-03	2.262e-03 2.586e-03 2.614e-03 2.798e-03 2.899e-03 3.072e-03 3.089e-03 3.417e-03 3.556e-03 3.675e-03 3.782e-03 3.863e-03 3.986e-03 4.338e-03 4.377e-03 5.807e-03 6.036e-03 6.522e-03 8.020e-03 1.110e-02
 distance-modulus-4x1590/eager	alloc_words	exact	77172
@@ -48,7 +49,13 @@ separation-1m/compiled	alloc_words	exact	2609
 separation-1m/compiled	wall_time	batch=1	n=20	4.704e-02	3.783e-02 3.853e-02 3.914e-02 3.982e-02 4.086e-02 4.101e-02 4.252e-02 4.389e-02 4.619e-02 4.682e-02 4.726e-02 5.709e-02 5.804e-02 6.061e-02 6.195e-02 6.906e-02 7.904e-02 8.146e-02 9.206e-02 9.334e-02
 separation-1m/eager	alloc_words	exact	17967
 separation-1m/eager	wall_time	batch=1	n=20	2.002e-01	1.401e-01 1.538e-01 1.596e-01 1.666e-01 1.723e-01 1.793e-01 1.843e-01 1.880e-01 1.939e-01 1.996e-01 2.009e-01 2.092e-01 2.181e-01 2.192e-01 2.230e-01 2.284e-01 2.292e-01 2.308e-01 2.531e-01 2.820e-01
-wcs-1m/compiled	alloc_words	exact	1211
-wcs-1m/compiled	wall_time	batch=1	n=20	6.307e-03	2.067e-03 2.934e-03 3.063e-03 3.357e-03 3.467e-03 3.497e-03 3.589e-03 3.663e-03 3.875e-03 5.174e-03 7.440e-03 7.784e-03 8.690e-03 9.177e-03 1.232e-02 1.299e-02 1.317e-02 1.340e-02 1.381e-02 1.384e-02
-wcs-1m/eager	alloc_words	exact	10213
-wcs-1m/eager	wall_time	batch=1	n=20	4.423e-02	3.358e-02 3.447e-02 3.470e-02 3.491e-02 3.543e-02 3.611e-02 3.829e-02 3.976e-02 4.092e-02 4.379e-02 4.466e-02 4.537e-02 4.616e-02 4.961e-02 5.556e-02 5.692e-02 6.200e-02 6.221e-02 7.157e-02 7.800e-02
+solved-100k/sip-forward-eager	alloc_words	exact	74323
+solved-100k/sip-forward-eager	wall_time	batch=1	n=20	3.055e-02	2.891e-02 2.983e-02 2.990e-02 2.991e-02 3.001e-02 3.012e-02 3.015e-02 3.035e-02 3.037e-02 3.051e-02 3.060e-02 3.060e-02 3.081e-02 3.082e-02 3.084e-02 3.084e-02 3.088e-02 3.088e-02 3.104e-02 3.210e-02
+solved-100k/sip-inverse-eager	alloc_words	exact	247848
+solved-100k/sip-inverse-eager	wall_time	batch=1	n=20	1.801e-01	1.778e-01 1.783e-01 1.786e-01 1.788e-01 1.789e-01 1.789e-01 1.790e-01 1.798e-01 1.799e-01 1.800e-01 1.802e-01 1.805e-01 1.810e-01 1.814e-01 1.817e-01 1.833e-01 1.839e-01 1.851e-01 1.896e-01 1.940e-01
+solved-100k/zpn-deproject-eager	alloc_words	exact	1228401
+solved-100k/zpn-deproject-eager	wall_time	batch=1	n=20	3.601e-01	3.554e-01 3.555e-01 3.559e-01 3.569e-01 3.571e-01 3.573e-01 3.573e-01 3.575e-01 3.582e-01 3.586e-01 3.617e-01 3.640e-01 3.640e-01 3.656e-01 3.741e-01 3.743e-01 3.745e-01 3.782e-01 3.809e-01 3.827e-01
+wcs-1m/compiled	alloc_words	exact	2003
+wcs-1m/compiled	wall_time	batch=1	n=20	4.038e-03	1.205e-03 3.930e-03 3.932e-03 3.937e-03 3.949e-03 3.962e-03 4.000e-03 4.008e-03 4.022e-03 4.027e-03 4.049e-03 4.196e-03 4.293e-03 4.382e-03 4.383e-03 4.404e-03 4.413e-03 4.418e-03 4.504e-03 4.566e-03
+wcs-1m/eager	alloc_words	exact	39938
+wcs-1m/eager	wall_time	batch=1	n=20	3.550e-02	3.467e-02 3.474e-02 3.478e-02 3.488e-02 3.522e-02 3.527e-02 3.540e-02 3.543e-02 3.544e-02 3.550e-02 3.551e-02 3.574e-02 3.574e-02 3.597e-02 3.603e-02 3.610e-02 3.612e-02 3.621e-02 3.624e-02 3.731e-02

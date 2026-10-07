@@ -230,6 +230,70 @@ let wcs_rows () =
         (fun (f, p) -> timed (fun () -> f p));
     ]
 
+(* Distortions and solved projections, on [m] points: a SIP header of order 3
+   over the same image, its inverse solving each point, and ZPN's
+   deprojection solving each radius. *)
+
+let m = 100_000
+
+let sip_wcs () =
+  (* [coefficients ts] is a 4 × 4 SIP matrix from [((p, q), v)] terms. *)
+  let coefficients ts =
+    let c = Array.make 16 0. in
+    List.iter (fun ((p, q), v) -> c.((4 * p) + q) <- v) ts;
+    Nx.create f64 [| 4; 4 |] c
+  in
+  let a =
+    coefficients
+      [ ((2, 0), 2.1e-6); ((1, 1), -1.4e-6); ((0, 2), 8.2e-7); ((3, 0), 3.1e-10) ]
+  and b =
+    coefficients
+      [ ((2, 0), -9.5e-7); ((1, 1), 1.9e-6); ((0, 2), -2.6e-6); ((0, 3), 1.4e-10) ]
+  in
+  Transform.(
+    axes [| 1; 0 |] ~origin:1
+    >> shift (Quantity.v Unit.one (Nx.create f64 [| 2 |] [| 2048.5; 2048.5 |]))
+    >> sip (a, b)
+    >> linear (degrees (Nx.create f64 [| 2; 2 |] [| -.pixel; 0.; 0.; pixel |]))
+    >> celestial Tan Frame.icrs ~pv:(Nx.zeros f64 [| 0 |])
+         ~native:(degrees (Nx.create f64 [| 2 |] [| 0.; 90. |]))
+         ~crval:(degrees (Nx.create f64 [| 2 |] [| 110.8375; -73.4537 |]))
+         ~lonpole:(degrees (Nx.scalar f64 180.))
+         ~latpole:(degrees (Nx.scalar f64 90.)))
+
+let sip_pixels () = Nx.slice [ Nx.R (0, m) ] (pixels ())
+
+let sip_sky () =
+  let t = sip_wcs () in
+  (t, Transform.apply t (Quantity.v Unit.one (sip_pixels ())))
+
+let to_pixels t d = Quantity.value Unit.one (Transform.apply (Transform.inverse t) d)
+
+let zpn () =
+  let pv = Nx.init f64 [| 30 |] (function [| 1 |] -> 1. | [| 3 |] -> -0.25 | _ -> 0.) in
+  let t =
+    Transform.celestial Zpn Frame.icrs ~pv
+      ~native:(degrees (Nx.create f64 [| 2 |] [| 0.; 90. |]))
+      ~crval:(degrees (Nx.create f64 [| 2 |] [| 120.; -45. |]))
+      ~lonpole:(degrees (Nx.scalar f64 180.))
+      ~latpole:(degrees (Nx.scalar f64 90.))
+  in
+  let u = Nx.linspace f64 0. 1. m in
+  let r = Nx.mul_s u 40. and phi = Nx.mul_s u (7919. *. 2. *. Float.pi) in
+  (t, degrees (Nx.stack ~axis:(-1) [ Nx.mul r (Nx.sin phi); Nx.mul r (Nx.cos phi) ]))
+
+let solved_rows () =
+  Thumper.group "solved-100k"
+    [
+      Thumper.bench_with_setup ~setup:sip_pixels "sip-forward-eager" (fun p ->
+          timed (fun () ->
+              Direction.xyz (Transform.apply (sip_wcs ()) (Quantity.v Unit.one p))));
+      Thumper.bench_with_setup ~setup:sip_sky "sip-inverse-eager" (fun (t, d) ->
+          timed (fun () -> to_pixels t d));
+      Thumper.bench_with_setup ~setup:zpn "zpn-deproject-eager" (fun (t, p) ->
+          timed (fun () -> Direction.xyz (Transform.apply t p)));
+    ]
+
 let mosaic () =
   let shape = [| 4096; 4096 |] in
   let g = Grid.pixels ~shape f64 (wcs ()) in
@@ -354,6 +418,7 @@ let suite () =
     galactic ();
     separations ();
     wcs_rows ();
+    solved_rows ();
     aperture_rows ();
     fits_reads ();
     fits_observation ();
