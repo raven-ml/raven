@@ -6,9 +6,12 @@
 (* Hostile bytes give values or an Error (the RFC's second law). The corpus
    is the files astropy wrote (gen/fixtures.py): images of every format,
    tiles of every codec and dither, and binary and ASCII tables with every
-   TFORM code. A byte changed in each region where a decoder path reads, and
-   a file cut around each of its boundaries, are read by every reader: none
-   may raise. *)
+   TFORM code; and cuts of files the archives wrote (survey/README.md):
+   pipeline headers with CONTINUE and HIERARCH records, cfitsio's Rice, gzip
+   and HCOMPRESS tiles, IDL's and STIL's tables, heap arrays, an ASCII table
+   and random groups. A byte changed in each region where a decoder path
+   reads, and a file cut around each of its boundaries, are read by every
+   reader: none may raise. *)
 
 open Windtrap
 open Ymir_fits
@@ -17,7 +20,12 @@ module V = Fits.Value
 module I = Fits.Image
 module T = Fits.Table
 
-let files = [ "golden/images.fits"; "golden/tiles.fits"; "golden/tables.fits" ]
+let files =
+  [ "golden/images.fits"; "golden/tiles.fits"; "golden/tables.fits" ]
+  @ (Sys.readdir "survey" |> Array.to_list
+    |> List.filter (fun f -> Filename.check_suffix f ".fits")
+    |> List.sort compare
+    |> List.map (Filename.concat "survey"))
 
 let contents =
   List.map (fun p -> (p, In_channel.with_open_bin p In_channel.input_all)) files
@@ -26,6 +34,36 @@ let tensor s =
   let a = Bigarray.(Array1.create int8_unsigned c_layout (String.length s)) in
   String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) s;
   Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+
+(* The keyword of a record that holds a value, by the interface's rules
+   for names, HIERARCH ones included. *)
+let keyword r =
+  let name = String.trim (String.sub r 0 8) in
+  let standard c =
+    match c with 'A' .. 'Z' | '0' .. '9' | '-' | '_' -> true | _ -> false
+  in
+  let token t = String.for_all (fun c -> c > ' ' && c <= '~' && c <> '=') t in
+  if
+    String.sub r 8 2 = "= "
+    && name <> ""
+    && String.for_all standard name
+    && String.starts_with ~prefix:name r
+    && name <> "CONTINUE"
+  then Some name
+  else if String.starts_with ~prefix:"HIERARCH " r then
+    match String.index_opt r '=' with
+    | None -> None
+    | Some i -> (
+        let tokens =
+          String.split_on_char ' ' (String.sub r 9 (i - 9))
+          |> List.filter (( <> ) "")
+        in
+        match tokens with
+        | [] -> None
+        | [ t ] when String.length t <= 8 -> None
+        | ts when List.for_all token ts -> Some (String.concat " " ts)
+        | _ -> None)
+  else None
 
 (* Every reader on every HDU; an exception fails the law. *)
 let read_all name s =
@@ -40,7 +78,20 @@ let read_all name s =
   | Ok hdus ->
       List.iter
         (fun h ->
+          guard "header values" (fun () ->
+              let hh = Fits.header h in
+              List.iter
+                (fun r ->
+                  Option.iter
+                    (fun k ->
+                      ignore (H.find V.text k hh);
+                      ignore (H.find V.string k hh);
+                      ignore (H.find V.float k hh))
+                    (keyword r))
+                (H.records hh);
+              Ok ());
           guard "verify" (fun () -> Fits.verify h);
+          guard "digest" (fun () -> Ok (ignore (Fits.digest h)));
           guard "unit" (fun () -> Result.map ignore (Fits.unit h));
           guard "pp" (fun () -> Ok (ignore (Format.asprintf "%a" Fits.pp h)));
           guard "image values" (fun () ->
@@ -50,7 +101,17 @@ let read_all name s =
           guard "image window" (fun () ->
               Result.map ignore
                 (I.values ~window:[| (0, 1); (0, 1) |] Nx.float32 h));
-          guard "table" (fun () -> Result.map ignore (T.read h)))
+          guard "table" (fun () -> Result.map ignore (T.read h));
+          guard "column units" (fun () ->
+              Result.map
+                (fun t ->
+                  List.iter
+                    (fun (c : T.column) ->
+                      match H.find V.string "TUNIT" c.cards with
+                      | Ok (Some u) -> ignore (Fits.Unit.parse ~scope:"t" u)
+                      | Ok None | Error _ -> ())
+                    (T.columns t))
+                (T.of_hdu h)))
         hdus
 
 (* The structure of the corpus: each HDU's header and data unit, in file
@@ -117,7 +178,10 @@ let regions =
   List.concat_map
     (fun (path, s) ->
       let sps = spans s in
-      let tag label ranges = List.map (fun r -> (label, path, r)) ranges in
+      let file = Filename.basename path in
+      let tag label ranges =
+        List.map (fun r -> (file ^ ": " ^ label, path, r)) ranges
+      in
       List.concat_map
         (fun sp ->
           let h = sp.h in
@@ -135,7 +199,8 @@ let regions =
                 "rice"
               else if String.length cmp >= 4 && String.sub cmp 0 4 = "GZIP" then
                 "gzip"
-              else "uncompressed tiles"
+              else if cmp = "NOCOMPRESS" then "uncompressed tiles"
+              else "unknown codec"
             in
             tag label [ sp.data ]
           else if xt = "BINTABLE" then
@@ -154,6 +219,8 @@ let regions =
                 ]
             @ tag "binary fields" [ sp.data ]
           else if xt = "TABLE" then tag "ascii" [ sp.data ]
+          else if H.find V.bool "GROUPS" h = Ok (Some true) then
+            tag "random groups" [ sp.data ]
           else tag "plain image" [ sp.data ])
         sps)
     contents
@@ -164,7 +231,8 @@ let labels =
   List.sort_uniq compare
     (Array.to_list (Array.map (fun (l, _, _) -> l) regions))
 
-(* The regions of each path, so that each path is drawn as often. *)
+(* The regions of each decoder path in each file, so that each pair is
+   drawn as often. *)
 let by_label =
   Array.of_list
     (List.map
@@ -175,7 +243,7 @@ let by_label =
 
 let mutated =
   prop "a changed byte in any decoder's bytes gives values or an Error"
-    ~count:300
+    ~count:1000
     Gen.(
       quad
         (int_range 0 (Array.length by_label - 1))

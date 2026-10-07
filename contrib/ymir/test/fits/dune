@@ -1,6 +1,16 @@
 (tests
- (names test_header test_hdu test_image test_tiles test_unit test_table test_domains test_hostile)
+ (names
+  test_header
+  test_hdu
+  test_image
+  test_tiles
+  test_unit
+  test_table
+  test_domains
+  test_hostile
+  test_survey)
  (package ymir)
  (libraries ymir.fits ymir.units nx nx.dtype nx.ragged windtrap)
  (deps
-  (glob_files golden/*)))
+  (glob_files golden/*)
+  (glob_files survey/*)))
