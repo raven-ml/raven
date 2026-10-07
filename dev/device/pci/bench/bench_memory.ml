@@ -14,12 +14,7 @@
    allocation of each kind and size stays resident, so the rows measure the warm
    path, without table creation. *)
 
-module Machine = Device_pci.Machine
-module Function = Device_pci.Function
-module Window = Device_pci.Window
-module Space = Device_pci.Space
-module Page_table = Device_pci.Page_table
-module Memory = Device_pci.Memory
+open Device_pci
 
 let kib = 1024
 let mib = 1024 * kib

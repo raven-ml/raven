@@ -16,8 +16,7 @@
    buffer, in a format whose entries hold the address, bit 0 valid and bit 1 a
    table. *)
 
-module Space = Device_pci.Space
-module Page_table = Device_pci.Page_table
+open Device_pci
 
 let kib = 1024
 let mib = 1024 * kib

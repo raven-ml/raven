@@ -13,7 +13,7 @@
    and [through] reaches a buffer through an in-process transport: the cost a
    remote or USB machine adds above its wire. *)
 
-module Window = Device_pci.Window
+open Device_pci
 
 external buffer : int -> int = "test_memory"
 external far : unit -> int = "bench_far"
