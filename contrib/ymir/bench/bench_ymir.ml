@@ -161,9 +161,126 @@ let fits_table () =
           timed (fun () -> ok (Fits.Table.read h)));
     ]
 
+(* Grids: a JWST-like TAN header with 0.031 arcsecond pixels. *)
+
+let degrees x = Quantity.v Unit.degree x
+let arcsec x = Quantity.v Unit.arcsecond x
+let pixel = 0.031 /. 3600.
+
+let wcs () =
+  Transform.(
+    axes [| 1; 0 |] ~origin:1
+    >> shift (Quantity.v Unit.one (Nx.create f64 [| 2 |] [| 2048.5; 2048.5 |]))
+    >> linear (degrees (Nx.create f64 [| 2; 2 |] [| -.pixel; 0.; 0.; pixel |]))
+    >> celestial Tan Frame.icrs f64 ~pv:(Nx.zeros f64 [| 0 |])
+         ~native:(degrees (Nx.create f64 [| 2 |] [| 0.; 90. |]))
+         ~crval:(degrees (Nx.create f64 [| 2 |] [| 110.8375; -73.4537 |]))
+         ~lonpole:(degrees (Nx.scalar f64 180.))
+         ~latpole:(degrees (Nx.scalar f64 90.)))
+
+(* [n] pixel coordinates spread over a 4096² image, [[n; 2]]. *)
+let pixels () =
+  let u = Nx.linspace f64 0. 1. n in
+  let v = Nx.mul_s u 7919. in
+  let v = Nx.sub v (Nx.floor v) in
+  Nx.stack ~axis:(-1) [ Nx.mul_s u 4095.; Nx.mul_s v 4095. ]
+
+let to_sky p = Direction.xyz (Transform.apply (wcs ()) (Quantity.v Unit.one p))
+
+let wcs_rows () =
+  Thumper.group "wcs-1m"
+    [
+      Thumper.bench_with_setup ~setup:pixels "eager" (fun p ->
+          timed (fun () -> to_sky p));
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let f = Rune.jit' to_sky and p = pixels () in
+          ignore (Sys.opaque_identity (f p));
+          (f, p))
+        "compiled"
+        (fun (f, p) -> timed (fun () -> f p));
+    ]
+
+let mosaic () =
+  let shape = [| 4096; 4096 |] in
+  let g = Grid.pixels ~shape f64 (wcs ()) in
+  let data =
+    Nx.init f64 shape (fun i ->
+        float_of_int (((i.(0) * 31) + (i.(1) * 17)) mod 101))
+  in
+  Observation.v
+    ~area:(Quantity.v Unit.steradian (Nx.scalar f64 2.26e-14))
+    g
+    (Quantity.v Unit.(symbol "Jy" / steradian) data)
+
+let target =
+  lazy
+    (Direction.lonlat Frame.icrs
+       ~lon:(degrees (Nx.scalar f64 110.8375))
+       ~lat:(degrees (Nx.scalar f64 (-73.4537))))
+
+(* The Guide's aperture: a 0.5 arcsecond circle less the mean of a 1-1.5
+   arcsecond annulus, on a 104 × 104 stamp, as a function of [east; north;
+   radius] in arcseconds. *)
+let flux stamp p =
+  let target = Lazy.force target in
+  let at =
+    Transform.(about target >> shift (arcsec (Nx.slice [ Nx.R (0, 2) ] p)))
+  in
+  let sum =
+    Observation.integrate
+      (Region.circle at ~radius:(arcsec (Nx.slice [ Nx.I 2 ] p)))
+      stamp
+  in
+  let sky =
+    Observation.integrate
+      (Region.annulus at
+         ~inner:(arcsec (Nx.scalar f64 1.))
+         ~outer:(arcsec (Nx.scalar f64 1.5)))
+      stamp
+  in
+  Quantity.(
+    value (Unit.symbol "Jy")
+      (sub sum.value (mul (div sky.value sky.area) sum.area)))
+
+let aperture_inputs () =
+  let stamp =
+    Observation.around (Lazy.force target) ~shape:[| 104; 104 |] (mosaic ())
+  in
+  (stamp, Nx.create f64 [| 3 |] [| 0.; 0.; 0.5 |])
+
+let aperture_rows () =
+  let grad stamp p = Rune.value_and_grad' (flux stamp) p in
+  Thumper.group "aperture-104"
+    [
+      Thumper.bench_with_setup ~setup:aperture_inputs "eager" (fun (s, p) ->
+          timed (fun () -> flux s p));
+      Thumper.bench_with_setup ~setup:aperture_inputs "eager-grad"
+        (fun (s, p) -> timed (fun () -> grad s p));
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let f =
+            Rune.jit
+              Nx.Ptree.(
+                Observation.ptree () @-> tensor @-> returns (pair tensor tensor))
+              grad
+          in
+          let s, p = aperture_inputs () in
+          ignore (Sys.opaque_identity (f s p));
+          (f, s, p))
+        "compiled-grad"
+        (fun (f, s, p) -> timed (fun () -> f s p));
+    ]
+
 let suite () =
   [
-    galactic (); separations (); fits_reads (); fits_quantize (); fits_table ();
+    galactic ();
+    separations ();
+    wcs_rows ();
+    aperture_rows ();
+    fits_reads ();
+    fits_quantize ();
+    fits_table ();
   ]
 
 let config = Thumper.Config.(default |> deadline 60.)

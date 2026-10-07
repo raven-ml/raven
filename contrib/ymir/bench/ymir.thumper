@@ -7,7 +7,14 @@
 # forced: blessed under load 33.7 on 10 cores
 # forced: blessed fits-image-4096/values-float32 fits-image-4096/raw-int16-rice fits-quantized-1024/write fits-table-50x100k/raw-one-column fits-table-50x100k/read under load 33.5 on 10 cores
 # forced: blessed fits-image-4096/raw-int16-rice under load 22.4 on 10 cores
+# forced: blessed wcs-1m/eager wcs-1m/compiled aperture-104/eager aperture-104/eager-grad aperture-104/compiled-grad under load 13.3 on 10 cores
 
+aperture-104/compiled-grad	alloc_words	exact	9234
+aperture-104/compiled-grad	wall_time	batch=1	n=20	1.870e-01	1.588e-01 1.599e-01 1.656e-01 1.661e-01 1.705e-01 1.723e-01 1.754e-01 1.802e-01 1.820e-01 1.849e-01 1.892e-01 1.949e-01 1.972e-01 1.978e-01 1.984e-01 1.992e-01 2.038e-01 2.601e-01 3.183e-01 5.142e-01
+aperture-104/eager	alloc_words	exact	407979
+aperture-104/eager	wall_time	batch=1	n=20	1.178e-01	1.086e-01 1.087e-01 1.114e-01 1.123e-01 1.129e-01 1.142e-01 1.143e-01 1.149e-01 1.156e-01 1.177e-01 1.179e-01 1.191e-01 1.204e-01 1.238e-01 1.255e-01 1.266e-01 1.277e-01 1.278e-01 1.342e-01 1.503e-01
+aperture-104/eager-grad	alloc_words	exact	1820953
+aperture-104/eager-grad	wall_time	batch=1	n=20	1.342e-01	1.129e-01 1.162e-01 1.235e-01 1.242e-01 1.259e-01 1.277e-01 1.299e-01 1.316e-01 1.334e-01 1.337e-01 1.347e-01 1.349e-01 1.356e-01 1.368e-01 1.389e-01 1.413e-01 1.445e-01 1.457e-01 1.497e-01 1.564e-01
 fits-image-4096/raw-int16-rice	alloc_words	exact	4435930
 fits-image-4096/raw-int16-rice	wall_time	batch=1	n=20	2.339e-01	2.272e-01 2.276e-01 2.282e-01 2.282e-01 2.287e-01 2.293e-01 2.296e-01 2.297e-01 2.325e-01 2.337e-01 2.342e-01 2.344e-01 2.363e-01 2.365e-01 2.366e-01 2.382e-01 2.571e-01 2.923e-01 3.645e-01 4.088e-01
 fits-image-4096/values-float32	alloc_words	exact	1638
@@ -26,3 +33,7 @@ separation-1m/compiled	alloc_words	exact	2609
 separation-1m/compiled	wall_time	batch=1	n=20	4.704e-02	3.783e-02 3.853e-02 3.914e-02 3.982e-02 4.086e-02 4.101e-02 4.252e-02 4.389e-02 4.619e-02 4.682e-02 4.726e-02 5.709e-02 5.804e-02 6.061e-02 6.195e-02 6.906e-02 7.904e-02 8.146e-02 9.206e-02 9.334e-02
 separation-1m/eager	alloc_words	exact	17967
 separation-1m/eager	wall_time	batch=1	n=20	2.002e-01	1.401e-01 1.538e-01 1.596e-01 1.666e-01 1.723e-01 1.793e-01 1.843e-01 1.880e-01 1.939e-01 1.996e-01 2.009e-01 2.092e-01 2.181e-01 2.192e-01 2.230e-01 2.284e-01 2.292e-01 2.308e-01 2.531e-01 2.820e-01
+wcs-1m/compiled	alloc_words	exact	1211
+wcs-1m/compiled	wall_time	batch=1	n=20	6.307e-03	2.067e-03 2.934e-03 3.063e-03 3.357e-03 3.467e-03 3.497e-03 3.589e-03 3.663e-03 3.875e-03 5.174e-03 7.440e-03 7.784e-03 8.690e-03 9.177e-03 1.232e-02 1.299e-02 1.317e-02 1.340e-02 1.381e-02 1.384e-02
+wcs-1m/eager	alloc_words	exact	10213
+wcs-1m/eager	wall_time	batch=1	n=20	4.423e-02	3.358e-02 3.447e-02 3.470e-02 3.491e-02 3.543e-02 3.611e-02 3.829e-02 3.976e-02 4.092e-02 4.379e-02 4.466e-02 4.537e-02 4.616e-02 4.961e-02 5.556e-02 5.692e-02 6.200e-02 6.221e-02 7.157e-02 7.800e-02
