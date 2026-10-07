@@ -1,0 +1,7 @@
+; sample.exe writes a file through every writer path, for check_written.py
+; to read with astropy. Neither runs in runtest: astropy is not a test
+; dependency.
+
+(executable
+ (name sample)
+ (libraries ymir.fits nx nx.ragged))
