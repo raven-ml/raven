@@ -272,6 +272,54 @@ let aperture_rows () =
         (fun (f, s, p) -> timed (fun () -> f s p));
     ]
 
+(* Cosmology *)
+
+let planck = Cosmology.planck2018 ~codata:Codata.v2022 f64
+
+let compile f x =
+  let f = Rune.jit' f in
+  ignore (Sys.opaque_identity (f x));
+  (f, x)
+
+(* A supernova fit's log density: the distance moduli of 1590 redshifts in
+   each of 4 chains, Omega_cb of shape [4; 1]. *)
+let supernovae () =
+  let z = Nx.linspace f64 0.01 2.3 1590 in
+  let modulus omega_cb =
+    Cosmology.distance_modulus { planck with omega_cb } ~observed:z z
+  in
+  let chains () = Nx.create f64 [| 4; 1 |] [| 0.28; 0.3; 0.31; 0.33 |] in
+  Thumper.group "distance-modulus-4x1590"
+    [
+      Thumper.bench_with_setup ~setup:chains "eager" (fun x ->
+          timed (fun () -> modulus x));
+      Thumper.bench_with_setup
+        ~setup:(fun () -> compile modulus (chains ()))
+        "compiled"
+        (fun (f, x) -> timed (fun () -> f x));
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          compile (Rune.grad' (fun x -> Nx.sum (modulus x))) (chains ()))
+        "grad"
+        (fun (f, x) -> timed (fun () -> f x));
+    ]
+
+(* Ages at 10^3 redshifts, with one massive species. *)
+let ages () =
+  let age z =
+    Quantity.value Unit.(giga Units.julian_year) (Cosmology.age planck z)
+  in
+  let redshifts () = Nx.logspace f64 0. 6. 1_000 in
+  Thumper.group "age-1k"
+    [
+      Thumper.bench_with_setup ~setup:redshifts "eager" (fun z ->
+          timed (fun () -> age z));
+      Thumper.bench_with_setup
+        ~setup:(fun () -> compile age (redshifts ()))
+        "compiled"
+        (fun (f, z) -> timed (fun () -> f z));
+    ]
+
 let suite () =
   [
     galactic ();
@@ -281,6 +329,8 @@ let suite () =
     fits_reads ();
     fits_quantize ();
     fits_table ();
+    supernovae ();
+    ages ();
   ]
 
 let config = Thumper.Config.(default |> deadline 60.)
