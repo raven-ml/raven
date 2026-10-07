@@ -1023,21 +1023,33 @@ module Fits : sig
       {[
       axes [| 1; 0 |] ~origin:1 (* tensor order, 0-based -> FITS, 1-based *)
       >> shift crpix
+      >> sip (a, b) (* a SIP header *)
       >> linear cd (* a CD header *)
       (* or: linear pc >> scale cdelt, a PC, CROTA2 or CDELT header *)
       >> axes [| 1; 0 |] ~origin:0 (* when latitude is axis 1 *)
-      >> celestial code frame dtype ~pv ~native ~crval ~lonpole ~latpole
+      >> tpv pv (* a TPV header *)
+      >> celestial code frame ~pv ~native ~crval ~lonpole ~latpole
       ]}
 
-      CRPIX, CD, PC and CDELT are held as the header writes them, CRVAL in CUNIT
-      (degrees when absent), and LONPOLE, LATPOLE and the native reference point
-      (φ₀, θ₀) = ([PVi_1], [PVi_2]) on the longitude axis [i] in degrees. A
-      keyword FITS leaves out takes its default: CRPIX and CRVAL 0, CDELT 1, PC
-      the identity, a missing CD element 0, (φ₀, θ₀) = (0°, 90°), LATPOLE 90°,
+      CRPIX, CD, PC, CDELT, SIP's coefficients and the PV terms are held as
+      the header writes them, CRVAL in CUNIT (degrees when absent), and
+      LONPOLE, LATPOLE and the native reference point (φ₀, θ₀) =
+      ([PVi_1], [PVi_2]) on the longitude axis [i] in degrees. A keyword FITS
+      leaves out takes its default: CRPIX and CRVAL 0, CDELT 1, PC the
+      identity, a missing CD element or SIP coefficient 0, a projection's
+      parameters those {!Transform.code} lists, (φ₀, θ₀) = (0°, 90°) for a
+      zenithal projection and (0°, 0°) for a cylindrical one, LATPOLE 90°,
       and LONPOLE 180° + φ₀ when CRVAL's latitude is below θ₀, φ₀ otherwise.
       CROTA2 reads as the PC matrix it implies. [PVi_3] and [PVi_4] on the
-      longitude axis are LONPOLE's and LATPOLE's other spellings; a header
+      longitude axis are LONPOLE's and LATPOLE's other spellings outside TPV; a header
       giving both spellings of one with different values is an [Error].
+
+      {b Distortions.} SIP reads from [A_ORDER], [B_ORDER] and [A_p_q],
+      [B_p_q], with [AP_ORDER], [BP_ORDER], [AP_p_q] and [BP_p_q] as the
+      inverse's seed, when the CTYPEs end in [-SIP] or the primary description
+      has [A_ORDER]. TPV reads from [PVi_0] to [PVi_39] on both axes when the
+      CTYPEs say [TPV], or say [TAN] and the latitude axis has PV terms, as
+      SCAMP writes; [PV1_1] and [PV2_1] default to 1, the other terms to 0.
 
       {b Frames.} The CTYPE prefix chooses the system and [RADESYS] (or
       [RADECSYS]) and [EQUINOX] (or [EPOCH]) qualify an equatorial or ecliptic
@@ -1052,10 +1064,10 @@ module Fits : sig
 
       Other systems and equinoxes are an [Error] naming what they need.
 
-      {b Scope.} TAN and ARC are read. Other projections, SIP, TPV (and TAN with
-      PV terms), distortion lookup tables, [PVi_m] on the longitude axis beyond
-      [m = 1, ..., 4], and a third WCS axis are an [Error] naming the keyword.
-  *)
+      {b Scope.} The thirteen projections of {!Transform.code}, SIP and TPV are
+      read. Other projections, distortion lookup tables, the fiducial offset
+      [PVi_0], [PVi_m] on the longitude axis beyond [m = 1, ..., 4] outside
+      TPV, and a third WCS axis are an [Error] naming the keyword. *)
   module Wcs : sig
     val read :
       ?alt:char ->
@@ -1082,11 +1094,12 @@ module Fits : sig
         axis's start. A keyword whose value reads back equal keeps its record,
         one that differs is set in place, and one [h] lacks is added where the
         first removed keyword was, or at the end, unless its value is its
-        default. Keywords [t] no longer spells (CD for a PC header, CROTA, SIP)
-        are removed. A pole keeps the spelling [h] gives it. Other records are
+        default and, for a PV term, the stage does not list it as stated.
+        Keywords [t] no longer spells (CD for a PC header, CROTA, SIP) are
+        removed. A pole keeps the spelling [h] gives it. Other records are
         unchanged, so [write (read h) h] is [h] for every header {!read} reads,
-        except that a CROTA2 header is written with the PC matrix it reads as,
-        whose stages are equal.
+        except that a CROTA2 header is written with the PC matrix it reads as
+        and SCAMP's TAN with PV terms as TPV, whose stages are equal.
 
         It is an [Error] naming the stage if [t] is not a list {!read} builds,
         up to an absent PC or a scale stage on its own, or if [t]'s leaves are

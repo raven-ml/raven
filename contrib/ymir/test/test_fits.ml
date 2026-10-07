@@ -60,12 +60,16 @@ let wcslib =
       let (F f) = frame c.frame in
       let t = ok (Fits.Wcs.read ~alt:c.alt f (header c.header)) in
       let world = Transform.apply t (pixels c.pixels) in
-      less float_exact ~than:2e-13
+      (* WCSLIB solves ZPN's and AIR's deprojections to 1e-13 and 1e-12 in
+         the radial function. *)
+      let solved = c.name = "ZPN" || c.name = "AIR" in
+      less float_exact ~than:(if solved then 5e-12 else 2e-13)
         (Array.fold_left max 0. (separation world (lonlat_deg f c.world))))
 
 (* Law 1: a transform prints back what it read *)
 
 let crota (c : Wcs_reference.case) = c.name = "CROTA2, Galactic"
+let tan_pv (c : Wcs_reference.case) = c.name = "TAN with PV terms"
 
 let round_trips =
   let written_reads_back (c : Wcs_reference.case) h =
@@ -79,7 +83,7 @@ let round_trips =
       cases
         ~name:(fun (c : Wcs_reference.case) -> c.name)
         "a header read at float64 prints back bit for bit"
-        (List.filter (fun c -> not (crota c)) Wcs_reference.cases)
+        (List.filter (fun c -> not (crota c || tan_pv c)) Wcs_reference.cases)
         (fun c ->
           let (F f) = frame c.frame in
           let h = header c.header in
@@ -97,6 +101,14 @@ let round_trips =
           equal (option string) None
             (ok (Fits.Header.find Fits.Value.text "CROTA2" h'));
           equal_stages t (ok (Fits.Wcs.read Frame.galactic h')));
+      test "TAN with PV terms prints back as TPV" (fun () ->
+          let c = List.find tan_pv Wcs_reference.cases in
+          let h = header c.header in
+          let t = ok (Fits.Wcs.read Frame.icrs h) in
+          let h' = ok (Fits.Wcs.write t h) in
+          equal (option string) (Some "RA---TPV")
+            (ok (Fits.Header.find Fits.Value.string "CTYPE1" h'));
+          equal_stages t (ok (Fits.Wcs.read Frame.icrs h')));
       test "a new card goes where the first removed card was" (fun () ->
           let t = ok (Fits.Wcs.read Frame.icrs nircam) in
           let cd =
@@ -166,10 +178,39 @@ let errors =
           ( "FK4 (EQUINOX 1950 without RADESYS) needs the time stage, not read \
              yet",
             [ Fits.Header.remove "RADESYS"; set_f "EQUINOX" 1950. ] );
-          ( "CTYPE1 = 'RA---TAN-SIP': SIP distortion is not read yet",
-            [ set_s "CTYPE1" "RA---TAN-SIP"; set_s "CTYPE2" "DEC--TAN-SIP" ] );
-          ( "CTYPE1: the SIN projection is not read yet",
-            [ set_s "CTYPE1" "RA---SIN"; set_s "CTYPE2" "DEC--SIN" ] );
+          ( "CTYPE1: the SFL projection is not read yet",
+            [ set_s "CTYPE1" "RA---SFL"; set_s "CTYPE2" "DEC--SFL" ] );
+          ( "PV1_0: the fiducial offset is not read",
+            [
+              set_s "CTYPE1" "RA---SIN";
+              set_s "CTYPE2" "DEC--SIN";
+              set_f "PV1_0" 1.;
+            ] );
+          ( "PV2_3: the SIN projection's parameters are PV2_1 to PV2_2",
+            [
+              set_s "CTYPE1" "RA---SIN";
+              set_s "CTYPE2" "DEC--SIN";
+              set_f "PV2_3" 1.;
+            ] );
+          ( "PV2_1: the ZEA projection takes no parameter",
+            [
+              set_s "CTYPE1" "RA---ZEA";
+              set_s "CTYPE2" "DEC--ZEA";
+              set_f "PV2_1" 1.;
+            ] );
+          ( "PV1_40: TPV's terms are PV1_0 to PV1_39",
+            [
+              set_s "CTYPE1" "RA---TPV";
+              set_s "CTYPE2" "DEC--TPV";
+              set_f "PV1_40" 1.;
+            ] );
+          ( "B_ORDER is absent beside A_ORDER",
+            [
+              set_s "CTYPE1" "RA---TAN-SIP";
+              set_s "CTYPE2" "DEC--TAN-SIP";
+              set_i "A_ORDER" 2;
+            ] );
+          ("CPDIS1: this distortion is not read yet", [ set_s "CPDIS1" "Lookup" ]);
           ("a header with both CD and PC is ambiguous", [ set_f "CD1_1" 1e-5 ]);
           ( "LONPOLE = 180 and PV1_3 = 150 spell one value and disagree",
             [ set_f "LONPOLE" 180.; set_f "PV1_3" 150. ] );
@@ -177,8 +218,6 @@ let errors =
              and LATPOLE) are read on the longitude axis",
             [ set_f "PV1_5" 1. ] );
           ("CROTA2 beside PC is ambiguous", [ set_f "CROTA2" 10. ]);
-          ( "PV2_1: TAN with PV terms is the TPV distortion, not read yet",
-            [ set_f "PV2_1" 1. ] );
           ( "3 axes: a celestial pair is read, and a spectral, time or other \
              third axis is not",
             [ set_i "WCSAXES" 3 ] );

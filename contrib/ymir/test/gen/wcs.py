@@ -10,8 +10,10 @@ It writes test/support/wcs_reference.ml: headers whose celestial
 descriptions vary each keyword the reader resolves (CD, PC with CDELT,
 CROTA2, latitude first, an alternate description, CUNIT in arcseconds,
 LONPOLE and the native reference point stated or defaulted, and each frame
-it reads), with pixel coordinates and WCSLIB's world coordinates for them
-(astropy.wcs, the core WCS with origin 0).
+it reads, each projection with its PV terms, SIP with and without AP and
+BP, TPV, and TAN with PV terms as SCAMP writes TPV), with pixel
+coordinates and WCSLIB's world coordinates for them (astropy.wcs's
+all_pix2world, origin 0, which applies SIP).
 
 Without --check the file is written; with it, nothing is written and the
 run fails if the file would change.
@@ -212,17 +214,127 @@ CASES = [
 ]
 
 
+def sip_cards(order, coeffs, prefix):
+    cards = [(f"{prefix}_ORDER", order)]
+    cards += [(f"{prefix}_{p}_{q}", v) for (p, q), v in coeffs.items()]
+    return cards
+
+
+SIP = (
+    sip_cards(2, {(2, 0): 1.3e-6, (1, 1): -2.1e-6, (0, 2): 6.0e-7}, "A")
+    + sip_cards(3, {(2, 0): -8.0e-7, (0, 2): 1.9e-6, (3, 0): 2.0e-10, (1, 2): -1.1e-10}, "B")
+)
+SIP_INVERSE = sip_cards(2, {(1, 0): -1.0e-4, (0, 1): 2.0e-5, (2, 0): -1.3e-6}, "AP") + sip_cards(
+    2, {(0, 0): 1.0e-6, (2, 0): 8.0e-7, (0, 2): -1.9e-6}, "BP"
+)
+DISTORTED_BASE = [
+    ("CRPIX1", 1024.5),
+    ("CRPIX2", 1000.25),
+    ("CD1_1", -1.2e-5),
+    ("CD1_2", 4.0e-6),
+    ("CD2_1", 4.1e-6),
+    ("CD2_2", 1.2e-5),
+    ("CRVAL1", 150.1),
+    ("CRVAL2", 2.2),
+    ("RADESYS", "ICRS"),
+]
+TPV_TERMS = [
+    ("PV1_0", 2.0e-6),
+    ("PV1_1", 1.0002),
+    ("PV1_2", -3.0e-4),
+    ("PV1_4", 2.0e-3),
+    ("PV1_7", -4.0e-2),
+    ("PV1_11", 1.0e-2),
+    ("PV2_1", 0.9998),
+    ("PV2_2", 1.0e-4),
+    ("PV2_5", -1.0e-3),
+    ("PV2_10", 3.0e-2),
+    ("PV2_39", 1.0e-1),
+]
+
+
+def projection(code, pv, crval=(30.0, 40.0), extra=()):
+    return [
+        ("CTYPE1", f"RA---{code}"),
+        ("CTYPE2", f"DEC--{code}"),
+        ("CRPIX1", 50.5),
+        ("CRPIX2", 40.25),
+        ("CDELT1", -0.6),
+        ("CDELT2", 0.6),
+        ("CRVAL1", crval[0]),
+        ("CRVAL2", crval[1]),
+    ] + [(f"PV2_{m}", v) for m, v in pv] + list(extra)
+
+
+PROJECTION_CASES = [
+    ("AZP", "icrs", " ", projection("AZP", [(1, 2.0), (2, 30.0)]), (80, 100)),
+    ("SZP", "icrs", " ", projection("SZP", [(1, 2.0), (2, 180.0), (3, 60.0)]), (80, 100)),
+    ("STG", "icrs", " ", projection("STG", []), (80, 100)),
+    ("SIN, slant", "icrs", " ", projection("SIN", [(1, 0.2), (2, -0.1)]), (80, 100)),
+    ("ZPN", "icrs", " ", projection("ZPN", [(1, 1.0), (3, -0.25), (0, 0.0)]), (80, 100)),
+    ("ZEA", "icrs", " ", projection("ZEA", []), (80, 100)),
+    ("AIR", "icrs", " ", projection("AIR", [(1, 45.0)]), (80, 100)),
+    ("CYP", "icrs", " ", projection("CYP", [(1, 0.5), (2, 0.8)], (100.0, 0.0)), (80, 100)),
+    ("CEA", "icrs", " ", projection("CEA", [(1, 0.5)], (100.0, 10.0)), (80, 100)),
+    (
+        "CAR, native reference stated, LATPOLE south",
+        "icrs",
+        " ",
+        projection("CAR", [], (10.0, 20.0), [("PV1_1", 0.0), ("PV1_2", 0.0), ("LONPOLE", 60.0), ("LATPOLE", -90.0)]),
+        (80, 100),
+    ),
+    ("MER", "icrs", " ", projection("MER", [], (45.0, -20.0)), (80, 100)),
+    ("TAN at theta0 45", "icrs", " ", projection("TAN", [], (80.0, 20.0), [("PV1_2", 45.0)]), (80, 100)),
+    (
+        "SIP",
+        "icrs",
+        " ",
+        [("CTYPE1", "RA---TAN-SIP"), ("CTYPE2", "DEC--TAN-SIP")] + DISTORTED_BASE + SIP,
+        (2048, 2048),
+    ),
+    (
+        "SIP with AP and BP",
+        "icrs",
+        " ",
+        [("CTYPE1", "RA---TAN-SIP"), ("CTYPE2", "DEC--TAN-SIP")] + DISTORTED_BASE + SIP + SIP_INVERSE,
+        (2048, 2048),
+    ),
+    (
+        "TPV",
+        "icrs",
+        " ",
+        [("CTYPE1", "RA---TPV"), ("CTYPE2", "DEC--TPV")] + DISTORTED_BASE + TPV_TERMS,
+        (2048, 2048),
+    ),
+    (
+        "TAN with PV terms",
+        "icrs",
+        " ",
+        [("CTYPE1", "RA---TAN"), ("CTYPE2", "DEC--TAN")] + DISTORTED_BASE + TPV_TERMS,
+        (2048, 2048),
+    ),
+]
+CASES += PROJECTION_CASES
+
+
 def case(name, frame, alt, cards, extent):
     h = header(cards)
     key = None if alt == " " else alt
-    w = WCS(h, key=alt)
+    reference = h.copy()
+    # WCSLIB reads TAN's PV terms as the projection's; SCAMP means TPV.
+    if name == "TAN with PV terms":
+        reference["CTYPE1"] = "RA---TPV"
+        reference["CTYPE2"] = "DEC--TPV"
+    w = WCS(reference, key=alt)
     rows, cols = extent
     r = np.linspace(-0.5, rows - 0.5, 7)
     c = np.linspace(-0.5, cols - 0.5, 9)
     rr, cc = np.meshgrid(r, c, indexing="ij")
     pixels = np.stack([rr.ravel(), cc.ravel()], axis=-1)
     pixels = np.concatenate([pixels, pixels[:20] + [0.37, -0.81]])
-    world = np.stack(w.wcs_pix2world(pixels[:, 1], pixels[:, 0], 0), axis=-1)
+    world = np.stack(w.all_pix2world(pixels[:, 1], pixels[:, 0], 0), axis=-1)
+    keep = np.all(np.isfinite(world), axis=-1)
+    pixels, world = pixels[keep], world[keep]
     if w.wcs.lat == 0:
         world = world[:, ::-1]
     # astropy.wcs gives CUNIT arcsec worlds in degrees.

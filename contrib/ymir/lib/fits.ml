@@ -38,25 +38,20 @@ module Wcs = struct
       { lon = "SLON"; lat = "SLAT" };
     ]
 
-  (* The zenithal and cylindrical codes beyond TAN and ARC. *)
-  let later_codes =
+  (* FITS's projection codes that have no family yet. *)
+  let unread_codes =
     [
-      "AZP";
-      "SZP";
-      "STG";
-      "SIN";
-      "ZPN";
-      "ZEA";
-      "AIR";
-      "CYP";
-      "CEA";
-      "CAR";
-      "MER";
+      "SFL"; "PAR"; "MOL"; "AIT"; "COP"; "COE"; "COD"; "COO"; "BON"; "PCO";
+      "TSC"; "CSC"; "QSC"; "HPX"; "XPH"; "GLS"; "NCP"; "TNX"; "ZPX"; "TPU";
     ]
 
-  let ctype_text pair_prefix code =
+  let tpv_code = "TPV"
+
+  let ctype_text pair_prefix code ~tpv ~sip =
     let p = pair_prefix ^ String.make (4 - String.length pair_prefix) '-' in
-    p ^ "-" ^ Transform.code_name code
+    p ^ "-"
+    ^ (if tpv then tpv_code else Transform.code_name code)
+    ^ if sip then "-SIP" else ""
 
   (* [split_ctype s] is [s]'s coordinate type, its projection code and what
      follows: ["RA---TAN-SIP"] is [("RA", "TAN", "-SIP")]. *)
@@ -87,18 +82,21 @@ module Wcs = struct
   type axes = {
     pair : pair;
     code : Transform.code;
+    tpv : bool;  (** The CTYPE says TPV. *)
+    sip : bool;  (** The CTYPE says -SIP. *)
     lng : int;  (** The longitude's FITS axis, 1 or 2. *)
     lat : int;
   }
 
   let read_code h key s =
     match String.trim s with
-    | "TAN" -> Ok Transform.Tan
-    | "ARC" -> Ok Transform.Arc
-    | "TPV" -> fail h "%s = '%s': the TPV distortion is not read yet" key s
-    | c when List.mem c later_codes ->
-        fail h "%s: the %s projection is not read yet" key c
-    | c -> fail h "%s: %S is not a celestial projection code" key c
+    | c when c = tpv_code -> Ok (Transform.Tan, true)
+    | c -> (
+        match Projection.of_name c with
+        | Some code -> Ok (code, false)
+        | None when List.mem c unread_codes ->
+            fail h "%s: the %s projection is not read yet" key c
+        | None -> fail h "%s: %S is not a celestial projection code" key c)
 
   let read_axes h sfx =
     let* n =
@@ -139,55 +137,195 @@ module Wcs = struct
             fail h "%s = '%s' and %s = '%s' are not a celestial pair ymir reads"
               k1 (Option.get s1) k2 (Option.get s2)
       in
-      let* code = read_code h k1 c1 in
-      let* code' = read_code h k2 c2 in
+      let* code, tpv = read_code h k1 c1 in
+      let* code', tpv' = read_code h k2 c2 in
       let* () =
-        if code = code' then Ok ()
+        if code = code' && tpv = tpv' then Ok ()
         else fail h "%s and %s name different projections" k1 k2
       in
-      let suffix_error k s r =
+      let algorithm k s r =
         match r with
-        | "" -> Ok ()
-        | "-SIP" -> fail h "%s = '%s': SIP distortion is not read yet" k s
+        | "" -> Ok false
+        | "-SIP" -> Ok true
         | r -> fail h "%s = '%s': the axis algorithm %S is not read" k s r
       in
-      let* () = suffix_error k1 (Option.get s1) r1 in
-      let* () = suffix_error k2 (Option.get s2) r2 in
-      Ok { pair; code; lng; lat }
+      let* sip1 = algorithm k1 (Option.get s1) r1 in
+      let* sip2 = algorithm k2 (Option.get s2) r2 in
+      let* () =
+        if sip1 = sip2 then Ok ()
+        else fail h "%s and %s disagree on -SIP" k1 k2
+      in
+      Ok { pair; code; tpv; sip = sip1; lng; lat }
 
-  (* Keywords that need a stage this reader does not build. *)
-  let unread h sfx axes =
-    let lat_pv =
-      List.init 100 (fun m -> strf "PV%d_%d%s" axes.lat m sfx)
-      |> List.find_opt (present h)
+  (* Parameters *)
+
+  let pv_key i m sfx = strf "PV%d_%d%s" i m sfx
+
+  (* The FITS limit on [m] in [PVi_m]. *)
+  let pv_terms = 100
+
+  (* [stated_pv h sfx i] is each [m] with [PVi_m] in [h], ascending. *)
+  let stated_pv h sfx i =
+    List.filter (fun m -> present h (pv_key i m sfx)) (List.init pv_terms Fun.id)
+
+  (* How the header's PV terms read: the projection's parameters with the
+     native reference point, or TPV's terms. *)
+  type terms =
+    | Projection of {
+        pv : float array;
+        stated : int array;
+        phi0 : float;
+        theta0 : float;
+      }
+    | Tpv of { pv : float array; stated : int array }
+
+  let tpv_default k = if k mod Distortion.tpv_count = 1 then 1. else 0.
+
+  let read_tpv h sfx axes =
+    let count = Distortion.tpv_count in
+    let row i =
+      let ms = stated_pv h sfx i in
+      match List.find_opt (fun m -> m >= count) ms with
+      | Some m ->
+          fail h "%s: TPV's terms are PV%d_0 to PV%d_%d" (pv_key i m sfx) i i
+            (count - 1)
+      | None -> Ok ms
     in
-    let lng_pv =
-      List.init 100 (fun m -> strf "PV%d_%d%s" axes.lng m sfx)
-      |> List.find_opt (fun k ->
-          present h k
-          && not
-               (List.mem k
-                  (List.init 4 (fun m -> strf "PV%d_%d%s" axes.lng (m + 1) sfx))))
+    let* lng_ms = row axes.lng in
+    let* lat_ms = row axes.lat in
+    let stated =
+      List.map (fun m -> m) lng_ms @ List.map (fun m -> count + m) lat_ms
     in
-    let distortion =
-      if sfx <> "" then None
+    let pv = Array.init (2 * count) tpv_default in
+    let* () =
+      List.fold_left
+        (fun acc k ->
+          let* () = acc in
+          let i = if k < count then axes.lng else axes.lat in
+          let* v = Header.get Value.float (pv_key i (k mod count) sfx) h in
+          pv.(k) <- v;
+          Ok ())
+        (Ok ()) stated
+    in
+    Ok (Tpv { pv; stated = Array.of_list stated })
+
+  let read_projection h sfx axes =
+    let code = axes.code in
+    let first = Projection.first code and count = Projection.count code in
+    let lat_ms = stated_pv h sfx axes.lat in
+    let* () =
+      match
+        List.find_opt (fun m -> m < first || m >= first + count) lat_ms
+      with
+      | None -> Ok ()
+      | Some m when count = 0 ->
+          fail h "%s: the %s projection takes no parameter"
+            (pv_key axes.lat m sfx) (Transform.code_name code)
+      | Some m ->
+          fail h "%s: the %s projection's parameters are PV%d_%d to PV%d_%d"
+            (pv_key axes.lat m sfx) (Transform.code_name code) axes.lat first
+            axes.lat
+            (first + count - 1)
+    in
+    let* () =
+      match
+        List.find_opt (fun m -> m < 1 || m > 4) (stated_pv h sfx axes.lng)
+      with
+      | None -> Ok ()
+      | Some 0 ->
+          fail h "%s: the fiducial offset is not read" (pv_key axes.lng 0 sfx)
+      | Some m ->
+          fail h
+            "%s: only PV%d_1 to PV%d_4 (the native reference point, LONPOLE \
+             and LATPOLE) are read on the longitude axis"
+            (pv_key axes.lng m sfx) axes.lng axes.lng
+    in
+    let pv = Projection.defaults code in
+    let* () =
+      List.fold_left
+        (fun acc m ->
+          let* () = acc in
+          let* v = Header.get Value.float (pv_key axes.lat m sfx) h in
+          pv.(m - first) <- v;
+          Ok ())
+        (Ok ()) lat_ms
+    in
+    let* phi0 = float_or h (pv_key axes.lng 1 sfx) 0. in
+    let* theta0 =
+      float_or h (pv_key axes.lng 2 sfx) (Projection.theta0 code)
+    in
+    Ok
+      (Projection
+         {
+           pv;
+           stated = Array.of_list (List.map (fun m -> m - first) lat_ms);
+           phi0;
+           theta0;
+         })
+
+  (* TAN with PV terms on its latitude axis is TPV, as SCAMP writes it. *)
+  let read_terms h sfx axes =
+    if axes.tpv || (axes.code = Transform.Tan && stated_pv h sfx axes.lat <> [])
+    then read_tpv h sfx axes
+    else read_projection h sfx axes
+
+  (* SIP
+
+     A_ORDER and B_ORDER give the forward polynomials' orders, AP_ORDER and
+     BP_ORDER the inverse's, each [p_i_j] for [i + j <= order], 0 when
+     absent. *)
+
+  let sip_max_order = 9
+
+  let sip_matrix h p order =
+    let n = order + 1 in
+    let m = Array.make (n * n) 0. in
+    let rec fill i j =
+      if i > order then Ok m
+      else if i + j > order then fill (i + 1) 0
       else
-        List.find_opt (present h)
-          [ "A_ORDER"; "B_ORDER"; "CPDIS1"; "CPDIS2"; "D2IMDIS1"; "D2IMDIS2" ]
+        let* v = float_or h (strf "%s_%d_%d" p i j) 0. in
+        m.((i * n) + j) <- v;
+        fill i (j + 1)
     in
-    match (lat_pv, lng_pv, distortion) with
-    | Some k, _, _ when axes.code = Transform.Tan ->
-        fail h "%s: TAN with PV terms is the TPV distortion, not read yet" k
-    | Some k, _, _ ->
-        fail h "%s: the %s projection takes no parameter" k
-          (Transform.code_name axes.code)
-    | None, Some k, _ ->
-        fail h
-          "%s: only PV%d_1 to PV%d_4 (the native reference point, LONPOLE and \
-           LATPOLE) are read on the longitude axis"
-          k axes.lng axes.lng
-    | None, None, Some k -> fail h "%s: this distortion is not read yet" k
-    | None, None, None -> Ok ()
+    let* m = fill 0 0 in
+    Ok (Nx.create Nx.float64 [| n; n |] m)
+
+  let sip_order h key =
+    let* o = Header.find Value.int key h in
+    match o with
+    | Some o when o < 0 || o > sip_max_order ->
+        fail h "%s = %d: SIP's orders run from 0 to %d" key o sip_max_order
+    | o -> Ok o
+
+  let read_sip h =
+    let pair a b =
+      let* oa = sip_order h (a ^ "_ORDER") in
+      let* ob = sip_order h (b ^ "_ORDER") in
+      match (oa, ob) with
+      | None, None -> Ok None
+      | Some oa, Some ob ->
+          let* ma = sip_matrix h a oa in
+          let* mb = sip_matrix h b ob in
+          Ok (Some (ma, mb))
+      | Some _, None -> fail h "%s_ORDER is absent beside %s_ORDER" b a
+      | None, Some _ -> fail h "%s_ORDER is absent beside %s_ORDER" a b
+    in
+    let* forward = pair "A" "B" in
+    let* seed = pair "AP" "BP" in
+    match forward with
+    | Some ab -> Ok (Some (Transform.sip ?seed ab))
+    | None -> Ok None
+
+  (* Distortions this reader does not build. *)
+  let unread_distortion h sfx =
+    if sfx <> "" then Ok ()
+    else
+      match
+        List.find_opt (present h) [ "CPDIS1"; "CPDIS2"; "D2IMDIS1"; "D2IMDIS2" ]
+      with
+      | Some k -> fail h "%s: this distortion is not read yet" k
+      | None -> Ok ()
 
   (* Frames
 
@@ -312,11 +450,6 @@ module Wcs = struct
     let c = Float.cos r and s = Float.sin r in
     Ok [ c; -.s *. d2 /. d1; s *. d1 /. d2; c ]
 
-  let read_native h sfx axes =
-    let* phi0 = float_or h (strf "PV%d_1%s" axes.lng sfx) 0. in
-    let* theta0 = float_or h (strf "PV%d_2%s" axes.lng sfx) 90. in
-    Ok (phi0, theta0)
-
   (* LONPOLE's default (Paper II §2.4): 180° when the reference point is below
      the native reference's latitude, else 0°, plus φ₀. *)
   let default_lonpole ~delta0 ~theta0 ~phi0 =
@@ -325,21 +458,29 @@ module Wcs = struct
   let default_latpole = 90.
 
   (* [pole h key alt default] reads LONPOLE or LATPOLE, which FITS also spells
-     PVi_3 and PVi_4 on the longitude axis [i] (Paper II §2.5). *)
+     PVi_3 and PVi_4 on the longitude axis [i] (Paper II §2.5); under TPV
+     those are TPV's terms, and [alt] is [None]. *)
   let pole h key alt default =
     let* a = find_float h key in
-    let* b = find_float h alt in
-    match (a, b) with
-    | Some x, Some y when not (Float.equal x y) ->
+    let* b =
+      match alt with None -> Ok None | Some alt -> find_float h alt
+    in
+    match (a, b, alt) with
+    | Some x, Some y, Some alt when not (Float.equal x y) ->
         fail h "%s = %g and %s = %g spell one value and disagree" key x alt y
-    | Some x, _ | None, Some x -> Ok x
-    | None, None -> Ok default
+    | Some x, _, _ | None, Some x, _ -> Ok x
+    | None, None, _ -> Ok default
 
   let read ?alt (frame : 'f Frame.t) h =
     let f64 = Nx.float64 in
     let sfx = suffix "read" alt in
     let* axes = read_axes h sfx in
-    let* () = unread h sfx axes in
+    let* () = unread_distortion h sfx in
+    let* terms = read_terms h sfx axes in
+    let* sip =
+      if axes.sip || (sfx = "" && present h "A_ORDER") then read_sip h
+      else Ok None
+    in
     let* (Frame found as fr) = read_frame h sfx axes in
     let* frame =
       match same frame found with
@@ -380,32 +521,46 @@ module Wcs = struct
           let* pc = pc_of_crota h axes d in
           Ok (pc_stage pc d)
     in
-    let* phi0, theta0 = read_native h sfx axes in
+    let pv, stated, phi0, theta0, tpv_stage =
+      match terms with
+      | Projection { pv; stated; phi0; theta0 } ->
+          (pv, stated, phi0, theta0, Transform.id)
+      | Tpv { pv; stated } ->
+          ( [||],
+            [||],
+            0.,
+            Projection.theta0 axes.code,
+            Transform.tpv ~stated
+              (Nx.create f64 [| 2; Distortion.tpv_count |] pv) )
+    in
     let delta0 = U.ratio Nx.float64 u U.degree *. crval_lat in
+    let alt m =
+      match terms with
+      | Projection _ -> Some (pv_key axes.lng m sfx)
+      | Tpv _ -> None
+    in
     let* lonpole =
-      pole h ("LONPOLE" ^ sfx)
-        (strf "PV%d_3%s" axes.lng sfx)
-        (default_lonpole ~delta0 ~theta0 ~phi0)
+      pole h ("LONPOLE" ^ sfx) (alt 3) (default_lonpole ~delta0 ~theta0 ~phi0)
     in
-    let* latpole =
-      pole h ("LATPOLE" ^ sfx) (strf "PV%d_4%s" axes.lng sfx) default_latpole
-    in
+    let* latpole = pole h ("LATPOLE" ^ sfx) (alt 4) default_latpole in
     let deg x = Quantity.v U.degree x in
     let swap =
       if axes.lng = 1 then Transform.id else Transform.axes [| 1; 0 |] ~origin:0
     in
     let projection =
-      Transform.celestial axes.code frame ~pv:(Nx.zeros f64 [| 0 |])
+      Transform.celestial ~stated axes.code frame
+        ~pv:(Nx.create f64 [| Array.length pv |] pv)
         ~native:(deg (Nx.create f64 [| 2 |] [| phi0; theta0 |]))
         ~crval:(Quantity.v u (Nx.create f64 [| 2 |] [| crval_lng; crval_lat |]))
         ~lonpole:(deg (Nx.scalar f64 lonpole))
         ~latpole:(deg (Nx.scalar f64 latpole))
     in
+    let sip_stage = Option.value sip ~default:Transform.id in
     Ok
       Transform.(
         axes [| 1; 0 |] ~origin:1
         >> shift (bare (Nx.create f64 [| 2 |] [| crpix1; crpix2 |]))
-        >> matrix_stages >> swap >> projection)
+        >> sip_stage >> matrix_stages >> swap >> tpv_stage >> projection)
 
   (* Writing
 
@@ -414,7 +569,7 @@ module Wcs = struct
      and a card the header lacks is added unless its value is the one FITS
      assumes for an absent keyword. *)
 
-  type value = F of float | S of string
+  type value = F of float | S of string | I of int
   type card = { key : string; value : value; optional : bool }
 
   let card ?(optional = false) key value = { key; value; optional }
@@ -424,9 +579,17 @@ module Wcs = struct
     code : Transform.code;
     frame : frame;
     crval : (float, Nx.float64_elt) Nx.t Quantity.t;
+    pv : float array;
+    stated : int array;
     native : float array;  (** (φ₀, θ₀) in degrees. *)
     lonpole : float;  (** Degrees. *)
     latpole : float;  (** Degrees. *)
+  }
+
+  type sip = {
+    a : float array array;
+    b : float array array;
+    seed : (float array array * float array array) option;
   }
 
   (* The stage list, read as plain data. *)
@@ -435,6 +598,8 @@ module Wcs = struct
     | Shift of float array
     | Linear of float array * U.t
     | Scale of float array * U.t
+    | Sip of sip
+    | Tpv of float array * int array
     | Celestial of celestial
     | Unspelled of string
 
@@ -448,6 +613,11 @@ module Wcs = struct
     let _, x, _ = host (Quantity.convert U.degree q) in
     x
 
+  let rows m =
+    let n = Nx.dim (-1) m in
+    let a = Nx.to_array m in
+    Array.init (Nx.dim (-2) m) (fun i -> Array.sub a (i * n) n)
+
   let step : type a b. (a, b) Transform.stage -> step = function
     | Transform.Plane (Transform.Axes { perm; origin }, Transform.Forward) ->
         Axes (perm, origin)
@@ -460,12 +630,23 @@ module Wcs = struct
     | Plane (Transform.Scale d, Forward) ->
         let _, d, u = host d in
         Scale (d, u)
+    | Plane (Transform.Sip { a; b; seed }, Forward) ->
+        Sip
+          {
+            a = rows a;
+            b = rows b;
+            seed = Option.map (fun (p, q) -> (rows p, rows q)) seed;
+          }
+    | Plane (Transform.Tpv { pv; stated }, Forward) ->
+        Tpv (Nx.to_array pv, stated)
     | Deproject c ->
         Celestial
           {
             code = c.code;
             frame = Frame c.frame;
             crval = c.crval;
+            pv = Nx.to_array c.pv;
+            stated = c.stated;
             native = degrees c.native;
             lonpole = (degrees c.lonpole).(0);
             latpole = (degrees c.latpole).(0);
@@ -483,6 +664,7 @@ module Wcs = struct
     && rank c.native = 1
     && rank c.lonpole = 0
     && rank c.latpole = 0
+    && Nx.ndim c.pv = 1
 
   (* Every leaf of a stage FITS spells holds one value per keyword. *)
   let rec unbatched : type a b. (a, b) Transform.t -> bool = function
@@ -494,7 +676,13 @@ module Wcs = struct
           | Plane (Transform.Linear m, _) -> rank m = 2
           | Plane (Transform.Scale d, _) -> rank d = 1
           | Plane (Transform.Axes _, _) -> true
-          | Plane ((Transform.Sip _ | Transform.Tpv _), _) -> true
+          | Plane (Transform.Sip { a; b; seed }, _) ->
+              Nx.ndim a = 2
+              && Nx.ndim b = 2
+              && Option.fold ~none:true
+                   ~some:(fun (p, q) -> Nx.ndim p = 2 && Nx.ndim q = 2)
+                   seed
+          | Plane (Transform.Tpv { pv; _ }, _) -> Nx.ndim pv = 2
           | Deproject c -> scalar_celestial c
           | Project c -> scalar_celestial c
           | Rotate _ -> true
@@ -509,6 +697,8 @@ module Wcs = struct
       | Shift _ -> "shift"
       | Linear _ -> "linear"
       | Scale _ -> "scale"
+      | Sip _ -> "sip"
+      | Tpv _ -> "tpv"
       | Celestial c -> "celestial " ^ Transform.code_name c.code
     in
     Error (strf "Fits.Wcs.write: FITS cannot spell the %s stage there" name)
@@ -541,11 +731,48 @@ module Wcs = struct
   let index_pairs = [ (1, 1); (1, 2); (2, 1); (2, 2) ]
 
   (* A pole is written with the spelling the header uses: PVi_3 or PVi_4 when
-     it has one, and then LONPOLE or LATPOLE only where it has that too. *)
+     it has one, and then LONPOLE or LATPOLE only where it has that too.
+     Under TPV, [alt] is [None]: those are TPV's terms. *)
   let pole_cards h key alt x d =
-    if present h alt then
-      [ card ~optional:true key (F x); card ~optional:true alt (F x) ]
-    else [ default x d key ]
+    match alt with
+    | Some alt when present h alt ->
+        [ card ~optional:true key (F x); card ~optional:true alt (F x) ]
+    | _ -> [ default x d key ]
+
+  (* [term_cards ~key ~default values stated] spells [values]: a stated
+     term or one away from its default is always written. *)
+  let term_cards ~key ~default values stated =
+    List.init (Array.length values) (fun k ->
+        let v = values.(k) in
+        card
+          ~optional:((not (Array.mem k stated)) && Float.equal v (default k))
+          (key k) (F v))
+
+  (* [sip_cards p m] spells SIP's [m] under the prefix [p], or [Error] where
+     it has a term beyond its order. *)
+  let sip_cards p m =
+    let n = Array.length m in
+    let order = n - 1 in
+    let beyond = ref false in
+    let cards = ref [] in
+    Array.iteri
+      (fun i row ->
+        Array.iteri
+          (fun j v ->
+            if i + j > order then (if v <> 0. then beyond := true)
+            else
+              cards :=
+                card ~optional:(Float.equal v 0.) (strf "%s_%d_%d" p i j) (F v)
+                :: !cards)
+          row)
+      m;
+    if !beyond then
+      Error
+        (strf
+           "Fits.Wcs.write: the sip stage's %s has a term of degree above %d, \
+            which FITS cannot spell"
+           p order)
+    else Ok (card (p ^ "_ORDER") (I order) :: List.rev !cards)
 
   (* [cards h sfx window steps] is the cards [steps] spell, or [Error] naming a
      stage FITS cannot spell there. *)
@@ -555,6 +782,15 @@ module Wcs = struct
       | Axes ([| 1; 0 |], 1) :: Shift crpix :: rest -> Ok (crpix, rest)
       | Axes ([| 1; 0 |], 1) :: s :: _ | s :: _ -> unspellable s
       | [] -> ends ()
+    in
+    let sip, rest =
+      match rest with Sip s :: rest -> (Some s, rest) | rest -> (None, rest)
+    in
+    let* () =
+      if Option.is_some sip && sfx <> "" then
+        Error
+          "Fits.Wcs.write: SIP's keywords belong to the primary description"
+      else Ok ()
     in
     let* linear, rest =
       match rest with
@@ -570,11 +806,31 @@ module Wcs = struct
       | Axes ([| 1; 0 |], 0) :: rest -> (true, rest)
       | rest -> (false, rest)
     in
+    let tpv, rest =
+      match rest with
+      | Tpv (pv, stated) :: rest -> (Some (pv, stated), rest)
+      | rest -> (None, rest)
+    in
     let* c =
       match rest with
       | [ Celestial c ] -> Ok c
       | Celestial _ :: s :: _ | s :: _ -> unspellable s
       | [] -> ends ()
+    in
+    let theta0_default = Projection.theta0 c.code in
+    let* () =
+      match tpv with
+      | Some _ when c.code <> Transform.Tan ->
+          Error
+            (strf
+               "Fits.Wcs.write: FITS spells TPV only before TAN, not before \
+                %s"
+               (Transform.code_name c.code))
+      | Some _ when c.native.(0) <> 0. || c.native.(1) <> theta0_default ->
+          Error
+            "Fits.Wcs.write: FITS spells TPV only with the projection's own \
+             native reference point"
+      | _ -> Ok ()
     in
     let u = match linear with `Pc (_, _, u) | `Cd (_, u) -> u in
     let* cunit =
@@ -596,7 +852,10 @@ module Wcs = struct
     in
     let lng, lat = if lat_first then (2, 1) else (1, 2) in
     let pair = pair_of c.frame in
-    let ctype prefix = S (ctype_text prefix c.code) in
+    let tpv_present = Option.is_some tpv and sip_present = Option.is_some sip in
+    let ctype prefix =
+      S (ctype_text prefix c.code ~tpv:tpv_present ~sip:sip_present)
+    in
     let crval = Nx.to_array (Quantity.value u c.crval) in
     let phi0 = c.native.(0) and theta0 = c.native.(1) in
     let delta0 = U.ratio Nx.float64 u U.degree *. crval.(1) in
@@ -625,6 +884,43 @@ module Wcs = struct
             (fun c -> { c with optional = c.optional && some_cd })
             (matrix "CD" cd (fun _ _ -> 0.))
     in
+    let* sip_cards =
+      match sip with
+      | None -> Ok []
+      | Some s ->
+          let* a = sip_cards "A" s.a in
+          let* b = sip_cards "B" s.b in
+          let* seed =
+            match s.seed with
+            | None -> Ok []
+            | Some (ap, bp) ->
+                let* ap = sip_cards "AP" ap in
+                let* bp = sip_cards "BP" bp in
+                Ok (ap @ bp)
+          in
+          Ok (a @ b @ seed)
+    in
+    let pv_cards =
+      match tpv with
+      | Some (pv, stated) ->
+          let count = Distortion.tpv_count in
+          term_cards
+            ~key:(fun k ->
+              pv_key (if k < count then lng else lat) (k mod count) sfx)
+            ~default:tpv_default pv stated
+      | None ->
+          let first = Projection.first c.code in
+          let defaults = Projection.defaults c.code in
+          term_cards
+            ~key:(fun k -> pv_key lat (first + k) sfx)
+            ~default:(fun k -> defaults.(k))
+            c.pv c.stated
+          @ [
+              default phi0 0. (pv_key lng 1 sfx);
+              default theta0 theta0_default (pv_key lng 2 sfx);
+            ]
+    in
+    let pole_alt m = if tpv_present then None else Some (pv_key lng m sfx) in
     let deg_unit = cunit = "deg" in
     Ok
       ([
@@ -639,14 +935,13 @@ module Wcs = struct
       @ [
           default crval.(0) 0. (strf "CRVAL%d%s" lng sfx);
           default crval.(1) 0. (strf "CRVAL%d%s" lat sfx);
-          default phi0 0. (strf "PV%d_1%s" lng sfx);
-          default theta0 90. (strf "PV%d_2%s" lng sfx);
         ]
-      @ pole_cards h ("LONPOLE" ^ sfx) (strf "PV%d_3%s" lng sfx) c.lonpole
+      @ pv_cards
+      @ pole_cards h ("LONPOLE" ^ sfx) (pole_alt 3) c.lonpole
           (default_lonpole ~delta0 ~theta0 ~phi0)
-      @ pole_cards h ("LATPOLE" ^ sfx) (strf "PV%d_4%s" lng sfx) c.latpole
-          default_latpole
-      @ frame_cards h sfx c.frame)
+      @ pole_cards h ("LATPOLE" ^ sfx) (pole_alt 4) c.latpole default_latpole
+      @ frame_cards h sfx c.frame
+      @ sip_cards)
 
   (* The keywords of an alternate's description the writer owns. *)
   let owned sfx =
@@ -654,11 +949,11 @@ module Wcs = struct
     let matrix p =
       List.map (fun (i, j) -> strf "%s%d_%d%s" p i j sfx) index_pairs
     in
-    let pv i = List.init 100 (fun m -> strf "PV%d_%d%s" i m sfx) in
+    let pv i = List.init pv_terms (fun m -> pv_key i m sfx) in
     let sip p =
       List.concat
-        (List.init 10 (fun i ->
-             List.init (10 - i) (fun j -> strf "%s_%d_%d" p i j)))
+        (List.init (sip_max_order + 1) (fun i ->
+             List.init (sip_max_order + 1 - i) (fun j -> strf "%s_%d_%d" p i j)))
     in
     let primary =
       if sfx <> "" then []
@@ -681,11 +976,16 @@ module Wcs = struct
         match find_string h key with
         | Ok (Some y) -> String.equal s y
         | _ -> false)
+    | I n -> (
+        match Header.find Value.int key h with
+        | Ok (Some m) -> n = m
+        | _ -> false)
 
   let set h { key; value; _ } =
     match value with
     | F x -> Header.set Value.float key x h
     | S s -> Header.set Value.string key s h
+    | I n -> Header.set Value.int key n h
 
   let record_key r =
     if String.length r >= 10 && r.[8] = '=' && r.[9] = ' ' then
