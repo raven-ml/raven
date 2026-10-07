@@ -1015,10 +1015,15 @@ let loops_around_calls ?(devices = devices) d (limit, max) =
             if i mod 4 = 0 && i / 4 < trips then carry (i / 4) +. 1. else -1.)))
     (Run.values Float32 ys_buffer)
 
+(* A loop's limit and trips. Limits -1 and 0 run no trip: 2 of 42 values, which
+   a uniform draw of 30 misses a quarter of the time, so they are drawn half the
+   time. *)
+let loop_bounds =
+  Gen.(pair (one_of [ int_range (-1) 0; int_range 1 40 ]) (int_range 1 6))
+
 let loops_around_calls_on_the_host =
   prop ~count:30 "a loop runs its calls in order each trip while its flag holds"
-    Gen.(pair (int_range (-1) 40) (int_range 1 6))
-    (fun bounds -> loops_around_calls "CPU" bounds)
+    loop_bounds (fun bounds -> loops_around_calls "CPU" bounds)
 
 (* A loop's flag is storage of one boolean: a view of one element of wider
    storage is refused, since the engine reads the storage it names. *)
@@ -3022,8 +3027,8 @@ let metal =
           loops_while_a_flag_holds ~devices:on_metal "CPU:1" bounds);
       prop ~tags:[ "slow" ]
         "a loop runs its calls in order each trip while its flag holds"
-        Gen.(pair (int_range (-1) 40) (int_range 1 6))
-        (fun bounds -> loops_around_calls ~devices:on_metal "CPU:1" bounds);
+        loop_bounds (fun bounds ->
+          loops_around_calls ~devices:on_metal "CPU:1" bounds);
       reads_trips_on ~devices:on_metal "CPU:1";
       reads_trips_under_a_back_edge ~devices:on_metal "CPU:1";
     ]
