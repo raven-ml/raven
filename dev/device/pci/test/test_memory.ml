@@ -11,6 +11,7 @@ open Windtrap
 open Device_pci
 open Device_pci_support
 
+let strf = Printf.sprintf
 let ranges = list (pair hex hex)
 
 (* The fake machine's page, larger than the GPU's 4 KiB. *)
@@ -292,7 +293,7 @@ let pp_target ppf t =
     (match t with
     | Page_table.Gpu -> "Gpu"
     | System -> "System"
-    | Peer i -> Printf.sprintf "Peer %d" i)
+    | Peer i -> strf "Peer %d" i)
 
 let target = Testable.make ~pp:pp_target ~equal:( = )
 
@@ -300,7 +301,7 @@ let target = Testable.make ~pp:pp_target ~equal:( = )
 
 let test_small_bar =
   cases "a BAR that cannot reach all of the GPU's memory is small"
-    ~name:(fun (bar, _) -> Printf.sprintf "%d MiB" (bar / mib))
+    ~name:(fun (bar, _) -> strf "%d MiB" (bar / mib))
     [
       (64 * mib, true);
       (256 * mib, true);
@@ -315,7 +316,7 @@ let test_small_bar =
 
 let test_no_bytes =
   cases "no bytes, or fewer, are refused"
-    ~name:(fun (name, n, _) -> Printf.sprintf "%s %d" name n)
+    ~name:(fun (name, n, _) -> strf "%s %d" name n)
     (List.concat_map
        (fun n ->
          [

@@ -7,6 +7,7 @@ open Windtrap
 open Device_pci
 open Device_pci_support
 
+let strf = Printf.sprintf
 let config_size = 4096
 
 exception In_use
@@ -97,7 +98,7 @@ let fake_fn m bus =
     in
     match misuse with
     | Some why ->
-        f.wrong <- Printf.sprintf "%s: %s" name why :: f.wrong;
+        f.wrong <- strf "%s: %s" name why :: f.wrong;
         failwith ("misuse reached the machine: " ^ name)
     | None -> run ()
   in
@@ -106,7 +107,7 @@ let fake_fn m bus =
   in
   let config n off =
     call
-      (Printf.sprintf "config%d" (8 * n))
+      (strf "config%d" (8 * n))
       (fun () -> in_config off n)
       (fun () ->
         let x = ref 0 in
@@ -117,7 +118,7 @@ let fake_fn m bus =
   in
   let set_config n off x =
     call
-      (Printf.sprintf "set_config%d" (8 * n))
+      (strf "set_config%d" (8 * n))
       (fun () -> in_config off n)
       (fun () ->
         for i = 0 to n - 1 do
@@ -373,7 +374,7 @@ let test_take_no_bus () =
   List.iter
     (fun bus ->
       equal ~msg:(String.escaped bus) (result pass string)
-        (Error (Printf.sprintf "%S is no PCI bus address" bus))
+        (Error (strf "%S is no PCI bus address" bus))
         (Function.take machine bus))
     not_buses;
   equal ~msg:"what the machine was asked" (list string) [] !calls
@@ -1359,7 +1360,7 @@ let host_files =
    taken. *)
 let with_fixtures n f =
   if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
-  let buses = List.init n (fun i -> Printf.sprintf "0000:%02x:00.0" (3 + i)) in
+  let buses = List.init n (fun i -> strf "0000:%02x:00.0" (3 + i)) in
   let m = Machine.at (Host.make (List.map Host.gpu buses)) in
   let fns = List.map (fun bus -> require_ok (Function.take m bus)) buses in
   Fun.protect

@@ -20,6 +20,12 @@ module Space = Device_pci.Space
 module Page_table = Device_pci.Page_table
 open Device_pci_support
 
+let strf = Printf.sprintf
+
+(* Errors *)
+
+let err_no_table = "map-unmap: no room for a table"
+
 (* Spaces *)
 
 let space_base = 1 lsl 44
@@ -89,7 +95,7 @@ let space_rows =
     let row (n, s) =
       Thumper.bench_with_setup
         ~setup:(fun () -> Lazy.force s)
-        (Printf.sprintf "%d-free" n)
+        (strf "%d-free" n)
         (fun s -> alloc_free s size)
     in
     Thumper.group name (List.map row spaces)
@@ -125,7 +131,7 @@ let page_table () =
 let map_unmap t va size pa =
   match Page_table.map t ~va Gpu [ (pa, size) ] with
   | Some _ -> Page_table.unmap t ~va size
-  | None -> failwith "map-unmap: no room for a table"
+  | None -> failwith err_no_table
 
 let alloc_free t n =
   match Page_table.alloc t n with
@@ -142,7 +148,7 @@ let page_runs =
 let map_unmap_runs t va =
   match Page_table.map t ~va System page_runs with
   | Some _ -> Page_table.unmap t ~va runs_size
-  | None -> failwith "map-unmap: no room for a table"
+  | None -> failwith err_no_table
 
 (* Each mapping starts at its own size past the resident page. *)
 let page_table_rows =

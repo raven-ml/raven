@@ -7,6 +7,12 @@ open Windtrap
 open Device_pci
 open Device_pci_support
 
+let strf = Printf.sprintf
+
+(* Errors *)
+
+let err_driver_bug = "a driver bug"
+
 (* A fake machine
 
    A transport's machine whose takes lock its functions, as this machine's takes
@@ -134,7 +140,7 @@ let names n why =
   let digits c = if c >= '0' && c <= '9' then c else ' ' in
   let words = String.split_on_char ' ' (String.map digits why) in
   satisfies
-    ~claim:(Printf.sprintf "names the number %d" n)
+    ~claim:(strf "names the number %d" n)
     string
     (fun _ -> List.mem (string_of_int n) words)
     why
@@ -185,7 +191,7 @@ let test_any_order (ids, listed) =
 let test_ith () =
   let g, m, _ = three () in
   let open_ i bus =
-    let msg = Printf.sprintf "GPU %d" i in
+    let msg = strf "GPU %d" i in
     let h =
       require_ok ~msg
         (Gpus.open_pci g m i (fun h fn ->
@@ -206,7 +212,7 @@ let test_reset_ith () =
       (Gpus.reset g m i (fun fn ->
            seen := Function.bus fn :: !seen;
            Ok ()));
-    equal ~msg:(Printf.sprintf "GPU %d" i) (list string) [ bus ] !seen
+    equal ~msg:(strf "GPU %d" i) (list string) [ bus ] !seen
   in
   List.iteri reset gpu_buses
 
@@ -255,11 +261,11 @@ let numbering =
       test "a reset of GPU i takes the ith bus address's function"
         test_reset_ith;
       cases "no GPU i is an Error naming how many there are"
-        ~name:(fun (f, _, i) -> Printf.sprintf "%s %d" f i)
+        ~name:(fun (f, _, i) -> strf "%s %d" f i)
         no_gpu test_no_gpu;
       test "a machine without the vendor's GPUs has none to open" test_none;
       cases "a negative GPU number raises Invalid_argument"
-        ~name:(fun (f, _, i) -> Printf.sprintf "%s %d" f i)
+        ~name:(fun (f, _, i) -> strf "%s %d" f i)
         negative
         (fun (_, f, i) ->
           raises_match (Exn.invalid_arg ?substring:None) (fun () -> f i));
@@ -681,7 +687,7 @@ let open_ref v start i =
       v.states.(i) <- Held;
       { v; i; back = false }
   | Fails -> raise Driver_failed
-  | Raises_invalid -> invalid_arg "a driver bug"
+  | Raises_invalid -> invalid_arg err_driver_bug
 
 let open_sys s start i =
   let started = ref false in
@@ -692,7 +698,7 @@ let open_sys s start i =
     match start with
     | Starts -> Ok h
     | Fails -> Error "the GPU did not start"
-    | Raises_invalid -> invalid_arg "a driver bug"
+    | Raises_invalid -> invalid_arg err_driver_bug
   in
   match Gpus.open_pci s.g s.m i driver with
   | Ok h -> h
@@ -782,7 +788,7 @@ let pci_file root file =
   |> (fun f -> In_channel.with_open_bin f In_channel.input_all)
   |> String.trim
 
-let devices bus file = Printf.sprintf "devices/%s/%s" bus file
+let devices bus file = strf "devices/%s/%s" bus file
 
 let changes =
   let gpu = Host.gpu gpu_bus in

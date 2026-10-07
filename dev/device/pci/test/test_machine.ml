@@ -7,6 +7,8 @@ open Windtrap
 open Device_pci
 open Device_pci_support
 
+let strf = Printf.sprintf
+
 (* A machine a transport reaches: [far] is its C transport, [calls] the
    operations it was asked for, newest first. *)
 type fake = { far : int; machine : Machine.t; calls : string list ref }
@@ -27,7 +29,7 @@ let fake ?(page = 16384) ?(ids = []) ?(name = "far:7000") () =
         reserve =
           (fun ~base n ->
             if base = 0 then Error "far:7000: the range is in use"
-            else ask (Printf.sprintf "reserve 0x%x %d" base n) (Ok ()));
+            else ask (strf "reserve 0x%x %d" base n) (Ok ()));
       }
   in
   { far; machine; calls }
@@ -76,7 +78,7 @@ let bus_order =
 
 let not_addresses =
   cases "a string that is no bus address is refused on either side"
-    ~name:(Printf.sprintf "%S")
+    ~name:(strf "%S")
     [ ""; "0000:03:00"; "0000:03:00."; "0000:03:00.0.1"; "0000:3g:00.0"; "x" ]
     (fun s ->
       let ok = "0000:00:00.0" in

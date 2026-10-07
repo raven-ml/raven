@@ -12,6 +12,7 @@ open Device_pci
 open Device_pci_support
 open Tables
 
+let strf = Printf.sprintf
 let page = 4096
 
 (* Entries *)
@@ -157,8 +158,7 @@ let test_create () =
 let test_main_pool =
   cases
     ~name:(fun (memory, boot, kind, _) ->
-      Printf.sprintf "%d KiB, a boot pool of %d KiB, %s" (memory / kib)
-        (boot / kib)
+      strf "%d KiB, a boot pool of %d KiB, %s" (memory / kib) (boot / kib)
         (match kind with
         | Page_table.Pool -> "a tables' pool"
         | Main -> "no tables' pool"))
@@ -216,7 +216,7 @@ let test_level_refusals =
    multiple of it. *)
 let test_base_refusals =
   cases
-    ~name:(fun base -> Printf.sprintf "base 0x%x" base)
+    ~name:(fun base -> strf "base 0x%x" base)
     "refuses a base off the largest page"
     [ page; 2 * mib; gib + (2 * mib); -gib ]
     (fun b ->
@@ -842,7 +842,7 @@ let sum = List.fold_left ( + ) 0
 
 let test_contiguous =
   cases
-    ~name:(fun (n, _) -> Printf.sprintf "%d bytes" n)
+    ~name:(fun (n, _) -> strf "%d bytes" n)
     "a contiguous allocation"
     [
       (1, page); (3 * mib, 2 * mib); (100 * kib, 64 * kib); (64 * kib, 64 * kib);

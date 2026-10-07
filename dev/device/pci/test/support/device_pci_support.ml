@@ -5,6 +5,8 @@
 
 open Windtrap
 
+let strf = Printf.sprintf
+
 (* Sizes and addresses *)
 
 let kib = 1024
@@ -361,10 +363,8 @@ module Host = struct
   (* The resource file's lines: a BAR's first and last address, or zeroes for an
      index without one, such as a 64-bit BAR's upper half. *)
   let resource bars =
-    let line (a, n) =
-      Printf.sprintf "0x%016x 0x%016x 0x%016x" a (a + n - 1) 0
-    in
-    let zero = Printf.sprintf "0x%016x 0x%016x 0x%016x" 0 0 0 in
+    let line (a, n) = strf "0x%016x 0x%016x 0x%016x" a (a + n - 1) 0 in
+    let zero = strf "0x%016x 0x%016x 0x%016x" 0 0 0 in
     let lines =
       List.concat_map
         (function
@@ -400,9 +400,9 @@ module Host = struct
     List.iter
       (fun fn ->
         let d = devices / fn.bus in
-        write (d / "vendor") (Printf.sprintf "0x%04x\n" fn.vendor);
-        write (d / "device") (Printf.sprintf "0x%04x\n" fn.device);
-        write (d / "class") (Printf.sprintf "0x%06x\n" (fn.class_ lsl 16));
+        write (d / "vendor") (strf "0x%04x\n" fn.vendor);
+        write (d / "device") (strf "0x%04x\n" fn.device);
+        write (d / "class") (strf "0x%06x\n" (fn.class_ lsl 16));
         write (d / "enable") (if fn.enabled then "1\n" else "0\n");
         write (d / "resource") (resource fn.bars);
         write (d / "config") (config fn);

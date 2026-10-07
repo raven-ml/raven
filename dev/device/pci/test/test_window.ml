@@ -7,6 +7,8 @@ open Windtrap
 open Device_pci
 open Device_pci_support
 
+let strf = Printf.sprintf
+
 external window_of : Window.t -> int * int * int * bool
   = "device_pci_test_window_of"
 
@@ -403,9 +405,7 @@ let test_order () =
   List.iter
     (fun d ->
       let mine = List.filter (fun i -> i / words = d) seen in
-      equal
-        ~msg:(Printf.sprintf "domain %d" d)
-        (list int)
+      equal ~msg:(strf "domain %d" d) (list int)
         (List.init words (fun i -> (d * words) + i))
         mine)
     [ 0; 1 ]
@@ -432,15 +432,13 @@ let test_blocking () =
    bus answers: each read as the bytes it gives. *)
 let failed_reads =
   [
-    ("get8", fun w -> (Printf.sprintf "%x" (Window.get8 w 1), "ff"));
-    ("get32", fun w -> (Printf.sprintf "%x" (Window.get32 w 4), "ffffffff"));
-    ( "get64",
-      fun w -> (Printf.sprintf "%Lx" (Window.get64 w 8), "ffffffffffffffff") );
+    ("get8", fun w -> (strf "%x" (Window.get8 w 1), "ff"));
+    ("get32", fun w -> (strf "%x" (Window.get32 w 4), "ffffffff"));
+    ("get64", fun w -> (strf "%Lx" (Window.get64 w 8), "ffffffffffffffff"));
     ("read", fun w -> (Window.read w 1 9, String.make 9 '\xff'));
-    ( "device_pci_load32",
-      fun w -> (Printf.sprintf "%x" (c_load32 w 4), "ffffffff") );
+    ("device_pci_load32", fun w -> (strf "%x" (c_load32 w 4), "ffffffff"));
     ( "device_pci_load64",
-      fun w -> (Printf.sprintf "%Lx" (c_load64 w 8), "ffffffffffffffff") );
+      fun w -> (strf "%Lx" (c_load64 w 8), "ffffffffffffffff") );
   ]
 
 let failed_writes =
