@@ -66,9 +66,10 @@ val armijo :
   ((float, 'b) Nx.t -> (float, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t)
   * ((float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t)
 (** [armijo ~phi0 ~slope0] is the sufficient-decrease test of a merit [φ] with
-    [φ 0 = phi0] and [φ' 0 = slope0], [φ α ≤ φ 0 + c α φ' 0] with [c = 10⁻⁴],
-    and its step: the minimum of the quadratic through [φ 0], [φ' 0] and [φ α],
-    kept in [[α / 10, α / 2]]. *)
+    [φ 0 = phi0] and [φ' 0 = slope0], [φ α ≤ φ 0 + c α φ' 0] with [c = 10⁻⁴] and
+    [φ α < φ 0] or [φ α = 0], which the first implies unless [c α φ' 0] is below
+    [φ 0]'s rounding, and its step: the minimum of the quadratic through [φ 0],
+    [φ' 0] and [φ α], kept in [[α / 10, α / 2]]. *)
 
 val wolfe :
   'p Nx.Ptree.t ->

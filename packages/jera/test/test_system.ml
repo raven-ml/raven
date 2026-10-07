@@ -491,6 +491,24 @@ let lane_tests =
              (System.lanes
                 ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
                 ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
+    test "a lane whose residual is rounding converges" (fun () ->
+        (* The seed's step lands at the zero to f's evaluation level, 3e-17,
+           while the unknown at 0 still has ulps of 1e-33: no step changes f,
+           and a short enough one meets the sufficient decrease by rounding. *)
+        let a =
+          Nx.create f64 [| 1; 2; 2 |]
+            [|
+              4.; -0.0025442380518094533; 0.370970824797177; 3.3353786945226602;
+            |]
+        in
+        let z = Nx.create f64 [| 1; 2 |] [| -0.6718716184867024; 0. |] in
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
+        equal near z
+          (Solution.get
+             (System.lanes
+                ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
+                ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
     test "compiled lanes equal eager" (fun () ->
         let a =
           Nx.broadcast_to [| 3; 2; 2 |]

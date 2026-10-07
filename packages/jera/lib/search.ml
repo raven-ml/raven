@@ -102,9 +102,14 @@ let backtrack p dtype ~trials ~running ~shrink trial last =
    slope predicts. *)
 let c = 1e-4
 
+(* Once [c α φ' 0] falls below [φ 0]'s rounding, the bound rounds to [φ 0] and a
+   trial that leaves [φ] unchanged would meet it: a decrease must be strict,
+   unless [φ α] is zero, as it is wherever [|f|²] underflows. *)
 let armijo ~phi0 ~slope0 =
   let accept alpha phi =
-    Nx.less_equal phi (Nx.add phi0 (Nx.mul_s (Nx.mul alpha slope0) c))
+    Nx.logical_and
+      (Nx.logical_or (Nx.less phi phi0) (Nx.equal_s phi 0.))
+      (Nx.less_equal phi (Nx.add phi0 (Nx.mul_s (Nx.mul alpha slope0) c)))
   in
   let shrink alpha phi =
     let excess = Nx.sub (Nx.sub phi phi0) (Nx.mul slope0 alpha) in
