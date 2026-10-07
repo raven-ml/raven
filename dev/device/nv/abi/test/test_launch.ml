@@ -67,7 +67,8 @@ let fits (k : Cubin.kernel) =
 let memory =
   group ~timeout:10. "memory"
     [
-      prop "a launch takes a kernel within its limits and refuses one past any"
+      prop ~count:500
+        "a launch takes a kernel within its limits and refuses one past any"
         (Gen.pair S.compute_class (Gen.with_pp S.pp_kernel kernel_gen))
         (fun (cls, k) ->
           cover "the most shared memory" (k.shared_bytes = limit);
