@@ -3,8 +3,7 @@
  (libraries device_pool thumper)
  (foreign_stubs
   (language c)
-  (names bench_pool_stubs)
-  (flags :standard -std=c11 -O2 -Wall -Wextra)))
+  (names bench_pool_stubs)))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly.

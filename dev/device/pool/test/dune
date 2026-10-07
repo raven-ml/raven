@@ -9,8 +9,7 @@
  (libraries device_pool unix windtrap)
  (foreign_stubs
   (language c)
-  (names pool_probe_stubs)
-  (flags :standard -std=c11 -Wall -Wextra)))
+  (names pool_probe_stubs)))
 
 (library
  (name thread_probe)
@@ -20,8 +19,7 @@
  (libraries device_pool)
  (foreign_stubs
   (language c)
-  (names thread_probe_stubs)
-  (flags :standard -std=c11 -Wall -Wextra)))
+  (names thread_probe_stubs)))
 
 (executable
  (name test_pool)

@@ -3,9 +3,7 @@
  (libraries device_pci unix windtrap)
  (foreign_stubs
   (language c)
-  (names test_stubs)
-  (extra_deps ../device_pci.h)
-  (flags :standard -std=c11 -Wall -Wextra -I ..)))
+  (names test_stubs)))
 
 (tests
  (names test_space test_page_table)

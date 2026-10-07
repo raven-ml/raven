@@ -1,0 +1,25 @@
+; The C flags of every library, test and bench under dev/device. A stanza
+; names no C flag of its own.
+;
+; The sanitize profile compiles the C with AddressSanitizer and
+; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
+; executable, whose link_flags keep :standard to carry them.
+
+(env
+ (dev
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra -Werror)))
+ (sanitize
+  (c_flags
+   (:standard
+    -std=c11
+    -Wall
+    -Wextra
+    -g
+    -fno-omit-frame-pointer
+    -fsanitize=address,undefined))
+  (link_flags
+   (:standard -cclib -fsanitize=address,undefined)))
+ (_
+  (c_flags
+   (:standard -std=c11 -Wall -Wextra))))

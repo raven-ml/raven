@@ -8,9 +8,7 @@
  (libraries device_pci thumper)
  (foreign_stubs
   (language c)
-  (names test_stubs bench_window_stubs)
-  (extra_deps ../device_pci.h)
-  (flags :standard -std=c11 -O2 -Wall -Wextra -I ..)))
+  (names test_stubs bench_window_stubs)))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe from this directory under _build/default.
@@ -44,9 +42,7 @@
  (libraries device_pci thumper)
  (foreign_stubs
   (language c)
-  (names bench_memory_stubs)
-  (extra_deps ../device_pci.h)
-  (flags :standard -std=c11 -O2 -Wall -Wextra -I ..)))
+  (names bench_memory_stubs)))
 
 (rule
  (alias bench)

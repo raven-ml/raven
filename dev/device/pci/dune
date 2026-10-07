@@ -7,5 +7,9 @@
  (install_c_headers device_pci)
  (foreign_stubs
   (language c)
-  (names device_pci_window device_pci_sysmem device_pci_files device_pci_vfio device_pci_machine)
-  (flags :standard -std=c11 -O2 -Wall -Wextra)))
+  (names
+   device_pci_window
+   device_pci_sysmem
+   device_pci_files
+   device_pci_vfio
+   device_pci_machine)))
