@@ -100,7 +100,6 @@ let test_this () =
   equal ~msg:"name" (option string) None (Machine.name Machine.this);
   equal ~msg:"failed" (option string) None (Machine.failed Machine.this)
 
-(* 7e635faa9: another machine's name is its transport's. *)
 let test_named () =
   let f = fake ~name:"host:7000" () in
   equal (option string) (Some "host:7000") (Machine.name f.machine)
@@ -145,7 +144,7 @@ let id =
         d.class_)
     ~equal:( = )
 
-(* d53e1085e: whatever order the transport lists them in. *)
+(* Whatever order the transport lists them in. *)
 let listed_in_bus_order =
   prop "a machine lists its functions in bus order"
     (Gen.list ~size:(Gen.int_range 0 12) numbers)
@@ -161,7 +160,7 @@ let listed_in_bus_order =
       let f = fake ~ids:(List.map id_of shuffled) () in
       equal (list id) (List.map id_of ns) (Machine.functions f.machine))
 
-(* 07387544f *)
+(* Listing asks the machine one question and changes nothing. *)
 let test_listing_asks () =
   let ids = List.map id_of [ (0, 1, 0, 0); (0, 2, 0, 0) ] in
   let f = fake ~ids () in

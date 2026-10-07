@@ -851,7 +851,7 @@ let test_refused_here () =
   | Ok _ -> fail "a function taken on a machine without PCI functions"
   | Error why -> contains ~msg:"names the bus" ~sub:"0000:00:00.0" why
 
-(* 07387544f: listing and taking change nothing on the machine. *)
+(* Listing and taking change nothing on the machine. *)
 let test_changes_nothing () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
   let buses =
@@ -907,7 +907,7 @@ let vfio_function () =
   | Some x -> x
   | None -> skip ~reason:"no function this process may take behind an IOMMU" ()
 
-(* 1dcf4ee87: without root, behind an IOMMU. *)
+(* Behind an IOMMU, a function needs no root. *)
 let test_vfio () =
   let d, f = vfio_function () in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
