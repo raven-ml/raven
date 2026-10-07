@@ -112,7 +112,17 @@ static void *load_library(const char *const *names) {
 #endif
 
 /* Decompression: zstd frames and xz streams, as distributions ship firmware.
-   [None] if the library is missing; [Failure] if the data is corrupt. */
+   [None] if the library is missing; [Failure] if the data is corrupt or
+   decompresses past MAX_IMAGE. */
+
+/* The largest image accepted. Firmware images are under 64 MiB; the bound
+   keeps a corrupt header from making the stub allocate terabytes. */
+#define MAX_IMAGE (1ULL << 30)
+
+/* lzma_ret values (lzma/base.h). */
+#define LZMA_OK 0
+#define LZMA_STREAM_END 1
+#define LZMA_BUF_ERROR 10
 
 typedef unsigned long long (*zstd_size_t)(const void *, size_t);
 typedef size_t (*zstd_decompress_t)(void *, size_t, const void *, size_t);
@@ -133,7 +143,8 @@ value caml_device_pci_unzstd(value s) {
   if (!size || !dec || !is_error) CAMLreturn(Val_none);
   unsigned long long n =
       size(String_val(s), caml_string_length(s));
-  if (n >= (1ULL << 40)) caml_failwith("a corrupt or unsized zstd frame");
+  if (n > MAX_IMAGE)
+    caml_failwith("a zstd frame whose size is unknown or over 1 GiB");
   out = caml_alloc_string(n);
   size_t r = dec(Bytes_val(out), n, String_val(s), caml_string_length(s));
   if (is_error(r) || r != n) caml_failwith("a corrupt zstd frame");
@@ -167,14 +178,15 @@ value caml_device_pci_unxz(value s) {
     size_t in_pos = 0, out_pos = 0;
     int r = dec(&limit, 0, NULL, (const uint8_t *)String_val(s), &in_pos,
                 caml_string_length(s), buf, &out_pos, cap);
-    if (r == 0 /* LZMA_OK */ || r == 1 /* LZMA_STREAM_END */) {
+    if (r == LZMA_OK || r == LZMA_STREAM_END) {
       out = caml_alloc_initialized_string(out_pos, (const char *)buf);
       free(buf);
       CAMLreturn(caml_alloc_some(out));
     }
     free(buf);
-    if (r != 10 /* LZMA_BUF_ERROR */) caml_failwith("a corrupt xz stream");
-    cap *= 2;
+    if (r != LZMA_BUF_ERROR) caml_failwith("a corrupt xz stream");
+    if (cap >= MAX_IMAGE) caml_failwith("an xz stream over 1 GiB");
+    cap = cap * 2 < MAX_IMAGE ? cap * 2 : MAX_IMAGE;
   }
 #else
   (void)s;
@@ -184,6 +196,17 @@ value caml_device_pci_unxz(value s) {
 
 /* HTTPS downloads through libcurl, with the runtime released. [Error why] if
    the library is missing or the transfer fails. */
+
+/* Option and info codes (curl/curl.h). */
+#define CURLOPT_WRITEDATA 10001
+#define CURLOPT_URL 10002
+#define CURLOPT_LOW_SPEED_LIMIT 19
+#define CURLOPT_LOW_SPEED_TIME 20
+#define CURLOPT_FAILONERROR 45
+#define CURLOPT_FOLLOWLOCATION 52
+#define CURLOPT_CONNECTTIMEOUT 78
+#define CURLOPT_WRITEFUNCTION 20011
+#define CURLINFO_RESPONSE_CODE 0x200002
 
 typedef void *(*curl_init_t)(void);
 typedef int (*curl_setopt_t)(void *, int, ...);
@@ -239,8 +262,7 @@ value caml_device_pci_download(value url) {
   curl_strerror_t strerr = (curl_strerror_t)dlsym(h, "curl_easy_strerror");
   if (!init || !setopt || !perform || !getinfo || !cleanup || !strerr)
     CAMLreturn(result(0, caml_copy_string("libcurl lacks the easy interface")));
-  char *u = strdup(String_val(url));
-  if (!u) caml_raise_out_of_memory();
+  char *u = caml_stat_strdup(String_val(url));
   struct sink s = {NULL, 0, 0};
   long status = 0;
   int rc;
@@ -249,23 +271,22 @@ value caml_device_pci_download(value url) {
   if (!c) {
     rc = -1;
   } else {
-    /* CURLOPT_URL, FOLLOWLOCATION, WRITEFUNCTION, WRITEDATA, FAILONERROR,
-       CONNECTTIMEOUT, LOW_SPEED_LIMIT, LOW_SPEED_TIME,
-       CURLINFO_RESPONSE_CODE */
-    setopt(c, 10002, u);
-    setopt(c, 52, 1L);
-    setopt(c, 20011, sink_write);
-    setopt(c, 10001, &s);
-    setopt(c, 45, 1L);
-    setopt(c, 78, 30L);
-    setopt(c, 19, 1L);
-    setopt(c, 20, 60L);
+    setopt(c, CURLOPT_URL, u);
+    setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    setopt(c, CURLOPT_WRITEFUNCTION, sink_write);
+    setopt(c, CURLOPT_WRITEDATA, &s);
+    setopt(c, CURLOPT_FAILONERROR, 1L);
+    /* Give up on a connection after 30 s, and on a transfer slower than one
+       byte a second for 60 s. */
+    setopt(c, CURLOPT_CONNECTTIMEOUT, 30L);
+    setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
+    setopt(c, CURLOPT_LOW_SPEED_TIME, 60L);
     rc = perform(c);
-    getinfo(c, 0x200002, &status);
+    getinfo(c, CURLINFO_RESPONSE_CODE, &status);
     cleanup(c);
   }
   caml_acquire_runtime_system();
-  free(u);
+  caml_stat_free(u);
   if (rc != 0) {
     free(s.data);
     char msg[512];
