@@ -272,6 +272,16 @@ let descriptors =
           List.iter
             (fun c -> cover (S.class_name c) (d.gpu.compute_class = c))
             S.classes;
+          cover "a size set and patched"
+            (List.exists
+               (fun d ->
+                 List.exists
+                   (function S.Set_dim (d', _) -> d' = d | _ -> false)
+                   d.ops
+                 && List.exists
+                      (function S.Patch_dim (d', _) -> d' = d | _ -> false)
+                      d.ops)
+               S.dims);
           cover "both releases"
             (List.length
                (List.filter
@@ -296,11 +306,7 @@ let descriptors =
             (let* d = S.dim in
              map (fun n -> (d, n)) (int_range 0 (Qmd.max_size d))))
         (fun (d, (dim, n)) ->
-          let other : S.op -> bool = function
-            | Set_dim (d', _) | Patch_dim (d', _) -> d' <> dim
-            | _ -> true
-          in
-          let q = S.descriptor { d with ops = List.filter other d.ops } in
+          let q = S.descriptor d in
           equal string
             (encode (Qmd.set_dim dim n q))
             (encode (Qmd.patch_dim dim (Int64.of_int n) q)));
@@ -370,19 +376,29 @@ let limits =
         [ -1; 1; 7; 8 ] (fun i ->
           raises_match (Exn.invalid_arg ~substring:"Qmd.set_bank") (fun () ->
               Qmd.set_bank i 0x1000L (qmd S.ada)));
-      xfail
-        ~reason:
-          "Qmd.make raises Invalid_argument when the registers overflow \
-           REGISTER_COUNT's 9 bits or a bank overflows CONSTANT_BUFFER_SIZE's \
-           13 bits of 16-byte units"
-        (cases ~name:fst "a launch Launch.make takes has a descriptor"
-           [
-             ("512 registers", S.kernel ~registers:512 ());
-             ( "a bank of 128 KiB",
-               S.kernel ~banks:[ { index = 0; offset = 0; bytes = 0x20000 } ] ()
-             );
-           ]
-           (fun (_, k) -> ignore (qmd ~k S.ada)));
+      cases ~name:fst "a kernel at Launch.make's bounds has a descriptor"
+        [
+          ("255 registers", S.kernel ~registers:255 ());
+          ( "a bank of 64 KiB",
+            S.kernel ~banks:[ { index = 0; offset = 0; bytes = 0x10000 } ] () );
+          ( "bank 7",
+            S.kernel ~banks:[ { index = 7; offset = 0; bytes = 16 } ] () );
+        ]
+        (fun (_, k) -> List.iter (fun cls -> ignore (qmd ~k cls)) S.classes);
+      cases ~name:fst "a kernel no descriptor holds is refused"
+        [
+          ("256 registers", S.kernel ~registers:256 ());
+          ( "a bank of 64 KiB and a byte",
+            S.kernel ~banks:[ { index = 0; offset = 0; bytes = 0x10001 } ] () );
+          ( "bank 8",
+            S.kernel ~banks:[ { index = 8; offset = 0; bytes = 16 } ] () );
+          ( "bank -1",
+            S.kernel ~banks:[ { index = -1; offset = 0; bytes = 16 } ] () );
+        ]
+        (fun (_, k) ->
+          List.iter
+            (fun cls -> is_error (Launch.make (S.gpu ~compute_class:cls ()) k))
+            S.classes);
     ]
 
 (* The words of a descriptor, over named values *)

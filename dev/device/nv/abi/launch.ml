@@ -39,6 +39,32 @@ let stack_limit = 0xfffdc0
 (* Bank 0 when the cubin has none: the driver's parameters alone, 352 bytes. *)
 let default_bank0 = { Cubin.index = 0; offset = 0; bytes = 0x160 }
 
+(* What a kernel may use, as CUDA states it for compute capabilities 8.0 to 12.0
+   (CUDA C++ Programming Guide, "Technical Specifications per Compute
+   Capability"), and the banks a descriptor names, 0 to 7 (clc7c0qmd.h,
+   clcec0qmd.h: CONSTANT_BUFFER_VALID(i)). Every descriptor field holds them. *)
+let max_registers = 255
+let max_bank_bytes = 0x10000
+let descriptor_banks = 8
+let ( let* ) = Result.bind
+
+let check_bank (b : Cubin.bank) =
+  if b.index < 0 || b.index >= descriptor_banks then
+    Error
+      (strf "the kernel reads constant bank %d, expected 0 to %d" b.index
+         (descriptor_banks - 1))
+  else if b.bytes > max_bank_bytes then
+    Error
+      (strf "the kernel's constant bank %d is %d bytes, more than 64 KiB"
+         b.index b.bytes)
+  else Ok ()
+
+let rec check_banks = function
+  | [] -> Ok ()
+  | b :: bs ->
+      let* () = check_bank b in
+      check_banks bs
+
 let make (g : Gpu.t) (k : Cubin.kernel) =
   let layout =
     if g.compute_class = Defs.blackwell_compute_b then Defs.qmd_v5
@@ -54,25 +80,35 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
   in
   (* Compared before the driver's 1 KiB is added, which a corrupt size near
      max_int would overflow. *)
-  if k.shared_bytes > (max_shared_kib * 1024) - reserved_shared then
-    Error
-      (strf
-         "the kernel declares %d bytes of shared memory, more than the %d a \
-          launch leaves it beside the driver's 1 KiB"
-         k.shared_bytes
-         ((max_shared_kib * 1024) - reserved_shared))
-  else
-    let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
-    let c = List.find (fun c -> c * 1024 >= shared_bytes) shared_configs in
-    Ok
-      {
-        kernel = k;
-        gpu = g;
-        layout;
-        shared_bytes;
-        shared_config = config c;
-        max_shared_config;
-      }
+  let* () =
+    if k.shared_bytes <= (max_shared_kib * 1024) - reserved_shared then Ok ()
+    else
+      Error
+        (strf
+           "the kernel declares %d bytes of shared memory, more than the %d a \
+            launch leaves it beside the driver's 1 KiB"
+           k.shared_bytes
+           ((max_shared_kib * 1024) - reserved_shared))
+  in
+  let* () =
+    if k.registers <= max_registers then Ok ()
+    else
+      Error
+        (strf "the kernel uses %d registers a thread, more than %d" k.registers
+           max_registers)
+  in
+  let* () = check_banks k.banks in
+  let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
+  let c = List.find (fun c -> c * 1024 >= shared_bytes) shared_configs in
+  Ok
+    {
+      kernel = k;
+      gpu = g;
+      layout;
+      shared_bytes;
+      shared_config = config c;
+      max_shared_config;
+    }
 
 let banks l =
   let banks = l.kernel.banks in

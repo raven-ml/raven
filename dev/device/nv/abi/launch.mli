@@ -17,9 +17,12 @@ type t = private Repr.launch
 (** The type for kernels set up for launch on a GPU. *)
 
 val make : Gpu.t -> Cubin.kernel -> (t, string) result
-(** [make g k] is [k] launched on [g]. It is [Error] if [k] declares more shared
-    memory than a launch can take: 100 KiB, the 1 KiB the driver reserves
-    included.
+(** [make g k] is [k] launched on [g]. It is [Error] if [k] takes more than a
+    launch can:
+    - more shared memory than 100 KiB, the 1 KiB the driver reserves included;
+    - more than 255 registers a thread;
+    - a constant bank of index outside \[[0];[7]\], the banks a launch
+      descriptor names, or of more than 64 KiB.
 
     Raises [Invalid_argument] if [g.compute_class] is none of the classes
     {!Gpu.t} names. *)
