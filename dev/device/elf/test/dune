@@ -1,0 +1,6 @@
+(test
+ (name smoke)
+ (libraries device_elf windtrap)
+ (deps
+  %{project_root}/packages/tolk/test/runtime/ops_nv/simple_add_sm89.cubin
+  %{project_root}/packages/tolk/test/gen/runtime/ops_amd_fixtures/simple_add_gfx1100.hsaco))
