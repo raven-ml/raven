@@ -26,11 +26,10 @@
       {tr {td Zero of a system } {td derivative given } {td {!System.newton} } }
       {tr {td  } {td no usable derivative } {td {!System.broyden} } }
       {tr {td  } {td fixed point [x = g x] } {td {!System.anderson} } }
-      {tr
-        {td Minimum }
-        {td one variable, a bracket }
-        {td {!Minimize.bracket} }
-      }
+      {tr {td Minimum } {td smooth, small } {td {!Minimize.bfgs} } }
+      {tr {td  } {td smooth, large } {td {!Minimize.lbfgs} } }
+      {tr {td  } {td smooth, ill-conditioned } {td {!Minimize.newton} } }
+      {tr {td  } {td one variable, a bracket } {td {!Minimize.bracket} } }
       {tr
         {td Integral, one dimension }
         {td smooth }
@@ -423,18 +422,18 @@ module System : sig
       {b Error.} Every method takes undamped steps [δ]: Newton's or Broyden's
       direction before the line search scales it, Anderson's fixed-point
       residual [f x]. [e = |δ| q / (1 − q)] per component, the distance left
-      when the steps shrink by [q], with [q] the contraction of the undamped map
-      [N x = x + δ] over the last step, [|N x − N x'| / |x − x'|] from the point
-      [x'] the last step started at; after a step taken in full it is the ratio
-      of the norms of the last two undamped steps. [e] is unbounded while
-      [q ≥ 1] or before two steps, and [y] is the estimate. A lane that meets
-      [tol] takes its last step in full. A shortened or mixed step moves the
-      estimate but its length never enters [e], so a search cannot converge by
-      shrinking its steps. A zero step is a zero. A step that no longer moves
-      the estimate without meeting [tol], a line search that finds no decrease,
-      or a failed linear solve ends the lane [Stalled]; a non-finite [f] at the
-      guess or at an estimate ends it [Not_finite]; [budget] iterations end it
-      [Budget_spent].
+      when the steps shrink by [q], with [q] the larger of the contractions of
+      the undamped map [N x = x + δ] over the last two steps, each
+      [|N x − N x'| / |x − x'|] from the point [x'] its step started at; after a
+      step taken in full it is the ratio of the norms of the last two undamped
+      steps. [e] is unbounded while [q ≥ 1] or before three steps, and [y] is
+      the estimate. A lane that meets [tol] takes its last step in full. A
+      shortened or mixed step moves the estimate but its length never enters
+      [e], so a search cannot converge by shrinking its steps. A zero step is a
+      zero. A step that no longer moves the estimate without meeting [tol], a
+      line search that finds no decrease, or a failed linear solve ends the lane
+      [Stalled]; a non-finite [f] at the guess or at an estimate ends it
+      [Not_finite]; [budget] iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of [f] through
       {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through
@@ -508,7 +507,110 @@ module System : sig
 end
 
 module Minimize : sig
-  (** Minima. *)
+  (** Minima.
+
+      A minimum of [f] is a zero of its gradient: every gradient method searches
+      with rune's gradient of [f] and states its answer as the zero of that
+      gradient, so a hand-written gradient never becomes the equation. A known
+      gradient is stated on [f] with {!Rune.custom_jvp}. The float tensors of a
+      value of ['x] are its vector, of one dtype, the search's; its other
+      tensors are carried from the start. A problem is one problem, with one
+      status; {!Rune.val-vmap} gives each lane its own.
+
+      {[
+      (* Rosenbrock's function from (−1.2, 1) *)
+      let rosenbrock v =
+        let x = Nx.get [ 0 ] v and y = Nx.get [ 1 ] v in
+        Nx.add
+          (Nx.mul_s (Nx.square (Nx.sub y (Nx.square x))) 100.)
+          (Nx.square (Nx.rsub_s 1. x))
+      in
+      Minimize.solve Nx.Ptree.tensor
+        (Minimize.bfgs ~linear:Linear.dense)
+        ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+        ~budget:100 rosenbrock
+        (Nx.create Nx.float64 [| 2 |] [| -1.2; 1. |])
+      ]}
+
+      {b Error.} The methods take undamped steps [δ], the quasi-Newton or Newton
+      direction before the line search scales it, and measure them as {!System}
+      does: [e = |δ| q / (1 − q)] per component, with [q] the larger of the
+      contractions of the undamped map [x + δ] over the last two steps, and [y]
+      the estimate; a lane that meets [tol] takes its last step in full. A step
+      that is not downhill, a line search that finds no decrease, or a failed
+      linear solve ends the lane [Stalled]; a non-finite [f] or gradient at the
+      start ends it [Not_finite]; [budget] iterations end it [Budget_spent].
+
+      {b Derivative.} The answer is stated as the zero of rune's gradient of [f]
+      through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every
+      tracked value [f] reads, with [H] the Hessian at the answer, solved by the
+      method's [linear] on Hessian-vector products; zero at a lane that did not
+      converge. Where [H] is singular the derivative does not exist and is not
+      finite. *)
+
+  type ('x, 'f) t
+  (** The type for methods for objectives of type ['f] over values of type ['x].
+  *)
+
+  val bfgs : linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+  (** [bfgs ~linear] is BFGS, for a smooth objective of up to some thousands of
+      unknowns.
+
+      {b Method.} Keeps an estimate [H] of the inverse Hessian, scaled to
+      [yᵀs / yᵀy] before its first update, and takes Broyden, Fletcher, Goldfarb
+      and Shanno's rank-two update after each step [s] that changed the gradient
+      by [y]; each step is [−H ∇f], searched to the strong Wolfe conditions by
+      bracketing and zoom (Nocedal and Wright, Algorithms 3.5 and 3.6), so every
+      update keeps [H] positive-definite. {b Cost.} [n²] numbers and [O(n²)]
+      work per iteration, one evaluation of [f] and its gradient per trial;
+      superlinear convergence near a minimum. *)
+
+  val lbfgs : memory:int -> linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+  (** [lbfgs ~memory ~linear] is limited-memory BFGS (Liu and Nocedal, 1989),
+      for a smooth objective of many unknowns.
+
+      {b Method.} The direction is the two-loop recursion over the last [memory]
+      pairs of steps and gradient changes, with the initial inverse Hessian
+      [yᵀs / yᵀy] of the newest pair; a pair of non-positive curvature enters
+      neither loop. Steps are searched as {!bfgs}'s. {b Cost.} [2 memory n]
+      numbers and [O(memory n)] work per iteration; linear convergence.
+
+      Raises [Invalid_argument] if [memory < 1]. *)
+
+  val newton : linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+  (** [newton ~linear] is Newton's method, for a smooth, ill-conditioned
+      objective.
+
+      {b Method.} Each step solves [H δ = −∇f] with [linear] on rune's
+      Hessian-vector products, truncated by its tolerance with {!Linear.cg},
+      then backtracks from [x + δ] to the sufficient decrease of [f]. A Hessian
+      that is not positive-definite gives a step that is not downhill, or ends
+      {!Linear.cg}, and the lane stalls. {b Cost.} One solve of [linear] per
+      iteration; quadratic convergence near a minimum. *)
+
+  val solve :
+    'x Nx.Ptree.t ->
+    ('x, 'f) t ->
+    tol:Tol.t ->
+    budget:int ->
+    'f ->
+    'x ->
+    'x Solution.t
+  (** [solve x m ~tol ~budget f x0] is a local minimum of [f] from [x0] by [m].
+      Its evaluations count the calls of [f] with its gradient, [budget] its
+      iterations.
+
+      Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
+      differ in dtype, or if [f] returns other than a scalar. *)
+
+  val iterates : 'x Nx.Ptree.t -> ('x, 'f) t -> steps:int -> 'f -> 'x -> 'x
+  (** [iterates x m ~steps f x0] is the first [steps] estimates of [m]'s search
+      from [x0], [x0] first, detached, stacked on a new leading axis of every
+      tensor. A lane stops at a zero gradient, or when its search finds no
+      decrease, and then repeats its estimate. Its tensors that are not floats
+      are [x0]'s, repeated.
+
+      Raises [Invalid_argument] if [steps < 1], or as {!solve} does. *)
 
   val bracket :
     tol:Tol.t ->

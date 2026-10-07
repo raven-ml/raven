@@ -460,6 +460,65 @@ let anderson_tanh =
     rows = all;
   }
 
+(* Minima *)
+
+(* The extended Rosenbrock function on 64 unknowns, shifted by the argument [c]:
+   Σ 100 (x_{i+1} − x_i²)² + (c_i − x_i)², by L-BFGS with 6 pairs. *)
+let lbfgs_rosenbrock =
+  {
+    id = "minimize-lbfgs-rosenbrock-64";
+    f =
+      (fun c ->
+        let f x =
+          let head = Nx.slice [ Nx.R (0, 63) ] x
+          and tail = Nx.slice [ Nx.R (1, 64) ] x in
+          Nx.add
+            (Nx.mul_s (Nx.sum (Nx.square (Nx.sub tail (Nx.square head)))) 100.)
+            (Nx.sum (Nx.square (Nx.sub c x)))
+        in
+        Solution.get
+          (Minimize.solve Nx.Ptree.tensor
+             (Minimize.lbfgs ~memory:6 ~linear:Linear.dense)
+             ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+             ~budget:500 f (Nx.zeros_like c)));
+    x = (fun () -> Nx.linspace f64 0.8 1.2 64);
+    rows = all;
+  }
+
+(* ½ xᵀ a x + Σ log cosh x − cᵀ x on 16 unknowns, a diagonally dominant, by BFGS
+   and by Newton. *)
+let convex m id =
+  let a =
+    Nx.add
+      (Nx.mul_s (Nx.eye f64 16) 18.)
+      (Nx.cos (Nx.reshape [| 16; 16 |] (Nx.arange_f f64 0. 256. 1.)))
+  in
+  let a = Nx.div_s (Nx.add a (Nx.transpose a)) 2. in
+  {
+    id;
+    f =
+      (fun c ->
+        let f x =
+          Nx.sub
+            (Nx.add
+               (Nx.mul_s (Nx.sum (Nx.mul x (Nx.matmul a x))) 0.5)
+               (Nx.sum (Nx.log (Nx.cosh x))))
+            (Nx.sum (Nx.mul c x))
+        in
+        Solution.get
+          (Minimize.solve Nx.Ptree.tensor m
+             ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+             ~budget:100 f (Nx.zeros_like c)));
+    x = (fun () -> Nx.linspace f64 (-8.) 8. 16);
+    rows = all;
+  }
+
+let bfgs_convex =
+  convex (Minimize.bfgs ~linear:Linear.dense) "minimize-bfgs-convex-16"
+
+let newton_convex =
+  convex (Minimize.newton ~linear:Linear.dense) "minimize-newton-convex-16"
+
 let workloads =
   [
     quad;
@@ -485,6 +544,9 @@ let workloads =
     newton_bratu;
     broyden_dense;
     anderson_tanh;
+    lbfgs_rosenbrock;
+    bfgs_convex;
+    newton_convex;
   ]
 
 let compiled f x =

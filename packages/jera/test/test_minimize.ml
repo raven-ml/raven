@@ -107,7 +107,285 @@ let derivative_tests =
         equal (Oracle.tensor ()) (f c) (Rune.vmap' f c));
   ]
 
+(* Gradient methods *)
+
+let one = Nx.Ptree.tensor
+let invalid_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let is st s = Nx.item [] (Solution.is st s)
+
+(* A convex problem [½ xᵀ a x + Σ log cosh x − bᵀ x] of [n] unknowns: [a] has
+   entries in [-1, 1] plus [n + 1] on its diagonal, symmetrised, so its Hessian
+   [a + diag (sech² x)] is positive-definite everywhere. An element of [b] below
+   [10⁻³⁰⁰] is zero: a minimum between subnormals moves by steps the floats
+   cannot resolve, and the search stalls there, as it states. *)
+let convex =
+  let open Gen in
+  (let* n = int_range 0 6 in
+   let+ a = list ~size:(constant (n * n)) (float_range (-1.) 1.)
+   and+ b = list ~size:(constant n) (float_range (-5.) 5.) in
+   let a = Nx.create f64 [| n; n |] (Array.of_list a) in
+   let a =
+     Nx.add
+       (Nx.div_s (Nx.add a (Nx.transpose a)) 2.)
+       (Nx.mul_s (Nx.eye f64 n) (Float.of_int (n + 1)))
+   in
+   let b = List.map (fun v -> if Float.abs v < 1e-300 then 0. else v) b in
+   (a, Nx.create f64 [| n |] (Array.of_list b)))
+  |> with_pp (fun ppf (a, b) ->
+      Format.fprintf ppf "a = %a@ b = %a" Nx.pp a Nx.pp b)
+
+let objective a b x =
+  Nx.sub
+    (Nx.add
+       (Nx.mul_s (Nx.sum (Nx.mul x (Nx.matmul a x))) 0.5)
+       (Nx.sum (Nx.log (Nx.cosh x))))
+    (Nx.sum (Nx.mul b x))
+
+let gradient a b x = Nx.sub (Nx.add (Nx.matmul a x) (Nx.tanh x)) b
+let hessian a x = Nx.add a (Nx.diag (Nx.square (Nx.recip (Nx.cosh x))))
+
+let methods =
+  [
+    ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+    ("lbfgs", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+    ("newton", Minimize.newton ~linear:Linear.dense);
+    ( "newton-cg",
+      Minimize.newton
+        ~linear:(Linear.cg ~rel:1e-10 ~budget:50 ~precondition:Fun.id) );
+  ]
+
+let minimum m f x0 = Minimize.solve one m ~tol:tight ~budget:200 f x0
+
+let rosenbrock v =
+  let x = Nx.get [ 0 ] v and y = Nx.get [ 1 ] v in
+  Nx.add
+    (Nx.mul_s (Nx.square (Nx.sub y (Nx.square x))) 100.)
+    (Nx.square (Nx.rsub_s 1. x))
+
+let gradient_tests =
+  [
+    prop "the minimum is the zero of the gradient" convex (fun (a, b) ->
+        cover "an empty problem" (Nx.dim 0 b = 0);
+        cover "several unknowns" (Nx.dim 0 b > 2);
+        List.iter
+          (fun (_, m) ->
+            let x =
+              Solution.get (minimum m (objective a b) (Nx.zeros_like b))
+            in
+            (* A residual within the tolerance's distance times the
+               curvature. *)
+            equal
+              (Oracle.tensor ~abs:(1e-9 *. Float.of_int (Nx.dim 0 b + 2)) ())
+              (Nx.zeros_like b) (gradient a b x))
+          methods);
+    test "every method finds Rosenbrock's minimum from (−1.2, 1)" (fun () ->
+        List.iter
+          (fun (_, m) ->
+            equal
+              (Oracle.tensor ~rel:1e-8 ())
+              (vec [| 1.; 1. |])
+              (Solution.get
+                 (Minimize.solve one m ~tol:tight ~budget:500 rosenbrock
+                    (vec [| -1.2; 1. |]))))
+          (List.filter (fun (n, _) -> n <> "newton-cg") methods));
+    test "a memory of one pair converges" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (vec [| 1.; 1. |])
+          (Solution.get
+             (Minimize.solve one
+                (Minimize.lbfgs ~memory:1 ~linear:Linear.dense)
+                ~tol:tight ~budget:2000 rosenbrock
+                (vec [| -1.2; 1. |]))));
+    test "a structure's float tensors are one vector, others carried" (fun () ->
+        let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
+        let f ((p, q), _) =
+          Nx.add
+            (Nx.sum (Nx.square (Nx.sub_s p 2.)))
+            (Nx.square (Nx.add_s q 1.))
+        in
+        let (p, q), k =
+          Solution.get
+            (Minimize.solve s
+               (Minimize.bfgs ~linear:Linear.dense)
+               ~tol:tight ~budget:100 f
+               ((Nx.zeros f64 [| 3 |], Nx.scalar f64 0.), Nx.scalar Nx.int32 7l))
+        in
+        equal (Oracle.tensor ~rel:1e-9 ()) (Nx.full f64 [| 3 |] 2.) p;
+        equal (Oracle.tensor ~rel:1e-9 ()) (Nx.scalar f64 (-1.)) q;
+        equal int32 7l (Nx.item [] k));
+    test "a spent budget is reported" (fun () ->
+        let s =
+          Minimize.solve one
+            (Minimize.lbfgs ~memory:3 ~linear:Linear.dense)
+            ~tol:tight ~budget:3 rosenbrock
+            (vec [| -1.2; 1. |])
+        in
+        equal bool true (is Budget_spent s);
+        raises_match (Exn.failure ~substring:"Jera.Minimize.solve") (fun () ->
+            Solution.get s));
+    test "an unbounded objective stalls or spends its budget" (fun () ->
+        let s =
+          Minimize.solve one
+            (Minimize.bfgs ~linear:Linear.dense)
+            ~tol:tight ~budget:50
+            (fun x -> Nx.sum (Nx.neg (Nx.exp x)))
+            (vec [| 0. |])
+        in
+        equal bool false (Nx.item [] (Solution.ok s)));
+    test "a start where f is not finite ends Not_finite" (fun () ->
+        equal bool true
+          (is Not_finite
+             (minimum
+                (Minimize.bfgs ~linear:Linear.dense)
+                (fun x -> Nx.sum (Nx.sqrt x))
+                (vec [| -1. |]))));
+    test "invalid arguments raise" (fun () ->
+        invalid_with "Jera.Minimize.lbfgs: memory = 0 is below 1" (fun () ->
+            Minimize.lbfgs ~memory:0 ~linear:Linear.dense);
+        invalid_with "Jera.Minimize.solve: budget = 0 is below 1" (fun () ->
+            Minimize.solve one
+              (Minimize.bfgs ~linear:Linear.dense)
+              ~tol:tight ~budget:0 rosenbrock
+              (vec [| 0.; 0. |]));
+        invalid_with "Jera.Minimize.solve: f returned a value of shape [2]"
+          (fun () ->
+            minimum
+              (Minimize.bfgs ~linear:Linear.dense)
+              Fun.id
+              (vec [| 0.; 0. |])));
+  ]
+
+(* Iterates *)
+
+let iterate_tests =
+  [
+    test "the first iterate is the start, then the search's" (fun () ->
+        let a = Nx.create f64 [| 2; 2 |] [| 2.; 0.5; 0.5; 1. |] in
+        let b = vec [| 1.; -1. |] in
+        let f x =
+          Nx.sub
+            (Nx.mul_s (Nx.sum (Nx.mul x (Nx.matmul a x))) 0.5)
+            (Nx.sum (Nx.mul b x))
+        in
+        let xs =
+          Minimize.iterates one
+            (Minimize.newton ~linear:Linear.dense)
+            ~steps:4 f
+            (vec [| 0.; 0. |])
+        in
+        equal (array int) [| 4; 2 |] (Nx.shape xs);
+        equal (Oracle.tensor ()) (vec [| 0.; 0. |]) (Nx.get [ 0 ] xs);
+        (* Newton's first step solves a quadratic; then the lane stops. *)
+        List.iter
+          (fun i ->
+            equal
+              (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ())
+              (Nx.solve a b) (Nx.get [ i ] xs))
+          [ 1; 2; 3 ]);
+    test "iterates are solve's path" (fun () ->
+        let m = Minimize.lbfgs ~memory:6 ~linear:Linear.dense in
+        let xs =
+          Minimize.iterates one m ~steps:60 rosenbrock (vec [| -1.2; 1. |])
+        in
+        equal (Oracle.tensor ~rel:1e-6 ()) (vec [| 1.; 1. |]) (Nx.get [ 59 ] xs));
+    test "steps below 1 raise" (fun () ->
+        invalid_with "Jera.Minimize.iterates: steps = 0 is below 1" (fun () ->
+            Minimize.iterates one
+              (Minimize.bfgs ~linear:Linear.dense)
+              ~steps:0 rosenbrock
+              (vec [| 0.; 0. |])));
+  ]
+
+(* Laws *)
+
+let law_tests =
+  [
+    prop "grad is the implicit derivative H⁻¹ 1 (law 1)" convex (fun (a, b) ->
+        List.iter
+          (fun (_, m) ->
+            let solve b =
+              Solution.get (minimum m (objective a b) (Nx.zeros_like b))
+            in
+            let x = solve b in
+            let expected =
+              if Nx.dim 0 b = 0 then b
+              else Nx.solve (hessian a x) (Nx.ones_like b)
+            in
+            equal
+              (Oracle.tensor ~rel:1e-8 ~abs:1e-12 ())
+              expected
+              (Rune.grad' (fun b -> Nx.sum (solve b)) b))
+          methods);
+    test "grad agrees with central differences (law 1)" (fun () ->
+        let solve c =
+          Solution.get
+            (minimum
+               (Minimize.lbfgs ~memory:4 ~linear:Linear.dense)
+               (fun x ->
+                 Nx.add
+                   (Nx.sum (Nx.square (Nx.sub x c)))
+                   (Nx.sum (Nx.square (Nx.square x))))
+               (Nx.zeros_like c))
+        in
+        let c = vec [| 1.; -0.5; 2. |] and v = vec [| 0.3; 1.; -1. |] in
+        equal
+          (Oracle.tensor ~rel:1e-6 ())
+          (Oracle.central ~eps:1e-5 (fun c -> Nx.sum (solve c)) c v)
+          (Nx.sum (Nx.mul (Rune.grad' (fun c -> Nx.sum (solve c)) c) v)));
+    test "a lane that did not converge has a zero derivative (law 5)" (fun () ->
+        let g =
+          Rune.grad'
+            (fun c ->
+              Nx.sum
+                (Solution.best
+                   (Minimize.solve one
+                      (Minimize.bfgs ~linear:Linear.dense)
+                      ~tol:tight ~budget:1
+                      (fun x -> Nx.sum (Nx.square (Nx.sub x c)))
+                      (Nx.zeros_like c))))
+            (vec [| 1.; 2. |])
+        in
+        equal (Oracle.tensor ~abs:0. ()) (vec [| 0.; 0. |]) g);
+    test "compiled equals eager (law 3)" (fun () ->
+        List.iter
+          (fun (_, m) ->
+            let f c =
+              Solution.get
+                (minimum m
+                   (fun x ->
+                     Nx.add
+                       (Nx.sum (Nx.square (Nx.sub x c)))
+                       (Nx.sum (Nx.square (Nx.square x))))
+                   (Nx.zeros_like c))
+            in
+            let c = vec [| 1.; -0.5; 2. |] in
+            equal (Oracle.tensor ()) (f c) (Rune.jit' f c))
+          methods);
+    test "vmap is each lane's search (law 3)" (fun () ->
+        let f c =
+          Solution.get
+            (minimum
+               (Minimize.lbfgs ~memory:3 ~linear:Linear.dense)
+               (fun x ->
+                 Nx.add
+                   (Nx.sum (Nx.square (Nx.sub x c)))
+                   (Nx.sum (Nx.square (Nx.square x))))
+               (Nx.zeros_like c))
+        in
+        let cs = Nx.create f64 [| 3; 2 |] [| 1.; -0.5; 0.; 0.; -2.; 3. |] in
+        equal (Oracle.tensor ())
+          (Nx.stack (List.init 3 (fun i -> f (Nx.get [ i ] cs))))
+          (Rune.vmap' f cs));
+  ]
+
 let () =
   exit
     (run "Jera.Minimize"
-       [ group "bracket" bracket_tests; group "derivatives" derivative_tests ])
+       [
+         group "bracket" bracket_tests;
+         group "derivatives" derivative_tests;
+         group "gradient methods" gradient_tests;
+         group "iterates" iterate_tests;
+         group "laws" law_tests;
+       ])

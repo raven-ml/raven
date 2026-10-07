@@ -21,124 +21,8 @@ let name = function
   | Broyden -> "broyden"
   | Anderson m -> Printf.sprintf "anderson, memory %d" m
 
-(* Searches
-
-   Every search runs on vectors over lanes (Search) with detached values. It
-   takes undamped steps [δ x] and carries the estimate [x], [f x], the last
-   point a step was tested at and the undamped map [N x = x + δ x] there, the
-   error estimate and the contraction [q] of the last test, the status, the
-   evaluations of [f] and the count of iterations, which every lane shares. *)
-
-type 'd vector = (float, 'd) Nx.t
-
-type 'd state = {
-  x : 'd vector;
-  fx : 'd vector;
-  before : 'd vector;
-  mapped : 'd vector;
-  e : 'd vector;
-  q : 'd vector;
-  st : (int32, Nx.int32_elt) Nx.t;
-  n : (int32, Nx.int32_elt) Nx.t;
-  k : (int32, Nx.int32_elt) Nx.t;
-}
-
 let int32 k = Nx.scalar Nx.int32 k
 let half_square v = Nx.mul_s (Search.dot v v) 0.5
-let finite v = Nx.all ~axes:[ -1 ] (Nx.isfinite v)
-
-(* [α v], [α] one length per lane. *)
-let along alpha v =
-  Nx.mul (Nx.reshape (Array.append (Nx.shape alpha) [| 1 |]) alpha) v
-
-let start residual x0 =
-  let fx = residual x0 in
-  let lanes = Array.sub (Nx.shape x0) 0 (Nx.ndim x0 - 1) in
-  let st =
-    settle
-      (Nx.full Nx.int32 lanes running)
-      (Nx.logical_not (finite fx))
-      Not_finite
-  in
-  let nan = Nx.full_like x0 Float.nan in
-  {
-    x = x0;
-    fx;
-    before = nan;
-    mapped = nan;
-    e = Nx.full_like x0 Float.infinity;
-    q = Nx.full (Nx.dtype x0) lanes Float.nan;
-    st;
-    n = Nx.ones Nx.int32 lanes;
-    k = int32 0l;
-  }
-
-(* The test of the undamped step [delta] at [s.x]. [q] is the contraction of the
-   undamped map over the last step, [|N x − N x'| / |x − x'|] from the last
-   tested point [x']: when that step was taken in full, [x = N x'] and [q] is
-   the ratio of the last two undamped steps, and after a shortened or mixed step
-   it is still [N]'s contraction, which the length of the step taken never
-   enters. A lane whose error meets [tol] converges at [N x], one whose step no
-   longer moves its estimate stalls. *)
-let test tol s delta =
-  let run = searching s.st in
-  let next = Nx.add s.x delta in
-  let q =
-    Nx.div
-      (Search.norm (Nx.sub next s.mapped))
-      (Search.norm (Nx.sub s.x s.before))
-  in
-  let e = Search.contraction delta ~q in
-  let st = settle s.st (Search.accepted tol ~e ~y:next) Converged in
-  let converged =
-    Nx.logical_and run (Nx.equal_s st (Solution.code Converged))
-  in
-  let st = settle st (Nx.all ~axes:[ -1 ] (Nx.equal next s.x)) Stalled in
-  {
-    s with
-    x = Search.hold converged next s.x;
-    before = Search.hold run s.x s.before;
-    mapped = Search.hold run next s.mapped;
-    e = Search.hold run e s.e;
-    q = Search.hold run q s.q;
-    st;
-  }
-
-(* The iterations' loop, with the method's own carry [aux] of structure [extra];
-   it ends every lane after [budget] iterations. *)
-let iterations ~budget extra step (s, aux) =
-  let carry =
-    Nx.Ptree.(
-      pair
-        (pair tensor (pair tensor (pair tensor tensor)))
-        (pair (pair tensor tensor) (pair tensor (pair tensor tensor))))
-  in
-  let pack s =
-    ((s.x, (s.fx, (s.before, s.mapped))), ((s.e, s.q), (s.st, (s.n, s.k))))
-  in
-  let unpack ((x, (fx, (before, mapped))), ((e, q), (st, (n, k)))) =
-    { x; fx; before; mapped; e; q; st; n; k }
-  in
-  let step (c, aux) =
-    let s = unpack c in
-    let s', aux = step s aux in
-    let k = Nx.add_s s.k 1l in
-    let spent = Nx.greater_equal_s k (Int32.of_int budget) in
-    let st =
-      settle s'.st (Nx.broadcast_to (Nx.shape s'.st) spent) Budget_spent
-    in
-    (pack { s' with st; k }, aux)
-  in
-  let c, _ =
-    Rune.iterate
-      Nx.Ptree.(pair carry extra)
-      ~max:budget
-      ~until:(fun ((_, (_, (st, _))), _) ->
-        Nx.logical_not (Nx.any (searching st)))
-      ~f:step
-      (pack s, aux)
-  in
-  unpack c
 
 (* Newton
 
@@ -146,18 +30,19 @@ let iterations ~budget extra step (s, aux) =
    the sufficient decrease of [|f|² / 2]. The linear run's residual is [J δ + f
    x], so the merit's slope at [x] is [f x · (J δ)]. *)
 
-let newton_search ~tol ~budget ~trials ~residual ~direction s =
+let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
+    =
   let dtype = Nx.dtype s.x in
-  let step s () =
+  let step (s : _ Search.state) () =
     let delta, jd, failed = direction s.x s.fx in
     let s = { s with st = settle s.st failed Stalled } in
-    let s = test tol s delta in
+    let s = Search.test tol s delta in
     let run = searching s.st in
     let accept, shrink =
       Search.armijo ~phi0:(half_square s.fx) ~slope0:(Search.dot s.fx jd)
     in
     let trial alpha =
-      let x = Nx.add s.x (along alpha delta) in
+      let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
       ((x, fx), half_square fx)
     in
@@ -166,10 +51,10 @@ let newton_search ~tol ~budget ~trials ~residual ~direction s =
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~accept ~shrink trial (s.x, s.fx)
     in
-    let st = settle s.st (Nx.logical_not found) Stalled in
+    let st = settle s.Search.st (Nx.logical_not found) Stalled in
     ({ s with x; fx; st; n = Nx.add s.n tries }, ())
   in
-  iterations ~budget Nx.Ptree.unit step (s, ())
+  fst @@ Search.iterations ~budget Nx.Ptree.unit step (s, ())
 
 (* Broyden
 
@@ -199,14 +84,14 @@ let differences residual x fx =
        (Nx.sub columns (Nx.reshape [| 1; n |] fx))
        (Nx.reshape [| n; 1 |] h))
 
-let broyden_search ~tol ~budget ~trials ~residual ~solve s =
+let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
   let dtype = Nx.dtype s.x in
   let b = differences residual s.x s.fx in
   let s = { s with n = Nx.add_s s.n (Int32.of_int (Nx.dim 0 s.x)) } in
-  let step s (b, k) =
+  let step (s : _ Search.state) (b, k) =
     let delta, _, failed = solve (Nx.matmul b) s.fx in
     let s = { s with st = settle s.st failed Stalled } in
-    let s = test tol s delta in
+    let s = Search.test tol s delta in
     let run = searching s.st in
     let norm0 = Search.norm s.fx in
     let eta = Nx.recip (Nx.square (Nx.add_s (Nx.cast dtype k) 1.)) in
@@ -219,7 +104,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve s =
     in
     let shrink alpha _ = Nx.mul_s alpha 0.5 in
     let trial alpha =
-      let x = Nx.add s.x (along alpha delta) in
+      let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
       ((x, fx), Search.norm fx)
     in
@@ -228,7 +113,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve s =
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~accept ~shrink trial (s.x, s.fx)
     in
-    let st = settle s.st (Nx.logical_not found) Stalled in
+    let st = settle s.Search.st (Nx.logical_not found) Stalled in
     let dx = Nx.sub x s.x and df = Nx.sub fx s.fx in
     let ss = Search.dot dx dx in
     let moved = Nx.greater_s ss 0. in
@@ -242,7 +127,11 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve s =
     let b = Nx.where moved (Nx.add b update) b in
     ({ s with x; fx; st; n = Nx.add s.n tries }, (b, Nx.add_s k 1l))
   in
-  iterations ~budget Nx.Ptree.(pair tensor tensor) step (s, (b, int32 0l))
+  fst
+  @@ Search.iterations ~budget
+       Nx.Ptree.(pair tensor tensor)
+       step
+       (s, (b, int32 0l))
 
 (* Anderson
 
@@ -254,7 +143,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve s =
    oldest columns. A mixed point that does not reduce [|f|] gives way to the
    Picard point [g x], evaluated only then. *)
 
-let anderson_search ~tol ~budget ~memory ~residual s =
+let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
   let dtype = Nx.dtype s.x in
   let size = Nx.dim 0 s.x in
   let m = Int.min memory size in
@@ -281,10 +170,10 @@ let anderson_search ~tol ~budget ~memory ~residual s =
       let gamma = Nx.solve_triangular ~upper:true r rhs in
       Nx.sub g (Nx.matmul dg gamma)
   in
-  let step s (df, (dg, count)) =
+  let step (s : _ Search.state) (df, (dg, count)) =
     let x0 = s.x and fx0 = s.fx in
     let g0 = Nx.add x0 fx0 in
-    let s = test tol s fx0 in
+    let s = Search.test tol s fx0 in
     let run = searching s.st in
     let x = mix (df, (dg, count)) x0 fx0 in
     let fx = residual x in
@@ -301,7 +190,9 @@ let anderson_search ~tol ~budget ~memory ~residual s =
     let n =
       Nx.add s.n (Nx.add (Nx.cast Nx.int32 run) (Nx.cast Nx.int32 picard))
     in
-    let st = settle s.st (Nx.logical_not (finite fx)) Not_finite in
+    let st =
+      settle s.Search.st (Nx.logical_not (Search.finite fx)) Not_finite
+    in
     let column v = Nx.reshape [| size; 1 |] v in
     let shift h v =
       if m = 0 then h
@@ -323,10 +214,11 @@ let anderson_search ~tol ~budget ~memory ~residual s =
       history )
   in
   let history = Nx.zeros dtype [| size; Int.max m 1 |] in
-  iterations ~budget
-    Nx.Ptree.(pair tensor (pair tensor tensor))
-    step
-    (s, (history, (history, int32 0l)))
+  fst
+  @@ Search.iterations ~budget
+       Nx.Ptree.(pair tensor (pair tensor tensor))
+       step
+       (s, (history, (history, int32 0l)))
 
 (* Solve *)
 
@@ -362,11 +254,11 @@ let solve x m ~linear ~tol ~budget f guess =
   let s =
     if size = 0 then
       {
-        (start residual x0) with
+        (Search.start x0 (residual x0)) with
         st = Nx.scalar Nx.int32 (Solution.code Converged);
       }
     else
-      let s = start residual x0 in
+      let s = Search.start x0 (residual x0) in
       match m with
       | Newton derivative ->
           let direction x fx =

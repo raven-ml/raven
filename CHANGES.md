@@ -1055,6 +1055,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Minimize.solve` and `Minimize.iterates` with the gradient methods
+  `Minimize.bfgs`, `lbfgs ~memory` (both searched to the strong Wolfe
+  conditions) and `newton` (steps solved by `~linear` on Hessian-vector
+  products). The minimum is stated as the zero of rune's gradient, so its
+  derivative is the implicit one through the Hessian.
 - Add `System.solve`, a zero of a system on a structure: `System.newton`
   with a sufficient-decrease line search (Newton–Krylov with `Linear.cg` or
   `gmres`), `System.broyden` for a residual with no usable derivative, and
