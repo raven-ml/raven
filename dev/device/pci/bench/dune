@@ -1,10 +1,21 @@
+; The benches' C calls pci's C as a driver's stubs do. It sits in a library
+; of its own: a static link lists a library's archives after the
+; executable's objects, dependents before dependencies, so GNU ld finds the
+; symbols the C asks for in pci's archive. Stubs of an executable itself
+; would come after that archive, which GNU ld would already have passed.
+
+(library
+ (name device_pci_bench_probe)
+ (modules)
+ (libraries device_pci)
+ (foreign_stubs
+  (language c)
+  (names bench_window_stubs bench_memory_stubs)))
+
 (executable
  (name bench_window)
  (modules bench_window)
- (libraries device_pci device_pci_support thumper)
- (foreign_stubs
-  (language c)
-  (names bench_window_stubs)))
+ (libraries device_pci device_pci_bench_probe device_pci_support thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe from this directory under _build/default.
@@ -35,10 +46,7 @@
 (executable
  (name bench_memory)
  (modules bench_memory)
- (libraries device_pci thumper)
- (foreign_stubs
-  (language c)
-  (names bench_memory_stubs)))
+ (libraries device_pci device_pci_bench_probe thumper))
 
 (rule
  (alias bench)
