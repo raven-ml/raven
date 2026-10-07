@@ -389,6 +389,65 @@ let round_trip () =
     (Ok (Some "deg"))
     (H.find V.string "TUNIT2" (Fits.header back))
 
+let streamed () =
+  (* Rows of 520 bytes over 10000 rows pass one 4 MiB slab: the streamed
+     write gives the in-memory encoding's bytes, and reads back. *)
+  let rows = 10_000 in
+  let vec =
+    Nx.init Nx.float64 [| rows; 64 |] (fun i ->
+        Float.of_int ((i.(0) * 64) + i.(1)))
+  in
+  let lengths =
+    Nx.init Nx.int64 [| rows |] (fun i -> Int64.of_int (i.(0) mod 4))
+  in
+  let total = Int64.to_int (Nx.item [] (Nx.sum lengths)) in
+  let lists =
+    Nx_ragged.of_lengths lengths
+      (Nx.init Nx.int16 [| total |] (fun i -> i.(0) mod 1000))
+  in
+  let q = Nx.init Nx.int32 [| rows |] (fun i -> Int32.of_int i.(0)) in
+  let valid =
+    Nx.cast Nx.bit (Nx.init Nx.bool [| rows |] (fun i -> i.(0) mod 7 <> 0))
+  in
+  let columns =
+    [
+      ("vec", H.empty, T.Array { values = Nx.P vec; validity = None });
+      ("q", H.empty, T.Array { values = Nx.P q; validity = Some valid });
+      ("l", H.empty, T.Lists { values = lists; validity = None });
+    ]
+  in
+  let file hdu =
+    let path = temp_file ~suffix:".fits" () in
+    require_ok (Fits.write path [ hdu ]);
+    In_channel.with_open_bin path In_channel.input_all
+  in
+  let a = file (require_ok (T.hdu H.empty columns)) in
+  let x = require_ok (T.hdu H.empty columns) in
+  let b = file (Fits.v (Fits.header x) (Fits.data x)) in
+  equal string
+    (Digest.to_hex (Digest.string a))
+    (Digest.to_hex (Digest.string b));
+  let back =
+    List.nth
+      (require_ok
+         (Fits.of_bytes ~name:"s"
+            (Nx.init Nx.uint8
+               [| String.length a |]
+               (fun i -> Char.code a.[i.(0)]))))
+      1
+  in
+  equal (array float_exact) (Nx.to_array vec)
+    (Nx.to_array (require_ok (T.raw Nx.float64 "vec" back)));
+  equal (array int)
+    (Nx.to_array (Nx_ragged.values lists))
+    (Nx.to_array (Nx_ragged.values (require_ok (T.ragged Nx.int16 "l" back))));
+  equal
+    (option (array bool))
+    (Some (Nx.to_array (Nx.cast Nx.bool valid)))
+    (Option.map
+       (fun v -> Nx.to_array (Nx.cast Nx.bool v))
+       (require_ok (T.validity "q" back)))
+
 let nulls () =
   let v = Nx.create Nx.int16 [| 4 |] [| -32768; 1; 2; 3 |] in
   let valid =
@@ -522,6 +581,7 @@ let () =
          group "writing"
            [
              test "round trip" round_trip;
+             test "streamed in slabs" streamed;
              test "TNULL" nulls;
              test "text and caller errors" text_errors;
            ];

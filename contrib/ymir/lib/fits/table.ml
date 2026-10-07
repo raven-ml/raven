@@ -1176,10 +1176,11 @@ let stored_min : Bintable.elt -> int64 = function
 (* The TNULL of an integer column whose cells [invalid] marks: the stored
    type's minimum unless a valid cell holds it, then the least stored value
    none holds. *)
-let choose_null cplace elt (stored : Nx.int64_t) (invalid : bool array) =
-  let v = Nx.to_array (Nx.reshape [| Nx.numel stored |] stored) in
-  let held = Hashtbl.create 64 in
-  Array.iteri (fun i x -> if not invalid.(i) then Hashtbl.replace held x ()) v;
+(* The TNULL of an integer column whose valid cells hold the stored values
+   [held] (those from the stored type's minimum on, which is where it lies):
+   that minimum unless a valid cell holds it, then the least stored value
+   none holds. *)
+let choose_null cplace elt held =
   let max =
     match elt with
     | Bintable.B -> 255L
@@ -1202,14 +1203,8 @@ let be_of (type a b) (t : (a, b) Nx.t) : bigbytes =
   let b = Image.to_big_endian t in
   Hdu.bigbytes b
 
-(* A column's cells as bytes: [width] bytes per row from [rows], heap
-   bytes, and its keywords. *)
-type encoded = {
-  width : int;
-  cell : int -> bigbytes -> int -> unit;  (** [cell r dst off] writes row [r] *)
-  heap : Buffer.t option -> unit;
-  keys : int -> Structure.entry list;
-}
+(* Rows of at most this many bytes make one slab of a write. *)
+let slab_bytes = 1 lsl 22
 
 let invalid_of validity n =
   match validity with
@@ -1217,16 +1212,23 @@ let invalid_of validity n =
   | Some v ->
       Array.map not (Nx.to_array (Nx.reshape [| n |] (Nx.cast Nx.bool v)))
 
-(* The stored bytes of [n] elements of a flat tensor, big-endian, with
-   [invalid] elements written as the column's undefined value; and the
-   TNULL that needed. *)
-let encode_elements (type a b) cplace (t : (a, b) Nx.t) (invalid : bool array) :
-    Bintable.elt * string option * int64 option * bigbytes =
+(* [encode_flat elt null t invalid] is the stored bytes of the flat [t],
+   big-endian, its [invalid] elements written as the column's undefined
+   value: [null] for integers, NaN for floats, a zero byte for logicals. *)
+let encode_flat (type a b) (elt : Bintable.elt) null (t : (a, b) Nx.t)
+    (invalid : bool array) : bigbytes =
   let n = Nx.numel t in
   let t = Nx.reshape [| n |] t in
   let any = Array.exists Fun.id invalid in
   let mask () = Nx.create Nx.bool [| n |] invalid in
-  let elt, zero = code_of (Nx.dtype t) in
+  let nan_pairs f =
+    if any then
+      Nx.where
+        (Nx.broadcast_to [| n; 2 |] (Nx.reshape [| n; 1 |] (mask ())))
+        (Nx.full (Nx.dtype f) [| n; 2 |] Float.nan)
+        f
+    else f
+  in
   match elt with
   | L ->
       let a = Nx.to_array (Nx.cast Nx.bool t) in
@@ -1235,82 +1237,99 @@ let encode_elements (type a b) cplace (t : (a, b) Nx.t) (invalid : bool array) :
         (fun i b ->
           A.set o i (if invalid.(i) then 0 else if b then t_byte else f_byte))
         a;
-      (elt, zero, None, o)
+      o
   | X ->
-      if any then
-        invalid_arg
-          "Fits.Table.hdu: a validity on bit data, which has no undefined value";
       let a = Nx.to_array (Nx.cast Nx.bool t) in
       let o = A.create Bigarray.int8_unsigned Bigarray.c_layout n in
       Array.iteri (fun i b -> A.set o i (if b then 1 else 0)) a;
-      (elt, zero, None, o)
+      o
   | E | D -> (
       match Nx.dtype t with
       | Float32 ->
-          let t =
-            if any then
-              Nx.where (mask ()) (Nx.full Nx.float32 [| n |] Float.nan) t
-            else t
-          in
-          (elt, zero, None, be_of t)
+          be_of
+            (if any then
+               Nx.where (mask ()) (Nx.full Nx.float32 [| n |] Float.nan) t
+             else t)
       | Float64 ->
-          let t =
-            if any then
-              Nx.where (mask ()) (Nx.full Nx.float64 [| n |] Float.nan) t
-            else t
-          in
-          (elt, zero, None, be_of t)
+          be_of
+            (if any then
+               Nx.where (mask ()) (Nx.full Nx.float64 [| n |] Float.nan) t
+             else t)
       | _ -> assert false)
   | C | M -> (
       match Nx.dtype t with
-      | Complex64 ->
-          let f = Nx.bitcast Nx.float32 t in
-          let f =
-            if any then
-              Nx.where
-                (Nx.broadcast_to [| n; 2 |] (Nx.reshape [| n; 1 |] (mask ())))
-                (Nx.full Nx.float32 [| n; 2 |] Float.nan)
-                f
-            else f
-          in
-          (elt, zero, None, be_of f)
-      | Complex128 ->
-          let f = Nx.bitcast Nx.float64 t in
-          let f =
-            if any then
-              Nx.where
-                (Nx.broadcast_to [| n; 2 |] (Nx.reshape [| n; 1 |] (mask ())))
-                (Nx.full Nx.float64 [| n; 2 |] Float.nan)
-                f
-            else f
-          in
-          (elt, zero, None, be_of f)
+      | Complex64 -> be_of (nan_pairs (Nx.bitcast Nx.float32 t))
+      | Complex128 -> be_of (nan_pairs (Nx.bitcast Nx.float64 t))
       | _ -> assert false)
-  | B | I | J | K ->
+  | B | I | J | K -> (
       let (Nx.P s) = Image.to_stored t in
-      let null =
-        if any then Some (choose_null cplace elt (Nx.cast Nx.int64 s) invalid)
-        else None
-      in
-      let s =
-        match null with
-        | None -> Nx.P s
-        | Some v -> (
-            let m = mask () in
-            match Nx.dtype s with
-            | UInt8 ->
-                Nx.P (Nx.where m (Nx.full Nx.uint8 [| n |] (Int64.to_int v)) s)
-            | Int16 ->
-                Nx.P (Nx.where m (Nx.full Nx.int16 [| n |] (Int64.to_int v)) s)
-            | Int32 ->
-                Nx.P
-                  (Nx.where m (Nx.full Nx.int32 [| n |] (Int64.to_int32 v)) s)
-            | Int64 -> Nx.P (Nx.where m (Nx.full Nx.int64 [| n |] v) s)
-            | _ -> Nx.P s)
-      in
-      let (Nx.P s) = s in
-      (elt, zero, null, be_of s)
+      match null with
+      | Some v when any -> (
+          let m = mask () in
+          match Nx.dtype s with
+          | UInt8 ->
+              be_of (Nx.where m (Nx.full Nx.uint8 [| n |] (Int64.to_int v)) s)
+          | Int16 ->
+              be_of (Nx.where m (Nx.full Nx.int16 [| n |] (Int64.to_int v)) s)
+          | Int32 ->
+              be_of (Nx.where m (Nx.full Nx.int32 [| n |] (Int64.to_int32 v)) s)
+          | Int64 -> be_of (Nx.where m (Nx.full Nx.int64 [| n |] v) s)
+          | _ -> be_of s)
+      | _ -> be_of s)
   | A -> assert false
+
+(* [scan_null cplace elt t validity] reads an integer column once, in slabs,
+   for its TNULL: [None] unless a cell is undefined. Only stored values from
+   the type's minimum to the minimum plus the valid cells' count can be the
+   least one no valid cell holds, so only those are kept. *)
+let scan_null (type a b) cplace elt (t : (a, b) Nx.t) validity =
+  match (elt : Bintable.elt) with
+  | B | I | J | K -> (
+      match validity with
+      | None -> None
+      | Some v ->
+          let n = Nx.numel t in
+          let flat = Nx.reshape [| n |] t and vflat = Nx.reshape [| n |] v in
+          let valid = ref 0 and any = ref false in
+          let held = Hashtbl.create 64 in
+          let step = Int.max 1 (slab_bytes / 8) in
+          let lo = stored_min elt in
+          let i = ref 0 in
+          let pass f =
+            i := 0;
+            while !i < n do
+              let j = Int.min n (!i + step) in
+              f
+                (Nx.slice [ Nx.R (!i, j) ] flat)
+                (Nx.to_array
+                   (Nx.cast Nx.bool (Nx.slice [ Nx.R (!i, j) ] vflat)));
+              i := j
+            done
+          in
+          pass (fun _ ok ->
+              Array.iter (fun o -> if o then incr valid else any := true) ok);
+          if not !any then None
+          else begin
+            let hi = Int64.add lo (Int64.of_int !valid) in
+            pass (fun x ok ->
+                let (Nx.P s) = Image.to_stored x in
+                let st = Nx.to_array (Nx.cast Nx.int64 s) in
+                Array.iteri
+                  (fun k o ->
+                    let y = st.(k) in
+                    if o && Int64.compare y lo >= 0 && Int64.compare y hi <= 0
+                    then Hashtbl.replace held y ())
+                  ok);
+            Some (choose_null cplace elt held)
+          end)
+  | X -> (
+      match validity with
+      | Some v when not (Nx.item [] (Nx.all (Nx.cast Nx.bool v))) ->
+          invalid_arg
+            "Fits.Table.hdu: a validity on bit data, which has no undefined \
+             value"
+      | _ -> None)
+  | _ -> None
 
 let pack_bits (bits : bigbytes) off count (dst : bigbytes) doff =
   for k = 0 to ((count + 7) / 8) - 1 do
@@ -1339,24 +1358,60 @@ let common_keys ~zero ~null n =
   | Some v -> [ Structure.decimal (strf "TNULL%d" n) (Int64.to_string v) ]
   | None -> []
 
-let encode_array cplace (Nx.P t) validity =
+let be_put (dst : bigbytes) off v n =
+  for i = 0 to n - 1 do
+    A.set dst (off + i) ((v lsr (8 * (n - 1 - i))) land 0xFF)
+  done
+
+(* A column as the writer streams it: [width] bytes in each row, written
+   for rows [a, b) by [cells], then [heap_size] bytes of the heap, written
+   for rows [a, b) by [heap]. A heap column's descriptors depend on where its
+   arrays start in the heap and on whether descriptors are Q, known once
+   every column is scanned: [writer wide base] makes it. *)
+type writer = {
+  cells : int -> int -> bigbytes;
+  heap : int -> int -> bigbytes;
+  keys : int -> Structure.entry list;
+}
+
+type column_plan = {
+  rows : int;
+  width : bool -> int;  (** bytes per row, given Q descriptors *)
+  heap_size : int;
+  writer : wide:bool -> base:int -> writer;
+}
+
+let no_heap _ _ = A.create Bigarray.int8_unsigned Bigarray.c_layout 0
+
+let array_plan cplace (Nx.P t) validity =
   let shape = Nx.shape t in
   if Array.length shape = 0 then
     invalid_arg "Fits.Table.hdu: a column of no rows axis";
   let rows = shape.(0) in
   let cell = Array.sub shape 1 (Array.length shape - 1) in
   let count = Array.fold_left ( * ) 1 cell in
-  let invalid = invalid_of validity (Nx.numel t) in
-  let elt, zero, null, bytes = encode_elements cplace t invalid in
+  let elt, zero = code_of (Nx.dtype t) in
+  let null = scan_null cplace elt t validity in
   let w =
     match elt with X -> (count + 7) / 8 | e -> count * Bintable.size e
   in
-  let ew = match elt with X -> 1 | e -> Bintable.size e in
-  let cell_fn r dst off =
+  let cells a b =
+    let n = b - a in
+    let slice = Nx.slice [ Nx.R (a, b) ] t in
+    let invalid =
+      invalid_of
+        (Option.map (fun v -> Nx.slice [ Nx.R (a, b) ] v) validity)
+        (n * count)
+    in
+    let bytes = encode_flat elt null slice invalid in
     match elt with
-    | X -> pack_bits bytes (r * count) count dst off
-    | _ ->
-        if w > 0 then A.blit (A.sub bytes (r * count * ew) w) (A.sub dst off w)
+    | X ->
+        let o = A.create Bigarray.int8_unsigned Bigarray.c_layout (n * w) in
+        for r = 0 to n - 1 do
+          pack_bits bytes (r * count) count o (r * w)
+        done;
+        o
+    | _ -> bytes
   in
   let keys n =
     [ Structure.string (strf "TFORM%d" n) (tform_text count elt) ]
@@ -1371,80 +1426,140 @@ let encode_array cplace (Nx.P t) validity =
        else [])
     @ common_keys ~zero ~null n
   in
-  (rows, { width = w; cell = cell_fn; heap = (fun _ -> ()); keys })
+  {
+    rows;
+    width = (fun _ -> w);
+    heap_size = 0;
+    writer = (fun ~wide:_ ~base:_ -> { cells; heap = no_heap; keys });
+  }
 
-let encode_lists cplace (values : ('a, 'b) Nx_ragged.t) validity =
+let lists_plan cplace (values : ('a, 'b) Nx_ragged.t) validity =
   let v = Nx_ragged.values values in
   if Nx.ndim v <> 1 then
     invalid_arg
       "Fits.Table.hdu: heap arrays hold scalars; its values are not 1-D";
-  let offsets = Nx.to_array (Nx_ragged.offsets values) in
-  let rows = Array.length offsets - 1 in
-  let invalid = invalid_of validity (Nx.numel v) in
-  let elt, zero, null, bytes = encode_elements cplace v invalid in
-  let ew = match elt with X -> 1 | e -> Bintable.size e in
-  let descs = Array.make rows (0, 0) in
-  let fill (b : Buffer.t) =
-    for r = 0 to rows - 1 do
-      let a = Int64.to_int offsets.(r) and z = Int64.to_int offsets.(r + 1) in
-      let count = z - a in
-      let off = Buffer.length b in
-      (match elt with
-      | X ->
-          let tmp =
-            A.create Bigarray.int8_unsigned Bigarray.c_layout ((count + 7) / 8)
-          in
-          pack_bits bytes a count tmp 0;
-          for k = 0 to A.dim tmp - 1 do
-            Buffer.add_char b (Char.unsafe_chr (A.get tmp k))
-          done
-      | _ ->
-          for k = a * ew to (z * ew) - 1 do
-            Buffer.add_char b (Char.unsafe_chr (A.get bytes k))
-          done);
-      descs.(r) <- (count, off)
-    done
+  let offsets =
+    Array.map Int64.to_int (Nx.to_array (Nx_ragged.offsets values))
   in
-  (rows, elt, zero, null, descs, fill)
-
-let encode_text cplace (r : (int, Nx.uint8_elt) Nx_ragged.t) =
-  let v = Nx.to_array (Nx_ragged.values r) in
-  let offsets = Nx.to_array (Nx_ragged.offsets r) in
   let rows = Array.length offsets - 1 in
+  let elt, zero = code_of (Nx.dtype v) in
+  let null = scan_null cplace elt v validity in
+  (* where each row's array starts in the column's heap *)
+  let bytes_of len =
+    match elt with X -> (len + 7) / 8 | e -> len * Bintable.size e
+  in
+  let starts = Array.make (rows + 1) 0 in
+  let maxlen = ref 0 in
+  for r = 0 to rows - 1 do
+    let len = offsets.(r + 1) - offsets.(r) in
+    maxlen := Int.max !maxlen len;
+    starts.(r + 1) <- starts.(r) + bytes_of len
+  done;
+  let heap a b =
+    let lo = offsets.(a) and hi = offsets.(b) in
+    let slice = Nx.slice [ Nx.R (lo, hi) ] v in
+    let invalid =
+      invalid_of
+        (Option.map (fun x -> Nx.slice [ Nx.R (lo, hi) ] x) validity)
+        (hi - lo)
+    in
+    let bytes = encode_flat elt null slice invalid in
+    match elt with
+    | X ->
+        let o =
+          A.create Bigarray.int8_unsigned Bigarray.c_layout
+            (starts.(b) - starts.(a))
+        in
+        for r = a to b - 1 do
+          pack_bits bytes
+            (offsets.(r) - lo)
+            (offsets.(r + 1) - offsets.(r))
+            o
+            (starts.(r) - starts.(a))
+        done;
+        o
+    | _ -> bytes
+  in
+  let writer ~wide ~base =
+    let d = if wide then 8 else 4 in
+    let cells a b =
+      let o =
+        A.create Bigarray.int8_unsigned Bigarray.c_layout ((b - a) * 2 * d)
+      in
+      for r = a to b - 1 do
+        let at = (r - a) * 2 * d in
+        be_put o at (offsets.(r + 1) - offsets.(r)) d;
+        be_put o (at + d) (base + starts.(r)) d
+      done;
+      o
+    in
+    let keys n =
+      Structure.string (strf "TFORM%d" n)
+        (strf "1%s%c(%d)"
+           (if wide then "Q" else "P")
+           (Bintable.char_of_elt elt) !maxlen)
+      :: common_keys ~zero ~null n
+    in
+    { cells; heap; keys }
+  in
+  {
+    rows;
+    width = (fun wide -> if wide then 16 else 8);
+    heap_size = starts.(rows);
+    writer;
+  }
+
+let text_plan cplace (r : (int, Nx.uint8_elt) Nx_ragged.t) =
+  let v = Nx_ragged.values r in
+  let offsets = Array.map Int64.to_int (Nx.to_array (Nx_ragged.offsets r)) in
+  let rows = Array.length offsets - 1 in
+  let text a b =
+    let lo = offsets.(a) and hi = offsets.(b) in
+    (lo, Nx.to_array (Nx.slice [ Nx.R (lo, hi) ] v))
+  in
+  (* one pass for the width and the bytes reading would not give back *)
   let w = ref 1 in
-  for i = 0 to rows - 1 do
-    let a = Int64.to_int offsets.(i) and z = Int64.to_int offsets.(i + 1) in
-    w := Int.max !w (z - a);
-    for k = a to z - 1 do
-      if v.(k) < 32 || v.(k) > 126 then
+  let step = Int.max 1 (slab_bytes / 64) in
+  let a = ref 0 in
+  while !a < rows do
+    let b = Int.min rows (!a + step) in
+    let lo, bytes = text a.contents b in
+    for i = !a to b - 1 do
+      let s = offsets.(i) - lo and e = offsets.(i + 1) - lo in
+      w := Int.max !w (e - s);
+      for k = s to e - 1 do
+        if bytes.(k) < 32 || bytes.(k) > 126 then
+          fail_at
+            (Err.sub cplace (strf "row %d" i))
+            "byte %d is outside ASCII 32-126" bytes.(k)
+      done;
+      if e > s && bytes.(e - 1) = 32 then
         fail_at
           (Err.sub cplace (strf "row %d" i))
-          "byte %d is outside ASCII 32-126" v.(k)
+          "the text ends in a space, which reading drops"
     done;
-    if z > a && v.(z - 1) = 32 then
-      fail_at
-        (Err.sub cplace (strf "row %d" i))
-        "the text ends in a space, which reading drops"
+    a := b
   done;
   let w = !w in
-  let cell i dst off =
-    let a = Int64.to_int offsets.(i) and z = Int64.to_int offsets.(i + 1) in
-    for k = 0 to w - 1 do
-      A.set dst (off + k) (if a + k < z then v.(a + k) else 32)
-    done
+  let cells a b =
+    let lo, bytes = text a b in
+    let o = A.create Bigarray.int8_unsigned Bigarray.c_layout ((b - a) * w) in
+    A.fill o 32;
+    for i = a to b - 1 do
+      let s = offsets.(i) - lo and e = offsets.(i + 1) - lo in
+      for k = s to e - 1 do
+        A.set o (((i - a) * w) + (k - s)) bytes.(k)
+      done
+    done;
+    o
   in
-  ( rows,
-    {
-      width = w;
-      cell;
-      heap = (fun _ -> ());
-      keys = (fun n -> [ Structure.string (strf "TFORM%d" n) (strf "%dA" w) ]);
-    } )
-
-let be_put (dst : bigbytes) off v n =
-  for i = 0 to n - 1 do
-    A.set dst (off + i) ((v lsr (8 * (n - 1 - i))) land 0xFF)
-  done
+  let keys n = [ Structure.string (strf "TFORM%d" n) (strf "%dA" w) ] in
+  {
+    rows;
+    width = (fun _ -> w);
+    heap_size = 0;
+    writer = (fun ~wide:_ ~base:_ -> { cells; heap = no_heap; keys });
+  }
 
 (* [renumber key n] is the keyword of column [n] whose keyword without the
    number is [key]. *)
@@ -1495,109 +1610,57 @@ let hdu header columns =
           (if name = "" then strf "column %d" i
            else strf "column %d (%s)" i name)
       in
-      (* Q descriptors when the heap passes 2^31 - 1 bytes, known once it is
-         written *)
-      let wide = ref false in
-      let encoded =
+      (* one scan of each column: its TNULL, its text's width and checks,
+         its heap arrays' places *)
+      let plans =
         List.mapi
           (fun i (name, cards, data) ->
             let n = i + 1 in
             let cp = place n name in
-            let rows, e =
+            let plan =
               match data with
-              | Array { values; validity } -> encode_array cp values validity
-              | Text r -> encode_text cp r
-              | Lists { values; validity } ->
-                  let rows, elt, zero, null, descs, fill =
-                    encode_lists cp values validity
-                  in
-                  let cell r dst off =
-                    let count, o = descs.(r) in
-                    if !wide then (
-                      be_put dst off count 8;
-                      be_put dst (off + 8) o 8)
-                    else (
-                      be_put dst off count 4;
-                      be_put dst (off + 4) o 4)
-                  in
-                  let maxlen = ref 0 in
-                  ( rows,
-                    {
-                      width = 8;
-                      cell;
-                      heap =
-                        (fun b ->
-                          match b with
-                          | Some b ->
-                              fill b;
-                              Array.iter
-                                (fun (c, _) -> maxlen := Int.max !maxlen c)
-                                descs
-                          | None -> ());
-                      keys =
-                        (fun n ->
-                          Structure.string (strf "TFORM%d" n)
-                            (strf "1%s%c(%d)"
-                               (if !wide then "Q" else "P")
-                               (Bintable.char_of_elt elt) !maxlen)
-                          :: common_keys ~zero ~null n);
-                    } )
+              | Array { values; validity } -> array_plan cp values validity
+              | Text r -> text_plan cp r
+              | Lists { values; validity } -> lists_plan cp values validity
             in
-            (n, name, cards, rows, e))
+            (n, name, cards, plan))
           columns
       in
       let rows =
-        match encoded with
+        match plans with
         | [] -> 0
-        | (_, _, _, r, _) :: rest ->
+        | (_, _, _, p) :: rest ->
             List.iter
-              (fun (n, _, _, r', _) ->
-                if r' <> r then
+              (fun (n, _, _, (p' : column_plan)) ->
+                if p'.rows <> p.rows then
                   invalid_arg
                     (strf "Fits.Table.hdu: column %d has %d rows, column 1 %d" n
-                       r' r))
+                       p'.rows p.rows))
               rest;
-            r
+            p.rows
       in
-      let heap = Buffer.create 1024 in
-      List.iter (fun (_, _, _, _, e) -> e.heap (Some heap)) encoded;
-      (* a Q descriptor is 16 bytes: widths are known once the heap is *)
-      wide := Buffer.length heap > 0x7FFFFFFF;
-      let widths =
-        List.map2
-          (fun (_, _, _, _, e) (_, _, d) ->
-            match d with Lists _ when !wide -> 16 | _ -> e.width)
-          encoded columns
+      let heap_size =
+        List.fold_left (fun acc (_, _, _, p) -> acc + p.heap_size) 0 plans
       in
-      let encoded =
-        List.map2
-          (fun (n, name, cards, r, e) w ->
-            (n, name, cards, r, { e with width = w }))
-          encoded widths
+      let wide = heap_size > 0x7FFFFFFF in
+      let base = ref 0 in
+      let writers =
+        List.map
+          (fun (n, name, cards, p) ->
+            let w = p.writer ~wide ~base:!base in
+            base := !base + p.heap_size;
+            (n, name, cards, p, w))
+          plans
       in
+      let widths = List.map (fun (_, _, _, p, _) -> p.width wide) writers in
       let row_bytes = List.fold_left ( + ) 0 widths in
-      let table =
-        A.create Bigarray.int8_unsigned Bigarray.c_layout
-          ((rows * row_bytes) + Buffer.length heap)
-      in
-      for r = 0 to rows - 1 do
-        let off = ref (r * row_bytes) in
-        List.iter
-          (fun (_, _, _, _, e) ->
-            e.cell r table !off;
-            off := !off + e.width)
-          encoded
-      done;
-      String.iteri
-        (fun i c -> A.set table ((rows * row_bytes) + i) (Char.code c))
-        (Buffer.contents heap);
       let entries =
         List.concat_map
-          (fun (n, name, cards, _, e) ->
+          (fun (n, name, cards, _, w) ->
             (if name = "" then []
              else [ Structure.string (strf "TTYPE%d" n) name ])
-            @ e.keys n @ card_entries n cards)
-          encoded
+            @ w.keys n @ card_entries n cards)
+          writers
       in
       let prefix =
         Structure.
@@ -1607,7 +1670,7 @@ let hdu header columns =
             int "NAXIS" 2;
             int "NAXIS1" row_bytes;
             int "NAXIS2" rows;
-            int "PCOUNT" (Buffer.length heap);
+            int "PCOUNT" heap_size;
             int "GCOUNT" 1;
             int "TFIELDS" ncols;
           ]
@@ -1616,6 +1679,62 @@ let hdu header columns =
         Structure.apply ~owned:Structure.table_owned ~prefix ~others:entries
           header
       in
-      let b = Hdu.host_bytes (A.dim table) in
-      A.blit table (Hdu.bigbytes b);
-      Hdu.constructed h (Once.of_value (Hdu.host_store b)))
+      (* the rows in slabs, each column's fields interleaved, then each heap
+         column's arrays in slabs *)
+      let step = Int.max 1 (slab_bytes / Int.max 1 row_bytes) in
+      let stream (append : bigbytes -> unit) =
+        let a = ref 0 in
+        while !a < rows do
+          let b = Int.min rows (!a + step) in
+          let o =
+            A.create Bigarray.int8_unsigned Bigarray.c_layout
+              ((b - !a) * row_bytes)
+          in
+          let at = ref 0 in
+          List.iter2
+            (fun (_, _, _, _, w) width ->
+              let cells = w.cells !a b in
+              for r = 0 to b - !a - 1 do
+                A.blit
+                  (A.sub cells (r * width) width)
+                  (A.sub o ((r * row_bytes) + !at) width)
+              done;
+              at := !at + width)
+            writers widths;
+          append o;
+          a := b
+        done;
+        List.iter
+          (fun (_, _, _, p, w) ->
+            if p.heap_size > 0 then begin
+              let a = ref 0 in
+              while !a < rows do
+                let b = Int.min rows (!a + step) in
+                append (w.heap !a b);
+                a := b
+              done
+            end)
+          writers
+      in
+      let host (a : bigbytes) =
+        let b = Hdu.host_bytes (A.dim a) in
+        A.blit a (Hdu.bigbytes b);
+        b
+      in
+      let data =
+        Once.make (fun () ->
+            let size = (rows * row_bytes) + heap_size in
+            let all = A.create Bigarray.int8_unsigned Bigarray.c_layout size in
+            let at = ref 0 in
+            stream (fun a ->
+                A.blit a (A.sub all !at (A.dim a));
+                at := !at + A.dim a);
+            Hdu.host_store (host all))
+      in
+      let write (sink : Hdu.sink) =
+        stream (fun a -> sink.append (host a));
+        h
+      in
+      Hdu.constructed
+        ~stream:(Once.of_value { Hdu.provisional = h; write })
+        h data)
