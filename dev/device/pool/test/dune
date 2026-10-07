@@ -51,11 +51,16 @@
 ; on CAML_LD_LIBRARY_PATH; the pool's symbols resolve at load. windtrap's
 ; stubs sit in the stublibs directory beside its library. ':' separates the
 ; path's directories off Windows only, so the bytecode runs are POSIX's.
+; Under the sanitize profile the stubs need the sanitizer runtime, which is
+; linked into the native executables and absent from ocamlrun, so the
+; bytecode runs are skipped.
 
 (rule
  (alias runtest)
  (enabled_if
-  (<> %{os_type} Win32))
+  (and
+   (<> %{os_type} Win32)
+   (<> %{profile} sanitize)))
  (deps ../dlldevice_pool_stubs.so dllpool_probe_stubs.so)
  (action
   (setenv
@@ -66,7 +71,9 @@
 (rule
  (alias runtest)
  (enabled_if
-  (<> %{os_type} Win32))
+  (and
+   (<> %{os_type} Win32)
+   (<> %{profile} sanitize)))
  (deps
   ../dlldevice_pool_stubs.so
   dllpool_probe_stubs.so
