@@ -36,7 +36,7 @@ let shared =
       (3, Gen.int_range 0 (2 * limit));
       ( 1,
         Gen.of_list ~pp:Format.pp_print_int
-          [ 0; limit - 1; limit; limit + 1; 1 lsl 40 ] );
+          [ 0; limit - 1; limit; limit + 1; max_int - 1023; max_int ] );
     ]
 
 let memory =
@@ -47,6 +47,7 @@ let memory =
          included" (Gen.pair S.compute_class shared) (fun (cls, shared_bytes) ->
           cover "the most" (shared_bytes = limit);
           cover "one byte more" (shared_bytes = limit + 1);
+          cover "max_int" (shared_bytes = max_int);
           equal ~msg:"Ok" bool (shared_bytes <= limit)
             (Result.is_ok
                (Launch.make
@@ -69,11 +70,7 @@ let memory =
 let banks_gen =
   let open Gen in
   let* indices = subsequence [ 0; 1; 2; 3; 4; 5; 6; 7 ] in
-  (* Bank 0 first when the kernel has one: test "banks" holds the other case. *)
   let* indices = permutation indices in
-  let indices =
-    if List.mem 0 indices then 0 :: List.filter (( <> ) 0) indices else indices
-  in
   let+ sizes =
     list ~size:(constant (List.length indices)) (int_range 0 0xffff)
   in
@@ -90,6 +87,8 @@ let banks =
           let has_0 = List.exists (fun (b : Cubin.bank) -> b.index = 0) banks in
           cover "a bank 0" has_0;
           cover "no bank 0" (not has_0);
+          cover "bank 0 after another"
+            (match banks with b :: _ -> has_0 && b.index <> 0 | [] -> false);
           let expected =
             if has_0 then banks
             else { Cubin.index = 0; offset = 0; bytes = 352 } :: banks

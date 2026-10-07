@@ -229,27 +229,6 @@ let op (k : Cubin.kernel) (banks : Cubin.bank list) =
       map (fun a -> Chain a) (address ~bits:40 ~align:8);
     ]
 
-(* [ops] without a size set after it was patched, or patched after it was set:
-   test_qmd's xfail holds that case. *)
-let unmixed ops =
-  let mixed ops d set =
-    List.exists
-      (function
-        | Set_dim (d', _) -> d' = d && not set
-        | Patch_dim (d', _) -> d' = d && set
-        | _ -> false)
-      ops
-  in
-  let rec go seen = function
-    | [] -> []
-    | (Set_dim (d, _) as op) :: rest ->
-        if mixed seen d true then go seen rest else op :: go (op :: seen) rest
-    | (Patch_dim (d, _) as op) :: rest ->
-        if mixed seen d false then go seen rest else op :: go (op :: seen) rest
-    | op :: rest -> op :: go (op :: seen) rest
-  in
-  go [] ops
-
 let drawn =
   let open Gen in
   let gen =
@@ -257,6 +236,6 @@ let drawn =
     let gpu = gpu ~compute_class () in
     let banks = Launch.banks (launch gpu kernel) in
     let+ ops = list ~size:(int_range 0 12) (op kernel banks) in
-    { gpu; kernel; ops = unmixed ops }
+    { gpu; kernel; ops }
   in
   with_pp pp_drawn gen

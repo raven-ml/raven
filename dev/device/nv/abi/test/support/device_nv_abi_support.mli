@@ -130,5 +130,4 @@ val drawn : drawn Windtrap.Gen.t
     descriptor fields, and setters each within the range its [.mli] states:
     sizes up to their {!Qmd.max_size}, addresses aligned and below [2{^49}]
     ([2{^40}] for releases and chains), local memory a multiple of 16 below 1
-    MiB and at least the launch's {!Launch.local_bytes}. No size is both set and
-    patched: that case is test_qmd's. *)
+    MiB and at least the launch's {!Launch.local_bytes}. *)

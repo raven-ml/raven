@@ -274,12 +274,12 @@ let descriptors =
             S.classes;
           cover "a size set and patched"
             (List.exists
-               (fun d ->
+               (fun dim ->
                  List.exists
-                   (function S.Set_dim (d', _) -> d' = d | _ -> false)
+                   (function S.Set_dim (d', _) -> d' = dim | _ -> false)
                    d.ops
                  && List.exists
-                      (function S.Patch_dim (d', _) -> d' = d | _ -> false)
+                      (function S.Patch_dim (d', _) -> d' = dim | _ -> false)
                       d.ops)
                S.dims);
           cover "both releases"
