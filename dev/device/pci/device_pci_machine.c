@@ -11,7 +11,7 @@
 #define CAML_NAME_SPACE
 #include <caml/mlvalues.h>
 
-/* Monotonic nanoseconds. */
+/* Monotonic nanoseconds. Holds the runtime. */
 intnat caml_device_pci_now_ns(value unit) {
   (void)unit;
   struct timespec ts;

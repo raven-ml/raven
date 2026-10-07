@@ -27,7 +27,8 @@
 
 #define AT(a) ((volatile uint8_t *)(a))
 
-/* Mapped windows: every access is volatile and of exactly its width. */
+/* Mapped windows: every access is volatile and of exactly its width, and
+   holds the runtime: it is one load or store. */
 
 intnat caml_device_pci_get8(intnat a) { return *AT(a); }
 value caml_device_pci_get8_byte(value a) {
@@ -75,7 +76,8 @@ value caml_device_pci_set64_byte(value a, value x) {
 /* Bulk accesses go a 32-bit word at a time wherever the mapped side is
    aligned: memory behind a BAR need not accept the wider or narrower
    accesses the C library's copies make. The process's side takes any
-   alignment. */
+   alignment. The copies hold the runtime: they read and write OCaml strings
+   in place. */
 static void read_words(uint8_t *dst, const volatile uint8_t *src, size_t n) {
   size_t i = 0;
   for (; i < n && ((uintptr_t)(src + i) & 3); i++) dst[i] = src[i];
@@ -150,7 +152,8 @@ static void transport_failed(const struct device_pci_transport *tr) {
 }
 
 /* The reason the transport [tr] failed, if it did; none for the transport 0
-   of this machine, which nothing fails. */
+   of this machine, which nothing fails. [failed] answers at once: it holds
+   the runtime. */
 value caml_device_pci_transport_failed(value tr) {
   CAMLparam1(tr);
   CAMLlocal1(why);
