@@ -346,7 +346,7 @@ let float_round_trip =
       Gen.(pair (int64_range 1L 0xFFFFFFFFFFFFFL) bool)
   in
   prop "get float (set float x) is x for every finite x"
-    (Gen.frequency [ (9, Gen.float); (1, subnormal) ])
+    (Gen.frequency [ (8, Gen.float); (1, subnormal); (1, Gen.constant (-0.)) ])
     (fun x ->
       cover "subnormal" (x <> 0. && Float.abs x < 0x1p-1022);
       cover "negative zero" (1. /. x = Float.neg_infinity);
