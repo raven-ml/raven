@@ -46,24 +46,47 @@ let default_bank0 = { Cubin.index = 0; offset = 0; bytes = 0x160 }
 let max_registers = 255
 let max_bank_bytes = 0x10000
 let descriptor_banks = 8
-let ( let* ) = Result.bind
 
-let check_bank (b : Cubin.bank) =
+(* The shared memory a launch leaves the kernel beside the driver's 1 KiB. *)
+let max_kernel_shared = (max_shared_kib * 1024) - reserved_shared
+
+(* What of [k] no launch takes, if anything: a check that allocates nothing when
+   [k] fits. *)
+let bank_refusal (b : Cubin.bank) =
   if b.index < 0 || b.index >= descriptor_banks then
-    Error
+    Some
       (strf "the kernel reads constant bank %d, expected 0 to %d" b.index
          (descriptor_banks - 1))
   else if b.bytes > max_bank_bytes then
-    Error
+    Some
       (strf "the kernel's constant bank %d is %d bytes, more than 64 KiB"
          b.index b.bytes)
-  else Ok ()
+  else None
 
-let rec check_banks = function
-  | [] -> Ok ()
-  | b :: bs ->
-      let* () = check_bank b in
-      check_banks bs
+let rec banks_refusal = function
+  | [] -> None
+  | b :: bs -> (
+      match bank_refusal b with None -> banks_refusal bs | refused -> refused)
+
+(* Compared before the driver's 1 KiB is added, which a corrupt size near
+   max_int would overflow. *)
+let refusal (k : Cubin.kernel) =
+  if k.shared_bytes > max_kernel_shared then
+    Some
+      (strf
+         "the kernel declares %d bytes of shared memory, more than the %d a \
+          launch leaves it beside the driver's 1 KiB"
+         k.shared_bytes max_kernel_shared)
+  else if k.registers > max_registers then
+    Some
+      (strf "the kernel uses %d registers a thread, more than %d" k.registers
+         max_registers)
+  else banks_refusal k.banks
+
+(* The smallest configuration that holds [bytes]. *)
+let rec config_for bytes = function
+  | [] -> max_shared_config
+  | c :: cs -> if c * 1024 >= bytes then config c else config_for bytes cs
 
 let make (g : Gpu.t) (k : Cubin.kernel) =
   let layout =
@@ -78,37 +101,19 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
         g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
         Defs.blackwell_compute_b
   in
-  (* Compared before the driver's 1 KiB is added, which a corrupt size near
-     max_int would overflow. *)
-  let* () =
-    if k.shared_bytes <= (max_shared_kib * 1024) - reserved_shared then Ok ()
-    else
-      Error
-        (strf
-           "the kernel declares %d bytes of shared memory, more than the %d a \
-            launch leaves it beside the driver's 1 KiB"
-           k.shared_bytes
-           ((max_shared_kib * 1024) - reserved_shared))
-  in
-  let* () =
-    if k.registers <= max_registers then Ok ()
-    else
-      Error
-        (strf "the kernel uses %d registers a thread, more than %d" k.registers
-           max_registers)
-  in
-  let* () = check_banks k.banks in
-  let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
-  let c = List.find (fun c -> c * 1024 >= shared_bytes) shared_configs in
-  Ok
-    {
-      kernel = k;
-      gpu = g;
-      layout;
-      shared_bytes;
-      shared_config = config c;
-      max_shared_config;
-    }
+  match refusal k with
+  | Some why -> Error why
+  | None ->
+      let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
+      Ok
+        {
+          kernel = k;
+          gpu = g;
+          layout;
+          shared_bytes;
+          shared_config = config_for shared_bytes shared_configs;
+          max_shared_config;
+        }
 
 let banks l =
   let banks = l.kernel.banks in

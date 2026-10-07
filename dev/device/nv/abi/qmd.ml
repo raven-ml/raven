@@ -49,19 +49,34 @@ let writes fn q fs =
   { q with bytes = Bytes.unsafe_to_string b }
 
 (* A field is known, in the bytes, or a hole, zero in the bytes: setting one way
-   undoes the other. *)
+   undoes the other. A hole's field starts a byte. *)
+
+let rec zero_bytes s at stop =
+  at >= stop || (String.unsafe_get s at = '\000' && zero_bytes s (at + 1) stop)
+
+(* Whether the field [f], which starts a byte, is zero in [q]'s bytes. *)
+let zero q (f : D.field) =
+  let at = f.lo / 8 and whole = f.bits / 8 and rest = f.bits mod 8 in
+  zero_bytes q.bytes at (at + whole)
+  && (rest = 0 || Char.code q.bytes.[at + whole] land ((1 lsl rest) - 1) = 0)
+
+let rec has_hole at = function
+  | [] -> false
+  | h :: hs -> h.at = at || has_hole at hs
 
 (* [q] with the field [f], which starts a byte, filled by the term [t]. *)
 let hole q (f : D.field) t =
   let at = f.lo / 8 in
-  let q = if read q f = 0 then q else writes "Qmd" q [ (f, 0) ] in
+  let q = if zero q f then q else writes "Qmd" q [ (f, 0) ] in
   let others = List.filter (fun h -> h.at <> at) q.holes in
   { q with holes = { at; bits = f.bits; value = t } :: others }
 
 (* [q] with the field [f] known as [v], in place of a hole there. *)
 let known fn q (f : D.field) v =
-  let q = writes fn q [ (f, v) ] in
-  { q with holes = List.filter (fun h -> h.at <> f.lo / 8) q.holes }
+  let q = writes fn q [ (f, v) ] and at = f.lo / 8 in
+  if has_hole at q.holes then
+    { q with holes = List.filter (fun h -> h.at <> at) q.holes }
+  else q
 
 (* An address in the fields [lower] and [upper]: [t]'s low 32 bits, then the
    bits above. *)
