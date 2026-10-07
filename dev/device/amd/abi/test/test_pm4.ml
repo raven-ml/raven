@@ -516,12 +516,8 @@ let runs =
             S.gpu ~target (if fst3 target = 9 then (9, 4, 3) else target)
           in
           equal int ((group_segment + 511) / 512) (lds g group_segment));
-      xfail
-        ~reason:
-          "GFX950's LDS_SIZE counts 1280-byte units (AMDGPUUsage); the encoder \
-           writes 512-byte units, 3 for a 1280-byte workgroup"
-        (test "a GFX950 workgroup's LDS, in 1280-byte units" (fun () ->
-             equal int 1 (lds (S.gpu ~target:(9, 5, 0) (9, 5, 0)) 1280)));
+      test "a GFX950 workgroup's LDS, in 1280-byte units" (fun () ->
+          equal int 1 (lds (S.gpu ~target:(9, 5, 0) (9, 5, 0)) 1280));
       cases ~name:string_of_int "a wave limit outside 10 bits is refused"
         [ 0; 1024 ] (fun n ->
           raises_match (Exn.invalid_arg ~substring:"waves_per_array") (fun () ->

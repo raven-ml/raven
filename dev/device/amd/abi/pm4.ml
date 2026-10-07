@@ -274,9 +274,13 @@ let max_waves_per_array = 0x3ff
    COMPUTE_PGM_RSRC1.PRIV. *)
 let priv = 1 lsl 20
 
-(* COMPUTE_PGM_RSRC2.LDS_SIZE: its first bit, its width, and its granule. *)
+(* COMPUTE_PGM_RSRC2.LDS_SIZE: its first bit and its width; its granule, 1280
+   bytes on GFX950 and 512 on GFX9 to GFX12 (AMDGPUUsage, LDS_SIZE; LLVM's
+   AMDGPU.td at 52c11435, FeatureISAVersion9_5_Common and the generations'
+   FeatureLDSEncodingGranularity). *)
 let lds_shift = 15
 let lds_mask = 0x1ff
+let lds_granule_gfx950 = 1280
 let lds_granule = 512
 
 (* The scratch's buffer descriptor in a kernel's first user SGPRs: the base
@@ -320,7 +324,10 @@ let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
       (lanes @ [ ("force_start_at_000", 1); ("compute_shader_en", 1) ])
   in
   let rsrc1 = if major g = 11 then k.rsrc1 lor priv else k.rsrc1 in
-  let lds = (k.group_segment + lds_granule - 1) / lds_granule land lds_mask in
+  let granule =
+    match g.gc with 9, 5, _ -> lds_granule_gfx950 | _ -> lds_granule
+  in
+  let lds = (k.group_segment + granule - 1) / granule land lds_mask in
   (* The user SGPRs the descriptor enables, in their fixed order. *)
   let user =
     (if k.private_segment_buffer then
