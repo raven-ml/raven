@@ -18,8 +18,7 @@
 
 module Window = Device_pci.Window
 
-let buffer = Device_pci_support.memory
-
+external buffer : int -> int = "device_pci_bench_memory"
 external far : unit -> int = "device_pci_bench_far"
 external store32 : Window.t -> int = "device_pci_bench_store32" [@@noalloc]
 external store64 : Window.t -> int = "device_pci_bench_store64" [@@noalloc]

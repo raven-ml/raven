@@ -14,15 +14,27 @@
 #define _GNU_SOURCE
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
+#include <caml/fail.h>
 #include <caml/mlvalues.h>
 
 #include "device_pci.h"
 
 #define STORES 1024
 #define SPAN 4096
+
+/* [n] new zeroed bytes of the process, which live as long as it does. They
+   come from here, not the test support library: support links the test
+   framework, which makes each major collection dearer, and the read rows'
+   large strings drive many (13% on read-4KiB on an M1 Max). */
+value device_pci_bench_memory(value n) {
+  void *p = calloc(1, (size_t)Long_val(n));
+  if (p == NULL) caml_raise_out_of_memory();
+  return Val_long((intnat)p);
+}
 
 static uint8_t far[SPAN];
 
