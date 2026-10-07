@@ -162,18 +162,17 @@ let materialise dtype n apply =
   Nx.transpose
     (Rune.vmap Nx.Ptree.(tensor @-> returns tensor) apply (Nx.eye dtype n))
 
-let direct (type d) (dtype : (float, d) Nx.dtype) n apply (r : (float, d) Nx.t)
-    =
-  let m = materialise dtype n apply in
-  let u = Nx.solve m r in
+(* The run of a dense solve: the solution [x] of the materialised [m]. *)
+let checked_dense (type d) (dtype : (float, d) Nx.dtype) n apply m
+    (r : (float, d) Nx.t) x =
   let bound =
     Nx.mul_s
-      (Nx.add (Nx.mul (Nx.norm m) (Nx.norm u)) (Nx.norm r))
+      (Nx.add (Nx.mul (Nx.norm m) (Nx.norm x)) (Nx.norm r))
       (backward *. float n *. Num.eps dtype)
   in
   {
-    u;
-    residual = Nx.sub (apply u) r;
+    u = x;
+    residual = Nx.sub (apply x) r;
     bound;
     outcomes =
       [ (Nx.logical_not (Nx.logical_and (finite m) (finite r)), Not_finite) ];
@@ -181,6 +180,18 @@ let direct (type d) (dtype : (float, d) Nx.dtype) n apply (r : (float, d) Nx.t)
     applications = Nx.scalar Nx.int32 (Int32.of_int (n + 1));
     facts = [];
   }
+
+let direct dtype n apply r =
+  let m = materialise dtype n apply in
+  checked_dense dtype n apply m r (Nx.solve m r)
+
+(* The dense matrix factored once, for many right-hand sides. *)
+let factored dtype n apply =
+  let m = materialise dtype n apply in
+  let perm, l, u = Nx.lu m in
+  fun r ->
+    let z = Nx.solve_triangular ~unit_diag:true l (Nx.take ~indices:perm r) in
+    checked_dense dtype n apply m r (Nx.solve_triangular ~upper:true u z)
 
 (* Banded
 
@@ -349,25 +360,27 @@ let substitute (type d) (u, l, p) n w (r : (float, d) Nx.t) =
   in
   Nx.flip ~axes:[ 0 ] x
 
-let band (type d) (dtype : (float, d) Nx.dtype) n w apply (r : (float, d) Nx.t)
-    =
+let band (type d) (dtype : (float, d) Nx.dtype) n w apply =
   let b = probe dtype n w apply in
-  let x = substitute (factor b n w) n w r in
-  let bound =
-    Nx.mul_s
-      (Nx.add (Nx.mul (Nx.norm b) (Nx.norm x)) (Nx.norm r))
-      (backward *. float n *. Num.eps dtype)
-  in
-  {
-    u = x;
-    residual = Nx.sub (apply x) r;
-    bound;
-    outcomes =
-      [ (Nx.logical_not (Nx.logical_and (finite b) (finite r)), Not_finite) ];
-    spent = None;
-    applications = Nx.scalar Nx.int32 (Int32.of_int ((2 * w) + 2));
-    facts = [];
-  }
+  let factors = factor b n w in
+  let norm = Nx.norm b and finite_b = finite b in
+  fun (r : (float, d) Nx.t) ->
+    let x = substitute factors n w r in
+    let bound =
+      Nx.mul_s
+        (Nx.add (Nx.mul norm (Nx.norm x)) (Nx.norm r))
+        (backward *. float n *. Num.eps dtype)
+    in
+    {
+      u = x;
+      residual = Nx.sub (apply x) r;
+      bound;
+      outcomes =
+        [ (Nx.logical_not (Nx.logical_and finite_b (finite r)), Not_finite) ];
+      spent = None;
+      applications = Nx.scalar Nx.int32 (Int32.of_int ((2 * w) + 2));
+      facts = [];
+    }
 
 (* Conjugate gradients
 
@@ -543,16 +556,24 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
     facts = [];
   }
 
+(* [s] prepared for [apply], [n] unknowns, with [precondition] on vectors: the
+   matrix materialised and factored once, so each right-hand side costs the
+   substitutions. *)
+let prepare (type d) s (dtype : (float, d) Nx.dtype) n apply precondition :
+    (float, d) Nx.t -> d run =
+  match s with
+  | Dense -> factored dtype n apply
+  | Banded w -> band dtype n w apply
+  | Cg { rel; budget; _ } -> conjugate dtype ~rel ~budget apply precondition
+  | Gmres { restart; rel; budget; _ } ->
+      generalised dtype ~restart ~rel ~budget apply precondition
+
 (* The run of [s] on [apply u = r], [n] unknowns, with [precondition] on
-   vectors. *)
-let run (type d) s (dtype : (float, d) Nx.dtype) n apply precondition
-    (r : (float, d) Nx.t) =
+   vectors. A dense solve of one right-hand side factors with it. *)
+let run s dtype n apply precondition r =
   match s with
   | Dense -> direct dtype n apply r
-  | Banded w -> band dtype n w apply r
-  | Cg { rel; budget; _ } -> conjugate dtype ~rel ~budget apply precondition r
-  | Gmres { restart; rel; budget; _ } ->
-      generalised dtype ~restart ~rel ~budget apply precondition r
+  | Banded _ | Cg _ | Gmres _ -> prepare s dtype n apply precondition r
 
 (* [s]'s preconditioner on the vectors of [ravel] and [unravel]. *)
 let preconditioner fn x s ravel unravel =

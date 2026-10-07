@@ -1042,12 +1042,178 @@ let delay_tests =
           (Rune.jit' f (scalar 1.)));
   ]
 
+(* Stiff fields *)
+
+let jvp f t y dy = snd (Rune.jvp' (f t) y dy)
+
+(* Prothero and Robinson's field y' = λ (y − sin t) + cos t, whose solution from
+   0 is sin t whatever λ: for λ = −10⁶ an explicit method needs a step below
+   2·10⁻⁶ on [0, 10]. *)
+let prothero lambda t y =
+  Nx.add (Nx.mul (Nx.sub y (Nx.sin t)) lambda) (Nx.cos t)
+
+let stiff_tol = Tol.v ~rel:1e-8 ~abs:1e-10
+let kvaerno ?mass f = Ode.kvaerno5 ?mass ~linear:Linear.dense (jvp f)
+
+let stiff_tests =
+  [
+    test "kvaerno5 follows a stiff field's slow solution" (fun () ->
+        let f = prothero (scalar (-1e6)) in
+        let s =
+          Ode.solve one (kvaerno f) ~tol:stiff_tol ~budget:500 f ~t0:(scalar 0.)
+            ~t1:(scalar 10.) (vec [| 0. |])
+        in
+        equal
+          (Oracle.tensor ~abs:1e-7 ())
+          (vec [| Float.sin 10. |])
+          (Solution.get s);
+        (* The steps follow the tolerance: some hundreds of evaluations where an
+           explicit method's stability needs millions. *)
+        at_most int32 ~than:2000l (Nx.item [] (Solution.evaluations s)));
+    test "an index-1 DAE: y₁' = y₂ − y₁, 0 = y₂ − cos t" (fun () ->
+        (* With y₁ (0) = 1/2, y₁ = (cos t + sin t) / 2 and y₂ = cos t. *)
+        let f t v =
+          Nx.stack
+            [
+              Nx.sub (Nx.get [ 1 ] v) (Nx.get [ 0 ] v);
+              Nx.sub (Nx.get [ 1 ] v) (Nx.cos t);
+            ]
+        in
+        let mass v = Nx.mul v (vec [| 1.; 0. |]) in
+        let s =
+          Ode.solve one (kvaerno ~mass f) ~tol:stiff_tol ~budget:500 f
+            ~t0:(scalar 0.) ~t1:(scalar 2.)
+            (vec [| 0.5; 1. |])
+        in
+        equal
+          (Oracle.tensor ~abs:1e-7 ())
+          (vec [| (Float.cos 2. +. Float.sin 2.) /. 2.; Float.cos 2. |])
+          (Solution.get s));
+    test "an event on a DAE's algebraic component: y₂ = cos t crosses at π/2"
+      (fun () ->
+        let f t v =
+          Nx.stack
+            [
+              Nx.sub (Nx.get [ 1 ] v) (Nx.get [ 0 ] v);
+              Nx.sub (Nx.get [ 1 ] v) (Nx.cos t);
+            ]
+        in
+        let mass v = Nx.mul v (vec [| 1.; 0. |]) in
+        let t, v, i =
+          Solution.get
+            (Ode.event one (kvaerno ~mass f) ~tol:stiff_tol ~budget:500 f
+               ~event:(fun _ v -> Nx.get [ 1 ] v)
+               ~t0:(scalar 0.) ~t1:(scalar 3.)
+               (vec [| 0.5; 1. |]))
+        in
+        equal int32 0l (Nx.item [] i);
+        (* The crossing and the state there are the extension's, whose error
+           [tol] does not control: the stage values are of stage order 2, and
+           the differential component misses by some 10⁻⁵ at these steps. *)
+        equal (Oracle.tensor ~abs:1e-6 ()) (scalar (Float.pi /. 2.)) t;
+        equal
+          (Oracle.tensor ~abs:1e-4 ())
+          (scalar
+             ((Float.cos (Float.pi /. 2.) +. Float.sin (Float.pi /. 2.)) /. 2.))
+          (Nx.get [ 0 ] v));
+    test "a path of a DAE passes through its algebraic component" (fun () ->
+        let f t v =
+          Nx.stack
+            [
+              Nx.sub (Nx.get [ 1 ] v) (Nx.get [ 0 ] v);
+              Nx.sub (Nx.get [ 1 ] v) (Nx.cos t);
+            ]
+        in
+        let mass v = Nx.mul v (vec [| 1.; 0. |]) in
+        let p =
+          Solution.get
+            (Ode.path one (kvaerno ~mass f) ~tol:stiff_tol ~budget:300 f
+               ~t0:(scalar 0.) ~t1:(scalar 2.)
+               (vec [| 0.5; 1. |]))
+        in
+        let ts = vec [| 0.3; 1.1; 1.9 |] in
+        equal
+          (Oracle.tensor ~abs:1e-6 ())
+          (Nx.cos ts)
+          (Nx.slice [ Nx.A; Nx.I 1 ] (Piecewise.eval p ts)));
+    test "a mass scales the field: 2 y' = −2 y is y' = −y" (fun () ->
+        let f _ y = Nx.mul_s y (-2.) in
+        let s =
+          Ode.solve one
+            (kvaerno ~mass:(fun v -> Nx.mul_s v 2.) f)
+            ~tol:stiff_tol ~budget:500 f ~t0:(scalar 0.) ~t1:(scalar 3.)
+            (vec [| 1. |])
+        in
+        equal
+          (Oracle.tensor ~rel:1e-7 ())
+          (vec [| Float.exp (-3.) |])
+          (Solution.get s));
+    test "its error follows the tolerance on a smooth field" (fun () ->
+        List.iter
+          (fun tl ->
+            let f = forced in
+            let m =
+              Ode.kvaerno5 ~linear:Linear.dense (fun t y dy ->
+                  snd (Rune.jvp pair pair (forced t) y dy))
+            in
+            let q, p =
+              Solution.get
+                (Ode.solve pair m ~tol:(Tol.v ~rel:tl ~abs:tl) ~budget:5000 f
+                   ~t0:(scalar 0.) ~t1:(scalar 3.)
+                   (scalar 1., scalar 0.))
+            in
+            let rq, rp = reference 3. in
+            at_most float_exact ~than:(30. *. tl)
+              (Float.max
+                 (Float.abs (Nx.item [] q -. rq))
+                 (Float.abs (Nx.item [] p -. rp))))
+          [ 1e-6; 1e-9 ]);
+    test "grad in λ agrees with central differences" (fun () ->
+        (* From y₀ = 1 the solution keeps a stiff transient e^(λt). *)
+        let final lambda =
+          let f = prothero lambda in
+          Nx.sum
+            (Solution.get
+               (Ode.solve one (kvaerno f) ~tol:stiff_tol ~budget:500 f
+                  ~t0:(scalar 0.) ~t1:(scalar 0.5) (vec [| 1. |])))
+        in
+        let lambda = scalar (-20.) in
+        equal
+          (Oracle.tensor ~rel:1e-5 ())
+          (Oracle.central ~eps:1e-4 final lambda (scalar 1.))
+          (Rune.grad' final lambda));
+    test "compiled kvaerno5 equals eager to rounding" (fun () ->
+        let solve lambda =
+          let f = prothero lambda in
+          Solution.get
+            (Ode.solve one (kvaerno f) ~tol:stiff_tol ~budget:500 f
+               ~t0:(scalar 0.) ~t1:(scalar 1.) (vec [| 1. |]))
+        in
+        let lambda = scalar (-1e4) in
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (solve lambda) (Rune.jit' solve lambda));
+    test "a path of kvaerno5 passes through its samples" (fun () ->
+        let f = prothero (scalar (-1e3)) in
+        let p =
+          Solution.get
+            (Ode.path one (kvaerno f) ~tol:stiff_tol ~budget:300 f
+               ~t0:(scalar 0.) ~t1:(scalar 2.) (vec [| 0. |]))
+        in
+        let ts = vec [| 0.3; 1.1; 1.9 |] in
+        equal
+          (Oracle.tensor ~abs:1e-6 ())
+          (Nx.sin ts)
+          (Nx.reshape [| 3 |] (Piecewise.eval p ts)));
+  ]
+
 let () =
   exit
     (run "Jera.Ode"
        [
          group "solve" solve_tests;
          group "solve derivatives" solve_derivative_tests;
+         group "stiff" stiff_tests;
          group "path" path_tests;
          group "event" event_tests;
          group "delay" delay_tests;

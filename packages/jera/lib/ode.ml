@@ -24,7 +24,17 @@ type tableau = {
   embedded : embedded option;
 }
 
-type (-'k, 'y, 't) t = tableau
+(* An implicit method: an ESDIRK tableau, whose first stage is explicit and
+   whose others share the diagonal [gamma], with what its stage solves need. *)
+type ('y, 't) implicit = {
+  gamma : float;
+  mass : ('y -> 'y) option;
+  derivative : (float, 't) Nx.t -> 'y -> 'y -> 'y;
+  linear : 'y Linear.t;
+}
+
+type ('y, 't) meth = { tableau : tableau; implicit : ('y, 't) implicit option }
+type (-'k, 'y, 't) t = ('y, 't) meth
 
 let first_same_as_last a b c =
   let s = Array.length b in
@@ -51,21 +61,21 @@ let hermite b =
         (-2. *. b.(i)) +. first +. last;
       |])
 
-let euler = make "euler" ~a:[| [||] |] ~b:[| 1. |] ~c:[| 0. |] ()
+let euler_tableau = make "euler" ~a:[| [||] |] ~b:[| 1. |] ~c:[| 0. |] ()
 
-let rk4 =
+let rk4_tableau =
   make "rk4"
     ~a:[| [||]; [| 0.5 |]; [| 0.; 0.5 |]; [| 0.; 0.; 1. |] |]
     ~b:[| 1. /. 6.; 1. /. 3.; 1. /. 3.; 1. /. 6. |]
     ~c:[| 0.; 0.5; 0.5; 1. |] ()
 
-let ssprk3 =
+let ssprk3_tableau =
   make "ssprk3"
     ~a:[| [||]; [| 1. |]; [| 0.25; 0.25 |] |]
     ~b:[| 1. /. 6.; 1. /. 6.; 2. /. 3. |]
     ~c:[| 0.; 1.; 0.5 |] ()
 
-let bs3 =
+let bs3_tableau =
   make "bs3"
     ~embedded:
       {
@@ -91,7 +101,7 @@ let tsit5_dense =
   |]
 
 (* Tsitouras (2011), Table 1, as the reference implementations carry it. *)
-let tsit5 =
+let tsit5_tableau =
   let b =
     [|
       0.09646076681806523;
@@ -170,7 +180,7 @@ let dopri5_dense b =
         d;
       |])
 
-let dopri5 =
+let dopri5_tableau =
   let b =
     [|
       35. /. 384.; 0.; 500. /. 1113.; 125. /. 192.; -2187. /. 6784.; 11. /. 84.;
@@ -236,8 +246,70 @@ let tableau ~a ~b ~c =
   if not (finite b && finite c && Array.for_all finite a) then
     fail "a coefficient is not finite";
   if not (sums_to_one b) then fail "b does not sum to 1";
-  make "tableau" ~a:(Array.map Array.copy a) ~b:(Array.copy b) ~c:(Array.copy c)
-    ()
+  {
+    tableau =
+      make "tableau" ~a:(Array.map Array.copy a) ~b:(Array.copy b)
+        ~c:(Array.copy c) ();
+    implicit = None;
+  }
+
+let euler = { tableau = euler_tableau; implicit = None }
+let rk4 = { tableau = rk4_tableau; implicit = None }
+let ssprk3 = { tableau = ssprk3_tableau; implicit = None }
+let bs3 = { tableau = bs3_tableau; implicit = None }
+let tsit5 = { tableau = tsit5_tableau; implicit = None }
+let dopri5 = { tableau = dopri5_tableau; implicit = None }
+
+(* Kværnø's (2004) ESDIRK 5(4): seven stages, the first explicit, L-stable, and
+   stiffly accurate in both formulas, so the step is its last stage and the
+   embedded solution its sixth, both at [c = 1]. The rows hold [a] below the
+   diagonal [γ = 0.26]; [b] is the last row with its diagonal. *)
+let kvaerno5_gamma = 0.26
+
+let kvaerno5_tableau =
+  let g = kvaerno5_gamma in
+  let a =
+    [|
+      [||];
+      [| g |];
+      [| 0.13; 0.84033320996790809 |];
+      [| 0.22371961478320505; 0.47675532319799699; -0.06470895363112615 |];
+      [|
+        0.16648564323248321;
+        0.10450018841591720;
+        0.03631482272098715;
+        -0.13090704451073998;
+      |];
+      [|
+        0.13855640231268224;
+        0.;
+        -0.04245337201752043;
+        0.02446657898003141;
+        0.61943039072480676;
+      |];
+      [|
+        0.13659751177640291;
+        0.;
+        -0.05496908796538376;
+        -0.04118626728321046;
+        0.62993304899016403;
+        0.06962479448202728;
+      |];
+    |]
+  in
+  let b = Array.append a.(6) [| g |] in
+  let embedded = Array.append a.(5) [| g; 0. |] in
+  let c = Array.map (fun row -> Array.fold_left ( +. ) g row) a in
+  c.(0) <- 0.;
+  make "kvaerno5"
+    ~embedded:{ e = Array.map2 ( -. ) b embedded; order = 5; dense = hermite b }
+    ~a ~b ~c ()
+
+let kvaerno5 ?mass ~linear derivative =
+  {
+    tableau = kvaerno5_tableau;
+    implicit = Some { gamma = kvaerno5_gamma; mass; derivative; linear };
+  }
 
 (* Marches *)
 
@@ -261,9 +333,10 @@ let eval fn y f t v =
          fn);
   dv
 
-(* One step of [m] from [(t, v)] by [h], given the field at [(t, v)] when the
-   method reuses its last stage: the new state and the stages. *)
-let step fn y m f t h v k0 =
+(* One step of the explicit tableau [m] from [(t, v)] by [h], given the field at
+   [(t, v)] when the method reuses its last stage: the new state and the
+   stages. *)
+let explicit_step fn y m f t h v k0 =
   let s = Array.length m.b in
   let ks = Array.make s v in
   let combine w =
@@ -283,38 +356,6 @@ let step fn y m f t h v k0 =
         ks.(i) <- eval fn y f (Nx.add t (Nx.mul_s h m.c.(i))) !last
   done;
   ((if m.fsal then !last else combine m.b), ks)
-
-let march y m ~steps f ~at y0 =
-  let fn = "Jera.Ode.march" in
-  March.check fn ~steps at;
-  let dtype = Nx.dtype at in
-  let interval c step t0 t1 carry =
-    let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
-    March.steps c dtype steps
-      (fun j carry -> step (Nx.add t0 (Nx.mul j h)) h carry)
-      carry
-  in
-  if m.fsal then
-    let c = Nx.Ptree.pair y y in
-    let step t h (v, k) =
-      let v, ks = step fn y m f t h v (Some k) in
-      (v, ks.(Array.length ks - 1))
-    in
-    let k0 = eval fn y f (Nx.get [ 0 ] at) y0 in
-    March.run c y ~at ~interval:(interval c step) ~state:fst (y0, k0)
-  else
-    let step t h v = fst (step fn y m f t h v None) in
-    March.run y y ~at ~interval:(interval y step) ~state:Fun.id y0
-
-(* Solves *)
-
-(* The proportional–integral controller (Hairer, Nørsett and Wanner, I, §II.4):
-   the next step is the last times 0.9 r^(−0.7/k) r'^(0.4/k), r the error ratio
-   of the step and r' the last accepted one's, k the controller's order, bounded
-   to [0.2, 10] and below 1 after a rejection. *)
-let safety = 0.9
-let shrink = 0.2
-let grow = 10.
 
 (* Each float leaf's [e / (abs + rel max (|v|, |w|))] as one vector of [dtype],
    then their root mean square in a fixed order. *)
@@ -341,6 +382,215 @@ let error_norm (type t) y tol (dtype : (float, t) Nx.dtype) e v w =
     | rows -> Nx.concatenate ~axis:0 rows
   in
   Nx.reshape [||] (Num.rms_rows (Nx.reshape [| 1; -1 |] flat))
+
+(* Implicit steps
+
+   Stage [i > 0] of an ESDIRK step is the [Z] with [G Z = M (Z − v) − r_i − h γ
+   f (t + c_i h, Z) = 0], [r_i = h Σ_{j<i} a_ij k_j], solved by simplified
+   Newton on [M − h γ J], [J] the field's Jacobian at the step's start, prepared
+   once per step. Newton starts from [v + r_i + h γ k_{i−1}] and stops when [η
+   |ΔZ|] meets [κ = 0.03], with [η = θ / (1 − θ)], [θ] the ratio of its last two
+   corrections in [tol]'s norm, and [η = 1] at the first; a correction that does
+   not shrink, a non-finite one, a failed linear solve or [10] iterations fail
+   the step. The stage's field is [k_i = (M (Z − v) − r_i) / (h γ)], which a
+   converged [Z] makes [f] there without another evaluation. The step is the
+   last stage and its error the difference from the stage before, both at [c =
+   1]. In an answer each stage is stated as the zero of [G] through
+   {!Rune.root}, its solve the same Newton iteration. *)
+
+let kappa = 0.03
+let newton_iterations = 10
+
+type stated = Searched | Stated
+
+(* A step's result: the new state, the stages' fields and an implicit step's
+   stage values, whether a stage solve failed, its error estimate when the
+   embedded weights do not give it, and the field's evaluations past the first
+   stage. *)
+type 'y stepped = {
+  next : 'y;
+  stages : 'y array;
+  values : 'y array;
+  failed : (bool, Nx.bool_elt) Nx.t;
+  error : 'y option;
+  evaluations : (int32, Nx.int32_elt) Nx.t;
+}
+
+let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
+    k0 =
+  let s = Array.length m.b in
+  let tdtype = Nx.dtype t in
+  let (Linear.Space { dtype; size; ravel; unravel }) =
+    Linear.space fn "the state" y v
+  in
+  let detached u = Nx.Ptree.map y (fun _ x -> Rune.detach x) u in
+  let mass u = match imp.mass with None -> u | Some m -> m u in
+  let hg = Nx.mul_s h imp.gamma in
+  let minus x = Nx.neg x in
+  let operator =
+    let vd = detached v and td = Rune.detach t and hgd = Rune.detach hg in
+    fun u ->
+      let u = unravel u in
+      Rune.detach
+        (ravel (Nx.Ptree.axpy y (minus hgd) (imp.derivative td vd u) (mass u)))
+  in
+  let precondition =
+    Linear.preconditioner fn y imp.linear
+      (fun u -> Rune.detach (ravel u))
+      unravel
+  in
+  let solve = Linear.prepare imp.linear dtype size operator precondition in
+  let zeros = Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v in
+  let ks = Array.make s k0 and zs = Array.make s v in
+  let failed = ref (Nx.scalar Nx.bool false) in
+  let count = ref (Nx.scalar Nx.int32 0l) in
+  for i = 1 to s - 1 do
+    let r = ref zeros in
+    Array.iteri
+      (fun j aij ->
+        if aij <> 0. then r := Nx.Ptree.axpy y (Nx.mul_s h aij) ks.(j) !r)
+      m.a.(i);
+    let r = !r in
+    let ti = Nx.add t (Nx.mul_s h m.c.(i)) in
+    let difference z = Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) v z in
+    let residual z =
+      Nx.Ptree.axpy y (minus hg) (eval fn y f ti z)
+        (Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) r (mass (difference z)))
+    in
+    let predictor =
+      Nx.Ptree.axpy y hg ks.(i - 1) (Nx.Ptree.axpy y (Nx.scalar tdtype 1.) r v)
+    in
+    (* Newton on detached values: the stage, whether it converged, whether it
+       failed, and its iterations. *)
+    let newton () =
+      let start = Rune.detach (ravel (detached predictor)) in
+      let resid z = Rune.detach (ravel (detached (residual (unravel z)))) in
+      let step (z, (last, (k, _))) =
+        let run = solve (Nx.neg (resid z)) in
+        let dz = run.u in
+        let z' = Nx.add z dz in
+        let norm =
+          error_norm y tol tdtype (unravel dz) (detached v) (unravel z')
+        in
+        let theta = Nx.div norm last in
+        let first = Nx.equal_s k 0l in
+        let eta =
+          Nx.where first (Nx.ones_like theta)
+            (Nx.div theta (Nx.rsub_s 1. theta))
+        in
+        let diverged =
+          Nx.logical_and (Nx.logical_not first) (Nx.greater_equal_s theta 1.)
+        in
+        let broken' =
+          Nx.logical_or diverged
+            (Nx.logical_or (Linear.failed run)
+               (Nx.logical_not (Nx.isfinite norm)))
+        in
+        let converged' =
+          Nx.logical_and (Nx.logical_not broken')
+            (Nx.less_equal_s (Nx.mul eta norm) kappa)
+        in
+        let k = Nx.add_s k 1l in
+        let broken' =
+          Nx.logical_or broken'
+            (Nx.logical_and
+               (Nx.logical_not converged')
+               (Nx.greater_equal_s k (Int32.of_int newton_iterations)))
+        in
+        (Nx.where broken' z z', (norm, (k, (converged', broken'))))
+      in
+      Rune.iterate
+        Nx.Ptree.(pair tensor (pair tensor (pair tensor (pair tensor tensor))))
+        ~max:newton_iterations
+        ~until:(fun (_, (_, (_, (converged, broken)))) ->
+          Nx.logical_or converged broken)
+        ~f:step
+        ( start,
+          ( Nx.full tdtype [||] Float.infinity,
+            ( Nx.scalar Nx.int32 0l,
+              (Nx.scalar Nx.bool false, Nx.scalar Nx.bool false) ) ) )
+    in
+    let z =
+      match stated with
+      | Searched ->
+          let z, (_, (k, (_, broken))) = newton () in
+          failed := Nx.logical_or !failed broken;
+          count := Nx.add !count k;
+          unravel z
+      | Stated ->
+          Rune.root y ~linear_solve:(Linear.derivative fn y imp.linear)
+            ~residual (fun () -> unravel (fst (newton ())))
+    in
+    zs.(i) <- z;
+    ks.(i) <-
+      Nx.Ptree.map y
+        (fun _ x -> Nx.div x (Nx.cast (Nx.dtype x) hg))
+        (Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) r (mass (difference z)))
+  done;
+  {
+    next = zs.(s - 1);
+    stages = ks;
+    values = zs;
+    failed = !failed;
+    error =
+      Some (Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) zs.(s - 2) zs.(s - 1));
+    evaluations = !count;
+  }
+
+(* One step of [m]; an implicit method solves its stages to [tol], on detached
+   values in a search and stated as roots in an answer. *)
+let step ?stages fn y m f t h v k0 =
+  match (m.implicit, stages) with
+  | None, _ ->
+      let next, ks = explicit_step fn y m.tableau f t h v k0 in
+      let s = Array.length ks in
+      {
+        next;
+        stages = ks;
+        values = [||];
+        failed = Nx.scalar Nx.bool false;
+        error = None;
+        evaluations =
+          Nx.scalar Nx.int32
+            (Int32.of_int (if Option.is_some k0 then s - 1 else s));
+      }
+  | Some imp, Some (tol, stated) ->
+      implicit_step ~tol ~stated fn y m.tableau imp f t h v
+        (match k0 with Some k -> k | None -> eval fn y f t v)
+  | Some _, None -> invalid_arg (fn ^ ": an implicit method needs a tolerance")
+
+let march y m ~steps f ~at y0 =
+  let fn = "Jera.Ode.march" in
+  March.check fn ~steps at;
+  let dtype = Nx.dtype at in
+  let interval c step t0 t1 carry =
+    let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
+    March.steps c dtype steps
+      (fun j carry -> step (Nx.add t0 (Nx.mul j h)) h carry)
+      carry
+  in
+  let m = m.tableau in
+  if m.fsal then
+    let c = Nx.Ptree.pair y y in
+    let step t h (v, k) =
+      let v, ks = explicit_step fn y m f t h v (Some k) in
+      (v, ks.(Array.length ks - 1))
+    in
+    let k0 = eval fn y f (Nx.get [ 0 ] at) y0 in
+    March.run c y ~at ~interval:(interval c step) ~state:fst (y0, k0)
+  else
+    let step t h v = fst (explicit_step fn y m f t h v None) in
+    March.run y y ~at ~interval:(interval y step) ~state:Fun.id y0
+
+(* Solves *)
+
+(* The proportional–integral controller (Hairer, Nørsett and Wanner, I, §II.4):
+   the next step is the last times 0.9 r^(−0.7/k) r'^(0.4/k), r the error ratio
+   of the step and r' the last accepted one's, k the controller's order, bounded
+   to [0.2, 10] and below 1 after a rejection. *)
+let safety = 0.9
+let shrink = 0.2
+let grow = 10.
 
 (* [true] when every element of every leaf of [v] is finite. *)
 let finite y v =
@@ -524,7 +774,7 @@ let endpoints fn t0 t1 =
   Nx.stack [ t0; t1 ]
 
 let embedded fn m =
-  match m.embedded with
+  match m.tableau.embedded with
   | Some e -> e
   | None -> invalid_arg (fn ^ ": the method has no embedded formula")
 
@@ -592,8 +842,8 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       v
   in
   let alpha = 0.7 /. float emb.order and beta = 0.4 /. float emb.order in
-  let stages = Array.length m.b in
-  let per_attempt = if Option.is_some mem.first then stages else stages - 1 in
+  let stages = Array.length m.tableau.b in
+  let refreshed = if Option.is_some mem.first then 1l else 0l in
   let attempt s =
     let s =
       match mem.limit s.memory with
@@ -618,20 +868,29 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       | None -> s.k
       | Some g -> detached (eval fn y (g s.memory) t s.v)
     in
-    let v', ks =
-      step fn y m
+    let stepped =
+      step ~stages:(tol, Searched) fn y m
         (fun t v -> detached (mem.field s.memory t v))
         t hh s.v (Some k0)
     in
+    let v' = stepped.next and ks = stepped.stages in
     let e =
-      let acc = ref (zeros_like s.v) in
-      Array.iteri
-        (fun i w ->
-          if w <> 0. then acc := Nx.Ptree.axpy y (Nx.mul_s hh w) ks.(i) !acc)
-        emb.e;
-      !acc
+      match stepped.error with
+      | Some e -> e
+      | None ->
+          let acc = ref (zeros_like s.v) in
+          Array.iteri
+            (fun i w ->
+              if w <> 0. then acc := Nx.Ptree.axpy y (Nx.mul_s hh w) ks.(i) !acc)
+            emb.e;
+          !acc
     in
-    let r = error_norm y tol dtype e s.v v' in
+    (* A failed stage solve rejects the attempt. *)
+    let r =
+      Nx.where stepped.failed
+        (Nx.full dtype [||] Float.infinity)
+        (error_norm y tol dtype e s.v v')
+    in
     let k' = ks.(stages - 1) in
     let running = Elementwise.searching s.status in
     let stepping = Nx.logical_and running (Nx.logical_not empty) in
@@ -762,7 +1021,9 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       attempts;
       evals =
         Nx.add s.evals
-          (Nx.mul_s (Nx.cast Nx.int32 stepping) (Int32.of_int per_attempt));
+          (Nx.mul
+             (Nx.cast Nx.int32 stepping)
+             (Nx.add_s stepped.evaluations refreshed));
       status = st;
       memory =
         Nx.Ptree.map2 mem.tree
@@ -833,7 +1094,8 @@ let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
   let dtype = Nx.dtype at in
   let at0 = Rune.detach at in
   let settings =
-    Format.asprintf "method %s, tol %a, budget %d" m.name Tol.pp tol budget
+    Format.asprintf "method %s, tol %a, budget %d" m.tableau.name Tol.pp tol
+      budget
   in
   let count c = Nx.cast dtype c in
   Solution.v ~fn ~settings
@@ -854,11 +1116,11 @@ let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
 (* The states at the times of [at]: each interval's accepted steps taken again
    with the tracked field, as fractions of the interval, so a moved end
    stretches every step. *)
-let samples fn y m mem ~budget ~at y0 s =
+let samples fn y m mem ~tol ~budget ~at y0 s =
   let n = Nx.dim 0 at in
   let n_int = n - 1 in
   let dtype = Nx.dtype at in
-  let stages = Array.length m.b in
+  let stages = Array.length m.tableau.b in
   let ok = Nx.equal_s s.status (Solution.code Converged) in
   let offsets = Nx.sub (Nx.cumsum ~axis:0 s.counts) s.counts in
   let replay (v, (k, mm)) (a, (b, (offset, count))) =
@@ -876,7 +1138,9 @@ let samples fn y m mem ~budget ~at y0 s =
       let k =
         match mem.first with None -> k | Some g -> eval fn y (g mm) t v
       in
-      let v', ks = step fn y m (mem.field mm) t h v (Some k) in
+      let { next = v'; stages = ks; _ } =
+        step ~stages:(tol, Stated) fn y m (mem.field mm) t h v (Some k)
+      in
       let mm, _ = mem.accept mm ~t ~t_end:(Nx.add t h) ~h ~v ~ks v' in
       ((v', (ks.(stages - 1), mm)), Nx.add_s i 1l)
     in
@@ -942,7 +1206,7 @@ let sample y m ~tol ~budget f ~at y0 =
       search fn `Refused y m ~tol ~budget (plain f) ~at y0
     in
     report fn m ~tol ~budget ~at found
-      ~value:(samples fn y m (plain f) ~budget ~at y0 s)
+      ~value:(samples fn y m (plain f) ~tol ~budget ~at y0 s)
       ~error:s.errs
 
 let solve y m ~tol ~budget f ~t0 ~t1 y0 =
@@ -954,22 +1218,56 @@ let solve y m ~tol ~budget f ~t0 ~t1 y0 =
   in
   let last v = Nx.Ptree.map y (fun _ x -> Nx.get [ 1 ] x) v in
   report fn m ~tol ~budget ~at found
-    ~value:(last (samples fn y m (plain f) ~budget ~at y0 s))
+    ~value:(last (samples fn y m (plain f) ~tol ~budget ~at y0 s))
     ~error:(last s.errs)
 
 (* Paths *)
 
-(* The continuous extension's weights at the Chebyshev points of a step:
-   [w.(j).(i)] is stage [i]'s [b_i(θ_j)], [θ_j = (u_j + 1) / 2]. *)
-let node_weights dense =
-  let degree = Array.length dense.(0) in
-  Array.map
-    (fun u ->
-      let theta = (u +. 1.) /. 2. in
-      Array.map
-        (fun row -> Array.fold_right (fun d acc -> theta *. (d +. acc)) row 0.)
-        dense)
-    (Cheb.nodes degree)
+(* A method's continuous extension on a step from [v] by [h]: the weights
+   [b_i(θ)] of its stages' fields, [v + h Σ_i b_i(θ) k_i], or, for a method with
+   a mass, whose fields are [M y'], Lagrange's polynomial through its stage
+   values at their [c] in [[0, 1]], the last of equal [c] kept. *)
+type extension =
+  | Fields of float array array
+  | Values of int array * float array
+
+let extension_of fn m =
+  match m.implicit with
+  | Some { mass = Some _; _ } ->
+      let c = m.tableau.c in
+      let keep =
+        List.filter
+          (fun i ->
+            c.(i) >= 0.
+            && c.(i) <= 1.
+            && not
+                 (List.exists
+                    (fun j -> j > i && c.(j) = c.(i))
+                    (List.init (Array.length c) Fun.id)))
+          (List.init (Array.length c) Fun.id)
+      in
+      let idx = Array.of_list keep in
+      Values (idx, Array.map (fun i -> c.(i)) idx)
+  | _ -> (
+      match m.tableau.embedded with
+      | Some e -> Fields e.dense
+      | None -> invalid_arg (fn ^ ": the method has no embedded formula"))
+
+let degree = function
+  | Fields dense -> Array.length dense.(0)
+  | Values (idx, _) -> Array.length idx - 1
+
+(* Lagrange's basis polynomial [j] of the points [cs] at [θ], in [lift]'s
+   arithmetic. *)
+let lagrange ~mul ~sub_s ~scale cs j theta =
+  let acc = ref None in
+  Array.iteri
+    (fun m cm ->
+      if m <> j then
+        let factor = scale (sub_s theta cm) (1. /. (cs.(j) -. cm)) in
+        acc := Some (match !acc with None -> factor | Some a -> mul a factor))
+    cs;
+  !acc
 
 (* [v + h Σ_i w.(i) k_i]. *)
 let combine y h w v ks =
@@ -979,6 +1277,29 @@ let combine y h w v ks =
       if wi <> 0. then acc := Nx.Ptree.axpy y (Nx.mul_s h wi) ks.(i) !acc)
     w;
   !acc
+
+(* The extension at the float fraction [theta] of the step [(ks, zs)]. *)
+let node y ext h v (ks, zs) theta =
+  match ext with
+  | Fields dense ->
+      combine y h
+        (Array.map
+           (fun row ->
+             Array.fold_right (fun d acc -> theta *. (d +. acc)) row 0.)
+           dense)
+        v ks
+  | Values (idx, cs) ->
+      let zero = Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v in
+      let acc = ref zero in
+      Array.iteri
+        (fun j i ->
+          let w =
+            Option.value ~default:1.
+              (lagrange ~mul:( *. ) ~sub_s:( -. ) ~scale:( *. ) cs j theta)
+          in
+          acc := Nx.Ptree.axpy y (Nx.scalar (Nx.dtype h) w) zs.(i) !acc)
+        idx;
+      !acc
 
 (* Values stacked on a new leading axis of each leaf. *)
 let stack y vs =
@@ -1009,8 +1330,9 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
     }
   in
   let ok = Nx.equal_s s.status (Solution.code Converged) in
-  let w = node_weights emb.dense in
-  let stages = Array.length m.b in
+  let ext = extension_of fn m in
+  let thetas = Array.map (fun u -> (u +. 1.) /. 2.) (Cheb.nodes (degree ext)) in
+  let stages = Array.length m.tableau.b in
   (* Each accepted step taken again with the tracked field, and a step of zero
      length in each slot past them: its continuous extension at the Chebyshev
      points, and the accumulated magnitudes of the local estimates. *)
@@ -1019,10 +1341,16 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
     let sigma1 = Nx.where live sigma1 sigma0 in
     let t = Nx.add t0 (Nx.mul span sigma0)
     and h = Nx.mul span (Nx.sub sigma1 sigma0) in
-    let v', ks = step fn y m f t h v (Some k) in
-    let nodes = stack y (Array.map (fun wj -> combine y h wj v ks) w) in
+    let stepped = step ~stages:(tol, Stated) fn y m f t h v (Some k) in
+    let v' = stepped.next and ks = stepped.stages in
+    let nodes =
+      stack y (Array.map (node y ext h v (ks, stepped.values)) thetas)
+    in
     let e =
-      combine y h emb.e (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v) ks
+      match stepped.error with
+      | Some e -> e
+      | None ->
+          combine y h emb.e (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v) ks
     in
     let acc =
       Nx.Ptree.map2 y (fun _ a e -> Nx.add a (Rune.detach (Nx.abs e))) acc e
@@ -1091,29 +1419,41 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
 
 (* Events *)
 
-(* The continuous extension at fraction [theta], a scalar, of the step from [v]
-   by [h] with stages [ks]: [v + h Σ_i b_i(θ) k_i]. *)
-let extension y dense h v ks theta =
-  let weight row =
-    Array.fold_right
-      (fun d acc -> Nx.mul theta (Nx.add_s acc d))
-      row (Nx.zeros_like theta)
-  in
-  let acc = ref v in
-  Array.iteri
-    (fun i row ->
-      if Array.exists (fun d -> d <> 0.) row then
-        acc := Nx.Ptree.axpy y (Nx.mul h (weight row)) ks.(i) !acc)
-    dense;
-  !acc
+(* The continuous extension at the fraction [theta], a scalar tensor, of the
+   step from [v] by [h] with stage fields [ks] and values [zs]. *)
+let extension y ext h v (ks, zs) theta =
+  match ext with
+  | Fields dense ->
+      let weight row =
+        Array.fold_right
+          (fun d acc -> Nx.mul theta (Nx.add_s acc d))
+          row (Nx.zeros_like theta)
+      in
+      let acc = ref v in
+      Array.iteri
+        (fun i row ->
+          if Array.exists (fun d -> d <> 0.) row then
+            acc := Nx.Ptree.axpy y (Nx.mul h (weight row)) ks.(i) !acc)
+        dense;
+      !acc
+  | Values (idx, cs) ->
+      let acc = ref (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v) in
+      Array.iteri
+        (fun j i ->
+          let w =
+            Option.value ~default:(Nx.ones_like theta)
+              (lagrange ~mul:Nx.mul ~sub_s:Nx.sub_s ~scale:Nx.mul_s cs j theta)
+          in
+          acc := Nx.Ptree.axpy y w zs.(i) !acc)
+        idx;
+      !acc
 
 let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let fn = "Jera.Ode.event" in
   let at = endpoints fn t0 t1 in
   check fn ~at ~budget;
-  let emb = embedded fn m in
   let dtype = Nx.dtype at in
-  let stages = Array.length m.b in
+  let stages = Array.length m.tableau.b in
   (* The event's components, flat, in the time's dtype. *)
   let watch t v = Nx.cast dtype (Nx.reshape [| -1 |] (event t v)) in
   (* The search remembers the components' last non-zero signs at the state and
@@ -1163,7 +1503,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     let sigma1 = fraction i in
     let t = Nx.add t0 (Nx.mul span sigma0)
     and h = Nx.mul span (Nx.sub sigma1 sigma0) in
-    let v, ks = step fn y m f t h v (Some k) in
+    let { next = v; stages = ks; _ } =
+      step ~stages:(tol, Stated) fn y m f t h v (Some k)
+    in
     (v, (ks.(stages - 1), Nx.add_s i 1l))
   in
   let last = Nx.sub_s s.accepted 1l in
@@ -1189,10 +1531,13 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   in
   let t_a = Nx.add t0 (Nx.mul span sigma0)
   and h = Nx.mul span (Nx.sub sigma1 sigma0) in
-  let v_b, ks = step fn y m f t_a h v_a (Some k_a) in
+  let { next = v_b; stages = ks; values = zs; _ } =
+    step ~stages:(tol, Stated) fn y m f t_a h v_a (Some k_a)
+  in
+  let ext = extension_of fn m in
   let h_safe = Nx.where (Nx.equal_s h 0.) (Nx.ones_like h) h in
   let at_time t =
-    extension y emb.dense h v_a ks (Nx.div (Nx.sub t t_a) h_safe)
+    extension y ext h v_a (ks, zs) (Nx.div (Nx.sub t t_a) h_safe)
   in
   (* The crossing, on detached values: each component that changed sign across
      the step is bracketed on the step's piece to the time's resolution, which
@@ -1208,7 +1553,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let detached v = Nx.Ptree.map y (fun _ x -> Rune.detach x) v in
   let ta = Rune.detach t_a and hd = Rune.detach h_safe in
   let tb = Nx.add ta (Rune.detach h) in
-  let vd = detached v_a and ksd = Array.map detached ks in
+  let vd = detached v_a
+  and ksd = Array.map detached ks
+  and zsd = Array.map detached zs in
   let eye =
     Nx.cast dtype
       (Nx.equal
@@ -1223,7 +1570,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       Rune.vmap
         Nx.Ptree.(tensor @-> returns tensor)
         (fun t ->
-          watch t (extension y emb.dense hd vd ksd (Nx.div (Nx.sub t ta) hd)))
+          watch t (extension y ext hd vd (ksd, zsd) (Nx.div (Nx.sub t ta) hd)))
         ts
     in
     let e = Nx.sum ~axes:[ 1 ] (Nx.mul all eye) in
@@ -1540,5 +1887,5 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
           Fact ("pieces", Nx.full dtype [||] (float pieces));
           Fact ("pieces needed", needed ~t s.memory);
         ]
-      ~value:(pick (samples fn y m memory ~budget ~at:sorted y0 s))
+      ~value:(pick (samples fn y m memory ~tol ~budget ~at:sorted y0 s))
       ~error:(pick s.errs)

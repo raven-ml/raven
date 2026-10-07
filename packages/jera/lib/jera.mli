@@ -74,6 +74,11 @@
           with an explicit method, {!Ode.euler} to {!Ode.dopri5}
         }
       }
+      {tr
+        {td  }
+        {td stiff; index-1 algebraic constraints }
+        {td {!Ode.kvaerno5}, with a mass }
+      }
       {tr {td  } {td randomness } {td {!Sde.march} } }
       {tr {td  } {td separable Hamiltonian, long times } {td {!Split} } }
     }
@@ -1312,6 +1317,41 @@ module Ode : sig
       [a] has [s] rows of which row [i] has [i] elements, every coefficient is
       finite, and [b] sums to [1] within rounding. *)
 
+  val kvaerno5 :
+    ?mass:('y -> 'y) ->
+    linear:'y Linear.t ->
+    ((float, 't) Nx.t -> 'y -> 'y -> 'y) ->
+    ([ `Embedded ], 'y, 't) t
+  (** [kvaerno5 ~mass ~linear derivative] is Kværnø's (2004) singly diagonally
+      implicit method of order 5 with an embedded order 4, for stiff fields:
+      [derivative t y dy] is the field's Jacobian at [(t, y)] applied to [dy],
+      such as [snd (Rune.jvp' (f t) y dy)]. [mass] is the linear map [M] of
+      [M y' = f t y], the identity by default; a singular [M] makes the problem
+      differential-algebraic.
+
+      {b Method.} Seven stages, the first explicit and the others implicit with
+      the diagonal [0.26]. Each stage is solved by simplified Newton on
+      [M − 0.26 h J], [J] the Jacobian at the step's start, which [linear]
+      prepares once per attempted step: {!Linear.dense} materialises and factors
+      it once, and every stage and Newton iteration reuses the factors. A stage
+      whose corrections do not shrink to [0.03] of [tol] in ten iterations, or
+      whose linear solve fails, rejects the attempt. {b Error.} The step is the
+      last stage and its error the difference from the sixth, both at [c = 1]:
+      the embedded formula is stiffly accurate like the step, so the estimate is
+      defined on algebraic components. {b Stability.} L-stable, so the step
+      follows the tolerance on a stiff field instead of its fastest eigenvalue.
+      A DAE is solved when its index is 1, when the equations in [M]'s left null
+      space determine the variables in its null space; a higher index shows as a
+      collapsing step and ends [Stalled]. [y0] must be consistent, [f t0 y0] in
+      the range of [M]: from an inconsistent [y0] the first steps project onto
+      the constraint. {b Cost.} Per attempt, one preparation of [linear] ([n]
+      applications of [derivative] and a factorisation for {!Linear.dense}), and
+      one evaluation of the field and one linear solve per Newton iteration.
+      {b Derivative.} In the answer each accepted stage is stated as a zero of
+      its stage equation through {!Rune.root}, solved by [linear], so the
+      derivative is the accepted steps' with their stages' implicit derivatives.
+  *)
+
   (** {1:marches Marches} *)
 
   type 't time = (float, 't) Nx.t
@@ -1416,9 +1456,12 @@ module Ode : sig
       Each embedded method has a continuous extension, a polynomial in the
       step's fraction that matches the step at both ends: {!tsit5}'s free
       interpolant of order 4 (Tsitouras, 2011), {!dopri5}'s of order 4 (Hairer,
-      Nørsett and Wanner, I, §II.6), and for {!bs3} the cubic Hermite
-      interpolant of the step's ends and fields, of order 3. Values between
-      steps carry that order's error, which [tol] does not control. *)
+      Nørsett and Wanner, I, §II.6), for {!bs3} and {!kvaerno5} the cubic
+      Hermite interpolant of the step's ends and fields, of order 3, and for a
+      {!kvaerno5} with a mass, whose fields are [M y'], the polynomial through
+      its stage values at their fractions in [[0, 1]], of degree 4, defined on
+      algebraic components too. Values between steps carry that extension's
+      error, which [tol] does not control. *)
 
   val path :
     'y Nx.Ptree.t ->

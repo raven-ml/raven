@@ -312,6 +312,36 @@ let delay =
     rows = all;
   }
 
+(* Robertson's chemical kinetics, stiff, to t = 40 with the rates as the
+   argument, by kvaerno5 on the dense Jacobian. *)
+let robertson =
+  {
+    id = "ode-solve-kvaerno5-robertson";
+    f =
+      (fun k ->
+        let field _ y =
+          let y1 = Nx.get [ 0 ] y
+          and y2 = Nx.get [ 1 ] y
+          and y3 = Nx.get [ 2 ] y in
+          let k1 = Nx.get [ 0 ] k
+          and k2 = Nx.get [ 1 ] k
+          and k3 = Nx.get [ 2 ] k in
+          let r1 = Nx.mul k1 y1
+          and r2 = Nx.mul k2 (Nx.square y2)
+          and r3 = Nx.mul k3 (Nx.mul y2 y3) in
+          Nx.stack [ Nx.add (Nx.neg r1) r3; Nx.sub (Nx.sub r1 r2) r3; r2 ]
+        in
+        Solution.get
+          (Ode.solve Nx.Ptree.tensor
+             (Ode.kvaerno5 ~linear:Linear.dense (fun t y dy ->
+                  snd (Rune.jvp' (field t) y dy)))
+             ~tol:(Tol.v ~rel:1e-6 ~abs:1e-10)
+             ~budget:400 field ~t0:(Nx.scalar f64 0.) ~t1:(Nx.scalar f64 40.)
+             (Nx.create f64 [| 3 |] [| 1.; 0.; 0. |])));
+    x = (fun () -> Nx.create f64 [| 3 |] [| 0.04; 3e7; 1e4 |]);
+    rows = all;
+  }
+
 (* Linear systems *)
 
 (* A dense system of 128 unknowns, a fixed matrix plus the diagonal argument,
@@ -589,6 +619,7 @@ let workloads =
     path;
     event;
     delay;
+    robertson;
     dense;
     banded;
     cg;

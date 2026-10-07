@@ -1053,6 +1053,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Ode.kvaerno5 ?mass ~linear derivative`, Kværnø's L-stable ESDIRK
+  5(4) for stiff fields and, with a singular mass, index-1 DAEs. Each attempt
+  prepares `M − γhJ` once with `~linear`; each stage is a simplified Newton
+  solve, stated as a root in the answer. Its paths use the cubic Hermite
+  extension, or with a mass the polynomial through its stage values.
 - Add `Minimize.levenberg_marquardt`, for a sum of squares given by its
   residual, with its damping falling on accepted steps, and
   `Minimize.nelder_mead`, for an objective with no useful gradient, which

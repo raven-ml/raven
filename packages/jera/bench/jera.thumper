@@ -14,6 +14,8 @@
 # forced: blessed system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad system-broyden-16/eager system-broyden-16/compiled system-broyden-16/grad system-anderson-tanh-64/eager system-anderson-tanh-64/compiled system-anderson-tanh-64/grad under load 24.0 on 10 cores
 # forced: blessed minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-rosenbrock-64/compiled minimize-lbfgs-rosenbrock-64/grad minimize-bfgs-convex-16/eager minimize-bfgs-convex-16/compiled minimize-bfgs-convex-16/grad minimize-newton-convex-16/eager minimize-newton-convex-16/compiled minimize-newton-convex-16/grad under load 30.4 on 10 cores
 # forced: blessed minimize-lm-exponential-200/eager minimize-lm-exponential-200/compiled minimize-lm-exponential-200/grad minimize-nelder-mead-rosenbrock-4/eager minimize-nelder-mead-rosenbrock-4/compiled under load 14.2 on 10 cores
+# forced: blessed ode-solve-kvaerno5-robertson/eager ode-solve-kvaerno5-robertson/compiled ode-solve-kvaerno5-robertson/grad under load 11.3 on 10 cores
+# forced: blessed ode-sample-tsit5-100-pendulums/eager ode-path-tsit5-100-pendulums/eager under load 19.6 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
@@ -95,16 +97,22 @@ ode-march-tsit5-100-pendulums/grad	alloc_words	exact	236131
 ode-march-tsit5-100-pendulums/grad	wall_time	batch=1	n=20	1.613e-02	1.452e-02 1.522e-02 1.524e-02 1.530e-02 1.541e-02 1.567e-02 1.568e-02 1.584e-02 1.609e-02 1.611e-02 1.614e-02 1.627e-02 1.722e-02 1.749e-02 1.762e-02 1.791e-02 1.885e-02 2.104e-02 2.284e-02 2.743e-02
 ode-path-tsit5-100-pendulums/compiled	alloc_words	exact	108923
 ode-path-tsit5-100-pendulums/compiled	wall_time	batch=1	n=20	3.893e-03	3.551e-03 3.599e-03 3.717e-03 3.869e-03 3.872e-03 3.879e-03 3.885e-03 3.885e-03 3.892e-03 3.892e-03 3.893e-03 3.901e-03 3.936e-03 3.962e-03 3.997e-03 4.012e-03 4.052e-03 4.061e-03 4.088e-03 4.113e-03
-ode-path-tsit5-100-pendulums/eager	alloc_words	exact	1991653
-ode-path-tsit5-100-pendulums/eager	wall_time	batch=1	n=20	6.897e-02	1.088e-02 1.493e-02 1.874e-02 1.883e-02 2.230e-02 3.824e-02 4.767e-02 5.740e-02 5.961e-02 6.856e-02 6.938e-02 6.973e-02 7.698e-02 8.128e-02 8.429e-02 9.091e-02 1.126e-01 1.647e-01 1.888e-01 1.972e-01
+ode-path-tsit5-100-pendulums/eager	alloc_words	exact	2021200
+ode-path-tsit5-100-pendulums/eager	wall_time	batch=1	n=20	9.292e-03	8.523e-03 8.769e-03 8.906e-03 9.017e-03 9.017e-03 9.045e-03 9.059e-03 9.186e-03 9.220e-03 9.282e-03 9.301e-03 9.513e-03 9.519e-03 9.533e-03 9.639e-03 9.659e-03 9.983e-03 1.023e-02 1.026e-02 1.113e-02
 ode-path-tsit5-100-pendulums/grad	alloc_words	exact	296339
 ode-path-tsit5-100-pendulums/grad	wall_time	batch=1	n=20	2.554e-02	8.604e-03 8.738e-03 8.738e-03 9.538e-03 1.130e-02 1.250e-02 2.199e-02 2.333e-02 2.490e-02 2.514e-02 2.593e-02 2.682e-02 2.992e-02 3.409e-02 3.848e-02 3.999e-02 7.137e-02 8.004e-02 8.123e-02 1.344e-01
 ode-sample-tsit5-100-pendulums/compiled	alloc_words	exact	146087
 ode-sample-tsit5-100-pendulums/compiled	wall_time	batch=2	n=20	4.013e-03	3.674e-03 3.685e-03 3.685e-03 3.699e-03 3.702e-03 3.728e-03 3.824e-03 3.989e-03 3.996e-03 4.013e-03 4.013e-03 4.032e-03 4.090e-03 4.097e-03 4.173e-03 4.342e-03 4.619e-03 5.847e-03 6.778e-03 2.987e-02
-ode-sample-tsit5-100-pendulums/eager	alloc_words	exact	1232588
-ode-sample-tsit5-100-pendulums/eager	wall_time	batch=1	n=20	5.040e-03	4.492e-03 4.626e-03 4.800e-03 4.851e-03 4.891e-03 4.908e-03 4.958e-03 4.968e-03 5.002e-03 5.018e-03 5.061e-03 5.134e-03 5.173e-03 5.248e-03 5.300e-03 5.775e-03 5.991e-03 6.304e-03 9.960e-03 1.060e-02
+ode-sample-tsit5-100-pendulums/eager	alloc_words	exact	1246089
+ode-sample-tsit5-100-pendulums/eager	wall_time	batch=1	n=20	4.308e-03	3.864e-03 3.941e-03 4.000e-03 4.030e-03 4.086e-03 4.130e-03 4.132e-03 4.205e-03 4.279e-03 4.304e-03 4.313e-03 4.378e-03 4.397e-03 4.431e-03 4.454e-03 4.524e-03 4.560e-03 4.640e-03 4.677e-03 4.864e-03
 ode-sample-tsit5-100-pendulums/grad	alloc_words	exact	308813
 ode-sample-tsit5-100-pendulums/grad	wall_time	batch=1	n=20	1.039e-02	9.179e-03 9.286e-03 9.549e-03 9.889e-03 9.916e-03 9.981e-03 1.004e-02 1.006e-02 1.015e-02 1.034e-02 1.043e-02 1.050e-02 1.072e-02 1.073e-02 1.079e-02 1.089e-02 1.157e-02 1.202e-02 1.284e-02 2.869e-02
+ode-solve-kvaerno5-robertson/compiled	alloc_words	exact	214910
+ode-solve-kvaerno5-robertson/compiled	wall_time	batch=2	n=20	2.949e-03	2.906e-03 2.917e-03 2.920e-03 2.923e-03 2.930e-03 2.933e-03 2.938e-03 2.941e-03 2.947e-03 2.948e-03 2.951e-03 2.967e-03 2.981e-03 2.995e-03 3.019e-03 3.021e-03 3.097e-03 3.651e-03 3.748e-03 4.544e-03
+ode-solve-kvaerno5-robertson/eager	alloc_words	exact	34683723
+ode-solve-kvaerno5-robertson/eager	wall_time	batch=1	n=20	1.248e-01	1.160e-01 1.189e-01 1.197e-01 1.199e-01 1.214e-01 1.216e-01 1.235e-01 1.235e-01 1.243e-01 1.247e-01 1.249e-01 1.263e-01 1.269e-01 1.291e-01 1.294e-01 1.298e-01 1.331e-01 1.342e-01 1.439e-01 1.515e-01
+ode-solve-kvaerno5-robertson/grad	alloc_words	exact	426474
+ode-solve-kvaerno5-robertson/grad	wall_time	batch=1	n=20	6.643e-03	6.344e-03 6.435e-03 6.487e-03 6.495e-03 6.532e-03 6.586e-03 6.624e-03 6.625e-03 6.631e-03 6.639e-03 6.647e-03 6.685e-03 6.701e-03 6.710e-03 6.712e-03 6.745e-03 7.252e-03 7.301e-03 7.500e-03 1.111e-02
 piecewise-adapt-kink/compiled	alloc_words	exact	34765
 piecewise-adapt-kink/compiled	wall_time	batch=32	n=20	2.578e-04	2.371e-04 2.371e-04 2.373e-04 2.530e-04 2.554e-04 2.572e-04 2.575e-04 2.575e-04 2.576e-04 2.577e-04 2.579e-04 2.582e-04 2.605e-04 2.624e-04 2.642e-04 2.658e-04 2.712e-04 2.747e-04 3.103e-04 3.405e-04
 piecewise-adapt-kink/eager	alloc_words	exact	447416
