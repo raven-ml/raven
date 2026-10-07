@@ -367,6 +367,25 @@ let test_no_bar () =
       Memory.create x.fn x.tables ~bar:1);
   Function.release x.fn
 
+let test_no_bytes =
+  cases "no bytes, or fewer, are refused"
+    ~name:(fun (name, n, _) -> Printf.sprintf "%s %d" name n)
+    (List.concat_map
+       (fun n ->
+         [
+           ("alloc Gpu", n, fun x -> ignore (Memory.alloc x.memory Gpu n));
+           ("alloc Host", n, fun x -> ignore (Memory.alloc x.memory Host n));
+           ( "map_host",
+             n,
+             fun x -> ignore (Memory.map_host x.memory tables_base n) );
+         ])
+       [ 0; -1 ])
+    (fun (_, _, f) ->
+      let x = gpu () in
+      raises_match (Exn.invalid_arg ~substring:"Memory.") (fun () -> f x);
+      equal ~msg:"no pin held" ranges [] x.fake.pins;
+      Function.release x.fn)
+
 type rule = In_gpu | Through_bar | In_host
 
 (* What each rule promises of a fresh allocation [mem] of [x]. *)
@@ -987,6 +1006,7 @@ let () =
            ];
          group "exhaustion"
            [
+             test_no_bytes;
              test "no room is None" test_out_of_memory;
              test "a small BAR's blocks stay inside it" test_small_bar_fills;
              test "no room for a table is None" test_tables_full;

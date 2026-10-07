@@ -81,9 +81,9 @@ val alloc : ?uncached:bool -> t -> kind -> int -> memory option
     no room, as {!Page_table.alloc} bounds it, or for {!Bar} memory, if the BAR
     does not reach a block that fits.
 
-    Raises [Failure] if system memory cannot be allocated, having freed what it
-    took, naming what is missing as {!Function.alloc_dma} does
-    ({{!Device_pci.errors}errors}). *)
+    Raises [Invalid_argument] if [n <= 0], and [Failure] if system memory cannot
+    be allocated, having freed what it took, naming what is missing as
+    {!Function.alloc_dma} does ({{!Device_pci.errors}errors}). *)
 
 val free : t -> memory -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.
@@ -100,8 +100,8 @@ val map_host : t -> int -> int -> (memory, string) result
     outside the GPU's virtual addresses, or cannot be pinned, [why] being
     {!Function.pin}'s reason, or if a page table has no room.
 
-    Raises [Invalid_argument] if part of the range is mapped for the GPU
-    already, and then pins nothing. *)
+    Raises [Invalid_argument] if [n <= 0], or if part of the range is mapped for
+    the GPU already, pinning nothing. *)
 
 val map_peer : t -> owner:t -> memory -> (memory, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
