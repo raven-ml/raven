@@ -104,8 +104,9 @@ val wait_64 :
   Gpu.t -> 'v -> Packet.comparison -> 'v -> ?interval:int -> unit -> 'v Packet.t
 (** [wait_64 g addr cmp v ~interval ()] waits until the 64 bits at [addr]
     compare to [v] as [cmp] says, reading them again every [interval] clocks of
-    the packet's poll timer, [4] by default. Whether a queue runs it is a fact
-    of its firmware, which a driver tests before relying on it.
+    the packet's poll timer, [4] by default. [addr] is a multiple of 8. Whether
+    a queue runs it is a fact of its firmware, which a driver tests before
+    relying on it.
 
     Raises [Invalid_argument] if [g]'s GC has no such packet (GFX9). *)
 
