@@ -162,6 +162,7 @@ unary/sqrt-1M	wall_time	batch=8	n=20	1.313e-04	1.240e-04 1.242e-04 1.247e-04 1.2
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 29.1 on 10 cores
+# forced: blessed reduce/mean-axis0-512x512 under load 10.8 on 10 cores
 
 binary/add-100x100-f64	alloc_words	exact	65
 binary/add-100x100-f64	wall_time	batch=512	n=20	3.692e-06	3.169e-06 3.208e-06 3.223e-06 3.256e-06 3.313e-06 3.428e-06 3.532e-06 3.535e-06 3.622e-06 3.654e-06 3.731e-06 3.802e-06 3.853e-06 3.872e-06 4.213e-06 4.223e-06 4.769e-06 4.894e-06 6.870e-06 2.088e-05
@@ -235,8 +236,8 @@ reduce/max-2x2-windows-32x16x26x26	alloc_words	exact	232
 reduce/max-2x2-windows-32x16x26x26	wall_time	batch=16	n=20	9.891e-04	4.946e-04 5.025e-04 5.184e-04 5.200e-04 5.303e-04 5.512e-04 5.678e-04 6.242e-04 8.494e-04 9.432e-04 1.035e-03 1.063e-03 1.110e-03 1.120e-03 1.169e-03 1.227e-03 1.338e-03 2.047e-03 2.781e-03 2.853e-03
 reduce/max-axis1-512x512	alloc_words	exact	156
 reduce/max-axis1-512x512	wall_time	batch=32	n=20	1.654e-04	1.638e-04 1.641e-04 1.642e-04 1.644e-04 1.644e-04 1.645e-04 1.648e-04 1.649e-04 1.653e-04 1.653e-04 1.654e-04 1.654e-04 1.656e-04 1.660e-04 1.985e-04 2.785e-04 2.799e-04 6.579e-04 1.100e-03 1.595e-03
-reduce/mean-axis0-512x512	alloc_words	exact	347
-reduce/mean-axis0-512x512	wall_time	batch=256	n=20	2.425e-05	2.359e-05 2.361e-05 2.369e-05 2.375e-05 2.388e-05 2.397e-05 2.416e-05 2.417e-05 2.419e-05 2.423e-05 2.427e-05 2.427e-05 2.429e-05 3.103e-05 3.306e-05 3.339e-05 8.779e-05 1.114e-04 1.605e-04 1.958e-04
+reduce/mean-axis0-512x512	alloc_words	exact	355
+reduce/mean-axis0-512x512	wall_time	batch=256	n=20	2.748e-05	2.560e-05 2.601e-05 2.640e-05 2.697e-05 2.698e-05 2.699e-05 2.706e-05 2.718e-05 2.738e-05 2.743e-05 2.754e-05 2.758e-05 2.767e-05 2.768e-05 2.771e-05 2.773e-05 2.774e-05 2.775e-05 2.777e-05 2.791e-05
 reduce/sum-128x128	alloc_words	exact	130
 reduce/sum-128x128	wall_time	batch=8192	n=20	1.690e-06	1.152e-06 1.160e-06 1.169e-06 1.189e-06 1.296e-06 1.311e-06 1.398e-06 1.510e-06 1.597e-06 1.635e-06 1.744e-06 2.347e-06 2.420e-06 2.607e-06 2.629e-06 3.090e-06 3.117e-06 4.397e-06 4.431e-06 4.896e-06
 reduce/sum-axes02-65536x16x2	alloc_words	exact	171
