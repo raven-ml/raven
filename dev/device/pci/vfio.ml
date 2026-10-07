@@ -5,22 +5,26 @@
 
 (* A function opened through VFIO, and the container that maps system memory for
    it behind an IOMMU. VFIO's requests (device_pci_vfio.c) raise Unix.Unix_error
-   with their errno when refused; without Linux, Failure. *)
+   with their errno when refused, ENOSYS without Linux. *)
 
-(* The IOMMU models, as the C side numbers them. *)
+(* The IOMMU models. device_pci_vfio.c reads the constructors in this order as
+   its enum model: keep the two in sync. *)
 type model = Type1v2 | No_iommu
 
-let model = function Type1v2 -> 0 | No_iommu -> 1
+(* VFIO_API_VERSION, the version of VFIO's requests; device_pci_vfio.c asserts
+   it against <linux/vfio.h>. *)
+let api_version = 0
 
 (* VFIO_PCI_CONFIG_REGION_INDEX: the region of configuration space. *)
 let config_region = 7
 
 type fd = Unix.file_descr
 
-external supports : fd -> int -> bool = "caml_device_pci_vfio_supports"
+external version : fd -> int = "caml_device_pci_vfio_version"
+external supports : fd -> model -> bool = "caml_device_pci_vfio_supports"
 external viable : fd -> bool = "caml_device_pci_vfio_viable"
 external set_container : fd -> fd -> unit = "caml_device_pci_vfio_set_container"
-external set_iommu : fd -> int -> unit = "caml_device_pci_vfio_set_iommu"
+external set_iommu : fd -> model -> unit = "caml_device_pci_vfio_set_iommu"
 external device : fd -> string -> fd = "caml_device_pci_vfio_device"
 
 external region : fd -> int -> int * int * bool * (int * int) list option
@@ -120,7 +124,11 @@ let open_function files bus m =
     | No_iommu -> Sysfs.noiommu_file g
   in
   let container = opened (open_file bus "/dev/vfio/vfio") in
-  if not (step "VFIO" (fun () -> supports container (model m))) then
+  let v = step "VFIO" (fun () -> version container) in
+  if v <> api_version then
+    failwith
+      (Printf.sprintf "VFIO speaks API version %d, expected %d" v api_version);
+  if not (step "VFIO" (fun () -> supports container m)) then
     failwith
       (match m with
       | No_iommu ->
@@ -136,7 +144,7 @@ let open_function files bus m =
     (fun () -> set_container group container);
   (* Linux attaches a group to an IOMMU only where the IOMMU also remaps the
      function's interrupts, so that it cannot raise another's. *)
-  (match set_iommu container (model m) with
+  (match set_iommu container m with
   | () -> ()
   | exception Unix.Unix_error (EPERM, _, _) when m = Type1v2 ->
       failwith

@@ -4,11 +4,13 @@
   ---------------------------------------------------------------------------*/
 
 /* VFIO's requests, with the kernel's own structures from <linux/vfio.h>,
-   which a Linux build needs (the kernel headers, Linux 5.4 or later), over descriptors that are Unix.file_descr, an int on
-   Linux. A refused request raises Unix.Unix_error with its errno, so the
-   caller names what to change. A request may wait, as opening a function
-   or resetting it does, so each runs with the runtime released; the version
-   checks answer at once. Elsewhere every request raises Failure. */
+   which a Linux build needs (the kernel headers, Linux 5.4 or later), over
+   descriptors that are Unix.file_descr, an int on Linux. A refused request
+   raises Unix.Unix_error with its errno, so the caller names what to
+   change. A request may wait, as opening a function or resetting it does,
+   so each runs with the runtime released; the version and extension checks
+   answer at once and hold it. Elsewhere every request raises Unix_error
+   ENOSYS. */
 
 #define _GNU_SOURCE
 #include <errno.h>
@@ -22,19 +24,27 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+#include <caml/unixsupport.h>
 
 #ifdef __linux__
-#include <caml/unixsupport.h>
 #include <linux/vfio.h>
 #include <poll.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-/* The IOMMU models: 0 translates through mappings, 1 is no-IOMMU mode. */
-static unsigned long model(value kind) {
-  return Int_val(kind) == 0 ? VFIO_TYPE1v2_IOMMU : VFIO_NOIOMMU_IOMMU;
-}
+/* The API version Vfio.api_version states: keep the two in sync. */
+_Static_assert(VFIO_API_VERSION == 0, "Vfio.api_version is 0");
+
+/* The IOMMU models, the constructors of Vfio.model in their order: keep the
+   two in sync. Type 1 v2 translates through mappings; no-IOMMU mode does
+   not translate. */
+enum model { MODEL_TYPE1V2, MODEL_NO_IOMMU };
+
+static const unsigned long models[] = {
+    [MODEL_TYPE1V2] = VFIO_TYPE1v2_IOMMU,
+    [MODEL_NO_IOMMU] = VFIO_NOIOMMU_IOMMU,
+};
 
 /* The ioctl [req] on [fd] with the runtime released: its result, with
    errno set where it is -1. [arg] is C memory. */
@@ -114,12 +124,18 @@ static intnat saturate(uint64_t x) {
   return x > (uint64_t)Max_long ? Max_long : (intnat)x;
 }
 
-/* Whether the container [fd] has the IOMMU model. Raises Failure if it
-   speaks another API. */
-value caml_device_pci_vfio_supports(value fd, value kind) {
-  if (ioctl(Int_val(fd), VFIO_GET_API_VERSION) != VFIO_API_VERSION)
-    caml_failwith("VFIO speaks another API version");
-  return Val_bool(ioctl(Int_val(fd), VFIO_CHECK_EXTENSION, model(kind)) > 0);
+/* The API version the container [fd] speaks. */
+value caml_device_pci_vfio_version(value fd) {
+  int v = ioctl(Int_val(fd), VFIO_GET_API_VERSION);
+  if (v < 0) caml_uerror("ioctl", Nothing);
+  return Val_int(v);
+}
+
+/* Whether the container [fd] has the IOMMU model [m]. */
+value caml_device_pci_vfio_supports(value fd, value m) {
+  int r = ioctl(Int_val(fd), VFIO_CHECK_EXTENSION, models[Int_val(m)]);
+  if (r < 0) caml_uerror("ioctl", Nothing);
+  return Val_bool(r > 0);
 }
 
 value caml_device_pci_vfio_viable(value group) {
@@ -136,16 +152,18 @@ value caml_device_pci_vfio_set_container(value group, value container) {
   return Val_unit;
 }
 
-value caml_device_pci_vfio_set_iommu(value container, value kind) {
+value caml_device_pci_vfio_set_iommu(value container, value m) {
   if (request(Int_val(container), VFIO_SET_IOMMU,
-              (void *)(uintptr_t)model(kind)) != 0)
+              (void *)(uintptr_t)models[Int_val(m)]) != 0)
     caml_uerror("ioctl", Nothing);
   return Val_unit;
 }
 
-/* Opening the function may reset it, which takes up to seconds. */
+/* Opening the function may reset it, which takes up to seconds. A name
+   with a NUL byte names no function: the kernel would read a shorter one. */
 value caml_device_pci_vfio_device(value group, value bus) {
   CAMLparam2(group, bus);
+  if (!caml_string_is_c_safe(bus)) caml_unix_error(ENODEV, "ioctl", bus);
   char *name = caml_stat_strdup(String_val(bus));
   int fd = request(Int_val(group), VFIO_GROUP_GET_DEVICE_FD, name);
   caml_stat_free(name);
@@ -292,35 +310,33 @@ value caml_device_pci_wait(value efd, value ms) {
 
 #else
 
-/* Without Linux every request raises Failure, and no interrupt comes. */
+/* Without Linux every request raises Unix_error ENOSYS, and no interrupt
+   comes. */
 
-static value no_vfio(void) {
-  caml_failwith("VFIO needs Linux");
-  return Val_unit;
-}
-
-#define FAILS1(f)             \
-  value f(value a) {          \
-    (void)a;                  \
-    return no_vfio();         \
-  }
-#define FAILS2(f)             \
-  value f(value a, value b) { \
-    (void)a;                  \
-    (void)b;                  \
-    return no_vfio();         \
+#define FAILS1(f, call)                     \
+  value f(value a) {                        \
+    (void)a;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
   }
 
-FAILS2(caml_device_pci_vfio_supports)
-FAILS1(caml_device_pci_vfio_viable)
-FAILS2(caml_device_pci_vfio_set_container)
-FAILS2(caml_device_pci_vfio_set_iommu)
-FAILS2(caml_device_pci_vfio_device)
-FAILS2(caml_device_pci_vfio_region)
-FAILS2(caml_device_pci_vfio_msi)
-FAILS1(caml_device_pci_vfio_reset)
-FAILS1(caml_device_pci_vfio_iommu)
-FAILS1(caml_device_pci_eventfd)
+#define FAILS2(f, call)                     \
+  value f(value a, value b) {               \
+    (void)a;                                \
+    (void)b;                                \
+    caml_unix_error(ENOSYS, call, Nothing); \
+  }
+
+FAILS1(caml_device_pci_vfio_version, "ioctl")
+FAILS2(caml_device_pci_vfio_supports, "ioctl")
+FAILS1(caml_device_pci_vfio_viable, "ioctl")
+FAILS2(caml_device_pci_vfio_set_container, "ioctl")
+FAILS2(caml_device_pci_vfio_set_iommu, "ioctl")
+FAILS2(caml_device_pci_vfio_device, "ioctl")
+FAILS2(caml_device_pci_vfio_region, "ioctl")
+FAILS2(caml_device_pci_vfio_msi, "ioctl")
+FAILS1(caml_device_pci_vfio_reset, "ioctl")
+FAILS1(caml_device_pci_vfio_iommu, "ioctl")
+FAILS1(caml_device_pci_eventfd, "eventfd")
 
 value caml_device_pci_vfio_map(value container, value va, value iova,
                                value n) {
@@ -328,14 +344,14 @@ value caml_device_pci_vfio_map(value container, value va, value iova,
   (void)va;
   (void)iova;
   (void)n;
-  return no_vfio();
+  caml_unix_error(ENOSYS, "ioctl", Nothing);
 }
 
 value caml_device_pci_vfio_unmap(value container, value iova, value n) {
   (void)container;
   (void)iova;
   (void)n;
-  return no_vfio();
+  caml_unix_error(ENOSYS, "ioctl", Nothing);
 }
 
 value caml_device_pci_wait(value efd, value ms) {
