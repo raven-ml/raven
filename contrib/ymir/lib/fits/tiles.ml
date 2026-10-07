@@ -229,11 +229,15 @@ let describe h (store : Hdu.store) =
 
 (* Decoding one tile *)
 
-(* A decoded tile: integers that fit [int], int64s, or floats. *)
+(* A decoded tile: integers that fit [int], int64s, computed floats, or the
+   bits of stored floats. *)
 type values =
   | Ints of ints
   | Longs of (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
   | Reals of floats
+  | Bits32 of ints  (** float32 bit patterns *)
+  | Bits64 of (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
+      (** float64 bit patterns *)
 
 let ints n = A.create Bigarray.int Bigarray.c_layout n
 let floats n = A.create Bigarray.float64 Bigarray.c_layout n
@@ -314,13 +318,16 @@ let of_bytes t place ~as_ints get len n =
         Ints a
     end
     else
-      let a = floats n in
-      (match w with
+      (* Lossless floats keep their bits, NaN payloads included. *)
+      match w with
       | 4 ->
+          let a = ints n in
           for i = 0 to n - 1 do
-            A.unsafe_set a i (Int32.float_of_bits (Int32.of_int (be i)))
-          done
+            A.unsafe_set a i (be i)
+          done;
+          Bits32 a
       | 8 ->
+          let a = A.create Bigarray.int64 Bigarray.c_layout n in
           for i = 0 to n - 1 do
             let v = ref 0L in
             for j = 0 to 7 do
@@ -328,10 +335,10 @@ let of_bytes t place ~as_ints get len n =
                 Int64.logor (Int64.shift_left !v 8)
                   (Int64.of_int (get ((i * 8) + j)))
             done;
-            A.unsafe_set a i (Int64.float_of_bits !v)
-          done
-      | _ -> fail_at place "%d-byte values in a float image" w);
-      Reals a
+            A.unsafe_set a i !v
+          done;
+          Bits64 a
+      | _ -> fail_at place "%d-byte values in a float image" w
 
 let param_value (type a) rows (p : a param) (of_float : float -> a)
     (of_int : int -> a) : a option =
@@ -452,8 +459,12 @@ type out =
   | I16 of (int, Bigarray.int16_signed_elt, Bigarray.c_layout) A.t
   | I32 of (int32, Bigarray.int32_elt, Bigarray.c_layout) A.t
   | I64 of (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
-  | F32 of (float, Bigarray.float32_elt, Bigarray.c_layout) A.t
-  | F64 of (float, Bigarray.float64_elt, Bigarray.c_layout) A.t
+  | F32 of
+      (float, Bigarray.float32_elt, Bigarray.c_layout) A.t
+      * (int32, Bigarray.int32_elt, Bigarray.c_layout) A.t
+  | F64 of
+      (float, Bigarray.float64_elt, Bigarray.c_layout) A.t
+      * (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
 
 let set place out k (v : values) j =
   let range lo hi x =
@@ -468,12 +479,16 @@ let set place out k (v : values) j =
         (Int32.of_int (range (-2147483648) 2147483647 (A.unsafe_get a j)))
   | I64 o, Ints a -> A.unsafe_set o k (Int64.of_int (A.unsafe_get a j))
   | I64 o, Longs a -> A.unsafe_set o k (A.unsafe_get a j)
-  | F32 o, Reals a -> A.unsafe_set o k (A.unsafe_get a j)
-  | F64 o, Reals a -> A.unsafe_set o k (A.unsafe_get a j)
-  | (U8 _ | I16 _ | I32 _ | I64 _), Reals _ ->
+  | F32 (o, _), Reals a -> A.unsafe_set o k (A.unsafe_get a j)
+  | F64 (o, _), Reals a -> A.unsafe_set o k (A.unsafe_get a j)
+  | F32 (_, o), Bits32 a -> A.unsafe_set o k (Int32.of_int (A.unsafe_get a j))
+  | F64 (_, o), Bits64 a -> A.unsafe_set o k (A.unsafe_get a j)
+  | (U8 _ | I16 _ | I32 _ | I64 _), (Reals _ | Bits32 _ | Bits64 _) ->
       fail_at place "floats in an integer image"
   | (F32 _ | F64 _), (Ints _ | Longs _) ->
       fail_at place "integers in a float image"
+  | F32 _, Bits64 _ | F64 _, Bits32 _ ->
+      fail_at place "floats of another width than ZBITPIX's"
   | (U8 _ | I16 _ | I32 _), Longs _ ->
       fail_at place "8-byte integers in a narrower image"
 
@@ -493,8 +508,14 @@ let read t bounds : Nx.packed =
     | 16 -> I16 (Nx_device.Buffer.bigarray Bigarray.int16_signed host)
     | 32 -> I32 (Nx_device.Buffer.bigarray Bigarray.int32 host)
     | 64 -> I64 (Nx_device.Buffer.bigarray Bigarray.int64 host)
-    | -32 -> F32 (Nx_device.Buffer.bigarray Bigarray.float32 host)
-    | _ -> F64 (Nx_device.Buffer.bigarray Bigarray.float64 host)
+    | -32 ->
+        F32
+          ( Nx_device.Buffer.bigarray Bigarray.float32 host,
+            Nx_device.Buffer.bigarray Bigarray.int32 host )
+    | _ ->
+        F64
+          ( Nx_device.Buffer.bigarray Bigarray.float64 host,
+            Nx_device.Buffer.bigarray Bigarray.int64 host )
   in
   if n > 0 then begin
     let budget = ref t.table.heap_size in
@@ -572,3 +593,266 @@ let read t bounds : Nx.packed =
   | 64 -> Nx.P (Nx.of_buffer Nx.int64 shape (view Int64))
   | -32 -> Nx.P (Nx.of_buffer Nx.float32 shape (view Float32))
   | _ -> Nx.P (Nx.of_buffer Nx.float64 shape (view Float64))
+
+(* Writing *)
+
+(* How a tiled image is written: losslessly by a codec, or quantized and
+   Rice-coded in steps of each tile's noise divided by [q]. *)
+type plan = Lossless of codec | Quantized of { q : float }
+
+(* The tiles of an image in file order, axis 0 fastest, each as the region
+   [start], [len] (file order). *)
+let iter_tiles axes tile f =
+  let rank = Array.length axes in
+  let counts = Array.mapi (fun i n -> (n + tile.(i) - 1) / tile.(i)) axes in
+  let total = Array.fold_left ( * ) 1 counts in
+  let ti = Array.make rank 0 in
+  for number = 0 to total - 1 do
+    let start = Array.mapi (fun i k -> k * tile.(i)) ti in
+    let len = Array.mapi (fun i s -> Int.min tile.(i) (axes.(i) - s)) start in
+    f number start len;
+    let rec bump i =
+      if i < rank then
+        if ti.(i) + 1 < counts.(i) then ti.(i) <- ti.(i) + 1
+        else begin
+          ti.(i) <- 0;
+          bump (i + 1)
+        end
+    in
+    bump 0
+  done;
+  total
+
+(* [gather axes w be start len f] calls [f k off] for each pixel [k] of the
+   tile, in tile order, with [off] the byte offset of its big-endian
+   element in [be], an image of [axes] in C order, file axis 0 fastest. *)
+let gather axes w start len f =
+  let rank = Array.length axes in
+  let stride = Array.make rank 1 in
+  for i = 1 to rank - 1 do
+    stride.(i) <- stride.(i - 1) * axes.(i - 1)
+  done;
+  let k = ref 0 in
+  let rec loop axis base =
+    if axis < 0 then begin
+      f !k (base * w);
+      incr k
+    end
+    else
+      for x = start.(axis) to start.(axis) + len.(axis) - 1 do
+        loop (axis - 1) (base + (x * stride.(axis)))
+      done
+  in
+  (* the slowest axis outermost, so the tile comes out with axis 0
+     fastest *)
+  loop (rank - 1) 0
+
+type encoded = {
+  rows : string;  (** the table's rows *)
+  heap : string;
+  columns : (string * string) list;  (** TTYPEn, TFORMn *)
+  keys : Structure.entry list;  (** the tile-compression keywords *)
+  ntiles : int;
+  row_bytes : int;
+}
+
+let be_bytes buf v n =
+  for i = n - 1 downto 0 do
+    Buffer.add_char buf (Char.unsafe_chr ((v lsr (8 * i)) land 0xFF))
+  done
+
+let be_float64 buf x =
+  let b = Int64.bits_of_float x in
+  for i = 7 downto 0 do
+    Buffer.add_char buf
+      (Char.unsafe_chr
+         (Int64.to_int
+            (Int64.logand (Int64.shift_right_logical b (8 * i)) 0xFFL)))
+  done
+
+(* [write ~bitpix ~axes ~tile plan be] codes the image whose big-endian
+   elements, in C order, are [be]. *)
+let write ~bitpix ~axes ~tile plan (be : Checksum.bigbytes) =
+  let w = abs bitpix / 8 in
+  let get i = A.unsafe_get be i in
+  let heap = Buffer.create 4096 in
+  let descriptors = ref [] in
+  let quantized = match plan with Quantized _ -> true | Lossless _ -> false in
+  (* ZDITHER0: 1 plus the ones' complement sum of the stored pixels modulo
+     10000, so equal images compress to equal bytes. *)
+  let zdither0 =
+    1
+    + ( Checksum.bigbytes 0 be 0 (A.dim be land lnot 3) |> fun s ->
+        let tail = A.dim be land 3 in
+        if tail = 0 then s
+        else
+          Checksum.string s
+            (String.init 4 (fun j ->
+                 if j < tail then Char.chr (get (A.dim be - tail + j))
+                 else '\000')) )
+      mod 10000
+  in
+  let add bytes =
+    let off = Buffer.length heap in
+    Buffer.add_string heap bytes;
+    (String.length bytes, off)
+  in
+  let ntiles =
+    iter_tiles axes tile (fun number start len ->
+        let n = Array.fold_left ( * ) 1 len in
+        let tile_ints () =
+          let a = ints n in
+          gather axes w start len (fun k off ->
+              let v = ref 0 in
+              for j = 0 to w - 1 do
+                v := (!v lsl 8) lor get (off + j)
+              done;
+              A.unsafe_set a k (Rice.signed w !v));
+          a
+        in
+        let bytes ~shuffle =
+          let b = Bytes.create (n * w) in
+          gather axes w start len (fun k off ->
+              for j = 0 to w - 1 do
+                let at = if shuffle then (j * n) + k else (k * w) + j in
+                Bytes.unsafe_set b at (Char.unsafe_chr (get (off + j)))
+              done);
+          Bytes.unsafe_to_string b
+        in
+        let d =
+          match plan with
+          | Lossless (Rice { block; bytepix }) ->
+              ( add (Rice.encode ~width:bytepix ~block (tile_ints ()) n),
+                (0, 0),
+                0.,
+                0. )
+          | Lossless Gzip_1 ->
+              ( add (Compress_deflate.Gzip.compress (bytes ~shuffle:false)),
+                (0, 0),
+                0.,
+                0. )
+          | Lossless Gzip_2 ->
+              ( add (Compress_deflate.Gzip.compress (bytes ~shuffle:(w > 1))),
+                (0, 0),
+                0.,
+                0. )
+          | Lossless Nocompress -> (add (bytes ~shuffle:false), (0, 0), 0., 0.)
+          | Quantized { q } -> (
+              let f = floats n in
+              gather axes w start len (fun k off ->
+                  let x =
+                    if w = 4 then begin
+                      let v = ref 0 in
+                      for j = 0 to 3 do
+                        v := (!v lsl 8) lor get (off + j)
+                      done;
+                      Int32.float_of_bits (Int32.of_int !v)
+                    end
+                    else begin
+                      let v = ref 0L in
+                      for j = 0 to 7 do
+                        v :=
+                          Int64.logor (Int64.shift_left !v 8)
+                            (Int64.of_int (get (off + j)))
+                      done;
+                      Int64.float_of_bits !v
+                    end
+                  in
+                  A.unsafe_set f k x);
+              let out = ints n in
+              let nx = len.(0) and ny = n / Int.max 1 len.(0) in
+              match
+                Quantize.quantize ~dither:Subtractive_2 ~row:(number + zdither0)
+                  ~q f nx ny out
+              with
+              | Some (scale, zero) ->
+                  ( add (Rice.encode ~width:4 ~block:32 out n),
+                    (0, 0),
+                    scale,
+                    zero )
+              | None ->
+                  (* no noise or a range past int32: the tile stays lossless *)
+                  ( (0, 0),
+                    add (Compress_deflate.Gzip.compress (bytes ~shuffle:false)),
+                    0.,
+                    0. ))
+        in
+        descriptors := d :: !descriptors)
+  in
+  let descriptors = List.rev !descriptors in
+  let wide = Buffer.length heap > 0x7FFFFFFF in
+  let desc buf (count, off) =
+    if wide then (
+      be_bytes buf count 8;
+      be_bytes buf off 8)
+    else (
+      be_bytes buf count 4;
+      be_bytes buf off 4)
+  in
+  let rows = Buffer.create (ntiles * 32) in
+  List.iter
+    (fun (c, g, scale, zero) ->
+      desc rows c;
+      if quantized then begin
+        desc rows g;
+        be_float64 rows scale;
+        be_float64 rows zero
+      end)
+    descriptors;
+  let max_len f =
+    List.fold_left (fun m d -> Int.max m (fst (f d))) 0 descriptors
+  in
+  let p = if wide then "Q" else "P" in
+  let heap_form f = Printf.sprintf "1%sB(%d)" p (max_len f) in
+  let columns =
+    ("COMPRESSED_DATA", heap_form (fun (c, _, _, _) -> c))
+    ::
+    (if quantized then
+       [
+         ("GZIP_COMPRESSED_DATA", heap_form (fun (_, g, _, _) -> g));
+         ("ZSCALE", "1D");
+         ("ZZERO", "1D");
+       ]
+     else [])
+  in
+  let codec =
+    match plan with
+    | Lossless c -> c
+    | Quantized _ -> Rice { block = 32; bytepix = 4 }
+  in
+  let rank = Array.length axes in
+  let keys =
+    Structure.[ bool "ZIMAGE" true; int "ZBITPIX" bitpix; int "ZNAXIS" rank ]
+    @ List.init rank (fun i -> Structure.int (strf "ZNAXIS%d" (i + 1)) axes.(i))
+    @ List.init rank (fun i -> Structure.int (strf "ZTILE%d" (i + 1)) tile.(i))
+    @ [ Structure.string "ZCMPTYPE" (codec_name codec) ]
+    @ (match codec with
+      | Rice { block; bytepix } ->
+          Structure.
+            [
+              string "ZNAME1" "BLOCKSIZE";
+              int "ZVAL1" block;
+              string "ZNAME2" "BYTEPIX";
+              int "ZVAL2" bytepix;
+            ]
+      | _ -> [])
+    @
+    if quantized then
+      Structure.
+        [
+          string "ZQUANTIZ" "SUBTRACTIVE_DITHER_2";
+          int "ZDITHER0" zdither0;
+          int "ZBLANK" Quantize.null_value;
+        ]
+    else []
+  in
+  {
+    rows = Buffer.contents rows;
+    heap = Buffer.contents heap;
+    columns;
+    keys;
+    ntiles;
+    row_bytes =
+      (((if wide then 16 else 8) * if quantized then 2 else 1)
+      + if quantized then 16 else 0);
+  }

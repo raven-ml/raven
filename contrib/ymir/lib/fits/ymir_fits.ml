@@ -62,6 +62,7 @@ module Fits = struct
     let values = Image.values
     let validity = Image.validity
     let hdu = Image.hdu
+    let quantized = Image.quantized
   end
 
   let pp ppf hdu =

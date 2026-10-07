@@ -505,25 +505,132 @@ let slabs (type a b) (t : (a, b) Nx.t) : Hdu.slabs =
   in
   { Hdu.write }
 
+(* The tile shape in file order, from [tiles] in tensor axis order, each
+   at most its axis. *)
+let tile_shape fn shape tiles =
+  if Array.length tiles <> Array.length shape then
+    invalid_arg
+      (strf "Fits.Image.%s: %d tile axes for an image of %d" fn
+         (Array.length tiles) (Array.length shape));
+  Array.iter
+    (fun n ->
+      if n < 1 then invalid_arg (strf "Fits.Image.%s: a tile axis of %d" fn n))
+    tiles;
+  Array.of_list
+    (List.rev
+       (Array.to_list
+          (Array.map2 (fun t n -> Int.max 1 (Int.min t n)) tiles shape)))
+
+(* A tiled image HDU: a BINTABLE of the tiles coded by [plan]. *)
+let tiled header t ~bitpix ~others ~tile plan =
+  let axes = Array.of_list (List.rev (Array.to_list (Nx.shape t))) in
+  let encoded =
+    lazy
+      (let be = encode t in
+       let e = Tiles.write ~bitpix ~axes ~tile plan (Hdu.bigbytes be) in
+       let columns =
+         List.concat
+           (List.mapi
+              (fun i (name, form) ->
+                Structure.
+                  [
+                    string (strf "TTYPE%d" (i + 1)) name;
+                    string (strf "TFORM%d" (i + 1)) form;
+                  ])
+              e.columns)
+       in
+       let prefix =
+         Structure.
+           [
+             string "XTENSION" "BINTABLE";
+             int "BITPIX" 8;
+             int "NAXIS" 2;
+             int "NAXIS1" e.row_bytes;
+             int "NAXIS2" e.ntiles;
+             int "PCOUNT" (String.length e.heap);
+             int "GCOUNT" 1;
+             int "TFIELDS" (List.length e.columns);
+           ]
+       in
+       let owned k =
+         Structure.table_owned k || Structure.tile_owned k
+         || Structure.image_owned k
+         || (bitpix < 0 && k = "BLANK")
+       in
+       let h =
+         Structure.apply ~owned ~prefix
+           ~others:(columns @ e.keys @ others)
+           header
+       in
+       let data = e.rows ^ e.heap in
+       let b = Hdu.host_bytes (String.length data) in
+       let a = Hdu.bigbytes b in
+       String.iteri
+         (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c))
+         data;
+       (h, Hdu.host_store b))
+  in
+  Hdu.constructed_lazy encoded
+
+let check_shape fn t =
+  if Array.length (Nx.shape t) = 0 then
+    invalid_arg
+      (strf "Fits.Image.%s: a scalar is no image; reshape it to [|1|]" fn)
+
 let hdu ?tiles header (t : ('a, 'b) Nx.t) =
   let bitpix, bzero = format_of (Nx.dtype t) in
-  (match tiles with
-  | Some _ -> invalid_arg "Fits.Image.hdu: tiles are not written yet"
-  | None -> ());
+  check_shape "hdu" t;
   let shape = Nx.shape t in
-  if Array.length shape = 0 then
-    invalid_arg "Fits.Image.hdu: a scalar is no image; reshape it to [|1|]";
-  let axes = Array.of_list (List.rev (Array.to_list shape)) in
   let others =
     match bzero with
     | None -> []
     | Some z -> [ Structure.decimal "BZERO" z; Structure.int "BSCALE" 1 ]
   in
-  let owned k = Structure.image_owned k || (bitpix < 0 && k = "BLANK") in
-  let header =
-    Structure.apply ~owned
-      ~prefix:(Structure.image_prefix ~primary:false ~bitpix ~axes)
-      ~others header
+  match tiles with
+  | Some tiles ->
+      let tile = tile_shape "hdu" shape tiles in
+      (* Rice for integers up to 32 bits, GZIP_2 otherwise, lossless. *)
+      let codec =
+        match bitpix with
+        | 8 | 16 | 32 -> Tiles.Rice { block = 32; bytepix = bitpix / 8 }
+        | _ -> Tiles.Gzip_2
+      in
+      tiled header t ~bitpix ~others ~tile (Lossless codec)
+  | None ->
+      let axes = Array.of_list (List.rev (Array.to_list shape)) in
+      let owned k = Structure.image_owned k || (bitpix < 0 && k = "BLANK") in
+      let header =
+        Structure.apply ~owned
+          ~prefix:(Structure.image_prefix ~primary:false ~bitpix ~axes)
+          ~others header
+      in
+      let data = lazy (Hdu.host_store (encode t)) in
+      Hdu.constructed ~slabs:(slabs t) header data
+
+let quantized (type b) ?tiles q header (t : (float, b) Nx.t) =
+  if not (Float.is_finite q && q > 0.) then
+    invalid_arg (strf "Fits.Image.quantized: %g is not a positive step" q);
+  check_shape "quantized" t;
+  let bitpix =
+    match Nx.dtype t with
+    | Float32 -> -32
+    | Float64 -> -64
+    | d ->
+        invalid_arg
+          (strf
+             "Fits.Image.quantized: FITS quantizes float32 and float64; cast \
+              the %s image to float32"
+             (Nx_dtype.to_string d))
   in
-  let data = lazy (Hdu.host_store (encode t)) in
-  Hdu.constructed ~slabs:(slabs t) header data
+  let shape = Nx.shape t in
+  let tiles =
+    match tiles with
+    | Some t -> t
+    | None ->
+        Array.mapi
+          (fun i n -> if i = Array.length shape - 1 then n else 1)
+          shape
+  in
+  tiled header t ~bitpix ~others:[]
+    ~tile:(tile_shape "quantized" shape tiles)
+    (Quantized { q })

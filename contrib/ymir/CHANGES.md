@@ -15,6 +15,9 @@ All notable changes to Ymir are documented in this file.
 - `Fits.Image` reads tile-compressed images (Rice, gzip, uncompressed and
   quantized tiles under every dither) as it reads plain ones, decoding only
   the tiles a window meets; HCOMPRESS and PLIO tiles are an `Error` naming
+  funpack. `Fits.Image.hdu ~tiles` writes them losslessly, and
+  `Fits.Image.quantized` writes floats Rice-coded in steps of each tile's
+  noise, with cfitsio's quantizer and a dither seed derived from the pixels.
   funpack.
 - `Ymir.Frame` names the fixed celestial frames, ICRS, FK5 at J2000, Galactic,
   the J2000 ecliptic and supergalactic, with one value per frame type.

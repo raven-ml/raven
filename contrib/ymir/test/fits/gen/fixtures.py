@@ -14,6 +14,7 @@ compared with the committed ones.
 """
 
 import filecmp
+from fractions import Fraction
 import hashlib
 import pathlib
 import sys
@@ -100,6 +101,51 @@ def write(path, hdus):
     hdul.writeto(path, overwrite=True)
 
 
+def r32(x):
+    """The exact rational [x] rounded once to float32, ties to even."""
+    y = np.float32(float(x))
+    cands = [np.nextafter(y, np.float32(-np.inf)), y, np.nextafter(y, np.float32(np.inf))]
+    return float(min(cands, key=lambda c: (abs(Fraction(float(c)) - x), int(c.view(np.uint32)) & 1)))
+
+
+def noise(row):
+    """cfitsio's FnNoise5_float on one row of at least 9 pixels without NaN,
+    each float operation rounded once to float32 as the C source states
+    (astropy's arm64 build fuses some of them), and the minimum of the
+    three estimates that fits_quantize_float takes."""
+    v = [Fraction(float(x)) for x in row]
+    d2, d3, d5 = [], [], []
+    for i in range(8, len(v)):
+        v1, v2, v3, v4, v5, v6, v7, v8, v9 = v[i - 8 : i + 1]
+        if not (v5 == v6 == v7):
+            d2.append(abs(r32(v5 - v7)))
+        if not (v3 == v4 == v5 == v6 == v7):
+            d3.append(abs(r32(r32(2 * v5 - v3) - v7)))
+            e = r32(r32(r32(r32(r32(6 * v5) - r32(4 * v3)) - r32(4 * v7)) + v1) + v9)
+            d5.append(abs(e))
+    # The 2nd order median runs over as many entries as the 3rd order's,
+    # the ones past its own count being zero.
+    d2 += [0.0] * (len(d3) - len(d2))
+    med = lambda a: sorted(a)[(len(a) - 1) // 2]
+    n2, n3, n5 = 1.0483579 * med(d2), 0.6052697 * med(d3), 0.1772048 * med(d5)
+    sd = n3
+    if n2 != 0 and n2 < sd:
+        sd = n2
+    if n5 != 0 and n5 < sd:
+        sd = n5
+    return sd
+
+
+def ones_complement(data):
+    """The ones' complement sum of big-endian 32-bit words, zero-padded."""
+    data = data + b"\0" * (-len(data) % 4)
+    words = np.frombuffer(data, dtype=">u4").astype(np.uint64)
+    s = int(words.sum())
+    while s >> 32:
+        s = (s & 0xFFFFFFFF) + (s >> 32)
+    return s
+
+
 def digest(path):
     """The BLAKE2b-256 digest of the file's headers as stored, records, END
     and padding, in file order."""
@@ -174,9 +220,25 @@ def tiles(path):
          quantize_method=1, dither_seed=5)
     hdus.append(fits.CompImageHDU(pattern(2 * 5 * 7, np.int16).reshape((2, 5, 7)), name="CUBE",
                                   compression_type="RICE_1", tile_shape=(1, 2, 3)))
+    # Pixels and astropy's quantization of them, by rows, with the dither
+    # seed ymir derives from them: 1 plus their ones' complement sum
+    # modulo 10000.
+    src = (100 + 5 * rng.standard_normal(n)).astype(np.float32)
+    src[[7, 90]] = 0.0
+    hdus.append(fits.ImageHDU(src.reshape(shape), name="QSRC"))
+    hdus.append(fits.CompImageHDU(src.reshape(shape), name="QREF", compression_type="RICE_1",
+                                  tile_shape=(1, 13), quantize_level=16.0, quantize_method=2,
+                                  dither_seed=1 + ones_complement(src.astype(">f4").tobytes()) % 10000))
     write(path, hdus)
     with fits.open(path) as hdul:
         values(path.with_suffix(".values"), hdul, scaled=False)
+    with fits.open(path, disable_image_compression=True) as hdul:
+        zscale = [noise(row) / 16.0 for row in src.reshape(shape)]
+        theirs = hdul["QREF"].data["ZSCALE"]
+        same = [float(a) == b for a, b in zip(theirs, zscale)]
+        with open(path.with_suffix(".values"), "a") as f:
+            f.write(" ".join(["QREF/zscale"] + [text(x) for x in zscale]) + "\n")
+            f.write(" ".join(["QREF/same"] + ["1" if x else "0" for x in same]) + "\n")
 
 
 def write_all(directory):

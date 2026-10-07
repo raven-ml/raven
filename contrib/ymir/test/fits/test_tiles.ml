@@ -158,13 +158,13 @@ let hostile =
   prop "a changed byte gives values or an Error"
     Gen.(pair (int_range 0 (106560 - 1)) (int_range 0 255))
     (fun (pos, byte) ->
-      let b = Bytes.of_string (Lazy.force raw) in
-      Bytes.set b pos (Char.chr byte);
-      let t =
-        Nx.create Nx.uint8
-          [| Bytes.length b |]
-          (Array.init (Bytes.length b) (fun i -> Char.code (Bytes.get b i)))
+      let raw = Lazy.force raw in
+      let a =
+        Bigarray.(Array1.create int8_unsigned c_layout (String.length raw))
       in
+      String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) raw;
+      Bigarray.Array1.set a pos byte;
+      let t = Nx.of_bigarray (Bigarray.genarray_of_array1 a) in
       match Fits.of_bytes ~name:"x" t with
       | Error _ -> collect "read fails"
       | Ok hdus ->
@@ -175,6 +175,145 @@ let hostile =
               | Error _ -> collect "error")
             hdus)
 
+(* Writing *)
+
+let quantizer () =
+  (* ymir quantizes as cfitsio's C source states: each tile's ZSCALE is the
+     reference noise (gen/fixtures.py, exact arithmetic), and where
+     astropy's build computes the same noise, ymir's tiles decode to
+     astropy's floats, so the zero point, dither and rounding agree. *)
+  let src = require_ok (I.raw Nx.float32 (hdu "QSRC")) in
+  let ours = I.quantized 16. H.empty src in
+  equal (result int string)
+    (H.get V.int "ZDITHER0" (Fits.header (hdu "QREF")))
+    (H.get V.int "ZDITHER0" (Fits.header ours));
+  let bytes = Nx.to_array (Fits.data ours) in
+  let zscale r =
+    let b = ref 0L in
+    for j = 0 to 7 do
+      b :=
+        Int64.logor (Int64.shift_left !b 8)
+          (Int64.of_int bytes.((r * 32) + 16 + j))
+    done;
+    Int64.float_of_bits !b
+  in
+  equal (array float_exact)
+    (Array.map float_of_string (expected "QREF/zscale"))
+    (Array.init 10 zscale);
+  let back = Nx.to_array (require_ok (I.values Nx.float32 ours)) in
+  let theirs = Array.map float_of_string (expected "QREF") in
+  let same = expected "QREF/same" in
+  Array.iteri
+    (fun r s ->
+      if s = "1" then
+        equal (array float_exact)
+          (Array.sub theirs (r * 13) 13)
+          (Array.sub back (r * 13) 13))
+    same
+
+let quantized_nan () =
+  let t =
+    Nx.create Nx.float32 [| 2; 10 |]
+      (Array.init 20 (fun i ->
+           if i = 3 then Float.nan else Float.of_int (i * i)))
+  in
+  let h = I.quantized 4. H.empty t in
+  equal
+    (option (array bool))
+    (Some (Array.init 20 (fun i -> i <> 3)))
+    (Option.map
+       (fun m -> Nx.to_array (Nx.reshape [| 20 |] m))
+       (require_ok (I.validity h)));
+  (* A tile without noise stays lossless. *)
+  let flat = Nx.full Nx.float32 [| 3; 12 |] 2.5 in
+  equal (array float_exact) (Nx.to_array flat)
+    (Nx.to_array
+       (require_ok (I.values Nx.float32 (I.quantized 4. H.empty flat))))
+
+let lossless =
+  let law (type a b) (dtype : (a, b) Nx.dtype) =
+    prop
+      (Nx_dtype.to_string dtype ^ " tiles read back bit for bit")
+      Gen.(
+        triple
+          (array ~size:(int_range 1 3) (int_range 0 6))
+          (array ~size:(int_range 3 3) (int_range 1 4))
+          (list ~size:(int_range 1 40) int64))
+      (fun (shape, tiles, bits) ->
+        let n = Array.fold_left ( * ) 1 shape in
+        let w = Nx_dtype.itemsize dtype in
+        let bits = Array.of_list bits in
+        let byte i =
+          Int64.(
+            to_int
+              (logand
+                 (shift_right_logical
+                    bits.(i / 8 mod Array.length bits)
+                    (8 * (i mod 8)))
+                 0xFFL))
+        in
+        let u = Nx.init Nx.uint8 [| n * w |] (fun i -> byte i.(0)) in
+        let t =
+          Nx.reshape shape
+            (if w = 1 then Nx.bitcast dtype u
+             else Nx.bitcast dtype (Nx.reshape [| n; w |] u))
+        in
+        let tiles = Array.sub tiles 0 (Array.length shape) in
+        cover "partial tiles"
+          (Array.exists2 (fun t s -> s mod t <> 0) tiles shape);
+        let r = require_ok (I.raw dtype (I.hdu ~tiles H.empty t)) in
+        let bytes x = Nx.to_array (Nx.bitcast Nx.uint8 (Nx.contiguous x)) in
+        equal (array int) (Nx.shape t) (Nx.shape r);
+        equal (array int) (bytes t) (bytes r))
+  in
+  [
+    law Nx.uint8;
+    law Nx.int8;
+    law Nx.int16;
+    law Nx.uint16;
+    law Nx.int32;
+    law Nx.uint32;
+    law Nx.int64;
+    law Nx.uint64;
+    law Nx.float32;
+    law Nx.float64;
+  ]
+
+let written () =
+  (* Through a file: checksums verify and every codec reads back. *)
+  let t =
+    Nx.init Nx.int16 [| 7; 11 |] (fun i -> (i.(0) * 1000) - (i.(1) * 37))
+  in
+  let f =
+    Nx.init Nx.float32 [| 7; 11 |] (fun i ->
+        Float.of_int ((i.(0) * 3) + i.(1)) *. 0.25)
+  in
+  let path = temp_file ~suffix:".fits" () in
+  require_ok
+    (Fits.write path
+       [
+         I.hdu ~tiles:[| 2; 3 |] H.(empty |> set V.string "EXTNAME" "INT") t;
+         I.hdu ~tiles:[| 7; 4 |]
+           H.(
+             empty
+             |> set V.string "EXTNAME" "FLT"
+             |> set V.string "BUNIT" "MJy/sr")
+           f;
+         I.quantized 8. H.(empty |> set V.string "EXTNAME" "Q") f;
+       ]);
+  let back = require_ok (Fits.read path) in
+  equal int 4 (List.length back);
+  List.iter (fun h -> equal (result unit string) (Ok ()) (Fits.verify h)) back;
+  let get n = require_ok (Fits.get n back) in
+  equal (array int) (Nx.to_array t)
+    (Nx.to_array (require_ok (I.raw Nx.int16 (get "INT"))));
+  equal (array float_exact) (Nx.to_array f)
+    (Nx.to_array (require_ok (I.raw Nx.float32 (get "FLT"))));
+  equal (result string string) (Ok "MJy/sr")
+    (H.get V.string "BUNIT" (Fits.header (get "FLT")));
+  let q = require_ok (I.values Nx.float32 (get "Q")) in
+  less float_exact ~than:0.25 (Nx.item [] (Nx.max (Nx.abs (Nx.sub q f))))
+
 let () =
   exit
   @@ run "Fits tiles"
@@ -184,4 +323,11 @@ let () =
          test "validity" validity;
          group "windows" windows;
          hostile;
+         group "writing"
+           ([
+              test "the quantizer is cfitsio's" quantizer;
+              test "undefined and flat tiles" quantized_nan;
+              test "through a file" written;
+            ]
+           @ lossless);
        ]

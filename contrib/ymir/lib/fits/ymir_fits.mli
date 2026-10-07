@@ -320,12 +320,28 @@ module Fits : sig
         NaN), or [None] if none is. *)
 
     val hdu : ?tiles:int array -> Header.t -> ('a, 'b) Nx.t -> hdu
-    (** [hdu h t] is [t] as an image HDU with [h]'s cards that are not
-        structural ({!write}); [BLANK] is dropped from a float image. It reads
+    (** [hdu ~tiles h t] is [t] as an image HDU with [h]'s cards that are not
+        structural ({!write}); [BLANK] is dropped from a float image. With
+        [tiles], a tile shape in tensor axis order, it is tile-compressed:
+        Rice-coded for integers up to 32 bits and GZIP_2 otherwise. It reads
         back bit for bit, NaN payloads included.
 
         Raises [Invalid_argument] if [t] is a scalar or of a dtype FITS images
         do not hold (bool, bit, complex, float16, bfloat16, the float8s, int4,
-        uint4), naming the cast that stores it. *)
+        uint4), naming the cast that stores it, or if [tiles] is not of [t]'s
+        rank with positive sizes. *)
+
+    val quantized :
+      ?tiles:int array -> float -> Header.t -> (float, 'b) Nx.t -> hdu
+    (** [quantized ~tiles q h t] stores [t] Rice-coded in integer steps of each
+        tile's noise divided by [q], in tiles of one row unless [tiles],
+        dithered by SUBTRACTIVE_DITHER_2, which keeps zeros exact; NaN pixels
+        are undefined. The noise estimate, quantizer and rounding are cfitsio's,
+        and the dither seed is computed from the pixels, so equal images give
+        equal bytes. A tile with no noise or a range past int32 is stored
+        losslessly.
+
+        Raises [Invalid_argument] if [q] is not positive and finite, if [t] is
+        not float32 or float64, or as {!hdu} does. *)
   end
 end
