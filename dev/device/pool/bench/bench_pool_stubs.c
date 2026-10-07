@@ -18,38 +18,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <time.h>
-#endif
-
 #include "nx_pool.h"
-
-/* OCaml's standard library has no monotonic clock. */
-static uint64_t now_ns(void) {
-#if defined(_WIN32)
-  LARGE_INTEGER count, frequency;
-  QueryPerformanceCounter(&count);
-  QueryPerformanceFrequency(&frequency);
-  uint64_t c = (uint64_t)count.QuadPart, f = (uint64_t)frequency.QuadPart;
-  return c / f * 1000000000u + c % f * 1000000000u / f;
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
-#endif
-}
-
-value pool_bench_cores(value unit) {
-  (void)unit;
-  return Val_int(nx_pool_cores());
-}
-
-value pool_bench_performance_cores(value unit) {
-  (void)unit;
-  return Val_int(nx_pool_performance_cores());
-}
+#include "pool_probe.h"
 
 /* Empty jobs */
 
@@ -70,7 +40,7 @@ value pool_bench_empty(value v_threads, value v_total, value v_chunks) {
 /* [busy gap] keeps the calling thread busy for [gap] nanoseconds, as a
    caller between two jobs. */
 value pool_bench_busy(value v_gap) {
-  uint64_t end = now_ns() + (uint64_t)Long_val(v_gap);
+  int64_t end = now_ns() + Long_val(v_gap);
   while (now_ns() < end) {
   }
   return Val_unit;
@@ -137,7 +107,7 @@ value pool_bench_compute(value v_threads, value v_total, value v_chunks,
    and yielding the core between reads after 2 us, so that a competing
    load does not starve them; they live for one row. */
 
-static const uint64_t floor_busy_ns = 2000;
+static const int64_t floor_busy_ns = 2000;
 
 static struct {
   _Alignas(128) _Atomic uint64_t generation;
@@ -169,7 +139,8 @@ static void floor_share(int i) {
 /* Waits for [*word] to leave [value] (or [*stop] to be set), spinning,
    then yielding between reads, and returns the last value read. */
 static uint64_t floor_wait(_Atomic uint64_t *word, uint64_t value) {
-  uint64_t v, start = now_ns();
+  uint64_t v;
+  int64_t start = now_ns();
   while ((v = atomic_load_explicit(word, memory_order_acquire)) == value &&
          !atomic_load_explicit(&floor_job.stop, memory_order_relaxed)) {
     relax();

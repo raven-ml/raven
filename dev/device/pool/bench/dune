@@ -2,12 +2,13 @@
 ; library of its own: a static link lists a library's archives after the
 ; executable's objects, dependents before dependencies, so GNU ld finds the
 ; pool's symbols the C asks for. Stubs of the executable itself would come
-; after the pool's archive, which GNU ld would already have passed.
+; after the pool's archive, which GNU ld would already have passed. The
+; suites' support gives it the clock and the host's cores.
 
 (library
  (name device_pool_bench_probe)
  (modules)
- (libraries device_pool)
+ (libraries device_pool pool_probe)
  (foreign_stubs
   (language c)
   (names bench_pool_stubs)))
@@ -15,7 +16,7 @@
 (executable
  (name bench_pool)
  (modules bench_pool)
- (libraries device_pool_bench_probe thumper unix))
+ (libraries device_pool_bench_probe pool_probe thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly.

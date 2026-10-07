@@ -78,8 +78,6 @@ let load_stop pids =
 
 (* Jobs *)
 
-external cores : unit -> int = "pool_bench_cores"
-external performance_cores : unit -> int = "pool_bench_performance_cores"
 external empty : int -> int -> int -> unit = "pool_bench_empty" [@@noalloc]
 external busy : int -> unit = "pool_bench_busy" [@@noalloc]
 
@@ -93,8 +91,8 @@ external floor_empty : int -> int -> unit = "pool_bench_floor_empty" [@@noalloc]
 external floor_compute : int -> int -> unit = "pool_bench_floor_compute"
 [@@noalloc]
 
-let cores = cores ()
-let fast = performance_cores ()
+let cores = Pool_probe.cores ()
+let fast = Pool_probe.performance_cores ()
 let us = 1_000
 let units = 1 lsl 16
 let chunks_per_thread = 8
