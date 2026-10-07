@@ -16,7 +16,7 @@
    The copy rows move 4 KiB and 64 KiB, below and above the size from which a
    copy releases the runtime, a piece at a time. *)
 
-open Device_pci
+module Window = Device_pci.Window
 
 let buffer = Device_pci_support.memory
 
