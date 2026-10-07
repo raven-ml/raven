@@ -102,16 +102,15 @@ let banks =
           equal (list S.bank) expected
             (Launch.banks
                (S.launch (S.gpu ~compute_class:cls ()) (S.kernel ~banks ()))));
-      xfail ~reason:"Launch.banks moves bank 0 first"
-        (test "a kernel's bank 0 keeps its place" (fun () ->
-             let banks =
-               [
-                 { Cubin.index = 1; offset = 0; bytes = 16 };
-                 { index = 0; offset = 0x100; bytes = 16 };
-               ]
-             in
-             equal (list S.bank) banks
-               (Launch.banks (S.launch (S.gpu ()) (S.kernel ~banks ())))));
+      test "a kernel's bank 0 keeps its place" (fun () ->
+          let banks =
+            [
+              { Cubin.index = 1; offset = 0; bytes = 16 };
+              { index = 0; offset = 0x100; bytes = 16 };
+            ]
+          in
+          equal (list S.bank) banks
+            (Launch.banks (S.launch (S.gpu ()) (S.kernel ~banks ()))));
     ]
 
 (* The driver's parameters *)

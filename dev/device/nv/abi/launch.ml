@@ -72,14 +72,9 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
         }
 
 let banks l =
-  let add banks (b : Cubin.bank) =
-    if List.exists (fun (x : Cubin.bank) -> x.index = b.index) banks then
-      List.map
-        (fun (x : Cubin.bank) -> if x.index = b.index then b else x)
-        banks
-    else banks @ [ b ]
-  in
-  List.fold_left add [ default_bank0 ] l.kernel.banks
+  let banks = l.kernel.banks in
+  if List.exists (fun (b : Cubin.bank) -> b.index = 0) banks then banks
+  else default_bank0 :: banks
 
 let driver_parameters l =
   let p =
