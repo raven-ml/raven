@@ -61,8 +61,8 @@ let traces f =
   let (), spans = profiled f in
   List.length (List.filter (String.equal "rune.jit: trace") spans)
 
-(* [loaded_on d f] is [f ()] and the number of programs loaded on [d]
-   meanwhile. *)
+(* [loaded_on d f] is [f ()] and the number of kernels loaded on [d] meanwhile:
+   the programs of a host's batches, which call the kernels, are none. *)
 let loaded_on d f =
   let p = Nx_device.Profile.start () in
   match f () with
@@ -73,6 +73,7 @@ let loaded_on d f =
             | Nx_device.Profile.Load l ->
                 Nx_device.equal (Nx.Device.memory d)
                   (Nx_device.Program.device l.program)
+                && Nx_device.Program.name l.program <> "host_batch"
             | _ -> false)
           (Nx_device.Profile.stop p)
       in

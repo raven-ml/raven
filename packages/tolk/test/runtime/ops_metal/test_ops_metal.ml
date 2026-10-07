@@ -22,11 +22,11 @@ let host_target =
 (* The host, and METAL of the GPU family [arch], with or without a residency
    set. *)
 let recorded_devices ~arch ~residency_set = function
-  | "CPU" -> { Hcq2.target = host_target; queues = None }
+  | "CPU" -> { Hcq2.target = host_target; work = Calls }
   | _ ->
       {
         Hcq2.target = { host_target with device = "METAL"; arch };
-        queues = Some (Ops_metal.queues ~host:"CPU" ~arch ~residency_set);
+        work = Queues (Ops_metal.queues ~host:"CPU" ~arch ~residency_set);
       }
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a

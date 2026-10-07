@@ -181,7 +181,7 @@ and counting (g : Ops_amd.gpu) =
 
 (* The host, and AMD, whose queues address the host's memory. *)
 let gpu_devices (g : Ops_amd.gpu) = function
-  | "CPU" -> { Hcq2.target = host_target; queues = None }
+  | "CPU" -> { Hcq2.target = host_target; work = Calls }
   | _ ->
       let m, n, s = g.target in
       {
@@ -191,8 +191,8 @@ let gpu_devices (g : Ops_amd.gpu) = function
             device = "AMD";
             arch = Printf.sprintf "gfx%d%x%x" m n s;
           };
-        queues =
-          Some (Ops_amd.queues ~host:"CPU" ~reaches:(String.equal "CPU") g);
+        work =
+          Queues (Ops_amd.queues ~host:"CPU" ~reaches:(String.equal "CPU") g);
       }
 
 let recorded_devices name = gpu_devices (gpu name)

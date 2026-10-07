@@ -209,8 +209,8 @@ let recorded_devices () =
           reaches = (fun _ -> true);
         }
       in
-      { Hcq2.target = recorded_target; queues = Some queues }
-  | _ -> { Hcq2.target = recorded_target; queues = None }
+      { Hcq2.target = recorded_target; work = Queues queues }
+  | _ -> { Hcq2.target = recorded_target; work = Calls }
 
 let lower ?search ?(devices = recorded_devices ()) case =
   plain (fun () ->

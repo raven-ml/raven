@@ -167,12 +167,22 @@ type queues = {
 }
 (** The type for the command queues of a device, as a compiler sees them. *)
 
+(** The type for how a device runs its calls. *)
+type work =
+  | Queues of queues
+      (** From command queues, which batches of its calls submit. *)
+  | Programs of string
+      (** As host programs that the host named runs in this process: a run of
+          its calls, with the ranges and back edges around them, is one host
+          program of that host, a {e host batch}. *)
+  | Calls
+      (** One by one, outside batches, such as the disk's copies or the programs
+          of another machine's host. *)
+
 type device = {
   target : Helpers.Target.t;
       (** What the device's programs are compiled for. *)
-  queues : queues option;
-      (** Its command queues, or [None] for a device that runs no work from
-          queues: its calls are run one by one, outside batches. *)
+  work : work;  (** How it runs its calls. *)
 }
 (** The type for devices, as a compiler sees them. The compiler never opens a
     device: the engine describes each device a schedule names with a [device].
@@ -342,12 +352,35 @@ val sched_batches :
     its first range outermost) whose calls are all enqueued, on devices of one
     kind, belongs to their batch: each queue its calls run on has a loop
     ({!Op.End} of an {!Op.Linear}) around its commands of one trip, which it
-    repeats for each value of the range. A range whose calls none is enqueued
-    stays a range, with each of its ranges [r] replaced in its calls by
-    [range_value r], and the engine runs it once per trip. So does a back edge
-    of calls ({!Ops.backedge}), whose flag the engine reads between trips, and a
-    range around one: their calls are batched trip by trip, and a back edge's
-    own calls are one submission per trip.
+    repeats for each value of the range. A back edge of such calls
+    ({!Ops.backedge}), whose flag the engine reads between trips, a range around
+    one, and a range around a call no batch runs, such as a copy on the host or
+    a call of a device of {!Calls}, stay loops of the engine, with each of their
+    ranges [r] replaced in their calls by [range_value r]: their calls are
+    batched trip by trip, and a back edge's own calls are one submission per
+    trip.
+
+    Each run of consecutive programs of one host ({!Programs}), each buffer of a
+    program on one device, is one {e host batch}, with the ranges and back edges
+    around them: a host program of that host that calls each program through
+    [Nx_device.Program.entry], in order, a range a loop of it. A back edge of
+    such calls is a host batch of its own, a loop of its program that stops
+    after a trip that leaves the flag false, at most the range's trips, inside a
+    back edge of the engine of one trip (range [0]) and the same flag, which
+    reads it before the first; the flag is a byte of storage the schedule holds.
+    A range or a back edge around a back edge, whose flag only the engine reads
+    before each trip, stays the engine's. Each call writes its buffers'
+    addresses and its values ({!Realize.get_call_var_uops}) into volatile
+    placeholders of the host tagged ["host_call"], of its own, before it calls,
+    those known at link written then ({!patch}); a split program
+    ({!Ops.kernel_info.split}) writes its split too, whose blocks are
+    [max 1 (min extent (min (blocks_per_worker * w) (ops / block_ops)))] for the
+    program's iterations [extent], its operations [ops] and the host's workers
+    [w] ({!host_workers}). A program's address is a word of the host tagged
+    [("program", binary, name)]. A host batch is a call, with an {!Ops.hcq_info}
+    of the host alone and no submission, of a sink of its calls, whose arguments
+    are the storage of its flag. A copy on the host, and a call of a device of
+    {!Calls}, stays a call of its own.
 
     A call's position counts each run of the calls before it in the batch, a
     range's calls once per trip. A queue's commands and each command's arguments
@@ -406,6 +439,21 @@ val sched_batches :
     on others, or on devices of two kinds, or with {!Over_capacity}'s reason if
     one call's submission is more than its queue holds. *)
 
+val block_ops : int
+(** [block_ops] is the operations a block of a split program does at least, in a
+    host batch and in a host's launch: a block repays waking the host's threads
+    and joining them once it does that many. *)
+
+val blocks_per_worker : int
+(** [blocks_per_worker] is the most blocks of a split program a host thread
+    runs, so that the threads that claim blocks as they finish balance fast and
+    slow cores. *)
+
+val host_workers : Ops.t
+(** [host_workers] is the number of the host's threads a split call runs on
+    ([Nx_device.Program.workers]): a variable of a host batch's program, which
+    the engine binds at link. *)
+
 val stages : devices:(string -> device) -> Ops.t -> bool
 (** [stages ~devices e] is [true] iff the range around calls [e] ({!Op.End})
     runs as a loop inside one batch ({!sched_batches}), each run of it one
@@ -424,14 +472,15 @@ val stages : devices:(string -> device) -> Ops.t -> bool
 
 val runs : devices:(string -> device) -> Ops.t -> bool
 (** [runs ~devices e] is [true] iff a loop around calls [e] ({!Op.End} or
-    {!Op.Backedge}) runs at all: as one batch ({!stages}), or trip by trip with
-    its calls all on the host, or all enqueued on devices of one kind. A loop
-    whose calls run on devices with queues and on the host, or on devices of two
-    kinds, does not. *)
+    {!Op.Backedge}) runs at all: as one batch of a queue ({!stages}) or of a
+    host, or trip by trip with none of its calls enqueued, or all enqueued on
+    devices of one kind. A loop whose calls run on devices with queues and on
+    others, or on devices of two kinds, does not. *)
 
 val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 (** [lower_call ~devices batch] is the batch [batch] as a call of its host
-    program, a kernel of the host of its first device ({!queues.host}):
+    program, a kernel of the host of its first device ({!queues.host}), or of
+    the host of a host batch:
     - each submission is encoded by its device's {!commands}, and the fence
       becomes the stores it makes. A loop around commands ({!Op.End} of an
       {!Op.Linear}) repeats their words for each trip of its range, each trip's
@@ -509,6 +558,12 @@ val compile_linear :
       reads the flag's one boolean before each trip, once the work before has
       completed, and runs the calls with [range_value r]'s variable bound to the
       trip while it holds, at most [r]'s trips.
+
+    {b Running a host batch}, each time: it waits for the work that touched the
+    memory it reaches to complete, writes the address table as a batch does, and
+    calls its host program, with {!host_workers} bound to the host's workers.
+    Nothing it runs queues work, and its calls are spans of a profile as calls
+    of their programs are ([Nx_device.Program.entry]).
 
     {b Linking a batch}, once:
     + Each argument is a placeholder, which the engine allocates on its device:

@@ -223,7 +223,8 @@ let shared : t =
           let cond = nth x 2 in
           no_arg x && shape cond = [] && not (is_invalid (base cond)));
       (* Around calls, a loop's range bounds its trips, a range of one trip
-         being its value [0], and its condition is storage of one element. *)
+         being its value [0], and its condition is storage of one element, or,
+         in a host batch's program, a value read from one. *)
       check
         (pat [ Op.Backedge ] ~dtype:[ Dtype.Void ] ~name:"x"
            ~src:
@@ -239,7 +240,8 @@ let shared : t =
           && Dtype.is_int (dtype r)
           && (if op r = Op.Const then arg r = Const (`Int Bigint.zero)
               else Axis_type.equal (axis_type r) Axis_type.Loop)
-          && max_numel (buf_uop (nth x 2)) = 1);
+          && (addrspace (nth x 2) = Some Dtype.Alu
+             || max_numel (buf_uop (nth x 2)) = 1));
       accept (pat [ Op.Param ] ~src:[]);
       check (pat [ Op.Buffer ] ~src:[] ~name:"x") "x" (fun x ->
           List.mem (addrspace x) [ Some Dtype.Reg; Some Dtype.Local ]);

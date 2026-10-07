@@ -21,12 +21,12 @@ let host_target =
 
 (* The host, and CUDA on sm_89, which reaches the host's memory. *)
 let recorded_devices = function
-  | "CPU" -> { Hcq2.target = host_target; queues = None }
+  | "CPU" -> { Hcq2.target = host_target; work = Calls }
   | _ ->
       {
         Hcq2.target = { host_target with device = "CUDA"; arch = "sm_89" };
-        queues =
-          Some (Ops_cuda.queues ~host:"CPU" ~reaches:(fun d -> d = "CPU"));
+        work =
+          Queues (Ops_cuda.queues ~host:"CPU" ~reaches:(fun d -> d = "CPU"));
       }
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a

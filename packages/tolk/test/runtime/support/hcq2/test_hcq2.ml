@@ -111,7 +111,7 @@ let kind name =
 let kinds ?(copy_queue = true) ?(submission = Hcq2.Buffered) () =
   let events = Null_queue.events () in
   fun name ->
-    if name = "CPU" then { Hcq2.target = recorded_target; queues = None }
+    if name = "CPU" then { Hcq2.target = recorded_target; work = Calls }
     else
       let queues =
         {
@@ -124,7 +124,7 @@ let kinds ?(copy_queue = true) ?(submission = Hcq2.Buffered) () =
       in
       {
         Hcq2.target = { recorded_target with device = kind name };
-        queues = Some queues;
+        work = Queues queues;
       }
 
 let sched ?(profile = Hcq2.Unstamped) ?copy_queue ?submission calls =
@@ -139,7 +139,7 @@ let sched ?(profile = Hcq2.Unstamped) ?copy_queue ?submission calls =
 let recorded_devices ?(copy_queue = true) () =
   let events = Null_queue.events () in
   function
-  | "CPU" -> { Hcq2.target = recorded_target; queues = None }
+  | "CPU" -> { Hcq2.target = recorded_target; work = Calls }
   | _ ->
       let queues =
         {
@@ -150,7 +150,7 @@ let recorded_devices ?(copy_queue = true) () =
           reaches = (fun _ -> true);
         }
       in
-      { Hcq2.target = recorded_target; queues = Some queues }
+      { Hcq2.target = recorded_target; work = Queues queues }
 
 let recorded_graph file actual =
   test file (fun () ->
@@ -1178,7 +1178,7 @@ let compiling =
          queues cannot reach" (fun () ->
           let events = Null_queue.events () in
           let devices = function
-            | "CPU" -> { Hcq2.target = recorded_target; queues = None }
+            | "CPU" -> { Hcq2.target = recorded_target; work = Calls }
             | _ ->
                 let queues =
                   {
@@ -1189,7 +1189,7 @@ let compiling =
                     reaches = (fun d -> d <> "CPU:2");
                   }
                 in
-                { Hcq2.target = recorded_target; queues = Some queues }
+                { Hcq2.target = recorded_target; work = Queues queues }
           in
           let big = 48 * 1024 * 1024 in
           let src = Ops.new_buffer (Single "CPU:1") big Float32
@@ -1281,7 +1281,7 @@ let run_calls ?(devices = Null_device.devices ()) ?(profile = Hcq2.Unstamped)
 (* The NULL devices as devices without queues, whose calls run one by one. *)
 let one_by_one name =
   let d = Null_device.devices () name in
-  { d with compiler = { d.compiler with queues = None } }
+  { d with compiler = { d.compiler with work = Calls } }
 
 (* Each storage node's values after running [calls] batched on the NULL device's
    queues, and one by one, from the same values. *)
@@ -1708,9 +1708,9 @@ let probing probe =
   let base = kinds () in
   fun name ->
     let d = base name in
-    match d.queues with
-    | None -> d
-    | Some qs ->
+    match d.work with
+    | Programs _ | Calls -> d
+    | Queues qs ->
         let commands q =
           let c = qs.commands q in
           {
@@ -1721,7 +1721,7 @@ let probing probe =
                 c.exec call prg);
           }
         in
-        { d with queues = Some { qs with commands } }
+        { d with work = Queues { qs with commands } }
 
 let lower_with devices calls =
   Hcq2.lower_call ~devices
@@ -1936,9 +1936,9 @@ let word_tests =
           let null = Null_device.devices () in
           let devices name =
             let dev = null name in
-            match dev.compiler.queues with
-            | None -> dev
-            | Some qs ->
+            match dev.compiler.work with
+            | Programs _ | Calls -> dev
+            | Queues qs ->
                 let commands q =
                   let c = qs.commands q in
                   let exec call prg =
@@ -1954,7 +1954,7 @@ let word_tests =
                 {
                   dev with
                   compiler =
-                    { dev.compiler with queues = Some { qs with commands } };
+                    { dev.compiler with work = Queues { qs with commands } };
                 }
           in
           let compiled =
@@ -2014,9 +2014,9 @@ let word_tests =
           let null = Null_device.devices () in
           let devices name =
             let dev = null name in
-            match dev.compiler.queues with
-            | None -> dev
-            | Some qs ->
+            match dev.compiler.work with
+            | Programs _ | Calls -> dev
+            | Queues qs ->
                 let commands q =
                   let c = qs.commands q in
                   let exec call prg =
@@ -2033,7 +2033,7 @@ let word_tests =
                 {
                   dev with
                   compiler =
-                    { dev.compiler with queues = Some { qs with commands } };
+                    { dev.compiler with work = Queues { qs with commands } };
                 }
           in
           let compiled =
@@ -2053,9 +2053,9 @@ let word_tests =
           let null = Null_device.devices () in
           let devices name =
             let dev = null name in
-            match dev.compiler.queues with
-            | None -> dev
-            | Some qs ->
+            match dev.compiler.work with
+            | Programs _ | Calls -> dev
+            | Queues qs ->
                 let commands q =
                   let c = qs.commands q in
                   let exec call prg =
@@ -2069,7 +2069,7 @@ let word_tests =
                 {
                   dev with
                   compiler =
-                    { dev.compiler with queues = Some { qs with commands } };
+                    { dev.compiler with work = Queues { qs with commands } };
                 }
           in
           let calls = [ kernel_adds (storage d) (storage d) ] in

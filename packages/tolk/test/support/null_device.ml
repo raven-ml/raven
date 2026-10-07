@@ -234,7 +234,7 @@ let devices ?(copy_queue = true) ?(reaches = fun _ -> true) ?ring () =
       in
       {
         Tolk_engine.device = d;
-        compiler = { target = Tolk_engine.target d; queues = Some queues };
+        compiler = { target = Tolk_engine.target d; work = Queues queues };
         placeholder = placeholder name;
         submitting = ignore;
       }

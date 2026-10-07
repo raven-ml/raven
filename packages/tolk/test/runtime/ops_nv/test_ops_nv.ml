@@ -36,13 +36,13 @@ let props ~blackwell =
 
 (* The host, and NV, which reaches the host's memory. *)
 let recorded_devices ~blackwell = function
-  | "CPU" -> { Hcq2.target = host_target; queues = None }
+  | "CPU" -> { Hcq2.target = host_target; work = Calls }
   | _ ->
       {
         Hcq2.target =
           { host_target with device = "NV"; renderer = "CUDA"; arch = "sm_89" };
-        queues =
-          Some
+        work =
+          Queues
             (Ops_nv.queues ~host:"CPU"
                ~reaches:(fun d -> d = "CPU")
                (props ~blackwell));
@@ -130,7 +130,7 @@ let recorded =
 let submission ?(pad = 0) queue cmds =
   let captured = ref None in
   let devices = function
-    | "CPU" -> { Hcq2.target = host_target; queues = None }
+    | "CPU" -> { Hcq2.target = host_target; work = Calls }
     | _ ->
         let qs =
           Ops_nv.queues ~host:"CPU"
@@ -154,7 +154,7 @@ let submission ?(pad = 0) queue cmds =
         in
         {
           Hcq2.target = { host_target with device = "NV" };
-          queues = Some { qs with commands };
+          work = Queues { qs with commands };
         }
   in
   let lin = Ops.v Linear ~arg:(Queue { devices = [ "NV" ]; queue }) ~src:cmds in
@@ -881,9 +881,9 @@ let loops =
           let submitted = ref [] in
           let devices d =
             let dev = recorded_devices ~blackwell:false d in
-            match dev.queues with
-            | None -> dev
-            | Some qs ->
+            match dev.work with
+            | Programs _ | Calls -> dev
+            | Queues qs ->
                 let commands q =
                   let c = qs.commands q in
                   {
@@ -895,7 +895,7 @@ let loops =
                         e);
                   }
                 in
-                { dev with queues = Some { qs with commands } }
+                { dev with work = Queues { qs with commands } }
           in
           ignore
             (plain (fun () ->

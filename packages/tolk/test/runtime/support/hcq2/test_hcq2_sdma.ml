@@ -24,7 +24,7 @@ let devices =
         reaches = (fun _ -> true);
       }
     in
-    { Hcq2.target; queues = Some queues }
+    { Hcq2.target; work = Queues queues }
 
 let storage d = Ops.new_buffer (Single d) 4 Float32
 

@@ -980,7 +980,9 @@ val jit :
     once, and from inside its own function. A key being compiled makes the other
     calls with that key wait, blocking their domain, so [f] must not suspend its
     fiber. A call returns once its work is queued, and a read of a result waits
-    for it.
+    for it. On the host, a call runs its kernels and loops as one host program,
+    with the OCaml runtime released: other domains go on, and the call returns,
+    or raises an exception of a signal handler, only once the program has.
 
     {b Transformations.} A transformation of a compiled function compiles:
     [grad (jit s f)], [jvp], [vmap] of it and a {!Total.collect} around it each

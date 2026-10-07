@@ -438,15 +438,22 @@ type queues = {
   reaches : string -> bool;
 }
 
-type device = { target : Helpers.Target.t; queues : queues option }
+type work = Queues of queues | Programs of string | Calls
+type device = { target : Helpers.Target.t; work : work }
 
 let kind devices d = (devices d).target.device
-let enqueues devices d = Option.is_some (devices d).queues
+
+let enqueues devices d =
+  match (devices d).work with Queues _ -> true | Programs _ | Calls -> false
 
 let queues devices d =
-  match (devices d).queues with
-  | Some q -> q
-  | None -> invalid_arg (strf "%s has no command queues" d)
+  match (devices d).work with
+  | Queues q -> q
+  | Programs _ | Calls -> invalid_arg (strf "%s has no command queues" d)
+
+(* The host that runs [d]'s programs, if a host batch may call them. *)
+let programs_host devices d =
+  match (devices d).work with Programs h -> Some h | Queues _ | Calls -> None
 
 let all_devices_in devices ds = List.for_all (enqueues devices) ds
 
@@ -1096,6 +1103,39 @@ let streamed_order ctx queues =
   in
   order [] queues
 
+(* What a batch's run reports of [call] on [devs], whose start and end
+   [stamps] are in slots of the devices'. *)
+let hcq_kernel ~devs ~stamps call =
+  let args = Realize.get_call_arg_uops call in
+  let globals =
+    match arg (body call) with
+    | Program p -> p.globals
+    | _ -> List.init (List.length args) Fun.id
+  in
+  let lanes = List.map (fun g -> lane_offset (List.nth args g)) globals in
+  let outs, ins = Realize.get_call_outs_ins call in
+  {
+    devices = devs;
+    name = Realize.get_call_name call args;
+    estimates = Realize.estimate_uop call;
+    stamps;
+    profile_key =
+      (if op (body call) = Op.Program then Some (key (body call)) else None);
+    input_slots =
+      (if
+         List.for_all
+           (fun (b, lane, _) -> op b = Op.Param && lane = None)
+           lanes
+       then
+         List.map
+           (fun (b, _, _) ->
+             match arg b with Param p -> p.slot | _ -> assert false)
+           lanes
+       else []);
+    outs;
+    ins;
+  }
+
 let finalize_batch ctx =
   let queues = build_queues ctx in
   let queues = if streamed ctx then streamed_order ctx queues else queues in
@@ -1129,44 +1169,17 @@ let finalize_batch ctx =
      range's calls once per trip. *)
   let kernel values tag =
     let { call; devs; base; strides; _ } = ctx.batch.(tag) in
-    let args = Realize.get_call_arg_uops call in
-    let globals =
-      match arg (body call) with
-      | Program p -> p.globals
-      | _ -> List.init (List.length args) Fun.id
-    in
-    let lanes = List.map (fun g -> lane_offset (List.nth args g)) globals in
-    let outs, ins = Realize.get_call_outs_ins call in
     let pos =
       List.fold_left
         (fun n (r, stride) -> n + (List.assq r values * stride))
         base strides
     in
-    {
-      devices = devs;
-      name = Realize.get_call_name call args;
-      estimates = Realize.estimate_uop call;
-      stamps =
+    hcq_kernel ~devs call
+      ~stamps:
         (if ctx.profile then
            let st = List.length (dev_queues ctx (List.hd devs)) + (2 * pos) in
            [ (2 * st) + 1; (2 * (st + 1)) + 1 ]
-         else []);
-      profile_key =
-        (if op (body call) = Op.Program then Some (key (body call)) else None);
-      input_slots =
-        (if
-           List.for_all
-             (fun (b, lane, _) -> op b = Op.Param && lane = None)
-             lanes
-         then
-           List.map
-             (fun (b, _, _) ->
-               match arg b with Param p -> p.slot | _ -> assert false)
-             lanes
-         else []);
-      outs;
-      ins;
-    }
+         else [])
   in
   let copy tag =
     let call = ctx.batch.(tag).call in
@@ -1217,44 +1230,82 @@ let finalize_batch ctx =
   in
   call ~aux:info sink (if ctx.profile then List.map snd ctx.slots else [])
 
-(* Where a range's calls run: on devices with queues, all of one kind, on the
-   host, or where one batch cannot run them. *)
-type placement = Enqueued of string list | Host | Mixed of string
+(* Where a range's calls run: on devices with queues, all of one kind, as the
+   programs of one host, by the engine one by one, or where nothing runs them
+   together. *)
+type placement =
+  | Enqueued of string list
+  | Host of string
+  | Engine
+  | Mixed of string
 
 let is_loop e = op e = Op.End || op e = Op.Backedge
 
+(* The host whose programs [call] runs, in a host batch: a program whose buffers
+   each lie on one device, a device of that host's programs. *)
+let call_host devices call =
+  if op call <> Op.Call then None
+  else
+    match (op (body call), Realize.get_call_arg_uops call) with
+    | (Op.Program | Op.Sink), (_ :: _ as bufs) -> (
+        let host b =
+          match devices_of b with [ d ] -> programs_host devices d | _ -> None
+        in
+        match List.map host bufs with
+        | Some h :: rest when List.for_all (( = ) (Some h)) rest -> Some h
+        | _ -> None)
+    | _ -> None
+
+(* A host batch reads a back edge's flag from storage the schedule holds, a
+   byte of it. *)
+let flag_held e =
+  op e <> Op.Backedge
+  ||
+  let base, _ = unwrap_view (nth e 2) in
+  op base = Op.Buffer && Dtype.itemsize (dtype base) = 1
+
+(* Whether a loop is or holds a back edge, whose flag the engine reads between
+   trips: no queue's batch holds it, nor a range around it. *)
+let rec stops e =
+  op e = Op.Backedge || (op e = Op.End && List.exists stops (range_body e))
+
 let rec range_placement devices e =
   if not (is_loop e) then
-    match get_enqueue_devs devices e with
-    | Some ds -> Enqueued ds
-    | None -> Host
+    match (get_enqueue_devs devices e, call_host devices e) with
+    | Some ds, _ -> Enqueued ds
+    | None, Some h -> Host h
+    | None, None -> Engine
   else
     let ps = List.map (range_placement devices) (range_body e) in
     match List.find_opt (function Mixed _ -> true | _ -> false) ps with
     | Some mixed -> mixed
-    | None when List.for_all (( = ) Host) ps -> Host
-    | None when List.mem Host ps ->
-        Mixed
-          "a range runs its calls on devices with queues, or all on the host"
     | None -> (
-        let devs =
+        let enqueued =
+          List.filter_map (function Enqueued ds -> Some ds | _ -> None) ps
+        and hosts =
           List.sort_uniq String.compare
-            (List.concat_map (function Enqueued ds -> ds | _ -> []) ps)
+            (List.filter_map (function Host h -> Some h | _ -> None) ps)
         in
-        match List.sort_uniq String.compare (List.map (kind devices) devs) with
-        | [ _ ] -> Enqueued devs
-        | _ -> Mixed "a range runs its calls on devices of one kind")
-
-(* Whether a loop is or holds a back edge, whose flag the engine reads between
-   trips: no batch holds it, nor a range around it. *)
-let rec stops e =
-  op e = Op.Backedge || (op e = Op.End && List.exists stops (range_body e))
-
-let range_devs devices e =
-  match range_placement devices e with
-  | Enqueued ds when not (stops e) -> Some ds
-  | Enqueued _ | Host -> None
-  | Mixed why -> invalid_arg why
+        if enqueued <> [] then
+          if List.compare_lengths enqueued ps <> 0 then
+            Mixed "a range runs its calls on devices with queues, or none there"
+          else
+            let devs = List.sort_uniq String.compare (List.concat enqueued) in
+            match
+              List.sort_uniq String.compare (List.map (kind devices) devs)
+            with
+            | [ _ ] -> Enqueued devs
+            | _ -> Mixed "a range runs its calls on devices of one kind"
+        else
+          (* A back edge inside a loop has its flag read before each trip,
+             which only the engine does: such a loop is the engine's. *)
+          match hosts with
+          | [ h ]
+            when List.for_all (function Host _ -> true | _ -> false) ps
+                 && flag_held e
+                 && not (List.exists stops (range_body e)) ->
+              Host h
+          | _ -> Engine)
 
 let stages ~devices e =
   op e = Op.End
@@ -1355,10 +1406,201 @@ let chunked lowered = function
         [ chunk ]
       :: left
 
+(* Host batches
+
+   A run of the calls of one host's programs, with the ranges and back edges
+   around them, is one host program of that host, which calls each program
+   through nx.device's entry ([Nx_device.Program.entry]): the program's order is
+   the calls', and a range is a loop of it, so the program does not grow with
+   the trips. Each call writes its buffers' addresses and its values into words
+   of its own before it calls, and a split program its split, whose blocks the
+   program counts as a host launch does. A back edge is a loop of the program
+   that runs while the flag holds, read before each trip. *)
+
+(* A block repays waking the host's threads and joining them once it does 2^18
+   operations. A wake and a join cost a few microseconds, and a block should
+   cost ten times that, about 50 to 100 us. A core runs 1 to 2 G scalar
+   operations a second and about 12 G on vectorised loops, so 100 us is 2^17 to
+   2^20 operations; 2^18 sits between. A launch runs at most four blocks per
+   thread, so that the threads that claim blocks as they finish balance fast and
+   slow cores. *)
+let block_ops = 1 lsl 18
+let blocks_per_worker = 4
+
+let host_workers =
+  variable ~dtype:Dtype.Int64 "host_workers" (`Int Bigint.one)
+    (`Int (Bigint.of_int 4096))
+
+let host_batch ~host entries =
+  let i64 n = int ~dtype:Dtype.Int64 n in
+  let on = Single host in
+  (* Words of one call: [n] of [dt] on the host, volatile, since the callee
+     reads them at an address of the table. They are the batch's own: link
+     writes the words known then. *)
+  let words dt n =
+    placeholder ~device:on ~volatile:true
+      ~tag:(Tag.String "host_call") [ max n 1 ] dt
+  in
+  let store_all w xs = List.mapi (fun i x -> store (index w [ int i ]) x) xs in
+  let program prg =
+    let obj = Device.Tiny_elf.of_program prg in
+    placeholder ~slot:0 ~device:on
+      ~tag:(Tag.Tuple [ String "program"; Bytes obj.lib; String obj.name ])
+      [ 1 ] Dtype.Uint64
+  in
+  (* The effect last made, the ranges open around it, and the storage of the
+     flags read. *)
+  let last = ref None and opened = ref [] and flags = ref [] in
+  let ordered u deps = after u (Option.to_list !last @ deps @ !opened) in
+  let address u = getaddr ~device:host u in
+  let kernel c prg =
+    let info = match arg prg with Program p -> p | _ -> assert false in
+    let bufs = Realize.get_call_arg_uops c in
+    let vals = Realize.get_call_var_uops c prg in
+    let args = words Dtype.Uint64 (List.length info.globals)
+    and values = words Dtype.Int64 (List.length vals) in
+    let stores =
+      store_all args (List.map (fun g -> address (List.nth bufs g)) info.globals)
+      @ store_all values (List.map (fun v -> ccast v Dtype.Int64) vals)
+    in
+    let split, stores =
+      match arg (nth prg 0) with
+      | Kernel { split = Some sp; estimates; _ } ->
+          let at slot =
+            Option.get
+              (List.find_index
+                 (fun v -> match arg v with Param p -> p.slot = slot | _ -> false)
+                 info.vars)
+          in
+          let lo = at sp.lo and hi = at sp.hi in
+          (* The call's bound variables, read where the split's sizes read
+             them. *)
+          let bound =
+            List.filter_map
+              (fun a ->
+                match arg a with
+                | Param { bound = Some x; _ } when is_bound_var a ->
+                    Some (unbound a, const (x :> Dtype.const))
+                | _ -> None)
+              (src_without_body c)
+          in
+          let size s =
+            ccast
+              (substitute ~calls:Skip ~pass:Fixed_point (sint_to_uop s) bound)
+              Dtype.Int64
+          in
+          let extent = size sp.iterations
+          and ops =
+            size (match estimates with Some e -> e.ops | None -> sp.iterations)
+          in
+          let least a b = where (lt a b) a b in
+          let most = mul (i64 blocks_per_worker) host_workers in
+          let blocks =
+            least (least extent most) (div ~rounding:`Floor ops (i64 block_ops))
+          in
+          let blocks = where (lt blocks (i64 1)) (i64 1) blocks in
+          let w = words Dtype.Int64 4 in
+          ( address w,
+            stores @ store_all w [ extent; blocks; i64 lo; i64 hi ] )
+      | _ -> (u64 0, stores)
+    in
+    (* A store of a value known at link is written then ({!patch}); one that
+       reads a loop of the program, in a group, on each trip. *)
+    let moving, fixed =
+      List.partition (fun s -> Nodes.cardinal (ranges s) > 0) stores
+    in
+    let deps = if moving = [] then fixed else v Op.Group ~src:moving :: fixed in
+    let f = load (index (ordered (program prg) deps) [ int 0 ]) [] in
+    last :=
+      Some
+        (ccall ~host ~lib:"nx_device" "entry"
+           [
+             f;
+             address args;
+             address values;
+             i64 (List.length vals);
+             split;
+           ])
+  in
+  let rec emit e =
+    match op e with
+    | Op.Linear -> List.iter emit (src e)
+    | Op.End ->
+        let rs = List.tl (src e) and outer = !opened in
+        opened := outer @ rs;
+        emit (nth e 0);
+        opened := outer;
+        last := Some (end_ (Option.get !last) rs)
+    (* One trip, whose flag the engine reads before it, is its calls. *)
+    | Op.Backedge when op (nth e 1) <> Op.Range || trips (nth e 1) = 1 ->
+        emit (nth e 0)
+    | Op.Backedge ->
+        (* The engine reads the flag before the first trip ({!sched_batches});
+           the loop stops after a trip that leaves it false. *)
+        let r = nth e 1 and base, off = unwrap_view (nth e 2) in
+        flags := base :: !flags;
+        let outer = !opened in
+        opened := outer @ [ r ];
+        emit (nth e 0);
+        let x = load (index (ordered base []) [ int off ]) [] in
+        let cond =
+          if Dtype.equal (dtype base) Dtype.Bool then x
+          else ne x (const_like x (`Int Bigint.zero))
+        in
+        opened := outer;
+        last := Some (backedge (Option.get !last) ~loop:r ~cond)
+    | Op.Call -> (
+        match op (body e) with
+        | Op.Program -> kernel e (body e)
+        | _ -> invalid_arg "a host batch calls programs")
+    | o -> invalid_arg (Format.asprintf "a host batch has no %a" Op.pp o)
+  in
+  List.iter emit entries;
+  let sink =
+    sink ~tag:(Tag.Int 1)
+      ~kernel:(kernel_info ~name:"host_batch" ~estimates:Renderer.Estimates.zero ())
+      [ Option.get !last ]
+  in
+  let rec calls_of e =
+    match op e with
+    | Op.Linear -> List.concat_map calls_of (src e)
+    | Op.End ->
+        let n = List.fold_left (fun n r -> n * trips r) 1 (List.tl (src e)) in
+        List.concat (List.init n (fun _ -> calls_of (nth e 0)))
+    | Op.Backedge -> calls_of (nth e 0)
+    | _ -> [ e ]
+  in
+  let calls = List.concat_map calls_of entries in
+  let info =
+    {
+      device = [ host ];
+      kernels =
+        List.map
+          (fun c ->
+            let devs = devices_of (List.hd (Realize.get_call_arg_uops c)) in
+            hcq_kernel ~devs ~stamps:[] c)
+          calls;
+      estimates =
+        Renderer.Estimates.simplify
+          (List.fold_left
+             (fun acc c -> Renderer.Estimates.add acc (Realize.estimate_uop c))
+             Renderer.Estimates.zero calls);
+      nargs = 0;
+      table = -1;
+      inputs = [];
+      slots = [];
+      written_bufs = dedup (List.concat_map Realize.get_call_written_bufs calls);
+      writes = dedup (List.concat_map call_writes calls);
+      copies = [];
+    }
+  in
+  call ~aux:info sink (dedup !flags)
+
 let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
-  (* The calls in a loop that no batch runs are the engine's, once per trip:
-     they read its ranges as variables, and are batched trip by trip. *)
-  let on_host e =
+  (* A loop of a queue's calls around a back edge is the engine's, once per
+     trip: its calls read its ranges as variables, and are batched trip by
+     trip. *)
+  let by_trips e =
     let rs =
       if op e = Op.End then List.tl (src e)
       else List.filter (fun r -> op r = Op.Range) [ nth e 1 ]
@@ -1377,12 +1619,22 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
     else replace e ~src:(inner :: List.tl (src e))
   in
   let entries = src l in
-  let devs = List.map (range_devs devices) entries in
-  let entries =
-    List.map2
-      (fun e d -> if is_loop e && d = None then on_host e else e)
-      entries devs
+  (* How each entry runs: in a queue's batch, a host's batch, the engine's loop
+     of trips, or alone. *)
+  let part e =
+    if is_loop e then
+      match range_placement devices e with
+      | Enqueued ds when not (stops e) -> `Queue ds
+      | Enqueued _ | Engine -> `Trips
+      | Host h -> `Host h
+      | Mixed why -> invalid_arg why
+    else
+      match (get_enqueue_devs devices e, call_host devices e) with
+      | Some ds, _ -> `Queue ds
+      | None, Some h -> `Host h
+      | None, None -> `Alone
   in
+
   let rec calls_of e =
     if is_loop e then List.concat_map calls_of (range_body e) else [ e ]
   in
@@ -1447,39 +1699,56 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   in
   (* Runs of entries enqueued or not; the enqueued ones batch by kind of device,
      in the order the kinds first appear. *)
+  (* Runs of entries: those enqueued, which batch by kind of device in the order
+     the kinds first appear, those of one host, which are one host batch, and
+     each other entry alone. *)
   let rec runs acc = function
     | [] -> List.rev acc
-    | (c, d) :: rest -> (
-        match acc with
-        | (hcq, grp) :: acc' when hcq = Option.is_some d ->
-            runs ((hcq, (c, d) :: grp) :: acc') rest
-        | _ -> runs ((Option.is_some d, [ (c, d) ]) :: acc) rest)
+    | e :: rest -> (
+        match (part e, acc) with
+        | `Queue ds, `Queue grp :: acc' -> runs (`Queue ((e, ds) :: grp) :: acc') rest
+        | `Queue ds, _ -> runs (`Queue [ (e, ds) ] :: acc) rest
+        | `Host h, _ when op e = Op.Backedge -> runs (`Guarded (h, e) :: acc) rest
+        | `Host h, `Host (h', grp) :: acc' when h = h' ->
+            runs (`Host (h, e :: grp) :: acc') rest
+        | `Host h, _ -> runs (`Host (h, [ e ]) :: acc) rest
+        | `Trips, _ -> runs (`Alone (by_trips e) :: acc) rest
+        | `Alone, _ -> runs (`Alone e :: acc) rest)
   in
   let batched =
     List.concat_map
-      (fun (hcq, grp) ->
-        let grp = List.rev grp in
-        if not hcq then List.map fst grp
-        else
-          let groups = Ordered.create () in
-          List.iter
-            (fun (c, d) ->
-              let k = kind devices (List.hd (Option.get d)) in
-              Ordered.set groups k
-                (Option.value (Ordered.find groups k) ~default:[] @ [ item c ]))
-            grp;
-          (* A batch whose submission a queue cannot hold runs as two. *)
-          let rec lowered items =
-            let stamped = profile = Stamped in
-            match lower (finalize_batch (make_ctx devices items stamped)) with
-            | batch -> [ batch ]
-            | exception Over_capacity why ->
-                List.concat_map lowered (halves why items)
-          in
-          List.concat_map
-            (fun (_, items) -> List.concat_map (chunked lowered) (parts items))
-            groups.items)
-      (runs [] (List.combine entries devs))
+      (function
+        | `Alone e -> [ e ]
+        | `Host (h, grp) -> [ lower (host_batch ~host:h (List.rev grp)) ]
+        (* A back edge on the host is a batch that loops while its flag holds
+           after each trip, in a loop of one trip of the engine, which reads the
+           flag before it. *)
+        | `Guarded (h, e) ->
+            [
+              backedge
+                (lower (host_batch ~host:h [ e ]))
+                ~loop:(int 0) ~cond:(nth e 2);
+            ]
+        | `Queue grp ->
+            let groups = Ordered.create () in
+            List.iter
+              (fun (c, ds) ->
+                let k = kind devices (List.hd ds) in
+                Ordered.set groups k
+                  (Option.value (Ordered.find groups k) ~default:[] @ [ item c ]))
+              (List.rev grp);
+            (* A batch whose submission a queue cannot hold runs as two. *)
+            let rec lowered items =
+              let stamped = profile = Stamped in
+              match lower (finalize_batch (make_ctx devices items stamped)) with
+              | batch -> [ batch ]
+              | exception Over_capacity why ->
+                  List.concat_map lowered (halves why items)
+            in
+            List.concat_map
+              (fun (_, items) -> List.concat_map (chunked lowered) (parts items))
+              groups.items)
+      (runs [] entries)
   in
   replace l ~src:batched
 
@@ -1814,7 +2083,10 @@ let batch_info call =
 let lower_call ~devices call =
   let info = batch_info call in
   if info.nargs <> 0 then invalid_arg "the batch is lowered already";
-  let host = (queues devices (List.hd info.device)).host in
+  let host =
+    let d = List.hd info.device in
+    match (devices d).work with Queues q -> q.host | Programs _ | Calls -> d
+  in
   let lt_patches = ref [] in
   let body =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:lt_patches (body call)
@@ -1965,11 +2237,15 @@ let lower_call ~devices call =
       (fun ns a -> if List.mem (expr a) ns then ns else ns @ [ expr a ])
       [] alus
   in
+  (* Storage of the schedule that the program reads, such as a host batch's
+     flags, is volatile: the calls write it at addresses of the table. *)
   let params =
     List.mapi
       (fun i b ->
         let volatile, name =
-          match arg b with Param p -> (p.volatile, p.name) | _ -> (false, None)
+          match arg b with
+          | Param p -> (p.volatile || tag b = None, p.name)
+          | _ -> (false, None)
         in
         ( b,
           param i (dtype b) ~shape:(shape b) ~device:(Single host) ~volatile

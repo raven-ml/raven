@@ -124,21 +124,33 @@ let targets =
                 (t.device, t.arch));
     ]
 
+(* How a device runs its calls, as a test prints it. *)
+let work (d : Engine.device) =
+  match d.compiler.work with
+  | Queues _ -> "queues"
+  | Programs h -> "programs of " ^ h
+  | Calls -> "calls"
+
 let describing =
   group "device"
     [
-      test "a device off Metal, CUDA, AMD and NV runs no queues" (fun () ->
+      test
+        "a device off Metal, CUDA, AMD and NV runs programs of this machine's \
+         host" (fun () ->
           let d = devices "CPU:1" in
           is_true (Nx_device.equal (device "CPU:1") d.device);
           equal target (Engine.target d.device) d.compiler.target;
-          is_true (Option.is_none d.compiler.queues));
+          equal string "programs of CPU:0" (work d));
+      test "another machine's host runs its calls one by one" (fun () ->
+          let d = Engine.device [ ("R", Lazy.force remote) ] "R" in
+          equal string "calls" (work d));
       test "the disk is described as a DISK target without queues" (fun () ->
           let d = devices "DISK:/tmp/tolk-schedule" in
           is_true (Nx_device.equal Nx_device.disk d.device);
           equal target
             (Result.get_ok (Helpers.Target.of_string "DISK"))
             d.compiler.target;
-          is_true (Option.is_none d.compiler.queues));
+          equal string "calls" (work d));
       test "a name the map does not hold is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () -> devices "CPU:9"));
       test "a map that gives one name twice is refused" (fun () ->
@@ -1122,12 +1134,17 @@ let one_program_for_any_loop () =
   let _, arg, _ = List.nth (trip_arguments 5) 1 in
   let programs axis n =
     let compiled, _, _ = trip_loop ~axis "CPU" n arg in
-    List.filter
-      (fun u -> Ops.op u = Op.Program)
+    List.filter_map
+      (fun u ->
+        match Ops.tag u with
+        | Some (Tuple [ String "program"; Bytes binary; String _ ]) ->
+            Some binary
+        | _ -> None)
       (Ops.toposort ~calls:Enter compiled)
   in
   equal int 1
-    (List.length (List.sort_uniq Ops.compare (programs 100 5 @ programs 101 9)))
+    (List.length
+       (List.sort_uniq String.compare (programs 100 5 @ programs 101 9)))
 
 let reads_trips_on ?devices d =
   cases
@@ -1660,15 +1677,24 @@ let spans_each_kernel () =
   let big = program "contiguous" in
   let compiled, vars = schedule big in
   let s = Engine.link ~devices ~bound:(bound (storage_of big)) compiled in
+  (* The programs a run calls: those of the schedule, and those of its host
+     batches, which call theirs. *)
   let kernels =
-    List.filter_map
+    List.concat_map
       (fun u ->
-        if Ops.op u <> Program then None
+        if Ops.op u <> Program then []
         else
           match Ops.arg (Ops.nth u 0) with
-          | Kernel k -> Some (Ops.function_name k)
-          | _ -> None)
+          | Kernel k -> [ Ops.function_name k ]
+          | _ -> [])
       (Ops.toposort ~calls:Enter compiled)
+    @ List.concat_map
+        (fun e ->
+          match Ops.arg (Ops.without_after e) with
+          | Call { aux = Some info; _ } ->
+              List.map (fun (k : Ops.hcq_kernel) -> k.name) info.kernels
+          | _ -> [])
+        (Ops.src compiled)
   in
   let p = Nx_device.Profile.start () in
   Engine.run ~vars s [||];
@@ -1695,11 +1721,20 @@ let fill d x =
   let y = Ops.new_buffer (Single d) 4 Float32 in
   (y, Ops.call kernel [ y ])
 
-(* At [DEBUG=1], a run of a schedule of [n] fills on the host. *)
+(* At [DEBUG=1], a run of a schedule of [n] copies on the host, each a call of
+   its own. *)
 let run_of_fills n =
-  let fills = List.init n (fun _ -> fill "CPU" 1.) in
+  let fills =
+    List.init n (fun _ ->
+        let y = Ops.new_buffer (Single "CPU") 4 Float32
+        and x = Ops.new_buffer (Single "CPU") 4 Float32 in
+        ((y, x), Call.store_call y x))
+  in
   let bound =
-    List.map (fun (y, _) -> (y, [ Run.buffer host Float32 a ])) fills
+    List.concat_map
+      (fun ((y, x), _) ->
+        [ (y, [ Run.buffer host Float32 a ]); (x, [ Run.buffer host Float32 a ]) ])
+      fills
   in
   let compiled =
     Hcq2.compile_linear ~profile:Unstamped
@@ -2004,6 +2039,124 @@ let link_calls ?(profile = Hcq2.Unstamped) ~bound calls =
       (Ops.v Op.Linear ~src:calls)
   in
   Engine.link ~devices ~bound compiled
+
+(* Host batches *)
+
+(* [add_one] of [n] floats, its loop whole: a host splits it into blocks. *)
+let add_one_of n =
+  let i = Ops.range (Int n) [ 0 ] in
+  let at slot = Ops.index (Call.placeholder ~slot [ n ] Float32) [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:(Printf.sprintf "add_one_%d" n) ())
+    [ Ops.end_ (Ops.store (at 0) Ops.O.(at 1 + float 1.)) [ i ] ]
+
+(* A range of [trips] trips around three calls of [add_one_of k], each trip on
+   its window of [k] floats of [src], two buffers of the schedule and [out]:
+   [out] is [src] plus three. *)
+let three_in_a_range ?(devices = devices) ~trips k =
+  let cpu = Ops.Single "CPU" in
+  let buffer () = Ops.new_buffer cpu (trips * k) Float32 in
+  let src = buffer () and a = buffer () and b = buffer () and out = buffer () in
+  let r = Ops.range (Int trips) [ 7 ] in
+  let trip x =
+    Shape.shrink x
+      [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
+  in
+  let k = add_one_of k in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Ops.end_
+            (Ops.v Op.Linear
+               ~src:
+                 [
+                   Ops.call k [ trip a; trip src ];
+                   Ops.call k [ trip b; trip a ];
+                   Ops.call k [ trip out; trip b ];
+                 ])
+            [ r ];
+        ]
+  in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      linear
+  in
+  (compiled, src, out)
+
+(* The names of the spans of [f ()] on the host. *)
+let host_spans f =
+  let p = Nx_device.Profile.start () in
+  f ();
+  List.filter_map
+    (function
+      | Nx_device.Profile.Span s when s.device == host -> Some s.name
+      | _ -> None)
+    (Nx_device.Profile.stop p)
+
+let host_range_is_one_call () =
+  let trips = 5 and k = 4 in
+  let compiled, src, out = three_in_a_range ~trips k in
+  let xs = Array.init (trips * k) Float.of_int in
+  let out_buffer = Run.buffer host Float32 (floats (Array.make (trips * k) 0.)) in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [ (src, [ Run.buffer host Float32 (floats xs) ]); (out, [ out_buffer ]) ]
+      compiled
+  in
+  let names = host_spans (fun () -> Engine.run s [||]; Engine.run s [||]) in
+  let kernel = String.equal "add_one_4" in
+  equal int ~msg:"a call from OCaml per run" 2
+    (List.length (List.filter (fun n -> not (kernel n)) names));
+  equal int ~msg:"a span of each kernel's call" (2 * 3 * trips)
+    (List.length (List.filter kernel names));
+  equal values
+    (floats (Array.map (fun x -> x +. 3.) xs))
+    (Run.values Float32 out_buffer)
+
+let host_range_splits () =
+  let trips = 2 and k = 1 lsl 20 in
+  let compiled, src, out = three_in_a_range ~trips k in
+  let xs = Array.init (trips * k) (fun i -> Float.of_int (i mod 1000)) in
+  let out_buffer = Run.buffer host Float32 (floats (Array.make (trips * k) 0.)) in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [ (src, [ Run.buffer host Float32 (floats xs) ]); (out, [ out_buffer ]) ]
+      compiled
+  in
+  Engine.run s [||];
+  equal values
+    (floats (Array.map (fun x -> x +. 3.) xs))
+    (Run.values Float32 out_buffer)
+
+(* A copy on CPU:1's queue into host memory, after a slow fill of its source,
+   then a host range that reads what it copied: the range waits for the
+   copy. *)
+let host_range_after_a_batch () =
+  let trips = 3 in
+  let x, filled = fill "CPU:1" 7. in
+  let y = Ops.new_buffer (Single "CPU") 4 Float32 in
+  let out = Ops.new_buffer (Single "CPU") (4 * trips) Float32 in
+  let r = Ops.range (Int trips) [ 7 ] in
+  let row =
+    Shape.shrink out
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
+  in
+  let out_buffer = Run.buffer host Float32 (floats (Array.make (4 * trips) 0.)) in
+  let s =
+    link_calls
+      ~bound:[ (out, [ out_buffer ]) ]
+      [
+        filled;
+        Call.store_call y x;
+        Ops.end_ (Ops.call add_one [ row; y ]) [ r ];
+      ]
+  in
+  Null_device.with_latency 0.05 (fun () -> Engine.run s [||]);
+  equal values (floats (Array.make (4 * trips) 8.)) (Run.values Float32 out_buffer)
 
 (* A copy on CPU:1's queue into CPU:2's memory, which a slow kernel of CPU:2
    filled first: the copy lands last. *)
@@ -2695,6 +2848,12 @@ let batches =
         (allocates_nothing ~devices:on_null "copy");
       slow "a batch waits for the work of a device outside it"
         waits_for_another_device;
+      test "a range of host calls runs as one host program a run"
+        host_range_is_one_call;
+      slow "a split kernel in a host range computes as unsplit"
+        host_range_splits;
+      slow "a host range waits for a queue's copy into what it reads"
+        host_range_after_a_batch;
       test "a run waits for a device without queues of an input"
         (waits_for_a_device_without_queues ~as_input:true);
       test "a run waits for a device without queues of storage"

@@ -1095,9 +1095,11 @@ the Exclusions of `README.md`.
     and a position a signal stores are 64-bit words cast from the range's weak
     integers, which D44 computes in integers. tinygrad's loop builds no such
     word: its offsets only index the command buffer.
-  - A range whose calls none is enqueued stays a range around them, reading
-    `range_value` variables that the engine binds on each trip; one that
-    mixes the two, or two kinds of device, is refused. `get_enqueue_devs`
+  - A range whose calls are all programs of one host is a loop of that host's
+    batch (D142); one around a call no batch runs, such as a copy on the
+    host, stays a range around them, reading `range_value` variables that the
+    engine binds on each trip; one that mixes enqueued calls with others, or
+    two kinds of device, is refused. `get_enqueue_devs`
     takes a kernel not compiled yet as its program, so that `stages` answers
     on a schedule before it compiles.
   - A batch whose submission a queue cannot hold, such as AMD's AQL ring's
@@ -2537,7 +2539,9 @@ stores through a pad.
   `[0, n)` into `min(n, 4 × workers, ops / 2^18)` blocks, at least one, that
   nx.device's thread pool runs (`Nx_device.Program.call ~split`); a queue's
   launch (`get_call_var_uops`) and tinygrad's own (`whole_loop` in
-  `engine/realize.py`) run one block, the whole loop.
+  `engine/realize.py`) run one block, the whole loop. A host batch passes the
+  same blocks to nx.device's entry, which runs them as
+  `Nx_device.Program.call ~split` does (D142).
 - **Reason:** (b): sofo's and symo's training steps on the CPU, which ran each
   kernel on one core. Their hottest kernels, split by hand into 32 blocks on
   kimchi's 8 E-cores (`taskset -c 6-13`, best of 30), took 6.17 ms and 0.77 ms
@@ -3762,10 +3766,12 @@ stores through a pad.
   (`Loop` in `link`) and `:1290` (in `run_call`).
 - **Differs:** an `Op.Backedge` stands around a call of a schedule, or a
   linear of calls, with a loop range of at most as many trips and a flag, one
-  boolean of storage the calls write. The schedule keeps it as an entry; hcq2
-  batches its calls alone, trip by trip, with the range read as a variable,
-  which a call's scalar argument reads too (D140), and runs a range around one
-  from the engine; the engine reads the flag
+  boolean of storage the calls write. The schedule keeps it as an entry. Around
+  programs of one host, it is a host batch whose loop reads the flag after each
+  trip, inside a back edge of one trip whose flag the engine reads before it
+  (D142). Otherwise hcq2 batches its calls alone, trip by
+  trip, with the range read as a variable, which a call's scalar argument
+  reads too (D140), and runs a range around one from the engine; the engine reads the flag
   before each trip and runs the calls while it holds. tinygrad's schedules run
   each call once, and stop on no value.
 - **Reason:** (b). rune's `Rune.iterate` under `Rune.jit` stages a loop that
@@ -4327,3 +4333,48 @@ stores through a pad.
   `cast_to_double_cpu`, `compare_cpu`, `add_24_cpu`, `add_17_cpu`,
   `wide_tree_cpu` and `long_chain_cpu`, and every other host case without a
   reduce, recorded from the equally patched tinygrad.
+
+## D142. The host runs a run of its calls as one host program
+
+- **tinygrad:** `engine/realize.py:160` (`exec_kernel`, which calls each CPU
+  program from Python), `runtime/support/hcq2.py:40-48` (`get_enqueue_devs`,
+  which enqueues no CPU call: `HCQ_DEVS` holds no CPU device).
+- **tolk:** `lib/runtime/support/hcq2.ml:1246` (`call_host`), `:1272`
+  (`range_placement`), `:1434` (`host_batch`), `:1599` (`sched_batches`) and
+  `:2083` (`lower_call`, whose program reads storage of the schedule as
+  volatile); `engine/tolk_engine.ml:88` (`host_placeholder`), `:734`
+  (`link_batch`) and `:928` (`run_host_batch`); `lib/uop/spec.ml` (a back
+  edge's condition read in a program); nx.device's `Program.entry`.
+- **Differs:** a device whose host is this process's runs its programs in
+  host batches (`Hcq2.Programs`): each run of consecutive calls of one host's
+  programs, with the ranges and back edges around them, is one host program
+  of the host, linked and run as a batch without queues. The program calls
+  each program through nx.device's entry, in order, after writing the call's
+  buffer addresses and values into words of its own, those known at link
+  written then; a range is a loop of the program, so the program does not
+  grow with the trips. A back edge is a host
+  batch of its own whose loop stops after a trip that clears the flag, inside
+  the engine's back edge of one trip, which reads the flag before the first; a
+  loop around a back edge stays the engine's, which reads its flag before each
+  trip. A split program passes its split, its blocks
+  `max 1 (min extent (min (4·w) (ops / 2^18)))` computed by the program for
+  the host's workers `w`, a variable the engine binds at link. A run waits for
+  the work that touched the memory the batch reaches, then calls the program
+  once: no OCaml runs per trip or per call, and each call is a span of a
+  profile as a call of its program is. A copy on the host, a call of another
+  machine's host or the disk (`Calls`), and a loop around one, stay the
+  engine's, and a loop's calls are then batched trip by trip. tinygrad calls
+  each CPU program from Python, once per call.
+- **Reason:** (b). rune's staged scans, `Rune.iterate`, `Loop.repeat`'s
+  factorizations and every compiled host function run many small kernels per
+  step: each launch from OCaml cost the allocation of its arguments, a view
+  per moving window, and a release of the runtime.
+- **Pinned by:** the `Tolk_engine` suite: `batches › a range of host calls
+  runs as one host program a run`, `› a split kernel in a host range computes
+  as unsplit`, `› a host range waits for a queue's copy into what it reads`,
+  and `link and run`'s loops and back edges on the host (D60, D123, D140);
+  `device › a device off Metal, CUDA, AMD and NV runs programs of this
+  machine's host` and `› another machine's host runs its calls one by one`;
+  nx.device's host suite: `a call through the entry is a call`, `a split
+  through the entry runs the blocks a split call runs`; rune's Jit, Iterate
+  and Staging suites on the host.

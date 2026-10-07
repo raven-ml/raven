@@ -191,6 +191,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- On the host, a compiled function runs its kernels, scans and iterates as
+  one host program per run of them: no OCaml runs per step or per kernel. A
+  staged scan of 256 steps runs in 291 us instead of 462 us on an M1 Max, an
+  iterate of 256 in 268 us instead of 495 us, and a float64 solve of 32
+  equations in 50 us instead of 89 us. The call holds the OCaml runtime
+  released until the program returns.
+
 - A compiled `Nx.qr`, LU factorization and `Nx.solve_triangular`, and so
   `Nx.solve`, `Nx.inv` and `Nx.det`, run one kernel fewer per step: the loop
   passes each step its index. A float64 solve of 32 equations runs in 92 us
@@ -1176,6 +1183,11 @@ thread.
 
 ### Tolk (new)
 
+- The host runs a run of its calls, with the ranges and back edges around
+  them, as one host program that calls each kernel through
+  `Nx_device.Program.entry`: no OCaml runs per trip or per kernel.
+  **Breaking:** `Hcq2.device`'s `queues` is `work`, `Queues`, `Programs` or
+  `Calls`.
 - A precompiled call inside a loop may pass a scalar parameter of its body a
   weak integer expression of the loop's ranges, such as `2r + 1`: each trip's
   kernels read it, and their programs compile once for any loop.

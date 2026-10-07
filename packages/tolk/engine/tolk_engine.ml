@@ -73,6 +73,28 @@ let with_hosts devices =
     devices devices
 
 (* Refuses [devices] if it gives one name twice. *)
+(* The storage of the placeholders a host batch's program names: a word holding
+   a program's address, which keeps it loaded, and one holding nx.device's
+   entry, which calls it. *)
+let host_word = Mutex.create ()
+
+let word a =
+  let w = Nx_device.Buffer.create Nx_device.host Nx_dtype.Scalar.Int64 1 in
+  (Nx_device.Buffer.bigarray Bigarray.int64 w).{0} <- Int64.of_nativeint a;
+  w
+
+let entry_word = lazy (word Nx_device.Program.entry)
+
+let host_placeholder u =
+  match Ops.tag u with
+  | Some (Tuple [ String "cfunc"; String "nx_device"; String "entry" ]) ->
+      Some (Mutex.protect host_word (fun () -> Lazy.force entry_word))
+  | Some (Tuple [ String "program"; Bytes binary; String name ]) -> (
+      match Nx_device.Program.load Nx_device.host ~binary ~name with
+      | Ok p -> Some (Nx_device.Program.keep p (word (Nx_device.Program.handle p)))
+      | Error why -> failwith why)
+  | _ -> None
+
 let rec distinct = function
   | [] -> ()
   | (n, _) :: devices ->
@@ -104,14 +126,21 @@ let device devices name =
   | Some (queues, placeholder, submitting) ->
       {
         device = d;
-        compiler = { Hcq2.target; queues = Some queues };
+        compiler = { Hcq2.target; work = Queues queues };
         placeholder;
         submitting;
+      }
+  | None when target.device = "CPU" && Nx_device.host_of d == Nx_device.host ->
+      {
+        device = d;
+        compiler = { Hcq2.target; work = Programs (Lazy.force host) };
+        placeholder = host_placeholder;
+        submitting = ignore;
       }
   | None ->
       {
         device = d;
-        compiler = { Hcq2.target; queues = None };
+        compiler = { Hcq2.target; work = Calls };
         placeholder = (fun _ -> None);
         submitting = ignore;
       }
@@ -190,16 +219,6 @@ module Program = struct
                  (Option.value p.name ~default:(string_of_int p.slot))))
     | _ -> assert false
 
-  (* A block repays waking the pool's threads and joining them once it does 2^18
-     operations. A wake and a join cost a few microseconds, and a block should
-     cost ten times that, about 50 to 100 us. A core runs 1 to 2 G scalar
-     operations a second and about 12 G on vectorised loops, so 100 us is 2^17
-     to 2^20 operations; 2^18 sits between. A launch runs at most four blocks
-     per thread, so that the threads that claim blocks as they finish balance
-     fast and slow cores. *)
-  let block_ops = 1 lsl 18
-  let blocks_per_worker = 4
-
   (* Whether the variable of slot [i] is a block's bound, which a launch sets
      itself. *)
   let bounds_block p i =
@@ -214,8 +233,8 @@ module Program = struct
   (* The blocks of a launch of [extent] iterations and [ops] operations that
      splits [s]. *)
   let blocks_of s ~extent ~ops =
-    let most = blocks_per_worker * Nx_device.Program.workers () in
-    let blocks = max 1 (min (min extent most) (ops / block_ops)) in
+    let most = Hcq2.blocks_per_worker * Nx_device.Program.workers () in
+    let blocks = max 1 (min (min extent most) (ops / Hcq2.block_ops)) in
     { Nx_device.Program.extent; blocks; lo = s.lo; hi = s.hi }
 
   (* [s] with each of its variables read by [value]. The loop a launch splits
@@ -779,12 +798,15 @@ let link_batch ~device ~storage ~cells call patches =
   in
   List.iter (apply storage addr) patches;
   let arguments = List.map (fun u -> List.hd (Ops.Tbl.find storage u)) args in
-  let queues = List.map (fun n -> (device n).device) info.device in
-  (* The host programs of a device's queues run on the host they name. *)
-  let host =
-    match (device (List.hd info.device)).compiler.queues with
-    | Some q -> (device q.host).device
-    | None -> invalid_arg "Tolk_engine.link: a batch of a device without queues"
+  (* The host programs of a device's queues run on the host they name; a host
+     batch, which submits no queue, runs on its host. *)
+  let queues, host =
+    let first = device (List.hd info.device) in
+    match first.compiler.work with
+    | Queues q ->
+        (List.map (fun n -> (device n).device) info.device, (device q.host).device)
+    | Programs _ -> ([], first.device)
+    | Calls -> invalid_arg "Tolk_engine.link: a batch of a device that runs none"
   in
   let table =
     if info.table < 0 then Bigarray.(Array1.create int64 c_layout 0)
@@ -796,8 +818,14 @@ let link_batch ~device ~storage ~cells call patches =
       reaches := (host, b, hb) :: !reaches;
       B.bigarray Bigarray.int64 hb
   in
-  let named = List.map (fun n -> (n, (device n).device)) info.device in
-  let named n = List.assoc n named in
+  (* A host batch's calls are its host's, whatever device their buffers lie
+     on. *)
+  let named =
+    if List.is_empty queues then fun _ -> host
+    else
+      let named = List.map (fun n -> (n, (device n).device)) info.device in
+      fun n -> List.assoc n named
+  in
   let host_program = Program.load host (Ops.body call) in
   let binder u =
     if Ops.op u = Op.Const then Fixed (int_of_const u)
@@ -809,6 +837,8 @@ let link_batch ~device ~storage ~cells call patches =
       match (is Hcq2.submitted, is Hcq2.value) with
       | Some n, _ -> Submitted (named n)
       | None, Some n -> Signals (named n)
+      | None, None when name = Ops.expr Hcq2.host_workers ->
+          Fixed (Nx_device.Program.workers ())
       | None, None -> Var (reader cells 0 u)
   in
   let input (base, off, dev) =
@@ -872,7 +902,47 @@ let rec any_written b k j =
   j < Array.length b.inputs
   && ((b.inputs.(j).written && same_input b j k) || any_written b k (j + 1))
 
-let run_batch ~env slots b =
+(* A host program is outside the devices' ordering: the work that touched its
+   buffers, such as a batch's before it, completes first. A device is
+   synchronized once until the run queues work again, which only a batch with
+   queues does: a copy returns once its bytes have landed. *)
+let settled t d =
+  if not (List.memq d t.synced) then begin
+    Nx_device.synchronize d;
+    t.synced <- d :: t.synced
+  end
+
+let rec settle_list t = function
+  | [] -> ()
+  | b :: rest ->
+      settled t (B.device b);
+      settle_list t rest
+
+let settle t buffers =
+  for k = 0 to Array.length buffers - 1 do
+    settled t (B.device buffers.(k))
+  done
+
+(* A host batch queues no work: it waits for the work that touched what it
+   reaches, then calls its program. *)
+let run_host_batch t b =
+  let env = t.env in
+  settle_list t b.touched;
+  settle t b.run_reached;
+  for k = 0 to Array.length b.inputs - 1 do
+    b.table.{k} <- Int64.of_nativeint b.addresses.(k)
+  done;
+  for i = 0 to Array.length b.binders - 1 do
+    b.values.(i) <-
+      (match b.binders.(i) with
+      | Fixed v -> v
+      | Var v -> v env
+      | Submitted _ | Signals _ -> assert false)
+  done;
+  Nx_device.Program.call b.host_program.program b.buffers b.values
+
+let run_batch t slots b =
+  let env = t.env in
   let n = Array.length b.inputs in
   for k = 0 to n - 1 do
     let i = b.inputs.(k) in
@@ -884,19 +954,22 @@ let run_batch ~env slots b =
      which are among its touches until it completes. An input's memory is
      reached once per device, for reading and writing when any input over it is
      written. *)
-  let touches = ref b.touched in
   for k = 0 to n - 1 do
     let i = b.inputs.(k) in
     let first = first_same b k 0 in
     if first < k then b.run_reached.(k) <- b.run_reached.(first)
     else begin
       let access = if any_written b k k then B.Read_write else B.Read in
-      let r = reach i.on b.run_inputs.(k) access in
-      b.run_reached.(k) <- r;
-      touches := r :: !touches
+      b.run_reached.(k) <- reach i.on b.run_inputs.(k) access
     end;
     b.addresses.(k) <-
       Nativeint.add (B.address b.run_reached.(k)) (Nativeint.of_int i.offset)
+  done;
+  if List.is_empty b.devices then run_host_batch t b
+  else
+  let touches = ref b.touched in
+  for k = 0 to n - 1 do
+    if first_same b k 0 = k then touches := b.run_reached.(k) :: !touches
   done;
   Nx_device.submit b.devices ~touches:!touches (fun s ->
       for i = 0 to Array.length b.queues - 1 do
@@ -1156,13 +1229,13 @@ let seconds f =
    its own, the batch reports each kernel's span once its devices synchronized.
    While a profile is taken elsewhere, the spans are that profile's, and the
    batch reports no time. *)
-let run_reported ~env ~vars slots b =
+let run_reported t ~vars slots b =
   let own =
     if Nx_device.Profile.enabled () then None
     else try Some (Nx_device.Profile.start ()) with Invalid_argument _ -> None
   in
   let events =
-    match run_batch ~env slots b with
+    match run_batch t slots b with
     | () -> (
         match own with
         | Some p -> Nx_device.Profile.stop p
@@ -1206,19 +1279,6 @@ let bindings t =
     (fun name i vars ->
       if t.env.set.(i) then (name, t.env.values.(i)) :: vars else vars)
     t.cells []
-
-(* A host program is outside the devices' ordering: the work that touched its
-   buffers, such as a batch's before it, completes first. A device is
-   synchronized once until the run queues work again, which only a batch does:
-   a copy returns once its bytes have landed. *)
-let settle t buffers =
-  for k = 0 to Array.length buffers - 1 do
-    let d = B.device buffers.(k) in
-    if not (List.memq d t.synced) then begin
-      Nx_device.synchronize d;
-      t.synced <- d :: t.synced
-    end
-  done
 
 let run_launch t reports call slots l =
   let env = t.env in
@@ -1269,10 +1329,9 @@ let rec run_call t reports slots = function
         run_launch t reports call slots launches.(i)
       done
   | Batch b ->
-      if reported reports then
-        run_reported ~env:t.env ~vars:(bindings t) slots b
-      else run_batch ~env:t.env slots b;
-      t.synced <- []
+      if reported reports then run_reported t ~vars:(bindings t) slots b
+      else run_batch t slots b;
+      if not (List.is_empty b.devices) then t.synced <- []
   | Range { ranges; body } ->
       let env = t.env in
       let rec trips = function
@@ -1480,7 +1539,12 @@ let link_program ~devices name prg =
   in
   let n = List.fold_left (fun n slot -> max n (slot + 1)) 0 info.globals in
   let args = List.init n arg in
+  (* The host launches the program itself, as a call of its own: a host batch
+     around one call would time the batch. *)
+  let compiler n =
+    let c = (devices n).compiler in
+    match c.work with Programs _ -> { c with work = Calls } | _ -> c
+  in
   link ~devices
-    (Hcq2.compile_linear ~profile:Stamped
-       ~devices:(fun n -> (devices n).compiler)
+    (Hcq2.compile_linear ~profile:Stamped ~devices:compiler
        (Ops.v Op.Linear ~src:[ Ops.call prg args ]))
