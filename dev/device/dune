@@ -1,6 +1,9 @@
 ; The C flags of every library, test and bench under dev/device. A stanza
 ; names no C flag of its own.
 ;
+; A C warning is an error in every profile but release, as in nx: a release
+; build must not break on a warning a future compiler adds.
+;
 ; The sanitize profile compiles the C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
 ; executable, whose link_flags keep :standard to carry them. Its options are
@@ -12,9 +15,9 @@
 ; watch server is shared, and a test that never ends blocks every build.
 
 (env
- (dev
+ (release
   (c_flags
-   (:standard -std=c11 -Wall -Wextra -Werror))
+   (:standard -std=c11 -Wall -Wextra))
   (env-vars
    (WINDTRAP_TIMEOUT 60)))
  (sanitize
@@ -23,6 +26,7 @@
     -std=c11
     -Wall
     -Wextra
+    -Werror
     -g
     -fno-omit-frame-pointer
     -fsanitize=address,undefined))
@@ -34,6 +38,6 @@
    (WINDTRAP_TIMEOUT 60)))
  (_
   (c_flags
-   (:standard -std=c11 -Wall -Wextra))
+   (:standard -std=c11 -Wall -Wextra -Werror))
   (env-vars
    (WINDTRAP_TIMEOUT 60))))
