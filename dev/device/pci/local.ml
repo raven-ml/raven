@@ -78,32 +78,33 @@ let set_config t off n x =
   ignore (config t off n)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
-   bytes at [off], at least one. *)
+   bytes at [off]. *)
 let pages off n =
   let first = off / page * page in
-  (first, Int.max page (round_page (off + n) - first))
+  (first, round_page (off + n) - first)
 
-(* An empty window maps the BAR's first page, which every BAR has, so that its
-   address is its own. *)
+(* An empty window maps nothing: it is the BAR's bus address at [off]. *)
 let map t i off n =
-  let off = if n = 0 then 0 else off in
-  let first, len = pages off n in
-  let window fd base =
-    Window.v (file_map fd (base + first) len + off - first) n
-  in
-  match t.container with
-  | Some c -> window c.device (Vfio.bar_offset t.bus c.device i off n)
-  | None ->
-      let file = Sysfs.path t.bus (Printf.sprintf "resource%d" i) in
-      let fd =
-        Vfio.step file (fun () ->
-            Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
-      in
-      Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> window fd 0)
+  if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.bus i)) + off) 0
+  else
+    let first, len = pages off n in
+    let window fd base =
+      Window.v (file_map fd (base + first) len + off - first) n
+    in
+    match t.container with
+    | Some c -> window c.device (Vfio.bar_offset t.bus c.device i off n)
+    | None ->
+        let file = Sysfs.path t.bus (Printf.sprintf "resource%d" i) in
+        let fd =
+          Vfio.step file (fun () ->
+              Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
+        in
+        Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> window fd 0)
 
 let unmap w =
-  let a, n = pages (Window.address w) (Window.length w) in
-  file_unmap a n
+  if Window.length w > 0 then
+    let a, n = pages (Window.address w) (Window.length w) in
+    file_unmap a n
 
 let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false
@@ -213,6 +214,14 @@ let take_physical files bus =
     files = !files;
   }
 
+(* A function another driver holds, with no IOMMU to take it through, is freed
+   by unbinding that driver. *)
+let refusal (s : Sysfs.state) why =
+  match s with
+  | { driver = Some d; iommu = No_iommu; _ } when d <> "vfio-pci" ->
+      why ^ "; detaching the GPU unbinds it"
+  | _ -> why
+
 (* A failure gives back every descriptor taken. *)
 let take bus =
   if not (Sysfs.exists bus) then
@@ -225,7 +234,10 @@ let take bus =
     in
     let ( let* ) = Result.bind in
     match
-      let* addressing = Sysfs.access bus (Sysfs.state bus) in
+      let state = Sysfs.state bus in
+      let* addressing =
+        Result.map_error (refusal state) (Sysfs.access bus state)
+      in
       let by =
         match addressing with
         | Ops.Iommu -> take_iommu
