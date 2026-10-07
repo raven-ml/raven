@@ -8,7 +8,8 @@
   test_pm4
   test_aql
   test_sdma
-  test_thread_trace)
+  test_thread_trace
+  test_capability)
  (libraries device_amd_abi device_elf windtrap)
  (deps
   ../../../elf/test/fixtures/amd_gfx1100.o
