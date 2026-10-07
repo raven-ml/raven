@@ -43,7 +43,8 @@ type t = { name : string option; ops : ops }
 
 let address = Address.v
 let compare_address = Address.compare
-let this = { name = None; ops = Local.ops }
+let at root = { name = None; ops = Local.ops (Sysfs.v root) }
+let this = { name = None; ops = Local.ops Local.this }
 let make ~name ops = { name = Some name; ops }
 let name m = m.name
 let failed m = transport_failed m.ops.transport

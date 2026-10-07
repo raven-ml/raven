@@ -144,3 +144,52 @@ module Tables : sig
   (** [walk m t] is the pages [t] maps in [m], by virtual address, and the
       tables reached from the root, root first. It touches nothing. *)
 end
+
+(** {1:hosts Hosts in a fixture tree} *)
+
+(** A host's files as Linux shows them, written under the test's own directory,
+    for {!Device_pci.Machine.at}.
+
+    A function's directory holds [vendor], [device] and [class] in hexadecimal,
+    [enable], [resource] (one line per BAR: start, end and flags), the first 64
+    bytes of [config] with its identity and BAR registers, and the links
+    [driver] and [iommu_group] when it has them. An IOMMU group's directory
+    holds its [type] and its functions. Names hold [:], so trees are written
+    only where the file system allows it: {!make} skips the test on Windows. *)
+module Host : sig
+  (** The type for a BAR, in BAR order from BAR 0. *)
+  type bar =
+    | Mem32 of int * int  (** A 32-bit memory BAR: bus address, bytes. *)
+    | Mem64 of int * int  (** A 64-bit memory BAR, which takes two indices. *)
+    | Io of int * int  (** An I/O BAR. *)
+
+  type fn = {
+    bus : string;
+    vendor : int;
+    device : int;
+    class_ : int;  (** The base class, such as [0x03]. *)
+    driver : string option;
+    group : string option;  (** Its IOMMU group. *)
+    enabled : bool;
+    bars : bar list;
+  }
+  (** The type for a function of a host. *)
+
+  val gpu : ?driver:string -> ?group:string -> ?enabled:bool -> string -> fn
+  (** [gpu bus] is an AMD display controller at [bus], enabled and bound to no
+      driver, with a 64-bit BAR 0 of 256 MiB at [0x7c_0000_0000], a 64-bit BAR 2
+      of 2 MiB at [0xfc00_0000], an I/O BAR 4 of 256 bytes at [0xe000] and a
+      32-bit BAR 5 of 1 MiB at [0xfcc0_0000]. *)
+
+  val make :
+    ?lockdown:string ->
+    ?groups:(string * string) list ->
+    ?noiommu:string list ->
+    fn list ->
+    string
+  (** [make fns] is the root of a new host whose functions are [fns]. [groups]
+      gives each IOMMU group's type (defaults to [[]], a group whose type is not
+      given is ["DMA"]), [noiommu] the groups VFIO's no-IOMMU mode holds, and
+      [lockdown] the kernel's lockdown file (defaults to
+      ["[none] integrity confidentiality"]). *)
+end

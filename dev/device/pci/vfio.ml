@@ -70,8 +70,8 @@ let open_file bus file =
 
 (* VFIO takes an IOMMU group whole: every function of it bound to vfio-pci or to
    a driver VFIO accepts. *)
-let not_viable bus g =
-  match Sysfs.group_holders g with
+let not_viable h bus g =
+  match Sysfs.group_holders h g with
   | [] -> Printf.sprintf "IOMMU group %s of %s is not viable" g bus
   | held ->
       Printf.sprintf
@@ -109,18 +109,18 @@ let map_error bus n (e : Unix.error) =
    the function, whose first MSI vector goes to an eventfd. Each descriptor goes
    on [files] once open. Is the container, the function's descriptor and the
    eventfd. *)
-let open_function files bus m =
+let open_function h files bus m =
   let opened fd =
     files := fd :: !files;
     fd
   in
-  let g = Option.get (Sysfs.group bus) in
+  let g = Option.get (Sysfs.group h bus) in
   let file =
     match m with
-    | Type1v2 -> "/dev/vfio/" ^ g
-    | No_iommu -> Sysfs.noiommu_file g
+    | Type1v2 -> Sysfs.vfio_file h g
+    | No_iommu -> Sysfs.noiommu_file h g
   in
-  let container = opened (open_file bus "/dev/vfio/vfio") in
+  let container = opened (open_file bus (Sysfs.vfio_file h "vfio")) in
   let v =
     Fail.step "checking VFIO's API version" (fun () -> version container)
   in
@@ -139,7 +139,7 @@ let open_function files bus m =
           "VFIO has no type 1 IOMMU; load it: sudo modprobe vfio_iommu_type1");
   let group = opened (open_file bus file) in
   if not (Fail.step ("reading the status of " ^ file) (fun () -> viable group))
-  then Fail.fail "%s" (not_viable bus g);
+  then Fail.fail "%s" (not_viable h bus g);
   Fail.step
     ("attaching " ^ file ^ " to a VFIO container")
     (fun () -> set_container group container);
@@ -250,8 +250,8 @@ type t = {
 
 (* Opens [bus] in a container, its descriptors on [files]: the container and the
    eventfd its interrupts signal. *)
-let open_ files bus =
-  let fd, device, efd = open_function files bus Type1v2 in
+let open_ h files bus =
+  let fd, device, efd = open_function h files bus Type1v2 in
   let iova = iova bus fd in
   let maps = Hashtbl.create 64 in
   ({ fd; device; iova; maps; mutex = Mutex.create (); closed = false }, efd)

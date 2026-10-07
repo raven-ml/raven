@@ -159,14 +159,14 @@ let change g fn i f =
   index fn i;
   Mutex.protect g.mutex @@ fun () ->
   let* bus = gpu g Machine.this i in
-  Local.locked bus (fun () -> caught (fun () -> Ok (f bus)))
+  Local.locked Local.this bus (fun () -> caught (fun () -> Ok (f bus)))
 
 let detach g i =
   change g "detach" i (fun bus ->
-      Sysfs.detach bus;
-      Sysfs.resize bus g.memory_bar)
+      Sysfs.detach Local.this bus;
+      Sysfs.resize Local.this bus g.memory_bar)
 
-let attach g i = change g "attach" i Sysfs.attach
+let attach g i = change g "attach" i (Sysfs.attach Local.this)
 
 let reset g m i f =
   index "reset" i;

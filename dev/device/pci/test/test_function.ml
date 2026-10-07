@@ -979,6 +979,110 @@ let test_vfio () =
   Function.unpin f (Window.address w) (Window.length w);
   List.iter (fun (w, _) -> Function.free_dma f w) allocs
 
+(* A host's files *)
+
+(* [take_on fns bus] takes [bus] on a host whose functions are [fns]. *)
+let take_on ?lockdown ?groups ?noiommu fns bus =
+  Function.take (Machine.at (Host.make ?lockdown ?groups ?noiommu fns)) bus
+
+let audio bus =
+  { (Host.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
+
+(* Each refusal names the function and its cause, and what cures it where a
+   detach does. *)
+let refusals =
+  [
+    ( "a bus the host lacks",
+      [ Host.gpu "0000:03:00.0" ],
+      "0000:04:00.0",
+      [],
+      [ "0000:04:00.0 is no PCI function" ] );
+    ( "a driver other than vfio-pci, without an IOMMU",
+      [ Host.gpu ~driver:"amdgpu" "0000:03:00.0" ],
+      "0000:03:00.0",
+      [],
+      [ "0000:03:00.0 is bound to the driver amdgpu"; "detach the GPU" ] );
+    ( "a driver other than vfio-pci, behind an IOMMU",
+      [ Host.gpu ~driver:"amdgpu" ~group:"12" "0000:03:00.0" ],
+      "0000:03:00.0",
+      [],
+      [ "bound to the driver amdgpu"; "vfio-pci" ] );
+    ( "no driver behind a translating IOMMU",
+      [ Host.gpu ~group:"12" "0000:03:00.0" ],
+      "0000:03:00.0",
+      [],
+      [ "the IOMMU translates the addresses 0000:03:00.0 reaches"; "iommu=pt" ]
+    );
+    ( "a device shared with another function",
+      [ Host.gpu "0000:03:00.0"; audio "0000:03:00.1" ],
+      "0000:03:00.0",
+      [],
+      [ "0000:03:00.0 shares its device with 0000:03:00.1"; "detach the GPU" ]
+    );
+    ( "a disabled function",
+      [ Host.gpu ~enabled:false "0000:03:00.0" ],
+      "0000:03:00.0",
+      [],
+      [ "0000:03:00.0 is disabled"; "detach the GPU" ] );
+    ( "a locked-down kernel",
+      [ Host.gpu "0000:03:00.0" ],
+      "0000:03:00.0",
+      [ "lockdown" ],
+      [ "the kernel is locked down"; "0000:03:00.0" ] );
+  ]
+
+let test_refusal (_, fns, bus, opts, subs) =
+  let lockdown =
+    if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
+    else None
+  in
+  let why = require_error (take_on ?lockdown fns bus) in
+  List.iter (fun sub -> contains ~sub why) subs
+
+(* An identity IOMMU passes physical addresses through, as does VFIO's no-IOMMU
+   mode: a function under either is taken physically. On Linux the take locks
+   its configuration file; elsewhere flock is refused. *)
+let test_physical () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  List.iter
+    (fun (msg, groups, noiommu, group) ->
+      let fn = Host.gpu ?group "0000:03:00.0" in
+      let f = require_ok ~msg (take_on ~groups ~noiommu [ fn ] fn.bus) in
+      equal ~msg addressing Physical (Function.addressing f);
+      equal ~msg:"vendor" int 0x1002 (Function.config16 f 0);
+      equal ~msg:"device" int 0x744c (Function.config16 f 2);
+      let bars = List.init 7 (Function.bar f) in
+      equal ~msg:"BARs"
+        (list (option (pair hex int)))
+        [
+          Some (0x7c_0000_0000, 256 * mib);
+          None;
+          Some (0xfc00_0000, 2 * mib);
+          None;
+          Some (0xe000, 256);
+          Some (0xfcc0_0000, mib);
+          None;
+        ]
+        bars;
+      Function.release f)
+    [
+      ("no IOMMU", [], [], None);
+      ("an identity IOMMU", [ ("12", "identity") ], [], Some "12");
+      ("VFIO's no-IOMMU mode", [], [ "12" ], Some "12");
+    ]
+
+let host_files =
+  group ~timeout:patience "a host's files"
+    [
+      cases "a take is refused, naming the function and the cause"
+        ~name:(fun (n, _, _, _, _) -> n)
+        refusals test_refusal;
+      test
+        "a function alone and enabled, under no translating IOMMU, is taken \
+         physically, its BARs as its registers and resource file say"
+        test_physical;
+    ]
+
 let this_machine =
   group ~timeout:patience "this machine"
     [
@@ -994,4 +1098,4 @@ let this_machine =
 let () =
   exit
   @@ run "device_pci Function"
-       [ taking; uses; misuse_refused; model; this_machine ]
+       [ taking; uses; misuse_refused; model; host_files; this_machine ]

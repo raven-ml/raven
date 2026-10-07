@@ -12,7 +12,6 @@ external file_unmap : int -> int -> unit = "caml_device_pci_unmap"
 
 let page = Sysmem.page
 let round_page n = (n + page - 1) / page * page
-let functions = Sysfs.functions
 let reserve = Sysmem.reserve
 
 (* Locks *)
@@ -20,28 +19,29 @@ let reserve = Sysmem.reserve
 (* A function taken physically is locked by flock on its configuration space
    file: the lock is the file's, which every process that opens it shares.
    Behind VFIO the group's file admits one process at a time itself. *)
-let lock bus fd =
-  let file = Sysfs.path bus "config" in
+let lock h bus fd =
+  let file = Sysfs.path h bus "config" in
   try flock fd with
   | Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
       Fail.fail "%s is taken already; find who holds it: lsof %s" bus file
   | Unix.Unix_error (e, _, _) ->
       Fail.fail "locking %s with %s: %s" bus file (Unix.error_message e)
 
-let locked bus f =
-  let file = Sysfs.path bus "config" in
+let locked h bus f =
+  let file = Sysfs.path h bus "config" in
   match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
   | exception Unix.Unix_error (e, _, _) ->
       Error (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-      match lock bus fd with
+      match lock h bus fd with
       | () -> f ()
       | exception Fail.Failed why -> Error why)
 
 (* Taking *)
 
 type taken = {
+  host : Sysfs.t;
   bus : string;
   config : Unix.file_descr * int; (* where configuration space starts in it *)
   seek : Mutex.t; (* a seek and its read or write, one at a time *)
@@ -97,7 +97,7 @@ let pages off n =
 
 (* An empty window maps nothing: it is the BAR's bus address at [off]. *)
 let map t i off n =
-  if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.bus i)) + off) 0
+  if n = 0 then Window.v (fst (Option.get (Sysfs.bar t.host t.bus i)) + off) 0
   else
     let first, len = pages off n in
     let window fd base =
@@ -111,7 +111,7 @@ let map t i off n =
     | Some c ->
         window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
     | None ->
-        let file = Sysfs.path t.bus (Printf.sprintf "resource%d" i) in
+        let file = Sysfs.path t.host t.bus (Printf.sprintf "resource%d" i) in
         let fd =
           Fail.step ("opening " ^ file) (fun () ->
               Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
@@ -130,7 +130,7 @@ let reset t =
   match t.container with
   | Some c ->
       Fail.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
-  | None -> Sysfs.reset t.bus
+  | None -> Sysfs.reset t.host t.bus
 
 (* Physical addresses as runs: one per page, or one for contiguous memory. *)
 let runs ~contiguous n = function
@@ -179,7 +179,7 @@ let fn t =
       (match t.container with None -> Physical | Some _ -> Iommu);
     config = config t;
     set_config = set_config t;
-    bar = Sysfs.bar t.bus;
+    bar = Sysfs.bar t.host t.bus;
     map = map t;
     unmap;
     interrupt = interrupt t;
@@ -191,9 +191,10 @@ let fn t =
     release = (fun () -> release t);
   }
 
-let take_iommu files bus =
-  let c, efd = Vfio.open_ files bus in
+let take_iommu host files bus =
+  let c, efd = Vfio.open_ host files bus in
   {
+    host;
     bus;
     config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
     seek = Mutex.create ();
@@ -204,8 +205,8 @@ let take_iommu files bus =
 
 (* Bound to vfio-pci, a function taken physically has its interrupts through
    VFIO's no-IOMMU mode. *)
-let take_physical files bus =
-  let file = Sysfs.path bus "config" in
+let take_physical host files bus =
+  let file = Sysfs.path host bus "config" in
   let config =
     try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
     | Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
@@ -217,14 +218,15 @@ let take_physical files bus =
         Fail.fail "opening %s: %s" file (Unix.error_message e)
   in
   files := config :: !files;
-  lock bus config;
+  lock host bus config;
   let interrupts =
-    if Sysfs.driver bus = Some "vfio-pci" then
-      let _, _, efd = Vfio.open_function files bus Vfio.No_iommu in
+    if Sysfs.driver host bus = Some "vfio-pci" then
+      let _, _, efd = Vfio.open_function host files bus Vfio.No_iommu in
       Some efd
     else None
   in
   {
+    host;
     bus;
     config = (config, 0);
     seek = Mutex.create ();
@@ -234,8 +236,8 @@ let take_physical files bus =
   }
 
 (* A failure gives back every descriptor taken. *)
-let take bus =
-  if not (Sysfs.exists bus) then
+let take host bus =
+  if not (Sysfs.exists host bus) then
     Error (Printf.sprintf "%s is no PCI function of this machine" bus)
   else
     let files = ref [] in
@@ -245,18 +247,26 @@ let take bus =
     in
     let ( let* ) = Result.bind in
     match
-      let state = Sysfs.state bus in
-      let* addressing = Sysfs.access bus state in
+      let state = Sysfs.state host bus in
+      let* addressing = Sysfs.access host bus state in
       let by =
         match addressing with
         | Ops.Iommu -> take_iommu
         | Physical -> take_physical
       in
-      Ok (fn (by files bus))
+      Ok (fn (by host files bus))
     with
     | Ok _ as fn -> fn
     | Error why -> refused why
     | exception Fail.Failed why -> refused why
 
-let ops =
-  { Ops.transport = Window.unsafe_transport 0; page; functions; take; reserve }
+let this = Sysfs.v "/"
+
+let ops host =
+  {
+    Ops.transport = Window.unsafe_transport 0;
+    page;
+    functions = (fun () -> Sysfs.functions host);
+    take = take host;
+    reserve;
+  }

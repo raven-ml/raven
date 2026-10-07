@@ -3,12 +3,29 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let root = "/sys/bus/pci/devices"
-let groups = "/sys/kernel/iommu_groups"
-let lockdown = "/sys/kernel/security/lockdown"
+(* A host's files, under its root directory: "/" for this machine. *)
+type t = {
+  devices : string;
+  groups : string;
+  lockdown : string;
+  bus_files : string; (* rescan and drivers_probe *)
+  vfio : string;
+}
+
+let v root =
+  let ( / ) = Filename.concat in
+  {
+    devices = root / "sys/bus/pci/devices";
+    groups = root / "sys/kernel/iommu_groups";
+    lockdown = root / "sys/kernel/security/lockdown";
+    bus_files = root / "sys/bus/pci";
+    vfio = root / "dev/vfio";
+  }
+
 let vfio_pci = "vfio-pci"
-let path bus file = Printf.sprintf "%s/%s/%s" root bus file
-let exists bus = Sys.file_exists (Filename.concat root bus)
+let path h bus file = Printf.sprintf "%s/%s/%s" h.devices bus file
+let exists h bus = Sys.file_exists (Filename.concat h.devices bus)
+let vfio_file h name = Filename.concat h.vfio name
 
 (* A channel's failure names its file: "FILE: cause". *)
 let read file =
@@ -52,39 +69,39 @@ let read_hex file = hex file (read file)
 
 (* Functions *)
 
-let link bus file =
-  let l = path bus file in
+let link h bus file =
+  let l = path h bus file in
   if Sys.file_exists l then Some (Filename.basename (readlink l)) else None
 
-let driver bus = link bus "driver"
-let group bus = link bus "iommu_group"
+let driver h bus = link h bus "driver"
+let group h bus = link h bus "iommu_group"
 
 (* A function the kernel lists but whose files cannot be read, as while it is
    being removed, is left out. *)
-let functions () =
-  if not (Sys.file_exists root) then []
+let functions h =
+  if not (Sys.file_exists h.devices) then []
   else
-    Sys.readdir root |> Array.to_list
+    Sys.readdir h.devices |> Array.to_list
     |> List.filter_map (fun bus ->
         match
           {
             Ops.bus;
-            vendor = read_hex (path bus "vendor");
-            device = read_hex (path bus "device");
-            class_ = read_hex (path bus "class") lsr 16;
+            vendor = read_hex (path h bus "vendor");
+            device = read_hex (path h bus "device");
+            class_ = read_hex (path h bus "class") lsr 16;
           }
         with
         | id -> Some id
         | exception Fail.Failed _ -> None)
 
 (* The other functions of [bus]'s device, such as its audio function. *)
-let siblings bus =
+let siblings h bus =
   let prefix = String.sub bus 0 (String.length bus - 1) in
   List.filter
-    (fun s -> s <> bus && exists s)
+    (fun s -> s <> bus && exists h s)
     (List.init 8 (fun fn -> prefix ^ string_of_int fn))
 
-let enabled bus = read (path bus "enable") <> "0"
+let enabled h bus = read (path h bus "enable") <> "0"
 
 (* BARs *)
 
@@ -101,8 +118,8 @@ let memory_flags = 0xf
 let wide_bar = 0b100
 let type_mask = 0b110
 
-let registers bus =
-  let file = path bus "config" in
+let registers h bus =
+  let file = path h bus "config" in
   let s =
     match
       In_channel.with_open_bin file (fun ic -> really_input_string ic header)
@@ -115,8 +132,8 @@ let registers bus =
   Array.init bars (fun i ->
       Int32.to_int (String.get_int32_le s (bar_base + (4 * i))) land 0xffff_ffff)
 
-let resource bus i =
-  let file = path bus "resource" in
+let resource h bus i =
+  let file = path h bus "resource" in
   match List.nth_opt (String.split_on_char '\n' (read file)) i with
   | None -> None
   | Some line -> (
@@ -140,10 +157,10 @@ let address regs i =
     if wide i && i + 1 < bars then Some (low lor (regs.(i + 1) lsl 32))
     else Some low
 
-let bar bus i =
+let bar h bus i =
   if i < 0 || i >= bars then None
   else
-    match (address (registers bus) i, resource bus i) with
+    match (address (registers h bus) i, resource h bus i) with
     | Some a, Some size -> Some (a, size)
     | _ -> None
 
@@ -162,49 +179,49 @@ type state = {
 (* VFIO's no-IOMMU mode gives a function a group of its own, whose file is
    [noiommu-N]. A group's [type] is the domain its functions' DMA goes through
    while no VFIO container holds them. *)
-let noiommu_file g = "/dev/vfio/noiommu-" ^ g
+let noiommu_file h g = vfio_file h ("noiommu-" ^ g)
 
-let iommu_of bus =
-  match group bus with
+let iommu_of h bus =
+  match group h bus with
   | None -> No_iommu
-  | Some g when Sys.file_exists (noiommu_file g) -> No_iommu
+  | Some g when Sys.file_exists (noiommu_file h g) -> No_iommu
   | Some g -> (
-      match read (Printf.sprintf "%s/%s/type" groups g) with
+      match read (Printf.sprintf "%s/%s/type" h.groups g) with
       | "identity" -> Identity
       | _ -> Translating
       | exception Fail.Failed _ -> Translating)
 
 (* The kernel's lockdown file lists the modes with the current one in
    brackets. *)
-let locked_down () =
-  match read lockdown with
+let locked_down h =
+  match read h.lockdown with
   | s -> not (String.starts_with ~prefix:"[none]" s)
   | exception Fail.Failed _ -> false
 
-let state bus =
+let state h bus =
   {
-    driver = driver bus;
-    iommu = iommu_of bus;
-    siblings = siblings bus;
-    enabled = enabled bus;
-    locked_down = locked_down ();
+    driver = driver h bus;
+    iommu = iommu_of h bus;
+    siblings = siblings h bus;
+    enabled = enabled h bus;
+    locked_down = locked_down h;
   }
 
 let bind_vfio bus = Printf.sprintf "sudo driverctl set-override %s vfio-pci" bus
 
 (* Bridges are held by pcieport, which VFIO accepts. *)
-let group_holders g =
-  match Sys.readdir (Printf.sprintf "%s/%s/devices" groups g) with
+let group_holders h g =
+  match Sys.readdir (Printf.sprintf "%s/%s/devices" h.groups g) with
   | exception Sys_error _ -> []
   | fns ->
       Array.to_list fns |> List.sort String.compare
       |> List.filter_map (fun f ->
-          match driver f with
+          match driver h f with
           | Some d when not (List.mem d [ vfio_pci; "pci-stub"; "pcieport" ]) ->
               Some (f, d)
           | _ -> None)
 
-let access bus s =
+let access h bus s =
   match s with
   | { driver = Some d; iommu = No_iommu; _ } when d <> vfio_pci ->
       Error
@@ -236,26 +253,26 @@ let access bus s =
            "the kernel is locked down (%s), which refuses mapping a BAR \
             outside VFIO; take %s behind an IOMMU: turn the IOMMU on and bind \
             it to vfio-pci (%s)"
-           lockdown bus (bind_vfio bus))
+           h.lockdown bus (bind_vfio bus))
   | _ -> Ok Ops.Physical
 
 (* Changes *)
 
-let detach bus =
-  match access bus (state bus) with
+let detach h bus =
+  match access h bus (state h bus) with
   | Ok _ -> ()
   | Error _ -> (
-      (match driver bus with
+      (match driver h bus with
       | Some d when d <> vfio_pci ->
-          write (path bus "driver/unbind") bus;
-          if driver bus <> None then
+          write (path h bus "driver/unbind") bus;
+          if driver h bus <> None then
             Fail.fail "the driver %s stays bound to %s" d bus
       | _ -> ());
-      List.iter (fun s -> write (path s "remove") "1") (siblings bus);
-      if driver bus = None && not (enabled bus) then
-        write (path bus "enable") "1";
-      let s = state bus in
-      match (access bus s, s) with
+      List.iter (fun s -> write (path h s "remove") "1") (siblings h bus);
+      if driver h bus = None && not (enabled h bus) then
+        write (path h bus "enable") "1";
+      let s = state h bus in
+      match (access h bus s, s) with
       | Ok _, _ -> ()
       | Error _, { siblings = sibling :: _; _ } ->
           Fail.fail "%s still shares its device with %s after removing it" bus
@@ -264,12 +281,12 @@ let detach bus =
           Fail.fail "%s is still disabled after enabling it" bus
       | Error why, _ -> Fail.fail "%s" why)
 
-let reset bus = write (path bus "reset") "1"
+let reset h bus = write (path h bus "reset") "1"
 
 (* A rescan brings back the functions [detach] removed. The function itself is
    on the bus already, so its driver is probed for it. *)
-let attach bus =
-  match driver bus with
+let attach h bus =
+  match driver h bus with
   | Some d when d = vfio_pci ->
       Fail.fail
         "%s is bound to vfio-pci; unbind it and clear its driver_override \
@@ -277,10 +294,10 @@ let attach bus =
         bus bus
   | Some _ -> ()
   | None ->
-      if enabled bus then write (path bus "enable") "0";
-      write "/sys/bus/pci/rescan" "1";
-      write "/sys/bus/pci/drivers_probe" bus;
-      if driver bus = None then
+      if enabled h bus then write (path h bus "enable") "0";
+      write (Filename.concat h.bus_files "rescan") "1";
+      write (Filename.concat h.bus_files "drivers_probe") bus;
+      if driver h bus = None then
         Fail.fail "no kernel driver took %s; load its module first" bus
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
@@ -290,9 +307,9 @@ let attach bus =
    highest bit is [largest]. *)
 let largest = Sys.int_size - 2
 
-let resize bus i =
-  let file = path bus (Printf.sprintf "resource%d_resize" i) in
-  if driver bus = None && Sys.file_exists file then
+let resize h bus i =
+  let file = path h bus (Printf.sprintf "resource%d_resize" i) in
+  if driver h bus = None && Sys.file_exists file then
     let sizes = read_hex file in
     let rec try_from k =
       if k >= 0 then

@@ -141,5 +141,10 @@ val make : name:string -> ops -> t
 
 (**/**)
 
-val take : t -> string -> (fn, string) result
 (* [take m bus] is [m]'s take: {!Function.take} builds on it. *)
+val take : t -> string -> (fn, string) result
+
+(* [at root] is this machine as the directory [root] shows it: its functions
+   under [root/sys/bus/pci], its VFIO files under [root/dev/vfio]. {!this} is
+   [at "/"]. Tests run it on a fixture tree. *)
+val at : string -> t

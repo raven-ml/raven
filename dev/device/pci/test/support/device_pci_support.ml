@@ -196,3 +196,150 @@ module Tables = struct
     go (Page_table.root t) 0 (Page_table.base t);
     (List.rev !pages, List.rev !tables)
 end
+
+(* Hosts in a fixture tree *)
+
+module Host = struct
+  type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
+
+  type fn = {
+    bus : string;
+    vendor : int;
+    device : int;
+    class_ : int;
+    driver : string option;
+    group : string option;
+    enabled : bool;
+    bars : bar list;
+  }
+
+  let gpu ?driver ?group ?(enabled = true) bus =
+    {
+      bus;
+      vendor = 0x1002;
+      device = 0x744c;
+      class_ = 0x03;
+      driver;
+      group;
+      enabled;
+      bars =
+        [
+          Mem64 (0x7c_0000_0000, 256 * mib);
+          Mem64 (0xfc00_0000, 2 * mib);
+          Io (0xe000, 256);
+          Mem32 (0xfcc0_0000, mib);
+        ];
+    }
+
+  let ( / ) = Filename.concat
+
+  let rec mkdir_p d =
+    if not (Sys.file_exists d) then begin
+      mkdir_p (Filename.dirname d);
+      Sys.mkdir d 0o755
+    end
+
+  let rec remove path =
+    match Unix.lstat path with
+    | { st_kind = S_DIR; _ } ->
+        Array.iter (fun f -> remove (path / f)) (Sys.readdir path);
+        Unix.rmdir path
+    | _ -> Unix.unlink path
+    | exception Unix.Unix_error (ENOENT, _, _) -> ()
+
+  let write file s =
+    mkdir_p (Filename.dirname file);
+    Out_channel.with_open_bin file (fun oc -> output_string oc s)
+
+  (* The suite's hosts are under one directory beside it in _build, named for
+     the executable so that suites running at once keep apart, and cleared at
+     its first host, since a killed run leaves it. *)
+  let hosts =
+    lazy
+      (let d =
+         Sys.getcwd ()
+         / (Filename.remove_extension (Filename.basename Sys.executable_name)
+           ^ ".hosts")
+       in
+       remove d;
+       mkdir_p d;
+       d)
+
+  let count = Atomic.make 0
+
+  (* BAR registers: memory BARs keep their low four bits for flags, a 64-bit one
+     has type bits 0b10 and its upper half in the next register, an I/O BAR has
+     bit 0 set. *)
+  let registers bars =
+    List.concat_map
+      (function
+        | Mem32 (a, _) -> [ a ]
+        | Mem64 (a, _) -> [ a land 0xffff_fff0 lor 0b100; a lsr 32 ]
+        | Io (a, _) -> [ a lor 1 ])
+      bars
+
+  (* The resource file's lines: a BAR's first and last address, or zeroes for an
+     index without one, such as a 64-bit BAR's upper half. *)
+  let resource bars =
+    let line (a, n) =
+      Printf.sprintf "0x%016x 0x%016x 0x%016x" a (a + n - 1) 0
+    in
+    let zero = Printf.sprintf "0x%016x 0x%016x 0x%016x" 0 0 0 in
+    let lines =
+      List.concat_map
+        (function
+          | Mem32 (a, n) | Io (a, n) -> [ line (a, n) ]
+          | Mem64 (a, n) -> [ line (a, n); zero ])
+        bars
+    in
+    String.concat "\n"
+      (lines @ List.init (13 - List.length lines) (fun _ -> zero))
+    ^ "\n"
+
+  let config fn =
+    let b = Bytes.make 64 '\000' in
+    Bytes.set_uint16_le b 0 fn.vendor;
+    Bytes.set_uint16_le b 2 fn.device;
+    Bytes.set_uint8 b 0x0b fn.class_;
+    List.iteri
+      (fun i r -> Bytes.set_int32_le b (0x10 + (4 * i)) (Int32.of_int r))
+      (registers fn.bars);
+    Bytes.to_string b
+
+  let make ?(lockdown = "[none] integrity confidentiality") ?(groups = [])
+      ?(noiommu = []) fns =
+    if Sys.win32 then skip ~reason:"Windows names no file with a colon" ();
+    let root =
+      Lazy.force hosts / string_of_int (Atomic.fetch_and_add count 1)
+    in
+    let sys = root / "sys" in
+    let devices = sys / "bus/pci/devices" in
+    write (sys / "kernel/security/lockdown") (lockdown ^ "\n");
+    List.iter
+      (fun fn ->
+        let d = devices / fn.bus in
+        write (d / "vendor") (Printf.sprintf "0x%04x\n" fn.vendor);
+        write (d / "device") (Printf.sprintf "0x%04x\n" fn.device);
+        write (d / "class") (Printf.sprintf "0x%06x\n" (fn.class_ lsl 16));
+        write (d / "enable") (if fn.enabled then "1\n" else "0\n");
+        write (d / "resource") (resource fn.bars);
+        write (d / "config") (config fn);
+        Option.iter
+          (fun drv ->
+            write (sys / "bus/pci/drivers" / drv / "bind") "";
+            Unix.symlink ("../../drivers" / drv) (d / "driver"))
+          fn.driver;
+        Option.iter
+          (fun g ->
+            Unix.symlink
+              ("../../../../kernel/iommu_groups" / g)
+              (d / "iommu_group");
+            let gd = sys / "kernel/iommu_groups" / g in
+            write (gd / "devices" / fn.bus) "";
+            write (gd / "type")
+              (Option.value (List.assoc_opt g groups) ~default:"DMA" ^ "\n"))
+          fn.group)
+      fns;
+    List.iter (fun g -> write (root / "dev/vfio" / ("noiommu-" ^ g)) "") noiommu;
+    root
+end

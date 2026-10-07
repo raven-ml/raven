@@ -166,27 +166,45 @@ let test_no_sysfs () =
   if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
   equal (list id) [] (Machine.functions Machine.this)
 
-(* Linux's sysfs: a directory per function, its identity in hexadecimal text
-   files. The class file holds base class, subclass and interface. *)
-let sysfs_id bus =
-  let hex file =
-    In_channel.with_open_text
-      (Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file)
-      In_channel.input_all
-    |> String.trim |> int_of_string
+(* A host's functions, from their files: identity in hexadecimal, the class
+   file's top byte the base class. *)
+let test_host () =
+  let gpu = Host.gpu "0000:c3:00.0" in
+  let nv =
+    { (Host.gpu "10000:21:00.0") with vendor = 0x10de; device = 0x2684 }
   in
-  {
-    Machine.bus;
-    vendor = hex "vendor";
-    device = hex "device";
-    class_ = hex "class" lsr 16;
-  }
+  let audio = { (Host.gpu "0000:03:00.1") with class_ = 0x04; bars = [] } in
+  let m = Machine.at (Host.make [ gpu; nv; audio ]) in
+  equal (list id)
+    [
+      { bus = "0000:03:00.1"; vendor = 0x1002; device = 0x744c; class_ = 0x04 };
+      { bus = "0000:c3:00.0"; vendor = 0x1002; device = 0x744c; class_ = 0x03 };
+      { bus = "10000:21:00.0"; vendor = 0x10de; device = 0x2684; class_ = 0x03 };
+    ]
+    (Machine.functions m)
 
+(* A function whose files cannot be read, as while the kernel removes it, is
+   left out. *)
+let test_host_unreadable () =
+  let root = Host.make [ Host.gpu "0000:03:00.0"; Host.gpu "0000:43:00.0" ] in
+  let vendor = "sys/bus/pci/devices/0000:43:00.0/vendor" in
+  Out_channel.with_open_bin (Filename.concat root vendor) (fun oc ->
+      output_string oc "zz\n");
+  equal (list string) [ "0000:03:00.0" ]
+    (List.map
+       (fun (d : Machine.id) -> d.bus)
+       (Machine.functions (Machine.at root)))
+
+let test_host_empty () =
+  equal (list id) [] (Machine.functions (Machine.at (Host.make [])))
+
+(* Read only: this machine lists the functions its kernel shows. *)
 let test_sysfs () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
   let buses = Array.to_list (Sys.readdir "/sys/bus/pci/devices") in
-  let want = List.map sysfs_id (List.sort Machine.compare_address buses) in
-  equal (list id) want (Machine.functions Machine.this)
+  equal (list string)
+    (List.sort Machine.compare_address buses)
+    (List.map (fun (d : Machine.id) -> d.bus) (Machine.functions Machine.this))
 
 let functions =
   group ~timeout:patience "functions"
@@ -195,6 +213,10 @@ let functions =
       test "listing a machine's functions asks it nothing else"
         test_listing_asks;
       test "this machine without /sys/bus/pci has none" test_no_sysfs;
+      test "a host's functions are its files', in bus order" test_host;
+      test "a function whose files cannot be read is left out"
+        test_host_unreadable;
+      test "a host without functions lists none" test_host_empty;
       test "this machine's are those of /sys/bus/pci, in bus order" test_sysfs;
     ]
 
