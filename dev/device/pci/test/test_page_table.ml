@@ -97,6 +97,23 @@ let pp_target ppf t =
     | System -> "system"
     | Peer -> "peer")
 
+let target = Testable.make ~pp:pp_target ~equal:( = )
+
+let space =
+  Testable.make
+    ~pp:(fun ppf s ->
+      Format.fprintf ppf "the space of %d addresses at 0x%x" (Space.length s)
+        (Space.base s))
+    ~equal:( == )
+
+(* [zeroed ~msg zs (a, n)] asserts that one of the ranges [zs] zeroed holds the
+   [n] bytes at [a]. *)
+let zeroed ~msg zs (a, n) =
+  satisfies ~msg ~claim:"one zeroed range holds the block"
+    (list (pair hex int))
+    (List.exists (fun (z, k) -> z <= a && a + n <= z + k))
+    zs
+
 let pp_entry ppf e =
   Format.fprintf ppf "{va 0x%x; level %d; pa 0x%x; %a%s%s; fragment %d}" e.va
     e.level e.pa pp_target e.target
@@ -246,7 +263,7 @@ let test_create () =
     Page_table.create (format g) s ~memory:(66 * mib) ~boot:mib ~tables:Main
       ~pages:[ (page, page) ]
   in
-  is_true ~msg:"its space" (Page_table.space t == s);
+  equal ~msg:"its space" space s (Page_table.space t);
   equal ~msg:"translates from the space's base" hex base (Page_table.base t);
   equal ~msg:"2^bits addresses" hex (1 lsl 48) (Page_table.span t);
   less ~msg:"the root in the boot pool" hex ~than:mib (Page_table.root t);
@@ -419,7 +436,7 @@ let test_map =
       equal ~msg:"pages" (list (pair hex int)) c.ranges m.pages;
       equal ~msg:"uncached" bool c.unc m.uncached;
       equal ~msg:"snooped" bool c.snoop m.snooped;
-      is_true ~msg:"target" (m.target = c.tg);
+      equal ~msg:"target" target c.tg m.target;
       let want =
         expect ~base ~target:c.tg ~uncached:c.unc ~snooped:c.snoop ~va c.ranges
       in
@@ -830,8 +847,7 @@ let test_contiguous =
       in
       equal ~msg:"one block" int size len;
       equal ~msg:"aligned as its largest page" hex 0 (pa land (align - 1));
-      is_true ~msg:"zeroed"
-        (List.exists (fun (z, k) -> z <= pa && pa + size <= z + k) g.zeroed);
+      zeroed ~msg:"zeroed" g.zeroed (pa, size);
       equal ~msg:"mapped" (list placed) (expect_mapping ~base m) (pages g t))
 
 (* Without [contiguous], 4 MiB and three pages are two 2 MiB blocks, which map
@@ -842,8 +858,8 @@ let test_blocks () =
   let m = require_some (Page_table.alloc ~uncached:true t n) in
   equal ~msg:"size" int n m.size;
   equal ~msg:"blocks cover it" int n (sum (sizes m.pages));
-  is_true ~msg:"uncached" m.uncached;
-  is_true ~msg:"the GPU's memory" (m.target = Gpu);
+  equal ~msg:"uncached" bool true m.uncached;
+  equal ~msg:"the GPU's memory" target Gpu m.target;
   let ps = pages g t in
   equal ~msg:"entries" (list placed) (expect_mapping ~base m) ps;
   equal ~msg:"levels" (list int) [ 2; 2; 3; 3; 3 ]
@@ -972,12 +988,11 @@ let palloc_judge align zero boot n m got =
       if fits ~gap size align then
         failf "None for %d bytes aligned to 0x%x with %d free in a row" size
           align gap
-  | Ok (Some a, zeroed) ->
+  | Ok (Some a, zs) ->
       in_pool ~msg:"block" p ~align (a, size);
       if Option.value zero ~default:true then
-        is_true ~msg:"zeroed"
-          (List.exists (fun (z, k) -> z <= a && a + size <= z + k) zeroed);
-      List.iter (apart ~msg:"zeroing" (m.boot.live @ m.main.live)) zeroed;
+        zeroed ~msg:"zeroed" zs (a, size);
+      List.iter (apart ~msg:"zeroing" (m.boot.live @ m.main.live)) zs;
       take p (a, size)
 
 let pfree m a =
@@ -1132,11 +1147,11 @@ let alloc_judge contiguous uncached n m got =
   | Ok None ->
       if space_fits && pool_fits then
         failf "None for %d bytes with room in the space and the pool" size
-  | Ok (Some (a, zeroed)) ->
+  | Ok (Some (a, zs)) ->
       equal ~msg:"size" int size a.size;
       equal ~msg:"uncached" bool uncached a.uncached;
-      is_false ~msg:"snooped" a.snooped;
-      is_true ~msg:"the GPU's memory" (a.target = Gpu);
+      equal ~msg:"snooped" bool false a.snooped;
+      equal ~msg:"the GPU's memory" target Gpu a.target;
       in_pool ~msg:"addresses" m.space ~align:1 (a.va, size);
       equal ~msg:"blocks cover it" int size (sum (sizes a.pages));
       if contiguous then equal ~msg:"one block" int 1 (List.length a.pages);
@@ -1145,8 +1160,7 @@ let alloc_judge contiguous uncached n m got =
           in_pool ~msg:"block" m.phys ~align:page (pa, k);
           take m.phys (pa, k);
           if contiguous then
-            is_true ~msg:"zeroed"
-              (List.exists (fun (z, j) -> z <= pa && pa + k <= z + j) zeroed))
+            zeroed ~msg:"zeroed" zs (pa, k))
         a.pages;
       take m.space (a.va, size);
       m.maps <- a :: m.maps
