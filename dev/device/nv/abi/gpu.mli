@@ -26,15 +26,16 @@
     so the segments hold neither. The GPU's queues take no fills.
 
     {b Times.} The GPU writes times ({!Method.release_stamp},
-    {!Qmd.release_stamp}, {!Method.copy_stamp}) as nanoseconds of its own timer,
-    unsigned 64-bit integers in little-endian order. The timer is a clock of the
-    GPU: a reader converts its times to the host clock ([CLOCK_MONOTONIC]) by
-    the offset between the two, measured with a time the GPU writes between two
-    readings of the host clock. *)
+    {!Qmd.release_stamp}, {!Method.copy_release_stamp}) as nanoseconds of its
+    own timer, unsigned 64-bit integers in little-endian order. The timer is a
+    clock of the GPU: a reader converts its times to the host clock
+    ([CLOCK_MONOTONIC]) by the offset between the two, measured with a time the
+    GPU writes between two readings of the host clock. *)
 
 type t = {
   compute_class : int;
-      (** The class of its compute engine, such as [0xc9c0] for Ada's. *)
+      (** The class of its compute engine: one of [0xc7c0] (Ampere), [0xc9c0]
+          (Ada) and [0xcec0] (Blackwell). *)
   sass_version : int;
       (** The version of the machine code its multiprocessors run. *)
   gpcs : int;  (** Its graphics processing clusters. *)

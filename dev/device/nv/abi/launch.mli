@@ -19,11 +19,10 @@ type t
 val make : Gpu.t -> Cubin.kernel -> (t, string) result
 (** [make g k] is [k] launched on [g]. It is [Error] if [k] declares more shared
     memory than a launch can take: 100 KiB, the 1 KiB the driver reserves
-    included. *)
+    included.
 
-val code : t -> int
-(** [code l] is the offset of the kernel's first instruction in its cubin's
-    image. *)
+    Raises [Invalid_argument] if [g.compute_class] is none of the classes
+    {!Gpu.t} names. *)
 
 val banks : t -> Cubin.bank list
 (** [banks l] is the constant banks a launch addresses: the kernel's
@@ -41,5 +40,5 @@ val local_bytes : t -> int
     kernel's stack and the 576 bytes the driver reserves. *)
 
 val max_threads : t -> int
-(** [max_threads l] is the most threads a block may have for the registers its
-    threads use. *)
+(** [max_threads l] is the most threads a block of [l] may have: [1024], or
+    fewer for the registers its threads use. *)

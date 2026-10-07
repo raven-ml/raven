@@ -16,7 +16,8 @@
     payload, is of the caller's type ['v]; an operand the operation fixes, such
     as a class, is an integer.
 
-    Addresses are the GPU's virtual addresses. *)
+    Addresses are the GPU's virtual addresses. Copy methods are those of the
+    copy classes from AMPERE_DMA_COPY_B ([0xc7b5]) on. *)
 
 (** {1:engines Engines} *)
 
@@ -38,15 +39,21 @@ val acquire : 'v -> 'v -> 'v Packet.t
     least [v] in circular order: until [w - v], computed modulo [2{^64}], is
     below [2{^63}]. *)
 
-val release : 'v -> 'v -> 'v Packet.t
-(** [release addr v] waits for the channel's earlier work to complete, every
-    engine idle, then writes [v] into the semaphore at [addr] and raises a
-    non-stalling interrupt. The channel's later methods run after the write. *)
+val release : Packet.scope -> 'v -> 'v -> 'v Packet.t
+(** [release s addr v] waits for the channel's earlier work to complete, every
+    engine idle, then writes the 64-bit [v] into the semaphore at [addr], so
+    that readers of scope [s] who see [v] see the work's writes. The channel's
+    later methods run after the write. *)
 
-val release_stamp : 'v -> 'v -> 'v Packet.t
-(** [release_stamp addr v] is {!release} without the interrupt, also writing the
-    GPU's timer, in nanoseconds, into the 8 bytes at [addr + 8]. [addr] is
-    16-byte aligned. *)
+val release_stamp : Packet.scope -> 'v -> 'v -> 'v Packet.t
+(** [release_stamp s addr v] is [release s addr v], also writing the GPU's
+    timer, in nanoseconds, into the 8 bytes at [addr + 8]. [addr] is 16-byte
+    aligned. *)
+
+val interrupt : 'v Packet.t
+(** [interrupt] raises a non-stalling interrupt when the channel reaches it. It
+    waits for nothing: it may reach the host before the write of a release just
+    before it is visible. *)
 
 (** {1:compute Compute} *)
 
@@ -61,11 +68,15 @@ val local_memory_window : 'v -> 'v Packet.t
 val local_memory : 'v -> per_tpc:'v -> 'v Packet.t
 (** [local_memory addr ~per_tpc] gives kernels the local memory at [addr]:
     [per_tpc] bytes for each texture processing cluster, for every streaming
-    multiprocessor. *)
+    multiprocessor. Launches scheduled after it use it. A launch scheduled
+    before it must have completed: a {!release} separates them, and the caller
+    keeps the memory until the launches that use it complete. *)
 
-val invalidate_caches : 'v Packet.t
-(** [invalidate_caches] invalidates the compute engine's instruction, data and
-    constant caches, without waiting for its work to complete. *)
+val invalidate_caches : Packet.scope -> 'v Packet.t
+(** [invalidate_caches s] invalidates the compute engine's caches that would
+    hide writes of scope [s] from launches scheduled after it: at [Agent], its
+    data and constant caches; at [System], its instruction cache too. It does
+    not wait for the engine's work to complete. *)
 
 val schedule : 'v -> 'v Packet.t
 (** [schedule addr] schedules the launch descriptor at [addr], 256-byte aligned
@@ -83,12 +94,12 @@ val copy : dst:'v -> src:'v -> 'v -> 'v Packet.t
     engine. [n] is at most {!max_copy}; a longer copy is several, at increasing
     offsets. *)
 
-val copy_release : 'v -> 'v -> 'v Packet.t
-(** [copy_release addr v] writes the low 32 bits of [v] into the 4 bytes at
-    [addr], 4-byte aligned, once the copy engine's earlier copies are complete
-    and their writes visible. *)
+val copy_release : Packet.scope -> 'v -> 'v -> 'v Packet.t
+(** [copy_release s addr v] writes the 64-bit [v] into the 8 bytes at [addr],
+    8-byte aligned, once the copy engine's earlier copies are complete, so that
+    readers of scope [s] who see [v] see their writes. *)
 
-val copy_stamp : 'v -> 'v Packet.t
-(** [copy_stamp addr] writes [0] into the 8 bytes at [addr], 16-byte aligned,
-    and the GPU's timer, in nanoseconds, into the 8 bytes after, once the copy
-    engine's earlier copies are complete. *)
+val copy_release_stamp : Packet.scope -> 'v -> 'v -> 'v Packet.t
+(** [copy_release_stamp s addr v] is [copy_release s addr v], also writing the
+    GPU's timer, in nanoseconds, into the 8 bytes at [addr + 8]. [addr] is
+    16-byte aligned. *)

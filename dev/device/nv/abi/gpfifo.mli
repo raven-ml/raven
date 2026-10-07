@@ -12,12 +12,13 @@
 val max_words : int
 (** [max_words] is the most words a segment holds, [2{^21} - 1]. *)
 
-val entry : 'v -> offset:int -> words:int -> 'v Packet.term
+val entry : 'v -> offset:int -> words:int -> 'v Packet.t
 (** [entry addr ~offset ~words] is the entry of the segment of [words] words at
     [addr + offset], which is 4-byte aligned and below [2{^40}]. The entry is
-    [Add (Value addr, n)], where [n] depends on [offset] and [words] alone: a
-    writer computes [n] once and adds each segment's address. Bit 63 of an
-    entry, which would make the channel wait for its earlier work, is clear.
+    [[W64 (Add (Value addr, n))]], where [n] depends on [offset] and [words]
+    alone: a writer reads [n] from the entry's {!Packet.template} with [addr]
+    unknown, and adds each segment's address. Bit 63 of an entry, which would
+    make the channel wait for its earlier work, is clear.
 
     Raises [Invalid_argument] if [words] is outside \[[0];{!max_words}\] or
     [offset] is outside \[[0];[2{^40}-1]\]. *)

@@ -8,9 +8,10 @@
     A launch descriptor ({!Qmd}) is a structure in memory: bytes whose fields
     hold integers the layout knows, and values of the caller. Each field a value
     fills is a {e hole}. As with {!Packet}, the caller interprets the
-    description: {!encode} with integers, a compiler as its own nodes. *)
+    description: {!encode} with integers, a compiler as its own nodes. Every
+    structure comes from {!Qmd.structure}. *)
 
-type 'v hole = {
+type 'v hole = private {
   at : int;  (** The offset of the field's first byte. *)
   bits : int;
       (** The field's width, from bit [0] of that byte, in \[[1];[64]\]. *)
@@ -25,7 +26,7 @@ type 'v hole = {
     value's low 24 bits go in bytes [8] to [10], and byte [11] keeps the field
     that follows. *)
 
-type 'v t = {
+type 'v t = private {
   bytes : string;
       (** The structure's bytes: its known fields, and zeros in its holes'
           fields. *)
@@ -37,8 +38,6 @@ type 'v t = {
 
 val encode : ('v -> int64) -> 'v t -> string
 (** [encode value s] is [s.bytes] with each hole filled by its term, each value
-    [v] taken as the 64-bit unsigned integer [value v] ({!Packet.eval}).
+    [v] taken as the 64-bit unsigned integer [value v].
 
-    Raises [Invalid_argument] if a hole's [bits] is outside \[[1];[64]\], its
-    word does not lie in [s.bytes], two holes' words overlap, or {!Packet.eval}
-    raises. *)
+    Raises [Invalid_argument] if a shift is outside \[[0];[63]\]. *)

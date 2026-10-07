@@ -41,13 +41,12 @@ type 'v word =
 type 'v t = 'v word list
 (** The type for packets, and for sequences of packets, in channel order. *)
 
+(** The type for the scope of a cache operation: work on this GPU ([Agent]), for
+    which the L2 keeps memory coherent, or anyone ([System]), the host and other
+    devices included. *)
+type scope = Agent | System
+
 (** {1:interpreting Interpreting} *)
-
-val eval : ('v -> int64) -> 'v term -> int64
-(** [eval value t] is the integer [t] computes, each value [v] taken as the
-    64-bit unsigned integer [value v].
-
-    Raises [Invalid_argument] if a shift is outside \[[0];[63]\]. *)
 
 val size : 'v t -> int
 (** [size p] is the number of 32-bit words of [p]: one per [Dword] and [W32],
@@ -57,7 +56,7 @@ val encode : ('v -> int64) -> 'v t -> string
 (** [encode value p] is the [4 * size p] bytes of [p], each word little-endian,
     with each value [v] taken as the 64-bit unsigned integer [value v].
 
-    Raises [Invalid_argument] if {!eval} does. *)
+    Raises [Invalid_argument] if a shift is outside \[[0];[63]\]. *)
 
 val template : ('v -> int64 option) -> 'v t -> string * (int * 'v word) list
 (** [template known p] is [(b, holes)] where [b] is {!encode} of [p] with every
@@ -71,4 +70,5 @@ val template : ('v -> int64 option) -> 'v t -> string * (int * 'v word) list
     the value unknown, once, and fills its hole each time.
     [template (fun v -> Some (value v)) p] is [(encode value p, [])].
 
-    Raises [Invalid_argument] if {!eval} does on a known word. *)
+    Raises [Invalid_argument] if a known word's shift is outside \[[0];[63]\].
+*)
