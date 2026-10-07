@@ -9,11 +9,8 @@
 open Windtrap
 open Device_amd_abi
 
-let words p =
-  let s = Packet.encode Int64.of_int p in
-  List.init
-    (String.length s / 4)
-    (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
+let timeout = Device_amd_abi_support.timeout
+let words = Device_amd_abi_support.encode
 
 let kernel : Code_object.kernel =
   {
@@ -33,32 +30,65 @@ let kernel : Code_object.kernel =
 (* A barrier, and system scope for both fences. *)
 let header = (1 lsl 8) lor (2 lsl 9) lor (2 lsl 11)
 
+let dispatches =
+  let open Gen in
+  let side = int_range 1 0xffff and u32 = int_range 0 0xffff_ffff in
+  let addr = int_range 0 ((1 lsl 48) - 1) in
+  with_pp
+    (fun ppf ((k : Code_object.kernel), (x, y, z), (gx, gy, gz), d, a) ->
+      Format.fprintf ppf
+        "private %d, group %d, threads (%d, %d, %d), grid (%d, %d, %d), \
+         descriptor 0x%x, args 0x%x"
+        k.private_segment k.group_segment x y z gx gy gz d a)
+    (let+ private_segment = u32
+     and+ group_segment = u32
+     and+ threads = triple side side side
+     and+ grid = triple u32 u32 u32
+     and+ descriptor = addr
+     and+ args = addr in
+     ( { kernel with private_segment; group_segment },
+       threads,
+       grid,
+       descriptor,
+       args ))
+
 let dispatch =
-  group "dispatch"
+  group ~timeout "dispatch"
     [
-      test "a kernel dispatch packet" (fun () ->
+      prop "a dispatch packet lays out hsa.h's fields" dispatches
+        (fun (k, (x, y, z), (gx, gy, gz), descriptor, args) ->
+          let lo n = n land 0xffff_ffff and hi n = n lsr 32 in
           equal (list int)
             [
               header lor 2 lor (3 lsl 16);
-              64 lor (2 lsl 16);
-              1;
-              128;
-              4;
-              1;
-              16;
-              1024;
-              0x1000;
-              0x1;
-              0x2000;
-              0x2;
+              x lor (y lsl 16);
+              z;
+              gx;
+              gy;
+              gz;
+              k.Code_object.private_segment;
+              k.group_segment;
+              lo descriptor;
+              hi descriptor;
+              lo args;
+              hi args;
               0;
               0;
               0;
               0;
             ]
             (words
-               (Aql.dispatch kernel ~descriptor:0x1_0000_1000
-                  ~args:0x2_0000_2000 ~threads:(64, 2, 1) ~grid:(128, 4, 1))));
+               (Aql.dispatch k ~descriptor ~args ~threads:(x, y, z)
+                  ~grid:(gx, gy, gz))));
+      cases ~name:string_of_int "a workgroup side of 16 bits is taken"
+        [ 1; 0xffff ] (fun t ->
+          equal int
+            (t lor (t lsl 16))
+            (List.nth
+               (words
+                  (Aql.dispatch kernel ~descriptor:0 ~args:0 ~threads:(t, t, t)
+                     ~grid:(1, 1, 1)))
+               1));
       cases ~name:string_of_int "a workgroup side outside 16 bits is refused"
         [ 0; 0x10000 ] (fun t ->
           raises_match (Exn.invalid_arg ~substring:"Aql.dispatch") (fun () ->
@@ -67,7 +97,7 @@ let dispatch =
     ]
 
 let indirect =
-  group "indirect_buffer"
+  group ~timeout "indirect_buffer"
     [
       test "PM4 words in a vendor packet of 16 words" (fun () ->
           equal (list int)

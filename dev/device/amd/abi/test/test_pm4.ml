@@ -8,32 +8,22 @@
 
 open Windtrap
 open Device_amd_abi
+module S = Device_amd_abi_support
 
-let gpu gc =
-  {
-    Gpu.target = gc;
-    gc;
-    sdma = (6, 0, 0);
-    xccs = 1;
-    shader_engines = 6;
-    compute_units = 48;
-    scratch_slots = 32;
-  }
-
+let timeout = Device_amd_abi_support.timeout
+let strf = Printf.sprintf
+let gpu gc = S.gpu ~shader_engines:6 ~compute_units:48 gc
 let gfx11 = gpu (11, 0, 0)
 let gfx9 = gpu (9, 4, 3)
-
-let words p =
-  let s = Packet.encode Int64.of_int p in
-  List.init
-    (String.length s / 4)
-    (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
+let words = S.encode
+let generations = [ gfx9; gfx11; gpu (12, 0, 0) ]
+let name (g : Gpu.t) = S.version g.gc
 
 (* PACKET3(op, n): type 3, n + 1 words after the header. *)
 let packet3 op n = (3 lsl 30) lor (n lsl 16) lor (op lsl 8)
 
 let memory =
-  group "memory and registers"
+  group ~timeout "memory and registers"
     [
       test "a write to a register, at one address" (fun () ->
           equal (list int)
@@ -51,7 +41,19 @@ let memory =
           equal (list int)
             [ packet3 0x79 1; 0x200; 7 ]
             (words (Pm4.set_reg 0xc200 [ W32 (Value 7) ])));
-      cases ~name:(Printf.sprintf "0x%x") "a register no packet sets is refused"
+      cases
+        ~name:(fun (r, _, _) -> strf "0x%x" r)
+        "the first and last registers of each range"
+        [ (0x2c00, 0x76, 0); (0x2fff, 0x76, 0x3ff); (0xc000, 0x79, 0) ]
+        (fun (reg, op, off) ->
+          equal (list int)
+            [ packet3 op 1; off; 7 ]
+            (words (Pm4.set_reg reg [ W32 (Value 7) ])));
+      test "a 64-bit word sets two registers" (fun () ->
+          equal (list int)
+            [ packet3 0x76 2; 0x20c; 2; 1 ]
+            (words (Pm4.set_reg 0x2e0c [ W64 (Value 0x1_0000_0002) ])));
+      cases ~name:(strf "0x%x") "a register no packet sets is refused"
         [ 0x2bff; 0x3000; 0xbfff ] (fun reg ->
           raises_match (Exn.invalid_arg ~substring:"Pm4.set_reg") (fun () ->
               Pm4.set_reg reg [ Dword 0 ]));
@@ -73,7 +75,7 @@ let memory =
     ]
 
 let waits =
-  group "waits"
+  group ~timeout "waits"
     [
       test "a wait on a register" (fun () ->
           equal (list int)
@@ -95,6 +97,11 @@ let waits =
             (List.nth
                (words (Pm4.wait g (Register 0xc8e8) Equal 0 ~mask:1 ()))
                2));
+      test "a wait compares the reference's low 32 bits" (fun () ->
+          equal int 4
+            (List.nth
+               (words (Pm4.wait gfx11 (Memory 8) Equal 0x7_0000_0004 ()))
+               4));
       test "a 64-bit wait compares every bit of both words" (fun () ->
           equal (list int)
             [
@@ -123,8 +130,32 @@ let release_gcr =
   0x4000 lor 0x8000 lor 0x10_0000 lor 0x1000 lor 0x2000 lor 0x20_0000
   lor 0x40_0000
 
+(* The caches an acquire's control word names: scalar, vector, L1, instruction,
+   L2 invalidated, L2 written back. GFX9's CP_COHER_CNTL (soc15d.h):
+   SH_KCACHE_ACTION_ENA 27, TCL1_ACTION_ENA 22 (its vector cache is its L1),
+   SH_ICACHE_ACTION_ENA 29, TC_ACTION_ENA 23, TC_WB_ACTION_ENA 18. GFX10 on,
+   GCR_CNTL (nvd.h): GLK_INV 7, GLV_INV 8, GL1_INV 9, GLI_INV 0, GL2_INV 14,
+   GL2_WB 15. *)
+let acquired (g : Gpu.t) ws =
+  let bit w n = w land (1 lsl n) <> 0 in
+  match (g.gc, ws) with
+  | (9, _, _), [ _; c; _; _; _; _; _ ] ->
+      (bit c 27, bit c 22, bit c 22, bit c 29, bit c 23, bit c 18)
+  | _, [ _; _; _; _; _; _; _; c ] ->
+      (bit c 7, bit c 8, bit c 9, bit c 0, bit c 14, bit c 15)
+  | _ -> failf "an acquire of %d words" (List.length ws)
+
+let caches_w =
+  Testable.make
+    ~pp:(fun ppf (k, v, l1, i, inv, wb) ->
+      Format.fprintf ppf
+        "{ scalar = %b; vector = %b; l1 = %b; instruction = %b; l2_inv = %b; \
+         l2_wb = %b }"
+        k v l1 i inv wb)
+    ~equal:( = )
+
 let caches =
-  group "caches and signals"
+  group ~timeout "caches and signals"
     [
       test "a release with an interrupt" (fun () ->
           equal (list int)
@@ -166,19 +197,82 @@ let caches =
           equal (list int)
             [ packet3 0x58 6; 0; 0xffff_ffff; 0xffff_ffff; 0; 0; 0; cntl ]
             (words (Pm4.acquire_mem gfx11 scope)));
+      cases
+        ~name:(fun ((g : Gpu.t), s) ->
+          strf "%s, %s" (name g)
+            (match s with Packet.Agent -> "agent" | System -> "system"))
+        "an acquire invalidates the caches its scope names"
+        (List.concat_map
+           (fun g -> [ (g, Packet.Agent); (g, System) ])
+           generations)
+        (fun (g, scope) ->
+          let all = scope = Packet.System in
+          equal caches_w
+            (true, true, true, all, all, all)
+            (acquired g (words (Pm4.acquire_mem g scope))));
+      cases ~name "a system release writes the L2 back" generations (fun g ->
+          let control =
+            List.nth (words (Pm4.release_mem g System 0 (Low_32 0))) 1
+          in
+          let wb = match g.gc with 9, _, _ -> 1 lsl 15 | _ -> 1 lsl 21 in
+          equal int wb (control land wb));
+      cases ~name "an interrupt carries its id's low 32 bits" generations
+        (fun g ->
+          let ws =
+            words
+              (Pm4.release_mem g Agent ~interrupt:0x1_0000_0077 0 (Low_32 0))
+          in
+          equal (pair int int) (2, 0x77)
+            ((List.nth ws 2 lsr 24) land 7, List.nth ws 7));
+      cases ~name "a release without an interrupt raises none" generations
+        (fun g ->
+          let ws = words (Pm4.release_mem g System 0 (Data_64 0)) in
+          equal int 0 ((List.nth ws 2 lsr 24) land 7));
       test "a partial flush" (fun () ->
           equal (list int)
             [ packet3 0x46 0; 7 lor (4 lsl 8) ]
             (words (Pm4.event_write Cs_partial_flush)));
+      test "a thread trace's marker and finish" (fun () ->
+          equal
+            (pair (list int) (list int))
+            ([ packet3 0x46 0; 0x35 ], [ packet3 0x46 0; 0x37 ])
+            ( words (Pm4.event_write Thread_trace_marker),
+              words (Pm4.event_write Thread_trace_finish) ));
     ]
 
+let pp_word ppf : int Packet.word -> unit = function
+  | Dword n -> Format.fprintf ppf "Dword 0x%x" n
+  | W32 _ -> Format.fprintf ppf "W32 _"
+  | W64 _ -> Format.fprintf ppf "W64 _"
+
+(* Packets of any words over integers. *)
+let packets =
+  let open Gen in
+  let addr = int_range 0 ((1 lsl 48) - 1) in
+  with_pp
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_word)
+    (list ~size:(int_range 0 40)
+       (frequency
+          [
+            (2, map (fun n -> Packet.Dword n) (int_range 0 0xffff_ffff));
+            (1, map (fun a -> Packet.W32 (Value a)) addr);
+            (1, map (fun a -> Packet.W64 (Value a)) addr);
+          ]))
+
 let control =
-  group "control"
+  group ~timeout "control"
     [
-      test "a predicated block counts its words" (fun () ->
+      prop "a predicated block is its header, its mask and count, then itself"
+        (Gen.pair (Gen.int_range 0 255) packets)
+        (fun (xcc_mask, p) ->
           equal (list int)
-            [ packet3 0x23 0; (0x5 lsl 24) lor 3; 1; 2; 3 ]
-            (words (Pm4.pred_exec ~xcc_mask:0x5 [ Dword 1; Dword 2; Dword 3 ])));
+            ([ packet3 0x23 0; (xcc_mask lsl 24) lor Packet.size p ] @ words p)
+            (words (Pm4.pred_exec ~xcc_mask p)));
+      test "a predicated block of 16383 words" (fun () ->
+          equal int 16385
+            (Packet.size
+               (Pm4.pred_exec ~xcc_mask:0xff
+                  (List.init 16383 (fun _ -> Packet.Dword 0)))));
       cases ~name:string_of_int "a die mask past 8 bits is refused"
         [ -1; 0x100 ] (fun xcc_mask ->
           raises_match (Exn.invalid_arg ~substring:"Pm4.pred_exec") (fun () ->
@@ -191,6 +285,12 @@ let control =
           equal (list int)
             [ packet3 0x3f 2; 0x100; 0x1; 16 lor (1 lsl 23) ]
             (words (Pm4.indirect_buffer 0x1_0000_0100 ~dwords:16)));
+      test "an indirect buffer of 2^20 - 1 words leaves CHAIN clear" (fun () ->
+          equal int
+            (((1 lsl 20) - 1) lor (1 lsl 23))
+            (List.nth
+               (words (Pm4.indirect_buffer 0 ~dwords:((1 lsl 20) - 1)))
+               3));
       cases ~name:string_of_int "an indirect buffer past IB_SIZE is refused"
         [ -1; 1 lsl 20 ]
         (fun dwords ->
@@ -217,18 +317,213 @@ let dispatch g =
   Pm4.dispatch g kernel ~program:0x1_0000_1100 ~scratch:0x2_0000_0000
     ~args:0x3_0000_0000 ~packet:0 ~threads:(64, 1, 1) ~groups:(2, 3, 4) ()
 
+(* Kernels as compilers describe them: no privilege in COMPUTE_PGM_RSRC1 (bit
+   20) and no LDS in COMPUTE_PGM_RSRC2 (bits 15 to 23), which AMDGPUUsage says
+   the descriptor leaves 0. *)
+let rsrc1_priv = 1 lsl 20
+let rsrc2_lds = 0x1ff lsl 15
+
+let pp_kernel ppf (k : Code_object.kernel) =
+  Format.fprintf ppf
+    "{ group = %d; private = %d; rsrc1 = 0x%x; rsrc2 = 0x%x; rsrc3 = 0x%x; \
+     wave32 = %b; dispatch_ptr = %b; private_segment_buffer = %b }"
+    k.group_segment k.private_segment k.rsrc1 k.rsrc2 k.rsrc3 k.wave32
+    k.dispatch_ptr k.private_segment_buffer
+
+let kernels =
+  let open Gen in
+  let u32 = int_range 0 0xffff_ffff in
+  with_pp pp_kernel
+    (let+ group_segment = int_range 0 65536
+     and+ private_segment = int_range 0 (1 lsl 16)
+     and+ rsrc = triple u32 u32 u32
+     and+ flags = triple bool bool bool in
+     let rsrc1, rsrc2, rsrc3 = rsrc and wave32, dispatch_ptr, psb = flags in
+     {
+       Code_object.descriptor = 0;
+       entry = 0;
+       group_segment;
+       private_segment;
+       kernarg_size = 0;
+       rsrc1 = rsrc1 land lnot rsrc1_priv;
+       rsrc2 = rsrc2 land lnot rsrc2_lds;
+       rsrc3;
+       wave32;
+       dispatch_ptr;
+       private_segment_buffer = psb;
+     })
+
+type launch = {
+  g : Gpu.t;
+  k : Code_object.kernel;
+  program : int;
+  scratch : int;
+  args : int;
+  packet : int;
+  threads : int * int * int;
+  groups : int * int * int;
+  waves : int option;
+}
+
+let launches =
+  let open Gen in
+  let aligned n = map (fun a -> a * n) (int_range 0 (((1 lsl 48) - 1) / n)) in
+  let side = int_range 1 1024 in
+  let count = int_range 1 0x7fff_ffff in
+  with_pp
+    (fun ppf l ->
+      let x, y, z = l.threads and gx, gy, gz = l.groups in
+      Format.fprintf ppf
+        "GC %s, %a, program 0x%x, scratch 0x%x, args 0x%x, packet 0x%x, \
+         threads (%d, %d, %d), groups (%d, %d, %d), waves %s"
+        (S.version l.g.gc) pp_kernel l.k l.program l.scratch l.args l.packet x y
+        z gx gy gz
+        (Option.fold ~none:"none" ~some:string_of_int l.waves))
+    (let+ g = of_list generations
+     and+ k = kernels
+     and+ program, scratch = pair (aligned 256) (aligned 256)
+     and+ args, packet = pair (aligned 16) (aligned 64)
+     and+ threads = triple side side side
+     and+ groups = triple count count count
+     and+ waves = option (int_range 1 1023) in
+     { g; k; program; scratch; args; packet; threads; groups; waves })
+
+let launch l =
+  Pm4.dispatch l.g l.k ~program:l.program ~scratch:l.scratch ~args:l.args
+    ~packet:l.packet ~threads:l.threads ~groups:l.groups
+    ?waves_per_array:l.waves ()
+
+let address g name = Register.address g (require_some (Register.find g name))
+let lo n = n land 0xffff_ffff
+let hi n = n lsr 32
+
+(* The registers a launch sets, as the .mli states them, at the addresses of the
+   GC's headers: each _HI register follows its _LO, RSRC2 follows RSRC1, and
+   NUM_THREAD_X to _Z follow START_X to _Z. *)
+let expected l =
+  let g = l.g and k = l.k in
+  let gfx11 = match g.gc with 11, _, _ -> true | _ -> false in
+  let x, y, z = l.threads in
+  let pgm = address g "regCOMPUTE_PGM_LO"
+  and rsrc1 = address g "regCOMPUTE_PGM_RSRC1"
+  and threads = address g "regCOMPUTE_START_X" + 3
+  and user = address g "regCOMPUTE_USER_DATA_0"
+  and scratch = address g "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" in
+  (* A scratch descriptor is 4 words: the address's low 32 bits, then its bits
+     32 to 47 under the descriptor's fields, which a law cannot state. *)
+  let user_data =
+    (if k.private_segment_buffer then
+       [ Some (lo l.scratch); Some (hi l.scratch); None; None ]
+     else [])
+    @ (if k.dispatch_ptr then [ Some (lo l.packet); Some (hi l.packet) ] else [])
+    @ [ Some (lo l.args); Some (hi l.args) ]
+  in
+  [
+    (pgm, lo (l.program lsr 8));
+    (pgm + 1, hi (l.program lsr 8));
+    (rsrc1, if gfx11 then k.rsrc1 lor rsrc1_priv else k.rsrc1);
+    (address g "regCOMPUTE_PGM_RSRC3", k.rsrc3);
+    (address g "regCOMPUTE_TMPRING_SIZE", Scratch.tmpring g k.private_segment);
+    (scratch, lo (l.scratch lsr 8));
+    (scratch + 1, hi (l.scratch lsr 8));
+    (threads, x);
+    (threads + 1, y);
+    (threads + 2, z);
+    ( address g "regCOMPUTE_RESOURCE_LIMITS",
+      Register.encode
+        (require_some (Register.find g "regCOMPUTE_RESOURCE_LIMITS"))
+        [ ("waves_per_sh", Option.value ~default:0 l.waves) ] );
+  ]
+  @ List.concat
+      (List.mapi
+         (fun i v -> Option.fold ~none:[] ~some:(fun v -> [ (user + i, v) ]) v)
+         user_data)
+
+let initiator (g : Gpu.t) (k : Code_object.kernel) =
+  let r = require_some (Register.find g "regCOMPUTE_DISPATCH_INITIATOR") in
+  let w32 = k.wave32 && List.mem_assoc "cs_w32_en" r.fields in
+  Register.encode r
+    ([ ("compute_shader_en", 1); ("force_start_at_000", 1) ]
+    @ if w32 then [ ("cs_w32_en", 1) ] else [])
+
+let writes l = S.writes (words (launch l))
+let fst3 (a, _, _) = a
+
+(* The LDS_SIZE field of the COMPUTE_PGM_RSRC2 a dispatch sets. *)
+let lds g group_segment =
+  let k = { kernel with group_segment; rsrc2 = 0 } in
+  let ws =
+    S.writes
+      (words
+         (Pm4.dispatch g k ~program:0 ~scratch:0 ~args:0 ~packet:0
+            ~threads:(1, 1, 1) ~groups:(1, 1, 1) ()))
+  in
+  (List.assoc (address g "regCOMPUTE_PGM_RSRC1" + 1) ws lsr 15) land 0x1ff
+
 let runs =
-  group "runs"
+  group ~timeout "runs"
     [
-      test "a dispatch ends in DISPATCH_DIRECT, wave32 at 0" (fun () ->
-          let ws = words (dispatch gfx11) in
-          equal (list int)
-            [ packet3 0x15 3; 2; 3; 4; 0x8005 ]
-            (List.filteri (fun i _ -> i >= List.length ws - 5) ws));
-      test "a dispatch sets its program from bit 8" (fun () ->
-          equal (list int)
-            [ packet3 0x76 2; 0x20c; 0x0100_0011; 0 ]
-            (List.filteri (fun i _ -> i < 4) (words (dispatch gfx11))));
+      prop "a dispatch sets the registers of its kernel and arguments" launches
+        (fun l ->
+          let ws = writes l in
+          cover "a scratch descriptor" l.k.private_segment_buffer;
+          cover "a dispatch packet" l.k.dispatch_ptr;
+          List.iter
+            (fun (a, v) ->
+              let v' =
+                require_some ~msg:(strf "0x%x is set" a) (List.assoc_opt a ws)
+              in
+              (* A scratch descriptor's second word holds the address's bits 32
+                 to 47, and fields above them. *)
+              let v' =
+                if
+                  l.k.private_segment_buffer
+                  && a = address l.g "regCOMPUTE_USER_DATA_0" + 1
+                then v' land 0xffff
+                else v'
+              in
+              equal ~msg:(strf "0x%x" a) int v v')
+            (expected l));
+      prop "a dispatch's other words leave its kernel's resources" launches
+        (fun l ->
+          let rsrc2 =
+            List.assoc (address l.g "regCOMPUTE_PGM_RSRC1" + 1) (writes l)
+          in
+          equal int l.k.rsrc2 (rsrc2 land lnot rsrc2_lds));
+      prop "a dispatch ends in DISPATCH_DIRECT of its groups" launches (fun l ->
+          let gx, gy, gz = l.groups in
+          match List.rev (S.packets (words (launch l))) with
+          | (op, body) :: rest ->
+              equal
+                (pair int (list int))
+                (0x15, [ gx; gy; gz; initiator l.g l.k ])
+                (op, body);
+              List.iter
+                (fun (op, _) -> equal ~msg:"SET_SH_REG before it" int 0x76 op)
+                rest
+          | [] -> fail "no packet");
+      cases
+        ~name:(fun (t, g) -> strf "%s, %d bytes" (S.version t) g)
+        "a GFX9 or GFX11 workgroup's LDS, in 512-byte units"
+        [
+          ((9, 4, 2), 0);
+          ((9, 4, 2), 1);
+          ((9, 4, 2), 512);
+          ((9, 4, 2), 513);
+          ((11, 0, 0), 65536);
+          ((11, 0, 0), 65535);
+        ]
+        (fun (target, group_segment) ->
+          let g =
+            S.gpu ~target (if fst3 target = 9 then (9, 4, 3) else target)
+          in
+          equal int ((group_segment + 511) / 512) (lds g group_segment));
+      xfail
+        ~reason:
+          "GFX950's LDS_SIZE counts 1280-byte units (AMDGPUUsage); the encoder \
+           writes 512-byte units, 3 for a 1280-byte workgroup"
+        (test "a GFX950 workgroup's LDS, in 1280-byte units" (fun () ->
+             equal int 1 (lds (S.gpu ~target:(9, 5, 0) (9, 5, 0)) 1280)));
       cases ~name:string_of_int "a wave limit outside 10 bits is refused"
         [ 0; 1024 ] (fun n ->
           raises_match (Exn.invalid_arg ~substring:"waves_per_array") (fun () ->
@@ -237,12 +532,14 @@ let runs =
       test "a GC with no dispatch registers is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Pm4.dispatch") (fun () ->
               dispatch (gpu (10, 3, 0))));
-      test "a run acquires, then flushes" (fun () ->
+      prop "a run is an agent acquire, its words, then a partial flush"
+        (Gen.pair (Gen.of_list generations) packets)
+        (fun (g, p) ->
           equal (list int)
-            (words (Pm4.acquire_mem gfx11 Agent)
-            @ [ 9 ]
+            (words (Pm4.acquire_mem g Agent)
+            @ words p
             @ words (Pm4.event_write Cs_partial_flush))
-            (words (Pm4.run gfx11 [ Dword 9 ])));
+            (words (Pm4.run g p)));
     ]
 
 let () =

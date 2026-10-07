@@ -8,6 +8,8 @@
 open Windtrap
 open Device_amd_abi
 
+let timeout = Device_amd_abi_support.timeout
+
 let gpu target =
   {
     Gpu.target;
@@ -20,13 +22,15 @@ let gpu target =
   }
 
 let processor =
-  cases ~name:snd "a processor's name"
+  cases ~timeout ~name:snd "a processor's name"
     [
       ((12, 0, 1), "gfx1201");
       ((11, 0, 0), "gfx1100");
       ((9, 0, 10), "gfx90a");
       ((9, 4, 2), "gfx942");
       ((9, 0, 12), "gfx90c");
+      ((10, 3, 0), "gfx1030");
+      ((11, 5, 1), "gfx1151");
     ]
     (fun (target, name) -> equal string name (Gpu.processor (gpu target)))
 

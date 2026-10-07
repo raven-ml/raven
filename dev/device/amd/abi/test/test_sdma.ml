@@ -8,75 +8,95 @@
 
 open Windtrap
 open Device_amd_abi
+module S = Device_amd_abi_support
 
-let gpu sdma =
-  {
-    Gpu.target = (11, 0, 0);
-    gc = (11, 0, 0);
-    sdma;
-    xccs = 1;
-    shader_engines = 4;
-    compute_units = 32;
-    scratch_slots = 32;
-  }
-
-let words p =
-  let s = Packet.encode Int64.of_int p in
-  List.init
-    (String.length s / 4)
-    (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
-
+let timeout = Device_amd_abi_support.timeout
+let gpu sdma = S.gpu ~sdma (11, 0, 0)
+let words = S.encode
 let version (a, b, c) = Printf.sprintf "%d.%d.%d" a b c
 
+(* The largest linear copy of each version, as the .mli states it. *)
+let largest = function
+  | 4, 4, s when s >= 2 -> 1 lsl 30
+  | 5, m, _ when m >= 2 -> 1 lsl 30
+  | a, _, _ when a >= 6 -> 1 lsl 30
+  | _ -> 1 lsl 22
+
+let versions =
+  [
+    (4, 0, 0);
+    (4, 4, 0);
+    (4, 4, 2);
+    (4, 4, 5);
+    (5, 0, 0);
+    (5, 2, 0);
+    (6, 0, 0);
+    (7, 0, 0);
+  ]
+
+(* A version, an address pair and a length around its largest copy. *)
+let copies =
+  let open Gen in
+  let addr = int_range 0 ((1 lsl 47) - 1) in
+  with_pp
+    (fun ppf (v, dst, src, n) ->
+      Format.fprintf ppf "SDMA %s, dst 0x%x, src 0x%x, %d bytes" (version v) dst
+        src n)
+    (let* v = of_list versions in
+     let max = largest v in
+     let+ dst = addr
+     and+ src = addr
+     and+ n =
+       frequency
+         [
+           (2, int_range 0 4096);
+           ( 2,
+             map
+               (fun (k, d) -> (k * max) + d)
+               (pair (int_range 0 3) (int_range (-2) 2))
+             |> such_that (fun n -> n >= 0) );
+           (1, int_range 0 (3 * max));
+         ]
+     in
+     (v, dst, src, n))
+
+(* A linear copy's 7 words: header, count less one, parameters, source, then
+   destination, each address low word first. *)
+let rec pieces = function
+  | [] -> []
+  | 1 :: count :: 0 :: s_lo :: s_hi :: d_lo :: d_hi :: rest ->
+      (count + 1, s_lo lor (s_hi lsl 32), d_lo lor (d_hi lsl 32)) :: pieces rest
+  | w :: _ -> failf "0x%x starts no linear copy" w
+
 let copy =
-  group "copy"
+  group ~timeout "copy"
     [
-      test "a linear copy" (fun () ->
-          equal (list int)
-            [ 1; 0xff; 0; 0; 0xa; 0x2345_6780; 1 ]
-            (words
-               (Sdma.copy
-                  (gpu (6, 0, 0))
-                  ~dst:0x1_2345_6780 ~src:0xa_0000_0000 0x100)));
+      prop
+        "a copy is linear copies of the largest size, in order, then the rest"
+        copies (fun (v, dst, src, n) ->
+          let max = largest v in
+          cover "two pieces or more" (n > max);
+          cover "exactly the largest" (n = max);
+          let rec expected at =
+            if at >= n then []
+            else
+              let k = Int.min max (n - at) in
+              (k, src + at, dst + at) :: expected (at + k)
+          in
+          equal
+            (list (triple int int int))
+            (expected 0)
+            (pieces (words (Sdma.copy (gpu v) ~dst ~src n))));
       test "a copy of no bytes is no packet" (fun () ->
           equal (list int) []
             (words (Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 0)));
-      cases
-        ~name:(fun (v, _) -> version v)
-        "a copy past the largest is two, the second at its offset"
-        [
-          ((4, 0, 0), 1 lsl 22);
-          ((4, 4, 2), 1 lsl 30);
-          ((5, 0, 0), 1 lsl 22);
-          ((5, 2, 0), 1 lsl 30);
-          ((7, 0, 0), 1 lsl 30);
-        ]
-        (fun (v, max) ->
-          equal (list int)
-            [
-              1;
-              max - 1;
-              0;
-              0x100;
-              0;
-              0x200;
-              0;
-              1;
-              4;
-              0;
-              0x100 + max;
-              0;
-              0x200 + max;
-              0;
-            ]
-            (words (Sdma.copy (gpu v) ~dst:0x200 ~src:0x100 (max + 5))));
       test "a negative copy is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Sdma.copy") (fun () ->
               Sdma.copy (gpu (6, 0, 0)) ~dst:0 ~src:0 (-1)));
     ]
 
 let others =
-  group "others"
+  group ~timeout "others"
     [
       test "a poll for equality" (fun () ->
           equal (list int)

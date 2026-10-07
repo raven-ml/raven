@@ -10,6 +10,9 @@
 
 open Windtrap
 open Device_amd_abi
+module S = Device_amd_abi_support
+
+let timeout = Device_amd_abi_support.timeout
 
 let gfx11 =
   {
@@ -33,29 +36,78 @@ let gfx9 =
     scratch_slots = 32;
   }
 
-let words s =
-  List.init
-    (String.length s / 4)
-    (fun i -> Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff)
+let words = S.words
+
+let pp_gpu ppf (g : Gpu.t) =
+  Format.fprintf ppf "GC %s, %d dies of %d engines, %d CUs of %d slots"
+    (S.version g.gc) g.xccs g.shader_engines g.compute_units g.scratch_slots
+
+(* GPUs of every generation the tables define, of any counts. *)
+let gpus =
+  Gen.with_pp pp_gpu
+    (let open Gen in
+     let+ gc = of_list S.families
+     and+ xccs = int_range 1 8
+     and+ shader_engines = int_range 1 8
+     and+ compute_units = int_range 1 128
+     and+ scratch_slots = int_range 1 64 in
+     S.gpu ~xccs ~shader_engines ~compute_units ~scratch_slots gc)
+
+(* Bytes per lane around the 128-byte floor and the granules. *)
+let lanes =
+  Gen.frequency
+    [
+      (2, Gen.int_range 0 300);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_int
+          [ 0; 1; 127; 128; 129; 131; 132; 143; 144; 145 ] );
+      (1, Gen.int_range 0 (1 lsl 20));
+    ]
+
+let granule (g : Gpu.t) = match g.gc with 9, _, _ -> 16 | _ -> 4
+let round_up n m = (n + m - 1) / m * m
+
+let laws =
+  group ~timeout "laws"
+    [
+      prop "a buffer holds a wave's lanes for every slot, unit and die"
+        (Gen.pair gpus lanes) (fun ((g : Gpu.t), n) ->
+          let share = round_up (Int.max n 128) (granule g) in
+          cover "below the floor" (n < 128);
+          cover "off the granule" (n > 128 && n mod granule g <> 0);
+          equal int
+            (share * 64 * g.scratch_slots * g.compute_units * g.xccs)
+            (Scratch.size g n));
+      prop "a descriptor holds the base and each die's share"
+        (Gen.triple gpus
+           (Gen.int_range 0 ((1 lsl 48) - 1))
+           (Gen.int_range 0 (1 lsl 30)))
+        (fun ((g : Gpu.t), base, per_die) ->
+          match words (Scratch.descriptor g ~base (per_die * g.xccs)) with
+          | [ w0; w1; w2; _ ] ->
+              equal (triple int int int)
+                (base land 0xffff_ffff, base lsr 32, per_die)
+                (w0, w1 land 0xffff, w2)
+          | ws -> failf "%d words" (List.length ws));
+    ]
 
 let sizes =
-  group "sizes"
+  group ~timeout "sizes"
     [
-      test "a GFX11 kernel of 0 bytes a lane takes 128" (fun () ->
-          equal int (128 * 64 * 32 * 48) (Scratch.size gfx11 0));
-      test "a GFX9 lane rounds up to 16 bytes, on every die" (fun () ->
-          equal int (272 * 64 * 32 * 38 * 8) (Scratch.size gfx9 260));
       test "the scratch ring of GFX11 kernels of 0 bytes a lane" (fun () ->
           equal int (256 lor (32 lsl 12)) (Scratch.tmpring gfx11 0));
       test "the scratch ring of GFX9 kernels of 256 bytes a lane" (fun () ->
           equal int (1216 lor (16 lsl 12)) (Scratch.tmpring gfx9 256));
+      test "a GC with no scratch ring register is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring") (fun () ->
+              Scratch.tmpring { gfx11 with gc = (10, 3, 0) } 0));
     ]
 
 (* Words 3's selects of x, y, z and w, and its added thread id. *)
 let selects = 4 lor (5 lsl 3) lor (6 lsl 6) lor (7 lsl 9) lor (1 lsl 23)
 
 let descriptor =
-  group "descriptor"
+  group ~timeout "descriptor"
     [
       test "a GFX11 descriptor" (fun () ->
           equal (list int)
@@ -81,4 +133,4 @@ let descriptor =
               Scratch.descriptor { gfx11 with gc = (10, 3, 0) } ~base:0 0));
     ]
 
-let () = exit (run "device_amd_abi.scratch" [ sizes; descriptor ])
+let () = exit (run "device_amd_abi.scratch" [ sizes; laws; descriptor ])

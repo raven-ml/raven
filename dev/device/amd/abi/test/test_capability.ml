@@ -9,6 +9,8 @@
 open Windtrap
 open Device_amd_abi
 
+let timeout = Device_amd_abi_support.timeout
+
 type binding = B : 'a Type.Id.t * 'a -> binding
 
 let find : type a. a Type.Id.t -> binding list -> a option =
@@ -41,7 +43,7 @@ let record =
   }
 
 let key =
-  test "a record is found under the key" (fun () ->
+  test ~timeout "a record is found under the key" (fun () ->
       let other : int Type.Id.t = Type.Id.make () in
       match
         find Capability.key [ B (other, 1); B (Capability.key, record) ]
