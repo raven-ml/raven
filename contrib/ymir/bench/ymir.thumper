@@ -1,0 +1,16 @@
+# thumper baseline v1
+# suite: ymir
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 33.7 on 10 cores
+
+galactic-lat-1m/compiled	alloc_words	exact	1555
+galactic-lat-1m/compiled	wall_time	batch=1	n=20	5.908e-02	4.066e-02 4.110e-02 4.240e-02 4.462e-02 4.555e-02 5.503e-02 5.563e-02 5.708e-02 5.802e-02 5.864e-02 5.951e-02 6.032e-02 6.090e-02 6.238e-02 6.366e-02 6.677e-02 6.757e-02 7.092e-02 9.153e-02 1.182e-01
+galactic-lat-1m/eager	alloc_words	exact	10834
+galactic-lat-1m/eager	wall_time	batch=1	n=20	1.030e-01	6.333e-02 6.344e-02 6.536e-02 6.720e-02 6.881e-02 7.152e-02 7.937e-02 8.534e-02 9.572e-02 1.028e-01 1.032e-01 1.066e-01 1.088e-01 1.151e-01 1.218e-01 1.229e-01 1.331e-01 1.519e-01 1.680e-01 2.149e-01
+separation-1m/compiled	alloc_words	exact	2609
+separation-1m/compiled	wall_time	batch=1	n=20	4.704e-02	3.783e-02 3.853e-02 3.914e-02 3.982e-02 4.086e-02 4.101e-02 4.252e-02 4.389e-02 4.619e-02 4.682e-02 4.726e-02 5.709e-02 5.804e-02 6.061e-02 6.195e-02 6.906e-02 7.904e-02 8.146e-02 9.206e-02 9.334e-02
+separation-1m/eager	alloc_words	exact	17967
+separation-1m/eager	wall_time	batch=1	n=20	2.002e-01	1.401e-01 1.538e-01 1.596e-01 1.666e-01 1.723e-01 1.793e-01 1.843e-01 1.880e-01 1.939e-01 1.996e-01 2.009e-01 2.092e-01 2.181e-01 2.192e-01 2.230e-01 2.284e-01 2.292e-01 2.308e-01 2.531e-01 2.820e-01
