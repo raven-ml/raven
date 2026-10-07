@@ -8,10 +8,8 @@
    pool did with them, called from OCaml as a consumer's stubs call the pool.
    They build on every system the pool does.
 
-   Some bodies wait for another call, which nx_pool.h forbids, to force a
-   chunk onto a worker or to hold a job open. Each such wait gives up after
-   [patience], so a pool that breaks a promise fails the test instead of
-   hanging it. */
+   Some bodies wait for another call, up to [patience] (pool_probe.h), to
+   force a chunk onto a worker or to hold a job open. */
 
 #define _GNU_SOURCE
 

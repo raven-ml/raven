@@ -17,8 +17,10 @@
 #include <time.h>
 #endif
 
-/* Far longer than any wakeup: only a pool that never runs the awaited chunk,
-   or never ends the awaited job, reaches it. */
+/* How long a probe body waits for another call, which nx_pool.h forbids,
+   before it gives up, so that a pool that breaks a promise fails the test
+   instead of hanging it. Far longer than any wakeup: only a pool that never
+   runs the awaited chunk, or never ends the awaited job, reaches it. */
 static const int64_t patience = INT64_C(10000000000);
 
 static inline int64_t now_ns(void) {

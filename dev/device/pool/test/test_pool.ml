@@ -24,7 +24,6 @@ let () =
   | _ -> ()
 
 let cores = P.cores ()
-let needs_two_cores = P.needs_two_cores
 
 (* Jobs by nx_pool.h *)
 
@@ -379,7 +378,7 @@ let test_claim_order ((threads, total, chunks) as job) =
     threads
 
 let test_balance () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   equal ~msg:"the other chunks ran while chunk 0 lasted" bool true
     (P.balance 16)
 
@@ -486,7 +485,7 @@ let worker_tests =
 (* Scheduling *)
 
 let test_one_thread_at_once () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   P.while_held (fun () ->
       let ran =
         P.finishes "a job of one thread" (fun () ->
@@ -512,7 +511,7 @@ let test_nested () =
 (* Nothing signals that a job waits, so the test samples: once the domain is
    about to begin its job, none of its chunks has run 50 ms later. *)
 let test_waits () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let beginning = Atomic.make false in
   let waiting =
     P.while_held (fun () ->

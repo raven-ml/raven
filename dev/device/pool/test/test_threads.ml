@@ -11,14 +11,12 @@ module P = Pool_probe
 module T = Thread_probe
 
 let strf = Printf.sprintf
-
 let cores = P.cores ()
-let needs_two_cores = P.needs_two_cores
 
 (* Bodies on a worker *)
 
 let test_worker_mask () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let worked, mask = T.worker_mask () in
   equal ~msg:"a worker ran a chunk" bool true worked;
   equal ~msg:"(signal, blocked)"
@@ -33,12 +31,12 @@ let in_child scenario =
   values
 
 let test_stack () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let v = in_child T.Stack in
   equal ~msg:"a worker ran the chunk" int 1 v.(0)
 
 let test_faults () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let v = in_child T.Faults in
   equal ~msg:"a worker ran the chunk" int 1 v.(0);
   equal ~msg:"(signal, its handler ran on the worker)"
@@ -67,7 +65,7 @@ let needs_thread_states () =
 let settle_to n = P.settle 5. T.running_threads (fun k -> k <= n)
 
 let test_made_once () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let v = in_child T.Threads in
   if v.(0) < 0 then skip ~reason:"the system does not count its threads" ();
   equal ~msg:"threads after a job of one thread, as before any" int v.(0) v.(1);
@@ -79,7 +77,7 @@ let test_made_once () =
    whose job a worker holds parks until the job ends. *)
 let test_parks () =
   needs_thread_states ();
-  needs_two_cores ();
+  P.needs_two_cores ();
   ignore (P.record ~threads:cores ~total:64L ~chunks:8L);
   equal ~msg:"threads running once the pool is idle" int 0 (settle_to 0);
   P.reset ();
@@ -123,15 +121,14 @@ let test_narrow_burst () =
   let median = List.nth (List.sort Int.compare samples) 25 in
   at_most
     ~msg:
-      (strf
-         "threads running beside the burst's caller and its worker, of %s"
+      (strf "threads running beside the burst's caller and its worker, of %s"
          (String.concat " " (List.map string_of_int samples)))
     int ~than:2 median
 
 (* The child answers after a job of the parent's on every core; the parent's
    pool then runs a job that needs a worker. *)
 let test_fork_child () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let v = in_child T.Job in
   equal ~msg:"(a worker ran a chunk, units not run once)" (pair int int) (1, 0)
     (v.(0), v.(1));
@@ -146,7 +143,7 @@ let test_fork_child () =
 let test_unmade () =
   if not (T.limits_threads ()) then
     skip ~reason:"the system cannot limit a process's own threads" ();
-  needs_two_cores ();
+  P.needs_two_cores ();
   let v = in_child T.Limited in
   if v.(0) = 0 then skip ~reason:"the thread limit does not bind this user" ();
   equal ~msg:"units not run once by each job" int 0 v.(1);
@@ -156,7 +153,7 @@ let test_unmade () =
 (* Nothing signals that fork waits, so the test samples: once the domain is
    about to fork, fork has still not returned 50 ms later. *)
 let test_fork_waits () =
-  needs_two_cores ();
+  P.needs_two_cores ();
   let forking = Atomic.make false and forked = Atomic.make false in
   let forker =
     P.while_held (fun () ->

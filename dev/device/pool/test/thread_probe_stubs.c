@@ -8,9 +8,8 @@
    worker, fork children, and the process's threads. They fork and read
    signal masks and thread states, so they build where POSIX does.
 
-   Some bodies wait for another call, which nx_pool.h forbids, to force a
-   chunk onto a worker. Each such wait gives up after [patience], so a pool
-   that breaks a promise fails the test instead of hanging it. */
+   Some bodies wait for another call, up to [patience] (pool_probe.h), to
+   force a chunk onto a worker. */
 
 #define _GNU_SOURCE
 
