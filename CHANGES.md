@@ -1053,6 +1053,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `Minimize.levenberg_marquardt`, for a sum of squares given by its
+  residual, with its damping falling on accepted steps, and
+  `Minimize.nelder_mead`, for an objective with no useful gradient, which
+  restarts from its best vertex before it converges (Kelley's test) and
+  returns a detached answer.
 - Add `Minimize.solve` and `Minimize.iterates` with the gradient methods
   `Minimize.bfgs`, `lbfgs ~memory` (both searched to the strong Wolfe
   conditions) and `newton` (steps solved by `~linear` on Hessian-vector

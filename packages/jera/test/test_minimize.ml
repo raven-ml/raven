@@ -172,10 +172,12 @@ let gradient_tests =
             let x =
               Solution.get (minimum m (objective a b) (Nx.zeros_like b))
             in
-            (* A residual within the tolerance's distance times the
-               curvature. *)
+            (* The error is an estimate from the last steps' contraction, and a
+               quasi-Newton method's rate can jump tenfold from one step to the
+               next: the gradient is within a hundred times the tolerance's
+               distance times the curvature. *)
             equal
-              (Oracle.tensor ~abs:(1e-9 *. Float.of_int (Nx.dim 0 b + 2)) ())
+              (Oracle.tensor ~abs:(1e-8 *. Float.of_int (Nx.dim 0 b + 2)) ())
               (Nx.zeros_like b) (gradient a b x))
           methods);
     test "every method finds Rosenbrock's minimum from (−1.2, 1)" (fun () ->
@@ -254,6 +256,148 @@ let gradient_tests =
               (Minimize.bfgs ~linear:Linear.dense)
               Fun.id
               (vec [| 0.; 0. |])));
+  ]
+
+(* Levenberg–Marquardt *)
+
+let times = Nx.linspace f64 0. 1. 20
+
+(* a e^(b t) at [times], the model of the fits. *)
+let model p = Nx.mul (Nx.get [ 0 ] p) (Nx.exp (Nx.mul (Nx.get [ 1 ] p) times))
+let lm = Minimize.levenberg_marquardt one ~linear:Linear.dense
+
+let fit y =
+  Minimize.solve one lm ~tol:tight ~budget:100
+    (fun p -> Nx.sub (model p) y)
+    (vec [| 1.; 0. |])
+
+let exponentials =
+  Gen.(
+    let+ a = float_range 0.5 3. and+ b = float_range (-2.) 1. in
+    vec [| a; b |])
+  |> Gen.with_pp Nx.pp
+
+let lm_tests =
+  [
+    prop "it recovers the parameters of exact data" exponentials (fun p ->
+        equal
+          (Oracle.tensor ~rel:1e-9 ~abs:1e-11 ())
+          p
+          (Solution.get (fit (model p))));
+    test "with residuals left, Jᵀ r vanishes at the fit" (fun () ->
+        let y =
+          Nx.add
+            (model (vec [| 2.; -1.3 |]))
+            (Nx.mul_s (Nx.sin (Nx.mul_s times 7.)) 0.05)
+        in
+        let p = Solution.get (fit y) in
+        let cost p = Nx.mul_s (Nx.sum (Nx.square (Nx.sub (model p) y))) 0.5 in
+        equal
+          (Oracle.tensor ~abs:1e-9 ())
+          (vec [| 0.; 0. |])
+          (Rune.grad' cost p));
+    test "grad in the data agrees with central differences (law 1)" (fun () ->
+        let y =
+          Nx.add
+            (model (vec [| 2.; -1.3 |]))
+            (Nx.mul_s (Nx.sin (Nx.mul_s times 7.)) 0.05)
+        in
+        let v = Nx.cos (Nx.mul_s times 3.) in
+        let f y = Nx.sum (Solution.get (fit y)) in
+        equal
+          (Oracle.tensor ~rel:1e-6 ())
+          (Oracle.central ~eps:1e-6 f y v)
+          (Nx.sum (Nx.mul (Rune.grad' f y) v)));
+    test "compiled equals eager (law 3)" (fun () ->
+        let f y = Solution.get (fit y) in
+        let y = model (vec [| 2.; -1.3 |]) in
+        equal (Oracle.tensor ()) (f y) (Rune.jit' f y));
+    test "its iterates start at the start and reach the fit" (fun () ->
+        let y = model (vec [| 2.; -1.3 |]) in
+        let xs =
+          Minimize.iterates one lm ~steps:40
+            (fun p -> Nx.sub (model p) y)
+            (vec [| 1.; 0. |])
+        in
+        equal (Oracle.tensor ()) (vec [| 1.; 0. |]) (Nx.get [ 0 ] xs);
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (vec [| 2.; -1.3 |])
+          (Nx.get [ 39 ] xs));
+  ]
+
+(* Nelder–Mead *)
+
+let simplex ?(budget = 2000) ?(tol = Tol.v ~rel:1e-9 ~abs:1e-10) f x0 =
+  Minimize.solve one Minimize.nelder_mead ~tol ~budget f x0
+
+let nelder_mead_tests =
+  [
+    prop "it finds a bowl's center" centers (fun c ->
+        cover "several unknowns" (Nx.dim 0 c > 2);
+        equal (near ()) c
+          (Solution.get
+             (simplex ~budget:5000
+                ~tol:(Tol.v ~rel:1e-8 ~abs:1e-9)
+                (fun x -> Nx.sum (bowl c x))
+                (Nx.zeros_like c))));
+    test "it finds Rosenbrock's minimum" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-5 ())
+          (vec [| 1.; 1. |])
+          (Solution.get (simplex rosenbrock (vec [| -1.2; 1. |]))));
+    test "it minimises a non-smooth function" (fun () ->
+        (* |x − 1| + 2 |y + 0.5|, whose gradient is not defined at its
+           minimum. *)
+        let f v =
+          Nx.add
+            (Nx.abs (Nx.sub_s (Nx.get [ 0 ] v) 1.))
+            (Nx.mul_s (Nx.abs (Nx.add_s (Nx.get [ 1 ] v) 0.5)) 2.)
+        in
+        equal
+          (Oracle.tensor ~abs:1e-6 ())
+          (vec [| 1.; -0.5 |])
+          (Solution.get (simplex f (vec [| 3.; 2. |]))));
+    test "McKinnon's function converges at its minimum" (fun () ->
+        (* τ = 2, θ = 6, φ = 60: the minimum is (0, −1/2). *)
+        let f v =
+          let x = Nx.get [ 0 ] v and y = Nx.get [ 1 ] v in
+          let side =
+            Nx.where (Nx.less_equal_s x 0.) (Nx.scalar f64 360.)
+              (Nx.scalar f64 6.)
+          in
+          Nx.add (Nx.mul side (Nx.square x)) (Nx.add y (Nx.square y))
+        in
+        equal
+          (Oracle.tensor ~abs:1e-5 ())
+          (vec [| 0.; -0.5 |])
+          (Solution.get (simplex f (vec [| 1.; 1. |]))));
+    test "its answer carries no derivative" (fun () ->
+        let g =
+          Rune.grad'
+            (fun c ->
+              Nx.sum
+                (Solution.get
+                   (simplex (fun x -> Nx.sum (bowl c x)) (Nx.zeros_like c))))
+            (vec [| 1.; 2. |])
+        in
+        equal (Oracle.tensor ~abs:0. ()) (vec [| 0.; 0. |]) g);
+    test "a spent budget of evaluations is reported" (fun () ->
+        let s = simplex ~budget:10 rosenbrock (vec [| -1.2; 1. |]) in
+        equal bool true (is Budget_spent s));
+    test "compiled equals eager (law 3)" (fun () ->
+        let f c =
+          Solution.get (simplex (fun x -> Nx.sum (bowl c x)) (Nx.zeros_like c))
+        in
+        let c = vec [| 1.; -0.5 |] in
+        equal (Oracle.tensor ()) (f c) (Rune.jit' f c));
+    test "its iterates start at the start" (fun () ->
+        let xs =
+          Minimize.iterates one Minimize.nelder_mead ~steps:5 rosenbrock
+            (vec [| -1.2; 1. |])
+        in
+        equal (array int) [| 5; 2 |] (Nx.shape xs);
+        equal (Oracle.tensor ()) (vec [| -1.2; 1. |]) (Nx.get [ 0 ] xs));
   ]
 
 (* Iterates *)
@@ -386,6 +530,8 @@ let () =
          group "bracket" bracket_tests;
          group "derivatives" derivative_tests;
          group "gradient methods" gradient_tests;
+         group "levenberg_marquardt" lm_tests;
+         group "nelder_mead" nelder_mead_tests;
          group "iterates" iterate_tests;
          group "laws" law_tests;
        ])

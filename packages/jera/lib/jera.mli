@@ -29,6 +29,8 @@
       {tr {td Minimum } {td smooth, small } {td {!Minimize.bfgs} } }
       {tr {td  } {td smooth, large } {td {!Minimize.lbfgs} } }
       {tr {td  } {td smooth, ill-conditioned } {td {!Minimize.newton} } }
+      {tr {td  } {td sum of squares } {td {!Minimize.levenberg_marquardt} } }
+      {tr {td  } {td no useful gradient } {td {!Minimize.nelder_mead} } }
       {tr {td  } {td one variable, a bracket } {td {!Minimize.bracket} } }
       {tr
         {td Integral, one dimension }
@@ -588,6 +590,45 @@ module Minimize : sig
       {!Linear.cg}, and the lane stalls. {b Cost.} One solve of [linear] per
       iteration; quadratic convergence near a minimum. *)
 
+  val levenberg_marquardt :
+    'r Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r) t
+  (** [levenberg_marquardt r ~linear] is for [|r x|² / 2] given by its residual
+      [r], a value of structure [r] whose float tensors are one vector.
+
+      {b Method.} Each iteration materialises [r]'s Jacobian [J] with one
+      Jacobian-vector product per unknown and solves [(JᵀJ + λ D) δ = −Jᵀ r]
+      with [linear]; [D] is the running maximum of [JᵀJ]'s diagonal. A step is
+      accepted when it achieves more than [10⁻⁴] of the decrease the linear
+      model predicts; [λ] then falls, and grows on each rejection (Nielsen,
+      1999), so near a small-residual minimum the steps are Gauss–Newton's.
+      {b Error.} The undamped step is the Gauss–Newton step at the estimate,
+      solved once the damped step has met the test. {b Stability.} The normal
+      equations square [J]'s condition: above about [ε^(−1/2)] its steps lose
+      accuracy and convergence slows, while the answer's equation is unaffected.
+      {b Cost.} [n] products and one solve of [linear] per iteration, and one
+      evaluation of [r] per trial. {b Derivative.} The minimum is the zero of
+      rune's gradient of [|r|² / 2]; at a rank-deficient minimum the derivative
+      does not exist and is not finite. *)
+
+  val nelder_mead : ('x, 'x -> (float, 'b) Nx.t) t
+  (** [nelder_mead] is the Nelder–Mead simplex, for an objective with no useful
+      gradient: non-smooth or piecewise constant.
+
+      {b Method.} The simplex of [x0] and [x0 + h_i e_i], [h_i] a twentieth of
+      [x0_i] or [2.5 · 10⁻⁴] where it is zero, reflects its worst vertex through
+      the others' centroid and expands, contracts or shrinks, with the
+      coefficients 1, 2, 1/2 and 1/2. {b Error.} [e] is the simplex's diameter
+      per component around its best vertex, [y] that vertex. Once [e] meets
+      [tol], a fresh simplex of that diameter around the best vertex is
+      evaluated: if no vertex is lower by a sufficient decrease the lane
+      converges, and otherwise it continues from it (Kelley, 1999); a diameter
+      alone converges on McKinnon's function at a point whose gradient is
+      [(0, 1)]. A non-finite value counts as [+∞], one at the start ends the
+      lane [Not_finite]. [budget] counts evaluations. {b Cost.} One evaluation
+      per trip, two when it expands or contracts, [n + 1] more when it shrinks.
+      {b Derivative.} None: its answer is the detached best vertex, since an
+      objective with no useful gradient has a minimum with no equation. *)
+
   val solve :
     'x Nx.Ptree.t ->
     ('x, 'f) t ->
@@ -597,8 +638,9 @@ module Minimize : sig
     'x ->
     'x Solution.t
   (** [solve x m ~tol ~budget f x0] is a local minimum of [f] from [x0] by [m].
-      Its evaluations count the calls of [f] with its gradient, [budget] its
-      iterations.
+      Its evaluations count the calls of [f], with its gradient for a gradient
+      method, and [budget] its iterations, or its evaluations for
+      {!nelder_mead}.
 
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
       differ in dtype, or if [f] returns other than a scalar. *)

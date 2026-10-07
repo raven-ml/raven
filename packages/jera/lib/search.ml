@@ -333,25 +333,30 @@ let start x0 fx =
    last two contractions: a quasi-Newton method's rate varies from step to step,
    and one small ratio would promise steps that shrink faster than the next one
    does. *)
-let test tol s delta =
+let secant s next =
+  Nx.div (norm (Nx.sub next s.mapped)) (norm (Nx.sub s.x s.before))
+
+let decide tol s ~map ~q delta =
   let run = searching s.st in
-  let next = Nx.add s.x delta in
-  let q = Nx.div (norm (Nx.sub next s.mapped)) (norm (Nx.sub s.x s.before)) in
+  let next = Nx.add s.x delta and mapped = Nx.add s.x map in
   let e = contraction delta ~q:(Nx.maximum q s.q) in
   let st = settle s.st (accepted tol ~e ~y:next) Converged in
   let converged =
     Nx.logical_and run (Nx.equal_s st (Solution.code Converged))
   in
-  let st = settle st (Nx.all ~axes:[ -1 ] (Nx.equal next s.x)) Stalled in
+  let st = settle st (Nx.all ~axes:[ -1 ] (Nx.equal mapped s.x)) Stalled in
   {
     s with
     x = hold converged next s.x;
     before = hold run s.x s.before;
-    mapped = hold run next s.mapped;
+    mapped = hold run mapped s.mapped;
     e = hold run e s.e;
     q = hold run q s.q;
     st;
   }
+
+let test tol s delta =
+  decide tol s ~map:delta ~q:(secant s (Nx.add s.x delta)) delta
 
 let iterations ~budget extra step (s, aux) =
   let carry =

@@ -519,6 +519,58 @@ let bfgs_convex =
 let newton_convex =
   convex (Minimize.newton ~linear:Linear.dense) "minimize-newton-convex-16"
 
+(* a e^(b t) + c fitted to 200 samples of the argument, by Levenberg–Marquardt
+   from (1, 0, 0). *)
+let lm_exponential =
+  let times = Nx.linspace f64 0. 4. 200 in
+  {
+    id = "minimize-lm-exponential-200";
+    f =
+      (fun y ->
+        let model p =
+          Nx.add
+            (Nx.mul (Nx.get [ 0 ] p) (Nx.exp (Nx.mul (Nx.get [ 1 ] p) times)))
+            (Nx.get [ 2 ] p)
+        in
+        Solution.get
+          (Minimize.solve Nx.Ptree.tensor
+             (Minimize.levenberg_marquardt Nx.Ptree.tensor ~linear:Linear.dense)
+             ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+             ~budget:100
+             (fun p -> Nx.sub (model p) y)
+             (Nx.create f64 [| 3 |] [| 1.; 0.; 0. |])));
+    x =
+      (fun () ->
+        let times = Nx.linspace f64 0. 4. 200 in
+        Nx.add
+          (Nx.add_s (Nx.mul_s (Nx.exp (Nx.mul_s times (-0.7))) 2.) 0.3)
+          (Nx.mul_s (Nx.sin (Nx.mul_s times 9.)) 0.01));
+    rows = all;
+  }
+
+(* Rosenbrock's function in 4 unknowns shifted by the argument, by Nelder–Mead;
+   its answer has no derivative, so no grad row. *)
+let nelder_mead =
+  {
+    id = "minimize-nelder-mead-rosenbrock-4";
+    f =
+      (fun c ->
+        let f x =
+          let x = Nx.sub x c in
+          let head = Nx.slice [ Nx.R (0, 3) ] x
+          and tail = Nx.slice [ Nx.R (1, 4) ] x in
+          Nx.add
+            (Nx.mul_s (Nx.sum (Nx.square (Nx.sub tail (Nx.square head)))) 100.)
+            (Nx.sum (Nx.square (Nx.rsub_s 1. head)))
+        in
+        Solution.get
+          (Minimize.solve Nx.Ptree.tensor Minimize.nelder_mead
+             ~tol:(Tol.v ~rel:1e-6 ~abs:1e-8)
+             ~budget:4000 f (Nx.zeros_like c)));
+    x = (fun () -> Nx.linspace f64 (-0.5) 0.5 4);
+    rows = [ Eager; Compiled ];
+  }
+
 let workloads =
   [
     quad;
@@ -547,6 +599,8 @@ let workloads =
     lbfgs_rosenbrock;
     bfgs_convex;
     newton_convex;
+    lm_exponential;
+    nelder_mead;
   ]
 
 let compiled f x =

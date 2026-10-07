@@ -128,6 +128,23 @@ val test : Tol.t -> 'd state -> (float, 'd) Nx.t -> 'd state
     converges at [x + delta], and one whose step no longer moves its estimate
     stalls. *)
 
+val secant : 'd state -> (float, 'd) Nx.t -> (float, 'd) Nx.t
+(** [secant s next] is the contraction [|next − N x'| / |x − x'|] of a map that
+    sends [s.x] to [next], per lane. *)
+
+val decide :
+  Tol.t ->
+  'd state ->
+  map:(float, 'd) Nx.t ->
+  q:(float, 'd) Nx.t ->
+  (float, 'd) Nx.t ->
+  'd state
+(** [decide tol s ~map ~q delta] is {!test} for a method whose map steps by
+    [map] and whose test step is [delta]: [q] is [map]'s contraction, the state
+    records [x + map] as the map's value, a lane converges at [x + delta], and
+    stalls when [map] no longer moves its estimate. [test] is [decide] with
+    [map = delta]. *)
+
 val iterations :
   budget:int ->
   'a Nx.Ptree.t ->
