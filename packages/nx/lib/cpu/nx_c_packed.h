@@ -242,7 +242,9 @@ nx_c_status nx_c_bit_reduce(nx_c_bit_op op, const nx_c_ndarray *out,
 /* Packing and unpacking, n <= 64: the n booleans at `bytes` as the low n
    bits of a word, element j in bit j and every non-zero byte a 1; and the low
    n bits of `bits` as n bytes of 0 and 1. NEON on arm64, and multiplies that
-   clang does not vectorise elsewhere. */
+   clang does not vectorise elsewhere. Here and in the nibble helpers, the
+   groups of eight run while i < (n & ~7): under -fwrapv, GCC 13 cannot bound
+   i by i + 8 <= n, and warns of a read before the buffer. */
 static inline uint64_t nx_c_bit_pack(const uint8_t *bytes, int n) {
   uint64_t w = 0;
   int i = 0;
@@ -269,7 +271,7 @@ static inline uint64_t nx_c_bit_pack(const uint8_t *bytes, int n) {
 #endif
   /* Eight booleans to one byte: each non-zero byte becomes 1 by carrying it
      into its top bit, and the product moves byte j's low bit to bit 56 + j. */
-  for (; i + 8 <= n; i += 8) {
+  for (; i < (n & ~7); i += 8) {
     uint64_t x = nx_c_ld64(bytes + i);
     x = (((x & 0x7f7f7f7f7f7f7f7fu) + 0x7f7f7f7f7f7f7f7fu) | x) >> 7;
     x &= 0x0101010101010101u;
@@ -304,7 +306,7 @@ static inline void nx_c_bit_unpack(uint8_t *bytes, uint64_t bits, int n) {
 #endif
   /* One byte to eight: spread it to every byte, keep byte j's bit j, and turn
      each non-zero byte into 1 by carrying it into the byte's top bit. */
-  for (; i + 8 <= n; i += 8) {
+  for (; i < (n & ~7); i += 8) {
     uint64_t t = ((bits >> i) & 0xff) * 0x0101010101010101u;
     t &= 0x8040201008040201u;
     t = ((t + 0x7f7f7f7f7f7f7f7fu) >> 7) & 0x0101010101010101u;
@@ -329,7 +331,7 @@ static inline uint64_t nx_c_nib_pack(const uint8_t *bytes, int n) {
   }
 #endif
   /* Eight bytes to eight nibbles: each round halves the gaps between them. */
-  for (; i + 8 <= n; i += 8) {
+  for (; i < (n & ~7); i += 8) {
     uint64_t x = nx_c_ld64(bytes + i) & 0x0f0f0f0f0f0f0f0fu;
     x = (x | (x >> 4)) & 0x00ff00ff00ff00ffu;
     x = (x | (x >> 8)) & 0x0000ffff0000ffffu;
@@ -357,7 +359,7 @@ static inline void nx_c_nib_unpack(uint8_t *bytes, uint64_t nibs, int n,
 #endif
   /* Eight nibbles to eight bytes: each round doubles the gaps between them,
      and a set bit 3 fills the byte's high nibble. */
-  for (; i + 8 <= n; i += 8) {
+  for (; i < (n & ~7); i += 8) {
     uint64_t t = (nibs >> (4 * i)) & 0xffffffffu;
     t = (t | (t << 16)) & 0x0000ffff0000ffffu;
     t = (t | (t << 8)) & 0x00ff00ff00ff00ffu;
