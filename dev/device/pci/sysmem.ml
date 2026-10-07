@@ -16,16 +16,16 @@ external unlock_at : int -> int -> unit = "caml_device_pci_sysmem_unlock"
 external pagemap : int -> int -> string = "caml_device_pci_pagemap"
 
 let page = page_size ()
-let huge = 2 lsl 20
-let lock = Mutex.create ()
 let round_page n = (n + page - 1) / page * page
 
-(* The ranges [reserve] reserved, and the memory mapped where the system chose,
-   which no reservation takes back. *)
-let reserved : (int * int, unit) Hashtbl.t = Hashtbl.create 4
-let placed : (int, unit) Hashtbl.t = Hashtbl.create 16
+(* The huge page of x86-64 and arm64 with 4 KiB pages, which contiguous memory
+   larger than a page is. *)
+let huge = 2 lsl 20
 
-(* Pins, counted per page across the process: munlock is not counted. *)
+(* The ranges [reserve] reserved, and pins, counted per page across the process:
+   munlock is not counted. [lock] guards both. *)
+let lock = Mutex.create ()
+let reserved : (int * int, unit) Hashtbl.t = Hashtbl.create 4
 let pins : (int, int) Hashtbl.t = Hashtbl.create 64
 
 let reserve ~base n =
@@ -35,9 +35,12 @@ let reserve ~base n =
     Hashtbl.add reserved (base, n) ()
   end
 
-let on_page fn a =
-  if a mod page <> 0 then
-    invalid_arg (Printf.sprintf "Sysmem.%s: 0x%x is not on a page" fn a)
+(* Whether the [n] bytes at [a] lie in a range [reserve] reserved. [lock] is
+   held. *)
+let reserved_at a n =
+  Hashtbl.fold
+    (fun (base, len) () r -> r || (a >= base && a + n <= base + len))
+    reserved false
 
 let pages_of a n = List.init ((n + page - 1) / page) (fun i -> a + (i * page))
 
@@ -89,70 +92,54 @@ let add_pins a n =
     (pages_of a n)
 
 (* Drops one pin of each page of [a, a + n), unlocking the pages whose last pin
-   goes if [unlock]. [lock] is held. *)
-let drop_pins ~unlock a n =
-  let pages = pages_of a n in
-  if List.exists (fun p -> not (Hashtbl.mem pins p)) pages then
-    invalid_arg (Printf.sprintf "Sysmem.unpin: 0x%x is not pinned" a);
+   goes. [lock] is held. *)
+let drop_pins a n =
   List.iter
     (fun p ->
       match Hashtbl.find pins p with
       | 1 ->
           Hashtbl.remove pins p;
-          if unlock then unlock_at p page
+          unlock_at p page
       | k -> Hashtbl.replace pins p (k - 1))
-    pages
+    (pages_of a n)
 
 let pin a n =
-  on_page "pin" a;
   Mutex.protect lock (fun () ->
       lock_at a n;
       add_pins a n);
   match physical a n with
   | addresses -> addresses
   | exception e ->
-      Mutex.protect lock (fun () -> drop_pins ~unlock:true a n);
+      Mutex.protect lock (fun () -> drop_pins a n);
       raise e
 
-let unpin a n = Mutex.protect lock (fun () -> drop_pins ~unlock:true a n)
+let unpin a n = Mutex.protect lock (fun () -> drop_pins a n)
 
 (* Memory *)
 
-(* Maps [n] bytes at [va], or where the system chooses. *)
+(* Maps [n] bytes at [va], which must lie in a reservation: mapping over
+   anything else would replace the process's own memory. Without [va], where the
+   system chooses. *)
 let map_bytes ?va n ~huge ~locked =
-  let a = map_at (Option.value va ~default:0) n huge locked in
-  if va = None then Mutex.protect lock (fun () -> Hashtbl.replace placed a ());
-  a
+  Option.iter
+    (fun va ->
+      if not (Mutex.protect lock (fun () -> reserved_at va n)) then
+        invalid_arg
+          (Printf.sprintf "Function.alloc_dma: 0x%x is in no reserved range" va))
+    va;
+  map_at (Option.value va ~default:0) n huge locked
 
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)
 let unmap a n =
-  let was_placed =
-    Mutex.protect lock (fun () ->
-        let p = Hashtbl.mem placed a in
-        Hashtbl.remove placed a;
-        p)
-  in
-  if was_placed then unmap_at a n else release_at a n
-
-let positive fn n =
-  if n <= 0 then invalid_arg (Printf.sprintf "Sysmem.%s: %d bytes" fn n)
+  if Mutex.protect lock (fun () -> reserved_at a n) then release_at a n
+  else unmap_at a n
 
 let map ?va n =
-  positive "map" n;
-  Option.iter (on_page "map") va;
   let n = round_page n in
   Window.v (map_bytes ?va n ~huge:false ~locked:false) n
 
 let alloc ?(contiguous = false) ?va n =
-  positive "alloc" n;
-  Option.iter (on_page "alloc") va;
-  if contiguous && n > huge then
-    invalid_arg "Sysmem.alloc: contiguous memory is at most 2 MiB";
   let huge_page = contiguous && n > page in
-  (match va with
-  | Some va when huge_page && va mod huge <> 0 ->
-      invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on 2 MiB" va)
-  | _ -> ());
   let n = if huge_page then huge else round_page n in
   let a =
     try map_bytes ?va n ~huge:huge_page ~locked:true
@@ -168,14 +155,8 @@ let alloc ?(contiguous = false) ?va n =
       unmap a n;
       raise e
   in
-  let first = List.hd pages in
-  let scattered = List.filteri (fun i p -> p <> first + (i * page)) pages in
-  if contiguous && scattered <> [] then begin
-    unmap a n;
-    failwith "the system gave contiguous memory in scattered pages"
-  end;
   Mutex.protect lock (fun () -> add_pins a n);
-  (Window.v a n, if contiguous then [ first ] else pages)
+  (Window.v a n, pages)
 
 let free w =
   let a = Window.address w and n = Window.length w in
