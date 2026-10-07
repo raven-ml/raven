@@ -259,8 +259,9 @@ let attach bus =
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size
-   refuses it with ENOSPC. The bitmap is an [int], whose highest bit is
-   [largest]. *)
+   refuses it with ENOSPC, and a smaller one may fit. Any other refusal holds
+   for every size, so the BAR keeps its own. The bitmap is an [int], whose
+   highest bit is [largest]. *)
 let largest = Sys.int_size - 2
 
 let resize bus i =
@@ -274,6 +275,6 @@ let resize bus i =
           match put file (string_of_int k) with
           | () -> ()
           | exception Unix.Unix_error (ENOSPC, _, _) -> try_from (k - 1)
-          | exception Unix.Unix_error (e, _, _) -> refused file e
+          | exception Unix.Unix_error _ -> ()
     in
     try_from largest

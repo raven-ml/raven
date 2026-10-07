@@ -89,4 +89,6 @@ val reset : string -> unit
 
 val resize : string -> int -> unit
 (** [resize bus i] makes BAR [i] of the unbound function the largest size it
-    supports that its bridge takes. A bound function keeps its size. *)
+    supports that its bridge takes. A bound function keeps its size, and so does
+    one whose resize the kernel refuses for another reason than room: its BAR
+    may stay small. *)
