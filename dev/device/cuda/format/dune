@@ -1,0 +1,3 @@
+(library
+ (name device_cuda_format)
+ (modules_without_implementation device_cuda_format))
