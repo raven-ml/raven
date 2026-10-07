@@ -39,3 +39,12 @@
   device_amd_abi_after
   device_amd_abi_support
   windtrap))
+
+(test
+ (name test_trace_program)
+ (modules test_trace_program)
+ (libraries device_amd_abi device_amd_abi_support windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_trace_program.ml test_trace_program.ml.corrected))))
