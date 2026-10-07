@@ -12,10 +12,10 @@
    whose windows may be another machine's declares that its submission may
    block and runs it without the OCaml runtime.
 
-   Every access returns 0, or -1 once the transport failed: a read then
-   gives all ones and a write is dropped, as for a function that left the
-   bus, and the transport's [failed] gives the reason. A submission checks
-   once, after its last access.
+   An access reports nothing. Once the transport failed, a read gives all
+   ones and a write is dropped, as for a function that left the bus. A
+   submission asks device_pci_failed once, after its last access: NULL
+   there means every access before it reached the machine.
    Values are little-endian; so is every host this library builds for. */
 
 #ifndef DEVICE_PCI_H
@@ -66,54 +66,54 @@ static inline void device_pci_barrier(void) {
 #endif
 }
 
+/* The reason the machine of [w] failed, or NULL. A mapped window's machine
+   is this one, which never fails. */
+static inline const char *
+device_pci_failed(const struct device_pci_window *w) {
+  if (w->mapped) return NULL;
+  return w->transport->failed(w->transport->ctx);
+}
+
 /* Register accesses: each is one access of exactly its width, at an
    address aligned to it. */
 
-static inline int device_pci_store32(const struct device_pci_window *w,
-                                     size_t off, uint32_t x) {
-  if (w->mapped) {
+static inline void device_pci_store32(const struct device_pci_window *w,
+                                      size_t off, uint32_t x) {
+  if (w->mapped)
     *(volatile uint32_t *)(w->mapped + off) = x;
-    return 0;
-  }
-  return w->transport->write(w->transport->ctx, w->address + off, &x, 4);
+  else
+    (void)w->transport->write(w->transport->ctx, w->address + off, &x, 4);
 }
 
-static inline int device_pci_store64(const struct device_pci_window *w,
-                                     size_t off, uint64_t x) {
-  if (w->mapped) {
+static inline void device_pci_store64(const struct device_pci_window *w,
+                                      size_t off, uint64_t x) {
+  if (w->mapped)
     *(volatile uint64_t *)(w->mapped + off) = x;
-    return 0;
-  }
-  return w->transport->write(w->transport->ctx, w->address + off, &x, 8);
+  else
+    (void)w->transport->write(w->transport->ctx, w->address + off, &x, 8);
 }
 
-static inline int device_pci_load32(const struct device_pci_window *w,
-                                    size_t off, uint32_t *x) {
-  if (w->mapped) {
-    *x = *(volatile uint32_t *)(w->mapped + off);
-    return 0;
-  }
-  if (w->transport->read(w->transport->ctx, w->address + off, x, 4) == 0)
-    return 0;
-  *x = UINT32_MAX;
-  return -1;
+static inline uint32_t device_pci_load32(const struct device_pci_window *w,
+                                         size_t off) {
+  uint32_t x;
+  if (w->mapped) return *(volatile uint32_t *)(w->mapped + off);
+  if (w->transport->read(w->transport->ctx, w->address + off, &x, 4) != 0)
+    return UINT32_MAX;
+  return x;
 }
 
-static inline int device_pci_load64(const struct device_pci_window *w,
-                                    size_t off, uint64_t *x) {
-  if (w->mapped) {
-    *x = *(volatile uint64_t *)(w->mapped + off);
-    return 0;
-  }
-  if (w->transport->read(w->transport->ctx, w->address + off, x, 8) == 0)
-    return 0;
-  *x = UINT64_MAX;
-  return -1;
+static inline uint64_t device_pci_load64(const struct device_pci_window *w,
+                                         size_t off) {
+  uint64_t x;
+  if (w->mapped) return *(volatile uint64_t *)(w->mapped + off);
+  if (w->transport->read(w->transport->ctx, w->address + off, &x, 8) != 0)
+    return UINT64_MAX;
+  return x;
 }
 
 /* Copies the [n] bytes at [src] to byte [off] of [w], at widths it chooses:
    memory, never registers. */
-int device_pci_write(const struct device_pci_window *w, size_t off,
-                     const void *src, size_t n);
+void device_pci_write(const struct device_pci_window *w, size_t off,
+                      const void *src, size_t n);
 
 #endif

@@ -5,8 +5,9 @@
 
 /* A driver's submission, reduced to its stores: 1024 stores through
    device_pci.h at successive aligned offsets of a 4 KiB window, and the same
-   stores made through a bare pointer, which is the floor. Each returns the
-   number of stores that failed.
+   stores made through a bare pointer, which is the floor. Each through
+   device_pci.h ends as a submission does, asking whether the window's
+   machine failed.
 
    The transport copies to and from a buffer of its own and does nothing
    else, so its rows are the window's cost above the wire. */
@@ -65,20 +66,18 @@ value device_pci_bench_far(value unit) {
 
 value device_pci_bench_store32(value w) {
   struct device_pci_window win;
-  int failed = 0;
   device_pci_window_of(w, &win);
   for (size_t i = 0; i < STORES; i++)
-    failed -= device_pci_store32(&win, (i * 4) % SPAN, (uint32_t)i);
-  return Val_int(failed);
+    device_pci_store32(&win, (i * 4) % SPAN, (uint32_t)i);
+  return Val_bool(device_pci_failed(&win) != NULL);
 }
 
 value device_pci_bench_store64(value w) {
   struct device_pci_window win;
-  int failed = 0;
   device_pci_window_of(w, &win);
   for (size_t i = 0; i < STORES; i++)
-    failed -= device_pci_store64(&win, (i * 8) % SPAN, (uint64_t)i);
-  return Val_int(failed);
+    device_pci_store64(&win, (i * 8) % SPAN, (uint64_t)i);
+  return Val_bool(device_pci_failed(&win) != NULL);
 }
 
 value device_pci_bench_store32_bare(value a) {
@@ -93,5 +92,6 @@ static uint8_t page[SPAN];
 value device_pci_bench_write(value w) {
   struct device_pci_window win;
   device_pci_window_of(w, &win);
-  return Val_int(-device_pci_write(&win, 0, page, SPAN));
+  device_pci_write(&win, 0, page, SPAN);
+  return Val_bool(device_pci_failed(&win) != NULL);
 }

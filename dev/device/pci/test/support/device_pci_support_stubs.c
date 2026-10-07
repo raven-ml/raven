@@ -204,33 +204,38 @@ value device_pci_test_window_of(value w) {
 
 value device_pci_test_store32(value w, value off, value x) {
   struct device_pci_window v = window(w);
-  return Val_int(device_pci_store32(&v, Long_val(off), (uint32_t)Long_val(x)));
+  device_pci_store32(&v, Long_val(off), (uint32_t)Long_val(x));
+  return Val_unit;
 }
 
 value device_pci_test_store64(value w, value off, value x) {
   struct device_pci_window v = window(w);
-  return Val_int(device_pci_store64(&v, Long_val(off), Int64_val(x)));
+  device_pci_store64(&v, Long_val(off), Int64_val(x));
+  return Val_unit;
 }
 
 value device_pci_test_load32(value w, value off) {
   struct device_pci_window v = window(w);
-  uint32_t x;
-  if (device_pci_load32(&v, Long_val(off), &x)) return Val_none;
-  return caml_alloc_some(Val_long(x));
+  return Val_long(device_pci_load32(&v, Long_val(off)));
 }
 
 value device_pci_test_load64(value w, value off) {
-  CAMLparam2(w, off);
   struct device_pci_window v = window(w);
-  uint64_t x;
-  if (device_pci_load64(&v, Long_val(off), &x)) CAMLreturn(Val_none);
-  CAMLreturn(caml_alloc_some(caml_copy_int64(x)));
+  return caml_copy_int64(device_pci_load64(&v, Long_val(off)));
 }
 
 value device_pci_test_write(value w, value off, value s) {
   struct device_pci_window v = window(w);
-  return Val_int(
-      device_pci_write(&v, Long_val(off), String_val(s), caml_string_length(s)));
+  device_pci_write(&v, Long_val(off), String_val(s), caml_string_length(s));
+  return Val_unit;
+}
+
+value device_pci_test_failed(value w) {
+  CAMLparam1(w);
+  struct device_pci_window v = window(w);
+  const char *why = device_pci_failed(&v);
+  if (why == NULL) CAMLreturn(Val_none);
+  CAMLreturn(caml_alloc_some(caml_copy_string(why)));
 }
 
 /* The monotonic clock */

@@ -63,7 +63,7 @@
     A driver owes four checks, each where it acts on what it read:
     + Its wait for the device: when the wait ends [false], {!Function.failed}
       says whether the function or its machine failed, and why.
-    + Its submission from C: one look at the transport's [failed] after the last
+    + Its submission from C: one call of [device_pci_failed] after its last
       access ([device_pci.h]).
     + A progress word read through a window: read it, then ask
       {!Function.failed}; once failed, the word keeps its last value.

@@ -10,11 +10,15 @@ open Device_pci_support
 external window_of : Window.t -> int * int * int * bool
   = "device_pci_test_window_of"
 
-external c_store32 : Window.t -> int -> int -> int = "device_pci_test_store32"
-external c_store64 : Window.t -> int -> int64 -> int = "device_pci_test_store64"
-external c_load32 : Window.t -> int -> int option = "device_pci_test_load32"
-external c_load64 : Window.t -> int -> int64 option = "device_pci_test_load64"
-external c_write : Window.t -> int -> string -> int = "device_pci_test_write"
+external c_store32 : Window.t -> int -> int -> unit = "device_pci_test_store32"
+
+external c_store64 : Window.t -> int -> int64 -> unit
+  = "device_pci_test_store64"
+
+external c_load32 : Window.t -> int -> int = "device_pci_test_load32"
+external c_load64 : Window.t -> int -> int64 = "device_pci_test_load64"
+external c_write : Window.t -> int -> string -> unit = "device_pci_test_write"
+external c_failed : Window.t -> string option = "device_pci_test_failed"
 
 (* Far machines put their bytes at [base], away from 0 so that an access sent to
    its offset in place of its address misses them. *)
@@ -155,35 +159,24 @@ let commands ~is_mapped make =
       Model.fill Window.fill;
     command "device_pci_store32"
       ~pre:(fun r o _ -> word 4 r o)
-      (win ^-> inner @-> Gen.int @-> returns int)
-      (fun r o x ->
-        Model.set32 r o x;
-        0)
-      c_store32;
+      (win ^-> inner @-> Gen.int @-> returns unit)
+      Model.set32 c_store32;
     command "device_pci_store64"
       ~pre:(fun r o _ -> word 8 r o)
-      (win ^-> inner @-> Gen.int64 @-> returns int)
-      (fun r o x ->
-        Model.set64 r o x;
-        0)
-      c_store64;
+      (win ^-> inner @-> Gen.int64 @-> returns unit)
+      Model.set64 c_store64;
     command "device_pci_load32"
       ~pre:(fun r o -> word 4 r o)
-      (win ^-> inner @-> returns (option int))
-      (fun r o -> Some (Model.get32 r o))
-      c_load32;
+      (win ^-> inner @-> returns int)
+      Model.get32 c_load32;
     command "device_pci_load64"
       ~pre:(fun r o -> word 8 r o)
-      (win ^-> inner @-> returns (option int64))
-      (fun r o -> Some (Model.get64 r o))
-      c_load64;
+      (win ^-> inner @-> returns int64)
+      Model.get64 c_load64;
     command "device_pci_write"
       ~pre:(fun r o s -> inside r o (String.length s))
-      (win ^-> inner @-> bytes @-> returns int)
-      (fun r o s ->
-        Model.write r o s;
-        0)
-      c_write;
+      (win ^-> inner @-> bytes @-> returns unit)
+      Model.write c_write;
   ]
 
 (* A window one byte past an aligned address: its words at offsets 3 and 7 are
@@ -365,9 +358,9 @@ let test_one_access () =
   once "get64" false 8 8 (fun () -> ignore (Window.get64 w 8));
   once "set64" true 24 8 (fun () -> Window.set64 w 24 1L);
   once "device_pci_load32" false 4 4 (fun () -> ignore (c_load32 w 4));
-  once "device_pci_store32" true 28 4 (fun () -> ignore (c_store32 w 28 1));
+  once "device_pci_store32" true 28 4 (fun () -> c_store32 w 28 1);
   once "device_pci_load64" false 8 8 (fun () -> ignore (c_load64 w 8));
-  once "device_pci_store64" true 24 8 (fun () -> ignore (c_store64 w 24 1L))
+  once "device_pci_store64" true 24 8 (fun () -> c_store64 w 24 1L)
 
 (* A store of [n] bytes at [off] of a far window reaches no other byte of the
    machine: a neighbouring register keeps its value and its side effects. *)
@@ -391,7 +384,7 @@ let bulk =
       (stores_only (fun w off s ->
            Window.blit_string ("ab" ^ s ^ "cd") 2 w off (String.length s)));
     prop "device_pci_write stores only the bytes it is given" place
-      (stores_only (fun w off s -> equal int 0 (c_write w off s)));
+      (stores_only c_write);
   ]
 
 (* Two domains each store ascending words of their half of a far machine. *)
@@ -444,6 +437,10 @@ let failed_reads =
     ( "get64",
       fun w -> (Printf.sprintf "%Lx" (Window.get64 w 8), "ffffffffffffffff") );
     ("read", fun w -> (Window.read w 1 9, String.make 9 '\xff'));
+    ( "device_pci_load32",
+      fun w -> (Printf.sprintf "%x" (c_load32 w 4), "ffffffff") );
+    ( "device_pci_load64",
+      fun w -> (Printf.sprintf "%Lx" (c_load64 w 8), "ffffffffffffffff") );
   ]
 
 let failed_writes =
@@ -453,16 +450,8 @@ let failed_writes =
     ("set64", fun w -> Window.set64 w 8 0L);
     ("write", fun w -> Window.write w 1 "123456789");
     ("fill", fun w -> Window.fill w 1 9 'x');
-  ]
-
-let c_failed =
-  [
     ("device_pci_store32", fun w -> c_store32 w 4 0);
     ("device_pci_store64", fun w -> c_store64 w 8 0L);
-    ( "device_pci_load32",
-      fun w -> Option.fold ~none:(-1) ~some:(fun _ -> 0) (c_load32 w 4) );
-    ( "device_pci_load64",
-      fun w -> Option.fold ~none:(-1) ~some:(fun _ -> 0) (c_load64 w 8) );
     ("device_pci_write", fun w -> c_write w 1 "123456789");
   ]
 
@@ -489,8 +478,6 @@ let transports =
            let f, w = broken () in
            write w;
            equal (list access) [] (log f));
-       cases ~name:fst "a C access returns -1 once its transport failed"
-         c_failed (fun (_, run) -> equal int (-1) (run (snd (broken ()))));
      ]
     @ bulk)
 
@@ -510,10 +497,22 @@ let test_window_of () =
     (base + 3, 9, 0, true)
     (window_of (Window.sub w 3 9))
 
+let test_c_failed () =
+  equal ~msg:"mapped" (option string) None (c_failed (mapped 0 16));
+  let f, w = far_window 32 in
+  equal ~msg:"through a live transport" (option string) None (c_failed w);
+  break f;
+  equal ~msg:"through a failed transport" (option string)
+    (Some "far: the link broke") (c_failed w)
+
 let c_view =
   group ~timeout:patience "device_pci.h"
     [
       test "device_pci_window_of reads a window's place and side" test_window_of;
+      test
+        "device_pci_failed is NULL until the window's transport fails, then \
+         its reason"
+        test_c_failed;
     ]
 
 let () =

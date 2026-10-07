@@ -305,11 +305,10 @@ void device_pci_window_of(value w, struct device_pci_window *out) {
   out->transport = tr;
 }
 
-int device_pci_write(const struct device_pci_window *w, size_t off,
-                     const void *src, size_t n) {
-  if (w->mapped) {
+void device_pci_write(const struct device_pci_window *w, size_t off,
+                      const void *src, size_t n) {
+  if (w->mapped)
     write_words(w->mapped + off, src, n);
-    return 0;
-  }
-  return w->transport->write(w->transport->ctx, w->address + off, src, n);
+  else
+    (void)w->transport->write(w->transport->ctx, w->address + off, src, n);
 }

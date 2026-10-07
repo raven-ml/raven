@@ -20,10 +20,10 @@ module Window = Device_pci.Window
 
 external buffer : int -> int = "device_pci_bench_memory"
 external far : unit -> int = "device_pci_bench_far"
-external store32 : Window.t -> int = "device_pci_bench_store32" [@@noalloc]
-external store64 : Window.t -> int = "device_pci_bench_store64" [@@noalloc]
+external store32 : Window.t -> bool = "device_pci_bench_store32" [@@noalloc]
+external store64 : Window.t -> bool = "device_pci_bench_store64" [@@noalloc]
 external store32_bare : int -> int = "device_pci_bench_store32_bare" [@@noalloc]
-external write_c : Window.t -> int = "device_pci_bench_write" [@@noalloc]
+external write_c : Window.t -> bool = "device_pci_bench_write" [@@noalloc]
 
 let span = 4096
 let accesses = 1024
