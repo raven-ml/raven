@@ -560,9 +560,15 @@ let read ~align ?held obj =
     match unplaced with
     | None -> Array.mapi (fun i h -> section h offsets.(i)) hs
     | Some unplaced ->
-        Array.mapi
-          (fun i (s : section) -> { s with offset = offsets.(i) })
-          unplaced
+        (* Placed in place: a section the image does not hold keeps its
+           record. *)
+        Array.iteri
+          (fun i (s : section) ->
+            match offsets.(i) with
+            | None -> ()
+            | offset -> unplaced.(i) <- { s with offset })
+          unplaced;
+        unplaced
   in
   {
     kind = u16 obj 16;
