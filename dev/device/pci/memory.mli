@@ -96,9 +96,12 @@ val free : t -> memory -> unit
 val map_host : t -> int -> int -> (memory, string) result
 (** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU,
     at [a]: it {!Function.pin}s them and maps their pages, snooped and uncached.
-    [Error why] if [a] is not on a page, lies outside the GPU's virtual
-    addresses, or cannot be pinned, [why] being {!Function.pin}'s reason, or if
-    a page table has no room. *)
+    [Error why] if [a] is not on a page of the machine ({!Machine.page}), lies
+    outside the GPU's virtual addresses, or cannot be pinned, [why] being
+    {!Function.pin}'s reason, or if a page table has no room.
+
+    Raises [Invalid_argument] if part of the range is mapped for the GPU
+    already, and then pins nothing. *)
 
 val map_peer : t -> owner:t -> memory -> (memory, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
@@ -108,7 +111,8 @@ val map_peer : t -> owner:t -> memory -> (memory, string) result
     is behind an IOMMU ({!Function.Iommu}), if [mem] is in the GPU's memory and
     [owner]'s BAR is {!small_bar}, or if a page table has no room.
 
-    Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner]. *)
+    Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner], or if the
+    GPU of [m] maps its addresses already. *)
 
 val unmap : t -> memory -> unit
 (** [unmap m mem] unmaps [mem] and unpins the memory {!map_host} pinned.

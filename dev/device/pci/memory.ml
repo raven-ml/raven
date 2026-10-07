@@ -67,20 +67,20 @@ let system m n =
   match Space.alloc ~align:page space n with
   | None -> None
   | Some va -> (
-      match Function.alloc_dma m.fn ~va n with
-      | exception e ->
+      let view, runs =
+        try Function.alloc_dma m.fn ~va n
+        with e ->
           Space.free space va;
           raise e
-      | view, runs -> (
-          match
-            Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
-          with
-          | Some mapping ->
-              Some { mapping; host = Some view; source = Allocated }
-          | None ->
-              Function.free_dma m.fn view;
-              Space.free space va;
-              None))
+      in
+      match
+        Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
+      with
+      | Some mapping -> Some { mapping; host = Some view; source = Allocated }
+      | None ->
+          Function.free_dma m.fn view;
+          Space.free space va;
+          None)
 
 (* The GPU's memory, one block the process reaches through the BAR when [bar],
    or [None] if the block lies beyond it. *)
@@ -152,6 +152,9 @@ let map_host m a n =
         match
           Page_table.map ~snooped:true ~uncached:true m.tables ~va:a System runs
         with
+        | exception (Invalid_argument _ as e) ->
+            Function.unpin m.fn a n;
+            raise e
         | Some mapping ->
             let mem = { mapping; host = None; source = Borrowed } in
             Hashtbl.replace m.mapped a mem;

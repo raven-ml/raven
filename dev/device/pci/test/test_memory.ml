@@ -673,6 +673,20 @@ let test_map_host_no_tables () =
   equal ~msg:"no pin held" ranges [] x.fake.pins;
   Function.release x.fn
 
+let test_map_host_mapped () =
+  let x = gpu () in
+  let host = alloc x Host page in
+  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      Memory.map_host x.memory host.mapping.va page);
+  let a = tables_base + (4 * mib) in
+  let borrowed = Result.get_ok (Memory.map_host x.memory a (2 * page)) in
+  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      Memory.map_host x.memory (a + page) (2 * page));
+  equal ~msg:"only the first pin held" ranges [ (a, 2 * page) ] x.fake.pins;
+  Memory.unmap x.memory borrowed;
+  Memory.free x.memory host;
+  Function.release x.fn
+
 let test_unmap_refused () =
   let x = gpu () and y = gpu () in
   let mem = alloc x Gpu (64 * kib) in
@@ -800,6 +814,8 @@ let test_peer_not_owned () =
       Memory.map_peer x.memory ~owner:owner.memory borrowed);
   let mem = alloc owner Gpu (64 * kib) in
   let p = peer_ok x owner mem in
+  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      Memory.map_peer x.memory ~owner:owner.memory mem);
   raises_match (Exn.invalid_arg ~substring:"") (fun () ->
       Memory.map_peer owner.memory ~owner:x.memory p);
   raises_match (Exn.invalid_arg ~substring:"") (fun () ->
@@ -991,6 +1007,8 @@ let () =
              test "an unpinnable range is refused with the pin's reason"
                test_map_host_unpinnable;
              test "no room for a table is refused" test_map_host_no_tables;
+             test "memory the GPU maps already is refused, holding no pin"
+               test_map_host_mapped;
              test "memory not borrowed by the GPU, or unmapped, is refused"
                test_unmap_refused;
            ];
@@ -1000,7 +1018,9 @@ let () =
              test "a link maps through the owner's peer function" test_peer_link;
              test "refusals" test_peer_refused;
              test "no room for a table is refused" test_peer_no_tables;
-             test "memory the owner did not allocate is refused"
+             test
+               "memory the owner did not allocate, or mapped already, is \
+                refused"
                test_peer_not_owned;
            ];
          group "after the release"
