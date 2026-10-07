@@ -8,7 +8,7 @@
    Each call runs this executable again as [--cold case] over an empty disk
    cache, so a sample is a fresh process's whole first call of a compiled
    function: tracing, lowering, tolk's passes and the kernel compiler, and the
-   process's start, about 25 ms. A case takes five samples, whose median a
+   process's start, about 25 ms. A case takes three samples, whose median a
    function's compile is held to. The special functions and the shaped programs
    compile at float64 over a 1-D input on the host.
 
@@ -25,7 +25,7 @@
 
    [--cold ID] runs one case's first call, of a row or of [once], and prints its
    milliseconds: run with [CACHEDB] at an empty path and [PARALLEL=1]. The cases
-   [once] lists are not rows, since a compile of several seconds, repeated five
+   [once] lists are not rows, since a compile of several seconds, repeated three
    times, would not fit the suite's time: the incomplete gamma's derivatives,
    and its inverse and theirs. *)
 
@@ -206,9 +206,11 @@ let solve m () =
   let b = Nx.rand Nx.float64 [| m |] in
   ignore (Sys.opaque_identity (Rune.jit' (fun a -> Nx.solve a b) a))
 
-(* [betainc] and [log_betainc] of three inputs, the derivative of [log_betainc]
-   in each and of [betainc] in [a], over shapes spread across TOMS 708's
-   regions. *)
+(* [betainc], and the derivative of [log_betainc] in [b], of three inputs over
+   shapes spread across TOMS 708's regions. [log_betainc], its other
+   derivatives and [betainc]'s in [a] compile the same long program, whose
+   compile is what these rows hold: the forward function and the costliest
+   derivative show a regression of it. *)
 let betainc =
   let a = Nx.exp (input (-5.) 12.) and b = Nx.exp (input (-5.) 12.) in
   let x = input 0. 1. in
@@ -221,18 +223,6 @@ let betainc =
   let sum f a b x = Nx.sum (f a b x) in
   [
     ("special/betainc", fun () -> compile3 Nx.betainc);
-    ( "special/betainc-grad-a",
-      fun () ->
-        compile3 (fun a b x -> Rune.grad' (fun a -> sum Nx.betainc a b x) a) );
-    ("special/log_betainc", fun () -> compile3 Nx.log_betainc);
-    ( "special/log_betainc-grad-x",
-      fun () ->
-        compile3 (fun a b x -> Rune.grad' (fun x -> sum Nx.log_betainc a b x) x)
-    );
-    ( "special/log_betainc-grad-a",
-      fun () ->
-        compile3 (fun a b x -> Rune.grad' (fun a -> sum Nx.log_betainc a b x) a)
-    );
     ( "special/log_betainc-grad-b",
       fun () ->
         compile3 (fun a b x -> Rune.grad' (fun b -> sum Nx.log_betainc a b x) b)
@@ -294,7 +284,7 @@ let cold id () =
 
 let config =
   Thumper.Config.(
-    default |> samples 5 |> warmup 0. |> deadline infinity
+    default |> samples 3 |> warmup 0. |> deadline infinity
     |> metrics [ Thumper.Metric.wall_time ])
 
 let () =
