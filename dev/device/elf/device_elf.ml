@@ -289,11 +289,9 @@ let start held hs =
    each held section's image offset, and the image's length. Sections go at
    their addresses if one has an address, else follow each other. *)
 let layout ~align held hs =
-  let addressed = ref false in
-  Array.iteri
-    (fun i h -> if held.(i) && h.sh_addr <> 0 then addressed := true)
-    hs;
-  let addressed = !addressed in
+  let addressed =
+    Array.exists2 (fun held h -> held && h.sh_addr <> 0) held hs
+  in
   let address = if addressed then start held hs else 0 in
   let offsets = Array.make (Array.length hs) None in
   let size = ref 0 and spans = ref [] in
@@ -322,13 +320,13 @@ let end_of at n = if at > max_int - n then max_int else at + n
 (* The allocated sections the image does not hold, as address ranges sorted and
    merged into disjoint [(start, end)] pairs, for a binary search. *)
 let lacking held hs =
-  let spans =
-    Array.to_list (Array.mapi (fun i h -> (held.(i), h)) hs)
-    |> List.filter_map (fun (held, h) ->
-        if h.sh_flags land shf_alloc = 0 || held || h.sh_size = 0 then None
-        else Some (h.sh_addr, end_of h.sh_addr h.sh_size))
-    |> Array.of_list
-  in
+  let spans = ref [] in
+  Array.iteri
+    (fun i h ->
+      if h.sh_flags land shf_alloc <> 0 && (not held.(i)) && h.sh_size > 0 then
+        spans := (h.sh_addr, end_of h.sh_addr h.sh_size) :: !spans)
+    hs;
+  let spans = Array.of_list !spans in
   Array.stable_sort by_start spans;
   let merge acc (s, e) =
     match acc with
@@ -397,9 +395,9 @@ let read ~align ?held obj =
   let section h offset =
     {
       name =
-        Option.fold ~none:""
-          ~some:(fun n -> string_at obj named n h.sh_name)
-          names;
+        (match names with
+        | None -> ""
+        | Some n -> string_at obj named n h.sh_name);
       kind = h.sh_type;
       flags = h.sh_flags;
       offset;
