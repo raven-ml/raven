@@ -74,8 +74,6 @@ let separations () =
 (* FITS: what a photometry program and a catalogue reader call. Each file
    is written once in the setup, so the timed region reads it. *)
 
-module Fits = Ymir_fits.Fits
-
 let fits_side = 4096
 
 let fits_path name =
@@ -119,6 +117,37 @@ let fits_reads () =
           timed (fun () -> ok (Fits.Image.values Nx.float32 h)));
       Thumper.bench_with_setup ~setup:rice "raw-int16-rice" (fun h ->
           timed (fun () -> ok (Fits.Image.raw Nx.int16 h)));
+    ]
+
+(* A 4096² image and its error under a JWST-like TAN header, read as an
+   observation. *)
+let fits_observation () =
+  let set k v h = Fits.Header.set Fits.Value.string k v h in
+  let setf k v h = Fits.Header.set Fits.Value.float k v h in
+  let pixel = 0.031 /. 3600. in
+  let sci =
+    Fits.Header.empty |> set "EXTNAME" "SCI" |> set "BUNIT" "MJy/sr"
+    |> set "CTYPE1" "RA---TAN" |> set "CTYPE2" "DEC--TAN"
+    |> setf "CRPIX1" 2048.5 |> setf "CRPIX2" 2048.5 |> setf "CRVAL1" 110.8375
+    |> setf "CRVAL2" (-73.4537) |> setf "CDELT1" (-.pixel)
+    |> setf "CDELT2" pixel |> setf "PIXAR_SR" 2.26e-14
+  in
+  let err = Fits.Header.empty |> set "EXTNAME" "ERR" |> set "BUNIT" "MJy/sr" in
+  let hdus () =
+    fits_file "observation"
+      [
+        Fits.Image.hdu sci (fits_image ());
+        Fits.Image.hdu err (Nx.mul_s (fits_image ()) 0.01);
+      ]
+      ()
+  in
+  Thumper.group "fits-observation-4096"
+    [
+      Thumper.bench_with_setup ~setup:hdus "sci-err-float32" (fun hdus ->
+          timed (fun () ->
+              ok
+                (Fits.observation ~dtype:Nx.float32 ~frame:Frame.icrs
+                   ~data:"SCI" ~error:"ERR" hdus)));
     ]
 
 let fits_quantize () =
@@ -327,6 +356,7 @@ let suite () =
     wcs_rows ();
     aperture_rows ();
     fits_reads ();
+    fits_observation ();
     fits_quantize ();
     fits_table ();
     supernovae ();
