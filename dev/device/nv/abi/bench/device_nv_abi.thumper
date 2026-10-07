@@ -37,10 +37,10 @@ qmd/encode/ada	alloc_words	exact	240
 qmd/encode/ada	wall_time	batch=65536	n=20	1.029e-07	9.633e-08 9.753e-08 9.899e-08 9.983e-08 1.002e-07 1.004e-07 1.007e-07 1.012e-07 1.015e-07 1.026e-07 1.032e-07 1.034e-07 1.035e-07 1.036e-07 1.040e-07 1.045e-07 1.054e-07 1.067e-07 1.071e-07 1.075e-07
 qmd/fill-into-bytes/ada	alloc_words	exact	0
 qmd/fill-into-bytes/ada	wall_time	batch=524288	n=20	1.812e-08	1.805e-08 1.805e-08 1.806e-08 1.807e-08 1.807e-08 1.808e-08 1.809e-08 1.809e-08 1.809e-08 1.811e-08 1.812e-08 1.812e-08 1.812e-08 1.812e-08 1.812e-08 1.813e-08 1.814e-08 1.814e-08 1.814e-08 1.816e-08
-qmd/launch/ada	alloc_words	exact	1321
-qmd/launch/ada	wall_time	batch=8192	n=20	9.447e-07	9.241e-07 9.331e-07 9.347e-07 9.354e-07 9.363e-07 9.372e-07 9.376e-07 9.419e-07 9.424e-07 9.435e-07 9.458e-07 9.479e-07 9.504e-07 9.520e-07 9.524e-07 9.560e-07 9.580e-07 9.582e-07 9.680e-07 9.826e-07
-qmd/launch/blackwell	alloc_words	exact	1420
-qmd/launch/blackwell	wall_time	batch=8192	n=20	9.264e-07	9.125e-07 9.168e-07 9.174e-07 9.174e-07 9.186e-07 9.186e-07 9.208e-07 9.250e-07 9.252e-07 9.261e-07 9.267e-07 9.279e-07 9.290e-07 9.292e-07 9.301e-07 9.302e-07 9.304e-07 9.376e-07 9.393e-07 9.402e-07
+qmd/launch/ada	alloc_words	exact	690
+qmd/launch/ada	wall_time	batch=16384	n=20	4.684e-07	4.652e-07 4.658e-07 4.661e-07 4.661e-07 4.666e-07 4.667e-07 4.670e-07 4.682e-07 4.683e-07 4.683e-07 4.686e-07 4.691e-07 4.694e-07 4.694e-07 4.697e-07 4.716e-07 4.723e-07 4.734e-07 4.754e-07 4.807e-07
+qmd/launch/blackwell	alloc_words	exact	725
+qmd/launch/blackwell	wall_time	batch=16384	n=20	4.901e-07	4.862e-07 4.865e-07 4.880e-07 4.882e-07 4.885e-07 4.885e-07 4.891e-07 4.897e-07 4.899e-07 4.901e-07 4.902e-07 4.903e-07 4.903e-07 4.906e-07 4.908e-07 4.916e-07 4.922e-07 4.924e-07 4.934e-07 4.939e-07
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
@@ -123,7 +123,7 @@ qmd/encode/ada	alloc_words	exact	240
 qmd/encode/ada	wall_time	batch=32768	n=20	1.803e-07	1.783e-07 1.783e-07 1.784e-07 1.785e-07 1.788e-07 1.788e-07 1.788e-07 1.801e-07 1.802e-07 1.803e-07 1.803e-07 1.813e-07 1.815e-07 1.815e-07 1.815e-07 1.816e-07 1.824e-07 1.829e-07 1.841e-07 1.853e-07
 qmd/fill-into-bytes/ada	alloc_words	exact	0
 qmd/fill-into-bytes/ada	wall_time	batch=262144	n=20	3.258e-08	3.194e-08 3.196e-08 3.196e-08 3.198e-08 3.199e-08 3.205e-08 3.238e-08 3.239e-08 3.239e-08 3.258e-08 3.258e-08 3.260e-08 3.260e-08 3.260e-08 3.262e-08 3.262e-08 3.263e-08 3.263e-08 3.263e-08 3.265e-08
-qmd/launch/ada	alloc_words	exact	1321
-qmd/launch/ada	wall_time	batch=4096	n=20	1.823e-06	1.822e-06 1.822e-06 1.822e-06 1.822e-06 1.822e-06 1.823e-06 1.823e-06 1.823e-06 1.823e-06 1.823e-06 1.823e-06 1.824e-06 1.824e-06 1.824e-06 1.824e-06 1.825e-06 1.825e-06 1.825e-06 1.825e-06 1.825e-06
-qmd/launch/blackwell	alloc_words	exact	1420
-qmd/launch/blackwell	wall_time	batch=4096	n=20	1.788e-06	1.773e-06 1.774e-06 1.774e-06 1.776e-06 1.786e-06 1.787e-06 1.787e-06 1.787e-06 1.788e-06 1.788e-06 1.788e-06 1.788e-06 1.788e-06 1.788e-06 1.789e-06 1.789e-06 1.789e-06 1.790e-06 1.790e-06 1.791e-06
+qmd/launch/ada	alloc_words	exact	690
+qmd/launch/ada	wall_time	batch=8192	n=20	8.748e-07	8.744e-07 8.744e-07 8.746e-07 8.746e-07 8.746e-07 8.746e-07 8.746e-07 8.747e-07 8.747e-07 8.748e-07 8.749e-07 8.750e-07 8.751e-07 8.755e-07 8.760e-07 8.761e-07 8.776e-07 8.784e-07 8.838e-07 8.865e-07
+qmd/launch/blackwell	alloc_words	exact	725
+qmd/launch/blackwell	wall_time	batch=8192	n=20	9.084e-07	8.864e-07 8.912e-07 8.918e-07 9.078e-07 9.079e-07 9.081e-07 9.082e-07 9.084e-07 9.084e-07 9.084e-07 9.085e-07 9.086e-07 9.089e-07 9.089e-07 9.090e-07 9.090e-07 9.092e-07 9.093e-07 9.099e-07 9.215e-07
