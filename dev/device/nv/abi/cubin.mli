@@ -40,9 +40,9 @@ val of_string : string -> (t, string) result
 (** [of_string obj] is the cubin [obj], its sections laid out at an alignment of
     128 bytes ({!Device_elf.of_string}). The result is [Error msg], [msg] saying
     which, if [obj] is not a well-formed ELF object, or if:
-    - its image would be longer than [2{^49}] bytes, more than the 49-bit
-      virtual addresses of GPUs before Hopper reach, which only a corrupted
-      address makes;
+    - its image ({!size}) would be longer than [2{^49}] bytes, more than the
+      49-bit virtual addresses of GPUs before Hopper reach, which only a
+      corrupted address makes;
     - a relocation is of a type other than the 64-bit address of a symbol
       ([R_CUDA_64], [0x2]) and its low ([R_CUDA_ABS32_LO_32], [0x38]) or high
       ([R_CUDA_ABS32_HI_32], [0x39]) 32 bits;

@@ -500,16 +500,12 @@ let image =
       test "an image of 2^49 bytes reads" (fun () ->
           let c = read (spanning ((1 lsl 49) - page - 16)) in
           equal int (1 lsl 49) (Cubin.size c));
-      xfail
-        ~reason:
-          "of_string bounds the ELF image by 2^49, so a cubin of 2^49 + 4 KiB \
-           bytes reads"
-        (test "an image past 2^49 bytes is refused" (fun () ->
-             let obj = spanning ((1 lsl 49) - page - 15) in
-             equal ~msg:"the ELF image" int
-               ((1 lsl 49) - page + 1)
-               (layout obj).size;
-             ignore (require_error ~pp:pp_cubin (Cubin.of_string obj))));
+      test "an image past 2^49 bytes is refused" (fun () ->
+          let obj = spanning ((1 lsl 49) - page - 15) in
+          equal ~msg:"the ELF image" int
+            ((1 lsl 49) - page + 1)
+            (layout obj).size;
+          ignore (require_error ~pp:pp_cubin (Cubin.of_string obj)));
       test "an object that is not ELF is refused" (fun () ->
           ignore (require_error ~pp:pp_cubin (Cubin.of_string "\x7fELF")));
       test "reading copies nothing: elf's file is the object" (fun () ->

@@ -62,8 +62,12 @@ let relocation ~image i (r : Device_elf.relocation) =
 let of_string obj =
   let* o = Device_elf.of_string ~align:section_align obj in
   let* () =
-    if o.size <= max_image then Ok ()
-    else Error (strf "the image is %d bytes, longer than 2^49" o.size)
+    (* The ELF image's end rounds up to a page, and a page follows. *)
+    if o.size <= max_image - page then Ok ()
+    else
+      Error
+        (strf "the image would be longer than 2^49 bytes: its sections take %d"
+           o.size)
   in
   let rec relocations i acc = function
     | [] -> Ok (List.rev acc)
