@@ -13,7 +13,8 @@ dune exec contrib/ymir/examples/09-observations/main.exe
 - Building an observation with `Observation.v`, its variance and validity
 - Data per cell with `Grid.cell` in the unit
 - Sums, areas, propagated variances and coverage from `Observation.integrate`
-- Background subtraction with quantity arithmetic
+- Background subtraction with quantity arithmetic, and with `Observation.sub`
+  of a model on the same grid
 - Windows of static shape with `Observation.around`, and the error for one that
   clips the region
 
@@ -23,6 +24,7 @@ dune exec contrib/ymir/examples/09-observations/main.exe
 | --------------------------------------- | ------------------------------------------------ |
 | `Observation.v ?variance ?valid g data` | Data on grid `g`                                 |
 | `Observation.integrate r o`             | Sum, variance, area and coverage over region `r` |
+| `Observation.sub a b`                   | `a` less `b` on agreeing grids, variances added  |
 | `Observation.around x ~shape o`         | The block of cells about a point                 |
 | `Grid.cell`                             | The unit symbol counting cells                   |
 

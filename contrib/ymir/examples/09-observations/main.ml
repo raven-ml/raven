@@ -2,7 +2,8 @@
 
    An observation is data on a grid, with an optional variance and a mask of
    valid samples. [integrate] sums it over a region with each cell weighed by
-   its exact overlap, and propagates the variance. *)
+   its exact overlap, and propagates the variance; [add], [sub] and [scale]
+   combine observations on the same grid. *)
 
 open Ymir
 
@@ -64,6 +65,17 @@ let () =
       Printf.printf "aperture sum error = %.3f e/s\n"
         (sqrt (Nx.item [] (Quantity.value Unit.(e_s ** 2) v))))
     a.variance;
+
+  (* With a model of the background on the same grid, [Observation.sub]
+     subtracts it sample by sample and adds the variances. *)
+  let model =
+    Observation.v
+      ~variance:(Quantity.v Unit.(rate ** 2) (Nx.full f64 [| 64; 64 |] 0.01))
+      grid
+      (Quantity.v rate (Nx.full f64 [| 64; 64 |] background))
+  in
+  let clean = Observation.integrate aperture (Observation.sub obs model) in
+  print "clean" clean;
 
   (* A window of static shape about a point reads the same cells, so the sum
      does not change; one that clips the aperture raises. *)

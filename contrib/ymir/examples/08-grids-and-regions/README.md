@@ -12,20 +12,22 @@ dune exec contrib/ymir/examples/08-grids-and-regions/main.exe
 
 - Grids with `Grid.pixels`, and each cell's area or solid angle with
   `Grid.measure`
-- Circles and annuli placed with `Transform.shift` in a plane
+- Circles, annuli, ellipses and polygons placed in a plane
 - Exact overlap weights: they sum to the shape's area
 - Caps on the sky placed with `Transform.about`
 
 ## Key Functions
 
-| Function                         | Purpose                                |
-| -------------------------------- | -------------------------------------- |
-| `Grid.pixels ~shape dtype t`     | The cells of an image seen through `t` |
-| `Grid.measure g`                 | Each cell's area or solid angle        |
-| `Region.circle p ~radius`        | A disc in the plane of placement `p`   |
-| `Region.annulus p ~inner ~outer` | A ring                                 |
-| `Region.weights r g`             | Each cell's covered fraction           |
-| `Transform.about c`              | Angular offsets about direction `c`    |
+| Function                          | Purpose                                      |
+| --------------------------------- | -------------------------------------------- |
+| `Grid.pixels ~shape dtype t`      | The cells of an image seen through `t`       |
+| `Grid.measure g`                  | Each cell's area or solid angle              |
+| `Region.circle p ~radius`         | A disc in the plane of placement `p`         |
+| `Region.annulus p ~inner ~outer`  | A ring                                       |
+| `Region.ellipse p ~a ~b ~angle`   | An ellipse                                   |
+| `Region.polygon dtype p vertices` | A polygon with straight edges in `p`'s plane |
+| `Region.weights r g`              | Each cell's covered fraction                 |
+| `Transform.about c`               | Angular offsets about direction `c`          |
 
 ## Next Steps
 

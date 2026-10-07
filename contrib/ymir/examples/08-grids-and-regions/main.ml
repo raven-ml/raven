@@ -43,6 +43,28 @@ let () =
     (sum (Region.weights ring plane))
     (Float.pi *. ((2. *. 2.) -. (1. *. 1.)));
 
+  (* An ellipse of semi-axes 3 and 1.5 at 30 degrees from +y toward +x, and a
+     triangle given by its vertices: their weights sum to their areas. *)
+  let ellipse =
+    Region.ellipse (Transform.shift at)
+      ~a:(Quantity.v Unit.one (Nx.scalar f64 3.))
+      ~b:(Quantity.v Unit.one (Nx.scalar f64 1.5))
+      ~angle:(Quantity.v Unit.degree (Nx.scalar f64 30.))
+  in
+  Printf.printf "ellipse area = %.12f, pi a b = %.12f\n"
+    (sum (Region.weights ellipse plane))
+    (Float.pi *. 3. *. 1.5);
+  let triangle =
+    Region.polygon f64 Transform.id
+      (Quantity.v Unit.one
+         (Nx.create f64 [| 3; 2 |] [| 1.2; 1.1; 6.7; 2.3; 3.4; 7.6 |]))
+  in
+  Printf.printf "triangle area = %.12f, expected %.12f\n"
+    (sum (Region.weights triangle plane))
+    (0.5
+    *. Float.abs
+         (((6.7 -. 1.2) *. (7.6 -. 1.1)) -. ((3.4 -. 1.2) *. (2.3 -. 1.1))));
+
   (* The same on the sky: 0.1 arcsecond pixels about a tangent point. Cell
      measures are solid angles, and a circle placed with [Transform.about] is
      the cap of that angular radius. *)

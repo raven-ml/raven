@@ -49,14 +49,17 @@ The [examples](examples/) teach each part on small synthetic data.
   `Direction` holds batches of directions with their separations, position
   angles and rotations between frames.
 - **Transforms**: `Transform` maps pixels to the sky as a list of stages
-  (axis order, shift, linear map, TAN and ARC projections) that compose with
-  `>>`, invert, and print back what they read.
+  that compose with `>>`, invert, and print back what they read: axis order,
+  shift, linear maps, SIP and TPV distortions, thirteen zenithal and
+  cylindrical projections, and rotations between frames.
 - **Grids, regions and observations**: `Grid` is an image's cells seen
-  through a transform, with each cell's exact area or solid angle. `Region`
-  places circles and annuli on a grid and weighs each cell by its exact
-  covered fraction. `Observation` holds data with variance and validity, and
-  `Observation.integrate` sums it over a region: aperture photometry,
-  differentiable in the aperture's centre and radius.
+  through a transform, with each cell's exact area or solid angle;
+  `Grid.agree` says whether two grids are the same cells. `Region` places
+  circles, annuli, ellipses and polygons on a grid and weighs each cell by
+  its exact covered fraction. `Observation` holds data with variance and
+  validity; `add`, `sub` and `scale` combine observations on agreeing grids
+  with their variances, and `integrate` sums one over a region: aperture
+  photometry, differentiable in the aperture's centre and size.
 - **FITS**: `Fits` reads and writes headers, images (tile compression
   included), binary and ASCII tables, `BUNIT` and `TUNIT` units, and world
   coordinates (`Fits.Wcs`). `Fits.observation` reads an image HDU with its
