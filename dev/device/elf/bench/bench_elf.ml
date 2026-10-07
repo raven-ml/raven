@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Reading the objects a program load reads: AMD code objects of 16 to 512
+(* Reading the objects a program load reads: AMD code objects of 16 and 128
    kernels (3 symbols each, their symbol tables stripped, as a library ships its
    kernels), a cubin as the NV loader reads it, and a host object of six
    kernels. Then finding a kernel's descriptor in the code object of 128, as the
@@ -119,9 +119,7 @@ let () =
          Thumper.group "of-string"
            [
              amd_row 16;
-             amd_row 64;
              amd_row 128;
-             amd_row 512;
              Thumper.bench "floor-bytes-amd-128-kernels" (floor_bytes amd);
              Thumper.bench "floor-symbols-amd-128-kernels" (floor_symbols o);
              Thumper.bench "cubin-sm89" (of_string ~align:128 cubin);

@@ -217,4 +217,6 @@ val of_string :
 val symbol : t -> string -> int option
 (** [symbol o name] is [Some offset] for the first symbol of [o.symbols], by
     index, named [name] whose place is [Image { offset; _ }], and [None] if
-    there is none. [symbol o ""] is [None]. *)
+    there is none. [symbol o ""] is [None]. It takes time linear in the number
+    of symbols; a loader that looks up many names walks {!field-symbols} once.
+*)
