@@ -55,6 +55,7 @@ let sht_rel = 9
 let sht_dynsym = 11
 let sht_symtab_shndx = 18
 let shf_alloc = 0x2
+let shf_tls = 0x400
 let shn_undef = 0
 let shn_loreserve = 0xff00
 let shn_abs = 0xfff1
@@ -188,7 +189,14 @@ let header f obj off =
 (* The null section's size is the section count when [e_shnum] is 0, so it has
    no bytes whatever its size. *)
 let has_bytes h = h.sh_type <> sht_null && h.sh_type <> sht_nobits
-let held h = h.sh_type = sht_progbits && h.sh_flags land shf_alloc <> 0
+
+(* ELF's rule for the sections a loader's memory holds: allocated program
+   sections, and allocated sections without bytes except thread-local ones, a
+   template each thread copies, whose addresses other sections take. *)
+let allocated_as kind flags =
+  flags land shf_alloc <> 0
+  && (kind = sht_progbits || (kind = sht_nobits && flags land shf_tls = 0))
+
 let is_pow2 n = n > 0 && n land (n - 1) = 0
 
 (* The headers of [obj], with the count and the names' index extended through
@@ -266,11 +274,11 @@ let round_up n a =
 (* The address of image offset 0 when sections go at their addresses: the lowest
    held section's, rounded down to their largest alignment, so that each keeps
    its alignment in the image. *)
-let start hs =
+let start held hs =
   let low = ref max_int and align = ref 1 in
-  Array.iter
-    (fun h ->
-      if held h then begin
+  Array.iteri
+    (fun i h ->
+      if held.(i) then begin
         low := Int.min !low h.sh_addr;
         align := Int.max !align h.sh_addralign
       end)
@@ -280,14 +288,18 @@ let start hs =
 (* Whether the sections go at their addresses, the address the image starts at,
    each held section's image offset, and the image's length. Sections go at
    their addresses if one has an address, else follow each other. *)
-let layout ~align hs =
-  let addressed = Array.exists (fun h -> held h && h.sh_addr <> 0) hs in
-  let address = if addressed then start hs else 0 in
+let layout ~align held hs =
+  let addressed = ref false in
+  Array.iteri
+    (fun i h -> if held.(i) && h.sh_addr <> 0 then addressed := true)
+    hs;
+  let addressed = !addressed in
+  let address = if addressed then start held hs else 0 in
   let offsets = Array.make (Array.length hs) None in
   let size = ref 0 and spans = ref [] in
   Array.iteri
     (fun i h ->
-      if held h then begin
+      if held.(i) then begin
         let off =
           if addressed then h.sh_addr - address
           else round_up !size (Int.max align h.sh_addralign)
@@ -309,11 +321,11 @@ let end_of at n = if at > max_int - n then max_int else at + n
 
 (* The allocated sections the image does not hold, as address ranges sorted and
    merged into disjoint [(start, end)] pairs, for a binary search. *)
-let lacking hs =
+let lacking held hs =
   let spans =
-    Array.to_list hs
-    |> List.filter_map (fun h ->
-        if h.sh_flags land shf_alloc = 0 || held h || h.sh_size = 0 then None
+    Array.to_list (Array.mapi (fun i h -> (held.(i), h)) hs)
+    |> List.filter_map (fun (held, h) ->
+        if h.sh_flags land shf_alloc = 0 || held || h.sh_size = 0 then None
         else Some (h.sh_addr, end_of h.sh_addr h.sh_size))
     |> Array.of_list
   in
@@ -340,7 +352,7 @@ let holds ranges a =
 
 (* Reading *)
 
-let read ~align obj =
+let read ~align ?held obj =
   if
     String.length obj < ei_nident
     || not (String.starts_with ~prefix:"\x7fELF" obj)
@@ -382,7 +394,30 @@ let read ~align obj =
     if names_index = shn_undef then None
     else Some (strings names_index "the ELF header")
   in
-  let addressed, address, offsets, size = layout ~align hs in
+  let section h offset =
+    {
+      name =
+        Option.fold ~none:""
+          ~some:(fun n -> string_at obj named n h.sh_name)
+          names;
+      kind = h.sh_type;
+      flags = h.sh_flags;
+      offset;
+      size = h.sh_size;
+      at = at_of h;
+      length = length_of h;
+    }
+  in
+  (* The caller's predicate sees each section before the layout, without an
+     offset; its names are read once. *)
+  let unplaced, kept =
+    match held with
+    | None -> (None, Array.map (fun h -> allocated_as h.sh_type h.sh_flags) hs)
+    | Some held ->
+        let unplaced = Array.map (fun h -> section h None) hs in
+        (Some unplaced, Array.map held unplaced)
+  in
+  let addressed, address, offsets, size = layout ~align kept hs in
   (* The place of a symbol in section [index] at [value]. *)
   let place index value =
     let h = section_of index "a symbol" in
@@ -491,7 +526,7 @@ let read ~align obj =
   in
   (* The allocated memory the image lacks, as addresses, which mean something in
      an object whose sections have addresses. *)
-  let lacks = lazy (if addressed then lacking hs else [||]) in
+  let lacks = lazy (if addressed then lacking kept hs else [||]) in
   (* A dynamic relocation's offset is an address; any other's lies in the
      section it patches. *)
   let relocations_of r h =
@@ -521,19 +556,13 @@ let read ~align obj =
                     h.sh_info;
                 off + o)
   in
-  let section i h =
-    {
-      name =
-        Option.fold ~none:""
-          ~some:(fun n -> string_at obj named n h.sh_name)
-          names;
-      kind = h.sh_type;
-      flags = h.sh_flags;
-      offset = offsets.(i);
-      size = h.sh_size;
-      at = at_of h;
-      length = length_of h;
-    }
+  let sections =
+    match unplaced with
+    | None -> Array.mapi (fun i h -> section h offsets.(i)) hs
+    | Some unplaced ->
+        Array.mapi
+          (fun i (s : section) -> { s with offset = offsets.(i) })
+          unplaced
   in
   {
     kind = u16 obj 16;
@@ -544,16 +573,20 @@ let read ~align obj =
     address;
     file = obj;
     size;
-    sections = Iarray.of_array (Array.mapi section hs);
+    sections = Iarray.of_array sections;
     symbols;
     relocations = List.concat (List.mapi relocations_of (Array.to_list hs));
   }
 
-let of_string ?(align = 1) obj =
+let allocated (s : section) = allocated_as s.kind s.flags
+
+let of_string ?(align = 1) ?held obj =
   if not (is_pow2 align) then
     invalid_argf "Device_elf.of_string: align %d is not a positive power of two"
       align;
-  match read ~align obj with o -> Ok o | exception Malformed m -> Error m
+  match read ~align ?held obj with
+  | o -> Ok o
+  | exception Malformed m -> Error m
 
 (* A loop: the AMD loader looks up each kernel it loads. *)
 let symbol o name =

@@ -7,13 +7,14 @@
 
     Host programs, GPU programs and firmware come as little-endian ELF objects,
     32- or 64-bit. Reading one with {!of_string} lays out its {e image}: the
-    contents of its allocated program sections ([SHT_PROGBITS] with
-    [SHF_ALLOC]), its code and data. If one of these sections has a nonzero
-    address ([sh_addr]), each goes at its address less {!field-address}, as in
-    an executable whose image starts with its first section. Otherwise each
-    follows the image's end in section order, at its alignment, as in a
-    relocatable object. The image ends where its last section ends. Other
-    sections, such as [.bss], the symbol and string tables or debugging
+    sections a loader's memory holds, by default its allocated sections
+    ({!allocated}), its code and data, each with its bytes or, for a section
+    that has none in the object ([SHT_NOBITS]) such as [.bss], zeros. If one of
+    these sections has a nonzero address ([sh_addr]), each goes at its address
+    less {!field-address}, as in an executable whose image starts with its first
+    section. Otherwise each follows the image's end in section order, at its
+    alignment, as in a relocatable object. The image ends where its last section
+    ends. Other sections, such as the symbol and string tables or debugging
     information, stay out of the image.
 
     Reading copies no section's bytes. A section's bytes are a range of the
@@ -74,9 +75,10 @@ type place =
           {!field-sections}, and the symbol's offset. *)
   | Outside of int
       (** Defined, but not in the image: in a section the image does not hold,
-          such as [.bss]; before the start or past the end of its section; or at
-          a special section index other than [SHN_UNDEF] and [SHN_ABS], such as
-          [SHN_COMMON]. The integer is the symbol's section index. *)
+          such as debugging information; before the start or past the end of its
+          section; or at a special section index other than [SHN_UNDEF] and
+          [SHN_ABS], such as [SHN_COMMON]. The integer is the symbol's section
+          index. *)
 
 type symbol = {
   name : string;  (** Its name, [""] for a nameless one. *)
@@ -90,14 +92,16 @@ type section = {
   flags : int;  (** Its flags, [sh_flags]. *)
   offset : int option;  (** Its offset, if the image holds it. *)
   size : int;
-      (** Its size in memory, [sh_size]. A section with no bytes in the object,
-          such as [.bss], has one too. *)
+      (** The bytes it takes in memory, and in the image if the image holds it,
+          [sh_size]. A section with no bytes in the object, such as [.bss], has
+          one too. *)
   at : int;
       (** Where its bytes start in {!field-file}, [sh_offset]; [0] for the null
           section and an [SHT_NOBITS] one. *)
   length : int;
-      (** How many bytes it has in {!field-file}: [size], or [0] for a section
-          with none ([SHT_NOBITS] and the null section). *)
+      (** The bytes it has in {!field-file}, which a loader copies: [size], or
+          [0] for a section with none ([SHT_NOBITS] and the null section), whose
+          bytes in the image are zeros. *)
 }
 (** The type for sections. *)
 
@@ -152,10 +156,11 @@ type t = private {
     - A section [s]'s bytes lie in the object,
       [s.at + s.length <= String.length o.file], and no two sections share a
       byte of it.
-    - A section [s] with [s.offset = Some off] has its bytes in the object,
-      [s.length = s.size], and lies in the image, [off + s.size <= o.size], at a
-      multiple of its alignment, [sh_addralign]. No two such sections share a
-      byte of the image.
+    - A section [s] with [s.offset = Some off] lies in the image,
+      [off + s.size <= o.size], at a multiple of its alignment, [sh_addralign],
+      and has all its bytes in the object, [s.length = s.size], or none,
+      [s.length = 0] for an [SHT_NOBITS] one. No two such sections share a byte
+      of the image.
     - A place [Image { section = i; offset }] names a section [s], index [i] of
       [o.sections], with [s.offset = Some off] and
       [off <= offset <= off + s.size].
@@ -163,11 +168,27 @@ type t = private {
 
 (** {1:reading Reading} *)
 
-val of_string : ?align:int -> string -> (t, string) result
-(** [of_string ~align obj] is the object [obj] laid out in its image. When its
-    sections follow the image's end, each goes at the first offset at or past it
-    that is a multiple of [align] and of its alignment, [sh_addralign]. [align]
-    has no effect when its sections go at their addresses, and defaults to [1].
+val allocated : section -> bool
+(** [allocated s] is [true] iff ELF has a loader's memory hold [s]: [s] is
+    allocated ([SHF_ALLOC]), a program section ([SHT_PROGBITS]) or one without
+    bytes ([SHT_NOBITS]), and not a thread-local one without bytes ([SHF_TLS],
+    [.tbss]), a template each thread copies, which takes no memory of its own.
+*)
+
+val of_string :
+  ?align:int -> ?held:(section -> bool) -> string -> (t, string) result
+(** [of_string ~align ~held obj] is the object [obj] laid out in its image.
+
+    The image holds the sections [s] with [held s], which defaults to
+    {!allocated}: a loader whose memory does not hold some of them, such as a
+    format whose allocated sections name memory of another kind, says so. [held]
+    sees each section before the layout, its [offset] [None]. A section it does
+    not hold stays out of the image, and its symbols are [Outside].
+
+    When its sections follow the image's end, each goes at the first offset at
+    or past it that is a multiple of [align] and of its alignment,
+    [sh_addralign]. [align] has no effect when its sections go at their
+    addresses, and defaults to [1].
 
     The result is [Error msg], [msg] saying which, if [obj] is not a 32- or
     64-bit little-endian ELF object, or if:

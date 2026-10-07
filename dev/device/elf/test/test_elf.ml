@@ -25,6 +25,7 @@ let sht_symtab_shndx = 18
 let shf_write = 0x1
 let shf_alloc = 0x2
 let shf_execinstr = 0x4
+let shf_tls = 0x400
 let shn_undef = 0
 let shn_loreserve = 0xff00
 let shn_abs = 0xfff1
@@ -57,6 +58,13 @@ let section ?(kind = sht_progbits) ?(flags = shf_alloc) ?(addr = 0) ?size
 
 let bss ?addr name size =
   section ~kind:sht_nobits ~flags:(shf_alloc lor shf_write) ?addr ~size name ""
+
+(* A thread-local section without bytes: allocated, and still out of the
+   image. *)
+let tbss ?addr name size =
+  section ~kind:sht_nobits
+    ~flags:(shf_alloc lor shf_write lor shf_tls)
+    ?addr ~size name ""
 
 let note name contents = section ~flags:0 name contents
 
@@ -362,7 +370,8 @@ let invariants (o : Elf.t) =
       | None -> ()
       | Some off ->
           at_least ~msg int ~than:0 off;
-          equal ~msg int s.size s.length;
+          if s.kind = sht_nobits then equal ~msg int 0 s.length
+          else equal ~msg int s.size s.length;
           at_most ~msg int ~than:o.size (off + s.size);
           if s.size > 0 then in_image := (off, s.size, msg) :: !in_image)
     o.sections;
@@ -458,9 +467,11 @@ let test_addressed () =
       ]
   in
   let o = read obj in
-  equal ~msg:"each at its address, zeros in the gaps, before the first too"
+  equal
+    ~msg:"each at its address, zeros in the gaps, before the first and in .bss"
     string
-    (String.make 8 '\000' ^ "ABCD" ^ String.make 4 '\000' ^ "RO")
+    (String.make 8 '\000' ^ "ABCD" ^ String.make 4 '\000' ^ "RO"
+    ^ String.make (0x50 - 0x12) '\000')
     (image o);
   equal ~msg:"align has no effect" string (image o)
     (image (read ~align:4096 obj));
@@ -475,19 +486,93 @@ let test_addressed () =
     (section_named o ".data").offset
 
 let test_bss () =
-  let o = read (write [ section ".text" "ABCD"; bss ".bss" 64 ]) in
-  equal ~msg:"a section with no bytes is outside the image" elf_section
+  let o =
+    read
+      (write
+         [
+           section ".text" "ABCD";
+           { (bss ".bss" 64) with align = 16 };
+           tbss ".tbss" 8;
+         ])
+  in
+  equal
+    ~msg:
+      "a section with no bytes takes its size in the image, at its alignment, \
+       and no byte of the object"
+    elf_section
     {
       name = ".bss";
       kind = sht_nobits;
       flags = shf_alloc lor shf_write;
-      offset = None;
+      offset = Some 16;
       size = 64;
       at = 0;
       length = 0;
     }
     (section_named o ".bss");
-  equal ~msg:"and adds nothing to it" string "ABCD" (image o)
+  equal ~msg:"its bytes are zeros" string
+    ("ABCD" ^ String.make 76 '\000')
+    (image o);
+  equal ~msg:"a thread-local one stays out" (option int) None
+    (section_named o ".tbss").offset
+
+(* A loader whose memory does not hold a section says so: it stays out, with its
+   symbols, and the others lay out without it. *)
+let test_held () =
+  let entries, names = symbols [ defined "t" 3 0; defined "c" 1 2 ] in
+  let obj =
+    write
+      [
+        section ".text" "ABCD";
+        note ".note" "N";
+        { (bss ".shared" 64) with align = 16 };
+        bss ".global" 8;
+        symtab ~link:6 entries;
+        strtab names;
+      ]
+  in
+  let held (s : Elf.section) = Elf.allocated s && s.name <> ".shared" in
+  let o = require_ok ~pp:Format.pp_print_string (Elf.of_string ~held obj) in
+  invariants o;
+  equal ~msg:"the section the loader does not hold stays out" (option int) None
+    (section_named o ".shared").offset;
+  equal ~msg:"the next one follows the code" (option int) (Some 4)
+    (section_named o ".global").offset;
+  equal ~msg:"its symbols are outside" symbol
+    (sym_entry "t" (Outside 3))
+    (symbol_named o "t");
+  equal ~msg:"by default, ELF's rule holds both"
+    (list (option int))
+    [ Some 16; Some 80 ]
+    (List.map
+       (fun n -> (section_named (read obj) n).offset)
+       [ ".shared"; ".global" ])
+
+let test_allocated () =
+  let o =
+    read
+      (write
+         [
+           section ".text" "AB";
+           bss ".bss" 4;
+           tbss ".tbss" 4;
+           note ".note" "N";
+           section ~kind:sht_init_array ~flags:(shf_alloc lor shf_write)
+             ".init_array" (String.make 8 '\000');
+         ])
+  in
+  equal ~msg:"allocated program sections and ones without bytes, not .tbss"
+    (list (pair string bool))
+    [
+      (".text", true);
+      (".bss", true);
+      (".tbss", false);
+      (".note", false);
+      (".init_array", false);
+    ]
+    (List.map
+       (fun n -> (n, Elf.allocated (section_named o n)))
+       [ ".text"; ".bss"; ".tbss"; ".note"; ".init_array" ])
 
 let test_sections () =
   let o =
@@ -557,7 +642,7 @@ let test_places () =
          [
            section ~align:8 ".data" "01234";
            section ~align:8 ".text" "ABCD";
-           bss ".bss" 4;
+           tbss ".tbss" 4;
            note ".comment" "c";
            symtab ~link:6 entries;
            strtab names;
@@ -619,7 +704,7 @@ let test_lookup () =
          [
            section ".text" "ABCD";
            symtab ~link:4 entries;
-           bss ".bss" 4;
+           tbss ".tbss" 4;
            strtab names;
          ])
   in
@@ -874,7 +959,7 @@ let many_relocation_sections count =
   let symtab_at = count + 2 and strtab_at = (3 * count) + 2 in
   write
     (section ~addr:0x100 ".text" "ABCD"
-     :: List.init count (fun i -> bss ~addr:(0x1000 + (2 * i)) ".bss" 1)
+     :: List.init count (fun i -> tbss ~addr:(0x1000 + (2 * i)) ".tbss" 1)
     @ List.init count (fun _ -> symtab ~link:strtab_at entries)
     @ List.init count (fun i ->
         rela_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1, 0) ])
@@ -928,7 +1013,7 @@ let with_relocation ~target entry =
     [
       section ~align:4 ".text" "ABCD";
       section ~align:8 ".data" "01234567";
-      bss ".bss" 8;
+      tbss ".tbss" 8;
       symtab ~link:5 objects_entries;
       strtab objects_names;
       rela_section ~link:4 ~info:target [ entry ];
@@ -974,13 +1059,13 @@ let shared_names =
       strtab ("\000" ^ String.make 256 'n' ^ "\000");
     ]
 
-(* An addressed object with [.bss] between [.text] and [.data], and a dynamic
+(* An addressed object with [.tbss] between [.text] and [.data], and a dynamic
    relocation at address [at]. *)
 let dynamic_into ~at =
   write
     [
       section ~addr:0x100 ".text" "ABCD";
-      bss ~addr:0x104 ".bss" 8;
+      tbss ~addr:0x104 ".tbss" 8;
       section ~addr:0x110 ".data" "EFGH";
       rela_section ~name:".rela.dyn" ~link:0 ~info:0 [ (at, 0, 1, 0) ];
     ]
@@ -1040,7 +1125,7 @@ let refusals =
       write [ section ~addr:0x102 ~align:4 ".text" "ABCD" ] );
     ( "a symbol value past the int range",
       patch well_formed (symbol_entry + 15) 1 0x40 );
-    ( "a dynamic relocation into .bss between program sections",
+    ( "a dynamic relocation into .tbss between program sections",
       dynamic_into ~at:0x106 );
     ( "an address past the int range",
       patch_section (addressed ~text:0x100 ~data:0x200) 2 sh_addr 8 (-16) );
@@ -1048,7 +1133,7 @@ let refusals =
       with_relocation ~target:1 (5, 1, 1, 0) );
     ( "a relocation at the end of the image",
       with_relocation ~target:2 (8, 1, 1, 0) );
-    ("a relocation into .bss", with_relocation ~target:3 (0, 1, 1, 0));
+    ("a relocation into .tbss", with_relocation ~target:3 (0, 1, 1, 0));
     ("a relocation into .init_array", into_init_array);
   ]
 
@@ -1068,7 +1153,7 @@ let test_near_refusals () =
        (write
           [
             section ~addr:0x100 ".text" "A";
-            { (bss ~addr:0x103 ".bss" 8) with align = 8 };
+            { (tbss ~addr:0x103 ".tbss" 8) with align = 8 };
           ]));
   ignore (read (patch well_formed (symbol_entry + 15) 1 0xff));
   ignore (read (dynamic_into ~at:0x10c));
@@ -1125,7 +1210,7 @@ let test_largest_align () =
 
 (* The law: objects written from random sections *)
 
-type part = Code | Note | Bss
+type part = Code | Note | Bss | Tbss
 
 type case = {
   parts : sh list;
@@ -1159,11 +1244,15 @@ let pp_case ppf c =
   Format.fprintf ppf "align=%d" c.align
 
 let names = [ ""; "a"; "b"; "k.kd" ]
-let in_image (s : sh) = s.kind = sht_progbits && s.flags land shf_alloc <> 0
+
+(* Allocated sections, with bytes or without, but thread-local ones without. *)
+let in_image (s : sh) =
+  s.flags land shf_alloc <> 0
+  && (s.kind = sht_progbits || (s.kind = sht_nobits && s.flags land shf_tls = 0))
 
 let gen_part =
   let open Gen in
-  let+ part = of_list [ Code; Code; Note; Bss ]
+  let+ part = of_list [ Code; Code; Note; Bss; Tbss ]
   and+ contents = string_of ~size:(int_range 0 12) char
   and+ align = of_list [ 0; 1; 2; 4; 8; 64 ]
   and+ bss_size = int_range 0 16
@@ -1174,6 +1263,7 @@ let gen_part =
     | Code -> section ~align ".code" contents
     | Note -> note ".note" contents
     | Bss -> bss ".bss" bss_size
+    | Tbss -> tbss ".tbss" bss_size
   in
   (s, gap, key)
 
@@ -1301,7 +1391,8 @@ let model_image c =
   in
   let b = Bytes.make length '\000' in
   List.iter
-    (fun ((s : sh), off) -> Bytes.blit_string s.contents 0 b off s.size)
+    (fun ((s : sh), off) ->
+      Bytes.blit_string s.contents 0 b off (String.length s.contents))
     placed;
   Bytes.to_string b
 
@@ -1394,6 +1485,10 @@ let law_image c =
   let held = List.filter_map Fun.id offsets in
   cover "addressed" (List.exists (fun s -> in_image s && s.addr <> 0) c.parts);
   cover "appended" (held <> [] && List.for_all (fun s -> s.addr = 0) c.parts);
+  cover "a section without bytes in the image"
+    (List.exists
+       (fun s -> in_image s && s.kind = sht_nobits && s.size > 0)
+       c.parts);
   cover "an empty section in the image"
     (List.exists (fun s -> in_image s && s.size = 0) c.parts);
   cover "a section past align"
@@ -1432,6 +1527,7 @@ let fixture path =
     In_channel.input_all
 
 let cubin_path = "simple_add_sm89.cubin"
+let global_path = "global_sm89.cubin"
 let hsaco_path = "amd_gfx1100.hsaco"
 let amd_object_path = "amd_gfx1100.o"
 let stripped_path = "amd_128_gfx1100.hsaco"
@@ -1685,9 +1781,37 @@ let test_cubin () =
   equal ~msg:"the debugging relocation is left out" (list relocation) []
     o.relocations
 
+(* global_sm89.cubin: an uninitialised __device__ global, [scratch], in
+   .nv.global (1 KiB, SHT_NOBITS), which .nv.constant4 relocates to. At an
+   alignment of 128: .nv.constant4 at 0, the kernel's bank at 128, its code at
+   512, then .nv.global at 1024. *)
+let test_global () =
+  let o = read ~align:128 (fixture global_path) in
+  invariants o;
+  equal ~msg:"the global's section takes 1 KiB of the image, no file byte"
+    elf_section
+    {
+      name = ".nv.global";
+      kind = sht_nobits;
+      flags = shf_alloc lor shf_write;
+      offset = Some 1024;
+      size = 1024;
+      at = 0;
+      length = 0;
+    }
+    (section_named o ".nv.global");
+  equal ~msg:"the image ends with it" int 2048 o.size;
+  equal ~msg:"zeros in the image" string (String.make 1024 '\000')
+    (String.sub (image o) 1024 1024);
+  let scratch = sym_entry "scratch" (Image { section = 14; offset = 1024 }) in
+  equal ~msg:"the global" symbol scratch (symbol_named o "scratch");
+  equal ~msg:"the bank's relocation reaches it" (list relocation)
+    [ { offset = 0; kind = 2; addend = 0; symbol = scratch } ]
+    o.relocations
+
 (* amd_gfx1100.hsaco: .rodata (64 bytes, aligned to 64) at 0x600 and .text
-   (0x280 bytes, aligned to 256) at 0x1700; .dynamic at 0x2980 and .bss after it
-   hold no bytes of the image. *)
+   (0x280 bytes, aligned to 256) at 0x1700; .dynamic at 0x2980 holds no bytes of
+   the image, and .relro_padding and .bss after it are zeros in it. *)
 let test_hsaco () =
   let o = read (fixture hsaco_path) in
   invariants o;
@@ -1698,7 +1822,7 @@ let test_hsaco () =
   equal ~msg:"for gfx1100" int 0x41 o.flags;
   equal ~msg:".rodata's address, a multiple of .text's alignment of 256" int
     0x600 o.address;
-  equal ~msg:"the image ends with .text at 0x1100" int 0x1380 o.size;
+  equal ~msg:"the image ends with .bss at 0x33f0" int 0x33f4 o.size;
   equal ~msg:"zeros between .rodata and .text" string
     (String.make (0x1100 - 0x40) '\000')
     (String.sub (image o) 0x40 (0x1100 - 0x40));
@@ -1716,12 +1840,12 @@ let test_hsaco () =
     (sym_entry "_DYNAMIC" (Outside 8))
     (symbol_named o "_DYNAMIC");
   equal ~msg:"a symbol in .bss" symbol
-    (sym_entry "last" (Outside 10))
+    (sym_entry "last" (Image { section = 10; offset = 0x33f0 }))
     (symbol_named o "last")
 
 (* amd_128_gfx1100.hsaco: 128 kernels, linked without .symtab. Its image starts
    at .rodata's 0x18680 rounded down to .text's alignment of 256, and ends with
-   .text at 0x1b700, 0x8180 bytes. *)
+   .bss after .text at 0x1b700, 0xd2f4 bytes. *)
 let test_stripped () =
   let o = read (fixture stripped_path) in
   invariants o;
@@ -1731,19 +1855,19 @@ let test_stripped () =
   equal ~msg:"a kernel descriptor" (option int) (Some 0x80)
     (Elf.symbol o "add0000.kd");
   equal ~msg:"its code" (option int) (Some 0x3100) (Elf.symbol o "add0000");
-  equal ~msg:"the image" int 0xb280 o.size
+  equal ~msg:"the image" int 0xd2f4 o.size
 
-(* amd_gfx1100.o: .text (0x280 bytes) then .rodata at its alignment of 64. The
-   code's four relocations reach [last] in .bss; the descriptor's reaches the
-   kernel. *)
+(* amd_gfx1100.o: .text (0x280 bytes), .rodata at its alignment of 64, then
+   .bss. The code's four relocations reach [last] in .bss; the descriptor's
+   reaches the kernel. *)
 let test_relocatable_amd () =
   let o = read (fixture amd_object_path) in
   invariants o;
   equal ~msg:"a relocatable object" int 1 o.kind;
-  equal ~msg:".text, then .rodata" int 0x2c0 o.size;
+  equal ~msg:".text, .rodata, then .bss" int 0x2c4 o.size;
   equal ~msg:"the descriptor in .rodata" (option int) (Some 0x280)
     (Elf.symbol o "add.kd");
-  let last = sym_entry "last" (Outside 7) in
+  let last = sym_entry "last" (Image { section = 7; offset = 0x2c0 }) in
   let r offset kind addend symbol : Elf.relocation =
     { offset; kind; addend; symbol }
   in
@@ -1774,8 +1898,13 @@ let test_host (target, call, addend, table) =
     require_some
       (Iarray.find_index (fun (s : Elf.section) -> s.name = ".bss") o.sections)
   in
-  equal ~msg:"the counter is outside the image" symbol
-    (sym_entry "counter" (Outside bss))
+  equal ~msg:"the counter is in .bss, in the image" symbol
+    (sym_entry "counter"
+       (Image
+          {
+            section = bss;
+            offset = Option.get (Iarray.get o.sections bss).offset;
+          }))
     (symbol_named o "counter");
   equal ~msg:"the empty .note.GNU-stack stays out" (option int) None
     (section_named o ".note.GNU-stack").offset;
@@ -1809,7 +1938,9 @@ let () =
              test "the image ends where its last section ends" test_no_padding;
              test "sections with addresses go at them, gaps as zeros"
                test_addressed;
-             test "a section without bytes stays out" test_bss;
+             test "a section without bytes is zeros in the image" test_bss;
+             test "the image holds what the loader's memory holds" test_held;
+             test "ELF's rule for what a loader's memory holds" test_allocated;
              test "every section by index" test_sections;
              test "an object without section names" test_no_names;
              prop ~count:300
@@ -1872,6 +2003,7 @@ let () =
          group ~timeout "real objects"
            [
              test "an NVIDIA cubin" test_cubin;
+             test "an NVIDIA cubin with an uninitialised global" test_global;
              test "an AMD code object" test_hsaco;
              test "an AMD code object without its symbol table" test_stripped;
              test "a relocatable AMD object" test_relocatable_amd;
