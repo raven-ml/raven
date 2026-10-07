@@ -28,7 +28,7 @@
 (executable
  (name bench_space)
  (modules bench_space)
- (libraries device_pci nx.device.support thumper))
+ (libraries device_pci thumper))
 
 (rule
  (alias bench)
