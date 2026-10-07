@@ -142,16 +142,21 @@ let test_fork_child () =
   equal ~msg:"(a worker ran a chunk, units not run once)" (pair int int) (1, 0)
     (v.(0), v.(1))
 
+(* Nothing signals that fork waits, so the test samples: once the domain is
+   about to fork, fork has still not returned 50 ms later. *)
 let test_fork_waits () =
   needs_two_cores ();
-  let forked = Atomic.make false in
-  let forking =
+  let forking = Atomic.make false and forked = Atomic.make false in
+  let forker =
     P.while_held (fun () ->
         let d =
           Domain.spawn (fun () ->
+              Atomic.set forking true;
               T.fork ();
               Atomic.set forked true)
         in
+        P.within 10. "the domain did not reach fork" (fun () ->
+            Atomic.get forking);
         Unix.sleepf 0.05;
         equal ~msg:"fork returned while a job ran" bool false
           (Atomic.get forked);
@@ -159,7 +164,7 @@ let test_fork_waits () =
   in
   P.within 10. "fork did not return once the job ended" (fun () ->
       Atomic.get forked);
-  Domain.join forking
+  Domain.join forker
 
 let thread_tests =
   group "threads"
@@ -173,7 +178,9 @@ let thread_tests =
         test_narrow_burst;
       test "a child made by fork runs its jobs on workers of its own"
         test_fork_child;
-      test "fork waits for a running job of more than one thread to end"
+      test
+        "fork waits for a running job of more than one thread to end, sampled \
+         for 50 ms"
         test_fork_waits;
     ]
 

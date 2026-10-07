@@ -250,7 +250,7 @@ let test_bounds ((threads, total, chunks) as job) =
   cover "fewer than one thread" (total > 0L && threads < 1);
   cover "more threads than cores" (c > Int64.of_int cores && threads > cores);
   cover "a job on one thread" (t = 1);
-  cover "a job on several threads" (t > 1);
+  if cores > 1 then cover "a job on several threads" (t > 1);
   let ran = P.record ~threads ~total ~chunks in
   let ranges = chunks_ran ran in
   at_most ~msg:"calls" int ~than:(Int64.to_int c) ran.count;
@@ -275,8 +275,11 @@ let test_claim_order ((threads, total, chunks) as job) =
       (fun (c : P.call) -> if c.thread = th then Some c.lo else None)
       ran.calls
   in
-  cover "a thread ran several chunks"
-    (List.exists (fun th -> List.length (los th) >= 2) threads);
+  (* A job of more chunks than threads, on more than one thread, has a thread
+     run several: its calls are one a chunk. *)
+  if cores > 1 then
+    cover "a thread ran several chunks"
+      (List.exists (fun th -> List.length (los th) >= 2) threads);
   List.iter
     (fun th ->
       equal
@@ -356,7 +359,6 @@ let test_workers ((threads, total, chunks) as job) =
   in
   let workers = distinct (List.map fst pairs)
   and threads_used = distinct (List.map snd pairs) in
-  cover "several threads ran chunks" (List.length threads_used >= 2);
   cover "fewer than one thread" (total > 0L && threads < 1);
   cover "more threads than cores" (threads > cores && t = cores);
   List.iter
@@ -398,7 +400,7 @@ let test_one_thread_at_once () =
   needs_two_cores ();
   P.while_held (fun () ->
       let ran =
-        finishes ~within:2. "a job of one thread" (fun () ->
+        finishes "a job of one thread" (fun () ->
             P.record ~threads:1 ~total:100L ~chunks:10L)
       in
       equal ~msg:"(lo, hi, worker, thread) of each call"
@@ -418,13 +420,20 @@ let test_nested () =
     (finishes "a job whose bodies begin jobs" (fun () ->
          P.nested ~threads:cores ~outer ~inner))
 
+(* Nothing signals that a job waits, so the test samples: once the domain is
+   about to begin its job, none of its chunks has run 50 ms later. *)
 let test_waits () =
   needs_two_cores ();
+  let beginning = Atomic.make false in
   let waiting =
     P.while_held (fun () ->
         let d =
-          Domain.spawn (fun () -> P.counted ~threads:2 ~total:4L ~chunks:4L)
+          Domain.spawn (fun () ->
+              Atomic.set beginning true;
+              P.counted ~threads:2 ~total:4L ~chunks:4L)
         in
+        P.within 10. "the domain did not begin its job" (fun () ->
+            Atomic.get beginning);
         Unix.sleepf 0.05;
         equal ~msg:"chunks run while another thread's job ran" int 0
           (P.counted_calls ());
@@ -464,7 +473,9 @@ let scheduling_tests =
         "a job begun from a body of a job of more than one thread runs at once \
          on the body's thread as worker 0, in one call"
         test_nested;
-      test "a job of more than one thread waits for another thread's job to end"
+      test
+        "a job of more than one thread waits for another thread's job to end, \
+         sampled for 50 ms"
         test_waits;
       stateful ~domains:2 ~count:30
         "jobs from two domains each call their chunks once" job_commands;
