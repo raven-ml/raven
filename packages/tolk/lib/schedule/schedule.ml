@@ -57,8 +57,8 @@ let rec states s =
    element of, or a weak integer expression of the loops around the call, which
    its body's scalar parameter holds on each trip. *)
 let scalar_argument k s =
-  addrspace s = Some Dtype.Alu
-  && match arg k with Call c -> c.precompile | _ -> false
+  (match arg k with Call c -> c.precompile | _ -> false)
+  && match addrspace s with Some Dtype.Alu -> true | _ -> false
 
 (* A loop around a call: a range's end, or a back edge. *)
 let is_loop k = op k = Op.End || op k = Op.Backedge
