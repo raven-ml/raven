@@ -17,6 +17,7 @@ type icb = {
 }
 
 type t = {
+  align : int;
   icb : nativeint -> dispatch array -> (icb, string) result;
   split : nativeint;
 }

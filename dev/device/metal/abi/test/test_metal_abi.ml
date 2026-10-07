@@ -20,7 +20,7 @@ let find : type a. a Type.Id.t -> binding list -> a option =
   List.find_map found bindings
 
 let split = 0x7f00_2000n
-let record = { Metal.icb = (fun _ _ -> Error "no Metal"); split }
+let record = { Metal.align = 4; icb = (fun _ _ -> Error "no Metal"); split }
 
 let test_found () =
   let other : int Type.Id.t = Type.Id.make () in

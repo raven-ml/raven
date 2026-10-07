@@ -10,9 +10,9 @@
     linked, and run on each submission of the step. Making one calls Metal on
     the device's objects, which only the device's driver, the library that
     opened the device, holds. Two things connect compiled code to the driver: a
-    record, {!t}, that makes indirect command buffers and gives the address of
-    {!field-split}, and a C calling convention, the fill, by which the driver
-    runs the compiled code's work.
+    record, {!t}, that makes indirect command buffers, gives the address of
+    {!field-split} and states the device's argument alignment, and a C calling
+    convention, the fill, by which the driver runs the compiled code's work.
 
     This library holds only that agreement. The driver makes the record when it
     opens the device and declares it under {!key}; compiled code finds it there.
@@ -72,11 +72,8 @@ type dispatch = {
       *)
   offset : int;
       (** Where its arguments start in the argument buffer, which it binds as
-          its kernel buffer [0]: bytes from the buffer's first byte. It is a
-          multiple of the GPU's minimum constant buffer offset alignment, which
-          Metal requires of a buffer a kernel reads as constant data: 4 bytes on
-          Apple-family GPUs. Apple's tables give no value for Mac-family GPUs.
-      *)
+          its kernel buffer [0]: bytes from the buffer's first byte, a multiple
+          of the record's {!field-align}. *)
   groups : int * int * int;
       (** Its threadgroups per grid, in x, y and z, each at least [1]. *)
   threads : int * int * int;
@@ -104,6 +101,11 @@ type icb = {
 (** {1:record The record} *)
 
 type t = {
+  align : int;
+      (** [align] is the device's minimum constant buffer offset alignment, in
+          bytes, at least [1]. Metal requires a buffer a kernel reads as
+          constant data to start at a multiple of it, so every dispatch's
+          {!field-offset} is a multiple of it. *)
   icb : nativeint -> dispatch array -> (icb, string) result;
       (** [icb buffer ds] is [Ok b] with [b] an indirect command buffer that
           records one dispatch per element of [ds], in order, each run after the
@@ -117,8 +119,8 @@ type t = {
 
           Raises [Invalid_argument] if [buffer] or a pipeline belongs to another
           [MTLDevice], or if a dispatch's offset lies outside [buffer] or is not
-          aligned as {!field-offset} states, or one of its sizes is less than
-          [1]. Any domain may call it. *)
+          a multiple of {!field-align}, or one of its sizes is less than [1].
+          Any domain may call it. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which a fill
