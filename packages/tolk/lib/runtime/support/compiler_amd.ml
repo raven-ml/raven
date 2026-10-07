@@ -41,13 +41,12 @@ let program_file program =
     if not (whole ()) then begin
       mkdir_p Helpers.cache_dir;
       let tmp, oc =
-        Filename.open_temp_file ~mode:[ Open_binary ]
+        Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o755
           ~temp_dir:Helpers.cache_dir "comgr-worker-" ".tmp"
       in
       Fun.protect
         ~finally:(fun () -> close_out_noerr oc)
         (fun () -> output_string oc program);
-      Unix.chmod tmp 0o755;
       try Sys.rename tmp path with Sys_error _ when whole () -> Sys.remove tmp
     end;
     if not (whole ()) then failwith (path ^ ": differs from the program");
