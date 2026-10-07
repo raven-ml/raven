@@ -221,8 +221,11 @@ let distortions =
           let t = distorted (List.nth Reference.distorted k) in
           let back = Transform.(apply (inverse t) (apply t (pixels [| r; c |]))) in
           less float_exact ~than:1e-9 (max_abs (values back Unit.one) [| r; c |]));
-      test "the inverse SIP differentiates in the direction" (fun () ->
-          let d = List.nth Reference.distorted 0 in
+      cases ~name "the inverse SIP differentiates in the direction"
+        (List.filter
+           (fun (d : Reference.distorted) -> d.kind = "SIP")
+           Reference.distorted)
+        (fun d ->
           let t = Transform.inverse (distorted d) in
           let column lon =
             let s =

@@ -344,7 +344,7 @@ def distorted_case(name, kind, seeded):
     return case
 
 
-DISTORTED = [("SIP", "SIP", False), ("TPV", "TPV", False)]
+DISTORTED = [("SIP", "SIP", False), ("SIP with AP and BP", "SIP", True), ("TPV", "TPV", False)]
 
 
 # photutils, pixel apertures
