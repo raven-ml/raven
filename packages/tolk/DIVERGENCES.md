@@ -4246,10 +4246,10 @@ stores through a pad.
   `codegen/opt/heuristic.py:112-138` (the upcasts of output axes by 3 or 4)
   and `:156-159` (the upcast by 4 of a kernel that has none).
 - **tolk:** `lib/renderer/renderer.mli:138` (`vector_alu`);
-  `lib/codegen/codegen.ml:237` (`in_order`), `:257` (`vector_operation`),
-  `:278` (`vector_dtypes`), `:288` (`do_devectorize`), `:324`
-  (`address_lanes`), `:379` (`pm_vector_constants`) and `:763`
-  (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
+  `lib/codegen/codegen.ml:235` (`constant_lanes`), `:270` (`in_order`),
+  `:293` (`vector_operation`), `:314` (`vector_dtypes`), `:324`
+  (`do_devectorize`), `:360` (`address_lanes`), `:415`
+  (`pm_vector_constants`) and `:799` (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
   (`clang_vectors`) and `:1144` (`clang_kernel`); `lib/uop/spec.ml:500`
   (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
   `lib/codegen/opt/heuristic.ml:446` (`host_vector_bytes`), `:463`
@@ -4262,12 +4262,13 @@ stores through a pad.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_alu`;
   Clang does). There an elementwise operation of several lanes on a type the
   target computes natively stays one operation on a vector of its lanes, on
-  one axis, when each source holds them in order: a vector operation, a stack
-  of loads of memory, of lanes of vectors or of constants, or a scalar that
-  every lane reads. A source that holds them in another order, a broadcast or
-  a permutation across lanes, or apart in registers, as an accumulator's
-  lanes, costs a vector shuffles that a scalar reads for free: such an
-  operation computes each lane apart. Loads, stores, tensor-core products,
+  one axis, when each source holds them in order: a vector operation,
+  constants in any view (a literal), a stack of loads of memory, a load in as
+  many lanes as read it, and of lanes of vectors, each in one lane, or a
+  scalar that every lane reads. A source that holds computed lanes in another
+  order, a broadcast or a permutation across lanes, or apart in registers, as
+  an accumulator's lanes, costs a vector shuffles that a scalar reads for
+  free: such an operation computes each lane apart. Loads, stores, tensor-core products,
   calls, and operations on a weak type (an address) or an emulated one still
   compute each lane apart; an address is computed lane by lane through the
   vector operations it reads, so that accesses still merge. A sum fuses each
@@ -4308,6 +4309,21 @@ stores through a pad.
   `lgamma`, float64 `sin` and `log_betainc` take none, and `log_betainc` and
   its gradients compile as fast as without the upcast (2.7 s and 4.9-8.9 s
   cold). The 64 bytes and the 5 were measured on the M1 alone.
+
+  nx.quant's MXFP4 product unpacks a byte of uint4 codes into two lanes, a
+  load each lane of the pair reads, shifted by a broadcast of the constants 0
+  and 4. Refused as a vector, the shift and every operation after it went lane
+  by lane: Clang compiled each code's e2m1 decode as a scalar select, a branch
+  on x86 that random codes, as a checkpoint's are, mispredict, which made the
+  product 2.5-4.5 times slower on random codes than on zero codes (kaun's
+  decode bench, kimchi). A load fills each lane that reads it, as a literal
+  fills its lanes, at no cost beyond the stack of distinct loads already
+  taken, and the decode, a vector, selects without branches. With D143, the
+  host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
+  token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
+  (alternated under load). A matmul's upcast products now build vectors of
+  their shared loads that each lane's multiply-add reads back
+  (`clang_matmul_upcasted*`); Clang compiles them to the same instructions.
 - **Rejected:** compile time is paid once and replay on every call, so
   neither trade below was taken. `#pragma clang loop vectorize(disable)`
   changes nothing on vector kernels (Clang 0.24 s with and without it on
@@ -4324,7 +4340,10 @@ stores through a pad.
   case), `› a weak constant stored into four lanes of half on the host
   converts them` and `multiply-adds` (every test); the Spec suite's `vectors
   in programs › a program of a renderer that computes on vectors … (D141)`;
-  rune's Rune.jit suite: `lanes` (every test); the Heuristic suite's `the
+  rune's Rune.jit suite: `lanes` (every test); rune's Rune.quant suite:
+  `decoding` (every law); rune's lower_index suite: `quantised products › a
+  product decodes a checkpoint's codes 16 at once on the host` (with D143);
+  the Heuristic suite's `the
   optimisations chosen are tinygrad's › applied_opts`, the host cases
   `exp_float_cpu`, `exp_double_cpu`, `add_half_cpu`, `add_uchar_cpu`,
   `cast_to_double_cpu`, `compare_cpu`, `add_24_cpu`, `add_17_cpu`,
@@ -4379,3 +4398,37 @@ stores through a pad.
   nx.device's host suite: `a call through the entry is a call`, `a split
   through the entry runs the blocks a split call runs`; rune's Jit, Iterate
   and Staging suites on the host.
+
+## D143. The host unrolls a reduce beside a small unrolled axis to a vector
+
+- **tinygrad:** `codegen/opt/heuristic.py:140-153` (the unroll of the last
+  reduce axis, and of a second one when both are at most 3).
+- **tolk:** `lib/codegen/opt/heuristic.ml:611` (`unroll_vector`) and `:625`
+  (`unroll`); `test/gen/tinygrad.patch`, which gives tinygrad the same before
+  the goldens are recorded.
+- **Differs:** on the host, when the last reduce axis is at most 3 and wholly
+  unrolled and the next one is larger than 3, the next is unrolled by the
+  largest power of two that divides it and keeps the unrolled lanes within 64
+  bytes of the reduce's type (`host_vector_bytes`, D141): 8 beside a pair of
+  float32 lanes, 4 beside 3. It reaches every host reduce of that shape, as
+  `experts_down`'s product summed over its two experts. tinygrad unrolls the
+  next axis only when it is at most 3 too.
+- **Reason:** (b). nx.quant's MXFP4 product of a checkpoint's codes reduces
+  over a byte axis and the pair of codes each byte holds: the pair alone left
+  each iteration two decoded codes per row, against 16 for GGUF's blocks,
+  whose 16 code bytes are the last axis, and an iteration's loop, its scale
+  decode and its loads outweighed them. With D141's vectors, kaun's decode
+  bench on an M1 Max (alternated under load 22-24) times the dense product of
+  a checkpoint's codes at 2.6-3.0 ms against 2.6-3.3 ms for the blocks, from
+  6.7-9.8 ms; one token's routed product at 11-21 ms from 37-55 ms; 64 tokens'
+  at 270-326 ms from 340-563 ms. Without D141's vectors the same unroll is
+  slower: its lanes decode one at a time (64 tokens' product 780-985 ms). On
+  one core, the dense kernel unrolled by 4, 8 and 16 bytes ran in 8.5, 7.7
+  and 8.9 ms, the blocks' in 7.3 ms; the routed one's in 39, 34 and 32 ms,
+  compiled in 0.11, 0.15 and 0.26 s.
+- **Pinned by:** the Heuristic suite's `the optimisations chosen are
+  tinygrad's › applied_opts`, the host cases `vecmat_decoded_cpu`,
+  `gpt_oss_gate_up_cpu`, `routed_blocks_cpu`, `routed_tiles_cpu` and
+  `experts_down_cpu`, recorded from the equally patched tinygrad; rune's
+  lower_index suite: `quantised products › a product decodes a checkpoint's
+  codes 16 at once on the host`.

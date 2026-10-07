@@ -13,25 +13,30 @@
 11 Ops.ADD dtypes.weakint [9, 10]
 12 Ops.CONST dtypes.weakint [] 32
 13 Ops.MUL dtypes.weakint [11, 12]
-14 Ops.RANGE dtypes.weakint [12] (0, AxisType.REDUCE)
-15 Ops.ADD dtypes.weakint [13, 14]
-16 Ops.INDEX dtypes.float [5, 15]
-17 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1024, device="CPU")
-18 Ops.MUL dtypes.weakint [2, 12]
-19 Ops.ADD dtypes.weakint [18, 14]
-20 Ops.CONST dtypes.weakint [] 512
-21 Ops.MUL dtypes.weakint [11, 20]
-22 Ops.ADD dtypes.weakint [19, 21]
-23 Ops.INDEX dtypes.float [17, 22]
-24 Ops.MUL dtypes.float [16, 23]
-25 Ops.REDUCE dtypes.float [24, 14] (Ops.ADD, 0)
-26 Ops.CMPLT dtypes.bool [4, 25]
-27 Ops.WHERE dtypes.float [26, 25, 4]
-28 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=2, device="CPU")
-29 Ops.INDEX dtypes.float [28, 11]
-30 Ops.MUL dtypes.float [27, 29]
-31 Ops.REDUCE dtypes.float [30, 7, 10] (Ops.ADD, 0)
-32 Ops.STORE dtypes.void [3, 31]
-33 Ops.END dtypes.void [32, 2]
-34 Ops.SINK dtypes.void [33] KernelInfo(name="r_16_32_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),)) tag=1
+14 Ops.CONST dtypes.weakint [] 4
+15 Ops.RANGE dtypes.weakint [14] (0, AxisType.REDUCE)
+16 Ops.CONST dtypes.weakint [] 8
+17 Ops.MUL dtypes.weakint [15, 16]
+18 Ops.RANGE dtypes.weakint [16] (4, AxisType.UNROLL)
+19 Ops.ADD dtypes.weakint [17, 18]
+20 Ops.ADD dtypes.weakint [13, 19]
+21 Ops.INDEX dtypes.float [5, 20]
+22 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1024, device="CPU")
+23 Ops.MUL dtypes.weakint [2, 12]
+24 Ops.ADD dtypes.weakint [23, 19]
+25 Ops.CONST dtypes.weakint [] 512
+26 Ops.MUL dtypes.weakint [11, 25]
+27 Ops.ADD dtypes.weakint [24, 26]
+28 Ops.INDEX dtypes.float [22, 27]
+29 Ops.MUL dtypes.float [21, 28]
+30 Ops.REDUCE dtypes.float [29, 15, 18] (Ops.ADD, 0)
+31 Ops.CMPLT dtypes.bool [4, 30]
+32 Ops.WHERE dtypes.float [31, 30, 4]
+33 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=2, device="CPU")
+34 Ops.INDEX dtypes.float [33, 11]
+35 Ops.MUL dtypes.float [32, 34]
+36 Ops.REDUCE dtypes.float [35, 7, 10] (Ops.ADD, 0)
+37 Ops.STORE dtypes.void [3, 36]
+38 Ops.END dtypes.void [37, 2]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="r_16_4_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.UNROLL)))) tag=1
 

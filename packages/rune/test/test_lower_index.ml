@@ -629,6 +629,38 @@ let quantised =
           in
           equal (list int) [ 0 ]
             (List.map narrow (Tolk.Ops.src (Programs.kernels (product w)))));
+      test "a product decodes a checkpoint's codes 16 at once on the host"
+        (fun () ->
+          (* Each byte's two codes are lanes of one vector, 8 bytes of them, a
+             vector of 64 bytes at uint32: decoded one at a time, Clang branches
+             on each code's exponent on x86. A scale is decoded once for its 16
+             codes, alone. *)
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(bytes [| n; k / 32 |])
+              (bytes [| n; k / 2 |])
+          in
+          let selects k =
+            List.filter_map
+              (fun u ->
+                if
+                  Tolk.Op.equal (Tolk.Ops.op u) Where
+                  && Tolk.Dtype.equal (Tolk.Ops.dtype u) Uint32
+                then Some (Tolk.Shape.shape u)
+                else None)
+              (Tolk.Ops.toposort ~calls:Enter
+                 (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+          in
+          let lanes = function
+            | [ Tolk.Ops.Int n ] -> n
+            | [] -> 1
+            | _ -> invalid_arg "a select of several axes"
+          in
+          equal int 16
+            (List.fold_left max 1
+               (List.concat_map
+                  (fun k -> List.map lanes (selects k))
+                  (Tolk.Ops.src (Programs.kernels (product w))))));
       test "a product over GGUF's MXFP4 blocks loads each byte once" (fun () ->
           let w = Nx_quant.mxfp4_blocks (bytes [| n; k / 32 * 17 |]) in
           equal int (k / 32 * 17) (loaded (product w)));

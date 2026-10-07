@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..2f0ec9d 100644
+index efb2e82..2e6f49e 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace
@@ -67,7 +67,7 @@ index efb2e82..2f0ec9d 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
-@@ -114,10 +120,54 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+@@ -114,10 +120,72 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -75,18 +75,36 @@ index efb2e82..2f0ec9d 100644
 +# the scalar every lane of x holds, if x expands one
 +def splat(x:UOp) -> UOp|None: return x.src[0] if x.op is Ops.EXPAND and x.src[0].shape == () else None
 +
-+# the vector x is of n lanes in the flat order of its shape, if it holds them in order, through reshapes: an elementwise operation
-+# of n lanes, or a stack of n constants and of loads of memory or lanes of vectors that no two lanes share, which move into a
-+# vector as memory or registers do. a view across lanes, a broadcast or a permutation, holds them in another order, and a stack of
-+# lanes computed apart, or held apart in registers, would be put together lane by lane
++def constant(l:UOp) -> bool: return l.op is Ops.CONST or (l.op is Ops.CAST and l.src[0].op is Ops.CONST)
++
++# the constants x holds in the flat order of its shape, if it holds only constants: through reshapes, expansions, which repeat their
++# source's lanes, permutations and stacks
++def constant_lanes(x:UOp) -> list[UOp]|None:
++  if x.shape == (): return [x] if constant(x) else None
++  if x.op is Ops.RESHAPE: return constant_lanes(x.src[0])
++  if x.op is Ops.STACK:
++    lanes = [constant_lanes(s) for s in x.src]
++    return None if any(l is None for l in lanes) else [c for l in lanes for c in l]
++  if x.op is Ops.EXPAND and (l:=constant_lanes(x.src[0])) is not None and all_int(x.marg): return l * prod(x.marg)
++  if x.op is Ops.PERMUTE and (l:=constant_lanes(x.src[0])) is not None:
++    sizes = x.src[0].shape
++    strides = [prod(sizes[i+1:]) for i in range(len(sizes))]
++    return [l[sum(strides[a]*i for a,i in zip(x.marg, index))] for index in itertools.product(*[range(s) for s in x.shape])]
++  return None
++
++# the vector x is of n lanes in the flat order of its shape, if it holds them in order, through reshapes: an elementwise operation of
++# n lanes, n constants in any view, or a stack of n loads of memory and lanes of vectors, a lane of a vector in one lane only. these
++# move into a vector as a literal, memory or registers do, and a load fills every lane that reads it. a view across the lanes of
++# computed values, a broadcast or a permutation, holds them in another order, and a stack of lanes computed apart, or held apart in
++# registers, would be put together lane by lane
 +def in_order(n:int, x:UOp) -> UOp|None:
 +  if x.op is Ops.RESHAPE: return in_order(n, x.src[0])
-+  if x.shape != (n,): return None
++  if x.shape != (n,): return UOp.stack(*l) if (l:=constant_lanes(x)) is not None and len(l) == n else None
 +  if x.op in GroupOp.Elementwise: return x
 +  if x.op is not Ops.STACK: return None
-+  moved = [l for l in x.src if not (l.op is Ops.CONST or (l.op is Ops.CAST and l.src[0].op is Ops.CONST))]
 +  def memory(l:UOp) -> bool: return l.op is Ops.LOAD and l.src[0].addrspace is not AddrSpace.REG
-+  return x if all(memory(l) or l.op is Ops.INDEX for l in moved) and len(set(moved)) == len(moved) else None
++  lanes = [l for l in x.src if l.op is Ops.INDEX]
++  return x if all(constant(l) or memory(l) or l.op is Ops.INDEX for l in x.src) and len(set(lanes)) == len(lanes) else None
 +
 +# an elementwise operation of a renderer that computes on vectors keeps its lanes whole, on one axis, the flat order of its shape:
 +# each source is a vector of those lanes in order, or a scalar every lane reads. where every source is a scalar, the operation is
@@ -123,7 +141,7 @@ index efb2e82..2f0ec9d 100644
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-@@ -134,9 +184,59 @@ def do_stack_wmma(u:UOp):
+@@ -134,9 +202,59 @@ def do_stack_wmma(u:UOp):
        src.append(b)
    return u.replace(src=tuple(src))
  
@@ -183,7 +201,7 @@ index efb2e82..2f0ec9d 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -151,10 +251,10 @@ devectorizer2 = pm_mops+PatternMatcher([
+@@ -151,10 +269,10 @@ devectorizer2 = pm_mops+PatternMatcher([
    (UPat(Ops.RESHAPE, dtype=dtypes.void, name="x"), lambda x: x.src[0]),
    # reshape of a single element shaped value to scalar is an index
    (UPat(Ops.RESHAPE, name="x"), lambda x: x.src[0].index(0) if x.marg == () and x.src[0].shape == (1,) else None),
@@ -197,7 +215,7 @@ index efb2e82..2f0ec9d 100644
  ])
  
  def fix_group_for_reduce(x:UOp):
-@@ -194,19 +294,48 @@ def merge_reduce_ends(sink:UOp):
+@@ -194,19 +312,48 @@ def merge_reduce_ends(sink:UOp):
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -252,7 +270,7 @@ index efb2e82..2f0ec9d 100644
  
  # an Invalid in a REDUCE source is that reduce's identity
  pm_reduce_identity = PatternMatcher([
-@@ -272,6 +401,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -272,6 +419,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -291,7 +309,7 @@ index efb2e82..2f0ec9d 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if VIZ: graph_rewrite(ast, PatternMatcher([]), name="View Base AST")
    if DEBUG >= 5: print(pyrender(ast))
-@@ -310,7 +471,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -310,7 +489,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -300,7 +318,7 @@ index efb2e82..2f0ec9d 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -323,7 +484,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -323,7 +502,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -309,7 +327,7 @@ index efb2e82..2f0ec9d 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -346,11 +507,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -346,11 +525,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -324,7 +342,7 @@ index efb2e82..2f0ec9d 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -364,11 +527,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -364,11 +545,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -338,7 +356,7 @@ index efb2e82..2f0ec9d 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -377,7 +541,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -377,7 +559,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, pm_add_control_flow, ctx=CFGContext(sink), name="add control flow", bottom_up=True)
  
    # put unnumbered variable PARAMs in slots
@@ -348,7 +366,7 @@ index efb2e82..2f0ec9d 100644
    sink = graph_rewrite(sink, pm_number_params, ctx=[num_params], name="number params with -1", walk=True)
  
    if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Output AST")
-@@ -432,9 +597,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -432,9 +615,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -903,7 +921,7 @@ index 319a60c..612ddfa 100644
  pm_move_gates_from_index = PatternMatcher([
    # for image idx (must be first)
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..b1b112f 100644
+index 712a2b7..2304534 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,39 @@
@@ -1119,7 +1137,7 @@ index 712a2b7..b1b112f 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -141,21 +252,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -141,21 +252,32 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
      if k.unrollable_dims and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UNROLL)) and (k.upcast_size() < 64):
@@ -1132,8 +1150,16 @@ index 712a2b7..b1b112f 100644
 +        if unroll_fits(s):
            k.apply_opt(Opt(OptOps.SPLIT, k.unrollable_dims[-1], (0, AxisType.UNROLL)))
 +          # if it's small, upcast a second reduce dimension too
-+          if k.unrollable_dims and s <= 3 and (s2:=k.full_shape[k.unrollable_dims[-1]]) <= 3 and unroll_fits(s2):
-+            k.apply_opt(Opt(OptOps.SPLIT, k.unrollable_dims[-1], (0, AxisType.UNROLL)))
++          if k.unrollable_dims and s <= 3 and (s2:=k.full_shape[k.unrollable_dims[-1]]) <= 3:
++            if unroll_fits(s2): k.apply_opt(Opt(OptOps.SPLIT, k.unrollable_dims[-1], (0, AxisType.UNROLL)))
++          # on the host, the lanes of the next axis fill the rest of a vector of HOST_VECTOR_BYTES of the reduce's type, by the
++          # largest power of two that divides it: the unrolled lanes compute as one vector, and one iteration's work outweighs its loop
++          # and the loads its unrolled lanes share
++          elif k.unrollable_dims and s <= 3 and k.ren.target.device == "CPU":
++            room, n, axis = HOST_VECTOR_BYTES // k.reduceops[0].dtype.itemsize // s, 1, k.unrollable_dims[-1]
++            while 2 * n <= room: n *= 2
++            while n >= 2 and not (isinstance(k.full_shape[axis], int) and k.full_shape[axis] % n == 0 and unroll_fits(n)): n //= 2
++            if n >= 2: k.apply_opt(Opt(OptOps.SPLIT, axis, (n, AxisType.UNROLL)))
        else:
          for splits in [4]:
 -          if k.full_shape[axis:=k.unrollable_dims[-1]]%splits == 0:

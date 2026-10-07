@@ -8,73 +8,85 @@
 6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=7, device="CPU")
 7 Ops.INDEX dtypes.float [6, 4]
 8 Ops.LOAD dtypes.float [7]
-9 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=5, device="CPU")
-10 Ops.CONST dtypes.weakint [] 1
-11 Ops.WHERE dtypes.weakint [1, 10, 3]
-12 Ops.INDEX dtypes.float [9, 11]
-13 Ops.LOAD dtypes.float [12]
-14 Ops.MUL dtypes.float [8, 13]
-15 Ops.INDEX dtypes.float [6, 11]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.WHERE dtypes.weakint [1, 9, 3]
+11 Ops.INDEX dtypes.float [6, 10]
+12 Ops.LOAD dtypes.float [11]
+13 Ops.CONST dtypes.weakint [] 2
+14 Ops.WHERE dtypes.weakint [1, 13, 3]
+15 Ops.INDEX dtypes.float [6, 14]
 16 Ops.LOAD dtypes.float [15]
-17 Ops.CONST dtypes.weakint [] 2
+17 Ops.CONST dtypes.weakint [] 3
 18 Ops.WHERE dtypes.weakint [1, 17, 3]
-19 Ops.INDEX dtypes.float [9, 18]
+19 Ops.INDEX dtypes.float [6, 18]
 20 Ops.LOAD dtypes.float [19]
-21 Ops.MUL dtypes.float [16, 20]
-22 Ops.ADD dtypes.float [14, 21] tag="fusable"
-23 Ops.INDEX dtypes.float [6, 18]
+21 Ops.CONST dtypes.weakint [] 4
+22 Ops.WHERE dtypes.weakint [1, 21, 3]
+23 Ops.INDEX dtypes.float [6, 22]
 24 Ops.LOAD dtypes.float [23]
-25 Ops.CONST dtypes.weakint [] 3
+25 Ops.CONST dtypes.weakint [] 5
 26 Ops.WHERE dtypes.weakint [1, 25, 3]
-27 Ops.INDEX dtypes.float [9, 26]
+27 Ops.INDEX dtypes.float [6, 26]
 28 Ops.LOAD dtypes.float [27]
-29 Ops.MUL dtypes.float [24, 28]
-30 Ops.ADD dtypes.float [22, 29] tag="fusable"
-31 Ops.INDEX dtypes.float [6, 26]
+29 Ops.CONST dtypes.weakint [] 6
+30 Ops.WHERE dtypes.weakint [1, 29, 3]
+31 Ops.INDEX dtypes.float [6, 30]
 32 Ops.LOAD dtypes.float [31]
-33 Ops.CONST dtypes.weakint [] 4
-34 Ops.WHERE dtypes.weakint [1, 33, 3]
-35 Ops.INDEX dtypes.float [9, 34]
+33 Ops.STACK dtypes.float [8, 12, 16, 20, 12, 16, 20, 24, 16, 20, 24, 28, 20, 24, 28, 32]
+34 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=5, device="CPU")
+35 Ops.INDEX dtypes.float [34, 10]
 36 Ops.LOAD dtypes.float [35]
-37 Ops.MUL dtypes.float [32, 36]
-38 Ops.ADD dtypes.float [30, 37] tag="fusable"
-39 Ops.STORE dtypes.void [5, 38]
-40 Ops.INDEX dtypes.float [0, 11]
-41 Ops.MUL dtypes.float [16, 13]
-42 Ops.MUL dtypes.float [24, 20]
-43 Ops.ADD dtypes.float [41, 42] tag="fusable"
-44 Ops.MUL dtypes.float [32, 28]
-45 Ops.ADD dtypes.float [43, 44] tag="fusable"
-46 Ops.INDEX dtypes.float [6, 34]
-47 Ops.LOAD dtypes.float [46]
-48 Ops.MUL dtypes.float [47, 36]
-49 Ops.ADD dtypes.float [45, 48] tag="fusable"
-50 Ops.STORE dtypes.void [40, 49]
-51 Ops.INDEX dtypes.float [0, 18]
-52 Ops.MUL dtypes.float [24, 13]
-53 Ops.MUL dtypes.float [32, 20]
-54 Ops.ADD dtypes.float [52, 53] tag="fusable"
-55 Ops.MUL dtypes.float [47, 28]
+37 Ops.INDEX dtypes.float [34, 14]
+38 Ops.LOAD dtypes.float [37]
+39 Ops.INDEX dtypes.float [34, 18]
+40 Ops.LOAD dtypes.float [39]
+41 Ops.INDEX dtypes.float [34, 22]
+42 Ops.LOAD dtypes.float [41]
+43 Ops.STACK dtypes.float [36, 38, 40, 42, 36, 38, 40, 42, 36, 38, 40, 42, 36, 38, 40, 42]
+44 Ops.MUL dtypes.float [33, 43]
+45 Ops.INDEX dtypes.float [44, 2]
+46 Ops.INDEX dtypes.float [44, 9]
+47 Ops.ADD dtypes.float [45, 46] tag="fusable"
+48 Ops.INDEX dtypes.float [44, 13]
+49 Ops.ADD dtypes.float [47, 48] tag="fusable"
+50 Ops.INDEX dtypes.float [44, 17]
+51 Ops.ADD dtypes.float [49, 50] tag="fusable"
+52 Ops.STORE dtypes.void [5, 51]
+53 Ops.INDEX dtypes.float [0, 10]
+54 Ops.INDEX dtypes.float [44, 21]
+55 Ops.INDEX dtypes.float [44, 25]
 56 Ops.ADD dtypes.float [54, 55] tag="fusable"
-57 Ops.CONST dtypes.weakint [] 5
-58 Ops.WHERE dtypes.weakint [1, 57, 3]
-59 Ops.INDEX dtypes.float [6, 58]
-60 Ops.LOAD dtypes.float [59]
-61 Ops.MUL dtypes.float [60, 36]
-62 Ops.ADD dtypes.float [56, 61] tag="fusable"
-63 Ops.STORE dtypes.void [51, 62]
-64 Ops.INDEX dtypes.float [0, 26]
-65 Ops.MUL dtypes.float [32, 13]
-66 Ops.MUL dtypes.float [47, 20]
-67 Ops.ADD dtypes.float [65, 66] tag="fusable"
-68 Ops.MUL dtypes.float [60, 28]
-69 Ops.ADD dtypes.float [67, 68] tag="fusable"
-70 Ops.CONST dtypes.weakint [] 6
-71 Ops.WHERE dtypes.weakint [1, 70, 3]
-72 Ops.INDEX dtypes.float [6, 71]
-73 Ops.LOAD dtypes.float [72]
-74 Ops.MUL dtypes.float [73, 36]
-75 Ops.ADD dtypes.float [69, 74] tag="fusable"
-76 Ops.STORE dtypes.void [64, 75]
-77 Ops.SINK dtypes.void [39, 50, 63, 76] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
+57 Ops.INDEX dtypes.float [44, 29]
+58 Ops.ADD dtypes.float [56, 57] tag="fusable"
+59 Ops.CONST dtypes.weakint [] 7
+60 Ops.INDEX dtypes.float [44, 59]
+61 Ops.ADD dtypes.float [58, 60] tag="fusable"
+62 Ops.STORE dtypes.void [53, 61]
+63 Ops.INDEX dtypes.float [0, 14]
+64 Ops.CONST dtypes.weakint [] 8
+65 Ops.INDEX dtypes.float [44, 64]
+66 Ops.CONST dtypes.weakint [] 9
+67 Ops.INDEX dtypes.float [44, 66]
+68 Ops.ADD dtypes.float [65, 67] tag="fusable"
+69 Ops.CONST dtypes.weakint [] 10
+70 Ops.INDEX dtypes.float [44, 69]
+71 Ops.ADD dtypes.float [68, 70] tag="fusable"
+72 Ops.CONST dtypes.weakint [] 11
+73 Ops.INDEX dtypes.float [44, 72]
+74 Ops.ADD dtypes.float [71, 73] tag="fusable"
+75 Ops.STORE dtypes.void [63, 74]
+76 Ops.INDEX dtypes.float [0, 18]
+77 Ops.CONST dtypes.weakint [] 12
+78 Ops.INDEX dtypes.float [44, 77]
+79 Ops.CONST dtypes.weakint [] 13
+80 Ops.INDEX dtypes.float [44, 79]
+81 Ops.ADD dtypes.float [78, 80] tag="fusable"
+82 Ops.CONST dtypes.weakint [] 14
+83 Ops.INDEX dtypes.float [44, 82]
+84 Ops.ADD dtypes.float [81, 83] tag="fusable"
+85 Ops.CONST dtypes.weakint [] 15
+86 Ops.INDEX dtypes.float [44, 85]
+87 Ops.ADD dtypes.float [84, 86] tag="fusable"
+88 Ops.STORE dtypes.void [76, 87]
+89 Ops.SINK dtypes.void [52, 62, 75, 88] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
 

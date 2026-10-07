@@ -602,6 +602,24 @@ let upcast_more k =
   in
   loop []
 
+(* On the host, a reduce whose last axis unrolls [unrolled] lanes of at most 3
+   fills the rest of a vector of [host_vector_bytes] of its type with lanes of
+   the next axis [axis], by the largest power of two that divides it: the
+   unrolled lanes compute as one vector, and one iteration's work outweighs its
+   loop and the loads its unrolled lanes share. A byte of uint4 codes holds two
+   lanes, and MXFP4's product unrolls 8 bytes of them beside their pairs. *)
+let unroll_vector k ~fits unrolled axis =
+  let reduce = List.hd (K.reduceops k) in
+  let room = host_vector_bytes / Dtype.itemsize (dtype reduce) / unrolled in
+  let rec largest n =
+    if n >= 2 then
+      if divisible (shape_at k axis) n && fits n then
+        ignore (try_split k axis n Opt.Unroll)
+      else largest (n / 2)
+  in
+  let rec pow2 p = if 2 * p > room then p else pow2 (2 * p) in
+  largest (pow2 1)
+
 (* if last reduce dim is small(ish), loop unroll the reduce. NOTE: this can fail
    on multireduce with mismatching dimensions, this is okay *)
 let unroll k =
@@ -626,8 +644,12 @@ let unroll k =
         | [] -> ()
         | dims ->
             let s2 () = size_at k (last dims) in
-            if at_most 3 s && at_most 3 (s2 ()) && fits (Bigint.to_int (s2 ()))
-            then ignore (try_split k (last dims) 0 Opt.Unroll)
+            if at_most 3 s && at_most 3 (s2 ()) then begin
+              if fits (Bigint.to_int (s2 ())) then
+                ignore (try_split k (last dims) 0 Opt.Unroll)
+            end
+            else if at_most 3 s && on_host k then
+              unroll_vector k ~fits (Bigint.to_int s) (last dims)
       end
     else
       let axis = last (K.unrollable_dims k) in

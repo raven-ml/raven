@@ -344,6 +344,93 @@ let compiled c =
         (fun ids x -> product { c with ids = Some ids } c.w x)
         ids c.x
 
+(* Decoding in a product. A row one at input [j] and zero elsewhere picks the
+   weight's values at [j]: each output is one value plus zeros, exact in any
+   order of the sum, so a compiled product is eager's bit for bit wherever its
+   kernel decodes a code. The codes are random bytes, as a checkpoint's are,
+   drawn from a seed, and the law covers each e2m1 code at the picked input. A
+   dense product has rows enough for its kernel to compute several rows at once,
+   as a model's do. *)
+
+let decoded_inputs = 64
+
+(* [decodes name lead make code f] is the law for [f w x], with [w] the [make
+   scales bytes] of shape [lead] by [decoded_inputs], whose row [r] of all
+   [lead]'s rows holds its code at input [j] at [code bytes r j], and [x] a row
+   one at [j]. *)
+let decodes name lead make code f =
+  let rows = Array.fold_left ( * ) 1 lead and k = decoded_inputs in
+  let bytes =
+    Gen.map
+      (fun seed ->
+        let s = Random.State.make [| seed |] in
+        Array.init (rows * k / 2) (fun _ -> Random.State.int s 256))
+      Gen.int
+  in
+  let scales =
+    Nx.init Nx.uint8
+      (Array.append lead [| k / 32 |])
+      (fun i -> 120 + (Array.fold_left ( + ) 0 i mod 15))
+  in
+  let compiled =
+    Rune.jit Nx.Ptree.(Nx_quant.ptree @-> tensor @-> returns tensor) f
+  in
+  prop
+    (Printf.sprintf "compiled, %s decodes each code as eager, bit for bit" name)
+    (Gen.pair bytes (Gen.int_range 0 (k - 1)))
+    (fun (b, j) ->
+      let codes = List.init rows (fun r -> code b r j) in
+      for c = 0 to 15 do
+        cover (Printf.sprintf "code %d" c) (List.mem c codes)
+      done;
+      let w =
+        make scales (Nx.create Nx.uint8 (Array.append lead [| k / 2 |]) b)
+      in
+      let x =
+        Nx.init Nx.float32 [| 1; k |] (fun i -> if i.(1) = j then 1. else 0.)
+      in
+      equal (tensor float_exact) (f w x) (compiled w x))
+
+(* The nibble [n] of byte [i] of [b]. *)
+let nibble b i n = (b.(i) lsr (4 * n)) land 15
+
+(* A checkpoint holds input [j] of row [r] at nibble [j mod 2] of byte [r k / 2
+   + j / 2]; a GGUF block, after its scale, holds value [p] of its 32 at nibble
+   [p / 16] of its byte [p mod 16]. *)
+let checkpoint_code b r j =
+  nibble b ((r * decoded_inputs / 2) + (j / 2)) (j mod 2)
+
+let blocks_code b r j =
+  let p = j mod 32 in
+  nibble b ((r * decoded_inputs / 2) + (j / 32 * 16) + (p mod 16)) (p / 16)
+
+(* [blocks scales codes] is GGUF's blocks of [scales] and [codes], each block
+   its scale byte and its 16 code bytes. *)
+let blocks scales codes =
+  let s = Nx.shape codes in
+  let lead = Array.sub s 0 (Array.length s - 1) in
+  let b =
+    Nx.concatenate ~axis:(-1)
+      [
+        Nx.reshape (Array.append (Nx.shape scales) [| 1 |]) scales;
+        Nx.reshape (Array.append lead [| -1; 16 |]) codes;
+      ]
+  in
+  Nx_quant.mxfp4_blocks (Nx.reshape (Array.append lead [| -1 |]) b)
+
+let decoding =
+  let checkpoint scales codes = Nx_quant.mxfp4 ~scales codes in
+  let ids = ints [| 1; 4 |] [| 2; 0; 3; 1 |] in
+  let routed w x = routed w ids (Nx.reshape [| 1; 1; 1; decoded_inputs |] x) in
+  group "decoding"
+    [
+      decodes "a product of a checkpoint's codes" [| 1024 |] checkpoint
+        checkpoint_code apply;
+      decodes "a product of GGUF's blocks" [| 1024 |] blocks blocks_code apply;
+      decodes "one token's routed product of a checkpoint's codes" [| 4; 64 |]
+        checkpoint checkpoint_code routed;
+    ]
+
 let values =
   group "values"
     [
@@ -836,6 +923,7 @@ let () =
     (run "Rune.quant"
        [
          values;
+         decoding;
          placements;
          memory;
          transformations;

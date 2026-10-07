@@ -10,61 +10,74 @@
 8 Ops.SHRINK dtypes.float [7, 4, 5]
 9 Ops.LOAD dtypes.float [8]
 10 Ops.INDEX dtypes.float [9, 2]
-11 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=5, device="CPU")
-12 Ops.CONST dtypes.weakint [] 1
-13 Ops.WHERE dtypes.weakint [1, 12, 3]
-14 Ops.INDEX dtypes.float [11, 13]
-15 Ops.LOAD dtypes.float [14]
-16 Ops.MUL dtypes.float [10, 15]
-17 Ops.INDEX dtypes.float [9, 12]
-18 Ops.CONST dtypes.weakint [] 2
-19 Ops.WHERE dtypes.weakint [1, 18, 3]
-20 Ops.SHRINK dtypes.float [11, 19, 18]
-21 Ops.LOAD dtypes.float [20]
-22 Ops.INDEX dtypes.float [21, 2]
-23 Ops.MUL dtypes.float [17, 22]
-24 Ops.ADD dtypes.float [16, 23] tag="fusable"
-25 Ops.INDEX dtypes.float [9, 18]
-26 Ops.INDEX dtypes.float [21, 12]
-27 Ops.MUL dtypes.float [25, 26]
-28 Ops.ADD dtypes.float [24, 27] tag="fusable"
-29 Ops.CONST dtypes.weakint [] 3
-30 Ops.INDEX dtypes.float [9, 29]
-31 Ops.WHERE dtypes.weakint [1, 5, 3]
-32 Ops.INDEX dtypes.float [11, 31]
+11 Ops.CONST dtypes.weakint [] 1
+12 Ops.INDEX dtypes.float [9, 11]
+13 Ops.CONST dtypes.weakint [] 2
+14 Ops.INDEX dtypes.float [9, 13]
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.INDEX dtypes.float [9, 15]
+17 Ops.WHERE dtypes.weakint [1, 5, 3]
+18 Ops.SHRINK dtypes.float [7, 17, 13]
+19 Ops.LOAD dtypes.float [18]
+20 Ops.INDEX dtypes.float [19, 2]
+21 Ops.INDEX dtypes.float [19, 11]
+22 Ops.CONST dtypes.weakint [] 6
+23 Ops.WHERE dtypes.weakint [1, 22, 3]
+24 Ops.INDEX dtypes.float [7, 23]
+25 Ops.LOAD dtypes.float [24]
+26 Ops.STACK dtypes.float [10, 12, 14, 16, 12, 14, 16, 20, 14, 16, 20, 21, 16, 20, 21, 25]
+27 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=5, device="CPU")
+28 Ops.WHERE dtypes.weakint [1, 11, 3]
+29 Ops.INDEX dtypes.float [27, 28]
+30 Ops.LOAD dtypes.float [29]
+31 Ops.WHERE dtypes.weakint [1, 13, 3]
+32 Ops.SHRINK dtypes.float [27, 31, 13]
 33 Ops.LOAD dtypes.float [32]
-34 Ops.MUL dtypes.float [30, 33]
-35 Ops.ADD dtypes.float [28, 34] tag="fusable"
-36 Ops.MUL dtypes.float [17, 15]
-37 Ops.MUL dtypes.float [25, 22]
-38 Ops.ADD dtypes.float [36, 37] tag="fusable"
-39 Ops.MUL dtypes.float [30, 26]
-40 Ops.ADD dtypes.float [38, 39] tag="fusable"
-41 Ops.SHRINK dtypes.float [7, 31, 18]
-42 Ops.LOAD dtypes.float [41]
-43 Ops.INDEX dtypes.float [42, 2]
-44 Ops.MUL dtypes.float [43, 33]
-45 Ops.ADD dtypes.float [40, 44] tag="fusable"
-46 Ops.MUL dtypes.float [25, 15]
-47 Ops.MUL dtypes.float [30, 22]
-48 Ops.ADD dtypes.float [46, 47] tag="fusable"
-49 Ops.MUL dtypes.float [43, 26]
-50 Ops.ADD dtypes.float [48, 49] tag="fusable"
-51 Ops.INDEX dtypes.float [42, 12]
-52 Ops.MUL dtypes.float [51, 33]
-53 Ops.ADD dtypes.float [50, 52] tag="fusable"
-54 Ops.MUL dtypes.float [30, 15]
-55 Ops.MUL dtypes.float [43, 22]
-56 Ops.ADD dtypes.float [54, 55] tag="fusable"
-57 Ops.MUL dtypes.float [51, 26]
-58 Ops.ADD dtypes.float [56, 57] tag="fusable"
-59 Ops.CONST dtypes.weakint [] 6
-60 Ops.WHERE dtypes.weakint [1, 59, 3]
-61 Ops.INDEX dtypes.float [7, 60]
-62 Ops.LOAD dtypes.float [61]
-63 Ops.MUL dtypes.float [62, 33]
-64 Ops.ADD dtypes.float [58, 63] tag="fusable"
-65 Ops.STACK dtypes.float [35, 45, 53, 64]
-66 Ops.STORE dtypes.void [6, 65]
-67 Ops.SINK dtypes.void [66, 66, 66, 66] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
+34 Ops.INDEX dtypes.float [33, 2]
+35 Ops.INDEX dtypes.float [33, 11]
+36 Ops.INDEX dtypes.float [27, 17]
+37 Ops.LOAD dtypes.float [36]
+38 Ops.STACK dtypes.float [30, 34, 35, 37, 30, 34, 35, 37, 30, 34, 35, 37, 30, 34, 35, 37]
+39 Ops.MUL dtypes.float [26, 38]
+40 Ops.INDEX dtypes.float [39, 2]
+41 Ops.INDEX dtypes.float [39, 11]
+42 Ops.ADD dtypes.float [40, 41] tag="fusable"
+43 Ops.INDEX dtypes.float [39, 13]
+44 Ops.ADD dtypes.float [42, 43] tag="fusable"
+45 Ops.INDEX dtypes.float [39, 15]
+46 Ops.ADD dtypes.float [44, 45] tag="fusable"
+47 Ops.INDEX dtypes.float [39, 5]
+48 Ops.CONST dtypes.weakint [] 5
+49 Ops.INDEX dtypes.float [39, 48]
+50 Ops.ADD dtypes.float [47, 49] tag="fusable"
+51 Ops.INDEX dtypes.float [39, 22]
+52 Ops.ADD dtypes.float [50, 51] tag="fusable"
+53 Ops.CONST dtypes.weakint [] 7
+54 Ops.INDEX dtypes.float [39, 53]
+55 Ops.ADD dtypes.float [52, 54] tag="fusable"
+56 Ops.CONST dtypes.weakint [] 8
+57 Ops.INDEX dtypes.float [39, 56]
+58 Ops.CONST dtypes.weakint [] 9
+59 Ops.INDEX dtypes.float [39, 58]
+60 Ops.ADD dtypes.float [57, 59] tag="fusable"
+61 Ops.CONST dtypes.weakint [] 10
+62 Ops.INDEX dtypes.float [39, 61]
+63 Ops.ADD dtypes.float [60, 62] tag="fusable"
+64 Ops.CONST dtypes.weakint [] 11
+65 Ops.INDEX dtypes.float [39, 64]
+66 Ops.ADD dtypes.float [63, 65] tag="fusable"
+67 Ops.CONST dtypes.weakint [] 12
+68 Ops.INDEX dtypes.float [39, 67]
+69 Ops.CONST dtypes.weakint [] 13
+70 Ops.INDEX dtypes.float [39, 69]
+71 Ops.ADD dtypes.float [68, 70] tag="fusable"
+72 Ops.CONST dtypes.weakint [] 14
+73 Ops.INDEX dtypes.float [39, 72]
+74 Ops.ADD dtypes.float [71, 73] tag="fusable"
+75 Ops.CONST dtypes.weakint [] 15
+76 Ops.INDEX dtypes.float [39, 75]
+77 Ops.ADD dtypes.float [74, 76] tag="fusable"
+78 Ops.STACK dtypes.float [46, 55, 66, 77]
+79 Ops.STORE dtypes.void [6, 78]
+80 Ops.SINK dtypes.void [79, 79, 79, 79] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
 

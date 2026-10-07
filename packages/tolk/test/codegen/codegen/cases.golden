@@ -32,11 +32,11 @@ matmul_big_clang	matmul_big	7	clang	CPU	CLANG	x86_64,x86-64		ok	False
 matmul_big_metal	matmul_big	7	metal	METAL	METAL	Apple9		ok	False
 matmul_big_cuda	matmul_big	7	cuda	CUDA	CUDA	sm_89		ok	False
 matmul_big_hip	matmul_big	7	hip	AMD	HIP	gfx1100		ok	False
-matmul_half_clang	matmul_half	8	clang	CPU	CLANG	x86_64,x86-64		ok	True
+matmul_half_clang	matmul_half	8	clang	CPU	CLANG	x86_64,x86-64		ok	False
 matmul_half_metal	matmul_half	8	metal	METAL	METAL	Apple9		ok	False
 matmul_half_cuda	matmul_half	8	cuda	CUDA	CUDA	sm_89		ok	False
 matmul_half_hip	matmul_half	8	hip	AMD	HIP	gfx1100		ok	False
-matmul_half_big_clang	matmul_half_big	9	clang	CPU	CLANG	x86_64,x86-64		ok	True
+matmul_half_big_clang	matmul_half_big	9	clang	CPU	CLANG	x86_64,x86-64		ok	False
 matmul_half_big_metal	matmul_half_big	9	metal	METAL	METAL	Apple9		ok	False
 matmul_half_big_cuda	matmul_half_big	9	cuda	CUDA	CUDA	sm_89		ok	False
 matmul_half_big_hip	matmul_half_big	9	hip	AMD	HIP	gfx1100		ok	False
@@ -583,11 +583,11 @@ long_emulated_clang	long_emulated	21	clang	CPU	CLANG	x86_64,x86-64	EMULATED_DTYP
 long_emulated_metal	long_emulated	21	metal	METAL	METAL	Apple9	EMULATED_DTYPES=long	ok	False
 long_emulated_cuda	long_emulated	21	cuda	CUDA	CUDA	sm_89	EMULATED_DTYPES=long	ok	False
 long_emulated_hip	long_emulated	21	hip	AMD	HIP	gfx1100	EMULATED_DTYPES=long	ok	False
-matmul_half_tc_shaped_clang	matmul_half_tc_shaped	8	clang	CPU	CLANG	x86_64,x86-64	TC=2	ok	True
+matmul_half_tc_shaped_clang	matmul_half_tc_shaped	8	clang	CPU	CLANG	x86_64,x86-64	TC=2	ok	False
 matmul_half_tc_shaped_metal	matmul_half_tc_shaped	8	metal	METAL	METAL	Apple9	TC=2	ok	False
 matmul_half_tc_shaped_cuda	matmul_half_tc_shaped	8	cuda	CUDA	CUDA	sm_89	TC=2	ok	False
 matmul_half_tc_shaped_hip	matmul_half_tc_shaped	8	hip	AMD	HIP	gfx1100	TC=2	ok	False
-matmul_half_no_tc_clang	matmul_half_no_tc	8	clang	CPU	CLANG	x86_64,x86-64	TC=0	ok	True
+matmul_half_no_tc_clang	matmul_half_no_tc	8	clang	CPU	CLANG	x86_64,x86-64	TC=0	ok	False
 matmul_half_no_tc_metal	matmul_half_no_tc	8	metal	METAL	METAL	Apple9	TC=0	ok	False
 matmul_half_no_tc_cuda	matmul_half_no_tc	8	cuda	CUDA	CUDA	sm_89	TC=0	ok	False
 matmul_half_no_tc_hip	matmul_half_no_tc	8	hip	AMD	HIP	gfx1100	TC=0	ok	False

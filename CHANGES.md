@@ -1196,6 +1196,10 @@ thread.
 
 ### Tolk (new)
 
+- On the host, a compiled product of MXFP4 codes in a checkpoint's layout
+  (`Nx_quant.mxfp4`) decodes them as vectors, 16 at a time, where it decoded
+  each code alone and branched on it on x86: its time no longer depends on the
+  codes, and on an M1 it runs 1.7-3.6 times as fast, as fast as GGUF's blocks.
 - `Tolk_engine.time` always times a schedule on its own profile and its
   devices' stamps, so a profile taken around a search no longer changes what
   it measures or the kernels a beam search picks. `Tolk_engine.clock` no
