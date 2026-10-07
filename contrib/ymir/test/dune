@@ -1,4 +1,4 @@
 (tests
- (names test_units)
+ (names test_units test_frame test_direction)
  (package ymir)
- (libraries ymir nx windtrap))
+ (libraries ymir ymir.units ymir_test nx rune windtrap))

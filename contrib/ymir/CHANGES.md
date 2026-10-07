@@ -4,6 +4,14 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Ymir.Frame` names the fixed celestial frames, ICRS, FK5 at J2000, Galactic,
+  the J2000 ecliptic and supergalactic, with one value per frame type.
+  `Frame.matrix` converts between any two from their standards' orientations,
+  each rounded once, so a conversion never depends on a path.
+- `Ymir.Direction` holds float64 directions in a frame: `lonlat`, `of_xyz`,
+  `lon`, `lat`, `rotate`, `separation` and `position_angle`. Readers accept any
+  finite vector as its direction, keep relative accuracy at any separation and
+  give derivative 0, never NaN, where no derivative exists.
 - New library `ymir`, astronomy over nx: `open Ymir` brings `ymir.units`'
   modules and `Ymir.Units`, astronomy's units, with `Units.parsec`
   (648000/π au) and `Units.julian_year` (31557600 s), both exact.
