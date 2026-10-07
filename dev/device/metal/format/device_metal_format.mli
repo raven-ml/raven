@@ -37,7 +37,10 @@
       [MTLCommandBuffer.h] ([GPUStartTime], [GPUEndTime]).
     - {{:https://developer.apple.com/documentation/metal/encoding-indirect-command-buffers-on-the-cpu}
        Encoding indirect command buffers on the CPU}: the buffers that the
-      commands of an indirect command buffer use must be declared resident. *)
+      commands of an indirect command buffer use must be declared resident.
+    - {{:https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf}Metal
+       feature set tables} (May 21, 2026), Resources: minimum constant buffer
+      offset alignment. *)
 
 type dispatch = {
   pipeline : nativeint;
@@ -46,7 +49,10 @@ type dispatch = {
   offset : int;
       (** Where its arguments start in the indirect command buffer's argument
           buffer, bound as its kernel buffer [0]: bytes from the argument
-          buffer's first byte. *)
+          buffer's first byte. It is a multiple of the GPU's minimum constant
+          buffer offset alignment, which Metal requires of a buffer a kernel
+          reads as constant data: 4 bytes on Apple-family GPUs. Apple's tables
+          give no value for Mac-family GPUs. *)
   groups : int * int * int;  (** Its threadgroups per grid. *)
   threads : int * int * int;  (** Its threads per threadgroup. *)
 }
@@ -81,8 +87,9 @@ type t = {
           indirect command buffer.
 
           Raises [Invalid_argument] if [buffer] or a pipeline belongs to another
-          [MTLDevice], an offset lies outside [buffer], or a size is less than
-          [1]. Any domain may call it. *)
+          [MTLDevice], an offset lies outside [buffer] or is not a multiple of
+          the alignment above, or a size is less than [1]. Any domain may call
+          it. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which a fill
