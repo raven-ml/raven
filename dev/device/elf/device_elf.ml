@@ -197,7 +197,8 @@ let headers f obj =
   let shstrndx = u16 obj (f.e_shentsize + 4) in
   if shoff = 0 then ([||], shn_undef)
   else begin
-    if entsize < f.shdr then fail "section headers of %d bytes" entsize;
+    if entsize < f.shdr then
+      fail "section headers are %d bytes, expected at least %d" entsize f.shdr;
     let first = header f obj shoff in
     let count = if shnum = 0 then first.sh_size else shnum in
     let names = if shstrndx = shn_xindex then first.sh_link else shstrndx in
@@ -346,7 +347,7 @@ let read ~align obj =
     match u8 obj 4 with
     | c when c = elfclass64 -> elf64
     | c when c = elfclass32 -> elf32
-    | c -> fail "an ELF object of unknown class %d" c
+    | c -> fail "unknown ELF class %d, expected 1 or 2" c
   in
   if u8 obj 5 <> elfdata2lsb then fail "not a little-endian ELF object";
   if String.length obj < f.ehdr then
@@ -372,7 +373,7 @@ let read ~align obj =
   let strings i what =
     let h = section_of i what in
     if h.sh_type <> sht_strtab then
-      fail "%s links to section %d, not a string table" what i;
+      fail "%s links to section %d, which is no string table" what i;
     h
   in
   let names =
@@ -453,7 +454,8 @@ let read ~align obj =
       else begin
         let link = section_of h.sh_link "a relocation section" in
         if link.sh_type <> sht_symtab && link.sh_type <> sht_dynsym then
-          fail "a relocation section links to section %d, not a symbol table"
+          fail
+            "a relocation section links to section %d, which is no symbol table"
             h.sh_link;
         let syms = table h.sh_link in
         if sym >= Iarray.length syms then
