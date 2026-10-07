@@ -167,7 +167,7 @@ let fake_fn m bus =
               let a = match va with Some v -> v | None -> fresh m bytes in
               let used = List.concat_map (fun g -> g.dmas) m.taken in
               if List.exists (fun r -> not (disjoint r (a, bytes))) used then
-                failwith "far:1: the addresses are in use";
+                raise (Failed "far:1: the addresses are in use");
               f.dmas <- (a, bytes) :: f.dmas;
               (Window.through m.tr a bytes, runs f a bytes ~one:contiguous)));
       free_dma =
@@ -467,7 +467,7 @@ let test_reset_silent () =
   let _, f, _ = take_fake () in
   Function.set_config16 f 0 0xffff;
   raises
-    (Failure (bus1 ^ " does not answer 1000 ms after its reset"))
+    (Failed (bus1 ^ " does not answer 1000 ms after its reset"))
     (fun () -> Function.reset f)
 
 let uses =
@@ -684,7 +684,7 @@ let alloc_at f contiguous va n =
   (match va with
   | Some a when List.exists (fun r -> not (disjoint r (a, bytes))) used ->
       cover "addresses in use" true;
-      failwith "in use"
+      raise (Failed "in use")
   | _ -> ());
   let w = { owner = f; kind = `Dma; len = bytes; at = va } in
   f.r_dmas <- w :: f.r_dmas;

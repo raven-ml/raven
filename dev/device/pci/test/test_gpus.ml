@@ -276,23 +276,20 @@ let test_error_gives_back () =
   ignore (Gpus.open_pci g m 0 (fun _ _ -> Error "the GPU did not start"));
   given_back g m fake
 
-let raised =
-  [
-    ("Failure", Failure "the GPU did not answer", "the GPU did not answer");
-    ("Sys_error", Sys_error "/dev/kfd: No such file", "/dev/kfd: No such file");
-    ( "Unix_error",
-      Unix.Unix_error (ENOENT, "open", "/dev/kfd"),
-      Unix.error_message ENOENT );
-  ]
-
-let test_raised (_, e, reason) =
+let test_raised () =
   let g, m, fake = three () in
-  contains ~sub:reason
-    (require_error (Gpus.open_pci g m 0 (fun _ _ -> raise e)));
+  equal (result pass string) (Error "the GPU did not answer")
+    (Gpus.open_pci g m 0 (fun _ _ -> raise (Failed "the GPU did not answer")));
   given_back g m fake
 
 let passed =
-  [ ("Invalid_argument", Invalid_argument "a bug"); ("Not_found", Not_found) ]
+  [
+    ("Invalid_argument", Invalid_argument "a bug");
+    ("Not_found", Not_found);
+    ("Failure", Failure "int_of_string");
+    ("Sys_error", Sys_error "/dev/kfd: No such file");
+    ("Unix_error", Unix.Unix_error (ENOENT, "open", "/dev/kfd"));
+  ]
 
 let test_passed (_, e) =
   let g, m, fake = three () in
@@ -330,14 +327,12 @@ let opening =
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
         test_error_gives_back;
+      test
+        "Failed from the driver is an Error that carries its reason, and gives \
+         the GPU back"
+        test_raised;
       cases
-        "Failure, Sys_error and Unix_error from the driver are Errors that \
-         carry its reason (assumed), and give the GPU back"
-        ~name:(fun (n, _, _) -> n)
-        raised test_raised;
-      cases
-        "other exceptions from the driver pass through, and give the GPU back \
-         (assumed)"
+        "other exceptions from the driver pass through, and give the GPU back"
         ~name:fst passed test_passed;
       test "a GPU held is refused without calling the driver" test_held;
       test "a function that cannot be taken is refused with the take's reason"
@@ -422,7 +417,7 @@ let test_reset_failure () =
   let g, m, fake = three () in
   let why =
     require_error
-      (Gpus.reset g m 0 (fun _ -> failwith "the GPU did not come back"))
+      (Gpus.reset g m 0 (fun _ -> raise (Failed "the GPU did not come back")))
   in
   contains ~sub:"the GPU did not come back" why;
   equal ~msg:"functions taken" taken_w [] (taken fake)
@@ -438,8 +433,8 @@ let resets =
       test "a reset takes the function, resets it and releases it" test_reset;
       test "a reset of a GPU held is refused" test_reset_held;
       test
-        "a Failure raised by the vendor's reset is an Error that carries its \
-         reason, the function released (assumed)"
+        "a Failed raised by the vendor's reset is an Error that carries its \
+         reason, the function released"
         test_reset_failure;
       test "a reset whose function cannot be taken is refused" test_reset_take;
     ]
@@ -676,7 +671,7 @@ let open_sys s start i =
     match start with
     | Starts -> Ok h
     | Fails -> Error "the GPU did not start"
-    | Raises_failure -> failwith "the GPU did not answer"
+    | Raises_failure -> raise (Failed "the GPU did not answer")
     | Raises_invalid -> invalid_arg "a driver bug"
   in
   match Gpus.open_pci s.g s.m i driver with

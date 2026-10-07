@@ -28,7 +28,7 @@ let fake ?(page = 16384) ?(ids = []) ?(name = "far:7000") () =
         take = (fun _ -> ask "take" (Error "far:7000: taken"));
         reserve =
           (fun ~base n ->
-            if base = 0 then failwith "far:7000: the range is in use";
+            if base = 0 then raise (Failed "far:7000: the range is in use");
             ask (Printf.sprintf "reserve 0x%x %d" base n) ());
       }
   in
@@ -207,7 +207,7 @@ let test_reserve () =
   equal ~msg:"asked" (list string)
     [ "reserve 0x200000000000 1073741824" ]
     !(f.calls);
-  raises ~msg:"refused" (Failure "far:7000: the range is in use") (fun () ->
+  raises ~msg:"refused" (Failed "far:7000: the range is in use") (fun () ->
       Machine.reserve f.machine ~base:0 4096)
 
 (* A range of this process's addresses far from what the runtime maps. *)
@@ -217,12 +217,12 @@ let test_reserve_this () =
   let n = 4 lsl 20 in
   (match Machine.reserve Machine.this ~base:free_base n with
   | () -> ()
-  | exception Failure why -> skip ~reason:why ());
+  | exception Failed why -> skip ~reason:why ());
   Machine.reserve Machine.this ~base:free_base n;
   let page = Machine.page Machine.this in
   let used = memory (4 * page) in
   let base = (used + page - 1) / page * page in
-  raises_match (Exn.failure ~substring:"") (fun () ->
+  raises_match (failed ~substring:"in use") (fun () ->
       Machine.reserve Machine.this ~base page)
 
 let reservations =
@@ -284,7 +284,7 @@ let test_failed_wait () =
   let f = fake () in
   break f.far;
   let why = Option.get (Machine.failed f.machine) in
-  raises (Failure why) (fun () ->
+  raises (Failed why) (fun () ->
       Machine.wait f.machine ~ms:10_000 (fun () -> false))
 
 let test_fails_during () =
@@ -296,7 +296,7 @@ let test_fails_during () =
     false
   in
   let t0 = now_ns () in
-  raises (Failure "far: the link broke") (fun () ->
+  raises (Failed "far: the link broke") (fun () ->
       Machine.wait f.machine ~ms:10_000 cond);
   less ~msg:"ms, without waiting out its time" int ~than:5_000 (ms_since t0)
 

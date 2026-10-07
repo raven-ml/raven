@@ -10,6 +10,6 @@ val ops : Ops.ops
 (** [ops] is the operations of {!Machine.this}. *)
 
 val locked : string -> (unit -> ('a, string) result) -> ('a, string) result
-(** [locked bus f] is [f ()] while the process holds the lock a physical take
-    of [bus] holds, or [Error why] if another holder has it or the lock's file
+(** [locked bus f] is [f ()] while the process holds the lock a physical take of
+    [bus] holds, or [Error why] if another holder has it or the lock's file
     cannot be opened. *)

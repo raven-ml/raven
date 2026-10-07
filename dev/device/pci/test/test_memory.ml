@@ -57,7 +57,7 @@ let runs k n =
         ((n + page - 1) / page)
         (fun i -> (fresh (), min page (n - (i * page))))
 
-let refuse k = Option.iter failwith k.refuse
+let refuse k = Option.iter (fun why -> raise (Failed why)) k.refuse
 
 let rec remove x = function
   | [] -> []
@@ -532,7 +532,7 @@ let test_system_refused () =
   x.fake.refuse <- Some "fake: the locked-memory limit (ulimit -l) is reached";
   List.iter
     (fun kind ->
-      raises_match (Exn.failure ~substring:"ulimit -l") (fun () ->
+      raises_match (failed ~substring:"ulimit -l") (fun () ->
           Memory.alloc x.memory kind (64 * kib)))
     [ Memory.Host; Visible ];
   equal ~msg:"its addresses returned" (pair int int) before (capacity x);

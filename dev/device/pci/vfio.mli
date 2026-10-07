@@ -6,12 +6,8 @@
 (** Functions opened through VFIO, and the containers that map system memory for
     them behind an IOMMU (private).
 
-    A request the kernel refuses raises [Failure] naming the step, the subject
-    and the system's cause, with the remedy where one exists. *)
-
-val step : string -> (unit -> 'a) -> 'a
-(** [step what f] is [f ()], whose [Unix.Unix_error] raises [Failure] as
-    ["what: cause"]. *)
+    A request the kernel refuses raises {!Fail.Failed} naming the step, the
+    subject and the system's cause, with the remedy where one exists. *)
 
 (** {1:functions Functions} *)
 

@@ -84,10 +84,10 @@ val released : t -> bool
     function behind an IOMMU or has [CAP_SYS_ADMIN].
 
     Each access raises [Invalid_argument] if its bytes are not in the
-    configuration space, and [Failure] naming [CAP_SYS_ADMIN] if they lie past
-    the first 64 bytes, [f] was taken physically and the process lacks that
-    capability. A write reads its bytes back, so it has reached the function
-    when it returns. *)
+    configuration space, and {!Device_pci.Failed} naming [CAP_SYS_ADMIN] if they
+    lie past the first 64 bytes, [f] was taken physically and the process lacks
+    that capability. A write reads its bytes back, so it has reached the
+    function when it returns. *)
 
 val config8 : t -> int -> int
 (** [config8 f off] is the byte at [off] of [f]'s configuration space. *)
@@ -126,7 +126,8 @@ val map : ?off:int -> ?length:int -> t -> int -> Window.t
     {!release}. Child processes do not inherit it.
 
     Raises [Invalid_argument] if [i < 0] or the bytes do not lie in the BAR, and
-    [Failure] if VFIO or the kernel does not let the process map them. *)
+    {!Device_pci.Failed} if VFIO or the kernel does not let the process map
+    them. *)
 
 val unmap : t -> Window.t -> unit
 (** [unmap f w] unmaps [w].
@@ -148,8 +149,8 @@ val reset : t -> unit
 (** [reset f] resets [f] with the reset Linux has for it, and waits at most a
     second for it to answer again. It clears the state a previous driver left.
 
-    Raises [Failure] naming the file if the process may not reset [f] or Linux
-    has none for it, and if [f] does not answer in time. *)
+    Raises {!Device_pci.Failed} naming the file if the process may not reset [f]
+    or Linux has none for it, and if [f] does not answer in time. *)
 
 (** {1:dma System memory}
 
@@ -179,9 +180,9 @@ val alloc_dma :
     Raises [Invalid_argument] if [n <= 0] or rounding it up overflows, if [va]
     is not on a page or in no range {!Machine.reserve} reserved, if [contiguous]
     memory is larger than 2 MiB, or if [va] is not on 2 MiB for a huge page.
-    Raises [Failure] naming what is missing if the machine cannot: free memory
-    or a huge page, or one of the privileges, settings and limits above
-    ({{!Device_pci.errors}errors}). *)
+    Raises {!Device_pci.Failed} naming what is missing if the machine cannot:
+    free memory or a huge page, or one of the privileges, settings and limits
+    above ({{!Device_pci.errors}errors}). *)
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more.
@@ -195,9 +196,9 @@ val pin : t -> int -> int -> (int * int) list
     stays locked until each pin is {!unpin}ned, and behind an IOMMU [(a, n)]
     stays mapped for [f] as long.
 
-    Raises [Invalid_argument] if [a] is not on a page or [n <= 0], and [Failure]
-    as {!alloc_dma} does, or if the pages cannot be locked or their addresses
-    read. *)
+    Raises [Invalid_argument] if [a] is not on a page or [n <= 0], and
+    {!Device_pci.Failed} as {!alloc_dma} does, or if the pages cannot be locked
+    or their addresses read. *)
 
 val unpin : t -> int -> int -> unit
 (** [unpin f a n] releases one pin of the [n] bytes at [a].

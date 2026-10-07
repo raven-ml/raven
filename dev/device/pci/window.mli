@@ -10,8 +10,8 @@
     function reaches. On this machine the range is mapped into the process; on
     another machine it is reached through a {{!transports}transport}, and each
     domain's accesses complete in the order it makes them. An access through a
-    transport whose machine failed raises [Failure] with {!Machine.failed}'s
-    reason ({{!Device_pci.errors}errors}).
+    transport whose machine failed raises {!Device_pci.Failed} with
+    {!Machine.failed}'s reason ({{!Device_pci.errors}errors}).
 
     Values are little-endian. Nothing is checked beyond the range: the caller
     keeps the mapping alive, and an access after it is unmapped is undefined.

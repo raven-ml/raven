@@ -21,11 +21,12 @@ let reserve = Sysmem.reserve
    file: the lock is the file's, which every process that opens it shares.
    Behind VFIO the group's file admits one process at a time itself. *)
 let lock bus fd =
-  try flock fd
-  with Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
-    failwith
-      (Printf.sprintf "%s is taken already; find who holds it: lsof %s" bus
-         (Sysfs.path bus "config"))
+  let file = Sysfs.path bus "config" in
+  try flock fd with
+  | Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
+      Fail.fail "%s is taken already; find who holds it: lsof %s" bus file
+  | Unix.Unix_error (e, _, _) ->
+      Fail.fail "locking %s with %s: %s" bus file (Unix.error_message e)
 
 let locked bus f =
   let file = Sysfs.path bus "config" in
@@ -34,7 +35,9 @@ let locked bus f =
       Error (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-      match lock bus fd with () -> f () | exception Failure why -> Error why)
+      match lock bus fd with
+      | () -> f ()
+      | exception Fail.Failed why -> Error why)
 
 (* Taking *)
 
@@ -51,7 +54,7 @@ type taken = {
    the bytes moved. *)
 let config_io t doing io off b n =
   let fd, at = t.config in
-  Vfio.step
+  Fail.step
     (Printf.sprintf "%s configuration space of %s at %d" doing t.bus off)
   @@ fun () ->
   Mutex.protect t.seek @@ fun () ->
@@ -62,7 +65,7 @@ let config t off n =
   let b = Bytes.create n in
   let got = config_io t "reading" Unix.read off b n in
   if got < n then
-    failwith
+    Fail.fail "%s"
       (if off + n > Sysfs.header && Option.is_none t.container then
          Printf.sprintf
            "reading configuration space of %s past %d bytes needs \
@@ -82,10 +85,8 @@ let set_config t off n x =
   let b = Bytes.init n (fun i -> Char.chr ((x lsr (8 * i)) land 0xff)) in
   let wrote = config_io t "writing" Unix.single_write off b n in
   if wrote < n then
-    failwith
-      (Printf.sprintf
-         "writing configuration space of %s at %d: wrote %d of %d bytes" t.bus
-         off wrote n);
+    Fail.fail "writing configuration space of %s at %d: wrote %d of %d bytes"
+      t.bus off wrote n;
   ignore (config t off n)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
@@ -101,7 +102,7 @@ let map t i off n =
     let first, len = pages off n in
     let window fd base =
       let a =
-        Vfio.step (Printf.sprintf "mapping BAR %d of %s" i t.bus) (fun () ->
+        Fail.step (Printf.sprintf "mapping BAR %d of %s" i t.bus) (fun () ->
             file_map fd (base + first) len)
       in
       Window.v (a + off - first) n
@@ -112,7 +113,7 @@ let map t i off n =
     | None ->
         let file = Sysfs.path t.bus (Printf.sprintf "resource%d" i) in
         let fd =
-          Vfio.step ("opening " ^ file) (fun () ->
+          Fail.step ("opening " ^ file) (fun () ->
               Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
         in
         Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> window fd 0)
@@ -120,7 +121,7 @@ let map t i off n =
 let unmap w =
   if Window.length w > 0 then
     let a, n = pages (Window.address w) (Window.length w) in
-    Vfio.step "unmapping a BAR" (fun () -> file_unmap a n)
+    Fail.step "unmapping a BAR" (fun () -> file_unmap a n)
 
 let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false
@@ -128,7 +129,7 @@ let interrupt t ms =
 let reset t =
   match t.container with
   | Some c ->
-      Vfio.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
+      Fail.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
   | None -> Sysfs.reset t.bus
 
 (* Physical addresses as runs: one per page, or one for contiguous memory. *)
@@ -208,13 +209,12 @@ let take_physical files bus =
   let config =
     try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
     | Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
-        failwith
-          (Printf.sprintf
-             "opening %s: %s; taking %s needs write access to its files under \
-              /sys/bus/pci: run as root"
-             file (Unix.error_message e) bus)
+        Fail.fail
+          "opening %s: %s; taking %s needs write access to its files under \
+           /sys/bus/pci: run as root"
+          file (Unix.error_message e) bus
     | Unix.Unix_error (e, _, _) ->
-        failwith (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
+        Fail.fail "opening %s: %s" file (Unix.error_message e)
   in
   files := config :: !files;
   lock bus config;
@@ -256,9 +256,7 @@ let take bus =
     with
     | Ok _ as fn -> fn
     | Error why -> refused why
-    | exception (Failure why | Sys_error why) -> refused why
-    | exception Unix.Unix_error (e, f, arg) ->
-        refused (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))
+    | exception Fail.Failed why -> refused why
 
 let ops =
   { Ops.transport = Window.unsafe_transport 0; page; functions; take; reserve }

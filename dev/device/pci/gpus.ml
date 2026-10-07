@@ -67,12 +67,7 @@ let gpu g m i =
   | Some bus -> Ok bus
 
 (* [f ()], with the failures the world causes as [Error]s. *)
-let caught f =
-  match f () with
-  | r -> r
-  | exception (Failure why | Sys_error why) -> Error why
-  | exception Unix.Unix_error (e, fn, arg) ->
-      Error (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
+let caught f = match f () with r -> r | exception Fail.Failed why -> Error why
 
 let interface_name = function
   | Kernel -> "through their kernel driver"

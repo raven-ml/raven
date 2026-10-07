@@ -161,7 +161,7 @@ let map_host m a n =
          (base + Page_table.span m.tables))
   else
     match Function.pin m.fn a n with
-    | exception Failure why -> Error why
+    | exception Fail.Failed why -> Error why
     | runs -> (
         match
           Page_table.map ~snooped:true ~uncached:true m.tables ~va:a System runs

@@ -41,9 +41,9 @@ val buses : t -> Machine.t -> string list
     An open is a bracket. It holds the GPU and calls the driver's [f], which
     starts the GPU. If [f] is [Ok _], the process keeps the hold until
     {!release} or {!lose}; otherwise the open gives back what it took.
-    [Failure], [Sys_error] and [Unix.Unix_error] raised by [f] are [Error]s
-    whose message is the exception's, so a driver's open raises nothing the
-    world causes; other exceptions pass through, the GPU given back. *)
+    {!Device_pci.Failed} raised by [f] is an [Error] whose message is its
+    reason, so a driver's open raises nothing the world causes; other exceptions
+    pass through, the GPU given back. *)
 
 type hold
 (** The type for the process's hold on one GPU. *)

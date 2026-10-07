@@ -47,7 +47,7 @@
       GPU. The caller decides there.
     - An allocator that runs out of GPU memory or virtual addresses for what was
       asked answers [None].
-    - An {e access} or a {e wait} on what the process holds raises [Failure]
+    - An {e access} or a {e wait} on what the process holds raises {!Failed}
       when the world fails under it: a device that stops answering, a machine
       whose transport failed, or a limit the machine sets, such as the
       locked-memory limit, reached while allocating system memory. Such a limit
@@ -80,6 +80,12 @@
     - The Linux kernel's
       {{:https://docs.kernel.org/admin-guide/mm/pagemap.html}pagemap}
       documentation: the physical addresses of system memory. *)
+
+exception Failed of string
+(** [Failed why] is the world failing under an access or a wait
+    ({{!errors}errors}): [why] names what failed and, where something grants
+    what is missing, the command, privilege or setting that does. A transport
+    raises it for its machine ({!Machine.make}). *)
 
 (** {1:hardware Reaching the hardware} *)
 

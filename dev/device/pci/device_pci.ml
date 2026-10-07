@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+exception Failed = Fail.Failed
+
 module Machine = Machine
 module Function = Function
 module Window = Window

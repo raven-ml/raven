@@ -24,6 +24,11 @@ val hex : int Windtrap.Testable.t
 val on_linux : bool
 (** [on_linux] is [true] iff this machine has [/sys/bus/pci]. *)
 
+val failed : ?substring:string -> exn -> bool
+(** [failed ?substring e] is [true] iff [e] is [Device_pci.Failed why] and [why]
+    contains [substring], when given: the predicate of [Windtrap.raises_match]
+    for the world's failures. *)
+
 val now_ns : unit -> int
 (** [now_ns ()] is the monotonic clock in nanoseconds. *)
 

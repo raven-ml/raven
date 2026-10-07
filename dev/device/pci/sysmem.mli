@@ -7,8 +7,8 @@
 
     {!Function} checks every argument first: sizes are positive, addresses are
     on a page, and contiguous memory is at most 2 MiB, a huge page that starts
-    on 2 MiB. What the system refuses raises [Failure]; off Linux every function
-    but {!page} does. Any domain may call. *)
+    on 2 MiB. What the system refuses raises {!Fail.Failed}; off Linux every
+    function but {!page} does. Any domain may call. *)
 
 val page : int
 (** [page] is the system's page size in bytes. *)

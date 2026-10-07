@@ -10,8 +10,11 @@ let vfio_pci = "vfio-pci"
 let path bus file = Printf.sprintf "%s/%s/%s" root bus file
 let exists bus = Sys.file_exists (Filename.concat root bus)
 
+(* A channel's failure names its file: "FILE: cause". *)
 let read file =
-  In_channel.with_open_text file In_channel.input_all |> String.trim
+  match In_channel.with_open_text file In_channel.input_all with
+  | s -> String.trim s
+  | exception Sys_error why -> Fail.fail "reading %s" why
 
 (* Writes [s] to [file] in one write, which sysfs takes whole or refuses. A
    buffered channel would see the refusal only at its close, which drops it. *)
@@ -21,12 +24,13 @@ let put file s =
   ignore (Unix.single_write_substring fd s 0 (String.length s))
 
 let refused file (e : Unix.error) =
-  let why = Printf.sprintf "%s: %s" file (Unix.error_message e) in
-  failwith
-    (match e with
-    | EACCES | EPERM ->
-        why ^ "; writing it needs CAP_SYS_ADMIN and write access (run as root)"
-    | _ -> why)
+  let why = Printf.sprintf "writing %s: %s" file (Unix.error_message e) in
+  match e with
+  | EACCES | EPERM ->
+      Fail.fail
+        "%s; it needs CAP_SYS_ADMIN and write access to the file: run as root"
+        why
+  | _ -> Fail.fail "%s" why
 
 let write file s =
   try put file s with Unix.Unix_error (e, _, _) -> refused file e
@@ -34,8 +38,7 @@ let write file s =
 let readlink link =
   try Unix.readlink link
   with Unix.Unix_error (e, _, _) ->
-    failwith
-      (Printf.sprintf "reading the link %s: %s" link (Unix.error_message e))
+    Fail.fail "reading the link %s: %s" link (Unix.error_message e)
 
 (* [hex file s] is the number that [s], read from [file], spells in
    hexadecimal. *)
@@ -43,8 +46,7 @@ let hex file s =
   let digits = if String.starts_with ~prefix:"0x" s then s else "0x" ^ s in
   match int_of_string_opt digits with
   | Some n -> n
-  | None ->
-      failwith (Printf.sprintf "reading %s: %S is no hexadecimal number" file s)
+  | None -> Fail.fail "reading %s: %S is no hexadecimal number" file s
 
 let read_hex file = hex file (read file)
 
@@ -73,7 +75,7 @@ let functions () =
           }
         with
         | id -> Some id
-        | exception (Sys_error _ | Failure _) -> None)
+        | exception Fail.Failed _ -> None)
 
 (* The other functions of [bus]'s device, such as its audio function. *)
 let siblings bus =
@@ -100,9 +102,15 @@ let wide_bar = 0b100
 let type_mask = 0b110
 
 let registers bus =
+  let file = path bus "config" in
   let s =
-    In_channel.with_open_bin (path bus "config") (fun ic ->
-        really_input_string ic header)
+    match
+      In_channel.with_open_bin file (fun ic -> really_input_string ic header)
+    with
+    | s -> s
+    | exception Sys_error why -> Fail.fail "reading %s" why
+    | exception End_of_file ->
+        Fail.fail "reading %s: shorter than %d bytes" file header
   in
   Array.init bars (fun i ->
       Int32.to_int (String.get_int32_le s (bar_base + (4 * i))) land 0xffff_ffff)
@@ -164,14 +172,14 @@ let iommu_of bus =
       match read (Printf.sprintf "%s/%s/type" groups g) with
       | "identity" -> Identity
       | _ -> Translating
-      | exception Sys_error _ -> Translating)
+      | exception Fail.Failed _ -> Translating)
 
 (* The kernel's lockdown file lists the modes with the current one in
    brackets. *)
 let locked_down () =
   match read lockdown with
   | s -> not (String.starts_with ~prefix:"[none]" s)
-  | exception Sys_error _ -> false
+  | exception Fail.Failed _ -> false
 
 let state bus =
   {
@@ -241,7 +249,7 @@ let detach bus =
       | Some d when d <> vfio_pci ->
           write (path bus "driver/unbind") bus;
           if driver bus <> None then
-            failwith (Printf.sprintf "the driver %s stays bound to %s" d bus)
+            Fail.fail "the driver %s stays bound to %s" d bus
       | _ -> ());
       List.iter (fun s -> write (path s "remove") "1") (siblings bus);
       if driver bus = None && not (enabled bus) then
@@ -250,13 +258,11 @@ let detach bus =
       match (access bus s, s) with
       | Ok _, _ -> ()
       | Error _, { siblings = sibling :: _; _ } ->
-          failwith
-            (Printf.sprintf
-               "%s still shares its device with %s after removing it" bus
-               sibling)
+          Fail.fail "%s still shares its device with %s after removing it" bus
+            sibling
       | Error _, { driver = None; enabled = false; _ } ->
-          failwith (Printf.sprintf "%s is still disabled after enabling it" bus)
-      | Error why, _ -> failwith why)
+          Fail.fail "%s is still disabled after enabling it" bus
+      | Error why, _ -> Fail.fail "%s" why)
 
 let reset bus = write (path bus "reset") "1"
 
@@ -265,19 +271,17 @@ let reset bus = write (path bus "reset") "1"
 let attach bus =
   match driver bus with
   | Some d when d = vfio_pci ->
-      failwith
-        (Printf.sprintf
-           "%s is bound to vfio-pci; unbind it and clear its driver_override \
-            first: sudo driverctl unset-override %s"
-           bus bus)
+      Fail.fail
+        "%s is bound to vfio-pci; unbind it and clear its driver_override \
+         first: sudo driverctl unset-override %s"
+        bus bus
   | Some _ -> ()
   | None ->
       if enabled bus then write (path bus "enable") "0";
       write "/sys/bus/pci/rescan" "1";
       write "/sys/bus/pci/drivers_probe" bus;
       if driver bus = None then
-        failwith
-          (Printf.sprintf "no kernel driver took %s; load its module first" bus)
+        Fail.fail "no kernel driver took %s; load its module first" bus
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size

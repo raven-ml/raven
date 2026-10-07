@@ -47,36 +47,26 @@ let user () =
   try (Unix.getpwuid (Unix.getuid ())).pw_name
   with Not_found -> string_of_int (Unix.getuid ())
 
-(* [f ()], whose system call failing is reported as [what]. *)
-let step what f =
-  try f ()
-  with Unix.Unix_error (e, _, _) ->
-    failwith (Printf.sprintf "%s: %s" what (Unix.error_message e))
-
-(* Opens the VFIO file [file] of [bus], naming the step that grants it. *)
+(* Opens the VFIO file [file] of [bus], naming the Fail.step that grants it. *)
 let open_file bus file =
   match Unix.openfile file [ O_RDWR; O_CLOEXEC ] 0 with
   | fd -> fd
   | exception Unix.Unix_error ((EACCES | EPERM), _, _) ->
       let u = user () in
-      failwith
-        (Printf.sprintf
-           "%s: permission denied; grant it to %s with a udev rule: echo \
-            'SUBSYSTEM==\"vfio\", KERNEL==\"%s\", OWNER=\"%s\"' | sudo tee -a \
-            /etc/udev/rules.d/90-raven-vfio.rules && sudo udevadm control \
-            --reload && sudo udevadm trigger --action=add \
-            --subsystem-match=vfio (a no-IOMMU group also needs CAP_SYS_RAWIO)"
-           file u (Filename.basename file) u)
+      Fail.fail
+        "%s: permission denied; grant it to %s with a udev rule: echo \
+         'SUBSYSTEM==\"vfio\", KERNEL==\"%s\", OWNER=\"%s\"' | sudo tee -a \
+         /etc/udev/rules.d/90-raven-vfio.rules && sudo udevadm control \
+         --reload && sudo udevadm trigger --action=add --subsystem-match=vfio \
+         (a no-IOMMU group also needs CAP_SYS_RAWIO)"
+        file u (Filename.basename file) u
   | exception Unix.Unix_error (ENOENT, _, _) ->
-      failwith
-        (Printf.sprintf "%s does not exist; bind %s to vfio-pci: %s" file bus
-           (Sysfs.bind_vfio bus))
+      Fail.fail "%s does not exist; bind %s to vfio-pci: %s" file bus
+        (Sysfs.bind_vfio bus)
   | exception Unix.Unix_error (EBUSY, _, _) ->
-      failwith
-        (Printf.sprintf "%s is open in another process; find it: lsof %s" file
-           file)
+      Fail.fail "%s is open in another process; find it: lsof %s" file file
   | exception Unix.Unix_error (e, _, _) ->
-      failwith (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
+      Fail.fail "opening %s: %s" file (Unix.error_message e)
 
 (* VFIO takes an IOMMU group whole: every function of it bound to vfio-pci or to
    a driver VFIO accepts. *)
@@ -131,13 +121,16 @@ let open_function files bus m =
     | No_iommu -> Sysfs.noiommu_file g
   in
   let container = opened (open_file bus "/dev/vfio/vfio") in
-  let v = step "checking VFIO's API version" (fun () -> version container) in
+  let v =
+    Fail.step "checking VFIO's API version" (fun () -> version container)
+  in
   if v <> api_version then
-    failwith
-      (Printf.sprintf "VFIO speaks API version %d, expected %d" v api_version);
-  if not (step "checking VFIO's IOMMU models" (fun () -> supports container m))
+    Fail.fail "VFIO speaks API version %d, expected %d" v api_version;
+  if
+    not
+      (Fail.step "checking VFIO's IOMMU models" (fun () -> supports container m))
   then
-    failwith
+    Fail.fail "%s"
       (match m with
       | No_iommu ->
           "VFIO is not in its no-IOMMU mode; turn it on: echo 1 | sudo tee \
@@ -145,9 +138,9 @@ let open_function files bus m =
       | Type1v2 ->
           "VFIO has no type 1 IOMMU; load it: sudo modprobe vfio_iommu_type1");
   let group = opened (open_file bus file) in
-  if not (step ("reading the status of " ^ file) (fun () -> viable group)) then
-    failwith (not_viable bus g);
-  step
+  if not (Fail.step ("reading the status of " ^ file) (fun () -> viable group))
+  then Fail.fail "%s" (not_viable bus g);
+  Fail.step
     ("attaching " ^ file ^ " to a VFIO container")
     (fun () -> set_container group container);
   (* Linux attaches a group to an IOMMU only where the IOMMU also remaps the
@@ -155,25 +148,23 @@ let open_function files bus m =
   (match set_iommu container m with
   | () -> ()
   | exception Unix.Unix_error (EPERM, _, _) when m = Type1v2 ->
-      failwith
-        (Printf.sprintf
-           "the IOMMU of %s does not remap interrupts, so Linux refuses it to \
-            VFIO; enable interrupt remapping in the firmware settings, or \
-            accept the risk: echo 1 | sudo tee \
-            /sys/module/vfio_iommu_type1/parameters/allow_unsafe_interrupts"
-           bus)
+      Fail.fail
+        "the IOMMU of %s does not remap interrupts, so Linux refuses it to \
+         VFIO; enable interrupt remapping in the firmware settings, or accept \
+         the risk: echo 1 | sudo tee \
+         /sys/module/vfio_iommu_type1/parameters/allow_unsafe_interrupts"
+        bus
   | exception Unix.Unix_error (e, _, _) ->
-      failwith
-        (Printf.sprintf "attaching %s to a VFIO container: %s" file
-           (Unix.error_message e)));
+      Fail.fail "attaching %s to a VFIO container: %s" file
+        (Unix.error_message e));
   let device =
     opened
-      (step
+      (Fail.step
          ("opening " ^ bus ^ " through VFIO")
          (fun () -> open_device group bus))
   in
-  let efd = opened (step "creating an eventfd" eventfd) in
-  step ("routing the interrupt of " ^ bus) (fun () -> msi device efd);
+  let efd = opened (Fail.step "creating an eventfd" eventfd) in
+  Fail.step ("routing the interrupt of " ^ bus) (fun () -> msi device efd);
   (container, device, efd)
 
 (* The offset of BAR [i] in [device]'s file, if VFIO maps its [n] bytes from
@@ -181,24 +172,22 @@ let open_function files bus m =
    those bytes map too. *)
 let bar_offset bus device i off n =
   let size, offset, mappable, areas =
-    step (Printf.sprintf "reading region %d of %s" i bus) (fun () ->
+    Fail.step (Printf.sprintf "reading region %d of %s" i bus) (fun () ->
         region device i)
   in
   let inside (o, k) = off >= o && off + n <= o + k in
   if (not mappable) || off + n > size then
-    failwith (Printf.sprintf "VFIO does not map BAR %d of %s" i bus);
+    Fail.fail "VFIO does not map BAR %d of %s" i bus;
   (match areas with
   | Some areas when not (List.exists inside areas) ->
-      failwith
-        (Printf.sprintf
-           "VFIO maps parts of BAR %d of %s, and none holds [0x%x, 0x%x)" i bus
-           off (off + n))
+      Fail.fail "VFIO maps parts of BAR %d of %s, and none holds [0x%x, 0x%x)" i
+        bus off (off + n)
   | _ -> ());
   offset
 
 let config_offset bus device =
   let _, offset, _, _ =
-    step ("reading the configuration space of " ^ bus) (fun () ->
+    Fail.step ("reading the configuration space of " ^ bus) (fun () ->
         region device config_region)
   in
   offset
@@ -217,11 +206,10 @@ let iova_high = 1 lsl 40
 let window bus page_sizes ranges =
   let smallest = page_sizes land -page_sizes in
   if smallest > page then
-    failwith
-      (Printf.sprintf
-         "the IOMMU of %s maps no page smaller than %d bytes, and system pages \
-          are %d bytes"
-         bus smallest page);
+    Fail.fail
+      "the IOMMU of %s maps no page smaller than %d bytes, and system pages \
+       are %d bytes"
+      bus smallest page;
   let ranges = if ranges = [] then [ (0, max_int) ] else ranges in
   let piece (first, last) =
     let a = round_page (Int.min iova_high (Int.max first iova_low)) in
@@ -235,15 +223,13 @@ let window bus page_sizes ranges =
   in
   match List.fold_left best None (List.filter_map piece ranges) with
   | None ->
-      failwith
-        (Printf.sprintf
-           "the IOMMU of %s maps no device addresses between 4 GiB and 1 TiB"
-           bus)
+      Fail.fail
+        "the IOMMU of %s maps no device addresses between 4 GiB and 1 TiB" bus
   | Some w -> w
 
 let iova bus fd =
   let page_sizes, ranges =
-    step ("reading the IOMMU of " ^ bus) (fun () -> iommu fd)
+    Fail.step ("reading the IOMMU of " ^ bus) (fun () -> iommu fd)
   in
   let base, n = window bus page_sizes ranges in
   Space.create ~base n
@@ -284,16 +270,13 @@ let map_dma fn bus c a n =
       let iova =
         match Space.alloc c.iova n with
         | Some x -> x
-        | None ->
-            failwith
-              (Printf.sprintf "%s has no IOMMU addresses left for %d bytes" bus
-                 n)
+        | None -> Fail.fail "%s has no IOMMU addresses left for %d bytes" bus n
       in
       (match map c.fd a iova n with
       | () -> ()
       | exception Unix.Unix_error (e, _, _) ->
           Space.free c.iova iova;
-          failwith (map_error bus n e));
+          Fail.fail "%s" (map_error bus n e));
       Hashtbl.replace c.maps (a, n) (iova, 1);
       iova
 
@@ -305,7 +288,7 @@ let unmap_dma bus c a n =
   | iova, k when k > 1 -> Hashtbl.replace c.maps (a, n) (iova, k - 1)
   | iova, _ ->
       if not c.closed then
-        step (Printf.sprintf "unmapping %d bytes for %s" n bus) (fun () ->
+        Fail.step (Printf.sprintf "unmapping %d bytes for %s" n bus) (fun () ->
             unmap c.fd iova n);
       Hashtbl.remove c.maps (a, n);
       Space.free c.iova iova

@@ -14,12 +14,6 @@ external unmap_at : int -> int -> unit = "caml_device_pci_sysmem_unmap"
 external lock_at : int -> int -> unit = "caml_device_pci_sysmem_lock"
 external unlock_at : int -> int -> unit = "caml_device_pci_sysmem_unlock"
 
-(* [f ()], whose system call failing is reported as [what]. *)
-let step what f =
-  try f ()
-  with Unix.Unix_error (e, _, _) ->
-    failwith (Printf.sprintf "%s: %s" what (Unix.error_message e))
-
 let page = page_size ()
 let round_page n = (n + page - 1) / page * page
 
@@ -40,11 +34,10 @@ let reserve ~base n =
     (match reserve_at base n with
     | () -> ()
     | exception Unix.Unix_error (EEXIST, _, _) ->
-        failwith (Printf.sprintf "addresses %s are in use" (range base n))
+        Fail.fail "addresses %s are in use" (range base n)
     | exception Unix.Unix_error (e, _, _) ->
-        failwith
-          (Printf.sprintf "reserving addresses %s: %s" (range base n)
-             (Unix.error_message e)));
+        Fail.fail "reserving addresses %s: %s" (range base n)
+          (Unix.error_message e));
     Hashtbl.add reserved (base, n) ()
   end
 
@@ -71,11 +64,10 @@ let check_setting () =
       with Sys_error _ -> "0"
     in
     if value <> "0" then
-      failwith
-        (Printf.sprintf
-           "the kernel may move locked pages (%s is %s); forbid it: sudo \
-            sysctl -w vm.compact_unevictable_allowed=0"
-           setting value);
+      Fail.fail
+        "the kernel may move locked pages (%s is %s); forbid it: sudo sysctl \
+         -w vm.compact_unevictable_allowed=0"
+        setting value;
     Atomic.set checked true
   end
 
@@ -99,16 +91,13 @@ let pagemap a pages =
   in
   match Unix.openfile pagemap_file [ O_RDONLY; O_CLOEXEC ] 0 with
   | exception Unix.Unix_error (e, _, _) ->
-      failwith
-        (Printf.sprintf "opening %s: %s" pagemap_file (Unix.error_message e))
+      Fail.fail "opening %s: %s" pagemap_file (Unix.error_message e)
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
       match read fd with
       | () -> Bytes.unsafe_to_string b
       | exception Unix.Unix_error (e, _, _) ->
-          failwith
-            (Printf.sprintf "reading %s: %s" pagemap_file (Unix.error_message e))
-      )
+          Fail.fail "reading %s: %s" pagemap_file (Unix.error_message e))
 
 (* Bits 0-54 of a page-map entry are the page frame, which reads as 0 without
    the privilege. *)
@@ -123,7 +112,7 @@ let physical a n =
         Int64.to_int (Int64.logand (String.get_int64_le map (8 * i)) frame_mask)
       in
       if frame = 0 then
-        failwith "reading physical addresses needs CAP_SYS_ADMIN; run as root";
+        Fail.fail "reading physical addresses needs CAP_SYS_ADMIN; run as root";
       frame * page)
 
 (* Pins *)
@@ -143,7 +132,7 @@ let drop_pins a n =
       match Hashtbl.find pins p with
       | 1 ->
           Hashtbl.remove pins p;
-          step "unlocking memory" (fun () -> unlock_at p page)
+          Fail.step "unlocking memory" (fun () -> unlock_at p page)
       | k -> Hashtbl.replace pins p (k - 1))
     (pages_of a n)
 
@@ -152,15 +141,12 @@ let pin a n =
       (match lock_at a n with
       | () -> ()
       | exception Unix.Unix_error (((ENOMEM | EPERM) as e), _, _) ->
-          failwith
-            (Printf.sprintf
-               "locking %d bytes for a GPU: %s; raise the locked-memory limit \
-                (ulimit -l)"
-               n (Unix.error_message e))
+          Fail.fail
+            "locking %d bytes for a GPU: %s; raise the locked-memory limit \
+             (ulimit -l)"
+            n (Unix.error_message e)
       | exception Unix.Unix_error (e, _, _) ->
-          failwith
-            (Printf.sprintf "locking %d bytes for a GPU: %s" n
-               (Unix.error_message e)));
+          Fail.fail "locking %d bytes for a GPU: %s" n (Unix.error_message e));
       add_pins a n);
   match physical a n with
   | addresses -> addresses
@@ -190,7 +176,7 @@ let map_bytes ?va n ~huge ~locked =
         Printf.sprintf "allocating %d bytes of system memory: %s" n
           (Unix.error_message e)
       in
-      failwith
+      Fail.fail "%s"
         (match e with
         | ENOMEM when huge ->
             why
@@ -202,7 +188,7 @@ let map_bytes ?va n ~huge ~locked =
 
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)
 let unmap a n =
-  step "freeing system memory" (fun () ->
+  Fail.step "freeing system memory" (fun () ->
       if Mutex.protect lock (fun () -> reserved_at a n) then release_at a n
       else unmap_at a n)
 

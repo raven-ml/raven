@@ -81,9 +81,9 @@ val alloc : ?uncached:bool -> t -> kind -> int -> memory option
     no room, as {!Page_table.alloc} bounds it, or for {!Bar} memory, if the BAR
     does not reach a block that fits.
 
-    Raises [Invalid_argument] if [n <= 0], and [Failure] if system memory cannot
-    be allocated, having freed what it took, naming what is missing as
-    {!Function.alloc_dma} does ({{!Device_pci.errors}errors}). *)
+    Raises [Invalid_argument] if [n <= 0], and {!Device_pci.Failed} if system
+    memory cannot be allocated, having freed what it took, naming what is
+    missing as {!Function.alloc_dma} does ({{!Device_pci.errors}errors}). *)
 
 val free : t -> memory -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.

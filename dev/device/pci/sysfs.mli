@@ -5,8 +5,8 @@
 
 (** This machine's PCI functions, through [/sys/bus/pci] (private).
 
-    Reading changes nothing. A write the process may not make raises [Failure]
-    naming the file and the privilege it needs. *)
+    Reading changes nothing. A write the process may not make raises
+    {!Fail.Failed} naming the file and the privilege it needs. *)
 
 (** {1:identity Functions} *)
 
@@ -78,11 +78,11 @@ val group_holders : string -> (string * string) list
 val detach : string -> unit
 (** [detach bus] makes [bus] takeable, unless {!access} takes it: it unbinds its
     driver unless that is [vfio-pci], removes its siblings and, unbound, enables
-    it. Raises [Failure] if it is still not takeable. *)
+    it. Raises {!Fail.Failed} if it is still not takeable. *)
 
 val attach : string -> unit
-(** [attach bus] gives [bus] back to its kernel driver. Raises [Failure] if it
-    is bound to [vfio-pci] or no driver takes it. *)
+(** [attach bus] gives [bus] back to its kernel driver. Raises {!Fail.Failed} if
+    it is bound to [vfio-pci] or no driver takes it. *)
 
 val reset : string -> unit
 (** [reset bus] resets [bus] with the reset Linux has for it. *)

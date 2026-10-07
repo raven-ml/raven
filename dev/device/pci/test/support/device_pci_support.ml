@@ -18,6 +18,17 @@ let hex =
 
 let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 
+let contains ~sub s =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
+let failed ?(substring = "") = function
+  | Device_pci.Failed why -> contains ~sub:substring why
+  | _ -> false
+
 external now_ns : unit -> int = "device_pci_test_now_ns"
 
 (* Process memory and far machines *)

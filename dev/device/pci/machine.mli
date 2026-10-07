@@ -65,8 +65,8 @@ val reserve : t -> base:int -> int -> unit
     {!Function.alloc_dma} maps memory there. A range is reserved once and stays
     reserved while that process runs; reserving it again does nothing.
 
-    Raises [Failure] if part of the range is in use, or if [m] is {!this} and
-    not Linux ({{!Device_pci.errors}errors}). *)
+    Raises {!Device_pci.Failed} if part of the range is in use, or if [m] is
+    {!this} and not Linux ({{!Device_pci.errors}errors}). *)
 
 val wait : t -> ms:int -> (unit -> bool) -> bool
 (** [wait m ~ms f] calls [f], at least once, until it is [true] or at least [ms]
@@ -75,15 +75,15 @@ val wait : t -> ms:int -> (unit -> bool) -> bool
     processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
     core. It is the loop in which drivers wait for their devices.
 
-    Raises [Failure] once [m] fails, with {!failed}'s reason
+    Raises {!Device_pci.Failed} once [m] fails, with {!failed}'s reason
     ({{!Device_pci.errors}errors}). *)
 
 (** {1:transports Transports}
 
     A library that reaches another machine makes it a machine with {!make}, from
     the operations below. A transport runs each operation on the other machine
-    as the same operation of {!this} runs here, and raises [Failure] with a
-    reason that starts with the machine's name when it cannot.
+    as the same operation of {!this} runs here, and raises {!Device_pci.Failed}
+    with a reason that starts with the machine's name when it cannot.
 
     {!Function} refuses misuse before an operation is called, and counts the
     windows and pins of each function. An operation is called only with

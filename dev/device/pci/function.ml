@@ -25,7 +25,8 @@ let take machine bus =
     | Some why -> Error why
     | None when Option.is_none (Address.numbers bus) ->
         Error (Printf.sprintf "%S is no PCI bus address" bus)
-    | None -> ( try Machine.take machine bus with Failure why -> Error why)
+    | None -> (
+        try Machine.take machine bus with Fail.Failed why -> Error why)
   in
   Result.map
     (fun fn ->
@@ -145,8 +146,7 @@ let reset f =
   f.fn.reset ();
   let answers () = f.fn.config 0 2 <> absent in
   if not (Machine.wait f.machine ~ms:reset_ms answers) then
-    failwith
-      (Printf.sprintf "%s does not answer %d ms after its reset" f.bus reset_ms)
+    Fail.fail "%s does not answer %d ms after its reset" f.bus reset_ms
 
 (* System memory *)
 

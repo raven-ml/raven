@@ -64,7 +64,7 @@ let nap_s = 0.0001
 let wait m ~ms f =
   let start = now_ns () in
   let rec go () =
-    Option.iter failwith (failed m);
+    Option.iter (fun why -> raise (Fail.Failed why)) (failed m);
     if f () then true
     else
       let elapsed = now_ns () - start in
