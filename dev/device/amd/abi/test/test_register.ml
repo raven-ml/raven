@@ -101,11 +101,7 @@ let address =
         "a segment with no base is refused"
         [ ((9, 4, 3), 2); ((11, 0, 0), 4); ((12, 0, 0), 100) ]
         (fun (v, segment) -> no_base v segment);
-      xfail
-        ~reason:
-          "a negative segment raises Invalid_argument \"List.nth\", naming no \
-           function of the library"
-        (test "a negative segment is refused" (fun () -> no_base (9, 4, 3) (-1)));
+      test "a negative segment is refused" (fun () -> no_base (9, 4, 3) (-1));
     ]
 
 (* Values at the edges of a field and of the integers. *)

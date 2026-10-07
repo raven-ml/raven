@@ -36,18 +36,24 @@ let registers (g : Gpu.t) =
 let find g name =
   List.find_opt (fun r -> String.equal r.name name) (registers g)
 
-(* The bases of the latest generation at or before [g]'s GC major. *)
+(* The bases of the latest generation at or before [major], from [latest]. *)
+let rec bases major latest = function
+  | (m, b) :: rest when m <= major -> bases major b rest
+  | _ -> latest
+
+(* The base of segment [s] of [bases], or [-1] if it has none. *)
+let rec base s = function
+  | b :: _ when s = 0 -> b
+  | _ :: rest when s > 0 -> base (s - 1) rest
+  | _ -> -1
+
 let address (g : Gpu.t) r =
-  let bases =
-    List.fold_left
-      (fun acc (m, b) -> if m <= major g.gc then b else acc)
-      [] Defs.gc_bases
-  in
-  match List.nth_opt bases r.segment with
-  | Some base -> base + r.offset
-  | None ->
-      invalid_argf "Register.address: %s's segment %d has no base on %s" r.name
-        r.segment (gc_name g)
+  let major, _, _ = g.gc in
+  let b = base r.segment (bases major [] Defs.gc_bases) in
+  if b < 0 then
+    invalid_argf "Register.address: %s's segment %d has no base on %s" r.name
+      r.segment (gc_name g);
+  b + r.offset
 
 let encode r fs =
   let set w (f, v) =
