@@ -64,6 +64,32 @@ let lanes =
       (1, Gen.int_range 0 (1 lsl 16));
     ]
 
+(* A GPU, a base and a size: below the bound, around 2^32 bytes a die, or
+   negative. *)
+let descriptors =
+  let open Gen in
+  with_pp
+    (fun ppf (g, base, n) ->
+      Format.fprintf ppf "%a, base 0x%x, %d bytes" pp_gpu g base n)
+    (let* g = gpus in
+     let around =
+       let+ d =
+         frequency
+           [ (1, constant (-1)); (1, constant 0); (1, int_range (-2) 2) ]
+       and+ r = int_range 0 (g.xccs - 1) in
+       (((1 lsl 32) + d) * g.xccs) + r
+     in
+     let+ base = int_range 0 ((1 lsl 48) - 1)
+     and+ n =
+       frequency
+         [
+           (3, int_range 0 ((1 lsl 32) - 1));
+           (2, around);
+           (1, of_list ~pp:Format.pp_print_int [ min_int; -1 ]);
+         ]
+     in
+     (g, base, n))
+
 let granule (g : Gpu.t) = match g.gc with 9, _, _ -> 16 | _ -> 4
 let round_up n m = (n + m - 1) / m * m
 
@@ -78,18 +104,23 @@ let laws =
           equal int
             (share * 64 * g.scratch_slots * g.compute_units * g.xccs)
             (Scratch.size g n));
-      prop "a descriptor holds the base and n / xccs bytes"
-        (Gen.triple gpus
-           (Gen.int_range 0 ((1 lsl 48) - 1))
-           (Gen.int_range 0 ((1 lsl 32) - 1)))
-        (fun ((g : Gpu.t), base, n) ->
+      prop "a descriptor holds the base and n / xccs bytes, below 2^32 a die"
+        descriptors (fun ((g : Gpu.t), base, n) ->
+          let share = 1 lsl 32 in
           cover "a share rounded down" (n mod g.xccs <> 0);
-          match words (Scratch.descriptor g ~base n) with
-          | [ w0; w1; w2; _ ] ->
-              equal (triple int int int)
-                (base land 0xffff_ffff, base lsr 32, n / g.xccs)
-                (w0, w1 land 0xffff, w2)
-          | ws -> failf "%d words" (List.length ws));
+          cover "the largest share" (n >= 0 && n / g.xccs = share - 1);
+          cover "a share of 2^32" (n / g.xccs = share);
+          cover "a negative size" (n < 0);
+          if n < 0 || n / g.xccs >= share then
+            raises_match (Exn.invalid_arg ~substring:"Scratch.descriptor")
+              (fun () -> Scratch.descriptor g ~base n)
+          else
+            match words (Scratch.descriptor g ~base n) with
+            | [ w0; w1; w2; _ ] ->
+                equal (triple int int int)
+                  (base land 0xffff_ffff, base lsr 32, n / g.xccs)
+                  (w0, w1 land 0xffff, w2)
+            | ws -> failf "%d words" (List.length ws));
       prop
         "a scratch ring holds a wave's scratch in units and the waves it serves"
         (Gen.pair gpus lanes) (fun ((g : Gpu.t), n) ->
