@@ -30,22 +30,24 @@
 /* nx_pool_cores () is the number of cores the process may occupy at once,
    the most threads a job runs on. 1 <= nx_pool_cores ().
 
-   On Linux it is min (a, ceil q): a the CPUs of the process's affinity
-   mask, q the smallest cpu.max quota / period of its cgroup v2 and the
-   cgroup's ancestors (no bound without a quota). On macOS it is the
-   physical cores; on Windows, the active processors; elsewhere, the online
-   CPUs. It is computed at the first call: a later change of affinity or
-   quota is not seen. */
+   On Linux it is min (a, ceil q): a the CPUs of the affinity mask of the
+   thread that makes the first call, q the smallest cpu.max quota / period
+   of the process's cgroup v2 and the cgroup's ancestors (no bound without
+   a quota). On macOS it is the physical cores; on Windows, the active
+   processors; elsewhere, the online CPUs. Nothing else bounds it, however
+   many cores the host has. It is computed at the first call: a later
+   change of affinity or quota is not seen. */
 int nx_pool_cores(void);
 
 /* nx_pool_performance_cores () is the number of those cores that run
    compute-bound work at full speed.
    1 <= nx_pool_performance_cores () <= nx_pool_cores ().
 
-   On macOS it counts the performance cores (hw.perflevel0), since a chunk
-   that an efficiency core claims takes two to three times as long and
-   delays the end of its job; elsewhere it is nx_pool_cores (). It is
-   computed at the first call. */
+   On macOS it counts the performance cores (hw.perflevel0) where the host
+   reports them, since a chunk that an efficiency core claims takes two to
+   three times as long and delays the end of its job; elsewhere, and on a
+   Mac that does not report them, it is nx_pool_cores (). It is computed at
+   the first call. */
 int nx_pool_performance_cores(void);
 
 /* Jobs */
@@ -89,11 +91,13 @@ typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    any interleaving: a body must not wait for another call. A body runs C
    and must not call the OCaml runtime, since a worker is not an OCaml
    thread. A body may begin a job of its own (see Scheduling). A body must
-   not fork. On a worker a body has 8 MiB of stack; on the calling thread,
-   the caller's. Workers block every signal except those a body raises
-   itself (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS), so a
-   signal sent to the process reaches one of the program's own threads and
-   a fault in a body is delivered on the thread that runs it.
+   not fork. On a worker a body has 8 MiB of stack, address space that
+   memory backs as the body touches it; on the calling thread, the
+   caller's. Workers block every signal except those a body raises itself
+   (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS), so a signal
+   sent to the process reaches one of the program's own threads and a fault
+   in a body is delivered on the thread that runs it. A profiler that
+   samples threads by SIGPROF therefore never samples a worker.
 
    Scheduling. The pool runs one job of more than one thread at a time. A
    job of t = 1, or a job begun from a body, runs at once on the calling
@@ -107,7 +111,8 @@ typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    with none, the calling thread runs every chunk. Threads that wait for
    work spin for up to 100 us before they sleep, so jobs that follow each
    other closely start without a system call. In a child made by fork, the
-   pool starts anew at its first job; fork waits for a running job to end. */
+   pool starts anew at its first job; fork waits for a running job of more
+   than one thread to end. */
 void nx_pool_run(int threads, int64_t total, int64_t chunks, nx_pool_body body,
                  void *ctx);
 

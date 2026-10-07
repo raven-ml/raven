@@ -168,7 +168,8 @@ let thread_tests =
         test_narrow_burst;
       test "a child made by fork runs its jobs on workers of its own"
         test_fork_child;
-      test "fork waits for a running job to end" test_fork_waits;
+      test "fork waits for a running job of more than one thread to end"
+        test_fork_waits;
     ]
 
 let () = exit (run "nx_pool.h threads" [ worker_tests; thread_tests ])
