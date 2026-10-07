@@ -191,6 +191,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Rune.iterate` or `Rune.scan` whose step calls `Nx.take` with a
+  constant index tensor compiles. It raised `Invalid_argument "a
+  dtypes.weakint cannot be stored"`.
 - On the host, a compiled function runs its kernels, scans and iterates as
   one host program per run of them: no OCaml runs per step or per kernel. A
   staged scan of 256 steps runs in 291 us instead of 462 us on an M1 Max, an

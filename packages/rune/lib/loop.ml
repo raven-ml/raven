@@ -84,6 +84,9 @@ let cut ~own next args body =
   in
   let reads_written = settle () in
   let varies u = reads_param u || reads_written u || open_ranges u in
+  (* A value of no width, such as an index computed from stored integers, has no
+     storage to pass: the body computes it from the stored values it reads. *)
+  let weak u = List.exists (Dtype.equal (Ops.dtype u)) Dtype.weaks in
   let rec rebuild u =
     match Ops.Tbl.find_opt rebuilt u with
     | Some v -> v
@@ -91,7 +94,8 @@ let cut ~own next args body =
         let v =
           if
             varies u
-            || (reads_storage u && Op.Set.mem (Ops.op u) Op.Set.movement)
+            || reads_storage u
+               && (Op.Set.mem (Ops.op u) Op.Set.movement || weak u)
           then
             let src = List.map rebuild (sources u) in
             Ops.replace u

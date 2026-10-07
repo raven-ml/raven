@@ -521,6 +521,16 @@ let compiled_tests =
         in
         let x = vec [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
         equal (close ()) (f x) (Rune.jit' f x));
+    test "a scan under jit whose step takes at constant indices is eager"
+      (fun () ->
+        let reversed = Nx.create Nx.int64 [| 4 |] [| 3L; 2L; 1L; 0L |] in
+        let f xs =
+          fst
+            (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
+               ~f:(fun c x -> (Nx.add (Nx.take ~indices:reversed c) x, ()))
+               ~init:(Nx.zeros f64 [| 4 |]) xs)
+        in
+        equal (close ()) (f (rows ())) (Rune.jit' f (rows ())));
     test "a changed carry is refused under jit" (fun () ->
         raises (Invalid_argument changed_length) (fun () ->
             Rune.jit' scan_growing (v4 ())));

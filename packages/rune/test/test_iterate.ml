@@ -1695,6 +1695,16 @@ let compiled_edge_tests =
             (scalar 1.9, held)
         in
         equal (exact ()) held h);
+    test "compiled, a step that takes at constant indices is eager's" (fun () ->
+        let reversed =
+          Nx.create Nx.int64 [| 8 |]
+            (Array.init 8 (fun i -> Int64.of_int (7 - i)))
+        in
+        let reverse x = Nx.take ~indices:reversed x in
+        let x = Nx.linspace f64 1. 2. 8 in
+        equal (exact ())
+          (to_count ~max:2 ~f:reverse (count_of 2) x)
+          (at_count ~max:2 reverse x (count_of 2)));
   ]
 
 (* Every dtype a compiled function takes as an argument, as a carry: [flips]
