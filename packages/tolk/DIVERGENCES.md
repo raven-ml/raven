@@ -4078,11 +4078,9 @@ stores through a pad.
   kernel, the only one the rule changes in its program, is faster with it on
   random codes, as real weights hold, on arm64 and on x86 (kimchi, clang 19,
   2.1% on six cores), and the routed 64-token product runs at 0.978 of its
-  time before the rule. On zero codes, which kaun's decode bench uses, the
-  kernel takes 4.4% longer with the rule on six x86 cores and 2-6% longer on
-  one, where the M1 still runs it faster: so the bench's routed one-token row
-  runs at 1.026 of its time before the rule on kimchi (pairs 1.025-1.027,
-  allocation equal).
+  time before the rule. On codes of one value the kernel takes 4.4% longer
+  with the rule on six x86 cores and 2-6% longer on one, where the M1 still
+  runs it faster. kaun's decode bench times random codes.
 - **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `symbolic › casts ›
   a widening cast of an unsigned mask masks the widened operand (D134)` and
   the four tests after it; rune's lower_index suite: `quantised products › a
