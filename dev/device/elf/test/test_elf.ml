@@ -9,6 +9,8 @@
 open Windtrap
 module Elf = Device_elf
 
+let strf = Printf.sprintf
+
 (* The format's numbers, from the System V gABI *)
 
 let sht_progbits = 1
@@ -351,7 +353,7 @@ let invariants (o : Elf.t) =
   let in_file = ref [] and in_image = ref [] in
   Iarray.iteri
     (fun i (s : Elf.section) ->
-      let msg = Printf.sprintf "section %d %S" i s.name in
+      let msg = strf "section %d %S" i s.name in
       at_least ~msg int ~than:0 s.at;
       at_least ~msg int ~than:0 s.length;
       at_most ~msg int ~than:(String.length o.file) (s.at + s.length);
@@ -381,7 +383,7 @@ let invariants (o : Elf.t) =
   Iarray.iter place o.symbols;
   List.iter
     (fun (r : Elf.relocation) ->
-      let msg = Format.asprintf "relocation at %#x" r.offset in
+      let msg = strf "relocation at %#x" r.offset in
       at_least ~msg int ~than:0 r.offset;
       less ~msg int ~than:o.size r.offset;
       place r.symbol)
@@ -832,7 +834,7 @@ let read_time obj =
 let linear_time make n =
   let small = read_time (make (n / 4)) and large = read_time (make n) in
   less
-    ~msg:(Printf.sprintf "CPU time of %gs at n over %gs at n / 4" large small)
+    ~msg:(strf "CPU time of %gs at n over %gs at n / 4" large small)
     float_exact ~than:8. (large /. small)
 
 (* [count] sections, each with a symbol of its own at an extended index. *)
@@ -1105,7 +1107,7 @@ let test_messages () =
 let test_bad_align () =
   List.iter
     (fun align ->
-      raises_match ~msg:(Printf.sprintf "align %d" align)
+      raises_match ~msg:(strf "align %d" align)
         (Exn.invalid_arg ?substring:None) (fun () ->
           Elf.of_string ~align well_formed))
     [ 0; -1; -4; 3; 6; 96; min_int; max_int ]
