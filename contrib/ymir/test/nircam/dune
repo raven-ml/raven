@@ -1,0 +1,11 @@
+; Stage 2's closing result on the whole NIRCam mosaic. It needs the 1.76 GB
+; mosaic, which no test run holds, so it is outside runtest:
+;
+;   uv run contrib/ymir/test/gen/nircam.py   # downloads and checks it once
+;   dune exec contrib/ymir/test/nircam/nircam.exe [-- MOSAIC]
+;
+; runtest checks the same path on golden/nircam.fits, cutouts of the mosaic.
+
+(executable
+ (name nircam)
+ (libraries ymir ymir.units ymir_test nx rune unix))
