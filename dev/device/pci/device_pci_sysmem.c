@@ -4,25 +4,20 @@
   ---------------------------------------------------------------------------*/
 
 /* This machine's memory for functions: reservations, locked and physically
-   addressed memory, page maps. Linux only; elsewhere every call but the page
-   size raises Failure. */
+   addressed memory. Linux only; elsewhere every call but the page size
+   raises Failure. */
 
 #define _GNU_SOURCE
 #include <errno.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
-#include <caml/alloc.h>
 #include <caml/fail.h>
-#include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
 #ifndef _WIN32
-#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -134,45 +129,6 @@ value caml_device_pci_sysmem_unlock(value a, value n) {
   return Val_unit;
 }
 
-/* The page-map entries of the [pages] pages from [va], as
-   /proc/self/pagemap gives them. The kernel walks the page tables for them:
-   the runtime is released while it reads into a buffer of its own. */
-value caml_device_pci_pagemap(value va, value pages) {
-  CAMLparam2(va, pages);
-  CAMLlocal1(out);
-  long page = sysconf(_SC_PAGESIZE);
-  size_t n = Long_val(pages) * 8;
-  off_t at = (off_t)((uintptr_t)Long_val(va) / page) * 8;
-  uint8_t *buf = malloc(n ? n : 1);
-  if (buf == NULL) caml_raise_out_of_memory();
-  const char *failed = NULL;
-  int e = 0;
-  caml_release_runtime_system();
-  int fd = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    failed = "opening /proc/self/pagemap";
-    e = errno;
-  }
-  for (size_t got = 0; !failed && got < n;) {
-    ssize_t r = pread(fd, buf + got, n - got, at + got);
-    if (r <= 0) {
-      failed = "reading /proc/self/pagemap";
-      e = r == 0 ? EIO : errno;
-    } else
-      got += r;
-  }
-  if (fd >= 0) close(fd);
-  caml_acquire_runtime_system();
-  if (failed) {
-    free(buf);
-    errno = e;
-    fail_errno(failed);
-  }
-  out = caml_alloc_initialized_string(n, (const char *)buf);
-  free(buf);
-  CAMLreturn(out);
-}
-
 #else
 
 /* Without Linux every call raises Failure. */
@@ -207,5 +163,4 @@ FAILS2(caml_device_pci_sysmem_unmap)
 FAILS2(caml_device_pci_sysmem_release)
 FAILS2(caml_device_pci_sysmem_lock)
 FAILS2(caml_device_pci_sysmem_unlock)
-FAILS2(caml_device_pci_pagemap)
 #endif
