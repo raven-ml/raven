@@ -7,11 +7,14 @@
 # forced: blessed under load 8.2 on 10 cores
 # forced: blessed hmc/schools/4 hmc/schools/64 hmc/schools/1024 under load 7.5 on 10 cores
 # forced: blessed nuts/schools/4 nuts/schools/64 under load 8.3 on 10 cores
+# forced: blessed ensemble/schools/64 nested/gaussian5/400 smc/hmc/gaussian5/400 smc/slice/gaussian5/400 under load 10.2 on 10 cores
 
 diag/rhat/4x1000x10	alloc_words	exact	6629121
 diag/rhat/4x1000x10	wall_time	batch=1	n=20	4.384e-02	4.298e-02 4.319e-02 4.325e-02 4.327e-02 4.335e-02 4.357e-02 4.359e-02 4.366e-02 4.370e-02 4.374e-02 4.394e-02 4.409e-02 4.411e-02 4.431e-02 4.442e-02 4.453e-02 4.477e-02 4.494e-02 4.505e-02 4.690e-02
 dist/student_t/100000	alloc_words	exact	2327
 dist/student_t/100000	wall_time	batch=4	n=20	2.157e-03	2.104e-03 2.124e-03 2.124e-03 2.128e-03 2.138e-03 2.143e-03 2.144e-03 2.148e-03 2.152e-03 2.153e-03 2.161e-03 2.167e-03 2.171e-03 2.171e-03 2.174e-03 2.174e-03 2.191e-03 2.195e-03 2.204e-03 2.208e-03
+ensemble/schools/64	alloc_words	exact	21152
+ensemble/schools/64	wall_time	batch=64	n=20	1.044e-04	1.015e-04 1.018e-04 1.025e-04 1.033e-04 1.037e-04 1.037e-04 1.038e-04 1.040e-04 1.040e-04 1.043e-04 1.044e-04 1.047e-04 1.048e-04 1.049e-04 1.051e-04 1.052e-04 1.055e-04 1.061e-04 1.081e-04 1.140e-04
 hmc/schools/1024	alloc_words	exact	29254
 hmc/schools/1024	wall_time	batch=8	n=20	1.023e-03	9.895e-04 9.996e-04 1.001e-03 1.009e-03 1.013e-03 1.017e-03 1.017e-03 1.020e-03 1.022e-03 1.022e-03 1.024e-03 1.025e-03 1.025e-03 1.028e-03 1.033e-03 1.040e-03 1.044e-03 1.045e-03 1.052e-03 1.070e-03
 hmc/schools/4	alloc_words	exact	28674
@@ -20,6 +23,8 @@ hmc/schools/64	alloc_words	exact	29254
 hmc/schools/64	wall_time	batch=64	n=20	1.455e-04	1.416e-04 1.418e-04 1.423e-04 1.428e-04 1.435e-04 1.436e-04 1.439e-04 1.448e-04 1.448e-04 1.452e-04 1.459e-04 1.459e-04 1.461e-04 1.465e-04 1.466e-04 1.472e-04 1.472e-04 1.473e-04 1.474e-04 1.492e-04
 model/schools/16	alloc_words	exact	68223
 model/schools/16	wall_time	batch=32	n=20	2.065e-04	1.972e-04 1.986e-04 1.998e-04 2.006e-04 2.019e-04 2.021e-04 2.032e-04 2.035e-04 2.041e-04 2.061e-04 2.068e-04 2.072e-04 2.099e-04 2.115e-04 2.118e-04 2.125e-04 2.126e-04 2.132e-04 2.165e-04 2.194e-04
+nested/gaussian5/400	alloc_words	exact	1583696
+nested/gaussian5/400	wall_time	batch=1	n=20	2.331e-02	2.310e-02 2.311e-02 2.313e-02 2.313e-02 2.313e-02 2.314e-02 2.317e-02 2.319e-02 2.320e-02 2.331e-02 2.331e-02 2.331e-02 2.333e-02 2.333e-02 2.334e-02 2.334e-02 2.336e-02 2.337e-02 2.344e-02 2.373e-02
 nuts/schools/4	alloc_words	exact	304058
 nuts/schools/4	wall_time	batch=8	n=20	1.289e-03	1.216e-03 1.233e-03 1.236e-03 1.257e-03 1.263e-03 1.276e-03 1.279e-03 1.281e-03 1.285e-03 1.289e-03 1.289e-03 1.297e-03 1.299e-03 1.299e-03 1.299e-03 1.304e-03 1.323e-03 1.324e-03 1.327e-03 1.330e-03
 nuts/schools/64	alloc_words	exact	510016
@@ -36,3 +41,7 @@ posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	alloc_words	exact	8883
 posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	wall_time	batch=32	n=20	2.213e-04	2.150e-04 2.151e-04 2.154e-04 2.163e-04 2.163e-04 2.188e-04 2.190e-04 2.201e-04 2.203e-04 2.212e-04 2.213e-04 2.218e-04 2.230e-04 2.237e-04 2.243e-04 2.246e-04 2.255e-04 2.277e-04 2.287e-04 2.367e-04
 posteriordb/sblrc-blr	alloc_words	exact	5622
 posteriordb/sblrc-blr	wall_time	batch=512	n=20	1.769e-05	1.710e-05 1.747e-05 1.749e-05 1.751e-05 1.753e-05 1.753e-05 1.755e-05 1.758e-05 1.761e-05 1.762e-05 1.776e-05 1.784e-05 1.785e-05 1.796e-05 1.796e-05 1.798e-05 1.862e-05 1.906e-05 1.920e-05 2.024e-05
+smc/hmc/gaussian5/400	alloc_words	exact	146285
+smc/hmc/gaussian5/400	wall_time	batch=8	n=20	1.171e-03	1.131e-03 1.144e-03 1.161e-03 1.162e-03 1.163e-03 1.165e-03 1.165e-03 1.167e-03 1.169e-03 1.170e-03 1.172e-03 1.174e-03 1.177e-03 1.178e-03 1.179e-03 1.181e-03 1.182e-03 1.186e-03 1.189e-03 1.198e-03
+smc/slice/gaussian5/400	alloc_words	exact	1493451
+smc/slice/gaussian5/400	wall_time	batch=1	n=20	8.256e-03	8.174e-03 8.175e-03 8.196e-03 8.209e-03 8.229e-03 8.231e-03 8.238e-03 8.245e-03 8.246e-03 8.252e-03 8.259e-03 8.262e-03 8.262e-03 8.274e-03 8.325e-03 8.327e-03 8.358e-03 8.374e-03 8.388e-03 8.434e-03
