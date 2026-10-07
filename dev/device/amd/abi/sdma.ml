@@ -5,6 +5,8 @@
 
 open Packet
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 (* A field's value, from its (mask, shift). *)
 let field (mask, shift) v = (v land mask) lsl shift
 
@@ -23,8 +25,7 @@ let copy_header =
   lor field Defs.sdma_pkt_copy_linear_header_sub_op Defs.sdma_subop_copy_linear
 
 let copy g ~dst ~src n =
-  if n < 0 then
-    invalid_arg (Printf.sprintf "Sdma.copy: %d bytes, expected 0 or more" n);
+  if n < 0 then invalid_argf "Sdma.copy: %d bytes, expected 0 or more" n;
   let max = max_copy g in
   let piece i =
     let off = i * max in

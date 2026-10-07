@@ -6,6 +6,8 @@
 open Packet
 module P = Defs.Dispatch
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 (* Every packet waits for the ones before it and is coherent across the system
    before and after it. *)
 let header =
@@ -44,9 +46,8 @@ let dispatch (k : Code_object.kernel) ~descriptor ~args ~threads:(tx, ty, tz)
     ~grid:(gx, gy, gz) =
   let check t =
     if t < 1 || t > max_threads then
-      invalid_arg
-        (Printf.sprintf
-           "Aql.dispatch: %d threads in a dimension, expected 1 to 65535" t)
+      invalid_argf
+        "Aql.dispatch: %d threads in a dimension, expected 1 to 65535" t
   in
   check tx;
   check ty;
@@ -82,9 +83,7 @@ let max_indirect = 0xf_ffff
 
 let indirect_buffer addr ~dwords =
   if dwords < 0 || dwords > max_indirect then
-    invalid_arg
-      (Printf.sprintf "Aql.indirect_buffer: %d words, expected 0 to 1048575"
-         dwords);
+    invalid_argf "Aql.indirect_buffer: %d words, expected 0 to 1048575" dwords;
   let hdr =
     header
     lor (Defs.hsa_packet_type_vendor_specific lsl Defs.hsa_packet_header_type)

@@ -5,13 +5,16 @@
 
 open Packet
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 let major (g : Gpu.t) =
   let m, _, _ = g.gc in
   m
 
 let gc_name (g : Gpu.t) =
   let a, b, c = g.gc in
-  Printf.sprintf "GC %d.%d.%d" a b c
+  strf "GC %d.%d.%d" a b c
 
 (* PACKET3: type 3, the opcode, and the words of the body less one. *)
 let packet op body =
@@ -38,11 +41,9 @@ let set_reg reg ws =
       && reg < Defs.packet3_set_uconfig_reg_start + uconfig_extent
     then (Defs.packet3_set_uconfig_reg, Defs.packet3_set_uconfig_reg_start)
     else
-      invalid_arg
-        (Printf.sprintf
-           "Pm4.set_reg: register 0x%x is in neither the SH nor the UCONFIG \
-            range"
-           reg)
+      invalid_argf
+        "Pm4.set_reg: register 0x%x is in neither the SH nor the UCONFIG range"
+        reg
   in
   packet op (Dword (reg - start) :: ws)
 
@@ -125,8 +126,7 @@ let wait g loc cmp v ?(mask = 0xffff_ffff) ?(interval = default_interval) () =
 
 let wait_64 g addr cmp v ?(interval = default_interval) () =
   if major g = 9 then
-    invalid_arg
-      (Printf.sprintf "Pm4.wait_64: %s has no 64-bit wait" (gc_name g));
+    invalid_argf "Pm4.wait_64: %s has no 64-bit wait" (gc_name g);
   packet Defs.packet3_wait_reg_mem64
     [
       Dword (wait_control memory_space cmp);
@@ -239,13 +239,10 @@ let max_predicated = 0x3fff
 
 let pred_exec ~xcc_mask p =
   if xcc_mask < 0 || xcc_mask > max_xcc_mask then
-    invalid_arg
-      (Printf.sprintf "Pm4.pred_exec: xcc_mask 0x%x, expected 0 to 0xff"
-         xcc_mask);
+    invalid_argf "Pm4.pred_exec: xcc_mask 0x%x, expected 0 to 0xff" xcc_mask;
   let n = size p in
   if n > max_predicated then
-    invalid_arg
-      (Printf.sprintf "Pm4.pred_exec: %d words, expected at most 16383" n);
+    invalid_argf "Pm4.pred_exec: %d words, expected at most 16383" n;
   packet Defs.packet3_pred_exec [ Dword ((xcc_mask lsl xcc_select) lor n) ] @ p
 
 (* IB_SIZE is 20 bits; bit 20 is CHAIN. *)
@@ -253,9 +250,7 @@ let max_indirect = 0xf_ffff
 
 let indirect_buffer addr ~dwords =
   if dwords < 0 || dwords > max_indirect then
-    invalid_arg
-      (Printf.sprintf "Pm4.indirect_buffer: %d words, expected 0 to 1048575"
-         dwords);
+    invalid_argf "Pm4.indirect_buffer: %d words, expected 0 to 1048575" dwords;
   packet Defs.packet3_indirect_buffer
     [ W64 (Value addr); Dword (dwords lor Defs.indirect_buffer_valid) ]
 
@@ -264,7 +259,7 @@ let indirect_buffer addr ~dwords =
 let register fn g name =
   match Register.find g name with
   | Some r -> r
-  | None -> invalid_arg (Printf.sprintf "%s: %s has no %s" fn (gc_name g) name)
+  | None -> invalid_argf "%s: %s has no %s" fn (gc_name g) name
 
 let address fn g name = Register.address g (register fn g name)
 
@@ -314,8 +309,7 @@ let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
     match waves_per_array with
     | None -> no_wave_limit
     | Some n when n < 1 || n > max_waves_per_array ->
-        invalid_arg
-          (Printf.sprintf "%s: waves_per_array %d, expected 1 to 1023" fn n)
+        invalid_argf "%s: waves_per_array %d, expected 1 to 1023" fn n
     | Some n ->
         Register.encode
           (register fn g "regCOMPUTE_RESOURCE_LIMITS")

@@ -5,6 +5,9 @@
 
 module K = Defs.Kernel_descriptor
 
+let strf = Printf.sprintf
+let ( let* ) = Result.bind
+
 type kernel = {
   descriptor : int;
   entry : int;
@@ -27,8 +30,6 @@ type t = {
   kernels : (string * kernel) list; (* by name, in increasing order *)
 }
 
-let ( let* ) = Result.bind
-
 (* LLVM's AMDGPU relocations, ELFRelocs/AMDGPU.def. *)
 let r_amdgpu_rel64 = 5
 
@@ -48,13 +49,12 @@ let processor (o : Device_elf.t) =
     lsr Defs.ef_amdgpu_generic_version_offset
   in
   match List.assoc_opt mach Defs.processors with
-  | None -> Error (Printf.sprintf "EF_AMDGPU_MACH 0x%x names no processor" mach)
+  | None -> Error (strf "EF_AMDGPU_MACH 0x%x names no processor" mach)
   | Some name when not (List.mem_assoc name Defs.generic) -> Ok name
   | Some name when o.abi_version < Defs.elfabiversion_amdgpu_hsa_v6 ->
-      Error
-        (Printf.sprintf "a %s code object before code object version 6" name)
+      Error (strf "a %s code object before code object version 6" name)
   | Some name when version = 0 ->
-      Error (Printf.sprintf "a %s code object of generic version 0" name)
+      Error (strf "a %s code object of generic version 0" name)
   | Some name -> Ok name
 
 (* The patch of [r]: its target's offset from the field, which REL64 writes. *)
@@ -63,18 +63,16 @@ let patch ~size i (r : Device_elf.relocation) =
     match r.symbol.place with
     | _ when r.kind <> r_amdgpu_rel64 ->
         Error
-          (Printf.sprintf "relocation %d is of kind %d, expected R_AMDGPU_REL64"
-             i r.kind)
+          (strf "relocation %d is of kind %d, expected R_AMDGPU_REL64" i r.kind)
     | Image { offset; _ } -> Ok offset
     | Undefined | Absolute _ | Outside _ ->
         Error
-          (Printf.sprintf "relocation %d uses %S, whose bytes the image lacks" i
+          (strf "relocation %d uses %S, whose bytes the image lacks" i
              r.symbol.name)
   in
   if r.offset + rel64_bytes > size then
     Error
-      (Printf.sprintf "relocation %d patches bytes past the image's end at %d" i
-         r.offset)
+      (strf "relocation %d patches bytes past the image's end at %d" i r.offset)
   else
     let b = Bytes.create rel64_bytes in
     Bytes.set_int64_le b 0 (Int64.of_int (target + r.addend - r.offset));
@@ -113,15 +111,12 @@ let kd_suffix = ".kd"
 let kernel_of o ~size ps name kd =
   if kd + K.sizeof > size then
     Error
-      (Printf.sprintf "kernel %s's descriptor at %d lies past the image's end"
-         name kd)
+      (strf "kernel %s's descriptor at %d lies past the image's end" name kd)
   else
     let d = read o ps kd K.sizeof in
     let entry = kd + field d K.kernel_code_entry_byte_offset in
     if entry < 0 || entry >= size then
-      Error
-        (Printf.sprintf "kernel %s's code at %d lies outside the image" name
-           entry)
+      Error (strf "kernel %s's code at %d lies outside the image" name entry)
     else
       let has flag = field d K.kernel_code_properties land flag <> 0 in
       Ok
@@ -173,13 +168,12 @@ let of_string obj =
     if o.machine = Defs.em_amdgpu then Ok ()
     else
       Error
-        (Printf.sprintf "e_machine %d, expected EM_AMDGPU (%d)" o.machine
-           Defs.em_amdgpu)
+        (strf "e_machine %d, expected EM_AMDGPU (%d)" o.machine Defs.em_amdgpu)
   in
   let* target = processor o in
   let* () =
     if o.size <= max_size then Ok ()
-    else Error (Printf.sprintf "the image is %d bytes, longer than 2^48" o.size)
+    else Error (strf "the image is %d bytes, longer than 2^48" o.size)
   in
   let size = (o.size + 3) / 4 * 4 in
   let* ps = patches ~size 0 [] o.relocations in

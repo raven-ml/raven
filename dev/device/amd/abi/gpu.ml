@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 type version = int * int * int
 
 type t = {
@@ -17,4 +19,4 @@ type t = {
 
 let processor g =
   let major, minor, stepping = g.target in
-  Printf.sprintf "gfx%d%x%x" major minor stepping
+  strf "gfx%d%x%x" major minor stepping

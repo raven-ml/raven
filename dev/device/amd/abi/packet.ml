@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type 'v term =
   | Value of 'v
   | Add of 'v term * int64
@@ -26,7 +28,7 @@ let rec eval fn value = function
   | Shift (t, n) ->
       let v = eval fn value t in
       if n < 0 || n > 63 then
-        invalid_arg (Printf.sprintf "%s: shift by %d, expected 0 to 63" fn n);
+        invalid_argf "%s: shift by %d, expected 0 to 63" fn n;
       Int64.shift_right_logical v n
 
 (* Writes [w] at byte [at] of [b], little-endian, and is the byte after it. *)
