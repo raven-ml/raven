@@ -13,7 +13,7 @@
     A cubin is uploaded as its {e image}: {!size} bytes, which are the image of
     its object {!elf} ({!Device_elf}), zeros up to [size] for the GPU's
     instruction prefetch, which may read past the code, and {!patches} written
-    over them. Into [bytes], for an upload at [base]:
+    over them. A loader builds the image of an upload at [base] as:
     {[
     let image c ~base =
       let o = Cubin.elf c in
@@ -31,9 +31,10 @@
     The image of {!elf} holds what the GPU's memory holds of the cubin: its
     code, constant banks and globals, a global without an initial value
     ([.nv.global], which has no bytes in the object) as zeros. A kernel's shared
-    memory ([.nv.shared.name]) is on chip, of each block of its launches, and
-    stays out. Reading a cubin copies none of its bytes: a loader writes them
-    once, into its destination.
+    memory ([.nv.shared.name]) stays out: it is on chip, and each block of a
+    launch gets the kernel's [shared_bytes] ({!type-kernel}) of it. Reading a
+    cubin copies none of its bytes: a loader writes them once, into its
+    destination.
 
     Offsets are image offsets. *)
 
@@ -48,9 +49,9 @@ val of_string : string -> (t, string) result
     - its image ({!size}) would be longer than [2{^49}] bytes, more than the
       49-bit virtual addresses of GPUs before Hopper reach, which only a
       corrupted address makes;
-    - a relocation is of a type other than the 64-bit address of a symbol
-      ([R_CUDA_64], [0x2]) and its low ([R_CUDA_ABS32_LO_32], [0x38]) or high
-      ([R_CUDA_ABS32_HI_32], [0x39]) 32 bits;
+    - a relocation is of a type other than these three: a symbol's 64-bit
+      address ([R_CUDA_64], [0x2]), its low 32 bits ([R_CUDA_ABS32_LO_32],
+      [0x38]) and its high 32 bits ([R_CUDA_ABS32_HI_32], [0x39]);
     - a relocation's symbol is not in the image, or the bytes it patches
       ({!patches}) lie past the end of the image of {!elf}. *)
 
@@ -63,15 +64,17 @@ val elf : t -> Device_elf.t
 
 val patches : t -> base:int -> (int * string) list
 (** [patches c ~base] is what [c]'s relocations write over its image for an
-    upload at the address [base], in the order of its relocations: at each
-    offset, the little-endian bytes there. A relocation of type [R_CUDA_64]
-    writes its symbol's address in the 8 bytes at its offset; one of type
-    [R_CUDA_ABS32_LO_32] or [R_CUDA_ABS32_HI_32] writes the low or high 32 bits
-    of that address in the 4 bytes 4 past its offset. A symbol's address is
-    [base] plus its offset, plus the relocation's addend, modulo [2{^64}].
+    upload at the address [base], in the order of its relocations: pairs
+    [(at, b)], each writing the little-endian bytes [b] at the offset [at]. A
+    relocation of type [R_CUDA_64] writes its symbol's address in the 8 bytes at
+    its offset; one of type [R_CUDA_ABS32_LO_32] or [R_CUDA_ABS32_HI_32] writes
+    the low or high 32 bits of that address in the 4 bytes 4 past its offset. A
+    symbol's address is [base] plus its offset, plus the relocation's addend,
+    modulo [2{^64}].
 
-    Every patch lies in the image of {!elf}, and so in \[[0];{!size}[ c]\[. A
-    later patch overwrites an earlier one where they share bytes. *)
+    Every patch lies in the image of {!elf}:
+    [at + String.length b <= (elf c).size]. A later patch overwrites an earlier
+    one where they share bytes. *)
 
 (** {1:kernels Kernels} *)
 

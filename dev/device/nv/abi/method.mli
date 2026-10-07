@@ -16,8 +16,13 @@
     payload, is of the caller's type ['v]; an operand the operation fixes, such
     as a class, is an integer.
 
-    Addresses are the GPU's virtual addresses. Copy methods are those of the
-    copy classes from AMPERE_DMA_COPY_B ([0xc7b5]) on. *)
+    Addresses are the GPU's virtual addresses. Compute methods are those of the
+    compute classes from AMPERE_COMPUTE_B ([0xc7c0]) on, copy methods those of
+    the copy classes from AMPERE_DMA_COPY_B ([0xc7b5]) on.
+
+    {b References.} NVIDIA's class headers in open-gpu-kernel-modules 570.144:
+    [clc56f.h] (the host's methods, pushbuffer headers), [clc7c0.h] (compute)
+    and [clc7b5.h] (copy). *)
 
 (** {1:engines Engines} *)
 
@@ -66,11 +71,12 @@ val local_memory_window : 'v -> 'v Packet.t
     [addr]. *)
 
 val local_memory : 'v -> per_tpc:'v -> 'v Packet.t
-(** [local_memory addr ~per_tpc] gives kernels the local memory at [addr]:
-    [per_tpc] bytes for each texture processing cluster, for every streaming
-    multiprocessor. Launches scheduled after it use it. A launch scheduled
-    before it must have completed: a {!release} separates them, and the caller
-    keeps the memory until the launches that use it complete. *)
+(** [local_memory addr ~per_tpc] gives kernels the local memory at [addr],
+    [per_tpc] bytes for each texture processing cluster
+    ({!Local.field-per_tpc}), and lets every streaming multiprocessor use it.
+    Launches scheduled after it use it. A launch scheduled before it must have
+    completed: a {!release} separates them, and the caller keeps the memory
+    until the launches that use it complete. *)
 
 val invalidate_caches : Packet.scope -> 'v Packet.t
 (** [invalidate_caches s] invalidates the compute engine's caches that would

@@ -7,7 +7,10 @@
 
     A channel's ring, its GPFIFO, holds 64-bit entries, each naming a segment of
     a pushbuffer. The channel fetches the entries in order and runs each
-    segment's words ({!Method}). *)
+    segment's words ({!Method}).
+
+    {b References.} NVIDIA's [clc56f.h] in open-gpu-kernel-modules 570.144:
+    [NVC56F_GP_ENTRY0] and [NVC56F_GP_ENTRY1]. *)
 
 val max_words : int
 (** [max_words] is the most words a segment holds, [2{^21} - 1]. *)

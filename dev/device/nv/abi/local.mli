@@ -24,8 +24,14 @@ type t = {
 
 val make : Gpu.t -> int -> t
 (** [make g n] is the local memory of [g] for kernels whose threads need [n]
-    bytes each ({!Launch.local_bytes}): [n] rounded up to 32 bytes per thread,
-    for the warps of 32 threads of every multiprocessor. It is all [0] for
-    [n = 0].
+    bytes each ({!Launch.local_bytes}):
+    - [per_thread] is [n] rounded up to a multiple of 32;
+    - [per_tpc] is [w * g.warps_per_sm * g.sms_per_tpc] rounded up to a multiple
+      of 32 KiB, where [w], a warp's share, is [32 * per_thread] rounded up to a
+      multiple of 512;
+    - [bytes] is [per_tpc * g.tpcs_per_gpc * g.gpcs] rounded up to a multiple of
+      128 KiB.
+
+    It is all [0] for [n = 0].
 
     Raises [Invalid_argument] if [n] is negative. *)

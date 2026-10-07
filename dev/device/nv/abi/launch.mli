@@ -5,20 +5,25 @@
 
 (** Kernels set up for launch on a GPU.
 
-    A launch of a cubin's kernel ({!Cubin.kernel}) depends on the GPU as well:
-    its compute engine's class sets the launch descriptor's version and the
-    layout of the driver's parameters, and the GPU's limits bound the shared
+    A launch of a cubin's kernel ({!Cubin.type-kernel}) depends on the GPU as
+    well: its compute engine's class sets the launch descriptor's version and
+    the layout of the driver's parameters, and the GPU's limits bound the shared
     memory and threads a launch may take.
 
     Constant bank [0] is written anew for each launch: the driver's parameters
-    ({!driver_parameters}), then the kernel's. *)
+    ({!driver_parameters}), then the kernel's. A launch's descriptor is built
+    from a {!t} ({!Qmd.make}).
+
+    {b References.} The CUDA C++ Programming Guide, "Technical Specifications
+    per Compute Capability", for compute capabilities 8.0 to 12.0: the registers
+    and constant memory a kernel may use. *)
 
 type t = private Repr.launch
 (** The type for kernels set up for launch on a GPU. *)
 
 val make : Gpu.t -> Cubin.kernel -> (t, string) result
-(** [make g k] is [k] launched on [g]. It is [Error] if [k] takes more than a
-    launch can:
+(** [make g k] is [Ok l], [k] set up for launch on [g], or [Error msg] if [k]
+    takes more than a launch can, [msg] saying which:
     - more shared memory than 100 KiB, the 1 KiB the driver reserves included;
     - more than 255 registers a thread;
     - a constant bank of index outside \[[0];[7]\], the banks a launch
@@ -29,8 +34,8 @@ val make : Gpu.t -> Cubin.kernel -> (t, string) result
 
 val banks : t -> Cubin.bank list
 (** [banks l] is the constant banks a launch addresses: the kernel's
-    ({!Cubin.kernel}), with a bank [0] of 352 bytes at offset [0] first if it
-    has none. *)
+    ({!Cubin.type-kernel}), with a bank [0] of 352 bytes at offset [0] first if
+    it has none. *)
 
 val driver_parameters : t -> string
 (** [driver_parameters l] is the start of constant bank [0]: the GPU's shared

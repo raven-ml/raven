@@ -11,16 +11,21 @@
     completes. Blackwell's compute class reads version 5, the others version 3
     ({!Gpu.t}).
 
-    A descriptor is a {!Structure.t}: fields known when encoding are bytes, and
-    each field a value fills is a hole. Setters return a new descriptor and
-    leave their argument as it was. *)
+    A descriptor is built from a launch ({!make}), given its sizes, addresses
+    and completion by setters, and laid out as a {!Structure.t} ({!structure}):
+    fields known when encoding are bytes, and each field a value fills is a
+    hole. Setters return a new descriptor and leave their argument as it was.
+    Setting a field again replaces what it held, a known value and a hole alike.
+
+    {b References.} NVIDIA's descriptor headers in open-gpu-doc: [clc7c0qmd.h]
+    (version 3) and [clcec0qmd.h] (version 5). *)
 
 type 'v t
 (** The type for launch descriptors around values of type ['v]. *)
 
 val make : Launch.t -> 'v t
-(** [make l] is the descriptor of a launch of [l], without its sizes and
-    addresses. *)
+(** [make l] is the descriptor of a launch of [l], its sizes and addresses [0],
+    without a release or a chain. *)
 
 (** {1:sizes Sizes} *)
 
@@ -35,18 +40,17 @@ type dim =
 val max_size : dim -> int
 (** [max_size d] is the largest size [d] takes: [2{^31}-1] blocks along a grid's
     [X], [65535] along [Y] and [Z]; [1024] threads along a block's [X] and [Y],
-    [64] along [Z]. *)
+    [64] along [Z]. A block's threads, the product of its three sizes, are at
+    most {!Launch.max_threads} too. *)
 
 val set_dim : dim -> int -> 'v t -> 'v t
-(** [set_dim d n q] is [q] with the size [d] of the launch [n], in place of a
-    value {!patch_dim} gave it.
+(** [set_dim d n q] is [q] whose launch has the size [n] along [d].
 
     Raises [Invalid_argument] if [n] is outside \[[0];[max_size d]\]. *)
 
 val patch_dim : dim -> 'v -> 'v t -> 'v t
-(** [patch_dim d v q] is [q] with the size [d] of the launch [v], which is at
-    most [max_size d], in place of a size {!set_dim} gave it: a hole of the
-    structure ({!structure}). *)
+(** [patch_dim d v q] is [q] whose launch has the size [v] along [d], a hole of
+    its {!structure}. [v] is at most [max_size d]. *)
 
 (** {1:addresses Addresses} *)
 
@@ -62,9 +66,10 @@ val set_bank : int -> 'v -> 'v t -> 'v t
     ({!Launch.banks}). *)
 
 val set_local_memory : 'v -> 'v t -> 'v t
-(** [set_local_memory bytes q] is [q] with [bytes] of local memory for each
-    thread, a multiple of 16 and at least the launch's {!Launch.local_bytes}:
-    the share of each thread in the memory {!Method.local_memory} gives. *)
+(** [set_local_memory bytes q] is [q] whose threads each take [bytes] of the
+    local memory {!Method.local_memory} gives: a multiple of 16, at least the
+    launch's {!Launch.local_bytes}, such as the {!Local.field-per_thread} the
+    memory was sized with. *)
 
 (** {1:completion Completion} *)
 
@@ -92,4 +97,5 @@ val chain : 'v -> 'v t -> 'v t
 (** {1:layout Layout} *)
 
 val structure : 'v t -> 'v Structure.t
-(** [structure q] is [q] laid out in memory. *)
+(** [structure q] is [q] laid out in memory: its [bytes] are the whole
+    descriptor, 256 bytes for version 3 and 384 for version 5. *)

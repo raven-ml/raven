@@ -41,10 +41,15 @@ type 'v word =
 type 'v t = 'v word list
 (** The type for packets, and for sequences of packets, in channel order. *)
 
-(** The type for the scope of a cache operation: work on this GPU ([Agent]), for
-    which the L2 keeps memory coherent, or anyone ([System]), the host and other
-    devices included. *)
-type scope = Agent | System
+(** {1:scopes Scopes} *)
+
+(** The type for the scope of a cache operation: the readers it serves. A scope
+    is the least the caller needs: an operation of scope [Agent] may serve
+    [System] too. *)
+type scope =
+  | Agent
+      (** Work on this GPU, for which its L2 cache keeps memory coherent. *)
+  | System  (** Anyone, the host and other devices included. *)
 
 (** {1:interpreting Interpreting} *)
 

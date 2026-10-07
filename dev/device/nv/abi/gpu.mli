@@ -11,19 +11,20 @@
     addresses at which the GPU's channels show kernels their shared and local
     memory. A driver reads the class and the parts from the GPU when it opens
     it, chooses the windows and sets them on each channel it opens
-    ({!Method.shared_memory_window}), holds the local memory its channels give
-    kernels, and gives compiled code the whole as a {!t}, under {!key}.
+    ({!Method.shared_memory_window}), and holds the local memory its channels
+    give kernels. It declares the whole as a {!t} under {!key}, where compiled
+    code finds it. Neither links the other.
 
     {b Memory.} Every address at which the GPU reaches memory the driver gives
     it is below [2{^40}], where ring segments, launch descriptors and semaphores
     must lie ({!Method}). The windows are at or above [2{^40}].
 
-    {b Work.} Work that compiled code hands one of the GPU's queues is words:
+    {b Work.} Compiled code hands one of the GPU's queues work as words alone:
     ring entries ({!Gpfifo.entry}), each as two 32-bit words, low first. Each
     entry names a segment of the GPU's memory that compiled code wrote and keeps
     until the work completes. The driver places the entries in the queue's ring
     after its wait for earlier work and before its signal of the work's value,
-    so the segments hold neither. The GPU's queues take no fills.
+    so the segments hold neither.
 
     {b Times.} The GPU writes times ({!Method.release_stamp},
     {!Qmd.release_stamp}, {!Method.copy_release_stamp}) as nanoseconds of its
@@ -37,7 +38,8 @@ type t = {
       (** The class of its compute engine: one of [0xc7c0] (Ampere), [0xc9c0]
           (Ada) and [0xcec0] (Blackwell). *)
   sass_version : int;
-      (** The version of the machine code its multiprocessors run. *)
+      (** The version of the machine code its multiprocessors run, its major in
+          bits 4 to 7 and its minor in bits 0 to 3: [0x89] for sm_89. *)
   gpcs : int;  (** Its graphics processing clusters. *)
   tpcs_per_gpc : int;  (** The texture processing clusters of one. *)
   sms_per_tpc : int;  (** The streaming multiprocessors of one of those. *)
@@ -51,11 +53,12 @@ type t = {
           driver's ({!Method.local_memory}). [local n] makes it serve kernels
           whose threads need up to [n] bytes each ({!Launch.local_bytes}): it
           does nothing if the memory already does, else replaces it with a
-          larger one ({!Local.make}), kept until the work placed before the call
-          completes. The result is [Error msg] if the device cannot allocate it.
-          Any domain may call it. *)
+          larger one ({!Local.make}) and keeps the old one until the work placed
+          before the call completes. The result is [Error msg] if the device
+          cannot allocate it. Any domain may call it. *)
 }
 (** The type for GPUs. Every count is positive. *)
 
 val key : t Type.Id.t
-(** [key] is the key an NVIDIA GPU's {!t} is found under. *)
+(** [key] is the key of an NVIDIA GPU's {!t}. The GPU's driver declares its
+    record under [key]; a device of another kind has none. *)

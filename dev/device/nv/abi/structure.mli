@@ -6,7 +6,7 @@
 (** Structures in memory around values.
 
     A launch descriptor ({!Qmd}) is a structure in memory: bytes whose fields
-    hold integers the layout knows, and values of the caller. Each field a value
+    hold integers the layout knows, and the caller's values. Each field a value
     fills is a {e hole}. As with {!Packet}, the caller interprets the
     description: {!encode} with integers, a compiler as its own nodes. Every
     structure comes from {!Qmd.structure}. *)
@@ -38,6 +38,4 @@ type 'v t = 'v Repr.structure = private {
 
 val encode : ('v -> int64) -> 'v t -> string
 (** [encode value s] is [s.bytes] with each hole filled by its term, each value
-    [v] taken as the 64-bit unsigned integer [value v].
-
-    Raises [Invalid_argument] if a shift is outside \[[0];[63]\]. *)
+    [v] taken as the 64-bit unsigned integer [value v]. *)
