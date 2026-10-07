@@ -79,7 +79,7 @@ let known (p : int Packet.t) =
     (fun i ->
       Dword (Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff))
 
-let bits = List.fold_left (fun m b -> m lor (1 lsl b)) 0
+let bits l = List.fold_left (fun m b -> m lor (1 lsl b)) 0 l
 
 (* The SQ's thread trace events, on or off (ac_emit_cp_spi_config_cntl):
    SPI_SQG_EVENT_CTL on GFX12, SPI_CONFIG_CNTL with the SPI's priorities
@@ -314,7 +314,7 @@ let length (g : Gpu.t) ~buffer w =
    4 shader cycles; a TIMESTAMP token holds an absolute time, which sets the
    time from its second on. Neither rule is in the headers: they are how
    tinygrad's decoder reads GFX9 traces (tinygrad/renderer/amd/sqtt.py),
-   unverified (plan decision 22). *)
+   unverified on hardware. *)
 
 let cycles_per_delta = 4
 let token_type = (0, 3)
