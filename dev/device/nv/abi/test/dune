@@ -2,3 +2,9 @@
  (names test_packet test_method test_gpfifo)
  (modules test_packet test_method test_gpfifo)
  (libraries device_nv_abi windtrap))
+
+(test
+ (name test_cubin)
+ (modules test_cubin)
+ (libraries device_nv_abi windtrap)
+ (deps ../../../elf/test/fixtures/simple_add_sm89.cubin))
