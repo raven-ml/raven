@@ -5,9 +5,16 @@
 
 open Packet
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 let major (g : Gpu.t) =
   let m, _, _ = g.gc in
   m
+
+let gc_name (g : Gpu.t) =
+  let a, b, c = g.gc in
+  strf "GC %d.%d.%d" a b c
 
 (* Recording
 
@@ -38,9 +45,7 @@ let itraced e = e < 2
 let register fn g name =
   match Register.find g ("reg" ^ name) with
   | Some r -> r
-  | None ->
-      let a, b, c = g.gc in
-      invalid_arg (Printf.sprintf "%s: GC %d.%d.%d has no reg%s" fn a b c name)
+  | None -> invalid_argf "%s: %s has no reg%s" fn (gc_name g) name
 
 (* The words of a register program: [set] writes fields, [write] words. *)
 let set fn g name fields =
@@ -259,9 +264,7 @@ let start_gfx9 fn g ~size buffer =
 let start (g : Gpu.t) ~size buffer =
   let fn = "Thread_trace.start" in
   if size <= 0 || size mod page <> 0 then
-    invalid_arg
-      (Printf.sprintf "%s: size %d, expected a positive multiple of 4096" fn
-         size);
+    invalid_argf "%s: size %d, expected a positive multiple of 4096" fn size;
   let program =
     if major g = 9 then start_gfx9 fn g ~size buffer
     else start_gfx11 fn g ~size buffer
