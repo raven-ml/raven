@@ -35,4 +35,7 @@ val dispatch :
 val indirect_buffer : 'v -> dwords:int -> 'v Packet.t
 (** [indirect_buffer addr ~dwords] runs the [dwords] words of PM4 packets at
     [addr] ({!Pm4}), in a packet of the vendor's format. Every die the queue
-    runs on runs them; {!Pm4.pred_exec} keeps words to some dies. *)
+    runs on runs them; {!Pm4.pred_exec} keeps words to some dies. [addr] is a
+    multiple of 4.
+
+    Raises [Invalid_argument] if [dwords] is not in \[[0];[1048575]\]. *)

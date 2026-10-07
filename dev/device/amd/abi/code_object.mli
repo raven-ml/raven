@@ -46,8 +46,9 @@ val of_string : string -> (t, string) result
     for a generic one in a code object before version 6 or of generic version
     [0], if one of its relocations is of another kind than [R_AMDGPU_REL64],
     uses a symbol whose bytes the image does not hold, or patches bytes past the
-    image's end, or if its image is longer than [2{^48}] bytes, which no GPU's
-    virtual addresses reach. [msg] says which. *)
+    image's end, if a kernel's descriptor or the instruction it points to lies
+    outside the image, or if its image is longer than [2{^48}] bytes, which no
+    GPU's virtual addresses reach. [msg] says which. *)
 
 val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
@@ -95,9 +96,6 @@ type kernel = {
 }
 (** The type for kernels, as their descriptors describe them. *)
 
-val kernel : t -> string -> (kernel, string) result
+val kernel : t -> string -> kernel option
 (** [kernel co name] is the kernel [name] of [co], whose descriptor is at the
-    symbol [name ^ ".kd"].
-
-    The result is [Error msg] if [co] has no such symbol in its image, or if the
-    descriptor or the instruction it points to lies outside the image. *)
+    symbol [name ^ ".kd"], if [co] defines it ({!kernels}). *)

@@ -38,18 +38,21 @@ val dispatch :
     in the buffer at [scratch], and the user SGPRs [k] enables, in their order:
     a buffer descriptor of the scratch at [scratch], the address [packet] of its
     dispatch packet ({!Aql.dispatch}), and the address [args] of its arguments.
-    [packet] is read only if [k.dispatch_ptr]. At most [waves_per_array] waves
-    run at once on each shader array; without it, as many as fit.
+    The scratch's descriptor is read only if [k.private_segment_buffer], which
+    compilers set for GFX9 and GFX10, and [packet] only if [k.dispatch_ptr]. At
+    most [waves_per_array] waves run at once on each shader array; without it,
+    as many as fit.
 
     [program] and [scratch] are 256-byte aligned. Raises [Invalid_argument] if
     [g]'s GC has no register of a dispatch. *)
 
 val run : Gpu.t -> 'v Packet.t -> 'v Packet.t
-(** [run g p] runs [p], the words of a dispatch and of what goes with it, such
-    as its profiling: it invalidates the data caches above the L2 before [p], so
-    that [p]'s kernels read what the work before them wrote, and waits for [p]'s
-    dispatches to complete after it ([CS_PARTIAL_FLUSH]), so that the packets
-    after it start once they have. *)
+(** [run g p] runs [p], the words of one or more dispatches none of which reads
+    what another writes, and of what goes with them, such as their profiling: it
+    invalidates the caches above the L2 before [p] ({!acquire_mem} at [Agent]),
+    so that [p]'s kernels read what the GPU's work before them wrote, and waits
+    for [p]'s dispatches to complete after it ([CS_PARTIAL_FLUSH]), so that the
+    packets after it start once they have. *)
 
 (** {1:memory Memory and registers} *)
 
@@ -72,7 +75,7 @@ val write_data : 'v location -> 'v -> 'v Packet.t
 type write = Posted | Confirmed
 
 (** The type for what a copy reads: a 32-bit counter register, at its address,
-    or the GPU's clock, a 64-bit count at 100 MHz. *)
+    or the GPU's clock, a 64-bit count at the rate {!Capability.t.clock_hz}. *)
 type source = Counter of int | Clock
 
 val copy_data : write -> source -> 'v -> 'v Packet.t
@@ -96,26 +99,36 @@ val wait :
     them again every [interval] clocks of the packet's poll timer. [mask]
     defaults to all 32 bits, [interval] to [4]. *)
 
-(** The type for the caches an acquire invalidates: the data caches above the L2
-    (scalar, vector and L1), or all of them, the instruction cache too, and the
-    L2, written back first. *)
-type caches = Data_caches | All_caches
+val wait_64 :
+  Gpu.t -> 'v -> Packet.comparison -> 'v -> ?interval:int -> unit -> 'v Packet.t
+(** [wait_64 g addr cmp v ~interval ()] waits until the 64 bits at [addr]
+    compare to [v] as [cmp] says, reading them again every [interval] clocks of
+    the packet's poll timer, [4] by default. Whether a queue runs it is a fact
+    of its firmware, which a driver tests before relying on it.
 
-val acquire_mem : Gpu.t -> caches -> 'v Packet.t
-(** [acquire_mem g c] invalidates the caches [c] of all memory before the next
-    packet starts. *)
+    Raises [Invalid_argument] if [g]'s GC has no such packet (GFX9). *)
+
+val acquire_mem : Gpu.t -> Packet.scope -> 'v Packet.t
+(** [acquire_mem g s] invalidates, before the next packet starts, the caches
+    that would hide writes of scope [s] from the work after it: at [Agent], for
+    writes of work on this GPU, the caches above the L2 (scalar, vector and L1);
+    at [System], for writes of anyone, all of them, the instruction cache too,
+    and the L2, written back first. *)
 
 (** The type for the signal a release writes: the low 32 bits of a value, or all
     64. *)
 type 'v data = Low_32 of 'v | Data_64 of 'v
 
-val release_mem : Gpu.t -> 'v -> 'v data -> 'v Packet.t
-(** [release_mem g addr d] writes [d] to memory at [addr] once the work before
-    it has completed, at the end of the pipe, after writing back and
-    invalidating the GPU's caches so that whoever reads the signal sees the
-    work's writes, then raises an interrupt. The next packet starts without
-    waiting for it. A 64-bit write is one write: a reader sees the value whole
-    or not at all. *)
+val release_mem :
+  Gpu.t -> Packet.scope -> ?interrupt:int -> 'v -> 'v data -> 'v Packet.t
+(** [release_mem g s ~interrupt addr d] writes [d] to memory at [addr] once the
+    work before it has completed, at the end of the pipe, so that readers of
+    scope [s] who see the signal see the work's writes: at [System] it writes
+    the L2 back first. The next packet starts without waiting for it. A 64-bit
+    write is one write: a reader sees the value whole or not at all.
+
+    With [interrupt], it then raises an interrupt that carries [interrupt]'s low
+    32 bits as its context id; without, none. *)
 
 (** The type for the events a queue signals. *)
 type event =
@@ -137,4 +150,6 @@ val pred_exec : xcc_mask:int -> 'v Packet.t -> 'v Packet.t
 
 val indirect_buffer : 'v -> dwords:int -> 'v Packet.t
 (** [indirect_buffer addr ~dwords] runs the [dwords] words of PM4 packets at
-    [addr], then the packets after it. *)
+    [addr], then the packets after it. [addr] is a multiple of 4.
+
+    Raises [Invalid_argument] if [dwords] is not in \[[0];[1048575]\]. *)

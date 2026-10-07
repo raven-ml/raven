@@ -8,9 +8,13 @@
     Code compiled for an AMD device encodes its work with this library's
     encoders for the device's GPU, and gives its kernels scratch memory
     ({!Scratch}). The device's driver gives what this needs as a {!t} when it
-    opens the device, under {!key}. Times the GPU writes, such as a
-    {!Pm4.copy_data} of its clock, count the GPU's clock; the driver converts
-    them to nanoseconds of the host clock when it reads them.
+    opens the device, under {!key}.
+
+    {b Times.} The GPU writes times ({!Pm4.copy_data} of {!Pm4.Clock},
+    {!Sdma.timestamp}, the markers of a {!Thread_trace}) as counts of its clock,
+    which runs at {!field-clock_hz}. A reader converts them to the host clock
+    ([CLOCK_MONOTONIC]) by that frequency and an offset, measured with a time
+    the GPU writes between two readings of the host clock.
 
     {b Fills.} Work for one of the device's queues can be a C function, a
     {e fill}: [int fill(void *queue, void *arg, uint64_t v)]. [queue] is the
@@ -30,21 +34,18 @@ type compute =
   | Pm4
       (** PM4 packets ({!Pm4}), which one die runs. Each dispatch names its
           scratch buffer ({!Pm4.dispatch}). *)
-  | Aql of { scratch : address:int -> int -> unit }
+  | Aql of { scratch : int -> (unit, string) result }
       (** AQL packets ({!Aql}), which every die runs. The queue hands every
-          kernel it dispatches one scratch buffer: [scratch ~address n] makes it
-          the {!Scratch.size}[ g n] bytes at [address], for kernels of up to [n]
-          bytes per lane, [g] the device's {!field-gpu} ({!Scratch.descriptor}).
-          Work placed before the call may run with it, so [n] is at least the
-          bytes per lane of the buffer it replaces, and the caller keeps that
-          buffer until the work placed before completes.
-
-          Raises [Invalid_argument] if [n] is less than the replaced buffer's
-          bytes per lane or [address] is not a multiple of 256. Any domain may
+          kernel it dispatches one scratch buffer, the driver's. [scratch n]
+          makes it serve kernels of up to [n] bytes per lane ({!Scratch.size}):
+          it does nothing if the buffer already does, else replaces it with a
+          larger one, kept until the work placed before the call completes. The
+          result is [Error msg] if the device cannot allocate it. Any domain may
           call it. *)
 
 type t = {
   gpu : Gpu.t;  (** The device's GPU, as the encoders take it. *)
+  clock_hz : int;  (** The frequency of the GPU's clock, in hertz. *)
   compute : compute;  (** What its compute queue reads. *)
   place : nativeint;
       (** [place] is the address of
@@ -65,7 +66,8 @@ type t = {
           kernels' arguments, such as a dispatch packet a kernel reads
           ({!Aql.dispatch}). It stores at [host] where the host writes them and
           at [address] where the GPU reads them, a multiple of 64. They stay
-          valid until [v] is reached.
+          valid until [v] is reached. The driver makes what the host wrote there
+          visible to the GPU before it hands the work over.
 
           It returns [0], or a failure that the fill returns as its own: a
           failure if the bytes would pass the segment bytes its work declared.
