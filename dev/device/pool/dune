@@ -1,0 +1,11 @@
+; The host's worker threads. A C library: its interface is nx_pool.h, which
+; the stubs of a library that depends on it include.
+
+(library
+ (name device_pool)
+ (modules)
+ (install_c_headers nx_pool)
+ (foreign_stubs
+  (language c)
+  (names nx_pool)
+  (flags :standard -std=c11 -O2 -Wall -Wextra)))

@@ -91,8 +91,7 @@ typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    the caller's. Workers block every signal except those a body raises
    itself (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS), so a
    signal sent to the process reaches one of the program's own threads and
-   a fault in a body is delivered on the thread that runs it. On macOS the
-   workers run at the main thread's QoS class.
+   a fault in a body is delivered on the thread that runs it.
 
    Scheduling. The pool runs one job of more than one thread at a time. A
    job of t = 1, or a job begun from a body, runs at once on the calling

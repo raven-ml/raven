@@ -1,0 +1,34 @@
+; A consumer library whose stubs call nx_pool_run, run as native code and
+; as bytecode, where each library's stubs load as a shared library of their
+; own and resolve the pool's symbols at load.
+
+(library
+ (name pool_smoke)
+ (modules pool_smoke)
+ (libraries device_pool)
+ (foreign_stubs
+  (language c)
+  (names pool_smoke_stubs)
+  (flags :standard -std=c11 -Wall -Wextra)))
+
+(executable
+ (name smoke)
+ (modules smoke)
+ (modes native byte)
+ (libraries pool_smoke))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{dep:smoke.exe})))
+
+; ocamlrun finds each library's stubs on CAML_LD_LIBRARY_PATH.
+
+(rule
+ (alias runtest)
+ (deps ../dlldevice_pool_stubs.so dllpool_smoke_stubs.so)
+ (action
+  (setenv
+   CAML_LD_LIBRARY_PATH
+   "..:."
+   (run %{dep:smoke.bc}))))
