@@ -370,6 +370,17 @@ let radio =
 let spell =
   group "Vocabulary.spell"
     [
+      test "words spell a unit whose factors pass the algebra's bound"
+        (fun () ->
+          (* (deci s)^k is π^k, though (10π)^k's coefficient is past the
+             algebra's 4096 bits from k = 1234; the words never form it. *)
+          let voc = Vocabulary.v [ ("s", Prefixable, Unit.(int 10 * pi)) ] in
+          List.iter
+            (fun k ->
+              equal (option spelling)
+                (Some { decade = 0; words = [ w ~prefix:(-1) "s" k ] })
+                (Vocabulary.spell voc Unit.(pi ** k)))
+            [ 1234; 2305843009213693951 ]);
       test "a symbol whose unit is the unit is the spelling" (fun () ->
           equal (option spelling)
             (Some { decade = 0; words = [ w "W" 1 ] })

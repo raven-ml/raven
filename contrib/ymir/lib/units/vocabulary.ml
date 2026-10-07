@@ -19,12 +19,18 @@ type kind =
   | Named
   | Decimal
 
+(* A unit's exponents on its terms, none zero. Spelling computes on them
+   rather than on units: the words of a spelling may cancel a coefficient the
+   unit algebra's bound refuses, as (deci s)^k with s = 10π spells π^k. *)
+type exponents = (Unit.term * (int * int)) list
+
 (* An entry's number is 10^[ten], [ten] 0 for a [Number]. *)
 type entry = {
   index : int;
   symbol : string;
   prefixing : prefixing;
   unit : Unit.t;
+  terms : exponents;
   kind : kind;
   ten : int * int;
 }
@@ -118,9 +124,11 @@ let equal_term (a : Unit.term) (b : Unit.term) =
       String.equal a.name b.name && Option.equal String.equal a.scope b.scope
   | (Prime _ | Pi | Symbol _), _ -> false
 
-let exponent t u =
-  match List.find_opt (fun (t', _, _) -> equal_term t t') (Unit.terms u) with
-  | Some (_, n, d) -> (n, d)
+let exponents u = List.map (fun (t, n, d) -> (t, (n, d))) (Unit.terms u)
+
+let exponent t (xs : exponents) =
+  match List.find_opt (fun (t', _) -> equal_term t t') xs with
+  | Some (_, q) -> q
   | None -> zero
 
 let on axis u =
@@ -128,22 +136,20 @@ let on axis u =
   | Term t -> exponent t u
   | Excess -> minus (exponent (Prime 2) u) (exponent (Prime 5) u)
 
-let symbol_terms u =
-  List.filter_map
-    (function
-      | (Unit.Symbol _ as t), n, d -> Some (t, (n, d))
-      | (Prime _ | Pi), _, _ -> None)
-    (Unit.terms u)
+let symbol_terms (xs : exponents) =
+  List.filter
+    (function Unit.Symbol _, _ -> true | (Prime _ | Pi), _ -> false)
+    xs
 
 (* [number_axes u] is the axes other than symbols on which [u]'s exponent is
    not 0. It is empty iff [u]'s number is a power of ten. *)
 let number_axes u =
   let number = function
-    | (Unit.Pi as t), _, _ -> Some (Term t)
-    | (Prime p as t), _, _ when p <> 2 && p <> 5 -> Some (Term t)
-    | (Prime _ | Symbol _), _, _ -> None
+    | (Unit.Pi as t), _ -> Some (Term t)
+    | (Prime p as t), _ when p <> 2 && p <> 5 -> Some (Term t)
+    | (Prime _ | Symbol _), _ -> None
   in
-  let axes = List.filter_map number (Unit.terms u) in
+  let axes = List.filter_map number u in
   if exponent (Prime 2) u = exponent (Prime 5) u then axes
   else axes @ [ Excess ]
 
@@ -151,10 +157,11 @@ let axes u = List.map (fun (t, _) -> Term t) (symbol_terms u) @ number_axes u
 
 (* [decimal u] is [Some t] iff [u] is 10^t. *)
 let decimal u =
-  match Unit.terms u with
-  | [] -> Some zero
-  | [ (Prime 2, n, d); (Prime 5, n', d') ] when n = n' && d = d' -> Some (n, d)
-  | _ -> None
+  let other (t, _) =
+    match t with Unit.Prime (2 | 5) -> false | Prime _ | Pi | Symbol _ -> true
+  in
+  let two = exponent (Prime 2) u in
+  if List.exists other u || two <> exponent (Prime 5) u then None else Some two
 
 let kind u =
   if number_axes u <> [] then Number
@@ -168,9 +175,10 @@ let kind u =
 
 let make fn triples =
   let entry index (symbol, prefixing, unit) =
-    let kind = kind unit in
-    let ten = if kind = Number then zero else exponent (Prime 5) unit in
-    { index; symbol; prefixing; unit; kind; ten }
+    let terms = exponents unit in
+    let kind = kind terms in
+    let ten = if kind = Number then zero else exponent (Prime 5) terms in
+    { index; symbol; prefixing; unit; terms; kind; ten }
   in
   let entries = List.mapi entry triples in
   let add symbols e =
@@ -245,16 +253,18 @@ let powers_of voc s =
 (* [attempt f] is [f ()], or [None] when it raises [No_spelling]. *)
 let attempt f = match f () with v -> v | exception No_spelling -> None
 
-(* [div_power r e q] is [r / e^q]. It raises [No_spelling] when the power or the
-   quotient leaves the unit algebra's bounds, the only failure of [Unit.power]
-   and [Unit.( / )]. *)
-let div_power r e (num, den) =
-  match Unit.(r / power "Vocabulary.spell" e num den) with
-  | r -> r
-  | exception Invalid_argument _ -> raise_notrace No_spelling
+(* [div_power r e q] is [r / e^q], term by term. It raises [No_spelling] when an
+   exponent leaves [int]. *)
+let div_power (r : exponents) (e : exponents) q : exponents =
+  let fresh = List.filter (fun (t, _) -> exponent t r = zero) e in
+  List.filter_map
+    (fun (t, _) ->
+      let x = minus (exponent t r) (times (exponent t e) q) in
+      if x = zero then None else Some (t, x))
+    (r @ fresh)
 
 let divide r words =
-  List.fold_left (fun r (e, q) -> div_power r e.unit q) r words
+  List.fold_left (fun r (e, q) -> div_power r e.terms q) r words
 
 (* [lex cs] is the first of the comparisons [cs] that is not 0. *)
 let lex cs = Option.value ~default:0 (List.find_opt (fun c -> c <> 0) cs)
@@ -287,7 +297,7 @@ let takes voc e p =
    word's exponent is an integer when all of [u]'s exponents are, so a
    fractional exponent comes only from [u] itself. *)
 let allowed u =
-  let whole = List.for_all (fun (_, _, d) -> d = 1) (Unit.terms u) in
+  let whole = List.for_all (fun (_, (_, d)) -> d = 1) u in
   fun (_, d) -> d = 1 || not whole
 
 (* [one_word voc u] is the best word (10^p e)^q equal to [u]: without a prefix,
@@ -296,16 +306,16 @@ let allowed u =
 let one_word voc u =
   let allowed = allowed u in
   let candidate e =
-    match axes e.unit with
+    match axes e.terms with
     | [] -> None
     | a :: _ -> (
         let x = on a u in
         if x = zero then None
         else
-          let q = over x (on a e.unit) in
+          let q = over x (on a e.terms) in
           if not (allowed q) then None
           else
-            match decimal (div_power u e.unit q) with
+            match decimal (div_power u e.terms q) with
             | None -> None
             | Some t when t = zero -> Some (0, e, q)
             | Some t -> (
@@ -335,10 +345,10 @@ let one_word voc u =
 let number_words voc u =
   let fits ws = number_axes (divide u ws) = [] in
   let single e =
-    match number_axes e.unit with
+    match number_axes e.terms with
     | [] -> None
     | a :: _ ->
-        let q = over (on a u) (on a e.unit) in
+        let q = over (on a u) (on a e.terms) in
         if q <> zero && fits [ (e, q) ] then Some [ (e, q) ] else None
   in
   (* Two entries' exponents solve the system of two axes on which the entries
@@ -346,8 +356,8 @@ let number_words voc u =
      pair of equal axes is dependent. *)
   let pair (a, b) =
     let solve (k, k') =
-      let a1 = on k a.unit and b1 = on k b.unit and c1 = on k u in
-      let a2 = on k' a.unit and b2 = on k' b.unit and c2 = on k' u in
+      let a1 = on k a.terms and b1 = on k b.terms and c1 = on k u in
+      let a2 = on k' a.terms and b2 = on k' b.terms and c2 = on k' u in
       let det = minus (times a1 b2) (times a2 b1) in
       if det = zero then None
       else
@@ -356,7 +366,7 @@ let number_words voc u =
         let ws = [ (a, qa); (b, qb) ] in
         if qa <> zero && qb <> zero && fits ws then Some ws else None
     in
-    pairs (number_axes a.unit @ number_axes b.unit)
+    pairs (number_axes a.terms @ number_axes b.terms)
     |> List.find_map (fun ks -> attempt (fun () -> solve ks))
   in
   if number_axes u = [] then [ [] ]
@@ -463,7 +473,7 @@ let product voc allowed numbers r head =
   let r, named =
     match head with
     | None -> (r, [])
-    | Some (h, q) -> (div_power r h.unit q, [ (h, q) ])
+    | Some (h, q) -> (div_power r h.terms q, [ (h, q) ])
   in
   let symbol (s, x) =
     match symbol_word voc s x with
@@ -506,7 +516,7 @@ let compound voc u =
           let x = exponent s r in
           if x = zero then None else attempt (fun () -> Some (h, over x a))
         in
-        let heads h = List.filter_map (cancels h) (symbol_terms h.unit) in
+        let heads h = List.filter_map (cancels h) (symbol_terms h.terms) in
         let heads =
           None
           :: List.map Option.some (List.concat_map heads (of_kind voc Named))
@@ -522,6 +532,7 @@ let spell voc u =
   match List.find_opt (fun e -> Unit.equal e.unit u) voc.entries with
   | Some e -> Some { decade = 0; words = [ word 0 e (1, 1) ] }
   | None -> (
+      let u = exponents u in
       match one_word voc u with
       | Some w -> Some { decade = 0; words = [ w ] }
       | None -> compound voc u)
