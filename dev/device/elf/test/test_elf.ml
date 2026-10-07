@@ -318,16 +318,27 @@ let symbol_named (o : Elf.t) name =
 
 let syms (o : Elf.t) = Iarray.to_list o.symbols
 
-(* The image, as the documentation writes it into [bytes]. *)
-let image (o : Elf.t) =
-  let b = Bytes.make o.size '\000' in
-  let put (s : Elf.section) =
-    match s.offset with
-    | Some off -> Bytes.blit_string o.file s.at b off s.length
-    | None -> ()
-  in
-  Iarray.iter put o.sections;
-  Bytes.to_string b
+(* The examples of device_elf.mli's preamble, verbatim, so that they compile
+   against the interface they document. *)
+module Doc = struct
+  let image (o : Device_elf.t) =
+    let b = Bytes.make o.size '\000' in
+    let put (s : Device_elf.section) =
+      match s.offset with
+      | Some off -> Bytes.blit_string o.file s.at b off s.length
+      | None -> ()
+    in
+    Iarray.iter put o.sections;
+    b
+
+  let value ~base (r : Device_elf.relocation) =
+    match r.symbol.place with
+    | Image { offset; _ } -> Some (base + offset)
+    | Absolute v -> Some v
+    | Undefined | Outside _ -> None
+end
+
+let image o = Bytes.to_string (Doc.image o)
 
 (* A section's bytes in the object. *)
 let contents (o : Elf.t) (s : Elf.section) = String.sub o.file s.at s.length
@@ -1758,6 +1769,26 @@ let test_host (target, call, addend) =
     [ sym_entry "ext" Undefined ]
     (List.map (fun (r : Elf.relocation) -> r.symbol) calls)
 
+(* host_x86_64.o holds .text, 39 bytes at 0x40 of the file, and .rodata.cst16,
+   16 bytes at 0x70 aligned to 16: the image puts them at 0 and 48. Its
+   relocations name, in order, ext, undefined; table, at the start of
+   .rodata.cst16; and .bss, outside the image. *)
+let test_doc_examples () =
+  let o = read (fixture "host_x86_64.o") in
+  let b = Doc.image o in
+  equal ~msg:"the image's length" int 64 (Bytes.length b);
+  equal ~msg:".text" string
+    (String.sub o.file 0x40 39)
+    (Bytes.sub_string b 0 39);
+  equal ~msg:"the gap" string (String.make 9 '\000') (Bytes.sub_string b 39 9);
+  equal ~msg:".rodata.cst16" string
+    (String.sub o.file 0x70 16)
+    (Bytes.sub_string b 48 16);
+  equal ~msg:"the relocations' values at 0x10000"
+    (list (option int))
+    [ None; Some 0x10030; None ]
+    (List.map (Doc.value ~base:0x10000) o.relocations)
+
 let () =
   exit
   @@ run "device_elf"
@@ -1843,4 +1874,6 @@ let () =
                [ ("x86_64", 4, -4); ("aarch64", 283, 0) ]
                test_host;
            ];
+         test "the interface's examples lay out and relocate a host object"
+           test_doc_examples;
        ]
