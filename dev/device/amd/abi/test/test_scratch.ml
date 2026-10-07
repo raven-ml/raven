@@ -12,7 +12,7 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
+let timeout = S.timeout
 
 let gfx11 =
   {

@@ -10,10 +10,10 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
+let timeout = S.timeout
 let gpu sdma = S.gpu ~sdma (11, 0, 0)
 let words = S.encode
-let version (a, b, c) = Printf.sprintf "%d.%d.%d" a b c
+let version = S.version
 
 (* The largest linear copy of each version, as the .mli states it. *)
 let largest = function

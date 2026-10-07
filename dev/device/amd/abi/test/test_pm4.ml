@@ -10,8 +10,8 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
 let strf = Printf.sprintf
+let timeout = S.timeout
 let gpu gc = S.gpu ~shader_engines:6 ~compute_units:48 gc
 let gfx11 = gpu (11, 0, 0)
 let gfx9 = gpu (9, 4, 3)
@@ -87,9 +87,7 @@ let waits =
             [ packet3 0x3c 5; (1 lsl 4) lor 5; 0x8; 0; 1; 0xffff_ffff; 4 ]
             (words (Pm4.wait gfx11 (Memory 8) Greater_equal 1 ())));
       cases
-        ~name:(fun (g, _) ->
-          let a, b, c = g.Gpu.gc in
-          Printf.sprintf "%d.%d.%d" a b c)
+        ~name:(fun (g, _) -> name g)
         "a wait on a UCONFIG register, from UCONFIG's start on GFX9"
         [ (gfx9, 0x8e8); (gfx11, 0xc8e8); (gpu (12, 0, 0), 0xc8e8) ]
         (fun (g, reg) ->

@@ -49,6 +49,7 @@ let names =
 
 let set_sh_reg = 0x76
 let set_uconfig_reg = 0x79
+let pred_exec = 0x23
 let sh_start = 0x2c00
 let uconfig_start = 0xc000
 

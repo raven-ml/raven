@@ -12,7 +12,8 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
+let strf = Printf.sprintf
+let timeout = S.timeout
 let gpu = S.gpu
 let version = S.version
 
@@ -52,7 +53,7 @@ let registers =
               equal (option register) (Some r) (Register.find g r.name))
             (Register.registers g));
       cases
-        ~name:(fun n -> Printf.sprintf "%S" n)
+        ~name:(fun n -> strf "%S" n)
         "a name of no register is none"
         [ ""; "GRBM_GFX_INDEX"; "reggrbm_gfx_index"; "regGRBM_GFX_INDEX " ]
         (fun name -> is_none (Register.find (gpu (11, 0, 0)) name));
@@ -67,7 +68,7 @@ let address =
   group ~timeout "address"
     [
       cases
-        ~name:(fun ((v, n), _) -> Printf.sprintf "%s of %s" n (version v))
+        ~name:(fun ((v, n), _) -> strf "%s of %s" n (version v))
         "a register's address"
         [
           (((11, 0, 0), "regCOMPUTE_PGM_LO"), 0x2e0c);
@@ -96,7 +97,7 @@ let address =
               | exception Invalid_argument _ -> ())
             (Register.registers g));
       cases
-        ~name:(fun (v, s) -> Printf.sprintf "segment %d of %s" s (version v))
+        ~name:(fun (v, s) -> strf "segment %d of %s" s (version v))
         "a segment with no base is refused"
         [ ((9, 4, 3), 2); ((11, 0, 0), 4); ((12, 0, 0), 100) ]
         (fun (v, segment) -> no_base v segment);
@@ -129,7 +130,7 @@ let encode =
                   List.iter
                     (fun n ->
                       equal
-                        ~msg:(Printf.sprintf "%s.%s = %d" r.name f n)
+                        ~msg:(strf "%s.%s = %d" r.name f n)
                         int (single r f n)
                         (Register.encode r [ (f, n) ]))
                     values)

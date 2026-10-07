@@ -7,19 +7,10 @@
 
 open Windtrap
 open Device_amd_abi
+module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
-
-let gpu target =
-  {
-    Gpu.target;
-    gc = target;
-    sdma = (6, 0, 0);
-    xccs = 1;
-    shader_engines = 4;
-    compute_units = 32;
-    scratch_slots = 32;
-  }
+let timeout = S.timeout
+let gpu target = S.gpu target
 
 let processor =
   cases ~timeout ~name:snd "a processor's name"

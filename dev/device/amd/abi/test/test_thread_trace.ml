@@ -10,8 +10,8 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
 let strf = Printf.sprintf
+let timeout = S.timeout
 let gpu = S.gpu
 
 (* Recording *)
@@ -24,11 +24,6 @@ let pp_use ppf u =
   let opt = Option.fold ~none:"-" ~some:string_of_int in
   Format.fprintf ppf "{ engine %d; dies %s; selected %s }" u.engine (opt u.dies)
     (opt u.selected)
-
-(* PACKET3's opcodes of PRED_EXEC, SET_UCONFIG_REG and COPY_DATA. *)
-let pred_exec = 0x23
-let set_uconfig_reg = 0x79
-let uconfig_start = 0xc000
 
 (* The words of [p] that make [n] 32-bit words, and the words after them. *)
 let rec split n (p : int Packet.t) =
@@ -69,11 +64,11 @@ let uses g (p : int Packet.t) =
         if !predicated > 0 then
           predicated := !predicated - (Packet.size body + 1);
         (match (op, body) with
-        | op, [ Dword w ] when op = pred_exec ->
+        | op, [ Dword w ] when op = S.pred_exec ->
             dies := Some (w lsr 24);
             predicated := w land 0x3fff
         | op, Dword off :: [ Dword w ]
-          when op = set_uconfig_reg && uconfig_start + off = grbm_at ->
+          when op = S.set_uconfig_reg && S.uconfig_start + off = grbm_at ->
             selected :=
               if field w "se_broadcast_writes" = 1 then None
               else Some (field w "se_index")

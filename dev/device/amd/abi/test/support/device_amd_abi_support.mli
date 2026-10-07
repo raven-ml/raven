@@ -41,6 +41,17 @@ val encode : int Packet.t -> int list
 
 (** {1:pm4 PM4 packets} *)
 
+val set_sh_reg : int
+(** [set_sh_reg] is PACKET3_SET_SH_REG's opcode, whose first word is an offset
+    from {!sh_start}. Likewise {!set_uconfig_reg} from {!uconfig_start}, and
+    {!pred_exec}, whose second word is the dies' mask from bit 24 and the count
+    of the words it predicates (soc15d.h, nvd.h). *)
+
+val set_uconfig_reg : int
+val pred_exec : int
+val sh_start : int
+val uconfig_start : int
+
 val packets : int list -> (int * int list) list
 (** [packets ws] is the type 3 packets of [ws], each as its opcode and its body.
     Raises [Failure] on a word that starts no type 3 packet, or a packet that

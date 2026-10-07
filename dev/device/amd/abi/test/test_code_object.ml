@@ -13,8 +13,8 @@ open Windtrap
 open Device_amd_abi
 module S = Device_amd_abi_support
 
-let timeout = Device_amd_abi_support.timeout
 let strf = Printf.sprintf
+let timeout = S.timeout
 
 let fixture name =
   In_channel.with_open_bin ("fixtures/" ^ name) In_channel.input_all
