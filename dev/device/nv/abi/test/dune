@@ -1,0 +1,4 @@
+(tests
+ (names test_packet)
+ (modules test_packet)
+ (libraries device_nv_abi windtrap))
