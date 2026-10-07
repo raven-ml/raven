@@ -64,9 +64,13 @@ type 'v location = Register of int | Memory of 'v
 
 val set_reg : int -> 'v Packet.t -> 'v Packet.t
 (** [set_reg a ws] writes the words [ws] to the consecutive registers from the
-    one at address [a]: an SH register's packet or a UCONFIG register's.
+    one at address [a]: an SH register's packet, for registers in
+    \[[0x2c00];[0x3000]\[, or a UCONFIG register's, for registers less than
+    [0xffff] past [0xc000], the most the packet's offset holds. Every register
+    the words reach lies in the range of [a]'s.
 
-    Raises [Invalid_argument] if [a] is in neither range. *)
+    Raises [Invalid_argument] if [a] is in neither range, or if the words reach
+    past its end. *)
 
 val write_data : 'v location -> 'v -> 'v Packet.t
 (** [write_data loc v] writes the low 32 bits of [v] to [loc]; a write to memory

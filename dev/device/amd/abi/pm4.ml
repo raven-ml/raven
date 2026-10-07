@@ -33,18 +33,29 @@ type 'v location = Register of int | Memory of 'v
 let uconfig_extent = 0xffff
 
 let set_reg reg ws =
-  let op, start =
+  let op, start, stop =
     if Defs.packet3_set_sh_reg_start <= reg && reg < Defs.packet3_set_sh_reg_end
-    then (Defs.packet3_set_sh_reg, Defs.packet3_set_sh_reg_start)
+    then
+      ( Defs.packet3_set_sh_reg,
+        Defs.packet3_set_sh_reg_start,
+        Defs.packet3_set_sh_reg_end )
     else if
       Defs.packet3_set_uconfig_reg_start <= reg
       && reg < Defs.packet3_set_uconfig_reg_start + uconfig_extent
-    then (Defs.packet3_set_uconfig_reg, Defs.packet3_set_uconfig_reg_start)
+    then
+      ( Defs.packet3_set_uconfig_reg,
+        Defs.packet3_set_uconfig_reg_start,
+        Defs.packet3_set_uconfig_reg_start + uconfig_extent )
     else
       invalid_argf
         "Pm4.set_reg: register 0x%x is in neither the SH nor the UCONFIG range"
         reg
   in
+  let n = size ws in
+  if reg + n > stop then
+    invalid_argf
+      "Pm4.set_reg: %d words from register 0x%x pass its range's end 0x%x" n reg
+      stop;
   packet op (Dword (reg - start) :: ws)
 
 let at = function
