@@ -18,7 +18,12 @@
 
    A caller sizes a job by two facts about the host: its cores, which bound
    the threads of every job, and its performance cores, those that run
-   compute-bound work at full speed. */
+   compute-bound work at full speed.
+
+   References. The host facts come from sched_getaffinity(2) and the
+   cpu.max files of the Linux kernel's cgroup v2
+   (Documentation/admin-guide/cgroup-v2.rst), from sysctl(3) on macOS, and
+   from GetActiveProcessorCount on Windows. */
 
 #ifndef NX_POOL_H
 #define NX_POOL_H
