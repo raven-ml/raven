@@ -9,6 +9,7 @@
 # forced: blessed nuts/schools/4 nuts/schools/64 under load 8.3 on 10 cores
 # forced: blessed ensemble/schools/64 nested/gaussian5/400 smc/hmc/gaussian5/400 smc/slice/gaussian5/400 under load 10.2 on 10 cores
 # forced: blessed nuts/schools/4 nuts/schools/64 hmc/schools/4 hmc/schools/64 hmc/schools/1024 ensemble/schools/64 nested/gaussian5/400 smc/hmc/gaussian5/400 smc/slice/gaussian5/400 under load 14.0 on 10 cores
+# forced: blessed nuts/schools/4 nuts/schools/64 posteriordb/eight_schools-eight_schools_noncentered posteriordb/arK-arK posteriordb/dogs-dogs posteriordb/low_dim_gauss_mix-low_dim_gauss_mix posteriordb/sblrc-blr posteriordb/gp_pois_regr-gp_pois_regr under load 6.2 on 10 cores
 
 diag/rhat/4x1000x10	alloc_words	exact	6629121
 diag/rhat/4x1000x10	wall_time	batch=1	n=20	4.384e-02	4.298e-02 4.319e-02 4.325e-02 4.327e-02 4.335e-02 4.357e-02 4.359e-02 4.366e-02 4.370e-02 4.374e-02 4.394e-02 4.409e-02 4.411e-02 4.431e-02 4.442e-02 4.453e-02 4.477e-02 4.494e-02 4.505e-02 4.690e-02
@@ -27,21 +28,21 @@ model/schools/16	wall_time	batch=32	n=20	2.065e-04	1.972e-04 1.986e-04 1.998e-04
 nested/gaussian5/400	alloc_words	exact	13597
 nested/gaussian5/400	wall_time	batch=1	n=20	1.890e-02	1.835e-02 1.839e-02 1.853e-02 1.854e-02 1.871e-02 1.877e-02 1.878e-02 1.882e-02 1.887e-02 1.888e-02 1.893e-02 1.902e-02 1.903e-02 1.909e-02 1.910e-02 1.921e-02 1.949e-02 1.953e-02 1.976e-02 1.989e-02
 nuts/schools/4	alloc_words	exact	22673
-nuts/schools/4	wall_time	batch=32	n=20	1.857e-04	1.743e-04 1.770e-04 1.788e-04 1.819e-04 1.820e-04 1.821e-04 1.826e-04 1.835e-04 1.840e-04 1.856e-04 1.858e-04 1.858e-04 1.872e-04 1.878e-04 1.887e-04 1.891e-04 1.899e-04 1.908e-04 1.912e-04 1.937e-04
+nuts/schools/4	wall_time	batch=32	n=20	1.616e-04	1.576e-04 1.581e-04 1.586e-04 1.589e-04 1.590e-04 1.594e-04 1.599e-04 1.601e-04 1.613e-04 1.614e-04 1.619e-04 1.628e-04 1.646e-04 1.653e-04 1.653e-04 1.655e-04 1.692e-04 1.706e-04 1.708e-04 1.715e-04
 nuts/schools/64	alloc_words	exact	22625
-nuts/schools/64	wall_time	batch=1	n=20	5.141e-03	4.611e-03 4.731e-03 4.871e-03 4.911e-03 4.997e-03 5.043e-03 5.084e-03 5.092e-03 5.116e-03 5.130e-03 5.151e-03 5.172e-03 5.186e-03 5.209e-03 5.328e-03 5.366e-03 5.480e-03 5.507e-03 5.540e-03 5.710e-03
-posteriordb/arK-arK	alloc_words	exact	7460
-posteriordb/arK-arK	wall_time	batch=256	n=20	2.969e-05	2.839e-05 2.881e-05 2.894e-05 2.895e-05 2.930e-05 2.931e-05 2.940e-05 2.944e-05 2.957e-05 2.965e-05 2.974e-05 2.990e-05 3.000e-05 3.035e-05 3.039e-05 3.082e-05 3.085e-05 3.085e-05 3.100e-05 3.268e-05
-posteriordb/dogs-dogs	alloc_words	exact	3521
-posteriordb/dogs-dogs	wall_time	batch=32	n=20	2.233e-04	2.146e-04 2.146e-04 2.162e-04 2.177e-04 2.177e-04 2.183e-04 2.185e-04 2.194e-04 2.218e-04 2.227e-04 2.239e-04 2.269e-04 2.294e-04 2.326e-04 2.345e-04 2.349e-04 2.406e-04 2.415e-04 2.426e-04 2.487e-04
-posteriordb/eight_schools-eight_schools_noncentered	alloc_words	exact	7564
-posteriordb/eight_schools-eight_schools_noncentered	wall_time	batch=256	n=20	2.385e-05	2.259e-05 2.268e-05 2.301e-05 2.301e-05 2.313e-05 2.343e-05 2.345e-05 2.373e-05 2.373e-05 2.383e-05 2.387e-05 2.401e-05 2.401e-05 2.406e-05 2.420e-05 2.425e-05 2.426e-05 2.489e-05 2.501e-05 2.561e-05
-posteriordb/gp_pois_regr-gp_pois_regr	alloc_words	exact	11018
-posteriordb/gp_pois_regr-gp_pois_regr	wall_time	batch=32	n=20	2.224e-04	1.994e-04 2.070e-04 2.087e-04 2.138e-04 2.176e-04 2.177e-04 2.189e-04 2.194e-04 2.204e-04 2.222e-04 2.226e-04 2.265e-04 2.278e-04 2.288e-04 2.297e-04 2.312e-04 2.317e-04 2.318e-04 2.417e-04 2.443e-04
-posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	alloc_words	exact	8883
-posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	wall_time	batch=32	n=20	2.213e-04	2.150e-04 2.151e-04 2.154e-04 2.163e-04 2.163e-04 2.188e-04 2.190e-04 2.201e-04 2.203e-04 2.212e-04 2.213e-04 2.218e-04 2.230e-04 2.237e-04 2.243e-04 2.246e-04 2.255e-04 2.277e-04 2.287e-04 2.367e-04
-posteriordb/sblrc-blr	alloc_words	exact	5622
-posteriordb/sblrc-blr	wall_time	batch=512	n=20	1.769e-05	1.710e-05 1.747e-05 1.749e-05 1.751e-05 1.753e-05 1.753e-05 1.755e-05 1.758e-05 1.761e-05 1.762e-05 1.776e-05 1.784e-05 1.785e-05 1.796e-05 1.796e-05 1.798e-05 1.862e-05 1.906e-05 1.920e-05 2.024e-05
+nuts/schools/64	wall_time	batch=2	n=20	3.436e-03	3.390e-03 3.394e-03 3.402e-03 3.402e-03 3.405e-03 3.409e-03 3.412e-03 3.413e-03 3.433e-03 3.433e-03 3.438e-03 3.446e-03 3.455e-03 3.471e-03 3.474e-03 3.474e-03 3.485e-03 3.492e-03 3.501e-03 3.513e-03
+posteriordb/arK-arK	alloc_words	exact	7326
+posteriordb/arK-arK	wall_time	batch=256	n=20	3.021e-05	2.994e-05 2.998e-05 3.002e-05 3.003e-05 3.007e-05 3.008e-05 3.008e-05 3.010e-05 3.017e-05 3.018e-05 3.024e-05 3.036e-05 3.038e-05 3.102e-05 3.107e-05 3.130e-05 3.149e-05 3.189e-05 3.193e-05 3.206e-05
+posteriordb/dogs-dogs	alloc_words	exact	3088
+posteriordb/dogs-dogs	wall_time	batch=64	n=20	1.068e-04	1.038e-04 1.038e-04 1.044e-04 1.055e-04 1.057e-04 1.059e-04 1.060e-04 1.061e-04 1.064e-04 1.066e-04 1.070e-04 1.071e-04 1.073e-04 1.077e-04 1.084e-04 1.088e-04 1.089e-04 1.093e-04 1.095e-04 1.112e-04
+posteriordb/eight_schools-eight_schools_noncentered	alloc_words	exact	7326
+posteriordb/eight_schools-eight_schools_noncentered	wall_time	batch=256	n=20	2.324e-05	2.280e-05 2.282e-05 2.286e-05 2.286e-05 2.287e-05 2.288e-05 2.296e-05 2.302e-05 2.319e-05 2.321e-05 2.327e-05 2.334e-05 2.336e-05 2.345e-05 2.367e-05 2.377e-05 2.386e-05 2.388e-05 2.396e-05 2.404e-05
+posteriordb/gp_pois_regr-gp_pois_regr	alloc_words	exact	7326
+posteriordb/gp_pois_regr-gp_pois_regr	wall_time	batch=128	n=20	6.467e-05	6.336e-05 6.349e-05 6.377e-05 6.398e-05 6.403e-05 6.415e-05 6.426e-05 6.454e-05 6.457e-05 6.466e-05 6.468e-05 6.478e-05 6.478e-05 6.486e-05 6.585e-05 6.613e-05 6.614e-05 6.672e-05 6.692e-05 6.699e-05
+posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	alloc_words	exact	7962
+posteriordb/low_dim_gauss_mix-low_dim_gauss_mix	wall_time	batch=32	n=20	2.123e-04	2.021e-04 2.051e-04 2.060e-04 2.065e-04 2.075e-04 2.084e-04 2.095e-04 2.104e-04 2.111e-04 2.111e-04 2.134e-04 2.148e-04 2.150e-04 2.163e-04 2.165e-04 2.173e-04 2.185e-04 2.197e-04 2.210e-04 2.269e-04
+posteriordb/sblrc-blr	alloc_words	exact	5084
+posteriordb/sblrc-blr	wall_time	batch=512	n=20	1.811e-05	1.755e-05 1.760e-05 1.765e-05 1.768e-05 1.769e-05 1.772e-05 1.781e-05 1.785e-05 1.789e-05 1.811e-05 1.812e-05 1.815e-05 1.816e-05 1.820e-05 1.830e-05 1.882e-05 2.187e-05 2.330e-05 2.515e-05 2.842e-05
 smc/hmc/gaussian5/400	alloc_words	exact	14339
 smc/hmc/gaussian5/400	wall_time	batch=8	n=20	6.977e-04	6.722e-04 6.747e-04 6.755e-04 6.800e-04 6.889e-04 6.913e-04 6.947e-04 6.948e-04 6.949e-04 6.964e-04 6.990e-04 6.990e-04 7.030e-04 7.081e-04 7.090e-04 7.109e-04 7.139e-04 7.141e-04 7.220e-04 7.246e-04
 smc/slice/gaussian5/400	alloc_words	exact	13205
