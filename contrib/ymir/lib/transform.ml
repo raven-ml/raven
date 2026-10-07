@@ -143,12 +143,12 @@ let nan_where bad v =
   Nx.where bad (Nx.full_like v Float.nan) v
 
 (* [domain mode ok data fail] is [ok] under [Cover], and under [Check] raises
-   [fail i d] where [ok] fails at a point of numbers. *)
+   [fail i d] where [ok] fails at a point of numbers, [d] from [data ()]. *)
 let domain mode ~numbers s ok data fail =
   match mode with
   | Cover -> Some (Nx.logical_and numbers ok)
   | Check ->
-      Nx.check s (Nx.logical_or ok (Nx.logical_not numbers)) data fail;
+      Nx.check s (Nx.logical_or ok (Nx.logical_not numbers)) (data ()) fail;
       None
 
 (* [floats t] is [t]'s values as ["a, b, c"]. *)
@@ -214,7 +214,7 @@ let distortion mode fn name unit ~forward ~jacobian ~inverse sense (x : plane) =
   let det = Distortion.det2 (jacobian at) in
   let unfolded = Nx.greater_s det 0. in
   let ok = match solved with None -> unfolded | Some s -> Nx.logical_and s unfolded in
-  let residual =
+  let residual () =
     match sense with
     | Forward -> Nx.zeros_like det
     | Inverse ->
@@ -224,7 +224,9 @@ let distortion mode fn name unit ~forward ~jacobian ~inverse sense (x : plane) =
   let mask =
     domain mode ~numbers:finite
       Nx.Ptree.(pair tensor tensor)
-      ok (det, residual) (fun i (det, r) ->
+      ok
+      (fun () -> (det, residual ()))
+      (fun i (det, r) ->
         Invalid_argument
           (match sense with
           | Forward ->
@@ -503,7 +505,9 @@ let deproject mode fn c (x : plane) =
     Projection.deproject c.code c.pv (component v 0) (component v 1)
   in
   let finite = numbers v in
-  let distance = degrees_of_radians (Nx.hypot (component v 0) (component v 1)) in
+  let distance () =
+    degrees_of_radians (Nx.hypot (component v 0) (component v 1))
+  in
   let ok =
     domain mode ~numbers:finite Nx.Ptree.tensor inside distance (fun i r ->
         Invalid_argument
@@ -513,7 +517,14 @@ let deproject mode fn c (x : plane) =
              fn (point i) (Nx.item [] r) (code_name c.code)))
   in
   let x, y, z = rotate m u in
-  let xyz = nan_where (Nx.logical_not finite) (stack [ x; y; z ]) in
+  let xyz = stack [ x; y; z ] in
+  (* A solve keeps its last finite estimate at NaN; every closed form passes
+     NaN through. *)
+  let xyz =
+    match c.code with
+    | Zpn | Air -> nan_where (Nx.logical_not finite) xyz
+    | _ -> xyz
+  in
   ({ Direction.frame = c.frame; xyz }, and_mask setup_ok ok)
 
 let project mode fn c (d : _ Direction.t) =
@@ -525,7 +536,7 @@ let project mode fn c (d : _ Direction.t) =
   let u = (Nx.div u1 n, Nx.div u2 n, Nx.div u3 n) in
   let (x, y), inside = Projection.project c.code c.pv u in
   let finite = numbers v in
-  let angle =
+  let angle () =
     (* The angle from CRVAL's direction, for the message. *)
     let lon, lat = reference c in
     let sl, cl = sincosd lon and sb, cb = sincosd lat in
@@ -534,11 +545,11 @@ let project mode fn c (d : _ Direction.t) =
     let dot = Nx.add (Nx.add (Nx.mul a1 rx) (Nx.mul a2 ry)) (Nx.mul a3 sb) in
     degrees_of_radians (Nx.acos (Nx.clamp ~min:(-1.) ~max:1. (Nx.div dot n)))
   in
-  let lon, lat = reference c in
   let ok =
     domain mode ~numbers:finite
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      inside (angle, (lon, lat))
+      inside
+      (fun () -> (angle (), reference c))
       (fun i (r, (lon, lat)) ->
         Invalid_argument
           (strf
@@ -547,7 +558,7 @@ let project mode fn c (d : _ Direction.t) =
              fn (point i) (Nx.item [] r) (code_name c.code) (Nx.item [] lon)
              (Nx.item [] lat)))
   in
-  ( Quantity.v Unit.radian (nan_where (Nx.logical_not finite) (stack [ x; y ])),
+  ( Quantity.v Unit.radian (stack [ x; y ]),
     and_mask setup_ok ok )
 
 (* Application *)
