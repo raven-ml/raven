@@ -18,13 +18,15 @@
     timeline. It enqueues its work on that stream, and nothing else: waiting for
     earlier work and signalling [v] are the driver's. It stops at the first call
     that fails and returns its [CUresult], or returns [0] ([CUDA_SUCCESS]) once
-    every call succeeded.
+    every call succeeded. A call can fail for earlier work on the device, which
+    CUDA reports at a later call; the driver loses the device on any failure,
+    returned here or met by the work after the fill returned.
 
     {b References.}
-    - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}: Stream
-      Management ([CUstream]), Execution Control ([cuLaunchKernel],
-      [cuLaunchHostFunc], [CUhostFn]) and Driver Entry Point Access (versioned
-      function names). *)
+    - {{:https://docs.nvidia.com/cuda/cuda-driver-api/}CUDA Driver API}:
+      Execution Control ([cuLaunchKernel], [cuLaunchHostFunc]), Memory
+      Management ([cuMemcpyAsync]) and Data types used by CUDA driver
+      ([CUstream], [CUresult]). *)
 
 type t = {
   symbol : string -> nativeint option;
