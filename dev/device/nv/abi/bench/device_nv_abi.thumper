@@ -49,13 +49,14 @@ qmd/launch/blackwell	wall_time	batch=16384	n=20	4.901e-07	4.862e-07 4.865e-07 4.
 # forced: blessed qmd/launch/ada qmd/launch/blackwell cubin/of-string/nv-128-kernels under load 6.9 on 10 cores
 # forced: blessed qmd/launch/ada qmd/launch/blackwell launch/make/ada cubin/of-string/nv-128-kernels cubin/kernel/last-of-128 under load 9.9 on 10 cores
 # forced: blessed qmd/launch/ada qmd/launch/blackwell under load 16.3 on 10 cores
+# forced: blessed cubin/of-string/nv-128-kernels cubin/elf-of-string/nv-128-kernels under load 8.3 on 10 cores
 
-cubin/elf-of-string/nv-128-kernels	alloc_words	exact	31432
-cubin/elf-of-string/nv-128-kernels	wall_time	batch=32	n=20	1.584e-04	1.532e-04 1.534e-04 1.539e-04 1.541e-04 1.549e-04 1.564e-04 1.573e-04 1.580e-04 1.583e-04 1.584e-04 1.584e-04 1.585e-04 1.595e-04 1.597e-04 1.599e-04 1.603e-04 1.607e-04 1.610e-04 1.623e-04 1.659e-04
+cubin/elf-of-string/nv-128-kernels	alloc_words	exact	31840
+cubin/elf-of-string/nv-128-kernels	wall_time	batch=64	n=20	1.582e-04	1.549e-04 1.550e-04 1.550e-04 1.558e-04 1.562e-04 1.565e-04 1.572e-04 1.573e-04 1.575e-04 1.578e-04 1.587e-04 1.588e-04 1.594e-04 1.598e-04 1.601e-04 1.603e-04 1.603e-04 1.609e-04 1.635e-04 1.783e-04
 cubin/kernel/last-of-128	alloc_words	exact	0
 cubin/kernel/last-of-128	wall_time	batch=262144	n=20	2.154e-08	2.137e-08 2.139e-08 2.140e-08 2.142e-08 2.145e-08 2.151e-08 2.152e-08 2.152e-08 2.153e-08 2.154e-08 2.155e-08 2.156e-08 2.156e-08 2.158e-08 2.159e-08 2.160e-08 2.161e-08 2.164e-08 2.184e-08 2.207e-08
-cubin/of-string/nv-128-kernels	alloc_words	exact	55147
-cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.456e-04	2.395e-04 2.417e-04 2.423e-04 2.423e-04 2.428e-04 2.444e-04 2.445e-04 2.447e-04 2.452e-04 2.456e-04 2.456e-04 2.465e-04 2.468e-04 2.479e-04 2.482e-04 2.491e-04 2.497e-04 2.513e-04 2.513e-04 2.555e-04
+cubin/of-string/nv-128-kernels	alloc_words	exact	57627
+cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	2.522e-04	2.449e-04 2.455e-04 2.467e-04 2.477e-04 2.480e-04 2.498e-04 2.504e-04 2.515e-04 2.515e-04 2.521e-04 2.522e-04 2.532e-04 2.535e-04 2.562e-04 2.565e-04 2.592e-04 2.693e-04 2.888e-04 5.254e-04 8.660e-04
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.713e-06	1.672e-06 1.674e-06 1.679e-06 1.690e-06 1.695e-06 1.701e-06 1.703e-06 1.708e-06 1.709e-06 1.712e-06 1.713e-06 1.713e-06 1.718e-06 1.719e-06 1.720e-06 1.724e-06 1.729e-06 1.745e-06 1.747e-06 1.751e-06
 gpfifo/entry-encode	alloc_words	exact	30
