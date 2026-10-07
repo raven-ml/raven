@@ -1101,16 +1101,16 @@ let alloc_commands =
 
 let () =
   exit
-  @@ run "page_table"
+  @@ run "device_pci Page_table"
        [
-         group "create"
+         group ~timeout:patience "create"
            [
              test "names its space, base, span and root" test_create;
              test_main_pool;
              test_create_refusals;
              test_base_refusals;
            ];
-         group "map"
+         group ~timeout:patience "map"
            [
              test_map;
              test "1 GiB pages, and 2 MiB ones where memory is aligned to 2 MiB"
@@ -1122,7 +1122,7 @@ let () =
              test_map_refusals;
              test_tables_path;
            ];
-         group "table memory"
+         group ~timeout:patience "table memory"
            [
              test "a full tables' pool answers None and keeps what it had"
                test_out_of_tables;
@@ -1135,13 +1135,13 @@ let () =
              test "booting takes tables and memory from the boot pool"
                test_booting;
            ];
-         group "real formats" [ test_real_formats ];
-         group "physical memory"
+         group ~timeout:patience "real formats" [ test_real_formats ];
+         group ~timeout:patience "physical memory"
            [
              stateful "blocks stay apart, zeroed and within the fit bound"
                ~count:300 palloc_commands;
            ];
-         group "alloc"
+         group ~timeout:patience "alloc"
            [
              test_contiguous;
              test "large blocks map as large pages" test_blocks;

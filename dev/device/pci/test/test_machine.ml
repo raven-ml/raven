@@ -85,7 +85,8 @@ let not_addresses =
       raises_match (Exn.invalid_arg ~substring:"") (fun () ->
           Machine.compare_address ok s))
 
-let addresses = group "bus addresses" [ spelled; bus_order; not_addresses ]
+let addresses =
+  group ~timeout:patience "bus addresses" [ spelled; bus_order; not_addresses ]
 
 (* Machines *)
 
@@ -115,7 +116,7 @@ let test_failed () =
   equal ~msg:"this machine" (option string) None (Machine.failed Machine.this)
 
 let machines =
-  group "machines"
+  group ~timeout:patience "machines"
     [
       test "this machine has no name and has not failed" test_this;
       test "another machine is named as its transport names it" test_named;
@@ -188,7 +189,7 @@ let test_sysfs () =
   equal (list id) want (Machine.functions Machine.this)
 
 let functions =
-  group "functions"
+  group ~timeout:patience "functions"
     [
       listed_in_bus_order;
       test "listing a machine's functions asks it nothing else"
@@ -224,7 +225,7 @@ let test_reserve_this () =
       Machine.reserve Machine.this ~base page)
 
 let reservations =
-  group "reservations"
+  group ~timeout:patience "reservations"
     [
       test "another machine's reservation is its transport's" test_reserve;
       test "this machine reserves a range once and refuses one in use"
@@ -295,7 +296,7 @@ let test_fails_during () =
       Machine.wait f.machine ~ms:10_000 cond)
 
 let waits =
-  group "waits"
+  group ~timeout:patience "waits"
     [
       test "a wait whose condition holds at once is true after one call"
         test_at_once;
@@ -313,5 +314,5 @@ let waits =
 
 let () =
   exit
-  @@ run "device_pci machine"
+  @@ run "device_pci Machine"
        [ addresses; machines; functions; reservations; waits ]

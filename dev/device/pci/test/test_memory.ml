@@ -934,7 +934,7 @@ let () =
   exit
   @@ run "device_pci Memory"
        [
-         group "placement"
+         group ~timeout:patience "placement"
            [
              test_small_bar;
              test "a BAR the function lacks is refused" test_no_bar;
@@ -943,7 +943,7 @@ let () =
              test_sizes;
              test_uncached;
            ];
-         group "exhaustion"
+         group ~timeout:patience "exhaustion"
            [
              test "no room is None" test_out_of_memory;
              test "a small BAR's blocks stay inside it" test_small_bar_fills;
@@ -952,13 +952,13 @@ let () =
                "system memory refused raises, having given back its addresses"
                test_system_refused;
            ];
-         group "freeing"
+         group ~timeout:patience "freeing"
            [
              test_free;
              test "memory not allocated by the GPU, or freed, is refused"
                test_free_refused;
            ];
-         group "borrowing"
+         group ~timeout:patience "borrowing"
            [
              test "map_host maps and pins, unmap unpins" test_map_host;
              test_map_host_refused;
@@ -970,7 +970,7 @@ let () =
              test "memory not borrowed by the GPU, or unmapped, is refused"
                test_unmap_refused;
            ];
-         group "peers"
+         group ~timeout:patience "peers"
            [
              test_peer;
              test "a link maps through the owner's peer function" test_peer_link;
@@ -981,7 +981,7 @@ let () =
                 refused"
                test_peer_not_owned;
            ];
-         group "after the release"
+         group ~timeout:patience "after the release"
            [
              test "a reopened GPU is not written by its old instance"
                test_reopened;

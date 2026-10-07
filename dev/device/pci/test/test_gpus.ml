@@ -235,7 +235,7 @@ let negative =
     ]
 
 let numbering =
-  group "numbering"
+  group ~timeout:patience "numbering"
     [
       prop "a vendor's GPUs are the functions it recognizes, in bus order"
         (Gen.with_pp pp_ids (Gen.subsequence pool))
@@ -322,7 +322,7 @@ let test_kernel_elsewhere () =
   ignore (unopened (kernel g m 0))
 
 let opening =
-  group "opening over PCI"
+  group ~timeout:patience "opening over PCI"
     [
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
@@ -381,7 +381,7 @@ let test_twice (_, first, _, again) =
   Gpus.release other
 
 let giving_back =
-  group "giving back"
+  group ~timeout:patience "giving back"
     [
       test "release gives the function back and the GPU opens again"
         test_release;
@@ -428,7 +428,7 @@ let test_reset_take () =
   ignore (unopened (reset g m 0))
 
 let resets =
-  group "resets"
+  group ~timeout:patience "resets"
     [
       test "a reset takes the function, resets it and releases it" test_reset;
       test "a reset of a GPU held is refused" test_reset_held;
@@ -508,7 +508,7 @@ let test_pci_fixes () =
   ignore (unopened (kernel g Machine.this i))
 
 let this_machine =
-  group "this machine"
+  group ~timeout:patience "this machine"
     [
       test "this machine without the vendor's GPUs has none to open or change"
         test_this_none;
@@ -738,7 +738,7 @@ let commands index =
   ]
 
 let serialized =
-  group "opens and changes"
+  group ~timeout:patience "opens and changes"
     [
       stateful "opens, gives back and resets behave as the model" ~count:300
         ~steps:30
@@ -756,5 +756,5 @@ let serialized =
 
 let () =
   exit
-  @@ run "device_pci gpus"
+  @@ run "device_pci Gpus"
        [ numbering; opening; giving_back; resets; this_machine; serialized ]

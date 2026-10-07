@@ -230,11 +230,15 @@ let test_whole () =
 
 let () =
   exit
-  @@ run "space"
+  @@ run "device_pci Space"
        [
-         stateful "allocations stay apart and within the fit bound" ~count:300
-           commands;
-         stateful "two domains allocate at once" ~domains:2 ~count:50 commands;
-         test "creating a space allocates nothing but its handle" test_lazy;
-         test "freeing every range makes the space whole" test_whole;
+         group ~timeout:patience "ranges"
+           [
+             stateful "allocations stay apart and within the fit bound"
+               ~count:300 commands;
+             stateful "two domains allocate at once" ~domains:2 ~count:50
+               commands;
+             test "creating a space allocates nothing but its handle" test_lazy;
+             test "freeing every range makes the space whole" test_whole;
+           ];
        ]

@@ -7,6 +7,7 @@
 
 open Windtrap
 open Device_pci
+open Device_pci_support
 
 let image = "raven firmware image\n"
 let pinned = "ce1c62cec35ab52e7ceef75a48b8cf0743b671f581f066288ec274636805997a"
@@ -107,8 +108,8 @@ let () =
   exit
   @@ run "device_pci Firmware"
        [
-         test_digest;
-         group "find"
+         group ~timeout:patience "digest" [ test_digest ];
+         group ~timeout:patience "find"
            [
              test "the first directory holding the image gives it" test_first;
              test "a file with another digest is skipped" test_other_digest;

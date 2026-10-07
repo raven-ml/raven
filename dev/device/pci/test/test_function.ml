@@ -388,7 +388,7 @@ let test_released () =
     fake.calls
 
 let taking =
-  group "taking"
+  group ~timeout:patience "taking"
     [
       test "a take asks the machine for its bus, and keeps its refusal"
         test_take_asks;
@@ -471,7 +471,7 @@ let test_reset_silent () =
     (fun () -> Function.reset f)
 
 let uses =
-  group "uses"
+  group ~timeout:patience "uses"
     [
       test "a function's windows, BARs and runs are its machine's"
         test_machine_values;
@@ -496,7 +496,7 @@ let refused name ?page ?addressing use =
 let va_base = 0x7f00_0000_0000
 
 let misuse_refused =
-  group "misuse is refused before the machine is asked"
+  group ~timeout:patience "misuse is refused before the machine is asked"
     [
       refused "a BAR index below zero" (fun f -> Function.bar f (-1));
       refused "the least BAR index" (fun f -> Function.bar f min_int);
@@ -863,7 +863,7 @@ let parallel =
      ]
     @ dma_cmds)
 
-let model = group "against a model" [ sequences; parallel ]
+let model = group ~timeout:patience "against a model" [ sequences; parallel ]
 
 (* This machine *)
 
@@ -980,7 +980,7 @@ let test_vfio () =
   List.iter (fun (w, _) -> Function.free_dma f w) allocs
 
 let this_machine =
-  group "this machine"
+  group ~timeout:patience "this machine"
     [
       test "this machine without /sys/bus/pci refuses a take, naming the bus"
         test_refused_here;
@@ -993,5 +993,5 @@ let this_machine =
 
 let () =
   exit
-  @@ run "device_pci function"
+  @@ run "device_pci Function"
        [ taking; uses; misuse_refused; model; this_machine ]
