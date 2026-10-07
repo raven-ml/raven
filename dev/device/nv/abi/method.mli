@@ -74,9 +74,9 @@ val local_memory : 'v -> per_tpc:'v -> 'v Packet.t
 
 val invalidate_caches : Packet.scope -> 'v Packet.t
 (** [invalidate_caches s] invalidates the compute engine's caches that would
-    hide writes of scope [s] from launches scheduled after it: at [Agent], its
-    data and constant caches; at [System], its instruction cache too. It does
-    not wait for the engine's work to complete. *)
+    hide writes of scope [s] from launches scheduled after it: at [Agent], at
+    least its data and constant caches; at [System], its instruction cache too.
+    It does not wait for the engine's work to complete. *)
 
 val schedule : 'v -> 'v Packet.t
 (** [schedule addr] schedules the launch descriptor at [addr], 256-byte aligned
