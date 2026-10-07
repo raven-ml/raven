@@ -906,18 +906,7 @@ type pool = {
 }
 
 let pool lo hi = { lo; hi; live = []; freed = [] }
-
-let largest_gap p =
-  let sorted = List.sort compare p.live in
-  let at, gap =
-    List.fold_left
-      (fun (at, gap) (a, n) -> (a + n, max gap (a - at)))
-      (p.lo, 0) sorted
-  in
-  max gap (p.hi - at)
-
-(* [fits ~gap n a] is [2 * (n + a) <= gap], without overflow. *)
-let fits ~gap n a = n <= gap / 2 && a <= (gap / 2) - n
+let largest_gap p = largest_gap p.lo p.hi p.live
 
 let apart ~msg blocks (a, n) =
   List.iter
@@ -973,8 +962,6 @@ let create_tables kind =
   in
   made_root := Page_table.root t;
   (t, g)
-
-let is_pow2 a = a > 0 && a land (a - 1) = 0
 
 let palloc_judge align zero boot n m got =
   let p = if Option.value boot ~default:m.booting then m.boot else m.main in
@@ -1130,10 +1117,6 @@ let create_alloc_tables () =
   tables ~tables:Pool ~memory:alloc_memory ~boot:mib
     ~pages:[ (page, page) ]
     ~length:alloc_space ()
-
-let pow2_floor n =
-  let rec go p = if p > n / 2 then p else go (2 * p) in
-  go 1
 
 (* An allocation takes fresh addresses and fresh blocks of the main pool, one
    zeroed block if contiguous. [None] is accepted where the space or the pool

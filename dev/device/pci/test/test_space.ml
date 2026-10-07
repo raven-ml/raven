@@ -22,27 +22,9 @@ let create (base, n) =
   if base < 0 || n < 0 || n > max_int - base then invalid_arg "Space.create";
   { base; length = n; live = []; freed = [] }
 
-let is_pow2 a = a > 0 && a land (a - 1) = 0
-
-(* The largest power of two not above [n >= 1]. *)
-let pow2_floor n =
-  let rec go p = if p > n / 2 then p else go (2 * p) in
-  go 1
-
 (* The alignment [alloc] promises: the size's and [align]'s. *)
 let alignment ?(align = 4096) n = max align (pow2_floor n)
-
-let largest_gap m =
-  let sorted = List.sort compare m.live in
-  let at, gap =
-    List.fold_left
-      (fun (at, gap) (a, n) -> (a + n, max gap (a - at)))
-      (m.base, 0) sorted
-  in
-  max gap (m.base + m.length - at)
-
-(* [fits ~gap n a] is [2 * (n + a) <= gap], without overflow. *)
-let fits ~gap n a = n <= gap / 2 && a <= (gap / 2) - n
+let largest_gap m = largest_gap m.base (m.base + m.length) m.live
 
 (* An allocation is aligned, inside the space and apart from every live range.
    [None] is accepted only where the fit bound does not promise a range: no free

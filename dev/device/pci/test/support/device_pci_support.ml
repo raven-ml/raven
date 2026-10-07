@@ -11,10 +11,29 @@ let kib = 1024
 let mib = 1 lsl 20
 let gib = 1 lsl 30
 let round_up n a = (n + a - 1) / a * a
+let is_pow2 n = n > 0 && n land (n - 1) = 0
+
+let pow2_floor n =
+  let rec go p = if p > n / 2 then p else go (2 * p) in
+  go 1
+
 let pp_hex ppf x = Format.fprintf ppf "0x%x" x
 
 let hex =
   Testable.with_compare Int.compare (Testable.make ~pp:pp_hex ~equal:Int.equal)
+
+let free_base = 0x6f00_0000_0000
+
+let largest_gap lo hi live =
+  let sorted = List.sort compare live in
+  let at, gap =
+    List.fold_left
+      (fun (at, gap) (a, n) -> (a + n, max gap (a - at)))
+      (lo, 0) sorted
+  in
+  max gap (hi - at)
+
+let fits ~gap n a = n <= gap / 2 && a <= (gap / 2) - n
 
 let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 

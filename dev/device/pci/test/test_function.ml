@@ -900,10 +900,6 @@ let model = group ~timeout:patience "against a model" [ sequences; parallel ]
 
 (* This machine *)
 
-(* Taking a GPU of this machine is a hardware opt-in: such a test runs only when
-   DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds while
-   it runs, so that it never takes a device another user drives. *)
-
 let sysfs bus file =
   Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file
 
@@ -1417,13 +1413,10 @@ let test_counted_pins () =
     (pinned - (page / 1024))
     (locked_kib ())
 
-(* A range of this process's addresses far from what the runtime maps. *)
-let reserved_base = 0x6d00_0000_0000
-
 let test_contiguous () =
   with_fixture @@ fun f ->
-  granted (Machine.reserve (Function.machine f) ~base:reserved_base (8 * mib));
-  let va = reserved_base + (2 * mib) in
+  granted (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+  let va = free_base + (2 * mib) in
   let w, runs =
     granted (Function.alloc_dma ~contiguous:true ~va f (300 * kib))
   in

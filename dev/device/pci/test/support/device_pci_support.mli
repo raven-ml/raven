@@ -15,11 +15,28 @@ val round_up : int -> int -> int
 (** [round_up n a] is the least multiple of [a] at or above [n], for [n >= 0]
     and [a > 0]. *)
 
+val is_pow2 : int -> bool
+(** [is_pow2 n] is [true] iff [n] is a positive power of two. *)
+
+val pow2_floor : int -> int
+(** [pow2_floor n] is the largest power of two not above [n], for [n >= 1]. *)
+
 val pp_hex : Format.formatter -> int -> unit
 (** [pp_hex] prints an integer in hexadecimal, as [0x1f]. *)
 
 val hex : int Windtrap.Testable.t
 (** [hex] is integers printed in hexadecimal and ordered as numbers. *)
+
+val free_base : int
+(** [free_base] starts a range of this process's addresses far from what the
+    runtime maps, which a test may reserve. *)
+
+val largest_gap : int -> int -> (int * int) list -> int
+(** [largest_gap lo hi live] is the length of the longest run of addresses from
+    [lo] up to [hi] that no [(address, length)] range of [live] covers. *)
+
+val fits : gap:int -> int -> int -> bool
+(** [fits ~gap n a] is [2 * (n + a) <= gap], without overflow. *)
 
 val on_linux : bool
 (** [on_linux] is [true] iff this machine has [/sys/bus/pci]. *)
@@ -38,9 +55,9 @@ val now_ns : unit -> int
 
 (** {1:host This machine's GPUs}
 
-    A test that takes a function of this machine takes only GPUs, and only while
-    it holds the machine's GPU lock, so that it never holds another user's
-    device. *)
+    Taking a GPU of this machine is a hardware opt-in. A test that takes a
+    function of this machine takes only GPUs, and only while it holds the
+    machine's GPU lock, so that it never holds another user's device. *)
 
 val host_gpus : unit -> Device_pci.Machine.id list
 (** [host_gpus ()] is this machine's display controllers, class [0x03]. *)

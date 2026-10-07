@@ -233,9 +233,6 @@ let test_reserve () =
   equal ~msg:"refused" reserved (Error "far:7000: the range is in use")
     (Machine.reserve f.machine ~base:0 4096)
 
-(* A range of this process's addresses far from what the runtime maps. *)
-let free_base = 0x6f00_0000_0000
-
 let test_reserve_this () =
   let n = 4 lsl 20 in
   let reserve () = Machine.reserve Machine.this ~base:free_base n in

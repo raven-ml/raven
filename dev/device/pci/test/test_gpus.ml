@@ -448,10 +448,6 @@ let resets =
 
 (* This machine *)
 
-(* Taking a GPU of this machine is a hardware opt-in: such a test runs only when
-   DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds while
-   it runs, so that it never takes a device another user drives. *)
-
 let test_this_none () =
   let g = Gpus.make ~memory_bar:0 (fun _ -> false) in
   let this = Machine.this in
