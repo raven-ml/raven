@@ -1,0 +1,13 @@
+(library
+ (name device_amd_format)
+ (libraries device_elf)
+ (modules_without_implementation
+  aql
+  code_object
+  gpu
+  packet
+  pm4
+  register
+  scratch
+  sdma
+  thread_trace))

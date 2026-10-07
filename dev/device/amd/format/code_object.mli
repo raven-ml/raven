@@ -12,21 +12,42 @@
     dispatch reads: where the kernel's code starts, the memory it takes, and the
     registers it sets up for its waves.
 
+    The image is {!size} bytes: the image of {!elf} ({!Device_elf}), zeros up to
+    {!size}, then each of {!patches} written over them, in order. It starts at
+    the object's lowest section the image holds ([(elf co).address]), so the
+    headers and tables a linker puts before its code are not loaded. A loader
+    writes it into its destination. Into [bytes], for instance:
+    {[
+    let image co =
+      let o = Code_object.elf co in
+      let b = Bytes.make (Code_object.size co) '\000' in
+      let put (s : Device_elf.section) =
+        match s.offset with
+        | Some off -> Bytes.blit_string o.file s.at b off s.length
+        | None -> ()
+      in
+      Iarray.iter put o.sections;
+      let patch (off, p) = Bytes.blit_string p 0 b off (String.length p) in
+      List.iter patch (Code_object.patches co);
+      b
+    ]}
+
     Offsets are offsets in the image, in bytes. *)
 
 type t
-(** The type for code objects, relocated. *)
+(** The type for code objects: an ELF object for AMD GPUs, and what its
+    relocations write over its image. *)
 
 val of_string : string -> (t, string) result
-(** [of_string obj] is the code object [obj], with its relocations applied as a
-    loader applies them: each [R_AMDGPU_REL64] word holds its target's offset
-    from itself, so that the image runs at any address.
+(** [of_string obj] is the code object [obj].
 
     The result is [Error msg] if [obj] is not an ELF object for AMD GPUs
     ({!Device_elf.of_string}), if it is compiled for no processor LLVM names, or
     for a generic one in a code object before version 6 or of generic version
-    [0], or if one of its relocations is of another kind or uses a symbol whose
-    bytes the image does not hold. [msg] says which. *)
+    [0], if one of its relocations is of another kind than [R_AMDGPU_REL64],
+    uses a symbol whose bytes the image does not hold, or patches bytes past the
+    image's end, or if its image is longer than [2{^48}] bytes, which no GPU's
+    virtual addresses reach. [msg] says which. *)
 
 val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
@@ -37,9 +58,19 @@ val runs_on : t -> string -> bool
     [co]: [co] is compiled for [gpu], or for a generic processor that LLVM lists
     [gpu] under. *)
 
-val image : t -> string
-(** [image co] is the bytes a device loads, padded with zeros to whole 32-bit
-    words. *)
+val size : t -> int
+(** [size co] is the length of [co]'s image, in bytes: [(elf co).size] rounded
+    up to whole 32-bit words. *)
+
+val elf : t -> Device_elf.t
+(** [elf co] is the object [co] was read from, which lays out its image. *)
+
+val patches : t -> (int * string) list
+(** [patches co] is what [co]'s relocations write over its image, in the order
+    of the object's relocations: each [(off, p)] puts the bytes [p] at offset
+    [off], and [off + String.length p <= size co]. Each [p] is the 8
+    little-endian bytes of an [R_AMDGPU_REL64] word, its target's offset from
+    the word itself, so the patches hold wherever the image is loaded. *)
 
 val kernels : t -> string list
 (** [kernels co] is the names of [co]'s kernels, in increasing order: each
