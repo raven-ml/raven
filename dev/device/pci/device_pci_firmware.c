@@ -115,14 +115,11 @@ static void *load_library(const char *const *names) {
    [None] if the library is missing; [Failure] if the data is corrupt or
    decompresses past MAX_IMAGE. */
 
-/* The largest image accepted. Firmware images are under 64 MiB; the bound
-   keeps a corrupt header from making the stub allocate terabytes. */
+/* The largest image accepted; firmware images are under 64 MiB. */
 #define MAX_IMAGE (1ULL << 30)
 
 /* lzma_ret values (lzma/base.h). */
-#define LZMA_OK 0
-#define LZMA_STREAM_END 1
-#define LZMA_BUF_ERROR 10
+enum { LZMA_OK = 0, LZMA_STREAM_END = 1, LZMA_BUF_ERROR = 10 };
 
 typedef unsigned long long (*zstd_size_t)(const void *, size_t);
 typedef size_t (*zstd_decompress_t)(void *, size_t, const void *, size_t);
@@ -141,8 +138,7 @@ value caml_device_pci_unzstd(value s) {
   zstd_decompress_t dec = (zstd_decompress_t)dlsym(h, "ZSTD_decompress");
   zstd_is_error_t is_error = (zstd_is_error_t)dlsym(h, "ZSTD_isError");
   if (!size || !dec || !is_error) CAMLreturn(Val_none);
-  unsigned long long n =
-      size(String_val(s), caml_string_length(s));
+  unsigned long long n = size(String_val(s), caml_string_length(s));
   if (n > MAX_IMAGE)
     caml_failwith("a zstd frame whose size is unknown or over 1 GiB");
   out = caml_alloc_string(n);
@@ -276,8 +272,6 @@ value caml_device_pci_download(value url) {
     setopt(c, CURLOPT_WRITEFUNCTION, sink_write);
     setopt(c, CURLOPT_WRITEDATA, &s);
     setopt(c, CURLOPT_FAILONERROR, 1L);
-    /* Give up on a connection after 30 s, and on a transfer slower than one
-       byte a second for 60 s. */
     setopt(c, CURLOPT_CONNECTTIMEOUT, 30L);
     setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
     setopt(c, CURLOPT_LOW_SPEED_TIME, 60L);
