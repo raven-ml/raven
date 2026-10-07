@@ -795,7 +795,7 @@ let ragged_of_texts (src : bigbytes) (spans : (int * int) list) =
 
 (* The heap spans of a heap column's [n] descriptors, checked, whose stored
    bytes together fit the heap. *)
-let descriptors t c (cells : bigbytes) n =
+let descriptors ~first_row t c (cells : bigbytes) n =
   let bt = match t.heap with Some b -> b | None -> assert false in
   let bc =
     match c.field with
@@ -811,7 +811,7 @@ let descriptors t c (cells : bigbytes) n =
   in
   let budget = ref bt.heap_size in
   Array.init n (fun r ->
-      let count, off = Bintable.descriptor rb bc cells r in
+      let count, off = Bintable.descriptor ~row:(first_row + r) rb bc cells r in
       let bytes =
         match bc.form.elt with
         | X -> (count + 7) / 8
@@ -836,8 +836,8 @@ let heap_bytes t spans =
   out
 
 (* A heap column's stored elements, flat, with the row offsets. *)
-let heap_stored t c cells n : Nx.packed * Nx.int64_t =
-  let spans = descriptors t c cells n in
+let heap_stored ~first_row t c cells n : Nx.packed * Nx.int64_t =
+  let spans = descriptors ~first_row t c cells n in
   let total = Array.fold_left (fun acc (k, _, _) -> acc + k) 0 spans in
   let offsets = Array.make (n + 1) 0L in
   Array.iteri
@@ -904,10 +904,11 @@ let heap_stored t c cells n : Nx.packed * Nx.int64_t =
   let (Nx.P s) = s in
   (Nx.P (Nx.reshape [| total |] s), Nx.create Nx.int64 [| n + 1 |] offsets)
 
-let text_spans t c (cells : bigbytes) n : bigbytes * (int * int) list =
+let text_spans ~first_row t c (cells : bigbytes) n : bigbytes * (int * int) list
+    =
   match (c.field, c.column.layout) with
   | Bin { form = { heap = P | Q; _ }; _ }, _ ->
-      let spans = descriptors t c cells n in
+      let spans = descriptors ~first_row t c cells n in
       let raw = heap_bytes t spans in
       let pos = ref 0 in
       let l =
@@ -1035,7 +1036,7 @@ let validity ?rows name hdu =
       | Array _ -> validity_of (snd (array_read t c r))
       | Lists ->
           let cells = List.hd (cells t [ c ] r) in
-          let s, _ = heap_stored t c cells (snd r - fst r) in
+          let s, _ = heap_stored ~first_row:(fst r) t c cells (snd r - fst r) in
           validity_of (undefined c s))
 
 let ragged (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
@@ -1050,11 +1051,11 @@ let ragged (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
       | Array _ -> fail_at c.place "an array column; read it with Table.raw"
       | Text _ ->
           Image.check_holds c.place UInt8 (S.of_dtype dtype);
-          let src, spans = text_spans t c cells n in
+          let src, spans = text_spans ~first_row:(fst r) t c cells n in
           Nx_ragged.map (Nx.cast dtype) (ragged_of_texts src spans)
       | Lists ->
           Image.check_holds c.place c.column.element (S.of_dtype dtype);
-          let s, offsets = heap_stored t c cells n in
+          let s, offsets = heap_stored ~first_row:(fst r) t c cells n in
           let (Nx.P e) = element c s in
           Nx_ragged.v ~offsets (Nx.cast dtype e))
 
@@ -1068,7 +1069,10 @@ let unit ~scope name hdu =
           match Fits_unit.parse ~scope s with
           | Ok u -> Some u
           | Error e ->
-              fail_at (Err.sub t.place (strf "card TUNIT%d" c.number)) "%s" e))
+              let h = Hdu.header hdu and k = strf "TUNIT%d" c.number in
+              fail_at
+                (Header.card_place h (List.hd (Header.cards h k)) k)
+                "%s" e))
 
 (* A column read whole: its layout's constructor names its data. *)
 type data =
@@ -1092,7 +1096,7 @@ let read ?rows hdu =
           let data =
             match c.column.layout with
             | Text _ ->
-                let src, spans = text_spans t c cells n in
+                let src, spans = text_spans ~first_row:(fst r) t c cells n in
                 Text (ragged_of_texts src spans)
             | Array shape -> (
                 let s, u =
@@ -1111,7 +1115,7 @@ let read ?rows hdu =
                   match to_element c s with
                   | Nx.P e -> Array { values = Nx.P e; validity })
             | Lists ->
-                let s, offsets = heap_stored t c cells n in
+                let s, offsets = heap_stored ~first_row:(fst r) t c cells n in
                 let u = undefined c s in
                 let validity = validity_of u in
                 if c.column.scaled then

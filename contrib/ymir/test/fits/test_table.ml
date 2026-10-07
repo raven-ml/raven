@@ -285,6 +285,38 @@ let ascii_fields () =
     (Ok [| 0; 0; 9 |])
     (Result.map Nx.to_array (T.raw Nx.int16 "n" hdu))
 
+let descriptor_error () =
+  (* The RFC's error format: places first, then what. *)
+  let h =
+    H.(
+      empty
+      |> set V.string "XTENSION" "BINTABLE"
+      |> set V.int "BITPIX" 8 |> set V.int "NAXIS" 2 |> set V.int "NAXIS1" 8
+      |> set V.int "NAXIS2" 2 |> set V.int "PCOUNT" 4 |> set V.int "GCOUNT" 1
+      |> set V.int "TFIELDS" 1
+      |> set V.string "TTYPE1" "SPECTRUM"
+      |> set V.string "TFORM1" "1PI"
+      |> set V.string "EXTNAME" "EVENTS")
+  in
+  let bytes =
+    [| 0; 0; 0; 1; 0; 0; 0; 0; 0; 0; 0; 5; 0; 0; 0; 0; 1; 2; 3; 4 |]
+  in
+  let hdu = Fits.v h (Nx.create Nx.uint8 [| Array.length bytes |] bytes) in
+  equal
+    (result (array int) string)
+    (Error
+       "HDU 0 (EVENTS), column 1 (SPECTRUM), row 1: the descriptor's 5 int16 \
+        at heap byte 0 end past the heap's 4 bytes")
+    (Result.map
+       (fun r -> Nx.to_array (Nx_ragged.values r))
+       (T.ragged Nx.int16 "SPECTRUM" hdu));
+  equal
+    (result (array int) string)
+    (Ok [| 258 |])
+    (Result.map
+       (fun r -> Nx.to_array (Nx_ragged.values r))
+       (T.ragged ~rows:(0, 1) Nx.int16 "SPECTRUM" hdu))
+
 (* Writing *)
 
 let read_back hdus =
@@ -486,6 +518,7 @@ let () =
          rows_law;
          test "descriptions" described;
          test "ASCII fields" ascii_fields;
+         test "descriptor errors" descriptor_error;
          group "writing"
            [
              test "round trip" round_trip;

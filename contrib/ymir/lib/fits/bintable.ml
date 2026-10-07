@@ -210,7 +210,22 @@ let be_int64 (a : Checksum.bigbytes) off =
    [c] in row [r] of the host rows [rows] starting at row 0 of [rows]. A
    descriptor of no elements names no bytes; any other one's bytes lie in
    the heap. *)
-let descriptor t c rows r =
+let elt_name = function
+  | L -> "logical"
+  | X -> "bit"
+  | A -> "char"
+  | B -> "uint8"
+  | I -> "int16"
+  | J -> "int32"
+  | K -> "int64"
+  | E -> "float32"
+  | D -> "float64"
+  | C -> "complex64"
+  | M -> "complex128"
+
+(* [descriptor ?row t c rows r] is the descriptor of column [c] in row [r] of
+   the host rows [rows]; [row] is the table's row, for errors. *)
+let descriptor ?row t c rows r =
   let off = (r * t.row_bytes) + c.start in
   let count, offset =
     match c.form.heap with
@@ -224,9 +239,14 @@ let descriptor t c rows r =
         else (Int64.to_int n, Int64.to_int o)
     | Row -> invalid_arg "Bintable.descriptor: not a heap column"
   in
+  let place =
+    match row with
+    | Some n -> Err.sub (column_place t c) (strf "row %d" n)
+    | None -> column_place t c
+  in
   if count < 0 || offset < 0 then
-    fail_at (column_place t c)
-      "a descriptor's count %d or offset %d is negative" count offset;
+    fail_at place "a descriptor's count %d or offset %d is negative" count
+      offset;
   if count = 0 then (0, 0)
   else
     let bytes =
@@ -236,10 +256,9 @@ let descriptor t c rows r =
           match Err.mul count (size e) with Some b -> b | None -> max_int)
     in
     if bytes > t.heap_size || offset > t.heap_size - bytes then
-      fail_at (column_place t c)
-        "the descriptor's %d elements at heap byte %d end past the heap's %d \
-         bytes"
-        count offset t.heap_size;
+      fail_at place
+        "the descriptor's %d %s at heap byte %d end past the heap's %d bytes"
+        count (elt_name c.form.elt) offset t.heap_size;
     (count, offset)
 
 (* [heap t off n] is a host copy of [n] bytes of the heap from [off]. *)
