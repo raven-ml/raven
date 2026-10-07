@@ -38,10 +38,29 @@ let tan ?(crpix = [| 0.; 0. |]) ~scale (lon, lat) =
          ~latpole:(deg (scalar 90.)))
 
 (* The solid angle of the tangent-plane rectangle [x1, x2] × [y1, y2] in
-   radians: [∫∫ dx dy / (1 + x² + y²)^(3/2)]. *)
+   radians, [∫∫ dx dy / (1 + x² + y²)^(3/2)], by three-point Gauss–Legendre on
+   each axis. Its error is of order the side to the sixth power, and it adds
+   positive terms, so it keeps 1e-15 relative far from the tangent point, where
+   the closed form's four arctangents cancel to 1e-8. *)
 let rectangle x1 x2 y1 y2 =
-  let f x y = Float.atan (x *. y /. Float.sqrt (1. +. (x *. x) +. (y *. y))) in
-  f x2 y2 -. f x1 y2 -. f x2 y1 +. f x1 y1
+  let r = Float.sqrt 0.6 in
+  let nodes = [ (-.r, 5. /. 9.); (0., 8. /. 9.); (r, 5. /. 9.) ] in
+  let hx = (x2 -. x1) /. 2. and hy = (y2 -. y1) /. 2. in
+  let cx = (x1 +. x2) /. 2. and cy = (y1 +. y2) /. 2. in
+  let density x y =
+    let q = 1. +. (x *. x) +. (y *. y) in
+    1. /. (q *. Float.sqrt q)
+  in
+  let sum =
+    List.fold_left
+      (fun acc (u, wu) ->
+        List.fold_left
+          (fun acc (v, wv) ->
+            acc +. (wu *. wv *. density (cx +. (hx *. u)) (cy +. (hy *. v))))
+          acc nodes)
+      0. nodes
+  in
+  sum *. hx *. hy
 
 let cells =
   group "Cells"
@@ -96,13 +115,22 @@ let cells =
           equal (array float_exact) (Nx.to_array expected) (Nx.to_array x));
     ]
 
+(* A sky measure is within about 1e-9 of a 0.031″ TAN pixel's solid angle. The
+   error comes from the corners' rounding, the same angle at any pixel size, so
+   a larger pixel's relative error is smaller and 1e-9 bounds both sizes drawn.
+   The small pixel tests the precision, the large one the formula. *)
+let measure_rel = 1e-9
+
 let measures =
   group "Measures"
     [
       prop "a TAN pixel's measure is its solid angle"
-        Gen.(
-          triple (int_range (-3000) 3000) (int_range (-3000) 3000)
-            (of_list [ 0.031 /. 3600.; 0.5 ]))
+        (Gen.with_pp
+           (fun ppf (i, j, scale) ->
+             Format.fprintf ppf "row %d, column %d, %g°" i j scale)
+           Gen.(
+             triple (int_range (-3000) 3000) (int_range (-3000) 3000)
+               (of_list [ 0.031 /. 3600.; 0.5 ])))
         (fun (i, j, scale) ->
           let i, j = if scale > 0.1 then (i / 30, j / 30) else (i, j) in
           let g =
@@ -115,8 +143,9 @@ let measures =
           and x2 = -.(float_of_int j -. 0.5) *. s in
           let y1 = (float_of_int i -. 0.5) *. s
           and y2 = (float_of_int i +. 0.5) *. s in
-          let rel = if scale > 0.1 then 1e-10 else 5e-9 in
-          equal (float_rel ~rel ~abs:0.) (rectangle x1 x2 y1 y2)
+          equal
+            (float_rel ~rel:measure_rel ~abs:0.)
+            (rectangle x1 x2 y1 y2)
             (values Unit.steradian (Grid.measure g)).(0));
       test "a TAN image's measures differ from the reference pixel's by cos³θ"
         (fun () ->
