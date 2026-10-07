@@ -1,7 +1,7 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 program	name	target	params	lib_bytes
-elementwise	E_16	CPU:CLANG:x86_64,x86-64	5	360
+elementwise	E_16	CPU:CLANG:x86_64,x86-64	3	1419
 elementwise_metal	E_4_4	METAL:METAL:Apple9	3	728
 sparse	sparse	CPU:CLANG:x86_64,x86-64	3	150
-scalars	r3Ascalars202	CPU:CLANG:x86_64,x86-64	7	409
+scalars	r3Ascalars202	CPU:CLANG:x86_64,x86-64	5	796
 fill	fill	METAL:METAL:Apple9	1	455

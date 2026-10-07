@@ -1,0 +1,203 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4096, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4096
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4096, device="CPU")
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.CONST dtypes.weakfloat [] 1.5
+7 Ops.MUL dtypes.float [5, 6]
+8 Ops.EXP2 dtypes.float [7]
+9 Ops.CONST dtypes.weakfloat [] 2.5
+10 Ops.MUL dtypes.float [8, 9]
+11 Ops.EXP2 dtypes.float [10]
+12 Ops.CONST dtypes.weakfloat [] 3.5
+13 Ops.MUL dtypes.float [11, 12]
+14 Ops.EXP2 dtypes.float [13]
+15 Ops.CONST dtypes.weakfloat [] 4.5
+16 Ops.MUL dtypes.float [14, 15]
+17 Ops.EXP2 dtypes.float [16]
+18 Ops.CONST dtypes.weakfloat [] 5.5
+19 Ops.MUL dtypes.float [17, 18]
+20 Ops.EXP2 dtypes.float [19]
+21 Ops.CONST dtypes.weakfloat [] 6.5
+22 Ops.MUL dtypes.float [20, 21]
+23 Ops.EXP2 dtypes.float [22]
+24 Ops.CONST dtypes.weakfloat [] 7.5
+25 Ops.MUL dtypes.float [23, 24]
+26 Ops.EXP2 dtypes.float [25]
+27 Ops.CONST dtypes.weakfloat [] 8.5
+28 Ops.MUL dtypes.float [26, 27]
+29 Ops.EXP2 dtypes.float [28]
+30 Ops.CONST dtypes.weakfloat [] 9.5
+31 Ops.MUL dtypes.float [29, 30]
+32 Ops.EXP2 dtypes.float [31]
+33 Ops.CONST dtypes.weakfloat [] 10.5
+34 Ops.MUL dtypes.float [32, 33]
+35 Ops.EXP2 dtypes.float [34]
+36 Ops.CONST dtypes.weakfloat [] 11.5
+37 Ops.MUL dtypes.float [35, 36]
+38 Ops.EXP2 dtypes.float [37]
+39 Ops.CONST dtypes.weakfloat [] 12.5
+40 Ops.MUL dtypes.float [38, 39]
+41 Ops.EXP2 dtypes.float [40]
+42 Ops.CONST dtypes.weakfloat [] 13.5
+43 Ops.MUL dtypes.float [41, 42]
+44 Ops.EXP2 dtypes.float [43]
+45 Ops.CONST dtypes.weakfloat [] 14.5
+46 Ops.MUL dtypes.float [44, 45]
+47 Ops.EXP2 dtypes.float [46]
+48 Ops.CONST dtypes.weakfloat [] 15.5
+49 Ops.MUL dtypes.float [47, 48]
+50 Ops.EXP2 dtypes.float [49]
+51 Ops.CONST dtypes.weakfloat [] 16.5
+52 Ops.MUL dtypes.float [50, 51]
+53 Ops.EXP2 dtypes.float [52]
+54 Ops.CONST dtypes.weakfloat [] 17.5
+55 Ops.MUL dtypes.float [53, 54]
+56 Ops.EXP2 dtypes.float [55]
+57 Ops.CONST dtypes.weakfloat [] 18.5
+58 Ops.MUL dtypes.float [56, 57]
+59 Ops.EXP2 dtypes.float [58]
+60 Ops.CONST dtypes.weakfloat [] 19.5
+61 Ops.MUL dtypes.float [59, 60]
+62 Ops.EXP2 dtypes.float [61]
+63 Ops.CONST dtypes.weakfloat [] 20.5
+64 Ops.MUL dtypes.float [62, 63]
+65 Ops.EXP2 dtypes.float [64]
+66 Ops.CONST dtypes.weakfloat [] 21.5
+67 Ops.MUL dtypes.float [65, 66]
+68 Ops.EXP2 dtypes.float [67]
+69 Ops.CONST dtypes.weakfloat [] 22.5
+70 Ops.MUL dtypes.float [68, 69]
+71 Ops.EXP2 dtypes.float [70]
+72 Ops.CONST dtypes.weakfloat [] 23.5
+73 Ops.MUL dtypes.float [71, 72]
+74 Ops.EXP2 dtypes.float [73]
+75 Ops.CONST dtypes.weakfloat [] 24.5
+76 Ops.MUL dtypes.float [74, 75]
+77 Ops.EXP2 dtypes.float [76]
+78 Ops.CONST dtypes.weakfloat [] 25.5
+79 Ops.MUL dtypes.float [77, 78]
+80 Ops.EXP2 dtypes.float [79]
+81 Ops.CONST dtypes.weakfloat [] 26.5
+82 Ops.MUL dtypes.float [80, 81]
+83 Ops.EXP2 dtypes.float [82]
+84 Ops.CONST dtypes.weakfloat [] 27.5
+85 Ops.MUL dtypes.float [83, 84]
+86 Ops.EXP2 dtypes.float [85]
+87 Ops.CONST dtypes.weakfloat [] 28.5
+88 Ops.MUL dtypes.float [86, 87]
+89 Ops.EXP2 dtypes.float [88]
+90 Ops.CONST dtypes.weakfloat [] 29.5
+91 Ops.MUL dtypes.float [89, 90]
+92 Ops.EXP2 dtypes.float [91]
+93 Ops.CONST dtypes.weakfloat [] 30.5
+94 Ops.MUL dtypes.float [92, 93]
+95 Ops.EXP2 dtypes.float [94]
+96 Ops.CONST dtypes.weakfloat [] 31.5
+97 Ops.MUL dtypes.float [95, 96]
+98 Ops.EXP2 dtypes.float [97]
+99 Ops.CONST dtypes.weakfloat [] 32.5
+100 Ops.MUL dtypes.float [98, 99]
+101 Ops.EXP2 dtypes.float [100]
+102 Ops.CONST dtypes.weakfloat [] 33.5
+103 Ops.MUL dtypes.float [101, 102]
+104 Ops.EXP2 dtypes.float [103]
+105 Ops.CONST dtypes.weakfloat [] 34.5
+106 Ops.MUL dtypes.float [104, 105]
+107 Ops.EXP2 dtypes.float [106]
+108 Ops.CONST dtypes.weakfloat [] 35.5
+109 Ops.MUL dtypes.float [107, 108]
+110 Ops.EXP2 dtypes.float [109]
+111 Ops.CONST dtypes.weakfloat [] 36.5
+112 Ops.MUL dtypes.float [110, 111]
+113 Ops.EXP2 dtypes.float [112]
+114 Ops.CONST dtypes.weakfloat [] 37.5
+115 Ops.MUL dtypes.float [113, 114]
+116 Ops.EXP2 dtypes.float [115]
+117 Ops.CONST dtypes.weakfloat [] 38.5
+118 Ops.MUL dtypes.float [116, 117]
+119 Ops.EXP2 dtypes.float [118]
+120 Ops.CONST dtypes.weakfloat [] 39.5
+121 Ops.MUL dtypes.float [119, 120]
+122 Ops.EXP2 dtypes.float [121]
+123 Ops.CONST dtypes.weakfloat [] 40.5
+124 Ops.MUL dtypes.float [122, 123]
+125 Ops.EXP2 dtypes.float [124]
+126 Ops.CONST dtypes.weakfloat [] 41.5
+127 Ops.MUL dtypes.float [125, 126]
+128 Ops.EXP2 dtypes.float [127]
+129 Ops.CONST dtypes.weakfloat [] 42.5
+130 Ops.MUL dtypes.float [128, 129]
+131 Ops.EXP2 dtypes.float [130]
+132 Ops.CONST dtypes.weakfloat [] 43.5
+133 Ops.MUL dtypes.float [131, 132]
+134 Ops.EXP2 dtypes.float [133]
+135 Ops.CONST dtypes.weakfloat [] 44.5
+136 Ops.MUL dtypes.float [134, 135]
+137 Ops.EXP2 dtypes.float [136]
+138 Ops.CONST dtypes.weakfloat [] 45.5
+139 Ops.MUL dtypes.float [137, 138]
+140 Ops.EXP2 dtypes.float [139]
+141 Ops.CONST dtypes.weakfloat [] 46.5
+142 Ops.MUL dtypes.float [140, 141]
+143 Ops.EXP2 dtypes.float [142]
+144 Ops.CONST dtypes.weakfloat [] 47.5
+145 Ops.MUL dtypes.float [143, 144]
+146 Ops.EXP2 dtypes.float [145]
+147 Ops.CONST dtypes.weakfloat [] 48.5
+148 Ops.MUL dtypes.float [146, 147]
+149 Ops.EXP2 dtypes.float [148]
+150 Ops.CONST dtypes.weakfloat [] 49.5
+151 Ops.MUL dtypes.float [149, 150]
+152 Ops.EXP2 dtypes.float [151]
+153 Ops.CONST dtypes.weakfloat [] 50.5
+154 Ops.MUL dtypes.float [152, 153]
+155 Ops.EXP2 dtypes.float [154]
+156 Ops.CONST dtypes.weakfloat [] 51.5
+157 Ops.MUL dtypes.float [155, 156]
+158 Ops.EXP2 dtypes.float [157]
+159 Ops.CONST dtypes.weakfloat [] 52.5
+160 Ops.MUL dtypes.float [158, 159]
+161 Ops.EXP2 dtypes.float [160]
+162 Ops.CONST dtypes.weakfloat [] 53.5
+163 Ops.MUL dtypes.float [161, 162]
+164 Ops.EXP2 dtypes.float [163]
+165 Ops.CONST dtypes.weakfloat [] 54.5
+166 Ops.MUL dtypes.float [164, 165]
+167 Ops.EXP2 dtypes.float [166]
+168 Ops.CONST dtypes.weakfloat [] 55.5
+169 Ops.MUL dtypes.float [167, 168]
+170 Ops.EXP2 dtypes.float [169]
+171 Ops.CONST dtypes.weakfloat [] 56.5
+172 Ops.MUL dtypes.float [170, 171]
+173 Ops.EXP2 dtypes.float [172]
+174 Ops.CONST dtypes.weakfloat [] 57.5
+175 Ops.MUL dtypes.float [173, 174]
+176 Ops.EXP2 dtypes.float [175]
+177 Ops.CONST dtypes.weakfloat [] 58.5
+178 Ops.MUL dtypes.float [176, 177]
+179 Ops.EXP2 dtypes.float [178]
+180 Ops.CONST dtypes.weakfloat [] 59.5
+181 Ops.MUL dtypes.float [179, 180]
+182 Ops.EXP2 dtypes.float [181]
+183 Ops.CONST dtypes.weakfloat [] 60.5
+184 Ops.MUL dtypes.float [182, 183]
+185 Ops.EXP2 dtypes.float [184]
+186 Ops.CONST dtypes.weakfloat [] 61.5
+187 Ops.MUL dtypes.float [185, 186]
+188 Ops.EXP2 dtypes.float [187]
+189 Ops.CONST dtypes.weakfloat [] 62.5
+190 Ops.MUL dtypes.float [188, 189]
+191 Ops.EXP2 dtypes.float [190]
+192 Ops.CONST dtypes.weakfloat [] 63.5
+193 Ops.MUL dtypes.float [191, 192]
+194 Ops.EXP2 dtypes.float [193]
+195 Ops.CONST dtypes.weakfloat [] 64.5
+196 Ops.MUL dtypes.float [194, 195]
+197 Ops.EXP2 dtypes.float [196]
+198 Ops.STORE dtypes.void [3, 197]
+199 Ops.END dtypes.void [198, 2]
+200 Ops.SINK dtypes.void [199] KernelInfo()
+

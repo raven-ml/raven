@@ -202,8 +202,9 @@ let solve m () =
   let b = Nx.rand Nx.float64 [| m |] in
   ignore (Sys.opaque_identity (Rune.jit' (fun a -> Nx.solve a b) a))
 
-(* [betainc] and [log_betainc] of three inputs, and the derivative of
-   [log_betainc] in each, over shapes spread across TOMS 708's regions. *)
+(* [betainc] and [log_betainc] of three inputs, the derivative of [log_betainc]
+   in each and of [betainc] in [a], over shapes spread across TOMS 708's
+   regions. *)
 let betainc =
   let a = Nx.exp (input (-5.) 12.) and b = Nx.exp (input (-5.) 12.) in
   let x = input 0. 1. in
@@ -216,6 +217,9 @@ let betainc =
   let sum f a b x = Nx.sum (f a b x) in
   [
     ("special/betainc", fun () -> compile3 Nx.betainc);
+    ( "special/betainc-grad-a",
+      fun () ->
+        compile3 (fun a b x -> Rune.grad' (fun a -> sum Nx.betainc a b x) a) );
     ("special/log_betainc", fun () -> compile3 Nx.log_betainc);
     ( "special/log_betainc-grad-x",
       fun () ->

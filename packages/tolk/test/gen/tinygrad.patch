@@ -903,18 +903,51 @@ index 319a60c..612ddfa 100644
  pm_move_gates_from_index = PatternMatcher([
    # for image idx (must be first)
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..ceacef0 100644
+index 712a2b7..b1b112f 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -2,6 +2,7 @@ import itertools
+@@ -1,9 +1,39 @@
+ import itertools
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
  from tinygrad.helpers import getenv, DEBUG, prod, TC_OPT, TC_SELECT, TC_MIN_GLOBALS, USE_TC, IMAGE
- from tinygrad.uop.ops import Ops, resolve, AxisType
+-from tinygrad.uop.ops import Ops, resolve, AxisType
++from tinygrad.uop.ops import Ops, UOp, GroupOp, resolve, AxisType
 +from tinygrad.dtype import dtypes
  from tinygrad.codegen.late.coalesce import image_valid_dims
  from tinygrad.codegen.opt.postrange import Scheduler
++from tinygrad.codegen.decomp.dtype import emulates
++
++HOST_VECTOR_BYTES, HOST_ILP, SPLIT_LANES = 64, 5, 16
++
++def upcast_vectors(k:Scheduler):
++  values = UOp.sink(*[u.src[1] for u in k.ast.toposort() if u.op is Ops.STORE]).toposort(lambda u: u.op is not Ops.INDEX)
++  operations = [u for u in values if u.op in GroupOp.Elementwise]
++  # the arithmetic operations for each of their longest chain: a conversion of a value is no step of it
++  depth: dict[UOp, int] = {}
++  for u in operations: depth[u] = (u.op in GroupOp.ALU) + max([depth.get(s, 0) for s in u.src], default=0)
++  longest, count = max(depth.values(), default=0), sum(u.op in GroupOp.ALU for u in operations)
++  # the types the kernel reads, writes or computes, but addresses'
++  value_dtypes = [dt for dt in [b.src[0].dtype for b in k.bufs] + [u.dtype for u in operations] if dt not in dtypes.weaks]
++  emulated = emulates(k.ren)
++  if not isinstance(upcast:=k.upcast_size(), int) or (longest and count // longest >= HOST_ILP) or \
++     any(emulated(dt) for dt in value_dtypes): return
++  # the last output axis that a power of two of lanes divides is upcast by the largest that fits the vector beside the lanes
++  # already upcast, and again while the vector has room: a split upcasts at most SPLIT_LANES
++  room = HOST_VECTOR_BYTES // max([dt.itemsize for dt in value_dtypes] + [1]) // upcast
++  while True:
++    pow2 = 1
++    while 2 * pow2 <= min(room, SPLIT_LANES): pow2 *= 2
++    def fits(axis):
++      n = pow2
++      while n >= 2 and not (isinstance(s:=k.full_shape[axis], int) and s % n == 0): n //= 2
++      return n
++    if (choice:=next(((axis, n) for axis in k.upcastable_dims[::-1] if (n:=fits(axis)) >= 2), None)) is None: return
++    k.apply_opt(Opt(OptOps.SPLIT, choice[0], (choice[1], AxisType.UPCAST)))
++    room //= choice[1]
  
-@@ -24,8 +25,18 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+   # first try the tensor cores
+@@ -24,8 +54,18 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -934,7 +967,7 @@ index 712a2b7..ceacef0 100644
      for axis in range(3):
        tk = k.copy()
        # check TC first and apply hand-coded opts if successful
-@@ -58,25 +69,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -58,25 +98,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
            if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
              k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
  
@@ -1031,7 +1064,7 @@ index 712a2b7..ceacef0 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -111,25 +174,42 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -111,25 +203,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1046,10 +1079,12 @@ index 712a2b7..ceacef0 100644
 +        if c.op is Ops.MUL and c.src[0] is rng and c.src[1].op is Ops.CONST: sum_strides += c.src[1].val
 +        if c.op is Ops.MUL and c.src[1] is rng and c.src[0].op is Ops.CONST: sum_strides += c.src[0].val
 +    return num_strides, sum_strides
-+  # on the host a kernel without a reduce takes no upcast but its masked ones: clang vectorizes the loop over its outputs itself, and
-+  # upcast lanes copy the body as scalars, which keeps that vectorizer off a float loop and costs a double one a compile time that
-+  # grows faster than the copies
++  # on the host a kernel without a reduce computes its upcast lanes as vectors, and its output axis is upcast until one value spans
++  # HOST_VECTOR_BYTES: the lanes give the core independent work while each lane waits on the latency of its chain. a kernel whose own
++  # operations already hold HOST_ILP independent operations for each step of its longest chain gains nothing from lanes and pays for
++  # them in compile time: it takes no upcast after its masked axes
 +  host_elementwise = k.ren.target.device == "CPU" and not k.reduceops
++  if host_elementwise: upcast_vectors(k)
    upcasted_axis: set[int] = set()
 -  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims) >= 1024) and (k.upcast_size() < 32):
 +  while not host_elementwise and resolve(prod(k.full_shape[i] for i in k.upcastable_dims) >= 1024) and (k.upcast_size() < 32):
@@ -1084,7 +1119,7 @@ index 712a2b7..ceacef0 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -141,21 +221,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -141,21 +252,24 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
      if k.unrollable_dims and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UNROLL)) and (k.upcast_size() < 64):

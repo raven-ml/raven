@@ -47,7 +47,6 @@ codegen/codegen/bool_chain_hip.golden
 codegen/codegen/bool_chain_metal.golden
 codegen/codegen/cases.golden
 codegen/codegen/cast_half_clang.golden
-codegen/codegen/cast_half_clang_narrowed.golden
 codegen/codegen/cast_half_cuda.golden
 codegen/codegen/cast_half_hip.golden
 codegen/codegen/cast_half_metal.golden
@@ -181,7 +180,6 @@ codegen/codegen/group_reduce_split_range_cuda.golden
 codegen/codegen/group_reduce_split_range_hip.golden
 codegen/codegen/group_reduce_split_range_metal.golden
 codegen/codegen/half_math_clang.golden
-codegen/codegen/half_math_clang_narrowed.golden
 codegen/codegen/half_math_cuda.golden
 codegen/codegen/half_math_hip.golden
 codegen/codegen/half_math_metal.golden
@@ -198,7 +196,6 @@ codegen/codegen/inline_const_alu_cuda.golden
 codegen/codegen/inline_const_alu_hip.golden
 codegen/codegen/inline_const_alu_metal.golden
 codegen/codegen/int8_clang.golden
-codegen/codegen/int8_clang_narrowed.golden
 codegen/codegen/int8_cuda.golden
 codegen/codegen/int8_cuda_narrowed.golden
 codegen/codegen/int8_hip.golden
@@ -1056,6 +1053,10 @@ codegen/late/linearizer/variable_linear.golden
 codegen/late/linearizer/wait_loop.golden
 codegen/late/linearizer/wait_loop_linear.golden
 codegen/opt/heuristic/add.golden
+codegen/opt/heuristic/add_17.golden
+codegen/opt/heuristic/add_17_cpu.golden
+codegen/opt/heuristic/add_24.golden
+codegen/opt/heuristic/add_24_cpu.golden
 codegen/opt/heuristic/add_amd.golden
 codegen/opt/heuristic/add_broadcast.golden
 codegen/opt/heuristic/add_broadcast_amd.golden
@@ -1064,6 +1065,8 @@ codegen/opt/heuristic/add_broadcast_cuda.golden
 codegen/opt/heuristic/add_broadcast_metal.golden
 codegen/opt/heuristic/add_cpu.golden
 codegen/opt/heuristic/add_cuda.golden
+codegen/opt/heuristic/add_half.golden
+codegen/opt/heuristic/add_half_cpu.golden
 codegen/opt/heuristic/add_large.golden
 codegen/opt/heuristic/add_large_amd.golden
 codegen/opt/heuristic/add_large_cpu.golden
@@ -1080,12 +1083,18 @@ codegen/opt/heuristic/add_small_amd.golden
 codegen/opt/heuristic/add_small_cpu.golden
 codegen/opt/heuristic/add_small_cuda.golden
 codegen/opt/heuristic/add_small_metal.golden
+codegen/opt/heuristic/add_uchar.golden
+codegen/opt/heuristic/add_uchar_cpu.golden
 codegen/opt/heuristic/batched_matmul_half.golden
 codegen/opt/heuristic/batched_matmul_half_amd.golden
 codegen/opt/heuristic/batched_matmul_half_cpu.golden
 codegen/opt/heuristic/batched_matmul_half_cuda.golden
 codegen/opt/heuristic/batched_matmul_half_metal.golden
 codegen/opt/heuristic/cases.golden
+codegen/opt/heuristic/cast_to_double.golden
+codegen/opt/heuristic/cast_to_double_cpu.golden
+codegen/opt/heuristic/compare.golden
+codegen/opt/heuristic/compare_cpu.golden
 codegen/opt/heuristic/conv.golden
 codegen/opt/heuristic/conv_amd.golden
 codegen/opt/heuristic/conv_cpu.golden
@@ -1104,6 +1113,10 @@ codegen/opt/heuristic/cumsum_amd.golden
 codegen/opt/heuristic/cumsum_cpu.golden
 codegen/opt/heuristic/cumsum_cuda.golden
 codegen/opt/heuristic/cumsum_metal.golden
+codegen/opt/heuristic/exp_double.golden
+codegen/opt/heuristic/exp_double_cpu.golden
+codegen/opt/heuristic/exp_float.golden
+codegen/opt/heuristic/exp_float_cpu.golden
 codegen/opt/heuristic/experts_down.golden
 codegen/opt/heuristic/experts_down_amd.golden
 codegen/opt/heuristic/experts_down_cpu.golden
@@ -1134,6 +1147,8 @@ codegen/opt/heuristic/gpt_oss_router_amd.golden
 codegen/opt/heuristic/gpt_oss_router_cpu.golden
 codegen/opt/heuristic/gpt_oss_router_cuda.golden
 codegen/opt/heuristic/gpt_oss_router_metal.golden
+codegen/opt/heuristic/long_chain.golden
+codegen/opt/heuristic/long_chain_cpu.golden
 codegen/opt/heuristic/matmul.golden
 codegen/opt/heuristic/matmul_amd.golden
 codegen/opt/heuristic/matmul_cpu.golden
@@ -1340,6 +1355,8 @@ codegen/opt/heuristic/vecmat_wide_amd.golden
 codegen/opt/heuristic/vecmat_wide_cpu.golden
 codegen/opt/heuristic/vecmat_wide_cuda.golden
 codegen/opt/heuristic/vecmat_wide_metal.golden
+codegen/opt/heuristic/wide_tree.golden
+codegen/opt/heuristic/wide_tree_cpu.golden
 codegen/opt/opt/comparisons.golden
 codegen/opt/opt/reprs.golden
 codegen/opt/postrange/add_one.golden

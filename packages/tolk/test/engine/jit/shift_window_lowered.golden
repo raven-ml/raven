@@ -1,32 +1,38 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16, device="CPU")
-1 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 8), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(0, 8), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
-3 Ops.SUB dtypes.int [2, 1]
-4 Ops.RANGE dtypes.int [3] (1, AxisType.WEAK)
-5 Ops.ADD dtypes.int [1, 4]
-6 Ops.INDEX dtypes.int [0, 5]
-7 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=16, device="CPU")
-8 Ops.CONST dtypes.weakint [] 8
-9 Ops.CAST dtypes.int [8] dtypes.int
-10 Ops.ADD dtypes.int [5, 9]
-11 Ops.INDEX dtypes.int [7, 10]
-12 Ops.LOAD dtypes.int [11]
-13 Ops.STORE dtypes.void [6, 12]
-14 Ops.INDEX dtypes.int [0, 10]
-15 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=8, device="CPU")
-16 Ops.INDEX dtypes.int [15, 5]
-17 Ops.LOAD dtypes.int [16]
-18 Ops.STORE dtypes.void [14, 17]
-19 Ops.GROUP dtypes.void [13, 18]
-20 Ops.END dtypes.void [19, 4]
-21 Ops.SINK dtypes.void [20] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(lds=128, mem=128), split=(8, 3, 4)) tag=1
-22 Ops.SINK dtypes.void [20] KernelInfo(name="E_8_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), split=(8, 3, 4)) tag=1
-23 Ops.LINEAR dtypes.void [0, 15, 7, 1, 2, 8, 9, 3, 4, 5, 16, 17, 10, 11, 12, 6, 14, 13, 18, 19, 20, 22]
-24 Ops.SOURCE dtypes.void [] "\nvoid E_8_2(int* restrict data0_16, int* restrict data1_8, int* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int val0 = (*(data1_8+alu0));\n    int alu1 = (alu0+8);\n    int val1 = (*(data2_16+alu1));\n    *(data0_16+alu0) = val1;\n    *(data0_16+alu1) = val0;\n  }\n}\n"
-25 Ops.BINARY dtypes.uchar [] b"\nvoid E_8_2(int* restrict data0_16, int* restrict data1_8, int* restrict data2_16, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int val0 = (*(data1_8+alu0));\n    int alu1 = (alu0+8);\n    int val1 = (*(data2_16+alu1));\n    *(data0_16+alu0) = val1;\n    *(data0_16+alu1) = val0;\n  }\n}\n"
-26 Ops.PROGRAM dtypes.void [21, 23, 24, 25] ProgramInfo(global_size=(8, 1, 1), vars=(%1, %2), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
-27 Ops.BUFFER dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=16, device="CPU")
-28 Ops.CALL dtypes.void [26, 27, 15, 0] CallInfo()
-29 Ops.LINEAR dtypes.void [28]
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.int [3] dtypes.int
+5 Ops.SHRINK dtypes.int [0, 2, 4]
+6 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=16, device="CPU")
+7 Ops.CONST dtypes.weakint [] 8
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.SHRINK dtypes.int [6, 8, 4]
+10 Ops.LOAD dtypes.int [9]
+11 Ops.STORE dtypes.void [5, 10]
+12 Ops.SHRINK dtypes.int [0, 4, 4]
+13 Ops.CONST dtypes.weakint [] 12
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.SHRINK dtypes.int [6, 14, 4]
+16 Ops.LOAD dtypes.int [15]
+17 Ops.STORE dtypes.void [12, 16]
+18 Ops.SHRINK dtypes.int [0, 8, 4]
+19 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=8, device="CPU")
+20 Ops.SHRINK dtypes.int [19, 2, 4]
+21 Ops.LOAD dtypes.int [20]
+22 Ops.STORE dtypes.void [18, 21]
+23 Ops.SHRINK dtypes.int [0, 14, 4]
+24 Ops.SHRINK dtypes.int [19, 4, 4]
+25 Ops.LOAD dtypes.int [24]
+26 Ops.STORE dtypes.void [23, 25]
+27 Ops.SINK dtypes.void [11, 11, 11, 11, 17, 17, 17, 17, 22, 22, 22, 22, 26, 26, 26, 26] KernelInfo(name="E_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST))), estimates=Estimates(lds=128, mem=128))
+28 Ops.SINK dtypes.void [11, 11, 11, 11, 17, 17, 17, 17, 22, 22, 22, 22, 26, 26, 26, 26] KernelInfo(name="E_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST))))
+29 Ops.LINEAR dtypes.void [0, 19, 6, 1, 2, 3, 4, 20, 21, 24, 25, 13, 14, 15, 16, 7, 8, 9, 10, 5, 23, 12, 18, 11, 26, 17, 22, 28]
+30 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_2_8(int* restrict data0_16, int* restrict data1_8, int* restrict data2_16) {\n  int4 val0 = (*((int4*)((data1_8+0))));\n  int4 val1 = (*((int4*)((data1_8+4))));\n  int4 val2 = (*((int4*)((data2_16+12))));\n  int4 val3 = (*((int4*)((data2_16+8))));\n  *((int4*)((data0_16+0))) = val3;\n  *((int4*)((data0_16+12))) = val1;\n  *((int4*)((data0_16+4))) = val2;\n  *((int4*)((data0_16+8))) = val0;\n}\n"
+31 Ops.BINARY dtypes.uchar [] b"typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_2_8(int* restrict data0_16, int* restrict data1_8, int* restrict data2_16) {\n  int4 val0 = (*((int4*)((data1_8+0))));\n  int4 val1 = (*((int4*)((data1_8+4))));\n  int4 val2 = (*((int4*)((data2_16+12))));\n  int4 val3 = (*((int4*)((data2_16+8))));\n  *((int4*)((data0_16+0))) = val3;\n  *((int4*)((data0_16+12))) = val1;\n  *((int4*)((data0_16+4))) = val2;\n  *((int4*)((data0_16+8))) = val0;\n}\n"
+32 Ops.PROGRAM dtypes.void [27, 29, 30, 31] ProgramInfo(globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+33 Ops.BUFFER dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=16, device="CPU")
+34 Ops.CALL dtypes.void [32, 33, 19, 0] CallInfo()
+35 Ops.LINEAR dtypes.void [34]
 

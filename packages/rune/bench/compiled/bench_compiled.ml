@@ -346,6 +346,58 @@ let transcendental =
   Thumper.group ~id:"transcendental" "transcendental"
     (rows Nx.float32 @ rows Nx.float64)
 
+(* Special functions of 10^5 elements on the host, each one kernel of one chain
+   whose lanes the host computes as vectors, over a domain that reaches its
+   branches. *)
+let special =
+  let n = 100_000 in
+  let row (type b) (dtype : (float, b) Nx.dtype) name f lo hi =
+    let id = Printf.sprintf "%s-%s-1e5-host" name (Nx_dtype.to_string dtype) in
+    compiled_call id
+      Nx.Ptree.(tensor @-> returns tensor)
+      f
+      (fun () ->
+        let st = Random.State.make [| 18 |] in
+        let x =
+          Nx.init dtype [| n |] (fun _ ->
+              lo +. Random.State.float st (hi -. lo))
+        in
+        fun g -> g x)
+  in
+  let rows dtype =
+    [
+      row dtype "exp" Nx.exp (-80.) 80.;
+      row dtype "erf" Nx.erf (-4.) 4.;
+      row dtype "erfc" Nx.erfc (-6.) 6.;
+      row dtype "erfinv" Nx.erfinv (-1.) 1.;
+      row dtype "ndtri" Nx.ndtri 0. 1.;
+      row dtype "lgamma" Nx.lgamma (-10.) 20.;
+      row dtype "sin" Nx.sin (-30.) 30.;
+      row dtype "tanh" Nx.tanh (-5.) 5.;
+    ]
+  in
+  (* [betainc] and the derivative of [log_betainc] in [a], kernels whose
+     operations already run several at a time, over TOMS 708's regions. *)
+  let three = Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor) in
+  let betainc id f =
+    compiled_call id three f (fun () ->
+        let st = Random.State.make [| 19 |] in
+        let uniform lo hi =
+          Nx.init Nx.float64 [| n |] (fun _ ->
+              lo +. Random.State.float st (hi -. lo))
+        in
+        let a = Nx.exp (uniform (-5.) 12.) and b = Nx.exp (uniform (-5.) 12.) in
+        let x = uniform 0. 1. in
+        fun g -> g a b x)
+  in
+  Thumper.group ~id:"special" "special"
+    (rows Nx.float32 @ rows Nx.float64
+    @ [
+        betainc "betainc-float64-1e5-host" Nx.betainc;
+        betainc "log_betainc-grad-a-float64-1e5-host" (fun a b x ->
+            Rune.grad' (fun a -> Nx.sum (Nx.log_betainc a b x)) a);
+      ])
+
 (* Symmetric eigendecompositions and singular value decompositions of 64 float32
    matrices of 8 x 8, eagerly and compiled for the host. Compiled, an eigh is 56
    rounds of Jacobi rotations and an svd 42, each round a kernel that computes
@@ -877,7 +929,7 @@ let suite () =
          searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000 ~m:1_000_000;
        ]
   :: split :: wide :: jvp :: indexed :: rope :: select_zero :: masks
-  :: transcendental :: gaussian :: solves :: factorizations
+  :: transcendental :: special :: gaussian :: solves :: factorizations
   @ reverse
     :: Thumper.group ~id:"finite" "finite"
          [

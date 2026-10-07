@@ -1057,10 +1057,10 @@ let programs =
           equal string
             (String.concat "\n"
                [
-                 "#define E_256 E_256_";
+                 "#define E_16_16 E_16_16_";
                  source p;
-                 "#undef E_256";
-                 "void E_256(void **b, const long long *v) { E_256_(b[0], \
+                 "#undef E_16_16";
+                 "void E_16_16(void **b, const long long *v) { E_16_16_(b[0], \
                   b[1], b[2], v[0], v[1]); }";
                ])
             (binary_of p));

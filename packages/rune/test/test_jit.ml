@@ -5336,9 +5336,10 @@ let integer_rules =
             [ 0; 1; d.bits - 1 ]);
     ]
 
-(* Lanes. On the host, a compiled kernel computes the lanes an upcast gives it
-   as vectors. Each lane computes what the kernel computes for its element
-   alone, bit for bit, whatever the layout of its arguments. A
+(* Lanes. On the host, a compiled elementwise kernel computes its outputs as
+   vectors of lanes, as many as fill 64 bytes of its widest type: 16 of float32,
+   8 of float64, 32 of float16. Each lane computes what the kernel computes for
+   its element alone, bit for bit, whatever the layout of its arguments. A
    function of the operations eager computes exactly equals eager too; a special
    function's polynomials and reductions differ from eager's by a few ulps, so
    its reference is its element compiled alone. *)

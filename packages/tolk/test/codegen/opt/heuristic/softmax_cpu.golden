@@ -4,24 +4,28 @@
 2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
 3 Ops.CONST dtypes.weakint [] 256
 4 Ops.MUL dtypes.weakint [2, 3]
-5 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
-6 Ops.ADD dtypes.weakint [4, 5]
-7 Ops.INDEX dtypes.float [0, 6]
-8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8192, device="CPU")
-9 Ops.INDEX dtypes.float [8, 6]
-10 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=32, device="CPU")
-11 Ops.INDEX dtypes.float [10, 2]
-12 Ops.CONST dtypes.weakfloat [] -1.0
-13 Ops.MUL dtypes.float [11, 12]
-14 Ops.ADD dtypes.float [9, 13]
-15 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
-16 Ops.MUL dtypes.float [14, 15]
-17 Ops.EXP2 dtypes.float [16]
-18 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=32, device="CPU")
-19 Ops.INDEX dtypes.float [18, 2]
-20 Ops.RECIPROCAL dtypes.float [19]
-21 Ops.MUL dtypes.float [17, 20]
-22 Ops.STORE dtypes.void [7, 21]
-23 Ops.END dtypes.void [22, 2, 5]
-24 Ops.SINK dtypes.void [23] KernelInfo(name="E_32_256") tag=1
+5 Ops.CONST dtypes.weakint [] 16
+6 Ops.RANGE dtypes.weakint [5] (1, AxisType.WEAK)
+7 Ops.MUL dtypes.weakint [6, 5]
+8 Ops.RANGE dtypes.weakint [5] (2, AxisType.UPCAST)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.ADD dtypes.weakint [4, 9]
+11 Ops.INDEX dtypes.float [0, 10]
+12 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8192, device="CPU")
+13 Ops.INDEX dtypes.float [12, 10]
+14 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=32, device="CPU")
+15 Ops.INDEX dtypes.float [14, 2]
+16 Ops.CONST dtypes.weakfloat [] -1.0
+17 Ops.MUL dtypes.float [15, 16]
+18 Ops.ADD dtypes.float [13, 17]
+19 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+20 Ops.MUL dtypes.float [18, 19]
+21 Ops.EXP2 dtypes.float [20]
+22 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=32, device="CPU")
+23 Ops.INDEX dtypes.float [22, 2]
+24 Ops.RECIPROCAL dtypes.float [23]
+25 Ops.MUL dtypes.float [21, 24]
+26 Ops.STORE dtypes.void [11, 25]
+27 Ops.END dtypes.void [26, 2, 6, 8]
+28 Ops.SINK dtypes.void [27] KernelInfo(name="E_32_16_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)) tag=1
 

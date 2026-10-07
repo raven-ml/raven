@@ -6,27 +6,536 @@
 4 Ops.BITCAST dtypes.uchar [3] dtypes.uchar
 5 Ops.BUFFER dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=1048576, device="CPU")
 6 Ops.CALL dtypes.void [2, 4, 5] CallInfo()
-7 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 1048576), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-8 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 1048576), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+7 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 16384), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(0, 16384), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
 9 Ops.SUB dtypes.int [8, 7]
 10 Ops.RANGE dtypes.int [9] (0, AxisType.WEAK)
 11 Ops.ADD dtypes.int [7, 10]
-12 Ops.INDEX dtypes.uchar [0, 11]
-13 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=1048576, device="CPU:1")
-14 Ops.INDEX dtypes.uchar [13, 11]
-15 Ops.LOAD dtypes.uchar [14]
-16 Ops.CONST dtypes.weakint [] 1
-17 Ops.CAST dtypes.uchar [16] dtypes.uchar
-18 Ops.ADD dtypes.uchar [15, 17]
-19 Ops.STORE dtypes.void [12, 18]
-20 Ops.END dtypes.void [19, 10]
-21 Ops.SINK dtypes.void [20] KernelInfo(name="E_1048576", estimates=Estimates(ops=1048576, lds=2097152, mem=2097152), split=(1048576, 2, 3)) tag=1
-22 Ops.SINK dtypes.void [20] KernelInfo(name="E_1048576", split=(1048576, 2, 3)) tag=1
-23 Ops.LINEAR dtypes.void [0, 13, 7, 8, 16, 17, 9, 10, 11, 14, 15, 12, 18, 19, 20, 22]
-24 Ops.SOURCE dtypes.void [] "\nvoid E_1048576(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned char val0 = (*(data1_1048576+alu0));\n    *(data0_1048576+alu0) = (val0+((unsigned char)(1u)));\n  }\n}\n"
-25 Ops.BINARY dtypes.uchar [] b"\nvoid E_1048576(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    unsigned char val0 = (*(data1_1048576+alu0));\n    *(data0_1048576+alu0) = (val0+((unsigned char)(1u)));\n  }\n}\n"
-26 Ops.PROGRAM dtypes.void [21, 23, 24, 25] ProgramInfo(global_size=(1048576, 1, 1), vars=(%7, %8), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-27 Ops.BUFFER dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=1048576, device="CPU:1")
-28 Ops.CALL dtypes.void [26, 27, 4] CallInfo()
-29 Ops.LINEAR dtypes.void [6, 28]
+12 Ops.CONST dtypes.weakint [] 6
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.SHL dtypes.int [11, 13]
+15 Ops.INDEX dtypes.uchar [0, 14]
+16 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=1048576, device="CPU:1")
+17 Ops.INDEX dtypes.uchar [16, 14]
+18 Ops.LOAD dtypes.uchar [17]
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.CAST dtypes.int [19] dtypes.int
+21 Ops.ADD dtypes.int [14, 20]
+22 Ops.INDEX dtypes.uchar [16, 21]
+23 Ops.LOAD dtypes.uchar [22]
+24 Ops.CONST dtypes.weakint [] 2
+25 Ops.CAST dtypes.int [24] dtypes.int
+26 Ops.ADD dtypes.int [14, 25]
+27 Ops.INDEX dtypes.uchar [16, 26]
+28 Ops.LOAD dtypes.uchar [27]
+29 Ops.CONST dtypes.weakint [] 3
+30 Ops.CAST dtypes.int [29] dtypes.int
+31 Ops.ADD dtypes.int [14, 30]
+32 Ops.INDEX dtypes.uchar [16, 31]
+33 Ops.LOAD dtypes.uchar [32]
+34 Ops.CONST dtypes.weakint [] 4
+35 Ops.CAST dtypes.int [34] dtypes.int
+36 Ops.ADD dtypes.int [14, 35]
+37 Ops.INDEX dtypes.uchar [16, 36]
+38 Ops.LOAD dtypes.uchar [37]
+39 Ops.CONST dtypes.weakint [] 5
+40 Ops.CAST dtypes.int [39] dtypes.int
+41 Ops.ADD dtypes.int [14, 40]
+42 Ops.INDEX dtypes.uchar [16, 41]
+43 Ops.LOAD dtypes.uchar [42]
+44 Ops.ADD dtypes.int [14, 13]
+45 Ops.INDEX dtypes.uchar [16, 44]
+46 Ops.LOAD dtypes.uchar [45]
+47 Ops.CONST dtypes.weakint [] 7
+48 Ops.CAST dtypes.int [47] dtypes.int
+49 Ops.ADD dtypes.int [14, 48]
+50 Ops.INDEX dtypes.uchar [16, 49]
+51 Ops.LOAD dtypes.uchar [50]
+52 Ops.CONST dtypes.weakint [] 8
+53 Ops.CAST dtypes.int [52] dtypes.int
+54 Ops.ADD dtypes.int [14, 53]
+55 Ops.INDEX dtypes.uchar [16, 54]
+56 Ops.LOAD dtypes.uchar [55]
+57 Ops.CONST dtypes.weakint [] 9
+58 Ops.CAST dtypes.int [57] dtypes.int
+59 Ops.ADD dtypes.int [14, 58]
+60 Ops.INDEX dtypes.uchar [16, 59]
+61 Ops.LOAD dtypes.uchar [60]
+62 Ops.CONST dtypes.weakint [] 10
+63 Ops.CAST dtypes.int [62] dtypes.int
+64 Ops.ADD dtypes.int [14, 63]
+65 Ops.INDEX dtypes.uchar [16, 64]
+66 Ops.LOAD dtypes.uchar [65]
+67 Ops.CONST dtypes.weakint [] 11
+68 Ops.CAST dtypes.int [67] dtypes.int
+69 Ops.ADD dtypes.int [14, 68]
+70 Ops.INDEX dtypes.uchar [16, 69]
+71 Ops.LOAD dtypes.uchar [70]
+72 Ops.CONST dtypes.weakint [] 12
+73 Ops.CAST dtypes.int [72] dtypes.int
+74 Ops.ADD dtypes.int [14, 73]
+75 Ops.INDEX dtypes.uchar [16, 74]
+76 Ops.LOAD dtypes.uchar [75]
+77 Ops.CONST dtypes.weakint [] 13
+78 Ops.CAST dtypes.int [77] dtypes.int
+79 Ops.ADD dtypes.int [14, 78]
+80 Ops.INDEX dtypes.uchar [16, 79]
+81 Ops.LOAD dtypes.uchar [80]
+82 Ops.CONST dtypes.weakint [] 14
+83 Ops.CAST dtypes.int [82] dtypes.int
+84 Ops.ADD dtypes.int [14, 83]
+85 Ops.INDEX dtypes.uchar [16, 84]
+86 Ops.LOAD dtypes.uchar [85]
+87 Ops.CONST dtypes.weakint [] 15
+88 Ops.CAST dtypes.int [87] dtypes.int
+89 Ops.ADD dtypes.int [14, 88]
+90 Ops.INDEX dtypes.uchar [16, 89]
+91 Ops.LOAD dtypes.uchar [90]
+92 Ops.CONST dtypes.weakint [] 16
+93 Ops.CAST dtypes.int [92] dtypes.int
+94 Ops.ADD dtypes.int [14, 93]
+95 Ops.INDEX dtypes.uchar [16, 94]
+96 Ops.LOAD dtypes.uchar [95]
+97 Ops.CONST dtypes.weakint [] 17
+98 Ops.CAST dtypes.int [97] dtypes.int
+99 Ops.ADD dtypes.int [14, 98]
+100 Ops.INDEX dtypes.uchar [16, 99]
+101 Ops.LOAD dtypes.uchar [100]
+102 Ops.CONST dtypes.weakint [] 18
+103 Ops.CAST dtypes.int [102] dtypes.int
+104 Ops.ADD dtypes.int [14, 103]
+105 Ops.INDEX dtypes.uchar [16, 104]
+106 Ops.LOAD dtypes.uchar [105]
+107 Ops.CONST dtypes.weakint [] 19
+108 Ops.CAST dtypes.int [107] dtypes.int
+109 Ops.ADD dtypes.int [14, 108]
+110 Ops.INDEX dtypes.uchar [16, 109]
+111 Ops.LOAD dtypes.uchar [110]
+112 Ops.CONST dtypes.weakint [] 20
+113 Ops.CAST dtypes.int [112] dtypes.int
+114 Ops.ADD dtypes.int [14, 113]
+115 Ops.INDEX dtypes.uchar [16, 114]
+116 Ops.LOAD dtypes.uchar [115]
+117 Ops.CONST dtypes.weakint [] 21
+118 Ops.CAST dtypes.int [117] dtypes.int
+119 Ops.ADD dtypes.int [14, 118]
+120 Ops.INDEX dtypes.uchar [16, 119]
+121 Ops.LOAD dtypes.uchar [120]
+122 Ops.CONST dtypes.weakint [] 22
+123 Ops.CAST dtypes.int [122] dtypes.int
+124 Ops.ADD dtypes.int [14, 123]
+125 Ops.INDEX dtypes.uchar [16, 124]
+126 Ops.LOAD dtypes.uchar [125]
+127 Ops.CONST dtypes.weakint [] 23
+128 Ops.CAST dtypes.int [127] dtypes.int
+129 Ops.ADD dtypes.int [14, 128]
+130 Ops.INDEX dtypes.uchar [16, 129]
+131 Ops.LOAD dtypes.uchar [130]
+132 Ops.CONST dtypes.weakint [] 24
+133 Ops.CAST dtypes.int [132] dtypes.int
+134 Ops.ADD dtypes.int [14, 133]
+135 Ops.INDEX dtypes.uchar [16, 134]
+136 Ops.LOAD dtypes.uchar [135]
+137 Ops.CONST dtypes.weakint [] 25
+138 Ops.CAST dtypes.int [137] dtypes.int
+139 Ops.ADD dtypes.int [14, 138]
+140 Ops.INDEX dtypes.uchar [16, 139]
+141 Ops.LOAD dtypes.uchar [140]
+142 Ops.CONST dtypes.weakint [] 26
+143 Ops.CAST dtypes.int [142] dtypes.int
+144 Ops.ADD dtypes.int [14, 143]
+145 Ops.INDEX dtypes.uchar [16, 144]
+146 Ops.LOAD dtypes.uchar [145]
+147 Ops.CONST dtypes.weakint [] 27
+148 Ops.CAST dtypes.int [147] dtypes.int
+149 Ops.ADD dtypes.int [14, 148]
+150 Ops.INDEX dtypes.uchar [16, 149]
+151 Ops.LOAD dtypes.uchar [150]
+152 Ops.CONST dtypes.weakint [] 28
+153 Ops.CAST dtypes.int [152] dtypes.int
+154 Ops.ADD dtypes.int [14, 153]
+155 Ops.INDEX dtypes.uchar [16, 154]
+156 Ops.LOAD dtypes.uchar [155]
+157 Ops.CONST dtypes.weakint [] 29
+158 Ops.CAST dtypes.int [157] dtypes.int
+159 Ops.ADD dtypes.int [14, 158]
+160 Ops.INDEX dtypes.uchar [16, 159]
+161 Ops.LOAD dtypes.uchar [160]
+162 Ops.CONST dtypes.weakint [] 30
+163 Ops.CAST dtypes.int [162] dtypes.int
+164 Ops.ADD dtypes.int [14, 163]
+165 Ops.INDEX dtypes.uchar [16, 164]
+166 Ops.LOAD dtypes.uchar [165]
+167 Ops.CONST dtypes.weakint [] 31
+168 Ops.CAST dtypes.int [167] dtypes.int
+169 Ops.ADD dtypes.int [14, 168]
+170 Ops.INDEX dtypes.uchar [16, 169]
+171 Ops.LOAD dtypes.uchar [170]
+172 Ops.CONST dtypes.weakint [] 32
+173 Ops.CAST dtypes.int [172] dtypes.int
+174 Ops.ADD dtypes.int [14, 173]
+175 Ops.INDEX dtypes.uchar [16, 174]
+176 Ops.LOAD dtypes.uchar [175]
+177 Ops.CONST dtypes.weakint [] 33
+178 Ops.CAST dtypes.int [177] dtypes.int
+179 Ops.ADD dtypes.int [14, 178]
+180 Ops.INDEX dtypes.uchar [16, 179]
+181 Ops.LOAD dtypes.uchar [180]
+182 Ops.CONST dtypes.weakint [] 34
+183 Ops.CAST dtypes.int [182] dtypes.int
+184 Ops.ADD dtypes.int [14, 183]
+185 Ops.INDEX dtypes.uchar [16, 184]
+186 Ops.LOAD dtypes.uchar [185]
+187 Ops.CONST dtypes.weakint [] 35
+188 Ops.CAST dtypes.int [187] dtypes.int
+189 Ops.ADD dtypes.int [14, 188]
+190 Ops.INDEX dtypes.uchar [16, 189]
+191 Ops.LOAD dtypes.uchar [190]
+192 Ops.CONST dtypes.weakint [] 36
+193 Ops.CAST dtypes.int [192] dtypes.int
+194 Ops.ADD dtypes.int [14, 193]
+195 Ops.INDEX dtypes.uchar [16, 194]
+196 Ops.LOAD dtypes.uchar [195]
+197 Ops.CONST dtypes.weakint [] 37
+198 Ops.CAST dtypes.int [197] dtypes.int
+199 Ops.ADD dtypes.int [14, 198]
+200 Ops.INDEX dtypes.uchar [16, 199]
+201 Ops.LOAD dtypes.uchar [200]
+202 Ops.CONST dtypes.weakint [] 38
+203 Ops.CAST dtypes.int [202] dtypes.int
+204 Ops.ADD dtypes.int [14, 203]
+205 Ops.INDEX dtypes.uchar [16, 204]
+206 Ops.LOAD dtypes.uchar [205]
+207 Ops.CONST dtypes.weakint [] 39
+208 Ops.CAST dtypes.int [207] dtypes.int
+209 Ops.ADD dtypes.int [14, 208]
+210 Ops.INDEX dtypes.uchar [16, 209]
+211 Ops.LOAD dtypes.uchar [210]
+212 Ops.CONST dtypes.weakint [] 40
+213 Ops.CAST dtypes.int [212] dtypes.int
+214 Ops.ADD dtypes.int [14, 213]
+215 Ops.INDEX dtypes.uchar [16, 214]
+216 Ops.LOAD dtypes.uchar [215]
+217 Ops.CONST dtypes.weakint [] 41
+218 Ops.CAST dtypes.int [217] dtypes.int
+219 Ops.ADD dtypes.int [14, 218]
+220 Ops.INDEX dtypes.uchar [16, 219]
+221 Ops.LOAD dtypes.uchar [220]
+222 Ops.CONST dtypes.weakint [] 42
+223 Ops.CAST dtypes.int [222] dtypes.int
+224 Ops.ADD dtypes.int [14, 223]
+225 Ops.INDEX dtypes.uchar [16, 224]
+226 Ops.LOAD dtypes.uchar [225]
+227 Ops.CONST dtypes.weakint [] 43
+228 Ops.CAST dtypes.int [227] dtypes.int
+229 Ops.ADD dtypes.int [14, 228]
+230 Ops.INDEX dtypes.uchar [16, 229]
+231 Ops.LOAD dtypes.uchar [230]
+232 Ops.CONST dtypes.weakint [] 44
+233 Ops.CAST dtypes.int [232] dtypes.int
+234 Ops.ADD dtypes.int [14, 233]
+235 Ops.INDEX dtypes.uchar [16, 234]
+236 Ops.LOAD dtypes.uchar [235]
+237 Ops.CONST dtypes.weakint [] 45
+238 Ops.CAST dtypes.int [237] dtypes.int
+239 Ops.ADD dtypes.int [14, 238]
+240 Ops.INDEX dtypes.uchar [16, 239]
+241 Ops.LOAD dtypes.uchar [240]
+242 Ops.CONST dtypes.weakint [] 46
+243 Ops.CAST dtypes.int [242] dtypes.int
+244 Ops.ADD dtypes.int [14, 243]
+245 Ops.INDEX dtypes.uchar [16, 244]
+246 Ops.LOAD dtypes.uchar [245]
+247 Ops.CONST dtypes.weakint [] 47
+248 Ops.CAST dtypes.int [247] dtypes.int
+249 Ops.ADD dtypes.int [14, 248]
+250 Ops.INDEX dtypes.uchar [16, 249]
+251 Ops.LOAD dtypes.uchar [250]
+252 Ops.CONST dtypes.weakint [] 48
+253 Ops.CAST dtypes.int [252] dtypes.int
+254 Ops.ADD dtypes.int [14, 253]
+255 Ops.INDEX dtypes.uchar [16, 254]
+256 Ops.LOAD dtypes.uchar [255]
+257 Ops.CONST dtypes.weakint [] 49
+258 Ops.CAST dtypes.int [257] dtypes.int
+259 Ops.ADD dtypes.int [14, 258]
+260 Ops.INDEX dtypes.uchar [16, 259]
+261 Ops.LOAD dtypes.uchar [260]
+262 Ops.CONST dtypes.weakint [] 50
+263 Ops.CAST dtypes.int [262] dtypes.int
+264 Ops.ADD dtypes.int [14, 263]
+265 Ops.INDEX dtypes.uchar [16, 264]
+266 Ops.LOAD dtypes.uchar [265]
+267 Ops.CONST dtypes.weakint [] 51
+268 Ops.CAST dtypes.int [267] dtypes.int
+269 Ops.ADD dtypes.int [14, 268]
+270 Ops.INDEX dtypes.uchar [16, 269]
+271 Ops.LOAD dtypes.uchar [270]
+272 Ops.CONST dtypes.weakint [] 52
+273 Ops.CAST dtypes.int [272] dtypes.int
+274 Ops.ADD dtypes.int [14, 273]
+275 Ops.INDEX dtypes.uchar [16, 274]
+276 Ops.LOAD dtypes.uchar [275]
+277 Ops.CONST dtypes.weakint [] 53
+278 Ops.CAST dtypes.int [277] dtypes.int
+279 Ops.ADD dtypes.int [14, 278]
+280 Ops.INDEX dtypes.uchar [16, 279]
+281 Ops.LOAD dtypes.uchar [280]
+282 Ops.CONST dtypes.weakint [] 54
+283 Ops.CAST dtypes.int [282] dtypes.int
+284 Ops.ADD dtypes.int [14, 283]
+285 Ops.INDEX dtypes.uchar [16, 284]
+286 Ops.LOAD dtypes.uchar [285]
+287 Ops.CONST dtypes.weakint [] 55
+288 Ops.CAST dtypes.int [287] dtypes.int
+289 Ops.ADD dtypes.int [14, 288]
+290 Ops.INDEX dtypes.uchar [16, 289]
+291 Ops.LOAD dtypes.uchar [290]
+292 Ops.CONST dtypes.weakint [] 56
+293 Ops.CAST dtypes.int [292] dtypes.int
+294 Ops.ADD dtypes.int [14, 293]
+295 Ops.INDEX dtypes.uchar [16, 294]
+296 Ops.LOAD dtypes.uchar [295]
+297 Ops.CONST dtypes.weakint [] 57
+298 Ops.CAST dtypes.int [297] dtypes.int
+299 Ops.ADD dtypes.int [14, 298]
+300 Ops.INDEX dtypes.uchar [16, 299]
+301 Ops.LOAD dtypes.uchar [300]
+302 Ops.CONST dtypes.weakint [] 58
+303 Ops.CAST dtypes.int [302] dtypes.int
+304 Ops.ADD dtypes.int [14, 303]
+305 Ops.INDEX dtypes.uchar [16, 304]
+306 Ops.LOAD dtypes.uchar [305]
+307 Ops.CONST dtypes.weakint [] 59
+308 Ops.CAST dtypes.int [307] dtypes.int
+309 Ops.ADD dtypes.int [14, 308]
+310 Ops.INDEX dtypes.uchar [16, 309]
+311 Ops.LOAD dtypes.uchar [310]
+312 Ops.CONST dtypes.weakint [] 60
+313 Ops.CAST dtypes.int [312] dtypes.int
+314 Ops.ADD dtypes.int [14, 313]
+315 Ops.INDEX dtypes.uchar [16, 314]
+316 Ops.LOAD dtypes.uchar [315]
+317 Ops.CONST dtypes.weakint [] 61
+318 Ops.CAST dtypes.int [317] dtypes.int
+319 Ops.ADD dtypes.int [14, 318]
+320 Ops.INDEX dtypes.uchar [16, 319]
+321 Ops.LOAD dtypes.uchar [320]
+322 Ops.CONST dtypes.weakint [] 62
+323 Ops.CAST dtypes.int [322] dtypes.int
+324 Ops.ADD dtypes.int [14, 323]
+325 Ops.INDEX dtypes.uchar [16, 324]
+326 Ops.LOAD dtypes.uchar [325]
+327 Ops.CONST dtypes.weakint [] 63
+328 Ops.CAST dtypes.int [327] dtypes.int
+329 Ops.ADD dtypes.int [14, 328]
+330 Ops.INDEX dtypes.uchar [16, 329]
+331 Ops.LOAD dtypes.uchar [330]
+332 Ops.STACK dtypes.uchar [18, 23, 28, 33, 38, 43, 46, 51, 56, 61, 66, 71, 76, 81, 86, 91, 96, 101, 106, 111, 116, 121, 126, 131, 136, 141, 146, 151, 156, 161, 166, 171, 176, 181, 186, 191, 196, 201, 206, 211, 216, 221, 226, 231, 236, 241, 246, 251, 256, 261, 266, 271, 276, 281, 286, 291, 296, 301, 306, 311, 316, 321, 326, 331]
+333 Ops.CAST dtypes.uchar [19] dtypes.uchar
+334 Ops.ADD dtypes.uchar [332, 333]
+335 Ops.CONST dtypes.weakint [] 0
+336 Ops.CAST dtypes.int [335] dtypes.int
+337 Ops.INDEX dtypes.uchar [334, 336]
+338 Ops.STORE dtypes.void [15, 337]
+339 Ops.INDEX dtypes.uchar [0, 21]
+340 Ops.INDEX dtypes.uchar [334, 20]
+341 Ops.STORE dtypes.void [339, 340]
+342 Ops.INDEX dtypes.uchar [0, 26]
+343 Ops.INDEX dtypes.uchar [334, 25]
+344 Ops.STORE dtypes.void [342, 343]
+345 Ops.INDEX dtypes.uchar [0, 31]
+346 Ops.INDEX dtypes.uchar [334, 30]
+347 Ops.STORE dtypes.void [345, 346]
+348 Ops.INDEX dtypes.uchar [0, 36]
+349 Ops.INDEX dtypes.uchar [334, 35]
+350 Ops.STORE dtypes.void [348, 349]
+351 Ops.INDEX dtypes.uchar [0, 41]
+352 Ops.INDEX dtypes.uchar [334, 40]
+353 Ops.STORE dtypes.void [351, 352]
+354 Ops.INDEX dtypes.uchar [0, 44]
+355 Ops.INDEX dtypes.uchar [334, 13]
+356 Ops.STORE dtypes.void [354, 355]
+357 Ops.INDEX dtypes.uchar [0, 49]
+358 Ops.INDEX dtypes.uchar [334, 48]
+359 Ops.STORE dtypes.void [357, 358]
+360 Ops.INDEX dtypes.uchar [0, 54]
+361 Ops.INDEX dtypes.uchar [334, 53]
+362 Ops.STORE dtypes.void [360, 361]
+363 Ops.INDEX dtypes.uchar [0, 59]
+364 Ops.INDEX dtypes.uchar [334, 58]
+365 Ops.STORE dtypes.void [363, 364]
+366 Ops.INDEX dtypes.uchar [0, 64]
+367 Ops.INDEX dtypes.uchar [334, 63]
+368 Ops.STORE dtypes.void [366, 367]
+369 Ops.INDEX dtypes.uchar [0, 69]
+370 Ops.INDEX dtypes.uchar [334, 68]
+371 Ops.STORE dtypes.void [369, 370]
+372 Ops.INDEX dtypes.uchar [0, 74]
+373 Ops.INDEX dtypes.uchar [334, 73]
+374 Ops.STORE dtypes.void [372, 373]
+375 Ops.INDEX dtypes.uchar [0, 79]
+376 Ops.INDEX dtypes.uchar [334, 78]
+377 Ops.STORE dtypes.void [375, 376]
+378 Ops.INDEX dtypes.uchar [0, 84]
+379 Ops.INDEX dtypes.uchar [334, 83]
+380 Ops.STORE dtypes.void [378, 379]
+381 Ops.INDEX dtypes.uchar [0, 89]
+382 Ops.INDEX dtypes.uchar [334, 88]
+383 Ops.STORE dtypes.void [381, 382]
+384 Ops.INDEX dtypes.uchar [0, 94]
+385 Ops.INDEX dtypes.uchar [334, 93]
+386 Ops.STORE dtypes.void [384, 385]
+387 Ops.INDEX dtypes.uchar [0, 99]
+388 Ops.INDEX dtypes.uchar [334, 98]
+389 Ops.STORE dtypes.void [387, 388]
+390 Ops.INDEX dtypes.uchar [0, 104]
+391 Ops.INDEX dtypes.uchar [334, 103]
+392 Ops.STORE dtypes.void [390, 391]
+393 Ops.INDEX dtypes.uchar [0, 109]
+394 Ops.INDEX dtypes.uchar [334, 108]
+395 Ops.STORE dtypes.void [393, 394]
+396 Ops.INDEX dtypes.uchar [0, 114]
+397 Ops.INDEX dtypes.uchar [334, 113]
+398 Ops.STORE dtypes.void [396, 397]
+399 Ops.INDEX dtypes.uchar [0, 119]
+400 Ops.INDEX dtypes.uchar [334, 118]
+401 Ops.STORE dtypes.void [399, 400]
+402 Ops.INDEX dtypes.uchar [0, 124]
+403 Ops.INDEX dtypes.uchar [334, 123]
+404 Ops.STORE dtypes.void [402, 403]
+405 Ops.INDEX dtypes.uchar [0, 129]
+406 Ops.INDEX dtypes.uchar [334, 128]
+407 Ops.STORE dtypes.void [405, 406]
+408 Ops.INDEX dtypes.uchar [0, 134]
+409 Ops.INDEX dtypes.uchar [334, 133]
+410 Ops.STORE dtypes.void [408, 409]
+411 Ops.INDEX dtypes.uchar [0, 139]
+412 Ops.INDEX dtypes.uchar [334, 138]
+413 Ops.STORE dtypes.void [411, 412]
+414 Ops.INDEX dtypes.uchar [0, 144]
+415 Ops.INDEX dtypes.uchar [334, 143]
+416 Ops.STORE dtypes.void [414, 415]
+417 Ops.INDEX dtypes.uchar [0, 149]
+418 Ops.INDEX dtypes.uchar [334, 148]
+419 Ops.STORE dtypes.void [417, 418]
+420 Ops.INDEX dtypes.uchar [0, 154]
+421 Ops.INDEX dtypes.uchar [334, 153]
+422 Ops.STORE dtypes.void [420, 421]
+423 Ops.INDEX dtypes.uchar [0, 159]
+424 Ops.INDEX dtypes.uchar [334, 158]
+425 Ops.STORE dtypes.void [423, 424]
+426 Ops.INDEX dtypes.uchar [0, 164]
+427 Ops.INDEX dtypes.uchar [334, 163]
+428 Ops.STORE dtypes.void [426, 427]
+429 Ops.INDEX dtypes.uchar [0, 169]
+430 Ops.INDEX dtypes.uchar [334, 168]
+431 Ops.STORE dtypes.void [429, 430]
+432 Ops.INDEX dtypes.uchar [0, 174]
+433 Ops.INDEX dtypes.uchar [334, 173]
+434 Ops.STORE dtypes.void [432, 433]
+435 Ops.INDEX dtypes.uchar [0, 179]
+436 Ops.INDEX dtypes.uchar [334, 178]
+437 Ops.STORE dtypes.void [435, 436]
+438 Ops.INDEX dtypes.uchar [0, 184]
+439 Ops.INDEX dtypes.uchar [334, 183]
+440 Ops.STORE dtypes.void [438, 439]
+441 Ops.INDEX dtypes.uchar [0, 189]
+442 Ops.INDEX dtypes.uchar [334, 188]
+443 Ops.STORE dtypes.void [441, 442]
+444 Ops.INDEX dtypes.uchar [0, 194]
+445 Ops.INDEX dtypes.uchar [334, 193]
+446 Ops.STORE dtypes.void [444, 445]
+447 Ops.INDEX dtypes.uchar [0, 199]
+448 Ops.INDEX dtypes.uchar [334, 198]
+449 Ops.STORE dtypes.void [447, 448]
+450 Ops.INDEX dtypes.uchar [0, 204]
+451 Ops.INDEX dtypes.uchar [334, 203]
+452 Ops.STORE dtypes.void [450, 451]
+453 Ops.INDEX dtypes.uchar [0, 209]
+454 Ops.INDEX dtypes.uchar [334, 208]
+455 Ops.STORE dtypes.void [453, 454]
+456 Ops.INDEX dtypes.uchar [0, 214]
+457 Ops.INDEX dtypes.uchar [334, 213]
+458 Ops.STORE dtypes.void [456, 457]
+459 Ops.INDEX dtypes.uchar [0, 219]
+460 Ops.INDEX dtypes.uchar [334, 218]
+461 Ops.STORE dtypes.void [459, 460]
+462 Ops.INDEX dtypes.uchar [0, 224]
+463 Ops.INDEX dtypes.uchar [334, 223]
+464 Ops.STORE dtypes.void [462, 463]
+465 Ops.INDEX dtypes.uchar [0, 229]
+466 Ops.INDEX dtypes.uchar [334, 228]
+467 Ops.STORE dtypes.void [465, 466]
+468 Ops.INDEX dtypes.uchar [0, 234]
+469 Ops.INDEX dtypes.uchar [334, 233]
+470 Ops.STORE dtypes.void [468, 469]
+471 Ops.INDEX dtypes.uchar [0, 239]
+472 Ops.INDEX dtypes.uchar [334, 238]
+473 Ops.STORE dtypes.void [471, 472]
+474 Ops.INDEX dtypes.uchar [0, 244]
+475 Ops.INDEX dtypes.uchar [334, 243]
+476 Ops.STORE dtypes.void [474, 475]
+477 Ops.INDEX dtypes.uchar [0, 249]
+478 Ops.INDEX dtypes.uchar [334, 248]
+479 Ops.STORE dtypes.void [477, 478]
+480 Ops.INDEX dtypes.uchar [0, 254]
+481 Ops.INDEX dtypes.uchar [334, 253]
+482 Ops.STORE dtypes.void [480, 481]
+483 Ops.INDEX dtypes.uchar [0, 259]
+484 Ops.INDEX dtypes.uchar [334, 258]
+485 Ops.STORE dtypes.void [483, 484]
+486 Ops.INDEX dtypes.uchar [0, 264]
+487 Ops.INDEX dtypes.uchar [334, 263]
+488 Ops.STORE dtypes.void [486, 487]
+489 Ops.INDEX dtypes.uchar [0, 269]
+490 Ops.INDEX dtypes.uchar [334, 268]
+491 Ops.STORE dtypes.void [489, 490]
+492 Ops.INDEX dtypes.uchar [0, 274]
+493 Ops.INDEX dtypes.uchar [334, 273]
+494 Ops.STORE dtypes.void [492, 493]
+495 Ops.INDEX dtypes.uchar [0, 279]
+496 Ops.INDEX dtypes.uchar [334, 278]
+497 Ops.STORE dtypes.void [495, 496]
+498 Ops.INDEX dtypes.uchar [0, 284]
+499 Ops.INDEX dtypes.uchar [334, 283]
+500 Ops.STORE dtypes.void [498, 499]
+501 Ops.INDEX dtypes.uchar [0, 289]
+502 Ops.INDEX dtypes.uchar [334, 288]
+503 Ops.STORE dtypes.void [501, 502]
+504 Ops.INDEX dtypes.uchar [0, 294]
+505 Ops.INDEX dtypes.uchar [334, 293]
+506 Ops.STORE dtypes.void [504, 505]
+507 Ops.INDEX dtypes.uchar [0, 299]
+508 Ops.INDEX dtypes.uchar [334, 298]
+509 Ops.STORE dtypes.void [507, 508]
+510 Ops.INDEX dtypes.uchar [0, 304]
+511 Ops.INDEX dtypes.uchar [334, 303]
+512 Ops.STORE dtypes.void [510, 511]
+513 Ops.INDEX dtypes.uchar [0, 309]
+514 Ops.INDEX dtypes.uchar [334, 308]
+515 Ops.STORE dtypes.void [513, 514]
+516 Ops.INDEX dtypes.uchar [0, 314]
+517 Ops.INDEX dtypes.uchar [334, 313]
+518 Ops.STORE dtypes.void [516, 517]
+519 Ops.INDEX dtypes.uchar [0, 319]
+520 Ops.INDEX dtypes.uchar [334, 318]
+521 Ops.STORE dtypes.void [519, 520]
+522 Ops.INDEX dtypes.uchar [0, 324]
+523 Ops.INDEX dtypes.uchar [334, 323]
+524 Ops.STORE dtypes.void [522, 523]
+525 Ops.INDEX dtypes.uchar [0, 329]
+526 Ops.INDEX dtypes.uchar [334, 328]
+527 Ops.STORE dtypes.void [525, 526]
+528 Ops.GROUP dtypes.void [338, 341, 344, 347, 350, 353, 356, 359, 362, 365, 368, 371, 374, 377, 380, 383, 386, 389, 392, 395, 398, 401, 404, 407, 410, 413, 416, 419, 422, 425, 428, 431, 434, 437, 440, 443, 446, 449, 452, 455, 458, 461, 464, 467, 470, 473, 476, 479, 482, 485, 488, 491, 494, 497, 500, 503, 506, 509, 512, 515, 518, 521, 524, 527]
+529 Ops.END dtypes.void [528, 10]
+530 Ops.SINK dtypes.void [529] KernelInfo(name="E_16384_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), estimates=Estimates(ops=1048576, lds=2097152, mem=2097152), split=(16384, 2, 3)) tag=1
+531 Ops.SINK dtypes.void [529] KernelInfo(name="E_16384_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))), split=(16384, 2, 3)) tag=1
+532 Ops.LINEAR dtypes.void [0, 16, 7, 8, 335, 336, 19, 20, 62, 63, 67, 68, 72, 73, 77, 78, 82, 83, 87, 88, 92, 93, 97, 98, 102, 103, 107, 108, 24, 25, 112, 113, 117, 118, 122, 123, 127, 128, 132, 133, 137, 138, 142, 143, 147, 148, 152, 153, 157, 158, 29, 30, 162, 163, 167, 168, 172, 173, 177, 178, 182, 183, 187, 188, 192, 193, 197, 198, 202, 203, 207, 208, 34, 35, 212, 213, 217, 218, 222, 223, 227, 228, 232, 233, 237, 238, 242, 243, 247, 248, 252, 253, 257, 258, 39, 40, 262, 263, 267, 268, 272, 273, 277, 278, 282, 283, 287, 288, 292, 293, 297, 298, 302, 303, 307, 308, 12, 13, 312, 313, 317, 318, 322, 323, 327, 328, 47, 48, 52, 53, 57, 58, 333, 9, 10, 11, 14, 21, 22, 23, 64, 65, 66, 69, 70, 71, 74, 75, 76, 79, 80, 81, 84, 85, 86, 89, 90, 91, 94, 95, 96, 99, 100, 101, 104, 105, 106, 109, 110, 111, 26, 27, 28, 114, 115, 116, 119, 120, 121, 124, 125, 126, 129, 130, 131, 134, 135, 136, 139, 140, 141, 144, 145, 146, 149, 150, 151, 154, 155, 156, 159, 160, 161, 31, 32, 33, 164, 165, 166, 169, 170, 171, 174, 175, 176, 179, 180, 181, 184, 185, 186, 189, 190, 191, 194, 195, 196, 199, 200, 201, 204, 205, 206, 209, 210, 211, 36, 37, 38, 214, 215, 216, 219, 220, 221, 224, 225, 226, 229, 230, 231, 234, 235, 236, 239, 240, 241, 244, 245, 246, 249, 250, 251, 254, 255, 256, 259, 260, 261, 41, 42, 43, 264, 265, 266, 269, 270, 271, 274, 275, 276, 279, 280, 281, 284, 285, 286, 289, 290, 291, 294, 295, 296, 299, 300, 301, 304, 305, 306, 309, 310, 311, 44, 45, 46, 314, 315, 316, 319, 320, 321, 324, 325, 326, 329, 330, 331, 49, 50, 51, 54, 55, 56, 59, 60, 61, 17, 18, 332, 339, 366, 369, 372, 375, 378, 381, 384, 387, 390, 393, 342, 396, 399, 402, 405, 408, 411, 414, 417, 420, 423, 345, 426, 429, 432, 435, 438, 441, 444, 447, 450, 453, 348, 456, 459, 462, 465, 468, 471, 474, 477, 480, 483, 351, 486, 489, 492, 495, 498, 501, 504, 507, 510, 513, 354, 516, 519, 522, 525, 357, 360, 363, 15, 334, 337, 340, 367, 370, 373, 376, 379, 382, 385, 388, 391, 394, 343, 397, 400, 403, 406, 409, 412, 415, 418, 421, 424, 346, 427, 430, 433, 436, 439, 442, 445, 448, 451, 454, 349, 457, 460, 463, 466, 469, 472, 475, 478, 481, 484, 352, 487, 490, 493, 496, 499, 502, 505, 508, 511, 514, 355, 517, 520, 523, 526, 358, 361, 364, 341, 368, 371, 374, 377, 380, 383, 386, 389, 392, 395, 344, 398, 401, 404, 407, 410, 413, 416, 419, 422, 425, 347, 428, 431, 434, 437, 440, 443, 446, 449, 452, 455, 350, 458, 461, 464, 467, 470, 473, 476, 479, 482, 485, 353, 488, 491, 494, 497, 500, 503, 506, 509, 512, 515, 356, 518, 521, 524, 527, 359, 362, 365, 338, 528, 529, 531]
+533 Ops.SOURCE dtypes.void [] "typedef unsigned char unsigned_char64 __attribute__((aligned(64),ext_vector_type(64)));\nvoid E_16384_16_4(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<6);\n    int alu1 = (alu0+1);\n    unsigned char val0 = (*(data1_1048576+alu1));\n    int alu2 = (alu0+10);\n    unsigned char val1 = (*(data1_1048576+alu2));\n    int alu3 = (alu0+11);\n    unsigned char val2 = (*(data1_1048576+alu3));\n    int alu4 = (alu0+12);\n    unsigned char val3 = (*(data1_1048576+alu4));\n    int alu5 = (alu0+13);\n    unsigned char val4 = (*(data1_1048576+alu5));\n    int alu6 = (alu0+14);\n    unsigned char val5 = (*(data1_1048576+alu6));\n    int alu7 = (alu0+15);\n    unsigned char val6 = (*(data1_1048576+alu7));\n    int alu8 = (alu0+16);\n    unsigned char val7 = (*(data1_1048576+alu8));\n    int alu9 = (alu0+17);\n    unsigned char val8 = (*(data1_1048576+alu9));\n    int alu10 = (alu0+18);\n    unsigned char val9 = (*(data1_1048576+alu10));\n    int alu11 = (alu0+19);\n    unsigned char val10 = (*(data1_1048576+alu11));\n    int alu12 = (alu0+2);\n    unsigned char val11 = (*(data1_1048576+alu12));\n    int alu13 = (alu0+20);\n    unsigned char val12 = (*(data1_1048576+alu13));\n    int alu14 = (alu0+21);\n    unsigned char val13 = (*(data1_1048576+alu14));\n    int alu15 = (alu0+22);\n    unsigned char val14 = (*(data1_1048576+alu15));\n    int alu16 = (alu0+23);\n    unsigned char val15 = (*(data1_1048576+alu16));\n    int alu17 = (alu0+24);\n    unsigned char val16 = (*(data1_1048576+alu17));\n    int alu18 = (alu0+25);\n    unsigned char val17 = (*(data1_1048576+alu18));\n    int alu19 = (alu0+26);\n    unsigned char val18 = (*(data1_1048576+alu19));\n    int alu20 = (alu0+27);\n    unsigned char val19 = (*(data1_1048576+alu20));\n    int alu21 = (alu0+28);\n    unsigned char val20 = (*(data1_1048576+alu21));\n    int alu22 = (alu0+29);\n    unsigned char val21 = (*(data1_1048576+alu22));\n    int alu23 = (alu0+3);\n    unsigned char val22 = (*(data1_1048576+alu23));\n    int alu24 = (alu0+30);\n    unsigned char val23 = (*(data1_1048576+alu24));\n    int alu25 = (alu0+31);\n    unsigned char val24 = (*(data1_1048576+alu25));\n    int alu26 = (alu0+32);\n    unsigned char val25 = (*(data1_1048576+alu26));\n    int alu27 = (alu0+33);\n    unsigned char val26 = (*(data1_1048576+alu27));\n    int alu28 = (alu0+34);\n    unsigned char val27 = (*(data1_1048576+alu28));\n    int alu29 = (alu0+35);\n    unsigned char val28 = (*(data1_1048576+alu29));\n    int alu30 = (alu0+36);\n    unsigned char val29 = (*(data1_1048576+alu30));\n    int alu31 = (alu0+37);\n    unsigned char val30 = (*(data1_1048576+alu31));\n    int alu32 = (alu0+38);\n    unsigned char val31 = (*(data1_1048576+alu32));\n    int alu33 = (alu0+39);\n    unsigned char val32 = (*(data1_1048576+alu33));\n    int alu34 = (alu0+4);\n    unsigned char val33 = (*(data1_1048576+alu34));\n    int alu35 = (alu0+40);\n    unsigned char val34 = (*(data1_1048576+alu35));\n    int alu36 = (alu0+41);\n    unsigned char val35 = (*(data1_1048576+alu36));\n    int alu37 = (alu0+42);\n    unsigned char val36 = (*(data1_1048576+alu37));\n    int alu38 = (alu0+43);\n    unsigned char val37 = (*(data1_1048576+alu38));\n    int alu39 = (alu0+44);\n    unsigned char val38 = (*(data1_1048576+alu39));\n    int alu40 = (alu0+45);\n    unsigned char val39 = (*(data1_1048576+alu40));\n    int alu41 = (alu0+46);\n    unsigned char val40 = (*(data1_1048576+alu41));\n    int alu42 = (alu0+47);\n    unsigned char val41 = (*(data1_1048576+alu42));\n    int alu43 = (alu0+48);\n    unsigned char val42 = (*(data1_1048576+alu43));\n    int alu44 = (alu0+49);\n    unsigned char val43 = (*(data1_1048576+alu44));\n    int alu45 = (alu0+5);\n    unsigned char val44 = (*(data1_1048576+alu45));\n    int alu46 = (alu0+50);\n    unsigned char val45 = (*(data1_1048576+alu46));\n    int alu47 = (alu0+51);\n    unsigned char val46 = (*(data1_1048576+alu47));\n    int alu48 = (alu0+52);\n    unsigned char val47 = (*(data1_1048576+alu48));\n    int alu49 = (alu0+53);\n    unsigned char val48 = (*(data1_1048576+alu49));\n    int alu50 = (alu0+54);\n    unsigned char val49 = (*(data1_1048576+alu50));\n    int alu51 = (alu0+55);\n    unsigned char val50 = (*(data1_1048576+alu51));\n    int alu52 = (alu0+56);\n    unsigned char val51 = (*(data1_1048576+alu52));\n    int alu53 = (alu0+57);\n    unsigned char val52 = (*(data1_1048576+alu53));\n    int alu54 = (alu0+58);\n    unsigned char val53 = (*(data1_1048576+alu54));\n    int alu55 = (alu0+59);\n    unsigned char val54 = (*(data1_1048576+alu55));\n    int alu56 = (alu0+6);\n    unsigned char val55 = (*(data1_1048576+alu56));\n    int alu57 = (alu0+60);\n    unsigned char val56 = (*(data1_1048576+alu57));\n    int alu58 = (alu0+61);\n    unsigned char val57 = (*(data1_1048576+alu58));\n    int alu59 = (alu0+62);\n    unsigned char val58 = (*(data1_1048576+alu59));\n    int alu60 = (alu0+63);\n    unsigned char val59 = (*(data1_1048576+alu60));\n    int alu61 = (alu0+7);\n    unsigned char val60 = (*(data1_1048576+alu61));\n    int alu62 = (alu0+8);\n    unsigned char val61 = (*(data1_1048576+alu62));\n    int alu63 = (alu0+9);\n    unsigned char val62 = (*(data1_1048576+alu63));\n    unsigned char val63 = (*(data1_1048576+alu0));\n    unsigned_char64 alu64 = ((unsigned_char64){val63,val0,val11,val22,val33,val44,val55,val60,val61,val62,val1,val2,val3,val4,val5,val6,val7,val8,val9,val10,val12,val13,val14,val15,val16,val17,val18,val19,val20,val21,val23,val24,val25,val26,val27,val28,val29,val30,val31,val32,val34,val35,val36,val37,val38,val39,val40,val41,val42,val43,val45,val46,val47,val48,val49,val50,val51,val52,val53,val54,val56,val57,val58,val59}+((unsigned char)(1u)));\n    *(data0_1048576+alu1) = alu64[1];\n    *(data0_1048576+alu2) = alu64[10];\n    *(data0_1048576+alu3) = alu64[11];\n    *(data0_1048576+alu4) = alu64[12];\n    *(data0_1048576+alu5) = alu64[13];\n    *(data0_1048576+alu6) = alu64[14];\n    *(data0_1048576+alu7) = alu64[15];\n    *(data0_1048576+alu8) = alu64[16];\n    *(data0_1048576+alu9) = alu64[17];\n    *(data0_1048576+alu10) = alu64[18];\n    *(data0_1048576+alu11) = alu64[19];\n    *(data0_1048576+alu12) = alu64[2];\n    *(data0_1048576+alu13) = alu64[20];\n    *(data0_1048576+alu14) = alu64[21];\n    *(data0_1048576+alu15) = alu64[22];\n    *(data0_1048576+alu16) = alu64[23];\n    *(data0_1048576+alu17) = alu64[24];\n    *(data0_1048576+alu18) = alu64[25];\n    *(data0_1048576+alu19) = alu64[26];\n    *(data0_1048576+alu20) = alu64[27];\n    *(data0_1048576+alu21) = alu64[28];\n    *(data0_1048576+alu22) = alu64[29];\n    *(data0_1048576+alu23) = alu64[3];\n    *(data0_1048576+alu24) = alu64[30];\n    *(data0_1048576+alu25) = alu64[31];\n    *(data0_1048576+alu26) = alu64[32];\n    *(data0_1048576+alu27) = alu64[33];\n    *(data0_1048576+alu28) = alu64[34];\n    *(data0_1048576+alu29) = alu64[35];\n    *(data0_1048576+alu30) = alu64[36];\n    *(data0_1048576+alu31) = alu64[37];\n    *(data0_1048576+alu32) = alu64[38];\n    *(data0_1048576+alu33) = alu64[39];\n    *(data0_1048576+alu34) = alu64[4];\n    *(data0_1048576+alu35) = alu64[40];\n    *(data0_1048576+alu36) = alu64[41];\n    *(data0_1048576+alu37) = alu64[42];\n    *(data0_1048576+alu38) = alu64[43];\n    *(data0_1048576+alu39) = alu64[44];\n    *(data0_1048576+alu40) = alu64[45];\n    *(data0_1048576+alu41) = alu64[46];\n    *(data0_1048576+alu42) = alu64[47];\n    *(data0_1048576+alu43) = alu64[48];\n    *(data0_1048576+alu44) = alu64[49];\n    *(data0_1048576+alu45) = alu64[5];\n    *(data0_1048576+alu46) = alu64[50];\n    *(data0_1048576+alu47) = alu64[51];\n    *(data0_1048576+alu48) = alu64[52];\n    *(data0_1048576+alu49) = alu64[53];\n    *(data0_1048576+alu50) = alu64[54];\n    *(data0_1048576+alu51) = alu64[55];\n    *(data0_1048576+alu52) = alu64[56];\n    *(data0_1048576+alu53) = alu64[57];\n    *(data0_1048576+alu54) = alu64[58];\n    *(data0_1048576+alu55) = alu64[59];\n    *(data0_1048576+alu56) = alu64[6];\n    *(data0_1048576+alu57) = alu64[60];\n    *(data0_1048576+alu58) = alu64[61];\n    *(data0_1048576+alu59) = alu64[62];\n    *(data0_1048576+alu60) = alu64[63];\n    *(data0_1048576+alu61) = alu64[7];\n    *(data0_1048576+alu62) = alu64[8];\n    *(data0_1048576+alu63) = alu64[9];\n    *(data0_1048576+alu0) = alu64[0];\n  }\n}\n"
+534 Ops.BINARY dtypes.uchar [] b"typedef unsigned char unsigned_char64 __attribute__((aligned(64),ext_vector_type(64)));\nvoid E_16384_16_4(unsigned char* restrict data0_1048576, unsigned char* restrict data1_1048576, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<6);\n    int alu1 = (alu0+1);\n    unsigned char val0 = (*(data1_1048576+alu1));\n    int alu2 = (alu0+10);\n    unsigned char val1 = (*(data1_1048576+alu2));\n    int alu3 = (alu0+11);\n    unsigned char val2 = (*(data1_1048576+alu3));\n    int alu4 = (alu0+12);\n    unsigned char val3 = (*(data1_1048576+alu4));\n    int alu5 = (alu0+13);\n    unsigned char val4 = (*(data1_1048576+alu5));\n    int alu6 = (alu0+14);\n    unsigned char val5 = (*(data1_1048576+alu6));\n    int alu7 = (alu0+15);\n    unsigned char val6 = (*(data1_1048576+alu7));\n    int alu8 = (alu0+16);\n    unsigned char val7 = (*(data1_1048576+alu8));\n    int alu9 = (alu0+17);\n    unsigned char val8 = (*(data1_1048576+alu9));\n    int alu10 = (alu0+18);\n    unsigned char val9 = (*(data1_1048576+alu10));\n    int alu11 = (alu0+19);\n    unsigned char val10 = (*(data1_1048576+alu11));\n    int alu12 = (alu0+2);\n    unsigned char val11 = (*(data1_1048576+alu12));\n    int alu13 = (alu0+20);\n    unsigned char val12 = (*(data1_1048576+alu13));\n    int alu14 = (alu0+21);\n    unsigned char val13 = (*(data1_1048576+alu14));\n    int alu15 = (alu0+22);\n    unsigned char val14 = (*(data1_1048576+alu15));\n    int alu16 = (alu0+23);\n    unsigned char val15 = (*(data1_1048576+alu16));\n    int alu17 = (alu0+24);\n    unsigned char val16 = (*(data1_1048576+alu17));\n    int alu18 = (alu0+25);\n    unsigned char val17 = (*(data1_1048576+alu18));\n    int alu19 = (alu0+26);\n    unsigned char val18 = (*(data1_1048576+alu19));\n    int alu20 = (alu0+27);\n    unsigned char val19 = (*(data1_1048576+alu20));\n    int alu21 = (alu0+28);\n    unsigned char val20 = (*(data1_1048576+alu21));\n    int alu22 = (alu0+29);\n    unsigned char val21 = (*(data1_1048576+alu22));\n    int alu23 = (alu0+3);\n    unsigned char val22 = (*(data1_1048576+alu23));\n    int alu24 = (alu0+30);\n    unsigned char val23 = (*(data1_1048576+alu24));\n    int alu25 = (alu0+31);\n    unsigned char val24 = (*(data1_1048576+alu25));\n    int alu26 = (alu0+32);\n    unsigned char val25 = (*(data1_1048576+alu26));\n    int alu27 = (alu0+33);\n    unsigned char val26 = (*(data1_1048576+alu27));\n    int alu28 = (alu0+34);\n    unsigned char val27 = (*(data1_1048576+alu28));\n    int alu29 = (alu0+35);\n    unsigned char val28 = (*(data1_1048576+alu29));\n    int alu30 = (alu0+36);\n    unsigned char val29 = (*(data1_1048576+alu30));\n    int alu31 = (alu0+37);\n    unsigned char val30 = (*(data1_1048576+alu31));\n    int alu32 = (alu0+38);\n    unsigned char val31 = (*(data1_1048576+alu32));\n    int alu33 = (alu0+39);\n    unsigned char val32 = (*(data1_1048576+alu33));\n    int alu34 = (alu0+4);\n    unsigned char val33 = (*(data1_1048576+alu34));\n    int alu35 = (alu0+40);\n    unsigned char val34 = (*(data1_1048576+alu35));\n    int alu36 = (alu0+41);\n    unsigned char val35 = (*(data1_1048576+alu36));\n    int alu37 = (alu0+42);\n    unsigned char val36 = (*(data1_1048576+alu37));\n    int alu38 = (alu0+43);\n    unsigned char val37 = (*(data1_1048576+alu38));\n    int alu39 = (alu0+44);\n    unsigned char val38 = (*(data1_1048576+alu39));\n    int alu40 = (alu0+45);\n    unsigned char val39 = (*(data1_1048576+alu40));\n    int alu41 = (alu0+46);\n    unsigned char val40 = (*(data1_1048576+alu41));\n    int alu42 = (alu0+47);\n    unsigned char val41 = (*(data1_1048576+alu42));\n    int alu43 = (alu0+48);\n    unsigned char val42 = (*(data1_1048576+alu43));\n    int alu44 = (alu0+49);\n    unsigned char val43 = (*(data1_1048576+alu44));\n    int alu45 = (alu0+5);\n    unsigned char val44 = (*(data1_1048576+alu45));\n    int alu46 = (alu0+50);\n    unsigned char val45 = (*(data1_1048576+alu46));\n    int alu47 = (alu0+51);\n    unsigned char val46 = (*(data1_1048576+alu47));\n    int alu48 = (alu0+52);\n    unsigned char val47 = (*(data1_1048576+alu48));\n    int alu49 = (alu0+53);\n    unsigned char val48 = (*(data1_1048576+alu49));\n    int alu50 = (alu0+54);\n    unsigned char val49 = (*(data1_1048576+alu50));\n    int alu51 = (alu0+55);\n    unsigned char val50 = (*(data1_1048576+alu51));\n    int alu52 = (alu0+56);\n    unsigned char val51 = (*(data1_1048576+alu52));\n    int alu53 = (alu0+57);\n    unsigned char val52 = (*(data1_1048576+alu53));\n    int alu54 = (alu0+58);\n    unsigned char val53 = (*(data1_1048576+alu54));\n    int alu55 = (alu0+59);\n    unsigned char val54 = (*(data1_1048576+alu55));\n    int alu56 = (alu0+6);\n    unsigned char val55 = (*(data1_1048576+alu56));\n    int alu57 = (alu0+60);\n    unsigned char val56 = (*(data1_1048576+alu57));\n    int alu58 = (alu0+61);\n    unsigned char val57 = (*(data1_1048576+alu58));\n    int alu59 = (alu0+62);\n    unsigned char val58 = (*(data1_1048576+alu59));\n    int alu60 = (alu0+63);\n    unsigned char val59 = (*(data1_1048576+alu60));\n    int alu61 = (alu0+7);\n    unsigned char val60 = (*(data1_1048576+alu61));\n    int alu62 = (alu0+8);\n    unsigned char val61 = (*(data1_1048576+alu62));\n    int alu63 = (alu0+9);\n    unsigned char val62 = (*(data1_1048576+alu63));\n    unsigned char val63 = (*(data1_1048576+alu0));\n    unsigned_char64 alu64 = ((unsigned_char64){val63,val0,val11,val22,val33,val44,val55,val60,val61,val62,val1,val2,val3,val4,val5,val6,val7,val8,val9,val10,val12,val13,val14,val15,val16,val17,val18,val19,val20,val21,val23,val24,val25,val26,val27,val28,val29,val30,val31,val32,val34,val35,val36,val37,val38,val39,val40,val41,val42,val43,val45,val46,val47,val48,val49,val50,val51,val52,val53,val54,val56,val57,val58,val59}+((unsigned char)(1u)));\n    *(data0_1048576+alu1) = alu64[1];\n    *(data0_1048576+alu2) = alu64[10];\n    *(data0_1048576+alu3) = alu64[11];\n    *(data0_1048576+alu4) = alu64[12];\n    *(data0_1048576+alu5) = alu64[13];\n    *(data0_1048576+alu6) = alu64[14];\n    *(data0_1048576+alu7) = alu64[15];\n    *(data0_1048576+alu8) = alu64[16];\n    *(data0_1048576+alu9) = alu64[17];\n    *(data0_1048576+alu10) = alu64[18];\n    *(data0_1048576+alu11) = alu64[19];\n    *(data0_1048576+alu12) = alu64[2];\n    *(data0_1048576+alu13) = alu64[20];\n    *(data0_1048576+alu14) = alu64[21];\n    *(data0_1048576+alu15) = alu64[22];\n    *(data0_1048576+alu16) = alu64[23];\n    *(data0_1048576+alu17) = alu64[24];\n    *(data0_1048576+alu18) = alu64[25];\n    *(data0_1048576+alu19) = alu64[26];\n    *(data0_1048576+alu20) = alu64[27];\n    *(data0_1048576+alu21) = alu64[28];\n    *(data0_1048576+alu22) = alu64[29];\n    *(data0_1048576+alu23) = alu64[3];\n    *(data0_1048576+alu24) = alu64[30];\n    *(data0_1048576+alu25) = alu64[31];\n    *(data0_1048576+alu26) = alu64[32];\n    *(data0_1048576+alu27) = alu64[33];\n    *(data0_1048576+alu28) = alu64[34];\n    *(data0_1048576+alu29) = alu64[35];\n    *(data0_1048576+alu30) = alu64[36];\n    *(data0_1048576+alu31) = alu64[37];\n    *(data0_1048576+alu32) = alu64[38];\n    *(data0_1048576+alu33) = alu64[39];\n    *(data0_1048576+alu34) = alu64[4];\n    *(data0_1048576+alu35) = alu64[40];\n    *(data0_1048576+alu36) = alu64[41];\n    *(data0_1048576+alu37) = alu64[42];\n    *(data0_1048576+alu38) = alu64[43];\n    *(data0_1048576+alu39) = alu64[44];\n    *(data0_1048576+alu40) = alu64[45];\n    *(data0_1048576+alu41) = alu64[46];\n    *(data0_1048576+alu42) = alu64[47];\n    *(data0_1048576+alu43) = alu64[48];\n    *(data0_1048576+alu44) = alu64[49];\n    *(data0_1048576+alu45) = alu64[5];\n    *(data0_1048576+alu46) = alu64[50];\n    *(data0_1048576+alu47) = alu64[51];\n    *(data0_1048576+alu48) = alu64[52];\n    *(data0_1048576+alu49) = alu64[53];\n    *(data0_1048576+alu50) = alu64[54];\n    *(data0_1048576+alu51) = alu64[55];\n    *(data0_1048576+alu52) = alu64[56];\n    *(data0_1048576+alu53) = alu64[57];\n    *(data0_1048576+alu54) = alu64[58];\n    *(data0_1048576+alu55) = alu64[59];\n    *(data0_1048576+alu56) = alu64[6];\n    *(data0_1048576+alu57) = alu64[60];\n    *(data0_1048576+alu58) = alu64[61];\n    *(data0_1048576+alu59) = alu64[62];\n    *(data0_1048576+alu60) = alu64[63];\n    *(data0_1048576+alu61) = alu64[7];\n    *(data0_1048576+alu62) = alu64[8];\n    *(data0_1048576+alu63) = alu64[9];\n    *(data0_1048576+alu0) = alu64[0];\n  }\n}\n"
+535 Ops.PROGRAM dtypes.void [530, 532, 533, 534] ProgramInfo(global_size=(16384, 1, 1), vars=(%7, %8), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+536 Ops.BUFFER dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=1048576, device="CPU:1")
+537 Ops.CALL dtypes.void [535, 536, 4] CallInfo()
+538 Ops.LINEAR dtypes.void [6, 537]
 

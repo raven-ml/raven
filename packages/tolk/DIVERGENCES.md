@@ -4001,56 +4001,6 @@ stores through a pad.
   is the device's where it has queues, the host's otherwise` and `› the
   clock is the host's under a profile`.
 
-## D131. On the host, a kernel without a reduce is upcast only along its masked axes
-
-- **tinygrad:** `codegen/opt/heuristic.py:112-138` (the upcasts of output
-  axes by 3 or 4) and `:156-159` (the upcast by 4 of a kernel that has none).
-- **tolk:** `lib/codegen/opt/heuristic.ml:443` (`host_elementwise`) and `:624`
-  (`hand_coded_optimizations`); `test/gen/tinygrad.patch`, which gives
-  tinygrad the same before the goldens are recorded.
-- **Differs:** on the host (`target.device = "CPU"`), a kernel with no reduce
-  takes neither upcast. Its masked axes are still upcast whole, and a kernel
-  with a reduce is upcast as tinygrad's is. Clang vectorizes the loop over the
-  outputs itself. Upcast lanes copy the body into each lane as scalars. A
-  float kernel's lanes read one vector and compute each element alone, which
-  keeps Clang's loop vectorizer off the loop. A double kernel's lanes, which
-  stay scalar, are vectorized two at a time, eight chains at once: a chain
-  bound by latency replays faster, and Clang compiles four copies of the body
-  in one basic block, in a time that grows faster than its size.
-- **Reason:** (b): RFC 0025's special functions on the host, compiled cold on
-  an M1 Max (fresh process, empty cache, `PARALLEL=1`). The upcast's cost in
-  compile time, against no upcast:
-
-  | float64 | upcast | no upcast |
-  |---|---|---|
-  | `erfinv` | 1.29-1.69 s | 0.39-0.41 s |
-  | `erfinv` gradient | 5.2-8.9 s | 0.89 s |
-  | `log_betainc` | 36 s (29 s in Clang, 7,904 lines) | 3.1 s (1.7 s in Clang, 1,979 lines) |
-  | `log_betainc` gradient in `a` | 174 s (162 s in Clang, 25,128 lines) | 10.8 s (8.0 s in Clang, 6,285 lines) |
-  | 16k-operation chain | 69-72 s | 7.0-7.3 s |
-
-  On the 7,904-line kernel, Clang's register allocator, machine scheduler and
-  loop vectorizer took 13.2 s of 15 s. What the upcast bought, its kernels
-  timed directly on one core (10^5 elements, median of 31 alternated runs),
-  as the time without it over the time with it:
-
-  | | without / with |
-  |---|---|
-  | float32 `exp`, a sigmoid, `erf`, `erfinv`, `sin` | 0.23-0.71 |
-  | float64 `erfc`, `erfinv`, `ndtr`, `ndtri`, `lgamma` | 1.62, 1.46, 1.39, 1.36, 1.28 |
-  | float64 `erf`, `exp`, `tanh`, `sin`, long chains | 0.77-1.05 |
-
-  No estimate of a body's parallelism told the float64 kernels that gain from
-  those that do not, and a derivative that compiles for minutes costs a user
-  more than a chain replaying up to 1.6 times as long. The fix that keeps
-  both, upcast lanes held as vector values on the host so that Clang
-  compiles the body once and runs its lanes at once, is pending.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `add_cpu`, `add_broadcast_cpu`,
-  `add_large_cpu`, `add_small_cpu`, `outer_add_cpu`, `transpose_cpu`,
-  `stack_8_cpu` and `softmax_cpu` (no upcast; `stack_cpu` and `pad_7x7_cpu`
-  keep their masked upcasts), recorded from the equally patched tinygrad.
-
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
 
 - **tinygrad:** `uop/ops.py:934-948` (`UOp.contiguous_view`), whose rewrite
@@ -4283,13 +4233,15 @@ stores through a pad.
   Hcq2 suite: `ranges › each trip of a chunked range reads its trip as a scalar
   argument`.
 
-## D141. The host computes upcast lanes as vectors
+## D141. The host computes upcast lanes as vectors of 64 bytes
 
 - **tinygrad:** `codegen/__init__.py:117` (`do_devectorize`, which splits
   every elementwise operation, load and store of several lanes into one per
   lane, on every target) and `:137` (`devectorizer2`);
   `renderer/cstyle.py:40-42`, which writes a conversion of a vector that is
-  not in registers as a C cast, a reinterpretation of its bits.
+  not in registers as a C cast, a reinterpretation of its bits;
+  `codegen/opt/heuristic.py:112-138` (the upcasts of output axes by 3 or 4)
+  and `:156-159` (the upcast by 4 of a kernel that has none).
 - **tolk:** `lib/renderer/renderer.mli:138` (`vector_alu`);
   `lib/codegen/codegen.ml:237` (`in_order`), `:257` (`vector_operation`),
   `:278` (`vector_dtypes`), `:288` (`do_devectorize`), `:324`
@@ -4297,6 +4249,8 @@ stores through a pad.
   (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
   (`clang_vectors`) and `:1144` (`clang_kernel`); `lib/uop/spec.ml:500`
   (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
+  `lib/codegen/opt/heuristic.ml:446` (`host_vector_bytes`), `:463`
+  (`parallel_operations`) and `:494` (`upcast_vectors`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded, and makes its compiled patterns match a repeated source
   lazily, as its interpreted ones do: a stack whose first lane is a constant
@@ -4324,12 +4278,33 @@ stores through a pad.
   width of the masks or values it meets; a lane of a mask is read as a
   `_Bool`, and a mask of one-byte lanes, which C types as plain chars, as
   signed chars.
+
+  On the host, a kernel with no reduce takes, after its masked axes, one
+  upcast of its last output axis that 2 divides, by the largest power of two,
+  at most 16, that keeps its lanes within 64 bytes of the widest type it
+  reads, writes or computes, and again while they have room: 16 float32
+  lanes, 8 float64, 32 float16. It takes none when its stored values hold 5
+  arithmetic operations or more for each of their longest chain, or when it
+  computes a type the target emulates. tinygrad upcasts output axes by 3 or 4
+  while 1024 elements remain and fewer than 32 lanes, and by 4 a kernel that
+  has none.
 - **Reason:** (b): RFC 0025's special functions on the host. Lanes copied as
   scalars made Clang compile each lane's copy of the body, in a time that
   grows faster than the copies, and kept its loop vectorizer off a float32
-  loop (D131 took the upcast away for that). As vectors, Clang compiles the
-  body once and runs its lanes at once, and each lane computes what the
-  scalar kernel computes, bit for bit.
+  loop: float64 `log_betainc` compiled in 36 s and its gradient in `a` in
+  174 s, and float32 `exp`, `erf` and `sin` replayed at 0.23-0.71 of their
+  speed without the upcast. As vectors, Clang compiles the body once and runs
+  its lanes at once, and each lane computes what the scalar kernel computes,
+  bit for bit. Timed on one core of an M1 Max (10^5 elements, kernels
+  alternated), against no upcast: float32 `exp`, `erf`, `erfc`, `erfinv`,
+  `ndtri` and `tanh` replay 1.03-1.50 times as fast, float64 `exp`, `erf`,
+  `erfc`, `erfinv`, `ndtri` and `tanh` 1.14-1.56 times, and float32 `sin`,
+  whose reduction multiplies 64-bit integers, which NEON lacks, 0.96 times.
+  A kernel whose operations already run 5 at a time gains nothing from lanes
+  and pays for them in compile time, which grows with lanes times operations:
+  `lgamma`, float64 `sin` and `log_betainc` take none, and `log_betainc` and
+  its gradients compile as fast as without the upcast (2.7 s and 4.9-8.9 s
+  cold). The 64 bytes and the 5 were measured on the M1 alone.
 - **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
   from the patched tinygrad, and `execution on the host › every kernel the
   interpreter runs writes what it computes`; the Codegen suite's `vectors in
@@ -4337,4 +4312,9 @@ stores through a pad.
   case), `› a weak constant stored into four lanes of half on the host
   converts them` and `multiply-adds` (every test); the Spec suite's `vectors
   in programs › a program of a renderer that computes on vectors … (D141)`;
-  rune's Rune.jit suite: `lanes` (every test).
+  rune's Rune.jit suite: `lanes` (every test); the Heuristic suite's `the
+  optimisations chosen are tinygrad's › applied_opts`, the host cases
+  `exp_float_cpu`, `exp_double_cpu`, `add_half_cpu`, `add_uchar_cpu`,
+  `cast_to_double_cpu`, `compare_cpu`, `add_24_cpu`, `add_17_cpu`,
+  `wide_tree_cpu` and `long_chain_cpu`, and every other host case without a
+  reduce, recorded from the equally patched tinygrad.

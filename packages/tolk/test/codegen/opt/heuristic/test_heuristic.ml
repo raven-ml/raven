@@ -114,23 +114,24 @@ let leaves_its_argument =
   cases ~name:Fun.id
     "hand_coded_optimizations leaves the scheduler it is given as it was"
     kernels (fun name ->
-      let k = K.v (kernel name) (renderer "metal") in
+      (* Metal's case, or the host's for a kernel only the host optimises. *)
+      let plain =
+        List.filter
+          (fun c -> c.kernel = name && c.settings = [] && c.environment = "")
+          recorded_cases
+      in
+      let c =
+        match List.find_opt (fun c -> c.renderer = "metal") plain with
+        | Some c -> c
+        | None -> List.hd plain
+      in
+      let k = K.v (kernel name) (renderer c.renderer) in
       K.convert_loop_to_global k;
       let ast = K.ast k in
       let optimized = Heuristic.hand_coded_optimizations k in
       equal Uops.uop ast (K.ast k);
       equal (list Kernel_opts.opt) [] (K.applied_opts k);
-      equal (list Kernel_opts.opt)
-        (List.filter_map
-           (fun c ->
-             if
-               c.kernel = name && c.renderer = "metal" && c.settings = []
-               && c.environment = ""
-             then Some c.opts
-             else None)
-           recorded_cases
-        |> List.hd)
-        (K.applied_opts optimized))
+      equal (list Kernel_opts.opt) c.opts (K.applied_opts optimized))
 
 (* Laws *)
 

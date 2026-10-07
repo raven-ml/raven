@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.half [] ParamArg(slot=0, dtype=dtypes.half, size=4096, device="CPU")
+1 Ops.CONST dtypes.weakint [] 128
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (2, AxisType.UPCAST)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 16
+8 Ops.MUL dtypes.weakint [6, 7]
+9 Ops.RANGE dtypes.weakint [7] (1, AxisType.UPCAST)
+10 Ops.ADD dtypes.weakint [8, 9]
+11 Ops.INDEX dtypes.half [0, 10]
+12 Ops.PARAM dtypes.half [] ParamArg(slot=1, dtype=dtypes.half, size=4096, device="CPU")
+13 Ops.INDEX dtypes.half [12, 10]
+14 Ops.CONST dtypes.weakfloat [] 1.0
+15 Ops.ADD dtypes.half [13, 14]
+16 Ops.STORE dtypes.void [11, 15]
+17 Ops.END dtypes.void [16, 2, 5, 9]
+18 Ops.SINK dtypes.void [17] KernelInfo(name="E_128_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)))) tag=1
+

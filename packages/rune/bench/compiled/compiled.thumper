@@ -122,6 +122,7 @@ transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	6.896e-03	6.397e-03 6
 # forced: blessed under load 21.6 on 10 cores
 # forced: blessed jvp/tanh-chain-8-float32-1e6-host wide/mul-1e6-host wide/sum-1e6-host under load 16.4 on 10 cores
 # forced: blessed gaussian/process-float64-8x11-host solve/float64-32-host solve/float64-128-host solve/float64-512-host svd/float32-64x8x8-host launch/chain-64 launch/scan-256 loop/iterate-256 loop/drawing-scan-256 lorenz/step-batch-128-host metal/jit-iterate-256 metal/jit-drawing-scan-256 under load 20.2 on 10 cores
+# forced: blessed transcendental/exp-float32-1Mi-host transcendental/log-float32-1Mi-host transcendental/sin-float32-1Mi-host transcendental/sin-far-float32-1Mi-host transcendental/exp-float64-1Mi-host transcendental/log-float64-1Mi-host transcendental/sin-float64-1Mi-host transcendental/sin-far-float64-1Mi-host special/exp-float32-1e5-host special/erf-float32-1e5-host special/erfc-float32-1e5-host special/erfinv-float32-1e5-host special/ndtri-float32-1e5-host special/lgamma-float32-1e5-host special/sin-float32-1e5-host special/tanh-float32-1e5-host special/exp-float64-1e5-host special/erf-float64-1e5-host special/erfc-float64-1e5-host special/erfinv-float64-1e5-host special/ndtri-float64-1e5-host special/lgamma-float64-1e5-host special/sin-float64-1e5-host special/tanh-float64-1e5-host special/betainc-float64-1e5-host special/log_betainc-grad-a-float64-1e5-host under load 21.0 on 10 cores
 
 decode/kv-2880x512-bfloat16-host	alloc_words	exact	1162
 decode/kv-2880x512-bfloat16-host	wall_time	batch=8	n=20	2.936e-04	2.433e-04 2.521e-04 2.528e-04 2.538e-04 2.729e-04 2.796e-04 2.805e-04 2.831e-04 2.855e-04 2.889e-04 2.983e-04 3.047e-04 3.057e-04 3.096e-04 3.150e-04 3.201e-04 3.240e-04 3.403e-04 9.208e-04 9.478e-04
@@ -211,6 +212,42 @@ solve/float64-32-host	alloc_words	exact	12965
 solve/float64-32-host	wall_time	batch=64	n=20	9.145e-05	9.015e-05 9.016e-05 9.025e-05 9.031e-05 9.033e-05 9.036e-05 9.039e-05 9.082e-05 9.120e-05 9.144e-05 9.146e-05 9.171e-05 9.177e-05 9.178e-05 9.216e-05 9.236e-05 9.237e-05 9.261e-05 9.265e-05 9.273e-05
 solve/float64-512-host	alloc_words	exact	185285
 solve/float64-512-host	wall_time	batch=1	n=20	8.353e-02	5.678e-02 6.013e-02 6.347e-02 7.080e-02 7.901e-02 7.929e-02 8.125e-02 8.171e-02 8.215e-02 8.288e-02 8.418e-02 8.742e-02 9.405e-02 9.561e-02 9.799e-02 1.012e-01 1.016e-01 1.106e-01 2.030e-01 3.010e-01
+special/betainc-float64-1e5-host	alloc_words	exact	1430
+special/betainc-float64-1e5-host	wall_time	batch=1	n=20	4.251e-02	2.493e-02 3.171e-02 3.175e-02 3.380e-02 3.489e-02 3.515e-02 3.550e-02 3.621e-02 3.993e-02 4.073e-02 4.430e-02 4.800e-02 5.053e-02 5.072e-02 5.113e-02 5.301e-02 5.503e-02 6.790e-02 1.006e-01 1.079e-01
+special/erf-float32-1e5-host	alloc_words	exact	863
+special/erf-float32-1e5-host	wall_time	batch=1	n=20	2.305e-03	4.745e-04 7.488e-04 8.408e-04 9.659e-04 9.790e-04 1.272e-03 1.883e-03 2.128e-03 2.164e-03 2.234e-03 2.376e-03 2.565e-03 2.848e-03 3.593e-03 4.453e-03 6.285e-03 9.774e-03 1.093e-02 1.185e-02 1.364e-02
+special/erf-float64-1e5-host	alloc_words	exact	863
+special/erf-float64-1e5-host	wall_time	batch=1	n=20	1.089e-02	1.502e-03 1.746e-03 3.420e-03 5.642e-03 6.449e-03 7.236e-03 9.082e-03 9.591e-03 9.841e-03 1.062e-02 1.116e-02 1.135e-02 1.148e-02 1.166e-02 1.171e-02 1.174e-02 1.200e-02 1.314e-02 1.557e-02 1.599e-02
+special/erfc-float32-1e5-host	alloc_words	exact	863
+special/erfc-float32-1e5-host	wall_time	batch=1	n=20	4.954e-03	6.016e-04 6.052e-04 6.710e-04 1.300e-03 1.587e-03 2.166e-03 3.017e-03 3.328e-03 3.813e-03 4.036e-03 5.872e-03 6.304e-03 6.588e-03 7.595e-03 9.939e-03 1.097e-02 1.146e-02 1.532e-02 1.601e-02 1.926e-02
+special/erfc-float64-1e5-host	alloc_words	exact	863
+special/erfc-float64-1e5-host	wall_time	batch=1	n=20	1.060e-02	1.210e-03 1.937e-03 2.546e-03 3.626e-03 5.285e-03 6.132e-03 6.956e-03 9.186e-03 1.001e-02 1.045e-02 1.074e-02 1.119e-02 1.270e-02 1.273e-02 1.603e-02 1.626e-02 1.708e-02 1.733e-02 1.880e-02 3.415e-02
+special/erfinv-float32-1e5-host	alloc_words	exact	863
+special/erfinv-float32-1e5-host	wall_time	batch=1	n=20	2.415e-03	6.960e-04 8.838e-04 9.743e-04 1.110e-03 1.311e-03 1.539e-03 1.741e-03 1.773e-03 2.169e-03 2.371e-03 2.459e-03 2.741e-03 3.044e-03 3.203e-03 4.467e-03 4.581e-03 1.163e-02 1.194e-02 1.214e-02 1.419e-02
+special/erfinv-float64-1e5-host	alloc_words	exact	863
+special/erfinv-float64-1e5-host	wall_time	batch=1	n=20	6.385e-03	1.735e-03 2.331e-03 2.863e-03 2.955e-03 2.997e-03 3.724e-03 4.766e-03 4.870e-03 5.617e-03 6.291e-03 6.479e-03 7.081e-03 7.430e-03 8.361e-03 1.067e-02 1.727e-02 1.917e-02 2.138e-02 3.091e-02 3.824e-02
+special/exp-float32-1e5-host	alloc_words	exact	863
+special/exp-float32-1e5-host	wall_time	batch=16	n=20	2.730e-03	5.028e-04 6.017e-04 6.697e-04 1.187e-03 1.387e-03 1.749e-03 1.751e-03 2.167e-03 2.227e-03 2.548e-03 2.911e-03 3.110e-03 3.153e-03 3.485e-03 4.546e-03 5.630e-03 6.020e-03 6.513e-03 7.079e-03 7.088e-03
+special/exp-float64-1e5-host	alloc_words	exact	863
+special/exp-float64-1e5-host	wall_time	batch=1	n=20	1.103e-02	9.925e-04 1.274e-03 1.628e-03 3.623e-03 5.839e-03 9.290e-03 9.944e-03 1.036e-02 1.071e-02 1.102e-02 1.104e-02 1.110e-02 1.118e-02 1.123e-02 1.149e-02 1.470e-02 1.707e-02 2.059e-02 2.087e-02 2.298e-02
+special/lgamma-float32-1e5-host	alloc_words	exact	863
+special/lgamma-float32-1e5-host	wall_time	batch=4	n=20	4.100e-03	1.230e-03 1.394e-03 1.599e-03 1.632e-03 1.951e-03 2.113e-03 2.275e-03 2.946e-03 3.850e-03 3.921e-03 4.280e-03 4.733e-03 4.799e-03 5.955e-03 6.750e-03 7.057e-03 7.869e-03 9.406e-03 9.531e-03 9.816e-03
+special/lgamma-float64-1e5-host	alloc_words	exact	863
+special/lgamma-float64-1e5-host	wall_time	batch=1	n=20	9.854e-03	1.888e-03 3.406e-03 4.425e-03 5.411e-03 5.985e-03 6.382e-03 6.437e-03 7.487e-03 7.607e-03 8.758e-03 1.095e-02 1.340e-02 1.392e-02 1.514e-02 1.787e-02 1.827e-02 1.925e-02 2.043e-02 3.036e-02 4.166e-02
+special/log_betainc-grad-a-float64-1e5-host	alloc_words	exact	1430
+special/log_betainc-grad-a-float64-1e5-host	wall_time	batch=1	n=20	9.888e-02	4.347e-02 5.162e-02 6.257e-02 6.339e-02 8.494e-02 8.680e-02 8.726e-02 8.965e-02 9.437e-02 9.566e-02 1.021e-01 1.045e-01 1.103e-01 1.213e-01 1.214e-01 1.296e-01 1.297e-01 1.304e-01 1.684e-01 2.145e-01
+special/ndtri-float32-1e5-host	alloc_words	exact	863
+special/ndtri-float32-1e5-host	wall_time	batch=4	n=20	8.312e-03	1.893e-03 3.028e-03 3.416e-03 4.610e-03 5.000e-03 6.481e-03 6.581e-03 7.016e-03 7.092e-03 8.261e-03 8.363e-03 8.498e-03 9.332e-03 9.561e-03 1.068e-02 1.097e-02 1.150e-02 1.174e-02 1.186e-02 1.261e-02
+special/ndtri-float64-1e5-host	alloc_words	exact	863
+special/ndtri-float64-1e5-host	wall_time	batch=1	n=20	1.136e-02	2.322e-03 3.725e-03 3.938e-03 4.764e-03 5.181e-03 8.045e-03 9.721e-03 1.027e-02 1.126e-02 1.127e-02 1.144e-02 1.362e-02 1.440e-02 1.503e-02 1.604e-02 1.632e-02 1.638e-02 1.747e-02 1.870e-02 2.583e-02
+special/sin-float32-1e5-host	alloc_words	exact	863
+special/sin-float32-1e5-host	wall_time	batch=4	n=20	7.028e-03	1.553e-03 2.656e-03 2.986e-03 3.674e-03 4.138e-03 4.337e-03 4.580e-03 4.844e-03 5.209e-03 6.811e-03 7.245e-03 7.357e-03 7.449e-03 7.569e-03 8.042e-03 9.323e-03 9.555e-03 9.842e-03 9.942e-03 1.109e-02
+special/sin-float64-1e5-host	alloc_words	exact	863
+special/sin-float64-1e5-host	wall_time	batch=1	n=20	7.435e-03	1.602e-03 1.709e-03 2.631e-03 2.835e-03 3.515e-03 3.725e-03 5.022e-03 5.187e-03 6.717e-03 7.255e-03 7.614e-03 1.133e-02 1.340e-02 1.423e-02 1.479e-02 1.524e-02 1.825e-02 2.107e-02 3.041e-02 4.524e-02
+special/tanh-float32-1e5-host	alloc_words	exact	863
+special/tanh-float32-1e5-host	wall_time	batch=2	n=20	9.281e-03	2.582e-04 4.911e-04 5.484e-04 5.720e-04 7.742e-04 8.813e-04 1.357e-03 5.533e-03 5.541e-03 8.342e-03 1.022e-02 1.023e-02 1.061e-02 1.075e-02 1.116e-02 1.119e-02 1.128e-02 1.129e-02 1.208e-02 2.150e-02
+special/tanh-float64-1e5-host	alloc_words	exact	863
+special/tanh-float64-1e5-host	wall_time	batch=1	n=20	5.217e-03	4.643e-04 9.701e-04 1.220e-03 1.336e-03 1.918e-03 2.240e-03 2.637e-03 3.367e-03 4.286e-03 4.297e-03 6.137e-03 7.718e-03 8.690e-03 1.042e-02 1.134e-02 1.152e-02 1.201e-02 1.223e-02 1.256e-02 1.668e-02
 split/fma-float32-16Mi-host	alloc_words	exact	1430
 split/fma-float32-16Mi-host	wall_time	batch=1	n=20	3.219e-03	2.220e-03 2.547e-03 2.550e-03 2.555e-03 2.728e-03 2.794e-03 2.951e-03 3.182e-03 3.201e-03 3.210e-03 3.227e-03 3.474e-03 3.562e-03 3.690e-03 3.745e-03 3.845e-03 3.885e-03 3.990e-03 4.208e-03 5.804e-03
 split/row-sums-float32-4096x4096-host	alloc_words	exact	865
@@ -224,21 +261,21 @@ topk/4-of-32-512-rows-compiled	wall_time	batch=32	n=20	1.168e-04	9.011e-05 1.020
 topk/4-of-32-512-rows-eager	alloc_words	exact	3056
 topk/4-of-32-512-rows-eager	wall_time	batch=2	n=20	2.506e-03	2.239e-03 2.263e-03 2.305e-03 2.460e-03 2.465e-03 2.466e-03 2.473e-03 2.477e-03 2.498e-03 2.502e-03 2.510e-03 2.533e-03 2.591e-03 2.595e-03 2.596e-03 2.597e-03 2.609e-03 2.632e-03 2.825e-03 2.959e-03
 transcendental/exp-float32-1Mi-host	alloc_words	exact	863
-transcendental/exp-float32-1Mi-host	wall_time	batch=8	n=20	9.618e-04	8.473e-04 8.828e-04 8.950e-04 9.215e-04 9.354e-04 9.354e-04 9.459e-04 9.536e-04 9.546e-04 9.606e-04 9.630e-04 9.646e-04 9.869e-04 9.951e-04 9.958e-04 1.060e-03 1.070e-03 1.209e-03 1.230e-03 1.231e-03
+transcendental/exp-float32-1Mi-host	wall_time	batch=2	n=20	2.523e-03	1.290e-03 1.440e-03 1.469e-03 1.472e-03 1.486e-03 1.612e-03 1.618e-03 1.734e-03 1.957e-03 2.415e-03 2.632e-03 2.660e-03 5.021e-03 6.164e-03 6.208e-03 6.864e-03 9.302e-03 9.516e-03 1.185e-02 1.249e-02
 transcendental/exp-float64-1Mi-host	alloc_words	exact	863
-transcendental/exp-float64-1Mi-host	wall_time	batch=4	n=20	1.965e-03	1.595e-03 1.680e-03 1.766e-03 1.778e-03 1.827e-03 1.833e-03 1.885e-03 1.901e-03 1.938e-03 1.949e-03 1.980e-03 2.016e-03 2.057e-03 2.091e-03 2.178e-03 2.278e-03 2.450e-03 2.903e-03 3.025e-03 3.123e-03
+transcendental/exp-float64-1Mi-host	wall_time	batch=2	n=20	7.063e-03	1.876e-03 2.398e-03 2.621e-03 3.455e-03 3.504e-03 3.612e-03 4.095e-03 4.206e-03 4.424e-03 6.977e-03 7.149e-03 7.398e-03 8.380e-03 1.029e-02 1.113e-02 1.130e-02 1.153e-02 2.491e-02 2.522e-02 2.589e-02
 transcendental/log-float32-1Mi-host	alloc_words	exact	863
-transcendental/log-float32-1Mi-host	wall_time	batch=8	n=20	8.523e-04	7.114e-04 7.642e-04 7.804e-04 8.035e-04 8.093e-04 8.116e-04 8.128e-04 8.152e-04 8.229e-04 8.500e-04 8.547e-04 8.567e-04 8.785e-04 8.810e-04 8.990e-04 9.248e-04 9.458e-04 1.291e-03 1.686e-03 2.041e-03
+transcendental/log-float32-1Mi-host	wall_time	batch=4	n=20	5.457e-03	1.743e-03 1.780e-03 2.925e-03 3.041e-03 3.069e-03 3.814e-03 3.983e-03 4.930e-03 4.966e-03 5.006e-03 5.908e-03 5.917e-03 7.361e-03 7.558e-03 8.436e-03 9.158e-03 1.056e-02 1.127e-02 1.240e-02 1.593e-02
 transcendental/log-float64-1Mi-host	alloc_words	exact	863
-transcendental/log-float64-1Mi-host	wall_time	batch=4	n=20	1.678e-03	1.400e-03 1.411e-03 1.427e-03 1.456e-03 1.562e-03 1.566e-03 1.596e-03 1.646e-03 1.659e-03 1.677e-03 1.678e-03 1.766e-03 1.778e-03 1.874e-03 1.915e-03 1.933e-03 1.960e-03 2.052e-03 2.110e-03 2.170e-03
+transcendental/log-float64-1Mi-host	wall_time	batch=1	n=20	4.064e-03	1.659e-03 2.060e-03 2.089e-03 2.149e-03 2.151e-03 2.158e-03 2.758e-03 3.191e-03 3.205e-03 3.994e-03 4.133e-03 5.667e-03 8.721e-03 9.074e-03 1.185e-02 1.245e-02 1.418e-02 1.435e-02 1.470e-02 2.262e-02
 transcendental/sin-far-float32-1Mi-host	alloc_words	exact	863
-transcendental/sin-far-float32-1Mi-host	wall_time	batch=1	n=20	5.090e-03	4.015e-03 4.359e-03 4.412e-03 4.705e-03 4.770e-03 4.786e-03 4.910e-03 5.058e-03 5.084e-03 5.085e-03 5.095e-03 5.109e-03 5.124e-03 5.156e-03 5.193e-03 5.238e-03 6.093e-03 6.200e-03 6.453e-03 1.309e-02
+transcendental/sin-far-float32-1Mi-host	wall_time	batch=1	n=20	1.627e-02	6.315e-03 7.060e-03 9.989e-03 1.038e-02 1.052e-02 1.132e-02 1.166e-02 1.333e-02 1.431e-02 1.545e-02 1.708e-02 1.749e-02 1.771e-02 2.009e-02 2.038e-02 2.182e-02 2.204e-02 2.208e-02 2.935e-02 4.942e-02
 transcendental/sin-far-float64-1Mi-host	alloc_words	exact	863
-transcendental/sin-far-float64-1Mi-host	wall_time	batch=1	n=20	1.775e-02	1.582e-02 1.587e-02 1.629e-02 1.649e-02 1.677e-02 1.707e-02 1.707e-02 1.739e-02 1.756e-02 1.758e-02 1.792e-02 1.807e-02 1.822e-02 1.836e-02 1.845e-02 1.863e-02 1.919e-02 2.070e-02 2.075e-02 2.273e-02
+transcendental/sin-far-float64-1Mi-host	wall_time	batch=1	n=20	2.839e-02	1.563e-02 1.934e-02 2.124e-02 2.445e-02 2.467e-02 2.512e-02 2.562e-02 2.599e-02 2.653e-02 2.820e-02 2.857e-02 2.944e-02 2.961e-02 3.343e-02 3.424e-02 3.573e-02 3.691e-02 3.732e-02 3.817e-02 6.479e-02
 transcendental/sin-float32-1Mi-host	alloc_words	exact	863
-transcendental/sin-float32-1Mi-host	wall_time	batch=1	n=20	5.861e-03	4.440e-03 4.601e-03 4.919e-03 5.078e-03 5.131e-03 5.162e-03 5.262e-03 5.457e-03 5.564e-03 5.796e-03 5.926e-03 6.049e-03 6.433e-03 6.629e-03 7.036e-03 7.366e-03 9.958e-03 1.253e-02 1.541e-02 3.430e-02
+transcendental/sin-float32-1Mi-host	wall_time	batch=1	n=20	1.582e-02	6.207e-03 7.571e-03 9.577e-03 9.776e-03 1.025e-02 1.036e-02 1.055e-02 1.197e-02 1.453e-02 1.521e-02 1.644e-02 1.672e-02 1.708e-02 1.968e-02 2.190e-02 2.606e-02 3.096e-02 3.107e-02 3.448e-02 8.001e-02
 transcendental/sin-float64-1Mi-host	alloc_words	exact	863
-transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	1.740e-02	1.488e-02 1.561e-02 1.565e-02 1.576e-02 1.640e-02 1.640e-02 1.656e-02 1.657e-02 1.665e-02 1.719e-02 1.761e-02 1.776e-02 1.781e-02 1.842e-02 1.865e-02 1.867e-02 1.867e-02 2.002e-02 2.017e-02 2.443e-02
+transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	2.875e-02	1.249e-02 1.499e-02 1.569e-02 1.682e-02 2.048e-02 2.052e-02 2.107e-02 2.546e-02 2.606e-02 2.821e-02 2.930e-02 2.999e-02 3.061e-02 3.070e-02 3.071e-02 3.218e-02 3.309e-02 3.447e-02 4.079e-02 7.415e-02
 wide/mul-1e6-host	alloc_words	exact	1898
 wide/mul-1e6-host	wall_time	batch=2	n=20	3.777e-03	2.909e-03 3.296e-03 3.326e-03 3.330e-03 3.370e-03 3.393e-03 3.525e-03 3.629e-03 3.735e-03 3.770e-03 3.784e-03 3.826e-03 3.879e-03 3.897e-03 3.937e-03 4.028e-03 4.049e-03 4.173e-03 4.213e-03 6.520e-03
 wide/sum-1e6-host	alloc_words	exact	1797

@@ -436,12 +436,93 @@ let on_host k = (K.ren k).target.device = "CPU"
 let beyond_host_lanes k amount =
   on_host k && not (holds Sint.(K.upcast_size k * Int amount <= Int host_lanes))
 
-(* On the host, a kernel without a reduce takes no upcast but its masked ones.
-   The kernel compiler vectorizes the loop over its outputs itself. Upcast lanes
-   copy the body as scalars: a float kernel's keep that vectorizer off the loop,
-   and a double kernel's, which give a chain bound by latency more of itself at
-   once, cost a compile time that grows faster than the copies. *)
+(* On the host, a kernel without a reduce computes its upcast lanes as vectors,
+   and its output axis is upcast until one value spans [host_vector_bytes]: the
+   lanes give the core independent work while each lane waits on the latency of
+   its chain. A kernel whose own operations already hold [host_ilp] independent
+   operations for each step of its longest chain gains nothing from lanes and
+   pays for them in compile time, which grows with lanes times operations: it
+   takes no upcast after its masked axes. *)
+let host_vector_bytes = 64
+let host_ilp = 5
 let host_elementwise k = on_host k && K.reduceops k = []
+
+(* The operations of the values [k] stores, the addresses aside. *)
+let stored_operations k =
+  let values =
+    List.filter_map
+      (fun u -> if op u = Op.Store then Some (nth u 1) else None)
+      (toposort ~calls:Skip (K.ast k))
+  in
+  List.filter
+    (fun u -> Op.Set.mem (op u) Op.Set.elementwise)
+    (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.Index) (sink values))
+
+(* The arithmetic operations of [operations] for each of their longest chain:
+   a conversion of a value is no step of it. *)
+let parallel_operations operations =
+  let depth = Tbl.create 64 in
+  let step u = if Op.Set.mem (op u) Op.Set.alu then 1 else 0 in
+  let longest =
+    List.fold_left
+      (fun longest u ->
+        let d =
+          step u
+          + List.fold_left
+              (fun d s ->
+                max d (Option.value (Tbl.find_opt depth s) ~default:0))
+              0 (src u)
+        in
+        Tbl.replace depth u d;
+        max longest d)
+      0 operations
+  in
+  let count = List.fold_left (fun n u -> n + step u) 0 operations in
+  if longest = 0 then 0 else count / longest
+
+(* The types [k] reads, writes or computes, but addresses'. *)
+let value_dtypes k operations =
+  List.filter
+    (fun dt -> not (List.mem dt Dtype.weaks))
+    (List.map (fun b -> dtype (nth b 0)) (K.bufs k) @ List.map dtype operations)
+
+(* The last output axis that a power of two of lanes divides is upcast by the
+   largest that fits the vector beside the lanes already upcast, and again while
+   the vector has room: a split upcasts at most [split_lanes]. *)
+let split_lanes = 16
+
+let upcast_vectors k =
+  let operations = stored_operations k in
+  let dtypes = value_dtypes k operations in
+  let emulated = Decomp_dtype.emulates (K.ren k) in
+  let widest =
+    List.fold_left (fun w dt -> max w (Dtype.itemsize dt)) 1 dtypes
+  in
+  let rec upcast room =
+    let rec pow2 p = if 2 * p > min room split_lanes then p else pow2 (2 * p) in
+    let fits axis =
+      let rec largest n =
+        if n < 2 then None
+        else if divisible (shape_at k axis) n then Some (axis, n)
+        else largest (n / 2)
+      in
+      largest (pow2 1)
+    in
+    match List.find_map fits (List.rev (K.upcastable_dims k)) with
+    | Some (axis, n) ->
+        ignore (split k axis n Opt.Upcast);
+        upcast (room / n)
+    | None -> ()
+  in
+  let ilp = parallel_operations operations in
+  if debug () >= 4 then
+    Format.eprintf "host vectors: %d operations, %d per step, %d bytes@."
+      (List.length operations) ilp widest;
+  match known_size (K.upcast_size k) with
+  | Some upcast_size when ilp < host_ilp && not (List.exists emulated dtypes)
+    ->
+      upcast (host_vector_bytes / widest / Bigint.to_int upcast_size)
+  | _ -> ()
 
 (* potentially do more upcasts of non reduce axes based on a heuristic *)
 let upcast_more k =
@@ -622,7 +703,8 @@ let hand_coded_optimizations k =
           (* no more opt if we are grouping *)
           if K.group_for_reduces k = 0 then begin
             upcast_masked k;
-            if not (host_elementwise k) then begin
+            if host_elementwise k then upcast_vectors k
+            else begin
               upcast_more k;
               unroll k;
               upcast_one k

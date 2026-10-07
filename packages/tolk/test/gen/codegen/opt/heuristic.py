@@ -10,6 +10,7 @@ environment variable, which tinygrad reads through the cached `getenv`. `rendere
 heuristic.
 """
 
+import functools
 import os
 
 from golden import graph, table
@@ -166,6 +167,25 @@ KERNELS = {
     "variable": lambda: with_vars(empty(1024)[:UOp.variable("n", 1, 1024).bind(512)].contiguous() + 1),
 }
 
+# Kernels without a reduce on the host, whose output is upcast until one value fills a vector of 64 bytes, unless their
+# operations already hold 5 independent operations for each step of their longest chain
+def tree(xs): return xs[0] if len(xs) == 1 else tree(xs[:len(xs) // 2]) + tree(xs[len(xs) // 2:])
+
+
+HOST_KERNELS = {
+    "exp_float": lambda: last(empty(4096).exp()),
+    "exp_double": lambda: last(empty(4096, dtype=dtypes.double).exp()),
+    "add_half": lambda: last(empty(4096, dtype=dtypes.half) + 1),
+    "add_uchar": lambda: last(empty(4096, dtype=dtypes.uint8) + 1),
+    "cast_to_double": lambda: last(empty(4096).cast(dtypes.double) + 1),
+    "compare": lambda: last(empty(4096) < 1),
+    "add_24": lambda: last(empty(24) + 1),
+    "add_17": lambda: last(empty(17) + 1),
+    "wide_tree": lambda: last(tree([empty(4096) * (1.5 + k) for k in range(64)])),
+    "long_chain": lambda: last(functools.reduce(lambda x, k: (x * (1.5 + k)).exp2(), range(64), empty(4096))),
+}
+KERNELS.update(HOST_KERNELS)
+
 CASES = []
 
 
@@ -174,7 +194,7 @@ def case(kernel, renderer, suffix="", **context):
 
 
 for kernel in KERNELS:
-    for renderer in ["cpu", "metal", "cuda", "amd"]:
+    for renderer in ["cpu"] if kernel in HOST_KERNELS else ["cpu", "metal", "cuda", "amd"]:
         case(kernel, renderer)
 for renderer in ["metal", "cuda", "amd"]:
     case("matmul_half", renderer, "_no_tc", TC=0)

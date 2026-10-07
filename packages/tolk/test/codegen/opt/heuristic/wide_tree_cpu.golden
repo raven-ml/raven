@@ -1,0 +1,328 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4096, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4096
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4096, device="CPU")
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.CONST dtypes.weakfloat [] 1.5
+7 Ops.MUL dtypes.float [5, 6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4096, device="CPU")
+9 Ops.INDEX dtypes.float [8, 2]
+10 Ops.CONST dtypes.weakfloat [] 2.5
+11 Ops.MUL dtypes.float [9, 10]
+12 Ops.ADD dtypes.float [7, 11]
+13 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4096, device="CPU")
+14 Ops.INDEX dtypes.float [13, 2]
+15 Ops.CONST dtypes.weakfloat [] 3.5
+16 Ops.MUL dtypes.float [14, 15]
+17 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=4096, device="CPU")
+18 Ops.INDEX dtypes.float [17, 2]
+19 Ops.CONST dtypes.weakfloat [] 4.5
+20 Ops.MUL dtypes.float [18, 19]
+21 Ops.ADD dtypes.float [16, 20]
+22 Ops.ADD dtypes.float [12, 21]
+23 Ops.PARAM dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=4096, device="CPU")
+24 Ops.INDEX dtypes.float [23, 2]
+25 Ops.CONST dtypes.weakfloat [] 5.5
+26 Ops.MUL dtypes.float [24, 25]
+27 Ops.PARAM dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=4096, device="CPU")
+28 Ops.INDEX dtypes.float [27, 2]
+29 Ops.CONST dtypes.weakfloat [] 6.5
+30 Ops.MUL dtypes.float [28, 29]
+31 Ops.ADD dtypes.float [26, 30]
+32 Ops.PARAM dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=4096, device="CPU")
+33 Ops.INDEX dtypes.float [32, 2]
+34 Ops.CONST dtypes.weakfloat [] 7.5
+35 Ops.MUL dtypes.float [33, 34]
+36 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=4096, device="CPU")
+37 Ops.INDEX dtypes.float [36, 2]
+38 Ops.CONST dtypes.weakfloat [] 8.5
+39 Ops.MUL dtypes.float [37, 38]
+40 Ops.ADD dtypes.float [35, 39]
+41 Ops.ADD dtypes.float [31, 40]
+42 Ops.ADD dtypes.float [22, 41]
+43 Ops.PARAM dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=4096, device="CPU")
+44 Ops.INDEX dtypes.float [43, 2]
+45 Ops.CONST dtypes.weakfloat [] 9.5
+46 Ops.MUL dtypes.float [44, 45]
+47 Ops.PARAM dtypes.float [] ParamArg(slot=10, dtype=dtypes.float, size=4096, device="CPU")
+48 Ops.INDEX dtypes.float [47, 2]
+49 Ops.CONST dtypes.weakfloat [] 10.5
+50 Ops.MUL dtypes.float [48, 49]
+51 Ops.ADD dtypes.float [46, 50]
+52 Ops.PARAM dtypes.float [] ParamArg(slot=11, dtype=dtypes.float, size=4096, device="CPU")
+53 Ops.INDEX dtypes.float [52, 2]
+54 Ops.CONST dtypes.weakfloat [] 11.5
+55 Ops.MUL dtypes.float [53, 54]
+56 Ops.PARAM dtypes.float [] ParamArg(slot=12, dtype=dtypes.float, size=4096, device="CPU")
+57 Ops.INDEX dtypes.float [56, 2]
+58 Ops.CONST dtypes.weakfloat [] 12.5
+59 Ops.MUL dtypes.float [57, 58]
+60 Ops.ADD dtypes.float [55, 59]
+61 Ops.ADD dtypes.float [51, 60]
+62 Ops.PARAM dtypes.float [] ParamArg(slot=13, dtype=dtypes.float, size=4096, device="CPU")
+63 Ops.INDEX dtypes.float [62, 2]
+64 Ops.CONST dtypes.weakfloat [] 13.5
+65 Ops.MUL dtypes.float [63, 64]
+66 Ops.PARAM dtypes.float [] ParamArg(slot=14, dtype=dtypes.float, size=4096, device="CPU")
+67 Ops.INDEX dtypes.float [66, 2]
+68 Ops.CONST dtypes.weakfloat [] 14.5
+69 Ops.MUL dtypes.float [67, 68]
+70 Ops.ADD dtypes.float [65, 69]
+71 Ops.PARAM dtypes.float [] ParamArg(slot=15, dtype=dtypes.float, size=4096, device="CPU")
+72 Ops.INDEX dtypes.float [71, 2]
+73 Ops.CONST dtypes.weakfloat [] 15.5
+74 Ops.MUL dtypes.float [72, 73]
+75 Ops.PARAM dtypes.float [] ParamArg(slot=16, dtype=dtypes.float, size=4096, device="CPU")
+76 Ops.INDEX dtypes.float [75, 2]
+77 Ops.CONST dtypes.weakfloat [] 16.5
+78 Ops.MUL dtypes.float [76, 77]
+79 Ops.ADD dtypes.float [74, 78]
+80 Ops.ADD dtypes.float [70, 79]
+81 Ops.ADD dtypes.float [61, 80]
+82 Ops.ADD dtypes.float [42, 81]
+83 Ops.PARAM dtypes.float [] ParamArg(slot=17, dtype=dtypes.float, size=4096, device="CPU")
+84 Ops.INDEX dtypes.float [83, 2]
+85 Ops.CONST dtypes.weakfloat [] 17.5
+86 Ops.MUL dtypes.float [84, 85]
+87 Ops.PARAM dtypes.float [] ParamArg(slot=18, dtype=dtypes.float, size=4096, device="CPU")
+88 Ops.INDEX dtypes.float [87, 2]
+89 Ops.CONST dtypes.weakfloat [] 18.5
+90 Ops.MUL dtypes.float [88, 89]
+91 Ops.ADD dtypes.float [86, 90]
+92 Ops.PARAM dtypes.float [] ParamArg(slot=19, dtype=dtypes.float, size=4096, device="CPU")
+93 Ops.INDEX dtypes.float [92, 2]
+94 Ops.CONST dtypes.weakfloat [] 19.5
+95 Ops.MUL dtypes.float [93, 94]
+96 Ops.PARAM dtypes.float [] ParamArg(slot=20, dtype=dtypes.float, size=4096, device="CPU")
+97 Ops.INDEX dtypes.float [96, 2]
+98 Ops.CONST dtypes.weakfloat [] 20.5
+99 Ops.MUL dtypes.float [97, 98]
+100 Ops.ADD dtypes.float [95, 99]
+101 Ops.ADD dtypes.float [91, 100]
+102 Ops.PARAM dtypes.float [] ParamArg(slot=21, dtype=dtypes.float, size=4096, device="CPU")
+103 Ops.INDEX dtypes.float [102, 2]
+104 Ops.CONST dtypes.weakfloat [] 21.5
+105 Ops.MUL dtypes.float [103, 104]
+106 Ops.PARAM dtypes.float [] ParamArg(slot=22, dtype=dtypes.float, size=4096, device="CPU")
+107 Ops.INDEX dtypes.float [106, 2]
+108 Ops.CONST dtypes.weakfloat [] 22.5
+109 Ops.MUL dtypes.float [107, 108]
+110 Ops.ADD dtypes.float [105, 109]
+111 Ops.PARAM dtypes.float [] ParamArg(slot=23, dtype=dtypes.float, size=4096, device="CPU")
+112 Ops.INDEX dtypes.float [111, 2]
+113 Ops.CONST dtypes.weakfloat [] 23.5
+114 Ops.MUL dtypes.float [112, 113]
+115 Ops.PARAM dtypes.float [] ParamArg(slot=24, dtype=dtypes.float, size=4096, device="CPU")
+116 Ops.INDEX dtypes.float [115, 2]
+117 Ops.CONST dtypes.weakfloat [] 24.5
+118 Ops.MUL dtypes.float [116, 117]
+119 Ops.ADD dtypes.float [114, 118]
+120 Ops.ADD dtypes.float [110, 119]
+121 Ops.ADD dtypes.float [101, 120]
+122 Ops.PARAM dtypes.float [] ParamArg(slot=25, dtype=dtypes.float, size=4096, device="CPU")
+123 Ops.INDEX dtypes.float [122, 2]
+124 Ops.CONST dtypes.weakfloat [] 25.5
+125 Ops.MUL dtypes.float [123, 124]
+126 Ops.PARAM dtypes.float [] ParamArg(slot=26, dtype=dtypes.float, size=4096, device="CPU")
+127 Ops.INDEX dtypes.float [126, 2]
+128 Ops.CONST dtypes.weakfloat [] 26.5
+129 Ops.MUL dtypes.float [127, 128]
+130 Ops.ADD dtypes.float [125, 129]
+131 Ops.PARAM dtypes.float [] ParamArg(slot=27, dtype=dtypes.float, size=4096, device="CPU")
+132 Ops.INDEX dtypes.float [131, 2]
+133 Ops.CONST dtypes.weakfloat [] 27.5
+134 Ops.MUL dtypes.float [132, 133]
+135 Ops.PARAM dtypes.float [] ParamArg(slot=28, dtype=dtypes.float, size=4096, device="CPU")
+136 Ops.INDEX dtypes.float [135, 2]
+137 Ops.CONST dtypes.weakfloat [] 28.5
+138 Ops.MUL dtypes.float [136, 137]
+139 Ops.ADD dtypes.float [134, 138]
+140 Ops.ADD dtypes.float [130, 139]
+141 Ops.PARAM dtypes.float [] ParamArg(slot=29, dtype=dtypes.float, size=4096, device="CPU")
+142 Ops.INDEX dtypes.float [141, 2]
+143 Ops.CONST dtypes.weakfloat [] 29.5
+144 Ops.MUL dtypes.float [142, 143]
+145 Ops.PARAM dtypes.float [] ParamArg(slot=30, dtype=dtypes.float, size=4096, device="CPU")
+146 Ops.INDEX dtypes.float [145, 2]
+147 Ops.CONST dtypes.weakfloat [] 30.5
+148 Ops.MUL dtypes.float [146, 147]
+149 Ops.ADD dtypes.float [144, 148]
+150 Ops.PARAM dtypes.float [] ParamArg(slot=31, dtype=dtypes.float, size=4096, device="CPU")
+151 Ops.INDEX dtypes.float [150, 2]
+152 Ops.CONST dtypes.weakfloat [] 31.5
+153 Ops.MUL dtypes.float [151, 152]
+154 Ops.PARAM dtypes.float [] ParamArg(slot=32, dtype=dtypes.float, size=4096, device="CPU")
+155 Ops.INDEX dtypes.float [154, 2]
+156 Ops.CONST dtypes.weakfloat [] 32.5
+157 Ops.MUL dtypes.float [155, 156]
+158 Ops.ADD dtypes.float [153, 157]
+159 Ops.ADD dtypes.float [149, 158]
+160 Ops.ADD dtypes.float [140, 159]
+161 Ops.ADD dtypes.float [121, 160]
+162 Ops.ADD dtypes.float [82, 161]
+163 Ops.PARAM dtypes.float [] ParamArg(slot=33, dtype=dtypes.float, size=4096, device="CPU")
+164 Ops.INDEX dtypes.float [163, 2]
+165 Ops.CONST dtypes.weakfloat [] 33.5
+166 Ops.MUL dtypes.float [164, 165]
+167 Ops.PARAM dtypes.float [] ParamArg(slot=34, dtype=dtypes.float, size=4096, device="CPU")
+168 Ops.INDEX dtypes.float [167, 2]
+169 Ops.CONST dtypes.weakfloat [] 34.5
+170 Ops.MUL dtypes.float [168, 169]
+171 Ops.ADD dtypes.float [166, 170]
+172 Ops.PARAM dtypes.float [] ParamArg(slot=35, dtype=dtypes.float, size=4096, device="CPU")
+173 Ops.INDEX dtypes.float [172, 2]
+174 Ops.CONST dtypes.weakfloat [] 35.5
+175 Ops.MUL dtypes.float [173, 174]
+176 Ops.PARAM dtypes.float [] ParamArg(slot=36, dtype=dtypes.float, size=4096, device="CPU")
+177 Ops.INDEX dtypes.float [176, 2]
+178 Ops.CONST dtypes.weakfloat [] 36.5
+179 Ops.MUL dtypes.float [177, 178]
+180 Ops.ADD dtypes.float [175, 179]
+181 Ops.ADD dtypes.float [171, 180]
+182 Ops.PARAM dtypes.float [] ParamArg(slot=37, dtype=dtypes.float, size=4096, device="CPU")
+183 Ops.INDEX dtypes.float [182, 2]
+184 Ops.CONST dtypes.weakfloat [] 37.5
+185 Ops.MUL dtypes.float [183, 184]
+186 Ops.PARAM dtypes.float [] ParamArg(slot=38, dtype=dtypes.float, size=4096, device="CPU")
+187 Ops.INDEX dtypes.float [186, 2]
+188 Ops.CONST dtypes.weakfloat [] 38.5
+189 Ops.MUL dtypes.float [187, 188]
+190 Ops.ADD dtypes.float [185, 189]
+191 Ops.PARAM dtypes.float [] ParamArg(slot=39, dtype=dtypes.float, size=4096, device="CPU")
+192 Ops.INDEX dtypes.float [191, 2]
+193 Ops.CONST dtypes.weakfloat [] 39.5
+194 Ops.MUL dtypes.float [192, 193]
+195 Ops.PARAM dtypes.float [] ParamArg(slot=40, dtype=dtypes.float, size=4096, device="CPU")
+196 Ops.INDEX dtypes.float [195, 2]
+197 Ops.CONST dtypes.weakfloat [] 40.5
+198 Ops.MUL dtypes.float [196, 197]
+199 Ops.ADD dtypes.float [194, 198]
+200 Ops.ADD dtypes.float [190, 199]
+201 Ops.ADD dtypes.float [181, 200]
+202 Ops.PARAM dtypes.float [] ParamArg(slot=41, dtype=dtypes.float, size=4096, device="CPU")
+203 Ops.INDEX dtypes.float [202, 2]
+204 Ops.CONST dtypes.weakfloat [] 41.5
+205 Ops.MUL dtypes.float [203, 204]
+206 Ops.PARAM dtypes.float [] ParamArg(slot=42, dtype=dtypes.float, size=4096, device="CPU")
+207 Ops.INDEX dtypes.float [206, 2]
+208 Ops.CONST dtypes.weakfloat [] 42.5
+209 Ops.MUL dtypes.float [207, 208]
+210 Ops.ADD dtypes.float [205, 209]
+211 Ops.PARAM dtypes.float [] ParamArg(slot=43, dtype=dtypes.float, size=4096, device="CPU")
+212 Ops.INDEX dtypes.float [211, 2]
+213 Ops.CONST dtypes.weakfloat [] 43.5
+214 Ops.MUL dtypes.float [212, 213]
+215 Ops.PARAM dtypes.float [] ParamArg(slot=44, dtype=dtypes.float, size=4096, device="CPU")
+216 Ops.INDEX dtypes.float [215, 2]
+217 Ops.CONST dtypes.weakfloat [] 44.5
+218 Ops.MUL dtypes.float [216, 217]
+219 Ops.ADD dtypes.float [214, 218]
+220 Ops.ADD dtypes.float [210, 219]
+221 Ops.PARAM dtypes.float [] ParamArg(slot=45, dtype=dtypes.float, size=4096, device="CPU")
+222 Ops.INDEX dtypes.float [221, 2]
+223 Ops.CONST dtypes.weakfloat [] 45.5
+224 Ops.MUL dtypes.float [222, 223]
+225 Ops.PARAM dtypes.float [] ParamArg(slot=46, dtype=dtypes.float, size=4096, device="CPU")
+226 Ops.INDEX dtypes.float [225, 2]
+227 Ops.CONST dtypes.weakfloat [] 46.5
+228 Ops.MUL dtypes.float [226, 227]
+229 Ops.ADD dtypes.float [224, 228]
+230 Ops.PARAM dtypes.float [] ParamArg(slot=47, dtype=dtypes.float, size=4096, device="CPU")
+231 Ops.INDEX dtypes.float [230, 2]
+232 Ops.CONST dtypes.weakfloat [] 47.5
+233 Ops.MUL dtypes.float [231, 232]
+234 Ops.PARAM dtypes.float [] ParamArg(slot=48, dtype=dtypes.float, size=4096, device="CPU")
+235 Ops.INDEX dtypes.float [234, 2]
+236 Ops.CONST dtypes.weakfloat [] 48.5
+237 Ops.MUL dtypes.float [235, 236]
+238 Ops.ADD dtypes.float [233, 237]
+239 Ops.ADD dtypes.float [229, 238]
+240 Ops.ADD dtypes.float [220, 239]
+241 Ops.ADD dtypes.float [201, 240]
+242 Ops.PARAM dtypes.float [] ParamArg(slot=49, dtype=dtypes.float, size=4096, device="CPU")
+243 Ops.INDEX dtypes.float [242, 2]
+244 Ops.CONST dtypes.weakfloat [] 49.5
+245 Ops.MUL dtypes.float [243, 244]
+246 Ops.PARAM dtypes.float [] ParamArg(slot=50, dtype=dtypes.float, size=4096, device="CPU")
+247 Ops.INDEX dtypes.float [246, 2]
+248 Ops.CONST dtypes.weakfloat [] 50.5
+249 Ops.MUL dtypes.float [247, 248]
+250 Ops.ADD dtypes.float [245, 249]
+251 Ops.PARAM dtypes.float [] ParamArg(slot=51, dtype=dtypes.float, size=4096, device="CPU")
+252 Ops.INDEX dtypes.float [251, 2]
+253 Ops.CONST dtypes.weakfloat [] 51.5
+254 Ops.MUL dtypes.float [252, 253]
+255 Ops.PARAM dtypes.float [] ParamArg(slot=52, dtype=dtypes.float, size=4096, device="CPU")
+256 Ops.INDEX dtypes.float [255, 2]
+257 Ops.CONST dtypes.weakfloat [] 52.5
+258 Ops.MUL dtypes.float [256, 257]
+259 Ops.ADD dtypes.float [254, 258]
+260 Ops.ADD dtypes.float [250, 259]
+261 Ops.PARAM dtypes.float [] ParamArg(slot=53, dtype=dtypes.float, size=4096, device="CPU")
+262 Ops.INDEX dtypes.float [261, 2]
+263 Ops.CONST dtypes.weakfloat [] 53.5
+264 Ops.MUL dtypes.float [262, 263]
+265 Ops.PARAM dtypes.float [] ParamArg(slot=54, dtype=dtypes.float, size=4096, device="CPU")
+266 Ops.INDEX dtypes.float [265, 2]
+267 Ops.CONST dtypes.weakfloat [] 54.5
+268 Ops.MUL dtypes.float [266, 267]
+269 Ops.ADD dtypes.float [264, 268]
+270 Ops.PARAM dtypes.float [] ParamArg(slot=55, dtype=dtypes.float, size=4096, device="CPU")
+271 Ops.INDEX dtypes.float [270, 2]
+272 Ops.CONST dtypes.weakfloat [] 55.5
+273 Ops.MUL dtypes.float [271, 272]
+274 Ops.PARAM dtypes.float [] ParamArg(slot=56, dtype=dtypes.float, size=4096, device="CPU")
+275 Ops.INDEX dtypes.float [274, 2]
+276 Ops.CONST dtypes.weakfloat [] 56.5
+277 Ops.MUL dtypes.float [275, 276]
+278 Ops.ADD dtypes.float [273, 277]
+279 Ops.ADD dtypes.float [269, 278]
+280 Ops.ADD dtypes.float [260, 279]
+281 Ops.PARAM dtypes.float [] ParamArg(slot=57, dtype=dtypes.float, size=4096, device="CPU")
+282 Ops.INDEX dtypes.float [281, 2]
+283 Ops.CONST dtypes.weakfloat [] 57.5
+284 Ops.MUL dtypes.float [282, 283]
+285 Ops.PARAM dtypes.float [] ParamArg(slot=58, dtype=dtypes.float, size=4096, device="CPU")
+286 Ops.INDEX dtypes.float [285, 2]
+287 Ops.CONST dtypes.weakfloat [] 58.5
+288 Ops.MUL dtypes.float [286, 287]
+289 Ops.ADD dtypes.float [284, 288]
+290 Ops.PARAM dtypes.float [] ParamArg(slot=59, dtype=dtypes.float, size=4096, device="CPU")
+291 Ops.INDEX dtypes.float [290, 2]
+292 Ops.CONST dtypes.weakfloat [] 59.5
+293 Ops.MUL dtypes.float [291, 292]
+294 Ops.PARAM dtypes.float [] ParamArg(slot=60, dtype=dtypes.float, size=4096, device="CPU")
+295 Ops.INDEX dtypes.float [294, 2]
+296 Ops.CONST dtypes.weakfloat [] 60.5
+297 Ops.MUL dtypes.float [295, 296]
+298 Ops.ADD dtypes.float [293, 297]
+299 Ops.ADD dtypes.float [289, 298]
+300 Ops.PARAM dtypes.float [] ParamArg(slot=61, dtype=dtypes.float, size=4096, device="CPU")
+301 Ops.INDEX dtypes.float [300, 2]
+302 Ops.CONST dtypes.weakfloat [] 61.5
+303 Ops.MUL dtypes.float [301, 302]
+304 Ops.PARAM dtypes.float [] ParamArg(slot=62, dtype=dtypes.float, size=4096, device="CPU")
+305 Ops.INDEX dtypes.float [304, 2]
+306 Ops.CONST dtypes.weakfloat [] 62.5
+307 Ops.MUL dtypes.float [305, 306]
+308 Ops.ADD dtypes.float [303, 307]
+309 Ops.PARAM dtypes.float [] ParamArg(slot=63, dtype=dtypes.float, size=4096, device="CPU")
+310 Ops.INDEX dtypes.float [309, 2]
+311 Ops.CONST dtypes.weakfloat [] 63.5
+312 Ops.MUL dtypes.float [310, 311]
+313 Ops.PARAM dtypes.float [] ParamArg(slot=64, dtype=dtypes.float, size=4096, device="CPU")
+314 Ops.INDEX dtypes.float [313, 2]
+315 Ops.CONST dtypes.weakfloat [] 64.5
+316 Ops.MUL dtypes.float [314, 315]
+317 Ops.ADD dtypes.float [312, 316]
+318 Ops.ADD dtypes.float [308, 317]
+319 Ops.ADD dtypes.float [299, 318]
+320 Ops.ADD dtypes.float [280, 319]
+321 Ops.ADD dtypes.float [241, 320]
+322 Ops.ADD dtypes.float [162, 321]
+323 Ops.STORE dtypes.void [3, 322]
+324 Ops.END dtypes.void [323, 2]
+325 Ops.SINK dtypes.void [324] KernelInfo(name="E_4096") tag=1
+

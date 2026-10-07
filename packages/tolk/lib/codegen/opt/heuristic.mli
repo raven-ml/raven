@@ -60,5 +60,10 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       split by the first of 32 (axis [0] only), 16, 8, 4, 3 and 2 that divides
       them while the workgroup stays within 128 threads.
 
-    A kernel of the host without a reduce takes no upcast after its masked
-    axes: the host's compiler vectorizes the loop over its outputs itself. *)
+    A kernel of the host without a reduce, whose lanes the host computes as
+    vectors, takes in place of the upcasts after its masked axes one upcast of
+    its last output axis that 2 divides, by the largest power of two, at most
+    16, that keeps its lanes within 64 bytes of the widest type it reads,
+    writes or computes, and again while they have room. It takes none when its
+    stored values hold 5 operations or more for each operation of their
+    longest chain, or when it computes a type the target emulates. *)
