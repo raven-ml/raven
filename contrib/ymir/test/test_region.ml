@@ -88,7 +88,9 @@ let laws =
           cover "cell-aligned centre" (fst c = Float.round (fst c));
           cover "tiny" (r < 1e-3);
           let w = Region.weights (circle c r) (plane [| 40; 40 |]) in
-          equal (float_rel ~rel:1e-13 ~abs:1e-15) (pi *. r *. r) (total w);
+          (* Each cell the boundary crosses adds a few roundings of its area,
+             one square pixel: 16 ε for the four cells about a tiny disc. *)
+          equal (float_rel ~rel:1e-13 ~abs:4e-15) (pi *. r *. r) (total w);
           let a = Nx.to_array w in
           at_least float_exact ~than:0. (Array.fold_left min 1. a);
           at_most float_exact ~than:1. (Array.fold_left max 0. a));
@@ -121,6 +123,24 @@ let laws =
           equal float_exact 1. (Nx.item [ 23; 23 ] w);
           equal float_exact 0. (Nx.item [ 26; 20 ] w);
           equal float_exact 0. (Nx.item [ 0; 0 ] w));
+      test "a small disc near a long cell edge weighs its exact fraction"
+        (fun () ->
+          (* Cells 1 by 1e-8: the disc's radius, 3.7e-9, is below the rounding
+             of the squared distance to a corner, and the edges 5.3e-9 away
+             pass outside it. *)
+          let k = 1.0536e-8 and r = 3.7253595981663415e-09 in
+          let g =
+            Grid.pixels ~shape:[| 40; 40 |] f64
+              (Transform.linear
+                 (one (Nx.create f64 [| 2; 2 |] [| 1.; 0.; 0.; k |])))
+          in
+          let disc =
+            Region.circle
+              (Transform.shift (one (Nx.create f64 [| 2 |] [| 14.; 14. *. k |])))
+              ~radius:(one (Nx.scalar f64 r))
+          in
+          equal (float_rel ~rel:1e-6 ~abs:0.) (pi *. r *. r /. k)
+            (Nx.item [ 14; 14 ] (Region.weights disc g)));
       test "a zero radius weighs 0" (fun () ->
           equal float_exact 0.
             (total

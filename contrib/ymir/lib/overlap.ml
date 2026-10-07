@@ -86,8 +86,10 @@ let arc r c0 s e =
 let edge r c0 a b =
   let d = sub b a in
   let qa = dot d d and qb = dot a d in
-  let qc = Nx.sub (dot a a) (Nx.square r) in
-  let disc = Nx.sub (Nx.square qb) (Nx.mul qa qc) in
+  (* [qb² − qa (|a|² − r²)] is [qa r² − (a × d)²]: written so, it keeps its
+     sign where [r²] is below the rounding of [|a|²], as for a small disc
+     near a long edge. *)
+  let disc = Nx.sub (Nx.mul qa (Nx.square r)) (Nx.square (cross a d)) in
   let degenerate = Nx.equal_s qa 0. in
   let qa = Nx.where degenerate (Nx.ones_like qa) qa in
   let crossing =
