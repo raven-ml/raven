@@ -72,29 +72,43 @@ let with_hosts devices =
       else devices @ [ (n, h) ])
     devices devices
 
-(* Refuses [devices] if it gives one name twice. *)
-(* The storage of the placeholders a host batch's program names: a word holding
-   a program's address, which keeps it loaded, and one holding nx.device's
-   entry, which calls it. *)
+(* The storage of the placeholders a host batch's program names: the words
+   holding its programs' addresses, which keep them loaded, and one holding
+   nx.device's entry, which calls them. *)
 let host_word = Mutex.create ()
 
-let word a =
-  let w = Nx_device.Buffer.create Nx_device.host Nx_dtype.Scalar.Int64 1 in
-  (Nx_device.Buffer.bigarray Bigarray.int64 w).{0} <- Int64.of_nativeint a;
+let words addresses =
+  let n = List.length addresses in
+  let w =
+    Nx_device.Buffer.create Nx_device.host Nx_dtype.Scalar.Int64 (max 1 n)
+  in
+  let b = Nx_device.Buffer.bigarray Bigarray.int64 w in
+  List.iteri (fun i a -> b.{i} <- Int64.of_nativeint a) addresses;
   w
 
-let entry_word = lazy (word Nx_device.Program.entry)
+let entry_word = lazy (words [ Nx_device.Program.entry ])
+
+let load_program = function
+  | Ops.Tag.Tuple [ Bytes binary; String name ] -> (
+      match Nx_device.Program.load Nx_device.host ~binary ~name with
+      | Ok p -> p
+      | Error why -> failwith why)
+  | _ -> invalid_arg "Tolk_engine.link: a program is a binary and a name"
 
 let host_placeholder u =
   match Ops.tag u with
   | Some (Tuple [ String "cfunc"; String "nx_device"; String "entry" ]) ->
       Some (Mutex.protect host_word (fun () -> Lazy.force entry_word))
-  | Some (Tuple [ String "program"; Bytes binary; String name ]) -> (
-      match Nx_device.Program.load Nx_device.host ~binary ~name with
-      | Ok p -> Some (Nx_device.Program.keep p (word (Nx_device.Program.handle p)))
-      | Error why -> failwith why)
+  | Some (Tuple [ String "programs"; Tuple programs ]) ->
+      let ps = List.map load_program programs in
+      Some
+        (List.fold_left
+           (fun w p -> Nx_device.Program.keep p w)
+           (words (List.map Nx_device.Program.handle ps))
+           ps)
   | _ -> None
 
+(* Refuses [devices] if it gives one name twice. *)
 let rec distinct = function
   | [] -> ()
   | (n, _) :: devices ->

@@ -369,18 +369,27 @@ val sched_batches :
     back edge of the engine of one trip (range [0]) and the same flag, which
     reads it before the first; the flag is a byte of storage the schedule holds.
     A range or a back edge around a back edge, whose flag only the engine reads
-    before each trip, stays the engine's. Each call writes its buffers'
-    addresses and its values ({!Realize.get_call_var_uops}) into volatile
-    placeholders of the host tagged ["host_call"], of its own, before it calls,
-    those known at link written then ({!patch}); a split program
-    ({!Ops.kernel_info.split}) writes its split too, whose blocks are
+    before each trip, stays the engine's.
+
+    A host batch's calls are data, so that its program grows with neither its
+    calls nor their trips: each call is a row of a volatile placeholder of the
+    host tagged ["host_words"], and the program walks each run of consecutive
+    calls in a loop, calling each row's program on the buffer addresses and the
+    values ({!Realize.get_call_var_uops}) the row points at, and on its split
+    ({!Ops.kernel_info.split}) if it has one. A word is written when its value
+    is known: at link ({!patch}); on each run, before the first call, for a
+    word that reads the run's inputs or variables, each such value computed once
+    and copied into the words that take it; and on each trip of a range, before
+    the walk of its call, for a word that reads the range. The program counts a
+    split's blocks before its call, as
     [max 1 (min extent (min (blocks_per_worker * w) (ops / block_ops)))] for the
     program's iterations [extent], its operations [ops] and the host's workers
-    [w] ({!host_workers}). A program's address is a word of the host tagged
-    [("program", binary, name)]. A host batch is a call, with an {!Ops.hcq_info}
-    of the host alone and no submission, of a sink of its calls, whose arguments
-    are the storage of its flag. A copy on the host, and a call of a device of
-    {!Calls}, stays a call of its own.
+    [w] ({!host_workers}). The programs' addresses are words of the host tagged
+    [("programs", programs)], one for each [(binary, name)] of [programs]. A
+    host batch is a call, with an {!Ops.hcq_info} of the host alone and no
+    submission, of a sink of its calls, whose arguments are the storage of its
+    flag. A copy on the host, and a call of a device of {!Calls}, stays a call
+    of its own.
 
     A call's position counts each run of the calls before it in the batch, a
     range's calls once per trip. A queue's commands and each command's arguments

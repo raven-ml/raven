@@ -1238,8 +1238,9 @@ thread.
   it measures or the kernels a beam search picks. `Tolk_engine.clock` no
   longer depends on whether a profile is taken.
 - The host runs a run of its calls, with the ranges and back edges around
-  them, as one host program that calls each kernel through
-  `Nx_device.Program.entry`: no OCaml runs per trip or per kernel.
+  them, as one host program that walks them as data, calling each kernel
+  through `Nx_device.Program.entry`: no OCaml runs per trip or per kernel, and
+  the program does not grow with its calls or their trips.
   **Breaking:** `Hcq2.device`'s `queues` is `work`, `Queues`, `Programs` or
   `Calls`.
 - A precompiled call inside a loop may pass a scalar parameter of its body a

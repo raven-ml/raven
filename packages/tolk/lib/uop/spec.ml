@@ -224,12 +224,13 @@ let shared : t =
           no_arg x && shape cond = [] && not (is_invalid (base cond)));
       (* Around calls, a loop's range bounds its trips, a range of one trip
          being its value [0], and its condition is storage of one element, or,
-         in a host batch's program, a value read from one. *)
+         in a host batch's program, a value read from one, after the loop that
+         walks its calls. *)
       check
         (pat [ Op.Backedge ] ~dtype:[ Dtype.Void ] ~name:"x"
            ~src:
              [
-               pat [ Op.Call; Op.Linear ];
+               pat [ Op.Call; Op.Linear; Op.End ];
                pat [ Op.Range; Op.Const ];
                Upat.v ~dtype:[ Dtype.Bool ] ();
              ])

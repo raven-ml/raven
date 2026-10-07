@@ -339,7 +339,7 @@ let rec is_link_patch w =
       && match lane_offset (nth w 0) with _, _, Int _ -> true | _ -> false)
   | Op.Param -> tag w <> None
   | Op.Buffer -> addrspace w = Some Dtype.Global
-  | Op.Load | Op.After -> false
+  | Op.Load | Op.After | Op.Range -> false
   | _ when is_variable w -> false
   | _ -> List.for_all is_link_patch (src w)
 
@@ -1409,13 +1409,20 @@ let chunked lowered = function
 (* Host batches
 
    A run of the calls of one host's programs, with the ranges and back edges
-   around them, is one host program of that host, which calls each program
-   through nx.device's entry ([Nx_device.Program.entry]): the program's order is
-   the calls', and a range is a loop of it, so the program does not grow with
-   the trips. Each call writes its buffers' addresses and its values into words
-   of its own before it calls, and a split program its split, whose blocks the
-   program counts as a host launch does. A back edge is a loop of the program
-   that runs while the flag holds, read before each trip. *)
+   around them, is one host program of that host. Its calls are data: each is a
+   row of the batch's words, and the program walks each run of rows in a loop,
+   calling a row's program through nx.device's entry ([Nx_device.Program.entry])
+   on the buffer addresses and values the row points at. A range is a loop of
+   the program around the walks of its calls, and a back edge one that runs
+   while the flag holds, read after each trip: the program grows with neither
+   the calls nor the trips.
+
+   A word is written once its value is known: at link ({!patch}) for most; on
+   each run for one that reads the run's inputs or variables, which the program
+   computes once and copies into each word that takes it, through pairs of
+   positions at link; and on each trip for one that reads a range, before the
+   walk of its call. The program counts a split row's blocks before its call, as
+   a host launch counts them. *)
 
 (* A block repays waking the host's threads and joining them once it does 2^18
    operations. A wake and a join cost a few microseconds, and a block should
@@ -1431,48 +1438,70 @@ let host_workers =
   variable ~dtype:Dtype.Int64 "host_workers" (`Int Bigint.one)
     (`Int (Bigint.of_int 4096))
 
+(* A call's row of words: its program's position among the batch's programs; the
+   arguments of nx.device's entry, the addresses of its buffer words and of its
+   value words, its number of values, and the address of its split or [0]; its
+   split as the entry reads it; and its operations. *)
+let row_words = 10
+let row_program = 0
+let row_buffers = 1
+let row_values = 2
+let row_count = 3
+let row_split = 4
+let row_extent = 5
+let row_blocks = 6
+let row_lo = 7
+let row_hi = 8
+let row_ops = 9
+
 let host_batch ~host entries =
-  let i64 n = int ~dtype:Dtype.Int64 n in
   let on = Single host in
-  (* Words of one call: [n] of [dt] on the host, volatile, since the callee
-     reads them at an address of the table. They are the batch's own: link
-     writes the words known then. *)
-  let words dt n =
-    placeholder ~device:on ~volatile:true
-      ~tag:(Tag.String "host_call") [ max n 1 ] dt
+  let rec flat es =
+    List.concat_map
+      (fun e -> if op e = Op.Linear then flat (src e) else [ e ])
+      es
   in
-  let store_all w xs = List.mapi (fun i x -> store (index w [ int i ]) x) xs in
-  let program prg =
-    let obj = Device.Tiny_elf.of_program prg in
+  let rec calls_in e =
+    match op e with
+    | Op.Linear -> List.concat_map calls_in (src e)
+    | Op.End | Op.Backedge -> calls_in (nth e 0)
+    | Op.Call when op (body e) = Op.Program -> [ e ]
+    | Op.Call -> invalid_arg "a host batch calls programs"
+    | o -> invalid_arg (Format.asprintf "a host batch has no %a" Op.pp o)
+  in
+  let calls = Array.of_list (List.concat_map calls_in entries) in
+  let n = Array.length calls in
+  let programs = dedup (Array.to_list (Array.map body calls)) in
+  let positions = Tbl.create 16 in
+  List.iteri (fun i prg -> Tbl.replace positions prg i) programs;
+  let programs_word =
+    let tag prg =
+      let obj = Device.Tiny_elf.of_program prg in
+      Tag.Tuple [ Bytes obj.lib; String obj.name ]
+    in
     placeholder ~slot:0 ~device:on
-      ~tag:(Tag.Tuple [ String "program"; Bytes obj.lib; String obj.name ])
-      [ 1 ] Dtype.Uint64
+      ~tag:(Tag.Tuple [ String "programs"; Tuple (List.map tag programs) ])
+      [ List.length programs ]
+      Dtype.Uint64
   in
-  (* The effect last made, the ranges open around it, and the storage of the
-     flags read. *)
-  let last = ref None and opened = ref [] and flags = ref [] in
-  let ordered u deps = after u (Option.to_list !last @ deps @ !opened) in
-  let address u = getaddr ~device:host u in
-  let kernel c prg =
+  let word x = bitcast (ccast x Dtype.Int64) Dtype.Uint64 in
+  (* A call's buffer addresses and values, and its split's iterations,
+     operations and slots. *)
+  let operands c =
+    let prg = body c in
     let info = match arg prg with Program p -> p | _ -> assert false in
     let bufs = Realize.get_call_arg_uops c in
     let vals = Realize.get_call_var_uops c prg in
-    let args = words Dtype.Uint64 (List.length info.globals)
-    and values = words Dtype.Int64 (List.length vals) in
-    let stores =
-      store_all args (List.map (fun g -> address (List.nth bufs g)) info.globals)
-      @ store_all values (List.map (fun v -> ccast v Dtype.Int64) vals)
-    in
-    let split, stores =
+    let split =
       match arg (nth prg 0) with
       | Kernel { split = Some sp; estimates; _ } ->
           let at slot =
             Option.get
               (List.find_index
-                 (fun v -> match arg v with Param p -> p.slot = slot | _ -> false)
+                 (fun v ->
+                   match arg v with Param p -> p.slot = slot | _ -> false)
                  info.vars)
           in
-          let lo = at sp.lo and hi = at sp.hi in
           (* The call's bound variables, read where the split's sizes read
              them. *)
           let bound =
@@ -1485,46 +1514,180 @@ let host_batch ~host entries =
               (src_without_body c)
           in
           let size s =
-            ccast
+            word
               (substitute ~calls:Skip ~pass:Fixed_point (sint_to_uop s) bound)
-              Dtype.Int64
           in
-          let extent = size sp.iterations
-          and ops =
-            size (match estimates with Some e -> e.ops | None -> sp.iterations)
+          let ops =
+            match estimates with Some e -> e.ops | None -> sp.iterations
           in
-          let least a b = where (lt a b) a b in
-          let most = mul (i64 blocks_per_worker) host_workers in
-          let blocks =
-            least (least extent most) (div ~rounding:`Floor ops (i64 block_ops))
-          in
-          let blocks = where (lt blocks (i64 1)) (i64 1) blocks in
-          let w = words Dtype.Int64 4 in
-          ( address w,
-            stores @ store_all w [ extent; blocks; i64 lo; i64 hi ] )
-      | _ -> (u64 0, stores)
+          Some (size sp.iterations, size ops, at sp.lo, at sp.hi)
+      | _ -> None
     in
-    (* A store of a value known at link is written then ({!patch}); one that
-       reads a loop of the program, in a group, on each trip. *)
-    let moving, fixed =
-      List.partition (fun s -> Nodes.cardinal (ranges s) > 0) stores
+    ( List.map (fun g -> getaddr ~device:host (List.nth bufs g)) info.globals,
+      List.map word vals,
+      split )
+  in
+  let operands = Array.map operands calls in
+  (* The words: the rows, each call's buffer and value words, the copies of the
+     run's values, each a word's position and the value's, and the run's
+     values. *)
+  let starts = Array.make n 0 in
+  let copies_at =
+    Array.fold_left
+      (fun (i, at) (bufs, vals, _) ->
+        starts.(i) <- at;
+        (i + 1, at + List.length bufs + List.length vals))
+      (0, row_words * n)
+      operands
+    |> snd
+  in
+  (* Call [i]'s words, but for the addresses of words of the batch. *)
+  let words_of i =
+    let bufs, vals, split = operands.(i) in
+    let r = row_words * i in
+    let split =
+      match split with
+      | Some (extent, ops, lo, hi) -> [ extent; ops; u64 lo; u64 hi ]
+      | None -> List.init 4 (fun _ -> u64 0)
     in
-    let deps = if moving = [] then fixed else v Op.Group ~src:moving :: fixed in
-    let f = load (index (ordered (program prg) deps) [ int 0 ]) [] in
+    List.mapi (fun j x -> (starts.(i) + j, x)) (bufs @ vals)
+    @ List.map2
+        (fun f x -> (r + f, x))
+        [ row_program; row_count; row_extent; row_ops; row_lo; row_hi ]
+        (u64 (Tbl.find positions (body calls.(i)))
+        :: u64 (List.length vals)
+        :: split)
+  in
+  let words_of = Array.init n words_of in
+  (* A word reads a range, the run's inputs or variables, or only what link
+     knows. *)
+  let moving x = Nodes.cardinal (ranges x) > 0 in
+  let of_run x = (not (moving x)) && not (is_link_patch x) in
+  let copied =
+    List.filter (fun (_, x) -> of_run x) (List.concat (Array.to_list words_of))
+  in
+  let run = dedup (List.map snd copied) in
+  let run_slots = Tbl.create 16 in
+  List.iteri (fun j x -> Tbl.replace run_slots x j) run;
+  let run_at = copies_at + (2 * List.length copied) in
+  let words =
+    placeholder ~device:on ~volatile:true ~tag:(Tag.String "host_words")
+      [ max 1 (run_at + List.length run) ]
+      Dtype.Uint64
+  in
+  let set (k, x) = store (index words [ int k ]) x in
+  let addresses i =
+    let bufs, vals, split = operands.(i) in
+    let r = row_words * i in
+    let address present k =
+      if present then getaddr ~device:host (part words k (k + 1)) else u64 0
+    in
+    [
+      (r + row_buffers, address (bufs <> []) starts.(i));
+      (r + row_values, address (vals <> []) (starts.(i) + List.length bufs));
+      (r + row_split, address (Option.is_some split) (r + row_extent));
+    ]
+  in
+  let linked =
+    List.concat_map
+      (List.filter (fun (_, x) -> not (moving x || of_run x)))
+      (Array.to_list words_of)
+    @ List.concat (List.init n addresses)
+    @ List.concat
+        (List.mapi
+           (fun p (k, x) ->
+             [
+               (copies_at + (2 * p), u64 k);
+               (copies_at + (2 * p) + 1, u64 (Tbl.find run_slots x));
+             ])
+           copied)
+  in
+  (* The effect last made, the ranges open around it, and the storage of the
+     flags read. *)
+  let last = ref None and opened = ref [] and flags = ref [] in
+  let ordered u deps = after u (Option.to_list !last @ deps @ !opened) in
+  let field w at = load (index w [ at ]) [] in
+  let loop n = range ~axis_type:Axis_type.Loop (Int n) [ unique_num () ] in
+  (* Each run computes its values, then copies each into the words that take
+     it. *)
+  let filled =
+    after words
+      (List.map set linked @ List.mapi (fun j x -> set (run_at + j, x)) run)
+  in
+  if copied <> [] then begin
+    let p = loop (List.length copied) in
+    let at j =
+      field filled (add (int copies_at) (add (mul p (int 2)) (int j)))
+    in
     last :=
       Some
-        (ccall ~host ~lib:"nx_device" "entry"
-           [
-             f;
-             address args;
-             address values;
-             i64 (List.length vals);
-             split;
-           ])
+        (end_
+           (store
+              (index filled [ at 0 ])
+              (field filled (add (u64 run_at) (at 1))))
+           [ p ])
+  end;
+  (* The walk of the [k] calls from the next, after their words that read a
+     range. *)
+  let next = ref 0 in
+  let walk k =
+    let first = !next in
+    next := first + k;
+    let moving_words =
+      List.concat_map
+        (fun i ->
+          List.filter_map
+            (fun (at, x) -> if moving x then Some (set (at, x)) else None)
+            words_of.(i))
+        (List.init k (( + ) first))
+    in
+    let c, close =
+      if k = 1 then (int first, Fun.id)
+      else
+        let c = loop k in
+        (add (int first) c, fun e -> end_ e [ c ])
+    in
+    let r = mul c (int row_words) in
+    let w = ordered filled moving_words in
+    let at f = field w (add r (int f)) in
+    let blocks =
+      let least a b = where (lt a b) a b in
+      let most =
+        mul (u64 blocks_per_worker) (ccast host_workers Dtype.Uint64)
+      in
+      let b =
+        least
+          (least (at row_extent) most)
+          (div ~rounding:`Floor (at row_ops) (u64 block_ops))
+      in
+      where (lt b (u64 1)) (u64 1) b
+    in
+    let w = after w [ store (index w [ add r (int row_blocks) ]) blocks ] in
+    let at f = field w (add r (int f)) in
+    last :=
+      Some
+        (close
+           (ccall ~host ~lib:"nx_device" "entry"
+              [
+                load (index programs_word [ at row_program ]) [];
+                at row_buffers;
+                at row_values;
+                ccast (at row_count) Dtype.Int64;
+                at row_split;
+              ]))
   in
-  let rec emit e =
+  let rec emit_all = function
+    | [] -> ()
+    | e :: _ as es when op e = Op.Call ->
+        let k = List.length (List.take_while (fun e -> op e = Op.Call) es) in
+        walk k;
+        emit_all (List.drop k es)
+    | e :: es ->
+        emit e;
+        emit_all es
+  and emit e =
     match op e with
-    | Op.Linear -> List.iter emit (src e)
+    | Op.Linear | Op.Call -> emit_all (flat [ e ])
     | Op.End ->
         let rs = List.tl (src e) and outer = !opened in
         opened := outer @ rs;
@@ -1549,16 +1712,13 @@ let host_batch ~host entries =
         in
         opened := outer;
         last := Some (backedge (Option.get !last) ~loop:r ~cond)
-    | Op.Call -> (
-        match op (body e) with
-        | Op.Program -> kernel e (body e)
-        | _ -> invalid_arg "a host batch calls programs")
     | o -> invalid_arg (Format.asprintf "a host batch has no %a" Op.pp o)
   in
-  List.iter emit entries;
+  emit_all (flat entries);
   let sink =
     sink ~tag:(Tag.Int 1)
-      ~kernel:(kernel_info ~name:"host_batch" ~estimates:Renderer.Estimates.zero ())
+      ~kernel:
+        (kernel_info ~name:"host_batch" ~estimates:Renderer.Estimates.zero ())
       [ Option.get !last ]
   in
   let rec calls_of e =
@@ -1570,7 +1730,7 @@ let host_batch ~host entries =
     | Op.Backedge -> calls_of (nth e 0)
     | _ -> [ e ]
   in
-  let calls = List.concat_map calls_of entries in
+  let runs = List.concat_map calls_of entries in
   let info =
     {
       device = [ host ];
@@ -1579,18 +1739,18 @@ let host_batch ~host entries =
           (fun c ->
             let devs = devices_of (List.hd (Realize.get_call_arg_uops c)) in
             hcq_kernel ~devs ~stamps:[] c)
-          calls;
+          runs;
       estimates =
         Renderer.Estimates.simplify
           (List.fold_left
              (fun acc c -> Renderer.Estimates.add acc (Realize.estimate_uop c))
-             Renderer.Estimates.zero calls);
+             Renderer.Estimates.zero runs);
       nargs = 0;
       table = -1;
       inputs = [];
       slots = [];
-      written_bufs = dedup (List.concat_map Realize.get_call_written_bufs calls);
-      writes = dedup (List.concat_map call_writes calls);
+      written_bufs = dedup (List.concat_map Realize.get_call_written_bufs runs);
+      writes = dedup (List.concat_map call_writes runs);
       copies = [];
     }
   in

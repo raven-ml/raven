@@ -1144,10 +1144,16 @@ let one_program_for_any_loop () =
     List.filter_map
       (fun u ->
         match Ops.tag u with
-        | Some (Tuple [ String "program"; Bytes binary; String _ ]) ->
-            Some binary
+        | Some (Tuple [ String "programs"; Tuple programs ]) ->
+            Some
+              (List.map
+                 (function
+                   | Ops.Tag.Tuple [ Bytes binary; String _ ] -> binary
+                   | _ -> failf "a program is a binary and a name")
+                 programs)
         | _ -> None)
       (Ops.toposort ~calls:Enter compiled)
+    |> List.concat
   in
   equal int 1
     (List.length
@@ -2196,6 +2202,99 @@ let host_range_after_a_batch () =
     (floats (Array.make (4 * trips) 8.))
     (Run.values Float32 out_buffer)
 
+(* [n] calls of [add_one_of 4] in a row on two buffers of the schedule, [a] and
+   [b], each reading what the one before it wrote: [a] ends as itself plus [n]
+   for an even [n]. *)
+let calls_in_a_row n =
+  let cpu = Ops.Single "CPU" in
+  let a = Ops.new_buffer cpu 4 Float32 and b = Ops.new_buffer cpu 4 Float32 in
+  let k = add_one_of 4 in
+  let calls =
+    List.init n (fun i ->
+        if i mod 2 = 0 then Ops.call k [ b; a ] else Ops.call k [ a; b ])
+  in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:calls)
+  in
+  (compiled, a, b)
+
+(* The source of the one host program of [compiled]'s host batch, without its
+   digits. *)
+let host_batch_source compiled =
+  let is_batch s =
+    let n = String.length "host_batch" in
+    let rec at i =
+      i + n <= String.length s && (String.sub s i n = "host_batch" || at (i + 1))
+    in
+    at 0
+  in
+  match
+    List.filter_map
+      (fun u ->
+        match (Ops.op u, Ops.arg u) with
+        | Op.Source, Ops.String s when is_batch s -> Some s
+        | _ -> None)
+      (Ops.toposort ~calls:Enter compiled)
+  with
+  | [ s ] ->
+      String.of_seq (Seq.filter (fun c -> c < '0' || c > '9') (String.to_seq s))
+  | sources -> failf "%d host programs, not one" (List.length sources)
+
+let host_batch_size () =
+  let row n =
+    let compiled, _, _ = calls_in_a_row n in
+    host_batch_source compiled
+  in
+  equal string ~msg:"the programs of 16 and 1,024 calls, but for numbers"
+    (row 16) (row 1024)
+
+let calls_in_a_row_compute () =
+  let n = 1024 in
+  let compiled, a, b = calls_in_a_row n in
+  let xs = [| 1.; 2.; 3.; 4. |] in
+  let a_buffer = Run.buffer host Float32 (floats xs) in
+  let s =
+    Engine.link ~devices
+      ~bound:[ (a, [ a_buffer ]); (b, [ Run.buffer host Float32 (floats xs) ]) ]
+      compiled
+  in
+  Engine.run s [||];
+  equal values
+    (floats (Array.map (fun x -> x +. Float.of_int n) xs))
+    (Run.values Float32 a_buffer)
+
+(* Two calls of [add_one_of 4] in a row, each from a half of the parameter of
+   slot 0 into the same half of slot 1's: each run reads and writes its own
+   slots. *)
+let host_batch_reads_its_slots () =
+  let cpu = Ops.Single "CPU" in
+  let x = Call.placeholder ~device:cpu ~slot:0 [ 8 ] Float32
+  and y = Call.placeholder ~device:cpu ~slot:1 [ 8 ] Float32 in
+  let half v h = Shape.shrink v [ Some (Int (4 * h), Int ((4 * h) + 4)) ] in
+  let k = add_one_of 4 in
+  let compiled =
+    Hcq2.compile_linear ~profile:Unstamped
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear
+         ~src:
+           [
+             Ops.call k [ half y 0; half x 0 ];
+             Ops.call k [ half y 1; half x 1 ];
+           ])
+  in
+  let s = Engine.link ~devices ~bound:[] compiled in
+  List.iter
+    (fun base ->
+      let xs = Array.init 8 (fun i -> base +. Float.of_int i) in
+      let y_buffer = Run.buffer host Float32 (floats (Array.make 8 0.)) in
+      Engine.run s [| [ Run.buffer host Float32 (floats xs) ]; [ y_buffer ] |];
+      equal values
+        (floats (Array.map (fun x -> x +. 1.) xs))
+        (Run.values Float32 y_buffer))
+    [ 0.; 100. ]
+
 (* A copy on CPU:1's queue into CPU:2's memory, which a slow kernel of CPU:2
    filled first: the copy lands last. *)
 let waits_for_another_device () =
@@ -2891,6 +2990,11 @@ let batches =
         waits_for_another_device;
       test "a range of host calls runs as one host program a run"
         host_range_is_one_call;
+      test "a host program does not grow with the calls it runs" host_batch_size;
+      test "a run of 1,024 host calls computes each in turn"
+        calls_in_a_row_compute;
+      test "a host batch reads and writes each run's slots, at their offsets"
+        host_batch_reads_its_slots;
       slow "a split kernel in a host range computes as unsplit"
         host_range_splits;
       slow "a host range waits for a queue's copy into what it reads"

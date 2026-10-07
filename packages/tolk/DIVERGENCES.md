@@ -4375,19 +4375,30 @@ stores through a pad.
   program from Python), `runtime/support/hcq2.py:40-48` (`get_enqueue_devs`,
   which enqueues no CPU call: `HCQ_DEVS` holds no CPU device).
 - **tolk:** `lib/runtime/support/hcq2.ml:1246` (`call_host`), `:1272`
-  (`range_placement`), `:1434` (`host_batch`), `:1599` (`sched_batches`) and
-  `:2083` (`lower_call`, whose program reads storage of the schedule as
-  volatile); `engine/tolk_engine.ml:88` (`host_placeholder`), `:734`
-  (`link_batch`) and `:928` (`run_host_batch`); `lib/uop/spec.ml` (a back
-  edge's condition read in a program); nx.device's `Program.entry`.
+  (`range_placement`), `:1445` (`row_words`, a call's row), `:1457`
+  (`host_batch`), `:1759` (`sched_batches`) and `:2243` (`lower_call`, whose
+  program reads storage of the schedule as volatile);
+  `engine/tolk_engine.ml:98` (`host_placeholder`, which loads the batch's
+  programs), `:748` (`link_batch`) and `:942` (`run_host_batch`);
+  `lib/uop/spec.ml` (a back edge's condition read in a program, after the loop
+  that walks its calls); nx.device's `Program.entry`.
 - **Differs:** a device whose host is this process's runs its programs in
   host batches (`Hcq2.Programs`): each run of consecutive calls of one host's
   programs, with the ranges and back edges around them, is one host program
-  of the host, linked and run as a batch without queues. The program calls
-  each program through nx.device's entry, in order, after writing the call's
-  buffer addresses and values into words of its own, those known at link
-  written then; a range is a loop of the program, so the program does not
-  grow with the trips. A back edge is a host
+  of the host, linked and run as a batch without queues. The calls are data:
+  each is a row of the batch's words (its program's position among the
+  batch's programs, the addresses of its buffer and value words, its number of
+  values, its split), and the program walks each run of consecutive calls in
+  a loop, calling each row's program through nx.device's entry. A word known
+  at link is written then; one that reads the run's inputs or variables is
+  computed once per run and copied, by a loop over pairs of positions written
+  at link, into each word that takes it; one that reads a range is written on
+  each trip before the walk of its call. A range is a loop of the program
+  around its walks, so the program grows with neither the calls nor the
+  trips: a straight-line trace of 1,024 kernels is the same program as one of
+  16. A call site per call would make the program, and Clang's compile and
+  tolk's lowering of it, grow with the trace: 1.8 s of rune's `sinkhorn-64`
+  cold compile, a trace of 1,024 kernels. A back edge is a host
   batch of its own whose loop stops after a trip that clears the flag, inside
   the engine's back edge of one trip, which reads the flag before the first; a
   loop around a back edge stays the engine's, which reads its flag before each
@@ -4409,9 +4420,11 @@ stores through a pad.
   step: each launch from OCaml cost the allocation of its arguments, a view
   per moving window, and a release of the runtime.
 - **Pinned by:** the `Tolk_engine` suite: `batches › a range of host calls
-  runs as one host program a run`, `› a split kernel in a host range computes
-  as unsplit`, `› a host range waits for a queue's copy into what it reads`,
-  and `link and run`'s loops and back edges on the host (D60, D123, D140);
+  runs as one host program a run`, `› a host program does not grow with the
+  calls it runs`, `› a run of 1,024 host calls computes each in turn`, `› a
+  host batch reads and writes each run's slots, at their offsets`, `› a split
+  kernel in a host range computes as unsplit`, `› a host range waits for a
+  queue's copy into what it reads`, and `link and run`'s loops and back edges on the host (D60, D123, D140);
   `device › a device off Metal, CUDA, AMD and NV runs programs of this
   machine's host` and `› another machine's host runs its calls one by one`;
   nx.device's host suite: `a call through the entry is a call`, `a split
