@@ -6,6 +6,8 @@
 /* The transport of the memory bench's machine. Its windows are mapped, so
    nothing reaches it: an access fails and the machine never does. */
 
+#define _GNU_SOURCE
+
 #include <stdint.h>
 #include <stddef.h>
 

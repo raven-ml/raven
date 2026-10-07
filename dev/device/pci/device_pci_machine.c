@@ -5,8 +5,7 @@
 
 /* Machines: a transport's failure, and the clock of the poll loop. */
 
-/* clock_gettime is POSIX, which -std=c11 hides on glibc. */
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 #include <time.h>
 
 #define CAML_NAME_SPACE
