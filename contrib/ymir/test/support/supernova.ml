@@ -27,9 +27,7 @@ type fit = {
   evaluations : int;
 }
 
-(* A minimum is determined to about the square root of chi^2's rounding over
-   its curvature: 3e-8 of Pantheon+'s Omega_m. *)
-let tol = Tol.v ~rel:1e-7 ~abs:1e-9
+let tol = Tol.v ~rel:1e-8 ~abs:1e-10
 let budget = 100
 
 let fit ~chol ~model m theta0 =
