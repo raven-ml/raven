@@ -136,10 +136,13 @@ let rec power x n =
     let half = power (Nx.mul x x) (n / 2) in
     if n land 1 = 0 then half else Nx.mul x half
 
+let is_integer (type a b) (d : (a, b) Nx.dtype) =
+  match Nx_dtype.kind d with Signed | Unsigned -> true | _ -> false
+
 let pow n q =
   let x = q.payload in
   let d = Nx.dtype x in
-  if n < 0 && Nx_dtype.is_int d then
+  if n < 0 && is_integer d then
     invalid_arg
       (strf "Quantity.pow: %d is negative and the payload is %s" n
          (Nx_dtype.to_string d));
