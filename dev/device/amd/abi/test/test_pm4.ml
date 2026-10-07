@@ -26,7 +26,8 @@ let packet3 op n = (3 lsl 30) lor (n lsl 16) lor (op lsl 8)
    0xffff, as the .mli states them. *)
 let ranges = [ (0x76, (0x2c00, 0x3000)); (0x79, (0xc000, 0xc000 + 0xffff)) ]
 
-(* A first register around a range's ends, and up to 4 words. *)
+(* A first register around a range's ends, and up to 4 words; one run in four
+   ends exactly at a range's end. *)
 let runs_of_regs =
   let open Gen in
   let edges = [ 0x2c00; 0x3000; 0xc000; 0xc000 + 0xffff ] in
@@ -37,12 +38,19 @@ let runs_of_regs =
         (1, map (fun n -> Packet.W64 (Value n)) (int_range 0 0xffff_ffff));
       ]
   in
-  let map2 f a b = map (fun (a, b) -> f a b) (pair a b) in
+  let words = list ~size:(int_range 0 4) word in
+  let around =
+    let+ edge = of_list edges and+ d = int_range (-4) 3 and+ ws = words in
+    (edge + d, ws)
+  in
+  let up_to_end =
+    let+ _, (_, stop) = of_list ranges
+    and+ ws = list ~size:(int_range 1 4) word in
+    (stop - Packet.size ws, ws)
+  in
   with_pp
     (fun ppf (a, ws) -> Format.fprintf ppf "0x%x, %d words" a (Packet.size ws))
-    (pair
-       (map2 ( + ) (of_list edges) (int_range (-4) 3))
-       (list ~size:(int_range 0 4) word))
+    (frequency [ (3, around); (1, up_to_end) ])
 
 let memory =
   group ~timeout "memory and registers"
