@@ -19,6 +19,12 @@ let n_reserved = 10
 let n_random = 10000
 let to_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
+(* Rounding to float32 through a one-element float32 array [c], which boxes
+   nothing in a loop. *)
+let round32 c x =
+  Bigarray.Array1.unsafe_set c 0 x;
+  Bigarray.Array1.unsafe_get c 0
+
 (* Appendix I: 10000 uniform deviates from Park and Miller's generator,
    rounded to float32. *)
 let randoms =
@@ -86,11 +92,34 @@ let dequantize ~dither ~row ~scale ~zero ~blank (i : ints) n (out : floats) =
 
 (* Noise *)
 
+(* [select a n k] is the [k]-th smallest of [a.(0)] to [a.(n - 1)], which
+   it reorders (Hoare's selection). *)
+let select (a : float array) n k =
+  let lo = ref 0 and hi = ref (n - 1) in
+  while !lo < !hi do
+    let pivot = a.((!lo + !hi) / 2) in
+    let i = ref !lo and j = ref !hi in
+    while !i <= !j do
+      while a.(!i) < pivot do
+        incr i
+      done;
+      while a.(!j) > pivot do
+        decr j
+      done;
+      if !i <= !j then begin
+        let t = a.(!i) in
+        a.(!i) <- a.(!j);
+        a.(!j) <- t;
+        incr i;
+        decr j
+      end
+    done;
+    if k <= !j then hi := !j else if k >= !i then lo := !i else lo := !hi
+  done;
+  a.(k)
+
 (* The median of [a.(0)] to [a.(n - 1)], the lower one of an even count. *)
-let lower_median (a : float array) n =
-  let c = Array.sub a 0 n in
-  Array.sort Float.compare c;
-  c.((n - 1) / 2)
+let lower_median (a : float array) n = select (Array.sub a 0 n) n ((n - 1) / 2)
 
 let mid_median (a : float array) n =
   let c = Array.sub a 0 n in
@@ -144,7 +173,8 @@ let noise5 (data : floats) nx ny =
     and r3 = Array.make ny 0.
     and r5 = Array.make ny 0. in
     let nrows = ref 0 and nrows2 = ref 0 and ngood = ref 0 in
-    let f = to_f32 in
+    let cell = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 1 in
+    let f = round32 cell in
     for jj = 0 to ny - 1 do
       let row = jj * nx in
       let ii = ref 0 in
