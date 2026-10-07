@@ -22,13 +22,14 @@ let record ~threads ~total ~chunks =
    read stale) over [jobs] jobs. *)
 external visibility : jobs:int -> threads:int -> int * int = "probe_visibility"
 
-(* [nested ~threads ~outer ~inner] is (outer calls, inner calls, inner calls off
-   their body's thread or not worker 0, inner units not run once). *)
+(* [nested ~threads ~outer ~inner] is (outer units run, inner jobs not run in
+   one call, inner calls off their body's thread or not worker 0, inner units
+   not run once). *)
 external nested : threads:int -> outer:int -> inner:int -> int * int * int * int
   = "probe_nested"
 
-(* [balance chunks] is whether chunks 1 to [chunks - 1] of a job on two threads
-   ran while chunk 0 lasted. *)
+(* [balance chunks] is whether, in a job of [chunks] chunks of one unit on two
+   threads, the units after the call that runs unit 0 ran while it lasted. *)
 external balance : int -> bool = "probe_balance"
 
 (* Jobs observed from another domain *)

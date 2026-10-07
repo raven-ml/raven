@@ -12,7 +12,7 @@
    The pool runs jobs. A job is a range of units [0, total) cut into
    contiguous chunks and run on at most a given number of threads: the
    calling thread, which is worker 0, and the pool's workers. Each thread
-   claims the next chunk in index order until none remains, so a thread
+   claims the next chunks in index order until none remains, so a thread
    that finishes early runs the chunks a slower one would have run. The job
    returns once every chunk has run.
 
@@ -50,15 +50,17 @@ int nx_pool_performance_cores(void);
 
 /* Jobs */
 
-/* The type for the function a job calls on each chunk: [lo, hi) are the
-   chunk's units, [worker] the index of the thread that runs it, [ctx] the
+/* The type for the function a job calls on its ranges: [lo, hi) are the
+   range's units, [worker] the index of the thread that runs it, [ctx] the
    job's context. */
 typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
 
 /* nx_pool_run (threads, total, chunks, body, ctx) runs the job [0, total)
    cut into [chunks] chunks on at most [threads] threads: it calls
-   body (lo, hi, worker, ctx) once per chunk and returns once every call
-   has returned. A job of total <= 0 calls nothing.
+   body (lo, hi, worker, ctx) on disjoint ranges [lo, hi) that cover
+   [0, total), each made of whole consecutive chunks, and returns once every
+   call has returned. A job of total <= 0 calls nothing; a job that runs on
+   one thread makes one call, over [0, total).
 
    Bounds. Integers out of range are bounded: for total >= 1 the job has
    c chunks and at most t threads,
@@ -77,14 +79,14 @@ typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
 
    Worker index. 0 <= worker < t <= max (threads, 1), and the calling
    thread's worker is 0. A thread keeps its index for the whole job and
-   claims a chunk only after its last one returned, so two calls with the
+   claims chunks only after its last call returned, so two calls with the
    same worker never overlap and scratch indexed by worker is never shared.
    An index may run no chunk: per-worker partials start at their identity.
    Writes the caller made before the call are visible to every body, and
    the bodies' writes to the caller once it returns.
 
-   Bodies. Chunks run in parallel or one after another on one thread, in
-   any interleaving: a body must not wait for another chunk. A body runs C
+   Bodies. Calls run in parallel or one after another on one thread, in
+   any interleaving: a body must not wait for another call. A body runs C
    and must not call the OCaml runtime, since a worker is not an OCaml
    thread. A body may begin a job of its own (see Scheduling). A body must
    not fork. On a worker a body has 8 MiB of stack; on the calling thread,

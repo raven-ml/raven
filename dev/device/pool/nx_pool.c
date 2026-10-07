@@ -289,9 +289,12 @@ static uint64_t spin(_Atomic uint64_t *word, uint64_t value, int until,
   }
 }
 
-/* Claims chunks of [j] until none remains. A relaxed fetch-add makes every
-   claimed index unique; the ordering the job needs rides the generation and
-   the countdown. */
+/* Claims chunks of [j] until none remains, one call a chunk. nx_pool.h
+   allows a call over several chunks; claiming one at a time lets the
+   thread that frees first take the next, so a costly chunk holds only the
+   thread that runs it. A relaxed fetch-add makes every claimed index
+   unique; the ordering the job needs rides the generation and the
+   countdown. */
 static void claim(pool *p, const job *j, int id) {
   for (;;) {
     int64_t i = atomic_fetch_add_explicit(&p->next, 1, memory_order_relaxed);
@@ -507,12 +510,11 @@ static pool *get(void) {
   return p;
 }
 
-/* Runs [j] on the calling thread alone, as worker 0. */
+/* Runs [j] on the calling thread alone, as worker 0, in one call. */
 static void run_alone(const job *j) {
   int outer = in_body;
   in_body = 1;
-  for (int64_t i = 0; i < j->chunks; i++)
-    j->body(bound(j, i), bound(j, i + 1), 0, j->ctx);
+  j->body(0, j->total, 0, j->ctx);
   in_body = outer;
 }
 
