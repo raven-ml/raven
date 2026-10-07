@@ -146,54 +146,6 @@ let bus () =
 
 (* The GPU's memory *)
 
-(* Page-table entries by the address of their 8 bytes, in four levels of 512
-   entries. Entries: bit 0 valid, bit 1 a page, bits 2-3 the target, bit 4
-   uncached, bit 5 snooped, bits 12-51 the address. *)
-type gpu_memory = {
-  entries : (int, int64) Hashtbl.t;
-  mutable touches : int;  (** Entries read and written, zeroes and flushes. *)
-}
-
-let shifts = [| 39; 30; 21; 12 |]
-let address_mask = 0xF_FFFF_FFFF_F000
-let bit b i = if b then 1 lsl i else 0
-let target_code = function Page_table.Gpu -> 0 | System -> 4 | Peer -> 8
-
-let target_of e =
-  match e land 12 with 0 -> Page_table.Gpu | 4 -> System | _ -> Peer
-
-let format g =
-  let touch () = g.touches <- g.touches + 1 in
-  {
-    Page_table.levels = [ 12; 21; 30; 39 ];
-    bits = 48;
-    first = 0;
-    get =
-      (fun ~level:_ ~table i ->
-        touch ();
-        Option.value ~default:0L (Hashtbl.find_opt g.entries (table + (8 * i))));
-    set =
-      (fun ~level:_ ~table i e ->
-        touch ();
-        Hashtbl.replace g.entries (table + (8 * i)) e);
-    encode =
-      (fun ~level:_ ~table tg ~uncached ~snooped ~fragment:_ ~valid pa ->
-        Int64.of_int
-          (pa lor bit valid 0 lor bit (not table) 1 lor target_code tg
-         lor bit uncached 4 lor bit snooped 5));
-    valid = (fun e -> Int64.logand e 1L <> 0L);
-    leaf = (fun ~level e -> level = 3 || Int64.logand e 2L <> 0L);
-    address = (fun e -> Int64.to_int e land address_mask);
-    large = (fun ~level -> level >= 1);
-    zero =
-      (fun pa n ->
-        touch ();
-        Hashtbl.filter_map_inplace
-          (fun a e -> if a >= pa && a < pa + n then None else Some e)
-          g.entries);
-    flush = touch;
-  }
-
 type leaf = {
   va : int;
   pa : int;
@@ -210,32 +162,17 @@ let leaf = Testable.make ~pp:pp_leaf ~equal:( = )
 
 (* The pages the tables map, by virtual address, read without counting. *)
 let leaves g t =
-  let out = ref [] in
-  let rec go table level va =
-    for i = 0 to 511 do
-      let e =
-        Int64.to_int
-          (Option.value ~default:0L
-             (Hashtbl.find_opt g.entries (table + (8 * i))))
-      in
-      let va = va + (i lsl shifts.(level)) in
-      if e land 1 = 0 then ()
-      else if level = 3 || e land 2 <> 0 then
-        out :=
-          {
-            va;
-            pa = e land address_mask;
-            size = 1 lsl shifts.(level);
-            target = target_of e;
-            uncached = e land 16 <> 0;
-            snooped = e land 32 <> 0;
-          }
-          :: !out
-      else go (e land address_mask) (level + 1) va
-    done
-  in
-  go (Page_table.root t) 0 (Page_table.base t);
-  List.rev !out
+  List.map
+    (fun (e : Tables.entry) ->
+      {
+        va = e.va;
+        pa = e.pa;
+        size = 1 lsl Tables.shifts.(e.level);
+        target = e.target;
+        uncached = e.uncached;
+        snooped = e.snooped;
+      })
+    (fst (Tables.walk g t))
 
 (* Adjacent ranges merged, so that two spellings of the same bytes compare. *)
 let merge l =
@@ -263,7 +200,7 @@ type gpu = {
   size : int;  (** The GPU's memory in bytes. *)
   fn : Function.t;
   fake : fake;
-  g : gpu_memory;
+  g : Tables.memory;
   tables : Page_table.t;
   memory : Memory.t;
 }
@@ -284,10 +221,10 @@ let gpu ?(addressing = Machine.Physical) ?(memory = gpu_memory) ?bar
     | Some s -> s
     | None -> Space.create ~base:space_base space_length
   in
-  let g = { entries = Hashtbl.create 64; touches = 0 } in
+  let g = Tables.memory () in
   let tables =
-    Page_table.create ~base:tables_base (format g) space ~memory ~boot:mib
-      ~tables ~pages:large_pages
+    Page_table.create ~base:tables_base (Tables.format g) space ~memory
+      ~boot:mib ~tables ~pages:large_pages
   in
   Page_table.booted tables;
   let size = memory in
@@ -850,7 +787,8 @@ let test_peer_not_owned () =
    memory. The old instance frees and unmaps all it holds, and the new one's
    entries are as they were. *)
 let bindings g =
-  List.sort compare (Hashtbl.fold (fun a e l -> (a, e) :: l) g.entries [])
+  List.sort compare
+    (Hashtbl.fold (fun a e l -> (a, e) :: l) g.Tables.entries [])
 
 let test_reopened () =
   let m = machine () in
@@ -866,8 +804,8 @@ let test_reopened () =
   let p = peer_ok x owner shared in
   Function.release x.fn;
   let reopened =
-    Page_table.create ~base:tables_base (format x.g) space ~memory:gpu_memory
-      ~boot:mib ~tables:Pool ~pages:large_pages
+    Page_table.create ~base:tables_base (Tables.format x.g) space
+      ~memory:gpu_memory ~boot:mib ~tables:Pool ~pages:large_pages
   in
   Page_table.booted reopened;
   let fresh = require_some (Page_table.alloc reopened (3 * mib)) in

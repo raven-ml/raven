@@ -58,3 +58,60 @@ val let_go : int -> unit
 val log : int -> (bool * int * int) list
 (** [log far] is [far]'s accesses since the last call, oldest first, as
     [(write, address, bytes)]. *)
+
+(** {1:tables Page tables in a fake format} *)
+
+(** Page tables in a fake format, in a fake GPU memory that keeps their entries
+    by address.
+
+    Four levels of 512 entries, the root numbered 0: level [l] indexes the bits
+    from [shifts.(l)] on. Pages map at levels 1 to 3: 1 GiB, 2 MiB and 4 KiB.
+    Entries: bit 0 valid, bit 1 a page, bits 2-3 the target, bit 4 uncached, bit
+    5 snooped, bits 6-11 the fragment, bits 12-51 the address. *)
+module Tables : sig
+  type memory = {
+    entries : (int, int64) Hashtbl.t;  (** Entries by physical address. *)
+    mutable zeroed : (int * int) list;  (** [zero] calls, newest first. *)
+    mutable unflushed : int;  (** Entries written since the last [flush]. *)
+    mutable touches : int;  (** Entries read and written, zeroes and flushes. *)
+  }
+  (** The type for a GPU memory that holds page tables. *)
+
+  val memory : unit -> memory
+  (** [memory ()] is a memory that holds no entry. *)
+
+  val format : memory -> Device_pci.Page_table.format
+  (** [format m] is the format, its entries in [m]. *)
+
+  val shifts : int array
+  (** [shifts.(l)] is the lowest bit of a virtual address level [l] indexes. *)
+
+  val address_mask : int
+  (** [address_mask] is an entry's address bits. *)
+
+  val leaf : int
+  (** [leaf] is the level of the smallest pages. *)
+
+  val large : int -> bool
+  (** [large l] is [true] iff pages map at level [l]. *)
+
+  type entry = {
+    va : int;
+    level : int;
+    pa : int;
+    target : Device_pci.Page_table.target;
+    uncached : bool;
+    snooped : bool;
+    fragment : int;
+  }
+  (** The type for an entry that maps a page. *)
+
+  val pp_target : Format.formatter -> Device_pci.Page_table.target -> unit
+  val target : Device_pci.Page_table.target Windtrap.Testable.t
+  val pp_entry : Format.formatter -> entry -> unit
+  val entry : entry Windtrap.Testable.t
+
+  val walk : memory -> Device_pci.Page_table.t -> entry list * int list
+  (** [walk m t] is the pages [t] maps in [m], by virtual address, and the
+      tables reached from the root, root first. It touches nothing. *)
+end
