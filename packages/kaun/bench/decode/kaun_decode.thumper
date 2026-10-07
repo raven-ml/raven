@@ -6,6 +6,7 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/mxfp4-product-1-token Quant/host/mxfp4-blocks-product-1-token Quant/host/q8_0-product-1-token Quant/host/q4_k-product-1-token Quant/host/q6_k-product-1-token Quant/host/routed-product-1-tokens-eager under load 6.4 on 6 cores
 # forced: blessed Quant/cuda/routed-product-1-tokens Quant/cuda/routed-product-512-tokens Quant/cuda/mxfp4-product-1-token Quant/cuda/mxfp4-blocks-product-1-token Quant/cuda/q8_0-product-1-token Quant/cuda/q4_k-product-1-token Quant/cuda/q6_k-product-1-token under load 4.8 on 4 cores
+# forced: blessed Quant/host/routed-product-1-tokens Quant/host/routed-product-64-tokens Quant/host/mxfp4-product-1-token Quant/host/mxfp4-blocks-product-1-token Quant/host/q8_0-product-1-token Quant/host/q4_k-product-1-token Quant/host/q6_k-product-1-token Quant/host/routed-product-1-tokens-eager under load 4.6 on 6 cores
 
 Gpt2/decode-step-cache-1024	alloc_words	exact	337658
 Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	3.116e-02	3.090e-02 3.098e-02 3.106e-02 3.107e-02 3.110e-02 3.112e-02 3.114e-02 3.114e-02 3.114e-02 3.116e-02 3.116e-02 3.116e-02 3.119e-02 3.120e-02 3.121e-02 3.121e-02 3.127e-02 3.134e-02 3.145e-02 3.177e-02
@@ -25,22 +26,22 @@ Quant/cuda/routed-product-1-tokens	alloc_words	exact	1681
 Quant/cuda/routed-product-1-tokens	wall_time	batch=128	n=20	6.186e-05	5.817e-05 5.895e-05 5.900e-05 5.925e-05 5.947e-05 5.962e-05 6.008e-05 6.033e-05 6.103e-05 6.134e-05 6.238e-05 6.321e-05 6.373e-05 6.446e-05 6.517e-05 6.528e-05 6.678e-05 6.722e-05 6.795e-05 2.542e-04
 Quant/cuda/routed-product-512-tokens	alloc_words	exact	1739
 Quant/cuda/routed-product-512-tokens	wall_time	batch=1	n=20	2.502e-02	2.357e-02 2.366e-02 2.382e-02 2.459e-02 2.487e-02 2.495e-02 2.497e-02 2.500e-02 2.501e-02 2.502e-02 2.502e-02 2.507e-02 2.511e-02 2.514e-02 2.517e-02 2.589e-02 3.723e-02 3.791e-02 3.944e-02 4.173e-02
-Quant/host/mxfp4-blocks-product-1-token	alloc_words	exact	865
-Quant/host/mxfp4-blocks-product-1-token	wall_time	batch=8	n=20	1.036e-03	8.305e-04 8.852e-04 9.671e-04 1.029e-03 1.029e-03 1.030e-03 1.030e-03 1.030e-03 1.033e-03 1.035e-03 1.037e-03 1.062e-03 1.068e-03 1.072e-03 1.096e-03 1.110e-03 1.200e-03 1.216e-03 1.486e-03 1.633e-03
-Quant/host/mxfp4-product-1-token	alloc_words	exact	865
-Quant/host/mxfp4-product-1-token	wall_time	batch=1	n=20	8.063e-03	6.501e-03 6.679e-03 6.681e-03 6.726e-03 8.030e-03 8.048e-03 8.048e-03 8.049e-03 8.053e-03 8.058e-03 8.068e-03 8.082e-03 8.084e-03 8.085e-03 8.106e-03 8.116e-03 8.118e-03 8.205e-03 8.207e-03 8.339e-03
-Quant/host/q4_k-product-1-token	alloc_words	exact	865
-Quant/host/q4_k-product-1-token	wall_time	batch=8	n=20	7.232e-04	5.811e-04 5.821e-04 5.857e-04 5.866e-04 5.878e-04 5.891e-04 6.438e-04 7.224e-04 7.225e-04 7.230e-04 7.235e-04 7.247e-04 7.260e-04 7.274e-04 7.277e-04 7.295e-04 7.298e-04 7.413e-04 7.621e-04 7.701e-04
-Quant/host/q6_k-product-1-token	alloc_words	exact	865
-Quant/host/q6_k-product-1-token	wall_time	batch=8	n=20	6.649e-04	6.539e-04 6.556e-04 6.575e-04 6.591e-04 6.594e-04 6.600e-04 6.601e-04 6.610e-04 6.629e-04 6.643e-04 6.654e-04 6.660e-04 6.732e-04 6.823e-04 6.908e-04 7.124e-04 7.126e-04 7.434e-04 7.529e-04 8.008e-04
-Quant/host/q8_0-product-1-token	alloc_words	exact	865
-Quant/host/q8_0-product-1-token	wall_time	batch=16	n=20	4.998e-04	4.056e-04 4.682e-04 4.977e-04 4.977e-04 4.981e-04 4.982e-04 4.985e-04 4.986e-04 4.988e-04 4.997e-04 4.999e-04 5.001e-04 5.004e-04 5.006e-04 5.026e-04 5.030e-04 5.055e-04 5.090e-04 5.195e-04 5.288e-04
-Quant/host/routed-product-1-tokens	alloc_words	exact	1163
-Quant/host/routed-product-1-tokens	wall_time	batch=1	n=20	3.292e-02	2.665e-02 2.666e-02 2.684e-02 2.704e-02 2.740e-02 2.743e-02 3.077e-02 3.257e-02 3.275e-02 3.292e-02 3.293e-02 3.299e-02 3.306e-02 3.345e-02 3.350e-02 3.353e-02 3.355e-02 3.364e-02 3.666e-02 4.272e-02
-Quant/host/routed-product-1-tokens-eager	alloc_words	exact	7704
-Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	3.123e-01	3.066e-01 3.072e-01 3.077e-01 3.087e-01 3.093e-01 3.099e-01 3.102e-01 3.111e-01 3.112e-01 3.112e-01 3.133e-01 3.133e-01 3.140e-01 3.144e-01 3.146e-01 3.157e-01 3.256e-01 3.267e-01 3.282e-01 3.338e-01
-Quant/host/routed-product-64-tokens	alloc_words	exact	1163
-Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	6.288e-01	5.917e-01 5.924e-01 5.926e-01 5.928e-01 5.931e-01 5.935e-01 6.011e-01 6.030e-01 6.149e-01 6.287e-01 6.288e-01 6.518e-01 6.645e-01 6.808e-01 7.116e-01 7.250e-01 7.319e-01 7.400e-01 7.403e-01 7.591e-01
+Quant/host/mxfp4-blocks-product-1-token	alloc_words	exact	857
+Quant/host/mxfp4-blocks-product-1-token	wall_time	batch=8	n=20	8.279e-04	8.269e-04 8.273e-04 8.276e-04 8.276e-04 8.276e-04 8.276e-04 8.277e-04 8.278e-04 8.279e-04 8.279e-04 8.279e-04 8.280e-04 8.280e-04 8.282e-04 8.284e-04 8.287e-04 8.293e-04 8.297e-04 8.337e-04 9.864e-04
+Quant/host/mxfp4-product-1-token	alloc_words	exact	857
+Quant/host/mxfp4-product-1-token	wall_time	batch=8	n=20	7.928e-04	7.896e-04 7.898e-04 7.903e-04 7.904e-04 7.907e-04 7.907e-04 7.908e-04 7.911e-04 7.924e-04 7.927e-04 7.928e-04 7.929e-04 7.931e-04 7.934e-04 7.935e-04 7.936e-04 7.955e-04 8.137e-04 8.183e-04 8.626e-04
+Quant/host/q4_k-product-1-token	alloc_words	exact	857
+Quant/host/q4_k-product-1-token	wall_time	batch=16	n=20	5.845e-04	5.809e-04 5.816e-04 5.826e-04 5.828e-04 5.828e-04 5.829e-04 5.829e-04 5.830e-04 5.835e-04 5.840e-04 5.850e-04 5.858e-04 5.859e-04 5.859e-04 5.862e-04 5.865e-04 5.867e-04 5.896e-04 6.278e-04 6.507e-04
+Quant/host/q6_k-product-1-token	alloc_words	exact	857
+Quant/host/q6_k-product-1-token	wall_time	batch=16	n=20	5.373e-04	5.265e-04 5.289e-04 5.307e-04 5.333e-04 5.346e-04 5.351e-04 5.355e-04 5.356e-04 5.368e-04 5.373e-04 5.373e-04 5.376e-04 5.391e-04 5.431e-04 5.436e-04 5.438e-04 5.438e-04 5.455e-04 5.474e-04 5.478e-04
+Quant/host/q8_0-product-1-token	alloc_words	exact	857
+Quant/host/q8_0-product-1-token	wall_time	batch=16	n=20	4.039e-04	3.998e-04 4.009e-04 4.010e-04 4.010e-04 4.012e-04 4.014e-04 4.026e-04 4.031e-04 4.034e-04 4.039e-04 4.039e-04 4.043e-04 4.043e-04 4.045e-04 4.046e-04 4.060e-04 4.062e-04 4.079e-04 4.086e-04 4.124e-04
+Quant/host/routed-product-1-tokens	alloc_words	exact	1155
+Quant/host/routed-product-1-tokens	wall_time	batch=2	n=20	3.606e-03	3.600e-03 3.603e-03 3.603e-03 3.603e-03 3.603e-03 3.604e-03 3.604e-03 3.605e-03 3.605e-03 3.605e-03 3.606e-03 3.606e-03 3.606e-03 3.606e-03 3.606e-03 3.607e-03 3.608e-03 3.611e-03 3.626e-03 3.730e-03
+Quant/host/routed-product-1-tokens-eager	alloc_words	exact	7700
+Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	2.760e-01	2.686e-01 2.706e-01 2.709e-01 2.712e-01 2.712e-01 2.714e-01 2.721e-01 2.723e-01 2.759e-01 2.760e-01 2.760e-01 2.761e-01 2.763e-01 2.765e-01 2.766e-01 2.767e-01 2.771e-01 2.774e-01 2.774e-01 2.776e-01
+Quant/host/routed-product-64-tokens	alloc_words	exact	1155
+Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	1.887e-01	1.879e-01 1.880e-01 1.882e-01 1.882e-01 1.883e-01 1.884e-01 1.884e-01 1.885e-01 1.886e-01 1.887e-01 1.887e-01 1.888e-01 1.889e-01 1.889e-01 1.889e-01 1.891e-01 1.892e-01 1.892e-01 1.893e-01 1.897e-01
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
