@@ -32,29 +32,3 @@ space/alloc-free/4KiB/4096-free	alloc_words	exact	59
 space/alloc-free/4KiB/4096-free	wall_time	batch=16384	n=20	3.170e-07	3.150e-07 3.154e-07 3.155e-07 3.155e-07 3.158e-07 3.160e-07 3.163e-07 3.165e-07 3.165e-07 3.169e-07 3.172e-07 3.174e-07 3.175e-07 3.176e-07 3.176e-07 3.177e-07 3.184e-07 3.204e-07 3.578e-07 4.460e-07
 space/churn	alloc_words	exact	32694
 space/churn	wall_time	batch=32	n=20	2.376e-04	2.356e-04 2.357e-04 2.357e-04 2.357e-04 2.358e-04 2.365e-04 2.369e-04 2.370e-04 2.370e-04 2.375e-04 2.377e-04 2.379e-04 2.380e-04 2.392e-04 2.417e-04 2.418e-04 2.422e-04 2.446e-04 2.835e-04 3.630e-04
-today/page-table/alloc-free/2MiB	alloc_words	exact	657
-today/page-table/alloc-free/2MiB	wall_time	batch=2048	n=20	3.354e-06	3.330e-06 3.332e-06 3.333e-06 3.334e-06 3.335e-06 3.336e-06 3.341e-06 3.343e-06 3.353e-06 3.353e-06 3.356e-06 3.360e-06 3.373e-06 3.374e-06 3.381e-06 3.385e-06 3.395e-06 3.472e-06 3.491e-06 4.016e-06
-today/page-table/alloc-free/4KiB	alloc_words	exact	578
-today/page-table/alloc-free/4KiB	wall_time	batch=4096	n=20	2.537e-06	2.116e-06 2.134e-06 2.140e-06 2.193e-06 2.219e-06 2.295e-06 2.323e-06 2.371e-06 2.374e-06 2.493e-06 2.582e-06 2.610e-06 2.753e-06 2.923e-06 3.487e-06 3.535e-06 3.564e-06 4.057e-06 4.459e-06 4.875e-06
-today/page-table/alloc-free/64KiB	alloc_words	exact	3406
-today/page-table/alloc-free/64KiB	wall_time	batch=512	n=20	1.699e-05	1.521e-05 1.525e-05 1.531e-05 1.533e-05 1.572e-05 1.612e-05 1.628e-05 1.641e-05 1.680e-05 1.693e-05 1.705e-05 1.717e-05 1.747e-05 1.763e-05 1.824e-05 1.830e-05 1.896e-05 2.111e-05 2.748e-05 2.985e-05
-today/page-table/map-unmap/2MiB	alloc_words	exact	271
-today/page-table/map-unmap/2MiB	wall_time	batch=32768	n=20	3.880e-07	3.036e-07 3.047e-07 3.105e-07 3.203e-07 3.214e-07 3.372e-07 3.472e-07 3.637e-07 3.832e-07 3.832e-07 3.927e-07 3.998e-07 4.089e-07 4.095e-07 4.166e-07 4.403e-07 4.621e-07 4.645e-07 4.661e-07 5.050e-07
-today/page-table/map-unmap/4KiB	alloc_words	exact	316
-today/page-table/map-unmap/4KiB	wall_time	batch=8192	n=20	3.793e-07	3.743e-07 3.743e-07 3.745e-07 3.746e-07 3.750e-07 3.754e-07 3.756e-07 3.770e-07 3.779e-07 3.782e-07 3.804e-07 3.814e-07 3.845e-07 3.908e-07 4.007e-07 4.013e-07 4.068e-07 4.092e-07 5.111e-07 5.597e-07
-today/page-table/map-unmap/64KiB	alloc_words	exact	496
-today/page-table/map-unmap/64KiB	wall_time	batch=8192	n=20	6.444e-07	6.390e-07 6.402e-07 6.406e-07 6.414e-07 6.416e-07 6.416e-07 6.422e-07 6.423e-07 6.424e-07 6.436e-07 6.452e-07 6.455e-07 6.595e-07 6.623e-07 6.826e-07 7.199e-07 7.275e-07 7.490e-07 1.007e-06 1.077e-06
-today/space/alloc-free/256MiB/16-free	alloc_words	exact	233
-today/space/alloc-free/256MiB/16-free	wall_time	batch=4096	n=20	1.527e-06	1.218e-06 1.229e-06 1.233e-06 1.290e-06 1.291e-06 1.306e-06 1.321e-06 1.361e-06 1.372e-06 1.455e-06 1.600e-06 1.628e-06 1.655e-06 1.660e-06 1.712e-06 1.756e-06 1.792e-06 1.804e-06 1.846e-06 2.229e-06
-today/space/alloc-free/256MiB/4096-free	alloc_words	exact	24713
-today/space/alloc-free/256MiB/4096-free	wall_time	batch=128	n=20	4.363e-05	4.035e-05 4.225e-05 4.228e-05 4.261e-05 4.267e-05 4.285e-05 4.320e-05 4.325e-05 4.331e-05 4.350e-05 4.375e-05 4.386e-05 4.473e-05 4.585e-05 5.094e-05 6.812e-05 8.947e-05 9.356e-05 1.681e-04 2.551e-04
-today/space/alloc-free/2MiB/16-free	alloc_words	exact	233
-today/space/alloc-free/2MiB/16-free	wall_time	batch=8192	n=20	1.240e-06	1.163e-06 1.166e-06 1.167e-06 1.172e-06 1.187e-06 1.192e-06 1.193e-06 1.215e-06 1.230e-06 1.236e-06 1.245e-06 1.262e-06 1.288e-06 1.319e-06 1.351e-06 1.374e-06 1.384e-06 1.447e-06 1.491e-06 1.669e-06
-today/space/alloc-free/2MiB/4096-free	alloc_words	exact	24719
-today/space/alloc-free/2MiB/4096-free	wall_time	batch=128	n=20	4.782e-05	4.276e-05 4.338e-05 4.547e-05 4.561e-05 4.582e-05 4.593e-05 4.608e-05 4.713e-05 4.754e-05 4.768e-05 4.796e-05 4.897e-05 5.100e-05 5.158e-05 5.289e-05 5.338e-05 5.554e-05 5.789e-05 6.031e-05 6.633e-05
-today/space/alloc-free/4KiB/16-free	alloc_words	exact	239
-today/space/alloc-free/4KiB/16-free	wall_time	batch=8192	n=20	1.078e-06	1.050e-06 1.050e-06 1.050e-06 1.050e-06 1.052e-06 1.052e-06 1.053e-06 1.053e-06 1.056e-06 1.074e-06 1.083e-06 1.084e-06 1.093e-06 1.119e-06 1.134e-06 1.158e-06 1.176e-06 1.207e-06 1.257e-06 1.475e-06
-today/space/alloc-free/4KiB/4096-free	alloc_words	exact	24719
-today/space/alloc-free/4KiB/4096-free	wall_time	batch=128	n=20	5.387e-05	4.208e-05 4.264e-05 4.477e-05 4.510e-05 4.524e-05 4.740e-05 4.741e-05 4.851e-05 5.165e-05 5.378e-05 5.397e-05 5.420e-05 5.565e-05 5.786e-05 5.844e-05 5.988e-05 6.095e-05 6.475e-05 6.484e-05 6.541e-05
-today/space/churn	alloc_words	exact	86634
-today/space/churn	wall_time	batch=4	n=20	8.663e-04	6.781e-04 6.868e-04 6.913e-04 6.997e-04 7.042e-04 7.155e-04 7.339e-04 7.914e-04 8.286e-04 8.415e-04 8.910e-04 9.712e-04 1.031e-03 1.046e-03 1.092e-03 1.137e-03 1.201e-03 1.307e-03 1.394e-03 1.486e-03

@@ -14,27 +14,16 @@
    next to a resident page and unmaps it; [page-table/alloc-free] is the whole
    allocation: addresses, physical memory, mapping. The page tables live in a
    buffer, in a format whose entries hold the address, bit 0 valid and bit 1 a
-   table.
-
-   [today/] makes the same calls on nx.device's Page_table and its Space. *)
+   table. *)
 
 module Space = Device_pci.Space
 module Page_table = Device_pci.Page_table
-module Today = Nx_device_support.Page_table
 
 let kib = 1024
 let mib = 1024 * kib
 let gib = 1024 * mib
 
 (* Spaces *)
-
-module type SPACE = sig
-  type t
-
-  val create : base:int -> int -> t
-  val alloc : ?align:int -> t -> int -> int option
-  val free : t -> int -> unit
-end
 
 let space_base = 1 lsl 44
 let space_length = 1 lsl 44
@@ -62,65 +51,60 @@ let churn_slot, churn_size =
   done;
   (slot, size)
 
-module Space_rows (S : SPACE) = struct
-  (* A space with [n] free ranges of twice each size, apart: [2 n] ranges
-     allocated in a row, then every other one freed. *)
-  let fragmented n =
-    let s = S.create ~base:space_base space_length in
-    let fragment (_, size) =
-      let ranges =
-        Array.init (2 * n) (fun _ -> Option.get (S.alloc s (2 * size)))
-      in
-      Array.iteri (fun i a -> if i land 1 = 0 then S.free s a) ranges
+(* A space with [n] free ranges of twice each size, apart: [2 n] ranges
+   allocated in a row, then every other one freed. *)
+let fragmented n =
+  let s = Space.create ~base:space_base space_length in
+  let fragment (_, size) =
+    let ranges =
+      Array.init (2 * n) (fun _ -> Option.get (Space.alloc s (2 * size)))
     in
-    List.iter fragment sizes;
-    s
+    Array.iteri (fun i a -> if i land 1 = 0 then Space.free s a) ranges
+  in
+  List.iter fragment sizes;
+  s
 
-  let alloc_free s n =
-    match S.alloc s n with
-    | Some a -> S.free s a
-    | None -> failwith "alloc-free: the space is full"
+let alloc_free s n =
+  match Space.alloc s n with
+  | Some a -> Space.free s a
+  | None -> failwith "alloc-free: the space is full"
 
-  let churn s live =
-    for i = 0 to steps - 1 do
-      let slot = churn_slot.(i) in
-      if live.(slot) >= 0 then begin
-        S.free s live.(slot);
-        live.(slot) <- -1
-      end
-      else live.(slot) <- Option.get (S.alloc s churn_size.(i))
-    done;
-    for slot = 0 to slots - 1 do
-      if live.(slot) >= 0 then begin
-        S.free s live.(slot);
-        live.(slot) <- -1
-      end
-    done
+let churn s live =
+  for i = 0 to steps - 1 do
+    let slot = churn_slot.(i) in
+    if live.(slot) >= 0 then begin
+      Space.free s live.(slot);
+      live.(slot) <- -1
+    end
+    else live.(slot) <- Option.get (Space.alloc s churn_size.(i))
+  done;
+  for slot = 0 to slots - 1 do
+    if live.(slot) >= 0 then begin
+      Space.free s live.(slot);
+      live.(slot) <- -1
+    end
+  done
 
-  let rows =
-    let spaces = List.map (fun n -> (n, lazy (fragmented n))) fragments in
-    let alloc_free (name, size) =
-      let size = Thumper.black_box size in
-      let row (n, s) =
-        Thumper.bench_with_setup
-          ~setup:(fun () -> Lazy.force s)
-          (Printf.sprintf "%d-free" n)
-          (fun s -> alloc_free s size)
-      in
-      Thumper.group name (List.map row spaces)
-    in
-    [
-      Thumper.group "alloc-free" (List.map alloc_free sizes);
+let space_rows =
+  let spaces = List.map (fun n -> (n, lazy (fragmented n))) fragments in
+  let alloc_free (name, size) =
+    let size = Thumper.black_box size in
+    let row (n, s) =
       Thumper.bench_with_setup
-        ~setup:(fun () ->
-          (S.create ~base:space_base space_length, Array.make slots (-1)))
-        "churn"
-        (fun (s, live) -> churn s live);
-    ]
-end
-
-module New_space = Space_rows (Space)
-module Today_space = Space_rows (Today.Space)
+        ~setup:(fun () -> Lazy.force s)
+        (Printf.sprintf "%d-free" n)
+        (fun s -> alloc_free s size)
+    in
+    Thumper.group name (List.map row spaces)
+  in
+  [
+    Thumper.group "alloc-free" (List.map alloc_free sizes);
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        (Space.create ~base:space_base space_length, Array.make slots (-1)))
+      "churn"
+      (fun (s, live) -> churn s live);
+  ]
 
 (* Page tables *)
 
@@ -211,45 +195,9 @@ let alloc_free t n =
   | Some m -> Page_table.free t m
   | None -> failwith "alloc-free: no memory"
 
-let today_page_table () =
-  let b = entries () in
-  let entry =
-    {
-      Today.levels;
-      bits;
-      first = 0;
-      get = get b;
-      set = set b;
-      encode =
-        (fun ~level:_ ~table _ ~uncached:_ ~snooped:_ ~fragment:_ ~valid pa ->
-          encode ~table ~valid pa);
-      valid;
-      leaf;
-      address;
-      large;
-      zero = zero b;
-      flush = ignore;
-    }
-  in
-  let space = Today.Space.create ~base:(1 lsl 40) (1 lsl 40) in
-  let t = Today.create entry space ~memory ~boot ~tables:true ~pages in
-  Today.booted t;
-  ignore (Today.map t ~va Phys [ (pa, 4 * kib) ]);
-  ignore (Option.get (Today.alloc t (4 * kib)));
-  t
-
-let today_map_unmap t va size pa =
-  ignore (Today.map t ~va Phys [ (pa, size) ]);
-  Today.unmap t ~va size
-
-let today_alloc_free t n =
-  match Today.alloc t n with
-  | Some m -> Today.free t m
-  | None -> failwith "alloc-free: no memory"
-
 (* Each mapping starts at its own size past the resident page. *)
-let page_table_rows make map_unmap alloc_free =
-  let t = lazy (make ()) in
+let page_table_rows =
+  let t = lazy (page_table ()) in
   let setup () = Lazy.force t in
   let map_row (name, size, at) =
     let va = Thumper.black_box (va + at) and size = Thumper.black_box size in
@@ -268,14 +216,6 @@ let () =
   exit
     (Thumper.run "device_pci_space"
        [
-         Thumper.group "space" New_space.rows;
-         Thumper.group "page-table"
-           (page_table_rows page_table map_unmap alloc_free);
-         Thumper.group "today"
-           [
-             Thumper.group "space" Today_space.rows;
-             Thumper.group "page-table"
-               (page_table_rows today_page_table today_map_unmap
-                  today_alloc_free);
-           ];
+         Thumper.group "space" space_rows;
+         Thumper.group "page-table" page_table_rows;
        ])
