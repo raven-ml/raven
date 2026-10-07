@@ -1,7 +1,7 @@
 (library
  (name device_nv_abi)
  (libraries device_elf)
- (private_modules repr)
+ (private_modules defs repr)
  (modules_without_implementation
   cubin
   gpfifo

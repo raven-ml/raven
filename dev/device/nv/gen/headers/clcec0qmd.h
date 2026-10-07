@@ -1,0 +1,80 @@
+/*******************************************************************************
+    Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+
+*******************************************************************************/
+
+#define NVCEC0_QMDV05_00_QMD_GROUP_ID                              MW(149:144)
+#define NVCEC0_QMDV05_00_QMD_TYPE                                  MW(153:151)
+#define NVCEC0_QMDV05_00_QMD_TYPE_GRID_CTA                         0x00000002
+#define NVCEC0_QMDV05_00_RELEASE_ENABLE(i)                         MW((288+(i)*16):(288+(i)*16))
+#define NVCEC0_QMDV05_00_RELEASE_STRUCTURE_SIZE(i)                 MW((290+(i)*16):(289+(i)*16))
+#define NVCEC0_QMDV05_00_RELEASE_STRUCTURE_SIZE_SEMAPHORE_FOUR_WORDS 0x00000000
+#define NVCEC0_QMDV05_00_RELEASE_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS 0x00000002
+#define NVCEC0_QMDV05_00_RELEASE_PAYLOAD64B(i)                     MW((300+(i)*16):(300+(i)*16))
+#define NVCEC0_QMDV05_00_DEPENDENT_QMD0_ENABLE                     MW(336:336)
+#define NVCEC0_QMDV05_00_DEPENDENT_QMD0_ACTION                     MW(339:337)
+#define NVCEC0_QMDV05_00_DEPENDENT_QMD0_ACTION_QMD_SCHEDULE        0x00000001
+#define NVCEC0_QMDV05_00_DEPENDENT_QMD0_PREFETCH                   MW(340:340)
+#define NVCEC0_QMDV05_00_DEPENDENT_QMD0_POINTER                    MW(415:384)
+#define NVCEC0_QMDV05_00_SASS_VERSION                              MW(455:448)
+#define NVCEC0_QMDV05_00_API_VISIBLE_CALL_LIMIT                    MW(456:456)
+#define NVCEC0_QMDV05_00_API_VISIBLE_CALL_LIMIT_NO_CHECK           0x00000001
+#define NVCEC0_QMDV05_00_SAMPLER_INDEX                             MW(457:457)
+#define NVCEC0_QMDV05_00_SAMPLER_INDEX_VIA_HEADER_INDEX            0x00000001
+#define NVCEC0_QMDV05_00_QMD_MAJOR_VERSION                         MW(471:468)
+#define NVCEC0_QMDV05_00_INVALIDATE_TEXTURE_HEADER_CACHE           MW(472:472)
+#define NVCEC0_QMDV05_00_INVALIDATE_TEXTURE_SAMPLER_CACHE          MW(473:473)
+#define NVCEC0_QMDV05_00_INVALIDATE_TEXTURE_DATA_CACHE             MW(474:474)
+#define NVCEC0_QMDV05_00_INVALIDATE_SHADER_DATA_CACHE              MW(475:475)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE0_ADDR_LOWER             MW(511:480)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE0_ADDR_UPPER             MW(536:512)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE0_PAYLOAD_LOWER          MW(575:544)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE0_PAYLOAD_UPPER          MW(607:576)
+#define NVCEC0_QMDV05_00_CWD_MEMBAR_TYPE                           MW(625:624)
+#define NVCEC0_QMDV05_00_CWD_MEMBAR_TYPE_L1_SYSMEMBAR              0x00000001
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE1_ADDR_LOWER             MW(799:768)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE1_ADDR_UPPER             MW(824:800)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE1_PAYLOAD_LOWER          MW(863:832)
+#define NVCEC0_QMDV05_00_RELEASE_SEMAPHORE1_PAYLOAD_UPPER          MW(895:864)
+#define NVCEC0_QMDV05_00_PROGRAM_ADDRESS_LOWER_SHIFTED4            MW(1055:1024)
+#define NVCEC0_QMDV05_00_PROGRAM_ADDRESS_UPPER_SHIFTED4            MW(1076:1056)
+#define NVCEC0_QMDV05_00_PROGRAM_PREFETCH_SIZE                     MW(1085:1077)
+#define NVCEC0_QMDV05_00_CTA_THREAD_DIMENSION0                     MW(1103:1088)
+#define NVCEC0_QMDV05_00_CTA_THREAD_DIMENSION1                     MW(1119:1104)
+#define NVCEC0_QMDV05_00_CTA_THREAD_DIMENSION2                     MW(1127:1120)
+#define NVCEC0_QMDV05_00_REGISTER_COUNT                            MW(1136:1128)
+#define NVCEC0_QMDV05_00_BARRIER_COUNT                             MW(1141:1137)
+#define NVCEC0_QMDV05_00_SHARED_MEMORY_SIZE_SHIFTED7               MW(1162:1152)
+#define NVCEC0_QMDV05_00_MIN_SM_CONFIG_SHARED_MEM_SIZE             MW(1168:1163)
+#define NVCEC0_QMDV05_00_MAX_SM_CONFIG_SHARED_MEM_SIZE             MW(1174:1169)
+#define NVCEC0_QMDV05_00_TARGET_SM_CONFIG_SHARED_MEM_SIZE          MW(1180:1175)
+#define NVCEC0_QMDV05_00_SHADER_LOCAL_MEMORY_HIGH_SIZE_SHIFTED4    MW(1215:1200)
+#define NVCEC0_QMDV05_00_GRID_WIDTH                                MW(1279:1248)
+#define NVCEC0_QMDV05_00_GRID_HEIGHT                               MW(1295:1280)
+#define NVCEC0_QMDV05_00_GRID_DEPTH                                MW(1327:1312)
+#define NVCEC0_QMDV05_00_CONSTANT_BUFFER_ADDR_LOWER_SHIFTED6(i)    MW((1375+(i)*64):(1344+(i)*64))
+#define NVCEC0_QMDV05_00_CONSTANT_BUFFER_ADDR_UPPER_SHIFTED6(i)    MW((1394+(i)*64):(1376+(i)*64))
+#define NVCEC0_QMDV05_00_CONSTANT_BUFFER_SIZE_SHIFTED4(i)          MW((1407+(i)*64):(1395+(i)*64))
+#define NVCEC0_QMDV05_00_CONSTANT_BUFFER_VALID(i)                  MW((1856+(i)*4):(1856+(i)*4))
+#define NVCEC0_QMDV05_00_CONSTANT_BUFFER_INVALIDATE(i)             MW((1859+(i)*4):(1859+(i)*4))
+#define NVCEC0_QMDV05_00_PROGRAM_PREFETCH_ADDR_LOWER_SHIFTED       MW(1919:1888)
+#define NVCEC0_QMDV05_00_PROGRAM_PREFETCH_ADDR_UPPER_SHIFTED       MW(1936:1920)
+#define NVCEC0_QMDV05_00_OUTER_STICKY_OVERFLOW                     MW(3071:3071)
