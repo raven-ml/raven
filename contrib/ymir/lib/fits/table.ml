@@ -425,7 +425,10 @@ let describe hdu =
     }
   end
 
-let of_hdu hdu = catch (fun () -> describe hdu)
+let description : (t, string) result Type.Id.t = Type.Id.make ()
+
+let of_hdu hdu =
+  Hdu.derive description (fun h -> catch (fun () -> describe h)) hdu
 
 let pp_layout ppf (c : col) =
   let shape s =
@@ -984,7 +987,7 @@ let to_element c s =
 let raw (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
     ((a, b) Nx.t, string) result =
   catch (fun () ->
-      let t = describe hdu in
+      let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
       not_array c;
       Image.check_holds c.place c.column.element (S.of_dtype dtype);
@@ -1008,7 +1011,7 @@ let physical (type b) c (dtype : (float, b) Nx.dtype) s u : (float, b) Nx.t =
 let values (type b) ?rows (dtype : (float, b) Nx.dtype) name hdu :
     ((float, b) Nx.t, string) result =
   catch (fun () ->
-      let t = describe hdu in
+      let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
       not_array c;
       if not (numeric_col c) then
@@ -1028,7 +1031,7 @@ let validity_of u =
 
 let validity ?rows name hdu =
   catch (fun () ->
-      let t = describe hdu in
+      let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
       let r = row_range t rows in
       match c.column.layout with
@@ -1042,7 +1045,7 @@ let validity ?rows name hdu =
 let ragged (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
     ((a, b) Nx_ragged.t, string) result =
   catch (fun () ->
-      let t = describe hdu in
+      let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
       let r = row_range t rows in
       let n = snd r - fst r in
@@ -1061,7 +1064,7 @@ let ragged (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
 
 let unit ~scope name hdu =
   catch (fun () ->
-      let t = describe hdu in
+      let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
       match c.unit_text with
       | None -> None
@@ -1086,7 +1089,7 @@ type data =
 
 let read ?rows hdu =
   catch (fun () ->
-      let t = describe hdu in
+      let t = ok_or_fail (of_hdu hdu) in
       let r = row_range t rows in
       let n = snd r - fst r in
       let cols = Array.to_list t.cols in

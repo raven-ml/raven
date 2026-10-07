@@ -17,6 +17,9 @@ let block = Header.block_size
    padding excluded. *)
 type store = { buffer : B.t; offset : int; size : int }
 
+(* A value computed from an HDU, keyed by its type's identity. *)
+type derived = Derived : 'a Type.Id.t * 'a -> derived
+
 type t = {
   name : string;  (** the file's path, [of_bytes]'s name, or [""] *)
   index : int;  (** position in the file; [0] for a constructed HDU *)
@@ -27,6 +30,7 @@ type t = {
   stream : stream Once.t option;
       (** a constructed HDU whose data [write] streams without encoding it whole
       *)
+  derived : derived list Atomic.t;  (** what {!derive} computed *)
 }
 
 (* How [write] streams a constructed HDU: [provisional] holds the final
@@ -51,6 +55,27 @@ let structure h =
 let name h = h.name
 let digest h = Once.get h.digest
 let place h = Header.place (header h)
+
+(* [derive key f h] is [f h], computed on the first ask for [key] and kept
+   with [h]: a table is described once however many of its columns are
+   read. Domains asking at once may each compute it; all get the kept one. *)
+let derive (type a) (key : a Type.Id.t) (f : t -> a) h : a =
+  let rec find : derived list -> a option = function
+    | [] -> None
+    | Derived (k, v) :: rest -> (
+        match Type.Id.provably_equal k key with
+        | Some Type.Equal -> Some v
+        | None -> find rest)
+  in
+  let rec keep v =
+    let l = Atomic.get h.derived in
+    match find l with
+    | Some kept -> kept
+    | None ->
+        if Atomic.compare_and_set h.derived l (Derived (key, v) :: l) then v
+        else keep v
+  in
+  match find (Atomic.get h.derived) with Some v -> v | None -> keep (f h)
 
 (* Host bytes *)
 
@@ -243,6 +268,7 @@ let walk ~name src =
         data = Once.of_value store;
         header_bytes = Some hb;
         stream = None;
+        derived = Atomic.make [];
       })
     parts
 
@@ -345,6 +371,7 @@ let constructed_lazy ?stream encoded =
     data = Once.make (fun () -> snd (Once.get encoded));
     header_bytes = None;
     stream;
+    derived = Atomic.make [];
   }
 
 let constructed ?stream header data =

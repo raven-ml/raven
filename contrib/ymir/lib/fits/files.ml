@@ -140,7 +140,12 @@ let with_header h (hdu : Hdu.t) =
   let header =
     Header.with_place (Hdu.hdu_place hdu.name hdu.index header) header
   in
-  { hdu with header = Once.of_value header; header_bytes = None }
+  {
+    hdu with
+    header = Once.of_value header;
+    header_bytes = None;
+    derived = Atomic.make [];
+  }
 
 (* Checksums *)
 

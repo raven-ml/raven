@@ -17,6 +17,7 @@
 # forced: blessed fits-observation-4096/sci-err-float32 under load 30.9 on 10 cores
 # forced: blessed galactic-lat-1m/eager galactic-lat-1m/compiled separation-1m/eager separation-1m/compiled under load 20.9 on 10 cores
 # forced: blessed fits-observation-4096/sci-err-float32 under load 15.7 on 10 cores
+# forced: blessed fits-table-50x100k/raw-one-column fits-table-50x100k/read fits-table-hst-293/units under load 10.8 on 10 cores
 
 age-1k/compiled	alloc_words	exact	849
 age-1k/compiled	wall_time	batch=2	n=20	4.240e-03	2.058e-03 2.175e-03 2.469e-03 2.968e-03 3.252e-03 3.462e-03 3.654e-03 3.803e-03 3.945e-03 4.144e-03 4.335e-03 4.494e-03 4.892e-03 4.942e-03 5.331e-03 5.482e-03 6.723e-03 6.850e-03 7.650e-03 8.104e-03
@@ -42,10 +43,12 @@ fits-observation-4096/sci-err-float32	alloc_words	exact	18315
 fits-observation-4096/sci-err-float32	wall_time	batch=1	n=20	5.484e-02	5.184e-02 5.270e-02 5.377e-02 5.390e-02 5.400e-02 5.415e-02 5.422e-02 5.424e-02 5.446e-02 5.482e-02 5.486e-02 5.539e-02 5.559e-02 5.616e-02 5.660e-02 5.741e-02 5.992e-02 6.012e-02 6.320e-02 1.018e-01
 fits-quantized-1024/write	alloc_words	exact	16314789
 fits-quantized-1024/write	wall_time	batch=1	n=20	2.476e-01	2.369e-01 2.374e-01 2.409e-01 2.418e-01 2.426e-01 2.450e-01 2.454e-01 2.462e-01 2.475e-01 2.475e-01 2.477e-01 2.512e-01 2.535e-01 2.542e-01 2.554e-01 2.592e-01 2.642e-01 2.645e-01 2.669e-01 2.782e-01
-fits-table-50x100k/raw-one-column	alloc_words	exact	1457723
-fits-table-50x100k/raw-one-column	wall_time	batch=1	n=20	1.365e-02	1.246e-02 1.306e-02 1.333e-02 1.336e-02 1.342e-02 1.347e-02 1.348e-02 1.351e-02 1.355e-02 1.364e-02 1.366e-02 1.369e-02 1.372e-02 1.382e-02 1.384e-02 1.384e-02 1.394e-02 1.395e-02 1.410e-02 1.469e-02
-fits-table-50x100k/read	alloc_words	exact	70086245
-fits-table-50x100k/read	wall_time	batch=1	n=20	4.346e-01	4.079e-01 4.137e-01 4.252e-01 4.274e-01 4.283e-01 4.288e-01 4.295e-01 4.299e-01 4.317e-01 4.319e-01 4.374e-01 4.377e-01 4.388e-01 4.417e-01 4.425e-01 4.504e-01 4.508e-01 4.549e-01 4.649e-01 4.809e-01
+fits-table-50x100k/raw-one-column	alloc_words	exact	1402767
+fits-table-50x100k/raw-one-column	wall_time	batch=1	n=20	1.195e-02	1.128e-02 1.132e-02 1.135e-02 1.165e-02 1.178e-02 1.183e-02 1.186e-02 1.190e-02 1.193e-02 1.194e-02 1.195e-02 1.198e-02 1.204e-02 1.230e-02 1.233e-02 1.237e-02 1.248e-02 1.260e-02 1.347e-02 1.359e-02
+fits-table-50x100k/read	alloc_words	exact	70031289
+fits-table-50x100k/read	wall_time	batch=1	n=20	4.007e-01	3.964e-01 3.974e-01 3.977e-01 3.979e-01 3.989e-01 4.001e-01 4.002e-01 4.003e-01 4.005e-01 4.007e-01 4.008e-01 4.021e-01 4.030e-01 4.036e-01 4.051e-01 4.074e-01 4.093e-01 4.096e-01 4.117e-01 4.244e-01
+fits-table-hst-293/units	alloc_words	exact	811793
+fits-table-hst-293/units	wall_time	batch=1	n=20	3.447e-03	3.311e-03 3.317e-03 3.318e-03 3.320e-03 3.338e-03 3.342e-03 3.357e-03 3.406e-03 3.424e-03 3.437e-03 3.457e-03 3.503e-03 3.505e-03 3.547e-03 3.551e-03 3.588e-03 3.606e-03 3.698e-03 3.756e-03 3.846e-03
 galactic-lat-1m/compiled	alloc_words	exact	1547
 galactic-lat-1m/compiled	wall_time	batch=1	n=20	2.355e-02	2.064e-02 2.084e-02 2.171e-02 2.204e-02 2.228e-02 2.246e-02 2.254e-02 2.305e-02 2.317e-02 2.336e-02 2.375e-02 2.434e-02 2.453e-02 2.502e-02 2.510e-02 2.675e-02 2.676e-02 2.723e-02 2.744e-02 3.077e-02
 galactic-lat-1m/eager	alloc_words	exact	12017

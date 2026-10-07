@@ -216,6 +216,18 @@ let fits_table () =
           timed (fun () -> ok (Fits.Table.read h)));
     ]
 
+(* The units of every column of an HST drizzle file's 293-column header
+   table, from opening the file: what a table browser reads first. *)
+let fits_units () =
+  let path = "../test/fits/survey/hst-acs-drz.fits" in
+  let units () =
+    let hdu = List.nth (ok (Fits.read path)) 4 in
+    List.map
+      (fun (c : Fits.Table.column) -> ok (Fits.Table.unit c.name hdu))
+      (Fits.Table.columns (ok (Fits.Table.of_hdu hdu)))
+  in
+  Thumper.group "fits-table-hst-293" [ Thumper.bench "units" units ]
+
 (* Grids: a JWST-like TAN header with 0.031 arcsecond pixels. *)
 
 let degrees x = Quantity.v Unit.degree x
@@ -504,6 +516,7 @@ let suite () =
     fits_observation ();
     fits_quantize ();
     fits_table ();
+    fits_units ();
     supernovae ();
     ages ();
   ]

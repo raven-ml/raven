@@ -528,6 +528,18 @@ let text_errors () =
           );
         ])
 
+let reheaded () =
+  (* A table described before Fits.with_header is described anew after:
+     its errors name the new EXTNAME. *)
+  let h = cat () in
+  let error hdu = match T.unit "nosuch" hdu with Ok _ -> "" | Error e -> e in
+  let head e = List.hd (String.split_on_char ':' e |> List.tl) in
+  equal string " HDU 1 (CAT)" (head (error h));
+  let h' =
+    Fits.with_header (H.set V.string "EXTNAME" "RENAMED" (Fits.header h)) h
+  in
+  equal string " HDU 1 (RENAMED)" (head (error h'))
+
 let () =
   exit
   @@ run "Fits.Table"
@@ -537,6 +549,7 @@ let () =
          test "exactness and lookup" exactness;
          rows_law;
          test "descriptions" described;
+         test "a new header describes anew" reheaded;
          test "ASCII fields" ascii_fields;
          test "descriptor errors" descriptor_error;
          group "writing"
