@@ -3,7 +3,33 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-include Ops
+type id = Ops.id = { bus : string; vendor : int; device : int; class_ : int }
+type addressing = Ops.addressing = Physical | Iommu
+
+type fn = Ops.fn = {
+  addressing : addressing;
+  config : int -> int -> int;
+  set_config : int -> int -> int -> unit;
+  bar : int -> (int * int) option;
+  map : int -> int -> int -> Window.t;
+  unmap : Window.t -> unit;
+  interrupt : int -> bool;
+  reset : unit -> unit;
+  alloc_dma :
+    contiguous:bool -> va:int option -> int -> Window.t * (int * int) list;
+  free_dma : Window.t -> unit;
+  pin : int -> int -> (int * int) list;
+  unpin : int -> int -> unit;
+  release : unit -> unit;
+}
+
+type ops = Ops.ops = {
+  transport : Window.transport;
+  page : int;
+  functions : unit -> id list;
+  take : string -> (fn, string) result;
+  reserve : base:int -> int -> unit;
+}
 
 external transport_failed : Window.transport -> string option
   = "caml_device_pci_transport_failed"
