@@ -23,6 +23,7 @@ alloc-free/visible/4KiB	wall_time	batch=16384	n=20	4.127e-07	4.104e-07 4.108e-07
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 19.2 on 10 cores
 # forced: blessed alloc-free/bar/16MiB alloc-free/visible/4KiB under load 18.6 on 10 cores
+# forced: blessed alloc-free/visible/4KiB alloc-free/visible/16MiB under load 12.0 on 10 cores
 
 alloc-free/bar/16MiB	alloc_words	exact	361
 alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.252e-06	1.225e-06 1.240e-06 1.240e-06 1.240e-06 1.243e-06 1.246e-06 1.246e-06 1.248e-06 1.251e-06 1.252e-06 1.252e-06 1.252e-06 1.255e-06 1.257e-06 1.258e-06 1.258e-06 1.259e-06 1.268e-06 1.286e-06 1.316e-06
@@ -32,10 +33,10 @@ alloc-free/gpu/16MiB	alloc_words	exact	810
 alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	3.172e-06	3.137e-06 3.143e-06 3.157e-06 3.157e-06 3.162e-06 3.163e-06 3.163e-06 3.166e-06 3.169e-06 3.171e-06 3.174e-06 3.219e-06 3.221e-06 3.225e-06 3.232e-06 3.236e-06 3.239e-06 3.285e-06 3.302e-06 3.744e-06
 alloc-free/gpu/4KiB	alloc_words	exact	355
 alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	8.869e-07	8.751e-07 8.757e-07 8.783e-07 8.810e-07 8.820e-07 8.828e-07 8.840e-07 8.844e-07 8.859e-07 8.864e-07 8.874e-07 8.874e-07 8.879e-07 8.888e-07 8.893e-07 8.981e-07 9.045e-07 1.041e-06 1.065e-06 1.114e-06
-alloc-free/visible/16MiB	alloc_words	exact	913
-alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.735e-04	1.724e-04 1.724e-04 1.725e-04 1.728e-04 1.731e-04 1.732e-04 1.732e-04 1.733e-04 1.734e-04 1.735e-04 1.735e-04 1.740e-04 1.740e-04 1.741e-04 1.744e-04 1.746e-04 1.748e-04 1.750e-04 1.754e-04 1.758e-04
-alloc-free/visible/4KiB	alloc_words	exact	298
-alloc-free/visible/4KiB	wall_time	batch=8192	n=20	7.235e-07	7.103e-07 7.129e-07 7.146e-07 7.161e-07 7.164e-07 7.169e-07 7.185e-07 7.190e-07 7.219e-07 7.220e-07 7.250e-07 7.262e-07 7.271e-07 7.280e-07 7.321e-07 7.352e-07 7.367e-07 7.388e-07 7.415e-07 7.457e-07
+alloc-free/visible/16MiB	alloc_words	exact	907
+alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.674e-04	1.630e-04 1.633e-04 1.634e-04 1.634e-04 1.642e-04 1.648e-04 1.649e-04 1.671e-04 1.671e-04 1.673e-04 1.674e-04 1.674e-04 1.677e-04 1.680e-04 1.682e-04 1.692e-04 1.696e-04 1.704e-04 2.001e-04 2.931e-04
+alloc-free/visible/4KiB	alloc_words	exact	292
+alloc-free/visible/4KiB	wall_time	batch=8192	n=20	7.470e-07	7.350e-07 7.390e-07 7.401e-07 7.407e-07 7.414e-07 7.418e-07 7.442e-07 7.458e-07 7.463e-07 7.467e-07 7.472e-07 7.493e-07 7.495e-07 7.498e-07 7.499e-07 7.523e-07 7.531e-07 7.537e-07 7.547e-07 7.549e-07
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
