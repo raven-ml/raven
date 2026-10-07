@@ -1,0 +1,3 @@
+(library
+ (name device_metal_format)
+ (modules_without_implementation device_metal_format))
