@@ -149,6 +149,19 @@ static void transport_failed(const struct device_pci_transport *tr) {
   caml_failwith(why ? why : "the machine's transport failed");
 }
 
+/* The reason the transport [tr] failed, if it did; none for the transport 0
+   of this machine, which nothing fails. */
+value caml_device_pci_transport_failed(value tr) {
+  CAMLparam1(tr);
+  CAMLlocal1(why);
+  const struct device_pci_transport *t = TRANSPORT(tr);
+  if (t == NULL) CAMLreturn(Val_none);
+  const char *s = t->failed(t->ctx);
+  if (s == NULL) CAMLreturn(Val_none);
+  why = caml_copy_string(s);
+  CAMLreturn(caml_alloc_some(why));
+}
+
 value caml_device_pci_transport_read(value tr, value a, value n) {
   CAMLparam3(tr, a, n);
   CAMLlocal1(s);
