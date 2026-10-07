@@ -13,21 +13,23 @@ let exists bus = Sys.file_exists (Filename.concat root bus)
 let read file =
   In_channel.with_open_text file In_channel.input_all |> String.trim
 
+(* Writes [s] to [file] in one write, which sysfs takes whole or refuses. A
+   buffered channel would see the refusal only at its close, which drops it. *)
+let put file s =
+  let fd = Unix.openfile file [ O_WRONLY; O_CLOEXEC ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  ignore (Unix.single_write_substring fd s 0 (String.length s))
+
+let refused file (e : Unix.error) =
+  let why = Printf.sprintf "%s: %s" file (Unix.error_message e) in
+  failwith
+    (match e with
+    | EACCES | EPERM ->
+        why ^ "; writing it needs CAP_SYS_ADMIN and write access (run as root)"
+    | _ -> why)
+
 let write file s =
-  try Out_channel.with_open_text file (fun oc -> output_string oc s)
-  with Sys_error e ->
-    let denied =
-      List.exists
-        (fun suffix -> String.ends_with ~suffix e)
-        [ "Permission denied"; "Operation not permitted" ]
-    in
-    failwith
-      (if denied then
-         Printf.sprintf
-           "%s; writing it needs CAP_SYS_ADMIN and write access to %s (run as \
-            root)"
-           e file
-       else e)
+  try put file s with Unix.Unix_error (e, _, _) -> refused file e
 
 let readlink link =
   try Unix.readlink link
@@ -63,7 +65,6 @@ let functions () =
         with
         | id -> Some id
         | exception (Sys_error _ | Failure _) -> None)
-    |> List.sort (fun (a : Ops.id) b -> Address.compare a.bus b.bus)
 
 (* The other functions of [bus]'s device, such as its audio function. *)
 let siblings bus =
@@ -76,12 +77,16 @@ let enabled bus = read (path bus "enable") <> "0"
 
 (* BARs *)
 
-(* BAR registers start here in configuration space, every reader sees the first
-   [header] bytes of it, and BAR register bits say what the BAR is. *)
+(* Configuration space shows every reader its first [header] bytes; past them
+   Linux shows only a reader with CAP_SYS_ADMIN. BAR registers start at
+   [bar_base], and their low bits say what the BAR is: I/O or memory, and for
+   memory whether it is 64 bits wide. *)
+let header = 64
 let bar_base = 0x10
 let bars = 6
-let header = 64
 let io_bar = 1
+let io_flags = 0b11
+let memory_flags = 0xf
 let wide_bar = 0b100
 let type_mask = 0b110
 
@@ -113,9 +118,9 @@ let address regs i =
     j < i && if wide j then j + 1 = i || upper (j + 2) else upper (j + 1)
   in
   if upper 0 then None
-  else if regs.(i) land io_bar <> 0 then Some (regs.(i) land lnot 0b11)
+  else if regs.(i) land io_bar <> 0 then Some (regs.(i) land lnot io_flags)
   else
-    let low = regs.(i) land lnot 0xf in
+    let low = regs.(i) land lnot memory_flags in
     if wide i && i + 1 < bars then Some (low lor (regs.(i + 1) lsl 32))
     else Some low
 
@@ -141,10 +146,12 @@ type state = {
 (* VFIO's no-IOMMU mode gives a function a group of its own, whose file is
    [noiommu-N]. A group's [type] is the domain its functions' DMA goes through
    while no VFIO container holds them. *)
+let noiommu_file g = "/dev/vfio/noiommu-" ^ g
+
 let iommu_of bus =
   match group bus with
   | None -> No_iommu
-  | Some g when Sys.file_exists ("/dev/vfio/noiommu-" ^ g) -> No_iommu
+  | Some g when Sys.file_exists (noiommu_file g) -> No_iommu
   | Some g -> (
       match read (Printf.sprintf "%s/%s/type" groups g) with
       | "identity" -> Identity
@@ -168,6 +175,18 @@ let state bus =
   }
 
 let bind_vfio bus = Printf.sprintf "sudo driverctl set-override %s vfio-pci" bus
+
+(* Bridges are held by pcieport, which VFIO accepts. *)
+let group_holders g =
+  match Sys.readdir (Printf.sprintf "%s/%s/devices" groups g) with
+  | exception Sys_error _ -> []
+  | fns ->
+      Array.to_list fns |> List.sort String.compare
+      |> List.filter_map (fun f ->
+          match driver f with
+          | Some d when not (List.mem d [ vfio_pci; "pci-stub"; "pcieport" ]) ->
+              Some (f, d)
+          | _ -> None)
 
 let access bus s =
   match s with
@@ -240,7 +259,10 @@ let attach bus =
 
 (* [resourceN_resize] holds a bitmap of the sizes BAR [N] supports, bit [k] for
    [2^k] MiB, and takes the [k] to set. A bridge whose window cannot hold a size
-   refuses it with ENOSPC. *)
+   refuses it with ENOSPC. The bitmap is an [int], whose highest bit is
+   [largest]. *)
+let largest = Sys.int_size - 2
+
 let resize bus i =
   let file = path bus (Printf.sprintf "resource%d_resize" i) in
   if driver bus = None && Sys.file_exists file then
@@ -249,10 +271,9 @@ let resize bus i =
       if k >= 0 then
         if sizes land (1 lsl k) = 0 then try_from (k - 1)
         else
-          match write file (string_of_int k) with
+          match put file (string_of_int k) with
           | () -> ()
-          | exception Failure e
-            when String.ends_with ~suffix:"No space left on device" e ->
-              try_from (k - 1)
+          | exception Unix.Unix_error (ENOSPC, _, _) -> try_from (k - 1)
+          | exception Unix.Unix_error (e, _, _) -> refused file e
     in
-    try_from (Sys.int_size - 2)
+    try_from largest

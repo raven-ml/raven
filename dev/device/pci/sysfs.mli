@@ -5,10 +5,8 @@
 
 (** This machine's PCI functions, through [/sys/bus/pci] (private).
 
-    Reads what a function is and how it is held, decides how the process takes
-    it, and makes the changes to the machine that {!Gpus} offers. Reading
-    changes nothing. A write the process may not make raises [Failure] naming
-    the file and the privilege it needs. *)
+    Reading changes nothing. A write the process may not make raises [Failure]
+    naming the file and the privilege it needs. *)
 
 (** {1:identity Functions} *)
 
@@ -16,8 +14,7 @@ val exists : string -> bool
 (** [exists bus] is [true] iff this machine has a function at [bus]. *)
 
 val functions : unit -> Ops.id list
-(** [functions ()] is this machine's functions in bus order, [[]] without
-    [/sys/bus/pci]. *)
+(** [functions ()] is this machine's functions, [[]] without [/sys/bus/pci]. *)
 
 val driver : string -> string option
 (** [driver bus] is the kernel driver bound to the function at [bus]. *)
@@ -25,10 +22,12 @@ val driver : string -> string option
 val group : string -> string option
 (** [group bus] is the IOMMU group of the function at [bus]. *)
 
+val header : int
+(** [header] is the bytes of configuration space every reader sees. *)
+
 val bar : string -> int -> (int * int) option
-(** [bar bus i] is the bus address of BAR [i] of the function at [bus], from its
-    BAR register, and its size, from the kernel's resources. [None] if it has no
-    BAR [i], such as the upper index of a 64-bit BAR. *)
+(** [bar bus i] is BAR [i]'s bus address, from its register, and its size;
+    [None] if there is no BAR [i], such as the upper index of a 64-bit BAR. *)
 
 val path : string -> string -> string
 (** [path bus file] is the file [file] of the function at [bus]. *)
@@ -65,32 +64,29 @@ val access : string -> state -> (Ops.addressing, string) result
       [vfio-pci] where that would do. *)
 
 val bind_vfio : string -> string
-(** [bind_vfio bus] is the command that binds the function at [bus] to
-    [vfio-pci]. *)
+(** [bind_vfio bus] is the command that binds [bus] to [vfio-pci]. *)
+
+val noiommu_file : string -> string
+(** [noiommu_file g] is the file of group [g] in VFIO's no-IOMMU mode. *)
+
+val group_holders : string -> (string * string) list
+(** [group_holders g] is the functions of IOMMU group [g] that a driver VFIO
+    refuses holds, with that driver. *)
 
 (** {1:changes Changes} *)
 
 val detach : string -> unit
-(** [detach bus] makes the function at [bus] takeable, unless {!access} already
-    takes it: it unbinds its driver unless that is [vfio-pci], removes its
-    siblings and, unbound, enables it.
-
-    Raises [Failure] if a write is refused or the function is still not
-    takeable, saying why. *)
+(** [detach bus] makes [bus] takeable, unless {!access} takes it: it unbinds its
+    driver unless that is [vfio-pci], removes its siblings and, unbound, enables
+    it. Raises [Failure] if it is still not takeable. *)
 
 val attach : string -> unit
-(** [attach bus] gives the function at [bus] back to its kernel driver.
-
-    Raises [Failure] if it is bound to [vfio-pci], if a write is refused, or if
-    no driver takes it. *)
+(** [attach bus] gives [bus] back to its kernel driver. Raises [Failure] if it
+    is bound to [vfio-pci] or no driver takes it. *)
 
 val reset : string -> unit
-(** [reset bus] resets the function at [bus] with the reset Linux has for it.
-
-    Raises [Failure] if the write is refused. *)
+(** [reset bus] resets [bus] with the reset Linux has for it. *)
 
 val resize : string -> int -> unit
-(** [resize bus i] makes BAR [i] of the unbound function at [bus] the largest
-    size it supports that its bridge takes, trying sizes from the largest down.
-    It does nothing where the function lists no sizes or is bound to a driver,
-    which keeps its BAR's size. *)
+(** [resize bus i] makes BAR [i] of the unbound function the largest size it
+    supports that its bridge takes. A bound function keeps its size. *)
