@@ -4378,15 +4378,76 @@ let test_sessions () =
   is_false (P.enabled ());
   let p = P.start () in
   is_true (P.enabled ());
-  raises_match Exn.invalid_arg P.start;
+  let q = P.start () in
   equal (list span_) [] (spans (P.stop p));
-  is_false (P.enabled ());
+  is_true ~msg:"another profile still taken" (P.enabled ());
   raises_match ~msg:"a profile stopped already" Exn.invalid_arg (fun () ->
       P.stop p);
-  let p' = P.start () in
-  raises_match ~msg:"another profile" Exn.invalid_arg (fun () -> P.stop p);
-  is_true ~msg:"still taken" (P.enabled ());
-  equal (list span_) [] (spans (P.stop p'))
+  equal (list span_) [] (spans (P.stop q));
+  is_false (P.enabled ())
+
+let names events = List.map (fun s -> s.what) (spans events)
+
+(* A profile taken inside another sees the work recorded while it is taken, and
+   the outer one sees that work too: host spans and a device's stamped spans. *)
+let test_nested () =
+  let d = (fake ~name:"GPU" ()).dev in
+  let stamps = B.create host S.UInt64 4 in
+  let outer = P.start () in
+  P.span "before" ignore;
+  let (), inner =
+    P.take (fun () ->
+        P.span "inside" ignore;
+        let work = stamped d stamps [ ("compute", "kernel") ] (100, 250) in
+        Nx_device.synchronize d;
+        Domain.join work)
+  in
+  P.span "after" ignore;
+  let outer = P.stop outer in
+  equal ~msg:"inner" (slist string compare) [ "inside"; "kernel" ] (names inner);
+  equal ~msg:"outer" (slist string compare)
+    [ "before"; "inside"; "kernel"; "after" ]
+    (names outer)
+
+(* Overlapping profiles, neither inside the other, each see the work recorded
+   while they are taken. *)
+let test_overlapping () =
+  let p = P.start () in
+  P.span "a" ignore;
+  let q = P.start () in
+  P.span "b" ignore;
+  let p = P.stop p in
+  P.span "c" ignore;
+  let q = P.stop q in
+  equal ~msg:"first" (list string) [ "a"; "b" ] (names p);
+  equal ~msg:"second" (list string) [ "b"; "c" ] (names q)
+
+(* A device's spans recorded while a profile was taken go to it even when read
+   once it is no longer the latest, and not to a profile started after. *)
+let test_nested_stamps () =
+  let d = (fake ~name:"GPU" ()).dev in
+  let stamps = B.create host S.UInt64 4 in
+  let outer = P.start () in
+  let work = stamped d stamps [ ("compute", "early") ] (100, 250) in
+  let (), inner = P.take (fun () -> Nx_device.synchronize d) in
+  Domain.join work;
+  equal ~msg:"inner" (list string) [] (names inner);
+  equal ~msg:"outer" (list string) [ "early" ] (names (P.stop outer))
+
+exception Raised
+
+let test_take () =
+  let r, events = P.take (fun () -> P.span "f" (fun () -> 42)) in
+  equal ~msg:"the result" int 42 r;
+  equal ~msg:"the events" (list string) [ "f" ] (names events);
+  is_false ~msg:"no profile after" (P.enabled ());
+  let outer = P.start () in
+  raises ~msg:"the exception" Raised (fun () ->
+      P.take (fun () -> P.span "raising" (fun () -> raise Raised)));
+  is_true ~msg:"the outer profile still taken" (P.enabled ());
+  equal ~msg:"the outer profile's events" (list string) [ "raising" ]
+    (names (P.stop outer));
+  is_false ~msg:"none taken" (P.enabled ())
 
 let test_host_spans () =
   let other = ref "" in
@@ -4984,6 +5045,38 @@ let test_traces () =
          (num "part" args, num "bytes" args))
        (List.filter (fun e -> str "ph" e = "i") trace))
 
+(* Nested profiles asking for different counters and traces: the work counts the
+   counters of both, and each profile receives those it asks for. *)
+let test_nested_counters () =
+  let log = ref [] in
+  let d, run, _ = counting log in
+  let outer = P.start ~counters:[ "A"; "B" ] () in
+  let (), inner =
+    P.take ~counters:[ "C"; "A" ] ~trace:true (fun () ->
+        equal ~msg:"asked by both" (list string) [ "A"; "B"; "C" ]
+          (P.counters ());
+        is_true ~msg:"traced" (P.traced ());
+        run [ (10, 20) ];
+        Nx_device.synchronize d)
+  in
+  equal ~msg:"asked once the inner stopped" (list string) [ "A"; "B" ]
+    (P.counters ());
+  is_false ~msg:"not traced once the inner stopped" (P.traced ());
+  run [ (30, 40) ];
+  let outer = P.stop outer in
+  let traces = List.filter (function P.Trace _ -> true | _ -> false) in
+  equal ~msg:"inner counters" counts
+    [ ("COUNTING", "k", (10, 20), [ ("C", [| 2; 3 |]); ("A", [| 0; 1 |]) ]) ]
+    (counted inner);
+  equal ~msg:"inner traces" int 1 (List.length (traces inner));
+  equal ~msg:"outer counters" counts
+    [
+      ("COUNTING", "k", (10, 20), [ ("A", [| 0; 1 |]); ("B", [| 1; 2 |]) ]);
+      ("COUNTING", "k", (30, 40), [ ("A", [| 0; 1 |]); ("B", [| 1; 2 |]) ]);
+    ]
+    (counted outer);
+  equal ~msg:"outer traces" int 0 (List.length (traces outer))
+
 (* Counters are their run's, whatever runs are not counted between them, and
    runs lost before they were read are an event of their own. *)
 let test_counted_runs () =
@@ -5064,10 +5157,90 @@ let test_record () =
   equal ~msg:"no span of a submission that raised" (list span_) []
     (spans events)
 
+(* Profiles against a model: the profiles taken, each with the names of the
+   spans recorded since it started. Spans name their world, so that a profile
+   reads only its own world's spans: the system's profiles see every world. *)
+module Taken = struct
+  type world = { mutable taken : profile list }
+  and profile = { world : world; mutable seen : string list }
+
+  let world () = { taken = [] }
+
+  let start w =
+    let p = { world = w; seen = [] } in
+    w.taken <- p :: w.taken;
+    p
+
+  let span w name = List.iter (fun p -> p.seen <- name :: p.seen) w.taken
+
+  let stop p =
+    if not (List.memq p p.world.taken) then
+      invalid_arg "Nx_device.Profile.stop: the profile is not being taken";
+    p.world.taken <- List.filter (fun q -> q != p) p.world.taken;
+    p.seen
+end
+
+let worlds = Atomic.make 0
+let world = abstract "w"
+
+let profile =
+  abstract "p" ~release:(fun (_, p) ->
+      try ignore (P.stop p) with Invalid_argument _ -> ())
+
+let span_name = Gen.of_list ~pp:Format.pp_print_string [ "a"; "b"; "c" ]
+
+(* The names of the spans of the world [w] in [events]. *)
+let of_world w events =
+  let prefix = string_of_int w ^ ":" in
+  List.filter_map
+    (fun n ->
+      if String.starts_with ~prefix n then
+        Some (String.sub n (String.length prefix) 1)
+      else None)
+    (names events)
+
+let profile_commands =
+  [
+    command "world"
+      (Gen.unit @-> makes world)
+      Taken.world
+      (fun () -> Atomic.fetch_and_add worlds 1);
+    command "start"
+      (world ^-> makes profile)
+      Taken.start
+      (fun w -> (w, P.start ()));
+    command "span"
+      (world ^-> span_name @-> returns unit)
+      Taken.span
+      (fun w name -> P.span (Printf.sprintf "%d:%s" w name) ignore);
+    command "stop"
+      (profile ^-> returns (slist string compare))
+      Taken.stop
+      (fun (w, p) -> of_world w (P.stop p));
+  ]
+
 let profiles =
   group "profiles"
     [
-      test "are taken one at a time, and stopped by their holder" test_sessions;
+      test "nest and overlap, each stopped by its holder" test_sessions;
+      test "nested, each see the work recorded while they are taken" test_nested;
+      test "overlapping, each see the work recorded while they are taken"
+        test_overlapping;
+      test "give a device's spans to the profiles taken when they were recorded"
+        test_nested_stamps;
+      test
+        "taken around a function, return its result and pass its exception \
+         through"
+        test_take;
+      test
+        "nested, ask for the counters and traces of both, and each receive its \
+         own"
+        test_nested_counters;
+      stateful "started, spanned and stopped, behave as the model"
+        profile_commands;
+      stateful ~domains:2 ~count:20
+        "started, spanned and stopped from two domains, behave as the model"
+        profile_commands;
       test
         "host spans nest on the lane of their domain, and one records a \
          function that raises"

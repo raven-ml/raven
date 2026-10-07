@@ -54,7 +54,7 @@ let replay =
   group "jit replay"
     [
       test "neg of one element" (fun () ->
-          equal int 812 (words (fun () -> neg x)));
+          equal int 808 (words (fun () -> neg x)));
     ]
 
 let () = exit (run "rune allocation" [ reverse; replay ])

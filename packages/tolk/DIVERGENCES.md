@@ -3986,13 +3986,12 @@ stores through a pad.
   round's candidates are timed in the order their compilations end, on every
   device).
 - **tolk:** `lib/codegen/opt/search.ml:352` (`compile`);
-  `lib/engine/worker.ml:77` (`iter`); `engine/tolk_engine.ml:1369`
+  `lib/engine/worker.ml:77` (`iter`); `engine/tolk_engine.ml:1465`
   (`clock`).
 - **Differs:** a round's candidates are timed in their own order, each once
   its compilation has ended, while other domains compile the later ones
   (`Worker.iter`). Where the host's clock times the runs (`Search.Host`: a
-  program the host calls, any program while a profile is taken, or a search
-  whose kernel was not timed), a round compiles all its candidates before it
+  program the host calls, or a search whose kernel was not timed), a round compiles all its candidates before it
   times any. The search reads the clock from its kernel's linked program.
 - **Reason:** the compute filter's running minimum, `seen_libs` and ties
   between equal samples read the order: timed as their compilations end, two
@@ -4004,8 +4003,8 @@ stores through a pad.
   candidates as one on the host's, whatever order their compilations end
   in` and `› a search on the host's clock compiles nothing while it times`;
   `Tolk.Worker › streaming` (every test); `Tolk_engine › timing › the clock
-  is the device's where it has queues, the host's otherwise` and `› the
-  clock is the host's under a profile`.
+  is the device's where it has queues, the host's otherwise` and `› a
+  profile taken around a time changes neither its clock nor its value`.
 
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
 

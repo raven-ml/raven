@@ -903,9 +903,11 @@ val stats : t -> Stats.t
 
 (** Profiles of devices' work.
 
-    One profile of every device is taken at a time, between {!start} and
-    {!stop}. While it is taken, the devices record {!event}s: {e spans} of work
-    on a device, changes of its allocated memory, the programs it loads and, on
+    A profile of every device is taken between {!start} and {!stop}, or while a
+    function runs ({!take}). Profiles nest and overlap, in any domains: each
+    holds the events recorded while it is taken, so taking one leaves what the
+    others record unchanged. The devices record {!event}s: {e spans} of work on
+    a device, changes of its allocated memory, the programs it loads and, on
     request, the {e counters} and {e traces} of its programs' runs. Spans come
     from the host ({!span}), from the runtime's own copies and calls of host
     programs, and from the libraries that submit work ({!Submission.record}).
@@ -989,31 +991,41 @@ module Profile : sig
   type t
   (** The type for profiles being taken. *)
 
+  val take :
+    ?counters:string list -> ?trace:bool -> (unit -> 'a) -> 'a * event list
+  (** [take f] is [f ()] and the events of a profile taken while [f] runs, as
+      {!stop} gives them. [counters] and [trace] are as {!start}'s. If [f]
+      raises, the profile stops, its events are dropped, and the exception is
+      raised again with its backtrace.
+
+      Raises [Invalid_argument] if [counters] names a counter twice. *)
+
   val start : ?counters:string list -> ?trace:bool -> unit -> t
   (** [start ()] starts taking a profile of every device, which only its holder
-      stops. Each run of a program on a device that counts [counters] (defaults
-      to none) has a {!Counters} event: their names are the device's, as its
-      library lists them, and work on a device that has no counter of such a
-      name raises [Invalid_argument] naming it when its library encodes the
-      work. A device that counts nothing, such as the {!host}, has no
-      [Counters]. With [trace] (defaults to [false]), each run of a program on a
-      device that traces has a {!Trace} event of each part of the device that
-      traced it.
+      stops: prefer {!take}, which cannot leave it taken. Each run of a program
+      on a device that counts [counters] (defaults to none) has a {!Counters}
+      event: their names are the device's, as its library lists them, and work
+      on a device that has no counter of such a name raises [Invalid_argument]
+      naming it when its library encodes the work. A device that counts nothing,
+      such as the {!host}, has no [Counters]. With [trace] (defaults to
+      [false]), each run of a program on a device that traces has a {!Trace}
+      event of each part of the device that traced it.
 
-      Raises [Invalid_argument] if a profile is being taken or if [counters]
-      names a counter twice. *)
+      Raises [Invalid_argument] if [counters] names a counter twice. *)
 
   val counters : unit -> string list
-  (** [counters ()] is the counters the profile being taken asks for, if any.
-      The libraries that encode work read it when they encode work, which then
-      counts these counters on every run: work encoded under one profile does
-      not count those of another, so a library that keeps encoded work keeps it
-      for each value of [counters ()]. *)
+  (** [counters ()] is the counters the profiles being taken ask for, each once,
+      in the order the profiles started. The libraries that encode work read it
+      when they encode work, which then counts these counters on every run, and
+      each profile receives the counts it asks for: work encoded under one
+      profile does not count those of another, so a library that keeps encoded
+      work keeps it for each value of [counters ()]. *)
 
   val traced : unit -> bool
-  (** [traced ()] is [true] iff the profile being taken asks for traces. The
+  (** [traced ()] is [true] iff a profile being taken asks for traces. The
       libraries that encode work read it as they read {!counters}, and keep
-      encoded work for each value of it. *)
+      encoded work for each value of it. Only the profiles that ask for traces
+      receive them. *)
 
   val stop : t -> event list
   (** [stop p] stops taking [p], and is its events, in time order and, at equal
@@ -1034,13 +1046,13 @@ module Profile : sig
       of Metal's command buffer times. *)
 
   val enabled : unit -> bool
-  (** [enabled ()] is [true] iff a profile is being taken. The libraries that
+  (** [enabled ()] is [true] iff some profile is being taken. The libraries that
       submit work read it to decide whether to stamp their work at all. *)
 
   val span : string -> (unit -> 'a) -> 'a
-  (** [span name f] is [f ()]. While a profile is taken, it records a span named
-      [name] on the lane of the calling domain of the {!host}, from the call
-      until [f] returns or raises. *)
+  (** [span name f] is [f ()]. It records a span named [name] on the lane of the
+      calling domain of the {!host}, from the call until [f] returns or raises,
+      in each profile taken when the call starts. *)
 
   val output_chrome_trace : out_channel -> event list -> unit
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's trace

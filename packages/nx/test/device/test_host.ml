@@ -524,6 +524,27 @@ let test_entry_spans () =
     [ ("CPU", lane, "via"); ("CPU", lane, "affine") ]
     entered
 
+(* Calls through the entry under nested profiles: each profile sees the calls
+   made while it is taken. *)
+let test_entry_nested () =
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
+  let out = B.create host S.Int32 4 and input = int32s [| 1l; 2l; 3l; 4l |] in
+  let call () = entered p [| out; input |] [| 4; 3; -5 |] in
+  let names =
+    List.filter_map (function
+      | Nx_device.Profile.Span s -> Some s.name
+      | _ -> None)
+  in
+  let outer = Nx_device.Profile.start () in
+  call ();
+  let (), inner = Nx_device.Profile.take call in
+  call ();
+  let outer = Nx_device.Profile.stop outer in
+  equal ~msg:"inner" (list string) [ "via"; "affine" ] (names inner);
+  equal ~msg:"outer" (list string)
+    [ "via"; "affine"; "via"; "affine"; "via"; "affine" ]
+    (names outer)
+
 let test_entry_no_profile () =
   let p = load ~binary:(Lazy.force affine) ~name:"affine" in
   let out = B.create host S.Int32 4 in
@@ -781,6 +802,10 @@ let () =
            "a call through the entry is a span of its program while a profile \
             is taken"
            test_entry_spans;
+         test
+           "a call through the entry is a span of each profile taken, nested \
+            ones included"
+           test_entry_nested;
          test "a call through the entry records no span while none is taken"
            test_entry_no_profile;
          test "a split call runs while another domain's holds the threads"

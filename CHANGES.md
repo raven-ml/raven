@@ -1188,6 +1188,10 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.time` always times a schedule on its own profile and its
+  devices' stamps, so a profile taken around a search no longer changes what
+  it measures or the kernels a beam search picks. `Tolk_engine.clock` no
+  longer depends on whether a profile is taken.
 - The host runs a run of its calls, with the ranges and back edges around
   them, as one host program that calls each kernel through
   `Nx_device.Program.entry`: no OCaml runs per trip or per kernel.
@@ -3532,6 +3536,12 @@ thread.
 
 ### Nx
 
+- `Nx_device.Profile` profiles nest and overlap, from any domains: each sees
+  the events recorded while it is taken, so profiling a program no longer
+  changes it. `Profile.start` no longer raises while another profile is
+  taken. The new `Profile.take` profiles a function and cannot leave its
+  profile taken. `Profile.counters` and `traced` answer for every profile
+  taken, and each profile receives the counters and traces it asks for.
 - **Breaking:** every index is an array of positions whose shape replaces its
   axis. `Nx.take ~axis` gives the axis its indices' shape, so a 0-d index
   drops it and an n-d one keeps its shape; it gave one axis of their count.

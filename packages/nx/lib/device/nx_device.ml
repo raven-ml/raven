@@ -345,19 +345,32 @@ and event =
   | Overwritten of { device : t; time : int; runs : int }
 
 and collector = {
-  events : event list Atomic.t;
   counters : string list;
   trace : bool;
+  mutable epochs : epoch list;
+      (* the epochs it was taken in, latest first, which only [change] writes *)
+}
+
+(* The events recorded while one set of profiles is taken, which each of them
+   reads when it stops: every event is one push, which a profile reads with all
+   the events recorded before it. The events of devices' reports are apart, and
+   each profile keeps those it asks for. *)
+and epoch = {
+  taken : collector list; (* latest first *)
+  counted : string list; (* the counters they ask for *)
+  traced : bool; (* whether one asks for traces *)
+  events : event list Atomic.t;
+  reports : event list Atomic.t;
 }
 
 (* A span whose stamps are in the two 16-byte slots at [address], which [stamps]
-   keeps. *)
+   keeps, for the profiles taken when it was recorded. *)
 and pending = {
   address : nativeint;
   stamps : keep;
   lane : string;
   name : string;
-  into : collector;
+  into : epoch;
 }
 
 exception Lost of t * string
@@ -545,9 +558,9 @@ let heap n =
 
 (* Profiling *)
 
-(* The collector of the profile being taken, if any. Every recording site reads
-   it once, and allocates nothing when it is [None]. *)
-let profile : collector option Atomic.t = Atomic.make None
+(* The epoch of the profiles being taken, if any. Every recording site reads it
+   once, and allocates nothing when it is [None]. *)
+let profiles : epoch option Atomic.t = Atomic.make None
 
 let rec push r x =
   let l = Atomic.get r in
@@ -618,10 +631,10 @@ let retain_bytes d kind n =
 let cache_bytes d kind n = on_pools d kind (fun p -> p.cached <- p.cached + n)
 
 let memory_changed d =
-  match Atomic.get profile with
+  match Atomic.get profiles with
   | None -> ()
-  | Some c ->
-      push c.events
+  | Some ep ->
+      push ep.events
         (Allocation { device = d; time = now_ns (); allocated = allocated d })
 
 (* The lane of the calling domain on the host. *)
@@ -1125,13 +1138,31 @@ let read_spans d =
           end)
         (Atomic.exchange d.spans [])
 
+let counts c = c.counters <> [] || c.trace
+
+(* [e], a report's event, as the profile [c] asks for it: the counters it asks
+   for, in its order, traces and the spans decoded from them if it asks for
+   traces, and the runs lost if it asks for either. *)
+let reported c e =
+  match e with
+  | Counters r -> (
+      let asked n =
+        Option.map (fun v -> (n, v)) (List.assoc_opt n r.counters)
+      in
+      match List.filter_map asked c.counters with
+      | [] -> None
+      | counters -> Some (Counters { r with counters }))
+  | Trace _ | Span _ -> if c.trace then Some e else None
+  | Overwritten _ -> if counts c then Some e else None
+  | Allocation _ | Load _ -> Some e
+
 (* The counters and traces of [d]'s work done since its last report, into the
-   profile [c] if it asks for some. [d] is taken. *)
-let read_reports c d =
-  match d.report with
-  | Some report when c.counters <> [] || c.trace ->
-      List.iter (push c.events) (driver d report)
-  | Some _ | None -> ()
+   profiles being taken if one asks for some. [d] is taken. *)
+let read_reports d =
+  match (d.report, Atomic.get profiles) with
+  | Some report, Some ep when ep.counted <> [] || ep.traced ->
+      List.iter (push ep.reports) (driver d report)
+  | Some _, _ | None, _ -> ()
 
 (* Waits for [d]'s work and for the work that touched [d]'s memory, then reads
    the stamps of the spans recorded on [d] and the counters of its work. [d] is
@@ -1144,7 +1175,7 @@ let sync d =
       if failed d' = None then try wait_signal d' v with Lost _ -> ())
     d.pending;
   read_spans d;
-  Option.iter (fun c -> read_reports c d) (Atomic.get profile);
+  read_reports d;
   try d.synchronized () with Failure why -> fail d why
 
 (* Every memory's generation until its first consumption: buffers made then
@@ -1946,7 +1977,7 @@ module Buffer = struct
             host (heap_memory ba)
         in
         (* While a profile is taken, the return of the bytes is recorded too. *)
-        if Atomic.get profile <> None then begin
+        if Option.is_some (Atomic.get profiles) then begin
           memory_changed host;
           Gc.finalise_last (fun () -> memory_changed host) base
         end;
@@ -2968,17 +2999,17 @@ module Buffer = struct
   (* A profiled copy is a span of the host on the calling domain's lane, and one
      on the copy lane of each device whose copy queue ran it, from its timestamp
      slots. *)
-  let profiled c route ~src ~dst n =
+  let profiled ep route ~src ~dst n =
     let s = device src and d = device dst in
     let start = now_ns () in
     move ~timed:true route ~src ~dst n;
     let stop = now_ns () in
     let name = s.name ^ " -> " ^ d.name in
-    push c.events
+    push ep.events
       (Span { device = host; lane = domain_lane (); name; start; stop });
     List.iter
       (fun e ->
-        push c.events
+        push ep.events
           (Span
              {
                device = e;
@@ -3011,9 +3042,9 @@ module Buffer = struct
         reachable src;
         reachable dst;
         (if n > 0 then
-           match Atomic.get profile with
+           match Atomic.get profiles with
            | None -> move ~timed:false route ~src ~dst n
-           | Some c -> profiled c route ~src ~dst n);
+           | Some ep -> profiled ep route ~src ~dst n);
         (* A borrow's memory is its host's, which the copy counts in. *)
         let holder b =
           match b.base.source with Some (m, _) -> m.owner | None -> device b
@@ -3111,9 +3142,9 @@ module Program = struct
     | Ok (l, (h, found)) ->
         let p = { p_device = d; p_name = name; p_handle = h; p_loaded = l } in
         if found && d == host then name_program h name;
-        (match Atomic.get profile with
-        | Some c when found ->
-            push c.events (Load { program = p; binary; time = now_ns () })
+        (match Atomic.get profiles with
+        | Some ep when found ->
+            push ep.events (Load { program = p; binary; time = now_ns () })
         | Some _ | None -> ());
         Ok p
 
@@ -3197,13 +3228,13 @@ module Program = struct
         Buffer.reachable b)
       buffers;
     if d == host then begin
-      (match Atomic.get profile with
+      (match Atomic.get profiles with
       | None -> run ()
-      | Some c ->
+      | Some ep ->
           let start = now_ns () in
           run ();
           let stop = now_ns () in
-          push c.events
+          push ep.events
             (Span
                {
                  device = host;
@@ -3307,7 +3338,7 @@ module Submission = struct
       invalid "record: %s is not a device of the submission" d.name;
     if stamps.dtype <> Nx_dtype.Scalar.UInt64 || stamps.length <> 4 then
       invalid "record: the stamps are not four UInt64";
-    match (stamps.base.memory.host, Atomic.get profile) with
+    match (stamps.base.memory.host, Atomic.get profiles) with
     | None, _ ->
         invalid "record: the host does not address the stamps on %s"
           stamps.base.owner.name
@@ -3555,7 +3586,77 @@ module Profile = struct
   type t = collector
 
   let now = now_ns
-  let enabled () = Option.is_some (Atomic.get profile)
+  let enabled () = Option.is_some (Atomic.get profiles)
+
+  let taken () =
+    match Atomic.get profiles with Some ep -> ep.taken | None -> []
+
+  (* The epoch of the profiles [cs]: the counters of each, each once, earliest
+     profile first. *)
+  let epoch cs =
+    let counted =
+      List.fold_left
+        (fun acc c ->
+          acc @ List.filter (fun n -> not (List.mem n acc)) c.counters)
+        [] (List.rev cs)
+    in
+    let traced = List.exists (fun c -> c.trace) cs in
+    {
+      taken = cs;
+      counted;
+      traced;
+      events = Atomic.make [];
+      reports = Atomic.make [];
+    }
+
+  (* Starts and stops change the profiles taken one at a time, each beginning an
+     epoch. The spans of host programs C recorded since the last change go to
+     the epoch that ends; C records while a profile is taken. *)
+  let changing = Mutex.create ()
+
+  let change f =
+    Mutex.protect changing (fun () ->
+        let ended = Atomic.get profiles in
+        let next = f (taken ()) in
+        Option.iter
+          (fun ep ->
+            Array.iter
+              (fun (name, lane, start, stop) ->
+                push ep.events
+                  (Span
+                     { device = host; lane = lane_of lane; name; start; stop }))
+              (host_spans ()))
+          ended;
+        (match (ended, next) with
+        | None, _ :: _ -> record_spans true
+        | Some _, [] -> record_spans false
+        | _ -> ());
+        match next with
+        | [] -> Atomic.set profiles None
+        | cs ->
+            let ep = epoch cs in
+            List.iter (fun c -> c.epochs <- ep :: c.epochs) cs;
+            Atomic.set profiles (Some ep))
+
+  let not_taken () =
+    invalid_arg "Nx_device.Profile.stop: the profile is not being taken"
+
+  (* Stops taking [p] without reading its events. *)
+  let close p =
+    change (fun cs ->
+        if List.memq p cs then List.filter (fun c -> c != p) cs
+        else not_taken ())
+
+  (* The events of [p]'s epochs, in the order they were recorded. The latest
+     epoch is read first, so that the events read include every event recorded
+     before any of them. *)
+  let collect p =
+    let read acc ep =
+      let events = List.rev (Atomic.get ep.events)
+      and reports = List.rev (Atomic.get ep.reports) in
+      (events @ List.filter_map (reported p) reports) :: acc
+    in
+    List.concat (List.fold_left read [] p.epochs)
 
   let start ?(counters = []) ?(trace = false) () =
     let rec once = function
@@ -3567,26 +3668,24 @@ module Profile = struct
       | _ :: rest -> once rest
     in
     once counters;
-    let c = { events = Atomic.make []; counters; trace } in
-    if not (Atomic.compare_and_set profile None (Some c)) then
-      invalid_arg "Nx_device.Profile.start: already profiling";
-    record_spans true;
+    let c = { counters; trace; epochs = [] } in
+    change (fun cs -> c :: cs);
     c
 
   let counters () =
-    match Atomic.get profile with Some c -> c.counters | None -> []
+    match Atomic.get profiles with Some ep -> ep.counted | None -> []
 
   let traced () =
-    match Atomic.get profile with Some c -> c.trace | None -> false
+    match Atomic.get profiles with Some ep -> ep.traced | None -> false
 
   let span name f =
-    match Atomic.get profile with
+    match Atomic.get profiles with
     | None -> f ()
-    | Some c -> (
+    | Some ep -> (
         let start = now_ns () in
         let record () =
           let stop = now_ns () in
-          push c.events
+          push ep.events
             (Span { device = host; lane = domain_lane (); name; start; stop })
         in
         match f () with
@@ -3639,58 +3738,52 @@ module Profile = struct
     | 0 -> Int.compare (length b) (length a)
     | c -> c
 
+  (* The devices' spans and reports are read while [p] is still taken, so that
+     they go to it. *)
   let stop p =
-    let taken = Atomic.get profile in
-    match taken with
-    | Some c when c == p && Atomic.compare_and_set profile taken None ->
-        record_spans false;
-        Array.iter
-          (fun (name, lane, start, stop) ->
-            push c.events
-              (Span { device = host; lane = lane_of lane; name; start; stop }))
-          (host_spans ());
-        List.iter
-          (fun d ->
-            let counted =
-              (c.counters <> [] || c.trace) && Option.is_some d.report
-            in
-            if (Atomic.get d.spans <> [] || counted) && failed d = None then
-              try
-                with_devices [ d ] (fun () ->
-                    sync d;
-                    read_reports c d)
-              with Lost _ -> ())
-          (Atomic.get opened);
-        let clocks = Hashtbl.create 4 in
-        let calibrated d hz =
-          match Hashtbl.find_opt clocks d.id with
-          | Some f -> f
-          | None ->
-              let f = try Some (calibrate d hz) with Lost _ -> None in
-              Hashtbl.add clocks d.id f;
-              f
-        in
-        List.rev (Atomic.get c.events)
-        |> List.filter_map (function
-          | Span ({ device = { clock = Device_clock { hz }; _ } as d; _ } as s)
-            ->
-              Option.map
-                (fun f -> Span { s with start = f s.start; stop = f s.stop })
-                (calibrated d hz)
-          | Counters
-              ({ device = { clock = Device_clock { hz }; _ } as d; _ } as c) ->
-              Option.map
-                (fun f ->
-                  Counters { c with start = f c.start; stop = f c.stop })
-                (calibrated d hz)
-          | Trace ({ device = { clock = Device_clock { hz }; _ } as d; _ } as t)
-            ->
-              Option.map
-                (fun f -> Trace { t with start = f t.start; stop = f t.stop })
-                (calibrated d hz)
-          | e -> Some e)
-        |> List.stable_sort order
-    | _ -> invalid_arg "Nx_device.Profile.stop: the profile is not being taken"
+    if not (List.memq p (taken ())) then not_taken ();
+    List.iter
+      (fun d ->
+        let counted = counts p && Option.is_some d.report in
+        if (Atomic.get d.spans <> [] || counted) && failed d = None then
+          try with_devices [ d ] (fun () -> sync d) with Lost _ -> ())
+      (Atomic.get opened);
+    close p;
+    let clocks = Hashtbl.create 4 in
+    let calibrated d hz =
+      match Hashtbl.find_opt clocks d.id with
+      | Some f -> f
+      | None ->
+          let f = try Some (calibrate d hz) with Lost _ -> None in
+          Hashtbl.add clocks d.id f;
+          f
+    in
+    collect p
+    |> List.filter_map (function
+      | Span ({ device = { clock = Device_clock { hz }; _ } as d; _ } as s) ->
+          Option.map
+            (fun f -> Span { s with start = f s.start; stop = f s.stop })
+            (calibrated d hz)
+      | Counters ({ device = { clock = Device_clock { hz }; _ } as d; _ } as c)
+        ->
+          Option.map
+            (fun f -> Counters { c with start = f c.start; stop = f c.stop })
+            (calibrated d hz)
+      | Trace ({ device = { clock = Device_clock { hz }; _ } as d; _ } as t) ->
+          Option.map
+            (fun f -> Trace { t with start = f t.start; stop = f t.stop })
+            (calibrated d hz)
+      | e -> Some e)
+    |> List.stable_sort order
+
+  let take ?counters ?trace f =
+    let p = start ?counters ?trace () in
+    match f () with
+    | r -> (r, stop p)
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        close p;
+        Printexc.raise_with_backtrace e bt
 
   (* Chrome's trace event format *)
 

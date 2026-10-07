@@ -1809,14 +1809,12 @@ let span_count name events =
 (* [f ()], whether a profile was still taken after it, and the profile's
    events. *)
 let profiled f =
-  let p = Nx_device.Profile.start () in
-  Fun.protect
-    ~finally:(fun () ->
-      if Nx_device.Profile.enabled () then ignore (Nx_device.Profile.stop p))
-    (fun () ->
-      let r = f () in
-      let taken = Nx_device.Profile.enabled () in
-      (r, taken, Nx_device.Profile.stop p))
+  let (r, taken), events =
+    Nx_device.Profile.take (fun () ->
+        let r = f () in
+        (r, Nx_device.Profile.enabled ()))
+  in
+  (r, taken, events)
 
 let clock =
   Testable.make
@@ -1833,10 +1831,24 @@ let clock_by_device name =
     (if name = "CPU" then Search.Host else Search.Device)
     (Engine.clock s)
 
-let clock_under_profile name =
-  let s, _ = timed name in
+(* A time under a profile takes its own: its clock is the one without, and its
+   value is the sum of the spans of its kernels that the outer profile records
+   too, stamped by the device where it has queues. *)
+let time_under_profile name =
+  let s, slots = timed name in
   let c, _, _ = profiled (fun () -> Engine.clock s) in
-  equal clock Search.Host c
+  equal ~msg:"the clock" clock (Engine.clock s) c;
+  let t, _, events = profiled (fun () -> Engine.time ~vars:n_bound s slots) in
+  let ns =
+    List.fold_left
+      (fun ns -> function
+        | Nx_device.Profile.Span sp
+          when String.starts_with ~prefix:"long_axpy" sp.name ->
+            ns + (sp.stop - sp.start)
+        | _ -> ns)
+      0 events
+  in
+  equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
 
 let positive name =
   let s, slots = timed name in
@@ -1977,7 +1989,10 @@ let timing =
       group
         "the clock is the device's where it has queues, the host's otherwise"
         [ on clock_by_device ];
-      group "the clock is the host's under a profile" [ on clock_under_profile ];
+      group
+        "a profile taken around a time changes neither its clock nor its \
+         value"
+        [ on time_under_profile ];
       group "a time is positive, under a second" [ on positive ];
       group "a time under a profile leaves the profile taken"
         [ on leaves_the_profile ];

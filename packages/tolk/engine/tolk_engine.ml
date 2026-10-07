@@ -1226,26 +1226,9 @@ let seconds f =
   Float.of_int (Nx_device.Profile.now () - t0) *. 1e-9
 
 (* A batch's kernels run on its devices, which stamp them: under a profile of
-   its own, the batch reports each kernel's span once its devices synchronized.
-   While a profile is taken elsewhere, the spans are that profile's, and the
-   batch reports no time. *)
+   its own, the batch reports each kernel's span once its devices synchronized. *)
 let run_reported t ~vars slots b =
-  let own =
-    if Nx_device.Profile.enabled () then None
-    else try Some (Nx_device.Profile.start ()) with Invalid_argument _ -> None
-  in
-  let events =
-    match run_batch t slots b with
-    | () -> (
-        match own with
-        | Some p -> Nx_device.Profile.stop p
-        | None ->
-            Array.iter Nx_device.synchronize b.queues;
-            [])
-    | exception e ->
-        Option.iter (fun p -> ignore (Nx_device.Profile.stop p)) own;
-        raise e
-  in
+  let (), events = Nx_device.Profile.take (fun () -> run_batch t slots b) in
   let spans = ref events in
   let span d name =
     let rec take = function
@@ -1470,40 +1453,22 @@ let time ?(vars = []) t slots =
       [] kernels
   in
   List.iter invalidate_caches devices;
-  let run () = run_with Silent ~vars t slots in
-  let now = Nx_device.Profile.now in
-  let ns =
-    if Nx_device.Profile.enabled () then begin
-      let t0 = now () in
-      run ();
-      List.iter Nx_device.synchronize devices;
-      now () - t0
-    end
-    else
-      let p = Nx_device.Profile.start () in
-      let events =
-        match run () with
-        | () -> Nx_device.Profile.stop p
-        | exception e ->
-            ignore (Nx_device.Profile.stop p);
-            raise e
-      in
-      List.fold_left (fun ns k -> ns + spans events k) 0 kernels
+  let (), events =
+    Nx_device.Profile.take (fun () -> run_with Silent ~vars t slots)
   in
+  let ns = List.fold_left (fun ns k -> ns + spans events k) 0 kernels in
   Float.of_int ns *. 1e-9
 
 (* A host program's call is timed on the host's clock; a batch's kernels are
-   stamped by their devices, unless a profile is taken already. A loop's read
-   of its flag is a copy, which runs no kernel. *)
+   stamped by their devices. A loop's read of its flag is a copy, which runs no
+   kernel. *)
 let clock t =
   let rec stamped = function
     | Kernel _ -> false
     | Copy _ | Batch _ -> true
     | Range { body; _ } | Loop { body; _ } -> List.for_all stamped body
   in
-  if Nx_device.Profile.enabled () || not (List.for_all stamped t.calls) then
-    Search.Host
-  else Search.Device
+  if List.for_all stamped t.calls then Search.Device else Search.Host
 
 let slots t =
   let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.params in

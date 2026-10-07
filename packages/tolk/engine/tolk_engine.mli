@@ -284,9 +284,9 @@ val link_program : devices:(string -> device) -> string -> Ops.t -> t
     does. *)
 
 val clock : t -> Tolk.Search.clock
-(** [clock s] is the clock {!time} times [s] on now: {!Tolk.Search.Device} if no
-    profile is taken and every kernel of [s] runs in a batch of a device with
-    queues, which stamps it, and {!Tolk.Search.Host} otherwise. *)
+(** [clock s] is the clock {!time} times [s] on: {!Tolk.Search.Device} if every
+    kernel of [s] runs in a batch of a device with queues, which stamps it, and
+    {!Tolk.Search.Host} otherwise. *)
 
 val time :
   ?vars:(string * int) list -> t -> Nx_device.Buffer.t list array -> float
@@ -297,9 +297,9 @@ val time :
     standard output whatever {!Tolk.Setting.debug} holds. The time is the sum of
     the spans of [s]'s kernels in a profile of the run ({!Nx_device.Profile}),
     which a device with queues stamps and the host records around each call of a
-    host program. While a profile is taken already, it is the run and the
-    synchronization of those devices on the host clock. A time allocates no
-    device memory and loads nothing.
+    host program. The profile is the time's own, whatever profiles are taken
+    around it, which record the run's events too. A time allocates no device
+    memory and loads nothing.
 
     Raises as {!run} does, {!Nx_device.Lost} if a device that runs a kernel of
     [s] is lost during the run, and [Invalid_argument] if a kernel of [s]
