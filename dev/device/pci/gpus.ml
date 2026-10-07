@@ -49,13 +49,6 @@ let bus h = h.bus
 
 (* Checks *)
 
-let linux () =
-  match
-    In_channel.with_open_text "/proc/sys/kernel/ostype" In_channel.input_all
-  with
-  | s -> String.trim s = "Linux"
-  | exception Sys_error _ -> false
-
 let index fn i =
   if i < 0 then invalid_arg (Printf.sprintf "Gpus.%s: GPU %d" fn i)
 
@@ -103,12 +96,10 @@ let open_kernel g m i f =
   index "open_kernel" i;
   Mutex.protect g.mutex @@ fun () ->
   let* () =
-    if m != Machine.this then
+    if m == Machine.this then Ok ()
+    else
       Error
         (Printf.sprintf "another machine's %s GPUs are reached over PCI" g.name)
-    else if not (linux ()) then
-      Error (Printf.sprintf "%s GPUs need Linux" g.name)
-    else Ok ()
   in
   let* () = refuse_interface g Kernel in
   let* bus = gpu g m i in
@@ -140,22 +131,25 @@ let open_pci g m i f =
       Function.release fn;
       raise e
 
-let give_back fn h =
+type ending = Released | Lost
+
+(* One critical section, so that no open sees a lost GPU before it is spent. *)
+let give_back ending h =
   let g = h.gpus in
   Mutex.protect g.mutex @@ fun () ->
   if h.given_back then
-    invalid_arg (Printf.sprintf "Gpus.%s: %s was given back already" fn h.bus);
+    invalid_arg
+      (Printf.sprintf "Gpus.%s: %s was given back already"
+         (match ending with Released -> "release" | Lost -> "lose")
+         h.bus);
   h.given_back <- true;
   g.held <- List.filter (fun h' -> h' != h) g.held;
+  if ending = Lost && Option.is_some h.fn then
+    g.spent <- (h.machine, h.bus) :: g.spent;
   Option.iter Function.release h.fn
 
-let release h = give_back "release" h
-
-let lose h =
-  give_back "lose" h;
-  if Option.is_some h.fn then
-    Mutex.protect h.gpus.mutex (fun () ->
-        h.gpus.spent <- (h.machine, h.bus) :: h.gpus.spent)
+let release h = give_back Released h
+let lose h = give_back Lost h
 
 (* Changes to the machine *)
 
@@ -164,10 +158,6 @@ let lose h =
 let change g fn i f =
   index fn i;
   Mutex.protect g.mutex @@ fun () ->
-  let* () =
-    if linux () then Ok ()
-    else Error (Printf.sprintf "%s GPUs need Linux" g.name)
-  in
   let* bus = gpu g Machine.this i in
   let* lock = Local.lock bus "nx" in
   Fun.protect

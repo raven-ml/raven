@@ -56,9 +56,9 @@ val open_kernel :
     for its kernel driver to drive. If [f h] is [Ok _], the process reaches
     [g]'s GPUs through their kernel driver from then on.
 
-    [Error why] without calling [f] if [m] is not {!Machine.this}, if [m] is not
-    Linux, if the process reaches [g]'s GPUs over PCI, if [m] has no GPU [i],
-    saying how many it has, or if the process holds it already. *)
+    [Error why] without calling [f] if [m] is not {!Machine.this}, if the
+    process reaches [g]'s GPUs over PCI, if [m] has no GPU [i], saying how many
+    it has, or if the process holds it already. *)
 
 val open_pci :
   t ->
@@ -103,10 +103,9 @@ val detach : t -> int -> (unit, string) result
     that a process can take its function, unless it is detached already. It
     unbinds the driver unless that is [vfio-pci], removes the other functions of
     its device, such as its audio function, and, unbound, enables the function
-    and makes its memory BAR the largest size the BAR and its bridge take. A
-    function bound to [vfio-pci] keeps its BAR's size: Linux resizes no BAR of a
-    function a driver holds. The kernel driver's users, a display among them,
-    lose the GPU until {!attach} or a reboot.
+    and makes its memory BAR the largest size the BAR and its bridge take. The
+    kernel driver's users, a display among them, lose the GPU until {!attach} or
+    a reboot.
 
     [Error why] if [i] is no GPU, if the process holds it, if the process may
     not write a file, or if the GPU is still not detached, saying why, such as
