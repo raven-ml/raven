@@ -1,0 +1,16 @@
+# thumper baseline v1
+# suite: device_elf
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 9.0 on 10 cores
+
+of-string/amd-unary-float16	alloc_words	exact	33633
+of-string/amd-unary-float16	wall_time	batch=512	n=20	1.866e-05	1.782e-05 1.788e-05 1.803e-05 1.804e-05 1.805e-05 1.807e-05 1.851e-05 1.857e-05 1.862e-05 1.865e-05 1.866e-05 1.869e-05 1.870e-05 1.877e-05 1.878e-05 1.881e-05 1.883e-05 1.904e-05 1.932e-05 1.960e-05
+of-string/cubin-sm89	alloc_words	exact	1298
+of-string/cubin-sm89	wall_time	batch=4096	n=20	1.926e-06	1.901e-06 1.904e-06 1.905e-06 1.909e-06 1.911e-06 1.913e-06 1.917e-06 1.923e-06 1.923e-06 1.924e-06 1.928e-06 1.931e-06 1.938e-06 1.939e-06 1.949e-06 1.952e-06 1.961e-06 1.962e-06 1.963e-06 1.974e-06
+of-string/host-arm64	alloc_words	exact	1415
+of-string/host-arm64	wall_time	batch=4096	n=20	1.906e-06	1.850e-06 1.875e-06 1.875e-06 1.881e-06 1.881e-06 1.883e-06 1.889e-06 1.891e-06 1.897e-06 1.905e-06 1.906e-06 1.906e-06 1.906e-06 1.918e-06 1.920e-06 1.921e-06 1.926e-06 1.928e-06 1.932e-06 1.956e-06
+symbol/amd-unary-float16-last-kernel	alloc_words	exact	12
+symbol/amd-unary-float16-last-kernel	wall_time	batch=16384	n=20	3.612e-07	3.497e-07 3.544e-07 3.549e-07 3.565e-07 3.578e-07 3.585e-07 3.587e-07 3.594e-07 3.595e-07 3.609e-07 3.615e-07 3.618e-07 3.630e-07 3.635e-07 3.643e-07 3.644e-07 3.654e-07 3.675e-07 3.697e-07 3.831e-07
