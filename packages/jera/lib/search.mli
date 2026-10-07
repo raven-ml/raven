@@ -119,9 +119,9 @@ type 'd state = {
 (** The state of a Newton-type search: the estimate [x], the function the search
     steps on at [x] ([f] for a system, the gradient for a minimum), the last
     point a step was tested at, the undamped map [N x = x + δ x] there, the
-    error estimate, the contraction over the last step the floats resolve, the
-    status, the evaluations and the count of iterations, which every lane
-    shares. *)
+    error estimate, the contraction of the last step whose rounding settled
+    whether the map contracts, the status, the evaluations and the count of
+    iterations, which every lane shares. *)
 
 val start : (float, 'd) Nx.t -> (float, 'd) Nx.t -> 'd state
 (** [start x0 fx] is the state at [x0], where the function is [fx], after one
@@ -130,16 +130,17 @@ val start : (float, 'd) Nx.t -> (float, 'd) Nx.t -> 'd state
 val test : Tol.t -> 'd state -> (float, 'd) Nx.t -> 'd state
 (** [test tol s delta] tests the undamped step [delta] at [s.x]:
     [e = contraction delta ~q], with [q] the larger of the contraction of the
-    undamped map over the last step, [|N x − N x'| / |x − x'|] from the point
-    [x'] tested before [x], and the one the state holds. The state then holds
-    the last step's contraction, unless that step lies within a unit in the last
-    place of [x'], where the contraction is a ratio of rounding errors. A
-    running lane whose error meets [tol] converges at [x + delta], and one whose
-    step no longer moves its estimate ends as {!resolved} says. *)
+    undamped map over the last step, {!secant}, and the one the state holds. The
+    state then holds the last step's contraction, unless that step's rounding
+    [r] leaves open whether the map contracts, [q − 2r < 1 ≤ q], as it does over
+    a step of one ulp. A running lane whose error meets [tol] converges at
+    [x + delta], and one whose step no longer moves its estimate ends as
+    {!resolved} says. *)
 
 val secant : 'd state -> (float, 'd) Nx.t -> (float, 'd) Nx.t
-(** [secant s next] is the contraction [|next − N x'| / |x − x'|] of a map that
-    sends [s.x] to [next], per lane. *)
+(** [secant s next] is the contraction [|next − N x'| / |x − x'| + r] of a map
+    that sends [s.x] to [next], per lane: the upper end of what the rounding of
+    [next] and [N x'] allows, [r = ε (|next| + |N x'|) / (2 |x − x'|)]. *)
 
 val resolved :
   'd state ->
@@ -147,8 +148,8 @@ val resolved :
   stuck:(bool, Nx.bool_elt) Nx.t ->
   'd state
 (** [resolved s ~delta ~stuck] ends each running lane whose step [delta] cannot
-    move its estimate, [stuck]: [Converged] with [e = |delta|] when the last
-    step the floats resolve contracted, [0 ≤ s.q < 1], at its zero to the
+    move its estimate, [stuck]: [Converged] with [e = |delta| / (1 − s.q)] when
+    the last step that settled it contracted, [0 ≤ s.q < 1], at its zero to the
     arithmetic's precision; [Stalled] otherwise. *)
 
 val decide :

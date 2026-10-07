@@ -359,16 +359,25 @@ let start x0 fx =
    last two contractions: a quasi-Newton method's rate varies from step to step,
    and one small ratio would promise steps that shrink faster than the next one
    does. *)
-(* A step that did not move the estimate has no contraction: [q] is then
-   infinite, so the error stays unbounded. *)
-let secant s next =
+(* [N x] and [N x'] are each rounded to the floats, by up to half a unit in
+   their last place, which leaves [q] uncertain by [r = ε (|N x| + |N x'|) / (2
+   |x − x'|)] either way. [q] is the upper end, [|N x − N x'| / |x − x'| + r]:
+   the ratio of the rounded values would read a contraction of 0.999 over a step
+   of three ulps as 2/3. A step that did not move the estimate has no
+   contraction: [q] is then infinite, so the error stays unbounded. *)
+let measure s next =
   let moved = norm (Nx.sub s.x s.before) in
   let still = Nx.equal_s moved 0. in
-  Nx.where still
-    (Nx.full_like moved Float.infinity)
-    (Nx.div
-       (norm (Nx.sub next s.mapped))
-       (Nx.where still (Nx.ones_like moved) moved))
+  let moved = Nx.where still (Nx.ones_like moved) moved in
+  let half = Num.eps (Nx.dtype next) /. 2. in
+  let inf = Nx.full_like moved Float.infinity in
+  let r =
+    Nx.div (norm (Nx.mul_s (Nx.add (Nx.abs next) (Nx.abs s.mapped)) half)) moved
+  in
+  let q = Nx.add (Nx.div (norm (Nx.sub next s.mapped)) moved) r in
+  (Nx.where still inf q, Nx.where still inf r)
+
+let secant s next = fst (measure s next)
 
 (* A step at the floats' resolution: within one unit of [x]'s last place in
    every component, so it moves the estimate by rounding at most, as a step that
@@ -381,9 +390,12 @@ let still x step =
        (Nx.less_equal (Nx.abs step) ulp))
 
 (* A running lane whose step cannot move its estimate has reached the floats'
-   resolution. If the last step they resolve contracted, [q < 1], its estimate
-   is its zero to the arithmetic's precision: it converges, with the step it
-   could not take as its error. Otherwise it stalls. *)
+   resolution. If the last step that settled its contraction contracted, [q <
+   1], its estimate is its zero to the arithmetic's precision: it converges. Its
+   estimate stays where it is, so its error counts the step it could not take
+   and the ones after it, [|δ| / (1 − q)]: with a slope 1000 times too steep, [q
+   = 0.999], and the estimate is still 1000 such steps from its zero. Otherwise
+   it stalls. *)
 let resolved s ~delta ~stuck =
   let stuck = Nx.logical_and (searching s.st) stuck in
   let contracting =
@@ -392,9 +404,13 @@ let resolved s ~delta ~stuck =
   in
   let root = Nx.logical_and stuck contracting in
   let st = settle s.st root Converged in
-  { s with st = settle st stuck Stalled; e = hold root (Nx.abs delta) s.e }
+  let gap = Nx.rsub_s 1. s.q in
+  let e =
+    Nx.div (Nx.abs delta) (Nx.reshape (Array.append (Nx.shape gap) [| 1 |]) gap)
+  in
+  { s with st = settle st stuck Stalled; e = hold root e s.e }
 
-let decide tol s ~map ~q delta =
+let judge tol s ~map ~q ~r delta =
   let run = searching s.st in
   let next = Nx.add s.x delta and mapped = Nx.add s.x map in
   let e = contraction delta ~q:(Nx.maximum q s.q) in
@@ -402,13 +418,15 @@ let decide tol s ~map ~q delta =
   let converged =
     Nx.logical_and run (Nx.equal_s st (Solution.code Converged))
   in
-  (* A step the floats do not resolve measures no contraction: over a step of
-     one ulp, [q] is a ratio of rounding errors, 1 for a step that flips between
-     the floats either side of a zero. The state keeps the contraction of the
-     last step they resolve. *)
-  let measured =
-    Nx.logical_and run (Nx.logical_not (still s.before (Nx.sub s.x s.before)))
+  (* A step whose rounding leaves open whether the map contracts, [q − 2r < 1 ≤
+     q], tells nothing: over a step of one ulp, [r ≥ 1], as for a step that
+     flips between the floats either side of a zero. The state keeps the
+     contraction of the last step that settled it. *)
+  let settled =
+    Nx.logical_or (Nx.less_s q 1.)
+      (Nx.greater_equal_s (Nx.sub q (Nx.mul_s r 2.)) 1.)
   in
+  let measured = Nx.logical_and run settled in
   let s =
     {
       s with
@@ -422,8 +440,12 @@ let decide tol s ~map ~q delta =
   in
   resolved s ~delta ~stuck:(still s.x map)
 
+let decide tol s ~map ~q delta =
+  judge tol s ~map ~q ~r:(snd (measure s (Nx.add s.x map))) delta
+
 let test tol s delta =
-  decide tol s ~map:delta ~q:(secant s (Nx.add s.x delta)) delta
+  let q, r = measure s (Nx.add s.x delta) in
+  judge tol s ~map:delta ~q ~r delta
 
 let iterations ~budget extra step (s, aux) =
   let carry =

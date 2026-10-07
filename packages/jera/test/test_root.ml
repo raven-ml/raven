@@ -224,6 +224,20 @@ let newton_tests =
                 ~slope:(fun x -> Nx.mul_s x 2.)
                 (fun x -> Nx.sub (Nx.square x) a)
                 seed)));
+    test "a slope 1000 times too steep never understates the error" (fun () ->
+        (* Steps 1000 times too short contract by 0.999 and fall within an ulp
+           of √2 while the estimate is still about 1000 ulps from it. *)
+        let z = Float.sqrt 2. in
+        let s =
+          Root.newton ~tol:tight ~budget:20000
+            ~slope:(fun x -> Nx.mul_s x 2000.)
+            (fun x -> Nx.sub_s (Nx.square x) 2.)
+            (vec [| z +. 1e-8 |])
+        in
+        let x = Nx.item [ 0 ] (Solution.get s) in
+        at_least float_exact
+          ~than:(Float.abs (x -. z))
+          (Nx.item [ 0 ] (Solution.error s)));
     test "a solve satisfies Kepler's equation" (fun () ->
         let x = Solution.get (kepler ~e m) in
         equal (Oracle.tensor ~abs:1e-14 ()) m (Nx.sub x (Nx.mul e (Nx.sin x))));
