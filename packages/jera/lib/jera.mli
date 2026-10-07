@@ -621,14 +621,15 @@ module Minimize : sig
 
       {b Method.} The simplex of [x0] and [x0 + h_i e_i], [h_i] a twentieth of
       [x0_i] or [2.5 · 10⁻⁴] where it is zero, reflects its worst vertex through
-      the others' centroid and expands, contracts or shrinks, with the
-      coefficients 1, 2, 1/2 and 1/2. {b Error.} [e] is the simplex's diameter
-      per component around its best vertex, [y] that vertex. Once [e] meets
-      [tol], a fresh simplex of that diameter around the best vertex is
-      evaluated: if no vertex is lower by a sufficient decrease the lane
-      converges, and otherwise it continues from it (Kelley, 1999); a diameter
-      alone converges on McKinnon's function at a point whose gradient is
-      [(0, 1)]. A non-finite value counts as [+∞], one at the start ends the
+      the others' centroid and expands, contracts or shrinks, with Gao and Han's
+      (2012) coefficients for [n] unknowns, [1], [1 + 2/n], [3/4 − 1/(2n)] and
+      [1 − 1/n], so the simplex keeps its shape as [n] grows. {b Error.} [e] is
+      the simplex's diameter per component around its best vertex, [y] that
+      vertex. Once [e] meets [tol], a fresh simplex of that diameter around the
+      best vertex is evaluated: if no vertex is lower by a sufficient decrease
+      the lane converges, and otherwise it continues from it (Kelley, 1999); a
+      diameter alone converges on McKinnon's function at a point whose gradient
+      is [(0, 1)]. A non-finite value counts as [+∞], one at the start ends the
       lane [Not_finite]. [budget] counts evaluations. {b Cost.} One evaluation
       per trip, two when it expands or contracts, [n + 1] more when it shrinks.
       {b Derivative.} None: its answer is the detached best vertex, since an

@@ -830,12 +830,14 @@ let lm_path fn x r linear ~steps f start =
    The simplex's [n + 1] vertices are the rows of [v], their values [fv]. A trip
    sorts them, reflects the worst through the centroid of the others, and
    expands, contracts outside or inside, or shrinks toward the best vertex, with
-   the coefficients 1, 2, 1/2 and 1/2; the second point and the shrink are
-   evaluated only when the trip needs them. A non-finite value counts as [+∞].
-   When the simplex's diameter per component meets [tol], a fresh simplex of
-   that diameter around the best vertex is evaluated: no vertex lower by [10⁻⁴]
-   of the decrease its simplex gradient predicts converges, and otherwise the
-   search continues from it (Kelley, 1999). *)
+   Gao and Han's (2012) coefficients for [n] unknowns, 1, 1 + 2/n, 3/4 − 1/(2n)
+   and 1 − 1/n: the classic 1, 2, 1/2, 1/2 collapse the simplex onto a subspace
+   as [n] grows and stagnate, as on a 6-D quartic bowl. The second point and the
+   shrink are evaluated only when the trip needs them. A non-finite value counts
+   as [+∞]. When the simplex's diameter per component meets [tol], a fresh
+   simplex of that diameter around the best vertex is evaluated: no vertex lower
+   by [10⁻⁴] of the decrease its simplex gradient predicts converges, and
+   otherwise the search continues from it (Kelley, 1999). *)
 
 type 'x simplex =
   | Simplex : {
@@ -878,6 +880,10 @@ let initial x0 =
 
 (* One trip of the simplex [(v, fv)]: the new simplex and the evaluations. *)
 let reflect values n (v, fv) =
+  let nf = float n in
+  let expansion = 1. +. (2. /. nf)
+  and contraction = 0.75 -. (1. /. (2. *. nf))
+  and shrinkage = 1. -. (1. /. nf) in
   let order = Nx.argsort fv in
   let v = Nx.take ~axis:0 ~indices:order v and fv = Nx.take ~indices:order fv in
   let best = Nx.get [ 0 ] v and worst = Nx.get [ n ] v in
@@ -897,10 +903,10 @@ let reflect values n (v, fv) =
   in
   let second =
     Nx.where expand
-      (Nx.add c (Nx.mul_s (Nx.sub xr c) 2.))
+      (Nx.add c (Nx.mul_s (Nx.sub xr c) expansion))
       (Nx.where outside
-         (Nx.add c (Nx.mul_s (Nx.sub xr c) 0.5))
-         (Nx.add c (Nx.mul_s (Nx.sub worst c) 0.5)))
+         (Nx.add c (Nx.mul_s (Nx.sub xr c) contraction))
+         (Nx.add c (Nx.mul_s (Nx.sub worst c) contraction)))
   in
   let f2, _ =
     Rune.iterate
@@ -934,7 +940,7 @@ let reflect values n (v, fv) =
         v,
       Nx.where last (Nx.broadcast_to (Nx.shape fv) fpoint) fv )
   in
-  let shrunk = Nx.add best (Nx.mul_s (Nx.sub v best) 0.5) in
+  let shrunk = Nx.add best (Nx.mul_s (Nx.sub v best) shrinkage) in
   let (v, fv), _ =
     Rune.iterate
       Nx.Ptree.(pair (pair tensor tensor) tensor)
