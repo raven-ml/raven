@@ -1,0 +1,20 @@
+(executable
+ (name bench_pool)
+ (libraries device_pool thumper)
+ (foreign_stubs
+  (language c)
+  (names bench_pool_stubs)
+  (flags :standard -std=c11 -O2 -Wall -Wextra)))
+
+; Not attached to runtest on purpose: run with `dune build @bench`, or run the
+; built exe directly.
+
+(rule
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend for
+ ; cores and distort measurements.
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_pool.exe})))
