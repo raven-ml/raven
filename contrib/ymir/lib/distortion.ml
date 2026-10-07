@@ -17,8 +17,6 @@
    with Newton's method on the Jacobian; the answer's derivative is the
    implicit one. *)
 
-type v = (float, Nx.float64_elt) Nx.t
-
 let last v = Nx.ndim v - 1
 let component v k = Nx.slice (List.init (last v) (fun _ -> Nx.A) @ [ Nx.I k ]) v
 

@@ -9,8 +9,6 @@
    implicit one and no iteration is differentiated. A lane that does not
    converge keeps its last estimate and is reported in the mask. *)
 
-type v = (float, Nx.float64_elt) Nx.t
-
 (* A float64 zero located to its last bits: two units in the last place of
    the answer, and an absolute floor for an answer at zero. *)
 let eps = Float.epsilon

@@ -33,8 +33,6 @@ type code =
   | Car
   | Mer
 
-type v = (float, Nx.float64_elt) Nx.t
-
 let name = function
   | Azp -> "AZP"
   | Szp -> "SZP"
@@ -66,17 +64,6 @@ let count = function
   | Zpn -> zpn_terms
 
 let first = function Zpn -> 0 | _ -> 1
-
-(* The parameters' names, by index. *)
-let parameter_names = function
-  | Azp -> [| "μ"; "γ" |]
-  | Szp -> [| "μ"; "φc"; "θc" |]
-  | Sin -> [| "ξ"; "η" |]
-  | Air -> [| "θb" |]
-  | Cyp -> [| "μ"; "λ" |]
-  | Cea -> [| "λ" |]
-  | Zpn -> Array.init zpn_terms (Printf.sprintf "P%d")
-  | Tan | Stg | Arc | Zea | Car | Mer -> [||]
 
 (* The value FITS gives a parameter the file leaves out, degrees for angles. *)
 let defaults = function
