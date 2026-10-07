@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Scratch as tinygrad sizes it: 48 compute units of 32 slots and 6 engines on
-   GFX11, at least 128 bytes a lane in 256-byte wave units; 38 of 32, 4 engines
-   and 8 dies on GFX9, in 1024-byte units. The descriptor's words follow ROCr's
-   registers.h layouts. *)
+(* Scratch of two GPUs: 48 compute units of 32 slots and 6 engines on GFX11, at
+   least 128 bytes a lane in 256-byte wave units; 38 of 32, 4 engines and 8 dies
+   on GFX9, in 1024-byte units. The descriptor's words follow ROCr's registers.h
+   layouts. *)
 
 open Windtrap
 open Device_amd_abi

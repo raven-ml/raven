@@ -3,8 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GC registers by name, at the addresses tinygrad's register modules give them,
-   and their fields as the headers' masks lay them out. *)
+(* GC registers by name, at their PM4 addresses: the offset in the GC's headers
+   from its segment's base in vega20_ip_offset.h (GFX9) or
+   sienna_cichlid_ip_offset.h (GFX10 on). Fields as the headers' masks lay them
+   out. *)
 
 open Windtrap
 open Device_amd_abi
