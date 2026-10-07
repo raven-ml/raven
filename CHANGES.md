@@ -3536,6 +3536,9 @@ thread.
 
 ### Nx
 
+- Operations on empty tensors no longer offset the NULL address of an empty
+  buffer, which C leaves undefined: a concatenation, a reduction over an empty
+  axis, a gather from one, or a matmul with an empty inner dimension did.
 - Copies, elementwise operations and reductions over views whose innermost
   axes are short, such as the windows of `Nx.sliding_window`, run 4 to 5 times
   faster on the CPU, `Nx.combine_patches` about 3 times and `Nx_wide.sum` 1.6

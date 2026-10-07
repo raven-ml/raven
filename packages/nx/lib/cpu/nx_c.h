@@ -634,7 +634,9 @@ NX_C_NORETURN void nx_c_raise_invalid(const char *op, nx_c_status status);
    get the byte steps the kernel ABI wants — that conversion happens in exactly
    one place. Entries [ndim, NX_C_MAX_NDIM) are unspecified; consumers read only
    [0, ndim). `data` is the buffer's first byte; the first live element is at
-   data + offset*elem_size. `length` is the buffer's number of elements. */
+   data + offset*elem_size. `length` is the buffer's number of elements. An
+   operand with no elements has offset and strides 0 and a `data` that is a
+   valid address, never NULL. */
 typedef struct {
   void *data;
   int ndim;
@@ -670,6 +672,20 @@ static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
   for (int i = 0; i < ndim; i++) {
     out->shape[i] = Long_val(Field(v_shape, i));
     out->strides[i] = Long_val(Field(v_strides, i));
+  }
+  /* An operand with no elements addresses no byte, and an empty buffer's first
+     byte is NULL, from which C defines no arithmetic. A driver forms its
+     operands' pointers before it looks at their sizes, and walks a nonempty
+     output's kept dims over an empty input, so such an operand addresses one
+     fixed byte with offset and strides 0: every pointer formed from it is that
+     byte, which no kernel reads or writes. */
+  for (int i = 0; i < ndim; i++) {
+    if (out->shape[i] != 0) continue;
+    static const char nowhere;
+    out->data = (void *)&nowhere;
+    out->offset = 0;
+    for (int j = 0; j < ndim; j++) out->strides[j] = 0;
+    break;
   }
   return NX_C_OK;
 }
