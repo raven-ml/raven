@@ -29,6 +29,15 @@ val failed : ?substring:string -> exn -> bool
     contains [substring], when given: the predicate of [Windtrap.raises_match]
     for the world's failures. *)
 
+val patience : float
+(** [patience] is 10 s, how long a test waits for what must happen: the
+    [~timeout] of each suite's top groups, and {!poll}'s bound. *)
+
+val poll : (unit -> bool) -> bool
+(** [poll f] calls [f] until it is [true] or {!patience} passed, and is [true]
+    iff [f] became [true]: the hang guard of a test that waits for another
+    domain. *)
+
 val now_ns : unit -> int
 (** [now_ns ()] is the monotonic clock in nanoseconds. *)
 

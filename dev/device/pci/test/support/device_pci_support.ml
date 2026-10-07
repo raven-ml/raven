@@ -31,6 +31,21 @@ let failed ?(substring = "") = function
 
 external now_ns : unit -> int = "device_pci_test_now_ns"
 
+let patience = 10.
+let patience_ns = int_of_float (patience *. 1e9)
+
+let poll f =
+  let t0 = now_ns () in
+  let rec go () =
+    f ()
+    || now_ns () - t0 < patience_ns
+       && begin
+         Unix.sleepf 0.0005;
+         go ()
+       end
+  in
+  go ()
+
 (* This machine's GPUs *)
 
 external flock : Unix.file_descr -> bool = "device_pci_test_flock"

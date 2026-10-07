@@ -533,12 +533,18 @@ let this_machine =
 
 (* Serialized opens and changes *)
 
+(* A window in which a domain that is not held back would have run, sampled:
+   nothing in the library signals that a domain waits on it. *)
+let sample () = Unix.sleepf 0.05
+
 (* While GPU 0's driver starts, another domain opens or resets GPU 1. Its driver
-   must not run before GPU 0's returns. GPU 0's driver waits for it a while, so
-   that a driver that is not held back runs inside it. *)
+   must not run before GPU 0's returns. GPU 0's driver waits until the other
+   domain is about to call Gpus, then samples a window in which a driver that is
+   not held back runs inside it. *)
 let test_one_at_a_time (_, other) =
   let g, m, _ = three () in
   let inside = Atomic.make false in
+  let about = Atomic.make false in
   let ran = Atomic.make false in
   let overlapped = Atomic.make false in
   let driver () =
@@ -548,8 +554,14 @@ let test_one_at_a_time (_, other) =
   in
   let start _ _ =
     Atomic.set inside true;
-    let d = Domain.spawn (fun () -> other g m 1 driver) in
-    ignore (Machine.wait Machine.this ~ms:200 (fun () -> Atomic.get ran));
+    let d =
+      Domain.spawn (fun () ->
+          Atomic.set about true;
+          other g m 1 driver)
+    in
+    equal ~msg:"the other domain reached Gpus" bool true
+      (poll (fun () -> Atomic.get about));
+    sample ();
     Atomic.set inside false;
     Ok d
   in
@@ -561,39 +573,43 @@ let test_one_at_a_time (_, other) =
 
 let others = [ ("an open", pci); ("a reset", reset) ]
 
-(* While [lose] gives GPU 0's function back, another domain opens GPU 0. *)
+(* While [lose] gives GPU 0's function back, another domain opens GPU 0: the
+   release waits until the opener is about to call Gpus, then samples a window
+   in which an open that is not held back sees the GPU free. *)
 let test_lose_race () =
   let g, m, fake = three () in
   let h = hold g m 0 in
   let opener = ref None in
-  let opened = Atomic.make false in
+  let about = Atomic.make false in
   let open_ () =
-    let r = pci g m 0 ok in
-    Atomic.set opened true;
-    r
+    Atomic.set about true;
+    pci g m 0 ok
   in
   fake.released <-
     (fun _ ->
       fake.released <- ignore;
       opener := Some (Domain.spawn open_);
-      ignore (Machine.wait Machine.this ~ms:200 (fun () -> Atomic.get opened)));
+      equal ~msg:"the opener reached Gpus" bool true
+        (poll (fun () -> Atomic.get about));
+      sample ());
   Gpus.lose h;
   let d = require_some !opener in
   ignore (require_error ~msg:"the open while it was lost" (Domain.join d))
 
 (* While GPU 0's driver starts, the main domain gives GPU 1 back. The driver
-   waits a while for it, so that a give-back held back by the start returns only
-   after the driver gave up. *)
+   waits for it, so a give-back held back by the start would never return: the
+   driver gives up after the hang guard and the test fails. *)
 let test_give_back_waits (_, give_back) =
   let g, m, _ = three () in
   let h1 = hold g m 1 in
   let inside = Atomic.make false and back = Atomic.make false in
   let start _ _ =
     Atomic.set inside true;
-    Ok (Machine.wait Machine.this ~ms:2000 (fun () -> Atomic.get back))
+    Ok (poll (fun () -> Atomic.get back))
   in
   let d = Domain.spawn (fun () -> Gpus.open_pci g m 0 start) in
-  ignore (Machine.wait Machine.this ~ms:2000 (fun () -> Atomic.get inside));
+  equal ~msg:"GPU 0's driver started" bool true
+    (poll (fun () -> Atomic.get inside));
   give_back h1;
   Atomic.set back true;
   equal ~msg:"given back while GPU 0's driver started" bool true
@@ -730,9 +746,10 @@ let serialized =
       stateful "from two domains, as some order of the calls" ~domains:2
         ~count:100
         (commands (indices [ 0 ]));
-      cases "opens and resets run their drivers one at a time" ~name:fst others
-        test_one_at_a_time;
-      test "a GPU lost while another domain opens it stays lost" test_lose_race;
+      cases "opens and resets run their drivers one at a time (sampled)"
+        ~name:fst others test_one_at_a_time;
+      test "a GPU lost while another domain opens it stays lost (sampled)"
+        test_lose_race;
       cases "giving a GPU back waits for no driver's start" ~name:fst give_backs
         test_give_back_waits;
     ]
