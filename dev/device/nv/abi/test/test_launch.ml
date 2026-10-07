@@ -11,20 +11,7 @@ open Device_nv_abi
 module S = Device_nv_abi_support
 
 let strf = Printf.sprintf
-
-let class_gen =
-  Gen.of_list
-    ~pp:(fun ppf c -> Format.pp_print_string ppf (S.class_name c))
-    S.classes
-
 let pp_error = Format.pp_print_string
-
-let bank =
-  Testable.make
-    ~pp:(fun ppf (b : Cubin.bank) ->
-      Format.fprintf ppf "{ index = %d; offset = 0x%x; bytes = %d }" b.index
-        b.offset b.bytes)
-    ~equal:( = )
 
 let classes =
   group ~timeout:10. "classes"
@@ -57,7 +44,7 @@ let memory =
     [
       prop
         "a launch takes up to 100 KiB of shared memory, the driver's 1 KiB \
-         included" (Gen.pair class_gen shared) (fun (cls, shared_bytes) ->
+         included" (Gen.pair S.compute_class shared) (fun (cls, shared_bytes) ->
           cover "the most" (shared_bytes = limit);
           cover "one byte more" (shared_bytes = limit + 1);
           equal ~msg:"Ok" bool (shared_bytes <= limit)
@@ -73,7 +60,7 @@ let memory =
              is_error
                (Launch.make (S.gpu ()) (S.kernel ~shared_bytes:max_int ()))));
       prop "a thread's local memory is its stack and 576 bytes"
-        (Gen.pair class_gen (Gen.int_range 0 0x10_0000))
+        (Gen.pair S.compute_class (Gen.int_range 0 0x10_0000))
         (fun (cls, stack_bytes) ->
           equal int (stack_bytes + 576)
             (Launch.local_bytes
@@ -104,7 +91,7 @@ let banks =
     [
       prop
         "a launch addresses the kernel's banks, after a bank 0 of 352 bytes if \
-         it has none" (Gen.pair class_gen banks_gen) (fun (cls, banks) ->
+         it has none" (Gen.pair S.compute_class banks_gen) (fun (cls, banks) ->
           let has_0 = List.exists (fun (b : Cubin.bank) -> b.index = 0) banks in
           cover "a bank 0" has_0;
           cover "no bank 0" (not has_0);
@@ -112,7 +99,7 @@ let banks =
             if has_0 then banks
             else { Cubin.index = 0; offset = 0; bytes = 352 } :: banks
           in
-          equal (list bank) expected
+          equal (list S.bank) expected
             (Launch.banks
                (S.launch (S.gpu ~compute_class:cls ()) (S.kernel ~banks ()))));
       xfail ~reason:"Launch.banks moves bank 0 first"
@@ -123,16 +110,11 @@ let banks =
                  { index = 0; offset = 0x100; bytes = 16 };
                ]
              in
-             equal (list bank) banks
+             equal (list S.bank) banks
                (Launch.banks (S.launch (S.gpu ()) (S.kernel ~banks ())))));
     ]
 
 (* The driver's parameters *)
-
-let le64 n =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 (Int64.of_int n);
-  Bytes.to_string b
 
 let find s sub =
   let n = String.length sub in
@@ -161,7 +143,7 @@ let driver =
   group ~timeout:10. "driver parameters"
     [
       prop "the parameters reach the kernel's, padded with zeros"
-        (Gen.pair class_gen (Gen.int_range 0 0x1000))
+        (Gen.pair S.compute_class (Gen.int_range 0 0x1000))
         (fun (cls, params_offset) ->
           let own = parameters cls ()
           and p = parameters cls ~params_offset () in
@@ -173,13 +155,13 @@ let driver =
             (String.make (String.length p - n) '\000')
             (String.sub p n (String.length p - n)));
       prop "the parameters hold the two windows in place of zeros"
-        Gen.(triple class_gen window window)
+        Gen.(triple S.compute_class window window)
         (fun (cls, s, l) ->
           assume (s <> l);
           let p = parameters cls ~shared_window:s ~local_window:l ()
           and zero = parameters cls ~shared_window:0 ~local_window:0 () in
           let at w =
-            match find p (le64 w) with
+            match find p (S.le64 (Int64.of_int w)) with
             | Some i -> i
             | None -> failf "no window 0x%x in the parameters" w
           in
@@ -189,7 +171,7 @@ let driver =
               let i = at w in
               equal ~msg:"under a window" string (String.make 8 '\000')
                 (String.sub zero i 8);
-              Bytes.blit_string (le64 w) 0 b i 8)
+              Bytes.blit_string (S.le64 (Int64.of_int w)) 0 b i 8)
             [ s; l ];
           equal string (Bytes.to_string b) p);
       test "each class's parameters" (fun () ->

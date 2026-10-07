@@ -293,11 +293,7 @@ let descriptors =
       prop "a size filled later is the size set now"
         Gen.(
           pair S.drawn
-            (let* d =
-               of_list
-                 ~pp:(fun ppf d -> Format.pp_print_string ppf (S.dim_name d))
-                 S.dims
-             in
+            (let* d = S.dim in
              map (fun n -> (d, n)) (int_range 0 (Qmd.max_size d))))
         (fun (d, (dim, n)) ->
           let other : S.op -> bool = function

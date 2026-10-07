@@ -11,8 +11,6 @@ open Windtrap
 open Device_nv_abi
 module S = Device_nv_abi_support
 
-let round_up n a = (n + a - 1) / a * a
-
 let geometry =
   let open Gen in
   let+ gpcs = int_range 1 16
@@ -56,11 +54,11 @@ let tests =
       prop "local memory is the least multiples that hold every thread"
         (Gen.pair (Gen.with_pp pp_gpu geometry) need)
         (fun (g, n) ->
-          let per_thread = round_up n 32 in
+          let per_thread = S.round_up n 32 in
           let per_tpc =
-            round_up (per_thread * 32 * g.warps_per_sm * g.sms_per_tpc) 0x8000
+            S.round_up (per_thread * 32 * g.warps_per_sm * g.sms_per_tpc) 0x8000
           in
-          let bytes = round_up (per_tpc * g.tpcs_per_gpc * g.gpcs) 0x20000 in
+          let bytes = S.round_up (per_tpc * g.tpcs_per_gpc * g.gpcs) 0x20000 in
           equal local { per_thread; per_tpc; bytes } (Local.make g n));
       cases ~name:string_of_int "a negative need is refused" [ min_int; -1 ]
         (fun n ->

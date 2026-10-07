@@ -140,10 +140,6 @@ type call =
   | Copy_release of Packet.scope * int64 * int64
   | Copy_release_stamp of Packet.scope * int64 * int64
 
-let scope_name : Packet.scope -> string = function
-  | Agent -> "Agent"
-  | System -> "System"
-
 let engine_name : Method.engine -> string = function
   | Compute -> "Compute"
   | Copy -> "Copy"
@@ -153,22 +149,23 @@ let pp_call ppf = function
       Format.fprintf ppf "set_object %s 0x%x" (engine_name e) c
   | Acquire (a, v) -> Format.fprintf ppf "acquire 0x%Lx 0x%Lx" a v
   | Release (s, a, v) ->
-      Format.fprintf ppf "release %s 0x%Lx 0x%Lx" (scope_name s) a v
+      Format.fprintf ppf "release %s 0x%Lx 0x%Lx" (S.scope_name s) a v
   | Release_stamp (s, a, v) ->
-      Format.fprintf ppf "release_stamp %s 0x%Lx 0x%Lx" (scope_name s) a v
+      Format.fprintf ppf "release_stamp %s 0x%Lx 0x%Lx" (S.scope_name s) a v
   | Interrupt -> Format.fprintf ppf "interrupt"
   | Shared_window a -> Format.fprintf ppf "shared_memory_window 0x%Lx" a
   | Local_window a -> Format.fprintf ppf "local_memory_window 0x%Lx" a
   | Local_memory (a, p) ->
       Format.fprintf ppf "local_memory 0x%Lx ~per_tpc:0x%Lx" a p
-  | Invalidate s -> Format.fprintf ppf "invalidate_caches %s" (scope_name s)
+  | Invalidate s -> Format.fprintf ppf "invalidate_caches %s" (S.scope_name s)
   | Schedule a -> Format.fprintf ppf "schedule 0x%Lx" a
   | Copy (d, s, n) ->
       Format.fprintf ppf "copy ~dst:0x%Lx ~src:0x%Lx 0x%Lx" d s n
   | Copy_release (s, a, v) ->
-      Format.fprintf ppf "copy_release %s 0x%Lx 0x%Lx" (scope_name s) a v
+      Format.fprintf ppf "copy_release %s 0x%Lx 0x%Lx" (S.scope_name s) a v
   | Copy_release_stamp (s, a, v) ->
-      Format.fprintf ppf "copy_release_stamp %s 0x%Lx 0x%Lx" (scope_name s) a v
+      Format.fprintf ppf "copy_release_stamp %s 0x%Lx 0x%Lx" (S.scope_name s) a
+        v
 
 let packet : call -> int64 Packet.t = function
   | Set_object (e, c) -> Method.set_object e c
@@ -330,26 +327,16 @@ let expected = function
 
 (* Drawing operations with operands in the ranges the .mli states *)
 
-let address ~bits ~align =
-  Gen.map
-    (fun n -> Int64.of_int (n lsl align))
-    (Gen.int_range 0 ((1 lsl (bits - align)) - 1))
-
 let window =
   Gen.map
     (fun n -> Int64.of_int ((1 lsl 40) + n))
     (Gen.int_range 0 ((1 lsl 49) - (1 lsl 40) - 1))
 
-let scope =
-  Gen.of_list
-    ~pp:(fun ppf s -> Format.pp_print_string ppf (scope_name s))
-    [ Packet.Agent; System ]
-
 let call =
   let open Gen in
-  let semaphore = address ~bits:40 ~align:3
-  and stamped = address ~bits:40 ~align:4
-  and wide = address ~bits:49 ~align:0 in
+  let semaphore = S.address ~bits:40 ~align:3
+  and stamped = S.address ~bits:40 ~align:4
+  and wide = S.address ~bits:49 ~align:0 in
   let engine =
     of_list
       ~pp:(fun ppf e -> Format.pp_print_string ppf (engine_name e))
@@ -362,18 +349,18 @@ let call =
           Set_object (e, c));
          (let+ a = semaphore and+ v = S.u64 in
           Acquire (a, v));
-         (let+ s = scope and+ a = semaphore and+ v = S.u64 in
+         (let+ s = S.scope and+ a = semaphore and+ v = S.u64 in
           Release (s, a, v));
-         (let+ s = scope and+ a = stamped and+ v = S.u64 in
+         (let+ s = S.scope and+ a = stamped and+ v = S.u64 in
           Release_stamp (s, a, v));
          constant Interrupt;
          map (fun a -> Shared_window a) window;
          map (fun a -> Local_window a) window;
-         (let+ a = address ~bits:40 ~align:0
-          and+ p = address ~bits:40 ~align:15 in
+         (let+ a = S.address ~bits:40 ~align:0
+          and+ p = S.address ~bits:40 ~align:15 in
           Local_memory (a, p));
-         map (fun s -> Invalidate s) scope;
-         map (fun a -> Schedule a) (address ~bits:40 ~align:8);
+         map (fun s -> Invalidate s) S.scope;
+         map (fun a -> Schedule a) (S.address ~bits:40 ~align:8);
          (let+ d = wide
           and+ s = wide
           and+ n =
@@ -384,9 +371,9 @@ let call =
               ]
           in
           Copy (d, s, Int64.of_int n));
-         (let+ s = scope and+ a = semaphore and+ v = S.u64 in
+         (let+ s = S.scope and+ a = semaphore and+ v = S.u64 in
           Copy_release (s, a, v));
-         (let+ s = scope and+ a = stamped and+ v = S.u64 in
+         (let+ s = S.scope and+ a = stamped and+ v = S.u64 in
           Copy_release_stamp (s, a, v));
        ])
 

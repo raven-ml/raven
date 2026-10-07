@@ -47,6 +47,12 @@ val kernel :
 val launch : Gpu.t -> Cubin.kernel -> Launch.t
 (** [launch g k] is [Launch.make g k]. Raises [Failure] on [Error]. *)
 
+val compute_class : int Windtrap.Gen.t
+(** [compute_class] draws one of {!classes}. *)
+
+val bank : Cubin.bank Windtrap.testable
+(** [bank] is the witness of constant banks. *)
+
 val pp_kernel : Format.formatter -> Cubin.kernel -> unit
 (** [pp_kernel] prints a kernel record. *)
 
@@ -58,6 +64,16 @@ val words : string -> int list
 val u64 : int64 Windtrap.Gen.t
 (** [u64] draws 64-bit integers, often at the edges of their halves and of the
     type. *)
+
+val le64 : int64 -> string
+(** [le64 n] is the 8 little-endian bytes of [n]. *)
+
+val round_up : int -> int -> int
+(** [round_up n a] is the least multiple of [a] at or above [n], [a > 0]. *)
+
+val address : bits:int -> align:int -> int64 Windtrap.Gen.t
+(** [address ~bits ~align] draws addresses below [2{^bits}], multiples of
+    [2{^align}]. *)
 
 (** {1:fields Descriptor fields} *)
 
@@ -87,6 +103,15 @@ val dims : Qmd.dim list
 
 val dim_name : Qmd.dim -> string
 (** [dim_name d] is ["Grid X"], ["Block Z"], ... *)
+
+val dim : Qmd.dim Windtrap.Gen.t
+(** [dim] draws one of {!dims}. *)
+
+val scope_name : Packet.scope -> string
+(** [scope_name s] is ["Agent"] or ["System"]. *)
+
+val scope : Packet.scope Windtrap.Gen.t
+(** [scope] draws a scope. *)
 
 val apply : op -> int64 Qmd.t -> int64 Qmd.t
 (** [apply op q] is [q] with [op]; a release of a descriptor whose releases are

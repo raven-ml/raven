@@ -53,6 +53,13 @@ let pp_bank ppf (b : Cubin.bank) =
   Format.fprintf ppf "{ index = %d; offset = 0x%x; bytes = %d }" b.index
     b.offset b.bytes
 
+let bank = Testable.make ~pp:pp_bank ~equal:( = )
+
+let compute_class =
+  Gen.of_list
+    ~pp:(fun ppf c -> Format.pp_print_string ppf (class_name c))
+    classes
+
 let pp_kernel ppf (k : Cubin.kernel) =
   Format.fprintf ppf
     "{ code = 0x%x; code_bytes = %d; registers = %d; shared_bytes = %d; \
@@ -88,6 +95,19 @@ let u64 =
             Int64.max_int;
           ] );
     ]
+
+let le64 n =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_le b 0 n;
+  Bytes.to_string b
+
+let round_up n a = (n + a - 1) / a * a
+
+(* An address below 2^bits, a multiple of 2^align. *)
+let address ~bits ~align =
+  Gen.map
+    (fun n -> Int64.of_int (n lsl align))
+    (Gen.int_range 0 ((1 lsl (bits - align)) - 1))
 
 (* Descriptor fields *)
 
@@ -159,12 +179,6 @@ let pp_drawn ppf d =
     (Format.pp_print_list pp_op)
     d.ops
 
-(* An address below 2^bits, a multiple of 2^align. *)
-let address ~bits ~align =
-  Gen.map
-    (fun n -> Int64.of_int (n lsl align))
-    (Gen.int_range 0 ((1 lsl (bits - align)) - 1))
-
 let scope =
   Gen.of_list
     ~pp:(fun ppf s -> Format.pp_print_string ppf (scope_name s))
@@ -189,11 +203,11 @@ let kernels =
   and+ banks = banks in
   kernel ~registers ~shared_bytes ~stack_bytes ~banks ()
 
+let dim =
+  Gen.of_list ~pp:(fun ppf d -> Format.pp_print_string ppf (dim_name d)) dims
+
 let op (k : Cubin.kernel) (banks : Cubin.bank list) =
   let open Gen in
-  let dim =
-    of_list ~pp:(fun ppf d -> Format.pp_print_string ppf (dim_name d)) dims
-  in
   let size d = int_range 0 (Qmd.max_size d) in
   let local_bytes = k.stack_bytes + 576 in
   one_of
@@ -239,13 +253,7 @@ let unmixed ops =
 let drawn =
   let open Gen in
   let gen =
-    let* compute_class, kernel =
-      pair
-        (of_list
-           ~pp:(fun ppf c -> Format.pp_print_string ppf (class_name c))
-           classes)
-        kernels
-    in
+    let* compute_class, kernel = pair compute_class kernels in
     let gpu = gpu ~compute_class () in
     let banks = Launch.banks (launch gpu kernel) in
     let+ ops = list ~size:(int_range 0 12) (op kernel banks) in

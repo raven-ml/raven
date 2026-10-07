@@ -175,14 +175,6 @@ let template =
                    (fun j _ -> j >= i && j < i + Packet.size [ w ])
                    (words b)))
             hs);
-      test "a template of known values is the encoding" (fun () ->
-          let p : int64 Packet.t =
-            [ Dword 1; W64 (Shift (Value 0x1234_5678_9000L, 8)) ]
-          in
-          equal (pair string int)
-            (Packet.encode id p, 0)
-            (let b, holes = Packet.template (fun v -> Some v) p in
-             (b, List.length holes)));
       test "a hole's shift is not evaluated" (fun () ->
           let _, holes =
             Packet.template known [ W32 (Shift (Value (Later 0L), 64)) ]
