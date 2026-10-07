@@ -512,13 +512,28 @@ module Quantity : sig
       both at the quantity's path. [jit], [vmap], [scan] and [jvp] carry units
       with no rule of their own, and a compiled function compiles once per unit.
       A [scan] carry keeps the initial carry's unit: a step that computes in
-      another unit returns [convert (unit init) q]. [grad] and [vjp] take and
-      return bare tensors, with the parameters' units kept as a value of the
-      same structure: a gradient is the loss per parameter unit, so a quantity
-      given to them would come back labelled with the parameter's unit, and
-      {!value} would then convert it by the wrong factor without a word. A
-      record of quantities walks each field with {!walk}; {!Nx.Ptree.cast} and
-      {!Nx.Ptree.Payload} then act on the payloads and keep the units.
+      another unit returns [convert (unit init) q]. A record of quantities walks
+      each field with {!walk}; {!Nx.Ptree.cast} and {!Nx.Ptree.Payload} then act
+      on the payloads and keep the units.
+
+      {b Gradients.} A unit fixes the coordinates its payload is in, and every
+      transformation acts on payloads in them. A gradient is a direction in the
+      parameters' own coordinates, the value whose {!Nx.Ptree.dot} with a
+      tangent is the derivative along it: a quantity's gradient is held in its
+      parameter's unit, and its payload is the derivative per that unit. For the
+      derivative per another unit, differentiate at the parameter converted to
+      that unit:
+
+      {[
+      let per_s = Unit.(one / second)
+      let at_si = { x with h0 = Quantity.convert per_s x.h0 }
+      let d_h0 = Quantity.value per_s (Rune.grad p loss at_si).h0
+      ]}
+
+      Never convert the gradient with {!value}: it multiplies by the factor,
+      where the derivative divides by it. A [vjp] cotangent is held in its
+      result's unit, likewise. A structure's units are the scale an optimiser or
+      sampler steps in.
 
       {b Dtypes.} A float payload converts by one rounded factor. A complex
       payload scales its real and imaginary parts by the real factor, so an

@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Rune.grad` over a record of quantities, such as a `Cosmology.t`, returns
+  the record with each field holding its derivative in the field's unit, the
+  payload per that unit. A derivative per another unit is the gradient at the
+  field converted to it; `Quantity.value` on a gradient converts a step.
 - `Ymir.Fits` is `ymir.fits`'s `Fits` with ymir's readers. `Fits.Wcs.read`
   turns a header's celestial description (FITS's thirteen zenithal and
   cylindrical projections with their PV terms; SIP, TPV and SCAMP's TAN with

@@ -846,6 +846,8 @@ end
     float64, 24 and 20 in float32. The age is integrated from the big bang. Each
     function is a formula of nx operations: batched, compiled and differentiable
     in every parameter and in z, its derivative the sum's.
+    [Rune.grad (Nx.Ptree.instantiate (module Cosmology))] returns a cosmology
+    whose fields are the derivatives, each per the unit its field holds.
 
     {b Accuracy.} Against the exact values of the same model, each distance,
     volume and time, {!Cosmology.hubble} and {!Cosmology.critical_density} has a

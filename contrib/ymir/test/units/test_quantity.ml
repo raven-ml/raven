@@ -1771,6 +1771,146 @@ let rune_laws =
           check (scan_jitted init xs));
     ]
 
+(* Gradients *)
+
+(* A record of quantities in two dimensions, each in a drawn unit. *)
+type 'a body = { size : 'a Quantity.t; temperature : 'a Quantity.t }
+
+module Body = struct
+  type 'a t = 'a body
+
+  let walk c b =
+    let open Nx.Ptree.Walk in
+    let size = field c "size" Quantity.walk b.size in
+    let temperature = field c "temperature" Quantity.walk b.temperature in
+    { size; temperature }
+end
+
+let body : Nx.float64_t body Nx.Ptree.t = Nx.Ptree.instantiate (module Body)
+let mk = Unit.(milli kelvin)
+let temperatures = [ Unit.kelvin; mk ]
+let temperature = Gen.of_list ~pp:Unit.pp temperatures
+let payload q = floats (Quantity.value (Quantity.unit q) q)
+
+let pp_body ppf b =
+  Format.fprintf ppf "@[<v>size %a@,temperature %a@]" Quantity.pp b.size
+    Quantity.pp b.temperature
+
+(* Payloads of 0 or of a magnitude whose products with the lengths' factors stay
+   normal. *)
+let payloads =
+  Gen.(
+    array ~size:(constant 3)
+      (one_of
+         [
+           constant 0.;
+           (let+ x = float_range 1e-3 3. and+ negative = bool in
+            if negative then -.x else x);
+         ]))
+
+(* Draws [n] bodies in one pair of units: a point and its directions. *)
+let bodies n =
+  let open Gen in
+  with_pp
+    (Format.pp_print_list pp_body)
+    (let+ u = length
+     and+ w = temperature
+     and+ vs = list ~size:(constant n) (pair payloads payloads) in
+     List.map
+       (fun (s, t) ->
+         { size = Quantity.v u (f64 s); temperature = Quantity.v w (f64 t) })
+       vs)
+
+(* Each field read in a unit of its own. *)
+let radiated b =
+  let r = Quantity.value Unit.metre b.size in
+  let t = Quantity.value Unit.kelvin b.temperature in
+  Nx.sum (Nx.mul (Nx.mul r r) (Nx.sin t))
+
+(* Bilinear in the fields, so its derivative in one field does not depend on
+   that field's payload: converting the field leaves the point's other
+   coordinates, and the derivative per metre or kelvin, bit for bit. *)
+let bilinear b =
+  Nx.sum
+    (Nx.mul
+       (Quantity.value Unit.metre b.size)
+       (Quantity.value Unit.kelvin b.temperature))
+
+(* Each unit pair a field converts between: every pair of lengths, and kelvin
+   and millikelvin both ways. *)
+type change = Size of Unit.t * Unit.t | Temperature of Unit.t * Unit.t
+
+let pp_change ppf = function
+  | Size (u, v) -> Format.fprintf ppf "size %a -> %a" Unit.pp u Unit.pp v
+  | Temperature (u, v) ->
+      Format.fprintf ppf "temperature %a -> %a" Unit.pp u Unit.pp v
+
+let changes =
+  List.concat_map (fun u -> List.map (fun v -> Size (u, v)) lengths) lengths
+  @ [ Temperature (Unit.kelvin, mk); Temperature (mk, Unit.kelvin) ]
+
+(* [rel_ulps k] compares within [k] ulps of the larger magnitude. *)
+let rel_ulps k =
+  array (float_rel ~rel:(float_of_int k *. epsilon_float) ~abs:0.)
+
+let gradients =
+  group "Gradients"
+    [
+      prop "a gradient paired with a tangent is the derivative along it"
+        (bodies 2) (fun bs ->
+          let x, t = match bs with [ x; t ] -> (x, t) | _ -> assert false in
+          let g = Rune.grad body radiated x in
+          let _, d = Rune.jvp body Nx.Ptree.tensor radiated x t in
+          let scale =
+            Nx.Ptree.dot body Nx.float64
+              (Nx.Ptree.map body (fun _ t -> Nx.abs t) g)
+              (Nx.Ptree.map body (fun _ t -> Nx.abs t) t)
+          in
+          let tol = 1e3 *. epsilon_float *. (1. +. Nx.item [] scale) in
+          equal (float tol) (Nx.item [] d)
+            (Nx.item [] (Nx.Ptree.dot body Nx.float64 g t)));
+      prop "a gradient is held in its parameters' units" (bodies 1) (fun bs ->
+          let x = List.hd bs in
+          let g = Rune.grad body radiated x in
+          equal (list visit) (Nx.Ptree.visits body x) (Nx.Ptree.visits body g));
+      (* [g] at [x] and [g'] at [x'], [x] with one field converted from [u] to
+         [v] by the factor [r]: [g'] is the derivative per [v], [g / r], and
+         [value v g] is [r g], [r^2] times it. A gradient and [value] are each
+         within 1.5 ulps of their exact products with the units' factors, and
+         each product or quotient by [r] rounds [r] and the result: 4 ulps for
+         the first claim, 3 for the second and 8 for the third. *)
+      prop "converting a parameter divides its gradient by the factor"
+        Gen.(pair (of_list ~pp:pp_change changes) (bodies 1))
+        (fun (change, bs) ->
+          let x = List.hd bs in
+          let x, x', get =
+            match change with
+            | Size (u, v) ->
+                let x = { x with size = Quantity.convert u x.size } in
+                (x, { x with size = Quantity.convert v x.size }, fun b -> b.size)
+            | Temperature (u, v) ->
+                let x =
+                  { x with temperature = Quantity.convert u x.temperature }
+                in
+                ( x,
+                  { x with temperature = Quantity.convert v x.temperature },
+                  fun b -> b.temperature )
+          in
+          let u = Quantity.unit (get x) and v = Quantity.unit (get x') in
+          let r = Unit.ratio Nx.float64 u v in
+          let g = get (Rune.grad body bilinear x) in
+          let g' = get (Rune.grad body bilinear x') in
+          equal ~msg:"per v" (rel_ulps 4)
+            (Array.map (fun p -> p /. r) (payload g))
+            (payload g');
+          equal ~msg:"value v" (rel_ulps 3)
+            (Array.map (fun p -> p *. r) (payload g))
+            (floats (Quantity.value v g));
+          equal ~msg:"r^2 apart" (rel_ulps 8)
+            (Array.map (fun p -> p *. r *. r) (payload g'))
+            (floats (Quantity.value v g)));
+    ]
+
 (* Accuracy *)
 
 (* Float formats, as IEEE 754 and the float8 specifications state them:
@@ -1883,4 +2023,5 @@ let () =
          formatting;
          rune;
          rune_laws;
+         gradients;
        ])
