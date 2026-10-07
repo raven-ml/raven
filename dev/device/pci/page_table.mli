@@ -12,11 +12,10 @@
     this module walks and edits the tree.
 
     A page maps at the highest level that allows pages, whose size the range
-    holds, and to whose size both its physical address and its virtual address,
-    counted from the tables' {!base}, are aligned. Each entry states the
-    {e fragment} of its run, the ranges that follow each other in both address
-    spaces: the largest block of the run, naturally aligned in both, that holds
-    the entry.
+    holds, and to whose size both its physical and virtual addresses are
+    aligned. Each entry states the {e fragment} of its run, the ranges that
+    follow each other in both address spaces: the largest block of the run,
+    naturally aligned in both, that holds the entry.
 
     Physical memory comes in three pools: a boot pool at the start of memory,
     for the state that survives the driver's reopening of the GPU; an optional
@@ -110,8 +109,8 @@ val create :
     {!palloc} and {!alloc} take by default come from the boot pool.
 
     Raises [Invalid_argument] if [fmt]'s levels do not rise from 12 to below
-    [bits], the pools do not fit in [memory] or the boot pool cannot hold the
-    root table. *)
+    [bits], [base] is not a multiple of the largest page a level maps, the pools
+    do not fit in [memory] or the boot pool cannot hold the root table. *)
 
 val booted : t -> unit
 (** [booted t] ends booting: tables and memory come from the other pools. *)
@@ -130,7 +129,8 @@ val root : t -> int
 (** [root t] is the physical address of the root table. *)
 
 val memory : t -> int
-(** [memory t] is the size of the main pool in bytes. *)
+(** [memory t] is the number of bytes of the GPU's physical memory [t] manages:
+    [memory] of {!create}. *)
 
 (** {1:physical Physical memory} *)
 

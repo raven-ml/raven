@@ -257,8 +257,9 @@ let test_create () =
   in
   equal ~msg:"or from the base given" hex 0 (Page_table.base t)
 
-(* The main pool is what the boot pool and the tables' pool leave: the tables'
-   pool is [memory / 512] rounded up to 1 MiB. *)
+(* The main pool is what the boot pool and the tables' pool leave at the end of
+   memory: the tables' pool is [memory / 512] rounded up to 1 MiB. A fresh
+   pool's first block is its start. *)
 let test_main_pool =
   cases
     ~name:(fun (memory, boot, kind, _) ->
@@ -278,7 +279,10 @@ let test_main_pool =
     ]
     (fun (memory, boot, kind, main) ->
       let t, _ = tables ~memory ~boot ~tables:kind () in
-      equal ~msg:"bytes" int main (Page_table.memory t))
+      equal ~msg:"the GPU's memory" int memory (Page_table.memory t);
+      equal ~msg:"the main pool's first block" (option hex)
+        (if main = 0 then None else Some (memory - main))
+        (Page_table.palloc ~zero:false t page))
 
 let test_create_refusals =
   cases
@@ -293,6 +297,38 @@ let test_create_refusals =
     (fun (_, memory, boot, kind) ->
       raises_match (Exn.invalid_arg ~substring:"") (fun () ->
           tables ~memory ~boot ~tables:kind ()))
+
+(* The largest page the fake format maps is 1 GiB: the tables' base must be a
+   multiple of it. *)
+let test_base_refusals =
+  cases
+    ~name:(fun base -> Printf.sprintf "base 0x%x" base)
+    "refuses a base off the largest page"
+    [ page; 2 * mib; gib + (2 * mib); -gib ]
+    (fun b ->
+      let g = { mem = Hashtbl.create 8; zeroed = []; unflushed = 0 } in
+      let s = Space.create ~base (1 lsl 40) in
+      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+          Page_table.create ~base:b (format g) s ~memory:(66 * mib) ~boot:mib
+            ~tables:Main
+            ~pages:[ (page, page) ]))
+
+(* Fragments are aligned in the space's addresses. From a base at 1 GiB, two 1
+   GiB pages at the base are the first 2 GiB the tables translate, but they
+   straddle the space's 2 GiB blocks: each is its own fragment. *)
+let test_fragments_from_base () =
+  let g = { mem = Hashtbl.create 8; zeroed = []; unflushed = 0 } in
+  let s = Space.create ~base (1 lsl 40) in
+  let t =
+    Page_table.create ~base:gib (format g) s ~memory:(66 * mib) ~boot:mib
+      ~tables:Main
+      ~pages:[ (page, page) ]
+  in
+  ignore (require_some (Page_table.map t ~va:gib Gpu [ (0, 2 * gib) ]));
+  equal ~msg:"(va, level, fragment)"
+    (list (triple hex int int))
+    [ (gib, 1, 18); (2 * gib, 1, 18) ]
+    (List.map (fun e -> (e.va, e.level, e.fragment)) (pages g t))
 
 (* Mapping *)
 
@@ -766,9 +802,8 @@ let test_booting () =
     m.pages;
   Page_table.booted t;
   let pa = require_some (Page_table.palloc t page) in
-  at_least ~msg:"then from the main pool" hex
-    ~than:((66 * mib) - Page_table.memory t)
-    pa
+  at_least ~msg:"then from the main pool, after the tables' 1 MiB" hex
+    ~than:(2 * mib) pa
 
 (* Allocations *)
 
@@ -953,8 +988,7 @@ let pfree m a =
 
 let pools =
   abstract "t" ~invariant:(fun m (t, _) ->
-      equal ~msg:"the main pool's bytes" int (m.main.hi - m.main.lo)
-        (Page_table.memory t);
+      equal ~msg:"the GPU's memory" int small_memory (Page_table.memory t);
       equal ~msg:"root" hex m.root (Page_table.root t))
 
 let blocks m =
@@ -1185,6 +1219,7 @@ let () =
              test "names its space, base, span and root" test_create;
              test_main_pool;
              test_create_refusals;
+             test_base_refusals;
            ];
          group "map"
            [
@@ -1193,6 +1228,8 @@ let () =
                test_gib_pages;
              test_fragments;
              test_fragment_cases;
+             test "fragments align in the space's addresses"
+               test_fragments_from_base;
              test_map_refusals;
              test_tables_path;
            ];

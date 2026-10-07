@@ -53,6 +53,7 @@ type t = {
   mutable booting : bool;
   root : int;
   base : int;
+  memory : int;
 }
 
 (* The GPU's page: what the leaf level maps, and the unit of a fragment. *)
@@ -277,6 +278,16 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
   in
   let shifts = Array.of_list (List.rev fmt.levels) in
   let above d = if d = 0 then fmt.bits else shifts.(d - 1) in
+  let base = Option.value base ~default:(Space.base space) in
+  (* The largest page: aligned to it, [base] aligns pages and fragments in the
+     tables as in the address space. *)
+  let rec largest d =
+    if d = Array.length shifts - 1 || fmt.large ~level:(fmt.first + d) then
+      1 lsl shifts.(d)
+    else largest (d + 1)
+  in
+  if base < 0 || not (aligned base (largest 0)) then
+    invalid_arg (Printf.sprintf "Page_table.create: base 0x%x off a page" base);
   let held = Hashtbl.create 64 in
   Hashtbl.replace held root ();
   {
@@ -291,7 +302,8 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
     held;
     booting = true;
     root;
-    base = Option.value base ~default:(Space.base space);
+    base;
+    memory;
   }
 
 let booted t = t.booting <- false
@@ -299,7 +311,7 @@ let root t = t.root
 let space t = t.space
 let base t = t.base
 let span t = 1 lsl t.fmt.bits
-let memory t = Tlsf.length t.main
+let memory t = t.memory
 
 (* Raises unless the [n] bytes from [va] are whole pages the tables reach. *)
 let check t fn ~va n =
@@ -340,12 +352,16 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
   unmapped t 0 t.root ~at:0 lo (lo + size);
   let write_run v (pa, n) =
     let delta = pa - v and hi = v + n in
-    (* The pages of a fragment's block share it: it is found once a block. *)
+    (* A fragment's block is aligned in the space's addresses: [first] and
+       [last] bound the run there. The pages of a block share its fragment: it
+       is found once a block. *)
+    let first = t.base + v and last = t.base + hi in
     let frag = ref 0 and until = ref v in
     let entry d at =
       if at >= !until then begin
-        frag := fragment ~lo:v ~hi ~delta at (t.shifts.(d) - page_bits);
-        until := (at lor ((page lsl !frag) - 1)) + 1
+        let va = t.base + at and k = t.shifts.(d) - page_bits in
+        frag := fragment ~lo:first ~hi:last ~delta:(pa - first) va k;
+        until := (va lor ((page lsl !frag) - 1)) + 1 - t.base
       end;
       t.fmt.encode ~level:(level t d) ~table:false target ~uncached ~snooped
         ~fragment:!frag ~valid:true (at + delta)
