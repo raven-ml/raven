@@ -4118,14 +4118,15 @@ stores through a pad.
   4096 x 4096 one-token product kernel took 40 ms where the same kernel
   unpacking at uint32 takes 21.6 ms. kaun's decode bench times the products a
   user calls (`Quant/host/*`).
-- **Cost:** none in the kernels measured. The routed one-token product's
+- **Cost:** on x86, for codes of one value. The routed one-token product's
   kernel, the only one the rule changes in its program, is faster with it on
-  arm64 and x86 (kimchi, clang 19): 2-5% on one core and 2.1% on six. The
-  routed 64-token product runs at 0.978 of its time before the rule. The
-  routed one-token row of kaun's decode bench runs at 1.022 of it on kimchi
-  (pairs 1.007-1.028, allocation equal), 0.165 ms outside the kernels whose
-  cause was not found: the program's other two kernels are unchanged, and so
-  are its launch's blocks.
+  random codes, as real weights hold, on arm64 and on x86 (kimchi, clang 19,
+  2.1% on six cores), and the routed 64-token product runs at 0.978 of its
+  time before the rule. On zero codes, which kaun's decode bench uses, the
+  kernel takes 4.4% longer with the rule on six x86 cores and 2-6% longer on
+  one, where the M1 still runs it faster: so the bench's routed one-token row
+  runs at 1.026 of its time before the rule on kimchi (pairs 1.025-1.027,
+  allocation equal).
 - **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `symbolic › casts ›
   a widening cast of an unsigned mask masks the widened operand (D134)` and
   the four tests after it; rune's lower_index suite: `quantised products › a
