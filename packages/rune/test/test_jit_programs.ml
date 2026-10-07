@@ -1221,7 +1221,9 @@ let f64s t = Nx.to_array t
 (* What the stated rounding allows of a sum of terms: [count] terms whose exact
    sum is [r] and whose magnitudes sum to [s], summed at float32 in any
    association and rounded once to [dt]. Past [dt]'s greatest float, [total],
-   the sum's magnitude before a mean divides it, any result is allowed. *)
+   the sum's magnitude before a mean divides it, any result is allowed: a term
+   may overflow in one run and not the other, as a product does eagerly and not
+   in a multiply-add, and two overflowed terms of opposite signs sum to NaN. *)
 let summed ?total dt ~count ~r ~s c e =
   let total = Option.value total ~default:s in
   let close () =
@@ -1229,8 +1231,8 @@ let summed ?total dt ~count ~r ~s c e =
     <= (2. *. Float.of_int count *. 0x1p-24 *. s)
        +. (2. *. unit_roundoff dt *. Float.max (Float.abs c) (Float.abs e))
   in
-  if Float.is_nan r then Float.is_nan c && Float.is_nan e
-  else if total > largest dt then true
+  if total > largest dt then true
+  else if Float.is_nan r then Float.is_nan c && Float.is_nan e
   else if Float.abs r = Float.infinity then c = r && e = r
   else if s = 0. then
     (* A sum of zeros is [0.], never [-0.]. *)
@@ -1445,6 +1447,18 @@ let rounded_found =
                 leaf I64 [| 1 |] [| 0. |],
                 Cast (F32, leaf F16 [| 0 |] [||]) ),
             leaf ~capture:true F32 [| 2 |] [| -0.; 0. |] ) );
+    (* A sum of products that overflow, [-inf] and [inf] eagerly: compiled with
+       a multiply-add, a product is never rounded alone. *)
+    Sum_f
+      ( [ 1 ],
+        false,
+        Bin
+          ( Mul,
+            Broadcast ([| 1; 1 |], leaf F32 [| 1; 1 |] [| 0x1.fffffep+127 |]),
+            Cast
+              ( F32,
+                Reduce (Sum, [ 0 ], false, leaf I32 [| 1; 1; 2 |] [| -2.; 2. |])
+              ) ) );
   ]
 
 let suite =
