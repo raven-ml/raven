@@ -21,7 +21,11 @@ All notable changes to Ymir are documented in this file.
 - `Fits.Unit` reads and writes FITS unit strings over `ymir.units` at the
   standard's values, and `Fits.unit` reads `BUNIT`, scoping `pix`, `chan`,
   `voxel` and `beam` to the file's digest and HDU.
-  funpack.
+- `Fits.Table` reads binary and ASCII tables: `raw` and `values` give a
+  column as a tensor of `[rows] @ cell`, `ragged` gives text and heap arrays
+  as `Nx_ragged.t`, `validity` marks TNULL, NaN and undefined logicals, and
+  `read` returns every column in one pass. `Fits.Table.hdu` writes a
+  binary table, numbering each column's cards and choosing its TNULL.
 - `Ymir.Frame` names the fixed celestial frames, ICRS, FK5 at J2000, Galactic,
   the J2000 ecliptic and supergalactic, with one value per frame type.
   `Frame.matrix` converts between any two from their standards' orientations,

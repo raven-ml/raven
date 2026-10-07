@@ -6,6 +6,7 @@
 module H = Header
 module V = Value
 module I = Image
+module T = Table
 
 module Fits = struct
   module Value = struct
@@ -93,6 +94,45 @@ module Fits = struct
               (Err.msg (H.card_place h (List.hd (H.cards h "BUNIT")) "BUNIT") e)
         )
 
+  module Table = struct
+    type layout = Table.layout =
+      | Array of int array
+      | Lists
+      | Text of int array
+
+    type column = Table.column = {
+      name : string;
+      element : Nx_dtype.Scalar.t;
+      layout : layout;
+      scaled : bool;
+      cards : H.t;
+    }
+
+    type t = Table.t
+
+    let of_hdu = Table.of_hdu
+    let rows = Table.rows
+    let columns = Table.columns
+    let pp = Table.pp
+    let raw = Table.raw
+    let values = Table.values
+    let ragged = Table.ragged
+    let validity = Table.validity
+    let unit name hdu = Table.unit ~scope:(scope hdu) name hdu
+
+    type data = Table.data =
+      | Array of { values : Nx.packed; validity : Nx.bit_t option }
+      | Lists : {
+          values : ('a, 'b) Nx_ragged.t;
+          validity : Nx.bit_t option;
+        }
+          -> data
+      | Text of (int, Nx.uint8_elt) Nx_ragged.t
+
+    let read = Table.read
+    let hdu = Table.hdu
+  end
+
   let pp ppf hdu =
     let h = header hdu in
     let kind =
@@ -108,5 +148,7 @@ module Fits = struct
     Format.fprintf ppf "%s%s: " kind name;
     match I.of_hdu hdu with
     | Ok i -> I.pp ppf i
+    | Error _ when Result.is_ok (T.of_hdu hdu) ->
+        T.pp ppf (Result.get_ok (T.of_hdu hdu))
     | Error _ -> Format.fprintf ppf "%d bytes" (Hdu.store hdu).size
 end

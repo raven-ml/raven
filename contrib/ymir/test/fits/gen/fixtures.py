@@ -241,9 +241,148 @@ def tiles(path):
             f.write(" ".join(["QREF/same"] + ["1" if x else "0" for x in same]) + "\n")
 
 
+def tables(path):
+    """A binary table of every TFORM code, offsets, TNULL, scaling, cell
+    shapes, text grids and heap arrays, and an ASCII table. The values file
+    holds, per column, its name and its elements in C order: integers in
+    decimal, floats in hex, complex as re,im, logicals as T, F or 0, bits as
+    0 or 1 and text in hex."""
+    n = 6
+    rng = np.random.default_rng(11)
+    mag = rng.normal(15, 2, n).astype(np.float32)
+    mag[2] = np.nan
+    q = np.array([1, -999, 3, 4, -999, 6], dtype=np.int16)
+    bits = np.array([[1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 1]] * n, dtype=bool)
+    bits[3] = ~bits[3]
+    strings = np.array(["alpha", "", "  lead", "x" * 16, "bb", "z"])
+    grid = np.array([["ab", "cde", ""], ["f", "", "gh"]] * 3)
+    vla = np.array([np.arange(k, dtype=np.int32) * 7 for k in [0, 3, 1, 5, 2, 0]], dtype=object)
+    vld = np.array([np.linspace(0, 1, k) for k in [2, 0, 4, 1, 1, 3]], dtype=object)
+    vlt = np.array(["one", "", "three", "four four", "5", "six"], dtype=object)
+    cols = [
+        fits.Column("source_id", "K", array=np.arange(n, dtype=np.int64) * 10**15 + 7),
+        fits.Column("ra", "D", unit="deg", array=np.linspace(0, 359.5, n)),
+        fits.Column("mag", "E", unit="mag", array=mag),
+        fits.Column("qual", "I", null=-999, array=q),
+        fits.Column("u16", "I", bzero=32768, array=np.array([0, 1, 65535, 32768, 7, 40000], dtype=np.uint16)),
+        fits.Column("i8", "B", bzero=-128, array=np.array([-128, 0, 127, 5, -5, 1], dtype=np.int8)),
+        fits.Column("u32", "J", bzero=2**31, array=np.array([0, 1, 2**32 - 1, 2**31, 3, 4], dtype=np.uint32)),
+        fits.Column("u8", "B", array=np.array([0, 1, 255, 128, 3, 4], dtype=np.uint8)),
+        fits.Column("flag", "L", array=np.array([True, False, True, True, False, False])),
+        fits.Column("bits", "11X", array=bits),
+        fits.Column("name", "16A", array=strings),
+        fits.Column("cplx", "C", array=(np.arange(n) + 1j * np.arange(n)[::-1]).astype(np.complex64)),
+        fits.Column("dcplx", "M", array=(np.arange(n) * 0.5 - 1j).astype(np.complex128)),
+        fits.Column("vec", "3E", array=np.arange(3 * n, dtype=np.float32).reshape(n, 3)),
+        fits.Column("mat", "6J", dim="(3,2)", array=np.arange(6 * n, dtype=np.int32).reshape(n, 2, 3)),
+        fits.Column("grid", "12A", dim="(4,3)", array=np.array([["ab", "cde", ""], ["f", "", "gh"], ["ij", "k", "l"]] * 2)),
+        fits.Column("scaled", "I", array=np.array([0, 1, -2, -200, 32, 3], dtype=np.int16)),
+        fits.Column("vla", "PJ()", array=vla),
+        fits.Column("vld", "QD()", array=vld),
+        fits.Column("vlt", "PA()", array=vlt),
+    ]
+    cat = fits.BinTableHDU.from_columns(cols, name="CAT")
+    asc = fits.TableHDU.from_columns(
+        [
+            fits.Column("id", "I5", array=np.array([1, -22, 333, 0, 99999, 7]), null="-1"),
+            fits.Column("x", "F8.3", array=np.array([1.5, -2.25, 0.0, 1000.125, 3.0, -0.5])),
+            fits.Column("y", "E12.4", array=np.array([1.5e10, -2.5e-3, 0.0, 6.0221e23, 1.0, 2.0])),
+            fits.Column("z", "D20.12", array=np.array([np.pi, -np.e, 0.0, 1e-300, 1.0, 2.0])),
+            fits.Column("s", "A10", array=np.array(["one", "two", "", "four", "five", "six"])),
+        ],
+        name="ASC",
+    )
+    fits.HDUList([fits.PrimaryHDU(), cat, asc]).writeto(path, overwrite=True)
+    # Values before scaling: TSCAL and TZERO enter the header afterwards, so
+    # the stored integers stay those given.
+    lines = []
+    with fits.open(path, uint=True) as hdul:
+        for hdu in hdul[1:]:
+            for col in hdu.columns:
+                v = hdu.data.field(col.name)
+                if col.name == "i8":
+                    v = v.astype(np.int64)
+                lines.append(" ".join([hdu.name + "." + col.name] + [cell_text(x) for x in flat(v)]))
+    with fits.open(path, mode="update") as hdul:
+        h = hdul["CAT"].header
+        h.insert("TFORM17", ("TSCAL17", 0.5), after=True)
+        h.insert("TSCAL17", ("TZERO17", 100.0), after=True)
+    # Checksums without a date: summed over the bytes as written.
+    data = bytearray(path.read_bytes())
+    with fits.open(path) as hdul:
+        spans = [(h.fileinfo()["hdrLoc"], h.fileinfo()["datLoc"], h.fileinfo()["datSpan"]) for h in hdul]
+    for hdr, dat, span in spans:
+        header = fits.Header.fromstring(bytes(data[hdr:dat]).decode("ascii"))
+        datasum = ones_complement(bytes(data[dat : dat + span]))
+        header["DATASUM"] = (str(datasum), "checksum")
+        header["CHECKSUM"] = ("0" * 16, "checksum")
+        text = header.tostring().encode("ascii")
+        assert len(text) == dat - hdr, "the checksum cards change the header's size"
+        total = ones_complement(text) + datasum
+        total = (total & 0xFFFFFFFF) + (total >> 32)
+        header["CHECKSUM"] = (checksum_text(0xFFFFFFFF - total), "checksum")
+        data[hdr:dat] = header.tostring().encode("ascii")
+    path.write_bytes(bytes(data))
+    path.with_suffix(".values").write_text("\n".join(lines) + "\n")
+
+
+def checksum_text(x):
+    """FITS 4.0 Appendix J's encoding of the 32-bit [x]."""
+    exclude = {0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60}
+    asc = [0] * 16
+    for i in range(4):
+        byte = (x >> (24 - 8 * i)) & 0xFF
+        q, r = byte // 4 + 0x30, byte % 4
+        ch = [q + r, q, q, q]
+        check = True
+        while check:
+            check = False
+            for e in sorted(exclude):
+                for j in (0, 2):
+                    if ch[j] == e or ch[j + 1] == e:
+                        ch[j] += 1
+                        ch[j + 1] -= 1
+                        check = True
+        for j in range(4):
+            asc[4 * j + i] = ch[j]
+    return "".join(chr(asc[(i + 15) % 16]) for i in range(16))
+
+
+def flat(v):
+    if isinstance(v, np.ndarray) and v.dtype == object:
+        out = []
+        for x in v:
+            if isinstance(x, str):
+                out.append(x)
+            elif isinstance(x, np.ndarray) and x.dtype.kind in "US":
+                plain = x.view(np.ndarray)
+                out.append(plain.tobytes().decode("ascii") if x.dtype.kind == "S" else "".join(plain.tolist()))
+            else:
+                out.extend(flat(np.asarray(x)))
+        return out
+    if isinstance(v, np.ndarray):
+        return list(v.ravel()) if v.dtype.kind != "U" and v.dtype.kind != "S" else [x for x in v.ravel()]
+    return [v]
+
+
+def cell_text(x):
+    if isinstance(x, (bytes, np.bytes_)):
+        x = x.decode("ascii")
+    if isinstance(x, (str, np.str_)):
+        return "s" + x.encode("ascii").hex()
+    if isinstance(x, (bool, np.bool_)):
+        return "T" if x else "F"
+    if isinstance(x, (complex, np.complexfloating)):
+        return float(x.real).hex() + "," + float(x.imag).hex()
+    if isinstance(x, (float, np.floating)):
+        return float(x).hex()
+    return str(int(x))
+
+
 def write_all(directory):
     images(directory / "images.fits")
     tiles(directory / "tiles.fits")
+    tables(directory / "tables.fits")
 
 
 def main():

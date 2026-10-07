@@ -383,4 +383,153 @@ module Fits : sig
         Raises [Invalid_argument] if [q] is not positive and finite, if [t] is
         not float32 or float64, or as {!hdu} does. *)
   end
+
+  (** {1:tables Tables} *)
+
+  (** Binary and ASCII tables.
+
+      A binary table ([BINTABLE]) is NAXIS2 rows of NAXIS1 bytes, then a heap of
+      variable-length arrays; an ASCII table ([TABLE]) is NAXIS2 lines of text
+      with fields at byte TBCOLn (FITS 4.0 §7). Both read through this module;
+      binary tables are written.
+
+      {b Columns.} TFORMn gives the element (L, X, A, B, I, J, K, E, D, C, M)
+      and the repeat; [rPT] and [rQT] make a {!Lists} column. TDIMn shapes the
+      cell, reversed into C order as NAXISn is; its product is at most the
+      repeat, the cell being the repeat's first product elements. TZEROn and
+      TSCALn follow the image rules: the unsigned offsets are types, anything
+      else makes the column scaled. A column read by name needs a unique TTYPEn.
+
+      {b Undefined elements.} An integer element equal to TNULLn, a NaN float or
+      complex part, and a logical byte other than [T] or [F] are undefined.
+      {!raw} returns the stored marker, NaN or [false] there, {!values} NaN, and
+      {!validity} says which.
+
+      {b Text.} An A cell's text is its bytes up to the first NUL with trailing
+      spaces dropped. A text grid reads as one list per string.
+
+      {b Rows.} [rows] is a [(start, stop)] range of rows; a read copies those
+      rows and, for heap columns, the spans their descriptors name. A range past
+      the table is an [Error]; [start < 0] or [start > stop] raises
+      [Invalid_argument].
+
+      {b ASCII tables.} [Aw] is text; [Iw] is the narrowest signed integer
+      holding every w-character integer ([int8] to w = 2, [int16] to 4, [int32]
+      to 9, [int64] beyond), and a field past int64 is an [Error] naming its
+      row; [Fw.d], [Ew.d] and [Dw.d] are float64, with §7.2.5's implied
+      decimals. A field equal to TNULLn padded to w is undefined, and a blank
+      numeric field is 0. *)
+  module Table : sig
+    (** The type for how a column reads: {!read} gives the {!data} case of the
+        same name. *)
+    type layout =
+      | Array of int array
+          (** a fixed cell of this shape, C order; [[||]] a scalar *)
+      | Lists  (** a heap array per row (P, Q) *)
+      | Text of int array
+          (** strings (A, PA, QA), a grid of this shape per row; [[||]] one *)
+
+    type column = {
+      name : string;  (** TTYPEn, [""] when absent *)
+      element : Nx_dtype.Scalar.t;
+          (** [Bool] for L, [Bit] for X, [UInt8] for A *)
+      layout : layout;
+      scaled : bool;  (** TSCAL or TZERO beyond the offsets *)
+      cards : Header.t;  (** the column's other keywords, number removed *)
+    }
+    (** The type for column descriptions. [TUNIT3 = 'deg'] is [TUNIT = 'deg'] in
+        column 3's [cards]. *)
+
+    type t
+    (** The type for a table's description: rows, columns, heap size. *)
+
+    val of_hdu : hdu -> (t, string) result
+    (** [of_hdu hdu] describes a [BINTABLE] or [TABLE] extension, a
+        tile-compressed image included. *)
+
+    val rows : t -> int
+    (** [rows t] is NAXIS2. *)
+
+    val columns : t -> column list
+    (** [columns t] is [t]'s columns in file order. *)
+
+    val pp : Format.formatter -> t -> unit
+    (** [pp] formats the kind, rows, columns and heap size, then one line per
+        column. *)
+
+    val raw :
+      ?rows:int * int ->
+      ('a, 'b) Nx.dtype ->
+      string ->
+      hdu ->
+      (('a, 'b) Nx.t, string) result
+    (** [raw ~rows dtype name hdu] is an {!Array} column's stored numbers, of
+        shape [[rows] @ cell], when [dtype] holds every value of its element:
+        [bool] for L, [bit] for X (most significant bit first), [complex64] or
+        [complex128] for C and M. *)
+
+    val values :
+      ?rows:int * int ->
+      (float, 'b) Nx.dtype ->
+      string ->
+      hdu ->
+      ((float, 'b) Nx.t, string) result
+    (** [values ~rows dtype name hdu] is a numeric {!Array} column's physical
+        values, NaN where undefined: on a scaled column [TZERO + TSCAL × s]
+        computed as one fma in float64, then cast once. *)
+
+    val ragged :
+      ?rows:int * int ->
+      ('a, 'b) Nx.dtype ->
+      string ->
+      hdu ->
+      (('a, 'b) Nx_ragged.t, string) result
+    (** [ragged ~rows dtype name hdu] is a {!Lists} column's stored numbers, or
+        a {!Text} column's bytes as [uint8], one list per cell. *)
+
+    val validity :
+      ?rows:int * int -> string -> hdu -> (Nx.bit_t option, string) result
+    (** [validity ~rows name hdu] is [false] where an element is undefined, in
+        {!raw}'s shape or the ragged elements'; [None] if none is. *)
+
+    val unit : string -> hdu -> (Ymir_units.Unit.t option, string) result
+    (** [unit name hdu] is the column's TUNITn, parsed as {!unit} parses BUNIT.
+    *)
+
+    type data =
+      | Array of { values : Nx.packed; validity : Nx.bit_t option }
+      | Lists : {
+          values : ('a, 'b) Nx_ragged.t;
+          validity : Nx.bit_t option;
+        }
+          -> data
+      | Text of (int, Nx.uint8_elt) Nx_ragged.t
+          (** The type for a column's data. *)
+
+    val read :
+      ?rows:int * int -> hdu -> ((string * Header.t * data) list, string) result
+    (** [read ~rows hdu] is every column in one pass over the rows, in file
+        order, with its name and cards, in the dtype its description names: its
+        element's, or float64 when scaled. *)
+
+    val hdu :
+      Header.t -> (string * Header.t * data) list -> (hdu, string) result
+    (** [hdu h columns] is a [BINTABLE] of [columns] in order, with [h]'s cards
+        that are neither structural nor column-numbered. [bool] is written as L
+        and [bit] as X, other dtypes as their image elements, complex as C and
+        M, {!Lists} as [1PT] or [1QT] (Q when the heap passes 2{^ 31} − 1
+        bytes), and {!Text} as [wA] padded with spaces. Each column's [cards]
+        are numbered. An integer column gets a TNULLn only when its validity
+        marks a cell undefined: the stored type's minimum unless a valid cell
+        holds it, then the least stored value none holds. Undefined float and
+        complex cells are written NaN.
+
+        It is an [Error] naming the column for an integer column whose valid
+        cells hold every stored value, and naming the row for text with a byte
+        outside ASCII 32–126 or a trailing space, which reading would drop.
+
+        Raises [Invalid_argument] for a dtype FITS has no column of, columns of
+        different row counts, a validity on [bit] data, or a column card FITS
+        cannot number. *)
+  end
 end

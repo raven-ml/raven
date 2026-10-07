@@ -62,6 +62,7 @@ let holders : S.t -> S.t list = function
   | UInt64 -> [ UInt64 ]
   | Float32 -> [ Float32; Float64; Complex64; Complex128 ]
   | Float64 -> [ Float64; Complex128 ]
+  | Complex64 -> [ Complex64; Complex128 ]
   | s -> [ s ]
 
 let is_complex : S.t -> bool = function
@@ -374,13 +375,15 @@ let stored t hdu bounds : Nx.packed =
 
 (* The stored numbers as the element: the offsets of Table 11 added, modulo
    the width, which flips the sign bit. *)
-let as_element t (Nx.P s) : Nx.packed =
-  match (t.element, Nx.dtype s) with
+let with_offset element (Nx.P s) : Nx.packed =
+  match ((element : S.t), Nx.dtype s) with
   | Int8, UInt8 -> Nx.P (Nx.add_s (Nx.bitcast Nx.int8 s) (-128))
   | UInt16, Int16 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint16 s) 32768)
   | UInt32, Int32 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint32 s) Int32.min_int)
   | UInt64, Int64 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint64 s) Int64.min_int)
   | _ -> Nx.P s
+
+let as_element t s = with_offset t.element s
 
 let raw (type a b) ?window (dtype : (a, b) Nx.dtype) hdu :
     ((a, b) Nx.t, string) result =
