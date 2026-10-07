@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------
-  Copyright (c) 2026 The Raven authors. All rights reserved.
-  SPDX-License-Identifier: ISC
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
 /* A driver's submission, reduced to its stores: 1024 stores through

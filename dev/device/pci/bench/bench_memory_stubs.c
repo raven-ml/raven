@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------
-  Copyright (c) 2026 The Raven authors. All rights reserved.
-  SPDX-License-Identifier: ISC
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
 /* The transport of the memory bench's machine. Its windows are mapped, so

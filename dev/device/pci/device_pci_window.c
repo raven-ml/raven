@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------
-  Copyright (c) 2026 The Raven authors. All rights reserved.
-  SPDX-License-Identifier: ISC
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
 /* Windows: accesses to mapped ranges, calls of transports, and the C entry
