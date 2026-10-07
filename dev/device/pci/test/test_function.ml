@@ -1422,7 +1422,7 @@ let reserved_base = 0x6d00_0000_0000
 
 let test_contiguous () =
   with_fixture @@ fun f ->
-  granted (Machine.reserve Machine.this ~base:reserved_base (8 * mib));
+  granted (Machine.reserve (Function.machine f) ~base:reserved_base (8 * mib));
   let va = reserved_base + (2 * mib) in
   let w, runs =
     granted (Function.alloc_dma ~contiguous:true ~va f (300 * kib))
