@@ -318,7 +318,7 @@
  (dir packages/norn)
  (synopsis "Probabilistic inference for OCaml")
  (description
-  "Bayesian inference over the user's own structures: distributions, bijectors, a typed model language, samplers batched over chains, Gaussian approximations, draws and diagnostics. Built on Nx and Rune.")
+  "Bayesian inference over the user's own structures: distributions, bijectors, a model language of generative functions, NUTS, HMC and ensemble samplers batched over chains, nested sampling and tempered SMC for the evidence, Gaussian approximations, draws and diagnostics. Built on Nx, Rune and Jera.")
  (depends
   (ocaml
    (>= 5.2.0))
