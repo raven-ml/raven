@@ -10,6 +10,17 @@
 open Windtrap
 open Device_amd_abi
 
+let gpu target =
+  {
+    Gpu.target;
+    gc = target;
+    sdma = (6, 0, 0);
+    xccs = 1;
+    shader_engines = 6;
+    compute_units = 48;
+    scratch_slots = 32;
+  }
+
 let fixture name =
   In_channel.with_open_bin
     ("../../../elf/test/fixtures/" ^ name)
@@ -61,7 +72,8 @@ let reading =
           let co = code_object "amd_gfx1100.hsaco" in
           equal string "gfx1100" (Code_object.target co);
           equal (pair bool bool) (true, false)
-            (Code_object.runs_on co "gfx1100", Code_object.runs_on co "gfx1101"));
+            ( Code_object.runs_on co (gpu (11, 0, 0)),
+              Code_object.runs_on co (gpu (11, 0, 1)) ));
       test "an absent kernel is none" (fun () ->
           is_none (Code_object.kernel (code_object "amd_gfx1100.hsaco") "sub"));
     ]

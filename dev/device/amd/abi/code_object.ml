@@ -193,7 +193,8 @@ let patches co = co.patches
 let kernels co = List.map fst co.kernels
 let kernel co name = List.assoc_opt name co.kernels
 
-let runs_on co gpu =
+let runs_on co g =
+  let gpu = Gpu.processor g in
   String.equal co.target gpu
   || List.exists
        (fun (g, members) -> String.equal g co.target && List.mem gpu members)

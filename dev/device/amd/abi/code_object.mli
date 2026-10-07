@@ -54,10 +54,10 @@ val target : t -> string
 (** [target co] is the processor [co] is compiled for, as LLVM names it: a GPU,
     such as ["gfx1201"], or a generic processor, such as ["gfx12-generic"]. *)
 
-val runs_on : t -> string -> bool
-(** [runs_on co gpu] is [true] iff the GPU named [gpu] ({!Gpu.processor}) runs
-    [co]: [co] is compiled for [gpu], or for a generic processor that LLVM lists
-    [gpu] under. *)
+val runs_on : t -> Gpu.t -> bool
+(** [runs_on co g] is [true] iff [g] runs [co]: [co] is compiled for
+    {!Gpu.processor}[ g], or for a generic processor that LLVM lists it under.
+*)
 
 val size : t -> int
 (** [size co] is the length of [co]'s image, in bytes: [(elf co).size] rounded
