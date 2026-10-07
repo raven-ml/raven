@@ -337,6 +337,12 @@ let quant () =
   in
   (("host", host) :: metal ()) @ gpu
 
+(* A GPU case times its calls only: a GPU buffer's release allocates when the
+   collector finalises it, so a call's count depends on the collection's phase.
+   Its allocation is measured again once nx.device's release path allocates
+   nothing. *)
+let gpu_metrics = [ Thumper.Metric.wall_time ]
+
 let bench c =
   Thumper.bench_with_setup ~setup:c.setup c.name (fun call -> call ())
 
@@ -357,7 +363,11 @@ let () =
           Thumper.group "Gpt2" (List.map bench gpt2);
           Thumper.group "Quant"
             (List.map
-               (fun (name, cases) -> Thumper.group name (List.map bench cases))
+               (fun (name, cases) ->
+                 let metrics =
+                   if name = "host" then None else Some gpu_metrics
+                 in
+                 Thumper.group ?metrics name (List.map bench cases))
                (quant ()));
         ]
       |> exit
