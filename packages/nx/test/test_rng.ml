@@ -414,8 +414,15 @@ let components =
           (Gen.array ~size:(Gen.int_range 0 2) (Gen.int_range 0 3))
           (Gen.int_range 2 4)))
 
+(* Finite logits, half of them masked by -inf. *)
+let masked =
+  Gen.frequency [ (1, Gen.float_range (-5.) 5.); (1, chosen [ neg_infinity ]) ]
+
 (* Logits of a float dtype that categorical takes, every one but float8, and an
-   axis to draw along. *)
+   axis to draw along. Half the tensors are [masked]: a lane of [n >= 2] logits,
+   drawn with probability 3/4, then holds -inf beside a finite logit with
+   probability [1 - 2 ** (1 - n) >= 1/2], so 100 cases miss that case with
+   probability [(13/16) ** 100 < 1e-9]. *)
 let logits_along =
   Gen.with_pp
     (fun ppf (P t, axis) ->
@@ -424,7 +431,8 @@ let logits_along =
     (let open Gen in
      let shape = array ~size:(int_range 1 3) (int_range 1 4) in
      let wide = List.filter (fun (F d) -> significand d > 4) floatings in
-     let* (P t) = param ~dtypes:wide ~shape logit in
+     let* masks = bool in
+     let* (P t) = param ~dtypes:wide ~shape (if masks then masked else logit) in
      let+ axis = int_range (-Nx.ndim t) (Nx.ndim t - 1) in
      (P t, axis))
 
