@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* The library's initialisation, measured between the initialisers of the probes
-   linked around it (support/dune): its tables are static data, and the one
-   value it computes is Gpu.key. *)
+   linked around it (support/dune): its tables are static data, and what it
+   allocates are the identities the language makes when a module starts:
+   Gpu.key, and the exception Packet.template stops at a hole with. *)
 
 open Windtrap
 module B = Device_nv_abi_before
@@ -22,15 +23,19 @@ let key_words () =
   let c = B.allocated () in
   c -. b -. (b -. a)
 
+let exception_words () =
+  let a = B.allocated () in
+  let b = B.allocated () in
+  let exception E in
+  ignore (Sys.opaque_identity E);
+  let c = B.allocated () in
+  c -. b -. (b -. a)
+
 let tests =
   group ~timeout:10. "initialisation"
     [
-      xfail
-        ~reason:
-          "Method computes interrupt at initialisation: 8 words besides \
-           Gpu.key's 5"
-        (test "initialising the library allocates only Gpu.key" (fun () ->
-             equal float_exact (key_words ()) init));
+      test "initialising the library allocates only its identities" (fun () ->
+          equal float_exact (key_words () +. exception_words ()) init);
     ]
 
 let () = exit (run "device_nv_abi.init" [ tests ])

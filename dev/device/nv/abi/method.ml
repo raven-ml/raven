@@ -64,7 +64,10 @@ let release_stamp s addr v =
     lor set D.nvc56f_sem_execute_release_timestamp
           D.nvc56f_sem_execute_release_timestamp_en)
 
-let interrupt = methods host D.nvc56f_non_stall_interrupt [ Dword 0 ]
+(* NON_STALL_INTERRUPT (0x20), one word on the host's subchannel. Its header is
+   written out, 0x20010008 by [methods]'s rule, so that the value is static data
+   the library builds nothing for at initialisation. *)
+let interrupt = [ Dword 0x2001_0008; Dword 0 ]
 
 (* Compute *)
 
