@@ -4,7 +4,6 @@
  (private_modules defs repr)
  (modules_without_implementation
   cubin
-  gpfifo
   launch
   local
   qmd

@@ -1,4 +1,4 @@
 (tests
- (names test_packet test_method)
- (modules test_packet test_method)
+ (names test_packet test_method test_gpfifo)
+ (modules test_packet test_method test_gpfifo)
  (libraries device_nv_abi windtrap))
