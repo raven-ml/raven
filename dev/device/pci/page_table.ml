@@ -40,6 +40,19 @@ type mapping = {
   snooped : bool;
 }
 
+(* The GPU's page: what the leaf level maps, and the unit of a fragment. *)
+let page_bits = 12
+let page = 1 lsl page_bits
+
+(* Tables by physical address, a multiple of a page: its page number hashes it,
+   cheaper than the generic hash that a walk would pay at each table. *)
+module Held = Hashtbl.Make (struct
+  type t = int
+
+  let equal = Int.equal
+  let hash pa = pa lsr page_bits
+end)
+
 type t = {
   fmt : format;
   space : Space.t;
@@ -49,16 +62,13 @@ type t = {
   tables : Tlsf.t; (* empty unless the tables have a pool *)
   main : Tlsf.t;
   pages : (int * int) list; (* block sizes and alignments, largest first *)
-  held : (int, unit) Hashtbl.t; (* the tables in use, the root among them *)
+  held : int ref Held.t;
+      (* the tables in use, the root among them, and their valid entries *)
   mutable booting : bool;
   root : int;
   base : int;
   memory : int;
 }
-
-(* The GPU's page: what the leaf level maps, and the unit of a fragment. *)
-let page_bits = 12
-let page = 1 lsl page_bits
 
 (* A table pool per GPU memory of this many bytes, rounded up to
    [table_round]. *)
@@ -70,6 +80,10 @@ let aligned x a = x land (a - 1) = 0
 
 (* A table that cannot be allocated, inside a walk. *)
 exception No_room
+
+(* A map that ran out of tables at this address: it wrote the entries below it
+   and none from it on. *)
+exception Stopped of int
 
 (* Physical memory *)
 
@@ -108,7 +122,7 @@ let pfree t pa =
     invalid_arg (Printf.sprintf "Page_table.pfree: no block at 0x%x" pa)
   in
   let inside a = pa >= Tlsf.base a && pa < Tlsf.base a + Tlsf.length a in
-  if Hashtbl.mem t.held pa then refuse ();
+  if Held.mem t.held pa then refuse ();
   match List.find_opt inside [ t.boot; t.tables; t.main ] with
   | Some a -> ( try Tlsf.free a pa with Invalid_argument _ -> refuse ())
   | None -> refuse ()
@@ -126,7 +140,7 @@ let new_table t =
   match take t (pool t ~table:true) page with
   | None -> raise No_room
   | Some pa ->
-      Hashtbl.replace t.held pa ();
+      Held.replace t.held pa (ref 0);
       pa
 
 (* Whether the valid entry [e] at depth [d] maps a page: every one of the last
@@ -137,13 +151,10 @@ let invalid_entry t level =
   t.fmt.encode ~level ~table:false Gpu ~uncached:false ~snooped:false
     ~fragment:0 ~valid:false 0
 
-let empty t d table =
-  let level = level t d in
-  let rec go i =
-    i = t.counts.(d)
-    || ((not (t.fmt.valid (t.fmt.get ~level ~table i))) && go (i + 1))
-  in
-  go 0
+(* The number of valid entries of [table]. Kept as entries are written and
+   cleared, it tells that a table is empty without reading its entries, each a
+   read across the bus. *)
+let entries t table = Held.find t.held table
 
 (* The table entry [i] of [table], at depth [d], points to, made if missing. *)
 let child t d table i =
@@ -154,6 +165,7 @@ let child t d table i =
     t.fmt.set ~level ~table i
       (t.fmt.encode ~level ~table:true Gpu ~uncached:false ~snooped:false
          ~fragment:0 ~valid:true pa);
+    incr (entries t table);
     pa
   end
   else if is_page t d e then
@@ -266,45 +278,61 @@ let entry t r d v =
    each table is read once. The last level's entries are all whole pages. *)
 let rec write t d table ~at lo hi r =
   let level = level t d and c = covers t d in
-  if d = bottom t then
+  if d = bottom t then begin
     for i = (lo - at) / c to ((hi - at) / c) - 1 do
       let v = at + (i * c) in
       seek r v;
       t.fmt.set ~level ~table i (entry t r d v)
-    done
+    done;
+    let n = entries t table in
+    n := !n + ((hi - lo) / c)
+  end
   else
     each t d ~at lo hi @@ fun i at lo hi ->
     seek r lo;
     let whole =
       lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
     in
-    if whole && t.fmt.large ~level then
-      t.fmt.set ~level ~table i (entry t r d lo)
-    else write t (d + 1) (child t d table i) ~at lo hi r
+    if whole && t.fmt.large ~level then begin
+      t.fmt.set ~level ~table i (entry t r d lo);
+      incr (entries t table)
+    end
+    else
+      match child t d table i with
+      | child -> write t (d + 1) child ~at lo hi r
+      | exception No_room -> raise (Stopped lo)
 
-(* Clears the entries of [lo, hi) and frees the tables it empties. The last
-   level's entries are cleared unread: each is a page or invalid. *)
+(* Clears the entries of [lo, hi) and frees the tables it empties: [true] iff
+   [table] is then empty. The last level's entries are cleared unread: each maps
+   a page. *)
 let rec clear t d table ~at lo hi =
-  let level = level t d and c = covers t d in
+  let level = level t d and c = covers t d and n = entries t table in
   let none = invalid_entry t level in
-  if d = bottom t then
+  if d = bottom t then begin
     for i = (lo - at) / c to ((hi - at) / c) - 1 do
       t.fmt.set ~level ~table i none
-    done
-  else
+    done;
+    n := !n - ((hi - lo) / c)
+  end
+  else begin
     each t d ~at lo hi @@ fun i at lo hi ->
     let e = t.fmt.get ~level ~table i in
     if not (t.fmt.valid e) then ()
-    else if t.fmt.leaf ~level e then t.fmt.set ~level ~table i none
+    else if t.fmt.leaf ~level e then begin
+      t.fmt.set ~level ~table i none;
+      decr n
+    end
     else begin
       let child = t.fmt.address e in
-      clear t (d + 1) child ~at lo hi;
-      if empty t (d + 1) child then begin
+      if clear t (d + 1) child ~at lo hi then begin
         t.fmt.set ~level ~table i none;
-        Hashtbl.remove t.held child;
+        decr n;
+        Held.remove t.held child;
         pfree t child
       end
     end
+  end;
+  !n = 0
 
 (* Page tables *)
 
@@ -352,8 +380,8 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
   in
   if base < 0 || not (aligned base (largest 0)) then
     invalid_arg (Printf.sprintf "Page_table.create: base 0x%x off a page" base);
-  let held = Hashtbl.create 64 in
-  Hashtbl.replace held root ();
+  let held = Held.create 64 in
+  Held.replace held root (ref 0);
   {
     fmt;
     space;
@@ -395,7 +423,12 @@ let tables t ~va n =
     let c = covers t d in
     let i = (v lsr t.shifts.(d)) land (t.counts.(d) - 1) in
     if d = bottom t || (t.fmt.large ~level:(level t d) && c <= n && aligned v c)
-    then List.rev (table :: path)
+    then begin
+      (* The caller may write entries of [table] that its count does not see:
+         one more keeps it, and so its path, from being freed. *)
+      incr (entries t table);
+      List.rev (table :: path)
+    end
     else go (d + 1) (child t d table i) (table :: path)
   in
   match go 0 t.root [] with path -> Some path | exception No_room -> None
@@ -404,7 +437,7 @@ let unmap t ~va n =
   check t "unmap" ~va n;
   let lo = va - t.base in
   mapped t 0 t.root ~at:0 lo (lo + n);
-  clear t 0 t.root ~at:0 lo (lo + n);
+  ignore (clear t 0 t.root ~at:0 lo (lo + n));
   t.fmt.flush ()
 
 let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
@@ -437,10 +470,10 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
   | () ->
       t.fmt.flush ();
       Some { va; size; pages = ranges; target; uncached; snooped }
-  | exception No_room ->
-      (* The range was unmapped: clearing all of it removes what was written and
-         the tables made for it. *)
-      clear t 0 t.root ~at:0 lo (lo + size);
+  | exception Stopped v ->
+      (* Clearing up to the page at [v] also frees the tables made on the way to
+         it, which hold nothing. *)
+      ignore (clear t 0 t.root ~at:0 lo (v + page));
       t.fmt.flush ();
       None
 

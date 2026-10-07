@@ -186,8 +186,9 @@ val map :
 val tables : t -> va:int -> int -> int list option
 (** [tables t ~va n] is the physical addresses of the tables from the root down
     to the one whose entries would map the [n] bytes from [va], root first,
-    creating those that are missing as {!map} would. [None] if the GPU's memory
-    has no room for one, keeping those it made.
+    creating those that are missing as {!map} would. They are never freed: the
+    caller may write the entries that map those bytes itself. [None] if the
+    GPU's memory has no room for one, keeping those it made.
 
     Raises [Invalid_argument] if the range is not as {!map} requires, or a page
     larger than [n] bytes maps [va]. *)

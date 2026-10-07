@@ -603,6 +603,83 @@ let test_mixed_unmap () =
     (snd (walk g t));
   equal ~msg:"the tables went back to the pool" int free (capacity t)
 
+(* Pages of 4 KiB at three places in two 2 MiB regions, and a 2 MiB page, in
+   each of two 1 GiB regions: slots [(g, m, Some p)] and [(g, 2, None)]. Some of
+   them, mapped one by one and unmapped in any order. *)
+let slots =
+  List.concat_map
+    (fun g ->
+      (g, 2, None)
+      :: List.concat_map
+           (fun m -> List.map (fun p -> (g, m, Some p)) [ 0; 1; 511 ])
+           [ 0; 1 ])
+    [ 0; 1 ]
+
+let pp_slot ppf (g, m, p) =
+  match p with
+  | Some p -> Format.fprintf ppf "page %d of 2 MiB %d of 1 GiB %d" p m g
+  | None -> Format.fprintf ppf "2 MiB %d of 1 GiB %d" m g
+
+let unmap_orders =
+  let pp_slots = Format.pp_print_list ~pp_sep:Format.pp_print_space pp_slot in
+  let pp ppf (mapped, order) =
+    Format.fprintf ppf "@[<v>mapped @[%a@]@,unmapped @[%a@]@]" pp_slots mapped
+      pp_slots order
+  in
+  let open Gen in
+  with_pp pp
+    (let* mapped = subsequence ~pp:pp_slot slots in
+     let+ order = permutation ~pp:pp_slot mapped in
+     (mapped, order))
+
+(* The tables that the mapped slots need: the root, a table under it, one per 1
+   GiB region and one per 2 MiB region of 4 KiB pages. *)
+let needed mapped =
+  let count l = List.length (List.sort_uniq compare l) in
+  let regions = count (List.map (fun (g, _, _) -> g) mapped) in
+  let tables =
+    count
+      (List.filter_map (fun (g, m, p) -> Option.map (fun _ -> (g, m)) p) mapped)
+  in
+  1 + Int.min 1 regions + regions + tables
+
+(* A table is freed when the last entry under it is cleared, and not before; an
+   unmap reads no table whole: it touches a few entries a level. *)
+let test_last_entry =
+  prop "a table is freed exactly when its last entry goes" ~count:200
+    unmap_orders (fun (mapped, order) ->
+      let t, g = tables ~memory:(4 * mib) () in
+      let free = capacity t in
+      let va (gi, m, p) =
+        base + (gi * gib) + (m * 2 * mib) + (Option.value p ~default:0 * page)
+      in
+      let size (_, _, p) = if Option.is_some p then page else 2 * mib in
+      List.iteri
+        (fun i s ->
+          ignore
+            (require_some
+               (Page_table.map t ~va:(va s) System [ (i * 2 * mib, size s) ])))
+        mapped;
+      equal ~msg:"tables mapped" int (needed mapped)
+        (List.length (snd (walk g t)));
+      let rec go left = function
+        | [] -> ()
+        | s :: rest ->
+            let left = List.filter (( <> ) s) left in
+            let touches = g.touches in
+            Page_table.unmap t ~va:(va s) (size s);
+            less ~msg:"entries the unmap touched" int ~than:(4 * 4)
+              (g.touches - touches);
+            cover "an unmap that frees a table"
+              (needed left < needed (s :: left));
+            cover "an unmap that frees none" (needed left = needed (s :: left));
+            equal ~msg:"tables left" int (needed left)
+              (List.length (snd (walk g t)));
+            go left rest
+      in
+      go mapped order;
+      equal ~msg:"the tables went back to the pool" int free (capacity t))
+
 (* The tables of an address *)
 
 let test_tables_path =
@@ -625,7 +702,9 @@ let test_tables_path =
         (require_some (Page_table.tables t ~va n));
       equal ~msg:"tables made, nothing mapped" (list entry) [] (pages g t);
       ignore (require_some (Page_table.map t ~va System [ (offset, n) ]));
-      equal ~msg:"the tables map uses" (list hex) path (snd (walk g t)))
+      equal ~msg:"the tables map uses" (list hex) path (snd (walk g t));
+      Page_table.unmap t ~va n;
+      equal ~msg:"never freed" (list hex) path (snd (walk g t)))
 
 (* Real formats *)
 
@@ -1145,6 +1224,7 @@ let () =
                test_gib_pages;
              test "a 2 MiB page spans ranges that follow each other"
                test_page_across_ranges;
+             test_last_entry;
              test_fragments;
              test_fragment_cases;
              test "fragments align in the space's addresses"

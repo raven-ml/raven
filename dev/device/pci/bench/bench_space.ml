@@ -11,7 +11,8 @@
    allocation and a free take a time bounded independently of what the space
    holds, so the two columns match. [space/churn] allocates and frees ranges of
    mixed sizes in a fresh space. [page-table/map-unmap] maps physical memory
-   next to a resident page and unmaps it, or 16 MiB of one-page runs;
+   next to a resident page and unmaps it, or 16 MiB of one-page runs, or a page
+   where no table is, making three tables and freeing them;
    [page-table/alloc-free] is the whole allocation: addresses, physical memory,
    mapping. The page tables live in a buffer, in a format whose entries hold the
    address, bit 0 valid and bit 1 a table. *)
@@ -223,8 +224,14 @@ let page_table_rows =
     let va = Thumper.black_box (va + runs_size) in
     Thumper.bench_with_setup ~setup "16MiB-pages" (fun t -> map_unmap_runs t va)
   in
+  (* 512 GiB on, under another entry of the root. *)
+  let tables_row =
+    let va = Thumper.black_box (va + (512 * gib)) in
+    Thumper.bench_with_setup ~setup "4KiB-tables" (fun t ->
+        map_unmap t va (4 * kib) pa)
+  in
   [
-    Thumper.group "map-unmap" (List.map map_row maps @ [ runs_row ]);
+    Thumper.group "map-unmap" (List.map map_row maps @ [ runs_row; tables_row ]);
     Thumper.group "alloc-free" (List.map alloc_row maps);
   ]
 
