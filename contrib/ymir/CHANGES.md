@@ -12,6 +12,10 @@ All notable changes to Ymir are documented in this file.
   names, with windows that read only the rows they cover; `Fits.Image.hdu`
   and `Fits.write` write images whose structure, `DATASUM` and `CHECKSUM`
   the writer computes, and `Fits.verify` checks them.
+- `Fits.Image` reads tile-compressed images (Rice, gzip, uncompressed and
+  quantized tiles under every dither) as it reads plain ones, decoding only
+  the tiles a window meets; HCOMPRESS and PLIO tiles are an `Error` naming
+  funpack.
 - `Ymir.Frame` names the fixed celestial frames, ICRS, FK5 at J2000, Galactic,
   the J2000 ecliptic and supergalactic, with one value per frame type.
   `Frame.matrix` converts between any two from their standards' orientations,

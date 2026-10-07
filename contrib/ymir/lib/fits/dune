@@ -10,5 +10,9 @@
   checksum
   hdu
   structure
+  bintable
+  rice
+  quantize
+  tiles
   image
   files))

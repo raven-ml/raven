@@ -126,7 +126,7 @@ let to_big_endian (type a b) (t : (a, b) Nx.t) : B.t =
 
 (* Descriptions *)
 
-type storage = Plain
+type storage = Plain | Tiled of Tiles.t
 
 type t = {
   place : Err.place;
@@ -154,7 +154,15 @@ let pp ppf t =
     Format.fprintf ppf ", scaled (BSCALE %s, BZERO %s)"
       (Value.print_float t.bscale)
       (Value.print_float t.bzero);
-  Option.iter (fun b -> Format.fprintf ppf ", BLANK %Ld" b) t.blank
+  Option.iter (fun b -> Format.fprintf ppf ", BLANK %Ld" b) t.blank;
+  match t.storage with
+  | Plain -> ()
+  | Tiled tl ->
+      Format.fprintf ppf ", %s tiles %a"
+        (Tiles.codec_name tl.codec)
+        pp_shape
+        (Array.of_list (List.rev (Array.to_list tl.tile)));
+      if tl.quantized then Format.fprintf ppf ", quantized (%s)" tl.dither_name
 
 let max_rank = 32
 
@@ -194,10 +202,10 @@ let stored_range bitpix =
   | 32 -> (Int64.of_int32 Int32.min_int, Int64.of_int32 Int32.max_int)
   | _ -> (Int64.min_int, Int64.max_int)
 
-let blank_of h bitpix =
+let blank_of h key bitpix =
   if bitpix < 0 then None
   else
-    match Header.find_struct Value.text "BLANK" h with
+    match Header.find_struct Value.text key h with
     | Error e -> fail "%s" e
     | Ok None -> None
     | Ok (Some t) ->
@@ -228,11 +236,10 @@ let blank_of h bitpix =
             bitpix lo hi;
         Some v
 
-(* [describe h] is the description of the image whose structure [h] holds:
-   the keywords of a plain image. *)
-let describe_plain place h =
-  let bitpix = Hdu.bitpix h in
-  let axes = Hdu.naxes h in
+(* [describe place h ~bitpix ~axes ~blank storage] is the description of an
+   image of [bitpix] and [axes] (in file order), scaled by [h]'s BSCALE and
+   BZERO. *)
+let describe place h ~bitpix ~axes ~blank storage =
   if Array.length axes = 0 then
     fail_at place "NAXIS = 0: the HDU holds no image";
   if Array.length axes > max_rank then
@@ -249,30 +256,36 @@ let describe_plain place h =
       | Some (off, e) when one && Decimal.equal bzero_t off -> (e, false)
       | _ -> (own_element bitpix, true)
   in
-  {
-    place;
-    shape;
-    bitpix;
-    element;
-    scaled;
-    bscale;
-    bzero;
-    blank = blank_of h bitpix;
-    storage = Plain;
-  }
+  { place; shape; bitpix; element; scaled; bscale; bzero; blank; storage }
 
 let of_hdu hdu =
   catch (fun () ->
       let h = Hdu.header hdu in
       let place = Hdu.place hdu in
+      let plain () =
+        let bitpix = Hdu.bitpix h in
+        describe place h ~bitpix ~axes:(Hdu.naxes h)
+          ~blank:(blank_of h "BLANK" bitpix)
+          Plain
+      in
       match
         Hdu.kind_of (Header.find_struct Value.string "XTENSION" h = Ok None) h
       with
       | Primary { groups = true }
         when match Hdu.naxes h with [||] -> false | a -> a.(0) = 0 ->
           fail_at place "random groups are no image; Fits.data reads the bytes"
-      | Primary _ -> describe_plain place h
-      | Extension "IMAGE" -> describe_plain place h
+      | Primary _ | Extension "IMAGE" -> plain ()
+      | Extension "BINTABLE"
+        when Hdu.find_struct h Value.bool "ZIMAGE" = Some true ->
+          let t = Tiles.describe h (Hdu.store hdu) in
+          let blank =
+            if t.zbitpix < 0 then None
+            else
+              match blank_of h "BLANK" t.zbitpix with
+              | Some b -> Some b
+              | None -> blank_of h "ZBLANK" t.zbitpix
+          in
+          describe place h ~bitpix:t.zbitpix ~axes:t.axes ~blank (Tiled t)
       | Extension x -> fail_at place "a %s extension is no image" x)
 
 (* Windows *)
@@ -357,6 +370,7 @@ let stored t hdu bounds : Nx.packed =
       let host, out = read_plain t (Hdu.store hdu) bounds in
       let (Nx.P z) = stored_dtype t.bitpix in
       Nx.P (of_big_endian (Nx.dtype z) out host)
+  | Tiled tiles -> Tiles.read tiles bounds
 
 (* The stored numbers as the element: the offsets of Table 11 added, modulo
    the width, which flips the sign bit. *)

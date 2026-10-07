@@ -21,7 +21,7 @@ type t = {
   name : string;  (** the file's path, [of_bytes]'s name, or [""] *)
   index : int;  (** position in the file; [0] for a constructed HDU *)
   digest : string Lazy.t;  (** of the file's headers *)
-  header : Header.t;
+  header : Header.t Lazy.t;
   data : store Lazy.t;
   header_bytes : (int * int) option;  (** a read HDU's header, in [buffer] *)
   slabs : slabs option;
@@ -33,10 +33,10 @@ type t = {
    in order. *)
 and slabs = { write : (B.t -> unit) -> unit }
 
-let header h = h.header
+let header h = Lazy.force h.header
 let name h = h.name
 let digest h = Lazy.force h.digest
-let place h = Header.place h.header
+let place h = Header.place (header h)
 
 (* Host bytes *)
 
@@ -225,7 +225,7 @@ let walk ~name src =
         name;
         index;
         digest;
-        header;
+        header = Lazy.from_val header;
         data = Lazy.from_val store;
         header_bytes = Some hb;
         slabs = None;
@@ -263,12 +263,12 @@ let data h =
 (* Lookup *)
 
 let extname h =
-  match Header.find_struct Value.string "EXTNAME" h.header with
+  match Header.find_struct Value.string "EXTNAME" (header h) with
   | Ok (Some n) -> Some n
   | _ -> None
 
 let extver h =
-  match Header.find_struct Value.int "EXTVER" h.header with
+  match Header.find_struct Value.int "EXTVER" (header h) with
   | Ok (Some v) -> v
   | _ -> 1
 
@@ -311,19 +311,29 @@ let get ?ver name hdus =
 let header_digest header =
   lazy
     ("blake2b-256:"
-    ^ Digest.BLAKE256.to_hex (Digest.BLAKE256.string (Header.to_string header))
-    )
+    ^ Digest.BLAKE256.to_hex
+        (Digest.BLAKE256.string (Header.to_string (Lazy.force header))))
 
-let constructed ?slabs header data =
-  let header = Header.with_place (hdu_place "" 0 header) header in
+(* [constructed_lazy encoded] is the HDU whose header and data [encoded]
+   computes when first asked, as a tiled image's whose PCOUNT is its
+   compressed size. *)
+let constructed_lazy ?slabs encoded =
+  let header =
+    lazy
+      (let h, _ = Lazy.force encoded in
+       Header.with_place (hdu_place "" 0 h) h)
+  in
   {
     name = "";
     index = 0;
     digest = header_digest header;
     header;
-    data;
+    data = lazy (snd (Lazy.force encoded));
     header_bytes = None;
     slabs;
   }
+
+let constructed ?slabs header data =
+  constructed_lazy ?slabs (lazy (header, Lazy.force data))
 
 let host_store b = { buffer = b; offset = 0; size = B.nbytes b }

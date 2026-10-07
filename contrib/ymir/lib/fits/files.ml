@@ -91,7 +91,7 @@ let groups records structural =
    first, each other one where [h] holds that keyword, and one [h] lacks
    after the structural record it followed in [hdu]. *)
 let with_header h (hdu : Hdu.t) =
-  let owned = owned_by hdu.header in
+  let owned = owned_by (Hdu.header hdu) in
   let structural k =
     owned k || Structure.mandatory k || Structure.checksums k
   in
@@ -104,7 +104,7 @@ let with_header h (hdu : Hdu.t) =
       | _ -> ())
     theirs;
   let prefix, groups =
-    groups (Array.of_list (Header.records hdu.header)) structural
+    groups (Array.of_list (Header.records (Hdu.header hdu))) structural
   in
   (* Each present group carries the absent ones that follow it; absent ones
      before every present one follow the prefix. *)
@@ -140,7 +140,7 @@ let with_header h (hdu : Hdu.t) =
   let header =
     Header.with_place (Hdu.hdu_place hdu.name hdu.index header) header
   in
-  { hdu with header; header_bytes = None }
+  { hdu with header = Lazy.from_val header; header_bytes = None }
 
 (* Checksums *)
 
@@ -225,11 +225,11 @@ let stated_datasum h =
 let header_bytes (hdu : Hdu.t) =
   match hdu.header_bytes with
   | Some (offset, n) -> Hdu.read_string (Hdu.store hdu).buffer ~offset n
-  | None -> Header.to_string hdu.header
+  | None -> Header.to_string (Hdu.header hdu)
 
 let verify (hdu : Hdu.t) =
   catch (fun () ->
-      let h = hdu.header in
+      let h = Hdu.header hdu in
       let place = Hdu.place hdu in
       let stated = stated_datasum h in
       let has_checksum =
@@ -270,7 +270,7 @@ let is_image h =
    checksums: the first HDU is the primary, and an image HDU elsewhere is an
    IMAGE extension. *)
 let positioned ~primary (hdu : Hdu.t) =
-  let h = hdu.header in
+  let h = Hdu.header hdu in
   let is_primary = Header.find_struct Value.string "XTENSION" h = Ok None in
   let kind = Hdu.kind_of is_primary h in
   let image prim =
@@ -343,7 +343,7 @@ let write_hdu fd ~primary (hdu : Hdu.t) =
          (fun _ -> 32))
       0 pad;
   let d = total s in
-  (match stated_datasum hdu.header with
+  (match stated_datasum (Hdu.header hdu) with
   | Some stated when stated <> d ->
       fail_at (Hdu.place hdu)
         "DATASUM states %d, the data unit sums to %d; Fits.v (Header.remove \

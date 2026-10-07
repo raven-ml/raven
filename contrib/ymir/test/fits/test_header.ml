@@ -363,9 +363,14 @@ let trim_right s =
 let string_round_trip =
   let gen =
     Gen.(
-      map trim_right
-        (string_of ~size:(int_range 0 300)
-           (frequency [ (8, printable); (1, constant '\'') ])))
+      frequency
+        [
+          (1, constant "");
+          ( 9,
+            map trim_right
+              (string_of ~size:(int_range 0 300)
+                 (frequency [ (8, printable); (1, constant '\'') ])) );
+        ])
   in
   prop "get string (set string s) is s for every string without trailing spaces"
     gen (fun s ->
