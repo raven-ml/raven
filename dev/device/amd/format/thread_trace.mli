@@ -7,8 +7,8 @@
 
     While tracing, each shader engine writes a stream of packets into a buffer
     of its own: when each wave starts and ends, the instructions it issues and,
-    from time to time on GFX11 on, markers of the GPU's realtime clock. Its
-    times count the engine's cycles from the start of the trace.
+    from time to time on GFX11 on, markers of the GPU's clock ({!Pm4.source}).
+    Its times count the engine's cycles from the start of the trace.
 
     A compute queue starts tracing with {!start} and stops with {!stop}; the
     host then reads each engine's buffer up to its {!length} and decodes it with
@@ -59,8 +59,8 @@ val waves : Gpu.t -> string -> wave list
     cut short yields the waves of its whole packets. *)
 
 val clock : Gpu.t -> string -> (int -> int) option
-(** [clock g trace] maps a shader time of [trace] to the GPU's 100 MHz realtime
-    clock through [trace]'s realtime markers: on the line through the two
-    markers around it, or through the first two or the last two outside them. It
-    is [None] for a trace of fewer than two markers at distinct shader times,
-    such as any trace of a GFX9 GPU. *)
+(** [clock g trace] maps a shader time of [trace] to the GPU's clock
+    ({!Pm4.source}) through [trace]'s realtime markers: on the line through the
+    two markers around it, or through the first two or the last two outside
+    them. It is [None] for a trace of fewer than two markers at distinct shader
+    times, such as any trace of a GFX9 GPU. *)

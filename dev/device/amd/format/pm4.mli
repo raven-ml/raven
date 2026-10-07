@@ -72,7 +72,7 @@ val write_data : 'v location -> 'v -> 'v Packet.t
 type write = Posted | Confirmed
 
 (** The type for what a copy reads: a 32-bit counter register, at its address,
-    or the GPU's 64-bit clock. *)
+    or the GPU's clock, a 64-bit count at 100 MHz. *)
 type source = Counter of int | Clock
 
 val copy_data : write -> source -> 'v -> 'v Packet.t

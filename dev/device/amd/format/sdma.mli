@@ -31,5 +31,4 @@ val trap : 'v Packet.t
 (** [trap] raises an interrupt. *)
 
 val timestamp : 'v -> 'v Packet.t
-(** [timestamp addr] writes the GPU's 64-bit global timestamp, which counts at
-    100 MHz, to [addr]. *)
+(** [timestamp addr] writes the GPU's clock ({!Pm4.source}) to [addr]. *)
