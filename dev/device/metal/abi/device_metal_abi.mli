@@ -7,30 +7,42 @@
 
     Code compiled for a Metal device runs a step's kernels from an
     {e indirect command buffer}: dispatches recorded once, when the step is
-    linked, and run on each submission of the step. Only the driver can make
-    one, since making it calls Metal on the device's objects, so the driver
-    gives the means as a {!t} when it opens the device, under {!key}.
+    linked, and run on each submission of the step. Making one calls Metal on
+    the device's objects, which only the device's driver, the library that
+    opened the device, holds. Two things connect compiled code to the driver: a
+    record, {!t}, that makes indirect command buffers and gives the address of
+    {!field-split}, and a C calling convention, the fill, by which the driver
+    runs the compiled code's work.
+
+    This library holds only that agreement. The driver makes the record when it
+    opens the device and declares it under {!key}; compiled code finds it there.
+    Neither links the other.
 
     {b Fills.} Work for the device's queue can be a C function, a {e fill}:
-    [int fill(void *queue, void *arg, uint64_t v)], called with the value [v]
-    the work completes on the device's timeline. [queue] points at a word that
-    holds the open compute command encoder, an [id] the driver made before the
-    call: it runs what the fill encodes in order, each after the one before
-    completed ([MTLDispatchTypeSerial]), its command buffer runs after the
-    device's earlier work, and every memory of the device is resident while it
-    runs. The fill encodes into that encoder, for instance
-    [executeCommandsInBuffer:withRange:], and nothing else: it ends no encoder
-    and makes no other encoder or command buffer, and waiting for earlier work
-    and signalling [v] are the driver's. {!field-split} starts a new command
-    buffer. The fill stops at the first call that fails and returns the failure
-    [split] returned, or returns [0] once every call succeeded. [queue] is valid
-    only during the call.
+    [int fill(void *queue, void *arg, uint64_t v)]. The driver calls it with:
+    - [queue], a pointer to a word that holds the open compute command encoder,
+      an [id] the driver made before the call. [queue] is valid only during the
+      call;
+    - [arg], the argument the work was given with;
+    - [v], the value the work completes on the device's timeline.
 
-    After the fill returns, the driver ends and commits the last command buffer.
-    The value [v] is reached once every command buffer of the work completed; if
-    one fails, Metal's reason loses the device. A fill whose work declares [r]
-    ring units makes at most [r] command buffers: it splits at most [r - 1]
-    times.
+    The encoder runs what the fill encodes in order, each after the one before
+    completed ([MTLDispatchTypeSerial]). Its command buffer runs after the
+    device's earlier work, and every memory of the device is resident while it
+    runs.
+
+    The fill encodes into that encoder, for instance
+    [executeCommandsInBuffer:withRange:], and does nothing else: it ends no
+    encoder and makes no other encoder or command buffer, and waiting for
+    earlier work and signalling [v] are the driver's. To start a new command
+    buffer it calls {!field-split}. It stops at the first [split] that fails and
+    returns its failure, and returns [0] otherwise.
+
+    The work declares how many command buffers it may make, its [r] ring units,
+    so the fill splits at most [r - 1] times. After the fill returns, the driver
+    ends the open encoder and commits the last command buffer. [v] is reached
+    once every command buffer of the work completed. If one fails, the driver
+    loses the device, with Metal's reason.
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK):
@@ -52,19 +64,23 @@
        feature set tables} (May 21, 2026), Resources: minimum constant buffer
       offset alignment. *)
 
+(** {1:icbs Indirect command buffers} *)
+
 type dispatch = {
   pipeline : nativeint;
       (** Its [MTLComputePipelineState]: an entry of an image the device loaded.
       *)
   offset : int;
-      (** Where its arguments start in the indirect command buffer's argument
-          buffer, bound as its kernel buffer [0]: bytes from the argument
-          buffer's first byte. It is a multiple of the GPU's minimum constant
-          buffer offset alignment, which Metal requires of a buffer a kernel
-          reads as constant data: 4 bytes on Apple-family GPUs. Apple's tables
-          give no value for Mac-family GPUs. *)
-  groups : int * int * int;  (** Its threadgroups per grid. *)
-  threads : int * int * int;  (** Its threads per threadgroup. *)
+      (** Where its arguments start in the argument buffer, which it binds as
+          its kernel buffer [0]: bytes from the buffer's first byte. It is a
+          multiple of the GPU's minimum constant buffer offset alignment, which
+          Metal requires of a buffer a kernel reads as constant data: 4 bytes on
+          Apple-family GPUs. Apple's tables give no value for Mac-family GPUs.
+      *)
+  groups : int * int * int;
+      (** Its threadgroups per grid, in x, y and z, each at least [1]. *)
+  threads : int * int * int;
+      (** Its threads per threadgroup, in x, y and z, each at least [1]. *)
 }
 (** The type for the dispatches an indirect command buffer records. *)
 
@@ -79,18 +95,20 @@ type icb = {
       (** [release ()] releases [handle], [commands] and the pipelines they
           hold. The owner of the linked step that made them calls it once, after
           the last work that ran [handle] completed, or at once when the device
-          is lost; until then they live, whatever happens to their pipelines'
+          is lost. Until then they live, whatever happens to their pipelines'
           image. Raises [Invalid_argument] if called twice. Any domain may call
           it. *)
 }
 (** The type for indirect command buffers. *)
 
+(** {1:record The record} *)
+
 type t = {
   icb : nativeint -> dispatch array -> (icb, string) result;
-      (** [icb buffer ds] is an indirect command buffer with one concurrent
-          dispatch per element of [ds], in order, each on its arguments in the
-          argument buffer [buffer], an [MTLBuffer] of the device, and run after
-          the one before it completed. [ds] may be empty.
+      (** [icb buffer ds] is [Ok b] with [b] an indirect command buffer that
+          records one dispatch per element of [ds], in order, each run after the
+          one before it completed. [buffer] is the argument buffer, an
+          [MTLBuffer] of the device. [ds] may be empty.
 
           The result is [Error msg] if a dispatch asks for more threads per
           threadgroup than its pipeline allows
@@ -98,28 +116,33 @@ type t = {
           indirect command buffer.
 
           Raises [Invalid_argument] if [buffer] or a pipeline belongs to another
-          [MTLDevice], an offset lies outside [buffer] or is not a multiple of
-          the alignment above, or a size is less than [1]. Any domain may call
-          it. *)
+          [MTLDevice], or if a dispatch's offset lies outside [buffer] or is not
+          aligned as {!field-offset} states, or one of its sizes is less than
+          [1]. Any domain may call it. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which a fill
-          calls to end the open command buffer and start a new one. It commits
-          the open command buffer and stores at [queue] the encoder of the next,
-          made as the first was. When the queue holds as many command buffers as
-          it can, it waits until an earlier command buffer of the work
-          completes, so one work may make more command buffers than the queue
-          holds. Unless [start] is [NULL], it writes the time the committed
-          command buffer started on the GPU at [start] before [v] is reached;
-          likewise the time it ended at [end]. Times are nanoseconds of the host
-          clock ([CLOCK_UPTIME_RAW], the clock of Metal's [GPUStartTime]), as
-          unsigned 64-bit integers in the host's byte order.
+          calls to end the open command buffer and start a new one. It ends the
+          open encoder, commits its command buffer, and stores at [queue] the
+          encoder of a new command buffer, which runs as the first did. When the
+          queue holds as many command buffers as it can, [split] waits until an
+          earlier command buffer of the work completes, so one work may make
+          more command buffers than the queue holds.
 
-          It returns [0], or a failure that the fill returns as its own: a
-          failure if the fill already made as many command buffers as its work
-          declared ring units. Only a fill, during its call, may call it. *)
+          Unless [start] is [NULL], [split] writes at [start] the time the
+          committed command buffer started on the GPU; unless [end] is [NULL],
+          the time it ended at [end]. Both are written before [v] is reached.
+          Times are nanoseconds of the host clock ([CLOCK_UPTIME_RAW], the clock
+          of Metal's [GPUStartTime]), as unsigned 64-bit integers in the host's
+          byte order.
+
+          [split] returns [0], or a nonzero failure that the fill returns as its
+          own. It fails if the fill already made as many command buffers as its
+          work declared ring units. Only a fill, during its call, may call it.
+      *)
 }
 (** The type for what compiled code needs from a Metal device. *)
 
 val key : t Type.Id.t
-(** [key] is the key a Metal device's {!t} is found under. *)
+(** [key] is the key of a Metal device's {!t}. The device's driver declares its
+    record under [key]; a device of another kind has none. *)
