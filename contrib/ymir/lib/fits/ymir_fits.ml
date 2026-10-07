@@ -65,6 +65,34 @@ module Fits = struct
     let quantized = Image.quantized
   end
 
+  module Unit = struct
+    let vocabulary = Fits_unit.vocabulary
+    let parse = Fits_unit.parse
+    let print = Fits_unit.print
+  end
+
+  (* The scope of a data set's own symbols: the file's digest and the HDU. *)
+  let scope hdu =
+    let name =
+      match Hdu.extname hdu with
+      | Some n -> n
+      | None -> Printf.sprintf "HDU%d" hdu.Hdu.index
+    in
+    Hdu.digest hdu ^ "#" ^ name
+
+  let unit hdu =
+    let h = Hdu.header hdu in
+    match H.find_struct V.string "BUNIT" h with
+    | Error e -> Error e
+    | Ok None -> Ok None
+    | Ok (Some s) -> (
+        match Fits_unit.parse ~scope:(scope hdu) s with
+        | Ok u -> Ok (Some u)
+        | Error e ->
+            Error
+              (Err.msg (H.card_place h (List.hd (H.cards h "BUNIT")) "BUNIT") e)
+        )
+
   let pp ppf hdu =
     let h = header hdu in
     let kind =

@@ -14,5 +14,6 @@
   rice
   quantize
   tiles
+  fits_unit
   image
   files))

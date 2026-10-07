@@ -241,6 +241,45 @@ module Fits : sig
   (** [pp] formats an HDU's kind, [EXTNAME] and [EXTVER], then {!Image.pp}, or
       its data size for other kinds. *)
 
+  (** {1:units Units} *)
+
+  (** FITS unit strings (FITS 4.0 §4.3).
+
+      A unit string is an optional power of ten ([10**k], [10^k], [10+k] or
+      [10-k]) then products of symbols by a space, [*] or [.], and divisions by
+      [/], each dividing by the product that follows it: [erg/cm2 s] is
+      [erg cm^-2 s^-1]. A symbol is raised to a power by [**], [^] or trailing
+      digits ([cm-2]), and to a rational one in parentheses ([m(3/2)],
+      [m**(1.5)]). Case is significant. Parsing is linear in the string's
+      length. *)
+  module Unit : sig
+    val vocabulary : Ymir_units.Vocabulary.t
+    (** [vocabulary] is FITS 4.0 Tables 3 and 4 at the standard's values (a
+        parsec is 3.0857e16 m, a solar mass 1.9891e30 kg), with the prefixes of
+        Table 5 on the symbols the standard allows them, and the archives'
+        spellings [Angstrom], [angstrom], [electron], [ELECTRONS], [DN] and
+        [COUNTS]. [mag], [count], [photon], [bit], [adu], [bin], [Sun],
+        [electron] and [DN] are symbols. *)
+
+    val parse : ?scope:string -> string -> (Ymir_units.Unit.t, string) result
+    (** [parse ~scope s] is the unit [s] spells. The data-set symbols [pix] and
+        [pixel] (one unit), [voxel], [chan] and [beam] are
+        [Ymir_units.Unit.scoped ~scope]; without [scope] they are an [Error].
+        [log()], [ln()], [exp()] and [sqrt()] of a dimensioned unit are an
+        [Error]: they make no monomial. *)
+
+    val print : Ymir_units.Unit.t -> (string, string) result
+    (** [print u] spells [u] with {!vocabulary}, as [MJy sr-1], scoped symbols
+        last by name; [""] for the dimensionless unit. [Error] if no product of
+        FITS symbols, prefixes and a power of ten is [u]. Writing a unit is
+        [Header.set Value.string "BUNIT"] of its text. *)
+  end
+
+  val unit : hdu -> (Ymir_units.Unit.t option, string) result
+  (** [unit hdu] is [BUNIT], parsed with {!Unit.parse} scoped by
+      [<digest>#<EXTNAME>] ([HDU<i>] when unnamed), so one file read twice gives
+      equal units and two files give two; [None] if [BUNIT] is absent. *)
+
   (** {1:images Images} *)
 
   (** Images.

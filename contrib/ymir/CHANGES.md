@@ -18,6 +18,9 @@ All notable changes to Ymir are documented in this file.
   funpack. `Fits.Image.hdu ~tiles` writes them losslessly, and
   `Fits.Image.quantized` writes floats Rice-coded in steps of each tile's
   noise, with cfitsio's quantizer and a dither seed derived from the pixels.
+- `Fits.Unit` reads and writes FITS unit strings over `ymir.units` at the
+  standard's values, and `Fits.unit` reads `BUNIT`, scoping `pix`, `chan`,
+  `voxel` and `beam` to the file's digest and HDU.
   funpack.
 - `Ymir.Frame` names the fixed celestial frames, ICRS, FK5 at J2000, Galactic,
   the J2000 ecliptic and supergalactic, with one value per frame type.
