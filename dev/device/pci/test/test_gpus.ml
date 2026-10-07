@@ -451,12 +451,12 @@ let test_this_none () =
   ignore (require_error (Gpus.detach g 0));
   ignore (require_error (Gpus.attach g 0))
 
-(* Every function of this machine stands for a GPU: the kernel driver opens
-   nothing, so holding one through it changes nothing. *)
+(* This machine's display controllers: the kernel driver opens nothing, so
+   holding one through it changes nothing. *)
 let this_gpus () =
-  let g = Gpus.make ~memory_bar:0 (fun _ -> true) in
+  let g = Gpus.make ~memory_bar:0 (fun id -> id.class_ = 0x03) in
   if Gpus.buses g Machine.this = [] then
-    skip ~reason:"this machine lists no PCI function" ();
+    skip ~reason:"this machine lists no GPU" ();
   g
 
 let kernel_hold g = require_ok (Gpus.open_kernel g Machine.this 0 Result.ok)
@@ -491,10 +491,11 @@ let test_far_leaves () =
   Gpus.release (hold g m 0);
   Gpus.release (kernel_hold g)
 
-(* A function this machine lets the process take: one bound to vfio-pci or to no
+(* A GPU this machine lets the process take: one bound to vfio-pci or to no
    driver. Taking it changes nothing. *)
 let test_pci_fixes () =
   let g = this_gpus () in
+  with_gpu_lock @@ fun () ->
   let n = List.length (Gpus.buses g Machine.this) in
   let rec first i =
     if i = n then skip ~reason:"this machine has no function to take" ();

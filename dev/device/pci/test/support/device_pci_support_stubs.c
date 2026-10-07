@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* What the suites need from C: process memory to map, a far machine reached
-   through a transport, the accesses of device_pci.h, and the monotonic
-   clock.
+   through a transport, the accesses of device_pci.h, the monotonic clock,
+   and the lock that keeps two suites off this machine's GPUs.
 
    A far machine holds [size] bytes at addresses [base, base + size) and
    nothing else. Its transport logs every access, fails on request, and
@@ -27,6 +27,13 @@
 #include <caml/mlvalues.h>
 
 #include "device_pci.h"
+
+/* Windows headers, which unixsupport.h brings, define [far]. */
+#ifndef _WIN32
+#include <caml/unixsupport.h>
+#include <errno.h>
+#include <sys/file.h>
+#endif
 
 value device_pci_test_memory(value n) {
   void *p = calloc(1, Long_val(n) + 1);
@@ -220,4 +227,19 @@ value device_pci_test_now_ns(value unit) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return Val_long((intnat)t.tv_sec * 1000000000 + t.tv_nsec);
+}
+
+/* The GPU lock */
+
+/* Whether flock took the exclusive lock of [fd] without waiting: false if
+   another open file holds it. Raises Unix_error otherwise. */
+value device_pci_test_flock(value fd) {
+#ifdef _WIN32
+  (void)fd;
+  caml_failwith("device_pci_test_flock: flock needs a POSIX system");
+#else
+  if (flock(Int_val(fd), LOCK_EX | LOCK_NB) == 0) return Val_true;
+  if (errno == EWOULDBLOCK) return Val_false;
+  caml_uerror("flock", Nothing);
+#endif
 }

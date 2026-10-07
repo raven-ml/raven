@@ -31,6 +31,26 @@ let failed ?(substring = "") = function
 
 external now_ns : unit -> int = "device_pci_test_now_ns"
 
+(* This machine's GPUs *)
+
+external flock : Unix.file_descr -> bool = "device_pci_test_flock"
+
+let gpu_lock = "DEVICE_PCI_TEST_GPU_LOCK"
+
+let host_gpus () =
+  List.filter
+    (fun (id : Device_pci.Machine.id) -> id.class_ = 0x03)
+    (Device_pci.Machine.functions Device_pci.Machine.this)
+
+let with_gpu_lock f =
+  match Sys.getenv_opt gpu_lock with
+  | None | Some "" -> skip ~reason:(gpu_lock ^ " names no lock file") ()
+  | Some file ->
+      let fd = Unix.openfile file [ O_RDONLY; O_CREAT; O_CLOEXEC ] 0o644 in
+      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      if not (flock fd) then skip ~reason:(file ^ " is held by another") ();
+      f ()
+
 (* Process memory and far machines *)
 
 external memory : int -> int = "device_pci_test_memory"

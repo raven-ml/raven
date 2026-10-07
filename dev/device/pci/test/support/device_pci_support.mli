@@ -32,6 +32,21 @@ val failed : ?substring:string -> exn -> bool
 val now_ns : unit -> int
 (** [now_ns ()] is the monotonic clock in nanoseconds. *)
 
+(** {1:host This machine's GPUs}
+
+    A test that takes a function of this machine takes only GPUs, and only while
+    it holds the machine's GPU lock, so that it never holds another user's
+    device. *)
+
+val host_gpus : unit -> Device_pci.Machine.id list
+(** [host_gpus ()] is this machine's display controllers, class [0x03]. *)
+
+val with_gpu_lock : (unit -> 'a) -> 'a
+(** [with_gpu_lock f] is [f ()] while the process holds this machine's GPU lock:
+    [flock] on the file the variable [DEVICE_PCI_TEST_GPU_LOCK] names. It skips
+    the running test if the variable is unset or another process holds the lock.
+*)
+
 (** {1:memory Process memory and far machines}
 
     A far machine holds the [size] bytes at its addresses from [base] on, and

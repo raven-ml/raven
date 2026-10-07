@@ -893,12 +893,12 @@ let test_refused_here () =
   | Ok _ -> fail "a function taken on a machine without PCI functions"
   | Error why -> contains ~msg:"names the bus" ~sub:"0000:00:00.0" why
 
-(* Listing and taking change nothing on the machine. *)
+(* Listing and taking change nothing on the machine. Only GPUs are taken:
+   another class of function may be another user's device. *)
 let test_changes_nothing () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
-  let buses =
-    List.map (fun (d : Machine.id) -> d.bus) (Machine.functions Machine.this)
-  in
+  with_gpu_lock @@ fun () ->
+  let buses = List.map (fun (d : Machine.id) -> d.bus) (host_gpus ()) in
   let before = List.map state buses in
   List.iter
     (fun bus ->
@@ -913,7 +913,7 @@ let test_changes_nothing () =
     (List.combine buses (List.map state buses))
 
 let takeable () =
-  Machine.functions Machine.this
+  host_gpus ()
   |> List.find_map (fun (d : Machine.id) ->
       match Function.take Machine.this d.bus with
       | Ok f ->
@@ -924,6 +924,7 @@ let takeable () =
 (* One process holds a function at a time, this one included. *)
 let test_held_here () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
+  with_gpu_lock @@ fun () ->
   let d =
     match takeable () with
     | Some d -> d
@@ -937,7 +938,7 @@ let test_held_here () =
 
 let vfio_function () =
   if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
-  Machine.functions Machine.this
+  host_gpus ()
   |> List.find_map (fun (d : Machine.id) ->
       match Function.take Machine.this d.bus with
       | Ok f when Function.addressing f = Iommu -> Some (d, f)
@@ -951,6 +952,7 @@ let vfio_function () =
 
 (* Behind an IOMMU, a function needs no root. *)
 let test_vfio () =
+  with_gpu_lock @@ fun () ->
   let d, f = vfio_function () in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
   equal ~msg:"its vendor" int d.vendor (Function.config16 f 0);
@@ -982,12 +984,11 @@ let this_machine =
     [
       test "this machine without /sys/bus/pci refuses a take, naming the bus"
         test_refused_here;
-      test "listing and taking functions change nothing on this machine"
+      test "listing functions and taking GPUs change nothing on this machine"
         test_changes_nothing;
-      test "a function taken here refuses a second take until released"
+      test "a GPU taken here refuses a second take until released"
         test_held_here;
-      test "a function behind an IOMMU reaches its memory at one run apart"
-        test_vfio;
+      test "a GPU behind an IOMMU reaches its memory at one run apart" test_vfio;
     ]
 
 let () =
