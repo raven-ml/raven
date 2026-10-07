@@ -3536,6 +3536,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.borrow` of a `Device_local` device's `Nx_device.signal_word`
+  succeeds on the other devices of its machine, which map it as the device's
+  pinned memory. It was refused, so one vendor's queue could not wait on
+  another's work, as AMD's on NV's.
 - `Nx_device.Profile` profiles nest and overlap, from any domains: each sees
   the events recorded while it is taken, so profiling a program no longer
   changes it. `Profile.start` no longer raises while another profile is

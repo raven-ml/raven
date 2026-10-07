@@ -3547,9 +3547,15 @@ let submit ds ~touches f =
           r)
 
 let signal_word d =
-  let owner = match d.kind with Local _ -> d | _ -> host_of d in
+  (* A [Device_local] device's timeline is its pinned memory, which the devices
+     of its machine borrow through their mappings of host memory. *)
   let base =
-    Buffer.base ~borrowed:true ~keep:d.timeline_keep owner d.timeline
+    match d.kind with
+    | Local _ ->
+        Buffer.base ~kind:Pinned ~borrowed:true ~keep:d.timeline_keep d
+          d.timeline
+    | _ ->
+        Buffer.base ~borrowed:true ~keep:d.timeline_keep (host_of d) d.timeline
   in
   Buffer.first base Nx_dtype.Scalar.UInt64 1
 

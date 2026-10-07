@@ -2550,6 +2550,21 @@ let test_system_borrows () =
     (Exn.invalid_arg ~substring:"does not address") (fun () ->
       B.create unaddressed S.UInt8 8)
 
+(* A [Device_local] device's signal word is its pinned memory, which a queue of
+   another vendor waits on: the devices of its machine and its host borrow it
+   through their mappings of host memory, though its driver maps no peer. *)
+let test_local_signal_word () =
+  let cpu =
+    Driver.device ~name:"CPU:WORD" ~arch:"test" ~budget:max_int
+      (Host_visible { memory = Driver.host_memory; mapping = Some Identity })
+  in
+  let word = Nx_device.signal_word far_one.dev in
+  let on_cpu = borrow cpu word and on_host = borrow host word in
+  equal ~msg:"another device's borrow, at the word's host address" nativeint
+    (B.address word) (B.address on_cpu);
+  equal ~msg:"the host's borrow, at the word's host address" nativeint
+    (B.address word) (B.address on_host)
+
 let borrows =
   group "borrows and overlaps"
     [
@@ -2557,6 +2572,8 @@ let borrows =
         "system memory of another device borrows through the mapping of host \
          memory, the identity's at any address"
         test_system_borrows;
+      test "a Device_local device's signal word borrows as its pinned memory"
+        test_local_signal_word;
       test "another device's memory borrows through its driver's peer mapping"
         test_peer_borrows;
       test
