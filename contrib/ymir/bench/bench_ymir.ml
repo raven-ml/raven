@@ -9,6 +9,7 @@
    timed region replays the program. *)
 
 open Ymir
+open Ymir_fits
 
 let f64 = Nx.float64
 let n = 1_000_000
@@ -119,6 +120,34 @@ let fits_reads () =
           timed (fun () -> ok (Fits.Image.raw Nx.int16 h)));
     ]
 
+(* [observation hdus] is the SCI and ERR HDUs as an observation, composed as
+   a program composes ymir.fits with ymir. *)
+let observation hdus =
+  let ( let* ) = Result.bind in
+  let* sci = Fits.get "SCI" hdus in
+  let* err = Fits.get "ERR" hdus in
+  let h = Fits.header sci in
+  let keywords =
+    {
+      Wcs.float = (fun k -> Fits.Header.find Fits.Value.float k h);
+      int = (fun k -> Fits.Header.find Fits.Value.int k h);
+      text = (fun k -> Fits.Header.find Fits.Value.string k h);
+    }
+  in
+  let* wcs = Wcs.read Frame.icrs keywords in
+  let* bunit = Fits.Header.get Fits.Value.string "BUNIT" h in
+  let* unit = Fits.Unit.parse bunit in
+  let* pixar = Fits.Header.get Fits.Value.float "PIXAR_SR" h in
+  let* data = Fits.Image.values Nx.float32 sci in
+  let* sigma = Fits.Image.values Nx.float32 err in
+  let grid = Grid.pixels ~shape:(Nx.shape data) Nx.float32 wcs in
+  Ok
+    (Observation.v
+       ~variance:(Quantity.v (Unit.( ** ) unit 2) (Nx.square sigma))
+       ~valid:Nx.(cast bit (logical_and (isfinite data) (isfinite sigma)))
+       ~area:(Quantity.v Unit.steradian (Nx.scalar Nx.float32 pixar))
+       grid (Quantity.v unit data))
+
 (* A 4096² image and its error under a JWST-like TAN header, read as an
    observation. *)
 let fits_observation () =
@@ -144,10 +173,7 @@ let fits_observation () =
   Thumper.group "fits-observation-4096"
     [
       Thumper.bench_with_setup ~setup:hdus "sci-err-float32" (fun hdus ->
-          timed (fun () ->
-              ok
-                (Fits.observation ~dtype:Nx.float32 ~frame:Frame.icrs
-                   ~data:"SCI" ~error:"ERR" hdus)));
+          timed (fun () -> ok (observation hdus)));
     ]
 
 let fits_quantize () =

@@ -8,4 +8,4 @@
 
 (executable
  (name nircam)
- (libraries ymir ymir.units ymir_test nx rune unix))
+ (libraries ymir ymir.fits ymir.units ymir_test nx rune unix))

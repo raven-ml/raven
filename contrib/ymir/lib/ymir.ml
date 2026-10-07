@@ -16,4 +16,4 @@ module Grid = Grid
 module Region = Region
 module Observation = Observation
 module Cosmology = Cosmology
-module Fits = Fits
+module Wcs = Wcs

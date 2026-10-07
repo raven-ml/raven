@@ -8,10 +8,11 @@
   test_region
   test_observation
   test_cosmology
-  test_fits
+  test_wcs
+  test_nircam
   test_layers)
  (package ymir)
- (libraries ymir ymir.units ymir_test nx rune windtrap)
+ (libraries ymir ymir.fits ymir.units ymir_test nx rune windtrap)
  (deps
   (glob_files golden/cosmology/*.golden)
   golden/nircam.fits

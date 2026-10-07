@@ -4,7 +4,7 @@
    lists, or text. A column carries its own keywords, such as its unit, and
    marks undefined cells with a validity mask. *)
 
-open Ymir
+open Ymir_fits
 
 let ( let* ) = Result.bind
 let no_cards = Fits.Header.empty
@@ -46,7 +46,9 @@ let run path =
   let* pos = Fits.Table.values Nx.float64 "POS" hdu in
   Format.printf "POS:@.%a@." Nx.pp pos;
   let* unit = Fits.Table.unit "POS" hdu in
-  Option.iter (fun u -> Printf.printf "POS unit: %s\n" (Unit.to_string u)) unit;
+  Option.iter
+    (fun u -> Printf.printf "POS unit: %s\n" (Ymir_units.Unit.to_string u))
+    unit;
 
   (* Undefined cells read as NaN, and [validity] says which they are. *)
   let* flux = Fits.Table.values ~rows:(1, 4) Nx.float32 "FLUX" hdu in

@@ -8,13 +8,15 @@ All notable changes to Ymir are documented in this file.
   the record with each field holding its derivative in the field's unit, the
   payload per that unit. A derivative per another unit is the gradient at the
   field converted to it; `Quantity.value` on a gradient converts a step.
-- `Ymir.Fits` is `ymir.fits`'s `Fits` with ymir's readers. `Fits.Wcs.read`
-  turns a header's celestial description (FITS's thirteen zenithal and
-  cylindrical projections with their PV terms; SIP, TPV and SCAMP's TAN with
-  PV terms; CD, PC, CDELT and CROTA2; ICRS, FK5 J2000, Galactic, ecliptic and
-  supergalactic) into a `Transform.t`, and `Fits.Wcs.write` prints one back,
-  keeping every record whose value is unchanged. `Fits.observation` reads an image HDU with its
-  error, `PIXAR_SR` area, validity and grid, optionally through a window.
+- `Ymir.Wcs.read` turns a FITS header's celestial description (FITS's
+  thirteen zenithal and cylindrical projections with their PV terms; SIP,
+  TPV and SCAMP's TAN with PV terms; CD, PC, CDELT and CROTA2; ICRS, FK5
+  J2000, Galactic, ecliptic and supergalactic) into a `Transform.t`, asking
+  a `Wcs.keywords` view for each keyword's decoded value, and `Wcs.write`
+  returns the typed keyword edits that print one back. `ymir` does not
+  depend on `ymir.fits`: a program links both, builds the view from
+  `Fits.Header.find`, and composes an observation from `Fits.Image.values`,
+  `Grid.pixels` and `Observation.v`.
 - `Ymir.Cosmology`, the background of a homogeneous expanding universe: one
   record of tensors for flat and curved ΛCDM, wCDM and w0waCDM with radiation
   and massive neutrinos, and its expansion rate, density parameters,

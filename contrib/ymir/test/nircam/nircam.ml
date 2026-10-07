@@ -18,6 +18,7 @@
      central difference, eager and compiled. *)
 
 open Ymir
+open Ymir_fits
 module Nircam = Ymir_test.Nircam_reference
 
 let f64 = Nx.float64
@@ -197,7 +198,7 @@ let () =
   end;
   let read dtype =
     let hdus = ok (Fits.read path) in
-    ok (Fits.observation ~dtype ~frame:Frame.icrs ~data:"SCI" ~error:"ERR" hdus)
+    ok (Ymir_test.I2d.observation dtype hdus)
   in
   let obs, t64 = time (fun () -> read f64) in
   Printf.printf "read %s at float64: %.1f s\n%!" path t64;

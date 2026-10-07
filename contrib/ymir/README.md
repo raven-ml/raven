@@ -30,10 +30,12 @@ The [examples](examples/) teach each part on small synthetic data.
 
 ## Libraries
 
-- `ymir` is the whole library; `open Ymir` brings every module below into
-  scope.
+- `ymir` is the astronomy; `open Ymir` brings every module below except
+  `Fits` into scope.
 - `ymir.units` holds the units alone, for code that needs no astronomy.
-- `ymir.fits` reads and writes FITS files without the rest.
+- `ymir.fits` reads and writes FITS files; `open Ymir_fits` brings `Fits`.
+  Neither `ymir` nor `ymir.fits` depends on the other, and a program that
+  reads files links both.
 
 ## What's inside
 
@@ -60,10 +62,11 @@ The [examples](examples/) teach each part on small synthetic data.
   validity; `add`, `sub` and `scale` combine observations on agreeing grids
   with their variances, and `integrate` sums one over a region: aperture
   photometry, differentiable in the aperture's centre and size.
-- **FITS**: `Fits` reads and writes headers, images (tile compression
-  included), binary and ASCII tables, `BUNIT` and `TUNIT` units, and world
-  coordinates (`Fits.Wcs`). `Fits.observation` reads an image HDU with its
-  error, area and validity as an `Observation`.
+- **FITS**: `ymir.fits`'s `Fits` reads and writes headers, images (tile
+  compression included), binary and ASCII tables, and `BUNIT` and `TUNIT`
+  units. `Wcs` reads a header's world coordinates as a `Transform` and
+  writes one back as keyword edits; a program composes an image's data,
+  error and world coordinates into an `Observation`.
 - **Cosmology**: `Cosmology.t` is one record of tensors for flat and curved
   ΛCDM, wCDM and w0waCDM with radiation and massive neutrinos. Expansion
   rate, density parameters, distances, volumes and times are fixed

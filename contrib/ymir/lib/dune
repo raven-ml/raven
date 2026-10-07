@@ -16,5 +16,5 @@
   observation
   cosmology
   cosmology_tables
-  fits)
- (libraries nx nx.dtype nx.wide jera ymir.units ymir.fits))
+  wcs)
+ (libraries nx nx.dtype nx.wide jera ymir.units))
