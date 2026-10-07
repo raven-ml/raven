@@ -70,8 +70,10 @@ let dispatch (k : Code_object.kernel) ~descriptor ~args ~threads:(tx, ty, tz)
       (fst P.kernarg_address, W64 (Value args));
     ]
 
-(* ROCr's vendor packet of PM4 commands (amd_aql_pm4_ib_packet_t): its format,
-   and the words left after its four of PM4. *)
+(* The vendor packet of PM4 commands, amd_aql_pm4_ib in ROCR-Runtime's
+   amd_aql_queue.cpp:1521-1547 (rocm-systems cccc350d): its format,
+   AMD_AQL_FORMAT_PM4_IB, and dw_cnt_remain, the words left after its four of
+   PM4. *)
 let format_pm4_ib = 1
 let dw_count_remain = 10
 

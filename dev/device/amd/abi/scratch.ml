@@ -42,9 +42,10 @@ let tmpring (g : Gpu.t) n =
       ("wavesize", wave);
     ]
 
-(* The descriptor's fields as HSA's runtime sets them for scratch: elements of 4
-   bytes, an index stride of 64, and bounds checked against the records alone,
-   past GFX9. *)
+(* The descriptor's fields as ROCR-Runtime sets them for a queue's scratch
+   (amd_aql_queue.cpp, rocm-systems cccc350d): elements of 4 bytes and an index
+   stride of 64 on GFX9 (:1646-1647), no bounds check in swizzle mode past it
+   (OOB_SELECT 2, :1671, :1689, :1709). *)
 let element_size_4 = 1
 let index_stride_64 = 3
 let oob_select_raw = 2

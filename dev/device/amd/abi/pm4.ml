@@ -286,9 +286,12 @@ let lds_shift = 15
 let lds_mask = 0x1ff
 let lds_granule = 512
 
-(* The scratch's buffer descriptor in a kernel's first user SGPRs, as HSA's
-   runtime makes it: the base address with SWIZZLE_ENABLE, bit 63, the most
-   records, and the word of its format and lane stride. *)
+(* The scratch's buffer descriptor in a kernel's first user SGPRs: the base
+   address with SWIZZLE_ENABLE, bit 63, the most records, and a word of its
+   format and lane stride. No primary source gives these words: ROCR-Runtime
+   dispatches through AQL, whose queue descriptor the CP hands kernels
+   ({!Scratch.descriptor}). They are the words today's PM4 dispatches write,
+   unverified (plan decision 24); only GFX9 and GFX10 kernels read them. *)
 let swizzle_enable = Int64.min_int
 let num_records = 0xffff_ffff
 let scratch_format = 0x20c14000
