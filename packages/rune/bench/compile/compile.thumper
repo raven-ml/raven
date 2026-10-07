@@ -53,8 +53,8 @@ erfinv-grad	wall_time	batch=1	n=5	8.280e-01	7.599e-01 8.028e-01 8.280e-01 8.612e
 linalg/solve-128	wall_time	batch=1	n=5	9.127e-01	8.447e-01 8.970e-01 9.127e-01 9.271e-01 9.423e-01
 linalg/solve-32	wall_time	batch=1	n=5	1.085e+00	1.060e+00 1.077e+00 1.085e+00 1.110e+00 1.123e+00
 linalg/solve-512	wall_time	batch=1	n=5	1.026e+00	1.004e+00 1.011e+00 1.026e+00 1.045e+00 1.052e+00
-search/host	wall_time	batch=1	n=5	1.422e+00	9.401e-01 1.409e+00 1.422e+00 1.483e+00 1.851e+00
-search/metal	wall_time	batch=1	n=5	6.121e+00	4.842e+00 5.640e+00 6.121e+00 6.190e+00 7.426e+00
+search/host	wall_time	batch=1	n=5	1.315e+00	1.207e+00 1.304e+00 1.315e+00 1.356e+00 1.359e+00
+search/metal	wall_time	batch=1	n=5	3.365e+00	3.315e+00 3.347e+00 3.365e+00 3.406e+00 4.603e+00
 shaped-16k	wall_time	batch=1	n=5	6.574e+00	6.568e+00 6.573e+00 6.574e+00 6.582e+00 6.846e+00
 shaped-1k	wall_time	batch=1	n=5	2.485e-01	2.457e-01 2.481e-01 2.485e-01 2.486e-01 2.490e-01
 shaped-4k	wall_time	batch=1	n=5	1.001e+00	1.000e+00 1.001e+00 1.001e+00 1.005e+00 1.036e+00
