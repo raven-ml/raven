@@ -1275,6 +1275,7 @@ let sq_tt_token_exclude_aluexec_shift = 1
 let sq_tt_token_exclude_valuinst_shift = 2
 let sq_tt_token_exclude_immediate_shift = 5
 let sq_tt_token_exclude_inst_shift = 8
+let sq_tt_token_exclude_perf_shift = 0xb
 
 (* SDMA: (mask, shift) for a field *)
 
