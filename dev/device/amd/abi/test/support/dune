@@ -1,3 +1,18 @@
 (library
  (name device_amd_abi_support)
+ (modules device_amd_abi_support)
  (libraries device_amd_abi))
+
+; The words allocated before and after device_amd_abi initialises: an
+; executable that links device_amd_abi_before, device_amd_abi and
+; device_amd_abi_after in this order runs their initialisers in it.
+
+(library
+ (name device_amd_abi_before)
+ (modules device_amd_abi_before)
+ (libraries device_elf))
+
+(library
+ (name device_amd_abi_after)
+ (modules device_amd_abi_after)
+ (libraries device_amd_abi_before device_amd_abi))

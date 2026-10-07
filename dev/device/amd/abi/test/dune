@@ -25,20 +25,17 @@
  (deps
   (source_tree fixtures)))
 
-(executables
- (names live_without live_with)
- (modules live_without live_with live_stdlib)
- (libraries device_amd_abi device_elf))
-
-(rule
- (with-stdout-to
-  live.txt
-  (progn
-   (run ./live_without.exe)
-   (run ./live_with.exe))))
+; The probes' initialisers run around device_amd_abi's in the order the
+; libraries are listed, and -linkall links every module of the library.
 
 (test
- (name test_static)
- (modules test_static)
- (libraries device_amd_abi_support windtrap)
- (deps live.txt))
+ (name test_init)
+ (modules test_init)
+ (link_flags
+  (:standard -linkall))
+ (libraries
+  device_amd_abi_before
+  device_amd_abi
+  device_amd_abi_after
+  device_amd_abi_support
+  windtrap))
