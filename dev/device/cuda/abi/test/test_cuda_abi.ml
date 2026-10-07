@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The key, as a device's records are found: in a table of bindings, each under
-   its own key. *)
+(* The key finds a CUDA device's record among bindings under other keys. *)
 
 open Windtrap
 module Cuda = Device_cuda_abi
