@@ -197,7 +197,6 @@ let nv_info ?(name = ".nv.info") ?(info = 0) contents =
 
 let layout obj = require_ok ~pp:pp_error (Device_elf.of_string ~align:128 obj)
 let page = 4096
-let round_up n a = (n + a - 1) / a * a
 
 (* simple_add, as llvm-readelf reads it *)
 
@@ -337,11 +336,6 @@ let base =
       (1, Gen.of_list ~pp:Format.pp_print_int [ 0; (1 lsl 49) - 1 ]);
     ]
 
-let le64 n =
-  let b = Bytes.create 8 in
-  Bytes.set_int64_le b 0 n;
-  Bytes.to_string b
-
 (* What a relocation writes, as cubin.mli states it, over the ELF layout: the
    symbol's address base + offset + addend, modulo 2^64. *)
 let expected_patch ~base (r : Device_elf.relocation) =
@@ -350,7 +344,7 @@ let expected_patch ~base (r : Device_elf.relocation) =
       let address =
         Int64.(add (add (of_int base) (of_int offset)) (of_int r.addend))
       in
-      let w = le64 address in
+      let w = S.le64 address in
       if r.kind = r_cuda_64 then Some (r.offset, w)
       else if r.kind = r_cuda_abs32_lo_32 then
         Some (r.offset + 4, String.sub w 0 4)
@@ -404,26 +398,22 @@ let relocations =
             (list (pair int string))
             (List.filter_map (expected_patch ~base) o.relocations)
             (Cubin.patches c ~base));
-      xfail
-        ~reason:
-          "patches computes base + offset + addend in 63-bit integers, so a \
-           sum past 2^62 wraps modulo 2^63"
-        (test "a symbol's address past 2^62 is taken modulo 2^64" (fun () ->
-             let obj =
-               relocatable
-                 {
-                   bank = 4;
-                   text = 16;
-                   in_text = 0;
-                   in_bank = 0;
-                   relocs = [ (0, 1, r_cuda_64, max_int) ];
-                 }
-             in
-             let base = 0x7000_0000_0000 in
-             equal
-               (list (pair int string))
-               (List.filter_map (expected_patch ~base) (layout obj).relocations)
-               (Cubin.patches (read obj) ~base)));
+      test "a symbol's address past 2^62 is taken modulo 2^64" (fun () ->
+          let obj =
+            relocatable
+              {
+                bank = 4;
+                text = 16;
+                in_text = 0;
+                in_bank = 0;
+                relocs = [ (0, 1, r_cuda_64, max_int) ];
+              }
+          in
+          let base = 0x7000_0000_0000 in
+          equal
+            (list (pair int string))
+            (List.filter_map (expected_patch ~base) (layout obj).relocations)
+            (Cubin.patches (read obj) ~base));
       prop ~count:300 "every patch lies in the image of the ELF object"
         (Gen.pair valid_cubin base) (fun (r, base) ->
           let c = read (relocatable r) in
@@ -484,7 +474,7 @@ let image =
       prop "the image is the ELF image, then zeros to a page and a page more"
         valid_cubin (fun r ->
           let c = read (relocatable r) in
-          equal int (round_up (Cubin.elf c).size page + page) (Cubin.size c));
+          equal int (S.round_up (Cubin.elf c).size page + page) (Cubin.size c));
       test "an ELF image of a whole page takes two" (fun () ->
           let c =
             read

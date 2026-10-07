@@ -7,8 +7,15 @@ let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
 (* A relocation as the image needs it: the offset of the bytes it patches, how
-   many, and the symbol's offset plus the addend, which a base completes. *)
-type relocation = { at : int; width : int; high : bool; target : int }
+   many, and the symbol's offset and the addend, which a base completes. *)
+type relocation = {
+  at : int;
+  width : int;
+  high : bool;
+  offset : int;
+  addend : int;
+}
+
 type t = { elf : Device_elf.t; size : int; relocations : relocation list }
 
 (* The relocations a cubin holds: R_CUDA_64 writes a symbol's 64-bit address,
@@ -50,7 +57,7 @@ let relocation ~image i (r : Device_elf.relocation) =
   in
   if at + width > image then
     Error (strf "relocation %d patches bytes past the image's end at %d" i at)
-  else Ok { at; width; high; target = offset + r.addend }
+  else Ok { at; width; high; offset; addend = r.addend }
 
 let of_string obj =
   let* o = Device_elf.of_string ~align:section_align obj in
@@ -73,7 +80,10 @@ let elf c = c.elf
 
 let patches c ~base =
   let patch r =
-    let v = Int64.add (Int64.of_int base) (Int64.of_int r.target) in
+    (* Modulo 2^64: an int would wrap at 2^62. *)
+    let v =
+      Int64.(add (add (of_int base) (of_int r.offset)) (of_int r.addend))
+    in
     let b = Bytes.create r.width in
     if r.width = 8 then Bytes.set_int64_le b 0 v
     else
