@@ -38,13 +38,15 @@ val max_size : dim -> int
     [64] along [Z]. *)
 
 val set_dim : dim -> int -> 'v t -> 'v t
-(** [set_dim d n q] is [q] with the size [d] of the launch [n].
+(** [set_dim d n q] is [q] with the size [d] of the launch [n], in place of a
+    value {!patch_dim} gave it.
 
     Raises [Invalid_argument] if [n] is outside \[[0];[max_size d]\]. *)
 
 val patch_dim : dim -> 'v -> 'v t -> 'v t
 (** [patch_dim d v q] is [q] with the size [d] of the launch [v], which is at
-    most [max_size d]. *)
+    most [max_size d], in place of a size {!set_dim} gave it: a hole of the
+    structure ({!structure}). *)
 
 (** {1:addresses Addresses} *)
 

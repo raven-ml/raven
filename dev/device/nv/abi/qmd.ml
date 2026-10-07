@@ -48,11 +48,20 @@ let writes fn q fs =
   List.iter (fun (f, v) -> write fn b f v) fs;
   { q with bytes = Bytes.unsafe_to_string b }
 
+(* A field is known, in the bytes, or a hole, zero in the bytes: setting one way
+   undoes the other. *)
+
 (* [q] with the field [f], which starts a byte, filled by the term [t]. *)
 let hole q (f : D.field) t =
   let at = f.lo / 8 in
+  let q = if read q f = 0 then q else writes "Qmd" q [ (f, 0) ] in
   let others = List.filter (fun h -> h.at <> at) q.holes in
   { q with holes = { at; bits = f.bits; value = t } :: others }
+
+(* [q] with the field [f] known as [v], in place of a hole there. *)
+let known fn q (f : D.field) v =
+  let q = writes fn q [ (f, v) ] in
+  { q with holes = List.filter (fun h -> h.at <> f.lo / 8) q.holes }
 
 (* An address in the fields [lower] and [upper]: [t]'s low 32 bits, then the
    bits above. *)
@@ -148,7 +157,7 @@ let field q = function
 let set_dim d n q =
   if n < 0 || n > max_size d then
     invalid_argf "Qmd.set_dim: size %d, expected 0 to %d" n (max_size d);
-  writes "Qmd.set_dim" q [ (field q d, n) ]
+  known "Qmd.set_dim" q (field q d) n
 
 let patch_dim d v q = hole q (field q d) (Value v)
 

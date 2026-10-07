@@ -82,17 +82,14 @@ let holes =
                 int64 0L
                 (Int64.logand (read b h.at (width h.bits)) (mask h.bits)))
             s.holes);
-      xfail
-        ~reason:
-          "patch_dim keeps the bytes set_dim wrote under the hole it makes"
-        (test "a size patched after it was set has a zero field" (fun () ->
-             let s =
-               Qmd.make (S.launch (S.gpu ()) (S.kernel ()))
-               |> Qmd.set_dim (Block Z) 1 |> Qmd.patch_dim (Block Z) 0L
-               |> Qmd.structure
-             in
-             (* CTA_THREAD_DIMENSION2, MW(639:624) of clc7c0qmd.h. *)
-             equal int 0 (S.field s.bytes (639, 624))));
+      test "a size patched after it was set has a zero field" (fun () ->
+          let s =
+            Qmd.make (S.launch (S.gpu ()) (S.kernel ()))
+            |> Qmd.set_dim (Block Z) 1 |> Qmd.patch_dim (Block Z) 0L
+            |> Qmd.structure
+          in
+          (* CTA_THREAD_DIMENSION2, MW(639:624) of clc7c0qmd.h. *)
+          equal int 0 (S.field s.bytes (639, 624)));
       prop
         "encode fills each hole's field with its term's low bits, and keeps \
          every other bit"

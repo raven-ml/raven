@@ -327,15 +327,11 @@ let descriptors =
           greater ~msg:"PROGRAM_PREFETCH_SIZE of 0x100 bytes of code" int
             ~than:0 known;
           equal int known (field (encode q) (1649, 1641)));
-      xfail
-        ~reason:
-          "set_dim writes the size's bytes and keeps the hole patch_dim made, \
-           whose value encode writes over them"
-        (test "a size set after it was patched is the size set" (fun () ->
-             let q =
-               qmd S.ada |> Qmd.patch_dim (Grid Y) 5L |> Qmd.set_dim (Grid Y) 7
-             in
-             equal int 7 (field (encode q) (dim_field v3 (Grid Y)))));
+      test "a size set after it was patched is the size set" (fun () ->
+          let q =
+            qmd S.ada |> Qmd.patch_dim (Grid Y) 5L |> Qmd.set_dim (Grid Y) 7
+          in
+          equal int 7 (field (encode q) (dim_field v3 (Grid Y))));
       cases ~name:S.class_name "two releases, then none" S.classes (fun cls ->
           let q = qmd cls in
           let q = require_some (Qmd.release System 0x1000L 1L q) in
