@@ -13,6 +13,8 @@
 # forced: blessed fits-observation-4096/sci-err-float32 under load 19.5 on 10 cores
 # forced: blessed wcs-1m/eager wcs-1m/compiled solved-100k/sip-forward-eager solved-100k/sip-inverse-eager solved-100k/zpn-deproject-eager aperture-104/eager aperture-104/eager-grad aperture-104/compiled-grad under load 9.6 on 10 cores
 # forced: blessed shapes-104/ellipse-eager shapes-104/polygon-eager under load 9.7 on 10 cores
+# forced: blessed observation-4096/sub-eager under load 50.1 on 10 cores
+# forced: blessed fits-observation-4096/sci-err-float32 under load 30.9 on 10 cores
 
 age-1k/compiled	alloc_words	exact	849
 age-1k/compiled	wall_time	batch=2	n=20	4.240e-03	2.058e-03 2.175e-03 2.469e-03 2.968e-03 3.252e-03 3.462e-03 3.654e-03 3.803e-03 3.945e-03 4.144e-03 4.335e-03 4.494e-03 4.892e-03 4.942e-03 5.331e-03 5.482e-03 6.723e-03 6.850e-03 7.650e-03 8.104e-03
@@ -34,8 +36,8 @@ fits-image-4096/raw-int16-rice	alloc_words	exact	4435930
 fits-image-4096/raw-int16-rice	wall_time	batch=1	n=20	2.339e-01	2.272e-01 2.276e-01 2.282e-01 2.282e-01 2.287e-01 2.293e-01 2.296e-01 2.297e-01 2.325e-01 2.337e-01 2.342e-01 2.344e-01 2.363e-01 2.365e-01 2.366e-01 2.382e-01 2.571e-01 2.923e-01 3.645e-01 4.088e-01
 fits-image-4096/values-float32	alloc_words	exact	1638
 fits-image-4096/values-float32	wall_time	batch=1	n=20	4.566e-02	3.965e-02 4.114e-02 4.266e-02 4.344e-02 4.365e-02 4.415e-02 4.425e-02 4.511e-02 4.527e-02 4.564e-02 4.569e-02 4.577e-02 4.587e-02 4.594e-02 4.605e-02 4.606e-02 4.626e-02 4.643e-02 4.647e-02 4.791e-02
-fits-observation-4096/sci-err-float32	alloc_words	exact	35775
-fits-observation-4096/sci-err-float32	wall_time	batch=1	n=20	8.652e-02	7.397e-02 7.409e-02 7.434e-02 7.788e-02 7.956e-02 8.249e-02 8.293e-02 8.294e-02 8.319e-02 8.541e-02 8.764e-02 8.851e-02 9.300e-02 9.508e-02 9.627e-02 1.006e-01 1.014e-01 1.023e-01 1.105e-01 1.161e-01
+fits-observation-4096/sci-err-float32	alloc_words	exact	20098
+fits-observation-4096/sci-err-float32	wall_time	batch=1	n=20	6.348e-02	5.507e-02 5.546e-02 5.614e-02 5.817e-02 5.838e-02 5.868e-02 5.923e-02 6.108e-02 6.341e-02 6.347e-02 6.348e-02 6.446e-02 6.453e-02 6.515e-02 6.518e-02 6.566e-02 6.631e-02 6.754e-02 7.157e-02 7.284e-02
 fits-quantized-1024/write	alloc_words	exact	16314789
 fits-quantized-1024/write	wall_time	batch=1	n=20	2.476e-01	2.369e-01 2.374e-01 2.409e-01 2.418e-01 2.426e-01 2.450e-01 2.454e-01 2.462e-01 2.475e-01 2.475e-01 2.477e-01 2.512e-01 2.535e-01 2.542e-01 2.554e-01 2.592e-01 2.642e-01 2.645e-01 2.669e-01 2.782e-01
 fits-table-50x100k/raw-one-column	alloc_words	exact	1457723
@@ -46,6 +48,8 @@ galactic-lat-1m/compiled	alloc_words	exact	1555
 galactic-lat-1m/compiled	wall_time	batch=1	n=20	5.908e-02	4.066e-02 4.110e-02 4.240e-02 4.462e-02 4.555e-02 5.503e-02 5.563e-02 5.708e-02 5.802e-02 5.864e-02 5.951e-02 6.032e-02 6.090e-02 6.238e-02 6.366e-02 6.677e-02 6.757e-02 7.092e-02 9.153e-02 1.182e-01
 galactic-lat-1m/eager	alloc_words	exact	10834
 galactic-lat-1m/eager	wall_time	batch=1	n=20	1.030e-01	6.333e-02 6.344e-02 6.536e-02 6.720e-02 6.881e-02 7.152e-02 7.937e-02 8.534e-02 9.572e-02 1.028e-01 1.032e-01 1.066e-01 1.088e-01 1.151e-01 1.218e-01 1.229e-01 1.331e-01 1.519e-01 1.680e-01 2.149e-01
+observation-4096/sub-eager	alloc_words	exact	7295
+observation-4096/sub-eager	wall_time	batch=1	n=20	3.651e-02	1.114e-02 1.903e-02 2.135e-02 2.380e-02 2.567e-02 2.785e-02 2.877e-02 2.984e-02 3.503e-02 3.580e-02 3.722e-02 3.729e-02 3.751e-02 3.838e-02 4.038e-02 4.691e-02 5.609e-02 7.203e-02 1.347e-01 1.347e-01
 separation-1m/compiled	alloc_words	exact	2609
 separation-1m/compiled	wall_time	batch=1	n=20	4.704e-02	3.783e-02 3.853e-02 3.914e-02 3.982e-02 4.086e-02 4.101e-02 4.252e-02 4.389e-02 4.619e-02 4.682e-02 4.726e-02 5.709e-02 5.804e-02 6.061e-02 6.195e-02 6.906e-02 7.904e-02 8.146e-02 9.206e-02 9.334e-02
 separation-1m/eager	alloc_words	exact	17967

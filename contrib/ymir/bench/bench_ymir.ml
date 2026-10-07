@@ -365,6 +365,25 @@ let aperture_rows () =
         (fun (f, s, p) -> timed (fun () -> f s p));
     ]
 
+(* The difference of two exposures of the mosaic, with their variances. *)
+let difference_rows () =
+  let exposures () =
+    let o = mosaic () in
+    let variance =
+      Quantity.v
+        Unit.((symbol "Jy" / steradian) ** 2)
+        (Nx.full f64 [| 4096; 4096 |] 0.25)
+    in
+    let o = Observation.v ~variance ?area:(Observation.area o)
+        (Observation.grid o) (Observation.data o) in
+    (o, Observation.scale (Quantity.v Unit.one (Nx.scalar f64 0.5)) o)
+  in
+  Thumper.group "observation-4096"
+    [
+      Thumper.bench_with_setup ~setup:exposures "sub-eager" (fun (a, b) ->
+          timed (fun () -> Observation.data (Observation.sub a b)));
+    ]
+
 (* An ellipse and a hexagon about the aperture's centre on its stamp. *)
 let shape_rows () =
   let stamp () = Observation.grid (fst (aperture_inputs ())) in
@@ -454,6 +473,7 @@ let suite () =
     solved_rows ();
     aperture_rows ();
     shape_rows ();
+    difference_rows ();
     fits_reads ();
     fits_observation ();
     fits_quantize ();
