@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type place =
   | Undefined
   | Absolute of int
@@ -549,9 +551,8 @@ let read ~align obj =
 
 let of_string ?(align = 1) obj =
   if not (is_pow2 align) then
-    invalid_arg
-      (Printf.sprintf
-         "Device_elf.of_string: align %d is not a positive power of two" align);
+    invalid_argf "Device_elf.of_string: align %d is not a positive power of two"
+      align;
   match read ~align obj with o -> Ok o | exception Malformed m -> Error m
 
 (* A loop: the AMD loader looks up each kernel it loads. *)
