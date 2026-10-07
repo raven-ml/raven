@@ -518,13 +518,16 @@ let image =
 
 (* Kernels
 
-   Cubins of up to three kernels with banks of their own and banks of the cubin,
-   shared memory, and attributes naming their functions by symbol. *)
+   Cubins of up to three kernels, two of them named k1 and k10 so that one name
+   prefixes the other, with banks of their own and banks of the cubin, shared
+   memory, and attributes naming their functions by symbol, their sections in
+   any order. *)
 
 type target =
   | Section_symbol of int  (** the nameless symbol of kernel i's code *)
   | Named_in of int * string  (** a symbol of this name in kernel i's code *)
   | Undefined of string  (** a symbol of this name the cubin does not define *)
+  | No_symbol  (** an index past the symbol table *)
 
 type kdesc = {
   kname : string;
@@ -534,20 +537,37 @@ type kdesc = {
   own_regcount : int option;  (** in its own .nv.info.name, which is ignored *)
 }
 
+(* The sections of a cubin, by what they are. *)
+type tag =
+  | Text of int  (** kernel i's code *)
+  | Bank of int  (** the bank [banks.(j)] *)
+  | Shared of int  (** kernel i's shared memory *)
+  | Info  (** .nv.info *)
+  | Own_info of int  (** kernel i's .nv.info.name *)
+  | Dead  (** a .text.dead the image does not hold *)
+
 type desc = {
   kernels : kdesc list;
   banks : (int * int option * int) list;
-      (** bank index, its kernel (None for the cubin's), bytes; in section order
-      *)
+      (** bank index, its kernel (None for the cubin's), bytes *)
   attrs : (int * target * int) list;  (** parameter, function, value *)
-  dead : bool;  (** a .text.dead the image does not hold *)
   truncated : bool;  (** .nv.info ends inside an attribute *)
+  order : tag list;  (** the sections, in the object's order *)
 }
 
 let pp_target ppf = function
   | Section_symbol i -> Format.fprintf ppf "Section_symbol %d" i
   | Named_in (i, n) -> Format.fprintf ppf "Named_in (%d, %S)" i n
   | Undefined n -> Format.fprintf ppf "Undefined %S" n
+  | No_symbol -> Format.pp_print_string ppf "No_symbol"
+
+let pp_tag ppf = function
+  | Text i -> Format.fprintf ppf "Text %d" i
+  | Bank j -> Format.fprintf ppf "Bank %d" j
+  | Shared i -> Format.fprintf ppf "Shared %d" i
+  | Info -> Format.pp_print_string ppf "Info"
+  | Own_info i -> Format.fprintf ppf "Own_info %d" i
+  | Dead -> Format.pp_print_string ppf "Dead"
 
 let pp_desc ppf d =
   let pp_opt ppf = function
@@ -560,63 +580,57 @@ let pp_desc ppf d =
       Format.fprintf ppf "%s: text %d, shared %a, cbank %a, own regcount %a@,"
         k.kname k.text pp_opt k.shared pp_opt k.cbank pp_opt k.own_regcount)
     d.kernels;
-  List.iter
-    (fun (i, k, n) ->
-      Format.fprintf ppf "bank %d of %a, %d bytes@," i pp_opt k n)
+  List.iteri
+    (fun j (i, k, n) ->
+      Format.fprintf ppf "bank %d: %d of %a, %d bytes@," j i pp_opt k n)
     d.banks;
   List.iter
     (fun (p, t, v) -> Format.fprintf ppf "attr 0x%x %a %d@," p pp_target t v)
     d.attrs;
-  Format.fprintf ppf "dead %b, truncated %b@]" d.dead d.truncated
+  Format.fprintf ppf "truncated %b@,order %a@]" d.truncated
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+       pp_tag)
+    d.order
 
-(* Section indexes: the kernels' code from 1, then banks, shared memory,
-   .nv.info sections, a dead code section, and the symbols. *)
+(* The object index of the section [t]: after the null section, in order. *)
+let index d t =
+  let rec go i = function
+    | [] -> invalid_arg "index"
+    | t' :: rest -> if t' = t then i else go (i + 1) rest
+  in
+  go 1 d.order
+
+let no_symbol = 10_000
+
 let assemble d =
   let n = List.length d.kernels in
-  let texts = List.map (fun k -> code k.kname k.text) d.kernels in
-  let name_of = function
-    | None -> ""
-    | Some i -> "." ^ (List.nth d.kernels i).kname
-  in
-  let banks =
-    List.map
-      (fun (i, k, bytes) ->
-        section ~align:4
-          (strf ".nv.constant%d%s" i (name_of k))
-          (String.make bytes '\002'))
-      d.banks
-  in
-  let shared =
-    List.filter_map
-      (fun k ->
-        Option.map
-          (fun size ->
-            section ~kind:nobits ~flags:(alloc lor 1) ~size
-              (".nv.shared." ^ k.kname) "")
-          k.shared)
-      d.kernels
-  in
+  let text i = index d (Text i) in
+  let kernel i = List.nth d.kernels i in
   (* Symbols: each kernel's section symbol at 2i+1, its function at 2i+2, then
      the attributes' own. *)
   let extra =
     List.filter_map
       (function
-        | _, Named_in (i, s), _ -> Some (s, 1 + i, 0)
+        | _, Named_in (i, s), _ -> Some (s, text i, 0)
         | _, Undefined s, _ -> Some (s, shn_undef, 0)
-        | _, Section_symbol _, _ -> None)
+        | _, (Section_symbol _ | No_symbol), _ -> None)
       d.attrs
   in
   let syms =
     List.concat
-      (List.mapi (fun i k -> [ ("", 1 + i, 0); (k.kname, 1 + i, 0) ]) d.kernels)
+      (List.mapi
+         (fun i k -> [ ("", text i, 0); (k.kname, text i, 0) ])
+         d.kernels)
     @ extra
   in
-  let index_of =
+  let symbol_of =
     let next = ref ((2 * n) + 1) in
     List.map
       (fun (_, t, _) ->
         match t with
         | Section_symbol i -> (2 * i) + 1
+        | No_symbol -> no_symbol
         | Named_in _ | Undefined _ ->
             let i = !next in
             incr next;
@@ -626,14 +640,29 @@ let assemble d =
   let info =
     String.concat ""
       (fillers
-      :: List.map2 (fun (p, _, v) sym -> of_symbol p sym v) d.attrs index_of)
+      :: List.map2 (fun (p, _, v) sym -> of_symbol p sym v) d.attrs symbol_of)
     ^
     if d.truncated then String.sub (of_symbol eiattr_regcount 1 99) 0 8 else ""
   in
-  let own =
-    List.mapi
-      (fun i k ->
-        nv_info ~name:(".nv.info." ^ k.kname) ~info:(1 + i)
+  let section_of = function
+    | Text i -> code (kernel i).kname (kernel i).text
+    | Bank j ->
+        let idx, owner, bytes = List.nth d.banks j in
+        let suffix =
+          match owner with None -> "" | Some i -> "." ^ (kernel i).kname
+        in
+        section ~align:4
+          (strf ".nv.constant%d%s" idx suffix)
+          (String.make bytes '\002')
+    | Shared i ->
+        section ~kind:nobits ~flags:(alloc lor 1)
+          ~size:(Option.get (kernel i).shared)
+          (".nv.shared." ^ (kernel i).kname)
+          ""
+    | Info -> nv_info info
+    | Own_info i ->
+        let k = kernel i in
+        nv_info ~name:(".nv.info." ^ k.kname) ~info:(text i)
           (fillers
           ^ (match k.cbank with
             | Some off -> param_cbank ((2 * i) + 1) off 0x1c
@@ -641,21 +670,18 @@ let assemble d =
           ^
           match k.own_regcount with
           | Some v -> of_symbol eiattr_regcount ((2 * i) + 1) v
-          | None -> ""))
-      d.kernels
+          | None -> "")
+    | Dead -> section ~flags:0 ".text.dead" (String.make 16 '\000')
   in
-  let dead =
-    if d.dead then [ section ~flags:0 ".text.dead" (String.make 16 '\000') ]
-    else []
-  in
-  let before = texts @ banks @ shared @ (nv_info info :: own) @ dead in
-  write (before @ symbols ~index:(List.length before + 1) syms)
+  let sections = List.map section_of d.order in
+  write (sections @ symbols ~index:(List.length sections + 1) syms)
+
+let names = [ "k1"; "k10"; "k2" ]
 
 let desc_gen =
   let open Gen in
   let gen =
     let* n = int_range 1 3 in
-    let names = List.init n (strf "k%d") in
     let* kernels =
       List.fold_right
         (fun kname acc ->
@@ -665,29 +691,28 @@ let desc_gen =
           and+ own_regcount = option (int_range 1 255)
           and+ rest = acc in
           { kname; text; shared; cbank; own_regcount } :: rest)
-        names (constant [])
+        (List.filteri (fun i _ -> i < n) names)
+        (constant [])
     in
+    let name = of_list ~pp:Format.pp_print_string (names @ [ "zz" ]) in
     let target =
-      one_of
+      frequency
         [
-          map (fun i -> Section_symbol i) (int_range 0 (n - 1));
-          (let+ i = int_range 0 (n - 1)
-           and+ s =
-             of_list ~pp:Format.pp_print_string [ "k0"; "k1"; "k2"; "zz" ]
-           in
-           Named_in (i, s));
-          map
-            (fun s -> Undefined s)
-            (of_list ~pp:Format.pp_print_string [ "k0"; "k1"; "k2"; "zz" ]);
+          (3, map (fun i -> Section_symbol i) (int_range 0 (n - 1)));
+          ( 3,
+            let+ i = int_range 0 (n - 1) and+ s = name in
+            Named_in (i, s) );
+          (3, map (fun s -> Undefined s) name);
+          (1, constant No_symbol);
         ]
     in
-    let+ banks =
+    let banks =
       list ~size:(int_range 0 5)
         (let+ i = int_range 0 4
          and+ k = option (int_range 0 (n - 1))
          and+ bytes = int_range 0 0x200 in
          (i, k, bytes))
-    and+ attrs =
+    and attrs =
       list ~size:(int_range 0 6)
         (let+ p =
            of_list ~pp:Format.pp_print_int
@@ -695,27 +720,36 @@ let desc_gen =
          and+ t = target
          and+ v = int_range 0 0xffff in
          (p, t, v))
-    and+ dead = bool
-    and+ truncated = bool in
-    { kernels; banks; attrs; dead; truncated }
+    in
+    let* banks, attrs, dead, truncated = quad banks attrs bool bool in
+    let tags =
+      List.concat
+        [
+          List.init n (fun i -> Text i);
+          List.mapi (fun j _ -> Bank j) banks;
+          List.concat
+            (List.mapi
+               (fun i k -> if k.shared = None then [] else [ Shared i ])
+               kernels);
+          [ Info ];
+          List.init n (fun i -> Own_info i);
+          (if dead then [ Dead ] else []);
+        ]
+    in
+    let+ order = permutation ~pp:pp_tag tags in
+    { kernels; banks; attrs; truncated; order }
   in
   with_pp pp_desc gen
 
 (* A kernel's record as cubin.mli states it, its offsets from the ELF layout. *)
 let expected (o : Device_elf.t) d i =
   let k = List.nth d.kernels i in
-  let offset name =
-    let s =
-      List.find
-        (fun (s : Device_elf.section) -> s.name = name)
-        (Iarray.to_list o.sections)
-    in
-    Option.get s.offset
-  in
+  let offset t = Option.get (Iarray.get o.sections (index d t)).offset in
   let resolves = function
     | Section_symbol j -> j = i
     | Named_in (j, _) -> j = i
     | Undefined s -> s = k.kname
+    | No_symbol -> false
   in
   let last p =
     List.fold_left
@@ -724,26 +758,25 @@ let expected (o : Device_elf.t) d i =
   in
   (* Banks: the cubin's and the kernel's, in section order; the last of an index
      gives its offset and size, the first gives its place. *)
-  let sections =
-    List.mapi (fun j b -> (j, b)) d.banks
-    |> List.filter (fun (_, (_, owner, _)) -> owner = None || owner = Some i)
-  in
-  let image_offset j =
-    Option.get (Iarray.get o.sections (1 + List.length d.kernels + j)).offset
-  in
   let banks =
     List.fold_left
-      (fun acc (j, (idx, _, bytes)) ->
-        let bank = { Cubin.index = idx; offset = image_offset j; bytes } in
-        if List.exists (fun (x : Cubin.bank) -> x.index = idx) acc then
-          List.map
-            (fun (x : Cubin.bank) -> if x.index = idx then bank else x)
-            acc
-        else acc @ [ bank ])
-      [] sections
+      (fun acc t ->
+        match t with
+        | Bank j -> (
+            match List.nth d.banks j with
+            | idx, owner, bytes when owner = None || owner = Some i ->
+                let bank = { Cubin.index = idx; offset = offset t; bytes } in
+                if List.exists (fun (x : Cubin.bank) -> x.index = idx) acc then
+                  List.map
+                    (fun (x : Cubin.bank) -> if x.index = idx then bank else x)
+                    acc
+                else acc @ [ bank ]
+            | _ -> acc)
+        | _ -> acc)
+      [] d.order
   in
   {
-    Cubin.code = offset (".text." ^ k.kname);
+    Cubin.code = offset (Text i);
     code_bytes = k.text;
     registers = last eiattr_regcount;
     shared_bytes = Option.value k.shared ~default:0;
@@ -770,6 +803,22 @@ let kernels =
                  | _, Named_in (i, s), _ -> s <> (List.nth d.kernels i).kname
                  | _ -> false)
                d.attrs);
+          cover "a kernel's sections before its code"
+            (List.exists
+               (fun t ->
+                 match t with
+                 | Bank _ | Shared _ | Own_info _ | Info ->
+                     List.exists
+                       (function Text _ -> true | _ -> false)
+                       (List.tl
+                          (List.filteri (fun j _ -> j >= index d t - 1) d.order))
+                 | Text _ | Dead -> false)
+               d.order);
+          cover "k1 and k10" (List.length d.kernels >= 2);
+          cover "an attribute past the symbol table"
+            (List.exists
+               (function _, No_symbol, _ -> true | _ -> false)
+               d.attrs);
           cover "a bank of the cubin and of a kernel"
             (List.exists (fun (_, k, _) -> k = None) d.banks
             && List.exists (fun (_, k, _) -> k <> None) d.banks);
@@ -783,7 +832,10 @@ let kernels =
         (fun d ->
           let c = read (assemble d) in
           equal (list string)
-            (List.map (fun k -> k.kname) d.kernels)
+            (List.filter_map
+               (function
+                 | Text i -> Some (List.nth d.kernels i).kname | _ -> None)
+               d.order)
             (Cubin.kernels c);
           equal ~msg:"a code section outside the image" (option kernel) None
             (Cubin.kernel c "dead"));
