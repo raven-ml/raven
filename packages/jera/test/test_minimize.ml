@@ -654,6 +654,62 @@ let law_tests =
           (Rune.vmap' f cs));
   ]
 
+(* Termination *)
+
+(* Every loop of a search has a trip bound: [budget] iterations, each line
+   search at most [3b] trials for a [b]-bit dtype, so a gradient method
+   evaluates [f] at most [1 + budget 3b] times, whatever [f] returns. A search
+   whose trials keep meeting NaN runs to that bound, a few hundred evaluations
+   at [budget = 8], hence the fewer cases. *)
+let evaluation_bound budget = Int32.of_int (1 + (budget * 3 * 53))
+let gradient_methods = List.filter (fun (n, _) -> n <> "newton-cg") methods
+
+let termination_tests =
+  [
+    prop ~count:10
+      "a NaN at the trial points ends every search within its bound" centers
+      (fun c ->
+        cover "the minimum past the NaN" (Nx.item [] (Nx.sum (Nx.square c)) > 1.);
+        (* Finite inside the unit ball around 0, NaN outside: trial points past
+           it are NaN, and the minimum at c may lie outside. *)
+        let f x =
+          let v = Nx.sum (bowl c x) in
+          Nx.where
+            (Nx.less_equal_s (Nx.sum (Nx.square x)) 1.)
+            v (Nx.full_like v Float.nan)
+        in
+        List.iter
+          (fun within ->
+            List.iter
+              (fun (_, m) ->
+                let s =
+                  Minimize.solve one m ?within ~tol:tight ~budget:8 f
+                    (Nx.zeros_like c)
+                in
+                at_most int32 ~than:(evaluation_bound 8)
+                  (Nx.item [] (Solution.evaluations s)))
+              gradient_methods)
+          [ None; Some (Nx.full_like c (-2.), Nx.full_like c 2.) ]);
+    prop ~count:10
+      "a kink that collapses the bracket ends every search within its bound"
+      centers (fun c ->
+        (* |x − c| has no derivative at its minimum: the line search's bracket
+           shrinks onto the kink without the curvature condition holding. *)
+        let f x = Nx.sum (Nx.abs (Nx.sub x c)) in
+        List.iter
+          (fun within ->
+            List.iter
+              (fun (_, m) ->
+                let s =
+                  Minimize.solve one m ?within ~tol:tight ~budget:8 f
+                    (Nx.zeros_like c)
+                in
+                at_most int32 ~than:(evaluation_bound 8)
+                  (Nx.item [] (Solution.evaluations s)))
+              gradient_methods)
+          [ None; Some (Nx.full_like c (-1.), Nx.full_like c 1.) ]);
+  ]
+
 let () =
   exit
     (run "Jera.Minimize"
@@ -666,4 +722,6 @@ let () =
          group "boxes" box_tests;
          group "iterates" iterate_tests;
          group "laws" law_tests;
+         (* A search that does not end is a failure, not a hang. *)
+         group ~timeout:60. "termination" termination_tests;
        ])
