@@ -366,6 +366,27 @@ let correlation =
           equal near
             (correlate_ref x k ~lo:(Nx.numel k / 2) ~len:(Nx.numel x))
             (Ref.of_nx (Nx.correlate ~padding:`Same x k)));
+      prop "a float16 correlate and convolve are float32's, rounded once"
+        (Gen.pair signal kernel) (fun (x, k) ->
+          (* Elements up to 300, whose products pass float16's largest. *)
+          let h t = Nx.cast Nx.float16 (Nx.mul_s t 100.) in
+          let x = h x and k = h k in
+          let f32 t = Nx.cast Nx.float32 t and once t = Nx.cast Nx.float16 t in
+          List.iter
+            (fun padding ->
+              equal ~msg:"correlate" (tensor float_exact)
+                (once (Nx.correlate ~padding (f32 x) (f32 k)))
+                (Nx.correlate ~padding x k);
+              equal ~msg:"convolve" (tensor float_exact)
+                (once (Nx.convolve ~padding (f32 x) (f32 k)))
+                (Nx.convolve ~padding x k))
+            [ `Full; `Same; `Valid ]);
+      test "a float16 correlate whose products overflow float16 is finite"
+        (fun () ->
+          let v xs = Nx.create Nx.float16 [| 2 |] xs in
+          let x = v [| 300.; 300. |] and k = v [| 300.; -300. |] in
+          exactly "correlate" [| 0. |] (Nx.correlate x k);
+          exactly "convolve" [| 0. |] (Nx.convolve x k));
       prop "full convolve is correlate with the kernel flipped"
         (Gen.pair signal kernel) (fun (x, k) ->
           equal

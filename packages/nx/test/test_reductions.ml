@@ -762,7 +762,8 @@ let signed_zeros =
           equal ~msg:"argmin" int64 1L (Nx.item [] (Nx.argmin t)));
     ]
 
-(* The normalisations, at float64 on finite values. *)
+(* The normalisations, at float64 on finite values, and at float16 against
+   float32. *)
 let normalisations =
   (* An empty lane has no maximum to shift by; nx refuses it, and nx.mli is
      silent, so the lanes drawn here have elements. *)
@@ -887,6 +888,62 @@ let normalisations =
             (Ref.witness (close ~rel:1e-9 ~abs:1e-9 ()))
             (Ref.map (fun x -> (x -. mean) /. Float.sqrt (var +. 1e-5)) r)
             (Ref.of_nx (Nx.standardize t)));
+      prop "at float16 the normalisations are float32's, rounded once"
+        (Gen.such_that
+           (fun t -> Nx.numel t > 0)
+           (viewed ~shape:nonempty ~pp:pp_float Nx.float64
+              (Gen.float_range (-1000.) 1000.)))
+        (fun t ->
+          let a = last t in
+          let h = Nx.cast Nx.float16 t in
+          let wide = Nx.cast Nx.float32 h in
+          let f32 = Nx.cast Nx.float32 in
+          let mean = Nx.mean ~axes:[ a ] ~keepdims:true h in
+          let variance = Nx.var ~axes:[ a ] ~keepdims:true h in
+          cover "a squared deviation past float16's largest"
+            (Nx.item [] (Nx.max (Nx.square (Nx.sub wide (f32 mean)))) > 65504.);
+          let agree msg expected actual =
+            equal ~msg (tensor float_exact) (Nx.cast Nx.float16 expected) actual
+          in
+          agree "softmax" (Nx.softmax wide) (Nx.softmax h);
+          agree "log_softmax" (Nx.log_softmax wide) (Nx.log_softmax h);
+          agree "logsumexp"
+            (Nx.logsumexp ~axes:[ a ] wide)
+            (Nx.logsumexp ~axes:[ a ] h);
+          agree "logmeanexp"
+            (Nx.logmeanexp ~axes:[ a ] wide)
+            (Nx.logmeanexp ~axes:[ a ] h);
+          agree "standardize" (Nx.standardize wide) (Nx.standardize h);
+          agree "standardize with a given mean and variance"
+            (Nx.standardize ~axes:[ a ] ~mean:(f32 mean)
+               ~variance:(f32 variance) wide)
+            (Nx.standardize ~axes:[ a ] ~mean ~variance h));
+      test "a float16 lane longer than float16 holds normalises" (fun () ->
+          let n = 70_000 in
+          let f16 x = Nx.item [] (Nx.create Nx.float16 [||] [| x |]) in
+          let zeros = Nx.zeros Nx.float16 [| n |] in
+          let log_n = Float.log (Float.of_int n) in
+          equal ~msg:"softmax" float_exact
+            (f16 (1. /. Float.of_int n))
+            (Nx.item [ 0 ] (Nx.softmax zeros));
+          equal ~msg:"log_softmax" float_exact (f16 (-.log_n))
+            (Nx.item [ 0 ] (Nx.log_softmax zeros));
+          equal ~msg:"logsumexp" float_exact (f16 log_n)
+            (Nx.item [] (Nx.logsumexp zeros));
+          equal ~msg:"logmeanexp" (float 1e-3) 0.
+            (Nx.item [] (Nx.logmeanexp zeros)));
+      test "a float16 standardize whose variance overflows float16 is finite"
+        (fun () ->
+          let x = Nx.create Nx.float16 [| 2 |] [| 300.; -300. |] in
+          equal (array float_exact) [| 1.; -1. |]
+            (Nx.to_array (Nx.standardize x)));
+      test "a float16 standardize whose deviation overflows float16 is finite"
+        (fun () ->
+          let v x = Nx.create Nx.float16 [| 1 |] [| x |] in
+          equal (array float_exact) [| 1200. |]
+            (Nx.to_array
+               (Nx.standardize ~mean:(v (-60000.)) ~variance:(v 10000.)
+                  (v 60000.))));
     ]
 
 (* The mean of [xs] rounded toward zero, by long division of their exact sum

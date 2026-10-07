@@ -3568,6 +3568,13 @@ thread.
 
 ### Nx
 
+- `Nx.standardize`, `Nx.softmax`, `Nx.log_softmax`, `Nx.logsumexp`,
+  `Nx.logmeanexp` and `Nx.norm` at `float16`, `bfloat16` and the float8 dtypes
+  compute at float32 and round once. A float16 standardize of `[300; -300]`
+  was zero, a norm of `[300; 400]` and a logsumexp of 70000 zeros infinite.
+- `Nx.lerp`, `Nx.cross`, `Nx.multi_dot`, `Nx.einsum`, `Nx.correlate` and
+  `Nx.convolve` at the same dtypes compute at float32 and round once: a float16
+  difference or product past 65504 inside them made the result infinite or NaN.
 - `Nx.mean`, `Nx.var` and `Nx.std` at `float16`, `bfloat16` and the float8
   dtypes compute at float32 and round once. A float16 mean of 70000 ones was
   NaN and a variance whose squared deviations passed 65504 was infinite.

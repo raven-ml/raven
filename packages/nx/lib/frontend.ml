@@ -656,6 +656,14 @@ let real_at_float32 c x =
   if narrow (dtype x) then cast (dtype x) (c.r (cast Nx_dtype.float32 x))
   else c.r x
 
+(* The same for a function of tensors of one dtype. *)
+type composites = { fs : 'a 'b. ('a, 'b) t array -> ('a, 'b) t }
+
+let all_at_float32 c xs =
+  if Array.length xs > 0 && narrow (dtype xs.(0)) then
+    cast (dtype xs.(0)) (c.fs (Array.map (cast Nx_dtype.float32) xs))
+  else c.fs xs
+
 let log2 x =
   at_float32
     {
@@ -728,7 +736,11 @@ let isfinite x =
   else logical_not (logical_or (isinf x) (isnan x))
 
 let lerp start_tensor end_tensor weight =
-  add start_tensor (mul (sub end_tensor start_tensor) weight)
+  let lerp start_tensor =
+    let like t = cast (dtype start_tensor) t in
+    add start_tensor (mul (sub (like end_tensor) start_tensor) (like weight))
+  in
+  at_float32 { f = lerp } start_tensor
 
 let shift_op ~op ~apply x shift_val =
   let dt = dtype x in
@@ -4483,7 +4495,8 @@ let outer a b =
   let r = if ndim a = 0 then squeeze ~axes:[ 0 ] r else r in
   if ndim b = 0 then squeeze ~axes:[ (if ndim a = 0 then 0 else 1) ] r else r
 
-let einsum subscripts operands = Einsum.calculate subscripts operands
+let einsum subscripts operands =
+  all_at_float32 { fs = (fun ops -> Einsum.calculate subscripts ops) } operands
 
 let kron a b =
   let sa = shape a in
@@ -4563,22 +4576,25 @@ let multi_dot arrays =
           split.(i).(j) <- !best_s
         done
       done;
-      let memo = Array.init n (fun _ -> Array.make n None) in
-      let rec compute i j =
-        match memo.(i).(j) with
-        | Some t -> t
-        | None ->
-            let r =
-              if i = j then arrays.(i)
-              else
-                matmul
-                  (compute i split.(i).(j))
-                  (compute (split.(i).(j) + 1) j)
-            in
-            memo.(i).(j) <- Some r;
-            r
+      let chain arrays =
+        let memo = Array.init n (fun _ -> Array.make n None) in
+        let rec compute i j =
+          match memo.(i).(j) with
+          | Some t -> t
+          | None ->
+              let r =
+                if i = j then arrays.(i)
+                else
+                  matmul
+                    (compute i split.(i).(j))
+                    (compute (split.(i).(j) + 1) j)
+              in
+              memo.(i).(j) <- Some r;
+              r
+        in
+        compute 0 (n - 1)
       in
-      compute 0 (n - 1)
+      all_at_float32 { fs = chain } arrays
 
 let cross ?axis a b =
   let axis =
@@ -4596,10 +4612,14 @@ let cross ?axis a b =
                  if j = axis then R (i, i + 1) else A)))
          t)
   in
-  let c1 = sub (mul (at 1 a) (at 2 b)) (mul (at 2 a) (at 1 b)) in
-  let c2 = sub (mul (at 2 a) (at 0 b)) (mul (at 0 a) (at 2 b)) in
-  let c3 = sub (mul (at 0 a) (at 1 b)) (mul (at 1 a) (at 0 b)) in
-  stack ~axis [ c1; c2; c3 ]
+  let cross a =
+    let b = cast (dtype a) b in
+    let c1 = sub (mul (at 1 a) (at 2 b)) (mul (at 2 a) (at 1 b)) in
+    let c2 = sub (mul (at 2 a) (at 0 b)) (mul (at 0 a) (at 2 b)) in
+    let c3 = sub (mul (at 0 a) (at 1 b)) (mul (at 1 a) (at 0 b)) in
+    stack ~axis [ c1; c2; c3 ]
+  in
+  at_float32 { f = cross } a
 
 (* ───── Matrix Decompositions and Solving ───── *)
 
@@ -4679,45 +4699,49 @@ let eigvalsh ?uplo a =
   check_float_or_complex ~op:"eigvalsh" a;
   B.eigvalsh (hermitian_lower ?uplo a)
 
-let norm (type a b) ?ord ?axes ?keepdims (x : (a, b) t) =
+let norm ?ord ?axes ?keepdims x =
   let keepdims = Option.value keepdims ~default:false in
-  match (ord, axes) with
-  | None, None -> sqrt (sum (square (abs x)) ~keepdims)
-  | None, Some _ | Some `Fro, _ -> sqrt (sum (square (abs x)) ?axes ~keepdims)
-  | Some `One, None ->
-      max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
-  | Some `NegOne, None ->
-      if ndim x = 1 then min (abs x) ~keepdims
-      else min (sum (abs x) ~axes:[ ndim x - 2 ]) ~keepdims
-  | Some `Two, None when ndim x = 1 -> sqrt (sum (square (abs x)) ~keepdims)
-  | Some `Two, None -> max (svdvals x |> cast (dtype x)) ~keepdims
-  | Some `NegTwo, None -> min (svdvals x |> cast (dtype x)) ~keepdims
-  | Some `Inf, None ->
-      if ndim x = 1 then max (abs x) ~keepdims
-      else max (sum (abs x) ~axes:[ ndim x - 1 ] ~keepdims) ~keepdims
-  | Some `NegInf, None ->
-      if ndim x = 1 then min (abs x) ~keepdims
-      else min (sum (abs x) ~axes:[ ndim x - 1 ]) ~keepdims
-  | Some `Nuc, None ->
-      if ndim x < 2 then
-        invalid_arg "norm: input, nuclear norm defined for matrices";
-      sum (svdvals x |> cast (dtype x)) ~keepdims
-  | Some `NegOne, _ | Some `NegTwo, _ | Some `NegInf, _ | Some `Nuc, _ ->
-      invalid_arg "norm: this combination of ord and axis not implemented"
-  | Some (`P p), _ ->
-      if p = 1.0 && axes = None && ndim x = 2 then
+  let norm (type a b) (x : (a, b) t) : (a, b) t =
+    match (ord, axes) with
+    | None, None -> sqrt (sum (square (abs x)) ~keepdims)
+    | None, Some _ | Some `Fro, _ -> sqrt (sum (square (abs x)) ?axes ~keepdims)
+    | Some `One, None ->
         max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
-      else
-        let p_t =
-          full (Value.context x) (dtype x) [||] (Nx_dtype.of_float (dtype x) p)
-        in
-        let inv_p =
-          div
-            (full (Value.context x) (dtype x) [||] (Nx_dtype.one (dtype x)))
-            p_t
-        in
-        pow (sum (pow (abs x) p_t) ?axes ~keepdims) inv_p
-  | _ -> invalid_arg "norm: this combination of ord and axis not implemented"
+    | Some `NegOne, None ->
+        if ndim x = 1 then min (abs x) ~keepdims
+        else min (sum (abs x) ~axes:[ ndim x - 2 ]) ~keepdims
+    | Some `Two, None when ndim x = 1 -> sqrt (sum (square (abs x)) ~keepdims)
+    | Some `Two, None -> max (svdvals x |> cast (dtype x)) ~keepdims
+    | Some `NegTwo, None -> min (svdvals x |> cast (dtype x)) ~keepdims
+    | Some `Inf, None ->
+        if ndim x = 1 then max (abs x) ~keepdims
+        else max (sum (abs x) ~axes:[ ndim x - 1 ] ~keepdims) ~keepdims
+    | Some `NegInf, None ->
+        if ndim x = 1 then min (abs x) ~keepdims
+        else min (sum (abs x) ~axes:[ ndim x - 1 ]) ~keepdims
+    | Some `Nuc, None ->
+        if ndim x < 2 then
+          invalid_arg "norm: input, nuclear norm defined for matrices";
+        sum (svdvals x |> cast (dtype x)) ~keepdims
+    | Some `NegOne, _ | Some `NegTwo, _ | Some `NegInf, _ | Some `Nuc, _ ->
+        invalid_arg "norm: this combination of ord and axis not implemented"
+    | Some (`P p), _ ->
+        if p = 1.0 && axes = None && ndim x = 2 then
+          max (sum (abs x) ~axes:[ ndim x - 2 ] ~keepdims) ~keepdims
+        else
+          let p_t =
+            full (Value.context x) (dtype x) [||]
+              (Nx_dtype.of_float (dtype x) p)
+          in
+          let inv_p =
+            div
+              (full (Value.context x) (dtype x) [||] (Nx_dtype.one (dtype x)))
+              p_t
+          in
+          pow (sum (pow (abs x) p_t) ?axes ~keepdims) inv_p
+    | _ -> invalid_arg "norm: this combination of ord and axis not implemented"
+  in
+  at_float32 { f = norm } x
 
 (* +1 for a pivot that kept its row, -1 for one that exchanged it. *)
 let pivot_signs dt pivots =
@@ -5820,15 +5844,21 @@ let scaled_shift ~axes ~scale x =
 
 let softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
   let axes = normalize_and_dedup_axes ~op:"softmax" (ndim x) axes in
-  let e = exp (scaled_shift ~axes ~scale x) in
-  div e (sum e ~axes ~keepdims:true)
+  let softmax x =
+    let e = exp (scaled_shift ~axes ~scale x) in
+    div e (sum e ~axes ~keepdims:true)
+  in
+  at_float32 { f = softmax } x
 
 let log_softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
   let axes = normalize_and_dedup_axes ~op:"log_softmax" (ndim x) axes in
   if axes = [] then zeros_like x
   else
-    let scaled = scaled_shift ~axes ~scale x in
-    sub scaled (log (sum (exp scaled) ~axes ~keepdims:true))
+    let log_softmax x =
+      let scaled = scaled_shift ~axes ~scale x in
+      sub scaled (log (sum (exp scaled) ~axes ~keepdims:true))
+    in
+    at_float32 { f = log_softmax } x
 
 let logsumexp ?axes ?(keepdims = false) x =
   let axes_norm =
@@ -5841,11 +5871,12 @@ let logsumexp ?axes ?(keepdims = false) x =
     (* The shift is the lane's maximum where it is finite: a lane of [-inf]
        sums to [-inf] and one holding [+inf] to [+inf], where [x - max] would
        be NaN. *)
-    let max_x = max x ~axes:axes_norm ~keepdims:true in
-    let shift = where (isfinite max_x) max_x (zeros_like max_x) in
-    let log_sum =
+    let logsumexp x =
+      let max_x = max x ~axes:axes_norm ~keepdims:true in
+      let shift = where (isfinite max_x) max_x (zeros_like max_x) in
       add (log (sum (exp (sub x shift)) ~axes:axes_norm ~keepdims:true)) shift
     in
+    let log_sum = at_float32 { f = logsumexp } x in
     if keepdims then log_sum else squeeze ~axes:(List.rev axes_norm) log_sum
 
 let logmeanexp ?axes ?(keepdims = false) x =
@@ -5856,14 +5887,13 @@ let logmeanexp ?axes ?(keepdims = false) x =
   in
   if axes_norm = [] then x
   else
-    let log_sum = logsumexp ~axes:axes_norm ~keepdims:true x in
     let count = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_norm in
-    let log_mean =
-      sub log_sum
-        (log
-           (scalar_like log_sum
-              (Nx_dtype.of_float (dtype x) (float_of_int count))))
+    let logmeanexp x =
+      let log_sum = logsumexp ~axes:axes_norm ~keepdims:true x in
+      let n = Nx_dtype.of_float (dtype x) (float_of_int count) in
+      sub log_sum (log (scalar_like log_sum n))
     in
+    let log_mean = at_float32 { f = logmeanexp } x in
     if keepdims then log_mean else squeeze ~axes:(List.rev axes_norm) log_mean
 
 let standardize ?axes ?mean:mean_param ?variance:variance_param
@@ -5894,24 +5924,31 @@ let standardize ?axes ?mean:mean_param ?variance:variance_param
     else if ps = core_shape then reshape keep_shape param
     else err "standardize" "%s, shape must match normalized axes" name
   in
-  let mean_tensor =
-    match mean_param with
-    | Some m -> broadcast_param "mean" m
-    | None ->
-        if axes_norm = [] then x else mean x ~axes:axes_norm ~keepdims:true
+  let mean_param = Option.map (broadcast_param "mean") mean_param in
+  let variance_param = Option.map (broadcast_param "variance") variance_param in
+  if Option.is_none variance_param then refuse_int "standardize" x;
+  (* A given mean or variance widens with [x], so the three combine at
+     float32. *)
+  let standardize x =
+    let mean_tensor =
+      match mean_param with
+      | Some m -> cast (dtype x) m
+      | None ->
+          if axes_norm = [] then x else mean x ~axes:axes_norm ~keepdims:true
+    in
+    let variance_tensor =
+      match variance_param with
+      | Some v -> cast (dtype x) v
+      | None ->
+          if axes_norm = [] then zeros_like x
+          else var x ~axes:axes_norm ~keepdims:true
+    in
+    div (sub x mean_tensor)
+      (sqrt
+         (add variance_tensor
+            (scalar_like x (Nx_dtype.of_float (dtype x) epsilon))))
   in
-  let variance_tensor =
-    match variance_param with
-    | Some v -> broadcast_param "variance" v
-    | None ->
-        refuse_int "standardize" x;
-        if axes_norm = [] then zeros_like x
-        else var x ~axes:axes_norm ~keepdims:true
-  in
-  div (sub x mean_tensor)
-    (sqrt
-       (add variance_tensor
-          (scalar_like x (Nx_dtype.of_float (dtype x) epsilon))))
+  at_float32 { f = standardize } x
 
 let erf (x : (float, 'b) t) = B.unary Erf x
 
@@ -6008,15 +6045,17 @@ let correlation ~flipped padding x kernel =
   let input_spatial = Array.sub (shape x) (xr - kr) kr in
   let pad_pairs = correlate_padding ~flipped ~mode:padding input_spatial ks in
   let ones_arr = Array.make kr 1 in
-  let x_unf =
-    B.unfold x ~kernel_size:ks ~stride:ones_arr ~dilation:ones_arr
-      ~padding:pad_pairs
+  let correlate x =
+    let x_unf =
+      B.unfold x ~kernel_size:ks ~stride:ones_arr ~dilation:ones_arr
+        ~padding:pad_pairs
+    in
+    let und = ndim x_unf in
+    let kp = (shape x_unf).(und - 2) in
+    let kernel = reshape [| kp; 1 |] (cast (dtype x) kernel) in
+    sum (mul x_unf kernel) ~axes:[ und - 2 ]
   in
-  let und = ndim x_unf in
-  let kp = (shape x_unf).(und - 2) in
-  let result =
-    sum (mul x_unf (reshape [| kp; 1 |] kernel)) ~axes:[ und - 2 ]
-  in
+  let result = at_float32 { f = correlate } x in
   let leading = Array.sub (shape x) 0 (xr - kr) in
   let out_spatial =
     Array.init kr (fun i ->

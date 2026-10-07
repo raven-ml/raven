@@ -960,7 +960,7 @@ let solvers =
             (Nx.tensorinv ~ind:2 a));
     ]
 
-(* float16 and bfloat16 products widen to float32 and round once. *)
+(* float16 and bfloat16 products and norms widen to float32 and round once. *)
 let narrow =
   group "narrow floats"
     [
@@ -987,6 +987,91 @@ let narrow =
             (tensor (close ~rel:0. ()))
             (once Nx.bfloat16)
             (Nx.matmul (Nx.cast Nx.bfloat16 a) (Nx.cast Nx.bfloat16 b)));
+      prop "a float16 norm is float32's, rounded once"
+        (sized (fun m -> sized (fun n -> matrix m n)))
+        (fun a ->
+          (* Entries up to 1000, whose squares pass float16's largest. *)
+          let a16 = Nx.cast Nx.float16 (Nx.mul_s a 1000.) in
+          let wide = Nx.cast Nx.float32 a16 in
+          let v x = Nx.reshape [| -1 |] x in
+          let agree msg expected actual =
+            equal ~msg
+              (tensor (close ~rel:0. ()))
+              (Nx.cast Nx.float16 expected)
+              actual
+          in
+          agree "default" (Nx.norm wide) (Nx.norm a16);
+          List.iter
+            (fun (msg, ord) -> agree msg (Nx.norm ~ord wide) (Nx.norm ~ord a16))
+            [
+              ("fro", `Fro);
+              ("one", `One);
+              ("inf", `Inf);
+              ("two", `Two);
+              ("nuc", `Nuc);
+            ];
+          agree "vector two"
+            (Nx.norm ~ord:`Two (v wide))
+            (Nx.norm ~ord:`Two (v a16));
+          agree "vector p"
+            (Nx.norm ~ord:(`P 3.) (v wide))
+            (Nx.norm ~ord:(`P 3.) (v a16)));
+      prop "a float16 cross, multi_dot and einsum are float32's, rounded once"
+        (Gen.pair
+           (Gen.pair (matrix 2 3) (matrix 2 3))
+           (Gen.pair (matrix 3 3) (matrix 3 2)))
+        (fun ((a, a'), (b, c)) ->
+          (* Entries up to 100, whose products pass float16's largest. *)
+          let h t = Nx.cast Nx.float16 (Nx.mul_s t 100.) in
+          let a = h a and a' = h a' and b = h b and c = h c in
+          let f32 t = Nx.cast Nx.float32 t in
+          let agree msg expected actual =
+            equal ~msg
+              (tensor (close ~rel:0. ()))
+              (Nx.cast Nx.float16 expected)
+              actual
+          in
+          agree "cross" (Nx.cross (f32 a) (f32 a')) (Nx.cross a a');
+          agree "multi_dot"
+            (Nx.multi_dot [| f32 a; f32 b; f32 c |])
+            (Nx.multi_dot [| a; b; c |]);
+          agree "einsum"
+            (Nx.einsum "ij,jk,kl->il" [| f32 a; f32 b; f32 c |])
+            (Nx.einsum "ij,jk,kl->il" [| a; b; c |]));
+      test
+        "a float16 cross, multi_dot and einsum whose products overflow float16 \
+         are finite" (fun () ->
+          let f16 x = Nx.item [] (Nx.create Nx.float16 [||] [| x |]) in
+          let u = Nx.create Nx.float16 [| 3 |] [| 0.; 300.; 300. |] in
+          equal ~msg:"cross"
+            (array (close ~rel:0. ()))
+            [| 0.; 0.; 0. |]
+            (Nx.to_array (Nx.cross u u));
+          (* Either association of the chain passes 300 * 300. *)
+          let m x = Nx.create Nx.float16 [| 1; 1 |] [| x |] in
+          let expected = f16 (300. *. 300. /. 256.) in
+          List.iter
+            (fun ops ->
+              equal ~msg:"multi_dot" (close ~rel:0. ()) expected
+                (Nx.item [ 0; 0 ] (Nx.multi_dot ops));
+              equal ~msg:"einsum" (close ~rel:0. ()) expected
+                (Nx.item [ 0; 0 ] (Nx.einsum "ij,jk,kl->il" ops)))
+            [
+              [| m 300.; m 300.; m (1. /. 256.) |];
+              [| m (1. /. 256.); m 300.; m 300. |];
+            ]);
+      test "a float16 norm whose powers overflow float16 is finite" (fun () ->
+          let f16 x = Nx.item [] (Nx.create Nx.float16 [||] [| x |]) in
+          let v xs = Nx.create Nx.float16 [| 2 |] xs in
+          equal ~msg:"two" (close ~rel:0. ()) 500.
+            (Nx.item [] (Nx.norm (v [| 300.; 400. |])));
+          equal ~msg:"fro" (close ~rel:0. ()) 500.
+            (Nx.item []
+               (Nx.norm ~ord:`Fro
+                  (Nx.create Nx.float16 [| 2; 2 |] [| 300.; 0.; 0.; 400. |])));
+          equal ~msg:"p" (close ~rel:0. ())
+            (f16 (Float.cbrt 91000.))
+            (Nx.item [] (Nx.norm ~ord:(`P 3.) (v [| 30.; 40. |]))));
     ]
 
 (* Factorizations at scale: the identities above over orders past each

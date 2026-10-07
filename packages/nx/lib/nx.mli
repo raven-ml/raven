@@ -3764,7 +3764,9 @@ val tensordot :
     Raises [Invalid_argument] if the contracted axes have different sizes. *)
 
 val einsum : string -> ('a, 'b) t array -> ('a, 'b) t
-(** [einsum subscripts operands] evaluates Einstein summation.
+(** [einsum subscripts operands] evaluates Einstein summation. At [float16],
+    [bfloat16] and the float8 dtypes, every contraction computes at [float32]
+    and the result rounds once.
 
     {@ocaml[
       # let a =
@@ -3787,7 +3789,9 @@ val kron : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val multi_dot : ('a, 'b) t array -> ('a, 'b) t
 (** [multi_dot ts] is the chained matrix product of [ts], automatically choosing
-    the association order that minimises computation.
+    the association order that minimises computation. At [float16], [bfloat16]
+    and the float8 dtypes, the whole chain computes at [float32] and rounds
+    once, so an intermediate product cannot overflow.
 
     Raises [Invalid_argument] if the array is empty, shapes are incompatible, or
     dtypes are not floating-point or complex.
@@ -3806,7 +3810,9 @@ val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
 
 val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [cross ?axis a b] is the cross product of 3-element vectors along [axis].
-    [axis] defaults to [-1].
+    [axis] defaults to [-1]. At [float16], [bfloat16] and the float8 dtypes, it
+    computes at [float32] and rounds once, so it is finite whenever it fits the
+    dtype.
 
     Raises [Invalid_argument] if the axis dimension is not 3. *)
 
@@ -3965,6 +3971,10 @@ val norm :
     - [`Inf] — max absolute row sum (matrix) or ∞-norm (vector).
     - [`P p] — p-norm (vectors only).
     - [`NegOne], [`NegTwo], [`NegInf] — corresponding minimum norms.
+
+    At [float16], [bfloat16] and the float8 dtypes, the norm computes at
+    [float32] and rounds once, so it is finite whenever it fits the dtype, even
+    where the squares or powers it sums do not.
 
     Raises [Invalid_argument] if [ord] requires a floating-point or complex
     dtype. *)
@@ -4567,7 +4577,11 @@ val istft :
 
     See also {!stft}. *)
 
-(** {1:normalisations Normalisations} *)
+(** {1:normalisations Normalisations}
+
+    At [float16], [bfloat16] and the float8 dtypes, each function below computes
+    at [float32] and rounds once, so its result is finite whenever it fits the
+    dtype. *)
 
 val sigmoid : ('a, 'b) t -> ('a, 'b) t
 (** [sigmoid t] is [1 / (1 + exp(-t))] element-wise, in [[0, 1]]: an element is
@@ -4628,7 +4642,8 @@ val standardize :
 (** [standardize ?axes ?mean ?variance ?epsilon t] is
     [(t - mean) / sqrt(variance + epsilon)]. When [mean] or [variance] are
     omitted, they are computed along [axes] (default all). [epsilon] defaults to
-    [1e-5].
+    [1e-5]. A given [mean] or [variance] widens to [float32] with [t], so
+    [t - mean] cannot overflow a narrow float.
 
     Raises [Invalid_argument] if [variance] is omitted and [t] is an integer
     tensor, whose variance {!var} refuses. *)
@@ -4734,7 +4749,10 @@ val combine_patches :
 
     See also {!extract_patches}. *)
 
-(** {2:correlate Cross-correlation and convolution} *)
+(** {2:correlate Cross-correlation and convolution}
+
+    At [float16], [bfloat16] and the float8 dtypes, both functions below
+    multiply and sum at [float32] and round once, as {!matmul} does. *)
 
 val correlate :
   ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t

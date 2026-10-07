@@ -915,6 +915,20 @@ let comparisons =
             (tensor (close ~rel:0. ()))
             (Nx.add a (Nx.mul w (Nx.sub b a)))
             (Nx.lerp a b w));
+      prop "a float16 lerp is float32's, rounded once"
+        (broadcast_pair Nx.float64) (fun (a, b) ->
+          let a = Nx.cast Nx.float16 a and b = Nx.cast Nx.float16 b in
+          let w = Nx.scalar Nx.float16 0.25 in
+          let f32 t = Nx.cast Nx.float32 t in
+          equal
+            (tensor (close ~rel:0. ()))
+            (Nx.cast Nx.float16 (Nx.lerp (f32 a) (f32 b) (f32 w)))
+            (Nx.lerp a b w));
+      test "a float16 lerp whose difference overflows float16 is finite"
+        (fun () ->
+          let s x = Nx.scalar Nx.float16 x in
+          equal float_exact 0.
+            (Nx.item [] (Nx.lerp (s (-60000.)) (s 60000.) (s 0.5))));
     ]
 
 (* Integers wrap, as OCaml's fixed-width integers do. *)
