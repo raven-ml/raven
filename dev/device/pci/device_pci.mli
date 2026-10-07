@@ -69,30 +69,23 @@
 
 (** {1:hardware Reaching the hardware} *)
 
-module Machine = Machine
-(** Machines, their PCI functions, and transports to other machines. *)
+(* Pending: module Machine = Machine *)
 
-module Function = Function
-(** PCI functions the process has taken. *)
+(* Pending: module Function = Function *)
 
 module Window = Window
 (** Ranges of a machine's addresses that the process reads and writes. *)
 
 (** {1:memory A GPU's memory} *)
 
-module Space = Space
-(** Virtual addresses the GPUs of one vendor share. *)
+(* Pending: module Space = Space *)
 
-module Page_table = Page_table
-(** A GPU's physical memory and the page tables that map it. *)
+(* Pending: module Page_table = Page_table *)
 
-module Memory = Memory
-(** The memory a GPU addresses, placed by kind. *)
+(* Pending: module Memory = Memory *)
 
 (** {1:gpus GPUs} *)
 
-module Firmware = Firmware
-(** Firmware images, verified by digest. *)
+(* Pending: module Firmware = Firmware *)
 
-module Gpus = Gpus
-(** A vendor's GPUs, and the process's hold on them. *)
+(* Pending: module Gpus = Gpus *)

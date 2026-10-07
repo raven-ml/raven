@@ -106,7 +106,9 @@ val bigarray :
     For the libraries that reach another machine. A transport is a
     [struct device_pci_transport] of C functions that read and write the
     machine's addresses, declared in [device_pci.h], which states their
-    contract. The library calls them without holding the OCaml runtime. *)
+    contract. The accesses of [device_pci.h] call them as a driver's submission
+    runs, which may be without the OCaml runtime; the accesses above call them
+    holding it. *)
 
 type transport
 (** The type for transports. *)

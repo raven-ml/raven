@@ -1,0 +1,13 @@
+; GPUs driven through their PCI function. Modules land one at a time; the
+; ones not yet implemented stay out of (modules).
+
+(library
+ (name device_pci)
+ (modules device_pci tlsf window)
+ (private_modules tlsf)
+ (libraries unix)
+ (install_c_headers device_pci)
+ (foreign_stubs
+  (language c)
+  (names device_pci_window)
+  (flags :standard -std=c11 -O2 -Wall -Wextra)))
