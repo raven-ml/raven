@@ -7,28 +7,5 @@
  (install_c_headers device_pci)
  (foreign_stubs
   (language c)
-  (names device_pci_window device_pci_sysmem device_pci_files device_pci_vfio device_pci_machine device_pci_firmware)
-  (flags :standard -std=c11 -O2 -Wall -Wextra))
- (c_library_flags
-  (:include dl_flags.sexp)))
-
-; dlopen is a library of its own on Linux; elsewhere it is part of the C
-; library (macOS) or of kernel32 (Windows).
-
-(rule
- (target dl_flags.sexp)
- (enabled_if
-  (= %{system} linux))
- (action
-  (with-stdout-to
-   dl_flags.sexp
-   (echo "(-ldl)"))))
-
-(rule
- (target dl_flags.sexp)
- (enabled_if
-  (<> %{system} linux))
- (action
-  (with-stdout-to
-   dl_flags.sexp
-   (echo "()"))))
+  (names device_pci_window device_pci_sysmem device_pci_files device_pci_vfio device_pci_machine)
+  (flags :standard -std=c11 -O2 -Wall -Wextra)))

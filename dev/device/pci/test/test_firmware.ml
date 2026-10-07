@@ -3,88 +3,35 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Firmware images by digest, in directories and the cache. Every lookup in this
-   process sees a cache of its own; the lookups that need another environment
-   run in a child process. *)
+(* Firmware images by digest, in the directories a lookup is given. *)
 
 open Windtrap
 open Device_pci
 
-(* The child: [TEST_FIRMWARE_FIND=name] prints what [find] gives for the image
-   below, in the environment it was given. *)
-
 let image = "raven firmware image\n"
-let digest = "f4bd2d0ec861f4d7ce351f995c824a6b18368a3d9b0b053366c50336923ed291"
+let pinned = "ce1c62cec35ab52e7ceef75a48b8cf0743b671f581f066288ec274636805997a"
 
-let () =
-  match Sys.getenv_opt "TEST_FIRMWARE_FIND" with
-  | None -> ()
-  | Some name ->
-      (match Firmware.find name ~sha256:digest with
-      | Ok s when s = image -> print_string "the image"
-      | Ok _ -> print_string "other bytes"
-      | Error _ -> print_string "none");
-      exit 0
+(* Digests *)
 
-(* SHA-256 *)
-
-let test_sha256 =
-  cases "sha256 is the hexadecimal digest"
+(* BLAKE2b with 32 bytes of output, as Python's hashlib computes it. *)
+let test_digest =
+  cases "digest is the hexadecimal BLAKE2b-256 digest"
     ~name:(fun (name, _, _) -> name)
     [
       ( "empty",
         "",
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" );
+        "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8" );
       ( "abc",
         "abc",
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" );
-      ( "two blocks",
-        "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
-        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1" );
-      ( "55 bytes, the most one block pads",
-        String.make 55 'a',
-        "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318" );
-      ( "56 bytes, padded to two blocks",
-        String.make 56 'a',
-        "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a" );
-      ( "63 bytes",
-        String.make 63 'a',
-        "7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34" );
-      ( "64 bytes, one whole block",
-        String.make 64 'a',
-        "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb" );
-      ( "65 bytes",
-        String.make 65 'a',
-        "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0" );
+        "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319" );
+      ("the image", image, pinned);
       ( "a million bytes",
         String.make 1_000_000 'a',
-        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" );
+        "0741850f36cba4259628355d1073e24ddb9ca0e1bfac36fd39ae5dc2101e23a4" );
     ]
-    (fun (_, s, d) -> equal string d (Firmware.sha256 s))
+    (fun (_, s, d) -> equal string d (Firmware.digest s))
 
 (* Files *)
-
-let of_hex h =
-  String.init
-    (String.length h / 2)
-    (fun i -> Char.chr (int_of_string ("0x" ^ String.sub h (2 * i) 2)))
-
-(* The image and another one, compressed by xz and zstd. *)
-let xz =
-  of_hex
-    "fd377a585a000004e6d6b44604c0191521011600000000000000000009e390b5010014726176656e206669726d7761726520696d6167650a00000000f2d3364f7087ea610001351576936aef1fb6f37d010000000004595a"
-
-let zst =
-  of_hex "28b52ffd2415a90000726176656e206669726d7761726520696d6167650a4a856cd1"
-
-let other_xz =
-  of_hex
-    "fd377a585a000004e6d6b44604c0120e2101160000000000000000009dc166a901000d616e6f7468657220696d6167650a000000dcfa83d9586b935500012e0e009139cc1fb6f37d010000000004595a"
-
-let other_zst = of_hex "28b52ffd0458710000616e6f7468657220696d6167650a7fd26a3b"
-
-(* Names no system holds in /lib/firmware. *)
-let name file = Printf.sprintf "raven-test-%d/%s" (Unix.getpid ()) file
 
 let rec mkdir_p d =
   if not (Sys.file_exists d) then begin
@@ -112,165 +59,60 @@ let root =
      d)
 
 let temp_dir () = Filename.temp_dir ~temp_dir:(Lazy.force root) "d" ""
-
-(* The cache of this process: [RAVEN_CACHE_ROOT] names it. *)
-let with_cache f =
-  let root = temp_dir () in
-  Unix.putenv "RAVEN_CACHE_ROOT" root;
-  f (Filename.concat root "firmware")
-
+let name = "amdgpu/image.bin"
 let found = result string string
 
-let has s sub =
-  let n = String.length sub in
-  let rec go i =
-    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
-  in
-  go 0
+let test_first () =
+  let a = temp_dir () and b = temp_dir () in
+  write b name image;
+  equal ~msg:"from the directory that holds it" found (Ok image)
+    (Firmware.find [ a; b ] name ~digest:pinned);
+  write a name image;
+  equal ~msg:"from the first that holds it" found (Ok image)
+    (Firmware.find [ a; b ] name ~digest:pinned)
 
-(* [find]'s [Error] for an image no place holds, rather than a file with another
-   digest. *)
-let missing why = has why "none of"
+let test_other_digest () =
+  let a = temp_dir () and b = temp_dir () in
+  write a name "another image\n";
+  write b name image;
+  equal ~msg:"another digest is skipped" found (Ok image)
+    (Firmware.find [ a; b ] name ~digest:pinned)
 
-let test_dir () =
-  with_cache @@ fun _ ->
-  let dir = temp_dir () in
-  write dir (name "plain.bin") image;
-  equal ~msg:"the image" found (Ok image)
-    (Firmware.find ~dir (name "plain.bin") ~sha256:digest);
-  write dir (name "other.bin") "another image\n";
-  match Firmware.find ~dir (name "other.bin") ~sha256:digest with
-  | Error why -> contains ~msg:"names the file" ~sub:(name "other.bin") why
+let test_missing () =
+  let a = temp_dir () and b = temp_dir () in
+  write a name "another image\n";
+  match Firmware.find [ a; b ] name ~digest:pinned with
   | Ok _ -> fail "a file with another digest was loaded"
+  | Error why ->
+      List.iter
+        (fun sub -> contains ~msg:"names" ~sub why)
+        [ name; pinned; a; b; Filename.concat a name ]
 
-let test_nowhere () =
-  with_cache @@ fun cache ->
-  let dir = temp_dir () in
-  let refused ~msg places r =
-    match r with
-    | Ok _ -> fail "an image nowhere was found"
-    | Error why ->
-        List.iter
-          (fun sub -> contains ~msg ~sub why)
-          ([ name "absent.bin"; digest ] @ places)
-  in
-  refused ~msg:"with a directory, naming the image, its digest and the places"
-    [ dir; "/lib/firmware"; cache ]
-    (Firmware.find ~dir (name "absent.bin") ~sha256:digest);
-  refused ~msg:"without" [ "/lib/firmware"; cache ]
-    (Firmware.find (name "absent.bin") ~sha256:digest)
+let test_no_directory () =
+  is_error ~msg:"no directory holds anything"
+    (Firmware.find [] name ~digest:pinned)
 
-let test_cache () =
-  with_cache @@ fun cache ->
-  write cache (name "cached.bin") image;
-  equal ~msg:"an image of the cache" found (Ok image)
-    (Firmware.find (name "cached.bin") ~sha256:digest);
-  write cache (name "stale.bin") "another image\n";
-  match Firmware.find (name "stale.bin") ~sha256:digest with
-  | Error why -> contains ~msg:"another digest is skipped" ~sub:"none of" why
-  | Ok _ -> fail "a file with another digest was loaded"
-
-let test_dir_first () =
-  with_cache @@ fun cache ->
-  let dir = temp_dir () in
-  write cache (name "both.bin") image;
-  write dir (name "both.bin") "another image\n";
-  is_error ~msg:"the directory's file, refused"
-    (Firmware.find ~dir (name "both.bin") ~sha256:digest);
-  equal ~msg:"the cache's, when the directory lacks it" found (Ok image)
-    (Firmware.find ~dir:(temp_dir ()) (name "both.bin") ~sha256:digest)
-
-(* Without the library, the compressed file is not read: the image is
-   missing. *)
-let test_compressed =
-  cases "compressed files of a directory"
-    ~name:(fun (file, _, _) -> file)
-    [
-      ("image.bin.xz", xz, Ok image);
-      ("image.bin.zst", zst, Ok image);
-      ("other.bin.xz", other_xz, Error ());
-      ("other.bin.zst", other_zst, Error ());
-    ]
-    (fun (file, bytes, expected) ->
-      with_cache @@ fun _ ->
-      let dir = temp_dir () in
-      write dir (name file) bytes;
-      let plain = name (Filename.remove_extension file) in
-      match (Firmware.find ~dir plain ~sha256:digest, expected) with
-      | Error why, _ when missing why ->
-          skip ~reason:"the system has no decompression library" ()
-      | Ok s, Ok e -> equal ~msg:"decompressed" string e s
-      | Error why, Error () -> contains ~msg:"names the file" ~sub:plain why
-      | Ok _, _ -> fail "an image with another digest was loaded"
-      | Error why, _ -> fail why)
-
-(* The cache's location, in a child whose environment holds [env] alone. *)
-let find_in env file =
-  let out, w = Unix.pipe ~cloexec:true () in
-  let env = Array.of_list (("TEST_FIRMWARE_FIND=" ^ name file) :: env) in
-  let pid =
-    Unix.create_process_env Sys.executable_name [| Sys.executable_name |] env
-      Unix.stdin w Unix.stderr
-  in
-  Unix.close w;
-  let ic = Unix.in_channel_of_descr out in
-  let s = In_channel.input_all ic in
-  close_in ic;
-  ignore (Unix.waitpid [] pid);
-  s
-
-let test_location =
-  cases "the cache is found"
-    ~name:(fun (n, _) -> n)
-    [
-      ("under RAVEN_CACHE_ROOT", `Raven);
-      ("under XDG_CACHE_HOME without RAVEN_CACHE_ROOT", `Xdg);
-      ("under HOME without either", `Home);
-      ("under RAVEN_CACHE_ROOT alone when both are set", `Both);
-    ]
-    (fun (_, where) ->
-      let home = temp_dir () and xdg = temp_dir () and raven = temp_dir () in
-      let file = "located.bin" in
-      let home_env = "HOME=" ^ home in
-      let env, at, expected =
-        match where with
-        | `Raven ->
-            ( [ home_env; "RAVEN_CACHE_ROOT=" ^ raven ],
-              raven ^ "/firmware",
-              "the image" )
-        | `Xdg ->
-            ( [ home_env; "XDG_CACHE_HOME=" ^ xdg ],
-              xdg ^ "/raven/firmware",
-              "the image" )
-        | `Home -> ([ home_env ], home ^ "/.cache/raven/firmware", "the image")
-        | `Both ->
-            ( [ home_env; "XDG_CACHE_HOME=" ^ xdg; "RAVEN_CACHE_ROOT=" ^ raven ],
-              xdg ^ "/raven/firmware",
-              "none" )
-      in
-      write at (name file) image;
-      equal string expected (find_in env file))
-
-let test_writes_nothing () =
-  with_cache @@ fun cache ->
-  is_error ~msg:"an image nowhere"
-    (Firmware.find (name "absent.bin") ~sha256:digest);
-  equal ~msg:"no cache made" bool false (Sys.file_exists cache)
+let test_compressed () =
+  let a = temp_dir () in
+  write a (name ^ ".zst") image;
+  write a (name ^ ".xz") image;
+  is_error ~msg:"only the file of that name"
+    (Firmware.find [ a ] name ~digest:pinned)
 
 let () =
   exit
   @@ run "device_pci Firmware"
        [
-         test_sha256;
+         test_digest;
          group "find"
            [
-             test "a directory's image, refused with another digest" test_dir;
-             test "an image nowhere is refused, naming where it looked"
-               test_nowhere;
-             test "the cache's image, skipped with another digest" test_cache;
-             test "the directory comes before the cache" test_dir_first;
-             test_compressed;
-             test_location;
-             test "a lookup writes nothing" test_writes_nothing;
+             test "the first directory holding the image gives it" test_first;
+             test "a file with another digest is skipped" test_other_digest;
+             test
+               "an image nowhere is refused, naming the image, its digest, the \
+                directories and the files with another digest"
+               test_missing;
+             test "no directory holds nothing" test_no_directory;
+             test "a compressed file is not the image" test_compressed;
            ];
        ]
