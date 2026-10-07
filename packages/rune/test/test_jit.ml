@@ -2402,6 +2402,63 @@ let domains =
 
 (* Transformations *)
 
+(* The area of each cell of an [n] x [n] grid of unit cells about the origin
+   inside a disc of radius [r] there, its arcs replaced by chords, summed. Each
+   cell edge from [a] to [b] is clipped to the circle at the parameters of [a +
+   t (b - a)] where it crosses it, clamped to [0, 1]; the part inside adds its
+   cross product, and each part outside the chord between the radial projections
+   of its ends. The gradient in [r] sums one reduction over the cells per
+   operation that broadcasts [r]. *)
+let clipped n r =
+  let lattice = Nx.cast Nx.float64 (Nx.arange Nx.int32 0 (n + 1) 1) in
+  let lattice = Nx.sub_s lattice ((float_of_int n /. 2.) -. 0.5) in
+  let corner (i, j) =
+    let at o = Nx.slice [ Nx.R (o, o + n) ] lattice in
+    (Nx.reshape [| 1; n |] (at i), Nx.reshape [| n; 1 |] (at j))
+  in
+  let cross (ax, ay) (bx, by) = Nx.sub (Nx.mul ax by) (Nx.mul ay bx) in
+  let dot (ax, ay) (bx, by) = Nx.add (Nx.mul ax bx) (Nx.mul ay by) in
+  let along (ax, ay) t (dx, dy) =
+    (Nx.add ax (Nx.mul t dx), Nx.add ay (Nx.mul t dy))
+  in
+  let clamp01 = Nx.clamp ~min:0. ~max:1. in
+  let project (x, y) =
+    let k = Nx.div r (Nx.sqrt (dot (x, y) (x, y))) in
+    (Nx.mul k x, Nx.mul k y)
+  in
+  let edge a b =
+    let d = (Nx.sub (fst b) (fst a), Nx.sub (snd b) (snd a)) in
+    let qa = dot d d and qb = dot a d in
+    let qc = Nx.sub (dot a a) (Nx.square r) in
+    let disc = Nx.sub (Nx.square qb) (Nx.mul qa qc) in
+    let crossing = Nx.greater_s disc 0. in
+    let root = Nx.sqrt (Nx.where crossing disc (Nx.zeros_like disc)) in
+    let nearest = clamp01 (Nx.div (Nx.neg qb) qa) in
+    let t1 =
+      Nx.where crossing (clamp01 (Nx.div (Nx.sub (Nx.neg qb) root) qa)) nearest
+    in
+    let t2 = Nx.where crossing (clamp01 (Nx.div (Nx.sub root qb) qa)) nearest in
+    let p1 = along a t1 d and p2 = along a t2 d in
+    Nx.add (cross p1 p2)
+      (Nx.add (cross (project a) (project p1)) (cross (project p2) (project b)))
+  in
+  let c = List.map corner [ (0, 0); (1, 0); (1, 1); (0, 1) ] in
+  let terms = List.mapi (fun k a -> edge a (List.nth c ((k + 1) mod 4))) c in
+  let twice = List.fold_left Nx.add (List.hd terms) (List.tl terms) in
+  Nx.sum (Nx.mul_s twice 0.5)
+
+let broadcast_gradient =
+  let n = 8 in
+  let g = Rune.jit' (Rune.grad' (clipped n)) in
+  cases ~name:string_of_float
+    "a compiled gradient of a parameter broadcast over a grid is its gradient"
+    [ 0.3; 2.5; 3.7; 10. ] (fun r ->
+      let r = Nx.scalar Nx.float64 r in
+      equal
+        (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ())
+        (Rune.grad' (clipped n) r)
+        (g r))
+
 let transformations =
   group "transformations"
     [
@@ -2501,6 +2558,7 @@ let transformations =
                  Nx.sum (Nx.tanh (Nx.mul (Nx.mul_s x 2.) (Nx.mul_s x 2.))))
                x)
             (Rune.jit' (Rune.grad' f) x));
+      broadcast_gradient;
     ]
 
 (* Placement and views *)
