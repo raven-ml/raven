@@ -5,7 +5,7 @@
 
 (* The operations of a machine and of a function it took, which Machine exports
    and this machine (Local) and transports implement. They live apart so that
-   Local, below Machine, builds them. *)
+   Local, below Machine, builds a function's. *)
 
 type id = { bus : string; vendor : int; device : int; class_ : int }
 type addressing = Physical | Iommu

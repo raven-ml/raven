@@ -65,13 +65,14 @@ val reserve : t -> base:int -> int -> unit
     {!Function.alloc_dma} maps memory there. A range is reserved once and stays
     reserved while that process runs; reserving it again does nothing.
 
-    Raises [Failure] if part of the range is in use
-    ({{!Device_pci.errors}errors}). *)
+    Raises [Failure] if part of the range is in use, or if [m] is {!this} and
+    not Linux ({{!Device_pci.errors}errors}). *)
 
 val wait : t -> ms:int -> (unit -> bool) -> bool
-(** [wait m ~ms f] calls [f] until it is [true] or [ms] milliseconds passed,
-    relaxing the processor between calls, and is [true] iff [f] became [true].
-    It is the loop in which drivers wait for their devices.
+(** [wait m ~ms f] calls [f], at least once, until it is [true] or at least [ms]
+    milliseconds passed on a monotonic clock, relaxing the processor between
+    calls, and is [true] iff [f] became [true]. It is the loop in which drivers
+    wait for their devices.
 
     Raises [Failure] once [m] fails, with {!failed}'s reason
     ({{!Device_pci.errors}errors}). *)
@@ -81,9 +82,14 @@ val wait : t -> ms:int -> (unit -> bool) -> bool
     A library that reaches another machine makes it a machine with {!make}, from
     the operations below. A transport runs each operation on the other machine
     as the same operation of {!this} runs here, and raises [Failure] with a
-    reason that starts with the machine's name when it cannot. Misuse, such as a
-    window the function did not map, raises [Invalid_argument] before the
-    operation is called. *)
+    reason that starts with the machine's name when it cannot.
+
+    {!Function} refuses misuse before an operation is called, and counts the
+    windows and pins of each function. An operation is called only with
+    arguments {!Function} accepts, with sizes of system memory rounded up to
+    {!page}, and on a released function only [free_dma], [unpin] and one
+    [release] are. Every pin and unpin is passed on, so a transport counts them
+    too. *)
 
 (** The type for how a function reaches system memory. *)
 type addressing = Ops.addressing =
@@ -102,7 +108,8 @@ type fn = Ops.fn = {
       (** [map i off n] is {!Function.map} of BAR [i]. *)
   unmap : Window.t -> unit;  (** {!Function.unmap}. *)
   interrupt : int -> bool;  (** {!Function.interrupt}. *)
-  reset : unit -> unit;  (** {!Function.reset}. *)
+  reset : unit -> unit;
+      (** {!Function.reset}, without waiting for the function to answer. *)
   alloc_dma :
     contiguous:bool -> va:int option -> int -> Window.t * (int * int) list;
       (** {!Function.alloc_dma}. *)
@@ -118,7 +125,7 @@ type ops = Ops.ops = {
       (** The C accesses to the machine's addresses, which its windows use and
           whose [failed] function is {!failed}'s. *)
   page : int;  (** {!page}. *)
-  functions : unit -> id list;  (** {!functions}. *)
+  functions : unit -> id list;  (** {!functions}, in any order. *)
   take : lock:string -> string -> (fn, string) result;
       (** {!Function.take} on the machine. *)
   reserve : base:int -> int -> unit;  (** {!reserve}. *)

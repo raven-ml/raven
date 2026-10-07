@@ -63,9 +63,10 @@
 
     {1:platforms Platforms}
 
-    The library builds everywhere. This machine's PCI functions need Linux;
-    elsewhere this machine has none, and another machine's are reached through
-    its transport. *)
+    The library builds everywhere. This machine's PCI functions, and the
+    addresses {!Machine.reserve} reserves for them, need Linux; elsewhere this
+    machine has none, and another machine's are reached through its transport.
+*)
 
 (** {1:hardware Reaching the hardware} *)
 

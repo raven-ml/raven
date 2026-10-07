@@ -147,21 +147,19 @@ let id =
 
 (* d53e1085e: whatever order the transport lists them in. *)
 let listed_in_bus_order =
-  xfail ~reason:"the transport's order is kept"
-  @@ prop "a machine lists its functions in bus order"
-       (Gen.list ~size:(Gen.int_range 0 12) numbers)
-       (fun ns ->
-         let ns = List.sort_uniq compare ns in
-         let shuffled =
-           List.map snd
-             (List.sort compare
-                (List.mapi (fun i n -> (i * 7919 mod 13, n)) ns))
-         in
-         cover "a four- and a five-digit domain"
-           (List.exists (fun (d, _, _, _) -> d < 0x10000) ns
-           && List.exists (fun (d, _, _, _) -> d >= 0x10000) ns);
-         let f = fake ~ids:(List.map id_of shuffled) () in
-         equal (list id) (List.map id_of ns) (Machine.functions f.machine))
+  prop "a machine lists its functions in bus order"
+    (Gen.list ~size:(Gen.int_range 0 12) numbers)
+    (fun ns ->
+      let ns = List.sort_uniq compare ns in
+      let shuffled =
+        List.map snd
+          (List.sort compare (List.mapi (fun i n -> (i * 7919 mod 13, n)) ns))
+      in
+      cover "a four- and a five-digit domain"
+        (List.exists (fun (d, _, _, _) -> d < 0x10000) ns
+        && List.exists (fun (d, _, _, _) -> d >= 0x10000) ns);
+      let f = fake ~ids:(List.map id_of shuffled) () in
+      equal (list id) (List.map id_of ns) (Machine.functions f.machine))
 
 (* 07387544f *)
 let test_listing_asks () =
@@ -312,9 +310,8 @@ let waits =
       until_true;
       test "a wait whose condition never holds is false, asked more than once"
         test_times_out;
-      xfail ~reason:"a wait ends up to a millisecond early"
-        (test "a wait whose condition never holds lasts its whole time"
-           test_full_time);
+      test "a wait whose condition never holds lasts its whole time"
+        test_full_time;
       test "a wait of 0 ms asks its condition once (unstated)" test_zero;
       test "a wait on a failed machine raises its reason" test_failed_wait;
       test "a machine that fails during a wait ends it with its reason"
