@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The key, as a device's records are found: in a table of bindings, each under
-   its own key. *)
+(* The key finds a Metal device's record among bindings under other keys. *)
 
 open Windtrap
 module Metal = Device_metal_abi
