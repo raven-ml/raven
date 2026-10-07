@@ -6105,6 +6105,9 @@ thread.
 
 ### Kaun
 
+- `Kaun_hf.download_file` writes a download through the descriptor that created
+  its temporary file. curl reopened it by name, so a link put there meanwhile
+  redirected the write, and a umask without the owner's write bit failed it.
 - **Breaking:** `Fn.gelu` takes and returns float tensors only, as `Nx.erf`
   does.
 - **Breaking:** `Fn.sigmoid`, `Fn.tanh`, `Fn.softmax` and `Fn.log_softmax` are

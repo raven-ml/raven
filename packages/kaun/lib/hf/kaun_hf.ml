@@ -87,7 +87,7 @@ let clear_cache ?cache_dir ?repo_id () =
 (* [curl] runs without a shell, so no argument needs quoting and the lookup on
    [PATH] is the same on every system. A missing program is exit code 127 from
    the forked child on Unix and [ENOENT] from process creation on Windows. *)
-let curl args =
+let curl args ~out =
   let rec wait pid =
     try snd (Unix.waitpid [] pid)
     with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
@@ -96,7 +96,7 @@ let curl args =
     wait
       (Unix.create_process "curl"
          (Array.of_list ("curl" :: args))
-         Unix.stdin Unix.stdout Unix.stderr)
+         Unix.stdin out Unix.stderr)
   with
   | Unix.WEXITED 0 -> true
   | Unix.WEXITED 127 -> failwith err_no_curl
@@ -108,15 +108,22 @@ let curl_download ~headers ~url ~dest () =
   let headers =
     List.concat_map (fun (k, v) -> [ "-H"; k ^ ": " ^ v ]) headers
   in
-  let temp =
-    Filename.temp_file ~temp_dir:(Filename.dirname dest)
+  (* curl writes to the descriptor that created the file: a name reopened would
+     follow a link put there meanwhile. *)
+  let temp, oc =
+    Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o644
+      ~temp_dir:(Filename.dirname dest)
       (Filename.basename dest ^ ".")
       ".part"
   in
   let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
-  match curl ([ "-L"; "--fail"; "-s" ] @ headers @ [ "-o"; temp; url ]) with
+  let out = Unix.descr_of_out_channel oc in
+  match
+    Fun.protect
+      ~finally:(fun () -> close_out_noerr oc)
+      (fun () -> curl ~out ([ "-L"; "--fail"; "-s" ] @ headers @ [ url ]))
+  with
   | true -> (
-      Unix.chmod temp 0o644;
       try Unix.rename temp dest
       with Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ())
   | false ->
