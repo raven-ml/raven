@@ -168,14 +168,25 @@ let gpt2 =
    token's 4 experts, compiled. One token is a decode step's product; a prompt's
    tokens share experts, 512 of them on a GPU and 64 on the host, where 512 take
    most of a minute a call. On the host, one token's product also runs eagerly.
-   Zero codes: the product's cost does not depend on their values. Each operand
-   is copied to storage of its own, as a model's are: a constant is one element
-   seen at every index, which a compiled call folds. *)
+   Each operand is copied to storage of its own, as a model's are: a constant is
+   one element seen at every index, which a compiled call folds.
+
+   The codes are random bytes from a fixed key, as a checkpoint's look, at the
+   scale byte 127, a scale of one. A product's speed depends on its codes: on
+   x86 a kernel runs a few percent faster or slower on zero codes than on random
+   ones. *)
 
 let experts = 32
 and per_token = 4
 and outputs = 5760
 and inputs = 2880
+
+(* [random shape] is uniformly random bytes of [shape], whose last axis is a
+   multiple of 4, the same for every call. *)
+let random shape =
+  let last = Array.length shape - 1 in
+  let words = Array.mapi (fun i n -> if i = last then n / 4 else n) shape in
+  Nx.reshape shape (Nx.bitcast Nx.uint8 (Nx.Rng.bits (Nx.Rng.key 42) words))
 
 let compiled f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f
 let eager f = f
@@ -185,7 +196,7 @@ let routed ~run ~tokens device =
   let w =
     Nx_quant.mxfp4
       ~scales:(place (Nx.full Nx.uint8 [| experts; outputs; inputs / 32 |] 127))
-      (place (Nx.zeros Nx.uint8 [| experts; outputs; inputs / 2 |]))
+      (place (random [| experts; outputs; inputs / 2 |]))
   in
   (* Each token's experts, distinct, spread over all of them. *)
   let ids =
@@ -209,24 +220,51 @@ let synchronize device = Nx_device.synchronize (Nx.Device.memory device)
 (* Dense quantised products, one per format, at a decode step's shape: one token
    by a [[| 4096; 4096 |]] projection, compiled. MXFP4 is read from a
    checkpoint's bytes and from GGUF's blocks, whose codes a product reads
-   through their pairing of values [j] and [j + 16]. Zero bytes, copied to
-   storage of their own, as the routed product's are. *)
+   through their pairing of values [j] and [j + 16]. Random codes at scales of
+   one, copied to storage of their own, as the routed product's are. *)
 
 let dense = 4096
 
+(* A part of a block: fixed bytes, or a number of random ones. *)
+type part = Fixed of int array | Random of int
+
+(* The float16 [1.], little-endian. *)
+let one = [| 0x00; 0x3c |]
+
+(* [dense] rows of blocks of [per] values, each laid out as [parts]. *)
+let blocks ~per parts place =
+  let n = dense / per in
+  let part = function
+    | Random len -> random [| dense; n; len |]
+    | Fixed b ->
+        let len = Array.length b in
+        Nx.broadcast_to [| dense; n; len |]
+          (Nx.create Nx.uint8 [| 1; 1; len |] b)
+  in
+  let b = Nx.concatenate ~axis:2 (List.map part parts) in
+  place (Nx.reshape [| dense; -1 |] b)
+
 let formats =
-  let zeros last place = place (Nx.zeros Nx.uint8 [| dense; last |]) in
   [
     ( "mxfp4",
       fun place ->
         Nx_quant.mxfp4
-          ~scales:(zeros (dense / 32) place)
-          (zeros (dense / 2) place) );
+          ~scales:(place (Nx.full Nx.uint8 [| dense; dense / 32 |] 127))
+          (place (random [| dense; dense / 2 |])) );
     ( "mxfp4 blocks",
-      fun place -> Nx_quant.mxfp4_blocks (zeros (dense / 32 * 17) place) );
-    ("q8_0", fun place -> Nx_quant.q8_0 (zeros (dense / 32 * 34) place));
-    ("q4_k", fun place -> Nx_quant.q4_k (zeros (dense / 256 * 144) place));
-    ("q6_k", fun place -> Nx_quant.q6_k (zeros (dense / 256 * 210) place));
+      fun place ->
+        Nx_quant.mxfp4_blocks
+          (blocks ~per:32 [ Fixed [| 127 |]; Random 16 ] place) );
+    ( "q8_0",
+      fun place -> Nx_quant.q8_0 (blocks ~per:32 [ Fixed one; Random 32 ] place)
+    );
+    ( "q4_k",
+      fun place ->
+        Nx_quant.q4_k
+          (blocks ~per:256 [ Fixed one; Fixed one; Random 140 ] place) );
+    ( "q6_k",
+      fun place ->
+        Nx_quant.q6_k (blocks ~per:256 [ Random 208; Fixed one ] place) );
   ]
 
 let linear make device =
