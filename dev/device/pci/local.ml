@@ -6,7 +6,7 @@
 (* This machine's operations: functions taken through VFIO behind an IOMMU, or
    physically through /sys/bus/pci. *)
 
-external lock_file : string -> Unix.file_descr = "caml_device_pci_lock"
+external flock : Unix.file_descr -> unit = "caml_device_pci_flock"
 external file_map : Unix.file_descr -> int -> int -> int = "caml_device_pci_map"
 external file_unmap : int -> int -> unit = "caml_device_pci_unmap"
 
@@ -15,32 +15,26 @@ let round_page n = (n + page - 1) / page * page
 let functions = Sysfs.functions
 let reserve = Sysmem.reserve
 
-(* Lock files *)
+(* Locks *)
 
-(* Locks [bus] under [name] in the temporary directory: its descriptor, or why
-   not. *)
-let lock bus name =
-  let file =
-    Filename.concat
-      (Filename.get_temp_dir_name ())
-      (Printf.sprintf "%s_%s.lock" name (String.lowercase_ascii bus))
-  in
-  match lock_file file with
-  | fd -> Ok fd
-  | exception Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
-      Error
-        (Printf.sprintf "%s is held by another process (see: lsof %s)" bus file)
-  | exception Unix.Unix_error (e, _, _) ->
-      Error (Printf.sprintf "%s: %s" file (Unix.error_message e))
-  | exception Failure why -> Error (Printf.sprintf "%s: %s" file why)
-
-(* The lock every process of this library takes on a function. *)
-let own_lock = "nx"
+(* A function taken physically is locked by flock on its configuration space
+   file: the lock is the file's, which every process that opens it shares.
+   Behind VFIO the group's file admits one process at a time itself. *)
+let lock bus fd =
+  try flock fd
+  with Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
+    failwith
+      (Printf.sprintf "%s is taken already (see: lsof %s)" bus
+         (Sysfs.path bus "config"))
 
 let locked bus f =
-  match lock bus own_lock with
-  | Error _ as e -> e
-  | Ok fd -> Fun.protect ~finally:(fun () -> Unix.close fd) f
+  let file = Sysfs.path bus "config" in
+  match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error (e, _, _) ->
+      Error (Printf.sprintf "%s: %s" file (Unix.error_message e))
+  | fd -> (
+      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      match lock bus fd with () -> f () | exception Failure why -> Error why)
 
 (* Taking *)
 
@@ -50,7 +44,7 @@ type taken = {
   seek : Mutex.t; (* a seek and its read or write, one at a time *)
   interrupts : Unix.file_descr option; (* the eventfd VFIO signals *)
   container : Vfio.t option; (* behind an IOMMU *)
-  files : Unix.file_descr list; (* every descriptor, the locks last *)
+  files : Unix.file_descr list; (* every descriptor the take opened *)
 }
 
 (* Moves the [n] bytes of configuration space at [off] with [io]. *)
@@ -192,12 +186,6 @@ let take_iommu files bus =
 (* Bound to vfio-pci, a function taken physically has its interrupts through
    VFIO's no-IOMMU mode. *)
 let take_physical files bus =
-  let interrupts =
-    if Sysfs.driver bus = Some "vfio-pci" then
-      let _, _, efd = Vfio.open_function files bus Vfio.No_iommu in
-      Some efd
-    else None
-  in
   let file = Sysfs.path bus "config" in
   let config =
     try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0
@@ -209,6 +197,13 @@ let take_physical files bus =
            file (Unix.error_message e) bus)
   in
   files := config :: !files;
+  lock bus config;
+  let interrupts =
+    if Sysfs.driver bus = Some "vfio-pci" then
+      let _, _, efd = Vfio.open_function files bus Vfio.No_iommu in
+      Some efd
+    else None
+  in
   {
     bus;
     config = (config, 0);
@@ -218,27 +213,18 @@ let take_physical files bus =
     files = !files;
   }
 
-(* The function's own lock, which every process of this library takes, then
-   [lock]'s, which other programs driving the same GPU take. A failure gives
-   back every descriptor taken. *)
-let take ~lock:name bus =
+(* A failure gives back every descriptor taken. *)
+let take bus =
   if not (Sysfs.exists bus) then
     Error (Printf.sprintf "%s is no PCI function of this machine" bus)
   else
     let files = ref [] in
-    let ( let* ) = Result.bind in
-    let hold name =
-      let* fd = lock bus name in
-      files := fd :: !files;
-      Ok ()
-    in
     let refused why =
       List.iter Unix.close !files;
       Error why
     in
+    let ( let* ) = Result.bind in
     match
-      let* () = hold own_lock in
-      let* () = hold name in
       let* addressing = Sysfs.access bus (Sysfs.state bus) in
       let by =
         match addressing with
@@ -253,4 +239,5 @@ let take ~lock:name bus =
     | exception Unix.Unix_error (e, f, arg) ->
         refused (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))
 
-let ops = { Ops.transport = Window.unsafe_transport 0; page; functions; take; reserve }
+let ops =
+  { Ops.transport = Window.unsafe_transport 0; page; functions; take; reserve }

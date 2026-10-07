@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Files of this machine's PCI functions: lock files, and mappings of BARs
+/* Files of this machine's PCI functions: their locks, and mappings of BARs
    and VFIO regions. Descriptors are Unix.file_descr, an int on POSIX. */
 
 #define _GNU_SOURCE
@@ -19,41 +19,22 @@
 
 #ifndef _WIN32
 #include <caml/unixsupport.h>
-#include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #endif
 
-/* Takes an exclusive lock on the file at [path], creating it readable by
-   every user, and is its descriptor. Raises Unix_error EWOULDBLOCK if
-   another holder has it. A link is never followed and the mode of a file
-   another process made is never changed, so a lock file names nothing
-   else. The lock is flock's, which other programs driving these GPUs take,
-   and which two descriptors of one process exclude as two processes do. */
-value caml_device_pci_lock(value path) {
-  CAMLparam1(path);
+/* Takes flock's exclusive lock on [fd] without waiting; raises Unix_error
+   EWOULDBLOCK if another open file holds it. flock locks the file itself,
+   so two descriptors of one process exclude each other as two processes
+   do. */
+value caml_device_pci_flock(value fd) {
 #ifdef _WIN32
+  (void)fd;
   caml_failwith("Locking a PCI function needs a POSIX system");
-  CAMLreturn(Val_unit);
 #else
-  int fd = open(String_val(path), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
-                0644);
-  if (fd < 0) caml_uerror("open", path);
-  struct stat st;
-  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-    close(fd);
-    caml_failwith("the lock file is not a regular file");
-  }
-  if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-    int e = errno;
-    close(fd);
-    errno = e;
-    caml_uerror("flock", path);
-  }
-  CAMLreturn(Val_int(fd));
+  if (flock(Int_val(fd), LOCK_EX | LOCK_NB) != 0) caml_uerror("flock", Nothing);
 #endif
+  return Val_unit;
 }
 
 /* Maps [n] bytes of [fd] from [off], on a page, shared, not inherited by
