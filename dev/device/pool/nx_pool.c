@@ -221,7 +221,6 @@ typedef struct {
   void *ctx;
   int64_t total, chunks;
   int wide;
-  int threads;
 } job;
 
 /* floor (i * total / chunks), exactly. */
@@ -265,8 +264,7 @@ struct pool {
 
 /* Whether the thread runs a body of a job of more than one thread: a job
    it begins then runs alone on it, since the pool runs one such job at a
-   time and the outer job holds it. A job on one thread holds nothing, so
-   its bodies leave the flag as it was. */
+   time and the outer job holds it. A job on one thread holds nothing. */
 static _Thread_local int in_body;
 
 static void relax(void) {
@@ -301,12 +299,10 @@ static uint64_t spin(_Atomic uint64_t *word, uint64_t value, spin_until until,
   }
 }
 
-/* Claims chunks of [j] until none remains, one call a chunk. nx_pool.h
-   allows a call over several chunks; claiming one at a time lets the
-   thread that frees first take the next, so a costly chunk holds only the
-   thread that runs it. A relaxed fetch-add makes every claimed index
-   unique; the ordering the job needs rides the generation and the
-   countdown. */
+/* Claims chunks of [j] until none remains, one call a chunk, which
+   nx_pool.h does not promise: the thread that frees first takes the next
+   chunk, so a costly one holds only its own thread. A relaxed fetch-add
+   makes every index unique; ordering rides the generation and countdown. */
 static void claim(pool *p, const job *j, int id) {
   for (;;) {
     int64_t i = atomic_fetch_add_explicit(&p->next, 1, memory_order_relaxed);
@@ -459,8 +455,7 @@ fail_pool:
    init_mtx serialises lazy creation. The prepare handler holds it and the
    current pool's drive mutex, so fork waits for a running job of more than
    one thread; the parent releases both, and the child clears the pointer
-   and releases only the still-valid init_mtx, never touching the old
-   pool's locks. */
+   and releases only the still-valid init_mtx. */
 static _Atomic(pool *) g_pool;
 static pthread_mutex_t init_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
@@ -492,9 +487,8 @@ static void register_atfork(void) {
 #endif
 
 /* The pool, made at first use; NULL if it cannot be made, or if a later
-   fork could not be made safe, which leaves the caller computing alone. A
-   pool exists only once the fork handlers are registered, so a job that
-   finds one skips the once. */
+   fork could not be made safe, which leaves the caller computing alone. It
+   exists only once the fork handlers do, so finding it skips the once. */
 static pool *get(void) {
   pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
   if (p) return p;
@@ -510,31 +504,43 @@ static pool *get(void) {
   return p;
 }
 
-/* Publishes [j] under a sequence lock (the odd generation marks the job
-   being written), claims chunks as worker 0, and waits for the workers to
-   count down. The claim counter is reset under the drive mutex and claimed
-   only by the current generation's threads, and the caller returns once
-   they all counted down, so no thread touches it, or the job, until the
-   next publish. */
-static void run_shared(pool *p, const job *j) {
+static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
+  return x < lo ? lo : x > hi ? hi : x;
+}
+
+/* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
+   or without a pool, else on at most p->threads (<= nx_pool_cores ()). The
+   job is published under a sequence lock (odd while written); the caller
+   claims as worker 0 and waits for the workers' countdown, after which no
+   thread touches the job or the claim counter until the next publish. Out
+   of line, so a serial nx_pool_run saves no registers. */
+__attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
+                                          nx_pool_body body, void *ctx) {
+  pool *p = in_body ? NULL : get();
+  if (p && t > p->threads) t = p->threads;
+  if (p == NULL || t == 1) {
+    body(0, total, 0, ctx);
+    return;
+  }
+  job j = {body, ctx, total, c, total > INT64_MAX / c};
+
   pthread_mutex_lock(&p->drive);
   uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
   atomic_store_explicit(&p->generation, g + 1, memory_order_relaxed);
   atomic_thread_fence(memory_order_release);
-  p->job = *j;
-  atomic_store_explicit(&p->active, j->threads, memory_order_relaxed);
+  p->job = j;
+  atomic_store_explicit(&p->active, t, memory_order_relaxed);
   atomic_store_explicit(&p->next, 0, memory_order_relaxed);
-  atomic_store_explicit(&p->pending, (uint64_t)(j->threads - 1),
-                        memory_order_relaxed);
+  atomic_store_explicit(&p->pending, (uint64_t)(t - 1), memory_order_relaxed);
   atomic_store(&p->generation, g + 2);
-  if (participant_parked(p, j->threads)) {
+  if (participant_parked(p, t)) {
     pthread_mutex_lock(&p->mtx);
     pthread_cond_broadcast(&p->wake);
     pthread_mutex_unlock(&p->mtx);
   }
 
   in_body = 1;
-  claim(p, j, 0);
+  claim(p, &j, 0);
   in_body = 0;
 
   if (atomic_load(&p->pending) != 0 &&
@@ -548,29 +554,7 @@ static void run_shared(pool *p, const job *j) {
   pthread_mutex_unlock(&p->drive);
 }
 
-static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
-  return x < lo ? lo : x > hi ? hi : x;
-}
-
-/* Runs a job of [t] > 1 threads and [c] chunks: alone if it was begun from
-   a body or no pool can be had, else on at most p->threads, the workers
-   made plus the caller, which is at most nx_pool_cores (). Kept out of
-   line: inlined, it makes nx_pool_run save a dozen registers on every
-   serial job. */
-__attribute__((noinline)) static void run(int t, int64_t total, int64_t c, nx_pool_body body,
-                void *ctx) {
-  pool *p = in_body ? NULL : get();
-  if (p && t > p->threads) t = p->threads;
-  if (p == NULL || t == 1) {
-    body(0, total, 0, ctx);
-    return;
-  }
-  job j = {body, ctx, total, c, total > INT64_MAX / c, t};
-  run_shared(p, &j);
-}
-
-/* A job on one thread, every serial kernel's, is one call before anything
-   else: no thread-local, no division. */
+/* A serial job is one call, before any thread-local read or division. */
 void nx_pool_run(int threads, int64_t total, int64_t chunks, nx_pool_body body,
                  void *ctx) {
   if (total <= 0) return;
