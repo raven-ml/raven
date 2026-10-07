@@ -192,23 +192,31 @@ let rec mapped t d table ~at lo hi =
 
 (* Maps [lo, hi) to the physical addresses [delta] bytes further, each page with
    the largest entry that the range holds and both addresses are aligned to:
-   [entry d v] is the entry at depth [d] of the page at [v]. *)
+   [entry d v] is the entry at depth [d] of the page at [v]. The last level's
+   entries are all whole pages. *)
 let rec write t d table ~at lo hi ~delta entry =
   let level = level t d and c = covers t d in
-  each t d ~at lo hi @@ fun i at lo hi ->
-  let whole = lo = at && hi = at + c && aligned (lo + delta) c in
-  if whole && (d = bottom t || t.fmt.large ~level) then
-    t.fmt.set ~level ~table i (entry d lo)
-  else write t (d + 1) (child t d table i) ~at lo hi ~delta entry
+  if d = bottom t then
+    for i = (lo - at) / c to ((hi - at) / c) - 1 do
+      t.fmt.set ~level ~table i (entry d (at + (i * c)))
+    done
+  else
+    each t d ~at lo hi @@ fun i at lo hi ->
+    let whole = lo = at && hi = at + c && aligned (lo + delta) c in
+    if whole && t.fmt.large ~level then t.fmt.set ~level ~table i (entry d lo)
+    else write t (d + 1) (child t d table i) ~at lo hi ~delta entry
 
 (* Clears the entries of [lo, hi) and frees the tables it empties. The last
    level's entries are cleared unread: each is a page or invalid. *)
 let rec clear t d table ~at lo hi =
-  let level = level t d in
+  let level = level t d and c = covers t d in
   let none = invalid_entry t level in
-  each t d ~at lo hi @@ fun i at lo hi ->
-  if d = bottom t then t.fmt.set ~level ~table i none
+  if d = bottom t then
+    for i = (lo - at) / c to ((hi - at) / c) - 1 do
+      t.fmt.set ~level ~table i none
+    done
   else
+    each t d ~at lo hi @@ fun i at lo hi ->
     let e = t.fmt.get ~level ~table i in
     if not (t.fmt.valid e) then ()
     else if t.fmt.leaf ~level e then t.fmt.set ~level ~table i none
