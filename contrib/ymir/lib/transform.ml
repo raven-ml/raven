@@ -238,14 +238,14 @@ let zenith c =
   Nx.equal_s (component (Quantity.value Unit.degree c.native) 1) 90.
 
 (* Native θ₀ must be 90° until the general pole solution arrives with the
-   projections whose θ₀ differs. *)
+   projections whose θ₀ differs. θ₀ is a parameter, so it is checked as data. *)
 let check_native fn c =
   let theta = component (Quantity.value Unit.degree c.native) 1 in
   Nx.check Nx.Ptree.tensor (zenith c) theta (fun i t ->
       Invalid_argument
         (strf
-           "%s: the %s stage's native latitude θ₀%s is %g deg; zenithal \
-            projections take θ₀ = 90 deg"
+           "%s: the %s stage's native latitude θ₀%s is %g deg; a native \
+            latitude other than 90 deg is not supported yet"
            fn (code_name c.code)
            (if Array.length i = 0 then ""
             else Format.asprintf " at %a" pp_ints i)

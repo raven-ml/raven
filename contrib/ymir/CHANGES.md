@@ -15,6 +15,8 @@ All notable changes to Ymir are documented in this file.
   marks data per cell.
 - `Ymir.Region` places circles and annuli on a grid's world and weighs each
   cell by its exact covered fraction, differentiable in centre and radius.
+- `Ymir_units.Quantity.t` is declared injective (`type !'p t`), so a GADT
+  can be indexed by quantities.
 - `Ymir.Observation` holds data on a grid with variance, validity and the
   area its pipeline states, and `integrate` sums them over a region: a cell
   counts by its area for a field and as one cell for data per cell.

@@ -130,7 +130,7 @@ let windows =
           let stamp = Observation.around t ~shape:[| 40; 40 |] obs in
           let i = Observation.integrate (circle t) stamp in
           equal (float_rel ~rel:1e-14 ~abs:0.) whole (jansky i);
-          equal float_exact 1. (Nx.item [] i.coverage));
+          equal (float 1e-12) 1. (Nx.item [] i.coverage));
       test "a batch of stamps is a batch of integrals" (fun () ->
           let es = [| 0.; 0.21; -0.3 |] and ns = [| 0.; -0.13; 0.27 |] in
           let one_by_one =
@@ -188,7 +188,11 @@ let windows =
           let inside = (Float.pi *. rho *. rho /. 4.) +. rho +. 0.25 in
           equal (float 1e-3)
             (inside /. (Float.pi *. rho *. rho))
-            (Nx.item [] i.coverage));
+            (Nx.item [] i.coverage);
+          (* The whole image reports the same edge. *)
+          let whole = Observation.integrate (circle corner) obs in
+          equal (float 1e-14) (Nx.item [] i.coverage)
+            (Nx.item [] whole.coverage));
     ]
 
 (* The unit rule *)

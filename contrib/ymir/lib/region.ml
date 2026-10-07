@@ -75,7 +75,8 @@ let check_cells area xs ys =
 (* Weights *)
 
 (* [overlap r g] is the kernel's result for each of [g]'s cells against [r],
-   [[batch; h; w]]. *)
+   [[batch; h; w]], and the shape's own area in its plane, [[batch]], both in
+   the square of the shape's size unit. *)
 let overlap (type w e) (Region { shape; placement } : (w, e) t)
     (g : (w, e) Grid.t) =
   let size = match shape with Circle r -> r | Annulus { outer; _ } -> outer in
@@ -91,26 +92,27 @@ let overlap (type w e) (Region { shape; placement } : (w, e) t)
   let xs = Array.init 4 (fun k -> at k 0)
   and ys = Array.init 4 (fun k -> at k 1) in
   let size q = Transform.expand_tensor 2 0 (Quantity.value unit q) in
-  let o =
+  let disc r = Nx.mul_s (Nx.square (Quantity.value unit r)) Float.pi in
+  let o, own =
     match shape with
     | Circle r ->
-        let r = size r in
-        check_size "the radius" r;
-        Overlap.disc r xs ys
+        let r' = size r in
+        check_size "the radius" r';
+        (Overlap.disc r' xs ys, disc r)
     | Annulus { inner; outer } ->
-        let inner = size inner and outer = size outer in
-        check_size "the inner radius" inner;
-        check_size "the outer radius" outer;
-        Nx.check Nx.Ptree.unit (Nx.less_equal inner outer) () (fun i () ->
+        let inner' = size inner and outer' = size outer in
+        check_size "the inner radius" inner';
+        check_size "the outer radius" outer';
+        Nx.check Nx.Ptree.unit (Nx.less_equal inner' outer') () (fun i () ->
             Invalid_argument
               (strf "Region.weights: the inner radius%s is above the outer one"
                  (batch i)));
-        Overlap.annulus inner outer xs ys
+        (Overlap.annulus inner' outer' xs ys, Nx.sub (disc outer) (disc inner))
   in
   check_cells o.area xs ys;
-  o
+  (o, own)
 
-let weights r g = (overlap r g).weight
+let weights r g = (fst (overlap r g)).weight
 
 (* Structure *)
 

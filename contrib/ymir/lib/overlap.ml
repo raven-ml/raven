@@ -27,7 +27,6 @@
 
 type 'e t = {
   weight : (float, 'e) Nx.t;
-  inside : (float, 'e) Nx.t;  (** The area inside, signed as [area]. *)
   area : (float, 'e) Nx.t;  (** The cell's shoelace area. *)
   outside : Nx.bool_t;  (** Where the weight is exactly 0 by the predicate. *)
   full : Nx.bool_t;  (** Where the weight is exactly 1 by the predicate. *)
@@ -164,17 +163,8 @@ let disc r xs ys =
       (Nx.where all_in (Nx.ones_like ratio)
          (Nx.where flat (Nx.zeros_like ratio) (clamp01 ratio)))
   in
-  let inside =
-    Nx.where outside (Nx.zeros_like inside) (Nx.where all_in area inside)
-  in
   let full = Nx.logical_and all_in (Nx.logical_not outside) in
-  {
-    weight;
-    inside = Nx.mul_s inside 0.5;
-    area = Nx.mul_s area 0.5;
-    outside;
-    full;
-  }
+  { weight; area = Nx.mul_s area 0.5; outside; full }
 
 (* [annulus inner outer xs ys] is the outer disc's weight minus the inner's. A
    cell is exactly outside where it is outside the outer disc or wholly inside
@@ -188,4 +178,4 @@ let annulus inner outer xs ys =
       (Nx.where full (Nx.ones_like o.weight)
          (clamp01 (Nx.sub o.weight i.weight)))
   in
-  { weight; inside = Nx.sub o.inside i.inside; area = o.area; outside; full }
+  { weight; area = o.area; outside; full }

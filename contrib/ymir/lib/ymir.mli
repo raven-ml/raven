@@ -341,8 +341,9 @@ module Transform : sig
       float64, and its inverse returns points at [dtype]. [stated] lists the
       indices of [pv] the file gave, all by default.
 
-      TAN and ARC take no parameter ([m = 0]) and native θ₀ = 90°: another θ₀
-      raises [Invalid_argument] where the stage is applied.
+      TAN and ARC take no parameter ([m = 0]). A native latitude θ₀ other than
+      90° is not supported yet: it raises [Invalid_argument] through {!Nx.check}
+      where the stage is applied.
 
       Raises [Invalid_argument] if [pv]'s last axis is not [m], if [stated] is
       not ascending indices below [m], or if an angle is not [[...; 2]] or not
@@ -377,8 +378,9 @@ module Transform : sig
 
   val covers : ('a, 'b) t -> 'a -> Nx.bool_t
   (** [covers t x] is where [apply t x] is defined: [false] outside a stage's
-      domain and at NaN. It has [x]'s batch shape, and is a scalar [true] for a
-      transform with no stage. It does not raise at any point. *)
+      domain and at NaN. It has [x]'s batch shape; for a transform with no stage
+      it is a scalar [true], which broadcasts over every point. It does not
+      raise at any point. *)
 
   val pp : Format.formatter -> ('a, 'b) t -> unit
   (** [pp] formats a transform's stages. *)
@@ -617,9 +619,10 @@ module Observation : sig
     area : (float, 'e) Nx.t Quantity.t;
         (** Σ w × a over valid cells: [value / area] is the mean. *)
     coverage : (float, 'e) Nx.t;
-        (** The valid cells' share of the region's overlap with the window, in
-            the region's plane: below 1 where the region crosses an edge of the
-            image or invalid samples, 0 where it does not overlap the window. *)
+        (** The valid cells' overlap with the region as a share of the region's
+            own area, both in the region's plane: below 1 where the region
+            reaches beyond the image's edge or over invalid samples, through a
+            window or the whole image alike, and 0 for a region of zero size. *)
   }
   (** The type for integrals of an observation over a region, each of the
       region's and window's batch axes broadcast. *)

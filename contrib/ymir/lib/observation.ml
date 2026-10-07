@@ -249,7 +249,7 @@ let check_border outside (g : _ Grid.t) =
            i.(n - 1)))
 
 let integrate r o =
-  let ov = Region.overlap r o.grid in
+  let ov, own = Region.overlap r o.grid in
   check_border ov.outside o.grid;
   let valid =
     match o.valid with
@@ -266,12 +266,7 @@ let integrate r o =
   let w = Nx.where valid ov.weight (Nx.zeros_like ov.weight) in
   let wa = match a with None -> w | Some a -> Nx.mul w a in
   let terms =
-    [
-      Nx.mul (payload o.data) wa;
-      wa;
-      Nx.where valid ov.inside (Nx.zeros_like ov.inside);
-      ov.inside;
-    ]
+    [ Nx.mul (payload o.data) wa; wa; Nx.mul w (Nx.abs ov.area) ]
     @
     match o.variance with
     | None -> []
@@ -282,18 +277,21 @@ let integrate r o =
       (Nx_wide.sum ~axes:[ -3; -2 ] (Nx_wide.v (Transform.stack terms)))
   in
   let sum k = component sums k in
-  let den = sum 3 in
-  let empty = Nx.equal_s den 0. in
+  (* The valid cells' overlap as a share of the region's own area, both in the
+     region's plane: below 1 wherever the region reaches beyond the base, since
+     a window that clips it inside the base raises. *)
+  let empty = Nx.equal_s own 0. in
   let coverage =
-    Nx.where empty (Nx.zeros_like den)
-      (Nx.div (sum 2) (Nx.where empty (Nx.ones_like den) den))
+    Nx.where empty (Nx.zeros_like own)
+      (Nx.clamp ~max:1.
+         (Nx.div (sum 2) (Nx.where empty (Nx.ones_like own) own)))
   in
   {
     value = Quantity.v Unit.(du * a_unit) (sum 0);
     area = Quantity.v a_unit (sum 1);
     variance =
       Option.map
-        (fun v -> Quantity.v Unit.(Quantity.unit v * (a_unit ** 2)) (sum 4))
+        (fun v -> Quantity.v Unit.(Quantity.unit v * (a_unit ** 2)) (sum 3))
         o.variance;
     coverage;
   }
