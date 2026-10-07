@@ -32,11 +32,6 @@ let write b at w n =
       (Char.chr (Int64.to_int (Int64.shift_right_logical n (8 * i)) land 0xff))
   done
 
-let rec eval value : _ Packet.term -> int64 = function
-  | Value v -> value v
-  | Add (t, n) -> Int64.add (eval value t) n
-  | Shift (t, n) -> Int64.shift_right_logical (eval value t) n
-
 (* [s.bytes] with each hole filled as structure.mli describes it. *)
 let reference value (s : _ Structure.t) =
   let b = Bytes.of_string s.bytes in
@@ -45,7 +40,7 @@ let reference value (s : _ Structure.t) =
       let w = width h.bits and m = mask h.bits in
       let word = read b h.at w in
       write b h.at w
-        Int64.(logor (logand word (lognot m)) (logand (eval value h.value) m)))
+        Int64.(logor (logand word (lognot m)) (logand (S.eval value h.value) m)))
     s.holes;
   Bytes.to_string b
 

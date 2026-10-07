@@ -75,6 +75,17 @@ val address : bits:int -> align:int -> int64 Windtrap.Gen.t
 (** [address ~bits ~align] draws addresses below [2{^bits}], multiples of
     [2{^align}]. *)
 
+(** {1:terms Terms} *)
+
+val eval : ('v -> int64) -> 'v Packet.term -> int64
+(** [eval value t] is [t]'s meaning, as {!Packet.term} states it: unsigned
+    64-bit integers, an addition modulo 2{^ 64} and a logical shift, each value
+    read by [value]. *)
+
+val pp_term :
+  (Format.formatter -> 'v -> unit) -> Format.formatter -> 'v Packet.term -> unit
+(** [pp_term pp_v] prints a term as its constructors, values by [pp_v]. *)
+
 (** {1:fields Descriptor fields} *)
 
 val field : string -> int * int -> int

@@ -24,15 +24,10 @@ let pp_v ppf = function
   | Known n -> Format.fprintf ppf "Known 0x%Lx" n
   | Later n -> Format.fprintf ppf "Later 0x%Lx" n
 
-let rec pp_term ppf : v Packet.term -> unit = function
-  | Value v -> pp_v ppf v
-  | Add (t, n) -> Format.fprintf ppf "Add (%a, 0x%Lx)" pp_term t n
-  | Shift (t, n) -> Format.fprintf ppf "Shift (%a, %d)" pp_term t n
-
 let pp_word ppf : v Packet.word -> unit = function
   | Dword n -> Format.fprintf ppf "Dword 0x%x" n
-  | W32 t -> Format.fprintf ppf "W32 (%a)" pp_term t
-  | W64 t -> Format.fprintf ppf "W64 (%a)" pp_term t
+  | W32 t -> Format.fprintf ppf "W32 (%a)" (S.pp_term pp_v) t
+  | W64 t -> Format.fprintf ppf "W64 (%a)" (S.pp_term pp_v) t
 
 let pp_packet ppf p =
   Format.fprintf ppf "[%a]"
@@ -71,14 +66,6 @@ let word : v Packet.word Gen.t =
     ]
 
 let packet = Gen.with_pp pp_packet (Gen.list ~size:(Gen.int_range 0 12) word)
-
-(* The terms' meaning, as the type states it: unsigned 64-bit integers, an
-   addition modulo 2^64 and a logical shift. *)
-let rec eval : v Packet.term -> int64 = function
-  | Value v -> value v
-  | Add (t, n) -> Int64.add (eval t) n
-  | Shift (t, n) -> Int64.shift_right_logical (eval t) n
-
 let low n = Int64.to_int n land 0xffff_ffff
 let high n = Int64.to_int (Int64.shift_right_logical n 32) land 0xffff_ffff
 
@@ -86,9 +73,9 @@ let reference p =
   List.concat_map
     (function
       | Packet.Dword n -> [ n land 0xffff_ffff ]
-      | W32 t -> [ low (eval t) ]
+      | W32 t -> [ low (S.eval value t) ]
       | W64 t ->
-          let n = eval t in
+          let n = S.eval value t in
           [ low n; high n ])
     p
 

@@ -389,11 +389,6 @@ let limits =
 
 (* The words of a descriptor, over named values *)
 
-let rec pp_term ppf : string Packet.term -> unit = function
-  | Value v -> Format.pp_print_string ppf v
-  | Add (t, n) -> Format.fprintf ppf "Add (%a, 0x%Lx)" pp_term t n
-  | Shift (t, n) -> Format.fprintf ppf "Shift (%a, %d)" pp_term t n
-
 let dump cls =
   let k =
     S.kernel ~registers:40 ~shared_bytes:0x800 ~stack_bytes:0x40
@@ -424,7 +419,9 @@ let dump cls =
     (List.init (String.length s.bytes / 16) (fun i -> row (16 * i))
     @ List.map
         (fun (h : string Structure.hole) ->
-          Format.asprintf "hole at %d, %d bits: %a" h.at h.bits pp_term h.value)
+          Format.asprintf "hole at %d, %d bits: %a" h.at h.bits
+            (S.pp_term Format.pp_print_string)
+            h.value)
         s.holes)
 
 let words =
