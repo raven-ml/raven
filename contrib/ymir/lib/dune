@@ -11,5 +11,7 @@
   overlap
   grid
   region
-  observation)
- (libraries nx nx.wide ymir.units))
+  observation
+  cosmology
+  cosmology_tables)
+ (libraries nx nx.dtype nx.wide ymir.units))

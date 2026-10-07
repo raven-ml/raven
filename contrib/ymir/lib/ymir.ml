@@ -15,3 +15,4 @@ module Transform = Transform
 module Grid = Grid
 module Region = Region
 module Observation = Observation
+module Cosmology = Cosmology

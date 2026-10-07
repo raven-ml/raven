@@ -1,6 +1,7 @@
 # Ymir
 
-Exact physical units for OCaml, built on [Nx](../../packages/nx/).
+Astronomy for OCaml, built on [Nx](../../packages/nx/): exact physical
+units, and the background cosmology.
 
 `ymir.units` gives a unit as an exact value: a product of primes, π and named
 symbols with rational exponents, kept in one canonical form whose text is its
@@ -48,3 +49,8 @@ let v_si = Quantity.value Unit.(metre / second) v
 - **Names**: `Vocabulary.lookup` reads a symbol with an SI prefix (`MJy`),
   `Vocabulary.spell` and `pp` write a unit with a vocabulary's symbols, and
   `Vocabulary.si` holds the SI's
+- **Cosmology**: `Cosmology.t`, one record of tensors for flat and curved
+  ΛCDM, wCDM and w0waCDM with radiation and massive neutrinos; the
+  expansion rate, density parameters, distances, volumes and times as fixed
+  Gauss–Legendre sums with a stated error bound, batched, compiled and
+  differentiable in every parameter; and the Planck and WMAP realisations

@@ -15,7 +15,9 @@
     scope. {!Frame} names the celestial frames and {!Direction} holds directions
     in them. {!Transform} maps pixels to the sky, {!Grid} is a shape of cells
     seen through a transform, {!Region} is a shape placed on a grid's world, and
-    {!Observation} holds data on a grid and integrates them over a region. *)
+    {!Observation} holds data on a grid and integrates them over a region.
+    {!Cosmology} is the background of a homogeneous expanding universe: its
+    expansion rate, distances, volumes and times. *)
 
 (** {1:units Units} *)
 
@@ -641,4 +643,281 @@ module Observation : sig
   val ptree : unit -> ('w, 'e) t Nx.Ptree.t
   (** [ptree ()] is the structure of observations: the grid, then the data,
       variance, validity and area, each present or not. *)
+end
+
+(** {1:cosmology Cosmology} *)
+
+(** The background of a homogeneous expanding universe.
+
+    A cosmology is one record of tensors: flat and curved ΛCDM, wCDM and
+    w0waCDM, with or without radiation and massive neutrinos, are values of it.
+    Every parameter is a leaf, so one compiled program and one batch serve every
+    model, and a derivative or a sampler moves Ω{_ k} across 0 with no branch.
+
+    {[
+    let planck = Cosmology.planck2018 ~codata:Codata.v2022 Nx.float64
+    let z = Nx.create Nx.float64 [| 4 |] [| 0.; 1.; 3.; 1100. |]
+    let gyr = Unit.giga Units.julian_year
+    let ages = Cosmology.age planck z |> Quantity.value gyr
+    (* 13.7872 5.85157 2.14385 0.000366537 *)
+    ]}
+
+    {b Terms.} The {e scale factor} is a = 1/(1 + z). The {e Hubble rate} H(a)
+    is the expansion rate, and E(a) = H(a)/H{_ 0}. A {e component} is a part of
+    the energy budget: cold matter (baryons and cold dark matter), photons,
+    neutrinos, dark energy and curvature; its {e density parameter} Ω{_ i}(a) is
+    its density over the critical density at a. The {e Hubble distance} is
+    D{_ H} = c/H{_ 0}, and χ is the line-of-sight comoving distance. A
+    cosmology's {e lanes} are the broadcast shape of its leaves and of a call's
+    redshifts.
+
+    {b The expansion rate.} With Ω{_ r}(a) the radiation's part,
+
+    {v
+    a^4 E^2(a) = Ω_cb a + Ω_k a^2 + Ω_de a^4 exp(-3(1 + w0 + wa) ln a - 3 wa (1 - a))
+                 + Ω_r(a)
+    Ω_r(a)     = Ω_γ (1 + 7/8 (4/11)^(4/3) N_ur) + Σ_i Ω_γ 7/8 T_ncdm^4 F(y_i a)
+    Ω_γ        = 32 π G σ T_CMB^4 / (3 c^3 H0^2)
+    y_i        = m_i c^2 / (k_B T_ncdm T_CMB),   T_ncdm = 0.71611
+    N_ur       = N_eff - k (T_ncdm / (4/11)^(1/3))^4
+    F(y)       = (120 / 7 π^4) ∫_0^∞ x^2 sqrt(x^2 + y^2) / (e^x + 1) dx
+    Ω_de       = 1 - Ω_cb - Ω_k - Ω_r(1)
+    v}
+
+    for k massive species. Dark energy closes the budget. The massive species
+    sit at T{_ ncdm} T{_ CMB}, and each counts as (T{_ ncdm}/(4/11){^ 1/3}){^ 4}
+    massless species at zero mass, so every result is continuous in each mass at
+    0. G is the {!Codata} release's, rounded once to the payload's dtype. ΛCDM
+    is w0 = -1, wa = 0, where the dark energy's factor is 1 exactly; flat is
+    Ω{_ k} = 0, exactly; T{_ CMB} = 0 removes the photons and every neutrino,
+    massive ones included.
+
+    {b Evaluation.} Every distance and time is one Gauss–Legendre sum of
+    a{^ 4}E{^ 2}, in a variable where its integrand is smooth from today to the
+    big bang, over nodes fixed per dtype: 64 for distances and 56 for ages in
+    float64, 24 and 20 in float32. The age is integrated from the big bang. Each
+    function is a formula of nx operations: batched, compiled and differentiable
+    in every parameter and in z, its derivative the sum's.
+
+    {b Accuracy.} Against the exact values of the same model, each distance,
+    volume and time, {!Cosmology.hubble} and {!Cosmology.critical_density} has a
+    relative error below 2{^ -46} in float64 and 2{^ -20} in float32, and each
+    density parameter an error below the same bound as a fraction of the budget,
+    on the {e validation box}: Ω{_ cb} ∈ \[0.01, 3\], Ω{_ k} ∈ \[-4.5, 2\], w0 ∈
+    \[-3, 1\], wa ∈ \[-3, 2\] with w0 + wa < 0, h ∈ \[0.4, 1\], T{_ CMB} ∈ \[0,
+    3\] K, N{_ eff} ∈ \[0, 5\], masses ∈ \[0, 1\] eV, redshifts in \[0, 1100\]
+    for distances, volumes and lookback times and \[0, 10{^ 6}\] for ages, and
+    a{^ 4}E{^ 2} at least 0.3 of the sum of its terms' magnitudes on the range
+    each function integrates. Outside the box the same rule runs with no
+    promise: where the terms of a{^ 4}E{^ 2} nearly cancel, as in a universe
+    whose expansion stalls and resumes, the integrand has a near-singularity no
+    fixed rule resolves.
+
+    {b Batching.} A cosmology is an operand of an elementwise function. Its
+    leaves, [m_nu]'s without its last axis, broadcast with the redshifts from
+    the right, and every result has the lanes' shape: leaves of shape
+    [[chains; 1]] against redshifts [[n]] give [[chains; n]]. Leaves of shape
+    [[k; 1]] give what [vmap] over k lanes of scalar leaves gives, row for row.
+
+    {b The domain.} A distance, volume or time is NaN, with a zero derivative,
+    where z ≤ -1, H{_ 0} ≤ 0 or a{^ 4}E{^ 2} ≤ 0 at a node of its rule;
+    {!Cosmology.hubble}, {!Cosmology.density_parameter} and
+    {!Cosmology.critical_density} are NaN where z ≤ -1, H{_ 0} ≤ 0 or E{^ 2}(z)
+    ≤ 0. {!Cosmology.transverse} is NaN where H{_ 0} ≤ 0. A NaN parameter gives
+    NaN with a NaN derivative. Every other lane is untouched, and nothing raises
+    on a tensor's values.
+
+    {b Errors.} Each function raises [Invalid_argument], eagerly or at trace, on
+    static data: a dtype other than float32 and float64, as in
+    ["Cosmology.hubble: float16 has no rule; the cosmology computes in float32
+     and float64"]; a unit that does not convert, as in
+    ["Cosmology.age: h0 is in 1e3 m s^-1, which does not convert to s^-1: their
+     quotient keeps m"]; a scalar [m_nu], as in
+    ["Cosmology.comoving_distance: m_nu is a scalar; its last axis lists the
+     massive species ([1] for one, [0] for none)"]; and shapes that do not
+    broadcast, as in
+    ["Cosmology.distance_modulus: the cosmology's lanes [4] and z [1590] do not
+     broadcast; for every redshift in each of 4 lanes, give leaves of shape [4;
+     1] or map with Rune.vmap"]. *)
+module Cosmology : sig
+  type 'p t = {
+    codata : Codata.t;  (** The CODATA release G is read from. *)
+    h0 : 'p Quantity.t;  (** H{_ 0}, in a unit of rate. *)
+    omega_cb : 'p;  (** Ω{_ cb} today: baryons and cold dark matter. *)
+    omega_k : 'p;  (** Ω{_ k} today; 0 is flat. *)
+    w0 : 'p;  (** Dark energy's w today. *)
+    wa : 'p;  (** w(a) = w0 + wa (1 - a). *)
+    t_cmb : 'p Quantity.t;  (** The photons' temperature today. *)
+    n_eff : 'p;
+        (** The effective number of neutrino species, massive ones included. *)
+    m_nu : 'p Quantity.t;
+        (** The rest energies m c{^ 2} of the massive species, on the last axis.
+        *)
+  }
+  (** The type for cosmologies with payloads ['p]. The record holds no derived
+      value: Ω{_ de}, Ω{_ γ} and Ω{_ ν} are functions of its fields. Its static
+      data are the release's year, the three quantities' units and the leaves'
+      shapes, the number of massive species included; everything else is a leaf.
+  *)
+
+  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  (** [walk c x] reports [codata]'s year with [Walk.int], then walks the other
+      fields in order, quantities with {!Quantity.walk}. [Cosmology] is an
+      {!Nx.Ptree.S}. *)
+
+  val pp : Format.formatter -> (float, 'b) Nx.t t -> unit
+  (** [pp] formats a cosmology's fields. *)
+
+  (** {1:realisations Realisations}
+
+      A realisation is a paper's flat ΛCDM fit, a starting point for record
+      update: [{ planck with omega_k; w0 }]. It transcribes the paper's decimals
+      and rounds each field once to the dtype: Ω{_ cb} is (ω{_ b} +
+      ω{_ c})/h{^ 2} from the physical densities the paper samples, computed
+      exactly. Its Ω{_ k}, w0 and wa are 0, -1 and 0. The Planck realisations
+      hold T{_ CMB} = 2.7255 K (Fixsen 2009), N{_ eff} = 3.046 and one massive
+      species of 0.06 eV; the WMAP ones T{_ CMB} = 2.725 K, N{_ eff} = 3.04 and
+      none. Each raises [Invalid_argument] for a dtype other than float32 and
+      float64. *)
+
+  val planck2018 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** Planck 2018 VI (Planck Collaboration 2020, A&A 641, A6), Table 2,
+      TT,TE,EE+lowE+lensing+BAO: H{_ 0} = 67.66, ω{_ b} = 0.02242, ω{_ c} =
+      0.11933. *)
+
+  val planck2015 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** Planck 2015 XIII (Planck Collaboration 2016, A&A 594, A13), Table 4,
+      TT,TE,EE+lowP+lensing+ext: H{_ 0} = 67.74, ω{_ b} = 0.02230, ω{_ c} =
+      0.1188. *)
+
+  val planck2013 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** Planck 2013 XVI (Planck Collaboration 2014, A&A 571, A16), Table 5,
+      Planck+WP+highL+BAO, best fit: H{_ 0} = 67.77, ω{_ b} = 0.022161, ω{_ c} =
+      0.11889. *)
+
+  val wmap9 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** WMAP nine-year (Hinshaw et al. 2013, ApJS 208, 19), Table 4,
+      WMAP+eCMB+BAO+H{_ 0}: H{_ 0} = 69.32, ω{_ b} = 0.02223, ω{_ c} = 0.1153.
+  *)
+
+  val wmap7 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** WMAP seven-year (Komatsu et al. 2011, ApJS 192, 18), Table 1,
+      WMAP+BAO+H{_ 0}, maximum likelihood: H{_ 0} = 70.4, ω{_ b} = 0.02253,
+      ω{_ c} = 0.1122. *)
+
+  val wmap5 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** WMAP five-year (Komatsu et al. 2009, ApJS 180, 330), Table 1, WMAP+BAO+SN,
+      maximum likelihood: H{_ 0} = 70.2, ω{_ b} = 0.02262, ω{_ c} = 0.1138. *)
+
+  val wmap3 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** WMAP three-year (Spergel et al. 2007, ApJS 170, 377), Table 6, WMAP+SN
+      Gold: h = 0.701 and ω{_ m} = 0.1349, which the paper prints in place of
+      ω{_ c}. *)
+
+  val wmap1 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  (** WMAP first-year (Spergel et al. 2003, ApJS 148, 175), Table 7,
+      WMAP+CBI+ACBAR+2dFGRS+Lyα: h = 0.72 and ω{_ m} = 0.133, which the paper
+      prints in place of ω{_ c}. *)
+
+  (** {1:expansion Expansion}
+
+      Each function takes a cosmology and redshifts and returns the lanes'
+      shape. *)
+
+  val hubble :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [hubble c z] is H(z), in [h0]'s unit. *)
+
+  (** The type for components. *)
+  type component =
+    | Cold_matter  (** [omega_cb]'s component. *)
+    | Photons
+    | Neutrinos  (** Massless and massive neutrinos, at every redshift. *)
+    | Dark_energy
+    | Curvature
+
+  val density_parameter :
+    (float, 'b) Nx.t t -> component -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  (** [density_parameter c i z] is Ω{_ i}(z). The five sum to 1. *)
+
+  val critical_density :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [critical_density c z] is 3H(z){^ 2}/8πG, in 3/(8π) u{^ 2} over G's unit
+      for [h0] in u. *)
+
+  (** {1:distances Distances}
+
+      A distance is in c/u for [h0] in u. For H{_ 0} in km s{^ -1} Mpc{^ -1}
+      that unit is exactly 299792.458 Mpc, and [Quantity.value mpc] applies it
+      as one rounded factor. *)
+
+  val comoving_distance :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [comoving_distance c z] is χ, along the line of sight. *)
+
+  val transverse :
+    (float, 'b) Nx.t t ->
+    (float, 'b) Nx.t Quantity.t ->
+    (float, 'b) Nx.t Quantity.t
+  (** [transverse c d] is the transverse comoving distance across a radial
+      comoving separation [d], in [d]'s unit: d S(Ω{_ k} (d/D{_ H}){^ 2}), with
+      S(x) = Σ{_ n} x{^ n}/(2n+1)!, which is sinh √x/√x for x > 0 and sin
+      √-x/√-x for x < 0. S is entire, so [transverse] is analytic in Ω{_ k}
+      across 0, where its derivative in Ω{_ k} is d{^ 3}/(6 D{_ H}{^ 2}) and its
+      value [d] exactly. The transverse comoving distance D{_ M} is
+      [transverse c (comoving_distance c z)]; between two redshifts,
+      [transverse c (Quantity.sub chi_s chi_l)].
+
+      Raises [Invalid_argument] if [d] is not a length. *)
+
+  val angular_diameter_distance :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [angular_diameter_distance c z] is D{_ M}(z)/(1 + z). *)
+
+  val luminosity_distance :
+    (float, 'b) Nx.t t ->
+    ?observed:(float, 'b) Nx.t ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t Quantity.t
+  (** [luminosity_distance c ~observed z] is (1 + observed) D{_ M}(z): [z]
+      places the source, [observed] is the redshift the observer measures, [z]
+      by default. A supernova fit passes its heliocentric redshift as
+      [observed]. *)
+
+  val distance_modulus :
+    (float, 'b) Nx.t t ->
+    ?observed:(float, 'b) Nx.t ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t
+  (** [distance_modulus c ~observed z] is 5 log{_ 10}(D{_ L}/10 pc), a
+      magnitude, with D{_ L} as {!luminosity_distance} gives it. It follows
+      [log]'s domain: NaN where D{_ M} < 0, past a closed universe's antipode,
+      and -∞ where D{_ L} = 0. *)
+
+  (** {1:volumes Volumes}
+
+      A volume is in (c/u){^ 3} sr{^ -1} for [h0] in u. *)
+
+  val comoving_volume :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [comoving_volume c z] is the comoving volume within [z] per steradian,
+      D{_ H}{^ 3} χ̂{^ 3} W(Ω{_ k} χ̂{^ 2}) with χ̂ = χ/D{_ H} and W(x) = (S(4x) -
+      1)/(2x). *)
+
+  val comoving_volume_element :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [comoving_volume_element c z] is dV{_ C}/dz per steradian, c
+      D{_ M}{^ 2}/H. *)
+
+  (** {1:times Times}
+
+      A time is in 1/u for [h0] in u. *)
+
+  val lookback_time :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [lookback_time c z] is the time light from [z] has travelled. *)
+
+  val age :
+    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+  (** [age c z] is the time since the big bang at [z]. *)
 end

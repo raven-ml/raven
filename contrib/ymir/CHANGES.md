@@ -4,6 +4,12 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Ymir.Cosmology`, the background of a homogeneous expanding universe: one
+  record of tensors for flat and curved ΛCDM, wCDM and w0waCDM with radiation
+  and massive neutrinos, and its expansion rate, density parameters,
+  distances, volumes and times as fixed Gauss–Legendre sums, batched,
+  compiled and differentiable in every parameter, NaN where the universe has
+  no past. `planck2018` to `wmap1` transcribe each paper's fit.
 - `Ymir.Transform` maps pixel coordinates to the sky as a list of stages that
   invert and print back what they read: `axes`, `shift`, `linear`, `scale` and
   `celestial` with the TAN and ARC projections, `about` and `gnomonic` for
