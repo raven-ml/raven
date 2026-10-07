@@ -746,6 +746,29 @@ let reads =
           let i, seen = naming () in
           Nx.Op.intercept i (fun () -> ignore (Nx_ragged.to_strings r));
           equal names [ "Nx_ragged.to_strings"; "Nx_ragged.to_strings" ] !seen);
+      test "to_strings of a sub of a long column reads only its rows" (fun () ->
+          let ss = Array.init 100_000 string_of_int in
+          let r =
+            Nx_ragged.sub (Nx_ragged.of_strings ss) ~offset:50_000 ~length:3
+          in
+          let sizes = ref [] in
+          let run : type r. r Nx.Op.t -> r =
+           fun op ->
+            (match op with
+            | Read { x; _ } -> sizes := Nx.numel x :: !sizes
+            | _ -> ());
+            Nx.Op.eval op
+          in
+          let claims : type r. r Nx.Op.t -> bool = function
+            | Read _ -> true
+            | _ -> false
+          in
+          let strings = ref [||] in
+          Nx.Op.intercept { run; claims } (fun () ->
+              strings := Nx_ragged.to_strings r);
+          equal (array string) [| "50000"; "50001"; "50002" |] !strings;
+          equal ~msg:"elements read: offsets, then bytes" (list int) [ 4; 15 ]
+            (List.rev !sizes));
       cases ~name:fst "ids and rank name every round's read"
         [
           ("Nx_ragged.ids", discard (fun () -> Nx_ragged.ids (grouped ())));
