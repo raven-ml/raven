@@ -14,6 +14,12 @@ external unmap_at : int -> int -> unit = "caml_device_pci_sysmem_unmap"
 external lock_at : int -> int -> unit = "caml_device_pci_sysmem_lock"
 external unlock_at : int -> int -> unit = "caml_device_pci_sysmem_unlock"
 
+(* [f ()], whose system call failing is reported as [what]. *)
+let step what f =
+  try f ()
+  with Unix.Unix_error (e, _, _) ->
+    failwith (Printf.sprintf "%s: %s" what (Unix.error_message e))
+
 let page = page_size ()
 let round_page n = (n + page - 1) / page * page
 
@@ -26,11 +32,19 @@ let huge = 2 lsl 20
 let lock = Mutex.create ()
 let reserved : (int * int, unit) Hashtbl.t = Hashtbl.create 4
 let pins : (int, int) Hashtbl.t = Hashtbl.create 64
+let range a n = Printf.sprintf "[0x%x, 0x%x)" a (a + n)
 
 let reserve ~base n =
   Mutex.protect lock @@ fun () ->
   if not (Hashtbl.mem reserved (base, n)) then begin
-    reserve_at base n;
+    (match reserve_at base n with
+    | () -> ()
+    | exception Unix.Unix_error (EEXIST, _, _) ->
+        failwith (Printf.sprintf "addresses %s are in use" (range base n))
+    | exception Unix.Unix_error (e, _, _) ->
+        failwith
+          (Printf.sprintf "reserving addresses %s: %s" (range base n)
+             (Unix.error_message e)));
     Hashtbl.add reserved (base, n) ()
   end
 
@@ -129,13 +143,24 @@ let drop_pins a n =
       match Hashtbl.find pins p with
       | 1 ->
           Hashtbl.remove pins p;
-          unlock_at p page
+          step "unlocking memory" (fun () -> unlock_at p page)
       | k -> Hashtbl.replace pins p (k - 1))
     (pages_of a n)
 
 let pin a n =
   Mutex.protect lock (fun () ->
-      lock_at a n;
+      (match lock_at a n with
+      | () -> ()
+      | exception Unix.Unix_error (((ENOMEM | EPERM) as e), _, _) ->
+          failwith
+            (Printf.sprintf
+               "locking %d bytes for a GPU: %s; raise the locked-memory limit \
+                (ulimit -l)"
+               n (Unix.error_message e))
+      | exception Unix.Unix_error (e, _, _) ->
+          failwith
+            (Printf.sprintf "locking %d bytes for a GPU: %s" n
+               (Unix.error_message e)));
       add_pins a n);
   match physical a n with
   | addresses -> addresses
@@ -157,12 +182,14 @@ let map_bytes ?va n ~huge ~locked =
         invalid_arg
           (Printf.sprintf "Function.alloc_dma: 0x%x is in no reserved range" va))
     va;
-  map_at (Option.value va ~default:0) n huge locked
+  step "allocating system memory" (fun () ->
+      map_at (Option.value va ~default:0) n huge locked)
 
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)
 let unmap a n =
-  if Mutex.protect lock (fun () -> reserved_at a n) then release_at a n
-  else unmap_at a n
+  step "freeing system memory" (fun () ->
+      if Mutex.protect lock (fun () -> reserved_at a n) then release_at a n
+      else unmap_at a n)
 
 let map ?va n =
   let n = round_page n in

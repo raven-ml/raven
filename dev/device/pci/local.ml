@@ -89,7 +89,11 @@ let map t i off n =
   else
     let first, len = pages off n in
     let window fd base =
-      Window.v (file_map fd (base + first) len + off - first) n
+      let a =
+        Vfio.step (Printf.sprintf "mapping BAR %d of %s" i t.bus) (fun () ->
+            file_map fd (base + first) len)
+      in
+      Window.v (a + off - first) n
     in
     match t.container with
     | Some c -> window c.device (Vfio.bar_offset t.bus c.device i off n)
@@ -104,7 +108,7 @@ let map t i off n =
 let unmap w =
   if Window.length w > 0 then
     let a, n = pages (Window.address w) (Window.length w) in
-    file_unmap a n
+    Vfio.step "unmapping a BAR" (fun () -> file_unmap a n)
 
 let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false

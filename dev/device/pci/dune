@@ -11,6 +11,5 @@
   (names
    device_pci_window
    device_pci_sysmem
-   device_pci_files
    device_pci_vfio
    device_pci_machine)))
