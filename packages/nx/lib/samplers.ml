@@ -1002,8 +1002,8 @@ module Rng = struct
       let x =
         mul (lit (Float.sqrt 2.0)) (Special.erfinv (add lo (mul u (sub hi lo))))
       in
-      (* The inverse carries seven digits, so a draw next to a bound can land an
-         ulp or so past it; the clamp makes the support exact. *)
+      (* The inversion's error, which grows as e^{x²/2}, can put a draw next to
+         a bound past it; the clamp makes the support exact. *)
       minimum (maximum x (minimum lower upper)) (maximum lower upper)
     in
     match target with
