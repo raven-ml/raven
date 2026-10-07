@@ -1,6 +1,5 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["libclang==18.1.1"]
 # ///
 """Generates defs.ml, the tables of device_amd_abi: the GC registers of each GC
 version and the bases of their segments, the constants of PM4, SDMA and AQL
@@ -12,17 +11,23 @@ Run from the worktree root:
 
   uv run dev/device/amd/abi/gen/gen.py
   uv run dev/device/amd/abi/gen/gen.py --check
+  uv run dev/device/amd/abi/gen/gen.py --excerpt [--check]
 
-Every input is pinned in pins.json by URL and SHA-256, and checked against its
-pin on every run. Downloads, and the source trees extracted from them, are kept
-in --cache under the digest of their URL. --pin records the digests of inputs
-not yet pinned. The output is deterministic: --check generates into a
-temporary directory, with no network once the cache holds the pinned inputs,
-and fails if the committed file differs.
+The inputs are excerpts of AMD's, LLVM's and PAL's headers, in headers/: each
+is a header's licence notice and the lines this script reads, verbatim and in
+the header's order (a #define, an enumerator, a struct's definition, a table of
+a document). SOURCES names the header each comes from, at its version.
+--excerpt makes them from the upstream headers, each pinned in pins.json by URL
+and SHA-256 and checked against its pin; downloads are kept in --cache, and
+--pin records the digests of headers not yet pinned. Generating reads the
+excerpts alone, offline. --check generates into memory and fails if a
+committed file differs.
 
-Values come from the headers through libclang, parsed for x86_64 Linux. Every
-table is a literal, which the compiler lays out as static data: nothing is
-built when a program starts.
+Where two headers define a value the library takes once (PM4's in soc15d.h and
+nvd.h, a thread trace value in each SOC enumeration, an SDMA field in each
+version's header), the script fails unless they agree. Every table is a
+literal, which the compiler lays out as static data: nothing is built when a
+program starts.
 """
 
 import argparse
@@ -31,35 +36,58 @@ import json
 import pathlib
 import re
 import sys
-import tarfile
-import tempfile
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
+HEADERS = HERE / "headers"
+PINS = HERE / "pins.json"
 OUT = HERE.parent / "defs.ml"
 
-KERNEL = ("https://github.com/ROCm/ROCK-Kernel-Driver/archive/"
-          "33970e1351f5e511029602454979f3de7e22260f.tar.gz")
-ROCM = "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/"
-LLVM = "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/"
-PAL = "https://raw.githubusercontent.com/GPUOpen-Drivers/pal/c5e800072a32f68b6ccc4422936d96167c6e0728/"
+# Sources, each at the commit or tag in its URL
 
-RUNTIME = "projects/rocr-runtime/runtime/hsa-runtime/"
-ROCM_FILES = [RUNTIME + "core/inc/registers.h", RUNTIME + "inc/amd_hsa_kernel_code.h",
-              RUNTIME + "inc/amd_hsa_common.h", RUNTIME + "inc/hsa.h",
-              "projects/aqlprofile/linux/vega10_enum.h", "projects/aqlprofile/linux/soc21_enum.h",
-              "projects/aqlprofile/linux/soc24_enum.h"]
-LLVM_FILES = ["llvm/include/llvm/Support/AMDHSAKernelDescriptor.h", "llvm/include/llvm/BinaryFormat/ELF.h",
-              "llvm/docs/AMDGPUUsage.rst"]
-PAL_FILES = ["src/core/hw/gfxip/gfx9/chip/gfx9_plus_merged_f32_mec_pm4_packets.h",
-             "src/core/hw/gfxip/gfx12/chip/gfx12_merged_f32_mec_pm4_packets.h"]
+KERNEL = ("https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/"
+          "drivers/gpu/drm/amd/")
+ROCM = "https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/"
+LLVM = "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/"
+PAL = "https://raw.githubusercontent.com/GPUOpen-Drivers/pal/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/hw/gfxip/"
 
-AMD = "drivers/gpu/drm/amd"
-
-# The GC versions whose register headers exist, and the registers kept of them:
-# those of compute queues, dispatches, performance counters, thread traces, and
-# of bringing the GPU up (its queues, its memory hub, its firmware engines).
+# The GC versions whose register headers exist.
 GC_VERSIONS = [(9, 4, 3), (11, 0, 0), (11, 0, 3), (11, 5, 0), (12, 0, 0)]
+
+
+def gc_header(ver, kind):
+    return f"gc_{'_'.join(map(str, ver))}_{kind}.h"
+
+
+# Each excerpt and the header it is cut from.
+SOURCES = {
+    **{gc_header(v, k): KERNEL + "include/asic_reg/gc/" + gc_header(v, k)
+       for v in GC_VERSIONS for k in ("offset", "sh_mask")},  # the Linux kernel's GC registers
+    "vega20_ip_offset.h": KERNEL + "include/vega20_ip_offset.h",  # GC segment bases, GFX9
+    "sienna_cichlid_ip_offset.h": KERNEL + "include/sienna_cichlid_ip_offset.h",  # GFX10 on
+    "soc15d.h": KERNEL + "amdgpu/soc15d.h",  # PM4, GFX9
+    "nvd.h": KERNEL + "amdgpu/nvd.h",  # PM4, GFX10 on
+    "kfd_pm4_headers_ai.h": KERNEL + "amdkfd/kfd_pm4_headers_ai.h",  # RELEASE_MEM's enumerations
+    "vega10_sdma_pkt_open.h": KERNEL + "amdgpu/vega10_sdma_pkt_open.h",  # SDMA 4
+    "navi10_sdma_pkt_open.h": KERNEL + "amdgpu/navi10_sdma_pkt_open.h",  # SDMA 5
+    "sdma_v6_0_0_pkt_open.h": KERNEL + "amdgpu/sdma_v6_0_0_pkt_open.h",  # SDMA 6
+    "vega10_enum.h": ROCM + "aqlprofile/linux/vega10_enum.h",  # SOC enumerations, GFX9
+    "soc21_enum.h": ROCM + "aqlprofile/linux/soc21_enum.h",  # GFX11
+    "soc24_enum.h": ROCM + "aqlprofile/linux/soc24_enum.h",  # GFX12
+    "hsa.h": ROCM + "rocr-runtime/runtime/hsa-runtime/inc/hsa.h",  # AQL
+    "registers.h": ROCM + "rocr-runtime/runtime/hsa-runtime/core/inc/registers.h",  # buffer descriptors
+    "AMDHSAKernelDescriptor.h": LLVM + "include/llvm/Support/AMDHSAKernelDescriptor.h",
+    "ELF.h": LLVM + "include/llvm/BinaryFormat/ELF.h",
+    "AMDGPUUsage.rst": LLVM + "docs/AMDGPUUsage.rst",  # processors
+    "gfx9_plus_merged_f32_mec_pm4_packets.h": PAL + "gfx9/chip/gfx9_plus_merged_f32_mec_pm4_packets.h",
+    "gfx12_merged_f32_mec_pm4_packets.h": PAL + "gfx12/chip/gfx12_merged_f32_mec_pm4_packets.h",
+}
+
+# What the runtime reads
+
+# The GC registers kept of each version: those of compute queues, dispatches,
+# performance counters, thread traces, and of bringing the GPU up (its queues,
+# its memory hub, its firmware engines).
 VM = r"reg(GC|MM)"
 GC_REGISTERS = [
     r"regGRBM_(CNTL|GFX_CNTL|GFX_INDEX|SOFT_RESET)",
@@ -87,30 +115,29 @@ GC_REGISTERS = [
     r"MX_L1_TLB_CNTL|FB_LOCATION_(BASE|TOP)|XGMI_LFB_(CNTL|SIZE))",
     r"regMM_ATC_L2_MISC_CG",
 ]
-# The bases of the GC's segments in PM4's register space, by the GC major
-# version from which they hold.
+GC_SEGMENTS = [f"GC_BASE__INST0_SEG{i}" for i in range(6)]
 GC_BASES = {9: "vega20_ip_offset.h", 10: "sienna_cichlid_ip_offset.h"}
 
-# PM4: the same in soc15d.h (GFX9) and nvd.h (GFX10 on), and the release's
-# enumerations in kfd_pm4_headers_ai.h.
+# PM4: the same in soc15d.h (GFX9) and nvd.h (GFX10 on).
 PM4_CONSTANTS = [
     "PACKET_TYPE3", "PACKET3_SET_SH_REG", "PACKET3_SET_SH_REG_START", "PACKET3_SET_SH_REG_END", "PACKET3_SET_UCONFIG_REG",
     "PACKET3_SET_UCONFIG_REG_START", "PACKET3_PRED_EXEC", "PACKET3_WAIT_REG_MEM", "PACKET3_ACQUIRE_MEM",
     "PACKET3_RELEASE_MEM", "PACKET3_DISPATCH_DIRECT", "PACKET3_EVENT_WRITE", "PACKET3_INDIRECT_BUFFER", "PACKET3_COPY_DATA",
-    "PACKET3_WRITE_DATA", "INDIRECT_BUFFER_VALID", "CACHE_FLUSH_AND_INV_TS_EVENT", "WR_ONE_ADDR", "WR_CONFIRM",
+    "PACKET3_WRITE_DATA", "INDIRECT_BUFFER_VALID", "WR_ONE_ADDR", "WR_CONFIRM",
     "PACKET3_WAIT_REG_MEM__FUNCTION__EQUAL_TO_THE_REFERENCE_VALUE",
     "PACKET3_WAIT_REG_MEM__FUNCTION__GREATER_THAN_OR_EQUAL_REFERENCE_VALUE",
-    "event_index__mec_release_mem__end_of_pipe", "data_sel__mec_release_mem__send_32_bit_low",
-    "data_sel__mec_release_mem__send_64_bit_data", "int_sel__mec_release_mem__none",
-    "int_sel__mec_release_mem__send_interrupt_after_write_confirm",
 ]
+# The release's enumerations, in kfd_pm4_headers_ai.h.
+PM4_ENUMS = ["event_index__mec_release_mem__end_of_pipe", "data_sel__mec_release_mem__send_32_bit_low",
+             "data_sel__mec_release_mem__send_64_bit_data", "int_sel__mec_release_mem__none",
+             "int_sel__mec_release_mem__send_interrupt_after_write_confirm"]
 # soc15d.h alone: the destinations of WRITE_DATA, and the source and destination
 # of COPY_DATA.
 PM4_SOC15_ONLY = ["PACKET3_WRITE_DATA__DST_SEL__MEM_MAPPED_REGISTER", "PACKET3_WRITE_DATA__DST_SEL__MEMORY",
                   "PACKET3_COPY_DATA__SRC_SEL__PERFCOUNTERS", "PACKET3_COPY_DATA__SRC_SEL__GPU_CLOCK_COUNT",
                   "PACKET3_COPY_DATA__DST_SEL__TC_L2", "PACKET3_COPY_DATA__COUNT_SEL__64_BITS_OF_DATA",
                   "PACKET3_COPY_DATA__WR_CONFIRM__WAIT_FOR_CONFIRMATION"]
-# Fields as the shift of their first bit, from the argument macros of both
+# Fields, as the shift of their first bit, from the argument macros of both
 # headers: (GFX9's name, GFX10's).
 PM4_SHIFTS = [("WAIT_REG_MEM_MEM_SPACE",) * 2, ("WAIT_REG_MEM_FUNCTION",) * 2, ("WRITE_DATA_DST_SEL",) * 2,
               ("PACKET3_COPY_DATA__SRC_SEL",) * 2, ("PACKET3_COPY_DATA__DST_SEL",) * 2,
@@ -127,18 +154,20 @@ PM4_SOC15_SHIFTS = [f"PACKET3_ACQUIRE_MEM_CP_COHER_CNTL_{f}" for f in
 PM4_SOC15_CONSTANTS = ["EOP_TC_WB_ACTION_EN", "EOP_TC_NC_ACTION_EN"]
 
 # WAIT_REG_MEM64, which the kernel's headers name but do not lay out: PAL's
-# layout of it, (field, byte offset or (bit offset, bits)), which the encoder
-# writes in this order.
+# layout of it, (field, byte offset and bytes, or bit offset and bits), which
+# the encoder writes in this order.
 WAIT_REG_MEM64 = "PM4_MEC_WAIT_REG_MEM64"
 WAIT_REG_MEM64_LAYOUT = [
     ("ordinal2__bitfields__function", ("bits", 32, 3)), ("ordinal2__bitfields__mem_space", ("bits", 36, 2)),
     ("ordinal3__bitfieldsA__mem_poll_addr_lo", ("bits", 67, 29)), ("ordinal4__mem_poll_addr_hi", (12, 4)),
     ("ordinal5__reference", (16, 4)), ("ordinal6__reference_hi", (20, 4)), ("ordinal7__mask", (24, 4)),
     ("ordinal8__mask_hi", (28, 4)), ("ordinal9__bitfields__poll_interval", ("bits", 256, 16))]
+PAL_HEADERS = ["gfx9_plus_merged_f32_mec_pm4_packets.h", "gfx12_merged_f32_mec_pm4_packets.h"]
 
 # The events and thread trace values of the SOC enumerations, the same in each
 # that defines them.
-SOC_EVENTS = ["CS_PARTIAL_FLUSH", "THREAD_TRACE_MARKER", "THREAD_TRACE_FINISH"]
+SOCS = ["vega10_enum.h", "soc21_enum.h", "soc24_enum.h"]
+SOC_EVENTS = ["CACHE_FLUSH_AND_INV_TS_EVENT", "CS_PARTIAL_FLUSH", "THREAD_TRACE_MARKER", "THREAD_TRACE_FINISH"]
 SOC_TRACE = ["SQ_TT_RT_FREQ_4096_CLK", "SQ_TT_WTYPE_INCLUDE_CS_BIT", "SQ_TT_TOKEN_MASK_SQDEC_BIT",
              "SQ_TT_TOKEN_MASK_SHDEC_BIT", "SQ_TT_TOKEN_MASK_GFXUDEC_BIT", "SQ_TT_TOKEN_MASK_COMP_BIT",
              "SQ_TT_TOKEN_MASK_CONTEXT_BIT", "SQ_TT_TOKEN_EXCLUDE_VMEMEXEC_SHIFT", "SQ_TT_TOKEN_EXCLUDE_ALUEXEC_SHIFT",
@@ -164,7 +193,8 @@ GFX9_TOKEN_FIELDS = [("CMN", "TIME_DELTA"), ("MISC", "TIME_DELTA"), ("WAVE_START
 
 # SDMA packets: the same in each version's header but for the fence's memory
 # type, from version 5.
-SDMA_PKT = {(4, 0, 0): "vega10_sdma_pkt_open", (5, 0, 0): "navi10_sdma_pkt_open", (6, 0, 0): "sdma_v6_0_0_pkt_open"}
+SDMA_PKT = {(4, 0, 0): "vega10_sdma_pkt_open.h", (5, 0, 0): "navi10_sdma_pkt_open.h",
+            (6, 0, 0): "sdma_v6_0_0_pkt_open.h"}
 SDMA_OPS = ["SDMA_OP_COPY", "SDMA_OP_FENCE", "SDMA_OP_TRAP", "SDMA_OP_POLL_REGMEM", "SDMA_OP_TIMESTAMP",
             "SDMA_SUBOP_COPY_LINEAR", "SDMA_SUBOP_TIMESTAMP_GET_GLOBAL"]
 SDMA_FIELDS = ["SDMA_PKT_COPY_LINEAR_HEADER_sub_op", "SDMA_PKT_POLL_REGMEM_HEADER_func",
@@ -177,12 +207,13 @@ SDMA_OPTIONAL = ["SDMA_PKT_FENCE_HEADER_mtype"]  # GFX9 engines take no memory t
 HSA_CONSTANTS = ["HSA_PACKET_HEADER_TYPE", "HSA_PACKET_HEADER_BARRIER", "HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE",
                  "HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE", "HSA_FENCE_SCOPE_SYSTEM", "HSA_PACKET_TYPE_VENDOR_SPECIFIC",
                  "HSA_PACKET_TYPE_KERNEL_DISPATCH", "HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS"]
+DISPATCH = "hsa_kernel_dispatch_packet_s"
 DISPATCH_FIELDS = ["header", "setup", "workgroup_size_x", "workgroup_size_y", "workgroup_size_z", "grid_size_x",
                    "grid_size_y", "grid_size_z", "private_segment_size", "group_segment_size", "kernel_object",
                    "kernarg_address"]
 
-# The scratch buffer descriptor, by GC major: the unions of its words 1 and 3,
-# and the values its fields take.
+# The scratch buffer descriptor, by GC major: the unions of its words 1 and 3
+# in registers.h, and the values its fields take.
 SQ_BUF_RSRC = {9: ("SQ_BUF_RSRC_WORD1", "SQ_BUF_RSRC_WORD3"),
                11: ("SQ_BUF_RSRC_WORD1_GFX11", "SQ_BUF_RSRC_WORD3_GFX11"),
                12: ("SQ_BUF_RSRC_WORD1_GFX11", "SQ_BUF_RSRC_WORD3_GFX12")}
@@ -192,202 +223,238 @@ SQ_WORD3_OPTIONAL = ["NUM_FORMAT", "DATA_FORMAT", "ELEMENT_SIZE", "INDEX_STRIDE"
 SQ_CONSTANTS = ["SQ_SEL_X", "SQ_SEL_Y", "SQ_SEL_Z", "SQ_SEL_W", "SQ_RSRC_BUF", "BUF_FORMAT_32_UINT",
                 "BUF_NUM_FORMAT_UINT", "BUF_DATA_FORMAT_32"]
 
-# The kernel descriptor's fields and code properties, ELF.h's values of the
-# AMDGPU header: its machine, its ABI version, and the fields of its flags.
+# The kernel descriptor's fields, by their offsets in AMDHSAKernelDescriptor.h,
+# and its code properties.
+KD = "kernel_descriptor_t"
 KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_size", "kernel_code_entry_byte_offset",
              "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
-KD_CONSTANTS = ["AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER",
-                "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_WAVEFRONT_SIZE32"]
+KD_PROPERTIES = ["ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER", "ENABLE_SGPR_DISPATCH_PTR", "ENABLE_WAVEFRONT_SIZE32"]
+# ELF.h's values of the AMDGPU header: its machine, its ABI version, and the
+# fields of its flags.
 ELF_CONSTANTS = ["EM_AMDGPU", "ELFABIVERSION_AMDGPU_HSA_V6", "EF_AMDGPU_MACH",
                  "EF_AMDGPU_GENERIC_VERSION", "EF_AMDGPU_GENERIC_VERSION_OFFSET"]
+RST_TABLES = ["amdgpu-ef-amdgpu-mach-table", "amdgpu-generic-processor-table"]
 
-# The headers' bit fields as a little-endian processor lays them out.
-DEFINES = ["LITTLEENDIAN_CPU"]
+# The configuration the headers are read under: a little-endian processor, a
+# 64-bit HSA model.
+DEFINED = {"LITTLEENDIAN_CPU", "HSA_LARGE_MODEL", "HSA_LITTLE_ENDIAN"}
 
-# Inputs
+# Reading C headers
 
-
-def key(url):
-    """The digest of [url] that names what the cache keeps of it."""
-    return hashlib.sha256(url.encode()).hexdigest()[:16]
-
-
-USED = set()
+DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)(\([\w, ]*\))?[ \t]*(.*?)[ \t]*(?:/\*.*?\*/|//.*)?[ \t]*$", re.M)
+ENUMERATOR = re.compile(r"^[ \t]*(\w+)[ \t]*=[ \t]*([^,/\n]+?)[ \t]*,?[ \t]*(?:/\*.*|//.*)?$", re.M)
 
 
-def fetch(cache, url, pins, pin):
-    """The path of [url]'s contents in [cache], verified against [pins]."""
-    USED.add(url)
-    path = cache / (key(url) + "-" + url.rsplit("/", 1)[-1])
-    if not path.exists():
-        print(f"fetching {url}", file=sys.stderr)
-        req = urllib.request.Request(url, headers={"User-Agent": "raven-gen"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            path.write_bytes(r.read())
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    if url in pins and pins[url] != digest:
-        sys.exit(f"{url}: SHA-256 {digest}, expected {pins[url]}")
-    if url not in pins:
-        if not pin:
-            sys.exit(f"{url} is not pinned; run with --pin to record {digest}")
-        pins[url] = digest
-    return path
+def defines(text):
+    """{name: (parameters or None, body)} of [text]'s #define lines."""
+    return {m.group(1): (m.group(2), m.group(3)) for m in DEFINE.finditer(text)}
 
 
-def sources(cache, pins, pin):
-    """The kernel's tree, and the trees of the files of ROCm, LLVM and PAL, each
-    under the digest of the URL it comes from."""
-    root = cache / "src"
-    tar = fetch(cache, KERNEL, pins, pin)
-    kernel = root / key(KERNEL)
-    if not kernel.exists():
-        partial = kernel.with_suffix(".partial")
-        with tarfile.open(tar) as t:
-            top = t.getnames()[0].split("/")[0]
-            members = [m for m in t.getmembers() if m.name.startswith(f"{top}/{AMD}/")]
-            for m in members:
-                m.name = m.name[len(top) + 1:]
-            t.extractall(partial, members=members, filter="data")
-        partial.rename(kernel)
-    trees = []
-    for base, files in ((ROCM, ROCM_FILES), (LLVM, LLVM_FILES), (PAL, PAL_FILES)):
-        tree = root / key(base)
-        for f in files:
-            data = fetch(cache, base + f, pins, pin).read_bytes()
-            dst = tree / f
-            if not dst.exists() or dst.read_bytes() != data:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(data)
-        trees.append(tree)
-    return kernel / AMD, *trees
-
-# C definitions
+def enumerators(text):
+    return {m.group(1): m.group(2) for m in ENUMERATOR.finditer(text)}
 
 
-PRELUDE = """
-typedef unsigned char uint8_t; typedef unsigned short uint16_t; typedef unsigned int uint32_t;
-typedef unsigned long long uint64_t; typedef signed char int8_t; typedef short int16_t; typedef int int32_t;
-typedef long long int64_t; typedef unsigned long uintptr_t; typedef long intptr_t; typedef unsigned long size_t;
-typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef uint64_t u64;
-typedef int8_t s8; typedef int16_t s16; typedef int32_t s32; typedef int64_t s64;
-typedef uint8_t __u8; typedef uint16_t __u16; typedef uint32_t __u32; typedef uint64_t __u64;
-typedef int8_t __s8; typedef int16_t __s16; typedef int32_t __s32; typedef int64_t __s64;
-typedef uint16_t __le16; typedef uint32_t __le32; typedef uint64_t __le64;
-#define __packed __attribute__((packed))
-#define __user
-#define BIT(n) (1UL << (n))
-#define BIT_ULL(n) (1ULL << (n))
-"""
-C_PRELUDE = "#define bool _Bool\n#define true 1\n#define false 0\n"
+def evaluate(expr, names, arg=None):
+    """The integer of the C constant expression [expr]: numbers, names of
+    [names], casts to integer types, and integer operators. [arg] is the value
+    of a macro's parameter."""
+    e = re.sub(r"\((unsigned|unsigned int|uint32_t|uint64_t|int)\)", "", expr)
+    e = re.sub(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]*\b", r"\1", e)
+
+    def name(m):
+        n = m.group(0)
+        if n in ("x", "_x") and arg is not None:
+            return str(arg)
+        if n.startswith(("0x", "0X")) or n.isdigit():
+            return n
+        if n not in names:
+            sys.exit(f"{expr}: {n} is not defined")
+        return str(evaluate(names[n], names))
+    e = re.sub(r"\b[A-Za-z_]\w*\b", name, e)
+    if not re.fullmatch(r"[0-9a-fA-FxX ()|&<>~+\-*]*", e):
+        sys.exit(f"{expr}: not a constant expression")
+    return eval(e, {"__builtins__": {}})
 
 
-class Unit:
-    """A translation unit of headers, parsed as C (or C++) for x86_64 Linux.
-    Includes that cannot be found are replaced by empty files in [stub]."""
-
-    def __init__(self, ci, headers, includes, stub, cpp=False):
-        self.ci, self.includes, self.stub, self.cpp = ci, includes, stub, cpp
-        self.src = PRELUDE + ("" if cpp else C_PRELUDE) + "".join(f'#include "{h}"\n' for h in headers)
-        self.tu = self.parse(self.src)
-
-    def parse(self, src):
-        args = ["-x", "c++" if self.cpp else "c", "-target", "x86_64-unknown-linux-gnu", "-nostdinc",
-                "-ferror-limit=0", "-I", str(self.stub)] + [f"-D{d}" for d in DEFINES] \
-            + [f"-I{i}" for i in self.includes]
-        index = self.ci.Index.create()
-        for _ in range(100):
-            tu = index.parse("probe.c", args=args, unsaved_files=[("probe.c", src)])
-            missing = [m.group(1) for d in tu.diagnostics if (m := re.search(r"'([^']+)' file not found", d.spelling))]
-            if not missing:
-                return tu
-            for m in missing:
-                p = self.stub / m
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text("")
-        sys.exit("too many missing includes")
-
-    def enums(self):
-        return {c.spelling: c.enum_value for c in self.tu.cursor.walk_preorder()
-                if c.kind == self.ci.CursorKind.ENUM_CONSTANT_DECL}
-
-    def macros(self, names):
-        """Evaluates macros through enumerators, a 32-bit half at a time."""
-        probe = "".join(f"#ifdef {n}\nenum {{ __probe_hi_{n} = (int)((unsigned long long)({n}) >> 32), "
-                        f"__probe_lo_{n} = (int)((unsigned long long)({n}) & 0xffffffffULL) }};\n#endif\n"
-                        for n in names)
-        tu = self.parse(self.src + probe)
-        vals = {c.spelling: c.enum_value for c in tu.cursor.walk_preorder()
-                if c.kind == self.ci.CursorKind.ENUM_CONSTANT_DECL and c.spelling.startswith("__probe_")}
-        out = {}
-        for n in names:
-            hi, lo = vals.get(f"__probe_hi_{n}"), vals.get(f"__probe_lo_{n}")
-            if hi is not None and lo is not None:
-                out[n] = ((hi & 0xffffffff) << 32) | (lo & 0xffffffff)
-        return out
-
-    def constants(self, names):
-        vals = {**self.enums(), **self.macros(names)}
-        missing = [n for n in names if n not in vals]
-        if missing:
-            sys.exit(f"undefined constants: {missing}")
-        return vals
-
-    def shifts(self, names):
-        """The shift of each argument macro [name(x)]: the first bit of [name(1)]."""
-        probe = "".join(f"enum {{ __shift_{n} = (int)({n}(1)) }};\n" for n in names)
-        tu = self.parse(self.src + probe)
-        vals = {c.spelling[len("__shift_"):]: c.enum_value for c in tu.cursor.walk_preorder()
-                if c.kind == self.ci.CursorKind.ENUM_CONSTANT_DECL and c.spelling.startswith("__shift_")}
-        missing = [n for n in names if n not in vals]
-        if missing:
-            sys.exit(f"undefined argument macros: {missing}")
-        return {n: (vals[n] & 0xffffffff).bit_length() - 1 for n in names}
-
-    def struct(self, name):
-        """The definition of the struct or union [name], or of the typedef [name]
-        names."""
-        kinds = (self.ci.CursorKind.STRUCT_DECL, self.ci.CursorKind.UNION_DECL)
-        for c in self.tu.cursor.walk_preorder():
-            if c.kind in kinds and c.spelling == name and c.is_definition():
-                return c
-        for c in self.tu.cursor.walk_preorder():
-            if c.kind == self.ci.CursorKind.TYPEDEF_DECL and c.spelling == name:
-                d = c.underlying_typedef_type.get_canonical().get_declaration()
-                if d.kind in kinds and d.is_definition():
-                    return d
-        sys.exit(f"no struct {name}")
+def constants(text, wanted):
+    """{name: value} of the macros and enumerators [wanted] of [text]."""
+    ds, es = defines(text), enumerators(text)
+    names = {**es, **{n: b for n, (p, b) in ds.items() if p is None}}
+    out = {}
+    for n in wanted:
+        if n not in names:
+            sys.exit(f"undefined constant {n}")
+        out[n] = evaluate(names[n], names) & 0xffff_ffff_ffff_ffff
+    return out
 
 
-def layout(ci, cursor):
-    """(sizeof, {path: (byte offset, bytes) or ("bits", bit offset, bits)}),
-    nested fields joined with "__". An array's bytes are its element's."""
-    fields = {}
+def shifts(text, wanted):
+    """The first bit of each argument macro [name(x)], [name(1)]'s."""
+    ds = defines(text)
+    names = {n: b for n, (p, b) in ds.items() if p is None}
+    out = {}
+    for n in wanted:
+        if n not in ds or ds[n][0] is None:
+            sys.exit(f"undefined argument macro {n}")
+        out[n] = (evaluate(ds[n][1], names, arg=1) & 0xffffffff).bit_length() - 1
+    return out
 
-    def walk(t, base, prefix):
-        for f in t.get_fields():
-            off = base + f.get_field_offsetof()
-            ft = f.type.get_canonical()
-            anonymous = not f.spelling or "(anonymous" in f.spelling
-            path = prefix if anonymous else (prefix + "__" if prefix else "") + f.spelling
-            if f.is_bitfield():
-                fields[path] = ("bits", off, f.get_bitfield_width())
-            elif ft.kind == ci.TypeKind.RECORD:
-                if not anonymous:
-                    fields[path] = (off // 8, ft.get_size())
-                walk(ft, off, path)
-            elif ft.kind in (ci.TypeKind.CONSTANTARRAY, ci.TypeKind.INCOMPLETEARRAY):
-                fields[path] = (off // 8, ft.get_array_element_type().get_canonical().get_size())
+
+def preprocess(text):
+    """[text] without its comments, its #if branches taken under [DEFINED]."""
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    text = re.sub(r"//.*", "", text)
+    out = []
+    taking = []  # per open #if: (this branch is taken, a branch was taken)
+    for line in text.splitlines():
+        m = re.match(r"\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)", line)
+        if m is None:
+            if all(t for t, _ in taking):
+                out.append(line)
+            continue
+        d, cond = m.group(1), m.group(2)
+        holds = any(n in DEFINED for n in re.findall(r"\w+", cond))
+        if d in ("if", "ifdef"):
+            taking.append((holds, holds))
+        elif d == "ifndef":
+            taking.append((not holds, not holds))
+        elif d == "elif":
+            _, done = taking[-1]
+            taking[-1] = (not done and holds, done or holds)
+        elif d == "else":
+            _, done = taking[-1]
+            taking[-1] = (not done, True)
+        else:
+            taking.pop()
+    return "\n".join(out)
+
+
+# The bytes and alignment of the scalar types of the headers' structs.
+SCALARS = {"uint8_t": 1, "uint16_t": 2, "uint32_t": 4, "uint64_t": 8, "int8_t": 1, "int16_t": 2, "int32_t": 4,
+           "int64_t": 8, "unsigned int": 4, "signed int": 4, "int": 4, "float": 4, "void*": 8}
+
+
+def layout(text, name):
+    """(sizeof, {path: (byte offset, bytes) or ("bits", bit offset, bits)}) of
+    the struct or union [name] defined in [text], nested fields joined with
+    "__", for x86_64 Linux. An array's bytes are its element's."""
+    src = preprocess(text)
+    tokens = re.findall(r"[A-Za-z_]\w*\s*\*|[A-Za-z_]\w*|\d+|[{};:\[\],]", src)
+    defs = {}  # every struct and union: name -> token range
+
+    def definition(i):
+        """The struct or union whose keyword is at [i]: (kind, tag, members, end)."""
+        kind = tokens[i]
+        j = i + 1
+        tag = None
+        if tokens[j] != "{":
+            tag = tokens[j]
+            j += 1
+        depth, k = 0, j
+        while True:
+            if tokens[k] == "{":
+                depth += 1
+            elif tokens[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    return kind, tag, (j + 1, k), k + 1
+            k += 1
+
+    def opens(i):
+        """Whether the struct or union keyword at [i] starts a definition."""
+        j = i + 1 if tokens[i + 1] == "{" else i + 2
+        return j < len(tokens) and tokens[j] == "{"
+
+    for i, t in enumerate(tokens):
+        if t in ("struct", "union") and i + 2 < len(tokens) and opens(i):
+            kind, tag, body, end = definition(i)
+            defs.setdefault(tag, (kind, body))
+            if i > 0 and tokens[i - 1] == "typedef":
+                defs.setdefault(tokens[end], (kind, body))
+
+    def walk(kind, body, base, prefix, fields):
+        """Lays out the members of [body] from bit [base]; the size in bits."""
+        i, end = body
+        pos = 0  # bits from [base]
+        size = 0
+        align = 1
+        while i < end:
+            if tokens[i] in ("struct", "union"):
+                k, _, inner, after = definition(i)
+                names = []
+                while tokens[after] != ";":
+                    if tokens[after] not in (",",):
+                        names.append(tokens[after])
+                    after += 1
+                ialign = 4  # every nested record of these headers holds 32-bit words
+                start = 0 if kind == "union" else -(-pos // (ialign * 8)) * ialign * 8
+                for n in names or [None]:
+                    p = prefix if n is None else (prefix + "__" if prefix else "") + n
+                    isize = walk(k, inner, base + start, p, fields)
+                    if n is not None:
+                        fields[p] = ((base + start) // 8, isize // 8)
+                if kind == "union":
+                    size = max(size, isize)
+                else:
+                    pos = start + isize
+                align = max(align, ialign)
+                i = after + 1
+                continue
+            j = i
+            while tokens[j] not in (";",):
+                j += 1
+            decl = tokens[i:j]
+            i = j + 1
+            if not decl:
+                continue
+            if ":" in decl:
+                c = decl.index(":")
+                ftype, fname, width = " ".join(decl[:c - 1]), decl[c - 1], int(decl[c + 1])
+                start = 0 if kind == "union" else pos
+                p = (prefix + "__" if prefix else "") + fname
+                fields[p] = ("bits", base + start, width)
+                if kind == "union":
+                    size = max(size, width)
+                else:
+                    pos += width
+                align = max(align, 4)
+                continue
+            count = 1
+            if "[" in decl:
+                b = decl.index("[")
+                count = int(decl[b + 1])
+                decl = decl[:b]
+            ftype, fname = " ".join(decl[:-1]).replace(" *", "*").replace("const ", ""), decl[-1]
+            if ftype.endswith("*"):
+                ftype = "void*"
+            if ftype in SCALARS:
+                fbytes = SCALARS[ftype]
+                falign = fbytes
+            elif ftype in defs:
+                k, inner = defs[ftype]
+                sub = {}
+                fbytes = walk(k, inner, 0, "", sub) // 8
+                falign = 8 if fbytes % 8 == 0 else 4
+            elif ftype.endswith("_enum"):
+                fbytes, falign = 4, 4
             else:
-                fields[path] = (off // 8, ft.get_size())
+                sys.exit(f"{name}: unknown type {ftype}")
+            start = 0 if kind == "union" else -(-pos // (falign * 8)) * falign * 8
+            p = (prefix + "__" if prefix else "") + fname
+            fields[p] = ((base + start) // 8, fbytes)
+            if kind == "union":
+                size = max(size, fbytes * count * 8)
+            else:
+                pos = start + fbytes * count * 8
+            align = max(align, falign)
+        total = size if kind == "union" else pos
+        return -(-total // (align * 8)) * align * 8
 
-    walk(cursor.type.get_canonical(), 0, "")
-    return cursor.type.get_size(), fields
-
-
-def same(what, values):
-    if len(set(values)) != 1:
-        sys.exit(f"{what} differs: {values}")
-    return values[0]
+    for tag, (kind, body) in defs.items():
+        if tag == name:
+            fields = {}
+            return walk(kind, body, 0, "", fields) // 8, fields
+    sys.exit(f"no struct {name}")
 
 # Registers
 
@@ -397,27 +464,32 @@ def split_name(name):
     return name[:pos], name[pos:]
 
 
-def gc_registers(amd, ver):
-    """The registers of GC [ver]: {name: (offset, segment, [(field, lo, hi)])}.
-    The VM registers of the GC's hub take its prefix, as regGCVM_CONTEXT0_CNTL."""
-    base = amd / "include/asic_reg/gc" / f"gc_{'_'.join(map(str, ver))}"
+def normalize(reg):
+    """A VM register of the GC's hub takes its prefix, as regGCVM_CONTEXT0_CNTL."""
+    s = split_name(reg)
+    return s[0] + "GC" + s[1] if s[1].startswith(("VM_", "MC_VM_")) else reg
 
-    def normalize(reg):
-        s = split_name(reg)
-        return s[0] + "GC" + s[1] if s[1].startswith(("VM_", "MC_VM_")) else reg
 
-    def extract(lines, pat):
-        return ((normalize(m.group(1)), int(m.group(2), 0)) for l in lines if (m := re.match(pat, l)))
+REG_DEFINE = re.compile(r"^#define\s+((?:mm|reg)\w+?)(_BASE_IDX)?\s+(0x[\da-fA-F]+|\d+)[uUlL]*\s*$", re.M)
+MASK_DEFINE = re.compile(r"^#define\s+(\w+?)__(\w+)_MASK\s+(0x[\da-fA-F]+|\d+)[uUlL]*\s*$", re.M)
 
-    offset = pathlib.Path(f"{base}_offset.h").read_text().splitlines()
-    masks = pathlib.Path(f"{base}_sh_mask.h").read_text().splitlines()
-    defs = dict(extract(offset, r"#define\s+((?:mm|reg)\S+)\s+(0x[\da-fA-F]+|\d+)"))
+
+def kept(reg):
+    return any(re.fullmatch(p, normalize(reg)) for p in GC_REGISTERS)
+
+
+def gc_registers(offsets, masks):
+    """The registers of a GC version: {name: (offset, segment, [(field, lo, hi)])}."""
+    offs, segs = {}, {}
+    for m in REG_DEFINE.finditer(offsets):
+        (segs if m.group(2) else offs)[m.group(1)] = int(m.group(3), 0)
     fields = {}
-    for name, mask in extract(masks, r"#define\s+(\S+)_MASK\s+(0x[\da-fA-F]+|\d+)"):
-        reg, field = name.split("__")[0], name.split("__")[1].lower()
-        fields.setdefault(reg, []).append((field, (mask & -mask).bit_length() - 1, mask.bit_length() - 1))
-    return {reg: (off, defs[f"{reg}_BASE_IDX"], fields.get(split_name(reg)[1], []))
-            for reg, off in defs.items() if f"{reg}_BASE_IDX" in defs}
+    for m in MASK_DEFINE.finditer(masks):
+        mask = int(m.group(3), 0)
+        fields.setdefault(m.group(1), []).append((m.group(2).lower(), (mask & -mask).bit_length() - 1,
+                                                   mask.bit_length() - 1))
+    return {normalize(r): (off, segs[r], fields.get(split_name(r)[1], []))
+            for r, off in offs.items() if r in segs and kept(r)}
 
 # Processors
 
@@ -443,20 +515,26 @@ def rst_table(lines, name):
     sys.exit(f"table {name} does not end")
 
 
-def processors(llvm):
+def rst_table_lines(lines, name):
+    """The lines of the table [name]: from its directive to its last rule."""
+    at = lines.index(f"     :name: {name}")
+    start = max(i for i in range(at) if lines[i].lstrip().startswith(".. table::"))
+    rules = [i for i in range(at + 2, len(lines)) if lines[i].strip() and set(lines[i].strip()) <= {"=", " "}]
+    return lines[start:rules[2] + 1]
+
+
+def processors(elf_h, usage):
     """LLVM's AMDGCN processors by their [EF_AMDGPU_MACH] value, and the
     processors each generic one lists, from ELF.h and AMDGPUUsage.rst, which
     must agree."""
-    header = (llvm / LLVM_FILES[1]).read_text()
-    enums = {m.group(1): int(m.group(2), 0)
-             for m in re.finditer(r"^\s*(E[A-Z0-9_]+)\s*=\s*(0x[0-9a-fA-F]+|\d+),", header, re.M)}
+    enums = {n: evaluate(v, {}) for n, v in enumerators(elf_h).items() if re.fullmatch(r"0x[0-9a-fA-F]+|\d+", v)}
     missing = [c for c in ELF_CONSTANTS if c not in enums]
     if missing:
         sys.exit(f"ELF.h lacks {missing}")
-    lines = (llvm / LLVM_FILES[2]).read_text().splitlines()
+    lines = usage.splitlines()
     code = re.compile(r"``([^`]+)``")
     machs = []
-    for name, value, desc in rst_table(lines, "amdgpu-ef-amdgpu-mach-table"):
+    for name, value, desc in rst_table(lines, RST_TABLES[0]):
         m = code.fullmatch(name[0])
         if not (m and m.group(1).startswith("EF_AMDGPU_MACH_AMDGCN_")):
             continue
@@ -465,13 +543,147 @@ def processors(llvm):
         machs.append((int(value[0], 16), code.match(desc[0]).group(1)))
     names = {n for _, n in machs}
     generic = []
-    for row in rst_table(lines, "amdgpu-generic-processor-table"):
+    for row in rst_table(lines, RST_TABLES[1]):
         name = code.fullmatch(row[0][0]).group(1)
         members = [code.search(l).group(1) for l in row[2] if l.startswith("- ")]
         if name not in names or not set(members) <= names:
             sys.exit(f"{name}: a generic processor or member without an EF_AMDGPU_MACH value")
         generic.append((name, members))
     return {c: enums[c] for c in ELF_CONSTANTS}, machs, generic
+
+# Excerpts
+
+KD_PROPERTY = re.compile(r"^\s*KERNEL_CODE_PROPERTY\((\w+),\s*(\d+),\s*(\d+)\),.*$", re.M)
+
+
+def wanted():
+    """For each excerpt: the macros, enumerators and structs it keeps."""
+    w = {name: {"defines": set(), "optional": set(), "enums": set(), "structs": set()} for name in SOURCES}
+    w["soc15d.h"]["defines"] |= {*PM4_CONSTANTS, *PM4_SOC15_ONLY, *PM4_SOC15_CONSTANTS, *PM4_SOC15_SHIFTS,
+                                 *(g for g, _ in PM4_SHIFTS)}
+    w["nvd.h"]["defines"] |= {*PM4_CONSTANTS, *PM4_NV_CONSTANTS, *PM4_NV_SHIFTS, *(n for _, n in PM4_SHIFTS)}
+    w["kfd_pm4_headers_ai.h"]["enums"] |= set(PM4_ENUMS)
+    for h in SDMA_PKT.values():
+        fields = {f"{n}_{k}" for n in SDMA_FIELDS for k in ("mask", "shift")}
+        optional = {f"{n}_{k}" for n in SDMA_OPTIONAL for k in ("mask", "shift")}
+        w[h]["defines"] |= {*SDMA_OPS, *(fields - optional)}
+        w[h]["optional"] |= optional
+    for h in GC_BASES.values():
+        w[h]["optional"] |= set(GC_SEGMENTS)
+    for h in SOCS:
+        w[h]["optional"] |= {*SOC_EVENTS, *SOC_TRACE}
+    w["vega10_enum.h"]["enums"] |= {f"SQ_THREAD_TRACE_TOKEN_{t}" for t in GFX9_TOKENS}
+    w["hsa.h"]["enums"] |= set(HSA_CONSTANTS)
+    w["hsa.h"]["structs"] |= {DISPATCH, "hsa_signal_s"}
+    w["registers.h"]["enums"] |= set(SQ_CONSTANTS)
+    w["registers.h"]["structs"] |= {u for pair in SQ_BUF_RSRC.values() for u in pair}
+    w["AMDHSAKernelDescriptor.h"]["enums"] |= {f.upper() + "_OFFSET" for f in KD_FIELDS}
+    w["AMDHSAKernelDescriptor.h"]["structs"] |= {KD}
+    w["ELF.h"]["enums"] |= set(ELF_CONSTANTS)
+    for h in PAL_HEADERS:
+        w[h]["structs"] |= {WAIT_REG_MEM64, "PM4_MEC_TYPE_3_HEADER"}
+    return w
+
+
+def licence(name, text):
+    """The header's leading comments, its licence notice; for a document, a
+    comment that names its source and licence."""
+    if name.endswith(".rst"):
+        return (f".. Excerpt of {SOURCES[name]}.\n"
+                ".. LLVM is under the Apache License v2.0 with LLVM Exceptions (SPDX:\n"
+                ".. Apache-2.0 WITH LLVM-exception).\n")
+    m = re.match(r"\s*((?:/\*.*?\*/\s*|//[^\n]*\n)+)", text, re.S)
+    if m is None:
+        sys.exit(f"{name}: no licence notice")
+    return m.group(1).rstrip() + "\n"
+
+
+def blocks(text, names):
+    """The lines of the definitions of the structs and unions [names]: from the
+    line of their keyword to the line of their closing brace."""
+    lines = text.splitlines()
+    out, found = set(), set()
+    for i, l in enumerate(lines):
+        m = re.match(r"\s*(?:typedef\s+)?(?:struct|union)\s+(\w+)\s*(\{|$)", l)
+        if m is None or m.group(1) not in names or m.group(1) in found:
+            continue
+        depth, j = 0, i
+        while True:
+            depth += lines[j].count("{") - lines[j].count("}")
+            if "{" in "".join(lines[i:j + 1]) and depth == 0:
+                break
+            j += 1
+        out |= set(range(i, j + 1))
+        found.add(m.group(1))
+    if found != names:
+        sys.exit(f"no definition of {sorted(names - found)}")
+    return out
+
+
+def excerpt(name, text):
+    """[name]'s excerpt of [text]: its licence notice and the lines this script
+    reads, in order."""
+    if name.endswith(".rst"):
+        lines = text.splitlines()
+        return licence(name, text) + "\n" + "\n\n".join("\n".join(rst_table_lines(lines, t)) for t in RST_TABLES) + "\n"
+    w = wanted()[name]
+    lines = text.splitlines()
+    keep = set(blocks(text, w["structs"])) if w["structs"] else set()
+    ds = {m.group(1) for m in DEFINE.finditer(text)}
+    for i, l in enumerate(lines):
+        m = DEFINE.match(l)
+        if m and m.group(1) in w["defines"] | w["optional"]:
+            keep.add(i)
+        e = ENUMERATOR.match(l)
+        if e and e.group(1) in w["enums"] | w["optional"]:
+            keep.add(i)
+        r = REG_DEFINE.match(l)
+        if name.startswith("gc_") and r and kept(r.group(1)):
+            keep.add(i)
+        k = MASK_DEFINE.match(l)
+        if name.startswith("gc_") and name.endswith("sh_mask.h") and k and kept("reg" + k.group(1)):
+            keep.add(i)
+        if name == "ELF.h" and e and e.group(1).startswith("EF_AMDGPU_MACH_AMDGCN_"):
+            keep.add(i)
+        p = KD_PROPERTY.match(l)
+        if name == "AMDHSAKernelDescriptor.h" and p and p.group(1) in KD_PROPERTIES:
+            keep.add(i)
+    # The macros a kept one refers to.
+    names = {DEFINE.match(lines[i]).group(1) for i in keep if DEFINE.match(lines[i])}
+    while True:
+        refs = {n for i in keep if DEFINE.match(lines[i])
+                for n in re.findall(r"\b[A-Za-z_]\w*\b", DEFINE.match(lines[i]).group(3)) if n in ds} - names
+        if not refs:
+            break
+        for i, l in enumerate(lines):
+            m = DEFINE.match(l)
+            if m and m.group(1) in refs:
+                keep.add(i)
+        names |= refs
+    found = {DEFINE.match(lines[i]).group(1) for i in keep if DEFINE.match(lines[i])}
+    found |= {ENUMERATOR.match(lines[i]).group(1) for i in keep if ENUMERATOR.match(lines[i])}
+    missing = (w["defines"] | w["enums"]) - found
+    if missing:
+        sys.exit(f"{name}: no {sorted(missing)}")
+    return licence(name, text) + "\n" + "\n".join(lines[i] for i in sorted(keep)) + "\n"
+
+
+def fetch(url, cache, pins, pin):
+    path = cache / (hashlib.sha256(url.encode()).hexdigest()[:16] + "-" + url.rsplit("/", 1)[-1])
+    if not path.exists():
+        print(f"fetching {url}", file=sys.stderr)
+        req = urllib.request.Request(url, headers={"User-Agent": "raven-gen"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            path.write_bytes(r.read())
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if url in pins and pins[url] != digest:
+        sys.exit(f"{url}: SHA-256 {digest}, expected {pins[url]}")
+    if url not in pins:
+        if not pin:
+            sys.exit(f"{url} is not pinned; run with --pin to record {digest}")
+        pins[url] = digest
+    return data.decode("latin-1")
 
 # Emission
 
@@ -492,24 +704,15 @@ def ml_field(v):
     return f"({v[1]}, {v[2]})" if v[0] == "bits" else f"({v[0]}, {v[1]})"
 
 
-def struct_module(out, module, size, fields, wanted):
-    out.append(f"module {module} = struct")
-    out.append(f"  let sizeof = {size}")
-    for f in wanted:
-        if f not in fields:
-            sys.exit(f"{module} has no field {f}")
-        out.append(f"  let {f} = {ml_field(fields[f])}")
-    out.append("end")
-    out.append("")
+def same(what, values):
+    if len(set(values)) != 1:
+        sys.exit(f"{what} differs: {values}")
+    return values[0]
 
 
-def generate(cache, pins, pin, outfile):
-    import clang.cindex as ci
-    amd, rocm, llvm, pal = sources(cache, pins, pin)
-    stub = pathlib.Path(tempfile.mkdtemp(prefix="device-amd-abi-gen-stub-"))
-    incs = [amd / "include", amd / "amdgpu", amd / "include/asic_reg"]
-    out = ["(* Generated by gen/gen.py; do not edit. The inputs and the command that",
-           "   regenerates this file are in gen/gen.py; their digests in gen/pins.json. *)", ""]
+def generate(h):
+    """defs.ml, from the excerpts [h], by name."""
+    out = ["(* Generated by gen/gen.py from the excerpts in gen/headers; do not edit. *)", ""]
 
     # Registers
     out += ["(* Registers *)", "",
@@ -517,37 +720,36 @@ def generate(cache, pins, pin, outfile):
             "  fields : (string * (int * int)) list;", "}", "",
             "(* The registers of each GC version, their fields as (name, (lowest bit,",
             "   highest bit)). *)", "let gc_registers = ["]
-    pats = [re.compile(p) for p in GC_REGISTERS]
     for ver in GC_VERSIONS:
         out.append(f"  ( {ml_version(ver)}, [")
-        for n, (off, seg, fields) in gc_registers(amd, ver).items():
-            if any(p.fullmatch(n) for p in pats):
-                fs = "; ".join(f"({json.dumps(f)}, ({lo}, {hi}))" for f, lo, hi in fields)
-                out.append(f"      {{ name = {json.dumps(n)}; offset = {ml_int(off)}; segment = {seg}; fields = [ {fs} ] }};")
+        for n, (off, seg, fields) in gc_registers(h[gc_header(ver, "offset")], h[gc_header(ver, "sh_mask")]).items():
+            fs = "; ".join(f"({json.dumps(f)}, ({lo}, {hi}))" for f, lo, hi in fields)
+            out.append(f"      {{ name = {json.dumps(n)}; offset = {ml_int(off)}; segment = {seg}; fields = [ {fs} ] }};")
         out.append("    ] );")
     out += ["]", "", "(* The bases of the GC's register segments in PM4's register space, by the",
             "   GC major version from which they hold, from segment 0 to the last with a",
             "   base. *)", "let gc_bases = ["]
-    for major, h in GC_BASES.items():
-        segs = [f"GC_BASE__INST0_SEG{i}" for i in range(6)]
-        bv = Unit(ci, [amd / "include" / h], incs, stub).macros(segs)
-        bases = [bv.get(n, 0) for n in segs]
+    for major, name in GC_BASES.items():
+        present = defines(h[name])
+        bv = constants(h[name], [n for n in GC_SEGMENTS if n in present])
+        bases = [bv.get(n, 0) for n in GC_SEGMENTS]
         while bases and bases[-1] == 0:  # the headers write 0 for no base
             bases.pop()
         if 0 in bases:
-            sys.exit(f"{h}: a GC segment without a base before one with")
+            sys.exit(f"{name}: a GC segment without a base before one with")
         out.append(f"  ({major}, [ " + "; ".join(ml_int(b) for b in bases) + " ]);")
     out += ["]", ""]
 
     # PM4
-    soc = Unit(ci, [amd / "amdkfd/kfd_pm4_headers_ai.h", amd / "amdgpu/soc15d.h"], incs, stub)
-    nv = Unit(ci, [amd / "amdkfd/kfd_pm4_headers_ai.h", amd / "amdgpu/nvd.h"], incs, stub)
-    sv = soc.constants(PM4_CONSTANTS + PM4_SOC15_ONLY + PM4_SOC15_CONSTANTS)
-    nvv = nv.constants(PM4_CONSTANTS + PM4_NV_CONSTANTS)
-    out += ["(* PM4, the same in soc15d.h (GFX9) and nvd.h (GFX10 on) *)", ""]
+    kfd = constants(h["kfd_pm4_headers_ai.h"], PM4_ENUMS)
+    sv = constants(h["soc15d.h"], PM4_CONSTANTS + PM4_SOC15_ONLY + PM4_SOC15_CONSTANTS)
+    nvv = constants(h["nvd.h"], PM4_CONSTANTS + PM4_NV_CONSTANTS)
+    out += ["(* PM4, the same in soc15d.h (GFX9) and nvd.h (GFX10 on), and the release's",
+            "   enumerations in kfd_pm4_headers_ai.h *)", ""]
     out += [f"let {ml_name(n)} = {ml_int(same(n, [sv[n], nvv[n]]))}" for n in PM4_CONSTANTS]
-    ss = soc.shifts(sorted({g for g, _ in PM4_SHIFTS} | set(PM4_SOC15_SHIFTS)))
-    ns = nv.shifts(sorted({n for _, n in PM4_SHIFTS} | set(PM4_NV_SHIFTS)))
+    out += [f"let {ml_name(n)} = {ml_int(kfd[n])}" for n in PM4_ENUMS]
+    ss = shifts(h["soc15d.h"], sorted({g for g, _ in PM4_SHIFTS} | set(PM4_SOC15_SHIFTS)))
+    ns = shifts(h["nvd.h"], sorted({n for _, n in PM4_SHIFTS} | set(PM4_NV_SHIFTS)))
     seen = set()
     for g, n in PM4_SHIFTS:
         v = same(g, [ss[g], ns[n]])
@@ -565,18 +767,16 @@ def generate(cache, pins, pin, outfile):
     # WAIT_REG_MEM64: the 32-bit wait's control word, then 64-bit address,
     # reference and mask, then the poll interval, in every generation PAL lays
     # it out for.
-    for f in PAL_FILES:
-        size, fields = layout(ci, Unit(ci, [pal / f], [], stub, cpp=True).struct(WAIT_REG_MEM64))
-        if size != 36 or any(fields.get(name) != at for name, at in WAIT_REG_MEM64_LAYOUT):
-            sys.exit(f"{f}: {WAIT_REG_MEM64} is not laid out as the encoder writes it")
+    for name in PAL_HEADERS:
+        size, fields = layout(h[name], WAIT_REG_MEM64)
+        if size != 36 or any(fields.get(f) != at for f, at in WAIT_REG_MEM64_LAYOUT):
+            sys.exit(f"{name}: {WAIT_REG_MEM64} is not laid out as the encoder writes it")
     if ss["WAIT_REG_MEM_FUNCTION"] != 0 or ss["WAIT_REG_MEM_MEM_SPACE"] != 4:
         sys.exit(f"{WAIT_REG_MEM64}'s control word differs from WAIT_REG_MEM's")
 
     # Events and thread traces
-    socs = [(rocm / "projects/aqlprofile/linux" / f).read_text() for f in ("vega10_enum.h", "soc21_enum.h", "soc24_enum.h")]
-
     def soc_enum(n):
-        found = [int(m.group(1), 0) for t in socs if (m := re.search(rf"^\s*{n}\s*=\s*(0x[0-9a-fA-F]+|\d+)", t, re.M))]
+        found = [evaluate(es[n], es) for es in (enumerators(h[s]) for s in SOCS) if n in es]
         if not found:
             sys.exit(f"no SOC enumeration defines {n}")
         return same(n, found)
@@ -587,21 +787,17 @@ def generate(cache, pins, pin, outfile):
 
     # GFX9's thread trace tokens
     masks = {}
-    for m in re.finditer(r"#define\s+SQ_THREAD_TRACE_WORD_(\w+?)__(\w+)_MASK\s+(0x[0-9a-fA-F]+)",
-                         (amd / "include/asic_reg/gc/gc_9_4_3_sh_mask.h").read_text()):
-        masks.setdefault(m.group(1), {})[m.group(2)] = int(m.group(3), 16)
+    for m in MASK_DEFINE.finditer(h[gc_header((9, 4, 3), "sh_mask")]):
+        if m.group(1).startswith("SQ_THREAD_TRACE_WORD_"):
+            masks.setdefault(m.group(1)[len("SQ_THREAD_TRACE_WORD_"):], {})[m.group(2)] = int(m.group(3), 0)
 
     def halfwords(word):
         if word not in masks:
             sys.exit(f"gc_9_4_3_sh_mask.h has no SQ_THREAD_TRACE_WORD_{word}")
         return 1 if max(masks[word].values()).bit_length() <= 16 else 2
-    vega10 = socs[0]
-    tokens = []
-    for name, words in GFX9_TOKENS.items():
-        m = re.search(rf"^\s*SQ_THREAD_TRACE_TOKEN_{name}\s*=\s*(0x[0-9a-fA-F]+|\d+)", vega10, re.M)
-        if m is None:
-            sys.exit(f"vega10_enum.h has no SQ_THREAD_TRACE_TOKEN_{name}")
-        tokens.append((name, int(m.group(1), 0), sum(halfwords(w) for w in words)))
+    vega10 = constants(h["vega10_enum.h"], [f"SQ_THREAD_TRACE_TOKEN_{t}" for t in GFX9_TOKENS])
+    tokens = [(name, vega10[f"SQ_THREAD_TRACE_TOKEN_{name}"], sum(halfwords(w) for w in words))
+              for name, words in GFX9_TOKENS.items()]
     if sorted(v for _, v, _ in tokens) != list(range(16)):
         sys.exit("GFX9's thread trace token types are not 0 to 15")
     out += ["(* GFX9's thread trace tokens, from vega10_enum.h and gc_9_4_3_sh_mask.h:",
@@ -619,7 +815,10 @@ def generate(cache, pins, pin, outfile):
     # SDMA
     out += ["(* SDMA: (mask, shift) for a field *)", ""]
     want = SDMA_OPS + [f"{n}_{k}" for n in SDMA_FIELDS for k in ("mask", "shift")]
-    svals = {ver: Unit(ci, [amd / "amdgpu" / f"{h}.h"], incs, stub).macros(want) for ver, h in SDMA_PKT.items()}
+    svals = {}
+    for ver, name in SDMA_PKT.items():
+        ds = {n for n in defines(h[name])}
+        svals[ver] = constants(h[name], [n for n in want if n in ds])
     for n in SDMA_OPS:
         out.append(f"let {ml_name(n)} = {ml_int(same(n, [v[n] for v in svals.values()]))}")
     for n in SDMA_FIELDS:
@@ -633,16 +832,16 @@ def generate(cache, pins, pin, outfile):
 
     # AQL
     out += ["(* AQL: hsa.h's constants, and its kernel dispatch packet as (byte offset,", "   bytes) *)", ""]
-    hu = Unit(ci, [rocm / RUNTIME / "inc/hsa.h"], [rocm / RUNTIME / "inc"], stub)
-    hv = hu.constants(HSA_CONSTANTS)
+    hv = constants(h["hsa.h"], HSA_CONSTANTS)
     out += [f"let {ml_name(n)} = {ml_int(hv[n])}" for n in HSA_CONSTANTS]
     out.append("")
-    size, fields = layout(ci, hu.struct("hsa_kernel_dispatch_packet_t"))
-    struct_module(out, "Dispatch", size, fields, DISPATCH_FIELDS)
+    size, fields = layout(h["hsa.h"], DISPATCH)
+    out += ["module Dispatch = struct", f"  let sizeof = {size}"]
+    out += [f"  let {f} = {ml_field(fields[f])}" for f in DISPATCH_FIELDS]
+    out += ["end", ""]
 
     # Scratch buffer descriptors
-    ru = Unit(ci, [rocm / RUNTIME / "core/inc/registers.h"], [rocm / RUNTIME / "inc"], stub)
-    rv = ru.constants(SQ_CONSTANTS)
+    rv = constants(h["registers.h"], SQ_CONSTANTS)
     out += ["(* The scratch buffer descriptor's words 1 and 3, by GC major: each field", "   as (bit offset, bits). *)", ""]
     out += ["type sq_buf_rsrc = {"]
     out += [f"  {ml_name(f) if f != 'TYPE' else 'type_'} : int * int;" for f in SQ_WORD1 + SQ_WORD3]
@@ -650,7 +849,7 @@ def generate(cache, pins, pin, outfile):
     out += ["}", "", "let sq_buf_rsrc = ["]
     for major, (w1, w3) in SQ_BUF_RSRC.items():
         def bits(union):
-            _, fields = layout(ci, ru.struct(union))
+            _, fields = layout(h["registers.h"], union)
             return {k.split("__")[-1]: v for k, v in fields.items() if v[0] == "bits"}
         b1, b3 = bits(w1), bits(w3)
         fs = [f"{ml_name(f)} = ({b1[f][1]}, {b1[f][2]})" for f in SQ_WORD1]
@@ -663,15 +862,19 @@ def generate(cache, pins, pin, outfile):
     out.append("")
 
     # Code objects
-    lu = Unit(ci, [llvm / LLVM_FILES[0]], [], stub, cpp=True)
-    out += ["(* The kernel descriptor: each field is (byte offset, bytes). *)"]
-    size, fields = layout(ci, lu.struct("kernel_descriptor_t"))
-    struct_module(out, "Kernel_descriptor", size, fields, KD_FIELDS)
-    ku = Unit(ci, [rocm / RUNTIME / "inc/amd_hsa_kernel_code.h"], [rocm / RUNTIME / "inc"], stub)
-    kv = ku.constants(KD_CONSTANTS)
-    out.append("(* Its code properties. *)")
-    out += [f"let {ml_name(c)} = {ml_int(kv[c])}" for c in KD_CONSTANTS]
-    elf, machs, generic = processors(llvm)
+    kd = h["AMDHSAKernelDescriptor.h"]
+    size, fields = layout(kd, KD)
+    offsets = constants(kd, [f.upper() + "_OFFSET" for f in KD_FIELDS])
+    out += ["(* The kernel descriptor: each field is (byte offset, bytes). *)", "module Kernel_descriptor = struct",
+            f"  let sizeof = {size}"]
+    for f in KD_FIELDS:
+        if fields[f][0] != offsets[f.upper() + "_OFFSET"]:
+            sys.exit(f"{KD}.{f} is not at its {f.upper()}_OFFSET")
+        out.append(f"  let {f} = {ml_field(fields[f])}")
+    out += ["end", "", "(* Its code properties. *)"]
+    props = {m.group(1): ((1 << int(m.group(3))) - 1) << int(m.group(2)) for m in KD_PROPERTY.finditer(kd)}
+    out += [f"let amd_kernel_code_properties_{ml_name(p)} = {ml_int(props[p])}" for p in KD_PROPERTIES]
+    elf, machs, generic = processors(h["ELF.h"], h["AMDGPUUsage.rst"])
     out += ["", "(* The ELF header of a code object. *)"]
     out += [f"let {ml_name(c)} = {ml_int(v)}" for c, v in elf.items()]
     out += ["", "(* LLVM's AMDGCN processors, by their EF_AMDGPU_MACH value. *)", "let processors = ["]
@@ -679,33 +882,37 @@ def generate(cache, pins, pin, outfile):
     out += ["]", "", "(* The generic processors, and the processors that run their code objects. *)", "let generic = ["]
     out += [f"  ({json.dumps(n)}, [ " + "; ".join(json.dumps(m) for m in ms) + " ]);" for n, ms in generic]
     out.append("]")
-    outfile.write_text("\n".join(out) + "\n")
+    return "\n".join(out) + "\n"
 
 # Command line
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cache", type=pathlib.Path, default=pathlib.Path.home() / ".cache/raven/amd-gen")
-    ap.add_argument("--check", action="store_true", help="fail if the committed file differs")
-    ap.add_argument("--pin", action="store_true", help="record the digests of inputs not yet pinned")
-    args = ap.parse_args()
-    cache = args.cache.resolve()
-    cache.mkdir(parents=True, exist_ok=True)
-    pins_file = HERE / "pins.json"
-    pins = json.loads(pins_file.read_text()) if pins_file.exists() else {}
-    if args.check:
-        with tempfile.TemporaryDirectory() as d:
-            generated = pathlib.Path(d) / OUT.name
-            generate(cache, pins, False, generated)
-            if generated.read_text() != OUT.read_text():
-                sys.exit(f"{OUT.name} differs from what gen.py generates")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--excerpt", action="store_true", help="make the excerpts from the pinned headers")
+    p.add_argument("--check", action="store_true", help="fail if a committed file differs")
+    p.add_argument("--pin", action="store_true", help="record the digests of headers not yet pinned")
+    p.add_argument("--cache", type=pathlib.Path, default=pathlib.Path.home() / ".cache/raven/amd-gen")
+    a = p.parse_args()
+    if a.excerpt:
+        pins = json.loads(PINS.read_text()) if PINS.exists() else {}
+        a.cache.mkdir(parents=True, exist_ok=True)
+        files = {HEADERS / n: excerpt(n, fetch(url, a.cache, pins, a.pin)) for n, url in SOURCES.items()}
+        if a.pin:
+            PINS.write_text(json.dumps({u: d for u, d in pins.items() if u in SOURCES.values()}, indent=1,
+                                       sort_keys=True) + "\n")
+    else:
+        h = {n: (HEADERS / n).read_text(encoding="latin-1") for n in SOURCES}
+        files = {OUT: generate(h)}
+    for path, text in files.items():
+        if a.check:
+            if not path.exists() or path.read_text(encoding="latin-1") != text:
+                sys.exit(f"{path.name} differs from what gen.py makes")
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="latin-1")
+    if a.check:
         print("up to date")
-        return
-    generate(cache, pins, args.pin, OUT)
-    if args.pin:
-        pins = {u: d for u, d in pins.items() if u in USED}
-        pins_file.write_text(json.dumps(pins, indent=1, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
