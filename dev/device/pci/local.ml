@@ -24,14 +24,14 @@ let lock bus fd =
   try flock fd
   with Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
     failwith
-      (Printf.sprintf "%s is taken already (see: lsof %s)" bus
+      (Printf.sprintf "%s is taken already; find who holds it: lsof %s" bus
          (Sysfs.path bus "config"))
 
 let locked bus f =
   let file = Sysfs.path bus "config" in
   match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
   | exception Unix.Unix_error (e, _, _) ->
-      Error (Printf.sprintf "%s: %s" file (Unix.error_message e))
+      Error (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
       match lock bus fd with () -> f () | exception Failure why -> Error why)
@@ -47,23 +47,31 @@ type taken = {
   files : Unix.file_descr list; (* every descriptor the take opened *)
 }
 
-(* Moves the [n] bytes of configuration space at [off] with [io]. *)
-let config_io t io off b n =
+(* Moves the [n] bytes of configuration space at [off] with [io], [doing] it; is
+   the bytes moved. *)
+let config_io t doing io off b n =
   let fd, at = t.config in
-  Vfio.step ("configuration space of " ^ t.bus) @@ fun () ->
+  Vfio.step
+    (Printf.sprintf "%s configuration space of %s at %d" doing t.bus off)
+  @@ fun () ->
   Mutex.protect t.seek @@ fun () ->
   ignore (Unix.lseek fd (at + off) SEEK_SET);
   io fd b 0 n
 
 let config t off n =
   let b = Bytes.create n in
-  if config_io t Unix.read off b n < n then
+  let got = config_io t "reading" Unix.read off b n in
+  if got < n then
     failwith
       (if off + n > Sysfs.header && Option.is_none t.container then
          Printf.sprintf
-           "reading configuration space of %s past %d bytes needs CAP_SYS_ADMIN"
+           "reading configuration space of %s past %d bytes needs \
+            CAP_SYS_ADMIN; run as root"
            t.bus Sysfs.header
-       else Printf.sprintf "reading configuration space of %s at %d" t.bus off);
+       else
+         Printf.sprintf
+           "reading configuration space of %s at %d: got %d of %d bytes" t.bus
+           off got n);
   let v = ref 0 in
   for i = n - 1 downto 0 do
     v := (!v lsl 8) lor Bytes.get_uint8 b i
@@ -72,9 +80,12 @@ let config t off n =
 
 let set_config t off n x =
   let b = Bytes.init n (fun i -> Char.chr ((x lsr (8 * i)) land 0xff)) in
-  if config_io t Unix.single_write off b n < n then
+  let wrote = config_io t "writing" Unix.single_write off b n in
+  if wrote < n then
     failwith
-      (Printf.sprintf "writing configuration space of %s at %d" t.bus off);
+      (Printf.sprintf
+         "writing configuration space of %s at %d: wrote %d of %d bytes" t.bus
+         off wrote n);
   ignore (config t off n)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
@@ -100,7 +111,7 @@ let map t i off n =
     | None ->
         let file = Sysfs.path t.bus (Printf.sprintf "resource%d" i) in
         let fd =
-          Vfio.step file (fun () ->
+          Vfio.step ("opening " ^ file) (fun () ->
               Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
         in
         Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> window fd 0)
@@ -131,7 +142,7 @@ let alloc_dma t ~contiguous ~va n =
   | Some c -> (
       let w = Sysmem.map ?va n in
       let n = Window.length w in
-      match Vfio.map_dma t.bus c (Window.address w) n with
+      match Vfio.map_dma "alloc_dma" t.bus c (Window.address w) n with
       | iova -> (w, [ (iova, n) ])
       | exception e ->
           Sysmem.free w;
@@ -148,7 +159,7 @@ let pin t a n =
   | None -> runs ~contiguous:false n (Sysmem.pin a n)
   | Some c ->
       let n = round_page n in
-      [ (Vfio.map_dma t.bus c a n, n) ]
+      [ (Vfio.map_dma "pin" t.bus c a n, n) ]
 
 let unpin t a n =
   match t.container with
@@ -193,13 +204,15 @@ let take_iommu files bus =
 let take_physical files bus =
   let file = Sysfs.path bus "config" in
   let config =
-    try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0
-    with Unix.Unix_error (e, _, _) ->
-      failwith
-        (Printf.sprintf
-           "%s: %s; taking %s needs write access to its files under \
-            /sys/bus/pci (run as root)"
-           file (Unix.error_message e) bus)
+    try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
+    | Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
+        failwith
+          (Printf.sprintf
+             "opening %s: %s; taking %s needs write access to its files under \
+              /sys/bus/pci: run as root"
+             file (Unix.error_message e) bus)
+    | Unix.Unix_error (e, _, _) ->
+        failwith (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
   in
   files := config :: !files;
   lock bus config;
@@ -218,14 +231,6 @@ let take_physical files bus =
     files = !files;
   }
 
-(* A function another driver holds, with no IOMMU to take it through, is freed
-   by unbinding that driver. *)
-let refusal (s : Sysfs.state) why =
-  match s with
-  | { driver = Some d; iommu = No_iommu; _ } when d <> "vfio-pci" ->
-      why ^ "; detaching the GPU unbinds it"
-  | _ -> why
-
 (* A failure gives back every descriptor taken. *)
 let take bus =
   if not (Sysfs.exists bus) then
@@ -239,9 +244,7 @@ let take bus =
     let ( let* ) = Result.bind in
     match
       let state = Sysfs.state bus in
-      let* addressing =
-        Result.map_error (refusal state) (Sysfs.access bus state)
-      in
+      let* addressing = Sysfs.access bus state in
       let by =
         match addressing with
         | Ops.Iommu -> take_iommu

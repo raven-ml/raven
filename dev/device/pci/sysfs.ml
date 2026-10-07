@@ -199,7 +199,9 @@ let group_holders g =
 let access bus s =
   match s with
   | { driver = Some d; iommu = No_iommu; _ } when d <> vfio_pci ->
-      Error (Printf.sprintf "%s is bound to the driver %s" bus d)
+      Error
+        (Printf.sprintf "%s is bound to the driver %s; detach the GPU first" bus
+           d)
   | { driver = Some d; _ } when d <> vfio_pci ->
       Error
         (Printf.sprintf
@@ -215,9 +217,11 @@ let access bus s =
             (%s), or boot Linux with iommu=pt"
            bus (bind_vfio bus))
   | { siblings = s :: _; _ } ->
-      Error (Printf.sprintf "%s shares its device with %s" bus s)
+      Error
+        (Printf.sprintf "%s shares its device with %s; detach the GPU first" bus
+           s)
   | { driver = None; enabled = false; _ } ->
-      Error (Printf.sprintf "%s is disabled" bus)
+      Error (Printf.sprintf "%s is disabled; detach the GPU first" bus)
   | { locked_down = true; _ } ->
       Error
         (Printf.sprintf

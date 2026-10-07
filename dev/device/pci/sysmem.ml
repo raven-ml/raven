@@ -73,9 +73,9 @@ let check_setting () =
     if value <> "0" then
       failwith
         (Printf.sprintf
-           "the kernel may move locked pages; run: sudo sysctl -w \
-            vm.compact_unevictable_allowed=0 (%s)"
-           setting);
+           "the kernel may move locked pages (%s is %s); forbid it: sudo \
+            sysctl -w vm.compact_unevictable_allowed=0"
+           setting value);
     Atomic.set checked true
   end
 
@@ -123,7 +123,7 @@ let physical a n =
         Int64.to_int (Int64.logand (String.get_int64_le map (8 * i)) frame_mask)
       in
       if frame = 0 then
-        failwith "reading physical addresses needs CAP_SYS_ADMIN (run as root)";
+        failwith "reading physical addresses needs CAP_SYS_ADMIN; run as root";
       frame * page)
 
 (* Pins *)
@@ -174,7 +174,8 @@ let unpin a n = Mutex.protect lock (fun () -> drop_pins a n)
 
 (* Maps [n] bytes at [va], which must lie in a reservation: mapping over
    anything else would replace the process's own memory. Without [va], where the
-   system chooses. *)
+   system chooses. A huge page the system lacks is ENOMEM, and locked memory
+   past the locked-memory limit EAGAIN (mmap(2)). *)
 let map_bytes ?va n ~huge ~locked =
   Option.iter
     (fun va ->
@@ -182,8 +183,22 @@ let map_bytes ?va n ~huge ~locked =
         invalid_arg
           (Printf.sprintf "Function.alloc_dma: 0x%x is in no reserved range" va))
     va;
-  step "allocating system memory" (fun () ->
-      map_at (Option.value va ~default:0) n huge locked)
+  match map_at (Option.value va ~default:0) n huge locked with
+  | a -> a
+  | exception Unix.Unix_error (e, _, _) ->
+      let why =
+        Printf.sprintf "allocating %d bytes of system memory: %s" n
+          (Unix.error_message e)
+      in
+      failwith
+        (match e with
+        | ENOMEM when huge ->
+            why
+            ^ "; reserve huge pages for contiguous memory: sudo sysctl -w \
+               vm.nr_hugepages=16"
+        | EAGAIN when locked ->
+            why ^ "; raise the locked-memory limit (ulimit -l)"
+        | _ -> why)
 
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)
 let unmap a n =
@@ -198,14 +213,7 @@ let map ?va n =
 let alloc ?(contiguous = false) ?va n =
   let huge_page = contiguous && n > page in
   let n = if huge_page then huge else round_page n in
-  let a =
-    try map_bytes ?va n ~huge:huge_page ~locked:true
-    with Failure why when huge_page ->
-      failwith
-        (why
-       ^ "; contiguous memory needs a free huge page: sudo sysctl -w \
-          vm.nr_hugepages=16")
-  in
+  let a = map_bytes ?va n ~huge:huge_page ~locked:true in
   let pages =
     try physical a n
     with e ->

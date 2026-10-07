@@ -72,19 +72,25 @@ let open_file bus file =
         (Printf.sprintf "%s does not exist; bind %s to vfio-pci: %s" file bus
            (Sysfs.bind_vfio bus))
   | exception Unix.Unix_error (EBUSY, _, _) ->
-      failwith (Printf.sprintf "%s is open in another process" file)
+      failwith
+        (Printf.sprintf "%s is open in another process; find it: lsof %s" file
+           file)
   | exception Unix.Unix_error (e, _, _) ->
-      failwith (Printf.sprintf "%s: %s" file (Unix.error_message e))
+      failwith (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
 
+(* VFIO takes an IOMMU group whole: every function of it bound to vfio-pci or to
+   a driver VFIO accepts. *)
 let not_viable bus g =
-  let held = Sysfs.group_holders g in
-  Printf.sprintf
-    "IOMMU group %s of %s holds functions of other drivers%s; bind each to \
-     vfio-pci: %s"
-    g bus
-    (String.concat ""
-       (List.map (fun (f, d) -> Printf.sprintf ", %s (%s)" f d) held))
-    (String.concat " && " (List.map (fun (f, _) -> Sysfs.bind_vfio f) held))
+  match Sysfs.group_holders g with
+  | [] -> Printf.sprintf "IOMMU group %s of %s is not viable" g bus
+  | held ->
+      Printf.sprintf
+        "IOMMU group %s of %s also holds %s, bound to other drivers; VFIO \
+         takes a group whole: bind each to vfio-pci: %s"
+        g bus
+        (String.concat ", "
+           (List.map (fun (f, d) -> Printf.sprintf "%s (%s)" f d) held))
+        (String.concat " && " (List.map (fun (f, _) -> Sysfs.bind_vfio f) held))
 
 (* Mapping memory behind an IOMMU pins it, and the kernel counts the pinned
    bytes against the process's locked-memory limit. *)
@@ -101,7 +107,8 @@ let map_error bus n (e : Unix.error) =
   | ENOSPC ->
       Printf.sprintf
         "mapping %d bytes for %s: the IOMMU holds as many mappings as Linux \
-         allows (the dma_entry_limit parameter of vfio_iommu_type1)"
+         allows; raise the limit in \
+         /sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
         n bus
   | e ->
       Printf.sprintf "mapping %d bytes for %s: %s" n bus (Unix.error_message e)
@@ -124,18 +131,19 @@ let open_function files bus m =
     | No_iommu -> Sysfs.noiommu_file g
   in
   let container = opened (open_file bus "/dev/vfio/vfio") in
-  let v = step "VFIO" (fun () -> version container) in
+  let v = step "checking VFIO's API version" (fun () -> version container) in
   if v <> api_version then
     failwith
       (Printf.sprintf "VFIO speaks API version %d, expected %d" v api_version);
-  if not (step "VFIO" (fun () -> supports container m)) then
+  if not (step "checking VFIO's IOMMU models" (fun () -> supports container m))
+  then
     failwith
       (match m with
       | No_iommu ->
-          "VFIO is not in its no-IOMMU mode (set \
-           /sys/module/vfio/parameters/enable_unsafe_noiommu_mode to 1)"
+          "VFIO is not in its no-IOMMU mode; turn it on: echo 1 | sudo tee \
+           /sys/module/vfio/parameters/enable_unsafe_noiommu_mode"
       | Type1v2 ->
-          "VFIO has no type 1 IOMMU (load it: sudo modprobe vfio_iommu_type1)");
+          "VFIO has no type 1 IOMMU; load it: sudo modprobe vfio_iommu_type1");
   let group = opened (open_file bus file) in
   if not (step ("reading the status of " ^ file) (fun () -> viable group)) then
     failwith (not_viable bus g);
@@ -176,14 +184,13 @@ let bar_offset bus device i off n =
   in
   let inside (o, k) = off >= o && off + n <= o + k in
   if (not mappable) || off + n > size then
-    failwith (Printf.sprintf "%s: VFIO does not map BAR %d" bus i);
+    failwith (Printf.sprintf "VFIO does not map BAR %d of %s" i bus);
   (match areas with
   | Some areas when not (List.exists inside areas) ->
       failwith
         (Printf.sprintf
-           "%s: VFIO maps only parts of BAR %d, none of which holds [0x%x, \
-            0x%x)"
-           bus i off (off + n))
+           "VFIO maps parts of BAR %d of %s, and none holds [0x%x, 0x%x)" i bus
+           off (off + n))
   | _ -> ());
   offset
 
@@ -205,11 +212,14 @@ let iova_high = 1 lsl 40
 
 (* The window of an IOMMU that maps pages of [page_sizes], a bitmap, at the
    [(first, last)] device address ranges, all of them if [[]]: [(base, n)]. *)
-let window page_sizes ranges =
+let window bus page_sizes ranges =
   let smallest = page_sizes land -page_sizes in
   if smallest > page then
     failwith
-      (Printf.sprintf "the IOMMU maps no page smaller than %d bytes" smallest);
+      (Printf.sprintf
+         "the IOMMU of %s maps no page smaller than %d bytes, and system pages \
+          are %d bytes"
+         bus smallest page);
   let ranges = if ranges = [] then [ (0, max_int) ] else ranges in
   let piece (first, last) =
     let a = round_page (Int.min iova_high (Int.max first iova_low)) in
@@ -223,16 +233,18 @@ let window page_sizes ranges =
   in
   match List.fold_left best None (List.filter_map piece ranges) with
   | None ->
-      failwith "the IOMMU maps no device addresses between 4 GiB and 1 TiB"
+      failwith
+        (Printf.sprintf
+           "the IOMMU of %s maps no device addresses between 4 GiB and 1 TiB"
+           bus)
   | Some w -> w
 
 let iova bus fd =
   let page_sizes, ranges =
     step ("reading the IOMMU of " ^ bus) (fun () -> iommu fd)
   in
-  match window page_sizes ranges with
-  | base, n -> Space.create ~base n
-  | exception Failure why -> failwith (Printf.sprintf "%s: %s" bus why)
+  let base, n = window bus page_sizes ranges in
+  Space.create ~base n
 
 (* The container of a function behind an IOMMU, which maps system memory for it
    at device addresses the process allocates. Mappings are counted by their
@@ -258,9 +270,10 @@ let open_ files bus =
 
 (* The device address at which [c] maps the [n] bytes at [a], mapping them for
    the first count. *)
-let map_dma bus c a n =
+let map_dma fn bus c a n =
   Mutex.protect c.mutex @@ fun () ->
-  if c.closed then failwith (bus ^ " is released");
+  if c.closed then
+    invalid_arg (Printf.sprintf "Function.%s: %s was released" fn bus);
   match Hashtbl.find_opt c.maps (a, n) with
   | Some (iova, k) ->
       Hashtbl.replace c.maps (a, n) (iova, k + 1);
@@ -271,7 +284,7 @@ let map_dma bus c a n =
         | Some x -> x
         | None ->
             failwith
-              (Printf.sprintf "%s has no device addresses left for %d bytes" bus
+              (Printf.sprintf "%s has no IOMMU addresses left for %d bytes" bus
                  n)
       in
       (match map c.fd a iova n with

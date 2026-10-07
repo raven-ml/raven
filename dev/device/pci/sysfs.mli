@@ -61,7 +61,7 @@ val access : string -> state -> (Ops.addressing, string) result
       identity one, alone on its device and the kernel not locked down:
       [Physical];
     - otherwise [Error why], naming the [driverctl] command that binds it to
-      [vfio-pci] where that would do. *)
+      [vfio-pci] where that would do, or {!detach} where it would. *)
 
 val bind_vfio : string -> string
 (** [bind_vfio bus] is the command that binds [bus] to [vfio-pci]. *)
