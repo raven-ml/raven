@@ -439,8 +439,9 @@ let value fn theta =
 
 (* [central fn theta i] is the derivative of [fn] along [theta]'s [i]-th
    coordinate from central differences at steps e and e/2, e = 1e-3 of the
-   coordinate, or of 0.05 nearer 0, combined by Richardson's extrapolation:
-   its error is O(e^4) relative to the coordinate's scale, and the
+   coordinate, or of 0.05 nearer 0, combined by Richardson's extrapolation,
+   and the change of that estimate when e halves, which bounds its error: the
+   error is O(e^4) where the function is smooth at the scale e, and the
    evaluation's own error, about 2^-46 of the value, counts once per e. *)
 let central fn theta i =
   let x = Nx.to_array theta in
@@ -450,8 +451,10 @@ let central fn theta i =
     item (value fn (Nx.create Nx.float64 [| 9 |] y))
   in
   let d e = (at e -. at (-.e)) /. (2. *. e) in
+  let richardson e = ((4. *. d (e /. 2.)) -. d e) /. 3. in
   let e = 1e-3 *. Float.max 0.05 (Float.abs x.(i)) in
-  ((4. *. d (e /. 2.)) -. d e) /. 3.
+  let fine = richardson (e /. 2.) in
+  (fine, Float.abs (fine -. richardson e))
 
 let derivatives =
   let point = Gen.(pair models (float_range 0.05 20.)) in
@@ -469,13 +472,16 @@ let derivatives =
   let defined theta =
     List.for_all (fun fn -> Float.is_finite (item (value fn theta))) functions
   in
+  (* A point where the differences have not converged, as near a closed
+     universe's antipode where log D_L turns sharply, holds no reference. *)
   let close fn theta i got =
-    let fd = central fn theta i in
+    let fd, error = central fn theta i in
     let scale = Float.abs (item (value fn theta)) in
+    let abs = Float.max (1e-9 *. scale) 1e-300 in
+    assume (error <= Float.max (1e-8 *. Float.abs fd) abs);
     equal
       ~msg:(Printf.sprintf "%s d/d%s" fn names.(i))
-      (float_rel ~rel:1e-7 ~abs:(Float.max (1e-9 *. scale) 1e-300))
-      fd got
+      (float_rel ~rel:1e-7 ~abs) fd got
   in
   group "derivatives"
     [

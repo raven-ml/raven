@@ -28,7 +28,9 @@ The box's floor is on q, the least a^4 E^2 over the sum of its terms'
 magnitudes on the range a function integrates: where the terms cancel, the
 integrand has a near-singularity, and no floor on E^2 alone bounds the
 error. Each node count is the smallest of COUNTS that meets the bound on the
-box; --explore prints every rule's error per count and floor instead.
+box. The run prints q's definition and each rule's error per count and
+floor, the table a change of rule reruns; --explore prints it for more
+counts and writes nothing.
 """
 
 import argparse
@@ -616,14 +618,20 @@ def write(path, text, check):
     path.write_text(text)
 
 
-def report(rows, floors):
-    """Per rule, format and node count, the largest error over the drawn
-    cosmologies whose q is at least each floor."""
+def report(rows, floors, counts):
+    """Per rule, format and node count, log2 of the largest relative error
+    over the drawn cosmologies whose q is at least each floor."""
+    print(
+        "q is the least a^4 E^2 over |Omega_cb a| + |Omega_k a^2| + |Omega_de a^4 f_de(a)|"
+        " + Omega_r(a) on the range a function integrates; each cell is"
+        " nodes:log2(worst relative error)",
+        file=sys.stderr,
+    )
     for kind in ["distance", "lookback", "age"]:
         rs = [r for r in rows if r[0] == kind]
         print(f"{kind}: {len(rs)} cosmologies", file=sys.stderr)
         for fmt in FORMATS:
-            cands = CANDIDATES["age" if kind == "age" else "distance"]
+            cands = counts[fmt.name]["age" if kind == "age" else "distance"]
             for floor in floors:
                 kept = [r for r in rs if r[2] >= floor]
                 cells = []
@@ -674,8 +682,8 @@ def main():
             rows = [r for rs in pool.map(measure, [(nu, counts, s) for s in samples]) for r in rs]
             pool.close()
             pool.join()
+        report(rows, [0.0, 0.05, 0.1, 0.2, 0.3, 0.5], counts)
         if args.explore:
-            report(rows, [0.0, 0.05, 0.1, 0.2, 0.3, 0.5])
             return
         rules = {fmt.name: {} for fmt in FORMATS}
         for fmt in FORMATS:
