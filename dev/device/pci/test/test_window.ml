@@ -505,5 +505,5 @@ let c_view =
 
 let () =
   exit
-  @@ run "device_pci"
+  @@ run "device_pci Window"
        [ same_bytes; windows; bigarrays; long; transports; c_view ]
