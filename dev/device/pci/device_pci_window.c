@@ -28,49 +28,50 @@
 #define AT(a) ((volatile uint8_t *)(a))
 
 /* Mapped windows: every access is volatile and of exactly its width, and
-   holds the runtime: it is one load or store. */
+   holds the runtime: it is one load or store, at a base address [a] and an
+   offset [off] from it. */
 
-intnat caml_device_pci_get8(intnat a) { return *AT(a); }
-value caml_device_pci_get8_byte(value a) {
-  return Val_long(caml_device_pci_get8(Long_val(a)));
+intnat caml_device_pci_get8(intnat a, intnat off) { return *AT(a + off); }
+value caml_device_pci_get8_byte(value a, value off) {
+  return Val_long(caml_device_pci_get8(Long_val(a), Long_val(off)));
 }
 
-value caml_device_pci_set8(intnat a, intnat x) {
-  *AT(a) = (uint8_t)x;
+value caml_device_pci_set8(intnat a, intnat off, intnat x) {
+  *AT(a + off) = (uint8_t)x;
   return Val_unit;
 }
-value caml_device_pci_set8_byte(value a, value x) {
-  return caml_device_pci_set8(Long_val(a), Long_val(x));
+value caml_device_pci_set8_byte(value a, value off, value x) {
+  return caml_device_pci_set8(Long_val(a), Long_val(off), Long_val(x));
 }
 
-intnat caml_device_pci_get32(intnat a) {
-  return *(volatile uint32_t *)AT(a);
+intnat caml_device_pci_get32(intnat a, intnat off) {
+  return *(volatile uint32_t *)AT(a + off);
 }
-value caml_device_pci_get32_byte(value a) {
-  return Val_long(caml_device_pci_get32(Long_val(a)));
+value caml_device_pci_get32_byte(value a, value off) {
+  return Val_long(caml_device_pci_get32(Long_val(a), Long_val(off)));
 }
 
-value caml_device_pci_set32(intnat a, intnat x) {
-  *(volatile uint32_t *)AT(a) = (uint32_t)x;
+value caml_device_pci_set32(intnat a, intnat off, intnat x) {
+  *(volatile uint32_t *)AT(a + off) = (uint32_t)x;
   return Val_unit;
 }
-value caml_device_pci_set32_byte(value a, value x) {
-  return caml_device_pci_set32(Long_val(a), Long_val(x));
+value caml_device_pci_set32_byte(value a, value off, value x) {
+  return caml_device_pci_set32(Long_val(a), Long_val(off), Long_val(x));
 }
 
-int64_t caml_device_pci_get64(intnat a) {
-  return (int64_t)*(volatile uint64_t *)AT(a);
+int64_t caml_device_pci_get64(intnat a, intnat off) {
+  return (int64_t)*(volatile uint64_t *)AT(a + off);
 }
-value caml_device_pci_get64_byte(value a) {
-  return caml_copy_int64(caml_device_pci_get64(Long_val(a)));
+value caml_device_pci_get64_byte(value a, value off) {
+  return caml_copy_int64(caml_device_pci_get64(Long_val(a), Long_val(off)));
 }
 
-value caml_device_pci_set64(intnat a, int64_t x) {
-  *(volatile uint64_t *)AT(a) = (uint64_t)x;
+value caml_device_pci_set64(intnat a, intnat off, int64_t x) {
+  *(volatile uint64_t *)AT(a + off) = (uint64_t)x;
   return Val_unit;
 }
-value caml_device_pci_set64_byte(value a, value x) {
-  return caml_device_pci_set64(Long_val(a), Int64_val(x));
+value caml_device_pci_set64_byte(value a, value off, value x) {
+  return caml_device_pci_set64(Long_val(a), Long_val(off), Int64_val(x));
 }
 
 /* Bulk accesses go a 32-bit word at a time wherever the mapped side is
@@ -207,8 +208,8 @@ value caml_device_pci_bigarray(value a, value n) {
 
 #define TRANSPORT(v) ((const struct device_pci_transport *)Long_val(v))
 
-/* Copies of at most this many bytes, registers among them, stay on the C
-   stack; longer ones are allocated. */
+/* Copies of at most this many bytes stay on the C stack; longer ones are
+   allocated. */
 #define SMALL 64
 
 /* The reason the transport [tr] failed, if it did; none for the transport 0
@@ -223,6 +224,37 @@ value caml_device_pci_transport_failed(value tr) {
   if (s == NULL) CAMLreturn(Val_none);
   why = caml_copy_string(s);
   CAMLreturn(caml_alloc_some(why));
+}
+
+/* A register of [n] bytes, 1, 4 or 8, at [a] through the transport [tr], its
+   value in the low bytes of a word: a read and a write each release the
+   runtime around one call of the transport, and no OCaml value is held. */
+int64_t caml_device_pci_transport_get(intnat tr, intnat a, intnat n) {
+  const struct device_pci_transport *t =
+      (const struct device_pci_transport *)tr;
+  uint64_t x = 0;
+  caml_release_runtime_system();
+  if (t->read(t->ctx, (uint64_t)a, &x, (size_t)n) != 0) memset(&x, 0xff, n);
+  caml_acquire_runtime_system();
+  return (int64_t)x;
+}
+value caml_device_pci_transport_get_byte(value tr, value a, value n) {
+  return caml_copy_int64(
+      caml_device_pci_transport_get(Long_val(tr), Long_val(a), Long_val(n)));
+}
+
+value caml_device_pci_transport_set(intnat tr, intnat a, intnat n, int64_t x) {
+  const struct device_pci_transport *t =
+      (const struct device_pci_transport *)tr;
+  uint64_t v = (uint64_t)x;
+  caml_release_runtime_system();
+  (void)t->write(t->ctx, (uint64_t)a, &v, (size_t)n);
+  caml_acquire_runtime_system();
+  return Val_unit;
+}
+value caml_device_pci_transport_set_byte(value tr, value a, value n, value x) {
+  return caml_device_pci_transport_set(Long_val(tr), Long_val(a), Long_val(n),
+                                       Int64_val(x));
 }
 
 value caml_device_pci_transport_read(value tr, value a, value n) {

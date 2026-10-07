@@ -12,29 +12,33 @@ type transport = int
    transport. *)
 type t = { address : int; length : int; transport : transport }
 
-(* Mapped windows: one volatile access of the width, at a process address. *)
+(* Mapped windows: one volatile access of the width, at a base address and an
+   offset from it. *)
 
-external get8_at : (int[@untagged]) -> (int[@untagged])
+external get8_at : (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "caml_device_pci_get8_byte" "caml_device_pci_get8"
 [@@noalloc]
 
-external set8_at : (int[@untagged]) -> (int[@untagged]) -> unit
+external set8_at :
+  (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
   = "caml_device_pci_set8_byte" "caml_device_pci_set8"
 [@@noalloc]
 
-external get32_at : (int[@untagged]) -> (int[@untagged])
+external get32_at : (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "caml_device_pci_get32_byte" "caml_device_pci_get32"
 [@@noalloc]
 
-external set32_at : (int[@untagged]) -> (int[@untagged]) -> unit
+external set32_at :
+  (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> unit
   = "caml_device_pci_set32_byte" "caml_device_pci_set32"
 [@@noalloc]
 
-external get64_at : (int[@untagged]) -> (int64[@unboxed])
+external get64_at : (int[@untagged]) -> (int[@untagged]) -> (int64[@unboxed])
   = "caml_device_pci_get64_byte" "caml_device_pci_get64"
 [@@noalloc]
 
-external set64_at : (int[@untagged]) -> (int64[@unboxed]) -> unit
+external set64_at :
+  (int[@untagged]) -> (int[@untagged]) -> (int64[@unboxed]) -> unit
   = "caml_device_pci_set64_byte" "caml_device_pci_set64"
 [@@noalloc]
 
@@ -55,7 +59,19 @@ external bigarray_at :
   = "caml_device_pci_bigarray"
 
 (* Through a transport: its C functions. Once it failed, a read gives all ones
-   and a write is dropped. *)
+   and a write is dropped. [transport_get tr a n] and [transport_set tr a n x]
+   are one register of [n] bytes, 1, 4 or 8, its value in the low bytes. *)
+
+external transport_get :
+  (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int64[@unboxed])
+  = "caml_device_pci_transport_get_byte" "caml_device_pci_transport_get"
+
+external transport_set :
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  (int[@untagged]) ->
+  (int64[@unboxed]) ->
+  unit = "caml_device_pci_transport_set_byte" "caml_device_pci_transport_set"
 
 external transport_read : transport -> int -> int -> string
   = "caml_device_pci_transport_read"
@@ -88,12 +104,17 @@ let check fn w off n =
       (Printf.sprintf "Window.%s: %d bytes at %d outside %d bytes" fn n off
          w.length)
 
-let aligned fn w off size =
+(* A register access checks its window inline with one test, [usable], and
+   formats a refusal out of line, so that the access stays small enough for its
+   caller to inline. *)
+let[@inline] usable w off size =
+  off >= 0 && off <= w.length - size && (w.address + off) land (size - 1) = 0
+
+let[@inline never] misuse fn w off size =
   check fn w off size;
-  if (w.address + off) land (size - 1) <> 0 then
-    invalid_arg
-      (Printf.sprintf "Window.%s: address 0x%x is not a multiple of %d" fn
-         (w.address + off) size)
+  invalid_arg
+    (Printf.sprintf "Window.%s: address 0x%x is not a multiple of %d" fn
+       (w.address + off) size)
 
 let sub w off n =
   check "sub" w off n;
@@ -101,46 +122,35 @@ let sub w off n =
 
 (* Accesses *)
 
-let get8 w off =
-  check "get8" w off 1;
-  if mapped w then get8_at (w.address + off)
-  else Char.code (transport_read w.transport (w.address + off) 1).[0]
+let[@inline] get8 w off =
+  if not (usable w off 1) then misuse "get8" w off 1;
+  if mapped w then get8_at w.address off
+  else Int64.to_int (transport_get w.transport (w.address + off) 1)
 
-let set8 w off x =
-  check "set8" w off 1;
-  if mapped w then set8_at (w.address + off) (x land 0xff)
-  else
-    transport_write w.transport (w.address + off)
-      (String.make 1 (Char.unsafe_chr (x land 0xff)))
-      0 1
+let[@inline] set8 w off x =
+  if not (usable w off 1) then misuse "set8" w off 1;
+  if mapped w then set8_at w.address off x
+  else transport_set w.transport (w.address + off) 1 (Int64.of_int x)
 
-let get32 w off =
-  aligned "get32" w off 4;
-  if mapped w then get32_at (w.address + off)
-  else
-    let s = transport_read w.transport (w.address + off) 4 in
-    Int32.to_int (String.get_int32_le s 0) land 0xffff_ffff
+let[@inline] get32 w off =
+  if not (usable w off 4) then misuse "get32" w off 4;
+  if mapped w then get32_at w.address off
+  else Int64.to_int (transport_get w.transport (w.address + off) 4)
 
-let set32 w off x =
-  aligned "set32" w off 4;
-  if mapped w then set32_at (w.address + off) (x land 0xffff_ffff)
-  else
-    let b = Bytes.create 4 in
-    Bytes.set_int32_le b 0 (Int32.of_int x);
-    transport_write w.transport (w.address + off) (Bytes.unsafe_to_string b) 0 4
+let[@inline] set32 w off x =
+  if not (usable w off 4) then misuse "set32" w off 4;
+  if mapped w then set32_at w.address off x
+  else transport_set w.transport (w.address + off) 4 (Int64.of_int x)
 
-let get64 w off =
-  aligned "get64" w off 8;
-  if mapped w then get64_at (w.address + off)
-  else String.get_int64_le (transport_read w.transport (w.address + off) 8) 0
+let[@inline] get64 w off =
+  if not (usable w off 8) then misuse "get64" w off 8;
+  if mapped w then get64_at w.address off
+  else transport_get w.transport (w.address + off) 8
 
-let set64 w off x =
-  aligned "set64" w off 8;
-  if mapped w then set64_at (w.address + off) x
-  else
-    let b = Bytes.create 8 in
-    Bytes.set_int64_le b 0 x;
-    transport_write w.transport (w.address + off) (Bytes.unsafe_to_string b) 0 8
+let[@inline] set64 w off x =
+  if not (usable w off 8) then misuse "set64" w off 8;
+  if mapped w then set64_at w.address off x
+  else transport_set w.transport (w.address + off) 8 x
 
 let read w off n =
   check "read" w off n;
