@@ -7,6 +7,8 @@
   guard
   frame
   direction
+  solve
+  projection
   transform
   overlap
   grid
@@ -15,4 +17,4 @@
   cosmology
   cosmology_tables
   fits)
- (libraries nx nx.dtype nx.wide ymir.units ymir.fits))
+ (libraries nx nx.dtype nx.wide jera ymir.units ymir.fits))

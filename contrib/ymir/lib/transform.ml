@@ -10,7 +10,22 @@ let strf = Printf.sprintf
 
 type plane = (float, Nx.float64_elt) Nx.t Quantity.t
 type vectors = (float, Nx.float64_elt) Nx.t
-type code = Tan | Arc
+
+type code = Projection.code =
+  | Azp
+  | Szp
+  | Tan
+  | Stg
+  | Sin
+  | Arc
+  | Zpn
+  | Zea
+  | Air
+  | Cyp
+  | Cea
+  | Car
+  | Mer
+
 type sense = Forward | Inverse
 
 type planar =
@@ -18,6 +33,8 @@ type planar =
   | Shift of plane
   | Linear of plane
   | Scale of plane
+  | Sip of { a : vectors; b : vectors; seed : (vectors * vectors) option }
+  | Tpv of { pv : vectors; stated : int array }
 
 (* A projection and the rotation to its frame. *)
 type 'f celestial = {
@@ -33,11 +50,14 @@ type 'f celestial = {
 
 (* A stage maps points of one type to another. [Deproject] is a celestial
    stage's forward map, from the plane to directions, and [Project] its
-   inverse. *)
+   inverse. A rotation's inverse is the rotation between its frames swapped. *)
 type (_, _) stage =
   | Plane : planar * sense -> (plane, plane) stage
   | Deproject : 'f celestial -> (plane, 'f Direction.t) stage
   | Project : 'f celestial -> ('f Direction.t, plane) stage
+  | Rotate :
+      'a Frame.fixed Frame.t * 'b Frame.fixed Frame.t
+      -> ('a Frame.fixed Direction.t, 'b Frame.fixed Direction.t) stage
 
 type (_, _) t =
   | Id : ('a, 'a) t
@@ -47,7 +67,7 @@ let one s = Stage (s, Id)
 
 (* Messages *)
 
-let code_name = function Tan -> "TAN" | Arc -> "ARC"
+let code_name = Projection.name
 let sense_name = function Forward -> "forward" | Inverse -> "inverse"
 
 let pp_ints ppf a =
@@ -68,12 +88,15 @@ let planar_name = function
   | Shift _ -> "shift"
   | Linear _ -> "linear"
   | Scale _ -> "scale"
+  | Sip _ -> "sip"
+  | Tpv _ -> "tpv"
 
 let stage_name : type a b. (a, b) stage -> string = function
   | Plane (p, Forward) -> planar_name p
   | Plane (p, Inverse) -> strf "inverse %s" (planar_name p)
   | Deproject c -> strf "celestial %s" (code_name c.code)
   | Project c -> strf "inverse celestial %s" (code_name c.code)
+  | Rotate (f, g) -> strf "rotation %s %s" (Frame.name f) (Frame.name g)
 
 (* Components *)
 
@@ -106,6 +129,32 @@ let check_rank fn name n x =
     invalid_arg
       (strf "%s: %s takes points on a last axis of %d, got shape %s" fn name n
          (shape_text s))
+
+(* How a run treats points outside a stage's domain: [Check] raises through
+   [Nx.check] at a finite one, [Cover] computes where each stage is defined. NaN
+   maps to NaN, outside every domain. *)
+type mode = Check | Cover
+
+let numbers v = Nx.logical_not (Nx.any ~axes:[ last v ] (Nx.isnan v))
+
+(* [nan_where bad v] is [v] with each point NaN where [bad]. *)
+let nan_where bad v =
+  let bad = Nx.reshape (Array.append (Nx.shape bad) [| 1 |]) bad in
+  Nx.where bad (Nx.full_like v Float.nan) v
+
+(* [domain mode ok data fail] is [ok] under [Cover], and under [Check] raises
+   [fail i d] where [ok] fails at a point of numbers. *)
+let domain mode ~numbers s ok data fail =
+  match mode with
+  | Cover -> Some (Nx.logical_and numbers ok)
+  | Check ->
+      Nx.check s (Nx.logical_or ok (Nx.logical_not numbers)) data fail;
+      None
+
+(* [floats t] is [t]'s values as ["a, b, c"]. *)
+let floats t =
+  String.concat ", "
+    (Array.to_list (Array.map (strf "%g") (Nx.to_array (Nx.reshape [| -1 |] t))))
 
 (* Planar families *)
 
@@ -145,60 +194,228 @@ let product m x =
   in
   stack (List.init n row)
 
-let apply_planar fn p sense (x : plane) : plane =
+(* [distortion mode fn name unit ~forward ~jacobian ~inverse sense x] applies a
+   distortion family to [x], read in [unit]. Its domain is where its forward
+   map's Jacobian keeps its sign at the origin, positive, and, inverted, where
+   Newton's method converged. *)
+let distortion mode fn name unit ~forward ~jacobian ~inverse sense (x : plane) =
+  let v = Quantity.value unit x in
+  check_rank fn name 2 v;
+  let finite = numbers v in
+  let safe = Nx.where (Nx.reshape (Array.append (Nx.shape finite) [| 1 |]) finite)
+      v (Nx.zeros_like v) in
+  let y, solved, at =
+    match sense with
+    | Forward -> (forward safe, None, safe)
+    | Inverse ->
+        let y, ok = inverse safe in
+        (y, Some ok, y)
+  in
+  let det = Distortion.det2 (jacobian at) in
+  let unfolded = Nx.greater_s det 0. in
+  let ok = match solved with None -> unfolded | Some s -> Nx.logical_and s unfolded in
+  let residual =
+    match sense with
+    | Forward -> Nx.zeros_like det
+    | Inverse ->
+        let r = Nx.sub (forward y) safe in
+        Nx.sqrt (Nx.sum ~axes:[ -1 ] (Nx.square r))
+  in
+  let mask =
+    domain mode ~numbers:finite
+      Nx.Ptree.(pair tensor tensor)
+      ok (det, residual) (fun i (det, r) ->
+        Invalid_argument
+          (match sense with
+          | Forward ->
+              strf
+                "%s: %s is where the %s distortion folds (its Jacobian's \
+                 determinant is %g), outside its domain; Transform.covers \
+                 gives the mask"
+                fn (point i) name (Nx.item [] det)
+          | Inverse ->
+              strf
+                "%s: %s does not invert through the %s distortion (Newton's \
+                 residual is %g %s, the Jacobian's determinant %g), outside \
+                 its domain; Transform.covers gives the mask"
+                fn (point i) name (Nx.item [] r)
+                (if Unit.equal unit Unit.one then "pixel" else Unit.to_string unit)
+                (Nx.item [] det)))
+  in
+  (Quantity.v unit (nan_where (Nx.logical_not finite) y), mask)
+
+let apply_planar mode fn p sense (x : plane) : plane * Nx.bool_t option =
+  let plain y =
+    let ok =
+      match mode with
+      | Check -> None
+      | Cover -> Some (numbers (Quantity.value (Quantity.unit x) x))
+    in
+    (y, ok)
+  in
   match (p, sense) with
-  | Axes { perm; origin }, _ -> apply_axes fn ~perm ~origin sense x
+  | Axes { perm; origin }, _ -> plain (apply_axes fn ~perm ~origin sense x)
   | Shift r, _ ->
       let u = Quantity.unit r and r = Quantity.value (Quantity.unit r) r in
       let v = Quantity.value u x in
       check_rank fn "shift" (Nx.dim (-1) r) v;
-      Quantity.v u
-        (match sense with Forward -> Nx.sub v r | Inverse -> Nx.add v r)
+      plain
+        (Quantity.v u
+           (match sense with Forward -> Nx.sub v r | Inverse -> Nx.add v r))
   | Linear m, Forward ->
       let v = Quantity.value Unit.one x in
       check_rank fn "linear"
         (Nx.dim (-1) (Quantity.value (Quantity.unit m) m))
         v;
-      Quantity.v (Quantity.unit m)
-        (product (Quantity.value (Quantity.unit m) m) v)
+      plain
+        (Quantity.v (Quantity.unit m)
+           (product (Quantity.value (Quantity.unit m) m) v))
   | Linear m, Inverse ->
       let u = Quantity.unit m in
       let m = Quantity.value u m in
       let v = Quantity.value u x in
       check_rank fn "inverse linear" (Nx.dim (-1) m) v;
-      Quantity.v Unit.one (product (Nx.inv m) v)
+      plain (Quantity.v Unit.one (product (Nx.inv m) v))
   | Scale d, Forward ->
       let u = Quantity.unit d and d = Quantity.value (Quantity.unit d) d in
       let v = Quantity.value Unit.one x in
       check_rank fn "scale" (Nx.dim (-1) d) v;
-      Quantity.v u (Nx.mul v d)
+      plain (Quantity.v u (Nx.mul v d))
   | Scale d, Inverse ->
       let u = Quantity.unit d and d = Quantity.value (Quantity.unit d) d in
       let v = Quantity.value u x in
       check_rank fn "inverse scale" (Nx.dim (-1) d) v;
-      Quantity.v Unit.one (Nx.div v d)
+      plain (Quantity.v Unit.one (Nx.div v d))
+  | Sip { a; b; seed }, _ ->
+      distortion mode fn "SIP" Unit.one
+        ~forward:(Distortion.sip_forward a b)
+        ~jacobian:(Distortion.sip_jacobian a b)
+        ~inverse:(Distortion.sip_inverse ?seed a b)
+        sense x
+  | Tpv { pv; _ }, _ ->
+      distortion mode fn "TPV" Unit.degree
+        ~forward:(Distortion.tpv_forward pv)
+        ~jacobian:(Distortion.tpv_jacobian pv)
+        ~inverse:(Distortion.tpv_inverse pv)
+        sense x
 
 (* Celestial stages
 
-   A zenithal projection's native sphere has its pole at the reference point.
-   The native vector of a plane point [(x, y)] at native longitude [φ] and
-   distance [R] from the pole is [(sin R cos φ, sin R sin φ, cos R)], with [x =
-   R sin φ] and [y = -R cos φ] for ARC and [R] replaced by [tan R] for TAN. The
-   rotation [M] takes native vectors to the frame's: [v = M · u]. *)
+   The projection maps plane points to native unit vectors, and the rotation
+   [M] takes native vectors to the frame's: [v = M · u]. [M] is [Rz(α_p) ·
+   Ry(90° - δ_p) · Rz(180° - φ_p)] for the celestial pole (α_p, δ_p) of the
+   native sphere and LONPOLE φ_p. Its pole solves FITS WCS Paper II's
+   equations from CRVAL, the native reference point (φ₀, θ₀), LONPOLE and
+   LATPOLE, as WCSLIB's [celset] does: with θ₀ = 90° it is CRVAL; otherwise
+   two latitudes solve and LATPOLE picks between them. Every branch is a
+   [where], so the rotation is differentiable in the header's numbers. *)
 
-let radians q = Quantity.value Unit.radian q
-let half_pi = Float.pi /. 2.
+let degree_per_radian = 180. /. Float.pi
+let radian_per_degree = Float.pi /. 180.
 
-(* [rotation c] is [M]'s nine entries, row-major, each of [c]'s batch shape:
-   [Rz(α₀) · Ry(π/2 - δ₀) · Rz(π - φ_p)] for CRVAL [(α₀, δ₀)] and LONPOLE
-   [φ_p]. *)
-let rotation c =
-  let crval = radians c.crval in
-  let a = component crval 0 and d = component crval 1 in
-  let p = radians c.lonpole in
-  let ca = Nx.cos a and sa = Nx.sin a in
-  let cd = Nx.cos d and sd = Nx.sin d in
-  let cp = Nx.cos p and sp = Nx.sin p in
+(* [sincosd d] is the sine and cosine of [d] degrees, exact at multiples of
+   90°: the argument is reduced to [[-45°, 45°]] about its quadrant. *)
+let sincosd d =
+  let q = Nx.round (Nx.div_s d 90.) in
+  let e = Nx.mul_s (Nx.sub d (Nx.mul_s q 90.)) radian_per_degree in
+  let s = Nx.sin e and c = Nx.cos e in
+  let k = Nx.sub q (Nx.mul_s (Nx.floor (Nx.div_s q 4.)) 4.) in
+  let is n = Nx.equal_s k n in
+  let pick a b cc d = Nx.where (is 0.) a (Nx.where (is 1.) b (Nx.where (is 2.) cc d)) in
+  (pick s c (Nx.neg s) (Nx.neg c), pick c (Nx.neg s) (Nx.neg c) s)
+
+let atan2d y x = Nx.mul_s (Nx.atan2 y x) degree_per_radian
+
+(* WCSLIB's tolerance on degrees and on products of cosines. *)
+let pole_tol = 1e-10
+
+let degrees_of q = Quantity.value Unit.degree q
+
+(* [wrap180 a] maps degrees in [(-540, 540)] into [[-180, 180]]. *)
+let wrap180 a =
+  Nx.where (Nx.greater_s a 180.) (Nx.sub_s a 360.)
+    (Nx.where (Nx.less_s a (-180.)) (Nx.add_s a 360.) a)
+
+type pole = {
+  lngp : vectors;  (** α_p, degrees. *)
+  latp : vectors;  (** δ_p, degrees. *)
+  phip : vectors;  (** φ_p, degrees. *)
+  exists : Nx.bool_t;
+}
+
+let pole c =
+  let crval = degrees_of c.crval and native = degrees_of c.native in
+  let lng0 = component crval 0 and lat0 = component crval 1 in
+  let phi0 = component native 0 and theta0 = component native 1 in
+  let phip = degrees_of c.lonpole and latpole = degrees_of c.latpole in
+  let zenith = Nx.equal_s theta0 90. in
+  let slat0, clat0 = sincosd lat0 and sthe0, cthe0 = sincosd theta0 in
+  let same = Nx.equal phip phi0 in
+  let sphip, cphip = sincosd (Nx.sub phip phi0) in
+  let x = Nx.mul cthe0 cphip and y = sthe0 in
+  let z2 = Nx.add (Nx.square x) (Nx.square y) in
+  let flat = Nx.equal_s z2 0. in
+  let z = Guard.sqrt flat (Nx.zeros_like z2) z2 in
+  let slz = Nx.div slat0 (Nx.where flat (Nx.ones_like z) z) in
+  let over = Nx.greater_s (Nx.abs slz) 1. in
+  let slz =
+    Nx.where (Nx.logical_and over (Nx.less_s (Nx.sub_s (Nx.abs slz) 1.) pole_tol))
+      (Nx.sign slz) slz
+  in
+  let solvable =
+    Nx.where flat (Nx.equal_s slat0 0.) (Nx.less_equal_s (Nx.abs slz) 1.)
+  in
+  (* [acos s] as [atan2 (√(1 - s²)) s], whose derivative stays finite at ±1
+     through the guard. *)
+  let c2 = Nx.rsub_s 1. (Nx.square slz) in
+  let edge = Nx.less_equal_s c2 0. in
+  let v = atan2d (Guard.sqrt edge (Nx.zeros_like c2) c2) slz in
+  let u = atan2d (Nx.broadcast_to (Nx.shape x) y) (Nx.where flat (Nx.ones_like x) x) in
+  let u = Nx.where same theta0 u and v = Nx.where same (Nx.rsub_s 90. lat0) v in
+  let latp1 = wrap180 (Nx.add u v) and latp2 = wrap180 (Nx.sub u v) in
+  let valid l = Nx.less_s (Nx.abs l) (90. +. pole_tol) in
+  let first =
+    Nx.where
+      (Nx.less (Nx.abs (Nx.sub latpole latp1)) (Nx.abs (Nx.sub latpole latp2)))
+      (valid latp1)
+      (Nx.logical_not (valid latp2))
+  in
+  let latp = Nx.where first latp1 latp2 in
+  let latp = Nx.where (Nx.logical_and flat (Nx.logical_not same))
+      (Nx.clamp ~min:(-90.) ~max:90. (Nx.broadcast_to (Nx.shape latp) latpole))
+      latp in
+  let exists = Nx.logical_and solvable (valid latp) in
+  let latp = Nx.clamp ~min:(-90.) ~max:90. latp in
+  let slatp, clatp = sincosd latp in
+  let zz = Nx.mul clatp clat0 in
+  let polar = Nx.less_s (Nx.abs zz) pole_tol in
+  let at_pole = Nx.less_s (Nx.abs clat0) pole_tol in
+  let lngp_polar =
+    Nx.where at_pole lng0
+      (Nx.where (Nx.greater_s latp 0.)
+         (Nx.sub_s (Nx.sub (Nx.add lng0 phip) phi0) 180.)
+         (Nx.add (Nx.sub lng0 phip) phi0))
+  in
+  let xx = Nx.div (Nx.sub sthe0 (Nx.mul slatp slat0)) (Nx.where polar (Nx.ones_like zz) zz) in
+  let yy = Nx.div (Nx.mul sphip cthe0) (Nx.where at_pole (Nx.ones_like clat0) clat0) in
+  let still = Nx.logical_or polar (Nx.logical_and (Nx.equal_s xx 0.) (Nx.equal_s yy 0.)) in
+  let lngp_general =
+    Nx.sub lng0
+      (Nx.mul_s (Guard.atan2 still (Nx.zeros_like xx) yy xx) degree_per_radian)
+  in
+  let lngp = Nx.where polar lngp_polar lngp_general in
+  {
+    lngp = Nx.where zenith lng0 lngp;
+    latp = Nx.where zenith lat0 latp;
+    phip;
+    exists = Nx.logical_or zenith exists;
+  }
+
+(* [rotation p] is [M]'s nine entries, row-major, each of the pole's batch
+   shape. *)
+let rotation p =
+  let sa, ca = sincosd p.lngp and sd, cd = sincosd p.latp in
+  let sp, cp = sincosd p.phip in
   let open Nx in
   [|
     sub (neg (mul (mul ca sd) cp)) (mul sa sp);
@@ -227,147 +444,111 @@ let rotate_back m (x, y, z) =
   in
   (col 0, col 1, col 2)
 
-(* [zenith c] is where [c]'s native θ₀ is 90°. *)
-let zenith c =
-  Nx.equal_s (component (Quantity.value Unit.degree c.native) 1) 90.
-
-(* Native θ₀ must be 90° until the general pole solution arrives with the
-   projections whose θ₀ differs. θ₀ is a parameter, so it is checked as data. *)
-let check_native fn c =
-  let theta = component (Quantity.value Unit.degree c.native) 1 in
-  Nx.check Nx.Ptree.tensor (zenith c) theta (fun i t ->
-      Invalid_argument
-        (strf
-           "%s: the %s stage's native latitude θ₀%s is %g deg; a native \
-            latitude other than 90 deg is not supported yet"
-           fn (code_name c.code)
-           (if Array.length i = 0 then ""
-            else Format.asprintf " at %a" pp_ints i)
-           (Nx.item [] t)))
-
-(* [native_of_plane c x y] is the native vector of the plane point [(x, y)] in
-   radians, and where it is in the projection's domain. *)
-let native_of_plane c x y =
-  match c.code with
-  | Tan ->
-      let s = Nx.rsqrt (Nx.add_s (Nx.add (Nx.square x) (Nx.square y)) 1.) in
-      ((Nx.neg (Nx.mul y s), Nx.mul x s, s), None)
-  | Arc ->
-      let r2 = Nx.add (Nx.square x) (Nx.square y) in
-      let pole = Nx.equal_s r2 0. in
-      let r = Guard.sqrt pole (Nx.zeros_like r2) r2 in
-      let safe = Nx.where pole (Nx.ones_like r) r in
-      let sinc = Nx.where pole (Nx.ones_like r) (Nx.div (Nx.sin safe) safe) in
-      ( (Nx.neg (Nx.mul y sinc), Nx.mul x sinc, Nx.cos r),
-        Some (r, Nx.less_equal_s r Float.pi) )
-
-(* [plane_of_native c u] is the plane point in radians of the native vector [u],
-   read as the ray it spans, and where it is in the projection's domain with the
-   angle from the reference point. *)
-let plane_of_native c (u1, u2, u3) =
-  let rho2 = Nx.add (Nx.square u1) (Nx.square u2) in
-  let axis = Nx.equal_s rho2 0. in
-  let rho = Guard.sqrt axis (Nx.zeros_like rho2) rho2 in
-  let zero_row = Nx.logical_and axis (Nx.equal_s u3 0.) in
-  let angle = Guard.atan2 zero_row (Nx.zeros_like u3) rho u3 in
-  match c.code with
-  | Tan ->
-      let inside = Nx.greater_s u3 0. in
-      let w = Nx.where inside u3 (Nx.ones_like u3) in
-      let nan = Nx.full_like u3 Float.nan in
-      let x = Nx.where inside (Nx.div u2 w) nan
-      and y = Nx.where inside (Nx.neg (Nx.div u1 w)) nan in
-      (x, y, inside, angle)
-  | Arc ->
-      (* [x = R u2 / ρ], [y = -R u1 / ρ]; on the axis [R / ρ] is [1 / u3] at the
-         reference point, and the antipode maps to [(0, -π)], native longitude
-         0. *)
-      let ahead = Nx.greater_s u3 0. in
-      let k_axis =
-        Nx.where ahead
-          (Nx.recip (Nx.where ahead u3 (Nx.ones_like u3)))
-          (Nx.zeros_like u3)
-      in
-      let k =
-        Nx.where axis k_axis
-          (Nx.div angle (Nx.where axis (Nx.ones_like rho) rho))
-      in
-      let x = Nx.mul k u2 in
-      let y = Nx.neg (Nx.mul k u1) in
-      let antipode = Nx.logical_and axis (Nx.less_s u3 0.) in
-      let y = Nx.where antipode (Nx.full_like y (-.Float.pi)) y in
-      (x, y, Nx.logical_not (Nx.isnan angle), angle)
-
-let degrees_of r = Nx.mul_s r (180. /. Float.pi)
-
 let reference c =
-  let crval = Quantity.value Unit.degree c.crval in
+  let crval = degrees_of c.crval in
   (component crval 0, component crval 1)
 
-(* How a run treats points outside a stage's domain: [Check] raises through
-   [Nx.check] at a finite one, [Cover] computes where each stage is defined. NaN
-   maps to NaN, outside every domain. *)
-type mode = Check | Cover
+let degrees_of_radians r = Nx.mul_s r degree_per_radian
 
-let numbers v = Nx.logical_not (Nx.any ~axes:[ last v ] (Nx.isnan v))
-
-let deproject mode fn c (x : plane) =
-  let v = radians x in
-  check_rank fn (strf "celestial %s" (code_name c.code)) 2 v;
-  let u, domain = native_of_plane c (component v 0) (component v 1) in
+(* [setup mode fn c] is the stage's rotation, and under [Cover]
+   where its parameters define it; under [Check] it raises where they do
+   not. *)
+let setup mode fn c =
+  let name = code_name c.code in
+  let p = pole c in
+  let valid, condition = Projection.valid c.code c.pv in
   let ok =
     match mode with
-    | Cover ->
-        let ok = Nx.logical_and (numbers v) (zenith c) in
-        Some
-          (match domain with
-          | None -> ok
-          | Some (_, inside) -> Nx.logical_and ok inside)
+    | Cover -> Some (Nx.logical_and p.exists valid)
     | Check ->
-        check_native fn c;
-        (match domain with
-        | None -> ()
-        | Some (r, inside) ->
-            Nx.check Nx.Ptree.tensor
-              (Nx.logical_or inside (Nx.isnan r))
-              (degrees_of r)
-              (fun i r ->
-                Invalid_argument
-                  (strf
-                     "%s: %s is %.6g deg from the %s reference, beyond 180 \
-                      deg, outside the projection's domain; Transform.covers \
-                      gives the mask"
-                     fn (point i) (Nx.item [] r) (code_name c.code))));
+        let pv = List.init (Nx.dim (-1) c.pv) (component c.pv) in
+        Nx.check Nx.Ptree.(list tensor) valid pv (fun i pv ->
+            Invalid_argument
+              (strf
+                 "%s: the %s stage's parameters%s (%s) do not define a \
+                  projection: it needs %s"
+                 fn name
+                 (if Array.length i = 0 then "" else " " ^ index i)
+                 (String.concat ", " (List.map floats pv))
+                 condition));
+        let lon, lat = reference c in
+        let native = degrees_of c.native in
+        Nx.check
+          Nx.Ptree.(pair (pair tensor tensor) (pair tensor tensor))
+          p.exists
+          ((p.phip, lon), (lat, component native 1))
+          (fun i ((phip, lon), (lat, theta0)) ->
+            Invalid_argument
+              (strf
+                 "%s: the %s stage's LONPOLE %g deg%s and CRVAL (%g, %g) deg \
+                  place no celestial pole for the native reference latitude \
+                  %g deg"
+                 fn name (Nx.item [] phip)
+                 (if Array.length i = 0 then "" else " at " ^ index i)
+                 (Nx.item [] lon) (Nx.item [] lat) (Nx.item [] theta0)));
         None
   in
-  let x, y, z = rotate (rotation c) u in
-  ({ Direction.frame = c.frame; xyz = stack [ x; y; z ] }, ok)
+  (rotation p, ok)
+
+let and_mask a b =
+  match (a, b) with
+  | None, o | o, None -> o
+  | Some a, Some b -> Some (Nx.logical_and a b)
+
+let deproject mode fn c (x : plane) =
+  let v = Quantity.value Unit.radian x in
+  check_rank fn (strf "celestial %s" (code_name c.code)) 2 v;
+  let m, setup_ok = setup mode fn c in
+  let u, inside =
+    Projection.deproject c.code c.pv (component v 0) (component v 1)
+  in
+  let finite = numbers v in
+  let distance = degrees_of_radians (Nx.hypot (component v 0) (component v 1)) in
+  let ok =
+    domain mode ~numbers:finite Nx.Ptree.tensor inside distance (fun i r ->
+        Invalid_argument
+          (strf
+             "%s: %s is %.6g deg from the %s plane's origin, outside the \
+              projection's domain; Transform.covers gives the mask"
+             fn (point i) (Nx.item [] r) (code_name c.code)))
+  in
+  let x, y, z = rotate m u in
+  let xyz = nan_where (Nx.logical_not finite) (stack [ x; y; z ]) in
+  ({ Direction.frame = c.frame; xyz }, and_mask setup_ok ok)
 
 let project mode fn c (d : _ Direction.t) =
   let v = Direction.rows (fn ^ ": the direction's vector") d.xyz in
-  let u = rotate_back (rotation c) (Direction.components v) in
-  let x, y, inside, angle = plane_of_native c u in
-  let ok =
-    match mode with
-    | Cover -> Some Nx.(logical_and (logical_and (numbers v) (zenith c)) inside)
-    | Check ->
-        check_native fn c;
-        let lon, lat = reference c in
-        Nx.check
-          Nx.Ptree.(pair tensor (pair tensor tensor))
-          (Nx.logical_or inside (Nx.isnan angle))
-          (degrees_of angle, (lon, lat))
-          (fun i (r, (lon, lat)) ->
-            Invalid_argument
-              (strf
-                 "%s: %s is %.6g deg from the %s reference (%.10g, %.10g) deg, \
-                  outside the projection's domain; Transform.covers gives the \
-                  mask"
-                 fn (point i) (Nx.item [] r) (code_name c.code) (Nx.item [] lon)
-                 (Nx.item [] lat)));
-        None
+  let m, setup_ok = setup mode fn c in
+  let u1, u2, u3 = rotate_back m (Direction.components v) in
+  let n2 = Nx.add (Nx.add (Nx.square u1) (Nx.square u2)) (Nx.square u3) in
+  let n = Nx.sqrt n2 in
+  let u = (Nx.div u1 n, Nx.div u2 n, Nx.div u3 n) in
+  let (x, y), inside = Projection.project c.code c.pv u in
+  let finite = numbers v in
+  let angle =
+    (* The angle from CRVAL's direction, for the message. *)
+    let lon, lat = reference c in
+    let sl, cl = sincosd lon and sb, cb = sincosd lat in
+    let a1, a2, a3 = Direction.components v in
+    let rx = Nx.mul cb cl and ry = Nx.mul cb sl in
+    let dot = Nx.add (Nx.add (Nx.mul a1 rx) (Nx.mul a2 ry)) (Nx.mul a3 sb) in
+    degrees_of_radians (Nx.acos (Nx.clamp ~min:(-1.) ~max:1. (Nx.div dot n)))
   in
-  (Quantity.v Unit.radian (stack [ x; y ]), ok)
+  let lon, lat = reference c in
+  let ok =
+    domain mode ~numbers:finite
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      inside (angle, (lon, lat))
+      (fun i (r, (lon, lat)) ->
+        Invalid_argument
+          (strf
+             "%s: %s is %.6g deg from the %s reference (%.10g, %.10g) deg, \
+              outside the projection's domain; Transform.covers gives the mask"
+             fn (point i) (Nx.item [] r) (code_name c.code) (Nx.item [] lon)
+             (Nx.item [] lat)))
+  in
+  ( Quantity.v Unit.radian (nan_where (Nx.logical_not finite) (stack [ x; y ])),
+    and_mask setup_ok ok )
 
 (* Application *)
 
@@ -377,16 +558,16 @@ let stage : type a b.
     mode -> string -> (a, b) stage -> a -> b * Nx.bool_t option =
  fun mode fn s x ->
   match s with
-  | Plane (p, sense) ->
-      let y = apply_planar fn p sense x in
+  | Plane (p, sense) -> apply_planar mode fn p sense x
+  | Deproject c -> deproject mode fn c x
+  | Project c -> project mode fn c x
+  | Rotate (_, g) ->
       let ok =
         match mode with
         | Check -> None
-        | Cover -> Some (numbers (Quantity.value (Quantity.unit x) x))
+        | Cover -> Some (numbers x.Direction.xyz)
       in
-      (y, ok)
-  | Deproject c -> deproject mode fn c x
-  | Project c -> project mode fn c x
+      (Direction.rotate g x, ok)
 
 let rec run : type a b. mode -> string -> (a, b) t -> a -> b * Nx.bool_t option
     =
@@ -396,12 +577,7 @@ let rec run : type a b. mode -> string -> (a, b) t -> a -> b * Nx.bool_t option
   | Stage (s, rest) ->
       let y, ok = stage mode fn s x in
       let z, ok' = run mode fn rest y in
-      let ok =
-        match (ok, ok') with
-        | None, o | o, None -> o
-        | Some a, Some b -> Some (Nx.logical_and a b)
-      in
-      (z, ok)
+      (z, and_mask ok ok')
 
 let apply t x = fst (run Check "Transform.apply" t x)
 
@@ -435,16 +611,56 @@ let scale d =
   vector "Transform.scale" "the scale" d;
   one (Plane (Scale d, Forward))
 
-let linear m =
-  let s = Nx.shape (Quantity.value (Quantity.unit m) m) in
+let check_square fn what s =
   let k = Array.length s in
   if k < 2 || s.(k - 1) <> s.(k - 2) then
     invalid_arg
-      (strf "Transform.linear: expected a matrix [...; n; n], got shape %s"
-         (shape_text s));
+      (strf "%s: expected %s [...; n; n], got shape %s" fn what (shape_text s))
+
+let linear m =
+  check_square "Transform.linear" "a matrix"
+    (Nx.shape (Quantity.value (Quantity.unit m) m));
   one (Plane (Linear m, Forward))
 
-let parameters = function Tan | Arc -> 0
+let sip ?seed (a, b) =
+  let fn = "Transform.sip" in
+  let square what m = check_square fn what (Nx.shape m) in
+  square "A" a;
+  square "B" b;
+  Option.iter
+    (fun (ap, bp) ->
+      square "AP" ap;
+      square "BP" bp)
+    seed;
+  one (Plane (Sip { a; b; seed }, Forward))
+
+(* [check_stated fn what stated m] checks that [stated] holds ascending indices
+   below [m], and is all of them by default. *)
+let check_stated fn what stated m =
+  let stated =
+    match stated with None -> Array.init m Fun.id | Some a -> Array.copy a
+  in
+  Array.iteri
+    (fun k t ->
+      if t < 0 || t >= m || (k > 0 && t <= stated.(k - 1)) then
+        invalid_arg
+          (Format.asprintf
+             "%s: stated terms %a are not ascending indices of %s's %d terms" fn
+             pp_ints stated what m))
+    stated;
+  stated
+
+let tpv ?stated pv =
+  let fn = "Transform.tpv" in
+  let s = Nx.shape pv in
+  let k = Array.length s in
+  let count = Distortion.tpv_count in
+  if k < 2 || s.(k - 2) <> 2 || s.(k - 1) <> count then
+    invalid_arg
+      (strf "%s: expected parameters [...; 2; %d], got shape %s" fn count
+         (shape_text s));
+  let stated = check_stated fn "TPV" stated (2 * count) in
+  one (Plane (Tpv { pv; stated }, Forward))
 
 let check_angle fn what q =
   if not (Unit.convertible (Quantity.unit q) Unit.radian) then
@@ -462,30 +678,20 @@ let check_pair fn what q =
 
 let celestial ?stated code frame ~pv ~native ~crval ~lonpole ~latpole =
   let fn = "Transform.celestial" in
-  let m = parameters code in
+  let m = Projection.count code in
   let s = Nx.shape pv in
   if Array.length s = 0 || s.(Array.length s - 1) <> m then
     invalid_arg
       (strf "%s: %s takes %d parameters on pv's last axis, got shape %s" fn
          (code_name code) m (shape_text s));
-  let stated =
-    match stated with None -> Array.init m Fun.id | Some a -> Array.copy a
-  in
-  Array.iteri
-    (fun k t ->
-      if t < 0 || t >= m || (k > 0 && t <= stated.(k - 1)) then
-        invalid_arg
-          (Format.asprintf
-             "%s: stated terms %a are not ascending indices of %s's %d \
-              parameters"
-             fn pp_ints stated (code_name code) m))
-    stated;
+  let stated = check_stated fn (code_name code) stated m in
   check_pair fn "native" native;
   check_pair fn "crval" crval;
   check_angle fn "lonpole" lonpole;
   check_angle fn "latpole" latpole;
   one (Deproject { code; frame; stated; pv; native; crval; lonpole; latpole })
 
+let rotation f g = one (Rotate (f, g))
 let degrees x = Quantity.v Unit.degree (Nx.scalar Nx.float64 x)
 
 (* The inverse of the zenithal stage [code] at [c] with LONPOLE 180°: x east, y
@@ -493,7 +699,11 @@ let degrees x = Quantity.v Unit.degree (Nx.scalar Nx.float64 x)
 let zenithal code (c : _ Direction.t) =
   let crval =
     Quantity.v Unit.radian
-      (stack [ radians (Direction.lon c); radians (Direction.lat c) ])
+      (stack
+         [
+           Quantity.value Unit.radian (Direction.lon c);
+           Quantity.value Unit.radian (Direction.lat c);
+         ])
   in
   let native =
     Quantity.v Unit.degree (Nx.create Nx.float64 [| 2 |] [| 0.; 90. |])
@@ -524,6 +734,7 @@ let flip : type a b. (a, b) stage -> (b, a) stage = function
   | Plane (p, Inverse) -> Plane (p, Forward)
   | Deproject c -> Project c
   | Project c -> Deproject c
+  | Rotate (f, g) -> Rotate (g, f)
 
 let rec inverse : type a b. (a, b) t -> (b, a) t = function
   | Id -> Id
@@ -544,6 +755,11 @@ let pp_planar ppf = function
   | Shift r -> Format.fprintf ppf "shift %a" Quantity.pp r
   | Linear m -> Format.fprintf ppf "linear %a" Quantity.pp m
   | Scale d -> Format.fprintf ppf "scale %a" Quantity.pp d
+  | Sip { a; b; seed } ->
+      Format.fprintf ppf "sip%s (%a, %a)"
+        (if Option.is_some seed then " ~seed" else "")
+        Nx.pp a Nx.pp b
+  | Tpv { pv; _ } -> Format.fprintf ppf "tpv %a" Nx.pp pv
 
 let pp_celestial ppf c =
   Format.fprintf ppf "celestial %s %a ~crval:%a ~lonpole:%a" (code_name c.code)
@@ -555,6 +771,7 @@ let pp_stage : type a b. Format.formatter -> (a, b) stage -> unit =
   | Plane (p, Inverse) -> Format.fprintf ppf "inverse (%a)" pp_planar p
   | Deproject c -> pp_celestial ppf c
   | Project c -> Format.fprintf ppf "inverse (%a)" pp_celestial c
+  | Rotate (f, g) -> Format.fprintf ppf "rotation %a %a" Frame.pp f Frame.pp g
 
 let pp ppf t =
   let rec stages : type a b. bool -> (a, b) t -> unit =
@@ -587,6 +804,15 @@ let walk_planar c = function
   | Shift r -> Shift (W.field c "offset" quantity r)
   | Linear m -> Linear (W.field c "matrix" quantity m)
   | Scale d -> Scale (W.field c "scale" quantity d)
+  | Sip { a; b; seed } ->
+      let a = W.field c "a" W.tensor a in
+      let b = W.field c "b" W.tensor b in
+      let seed = W.field c "seed" (W.structure Nx.Ptree.(option (pair tensor tensor))) seed in
+      Sip { a; b; seed }
+  | Tpv { pv; stated } ->
+      let stated = W.field c "stated" ints stated in
+      let pv = W.field c "pv" W.tensor pv in
+      Tpv { pv; stated }
 
 let walk_celestial c cel =
   W.case c (code_name cel.code);
@@ -613,6 +839,12 @@ let walk_stage : type a b. ('x, 'y) W.cursor -> (a, b) stage -> (a, b) stage =
       W.case c "celestial";
       W.case c "inverse";
       Project (walk_celestial c cel)
+  | Rotate (f, g) ->
+      W.case c "rotation";
+      W.case c "forward";
+      let f = W.field c "from" Frame.walk f in
+      let g = W.field c "to" Frame.walk g in
+      Rotate (f, g)
 
 let rec length : type a b. (a, b) t -> int = function
   | Id -> 0
@@ -664,6 +896,10 @@ let expand_planar k = function
   | Shift r -> Shift (expand k 1 r)
   | Linear m -> Linear (expand k 2 m)
   | Scale d -> Scale (expand k 1 d)
+  | Sip { a; b; seed } ->
+      let e = expand_tensor k 2 in
+      Sip { a = e a; b = e b; seed = Option.map (fun (p, q) -> (e p, e q)) seed }
+  | Tpv { pv; stated } -> Tpv { pv = expand_tensor k 2 pv; stated }
 
 let expand_celestial k c =
   {
@@ -675,11 +911,6 @@ let expand_celestial k c =
     latpole = expand k 0 c.latpole;
   }
 
-let and_mask a b =
-  match (a, b) with
-  | None, o | o, None -> o
-  | Some a, Some b -> Some (Nx.logical_and a b)
-
 (* [run_cells ~cells t x] is [t] applied to [x] and where each stage is
    defined, under [Cover]: no point raises. *)
 let run_cells ~cells t x =
@@ -689,11 +920,9 @@ let run_cells ~cells t x =
     match (t, x) with
     | Id, x -> (x, None)
     | Stage (Plane (p, sense), rest), P v ->
-        let ok = numbers (Quantity.value (Quantity.unit v) v) in
-        let y, ok' =
-          go rest (P (apply_planar fn (expand_planar cells p) sense v))
-        in
-        (y, and_mask (Some ok) ok')
+        let y, ok = apply_planar Cover fn (expand_planar cells p) sense v in
+        let y, ok' = go rest (P y) in
+        (y, and_mask ok ok')
     | Stage (Deproject c, rest), P v ->
         let d, ok = deproject Cover fn (expand_celestial cells c) v in
         let y, ok' = go rest (D d) in
@@ -703,6 +932,10 @@ let run_cells ~cells t x =
         let v, ok = project Cover fn (expand_celestial cells c) d in
         let y, ok' = go rest (P v) in
         (y, and_mask ok ok')
+    | Stage (Rotate (f, g), rest), D d ->
+        let d = Direction.rotate g { Direction.frame = f; xyz = d.xyz } in
+        let y, ok' = go rest (D d) in
+        (y, and_mask (Some (numbers d.xyz)) ok')
     | Stage _, _ ->
         invalid_arg "Transform.run_cells: a stage met a point of another type"
   in
@@ -723,6 +956,7 @@ let rec target : type a b. a endpoint -> (a, b) t -> b endpoint =
   | Stage (Plane _, rest) -> target e rest
   | Stage (Deproject c, rest) -> target (Sky c.frame) rest
   | Stage (Project _, rest) -> target Planar rest
+  | Stage (Rotate (_, g), rest) -> target (Sky g) rest
 
 let value : type a. a endpoint -> a -> value =
  fun e x -> match e with Planar -> P x | Sky _ -> D x

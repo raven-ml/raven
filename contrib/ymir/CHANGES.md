@@ -17,10 +17,12 @@ All notable changes to Ymir are documented in this file.
   compiled and differentiable in every parameter, NaN where the universe has
   no past. `planck2018` to `wmap1` transcribe each paper's fit.
 - `Ymir.Transform` maps pixel coordinates to the sky as a list of stages that
-  invert and print back what they read: `axes`, `shift`, `linear`, `scale` and
-  `celestial` with the TAN and ARC projections, `about` and `gnomonic` for
-  offsets about a direction. `apply` raises at a point outside a projection's
-  domain, naming it; `covers` gives the mask.
+  invert and print back what they read: `axes`, `shift`, `linear`, `scale`,
+  the `sip` and `tpv` distortions, whose inverses solve with jera,
+  `celestial` with FITS's thirteen zenithal and cylindrical projections and
+  any native reference point, `rotation` between fixed frames, and `about`
+  and `gnomonic` for offsets about a direction. `apply` raises at a point
+  outside a stage's domain, naming it; `covers` gives the mask.
 - `Ymir.Grid` is an image's cells seen through a transform, with `centres`,
   `corners`, each cell's exact `measure` (solid angle or area), and windows of
   static shape at traced, batched starts (`window`, `around`). `Grid.cell`

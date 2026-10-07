@@ -25,8 +25,19 @@ let max_abs a b =
 let no_pv = Nx.zeros f64 [| 0 |]
 
 let code = function
+  | "AZP" -> Transform.Azp
+  | "SZP" -> Transform.Szp
   | "TAN" -> Transform.Tan
+  | "STG" -> Transform.Stg
+  | "SIN" -> Transform.Sin
   | "ARC" -> Transform.Arc
+  | "ZPN" -> Transform.Zpn
+  | "ZEA" -> Transform.Zea
+  | "AIR" -> Transform.Air
+  | "CYP" -> Transform.Cyp
+  | "CEA" -> Transform.Cea
+  | "CAR" -> Transform.Car
+  | "MER" -> Transform.Mer
   | c -> invalid_arg c
 
 (* [fits c] is the transform a FITS header with [c]'s keywords reads as. *)
@@ -63,6 +74,201 @@ let wcslib =
       less float_exact ~than:2e-13 off;
       let back = Transform.apply (Transform.inverse t) (lonlat_deg c.sky) in
       less float_exact ~than:1e-8 (max_abs (values back Unit.one) c.sky_pixels))
+
+let central f x h = (f (x +. h) -. f (x -. h)) /. (2. *. h)
+
+(* Projections *)
+
+let projection (p : Reference.projection) =
+  Transform.(
+    axes [| 1; 0 |] ~origin:1
+    >> shift (one (tensor [| 2 |] p.crpix))
+    >> linear (deg (tensor [| 2; 2 |] p.cd))
+    >> celestial (code p.code) Frame.icrs
+         ~pv:(tensor [| Array.length p.pv |] p.pv)
+         ~native:(deg (tensor [| 2 |] p.native))
+         ~crval:(deg (tensor [| 2 |] p.crval))
+         ~lonpole:(deg (scalar p.lonpole))
+         ~latpole:(deg (scalar p.latpole)))
+
+let all_equal b mask = Array.for_all (Bool.equal b) (Nx.to_array mask)
+
+let projections =
+  let name (p : Reference.projection) = p.name in
+  group "Projections"
+    [
+      (* WCSLIB solves ZPN's and AIR's deprojections to 1e-13 and 1e-12 in
+         the radial function, which moves a direction by a few 1e-12. *)
+      cases ~name "map pixels as WCSLIB does" Reference.projections (fun p ->
+          let world = Transform.apply (projection p) (pixels p.pixels) in
+          let off =
+            Array.fold_left max 0. (separation world (lonlat_deg p.world))
+          in
+          let tol = if p.code = "ZPN" || p.code = "AIR" then 5e-12 else 2e-13 in
+          less float_exact ~than:tol off);
+      cases ~name "map directions as WCSLIB does" Reference.projections
+        (fun p ->
+          let t = Transform.inverse (projection p) in
+          let back = values (Transform.apply t (lonlat_deg p.sky)) Unit.one in
+          let worst =
+            Array.fold_left max 0.
+              (Array.map2
+                 (fun x y -> Float.abs (x -. y) /. Float.max 1. (Float.abs y))
+                 back p.sky_pixels)
+          in
+          less float_exact ~than:1e-12 worst);
+      cases ~name "cover what WCSLIB maps" Reference.projections (fun p ->
+          let t = projection p in
+          equal bool true (all_equal true (Transform.covers t (pixels p.pixels)));
+          equal bool true
+            (all_equal true
+               (Transform.covers (Transform.inverse t) (lonlat_deg p.sky))));
+      prop "map pixels back where they cover"
+        Gen.(
+          pair
+            (int_range 0 (List.length Reference.projections - 1))
+            (pair (float_range (-1.) 1.) (float_range (-1.) 1.)))
+        (fun (k, (a, b)) ->
+          let p = List.nth Reference.projections k in
+          (* A point among the fixture's pixels, which span the plane. *)
+          let n = Array.length p.pixels / 2 in
+          let i = abs (int_of_float (a *. 1e6)) mod n in
+          let px =
+            [| p.pixels.(2 * i) +. (b *. 3.); p.pixels.((2 * i) + 1) -. (a *. 3.) |]
+          in
+          let t = projection p in
+          let covered = Nx.item [ 0 ] (Transform.covers t (pixels px)) in
+          cover "covered" covered;
+          if covered then begin
+            let back = Transform.(apply (inverse t) (apply t (pixels px))) in
+            let back = values back Unit.one in
+            let scale = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 1. px in
+            less float_exact ~than:(1e-12 *. scale) (max_abs back px)
+          end);
+      cases ~name "do not cover what WCSLIB leaves out" Reference.projections
+        (fun p ->
+          let t = projection p in
+          if Array.length p.outside > 0 then
+            equal bool true
+              (all_equal false (Transform.covers t (pixels p.outside)));
+          if Array.length p.sky_outside > 0 then
+            equal bool true
+              (all_equal false
+                 (Transform.covers (Transform.inverse t)
+                    (lonlat_deg p.sky_outside))));
+    ]
+
+(* Distortions *)
+
+let distorted (d : Reference.distorted) =
+  let square a =
+    let n = int_of_float (Float.sqrt (float_of_int (Array.length a))) in
+    tensor [| n; n |] a
+  in
+  let middle =
+    match d.kind with
+    | "SIP" ->
+        let seed =
+          match (d.ap, d.bp) with
+          | Some ap, Some bp -> Some (square ap, square bp)
+          | _ -> None
+        in
+        Transform.(
+          sip ?seed (square d.a, square d.b)
+          >> linear (deg (tensor [| 2; 2 |] d.cd)))
+    | _ ->
+        Transform.(
+          linear (deg (tensor [| 2; 2 |] d.cd)) >> tpv (tensor [| 2; 40 |] d.pv))
+  in
+  Transform.(
+    axes [| 1; 0 |] ~origin:1
+    >> shift (one (tensor [| 2 |] d.crpix))
+    >> middle
+    >> celestial Tan Frame.icrs ~pv:no_pv
+         ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
+         ~crval:(deg (tensor [| 2 |] d.crval))
+         ~lonpole:(deg (scalar 180.))
+         ~latpole:(deg (scalar 90.)))
+
+let distortions =
+  let name (d : Reference.distorted) = d.name in
+  group "Distortions"
+    [
+      cases ~name "map pixels as astropy does" Reference.distorted (fun d ->
+          let world = Transform.apply (distorted d) (pixels d.pixels) in
+          less float_exact ~than:2e-13
+            (Array.fold_left max 0. (separation world (lonlat_deg d.world))));
+      cases ~name "map directions as astropy does" Reference.distorted
+        (fun d ->
+          let t = Transform.inverse (distorted d) in
+          let back = Transform.apply t (lonlat_deg d.sky) in
+          (* A unit in the last place of a longitude in degrees is 2e-9 of
+             these 0.05″ pixels. *)
+          less float_exact ~than:1e-8
+            (max_abs (values back Unit.one) d.sky_pixels));
+      cases ~name "cover the image both ways" Reference.distorted (fun d ->
+          let t = distorted d in
+          equal bool true (all_equal true (Transform.covers t (pixels d.pixels)));
+          equal bool true
+            (all_equal true
+               (Transform.covers (Transform.inverse t) (lonlat_deg d.sky))));
+      prop "an inverted distortion round-trips its pixels"
+        Gen.(
+          pair
+            (int_range 0 (List.length Reference.distorted - 1))
+            (pair (float_range (-100.) 2150.) (float_range (-100.) 2150.)))
+        (fun (k, (r, c)) ->
+          let t = distorted (List.nth Reference.distorted k) in
+          let back = Transform.(apply (inverse t) (apply t (pixels [| r; c |]))) in
+          less float_exact ~than:1e-9 (max_abs (values back Unit.one) [| r; c |]));
+      test "the inverse SIP differentiates in the direction" (fun () ->
+          let d = List.nth Reference.distorted 0 in
+          let t = Transform.inverse (distorted d) in
+          let column lon =
+            let s =
+              Direction.lonlat Frame.icrs ~lon:(Quantity.v Unit.degree lon)
+                ~lat:(Quantity.v Unit.degree (scalar 2.205))
+            in
+            Nx.slice [ Nx.I 1 ] (Quantity.value Unit.one (Transform.apply t s))
+          in
+          let g = Nx.item [] (Rune.grad' column (scalar 150.1004)) in
+          let fd =
+            central (fun x -> Nx.item [] (column (scalar x))) 150.1004 1e-7
+          in
+          equal (float (1e-5 *. Float.abs fd)) fd g);
+      test "a fold is outside the domain" (fun () ->
+          let a = tensor [| 3; 3 |] [| 0.; 0.; 0.; 0.; 0.; 0.; -0.01; 0.; 0. |] in
+          let b = Nx.zeros f64 [| 3; 3 |] in
+          let t = Transform.sip (a, b) in
+          (* [x = u − 0.01 u²] folds at u = 50. *)
+          let p = one (tensor [| 2; 2 |] [| 10.; 0.; 80.; 0. |]) in
+          equal (array bool) [| true; false |]
+            (Nx.to_array (Transform.covers t p));
+          raises_match
+            (Exn.invalid_arg ~substring:"point 1 is where the SIP distortion folds")
+            (fun () -> Transform.apply t p));
+    ]
+
+(* Rotations *)
+
+let rotations =
+  group "Rotations"
+    [
+      test "a rotation stage rotates as Direction.rotate does" (fun () ->
+          let d = lonlat_deg [| 10.; 20.; 266.4; -29.; 0.; 89.9 |] in
+          let t = Transform.rotation Frame.icrs Frame.galactic in
+          equal (array float_exact)
+            (Nx.to_array (Direction.xyz (Direction.rotate Frame.galactic d)))
+            (Nx.to_array (Direction.xyz (Transform.apply t d))));
+      test "its inverse swaps the frames" (fun () ->
+          let d = lonlat_deg [| 10.; 20.; 266.4; -29. |] in
+          let t = Transform.rotation Frame.icrs Frame.galactic in
+          let back = Transform.(apply (inverse t) (apply t d)) in
+          less float_exact ~than:1e-15
+            (Array.fold_left max 0. (separation d back));
+          expect (Format.asprintf "%a" Transform.pp (Transform.inverse t))
+          @@ __POS_OF__ {|rotation galactic icrs|});
+    ]
 
 (* Inverses *)
 
@@ -235,7 +441,7 @@ let domains =
             (Nx.to_array (Transform.covers t p));
           raises_match
             (Exn.invalid_arg
-               ~substring:"point 1 is 212.132 deg from the ARC reference")
+               ~substring:"point 1 is 212.132 deg from the ARC plane's origin")
             (fun () -> Transform.apply t p));
       test "a transform with no stage covers everything" (fun () ->
           equal (array bool) [| true |]
@@ -271,16 +477,35 @@ let constructors =
                 ~crval:(deg (tensor [| 2 |] [| 0.; 0. |]))
                 ~lonpole:(deg (scalar 180.))
                 ~latpole:(deg (scalar 90.))));
-      test "a native latitude other than 90 degrees raises when applied"
+      test "LONPOLE 90 with CRVAL off the equator has no pole for θ₀ = 0"
         (fun () ->
           let t =
-            Transform.celestial Transform.Tan Frame.icrs ~pv:no_pv
-              ~native:(deg (tensor [| 2 |] [| 0.; 45. |]))
-              ~crval:(deg (tensor [| 2 |] [| 0.; 0. |]))
-              ~lonpole:(deg (scalar 180.))
+            Transform.celestial Transform.Car Frame.icrs ~pv:no_pv
+              ~native:(deg (tensor [| 2 |] [| 0.; 0. |]))
+              ~crval:(deg (tensor [| 2 |] [| 10.; 20. |]))
+              ~lonpole:(deg (scalar 90.))
               ~latpole:(deg (scalar 90.))
           in
-          raises_match (Exn.invalid_arg ~substring:"native latitude") (fun () ->
+          let p = Quantity.v Unit.degree (tensor [| 2 |] [| 0.; 0. |]) in
+          equal (array bool) [| false |]
+            (Nx.to_array (Nx.reshape [| 1 |] (Transform.covers t p)));
+          raises_match (Exn.invalid_arg ~substring:"place no celestial pole")
+            (fun () -> Transform.apply t p));
+      test "parameters that define no projection raise when applied"
+        (fun () ->
+          let t =
+            Transform.celestial Transform.Cea Frame.icrs
+              ~pv:(tensor [| 1 |] [| 1.5 |])
+              ~native:(deg (tensor [| 2 |] [| 0.; 0. |]))
+              ~crval:(deg (tensor [| 2 |] [| 0.; 0. |]))
+              ~lonpole:(deg (scalar 0.))
+              ~latpole:(deg (scalar 90.))
+          in
+          raises
+            (Invalid_argument
+               "Transform.apply: the CEA stage's parameters (1.5) do not \
+                define a projection: it needs 0 < λ ≤ 1")
+            (fun () ->
               Transform.apply t
                 (Quantity.v Unit.degree (tensor [| 2 |] [| 0.; 0. |]))));
     ]
@@ -308,7 +533,6 @@ let batches =
 
 (* Gradients and compilation *)
 
-let central f x h = (f (x +. h) -. f (x -. h)) /. (2. *. h)
 
 let gradients =
   group "Gradients"
@@ -345,6 +569,68 @@ let gradients =
                  (Transform.apply (Transform.about a) b))
           in
           equal (float 1e-12) 1. (Nx.item [] (Rune.grad' f (scalar 0.3))));
+      test "ZPN's solved deprojection differentiates in the point and P3"
+        (fun () ->
+          let p =
+            List.find
+              (fun (p : Reference.projection) -> p.name = "ZPN cubic")
+              Reference.projections
+          in
+          let lat_of pv x =
+            let t =
+              Transform.celestial Transform.Zpn Frame.icrs ~pv
+                ~native:(deg (tensor [| 2 |] p.native))
+                ~crval:(deg (tensor [| 2 |] p.crval))
+                ~lonpole:(deg (scalar p.lonpole))
+                ~latpole:(deg (scalar p.latpole))
+            in
+            Quantity.value Unit.degree
+              (Direction.lat (Transform.apply t (Quantity.v Unit.degree x)))
+          in
+          let pv = tensor [| 30 |] p.pv in
+          let x0 = tensor [| 2 |] [| 12.5; -20.25 |] in
+          let gx = Rune.grad' (lat_of pv) x0 in
+          let fd =
+            central
+              (fun h ->
+                Nx.item [] (lat_of pv (tensor [| 2 |] [| 12.5; -20.25 +. h |])))
+              0. 1e-5
+          in
+          equal (float 1e-8) fd (Nx.item [ 1 ] gx);
+          let with_p3 c =
+            Nx.item []
+              (lat_of
+                 (Nx.add pv
+                    (Nx.mul_s (Nx.cast f64 (Nx.equal_s (Nx.cast f64 (Nx.arange Nx.int32 0 30 1)) 3.)) c))
+                 x0)
+          in
+          let g3 =
+            Rune.grad'
+              (fun c ->
+                lat_of
+                  (Nx.add pv
+                     (Nx.mul c (Nx.cast f64 (Nx.equal_s (Nx.cast f64 (Nx.arange Nx.int32 0 30 1)) 3.))))
+                  x0)
+              (scalar 0.)
+          in
+          equal (float 1e-6) (central with_p3 0. 1e-6) (Nx.item [] g3));
+      test "the pole differentiates in CRVAL off the native pole" (fun () ->
+          let lat_of b =
+            let t =
+              Transform.celestial Transform.Car Frame.icrs ~pv:no_pv
+                ~native:(deg (tensor [| 2 |] [| 0.; 0. |]))
+                ~crval:(deg (Nx.stack [ scalar 120.; b ]))
+                ~lonpole:(deg (scalar 0.))
+                ~latpole:(deg (scalar 90.))
+            in
+            Quantity.value Unit.degree
+              (Direction.lat
+                 (Transform.apply t
+                    (Quantity.v Unit.degree (tensor [| 2 |] [| 15.; 7. |]))))
+          in
+          let g = Nx.item [] (Rune.grad' lat_of (scalar 30.)) in
+          let fd = central (fun b -> Nx.item [] (lat_of (scalar b))) 30. 1e-6 in
+          equal (float 1e-7) fd g);
       test "compiled equals eager" (fun () ->
           let t = fits (List.hd Reference.wcs) in
           let f p = Direction.xyz (Transform.apply t (one p)) in
@@ -412,6 +698,9 @@ let () =
     (run "Transform"
        [
          wcslib;
+         projections;
+         distortions;
+         rotations;
          inverses;
          about_law;
          domains;

@@ -494,8 +494,10 @@ module Wcs = struct
           | Plane (Transform.Linear m, _) -> rank m = 2
           | Plane (Transform.Scale d, _) -> rank d = 1
           | Plane (Transform.Axes _, _) -> true
+          | Plane ((Transform.Sip _ | Transform.Tpv _), _) -> true
           | Deproject c -> scalar_celestial c
           | Project c -> scalar_celestial c
+          | Rotate _ -> true
         in
         ok && unbatched rest
 

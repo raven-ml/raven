@@ -39,9 +39,7 @@
     :with-test
     (>= 1.0.0~alpha3)))
   (jera
-   (and
-    :with-test
-    (>= 1.0.0~alpha3)))
+   (>= 1.0.0~alpha3))
   (windtrap
    (and
     :with-test

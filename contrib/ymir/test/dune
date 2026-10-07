@@ -8,9 +8,21 @@
   test_region
   test_observation
   test_cosmology
-  test_fits)
+  test_fits
+  test_layers)
  (package ymir)
  (libraries ymir ymir.units ymir_test nx rune windtrap)
  (deps
   (glob_files golden/cosmology/*.golden)
-  golden/nircam.fits))
+  golden/nircam.fits
+  layers.deps))
+
+; Each library module's dependencies, for the layer test.
+
+(rule
+ (deps
+  (glob_files ../lib/*.ml))
+ (action
+  (with-stdout-to
+   layers.deps
+   (run %{bin:ocamldep} -modules %{deps}))))

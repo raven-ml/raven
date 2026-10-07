@@ -250,23 +250,28 @@ end
 
     {[
     axes [| 1; 0 |] ~origin:1
-    >> shift crpix >> linear cd
-    >> celestial Tan Frame.icrs ~pv ~native ~crval ~lonpole ~latpole
+    >> shift crpix >> sip (a, b) >> linear cd
+    >> tpv pv >> celestial Tan Frame.icrs ~pv ~native ~crval ~lonpole ~latpole
     ]}
 
-    {!axes} holds raven's pixel convention (0-based centres in the data tensor's
-    axis order) and FITS's (1-based, [NAXIS1] first) in one stage.
+    with {!sip} and {!tpv} present when the header has them. {!axes} holds
+    raven's pixel convention (0-based centres in the data tensor's axis order)
+    and FITS's (1-based, [NAXIS1] first) in one stage.
 
     {b Units.} Each planar family reads its input in the unit it states: {!axes}
-    with an origin and {!linear} and {!scale} in {!Unit.one}, {!shift} in its
-    offset's unit, {!celestial} in an angle. A list in the wrong order raises
-    [Invalid_argument] where a stage reads its input.
+    with an origin, {!sip}, {!linear} and {!scale} in {!Unit.one}, {!shift} in
+    its offset's unit, {!tpv} and {!celestial} in an angle. A list in the wrong
+    order raises [Invalid_argument] where a stage reads its input.
 
-    {b Domains.} A stage is a bijection on its domain. TAN's projection, from
-    directions to the plane, needs native θ > 0; ARC's deprojection needs a
-    distance from the reference point of at most 180°. {!apply} at a finite
-    point outside a domain raises [Invalid_argument] through {!Nx.check}, naming
-    the stage, the point and its distance, as in
+    {b Domains.} A stage is a bijection on its domain, the connected region
+    about its reference point where its map does not fold. TAN's projection,
+    from directions to the plane, needs native θ > 0; ARC's deprojection needs
+    a distance from the reference point of at most 180°; ZPN's ends where its
+    polynomial first turns. A distortion's domain is where its Jacobian's
+    determinant is positive and, inverted, where Newton's method converges.
+    {!apply} at a finite point outside a domain raises [Invalid_argument]
+    through {!Nx.check}, naming the stage, the point and its distance or
+    residual, as in
     ["Transform.apply: point 12 is 93.1 deg from the TAN reference (110.8375,
      -73.4537) deg, outside the projection's domain; Transform.covers gives the
      mask"]. NaN maps to NaN. {!covers} gives the mask for callers that expect
@@ -285,11 +290,40 @@ module Transform : sig
   (** The type for points [[...; n]] in a plane. Pixel coordinates are in
       {!Unit.one}, intermediate and tangent-plane coordinates in an angle. *)
 
-  (** The type for projections, by their FITS codes. *)
+  (** The type for projections, by their FITS codes. Zenithal projections put
+      the native pole at the plane's origin, cylindrical ones the native point
+      (0°, 0°). Each code's parameters [pv] are listed with the FITS keywords
+      [PVi_m] of the latitude axis [i] that state them, and their defaults;
+      angles are in degrees. *)
   type code =
+    | Azp
+        (** Zenithal perspective from distance μ, onto a plane tilted by γ:
+            [[|μ; γ|]], [PVi_1], [PVi_2], defaults 0, 0. *)
+    | Szp
+        (** Slant zenithal perspective from distance μ toward (φc, θc):
+            [[|μ; φc; θc|]], [PVi_1] to [PVi_3], defaults 0, 0, 90. *)
     | Tan  (** Gnomonic: great circles map to lines. *)
+    | Stg  (** Stereographic: circles map to circles. *)
+    | Sin
+        (** Slant orthographic, along (ξ, η): [[|ξ; η|]], [PVi_1], [PVi_2],
+            defaults 0, 0. *)
     | Arc
         (** Zenithal equidistant: distance from the reference is preserved. *)
+    | Zpn
+        (** Zenithal polynomial [R = Σ Pₘ (90° − θ)ᵐ], θ in radians: 30
+            coefficients [P₀] to [P₂₉], [PVi_0] to [PVi_29], default 0. *)
+    | Zea  (** Zenithal equal area. *)
+    | Air
+        (** Airy's minimum-error zenithal, for a boundary at θb: [[|θb|]],
+            [PVi_1], default 90. *)
+    | Cyp
+        (** Cylindrical perspective from distance μ onto a cylinder of radius
+            λ: [[|μ; λ|]], [PVi_1], [PVi_2], defaults 1, 1. *)
+    | Cea
+        (** Cylindrical equal area, λ the square of the cosine of the
+            standard parallel: [[|λ|]], [PVi_1], default 1. *)
+    | Car  (** Plate carrée: x is longitude and y latitude. *)
+    | Mer  (** Mercator's: conformal. *)
 
   (** {1:constructors Constructors} *)
 
@@ -322,6 +356,35 @@ module Transform : sig
 
       Raises [Invalid_argument] if [d] is a scalar. *)
 
+  val sip :
+    ?seed:(float, Nx.float64_elt) Nx.t * (float, Nx.float64_elt) Nx.t ->
+    (float, Nx.float64_elt) Nx.t * (float, Nx.float64_elt) Nx.t ->
+    (plane, plane) t
+  (** [sip ~seed (a, b)] maps pixel offsets [(u, v)] from CRPIX, in
+      {!Unit.one}, to [(u + f, v + g)] with SIP's polynomials
+      [f = Σ a.(p).(q) uᵖ v^q] and [g = Σ b.(p).(q) uᵖ v^q]; [a] and [b] are
+      [[...; n; n]], [n] the order plus one. Its inverse solves for each point
+      with Newton's method, starting from [seed], the file's AP and BP of the
+      same form, applied as [(u + ap, v + bp)], or from the point itself.
+
+      Raises [Invalid_argument] if a matrix is not square on its last two
+      axes. *)
+
+  val tpv : ?stated:int array -> (float, Nx.float64_elt) Nx.t -> (plane, plane) t
+  (** [tpv ~stated pv] maps intermediate coordinates [(ξ, η)], in an angle, to
+      [(Σ pv.(0).(k) t_k (ξ, η), Σ pv.(1).(k) t_k (η, ξ))] in degrees, over
+      TPV's forty terms [t_k]: [1], [x], [y], [r], then the monomials of
+      each degree from 2 to 7 in decreasing powers of [x], with [r³], [r⁵]
+      and [r⁷] after degrees 3, 5 and 7, [r = √(x² + y²)]. [pv] is
+      [[...; 2; 40]], the longitude axis's [PVi_k] then the latitude axis's,
+      with the terms the file left out filled: 1 for [PV1_1] and [PV2_1], 0
+      otherwise. [stated] lists the indices of [pv] flattened on its last
+      two axes that the file gave, all by default. Its inverse solves for
+      each point with Newton's method from the point itself.
+
+      Raises [Invalid_argument] if [pv] is not [[...; 2; 40]] or [stated] not
+      ascending indices below 80. *)
+
   val celestial :
     ?stated:int array ->
     code ->
@@ -341,13 +404,26 @@ module Transform : sig
       them. Plane points are angles. [stated] lists the indices of [pv] the file
       gave, all by default.
 
-      TAN and ARC take no parameter ([m = 0]). A native latitude θ₀ other than
-      90° is not supported yet: it raises [Invalid_argument] through {!Nx.check}
-      where the stage is applied.
+      The plane's origin is the projection's own reference point, (0°, 90°)
+      for a zenithal code and (0°, 0°) for a cylindrical one, whatever
+      [native] is. The celestial pole is solved as FITS WCS Paper II states,
+      from CRVAL, (φ₀, θ₀) and LONPOLE; where two poles solve, the one nearer
+      [latpole] is taken.
+
+      Where [pv] does not define the projection or no pole solves, the stage
+      raises [Invalid_argument] through {!Nx.check} where it is applied,
+      naming the parameters.
 
       Raises [Invalid_argument] if [pv]'s last axis is not [m], if [stated] is
       not ascending indices below [m], or if an angle is not [[...; 2]] or not
       in an angle unit. *)
+
+  val rotation :
+    ('a Frame.fixed as 'f) Frame.t ->
+    ('b Frame.fixed as 'g) Frame.t ->
+    ('f Direction.t, 'g Direction.t) t
+  (** [rotation f g] maps directions in [f] to the same directions in [g], as
+      {!Direction.rotate} does. Its inverse is [rotation g f]. *)
 
   val about : 'f Direction.t -> ('f Direction.t, plane) t
   (** [about c] maps directions to angular offsets about [c], in radians, x east
