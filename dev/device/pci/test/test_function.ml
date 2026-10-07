@@ -9,6 +9,8 @@ open Device_pci_support
 
 let config_size = 4096
 
+exception In_use
+
 (* A fake machine
 
    A transport's machine that keeps the contract of each operation as this
@@ -141,7 +143,7 @@ let fake_fn m bus =
             (fun () ->
               let a = fresh m n in
               f.maps <- (a, n) :: f.maps;
-              Window.through m.tr a n));
+              Ok (Window.through m.tr a n)));
       unmap =
         (fun w ->
           call "unmap"
@@ -149,7 +151,7 @@ let fake_fn m bus =
               if List.mem (window w) f.maps then None else Some "no window")
             (fun () -> f.maps <- Option.get (remove (window w) f.maps)));
       interrupt = (fun _ -> call "interrupt" (fun () -> None) (fun () -> false));
-      reset = (fun () -> call "reset" (fun () -> None) (fun () -> ()));
+      reset = (fun () -> call "reset" (fun () -> None) (fun () -> Ok ()));
       alloc_dma =
         (fun ~contiguous ~va n ->
           let bytes = round_up n f.page in
@@ -167,9 +169,11 @@ let fake_fn m bus =
               let a = match va with Some v -> v | None -> fresh m bytes in
               let used = List.concat_map (fun g -> g.dmas) m.taken in
               if List.exists (fun r -> not (disjoint r (a, bytes))) used then
-                raise (Failed "far:1: the addresses are in use");
-              f.dmas <- (a, bytes) :: f.dmas;
-              (Window.through m.tr a bytes, runs f a bytes ~one:contiguous)));
+                Error "far:1: the addresses are in use"
+              else begin
+                f.dmas <- (a, bytes) :: f.dmas;
+                Ok (Window.through m.tr a bytes, runs f a bytes ~one:contiguous)
+              end));
       free_dma =
         (fun w ->
           call ~after_release:true "free_dma"
@@ -182,7 +186,7 @@ let fake_fn m bus =
             (fun () -> if a mod f.page <> 0 then Some "off a page" else None)
             (fun () ->
               f.pins <- (a, n) :: f.pins;
-              runs f a n ~one:false));
+              Ok (runs f a n ~one:false)));
       unpin =
         (fun a n ->
           call ~after_release:true "unpin"
@@ -249,7 +253,7 @@ let fake_machine ?(base = next_base ()) ?(page = 4096)
         page;
         functions = (fun () -> []);
         take;
-        reserve = (fun ~base:_ _ -> ());
+        reserve = (fun ~base:_ _ -> Ok ());
       }
   in
   (machine, m)
@@ -258,6 +262,14 @@ let take_fake ?base ?page ?addressing () =
   let machine, m = fake_machine ?base ?page ?addressing () in
   let f = Result.get_ok (Function.take machine bus1) in
   (machine, f, List.hd m.taken)
+
+(* The requests of a fake machine, which refuses none within its contract. *)
+let map ?off ?length f i = require_ok (Function.map ?off ?length f i)
+
+let alloc_dma ?contiguous ?va f n =
+  require_ok (Function.alloc_dma ?contiguous ?va f n)
+
+let pin f a n = require_ok (Function.pin f a n)
 
 let addressing =
   Testable.make
@@ -282,7 +294,7 @@ let test_take_asks () =
           (fun bus ->
             calls := bus :: !calls;
             Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`");
-        reserve = (fun ~base:_ _ -> ());
+        reserve = (fun ~base:_ _ -> Ok ());
       }
   in
   equal ~msg:"the machine's refusal" (result pass string)
@@ -341,7 +353,7 @@ let test_take_no_bus () =
           (fun bus ->
             calls := bus :: !calls;
             Error "asked");
-        reserve = (fun ~base:_ _ -> ());
+        reserve = (fun ~base:_ _ -> Ok ());
       }
   in
   List.iter
@@ -363,8 +375,8 @@ let test_take_failed () =
 (* After release, only free_dma and unpin reach the machine. *)
 let test_released () =
   let _, f, fake = take_fake () in
-  let d, _ = Function.alloc_dma f 4096 in
-  ignore (Function.pin f 0x5000_0000 4096 : (int * int) list);
+  let d, _ = alloc_dma f 4096 in
+  ignore (pin f 0x5000_0000 4096 : (int * int) list);
   Function.release f;
   List.iter
     (fun (name, use) ->
@@ -373,12 +385,11 @@ let test_released () =
       ("config16", fun () -> ignore (Function.config16 f 0 : int));
       ("set_config16", fun () -> Function.set_config16 f 0 0);
       ("bar", fun () -> ignore (Function.bar f 0 : (int * int) option));
-      ("map", fun () -> ignore (Function.map f 0 : Window.t));
+      ("map", fun () -> ignore (Function.map f 0 : _ result));
       ("interrupt", fun () -> ignore (Function.interrupt f 0 : bool));
-      ("reset", fun () -> Function.reset f);
-      ( "alloc_dma",
-        fun () -> ignore (Function.alloc_dma f 4096 : Window.t * _ list) );
-      ("pin", fun () -> ignore (Function.pin f 0x5000_0000 4096 : _ list));
+      ("reset", fun () -> ignore (Function.reset f : _ result));
+      ("alloc_dma", fun () -> ignore (Function.alloc_dma f 4096 : _ result));
+      ("pin", fun () -> ignore (Function.pin f 0x5000_0000 4096 : _ result));
     ];
   Function.free_dma f d;
   Function.unpin f 0x5000_0000 4096;
@@ -406,11 +417,11 @@ let taking =
 (* Pass-through: a function's windows and runs are its machine's. *)
 let test_machine_values () =
   let _, f, fake = take_fake ~page:4096 () in
-  let w = Function.map f 0 ~off:256 ~length:512 in
+  let w = map f 0 ~off:256 ~length:512 in
   equal ~msg:"a BAR window" (pair int int) (List.hd fake.maps)
     (Window.address w, Window.length w);
   equal ~msg:"its BAR" (option (pair int int)) bars.(0) (Function.bar f 0);
-  let d, runs = Function.alloc_dma f (3 * 4096) in
+  let d, runs = alloc_dma f (3 * 4096) in
   equal ~msg:"DMA memory" (pair int int) (List.hd fake.dmas)
     (Window.address d, Window.length d);
   equal ~msg:"its runs" runs_w
@@ -418,16 +429,13 @@ let test_machine_values () =
     runs;
   equal ~msg:"pinned runs" runs_w
     [ (0x7000_0000, 4096); (0x7000_1000, 4096) ]
-    (Function.pin f 0x7000_0000 8192)
+    (pin f 0x7000_0000 8192)
 
 let test_defaults () =
   let _, f, fake = take_fake () in
   let size = 64 * 1024 in
   let lengths =
-    List.map Window.length
-      [
-        Function.map f 0; Function.map f 0 ~off:256; Function.map f 0 ~length:16;
-      ]
+    List.map Window.length [ map f 0; map f 0 ~off:256; map f 0 ~length:16 ]
   in
   equal ~msg:"lengths" (list int) [ size; size - 256; 16 ] lengths;
   equal ~msg:"windows the machine mapped" int 3 (List.length fake.maps)
@@ -437,12 +445,12 @@ let test_defaults () =
 let test_other_machine () =
   let _, f, fake = take_fake ~base:(1 lsl 40) () in
   let _, g, _ = take_fake ~base:(1 lsl 40) () in
-  let w, _ = Function.alloc_dma f 4096 in
-  let w', _ = Function.alloc_dma g 4096 in
+  let w, _ = alloc_dma f 4096 in
+  let w', _ = alloc_dma g 4096 in
   equal ~msg:"one address" int (Window.address w) (Window.address w');
   raises_match ~msg:"DMA memory" (Exn.invalid_arg ~substring:"") (fun () ->
       Function.free_dma f w');
-  let b = Function.map f 0 and b' = Function.map g 0 in
+  let b = map f 0 and b' = map g 0 in
   equal ~msg:"one address" int (Window.address b) (Window.address b');
   raises_match ~msg:"a BAR window" (Exn.invalid_arg ~substring:"") (fun () ->
       Function.unmap f b');
@@ -453,22 +461,22 @@ let test_other_machine () =
 let test_empty () =
   let _, f, _ = take_fake () in
   let size = 64 * 1024 in
-  equal ~msg:"at the start" int 0 (Window.length (Function.map f 0 ~length:0));
-  equal ~msg:"at the end" int 0 (Window.length (Function.map f 0 ~off:size))
+  equal ~msg:"at the start" int 0 (Window.length (map f 0 ~length:0));
+  equal ~msg:"at the end" int 0 (Window.length (map f 0 ~off:size))
 
 (* After the reset, the function's vendor ID is read until it answers. *)
 let test_reset () =
   let _, f, fake = take_fake () in
-  Function.reset f;
+  require_ok (Function.reset f);
   equal ~msg:"asked" (list string) [ "config"; "reset" ] fake.calls
 
 (* A vendor ID of all ones is a function that does not answer. *)
 let test_reset_silent () =
   let _, f, _ = take_fake () in
   Function.set_config16 f 0 0xffff;
-  raises
-    (Failed (bus1 ^ " does not answer 1000 ms after its reset"))
-    (fun () -> Function.reset f)
+  equal (result unit string)
+    (Error (bus1 ^ " does not answer 1000 ms after its reset"))
+    (Function.reset f)
 
 let uses =
   group ~timeout:patience "uses"
@@ -500,7 +508,7 @@ let misuse_refused =
     [
       refused "a BAR index below zero" (fun f -> Function.bar f (-1));
       refused "the least BAR index" (fun f -> Function.bar f min_int);
-      refused "a map of a BAR index below zero" (fun f -> Function.map f (-1));
+      refused "a map of a BAR index below zero" (fun f -> map f (-1));
       refused "a pin off a page" ~page:16384 (fun f ->
           Function.pin f (0x5000_0000 + 4096) 4096);
       refused "DMA memory at an address off a page" ~page:16384 (fun f ->
@@ -510,9 +518,9 @@ let misuse_refused =
       refused "a huge page at an address off 2 MiB" ~page:16384
         ~addressing:Physical (fun f ->
           Function.alloc_dma ~contiguous:true ~va:(va_base + 16384) f 32768);
-      refused "DMA memory of no bytes" (fun f -> Function.alloc_dma f 0);
+      refused "DMA memory of no bytes" (fun f -> alloc_dma f 0);
       refused "DMA memory of more bytes than an int holds" (fun f ->
-          Function.alloc_dma f max_int);
+          alloc_dma f max_int);
       refused "a pin of no bytes" (fun f -> Function.pin f 0x5000_0000 0);
       refused "configuration space below its first byte" (fun f ->
           Function.config8 f (-1));
@@ -641,7 +649,7 @@ let map_ref f i off len =
       f.r_maps <- w :: f.r_maps;
       w
 
-let map_sys (f, _) i off len = Function.map ?off ?length:len f i
+let map_sys (f, _) i off len = map ?off ?length:len f i
 let without w l = List.filter (fun x -> x != w) l
 
 (* Windows are values: a window equal to a live one, as DMA memory asked twice
@@ -684,7 +692,7 @@ let alloc_at f contiguous va n =
   (match va with
   | Some a when List.exists (fun r -> not (disjoint r (a, bytes))) used ->
       cover "addresses in use" true;
-      raise (Failed "in use")
+      raise In_use
   | _ -> ());
   let w = { owner = f; kind = `Dma; len = bytes; at = va } in
   f.r_dmas <- w :: f.r_dmas;
@@ -693,7 +701,9 @@ let alloc_at f contiguous va n =
 (* Reserved addresses: the fake maps memory at any [va]. *)
 let alloc_sys (f, _) contiguous va n =
   let va = Option.map (fun v -> va_base + v) va in
-  fst (Function.alloc_dma ~contiguous ?va f n)
+  match Function.alloc_dma ~contiguous ?va f n with
+  | Ok (w, _) -> w
+  | Error _ -> raise In_use
 
 let alloc_ref f contiguous va n =
   alloc_at f contiguous (Option.map (fun v -> va_base + v) va) n
@@ -793,7 +803,7 @@ let dma_cmds =
     command "pin"
       (fn_t ^-> pin_addrs @-> pin_lens @-> returns unit)
       pin_ref
-      (fun (f, _) a n -> ignore (Function.pin f a n : (int * int) list));
+      (fun (f, _) a n -> ignore (pin f a n : (int * int) list));
     command "unpin"
       (fn_t ^-> pin_addrs @-> pin_lens @-> returns unit)
       unpin_ref (fsys Function.unpin);
@@ -958,9 +968,7 @@ let test_vfio () =
   equal ~msg:"its vendor" int d.vendor (Function.config16 f 0);
   equal ~msg:"its device" int d.device (Function.config16 f 2);
   let page = Machine.page Machine.this in
-  let allocs =
-    List.map (fun n -> Function.alloc_dma f n) [ 1; 3 * page; 2 * mib ]
-  in
+  let allocs = List.map (fun n -> alloc_dma f n) [ 1; 3 * page; 2 * mib ] in
   List.iter
     (fun (w, runs) ->
       equal ~msg:"one run of its bytes" (list int)
@@ -974,10 +982,114 @@ let test_vfio () =
     (List.filteri (fun i _ -> i < List.length runs - 1) runs)
     (List.tl runs);
   let w, _ = List.hd allocs in
-  let pinned = Function.pin f (Window.address w) (Window.length w) in
+  let pinned = pin f (Window.address w) (Window.length w) in
   equal ~msg:"a pin is one run" int 1 (List.length pinned);
   Function.unpin f (Window.address w) (Window.length w);
   List.iter (fun (w, _) -> Function.free_dma f w) allocs
+
+(* Failing at any access *)
+
+(* A machine of one function whose BAR 0 is [base, base + 4096) of the far
+   machine [far], as a transport reaches it. *)
+let far_function far =
+  let tr = Window.unsafe_transport far and base = 0x10_0000 in
+  let fn =
+    {
+      Machine.addressing = Iommu;
+      config = (fun off _ -> if off = 0 then 0x1002 else 0);
+      set_config = (fun _ _ _ -> ());
+      bar = (fun i -> if i = 0 then Some (base, 4096) else None);
+      map = (fun _ off n -> Ok (Window.through tr (base + off) n));
+      unmap = ignore;
+      interrupt = (fun _ -> false);
+      reset = (fun () -> Ok ());
+      alloc_dma = (fun ~contiguous:_ ~va:_ _ -> Error "far:1: no memory");
+      free_dma = ignore;
+      pin = (fun _ _ -> Error "far:1: no memory");
+      unpin = (fun _ _ -> ());
+      release = ignore;
+    }
+  in
+  let m =
+    Machine.make ~name:"far:1"
+      {
+        transport = tr;
+        page = 4096;
+        functions = (fun () -> []);
+        take = (fun _ -> Ok fn);
+        reserve = (fun ~base:_ _ -> Ok ());
+      }
+  in
+  (m, require_ok (Function.take m bus1))
+
+let data = "0123456789abcdef"
+
+(* A driver's step with the checks it owes: a command, a wait for the device's
+   ready bit, a copy out of 16 bytes, then [Function.failed] before the bytes
+   leave. Three accesses reach the transport. *)
+let step m f w =
+  Window.set32 w 0 1;
+  let ready () = Window.get32 w 4 land 1 = 1 in
+  if not (Machine.wait m ~ms:1000 ready) then
+    Error (Option.value (Function.failed f) ~default:"the device is not ready")
+  else
+    let s = Window.read w 8 16 in
+    match Function.failed f with Some why -> Error why | None -> Ok s
+
+let accesses = 3
+
+(* Whichever access the transport fails at, the step ends in the machine's
+   reason, never in bytes: a read through it gives all ones, and the checks
+   catch them. *)
+let fails_at_any_access =
+  prop "a transport failing at access k ends a step in Error, never in bytes"
+    (Gen.int_range 0 (accesses + 2))
+    (fun k ->
+      let far = far 0x10_0000 4096 in
+      let m, f = far_function far in
+      let w = require_ok (Function.map f 0) in
+      Window.set32 w 4 1;
+      Window.write w 8 data;
+      break_at far k;
+      cover "fails before the copy is checked" (k < accesses);
+      cover "never fails" (k >= accesses);
+      let want =
+        if k < accesses then Error "far: the link broke" else Ok data
+      in
+      equal (result string string) want (step m f w))
+
+let test_failed_function () =
+  let far = far 0x10_0000 4096 in
+  let m, f = far_function far in
+  equal ~msg:"live" (option string) None (Function.failed f);
+  break far;
+  equal ~msg:"its machine failed" (option string) (Some "far: the link broke")
+    (Function.failed f);
+  let w = require_ok (Function.map f 0) in
+  equal ~msg:"a read gives all ones" int 0xffff_ffff (Window.get32 w 4);
+  Window.set32 w 4 0;
+  equal ~msg:"a write is dropped" string (String.make 16 '\xff')
+    (Window.read w 8 16);
+  equal ~msg:"a wait is false" bool false
+    (Machine.wait m ~ms:1000 (fun () -> true))
+
+(* A function whose vendor ID reads all ones left the bus. *)
+let test_left_bus () =
+  let _, f, _ = take_fake () in
+  equal ~msg:"live" (option string) None (Function.failed f);
+  Function.set_config16 f 0 0xffff;
+  equal (option string)
+    (Some (bus1 ^ " left the bus: its vendor ID reads 0xffff"))
+    (Function.failed f)
+
+let failures =
+  group ~timeout:patience "failures"
+    [
+      fails_at_any_access;
+      test "a function of a failed machine is failed, its accesses all ones"
+        test_failed_function;
+      test "a function whose vendor ID reads 0xffff left the bus" test_left_bus;
+    ]
 
 (* A host's files *)
 
@@ -1098,4 +1210,6 @@ let this_machine =
 let () =
   exit
   @@ run "device_pci Function"
-       [ taking; uses; misuse_refused; model; host_files; this_machine ]
+       [
+         taking; uses; misuse_refused; model; failures; host_files; this_machine;
+       ]

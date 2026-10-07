@@ -24,11 +24,6 @@ val hex : int Windtrap.Testable.t
 val on_linux : bool
 (** [on_linux] is [true] iff this machine has [/sys/bus/pci]. *)
 
-val failed : ?substring:string -> exn -> bool
-(** [failed ?substring e] is [true] iff [e] is [Device_pci.Failed why] and [why]
-    contains [substring], when given: the predicate of [Windtrap.raises_match]
-    for the world's failures. *)
-
 val patience : float
 (** [patience] is 10 s, how long a test waits for what must happen: the
     [~timeout] of each suite's top groups, and {!poll}'s bound. *)
@@ -62,7 +57,7 @@ val with_gpu_lock : (unit -> 'a) -> 'a
     nothing else, reached through a transport whose C structure is at the
     machine's address. Its transport logs every access, fails once the machine
     is broken, and fails an access outside its bytes. Held, its accesses block
-    until it is let go, at most 2 s, as a link's round trip does. *)
+    until it is let go, at most 10 s, as a link's round trip does. *)
 
 val memory : int -> int
 (** [memory n] is the address of [n] new zeroed bytes of the process, never
@@ -74,6 +69,10 @@ val far : int -> int -> int
 val break : int -> unit
 (** [break far] fails [far]'s transport with the reason ["far: the link broke"].
 *)
+
+val break_at : int -> int -> unit
+(** [break_at far k] breaks [far] at its access [k] from now on, counting from
+    0: [k] accesses succeed, and from the next on [far] is broken. *)
 
 val hold : int -> unit
 (** [hold far] makes [far]'s accesses wait until {!let_go}. *)

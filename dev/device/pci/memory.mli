@@ -72,18 +72,19 @@ type memory = private {
 }
 (** The type for memory the GPU addresses. *)
 
-val alloc : ?uncached:bool -> t -> kind -> int -> memory option
+val alloc : ?uncached:bool -> t -> kind -> int -> (memory option, string) result
 (** [alloc m k n] is [n] new bytes of kind [k]: rounded up to the machine's page
     in system memory, and in the GPU's memory to 4 KiB, or to 2 MiB from 8 MiB
     on so that large ones map with large pages. With [~uncached:true] (defaults
     to [false]) the GPU bypasses its caches for them; {!Host} memory is always
-    uncached. [None] if the GPU's memory, a page table or the address space has
-    no room, as {!Page_table.alloc} bounds it, or for {!Bar} memory, if the BAR
-    does not reach a block that fits.
+    uncached. [Ok None] if the GPU's memory, a page table or the address space
+    has no room, as {!Page_table.alloc} bounds it, or for {!Bar} memory, if the
+    BAR does not reach a block that fits: freeing memory makes room. [Error why]
+    if the machine refuses system memory or a window on the BAR, having freed
+    what it took, [why] naming what is missing as {!Function.alloc_dma} does:
+    such a limit is cured by a setting, rarely by freeing memory.
 
-    Raises [Invalid_argument] if [n <= 0], and {!Device_pci.Failed} if system
-    memory cannot be allocated, having freed what it took, naming what is
-    missing as {!Function.alloc_dma} does ({{!Device_pci.errors}errors}). *)
+    Raises [Invalid_argument] if [n <= 0]. *)
 
 val free : t -> memory -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.

@@ -43,23 +43,33 @@
     {1:errors Errors}
 
     - A {e request} that the world may refuse returns [Error why]: taking a
-      function, opening or changing GPUs, finding firmware, mapping memory for a
-      GPU. The caller decides there.
+      function, mapping a BAR, allocating or pinning system memory, resetting a
+      function, reserving addresses, opening or changing GPUs, finding firmware,
+      mapping memory for a GPU. The caller decides there.
     - An allocator that runs out of GPU memory or virtual addresses for what was
       asked answers [None].
-    - An {e access} or a {e wait} on what the process holds raises {!Failed}
-      when the world fails under it: a device that stops answering, a machine
-      whose transport failed, or a limit the machine sets, such as the
-      locked-memory limit, reached while allocating system memory. Such a limit
-      is cured by a setting, rarely by freeing memory. A driver turns these
-      failures into its own errors once, where it can act: its open into an
-      [Error], its wait into a fault. A mapped access cannot fail, so no access
-      returns a [result].
+    - An {e access} never fails. A function that left the bus answers reads with
+      all ones and drops writes, and nothing tells the process; through a
+      machine whose transport failed, accesses do the same. Failure is state:
+      {!Machine.failed} for a machine, {!Function.failed} for a function, which
+      also reads the function's vendor ID. {!Machine.wait} answers [false] once
+      its machine failed.
     - {e Misuse} raises [Invalid_argument]: an index below zero, bytes outside a
       window, memory given back twice.
 
     A message names what failed and, where something grants what is missing, the
     command, privilege or setting that does.
+
+    A driver owes four checks, each where it acts on what it read:
+    + Its wait for the device: when the wait ends [false], {!Function.failed}
+      says whether the function or its machine failed, and why.
+    + Its submission from C: one look at the transport's [failed] after the last
+      access ([device_pci.h]).
+    + A progress word read through a window: read it, then ask
+      {!Function.failed}; once failed, the word keeps its last value.
+    + A read whose bytes leave the driver, such as a copy of results: ask
+      {!Function.failed} after it, which on a mapped window is needed only when
+      the bytes hold a word of all ones.
 
     {1:platforms Platforms}
 
@@ -80,12 +90,6 @@
     - The Linux kernel's
       {{:https://docs.kernel.org/admin-guide/mm/pagemap.html}pagemap}
       documentation: the physical addresses of system memory. *)
-
-exception Failed of string
-(** [Failed why] is the world failing under an access or a wait
-    ({{!errors}errors}): [why] names what failed and, where something grants
-    what is missing, the command, privilege or setting that does. A transport
-    raises it for its machine ({!Machine.make}). *)
 
 (** {1:hardware Reaching the hardware} *)
 

@@ -59,31 +59,31 @@ val functions : t -> id list
     ({!compare_address}). Listing them changes nothing on [m]. It is [[]] where
     [m] is {!this} and the system has no [/sys/bus/pci]. *)
 
-val reserve : t -> base:int -> int -> unit
+val reserve : t -> base:int -> int -> (unit, string) result
 (** [reserve m ~base n] reserves the [n] addresses from [base] on in the address
     space of the process that holds [m]'s functions, so that only
     {!Function.alloc_dma} maps memory there. A range is reserved once and stays
     reserved while that process runs; reserving it again does nothing.
 
-    Raises {!Device_pci.Failed} if part of the range is in use, or if [m] is
-    {!this} and not Linux ({{!Device_pci.errors}errors}). *)
+    [Error why] if part of the range is in use, or if [m] is {!this} and not
+    Linux. *)
 
 val wait : t -> ms:int -> (unit -> bool) -> bool
 (** [wait m ~ms f] calls [f], at least once, until it is [true] or at least [ms]
-    milliseconds passed on a monotonic clock, and is [true] iff [f] became
-    [true]. For its first millisecond it calls [f] back to back, relaxing the
-    processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
-    core. It is the loop in which drivers wait for their devices.
-
-    Raises {!Device_pci.Failed} once [m] fails, with {!failed}'s reason
-    ({{!Device_pci.errors}errors}). *)
+    milliseconds passed on a monotonic clock, or [m] failed, and is [true] iff
+    [f] became [true] while [m] had not failed: [m]'s state is read after each
+    call of [f], so an answer computed from the all ones of a failed machine is
+    not trusted. For its first millisecond it calls [f] back to back, relaxing
+    the processor; then it sleeps 0.1 ms between calls, so that a long wait
+    holds no core. It is the loop in which drivers wait for their devices. *)
 
 (** {1:transports Transports}
 
     A library that reaches another machine makes it a machine with {!make}, from
     the operations below. A transport runs each operation on the other machine
-    as the same operation of {!this} runs here, and raises {!Device_pci.Failed}
-    with a reason that starts with the machine's name when it cannot.
+    as the same operation of {!this} runs here. A request it cannot run returns
+    [Error why], [why] starting with the machine's name; once its transport
+    failed, its accesses read all ones and drop writes, and raise nothing.
 
     {!Function} refuses misuse before an operation is called, and counts the
     windows and pins of each function. An operation is called only with
@@ -109,17 +109,21 @@ type fn = Ops.fn = {
       (** [set_config off n x] writes the low [n] bytes of [x] at [off]:
           {!Function.set_config8} and its siblings. *)
   bar : int -> (int * int) option;  (** {!Function.bar}. *)
-  map : int -> int -> int -> Window.t;
+  map : int -> int -> int -> (Window.t, string) result;
       (** [map i off n] is {!Function.map} of BAR [i]. *)
   unmap : Window.t -> unit;  (** {!Function.unmap}. *)
   interrupt : int -> bool;  (** {!Function.interrupt}. *)
-  reset : unit -> unit;
+  reset : unit -> (unit, string) result;
       (** {!Function.reset}, without waiting for the function to answer. *)
   alloc_dma :
-    contiguous:bool -> va:int option -> int -> Window.t * (int * int) list;
+    contiguous:bool ->
+    va:int option ->
+    int ->
+    (Window.t * (int * int) list, string) result;
       (** {!Function.alloc_dma}. *)
   free_dma : Window.t -> unit;  (** {!Function.free_dma}. *)
-  pin : int -> int -> (int * int) list;  (** {!Function.pin}. *)
+  pin : int -> int -> ((int * int) list, string) result;
+      (** {!Function.pin}. *)
   unpin : int -> int -> unit;  (** {!Function.unpin}. *)
   release : unit -> unit;  (** {!Function.release}. *)
 }
@@ -132,7 +136,7 @@ type ops = Ops.ops = {
   page : int;  (** {!page}. *)
   functions : unit -> id list;  (** {!functions}, in any order. *)
   take : string -> (fn, string) result;  (** {!Function.take} on the machine. *)
-  reserve : base:int -> int -> unit;  (** {!reserve}. *)
+  reserve : base:int -> int -> (unit, string) result;  (** {!reserve}. *)
 }
 (** The type for the operations of a transport. *)
 

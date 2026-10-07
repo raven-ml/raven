@@ -201,18 +201,15 @@ value caml_device_pci_bigarray(value a, value n) {
 
 /* Transports, from OCaml. A transport may block for a round trip, so its
    functions run without the OCaml runtime, on a copy of the bytes: other
-   domains collect meanwhile. */
+   domains collect meanwhile. Once the transport failed, a read gives all
+   ones and a write is dropped, as for a function that left the bus: no
+   access raises. */
 
 #define TRANSPORT(v) ((const struct device_pci_transport *)Long_val(v))
 
 /* Copies of at most this many bytes, registers among them, stay on the C
    stack; longer ones are allocated. */
 #define SMALL 64
-
-static void transport_failed(const struct device_pci_transport *tr) {
-  const char *why = tr->failed(tr->ctx);
-  caml_failwith(why ? why : "the machine's transport failed");
-}
 
 /* The reason the transport [tr] failed, if it did; none for the transport 0
    of this machine, which nothing fails. [failed] answers at once: it holds
@@ -237,11 +234,10 @@ value caml_device_pci_transport_read(value tr, value a, value n) {
   char small[SMALL];
   char *buf = len <= SMALL ? small : caml_stat_alloc(len);
   caml_release_runtime_system();
-  int r = t->read(t->ctx, at, buf, len);
+  if (t->read(t->ctx, at, buf, len) != 0) memset(buf, 0xff, len);
   caml_acquire_runtime_system();
-  if (r == 0) s = caml_alloc_initialized_string(len, buf);
+  s = caml_alloc_initialized_string(len, buf);
   if (buf != small) caml_stat_free(buf);
-  if (r != 0) transport_failed(t);
   CAMLreturn(s);
 }
 
@@ -256,10 +252,9 @@ value caml_device_pci_transport_write(value tr, value a, value s, value off,
   char *buf = len <= SMALL ? small : caml_stat_alloc(len);
   memcpy(buf, String_val(s) + Long_val(off), len);
   caml_release_runtime_system();
-  int r = t->write(t->ctx, at, buf, len);
+  (void)t->write(t->ctx, at, buf, len);
   caml_acquire_runtime_system();
   if (buf != small) caml_stat_free(buf);
-  if (r != 0) transport_failed(t);
   CAMLreturn(Val_unit);
 }
 

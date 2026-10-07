@@ -63,40 +63,46 @@ let system m n =
   let n = round_up n page in
   let space = Page_table.space m.tables in
   match Space.alloc ~align:page space n with
-  | None -> None
+  | None -> Ok None
   | Some va -> (
-      let view, runs =
-        try Function.alloc_dma m.fn ~va n
-        with e ->
+      match Function.alloc_dma m.fn ~va n with
+      | exception e ->
           Space.free space va;
           raise e
-      in
-      match
-        Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
-      with
-      | Some mapping -> Some { mapping; host = Some view; source = Allocated }
-      | None ->
-          Function.free_dma m.fn view;
+      | Error why ->
           Space.free space va;
-          None)
+          Error why
+      | Ok (view, runs) -> (
+          match
+            Page_table.map ~snooped:true ~uncached:true m.tables ~va System runs
+          with
+          | Some mapping ->
+              Ok (Some { mapping; host = Some view; source = Allocated })
+          | None ->
+              Function.free_dma m.fn view;
+              Space.free space va;
+              Ok None))
 
 (* The GPU's memory, one block the process reaches through the BAR when [bar],
    or [None] if the block lies beyond it. *)
 let gpu m ~uncached ~bar n =
   let n = round_up n (if n >= large then large_page else page) in
   match Page_table.alloc ~uncached ~contiguous:bar m.tables n with
-  | None -> None
+  | None -> Ok None
   | Some mapping when not bar ->
-      Some { mapping; host = None; source = Allocated }
-  | Some mapping ->
+      Ok (Some { mapping; host = None; source = Allocated })
+  | Some mapping -> (
       let pa = fst (List.hd mapping.pages) in
       if pa + mapping.size > m.bar_size then begin
         Page_table.free m.tables mapping;
-        None
+        Ok None
       end
       else
-        let host = Function.map ~off:pa ~length:mapping.size m.fn m.bar in
-        Some { mapping; host = Some host; source = Allocated }
+        match Function.map ~off:pa ~length:mapping.size m.fn m.bar with
+        | Ok host -> Ok (Some { mapping; host = Some host; source = Allocated })
+        | Error why ->
+            Page_table.free m.tables mapping;
+            Error why)
 
 let positive fn n =
   if n <= 0 then
@@ -112,7 +118,9 @@ let alloc ?(uncached = false) m kind n =
     | Gpu -> gpu m ~uncached ~bar:false n
     | Bar | Visible -> gpu m ~uncached ~bar:true n
   in
-  Option.iter (fun mem -> Hashtbl.replace m.allocated mem.mapping.va mem) mem;
+  (match mem with
+  | Ok (Some mem) -> Hashtbl.replace m.allocated mem.mapping.va mem
+  | Ok None | Error _ -> ());
   mem
 
 (* Removes [mem] from [table], or refuses it. *)
@@ -161,8 +169,8 @@ let map_host m a n =
          (base + Page_table.span m.tables))
   else
     match Function.pin m.fn a n with
-    | exception Fail.Failed why -> Error why
-    | runs -> (
+    | Error _ as e -> e
+    | Ok runs -> (
         match
           Page_table.map ~snooped:true ~uncached:true m.tables ~va:a System runs
         with

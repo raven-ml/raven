@@ -35,14 +35,14 @@ let fake_fn fake tr bus =
     config = (fun _ _ -> 0);
     set_config = (fun _ _ _ -> ());
     bar = (fun i -> if i = 0 then Some (0, 4096) else None);
-    map = (fun _ off n -> Window.through tr off n);
+    map = (fun _ off n -> Ok (Window.through tr off n));
     unmap = (fun _ -> ());
     interrupt = (fun _ -> false);
-    reset = (fun () -> ());
+    reset = (fun () -> Ok ());
     alloc_dma =
-      (fun ~contiguous:_ ~va:_ n -> (Window.through tr 0 n, [ (0, n) ]));
+      (fun ~contiguous:_ ~va:_ n -> Ok (Window.through tr 0 n, [ (0, n) ]));
     free_dma = (fun _ -> ());
-    pin = (fun a n -> [ (a, n) ]);
+    pin = (fun a n -> Ok [ (a, n) ]);
     unpin = (fun _ _ -> ());
     release;
   }
@@ -71,7 +71,7 @@ let machine ?(name = "far:1") ids =
       page = 4096;
       functions = (fun () -> ids);
       take;
-      reserve = (fun ~base:_ _ -> ());
+      reserve = (fun ~base:_ _ -> Ok ());
     }
   in
   (Machine.make ~name ops, fake)
@@ -109,7 +109,7 @@ let three () =
 let ok () = Ok ()
 let pci g m i d = Gpus.open_pci g m i (fun _ _ -> d ())
 let kernel g m i d = Gpus.open_kernel g m i (fun _ -> d ())
-let reset g m i d = Gpus.reset g m i (fun _ -> ignore (d ()))
+let reset g m i d = Gpus.reset g m i (fun _ -> d ())
 let hold g m i = require_ok (Gpus.open_pci g m i (fun h _ -> Ok h))
 let hold_fn g m i = require_ok (Gpus.open_pci g m i (fun h fn -> Ok (h, fn)))
 
@@ -198,7 +198,10 @@ let test_reset_ith () =
   let g, m, _ = three () in
   let reset i bus =
     let seen = ref [] in
-    require_ok (Gpus.reset g m i (fun fn -> seen := Function.bus fn :: !seen));
+    require_ok
+      (Gpus.reset g m i (fun fn ->
+           seen := Function.bus fn :: !seen;
+           Ok ()));
     equal ~msg:(Printf.sprintf "GPU %d" i) (list string) [ bus ] !seen
   in
   List.iteri reset gpu_buses
@@ -276,12 +279,6 @@ let test_error_gives_back () =
   ignore (Gpus.open_pci g m 0 (fun _ _ -> Error "the GPU did not start"));
   given_back g m fake
 
-let test_raised () =
-  let g, m, fake = three () in
-  equal (result pass string) (Error "the GPU did not answer")
-    (Gpus.open_pci g m 0 (fun _ _ -> raise (Failed "the GPU did not answer")));
-  given_back g m fake
-
 let passed =
   [
     ("Invalid_argument", Invalid_argument "a bug");
@@ -327,10 +324,6 @@ let opening =
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
         test_error_gives_back;
-      test
-        "Failed from the driver is an Error that carries its reason, and gives \
-         the GPU back"
-        test_raised;
       cases
         "other exceptions from the driver pass through, and give the GPU back"
         ~name:fst passed test_passed;
@@ -400,7 +393,8 @@ let test_reset () =
   let reset_gpu fn =
     equal ~msg:"taken during the reset" taken_w [ "0000:43:00.0" ] (taken fake);
     equal (option string) (Machine.name m) (Machine.name (Function.machine fn));
-    seen := fn :: !seen
+    seen := fn :: !seen;
+    Ok ()
   in
   require_ok (Gpus.reset g m 1 reset_gpu);
   let fn = require_some (List.nth_opt !seen 0) in
@@ -417,7 +411,7 @@ let test_reset_failure () =
   let g, m, fake = three () in
   let why =
     require_error
-      (Gpus.reset g m 0 (fun _ -> raise (Failed "the GPU did not come back")))
+      (Gpus.reset g m 0 (fun _ -> Error "the GPU did not come back"))
   in
   contains ~sub:"the GPU did not come back" why;
   equal ~msg:"functions taken" taken_w [] (taken fake)
@@ -433,8 +427,8 @@ let resets =
       test "a reset takes the function, resets it and releases it" test_reset;
       test "a reset of a GPU held is refused" test_reset_held;
       test
-        "a Failed raised by the vendor's reset is an Error that carries its \
-         reason, the function released"
+        "a vendor's reset that fails is the reset's Error, the function \
+         released"
         test_reset_failure;
       test "a reset whose function cannot be taken is refused" test_reset_take;
     ]
@@ -628,19 +622,16 @@ type vendor_sys = { g : Gpus.t; m : Machine.t; fake : fake }
 exception Refused
 exception Driver_failed
 
-type start = Starts | Fails | Raises_failure | Raises_invalid
+type start = Starts | Fails | Raises_invalid
 
 let pp_start ppf s =
   Format.pp_print_string ppf
     (match s with
     | Starts -> "starts"
     | Fails -> "fails"
-    | Raises_failure -> "raises-failure"
     | Raises_invalid -> "raises-invalid")
 
-let starts =
-  Gen.of_list ~pp:pp_start [ Starts; Fails; Raises_failure; Raises_invalid ]
-
+let starts = Gen.of_list ~pp:pp_start [ Starts; Fails; Raises_invalid ]
 let indices l = Gen.of_list ~pp:Format.pp_print_int l
 
 let two_gpus =
@@ -676,7 +667,7 @@ let open_ref v start i =
   | Starts ->
       v.states.(i) <- Held;
       { v; i; back = false }
-  | Fails | Raises_failure -> raise Driver_failed
+  | Fails -> raise Driver_failed
   | Raises_invalid -> invalid_arg "a driver bug"
 
 let open_sys s start i =
@@ -688,7 +679,6 @@ let open_sys s start i =
     match start with
     | Starts -> Ok h
     | Fails -> Error "the GPU did not start"
-    | Raises_failure -> raise (Failed "the GPU did not answer")
     | Raises_invalid -> invalid_arg "a driver bug"
   in
   match Gpus.open_pci s.g s.m i driver with
@@ -717,7 +707,10 @@ let reset_ref v i =
   free
 
 let reset_sys s i =
-  let reset fn = equal ~msg:"GPU i" string two_buses.(i) (Function.bus fn) in
+  let reset fn =
+    equal ~msg:"GPU i" string two_buses.(i) (Function.bus fn);
+    Ok ()
+  in
   Result.is_ok (Gpus.reset s.g s.m i reset)
 
 (* Two domains contend for GPU 0 alone, so that they meet. *)

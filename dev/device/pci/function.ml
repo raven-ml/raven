@@ -25,8 +25,7 @@ let take machine bus =
     | Some why -> Error why
     | None when Option.is_none (Address.numbers bus) ->
         Error (Printf.sprintf "%S is no PCI bus address" bus)
-    | None -> (
-        try Machine.take machine bus with Fail.Failed why -> Error why)
+    | None -> Machine.take machine bus
   in
   Result.map
     (fun fn ->
@@ -42,6 +41,7 @@ let take machine bus =
       })
     taken
 
+let ( let* ) = Result.bind
 let machine f = f.machine
 let bus f = f.bus
 let addressing f = f.fn.addressing
@@ -114,9 +114,9 @@ let map ?(off = 0) ?length f i =
     invalid_arg
       (Printf.sprintf "Function.map: %d bytes at %d outside BAR %d of %d bytes"
          length off i size);
-  let w = f.fn.map i off length in
+  let* w = f.fn.map i off length in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.maps w ());
-  w
+  Ok w
 
 (* Removes one binding of the live window [w] from [table], or refuses [w]. *)
 let forget f table fn w =
@@ -141,12 +141,26 @@ let interrupt f ms =
 let absent = 0xffff
 let reset_ms = 1000
 
+let failed f =
+  live f "failed";
+  match Machine.failed f.machine with
+  | Some _ as why -> why
+  | None when f.fn.config 0 2 = absent ->
+      Some (Printf.sprintf "%s left the bus: its vendor ID reads 0xffff" f.bus)
+  | None -> None
+
 let reset f =
   live f "reset";
-  f.fn.reset ();
+  let* () = f.fn.reset () in
   let answers () = f.fn.config 0 2 <> absent in
-  if not (Machine.wait f.machine ~ms:reset_ms answers) then
-    Fail.fail "%s does not answer %d ms after its reset" f.bus reset_ms
+  if Machine.wait f.machine ~ms:reset_ms answers then Ok ()
+  else
+    match Machine.failed f.machine with
+    | Some why -> Error why
+    | None ->
+        Error
+          (Printf.sprintf "%s does not answer %d ms after its reset" f.bus
+             reset_ms)
 
 (* System memory *)
 
@@ -184,9 +198,9 @@ let alloc_dma ?(contiguous = false) ?va f n =
            "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs"
            va)
   | _ -> ());
-  let ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
+  let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
-  dma
+  Ok dma
 
 let free_dma f w =
   forget f f.dmas "free_dma" w;
@@ -198,9 +212,9 @@ let pin f a n =
   if n <= 0 then
     invalid_arg
       (Printf.sprintf "Function.pin: %d bytes, expected more than 0" n);
-  let runs = f.fn.pin a n in
+  let* runs = f.fn.pin a n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.pins (a, n) ());
-  runs
+  Ok runs
 
 let unpin f a n =
   Mutex.protect f.lock (fun () ->

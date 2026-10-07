@@ -47,7 +47,7 @@ let user () =
   try (Unix.getpwuid (Unix.getuid ())).pw_name
   with Not_found -> string_of_int (Unix.getuid ())
 
-(* Opens the VFIO file [file] of [bus], naming the Fail.step that grants it. *)
+(* Opens the VFIO file [file] of [bus], naming the step that grants it. *)
 let open_file bus file =
   match Unix.openfile file [ O_RDWR; O_CLOEXEC ] 0 with
   | fd -> fd
@@ -288,7 +288,7 @@ let unmap_dma bus c a n =
   | iova, k when k > 1 -> Hashtbl.replace c.maps (a, n) (iova, k - 1)
   | iova, _ ->
       if not c.closed then
-        Fail.step (Printf.sprintf "unmapping %d bytes for %s" n bus) (fun () ->
+        Fail.bug (Printf.sprintf "unmapping %d bytes for %s" n bus) (fun () ->
             unmap c.fd iova n);
       Hashtbl.remove c.maps (a, n);
       Space.free c.iova iova

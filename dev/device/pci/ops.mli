@@ -17,14 +17,17 @@ type fn = {
   config : int -> int -> int;
   set_config : int -> int -> int -> unit;
   bar : int -> (int * int) option;
-  map : int -> int -> int -> Window.t;
+  map : int -> int -> int -> (Window.t, string) result;
   unmap : Window.t -> unit;
   interrupt : int -> bool;
-  reset : unit -> unit;
+  reset : unit -> (unit, string) result;
   alloc_dma :
-    contiguous:bool -> va:int option -> int -> Window.t * (int * int) list;
+    contiguous:bool ->
+    va:int option ->
+    int ->
+    (Window.t * (int * int) list, string) result;
   free_dma : Window.t -> unit;
-  pin : int -> int -> (int * int) list;
+  pin : int -> int -> ((int * int) list, string) result;
   unpin : int -> int -> unit;
   release : unit -> unit;
 }
@@ -34,5 +37,5 @@ type ops = {
   page : int;
   functions : unit -> id list;
   take : string -> (fn, string) result;
-  reserve : base:int -> int -> unit;
+  reserve : base:int -> int -> (unit, string) result;
 }

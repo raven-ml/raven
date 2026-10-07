@@ -50,44 +50,34 @@ type taken = {
   files : Unix.file_descr list; (* every descriptor the take opened *)
 }
 
-(* Moves the [n] bytes of configuration space at [off] with [io], [doing] it; is
-   the bytes moved. *)
-let config_io t doing io off b n =
+(* Moves the [n] bytes of configuration space at [off] with [io]: the bytes
+   moved, none if the system refused. *)
+let config_io t io off b n =
   let fd, at = t.config in
-  Fail.step
-    (Printf.sprintf "%s configuration space of %s at %d" doing t.bus off)
-  @@ fun () ->
   Mutex.protect t.seek @@ fun () ->
-  ignore (Unix.lseek fd (at + off) SEEK_SET);
-  io fd b 0 n
+  match
+    ignore (Unix.lseek fd (at + off) SEEK_SET);
+    io fd b 0 n
+  with
+  | moved -> moved
+  | exception Unix.Unix_error _ -> 0
 
+(* Bytes the system does not give, as past the first 64 without CAP_SYS_ADMIN or
+   of a function that left the bus, read as all ones, as the bus answers. *)
 let config t off n =
-  let b = Bytes.create n in
-  let got = config_io t "reading" Unix.read off b n in
-  if got < n then
-    Fail.fail "%s"
-      (if off + n > Sysfs.header && Option.is_none t.container then
-         Printf.sprintf
-           "reading configuration space of %s past %d bytes needs \
-            CAP_SYS_ADMIN; run as root"
-           t.bus Sysfs.header
-       else
-         Printf.sprintf
-           "reading configuration space of %s at %d: got %d of %d bytes" t.bus
-           off got n);
+  let b = Bytes.make n '\xff' in
+  ignore (config_io t Unix.read off b n : int);
   let v = ref 0 in
   for i = n - 1 downto 0 do
     v := (!v lsl 8) lor Bytes.get_uint8 b i
   done;
   !v
 
+(* A write the system refuses is dropped, as the bus drops one. *)
 let set_config t off n x =
   let b = Bytes.init n (fun i -> Char.chr ((x lsr (8 * i)) land 0xff)) in
-  let wrote = config_io t "writing" Unix.single_write off b n in
-  if wrote < n then
-    Fail.fail "writing configuration space of %s at %d: wrote %d of %d bytes"
-      t.bus off wrote n;
-  ignore (config t off n)
+  ignore (config_io t Unix.single_write off b n : int);
+  ignore (config t off n : int)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
    bytes at [off]. *)
@@ -121,7 +111,7 @@ let map t i off n =
 let unmap w =
   if Window.length w > 0 then
     let a, n = pages (Window.address w) (Window.length w) in
-    Fail.step "unmapping a BAR" (fun () -> file_unmap a n)
+    Fail.bug "unmapping a BAR" (fun () -> file_unmap a n)
 
 let interrupt t ms =
   match t.interrupts with Some fd -> Vfio.wait fd ms | None -> false
@@ -179,14 +169,20 @@ let fn t =
       (match t.container with None -> Physical | Some _ -> Iommu);
     config = config t;
     set_config = set_config t;
-    bar = Sysfs.bar t.host t.bus;
-    map = map t;
+    bar =
+      (fun i ->
+        match Sysfs.bar t.host t.bus i with
+        | bar -> bar
+        | exception Fail.Failed _ -> None);
+    map = (fun i off n -> Fail.result (fun () -> map t i off n));
     unmap;
     interrupt = interrupt t;
-    reset = (fun () -> reset t);
-    alloc_dma = alloc_dma t;
+    reset = (fun () -> Fail.result (fun () -> reset t));
+    alloc_dma =
+      (fun ~contiguous ~va n ->
+        Fail.result (fun () -> alloc_dma t ~contiguous ~va n));
     free_dma = free_dma t;
-    pin = pin t;
+    pin = (fun a n -> Fail.result (fun () -> pin t a n));
     unpin = unpin t;
     release = (fun () -> release t);
   }
@@ -268,5 +264,5 @@ let ops host =
     page;
     functions = (fun () -> Sysfs.functions host);
     take = take host;
-    reserve;
+    reserve = (fun ~base n -> Fail.result (fun () -> reserve ~base n));
   }

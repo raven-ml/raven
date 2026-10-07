@@ -132,7 +132,7 @@ let drop_pins a n =
       match Hashtbl.find pins p with
       | 1 ->
           Hashtbl.remove pins p;
-          Fail.step "unlocking memory" (fun () -> unlock_at p page)
+          Fail.bug "unlocking memory" (fun () -> unlock_at p page)
       | k -> Hashtbl.replace pins p (k - 1))
     (pages_of a n)
 
@@ -188,7 +188,7 @@ let map_bytes ?va n ~huge ~locked =
 
 (* Returns [n] bytes at [a] to their reservation, or to the system. *)
 let unmap a n =
-  Fail.step "freeing system memory" (fun () ->
+  Fail.bug "freeing system memory" (fun () ->
       if Mutex.protect lock (fun () -> reserved_at a n) then release_at a n
       else unmap_at a n)
 

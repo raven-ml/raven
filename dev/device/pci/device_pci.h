@@ -12,8 +12,10 @@
    whose windows may be another machine's declares that its submission may
    block and runs it without the OCaml runtime.
 
-   Every access returns 0, or -1 once the transport failed: the value read
-   is then unspecified, and the transport's [failed] gives the reason.
+   Every access returns 0, or -1 once the transport failed: a read then
+   gives all ones and a write is dropped, as for a function that left the
+   bus, and the transport's [failed] gives the reason. A submission checks
+   once, after its last access.
    Values are little-endian; so is every host this library builds for. */
 
 #ifndef DEVICE_PCI_H
@@ -91,7 +93,10 @@ static inline int device_pci_load32(const struct device_pci_window *w,
     *x = *(volatile uint32_t *)(w->mapped + off);
     return 0;
   }
-  return w->transport->read(w->transport->ctx, w->address + off, x, 4);
+  if (w->transport->read(w->transport->ctx, w->address + off, x, 4) == 0)
+    return 0;
+  *x = UINT32_MAX;
+  return -1;
 }
 
 static inline int device_pci_load64(const struct device_pci_window *w,
@@ -100,7 +105,10 @@ static inline int device_pci_load64(const struct device_pci_window *w,
     *x = *(volatile uint64_t *)(w->mapped + off);
     return 0;
   }
-  return w->transport->read(w->transport->ctx, w->address + off, x, 8);
+  if (w->transport->read(w->transport->ctx, w->address + off, x, 8) == 0)
+    return 0;
+  *x = UINT64_MAX;
+  return -1;
 }
 
 /* Copies the [n] bytes at [src] to byte [off] of [w], at widths it chooses:

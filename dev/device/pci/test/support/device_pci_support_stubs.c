@@ -57,12 +57,13 @@ struct far {
   size_t size;
   uint8_t *bytes;
   int broken, outside, held, waiting;
+  long left; /* accesses that succeed before it breaks, or -1 */
   size_t logged;
   struct access log[LOG];
 };
 
 /* The longest a held access waits before it fails. */
-#define HOLD_MS 2000
+#define HOLD_MS 10000
 
 /* Whether [f] was let go within HOLD_MS. */
 static int let_go(struct far *f) {
@@ -77,6 +78,9 @@ static int let_go(struct far *f) {
 
 static int far_access(struct far *f, int write, uint64_t a, void *p,
                       size_t n) {
+  if (__atomic_load_n(&f->left, __ATOMIC_ACQUIRE) >= 0 &&
+      __atomic_fetch_sub(&f->left, 1, __ATOMIC_ACQ_REL) <= 0)
+    __atomic_store_n(&f->broken, 1, __ATOMIC_RELEASE);
   if (__atomic_load_n(&f->broken, __ATOMIC_ACQUIRE)) return -1;
   if (__atomic_load_n(&f->held, __ATOMIC_ACQUIRE) && !let_go(f)) return -1;
   if (a < f->base || a - f->base > f->size || n > f->size - (a - f->base)) {
@@ -118,7 +122,16 @@ value device_pci_test_far(value base, value size) {
   f->base = Long_val(base);
   f->size = Long_val(size);
   f->bytes = bytes;
+  f->left = -1;
   return Val_long((intnat)f);
+}
+
+/* Breaks [far] at its access [k] from now on, counting from 0: [k] accesses
+   succeed. */
+value device_pci_test_far_break_at(value far, value k) {
+  struct far *f = (struct far *)Long_val(far);
+  __atomic_store_n(&f->left, Long_val(k), __ATOMIC_RELEASE);
+  return Val_unit;
 }
 
 value device_pci_test_far_break(value far) {

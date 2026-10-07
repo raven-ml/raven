@@ -66,9 +66,6 @@ let gpu g m i =
       Error (bus ^ " is open in this process")
   | Some bus -> Ok bus
 
-(* [f ()], with the failures the world causes as [Error]s. *)
-let caught f = match f () with r -> r | exception Fail.Failed why -> Error why
-
 let interface_name = function
   | Kernel -> "through their kernel driver"
   | Pci -> "over PCI"
@@ -105,7 +102,7 @@ let open_kernel g m i f =
   let* () = refuse_interface g Kernel in
   let* bus = gpu g m i in
   let h = hold g m bus None in
-  let* v = caught (fun () -> f h) in
+  let* v = f h in
   keep g m Kernel h;
   Ok v
 
@@ -120,7 +117,7 @@ let open_pci g m i f =
   in
   let* fn = Function.take m bus in
   let h = hold g m bus (Some fn) in
-  match caught (fun () -> f h fn) with
+  match f h fn with
   | Ok v ->
       keep g m Pci h;
       Ok v
@@ -159,7 +156,7 @@ let change g fn i f =
   index fn i;
   Mutex.protect g.mutex @@ fun () ->
   let* bus = gpu g Machine.this i in
-  Local.locked Local.this bus (fun () -> caught (fun () -> Ok (f bus)))
+  Local.locked Local.this bus (fun () -> Fail.result (fun () -> f bus))
 
 let detach g i =
   change g "detach" i (fun bus ->
@@ -174,9 +171,7 @@ let reset g m i f =
   let* bus = gpu g m i in
   let* fn = Function.take m bus in
   let r =
-    Fun.protect
-      ~finally:(fun () -> Function.release fn)
-      (fun () -> caught (fun () -> Ok (f fn)))
+    Fun.protect ~finally:(fun () -> Function.release fn) (fun () -> f fn)
   in
   if Result.is_ok r then
     Mutex.protect g.holds (fun () ->

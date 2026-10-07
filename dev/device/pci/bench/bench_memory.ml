@@ -47,15 +47,15 @@ let fn ~bar_size =
     config = (fun _ _ -> 0);
     set_config = (fun _ _ _ -> ());
     bar = (fun i -> if i = 0 then Some (bar_base, bar_size) else None);
-    map = (fun _ off n -> Window.v (bar_base + off) n);
+    map = (fun _ off n -> Ok (Window.v (bar_base + off) n));
     unmap = ignore;
     interrupt = (fun _ -> false);
-    reset = ignore;
+    reset = (fun () -> Ok ());
     alloc_dma =
       (fun ~contiguous:_ ~va n ->
-        (Window.v (Option.get va) n, List.assoc n runs));
+        Ok (Window.v (Option.get va) n, List.assoc n runs));
     free_dma = ignore;
-    pin = (fun a n -> [ (a, n) ]);
+    pin = (fun a n -> Ok [ (a, n) ]);
     unpin = (fun _ _ -> ());
     release = ignore;
   }
@@ -71,7 +71,7 @@ let take ~bar_size =
         page;
         functions = (fun () -> []);
         take = (fun _ -> Ok fn);
-        reserve = (fun ~base:_ _ -> ());
+        reserve = (fun ~base:_ _ -> Ok ());
       }
   in
   Result.get_ok (Function.take machine bus)
@@ -152,7 +152,8 @@ let kinds =
     ("visible", Memory.Visible, 256 * mib);
   ]
 
-let resident m kind = List.iter (fun (_, n) -> ignore (Memory.alloc m kind n))
+let resident m kind =
+  List.iter (fun (_, n) -> ignore (Memory.alloc m kind n : _ result))
 
 let memory kind ~bar_size =
   let m = Memory.create (take ~bar_size) (page_table ()) ~bar:0 in
@@ -161,8 +162,9 @@ let memory kind ~bar_size =
 
 let alloc_free m kind n =
   match Memory.alloc m kind n with
-  | Some mem -> Memory.free m mem
-  | None -> failwith "alloc-free: no memory"
+  | Ok (Some mem) -> Memory.free m mem
+  | Ok None -> failwith "alloc-free: no memory"
+  | Error why -> failwith ("alloc-free: " ^ why)
 
 let rows =
   let kind (name, kind, bar_size) =

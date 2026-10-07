@@ -57,7 +57,9 @@ let runs k n =
         ((n + page - 1) / page)
         (fun i -> (fresh (), min page (n - (i * page))))
 
-let refuse k = Option.iter (fun why -> raise (Failed why)) k.refuse
+(* [Error why] if [k] refuses, else [Ok (f ())]. *)
+let unless_refused k f =
+  match k.refuse with Some why -> Error why | None -> Ok (f ())
 
 let rec remove x = function
   | [] -> []
@@ -69,13 +71,14 @@ let ops k =
     config = (fun _ _ -> 0);
     set_config = (fun _ _ _ -> ());
     bar = (fun i -> if i = 0 then Some k.bar else None);
-    map = (fun _ off n -> Window.through (Lazy.force bars) (fst k.bar + off) n);
+    map =
+      (fun _ off n -> Ok (Window.through (Lazy.force bars) (fst k.bar + off) n));
     unmap = ignore;
     interrupt = (fun _ -> false);
-    reset = ignore;
+    reset = (fun () -> Ok ());
     alloc_dma =
       (fun ~contiguous:_ ~va n ->
-        refuse k;
+        unless_refused k @@ fun () ->
         let va =
           match va with
           | Some va -> va
@@ -91,7 +94,7 @@ let ops k =
         k.dma <- List.filter (fun (a, _) -> a <> Window.address w) k.dma);
     pin =
       (fun a n ->
-        refuse k;
+        unless_refused k @@ fun () ->
         k.pins <- (a, n) :: k.pins;
         runs k n);
     unpin = (fun a n -> k.pins <- remove (a, n) k.pins);
@@ -130,7 +133,7 @@ let machine () =
       page;
       functions = (fun () -> []);
       take;
-      reserve = (fun ~base:_ _ -> ());
+      reserve = (fun ~base:_ _ -> Ok ());
     }
   in
   { machine = Machine.make ~name:"fake" ops; fakes; config }
@@ -247,8 +250,11 @@ let capacity x =
   ( drain (fun () -> Page_table.palloc ~zero:false t 4096) (Page_table.pfree t),
     drain (fun () -> Space.alloc s page) (Space.free s) )
 
+(* [Memory.alloc], which the fake machine never refuses unless asked. *)
+let alloc_opt ?uncached m kind n = require_ok (Memory.alloc ?uncached m kind n)
+
 let alloc ?uncached x kind n =
-  match Memory.alloc ?uncached x.memory kind n with
+  match alloc_opt ?uncached x.memory kind n with
   | Some mem -> mem
   | None -> fail "the GPU's memory has room"
 
@@ -304,8 +310,8 @@ let test_no_bytes =
     (List.concat_map
        (fun n ->
          [
-           ("alloc Gpu", n, fun x -> ignore (Memory.alloc x.memory Gpu n));
-           ("alloc Host", n, fun x -> ignore (Memory.alloc x.memory Host n));
+           ("alloc Gpu", n, fun x -> ignore (alloc_opt x.memory Gpu n));
+           ("alloc Host", n, fun x -> ignore (alloc_opt x.memory Host n));
            ( "map_host",
              n,
              fun x -> ignore (Memory.map_host x.memory tables_base n) );
@@ -475,14 +481,14 @@ let test_out_of_memory () =
   let x = gpu () in
   let before = capacity x in
   is_none ~msg:"more than the GPU's memory" ~pp:pp_memory
-    (Memory.alloc x.memory Gpu (gpu_memory + 4096));
+    (alloc_opt x.memory Gpu (gpu_memory + 4096));
   is_none ~msg:"a BAR block larger than the memory" ~pp:pp_memory
-    (Memory.alloc x.memory Bar (gpu_memory + 4096));
+    (alloc_opt x.memory Bar (gpu_memory + 4096));
   let y = gpu ~memory:(512 * mib) () in
   is_none ~msg:"more than the space" ~pp:pp_memory
-    (Memory.alloc y.memory Gpu (2 * space_length));
+    (alloc_opt y.memory Gpu (2 * space_length));
   is_none ~msg:"system memory larger than the space" ~pp:pp_memory
-    (Memory.alloc y.memory Host (2 * space_length));
+    (alloc_opt y.memory Host (2 * space_length));
   equal ~msg:"no system memory held" int 0 (List.length y.fake.dma);
   equal ~msg:"nothing held" (pair int int) before (capacity x);
   Function.release x.fn;
@@ -491,7 +497,7 @@ let test_out_of_memory () =
 let test_small_bar_fills () =
   let x = gpu ~memory:(512 * mib) ~bar:(256 * mib) () in
   let rec fill acc =
-    match Memory.alloc x.memory Bar mib with
+    match alloc_opt x.memory Bar mib with
     | Some mem -> fill (mem :: acc)
     | None -> acc
   in
@@ -503,7 +509,7 @@ let test_small_bar_fills () =
        blocks);
   not_equal ~msg:"blocks" int 0 (List.length blocks);
   is_some ~msg:"the GPU's memory past the BAR remains"
-    (Memory.alloc x.memory Gpu (64 * mib));
+    (alloc_opt x.memory Gpu (64 * mib));
   Function.release x.fn
 
 (* The main pool full, with the tables in it: system memory that needs new
@@ -512,9 +518,7 @@ let fill_main x =
   let rec go n =
     if n < 4096 then ()
     else
-      match Memory.alloc x.memory Gpu n with
-      | Some _ -> go n
-      | None -> go (n / 2)
+      match alloc_opt x.memory Gpu n with Some _ -> go n | None -> go (n / 2)
   in
   go (8 * mib)
 
@@ -522,7 +526,7 @@ let test_tables_full () =
   let x = gpu ~tables:Main ~memory:(16 * mib) () in
   fill_main x;
   is_none ~msg:"system memory" ~pp:pp_memory
-    (Memory.alloc x.memory Host (64 * mib));
+    (alloc_opt x.memory Host (64 * mib));
   equal ~msg:"no system memory held" int 0 (List.length x.fake.dma);
   Function.release x.fn
 
@@ -532,13 +536,13 @@ let test_system_refused () =
   x.fake.refuse <- Some "fake: the locked-memory limit (ulimit -l) is reached";
   List.iter
     (fun kind ->
-      raises_match (failed ~substring:"ulimit -l") (fun () ->
-          Memory.alloc x.memory kind (64 * kib)))
+      contains ~sub:"ulimit -l"
+        (require_error (Memory.alloc x.memory kind (64 * kib))))
     [ Memory.Host; Visible ];
   equal ~msg:"its addresses returned" (pair int int) before (capacity x);
   x.fake.refuse <- None;
   is_some ~msg:"allocated once the limit is lifted"
-    (Memory.alloc x.memory Host (64 * kib));
+    (alloc_opt x.memory Host (64 * kib));
   Function.release x.fn
 
 (* Freeing *)

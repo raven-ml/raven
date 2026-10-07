@@ -26,8 +26,8 @@ let fake ?(page = 16384) ?(ids = []) ?(name = "far:7000") () =
         take = (fun _ -> ask "take" (Error "far:7000: taken"));
         reserve =
           (fun ~base n ->
-            if base = 0 then raise (Failed "far:7000: the range is in use");
-            ask (Printf.sprintf "reserve 0x%x %d" base n) ());
+            if base = 0 then Error "far:7000: the range is in use"
+            else ask (Printf.sprintf "reserve 0x%x %d" base n) (Ok ()));
       }
   in
   { far; machine; calls }
@@ -224,12 +224,14 @@ let functions =
 
 let test_reserve () =
   let f = fake () in
-  Machine.reserve f.machine ~base:0x2000_0000_0000 (1 lsl 30);
+  let reserved = result unit string in
+  equal ~msg:"reserved" reserved (Ok ())
+    (Machine.reserve f.machine ~base:0x2000_0000_0000 (1 lsl 30));
   equal ~msg:"asked" (list string)
     [ "reserve 0x200000000000 1073741824" ]
     !(f.calls);
-  raises ~msg:"refused" (Failed "far:7000: the range is in use") (fun () ->
-      Machine.reserve f.machine ~base:0 4096)
+  equal ~msg:"refused" reserved (Error "far:7000: the range is in use")
+    (Machine.reserve f.machine ~base:0 4096)
 
 (* A range of this process's addresses far from what the runtime maps. *)
 let free_base = 0x6f00_0000_0000
@@ -237,14 +239,14 @@ let free_base = 0x6f00_0000_0000
 let test_reserve_this () =
   let n = 4 lsl 20 in
   (match Machine.reserve Machine.this ~base:free_base n with
-  | () -> ()
-  | exception Failed why -> skip ~reason:why ());
-  Machine.reserve Machine.this ~base:free_base n;
+  | Ok () -> ()
+  | Error why -> skip ~reason:why ());
+  require_ok ~msg:"again" (Machine.reserve Machine.this ~base:free_base n);
   let page = Machine.page Machine.this in
   let used = memory (4 * page) in
   let base = (used + page - 1) / page * page in
-  raises_match (failed ~substring:"in use") (fun () ->
-      Machine.reserve Machine.this ~base page)
+  contains ~sub:"in use"
+    (require_error (Machine.reserve Machine.this ~base page))
 
 let reservations =
   group ~timeout:patience "reservations"
@@ -302,20 +304,22 @@ let test_zero () =
 let test_failed_wait () =
   let f = fake () in
   break f.far;
-  let why = Option.get (Machine.failed f.machine) in
-  raises (Failed why) (fun () ->
-      Machine.wait f.machine ~ms:10_000 (fun () -> false))
+  let n, cond = counter () in
+  equal ~msg:"result" bool false (Machine.wait f.machine ~ms:10_000 (cond 1));
+  equal ~msg:"calls" int 1 !n
 
+(* The condition holds on the call during which the machine fails, as one
+   computed from all ones would: the wait does not trust it. *)
 let test_fails_during () =
   let f = fake () in
   let n = ref 0 in
   let cond () =
     incr n;
     if !n = 3 then break f.far;
-    false
+    !n >= 3
   in
-  raises (Failed "far: the link broke") (fun () ->
-      Machine.wait f.machine ~ms:10_000 cond)
+  equal ~msg:"result" bool false (Machine.wait f.machine ~ms:10_000 cond);
+  equal ~msg:"calls" int 3 !n
 
 let waits =
   group ~timeout:patience "waits"
@@ -329,8 +333,9 @@ let waits =
         test_full_time;
       test "a long wait holds no core" test_naps;
       test "a wait of 0 ms asks its condition once (unstated)" test_zero;
-      test "a wait on a failed machine raises its reason" test_failed_wait;
-      test "a machine that fails during a wait ends it with its reason"
+      test "a wait on a failed machine is false, its condition asked once"
+        test_failed_wait;
+      test "a machine that fails during a wait ends it false at once"
         test_fails_during;
     ]
 

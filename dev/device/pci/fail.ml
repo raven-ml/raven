@@ -5,9 +5,15 @@
 
 exception Failed of string
 
-let () = Callback.register_exception "Device_pci.Failed" (Failed "")
 let fail fmt = Printf.ksprintf (fun why -> raise (Failed why)) fmt
 
 let step what f =
   try f ()
   with Unix.Unix_error (e, _, _) -> fail "%s: %s" what (Unix.error_message e)
+
+let result f = match f () with v -> Ok v | exception Failed why -> Error why
+
+let bug what f =
+  try f ()
+  with Unix.Unix_error (e, _, _) ->
+    failwith (Printf.sprintf "%s: %s" what (Unix.error_message e))

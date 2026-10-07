@@ -54,8 +54,8 @@ external bigarray_at :
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
   = "caml_device_pci_bigarray"
 
-(* Through a transport: its C functions, which raise Device_pci.Failed with its
-   reason once it failed. *)
+(* Through a transport: its C functions. Once it failed, a read gives all ones
+   and a write is dropped. *)
 
 external transport_read : transport -> int -> int -> string
   = "caml_device_pci_transport_read"

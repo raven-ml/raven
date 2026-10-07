@@ -19,7 +19,6 @@ external c_write : Window.t -> int -> string -> int = "device_pci_test_write"
 (* Far machines put their bytes at [base], away from 0 so that an access sent to
    its offset in place of its address misses them. *)
 let base = 0x4000_0000
-let broke = Failure "far: the link broke"
 
 (* [mapped skew n] and [through skew n] are [n] fresh zero bytes whose address
    is [skew] modulo 8. A far machine holds exactly the window's bytes. *)
@@ -436,15 +435,22 @@ let test_blocking () =
   Domain.join other;
   equal ~msg:"the word" int 0 x
 
-let failed_accesses =
+(* Through a failed transport a read gives all ones, as a function that left the
+   bus answers: each read as the bytes it gives. *)
+let failed_reads =
   [
-    ("get8", fun w -> ignore (Window.get8 w 1));
+    ("get8", fun w -> (Printf.sprintf "%x" (Window.get8 w 1), "ff"));
+    ("get32", fun w -> (Printf.sprintf "%x" (Window.get32 w 4), "ffffffff"));
+    ( "get64",
+      fun w -> (Printf.sprintf "%Lx" (Window.get64 w 8), "ffffffffffffffff") );
+    ("read", fun w -> (Window.read w 1 9, String.make 9 '\xff'));
+  ]
+
+let failed_writes =
+  [
     ("set8", fun w -> Window.set8 w 1 0);
-    ("get32", fun w -> ignore (Window.get32 w 4));
     ("set32", fun w -> Window.set32 w 4 0);
-    ("get64", fun w -> ignore (Window.get64 w 8));
     ("set64", fun w -> Window.set64 w 8 0L);
-    ("read", fun w -> ignore (Window.read w 1 9));
     ("write", fun w -> Window.write w 1 "123456789");
     ("fill", fun w -> Window.fill w 1 9 'x');
   ]
@@ -463,7 +469,8 @@ let c_failed =
 let broken () =
   let f, w = far_window 32 in
   break f;
-  w
+  ignore (log f : _ list);
+  (f, w)
 
 let transports =
   group ~timeout:patience "transports"
@@ -473,11 +480,17 @@ let transports =
          test_order;
        test "a domain whose transport access blocks holds no other"
          test_blocking;
-       cases ~name:fst "a failed transport fails with its reason"
-         failed_accesses (fun (_, run) ->
-           raises broke (fun () -> run (broken ())));
+       cases ~name:fst "a read through a failed transport gives all ones"
+         failed_reads (fun (_, read) ->
+           let got, want = read (snd (broken ())) in
+           equal string want got);
+       cases ~name:fst "a write through a failed transport is dropped"
+         failed_writes (fun (_, write) ->
+           let f, w = broken () in
+           write w;
+           equal (list access) [] (log f));
        cases ~name:fst "a C access returns -1 once its transport failed"
-         c_failed (fun (_, run) -> equal int (-1) (run (broken ())));
+         c_failed (fun (_, run) -> equal int (-1) (run (snd (broken ()))));
      ]
     @ bulk)
 

@@ -18,17 +18,6 @@ let hex =
 
 let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 
-let contains ~sub s =
-  let n = String.length sub in
-  let rec at i =
-    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
-  in
-  at 0
-
-let failed ?(substring = "") = function
-  | Device_pci.Failed why -> contains ~sub:substring why
-  | _ -> false
-
 external now_ns : unit -> int = "device_pci_test_now_ns"
 
 let patience = 10.
@@ -71,6 +60,7 @@ let with_gpu_lock f =
 external memory : int -> int = "device_pci_test_memory"
 external far : int -> int -> int = "device_pci_test_far"
 external break : int -> unit = "device_pci_test_far_break"
+external break_at : int -> int -> unit = "device_pci_test_far_break_at"
 external hold : int -> unit = "device_pci_test_far_hold"
 external waiting : int -> bool = "device_pci_test_far_waiting"
 external let_go : int -> unit = "device_pci_test_far_let_go"

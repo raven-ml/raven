@@ -77,6 +77,14 @@ val addressing : t -> Machine.addressing
 val released : t -> bool
 (** [released f] is [true] iff {!release} gave [f] back. *)
 
+val failed : t -> string option
+(** [failed f] is why [f] can no longer be reached, if it cannot: its machine
+    failed ({!Machine.failed}), or [f] left the bus, its vendor ID reading
+    [0xffff]. It reads configuration space, so a driver asks it where it acts on
+    what it read, off its hot path ({{!Device_pci.errors}errors}).
+
+    Raises [Invalid_argument] if [f] was released. *)
+
 (** {1:config Configuration space}
 
     A function's configuration space is 4096 bytes of little-endian values.
@@ -84,10 +92,11 @@ val released : t -> bool
     function behind an IOMMU or has [CAP_SYS_ADMIN].
 
     Each access raises [Invalid_argument] if its bytes are not in the
-    configuration space, and {!Device_pci.Failed} naming [CAP_SYS_ADMIN] if they
-    lie past the first 64 bytes, [f] was taken physically and the process lacks
-    that capability. A write reads its bytes back, so it has reached the
-    function when it returns. *)
+    configuration space, and nothing else. A read the function or the system
+    does not answer gives all ones: on a function that left the bus or a failed
+    machine, and past the first 64 bytes of a function taken physically by a
+    process without [CAP_SYS_ADMIN]. A write reads its bytes back, so it has
+    reached the function when it returns; one the system refuses is dropped. *)
 
 val config8 : t -> int -> int
 (** [config8 f off] is the byte at [off] of [f]'s configuration space. *)
@@ -120,14 +129,14 @@ val bar : t -> int -> (int * int) option
 
     Raises [Invalid_argument] if [i < 0]. *)
 
-val map : ?off:int -> ?length:int -> t -> int -> Window.t
+val map : ?off:int -> ?length:int -> t -> int -> (Window.t, string) result
 (** [map f i] is a window on [length] bytes (defaults to the rest of the BAR) of
     [f]'s BAR [i] from byte [off] (defaults to [0]), until {!unmap} or
     {!release}. Child processes do not inherit it.
 
-    Raises [Invalid_argument] if [i < 0] or the bytes do not lie in the BAR, and
-    {!Device_pci.Failed} if VFIO or the kernel does not let the process map
-    them. *)
+    [Error why] if VFIO or the kernel does not let the process map them.
+
+    Raises [Invalid_argument] if [i < 0] or the bytes do not lie in the BAR. *)
 
 val unmap : t -> Window.t -> unit
 (** [unmap f w] unmaps [w].
@@ -145,12 +154,12 @@ val interrupt : t -> int -> bool
 
     Raises [Invalid_argument] if [ms < 0]. *)
 
-val reset : t -> unit
+val reset : t -> (unit, string) result
 (** [reset f] resets [f] with the reset Linux has for it, and waits at most a
     second for it to answer again. It clears the state a previous driver left.
 
-    Raises {!Device_pci.Failed} naming the file if the process may not reset [f]
-    or Linux has none for it, and if [f] does not answer in time. *)
+    [Error why] naming the file if the process may not reset [f] or Linux has
+    none for it, if [f] does not answer in time, or if its machine failed. *)
 
 (** {1:dma System memory}
 
@@ -168,7 +177,11 @@ val reset : t -> unit
       locked pages. *)
 
 val alloc_dma :
-  ?contiguous:bool -> ?va:int -> t -> int -> Window.t * (int * int) list
+  ?contiguous:bool ->
+  ?va:int ->
+  t ->
+  int ->
+  (Window.t * (int * int) list, string) result
 (** [alloc_dma f n] is [n] bytes, rounded up to {!Machine.page}, of new, zeroed
     memory of [f]'s machine, locked where it is, at [va] inside a range
     {!Machine.reserve} reserved or where the machine chooses without [va], with
@@ -177,12 +190,12 @@ val alloc_dma :
     larger than a page, it is a huge page the system must have free
     ([vm.nr_hugepages]).
 
+    [Error why] naming what is missing if the machine cannot: free memory or a
+    huge page, or one of the privileges, settings and limits above.
+
     Raises [Invalid_argument] if [n <= 0] or rounding it up overflows, if [va]
     is not on a page or in no range {!Machine.reserve} reserved, if [contiguous]
-    memory is larger than 2 MiB, or if [va] is not on 2 MiB for a huge page.
-    Raises {!Device_pci.Failed} naming what is missing if the machine cannot:
-    free memory or a huge page, or one of the privileges, settings and limits
-    above ({{!Device_pci.errors}errors}). *)
+    memory is larger than 2 MiB, or if [va] is not on 2 MiB for a huge page. *)
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more.
@@ -190,15 +203,16 @@ val free_dma : t -> Window.t -> unit
     Raises [Invalid_argument] if [w] is no live window {!alloc_dma} returned for
     [f]. *)
 
-val pin : t -> int -> int -> (int * int) list
+val pin : t -> int -> int -> ((int * int) list, string) result
 (** [pin f a n] locks the [n] bytes at [a] of [f]'s machine, which start on a
     page, and is the runs at which [f] reaches them. Pins are counted: memory
     stays locked until each pin is {!unpin}ned, and behind an IOMMU [(a, n)]
     stays mapped for [f] as long.
 
-    Raises [Invalid_argument] if [a] is not on a page or [n <= 0], and
-    {!Device_pci.Failed} as {!alloc_dma} does, or if the pages cannot be locked
-    or their addresses read. *)
+    [Error why] as {!alloc_dma}, or if the pages cannot be locked or their
+    addresses read.
+
+    Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)
 
 val unpin : t -> int -> int -> unit
 (** [unpin f a n] releases one pin of the [n] bytes at [a].

@@ -40,10 +40,10 @@ val buses : t -> Machine.t -> string list
 
     An open is a bracket. It holds the GPU and calls the driver's [f], which
     starts the GPU. If [f] is [Ok _], the process keeps the hold until
-    {!release} or {!lose}; otherwise the open gives back what it took.
-    {!Device_pci.Failed} raised by [f] is an [Error] whose message is its
-    reason, so a driver's open raises nothing the world causes; other exceptions
-    pass through, the GPU given back. *)
+    {!release} or {!lose}; otherwise the open gives back what it took. An
+    exception raised by [f] passes through, the GPU given back: a driver reports
+    the world's failures as [Error]s, the library's requests returning them and
+    its accesses raising nothing ({{!Device_pci.errors}errors}). *)
 
 type hold
 (** The type for the process's hold on one GPU. *)
@@ -127,11 +127,15 @@ val attach : t -> int -> (unit, string) result
     module is not loaded. *)
 
 val reset :
-  t -> Machine.t -> int -> (Function.t -> unit) -> (unit, string) result
+  t ->
+  Machine.t ->
+  int ->
+  (Function.t -> (unit, string) result) ->
+  (unit, string) result
 (** [reset g m i f] takes the function of GPU [i] of [m], calls [f] on it to
-    reset the GPU as its vendor does, and releases it, whatever [f] raises. A
-    GPU lost over PCI opens again after a reset whose [f] returns. Exceptions
-    raised by [f] are as in {{!holds}an open}.
+    reset the GPU as its vendor does, and releases it, whatever [f] returns or
+    raises. A GPU lost over PCI opens again after a reset whose [f] is [Ok ()].
+    Exceptions raised by [f] pass through, as in {{!holds}an open}.
 
-    [Error why] if [i] is no GPU, if the process holds it, or if its function
-    cannot be taken. *)
+    [Error why] if [i] is no GPU, if the process holds it, if its function
+    cannot be taken, or [f]'s. *)
