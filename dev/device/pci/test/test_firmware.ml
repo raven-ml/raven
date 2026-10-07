@@ -51,11 +51,15 @@ let rec remove path =
   end
   else Sys.remove path
 
-(* Every file the suite writes is under one directory, removed at exit. *)
+(* Every file the suite writes is under one directory beside it in _build,
+   cleared at the start of a run, since a killed run leaves it, and removed at
+   exit. *)
 let root =
   lazy
-    (let d = Filename.temp_dir "firmware" "" in
-     at_exit (fun () -> remove d);
+    (let d = Filename.concat (Sys.getcwd ()) "firmware.tmp" in
+     if Sys.file_exists d then remove d;
+     Sys.mkdir d 0o755;
+     at_exit (fun () -> if Sys.file_exists d then remove d);
      d)
 
 let temp_dir () = Filename.temp_dir ~temp_dir:(Lazy.force root) "d" ""
