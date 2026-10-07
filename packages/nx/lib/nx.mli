@@ -2537,10 +2537,12 @@ val betainc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
     +inf], at [x = 0] with [a = 0] or [b = +inf], and at [x = 1] with [b = 0]
     or [a = +inf].
 
+    At [(2, 3, 1/2)] it is [11/16], here to the 13 digits its bound fixes:
+
     {@ocaml[
       # betainc (scalar float64 2.) (scalar float64 3.) (scalar float64 0.5)
-        |> item []
-      - : float = 0.6875
+        |> item [] |> Printf.sprintf "%.13g"
+      - : string = "0.6875"
     ]} *)
 
 val betaincc : (float, 'b) t -> (float, 'b) t -> (float, 'b) t -> (float, 'b) t
