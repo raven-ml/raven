@@ -1,14 +1,10 @@
-; The process memory is the tests' own.
-
-(copy_files# ../test/test_stubs.c)
-
 (executable
  (name bench_window)
  (modules bench_window)
- (libraries device_pci thumper)
+ (libraries device_pci device_pci_support thumper)
  (foreign_stubs
   (language c)
-  (names test_stubs bench_window_stubs)))
+  (names bench_window_stubs)))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe from this directory under _build/default.

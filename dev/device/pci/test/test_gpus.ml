@@ -5,8 +5,7 @@
 
 open Windtrap
 open Device_pci
-
-external far : int -> int -> int = "test_far"
+open Device_pci_support
 
 (* A fake machine
 

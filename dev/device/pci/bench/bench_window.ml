@@ -15,7 +15,8 @@
 
 open Device_pci
 
-external buffer : int -> int = "test_memory"
+let buffer = Device_pci_support.memory
+
 external far : unit -> int = "bench_far"
 external store32 : Window.t -> int = "bench_store32" [@@noalloc]
 external store64 : Window.t -> int = "bench_store64" [@@noalloc]

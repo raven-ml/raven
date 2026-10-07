@@ -1,14 +1,11 @@
 (tests
- (names test_window test_memory test_machine test_function test_gpus)
- (libraries device_pci unix windtrap)
- (foreign_stubs
-  (language c)
-  (names test_stubs)))
-
-(tests
- (names test_space test_page_table)
- (libraries device_pci windtrap))
-
-(tests
- (names test_firmware)
- (libraries device_pci unix windtrap))
+ (names
+  test_window
+  test_memory
+  test_machine
+  test_function
+  test_gpus
+  test_space
+  test_page_table
+  test_firmware)
+ (libraries device_pci device_pci_support unix windtrap))

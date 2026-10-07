@@ -5,10 +5,7 @@
 
 open Windtrap
 open Device_pci
-
-external far : int -> int -> int = "test_far"
-external break : int -> unit = "test_far_break"
-external now_ns : unit -> int = "test_now_ns"
+open Device_pci_support
 
 let ms_since t0 = (now_ns () - t0) / 1_000_000
 
@@ -36,8 +33,6 @@ let fake ?(page = 16384) ?(ids = []) ?(name = "far:7000") () =
       }
   in
   { far; machine; calls }
-
-let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 
 (* Bus addresses *)
 
@@ -217,8 +212,6 @@ let test_reserve () =
 
 (* A range of this process's addresses far from what the runtime maps. *)
 let free_base = 0x6f00_0000_0000
-
-external memory : int -> int = "test_memory"
 
 let test_reserve_this () =
   let n = 4 lsl 20 in

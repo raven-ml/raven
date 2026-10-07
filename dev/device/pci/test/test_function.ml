@@ -5,12 +5,8 @@
 
 open Windtrap
 open Device_pci
+open Device_pci_support
 
-external far : int -> int -> int = "test_far"
-external break : int -> unit = "test_far_break"
-
-let mib = 1 lsl 20
-let round_up n page = (n + page - 1) / page * page
 let config_size = 4096
 
 (* A fake machine
@@ -870,8 +866,6 @@ let parallel =
 let model = group "against a model" [ sequences; parallel ]
 
 (* This machine *)
-
-let on_linux = Sys.file_exists "/sys/bus/pci/devices"
 
 let sysfs bus file =
   Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file

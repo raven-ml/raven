@@ -9,15 +9,9 @@
 
 open Windtrap
 open Device_pci
+open Device_pci_support
 
-external far : int -> int -> int = "test_far"
-
-let pp_hex ppf x = Format.fprintf ppf "0x%x" x
-let hex = Testable.make ~pp:pp_hex ~equal:Int.equal
 let ranges = list (pair hex hex)
-let kib = 1024
-let mib = 1 lsl 20
-let round_up n a = (n + a - 1) / a * a
 
 (* The fake machine's page, larger than the GPU's 4 KiB. *)
 let page = 16 * kib

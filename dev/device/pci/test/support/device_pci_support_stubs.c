@@ -28,7 +28,7 @@
 
 #include "device_pci.h"
 
-value test_memory(value n) {
+value device_pci_test_memory(value n) {
   void *p = calloc(1, Long_val(n) + 1);
   if (p == NULL) caml_raise_out_of_memory();
   return Val_long((intnat)p);
@@ -102,7 +102,7 @@ static const char *far_failed(void *ctx) {
   return NULL;
 }
 
-value test_far(value base, value size) {
+value device_pci_test_far(value base, value size) {
   struct far *f = calloc(1, sizeof *f);
   uint8_t *bytes = calloc(1, Long_val(size) + 1);
   if (f == NULL || bytes == NULL) caml_raise_out_of_memory();
@@ -114,13 +114,13 @@ value test_far(value base, value size) {
   return Val_long((intnat)f);
 }
 
-value test_far_break(value far) {
+value device_pci_test_far_break(value far) {
   struct far *f = (struct far *)Long_val(far);
   __atomic_store_n(&f->broken, 1, __ATOMIC_RELEASE);
   return Val_unit;
 }
 
-value test_far_hold(value far) {
+value device_pci_test_far_hold(value far) {
   struct far *f = (struct far *)Long_val(far);
   __atomic_store_n(&f->waiting, 0, __ATOMIC_RELEASE);
   __atomic_store_n(&f->held, 1, __ATOMIC_RELEASE);
@@ -128,23 +128,23 @@ value test_far_hold(value far) {
 }
 
 /* Whether an access waits on the hold. */
-value test_far_waiting(value far) {
+value device_pci_test_far_waiting(value far) {
   struct far *f = (struct far *)Long_val(far);
   return Val_bool(__atomic_load_n(&f->waiting, __ATOMIC_ACQUIRE));
 }
 
-value test_far_let_go(value far) {
+value device_pci_test_far_let_go(value far) {
   struct far *f = (struct far *)Long_val(far);
   __atomic_store_n(&f->held, 0, __ATOMIC_RELEASE);
   return Val_unit;
 }
 
 /* The accesses since the last call, oldest first, as (write, address, n). */
-value test_far_log(value far) {
+value device_pci_test_far_log(value far) {
   CAMLparam1(far);
   CAMLlocal3(l, a, cell);
   struct far *f = (struct far *)Long_val(far);
-  if (f->logged > LOG) caml_failwith("test_far_log: the log overflowed");
+  if (f->logged > LOG) caml_failwith("device_pci_test_far_log: the log overflowed");
   l = Val_emptylist;
   for (size_t i = f->logged; i > 0; i--) {
     struct access *x = &f->log[i - 1];
@@ -170,7 +170,7 @@ static struct device_pci_window window(value w) {
 }
 
 /* (address, length, mapped pointer or 0, has a transport) */
-value test_window_of(value w) {
+value device_pci_test_window_of(value w) {
   CAMLparam1(w);
   CAMLlocal1(r);
   struct device_pci_window x = window(w);
@@ -182,24 +182,24 @@ value test_window_of(value w) {
   CAMLreturn(r);
 }
 
-value test_store32(value w, value off, value x) {
+value device_pci_test_store32(value w, value off, value x) {
   struct device_pci_window v = window(w);
   return Val_int(device_pci_store32(&v, Long_val(off), (uint32_t)Long_val(x)));
 }
 
-value test_store64(value w, value off, value x) {
+value device_pci_test_store64(value w, value off, value x) {
   struct device_pci_window v = window(w);
   return Val_int(device_pci_store64(&v, Long_val(off), Int64_val(x)));
 }
 
-value test_load32(value w, value off) {
+value device_pci_test_load32(value w, value off) {
   struct device_pci_window v = window(w);
   uint32_t x;
   if (device_pci_load32(&v, Long_val(off), &x)) return Val_none;
   return caml_alloc_some(Val_long(x));
 }
 
-value test_load64(value w, value off) {
+value device_pci_test_load64(value w, value off) {
   CAMLparam2(w, off);
   struct device_pci_window v = window(w);
   uint64_t x;
@@ -207,7 +207,7 @@ value test_load64(value w, value off) {
   CAMLreturn(caml_alloc_some(caml_copy_int64(x)));
 }
 
-value test_write(value w, value off, value s) {
+value device_pci_test_write(value w, value off, value s) {
   struct device_pci_window v = window(w);
   return Val_int(
       device_pci_write(&v, Long_val(off), String_val(s), caml_string_length(s)));
@@ -215,7 +215,7 @@ value test_write(value w, value off, value s) {
 
 /* The monotonic clock */
 
-value test_now_ns(value unit) {
+value device_pci_test_now_ns(value unit) {
   (void)unit;
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);

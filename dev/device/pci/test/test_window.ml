@@ -5,20 +5,16 @@
 
 open Windtrap
 open Device_pci
+open Device_pci_support
 
-external memory : int -> int = "test_memory"
-external far : int -> int -> int = "test_far"
-external break : int -> unit = "test_far_break"
-external log : int -> (bool * int * int) list = "test_far_log"
-external hold : int -> unit = "test_far_hold"
-external waiting : int -> bool = "test_far_waiting"
-external let_go : int -> unit = "test_far_let_go"
-external window_of : Window.t -> int * int * int * bool = "test_window_of"
-external c_store32 : Window.t -> int -> int -> int = "test_store32"
-external c_store64 : Window.t -> int -> int64 -> int = "test_store64"
-external c_load32 : Window.t -> int -> int option = "test_load32"
-external c_load64 : Window.t -> int -> int64 option = "test_load64"
-external c_write : Window.t -> int -> string -> int = "test_write"
+external window_of : Window.t -> int * int * int * bool
+  = "device_pci_test_window_of"
+
+external c_store32 : Window.t -> int -> int -> int = "device_pci_test_store32"
+external c_store64 : Window.t -> int -> int64 -> int = "device_pci_test_store64"
+external c_load32 : Window.t -> int -> int option = "device_pci_test_load32"
+external c_load64 : Window.t -> int -> int64 option = "device_pci_test_load64"
+external c_write : Window.t -> int -> string -> int = "device_pci_test_write"
 
 (* Far machines put their bytes at [base], away from 0 so that an access sent to
    its offset in place of its address misses them. *)

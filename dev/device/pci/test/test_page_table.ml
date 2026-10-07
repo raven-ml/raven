@@ -9,17 +9,9 @@
 
 open Windtrap
 open Device_pci
+open Device_pci_support
 
-let pp_hex ppf x = Format.fprintf ppf "0x%x" x
-
-let hex =
-  Testable.with_compare Int.compare (Testable.make ~pp:pp_hex ~equal:Int.equal)
-
-let kib = 1024
-let mib = 1 lsl 20
-let gib = 1 lsl 30
 let page = 4096
-let round_up n a = (n + a - 1) / a * a
 
 (* The fake format *)
 

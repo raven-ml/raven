@@ -7,11 +7,7 @@
 
 open Windtrap
 open Device_pci
-
-let pp_hex ppf x = Format.fprintf ppf "0x%x" x
-
-let hex =
-  Testable.with_compare Int.compare (Testable.make ~pp:pp_hex ~equal:Int.equal)
+open Device_pci_support
 
 (* The model *)
 
