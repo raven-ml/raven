@@ -44,7 +44,8 @@ val length : Gpu.t -> buffer:int -> int -> int
 type wave = {
   cu : int;
       (** The compute unit, numbered within its shader engine; on GFX11 on, its
-          workgroup processor and shader array. *)
+          workgroup processor, with its shader array above it: the array's
+          number shifted left by 3 bits on GFX11 and 4 on GFX12. *)
   simd : int;  (** The SIMD of the compute unit. *)
   slot : int;  (** The SIMD's wave slot. *)
   start : int;  (** When the wave started, in shader cycles. *)

@@ -18,15 +18,16 @@ val size : Gpu.t -> int -> int
 
 val tmpring : Gpu.t -> int -> int
 (** [tmpring g n] is the word of [COMPUTE_TMPRING_SIZE] for kernels of [n] bytes
-    per lane: the size of a wave's scratch, in the generation's units, and the
-    waves one die's scratch serves, divided among its shader engines after GFX9
-    and at most every slot's.
+    per lane: the size of a wave's scratch, in units of 1024 bytes on GFX9 and
+    of 256 bytes after, and the waves one die's scratch serves, divided among
+    its shader engines after GFX9 and at most every slot's.
 
     Raises [Invalid_argument] if [g]'s GC has no such register. *)
 
 val descriptor : Gpu.t -> base:int -> int -> string
 (** [descriptor g ~base n] is the 16 bytes of the buffer descriptor of the
     scratch buffer of [n] bytes at address [base], split evenly among [g]'s
-    dies, as a queue that dispatches AQL packets hands it to kernels.
+    dies, [n / g.xccs] bytes each, as a queue that dispatches AQL packets hands
+    it to kernels.
 
     Raises [Invalid_argument] if [g]'s GC has no buffer descriptor layout. *)
