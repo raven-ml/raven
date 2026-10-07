@@ -260,7 +260,7 @@ let open_ h files bus =
    the first count. *)
 let map_dma fn bus c a n =
   Mutex.protect c.mutex @@ fun () ->
-  if c.closed then invalid_argf "Function.%s: %s was released" fn bus;
+  if c.closed then invalid_argf "Function.%s: %s is released" fn bus;
   match Hashtbl.find_opt c.maps (a, n) with
   | Some (iova, k) ->
       Hashtbl.replace c.maps (a, n) (iova, k + 1);
