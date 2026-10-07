@@ -60,18 +60,9 @@ let needs_thread_states () =
   if T.running_threads () < 0 then
     skip ~reason:"the system does not report its threads' states" ()
 
-(* Polls until at most [n] threads other than this one run, for at most [within]
-   seconds, and is the last count. *)
-let settle_to n ~within =
-  let deadline = Unix.gettimeofday () +. within in
-  let rec poll () =
-    let k = T.running_threads () in
-    if k <= n || Unix.gettimeofday () > deadline then k
-    else (
-      Unix.sleepf 0.001;
-      poll ())
-  in
-  poll ()
+(* [settle_to n] polls until at most [n] threads other than this one run, for at
+   most 5 s, and is the last count. *)
+let settle_to n = P.settle 5. T.running_threads (fun k -> k <= n)
 
 let test_made_once () =
   needs_two_cores ();
@@ -88,8 +79,7 @@ let test_parks () =
   needs_thread_states ();
   needs_two_cores ();
   ignore (P.record ~threads:cores ~total:64L ~chunks:8L);
-  equal ~msg:"threads running once the pool is idle" int 0
-    (settle_to 0 ~within:5.);
+  equal ~msg:"threads running once the pool is idle" int 0 (settle_to 0);
   P.reset ();
   let finished = Atomic.make false in
   let caller =
@@ -101,7 +91,7 @@ let test_parks () =
   P.within 10. "a parked worker was not woken for the job" (fun () ->
       P.hold_arrived () = 2);
   equal ~msg:"threads running while a worker holds the job: the caller parked"
-    int 1 (settle_to 1 ~within:5.);
+    int 1 (settle_to 1);
   P.hold_release ();
   P.within 10. "the parked caller was not woken at the job's end" (fun () ->
       Atomic.get finished);
@@ -123,7 +113,7 @@ let test_narrow_burst () =
         T.burst_stop ();
         Domain.join burst)
       (fun () ->
-        ignore (settle_to 2 ~within:5.);
+        ignore (settle_to 2);
         List.init 51 (fun _ ->
             Unix.sleepf 0.001;
             T.running_threads ()))

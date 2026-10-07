@@ -85,32 +85,20 @@ let distinct l = List.sort_uniq compare l
 
 (* Waiting *)
 
-(* [finishes ~within what f] is [f ()], run on a domain of its own, and fails
-   the test if it has not returned after [within] seconds: a job that waits
-   forever fails the test instead of hanging it. *)
-let finishes ?(within = 10.) what f =
+(* [finishes what f] is [f ()], run on a domain of its own, and fails the test
+   if it has not returned after 10 s: a job that waits forever fails the test
+   instead of hanging it. *)
+let finishes what f =
   let result = Atomic.make None in
   let d =
     Domain.spawn (fun () ->
         Atomic.set result
           (Some (match f () with v -> Ok v | exception e -> Error e)))
   in
-  let deadline = Unix.gettimeofday () +. within in
-  let rec wait () =
-    match Atomic.get result with
-    | Some (Ok v) ->
-        Domain.join d;
-        v
-    | Some (Error e) ->
-        Domain.join d;
-        raise e
-    | None ->
-        if Unix.gettimeofday () > deadline then
-          failf "%s had not returned after %gs" what within;
-        Unix.sleepf 0.001;
-        wait ()
-  in
-  wait ()
+  P.within 10. (what ^ " had not returned") (fun () ->
+      Option.is_some (Atomic.get result));
+  Domain.join d;
+  match Option.get (Atomic.get result) with Ok v -> v | Error e -> raise e
 
 (* Cores *)
 

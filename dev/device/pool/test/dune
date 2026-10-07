@@ -1,22 +1,15 @@
 ; The pool's suites. Their probes are the C stubs of libraries of their own,
-; which call nx_pool.h as a consumer's stubs do. test_pool runs on every
-; system. test_threads forks and reads signal masks and thread states, so it
-; runs where POSIX does.
-
-(library
- (name pool_probe)
- (modules pool_probe)
- (libraries device_pool unix windtrap)
- (foreign_stubs
-  (language c)
-  (names pool_probe_stubs)))
+; which call nx_pool.h as a consumer's stubs do: pool_probe, in support/,
+; which both suites share, and thread_probe. test_pool runs on every system.
+; test_threads forks and reads signal masks and thread states, so it runs
+; where POSIX does.
 
 (library
  (name thread_probe)
  (modules thread_probe)
  (enabled_if
   (<> %{os_type} Win32))
- (libraries device_pool)
+ (libraries device_pool pool_probe)
  (foreign_stubs
   (language c)
   (names thread_probe_stubs)))
@@ -61,11 +54,11 @@
   (and
    (<> %{os_type} Win32)
    (<> %{profile} sanitize)))
- (deps ../dlldevice_pool_stubs.so dllpool_probe_stubs.so)
+ (deps ../dlldevice_pool_stubs.so support/dllpool_probe_stubs.so)
  (action
   (setenv
    CAML_LD_LIBRARY_PATH
-   "..:.:%{lib:windtrap:../stublibs}"
+   "..:.:support:%{lib:windtrap:../stublibs}"
    (run %{dep:test_pool.bc}))))
 
 (rule
@@ -76,10 +69,10 @@
    (<> %{profile} sanitize)))
  (deps
   ../dlldevice_pool_stubs.so
-  dllpool_probe_stubs.so
+  support/dllpool_probe_stubs.so
   dllthread_probe_stubs.so)
  (action
   (setenv
    CAML_LD_LIBRARY_PATH
-   "..:.:%{lib:windtrap:../stublibs}"
+   "..:.:support:%{lib:windtrap:../stublibs}"
    (run %{dep:test_threads.bc}))))

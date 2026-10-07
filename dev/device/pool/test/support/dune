@@ -1,0 +1,11 @@
+; What the pool's suites share: pool_probe, the probes of nx_pool.h whose
+; bodies record what the pool did, and the suites' waits; pool_probe.h, the
+; clock and patience its stubs and thread_probe's share.
+
+(library
+ (name pool_probe)
+ (libraries device_pool unix windtrap)
+ (install_c_headers pool_probe)
+ (foreign_stubs
+  (language c)
+  (names pool_probe_stubs)))

@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Probes of nx_pool.h (pool_probe_stubs.c), and the waits the suites share. *)
+(* What the pool's suites share: probes of nx_pool.h (pool_probe_stubs.c), and
+   their waits. *)
 
 (* Recorded jobs *)
 
@@ -77,15 +78,24 @@ let needs_two_cores () =
 
 (* Waiting *)
 
+(* [settle seconds read ok] reads [read ()] every millisecond until [ok] holds
+   of the value or [seconds] have passed, and is the last value read. *)
+let settle seconds read ok =
+  let deadline = Unix.gettimeofday () +. seconds in
+  let rec poll () =
+    let v = read () in
+    if ok v || Unix.gettimeofday () > deadline then v
+    else (
+      Unix.sleepf 0.001;
+      poll ())
+  in
+  poll ()
+
 (* Polls [ready] for at most [seconds], and fails with [why] if it never
    holds. *)
 let within seconds why ready =
-  let deadline = Unix.gettimeofday () +. seconds in
-  while not (ready ()) do
-    if Unix.gettimeofday () > deadline then
-      Windtrap.failf "after %gs, %s" seconds why;
-    Unix.sleepf 0.001
-  done
+  if not (settle seconds ready Fun.id) then
+    Windtrap.failf "after %gs, %s" seconds why
 
 (* [while_held f] is [f ()], run while another domain's job of two threads runs:
    every chunk of it waits until [f] has returned. *)

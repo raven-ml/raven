@@ -41,18 +41,7 @@
 #endif
 
 #include "nx_pool.h"
-
-/* Time */
-
-/* Far longer than any wakeup: only a pool that never runs the awaited chunk
-   reaches it. */
-static const int64_t patience = INT64_C(10000000000);
-
-static int64_t now_ns(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
-}
+#include "pool_probe.h"
 
 static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;

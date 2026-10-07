@@ -28,8 +28,6 @@
 
 #if defined(_WIN32)
 #include <windows.h>
-#else
-#include <time.h>
 #endif
 
 #if defined(__APPLE__)
@@ -39,26 +37,9 @@
 #endif
 
 #include "nx_pool.h"
+#include "pool_probe.h"
 
 /* Time */
-
-/* Far longer than any wakeup: only a pool that never runs the awaited chunk,
-   or never ends the awaited job, reaches it. */
-static const int64_t patience = INT64_C(10000000000);
-
-static int64_t now_ns(void) {
-#if defined(_WIN32)
-  LARGE_INTEGER count, frequency;
-  QueryPerformanceCounter(&count);
-  QueryPerformanceFrequency(&frequency);
-  int64_t c = count.QuadPart, f = frequency.QuadPart;
-  return c / f * 1000000000 + c % f * 1000000000 / f;
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
-#endif
-}
 
 static void spin_ns(int64_t ns) {
   int64_t end = now_ns() + ns;
