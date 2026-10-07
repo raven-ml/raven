@@ -1790,12 +1790,15 @@ let test_host (target, call, addend, table) =
     [ sym_entry "ext" Undefined ]
     (List.map (fun (r : Elf.relocation) -> r.symbol) calls)
 
+(* Each test's limit, in seconds. *)
+let timeout = 30.
+
 let () =
   exit
   @@ run "device_elf"
        [
-         test "an object's header fields" test_header;
-         group "layout"
+         test ~timeout "an object's header fields" test_header;
+         group ~timeout "layout"
            [
              test "sections without addresses follow the image's end in order"
                test_appended;
@@ -1813,7 +1816,7 @@ let () =
              prop ~count:300 "reading allocates as much at any address"
                gen_address law_address;
            ];
-         group "symbols"
+         group ~timeout "symbols"
            [
              test "each kind of place" test_places;
              test "an addressed object's symbol values are addresses"
@@ -1825,7 +1828,7 @@ let () =
              prop ~count:300 "a lookup agrees with the table" gen_case
                law_lookup;
            ];
-         group "relocations"
+         group ~timeout "relocations"
            [
              test "kinds, addends and symbols, in order" test_relocations;
              test "each resolves through its own section's table" test_own_table;
@@ -1834,7 +1837,7 @@ let () =
              test "a dynamic relocation patches an address in the image"
                test_dynamic_relocations;
            ];
-         group "extended numbering"
+         group ~timeout "extended numbering"
            [
              test "the section count in the null section" test_extended_header;
              test "a symbol's section in the extended index table" test_xindex;
@@ -1844,8 +1847,9 @@ let () =
              test "10,000 relocation sections, in linear time"
                test_many_relocation_sections;
            ];
-         prop ~count:300 "an object reads back as written" gen_case law_tables;
-         group "refusals"
+         prop ~timeout ~count:300 "an object reads back as written" gen_case
+           law_tables;
+         group ~timeout "refusals"
            [
              cases ~name:fst "a malformed object is an error" refusals
                (fun (_, obj) ->
@@ -1858,12 +1862,12 @@ let () =
              prop ~count:2000 "a corrupted object reads or is refused"
                gen_corruption law_total;
            ];
-         group "32-bit objects"
+         group ~timeout "32-bit objects"
            [
              test "sections, symbols and relocations" test_elf32;
              test "firmware read by section name" test_firmware32;
            ];
-         group "real objects"
+         group ~timeout "real objects"
            [
              test "an NVIDIA cubin" test_cubin;
              test "an AMD code object" test_hsaco;
