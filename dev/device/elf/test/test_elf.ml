@@ -836,6 +836,26 @@ let test_dynamic_relocations () =
   ignore (refused (obj ~at:0xff));
   ignore (refused (obj ~at:0x204))
 
+(* A thread-local section without bytes takes no memory, so the section after it
+   starts at its address, as a linker lays out [.tbss] and [.init_array]. *)
+let test_tbss_addresses () =
+  let dyn, dynnames = symbols [] in
+  let o =
+    read
+      (write
+         [
+           section ~addr:0x100 ".text" "ABCD";
+           tbss ~addr:0x200 ".tbss" 16;
+           section ~addr:0x200 ".data" "EFGH";
+           symtab ~kind:sht_dynsym ~name:".dynsym" ~link:5 dyn;
+           strtab ~name:".dynstr" dynnames;
+           rela_section ~name:".rela.dyn" ~link:4 ~info:0 [ (0x202, 0, 8, 0) ];
+         ])
+  in
+  equal ~msg:"one at its addresses patches the section that holds them"
+    (list int) [ 0x102 ]
+    (List.map (fun (r : Elf.relocation) -> r.offset) o.relocations)
+
 (* Extended section numbering *)
 
 let test_extended_header () =
@@ -1969,6 +1989,12 @@ let () =
                test_unloaded_relocations;
              test "a dynamic relocation patches an address in the image"
                test_dynamic_relocations;
+             xfail
+               ~reason:
+                 "a relocation at the addresses of .tbss is refused, though \
+                  the section after it holds them"
+               (test "one at a thread-local section's addresses"
+                  test_tbss_addresses);
            ];
          group ~timeout "extended numbering"
            [
