@@ -78,6 +78,10 @@ let needs_two_cores () =
 
 (* Waiting *)
 
+(* Each test's limit in seconds, past the 10 s that a probe or a poll waits
+   before it fails with what it waited for. *)
+let timeout = 30.
+
 (* [settle seconds read ok] reads [read ()] every millisecond until [ok] holds
    of the value or [seconds] have passed, and is the last value read. *)
 let settle seconds read ok =

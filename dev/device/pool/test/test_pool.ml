@@ -127,7 +127,7 @@ let test_windows_cores () =
   equal ~msg:"cores" int active cores
 
 let cores_tests =
-  group "cores"
+  group ~timeout:P.timeout "cores"
     [
       test "the cores and the performance cores are within their bounds"
         test_core_bounds;
@@ -300,7 +300,7 @@ let test_wide_job (total, chunks, expected) =
     (cut (0L :: List.map snd expected) ran)
 
 let chunk_tests =
-  group "chunks"
+  group ~timeout:P.timeout "chunks"
     [
       prop ~count:300 ~examples:job_examples
         "a job calls ranges of whole chunks of the stated bounds that cover \
@@ -353,7 +353,7 @@ let test_visibility () =
   equal ~msg:"values the caller read stale" int 0 caller
 
 let worker_tests =
-  group "workers"
+  group ~timeout:P.timeout "workers"
     [
       prop ~examples:job_examples
         "a call's worker is below the job's threads, the caller's 0, one per \
@@ -436,7 +436,7 @@ let job_commands =
   ]
 
 let scheduling_tests =
-  group "scheduling"
+  group ~timeout:P.timeout "scheduling"
     [
       test "a job of one thread runs at once while another thread's job runs"
         test_one_thread_at_once;

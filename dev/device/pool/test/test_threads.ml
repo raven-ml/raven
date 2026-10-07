@@ -45,7 +45,7 @@ let test_faults () =
     (List.mapi (fun k s -> (s, v.(1) land (1 lsl k) <> 0)) T.faults)
 
 let worker_tests =
-  group "workers"
+  group ~timeout:P.timeout "workers"
     [
       test "a body on a worker has 8 MiB of stack" test_stack;
       test "workers block every signal but those a body raises itself"
@@ -163,7 +163,7 @@ let test_fork_waits () =
   Domain.join forker
 
 let thread_tests =
-  group "threads"
+  group ~timeout:P.timeout "threads"
     [
       test
         "the workers are made at the first job of more than one thread and \
