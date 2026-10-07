@@ -11,7 +11,7 @@
     one, since making it calls Metal on the device's objects, so the driver
     gives the means as a {!t} when it opens the device, under {!key}.
 
-    {b Fills.} A piece of work on the device's queue is a C function
+    {b Fills.} Work for the device's queue can be a C function, a {e fill}:
     [int fill(void *queue, void *arg, uint64_t v)]. [queue] points at a word
     that holds the open compute command encoder, an [id] the driver made before
     the call: its command buffer runs after the device's earlier work, and every
@@ -19,8 +19,9 @@
     encoder, for instance [executeCommandsInBuffer:withRange:], and nothing
     else: it ends no encoder and makes no other encoder or command buffer, and
     waiting for earlier work and signalling [v] are the driver's. {!field-split}
-    starts a new command buffer. The fill returns [0], or a failure, and then
-    encodes nothing after it. [queue] is valid only during the call.
+    starts a new command buffer. The fill stops at the first call that fails and
+    returns its failure, which is not [0], or returns [0] once every call
+    succeeded. [queue] is valid only during the call.
 
     After the fill returns, the driver ends and commits the last command buffer.
     The value [v] is reached once every command buffer of the work completed; if
