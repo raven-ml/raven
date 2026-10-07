@@ -40,13 +40,12 @@ external set64_at : (int[@untagged]) -> (int64[@unboxed]) -> unit
 
 external read_at : int -> int -> string = "caml_device_pci_read"
 
+(* [write_at] and [fill_at] release the runtime from 8 KiB on
+   (device_pci_window.c), so neither is [@@noalloc]. *)
 external write_at : int -> string -> int -> int -> unit
   = "caml_device_pci_write_at"
-[@@noalloc]
 
 external fill_at : int -> int -> int -> unit = "caml_device_pci_fill"
-[@@noalloc]
-
 external barrier : unit -> unit = "caml_device_pci_barrier" [@@noalloc]
 
 external bigarray_at :

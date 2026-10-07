@@ -284,6 +284,73 @@ let bigarrays =
               Window.bigarray (through 0 16)));
     ]
 
+(* Long copies
+
+   A copy of 8 KiB or more moves in pieces, with the runtime released for each,
+   while another domain compacts the heap and moves the strings it copies. *)
+
+let piece = 8192
+
+(* [(skew, n, off)]: the bytes from [off] of a mapped window of [n] bytes. *)
+let long_place =
+  let open Gen in
+  bind
+    (pair skew (int_range (piece - 8) ((3 * piece) + 9)))
+    (fun (s, n) -> map (fun off -> (s, n, off)) (int_range 0 9))
+  |> with_pp (fun ppf (s, n, off) ->
+      Format.fprintf ppf "skew %d, length %d, from %d" s n off)
+
+(* [f ()] while another domain compacts the heap, and whether a compaction ran
+   meanwhile. *)
+let compacting f =
+  let compactions () = (Gc.quick_stat ()).compactions in
+  let stop = Atomic.make false in
+  let before = compactions () in
+  let other =
+    Domain.spawn (fun () ->
+        while not (Atomic.get stop) do
+          Gc.compact ()
+        done)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set stop true;
+      Domain.join other)
+    f;
+  compactions () > before
+
+let long_copies (skew, n, off) =
+  let w = mapped skew n and k = n - off in
+  let s = String.init k (fun i -> Char.chr (((i * 7) + skew) land 0xff)) in
+  let t =
+    "ab" ^ String.map (fun c -> Char.chr ((Char.code c + 1) land 0xff)) s ^ "cd"
+  in
+  cover "8 KiB or more" (k >= piece);
+  cover "a part of a piece at the end" (k > piece && k mod piece <> 0);
+  let moved =
+    compacting (fun () ->
+        Window.write w off s;
+        equal ~msg:"read after write" string s (Window.read w off k);
+        Window.blit_string t 2 w off k;
+        equal ~msg:"read after blit_string" string (String.sub t 2 k)
+          (Window.read w off k);
+        Window.fill w off k 'q';
+        equal ~msg:"read after fill" string (String.make k 'q')
+          (Window.read w off k);
+        equal ~msg:"the bytes before" string (String.make off '\000')
+          (Window.read w 0 off))
+  in
+  cover "the heap compacted during the copies" moved
+
+let long =
+  group "long copies"
+    [
+      prop
+        "read, write, blit_string and fill agree with the bytes while the heap \
+         moves"
+        long_place long_copies;
+    ]
+
 (* Transports *)
 
 let access = triple bool int int
@@ -438,4 +505,5 @@ let c_view =
 
 let () =
   exit
-  @@ run "device_pci" [ same_bytes; windows; bigarrays; transports; c_view ]
+  @@ run "device_pci"
+       [ same_bytes; windows; bigarrays; long; transports; c_view ]

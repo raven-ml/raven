@@ -106,16 +106,16 @@ static void fill_words(volatile uint8_t *p, size_t n, uint8_t b) {
   for (; i < n; i++) p[i] = b;
 }
 
-/* Copies of at least PIECE bytes release the runtime, moving a piece at a
-   time through a buffer on the C stack, since OCaml strings may move while
-   the runtime is released; shorter ones hold it and copy in place. A read
-   from a BAR is a PCIe round trip, about 1 us a word, and every other
-   domain waits at its next collection for one that holds the runtime: 8 KiB
-   bounds that wait to about 2 ms. On an M1 Max a release and reacquire take
-   42 ns and a copy of process memory a word at a time runs at 10 GB/s, 800
-   ns for 8 KiB; a piece through the buffer adds about a quarter to that,
-   the pair 5% and the buffer's memcpy the rest, and under 0.01% to the 2 ms
-   of a BAR's. */
+/* Copies of at least PIECE bytes release the runtime, so their externals are
+   not [@@noalloc]. They move a piece at a time through a buffer on the C
+   stack, since OCaml strings may move while the runtime is released; shorter
+   copies hold it and copy in place. A read from a BAR is a PCIe round trip,
+   about 1 us a word, and every other domain waits at its next collection for
+   one that holds the runtime: 8 KiB bounds that wait to about 2 ms. On an M1
+   Max a release and reacquire take 42 ns and a copy of process memory a word
+   at a time runs at 10 GB/s, 800 ns for 8 KiB; a piece through the buffer
+   adds about a quarter to that, the pair 5% and the buffer's memcpy the rest,
+   and under 0.01% to the 2 ms of a BAR's. */
 #define PIECE 8192
 
 static size_t piece(size_t at, size_t n) {
