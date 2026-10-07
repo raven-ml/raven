@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Ensemble slice sampling's chains on the gate's targets, for ensemble_gate.py,
+(* The ensemble sampler's chains on the gate's targets, for ensemble_gate.py,
    which compares their evaluations per effective draw with zeus's and emcee's.
    Each target writes every tenth draw, [steps / 10; walkers; d], to
-   <dir>/<target>.npy and a line "<target> <moving> <rows>" to stdout: the
-   walkers' own evaluations, and every row the density was called on. *)
+   <dir>/<target>.npy and a line "<target> <rows>" to stdout: every row the
+   density was called on, warmup included. *)
 
 let t = Nx.Ptree.tensor
 
@@ -59,29 +59,17 @@ let () =
       let start = Nx.Rng.normal (Nx.Rng.key 1) Nx.float64 [| w; d |] in
       let s = Norn.Ensemble.init t counted start in
       let s = Norn.Ensemble.warmup t counted (Nx.Rng.key 2) ~steps:burn s in
-      let rec chunks s n draws evaluations =
-        if n = 0 then (List.rev draws, evaluations)
+      let rec chunks s n draws =
+        if n = 0 then List.rev draws
         else
-          let s, d, st =
+          let s, d, _ =
             Norn.Ensemble.sample t counted (Nx.Rng.key 3) ~draws:chunk s
           in
-          let st =
-            (st
-              : Nx.float64_elt Norn.Ensemble.stats Norn.Draws.t
-              :> Nx.float64_elt Norn.Ensemble.stats)
-          in
-          let e = Nx.item [] (Nx.sum (Nx.cast Nx.float64 st.evaluations)) in
           chunks s (n - chunk)
             ((Norn.Draws.thin t ~every:thin d :> Nx.float64_t) :: draws)
-            (evaluations +. e)
       in
-      let draws, evaluations = chunks s steps [] 0. in
+      let draws = chunks s steps [] in
       let x = Nx.moveaxis 0 1 (Nx.concatenate ~axis:1 draws) in
       Nx_io.save_npy ~overwrite:true (Filename.concat dir (name ^ ".npy")) x;
-      (* The warmup's moving evaluations are the sampled ones' at the same rate;
-         [rows] counts both. *)
-      let moving =
-        evaluations *. float_of_int (burn + steps) /. float_of_int steps
-      in
-      Printf.printf "%s %.0f %d\n%!" name moving !rows)
+      Printf.printf "%s %d\n%!" name !rows)
     targets

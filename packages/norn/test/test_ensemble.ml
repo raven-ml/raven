@@ -63,9 +63,10 @@ let reproducible =
           equal
             (array (float 1e-9))
             (floats eager.position) (floats compiled.position);
-          equal (array int32)
-            (Nx.to_array eager.stats.evaluations)
-            (Nx.to_array compiled.stats.evaluations));
+          equal
+            (array (float 1e-9))
+            (Nx.to_array eager.stats.acceptance)
+            (Nx.to_array compiled.stats.acceptance));
       test "warmup counts its transitions" (fun () ->
           let s =
             E.warmup t banana (Nx.Rng.key 1) ~steps:3
@@ -76,29 +77,22 @@ let reproducible =
 
 (* Transitions *)
 
-(* A walker 10^3 sds from a standard normal whose other walkers lie on it moves
-   along directions of the normal's scale. The bracket doubles to the slice's
-   length in about ten trips; stepping out, at most 63 widths a transition,
-   takes 59 transitions on this key. Over 40 keys the walker returns in 11 to
-   31. *)
+(* A walker 10^3 sds from a standard normal whose other walkers lie on it
+   comes back: a stretch toward a partner shrinks its distance by up to half,
+   and every such move raises its density. Over 40 keys it returns in 23 to 62
+   transitions. *)
 let straggler =
   test "a walker 10^3 sds from the posterior returns" (fun () ->
       let lp x = Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5) in
       let x = Nx.Rng.normal (Nx.Rng.key 5) Nx.float64 [| 8; dim |] in
       let x = Nx.set [ Nx.I 0; Nx.I 0 ] (Nx.scalar Nx.float64 1e3) x in
-      let s = E.warmup t lp (Nx.Rng.key 6) ~steps:40 (E.init t lp x) in
+      let s = E.warmup t lp (Nx.Rng.key 6) ~steps:70 (E.init t lp x) in
       at_most float_exact ~than:6. (Nx.item [] (Nx.max (Nx.abs s.position))))
 
 let transitions =
   group "transitions"
     [
-      test "a move evaluates the first bracket's ends and a point in it"
-        (fun () ->
-          let s = E.step t banana (Nx.Rng.key 4) (E.init t banana (start 8)) in
-          Array.iter
-            (fun n -> at_least int32 ~than:3l n)
-            (Nx.to_array s.stats.evaluations));
-      test "the density sees only the moving half of every ensemble" (fun () ->
+      test "a transition calls the density once on each moving half" (fun () ->
           let x = Nx.concatenate ~axis:0 [ start 8; start 8 ] in
           let s = E.init t ~ensembles:2 banana x in
           let rows = ref [] in
@@ -107,7 +101,7 @@ let transitions =
             banana x
           in
           ignore (E.step t counted (Nx.Rng.key 4) s);
-          equal (list int) (List.map (fun _ -> 8) !rows) !rows);
+          equal (list int) [ 8; 8 ] !rows);
       straggler;
       test "the log density is the density's at the new position" (fun () ->
           let s = E.step t banana (Nx.Rng.key 4) (E.init t banana (start 8)) in
@@ -155,12 +149,12 @@ let refusals =
 
 (* Law 11: invariance. From exact draws of a target, five transitions keep each
    tested coordinate within the Dvoretzky-Kiefer-Wolfowitz band of level [0.01 /
-   3] of its CDF, three comparisons holding the false alarms at 1%. *)
+   2] of its CDF, two comparisons holding the false alarms at 1%. *)
 
 let chains = 4096
 
 let band =
-  Float.sqrt (Float.log (2. /. (0.01 /. 3.)) /. (2. *. float_of_int chains))
+  Float.sqrt (Float.log (2. /. (0.01 /. 2.)) /. (2. *. float_of_int chains))
 
 (* [max_deviation cdf xs] is the largest distance between [cdf] and the ECDF of
    [xs]. *)
@@ -201,54 +195,7 @@ let law_11 =
       at_most (float 1e-12) ~than:band
         (max_deviation (normal_cdf 0.5) (floats b')))
 
-(* Two modes of unequal weight and width on a line: [0.8 N(-3, 1) + 0.2 N(3,
-   0.1²)]. In ensembles of two walkers the held half is one point, whose
-   Gaussian is degenerate, so every bracket doubles dozens of times, and a slice
-   through both modes is two intervals: the acceptance check keeps the move
-   reversible. Without it the ECDF strays 0.065 from the CDF. *)
-let modes =
-  slow "five transitions of two-walker ensembles leave two modes invariant"
-    (fun () ->
-      let mode m sd w x =
-        Nx.add_s
-          (Nx.mul_s (Nx.square (Nx.sub_s x m)) (-0.5 /. (sd *. sd)))
-          (Float.log (w /. sd))
-      in
-      let lp x =
-        let a = Nx.slice [ Nx.A; Nx.I 0 ] x in
-        Nx.logsumexp ~axes:[ 0 ]
-          (Nx.stack ~axis:0 [ mode (-3.) 1. 0.8 a; mode 3. 0.1 0.2 a ])
-      in
-      let cdf x =
-        (0.8 *. normal_cdf 1. (x +. 3.)) +. (0.2 *. normal_cdf 0.1 (x -. 3.))
-      in
-      let k = Nx.Rng.key 32 in
-      let first =
-        Nx.less_s
-          (Nx.Rng.uniform (Nx.Rng.fold_in k 0) Nx.float64 [| chains |])
-          0.8
-      in
-      let at a b =
-        Nx.where first
-          (Nx.full Nx.float64 [| chains |] a)
-          (Nx.full Nx.float64 [| chains |] b)
-      in
-      let z = Nx.Rng.normal (Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
-      let x =
-        Nx.reshape [| chains; 1 |] (Nx.add (Nx.mul z (at 1. 0.1)) (at (-3.) 3.))
-      in
-      let s = ref (E.init t ~ensembles:(chains / 2) lp x) in
-      for i = 0 to 4 do
-        s := E.step t lp (Nx.Rng.fold_in k (10 + i)) !s
-      done;
-      at_most (float 1e-12) ~than:band (max_deviation cdf (floats !s.position)))
-
 let () =
   exit
     (run "Norn.Ensemble"
-       [
-         reproducible;
-         transitions;
-         refusals;
-         group "invariance" [ law_11; modes ];
-       ])
+       [ reproducible; transitions; refusals; group "invariance" [ law_11 ] ])

@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Law 10: reference posteriors. On six posteriordb posteriors, NUTS, HMC,
-   ensemble slice sampling, SMC and nested sampling each recover every element's
-   mean and standard deviation within z sqrt (mcse² + mcse_ref²). The reference
+   ensemble sampling, SMC and nested sampling each recover every element's mean
+   and standard deviation within z sqrt (mcse² + mcse_ref²). The reference
    moments and their errors come from gen/posteriordb.py. HMC also recovers
    Neal's funnel, non-centred, at 1024 chains. z holds the family-wise
    false-alarm rate over every comparison at 1%. *)
@@ -71,10 +71,10 @@ let hmc =
   }
 
 (* Two ensembles of 64 walkers: at least twice the coordinates of each
-   posterior. A walker far from a narrow, correlated posterior moves along
-   directions of the posterior's shape, which lead back to it over hundreds of
-   transitions, so the walkers start where HMC leaves them after twice the
-   warmup, which on sblrc-blr leaves no chain behind. *)
+   posterior. Walkers spread over a region of another shape than a narrow,
+   correlated posterior come back to it only over many transitions, so they
+   start where HMC leaves them after twice the warmup, which on sblrc-blr leaves
+   no chain behind. *)
 let ensemble =
   {
     chains = 128;
@@ -294,7 +294,7 @@ let () =
          group "NUTS recovers" (List.map (recovers (of_kernel nuts)) all);
          group "HMC recovers"
            (List.map (recovers (of_kernel hmc)) all @ [ funnel_test ]);
-         group "ensemble slice sampling recovers"
+         group "ensemble sampling recovers"
            (List.map (recovers (of_kernel ensemble)) all);
          group "SMC recovers" (List.map (recovers smc) all);
          group "nested sampling recovers" (List.map (recovers nested) all);

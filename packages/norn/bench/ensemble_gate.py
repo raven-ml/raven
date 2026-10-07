@@ -2,15 +2,13 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "emcee", "zeus-mcmc"]
 # ///
-"""Evaluations per effective draw: norn's ensemble slice sampler, zeus, emcee.
+"""Evaluations per effective draw: norn's ensemble sampler, zeus, emcee.
 
 Runs ensemble_gate.exe for norn's chains, then zeus and emcee on the same
 targets with the same walkers, burn-in and steps. Effective draws are steps
 times walkers over the largest integrated autocorrelation time of the
-coordinates (emcee's estimator, for all three). norn is reported twice: its
-walkers' own evaluations, and every row its density is called on, which also
-counts the trips a walker that has found its point waits, in lock step, for
-the others of its half.
+coordinates (emcee's estimator, for all three). norn counts every row its
+density is called on.
 
   uv run packages/norn/bench/ensemble_gate.py [DIR]
 
@@ -79,7 +77,7 @@ def run_zeus(d, steps, lp, start):
 
 
 def norn_chains(directory, out):
-    counts = {name: (float(m), float(r)) for name, m, r in
+    counts = {name: float(r) for name, r in
               (line.split() for line in out.splitlines())}
     chains = {name: np.load(os.path.join(directory, name + ".npy"))
               for name, _, _, _ in TARGETS}
@@ -99,16 +97,16 @@ def main():
                                  text=True).stdout
             counts, chains = norn_chains(tmp, out)
     rng = np.random.default_rng(1)
-    print(f"{'target':<14}{'norn moving':>13}{'norn rows':>11}"
-          f"{'zeus':>9}{'emcee':>9}   (evaluations per effective draw)")
+    print(f"{'target':<14}{'norn':>9}{'zeus':>9}{'emcee':>9}"
+          "   (evaluations per effective draw)")
     for name, d, steps, lp in TARGETS:
         start = rng.standard_normal((walkers(d), d))
         e, f = ess(chains[name])
-        moving, rows = counts[name]
+        rows = counts[name]
         zc, zn = run_zeus(d, steps, lp, start)
         ec, en = run_emcee(d, steps, lp, start)
         (ze, zf), (ee, ef) = ess(zc), ess(ec)
-        print(f"{name:<14}{moving / e:>12.1f}{f}{rows / e:>10.1f}{f}"
+        print(f"{name:<14}{rows / e:>8.1f}{f}"
               f"{zn / ze:>8.1f}{zf}{en / ee:>8.1f}{ef}", flush=True)
     sys.stdout.flush()
 

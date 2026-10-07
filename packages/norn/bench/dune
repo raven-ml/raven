@@ -17,7 +17,7 @@
  (action
   (run %{exe:bench_norn.exe})))
 
-; Ensemble slice sampling's chains for ensemble_gate.py.
+; The ensemble sampler's chains for ensemble_gate.py.
 
 (executable
  (name ensemble_gate)

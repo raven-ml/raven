@@ -86,7 +86,7 @@ let hmc_step chains =
   Thumper.bench_with_setup ~setup (Printf.sprintf "schools/%d" chains)
     (fun (step, k, s) -> step k s)
 
-(* An ensemble slice transition, compiled, of 64 walkers in one ensemble. *)
+(* An ensemble transition, compiled, of 64 walkers in one ensemble. *)
 let ensemble_step =
   let setup () =
     let lp = M.log_density model y in

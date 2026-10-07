@@ -58,9 +58,9 @@ All notable changes to this project will be documented in this file.
 - Add `Norn.Nested`, nested sampling by slice moves on the prior, which
   returns an `Evidence.t`; a spent budget returns the estimate with the nats
   the live points could still add.
-- Add `Norn.Ensemble`, ensemble slice sampling without derivatives: walkers
-  in independent ensembles move along directions drawn from the other half's
-  Gaussian, in brackets that double, so a walker far from the rest returns.
+- Add `Norn.Ensemble`, ensemble sampling by the affine-invariant stretch
+  move, without derivatives: walkers in independent ensembles move in two
+  halves, one density evaluation per moving walker per transition.
 - Add `Norn.Evidence`, an estimate of the evidence `ln Z` with its error,
   information and weighted posterior sample, and why its run stopped
   (`Evidence.stop`): a spent budget is a result, not an error.

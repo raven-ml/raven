@@ -3,38 +3,39 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Ensemble slice sampling, without derivatives.
+(** Ensemble sampling by the stretch move, without derivatives.
 
     Walkers lie on the chain axis in independent ensembles of equal size,
-    consecutive on the axis. A transition updates each ensemble in two halves
-    (Karamanis and Beutler 2021): a half moves by slice sampling (Neal 2003)
-    along directions drawn from the Gaussian of the other half, its walkers'
-    mean and covariance, so a walker's move depends only on the half that does
-    not move, as detailed balance requires. A direction has unit length in that
-    Gaussian's whitened coordinates. Each walker draws a level under its log
-    density and doubles a bracket toward random sides while an end lies in the
-    slice, so a walker far from the others' scale reaches the slice in as many
-    doublings as the log of the distance; shrinking keeps the walker in the
-    bracket, takes a point only if the doubling could have produced the bracket
-    from it, which keeps the move reversible, and ends, the walker staying, when
-    the bracket is narrower than the dtype's resolution. Nothing is tuned.
+    consecutive on the axis. A transition splits each ensemble at random into
+    two halves, which mixes faster than fixed halves, and updates them in turn:
+    a walker [x] of the moving half draws a walker [w] of the other half and a
+    stretch [z] of density proportional to [1 / sqrt z] on [[1 / 2, 2]], and
+    moves to [w + z (x - w)] with probability [min (1, z^(d - 1) p(y) / p(x))],
+    [d] its float elements (Goodman and Weare 2010). A walker's move depends
+    only on the half that does not move, as detailed balance requires, and on no
+    scale: the move is unchanged by an affine map of the coordinates, so a
+    correlated posterior costs what an isotropic one does. Nothing is tuned.
 
-    The density is evaluated on the moving half of every ensemble at once, once
-    per trip of the slice loop: a call has [walkers / 2] rows when ensembles
-    have an even size. A walker that has found its point repeats its last
-    evaluation until the others have. A transition costs a varying number of
-    evaluations, which {!stats} counts.
+    The density is evaluated once per transition on the moving half of every
+    ensemble, a call of [walkers / 2] rows when ensembles have an even size.
+
+    The walkers move along lines through each other, so they explore the region
+    their spread spans. Walkers that start far from a narrow, correlated
+    posterior, spread over a region of another shape, come back to it only over
+    many transitions: start them where a warmed sampler or the posterior's
+    approximation leaves them.
 
     {b Keys.} Transition [n] of a run has the key [k = Nx.Rng.fold_in run n],
-    and walker [i] row [i] of [Nx.Rng.split_batch ~n:walkers k], so with
-    ensembles of a fixed size a walker's randomness does not depend on the
-    number of ensembles. {!warmup} and {!sample} fold the state's draw counter
-    into their key and advance it, so [a + b] draws are [a] draws then [b]. *)
+    and walker [i] row [i] of [Nx.Rng.split_batch ~n:walkers k]; an ensemble's
+    split draws from its first walker's key. So with ensembles of a fixed size a
+    walker's randomness does not depend on the number of ensembles. {!warmup}
+    and {!sample} fold the state's draw counter into their key and advance it,
+    so [a + b] draws are [a] draws then [b]. *)
 
 type 'f stats = {
   lp : (float, 'f) Nx.t;  (** The log density at the transition's end. *)
-  evaluations : Nx.int32_t;
-      (** The density evaluations of the walker's moves in the transition. *)
+  acceptance : (float, 'f) Nx.t;
+      (** The probability with which the walker's move was accepted. *)
 }
 (** The type for statistics of transitions, one element per walker. *)
 
