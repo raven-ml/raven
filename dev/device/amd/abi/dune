@@ -7,5 +7,4 @@
   capability
   code_object
   pm4
-  scratch
   thread_trace))
