@@ -169,10 +169,11 @@ val alloc_dma :
     ([vm.nr_hugepages]).
 
     Raises [Invalid_argument] if [n <= 0] or rounding it up overflows, if [va]
-    is not on a page, if [contiguous] memory is larger than 2 MiB, or if [va] is
-    not on 2 MiB for a huge page. Raises [Failure] naming what is missing if the
-    machine cannot: free memory or a huge page, or one of the privileges,
-    settings and limits above ({{!Device_pci.errors}errors}). *)
+    is not on a page or in no range {!Machine.reserve} reserved, if [contiguous]
+    memory is larger than 2 MiB, or if [va] is not on 2 MiB for a huge page.
+    Raises [Failure] naming what is missing if the machine cannot: free memory
+    or a huge page, or one of the privileges, settings and limits above
+    ({{!Device_pci.errors}errors}). *)
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more.

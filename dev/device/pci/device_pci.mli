@@ -43,8 +43,8 @@
     {1:errors Errors}
 
     - A {e request} that the world may refuse returns [Error why]: taking a
-      function, opening or changing GPUs, finding or fetching firmware, mapping
-      memory for a GPU. The caller decides there.
+      function, opening or changing GPUs, finding firmware, mapping memory for a
+      GPU. The caller decides there.
     - An allocator that runs out of GPU memory or virtual addresses for what was
       asked answers [None].
     - An {e access} or a {e wait} on what the process holds raises [Failure]
