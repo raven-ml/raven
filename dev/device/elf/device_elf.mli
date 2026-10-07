@@ -7,15 +7,15 @@
 
     Host programs, GPU programs and firmware come as little-endian ELF objects,
     32- or 64-bit. Reading one with {!of_string} lays out its {e image}: the
-    sections a loader's memory holds, by default its allocated sections
-    ({!allocated}), its code and data, each with its bytes or, for a section
-    that has none in the object ([SHT_NOBITS]) such as [.bss], zeros. If one of
-    these sections has a nonzero address ([sh_addr]), each goes at its address
-    less {!field-address}, as in an executable whose image starts with its first
-    section. Otherwise each follows the image's end in section order, at its
-    alignment, as in a relocatable object. The image ends where its last section
-    ends. Other sections, such as the symbol and string tables or debugging
-    information, stay out of the image.
+    sections a loader's memory holds, by default its code and data
+    ({!allocated}). A section's bytes in the image are its bytes in the object,
+    or zeros for a section that has none there ([SHT_NOBITS]), such as [.bss].
+    If one of these sections has a nonzero address ([sh_addr]), each goes at its
+    address less {!field-address}, as in an executable whose image starts with
+    its first section. Otherwise each follows the image's end in section order,
+    at its alignment, as in a relocatable object. The image ends where its last
+    section ends. Other sections, such as the symbol and string tables or
+    debugging information, stay out of the image.
 
     Reading copies no section's bytes. A section's bytes are a range of the
     object, and the image is described by the sections it holds: it is
@@ -159,8 +159,8 @@ type t = private {
     - A section [s] with [s.offset = Some off] lies in the image,
       [off + s.size <= o.size], at a multiple of its alignment, [sh_addralign],
       and has all its bytes in the object, [s.length = s.size], or none,
-      [s.length = 0] for an [SHT_NOBITS] one. No two such sections share a byte
-      of the image.
+      [s.length = 0], such as an [SHT_NOBITS] one. No two such sections share a
+      byte of the image.
     - A place [Image { section = i; offset }] names a section [s], index [i] of
       [o.sections], with [s.offset = Some off] and
       [off <= offset <= off + s.size].
@@ -169,21 +169,23 @@ type t = private {
 (** {1:reading Reading} *)
 
 val allocated : section -> bool
-(** [allocated s] is [true] iff ELF has a loader's memory hold [s]: [s] is
-    allocated ([SHF_ALLOC]), a program section ([SHT_PROGBITS]) or one without
-    bytes ([SHT_NOBITS]), and not a thread-local one without bytes ([SHF_TLS],
-    [.tbss]), a template each thread copies, which takes no memory of its own.
-*)
+(** [allocated s] is [true] iff [s] is code or data a loader's memory holds: an
+    allocated ([SHF_ALLOC]) program section ([SHT_PROGBITS]) or section without
+    bytes ([SHT_NOBITS]), other than a thread-local one without bytes
+    ([SHF_TLS], [.tbss]), a template each thread copies, which takes no memory
+    of its own. Other allocated sections, such as [.dynamic], [.dynsym], notes
+    or [.init_array], hold what a dynamic loader reads to link and start a
+    program. *)
 
 val of_string :
   ?align:int -> ?held:(section -> bool) -> string -> (t, string) result
 (** [of_string ~align ~held obj] is the object [obj] laid out in its image.
 
-    The image holds the sections [s] with [held s], which defaults to
-    {!allocated}: a loader whose memory does not hold some of them, such as a
-    format whose allocated sections name memory of another kind, says so. [held]
-    sees each section before the layout, its [offset] [None]. A section it does
-    not hold stays out of the image, and its symbols are [Outside].
+    The image holds the sections [s] with [held s]. [held] defaults to
+    {!allocated}; a loader whose memory holds less passes its own, such as one
+    for a format that marks memory of another kind allocated. [held] sees each
+    section before the layout, its [offset] [None]. A section it does not hold
+    stays out of the image, and its symbols are [Outside].
 
     When its sections follow the image's end, each goes at the first offset at
     or past it that is a multiple of [align] and of its alignment,
