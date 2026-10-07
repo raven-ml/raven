@@ -5,6 +5,9 @@
 
 open Repr
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type t = launch
 
 let round_up n a = (n + a - 1) / a * a
@@ -43,17 +46,16 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
       || g.compute_class = Defs.ada_compute_a
     then Defs.qmd_v3
     else
-      invalid_arg
-        (Printf.sprintf
-           "Launch.make: compute class 0x%x, expected 0x%x, 0x%x or 0x%x"
-           g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
-           Defs.blackwell_compute_b)
+      invalid_argf
+        "Launch.make: compute class 0x%x, expected 0x%x, 0x%x or 0x%x"
+        g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
+        Defs.blackwell_compute_b
   in
   let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
   match List.find_opt (fun c -> c * 1024 >= shared_bytes) shared_configs with
   | None ->
       Error
-        (Printf.sprintf
+        (strf
            "the kernel needs %d bytes of shared memory, the driver's 1 KiB \
             included, more than 100 KiB"
            shared_bytes)

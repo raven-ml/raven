@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type t = { per_thread : int; per_tpc : int; bytes : int }
 
 let round_up n a = (n + a - 1) / a * a
@@ -18,8 +20,7 @@ let bytes_align = 0x20000
 let warp = 32
 
 let make (g : Gpu.t) n =
-  if n < 0 then
-    invalid_arg (Printf.sprintf "Local.make: %d bytes, expected 0 or more" n);
+  if n < 0 then invalid_argf "Local.make: %d bytes, expected 0 or more" n;
   let per_thread = round_up n thread_align in
   let per_warp = round_up (per_thread * warp) warp_align in
   let per_tpc =

@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+let ( let* ) = Result.bind
+
 (* A relocation as the image needs it: the offset of the bytes it patches, how
    many, and the symbol's offset plus the addend, which a base completes. *)
 type relocation = { at : int; width : int; high : bool; target : int }
 type t = { elf : Device_elf.t; size : int; relocations : relocation list }
-
-let ( let* ) = Result.bind
 
 (* The relocations a cubin holds: R_CUDA_64 writes a symbol's 64-bit address,
    R_CUDA_ABS32_LO_32 and R_CUDA_ABS32_HI_32 its low and high 32 bits. *)
@@ -34,7 +35,7 @@ let relocation ~image i (r : Device_elf.relocation) =
     else if r.kind = r_cuda_abs32_hi_32 then Ok (r.offset + 4, 4, true)
     else
       Error
-        (Printf.sprintf
+        (strf
            "relocation %d is of kind 0x%x, expected R_CUDA_64, \
             R_CUDA_ABS32_LO_32 or R_CUDA_ABS32_HI_32"
            i r.kind)
@@ -44,20 +45,18 @@ let relocation ~image i (r : Device_elf.relocation) =
     | Image { offset; _ } -> Ok offset
     | Undefined | Absolute _ | Outside _ ->
         Error
-          (Printf.sprintf "relocation %d uses %S, whose bytes the image lacks" i
+          (strf "relocation %d uses %S, whose bytes the image lacks" i
              r.symbol.name)
   in
   if at + width > image then
-    Error
-      (Printf.sprintf "relocation %d patches bytes past the image's end at %d" i
-         at)
+    Error (strf "relocation %d patches bytes past the image's end at %d" i at)
   else Ok { at; width; high; target = offset + r.addend }
 
 let of_string obj =
   let* o = Device_elf.of_string ~align:section_align obj in
   let* () =
     if o.size <= max_image then Ok ()
-    else Error (Printf.sprintf "the image is %d bytes, longer than 2^49" o.size)
+    else Error (strf "the image is %d bytes, longer than 2^49" o.size)
   in
   let rec relocations i acc = function
     | [] -> Ok (List.rev acc)

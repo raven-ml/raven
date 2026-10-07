@@ -7,6 +7,8 @@ open Packet
 open Repr
 module D = Defs
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type 'v t = {
   layout : D.qmd;
   banks : int list; (* the indices of the launch's banks *)
@@ -24,8 +26,7 @@ let bank (f : D.banked) i = { f.first with lo = f.first.lo + (i * f.stride) }
 (* Writes [v] into the field [f] of [b], bit by bit. *)
 let write fn b (f : D.field) v =
   if v < 0 || v lsr f.bits <> 0 then
-    invalid_arg
-      (Printf.sprintf "%s: 0x%x does not fit a field of %d bits" fn v f.bits);
+    invalid_argf "%s: 0x%x does not fit a field of %d bits" fn v f.bits;
   for i = 0 to f.bits - 1 do
     let at = (f.lo + i) / 8 and m = 1 lsl ((f.lo + i) mod 8) in
     let byte = Char.code (Bytes.get b at) in
@@ -146,8 +147,7 @@ let field q = function
 
 let set_dim d n q =
   if n < 0 || n > max_size d then
-    invalid_arg
-      (Printf.sprintf "Qmd.set_dim: size %d, expected 0 to %d" n (max_size d));
+    invalid_argf "Qmd.set_dim: size %d, expected 0 to %d" n (max_size d);
   writes "Qmd.set_dim" q [ (field q d, n) ]
 
 let patch_dim d v q = hole q (field q d) (Value v)
@@ -166,9 +166,8 @@ let set_program addr q =
 
 let set_bank i addr q =
   if not (List.mem i q.banks) then
-    invalid_arg
-      (Printf.sprintf "Qmd.set_bank: bank %d, expected one of %s" i
-         (String.concat ", " (List.map string_of_int q.banks)));
+    invalid_argf "Qmd.set_bank: bank %d, expected one of %s" i
+      (String.concat ", " (List.map string_of_int q.banks));
   let p = q.layout in
   address q
     (bank p.constant_buffer_addr_lower i)

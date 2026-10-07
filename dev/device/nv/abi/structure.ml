@@ -5,6 +5,8 @@
 
 open Packet
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type 'v hole = 'v Repr.hole = private {
   at : int;
   bits : int;
@@ -19,8 +21,7 @@ let rec eval value = function
   | Shift (t, n) ->
       let v = eval value t in
       if n < 0 || n > 63 then
-        invalid_arg
-          (Printf.sprintf "Structure.encode: shift by %d, expected 0 to 63" n);
+        invalid_argf "Structure.encode: shift by %d, expected 0 to 63" n;
       Int64.shift_right_logical v n
 
 (* A hole's word: the narrowest of 1, 2, 4 and 8 bytes that holds [bits]. *)
