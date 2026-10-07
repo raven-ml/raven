@@ -60,6 +60,10 @@ static const uint64_t busy_ns = 2000;
    a body's safe depth does not depend on which thread claims its chunk. */
 static const size_t stack_bytes = 8 << 20;
 
+/* A cache line on Apple silicon, and the pair of lines x86 fetches
+   together. */
+enum { line_bytes = 128 };
+
 /* Clock */
 
 static uint64_t now_ns(void) {
@@ -210,7 +214,7 @@ int nx_pool_performance_cores(void) {
 
 /* Jobs */
 
-/* A job as its threads read it. [wide] says i * total may overflow 64 bits
+/* A job as its caller passes it. [wide] says i * total may overflow 64 bits
    for some chunk bound i <= chunks, so the bounds take 128. */
 typedef struct {
   nx_pool_body body;
@@ -241,17 +245,20 @@ struct pool {
   pthread_cond_t wake;   /* parked workers wait here for a new generation */
   pthread_cond_t done;   /* a parked caller waits here for the job's end */
   _Atomic uint64_t generation; /* even; odd while a job is being written */
-  _Atomic uint64_t pending;    /* participating workers not yet finished */
-  _Atomic int waiting;         /* whether the caller parked on [done] */
-  /* The job, written while the generation is odd and read while it is even:
-     a worker that is no participant may read the next job's while the caller
-     writes it, so each field is atomic, and a worker that finds the
-     generation moved while it read them reads them again. */
-  _Atomic(nx_pool_body) body;
-  _Atomic(void *) ctx;
-  _Atomic int64_t total, chunks;
-  _Atomic int wide, active;
-  _Atomic int64_t next; /* next unclaimed chunk index */
+  /* The job's threads, written while the generation is odd. A worker
+     outside the job may read it while the next job writes it, so it is
+     atomic, and the worker reads it again if the generation moved. */
+  _Atomic int active;
+  /* The job, read by its participants only, each of whom holds the next
+     job back until it counts down. */
+  job job;
+  /* Keeps the claims' cache line at least a line away from the job's and
+     the generation's, whatever the pool's address: every claim would
+     otherwise take that line from the threads that spin on it. */
+  char gap[line_bytes];
+  _Atomic int64_t next;     /* next unclaimed chunk index */
+  _Atomic uint64_t pending; /* participating workers not yet finished */
+  _Atomic int waiting;      /* whether the caller parked on [done] */
   /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked. */
   _Atomic uint64_t parked[];
 };
@@ -358,24 +365,16 @@ static void *work(void *arg) {
      leave out parks once the window ends, for the rest of their burst. */
   uint64_t deadline = now_ns() + spin_ns;
   for (;;) {
-    uint64_t g = next_job(p, w->id, seen, deadline);
-    job j;
-    for (;;) {
-      j.body = atomic_load_explicit(&p->body, memory_order_relaxed);
-      j.ctx = atomic_load_explicit(&p->ctx, memory_order_relaxed);
-      j.total = atomic_load_explicit(&p->total, memory_order_relaxed);
-      j.chunks = atomic_load_explicit(&p->chunks, memory_order_relaxed);
-      j.wide = atomic_load_explicit(&p->wide, memory_order_relaxed);
-      j.threads = atomic_load_explicit(&p->active, memory_order_relaxed);
-      atomic_thread_fence(memory_order_acquire);
-      if (atomic_load_explicit(&p->generation, memory_order_relaxed) == g) break;
-      g = next_job(p, w->id, seen, deadline);
-    }
-    seen = g;
-    /* A participant keeps the next job from being written until it counts
-       down, so the fields it read are its job's. */
-    if (w->id >= j.threads) continue;
-    claim(p, &j, w->id);
+    seen = next_job(p, w->id, seen, deadline);
+    int active = atomic_load_explicit(&p->active, memory_order_relaxed);
+    atomic_thread_fence(memory_order_acquire);
+    /* A participant holds the next job back until it counts down, so a
+       generation that moved while [active] was read had no part for this
+       worker, and a participant reads its own job. */
+    if (atomic_load_explicit(&p->generation, memory_order_relaxed) != seen ||
+        w->id >= active)
+      continue;
+    claim(p, &p->job, w->id);
     if (atomic_fetch_sub(&p->pending, 1) == 1 && atomic_load(&p->waiting)) {
       pthread_mutex_lock(&p->mtx);
       pthread_cond_signal(&p->done);
@@ -523,17 +522,14 @@ static void run_alone(const job *j) {
    being written), claims chunks as worker 0, and waits for the workers to
    count down. The claim counter is reset under the drive mutex and claimed
    only by the current generation's threads, and the caller returns once
-   they all counted down, so no thread touches it until the next publish. */
+   they all counted down, so no thread touches it, or the job, until the
+   next publish. */
 static void run_shared(pool *p, const job *j) {
   pthread_mutex_lock(&p->drive);
   uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
   atomic_store_explicit(&p->generation, g + 1, memory_order_relaxed);
   atomic_thread_fence(memory_order_release);
-  atomic_store_explicit(&p->body, j->body, memory_order_relaxed);
-  atomic_store_explicit(&p->ctx, j->ctx, memory_order_relaxed);
-  atomic_store_explicit(&p->total, j->total, memory_order_relaxed);
-  atomic_store_explicit(&p->chunks, j->chunks, memory_order_relaxed);
-  atomic_store_explicit(&p->wide, j->wide, memory_order_relaxed);
+  p->job = *j;
   atomic_store_explicit(&p->active, j->threads, memory_order_relaxed);
   atomic_store_explicit(&p->next, 0, memory_order_relaxed);
   atomic_store_explicit(&p->pending, (uint64_t)(j->threads - 1),
