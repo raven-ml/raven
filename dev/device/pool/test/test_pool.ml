@@ -83,23 +83,6 @@ let chunks_ran (job : P.job) =
 
 let distinct l = List.sort_uniq compare l
 
-(* Waiting *)
-
-(* [finishes what f] is [f ()], run on a domain of its own, and fails the test
-   if it has not returned after 10 s: a job that waits forever fails the test
-   instead of hanging it. *)
-let finishes what f =
-  let result = Atomic.make None in
-  let d =
-    Domain.spawn (fun () ->
-        Atomic.set result
-          (Some (match f () with v -> Ok v | exception e -> Error e)))
-  in
-  P.within 10. (what ^ " had not returned") (fun () ->
-      Option.is_some (Atomic.get result));
-  Domain.join d;
-  match Option.get (Atomic.get result) with Ok v -> v | Error e -> raise e
-
 (* Cores *)
 
 let test_core_bounds () =
@@ -388,7 +371,7 @@ let test_one_thread_at_once () =
   needs_two_cores ();
   P.while_held (fun () ->
       let ran =
-        finishes "a job of one thread" (fun () ->
+        P.finishes "a job of one thread" (fun () ->
             P.record ~threads:1 ~total:100L ~chunks:10L)
       in
       equal ~msg:"(lo, hi, worker, thread) of each call"
@@ -405,7 +388,7 @@ let test_nested () =
       "(outer units run, inner jobs not run in one call, misplaced inner \
        calls, inner units not run once)"
     (quad int int int int) (outer, 0, 0, 0)
-    (finishes "a job whose bodies begin jobs" (fun () ->
+    (P.finishes "a job whose bodies begin jobs" (fun () ->
          P.nested ~threads:cores ~outer ~inner))
 
 (* Nothing signals that a job waits, so the test samples: once the domain is

@@ -97,6 +97,21 @@ let within seconds why ready =
   if not (settle seconds ready Fun.id) then
     Windtrap.failf "after %gs, %s" seconds why
 
+(* [finishes what f] is [f ()], run on a domain of its own, and fails the test
+   if it has not returned after 10 s: a job that waits forever fails the test
+   instead of hanging it. *)
+let finishes what f =
+  let result = Atomic.make None in
+  let d =
+    Domain.spawn (fun () ->
+        Atomic.set result
+          (Some (match f () with v -> Ok v | exception e -> Error e)))
+  in
+  within 10. (what ^ " had not returned") (fun () ->
+      Option.is_some (Atomic.get result));
+  Domain.join d;
+  match Option.get (Atomic.get result) with Ok v -> v | Error e -> raise e
+
 (* [while_held f] is [f ()], run while another domain's job of two threads runs:
    every chunk of it waits until [f] has returned. *)
 let while_held f =

@@ -132,6 +132,35 @@ let test_fork_child () =
   equal ~msg:"(a worker ran a chunk, units not run once)" (pair int int) (1, 0)
     (v.(0), v.(1))
 
+(* [joined ranges] is the sorted [ranges] with each that starts where the one
+   before it ends joined to it: [[(0, total)]] for ranges that cover the units
+   once. *)
+let joined ranges =
+  List.fold_left
+    (fun acc (lo, hi) ->
+      match acc with
+      | (l, h) :: rest when h = lo -> (l, hi) :: rest
+      | _ -> (lo, hi) :: acc)
+    [] (List.sort compare ranges)
+  |> List.rev
+
+(* A fork after a job of the parent's leaves the parent's pool whole: its next
+   jobs run on its workers and cover their units. *)
+let test_fork_parent () =
+  needs_two_cores ();
+  ignore (P.record ~threads:cores ~total:64L ~chunks:8L);
+  T.fork ();
+  equal ~msg:"the other chunks ran on a worker while chunk 0 lasted" bool true
+    (P.finishes "a job after the fork" (fun () -> P.balance 16));
+  let ran =
+    P.finishes "a job on every core after the fork" (fun () ->
+        P.record ~threads:cores ~total:1000L ~chunks:37L)
+  in
+  equal ~msg:"its calls' ranges, joined"
+    (list (pair int64 int64))
+    [ (0L, 1000L) ]
+    (joined (List.map (fun (c : P.call) -> (c.lo, c.hi)) ran.calls))
+
 (* Nothing signals that fork waits, so the test samples: once the domain is
    about to fork, fork has still not returned 50 ms later. *)
 let test_fork_waits () =
@@ -168,6 +197,8 @@ let thread_tests =
         test_narrow_burst;
       test "a child made by fork runs its jobs on workers of its own"
         test_fork_child;
+      test "the parent runs its jobs on its workers after a fork"
+        test_fork_parent;
       test
         "fork waits for a running job of more than one thread to end, sampled \
          for 50 ms"
