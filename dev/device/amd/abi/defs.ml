@@ -1121,6 +1121,7 @@ let gc_registers = [
       { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] };
       { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] };
       { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] };
+      { name = "regSPI_SQG_EVENT_CTL"; offset = 0x2448; segment = 1; fields = [ ("enable_sqg_top_events", (0, 0)); ("enable_sqg_bop_events", (1, 1)) ] };
       { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
       { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
       { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
@@ -1264,12 +1265,16 @@ let cs_partial_flush = 7
 let thread_trace_marker = 0x35
 let thread_trace_finish = 0x37
 let sq_tt_rt_freq_4096_clk = 2
+let sq_tt_wtype_include_ps_bit = 1
+let sq_tt_wtype_include_gs_bit = 4
+let sq_tt_wtype_include_hs_bit = 0x10
 let sq_tt_wtype_include_cs_bit = 0x40
 let sq_tt_token_mask_sqdec_bit = 1
 let sq_tt_token_mask_shdec_bit = 2
 let sq_tt_token_mask_gfxudec_bit = 4
 let sq_tt_token_mask_comp_bit = 8
 let sq_tt_token_mask_context_bit = 0x10
+let sq_tt_token_mask_config_bit = 0x20
 let sq_tt_token_exclude_vmemexec_shift = 0
 let sq_tt_token_exclude_aluexec_shift = 1
 let sq_tt_token_exclude_valuinst_shift = 2

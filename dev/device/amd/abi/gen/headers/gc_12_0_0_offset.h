@@ -389,6 +389,8 @@
 #define regSQ_THREAD_TRACE_USERDATA_7_BASE_IDX                                                          1
 #define regSPI_CONFIG_CNTL                                                                              0x2440
 #define regSPI_CONFIG_CNTL_BASE_IDX                                                                     1
+#define regSPI_SQG_EVENT_CTL                                                                            0x2448
+#define regSPI_SQG_EVENT_CTL_BASE_IDX                                                                   1
 #define regSQ_PERFCOUNTER0_LO                                                                           0x31c0
 #define regSQ_PERFCOUNTER0_LO_BASE_IDX                                                                  1
 #define regSQ_PERFCOUNTER1_LO                                                                           0x31c2

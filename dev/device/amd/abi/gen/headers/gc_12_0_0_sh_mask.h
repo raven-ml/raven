@@ -711,6 +711,8 @@
 #define SPI_CONFIG_CNTL__ALLOC_ARB_LRU_ENA_MASK                                                               0x10000000L
 #define SPI_CONFIG_CNTL__EXP_ARB_LRU_ENA_MASK                                                                 0x20000000L
 #define SPI_CONFIG_CNTL__PS_PKR_PRIORITY_CNTL_MASK                                                            0xC0000000L
+#define SPI_SQG_EVENT_CTL__ENABLE_SQG_TOP_EVENTS_MASK                                                         0x00000001L
+#define SPI_SQG_EVENT_CTL__ENABLE_SQG_BOP_EVENTS_MASK                                                         0x00000002L
 #define SQ_PERFCOUNTER0_LO__PERFCOUNTER_LO_MASK                                                               0xFFFFFFFFL
 #define SQ_PERFCOUNTER1_LO__PERFCOUNTER_LO_MASK                                                               0xFFFFFFFFL
 #define SQ_PERFCOUNTER2_LO__PERFCOUNTER_LO_MASK                                                               0xFFFFFFFFL

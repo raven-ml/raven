@@ -11,24 +11,28 @@ let major (g : Gpu.t) =
 
 (* Recording
 
-   The program follows Mesa's ac_sqtt.c (ac_sqtt_emit_start, ac_sqtt_emit_stop,
-   ac_sqtt_emit_wait, ac_sqtt_get_ctrl) for a compute queue, register by
-   register, with the departures the comments name: the values traces were
-   captured with on gfx1100, gfx1201 and gfx942. *)
+   The program is Mesa's for a compute queue (src/amd/common/ac_sqtt.c and
+   src/amd/vulkan/tools/radv_sqtt.c at mesa e11d8ed6: radv_begin_sqtt,
+   ac_sqtt_emit_start, radv_end_sqtt, ac_sqtt_emit_stop, ac_sqtt_emit_wait,
+   ac_sqtt_get_ctrl), register by register. It departs where the interface
+   decides: the caches are coherent before and after (radv waits for idle), only
+   engines 0 and 1 trace instructions (Mesa takes a mask), the traced work-group
+   processor is the first (Mesa reads which are active), each die's engines are
+   predicated, and the engine's write pointer alone is stored. *)
 
 (* A trace buffer's size is in pages of 4096 bytes, its address from bit 12
    (SQTT_BUFFER_ALIGN_SHIFT). *)
 let page = 4096
 let page_shift = 12
 
-(* GFX9 and GFX11 hold the address's bits from 44 in a register of their own
-   (SQ_THREAD_TRACE_BASE2, BUF0_SIZE.BASE_HI). *)
+(* The address's bits from 44, in BASE2 (GFX9), BUF0_SIZE (GFX11) or
+   BUF0_BASE_HI (GFX12). *)
 let high_shift = 44
 
-(* The poll interval of the waits for the engines, as ac_sqtt_emit_wait's. *)
+(* The poll interval of the waits for the engines (ac_sqtt_emit_wait). *)
 let interval = 4
 
-(* The engines that trace instructions, where Mesa takes a mask. *)
+(* The engines that trace instructions. *)
 let itraced e = e < 2
 
 let register fn g name =
@@ -46,19 +50,16 @@ let set fn g name fields =
 let write fn g name ws =
   Pm4.set_reg (Register.address g (register fn g name)) ws
 
-(* Selects the engine [se] and shader array [sa] for the register writes after
-   it, or every one of them. *)
-let grbm fn g ?se ?sa () =
-  let field key = function
-    | None -> (key ^ "_broadcast_writes", 1)
-    | Some v -> (key ^ "_index", v)
+(* Selects engine [se] and its shader array 0 for the register writes after it,
+   or every engine and array; every instance either way. *)
+let grbm fn g ?se () =
+  let array = if major g = 9 then "sh" else "sa" in
+  let fields =
+    match se with
+    | Some se -> [ ("se_index", se); (array ^ "_index", 0) ]
+    | None -> [ ("se_broadcast_writes", 1); (array ^ "_broadcast_writes", 1) ]
   in
-  set fn g "GRBM_GFX_INDEX"
-    [
-      field "instance" None;
-      field "se" se;
-      field (if major g = 9 then "sh" else "sa") sa;
-    ]
+  set fn g "GRBM_GFX_INDEX" (("instance_broadcast_writes", 1) :: fields)
 
 (* Words for the dies of [xcc_mask], on a GPU of several. *)
 let on_dies (g : Gpu.t) xcc_mask p =
@@ -78,110 +79,96 @@ let known (p : int Packet.t) =
     (fun i ->
       Dword (Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff))
 
-(* The SPI's configuration around a trace, as Mesa's radv_sqtt.c sets it. *)
-let spi_config fn g ~tracing =
-  let t = Bool.to_int tracing in
-  set fn g "SPI_CONFIG_CNTL"
-    [
-      ("ps_pkr_priority_cntl", 3);
-      ("exp_priority_order", 3);
-      ("gpr_write_priority", 0x2c688);
-      ("enable_sqg_bop_events", t);
-      ("enable_sqg_top_events", t);
-    ]
+let bits = List.fold_left (fun m b -> m lor (1 lsl b)) 0
 
-(* ac_sqtt_get_ctrl's, but for HIWATER, 1 where Mesa writes 5, and GFX12's
-   LOWATER_OFFSET, which Mesa sets to 4. *)
-let trace_config fn g ~tracing =
+(* The SQ's thread trace events, on or off (ac_emit_cp_spi_config_cntl):
+   SPI_SQG_EVENT_CTL on GFX12, SPI_CONFIG_CNTL with the SPI's priorities
+   before. *)
+let gpr_write_priority = 0x2c688
+let exp_priority_order = 3
+let ps_pkr_priority_cntl = 3
+
+let sqg_events fn g ~on =
+  let t = Bool.to_int on in
+  let events = [ ("enable_sqg_top_events", t); ("enable_sqg_bop_events", t) ] in
+  if major g >= 12 then set fn g "SPI_SQG_EVENT_CTL" events
+  else
+    set fn g "SPI_CONFIG_CNTL"
+      ([
+         ("gpr_write_priority", gpr_write_priority);
+         ("exp_priority_order", exp_priority_order);
+       ]
+      @ events
+      @
+      if major g >= 10 then [ ("ps_pkr_priority_cntl", ps_pkr_priority_cntl) ]
+      else [])
+
+(* SQ_THREAD_TRACE_CTRL (ac_sqtt_get_ctrl). *)
+let hiwater = 5
+let reg_at_hwm = 2
+let lowater_offset = 4
+
+let ctrl fn g ~on =
   set fn g "SQ_THREAD_TRACE_CTRL"
     ([
+       ("mode", Bool.to_int on);
+       ("hiwater", hiwater);
+       ("util_timer", 1);
        ("draw_event_en", 1);
        ("spi_stall_en", 1);
        ("sq_stall_en", 1);
-       ("reg_at_hwm", 2);
-       ("hiwater", 1);
-       ("util_timer", 1);
-       ("mode", Bool.to_int tracing);
+       ("reg_at_hwm", reg_at_hwm);
      ]
-    @ if major g >= 12 then [] else [ ("rt_freq", Defs.sq_tt_rt_freq_4096_clk) ]
-    )
+    @
+    if major g >= 12 then [ ("lowater_offset", lowater_offset) ]
+    else [ ("rt_freq", Defs.sq_tt_rt_freq_4096_clk) ])
 
-(* GFX9's tokens, by SQ_THREAD_TRACE_TOKEN_* type (vega10_enum.h): MISC,
-   TIMESTAMP, REG, WAVE_START, WAVE_END, INST_USERDATA, REG_CSPRIV and REG_CS;
-   and INST, INST_PC and ISSUE on the engines that trace instructions. Mesa
-   traces every token (0xbfff). *)
-let gfx9_tokens = [ 0; 1; 2; 3; 6; 12; 5; 15 ]
-let gfx9_instruction_tokens = [ 10; 11; 13 ]
-let bits = List.fold_left (fun m b -> m lor (1 lsl b)) 0
+(* The waves GFX11 on traces: every stage it has (ac_sqtt_get_shader_mask), of
+   which a compute queue runs compute waves alone. *)
+let stages =
+  Defs.(
+    sq_tt_wtype_include_ps_bit lor sq_tt_wtype_include_gs_bit
+    lor sq_tt_wtype_include_hs_bit lor sq_tt_wtype_include_cs_bit)
 
-(* The registers a GFX11 trace includes: Mesa's, but CONFIG. *)
+(* The registers GFX11 on traces, and those GFX12 excludes: CP_ME_MC_RADDR. *)
 let included =
-  Defs.sq_tt_token_mask_sqdec_bit lor Defs.sq_tt_token_mask_shdec_bit
-  lor Defs.sq_tt_token_mask_gfxudec_bit lor Defs.sq_tt_token_mask_comp_bit
-  lor Defs.sq_tt_token_mask_context_bit
+  Defs.(
+    sq_tt_token_mask_sqdec_bit lor sq_tt_token_mask_shdec_bit
+    lor sq_tt_token_mask_gfxudec_bit lor sq_tt_token_mask_comp_bit
+    lor sq_tt_token_mask_context_bit lor sq_tt_token_mask_config_bit)
 
-(* The tokens an engine that traces no instructions excludes: Mesa's five.
-   GFX12's enumeration names few of the field's bits, so GFX11's are taken for
-   them; GFX12 also sets bit 11, PERF on GFX11, which Mesa does not (an
-   unverified value, plan decision 22). Mesa excludes PERF on every GFX11
-   engine; here no traced engine excludes anything. *)
-let instructions_excluded g =
-  let gfx11 =
-    bits
-      Defs.
-        [
-          sq_tt_token_exclude_vmemexec_shift;
-          sq_tt_token_exclude_aluexec_shift;
-          sq_tt_token_exclude_valuinst_shift;
-          sq_tt_token_exclude_immediate_shift;
-          sq_tt_token_exclude_inst_shift;
-        ]
+let cp_me_mc_raddr = 2
+
+(* The tokens an engine excludes: those of instruction timing where it traces
+   none, and on GFX11 the performance counters', which Mesa calls deprecated.
+   GFX12's field takes GFX11's bits. *)
+let excluded g e =
+  let timing =
+    if itraced e then 0
+    else
+      bits
+        Defs.
+          [
+            sq_tt_token_exclude_vmemexec_shift;
+            sq_tt_token_exclude_aluexec_shift;
+            sq_tt_token_exclude_valuinst_shift;
+            sq_tt_token_exclude_immediate_shift;
+            sq_tt_token_exclude_inst_shift;
+          ]
   in
-  if major g >= 12 then gfx11 lor (1 lsl Defs.sq_tt_token_exclude_perf_shift)
-  else gfx11
+  if major g >= 12 then timing
+  else timing lor (1 lsl Defs.sq_tt_token_exclude_perf_shift)
 
-(* Mesa writes BASE2 before BASE ("order seems important") and the mask per
-   engine with its active compute unit, sets PERF_MASK, HIWATER, STATUS and
-   every stage's MODE bit, and enables the trace with
-   COMPUTE_THREAD_TRACE_ENABLE. *)
-let start_gfx9 fn g ~size buffer =
-  let base e shift = W32 (Shift (Value (buffer e), shift)) in
-  grbm fn g ()
-  @ set fn g "SQ_THREAD_TRACE_MASK"
-      [
-        ("simd_en", 0xf);
-        ("cu_sel", 0);
-        ("sq_stall_en", 1);
-        ("spi_stall_en", 1);
-        ("reg_stall_en", 1);
-        ("vm_id_mask", 0);
-      ]
-  @ engines g (fun e se ->
-      let tokens =
-        bits gfx9_tokens
-        lor if itraced e then bits gfx9_instruction_tokens else 0
-      in
-      grbm fn g ~se ~sa:0 ()
-      @ set fn g "SQ_THREAD_TRACE_TOKEN_MASK"
-          [ ("reg_mask", 0xf); ("token_mask", tokens) ]
-      @ set fn g "SQ_THREAD_TRACE_TOKEN_MASK2" [ ("inst_mask", 0xffff_ffff) ]
-      @ write fn g "SQ_THREAD_TRACE_BASE" [ base e page_shift ]
-      @ write fn g "SQ_THREAD_TRACE_BASE2" [ base e high_shift ]
-      @ set fn g "SQ_THREAD_TRACE_SIZE" [ ("size", size / page) ]
-      @ set fn g "SQ_THREAD_TRACE_CTRL" [ ("reset_buffer", 1) ]
-      @ set fn g "SQ_THREAD_TRACE_MODE"
-          [ ("mask_cs", 1); ("autoflush_en", 1); ("mode", 1) ])
-
-(* Mesa traces every stage and the first active work-group processor, and on
-   GFX12 zeroes SQ_THREAD_TRACE_WPTR and excludes CP_ME_MC_RADDR. *)
 let start_gfx11 fn g ~size buffer =
   let base e shift = Shift (Value (buffer e), shift) in
   let gfx12 = major g >= 12 in
+  (* BUF0_SIZE before the base: "order seems important". *)
   let buffer_words e =
     if gfx12 then
       set fn g "SQ_THREAD_TRACE_BUF0_SIZE" [ ("size", size / page) ]
       @ write fn g "SQ_THREAD_TRACE_BUF0_BASE_LO" [ W32 (base e page_shift) ]
       @ write fn g "SQ_THREAD_TRACE_BUF0_BASE_HI" [ W32 (base e high_shift) ]
+      @ write fn g "SQ_THREAD_TRACE_WPTR" [ Dword 0 ]
     else
       let r = register fn g "SQ_THREAD_TRACE_BUF0_SIZE" in
       let size = Int64.of_int (Register.encode r [ ("size", size / page) ]) in
@@ -189,26 +176,85 @@ let start_gfx11 fn g ~size buffer =
         [ W32 (Or (base e high_shift, size)) ]
       @ write fn g "SQ_THREAD_TRACE_BUF0_BASE" [ W32 (base e page_shift) ]
   in
-  spi_config fn g ~tracing:true
-  @ engines g (fun e se ->
-      grbm fn g ~se ~sa:0 () @ buffer_words e
+  engines g (fun e se ->
+      grbm fn g ~se () @ buffer_words e
       @ set fn g "SQ_THREAD_TRACE_MASK"
           [
-            ("wtype_include", Defs.sq_tt_wtype_include_cs_bit);
-            ("simd_sel", 0);
-            ("wgp_sel", 0);
+            ("wtype_include", stages);
             ("sa_sel", 0);
+            ("wgp_sel", 0);
+            ("simd_sel", 0);
           ]
       @ set fn g "SQ_THREAD_TRACE_TOKEN_MASK"
           ([
              ("reg_include", included);
-             ("token_exclude", if itraced e then 0 else instructions_excluded g);
+             ("token_exclude", excluded g e);
              ("bop_events_token_include", 1);
            ]
           @
-          if gfx12 then [ ("exclude_barrier_wait", 1) ]
-          else [ ("ttrace_exec", 1) ])
-      @ trace_config fn g ~tracing:true)
+          if gfx12 then
+            [ ("exclude_barrier_wait", 1); ("reg_exclude", cp_me_mc_raddr) ]
+          else [])
+      (* Last: it enables the trace. *)
+      @ ctrl fn g ~on:true)
+
+(* GFX9's tokens, by SQ_THREAD_TRACE_TOKEN_* type (vega10_enum.h): every one but
+   PERF (14), as Mesa's 0xbfff; on an engine that traces no instructions,
+   neither INST, INST_PC nor ISSUE (10, 11, 13). *)
+let gfx9_tokens = 0xbfff
+let gfx9_instruction_tokens = bits [ 10; 11; 13 ]
+
+(* GFX9's SQ_THREAD_TRACE_HIWATER, and its MODE: every stage, flushed to memory
+   periodically, counted in TCC's counters. *)
+let gfx9_hiwater = 4
+
+let gfx9_mode ~on =
+  [
+    ("mask_ps", 1);
+    ("mask_vs", 1);
+    ("mask_gs", 1);
+    ("mask_es", 1);
+    ("mask_hs", 1);
+    ("mask_ls", 1);
+    ("mask_cs", 1);
+    ("autoflush_en", 1);
+    ("mode", Bool.to_int on);
+    ("tc_perf_en", 1);
+  ]
+
+let start_gfx9 fn g ~size buffer =
+  let base e shift = W32 (Shift (Value (buffer e), shift)) in
+  engines g (fun e se ->
+      let tokens =
+        if itraced e then gfx9_tokens
+        else gfx9_tokens land lnot gfx9_instruction_tokens
+      in
+      (* BASE2, BASE, SIZE and CTRL in this order: "order seems important". *)
+      grbm fn g ~se ()
+      @ write fn g "SQ_THREAD_TRACE_BASE2" [ base e high_shift ]
+      @ write fn g "SQ_THREAD_TRACE_BASE" [ base e page_shift ]
+      @ set fn g "SQ_THREAD_TRACE_SIZE" [ ("size", size / page) ]
+      @ set fn g "SQ_THREAD_TRACE_CTRL" [ ("reset_buffer", 1) ]
+      @ set fn g "SQ_THREAD_TRACE_MASK"
+          [
+            ("cu_sel", 0);
+            ("sh_sel", 0);
+            ("simd_en", 0xf);
+            ("vm_id_mask", 0);
+            ("reg_stall_en", 1);
+            ("spi_stall_en", 1);
+            ("sq_stall_en", 1);
+          ]
+      @ set fn g "SQ_THREAD_TRACE_TOKEN_MASK"
+          [
+            ("token_mask", tokens); ("reg_mask", 0xff); ("reg_drop_on_stall", 0);
+          ]
+      @ set fn g "SQ_THREAD_TRACE_PERF_MASK"
+          [ ("sh0_mask", 0xffff); ("sh1_mask", 0xffff) ]
+      @ write fn g "SQ_THREAD_TRACE_TOKEN_MASK2" [ Dword 0xffff_ffff ]
+      @ set fn g "SQ_THREAD_TRACE_HIWATER" [ ("hiwater", gfx9_hiwater) ]
+      @ set fn g "SQ_THREAD_TRACE_STATUS" [ ("utc_error", 0) ]
+      @ set fn g "SQ_THREAD_TRACE_MODE" (gfx9_mode ~on:true))
 
 let start (g : Gpu.t) ~size buffer =
   let fn = "Thread_trace.start" in
@@ -216,48 +262,41 @@ let start (g : Gpu.t) ~size buffer =
     invalid_arg
       (Printf.sprintf "%s: size %d, expected a positive multiple of 4096" fn
          size);
-  let program, enable =
-    if major g = 9 then (start_gfx9 fn g ~size buffer, [])
-    else
-      ( start_gfx11 fn g ~size buffer,
-        write fn g "COMPUTE_THREAD_TRACE_ENABLE" [ Dword 1 ] )
+  let program =
+    if major g = 9 then start_gfx9 fn g ~size buffer
+    else start_gfx11 fn g ~size buffer
   in
-  Pm4.acquire_mem g System @ program @ grbm fn g () @ enable
+  Pm4.acquire_mem g System @ sqg_events fn g ~on:true @ program @ grbm fn g ()
+  @ set fn g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 1) ]
   @ Pm4.acquire_mem g System
 
-(* GFX11 on waits for FINISH_PENDING to clear, where Mesa waits for FINISH_DONE
-   to be set; GFX9 stops by MODE alone. *)
 let stop (g : Gpu.t) ends =
   let fn = "Thread_trace.stop" in
-  let gfx9 = major g = 9 in
   let status = register fn g "SQ_THREAD_TRACE_STATUS" in
   let wptr = Register.address g (register fn g "SQ_THREAD_TRACE_WPTR") in
-  let idle field =
+  (* Until the status's [field] compares to [v] as [cmp] says. *)
+  let await field cmp v =
     let mask = Register.encode status [ (field, -1) ] in
     known
       (Pm4.wait g
          (Register (Register.address g status))
-         Equal 0 ~mask ~interval ())
+         cmp v ~mask ~interval ())
   in
-  let stopping =
-    if gfx9 then
-      set fn g "SQ_THREAD_TRACE_MODE"
-        [ ("mask_cs", 1); ("autoflush_en", 1); ("mode", 0) ]
+  let finished =
+    if major g = 9 then
+      set fn g "SQ_THREAD_TRACE_MODE" [ ("mode", 0) ] @ await "busy" Equal 0
     else
-      write fn g "COMPUTE_THREAD_TRACE_ENABLE" [ Dword 0 ]
-      @ Pm4.event_write Thread_trace_finish
+      (* FINISH_DONE set: Mesa waits for it to differ from 0. *)
+      await "finish_done" Greater_equal 1
+      @ ctrl fn g ~on:false @ await "busy" Equal 0
   in
-  Pm4.acquire_mem g System @ grbm fn g () @ stopping
+  Pm4.acquire_mem g System
+  @ set fn g "COMPUTE_THREAD_TRACE_ENABLE" [ ("thread_trace_enable", 0) ]
+  @ Pm4.event_write Thread_trace_finish
   @ engines g (fun e se ->
-      grbm fn g ~se ~sa:0 ()
-      @ (if gfx9 then []
-         else idle "finish_pending" @ trace_config fn g ~tracing:false)
-      @ idle "busy"
-      @ Pm4.event_write Cs_partial_flush
+      grbm fn g ~se () @ finished
       @ Pm4.copy_data Confirmed (Counter wptr) (ends e))
-  @ grbm fn g ()
-  @ (if gfx9 then [] else spi_config fn g ~tracing:false)
-  @ Pm4.acquire_mem g System
+  @ grbm fn g () @ sqg_events fn g ~on:false @ Pm4.acquire_mem g System
 
 (* An engine's write pointer counts 32-byte units in 29 bits from the trace's
    start, or from address 0 on GFX 11.0 (ac_sqtt_copy_info_regs). *)
