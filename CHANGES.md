@@ -3532,9 +3532,9 @@ thread.
   drops it and an n-d one keeps its shape; it gave one axis of their count.
   The new index `T p` selects the positions held in a tensor in `slice` and
   `set`, where repeated positions keep the last write and positions outside
-  the axis read zero and drop their write. `Nx.get l` is `slice` of `I`s,
-  `shrink` is `slice` of `R`s, `compress` and `extract` are `slice` with `M`,
-  `nonzero` of a 1-D mask is `positions`, and `argwhere` and `.%{}` are gone.
+  the axis read zero and drop their write. `Nx.shrink` is gone for `slice` of
+  `R`s, which cuts a range to its axis where `shrink` raised, and
+  `Nx.compress ~axis ~condition` for `slice` with `M condition` at `axis`.
 - **Breaking:** `Nx_dtype.kind dt` is the kind of number a dtype holds,
   `Float`, `Complex`, `Signed`, `Unsigned` or `Boolean`, and its `Float` arm
   makes a tensor of any dtype a float tensor. `Nx_dtype.is_float`,

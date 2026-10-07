@@ -797,9 +797,7 @@ let pullback_tests =
           Rune.vjp' (fun x -> Nx.mul (Nx.sin x) x) (vec [| 0.5; -1. |])
         in
         let cts = Nx.create f64 [| 3; 2 |] [| 1.; 0.; 0.; 1.; 2.; -3. |] in
-        let loop =
-          Nx.stack (List.init 3 (fun i -> pb (Nx.slice [ Nx.I i ] cts)))
-        in
+        let loop = Nx.stack (List.init 3 (fun i -> pb (Nx.get [ i ] cts))) in
         equal (close ()) loop (Rune.vmap' pb cts));
     test "a pullback applied under jit is its eager value" (fun () ->
         let _, pb =

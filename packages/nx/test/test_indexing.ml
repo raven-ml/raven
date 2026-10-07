@@ -891,6 +891,135 @@ let selections =
                   (Nx.zeros Nx.int32 [| 0; 3 |]))));
     ]
 
+(* A shape and positions on its first axes, negative ones counting from the
+   end. *)
+let prefixed =
+  let open Gen in
+  let* s = shape in
+  let* k = int_range 0 (Array.length s) in
+  let+ l =
+    array ~size:(constant k) (int_range 0 100)
+    |> map (Array.mapi (fun a i -> (i mod (2 * s.(a))) - s.(a)))
+  in
+  (s, Array.to_list l)
+
+(* A condition of [s]'s number of elements: of shape [s], flat, or [s]'s
+   elements in other rows. *)
+let conditioned =
+  let open Gen in
+  let* s = shape in
+  let* step = int_range 2 3 in
+  let+ form = int_range 0 2 in
+  let n = Ref.numel s in
+  let cond = Array.init n (fun i -> i mod step = 0) in
+  let cs = match form with 0 -> s | 1 -> [| n |] | _ -> [| 1; n |] in
+  (s, cs, cond)
+
+(* The coordinates of the non-zero elements of [t], one row each in row-major
+   order. *)
+let coordinates_of t =
+  let r = Ref.of_nx t in
+  let rows =
+    List.filter_map
+      (fun i -> if r.data.(i) <> 0l then Some (Ref.unravel r.shape i) else None)
+      (List.init (Ref.numel r.shape) Fun.id)
+    |> Array.of_list
+  in
+  Ref.init
+    [| Array.length rows; Array.length r.shape |]
+    (fun i -> Int64.of_int rows.(i.(0)).(i.(1)))
+
+let positions = Ref.witness int64
+
+(* Shapes of rank 0 to 3 with empty axes, and every third element zero. *)
+let sparse =
+  let open Gen in
+  let+ s = array ~size:(int_range 0 3) (int_range 0 4) in
+  let r = Ref.init s (fun i -> Int32.of_int ((Ref.ravel s i + 1) mod 3)) in
+  Nx.create Nx.int32 s r.data
+
+let familiar =
+  group "get, extract, argwhere and nonzero"
+    [
+      prop "get is slice of an I at each of its positions" prefixed
+        (fun (s, l) ->
+          cover "a negative position" (List.exists (fun i -> i < 0) l);
+          cover "every axis addressed" (List.length l = Array.length s);
+          let _, t = tensor_of s in
+          let expanded = Nx.slice (List.map (fun i -> Nx.I i) l) t in
+          equal (tensor int32) expanded (Nx.get l t);
+          equal (tensor int32) expanded Nx.Infix.(t.%{l}));
+      cases "get raises at a position outside its axis or past the rank"
+        ~name:(fun l -> String.concat "; " (List.map string_of_int l))
+        [ [ 2 ]; [ -3 ]; [ 0; 3 ]; [ 0; 0; 0 ] ]
+        (fun l ->
+          raises_invalid_arg (fun () -> Nx.get l (Nx.zeros Nx.int32 [| 2; 3 |])));
+      prop
+        "extract is a flattened mask of the flattened tensor, the elements \
+         where the condition holds in row-major order"
+        conditioned (fun (s, cs, cond) ->
+          let r, t = tensor_of s in
+          let condition = Nx.create Nx.bool cs cond in
+          let got = Nx.extract ~condition t in
+          equal (tensor int32)
+            (Nx.slice [ Nx.M (Nx.flatten condition) ] (Nx.flatten t))
+            got;
+          equal ints
+            (Ref.compress cond (Ref.create [| Ref.numel s |] r.data))
+            (Ref.of_nx got));
+      test "extract reads a transposed tensor" (fun () ->
+          let r, t = tensor_of [| 2; 3 |] in
+          let cond = [| true; false; false; true; true; false |] in
+          equal ints
+            (Ref.compress cond (Ref.transpose r))
+            (Ref.of_nx
+               (Nx.extract
+                  ~condition:(Nx.create Nx.bool [| 3; 2 |] cond)
+                  (Nx.transpose t))));
+      test "extract refuses a condition of another size" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.extract
+                ~condition:(Nx.create Nx.bool [| 3 |] [| true; false; true |])
+                (Nx.zeros Nx.int32 [| 2 |])));
+      prop
+        "argwhere lists the coordinates of the non-zero elements, one row each \
+         in row-major order"
+        sparse (fun t ->
+          cover "an empty axis" (Array.exists (( = ) 0) (Nx.shape t));
+          cover "a scalar" (Nx.ndim t = 0);
+          cover "rank 3" (Nx.ndim t = 3);
+          equal positions (coordinates_of t) (Ref.of_nx (Nx.argwhere t)));
+      prop "nonzero is the columns of argwhere" sparse (fun t ->
+          let w = Nx.argwhere t in
+          equal
+            (array (tensor int64))
+            (Array.init (Nx.ndim t) (fun j -> Nx.slice [ Nx.A; Nx.I j ] w))
+            (Nx.nonzero t));
+      test
+        "argwhere of a scalar has a row of no coordinate where it is non-zero"
+        (fun () ->
+          equal (array int) [| 1; 0 |]
+            (Nx.shape (Nx.argwhere (Nx.scalar Nx.int32 3l)));
+          equal (array int) [| 0; 0 |]
+            (Nx.shape (Nx.argwhere (Nx.scalar Nx.int32 0l)));
+          equal int 0 (Array.length (Nx.nonzero (Nx.scalar Nx.int32 3l))));
+      test "nonzero takes NaN as non-zero, and -0 and complex zero as zero"
+        (fun () ->
+          let x = Nx.create Nx.float64 [| 4 |] [| -0.; Float.nan; 0.; 2. |] in
+          equal (array int64) [| 1L; 3L |] (Nx.to_array (Nx.nonzero x).(0));
+          let z = Nx.create Nx.complex64 [| 2 |] Complex.[| zero; one |] in
+          equal (array int64) [| 1L |] (Nx.to_array (Nx.nonzero z).(0)));
+      test "a bool and a bit mask have the coordinates of their int32 cast"
+        (fun () ->
+          let m =
+            Nx.create Nx.bool [| 3; 3 |]
+              [| false; true; false; true; false; true; false; false; true |]
+          in
+          let expected = Nx.argwhere (Nx.cast Nx.int32 m) in
+          equal (tensor int64) expected (Nx.argwhere m);
+          equal (tensor int64) expected (Nx.argwhere (Nx.cast Nx.bit m)));
+    ]
+
 let extremes =
   let x = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
   let at = Nx.create Nx.int64 [| 3 |] [| Int64.min_int; 1L; Int64.max_int |] in
@@ -1085,6 +1214,7 @@ let () =
          extremes;
          positions_of_counts;
          selections;
+         familiar;
          windows;
          stepped_ranges;
          past_int32;

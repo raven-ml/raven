@@ -241,7 +241,7 @@ let nested ran x =
              ~init:c row
          in
          (inner, inner))
-       ~init:(Nx.mul_s (Nx.slice [ Nx.I 0; Nx.I 0 ] x) 0.)
+       ~init:(Nx.mul_s (Nx.get [ 0; 0 ] x) 0.)
        x)
 
 let lanes_gen =
@@ -258,7 +258,7 @@ let boundary_tests =
       lanes_gen (fun xs ->
         let ran = ref 0 in
         let each =
-          Nx.stack (List.init 2 (fun i -> nested ran (Nx.slice [ Nx.I i ] xs)))
+          Nx.stack (List.init 2 (fun i -> nested ran (Nx.get [ i ] xs)))
         in
         ran := 0;
         let got = Rune.jit' (Rune.vmap' (nested ran)) xs in
@@ -273,7 +273,7 @@ let boundary_tests =
             x
         in
         let w0 = scalar 0.7 in
-        let lane i w = f w (Nx.slice [ Nx.I i ] xs) in
+        let lane i w = f w (Nx.get [ i ] xs) in
         let expected =
           Nx.add (Rune.grad' (lane 0) w0) (Rune.grad' (lane 1) w0)
         in
@@ -316,11 +316,10 @@ let boundary_tests =
         in
         let flat = Nx.reshape [| 2; 6 |] xs in
         let expected =
-          Float.of_int
-            (trips (Nx.slice [ Nx.I 0 ] flat) + trips (Nx.slice [ Nx.I 1 ] flat))
+          Float.of_int (trips (Nx.get [ 0 ] flat) + trips (Nx.get [ 1 ] flat))
         in
         cover "lanes stop apart"
-          (trips (Nx.slice [ Nx.I 0 ] flat) <> trips (Nx.slice [ Nx.I 1 ] flat));
+          (trips (Nx.get [ 0 ] flat) <> trips (Nx.get [ 1 ] flat));
         equal (close ()) (scalar expected)
           (collect (fun () -> Rune.vmap' f flat)));
     prop
@@ -346,11 +345,10 @@ let boundary_tests =
         in
         let flat = Nx.reshape [| 2; 6 |] xs in
         let expected =
-          Float.of_int
-            (trips (Nx.slice [ Nx.I 0 ] flat) + trips (Nx.slice [ Nx.I 1 ] flat))
+          Float.of_int (trips (Nx.get [ 0 ] flat) + trips (Nx.get [ 1 ] flat))
         in
         cover "lanes stop apart"
-          (trips (Nx.slice [ Nx.I 0 ] flat) <> trips (Nx.slice [ Nx.I 1 ] flat));
+          (trips (Nx.get [ 0 ] flat) <> trips (Nx.get [ 1 ] flat));
         equal (close ()) (scalar expected)
           (collect (fun () -> Rune.vmap' f flat)));
   ]
@@ -490,7 +488,7 @@ let ruled x =
        ~f:(fun c e ->
          let c = Nx.add (Nx.mul_s c 0.5) (doubled (Nx.mul e c)) in
          (c, c))
-       ~init:(Nx.add_s (Nx.slice [ Nx.I 0 ] x) 0.2)
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.2)
        x)
 
 (* Rules for [sin] whose tangent map or pullback reads a value the rule's own
@@ -514,13 +512,13 @@ let stepped rule x =
        ~f:(fun c e ->
          let c = Nx.add (Nx.mul_s c 0.5) (rule (Nx.mul e c)) in
          (c, c))
-       ~init:(Nx.add_s (Nx.slice [ Nx.I 0 ] x) 0.2)
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.2)
        x)
 
 let unrolled x =
-  let c = ref (Nx.add_s (Nx.slice [ Nx.I 0 ] x) 0.2) in
+  let c = ref (Nx.add_s (Nx.get [ 0 ] x) 0.2) in
   for i = 0 to (Nx.shape x).(0) - 1 do
-    c := Nx.add (Nx.mul_s !c 0.5) (Nx.sin (Nx.mul (Nx.slice [ Nx.I i ] x) !c))
+    c := Nx.add (Nx.mul_s !c 0.5) (Nx.sin (Nx.mul (Nx.get [ i ] x) !c))
   done;
   !c
 
@@ -553,7 +551,7 @@ let rooted ?linear_solve x =
          in
          let c = Nx.mul_s r 0.5 in
          (c, c))
-       ~init:(Nx.add_s (Nx.slice [ Nx.I 0 ] x) 0.3)
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.3)
        x)
 
 (* Linear solves of a scalar system that apply their operator: once, and under a
@@ -577,7 +575,7 @@ let calling x =
            Nx.add (Nx.mul_s (compiled_sin (Nx.mul c e)) 0.5) (squared e)
          in
          (c, c))
-       ~init:(Nx.add_s (Nx.slice [ Nx.I 0 ] x) 0.1)
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.1)
        x)
 
 (* A step that reads a detached value: [c + detach (c²) e]. *)
@@ -587,7 +585,7 @@ let detaching x =
        ~f:(fun c e ->
          let c = Nx.sin (Nx.add c (Nx.mul (Rune.detach (Nx.mul c c)) e)) in
          (c, c))
-       ~init:(Nx.add_s (Nx.slice [ Nx.I 0 ] x) 0.1)
+       ~init:(Nx.add_s (Nx.get [ 0 ] x) 0.1)
        x)
 
 let gen_vec =
@@ -675,10 +673,10 @@ let record_tests =
       "a root's linear_solve in a step, replayed, applies the replay's \
        operator, directly and under a jvp it opens, compiled and mapped"
       gen_lanes (fun xs ->
-        let x = Nx.slice [ Nx.I 0 ] xs in
+        let x = Nx.get [ 0 ] xs in
         let expected = rooted_grad x
         and each =
-          Nx.stack (List.init 2 (fun i -> rooted_grad (Nx.slice [ Nx.I i ] xs)))
+          Nx.stack (List.init 2 (fun i -> rooted_grad (Nx.get [ i ] xs)))
         in
         List.iter
           (fun (name, g, compiled) ->
@@ -691,12 +689,11 @@ let record_tests =
        and mapped, are eager's"
       gen_lanes (fun xs ->
         let each =
-          Nx.stack
-            (List.init 2 (fun i -> grad1 calling (Nx.slice [ Nx.I i ] xs)))
+          Nx.stack (List.init 2 (fun i -> grad1 calling (Nx.get [ i ] xs)))
         in
         equal ~msg:"compiled" (close ())
-          (grad1 calling (Nx.slice [ Nx.I 0 ] xs))
-          (calling_jit (Nx.slice [ Nx.I 0 ] xs));
+          (grad1 calling (Nx.get [ 0 ] xs))
+          (calling_jit (Nx.get [ 0 ] xs));
         equal ~msg:"mapped" (close ()) each (Rune.vmap' (grad1 calling) xs);
         equal ~msg:"mapped, compiled" (close ()) each (calling_mapped_jit xs));
     prop
@@ -721,7 +718,7 @@ let record_tests =
             (List.init 2 (fun i ->
                  g
                    (fun () -> Nx.scalar Nx.int32 (Int32.of_int i))
-                   (Nx.slice [ Nx.I i ] xs)))
+                   (Nx.get [ i ] xs)))
         in
         equal (close ()) each (Rune.vmap' (g (fun () -> Rune.lane_index ())) xs));
     prop
@@ -758,11 +755,10 @@ let record_tests =
        run's value is, under grad of grad, the unrolled loop's, eagerly, \
        compiled and mapped"
       gen_lanes (fun xs ->
-        let x = Nx.slice [ Nx.I 0 ] xs in
+        let x = Nx.get [ 0 ] xs in
         let expected = grad2 unrolled x
         and each =
-          Nx.stack
-            (List.init 2 (fun i -> grad2 unrolled (Nx.slice [ Nx.I i ] xs)))
+          Nx.stack (List.init 2 (fun i -> grad2 unrolled (Nx.get [ i ] xs)))
         in
         List.iter
           (fun (name, _, g, compiled, mapped) ->
@@ -776,7 +772,7 @@ let record_tests =
     prop
       "grad of grad of a scan whose step applies such a rule is the central \
        difference of its grad" (Gen.pair gen_lanes gen_lanes) (fun (xs, vs) ->
-        let x = Nx.slice [ Nx.I 0 ] xs and v = Nx.slice [ Nx.I 0 ] vs in
+        let x = Nx.get [ 0 ] xs and v = Nx.get [ 0 ] vs in
         List.iter
           (fun (name, rule, g, _, _) ->
             let grad x = Nx.sum (grad1 (stepped rule) x) in
@@ -793,9 +789,7 @@ let record_tests =
           (list ~size:(constant 4) (float_range (-2.) 2.)))
       (fun xs ->
         let g x = Rune.grad' (fun x -> Nx.sum (halving x)) x in
-        let each =
-          Nx.stack (List.init 2 (fun i -> g (Nx.slice [ Nx.I i ] xs)))
-        in
+        let each = Nx.stack (List.init 2 (fun i -> g (Nx.get [ i ] xs))) in
         equal (close ()) each (Rune.vmap' g xs));
   ]
 
@@ -1204,7 +1198,7 @@ let key_tests =
         let each =
           Nx.stack
             (List.init 4 (fun j ->
-                 Nx.Rng.with_key k7 (fun () -> f (Nx.slice [ Nx.I j ] ts))))
+                 Nx.Rng.with_key k7 (fun () -> f (Nx.get [ j ] ts))))
         in
         equal (close ()) each (Nx.Rng.with_key k7 (fun () -> Rune.vmap' f ts)));
     test

@@ -170,7 +170,7 @@ let element = Nx.item [0; 1] arr
 let arr' = Nx.set [I 0; I 1] (Nx.scalar Nx.float32 5.0) arr
 
 (* Get a slice/subarray *)
-let row = Nx.slice [I 0] arr
+let row = Nx.get [0] arr
 ```
 
 **NumPy:**

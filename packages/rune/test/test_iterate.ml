@@ -20,7 +20,7 @@ let scalar x = Nx.scalar f64 x
 let exact () = Oracle.tensor ()
 let close () = Oracle.tensor ~rel:1e-10 ~abs:1e-12 ()
 let holds b = Nx.item [] b
-let lane i x = Nx.slice [ Nx.I i ] x
+let lane i x = Nx.get [ i ] x
 let lanes x = (Nx.shape x).(0)
 let stack n f = Nx.stack (List.init n f)
 

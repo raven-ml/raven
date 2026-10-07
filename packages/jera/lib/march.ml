@@ -40,7 +40,7 @@ let run c y ~at ~interval ~state init =
   let y0 = state init in
   if n = 1 then stack1 y y0
   else if n = 2 then
-    let t0 = Nx.slice [ Nx.I 0 ] at and t1 = Nx.slice [ Nx.I 1 ] at in
+    let t0 = Nx.get [ 0 ] at and t1 = Nx.get [ 1 ] at in
     prepend y y0 (stack1 y (state (interval t0 t1 init)))
   else
     (* Reverse mode keeps each interval's start and runs the interval again

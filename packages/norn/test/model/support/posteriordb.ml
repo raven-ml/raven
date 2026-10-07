@@ -155,7 +155,7 @@ let dogs data =
     let beta =
       M.sample (D.iid [| 3 |] (D.normal ~loc:(f64 0.) ~scale:(f64 100.)))
     in
-    let b i = Nx.slice [ Nx.I i ] beta in
+    let b i = Nx.get [ i ] beta in
     let logits =
       Nx.add (b 0) (Nx.add (Nx.mul (b 1) avoided) (Nx.mul (b 2) shocks))
     in

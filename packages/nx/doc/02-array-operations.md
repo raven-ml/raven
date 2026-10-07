@@ -158,6 +158,21 @@ Nx.flip x                (* reverse all dimensions *)
 
 ## Indexing and Slicing
 
+### get
+
+Index from the outermost dimension inward. Returns a sub-tensor (view):
+
+```ocaml
+open Nx
+
+let () =
+  let x = create Int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
+  let row = get [1] x in      (* second row: [4, 5, 6] *)
+  Printf.printf "%s\n" (to_string row)
+```
+
+`get [i; j] x` is `slice [I i; I j] x`.
+
 ### item
 
 Extract a scalar value:

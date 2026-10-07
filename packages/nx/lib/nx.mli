@@ -74,9 +74,10 @@ type bit_elt = Nx_dtype.bit_elt
     [bit] holds booleans eight to a byte, for keeping large masks. Every
     function that takes [bool] outside a condition takes [bit], and one that
     returns its operands' dtype returns [bit]. A condition ({!where}, a mask
-    index [M], {!check}) is a [bool]: compute with [cast bool m] and keep with
-    [cast bit m]. A function that returns a new [bit], [int4] or [uint4] tensor
-    writes the bits of its last byte past its last element as [0]. *)
+    index [M], {!extract}, {!check}) is a [bool]: compute with [cast bool m] and
+    keep with [cast bit m]. A function that returns a new [bit], [int4] or
+    [uint4] tensor writes the bits of its last byte past its last element as
+    [0]. *)
 type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
@@ -1682,7 +1683,25 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
     [I] or [L] position lies outside its axis, a step is zero, a mask is not 1-d
     with its axis' length, or a [D] run is longer than its axis.
 
-    See also {!set}, {!take}, {!item}. *)
+    See also {!get}, {!set}, {!take}, {!item}. *)
+
+val get : int list -> ('a, 'b) t -> ('a, 'b) t
+(** [get l t] is [slice (List.map (fun i -> I i) l) t]: the view of [t] at the
+    positions [l] on its outer axes, which go. [get [ i ] t] is row [i].
+
+    {@ocaml[
+      # let x =
+          create int32 [| 2; 3 |]
+            [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        in
+        get [ 1 ] x, get [ 1; -1 ] x
+      - : (int32, int32_elt) t * (int32, int32_elt) t = ([4, 5, 6], 6)
+    ]}
+
+    Raises [Invalid_argument] if [l] is longer than [t]'s rank or a position
+    lies outside its axis.
+
+    See also {!item}. *)
 
 val set : index list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [set indices v t] is [t] with [v], broadcast to the selection of [indices],
@@ -1715,7 +1734,7 @@ val set : index list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val item : int list -> ('a, 'b) t -> 'a
 (** [item indices t] is the element at [indices], one per axis, as an OCaml
-    value: [slice] of their [I]s, read. Negative indices count from the end.
+    value: [get indices t], read. Negative indices count from the end.
 
     Each call allocates its index list. To visit every element, use {!iter_item}
     or {!fold_item}; for indexed reads in a hot loop, index the bigarray of
@@ -1833,12 +1852,13 @@ val scatter :
 
 (** {2:counted Lengths that depend on values}
 
-    {!positions}, {!unique} and {!val-slice} with an [M] index return tensors
-    whose length depends on their operands' values. Each reads that length at
-    most once per call, as one read named after the function the program called:
-    a placed operand's device synchronizes once. Under [Rune.grad] the read
-    reads the primal values. Inside [Rune.jit] and [Rune.vmap] it raises, naming
-    the function: there, keep the shape and mask with {!where}. *)
+    {!positions}, {!extract}, {!argwhere}, {!nonzero}, {!unique} and
+    {!val-slice} with an [M] index return tensors whose length depends on their
+    operands' values. Each reads that length at most once per call, as one read
+    named after the function the program called: a placed operand's device
+    synchronizes once. Under [Rune.grad] the read reads the primal values.
+    Inside [Rune.jit] and [Rune.vmap] it raises, naming the function: there,
+    keep the shape and mask with {!where}. *)
 
 val positions : ('a, 'b) t -> int64_t
 (** [positions c] is each index [i] of [c] repeated [c.{i}] times, in increasing
@@ -1848,8 +1868,7 @@ val positions : ('a, 'b) t -> int64_t
     ([item [] (count c)] for a boolean [c]), read as
     {{!section:counted}a length}.
 
-    The positions of an n-d mask [m] are [positions (flatten m)], and its
-    elements where it holds are [slice [ M (flatten m) ] (flatten t)].
+    An n-d mask's elements are {!extract}, and their coordinates {!argwhere}.
 
     {@ocaml[
       # create bool [| 4 |] [| false; true; false; true |]
@@ -1869,6 +1888,58 @@ val positions : ('a, 'b) t -> int64_t
     counts sum past [int64]'s range.
 
     See also {!count}. *)
+
+val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [extract ~condition t] is [slice [ M (flatten condition) ] (flatten t)]:
+    [t]'s elements where [condition] holds, in C order. [condition] has [t]'s
+    number of elements, in any shape. The result's length is read as
+    {{!section:counted}a length}.
+
+    {@ocaml[
+      # let x =
+          create int32 [| 2; 3 |]
+            [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        in
+        extract ~condition:(greater_s x 2l) x
+      - : (int32, int32_elt) t = [3, 4, 5, 6]
+    ]}
+
+    Raises [Invalid_argument] if [condition] and [t] have different numbers of
+    elements. *)
+
+val argwhere : ('a, 'b) t -> int64_t
+(** [argwhere t] is the coordinates of [t]'s non-zero elements, one row each:
+    row [r] is the coordinates in [t]'s shape of the [r]th position of
+    [positions (flatten (not_equal t (zeros_like t)))]. Its shape is
+    [[k; ndim t]], [k] the number of non-zero elements, read as
+    {{!section:counted}a length}. A NaN is non-zero, and a scalar has a row of
+    no coordinate if it is non-zero.
+
+    {@ocaml[
+      # create int32 [| 2; 3 |]
+          [| 0l; 1l; 0l;
+             2l; 0l; 3l |]
+        |> argwhere
+      - : int64_t = int64 [3,2] [[0, 1],
+                                 [1, 0],
+                                 [1, 2]]
+    ]} *)
+
+val nonzero : ('a, 'b) t -> int64_t array
+(** [nonzero t] is the columns of {!argwhere}, one 1-d tensor of coordinates per
+    axis of [t]: [Array.init (ndim t) (fun j -> slice [ A; I j ] (argwhere t))].
+    Their common length is read as {{!section:counted}a length}.
+
+    {@ocaml[
+      # let c =
+          nonzero
+            (create int32 [| 2; 3 |]
+               [| 0l; 1l; 0l;
+                  2l; 0l; 3l |])
+        in
+        c.(0), c.(1)
+      - : int64_t * int64_t = ([0, 1, 1], [1, 0, 2])
+    ]} *)
 
 (** {1:arithmetic Arithmetic}
 
@@ -2788,6 +2859,9 @@ module Infix : sig
   (** [t **@ n] is {!matrix_power} [t n]. *)
 
   (** {2:infix_index Indexing} *)
+
+  val ( .%{} ) : ('a, 'b) t -> int list -> ('a, 'b) t
+  (** [t.%\{l\}] is {!get} [l t]. *)
 
   val ( .${} ) : ('a, 'b) t -> index list -> ('a, 'b) t
   (** [t.$\{s\}] is {!val-slice} [s t]. *)

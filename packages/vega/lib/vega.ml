@@ -792,7 +792,7 @@ let lbfgs_init p ?(history = 10) f params =
 
 (* A leaf's memory is its pairs stacked along axis 0, newest first: [slot i]
    views the [i]-th, [push] puts a new one on top and drops the oldest. *)
-let slot i memory = Nx.slice [ Nx.I i ] memory
+let slot i memory = Nx.get [ i ] memory
 
 let push x memory =
   let n = (Nx.shape memory).(0) in
@@ -813,7 +813,7 @@ let lbfgs_direction p st =
   let pair i =
     ( Nx.Ptree.map p (fun _ m -> slot i m) st.s,
       Nx.Ptree.map p (fun _ m -> slot i m) st.y,
-      Nx.slice [ Nx.I i ] st.rho )
+      Nx.get [ i ] st.rho )
   in
   let alphas = Array.make m (Nx.scalar dt 0.0) in
   let q = ref st.grads in
@@ -824,7 +824,7 @@ let lbfgs_direction p st =
     q := Nx.Ptree.axpy p (Nx.neg alpha) y !q
   done;
   let y0 = Nx.Ptree.map p (fun _ m -> slot 0 m) st.y
-  and rho0 = Nx.slice [ Nx.I 0 ] st.rho in
+  and rho0 = Nx.get [ 0 ] st.rho in
   let gamma =
     Nx.where (Nx.greater_s rho0 0.0)
       (Nx.div (Nx.scalar dt 1.0) (Nx.mul rho0 (dot y0 y0)))

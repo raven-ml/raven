@@ -12,7 +12,7 @@ dune exec nx/examples/03-indexing-and-slicing/main.exe
 - Reading single elements with `item`
 - Selecting rows and columns with `I` and `A`
 - Range slicing with `R` and strided slicing with `Rs`
-- Infix indexing syntax: `.${}`
+- Infix indexing syntax: `.%{}` and `.${}`
 - Boolean masks with `M` and `where`
 - Picking rows by positions held in a tensor with `T`
 
@@ -25,6 +25,7 @@ dune exec nx/examples/03-indexing-and-slicing/main.exe
 | `A`                           | Select all indices along an axis       |
 | `R (start, stop)`             | Half-open range `[start, stop)`        |
 | `Rs (start, stop, step)`      | Range with stride                      |
+| `t.%{[i; ...]}`               | Infix `get`: the row at `i`            |
 | `t.${[...]}`                  | Infix slicing (synonym for `slice`)    |
 | `M mask`                      | Keep rows/cols where `mask` is true    |
 | `where cond then_ else_`      | Element-wise conditional selection     |
@@ -52,11 +53,11 @@ item [ 0; 1 ] grades              (* → 72.0 *)
 
 ### Row and column selection
 
-The infix `.${[...]}` operator makes slicing readable. `I n` picks one index,
-`A` keeps the full axis:
+`t.%{[i]}`, the infix `get`, reads row `i`. The infix `.${[...]}` slices: `I n`
+picks one index, `A` keeps the full axis:
 
 ```ocaml
-grades.${[ I 2; A ]}              (* student 2, all subjects → [92, 85, 91, 70] *)
+grades.%{[ 2 ]}                   (* student 2, all subjects → [92, 85, 91, 70] *)
 grades.${[ A; I 0 ]}              (* all students, Math      → [88, 45, 92, 76, 60] *)
 ```
 

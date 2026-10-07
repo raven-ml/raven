@@ -511,7 +511,7 @@ let transformation_tests =
         let ys = Nx.stack [ samples; Nx.cos samples; Nx.neg samples ] in
         let one y = Piecewise.eval (Piecewise.cubic `Natural knots y) points in
         equal (close ())
-          (Nx.stack (List.init 3 (fun i -> one (Nx.slice [ Nx.I i ] ys))))
+          (Nx.stack (List.init 3 (fun i -> one (Nx.get [ i ] ys))))
           (Rune.vmap' one ys));
     test "float32 evaluates within float32's rounding" (fun () ->
         let c32 = Nx.cast Nx.float32 in

@@ -2167,6 +2167,7 @@ let select ~op specs x =
     | result, squeezed -> squeeze ~axes:(List.rev squeezed) result
 
 let slice specs x = select ~op:"slice" specs x
+let get indices x = select ~op:"get" (List.map (fun i -> I i) indices) x
 
 let item indices t =
   let s = shape t in
@@ -2176,6 +2177,41 @@ let item indices t =
          (Array.length s) (Array.length s) (List.length indices));
   read_item ~by:"Nx.item"
     (select ~op:"item" (List.map (fun i -> I i) indices) t)
+
+let extract ~condition t =
+  select ~op:"extract" [ M (flatten condition) ] (flatten t)
+
+(* [argwhere' ~by t] is [argwhere t], its length read by the surface function
+   [by]. Row [r] holds the coordinates of the [r]th flat position: the last
+   axis' is the position modulo its extent, and the quotient goes on to the axes
+   before. *)
+let argwhere' (type a b) ~by (t : (a, b) t) =
+  let mask : bool_t =
+    match dtype t with
+    | Bool -> t
+    | Bit -> cast Bool t
+    | _ -> not_equal t (zeros_like t)
+  in
+  let p = positions' ~by (flatten mask) in
+  let s = shape t in
+  let r = Array.length s in
+  if r = 0 then empty (Value.context t) Int64 [| dim 0 p; 0 |]
+  else
+    let c = Array.make r p in
+    let rest = ref p in
+    for d = r - 1 downto 1 do
+      let extent = Int64.of_int s.(d) in
+      c.(d) <- mod_s !rest extent;
+      rest := div_s !rest extent
+    done;
+    c.(0) <- !rest;
+    stack ~axis:1 (Array.to_list c)
+
+let argwhere t = argwhere' ~by:"Nx.argwhere" t
+
+let nonzero t =
+  let w = argwhere' ~by:"Nx.nonzero" t in
+  Array.init (ndim t) (fun j -> slice [ A; I j ] w)
 
 (* ───── Functional update ───── *)
 
@@ -6206,5 +6242,6 @@ module Infix = struct
   let ( *@ ) a b = matmul a b
   let ( /@ ) = solve
   let ( **@ ) = matrix_power
+  let ( .%{} ) x indices = get indices x
   let ( .${} ) x slice_def = slice slice_def x
 end

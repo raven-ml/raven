@@ -16,7 +16,7 @@ let scalar x = Nx.scalar f64 x
 let exact () = Oracle.tensor ()
 let close () = Oracle.tensor ~rel:1e-7 ~abs:1e-9 ()
 let one = Nx.Ptree.tensor
-let lane i x = Nx.slice [ Nx.I i ] x
+let lane i x = Nx.get [ i ] x
 let stack n f = Nx.stack (List.init n f)
 
 (* Square roots *)
@@ -314,7 +314,7 @@ let mapped_twice op b =
   let ones = Nx.ones f64 [| 3 |] in
   let v = Nx.add ones (solve_dense j (Nx.sub b (op ones))) in
   let shared =
-    Nx.slice [ Nx.I 0 ] (Rune.vmap' (fun _ -> op v) (Nx.zeros f64 [| 2 |]))
+    Nx.get [ 0 ] (Rune.vmap' (fun _ -> op v) (Nx.zeros f64 [| 2 |]))
   in
   Nx.add v (solve_dense j (Nx.sub b shared))
 
@@ -329,7 +329,7 @@ let richardson op b =
    second takes more trips. *)
 let richardson_mapped op b =
   let bs = Nx.stack [ b; Nx.mul_s b 8. ] in
-  Nx.slice [ Nx.I 0 ] (Rune.vmap' (richardson op) bs)
+  Nx.get [ 0 ] (Rune.vmap' (richardson op) bs)
 
 let mapped_solves =
   [
@@ -432,8 +432,7 @@ let mapped_tests =
              ths));
     test "an inner map of one lane" (fun () ->
         let one_lane op b =
-          Nx.slice [ Nx.I 0 ]
-            (Rune.vmap' (mapped_dense op) (Nx.reshape [| 1; 3 |] b))
+          Nx.get [ 0 ] (Rune.vmap' (mapped_dense op) (Nx.reshape [| 1; 3 |] b))
         in
         let ths = vec [| 0.3; -1.1 |] in
         equal (close ())
@@ -456,8 +455,7 @@ let mapped_tests =
             None;
             Some
               (fun op b ->
-                Nx.div b
-                  (Nx.slice [ Nx.I 0 ] (Rune.vmap' op (Nx.ones f64 [| 1 |]))));
+                Nx.div b (Nx.get [ 0 ] (Rune.vmap' op (Nx.ones f64 [| 1 |]))));
           ]
         in
         List.iter

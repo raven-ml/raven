@@ -356,7 +356,7 @@ let views =
       shares "slice by an index, the whole axis and a new axis"
         (Nx.slice [ I 1; A; N ]);
       shares "slice by a step of 1" (Nx.slice [ A; Rs (1, 5, 1) ]);
-      shares "get" (Nx.slice [ Nx.I 2 ]);
+      shares "get" (Nx.get [ 2 ]);
       shares "shrink" (Nx.slice [ Nx.R (1, 3); Nx.R (0, 6) ]);
       shares "expand" (fun t -> Nx.expand [| 2; -1; -1 |] t);
       shares "swapaxes" (Nx.swapaxes 0 1);

@@ -158,7 +158,7 @@ let refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
     let put v two =
       let child i =
         Nx.broadcast_to (Nx.shape v)
-          (Nx.unsqueeze ~axes:[ 0 ] (Nx.slice [ Nx.I i ] two))
+          (Nx.unsqueeze ~axes:[ 0 ] (Nx.get [ i ] two))
       in
       Nx.where (widen left v) (child 0) (Nx.where (widen right v) (child 1) v)
     in

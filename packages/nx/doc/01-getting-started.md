@@ -151,7 +151,7 @@ let () =
   let x = create Int32 [|3; 3|] [|1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l|] in
 
   (* Get a row *)
-  let row = slice [I 1] x in       (* [4, 5, 6] *)
+  let row = get [1] x in           (* [4, 5, 6] *)
   Printf.printf "%s\n" (to_string row);
 
   (* Get a scalar *)

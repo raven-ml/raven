@@ -300,7 +300,7 @@ let march y m ~steps f ~at y0 =
       let v, ks = step fn y m f t h v (Some k) in
       (v, ks.(Array.length ks - 1))
     in
-    let k0 = eval fn y f (Nx.slice [ Nx.I 0 ] at) y0 in
+    let k0 = eval fn y f (Nx.get [ 0 ] at) y0 in
     March.run c y ~at ~interval:(interval c step) ~state:fst (y0, k0)
   else
     let step t h v = fst (step fn y m f t h v None) in
@@ -494,9 +494,7 @@ let disorder repeats at =
     let d =
       Nx.sub (Nx.slice [ Nx.R (1, n) ] at) (Nx.slice [ Nx.R (0, n - 1) ] at)
     in
-    let direction =
-      Nx.sign (Nx.sub (Nx.slice [ Nx.I (n - 1) ] at) (Nx.slice [ Nx.I 0 ] at))
-    in
+    let direction = Nx.sign (Nx.sub (Nx.get [ n - 1 ] at) (Nx.get [ 0 ] at)) in
     let along = Nx.mul d direction in
     let fine =
       match repeats with
@@ -544,7 +542,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
   and stops = Nx.slice [ Nx.R (1, n) ] at0 in
   let detached v = Nx.Ptree.map y (fun _ x -> Rune.detach x) v in
   let v0 = detached y0 in
-  let t0 = Nx.slice [ Nx.I 0 ] at0 in
+  let t0 = Nx.get [ 0 ] at0 in
   let m0, opening = mem.start t0 v0 in
   let m0 = Nx.Ptree.map mem.tree (fun _ x -> Rune.detach x) m0 in
   let cap h = match mem.limit m0 with None -> h | Some l -> Nx.minimum h l in
@@ -557,7 +555,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
      zero with no [abs], makes the estimate meaningless; the fallback then
      starts small and the controller grows it. *)
   let one = Nx.scalar dtype 1. in
-  let span_all = Nx.abs (Nx.sub (Nx.slice [ Nx.I (n - 1) ] at0) t0) in
+  let span_all = Nx.abs (Nx.sub (Nx.get [ n - 1 ] at0) t0) in
   let fallback = Nx.mul_s span_all 1e-6 in
   let d0 = error_norm y tol dtype v0 v0 v0
   and d1 = error_norm y tol dtype k0 v0 v0 in
@@ -567,7 +565,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       (Nx.where tiny fallback
          (Nx.div (Nx.mul_s d0 0.01) (Nx.where tiny one d1)))
   in
-  let direction = Nx.sign (Nx.sub (Nx.slice [ Nx.I 1 ] at0) t0) in
+  let direction = Nx.sign (Nx.sub (Nx.get [ 1 ] at0) t0) in
   let v1 = Nx.Ptree.axpy y (Nx.mul h0 direction) k0 v0 in
   let k1 = fd (Nx.add t0 (Nx.mul h0 direction)) v1 in
   let diff = Nx.Ptree.axpy y (Nx.neg one) k0 k1 in
@@ -844,12 +842,7 @@ let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
     ~facts:
       ([
          Solution.Fact ("t", reached ~at s);
-         Fact
-           ( "span",
-             Nx.abs
-               (Nx.sub
-                  (Nx.slice [ Nx.I (n - 1) ] at0)
-                  (Nx.slice [ Nx.I 0 ] at0)) );
+         Fact ("span", Nx.abs (Nx.sub (Nx.get [ n - 1 ] at0) (Nx.get [ 0 ] at0)));
          Fact ("step", s.h);
          Fact ("accepted", count s.accepted);
          Fact ("rejected", count (Nx.sub s.attempts s.accepted));
@@ -912,8 +905,8 @@ let samples fn y m mem ~budget ~at y0 s =
       in
       r
   in
-  let m0, _ = mem.start (Nx.slice [ Nx.I 0 ] at) y0 in
-  let k_start = eval fn y (mem.field m0) (Nx.slice [ Nx.I 0 ] at) y0 in
+  let m0, _ = mem.start (Nx.get [ 0 ] at) y0 in
+  let k_start = eval fn y (mem.field m0) (Nx.get [ 0 ] at) y0 in
   let _, ys =
     Rune.scan c
       Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
@@ -959,7 +952,7 @@ let solve y m ~tol ~budget f ~t0 ~t1 y0 =
   let ((s, _) as found) =
     search fn `Allowed y m ~tol ~budget (plain f) ~at y0
   in
-  let last v = Nx.Ptree.map y (fun _ x -> Nx.slice [ Nx.I 1 ] x) v in
+  let last v = Nx.Ptree.map y (fun _ x -> Nx.get [ 1 ] x) v in
   report fn m ~tol ~budget ~at found
     ~value:(last (samples fn y m (plain f) ~budget ~at y0 s))
     ~error:(last s.errs)
@@ -1335,8 +1328,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
       ~evaluations:(Nx.scalar Nx.int32 0l) ~facts:[] ()
   else
     let degree = Array.length emb.dense.(0) in
-    let t_first = Nx.slice [ Nx.I 0 ] at
-    and t_last = Nx.slice [ Nx.I (n - 1) ] at in
+    let t_first = Nx.get [ 0 ] at and t_last = Nx.get [ n - 1 ] at in
     let smallest = Nx.min (Rune.detach lags)
     and largest = Nx.max (Rune.detach lags) in
     let int32 x = Nx.scalar Nx.int32 x in
@@ -1408,9 +1400,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
         | `Right -> Nx.less s t_first
       in
       let s = Nx.minimum s (Nx.broadcast_to (Nx.shape s) t_first) in
-      let past =
-        stack y (Array.init n_lags (fun i -> past (Nx.slice [ Nx.I i ] s)))
-      in
+      let past = stack y (Array.init n_lags (fun i -> past (Nx.get [ i ] s))) in
       Nx.Ptree.map2 y
         (fun _ h p ->
           let mask =

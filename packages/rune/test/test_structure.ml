@@ -383,13 +383,13 @@ let arithmetic_tests =
             a
         in
         let lane i (u, (m, c)) =
-          (Nx.slice [ Nx.I i ] u, (Nx.slice [ Nx.I i ] m, Nx.slice [ Nx.I i ] c))
+          (Nx.get [ i ] u, (Nx.get [ i ] m, Nx.get [ i ] c))
         in
         for i = 0 to 2 do
           equal
             ~msg:(Printf.sprintf "lane %d" i)
             mixed_w
-            (Nx.Ptree.axpy mixed (Nx.slice [ Nx.I i ] a) (x ()) (y ()))
+            (Nx.Ptree.axpy mixed (Nx.get [ i ] a) (x ()) (y ()))
             (lane i z)
         done);
   ]

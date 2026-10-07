@@ -111,7 +111,7 @@ let v ~offsets values =
       (shape_string offsets);
   let n = dim 0 offsets and rows = dim 0 values in
   let increase =
-    greater_equal (slice [ R (1, n) ] offsets) (slice [ R (0, n - 1) ] offsets)
+    greater_equal (slice [ R (1, n) ] offsets) (slice [ R (0, -1) ] offsets)
   in
   require "Nx_ragged.v"
     [
@@ -162,9 +162,7 @@ let of_ids ~segments ids x =
       ~values:(broadcast_to [| n |] (scalar_like ids 1L))
       (full_as ids [| segments + 1 |] 0L)
   in
-  let offsets =
-    pad [| (1, 0) |] 0L (cumsum (slice [ R (0, segments) ] counts))
-  in
+  let offsets = pad [| (1, 0) |] 0L (cumsum (slice [ R (0, -1) ] counts)) in
   { offsets; values = take ~axis:0 ~indices:(argsort ids) x }
 
 let offsets r = r.offsets
@@ -173,7 +171,7 @@ let length r = dim 0 r.offsets - 1
 
 let lengths r =
   let n = dim 0 r.offsets in
-  sub (slice [ R (1, n) ] r.offsets) (slice [ R (0, n - 1) ] r.offsets)
+  sub (slice [ R (1, n) ] r.offsets) (slice [ R (0, -1) ] r.offsets)
 
 (* The elements of [r]'s values in row-major order, and its offsets in elements:
    a row of cells of [c] elements is [c] times as long. *)
@@ -230,7 +228,7 @@ let quantile (type b) qs (r : (float, b) t) : (float, b) Nx.t =
   let at = mul (create Float64 [| k; 1 |] qs) (sub_s (cast Float64 lens) 1.) in
   let lo = floor at in
   let statistic i =
-    let i = add (reshape [| 1; n |] (slice [ R (0, n) ] offsets)) i in
+    let i = add (reshape [| 1; n |] (slice [ R (0, -1) ] offsets)) i in
     reshape [| k; n |] (take ~indices:(reshape [| k * n |] i) sorted)
   in
   let lo_i = cast Int64 lo in
@@ -268,7 +266,7 @@ let rows op r =
   (* Every window of up to 64 bytes from an element of a row lies in
      [keys]. *)
   let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in
-  let start = slice [ R (0, n) ] offsets in
+  let start = slice [ R (0, -1) ] offsets in
   let len = sub (slice [ R (1, n + 1) ] offsets) start in
   let round ~ordered ~seen ~active ~m ~longest =
     let width =
@@ -348,8 +346,8 @@ let ranks op r =
             true
             (any ~axes:[ 1 ]
                (not_equal
-                  (slice [ R (1, m); R (0, dim 1 key) ] sorted)
-                  (slice [ R (0, m - 1); R (0, dim 1 key) ] sorted)))
+                  (slice [ R (1, m) ] sorted)
+                  (slice [ R (0, -1) ] sorted)))
         in
         let splits =
           logical_and starts
@@ -358,7 +356,7 @@ let ranks op r =
                false
                (equal
                   (slice [ R (1, m) ] sorted_rank)
-                  (slice [ R (0, m - 1) ] sorted_rank)))
+                  (slice [ R (0, -1) ] sorted_rank)))
         in
         let splits = cast Int64 splits in
         let within = cumsum splits in
@@ -372,7 +370,7 @@ let ranks op r =
                 0L
                 (cumsum
                    (slice
-                      [ R (0, classes - 1) ]
+                      [ R (0, -1) ]
                       (reduce_segments `Add ~segments:classes sorted_rank splits)))
             in
             add rank (take ~indices:rank before)
@@ -516,7 +514,7 @@ let ids r =
 let take ~indices r =
   if ndim indices <> 1 then
     err "Nx_ragged.take" "indices of shape %s, not 1-D" (shape_string indices);
-  let k = dim 0 indices and l = length r in
+  let k = dim 0 indices in
   let lens = take ~indices (lengths r) in
   let ends = cumsum lens in
   let offsets = pad [| (1, 0) |] 0L ends in
@@ -540,11 +538,9 @@ let take ~indices r =
        the row's old start less its new one. That is a running sum of ones with
        each row's change of shift added at its first element, a row that starts
        at [total] being empty. *)
-    let firsts = slice [ R (0, k) ] offsets in
-    let shift = sub (take ~indices (slice [ R (0, l) ] r.offsets)) firsts in
-    let change =
-      sub shift (pad [| (1, 0) |] 1L (slice [ R (0, k - 1) ] shift))
-    in
+    let firsts = slice [ R (0, -1) ] offsets in
+    let shift = sub (take ~indices (slice [ R (0, -1) ] r.offsets)) firsts in
+    let change = sub shift (pad [| (1, 0) |] 1L (slice [ R (0, -1) ] shift)) in
     let positions =
       cumsum
         (scatter ~mode:`Add ~axis:0 ~indices:firsts ~values:change

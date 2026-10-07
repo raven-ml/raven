@@ -803,7 +803,7 @@ let cubature ~tol ~budget f (box : _ Box.t) =
     in
     let s7 = Nx.mul vol (Nx.sum ~axes:[ 0 ] (Nx.mul (along rule.w7) y)) in
     let s5 = Nx.mul vol (Nx.sum ~axes:[ 0 ] (Nx.mul (along rule.w5) y)) in
-    let row i = Nx.slice [ Nx.I i ] y in
+    let row i = Nx.get [ i ] y in
     let fourth =
       Array.map
         (fun (c, p2, m2, p3, m3) ->

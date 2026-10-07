@@ -470,7 +470,7 @@ let rec reader : type a. a Type.t -> t -> a reader =
       { get; bad = (if checked then Some bad else None) }
   | Tensor (dt, _), Fixed p ->
       let x = Nx.unpack dt p in
-      { get = (fun i -> Nx.copy (Nx.slice [ Nx.I i ] x)); bad = None }
+      { get = (fun i -> Nx.copy (Nx.get [ i ] x)); bad = None }
   | Ext _, _ ->
       let bad _ = Some "an extension value is read through its declaration" in
       { get = (fun _ -> assert false); bad = Some bad }

@@ -41,7 +41,7 @@ let () =
   Printf.printf "Student 0, Science: %.0f\n\n" score;
 
   (* Entire row: all of student 2's grades. *)
-  let student_2 = grades.${[ I 2; A ]} in
+  let student_2 = grades.%{[ 2 ]} in
   Printf.printf "Student 2 (all subjects): %s\n\n" (to_string student_2);
 
   (* Entire column: everyone's Math scores (column 0). *)

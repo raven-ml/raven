@@ -34,7 +34,7 @@ let loop f init xs =
   let n = (Nx.shape xs).(0) in
   let c = ref init and ys = ref [] in
   for i = 0 to n - 1 do
-    let c', y = f !c (Nx.slice [ Nx.I i ] xs) in
+    let c', y = f !c (Nx.get [ i ] xs) in
     c := c';
     ys := y :: !ys
   done;

@@ -1217,9 +1217,8 @@ let elements =
             (renamed (printed m.bits));
           if Nx.ndim m.bits > 0 && Nx.dim 0 m.bits > 0 then
             let last = Nx.dim 0 m.bits - 1 in
-            equal ~msg:"get of its last row" same
-              (Nx.slice [ Nx.I last ] m.bools)
-              (Nx.cast Nx.bool (Nx.slice [ Nx.I last ] m.bits)));
+            equal ~msg:"get of its last row" same (Nx.get [ last ] m.bools)
+              (Nx.cast Nx.bool (Nx.get [ last ] m.bits)));
     ]
 
 (* Packed bytes *)

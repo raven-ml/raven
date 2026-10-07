@@ -1540,7 +1540,7 @@ let lanes_apart ?(real = false) op (lanes, good, bad) =
   List.iter
     (fun (F d) ->
       let cast x = Nx.cast d.dtype (c128 x) in
-      let good = List.init lanes.count (fun i -> Nx.slice [ Nx.I i ] good) in
+      let good = List.init lanes.count (fun i -> Nx.get [ i ] good) in
       let failed = c128 (op.apply (cast bad)) in
       let nan =
         Nx.full Nx.complex128 (Nx.shape failed)
@@ -1560,9 +1560,7 @@ let with_nan m n =
     (fun (lanes, a) ->
       ( lanes,
         a,
-        Nx.set [ I 0; I 0 ]
-          (Nx.scalar Nx.float64 Float.nan)
-          (Nx.slice [ Nx.I 0 ] a) ))
+        Nx.set [ I 0; I 0 ] (Nx.scalar Nx.float64 Float.nan) (Nx.get [ 0 ] a) ))
     (Gen.pair lanes (matrix ~batch:(Gen.constant ~pp:pp_shape [| 5 |]) m n))
 
 let failures =
@@ -1684,8 +1682,7 @@ let failures =
             Nx.concatenate ~axis:0
               [ Nx.slice [ R (0, 13) ] x; Nx.slice [ R (14, 20) ] x ]
           in
-          all_nan ~msg:"the failing matrix" ~complex:false
-            (Nx.slice [ Nx.I 13 ] l);
+          all_nan ~msg:"the failing matrix" ~complex:false (Nx.get [ 13 ] l);
           equal ~msg:"the others"
             (tensor (close ~rel:0. ()))
             (Nx.cholesky (others good))
@@ -1705,8 +1702,7 @@ let failures =
             Nx.concatenate ~axis:0
               [ Nx.slice [ R (0, 7) ] x; Nx.slice [ R (8, 20) ] x ]
           in
-          all_nan ~msg:"the failing matrix" ~complex:false
-            (Nx.slice [ Nx.I 7 ] x);
+          all_nan ~msg:"the failing matrix" ~complex:false (Nx.get [ 7 ] x);
           equal ~msg:"the others"
             (tensor (close ~rel:0. ()))
             (Nx.solve_triangular (others good) (others b))
@@ -1716,7 +1712,7 @@ let failures =
              Gen.map
                (fun (lanes, a) ->
                  let good = Nx.add (t a *@ a) (Nx.mul_s (identity_like a) 1.) in
-                 (lanes, good, Nx.neg (Nx.slice [ Nx.I 0 ] good)))
+                 (lanes, good, Nx.neg (Nx.get [ 0 ] good)))
                (Gen.pair lanes
                   (matrix ~batch:(Gen.constant ~pp:pp_shape [| 5 |]) n n))))
         (lanes_apart { apply = (fun a -> Nx.cholesky a) });
@@ -1727,7 +1723,7 @@ let failures =
                  let singular =
                    Nx.set [ I 0 ]
                      (Nx.zeros Nx.float64 [| n |])
-                     (Nx.slice [ Nx.I 0 ] good)
+                     (Nx.get [ 0 ] good)
                  in
                  ((lanes, good, singular), rhs))
                (Gen.pair
@@ -1787,9 +1783,7 @@ let failures =
           List.iter
             (fun (F d) ->
               let cast x = Nx.cast d.dtype (c128 x) in
-              let good =
-                List.init lanes.count (fun i -> Nx.slice [ Nx.I i ] good)
-              in
+              let good = List.init lanes.count (fun i -> Nx.get [ i ] good) in
               let rank ?hermitian a = Nx.matrix_rank ?hermitian a in
               let symmetric a = Nx.add a (Nx.matrix_transpose a) in
               let undefined = Nx.scalar Nx.int32 (-1l) in

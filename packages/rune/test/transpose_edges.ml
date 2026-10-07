@@ -272,7 +272,7 @@ let recorder =
           snd
             (Rune.scan'
                ~f:(fun c r -> (Nx.add c r, Nx.add c r))
-               ~init:(Nx.mul_s (Nx.slice [ Nx.I 0 ] dx) 0.)
+               ~init:(Nx.mul_s (Nx.get [ 0 ] dx) 0.)
                dx)
         in
         equal floats [| 3.; 2.; 1. |]

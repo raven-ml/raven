@@ -35,8 +35,7 @@ let check_series_breaks fn breaks =
         (Printf.sprintf "%s: the breaks decrease at [%d]: %g after %g" fn
            (i.(0) + 1)
            (Nx.item [] hi) (Nx.item [] lo)));
-  let first = Nx.slice [ Nx.I 0 ] breaks
-  and last = Nx.slice [ Nx.I (n - 1) ] breaks in
+  let first = Nx.get [ 0 ] breaks and last = Nx.get [ n - 1 ] breaks in
   Nx.check Nx.Ptree.unit (Nx.less first last) () (fun _ () ->
       Invalid_argument (fn ^ ": the first break equals the last"))
 
@@ -206,7 +205,7 @@ let adapt s ~degree ~tol ~budget f a b =
             (fun x ->
               let k = Nx.dim 0 x in
               let flat = Nx.reshape [| k; m; -1 |] x in
-              let last i = Nx.abs (Nx.slice [ Nx.I i ] (Nx.moveaxis 1 0 flat)) in
+              let last i = Nx.abs (Nx.get [ i ] (Nx.moveaxis 1 0 flat)) in
               let e = Nx.maximum (last degree) (last (degree - 1)) in
               let y = Nx.max ~axes:[ 1 ] (Nx.abs flat) in
               Nx.cast (Nx.dtype x) (Tol.ratio tol ~e ~y))

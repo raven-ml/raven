@@ -470,7 +470,7 @@ let transformation_tests =
         equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
     test "lanes solve their own systems" (fun () ->
         let rs = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; -1.; 0.; 5. |] in
-        let one_lane i = Solution.get (dense a (Nx.slice [ Nx.I i ] rs)) in
+        let one_lane i = Solution.get (dense a (Nx.get [ i ] rs)) in
         equal
           (Oracle.tensor ~rel:1e-14 ())
           (Nx.stack [ one_lane 0; one_lane 1 ])
