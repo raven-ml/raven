@@ -208,7 +208,7 @@ let map_peer m ~owner mem =
     let pages, target =
       match map.target with
       | System -> (map.pages, Page_table.System)
-      | Gpu | Peer -> owner.peer map.pages
+      | Gpu | Peer _ -> owner.peer map.pages
     in
     match
       Page_table.map ~snooped:true ~uncached:map.uncached m.tables ~va:map.va

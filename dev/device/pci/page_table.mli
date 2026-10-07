@@ -29,7 +29,10 @@
 type target =
   | Gpu  (** The GPU's own memory. *)
   | System  (** System memory, which the GPU reaches over the bus. *)
-  | Peer  (** Another GPU's memory, reached over a direct link. *)
+  | Peer of int
+      (** [Peer i] is another GPU's memory, reached over a direct link: [i] is
+          the number this GPU's links give that GPU. A format whose links
+          address peers by physical address alone ignores [i]. *)
 
 (** The type for what a table entry holds. *)
 type entry =
@@ -198,8 +201,9 @@ val tables : t -> va:int -> int -> int list option
 (** [tables t ~va n] is the physical addresses of the tables from the root down
     to the one whose entries would map the [n] bytes from [va], root first,
     creating those that are missing as {!map} would. They are never freed: the
-    caller may write the entries that map those bytes itself. [None] if the
-    GPU's memory has no room for one, keeping those it made.
+    caller may write the entries that map those bytes itself, and [t], which
+    knows a table is empty only by the entries it wrote there, cannot see them.
+    [None] if the GPU's memory has no room for one, keeping those it made.
 
     Raises [Invalid_argument] if the range is not as {!map} requires, or a page
     larger than [n] bytes maps [va]. *)

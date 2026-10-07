@@ -292,7 +292,7 @@ let pp_target ppf t =
     (match t with
     | Page_table.Gpu -> "Gpu"
     | System -> "System"
-    | Peer -> "Peer")
+    | Peer i -> Printf.sprintf "Peer %d" i)
 
 let target = Testable.make ~pp:pp_target ~equal:( = )
 
@@ -729,14 +729,14 @@ let test_peer_link () =
   let asked = ref [] in
   let peer r =
     asked := r;
-    (List.map (fun (pa, n) -> (link_base + pa, n)) r, Page_table.Peer)
+    (List.map (fun (pa, n) -> (link_base + pa, n)) r, Page_table.Peer 3)
   in
   let owner, x = pair_of ~peer () in
   let mem = alloc owner Gpu (3 * mib) in
   let p = peer_ok x owner mem in
   equal ~msg:"asked for the memory's ranges" ranges (merge mem.mapping.pages)
     (merge !asked);
-  equal ~msg:"in the link's target" target Peer p.mapping.target;
+  equal ~msg:"in the link's target" target (Peer 3) p.mapping.target;
   equal ~msg:"at the link's addresses" ranges
     (merge (List.map (fun (pa, n) -> (link_base + pa, n)) mem.mapping.pages))
     (merge p.mapping.pages);

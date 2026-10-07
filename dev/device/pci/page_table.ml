@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type target = Gpu | System | Peer
+type target = Gpu | System | Peer of int
 type entry = Invalid | Page | Table of int
 
 type format = {

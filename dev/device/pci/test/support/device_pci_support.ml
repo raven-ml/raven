@@ -86,10 +86,17 @@ module Tables = struct
   let large l = l >= 1
   let address_mask = 0xF_FFFF_FFFF_F000
   let bit b i = if b then 1 lsl i else 0
-  let target_code = function Page_table.Gpu -> 0 | System -> 4 | Peer -> 8
+
+  let target_code = function
+    | Page_table.Gpu -> 0
+    | System -> 4
+    | Peer i -> 8 lor ((i land 15) lsl 52)
 
   let target_of e =
-    match e land 12 with 0 -> Page_table.Gpu | 4 -> System | _ -> Peer
+    match e land 12 with
+    | 0 -> Page_table.Gpu
+    | 4 -> System
+    | _ -> Peer ((e lsr 52) land 15)
 
   let entry_at m table i =
     Option.value ~default:0L (Hashtbl.find_opt m.entries (table + (8 * i)))
@@ -148,7 +155,7 @@ module Tables = struct
       (match t with
       | Page_table.Gpu -> "gpu"
       | System -> "system"
-      | Peer -> "peer")
+      | Peer i -> "peer " ^ string_of_int i)
 
   let target = Testable.make ~pp:pp_target ~equal:( = )
 

@@ -95,7 +95,8 @@ val log : int -> (bool * int * int) list
     Four levels of 512 entries, the root numbered 0: level [l] indexes the bits
     from [shifts.(l)] on. Pages map at levels 1 to 3: 1 GiB, 2 MiB and 4 KiB.
     Entries: bit 0 valid, bit 1 a page, bits 2-3 the target, bit 4 uncached, bit
-    5 snooped, bits 6-11 the fragment, bits 12-51 the address. *)
+    5 snooped, bits 6-11 the fragment, bits 12-51 the address, bits 52-55 a
+    peer's number. *)
 module Tables : sig
   type memory = {
     entries : (int, int64) Hashtbl.t;  (** Entries by physical address. *)

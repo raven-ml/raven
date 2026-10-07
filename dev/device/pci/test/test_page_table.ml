@@ -192,6 +192,26 @@ let test_create_refusals =
       raises_match (Exn.invalid_arg ~substring:"") (fun () ->
           tables ~memory ~boot ~tables:kind ()))
 
+(* Levels rise from bit 12, the leaf's, to below [bits]. *)
+let test_level_refusals =
+  cases
+    ~name:(fun (why, _, _) -> why)
+    "refuses levels"
+    [
+      ("a leaf level of 8 KiB pages", [ 13; 21; 30; 39 ], 48);
+      ("levels that do not rise", [ 12; 30; 21; 39 ], 48);
+      ("a root level at the top bit", [ 12; 21; 30; 39 ], 39);
+      ("more bits than an int holds", [ 12; 21; 30; 39 ], Sys.int_size);
+    ]
+    (fun (_, levels, bits) ->
+      let g = Tables.memory () in
+      let s = Space.create ~base (1 lsl 40) in
+      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+          Page_table.create
+            { (format g) with levels; bits }
+            s ~memory:(66 * mib) ~boot:mib ~tables:Main
+            ~pages:[ (page, page) ]))
+
 (* The largest page the fake format maps is 1 GiB: the tables' base must be a
    multiple of it. *)
 let test_base_refusals =
@@ -300,7 +320,12 @@ let case_gen =
          { offset; ranges = split k (apart ranges); tg; unc; snoop })
        (Gen.triple
           (Gen.pair (Gen.frequency [ (9, ranges); (1, gib_page) ]) cut)
-          (Gen.of_list ~pp:pp_target [ Page_table.Gpu; System; Peer ])
+          (Gen.frequency
+             [
+               (1, Gen.constant ~pp:pp_target Page_table.Gpu);
+               (1, Gen.constant ~pp:pp_target Page_table.System);
+               (1, Gen.map (fun i -> Page_table.Peer i) (Gen.int_range 0 15));
+             ])
           (Gen.pair Gen.bool Gen.bool)))
 
 (* A mapping writes exactly the entries its pages, levels and fragments call
@@ -472,6 +497,14 @@ let test_map_refusals =
           ignore (Page_table.map t ~va:last System [ (0, 2 * page) ]) );
       ( "an unmap below the base",
         fun t -> Page_table.unmap t ~va:(base - page) page );
+      ( "the tables of an address off a page",
+        fun t -> ignore (Page_table.tables t ~va:(va + 0x3001) page) );
+      ( "the tables of a range past the tables' reach",
+        fun t ->
+          let last = base + Page_table.span t - page in
+          ignore (Page_table.tables t ~va:last (2 * page)) );
+      ( "the tables of a page inside a 2 MiB page",
+        fun t -> ignore (Page_table.tables t ~va:(large + page) page) );
     ]
     (fun (_, f) ->
       let t, g = tables () in
@@ -1211,6 +1244,7 @@ let () =
              test "names its space, base, span and root" test_create;
              test_main_pool;
              test_create_refusals;
+             test_level_refusals;
              test_base_refusals;
            ];
          group ~timeout:patience "map"
