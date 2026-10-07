@@ -50,7 +50,16 @@
     [B + A], takes [B = base - o.address], how far the image moved from its link
     address.
 
-    In this module an {e offset} is an image offset unless said otherwise. *)
+    In this module an {e offset} is an image offset unless said otherwise.
+
+    {b References.}
+    - The
+      {{:https://www.sco.com/developers/gabi/latest/contents.html}System V ABI},
+      chapter 4, Object Files: headers, sections, symbols and relocation
+      entries.
+    - A machine's processor supplement to it, such as the
+      {{:https://gitlab.com/x86-psABIs/x86-64-ABI}x86-64 psABI}: its relocation
+      types and their formulas. *)
 
 (** {1:objects Objects} *)
 
