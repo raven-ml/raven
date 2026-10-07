@@ -817,10 +817,26 @@ let test_many_sections () =
     [ null_symbol; sym_entry "far" (Image { section = at; offset = 1 }) ]
     (syms o)
 
-(* Every section past the header's reach with a symbol of its own, each at an
-   extended index: reading takes time linear in the symbols. *)
-let test_many_symbols () =
-  let count = 70_000 in
+(* The least CPU time of three reads of [obj]. *)
+let read_time obj =
+  let once () =
+    let start = Sys.time () in
+    ignore (Sys.opaque_identity (Elf.of_string obj));
+    Sys.time () -. start
+  in
+  Float.min (once ()) (Float.min (once ()) (once ()))
+
+(* Reading [make n] takes less than 8 times as long as reading [make (n / 4)]:
+   about 4 if reading is linear, 16 if it is quadratic. A ratio holds on a slow
+   or instrumented build where a bound in seconds would not. *)
+let linear_time make n =
+  let small = read_time (make (n / 4)) and large = read_time (make n) in
+  less
+    ~msg:(Printf.sprintf "CPU time of %gs at n over %gs at n / 4" large small)
+    float_exact ~than:8. (large /. small)
+
+(* [count] sections, each with a symbol of its own at an extended index. *)
+let many_symbols count =
   let filler = List.init count (fun _ -> note "" "") in
   let indexes = Buffer.create (4 * (count + 1)) in
   Buffer.add_int32_le indexes 0l;
@@ -830,44 +846,44 @@ let test_many_symbols () =
   let entries, names =
     symbols (List.init count (fun _ -> defined "" shn_xindex 0))
   in
-  let obj =
-    write
-      (filler
-      @ [
-          symtab ~link:(count + 2) entries;
-          strtab names;
-          section ~kind:sht_symtab_shndx ~flags:0 ~link:(count + 1) ~align:4
-            ~entsize:4 ".symtab_shndx" (Buffer.contents indexes);
-        ])
-  in
-  let start = Sys.time () in
-  let o = read obj in
-  let seconds = Sys.time () -. start in
+  write
+    (filler
+    @ [
+        symtab ~link:(count + 2) entries;
+        strtab names;
+        section ~kind:sht_symtab_shndx ~flags:0 ~link:(count + 1) ~align:4
+          ~entsize:4 ".symtab_shndx" (Buffer.contents indexes);
+      ])
+
+(* Every section past the header's reach with a symbol of its own: reading takes
+   time linear in the symbols. *)
+let test_many_symbols () =
+  let count = 70_000 in
+  let o = read (many_symbols count) in
   equal ~msg:"the last symbol's section" symbol
     (sym_entry "" (Outside count))
     (Iarray.get o.symbols count);
-  less ~msg:"CPU seconds" float_exact ~than:1.0 seconds
+  linear_time many_symbols count
 
-(* Many dynamic relocation sections, each with its own symbol table, among many
-   allocated sections the image lacks: reading takes time linear in them. *)
-let test_many_relocation_sections () =
-  let count = 10_000 in
+(* [count] dynamic relocation sections, each with its own symbol table, among
+   [count] allocated sections the image lacks. *)
+let many_relocation_sections count =
   let entries, names = symbols [ defined "f" 1 0x100 ] in
   let symtab_at = count + 2 and strtab_at = (3 * count) + 2 in
-  let obj =
-    write
-      (section ~addr:0x100 ".text" "ABCD"
-       :: List.init count (fun i -> bss ~addr:(0x1000 + (2 * i)) ".bss" 1)
-      @ List.init count (fun _ -> symtab ~link:strtab_at entries)
-      @ List.init count (fun i ->
-          rela_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1, 0) ])
-      @ [ strtab names ])
-  in
-  let start = Sys.time () in
-  let o = read obj in
-  let seconds = Sys.time () -. start in
+  write
+    (section ~addr:0x100 ".text" "ABCD"
+     :: List.init count (fun i -> bss ~addr:(0x1000 + (2 * i)) ".bss" 1)
+    @ List.init count (fun _ -> symtab ~link:strtab_at entries)
+    @ List.init count (fun i ->
+        rela_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1, 0) ])
+    @ [ strtab names ])
+
+(* Reading takes time linear in the relocation sections. *)
+let test_many_relocation_sections () =
+  let count = 10_000 in
+  let o = read (many_relocation_sections count) in
   equal ~msg:"every relocation" int count (List.length o.relocations);
-  less ~msg:"CPU seconds" float_exact ~than:1.0 seconds
+  linear_time many_relocation_sections count
 
 (* An object's image starts at its first section's address: reading allocates as
    much whatever the address, up to the largest. *)
