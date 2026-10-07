@@ -11,7 +11,10 @@
    mapped window from OCaml, [c] stores from C through device_pci.h as a
    submission does, with [store32-bare] the same stores through a bare pointer,
    and [through] reaches a buffer through an in-process transport: the cost a
-   remote or USB machine adds above its wire. *)
+   remote or USB machine adds above its wire.
+
+   The copy rows move 4 KiB and 64 KiB, below and above the size from which a
+   copy releases the runtime, a piece at a time. *)
 
 open Device_pci
 
@@ -27,6 +30,8 @@ let span = 4096
 let accesses = 1024
 let x64 = Thumper.black_box 0x0102_0304_0506_0708L
 let page = String.make span 'x'
+let wide_span = 64 * 1024
+let wide_page = String.make wide_span 'x'
 
 (* Window *)
 
@@ -67,6 +72,7 @@ let set64 w () =
   done
 
 let mapped = Window.v (buffer span) span
+let wide = Window.v (buffer wide_span) wide_span
 let through = Window.through (Window.unsafe_transport (far ())) 0 span
 let bench = Thumper.bench
 
@@ -83,6 +89,11 @@ let () =
              bench "get64" (get64 mapped);
              bench "set64" (set64 mapped);
              bench "write-4KiB" (fun () -> Window.write mapped 0 page);
+             bench "read-4KiB" (fun () -> Window.read mapped 0 span);
+             bench "fill-4KiB" (fun () -> Window.fill mapped 0 span 'x');
+             bench "write-64KiB" (fun () -> Window.write wide 0 wide_page);
+             bench "read-64KiB" (fun () -> Window.read wide 0 wide_span);
+             bench "fill-64KiB" (fun () -> Window.fill wide 0 wide_span 'x');
            ];
          Thumper.group "c"
            [

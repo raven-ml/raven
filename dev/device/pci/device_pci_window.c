@@ -76,8 +76,7 @@ value caml_device_pci_set64_byte(value a, value x) {
 /* Bulk accesses go a 32-bit word at a time wherever the mapped side is
    aligned: memory behind a BAR need not accept the wider or narrower
    accesses the C library's copies make. The process's side takes any
-   alignment. The copies hold the runtime: they read and write OCaml strings
-   in place. */
+   alignment. */
 static void read_words(uint8_t *dst, const volatile uint8_t *src, size_t n) {
   size_t i = 0;
   for (; i < n && ((uintptr_t)(src + i) & 3); i++) dst[i] = src[i];
@@ -99,28 +98,92 @@ static void write_words(volatile uint8_t *dst, const uint8_t *src, size_t n) {
   for (; i < n; i++) dst[i] = src[i];
 }
 
-value caml_device_pci_read(value a, value n) {
-  CAMLparam2(a, n);
+static void fill_words(volatile uint8_t *p, size_t n, uint8_t b) {
+  uint32_t w = b * 0x01010101u;
+  size_t i = 0;
+  for (; i < n && ((uintptr_t)(p + i) & 3); i++) p[i] = b;
+  for (; i + 4 <= n; i += 4) *(volatile uint32_t *)(p + i) = w;
+  for (; i < n; i++) p[i] = b;
+}
+
+/* Copies of at least PIECE bytes release the runtime, moving a piece at a
+   time through a buffer on the C stack, since OCaml strings may move while
+   the runtime is released; shorter ones hold it and copy in place. A read
+   from a BAR is a PCIe round trip, about 1 us a word, and every other
+   domain waits at its next collection for one that holds the runtime: 8 KiB
+   bounds that wait to about 2 ms. On an M1 Max a release and reacquire take
+   42 ns and a copy of process memory a word at a time runs at 10 GB/s, 800
+   ns for 8 KiB; a piece through the buffer adds about a quarter to that,
+   the pair 5% and the buffer's memcpy the rest, and under 0.01% to the 2 ms
+   of a BAR's. */
+#define PIECE 8192
+
+static size_t piece(size_t at, size_t n) {
+  return n - at < PIECE ? n - at : PIECE;
+}
+
+static value read_pieces(const volatile uint8_t *src, size_t n) {
+  CAMLparam0();
   CAMLlocal1(s);
-  s = caml_alloc_string(Long_val(n));
-  read_words(Bytes_val(s), AT(Long_val(a)), Long_val(n));
+  uint8_t buf[PIECE];
+  s = caml_alloc_string(n);
+  for (size_t at = 0; at < n; at += PIECE) {
+    size_t k = piece(at, n);
+    caml_release_runtime_system();
+    read_words(buf, src + at, k);
+    caml_acquire_runtime_system();
+    memcpy(Bytes_val(s) + at, buf, k);
+  }
   CAMLreturn(s);
 }
 
+value caml_device_pci_read(value a, value n) {
+  CAMLparam2(a, n);
+  CAMLlocal1(s);
+  size_t len = Long_val(n);
+  if (len >= PIECE) CAMLreturn(read_pieces(AT(Long_val(a)), len));
+  s = caml_alloc_string(len);
+  read_words(Bytes_val(s), AT(Long_val(a)), len);
+  CAMLreturn(s);
+}
+
+static void write_pieces(volatile uint8_t *dst, value s, size_t off, size_t n) {
+  CAMLparam1(s);
+  uint8_t buf[PIECE];
+  for (size_t at = 0; at < n; at += PIECE) {
+    size_t k = piece(at, n);
+    memcpy(buf, String_val(s) + off + at, k);
+    caml_release_runtime_system();
+    write_words(dst + at, buf, k);
+    caml_acquire_runtime_system();
+  }
+  CAMLreturn0;
+}
+
+/* Writes the [n] bytes of [s] from [off]. */
 value caml_device_pci_write_at(value a, value s, value off, value n) {
-  write_words(AT(Long_val(a)), (const uint8_t *)String_val(s) + Long_val(off),
-              Long_val(n));
+  size_t len = Long_val(n);
+  if (len >= PIECE)
+    write_pieces(AT(Long_val(a)), s, Long_val(off), len);
+  else
+    write_words(AT(Long_val(a)), (const uint8_t *)String_val(s) + Long_val(off),
+                len);
   return Val_unit;
 }
 
+/* A fill reads no OCaml value: one of PIECE bytes or more runs with the
+   runtime released throughout. */
 value caml_device_pci_fill(value a, value n, value c) {
   volatile uint8_t *p = AT(Long_val(a));
-  size_t len = Long_val(n), i = 0;
+  size_t len = Long_val(n);
   uint8_t b = (uint8_t)Long_val(c);
-  uint32_t w = b * 0x01010101u;
-  for (; i < len && ((uintptr_t)(p + i) & 3); i++) p[i] = b;
-  for (; i + 4 <= len; i += 4) *(volatile uint32_t *)(p + i) = w;
-  for (; i < len; i++) p[i] = b;
+  if (len < PIECE) {
+    fill_words(p, len, b);
+    return Val_unit;
+  }
+  caml_release_runtime_system();
+  fill_words(p, len, b);
+  caml_acquire_runtime_system();
   return Val_unit;
 }
 
