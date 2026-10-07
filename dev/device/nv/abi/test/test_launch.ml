@@ -26,33 +26,63 @@ let classes =
               Launch.make (S.gpu ~compute_class:cls ()) (S.kernel ())));
     ]
 
-(* Shared memory up to 100 KiB, the driver's 1 KiB included *)
+(* What a launch can take: 100 KiB of shared memory, the driver's 1 KiB
+   included; 255 registers a thread; banks 0 to 7 of at most 64 KiB. *)
 
 let limit = (100 * 1024) - 1024
 
-let shared =
+let edges ~max =
   Gen.frequency
     [
-      (3, Gen.int_range 0 (2 * limit));
+      (3, Gen.int_range 0 (2 * max));
       ( 1,
         Gen.of_list ~pp:Format.pp_print_int
-          [ 0; limit - 1; limit; limit + 1; max_int - 1023; max_int ] );
+          [ 0; max - 1; max; max + 1; max_int - 1023; max_int ] );
     ]
+
+let kernel_gen =
+  let open Gen in
+  let bank =
+    let+ index =
+      frequency
+        [
+          (4, int_range 0 7);
+          (1, of_list ~pp:Format.pp_print_int [ min_int; -1; 8; max_int ]);
+        ]
+    and+ bytes = edges ~max:0x10000 in
+    { Cubin.index; offset = 0; bytes }
+  in
+  let+ shared_bytes = edges ~max:limit
+  and+ registers = edges ~max:255
+  and+ banks = list ~size:(int_range 0 2) bank in
+  S.kernel ~shared_bytes ~registers ~banks ()
+
+let fits (k : Cubin.kernel) =
+  k.shared_bytes <= limit && k.registers <= 255
+  && List.for_all
+       (fun (b : Cubin.bank) ->
+         b.index >= 0 && b.index <= 7 && b.bytes <= 0x10000)
+       k.banks
 
 let memory =
   group ~timeout:10. "memory"
     [
-      prop
-        "a launch takes up to 100 KiB of shared memory, the driver's 1 KiB \
-         included" (Gen.pair S.compute_class shared) (fun (cls, shared_bytes) ->
-          cover "the most" (shared_bytes = limit);
-          cover "one byte more" (shared_bytes = limit + 1);
-          cover "max_int" (shared_bytes = max_int);
-          equal ~msg:"Ok" bool (shared_bytes <= limit)
-            (Result.is_ok
-               (Launch.make
-                  (S.gpu ~compute_class:cls ())
-                  (S.kernel ~shared_bytes ()))));
+      prop "a launch takes a kernel within its limits and refuses one past any"
+        (Gen.pair S.compute_class (Gen.with_pp S.pp_kernel kernel_gen))
+        (fun (cls, k) ->
+          cover "the most shared memory" (k.shared_bytes = limit);
+          cover "a byte of shared memory more" (k.shared_bytes = limit + 1);
+          cover "255 registers" (k.registers = 255);
+          cover "256 registers" (k.registers = 256);
+          cover "a bank of 64 KiB"
+            (List.exists (fun (b : Cubin.bank) -> b.bytes = 0x10000) k.banks);
+          cover "a bank of 64 KiB and a byte"
+            (List.exists (fun (b : Cubin.bank) -> b.bytes = 0x10001) k.banks);
+          cover "a bank past 7"
+            (List.exists (fun (b : Cubin.bank) -> b.index > 7) k.banks);
+          cover "a kernel within" (fits k);
+          equal ~msg:"Ok" bool (fits k)
+            (Result.is_ok (Launch.make (S.gpu ~compute_class:cls ()) k)));
       test "a kernel of max_int bytes of shared memory is refused" (fun () ->
           is_error (Launch.make (S.gpu ()) (S.kernel ~shared_bytes:max_int ())));
       prop "a thread's local memory is its stack and 576 bytes"

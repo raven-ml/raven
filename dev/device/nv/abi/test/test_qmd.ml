@@ -385,20 +385,6 @@ let limits =
             S.kernel ~banks:[ { index = 7; offset = 0; bytes = 16 } ] () );
         ]
         (fun (_, k) -> List.iter (fun cls -> ignore (qmd ~k cls)) S.classes);
-      cases ~name:fst "a kernel no descriptor holds is refused"
-        [
-          ("256 registers", S.kernel ~registers:256 ());
-          ( "a bank of 64 KiB and a byte",
-            S.kernel ~banks:[ { index = 0; offset = 0; bytes = 0x10001 } ] () );
-          ( "bank 8",
-            S.kernel ~banks:[ { index = 8; offset = 0; bytes = 16 } ] () );
-          ( "bank -1",
-            S.kernel ~banks:[ { index = -1; offset = 0; bytes = 16 } ] () );
-        ]
-        (fun (_, k) ->
-          List.iter
-            (fun cls -> is_error (Launch.make (S.gpu ~compute_class:cls ()) k))
-            S.classes);
     ]
 
 (* The words of a descriptor, over named values *)
