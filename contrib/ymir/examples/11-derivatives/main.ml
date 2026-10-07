@@ -1,42 +1,42 @@
 (* Derivatives and compilation.
 
    Every ymir function is a formula of nx operations, so rune differentiates and
-   compiles it with no rule of its own: a distance in a cosmological parameter,
-   an aperture sum in the aperture's centre and radius. *)
+   compiles it with no rule of its own: a distance in every field of a
+   cosmology, an aperture sum in the aperture's centre and radius. *)
 
 open Ymir
 
 let f64 = Nx.float64
 let planck = Cosmology.planck2018 ~codata:Codata.v2022 f64
 let z = Nx.create f64 [| 3 |] [| 0.1; 1.; 3. |]
-
-(* The distance modulus at [z] as a function of theta = (omega_cb, w0). *)
-let modulus theta =
-  let c =
-    {
-      planck with
-      omega_cb = Nx.slice [ Nx.I 0 ] theta;
-      w0 = Nx.slice [ Nx.I 1 ] theta;
-    }
-  in
-  Cosmology.distance_modulus c z
+let cosmology = Nx.Ptree.instantiate (module Cosmology)
+let kms_mpc = Unit.(kilo metre / second / mega Units.parsec)
+let mu c = Cosmology.distance_modulus c z
 
 let print name x =
-  Printf.printf "%-24s %s\n" name
+  Printf.printf "%-28s %s\n" name
     (String.concat " "
        (List.map (Printf.sprintf "%9.5f") (Array.to_list (Nx.to_array x))))
 
-let cosmology () =
-  let theta = Nx.create f64 [| 2 |] [| 0.31; -1. |] in
-  print "mu(z)" (modulus theta);
-  (* One gradient per redshift, each a [2] vector of d mu / d theta. *)
+let derivatives () =
+  print "mu(z)" (mu planck);
+  (* One gradient per redshift: a cosmology whose fields are d mu / d field,
+     each per the unit planck holds it in. *)
   for i = 0 to 2 do
-    let g = Rune.grad' (fun t -> Nx.slice [ Nx.I i ] (modulus t)) theta in
-    print (Printf.sprintf "d mu(%g) / d(Om, w0)" (Nx.item [ i ] z)) g
+    let g = Rune.grad cosmology (fun c -> Nx.slice [ Nx.I i ] (mu c)) planck in
+    Printf.printf "z = %g\n" (Nx.item [ i ] z);
+    print "  d mu / d Om_cb" g.omega_cb;
+    print "  d mu / d w0" g.w0;
+    print "  d mu / d H0, per km/s/Mpc" (Quantity.value kms_mpc g.h0);
+    print "  d mu / d m_nu, per eV" (Quantity.value Unit.electronvolt g.m_nu)
   done;
-  (* The same function compiled. *)
-  let compiled = Rune.jit' modulus in
-  print "mu(z), compiled" (compiled theta)
+  (* Forward mode: mu's change per km/s/Mpc of H0, at every z at once. *)
+  let zero = Nx.Ptree.map cosmology (fun _ x -> Nx.zeros_like x) planck in
+  let dh0 = { zero with h0 = Quantity.v kms_mpc (Nx.scalar f64 1.) } in
+  print "d mu / d H0, forward"
+    (snd (Rune.jvp cosmology Nx.Ptree.tensor mu planck dh0));
+  print "mu(z), compiled"
+    (Rune.jit Nx.Ptree.(cosmology @-> returns tensor) mu planck)
 
 (* A Gaussian source of total 100 at (15.2, 14.7) on a 32x32 grid. *)
 let image =
@@ -63,5 +63,5 @@ let photometry () =
   print "d sum / d(row, col, r)" (Rune.grad' aperture p)
 
 let () =
-  cosmology ();
+  derivatives ();
   photometry ()

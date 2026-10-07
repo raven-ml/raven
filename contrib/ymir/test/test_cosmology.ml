@@ -13,10 +13,12 @@
    printed digits. The goldens are written by gen/references.py.
 
    Laws: the density parameters sum to 1; flat is exact (D_M = D_C bit for
-   bit); the curvature derivative at Omega_k = 0 is d^3 / (6 D_H^2); jvp and
-   grad agree with central differences in every parameter and in z; a species
-   of zero mass counts as massless; broadcast lanes equal vmap's rows; the
-   domain's NaN lanes have zero derivatives and leave the others alone.
+   bit); the curvature derivative at Omega_k = 0 is d^3 / (6 D_H^2); grad over
+   the record agrees with central differences in every field and in z, each
+   per the unit the field holds, and jvp along one unit of a field is its
+   gradient's payload; a species of zero mass counts as massless; broadcast
+   lanes equal vmap's rows; the domain's NaN lanes have zero derivatives and
+   leave the others alone.
 
    Fit: test/pantheon's path on supernovae drawn from a known cosmology gives
    it back, from noise-free data with G C G^T equal to the inverse Fisher
@@ -398,25 +400,10 @@ let laws =
 
 (* Derivatives *)
 
-(* theta = (h0, omega_cb, omega_k, w0, wa, t_cmb, n_eff, m, z), bare, against
-   one function's value. *)
-let names =
-  [| "h0"; "omega_cb"; "omega_k"; "w0"; "wa"; "t_cmb"; "n_eff"; "m"; "z" |]
-
-let of_theta theta : (float, Nx.float64_elt) Nx.t Cosmology.t * _ =
-  let at i = Nx.get [ i ] theta in
-  ( {
-      codata = Codata.v2022;
-      h0 = Quantity.v km_s_mpc (at 0);
-      omega_cb = at 1;
-      omega_k = at 2;
-      w0 = at 3;
-      wa = at 4;
-      t_cmb = Quantity.v Unit.kelvin (at 5);
-      n_eff = at 6;
-      m_nu = Quantity.v Unit.electronvolt (Nx.reshape [| 1 |] (at 7));
-    },
-    at 8 )
+(* A point is a cosmology and a redshift; its coordinates are the payloads of
+   its leaves, each in the unit the cosmology holds it in. *)
+let point = Nx.Ptree.(pair (cosmology_ptree ()) tensor)
+let value fn (c, z) = evaluate fn c z
 
 let functions =
   [
@@ -432,90 +419,106 @@ let functions =
     "age";
   ]
 
-let theta_of m z =
-  let mass = match m.m_nu with [] -> 0. | x :: _ -> x in
-  Nx.create Nx.float64 [| 9 |]
-    [| m.h0; m.omega_cb; m.omega_k; m.w0; m.wa; m.t_cmb; m.n_eff; mass; z |]
+(* The tangents of one unit along each leaf, all others zero, with the leaf's
+   path. *)
+let axes x =
+  List.filter_map
+    (function
+      | Nx.Ptree.Leaf path ->
+          let along q t =
+            if Nx.Ptree.Path.equal q path then Nx.ones_like t
+            else Nx.zeros_like t
+          in
+          Some (Nx.Ptree.Path.to_string path, Nx.Ptree.map point along x)
+      | Report _ -> None)
+    (Nx.Ptree.visits point x)
 
-let value fn theta =
-  let c, z = of_theta theta in
-  evaluate fn c z
+let dot x y = item (Nx.Ptree.dot point Nx.float64 x y)
 
-(* [central fn theta i] is the derivative of [fn] along [theta]'s [i]-th
-   coordinate from central differences at steps e and e/2, e = 1e-3 of the
-   coordinate, or of 0.05 nearer 0, combined by Richardson's extrapolation,
-   and the change of that estimate when e halves, which bounds its error: the
-   error is O(e^4) where the function is smooth at the scale e, and the
-   evaluation's own error, about 2^-46 of the value, counts once per e. *)
-let central fn theta i =
-  let x = Nx.to_array theta in
-  let at s =
-    let y = Array.copy x in
-    y.(i) <- y.(i) +. s;
-    item (value fn (Nx.create Nx.float64 [| 9 |] y))
-  in
-  let d e = (at e -. at (-.e)) /. (2. *. e) in
-  let richardson e = ((4. *. d (e /. 2.)) -. d e) /. 3. in
-  let e = 1e-3 *. Float.max 0.05 (Float.abs x.(i)) in
-  let fine = richardson (e /. 2.) in
-  (fine, Float.abs (fine -. richardson e))
+(* [central fn x e] is the derivative of [fn] along the axis [e] from central
+   differences at steps h and h/2, h = 1e-3 of the coordinate, or of 0.05
+   nearer 0, combined by Richardson's extrapolation, and the change of that
+   estimate when h halves, which bounds its error: the error is O(h^4) where
+   the function is smooth at the scale h, and the evaluation's own error, about
+   2^-46 of the value, counts once per h. *)
+let central fn x e =
+  let at s = item (value fn (Nx.Ptree.axpy point (f64 s) e x)) in
+  let d h = (at h -. at (-.h)) /. (2. *. h) in
+  let richardson h = ((4. *. d (h /. 2.)) -. d h) /. 3. in
+  let h = 1e-3 *. Float.max 0.05 (Float.abs (dot e x)) in
+  let fine = richardson (h /. 2.) in
+  (fine, Float.abs (fine -. richardson h))
 
 let derivatives =
-  let point = Gen.(pair models (float_range 0.05 20.)) in
-  let point =
-    Gen.map
-      (fun (m, z) ->
-        let m = { m with t_cmb = (if m.t_cmb = 0. then 2. else m.t_cmb) } in
-        theta_of
-          { m with m_nu = (match m.m_nu with [] -> [ 0.1 ] | l -> l) }
-          z)
-      point
+  let point_gen =
+    Gen.(
+      map
+        (fun (m, z) ->
+          let m = { m with t_cmb = (if m.t_cmb = 0. then 2. else m.t_cmb) } in
+          let m =
+            { m with m_nu = (match m.m_nu with [] -> [ 0.1 ] | l -> l) }
+          in
+          (cosmology Nx.float64 m, f64 z))
+        (pair models (float_range 0.05 20.)))
   in
   (* A point where the universe has no past is the domain's, with its own
      tests. *)
-  let defined theta =
-    List.for_all (fun fn -> Float.is_finite (item (value fn theta))) functions
+  let defined x =
+    List.for_all (fun fn -> Float.is_finite (item (value fn x))) functions
   in
   (* A point where the differences have not converged, as near a closed
      universe's antipode where log D_L turns sharply, holds no reference. *)
-  let close fn theta i got =
-    let fd, error = central fn theta i in
-    let scale = Float.abs (item (value fn theta)) in
+  let close fn x (name, e) got =
+    let fd, error = central fn x e in
+    let scale = Float.abs (item (value fn x)) in
     let abs = Float.max (1e-9 *. scale) 1e-300 in
     assume (error <= Float.max (1e-8 *. Float.abs fd) abs);
     equal
-      ~msg:(Printf.sprintf "%s d/d%s" fn names.(i))
+      ~msg:(Printf.sprintf "%s d/d%s" fn name)
       (float_rel ~rel:1e-7 ~abs) fd got
   in
+  (* Forward and reverse mode add the same terms in two orders. *)
+  let paired = float_rel ~rel:1e-12 ~abs:1e-300 in
   group "derivatives"
     [
-      prop ~count:20 "grad agrees with central differences" point (fun theta ->
-          assume (defined theta);
+      prop ~count:20
+        "grad over the record agrees with central differences, per each \
+         field's unit"
+        point_gen (fun x ->
+          assume (defined x);
           List.iter
             (fun fn ->
-              let g = Rune.grad' (fun t -> value fn t) theta in
-              Array.iteri (fun i gi -> close fn theta i gi) (Nx.to_array g))
+              let g = Rune.grad point (value fn) x in
+              List.iter
+                (fun (name, e) -> close fn x (name, e) (dot g e))
+                (axes x))
             functions);
-      prop ~count:20 "jvp agrees with central differences" point (fun theta ->
-          assume (defined theta);
+      prop ~count:20
+        "jvp along one unit of a field is that field's gradient payload"
+        point_gen (fun x ->
+          assume (defined x);
           List.iter
             (fun fn ->
-              for i = 0 to 8 do
-                let e =
-                  Nx.init Nx.float64 [| 9 |] (fun j ->
-                      if j.(0) = i then 1. else 0.)
-                in
-                let _, dy = Rune.jvp' (fun t -> value fn t) theta e in
-                close fn theta i (item dy)
-              done)
+              let g = Rune.grad point (value fn) x in
+              List.iter
+                (fun (name, e) ->
+                  let _, d = Rune.jvp point Nx.Ptree.tensor (value fn) x e in
+                  equal
+                    ~msg:(Printf.sprintf "%s d/d%s" fn name)
+                    paired (dot g e) (item d))
+                (axes x))
             functions);
       test "a compiled gradient equals the eager one" (fun () ->
-          let theta = theta_of planck_like 1.5 in
-          let g = Rune.grad' (value "distance_modulus") in
-          equal
-            (array (float_rel ~rel:1e-12 ~abs:1e-300))
-            (Nx.to_array (g theta))
-            (Nx.to_array (Rune.jit' g theta)));
+          let x = (cosmology Nx.float64 planck_like, f64 1.5) in
+          let g = Rune.grad point (value "distance_modulus") in
+          let compiled = Rune.jit Nx.Ptree.(point @-> returns point) g x in
+          List.iter
+            (fun (name, e) ->
+              equal ~msg:name
+                (float_rel ~rel:1e-12 ~abs:1e-300)
+                (dot (g x) e)
+                (dot compiled e))
+            (axes x));
       test "the curvature term at Omega_k = 0 is d^3 / (6 D_H^2)" (fun () ->
           let c = cosmology Nx.float64 planck_like in
           let d = Quantity.v mpc (f64 3000.) in
