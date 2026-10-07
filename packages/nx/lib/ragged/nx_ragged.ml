@@ -69,14 +69,19 @@ type ('a, 'b) t = { offsets : int64_t; values : ('a, 'b) Nx.t }
 
 let shape_string x = Format.asprintf "%a" pp_shape (shape x)
 
-(* [read ~by x] is the elements of the int64 tensor [x] in C order, read by the
-   function [by]. *)
-let read ~by x =
+(* [claimed ~by x f] is [f] of a host buffer of the elements of [x] in C order,
+   read by the function [by]. *)
+let claimed ~by x f =
   let b = Op.eval (Read { by; x }) in
   Nx_device.Buffer.Claim.read b;
   Fun.protect
     ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
-    (fun () ->
+    (fun () -> f b)
+
+(* [read ~by x] is the elements of the int64 tensor [x] in C order, read by the
+   function [by]. *)
+let read ~by x =
+  claimed ~by x (fun b ->
       let a = Nx_device.Buffer.bigarray Bigarray.int64 b in
       Array.init (numel x) (Bigarray.Array1.get a))
 
@@ -165,6 +170,26 @@ let of_ids ~segments ids x =
   let offsets = pad [| (1, 0) |] 0L (cumsum (slice [ R (0, -1) ] counts)) in
   { offsets; values = take ~axis:0 ~indices:(argsort ids) x }
 
+let of_strings ss =
+  let n = Array.length ss in
+  let offsets = Bigarray.(Array1.create int64 c_layout (n + 1)) in
+  offsets.{0} <- 0L;
+  for i = 0 to n - 1 do
+    offsets.{i + 1} <-
+      Int64.add offsets.{i} (Int64.of_int (String.length ss.(i)))
+  done;
+  let total = Int64.to_int offsets.{n} in
+  let bytes = Bigarray.(Array1.create int8_unsigned c_layout total) in
+  for i = 0 to n - 1 do
+    let s = ss.(i) and o = Int64.to_int offsets.{i} in
+    for k = 0 to String.length s - 1 do
+      Bigarray.Array1.unsafe_set bytes (o + k)
+        (Char.code (String.unsafe_get s k))
+    done
+  done;
+  let tensor a = of_bigarray (Bigarray.genarray_of_array1 a) in
+  { offsets = tensor offsets; values = tensor bytes }
+
 let offsets r = r.offsets
 let values r = r.values
 let length r = dim 0 r.offsets - 1
@@ -172,6 +197,28 @@ let length r = dim 0 r.offsets - 1
 let lengths r =
   let n = dim 0 r.offsets in
   sub (slice [ R (1, n) ] r.offsets) (slice [ R (0, -1) ] r.offsets)
+
+(* Only the bytes from the first offset to the last are read, so the strings of
+   a [sub] of a long array copy only its own bytes. *)
+let to_strings r =
+  let op = "Nx_ragged.to_strings" in
+  if ndim r.values <> 1 then
+    err op "values of shape %s, not 1-D" (shape_string r.values);
+  let n = length r in
+  claimed ~by:op r.offsets @@ fun b ->
+  let o = Nx_device.Buffer.bigarray Bigarray.int64 b in
+  let at i = Int64.to_int (Bigarray.Array1.unsafe_get o i) in
+  let lo = at 0 in
+  claimed ~by:op (slice [ R (lo, at n) ] r.values) @@ fun b ->
+  let a = Nx_device.Buffer.bigarray Bigarray.int8_unsigned b in
+  Array.init n (fun i ->
+      let start = at i - lo in
+      let s = Bytes.create (at (i + 1) - at i) in
+      for k = 0 to Bytes.length s - 1 do
+        Bytes.unsafe_set s k
+          (Char.unsafe_chr (Bigarray.Array1.unsafe_get a (start + k)))
+      done;
+      Bytes.unsafe_to_string s)
 
 (* The elements of [r]'s values in row-major order, and its offsets in elements:
    a row of cells of [c] elements is [c] times as long. *)

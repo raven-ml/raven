@@ -20,13 +20,14 @@
     are placed as any operands are, and values differentiate through {!take} and
     {!of_ids}.
 
-    {b Reads.} {!v}, {!of_lengths}, {!take}, {!concat}, {!ids} and {!rank} read
-    values: [v] and [of_lengths] whether their invariant holds, [take] the
-    length of its result, [concat] the bounds of its operands, and [ids] and
-    [rank] what each of their rounds needs. Each reads once, or once per round.
-    Under a transformation that traces, such as a compiled function or a mapped
-    one, a read raises naming the function. Every other operation reads nothing.
-*)
+    {b Reads.} {!v}, {!of_lengths}, {!to_strings}, {!take}, {!concat}, {!ids}
+    and {!rank} read values: [v] and [of_lengths] whether their invariant holds,
+    [to_strings] its offsets and then its bytes, [take] the length of its
+    result, [concat] the bounds of its operands, and [ids] and [rank] what each
+    of their rounds needs. Each reads once, [to_strings] twice, and [ids] and
+    [rank] once per round. Under a transformation that traces, such as a
+    compiled function or a mapped one, a read raises naming the function. Every
+    other operation reads nothing. *)
 
 type ('a, 'b) t
 (** The type for ragged arrays of values of type ['a] stored as ['b]. Its
@@ -62,6 +63,11 @@ val of_ids : segments:int -> Nx.int64_t -> ('a, 'b) Nx.t -> ('a, 'b) t
     Raises [Invalid_argument] if [segments] is negative, [x] is a scalar, or
     [ids] is not 1-D with [dim 0 x] entries. *)
 
+val of_strings : string array -> (int, Nx.uint8_elt) t
+(** [of_strings ss] is the ragged array whose row [i] holds the bytes of
+    [ss.(i)] as [uint8] values, from offset [0]. Every byte is kept as it is,
+    NUL and bytes above 127 included: no text encoding is assumed. *)
+
 (** {1:observe Observing} *)
 
 val offsets : ('a, 'b) t -> Nx.int64_t
@@ -75,6 +81,14 @@ val length : ('a, 'b) t -> int
 
 val lengths : ('a, 'b) t -> Nx.int64_t
 (** [lengths r] is the length of each row of [r]. *)
+
+val to_strings : (int, Nx.uint8_elt) t -> string array
+(** [to_strings r] is the bytes of each row of [r] as a string:
+    [to_strings (of_strings ss)] is [ss].
+
+    It reads [r]'s offsets, then the values from the first offset to the last.
+
+    Raises [Invalid_argument] if [r]'s values are not 1-D. *)
 
 (** {1:transform Transforming} *)
 

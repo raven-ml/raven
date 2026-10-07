@@ -59,6 +59,8 @@ ragged-take/strings6-4e4-permuted-runcopy	320008	8.0
 ragged-take/strings12-1e6-permuted-runcopy	8000008	8.0
 ragged/v-strings12-1e7	20000047	2.0
 ragged/of_lengths-strings12-1e7	80000078	8.0
+ragged/of_strings-strings12-1e6	0	0.0
+ragged/to_strings-strings12-1e6	-	-
 ragged/concat-strings12-2x5e6	160000072	16.0
 ragged/ids-strings6-4e4	2800194	70.0
 ragged/ids-strings12-1e6	100000258	100.0

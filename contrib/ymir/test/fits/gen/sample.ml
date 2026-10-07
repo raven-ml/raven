@@ -60,12 +60,6 @@ let table =
   let lists lengths values =
     Nx_ragged.of_lengths (Nx.create Nx.int64 [| n |] lengths) values
   in
-  let text l =
-    let s = String.concat "" l in
-    lists
-      (Array.of_list (List.map (fun x -> Int64.of_int (String.length x)) l))
-      (Nx.init Nx.uint8 [| String.length s |] (fun i -> Char.code s.[i.(0)]))
-  in
   let tunit u = H.(empty |> set V.string "TUNIT" u) in
   Fits.Table.
     [
@@ -140,7 +134,9 @@ let table =
                      }));
             validity = None;
           } );
-      ("name", H.empty, Text (text [ "alpha"; ""; "  lead"; "z" ]));
+      ( "name",
+        H.empty,
+        Text (Nx_ragged.of_strings [| "alpha"; ""; "  lead"; "z" |]) );
       ( "vla",
         H.empty,
         Lists

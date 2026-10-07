@@ -162,6 +162,7 @@ unique/int64-4e4-1e4	wall_time	batch=32	n=20	3.026e-04	3.016e-04 3.016e-04 3.018
 # forced: blessed bit/any-rows-2500x4000 bit/any-columns-2500x4000 under load 8.8 on 10 cores
 # forced: blessed uint4/take-rows-1e7 uint4/take-1e7 under load 20.2 on 10 cores
 # forced: blessed uint4/take-rows-1e7 uint4/take-1e7 under load 14.0 on 10 cores
+# forced: blessed ragged/of_strings-strings12-1e6 ragged/to_strings-strings12-1e6 under load 50.9 on 10 cores
 
 arange/int32-1e7	alloc_words	exact	1627
 arange/int32-1e7	wall_time	batch=1	n=20	2.933e-03	2.871e-03 2.884e-03 2.895e-03 2.897e-03 2.904e-03 2.905e-03 2.914e-03 2.916e-03 2.923e-03 2.926e-03 2.940e-03 2.941e-03 2.943e-03 2.943e-03 2.944e-03 2.945e-03 2.948e-03 2.950e-03 2.980e-03 3.112e-03
@@ -265,10 +266,14 @@ ragged/ids-strings6-4e4	alloc_words	exact	2292
 ragged/ids-strings6-4e4	wall_time	batch=8	n=20	8.552e-04	7.852e-04 7.932e-04 7.947e-04 8.038e-04 8.063e-04 8.267e-04 8.317e-04 8.364e-04 8.495e-04 8.541e-04 8.562e-04 8.600e-04 8.600e-04 8.648e-04 8.661e-04 8.699e-04 8.710e-04 8.742e-04 8.747e-04 8.813e-04
 ragged/of_lengths-strings12-1e7	alloc_words	exact	1328
 ragged/of_lengths-strings12-1e7	wall_time	batch=1	n=20	9.130e-03	9.010e-03 9.033e-03 9.036e-03 9.037e-03 9.063e-03 9.071e-03 9.081e-03 9.102e-03 9.122e-03 9.129e-03 9.132e-03 9.150e-03 9.255e-03 9.256e-03 9.267e-03 9.270e-03 9.333e-03 9.475e-03 9.704e-03 1.016e-02
+ragged/of_strings-strings12-1e6	alloc_words	exact	173
+ragged/of_strings-strings12-1e6	wall_time	batch=1	n=20	4.460e-02	1.883e-02 1.885e-02 1.886e-02 1.886e-02 1.887e-02 1.900e-02 2.287e-02 2.501e-02 3.116e-02 4.241e-02 4.679e-02 5.264e-02 6.160e-02 6.457e-02 1.068e-01 1.189e-01 1.474e-01 1.494e-01 1.656e-01 1.834e-01
 ragged/quantile-float64-1e6-into-1e3	alloc_words	exact	5591
 ragged/quantile-float64-1e6-into-1e3	wall_time	batch=1	n=20	2.818e-02	2.771e-02 2.771e-02 2.777e-02 2.781e-02 2.787e-02 2.801e-02 2.807e-02 2.809e-02 2.813e-02 2.816e-02 2.820e-02 2.826e-02 2.827e-02 2.839e-02 2.844e-02 2.849e-02 2.860e-02 2.865e-02 2.874e-02 2.921e-02
 ragged/rank-strings12-1e6	alloc_words	exact	8713
 ragged/rank-strings12-1e6	wall_time	batch=1	n=20	9.323e-02	9.188e-02 9.204e-02 9.220e-02 9.228e-02 9.250e-02 9.262e-02 9.265e-02 9.267e-02 9.279e-02 9.292e-02 9.354e-02 9.397e-02 9.401e-02 9.415e-02 9.431e-02 9.447e-02 9.465e-02 9.475e-02 9.481e-02 9.617e-02
+ragged/to_strings-strings12-1e6	alloc_words	exact	4000137
+ragged/to_strings-strings12-1e6	wall_time	batch=1	n=20	1.449e-01	8.095e-02 8.491e-02 8.688e-02 1.060e-01 1.103e-01 1.131e-01 1.319e-01 1.346e-01 1.418e-01 1.447e-01 1.452e-01 1.476e-01 1.482e-01 1.523e-01 2.570e-01 2.686e-01 2.766e-01 2.769e-01 2.921e-01 3.294e-01
 ragged/v-strings12-1e7	alloc_words	exact	1259
 ragged/v-strings12-1e7	wall_time	batch=2	n=20	2.156e-03	2.111e-03 2.117e-03 2.126e-03 2.126e-03 2.130e-03 2.134e-03 2.135e-03 2.136e-03 2.144e-03 2.146e-03 2.167e-03 2.177e-03 2.177e-03 2.178e-03 2.240e-03 2.267e-03 2.409e-03 2.442e-03 2.470e-03 2.818e-03
 ranges/add-float64-4e4-w1e3	alloc_words	exact	28621

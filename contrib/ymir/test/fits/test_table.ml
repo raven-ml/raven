@@ -52,15 +52,6 @@ let texts (type a b) (t : (a, b) Nx.t) : string array =
 
 let floats name = Array.map float_of_string (expected name)
 
-let strings_of (r : (int, Nx.uint8_elt) Nx_ragged.t) =
-  let v = Nx.to_array (Nx_ragged.values r)
-  and o = Nx.to_array (Nx_ragged.offsets r) in
-  Array.init
-    (Array.length o - 1)
-    (fun i ->
-      let a = Int64.to_int o.(i) and z = Int64.to_int o.(i + 1) in
-      String.init (z - a) (fun k -> Char.chr v.(a + k)))
-
 let ints (type a b) name (dtype : (a, b) Nx.dtype) h col =
   equal (array string) (expected name) (texts (require_ok (T.raw dtype col h)))
 
@@ -72,7 +63,7 @@ let reals (type b) name (dtype : (float, b) Nx.dtype) h col =
 let texts_col name h col =
   equal (array string)
     (Array.map unhex (expected name))
-    (strings_of (require_ok (T.ragged Nx.uint8 col h)))
+    (Nx_ragged.to_strings (require_ok (T.ragged Nx.uint8 col h)))
 
 let columns =
   cases ~name:fst "columns read as astropy reads them"
@@ -381,7 +372,8 @@ let round_trip () =
             (bytes_of (Nx.P (Nx_ragged.values a)))
             (bytes_of (Nx.P (Nx_ragged.values b)))
       | T.Text a, T.Text b ->
-          equal ~msg:n (array string) (strings_of a) (strings_of b)
+          equal ~msg:n (array string) (Nx_ragged.to_strings a)
+            (Nx_ragged.to_strings b)
       | _ -> fail (n ^ ": the column's kind changed"))
     cols cols';
   equal
@@ -508,11 +500,7 @@ let nulls () =
     (Result.map (Option.map Nx.to_array) (T.validity "f" t))
 
 let text_errors () =
-  let r s =
-    Nx_ragged.of_lengths
-      (Nx.create Nx.int64 [| 1 |] [| Int64.of_int (String.length s) |])
-      (Nx.init Nx.uint8 [| String.length s |] (fun i -> Char.code s.[i.(0)]))
-  in
+  let r s = Nx_ragged.of_strings [| s |] in
   is_error (T.hdu H.empty [ ("s", H.empty, T.Text (r "trailing ")) ]);
   is_error (T.hdu H.empty [ ("s", H.empty, T.Text (r "caf\xc3\xa9")) ]);
   is_ok (T.hdu H.empty [ ("s", H.empty, T.Text (r " lead")) ]);

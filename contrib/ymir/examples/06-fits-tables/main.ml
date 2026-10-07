@@ -9,31 +9,10 @@ open Ymir
 let ( let* ) = Result.bind
 let no_cards = Fits.Header.empty
 
-(* Text columns hold each row's bytes as one list of a ragged tensor. *)
-let text_column names =
-  let bytes = String.concat "" names in
-  let lengths =
-    Array.of_list (List.map (fun s -> Int64.of_int (String.length s)) names)
-  in
-  Nx_ragged.of_lengths
-    (Nx.create Nx.int64 [| Array.length lengths |] lengths)
-    (Nx.init Nx.uint8
-       [| String.length bytes |]
-       (fun i -> Char.code bytes.[i.(0)]))
-
-let strings ragged =
-  let values = Nx.to_array (Nx_ragged.values ragged) in
-  let offsets =
-    Nx.to_array (Nx_ragged.offsets ragged) |> Array.map Int64.to_int
-  in
-  List.init (Nx_ragged.length ragged) (fun i ->
-      String.init
-        (offsets.(i + 1) - offsets.(i))
-        (fun k -> Char.chr values.(offsets.(i) + k)))
-
 let run path =
   let n = 4 in
-  let name = text_column [ "alpha"; "beta"; "gamma"; "delta" ] in
+  (* A text column holds each row's bytes as one row of a ragged tensor. *)
+  let name = Nx_ragged.of_strings [| "alpha"; "beta"; "gamma"; "delta" |] in
   let position =
     Nx.create Nx.float64 [| n; 2 |]
       [| 10.1; -2.3; 10.4; -2.1; 9.8; -2.6; 10.0; -2.0 |]
@@ -76,7 +55,8 @@ let run path =
   Option.iter (Format.printf "FLUX defined:  %a@." Nx.pp) valid;
 
   let* name = Fits.Table.ragged Nx.uint8 "NAME" hdu in
-  Printf.printf "NAME: %s\n" (String.concat ", " (strings name));
+  Printf.printf "NAME: %s\n"
+    (String.concat ", " (Array.to_list (Nx_ragged.to_strings name)));
   Ok ()
 
 let () =

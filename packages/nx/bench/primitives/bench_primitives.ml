@@ -367,6 +367,12 @@ let ragged_rows =
       let _, bytes, _ = strings n w in
       nx_of bytes )
   in
+  let texts n w () =
+    let offsets, bytes, _ = strings n w in
+    Array.init n (fun i ->
+        let o = Int64.to_int offsets.{i} in
+        String.init w (fun k -> Char.chr bytes.{o + k}))
+  in
   [
     (* [v] returns its operands, so it has no result bytes of its own. *)
     Row
@@ -379,6 +385,25 @@ let ragged_rows =
       };
     row "of_lengths-strings12-1e7" l (lengths l 12) (fun (lengths, bytes) ->
         Nx_ragged.offsets (Nx_ragged.of_lengths lengths bytes));
+    (* [of_strings] fills OCaml bigarrays, which the host's count does not see,
+       and [to_strings] returns OCaml strings: neither has result bytes the
+       count holds. *)
+    Row
+      {
+        id = "of_strings-strings12-1e6";
+        rows = m;
+        setup = texts m 12;
+        run = Nx_ragged.of_strings;
+        results = (fun _ -> []);
+      };
+    Row
+      {
+        id = "to_strings-strings12-1e6";
+        rows = m;
+        setup = ragged m 12;
+        run = Nx_ragged.to_strings;
+        results = (fun _ -> []);
+      };
     row "concat-strings12-2x5e6" l
       (fun () -> (ragged (l / 2) 12 (), ragged (l / 2) 12 ()))
       (fun (a, b) -> Nx_ragged.values (Nx_ragged.concat [ a; b ]));

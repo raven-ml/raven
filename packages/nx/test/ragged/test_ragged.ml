@@ -136,6 +136,54 @@ let making =
               Nx_ragged.of_lengths lengths (Nx.zeros Nx.int32 shape)));
     ]
 
+(* Strings *)
+
+let every_byte = String.init 256 Char.chr
+let strings = Gen.(array ~size:(int_range 0 6) string)
+
+let strings_of_bytes =
+  group "strings"
+    [
+      prop "to_strings reads back the strings of_strings makes"
+        ~examples:[ [||]; [| "" |]; [| ""; "a"; "" |]; [| every_byte |] ]
+        strings
+        (fun ss ->
+          cover "no string" (Array.length ss = 0);
+          cover "an empty string" (Array.exists (String.equal "") ss);
+          cover "a NUL byte"
+            (Array.exists (fun s -> String.contains s '\000') ss);
+          cover "a byte above 127"
+            (Array.exists (String.exists (fun c -> Char.code c > 127)) ss);
+          equal (array string) ss
+            (Nx_ragged.to_strings (Nx_ragged.of_strings ss)));
+      prop "of_strings holds each string's bytes as a row, from offset 0"
+        strings (fun ss ->
+          let r = Nx_ragged.of_strings ss in
+          exactly_rows r;
+          equal (array int64)
+            (Array.map (fun s -> Int64.of_int (String.length s)) ss)
+            (Nx.to_array (Nx_ragged.lengths r));
+          equal (array int)
+            (List.concat_map
+               (fun s -> List.init (String.length s) (fun k -> Char.code s.[k]))
+               (Array.to_list ss)
+            |> Array.of_list)
+            (Nx.to_array (Nx_ragged.values r)));
+      prop "to_strings reads only the rows of a sub" strings (fun ss ->
+          let n = Array.length ss in
+          let offset = n / 3 and length = n / 2 in
+          equal (array string)
+            (Array.sub ss offset length)
+            (Nx_ragged.to_strings
+               (Nx_ragged.sub (Nx_ragged.of_strings ss) ~offset ~length)));
+      test "to_strings refuses values with cells" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx_ragged.to_strings
+                (Nx_ragged.v
+                   ~offsets:(int64s [| 0L; 1L |])
+                   (Nx.zeros Nx.uint8 [| 1; 2 |]))));
+    ]
+
 (* Grouping by ids *)
 
 let grouped =
@@ -693,6 +741,11 @@ let reads =
           let i, seen = naming () in
           Nx.Op.intercept i f;
           equal names [ expected ] !seen);
+      test "to_strings reads its offsets, then its bytes" (fun () ->
+          let r = Nx_ragged.of_strings [| "ab"; "c" |] in
+          let i, seen = naming () in
+          Nx.Op.intercept i (fun () -> ignore (Nx_ragged.to_strings r));
+          equal names [ "Nx_ragged.to_strings"; "Nx_ragged.to_strings" ] !seen);
       cases ~name:fst "ids and rank name every round's read"
         [
           ("Nx_ragged.ids", discard (fun () -> Nx_ragged.ids (grouped ())));
@@ -707,4 +760,12 @@ let reads =
 let () =
   exit
     (run "nx ragged"
-       [ making; by_ids; transforming; row_quantiles; identities; reads ])
+       [
+         making;
+         strings_of_bytes;
+         by_ids;
+         transforming;
+         row_quantiles;
+         identities;
+         reads;
+       ])
