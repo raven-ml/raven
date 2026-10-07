@@ -61,13 +61,8 @@ let live () =
 let tests =
   group ~timeout "initialisation"
     [
-      xfail
-        ~reason:
-          "Sdma computes trap, a list over Defs.sdma_op_trap, at \
-           initialisation: 5 words, as -opaque builds keep it from being a \
-           constant"
-        (test "initialising the library allocates only its declarations"
-           (fun () -> equal float_exact (declared ()) init));
+      test "initialising the library allocates only its declarations" (fun () ->
+          equal float_exact (declared ()) init);
       test "reading every table keeps no word live" (fun () ->
           read_tables ();
           let l0 = live () in

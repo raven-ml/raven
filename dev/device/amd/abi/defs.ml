@@ -3683,6 +3683,10 @@ let sdma_op_poll_regmem = 8
 let sdma_op_timestamp = 0xd
 let sdma_subop_copy_linear = 0
 let sdma_subop_timestamp_get_global = 2
+
+(* The trap packet: SDMA_OP_TRAP, then its interrupt context, 0. *)
+let sdma_trap = [ Packet.Dword 6; Packet.Dword 0 ]
+
 let sdma_pkt_copy_linear_header_sub_op = (0xff, 8)
 let sdma_pkt_poll_regmem_header_func = (7, 28)
 let sdma_pkt_poll_regmem_header_mem_poll = (1, 31)

@@ -75,7 +75,7 @@ let fence (g : Gpu.t) addr v =
   in
   [ Dword (Defs.sdma_op_fence lor mtype); W64 (Value addr); W32 (Value v) ]
 
-let trap = [ Dword Defs.sdma_op_trap; Dword 0 ]
+let trap = Defs.sdma_trap
 
 let timestamp addr =
   [

@@ -849,6 +849,10 @@ def generate(h):
         svals[ver] = constants(h[name], [n for n in want if n in ds])
     for n in SDMA_OPS:
         out.append(f"let {ml_name(n)} = {ml_int(same(n, [v[n] for v in svals.values()]))}")
+    # A literal, so that no build initialises it, -opaque ones included.
+    trap = same("SDMA_OP_TRAP", [v["SDMA_OP_TRAP"] for v in svals.values()])
+    out += ["", "(* The trap packet: SDMA_OP_TRAP, then its interrupt context, 0. *)",
+            f"let sdma_trap = [ Packet.Dword {ml_int(trap)}; Packet.Dword 0 ]", ""]
     for n in SDMA_FIELDS:
         have = [(v[n + "_mask"], v[n + "_shift"]) for v in svals.values() if n + "_mask" in v]
         if len(have) != len(svals) and n not in SDMA_OPTIONAL:
