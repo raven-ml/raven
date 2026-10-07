@@ -123,6 +123,8 @@ transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	6.896e-03	6.397e-03 6
 # forced: blessed jvp/tanh-chain-8-float32-1e6-host wide/mul-1e6-host wide/sum-1e6-host under load 16.4 on 10 cores
 # forced: blessed gaussian/process-float64-8x11-host solve/float64-32-host solve/float64-128-host solve/float64-512-host svd/float32-64x8x8-host launch/chain-64 launch/scan-256 loop/iterate-256 loop/drawing-scan-256 lorenz/step-batch-128-host metal/jit-iterate-256 metal/jit-drawing-scan-256 under load 20.2 on 10 cores
 # forced: blessed transcendental/exp-float32-1Mi-host transcendental/log-float32-1Mi-host transcendental/sin-float32-1Mi-host transcendental/sin-far-float32-1Mi-host transcendental/exp-float64-1Mi-host transcendental/log-float64-1Mi-host transcendental/sin-float64-1Mi-host transcendental/sin-far-float64-1Mi-host special/exp-float32-1e5-host special/erf-float32-1e5-host special/erfc-float32-1e5-host special/erfinv-float32-1e5-host special/ndtri-float32-1e5-host special/lgamma-float32-1e5-host special/sin-float32-1e5-host special/tanh-float32-1e5-host special/exp-float64-1e5-host special/erf-float64-1e5-host special/erfc-float64-1e5-host special/erfinv-float64-1e5-host special/ndtri-float64-1e5-host special/lgamma-float64-1e5-host special/sin-float64-1e5-host special/tanh-float64-1e5-host special/betainc-float64-1e5-host special/log_betainc-grad-a-float64-1e5-host under load 21.0 on 10 cores
+# forced: blessed reverse/jit-of-grad-clipped-disc-float64-104x104-host under load 9.4 on 10 cores
+# forced: blessed gaussian/process-float64-8x11-host under load 8.5 on 10 cores
 
 decode/kv-2880x512-bfloat16-host	alloc_words	exact	1162
 decode/kv-2880x512-bfloat16-host	wall_time	batch=8	n=20	2.936e-04	2.433e-04 2.521e-04 2.528e-04 2.538e-04 2.729e-04 2.796e-04 2.805e-04 2.831e-04 2.855e-04 2.889e-04 2.983e-04 3.047e-04 3.057e-04 3.096e-04 3.150e-04 3.201e-04 3.240e-04 3.403e-04 9.208e-04 9.478e-04
@@ -138,8 +140,8 @@ finite/checks-128-leaves-host	alloc_words	exact	104360
 finite/checks-128-leaves-host	wall_time	batch=1	n=20	1.110e-02	9.794e-03 9.867e-03 1.011e-02 1.031e-02 1.032e-02 1.039e-02 1.040e-02 1.074e-02 1.095e-02 1.110e-02 1.110e-02 1.174e-02 1.244e-02 1.354e-02 1.442e-02 1.465e-02 1.523e-02 1.677e-02 1.796e-02 2.211e-02
 gaussian/process-float64-8x11-eager	alloc_words	exact	28579
 gaussian/process-float64-8x11-eager	wall_time	batch=8	n=20	2.645e-04	2.353e-04 2.426e-04 2.436e-04 2.444e-04 2.456e-04 2.487e-04 2.570e-04 2.603e-04 2.622e-04 2.645e-04 2.645e-04 2.832e-04 2.855e-04 2.899e-04 2.920e-04 3.204e-04 3.454e-04 3.465e-04 3.639e-04 3.788e-04
-gaussian/process-float64-8x11-host	alloc_words	exact	1567
-gaussian/process-float64-8x11-host	wall_time	batch=128	n=20	5.364e-05	5.096e-05 5.245e-05 5.302e-05 5.303e-05 5.315e-05 5.336e-05 5.338e-05 5.343e-05 5.357e-05 5.361e-05 5.367e-05 5.367e-05 5.369e-05 5.370e-05 5.370e-05 5.378e-05 5.378e-05 5.413e-05 5.464e-05 5.472e-05
+gaussian/process-float64-8x11-host	alloc_words	exact	1559
+gaussian/process-float64-8x11-host	wall_time	batch=256	n=20	3.435e-05	3.402e-05 3.407e-05 3.411e-05 3.412e-05 3.414e-05 3.422e-05 3.425e-05 3.432e-05 3.432e-05 3.434e-05 3.436e-05 3.437e-05 3.450e-05 3.451e-05 3.460e-05 3.475e-05 3.482e-05 3.501e-05 3.561e-05 3.584e-05
 indexed/scatter-16-rows-into-4096x1024-cache-host	alloc_words	exact	1508
 indexed/scatter-16-rows-into-4096x1024-cache-host	wall_time	batch=512	n=20	1.012e-05	9.737e-06 9.883e-06 9.910e-06 9.956e-06 9.967e-06 1.004e-05 1.008e-05 1.010e-05 1.011e-05 1.012e-05 1.013e-05 1.015e-05 1.015e-05 1.016e-05 1.018e-05 1.022e-05 1.024e-05 1.036e-05 1.036e-05 1.037e-05
 indexed/take-512-rows-of-32768x1024-host	alloc_words	exact	1160
@@ -196,6 +198,8 @@ metal/lorenz-step-batch-1024	alloc_words	exact	47342
 metal/lorenz-step-batch-1024	wall_time	batch=1	n=20	3.335e-01	2.279e-01 2.605e-01 2.750e-01 3.176e-01 3.209e-01 3.212e-01 3.220e-01 3.259e-01 3.292e-01 3.307e-01 3.362e-01 3.439e-01 3.581e-01 3.764e-01 4.005e-01 4.705e-01 4.711e-01 5.969e-01 6.413e-01 7.373e-01
 reverse/grad-of-jit-mlp-float32-host	alloc_words	exact	8234
 reverse/grad-of-jit-mlp-float32-host	wall_time	batch=64	n=20	1.041e-04	7.365e-05 7.487e-05 7.842e-05 7.988e-05 8.001e-05 8.256e-05 8.601e-05 9.869e-05 9.935e-05 1.032e-04 1.050e-04 1.105e-04 1.175e-04 1.204e-04 1.270e-04 1.294e-04 1.305e-04 1.392e-04 1.465e-04 1.684e-04
+reverse/jit-of-grad-clipped-disc-float64-104x104-host	alloc_words	exact	824
+reverse/jit-of-grad-clipped-disc-float64-104x104-host	wall_time	batch=16	n=20	4.469e-04	4.311e-04 4.326e-04 4.391e-04 4.419e-04 4.441e-04 4.445e-04 4.458e-04 4.458e-04 4.460e-04 4.466e-04 4.473e-04 4.475e-04 4.485e-04 4.488e-04 4.490e-04 4.513e-04 4.516e-04 4.533e-04 4.535e-04 4.601e-04
 reverse/jit-of-grad-mlp-float32-host	alloc_words	exact	2904
 reverse/jit-of-grad-mlp-float32-host	wall_time	batch=128	n=20	6.267e-05	5.567e-05 5.612e-05 5.656e-05 5.726e-05 5.777e-05 5.785e-05 5.874e-05 5.970e-05 6.012e-05 6.216e-05 6.318e-05 6.365e-05 6.471e-05 6.537e-05 6.562e-05 6.718e-05 7.452e-05 7.479e-05 1.020e-04 1.021e-04
 rope/float32-512-positions-64x64-host	alloc_words	exact	1332
