@@ -1223,6 +1223,23 @@ module Evidence : sig
   (** [sample z] is draws weighted by the posterior, their log weights
       normalised. *)
 
+  val expectation :
+    'u Nx.Ptree.t ->
+    ('u -> (float, 'f) Nx.t) ->
+    ('u, 'f) t ->
+    (float, 'f) Nx.t * (float, 'f) Nx.t
+  (** [expectation u f z] is the posterior expectation of [f], a map of one draw
+      to a tensor, under [z]'s {!sample}, and its standard error, element by
+      element. The error counts the noise of the weights over the shrinkage
+      sequences {!error} simulates, and the sampling error of the draws in
+      independent groups: for nested sampling the draws that descend from one
+      starting point ({!Norn.Nested.type-state}'s [lineage]), for tempering each
+      chain. It under-covers when slice moves leave the draws within a
+      replacement correlated: by 1.5 to 1.9 times on a hierarchical posterior's
+      hyperparameters. For an error to trust on a hard posterior, run
+      independent replicates and take their spread. [f] runs under
+      {!Rune.val-vmap}, once for all draws. *)
+
   (** {1:stop Why a run stopped} *)
 
   (** The type for the reasons a run stopped. A spent budget is a result, not an
@@ -1296,6 +1313,9 @@ module Nested : sig
     prior : (float, 'f) Nx.t;  (** Their prior log densities, shape [[n]]. *)
     likelihood : (float, 'f) Nx.t;  (** Their log likelihoods. *)
     rank : (float, 'f) Nx.t;  (** Their ranks, in [(0, 1)]. *)
+    lineage : Nx.int32_t;
+        (** The starting point each descends from, by the slice moves that
+            replaced its ancestors: an index of the initial live points. *)
     dead : 'u;
         (** The dead points, lowest first, on a leading axis of
             [budget * batch]; the rows past [deaths] are padding. *)
@@ -1303,6 +1323,7 @@ module Nested : sig
         (** Their log likelihoods, [-inf] in the padding. *)
     shrinkage : (float, 'f) Nx.t;
         (** The expected fall in [ln X] at each, [0] in the padding. *)
+    dead_lineage : Nx.int32_t;  (** Their lineages. *)
     deaths : Nx.int32_t;  (** The number of dead points. *)
     log_volume : (float, 'f) Nx.t;  (** The expected [ln X] left. *)
     log_evidence : (float, 'f) Nx.t;  (** [ln Z] of the dead points. *)

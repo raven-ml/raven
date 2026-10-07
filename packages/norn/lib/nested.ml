@@ -12,9 +12,11 @@ type ('u, 'f) state = {
   prior : (float, 'f) Nx.t;
   likelihood : (float, 'f) Nx.t;
   rank : (float, 'f) Nx.t;
+  lineage : Nx.int32_t;
   dead : 'u;
   dead_likelihood : (float, 'f) Nx.t;
   shrinkage : (float, 'f) Nx.t;
+  dead_lineage : Nx.int32_t;
   deaths : Nx.int32_t;
   log_volume : (float, 'f) Nx.t;
   log_evidence : (float, 'f) Nx.t;
@@ -36,11 +38,13 @@ let ptree (type u f) (u : u P.t) : (u, f) state P.t =
       let prior = field c "prior" tensor s.prior in
       let likelihood = field c "likelihood" tensor s.likelihood in
       let rank = field c "rank" tensor s.rank in
+      let lineage = field c "lineage" tensor s.lineage in
       let dead = field c "dead" (structure u) s.dead in
       let dead_likelihood =
         field c "dead_likelihood" tensor s.dead_likelihood
       in
       let shrinkage = field c "shrinkage" tensor s.shrinkage in
+      let dead_lineage = field c "dead_lineage" tensor s.dead_lineage in
       let deaths = field c "deaths" tensor s.deaths in
       let log_volume = field c "log_volume" tensor s.log_volume in
       let log_evidence = field c "log_evidence" tensor s.log_evidence in
@@ -53,9 +57,11 @@ let ptree (type u f) (u : u P.t) : (u, f) state P.t =
         prior;
         likelihood;
         rank;
+        lineage;
         dead;
         dead_likelihood;
         shrinkage;
+        dead_lineage;
         deaths;
         log_volume;
         log_evidence;
@@ -152,6 +158,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f) state) =
   let l = Nx.take ~indices:sorted s.likelihood in
   let r = Nx.take ~indices:sorted s.rank in
   let lp = Nx.take ~indices:sorted s.prior in
+  let lin = Nx.take ~indices:sorted s.lineage in
   (* The deleted, lowest first. *)
   let shrink = shrinkages dt n b in
   let deleted_l = Nx.slice [ Nx.R (0, b) ] l in
@@ -165,6 +172,9 @@ let step (type f) u ~prior ~likelihood k (s : (_, f) state) =
   in
   let dead_likelihood = Nx.set [ at ] deleted_l s.dead_likelihood in
   let shrinkage = Nx.set [ at ] shrink s.shrinkage in
+  let dead_lineage =
+    Nx.set [ at ] (Nx.slice [ Nx.R (0, b) ] lin) s.dead_lineage
+  in
   let l_star = Nx.slice [ Nx.I (b - 1) ] l
   and r_star = Nx.slice [ Nx.I (b - 1) ] r in
   (* Starts: survivors drawn uniformly. *)
@@ -226,6 +236,9 @@ let step (type f) u ~prior ~likelihood k (s : (_, f) state) =
       prior = Nx.concatenate ~axis:0 [ keep lp; lp_new ];
       likelihood = Nx.concatenate ~axis:0 [ keep l; l_new ];
       rank = Nx.concatenate ~axis:0 [ keep r; r_new ];
+      lineage =
+        Nx.concatenate ~axis:0 [ keep lin; Nx.take ~indices:pick (keep lin) ];
+      dead_lineage;
       dead;
       dead_likelihood;
       shrinkage;
@@ -279,9 +292,11 @@ let init u ?batch ?(tolerance = 1e-3) ~budget ~prior ~likelihood live =
     (* The starting points are exchangeable, so ranks evenly spaced in their
        order break ties among them at random. *)
     rank = Nx.div_s (Nx.arange_f dt 0.5 (float_of_int n) 1.) (float_of_int n);
+    lineage = Nx.arange Nx.int32 0 n 1;
     dead;
     dead_likelihood = Nx.full dt [| cap |] Float.neg_infinity;
     shrinkage = Nx.zeros dt [| cap |];
+    dead_lineage = Nx.zeros Nx.int32 [| cap |];
     deaths = Nx.scalar Nx.int32 0l;
     log_volume = Nx.zeros dt [||];
     log_evidence = Nx.scalar dt Float.neg_infinity;
@@ -320,14 +335,15 @@ let evidence (type f) u k (s : (_, f) state) =
   in
   let m = (Nx.shape shrink).(0) in
   let e = Nx.neg (Nx.log (Nx.Rng.uniform k dt [| simulations; m |])) in
-  let simulated =
+  let simulated, replicates =
     Rune.vmap
-      P.(tensor @-> returns tensor)
+      P.(tensor @-> returns (pair tensor tensor))
       (fun e ->
         let terms, _ =
           contributions log_l (Nx.zeros dt [||]) (Nx.mul e shrink)
         in
-        Nx.logsumexp terms)
+        let z = Nx.logsumexp terms in
+        (z, Nx.sub terms z))
       e
   in
   let error = Nx.std simulated in
@@ -338,7 +354,11 @@ let evidence (type f) u k (s : (_, f) state) =
       (Nx.where (converged s)
          (Nx.scalar Nx.int32 Evidence.converged)
          (Nx.scalar Nx.int32 Evidence.remaining))
-    ~reached:(remaining s)
+    ~reached:(remaining s) ~replicates
+    ~groups:
+      (Nx.concatenate ~axis:0
+         [ s.dead_lineage; Nx.take ~indices:sorted s.lineage ])
+    ~group_count:n
 
 let run u ?batch ?tolerance ~budget ~prior ~likelihood k live =
   let s = init u ?batch ?tolerance ~budget ~prior ~likelihood live in

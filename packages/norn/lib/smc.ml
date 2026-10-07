@@ -345,12 +345,9 @@ let finished (s : (_, _) state) = Nx.greater_equal s.beta (Nx.ones_like s.beta)
 let evidence (type f) (s : (_, f) state) =
   let dt = Nx.dtype s.beta in
   let n = (Nx.shape s.likelihood).(0) in
+  let log_weights = Nx.full dt [| n |] (-.Float.log (float_of_int n)) in
   Evidence.v
-    ~sample:
-      {
-        Weighted.values = s.particles;
-        log_weights = Nx.full dt [| n |] (-.Float.log (float_of_int n));
-      }
+    ~sample:{ Weighted.values = s.particles; log_weights }
     ~log_evidence:s.log_evidence ~error:(Nx.sqrt s.variance)
     ~information:(Nx.sub (Nx.mean s.likelihood) s.log_evidence)
     ~stop:
@@ -358,6 +355,11 @@ let evidence (type f) (s : (_, f) state) =
          (Nx.scalar Nx.int32 Evidence.converged)
          (Nx.scalar Nx.int32 Evidence.temperature))
     ~reached:s.beta
+    ~replicates:(Nx.reshape [| 1; n |] log_weights)
+    ~groups:
+      (Nx.mod_ (Nx.arange Nx.int32 0 n 1)
+         (Nx.scalar Nx.int32 (Int32.of_int s.resampled)))
+    ~group_count:s.resampled
 
 let run u ?move ?resampled ~budget ~prior ~likelihood k start =
   if budget < 1 then

@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Norn.Evidence.expectation`, a posterior expectation under an
+  evidence's sample with its standard error: the shrinkage noise of nested
+  sampling's weights and the sampling error of independent groups of draws,
+  the lineages `Norn.Nested.state` now tracks or tempering's chains.
 - Add `Norn.Smc`, waste-free tempered sequential Monte Carlo, which returns
   an `Evidence.t`. Particles move by Hamiltonian transitions (`Hmc`, the
   default) whose step size and length are tuned between temperatures, or by

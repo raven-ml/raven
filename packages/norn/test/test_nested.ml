@@ -28,9 +28,20 @@ let nest m i =
     (Nx.Rng.fold_in k 0)
     (m.draw (Nx.Rng.fold_in k 1) live)
 
+(* The runs of Law 13, shared with the calibration law. *)
+let runs = Hashtbl.create 3
+
+let runs_of m n =
+  match Hashtbl.find_opt runs (m.name, n) with
+  | Some zs -> zs
+  | None ->
+      let zs = List.init n (nest m) in
+      Hashtbl.replace runs (m.name, n) zs;
+      zs
+
 let law_13 ~runs m =
   slow m.name (fun () ->
-      let zs = List.init runs (nest m) in
+      let zs = runs_of m runs in
       let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
       let err z = Nx.item [] (Norn.Evidence.error z) in
       let z0 = List.hd zs in
@@ -64,6 +75,68 @@ let posterior =
       let var = Nx.item [] (Nx.sum (Nx.mul p (Nx.square (Nx.sub_s x mean)))) in
       equal (float 0.05) (5.7 /. 6.) mean;
       equal (float 0.03) (1. /. 6.) var)
+
+(* Law 14: expectations. Under the conjugate model x's posterior has mean [5.7 /
+   6] and second moment [1 / 6 + (5.7 / 6)²]. A run's expectation of each lies
+   within [z] of its errors of the truth, [z] holding the family-wise
+   false-alarm rate over every case at 1%, and over Law 13's 20 runs the root
+   mean square of the errors' multiples is within a factor of two of 1, as the
+   spread of ln Z is. *)
+
+let moments x = Nx.concatenate ~axis:0 [ x; Nx.square x ]
+let truth = [| 5.7 /. 6.; (1. /. 6.) +. ((5.7 /. 6.) ** 2.) |]
+
+(* Each moment's error multiple in a run. *)
+let multiples z =
+  let m, e = Norn.Evidence.expectation t moments z in
+  Array.mapi
+    (fun j truth -> (Nx.item [ j ] m -. truth) /. Nx.item [ j ] e)
+    truth
+
+let calibration_cases = 10
+
+let z_bound =
+  let cases = float_of_int (2 * calibration_cases) in
+  Nx.item []
+    (Norn.Dist.quantile
+       (Norn.Dist.normal ~loc:(Nx.scalar Nx.float64 0.)
+          ~scale:(Nx.scalar Nx.float64 1.))
+       (Nx.scalar Nx.float64 (1. -. (0.01 /. (2. *. cases)))))
+
+let law_14 =
+  group "expectations"
+    [
+      prop ~count:calibration_cases
+        "a run's expectations lie within their errors of the truth"
+        (Gen.int_range 0 1_000_000) (fun seed ->
+          let k = Nx.Rng.fold_in (Nx.Rng.key 71) seed in
+          let z =
+            Norn.Nested.run t ~budget ~prior:conjugate.prior
+              ~likelihood:conjugate.likelihood (Nx.Rng.fold_in k 0)
+              (conjugate.draw (Nx.Rng.fold_in k 1) live)
+          in
+          Array.iteri
+            (fun j m ->
+              at_most (float 1e-12) ~than:z_bound
+                ~msg:
+                  (Printf.sprintf "moment %d's multiple of its error" (j + 1))
+                (Float.abs m))
+            (multiples z));
+      slow "the errors' multiples have a root mean square near 1" (fun () ->
+          let ms =
+            List.concat_map
+              (fun z -> Array.to_list (multiples z))
+              (runs_of conjugate 20)
+          in
+          let rms =
+            Float.sqrt
+              (List.fold_left (fun s m -> s +. (m *. m)) 0. ms
+              /. float_of_int (List.length ms))
+          in
+          let msg = "the root mean square of the errors' multiples" in
+          greater (float 1e-12) ~than:0.5 ~msg rms;
+          less (float 1e-12) ~than:2. ~msg rms);
+    ]
 
 (* Two steps of the ten-dimensional Gaussian, far from its tolerance. *)
 let spent () =
@@ -163,4 +236,5 @@ let () =
              law_13 ~runs:1 gaussian;
              law_13 ~runs:20 mixture;
            ];
+         law_14;
        ])
