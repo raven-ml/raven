@@ -20,3 +20,10 @@ What the suite expects of it was read with Homebrew LLVM 22.1.7's
   EIATTR_PARAM_CBANK (0xa): parameters at 0x160 of bank 0, 0x1c bytes;
 - its one relocation, in `.rel.debug_frame`, patches a section the image
   does not hold.
+
+Made in this directory from `many.cu` with nvcc 13.4 (V13.4.92, CUDA 13.4):
+
+- `many_sm89.cubin`, 128 kernels for sm_89, each with an initialised global
+  of its own (in `.nv.global.init`) whose address a `R_CUDA_64` relocation
+  writes into bank 4, for the bench:
+  `nvcc -cubin -arch=sm_89 -O2 many.cu -o many_sm89.cubin`
