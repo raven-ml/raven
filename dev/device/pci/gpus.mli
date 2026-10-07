@@ -81,38 +81,46 @@ val open_pci :
 val release : hold -> unit
 (** [release h] gives the GPU [h] holds back: it releases its function if
     {!open_pci} took it, and the GPU may be opened again. The driver stops its
-    use of the GPU first. *)
+    use of the GPU first.
+
+    Raises [Invalid_argument] if [h] was given back already. *)
 
 val lose : hold -> unit
 (** [lose h] is {!release}, for a GPU the driver lost. A GPU {!open_pci} took
-    then opens again only after a {!reset}. *)
+    then opens again only after a {!reset}.
+
+    Raises [Invalid_argument] if [h] was given back already. *)
 
 (** {1:changes Changes to the machine}
 
     These change the machine and persist after the process. Each refuses a GPU
-    the process holds. *)
+    the process holds. {!detach} and {!attach} change this machine's sysfs, so
+    they act on {!Machine.this} alone. *)
 
 val detach : t -> int -> (unit, string) result
 (** [detach g i] detaches GPU [i] of {!Machine.this} from its kernel driver, so
-    that a process can take its function, unless it is detached already: it
-    unbinds the driver, unless that is [vfio-pci], removes the other functions
-    of its device, such as its audio function, enables it, and makes its memory
-    BAR as large as the platform allows. The kernel driver's users, a display
-    among them, lose it until {!attach} or a reboot. It needs root, or write
-    access to the files under [/sys/bus/pci] it writes.
+    that a process can take its function, unless it is detached already. It
+    unbinds the driver unless that is [vfio-pci], removes the other functions of
+    its device, such as its audio function, and, unbound, enables the function
+    and makes its memory BAR the largest size the BAR and its bridge take. A
+    function bound to [vfio-pci] keeps its BAR's size: Linux resizes no BAR of a
+    function a driver holds. The kernel driver's users, a display among them,
+    lose the GPU until {!attach} or a reboot. It needs [CAP_SYS_ADMIN] and write
+    access to the files under [/sys/bus/pci] it writes, which root has.
 
     [Error why] if [i] is no GPU, if the process holds it, if the process may
     not write a file, naming it, or if the GPU is still not detached, saying
     why, such as when an IOMMU translates its addresses and it is not bound to
-    [vfio-pci].
+    [vfio-pci]. A memory BAR left small on [vfio-pci] is no error; the message
+    of the open that needs it names the unbind, detach and bind that enlarge it.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
 val attach : t -> int -> (unit, string) result
 (** [attach g i] gives GPU [i] of {!Machine.this} back to its kernel driver:
     Linux rescans the bus, which brings back the functions {!detach} removed,
-    and binds the GPU's driver. It needs root, or write access to
-    [/sys/bus/pci/rescan] and [/sys/bus/pci/drivers_probe].
+    and binds the GPU's driver. It needs [CAP_SYS_ADMIN] and write access to
+    [/sys/bus/pci/rescan] and [/sys/bus/pci/drivers_probe], which root has.
 
     [Error why] if [i] is no GPU, if the process holds it, if it is bound to
     [vfio-pci], naming the [driverctl] command that unbinds it, or if no driver
@@ -128,14 +136,5 @@ val reset :
 
     [Error why] if [i] is no GPU, if the process holds it, or if its function
     cannot be taken.
-
-    Raises [Invalid_argument] if [i < 0]. *)
-
-val fetch :
-  t -> int -> (string -> (unit, string) result) -> (unit, string) result
-(** [fetch g i f] is [f bus], the vendor fetching the firmware of GPU [i] of
-    {!Machine.this}, at [bus] ({!Firmware.fetch}).
-
-    [Error why] if [i] is no GPU or if the process holds it.
 
     Raises [Invalid_argument] if [i < 0]. *)

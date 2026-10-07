@@ -15,6 +15,12 @@
     This module is where a driver places what it allocates. A driver's region of
     memory is a {!memory}, whichever vendor's the GPU is.
 
+    {b After the GPU is given back.} Once the GPU's function is released
+    ({!Function.release}, {!Gpus.release}, {!Gpus.lose}), {!free} and {!unmap}
+    touch none of the GPU's memory: they return system memory, pins and virtual
+    addresses only. A GPU reset and opened again by another instance is not
+    written by this one.
+
     The GPU's owner serializes calls on one GPU. *)
 
 type t
@@ -29,8 +35,8 @@ val create :
 (** [create f tables ~bar] is the memory of the GPU of [f], whose page tables
     are [tables] and whose memory BAR is [bar]. [peer ranges] is how another GPU
     reaches the physical [ranges] of this one's memory, and in which
-    {!Page_table.target}; it defaults to through the memory BAR, as
-    {!Page_table.System} memory. *)
+    {!Page_table.target}; it defaults to through the memory BAR's bus address
+    ({!Function.bar}), as {!Page_table.System} memory. *)
 
 val small_bar : t -> bool
 (** [small_bar m] is [true] iff the memory BAR is 256 MiB, too small for the
@@ -69,36 +75,43 @@ val alloc : ?uncached:bool -> t -> kind -> int -> memory option
     in system memory, and in the GPU's memory to 4 KiB, or to 2 MiB from 8 MiB
     on so that large ones map with large pages. With [~uncached:true] (defaults
     to [false]) the GPU bypasses its caches for them; {!Host} memory is always
-    uncached. [None] if the memory or the address space is exhausted, or for
-    {!Bar} memory, if the BAR does not reach a block that fits.
+    uncached. [None] if the GPU's memory or the address space is exhausted, as
+    {!Page_table.alloc} bounds it, or for {!Bar} memory, if the BAR does not
+    reach a block that fits.
 
     Raises [Failure] if system memory or a page table cannot be allocated,
-    having freed what it took. *)
+    having freed what it took, naming the limit as {!Function.alloc_dma} does.
+    The locked-memory limit and the IOMMU's mapping limit raise rather than
+    answer [None]: they are the machine's settings, which freeing memory rarely
+    cures and whose name the caller needs. *)
 
 val free : t -> memory -> unit
-(** [free m mem] unmaps and frees [mem], which {!alloc} returned, and returns
-    its addresses.
+(** [free m mem] unmaps and frees [mem] and returns its addresses.
 
-    Raises [Invalid_argument] if [mem] was not {!Allocated} by [m]. *)
+    Raises [Invalid_argument] if [mem] is not {!Allocated} by [m], or freed
+    already. *)
 
 (** {1:maps Mapping} *)
 
-val map_host : t -> nativeint -> int -> (memory, string) result
+val map_host : t -> int -> int -> (memory, string) result
 (** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU,
     at [a]: it {!Function.pin}s them and maps their pages, snooped and uncached.
     [Error why] if [a] is not on a page, lies outside the GPU's virtual
-    addresses, or cannot be pinned. *)
+    addresses, or cannot be pinned, naming the limit when the IOMMU holds
+    [dma_entry_limit] mappings. *)
 
-val map_peer : t -> t -> memory -> (memory, string) result
-(** [map_peer m m' mem] maps [mem], which {!alloc} allocated on the GPU of [m'],
-    for the GPU of [m], at its address on [m']: the GPU's memory through [m']'s
-    memory BAR or link, and system memory at its pages, which stay [m']'s.
-    [Error why] if the GPUs are on different machines, if either is behind an
-    IOMMU ({!Function.Iommu}), or if [mem] is in the GPU's memory and [m']'s BAR
-    is {!small_bar}. *)
+val map_peer : t -> owner:t -> memory -> (memory, string) result
+(** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
+    [owner], for the GPU of [m], at its address on [owner]: the GPU's memory
+    through [owner]'s memory BAR or link, and system memory at its pages, which
+    stay [owner]'s. [Error why] if the GPUs are on different machines, if either
+    is behind an IOMMU ({!Function.Iommu}), or if [mem] is in the GPU's memory
+    and [owner]'s BAR is {!small_bar}.
+
+    Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner]. *)
 
 val unmap : t -> memory -> unit
-(** [unmap m mem] unmaps [mem], which {!map_host} or {!map_peer} mapped, and
-    unpins the memory {!map_host} pinned.
+(** [unmap m mem] unmaps [mem] and unpins the memory {!map_host} pinned.
 
-    Raises [Invalid_argument] if [mem] was {!Allocated}. *)
+    Raises [Invalid_argument] if [mem] is not {!Borrowed} or {!Peer} memory of
+    [m], or unmapped already. *)

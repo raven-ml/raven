@@ -27,12 +27,12 @@ val find :
     [Ok None] if none holds the image. [Error why] names a file of [dir] with
     another digest. *)
 
-val fetch : url:string -> string -> sha256:string -> (unit, string) result
-(** [fetch ~url name ~sha256] makes the image [name] available to {!find}
+val fetch : base_url:string -> string -> sha256:string -> (unit, string) result
+(** [fetch ~base_url name ~sha256] makes the image [name] available to {!find}
     without a directory: unless [/lib/firmware] or the cache holds it already,
-    it downloads [url ^ name] with the system's [libcurl], checks its digest and
-    keeps it in the cache, which persists after the process. It needs network
-    access and write access to the cache.
+    it downloads [base_url ^ name] with the system's [libcurl], checks its
+    digest and keeps it in the cache, which persists after the process. It needs
+    network access and write access to the cache.
 
     [Error why] names what failed: a download that could not be made, one with
     another digest, or a cache that cannot be written. *)

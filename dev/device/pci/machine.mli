@@ -5,27 +5,13 @@
 
 (** Machines this process reaches, and their PCI functions.
 
-    This library drives a GPU through its PCI function, doing what a kernel
-    driver does: a driver library finds the GPU on a {e machine} ({!t}), takes
-    its function ({!Function}), reads and writes its registers and memory
-    through {e windows} ({!Window}), allocates the system memory it reaches,
-    manages its memory, address space and page tables ({!Space}, {!Page_table},
-    {!Memory}), and loads the firmware it was validated with ({!Firmware}).
-    {!Gpus} numbers a vendor's GPUs and keeps the process's hold on them.
-
     A machine is this one ({!this}) or another one a {e transport} reaches
-    ({!make}). Every function below works on either, and a driver never learns
-    which. This library knows no transport: another library implements one by
-    giving the operations of {!ops}.
+    ({!make}). Every function of this library works on either, and a driver
+    never learns which. This library knows no transport: another library
+    implements one by giving the operations of {!ops}.
 
-    {b Errors.} Taking a function and changing the machine return [Error why]
-    when the world refuses ({!Function.take}, {!Gpus}). Accesses and waits on
-    what the process holds raise [Failure] when the world fails under them: a
-    device that stops answering, or a machine whose transport failed. A message
-    names what failed and, where something grants it, what to run.
-
-    {b Platforms.} The library builds everywhere. Taking a function of this
-    machine needs Linux; elsewhere this machine has no functions. *)
+    Taking a function of this machine needs Linux; elsewhere this machine has no
+    functions. *)
 
 (** {1:addresses Bus addresses}
 
@@ -82,21 +68,25 @@ val reserve : t -> base:int -> int -> unit
     {!Function.alloc_dma} maps memory there. A range is reserved once and stays
     reserved while that process runs; reserving it again does nothing.
 
-    Raises [Failure] if part of the range is in use. *)
+    Raises [Failure] if part of the range is in use
+    ({{!Device_pci.errors}errors}). *)
 
 val wait : t -> ms:int -> (unit -> bool) -> bool
 (** [wait m ~ms f] calls [f] until it is [true] or [ms] milliseconds passed,
     relaxing the processor between calls, and is [true] iff [f] became [true].
     It is the loop in which drivers wait for their devices.
 
-    Raises [Failure] once [m] fails, with {!failed}'s reason. *)
+    Raises [Failure] once [m] fails, with {!failed}'s reason
+    ({{!Device_pci.errors}errors}). *)
 
 (** {1:transports Transports}
 
     A library that reaches another machine makes it a machine with {!make}, from
     the operations below. A transport runs each operation on the other machine
     as the same operation of {!this} runs here, and raises [Failure] with a
-    reason that starts with the machine's name when it cannot. *)
+    reason that starts with the machine's name when it cannot. Misuse, such as a
+    window the function did not map, raises [Invalid_argument] before the
+    operation is called. *)
 
 (** The type for how a function reaches system memory. *)
 type addressing =
@@ -116,11 +106,12 @@ type fn = {
   unmap : Window.t -> unit;  (** {!Function.unmap}. *)
   interrupt : int -> bool;  (** {!Function.interrupt}. *)
   reset : unit -> unit;  (** {!Function.reset}. *)
-  alloc_dma : contiguous:bool -> va:int option -> int -> Window.t * int list;
+  alloc_dma :
+    contiguous:bool -> va:int option -> int -> Window.t * (int * int) list;
       (** {!Function.alloc_dma}. *)
   free_dma : Window.t -> unit;  (** {!Function.free_dma}. *)
-  pin : nativeint -> int -> int list;  (** {!Function.pin}. *)
-  unpin : nativeint -> int -> unit;  (** {!Function.unpin}. *)
+  pin : int -> int -> (int * int) list;  (** {!Function.pin}. *)
+  unpin : int -> int -> unit;  (** {!Function.unpin}. *)
   release : unit -> unit;  (** {!Function.release}. *)
 }
 (** The type for the operations on a function a transport took. *)

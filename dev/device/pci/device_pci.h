@@ -28,9 +28,10 @@
 
 /* The accesses to another machine's addresses, which the library that
    reaches it implements. [read] and [write] move [n] bytes at [address] of
-   the machine, in the order they are called, as one access where [n] is 4
-   or 8 and [address] is aligned to it. [failed] is the reason the
-   transport failed, or NULL. */
+   the machine, as one access where [n] is 4 or 8 and [address] is aligned
+   to it. They may be called from several threads at once; the accesses
+   one thread makes complete in the order it makes them. [failed] is the
+   reason the transport failed, or NULL; once it is not NULL it stays. */
 struct device_pci_transport {
   void *ctx;
   int (*read)(void *ctx, uint64_t address, void *dst, size_t n);

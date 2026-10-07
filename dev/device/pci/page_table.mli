@@ -71,10 +71,17 @@ type format = {
 (** The type for a vendor's page-table format and the access to the GPU's memory
     that holds the tables. *)
 
-(** {1:tables Tables} *)
+(** {1:page_tables Page tables} *)
 
 type t
 (** The type for the page tables and physical memory of one GPU. *)
+
+(** The type for where page tables come from. *)
+type tables =
+  | Pool
+      (** A pool of their own: [memory / 512] bytes after the boot pool, rounded
+          up to 1 MiB. *)
+  | Main  (** The main pool, as other memory does. *)
 
 val create :
   ?base:int ->
@@ -82,17 +89,17 @@ val create :
   Space.t ->
   memory:int ->
   boot:int ->
-  tables:bool ->
+  tables:tables ->
   pages:(int * int) list ->
   t
 (** [create fmt s ~memory ~boot ~tables ~pages] manages [memory] bytes of a
-    GPU's physical memory: a boot pool of its first [boot] bytes, a pool for
-    page tables of [memory / 512] bytes rounded up to 1 MiB if [tables], and the
-    main pool. [pages] lists the physical block sizes and their alignments that
-    {!alloc} tries, largest first. The tables translate the addresses from
-    [base] on (defaults to [Space.base s]), of which [s] hands out some. It
-    allocates the root table in the boot pool and starts {e booting}: until
-    {!booted}, physical memory comes only from the boot pool.
+    GPU's physical memory: a boot pool of its first [boot] bytes, the page
+    tables' pool if [tables] is {!Pool}, and the main pool. [pages] lists the
+    physical block sizes and their alignments that {!alloc} tries, largest
+    first. The tables translate the addresses from [base] on (defaults to
+    [Space.base s]), of which [s] hands out some. It allocates the root table in
+    the boot pool and starts {e booting}: until {!booted}, physical memory comes
+    only from the boot pool.
 
     Raises [Invalid_argument] if the pools do not fit in [memory] or the boot
     pool cannot hold the root table. *)
@@ -122,7 +129,9 @@ val palloc : ?align:int -> ?zero:bool -> ?boot:bool -> t -> int -> int option
 (** [palloc t n] is the physical address of [n] new bytes rounded up to 4 KiB,
     aligned to [align] (defaults to 4096) and zeroed if [zero] (defaults to
     [true]): from the boot pool if [boot], from the main pool otherwise. [boot]
-    defaults to whether [t] is booting. [None] if the pool has no such block. *)
+    defaults to whether [t] is booting. It is [Some _] while the pool has a free
+    block of [2 * (n + align)] bytes, and may be [None] with a smaller one that
+    would fit. *)
 
 val pfree : t -> int -> unit
 (** [pfree t pa] frees the physical memory {!palloc} returned at [pa].
@@ -180,8 +189,9 @@ val alloc :
       maps with large pages;
     - otherwise the largest blocks of [pages] the pool has, not zeroed.
 
-    [None] if the pool or the space cannot supply them, having freed what it
-    took. Raises [Failure] as {!map} does, having freed what it took. *)
+    [None] if the pool or the space cannot supply them, as {!palloc} and
+    {!Space.alloc} bound it, having freed what it took. Raises [Failure] as
+    {!map} does, having freed what it took. *)
 
 val free : t -> mapping -> unit
 (** [free t m] unmaps [m], frees its virtual addresses and, if it is in the

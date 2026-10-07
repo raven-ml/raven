@@ -17,9 +17,9 @@
     Values are little-endian. Nothing is checked beyond the range: the caller
     keeps the mapping alive, and an access after it is unmapped is undefined.
 
-    {b Failures.} An access through a transport whose machine failed raises
-    [Failure] with the transport's reason, which starts with the machine's name.
-    An access to a mapped window cannot fail.
+    An access through a transport whose machine failed raises [Failure] with
+    {!Machine.failed}'s reason ({{!Device_pci.errors}errors}). An access to a
+    mapped window cannot fail.
 
     {b C.} A driver's C code reaches windows through [device_pci.h]:
     [device_pci_window_of] reads a window into a [struct device_pci_window], and
@@ -35,12 +35,12 @@
 type t
 (** The type for windows. *)
 
-val v : nativeint -> int -> t
+val v : int -> int -> t
 (** [v a n] is the [n] bytes mapped at [a] in the process.
 
     Raises [Invalid_argument] if [n < 0]. *)
 
-val address : t -> nativeint
+val address : t -> int
 (** [address w] is the address of [w]'s first byte on its machine. For a mapped
     window it is the process's address. *)
 
@@ -49,7 +49,7 @@ val length : t -> int
 
 val mapped : t -> bool
 (** [mapped w] is [true] iff [w] is mapped into the process, so that {!address}
-    is a pointer of the process. *)
+    is an address of the process. *)
 
 val sub : t -> int -> int -> t
 (** [sub w off n] is the [n] bytes of [w] from byte [off] on.
@@ -107,23 +107,20 @@ val bigarray :
 
     For the libraries that reach another machine. A transport is a
     [struct device_pci_transport] of C functions that read and write the
-    machine's addresses: they may block, run without the OCaml runtime, and
-    return [-1] once the transport failed, whose reason its [failed] function
-    then gives. *)
+    machine's addresses. They may block, run without the OCaml runtime, may be
+    called from several domains at once, and return [-1] once the transport
+    failed, whose reason its [failed] function then gives. Accesses made by one
+    domain complete in the order it makes them. *)
 
 type transport
 (** The type for transports. *)
 
-val transport : nativeint -> transport
+val transport : int -> transport
 (** [transport p] is the transport whose [struct device_pci_transport] is at
-    [p]. The structure stays valid and unchanged while a window or a machine
-    uses it. *)
+    address [p] of the process. The structure stays valid and unchanged while a
+    window or a machine uses it. *)
 
-val through : transport -> nativeint -> int -> t
+val through : transport -> int -> int -> t
 (** [through tr a n] is the [n] bytes at [a] of the machine [tr] reaches.
 
     Raises [Invalid_argument] if [n < 0]. *)
-
-val failed : transport -> string option
-(** [failed tr] is the reason [tr] failed, if it has. A transport that failed
-    stays failed. *)
