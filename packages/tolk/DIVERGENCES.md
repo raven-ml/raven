@@ -4305,6 +4305,15 @@ stores through a pad.
   `lgamma`, float64 `sin` and `log_betainc` take none, and `log_betainc` and
   its gradients compile as fast as without the upcast (2.7 s and 4.9-8.9 s
   cold). The 64 bytes and the 5 were measured on the M1 alone.
+- **Rejected:** compile time is paid once and replay on every call, so
+  neither trade below was taken. `#pragma clang loop vectorize(disable)`
+  changes nothing on vector kernels (Clang 0.24 s with and without it on
+  float64 `erfinv`, replay 0.99-1.00 times on 9 kernels); `-fno-vectorize`
+  on scalar kernels cuts the gradient of `log_betainc` from 7.68 s to 1.36 s
+  of Clang but slows its replay from 204 ms to 475 ms. One 16-byte register
+  of lanes at 5 operations or more saves at most 2.1 times of Clang (that
+  gradient, 6.35 s to 3.05 s) and replays 1.17-1.79 times slower (the
+  gradient 1.17, float64 `sin` 1.28, float32 `lgamma` 1.79).
 - **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
   from the patched tinygrad, and `execution on the host › every kernel the
   interpreter runs writes what it computes`; the Codegen suite's `vectors in
