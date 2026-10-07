@@ -3486,7 +3486,14 @@ let timeline =
       test
         "Ctrl-C interrupts a wait for work that never signals, and loses no \
          device" (fun () ->
-          let d = (fake ~name:"STUCK" ()).dev in
+          if Sys.win32 then skip ~reason:"no SIGINT to send on Windows" ();
+          (* Its driver declares a hang after 10 s, should no interrupt come,
+             and so ends the process's last synchronization too. *)
+          let sleep ~still ms =
+            if still > 10_000 then failwith "no interrupt came";
+            Unix.sleepf (Float.of_int ms /. 1000.)
+          in
+          let d = (fake ~name:"STUCK" ~sleep ()).dev in
           ignore (submit d Fun.id);
           let pid = Unix.getpid () in
           Sys.catch_break true;
