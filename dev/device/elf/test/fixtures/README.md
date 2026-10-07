@@ -10,4 +10,4 @@ LLD 21.1.8 (`ld.lld`). `H` is `-c -x c -O2 -fPIC -ffreestanding
 - `amd_gfx1100.o`, a relocatable GPU object whose descriptor relocates to its kernel: `clang $A amd.cl -o amd_gfx1100.o`
 - `amd_gfx1100.hsaco`, a linked code object with sections at addresses: `ld.lld -shared amd_gfx1100.o -o amd_gfx1100.hsaco`
 - `amd_many_gfx1100.hsaco`, 128 kernels without a symbol table, for the bench: `clang $A -DMANY amd.cl -o many.o && ld.lld -shared --strip-all many.o -o amd_many_gfx1100.hsaco`
-- `simple_add_sm89.cubin`, an NVIDIA executable whose sections the reader finds by name; rebuilding needs CUDA (kimchi): NVRTC 12.8 `nvrtcCompileProgram` on `simple_add.cu` with `--gpu-architecture=sm_89 --minimal`, then `nvrtcGetCUBIN`
+- `simple_add_sm89.cubin`, an NVIDIA executable whose sections the reader finds by name, made by `nvrtc.c` with NVRTC 12.8.93 (CUDA 12.8, the PyPI package `nvidia-cuda-nvrtc-cu12==12.8.93`), whose files are under `$NVRTC`: `cc nvrtc.c -I$NVRTC/include -L$NVRTC/lib -l:libnvrtc.so.12 -Wl,-rpath,$NVRTC/lib -o nvrtc && ./nvrtc simple_add.cu sm_89 simple_add_sm89.cubin`; another release of NVRTC writes its own version into the file
