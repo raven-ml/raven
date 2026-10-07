@@ -197,7 +197,10 @@ let describe h (store : Hdu.store) =
       match find Value.int "ZDITHER0" with
       | Some d when d >= 1 && d <= 10000 -> d
       | Some d -> Hdu.card_fail h "ZDITHER0" (strf "%d is outside 1-10000" d)
-      | None -> fail_at place "ZDITHER0 is absent from a dithered image"
+      (* FITS 4.0 §10.1.2 gives ZDITHER0 no default. Files written before
+         2009 lack it, and cfitsio, which wrote them, reads them from the
+         first element of the random sequence: seed 1. *)
+      | None -> 1
   in
   let zblank =
     match column "ZBLANK" with

@@ -106,6 +106,20 @@ let validity () =
   equal w (Ok (Some nan)) (mask "Q_DITHER1");
   equal w (Ok None) (mask "RICE_I16")
 
+let no_zdither0 () =
+  (* Without ZDITHER0 a dithered image reads from seed 1, as cfitsio reads
+     the files written before the keyword existed. Q_GZIP was written with
+     seed 1. *)
+  let h = hdu "Q_GZIP" in
+  let bare = Fits.v (H.remove "ZDITHER0" (Fits.header h)) (Fits.data h) in
+  equal
+    (result (option int) string)
+    (Ok None)
+    (H.find V.int "ZDITHER0" (Fits.header bare));
+  equal (array float_exact)
+    (Nx.to_array (require_ok (I.values Nx.float32 h)))
+    (Nx.to_array (require_ok (I.values Nx.float32 bare)))
+
 (* Windows *)
 
 let window_gen shape =
@@ -321,6 +335,7 @@ let () =
          decoded;
          test "descriptions" described;
          test "validity" validity;
+         test "ZDITHER0 absent" no_zdither0;
          group "windows" windows;
          hostile;
          group "writing"
