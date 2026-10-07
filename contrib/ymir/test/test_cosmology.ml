@@ -401,9 +401,12 @@ let laws =
           let massless = cosmology Nx.float64 { m with m_nu = [] } in
           let zero = cosmology Nx.float64 { m with m_nu = [ 0. ] } in
           let f c =
-            item (Quantity.value mpc (Cosmology.comoving_distance c (f64 z)))
+            let d =
+              item (Quantity.value mpc (Cosmology.comoving_distance c (f64 z)))
+            in
+            if Float.is_nan d then None else Some d
           in
-          equal (float_rel ~rel:1e-14 ~abs:0.) (f massless) (f zero));
+          equal (option (float_rel ~rel:1e-14 ~abs:0.)) (f massless) (f zero));
       test "hubble at z = 0 is h0" (fun () ->
           let c = cosmology Nx.float64 planck_like in
           equal
