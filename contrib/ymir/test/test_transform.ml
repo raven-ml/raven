@@ -35,7 +35,7 @@ let fits (c : Reference.wcs) =
     axes [| 1; 0 |] ~origin:1
     >> shift (one (tensor [| 2 |] c.crpix))
     >> linear (deg (tensor [| 2; 2 |] c.cd))
-    >> celestial (code c.code) Frame.icrs f64 ~pv:no_pv
+    >> celestial (code c.code) Frame.icrs ~pv:no_pv
          ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
          ~crval:(deg (tensor [| 2 |] c.crval))
          ~lonpole:(deg (scalar 180.))
@@ -125,10 +125,22 @@ let at (l, b) = lonlat_deg [| l *. 180. /. Float.pi; b *. 180. /. Float.pi |]
 let about_law =
   group "about"
     [
+      (* The bounds, from the rounding of each side, u = 2⁻⁵³ and r the offset's
+         length. [about a] rotates [b'] into [a]'s native frame by a matrix
+         whose entries are products of faithfully rounded sines and cosines of
+         a's longitude and latitude, each read from [a]'s vector by [atan2]:
+         the reference point is off by at most 7u, and each entry by at most
+         9u, so each native component carries at most 7u + 9√3 u + 3u ≤ 26u
+         of absolute error. The offset is that native vector's (u₁, u₂), of
+         length r: its norm moves by at most 26√2 u ≤ 37u and its bearing by
+         at most 37u / r. [separation] and [position_angle] work on [b' − a],
+         exact where it cancels, and are within 4u·r and 4u; the final
+         [hypot] and [atan2] add u each. *)
       prop "the norm is the separation and the bearing the position angle"
         Gen.(
           pair directions (pair (float_range (-1.) 1.) (float_range 1e-9 2.)))
         (fun ((l, b), (pa, r)) ->
+          let u = Float.epsilon /. 2. in
           let a = at (l, b) in
           let b' =
             (* [b] at separation [r] and bearing [pa] from [a]. *)
@@ -141,7 +153,8 @@ let about_law =
           let x = values (Transform.apply (Transform.about a) b') Unit.radian in
           let sep = (separation a b').(0)
           and bearing = (position_angle a b').(0) in
-          less float_exact ~than:1e-14
+          less ~msg:"norm" float_exact
+            ~than:((37. +. (4. *. r) +. 1.) *. u)
             (Float.abs (Float.hypot x.(0) x.(1) -. sep));
           let d = Float.atan2 x.(0) x.(1) -. bearing in
           let d =
@@ -149,9 +162,9 @@ let about_law =
             else if d < -.Float.pi then d +. (2. *. Float.pi)
             else d
           in
-          (* Within 1e-5 rad, the vectors' rounding fixes a bearing only to
-             their resolution over the distance. *)
-          if r > 1e-5 then less float_exact ~than:1e-14 (Float.abs d));
+          less ~msg:"bearing" float_exact
+            ~than:(((37. /. r) +. 4. +. 1.) *. u)
+            (Float.abs d));
       test "at the poles" (fun () ->
           List.iter
             (fun b ->
@@ -252,7 +265,7 @@ let constructors =
       test "celestial refuses pv of the wrong size" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"TAN takes 0 parameters")
             (fun () ->
-              Transform.celestial Transform.Tan Frame.icrs f64
+              Transform.celestial Transform.Tan Frame.icrs
                 ~pv:(Nx.zeros f64 [| 3 |])
                 ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
                 ~crval:(deg (tensor [| 2 |] [| 0.; 0. |]))
@@ -261,7 +274,7 @@ let constructors =
       test "a native latitude other than 90 degrees raises when applied"
         (fun () ->
           let t =
-            Transform.celestial Transform.Tan Frame.icrs f64 ~pv:no_pv
+            Transform.celestial Transform.Tan Frame.icrs ~pv:no_pv
               ~native:(deg (tensor [| 2 |] [| 0.; 45. |]))
               ~crval:(deg (tensor [| 2 |] [| 0.; 0. |]))
               ~lonpole:(deg (scalar 180.))
@@ -270,26 +283,6 @@ let constructors =
           raises_match (Exn.invalid_arg ~substring:"native latitude") (fun () ->
               Transform.apply t
                 (Quantity.v Unit.degree (tensor [| 2 |] [| 0.; 0. |]))));
-      test "float32 planes compute the celestial stage in float64" (fun () ->
-          let c = List.hd Reference.wcs in
-          let t32 =
-            Transform.(
-              axes [| 1; 0 |] ~origin:1
-              >> shift (one (Nx.create Nx.float32 [| 2 |] c.crpix))
-              >> linear (deg (Nx.create Nx.float32 [| 2; 2 |] c.cd))
-              >> celestial Tan Frame.icrs Nx.float32 ~pv:no_pv
-                   ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
-                   ~crval:(deg (tensor [| 2 |] c.crval))
-                   ~lonpole:(deg (scalar 180.))
-                   ~latpole:(deg (scalar 90.)))
-          in
-          let p =
-            Quantity.v Unit.one
-              (Nx.create Nx.float32 [| 1; 2 |] [| 512.; 300. |])
-          in
-          let d = Transform.apply t32 p in
-          let back = Transform.apply (Transform.inverse t32) d in
-          equal (array (float 2e-3)) [| 512.; 300. |] (values back Unit.one));
     ]
 
 (* Batches *)
@@ -393,7 +386,6 @@ let structure =
             3: case "forward"
             3: case "TAN"
             3.frame: case "icrs"
-            3: case "float64"
             3.stated: int 0
             3.pv: a leaf
             3.native: case "1/180 pi rad"
@@ -410,7 +402,7 @@ let structure =
             (Format.asprintf "%a" Transform.pp (Transform.about (at (0., 0.))))
           @@ __POS_OF__
                {|
-            inverse (celestial ARC icrs float64 ~crval:float64 [1,2] [[0, 0]] rad ~lonpole:
+            inverse (celestial ARC icrs ~crval:float64 [1,2] [[0, 0]] rad ~lonpole:
               180 1/180 pi rad)
             |});
     ]

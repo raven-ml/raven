@@ -31,7 +31,7 @@ let tan ?(crpix = [| 0.; 0. |]) ~scale (lon, lat) =
     axes [| 1; 0 |] ~origin:1
     >> shift (one (tensor [| 2 |] (Array.map (fun x -> x +. 1.) crpix)))
     >> linear cd
-    >> celestial Tan Frame.icrs f64 ~pv:(Nx.zeros f64 [| 0 |])
+    >> celestial Tan Frame.icrs ~pv:(Nx.zeros f64 [| 0 |])
          ~native:(deg (tensor [| 2 |] [| 0.; 90. |]))
          ~crval:(deg (tensor [| 2 |] [| lon; lat |]))
          ~lonpole:(deg (scalar 180.))
@@ -141,6 +141,23 @@ let measures =
             (array (float 1e-14))
             [| 6.5; 6.5; 6.5; 6.5 |]
             (values Unit.(degree ** 2) (Grid.measure g)));
+      test "a float32 grid's geometry is its float64 grid's" (fun () ->
+          (* CRPIX from a NIRCam header, 2e-4 pixel from its nearest float32. *)
+          let t =
+            tan
+              ~crpix:[| 5098.44382803652; 2372.7753424908956 |]
+              ~scale:8.67445987394292e-06
+              (110.75544256521349, -73.46776600616062)
+          in
+          let g64 = Grid.pixels ~shape:[| 3; 4 |] f64 t
+          and g32 = Grid.pixels ~shape:[| 3; 4 |] Nx.float32 t in
+          let xyz g = Nx.to_array (Direction.xyz (Grid.centres g)) in
+          equal (array float_exact) (xyz g64) (xyz g32);
+          equal (array float_exact)
+            (Nx.to_array
+               (Nx.cast Nx.float32
+                  (Quantity.value Unit.steradian (Grid.measure g64))))
+            (Nx.to_array (Quantity.value Unit.steradian (Grid.measure g32))));
       test "a float32 grid's measures are float32" (fun () ->
           let g = Grid.pixels ~shape:[| 2; 2 |] Nx.float32 Transform.id in
           equal int 4

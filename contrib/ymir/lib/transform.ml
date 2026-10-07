@@ -8,41 +8,36 @@ module Unit = Ymir_units.Unit
 
 let strf = Printf.sprintf
 
-type 'e plane = (float, 'e) Nx.t Quantity.t
-type angles = Nx.float64_elt plane
+type plane = (float, Nx.float64_elt) Nx.t Quantity.t
 type vectors = (float, Nx.float64_elt) Nx.t
 type code = Tan | Arc
 type sense = Forward | Inverse
 
-(* Planar families hold their leaves at the plane's dtype. *)
-type 'e planar =
+type planar =
   | Axes of { perm : int array; origin : int }
-  | Shift of 'e plane
-  | Linear of 'e plane
-  | Scale of 'e plane
+  | Shift of plane
+  | Linear of plane
+  | Scale of plane
 
-(* A projection and the rotation to its frame. [dtype] is the dtype of the
-   plane: the stage computes in float64 and its inverse returns planes at
-   [dtype]. *)
-type ('e, 'f) celestial = {
+(* A projection and the rotation to its frame. *)
+type 'f celestial = {
   code : code;
   frame : 'f Frame.t;
-  dtype : (float, 'e) Nx.dtype;
   stated : int array;
   pv : vectors;
-  native : angles;
-  crval : angles;
-  lonpole : angles;
-  latpole : angles;
+  native : plane;
+  crval : plane;
+  lonpole : plane;
+  latpole : plane;
 }
 
 (* A stage maps points of one type to another. [Deproject] is a celestial
    stage's forward map, from the plane to directions, and [Project] its
    inverse. *)
 type (_, _) stage =
-  | Plane : 'e planar * sense -> ('e plane, 'e plane) stage
-  | Deproject : ('e, 'f) celestial -> ('e plane, 'f Direction.t) stage
-  | Project : ('e, 'f) celestial -> ('f Direction.t, 'e plane) stage
+  | Plane : planar * sense -> (plane, plane) stage
+  | Deproject : 'f celestial -> (plane, 'f Direction.t) stage
+  | Project : 'f celestial -> ('f Direction.t, plane) stage
 
 type (_, _) t =
   | Id : ('a, 'a) t
@@ -68,7 +63,7 @@ let index = function
 let point = function [||] -> "the point" | i -> "point " ^ index i
 let shape_text s = Format.asprintf "%a" pp_ints s
 
-let planar_name : type e. e planar -> string = function
+let planar_name = function
   | Axes _ -> "axes"
   | Shift _ -> "shift"
   | Linear _ -> "linear"
@@ -116,7 +111,7 @@ let check_rank fn name n x =
 
 (* [axes] maps [x] to [x.(perm.(k)) + origin] in component [k]; its inverse maps
    [y] to [y.(inv.(j)) - origin] in component [j]. *)
-let apply_axes fn ~perm ~origin sense (x : _ plane) =
+let apply_axes fn ~perm ~origin sense (x : plane) =
   let n = Array.length perm in
   let unit = if origin = 0 then Quantity.unit x else Unit.one in
   let v = Quantity.value unit x in
@@ -150,8 +145,7 @@ let product m x =
   in
   stack (List.init n row)
 
-let apply_planar : type e. string -> e planar -> sense -> e plane -> e plane =
- fun fn p sense x ->
+let apply_planar fn p sense (x : plane) : plane =
   match (p, sense) with
   | Axes { perm; origin }, _ -> apply_axes fn ~perm ~origin sense x
   | Shift r, _ ->
@@ -317,8 +311,8 @@ type mode = Check | Cover
 
 let numbers v = Nx.logical_not (Nx.any ~axes:[ last v ] (Nx.isnan v))
 
-let deproject mode fn c (x : _ plane) =
-  let v = Nx.cast Nx.float64 (radians x) in
+let deproject mode fn c (x : plane) =
+  let v = radians x in
   check_rank fn (strf "celestial %s" (code_name c.code)) 2 v;
   let u, domain = native_of_plane c (component v 0) (component v 1) in
   let ok =
@@ -373,7 +367,7 @@ let project mode fn c (d : _ Direction.t) =
                  (Nx.item [] lat)));
         None
   in
-  (Quantity.v Unit.radian (Nx.cast c.dtype (stack [ x; y ])), ok)
+  (Quantity.v Unit.radian (stack [ x; y ]), ok)
 
 (* Application *)
 
@@ -466,7 +460,7 @@ let check_pair fn what q =
     invalid_arg
       (strf "%s: %s takes [...; 2] angles, got shape %s" fn what (shape_text s))
 
-let celestial ?stated code frame dtype ~pv ~native ~crval ~lonpole ~latpole =
+let celestial ?stated code frame ~pv ~native ~crval ~lonpole ~latpole =
   let fn = "Transform.celestial" in
   let m = parameters code in
   let s = Nx.shape pv in
@@ -490,9 +484,7 @@ let celestial ?stated code frame dtype ~pv ~native ~crval ~lonpole ~latpole =
   check_pair fn "crval" crval;
   check_angle fn "lonpole" lonpole;
   check_angle fn "latpole" latpole;
-  one
-    (Deproject
-       { code; frame; dtype; stated; pv; native; crval; lonpole; latpole })
+  one (Deproject { code; frame; stated; pv; native; crval; lonpole; latpole })
 
 let degrees x = Quantity.v Unit.degree (Nx.scalar Nx.float64 x)
 
@@ -511,7 +503,6 @@ let zenithal code (c : _ Direction.t) =
        {
          code;
          frame = c.frame;
-         dtype = Nx.float64;
          stated = [||];
          pv = Nx.zeros Nx.float64 [| 0 |];
          native;
@@ -547,8 +538,7 @@ let covers t x =
 
 (* Printing *)
 
-let pp_planar : type e. Format.formatter -> e planar -> unit =
- fun ppf -> function
+let pp_planar ppf = function
   | Axes { perm; origin } ->
       Format.fprintf ppf "axes %a ~origin:%d" pp_ints perm origin
   | Shift r -> Format.fprintf ppf "shift %a" Quantity.pp r
@@ -556,9 +546,8 @@ let pp_planar : type e. Format.formatter -> e planar -> unit =
   | Scale d -> Format.fprintf ppf "scale %a" Quantity.pp d
 
 let pp_celestial ppf c =
-  Format.fprintf ppf "celestial %s %a %a ~crval:%a ~lonpole:%a"
-    (code_name c.code) Frame.pp c.frame Nx.pp_dtype c.dtype Quantity.pp c.crval
-    Quantity.pp c.lonpole
+  Format.fprintf ppf "celestial %s %a ~crval:%a ~lonpole:%a" (code_name c.code)
+    Frame.pp c.frame Quantity.pp c.crval Quantity.pp c.lonpole
 
 let pp_stage : type a b. Format.formatter -> (a, b) stage -> unit =
  fun ppf -> function
@@ -590,8 +579,7 @@ let ints c a =
   ignore (W.int c (Array.length a));
   Array.map (W.int c) a
 
-let walk_planar : type e. ('x, 'y) W.cursor -> e planar -> e planar =
- fun c -> function
+let walk_planar c = function
   | Axes { perm; origin } ->
       let perm = W.field c "perm" ints perm in
       let origin = W.field c "origin" W.int origin in
@@ -603,7 +591,6 @@ let walk_planar : type e. ('x, 'y) W.cursor -> e planar -> e planar =
 let walk_celestial c cel =
   W.case c (code_name cel.code);
   let frame = W.field c "frame" Frame.walk cel.frame in
-  W.case c (Format.asprintf "%a" Nx.pp_dtype cel.dtype);
   let stated = W.field c "stated" ints cel.stated in
   let pv = W.field c "pv" W.tensor cel.pv in
   let native = W.field c "native" quantity cel.native in
@@ -652,13 +639,13 @@ let ptree (type a b) () : (a, b) t Nx.Ptree.t =
       let walk = walk
     end)
 
-(* Geometry in float64
+(* Geometry on cells
 
-   Grids and regions map cell corners in float64 whatever their dtype, with
-   [cells] axes of cells after the batch axes of the transform's parameters: a
-   parameter of batch shape [b] meets points of shape [b @ cells @ [n]]. *)
+   Grids and regions map cell corners with [cells] axes of cells after the
+   batch axes of the transform's parameters: a parameter of batch shape [b]
+   meets points of shape [b @ cells @ [n]]. *)
 
-type value = P of Nx.float64_elt plane | D : 'f Direction.t -> value
+type value = P of plane | D : 'f Direction.t -> value
 
 (* [expand k core q] inserts [k] axes of 1 before [q]'s last [core] axes. *)
 let expand_tensor k core v =
@@ -672,17 +659,15 @@ let expand_tensor k core v =
 
 let expand k core q = Quantity.map (expand_tensor k core) q
 
-let planar64 : type e. int -> e planar -> Nx.float64_elt planar =
- fun k -> function
+let expand_planar k = function
   | Axes a -> Axes a
-  | Shift r -> Shift (expand k 1 (Quantity.map (Nx.cast Nx.float64) r))
-  | Linear m -> Linear (expand k 2 (Quantity.map (Nx.cast Nx.float64) m))
-  | Scale d -> Scale (expand k 1 (Quantity.map (Nx.cast Nx.float64) d))
+  | Shift r -> Shift (expand k 1 r)
+  | Linear m -> Linear (expand k 2 m)
+  | Scale d -> Scale (expand k 1 d)
 
-let celestial64 k c =
+let expand_celestial k c =
   {
     c with
-    dtype = Nx.float64;
     pv = expand_tensor k 1 c.pv;
     native = expand k 1 c.native;
     crval = expand k 1 c.crval;
@@ -695,9 +680,9 @@ let and_mask a b =
   | None, o | o, None -> o
   | Some a, Some b -> Some (Nx.logical_and a b)
 
-(* [run64 ~cells t x] is [t] applied to [x] in float64 and where each stage is
+(* [run_cells ~cells t x] is [t] applied to [x] and where each stage is
    defined, under [Cover]: no point raises. *)
-let run64 ~cells t x =
+let run_cells ~cells t x =
   let fn = "Transform.apply" in
   let rec go : type a b. (a, b) t -> value -> value * Nx.bool_t option =
    fun t x ->
@@ -705,29 +690,31 @@ let run64 ~cells t x =
     | Id, x -> (x, None)
     | Stage (Plane (p, sense), rest), P v ->
         let ok = numbers (Quantity.value (Quantity.unit v) v) in
-        let y, ok' = go rest (P (apply_planar fn (planar64 cells p) sense v)) in
+        let y, ok' =
+          go rest (P (apply_planar fn (expand_planar cells p) sense v))
+        in
         (y, and_mask (Some ok) ok')
     | Stage (Deproject c, rest), P v ->
-        let d, ok = deproject Cover fn (celestial64 cells c) v in
+        let d, ok = deproject Cover fn (expand_celestial cells c) v in
         let y, ok' = go rest (D d) in
         (y, and_mask ok ok')
     | Stage (Project c, rest), D d ->
         let d = { Direction.frame = c.frame; xyz = d.xyz } in
-        let v, ok = project Cover fn (celestial64 cells c) d in
+        let v, ok = project Cover fn (expand_celestial cells c) d in
         let y, ok' = go rest (P v) in
         (y, and_mask ok ok')
     | Stage _, _ ->
-        invalid_arg "Transform.run64: a stage met a point of another type"
+        invalid_arg "Transform.run_cells: a stage met a point of another type"
   in
   go t x
 
 (* Endpoints
 
-   A grid knows its transform's input, planes at its dtype, and reads the
-   output's kind from the stages. *)
+   A grid knows its transform's input, a plane, and reads the output's kind
+   from the stages. *)
 
 type _ endpoint =
-  | Plane_at : (float, 'e) Nx.dtype -> 'e plane endpoint
+  | Planar : plane endpoint
   | Sky : 'f Frame.t -> 'f Direction.t endpoint
 
 let rec target : type a b. a endpoint -> (a, b) t -> b endpoint =
@@ -735,13 +722,10 @@ let rec target : type a b. a endpoint -> (a, b) t -> b endpoint =
   | Id -> e
   | Stage (Plane _, rest) -> target e rest
   | Stage (Deproject c, rest) -> target (Sky c.frame) rest
-  | Stage (Project c, rest) -> target (Plane_at c.dtype) rest
+  | Stage (Project _, rest) -> target Planar rest
 
 let value : type a. a endpoint -> a -> value =
- fun e x ->
-  match e with
-  | Plane_at _ -> P (Quantity.map (Nx.cast Nx.float64) x)
-  | Sky _ -> D x
+ fun e x -> match e with Planar -> P x | Sky _ -> D x
 
 (* [map_points e f x] applies [f] to [x]'s tensor: a plane's payload or a
    direction's vectors. *)
@@ -750,5 +734,5 @@ type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 let map_points : type a. a endpoint -> fn -> a -> a =
  fun e fn x ->
   match e with
-  | Plane_at _ -> Quantity.map fn.f x
+  | Planar -> Quantity.map fn.f x
   | Sky _ -> { x with Direction.xyz = fn.f x.Direction.xyz }

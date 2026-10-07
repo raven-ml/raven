@@ -12,19 +12,16 @@ type 'e q = (float, 'e) Nx.t Quantity.t
 type 'e shape = Circle of 'e q | Annulus of { inner : 'e q; outer : 'e q }
 
 (* A planar shape centred on the origin of the plane its placement maps into.
-   The plane's dtype is the placement's own: weights map corners in float64 and
-   cast the offsets to the shape's dtype. *)
-type ('w, 'e) t =
-  | Region : {
-      shape : 'e shape;
-      placement : ('w, 'p Transform.plane) Transform.t;
-    }
-      -> ('w, 'e) t
+   Weights map corners in float64 and cast the offsets to the shape's dtype. *)
+type ('w, 'e) t = {
+  shape : 'e shape;
+  placement : ('w, Transform.plane) Transform.t;
+}
 
-let circle placement ~radius = Region { shape = Circle radius; placement }
+let circle placement ~radius = { shape = Circle radius; placement }
 
 let annulus placement ~inner ~outer =
-  Region { shape = Annulus { inner; outer }; placement }
+  { shape = Annulus { inner; outer }; placement }
 
 (* Checks *)
 
@@ -77,13 +74,12 @@ let check_cells area xs ys =
 (* [overlap r g] is the kernel's result for each of [g]'s cells against [r],
    [[batch; h; w]], and the shape's own area in its plane, [[batch]], both in
    the square of the shape's size unit. *)
-let overlap (type w e) (Region { shape; placement } : (w, e) t)
-    (g : (w, e) Grid.t) =
+let overlap (type w e) ({ shape; placement } : (w, e) t) (g : (w, e) Grid.t) =
   let size = match shape with Circle r -> r | Annulus { outer; _ } -> outer in
   let unit = Quantity.unit size in
   let dtype : (float, e) Nx.dtype = Nx.dtype (payload size) in
   let plane =
-    match Transform.run64 ~cells:2 placement (Grid.mapped g) with
+    match Transform.run_cells ~cells:2 placement (Grid.mapped g) with
     | Transform.P q, _ -> Quantity.value unit q
     | Transform.D _, _ ->
         invalid_arg "Region.weights: the placement returned directions"
@@ -118,7 +114,7 @@ let weights r g = (fst (overlap r g)).weight
 
 module W = Nx.Ptree.Walk
 
-let walk (type w e) c (Region { shape; placement } : (w, e) t) : (w, e) t =
+let walk (type w e) c ({ shape; placement } : (w, e) t) : (w, e) t =
   let shape =
     match shape with
     | Circle r ->
@@ -133,7 +129,7 @@ let walk (type w e) c (Region { shape; placement } : (w, e) t) : (w, e) t =
   let placement =
     W.field c "placement" (W.structure (Transform.ptree ())) placement
   in
-  Region { shape; placement }
+  { shape; placement }
 
 type ('w, 'e) region = ('w, 'e) t
 

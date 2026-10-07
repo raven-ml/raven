@@ -28,13 +28,13 @@ let image dtype shape seed =
       float_of_int (((7919 * i) + (104729 * j) + (13 * i * j) + seed) mod 1009)
       /. 64.)
 
-(* The fixture's TAN image at [dtype]. *)
-let wcs dtype =
+(* The fixture's TAN image. *)
+let wcs =
   Transform.(
     axes [| 1; 0 |] ~origin:1
-    >> shift (one (Nx.create dtype [| 2 |] Reference.sky_crpix))
-    >> linear (deg (Nx.create dtype [| 2; 2 |] Reference.sky_cd))
-    >> celestial Tan Frame.icrs dtype ~pv:(Nx.zeros f64 [| 0 |])
+    >> shift (one (Nx.create f64 [| 2 |] Reference.sky_crpix))
+    >> linear (deg (Nx.create f64 [| 2; 2 |] Reference.sky_cd))
+    >> celestial Tan Frame.icrs ~pv:(Nx.zeros f64 [| 0 |])
          ~native:(deg (Nx.create f64 [| 2 |] [| 0.; 90. |]))
          ~crval:(deg (Nx.create f64 [| 2 |] Reference.sky_crval))
          ~lonpole:(deg (scalar 180.))
@@ -46,7 +46,7 @@ let crval =
     ~lat:(deg (scalar Reference.sky_crval.(1)))
 
 let sky ?area ?(unit = brightness) dtype =
-  let g = Grid.pixels ~shape:Reference.sky_shape dtype (wcs dtype) in
+  let g = Grid.pixels ~shape:Reference.sky_shape dtype wcs in
   Observation.v ?area g (Quantity.v unit (image dtype Reference.sky_shape 73))
 
 let with_pixar dtype =
@@ -252,7 +252,7 @@ let unit_rule =
             (w *. pixar)
             (Nx.item [] (Quantity.value Unit.steradian i.area)));
       test "a per-cell area map windows with the data" (fun () ->
-          let g = Grid.pixels ~shape:Reference.sky_shape f64 (wcs f64) in
+          let g = Grid.pixels ~shape:Reference.sky_shape f64 wcs in
           let obs =
             Observation.v ~area:(Grid.measure g) g
               (Quantity.v brightness (image f64 Reference.sky_shape 73))
@@ -287,7 +287,7 @@ let validity =
         "invalid samples holding NaN give what zeros give, value and gradient"
         (fun () ->
           let data = image f64 Reference.sky_shape 73 in
-          let g = Grid.pixels ~shape:Reference.sky_shape f64 (wcs f64) in
+          let g = Grid.pixels ~shape:Reference.sky_shape f64 wcs in
           let with_under under =
             let data = Nx.where mask data (Nx.full_like data under) in
             Observation.v ~valid:(Nx.cast Nx.bit mask) g
@@ -320,7 +320,7 @@ let validity =
             (Nx.to_array (Nx.logical_and half mask))
             (Nx.to_array valid));
       test "the variance sums variance × w² × a²" (fun () ->
-          let g = Grid.pixels ~shape:Reference.sky_shape f64 (wcs f64) in
+          let g = Grid.pixels ~shape:Reference.sky_shape f64 wcs in
           let var = Nx.full f64 Reference.sky_shape 4. in
           let obs =
             Observation.v

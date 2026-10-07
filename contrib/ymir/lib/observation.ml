@@ -54,7 +54,7 @@ let constant s =
 let measure_unit (type w e) (g : (w, e) Grid.t) =
   match Grid.world g with
   | Transform.Sky _ -> Unit.steradian
-  | Transform.Plane_at _ ->
+  | Transform.Planar ->
       let one =
         Grid.window ~start:(Nx.zeros Nx.int64 [| 2 |]) ~shape:[| 1; 1 |] g
       in

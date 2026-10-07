@@ -172,7 +172,7 @@ let wcs () =
     axes [| 1; 0 |] ~origin:1
     >> shift (Quantity.v Unit.one (Nx.create f64 [| 2 |] [| 2048.5; 2048.5 |]))
     >> linear (degrees (Nx.create f64 [| 2; 2 |] [| -.pixel; 0.; 0.; pixel |]))
-    >> celestial Tan Frame.icrs f64 ~pv:(Nx.zeros f64 [| 0 |])
+    >> celestial Tan Frame.icrs ~pv:(Nx.zeros f64 [| 0 |])
          ~native:(degrees (Nx.create f64 [| 2 |] [| 0.; 90. |]))
          ~crval:(degrees (Nx.create f64 [| 2 |] [| 110.8375; -73.4537 |]))
          ~lonpole:(degrees (Nx.scalar f64 180.))

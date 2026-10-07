@@ -19,17 +19,15 @@ let pi = Float.pi
 (* A grid whose world is its own pixel coordinates. *)
 let plane_at dtype shape = Grid.pixels ~shape dtype Transform.id
 let plane shape = plane_at f64 shape
-
-let at dtype (row, col) =
-  Transform.shift (one (Nx.create dtype [| 2 |] [| row; col |]))
+let at (row, col) = Transform.shift (one (Nx.create f64 [| 2 |] [| row; col |]))
 
 let circle_at dtype centre r =
-  Region.circle (at dtype centre) ~radius:(one (Nx.scalar dtype r))
+  Region.circle (at centre) ~radius:(one (Nx.scalar dtype r))
 
 let circle centre r = circle_at f64 centre r
 
 let annulus centre inner outer =
-  Region.annulus (at f64 centre)
+  Region.annulus (at centre)
     ~inner:(one (Nx.scalar f64 inner))
     ~outer:(one (Nx.scalar f64 outer))
 
@@ -185,7 +183,7 @@ let errors =
       test "a batch names the radius's index" (fun () ->
           let r =
             Region.circle
-              (at f64 (20., 20.))
+              (at (20., 20.))
               ~radius:(one (Nx.create f64 [| 3 |] [| 1.; 2.; -3. |]))
           in
           raises
@@ -209,7 +207,7 @@ let errors =
 let derivatives =
   let g = plane [| 40; 40 |] in
   let area r c =
-    total (Region.weights (Region.circle (at f64 c) ~radius:(one r)) g)
+    total (Region.weights (Region.circle (at c) ~radius:(one r)) g)
   in
   group "Derivatives"
     [
@@ -219,8 +217,7 @@ let derivatives =
           let d =
             Rune.grad'
               (fun r ->
-                Nx.sum
-                  (Region.weights (Region.circle (at f64 c) ~radius:(one r)) g))
+                Nx.sum (Region.weights (Region.circle (at c) ~radius:(one r)) g))
               (Nx.scalar f64 r)
           in
           ignore area;
@@ -259,7 +256,7 @@ let derivatives =
               (fun r ->
                 Nx.sum
                   (Region.weights
-                     (Region.circle (at f64 (20.3, 20.1)) ~radius:(one r))
+                     (Region.circle (at (20.3, 20.1)) ~radius:(one r))
                      g))
               (Nx.scalar f64 0.)
           in
@@ -277,9 +274,7 @@ let derivatives =
               (fun r ->
                 Nx.sum
                   (Region.weights
-                     (Region.circle
-                        (at f64 (float_of_int i, 20.3))
-                        ~radius:(one r))
+                     (Region.circle (at (float_of_int i, 20.3)) ~radius:(one r))
                      g))
               (Nx.scalar f64 (3.5 +. eps))
           in

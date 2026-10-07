@@ -240,17 +240,17 @@ end
 (** Maps between planes and the sky.
 
     A transform is a list of {e stages}, each one family's parameters and a
-    sense, forward or inverse. Its endpoint types say what it maps:
-    [Nx.float32_elt plane] points, [Frame.icrs Direction.t] directions.
-    Composing appends stages and inverting reverses them; no stage is ever
-    fused, so what a file stated is what a writer prints.
+    sense, forward or inverse. Its endpoint types say what it maps: {!plane}
+    points, [Frame.icrs Direction.t] directions. Composing appends stages and
+    inverting reverses them; no stage is ever fused, so what a file stated is
+    what a writer prints.
 
     A FITS celestial image stored [[NAXIS2; NAXIS1]] reads as
 
     {[
     axes [| 1; 0 |] ~origin:1
     >> shift crpix >> linear cd
-    >> celestial Tan Frame.icrs Nx.float64 ~pv ~native ~crval ~lonpole ~latpole
+    >> celestial Tan Frame.icrs ~pv ~native ~crval ~lonpole ~latpole
     ]}
 
     {!axes} holds raven's pixel convention (0-based centres in the data tensor's
@@ -271,17 +271,16 @@ end
      mask"]. NaN maps to NaN. {!covers} gives the mask for callers that expect
     points outside.
 
-    {b Precision.} Planar stages hold their parameters at the plane's dtype and
-    compute at it. Celestial stages hold float64 parameters and compute in
-    float64: a float32 plane point is cast up exactly. A float32 planar map
-    resolves positions to about 2⁻²⁴ of their distance from its origin.
+    {b Precision.} Planes are float64: every stage holds its parameters and
+    computes in float64, so a header's numbers are held as the file wrote them.
+    Data at another dtype sit on float64 geometry ({!Grid}, {!Region}).
 
     Batch axes of points and parameters broadcast. *)
 module Transform : sig
   type ('a, 'b) t
   (** The type for maps from points of type ['a] to points of type ['b]. *)
 
-  type 'e plane = (float, 'e) Nx.t Quantity.t
+  type plane = (float, Nx.float64_elt) Nx.t Quantity.t
   (** The type for points [[...; n]] in a plane. Pixel coordinates are in
       {!Unit.one}, intermediate and tangent-plane coordinates in an angle. *)
 
@@ -296,7 +295,7 @@ module Transform : sig
   val id : ('a, 'a) t
   (** [id] maps every point to itself. *)
 
-  val axes : int array -> origin:int -> ('e plane, 'e plane) t
+  val axes : int array -> origin:int -> (plane, plane) t
   (** [axes p ~origin] maps [x] to [x.(p.(k)) + origin] in component [k]. With
       [origin = 0] it permutes plane points of any unit; otherwise they are in
       {!Unit.one}.
@@ -304,19 +303,19 @@ module Transform : sig
       Raises [Invalid_argument] if [p] is not a permutation of [0], ...,
       [n - 1]. *)
 
-  val shift : 'e plane -> ('e plane, 'e plane) t
+  val shift : plane -> (plane, plane) t
   (** [shift r] maps [x] to [x - r]: the plane whose origin is [r]. Points are
       read in [r]'s unit.
 
       Raises [Invalid_argument] if [r] is a scalar. *)
 
-  val linear : 'e plane -> ('e plane, 'e plane) t
+  val linear : plane -> (plane, plane) t
   (** [linear m] maps [x], in {!Unit.one}, to [m · x] in [m]'s unit: CD, or PC
       in {!Unit.one}. [m] is [[...; n; n]].
 
       Raises [Invalid_argument] if [m] is not square on its last two axes. *)
 
-  val scale : 'e plane -> ('e plane, 'e plane) t
+  val scale : plane -> (plane, plane) t
   (** [scale d] maps [x], in {!Unit.one}, to [x.(k) · d.(k)] in component [k],
       in [d]'s unit: CDELT.
 
@@ -326,22 +325,20 @@ module Transform : sig
     ?stated:int array ->
     code ->
     'f Frame.t ->
-    (float, 'e) Nx.dtype ->
     pv:(float, Nx.float64_elt) Nx.t ->
-    native:Nx.float64_elt plane ->
-    crval:Nx.float64_elt plane ->
-    lonpole:Nx.float64_elt plane ->
-    latpole:Nx.float64_elt plane ->
-    ('e plane, 'f Direction.t) t
-  (** [celestial code f dtype ~pv ~native ~crval ~lonpole ~latpole] is the
-      projection [code] with parameters [pv], [[...; m]], followed by the
-      rotation taking the native point [native] (φ₀, θ₀) to [crval] (lon, lat)
-      in [f], with the celestial pole at native longitude [lonpole]; [latpole]
-      picks between two poles where FITS defines two. Angles are [[...; 2]] for
-      [native] and [crval] and scalars for the poles, in any angle unit, as the
-      file gives them. Plane points are angles at [dtype]; the stage computes in
-      float64, and its inverse returns points at [dtype]. [stated] lists the
-      indices of [pv] the file gave, all by default.
+    native:plane ->
+    crval:plane ->
+    lonpole:plane ->
+    latpole:plane ->
+    (plane, 'f Direction.t) t
+  (** [celestial code f ~pv ~native ~crval ~lonpole ~latpole] is the projection
+      [code] with parameters [pv], [[...; m]], followed by the rotation taking
+      the native point [native] (φ₀, θ₀) to [crval] (lon, lat) in [f], with the
+      celestial pole at native longitude [lonpole]; [latpole] picks between two
+      poles where FITS defines two. Angles are [[...; 2]] for [native] and
+      [crval] and scalars for the poles, in any angle unit, as the file gives
+      them. Plane points are angles. [stated] lists the indices of [pv] the file
+      gave, all by default.
 
       TAN and ARC take no parameter ([m = 0]). A native latitude θ₀ other than
       90° is not supported yet: it raises [Invalid_argument] through {!Nx.check}
@@ -351,7 +348,7 @@ module Transform : sig
       not ascending indices below [m], or if an angle is not [[...; 2]] or not
       in an angle unit. *)
 
-  val about : 'f Direction.t -> ('f Direction.t, Nx.float64_elt plane) t
+  val about : 'f Direction.t -> ('f Direction.t, plane) t
   (** [about c] maps directions to angular offsets about [c], in radians, x east
       and y north: the inverse of [celestial Arc] at [c] with LONPOLE 180°. The
       offset's norm is {!Direction.separation} from [c], and its bearing from +y
@@ -359,7 +356,7 @@ module Transform : sig
       origin is exactly the cap of angular radius ρ about [c]. At a pole the
       meridian is longitude 0, as {!Direction.lon} takes it. *)
 
-  val gnomonic : 'f Direction.t -> ('f Direction.t, Nx.float64_elt plane) t
+  val gnomonic : 'f Direction.t -> ('f Direction.t, plane) t
   (** [gnomonic c] is the same with [Tan]: great circles map to lines. *)
 
   (** {1:ops Operations} *)
@@ -390,7 +387,7 @@ module Transform : sig
   val ptree : unit -> ('a, 'b) t Nx.Ptree.t
   (** [ptree ()] is the structure of transforms: the number of stages, then each
       stage at its index, reporting its family, its sense and its static data
-      (permutation, origin, code, frame, dtype, stated terms) and walking its
+      (permutation, origin, code, frame, stated terms) and walking its
       parameters. No float is static. *)
 end
 
@@ -426,11 +423,11 @@ module Grid : sig
   val pixels :
     shape:int array ->
     (float, 'e) Nx.dtype ->
-    ('e Transform.plane, 'w) Transform.t ->
+    (Transform.plane, 'w) Transform.t ->
     ('w, 'e) t
   (** [pixels ~shape dtype t] is the image of [shape] cells,
-      [[|rows; columns|]], seen through [t]: the whole image, its own base, at
-      [dtype].
+      [[|rows; columns|]], seen through [t]: the whole image, its own base, with
+      measures at [dtype].
 
       Raises [Invalid_argument] unless [shape] is two non-negative sizes. *)
 
@@ -440,7 +437,7 @@ module Grid : sig
         base : int array;  (** The whole image's shape. *)
         shape : int array;  (** The window's shape. *)
         start : Nx.int64_t;  (** The window's first cell, [[...; 2]]. *)
-        transform : ('e Transform.plane, 'w) Transform.t;
+        transform : (Transform.plane, 'w) Transform.t;
             (** From the whole image's pixel coordinates. *)
       }
         -> ('w, 'e) kind
@@ -515,14 +512,14 @@ module Region : sig
   (** The type for regions placed from world ['w], sized at dtype ['e]. *)
 
   val circle :
-    ('w, 'p Transform.plane) Transform.t ->
+    ('w, Transform.plane) Transform.t ->
     radius:(float, 'e) Nx.t Quantity.t ->
     ('w, 'e) t
   (** [circle p ~radius] is the disc of [radius] about the origin of [p]'s
       plane, in a unit of that plane. *)
 
   val annulus :
-    ('w, 'p Transform.plane) Transform.t ->
+    ('w, Transform.plane) Transform.t ->
     inner:(float, 'e) Nx.t Quantity.t ->
     outer:(float, 'e) Nx.t Quantity.t ->
     ('w, 'e) t

@@ -14,7 +14,7 @@ type ('w, 'e) t = {
   base : int array;
   shape : int array;
   start : Nx.int64_t;
-  transform : ('e Transform.plane, 'w) Transform.t;
+  transform : (Transform.plane, 'w) Transform.t;
 }
 
 type ('w, 'e) kind =
@@ -22,7 +22,7 @@ type ('w, 'e) kind =
       base : int array;
       shape : int array;
       start : Nx.int64_t;
-      transform : ('e Transform.plane, 'w) Transform.t;
+      transform : (Transform.plane, 'w) Transform.t;
     }
       -> ('w, 'e) kind
 
@@ -53,25 +53,23 @@ let pixels ~shape dtype transform =
 
 let component = Transform.component
 
-(* [lattice dtype start (h, w) offset] is the pixel coordinates [start + (i, j)
-   + offset] for [i < h], [j < w], [[...; h; w; 2]] in {!Unit.one}: the batch
-   axes are [start]'s. Each coordinate is an integer or a half-integer, exact at
-   every dtype that holds the image's size, so a window's points are its base's
-   at the same cells, bit for bit. *)
-let lattice dtype start h w offset =
-  let s = Nx.cast dtype start in
+(* [lattice start (h, w) offset] is the pixel coordinates [start + (i, j) +
+   offset] for [i < h], [j < w], [[...; h; w; 2]] in {!Unit.one}: the batch
+   axes are [start]'s. Each coordinate is an integer or a half-integer, exact
+   in float64, so a window's points are its base's at the same cells, bit for
+   bit. *)
+let lattice start h w offset =
+  let s = Nx.cast Nx.float64 start in
   let batch = Array.sub (Nx.shape s) 0 (Nx.ndim s - 1) in
   let at k = Nx.reshape (Array.append batch [| 1; 1 |]) (component s k) in
-  let axis n = Nx.cast dtype (Nx.arange Nx.int32 0 n 1) in
+  let axis n = Nx.cast Nx.float64 (Nx.arange Nx.int32 0 n 1) in
   let rows = Nx.add (at 0) (Nx.reshape [| h; 1 |] (axis h)) in
   let cols = Nx.add (at 1) (Nx.reshape [| 1; w |] (axis w)) in
   let shift v = if offset = 0. then v else Nx.add_s v offset in
   Quantity.v Unit.one (Transform.stack [ shift rows; shift cols ])
 
-let centre_points g = lattice g.dtype g.start g.shape.(0) g.shape.(1) 0.
-
-let corner_points g =
-  lattice g.dtype g.start (g.shape.(0) + 1) (g.shape.(1) + 1) (-0.5)
+let centre_points g = lattice g.start g.shape.(0) g.shape.(1) 0.
+let corner_points g = lattice g.start (g.shape.(0) + 1) (g.shape.(1) + 1) (-0.5)
 
 (* [quads v] turns a corner lattice [[...; h + 1; w + 1; c]] into each cell's
    corners [[...; h; w; 4; c]], counter-clockwise in the pixel plane: (i, j), (i
@@ -88,18 +86,17 @@ let quads v =
   in
   Nx.stack ~axis:(-2) [ at 0 0; at 1 0; at 1 1; at 0 1 ]
 
-let world g = Transform.target (Transform.Plane_at g.dtype) g.transform
+let world g = Transform.target Transform.Planar g.transform
 let centres g = Transform.apply g.transform (centre_points g)
 
 let corners g =
   Transform.map_points (world g) { f = quads }
     (Transform.apply g.transform (corner_points g))
 
-(* [mapped g] is [g]'s corner lattice mapped in float64, with [cells] axes for
-   its lattice. *)
+(* [mapped g] is [g]'s corner lattice mapped, with [cells] axes for its
+   lattice. *)
 let mapped g =
-  let x = Transform.P (Quantity.map (Nx.cast Nx.float64) (corner_points g)) in
-  fst (Transform.run64 ~cells:2 g.transform x)
+  fst (Transform.run_cells ~cells:2 g.transform (Transform.P (corner_points g)))
 
 (* Measures *)
 
@@ -166,7 +163,7 @@ let locate x ~shape g =
   let fn = "Grid.around" in
   check_shape fn "~shape" shape;
   let v = Transform.value (world g) x in
-  let p, ok = Transform.run64 ~cells:0 (Transform.inverse g.transform) v in
+  let p, ok = Transform.run_cells ~cells:0 (Transform.inverse g.transform) v in
   let p =
     match p with
     | Transform.P q -> Quantity.value Unit.one q
