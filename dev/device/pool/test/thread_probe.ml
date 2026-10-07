@@ -3,19 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Probes of device_pool.h's threads (device_pool_thread_probe_stubs.c). *)
+(* Probes of nx_pool.h's threads (thread_probe_stubs.c). *)
 
 (* [burst ()] runs a job on every core, then jobs of two chunks on two threads
    until [burst_stop ()]. *)
-external burst : unit -> unit = "device_pool_test_burst"
-external burst_stop : unit -> unit = "device_pool_test_burst_stop"
+external burst : unit -> unit = "probe_burst"
+external burst_stop : unit -> unit = "probe_burst_stop"
 
 (* Bodies on a worker *)
 
 (* Whether a worker ran a chunk, and the signals of a table with whether that
    worker blocks them. *)
-external worker_mask : unit -> bool * (string * bool) list
-  = "device_pool_test_worker_mask"
+external worker_mask : unit -> bool * (string * bool) list = "probe_worker_mask"
 
 (* The signals a body may raise itself, in the order of the child's bits. *)
 let faults =
@@ -38,9 +37,9 @@ type scenario =
 
 (* [in_child s] is (how the child ended, "exit 0" once it answered; its four
    values). *)
-external in_child : scenario -> string * int array = "device_pool_test_in_child"
-external fork : unit -> unit = "device_pool_test_fork"
+external in_child : scenario -> string * int array = "probe_in_child"
+external fork : unit -> unit = "probe_fork"
 
 (* The threads of the process, other than the calling one, that are running now,
    or -1 where the system does not say. *)
-external running_threads : unit -> int = "device_pool_test_running_threads"
+external running_threads : unit -> int = "probe_running_threads"

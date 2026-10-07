@@ -25,15 +25,15 @@
    (Documentation/admin-guide/cgroup-v2.rst), from sysctl(3) on macOS, and
    from GetActiveProcessorCount on Windows. */
 
-#ifndef DEVICE_POOL_H
-#define DEVICE_POOL_H
+#ifndef NX_POOL_H
+#define NX_POOL_H
 
 #include <stdint.h>
 
 /* Cores */
 
-/* device_pool_cores () is the number of cores the process may occupy at once,
-   the most threads a job runs on. 1 <= device_pool_cores ().
+/* nx_pool_cores () is the number of cores the process may occupy at once,
+   the most threads a job runs on. 1 <= nx_pool_cores ().
 
    On Linux it is min (a, ceil q): a the CPUs of the affinity mask of the
    thread that makes the first call, q the smallest cpu.max quota / period
@@ -42,27 +42,27 @@
    processors; elsewhere, the online CPUs. Nothing else bounds it, however
    many cores the host has. It is computed at the first call: a later
    change of affinity or quota is not seen. */
-int device_pool_cores(void);
+int nx_pool_cores(void);
 
-/* device_pool_performance_cores () is the number of those cores that run
+/* nx_pool_performance_cores () is the number of those cores that run
    compute-bound work at full speed.
-   1 <= device_pool_performance_cores () <= device_pool_cores ().
+   1 <= nx_pool_performance_cores () <= nx_pool_cores ().
 
    On macOS it counts the performance cores (hw.perflevel0) where the host
    reports them, since a chunk that an efficiency core claims takes two to
    three times as long and delays the end of its job; elsewhere, and on a
-   Mac that does not report them, it is device_pool_cores (). It is computed at
+   Mac that does not report them, it is nx_pool_cores (). It is computed at
    the first call. */
-int device_pool_performance_cores(void);
+int nx_pool_performance_cores(void);
 
 /* Jobs */
 
 /* The type for the function a job calls on its ranges: [lo, hi) are the
    range's units, [worker] the index of the thread that runs it, [ctx] the
    job's context. */
-typedef void (*device_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
+typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
 
-/* device_pool_run (threads, total, chunks, body, ctx) runs the job [0, total)
+/* nx_pool_run (threads, total, chunks, body, ctx) runs the job [0, total)
    cut into [chunks] chunks on at most [threads] threads: it calls
    body (lo, hi, worker, ctx) on disjoint ranges [lo, hi) that cover
    [0, total), each made of whole consecutive chunks, and returns once every
@@ -73,7 +73,7 @@ typedef void (*device_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    c chunks and at most t threads,
 
      c = min (max (chunks, 1), total)
-     t = min (max (threads, 1), device_pool_cores (), c)
+     t = min (max (threads, 1), nx_pool_cores (), c)
 
    Chunk i, for 0 <= i < c, is
 
@@ -119,7 +119,7 @@ typedef void (*device_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    other closely start without a system call. In a child made by fork, the
    pool starts anew at its first job; fork waits for a running job of more
    than one thread to end. */
-void device_pool_run(int threads, int64_t total, int64_t chunks,
-                     device_pool_body body, void *ctx);
+void nx_pool_run(int threads, int64_t total, int64_t chunks, nx_pool_body body,
+                 void *ctx);
 
 #endif
