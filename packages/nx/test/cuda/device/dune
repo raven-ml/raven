@@ -25,5 +25,6 @@
   (language c)
   (names test_driver))
  (link_flags
-  (:include dl_flags.sexp))
+  (:standard
+   (:include dl_flags.sexp)))
  (libraries nx nx_test nx.cuda.device nx.device nx.dtype unix windtrap))

@@ -5,7 +5,8 @@
  (name bench_owned_gemm)
  (modules bench_owned_gemm)
  (libraries nx_cpu nx_array nx_dtype nx.device thumper)
- (link_flags -linkall)
+ (link_flags
+  (:standard -linkall))
  (foreign_stubs
   (language c)
   (names owned_gemm_stubs)
