@@ -74,10 +74,87 @@ let test_transport () =
   Function.release f;
   equal ~msg:"released" bool true (Function.released f)
 
+(* Memory over the fake function, with page tables kept in a table that counts
+   its writes. Entries: the address, bit 0 valid, bit 1 a table. *)
+let format writes =
+  let entries = Hashtbl.create 64 in
+  let key table i = table + (8 * i) in
+  {
+    Page_table.levels = [ 12; 21; 30; 39 ];
+    bits = 48;
+    first = 0;
+    get =
+      (fun ~level:_ ~table i ->
+        Option.value ~default:0L (Hashtbl.find_opt entries (key table i)));
+    set =
+      (fun ~level:_ ~table i e ->
+        incr writes;
+        Hashtbl.replace entries (key table i) e);
+    encode =
+      (fun ~level:_ ~table _ ~uncached:_ ~snooped:_ ~fragment:_ ~valid pa ->
+        Int64.of_int (pa lor (if valid then 1 else 0) lor if table then 2 else 0));
+    valid = (fun e -> Int64.logand e 1L = 1L);
+    leaf = (fun ~level e -> level = 3 || Int64.logand e 2L = 0L);
+    address = (fun e -> Int64.to_int e land lnot 0xfff);
+    large = (fun ~level -> level >= 2);
+    zero = (fun _ _ -> ());
+    flush = (fun () -> ());
+  }
+
+let test_memory () =
+  let p = far 0 4096 in
+  let tr = Window.transport p in
+  let m =
+    Machine.make ~name:"far:2"
+      {
+        transport = tr;
+        page = 4096;
+        functions = (fun () -> []);
+        take = (fun ~lock:_ _ -> Ok (fake tr));
+        reserve = (fun ~base:_ _ -> ());
+      }
+  in
+  let f = Result.get_ok (Function.take m ~lock:"smoke" "0000:01:00.0") in
+  let writes = ref 0 in
+  let space = Space.create ~base:(1 lsl 40) (1 lsl 30) in
+  let tables =
+    Page_table.create (format writes) space ~memory:(64 lsl 20) ~boot:(1 lsl 20)
+      ~tables:Pool
+      ~pages:[ (0x1000, 0x1000) ]
+  in
+  Page_table.booted tables;
+  let mem = Memory.create f tables ~bar:0 in
+  let host = Option.get (Memory.alloc mem Host 4096) in
+  equal ~msg:"system memory has a window" bool true (Option.is_some host.host);
+  Memory.free mem host;
+  raises_match (Exn.invalid_arg ~substring:"does not hold") (fun () ->
+      Memory.free mem host);
+  let gpu = Option.get (Memory.alloc mem Gpu (64 lsl 10)) in
+  Function.release f;
+  let before = !writes in
+  Memory.free mem gpu;
+  equal ~msg:"a released GPU's memory is not written" int before !writes
+
+let test_firmware () =
+  equal ~msg:"sha256" string
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    (Firmware.sha256 "abc");
+  let dir = Filename.temp_dir "smoke" "firmware" in
+  Out_channel.with_open_bin (Filename.concat dir "image.bin") (fun oc ->
+      output_string oc "abc");
+  equal ~msg:"from a directory"
+    (result (option string) string)
+    (Ok (Some "abc"))
+    (Firmware.find ~dir "image.bin" ~sha256:(Firmware.sha256 "abc"));
+  equal ~msg:"another digest" bool true
+    (Result.is_error (Firmware.find ~dir "image.bin" ~sha256:"00"))
+
 let () =
   exit
   @@ run "device_pci smoke"
        [
          test "this machine" test_this;
          test "a machine through a transport" test_transport;
+         test "memory" test_memory;
+         test "firmware" test_firmware;
        ]

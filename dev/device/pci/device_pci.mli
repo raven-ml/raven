@@ -86,10 +86,12 @@ module Space = Space
 module Page_table = Page_table
 (** A GPU's physical memory and the page tables that map it. *)
 
-(* Pending: module Memory = Memory *)
+module Memory = Memory
+(** The memory a GPU addresses, placed by kind. *)
 
 (** {1:gpus GPUs} *)
 
-(* Pending: module Firmware = Firmware *)
+module Firmware = Firmware
+(** Firmware images, verified by digest. *)
 
 (* Pending: module Gpus = Gpus *)

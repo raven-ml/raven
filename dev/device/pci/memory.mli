@@ -36,7 +36,9 @@ val create :
     are [tables] and whose memory BAR is [bar]. [peer ranges] is how another GPU
     reaches the physical [ranges] of this one's memory, and in which
     {!Page_table.target}; it defaults to through the memory BAR's bus address
-    ({!Function.bar}), as {!Page_table.System} memory. *)
+    ({!Function.bar}), as {!Page_table.System} memory.
+
+    Raises [Invalid_argument] if [f] has no BAR [bar]. *)
 
 val small_bar : t -> bool
 (** [small_bar m] is [true] iff the memory BAR is 256 MiB, too small for the
@@ -75,13 +77,13 @@ val alloc : ?uncached:bool -> t -> kind -> int -> memory option
     in system memory, and in the GPU's memory to 4 KiB, or to 2 MiB from 8 MiB
     on so that large ones map with large pages. With [~uncached:true] (defaults
     to [false]) the GPU bypasses its caches for them; {!Host} memory is always
-    uncached. [None] if the GPU's memory or the address space is exhausted, as
-    {!Page_table.alloc} bounds it, or for {!Bar} memory, if the BAR does not
-    reach a block that fits.
+    uncached. [None] if the GPU's memory, a page table or the address space has
+    no room, as {!Page_table.alloc} bounds it, or for {!Bar} memory, if the BAR
+    does not reach a block that fits.
 
-    Raises [Failure] if system memory or a page table cannot be allocated,
-    having freed what it took, naming what is missing as {!Function.alloc_dma}
-    does ({{!Device_pci.errors}errors}). *)
+    Raises [Failure] if system memory cannot be allocated, having freed what it
+    took, naming what is missing as {!Function.alloc_dma} does
+    ({{!Device_pci.errors}errors}). *)
 
 val free : t -> memory -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.
@@ -95,15 +97,16 @@ val map_host : t -> int -> int -> (memory, string) result
 (** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU,
     at [a]: it {!Function.pin}s them and maps their pages, snooped and uncached.
     [Error why] if [a] is not on a page, lies outside the GPU's virtual
-    addresses, or cannot be pinned, [why] being {!Function.pin}'s reason. *)
+    addresses, or cannot be pinned, [why] being {!Function.pin}'s reason, or if
+    a page table has no room. *)
 
 val map_peer : t -> owner:t -> memory -> (memory, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of
     [owner], for the GPU of [m], at its address on [owner]: the GPU's memory
     through [owner]'s memory BAR or link, and system memory at its pages, which
     stay [owner]'s. [Error why] if the GPUs are on different machines, if either
-    is behind an IOMMU ({!Function.Iommu}), or if [mem] is in the GPU's memory
-    and [owner]'s BAR is {!small_bar}.
+    is behind an IOMMU ({!Function.Iommu}), if [mem] is in the GPU's memory and
+    [owner]'s BAR is {!small_bar}, or if a page table has no room.
 
     Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner]. *)
 
