@@ -159,20 +159,19 @@ val map :
   va:int ->
   target ->
   (int * int) list ->
-  mapping
+  mapping option
 (** [map t ~va tg ranges] maps the physical [ranges] of [tg], in order, from
     [va] on, creating the tables it needs, and flushes. [uncached] and [snooped]
-    default to [false].
+    default to [false]. [None] if the GPU's memory has no room for a table it
+    needs, having unmapped what it mapped.
 
-    Raises [Invalid_argument] if an address of the range is mapped already, and
-    [Failure] if a table cannot be allocated, having unmapped what it mapped. *)
+    Raises [Invalid_argument] if an address of the range is mapped already. *)
 
-val tables : t -> va:int -> int -> int list
+val tables : t -> va:int -> int -> int list option
 (** [tables t ~va n] is the physical addresses of the tables from the root down
     to the one whose entries would map the [n] bytes from [va], root first,
-    creating those that are missing as {!map} would.
-
-    Raises [Failure] if a table cannot be allocated. *)
+    creating those that are missing as {!map} would. [None] if the GPU's memory
+    has no room for one. *)
 
 val unmap : t -> va:int -> int -> unit
 (** [unmap t ~va n] unmaps the [n] bytes mapped from [va], frees the tables that
@@ -190,8 +189,8 @@ val alloc :
     - otherwise the largest blocks of [pages] the pool has, not zeroed.
 
     [None] if the pool or the space cannot supply them, as {!palloc} and
-    {!Space.alloc} bound it, having freed what it took. Raises [Failure] as
-    {!map} does, having freed what it took. *)
+    {!Space.alloc} bound it, or if a table has no room, having freed what it
+    took. *)
 
 val free : t -> mapping -> unit
 (** [free t m] unmaps [m], frees its virtual addresses and, if it is in the

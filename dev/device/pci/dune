@@ -3,7 +3,7 @@
 
 (library
  (name device_pci)
- (modules device_pci tlsf window sysmem)
+ (modules device_pci tlsf window sysmem space page_table)
  (private_modules tlsf sysmem)
  (libraries unix)
  (install_c_headers device_pci)

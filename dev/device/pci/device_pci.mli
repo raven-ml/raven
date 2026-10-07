@@ -78,9 +78,11 @@ module Window = Window
 
 (** {1:memory A GPU's memory} *)
 
-(* Pending: module Space = Space *)
+module Space = Space
+(** Virtual addresses the GPUs of one vendor share. *)
 
-(* Pending: module Page_table = Page_table *)
+module Page_table = Page_table
+(** A GPU's physical memory and the page tables that map it. *)
 
 (* Pending: module Memory = Memory *)
 
