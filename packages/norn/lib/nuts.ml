@@ -68,23 +68,23 @@ let logaddexp a b =
 (* Geometry per chain *)
 
 let per_chain_color u g z =
-  Rune.vmap P.(Gaussian.ptree u @-> u @-> returns u) (Geometry.color u) g z
+  Rune.vmap P.(Gaussian.ptree u @-> u @-> returns u) (Gaussian.color u) g z
 
 let per_chain_whiten u g x =
-  Rune.vmap P.(Gaussian.ptree u @-> u @-> returns u) (Geometry.whiten u) g x
+  Rune.vmap P.(Gaussian.ptree u @-> u @-> returns u) (Gaussian.whiten u) g x
 
 (* [to_whitened u g x gx] is the gradient in whitened coordinates of a gradient
    [gx] at [x]: [color]'s transpose applied to it. *)
 let to_whitened u g z gx =
   Rune.vmap
     P.(Gaussian.ptree u @-> u @-> u @-> returns u)
-    (fun g z gx -> snd (Rune.vjp u u (Geometry.color u g) z) gx)
+    (fun g z gx -> snd (Rune.vjp u u (Gaussian.color u g) z) gx)
     g z gx
 
 let to_original u g x gz =
   Rune.vmap
     P.(Gaussian.ptree u @-> u @-> u @-> returns u)
-    (fun g x gz -> snd (Rune.vjp u u (Geometry.whiten u g) x) gz)
+    (fun g x gz -> snd (Rune.vjp u u (Gaussian.whiten u g) x) gz)
     g x gz
 
 (* Keys
@@ -616,7 +616,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
   if schedule = [] then s
   else
     let dt = Nx.dtype s.lp in
-    let rank = Geometry.rank s.geometry in
+    let rank = Gaussian.rank s.geometry in
     let longest = List.fold_left (fun m (n, _) -> max m n) 0 schedule in
     (* A low-rank fit reads the window's draws; a diagonal one their sums. *)
     let buffer = if rank = 0 then 0 else longest in

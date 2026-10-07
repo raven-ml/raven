@@ -181,7 +181,7 @@ let broadcast_to s x = Nx.broadcast_to s x
 
 (* A continuous value's bounds are its coordinates' image of the reals. *)
 let coord_bounds dtype coords () =
-  Bijection.bounds coords
+  Bij.bounds coords
     (Nx.scalar dtype Float.neg_infinity, Nx.scalar dtype Float.infinity)
 
 let continuous ~family ~params ~shape ~checks ~support ~factors ~draw ~coords
@@ -448,7 +448,7 @@ let uniform ~low ~high =
           (fun w -> Nx.logical_and (positive w) (finite w))
           width;
       ]
-    ~support:(fun () -> Bijection.image coords Support.Real [||])
+    ~support:(fun () -> Bij.image coords Support.Real [||])
     ~factors
     ~draw:(fun k s -> Nx.add low (Nx.mul width (Nx.Rng.uniform k dt s)))
     ~coords
@@ -766,7 +766,7 @@ let transform b d =
     family = "transform";
     descr = Format.asprintf "transform %a %s" Bij.pp b d.descr;
     shape;
-    support = (fun () -> Bijection.image b (d.support ()) shape);
+    support = (fun () -> Bij.image b (d.support ()) shape);
     factors;
     draw = (fun k s -> fst (Bij.forward b (d.draw k (Bij.shape b s))));
     coords = Some (Bij.compose b coords);

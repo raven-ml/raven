@@ -113,8 +113,8 @@ let search (type f) context u lp_z ~reduce keys start (eps : (float, f) Nx.t) =
    unit metric in the Gaussian's whitened coordinates. *)
 
 let max_steps = 1024
-let color u g z = Rune.vmap P.(u @-> returns u) (Geometry.color u g) z
-let whiten u g x = Rune.vmap P.(u @-> returns u) (Geometry.whiten u g) x
+let color u g z = Rune.vmap P.(u @-> returns u) (Gaussian.color u g) z
+let whiten u g x = Rune.vmap P.(u @-> returns u) (Gaussian.whiten u g) x
 
 (* [to_whitened u g z gx] is the gradient in whitened coordinates of a gradient
    [gx] at [color z]: [color]'s transpose applied to it; [to_original] is
@@ -122,13 +122,13 @@ let whiten u g x = Rune.vmap P.(u @-> returns u) (Geometry.whiten u g) x
 let to_whitened u g z gx =
   Rune.vmap
     P.(u @-> u @-> returns u)
-    (fun z gx -> snd (Rune.vjp u u (Geometry.color u g) z) gx)
+    (fun z gx -> snd (Rune.vjp u u (Gaussian.color u g) z) gx)
     z gx
 
 let to_original u g x gz =
   Rune.vmap
     P.(u @-> u @-> returns u)
-    (fun x gz -> snd (Rune.vjp u u (Geometry.whiten u g) x) gz)
+    (fun x gz -> snd (Rune.vjp u u (Gaussian.whiten u g) x) gz)
     x gz
 
 let chain_keys k c = Nx.Rng.split_batch ~n:c (Nx.Rng.fold_in k 0)

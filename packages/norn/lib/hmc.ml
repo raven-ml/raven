@@ -231,7 +231,7 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
   if schedule = [] then s
   else
     let dt = Nx.dtype s.lp in
-    let rank = Geometry.rank s.geometry in
+    let rank = Gaussian.rank s.geometry in
     let longest = List.fold_left (fun m (n, _) -> max m n) 0 schedule in
     (* A low-rank fit reads the window's draws; a diagonal one their sums. *)
     let buffer = if rank = 0 then 0 else longest in

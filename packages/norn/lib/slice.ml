@@ -370,5 +370,5 @@ let hit_and_run context u a eval keys g x lp aux =
          keys)
       lp x
   in
-  let direction = Rune.vmap P.(u @-> returns u) (Geometry.direction u g) z in
+  let direction = Rune.vmap P.(u @-> returns u) (Gaussian.direction u g) z in
   move context u a eval keys ~direction x lp aux

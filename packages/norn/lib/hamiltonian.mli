@@ -68,10 +68,10 @@ val max_steps : int
 (** The longest trajectory, in leapfrog steps. *)
 
 val color : 'u Nx.Ptree.t -> ('u, 'f) Gaussian.t -> 'u -> 'u
-(** [color u g z] is {!Geometry.color} of every chain's [z]. *)
+(** [color u g z] is {!Gaussian.color} of every chain's [z]. *)
 
 val whiten : 'u Nx.Ptree.t -> ('u, 'f) Gaussian.t -> 'u -> 'u
-(** [whiten u g x] is {!Geometry.whiten} of every chain's [x]. *)
+(** [whiten u g x] is {!Gaussian.whiten} of every chain's [x]. *)
 
 val to_whitened : 'u Nx.Ptree.t -> ('u, 'f) Gaussian.t -> 'u -> 'u -> 'u
 (** [to_whitened u g z gx] is the gradient in whitened coordinates of the

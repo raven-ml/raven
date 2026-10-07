@@ -18,6 +18,9 @@ let converged = 0l
 let remaining = 1l
 let temperature = 2l
 
+(* [v ... ~stop ~reached] is an estimate that stopped as [stop] codes it:
+   [converged], [remaining] or [temperature], whose payload is [reached], a
+   scalar. *)
 let v ~sample ~log_evidence ~error ~information ~stop ~reached =
   { sample; log_evidence; error; information; stop; reached }
 
