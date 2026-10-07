@@ -7,6 +7,7 @@ module Tol = Tol
 module Solution = Solution
 module Linear = Linear
 module Root = Root
+module System = System
 module Minimize = Minimize
 module Quad = Quad
 module Piecewise = Piecewise

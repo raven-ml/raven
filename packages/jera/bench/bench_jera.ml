@@ -396,6 +396,70 @@ let gmres =
     rows = all;
   }
 
+(* Systems *)
+
+let solve m ~linear f guess =
+  Solution.get
+    (System.solve Nx.Ptree.tensor m ~linear
+       ~tol:(Tol.v ~rel:1e-10 ~abs:1e-12)
+       ~budget:50 f guess)
+
+(* Bratu's problem u'' + λ eᵘ = 0 on 64 interior nodes with zero ends, λ the
+   argument per node, by Newton. *)
+let newton_bratu =
+  {
+    id = "system-newton-bratu-64";
+    f =
+      (fun lambda ->
+        let h2 = 1. /. (65. *. 65.) in
+        let f u = Nx.sub (poisson u) (Nx.mul_s (Nx.mul lambda (Nx.exp u)) h2) in
+        let derivative u du = snd (Rune.jvp' f u du) in
+        solve
+          (System.newton ~derivative)
+          ~linear:Linear.dense f (Nx.zeros_like lambda));
+    x = (fun () -> Nx.linspace f64 1. 1.5 64);
+    rows = all;
+  }
+
+(* a x + sin x = b on 16 unknowns, a diagonally dominant, by Broyden. *)
+let broyden_dense =
+  let a =
+    Nx.add
+      (Nx.mul_s (Nx.eye f64 16) 18.)
+      (Nx.sin (Nx.reshape [| 16; 16 |] (Nx.arange_f f64 0. 256. 1.)))
+  in
+  {
+    id = "system-broyden-16";
+    f =
+      (fun b ->
+        solve System.broyden ~linear:Linear.dense
+          (fun x -> Nx.sub (Nx.add (Nx.matmul a x) (Nx.sin x)) b)
+          (Nx.zeros_like b));
+    x = (fun () -> Nx.linspace f64 (-4.) 4. 16);
+    rows = all;
+  }
+
+(* The equilibrium x = tanh (w x + θ) of 64 units, w of norm about 1/2, by
+   Anderson mixing of 5 steps. *)
+let anderson_tanh =
+  let w =
+    Nx.div_s
+      (Nx.sin (Nx.reshape [| 64; 64 |] (Nx.arange_f f64 0. 4096. 1.)))
+      16.
+  in
+  {
+    id = "system-anderson-tanh-64";
+    f =
+      (fun theta ->
+        solve
+          (System.anderson ~memory:5)
+          ~linear:Linear.dense
+          (fun x -> Nx.sub (Nx.tanh (Nx.add (Nx.matmul w x) theta)) x)
+          (Nx.zeros_like theta));
+    x = (fun () -> Nx.linspace f64 (-1.) 1. 64);
+    rows = all;
+  }
+
 let workloads =
   [
     quad;
@@ -418,6 +482,9 @@ let workloads =
     banded;
     cg;
     gmres;
+    newton_bratu;
+    broyden_dense;
+    anderson_tanh;
   ]
 
 let compiled f x =

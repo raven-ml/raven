@@ -65,7 +65,7 @@ type 'x space =
 
 let is_float (Nx.P t) = Nx_dtype.is Float (Nx.dtype t)
 
-let space fn x like =
+let space fn what x like =
   let leaves, _ = Nx.Ptree.flatten x like in
   let floats = List.filter is_float leaves in
   let dtypes =
@@ -74,8 +74,8 @@ let space fn x like =
   in
   if List.length dtypes > 1 then
     invalid_arg
-      (Printf.sprintf "%s: the float tensors of r have the dtypes %s, not one"
-         fn
+      (Printf.sprintf "%s: the float tensors of %s have the dtypes %s, not one"
+         fn what
          (String.concat ", " dtypes));
   let size = List.fold_left (fun n (Nx.P t) -> n + Nx.numel t) 0 floats in
   let make (type d) (dtype : (float, d) Nx.dtype) =
@@ -122,13 +122,14 @@ let layout x v =
       (fun _ t acc -> (Nx_dtype.to_string (Nx.dtype t), Nx.shape t) :: acc)
       v [] )
 
-let checked fn x a u =
+let checked fn what x a u =
   let v = a u in
   if layout x v <> layout x u then
     invalid_arg
-      (fn
-     ^ ": a returned a value of another structure, dtype or shape than its \
-        argument");
+      (Printf.sprintf
+         "%s: %s returned a value of another structure, dtype or shape than \
+          its argument"
+         fn what);
   v
 
 (* Solvers
@@ -558,7 +559,7 @@ let preconditioner fn x s ravel unravel =
   match s with
   | Dense | Banded _ -> Fun.id
   | Cg { precondition; _ } | Gmres { precondition; _ } ->
-      fun v -> ravel (checked fn x precondition (unravel v))
+      fun v -> ravel (checked fn "precondition" x precondition (unravel v))
 
 let failed run =
   List.fold_left
@@ -571,10 +572,10 @@ let failed run =
 (* The linear solve of a derivative: [op v = b] by [s]. A system the solver
    cannot solve to its bound gives a solution whose every element is NaN. *)
 let derivative fn x s op b =
-  let (Space { dtype; size; ravel; unravel }) = space fn x b in
+  let (Space { dtype; size; ravel; unravel }) = space fn "the tangent" x b in
   if size = 0 then b
   else
-    let apply v = ravel (checked fn x op (unravel v)) in
+    let apply v = ravel (checked fn "a" x op (unravel v)) in
     let precondition = preconditioner fn x s ravel unravel in
     let r = run s dtype size apply precondition (ravel b) in
     unravel (Nx.where (failed r) (Nx.full_like r.u Float.nan) r.u)
@@ -596,8 +597,8 @@ let fix (st : Solution.status) facts =
 
 let solve x s a r =
   let fn = "Jera.Linear.solve" in
-  let (Space { dtype; size; ravel; unravel }) = space fn x r in
-  let apply v = ravel (checked fn x a (unravel v)) in
+  let (Space { dtype; size; ravel; unravel }) = space fn "r" x r in
+  let apply v = ravel (checked fn "a" x a (unravel v)) in
   let rv = ravel r in
   (* A system of no unknowns is solved by the empty vector. *)
   let result =

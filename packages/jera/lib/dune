@@ -1,5 +1,5 @@
 (library
  (name jera)
  (public_name jera)
- (private_modules tol solution linear root minimize quad piecewise grid ode sde split partition num march cheb tridiag spline elementwise sobol)
+ (private_modules tol solution linear root system search minimize quad piecewise grid ode sde split partition num march cheb tridiag spline elementwise sobol)
  (libraries nx nx.dtype rune))

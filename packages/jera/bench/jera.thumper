@@ -11,6 +11,7 @@
 # forced: blessed linear-dense-128/eager linear-dense-128/compiled linear-dense-128/grad linear-banded-poisson-256/eager linear-banded-poisson-256/compiled linear-banded-poisson-256/grad linear-cg-poisson-256/eager linear-cg-poisson-256/compiled linear-cg-poisson-256/grad linear-gmres-convection-256/eager linear-gmres-convection-256/compiled linear-gmres-convection-256/grad under load 14.4 on 10 cores
 # forced: blessed linear-dense-128/eager linear-gmres-convection-256/grad under load 13.2 on 10 cores
 # forced: blessed linear-dense-128/eager linear-gmres-convection-256/grad under load 15.3 on 10 cores
+# forced: blessed system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad system-broyden-16/eager system-broyden-16/compiled system-broyden-16/grad system-anderson-tanh-64/eager system-anderson-tanh-64/compiled system-anderson-tanh-64/grad under load 24.0 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
@@ -130,3 +131,21 @@ split-yoshida4-100-pendulums/compiled	alloc_words	exact	24169
 split-yoshida4-100-pendulums/compiled	wall_time	batch=4	n=20	1.668e-03	1.513e-03 1.513e-03 1.516e-03 1.526e-03 1.574e-03 1.628e-03 1.646e-03 1.657e-03 1.665e-03 1.665e-03 1.671e-03 1.702e-03 1.865e-03 1.921e-03 1.969e-03 2.014e-03 2.109e-03 2.297e-03 2.372e-03 2.522e-03
 split-yoshida4-100-pendulums/eager	alloc_words	exact	147445
 split-yoshida4-100-pendulums/eager	wall_time	batch=8	n=20	6.236e-04	5.478e-04 5.734e-04 5.742e-04 5.758e-04 5.804e-04 5.811e-04 6.033e-04 6.062e-04 6.080e-04 6.211e-04 6.261e-04 6.595e-04 6.862e-04 7.098e-04 8.082e-04 8.252e-04 8.511e-04 8.528e-04 9.433e-04 1.115e-03
+system-anderson-tanh-64/compiled	alloc_words	exact	5615
+system-anderson-tanh-64/compiled	wall_time	batch=32	n=20	2.181e-04	2.129e-04 2.131e-04 2.141e-04 2.143e-04 2.148e-04 2.151e-04 2.153e-04 2.157e-04 2.178e-04 2.178e-04 2.184e-04 2.204e-04 2.215e-04 2.239e-04 2.239e-04 2.302e-04 2.325e-04 2.497e-04 2.923e-04 3.197e-04
+system-anderson-tanh-64/eager	alloc_words	exact	167118
+system-anderson-tanh-64/eager	wall_time	batch=8	n=20	7.093e-04	5.849e-04 6.246e-04 6.425e-04 6.519e-04 6.538e-04 6.641e-04 6.662e-04 6.708e-04 6.859e-04 7.059e-04 7.128e-04 7.160e-04 7.192e-04 7.497e-04 7.512e-04 7.525e-04 7.875e-04 7.883e-04 8.565e-04 1.148e-03
+system-anderson-tanh-64/grad	alloc_words	exact	5495
+system-anderson-tanh-64/grad	wall_time	batch=8	n=20	1.596e-03	9.290e-04 9.896e-04 1.034e-03 1.053e-03 1.134e-03 1.161e-03 1.237e-03 1.255e-03 1.309e-03 1.446e-03 1.745e-03 1.808e-03 1.872e-03 1.915e-03 1.974e-03 1.987e-03 2.077e-03 2.148e-03 2.226e-03 2.607e-03
+system-broyden-16/compiled	alloc_words	exact	4316
+system-broyden-16/compiled	wall_time	batch=64	n=20	8.854e-05	8.758e-05 8.764e-05 8.790e-05 8.804e-05 8.804e-05 8.810e-05 8.810e-05 8.813e-05 8.827e-05 8.835e-05 8.873e-05 8.878e-05 8.921e-05 8.938e-05 9.063e-05 9.228e-05 1.064e-04 1.109e-04 1.114e-04 1.312e-04
+system-broyden-16/eager	alloc_words	exact	123392
+system-broyden-16/eager	wall_time	batch=16	n=20	4.331e-04	3.786e-04 3.914e-04 3.951e-04 4.026e-04 4.028e-04 4.039e-04 4.039e-04 4.094e-04 4.212e-04 4.330e-04 4.333e-04 4.404e-04 4.518e-04 4.579e-04 4.670e-04 5.010e-04 5.072e-04 5.082e-04 5.125e-04 5.196e-04
+system-broyden-16/grad	alloc_words	exact	4256
+system-broyden-16/grad	wall_time	batch=64	n=20	1.278e-04	1.035e-04 1.082e-04 1.096e-04 1.124e-04 1.196e-04 1.221e-04 1.227e-04 1.252e-04 1.256e-04 1.275e-04 1.281e-04 1.305e-04 1.352e-04 1.391e-04 1.393e-04 1.407e-04 1.436e-04 1.443e-04 1.554e-04 1.622e-04
+system-newton-bratu-64/compiled	alloc_words	exact	4382
+system-newton-bratu-64/compiled	wall_time	batch=2	n=20	1.794e-03	1.609e-03 1.615e-03 1.620e-03 1.631e-03 1.645e-03 1.646e-03 1.667e-03 1.674e-03 1.734e-03 1.747e-03 1.841e-03 1.961e-03 1.974e-03 2.065e-03 2.068e-03 2.191e-03 2.470e-03 2.747e-03 2.877e-03 3.089e-03
+system-newton-bratu-64/eager	alloc_words	exact	202095
+system-newton-bratu-64/eager	wall_time	batch=8	n=20	8.877e-04	8.043e-04 8.196e-04 8.285e-04 8.423e-04 8.456e-04 8.479e-04 8.513e-04 8.586e-04 8.667e-04 8.753e-04 9.002e-04 9.038e-04 9.074e-04 9.158e-04 9.188e-04 9.284e-04 9.674e-04 1.026e-03 1.052e-03 1.241e-03
+system-newton-bratu-64/grad	alloc_words	exact	4316
+system-newton-bratu-64/grad	wall_time	batch=2	n=20	1.989e-03	1.970e-03 1.974e-03 1.978e-03 1.980e-03 1.981e-03 1.984e-03 1.984e-03 1.984e-03 1.986e-03 1.987e-03 1.991e-03 1.991e-03 2.000e-03 2.135e-03 2.257e-03 2.462e-03 2.782e-03 2.918e-03 2.936e-03 3.223e-03

@@ -23,6 +23,9 @@
       {tr {td  } {td large } {td {!Linear.gmres} } }
       {tr {td Zero of a function } {td derivative given } {td {!Root.newton} } }
       {tr {td  } {td a bracket } {td {!Root.bracket} } }
+      {tr {td Zero of a system } {td derivative given } {td {!System.newton} } }
+      {tr {td  } {td no usable derivative } {td {!System.broyden} } }
+      {tr {td  } {td fixed point [x = g x] } {td {!System.anderson} } }
       {tr
         {td Minimum }
         {td one variable, a bracket }
@@ -393,6 +396,115 @@ module Root : sig
       one of [slope] per iteration.
 
       Raises [Invalid_argument] if [budget < 1]. *)
+end
+
+module System : sig
+  (** Zeros of systems.
+
+      A system is a function [f] from values of a structure ['x] to values of
+      the same structure, dtypes and shapes: its zero is the [x] with [f x = 0].
+      The float tensors of a value are its vector, of one dtype; its other
+      tensors are carried from the guess. A system is one problem, with one
+      status; {!Rune.val-vmap} gives each lane its own.
+
+      {[
+      (* x² + y² = 4 and x = y, from (1, 2) *)
+      let f v =
+        let x = Nx.get [ 0 ] v and y = Nx.get [ 1 ] v in
+        Nx.stack
+          [ Nx.sub_s (Nx.add (Nx.square x) (Nx.square y)) 4.; Nx.sub x y ]
+      in
+      System.solve Nx.Ptree.tensor
+        (System.newton ~derivative:(fun v dv -> snd (Rune.jvp' f v dv)))
+        ~linear:Linear.dense ~tol:(Tol.rel 1e-12) ~budget:20 f
+        (Nx.create Nx.float64 [| 2 |] [| 1.; 2. |])
+      ]}
+
+      {b Error.} Every method takes undamped steps [δ]: Newton's or Broyden's
+      direction before the line search scales it, Anderson's fixed-point
+      residual [f x]. [e = |δ| q / (1 − q)] per component, the distance left
+      when the steps shrink by [q], with [q] the contraction of the undamped map
+      [N x = x + δ] over the last step, [|N x − N x'| / |x − x'|] from the point
+      [x'] the last step started at; after a step taken in full it is the ratio
+      of the norms of the last two undamped steps. [e] is unbounded while
+      [q ≥ 1] or before two steps, and [y] is the estimate. A lane that meets
+      [tol] takes its last step in full. A shortened or mixed step moves the
+      estimate but its length never enters [e], so a search cannot converge by
+      shrinking its steps. A zero step is a zero. A step that no longer moves
+      the estimate without meeting [tol], a line search that finds no decrease,
+      or a failed linear solve ends the lane [Stalled]; a non-finite [f] at the
+      guess or at an estimate ends it [Not_finite]; [budget] iterations end it
+      [Budget_spent].
+
+      {b Derivative.} The answer is stated as the zero of [f] through
+      {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through
+      every tracked value [f] reads, with [J] rune's derivative of [f] at the
+      answer, solved by [linear]; zero at a lane that did not converge. At a
+      zero where [J] is singular the derivative does not exist and is not
+      finite. *)
+
+  type 'x t
+  (** The type for methods for systems on values of type ['x]. *)
+
+  val newton : derivative:('x -> 'x -> 'x) -> 'x t
+  (** [newton ~derivative] is Newton's method: [derivative x dx] is [f]'s
+      Jacobian at [x] applied to [dx], such as [snd (Rune.jvp' f x dx)]. It
+      steers the steps only, so a wrong one slows a solve and cannot end it
+      early.
+
+      {b Method.} Each step solves [J δ = −f x] with [linear], then backtracks
+      from [x + δ] to the sufficient decrease of [|f|² / 2], by safeguarded
+      quadratic steps. {b Stability.} The line search makes every step decrease
+      [|f|], so the search can end at a local minimum of [|f|] that is no zero,
+      where it stalls. {b Cost.} Per iteration, one solve of [linear] on
+      [derivative] and one evaluation of [f] per trial of the line search;
+      quadratic convergence near a simple zero, and with a Krylov solver it is
+      Newton–Krylov. *)
+
+  val broyden : 'x t
+  (** [broyden] is Broyden's method, for an [f] with no usable derivative.
+
+      {b Method.} The Jacobian's estimate [B] starts as forward differences and
+      takes Broyden's rank-one update after each step; each step solves
+      [B δ = −f x] with [linear] and backtracks by halving to Li and Fukushima's
+      derivative-free decrease test,
+      [|f (x + α δ)| ≤ (1 + η_k) |f x| − σ |α δ|²] with [η_k = 1 / (k + 1)²] and
+      [σ = 10⁻⁴], which short steps always meet. {b Cost.} [n] evaluations for
+      the differences, [n] the size of the vector, then one per trial; it keeps
+      the [n × n] matrix [B], so it suits up to some hundreds of unknowns, and
+      converges superlinearly near a simple zero. *)
+
+  val anderson : memory:int -> 'x t
+  (** [anderson ~memory] is for a fixed point [x = g x] stated as the residual
+      [f x = g x − x].
+
+      {b Method.} Iterates [g] with Anderson mixing of the last [memory] steps:
+      the mixed point is [g x − ΔG γ], with [ΔF] and [ΔG] the changes of [f] and
+      [g] over those steps and [γ] least [|f x − ΔF γ|] by QR, dropping the
+      oldest steps while the ratio of [R]'s diagonal entries exceeds [ε^(−1/2)].
+      A mixed point that does not reduce [|f|] is replaced by the Picard point
+      [g x]. [memory = 0] is Picard iteration. {b Cost.} One evaluation per
+      iteration, two when the Picard point replaces the mixed one, and a QR of
+      [n × memory].
+
+      Raises [Invalid_argument] if [memory < 0]. *)
+
+  val solve :
+    'x Nx.Ptree.t ->
+    'x t ->
+    linear:'x Linear.t ->
+    tol:Tol.t ->
+    budget:int ->
+    ('x -> 'x) ->
+    'x ->
+    'x Solution.t
+  (** [solve x m ~linear ~tol ~budget f guess] is a zero of [f] near [guess] by
+      [m]. [linear] solves the method's linear systems and the derivative's. Its
+      evaluations count the calls of [f], [budget] its iterations.
+
+      Raises [Invalid_argument] if [budget < 1], if the float tensors of [guess]
+      differ in dtype, or if [f] returns a value of another structure, dtype or
+      shape than its argument. *)
 end
 
 module Minimize : sig

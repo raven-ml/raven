@@ -1055,6 +1055,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `System.solve`, a zero of a system on a structure: `System.newton`
+  with a sufficient-decrease line search (Newton–Krylov with `Linear.cg` or
+  `gmres`), `System.broyden` for a residual with no usable derivative, and
+  `System.anderson ~memory` for fixed points. The answer is stated through
+  `Rune.root`, so its derivative is the implicit one, solved by `~linear`.
 - Add `Linear.banded ~width`, for systems whose matrix has entries near its
   diagonal only: `2 width + 1` products probe the band, factored by LU with
   partial pivoting in loops of fixed-size windows.
