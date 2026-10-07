@@ -196,21 +196,91 @@ let rec mapped t d table ~at lo hi =
       (Printf.sprintf "Page_table.unmap: the page at 0x%x is partly outside"
          (t.base + at))
 
-(* Maps [lo, hi) to the physical addresses [delta] bytes further, each page with
-   the largest entry that the range holds and both addresses are aligned to:
-   [entry d v] is the entry at depth [d] of the page at [v]. The last level's
-   entries are all whole pages. *)
-let rec write t d table ~at lo hi ~delta entry =
+(* The fragment of the page at [v] of the run [lo, hi), mapped [delta] bytes
+   further: the log2 of the pages of the largest block naturally aligned in both
+   address spaces, inside the run, that holds it, if at least [k]. *)
+let rec fragment ~lo ~hi ~delta v k =
+  let size = page lsl (k + 1) in
+  let block = v land lnot (size - 1) in
+  if block >= lo && block + size <= hi && aligned delta size then
+    fragment ~lo ~hi ~delta v (k + 1)
+  else k
+
+(* The physical ranges a map writes, read in virtual order as one walk of the
+   tables reaches them. The current run maps [lo, hi) to the addresses [delta]
+   bytes further; ranges that follow each other in both address spaces are one
+   run. Its pages below [until] share the fragment [frag]. *)
+type run = {
+  target : target;
+  uncached : bool;
+  snooped : bool;
+  mutable rest : (int * int) list;
+  mutable lo : int;
+  mutable hi : int;
+  mutable delta : int;
+  mutable frag : int;
+  mutable until : int;
+}
+
+(* Moves [r] on to the run that holds [v]. *)
+let rec seek r v =
+  match r.rest with
+  | (pa, n) :: rest when v >= r.hi ->
+      r.rest <- rest;
+      r.lo <- r.hi;
+      r.hi <- r.hi + n;
+      r.delta <- pa - r.lo;
+      r.until <- r.lo;
+      join r;
+      seek r v
+  | _ -> ()
+
+(* Joins to [r]'s run the ranges that follow it, passing empty ones. *)
+and join r =
+  match r.rest with
+  | (_, 0) :: rest ->
+      r.rest <- rest;
+      join r
+  | (pa, n) :: rest when pa = r.hi + r.delta ->
+      r.rest <- rest;
+      r.hi <- r.hi + n;
+      join r
+  | _ -> ()
+
+(* The entry at depth [d] of the page at [v] of [r]'s run. A fragment's block is
+   aligned in the space's addresses; the pages of a block share its fragment,
+   which is found once a block. *)
+let entry t r d v =
+  if v >= r.until then begin
+    let va = t.base + v and k = t.shifts.(d) - page_bits in
+    r.frag <-
+      fragment ~lo:(t.base + r.lo) ~hi:(t.base + r.hi) ~delta:(r.delta - t.base)
+        va k;
+    r.until <- (va lor ((page lsl r.frag) - 1)) + 1 - t.base
+  end;
+  t.fmt.encode ~level:(level t d) ~table:false r.target ~uncached:r.uncached
+    ~snooped:r.snooped ~fragment:r.frag ~valid:true (v + r.delta)
+
+(* Maps [lo, hi) to the runs of [r], each page with the largest entry that its
+   run holds and both its addresses are aligned to. One walk serves every run:
+   each table is read once. The last level's entries are all whole pages. *)
+let rec write t d table ~at lo hi r =
   let level = level t d and c = covers t d in
   if d = bottom t then
     for i = (lo - at) / c to ((hi - at) / c) - 1 do
-      t.fmt.set ~level ~table i (entry d (at + (i * c)))
+      let v = at + (i * c) in
+      seek r v;
+      t.fmt.set ~level ~table i (entry t r d v)
     done
   else
     each t d ~at lo hi @@ fun i at lo hi ->
-    let whole = lo = at && hi = at + c && aligned (lo + delta) c in
-    if whole && t.fmt.large ~level then t.fmt.set ~level ~table i (entry d lo)
-    else write t (d + 1) (child t d table i) ~at lo hi ~delta entry
+    seek r lo;
+    let whole =
+      lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
+    in
+    if whole && t.fmt.large ~level then
+      t.fmt.set ~level ~table i (entry t r d lo)
+    else write t (d + 1) (child t d table i) ~at lo hi r
 
 (* Clears the entries of [lo, hi) and frees the tables it empties. The last
    level's entries are cleared unread: each is a page or invalid. *)
@@ -235,23 +305,6 @@ let rec clear t d table ~at lo hi =
         pfree t child
       end
     end
-
-(* The fragment of the page at [v] of the run [lo, hi), mapped [delta] bytes
-   further: the log2 of the pages of the largest block naturally aligned in both
-   address spaces, inside the run, that holds it, if at least [k]. *)
-let rec fragment ~lo ~hi ~delta v k =
-  let size = page lsl (k + 1) in
-  let block = v land lnot (size - 1) in
-  if block >= lo && block + size <= hi && aligned delta size then
-    fragment ~lo ~hi ~delta v (k + 1)
-  else k
-
-(* [ranges] without empty ones, joined where one ends where the next starts. *)
-let rec runs = function
-  | (_, 0) :: rest -> runs rest
-  | (a, n) :: (b, k) :: rest when a + n = b -> runs ((a, n + k) :: rest)
-  | r :: rest -> r :: runs rest
-  | [] -> []
 
 (* Page tables *)
 
@@ -367,27 +420,21 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
   check t "map" ~va size;
   let lo = va - t.base in
   unmapped t 0 t.root ~at:0 lo (lo + size);
-  let write_run v (pa, n) =
-    let delta = pa - v and hi = v + n in
-    (* A fragment's block is aligned in the space's addresses: [first] and
-       [last] bound the run there. The pages of a block share its fragment: it
-       is found once a block. *)
-    let first = t.base + v and last = t.base + hi in
-    let frag = ref 0 and until = ref v in
-    let entry d at =
-      if at >= !until then begin
-        let va = t.base + at and k = t.shifts.(d) - page_bits in
-        frag := fragment ~lo:first ~hi:last ~delta:(pa - first) va k;
-        until := (va lor ((page lsl !frag) - 1)) + 1 - t.base
-      end;
-      t.fmt.encode ~level:(level t d) ~table:false target ~uncached ~snooped
-        ~fragment:!frag ~valid:true (at + delta)
-    in
-    write t 0 t.root ~at:0 v hi ~delta entry;
-    hi
+  let r =
+    {
+      target;
+      uncached;
+      snooped;
+      rest = ranges;
+      lo;
+      hi = lo;
+      delta = 0;
+      frag = 0;
+      until = lo;
+    }
   in
-  match List.fold_left write_run lo (runs ranges) with
-  | _ ->
+  match write t 0 t.root ~at:0 lo (lo + size) r with
+  | () ->
       t.fmt.flush ();
       Some { va; size; pages = ranges; target; uncached; snooped }
   | exception No_room ->

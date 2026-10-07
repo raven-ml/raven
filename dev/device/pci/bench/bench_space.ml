@@ -11,10 +11,10 @@
    allocation and a free take a time bounded independently of what the space
    holds, so the two columns match. [space/churn] allocates and frees ranges of
    mixed sizes in a fresh space. [page-table/map-unmap] maps physical memory
-   next to a resident page and unmaps it; [page-table/alloc-free] is the whole
-   allocation: addresses, physical memory, mapping. The page tables live in a
-   buffer, in a format whose entries hold the address, bit 0 valid and bit 1 a
-   table. *)
+   next to a resident page and unmaps it, or 16 MiB of one-page runs;
+   [page-table/alloc-free] is the whole allocation: addresses, physical memory,
+   mapping. The page tables live in a buffer, in a format whose entries hold the
+   address, bit 0 valid and bit 1 a table. *)
 
 module Space = Device_pci.Space
 module Page_table = Device_pci.Page_table
@@ -195,6 +195,18 @@ let alloc_free t n =
   | Some m -> Page_table.free t m
   | None -> failwith "alloc-free: no memory"
 
+(* System memory taken page by page: 16 MiB of one-page runs, every other
+   physical page, so that no two join and each maps with its own entry. *)
+let runs_size = 16 * mib
+
+let page_runs =
+  List.init (runs_size / (4 * kib)) (fun i -> (pa + (2 * i * 4 * kib), 4 * kib))
+
+let map_unmap_runs t va =
+  match Page_table.map t ~va System page_runs with
+  | Some _ -> Page_table.unmap t ~va runs_size
+  | None -> failwith "map-unmap: no room for a table"
+
 (* Each mapping starts at its own size past the resident page. *)
 let page_table_rows =
   let t = lazy (page_table ()) in
@@ -207,8 +219,12 @@ let page_table_rows =
     let size = Thumper.black_box size in
     Thumper.bench_with_setup ~setup name (fun t -> alloc_free t size)
   in
+  let runs_row =
+    let va = Thumper.black_box (va + runs_size) in
+    Thumper.bench_with_setup ~setup "16MiB-pages" (fun t -> map_unmap_runs t va)
+  in
   [
-    Thumper.group "map-unmap" (List.map map_row maps);
+    Thumper.group "map-unmap" (List.map map_row maps @ [ runs_row ]);
     Thumper.group "alloc-free" (List.map alloc_row maps);
   ]
 

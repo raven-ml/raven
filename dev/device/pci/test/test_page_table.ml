@@ -248,7 +248,8 @@ let pp_case ppf c =
 (* Addresses aligned to 4 KiB, 64 KiB, 2 MiB and 1 GiB, sizes of a few pages, of
    2 MiB and a few pages past it, and one case in ten a 1 GiB page and a page
    past it. Physically contiguous neighbours are moved apart by a page, so that
-   each range is one run. *)
+   each range is one run; one case in four then splits its first range in two
+   that follow each other, one run of two ranges. *)
 let case_gen =
   let addr =
     Gen.frequency
@@ -285,12 +286,20 @@ let case_gen =
   let ranges =
     Gen.pair addr (Gen.list ~size:(Gen.int_range 1 3) (Gen.pair addr size))
   in
+  (* [split k ranges] cuts the first range [k] pages in, when [k > 0] and it has
+     more pages than that. *)
+  let split k = function
+    | (pa, n) :: rest when k > 0 && k * page < n ->
+        (pa, k * page) :: (pa + (k * page), n - (k * page)) :: rest
+    | ranges -> ranges
+  in
+  let cut = Gen.frequency [ (3, Gen.constant 0); (1, Gen.int_range 1 1024) ] in
   Gen.with_pp pp_case
     (Gen.map
-       (fun ((offset, ranges), tg, (unc, snoop)) ->
-         { offset; ranges = apart ranges; tg; unc; snoop })
+       (fun (((offset, ranges), k), tg, (unc, snoop)) ->
+         { offset; ranges = split k (apart ranges); tg; unc; snoop })
        (Gen.triple
-          (Gen.frequency [ (9, ranges); (1, gib_page) ])
+          (Gen.pair (Gen.frequency [ (9, ranges); (1, gib_page) ]) cut)
           (Gen.of_list ~pp:pp_target [ Page_table.Gpu; System; Peer ])
           (Gen.pair Gen.bool Gen.bool)))
 
@@ -327,6 +336,10 @@ let test_map =
              e.pa land ((page lsl (e.fragment + 1)) - 1) <> 0
              && e.va land ((page lsl (e.fragment + 1)) - 1) = 0)
            want);
+      cover "a run of two ranges"
+        (match c.ranges with
+        | (pa, n) :: (pb, _) :: _ -> pa + n = pb
+        | _ -> false);
       equal ~msg:"entries" (list placed) want (pages g t);
       equal ~msg:"flushed" int 0 g.unflushed;
       Page_table.unmap t ~va size;
@@ -371,6 +384,21 @@ let test_fragment_cases =
       let t, g = tables () in
       ignore (require_some (Page_table.map t ~va:(base + offset) Gpu ranges));
       equal (list int) want (List.map (fun e -> e.fragment) (pages g t)))
+
+(* Ranges that follow each other are one run, empty ones aside: a 2 MiB page may
+   span them. *)
+let test_page_across_ranges () =
+  let t, g = tables () in
+  let va = base + (2 * mib) in
+  let half = mib in
+  ignore
+    (require_some
+       (Page_table.map t ~va Gpu
+          [ (4 * mib, half); (0, 0); ((4 * mib) + half, half) ]));
+  equal ~msg:"one 2 MiB page"
+    (list (pair hex int))
+    [ (va, 2) ]
+    (List.map (fun e -> (e.va, e.level)) (pages g t))
 
 let test_gib_pages () =
   let t, g = tables () in
@@ -1115,6 +1143,8 @@ let () =
              test_map;
              test "1 GiB pages, and 2 MiB ones where memory is aligned to 2 MiB"
                test_gib_pages;
+             test "a 2 MiB page spans ranges that follow each other"
+               test_page_across_ranges;
              test_fragments;
              test_fragment_cases;
              test "fragments align in the space's addresses"
