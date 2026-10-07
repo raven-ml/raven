@@ -11,13 +11,17 @@
 #define _GNU_SOURCE
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
 #include <caml/custom.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -30,6 +34,8 @@
 #if defined(__APPLE__) && defined(__aarch64__)
 #include <pthread.h>
 #endif
+
+#include "nx_pool.h"
 
 /* The host */
 
@@ -164,4 +170,152 @@ value caml_device_host_install(value v_mapping, value v_bytes) {
   __builtin___clear_cache(m->base, m->base + n);
 #endif
   return Val_long(0);
+}
+
+/* Calls
+
+   Linked code follows System V on x86_64, Windows included, whose own
+   convention differs: a function pointer to it, and device_host_call, carry
+   the attribute there. A compiler without GNU attributes would call it with
+   the wrong convention. */
+
+#if defined(_WIN64) && (defined(__x86_64__) || defined(_M_X64))
+#if !defined(__GNUC__)
+#error "calling linked code on x86_64 Windows needs __attribute__((sysv_abi))"
+#endif
+#define SYSV __attribute__((sysv_abi))
+#else
+#define SYSV
+#endif
+
+typedef void (SYSV *program)(void **, const int64_t *);
+
+/* Synchronizes the calling thread's instruction stream with code another
+   core wrote. The writer's cache maintenance reaches every core, but only a
+   context synchronization makes a core refetch, and a pool worker takes none
+   between jobs. x86 keeps its instruction stream coherent with stores. */
+static inline void synchronize(void) {
+#if defined(__aarch64__)
+  __asm__ volatile("isb" ::: "memory");
+#endif
+}
+
+/* The copies of the values that a split's calls take, on the stack when they
+   fit. */
+#define SMALL_WORDS 1024
+
+typedef struct {
+  program f;
+  void **buffers;
+  int64_t *copies; /* n values per worker */
+  int64_t n, lo, hi;
+} job;
+
+static void body(int64_t first, int64_t last, int worker, void *ctx) {
+  job *j = ctx;
+  int64_t *v = j->copies + (size_t)worker * (size_t)j->n;
+  v[j->lo] = first;
+  v[j->hi] = last;
+  synchronize();
+  j->f(j->buffers, v);
+}
+
+/* The threads a split of {extent, blocks, lo, hi} runs on: one copy of the
+   values each. The pool's blocks are at most [extent], and its threads at
+   most its blocks. */
+static int threads_of(const int64_t *split) {
+  int64_t t = nx_pool_performance_cores();
+  if (t > split[1]) t = split[1];
+  if (t > split[0]) t = split[0] > 0 ? split[0] : 1;
+  return (int)t;
+}
+
+/* [f] on [buffers] and [copies], once, or split by [split] on [threads]
+   threads, each the pool's worker of its copy of the [n] values. The first
+   copy holds the values; the others are filled here. */
+static void run(program f, void **buffers, int64_t *copies, int64_t n,
+                const int64_t *split, int threads) {
+  if (split == NULL) {
+    synchronize();
+    f(buffers, copies);
+    return;
+  }
+  for (int w = 1; w < threads; w++)
+    memcpy(copies + (size_t)w * (size_t)n, copies, (size_t)n * sizeof *copies);
+  job j = {f, buffers, copies, n, split[2], split[3]};
+  nx_pool_run(threads, split[0], split[1], body, &j);
+}
+
+/* The entry of linked code. Its copies come from the stack when they fit,
+   else from malloc, else from the stack for as many threads as fit. */
+SYSV void device_host_call(program f, void **buffers, const int64_t *values,
+                           int64_t n, const int64_t *split) {
+  if (split == NULL) {
+    synchronize();
+    f(buffers, values);
+    return;
+  }
+  int threads = threads_of(split);
+  int64_t small[SMALL_WORDS], *copies = small;
+  if ((size_t)threads * (size_t)n > SMALL_WORDS) {
+    copies = malloc((size_t)threads * (size_t)n * sizeof *copies);
+    if (copies == NULL) {
+      copies = small;
+      threads = (int)(SMALL_WORDS / n);
+    }
+  }
+  if (threads == 0) {
+    fputs("device_host_call: no memory for a copy of the values\n", stderr);
+    abort();
+  }
+  memcpy(copies, values, (size_t)n * sizeof *copies);
+  run(f, buffers, copies, n, split, threads);
+  if (copies != small) free(copies);
+}
+
+/* Calls the program at [entry] on [buffers] and [values], split by [split]
+   if it is [Some], with the runtime released. The buffers' addresses and the
+   copies of the values are in C memory, reserved before the release. [code]
+   is the program's mapping, which the root keeps mapped while it runs. */
+value caml_device_host_call(value v_entry, value v_code, value v_buffers,
+                            value v_values, value v_split) {
+  CAMLparam5(v_entry, v_code, v_buffers, v_values, v_split);
+  size_t nb = Wosize_val(v_buffers), n = Wosize_val(v_values);
+  int64_t split[4], *s = NULL;
+  int threads = 1;
+  if (Is_some(v_split)) {
+    for (int i = 0; i < 4; i++)
+      split[i] = Long_val(Field(Some_val(v_split), i));
+    s = split;
+    threads = threads_of(s);
+  }
+  void *small_b[SMALL_WORDS], **buffers = small_b;
+  int64_t small_v[SMALL_WORDS], *copies = small_v;
+  if (nb > SMALL_WORDS) buffers = malloc(nb * sizeof *buffers);
+  if ((size_t)threads * n > SMALL_WORDS)
+    copies = malloc((size_t)threads * n * sizeof *copies);
+  if (buffers == NULL || copies == NULL) {
+    if (buffers != small_b) free(buffers);
+    if (copies != small_v) free(copies);
+    caml_raise_out_of_memory();
+  }
+  for (size_t i = 0; i < nb; i++)
+    buffers[i] = (void *)Long_val(Field(v_buffers, i));
+  for (size_t i = 0; i < n; i++) copies[i] = Long_val(Field(v_values, i));
+  program f = (program)Long_val(v_entry);
+  caml_release_runtime_system();
+  run(f, buffers, copies, (int64_t)n, s, threads);
+  caml_acquire_runtime_system();
+  if (buffers != small_b) free(buffers);
+  if (copies != small_v) free(copies);
+  CAMLreturn(Val_unit);
+}
+
+intnat caml_device_host_workers(value unit) {
+  (void)unit;
+  return nx_pool_performance_cores();
+}
+
+value caml_device_host_workers_byte(value unit) {
+  return Val_long(caml_device_host_workers(unit));
 }
