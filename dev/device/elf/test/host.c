@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
 /* A function as the host loader takes it: a call to a function another object
    defines, a static counter in .bss and a constant table in .rodata.
    host_x86_64.o and host_aarch64.o are this file compiled by:

@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
 /* Host kernels as the host loader takes them: position-independent code with
    constants in .rodata, a helper the kernels call, and math functions the
    loader resolves by name. host_arm64.o is this file compiled by:
