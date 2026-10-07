@@ -45,14 +45,22 @@ external now_ns : unit -> (int[@untagged])
   = "caml_device_pci_now_ns_byte" "caml_device_pci_now_ns"
 [@@noalloc]
 
-(* This machine has no transport: nothing fails it. *)
-type t = { name : string option; ops : ops }
+(* This machine has no transport: nothing fails it. [reserved] is the ranges
+   [reserve] gave, which [Function] checks addresses against before a transport
+   is asked; [lock] guards it. *)
+type t = {
+  name : string option;
+  ops : ops;
+  lock : Mutex.t;
+  mutable reserved : (int * int) list;
+}
 
 let address = Address.v
 let compare_address = Address.compare
-let at root = { name = None; ops = Local.ops (Sysfs.v root) }
-let this = { name = None; ops = Local.ops Local.this }
-let make ~name ops = { name = Some name; ops }
+let machine name ops = { name; ops; lock = Mutex.create (); reserved = [] }
+let at root = machine None (Local.ops (Sysfs.v root))
+let this = machine None (Local.ops Local.this)
+let make ~name ops = machine (Some name) ops
 let name m = m.name
 let failed m = transport_failed m.ops.transport
 let page m = m.ops.page
@@ -60,7 +68,18 @@ let page m = m.ops.page
 let functions m =
   List.sort (fun a b -> Address.compare a.bus b.bus) (m.ops.functions ())
 
-let reserve m ~base n = m.ops.reserve ~base n
+let reserve m ~base n =
+  let r = m.ops.reserve ~base n in
+  if Result.is_ok r then
+    Mutex.protect m.lock (fun () ->
+        if not (List.mem (base, n) m.reserved) then
+          m.reserved <- (base, n) :: m.reserved);
+  r
+
+let reserved m a n =
+  Mutex.protect m.lock @@ fun () ->
+  List.exists (fun (base, len) -> a >= base && a <= base + len - n) m.reserved
+
 let take m bus = m.ops.take bus
 
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]

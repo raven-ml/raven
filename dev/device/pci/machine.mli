@@ -88,9 +88,9 @@ val wait : t -> ms:int -> (unit -> bool) -> bool
     {!Function} refuses misuse before an operation is called, and counts the
     windows and pins of each function. An operation is called only with
     arguments {!Function} accepts, with sizes of system memory rounded up to
-    {!page}, and on a released function only [free_dma], [unpin] and one
-    [release] are. Every pin and unpin is passed on, so a transport counts them
-    too. *)
+    {!page} and addresses of memory inside ranges {!reserve} reserved, and on a
+    released function only [free_dma], [unpin] and one [release] are. Every pin
+    and unpin is passed on, so a transport counts them too. *)
 
 (** The type for how a function reaches system memory. *)
 type addressing = Ops.addressing =
@@ -148,6 +148,10 @@ val make : name:string -> ops -> t
 
 (* [take m bus] is [m]'s take: {!Function.take} builds on it. *)
 val take : t -> string -> (fn, string) result
+
+(* [reserved m a n] is [true] iff the [n] bytes at [a] lie in one range
+   {!reserve} reserved on [m]. *)
+val reserved : t -> int -> int -> bool
 
 (* [at root] is this machine as the directory [root] shows it: its functions
    under [root/sys/bus/pci], its VFIO files under [root/dev/vfio]. {!this} is

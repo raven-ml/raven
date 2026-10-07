@@ -143,7 +143,9 @@ let machine () =
       reserve = (fun ~base:_ _ -> Ok ());
     }
   in
-  { machine = Machine.make ~name:"fake" ops; fakes; config }
+  let machine = Machine.make ~name:"fake" ops in
+  require_ok (Machine.reserve machine ~base:space_base space_length);
+  { machine; fakes; config }
 
 (* Bus addresses no other GPU of the run holds. *)
 let buses = ref 0

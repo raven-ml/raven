@@ -196,17 +196,26 @@ let alloc_dma ?(contiguous = false) ?va f n =
          "Function.alloc_dma: %d bytes of contiguous memory, expected at most \
           2 MiB"
          n);
-  Option.iter (on_page f "alloc_dma") va;
-  (match va with
-  | Some va
-    when contiguous && n > page
-         && f.fn.addressing = Machine.Physical
-         && va mod huge <> 0 ->
-      invalid_arg
-        (Printf.sprintf
-           "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs"
-           va)
-  | _ -> ());
+  (* Reached physically, contiguous memory larger than a page is a huge page,
+     which maps whole at [va]. *)
+  let huge_page =
+    contiguous && n > page && f.fn.addressing = Machine.Physical
+  in
+  let mapped = if huge_page then huge else n in
+  Option.iter
+    (fun va ->
+      on_page f "alloc_dma" va;
+      if huge_page && va mod huge <> 0 then
+        invalid_arg
+          (Printf.sprintf
+             "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs"
+             va);
+      if not (Machine.reserved f.machine va mapped) then
+        invalid_arg
+          (Printf.sprintf
+             "Function.alloc_dma: 0x%x is in no range Machine.reserve reserved"
+             va))
+    va;
   let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
   Ok dma

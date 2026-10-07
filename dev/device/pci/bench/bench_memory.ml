@@ -31,6 +31,9 @@ let sizes = [ ("4KiB", 4 * kib); ("16MiB", 16 * mib) ]
 let page = 4 * kib
 let bar_base = 1 lsl 39
 
+(* The GPU's virtual addresses, which the machine reserves. *)
+let space_base = 1 lsl 40
+
 (* The pages of system memory: one run each, every other page, so no two
    merge. *)
 let system_base = 1 lsl 36
@@ -78,6 +81,7 @@ let take ~bar_size =
         reserve = (fun ~base:_ _ -> Ok ());
       }
   in
+  Result.get_ok (Machine.reserve machine ~base:space_base space_base);
   Result.get_ok (Function.take machine bus)
 
 (* Page tables
@@ -119,7 +123,6 @@ let zero (b : entries) pa n =
 let large ~level = level >= 2
 let levels = [ 12; 21; 30; 39 ]
 let bits = 48
-let space_base = 1 lsl 40
 
 let page_table () =
   let b = entries () in

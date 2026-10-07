@@ -226,6 +226,11 @@ let absent = "0000:03:00.0"
 let machines = Atomic.make 0
 let next_base () = (1 + (Atomic.fetch_and_add machines 1 mod 0x7000)) lsl 32
 
+(* Each machine reserves [reserved] bytes from [va_base], where DMA memory is
+   asked. *)
+let va_base = 0x7f00_0000_0000
+let reserved = 8 * mib
+
 let fake_machine ?(base = next_base ()) ?(page = 4096)
     ?(addressing = Machine.Physical) () =
   let far = far 0 4096 in
@@ -264,6 +269,7 @@ let fake_machine ?(base = next_base ()) ?(page = 4096)
         reserve = (fun ~base:_ _ -> Ok ());
       }
   in
+  require_ok (Machine.reserve machine ~base:va_base reserved);
   (machine, m)
 
 let take_fake ?base ?page ?addressing () =
@@ -510,8 +516,6 @@ let refused name ?page ?addressing use =
       raises_match (Exn.invalid_arg ~substring:"") (fun () -> use f);
       equal ~msg:"what the machine was asked" (list string) [] fake.calls)
 
-let va_base = 0x7f00_0000_0000
-
 let misuse_refused =
   group ~timeout:patience "misuse is refused before the machine is asked"
     [
@@ -537,12 +541,10 @@ let misuse_refused =
           Function.set_config32 f 4094 0);
       refused "an interrupt wait below zero" (fun f ->
           Function.interrupt f (-1));
-      xfail
-        ~reason:
-          "Function.alloc_dma hands a transport a va that no Machine.reserve \
-           reserved; only this machine refuses it (sysmem.ml, map_bytes)"
-        (refused "DMA memory at an address no reservation holds" (fun f ->
-             Function.alloc_dma ~va:va_base f 4096));
+      refused "DMA memory at an address no reservation holds" (fun f ->
+          Function.alloc_dma ~va:(va_base + reserved) f 4096);
+      refused "DMA memory that ends past its reservation" (fun f ->
+          Function.alloc_dma ~va:(va_base + reserved - 4096) f 8192);
     ]
 
 (* Sequences against a model
@@ -695,6 +697,11 @@ let alloc_at f contiguous va n =
          && bytes > page
          && v mod (2 * mib) <> 0 ->
       misuse "a huge page off 2 MiB"
+  | Some v ->
+      let huge = contiguous && f.rm.r_addressing = Physical && bytes > page in
+      let mapped = if huge then 2 * mib else bytes in
+      if v + mapped > va_base + reserved then
+        misuse "an address no reservation holds"
   | _ -> ());
   let used =
     List.concat_map
@@ -797,12 +804,13 @@ let take_cmd =
 let fsys g (f, _) = g f
 
 (* Inputs at each bound: empty windows, addresses off a 16 KiB page, contiguous
-   memory above 2 MiB and huge pages off 2 MiB among them. *)
+   memory above 2 MiB, huge pages off 2 MiB and memory past the reservation
+   among them. *)
 let size = 64 * 1024
 let offs = [ -1; 0; 1; 16; size - 1; size; size + 1; max_int ]
 let map_lens = [ -1; 0; 1; 16; 4096; size - 1; size + 1; max_int ]
 let lens = [ 1; 4095; 4096; 4097; 16385; (2 * mib) - 1; 2 * mib; (2 * mib) + 1 ]
-let vas = [ 0; 4096; 16384; 2 * mib; 4 * mib ]
+let vas = [ 0; 4096; 16384; 2 * mib; 4 * mib; reserved - 4096; reserved ]
 let pin_addrs = ints (List.map (( + ) pin_base) [ 0; 4096; 16384 ])
 let pin_lens = ints [ 1; 16384 ]
 let pinned = among (pair int int) fn_t (fun f -> sorted f.r_pins)

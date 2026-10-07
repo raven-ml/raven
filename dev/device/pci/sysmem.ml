@@ -158,17 +158,11 @@ let unpin a n = Mutex.protect lock (fun () -> drop_pins a n)
 
 (* Memory *)
 
-(* Maps [n] bytes at [va], which must lie in a reservation: mapping over
-   anything else would replace the process's own memory. Without [va], where the
-   system chooses. A huge page the system lacks is ENOMEM, and locked memory
-   past the locked-memory limit EAGAIN (mmap(2)). *)
+(* Maps [n] bytes at [va], which lie in a reservation, as Function checked:
+   mapping over anything else would replace the process's own memory. Without
+   [va], where the system chooses. A huge page the system lacks is ENOMEM, and
+   locked memory past the locked-memory limit EAGAIN (mmap(2)). *)
 let map_bytes ?va n ~huge ~locked =
-  Option.iter
-    (fun va ->
-      if not (Mutex.protect lock (fun () -> reserved_at va n)) then
-        invalid_arg
-          (Printf.sprintf "Function.alloc_dma: 0x%x is in no reserved range" va))
-    va;
   match map_at (Option.value va ~default:0) n huge locked with
   | a -> a
   | exception Unix.Unix_error (e, _, _) ->

@@ -36,7 +36,9 @@ val create :
     are [tables] and whose memory BAR is [bar]. [peer ranges] is how another GPU
     reaches the physical [ranges] of this one's memory, and in which
     {!Page_table.target}; it defaults to through the memory BAR's bus address
-    ({!Function.bar}), as {!Page_table.System} memory.
+    ({!Function.bar}), as {!Page_table.System} memory. System memory goes at
+    addresses of [tables]' space ({!Page_table.space}), which the driver
+    reserves on [f]'s machine first ({!Machine.reserve}).
 
     Raises [Invalid_argument] if [f] has no BAR [bar]. *)
 
@@ -84,7 +86,8 @@ val alloc : ?uncached:bool -> t -> kind -> int -> (memory option, string) result
     what it took, [why] naming what is missing as {!Function.alloc_dma} does:
     such a limit is cured by a setting, rarely by freeing memory.
 
-    Raises [Invalid_argument] if [n <= 0]. *)
+    Raises [Invalid_argument] if [n <= 0], or if system memory goes at addresses
+    {!Machine.reserve} did not reserve. *)
 
 val free : t -> memory -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.

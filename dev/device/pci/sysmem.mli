@@ -21,8 +21,8 @@ val alloc : ?contiguous:bool -> ?va:int -> int -> Window.t * int list
 (** [alloc n] is [n] bytes, rounded up to {!page}, of new, zeroed, locked
     memory, with the physical address of each page, pinned until {!free}. At
     [va], or where the system chooses. [~contiguous:true] memory larger than a
-    page is one 2 MiB huge page. Raises [Invalid_argument] if [va] is in no
-    reserved range. *)
+    page is one 2 MiB huge page. [va] and the bytes mapped there lie in a range
+    {!reserve} reserved, as {!Function.alloc_dma} checks. *)
 
 val map : ?va:int -> int -> Window.t
 (** [map n] is {!alloc}'s memory, neither locked nor read for its addresses. *)
