@@ -54,9 +54,10 @@ let tests =
     [
       xfail
         ~reason:
-          "initialisation allocates 19 words where Capability.key takes 5: \
-           Packet's exception Hole takes 3 and Thread_trace's bits, a partial \
-           application, 6"
+          "initialisation allocates 13 words where Capability.key takes 5: \
+           Packet's exception Hole takes 3, and Sdma.trap, a list over \
+           Defs.sdma_op_trap that -opaque builds keep from being a constant, \
+           takes 5"
         (test "initialising the library allocates only Capability.key"
            (fun () -> equal float_exact (key_words ()) init));
       test "reading every table keeps no word live" (fun () ->
