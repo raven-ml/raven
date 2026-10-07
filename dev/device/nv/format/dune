@@ -1,0 +1,13 @@
+(library
+ (name device_nv_format)
+ (libraries device_elf)
+ (modules_without_implementation
+  cubin
+  gpfifo
+  gpu
+  launch
+  local
+  method
+  packet
+  qmd
+  structure))
