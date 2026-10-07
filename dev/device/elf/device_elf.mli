@@ -205,9 +205,10 @@ val of_string :
     - its names together are longer than it, which only names that share bytes
       of their string table can be;
     - its image would be longer than [max_int] bytes;
-    - a relocation's offset lies at or past the end of the section it patches,
-      or a relocation patches allocated memory the image does not hold: a
-      section the image lacks, or an address before its start or past its end.
+    - a relocation's offset lies outside the section it patches, or a relocation
+      patches allocated memory the image does not hold: a section the image
+      lacks, other than a thread-local one without bytes, which takes no memory,
+      or an address before its start or past its end.
 
     Any other object is [Ok]. Reading takes memory linear in [obj]'s length, and
     time linear in it up to sorting its sections, whatever {!field-size} is.

@@ -190,12 +190,16 @@ let header f obj off =
    no bytes whatever its size. *)
 let has_bytes h = h.sh_type <> sht_null && h.sh_type <> sht_nobits
 
-(* ELF's rule for the sections a loader's memory holds: allocated program
-   sections, and allocated sections without bytes except thread-local ones, a
-   template each thread copies, whose addresses other sections take. *)
+(* Whether a section takes memory of its own: it is allocated, and not a
+   thread-local section without bytes ([.tbss]), a template each thread copies,
+   whose addresses the next section takes. *)
+let takes_memory kind flags =
+  flags land shf_alloc <> 0 && not (kind = sht_nobits && flags land shf_tls <> 0)
+
+(* The sections of code and data a loader's memory holds: program sections and
+   sections without bytes that take memory. *)
 let allocated_as kind flags =
-  flags land shf_alloc <> 0
-  && (kind = sht_progbits || (kind = sht_nobits && flags land shf_tls = 0))
+  (kind = sht_progbits || kind = sht_nobits) && takes_memory kind flags
 
 let is_pow2 n = n > 0 && n land (n - 1) = 0
 
@@ -317,14 +321,14 @@ let layout ~align held hs =
 (* [at + n], or [max_int] past it: the end of an address range. *)
 let end_of at n = if at > max_int - n then max_int else at + n
 
-(* The allocated sections the image does not hold, as address ranges sorted and
-   merged into disjoint [(start, end)] pairs, for a binary search. *)
+(* The sections taking memory that the image does not hold, as address ranges
+   sorted and merged into disjoint [(start, end)] pairs, for a binary search. *)
 let lacking held hs =
   let spans = ref [] in
   Array.iteri
     (fun i h ->
-      if h.sh_flags land shf_alloc <> 0 && (not held.(i)) && h.sh_size > 0 then
-        spans := (h.sh_addr, end_of h.sh_addr h.sh_size) :: !spans)
+      if takes_memory h.sh_type h.sh_flags && (not held.(i)) && h.sh_size > 0
+      then spans := (h.sh_addr, end_of h.sh_addr h.sh_size) :: !spans)
     hs;
   let spans = Array.of_list !spans in
   Array.stable_sort by_start spans;

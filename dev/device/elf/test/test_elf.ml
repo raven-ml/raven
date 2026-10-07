@@ -837,24 +837,28 @@ let test_dynamic_relocations () =
   ignore (refused (obj ~at:0x204))
 
 (* A thread-local section without bytes takes no memory, so the section after it
-   starts at its address, as a linker lays out [.tbss] and [.init_array]. *)
+   may start at its address, as a linker lays out [.tbss] and [.init_array]. *)
 let test_tbss_addresses () =
   let dyn, dynnames = symbols [] in
-  let o =
-    read
-      (write
-         [
-           section ~addr:0x100 ".text" "ABCD";
-           tbss ~addr:0x200 ".tbss" 16;
-           section ~addr:0x200 ".data" "EFGH";
-           symtab ~kind:sht_dynsym ~name:".dynsym" ~link:5 dyn;
-           strtab ~name:".dynstr" dynnames;
-           rela_section ~name:".rela.dyn" ~link:4 ~info:0 [ (0x202, 0, 8, 0) ];
-         ])
+  let offsets ~data =
+    let o =
+      read
+        (write
+           [
+             section ~addr:0x100 ".text" "ABCD";
+             tbss ~addr:0x200 ".tbss" 16;
+             section ~addr:data ".data" "EFGH";
+             symtab ~kind:sht_dynsym ~name:".dynsym" ~link:5 dyn;
+             strtab ~name:".dynstr" dynnames;
+             rela_section ~name:".rela.dyn" ~link:4 ~info:0 [ (0x202, 0, 8, 0) ];
+           ])
+    in
+    List.map (fun (r : Elf.relocation) -> r.offset) o.relocations
   in
-  equal ~msg:"one at its addresses patches the section that holds them"
-    (list int) [ 0x102 ]
-    (List.map (fun (r : Elf.relocation) -> r.offset) o.relocations)
+  equal ~msg:"one at its addresses patches the section that takes them"
+    (list int) [ 0x102 ] (offsets ~data:0x200);
+  equal ~msg:"or the zeros between sections where none does" (list int)
+    [ 0x102 ] (offsets ~data:0x300)
 
 (* Extended section numbering *)
 
@@ -979,7 +983,8 @@ let many_relocation_sections count =
   let symtab_at = count + 2 and strtab_at = (3 * count) + 2 in
   write
     (section ~addr:0x100 ".text" "ABCD"
-     :: List.init count (fun i -> tbss ~addr:(0x1000 + (2 * i)) ".tbss" 1)
+     :: List.init count (fun i ->
+         section ~kind:sht_init_array ~addr:(0x1000 + (2 * i)) ".init_array" "x")
     @ List.init count (fun _ -> symtab ~link:strtab_at entries)
     @ List.init count (fun i ->
         rela_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1, 0) ])
@@ -1079,17 +1084,6 @@ let shared_names =
       strtab ("\000" ^ String.make 256 'n' ^ "\000");
     ]
 
-(* An addressed object with [.tbss] between [.text] and [.data], and a dynamic
-   relocation at address [at]. *)
-let dynamic_into ~at =
-  write
-    [
-      section ~addr:0x100 ".text" "ABCD";
-      tbss ~addr:0x104 ".tbss" 8;
-      section ~addr:0x110 ".data" "EFGH";
-      rela_section ~name:".rela.dyn" ~link:0 ~info:0 [ (at, 0, 1, 0) ];
-    ]
-
 let refusals =
   let len = String.length well_formed in
   let rela_entry = entry well_formed 6 0 24 in
@@ -1145,8 +1139,6 @@ let refusals =
       write [ section ~addr:0x102 ~align:4 ".text" "ABCD" ] );
     ( "a symbol value past the int range",
       patch well_formed (symbol_entry + 15) 1 0x40 );
-    ( "a dynamic relocation into .tbss between program sections",
-      dynamic_into ~at:0x106 );
     ( "an address past the int range",
       patch_section (addressed ~text:0x100 ~data:0x200) 2 sh_addr 8 (-16) );
     ( "a relocation past its section's end",
@@ -1176,7 +1168,6 @@ let test_near_refusals () =
             { (tbss ~addr:0x103 ".tbss" 8) with align = 8 };
           ]));
   ignore (read (patch well_formed (symbol_entry + 15) 1 0xff));
-  ignore (read (dynamic_into ~at:0x10c));
   ignore
     (read
        (write
@@ -1989,12 +1980,8 @@ let () =
                test_unloaded_relocations;
              test "a dynamic relocation patches an address in the image"
                test_dynamic_relocations;
-             xfail
-               ~reason:
-                 "a relocation at the addresses of .tbss is refused, though \
-                  the section after it holds them"
-               (test "one at a thread-local section's addresses"
-                  test_tbss_addresses);
+             test "one at a thread-local section's addresses"
+               test_tbss_addresses;
            ];
          group ~timeout "extended numbering"
            [
