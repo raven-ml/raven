@@ -2,9 +2,4 @@
  (name test_elf)
  (libraries device_elf windtrap)
  (deps
-  simple_add_sm89.cubin
-  simple_add_gfx1100.hsaco
-  lds_gfx1100.o
-  unfold.8.co
-  host_x86_64.o
-  host_aarch64.o))
+  (source_tree fixtures)))

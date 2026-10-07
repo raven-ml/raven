@@ -5,10 +5,13 @@
 
 /* Host kernels as the host loader takes them: position-independent code with
    constants in .rodata, a helper the kernels call, and math functions the
-   loader resolves by name. host_arm64.o is this file compiled by:
+   loader resolves by name. host_aarch64.o is this file compiled, in this
+   directory, by Homebrew clang 22.1.7:
 
    clang -c -x c -O2 -fPIC -ffreestanding -fno-math-errno -nostdlib -fno-ident \
-     -ffixed-x18 --target=arm64-none-unknown-elf host.c -o host_arm64.o */
+     -ffixed-x18 --target=aarch64-none-unknown-elf host.c -o host_aarch64.o
+
+   The object names its source file, so the file keeps its name. */
 
 float expf(float);
 float logf(float);

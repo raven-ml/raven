@@ -11,17 +11,17 @@
 
 module Elf = Device_elf
 
-(* Copies of the repository's objects: unary.float16.co of
-   packages/nx/lib/amd/kernels/gfx12-generic/, which `uv run
-   packages/nx/lib/amd/kernels/gen.py` compiles from src/ there, and
-   simple_add_sm89.cubin of packages/tolk/test/runtime/ops_nv/, NVRTC 12.8's
-   sm_89 code of simple_add.cu there. host.c says how host_arm64.o was
-   compiled. *)
+(* The suite's fixtures. ../test/fixtures/README.md says where each comes
+   from. *)
 
-let read path = In_channel.with_open_bin path In_channel.input_all
+let read path =
+  In_channel.with_open_bin
+    (Filename.concat "../test/fixtures" path)
+    In_channel.input_all
+
 let code_object = read "unary.float16.co"
 let cubin = read "simple_add_sm89.cubin"
-let host = read "host_arm64.o"
+let host = read "kernels/host_aarch64.o"
 
 let of_string ?align obj () =
   match Elf.of_string ?align obj with Ok o -> o | Error e -> failwith e
