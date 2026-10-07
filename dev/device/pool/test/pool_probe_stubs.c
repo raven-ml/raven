@@ -408,19 +408,6 @@ value probe_performance_cores(value unit) {
   return Val_int(nx_pool_performance_cores());
 }
 
-value probe_system(value unit) {
-  (void)unit;
-#if defined(__APPLE__)
-  return caml_copy_string("macos");
-#elif defined(__linux__)
-  return caml_copy_string("linux");
-#elif defined(_WIN32)
-  return caml_copy_string("windows");
-#else
-  return caml_copy_string("other");
-#endif
-}
-
 /* [probe_sysctl name] is the integer [name] reads, or -1. */
 value probe_sysctl(value v_name) {
 #if defined(__APPLE__)

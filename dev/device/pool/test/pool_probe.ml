@@ -57,9 +57,17 @@ external counted_calls : unit -> int = "probe_counted_calls"
 
 external cores : unit -> int = "probe_cores"
 external performance_cores : unit -> int = "probe_performance_cores"
-external system : unit -> string = "probe_system"
+
+(* The probes of a host fact answer -1 where the host lacks it. *)
+
+(* [sysctl name] is the integer the sysctl [name] reads (macOS). *)
 external sysctl : string -> int = "probe_sysctl"
+
+(* [active_processors ()] is the processors active in every group (Windows). *)
 external active_processors : unit -> int = "probe_active_processors"
+
+(* [pinned_cores ()] pins the calling thread to one CPU of its affinity, reads
+   the cores, restores the affinity and reads them again (Linux). *)
 external pinned_cores : unit -> int * int = "probe_pinned_cores"
 
 (* Calls nx_pool_cores only when run: test_pool's affinity child must call

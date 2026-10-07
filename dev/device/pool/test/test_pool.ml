@@ -121,20 +121,21 @@ let test_core_bounds () =
   at_most ~msg:"performance cores" int ~than:cores fast
 
 let test_macos_cores () =
-  if P.system () <> "macos" then skip ~reason:"the host is not macOS" ();
-  equal ~msg:"cores" int (P.sysctl "hw.physicalcpu") cores;
+  let physical = P.sysctl "hw.physicalcpu" in
+  if physical < 0 then skip ~reason:"the host has no hw.physicalcpu" ();
+  equal ~msg:"cores" int physical cores;
   let fast = P.sysctl "hw.perflevel0.physicalcpu" in
   if fast < 0 then skip ~reason:"the host has cores of one kind" ();
   equal ~msg:"performance cores" int fast (P.performance_cores ())
 
 let test_other_performance_cores () =
-  if P.system () = "macos" then skip ~reason:"the host is macOS" ();
+  if P.sysctl "hw.perflevel0.physicalcpu" >= 0 then
+    skip ~reason:"the host reports its performance cores" ();
   equal int cores (P.performance_cores ())
 
 (* A process of this executable pins itself to one CPU, reads the cores, then
    restores its affinity and reads them again. *)
 let test_affinity () =
-  if P.system () <> "linux" then skip ~reason:"affinity is Linux's" ();
   let env =
     Array.append (Unix.environment ()) [| child_variable ^ "=affinity" |]
   in
@@ -144,13 +145,15 @@ let test_affinity () =
   in
   let line = In_channel.input_line out in
   ignore (Unix.close_process_full process);
+  if line = Some "-1 -1" then skip ~reason:"the host has no affinity to pin" ();
   equal
     ~msg:"cores at the first call, on one CPU, and after the affinity returned"
     (option string) (Some "1 1") line
 
 let test_windows_cores () =
-  if P.system () <> "windows" then skip ~reason:"the host is not Windows" ();
-  equal ~msg:"cores" int (P.active_processors ()) cores
+  let active = P.active_processors () in
+  if active < 0 then skip ~reason:"the host has no processor groups" ();
+  equal ~msg:"cores" int active cores
 
 let cores_tests =
   group "cores"
@@ -161,7 +164,7 @@ let cores_tests =
         "on macOS the cores are the physical cores and the performance cores \
          those of hw.perflevel0"
         test_macos_cores;
-      test "off macOS the performance cores are the cores"
+      test "where the host reports no performance cores, they are the cores"
         test_other_performance_cores;
       test "on Windows the cores are the active processors of every group"
         test_windows_cores;
