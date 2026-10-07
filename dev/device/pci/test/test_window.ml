@@ -199,7 +199,7 @@ let address_alignment make () =
       Window.get64 w 0)
 
 let same_bytes =
-  group "accesses"
+  group ~timeout:patience "accesses"
     [
       stateful ~count:300 "a mapped window behaves as its bytes"
         (commands ~is_mapped:true mapped);
@@ -252,7 +252,7 @@ let sub_address make (s, len, off, n) =
   equal ~msg:"length" int n (Window.length x)
 
 let windows =
-  group "windows"
+  group ~timeout:patience "windows"
     [
       test "v is the bytes at the address it is given" test_v;
       test "through is the bytes at the address it is given" test_through;
@@ -276,7 +276,7 @@ let test_bigarray () =
   equal ~msg:"the bigarray is the window" int (Char.code 'z') (Window.get8 w 9)
 
 let bigarrays =
-  group "bigarrays"
+  group ~timeout:patience "bigarrays"
     [
       test "a mapped window's bigarray is its bytes" test_bigarray;
       test "a far window has no bigarray" (fun () ->
@@ -343,7 +343,7 @@ let long_copies (skew, n, off) =
   cover "the heap compacted during the copies" moved
 
 let long =
-  group "long copies"
+  group ~timeout:patience "long copies"
     [
       prop
         "read, write, blit_string and fill agree with the bytes while the heap \
@@ -466,7 +466,7 @@ let broken () =
   w
 
 let transports =
-  group "transports"
+  group ~timeout:patience "transports"
     ([
        test "a 32- or 64-bit access is one access of its width" test_one_access;
        test "each domain's accesses arrive in the order it makes them"
@@ -498,7 +498,7 @@ let test_window_of () =
     (window_of (Window.sub w 3 9))
 
 let c_view =
-  group "device_pci.h"
+  group ~timeout:patience "device_pci.h"
     [
       test "device_pci_window_of reads a window's place and side" test_window_of;
     ]
