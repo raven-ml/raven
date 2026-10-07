@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "astropy", "photutils"]
+# dependencies = ["numpy", "astropy", "photutils", "regions"]
 # ///
 """Generate the grids' test references.
 
@@ -18,8 +18,8 @@ It writes test/support/grids_reference.ml:
   coordinates with astropy's all_pix2world and world coordinates with its
   all_world2pix;
 - an image of values from an integer formula, with photutils' exact sums over pixel
-  circles and annuli at positions that put their edges on every kind of
-  cell crossing;
+  circles, annuli and ellipses at positions that put their edges on every
+  kind of cell crossing, and astropy regions' exact sums over polygons;
 - a TAN image of 0.031 arcsecond pixels, with photutils' exact sums over
   sky circles and annuli.
 
@@ -39,9 +39,11 @@ import numpy as np
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS, Sip
+from regions import PixCoord, PolygonPixelRegion
 from photutils.aperture import (
     CircularAnnulus,
     CircularAperture,
+    EllipticalAperture,
     SkyCircularAnnulus,
     SkyCircularAperture,
     aperture_photometry,
@@ -370,6 +372,30 @@ def image(shape, seed):
     return ((7919 * i + 104729 * j + 13 * i * j + seed) % 1009) / 64.0
 
 
+# (row, column, a, b, angle in degrees from the column axis toward the row
+# axis, photutils' theta) of each ellipse.
+ELLIPSES = [
+    (20.0, 18.0, 6.0, 3.0, 0.0),
+    (20.5, 18.5, 6.0, 3.0, 90.0),
+    (19.3, 21.7, 7.25, 2.1, 33.0),
+    (24.0, 20.0, 0.9, 0.3, -71.5),
+    (22.123, 19.987, 9.5, 9.5, 12.0),
+    (23.1, 17.9, 11.0, 0.5, 125.0),
+]
+
+# Vertices (row, column) of each polygon: convex, concave, clockwise, with
+# edges along cell edges and through cell corners.
+POLYGONS = [
+    [(10.0, 10.0), (10.0, 20.0), (20.0, 20.0), (20.0, 10.0)],
+    [(10.3, 11.7), (25.1, 14.2), (21.9, 30.6), (12.2, 26.0)],
+    [(12.0, 12.0), (30.0, 15.5), (18.0, 19.0), (28.0, 31.0), (14.0, 27.5)],
+    [(14.0, 27.5), (28.0, 31.0), (18.0, 19.0), (30.0, 15.5), (12.0, 12.0)],
+    [(20.5, 20.5), (21.5, 20.5), (21.5, 21.5)],
+    [(9.5, 9.5), (9.5, 19.5), (19.5, 19.5), (19.5, 9.5)],
+    [(5.25, 5.75), (40.5, 9.5), (33.0, 36.0), (21.0, 22.0), (8.0, 33.5), (15.0, 18.0)],
+]
+
+
 def pixel_apertures():
     data = image(IMAGE_SHAPE, 0)
     circles = []
@@ -380,7 +406,18 @@ def pixel_apertures():
     for row, col, r_in, r_out in ANNULI:
         t = aperture_photometry(data, CircularAnnulus((col, row), r_in, r_out), method="exact")
         annuli.append((row, col, r_in, r_out, float(t["aperture_sum"][0])))
-    return data, circles, annuli
+    ellipses = []
+    for row, col, a, b, angle in ELLIPSES:
+        ap = EllipticalAperture((col, row), a, b, theta=np.deg2rad(angle))
+        t = aperture_photometry(data, ap, method="exact")
+        ellipses.append((row, col, a, b, angle, float(t["aperture_sum"][0])))
+    polygons = []
+    for vertices in POLYGONS:
+        rows, cols = np.array(vertices).T
+        region = PolygonPixelRegion(PixCoord(x=cols, y=rows))
+        weights = region.to_mask(mode="exact").to_image(IMAGE_SHAPE)
+        polygons.append((vertices, float(np.sum(data * weights))))
+    return data, circles, annuli, ellipses, polygons
 
 
 # photutils, sky apertures on a TAN image
@@ -530,7 +567,7 @@ def render():
     out.append("]")
     out.append("")
 
-    data, circles, annuli = pixel_apertures()
+    data, circles, annuli, ellipses, polygons = pixel_apertures()
     out.append(f"let image_shape = [| {IMAGE_SHAPE[0]}; {IMAGE_SHAPE[1]} |]")
     out.append("")
     out.append("(* (row, column, radius, photutils' exact sum). *)")
@@ -545,6 +582,20 @@ def render():
         out.append(
             f"  ({ocaml_float(row)}, {ocaml_float(col)}, {ocaml_float(r_in)}, {ocaml_float(r_out)}, {ocaml_float(s)});"
         )
+    out.append("]")
+    out.append("")
+    out.append("(* (row, column, a, b, angle in degrees, photutils' exact sum). *)")
+    out.append("let pixel_ellipses = [")
+    for row, col, a, b, angle, total in ellipses:
+        out.append(
+            f"  ({ocaml_float(row)}, {ocaml_float(col)}, {ocaml_float(a)}, {ocaml_float(b)}, {ocaml_float(angle)}, {ocaml_float(total)});"
+        )
+    out.append("]")
+    out.append("")
+    out.append("(* Vertices as (row, column) pairs, and regions' exact sum. *)")
+    out.append("let pixel_polygons = [")
+    for vertices, total in polygons:
+        out.append(f"  ({floats(np.array(vertices).ravel())}, {ocaml_float(total)});")
     out.append("]")
     out.append("")
 

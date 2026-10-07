@@ -576,11 +576,17 @@ end
     A cell's {e weight} is the fraction of its area inside the shape, both taken
     in the shape's plane: the quadrilateral of the cell's corners mapped there,
     edges straight. The overlap is exact, computed with no data-dependent branch
-    and differentiable in the shape's centre and size. A cell weighs exactly 1
-    when its corners are all inside a disc, and exactly 0 when its nearest point
-    is at least the radius from the centre and it does not hold the centre. An
-    annulus weighs the outer disc's weight minus the inner's, with the disc's
-    predicates on each.
+    and differentiable in the shape's centre and size, and continuous in a
+    polygon's vertices. A cell weighs exactly 1 when its corners are all inside
+    a disc, and exactly 0 when its nearest point is at least the radius from
+    the centre and it does not hold the centre. An annulus weighs the outer
+    disc's weight minus the inner's, with the disc's predicates on each; an
+    ellipse is a disc after the affine map that takes it there, so its
+    weights' rounding grows as the square of its axis ratio, to 1e-12 of its
+    area at a ratio of 1000. A cell
+    weighs exactly 1 in a polygon when its corners are all inside and no edge
+    crosses it, and exactly 0 when no corner is inside, no edge crosses it and
+    no vertex is in it.
 
     A zero size weighs 0 with zero gradient. Regions have no set algebra: the
     fraction of a cell inside a union is no function of the two fractions. *)
@@ -603,15 +609,39 @@ module Region : sig
   (** [annulus p ~inner ~outer] is the ring between the discs of radii [inner]
       and [outer] about the origin of [p]'s plane. *)
 
+  val ellipse :
+    ('w, Transform.plane) Transform.t ->
+    a:(float, 'e) Nx.t Quantity.t ->
+    b:(float, 'e) Nx.t Quantity.t ->
+    angle:(float, 'e) Nx.t Quantity.t ->
+    ('w, 'e) t
+  (** [ellipse p ~a ~b ~angle] is the ellipse about the origin of [p]'s plane
+      with semi-axis [a] along the direction at [angle] from the plane's +y
+      toward +x, the position angle east of north on the sky, and semi-axis [b]
+      across it. [a] and [b] are in a unit of the plane.
+
+      Raises [Invalid_argument] if [angle] is not an angle. *)
+
+  val polygon :
+    (float, 'e) Nx.dtype -> ('w, Transform.plane) Transform.t -> 'w -> ('w, 'e) t
+  (** [polygon dtype p vertices] is the polygon whose vertices, on axis −2 of
+      [vertices] in either orientation, are mapped by [p] into its plane, with
+      edges straight there. In [about c], edges are straight in angular offsets
+      about [c]; in [gnomonic c] they are great circles. The weights are at
+      [dtype].
+
+      Raises [Invalid_argument] if [vertices] has fewer than three points on
+      axis −2. *)
+
   val weights : ('w, 'e) t -> ('w, 'e) Grid.t -> (float, 'e) Nx.t
   (** [weights r g] is each cell's weight in \[0, 1\], [batch @ Grid.shape g],
       the region's and the grid's batch axes broadcast. Corners map in float64
       and their offsets in the shape's plane are cast to ['e].
 
       Raises [Invalid_argument] through {!Nx.check} where a size is negative or
-      NaN, an annulus's [inner] is above its [outer], or a cell maps to a
-      quadrilateral that is not convex or not oriented as its window's first
-      cell. *)
+      NaN, an annulus's [inner] is above its [outer], two edges of a polygon
+      cross, or a cell maps to a quadrilateral that is not convex or not
+      oriented as its window's first cell. *)
 
   val ptree : unit -> ('w, 'e) t Nx.Ptree.t
   (** [ptree ()] is the structure of regions: the shape's kind, its sizes and

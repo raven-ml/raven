@@ -28,8 +28,9 @@ All notable changes to Ymir are documented in this file.
   `corners`, each cell's exact `measure` (solid angle or area), and windows of
   static shape at traced, batched starts (`window`, `around`). `Grid.cell`
   marks data per cell.
-- `Ymir.Region` places circles and annuli on a grid's world and weighs each
-  cell by its exact covered fraction, differentiable in centre and radius.
+- `Ymir.Region` places circles, annuli, ellipses and polygons on a grid's
+  world and weighs each cell by its exact covered fraction, differentiable in
+  centre and size and continuous in a polygon's vertices.
 - `Ymir_units.Quantity.t` is declared injective (`type !'p t`), so a GADT
   can be indexed by quantities.
 - `Ymir.Observation` holds data on a grid with variance, validity and the

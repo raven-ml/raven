@@ -969,6 +969,17 @@ let rec target : type a b. a endpoint -> (a, b) t -> b endpoint =
   | Stage (Project _, rest) -> target Planar rest
   | Stage (Rotate (_, g), rest) -> target (Sky g) rest
 
+(* [source t e] is the endpoint [t] maps from, given the one it maps to: its
+   first stage's input. *)
+let source : type a b. (a, b) t -> b endpoint -> a endpoint =
+ fun t e ->
+  match t with
+  | Id -> e
+  | Stage (Plane _, _) -> Planar
+  | Stage (Deproject _, _) -> Planar
+  | Stage (Project c, _) -> Sky c.frame
+  | Stage (Rotate (f, _), _) -> Sky f
+
 let value : type a. a endpoint -> a -> value =
  fun e x -> match e with Planar -> P x | Sky _ -> D x
 

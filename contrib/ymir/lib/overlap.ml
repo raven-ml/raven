@@ -181,3 +181,232 @@ let annulus inner outer xs ys =
          (clamp01 (Nx.sub o.weight i.weight)))
   in
   { weight; area = o.area; outside; full }
+
+(* [shoelace xs ys] is twice the signed area of the quadrilateral of corners
+   [(xs.(k), ys.(k))], about its first corner. *)
+let shoelace xs ys =
+  let corner k = (xs.(k), ys.(k)) in
+  let c0 = corner 0 in
+  Nx.add
+    (cross (sub (corner 1) c0) (sub (corner 2) c0))
+    (cross (sub (corner 2) c0) (sub (corner 3) c0))
+
+(* Ellipses
+
+   An ellipse of semi-axes [a] along the direction at [angle] from +y toward
+   +x and [b] across it is the disc of radius [m = min a b] after the affine
+   map that shrinks the axis along the direction by [m / a] and the one
+   across by [m / b]. The map scales every area alike, so a cell's weight is
+   the disc's weight on its mapped corners; shrinking keeps every coordinate
+   within the cell's size. A cell maps to a sliver [a / b] times thinner, and
+   the weights' rounding grows as the square of that ratio: 1e-14 of the
+   ellipse's area at a ratio of 100, 1e-12 at 1000. *)
+let ellipse a b angle xs ys =
+  let s = Nx.sin angle and c = Nx.cos angle in
+  let empty = Nx.logical_or (Nx.equal_s a 0.) (Nx.equal_s b 0.) in
+  let a' = Nx.where empty (Nx.ones_like a) a
+  and b' = Nx.where empty (Nx.ones_like b) b in
+  let m = Nx.minimum a' b' in
+  let ka = Nx.div m a' and kb = Nx.div m b' in
+  let across k = Nx.mul (Nx.sub (Nx.mul xs.(k) c) (Nx.mul ys.(k) s)) kb
+  and along k = Nx.mul (Nx.add (Nx.mul xs.(k) s) (Nx.mul ys.(k) c)) ka in
+  let o = disc m (Array.init 4 across) (Array.init 4 along) in
+  let weight = Nx.where empty (Nx.zeros_like o.weight) o.weight in
+  {
+    weight;
+    area = Nx.mul_s (shoelace xs ys) 0.5;
+    outside = Nx.logical_or empty o.outside;
+    full = Nx.logical_and (Nx.logical_not empty) o.full;
+  }
+
+(* Polygons
+
+   The polygon is the signed sum of the triangles [(c₀, Vⱼ, Vⱼ₊₁)] fanned from
+   the cell's first corner [c₀], and a convex cell's intersection with each
+   triangle is bounded by the parts of the triangle's edges inside the cell
+   and of the cell's edges inside the triangle. Taken about [c₀], the terms of
+   the fan's edges and of the cell's two edges through [c₀] vanish, which
+   leaves, for each polygon edge, the edge clipped to the cell and the cell's
+   edges [c₁c₂] and [c₂c₃] clipped to its triangle, each clip an interval of
+   one parameter (Liang and Barsky). The cell and the polygon are first
+   oriented counter-clockwise. A segment that lies along a boundary counts
+   once in each triangle: a polygon edge along a cell edge counts where the
+   triangle's interior and the cell's meet, and a cell edge along a polygon
+   edge never. *)
+
+(* [clip planes p q] is the interval [[t0, t1]] of [p + t (q - p)], [t] in [0,
+   1], on the inner side of every half-plane: [planes] lists, for each, its
+   side function's values at [p] and [q] (inner where positive), and where the
+   segment lies on its line, whether that counts as inside. *)
+let clip planes =
+  List.fold_left
+    (fun (t0, t1) (f0, f1, on_line) ->
+      let line = Nx.logical_and (Nx.equal_s f0 0.) (Nx.equal_s f1 0.) in
+      let both_in =
+        Nx.logical_and (Nx.greater_equal_s f0 0.) (Nx.greater_equal_s f1 0.)
+      in
+      let both_out = Nx.logical_and (Nx.less_s f0 0.) (Nx.less_s f1 0.) in
+      let span = Nx.sub f0 f1 in
+      let flat = Nx.equal_s span 0. in
+      let t = Nx.div f0 (Nx.where flat (Nx.ones_like span) span) in
+      let entering = Nx.less_s f0 0. in
+      let t0' = Nx.where entering (Nx.maximum t0 t) t0
+      and t1' = Nx.where entering t1 (Nx.minimum t1 t) in
+      let crossing = Nx.logical_not (Nx.logical_or both_in both_out) in
+      let t0' = Nx.where crossing t0' t0 and t1' = Nx.where crossing t1' t1 in
+      let empty =
+        Nx.logical_or
+          (Nx.logical_and line (Nx.logical_not on_line))
+          (Nx.logical_and both_out (Nx.logical_not line))
+      in
+      ( Nx.where empty (Nx.ones_like t0') t0',
+        Nx.where empty (Nx.zeros_like t1') t1' ))
+    (Nx.zeros_like (let f0, _, _ = List.hd planes in f0),
+     Nx.ones_like (let f0, _, _ = List.hd planes in f0))
+    planes
+
+(* [segment c0 p q (t0, t1)] is twice the term of [p + t (q - p)] for [t] in
+   [[t0, t1]], about [c0], and 0 for an empty interval. *)
+let segment c0 p q (t0, t1) =
+  let d = sub q p in
+  let a = along p t0 d and b = along p t1 d in
+  let term = cross (sub a c0) (sub b c0) in
+  Nx.where (Nx.greater t1 t0) term (Nx.zeros_like term)
+
+(* [side a b p] is [(b - a) × (p - a)], positive left of [a → b]. *)
+let side a b p = cross (sub b a) (sub p a)
+
+(* [winding vs p] is whether [p] is inside the polygon [vs], by its winding
+   number: crossings of the ray toward +x, upward ones counted where [p] is
+   left of the edge and downward ones where it is right. *)
+let winding vs (px, py) =
+  let n = Array.length vs in
+  let count = ref (Nx.zeros_like (Nx.add px py)) in
+  for j = 0 to n - 1 do
+    let ((_, ay) as a) = vs.(j) and ((_, by) as b) = vs.((j + 1) mod n) in
+    let s = side a b (px, py) in
+    let up =
+      Nx.logical_and
+        (Nx.logical_and (Nx.less_equal ay py) (Nx.less py by))
+        (Nx.greater_s s 0.)
+    and down =
+      Nx.logical_and
+        (Nx.logical_and (Nx.less_equal by py) (Nx.less py ay))
+        (Nx.less_s s 0.)
+    in
+    let one = Nx.ones_like !count in
+    count :=
+      Nx.add !count
+        (Nx.sub
+           (Nx.where up one (Nx.zeros_like one))
+           (Nx.where down one (Nx.zeros_like one)))
+  done;
+  Nx.not_equal_s !count 0.
+
+(* [crosses a b c d] is whether the segments [a b] and [c d] cross at a point
+   inside both. *)
+let crosses a b c d =
+  let s1 = side a b c and s2 = side a b d in
+  let s3 = side c d a and s4 = side c d b in
+  Nx.logical_and
+    (Nx.less_s (Nx.mul s1 s2) 0.)
+    (Nx.less_s (Nx.mul s3 s4) 0.)
+
+(* [polygon vs xs ys] weighs the cells whose corners are [(xs.(k), ys.(k))]
+   against the polygon of vertices [vs], each coordinate broadcasting against
+   the corners. *)
+let polygon vs xs ys =
+  let n = Array.length vs in
+  (* Reflect a clockwise cell, and with it the polygon, so the cell turns
+     counter-clockwise. *)
+  let twice = shoelace xs ys in
+  let flip = Nx.less_s twice 0. in
+  let mirror x = Nx.where flip (Nx.neg x) x in
+  let xs = Array.map mirror xs in
+  let vs = Array.map (fun (x, y) -> (mirror x, y)) vs in
+  (* Orient the polygon counter-clockwise. *)
+  let twice_own =
+    let acc = ref (Nx.zeros_like (fst vs.(0))) in
+    for j = 0 to n - 1 do
+      acc := Nx.add !acc (cross vs.(j) vs.((j + 1) mod n))
+    done;
+    !acc
+  in
+  let reversed = Nx.less_s twice_own 0. in
+  let edge j =
+    let a = vs.(j) and b = vs.((j + 1) mod n) in
+    let pick (ax, ay) (bx, by) = (Nx.where reversed bx ax, Nx.where reversed by ay) in
+    (pick a b, pick b a)
+  in
+  let corner k = (xs.(k), ys.(k)) in
+  let c0 = corner 0 in
+  (* A polygon edge along a cell edge bounds the triangle's part of the cell
+     where the triangle and the cell lie on one side of it: where the edges
+     run the same way, for a counter-clockwise triangle. *)
+  let cell_planes orientation p q =
+    List.init 4 (fun k ->
+        let a = corner k and b = corner ((k + 1) mod 4) in
+        let same =
+          Nx.greater_s (Nx.mul orientation (dot (sub q p) (sub b a))) 0.
+        in
+        (side a b p, side a b q, same))
+  in
+  let total = ref (Nx.zeros_like (Nx.add twice (fst vs.(0)))) in
+  let never = Nx.zeros Nx.bool [||] in
+  for j = 0 to n - 1 do
+    let a, b = edge j in
+    let orientation = Nx.sign (side c0 a b) in
+    (* The polygon edge inside the cell. *)
+    total :=
+      Nx.add !total (segment c0 a b (clip (cell_planes orientation a b)));
+    (* The cell's far edges inside the triangle (c₀, a, b), oriented as it. *)
+    let tri_planes p q =
+      List.map
+        (fun (u, v) ->
+          ( Nx.mul orientation (side u v p),
+            Nx.mul orientation (side u v q),
+            never ))
+        [ (c0, a); (a, b); (b, c0) ]
+    in
+    List.iter
+      (fun k ->
+        let p = corner k and q = corner (k + 1) in
+        let term = segment c0 p q (clip (tri_planes p q)) in
+        total := Nx.add !total (Nx.mul orientation term))
+      [ 1; 2 ]
+  done;
+  let area = Nx.abs twice in
+  (* Predicates: every corner inside and no edge crossing, or no corner
+     inside, no edge crossing and no vertex inside the cell. *)
+  let inside = Array.init 4 (fun k -> winding vs (corner k)) in
+  let all_in = Array.fold_left Nx.logical_and inside.(0) (Array.sub inside 1 3) in
+  let any_in = Array.fold_left Nx.logical_or inside.(0) (Array.sub inside 1 3) in
+  let cross_any = ref (Nx.zeros Nx.bool [||]) in
+  let vertex_in = ref (Nx.zeros Nx.bool [||]) in
+  for j = 0 to n - 1 do
+    let a = vs.(j) and b = vs.((j + 1) mod n) in
+    for k = 0 to 3 do
+      cross_any :=
+        Nx.logical_or !cross_any (crosses a b (corner k) (corner ((k + 1) mod 4)))
+    done;
+    let within =
+      List.fold_left
+        (fun acc k ->
+          Nx.logical_and acc
+            (Nx.greater_equal_s (side (corner k) (corner ((k + 1) mod 4)) a) 0.))
+        (Nx.ones Nx.bool [||]) [ 0; 1; 2; 3 ]
+    in
+    vertex_in := Nx.logical_or !vertex_in within
+  done;
+  let full = Nx.logical_and all_in (Nx.logical_not !cross_any) in
+  let outside =
+    Nx.logical_not (Nx.logical_or (Nx.logical_or any_in !cross_any) !vertex_in)
+  in
+  let flat = Nx.equal_s area 0. in
+  let ratio = Nx.div !total (Nx.where flat (Nx.ones_like area) area) in
+  let weight =
+    Nx.where outside (Nx.zeros_like ratio)
+      (Nx.where full (Nx.ones_like ratio)
+         (Nx.where flat (Nx.zeros_like ratio) (clamp01 ratio)))
+  in
+  { weight; area = Nx.mul_s twice 0.5; outside; full }
