@@ -17,9 +17,12 @@
     the machine touches it. A GPU lost while driven over PCI opens again only
     after a {!reset}.
 
-    Opening and changing GPUs of one vendor are serialized. The driver puts the
-    GPU's name in front of an [Error]'s message. A function given a GPU number
-    [i] raises [Invalid_argument] if [i < 0]. *)
+    These facts belong to a value of {!t}: a process makes one per vendor.
+    Opening and changing GPUs of one vendor are serialized, the driver's start
+    included, so a start that takes seconds delays the vendor's other opens and
+    changes; {!release} and {!lose} wait for none. The driver puts the GPU's
+    name in front of an [Error]'s message. A function given a GPU number [i]
+    raises [Invalid_argument] if [i < 0]. *)
 
 type t
 (** The type for a vendor's GPUs. *)
@@ -41,8 +44,9 @@ val buses : t -> Machine.t -> string list
     An open is a bracket. It holds the GPU and calls the driver's [f], which
     starts the GPU. If [f] is [Ok _], the process keeps the hold until
     {!release} or {!lose}; otherwise the open gives back what it took.
-    [Failure], [Sys_error] and [Unix.Unix_error] raised by [f] are [Error]s, so
-    a driver's open raises nothing the world causes. *)
+    [Failure], [Sys_error] and [Unix.Unix_error] raised by [f] are [Error]s
+    whose message is the exception's, so a driver's open raises nothing the
+    world causes; other exceptions pass through, the GPU given back. *)
 
 type hold
 (** The type for the process's hold on one GPU. *)
@@ -127,8 +131,9 @@ val attach : t -> int -> (unit, string) result
 val reset :
   t -> Machine.t -> int -> (Function.t -> unit) -> (unit, string) result
 (** [reset g m i f] takes the function of GPU [i] of [m], calls [f] on it to
-    reset the GPU as its vendor does, and releases it. A GPU lost over PCI opens
-    again afterwards. [Failure] raised by [f] is an [Error].
+    reset the GPU as its vendor does, and releases it, whatever [f] raises. A
+    GPU lost over PCI opens again after a reset whose [f] returns. Exceptions
+    raised by [f] are as in {{!holds}an open}.
 
     [Error why] if [i] is no GPU, if the process holds it, or if its function
     cannot be taken. *)

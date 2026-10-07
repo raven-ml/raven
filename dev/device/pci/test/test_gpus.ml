@@ -243,11 +243,10 @@ let numbering =
       prop "a vendor's GPUs are the functions it recognizes, in bus order"
         (Gen.with_pp pp_ids (Gen.subsequence pool))
         test_in_order;
-      xfail ~reason:"Machine.functions keeps the transport's order"
-        (prop
-           "a vendor's GPUs are in bus order whatever order the transport \
-            lists them in"
-           any_order test_any_order);
+      prop
+        "a vendor's GPUs are in bus order whatever order the transport lists \
+         them in"
+        any_order test_any_order;
       test "GPU i is the ith bus address, its function taken there" test_ith;
       test "a reset of GPU i takes the ith bus address's function"
         test_reset_ith;
@@ -597,6 +596,26 @@ let test_lose_race () =
   let d = require_some !opener in
   ignore (require_error ~msg:"the open while it was lost" (Domain.join d))
 
+(* While GPU 0's driver starts, the main domain gives GPU 1 back. The driver
+   waits a while for it, so that a give-back held back by the start returns only
+   after the driver gave up. *)
+let test_give_back_waits (_, give_back) =
+  let g, m, _ = three () in
+  let h1 = hold g m 1 in
+  let inside = Atomic.make false and back = Atomic.make false in
+  let start _ _ =
+    Atomic.set inside true;
+    Ok (Machine.wait Machine.this ~ms:2000 (fun () -> Atomic.get back))
+  in
+  let d = Domain.spawn (fun () -> Gpus.open_pci g m 0 start) in
+  ignore (Machine.wait Machine.this ~ms:2000 (fun () -> Atomic.get inside));
+  give_back h1;
+  Atomic.set back true;
+  equal ~msg:"given back while GPU 0's driver started" bool true
+    (require_ok (Domain.join d))
+
+let give_backs = [ ("release", Gpus.release); ("lose", Gpus.lose) ]
+
 (* A model *)
 
 type state = Free | Held | Lost
@@ -731,6 +750,8 @@ let serialized =
       cases "opens and resets run their drivers one at a time" ~name:fst others
         test_one_at_a_time;
       test "a GPU lost while another domain opens it stays lost" test_lose_race;
+      cases "giving a GPU back waits for no driver's start" ~name:fst give_backs
+        test_give_back_waits;
     ]
 
 let () =

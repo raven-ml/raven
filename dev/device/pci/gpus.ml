@@ -5,10 +5,13 @@
 
 type interface = Kernel | Pci
 
-(* A vendor's GPUs and the process's state for them, under [mutex]: the
-   interface this machine's GPUs are reached through, fixed by the first
-   successful open; the GPUs held; and those lost over PCI, which open again
-   only after a reset. A GPU is named by its machine and bus address. *)
+(* A vendor's GPUs. [mutex] serializes opens, resets and changes, drivers
+   included, and guards [interface], how this machine's GPUs are reached, fixed
+   by the first successful open. Only opens add holds and only resets clear lost
+   GPUs, so what they check stays true while they run. [holds] guards the GPUs
+   held and those lost over PCI, which open again only after a reset; it is held
+   briefly, so that giving a GPU back waits for no driver. A GPU is named by its
+   machine and bus address. *)
 type t = {
   name : string;
   lock : string;
@@ -16,6 +19,7 @@ type t = {
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
   mutable interface : interface option;
+  holds : Mutex.t;
   mutable held : hold list;
   mutable spent : (Machine.t * string) list;
 }
@@ -25,7 +29,6 @@ and hold = {
   machine : Machine.t;
   bus : string;
   fn : Function.t option;
-  mutable given_back : bool;
 }
 
 let make ~name ~lock ~memory_bar is_gpu =
@@ -36,6 +39,7 @@ let make ~name ~lock ~memory_bar is_gpu =
     is_gpu;
     mutex = Mutex.create ();
     interface = None;
+    holds = Mutex.create ();
     held = [];
     spent = [];
   }
@@ -62,7 +66,9 @@ let gpu g m i =
       Error
         (Printf.sprintf "no GPU %d; there are %d %s GPUs" i (List.length all)
            g.name)
-  | Some bus when List.exists (fun h -> h.machine == m && h.bus = bus) g.held ->
+  | Some bus
+    when Mutex.protect g.holds (fun () ->
+             List.exists (fun h -> h.machine == m && h.bus = bus) g.held) ->
       Error (bus ^ " is open in this process")
   | Some bus -> Ok bus
 
@@ -86,11 +92,15 @@ let refuse_interface g wanted =
 
 (* Opening *)
 
-let hold g m bus fn = { gpus = g; machine = m; bus; fn; given_back = false }
+let hold g m bus fn = { gpus = g; machine = m; bus; fn }
+
+let lost g m bus =
+  Mutex.protect g.holds (fun () ->
+      List.exists (fun (m', b) -> m' == m && b = bus) g.spent)
 
 let keep g m interface h =
   if m == Machine.this then g.interface <- Some interface;
-  g.held <- h :: g.held
+  Mutex.protect g.holds (fun () -> g.held <- h :: g.held)
 
 let open_kernel g m i f =
   index "open_kernel" i;
@@ -114,7 +124,7 @@ let open_pci g m i f =
   let* () = if m == Machine.this then refuse_interface g Pci else Ok () in
   let* bus = gpu g m i in
   let* () =
-    if List.exists (fun (m', b) -> m' == m && b = bus) g.spent then
+    if lost g m bus then
       Error (bus ^ " was lost; over PCI only a reset recovers it")
     else Ok ()
   in
@@ -133,16 +143,16 @@ let open_pci g m i f =
 
 type ending = Released | Lost
 
-(* One critical section, so that no open sees a lost GPU before it is spent. *)
+(* One step against opens and resets: none sees the GPU free with its function
+   still taken, or lost before it is spent. *)
 let give_back ending h =
   let g = h.gpus in
-  Mutex.protect g.mutex @@ fun () ->
-  if h.given_back then
+  Mutex.protect g.holds @@ fun () ->
+  if not (List.memq h g.held) then
     invalid_arg
       (Printf.sprintf "Gpus.%s: %s was given back already"
          (match ending with Released -> "release" | Lost -> "lose")
          h.bus);
-  h.given_back <- true;
   g.held <- List.filter (fun h' -> h' != h) g.held;
   if ending = Lost && Option.is_some h.fn then
     g.spent <- (h.machine, h.bus) :: g.spent;
@@ -159,10 +169,7 @@ let change g fn i f =
   index fn i;
   Mutex.protect g.mutex @@ fun () ->
   let* bus = gpu g Machine.this i in
-  let* lock = Local.lock bus "nx" in
-  Fun.protect
-    ~finally:(fun () -> Local.close lock)
-    (fun () -> caught (fun () -> Ok (f bus)))
+  Local.locked bus (fun () -> caught (fun () -> Ok (f bus)))
 
 let detach g i =
   change g "detach" i (fun bus ->
@@ -182,5 +189,6 @@ let reset g m i f =
       (fun () -> caught (fun () -> Ok (f fn)))
   in
   if Result.is_ok r then
-    g.spent <- List.filter (fun (m', b) -> not (m' == m && b = bus)) g.spent;
+    Mutex.protect g.holds (fun () ->
+        g.spent <- List.filter (fun (m', b) -> not (m' == m && b = bus)) g.spent);
   r
