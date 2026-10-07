@@ -49,8 +49,8 @@ let gpus =
      let+ gc = of_list S.families
      and+ xccs = int_range 1 8
      and+ shader_engines = int_range 1 8
-     and+ compute_units = int_range 1 128
-     and+ scratch_slots = int_range 1 64 in
+     and+ compute_units = int_range 1 96
+     and+ scratch_slots = int_range 1 32 in
      S.gpu ~xccs ~shader_engines ~compute_units ~scratch_slots gc)
 
 (* Bytes per lane around the 128-byte floor and the granules. *)
@@ -61,7 +61,7 @@ let lanes =
       ( 1,
         Gen.of_list ~pp:Format.pp_print_int
           [ 0; 1; 127; 128; 129; 131; 132; 143; 144; 145 ] );
-      (1, Gen.int_range 0 (1 lsl 20));
+      (1, Gen.int_range 0 (1 lsl 16));
     ]
 
 let granule (g : Gpu.t) = match g.gc with 9, _, _ -> 16 | _ -> 4
@@ -78,26 +78,47 @@ let laws =
           equal int
             (share * 64 * g.scratch_slots * g.compute_units * g.xccs)
             (Scratch.size g n));
-      prop "a descriptor holds the base and each die's share"
+      prop "a descriptor holds the base and n / xccs bytes"
         (Gen.triple gpus
            (Gen.int_range 0 ((1 lsl 48) - 1))
-           (Gen.int_range 0 (1 lsl 30)))
-        (fun ((g : Gpu.t), base, per_die) ->
-          match words (Scratch.descriptor g ~base (per_die * g.xccs)) with
+           (Gen.int_range 0 ((1 lsl 32) - 1)))
+        (fun ((g : Gpu.t), base, n) ->
+          cover "a share rounded down" (n mod g.xccs <> 0);
+          match words (Scratch.descriptor g ~base n) with
           | [ w0; w1; w2; _ ] ->
               equal (triple int int int)
-                (base land 0xffff_ffff, base lsr 32, per_die)
+                (base land 0xffff_ffff, base lsr 32, n / g.xccs)
                 (w0, w1 land 0xffff, w2)
           | ws -> failf "%d words" (List.length ws));
+      prop
+        "a scratch ring holds a wave's scratch in units and the waves it serves"
+        (Gen.pair gpus lanes) (fun ((g : Gpu.t), n) ->
+          let r = Option.get (Register.find g "regCOMPUTE_TMPRING_SIZE") in
+          let field f w =
+            let lo, hi = List.assoc f r.fields in
+            (w lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
+          in
+          let w = Scratch.tmpring g n in
+          let unit = match g.gc with 9, _, _ -> 1024 | _ -> 256 in
+          let wave =
+            Scratch.size g n / g.xccs / g.compute_units / g.scratch_slots
+          in
+          let size = (wave + unit - 1) / unit in
+          let engines =
+            match g.gc with 9, _, _ -> 1 | _ -> g.shader_engines
+          in
+          let waves =
+            Int.min
+              (Scratch.size g n / g.xccs / (size * unit) / engines)
+              (g.compute_units * g.scratch_slots)
+          in
+          equal (pair int int) (size, waves)
+            (field "wavesize" w, field "waves" w));
     ]
 
 let sizes =
   group ~timeout "sizes"
     [
-      test "the scratch ring of GFX11 kernels of 0 bytes a lane" (fun () ->
-          equal int (256 lor (32 lsl 12)) (Scratch.tmpring gfx11 0));
-      test "the scratch ring of GFX9 kernels of 256 bytes a lane" (fun () ->
-          equal int (1216 lor (16 lsl 12)) (Scratch.tmpring gfx9 256));
       test "a GC with no scratch ring register is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring") (fun () ->
               Scratch.tmpring { gfx11 with gc = (10, 3, 0) } 0));

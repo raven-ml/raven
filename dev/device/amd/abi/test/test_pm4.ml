@@ -22,6 +22,28 @@ let name (g : Gpu.t) = S.version g.gc
 (* PACKET3(op, n): type 3, n + 1 words after the header. *)
 let packet3 op n = (3 lsl 30) lor (n lsl 16) lor (op lsl 8)
 
+(* SET_SH_REG's registers and SET_UCONFIG_REG's, whose offset holds less than
+   0xffff, as the .mli states them. *)
+let ranges = [ (0x76, (0x2c00, 0x3000)); (0x79, (0xc000, 0xc000 + 0xffff)) ]
+
+(* A first register around a range's ends, and up to 4 words. *)
+let runs_of_regs =
+  let open Gen in
+  let edges = [ 0x2c00; 0x3000; 0xc000; 0xc000 + 0xffff ] in
+  let word =
+    frequency
+      [
+        (2, map (fun n -> Packet.Dword n) (int_range 0 0xffff_ffff));
+        (1, map (fun n -> Packet.W64 (Value n)) (int_range 0 0xffff_ffff));
+      ]
+  in
+  let map2 f a b = map (fun (a, b) -> f a b) (pair a b) in
+  with_pp
+    (fun ppf (a, ws) -> Format.fprintf ppf "0x%x, %d words" a (Packet.size ws))
+    (pair
+       (map2 ( + ) (of_list edges) (int_range (-4) 3))
+       (list ~size:(int_range 0 4) word))
+
 let memory =
   group ~timeout "memory and registers"
     [
@@ -41,22 +63,26 @@ let memory =
           equal (list int)
             [ packet3 0x79 1; 0x200; 7 ]
             (words (Pm4.set_reg 0xc200 [ W32 (Value 7) ])));
-      cases
-        ~name:(fun (r, _, _) -> strf "0x%x" r)
-        "the first and last registers of each range"
-        [ (0x2c00, 0x76, 0); (0x2fff, 0x76, 0x3ff); (0xc000, 0x79, 0) ]
-        (fun (reg, op, off) ->
-          equal (list int)
-            [ packet3 op 1; off; 7 ]
-            (words (Pm4.set_reg reg [ W32 (Value 7) ])));
-      test "a 64-bit word sets two registers" (fun () ->
-          equal (list int)
-            [ packet3 0x76 2; 0x20c; 2; 1 ]
-            (words (Pm4.set_reg 0x2e0c [ W64 (Value 0x1_0000_0002) ])));
-      cases ~name:(strf "0x%x") "a register no packet sets is refused"
-        [ 0x2bff; 0x3000; 0xbfff ] (fun reg ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.set_reg") (fun () ->
-              Pm4.set_reg reg [ Dword 0 ]));
+      prop "a run of registers is set iff it lies in one range" runs_of_regs
+        (fun (a, ws) ->
+          let fits (start, stop) =
+            start <= a && a < stop && a + Packet.size ws <= stop
+          in
+          let range = List.find_opt (fun (_, r) -> fits r) ranges in
+          cover "past a range's end" (range = None);
+          cover "up to a range's end"
+            (List.exists
+               (fun (_, (_, stop)) -> a + Packet.size ws = stop)
+               ranges);
+          match (range, Pm4.set_reg a ws) with
+          | Some (op, (start, _)), p ->
+              equal (list int)
+                ([ packet3 op (Packet.size ws); a - start ] @ words ws)
+                (words p)
+          | None, _ -> fail "set"
+          | exception Invalid_argument m ->
+              equal (option int) None (Option.map fst range);
+              contains ~sub:"Pm4.set_reg" m);
       test "a counter copied to memory through the L2" (fun () ->
           equal (list int)
             [ packet3 0x40 4; (2 lsl 8) lor 4; 0x99; 0; 0x8; 0 ]
