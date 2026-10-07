@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 type t = Defs.register = {
@@ -13,6 +14,10 @@ type t = Defs.register = {
 }
 
 let major ((m, _, _) : Gpu.version) = m
+
+let gc_name (g : Gpu.t) =
+  let a, b, c = g.gc in
+  strf "GC %d.%d.%d" a b c
 
 (* The registers of the latest version of [g]'s GC major at or before its GC: GC
    11.0.2 takes 11.0.0's. *)
@@ -41,10 +46,8 @@ let address (g : Gpu.t) r =
   match List.nth_opt bases r.segment with
   | Some base -> base + r.offset
   | None ->
-      let a, b, c = g.gc in
-      invalid_argf
-        "Register.address: %s's segment %d has no base on GC %d.%d.%d" r.name
-        r.segment a b c
+      invalid_argf "Register.address: %s's segment %d has no base on %s" r.name
+        r.segment (gc_name g)
 
 let encode r fs =
   let set w (f, v) =

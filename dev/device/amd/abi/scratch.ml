@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* A wave's lanes, which scratch is sized for, and the least a lane takes. *)
@@ -12,6 +13,10 @@ let min_per_lane = 128
 let major (g : Gpu.t) =
   let m, _, _ = g.gc in
   m
+
+let gc_name (g : Gpu.t) =
+  let a, b, c = g.gc in
+  strf "GC %d.%d.%d" a b c
 
 (* A wave's scratch is a multiple of 1024 bytes on GFX9, of 256 after. *)
 let granule g = if major g = 9 then 1024 else 256
@@ -28,9 +33,8 @@ let tmpring (g : Gpu.t) n =
     match Register.find g "regCOMPUTE_TMPRING_SIZE" with
     | Some r -> r
     | None ->
-        let a, b, c = g.gc in
-        invalid_argf "Scratch.tmpring: GC %d.%d.%d has no COMPUTE_TMPRING_SIZE"
-          a b c
+        invalid_argf "Scratch.tmpring: %s has no COMPUTE_TMPRING_SIZE"
+          (gc_name g)
   in
   let granule = granule g in
   let per_die = per_lane g n * lanes * g.scratch_slots * g.compute_units in
@@ -54,9 +58,8 @@ let mask32 = 0xffff_ffff
 
 let descriptor (g : Gpu.t) ~base n =
   let no_layout () =
-    let a, b, c = g.gc in
-    invalid_argf
-      "Scratch.descriptor: GC %d.%d.%d has no buffer descriptor layout" a b c
+    invalid_argf "Scratch.descriptor: %s has no buffer descriptor layout"
+      (gc_name g)
   in
   let l =
     match List.assoc_opt (major g) Defs.sq_buf_rsrc with
