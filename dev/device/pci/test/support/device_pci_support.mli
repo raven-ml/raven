@@ -162,6 +162,18 @@ module Tables : sig
       tables reached from the root, root first. It touches nothing. *)
 end
 
+(** {1:buffer Page tables in a buffer} *)
+
+(** Page tables of a GPU of 1 GiB, in a buffer, as a bench times them.
+
+    The tables come from a pool: 1 MiB of boot memory, then 2 MiB of tables,
+    both in the buffer, which keeps nothing past them. Pages map at 2 MiB and 4
+    KiB. An entry holds the address, bit 0 valid and bit 1 a table. *)
+module Buffer_tables : sig
+  val create : Device_pci.Space.t -> Device_pci.Page_table.t
+  (** [create s] is booted page tables whose virtual addresses come from [s]. *)
+end
+
 (** {1:hosts Hosts in a fixture tree} *)
 
 (** A host's files as Linux shows them, written under the test's own directory,

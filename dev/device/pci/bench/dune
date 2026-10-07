@@ -22,7 +22,7 @@
 (executable
  (name bench_space)
  (modules bench_space)
- (libraries device_pci thumper))
+ (libraries device_pci device_pci_support thumper))
 
 (rule
  (alias bench)
@@ -35,7 +35,7 @@
 (executable
  (name bench_memory)
  (modules bench_memory)
- (libraries device_pci thumper))
+ (libraries device_pci device_pci_support thumper))
 
 (rule
  (alias bench)

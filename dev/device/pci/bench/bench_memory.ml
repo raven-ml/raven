@@ -20,10 +20,8 @@ module Window = Device_pci.Window
 module Space = Device_pci.Space
 module Page_table = Device_pci.Page_table
 module Memory = Device_pci.Memory
+open Device_pci_support
 
-let kib = 1024
-let mib = 1024 * kib
-let gib = 1024 * mib
 let sizes = [ ("4KiB", 4 * kib); ("16MiB", 16 * mib) ]
 
 (* The machine *)
@@ -84,68 +82,10 @@ let take ~bar_size =
   Result.get_ok (Machine.reserve machine ~base:space_base space_base);
   Result.get_ok (Function.take machine bus)
 
-(* Page tables
-
-   A GPU of 1 GiB whose page tables have a pool: 1 MiB of boot memory, then 2
-   MiB of tables. The buffer holds both; the format's entries hold the address,
-   bit 0 valid and bit 1 a table. *)
-
-let memory = gib
-let boot = mib
-let tables_end = boot + (2 * mib)
-let pages = [ (2 * mib, 2 * mib); (4 * kib, 4 * kib) ]
-
-type entries = (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-let entries () : entries =
-  let b =
-    Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout (tables_end / 8)
-  in
-  Bigarray.Array1.fill b 0L;
-  b
-
-let set (b : entries) table i e =
-  Bigarray.Array1.set b ((table lsr 3) + i) (Int64.of_int e)
-
-let get (b : entries) ~level ~table i : Page_table.entry =
-  let e = Int64.to_int (Bigarray.Array1.get b ((table lsr 3) + i)) in
-  if e land 1 = 0 then Invalid
-  else if level = 3 || e land 2 = 0 then Page
-  else Table (e land lnot 0xfff)
-
-(* Memory past the tables holds no entries and is not kept. *)
-let zero (b : entries) pa n =
-  if pa < tables_end then
-    for i = pa lsr 3 to ((pa + n) lsr 3) - 1 do
-      Bigarray.Array1.set b i 0L
-    done
-
-let large ~level = level >= 2
-let levels = [ 12; 21; 30; 39 ]
-let bits = 48
+(* Page tables *)
 
 let page_table () =
-  let b = entries () in
-  let format =
-    {
-      Page_table.levels;
-      bits;
-      first = 0;
-      get = get b;
-      set_table = (fun ~level:_ ~table i ~child -> set b table i (child lor 3));
-      set_page =
-        (fun ~level:_ ~table i ~pa _ ~uncached:_ ~snooped:_ ~fragment:_ ->
-          set b table i (pa lor 1));
-      clear = (fun ~level:_ ~table i -> set b table i 0);
-      large;
-      zero = zero b;
-      flush = ignore;
-    }
-  in
-  let space = Space.create ~base:space_base space_base in
-  let t = Page_table.create format space ~memory ~boot ~tables:Pool ~pages in
-  Page_table.booted t;
-  t
+  Buffer_tables.create (Space.create ~base:space_base space_base)
 
 (* Memories *)
 
