@@ -41,15 +41,17 @@
     The work declares how many command buffers it may make, its [r] ring units,
     so the fill splits at most [r - 1] times. After the fill returns, the driver
     ends the open encoder and commits the last command buffer. [v] is reached
-    once every command buffer of the work completed. If one fails, the driver
-    loses the device, with Metal's reason.
+    once every command buffer of the work completed. The driver loses the device
+    if the fill returns a failure, or, with Metal's reason, if a command buffer
+    of the work fails.
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK):
       [MTLIndirectCommandBuffer.h], [MTLIndirectCommandEncoder.h]
       ([setBarrier]), [MTLComputeCommandEncoder.h]
       ([executeCommandsInBuffer:withRange:], [useResources:count:usage:]),
-      [MTLCommandBuffer.h] ([GPUStartTime], [GPUEndTime], [MTLDispatchType]).
+      [MTLCommandBuffer.h] ([GPUStartTime], [GPUEndTime], [MTLDispatchType],
+      [computeCommandEncoderWithDispatchType:]).
     - [MTLCommandQueue.h] ([commandBuffer], [maxCommandBufferCount]) and
       {{:https://developer.apple.com/documentation/metal/mtlcommandqueue/makecommandbuffer()}
        makeCommandBuffer()}: a full queue blocks until the GPU finishes a
@@ -120,7 +122,7 @@ type t = {
           Raises [Invalid_argument] if [buffer] or a pipeline belongs to another
           [MTLDevice], or if a dispatch's offset lies outside [buffer] or is not
           a multiple of {!field-align}, or one of its sizes is less than [1].
-          Any domain may call it. *)
+          Any domain may call it while the device is open. *)
   split : nativeint;
       (** [split] is the address of
           [int split(void *queue, uint64_t *start, uint64_t *end)], which a fill
@@ -139,9 +141,15 @@ type t = {
           byte order.
 
           [split] returns [0], or a nonzero failure that the fill returns as its
-          own. It fails if the fill already made as many command buffers as its
-          work declared ring units. Only a fill, during its call, may call it.
-      *)
+          own. It fails if:
+          - the fill already made as many command buffers as its work declared
+            ring units;
+          - Metal makes no new command buffer ([commandBuffer] returns [nil]);
+          - Metal makes no encoder for it
+            ([computeCommandEncoderWithDispatchType:] returns [nil]).
+
+          The address is valid while the device is open. Only a fill, during its
+          call, may call [split]. *)
 }
 (** The type for what compiled code needs from a Metal device. *)
 
