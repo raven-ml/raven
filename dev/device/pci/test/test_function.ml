@@ -320,6 +320,42 @@ let test_refused () =
   equal ~msg:"taken again once released" string bus1 (Function.bus g);
   equal ~msg:"functions made" int 2 (List.length m.taken)
 
+(* A bus that is no bus address reaches no file, here or on another machine:
+   these name sysfs's directory, its parent, or a path through it. *)
+let not_buses =
+  [
+    "";
+    ".";
+    "..";
+    "0000:01:00.0/..";
+    "../../../etc";
+    "0000:01:00.0\000";
+    "0000:01:00";
+  ]
+
+let test_take_no_bus () =
+  let calls = ref [] in
+  let machine =
+    Machine.make ~name:"far:1"
+      {
+        transport = transport ();
+        page = 4096;
+        functions = (fun () -> []);
+        take =
+          (fun bus ->
+            calls := bus :: !calls;
+            Error "asked");
+        reserve = (fun ~base:_ _ -> ());
+      }
+  in
+  List.iter
+    (fun bus ->
+      equal ~msg:(String.escaped bus) (result pass string)
+        (Error (Printf.sprintf "%S is no PCI bus address" bus))
+        (Function.take machine bus))
+    not_buses;
+  equal ~msg:"what the machine was asked" (list string) [] !calls
+
 let test_take_failed () =
   let machine, m = fake_machine () in
   break m.far;
@@ -364,6 +400,8 @@ let taking =
         test_taken;
       test "a function another holder has is refused until released"
         test_refused;
+      test "a string that is no bus address is refused before the machine"
+        test_take_no_bus;
       test "a failed machine refuses a take" test_take_failed;
       test "a released function refuses all but free_dma and unpin"
         test_released;

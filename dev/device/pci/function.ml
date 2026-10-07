@@ -18,10 +18,13 @@ type t = {
   pins : (int * int, unit) Hashtbl.t; (* (address, bytes) *)
 }
 
+(* A bus is parsed before it names a file of the machine's. *)
 let take machine bus =
   let taken =
     match Machine.failed machine with
     | Some why -> Error why
+    | None when Option.is_none (Address.numbers bus) ->
+        Error (Printf.sprintf "%S is no PCI bus address" bus)
     | None -> ( try Machine.take machine bus with Failure why -> Error why)
   in
   Result.map
