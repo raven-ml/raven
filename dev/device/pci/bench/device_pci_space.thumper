@@ -1,6 +1,37 @@
 # thumper baseline v1
 # suite: device_pci_space
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+page-table/alloc-free/2MiB	alloc_words	exact	415
+page-table/alloc-free/2MiB	wall_time	batch=16384	n=20	5.432e-07	5.365e-07 5.390e-07 5.394e-07 5.403e-07 5.405e-07 5.419e-07 5.425e-07 5.427e-07 5.428e-07 5.428e-07 5.435e-07 5.438e-07 5.440e-07 5.442e-07 5.448e-07 5.458e-07 5.460e-07 5.461e-07 5.461e-07 5.505e-07
+page-table/alloc-free/4KiB	alloc_words	exact	414
+page-table/alloc-free/4KiB	wall_time	batch=16384	n=20	4.701e-07	4.586e-07 4.631e-07 4.632e-07 4.652e-07 4.670e-07 4.679e-07 4.680e-07 4.684e-07 4.694e-07 4.699e-07 4.703e-07 4.709e-07 4.728e-07 4.732e-07 4.737e-07 4.753e-07 4.757e-07 4.760e-07 4.764e-07 4.822e-07
+page-table/alloc-free/64KiB	alloc_words	exact	1710
+page-table/alloc-free/64KiB	wall_time	batch=2048	n=20	2.976e-06	2.955e-06 2.955e-06 2.962e-06 2.967e-06 2.970e-06 2.971e-06 2.971e-06 2.973e-06 2.974e-06 2.976e-06 2.976e-06 2.981e-06 2.984e-06 2.984e-06 2.985e-06 2.987e-06 2.989e-06 2.991e-06 2.996e-06 3.011e-06
+page-table/map-unmap/2MiB	alloc_words	exact	232
+page-table/map-unmap/2MiB	wall_time	batch=65536	n=20	1.228e-07	1.219e-07 1.221e-07 1.221e-07 1.222e-07 1.222e-07 1.224e-07 1.225e-07 1.226e-07 1.227e-07 1.227e-07 1.229e-07 1.230e-07 1.233e-07 1.234e-07 1.238e-07 1.238e-07 1.239e-07 1.239e-07 1.242e-07 1.246e-07
+page-table/map-unmap/4KiB	alloc_words	exact	273
+page-table/map-unmap/4KiB	wall_time	batch=32768	n=20	1.528e-07	1.502e-07 1.508e-07 1.508e-07 1.517e-07 1.517e-07 1.518e-07 1.519e-07 1.520e-07 1.524e-07 1.526e-07 1.531e-07 1.534e-07 1.537e-07 1.538e-07 1.544e-07 1.584e-07 1.584e-07 1.594e-07 1.640e-07 1.650e-07
+page-table/map-unmap/64KiB	alloc_words	exact	408
+page-table/map-unmap/64KiB	wall_time	batch=16384	n=20	3.760e-07	3.612e-07 3.630e-07 3.632e-07 3.666e-07 3.687e-07 3.699e-07 3.728e-07 3.732e-07 3.745e-07 3.746e-07 3.774e-07 3.793e-07 3.802e-07 3.809e-07 3.881e-07 3.894e-07 3.902e-07 3.918e-07 3.939e-07 4.063e-07
+space/alloc-free/256MiB/16-free	alloc_words	exact	59
+space/alloc-free/256MiB/16-free	wall_time	batch=32768	n=20	1.771e-07	1.755e-07 1.759e-07 1.760e-07 1.760e-07 1.764e-07 1.766e-07 1.767e-07 1.767e-07 1.768e-07 1.770e-07 1.771e-07 1.774e-07 1.776e-07 1.776e-07 1.777e-07 1.777e-07 1.778e-07 1.780e-07 1.793e-07 1.813e-07
+space/alloc-free/256MiB/4096-free	alloc_words	exact	59
+space/alloc-free/256MiB/4096-free	wall_time	batch=32768	n=20	1.709e-07	1.694e-07 1.695e-07 1.699e-07 1.702e-07 1.702e-07 1.702e-07 1.702e-07 1.705e-07 1.707e-07 1.708e-07 1.711e-07 1.711e-07 1.711e-07 1.715e-07 1.715e-07 1.716e-07 1.717e-07 1.723e-07 1.744e-07 1.751e-07
+space/alloc-free/2MiB/16-free	alloc_words	exact	59
+space/alloc-free/2MiB/16-free	wall_time	batch=32768	n=20	1.902e-07	1.895e-07 1.897e-07 1.897e-07 1.897e-07 1.898e-07 1.898e-07 1.899e-07 1.899e-07 1.899e-07 1.900e-07 1.905e-07 1.905e-07 1.907e-07 1.907e-07 1.907e-07 1.908e-07 1.909e-07 1.909e-07 1.910e-07 1.910e-07
+space/alloc-free/2MiB/4096-free	alloc_words	exact	59
+space/alloc-free/2MiB/4096-free	wall_time	batch=32768	n=20	1.773e-07	1.768e-07 1.768e-07 1.770e-07 1.770e-07 1.770e-07 1.770e-07 1.771e-07 1.772e-07 1.772e-07 1.772e-07 1.773e-07 1.773e-07 1.773e-07 1.774e-07 1.779e-07 1.785e-07 1.797e-07 1.823e-07 1.826e-07 1.827e-07
+space/alloc-free/4KiB/16-free	alloc_words	exact	59
+space/alloc-free/4KiB/16-free	wall_time	batch=32768	n=20	2.001e-07	1.988e-07 1.990e-07 1.993e-07 1.993e-07 1.996e-07 1.997e-07 1.997e-07 1.998e-07 1.998e-07 2.001e-07 2.001e-07 2.001e-07 2.002e-07 2.002e-07 2.004e-07 2.005e-07 2.006e-07 2.006e-07 2.009e-07 2.010e-07
+space/alloc-free/4KiB/4096-free	alloc_words	exact	59
+space/alloc-free/4KiB/4096-free	wall_time	batch=32768	n=20	1.849e-07	1.839e-07 1.839e-07 1.840e-07 1.840e-07 1.841e-07 1.844e-07 1.845e-07 1.846e-07 1.848e-07 1.849e-07 1.850e-07 1.850e-07 1.850e-07 1.852e-07 1.852e-07 1.860e-07 1.863e-07 1.864e-07 1.899e-07 1.944e-07
+space/churn	alloc_words	exact	32694
+space/churn	wall_time	batch=64	n=20	1.476e-04	1.464e-04 1.464e-04 1.470e-04 1.470e-04 1.470e-04 1.471e-04 1.474e-04 1.475e-04 1.475e-04 1.476e-04 1.476e-04 1.478e-04 1.478e-04 1.479e-04 1.480e-04 1.481e-04 1.481e-04 1.493e-04 1.495e-04 1.497e-04
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
@@ -32,3 +63,34 @@ space/alloc-free/4KiB/4096-free	alloc_words	exact	59
 space/alloc-free/4KiB/4096-free	wall_time	batch=16384	n=20	3.188e-07	3.149e-07 3.153e-07 3.161e-07 3.168e-07 3.173e-07 3.178e-07 3.180e-07 3.180e-07 3.182e-07 3.186e-07 3.190e-07 3.192e-07 3.197e-07 3.202e-07 3.205e-07 3.217e-07 3.269e-07 3.288e-07 3.300e-07 3.571e-07
 space/churn	alloc_words	exact	32694
 space/churn	wall_time	batch=32	n=20	2.440e-04	2.396e-04 2.408e-04 2.416e-04 2.420e-04 2.434e-04 2.438e-04 2.438e-04 2.438e-04 2.439e-04 2.440e-04 2.441e-04 2.445e-04 2.450e-04 2.452e-04 2.461e-04 2.462e-04 2.467e-04 2.478e-04 2.527e-04 2.557e-04
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+page-table/alloc-free/2MiB	alloc_words	exact	415
+page-table/alloc-free/2MiB	wall_time	batch=8192	n=20	1.111e-06	1.109e-06 1.110e-06 1.110e-06 1.110e-06 1.110e-06 1.110e-06 1.110e-06 1.110e-06 1.111e-06 1.111e-06 1.112e-06 1.112e-06 1.112e-06 1.114e-06 1.114e-06 1.114e-06 1.115e-06 1.115e-06 1.115e-06 1.119e-06
+page-table/alloc-free/4KiB	alloc_words	exact	414
+page-table/alloc-free/4KiB	wall_time	batch=8192	n=20	1.028e-06	1.027e-06 1.027e-06 1.028e-06 1.028e-06 1.028e-06 1.028e-06 1.028e-06 1.028e-06 1.028e-06 1.028e-06 1.029e-06 1.029e-06 1.029e-06 1.029e-06 1.029e-06 1.029e-06 1.030e-06 1.030e-06 1.030e-06 1.030e-06
+page-table/alloc-free/64KiB	alloc_words	exact	1710
+page-table/alloc-free/64KiB	wall_time	batch=1024	n=20	5.620e-06	5.601e-06 5.602e-06 5.609e-06 5.614e-06 5.615e-06 5.615e-06 5.616e-06 5.618e-06 5.618e-06 5.620e-06 5.621e-06 5.621e-06 5.622e-06 5.623e-06 5.623e-06 5.624e-06 5.624e-06 5.625e-06 5.627e-06 5.630e-06
+page-table/map-unmap/2MiB	alloc_words	exact	232
+page-table/map-unmap/2MiB	wall_time	batch=16384	n=20	3.710e-07	3.708e-07 3.709e-07 3.709e-07 3.709e-07 3.709e-07 3.709e-07 3.709e-07 3.710e-07 3.710e-07 3.710e-07 3.711e-07 3.711e-07 3.711e-07 3.711e-07 3.712e-07 3.712e-07 3.712e-07 3.712e-07 3.712e-07 3.716e-07
+page-table/map-unmap/4KiB	alloc_words	exact	273
+page-table/map-unmap/4KiB	wall_time	batch=16384	n=20	4.645e-07	4.639e-07 4.641e-07 4.642e-07 4.643e-07 4.644e-07 4.644e-07 4.644e-07 4.644e-07 4.644e-07 4.644e-07 4.645e-07 4.645e-07 4.645e-07 4.646e-07 4.649e-07 4.658e-07 4.662e-07 4.668e-07 4.675e-07 4.701e-07
+page-table/map-unmap/64KiB	alloc_words	exact	408
+page-table/map-unmap/64KiB	wall_time	batch=8192	n=20	8.231e-07	8.222e-07 8.225e-07 8.227e-07 8.228e-07 8.228e-07 8.228e-07 8.229e-07 8.231e-07 8.231e-07 8.231e-07 8.231e-07 8.232e-07 8.233e-07 8.233e-07 8.234e-07 8.234e-07 8.235e-07 8.235e-07 8.236e-07 8.250e-07
+space/alloc-free/256MiB/16-free	alloc_words	exact	59
+space/alloc-free/256MiB/16-free	wall_time	batch=16384	n=20	3.078e-07	3.071e-07 3.072e-07 3.073e-07 3.073e-07 3.073e-07 3.074e-07 3.075e-07 3.078e-07 3.078e-07 3.078e-07 3.079e-07 3.080e-07 3.080e-07 3.080e-07 3.080e-07 3.080e-07 3.080e-07 3.080e-07 3.081e-07 3.082e-07
+space/alloc-free/256MiB/4096-free	alloc_words	exact	59
+space/alloc-free/256MiB/4096-free	wall_time	batch=32768	n=20	3.008e-07	3.007e-07 3.007e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.008e-07 3.010e-07 3.010e-07 3.010e-07 3.010e-07 3.011e-07 3.011e-07 3.011e-07 3.024e-07
+space/alloc-free/2MiB/16-free	alloc_words	exact	59
+space/alloc-free/2MiB/16-free	wall_time	batch=16384	n=20	3.205e-07	3.198e-07 3.199e-07 3.199e-07 3.199e-07 3.200e-07 3.200e-07 3.204e-07 3.204e-07 3.204e-07 3.205e-07 3.205e-07 3.206e-07 3.206e-07 3.206e-07 3.207e-07 3.207e-07 3.207e-07 3.211e-07 3.227e-07 3.229e-07
+space/alloc-free/2MiB/4096-free	alloc_words	exact	59
+space/alloc-free/2MiB/4096-free	wall_time	batch=16384	n=20	3.063e-07	3.058e-07 3.058e-07 3.059e-07 3.059e-07 3.059e-07 3.060e-07 3.062e-07 3.063e-07 3.063e-07 3.063e-07 3.064e-07 3.064e-07 3.064e-07 3.064e-07 3.064e-07 3.065e-07 3.065e-07 3.065e-07 3.066e-07 3.069e-07
+space/alloc-free/4KiB/16-free	alloc_words	exact	59
+space/alloc-free/4KiB/16-free	wall_time	batch=16384	n=20	3.351e-07	3.344e-07 3.345e-07 3.345e-07 3.345e-07 3.346e-07 3.346e-07 3.348e-07 3.350e-07 3.350e-07 3.351e-07 3.351e-07 3.351e-07 3.351e-07 3.351e-07 3.351e-07 3.351e-07 3.351e-07 3.352e-07 3.352e-07 3.352e-07
+space/alloc-free/4KiB/4096-free	alloc_words	exact	59
+space/alloc-free/4KiB/4096-free	wall_time	batch=16384	n=20	3.196e-07	3.190e-07 3.190e-07 3.191e-07 3.191e-07 3.191e-07 3.192e-07 3.193e-07 3.194e-07 3.195e-07 3.196e-07 3.197e-07 3.197e-07 3.197e-07 3.197e-07 3.197e-07 3.197e-07 3.198e-07 3.198e-07 3.198e-07 3.198e-07
+space/churn	alloc_words	exact	32694
+space/churn	wall_time	batch=32	n=20	2.328e-04	2.326e-04 2.326e-04 2.326e-04 2.327e-04 2.327e-04 2.327e-04 2.327e-04 2.328e-04 2.328e-04 2.328e-04 2.328e-04 2.328e-04 2.328e-04 2.328e-04 2.329e-04 2.329e-04 2.329e-04 2.329e-04 2.330e-04 2.330e-04

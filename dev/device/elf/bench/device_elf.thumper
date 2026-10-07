@@ -1,6 +1,17 @@
 # thumper baseline v1
 # suite: device_elf
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+of-string/amd-128-kernels	alloc_words	exact	5716
+of-string/amd-128-kernels	wall_time	batch=256	n=20	2.291e-05	2.249e-05 2.269e-05 2.271e-05 2.277e-05 2.279e-05 2.279e-05 2.281e-05 2.284e-05 2.286e-05 2.287e-05 2.295e-05 2.299e-05 2.304e-05 2.310e-05 2.310e-05 2.321e-05 2.332e-05 2.333e-05 2.338e-05 2.362e-05
+of-string/host-aarch64	alloc_words	exact	1238
+of-string/host-aarch64	wall_time	batch=4096	n=20	1.343e-06	1.334e-06 1.337e-06 1.337e-06 1.338e-06 1.340e-06 1.340e-06 1.341e-06 1.342e-06 1.343e-06 1.343e-06 1.343e-06 1.346e-06 1.348e-06 1.348e-06 1.351e-06 1.351e-06 1.353e-06 1.354e-06 1.360e-06 1.367e-06
+symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
+symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	5.603e-07	5.582e-07 5.590e-07 5.590e-07 5.591e-07 5.591e-07 5.595e-07 5.597e-07 5.597e-07 5.599e-07 5.599e-07 5.607e-07 5.607e-07 5.611e-07 5.613e-07 5.616e-07 5.616e-07 5.629e-07 5.659e-07 5.686e-07 5.698e-07
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
@@ -12,3 +23,14 @@ of-string/host-aarch64	alloc_words	exact	1238
 of-string/host-aarch64	wall_time	batch=2048	n=20	2.668e-06	2.591e-06 2.614e-06 2.623e-06 2.644e-06 2.657e-06 2.660e-06 2.662e-06 2.663e-06 2.664e-06 2.668e-06 2.669e-06 2.677e-06 2.677e-06 2.680e-06 2.683e-06 2.683e-06 2.707e-06 2.722e-06 2.729e-06 2.783e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
 symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.135e-06	1.109e-06 1.109e-06 1.119e-06 1.122e-06 1.122e-06 1.131e-06 1.132e-06 1.133e-06 1.133e-06 1.135e-06 1.135e-06 1.140e-06 1.140e-06 1.143e-06 1.145e-06 1.146e-06 1.148e-06 1.153e-06 1.163e-06 1.168e-06
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+of-string/amd-128-kernels	alloc_words	exact	5716
+of-string/amd-128-kernels	wall_time	batch=256	n=20	3.704e-05	3.695e-05 3.697e-05 3.697e-05 3.697e-05 3.701e-05 3.701e-05 3.701e-05 3.702e-05 3.703e-05 3.703e-05 3.705e-05 3.706e-05 3.706e-05 3.708e-05 3.709e-05 3.710e-05 3.711e-05 3.720e-05 3.722e-05 3.727e-05
+of-string/host-aarch64	alloc_words	exact	1238
+of-string/host-aarch64	wall_time	batch=2048	n=20	2.690e-06	2.674e-06 2.681e-06 2.682e-06 2.684e-06 2.687e-06 2.688e-06 2.689e-06 2.689e-06 2.689e-06 2.690e-06 2.691e-06 2.691e-06 2.691e-06 2.691e-06 2.693e-06 2.694e-06 2.694e-06 2.695e-06 2.695e-06 2.702e-06
+symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
+symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.137e-06	1.128e-06 1.131e-06 1.131e-06 1.132e-06 1.132e-06 1.132e-06 1.133e-06 1.134e-06 1.135e-06 1.136e-06 1.137e-06 1.141e-06 1.142e-06 1.151e-06 1.155e-06 1.156e-06 1.158e-06 1.160e-06 1.187e-06 1.190e-06
