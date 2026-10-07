@@ -46,15 +46,15 @@ val backtrack :
   shrink:((float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t) ->
   ((float, 'b) Nx.t -> 'p * (float, 'b) Nx.t * (bool, Nx.bool_elt) Nx.t) ->
   'p ->
-  'p * (bool, Nx.bool_elt) Nx.t * (int32, Nx.int32_elt) Nx.t
+  'p * (bool, Nx.bool_elt) Nx.t * (int32, Nx.int32_elt) Nx.t * (float, 'b) Nx.t
 (** [backtrack p dtype ~trials ~running ~shrink trial last] searches from the
     step length [α = 1] of [dtype] in each running lane: [trial α] is a point's
     payload of structure [p], whose tensors' shapes start with the lanes', its
     merit [φ] and whether the lane accepts it. A lane ends at the first accepted
     [α], and otherwise moves to [shrink α φ], which is at most [α / 2], for at
     most [trials] trials. The result is the accepted payload, or [last] in a
-    lane that accepted none, whether each lane accepted, and the trials each
-    lane took. *)
+    lane that accepted none, whether each lane accepted, the trials each lane
+    took, and the merit of the full step. *)
 
 val c : float
 (** [c] is the sufficient-decrease constant, [10⁻⁴]: a step must take [c] of the
@@ -136,6 +136,16 @@ val test : Tol.t -> 'd state -> (float, 'd) Nx.t -> 'd state
 val secant : 'd state -> (float, 'd) Nx.t -> (float, 'd) Nx.t
 (** [secant s next] is the contraction [|next − N x'| / |x − x'|] of a map that
     sends [s.x] to [next], per lane. *)
+
+val resolved :
+  'd state ->
+  delta:(float, 'd) Nx.t ->
+  stuck:(bool, Nx.bool_elt) Nx.t ->
+  'd state
+(** [resolved s ~delta ~stuck] ends each running lane whose step [delta] cannot
+    move its estimate, [stuck]: [Converged] with [e = |delta|] when its last
+    step contracted, [0 ≤ q < 1], at its zero to the arithmetic's precision;
+    [Stalled] otherwise. *)
 
 val decide :
   Tol.t ->

@@ -602,7 +602,7 @@ let projected ~trials evaluate ~project ~running (p : _ point) d =
     )
   in
   let shrink alpha _ = Nx.mul_s alpha 0.5 in
-  let q, found, tries =
+  let q, found, tries, _ =
     Search.backtrack (point_ptree ()) dtype ~trials ~running ~shrink trial
       (pack p)
   in

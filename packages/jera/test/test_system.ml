@@ -80,6 +80,22 @@ let newton_tests =
           Linear.gmres ~restart:6 ~rel:1e-13 ~budget:60 ~precondition:Fun.id
         in
         equal near z (Solution.get (newton ~linear f (Nx.zeros_like z))));
+    prop "from a good seed, a zero reached to rounding in two steps converges"
+      system (fun (a, z) ->
+        (* Seeded within 1e-6 of the zero, quadratic convergence reaches f's
+           evaluation level before a third point exists to measure two
+           contractions; the next step cannot move the estimate. *)
+        cover "several unknowns" (Nx.dim 0 z > 2);
+        let f = field a (rhs a z) in
+        let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
+        let s =
+          System.solve one
+            (System.newton ~derivative:(derivative f))
+            ~linear:Linear.dense
+            ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
+            ~budget:20 f seed
+        in
+        equal near z (Solution.get s));
     test "a linear system takes one step, then the zero step" (fun () ->
         (* f at the guess, at x + δ in the line search, then δ = 0. *)
         let a = Nx.create f64 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in
@@ -453,6 +469,15 @@ let lane_tests =
                         (System.lanes ~tol:tight ~budget:30 ~jacobian (mixed b)
                            (Nx.zeros f64 [| 2; 1 |])))))
               (Nx.create f64 [| 2; 1 |] [| 1.; 2. |])));
+    prop "seeded lanes reaching rounding in two steps converge" lane_systems
+      (fun (a, z) ->
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
+        equal near z
+          (Solution.get
+             (System.lanes
+                ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
+                ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
     test "compiled lanes equal eager" (fun () ->
         let a =
           Nx.broadcast_to [| 3; 2; 2 |]

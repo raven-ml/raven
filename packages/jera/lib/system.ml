@@ -47,18 +47,32 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
       let phi = half_square fx in
       ((x, fx), phi, accept alpha phi)
     in
-    let (x, fx), found, tries =
+    let (x, fx), found, tries, full =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
-    (* A step below the floats' resolution is no decrease. *)
-    let found =
-      Nx.logical_and found
-        (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal x s.x)))
+    (* The step cannot move the estimate when it lands below the floats'
+       resolution, or when no trial decreases the merit and the full step
+       changes it by less than its rounding: the estimate is at [f]'s evaluation
+       level. *)
+    let phi0 = half_square s.fx in
+    let unmoved = Nx.all ~axes:[ -1 ] (Nx.equal x s.x) in
+    let rounded =
+      Nx.logical_and (Nx.logical_not found)
+        (Nx.less_equal
+           (Nx.abs (Nx.sub full phi0))
+           (Nx.mul_s phi0 (sqrt (Num.eps dtype))))
     in
+    let s = { s with n = Nx.add s.n tries } in
+    let stuck =
+      Nx.logical_and run (Nx.logical_or rounded (Nx.logical_and found unmoved))
+    in
+    let s = Search.resolved s ~delta ~stuck in
+    let found = Nx.logical_and found (Nx.logical_not unmoved) in
     let st = settle s.Search.st (Nx.logical_not found) Stalled in
-    ({ s with x; fx; st; n = Nx.add s.n tries }, ())
+    ( { s with x = Search.hold found x s.x; fx = Search.hold found fx s.fx; st },
+      () )
   in
   fst @@ Search.iterations ~budget Nx.Ptree.unit step (s, ())
 
@@ -115,7 +129,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
       let phi = Search.norm fx in
       ((x, fx), phi, accept alpha phi)
     in
-    let (x, fx), found, tries =
+    let (x, fx), found, tries, _ =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~shrink trial (s.x, s.fx)

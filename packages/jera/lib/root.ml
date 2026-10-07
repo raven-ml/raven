@@ -175,65 +175,58 @@ let bracket ~tol f ~lo ~hi =
 
 (* Newton *)
 
+(* Newton's search runs on lanes of one unknown: every element is a lane of a
+   vector of length one, so it shares Search's error estimate and its resolution
+   rule with the systems. *)
 let newton ~tol ~budget ~slope f x0 =
   let fn = "Jera.Root.newton" in
   if budget < 1 then
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   let x0 = Rune.detach x0 in
-  let inf = Nx.full_like x0 Float.infinity in
-  let carry =
-    Nx.Ptree.(pair (pair tensor tensor) (pair tensor (pair tensor tensor)))
-  in
-  (* The carry: the estimate and the last step's size, the status, the
-     evaluations and the step count. *)
-  let step ((x, last), (st, (n, k))) =
-    let run = searching st in
-    let fx = Rune.detach (f x) and s = Rune.detach (slope x) in
-    let n = Nx.add n (Nx.cast Nx.int32 run) in
-    let st = settle st (Nx.logical_not (Nx.isfinite fx)) Not_finite in
-    let flat =
-      Nx.logical_or
-        (Nx.equal s (Nx.zeros_like s))
-        (Nx.logical_not (Nx.isfinite s))
+  let shape = Nx.shape x0 in
+  let column v = Nx.reshape (Array.append shape [| 1 |]) v
+  and flat v = Nx.reshape shape v in
+  let evaluate x = column (Rune.detach (f (flat x))) in
+  let start = column x0 in
+  let s = Search.start start (evaluate start) in
+  let step (s : _ Search.state) () =
+    let sl = column (Rune.detach (slope (flat s.x))) in
+    let usable =
+      Nx.logical_and (Nx.isfinite sl) (Nx.not_equal sl (Nx.zeros_like sl))
     in
-    let st = settle st flat Stalled in
-    let run = searching st in
+    let s =
+      { s with st = settle s.st (flat (Nx.logical_not usable)) Stalled }
+    in
+    let run = searching s.st in
     let delta =
-      Nx.where run
-        (Nx.neg (Nx.div fx (Nx.where run s (Nx.ones_like s))))
-        (Nx.zeros_like x)
+      Search.hold run
+        (Nx.neg (Nx.div s.fx (Nx.where usable sl (Nx.ones_like sl))))
+        (Nx.zeros_like s.x)
     in
-    let size = Nx.abs delta in
-    let next = Nx.add x delta in
-    (* The contraction estimate, unbounded until it has two steps that
-       shrink. *)
-    let q = Nx.div size last in
-    let shrinking = Nx.logical_and (Nx.isfinite last) (Nx.less_s q 1.) in
-    let e = Nx.where shrinking (Nx.div (Nx.mul size q) (Nx.rsub_s 1. q)) inf in
-    let e =
-      Nx.where (Nx.equal size (Nx.zeros_like size)) (Nx.zeros_like size) e
-    in
-    let st = settle st (accepted tol ~e ~y:next) Converged in
-    let st = settle st (Nx.equal next x) Stalled in
-    let x = Nx.where run next x in
+    let s = Search.test tol s delta in
+    let moving = searching s.st in
+    let next = Nx.add s.x delta in
+    let fx = evaluate next in
     let st =
-      settle st
-        (Nx.broadcast_to (Nx.shape st)
-           (Nx.greater_equal_s (Nx.add_s k 1l) (Int32.of_int budget)))
-        Budget_spent
+      settle s.st
+        (Nx.logical_and moving (Nx.logical_not (Search.finite fx)))
+        Not_finite
     in
-    ((x, Nx.where run size last), (st, (n, Nx.add_s k 1l)))
+    ( {
+        s with
+        x = Search.hold moving next s.x;
+        fx = Search.hold moving fx s.fx;
+        st;
+        n = Nx.add s.n (Nx.cast Nx.int32 moving);
+      },
+      () )
   in
-  let initial =
-    ( (x0, inf),
-      ( Nx.full Nx.int32 (Nx.shape x0) running,
-        (Nx.zeros Nx.int32 (Nx.shape x0), int32 0l) ) )
+  let s =
+    if Nx.numel x0 = 0 then
+      { s with st = Nx.full Nx.int32 shape (Solution.code Converged) }
+    else fst (Search.iterations ~budget Nx.Ptree.unit step (s, ()))
   in
-  let (x, last), (st, (n, _)) =
-    Rune.iterate carry ~max:budget
-      ~until:(fun (_, (st, _)) -> Nx.logical_not (Nx.any (searching st)))
-      ~f:step initial
-  in
+  let st = s.st and n = s.n and x = flat s.x and error = flat s.e in
   let ok = Nx.equal_s st (Solution.code Converged) in
   let value = state fn ~ok f x in
   let fix (st : Solution.status) _ =
@@ -252,7 +245,7 @@ let newton ~tol ~budget ~slope f x0 =
   in
   Solution.v ~fn
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
-    ~spent:{ used = n; unit = "iterations"; budget }
-    ~fix ~value ~error:last ~status:st ~evaluations:n
-    ~facts:[ Fact ("start", x0); Fact ("estimate", x); Fact ("step", last) ]
+    ~spent:{ used = Nx.broadcast_to shape s.k; unit = "iterations"; budget }
+    ~fix ~value ~error ~status:st ~evaluations:n
+    ~facts:[ Fact ("start", x0); Fact ("estimate", x); Fact ("error", error) ]
     ()

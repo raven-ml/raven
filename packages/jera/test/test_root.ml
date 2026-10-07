@@ -209,6 +209,21 @@ let newton_tests =
   let m = vec [| 0.; 0.3; 1.; 2.5; 3.1 |] in
   let e = Nx.full f64 [| 5 |] 0.6 in
   [
+    prop "from a good seed, a zero reached to rounding converges" positive
+      (fun a ->
+        (* √a seeded within 1e-7: Newton reaches the floats' resolution in two
+           steps. *)
+        let seed =
+          Nx.mul (Nx.sqrt a) (Nx.add_s (Nx.mul_s (Nx.cos a) 1e-7) 1.)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (Nx.sqrt a)
+          (Solution.get
+             (Root.newton ~tol:(Tol.ulps 4.) ~budget:20
+                ~slope:(fun x -> Nx.mul_s x 2.)
+                (fun x -> Nx.sub (Nx.square x) a)
+                seed)));
     test "a solve satisfies Kepler's equation" (fun () ->
         let x = Solution.get (kepler ~e m) in
         equal (Oracle.tensor ~abs:1e-14 ()) m (Nx.sub x (Nx.mul e (Nx.sin x))));

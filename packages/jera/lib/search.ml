@@ -13,11 +13,20 @@ let rows v =
   let width = (Nx.shape v).(Nx.ndim v - 1) in
   Nx.reshape [| Array.fold_left ( * ) 1 (lanes v); width |] v
 
+let width v = (Nx.shape v).(Nx.ndim v - 1)
+
+(* A vector of one component is its own sum, which needs no reduction. *)
 let dot u v =
   let uv = Nx.mul u v in
-  Nx.reshape (lanes uv) (Num.sum_rows (rows uv))
+  if width uv = 1 then Nx.reshape (lanes uv) uv
+  else Nx.reshape (lanes uv) (Num.sum_rows (rows uv))
 
-let norm v = Nx.sqrt (dot v v)
+(* Whether every component of each lane holds. *)
+let every b =
+  if width b = 1 then Nx.reshape (lanes b) b else Nx.all ~axes:[ -1 ] b
+
+let norm v =
+  if width v = 1 then Nx.reshape (lanes v) (Nx.abs v) else Nx.sqrt (dot v v)
 
 (* Each vector scaled by its largest magnitude, so a product neither underflows
    nor overflows. *)
@@ -34,7 +43,8 @@ let hold m next last =
   Nx.where (Nx.broadcast_to (Nx.shape next) m) next last
 
 let accepted tol ~e ~y =
-  let r = Num.rms_rows (rows (Tol.ratio tol ~e ~y)) in
+  let ratio = Tol.ratio tol ~e ~y in
+  let r = if width e = 1 then ratio else Num.rms_rows (rows ratio) in
   Nx.less_equal_s (Nx.reshape (lanes e) r) 1.
 
 (* Contraction *)
@@ -59,30 +69,34 @@ let contraction delta ~q =
    searches, the trials each lane took and the count of trips. *)
 
 let backtrack p dtype ~trials ~running ~shrink trial last =
-  let step (alpha, (payload, (searching, (n, j)))) =
+  let step (alpha, (payload, (searching, (first, (n, j))))) =
     let next, phi, accepted = trial alpha in
     let n = Nx.add n (Nx.cast Nx.int32 searching) in
     let ok = Nx.logical_and searching accepted in
     let payload = Nx.Ptree.map2 p (fun _ a b -> hold ok a b) next payload in
+    let first = Nx.where (Nx.equal_s j 0l) phi first in
     let searching = Nx.logical_and searching (Nx.logical_not ok) in
     let alpha = Nx.where searching (shrink alpha phi) alpha in
-    (alpha, (payload, (searching, (n, Nx.add_s j 1l))))
+    (alpha, (payload, (searching, (first, (n, Nx.add_s j 1l)))))
   in
-  let _, (payload, (searching, (n, _))) =
+  let lanes = Nx.shape running in
+  let _, (payload, (searching, (first, (n, _)))) =
     Rune.iterate
-      Nx.Ptree.(pair tensor (pair p (pair tensor (pair tensor tensor))))
+      Nx.Ptree.(
+        pair tensor (pair p (pair tensor (pair tensor (pair tensor tensor)))))
       ~max:trials
-      ~until:(fun (_, (_, (searching, (_, j)))) ->
+      ~until:(fun (_, (_, (searching, (_, (_, j))))) ->
         Nx.logical_or
           (Nx.logical_not (Nx.any searching))
           (Nx.greater_equal_s j (Int32.of_int trials)))
       ~f:step
-      ( Nx.ones dtype (Nx.shape running),
+      ( Nx.ones dtype lanes,
         ( last,
           ( running,
-            (Nx.zeros Nx.int32 (Nx.shape running), Nx.scalar Nx.int32 0l) ) ) )
+            ( Nx.full dtype lanes Float.nan,
+              (Nx.zeros Nx.int32 lanes, Nx.scalar Nx.int32 0l) ) ) ) )
   in
-  (payload, Nx.logical_and running (Nx.logical_not searching), n)
+  (payload, Nx.logical_and running (Nx.logical_not searching), n, first)
 
 (* The sufficient-decrease constant: a step must take [c] of the decrease the
    slope predicts. *)
@@ -306,7 +320,7 @@ type 'd state = {
   k : (int32, Nx.int32_elt) Nx.t;
 }
 
-let finite v = Nx.all ~axes:[ -1 ] (Nx.isfinite v)
+let finite v = every (Nx.isfinite v)
 
 let along alpha v =
   Nx.mul (Nx.reshape (Array.append (Nx.shape alpha) [| 1 |]) alpha) v
@@ -351,6 +365,30 @@ let secant s next =
        (norm (Nx.sub next s.mapped))
        (Nx.where still (Nx.ones_like moved) moved))
 
+(* A step at the floats' resolution: within one unit of [x]'s last place in
+   every component, so it moves the estimate by rounding at most, as a step that
+   flips between the floats either side of a zero does. *)
+let still x step =
+  let ulp = Nx.mul_s (Nx.abs x) (Num.eps (Nx.dtype x)) in
+  every
+    (Nx.logical_or
+       (Nx.equal (Nx.add x step) x)
+       (Nx.less_equal (Nx.abs step) ulp))
+
+(* A running lane whose step cannot move its estimate has reached the floats'
+   resolution. If its last step contracted, [q < 1], its estimate is its zero to
+   the arithmetic's precision: it converges, with the step it could not take as
+   its error. Otherwise it stalls. *)
+let resolved s ~delta ~stuck =
+  let stuck = Nx.logical_and (searching s.st) stuck in
+  let contracting =
+    Nx.logical_and (Nx.isfinite s.q)
+      (Nx.logical_and (Nx.greater_equal_s s.q 0.) (Nx.less_s s.q 1.))
+  in
+  let root = Nx.logical_and stuck contracting in
+  let st = settle s.st root Converged in
+  { s with st = settle st stuck Stalled; e = hold root (Nx.abs delta) s.e }
+
 let decide tol s ~map ~q delta =
   let run = searching s.st in
   let next = Nx.add s.x delta and mapped = Nx.add s.x map in
@@ -359,16 +397,18 @@ let decide tol s ~map ~q delta =
   let converged =
     Nx.logical_and run (Nx.equal_s st (Solution.code Converged))
   in
-  let st = settle st (Nx.all ~axes:[ -1 ] (Nx.equal mapped s.x)) Stalled in
-  {
-    s with
-    x = hold converged next s.x;
-    before = hold run s.x s.before;
-    mapped = hold run mapped s.mapped;
-    e = hold run e s.e;
-    q = hold run q s.q;
-    st;
-  }
+  let s =
+    {
+      s with
+      x = hold converged next s.x;
+      before = hold run s.x s.before;
+      mapped = hold run mapped s.mapped;
+      e = hold run e s.e;
+      q = hold run q s.q;
+      st;
+    }
+  in
+  resolved s ~delta ~stuck:(still s.x map)
 
 let test tol s delta =
   decide tol s ~map:delta ~q:(secant s (Nx.add s.x delta)) delta

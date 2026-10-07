@@ -394,14 +394,16 @@ module Root : sig
       early.
 
       {b Method.} Undamped Newton steps [δ = −f x / slope x], quadratic near a
-      simple zero. {b Error.} [e = |δ| q / (1 − q)], with [q] the ratio of the
-      last two steps, the distance left when the steps shrink by [q]: unbounded
-      while [q ≥ 1] or before two steps; [y] is the estimate. A zero step is a
-      zero. A zero or non-finite slope, or a step that no longer moves the
-      estimate without meeting [tol], ends the element [Stalled]; a non-finite
-      [f] ends it [Not_finite]; [budget] iterations end it [Budget_spent], so a
-      budget of 1 converges only on a zero step. {b Cost.} One call of [f] and
-      one of [slope] per iteration.
+      simple zero. {b Error.} As {!System}'s, each element a system of one
+      unknown: [e = |δ| q / (1 − q)], with [q] the larger of the last two
+      contractions, unbounded while [q ≥ 1] or before three steps; [y] is the
+      estimate. A zero step is a zero, and a step within a unit in the last
+      place after a contracting step converges with [e = |δ|]. A zero or
+      non-finite slope, or a step that cannot move the estimate after one that
+      did not contract, ends the element [Stalled]; a non-finite [f] ends it
+      [Not_finite]; [budget] iterations end it [Budget_spent], so a budget of 1
+      converges only on a zero step. {b Cost.} One call of [f] and one of
+      [slope] per iteration.
 
       Raises [Invalid_argument] if [budget < 1]. *)
 end
@@ -439,9 +441,14 @@ module System : sig
       the estimate. A lane that meets [tol] takes its last step in full. A
       shortened or mixed step moves the estimate but its length never enters
       [e], so a search cannot converge by shrinking its steps. A zero step is a
-      zero. A step that no longer moves the estimate without meeting [tol], a
-      line search that finds no decrease, or a failed linear solve ends the lane
-      [Stalled]; a non-finite [f] at the guess or at an estimate ends it
+      zero. A step that cannot move the estimate, one within a unit in the last
+      place of every component, or one whose line search finds no decrease while
+      the full step changes [|f|² / 2] by less than its rounding, marks the
+      arithmetic's limit: a lane whose last step contracted, [q < 1] over that
+      one step, has reached its zero to the floats' precision and converges with
+      [e = |δ|], the step it could not take; any other ends [Stalled], as do a
+      line search that finds no decrease above the rounding and a failed linear
+      solve. A non-finite [f] at the guess or at an estimate ends it
       [Not_finite]; [budget] iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of [f] through
