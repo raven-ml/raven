@@ -1,0 +1,10 @@
+# thumper baseline v1
+# suite: compress
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed small/Compress-gzip-of-64-strings-of-4-KiB under load 23.8 on 10 cores
+
+small/Compress-gzip-of-64-strings-of-4-KiB	alloc_words	exact	34284
+small/Compress-gzip-of-64-strings-of-4-KiB	wall_time	batch=1	n=20	8.066e-03	7.006e-03 7.082e-03 7.211e-03 7.230e-03 7.447e-03 7.739e-03 7.766e-03 7.781e-03 7.818e-03 7.876e-03 8.256e-03 8.365e-03 8.574e-03 9.237e-03 9.478e-03 9.709e-03 1.005e-02 1.018e-02 1.059e-02 1.229e-02

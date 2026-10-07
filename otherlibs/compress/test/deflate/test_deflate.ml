@@ -520,6 +520,26 @@ let encoders =
               C.Zlib.compress ~level ""));
       test "default to level 6" (fun () ->
           equal string (compress ~level:6 zlib F.text) (compress zlib F.text));
+      prop "compress writes a fresh encoder's bytes after any other calls"
+        Gen.(
+          list ~size:(int_range 1 4)
+            (pair (int_range 0 9)
+               (frequency
+                  [
+                    (4, string);
+                    ( 1,
+                      string_of ~size:(int_range 32_800 36_000)
+                        (char_range 'a' 'e') );
+                  ])))
+        (fun calls ->
+          (* each call reuses the state the one before it left *)
+          List.iter
+            (fun (level, s) ->
+              cover "a long input" (String.length s > 32768);
+              equal string
+                (compress_sliced ~level gzip (String.length s + 1) s)
+                (compress ~level gzip s))
+            calls);
       test "await input until it ends, then stay ended" (fun () ->
           let e = C.Zlib.encoder () in
           let _, ended = outputs (encode e) in

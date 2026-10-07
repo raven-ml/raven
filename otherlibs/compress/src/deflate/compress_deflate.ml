@@ -439,6 +439,9 @@ external deflate_create : int -> deflate = "caml_compress_deflate_create"
 external deflate_free : deflate -> unit = "caml_compress_deflate_free"
 [@@noalloc]
 
+external deflate_reset : deflate -> unit = "caml_compress_deflate_reset"
+[@@noalloc]
+
 external deflate_input : deflate -> bytes -> int -> int -> int
   = "caml_compress_deflate_input"
 [@@noalloc]
@@ -458,26 +461,35 @@ module Encoder = struct
     deflate : deflate;
     pending : pending;
     output : bytes;
+    keep : bool;  (** whether [deflate] outlives the stream *)
     mutable phase : phase;
     mutable check : int;
     mutable size : int;
   }
 
-  let make framing ?(level = 6) () =
+  let check_level framing level =
     if level < 0 || level > 9 then
       invalid_arg
         (Printf.sprintf "%s: level %d is not in [0;9]" (module_name framing)
-           level);
+           level)
+
+  let start framing level ~keep deflate output =
     {
       framing;
       level;
-      deflate = deflate_create level;
+      deflate;
       pending = pending ();
-      output = Bytes.create out_max;
+      output;
+      keep;
       phase = Header;
       check = initial_check framing;
       size = 0;
     }
+
+  let make framing ?(level = 6) () =
+    check_level framing level;
+    start framing level ~keep:false (deflate_create level)
+      (Bytes.create out_max)
 
   let src e s first length =
     give "Compress_deflate.Encoder.src" e.pending s first length;
@@ -516,7 +528,7 @@ module Encoder = struct
         if n > 0 then `Data (e.output, 0, n)
         else if p.length > 0 then encode e
         else if p.ended then begin
-          deflate_free e.deflate;
+          if not e.keep then deflate_free e.deflate;
           e.phase <- Trailer;
           encode e
         end
@@ -536,8 +548,24 @@ end
 
 (* Whole buffers *)
 
-let compress framing ?level s =
-  let e = Encoder.make framing ?level () in
+(* [compress] keeps one encoder state and output buffer per domain and level,
+   reset for each call: a state holds about 1 MiB, which a call on a small
+   string would otherwise allocate and clear. A reset state writes the bytes of
+   a fresh one. *)
+let states = Domain.DLS.new_key (fun () -> Array.make 10 None)
+
+let compress framing ?(level = 6) s =
+  Encoder.check_level framing level;
+  let cache = Domain.DLS.get states in
+  let deflate, output =
+    match cache.(level) with
+    | Some (d, o) ->
+        cache.(level) <- None;
+        deflate_reset d;
+        (d, o)
+    | None -> (deflate_create level, Bytes.create out_max)
+  in
+  let e = Encoder.start framing level ~keep:true deflate output in
   let b = Buffer.create (64 + (String.length s / 2)) in
   let rec loop () =
     match Encoder.encode e with
@@ -547,7 +575,9 @@ let compress framing ?level s =
     | `Await ->
         Encoder.src e Bytes.empty 0 0;
         loop ()
-    | `End -> Buffer.contents b
+    | `End ->
+        cache.(level) <- Some (deflate, output);
+        Buffer.contents b
   in
   Encoder.src e (Bytes.unsafe_of_string s) 0 (String.length s);
   loop ()

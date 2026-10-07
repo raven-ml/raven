@@ -190,6 +190,11 @@ CAMLprim value caml_compress_deflate_free(value v) {
   return Val_unit;
 }
 
+CAMLprim value caml_compress_deflate_reset(value v) {
+  compress_deflate_reset(Deflate_val(v));
+  return Val_unit;
+}
+
 CAMLprim value caml_compress_deflate_input(value v, value src, value off,
                                            value len) {
   return Val_long(compress_deflate_input(

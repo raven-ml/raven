@@ -656,6 +656,20 @@ void compress_deflate_free(compress_deflate *e) {
   free(e);
 }
 
+/* Starts a new stream on [e]'s memory. Its positions continue more than a
+   window past the last stream's, so every position the match tables hold
+   from it is out of reach and ends a search as an empty entry does: the
+   bytes are a fresh encoder's, and the tables need no clearing. */
+void compress_deflate_reset(compress_deflate *e) {
+  size_t start = e->end + WINDOW + 1u;
+  e->base = start;
+  e->end = start;
+  e->block = start;
+  e->finished = 0;
+  e->bits = 0;
+  e->nbits = 0;
+}
+
 size_t compress_deflate_input(compress_deflate *e, const uint8_t *src,
                               size_t len) {
   size_t keep = e->block > WINDOW ? e->block - WINDOW : 0;

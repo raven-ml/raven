@@ -55,8 +55,26 @@ let corpus name =
             Compress_snappy.compress_into raw snappy);
       ])
 
+(* Many small strings, as a tiled image's gzip tiles are: each call pays for
+   whatever state the encoder sets up. *)
+let small () =
+  let raw = data "text.raw" in
+  let tiles =
+    Array.init 64 (fun t ->
+        String.init 4096 (fun i ->
+            Char.unsafe_chr (Array1.unsafe_get raw ((t * 4096) + i))))
+  in
+  Thumper.group "small"
+    [
+      Thumper.bench "Compress gzip of 64 strings of 4 KiB" (fun () ->
+          Array.iter
+            (fun s ->
+              ignore (Sys.opaque_identity (Compress_deflate.Gzip.compress s)))
+            tiles);
+    ]
+
 let () =
   Thumper.run "compress"
     ~budgets:[ Thumper.Budget.no_slower_than 0.10 ]
-    (List.map corpus [ "text"; "columns"; "random" ])
+    (small () :: List.map corpus [ "text"; "columns"; "random" ])
   |> exit

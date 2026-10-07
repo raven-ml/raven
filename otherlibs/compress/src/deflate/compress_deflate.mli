@@ -23,7 +23,8 @@
     {b Compression.} The bytes written depend only on the bytes given and the
     level: not on how they are sliced, or on the machine.
 
-    {b Concurrency.} The module holds no global mutable state. Distinct
+    {b Concurrency.} The module shares no mutable state between domains:
+    [compress] keeps each domain's encoder state for its next call. Distinct
     encoders, decoders and calls may run on distinct domains at once; one
     encoder or decoder is used by one domain at a time. *)
 

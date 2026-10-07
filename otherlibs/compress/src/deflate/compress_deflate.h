@@ -81,6 +81,7 @@ typedef struct compress_deflate compress_deflate;
 
 compress_deflate *compress_deflate_create(int level);
 void compress_deflate_free(compress_deflate *e);
+void compress_deflate_reset(compress_deflate *e);
 size_t compress_deflate_input(compress_deflate *e, const uint8_t *src,
                               size_t len);
 size_t compress_deflate_encode(compress_deflate *e, uint8_t *out, int eod);
