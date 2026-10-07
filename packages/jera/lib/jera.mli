@@ -644,7 +644,10 @@ module Minimize : sig
       Jacobian-vector product per unknown and solves [(JᵀJ + λ D) δ = −Jᵀ r]
       with [linear]; [D] is the running maximum of [JᵀJ]'s diagonal. A step is
       accepted when it achieves more than [10⁻⁴] of the decrease the linear
-      model predicts; [λ] then falls, and grows on each rejection (Nielsen,
+      model predicts: the decrease of [|r|² / 2] measured or, where that changes
+      by less than its rounding [√ε |r|² / 2], estimated from rune's gradients
+      at the step's ends, [−(∇ + ∇') · s / 2], so a minimum with residuals left
+      still converges. [λ] then falls, and grows on each rejection (Nielsen,
       1999), so near a small-residual minimum the steps are Gauss–Newton's.
       {b Error.} The undamped step is the Gauss–Newton step at the estimate,
       solved once the damped step has met the test. {b Stability.} The normal

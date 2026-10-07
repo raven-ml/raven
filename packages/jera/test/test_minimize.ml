@@ -279,6 +279,16 @@ let exponentials =
     vec [| a; b |])
   |> Gen.with_pp Nx.pp
 
+(* An exponential and the frequency of the sine added to its samples. *)
+let noisy =
+  Gen.(
+    let+ a = float_range 0.5 3.
+    and+ b = float_range (-2.) 1.
+    and+ noise = float_range 3. 40. in
+    (vec [| a; b |], noise))
+  |> Gen.with_pp (fun ppf (p, noise) ->
+      Format.fprintf ppf "p = %a@ noise frequency %g" Nx.pp p noise)
+
 let lm_tests =
   [
     prop "it recovers the parameters of exact data" exponentials (fun p ->
@@ -286,6 +296,29 @@ let lm_tests =
           (Oracle.tensor ~rel:1e-9 ~abs:1e-11 ())
           p
           (Solution.get (fit (model p))));
+    prop "a fit with residuals left converges at its minimum" noisy
+      (fun (p, noise) ->
+        (* Near a nonzero-residual minimum the cost's decrease falls below its
+           rounding before the steps meet [tol]. The residuals, a tenth of the
+           signal or more, leave a small-residual problem, whose Gauss–Newton
+           steps converge fast; a residual far above the signal makes them
+           converge linearly, which a budget then bounds. *)
+        let y =
+          Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) 0.3)
+        in
+        let s =
+          Minimize.solve one lm
+            ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+            ~budget:100
+            (fun p -> Nx.sub (model p) y)
+            (vec [| 1.; 0. |])
+        in
+        let fit = Solution.get s in
+        let cost p = Nx.mul_s (Nx.sum (Nx.square (Nx.sub (model p) y))) 0.5 in
+        equal
+          (Oracle.tensor ~abs:1e-5 ())
+          (vec [| 0.; 0. |])
+          (Rune.grad' cost fit));
     test "with residuals left, Jᵀ r vanishes at the fit" (fun () ->
         let y =
           Nx.add
