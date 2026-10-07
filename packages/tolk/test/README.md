@@ -22,35 +22,30 @@ A suite's stanza:
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden))
- (action
-  (run %{test} --exclude-tag slow)))
+  (glob_files *.golden)))
 ```
 
-## Slow tests
+## Running
 
-`dune build @packages/tolk/runtest` is the default run, and it skips
-every test tagged `slow`: each stanza runs its suite with
-`--exclude-tag slow`. Declare with `slow` (or `~tags:["slow"]`) whatever is
-heavy: compiling more than a few kernels, GPUs, end-to-end runs, the
-optimisation fuzzer. Each module's default suite runs in 2 s or less, and the
-whole default run in 60 s or less.
-
-A suite that has slow tests adds a rule to the `slow` alias:
+`dune build @packages/tolk/runtest` runs every test. A setting is read
+once per process, so a suite whose tests need a setting of their own tags
+them and runs twice: once without the tag, then with the variable set and
+only the tag.
 
 ```lisp
-(rule
- (alias slow)
- (package tolk)
- (deps
-  (glob_files *.golden))
- (action
-  (run %{exe:test_dtype.exe} --tag slow)))
+(action
+ (progn
+  (run %{test} --exclude-tag mv_0)
+  (setenv
+   MV
+   0
+   (run %{test} --tag mv_0))))
 ```
 
-`dune build @packages/tolk/slow` runs them all. A suite without slow
-tests has no such rule, since `--tag slow` then selects nothing, which windtrap
-reports as a failure.
+A stanza excludes a tag only to run it in another process, so `runtest`
+leaves no test out, and a tagged run that selects nothing fails, so no
+stanza names a tag its suite dropped. The suites that need a GPU skip
+without one; Metal's run on macOS alone.
 
 ## Hardware checks
 
@@ -90,8 +85,8 @@ named:
   compute channel releases all 64 bits. No waiter may pass early mid-write,
   and a late high word may never take the word back below another
   channel's value.
-- **NV batches (Ops_nv, D38, D40, D42, D51):** `test_ops_nv_exec` (the `slow` alias) on
-  an NVIDIA GPU: chained launches, copies on the copy engine inside a batch,
+- **NV batches (Ops_nv, D38, D40, D42, D51):** `test_ops_nv_exec` on an
+  NVIDIA GPU: chained launches, copies on the copy engine inside a batch,
   runs without synchronizing, profiled spans and each trip of a range on its
   own descriptors. The copy channel's second release lands at the signal
   word's high half or at the device's sink word, as its first release's low

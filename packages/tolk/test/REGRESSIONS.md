@@ -2803,7 +2803,7 @@ when each is armed (`--arm`: Metal does not survive `fork`).
 ### Execution
 
 `OX` runs batches through `tolk.engine` on the Mac's GPU (`test_ops_metal_exec`,
-the `slow` alias, built on macOS only).
+in `runtest` on macOS only).
 
 | Source | Behaviour | Outcome |
 |---|---|---|
@@ -2869,7 +2869,7 @@ all 8 mutants of `ops_cuda.ml`.
 ### Execution
 
 `CX` runs batches through `tolk.engine` on NVIDIA GPUs (`test_ops_cuda_exec`,
-the `slow` alias), and skips each test on a machine without the GPUs it needs.
+in `runtest`), and skips each test on a machine without the GPUs it needs.
 No CI machine has one: it runs on hardware by hand.
 
 | Source | Behaviour | Outcome |
@@ -2946,7 +2946,7 @@ more than 100 KiB of shared memory is unread.
 ### Execution
 
 `NX` runs batches through `tolk.engine` on the first NVIDIA GPU
-(`test_ops_nv_exec`, the `slow` alias), and skips each test on a machine
+(`test_ops_nv_exec`, in `runtest`), and skips each test on a machine
 without one. No CI machine has one: it runs on hardware by hand, and has not
 run yet.
 
@@ -3127,7 +3127,7 @@ in the `SET_UCONFIG_REG` branch.
 ### Execution
 
 `AX` runs batches through `tolk.engine` on the first AMD GPU
-(`test_ops_amd_exec`, the `slow` alias); every test skips without one.
+(`test_ops_amd_exec`, in `runtest`); every test skips without one.
 
 | Source | Behaviour | Outcome |
 |---|---|---|

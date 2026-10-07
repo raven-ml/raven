@@ -164,7 +164,7 @@ is scope, not a divergence: the part left out is listed here, and
 
 ## Tests and ledgers
 
-`test/README.md` describes the suites, the slow tests and the goldens
+`test/README.md` describes the suites, how they run and the goldens
 recorded from tinygrad. `DIVERGENCES.md` lists every place where tolk
 differs from tinygrad and why, and `test/REGRESSIONS.md` maps each test of
 the old tolk and of tinygrad to the test that replaces it.
