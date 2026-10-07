@@ -85,9 +85,17 @@ let reserve m ~base n =
           m.reserved <- (base, n) :: m.reserved);
   r
 
+(* A loop and a bare lock, since every allocation at an address asks: no closure
+   is made. [within] cannot raise. *)
+let rec within a n = function
+  | [] -> false
+  | (base, len) :: l -> (a >= base && a <= base + len - n) || within a n l
+
 let reserved m a n =
-  Mutex.protect m.lock @@ fun () ->
-  List.exists (fun (base, len) -> a >= base && a <= base + len - n) m.reserved
+  Mutex.lock m.lock;
+  let r = within a n m.reserved in
+  Mutex.unlock m.lock;
+  r
 
 let take m bus = m.ops.take bus
 

@@ -202,8 +202,9 @@ let alloc_dma ?(contiguous = false) ?va f n =
     contiguous && n > page && f.fn.addressing = Machine.Physical
   in
   let mapped = if huge_page then huge else n in
-  Option.iter
-    (fun va ->
+  (match va with
+  | None -> ()
+  | Some va ->
       on_page f "alloc_dma" va;
       if huge_page && va mod huge <> 0 then
         invalid_arg
@@ -214,8 +215,7 @@ let alloc_dma ?(contiguous = false) ?va f n =
         invalid_arg
           (Printf.sprintf
              "Function.alloc_dma: 0x%x is in no range Machine.reserve reserved"
-             va))
-    va;
+             va));
   let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
   Ok dma
