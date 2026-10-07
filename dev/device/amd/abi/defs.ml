@@ -3529,13 +3529,22 @@ let find gc name =
   | Gc_11_5_0 -> gc_11_5_0_find name
   | Gc_12_0_0 -> gc_12_0_0_find name
 
-(* The bases of the GC's register segments in PM4's register space, by the
-   GC major version from which they hold, from segment 0 to the last with a
-   base. *)
-let gc_bases = [
-  (9, [ 0x2000; 0xa000 ]);
-  (10, [ 0x1260; 0xa000; 0x1c000; 0x2402c00 ]);
-]
+(* The base of a GC register segment in PM4's register space, by the GC
+   major version from which it holds, or [-1] for a segment with none. *)
+let gc_base major segment =
+  if major >= 10 then (* sienna_cichlid_ip_offset.h *)
+    (match segment with
+    | 0 -> 0x1260
+    | 1 -> 0xa000
+    | 2 -> 0x1c000
+    | 3 -> 0x2402c00
+    | _ -> -1)
+  else if major >= 9 then (* vega20_ip_offset.h *)
+    (match segment with
+    | 0 -> 0x2000
+    | 1 -> 0xa000
+    | _ -> -1)
+  else -1
 
 (* PM4, the same in soc15d.h (GFX9) and nvd.h (GFX10 on), and the release's
    enumerations in kfd_pm4_headers_ai.h *)

@@ -20,29 +20,24 @@ let gc_name (g : Gpu.t) =
 let registers (g : Gpu.t) = Defs.registers (Defs.gc g.gc)
 let find (g : Gpu.t) name = Defs.find (Defs.gc g.gc) name
 
-(* The bases of the latest generation at or before [major], from [latest]. *)
-let rec bases major latest = function
-  | (m, b) :: rest when m <= major -> bases major b rest
-  | _ -> latest
-
-(* The base of segment [s] of [bases], or [-1] if it has none. *)
-let rec base s = function
-  | b :: _ when s = 0 -> b
-  | _ :: rest when s > 0 -> base (s - 1) rest
-  | _ -> -1
-
 let address (g : Gpu.t) r =
   let major, _, _ = g.gc in
-  let b = base r.segment (bases major [] Defs.gc_bases) in
+  let b = Defs.gc_base major r.segment in
   if b < 0 then
     invalid_argf "Register.address: %s's segment %d has no base on %s" r.name
       r.segment (gc_name g);
   b + r.offset
 
-let encode r fs =
-  let set w (f, v) =
-    match List.assoc_opt f r.fields with
-    | Some (lo, hi) -> w lor ((v land ((1 lsl (hi - lo + 1)) - 1)) lsl lo)
-    | None -> invalid_argf "Register.encode: %s has no field %s" r.name f
-  in
-  List.fold_left set 0 fs
+(* The lowest and highest bits of [r]'s field [f]. *)
+let rec bits_of r f = function
+  | (name, bits) :: fields ->
+      if String.equal name f then bits else bits_of r f fields
+  | [] -> invalid_argf "Register.encode: %s has no field %s" r.name f
+
+let rec encode_fields r w = function
+  | (f, v) :: fs ->
+      let lo, hi = bits_of r f r.fields in
+      encode_fields r (w lor ((v land ((1 lsl (hi - lo + 1)) - 1)) lsl lo)) fs
+  | [] -> w
+
+let encode r fs = encode_fields r 0 fs

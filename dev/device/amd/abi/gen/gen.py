@@ -754,9 +754,8 @@ def generate(h):
             "  match gc with", "  | No_gc -> None"]
     out += [f"  | {t} -> gc_{'_'.join(map(str, v))}_find name" for v, t in tags.items()]
     out.append("")
-    out += ["(* The bases of the GC's register segments in PM4's register space, by the",
-            "   GC major version from which they hold, from segment 0 to the last with a",
-            "   base. *)", "let gc_bases = ["]
+    # Segment bases, as a match on the GC major and the segment.
+    gens = []
     for major, name in GC_BASES.items():
         present = defines(h[name])
         bv = constants(h[name], [n for n in GC_SEGMENTS if n in present])
@@ -765,8 +764,17 @@ def generate(h):
             bases.pop()
         if 0 in bases:
             sys.exit(f"{name}: a GC segment without a base before one with")
-        out.append(f"  ({major}, [ " + "; ".join(ml_int(b) for b in bases) + " ]);")
-    out += ["]", ""]
+        gens.append((major, name, bases))
+    out += ["(* The base of a GC register segment in PM4's register space, by the GC",
+            "   major version from which it holds, or [-1] for a segment with none. *)",
+            "let gc_base major segment ="]
+    for k, (major, name, bases) in enumerate(sorted(gens, reverse=True)):
+        kw = "if" if k == 0 else "else if"
+        out.append(f"  {kw} major >= {major} then (* {name} *)")
+        out.append("    (match segment with")
+        out += [f"    | {i} -> {ml_int(b)}" for i, b in enumerate(bases)]
+        out.append("    | _ -> -1)")
+    out += ["  else -1", ""]
 
     # PM4
     kfd = constants(h["kfd_pm4_headers_ai.h"], PM4_ENUMS)
