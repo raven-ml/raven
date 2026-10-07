@@ -8,9 +8,7 @@
    The bench program has one domain, so the stubs keep the runtime during a
    job: releasing it would add its own cost to every row. */
 
-#if defined(__linux__)
-#define _POSIX_C_SOURCE 200809L /* clock_gettime */
-#endif
+#define _GNU_SOURCE
 
 #include <caml/mlvalues.h>
 

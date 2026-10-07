@@ -13,9 +13,7 @@
    [patience], so a pool that breaks a promise fails the test instead of
    hanging it. */
 
-#if defined(__linux__)
-#define _GNU_SOURCE /* sched_setaffinity, CPU_SET */
-#endif
+#define _GNU_SOURCE
 
 #include <caml/alloc.h>
 #include <caml/fail.h>

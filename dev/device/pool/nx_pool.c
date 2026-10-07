@@ -19,9 +19,7 @@
    them. A job's publication then costs no system call, and a worker that a
    burst's jobs leave out parks once its window ends. */
 
-#if defined(__linux__)
-#define _GNU_SOURCE /* sched_getaffinity, CPU_ALLOC */
-#endif
+#define _GNU_SOURCE
 
 #include "nx_pool.h"
 
