@@ -16,7 +16,11 @@
    bit); the curvature derivative at Omega_k = 0 is d^3 / (6 D_H^2); jvp and
    grad agree with central differences in every parameter and in z; a species
    of zero mass counts as massless; broadcast lanes equal vmap's rows; the
-   domain's NaN lanes have zero derivatives and leave the others alone. *)
+   domain's NaN lanes have zero derivatives and leave the others alone.
+
+   Fit: test/pantheon's path on supernovae drawn from a known cosmology gives
+   it back, from noise-free data with G C G^T equal to the inverse Fisher
+   matrix, from noisy data within 3 sigma. *)
 
 open Windtrap
 open Ymir
@@ -702,6 +706,65 @@ let errors =
               Cosmology.hubble c (Nx.scalar Nx.float16 0.)));
     ]
 
+(* A supernova fit *)
+
+(* The Pantheon+ program's path on data drawn from a known cosmology: 200
+   supernovae from z = 0.01 to 2.3, heliocentric redshifts offset from the
+   placing ones, 0.1 mag of independent scatter and a 0.05 mag systematic that
+   grows with log (1 + z), correlating every pair. *)
+module Sn = Ymir_test.Supernova
+
+let n_sn = 200
+
+let z_hd =
+  Nx.init Nx.float64 [| n_sn |] (fun i ->
+      0.01 *. (230. ** (Float.of_int i.(0) /. Float.of_int (n_sn - 1))))
+
+let z_hel = Nx.add z_hd (Nx.mul_s (Nx.sin (Nx.mul_s z_hd 40.)) 1e-3)
+
+let chol =
+  let tilt = Nx.reshape [| n_sn; 1 |] (Nx.log1p z_hd) in
+  Nx.cholesky
+    (Nx.add
+       (Nx.mul_s (Nx.eye Nx.float64 n_sn) 0.01)
+       (Nx.mul_s (Nx.matmul tilt (Nx.transpose tilt)) 0.0025))
+
+let truth = Nx.create Nx.float64 [| 3 |] [| 0.3; 0.7; -19.3 |]
+
+let magnitudes theta =
+  let at i = Nx.get [ i ] theta in
+  let c = Sn.lcdm ~omega_m:(at 0) ~omega_l:(at 1) () in
+  Nx.add (Cosmology.distance_modulus c ~observed:z_hel z_hd) (at 2)
+
+let start = Nx.create Nx.float64 [| 3 |] [| 0.5; 0.5; -19. |]
+let fit m = Sn.fit ~chol ~model:magnitudes m start
+
+let fits =
+  let matrix = array (float_rel ~rel:1e-8 ~abs:1e-14) in
+  group "fit"
+    [
+      test "noise-free data give the cosmology and the Fisher covariance"
+        (fun () ->
+          let f = fit (magnitudes truth) in
+          equal
+            (array (float_rel ~rel:1e-7 ~abs:0.))
+            (Nx.to_array truth) (Nx.to_array f.theta);
+          equal ~msg:"G C G^T" matrix (Nx.to_array f.fisher) (Nx.to_array f.cov));
+      test "noisy data give the cosmology within 3 sigma" (fun () ->
+          List.iter
+            (fun seed ->
+              let w = Nx.Rng.normal (Nx.Rng.key seed) Nx.float64 [| n_sn |] in
+              let f = fit (Nx.add (magnitudes truth) (Nx.matmul chol w)) in
+              for i = 0 to 2 do
+                less
+                  ~msg:(Printf.sprintf "seed %d, parameter %d" seed i)
+                  float_exact
+                  ~than:(3. *. Sn.sigma f.cov i)
+                  (Float.abs (Nx.item [ i ] f.theta -. Nx.item [ i ] truth))
+              done)
+            [ 1; 2; 3 ]);
+    ]
+
 let () =
   exit
     (run "Cosmology"
@@ -716,4 +779,5 @@ let () =
          batching;
          domain;
          errors;
+         fits;
        ])

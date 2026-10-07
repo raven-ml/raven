@@ -1,3 +1,3 @@
 (library
  (name ymir_test)
- (libraries ymir ymir.units nx windtrap))
+ (libraries ymir ymir.units nx rune jera windtrap))

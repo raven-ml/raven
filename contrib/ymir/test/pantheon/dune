@@ -1,0 +1,12 @@
+; Stage 2's closing result on the Pantheon+ data release. It reads 34 MB of
+; public data, downloaded to ~/.cache/ymir on the first run, which no test
+; run holds, so it is outside runtest:
+;
+;   dune exec contrib/ymir/test/pantheon/pantheon.exe [-- DIR]
+;
+; runtest fits the same path on supernovae drawn from a known cosmology
+; (test_cosmology.ml, group fit).
+
+(executable
+ (name pantheon)
+ (libraries ymir ymir_test nx unix))
