@@ -14,5 +14,4 @@ type event =
 
 val iter : (event -> unit) -> string -> unit
 (** [iter f trace] calls [f] on the events of [trace], one shader engine's
-    bytes, in order. A packet whose 8 bytes from its start pass [trace]'s end is
-    not read. *)
+    bytes, in order. A packet cut short by [trace]'s end is not read. *)

@@ -478,13 +478,8 @@ let decoding =
                 ts);
       cut_short "a GFX9 trace cut short yields the waves of its whole packets"
         [ gfx9 ];
-      xfail
-        ~reason:
-          "an RDNA trace cut short loses the whole packets in its last 8 \
-           bytes: the decoder reads a packet only when 8 bytes from its start \
-           remain"
-        (cut_short
-           "an RDNA trace cut short yields the waves of its whole packets" rdna);
+      cut_short "an RDNA trace cut short yields the waves of its whole packets"
+        rdna;
       cases ~name:S.version "an empty trace has no waves and no clock"
         [ (9, 4, 3); (11, 0, 0); (12, 0, 1) ]
         (fun v ->

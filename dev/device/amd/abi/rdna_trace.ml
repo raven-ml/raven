@@ -187,42 +187,30 @@ let rdna4_layout = 4
 
 (* The reader holds the next 16 nibbles in [reg], the current packet's from bit
    0, and shifts in as many as the packet before it took. *)
+(* The nibble [i] of [data], least significant first, [0] past its end. *)
+let nibble data i =
+  if i lsr 1 >= String.length data then 0
+  else
+    let b = Char.code (String.unsafe_get data (i lsr 1)) in
+    if i land 1 = 0 then b land 0xf else b lsr 4
+
+(* The reader holds the 16 nibbles from the current packet's start in [reg], the
+   packet's first at bit 0, and reads a packet only if the trace holds all its
+   nibbles. *)
 let iter f data =
-  let n = String.length data in
-  let byte i = Char.code (String.unsafe_get data i) in
+  let total = 2 * String.length data in
   let fmt = ref (format rdna3) in
-  let reg = ref 0L and pos = ref 0 and nib_off = ref 0 and nibbles = ref 16 in
-  let time = ref 0 in
-  while !pos + ((!nibbles + !nib_off + 1) lsr 1) <= n do
-    let need = !nibbles - !nib_off in
-    if !nib_off = 1 then begin
-      (reg :=
-         Int64.(
-           logor
-             (shift_right_logical !reg 4)
-             (shift_left (of_int (byte !pos lsr 4)) 60)));
-      incr pos
-    end;
-    let bytes = need lsr 1 in
-    if bytes > 0 then begin
-      let k = Int.min bytes 8 in
-      let chunk = ref 0L in
-      for i = k - 1 downto 0 do
-        chunk := Int64.(logor (shift_left !chunk 8) (of_int (byte (!pos + i))))
-      done;
-      let kept = if k = 8 then 0L else Int64.shift_right_logical !reg (8 * k) in
-      (reg := Int64.(logor kept (shift_left !chunk (64 - (8 * k)))));
-      pos := !pos + bytes
-    end;
-    nib_off := need land 1;
-    (if !nib_off = 1 then
-       reg :=
-         Int64.(
-           logor
-             (shift_right_logical !reg 4)
-             (shift_left (of_int (byte !pos land 0xf)) 60)));
-    let _, _, _, size, delta, kind = !fmt.(Int64.to_int !reg land 0xff) in
-    nibbles := size;
+  let reg = ref 0L and start = ref 0 and time = ref 0 in
+  let shift_in i =
+    reg :=
+      Int64.(
+        logor
+          (shift_right_logical !reg 4)
+          (shift_left (of_int (nibble data i)) 60))
+  in
+  (* Takes the packet in [reg] into the trace's time and events. *)
+  let decode () =
+    let _, _, _, _, delta, kind = !fmt.(Int64.to_int !reg land 0xff) in
     let delta = Option.fold ~none:0 ~some:(field !reg) delta in
     let marker =
       match kind with
@@ -243,4 +231,18 @@ let iter f data =
         let cu, simd, slot = wave_of !reg w in
         f (Wave_end { time = !time; cu; simd; slot })
     | Plain | Short | Mark _ -> ()
+  in
+  for i = 0 to 15 do
+    shift_in i
+  done;
+  while !start < total do
+    let _, _, _, size, _, _ = !fmt.(Int64.to_int !reg land 0xff) in
+    if !start + size > total then start := total
+    else begin
+      decode ();
+      for i = !start + 16 to !start + 15 + size do
+        shift_in i
+      done;
+      start := !start + size
+    end
   done
