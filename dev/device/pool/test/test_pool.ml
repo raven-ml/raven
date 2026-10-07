@@ -126,6 +126,117 @@ let test_windows_cores () =
   if active < 0 then skip ~reason:"the host has no processor groups" ();
   equal ~msg:"cores" int active cores
 
+(* A cgroup tree as Linux shows it to a process: proc/self/cgroup's lines,
+   proc/self/mountinfo's mounts, and the cpu.max files under the mount points,
+   all under one directory. [cpus] is ceil q of nx_pool.h: the least ceil
+   (quota / period) over the cgroup and its ancestors up to the mount. *)
+type tree = {
+  name : string;
+  cgroup : string list;
+  mounts : string list;
+  limits : (string * string) list;
+  cpus : int;
+}
+
+let mount ?(root = "/") point =
+  String.concat " "
+    [ "35 24 0:30"; root; point; "rw,nosuid shared:9 - cgroup2 cgroup2 rw" ]
+
+let host_mount = mount "/sys/fs/cgroup"
+let session = "/user.slice/user-1000.slice/session-2.scope"
+let cpu_max cgroup = "sys/fs/cgroup" ^ cgroup ^ "/cpu.max"
+let quota q = Printf.sprintf "%d 100000\n" q
+let no_quota = "max 100000\n"
+
+let trees =
+  let on_host ~name limits cpus =
+    { name; cgroup = [ "0::" ^ session ]; mounts = [ host_mount ]; limits; cpus }
+  in
+  [
+    on_host ~name:"no quota on the path"
+      [ (cpu_max session, no_quota); (cpu_max "/user.slice", no_quota) ]
+      (-1);
+    on_host ~name:"a quota of 1.5 CPUs" [ (cpu_max session, quota 150000) ] 2;
+    on_host ~name:"a quota under one CPU" [ (cpu_max session, quota 50000) ] 1;
+    on_host ~name:"a quota of whole CPUs" [ (cpu_max session, quota 300000) ] 3;
+    on_host ~name:"the tightest of the cgroup and its ancestors"
+      [
+        (cpu_max session, quota 400000);
+        (cpu_max "/user.slice/user-1000.slice", quota 250000);
+        (cpu_max "/user.slice", quota 800000);
+      ]
+      3;
+    on_host ~name:"a cgroup without cpu.max"
+      [ (cpu_max "/user.slice/user-1000.slice", quota 200000) ]
+      2;
+    on_host ~name:"a file above the mount point"
+      [ ("sys/fs/cpu.max", quota 100000); (cpu_max session, no_quota) ]
+      (-1);
+    {
+      name = "a mount of a cgroup below the hierarchy's root";
+      cgroup = [ "0::/kubepods/pod1/c1" ];
+      mounts = [ mount ~root:"/kubepods" "/sys/fs/cgroup" ];
+      limits = [ ("sys/fs/cgroup/pod1/c1/cpu.max", quota 200000) ];
+      cpus = 2;
+    };
+    {
+      name = "a mount that does not hold the cgroup";
+      cgroup = [ "0::" ^ session ];
+      mounts = [ mount ~root:"/system.slice" "/mnt/system"; host_mount ];
+      limits = [ ("mnt/system/cpu.max", quota 100000) ];
+      cpus = -1;
+    };
+    {
+      name = "the cgroup v2 line among v1 lines";
+      cgroup = [ "12:cpu,cpuacct:/user.slice"; "0::" ^ session ];
+      mounts = [ host_mount ];
+      limits = [ (cpu_max session, quota 200000) ];
+      cpus = 2;
+    };
+    {
+      name = "cgroup v1 alone";
+      cgroup = [ "12:cpu,cpuacct:" ^ session ];
+      mounts =
+        [ "36 24 0:31 / /sys/fs/cgroup/cpu rw shared:10 - cgroup cgroup rw,cpu" ];
+      limits = [ ("sys/fs/cgroup/cpu" ^ session ^ "/cpu.max", quota 100000) ];
+      cpus = -1;
+    };
+  ]
+
+(* [with_files files f] is [f dir], with each (path, contents) of [files]
+   written under a new directory [dir], which is removed after. *)
+let with_files files f =
+  let dir = Filename.temp_dir "nx_pool" "" in
+  let rec make path =
+    if not (Sys.file_exists path) then (
+      make (Filename.dirname path);
+      Sys.mkdir path 0o755)
+  in
+  let rec remove path =
+    if Sys.is_directory path then (
+      Array.iter (fun e -> remove (Filename.concat path e)) (Sys.readdir path);
+      Sys.rmdir path)
+    else Sys.remove path
+  in
+  List.iter
+    (fun (path, contents) ->
+      let file = Filename.concat dir path in
+      make (Filename.dirname file);
+      Out_channel.with_open_bin file (fun oc ->
+          Out_channel.output_string oc contents))
+    files;
+  Fun.protect ~finally:(fun () -> remove dir) (fun () -> f dir)
+
+let test_cgroup tree =
+  let lines l = String.concat "" (List.map (fun s -> s ^ "\n") l) in
+  let files =
+    ("proc/self/cgroup", lines tree.cgroup)
+    :: ("proc/self/mountinfo", lines tree.mounts)
+    :: tree.limits
+  in
+  equal ~msg:"ceil q, or -1 without a quota" int tree.cpus
+    (with_files files P.cgroup_cpus)
+
 let cores_tests =
   group ~timeout:P.timeout "cores"
     [
@@ -143,6 +254,11 @@ let cores_tests =
         "on Linux the cores are bounded by the affinity at the first call, and \
          a later change is not seen"
         test_affinity;
+      cases
+        ~name:(fun t -> t.name)
+        "Linux's cgroup v2 bound is the least ceil (quota / period) up the \
+         process's cgroup, read from any tree"
+        trees test_cgroup;
     ]
 
 (* Chunks *)

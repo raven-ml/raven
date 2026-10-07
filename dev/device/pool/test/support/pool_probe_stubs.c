@@ -37,6 +37,7 @@
 #endif
 
 #include "nx_pool.h"
+#include "nx_pool_cgroup.h"
 #include "pool_probe.h"
 
 /* Time */
@@ -385,6 +386,10 @@ value probe_cores(value unit) {
 value probe_performance_cores(value unit) {
   (void)unit;
   return Val_int(nx_pool_performance_cores());
+}
+
+value probe_cgroup_cpus(value v_root) {
+  return Val_long(nx_pool_cgroup_cpus(String_val(v_root)));
 }
 
 /* [probe_sysctl name] is the integer [name] reads, or -1. */

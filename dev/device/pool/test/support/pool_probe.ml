@@ -42,6 +42,7 @@ external counted_calls : unit -> int = "probe_counted_calls"
 
 external cores : unit -> int = "probe_cores"
 external performance_cores : unit -> int = "probe_performance_cores"
+external cgroup_cpus : string -> int = "probe_cgroup_cpus"
 
 external sysctl : string -> int = "probe_sysctl"
 

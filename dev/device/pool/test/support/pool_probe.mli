@@ -74,6 +74,11 @@ val cores : unit -> int
 val performance_cores : unit -> int
 (** [performance_cores ()] is [nx_pool_performance_cores ()]. *)
 
+val cgroup_cpus : string -> int
+(** [cgroup_cpus root] is the cgroup v2 bound of [nx_pool_cores ()], ceil q,
+    read from the tree of files under the directory [root] as the pool reads
+    the host's under [/]: [-1] without a quota (nx_pool_cgroup.h). *)
+
 val sysctl : string -> int
 (** [sysctl name] is the integer the sysctl [name] reads (macOS). *)
 

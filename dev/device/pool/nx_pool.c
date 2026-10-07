@@ -25,11 +25,14 @@
 #define _GNU_SOURCE
 
 #include "nx_pool.h"
+#include "nx_pool_cgroup.h"
 
 #include <pthread.h>
 #include <sched.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -43,8 +46,6 @@
 #include <sys/sysctl.h>
 #elif defined(__linux__)
 #include <errno.h>
-#include <stdio.h>
-#include <string.h>
 #endif
 
 /* How long a waiting thread spins before it parks. Waking a parked thread
@@ -105,14 +106,28 @@ static long affinity_cpus(void) {
   return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
-/* The process's cgroup v2 directory, written to [dir]: the cgroup2 mount
-   that holds the path of /proc/self/cgroup's "0::" line. A mount's root is
-   the cgroup it shows, so the directory is the mount point joined with the
-   path below that root. Returns the length of the mount point, where the
-   walk to the ancestors stops, or 0 if there is none. */
-static size_t cgroup_dir(char *dir, size_t size) {
-  char line[4096], path[4096] = "", root[4096], point[4096];
-  FILE *f = fopen("/proc/self/cgroup", "r");
+#endif
+
+/* The cgroup quota is plain reading of files, compiled everywhere so that
+   the suite runs it on every system. */
+
+/* The file [name] under [root], opened for reading, or NULL. */
+static FILE *open_under(const char *root, const char *name) {
+  char file[4096];
+  if (snprintf(file, sizeof file, "%s%s", root, name) >= (int)sizeof file)
+    return NULL;
+  return fopen(file, "r");
+}
+
+/* The process's cgroup v2 directory under [root], written to [dir]: the
+   cgroup2 mount that holds the path of proc/self/cgroup's "0::" line. A
+   mount's root is the cgroup it shows, so the directory is the mount point
+   joined with the path below that root. Returns the length of [root] and
+   the mount point, where the walk to the ancestors stops, or 0 if there is
+   none. */
+static size_t cgroup_dir(const char *root, char *dir, size_t size) {
+  char line[4096], path[4096] = "", mount[4096], point[4096];
+  FILE *f = open_under(root, "/proc/self/cgroup");
   if (f == NULL) return 0;
   while (fgets(line, sizeof line, f))
     if (strncmp(line, "0::", 3) == 0 && sscanf(line + 3, "%4095s", path) == 1)
@@ -121,29 +136,29 @@ static size_t cgroup_dir(char *dir, size_t size) {
   if (path[0] != '/') return 0;
 
   size_t stop = 0;
-  f = fopen("/proc/self/mountinfo", "r");
+  f = open_under(root, "/proc/self/mountinfo");
   if (f == NULL) return 0;
   while (stop == 0 && fgets(line, sizeof line, f)) {
     if (strstr(line, " - cgroup2 ") == NULL) continue;
-    if (sscanf(line, "%*s %*s %*s %4095s %4095s", root, point) != 2) continue;
-    size_t n = strcmp(root, "/") == 0 ? 0 : strlen(root);
-    if (strncmp(path, root, n) != 0 || (path[n] != '/' && path[n] != '\0'))
+    if (sscanf(line, "%*s %*s %*s %4095s %4095s", mount, point) != 2)
       continue;
-    if (snprintf(dir, size, "%s%s", point, path + n) < (int)size)
-      stop = strlen(point);
+    size_t n = strcmp(mount, "/") == 0 ? 0 : strlen(mount);
+    if (strncmp(path, mount, n) != 0 || (path[n] != '/' && path[n] != '\0'))
+      continue;
+    if (snprintf(dir, size, "%s%s%s", root, point, path + n) < (int)size)
+      stop = strlen(root) + strlen(point);
   }
   fclose(f);
   return stop;
 }
 
-/* The CPUs the cgroup quotas allow: the smallest of ceil (quota / period)
-   over the process's cgroup and its ancestors, since limits nest, or -1
-   without a quota. Rounded up: n threads spend at most n CPUs a period, so
-   rounding a quota of 1.5 down would leave a third of it idle. A file
+/* The smallest of ceil (quota / period) over the cgroup and its ancestors,
+   since limits nest. Rounded up: n threads spend at most n CPUs a period,
+   so rounding a quota of 1.5 down would leave a third of it idle. A file
    reads "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
-static long quota_cpus(void) {
+long nx_pool_cgroup_cpus(const char *root) {
   char dir[4096], file[4200];
-  size_t stop = cgroup_dir(dir, sizeof dir);
+  size_t stop = cgroup_dir(root, dir, sizeof dir);
   if (stop == 0) return -1;
   long least = -1;
   for (;;) {
@@ -164,8 +179,6 @@ static long quota_cpus(void) {
   }
 }
 
-#endif
-
 static int count_cores(void) {
   long n;
 #if defined(__APPLE__)
@@ -176,7 +189,7 @@ static int count_cores(void) {
   n = (long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
 #elif defined(__linux__)
   n = affinity_cpus();
-  long quota = quota_cpus();
+  long quota = nx_pool_cgroup_cpus("");
   if (quota > 0 && quota < n) n = quota;
 #else
   n = sysconf(_SC_NPROCESSORS_ONLN);
