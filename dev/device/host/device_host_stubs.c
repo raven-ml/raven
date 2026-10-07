@@ -25,7 +25,10 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+/* After windows.h, which it needs. */
+#include <tlhelp32.h>
 #else
+#include <dlfcn.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -188,7 +191,7 @@ value caml_device_host_install(value v_mapping, value v_bytes) {
 #define SYSV
 #endif
 
-typedef void (SYSV *program)(void **, const int64_t *);
+typedef void(SYSV *program)(void **, const int64_t *);
 
 /* Synchronizes the calling thread's instruction stream with code another
    core wrote. The writer's cache maintenance reaches every core, but only a
@@ -318,4 +321,29 @@ intnat caml_device_host_workers(value unit) {
 
 value caml_device_host_workers_byte(value unit) {
   return Val_long(caml_device_host_workers(unit));
+}
+
+/* Symbols */
+
+/* The address of the symbol [name] that linked code refers to and does not
+   define: device_host_call, else the definition in the libraries the process
+   loaded into its global scope; 0 if none defines it. */
+value caml_device_host_symbol(value v_name) {
+  const char *name = String_val(v_name);
+  if (strcmp(name, "device_host_call") == 0)
+    return Val_long((intnat)device_host_call);
+#if defined(_WIN32)
+  void *a = NULL;
+  HANDLE modules = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+  if (modules == INVALID_HANDLE_VALUE) return Val_long(0);
+  MODULEENTRY32 m;
+  m.dwSize = sizeof m;
+  for (BOOL more = Module32First(modules, &m); more && a == NULL;
+       more = Module32Next(modules, &m))
+    a = (void *)GetProcAddress(m.hModule, name);
+  CloseHandle(modules);
+  return Val_long((intnat)a);
+#else
+  return Val_long((intnat)dlsym(RTLD_DEFAULT, name));
+#endif
 }
