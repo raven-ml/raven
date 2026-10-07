@@ -877,6 +877,10 @@ let model = group ~timeout:patience "against a model" [ sequences; parallel ]
 
 (* This machine *)
 
+(* Taking a GPU of this machine is a hardware opt-in: such a test runs only
+   when DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds
+   while it runs, so that it never takes a device another user drives. *)
+
 let sysfs bus file =
   Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file
 
