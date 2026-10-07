@@ -1,8 +1,8 @@
-; The benches' C calls pci's C as a driver's stubs do. It sits in a library
-; of its own: a static link lists a library's archives after the
+; The window bench's C calls pci's C as a driver's stubs do. It sits in a
+; library of its own: a static link lists a library's archives after the
 ; executable's objects, dependents before dependencies, so GNU ld finds the
-; symbols the C asks for in pci's archive. Stubs of an executable itself
-; would come after that archive, which GNU ld would already have passed.
+; symbols the C asks for in pci's archive. Stubs of an executable itself would
+; come after that archive, which GNU ld would already have passed.
 
 (library
  (name device_pci_bench_probe)
@@ -10,7 +10,7 @@
  (libraries device_pci)
  (foreign_stubs
   (language c)
-  (names bench_window_stubs bench_memory_stubs)))
+  (names bench_window_stubs)))
 
 (executable
  (name bench_window)
@@ -46,7 +46,7 @@
 (executable
  (name bench_memory)
  (modules bench_memory)
- (libraries device_pci device_pci_bench_probe thumper))
+ (libraries device_pci thumper))
 
 (rule
  (alias bench)

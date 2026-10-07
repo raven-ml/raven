@@ -28,8 +28,6 @@ let sizes = [ ("4KiB", 4 * kib); ("16MiB", 16 * mib) ]
 
 (* The machine *)
 
-external transport : unit -> int = "bench_memory_transport"
-
 let page = 4 * kib
 let bar_base = 1 lsl 39
 
@@ -69,7 +67,7 @@ let take ~bar_size =
   let machine =
     Machine.make ~name:"bench"
       {
-        transport = Window.unsafe_transport (transport ());
+        transport = Window.unsafe_transport 0;
         page;
         functions = (fun () -> []);
         take = (fun _ -> Ok fn);
