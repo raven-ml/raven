@@ -11,7 +11,7 @@
     description: {!encode} with integers, a compiler as its own nodes. Every
     structure comes from {!Qmd.structure}. *)
 
-type 'v hole = private {
+type 'v hole = 'v Repr.hole = private {
   at : int;  (** The offset of the field's first byte. *)
   bits : int;
       (** The field's width, from bit [0] of that byte, in \[[1];[64]\]. *)
@@ -26,7 +26,7 @@ type 'v hole = private {
     value's low 24 bits go in bytes [8] to [10], and byte [11] keeps the field
     that follows. *)
 
-type 'v t = private {
+type 'v t = 'v Repr.structure = private {
   bytes : string;
       (** The structure's bytes: its known fields, and zeros in its holes'
           fields. *)
