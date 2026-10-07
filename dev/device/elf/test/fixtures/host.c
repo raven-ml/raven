@@ -3,15 +3,14 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Host kernels as the host loader takes them: position-independent code with
-   constants in .rodata, a helper the kernels call, and math functions the
-   loader resolves by name. host_aarch64.o is this file compiled, in this
-   directory, by Homebrew clang 22.1.7:
+/* Host code as the host loader takes it: a call to a function another
+   object defines, a counter in .bss, constants in .rodata, a helper the
+   kernels call and math functions the loader resolves by name. */
 
-   clang -c -x c -O2 -fPIC -ffreestanding -fno-math-errno -nostdlib -fno-ident \
-     -ffixed-x18 --target=aarch64-none-unknown-elf host.c -o host_aarch64.o
-
-   The object names its source file, so the file keeps its name. */
+void ext(int);
+static int counter;
+static const int table[4] = {1, 2, 3, 4};
+void f(int i) { ext(i); counter += table[i & 3]; }
 
 float expf(float);
 float logf(float);

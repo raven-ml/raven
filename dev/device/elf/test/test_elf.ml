@@ -1422,24 +1422,24 @@ let law_lookup c =
 
 (* Corrupted objects *)
 
-(* Real objects. fixtures/README.md says where each comes from. *)
+(* Real objects. fixtures/README.md says how each is made. *)
 
 let fixture path =
   In_channel.with_open_bin
     (Filename.concat "fixtures" path)
     In_channel.input_all
 
-let cubin_path = "simple_add_sm89.cubin"
-let hsaco_path = "simple_add_gfx1100.hsaco"
-let lds_path = "lds_gfx1100.o"
-let stripped_path = "unfold.8.co"
+let hsaco_path = "amd_gfx1100.hsaco"
+let amd_object_path = "amd_gfx1100.o"
+let stripped_path = "amd_many_gfx1100.hsaco"
+let host_path target = "host_" ^ target ^ ".o"
 
 let corruptible =
   lazy
     [|
-      fixture cubin_path;
       fixture hsaco_path;
-      fixture lds_path;
+      fixture amd_object_path;
+      fixture (host_path "aarch64");
       well_formed;
       write ~extended:true
         [ section ~addr:0x100 ".text" "ABCD"; section ~addr:0x200 ".data" "EF" ];
@@ -1658,29 +1658,9 @@ let test_firmware32 () =
 
 (* Real objects *)
 
-let test_cubin () =
-  let o = read ~align:128 (fixture cubin_path) in
-  invariants o;
-  equal ~msg:"an executable" int 2 o.kind;
-  equal ~msg:"for NVIDIA GPUs" int 190 o.machine;
-  equal ~msg:"under the CUDA ABI" int 51 o.os_abi;
-  equal ~msg:"its version" int 7 o.abi_version;
-  equal ~msg:"for sm_89" int 0x590559 o.flags;
-  equal ~msg:"debugging information stays out" (option int) None
-    (section_named o ".debug_frame").offset;
-  equal ~msg:"the constant bank first" (option int) (Some 0)
-    (section_named o ".nv.constant0.simple_add").offset;
-  equal ~msg:"its 380 bytes, then the code at 384" (option int) (Some 384)
-    (section_named o ".text.simple_add").offset;
-  equal ~msg:"the image ends with the code" int 896 o.size;
-  equal ~msg:"the kernel's symbol" (option int) (Some 384)
-    (Elf.symbol o "simple_add");
-  equal ~msg:"symbols by index" symbol
-    (sym_entry "simple_add" (Image { section = 11; offset = 384 }))
-    (Iarray.get o.symbols 6);
-  equal ~msg:"the debugging relocation is left out" (list relocation) []
-    o.relocations
-
+(* amd_gfx1100.hsaco: .rodata (64 bytes, aligned to 64) at 0x600 and .text
+   (0x280 bytes, aligned to 256) at 0x1700; .dynamic at 0x2980 and .bss after it
+   hold no bytes of the image. *)
 let test_hsaco () =
   let o = read (fixture hsaco_path) in
   invariants o;
@@ -1689,68 +1669,79 @@ let test_hsaco () =
   equal ~msg:"under the HSA ABI" int 64 o.os_abi;
   equal ~msg:"code object version 5" int 3 o.abi_version;
   equal ~msg:"for gfx1100" int 0x41 o.flags;
-  equal ~msg:".rodata at 0x5c0 rounded down to .text's alignment of 256" int
-    0x500 o.address;
+  equal ~msg:".rodata's address, a multiple of .text's alignment of 256" int
+    0x600 o.address;
   equal ~msg:"the image ends with .text at 0x1100" int 0x1380 o.size;
-  equal ~msg:"zeros before .rodata" string (String.make 0xc0 '\000')
-    (String.sub (image o) 0 0xc0);
-  equal ~msg:"and between .rodata and .text" string
-    (String.make (0x1100 - 0x100) '\000')
-    (String.sub (image o) 0x100 (0x1100 - 0x100));
+  equal ~msg:"zeros between .rodata and .text" string
+    (String.make (0x1100 - 0x40) '\000')
+    (String.sub (image o) 0x40 (0x1100 - 0x40));
   equal ~msg:"the comment stays out" (option int) None
     (section_named o ".comment").offset;
-  equal ~msg:"the kernel descriptor" (option int) (Some 0xc0)
-    (Elf.symbol o "simple_add.kd");
-  equal ~msg:"the symbol table over the dynamic one" int 10
+  equal ~msg:"the kernel descriptor" (option int) (Some 0)
+    (Elf.symbol o "add.kd");
+  equal ~msg:"the kernel" (option int) (Some 0x1100) (Elf.symbol o "add");
+  equal ~msg:"the symbol table over the dynamic one" int 11
     (Iarray.length o.symbols);
   equal ~msg:"a register count" symbol
-    (sym_entry "simple_add.num_vgpr" (Absolute 6))
-    (symbol_named o "simple_add.num_vgpr");
+    (sym_entry "add.num_vgpr" (Absolute 4))
+    (symbol_named o "add.num_vgpr");
   equal ~msg:"a symbol in .dynamic" symbol
     (sym_entry "_DYNAMIC" (Outside 8))
     (symbol_named o "_DYNAMIC");
   equal ~msg:"a symbol in .bss" symbol
-    (sym_entry "__hip_cuid_3477dd1aa81fd581" (Outside 10))
-    (symbol_named o "__hip_cuid_3477dd1aa81fd581")
+    (sym_entry "last" (Outside 10))
+    (symbol_named o "last")
 
+(* amd_many_gfx1100.hsaco: 128 kernels, linked without .symtab. Its image starts
+   at .rodata's 0x18680 rounded down to .text's alignment of 256, and ends with
+   .text at 0x1b700, 0x8180 bytes. *)
 let test_stripped () =
   let o = read (fixture stripped_path) in
   invariants o;
-  equal ~msg:"the dynamic symbols" (list string)
-    [ ""; "u"; "u.kd"; "__hip_cuid_5224b70de10a6e29" ]
-    (List.map (fun (s : Elf.symbol) -> s.name) (syms o));
-  equal ~msg:"the kernel descriptor" (option int) (Some 0xc0)
-    (Elf.symbol o "u.kd");
-  equal ~msg:"the code" (option int) (Some 0x1100) (Elf.symbol o "u");
-  equal ~msg:"the image" int 0x2980 o.size
+  equal ~msg:"no symbol table" (option int) None
+    (Iarray.find_index (fun (s : Elf.section) -> s.name = ".symtab") o.sections);
+  equal ~msg:"the dynamic symbols" int 385 (Iarray.length o.symbols);
+  equal ~msg:"a kernel descriptor" (option int) (Some 0x80)
+    (Elf.symbol o "add0000.kd");
+  equal ~msg:"its code" (option int) (Some 0x3100) (Elf.symbol o "add0000");
+  equal ~msg:"the image" int 0xb280 o.size
 
+(* amd_gfx1100.o: .text (0x280 bytes) then .rodata at its alignment of 64. The
+   code's four relocations reach [last] in .bss; the descriptor's reaches the
+   kernel. *)
 let test_relocatable_amd () =
-  let o = read (fixture lds_path) in
+  let o = read (fixture amd_object_path) in
   invariants o;
-  equal ~msg:".text, then .rodata at its alignment of 64" int 0x240 o.size;
-  equal ~msg:"the descriptor in .rodata" (option int) (Some 0x200)
-    (Elf.symbol o "lds.kd");
-  equal ~msg:"its relocation to the code" (list relocation)
+  equal ~msg:"a relocatable object" int 1 o.kind;
+  equal ~msg:".text, then .rodata" int 0x2c0 o.size;
+  equal ~msg:"the descriptor in .rodata" (option int) (Some 0x280)
+    (Elf.symbol o "add.kd");
+  let last = sym_entry "last" (Outside 7) in
+  let r offset kind addend symbol : Elf.relocation =
+    { offset; kind; addend; symbol }
+  in
+  equal ~msg:"the relocations" (list relocation)
     [
-      {
-        offset = 0x210;
-        kind = 5;
-        addend = 0x10;
-        symbol = sym_entry "lds" (Image { section = 2; offset = 0 });
-      };
+      r 0x38 10 4 last;
+      r 0x40 11 0xc last;
+      r 0x78 10 4 last;
+      r 0x80 11 0xc last;
+      r 0x290 5 0x10 (sym_entry "add" (Image { section = 2; offset = 0 }));
     ]
     o.relocations
 
 (* Host objects *)
 
 (* The call to [ext] is the relocation a loader fills with a slot that jumps to
-   it: its kind, its addend and the undefined symbol by name. *)
-let test_host (target, call, addend) =
-  let o = read (fixture ("host/host_" ^ target ^ ".o")) in
+   it: its kind, its addend and the undefined symbol by name. x86_64 puts
+   [table] 0x80 bytes into .rodata.cst16, behind the kernels' constants. *)
+let test_host (target, call, addend, table) =
+  let o = read (fixture (host_path target)) in
   invariants o;
   let text = section_named o ".text" in
   equal ~msg:"the function" (option int) text.offset (Elf.symbol o "f");
-  equal ~msg:"the table" (option int) (section_named o ".rodata.cst16").offset
+  equal ~msg:"the table" (option int)
+    (Option.map (( + ) table) (section_named o ".rodata.cst16").offset)
     (Elf.symbol o "table");
   let bss =
     require_some
@@ -1849,14 +1840,13 @@ let () =
            ];
          group "real objects"
            [
-             test "an NVIDIA cubin" test_cubin;
              test "an AMD code object" test_hsaco;
-             test "a stripped AMD code object" test_stripped;
+             test "an AMD code object without its symbol table" test_stripped;
              test "a relocatable AMD object" test_relocatable_amd;
              cases
-               ~name:(fun (t, _, _) -> "a host object for " ^ t)
+               ~name:(fun (t, _, _, _) -> "a host object for " ^ t)
                "host objects"
-               [ ("x86_64", 4, -4); ("aarch64", 283, 0) ]
+               [ ("x86_64", 4, -4, 0x80); ("aarch64", 283, 0, 0) ]
                test_host;
            ];
        ]
