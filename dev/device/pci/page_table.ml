@@ -43,24 +43,29 @@ type mapping = {
 type t = {
   fmt : format;
   space : Space.t;
-  covers : int array; (* bytes an entry covers, by level *)
-  counts : int array; (* entries of a table, by level *)
+  shifts : int array; (* the address bit each level indexes, root first *)
+  counts : int array; (* the entries of a table, root first *)
   boot : Tlsf.t;
   tables : Tlsf.t; (* empty unless the tables have a pool *)
   main : Tlsf.t;
   pages : (int * int) list; (* block sizes and alignments, largest first *)
+  held : (int, unit) Hashtbl.t; (* the tables in use, the root among them *)
   mutable booting : bool;
   root : int;
   base : int;
 }
 
-let page = 0x1000
+(* The GPU's page: what the leaf level maps, and the unit of a fragment. *)
+let page_bits = 12
+let page = 1 lsl page_bits
 
 (* A table pool per GPU memory of this many bytes, rounded up to
    [table_round]. *)
 let table_share = 512
 let table_round = 1 lsl 20
 let round_up n a = (n + a - 1) / a * a
+let is_power_of_two n = n > 0 && n land (n - 1) = 0
+let aligned x a = x land (a - 1) = 0
 
 (* A table that cannot be allocated, inside a walk. *)
 exception No_room
@@ -73,179 +78,185 @@ let pool t ~table =
   else t.main
 
 let take t tlsf ?(align = page) ?(zero = true) n =
-  let n = round_up n page in
-  match Tlsf.alloc ~align tlsf n with
-  | Some pa as r ->
-      if zero then t.fmt.zero pa n;
-      r
-  | None -> None
+  if n > Tlsf.length tlsf then None
+  else
+    let n = round_up n page in
+    match Tlsf.alloc ~align tlsf n with
+    | Some pa as r ->
+        if zero then t.fmt.zero pa n;
+        r
+    | None -> None
 
-let palloc ?align ?zero ?boot t n =
+let palloc ?(align = page) ?zero ?boot t n =
+  if n <= 0 || not (is_power_of_two align) then
+    invalid_arg
+      (Printf.sprintf "Page_table.palloc: %d bytes aligned to %d" n align);
   let tlsf =
     match boot with
     | Some true -> t.boot
     | Some false -> t.main
     | None -> pool t ~table:false
   in
-  take t tlsf ?align ?zero n
+  take t tlsf ~align ?zero n
 
 let pfree t pa =
+  let refuse () = invalid_arg (Printf.sprintf "Page_table.pfree: 0x%x" pa) in
   let inside a = pa >= Tlsf.base a && pa < Tlsf.base a + Tlsf.length a in
+  if Hashtbl.mem t.held pa then refuse ();
   match List.find_opt inside [ t.boot; t.tables; t.main ] with
-  | Some a -> (
-      try Tlsf.free a pa
-      with Invalid_argument _ ->
-        invalid_arg (Printf.sprintf "Page_table.pfree: 0x%x" pa))
-  | None -> invalid_arg (Printf.sprintf "Page_table.pfree: 0x%x" pa)
+  | Some a -> ( try Tlsf.free a pa with Invalid_argument _ -> refuse ())
+  | None -> refuse ()
 
-(* Walks *)
+(* Tables *)
 
-(* A walk visits the entries of a virtual range from [va] on, keeping the path
-   from the root to the table it is in: each element is a table's physical
-   address, its level, and the index of the next entry. *)
-type walk = {
-  mutable at : int; (* the virtual address, relative to the tables' base *)
-  mutable path : (int * int * int) list;
-  create : bool;
-  free_tables : bool;
-  inspect : bool;
-}
+(* A table's depth is its distance from the root. The format numbers its level
+   from the root's, [first]. Addresses below are relative to the tables'
+   base. *)
+let level t d = t.fmt.first + d
+let covers t d = 1 lsl t.shifts.(d)
+let bottom t = Array.length t.shifts - 1
 
-let index t level va = va / t.covers.(level) mod t.counts.(level)
+let new_table t =
+  match take t (pool t ~table:true) page with
+  | None -> raise No_room
+  | Some pa ->
+      Hashtbl.replace t.held pa ();
+      pa
 
-let walk t ?(create = false) ?(free_tables = false) ?(inspect = false) va =
-  let at = va - t.base in
-  let level = t.fmt.first in
-  {
-    at;
-    path = [ (t.root, level, index t level at) ];
-    create;
-    free_tables;
-    inspect;
-  }
-
-let top w = List.hd w.path
+(* Whether the valid entry [e] at depth [d] maps a page: every one of the last
+   level does. *)
+let is_page t d e = d = bottom t || t.fmt.leaf ~level:(level t d) e
 
 let invalid_entry t level =
   t.fmt.encode ~level ~table:false Gpu ~uncached:false ~snooped:false
     ~fragment:0 ~valid:false 0
 
-(* Descends into the table the entry at the walk's position points to, creating
-   it if the walk creates. *)
-let down t w =
-  let table, level, i = top w in
-  let e = t.fmt.get ~level ~table i in
-  if not (t.fmt.valid e) then begin
-    if not w.create then
-      invalid_arg "Page_table: an address of the range is not mapped";
-    match take t (pool t ~table:true) page with
-    | None -> raise No_room
-    | Some pa ->
-        t.fmt.set ~level ~table i
-          (t.fmt.encode ~level ~table:true Gpu ~uncached:false ~snooped:false
-             ~fragment:0 ~valid:true pa)
-  end;
-  let e = t.fmt.get ~level ~table i in
-  if t.fmt.leaf ~level e then invalid_arg "Page_table: a page where a table was";
-  let child = t.fmt.address e and level = level + 1 in
-  w.path <- (child, level, index t level w.at) :: w.path
-
-let empty t table level =
+let empty t d table =
+  let level = level t d in
   let rec go i =
-    i >= t.counts.(level)
+    i = t.counts.(d)
     || ((not (t.fmt.valid (t.fmt.get ~level ~table i))) && go (i + 1))
   in
   go 0
 
-(* Frees the table at the top of the path if it became empty. *)
-let try_free t w =
-  match w.path with
-  | (table, level, _) :: (parent, plevel, pi) :: _
-    when w.free_tables && empty t table level ->
-      pfree t table;
-      t.fmt.set ~level:plevel ~table:parent pi (invalid_entry t plevel);
-      true
-  | _ -> false
+(* The table entry [i] of [table], at depth [d], points to, made if missing. *)
+let child t d table i =
+  let level = level t d in
+  let e = t.fmt.get ~level ~table i in
+  if not (t.fmt.valid e) then begin
+    let pa = new_table t in
+    t.fmt.set ~level ~table i
+      (t.fmt.encode ~level ~table:true Gpu ~uncached:false ~snooped:false
+         ~fragment:0 ~valid:true pa);
+    pa
+  end
+  else if is_page t d e then
+    invalid_arg "Page_table.tables: a larger page maps the address"
+  else t.fmt.address e
 
-let rec up t w =
-  let at_end () =
-    let _, level, i = top w in
-    i = t.counts.(level)
-  in
-  if try_free t w || at_end () then
-    match w.path with
-    | (_, level, i) :: (pt, plevel, pi) :: rest ->
-        w.path <-
-          (if i = t.counts.(level) then (pt, plevel, pi + 1) :: rest
-           else (pt, plevel, pi) :: rest);
-        up t w
-    | _ -> ()
+(* Calls [f i at lo hi] for each entry [i] of a table at depth [d], whose first
+   entry maps [at], that overlaps [lo, hi): [at] is the first address the entry
+   maps and [lo, hi) the part of the range inside it. *)
+let each t d ~at lo hi f =
+  let c = covers t d in
+  if lo < hi then
+    for i = (lo - at) / c to (hi - 1 - at) / c do
+      let at = at + (i * c) in
+      f i at (Int.max lo at) (Int.min hi (at + c))
+    done
 
-(* Visits the entries covering [size] bytes from the walk's position with [f off
-   table level i n covers]: [n] entries from [i] of [table], [off] bytes into
-   the range. Creating, it descends until an entry covers no more than the rest,
-   pages may map at its level, and both the virtual address and the physical
-   one, [pa + off], are aligned to what it covers; otherwise it descends through
-   the valid tables. *)
-let visit ?(pa = 0) t w size f =
-  let rec descend size off =
-    let table, level, i = top w in
-    let covers = t.covers.(level) in
-    let deeper =
-      if w.create then
-        covers > size
-        || (not (t.fmt.large ~level))
-        || w.at land (covers - 1) <> 0
-        || (pa + off) land (covers - 1) <> 0
-      else
-        let e = t.fmt.get ~level ~table i in
-        (not (t.fmt.leaf ~level e)) && (w.free_tables || t.fmt.valid e)
-    in
-    if deeper then begin
-      down t w;
-      descend size off
+(* Raises if a page maps an address of [lo, hi). *)
+let rec unmapped t d table ~at lo hi =
+  let level = level t d in
+  each t d ~at lo hi @@ fun i at lo hi ->
+  let e = t.fmt.get ~level ~table i in
+  if not (t.fmt.valid e) then ()
+  else if is_page t d e then
+    invalid_arg
+      (Printf.sprintf "Page_table.map: 0x%x is mapped already" (t.base + lo))
+  else unmapped t (d + 1) (t.fmt.address e) ~at lo hi
+
+(* Raises unless pages map every address of [lo, hi), none past it. *)
+let rec mapped t d table ~at lo hi =
+  let level = level t d and c = covers t d in
+  each t d ~at lo hi @@ fun i at lo hi ->
+  let e = t.fmt.get ~level ~table i in
+  if not (t.fmt.valid e) then
+    invalid_arg
+      (Printf.sprintf "Page_table.unmap: 0x%x is not mapped" (t.base + lo))
+  else if not (is_page t d e) then mapped t (d + 1) (t.fmt.address e) ~at lo hi
+  else if lo <> at || hi <> at + c then
+    invalid_arg
+      (Printf.sprintf "Page_table.unmap: the page at 0x%x is partly outside"
+         (t.base + at))
+
+(* Maps [lo, hi) to the physical addresses [delta] bytes further, each page with
+   the largest entry that the range holds and both addresses are aligned to:
+   [entry d v] is the entry at depth [d] of the page at [v]. *)
+let rec write t d table ~at lo hi ~delta entry =
+  let level = level t d and c = covers t d in
+  each t d ~at lo hi @@ fun i at lo hi ->
+  let whole = lo = at && hi = at + c && aligned (lo + delta) c in
+  if whole && (d = bottom t || t.fmt.large ~level) then
+    t.fmt.set ~level ~table i (entry d lo)
+  else write t (d + 1) (child t d table i) ~at lo hi ~delta entry
+
+(* Clears the entries of [lo, hi) and frees the tables it empties. The last
+   level's entries are cleared unread: each is a page or invalid. *)
+let rec clear t d table ~at lo hi =
+  let level = level t d in
+  let none = invalid_entry t level in
+  each t d ~at lo hi @@ fun i at lo hi ->
+  if d = bottom t then t.fmt.set ~level ~table i none
+  else
+    let e = t.fmt.get ~level ~table i in
+    if not (t.fmt.valid e) then ()
+    else if t.fmt.leaf ~level e then t.fmt.set ~level ~table i none
+    else begin
+      let child = t.fmt.address e in
+      clear t (d + 1) child ~at lo hi;
+      if empty t (d + 1) child then begin
+        t.fmt.set ~level ~table i none;
+        Hashtbl.remove t.held child;
+        pfree t child
+      end
     end
-  in
-  let rec go size off =
-    if size > 0 then begin
-      descend size off;
-      let table, level, i = top w in
-      let covers = t.covers.(level) in
-      let n =
-        Int.max
-          (Int.min (size / covers) (t.counts.(level) - i))
-          (if w.inspect then 1 else 0)
-      in
-      if n <= 0 then invalid_arg "Page_table: a range smaller than a page";
-      f off table level i n covers;
-      w.at <- w.at + (n * covers);
-      w.path <- (table, level, i + n) :: List.tl w.path;
-      up t w;
-      go (size - (n * covers)) (off + (n * covers))
-    end
-  in
-  go size 0
 
-(* The fragment of a run of [size] bytes mapping [pa] at [va]: the log2 of the 4
-   KiB pages of the largest block naturally aligned in both address spaces that
-   the run's size allows. The lowest bit set in any of the three bounds it. *)
-let fragment ~va ~pa size =
-  let x = va lor pa lor size in
-  let rec log2 n k = if n <= 1 then k else log2 (n lsr 1) (k + 1) in
-  log2 (x land -x) 0 - 12
+(* The fragment of the page at [v] of the run [lo, hi), mapped [delta] bytes
+   further: the log2 of the pages of the largest block naturally aligned in both
+   address spaces, inside the run, that holds it, if at least [k]. *)
+let rec fragment ~lo ~hi ~delta v k =
+  let size = page lsl (k + 1) in
+  let block = v land lnot (size - 1) in
+  if block >= lo && block + size <= hi && aligned delta size then
+    fragment ~lo ~hi ~delta v (k + 1)
+  else k
 
-(* Tables *)
+(* [ranges] without empty ones, joined where one ends where the next starts. *)
+let rec runs = function
+  | (_, 0) :: rest -> runs rest
+  | (a, n) :: (b, k) :: rest when a + n = b -> runs ((a, n + k) :: rest)
+  | r :: rest -> r :: runs rest
+  | [] -> []
+
+(* Page tables *)
 
 let create ?base fmt space ~memory ~boot ~tables ~pages =
-  let levels = Array.of_list (List.rev fmt.levels) in
-  let msb = Array.of_list (fmt.levels @ [ fmt.bits + 1 ]) in
-  let n = Array.length levels in
+  let rec rising = function
+    | a :: (b :: _ as rest) -> a < b && rising rest
+    | _ -> true
+  in
+  if
+    List.nth_opt fmt.levels 0 <> Some page_bits
+    || fmt.bits >= Sys.int_size - 1
+    || not (rising (fmt.levels @ [ fmt.bits ]))
+  then invalid_arg "Page_table.create: levels must rise from 12 below bits";
   let table_bytes =
     match tables with
     | Pool -> round_up (memory / table_share) table_round
     | Main -> 0
   in
-  if boot + table_bytes > memory then
+  if boot < 0 || boot + table_bytes > memory then
     invalid_arg "Page_table.create: the pools do not fit in the memory";
   let rest = boot + table_bytes in
   let boot_pool = Tlsf.create ~base:0 boot in
@@ -256,15 +267,20 @@ let create ?base fmt space ~memory ~boot ~tables ~pages =
         pa
     | None -> invalid_arg "Page_table.create: no boot memory for the root table"
   in
+  let shifts = Array.of_list (List.rev fmt.levels) in
+  let above d = if d = 0 then fmt.bits else shifts.(d - 1) in
+  let held = Hashtbl.create 64 in
+  Hashtbl.replace held root ();
   {
     fmt;
     space;
-    covers = Array.map (fun s -> 1 lsl s) levels;
-    counts = Array.init n (fun i -> 1 lsl (msb.(n - i) - msb.(n - i - 1)));
+    shifts;
+    counts = Array.mapi (fun d s -> 1 lsl (above d - s)) shifts;
     boot = boot_pool;
     tables = Tlsf.create ~base:boot table_bytes;
     main = Tlsf.create ~base:rest (memory - rest);
     pages;
+    held;
     booting = true;
     root;
     base = Option.value base ~default:(Space.base space);
@@ -277,65 +293,73 @@ let base t = t.base
 let span t = 1 lsl t.fmt.bits
 let memory t = Tlsf.length t.main
 
-let tables t ~va n =
-  let w = walk t ~create:true va in
-  let path = ref [] in
-  match
-    visit t w n (fun _ _ _ _ _ _ ->
-        if !path = [] then path := List.map (fun (table, _, _) -> table) w.path)
-  with
-  | () -> Some (List.rev !path)
-  | exception No_room -> None
+(* Raises unless the [n] bytes from [va] are whole pages the tables reach. *)
+let check t fn ~va n =
+  let v = va - t.base in
+  if v < 0 || n < 0 || n > span t - v || not (aligned (v lor n) page) then
+    invalid_arg (Printf.sprintf "Page_table.%s: 0x%x bytes at 0x%x" fn n va)
 
-let clear t ~va n =
-  let w = walk t ~free_tables:true va in
-  visit t w n (fun _ table level i n _ ->
-      for k = i to i + n - 1 do
-        if not (t.fmt.valid (t.fmt.get ~level ~table k)) then
-          invalid_arg (Printf.sprintf "Page_table.unmap: 0x%x is not mapped" va);
-        t.fmt.set ~level ~table k (invalid_entry t level)
-      done)
+let tables t ~va n =
+  check t "tables" ~va n;
+  let v = va - t.base in
+  (* Down to the table where [map] would write the entry of [v]. *)
+  let rec go d table path =
+    let c = covers t d in
+    let i = (v lsr t.shifts.(d)) land (t.counts.(d) - 1) in
+    if d = bottom t || (t.fmt.large ~level:(level t d) && c <= n && aligned v c)
+    then List.rev (table :: path)
+    else go (d + 1) (child t d table i) (table :: path)
+  in
+  match go 0 t.root [] with path -> Some path | exception No_room -> None
 
 let unmap t ~va n =
-  clear t ~va n;
+  check t "unmap" ~va n;
+  let lo = va - t.base in
+  mapped t 0 t.root ~at:0 lo (lo + n);
+  clear t 0 t.root ~at:0 lo (lo + n);
   t.fmt.flush ()
 
 let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
-  let size = List.fold_left (fun n (_, s) -> n + s) 0 ranges in
-  let probe = walk t ~inspect:true va in
-  visit t probe size (fun _ table level i n _ ->
-      for k = i to i + n - 1 do
-        if t.fmt.valid (t.fmt.get ~level ~table k) then
-          invalid_arg
-            (Printf.sprintf "Page_table.map: 0x%x is mapped already" va)
-      done);
-  let w = walk t ~create:true va in
-  let write (pa, bytes) =
-    visit ~pa t w bytes (fun off table level i n covers ->
-        let fragment =
-          fragment ~va:(t.base + w.at) ~pa:(pa + off) (n * covers)
-        in
-        for k = 0 to n - 1 do
-          t.fmt.set ~level ~table (i + k)
-            (t.fmt.encode ~level ~table:false target ~uncached ~snooped
-               ~fragment ~valid:true
-               (pa + off + (k * covers)))
-        done)
+  List.iter
+    (fun (pa, n) ->
+      if pa < 0 || n < 0 || not (aligned (pa lor n) page) then
+        invalid_arg
+          (Printf.sprintf "Page_table.map: 0x%x bytes at physical 0x%x" n pa))
+    ranges;
+  let size = List.fold_left (fun n (_, k) -> n + k) 0 ranges in
+  check t "map" ~va size;
+  let lo = va - t.base in
+  unmapped t 0 t.root ~at:0 lo (lo + size);
+  let write_run v (pa, n) =
+    let delta = pa - v and hi = v + n in
+    (* The pages of a fragment's block share it: it is found once a block. *)
+    let frag = ref 0 and until = ref v in
+    let entry d at =
+      if at >= !until then begin
+        frag := fragment ~lo:v ~hi ~delta at (t.shifts.(d) - page_bits);
+        until := (at lor ((page lsl !frag) - 1)) + 1
+      end;
+      t.fmt.encode ~level:(level t d) ~table:false target ~uncached ~snooped
+        ~fragment:!frag ~valid:true (at + delta)
+    in
+    write t 0 t.root ~at:0 v hi ~delta entry;
+    hi
   in
-  match List.iter write ranges with
-  | () ->
+  match List.fold_left write_run lo (runs ranges) with
+  | _ ->
       t.fmt.flush ();
       Some { va; size; pages = ranges; target; uncached; snooped }
   | exception No_room ->
-      (* The entries written so far are cleared. *)
-      let mapped = t.base + w.at - va in
-      if mapped > 0 then clear t ~va mapped;
+      (* The range was unmapped: clearing all of it removes what was written and
+         the tables made for it. *)
+      clear t 0 t.root ~at:0 lo (lo + size);
       t.fmt.flush ();
       None
 
 (* Physical blocks for [n] bytes, the largest [pages] allows first, falling to
    smaller ones when the pool has none left. *)
 let blocks t n =
+  let pool = pool t ~table:false in
   let rec go acc left = function
     | _ when left = 0 -> Some (List.rev acc)
     | [] ->
@@ -343,7 +367,7 @@ let blocks t n =
         None
     | (size, _) :: rest when size > left -> go acc left rest
     | (size, align) :: rest as sizes -> (
-        match take t t.main ~align ~zero:false size with
+        match take t pool ~align ~zero:false size with
         | Some pa -> go ((pa, size) :: acc) (left - size) sizes
         | None -> go acc left rest)
   in
@@ -352,37 +376,34 @@ let blocks t n =
 (* One block of [n] bytes, aligned as the largest block of [pages] it holds, so
    that it maps with the largest pages, when the pool has such a block. *)
 let block t n =
+  let pool = pool t ~table:false in
   let align =
     match List.find_opt (fun (size, _) -> size <= n) t.pages with
     | Some (_, align) -> align
     | None -> page
   in
-  match take t t.main ~align n with
-  | None when align > page -> take t t.main n
+  match take t pool ~align n with
+  | None when align > page -> take t pool n
   | found -> found
 
-let alloc ?(align = page) ?(uncached = false) ?(contiguous = false) t n =
-  let n = round_up n page in
-  match Space.alloc ~align t.space n with
-  | None -> None
-  | Some va -> (
-      let pages =
-        if contiguous then Option.map (fun pa -> [ (pa, n) ]) (block t n)
-        else blocks t n
-      in
-      let give_back pages =
-        List.iter (fun (pa, _) -> pfree t pa) pages;
-        Space.free t.space va;
-        None
-      in
-      match pages with
-      | None ->
-          Space.free t.space va;
-          None
-      | Some pages -> (
-          match map ~uncached t ~va Gpu pages with
-          | Some m -> Some m
-          | None -> give_back pages))
+let alloc ?(uncached = false) ?(contiguous = false) t n =
+  if n <= 0 then invalid_arg (Printf.sprintf "Page_table.alloc: %d bytes" n);
+  if n > Space.length t.space then None
+  else
+    let n = round_up n page in
+    match Space.alloc t.space n with
+    | None -> None
+    | Some va ->
+        let pages =
+          if contiguous then Option.map (fun pa -> [ (pa, n) ]) (block t n)
+          else blocks t n
+        in
+        let m = Option.bind pages (map ~uncached t ~va Gpu) in
+        if Option.is_none m then begin
+          Option.iter (List.iter (fun (pa, _) -> pfree t pa)) pages;
+          Space.free t.space va
+        end;
+        m
 
 let free t (m : mapping) =
   unmap t ~va:m.va m.size;

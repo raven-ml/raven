@@ -316,8 +316,9 @@ let pp_case ppf c =
     (if c.snoop then " snooped" else "")
 
 (* Addresses aligned to 4 KiB, 64 KiB, 2 MiB and 1 GiB, sizes of a few pages, of
-   2 MiB and a few pages past it. Physically contiguous neighbours are moved
-   apart by a page, so that each range is one run. *)
+   2 MiB and a few pages past it, and one case in ten a 1 GiB page and a page
+   past it. Physically contiguous neighbours are moved apart by a page, so that
+   each range is one run. *)
 let case_gen =
   let addr =
     Gen.frequency
@@ -346,12 +347,20 @@ let case_gen =
     in
     go (-1) ranges
   in
+  let gib_page =
+    Gen.map
+      (fun (k, j) -> (k * gib, [ (j * gib, gib + page) ]))
+      (Gen.pair (Gen.int_range 0 15) (Gen.int_range 0 15))
+  in
+  let ranges =
+    Gen.pair addr (Gen.list ~size:(Gen.int_range 1 3) (Gen.pair addr size))
+  in
   Gen.with_pp pp_case
     (Gen.map
-       (fun (offset, ranges, tg, (unc, snoop)) ->
+       (fun ((offset, ranges), tg, (unc, snoop)) ->
          { offset; ranges = apart ranges; tg; unc; snoop })
-       (Gen.quad addr
-          (Gen.list ~size:(Gen.int_range 1 3) (Gen.pair addr size))
+       (Gen.triple
+          (Gen.frequency [ (9, ranges); (1, gib_page) ])
           (Gen.of_list ~pp:pp_target [ Page_table.Gpu; System; Peer ])
           (Gen.pair Gen.bool Gen.bool)))
 
@@ -412,6 +421,27 @@ let test_fragments =
         (fragments (expect ~base ~target:c.tg ~va c.ranges))
         (fragments (pages g t)))
 
+(* Fragments the rule gives, at the space's base: ranges that follow each other
+   are one run, and a block must be aligned in both address spaces. *)
+let test_fragment_cases =
+  cases
+    ~name:(fun (what, _, _, _) -> what)
+    "fragments"
+    [
+      ("three pages", 0, [ (0, 0x3000) ], [ 1; 1; 0 ]);
+      ("two ranges, one run", 0, [ (0, page); (page, page) ], [ 1; 1 ]);
+      ("a run across a block's bound", page, [ (page, 0x2000) ], [ 0; 0 ]);
+      ( "64 KiB aligned in both",
+        0,
+        [ (0x1_0000, 0x1_0000) ],
+        List.init 16 (fun _ -> 4) );
+      ("aligned virtually only", 0, [ (page, 0x4000) ], [ 0; 0; 0; 0 ]);
+    ]
+    (fun (_, offset, ranges, want) ->
+      let t, g = tables () in
+      ignore (require_some (Page_table.map t ~va:(base + offset) Gpu ranges));
+      equal (list int) want (List.map (fun e -> e.fragment) (pages g t)))
+
 let test_gib_pages () =
   let t, g = tables () in
   let va = base + (2 * gib) in
@@ -442,10 +472,11 @@ let test_gib_pages () =
       equal ~msg:"pa" hex (pa + (e.va - va)) e.pa)
     ps
 
-(* A mapping of three pages at the start of a 2 MiB region, and calls that touch
-   it. A refused call leaves the tables as they were. *)
+(* A mapping of three pages at the start of a 2 MiB region and one of a 2 MiB
+   page after it, and calls that touch them or break the rules on ranges. A
+   refused call leaves the tables as they were. *)
 let test_map_refusals =
-  let va = base + (2 * mib) in
+  let va = base + (2 * mib) and large = base + (4 * mib) in
   cases
     ~name:(fun (what, _) -> what)
     "refuses"
@@ -465,11 +496,32 @@ let test_map_refusals =
         fun t -> Page_table.unmap t ~va 0x4000 );
       ( "an unmap of nothing mapped",
         fun t -> Page_table.unmap t ~va:(va + 0x3000) page );
+      ( "an unmap of half a 2 MiB page",
+        fun t -> Page_table.unmap t ~va:large mib );
+      ( "a map at an address off a page",
+        fun t ->
+          ignore (Page_table.map t ~va:(va + 0x3001) System [ (0, page) ]) );
+      ( "a map of memory off a page",
+        fun t ->
+          ignore (Page_table.map t ~va:(va + 0x3000) System [ (0x800, page) ])
+      );
+      ( "a map of part of a page",
+        fun t ->
+          ignore (Page_table.map t ~va:(va + 0x3000) System [ (0, 0x800) ]) );
+      ( "a map past the tables' reach",
+        fun t ->
+          let last = base + Page_table.span t - page in
+          ignore (Page_table.map t ~va:last System [ (0, 2 * page) ]) );
+      ( "an unmap below the base",
+        fun t -> Page_table.unmap t ~va:(base - page) page );
     ]
     (fun (_, f) ->
       let t, g = tables () in
       ignore
         (require_some (Page_table.map t ~va System [ (0x40_0000, 0x3000) ]));
+      ignore
+        (require_some
+           (Page_table.map t ~va:large System [ (0x80_0000, 2 * mib) ]));
       let before = pages g t in
       raises_match (Exn.invalid_arg ~substring:"") (fun () -> f t);
       equal ~msg:"the tables as they were" (list entry) before (pages g t))
@@ -531,6 +583,45 @@ let test_out_of_main () =
   is_some ~msg:"room again"
     (Page_table.map t ~va:(far 0) System [ (0x10_0000, page) ])
 
+(* A map that runs out of tables after making one frees it: the main pool has 8
+   KiB free, room for one table, and the region needs three. *)
+let test_failed_descent () =
+  let t, g = tables ~tables:Main () in
+  let rec drain acc =
+    match Page_table.palloc ~zero:false t page with
+    | Some pa -> drain (pa :: acc)
+    | None -> acc
+  in
+  let taken = drain [] in
+  let held a = List.mem a taken in
+  (* Two blocks in a row between two others, so the 8 KiB has no free
+     neighbour. *)
+  let a =
+    List.find
+      (fun a -> held (a - page) && held (a + page) && held (a + (2 * page)))
+      taken
+  in
+  Page_table.pfree t a;
+  Page_table.pfree t (a + page);
+  is_none ~msg:"no room for three tables"
+    (Page_table.map t ~va:(far 0) System [ (0x10_0000, page) ]);
+  equal ~msg:"no table but the root" (list hex)
+    [ Page_table.root t ]
+    (snd (walk g t));
+  is_some ~msg:"the 8 KiB free again" (Page_table.palloc ~zero:false t page)
+
+(* The tables in use are not blocks [pfree] frees. *)
+let test_pfree_tables () =
+  let t, g = tables () in
+  ignore (require_some (Page_table.map t ~va:(far 0) System [ (0, page) ]));
+  let mapped = pages g t in
+  List.iter
+    (fun table ->
+      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+          Page_table.pfree t table))
+    (snd (walk g t));
+  equal ~msg:"the tables as they were" (list entry) mapped (pages g t)
+
 (* Map and unmap many times over, in more regions than the tables' pool holds
    tables for at once: unmapping frees the tables it empties. *)
 let test_tables_freed () =
@@ -578,6 +669,86 @@ let test_tables_path =
       ignore (require_some (Page_table.map t ~va System [ (offset, n) ]));
       equal ~msg:"the tables map uses" (list hex) path (snd (walk g t)))
 
+(* Real formats *)
+
+(* The layouts of real GPUs' tables, levels numbered from [first], and each
+   level's entry count, root first, as their specifications give it: - AMD GFX9
+   on: 48 bits, four levels of 9 bits over 4 KiB pages; the root, PDB2, numbered
+   1, holds 512 entries (Linux amdgpu's amdgpu_vm_pt_num_entries over the 256
+   TiB space gmc_v9_0 sets). - NVIDIA MMU version 2, Pascal to Ada: 49 bits; PD3
+   indexes bits 48-47 and PD0 bits 28-21 (open-gpu-kernel-modules,
+   kern_gmmu_fmt_gp10x.c). - NVIDIA MMU version 3, Hopper on: 57 bits; PD4
+   indexes bit 56 (kern_gmmu_fmt_gh10x.c). *)
+let real_formats =
+  [
+    ("AMD", 1, [ 12; 21; 30; 39 ], 48, [ 512; 512; 512; 512 ]);
+    ("NVIDIA MMU v2", 0, [ 12; 21; 29; 38; 47 ], 49, [ 4; 512; 512; 256; 512 ]);
+    ( "NVIDIA MMU v3",
+      0,
+      [ 12; 21; 29; 38; 47; 56 ],
+      57,
+      [ 2; 512; 512; 512; 256; 512 ] );
+  ]
+
+(* A map of the last page the tables reach writes the last entry of each level,
+   numbered as the format numbers them; the address past it is refused. *)
+let test_real_formats =
+  cases
+    ~name:(fun (name, _, _, _, _) -> name)
+    "real formats" real_formats
+    (fun (_, first, levels, bits, counts) ->
+      let mem = Hashtbl.create 16 and writes = ref [] in
+      let bottom = first + List.length levels - 1 in
+      let fmt =
+        {
+          Page_table.levels;
+          bits;
+          first;
+          get =
+            (fun ~level:_ ~table i ->
+              Option.value ~default:0L (Hashtbl.find_opt mem (table + (8 * i))));
+          set =
+            (fun ~level ~table i e ->
+              writes := (level, i) :: !writes;
+              Hashtbl.replace mem (table + (8 * i)) e);
+          encode =
+            (fun ~level:_
+              ~table:_
+              _
+              ~uncached:_
+              ~snooped:_
+              ~fragment:_
+              ~valid
+              pa
+            -> Int64.of_int (pa lor Bool.to_int valid));
+          valid = (fun e -> Int64.logand e 1L <> 0L);
+          leaf = (fun ~level _ -> level = bottom);
+          address = (fun e -> Int64.to_int e land address_mask);
+          large = (fun ~level -> level = bottom);
+          zero =
+            (fun pa n ->
+              Hashtbl.filter_map_inplace
+                (fun k e -> if k >= pa && k < pa + n then None else Some e)
+                mem);
+          flush = ignore;
+        }
+      in
+      let t =
+        Page_table.create ~base:0 fmt (Space.create ~base:0 gib)
+          ~memory:(66 * mib) ~boot:mib ~tables:Main
+          ~pages:[ (page, page) ]
+      in
+      Page_table.booted t;
+      equal ~msg:"span" hex (1 lsl bits) (Page_table.span t);
+      let last = Page_table.span t - page in
+      ignore (require_some (Page_table.map t ~va:last Gpu [ (0, page) ]));
+      equal ~msg:"the last entry of each level, root first"
+        (list (pair int int))
+        (List.mapi (fun d n -> (first + d, n - 1)) counts)
+        (List.rev !writes);
+      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+          Page_table.map t ~va:(last + page) Gpu [ (0, page) ]))
+
 (* Booting *)
 
 (* Until booted, tables come from the boot pool. *)
@@ -589,6 +760,10 @@ let test_booting () =
     (snd (walk g t));
   let pa = require_some (Page_table.palloc t page) in
   less ~msg:"physical memory from the boot pool" hex ~than:mib pa;
+  let m = require_some (Page_table.alloc t page) in
+  List.iter
+    (fun (pa, _) -> less ~msg:"allocations from the boot pool" hex ~than:mib pa)
+    m.pages;
   Page_table.booted t;
   let pa = require_some (Page_table.palloc t page) in
   at_least ~msg:"then from the main pool" hex
@@ -735,10 +910,16 @@ let create_tables kind =
   made_root := Page_table.root t;
   (t, g)
 
+let is_pow2 a = a > 0 && a land (a - 1) = 0
+
 let palloc_judge align zero boot n m got =
   let p = if Option.value boot ~default:m.booting then m.boot else m.main in
-  let size = round_up n page and align = Option.value align ~default:page in
+  let align = Option.value align ~default:page in
+  (* Past the pool, [round_up] could wrap: no block fits. *)
+  let size = if n > p.hi - p.lo then max_int else round_up n page in
+  let refused = n <= 0 || not (is_pow2 align) in
   let gap = largest_gap p in
+  cover "a refused request" refused;
   cover "the boot pool" (p == m.boot);
   cover "the main pool by default" (p == m.main && boot = None);
   cover "a pool without room"
@@ -747,7 +928,11 @@ let palloc_judge align zero boot n m got =
   cover "memory handed out again after a free"
     (match got with Ok (Some a, _) -> List.mem a p.freed | _ -> false);
   match got with
+  | Error (Invalid_argument _) when refused -> ()
   | Error e -> raise e
+  | Ok _ when refused ->
+      failf "a block for %d bytes aligned to %d, which raise Invalid_argument" n
+        align
   | Ok (None, _) ->
       if fits ~gap size align then
         failf "None for %d bytes aligned to 0x%x with %d free in a row" size
@@ -799,12 +984,25 @@ let palloc_sizes =
     [
       (4, Gen.int_range 1 (64 * kib));
       (2, Gen.map (fun k -> k * page) (Gen.int_range 1 32));
-      (1, Gen.of_list ~pp:pp_hex [ 1; 4095; 4096; 4097; 256 * kib ]);
+      ( 1,
+        Gen.of_list ~pp:pp_hex
+          [ 1; 4095; 4096; 4097; 256 * kib; 0; -1; min_int; max_int ] );
     ]
 
 let palloc_aligns =
   Gen.of_list ~pp:(opt pp_hex)
-    [ None; None; None; Some 1; Some page; Some (64 * kib); Some (2 * mib) ]
+    [
+      None;
+      None;
+      None;
+      Some 1;
+      Some page;
+      Some (64 * kib);
+      Some (2 * mib);
+      Some 0;
+      Some 0x3000;
+      Some (-page);
+    ]
 
 let bools =
   Gen.of_list ~pp:(opt Format.pp_print_bool) [ None; Some true; Some false ]
@@ -881,7 +1079,8 @@ let pow2_floor n =
    holds no free range of twice the request and its alignment: the request a
    single block would make. *)
 let alloc_judge contiguous uncached n m got =
-  let size = round_up n page in
+  let size = round_up n page and refused = n <= 0 in
+  cover "a refused request" refused;
   let space_fits =
     fits ~gap:(largest_gap m.space) size (max page (pow2_floor size))
   in
@@ -893,7 +1092,9 @@ let alloc_judge contiguous uncached n m got =
     | Ok (Some ((a : Page_table.mapping), _)) -> List.length a.pages > 1
     | _ -> false);
   match got with
+  | Error (Invalid_argument _) when refused -> ()
   | Error e -> raise e
+  | Ok _ when refused -> failf "an allocation of %d bytes" n
   | Ok None ->
       if space_fits && pool_fits then
         failf "None for %d bytes with room in the space and the pool" size
@@ -948,7 +1149,7 @@ let alloc_sizes =
     [
       (4, Gen.int_range 1 (64 * kib));
       (2, Gen.map (fun k -> k * page) (Gen.int_range 1 64));
-      (1, Gen.of_list ~pp:pp_hex [ 1; 4096; 4097; 256 * kib; mib ]);
+      (1, Gen.of_list ~pp:pp_hex [ 1; 4096; 4097; 256 * kib; mib; 0; -1 ]);
     ]
 
 let alloc contiguous uncached n (t, g) =
@@ -991,6 +1192,7 @@ let () =
              test "1 GiB pages, and 2 MiB ones where memory is aligned to 2 MiB"
                test_gib_pages;
              test_fragments;
+             test_fragment_cases;
              test_map_refusals;
              test_tables_path;
            ];
@@ -999,12 +1201,15 @@ let () =
              test "a full tables' pool answers None and keeps what it had"
                test_out_of_tables;
              test "a full main pool answers None" test_out_of_main;
+             test "a map out of tables frees those it made" test_failed_descent;
+             test "pfree refuses the tables in use" test_pfree_tables;
              test "unmapping frees the tables it empties" test_tables_freed;
              test "unmapping 2 MiB and 4 KiB pages frees their tables"
                test_mixed_unmap;
              test "booting takes tables and memory from the boot pool"
                test_booting;
            ];
+         group "real formats" [ test_real_formats ];
          group "physical memory"
            [
              stateful "blocks stay apart, zeroed and within the fit bound"

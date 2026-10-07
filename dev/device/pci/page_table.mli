@@ -11,10 +11,12 @@
     entries are in the vendor's format, which the vendor gives as a {!format};
     this module walks and edits the tree.
 
-    A page maps at the highest level that allows pages and to whose size both
-    its virtual and physical addresses are aligned, and each entry states the
-    {e fragment} of its run: the largest naturally aligned block, in both
-    address spaces, of contiguous pages it belongs to.
+    A page maps at the highest level that allows pages, whose size the range
+    holds, and to whose size both its physical address and its virtual address,
+    counted from the tables' {!base}, are aligned. Each entry states the
+    {e fragment} of its run, the ranges that follow each other in both address
+    spaces: the largest block of the run, naturally aligned in both, that holds
+    the entry.
 
     Physical memory comes in three pools: a boot pool at the start of memory,
     for the state that survives the driver's reopening of the GPU; an optional
@@ -33,8 +35,14 @@ type target =
 type format = {
   levels : int list;
       (** The bit position of the address each level indexes, from the leaf
-          level up: [[12; 21; 30; 39]] for four levels of 512 entries. *)
-  bits : int;  (** The number of bits of a virtual address. *)
+          level up. The leaf level indexes bit 12: it maps 4 KiB pages. Each
+          table fits in a 4 KiB page. *)
+  bits : int;
+      (** The number of bits of a virtual address. A table has [2{^(above - l)}]
+          entries, [l] the bit its level indexes and [above] the next level's,
+          or [bits] for the root: with 48 bits, [[12; 21; 30; 39]] is four
+          levels of 512 entries; with 49 bits, [[12; 21; 29; 38; 47]] has a root
+          of 4 entries and a level of 256. *)
   first : int;  (** The number of the root level. *)
   get : level:int -> table:int -> int -> int64;
       (** [get ~level ~table i] is entry [i] of the table of [level] at physical
@@ -98,14 +106,15 @@ val create :
     physical block sizes and their alignments that {!alloc} tries, largest
     first. The tables translate the addresses from [base] on (defaults to
     [Space.base s]), of which [s] hands out some. It allocates the root table in
-    the boot pool and starts {e booting}: until {!booted}, physical memory comes
-    only from the boot pool.
+    the boot pool and starts {e booting}: until {!booted}, tables and the memory
+    {!palloc} and {!alloc} take by default come from the boot pool.
 
-    Raises [Invalid_argument] if the pools do not fit in [memory] or the boot
-    pool cannot hold the root table. *)
+    Raises [Invalid_argument] if [fmt]'s levels do not rise from 12 to below
+    [bits], the pools do not fit in [memory] or the boot pool cannot hold the
+    root table. *)
 
 val booted : t -> unit
-(** [booted t] ends booting: physical memory comes from the other pools. *)
+(** [booted t] ends booting: tables and memory come from the other pools. *)
 
 val space : t -> Space.t
 (** [space t] is the virtual address space [t] maps. *)
@@ -130,13 +139,18 @@ val palloc : ?align:int -> ?zero:bool -> ?boot:bool -> t -> int -> int option
     aligned to [align] (defaults to 4096) and zeroed if [zero] (defaults to
     [true]): from the boot pool if [boot], from the main pool otherwise. [boot]
     defaults to whether [t] is booting. It is [Some _] while the pool has a free
-    block of [2 * (n + align)] bytes, and may be [None] with a smaller one that
-    would fit. *)
+    block of [2 * (n' + align)] bytes, [n'] being [n] rounded up, and may be
+    [None] with a smaller one that would fit.
+
+    Raises [Invalid_argument] if [n <= 0] or [align] is not a positive power of
+    two. *)
 
 val pfree : t -> int -> unit
-(** [pfree t pa] frees the physical memory {!palloc} returned at [pa].
+(** [pfree t pa] frees the block of physical memory at [pa] that {!palloc}
+    returned or that a mapping of {!alloc} holds.
 
-    Raises [Invalid_argument] if none was. *)
+    Raises [Invalid_argument] if no such block starts at [pa], or if a table is
+    there. *)
 
 (** {1:mappings Mappings} *)
 
@@ -163,34 +177,43 @@ val map :
 (** [map t ~va tg ranges] maps the physical [ranges] of [tg], in order, from
     [va] on, creating the tables it needs, and flushes. [uncached] and [snooped]
     default to [false]. [None] if the GPU's memory has no room for a table it
-    needs, having unmapped what it mapped.
+    needs, having unmapped what it mapped and freed the tables it made.
 
-    Raises [Invalid_argument] if an address of the range is mapped already. *)
+    Raises [Invalid_argument], changing nothing, if [va] or an address or length
+    of [ranges] is not a multiple of 4 KiB, the range is not within {!span}
+    bytes from {!base}, or an address of it is mapped already. *)
 
 val tables : t -> va:int -> int -> int list option
 (** [tables t ~va n] is the physical addresses of the tables from the root down
     to the one whose entries would map the [n] bytes from [va], root first,
     creating those that are missing as {!map} would. [None] if the GPU's memory
-    has no room for one. *)
+    has no room for one, keeping those it made.
+
+    Raises [Invalid_argument] if the range is not as {!map} requires, or a page
+    larger than [n] bytes maps [va]. *)
 
 val unmap : t -> va:int -> int -> unit
 (** [unmap t ~va n] unmaps the [n] bytes mapped from [va], frees the tables that
     become empty, and flushes, so the GPU no longer reaches the memory.
 
-    Raises [Invalid_argument] if an address of the range is not mapped. *)
+    Raises [Invalid_argument], changing nothing, if the range is not as {!map}
+    requires, an address of it is not mapped, or a page maps addresses on both
+    sides of its bounds. *)
 
-val alloc :
-  ?align:int -> ?uncached:bool -> ?contiguous:bool -> t -> int -> mapping option
-(** [alloc t n] is [n] bytes, rounded up to 4 KiB, of new physical memory of the
-    main pool mapped at new virtual addresses of [space t]:
+val alloc : ?uncached:bool -> ?contiguous:bool -> t -> int -> mapping option
+(** [alloc t n] is [n] bytes, rounded up to 4 KiB, of new physical memory from
+    the pool {!palloc} takes from by default, mapped at new virtual addresses of
+    [space t]:
     - if [contiguous] (defaults to [false]), one zeroed block, aligned as the
       largest block of [pages] it could hold when the pool has one, so that it
       maps with large pages;
     - otherwise the largest blocks of [pages] the pool has, not zeroed.
 
-    [None] if the pool or the space cannot supply them, as {!palloc} and
-    {!Space.alloc} bound it, or if a table has no room, having freed what it
-    took. *)
+    [None] if the space or the pool cannot supply them, as {!Space.alloc} and
+    {!palloc} bound each request, or if a table has no room, having given back
+    what it took.
+
+    Raises [Invalid_argument] if [n <= 0]. *)
 
 val free : t -> mapping -> unit
 (** [free t m] unmaps [m], frees its virtual addresses and, if it is in the
