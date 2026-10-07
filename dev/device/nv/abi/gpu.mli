@@ -11,8 +11,8 @@
     addresses at which the GPU's channels show kernels their shared and local
     memory. A driver reads the class and the parts from the GPU when it opens
     it, chooses the windows and sets them on each channel it opens
-    ({!Method.shared_memory_window}), and gives compiled code the whole as a
-    {!t}, under {!key}.
+    ({!Method.shared_memory_window}), holds the local memory its channels give
+    kernels, and gives compiled code the whole as a {!t}, under {!key}.
 
     {b Memory.} Every address at which the GPU reaches memory the driver gives
     it is below [2{^40}], where ring segments, launch descriptors and semaphores
@@ -46,6 +46,14 @@ type t = {
       (** The address at which its kernels see their shared memory. *)
   local_window : int;
       (** The address at which its kernels see their local memory. *)
+  local : int -> (unit, string) result;
+      (** The GPU's channels give every kernel they launch one local memory, the
+          driver's ({!Method.local_memory}). [local n] makes it serve kernels
+          whose threads need up to [n] bytes each ({!Launch.local_bytes}): it
+          does nothing if the memory already does, else replaces it with a
+          larger one ({!Local.make}), kept until the work placed before the call
+          completes. The result is [Error msg] if the device cannot allocate it.
+          Any domain may call it. *)
 }
 (** The type for GPUs. Every count is positive. *)
 

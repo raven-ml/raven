@@ -12,6 +12,7 @@ type t = {
   warps_per_sm : int;
   shared_window : int;
   local_window : int;
+  local : int -> (unit, string) result;
 }
 
 let key = Type.Id.make ()

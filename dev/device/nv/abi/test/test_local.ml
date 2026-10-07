@@ -18,6 +18,7 @@ let ada =
     warps_per_sm = 48;
     shared_window = 0x7294_0000_0000;
     local_window = 0x7293_0000_0000;
+    local = (fun _ -> Ok ());
   }
 
 let tests =

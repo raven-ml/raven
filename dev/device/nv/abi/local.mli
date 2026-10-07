@@ -9,8 +9,9 @@
     spills, which kernels see through the local memory window
     ({!Method.local_memory_window}). A GPU takes it from one allocation, given
     with {!Method.local_memory}, which holds as much for every thread every
-    multiprocessor may run at once. Each launch says how much one thread has
-    ({!Qmd.set_local_memory}). *)
+    multiprocessor may run at once. The driver holds it and grows it on demand
+    ({!Gpu.field-local}), sized by {!make}. Each launch says how much one thread
+    has ({!Qmd.set_local_memory}). *)
 
 type t = {
   per_thread : int;  (** The bytes of each thread, a multiple of 32. *)
