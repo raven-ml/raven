@@ -17,7 +17,12 @@
     succeeds while a free block of [2 * (n + a)] bytes exists, and may fail with
     a smaller one that would fit.
 
-    Not synchronized: the owner serializes calls. *)
+    Not synchronized: the owner serializes calls.
+
+    {b Reference.} M. Masmano, I. Ripoll, A. Crespo and J. Real. "TLSF: a new
+    dynamic memory allocator for real-time systems".
+    {e Proceedings of the 16th Euromicro Conference on Real-Time Systems}, 2004.
+*)
 
 type t
 (** The type for allocators. *)

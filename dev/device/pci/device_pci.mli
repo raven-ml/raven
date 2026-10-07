@@ -66,7 +66,20 @@
     The library builds everywhere. This machine's PCI functions, and the
     addresses {!Machine.reserve} reserves for them, need Linux; elsewhere this
     machine has none, and another machine's are reached through its transport.
-*)
+
+    {1:references References}
+
+    - PCI-SIG. {e PCI Express Base Specification}, chapter 7, "Software
+      Initialization and Configuration": configuration space, BARs and their
+      resizing.
+    - The Linux kernel's {{:https://docs.kernel.org/driver-api/vfio.html}VFIO}
+      documentation, and [include/uapi/linux/vfio.h]: functions behind an IOMMU.
+    - The Linux kernel's
+      {{:https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-bus-pci}sysfs-bus-pci}
+      ABI: functions taken physically, detached and attached.
+    - The Linux kernel's
+      {{:https://docs.kernel.org/admin-guide/mm/pagemap.html}pagemap}
+      documentation: the physical addresses of system memory. *)
 
 (** {1:hardware Reaching the hardware} *)
 
