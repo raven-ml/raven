@@ -247,6 +247,22 @@ let unit_rule =
             (float_rel ~rel:1e-13 ~abs:0.)
             (w *. pixar)
             (Nx.item [] (Quantity.value Unit.steradian i.area)));
+      test "a per-cell area map windows with the data" (fun () ->
+          let g = Grid.pixels ~shape:Reference.sky_shape f64 (wcs f64) in
+          let obs =
+            Observation.v ~area:(Grid.measure g) g
+              (Quantity.v brightness (image f64 Reference.sky_shape 73))
+          in
+          let whole = jansky (Observation.integrate circle (sky f64)) in
+          let stamp =
+            Observation.window
+              ~start:(Nx.create Nx.int64 [| 2 |] [| 20L; 25L |])
+              ~shape:[| 60; 60 |] obs
+          in
+          equal
+            (float_rel ~rel:1e-14 ~abs:0.)
+            whole
+            (jansky (Observation.integrate circle stamp)));
       test "an area of another dimension raises" (fun () ->
           raises_match
             (Exn.invalid_arg ~substring:"not a measure of the grid's cells")
