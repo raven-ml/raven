@@ -1,0 +1,5 @@
+(library
+ (name ymir)
+ (public_name ymir)
+ (private_modules units)
+ (libraries nx ymir.units))

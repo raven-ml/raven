@@ -1,0 +1,4 @@
+(tests
+ (names test_units)
+ (package ymir)
+ (libraries ymir nx windtrap))
