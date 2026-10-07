@@ -195,15 +195,13 @@ let config_offset bus device =
 let iova_low = 1 lsl 32
 let iova_high = 1 lsl 40
 
-let iova bus fd =
-  let page_sizes, ranges =
-    step ("reading the IOMMU of " ^ bus) (fun () -> iommu fd)
-  in
+(* The window of an IOMMU that maps pages of [page_sizes], a bitmap, at the
+   [(first, last)] device address ranges, all of them if [[]]: [(base, n)]. *)
+let window page_sizes ranges =
   let smallest = page_sizes land -page_sizes in
   if smallest > page then
     failwith
-      (Printf.sprintf "the IOMMU of %s maps no page smaller than %d bytes" bus
-         smallest);
+      (Printf.sprintf "the IOMMU maps no page smaller than %d bytes" smallest);
   let ranges = if ranges = [] then [ (0, max_int) ] else ranges in
   let piece (first, last) =
     let a = round_page (Int.min iova_high (Int.max first iova_low)) in
@@ -218,7 +216,15 @@ let iova bus fd =
   match List.fold_left best None (List.filter_map piece ranges) with
   | None ->
       failwith "the IOMMU maps no device addresses between 4 GiB and 1 TiB"
-  | Some (base, n) -> Space.create ~base n
+  | Some w -> w
+
+let iova bus fd =
+  let page_sizes, ranges =
+    step ("reading the IOMMU of " ^ bus) (fun () -> iommu fd)
+  in
+  match window page_sizes ranges with
+  | base, n -> Space.create ~base n
+  | exception Failure why -> failwith (Printf.sprintf "%s: %s" bus why)
 
 (* The container of a function behind an IOMMU, which maps system memory for it
    at device addresses the process allocates. Mappings are counted by their

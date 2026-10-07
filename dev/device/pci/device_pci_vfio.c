@@ -114,10 +114,11 @@ static intnat saturate(uint64_t x) {
   return x > (uint64_t)Max_long ? Max_long : (intnat)x;
 }
 
-/* Whether the container [fd] speaks this API and has the IOMMU model. */
+/* Whether the container [fd] has the IOMMU model. Raises Failure if it
+   speaks another API. */
 value caml_device_pci_vfio_supports(value fd, value kind) {
   if (ioctl(Int_val(fd), VFIO_GET_API_VERSION) != VFIO_API_VERSION)
-    return Val_false;
+    caml_failwith("VFIO speaks another API version");
   return Val_bool(ioctl(Int_val(fd), VFIO_CHECK_EXTENSION, model(kind)) > 0);
 }
 
