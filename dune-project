@@ -309,7 +309,13 @@
   (nx
    (= :version))
   (rune
-   (= :version)))
+   (= :version))
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (numerical-methods linear-algebra optimization quadrature interpolation differential-equations)))
 
