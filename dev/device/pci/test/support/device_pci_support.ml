@@ -313,6 +313,8 @@ module Host = struct
     let sys = root / "sys" in
     let devices = sys / "bus/pci/devices" in
     write (sys / "kernel/security/lockdown") (lockdown ^ "\n");
+    write (sys / "bus/pci/rescan") "";
+    write (sys / "bus/pci/drivers_probe") "";
     List.iter
       (fun fn ->
         let d = devices / fn.bus in
@@ -322,9 +324,11 @@ module Host = struct
         write (d / "enable") (if fn.enabled then "1\n" else "0\n");
         write (d / "resource") (resource fn.bars);
         write (d / "config") (config fn);
+        write (d / "remove") "";
         Option.iter
           (fun drv ->
             write (sys / "bus/pci/drivers" / drv / "bind") "";
+            write (sys / "bus/pci/drivers" / drv / "unbind") "";
             Unix.symlink ("../../drivers" / drv) (d / "driver"))
           fn.driver;
         Option.iter

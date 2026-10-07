@@ -237,8 +237,8 @@ let negative =
       ( "open_kernel of this machine",
         fun i -> ignore (kernel (gpus ()) Machine.this i ok) );
       ("reset", fun i -> ignore (reset (gpus ()) (far ()) i ok));
-      ("detach", fun i -> ignore (Gpus.detach (gpus ()) i));
-      ("attach", fun i -> ignore (Gpus.attach (gpus ()) i));
+      ("detach", fun i -> ignore (Gpus.detach (gpus ()) Machine.this i));
+      ("attach", fun i -> ignore (Gpus.attach (gpus ()) Machine.this i));
     ]
 
 let numbering =
@@ -459,8 +459,8 @@ let test_this_none () =
   names 0 (unopened (kernel g this 0));
   names 0 (unopened (pci g this 0));
   names 0 (unopened (reset g this 0));
-  ignore (require_error (Gpus.detach g 0));
-  ignore (require_error (Gpus.attach g 0))
+  ignore (require_error (Gpus.detach g this 0));
+  ignore (require_error (Gpus.attach g this 0))
 
 (* This machine's display controllers: the kernel driver opens nothing, so
    holding one through it changes nothing. *)
@@ -764,7 +764,153 @@ let serialized =
         test_give_back_waits;
     ]
 
+(* Changes on a host's files
+
+   A host in a fixture tree keeps what a change writes as plain files and acts
+   on none of it: an unbound driver stays linked, a removed function stays
+   listed. Each case states what a change writes there and how it answers for
+   the state that remains. Changes lock the function's file, which needs
+   Linux. *)
+
+let gpu_bus = "0000:03:00.0"
+
+let audio bus =
+  { (Host.gpu ~driver:"snd_hda_intel" bus) with class_ = 0x04; bars = [] }
+
+let needs_flock () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ()
+
+(* The trimmed contents of [file] under the host's [sys/bus/pci]. *)
+let pci_file root file =
+  Filename.concat root ("sys/bus/pci/" ^ file)
+  |> (fun f -> In_channel.with_open_bin f In_channel.input_all)
+  |> String.trim
+
+let devices bus file = Printf.sprintf "devices/%s/%s" bus file
+
+let changes =
+  let gpu = Host.gpu gpu_bus in
+  [
+    ( "detach leaves a GPU a process can take as it is",
+      [ gpu ],
+      `Detach,
+      None,
+      [ (devices gpu_bus "enable", "1"); (devices gpu_bus "remove", "") ] );
+    ( "detach enables a disabled GPU",
+      [ Host.gpu ~enabled:false gpu_bus ],
+      `Detach,
+      None,
+      [ (devices gpu_bus "enable", "1") ] );
+    ( "detach unbinds the kernel driver, refused while it stays bound",
+      [ Host.gpu ~driver:"amdgpu" gpu_bus ],
+      `Detach,
+      Some "the driver amdgpu stays bound to 0000:03:00.0",
+      [ ("drivers/amdgpu/unbind", gpu_bus) ] );
+    ( "detach removes the other functions of the GPU's device, refused while \
+       they stay",
+      [ gpu; audio "0000:03:00.1" ],
+      `Detach,
+      Some "0000:03:00.0 still shares its device with 0000:03:00.1",
+      [ (devices "0000:03:00.1" "remove", "1") ] );
+    ( "detach leaves a GPU bound to vfio-pci behind an IOMMU",
+      [ Host.gpu ~driver:"vfio-pci" ~group:"12" gpu_bus ],
+      `Detach,
+      None,
+      [ ("drivers/vfio-pci/unbind", "") ] );
+    ( "detach refuses a GPU whose addresses an IOMMU translates",
+      [ Host.gpu ~group:"12" gpu_bus ],
+      `Detach,
+      Some "the IOMMU translates the addresses 0000:03:00.0 reaches",
+      [] );
+    ( "attach probes the drivers for an unbound GPU, refused when none takes it",
+      [ gpu ],
+      `Attach,
+      Some "no kernel driver took 0000:03:00.0",
+      [
+        (devices gpu_bus "enable", "0");
+        ("rescan", "1");
+        ("drivers_probe", gpu_bus);
+      ] );
+    ( "attach leaves a GPU bound to its kernel driver",
+      [ Host.gpu ~driver:"amdgpu" gpu_bus ],
+      `Attach,
+      None,
+      [ ("rescan", ""); ("drivers_probe", "") ] );
+    ( "attach refuses a GPU bound to vfio-pci, naming the command that unbinds \
+       it",
+      [ Host.gpu ~driver:"vfio-pci" gpu_bus ],
+      `Attach,
+      Some "sudo driverctl unset-override 0000:03:00.0",
+      [ ("rescan", "") ] );
+  ]
+
+let test_change (_, fns, change, refusal, files) =
+  needs_flock ();
+  let root = Host.make fns in
+  let m = Machine.at root in
+  let change =
+    match change with `Detach -> Gpus.detach | `Attach -> Gpus.attach
+  in
+  (match (refusal, change (gpus ()) m 0) with
+  | None, r -> require_ok r
+  | Some sub, r -> contains ~sub (require_error r));
+  List.iter
+    (fun (file, want) -> equal ~msg:file string want (pci_file root file))
+    files
+
+let test_change_held () =
+  needs_flock ();
+  let g = gpus () and m = Machine.at (Host.make [ Host.gpu gpu_bus ]) in
+  let h = hold g m 0 in
+  contains ~msg:"detach" ~sub:"0000:03:00.0 is open in this process"
+    (require_error (Gpus.detach g m 0));
+  contains ~msg:"attach" ~sub:"0000:03:00.0 is open in this process"
+    (require_error (Gpus.attach g m 0));
+  Gpus.release h
+
+let test_change_unwritable () =
+  needs_flock ();
+  if Unix.geteuid () = 0 then
+    skip ~reason:"root writes a file whatever its mode" ();
+  let root = Host.make [ Host.gpu ~enabled:false gpu_bus ] in
+  let enable =
+    Filename.concat root ("sys/bus/pci/" ^ devices gpu_bus "enable")
+  in
+  Unix.chmod enable 0o444;
+  let why = require_error (Gpus.detach (gpus ()) (Machine.at root) 0) in
+  contains ~msg:"names the file" ~sub:enable why;
+  contains ~msg:"names the privilege" ~sub:"run as root" why
+
+let test_change_transport () =
+  let m, _ = machine functions in
+  List.iter
+    (fun (msg, change) ->
+      contains ~msg ~sub:"far:1 is reached through a transport"
+        (require_error (change (gpus ()) m 0)))
+    [ ("detach", Gpus.detach); ("attach", Gpus.attach) ]
+
+let host_changes =
+  group ~timeout:patience "changes on a host's files"
+    [
+      cases "each change writes what it says and answers for what remains"
+        ~name:(fun (n, _, _, _, _) -> n)
+        changes test_change;
+      test "a GPU the process holds is refused" test_change_held;
+      test "a file the process may not write is refused, naming it"
+        test_change_unwritable;
+      test "another machine reached through a transport is refused"
+        test_change_transport;
+    ]
+
 let () =
   exit
   @@ run "device_pci Gpus"
-       [ numbering; opening; giving_back; resets; this_machine; serialized ]
+       [
+         numbering;
+         opening;
+         giving_back;
+         resets;
+         host_changes;
+         this_machine;
+         serialized;
+       ]

@@ -153,6 +153,10 @@ val take : t -> string -> (fn, string) result
    {!reserve} reserved on [m]. *)
 val reserved : t -> int -> int -> bool
 
+(* [host m] is the files of [m] if the process reaches [m] without a transport:
+   {!this}'s, or those of a machine {!at} made. *)
+val host : t -> Sysfs.t option
+
 (* [at root] is this machine as the directory [root] shows it: its functions
    under [root/sys/bus/pci], its VFIO files under [root/dev/vfio]. {!this} is
    [at "/"]. Tests run it on a fixture tree. *)

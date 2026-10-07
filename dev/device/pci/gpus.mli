@@ -96,35 +96,36 @@ val lose : hold -> unit
     These change the machine and persist after the process. Each refuses a GPU
     the process holds. Changes run under the lock a physical take holds; they
     leave a function bound to [vfio-pci] as it is. {!detach} and {!attach} write
-    this machine's [/sys/bus/pci], so they act on {!Machine.this} alone, and
-    need [CAP_SYS_ADMIN] and write access to the files they write, which root
-    has. An [Error] for a file the process may not write names it. *)
+    the machine's [/sys/bus/pci], so they act on a machine the process reaches
+    without a transport, such as {!Machine.this}, and need [CAP_SYS_ADMIN] and
+    write access to the files they write, which root has. An [Error] for a file
+    the process may not write names it. *)
 
-val detach : t -> int -> (unit, string) result
-(** [detach g i] detaches GPU [i] of {!Machine.this} from its kernel driver, so
-    that a process can take its function, unless it is detached already. It
-    unbinds the driver unless that is [vfio-pci], removes the other functions of
-    its device, such as its audio function, and, unbound, enables the function
-    and makes its memory BAR the largest size the BAR and its bridge take. The
-    kernel driver's users, a display among them, lose the GPU until {!attach} or
-    a reboot.
+val detach : t -> Machine.t -> int -> (unit, string) result
+(** [detach g m i] detaches GPU [i] of [m] from its kernel driver, so that a
+    process can take its function, unless it is detached already. It unbinds the
+    driver unless that is [vfio-pci], removes the other functions of its device,
+    such as its audio function, and, unbound, enables the function and makes its
+    memory BAR the largest size the BAR and its bridge take. The kernel driver's
+    users, a display among them, lose the GPU until {!attach} or a reboot.
 
-    [Error why] if [i] is no GPU, if the process holds it, if the process may
-    not write a file, or if the GPU is still not detached, saying why, such as
-    when an IOMMU translates its addresses and it is not bound to [vfio-pci]. A
-    memory BAR left small on [vfio-pci] is no error; the message of the open
-    that needs it names the unbind, detach and bind that enlarge it. *)
+    [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
+    process holds it, if the process may not write a file, or if the GPU is
+    still not detached, saying why, such as when an IOMMU translates its
+    addresses and it is not bound to [vfio-pci]. A memory BAR left small on
+    [vfio-pci] is no error; the message of the open that needs it names the
+    unbind, detach and bind that enlarge it. *)
 
-val attach : t -> int -> (unit, string) result
-(** [attach g i] gives GPU [i] of {!Machine.this} back to its kernel driver:
-    Linux rescans the bus, which brings back the functions {!detach} removed,
-    and binds the GPU's driver. It writes [/sys/bus/pci/rescan] and
+val attach : t -> Machine.t -> int -> (unit, string) result
+(** [attach g m i] gives GPU [i] of [m] back to its kernel driver: Linux rescans
+    the bus, which brings back the functions {!detach} removed, and binds the
+    GPU's driver. It writes [/sys/bus/pci/rescan] and
     [/sys/bus/pci/drivers_probe].
 
-    [Error why] if [i] is no GPU, if the process holds it, if the process may
-    not write a file, if it is bound to [vfio-pci], naming the [driverctl]
-    command that unbinds it, or if no driver takes it, such as when the driver's
-    module is not loaded. *)
+    [Error why] if [m] is reached through a transport, if [i] is no GPU, if the
+    process holds it, if the process may not write a file, if it is bound to
+    [vfio-pci], naming the [driverctl] command that unbinds it, or if no driver
+    takes it, such as when the driver's module is not loaded. *)
 
 val reset :
   t ->

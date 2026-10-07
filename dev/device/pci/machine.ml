@@ -45,22 +45,31 @@ external now_ns : unit -> (int[@untagged])
   = "caml_device_pci_now_ns_byte" "caml_device_pci_now_ns"
 [@@noalloc]
 
-(* This machine has no transport: nothing fails it. [reserved] is the ranges
+(* This machine has no transport: nothing fails it. [host] is the files of a
+   machine this process reaches without a transport. [reserved] is the ranges
    [reserve] gave, which [Function] checks addresses against before a transport
    is asked; [lock] guards it. *)
 type t = {
   name : string option;
   ops : ops;
+  host : Sysfs.t option;
   lock : Mutex.t;
   mutable reserved : (int * int) list;
 }
 
 let address = Address.v
 let compare_address = Address.compare
-let machine name ops = { name; ops; lock = Mutex.create (); reserved = [] }
-let at root = machine None (Local.ops (Sysfs.v root))
-let this = machine None (Local.ops Local.this)
-let make ~name ops = machine (Some name) ops
+
+let machine name host ops =
+  { name; ops; host; lock = Mutex.create (); reserved = [] }
+
+let at root =
+  let host = Sysfs.v root in
+  machine None (Some host) (Local.ops host)
+
+let this = machine None (Some Local.this) (Local.ops Local.this)
+let make ~name ops = machine (Some name) None ops
+let host m = m.host
 let name m = m.name
 let failed m = transport_failed m.ops.transport
 let page m = m.ops.page

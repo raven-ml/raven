@@ -150,20 +150,27 @@ let lose h = give_back Lost h
 
 (* Changes to the machine *)
 
-(* [f bus] for GPU [i] of this machine, which no process takes while it runs:
-   the lock a take holds is held around [f]. *)
-let change g fn i f =
+(* [f host bus] for GPU [i] of [m], whose files are [host], which no process
+   takes while it runs: the lock a take holds is held around [f]. *)
+let change g fn m i f =
   index fn i;
   Mutex.protect g.mutex @@ fun () ->
-  let* bus = gpu g Machine.this i in
-  Local.locked Local.this bus (fun () -> Fail.result (fun () -> f bus))
+  match Machine.host m with
+  | None ->
+      Error
+        (Printf.sprintf
+           "%s is reached through a transport; change its GPUs there"
+           (Option.value (Machine.name m) ~default:"the machine"))
+  | Some host ->
+      let* bus = gpu g m i in
+      Local.locked host bus (fun () -> Fail.result (fun () -> f host bus))
 
-let detach g i =
-  change g "detach" i (fun bus ->
-      Sysfs.detach Local.this bus;
-      Sysfs.resize Local.this bus g.memory_bar)
+let detach g m i =
+  change g "detach" m i (fun host bus ->
+      Sysfs.detach host bus;
+      Sysfs.resize host bus g.memory_bar)
 
-let attach g i = change g "attach" i (Sysfs.attach Local.this)
+let attach g m i = change g "attach" m i Sysfs.attach
 
 let reset g m i f =
   index "reset" i;

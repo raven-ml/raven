@@ -152,10 +152,13 @@ end
 
     A function's directory holds [vendor], [device] and [class] in hexadecimal,
     [enable], [resource] (one line per BAR: start, end and flags), the first 64
-    bytes of [config] with its identity and BAR registers, and the links
-    [driver] and [iommu_group] when it has them. An IOMMU group's directory
-    holds its [type] and its functions. Names hold [:], so trees are written
-    only where the file system allows it: {!make} skips the test on Windows. *)
+    bytes of [config] with its identity and BAR registers, an empty [remove],
+    and the links [driver] and [iommu_group] when it has them. A driver's
+    directory holds empty [bind] and [unbind], the bus directory empty [rescan]
+    and [drivers_probe], and an IOMMU group's directory its [type] and its
+    functions. The host takes what a change writes as plain files and acts on
+    none of it. Names hold [:], so trees are written only where the file system
+    allows it: {!make} skips the test on Windows. *)
 module Host : sig
   (** The type for a BAR, in BAR order from BAR 0. *)
   type bar =
