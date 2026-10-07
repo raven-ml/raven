@@ -25,7 +25,7 @@ external supports : fd -> model -> bool = "caml_device_pci_vfio_supports"
 external viable : fd -> bool = "caml_device_pci_vfio_viable"
 external set_container : fd -> fd -> unit = "caml_device_pci_vfio_set_container"
 external set_iommu : fd -> model -> unit = "caml_device_pci_vfio_set_iommu"
-external device : fd -> string -> fd = "caml_device_pci_vfio_device"
+external open_device : fd -> string -> fd = "caml_device_pci_vfio_device"
 
 external region : fd -> int -> int * int * bool * (int * int) list option
   = "caml_device_pci_vfio_region"
@@ -168,7 +168,9 @@ let open_function files bus m =
            (Unix.error_message e)));
   let device =
     opened
-      (step ("opening " ^ bus ^ " through VFIO") (fun () -> device group bus))
+      (step
+         ("opening " ^ bus ^ " through VFIO")
+         (fun () -> open_device group bus))
   in
   let efd = opened (step "creating an eventfd" eventfd) in
   step ("routing the interrupt of " ^ bus) (fun () -> msi device efd);
@@ -308,4 +310,5 @@ let unmap_dma bus c a n =
       Hashtbl.remove c.maps (a, n);
       Space.free c.iova iova
 
+let device c = c.device
 let close c = Mutex.protect c.mutex (fun () -> c.closed <- true)

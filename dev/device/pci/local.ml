@@ -107,7 +107,8 @@ let map t i off n =
       Window.v (a + off - first) n
     in
     match t.container with
-    | Some c -> window c.device (Vfio.bar_offset t.bus c.device i off n)
+    | Some c ->
+        window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
     | None ->
         let file = Sysfs.path t.bus (Printf.sprintf "resource%d" i) in
         let fd =
@@ -126,7 +127,8 @@ let interrupt t ms =
 
 let reset t =
   match t.container with
-  | Some c -> Vfio.step ("resetting " ^ t.bus) (fun () -> Vfio.reset c.device)
+  | Some c ->
+      Vfio.step ("resetting " ^ t.bus) (fun () -> Vfio.reset (Vfio.device c))
   | None -> Sysfs.reset t.bus
 
 (* Physical addresses as runs: one per page, or one for contiguous memory. *)
@@ -192,7 +194,7 @@ let take_iommu files bus =
   let c, efd = Vfio.open_ files bus in
   {
     bus;
-    config = (c.device, Vfio.config_offset bus c.device);
+    config = (Vfio.device c, Vfio.config_offset bus (Vfio.device c));
     seek = Mutex.create ();
     interrupts = Some efd;
     container = Some c;
