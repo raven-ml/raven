@@ -1434,7 +1434,7 @@ let fixture path =
 let cubin_path = "simple_add_sm89.cubin"
 let hsaco_path = "amd_gfx1100.hsaco"
 let amd_object_path = "amd_gfx1100.o"
-let stripped_path = "amd_many_gfx1100.hsaco"
+let stripped_path = "amd_128_gfx1100.hsaco"
 let host_path target = "host_" ^ target ^ ".o"
 
 let corruptible =
@@ -1719,7 +1719,7 @@ let test_hsaco () =
     (sym_entry "last" (Outside 10))
     (symbol_named o "last")
 
-(* amd_many_gfx1100.hsaco: 128 kernels, linked without .symtab. Its image starts
+(* amd_128_gfx1100.hsaco: 128 kernels, linked without .symtab. Its image starts
    at .rodata's 0x18680 rounded down to .text's alignment of 256, and ends with
    .text at 0x1b700, 0x8180 bytes. *)
 let test_stripped () =

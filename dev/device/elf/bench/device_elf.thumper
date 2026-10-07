@@ -17,17 +17,26 @@ symbol/amd-128-kernels-last-kernel	wall_time	batch=16384	n=20	5.635e-07	5.580e-0
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
-# forced: blessed under load 14.5 on 10 cores
-# forced: blessed of-string/cubin-sm89 under load 9.8 on 10 cores
+# forced: blessed under load 6.6 on 10 cores
 
 of-string/amd-128-kernels	alloc_words	exact	5716
-of-string/amd-128-kernels	wall_time	batch=256	n=20	4.007e-05	3.885e-05 3.918e-05 3.924e-05 3.963e-05 3.973e-05 4.000e-05 4.002e-05 4.002e-05 4.002e-05 4.006e-05 4.009e-05 4.011e-05 4.013e-05 4.033e-05 4.034e-05 4.038e-05 4.051e-05 4.077e-05 4.078e-05 4.082e-05
+of-string/amd-128-kernels	wall_time	batch=256	n=20	3.931e-05	3.849e-05 3.870e-05 3.872e-05 3.872e-05 3.896e-05 3.904e-05 3.906e-05 3.909e-05 3.917e-05 3.920e-05 3.943e-05 3.956e-05 3.975e-05 3.976e-05 3.976e-05 3.979e-05 3.988e-05 3.996e-05 4.026e-05 4.027e-05
+of-string/amd-16-kernels	alloc_words	exact	1572
+of-string/amd-16-kernels	wall_time	batch=2048	n=20	4.255e-06	4.137e-06 4.175e-06 4.188e-06 4.219e-06 4.219e-06 4.237e-06 4.239e-06 4.244e-06 4.245e-06 4.246e-06 4.264e-06 4.267e-06 4.282e-06 4.282e-06 4.299e-06 4.302e-06 4.311e-06 4.312e-06 4.345e-06 4.396e-06
+of-string/amd-512-kernels	alloc_words	exact	20436
+of-string/amd-512-kernels	wall_time	batch=64	n=20	1.536e-04	1.496e-04 1.509e-04 1.518e-04 1.519e-04 1.521e-04 1.523e-04 1.527e-04 1.528e-04 1.530e-04 1.533e-04 1.538e-04 1.540e-04 1.540e-04 1.541e-04 1.544e-04 1.548e-04 1.549e-04 1.557e-04 1.558e-04 1.742e-04
+of-string/amd-64-kernels	alloc_words	exact	3348
+of-string/amd-64-kernels	wall_time	batch=512	n=20	1.212e-05	1.166e-05 1.168e-05 1.177e-05 1.181e-05 1.189e-05 1.195e-05 1.195e-05 1.198e-05 1.204e-05 1.212e-05 1.212e-05 1.213e-05 1.215e-05 1.215e-05 1.219e-05 1.220e-05 1.221e-05 1.225e-05 1.241e-05 1.251e-05
 of-string/cubin-sm89	alloc_words	exact	950
-of-string/cubin-sm89	wall_time	batch=4096	n=20	1.872e-06	1.796e-06 1.827e-06 1.832e-06 1.835e-06 1.856e-06 1.859e-06 1.859e-06 1.861e-06 1.863e-06 1.870e-06 1.874e-06 1.877e-06 1.882e-06 1.883e-06 1.884e-06 1.885e-06 1.886e-06 1.889e-06 1.913e-06 1.931e-06
+of-string/cubin-sm89	wall_time	batch=4096	n=20	1.901e-06	1.867e-06 1.880e-06 1.882e-06 1.888e-06 1.890e-06 1.895e-06 1.896e-06 1.899e-06 1.900e-06 1.900e-06 1.901e-06 1.903e-06 1.904e-06 1.906e-06 1.908e-06 1.910e-06 1.921e-06 1.933e-06 1.969e-06 2.153e-06
+of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
+of-string/floor-bytes-amd-128-kernels	wall_time	batch=1024	n=20	6.742e-06	6.672e-06 6.695e-06 6.724e-06 6.728e-06 6.732e-06 6.734e-06 6.734e-06 6.736e-06 6.739e-06 6.741e-06 6.743e-06 6.751e-06 6.757e-06 6.760e-06 6.766e-06 6.773e-06 6.786e-06 6.790e-06 6.797e-06 6.938e-06
+of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
+of-string/floor-symbols-amd-128-kernels	wall_time	batch=256	n=20	3.040e-05	2.975e-05 2.990e-05 2.997e-05 3.000e-05 3.008e-05 3.017e-05 3.019e-05 3.026e-05 3.037e-05 3.039e-05 3.042e-05 3.051e-05 3.053e-05 3.054e-05 3.057e-05 3.064e-05 3.071e-05 3.090e-05 3.113e-05 3.138e-05
 of-string/host-aarch64	alloc_words	exact	1238
-of-string/host-aarch64	wall_time	batch=2048	n=20	2.668e-06	2.591e-06 2.614e-06 2.623e-06 2.644e-06 2.657e-06 2.660e-06 2.662e-06 2.663e-06 2.664e-06 2.668e-06 2.669e-06 2.677e-06 2.677e-06 2.680e-06 2.683e-06 2.683e-06 2.707e-06 2.722e-06 2.729e-06 2.783e-06
+of-string/host-aarch64	wall_time	batch=2048	n=20	2.775e-06	2.741e-06 2.753e-06 2.756e-06 2.760e-06 2.762e-06 2.762e-06 2.764e-06 2.768e-06 2.775e-06 2.775e-06 2.775e-06 2.778e-06 2.779e-06 2.784e-06 2.786e-06 2.788e-06 2.792e-06 2.807e-06 2.809e-06 2.815e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
-symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.135e-06	1.109e-06 1.109e-06 1.119e-06 1.122e-06 1.122e-06 1.131e-06 1.132e-06 1.133e-06 1.133e-06 1.135e-06 1.135e-06 1.140e-06 1.140e-06 1.143e-06 1.145e-06 1.146e-06 1.148e-06 1.153e-06 1.163e-06 1.168e-06
+symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.182e-06	1.173e-06 1.174e-06 1.174e-06 1.176e-06 1.176e-06 1.177e-06 1.178e-06 1.179e-06 1.181e-06 1.182e-06 1.182e-06 1.187e-06 1.187e-06 1.187e-06 1.189e-06 1.189e-06 1.194e-06 1.197e-06 1.198e-06 1.198e-06
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
