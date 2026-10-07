@@ -115,7 +115,7 @@ type machine = {
 
 let machine () =
   let fakes = Hashtbl.create 4 and config = ref (Machine.Physical, 0) in
-  let take ~lock:_ bus =
+  let take bus =
     let addressing, size = !config in
     let slot = Hashtbl.length fakes mod 4 in
     let k =
@@ -281,7 +281,7 @@ let gpu ?(addressing = Machine.Physical) ?(memory = gpu_memory) ?bar
   m.config := (addressing, bar);
   let b = bus () in
   let fn =
-    match Function.take m.machine ~lock:"memtest" b with
+    match Function.take m.machine b with
     | Ok fn -> fn
     | Error why -> failf "taking a fake function: %s" why
   in

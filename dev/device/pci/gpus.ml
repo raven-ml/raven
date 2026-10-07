@@ -14,7 +14,6 @@ type interface = Kernel | Pci
    machine and bus address. *)
 type t = {
   name : string;
-  lock : string;
   memory_bar : int;
   is_gpu : Machine.id -> bool;
   mutex : Mutex.t;
@@ -31,10 +30,9 @@ and hold = {
   fn : Function.t option;
 }
 
-let make ~name ~lock ~memory_bar is_gpu =
+let make ~name ~memory_bar is_gpu =
   {
     name;
-    lock;
     memory_bar;
     is_gpu;
     mutex = Mutex.create ();
@@ -128,7 +126,7 @@ let open_pci g m i f =
       Error (bus ^ " was lost; over PCI only a reset recovers it")
     else Ok ()
   in
-  let* fn = Function.take m ~lock:g.lock bus in
+  let* fn = Function.take m bus in
   let h = hold g m bus (Some fn) in
   match caught (fun () -> f h fn) with
   | Ok v ->
@@ -163,8 +161,8 @@ let lose h = give_back Lost h
 
 (* Changes to the machine *)
 
-(* [f bus] for GPU [i] of this machine, which no process holds while it runs:
-   the library's own lock on it is taken around [f]. *)
+(* [f bus] for GPU [i] of this machine, which no process takes while it runs:
+   the lock a take holds is held around [f]. *)
 let change g fn i f =
   index fn i;
   Mutex.protect g.mutex @@ fun () ->
@@ -182,7 +180,7 @@ let reset g m i f =
   index "reset" i;
   Mutex.protect g.mutex @@ fun () ->
   let* bus = gpu g m i in
-  let* fn = Function.take m ~lock:g.lock bus in
+  let* fn = Function.take m bus in
   let r =
     Fun.protect
       ~finally:(fun () -> Function.release fn)

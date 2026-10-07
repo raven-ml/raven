@@ -10,13 +10,12 @@ external far : int -> int -> int = "test_far"
 
 (* A fake machine
 
-   A transport's machine whose takes lock its functions, as this machine's lock
-   files do: a function taken and not released refuses another take. It records
-   each function taken with the lock name it was taken with, and calls
-   [released] once a function is given back. *)
+   A transport's machine whose takes lock its functions, as this machine's takes
+   do: a function taken and not released refuses another take. It records each
+   function taken, and calls [released] once a function is given back. *)
 
 type fake = {
-  mutable taken : (string * string) list; (* (bus, lock), newest first *)
+  mutable taken : string list; (* buses, newest first *)
   mutable refusal : string option; (* why every take is refused *)
   mutable released : string -> unit;
   lock : Mutex.t;
@@ -28,7 +27,7 @@ let fake_fn fake tr bus =
     if not !gone then begin
       gone := true;
       Mutex.protect fake.lock (fun () ->
-          fake.taken <- List.filter (fun (b, _) -> b <> bus) fake.taken);
+          fake.taken <- List.filter (fun b -> b <> bus) fake.taken);
       fake.released bus
     end
   in
@@ -54,16 +53,16 @@ let machine ?(name = "far:1") ids =
     { taken = []; refusal = None; released = ignore; lock = Mutex.create () }
   in
   let tr = Window.unsafe_transport (far 0 4096) in
-  let take ~lock bus =
+  let take bus =
     Mutex.protect fake.lock @@ fun () ->
     match fake.refusal with
     | Some why -> Error why
     | None ->
         if not (List.exists (fun (id : Machine.id) -> id.bus = bus) ids) then
           Error (bus ^ " is no function of " ^ name)
-        else if List.mem_assoc bus fake.taken then Error (bus ^ " is locked")
+        else if List.mem bus fake.taken then Error (bus ^ " is locked")
         else begin
-          fake.taken <- (bus, lock) :: fake.taken;
+          fake.taken <- bus :: fake.taken;
           Ok (fake_fn fake tr bus)
         end
   in
@@ -79,19 +78,18 @@ let machine ?(name = "far:1") ids =
   (Machine.make ~name ops, fake)
 
 let taken fake = Mutex.protect fake.lock (fun () -> fake.taken)
-let taken_w = list (pair string string)
+let taken_w = list string
 
 (* The vendor's GPUs are its display controllers. Its audio functions and
    another vendor's display controllers are no GPUs of it. *)
 
 let vendor = 0x1002
-let lock = "test"
 
 let id ?(vendor = vendor) ?(class_ = 0x03) bus =
   { Machine.bus; vendor; device = 0x73bf; class_ }
 
 let is_gpu (id : Machine.id) = id.vendor = vendor && id.class_ = 0x03
-let gpus () = Gpus.make ~name:"AMD" ~lock ~memory_bar:0 is_gpu
+let gpus () = Gpus.make ~name:"AMD" ~memory_bar:0 is_gpu
 let gpu_buses = [ "0000:03:00.0"; "0000:43:00.0"; "0000:c3:00.0" ]
 
 let functions =
@@ -263,11 +261,6 @@ let numbering =
 
 (* Opening over PCI *)
 
-let test_lock () =
-  let g, m, fake = three () in
-  ignore (hold g m 1);
-  equal taken_w [ ("0000:43:00.0", lock) ] (taken fake)
-
 let test_result () =
   let g, m, _ = three () in
   equal (result int string) (Ok 42) (Gpus.open_pci g m 0 (fun _ _ -> Ok 42));
@@ -335,7 +328,6 @@ let test_kernel_elsewhere () =
 let opening =
   group "opening over PCI"
     [
-      test "a GPU's function is taken with the vendor's lock name" test_lock;
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
         test_error_gives_back;
@@ -371,7 +363,7 @@ let test_lose () =
   ignore (hold g m 1);
   Gpus.lose h;
   equal ~msg:"released" bool true (Function.released fn);
-  equal ~msg:"functions taken" taken_w [ ("0000:43:00.0", lock) ] (taken fake);
+  equal ~msg:"functions taken" taken_w [ "0000:43:00.0" ] (taken fake);
   ignore (unopened (pci g m 0));
   ignore (hold g m 2);
   require_ok (reset g m 0 ok);
@@ -391,7 +383,7 @@ let test_twice (_, first, _, again) =
   first h;
   let other = hold g m 1 in
   raises_match (Exn.invalid_arg ?substring:None) (fun () -> again h);
-  equal ~msg:"functions taken" taken_w [ ("0000:43:00.0", lock) ] (taken fake);
+  equal ~msg:"functions taken" taken_w [ "0000:43:00.0" ] (taken fake);
   Gpus.release other
 
 let giving_back =
@@ -412,9 +404,7 @@ let test_reset () =
   let g, m, fake = three () in
   let seen = ref [] in
   let reset_gpu fn =
-    equal ~msg:"taken during the reset" taken_w
-      [ ("0000:43:00.0", lock) ]
-      (taken fake);
+    equal ~msg:"taken during the reset" taken_w [ "0000:43:00.0" ] (taken fake);
     equal (option string) (Machine.name m) (Machine.name (Function.machine fn));
     seen := fn :: !seen
   in
@@ -458,7 +448,7 @@ let resets =
 (* This machine *)
 
 let test_this_none () =
-  let g = Gpus.make ~name:"none" ~lock ~memory_bar:0 (fun _ -> false) in
+  let g = Gpus.make ~name:"none" ~memory_bar:0 (fun _ -> false) in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
   ignore (unopened (kernel g this 0));
@@ -470,7 +460,7 @@ let test_this_none () =
 (* Every function of this machine stands for a GPU: the kernel driver opens
    nothing, so holding one through it changes nothing. *)
 let this_gpus () =
-  let g = Gpus.make ~name:"PCI" ~lock ~memory_bar:0 (fun _ -> true) in
+  let g = Gpus.make ~name:"PCI" ~memory_bar:0 (fun _ -> true) in
   if Gpus.buses g Machine.this = [] then
     skip ~reason:"this machine lists no PCI function" ();
   g
@@ -652,9 +642,7 @@ let held_buses v =
 
 let vendor_t =
   abstract "v" ~invariant:(fun v s ->
-      equal ~msg:"functions taken"
-        (slist (pair string string) compare)
-        (List.map (fun b -> (b, lock)) (held_buses v))
+      equal ~msg:"functions taken" (slist string compare) (held_buses v)
         (taken s.fake))
 
 let hold_t = abstract "h"

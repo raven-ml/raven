@@ -72,11 +72,11 @@ let take ~bar_size =
         transport = Window.unsafe_transport (transport ());
         page;
         functions = (fun () -> []);
-        take = (fun ~lock:_ _ -> Ok fn);
+        take = (fun _ -> Ok fn);
         reserve = (fun ~base:_ _ -> ());
       }
   in
-  Result.get_ok (Function.take machine ~lock:"bench" bus)
+  Result.get_ok (Function.take machine bus)
 
 (* Page tables
 

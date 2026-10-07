@@ -27,13 +27,11 @@
 type t
 (** The type for a vendor's GPUs. *)
 
-val make :
-  name:string -> lock:string -> memory_bar:int -> (Machine.id -> bool) -> t
-(** [make ~name ~lock ~memory_bar is_gpu] is the GPUs of the vendor named [name]
-    in messages, such as ["AMD"]: the functions [f] with [is_gpu f]. [lock]
-    names the lock file this process takes for them ({!Function.take}), and
-    [memory_bar] the BAR through which the process reaches their memory, which
-    {!detach} enlarges. *)
+val make : name:string -> memory_bar:int -> (Machine.id -> bool) -> t
+(** [make ~name ~memory_bar is_gpu] is the GPUs of the vendor named [name] in
+    messages, such as ["AMD"]: the functions [f] with [is_gpu f]. [memory_bar]
+    is the BAR through which the process reaches their memory, which {!detach}
+    enlarges. *)
 
 val buses : t -> Machine.t -> string list
 (** [buses g m] is the bus addresses of [g]'s GPUs on [m], in bus order: GPU [i]
@@ -97,10 +95,11 @@ val lose : hold -> unit
 (** {1:changes Changes to the machine}
 
     These change the machine and persist after the process. Each refuses a GPU
-    the process holds. {!detach} and {!attach} write this machine's
-    [/sys/bus/pci], so they act on {!Machine.this} alone, and need
-    [CAP_SYS_ADMIN] and write access to the files they write, which root has. An
-    [Error] for a file the process may not write names it. *)
+    the process holds, and one another process has taken ({!Function.take}),
+    holding the function as a take does while it runs. {!detach} and {!attach}
+    write this machine's [/sys/bus/pci], so they act on {!Machine.this} alone,
+    and need [CAP_SYS_ADMIN] and write access to the files they write, which
+    root has. An [Error] for a file the process may not write names it. *)
 
 val detach : t -> int -> (unit, string) result
 (** [detach g i] detaches GPU [i] of {!Machine.this} from its kernel driver, so
