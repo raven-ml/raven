@@ -1,6 +1,5 @@
 (*---------------------------------------------------------------------------
-  Copyright (c) 2026 The Raven authors. ISC License.
-
+  Copyright (c) 2026 The Raven authors. All rights reserved.
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 

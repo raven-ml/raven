@@ -1,8 +1,6 @@
 (*---------------------------------------------------------------------------
-  Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
-  Copyright (c) 2026 The Raven authors. ISC License.
-
-  SPDX-License-Identifier: MIT AND ISC
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
 (** Launch descriptors.
