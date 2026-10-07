@@ -95,11 +95,11 @@ val lose : hold -> unit
 (** {1:changes Changes to the machine}
 
     These change the machine and persist after the process. Each refuses a GPU
-    the process holds, and one another process has taken ({!Function.take}),
-    holding the function as a take does while it runs. {!detach} and {!attach}
-    write this machine's [/sys/bus/pci], so they act on {!Machine.this} alone,
-    and need [CAP_SYS_ADMIN] and write access to the files they write, which
-    root has. An [Error] for a file the process may not write names it. *)
+    the process holds. Changes run under the lock a physical take holds; they
+    leave a function bound to [vfio-pci] as it is. {!detach} and {!attach} write
+    this machine's [/sys/bus/pci], so they act on {!Machine.this} alone, and
+    need [CAP_SYS_ADMIN] and write access to the files they write, which root
+    has. An [Error] for a file the process may not write names it. *)
 
 val detach : t -> int -> (unit, string) result
 (** [detach g i] detaches GPU [i] of {!Machine.this} from its kernel driver, so
