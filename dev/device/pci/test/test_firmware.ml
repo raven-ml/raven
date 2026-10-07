@@ -97,6 +97,25 @@ let test_no_directory () =
   is_error ~msg:"no directory holds anything"
     (Firmware.find [] name ~digest:pinned)
 
+(* The files under [d] and their contents, in order. *)
+let rec files d =
+  Sys.readdir d |> Array.to_list |> List.sort compare
+  |> List.concat_map (fun f ->
+      let path = Filename.concat d f in
+      if Sys.is_directory path then (path, "/") :: files path
+      else [ (path, In_channel.with_open_bin path In_channel.input_all) ])
+
+let test_writes_nothing () =
+  let a = temp_dir () and b = temp_dir () in
+  write a name "another image\n";
+  write b name image;
+  let before = files (Lazy.force root) in
+  ignore (Firmware.find [ a; b ] name ~digest:pinned : (string, string) result);
+  ignore
+    (Firmware.find [ a; b ] "amdgpu/missing.bin" ~digest:pinned
+      : (string, string) result);
+  equal (list (pair string string)) before (files (Lazy.force root))
+
 let test_compressed () =
   let a = temp_dir () in
   write a (name ^ ".zst") image;
@@ -118,6 +137,7 @@ let () =
                 directories and the files with another digest"
                test_missing;
              test "no directory holds nothing" test_no_directory;
+             test "a lookup writes nothing" test_writes_nothing;
              test "a compressed file is not the image" test_compressed;
            ];
        ]

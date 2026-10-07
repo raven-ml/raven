@@ -238,21 +238,26 @@ let free_base = 0x6f00_0000_0000
 
 let test_reserve_this () =
   let n = 4 lsl 20 in
-  (match Machine.reserve Machine.this ~base:free_base n with
-  | Ok () -> ()
-  | Error why -> skip ~reason:why ());
-  require_ok ~msg:"again" (Machine.reserve Machine.this ~base:free_base n);
-  let page = Machine.page Machine.this in
-  let used = memory (4 * page) in
-  let base = (used + page - 1) / page * page in
-  contains ~sub:"in use"
-    (require_error (Machine.reserve Machine.this ~base page))
+  let reserve () = Machine.reserve Machine.this ~base:free_base n in
+  if not on_linux then
+    ignore (require_error ~msg:"off Linux" (reserve ()) : string)
+  else begin
+    require_ok (reserve ());
+    require_ok ~msg:"again" (reserve ());
+    let page = Machine.page Machine.this in
+    let used = memory (4 * page) in
+    let base = (used + page - 1) / page * page in
+    contains ~sub:"in use"
+      (require_error (Machine.reserve Machine.this ~base page))
+  end
 
 let reservations =
   group ~timeout:patience "reservations"
     [
       test "another machine's reservation is its transport's" test_reserve;
-      test "this machine reserves a range once and refuses one in use"
+      test
+        "this machine reserves a range once and refuses one in use, on Linux \
+         alone"
         test_reserve_this;
     ]
 

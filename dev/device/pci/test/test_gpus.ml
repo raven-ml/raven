@@ -284,17 +284,25 @@ let test_error_gives_back () =
   given_back g m fake
 
 let passed =
-  [
-    ("Invalid_argument", Invalid_argument "a bug");
-    ("Not_found", Not_found);
-    ("Failure", Failure "int_of_string");
-    ("Sys_error", Sys_error "/dev/kfd: No such file");
-    ("Unix_error", Unix.Unix_error (ENOENT, "open", "/dev/kfd"));
-  ]
+  List.concat_map
+    (fun (op, run) ->
+      List.map
+        (fun (name, e) -> (op ^ " " ^ name, run, e))
+        [
+          ("Invalid_argument", Invalid_argument "a bug");
+          ("Not_found", Not_found);
+          ("Failure", Failure "int_of_string");
+          ("Sys_error", Sys_error "/dev/kfd: No such file");
+          ("Unix_error", Unix.Unix_error (ENOENT, "open", "/dev/kfd"));
+        ])
+    [
+      ("open_pci", fun g m e -> Gpus.open_pci g m 0 (fun _ _ -> raise e));
+      ("reset", fun g m e -> Gpus.reset g m 0 (fun _ -> raise e));
+    ]
 
-let test_passed (_, e) =
+let test_passed (_, run, e) =
   let g, m, fake = three () in
-  raises e (fun () -> Gpus.open_pci g m 0 (fun _ _ -> raise e));
+  raises e (fun () -> run g m e);
   given_back g m fake
 
 let test_held () =
@@ -330,7 +338,8 @@ let opening =
         test_error_gives_back;
       cases
         "other exceptions from the driver pass through, and give the GPU back"
-        ~name:fst passed test_passed;
+        ~name:(fun (n, _, _) -> n)
+        passed test_passed;
       test "a GPU held is refused without calling the driver" test_held;
       test "a function that cannot be taken is refused with the take's reason"
         test_take_refused;
@@ -447,7 +456,7 @@ let test_this_none () =
   let g = Gpus.make ~memory_bar:0 (fun _ -> false) in
   let this = Machine.this in
   equal (list string) [] (Gpus.buses g this);
-  ignore (unopened (kernel g this 0));
+  names 0 (unopened (kernel g this 0));
   names 0 (unopened (pci g this 0));
   names 0 (unopened (reset g this 0));
   ignore (require_error (Gpus.detach g 0));

@@ -165,6 +165,7 @@ let fake_fn m bus =
           call "alloc_dma"
             (fun () ->
               match va with
+              | _ when n mod f.page <> 0 -> Some "a size off the page"
               | Some v when v mod f.page <> 0 -> Some "va off a page"
               | _ when contiguous && bytes > 2 * mib -> Some "too large"
               | Some v
@@ -389,6 +390,7 @@ let test_released () =
     (fun (name, use) ->
       raises_match ~msg:name (Exn.invalid_arg ~substring:"released") use)
     [
+      ("failed", fun () -> ignore (Function.failed f : string option));
       ("config16", fun () -> ignore (Function.config16 f 0 : int));
       ("set_config16", fun () -> Function.set_config16 f 0 0);
       ("bar", fun () -> ignore (Function.bar f 0 : (int * int) option));
@@ -535,6 +537,12 @@ let misuse_refused =
           Function.set_config32 f 4094 0);
       refused "an interrupt wait below zero" (fun f ->
           Function.interrupt f (-1));
+      xfail
+        ~reason:
+          "Function.alloc_dma hands a transport a va that no Machine.reserve \
+           reserved; only this machine refuses it (sysmem.ml, map_bytes)"
+        (refused "DMA memory at an address no reservation holds" (fun f ->
+             Function.alloc_dma ~va:va_base f 4096));
     ]
 
 (* Sequences against a model
@@ -1086,7 +1094,9 @@ let test_failed_function () =
   equal ~msg:"a write is dropped" string (String.make 16 '\xff')
     (Window.read w 8 16);
   equal ~msg:"a wait is false" bool false
-    (Machine.wait m ~ms:1000 (fun () -> true))
+    (Machine.wait m ~ms:1000 (fun () -> true));
+  equal ~msg:"a reset is refused" (result unit string)
+    (Error "far: the link broke") (Function.reset f)
 
 (* A function whose vendor ID reads all ones left the bus. *)
 let test_left_bus () =
@@ -1146,11 +1156,21 @@ let refusals =
       [],
       [ "0000:03:00.0 shares its device with 0000:03:00.1"; "detach the GPU" ]
     );
+    ( "a device shared with another function, bound to vfio-pci without an IOMMU",
+      [ Host.gpu ~driver:"vfio-pci" "0000:03:00.0"; audio "0000:03:00.1" ],
+      "0000:03:00.0",
+      [],
+      [ "0000:03:00.0 shares its device with 0000:03:00.1" ] );
     ( "a disabled function",
       [ Host.gpu ~enabled:false "0000:03:00.0" ],
       "0000:03:00.0",
       [],
       [ "0000:03:00.0 is disabled"; "detach the GPU" ] );
+    ( "a configuration file the process may not write",
+      [ Host.gpu "0000:03:00.0" ],
+      "0000:03:00.0",
+      [ "read-only" ],
+      [ "taking 0000:03:00.0 needs write access"; "run as root" ] );
     ( "a locked-down kernel",
       [ Host.gpu "0000:03:00.0" ],
       "0000:03:00.0",
@@ -1163,7 +1183,15 @@ let test_refusal (_, fns, bus, opts, subs) =
     if List.mem "lockdown" opts then Some "none [integrity] confidentiality"
     else None
   in
-  let why = require_error (take_on ?lockdown fns bus) in
+  let root = Host.make ?lockdown fns in
+  if List.mem "read-only" opts then begin
+    if Unix.geteuid () = 0 then
+      skip ~reason:"root opens a file whatever its mode" ();
+    Unix.chmod
+      (Filename.concat root ("sys/bus/pci/devices/" ^ bus ^ "/config"))
+      0o444
+  end;
+  let why = require_error (Function.take (Machine.at root) bus) in
   List.iter (fun sub -> contains ~sub why) subs
 
 (* An identity IOMMU passes physical addresses through, as does VFIO's no-IOMMU
@@ -1174,7 +1202,8 @@ let test_physical () =
   List.iter
     (fun (msg, groups, noiommu, group) ->
       let fn = Host.gpu ?group "0000:03:00.0" in
-      let f = require_ok ~msg (take_on ~groups ~noiommu [ fn ] fn.bus) in
+      let m = Machine.at (Host.make ~groups ~noiommu [ fn ]) in
+      let f = require_ok ~msg (Function.take m fn.bus) in
       equal ~msg addressing Physical (Function.addressing f);
       equal ~msg:"vendor" int 0x1002 (Function.config16 f 0);
       equal ~msg:"device" int 0x744c (Function.config16 f 2);
@@ -1191,12 +1220,41 @@ let test_physical () =
           None;
         ]
         bars;
-      Function.release f)
+      equal ~msg:"past the 64 bytes Linux shows" hex 0xffff_ffff
+        (Function.config32 f 64);
+      equal ~msg:"no interrupt to wait for" bool false
+        (Function.interrupt f max_int);
+      contains ~msg:"a second take" ~sub:"0000:03:00.0 is taken already"
+        (require_error (Function.take m fn.bus));
+      Function.release f;
+      Function.release
+        (require_ok ~msg:"a take once released" (Function.take m fn.bus)))
     [
       ("no IOMMU", [], [], None);
       ("an identity IOMMU", [ ("12", "identity") ], [], Some "12");
       ("VFIO's no-IOMMU mode", [], [ "12" ], Some "12");
     ]
+
+(* Bound to vfio-pci, a function is taken through VFIO, which takes its IOMMU
+   group whole: neither what shares its device nor whether it is enabled refuses
+   it. The host has none of VFIO's files, so the take is refused naming the
+   first one it opens. In VFIO's no-IOMMU mode the take locks the function's
+   file first. *)
+let through_vfio =
+  [
+    ("behind a translating IOMMU, beside its audio", [], [], true, true);
+    ("behind an identity IOMMU", [ ("12", "identity") ], [], false, true);
+    ("behind an IOMMU, disabled", [], [], false, false);
+    ("in VFIO's no-IOMMU mode", [], [ "12" ], false, true);
+  ]
+
+let test_through_vfio (_, groups, noiommu, beside, enabled) =
+  if noiommu <> [] && not on_linux then
+    skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Host.gpu ~driver:"vfio-pci" ~group:"12" ~enabled "0000:03:00.0" in
+  let fns = if beside then [ fn; audio "0000:03:00.1" ] else [ fn ] in
+  contains ~sub:"dev/vfio/vfio does not exist"
+    (require_error (take_on ~groups ~noiommu fns fn.bus))
 
 (* The command register and two of its bits (PCI Express Base Specification,
    7.5.1.1.3): the function answers at its memory BARs, and it masters the bus,
@@ -1270,14 +1328,112 @@ let host_files =
         refusals test_refusal;
       test
         "a function alone and enabled, under no translating IOMMU, is taken \
-         physically, its BARs as its registers and resource file say"
+         physically by one take at a time, its BARs as its registers and \
+         resource file say, all ones past 64 bytes, without interrupts"
         test_physical;
+      cases
+        "a function bound to vfio-pci is taken through VFIO, whatever shares \
+         its device or whether it is enabled"
+        ~name:(fun (n, _, _, _, _) -> n)
+        through_vfio test_through_vfio;
       test "a function taken physically stops mastering the bus when released"
         test_release_stops_dma;
       test
         "a function taken physically stops mastering the bus when its process \
          exits, and a child that process forked exits without stopping it"
         test_exit_stops_dma;
+    ]
+
+(* Locked system memory
+
+   Functions of a host in a fixture tree, taken physically, reach this process's
+   memory as GPUs of this machine do. Locking memory and reading its physical
+   addresses need privileges: a test the machine refuses them skips with the
+   reason. *)
+
+(* [with_fixtures n f] is [f fns], [fns] the [n] functions of a fixture host,
+   taken. *)
+let with_fixtures n f =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let buses = List.init n (fun i -> Printf.sprintf "0000:%02x:00.0" (3 + i)) in
+  let m = Machine.at (Host.make (List.map Host.gpu buses)) in
+  let fns = List.map (fun bus -> require_ok (Function.take m bus)) buses in
+  Fun.protect
+    ~finally:(fun () -> List.iter Function.release fns)
+    (fun () -> f fns)
+
+let with_fixture f = with_fixtures 1 (fun fns -> f (List.hd fns))
+let granted = function Ok x -> x | Error why -> skip ~reason:why ()
+
+(* The kibibytes of the process's memory Linux keeps locked. *)
+let locked_kib () =
+  In_channel.with_open_text "/proc/self/status" In_channel.input_lines
+  |> List.find_map (fun l ->
+      match String.split_on_char ':' l with
+      | [ "VmLck"; v ] ->
+          int_of_string_opt
+            (String.trim (Filename.chop_suffix (String.trim v) "kB"))
+      | _ -> None)
+  |> Option.get
+
+(* DMA memory stays locked through a pin and an unpin of it, which another
+   function's mapping of it makes. *)
+let test_dma_locked () =
+  with_fixture @@ fun f ->
+  let w, runs = granted (Function.alloc_dma f mib) in
+  let page = Machine.page Machine.this in
+  equal ~msg:"a run per page" (list int)
+    (List.init (mib / page) (fun _ -> page))
+    (List.map snd runs);
+  equal ~msg:"zeroed" string (String.make mib '\000') (Window.read w 0 mib);
+  let locked = locked_kib () in
+  at_least ~msg:"locked" int ~than:1024 locked;
+  ignore (granted (Function.pin f (Window.address w) mib));
+  Function.unpin f (Window.address w) mib;
+  equal ~msg:"still locked after a pin and an unpin" int locked (locked_kib ());
+  Function.free_dma f w;
+  equal ~msg:"unlocked once freed" int (locked - 1024) (locked_kib ())
+
+let test_counted_pins () =
+  with_fixtures 2 @@ fun fns ->
+  let f, g = (List.nth fns 0, List.nth fns 1) in
+  let page = Machine.page Machine.this in
+  let a = round_up (memory (2 * page)) page in
+  ignore (granted (Function.pin f a page));
+  let pinned = locked_kib () in
+  ignore (pin g a page);
+  Function.unpin f a page;
+  equal ~msg:"still locked after one of two unpins" int pinned (locked_kib ());
+  Function.unpin g a page;
+  equal ~msg:"unlocked after the second" int
+    (pinned - (page / 1024))
+    (locked_kib ())
+
+(* A range of this process's addresses far from what the runtime maps. *)
+let reserved_base = 0x6d00_0000_0000
+
+let test_contiguous () =
+  with_fixture @@ fun f ->
+  granted (Machine.reserve Machine.this ~base:reserved_base (8 * mib));
+  let va = reserved_base + (2 * mib) in
+  let w, runs =
+    granted (Function.alloc_dma ~contiguous:true ~va f (300 * kib))
+  in
+  equal ~msg:"at the address asked" hex va (Window.address w);
+  equal ~msg:"one run" int 1 (List.length runs);
+  Function.free_dma f w
+
+let system_memory =
+  group ~timeout:patience "locked system memory"
+    [
+      test
+        "DMA memory, zeroed and a run per page, stays locked through a pin and \
+         an unpin until freed"
+        test_dma_locked;
+      test "of two functions' pins of a range, the second unpin unlocks it"
+        test_counted_pins;
+      test "contiguous memory is one run at the reserved address asked"
+        test_contiguous;
     ]
 
 let this_machine =
@@ -1305,5 +1461,6 @@ let () =
              model;
              failures;
              host_files;
+             system_memory;
              this_machine;
            ]

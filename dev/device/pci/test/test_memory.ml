@@ -39,7 +39,8 @@ type fake = {
       (** Windows [alloc_dma] gave and [free_dma] did not take back: address and
           runs. *)
   mutable pins : (int * int) list;  (** Pins held. *)
-  mutable refuse : string option;  (** [alloc_dma] and [pin] fail with it. *)
+  mutable refuse : string option;
+      (** [alloc_dma], [pin] and [map] fail with it. *)
 }
 
 (* Physical pages with gaps between them, so no two runs merge. *)
@@ -76,7 +77,9 @@ let ops k =
     set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some k.bar else None);
     map =
-      (fun _ off n -> Ok (Window.through (Lazy.force bars) (fst k.bar + off) n));
+      (fun _ off n ->
+        unless_refused k @@ fun () ->
+        Window.through (Lazy.force bars) (fst k.bar + off) n);
     unmap = ignore;
     interrupt = (fun _ -> false);
     reset = (fun () -> Ok ());
@@ -542,7 +545,7 @@ let test_system_refused () =
     (fun kind ->
       contains ~sub:"ulimit -l"
         (require_error (Memory.alloc x.memory kind (64 * kib))))
-    [ Memory.Host; Visible ];
+    [ Memory.Host; Visible; Bar ];
   equal ~msg:"its addresses returned" (pair int int) before (capacity x);
   x.fake.refuse <- None;
   is_some ~msg:"allocated once the limit is lifted"
@@ -957,7 +960,8 @@ let () =
              test "a small BAR's blocks stay inside it" test_small_bar_fills;
              test "no room for a table is None" test_tables_full;
              test
-               "system memory refused raises, having given back its addresses"
+               "system memory or a BAR window refused is an Error, having \
+                given back its addresses"
                test_system_refused;
            ];
          group ~timeout:patience "freeing"
