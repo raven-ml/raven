@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Norn.Nuts`, `Norn.Hmc`, tempering's moves and nested sampling's slice
+  moves work on one row per chain instead of per tensor of the position: a NUTS
+  leapfrog step compiles to 210 kernels instead of 760 on eight schools, and
+  compiles and runs faster. The momenta's random draws change.
 - Add `Norn.Evidence.expectation`, a posterior expectation under an
   evidence's sample with its standard error: the shrinkage noise of nested
   sampling's weights and the sampling error of independent groups of draws,
