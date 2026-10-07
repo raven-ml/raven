@@ -138,6 +138,19 @@ let test_fork_child () =
     bool true
     (P.finishes "the parent's job after the fork" (fun () -> P.balance 16))
 
+(* The child limits its own threads to none, so the pool makes no worker. Its
+   jobs run on the calling thread, and the pool makes none once the limit is
+   lifted. *)
+let test_unmade () =
+  if not (T.limits_threads ()) then
+    skip ~reason:"the system cannot limit a process's own threads" ();
+  needs_two_cores ();
+  let v = in_child T.Limited in
+  if v.(0) = 0 then skip ~reason:"the thread limit does not bind this user" ();
+  equal ~msg:"units not run once by each job" int 0 v.(1);
+  equal ~msg:"calls on a worker" int 0 v.(2);
+  equal ~msg:"threads after both jobs" int 1 v.(3)
+
 (* Nothing signals that fork waits, so the test samples: once the domain is
    about to fork, fork has still not returned 50 ms later. *)
 let test_fork_waits () =
@@ -176,6 +189,10 @@ let thread_tests =
         "a child made by fork runs its jobs on workers of its own, and the \
          parent on its own"
         test_fork_child;
+      test
+        "workers that cannot be made are missing from every job; with none, \
+         the calling thread runs every chunk"
+        test_unmade;
       test
         "fork waits for a running job of more than one thread to end, sampled \
          for 50 ms"

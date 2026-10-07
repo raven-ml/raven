@@ -37,6 +37,7 @@
 #include <mach/mach.h>
 #elif defined(__linux__)
 #include <dirent.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #endif
 
@@ -272,6 +273,58 @@ static void child_job(int64_t *v) {
 
 static void child_stack(int64_t *v) { v[0] = on_a_worker(deep_stack); }
 
+#if defined(__linux__)
+static void *idle(void *arg) { return arg; }
+
+static _Atomic int64_t off_caller;
+
+static void count_alone(int64_t lo, int64_t hi, int worker, void *ctx) {
+  if (worker != 0)
+    atomic_fetch_add(&off_caller, 1);
+  count_units(lo, hi, worker, ctx);
+}
+
+/* [units_not_once ()] runs a job on every core and is the units it did not
+   run once, which it then clears. */
+static int64_t units_not_once(void) {
+  nx_pool_run(nx_pool_cores(), CHILD_UNITS, 37, count_alone, NULL);
+  int64_t n = 0;
+  for (int i = 0; i < CHILD_UNITS; i++)
+    if (atomic_exchange(&child_units[i], 0) != 1)
+      n++;
+  return n;
+}
+
+/* Linux counts each thread against RLIMIT_NPROC, a limit of the process
+   alone: at 0, pthread_create fails in this child and nowhere else. One
+   thread is made to see that the limit binds, which it does not for root.
+   Then: the units not run once by a job under the limit and by one once it
+   is lifted, the calls of both on a worker, and the threads after them. */
+static void child_limited(int64_t *v) {
+  struct rlimit old, none;
+  if (getrlimit(RLIMIT_NPROC, &old) != 0)
+    return;
+  none = old;
+  none.rlim_cur = 0;
+  if (setrlimit(RLIMIT_NPROC, &none) != 0)
+    return;
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, idle, NULL) == 0) {
+    pthread_join(thread, NULL);
+    return;
+  }
+  v[1] = units_not_once();
+  if (setrlimit(RLIMIT_NPROC, &old) != 0)
+    return;
+  v[0] = 1;
+  v[1] += units_not_once();
+  v[2] = atomic_load(&off_caller);
+  v[3] = thread_count();
+}
+#else
+static void child_limited(int64_t *v) { (void)v; }
+#endif
+
 static void child_faults(int64_t *v) {
   v[0] = on_a_worker(raise_faults);
   v[1] = delivered;
@@ -339,12 +392,12 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
 }
 
 /* [probe_in_child scenario] is (status, values) of [in_child] for the
-   scenario of that index: threads, job, stack, faults. */
+   scenario of that index: threads, job, stack, faults, limited. */
 value probe_in_child(value v_scenario) {
   CAMLparam1(v_scenario);
   CAMLlocal3(result, values, s);
-  static void (*const scenarios[])(int64_t *) = {child_threads, child_job,
-                                                 child_stack, child_faults};
+  static void (*const scenarios[])(int64_t *) = {
+      child_threads, child_job, child_stack, child_faults, child_limited};
   int64_t v[CHILD_VALUES] = {0};
   char status[128];
   caml_enter_blocking_section();
@@ -358,6 +411,16 @@ value probe_in_child(value v_scenario) {
   Store_field(result, 0, s);
   Store_field(result, 1, values);
   CAMLreturn(result);
+}
+
+/* Whether the system can limit a process's own threads. */
+value probe_limits_threads(value unit) {
+  (void)unit;
+#if defined(__linux__)
+  return Val_true;
+#else
+  return Val_false;
+#endif
 }
 
 /* [probe_fork ()] forks a child that exits at once, and waits for it. */

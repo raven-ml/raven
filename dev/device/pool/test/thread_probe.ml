@@ -34,11 +34,19 @@ type scenario =
   (* Whether a worker ran a chunk; a bit per signal of [faults] that it raised
      and whose handler ran before [raise] returned. *)
   | Faults
+  (* 1 once a thread limit of 0 kept a thread from being made and was lifted,
+     else 0; the units not run once by a job on every core under the limit and
+     by one after it; the calls of both on a worker; the threads after them. *)
+  | Limited
 
 (* [in_child s] is (how the child ended, "exit 0" once it answered; its four
    values). *)
 external in_child : scenario -> string * int array = "probe_in_child"
 external fork : unit -> unit = "probe_fork"
+
+(* Whether the system can limit a process's own threads: Linux counts each
+   thread against RLIMIT_NPROC. *)
+external limits_threads : unit -> bool = "probe_limits_threads"
 
 (* The threads of the process, other than the calling one, that are running now,
    or -1 where the system does not say. *)
