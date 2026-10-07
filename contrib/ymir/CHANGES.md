@@ -38,7 +38,7 @@ All notable changes to Ymir are documented in this file.
 - `Ymir.Region` places circles, annuli, ellipses and polygons on a grid's
   world and weighs each cell by its exact covered fraction, differentiable in
   centre and size and continuous in a polygon's vertices.
-- `Ymir_units.Quantity.t` is declared injective (`type !'p t`), so a GADT
+- `Quantity.t` is declared injective (`type !'p t`), so a GADT
   can be indexed by quantities.
 - `Ymir.Observation` holds data on a grid with variance, validity and the
   area its pipeline states, and `integrate` sums them over a region: a cell

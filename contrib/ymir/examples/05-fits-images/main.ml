@@ -4,6 +4,7 @@
    unit. Reading copies the headers and reads no pixels until asked; every
    failure in a file is an [Error] naming where it happened. *)
 
+open Ymir
 open Ymir_fits
 
 let ( let* ) = Result.bind
@@ -41,7 +42,7 @@ let run path =
   let* exptime = Fits.Header.get Fits.Value.float "EXPTIME" h in
   let* unit = Fits.unit sci in
   Printf.printf "EXPTIME = %g, BUNIT = %s\n" exptime
-    (match unit with Some u -> Ymir_units.Unit.to_string u | None -> "none");
+    (match unit with Some u -> Unit.to_string u | None -> "none");
 
   (* Pixels in the dtype the caller names. A window reads only the rows it
      covers. *)
