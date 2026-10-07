@@ -77,24 +77,38 @@ val addressing : t -> Machine.addressing
 val released : t -> bool
 (** [released f] is [true] iff {!release} gave [f] back. *)
 
-(** {1:config Configuration space} *)
+(** {1:config Configuration space}
 
-val config : t -> int -> int -> int
-(** [config f off n] is the [n]-byte little-endian value at byte [off] of [f]'s
-    configuration space, [n] being 1, 2 or 4.
+    A function's configuration space is 4096 bytes of little-endian values.
+    Linux shows a process its first 64 bytes alone, unless the process took the
+    function behind an IOMMU or has [CAP_SYS_ADMIN].
 
-    Raises [Invalid_argument] if [n] is not 1, 2 or 4 or the bytes are not in
-    the 4096 bytes of configuration space, and [Failure] naming [CAP_SYS_ADMIN]
-    if [off] is past the first 64 bytes, [f] was taken physically and the
-    process lacks that capability: Linux shows other readers the first 64 bytes
-    alone. *)
+    Each access raises [Invalid_argument] if its bytes are not in the
+    configuration space, and [Failure] naming [CAP_SYS_ADMIN] if they lie past
+    the first 64 bytes, [f] was taken physically and the process lacks that
+    capability. A write reads its bytes back, so it has reached the function
+    when it returns. *)
 
-val set_config : t -> int -> int -> int -> unit
-(** [set_config f off n x] writes the low [n] bytes of [x] at byte [off] of
-    [f]'s configuration space, then reads them back, so the write has reached
-    the function when it returns.
+val config8 : t -> int -> int
+(** [config8 f off] is the byte at [off] of [f]'s configuration space. *)
 
-    Raises as {!config} does. *)
+val config16 : t -> int -> int
+(** [config16 f off] is the 16-bit value at byte [off] of [f]'s configuration
+    space. *)
+
+val config32 : t -> int -> int
+(** [config32 f off] is the 32-bit value at byte [off] of [f]'s configuration
+    space. *)
+
+val set_config8 : t -> int -> int -> unit
+(** [set_config8 f off x] writes the low 8 bits of [x] at byte [off] of [f]'s
+    configuration space. *)
+
+val set_config16 : t -> int -> int -> unit
+(** [set_config16 f off x] writes the low 16 bits of [x] at byte [off]. *)
+
+val set_config32 : t -> int -> int -> unit
+(** [set_config32 f off x] writes the low 32 bits of [x] at byte [off]. *)
 
 (** {1:bars BARs} *)
 

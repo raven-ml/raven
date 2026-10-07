@@ -374,8 +374,8 @@ let test_released () =
     (fun (name, use) ->
       raises_match ~msg:name (Exn.invalid_arg ~substring:"released") use)
     [
-      ("config", fun () -> ignore (Function.config f 0 2 : int));
-      ("set_config", fun () -> Function.set_config f 0 2 0);
+      ("config16", fun () -> ignore (Function.config16 f 0 : int));
+      ("set_config16", fun () -> Function.set_config16 f 0 0);
       ("bar", fun () -> ignore (Function.bar f 0 : (int * int) option));
       ("map", fun () -> ignore (Function.map f 0 : Window.t));
       ("interrupt", fun () -> ignore (Function.interrupt f 0 : bool));
@@ -469,7 +469,7 @@ let test_reset () =
 (* A vendor ID of all ones is a function that does not answer. *)
 let test_reset_silent () =
   let _, f, _ = take_fake () in
-  Function.set_config f 0 2 0xffff;
+  Function.set_config16 f 0 0xffff;
   raises
     (Failure (bus1 ^ " does not answer after its reset"))
     (fun () -> Function.reset f)
@@ -519,9 +519,9 @@ let misuse_refused =
           Function.alloc_dma f max_int);
       refused "a pin of no bytes" (fun f -> Function.pin f 0x5000_0000 0);
       refused "configuration space below its first byte" (fun f ->
-          Function.config f (-1) 1);
+          Function.config8 f (-1));
       refused "configuration space past its 4096 bytes" (fun f ->
-          Function.set_config f 4094 4 0);
+          Function.set_config32 f 4094 0);
       refused "an interrupt wait below zero" (fun f ->
           Function.interrupt f (-1));
     ]
@@ -723,7 +723,6 @@ let pin_base = 0x5000_0000
 
 let config_ref f off n =
   live f;
-  if not (List.mem n [ 1; 2; 4 ]) then misuse "a width not 1, 2 or 4";
   let x = ref 0 in
   for i = n - 1 downto 0 do
     x := (!x lsl 8) lor Bytes.get_uint8 f.r_config (off + i)
@@ -732,10 +731,21 @@ let config_ref f off n =
 
 let set_config_ref f off n x =
   live f;
-  if not (List.mem n [ 1; 2; 4 ]) then misuse "a width not 1, 2 or 4";
   for i = 0 to n - 1 do
     Bytes.set_uint8 f.r_config (off + i) ((x lsr (8 * i)) land 0xff)
   done
+
+(* The access of width [n] bytes. *)
+let config_sys f off = function
+  | 1 -> Function.config8 f off
+  | 2 -> Function.config16 f off
+  | _ -> Function.config32 f off
+
+let set_config_sys f off n x =
+  match n with
+  | 1 -> Function.set_config8 f off x
+  | 2 -> Function.set_config16 f off x
+  | _ -> Function.set_config32 f off x
 
 let bar_ref f i =
   live f;
@@ -824,16 +834,16 @@ let commands =
     command "config"
       (fn_t
       ^-> ints [ 0; 4; 60; 64; 256; 4092 ]
-      @-> ints [ -1; 0; 1; 2; 3; 4; 8 ]
+      @-> ints [ 1; 2; 4 ]
       @-> returns int)
-      config_ref (fsys Function.config);
+      config_ref (fsys config_sys);
     command "set_config"
       (fn_t
       ^-> ints [ 0; 4; 64; 4092 ]
-      @-> ints [ 0; 1; 2; 3; 4 ]
+      @-> ints [ 1; 2; 4 ]
       @-> ints [ 0; 0xff; 0x1234; 0xdead_beef; -1; max_int; min_int ]
       @-> returns unit)
-      set_config_ref (fsys Function.set_config);
+      set_config_ref (fsys set_config_sys);
   ]
   @ dma_cmds
 
@@ -949,8 +959,8 @@ let vfio_function () =
 let test_vfio () =
   let d, f = vfio_function () in
   Fun.protect ~finally:(fun () -> Function.release f) @@ fun () ->
-  equal ~msg:"its vendor" int d.vendor (Function.config f 0 2);
-  equal ~msg:"its device" int d.device (Function.config f 2 2);
+  equal ~msg:"its vendor" int d.vendor (Function.config16 f 0);
+  equal ~msg:"its device" int d.device (Function.config16 f 2);
   let page = Machine.page Machine.this in
   let allocs =
     List.map (fun n -> Function.alloc_dma f n) [ 1; 3 * page; 2 * mib ]

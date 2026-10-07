@@ -70,19 +70,24 @@ let config_size = 4096
 
 let in_config f fn off n =
   live f fn;
-  if n <> 1 && n <> 2 && n <> 4 then
-    invalid_arg (Printf.sprintf "Function.%s: %d bytes" fn n);
   if off < 0 || off > config_size - n then
     invalid_arg
       (Printf.sprintf "Function.%s: byte %d outside configuration space" fn off)
 
-let config f off n =
-  in_config f "config" off n;
+let config f fn off n =
+  in_config f fn off n;
   f.fn.config off n
 
-let set_config f off n x =
-  in_config f "set_config" off n;
+let set_config f fn off n x =
+  in_config f fn off n;
   f.fn.set_config off n x
+
+let config8 f off = config f "config8" off 1
+let config16 f off = config f "config16" off 2
+let config32 f off = config f "config32" off 4
+let set_config8 f off x = set_config f "set_config8" off 1 x
+let set_config16 f off x = set_config f "set_config16" off 2 x
+let set_config32 f off x = set_config f "set_config32" off 4 x
 
 (* BARs *)
 
