@@ -5,6 +5,7 @@
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 8.1 on 10 cores
+# forced: blessed compute/balanced-performance-cores-under-load under load 6.3 on 10 cores
 
 claim/65536-empty-chunks-all-cores	alloc_words	exact	0
 claim/65536-empty-chunks-all-cores	cpu_time	batch=16	n=20	3.291e-02	2.925e-02 2.927e-02 2.966e-02 3.057e-02 3.157e-02 3.224e-02 3.247e-02 3.271e-02 3.273e-02 3.285e-02 3.298e-02 3.311e-02 3.315e-02 3.321e-02 3.324e-02 3.425e-02 3.462e-02 3.572e-02 3.615e-02 3.616e-02
@@ -19,7 +20,8 @@ compute/balanced-performance-cores	alloc_words	exact	0
 compute/balanced-performance-cores	cpu_time	batch=64	n=20	6.164e-03	6.104e-03 6.121e-03 6.126e-03 6.137e-03 6.145e-03 6.152e-03 6.161e-03 6.161e-03 6.161e-03 6.163e-03 6.166e-03 6.167e-03 6.172e-03 6.180e-03 6.189e-03 6.192e-03 6.196e-03 6.202e-03 6.217e-03 6.223e-03
 compute/balanced-performance-cores	wall_time	batch=64	n=20	7.895e-04	7.809e-04 7.814e-04 7.831e-04 7.841e-04 7.847e-04 7.868e-04 7.873e-04 7.875e-04 7.881e-04 7.894e-04 7.896e-04 7.921e-04 7.928e-04 7.936e-04 7.950e-04 7.965e-04 8.001e-04 8.008e-04 8.068e-04 8.084e-04
 compute/balanced-performance-cores-under-load	alloc_words	exact	0
-compute/balanced-performance-cores-under-load	wall_time	batch=4	n=20	4.232e-03	1.845e-03 2.417e-03 2.473e-03 2.647e-03 2.660e-03 3.107e-03 3.525e-03 3.576e-03 3.668e-03 4.166e-03 4.297e-03 4.400e-03 5.157e-03 5.340e-03 5.439e-03 5.641e-03 5.811e-03 6.136e-03 7.919e-03 8.985e-03
+compute/balanced-performance-cores-under-load	cpu_time	batch=16	n=20	6.356e-03	6.161e-03 6.197e-03 6.210e-03 6.232e-03 6.308e-03 6.314e-03 6.325e-03 6.328e-03 6.337e-03 6.355e-03 6.357e-03 6.361e-03 6.405e-03 6.412e-03 6.414e-03 6.501e-03 6.504e-03 6.535e-03 6.629e-03 6.701e-03
+compute/balanced-performance-cores-under-load	wall_time	batch=16	n=20	4.084e-03	2.449e-03 2.631e-03 2.766e-03 2.846e-03 3.134e-03 3.211e-03 3.830e-03 3.846e-03 3.994e-03 4.002e-03 4.166e-03 4.361e-03 4.399e-03 4.808e-03 5.374e-03 5.614e-03 5.908e-03 6.153e-03 6.579e-03 7.299e-03
 compute/skewed-performance-cores	alloc_words	exact	0
 compute/skewed-performance-cores	cpu_time	batch=128	n=20	5.822e-03	5.757e-03 5.792e-03 5.792e-03 5.803e-03 5.808e-03 5.810e-03 5.814e-03 5.816e-03 5.819e-03 5.821e-03 5.822e-03 5.826e-03 5.827e-03 5.830e-03 5.832e-03 5.832e-03 5.834e-03 5.859e-03 5.864e-03 5.931e-03
 compute/skewed-performance-cores	wall_time	batch=128	n=20	7.414e-04	7.285e-04 7.373e-04 7.384e-04 7.387e-04 7.391e-04 7.395e-04 7.398e-04 7.408e-04 7.411e-04 7.414e-04 7.414e-04 7.493e-04 7.495e-04 7.513e-04 7.514e-04 7.518e-04 7.526e-04 7.603e-04 7.608e-04 7.715e-04

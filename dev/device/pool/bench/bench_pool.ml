@@ -18,8 +18,59 @@
    Compute jobs are 65,536 units of 64 dependent multiply-adds, 8 chunks a
    thread: on one thread, on the performance cores, on every core, with the cost
    skewed (the costliest units first, the threads balanced by claiming), and
-   against one spinning thread per core that another part of the program
-   started. *)
+   against one spinning process per core, another program on the host. *)
+
+(* Competing load
+
+   A process of this executable started with [spin_flag] spins until it is
+   killed or its parent ends, and runs nothing else of the bench. Spinning
+   domains would join the bench's collections; processes share nothing with it
+   but the cores. Windows tells a process nothing of its parent, so there a
+   spinner whose bench was killed spins until it is killed too. *)
+
+let spin_flag = "--spin"
+
+let spin parent =
+  print_char '.';
+  flush stdout;
+  let x = ref 1 in
+  while Sys.win32 || Unix.getppid () = parent do
+    for _ = 1 to 1 lsl 20 do
+      x := Sys.opaque_identity ((!x * 3) + 1)
+    done
+  done;
+  exit 0
+
+let () =
+  match Sys.argv with
+  | [| _; flag; parent |] when flag = spin_flag -> spin (int_of_string parent)
+  | _ -> ()
+
+(* [load_start n] is [n] spinning processes, once each spins. *)
+let load_start n =
+  let exe = Sys.executable_name in
+  let args = [| exe; spin_flag; string_of_int (Unix.getpid ()) |] in
+  let r, w = Unix.pipe ~cloexec:true () in
+  let pids =
+    Array.init n (fun _ ->
+        Unix.create_process exe args Unix.stdin w Unix.stderr)
+  in
+  Unix.close w;
+  let b = Bytes.create n in
+  let rec await got =
+    if got < n then
+      match Unix.read r b got (n - got) with
+      | 0 -> failwith "a spinning process ended before it spun"
+      | k -> await (got + k)
+  in
+  Fun.protect ~finally:(fun () -> Unix.close r) (fun () -> await 0);
+  pids
+
+let load_stop pids =
+  Array.iter (fun pid -> Unix.kill pid Sys.sigkill) pids;
+  Array.iter (fun pid -> ignore (Unix.waitpid [] pid)) pids
+
+(* Jobs *)
 
 external cores : unit -> int = "pool_bench_cores"
 external performance_cores : unit -> int = "pool_bench_performance_cores"
@@ -28,9 +79,6 @@ external empty_after : int -> int -> unit = "pool_bench_empty_after" [@@noalloc]
 
 external compute : int -> int -> int -> bool -> unit = "pool_bench_compute"
 [@@noalloc]
-
-external load_start : int -> unit = "pool_bench_load_start"
-external load_stop : unit -> unit = "pool_bench_load_stop"
 
 let cores = cores ()
 let fast = performance_cores ()
@@ -70,12 +118,10 @@ let compute =
       Thumper.bench "balanced-performance-cores" (job fast);
       Thumper.bench "balanced-all-cores" (job cores);
       Thumper.bench "skewed-performance-cores" (job ~skewed:true fast);
-      (* The load's own CPU time would swamp the job's. *)
       Thumper.bench_with_setup
-        ~metrics:Thumper.Metric.[ wall_time; alloc_words ]
         ~setup:(fun () -> load_start cores)
         ~teardown:load_stop "balanced-performance-cores-under-load"
-        (fun () -> job fast ());
+        (fun _ -> job fast ());
     ]
 
 (* The process's CPU time counts what spinning workers spend. A batch of at

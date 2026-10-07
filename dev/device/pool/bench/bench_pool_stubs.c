@@ -12,8 +12,7 @@
 
 #include <caml/mlvalues.h>
 
-#include <pthread.h>
-#include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #if defined(_WIN32)
@@ -22,12 +21,9 @@
 #include <time.h>
 #endif
 
-#if defined(__APPLE__)
-#include <pthread/qos.h>
-#endif
-
 #include "nx_pool.h"
 
+/* OCaml's standard library has no monotonic clock. */
 static uint64_t now_ns(void) {
 #if defined(_WIN32)
   LARGE_INTEGER count, frequency;
@@ -125,51 +121,5 @@ value pool_bench_compute(value v_threads, value v_total, value v_chunks,
   }
   work w = {Long_val(v_total), Bool_val(v_skewed), sinks};
   nx_pool_run(Int_val(v_threads), w.total, Long_val(v_chunks), compute, &w);
-  return Val_unit;
-}
-
-/* Competing load
-
-   Threads that spin until stopped, made the way another program makes its
-   threads: at the default priority (on macOS, the default QoS class). */
-
-static _Atomic int load_on;
-static pthread_t *load_threads;
-static int load_count;
-
-static void *spin_load(void *arg) {
-  volatile double x = 1.;
-  (void)arg;
-  while (atomic_load_explicit(&load_on, memory_order_relaxed))
-    x = x * 0.999999 + 1e-9;
-  return NULL;
-}
-
-/* [load_start n] starts [n] spinning threads. */
-value pool_bench_load_start(value v_n) {
-  int n = Int_val(v_n);
-  pthread_attr_t attr;
-  pthread_attr_init(&attr);
-#if defined(__APPLE__)
-  pthread_attr_set_qos_class_np(&attr, QOS_CLASS_DEFAULT, 0);
-#endif
-  load_threads = calloc((size_t)n, sizeof *load_threads);
-  if (load_threads == NULL) abort();
-  atomic_store(&load_on, 1);
-  for (load_count = 0; load_count < n; load_count++)
-    if (pthread_create(&load_threads[load_count], &attr, spin_load, NULL) != 0)
-      abort();
-  pthread_attr_destroy(&attr);
-  return Val_unit;
-}
-
-/* [load_stop ()] stops the threads [load_start] started. */
-value pool_bench_load_stop(value unit) {
-  (void)unit;
-  atomic_store(&load_on, 0);
-  for (int i = 0; i < load_count; i++) pthread_join(load_threads[i], NULL);
-  free(load_threads);
-  load_threads = NULL;
-  load_count = 0;
   return Val_unit;
 }
