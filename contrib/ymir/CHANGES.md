@@ -27,7 +27,8 @@ All notable changes to Ymir are documented in this file.
 - `Ymir.Grid` is an image's cells seen through a transform, with `centres`,
   `corners`, each cell's exact `measure` (solid angle or area), and windows of
   static shape at traced, batched starts (`window`, `around`). `Grid.cell`
-  marks data per cell.
+  marks data per cell. `map_world` sees the cells in another world and keeps
+  their measures; `agree` tells whether two grids are the same cells, exactly.
 - `Ymir.Region` places circles, annuli, ellipses and polygons on a grid's
   world and weighs each cell by its exact covered fraction, differentiable in
   centre and size and continuous in a polygon's vertices.
@@ -35,7 +36,9 @@ All notable changes to Ymir are documented in this file.
   can be indexed by quantities.
 - `Ymir.Observation` holds data on a grid with variance, validity and the
   area its pipeline states, and `integrate` sums them over a region: a cell
-  counts by its area for a field and as one cell for data per cell.
+  counts by its area for a field and as one cell for data per cell. `add`,
+  `sub` and `scale` combine observations on agreeing grids with exact
+  variances, and `map_world` moves one to another world.
 - New library `ymir.fits`, FITS files without the compiler. `Fits.read`
   copies a file's headers, checks every data unit's extent and reads no data;
   `Fits.Header` keeps every record as the file held it, reading a value with

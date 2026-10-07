@@ -232,6 +232,66 @@ let around =
           equal (array int64) [| 14L; 78L |] (Nx.to_array start));
     ]
 
+(* Worlds and agreement *)
+
+let worlds =
+  let g () = Grid.pixels ~shape:[| 6; 5 |] f64 (tan ~scale:0.01 (30., 20.)) in
+  let to_galactic = Transform.rotation Frame.icrs Frame.galactic in
+  group "Worlds"
+    [
+      test "map_world moves the centres and keeps the measures" (fun () ->
+          let g = g () in
+          let m = Grid.map_world to_galactic g in
+          equal (array float_exact)
+            (Nx.to_array
+               (Direction.xyz
+                  (Direction.rotate Frame.galactic (Grid.centres g))))
+            (Nx.to_array (Direction.xyz (Grid.centres m)));
+          equal (array float_exact)
+            (values Unit.steradian (Grid.measure g))
+            (values Unit.steradian (Grid.measure m)));
+      test "a grid in a plane keeps its sky measures" (fun () ->
+          let g = g () in
+          let c =
+            Direction.lonlat Frame.icrs ~lon:(deg (scalar 30.))
+              ~lat:(deg (scalar 20.))
+          in
+          let m = Grid.map_world (Transform.about c) g in
+          equal (array float_exact)
+            (values Unit.steradian (Grid.measure g))
+            (values Unit.steradian (Grid.measure m)));
+      test "a grid agrees with itself, and NaN with NaN" (fun () ->
+          equal (array bool) [| true |]
+            (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree (g ()) (g ()))));
+          let nan = Grid.pixels ~shape:[| 2; 2 |] f64
+              (Transform.shift (one (tensor [| 2 |] [| Float.nan; 1. |]))) in
+          equal (array bool) [| true |]
+            (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree nan nan))));
+      test "a different number or static datum does not agree" (fun () ->
+          let other =
+            Grid.pixels ~shape:[| 6; 5 |] f64 (tan ~scale:0.0100001 (30., 20.))
+          in
+          equal bool false (Nx.item [] (Grid.agree (g ()) other));
+          equal bool false
+            (Nx.item []
+               (Grid.agree (g ())
+                  (Grid.pixels ~shape:[| 6; 4 |] f64 (tan ~scale:0.01 (30., 20.)))));
+          equal bool false
+            (Nx.item []
+               (Grid.agree (g ())
+                  (Grid.map_world (Transform.rotation Frame.icrs Frame.icrs) (g ()))));
+          equal bool false
+            (Nx.item []
+               (Grid.agree
+                  (Grid.window ~start:(start 1 1) ~shape:[| 2; 2 |] (g ()))
+                  (Grid.window ~start:(start 1 2) ~shape:[| 2; 2 |] (g ())))));
+      test "batched windows agree element by element" (fun () ->
+          let a = Grid.window ~start:(starts [| 0; 0; 1; 1; 2; 2 |]) ~shape:[| 2; 2 |] (g ())
+          and b = Grid.window ~start:(starts [| 0; 0; 1; 2; 2; 2 |]) ~shape:[| 2; 2 |] (g ()) in
+          equal (array bool) [| true; false; true |]
+            (Nx.to_array (Grid.agree a b)));
+    ]
+
 let structure =
   group "Structure"
     [
@@ -255,9 +315,10 @@ let structure =
             shape: int 3
             shape: int 3
             the root: case "float64"
+            measured: int 0
             start: a leaf
             transform: int 0
             |});
     ]
 
-let () = exit (run "Grid" [ cells; measures; around; structure ])
+let () = exit (run "Grid" [ cells; measures; around; worlds; structure ])

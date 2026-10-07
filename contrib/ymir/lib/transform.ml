@@ -922,35 +922,58 @@ let expand_celestial k c =
     latpole = expand k 0 c.latpole;
   }
 
-(* [run_cells ~cells t x] is [t] applied to [x] and where each stage is
-   defined, under [Cover]: no point raises. *)
-let run_cells ~cells t x =
+(* [run_cells ?stages ~cells t x] is [t]'s first [stages] stages, all by
+   default, applied to [x], and where each is defined, under [Cover]: no point
+   raises. *)
+let run_cells ?(stages = max_int) ~cells t x =
   let fn = "Transform.apply" in
-  let rec go : type a b. (a, b) t -> value -> value * Nx.bool_t option =
-   fun t x ->
-    match (t, x) with
-    | Id, x -> (x, None)
-    | Stage (Plane (p, sense), rest), P v ->
-        let y, ok = apply_planar Cover fn (expand_planar cells p) sense v in
-        let y, ok' = go rest (P y) in
-        (y, and_mask ok ok')
-    | Stage (Deproject c, rest), P v ->
-        let d, ok = deproject Cover fn (expand_celestial cells c) v in
-        let y, ok' = go rest (D d) in
-        (y, and_mask ok ok')
-    | Stage (Project c, rest), D d ->
-        let d = { Direction.frame = c.frame; xyz = d.xyz } in
-        let v, ok = project Cover fn (expand_celestial cells c) d in
-        let y, ok' = go rest (P v) in
-        (y, and_mask ok ok')
-    | Stage (Rotate (f, g), rest), D d ->
-        let d = Direction.rotate g { Direction.frame = f; xyz = d.xyz } in
-        let y, ok' = go rest (D d) in
-        (y, and_mask (Some (numbers d.xyz)) ok')
-    | Stage _, _ ->
-        invalid_arg "Transform.run_cells: a stage met a point of another type"
+  let rec go : type a b. int -> (a, b) t -> value -> value * Nx.bool_t option =
+   fun n t x ->
+    if n = 0 then (x, None)
+    else
+      match (t, x) with
+      | Id, x -> (x, None)
+      | Stage (Plane (p, sense), rest), P v ->
+          let y, ok = apply_planar Cover fn (expand_planar cells p) sense v in
+          let y, ok' = go (n - 1) rest (P y) in
+          (y, and_mask ok ok')
+      | Stage (Deproject c, rest), P v ->
+          let d, ok = deproject Cover fn (expand_celestial cells c) v in
+          let y, ok' = go (n - 1) rest (D d) in
+          (y, and_mask ok ok')
+      | Stage (Project c, rest), D d ->
+          let d = { Direction.frame = c.frame; xyz = d.xyz } in
+          let v, ok = project Cover fn (expand_celestial cells c) d in
+          let y, ok' = go (n - 1) rest (P v) in
+          (y, and_mask ok ok')
+      | Stage (Rotate (f, g), rest), D d ->
+          let d = Direction.rotate g { Direction.frame = f; xyz = d.xyz } in
+          let y, ok' = go (n - 1) rest (D d) in
+          (y, and_mask (Some (numbers d.xyz)) ok')
+      | Stage _, _ ->
+          invalid_arg "Transform.run_cells: a stage met a point of another type"
   in
-  go t x
+  go stages t x
+
+(* [cores t] is, for each tensor [t]'s walk visits, in walk order, the number
+   of its trailing axes that are not batch axes. *)
+let cores t =
+  let planar = function
+    | Axes _ -> []
+    | Shift _ | Scale _ -> [ 1 ]
+    | Linear _ -> [ 2 ]
+    | Sip { seed; _ } -> [ 2; 2 ] @ if Option.is_some seed then [ 2; 2 ] else []
+    | Tpv _ -> [ 2 ]
+  in
+  let celestial = [ 1; 1; 1; 0; 0 ] in
+  let rec go : type a b. (a, b) t -> int list = function
+    | Id -> []
+    | Stage (Plane (p, _), rest) -> planar p @ go rest
+    | Stage (Deproject _, rest) -> celestial @ go rest
+    | Stage (Project _, rest) -> celestial @ go rest
+    | Stage (Rotate _, rest) -> go rest
+  in
+  go t
 
 (* Endpoints
 

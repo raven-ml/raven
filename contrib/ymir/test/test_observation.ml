@@ -412,6 +412,99 @@ let gradients =
             (Nx.item [] (c obs p)));
     ]
 
+(* Arithmetic and worlds *)
+
+let arithmetic =
+  let obs ?variance ?valid ?area seed =
+    let g = Grid.pixels ~shape:[| 4; 3 |] f64 Transform.id in
+    Observation.v ?valid ?area
+      ?variance:(Option.map (fun v -> Quantity.v Unit.(counts ** 2) v) variance)
+      g
+      (Quantity.v counts (image f64 [| 4; 3 |] seed))
+  in
+  let data o = Nx.to_array (Quantity.value counts (Observation.data o)) in
+  group "Arithmetic"
+    [
+      test "add and sub combine data and add variances" (fun () ->
+          let va = Nx.full f64 [| 4; 3 |] 2. and vb = Nx.full f64 [| 4; 3 |] 3. in
+          let a = obs ~variance:va 1 and b = obs ~variance:vb 2 in
+          let s = Observation.add a b and d = Observation.sub a b in
+          equal (array float_exact)
+            (Array.map2 ( +. ) (data a) (data b)) (data s);
+          equal (array float_exact)
+            (Array.map2 ( -. ) (data a) (data b)) (data d);
+          equal (array float_exact) (Array.make 12 5.)
+            (Nx.to_array
+               (Quantity.value Unit.(counts ** 2)
+                  (Option.get (Observation.variance d)))));
+      test "a variance survives only where both have one" (fun () ->
+          let a = obs ~variance:(Nx.ones f64 [| 4; 3 |]) 1 and b = obs 2 in
+          equal bool true (Option.is_none (Observation.variance (Observation.add a b))));
+      test "validity is the conjunction" (fun () ->
+          let m k = Nx.cast Nx.bit (Nx.init Nx.bool [| 4; 3 |] (fun i -> (i.(0) + i.(1)) mod k <> 0)) in
+          let a = obs ~valid:(m 2) 1 and b = obs ~valid:(m 3) 2 in
+          let s = Observation.add a b in
+          let v = Nx.to_array (Nx.cast Nx.bool (Option.get (Observation.valid s))) in
+          let expected = Array.init 12 (fun k -> let i = k / 3 and j = k mod 3 in (i + j) mod 2 <> 0 && (i + j) mod 3 <> 0) in
+          equal (array bool) expected v;
+          Array.iteri (fun k ok -> if not ok then equal float_exact 0. (data s).(k)) expected);
+      test "scale multiplies data and variance by k and k²" (fun () ->
+          let a = obs ~variance:(Nx.full f64 [| 4; 3 |] 2.) 1 in
+          let k = Quantity.v Unit.one (Nx.scalar f64 3.) in
+          let s = Observation.scale k a in
+          equal (array float_exact) (Array.map (fun x -> 3. *. x) (data a)) (data s);
+          equal (array float_exact) (Array.make 12 18.)
+            (Nx.to_array (Quantity.value Unit.(counts ** 2) (Option.get (Observation.variance s)))));
+      test "grids that do not agree raise, naming the leaf" (fun () ->
+          let shifted =
+            Observation.v
+              (Grid.pixels ~shape:[| 4; 3 |] f64
+                 (Transform.shift (one (Nx.create f64 [| 2 |] [| 0.; 0.5 |]))))
+              (Quantity.v counts (image f64 [| 4; 3 |] 0))
+          in
+          let other =
+            Observation.v
+              (Grid.pixels ~shape:[| 4; 3 |] f64
+                 (Transform.shift (one (Nx.create f64 [| 2 |] [| 0.; 0.25 |]))))
+              (Quantity.v counts (image f64 [| 4; 3 |] 0))
+          in
+          raises
+            (Invalid_argument
+               "Observation.sub: the grids do not agree at transform.0.offset: \
+                element (1) is 0.5 in the first and 0.25 in the second")
+            (fun () -> Observation.sub shifted other);
+          raises_match (Exn.invalid_arg ~substring:"Observation.add: the grids do not agree at base: int 3 in the first, int 2 in the second")
+            (fun () ->
+              Observation.add (obs 1)
+                (Observation.v (Grid.pixels ~shape:[| 4; 2 |] f64 Transform.id)
+                   (Quantity.v counts (Nx.zeros f64 [| 4; 2 |])))));
+      test "areas must be equal" (fun () ->
+          let area x = Quantity.v Unit.(one ** 2) (Nx.scalar f64 x) in
+          raises
+            (Invalid_argument
+               "Observation.add: one observation states an area and the other \
+                does not")
+            (fun () -> Observation.add (obs ~area:(area 1.) 1) (obs 2));
+          raises
+            (Invalid_argument
+               "Observation.add: the areas differ: 1 in the first and 2 in the \
+                second")
+            (fun () -> Observation.add (obs ~area:(area 1.) 1) (obs ~area:(area 2.) 2)));
+      test "map_world keeps the data and moves the integral's world" (fun () ->
+          let o = sky Nx.float64 in
+          let g = Observation.map_world (Transform.rotation Frame.icrs Frame.galactic) o in
+          let c = target 0.1 (-0.2) in
+          let r = arcsec (scalar 0.4) in
+          let i = Observation.integrate (Region.circle (Transform.about c) ~radius:r) o in
+          let j =
+            Observation.integrate
+              (Region.circle (Transform.about (Direction.rotate Frame.galactic c)) ~radius:r)
+              g
+          in
+          equal (float_rel ~rel:1e-9 ~abs:0.) (jansky i) (jansky j));
+    ]
+
 let () =
   exit
-    (run "Observation" [ photutils; windows; unit_rule; validity; gradients ])
+    (run "Observation"
+       [ photutils; windows; unit_rule; validity; arithmetic; gradients ])

@@ -9,12 +9,16 @@ module Unit = Ymir_units.Unit
 let strf = Printf.sprintf
 let cell = Unit.symbol "cell"
 
+(* [measured] counts the transform's first stages, those of the world the
+   grid was built with, in which its measures are taken: {!map_world} appends
+   stages and keeps the measures. *)
 type ('w, 'e) t = {
   dtype : (float, 'e) Nx.dtype;
   base : int array;
   shape : int array;
   start : Nx.int64_t;
   transform : (Transform.plane, 'w) Transform.t;
+  measured : int;
 }
 
 type ('w, 'e) kind =
@@ -47,7 +51,11 @@ let pixels ~shape dtype transform =
     shape = Array.copy shape;
     start = Nx.zeros Nx.int64 [| 2 |];
     transform;
+    measured = Transform.length transform;
   }
+
+let map_world t g =
+  { g with transform = Transform.(g.transform >> t) }
 
 (* Lattices *)
 
@@ -119,7 +127,12 @@ let solid_angle a b c =
   Nx.mul_s (Nx.atan2 num den) 2.
 
 let measure g =
-  match mapped g with
+  let corners =
+    fst
+      (Transform.run_cells ~stages:g.measured ~cells:2 g.transform
+         (Transform.P (corner_points g)))
+  in
+  match corners with
   | Transform.D d ->
       let at = cells d.xyz in
       let v k = (at k 0, at k 1, at k 2) in
@@ -198,11 +211,12 @@ let walk c g =
   let base = W.field c "base" Transform.ints g.base in
   let shape = W.field c "shape" Transform.ints g.shape in
   W.case c (Format.asprintf "%a" Nx.pp_dtype g.dtype);
+  let measured = W.field c "measured" W.int g.measured in
   let start = W.field c "start" W.tensor g.start in
   let transform =
     W.field c "transform" (W.structure (Transform.ptree ())) g.transform
   in
-  { g with base; shape; start; transform }
+  { g with base; shape; start; transform; measured }
 
 type ('w, 'e) grid = ('w, 'e) t
 
@@ -213,3 +227,82 @@ let ptree (type w e) () : (w, e) t Nx.Ptree.t =
 
       let walk = walk
     end)
+
+(* Agreement
+
+   Two grids agree where every static datum is equal and every leaf holds the
+   same numbers, NaN equal to NaN: one boolean per batch element, each leaf's
+   comparison reduced over its own axes. *)
+
+(* [cores g] is the number of non-batch axes of each of [g]'s leaves, in walk
+   order. *)
+let cores g = 1 :: Transform.cores g.transform
+
+let paths g =
+  List.filter_map
+    (function Nx.Ptree.Leaf p -> Some p | Nx.Ptree.Report _ -> None)
+    (Nx.Ptree.visits (ptree ()) g)
+
+(* [same a b] is where the leaves [a] and [b] hold the same number. *)
+let same (Nx.P a) (Nx.P b) =
+  if Nx_dtype.is Nx_dtype.Float (Nx.dtype a) then
+    let a = Nx.cast Nx.float64 a and b = Nx.cast Nx.float64 b in
+    Nx.logical_or (Nx.equal a b) (Nx.logical_and (Nx.isnan a) (Nx.isnan b))
+  else Nx.equal (Nx.cast Nx.int64 a) (Nx.cast Nx.int64 b)
+
+(* [compare a b] is [Error d] naming the first static difference, or each
+   leaf's elementwise agreement with its path, its core and both sides. *)
+let compare a b =
+  let la, ka = Nx.Ptree.flatten (ptree ()) a
+  and lb, kb = Nx.Ptree.flatten (ptree ()) b in
+  match
+    Nx.Ptree.Skeleton.diff ~this:"in the first" ka ~that:"in the second" kb
+  with
+  | Some d -> Error d
+  | None ->
+      Ok
+        (List.map2
+           (fun ((x, y), core) path -> (same x y, core, path, (x, y)))
+           (List.combine la lb |> fun l -> List.combine l (cores a))
+           (paths a))
+
+let agree a b =
+  match compare a b with
+  | Error _ -> Nx.scalar Nx.bool false
+  | Ok leaves ->
+      List.fold_left
+        (fun acc (eq, core, _, _) ->
+          let n = Nx.ndim eq in
+          let eq =
+            if core = 0 then eq
+            else Nx.all ~axes:(List.init core (fun k -> n - 1 - k)) eq
+          in
+          Nx.logical_and acc eq)
+        (Nx.scalar Nx.bool true) leaves
+
+let index_text i =
+  "(" ^ String.concat ", " (Array.to_list (Array.map string_of_int i)) ^ ")"
+
+let float64 (Nx.P x) = Nx.cast Nx.float64 x
+
+(* [require fn a b] raises [Invalid_argument] naming [fn] where [a] and [b]
+   do not agree: at trace time for a static difference, through [Nx.check]
+   for a leaf. *)
+let require fn a b =
+  match compare a b with
+  | Error d -> invalid_arg (strf "%s: the grids do not agree at %s" fn d)
+  | Ok leaves ->
+      List.iter
+        (fun (eq, _, path, (x, y)) ->
+          Nx.check
+            Nx.Ptree.(pair tensor tensor)
+            eq
+            (float64 x, float64 y)
+            (fun i (x, y) ->
+              Invalid_argument
+                (Format.asprintf
+                   "%s: the grids do not agree at %a: element %s is %g in the \
+                    first and %g in the second"
+                   fn Nx.Ptree.Path.pp path (index_text i) (Nx.item [] x)
+                   (Nx.item [] y))))
+        leaves

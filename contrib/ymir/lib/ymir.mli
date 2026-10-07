@@ -484,8 +484,10 @@ end
     The {e border} of a window is its outer ring of cells.
 
     A cell's {e measure} is its solid angle on the sky, or its area in a plane:
-    the measure of the quadrilateral of its corners mapped to the world, with
-    great-circle edges on the sky. Measures are computed in float64. *)
+    the measure of the quadrilateral of its corners mapped to the world the
+    grid was built with, with great-circle edges on the sky. {!map_world}
+    changes the world and keeps the measures. Measures are computed in
+    float64. *)
 module Grid : sig
   type ('w, 'e) t
   (** The type for grids of cells whose world is ['w], with measures at dtype
@@ -540,6 +542,19 @@ module Grid : sig
       the sky, by Van Oosterom and Strackee's formula on corner differences,
       within about 1e-9 of a 0.031″ TAN pixel's solid angle; in the plane's unit
       squared in a plane, by the shoelace formula. *)
+
+  val map_world : ('w, 'v) Transform.t -> ('w, 'e) t -> ('v, 'e) t
+  (** [map_world t g] is [g]'s cells seen in the world [t] maps [g]'s world
+      to: its transform followed by [t]. Its cells and their measures are
+      [g]'s, taken in the world [g] was built with. *)
+
+  val agree : ('w, 'e) t -> ('w, 'e) t -> Nx.bool_t
+  (** [agree a b] is where [a] and [b] are the same cells in the same world:
+      [false] if their kinds, shapes, stages, codes, frames or units differ,
+      and otherwise whether every parameter holds the same numbers, NaN equal
+      to NaN, one boolean per batch element. It does not raise. Agreement is
+      exact: two headers that differ in their last digit give grids that do
+      not agree. *)
 
   val window : start:Nx.int64_t -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
   (** [window ~start ~shape g] is the block of [shape] cells of [g] from
@@ -705,6 +720,35 @@ module Observation : sig
 
   val restrict : Nx.bit_t -> ('w, 'e) t -> ('w, 'e) t
   (** [restrict m o] keeps a sample valid where it was valid and [m] holds. *)
+
+  val map_world : ('w, 'v) Transform.t -> ('w, 'e) t -> ('v, 'e) t
+  (** [map_world t o] is [o] on [Grid.map_world t (grid o)]: its data,
+      variance, validity and area are [o]'s. *)
+
+  (** {1:arithmetic Arithmetic}
+
+      Sums, differences and scalings, whose variances combine exactly for
+      independent samples. Products, ratios and other functions of data are
+      the program's, on {!data}, with variances from [Rune.jvp]. *)
+
+  val add : ('w, 'e) t -> ('w, 'e) t -> ('w, 'e) t
+  (** [add a b] is [a]'s data plus [b]'s, in [a]'s unit, on [a]'s grid. The
+      variance is the sum of both when both have one; a sample is valid where
+      it is valid in both.
+
+      Raises [Invalid_argument] if the grids do not agree ({!Grid.agree}) or
+      the areas differ, naming the first difference, as in
+      ["Observation.add: the grids do not agree at transform.3.matrix: element
+       (0, 1) is -8.6e-06 in the first and -8.7e-06 in the second"]; numbers
+      that differ raise through {!Nx.check}. Raises if [b]'s unit does not
+      convert to [a]'s. *)
+
+  val sub : ('w, 'e) t -> ('w, 'e) t -> ('w, 'e) t
+  (** [sub a b] is [a]'s data less [b]'s, as {!add} combines them. *)
+
+  val scale : (float, 'e) Nx.t Quantity.t -> ('w, 'e) t -> ('w, 'e) t
+  (** [scale k o] is [o]'s data times [k], in their units' product, with the
+      variance times [k²]. *)
 
   val window : start:Nx.int64_t -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
   (** [window ~start ~shape o] is [o] on [Grid.window ~start ~shape (grid o)]:

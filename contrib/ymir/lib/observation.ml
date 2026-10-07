@@ -113,6 +113,60 @@ let restrict m o =
   in
   zero_all m { o with valid = Some (Nx.cast Nx.bit m) }
 
+let map_world t o = { o with grid = Grid.map_world t o.grid }
+
+(* Arithmetic
+
+   Sums, differences and scalings of observations on agreeing grids, whose
+   variances combine exactly for independent samples. *)
+
+(* [require_areas fn a b] raises where [a] and [b] are not one area. *)
+let require_areas fn a b =
+  match (a, b) with
+  | None, None -> ()
+  | Some _, None | None, Some _ ->
+      invalid_arg
+        (strf "%s: one observation states an area and the other does not" fn)
+  | Some a, Some b ->
+      let x = payload a and y = Quantity.value (Quantity.unit a) b in
+      Nx.check
+        Nx.Ptree.(pair tensor tensor)
+        (Nx.equal x y) (x, y)
+        (fun i (x, y) ->
+          Invalid_argument
+            (Format.asprintf
+               "%s: the areas differ%s: %g in the first and %g in the second"
+               fn
+               (if Array.length i = 0 then "" else " at " ^ Grid.index_text i)
+               (Nx.item [] x) (Nx.item [] y)))
+
+let combine fn op a b =
+  Grid.require fn a.grid b.grid;
+  require_areas fn a.area b.area;
+  let variance =
+    match (a.variance, b.variance) with
+    | Some va, Some vb -> Some (Quantity.add va vb)
+    | _ -> None
+  in
+  let valid =
+    match (a.valid, b.valid) with
+    | None, None -> None
+    | Some m, None | None, Some m -> Some (Nx.cast Nx.bool m)
+    | Some m, Some n -> Some (Nx.logical_and (Nx.cast Nx.bool m) (Nx.cast Nx.bool n))
+  in
+  let o = { a with data = op a.data b.data; variance } in
+  match valid with
+  | None -> o
+  | Some m -> zero_all m { o with valid = Some (Nx.cast Nx.bit m) }
+
+let add a b = combine "Observation.add" Quantity.add a b
+let sub a b = combine "Observation.sub" Quantity.sub a b
+
+let scale k o =
+  let variance = Option.map (fun v -> Quantity.mul v (Quantity.mul k k)) o.variance in
+  let o = { o with data = Quantity.mul k o.data; variance } in
+  match o.valid with None -> o | Some m -> zero_all (Nx.cast Nx.bool m) o
+
 (* Windows *)
 
 let component = Transform.component
