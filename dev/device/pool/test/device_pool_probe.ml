@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Probes of nx_pool.h (pool_probe_stubs.c), and the waits the suites share. *)
+(* Probes of device_pool.h (device_pool_probe_stubs.c), and the waits the suites
+   share. *)
 
 (* Recorded jobs *)
 
@@ -16,7 +17,7 @@ type job = { calls : call list; count : int; overlaps : int }
 
 external record_raw :
   int -> int64 -> int64 -> (int64 * int64 * int * int) array * int * int
-  = "probe_record"
+  = "device_pool_test_record"
 
 let record ~threads ~total ~chunks =
   let calls, count, overlaps = record_raw threads total chunks in
@@ -25,52 +26,53 @@ let record ~threads ~total ~chunks =
 
 (* [visibility ~jobs ~threads] is (values bodies read stale, values the caller
    read stale) over [jobs] jobs. *)
-external visibility : jobs:int -> threads:int -> int * int = "probe_visibility"
+external visibility : jobs:int -> threads:int -> int * int
+  = "device_pool_test_visibility"
 
 (* [nested ~threads ~outer ~inner] is (outer units run, inner jobs not run in
    one call, inner calls off their body's thread or not worker 0, inner units
    not run once). *)
 external nested : threads:int -> outer:int -> inner:int -> int * int * int * int
-  = "probe_nested"
+  = "device_pool_test_nested"
 
 (* [balance chunks] is whether, in a job of [chunks] chunks of one unit on two
    threads, the units after the call that runs unit 0 ran while it lasted. *)
-external balance : int -> bool = "probe_balance"
+external balance : int -> bool = "device_pool_test_balance"
 
 (* Jobs observed from another domain *)
 
-external reset : unit -> unit = "probe_reset"
+external reset : unit -> unit = "device_pool_test_reset"
 
 (* [hold ~only_worker] runs a job of two chunks on two threads whose chunks, or
    with [only_worker] the worker's once both began, wait for [hold_release]. It
    is whether they were released before patience ran out. *)
-external hold : only_worker:bool -> bool = "probe_hold"
-external hold_arrived : unit -> int = "probe_hold_arrived"
-external hold_release : unit -> unit = "probe_hold_release"
+external hold : only_worker:bool -> bool = "device_pool_test_hold"
+external hold_arrived : unit -> int = "device_pool_test_hold_arrived"
+external hold_release : unit -> unit = "device_pool_test_hold_release"
 
 external counted : threads:int -> total:int64 -> chunks:int64 -> unit
-  = "probe_counted"
+  = "device_pool_test_counted"
 
-external counted_calls : unit -> int = "probe_counted_calls"
+external counted_calls : unit -> int = "device_pool_test_counted_calls"
 
 (* The host *)
 
-external cores : unit -> int = "probe_cores"
-external performance_cores : unit -> int = "probe_performance_cores"
+external cores : unit -> int = "device_pool_test_cores"
+external performance_cores : unit -> int = "device_pool_test_performance_cores"
 
 (* The probes of a host fact answer -1 where the host lacks it. *)
 
 (* [sysctl name] is the integer the sysctl [name] reads (macOS). *)
-external sysctl : string -> int = "probe_sysctl"
+external sysctl : string -> int = "device_pool_test_sysctl"
 
 (* [active_processors ()] is the processors active in every group (Windows). *)
-external active_processors : unit -> int = "probe_active_processors"
+external active_processors : unit -> int = "device_pool_test_active_processors"
 
 (* [pinned_cores ()] pins the calling thread to one CPU of its affinity, reads
    the cores, restores the affinity and reads them again (Linux). *)
-external pinned_cores : unit -> int * int = "probe_pinned_cores"
+external pinned_cores : unit -> int * int = "device_pool_test_pinned_cores"
 
-(* Calls nx_pool_cores only when run: test_pool's affinity child must call
+(* Calls device_pool_cores only when run: test_pool's affinity child must call
    nothing of the pool before it pins itself. *)
 let needs_two_cores () =
   if cores () < 2 then Windtrap.skip ~reason:"the host has one core" ()

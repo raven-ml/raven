@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The suite of nx_pool.h's threads, through the probes of thread_probe_stubs.c:
-   what a body sees on a worker, and the workers' life. *)
+(* The suite of device_pool.h's threads, through the probes of
+   device_pool_thread_probe_stubs.c: what a body sees on a worker, and the
+   workers' life. *)
 
 open Windtrap
-module P = Pool_probe
-module T = Thread_probe
+module P = Device_pool_probe
+module T = Device_pool_thread_probe
 
 let cores = P.cores ()
 let needs_two_cores = P.needs_two_cores
@@ -184,4 +185,4 @@ let thread_tests =
         test_fork_waits;
     ]
 
-let () = exit (run "nx_pool.h threads" [ worker_tests; thread_tests ])
+let () = exit (run "device_pool threads" [ worker_tests; thread_tests ])

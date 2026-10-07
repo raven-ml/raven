@@ -72,12 +72,17 @@ let load_stop pids =
 
 (* Jobs *)
 
-external cores : unit -> int = "pool_bench_cores"
-external performance_cores : unit -> int = "pool_bench_performance_cores"
-external empty : int -> int -> int -> unit = "pool_bench_empty" [@@noalloc]
-external empty_after : int -> int -> unit = "pool_bench_empty_after" [@@noalloc]
+external cores : unit -> int = "device_pool_bench_cores"
+external performance_cores : unit -> int = "device_pool_bench_performance_cores"
 
-external compute : int -> int -> int -> bool -> unit = "pool_bench_compute"
+external empty : int -> int -> int -> unit = "device_pool_bench_empty"
+[@@noalloc]
+
+external empty_after : int -> int -> unit = "device_pool_bench_empty_after"
+[@@noalloc]
+
+external compute : int -> int -> int -> bool -> unit
+  = "device_pool_bench_compute"
 [@@noalloc]
 
 let cores = cores ()
@@ -132,4 +137,4 @@ let config =
     default |> batch_floor 0.05
     |> metrics Thumper.Metric.[ wall_time; cpu_time; alloc_words ])
 
-let () = exit (Thumper.run ~config "nx_pool" [ launch; claim; compute ])
+let () = exit (Thumper.run ~config "device_pool" [ launch; claim; compute ])

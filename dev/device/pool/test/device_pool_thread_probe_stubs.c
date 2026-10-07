@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*/
 
 
-/* Probes of nx_pool.h's threads for the pool's suite: what a body sees on a
+/* Probes of device_pool.h's threads for the pool's suite: what a body sees on a
    worker, fork children, and the process's threads. They fork and read
    signal masks and thread states, so they build where POSIX does.
 
-   Some bodies wait for another call, which nx_pool.h forbids, to force a
+   Some bodies wait for another call, which device_pool.h forbids, to force a
    chunk onto a worker. Each such wait gives up after [patience], so a pool
    that breaks a promise fails the test instead of hanging it. */
 
@@ -40,7 +40,7 @@
 #include <sys/syscall.h>
 #endif
 
-#include "nx_pool.h"
+#include "device_pool.h"
 
 /* Time */
 
@@ -66,22 +66,22 @@ static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static _Atomic int burst_stop;
 
-/* [probe_burst ()] runs a job on every core, then jobs of two chunks on two
-   threads back to back until [probe_burst_stop], whose request it then
-   clears. */
-value probe_burst(value unit) {
+/* [device_pool_test_burst ()] runs a job on every core, then jobs of two chunks
+   on two threads back to back until [device_pool_test_burst_stop], whose
+   request it then clears. */
+value device_pool_test_burst(value unit) {
   (void)unit;
-  int cores = nx_pool_cores();
+  int cores = device_pool_cores();
   caml_enter_blocking_section();
-  nx_pool_run(cores, cores, cores, nothing, NULL);
+  device_pool_run(cores, cores, cores, nothing, NULL);
   while (!atomic_load(&burst_stop))
-    nx_pool_run(2, 2, 2, nothing, NULL);
+    device_pool_run(2, 2, 2, nothing, NULL);
   atomic_store(&burst_stop, 0);
   caml_leave_blocking_section();
   return Val_unit;
 }
 
-value probe_burst_stop(value unit) {
+value device_pool_test_burst_stop(value unit) {
   (void)unit;
   atomic_store(&burst_stop, 1);
   return Val_unit;
@@ -115,7 +115,7 @@ static void meet(int64_t lo, int64_t hi, int worker, void *ctx) {
 /* Whether a worker ran a chunk, and so [on_worker]. */
 static int on_a_worker(void (*on_worker)(void)) {
   meet_job j = {0, 0, on_worker};
-  nx_pool_run(2, 2, 2, meet, &j);
+  device_pool_run(2, 2, 2, meet, &j);
   return j.worked;
 }
 
@@ -140,9 +140,9 @@ static sigset_t worker_mask;
 
 static void read_mask(void) { pthread_sigmask(SIG_BLOCK, NULL, &worker_mask); }
 
-/* [probe_worker_mask ()] is (whether a worker ran, the signals of the table
-   with whether a worker blocks them). */
-value probe_worker_mask(value unit) {
+/* [device_pool_test_worker_mask ()] is (whether a worker ran, the signals of
+   the table with whether a worker blocks them). */
+value device_pool_test_worker_mask(value unit) {
   CAMLparam1(unit);
   CAMLlocal5(result, list, pair, name, cell);
   caml_enter_blocking_section();
@@ -167,7 +167,8 @@ value probe_worker_mask(value unit) {
   CAMLreturn(result);
 }
 
-/* The signals a body may raise itself, in the order of [probe_faults]. */
+/* The signals a body may raise itself, in the order of [faults] in
+   device_pool_thread_probe.ml. */
 static const int faults[] = {SIGSEGV, SIGBUS,  SIGFPE, SIGILL,
                              SIGTRAP, SIGABRT, SIGSYS};
 
@@ -199,7 +200,7 @@ static void raise_faults(void) {
   }
 }
 
-/* 7 MiB of the 8 MiB nx_pool.h promises, touched from the top down so an
+/* 7 MiB of the 8 MiB device_pool.h promises, touched from the top down so an
    overflow meets the guard page first. The deepest byte is read back, so
    the frame is used. */
 #define DEEP_BYTES (7 << 20)
@@ -249,14 +250,14 @@ static int64_t thread_count(void) { return -1; }
 /* The process's threads before any job, after a job of one thread, after the
    first job of two, and after jobs of every core. */
 static void child_threads(int64_t *v) {
-  int cores = nx_pool_cores();
+  int cores = device_pool_cores();
   v[0] = thread_count();
-  nx_pool_run(1, 1000, 10, nothing, NULL);
+  device_pool_run(1, 1000, 10, nothing, NULL);
   v[1] = thread_count();
-  nx_pool_run(2, 1000, 10, nothing, NULL);
+  device_pool_run(2, 1000, 10, nothing, NULL);
   v[2] = thread_count();
-  nx_pool_run(cores, 1000, 100, nothing, NULL);
-  nx_pool_run(cores, 1000, 100, nothing, NULL);
+  device_pool_run(cores, 1000, 100, nothing, NULL);
+  device_pool_run(cores, 1000, 100, nothing, NULL);
   v[3] = thread_count();
 }
 
@@ -275,7 +276,7 @@ static void count_units(int64_t lo, int64_t hi, int worker, void *ctx) {
    once. */
 static void child_job(int64_t *v) {
   v[0] = on_a_worker(NULL);
-  nx_pool_run(nx_pool_cores(), CHILD_UNITS, 37, count_units, NULL);
+  device_pool_run(device_pool_cores(), CHILD_UNITS, 37, count_units, NULL);
   for (int i = 0; i < CHILD_UNITS; i++)
     if (atomic_load(&child_units[i]) != 1)
       v[1]++;
@@ -294,7 +295,7 @@ static void child_faults(int64_t *v) {
 static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
                      size_t len) {
   int fds[2];
-  nx_pool_run(nx_pool_cores(), 1000, 100, nothing, NULL);
+  device_pool_run(device_pool_cores(), 1000, 100, nothing, NULL);
   if (pipe(fds) != 0) {
     snprintf(status, len, "pipe: %s", strerror(errno));
     return;
@@ -349,9 +350,9 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
     snprintf(status, len, "exit 0");
 }
 
-/* [probe_in_child scenario] is (status, values) of [in_child] for the
-   scenario of that index: threads, job, stack, faults. */
-value probe_in_child(value v_scenario) {
+/* [device_pool_test_in_child scenario] is (status, values) of [in_child] for
+   the scenario of that index: threads, job, stack, faults. */
+value device_pool_test_in_child(value v_scenario) {
   CAMLparam1(v_scenario);
   CAMLlocal3(result, values, s);
   static void (*const scenarios[])(int64_t *) = {child_threads, child_job,
@@ -371,8 +372,9 @@ value probe_in_child(value v_scenario) {
   CAMLreturn(result);
 }
 
-/* [probe_fork ()] forks a child that exits at once, and waits for it. */
-value probe_fork(value unit) {
+/* [device_pool_test_fork ()] forks a child that exits at once, and waits for
+   it. */
+value device_pool_test_fork(value unit) {
   (void)unit;
   caml_enter_blocking_section();
   pid_t pid = fork();
@@ -384,13 +386,13 @@ value probe_fork(value unit) {
     }
   caml_leave_blocking_section();
   if (pid < 0)
-    caml_failwith("probe_fork: fork failed");
+    caml_failwith("device_pool_test_fork: fork failed");
   return Val_unit;
 }
 
 /* The threads of the process, other than the calling one, that are running
    now, or -1 where the system does not say. */
-value probe_running_threads(value unit) {
+value device_pool_test_running_threads(value unit) {
   (void)unit;
 #if defined(__APPLE__)
   mach_port_t task = mach_task_self();

@@ -3,15 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The suite of nx_pool.h, through the probes of pool_probe_stubs.c. *)
+(* The suite of device_pool.h, through the probes of
+   device_pool_probe_stubs.c. *)
 
 open Windtrap
-module P = Pool_probe
+module P = Device_pool_probe
 
-(* A process this executable starts, to see the first call of nx_pool_cores
+(* A process this executable starts, to see the first call of device_pool_cores
    under a pinned affinity. It must call nothing of the pool before, so this
    comes first. *)
-let child_variable = "NX_POOL_TEST_CHILD"
+let child_variable = "DEVICE_POOL_TEST_CHILD"
 
 let () =
   match Sys.getenv_opt child_variable with
@@ -24,7 +25,7 @@ let () =
 let cores = P.cores ()
 let needs_two_cores = P.needs_two_cores
 
-(* Jobs by nx_pool.h *)
+(* Jobs by device_pool.h *)
 
 (* c, the chunks of a job. *)
 let chunk_count ~total ~chunks =
@@ -483,5 +484,5 @@ let scheduling_tests =
 
 let () =
   exit
-    (run "nx_pool.h"
+    (run "device_pool"
        [ cores_tests; chunk_tests; worker_tests; scheduling_tests ])

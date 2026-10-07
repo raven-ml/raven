@@ -3,9 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The host's worker threads (nx_pool.h).
+/* The host's worker threads (device_pool.h).
 
-   One pool per process: nx_pool_cores () - 1 persistent workers, made at
+   One pool per process: device_pool_cores () - 1 persistent workers, made at
    the first job of more than one thread. A job is published behind a
    generation counter; its threads claim chunk indices from a shared counter
    with one relaxed fetch-add each, and the workers count down to the
@@ -21,7 +21,7 @@
 
 #define _GNU_SOURCE
 
-#include "nx_pool.h"
+#include "device_pool.h"
 
 #include <pthread.h>
 #include <sched.h>
@@ -200,12 +200,12 @@ static void cores_init(void) {
   g_performance_cores = count_performance_cores(g_cores);
 }
 
-int nx_pool_cores(void) {
+int device_pool_cores(void) {
   pthread_once(&cores_once, cores_init);
   return g_cores;
 }
 
-int nx_pool_performance_cores(void) {
+int device_pool_performance_cores(void) {
   pthread_once(&cores_once, cores_init);
   return g_performance_cores;
 }
@@ -215,7 +215,7 @@ int nx_pool_performance_cores(void) {
 /* A job as its caller passes it. [wide] says i * total may overflow 64 bits
    for some chunk bound i <= chunks, so the bounds take 128. */
 typedef struct {
-  nx_pool_body body;
+  device_pool_body body;
   void *ctx;
   int64_t total, chunks;
   int wide;
@@ -298,7 +298,7 @@ static uint64_t spin(_Atomic uint64_t *word, uint64_t value, spin_until until,
 }
 
 /* Claims chunks of [j] until none remains, one call a chunk, which
-   nx_pool.h does not promise: the thread that frees first takes the next
+   device_pool.h does not promise: the thread that frees first takes the next
    chunk, so a costly one holds only its own thread. A relaxed fetch-add
    makes every index unique; ordering rides the generation and countdown. */
 static void claim(pool *p, const job *j, int id) {
@@ -417,7 +417,7 @@ static void start_workers(pool *p, int wanted) {
 /* A new pool, or NULL if its memory or locks cannot be had. calloc's zeros
    are each atomic field's initial value. */
 static pool *create(void) {
-  int cores = nx_pool_cores();
+  int cores = device_pool_cores();
   size_t words = ((size_t)cores + 63) / 64;
   pool *p = calloc(1, sizeof *p + words * sizeof(_Atomic uint64_t));
   if (p == NULL) return NULL;
@@ -507,13 +507,13 @@ static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
 }
 
 /* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
-   or without a pool, else on at most p->threads (<= nx_pool_cores ()). The
+   or without a pool, else on at most p->threads (<= device_pool_cores ()). The
    job is published under a sequence lock (odd while written); the caller
    claims as worker 0 and waits for the workers' countdown, after which no
    thread touches the job or the claim counter until the next publish. Out
-   of line, so a serial nx_pool_run saves no registers. */
+   of line, so a serial device_pool_run saves no registers. */
 __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
-                                          nx_pool_body body, void *ctx) {
+                                          device_pool_body body, void *ctx) {
   pool *p = in_body ? NULL : get();
   if (p && t > p->threads) t = p->threads;
   if (p == NULL || t == 1) {
@@ -553,8 +553,8 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
 }
 
 /* A serial job is one call, before any thread-local read or division. */
-void nx_pool_run(int threads, int64_t total, int64_t chunks, nx_pool_body body,
-                 void *ctx) {
+void device_pool_run(int threads, int64_t total, int64_t chunks,
+                     device_pool_body body, void *ctx) {
   if (total <= 0) return;
   int64_t c = clamp(chunks, 1, total);
   int t = (int)clamp(threads, 1, c);

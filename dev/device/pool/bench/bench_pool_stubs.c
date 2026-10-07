@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Jobs for the pool's bench, run through nx_pool.h as a kernel runs them.
+/* Jobs for the pool's bench, run through device_pool.h as a kernel runs them.
 
    The bench program has one domain, so the stubs keep the runtime during a
    job: releasing it would add its own cost to every row. */
@@ -21,7 +21,7 @@
 #include <time.h>
 #endif
 
-#include "nx_pool.h"
+#include "device_pool.h"
 
 /* OCaml's standard library has no monotonic clock. */
 static uint64_t now_ns(void) {
@@ -38,14 +38,14 @@ static uint64_t now_ns(void) {
 #endif
 }
 
-value pool_bench_cores(value unit) {
+value device_pool_bench_cores(value unit) {
   (void)unit;
-  return Val_int(nx_pool_cores());
+  return Val_int(device_pool_cores());
 }
 
-value pool_bench_performance_cores(value unit) {
+value device_pool_bench_performance_cores(value unit) {
   (void)unit;
-  return Val_int(nx_pool_performance_cores());
+  return Val_int(device_pool_performance_cores());
 }
 
 /* Empty jobs */
@@ -58,21 +58,21 @@ static void empty(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* [empty threads total chunks] runs a job whose bodies do nothing. */
-value pool_bench_empty(value v_threads, value v_total, value v_chunks) {
-  nx_pool_run(Int_val(v_threads), Long_val(v_total), Long_val(v_chunks), empty,
-              NULL);
+value device_pool_bench_empty(value v_threads, value v_total, value v_chunks) {
+  device_pool_run(Int_val(v_threads), Long_val(v_total), Long_val(v_chunks),
+                  empty, NULL);
   return Val_unit;
 }
 
 /* [empty_after gap threads] keeps the calling thread busy for [gap]
    nanoseconds, as a caller between two jobs, then runs an empty job of one
    chunk per thread. */
-value pool_bench_empty_after(value v_gap, value v_threads) {
+value device_pool_bench_empty_after(value v_gap, value v_threads) {
   uint64_t end = now_ns() + (uint64_t)Long_val(v_gap);
   while (now_ns() < end) {
   }
   int threads = Int_val(v_threads);
-  nx_pool_run(threads, threads, threads, empty, NULL);
+  device_pool_run(threads, threads, threads, empty, NULL);
   return Val_unit;
 }
 
@@ -112,14 +112,14 @@ static void compute(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* [compute threads total chunks skewed] runs a compute-bound job. */
-value pool_bench_compute(value v_threads, value v_total, value v_chunks,
-                         value v_skewed) {
+value device_pool_bench_compute(value v_threads, value v_total, value v_chunks,
+                                value v_skewed) {
   static sink *sinks;
   if (sinks == NULL) {
-    sinks = calloc((size_t)nx_pool_cores(), sizeof *sinks);
+    sinks = calloc((size_t)device_pool_cores(), sizeof *sinks);
     if (sinks == NULL) abort();
   }
   work w = {Long_val(v_total), Bool_val(v_skewed), sinks};
-  nx_pool_run(Int_val(v_threads), w.total, Long_val(v_chunks), compute, &w);
+  device_pool_run(Int_val(v_threads), w.total, Long_val(v_chunks), compute, &w);
   return Val_unit;
 }
