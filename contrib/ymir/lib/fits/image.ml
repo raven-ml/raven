@@ -656,10 +656,16 @@ let hdu ?tiles header (t : ('a, 'b) Nx.t) =
   match tiles with
   | Some tiles ->
       let tile = tile_shape "hdu" shape tiles in
-      (* Rice for integers up to 32 bits, GZIP_2 otherwise, lossless. *)
+      (* Rice for integers, GZIP_2 for floats, lossless. *)
       let codec =
         match bitpix with
         | 8 | 16 | 32 -> Tiles.Rice { block = 32; bytepix = bitpix / 8 }
+        | 64 ->
+            invalid_arg
+              (strf
+                 "Fits.Image.hdu: cfitsio-based tools cannot read 64-bit \
+                  integer tiles; write the %s image without ~tiles"
+                 (Nx_dtype.to_string (Nx.dtype t)))
         | _ -> Tiles.Gzip_2
       in
       tiled header t ~bitpix ~others ~tile (Lossless codec)

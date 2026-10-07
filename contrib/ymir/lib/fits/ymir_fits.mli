@@ -362,13 +362,15 @@ module Fits : sig
     (** [hdu ~tiles h t] is [t] as an image HDU with [h]'s cards that are not
         structural ({!write}); [BLANK] is dropped from a float image. With
         [tiles], a tile shape in tensor axis order, it is tile-compressed:
-        Rice-coded for integers up to 32 bits and GZIP_2 otherwise. It reads
-        back bit for bit, NaN payloads included.
+        Rice-coded for integers and GZIP_2 for floats. It reads back bit for
+        bit, NaN payloads included. Tiles of int64 and uint64 are refused:
+        cfitsio, which funpack and most FITS readers use, decompresses no
+        64-bit integer tiles.
 
         Raises [Invalid_argument] if [t] is a scalar or of a dtype FITS images
         do not hold (bool, bit, complex, float16, bfloat16, the float8s, int4,
-        uint4), naming the cast that stores it, or if [tiles] is not of [t]'s
-        rank with positive sizes. *)
+        uint4), naming the cast that stores it, if [tiles] is not of [t]'s
+        rank with positive sizes, or if [t] is int64 or uint64 with [tiles]. *)
 
     val quantized :
       ?tiles:int array -> float -> Header.t -> (float, 'b) Nx.t -> hdu

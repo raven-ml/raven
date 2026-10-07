@@ -37,6 +37,7 @@ let texts (type a b) (t : (a, b) Nx.t) : string array =
   | UInt16 -> Array.map string_of_int a
   | Int32 -> Array.map Int32.to_string a
   | UInt32 -> Array.map (Printf.sprintf "%lu") a
+  | Int64 -> Array.map Int64.to_string a
   | _ -> failwith "texts: an integer dtype"
 
 let check (type a b) name (dtype : (a, b) Nx.dtype) =
@@ -60,6 +61,7 @@ let decoded =
       ("GZIP1_I32", fun n -> check n Nx.int32);
       ("GZIP2_I32", fun n -> check n Nx.int32);
       ("GZIP2_U32", fun n -> check n Nx.uint32);
+      ("GZIP2_I64", fun n -> check n Nx.int64);
       ("NOCOMP_I16", fun n -> check n Nx.int16);
       ("GZIP2_F32", fun n -> check n Nx.float32);
       ("GZIP1_F64", fun n -> check n Nx.float64);
@@ -268,11 +270,18 @@ let lossless =
     law Nx.uint16;
     law Nx.int32;
     law Nx.uint32;
-    law Nx.int64;
-    law Nx.uint64;
     law Nx.float32;
     law Nx.float64;
   ]
+
+let tiled_64 () =
+  (* cfitsio decompresses no 64-bit integer tiles, so ymir writes none. *)
+  let refused (type a b) (dtype : (a, b) Nx.dtype) =
+    raises_match (Exn.invalid_arg ~substring:"cfitsio") (fun () ->
+        I.hdu ~tiles:[| 2 |] H.empty (Nx.zeros dtype [| 4 |]))
+  in
+  refused Nx.int64;
+  refused Nx.uint64
 
 let streamed =
   prop "a streamed tiled write gives the in-memory encoding's bytes"
@@ -353,6 +362,7 @@ let () =
               test "the quantizer is cfitsio's" quantizer;
               test "undefined and flat tiles" quantized_nan;
               test "through a file" written;
+              test "64-bit integer tiles are refused" tiled_64;
               streamed;
             ]
            @ lossless);

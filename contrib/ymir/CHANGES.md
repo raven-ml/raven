@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Fits.Image.hdu ~tiles` raises `Invalid_argument` on an int64 or uint64
+  image: cfitsio, behind funpack, imcopy and ds9, cannot decompress 64-bit
+  integer tiles. Write such an image plain; reading these tiles still works.
 - `Rune.grad` over a record of quantities, such as a `Cosmology.t`, returns
   the record with each field holding its derivative in the field's unit, the
   payload per that unit. A derivative per another unit is the gradient at the

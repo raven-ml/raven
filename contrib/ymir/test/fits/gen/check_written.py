@@ -12,9 +12,8 @@ astropy opens the file verifying every CHECKSUM and DATASUM, each tiled
 image must equal its uncompressed copy SRC_<name>, the quantized one must
 lie within its quantization step, and the table must hold sample.ml's
 columns. cfitsio checks it too: fitsverify must find no error, and
-imcopy's decompression of each tiled image must equal astropy's, except
-I64, whose 64-bit tiles cfitsio does not decompress. Both tools come with
-cfitsio (brew install cfitsio).
+imcopy's decompression of each tiled image must equal astropy's. Both
+tools come with cfitsio (brew install cfitsio).
 """
 
 import pathlib
@@ -32,7 +31,9 @@ with warnings.catch_warnings():
     hdul = fits.open(sys.argv[1], checksum=True, uint=True)
     hdul.verify("exception")
 
-for name in ["I16", "U16", "U8", "I8", "I32", "U32", "I64", "F32", "F64"]:
+TILED = ["I16", "U16", "U8", "I8", "I32", "U32", "F32", "F64"]
+
+for name in TILED:
     a, b = hdul[name].data, hdul["SRC_" + name].data
     assert a.dtype.newbyteorder("=") == b.dtype.newbyteorder("="), (name, a.dtype, b.dtype)
     assert np.array_equal(a, b), name
@@ -61,7 +62,7 @@ if None in tools.values():
 subprocess.run([tools["fitsverify"], "-q", "-e", sys.argv[1]], check=True)
 
 with tempfile.TemporaryDirectory() as d:
-    for name in ["I16", "U16", "U8", "I8", "I32", "U32", "F32", "F64", "Q"]:
+    for name in TILED + ["Q"]:
         out = pathlib.Path(d) / f"{name}.fits"
         subprocess.run([tools["imcopy"], f"{sys.argv[1]}[{hdul.index_of(name)}]", str(out)], check=True, stdout=subprocess.DEVNULL)
         with fits.open(out, uint=True) as copy:

@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Writes a FITS file through every writer path: plain and tiled images of
-   each dtype, a quantized image, and a binary table. Each coded image has
-   an uncompressed copy named SRC_<name> that check_written.py compares it
-   with.
+   each dtype ymir tiles, a quantized image, and a binary table. Each coded
+   image has an uncompressed copy named SRC_<name> that check_written.py
+   compares it with.
 
      dune build ./contrib/ymir/test/fits/gen/sample.exe
      ./_build/default/contrib/ymir/test/fits/gen/sample.exe out.fits
@@ -41,9 +41,6 @@ let images =
       pair "U32"
         (Nx.init Nx.uint32 shape (fun i ->
              Int32.of_int ((i.(0) * 100003) + i.(1))));
-      pair "I64"
-        (Nx.init Nx.int64 shape (fun i ->
-             Int64.of_int ((i.(0) * 1000000007) - i.(1))));
       pair "F32" (Nx.init Nx.float32 shape (fun i -> sin (f i) *. 100.));
       pair "F64" (Nx.init Nx.float64 shape (fun i -> cos (f i) *. 1e-3));
     ]

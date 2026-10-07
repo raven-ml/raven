@@ -185,8 +185,8 @@ def values(path, hdus, scaled=True):
 
 def tiles(path):
     """Tile-compressed images, edge tiles partial: integers Rice- and
-    gzip-coded, unsigned offsets, lossless floats, and quantized floats
-    under each dither with NaN and zero pixels."""
+    gzip-coded, 64-bit ones included, unsigned offsets, lossless floats,
+    and quantized floats under each dither with NaN and zero pixels."""
     shape = (10, 13)
     n = shape[0] * shape[1]
     rng = np.random.default_rng(7)
@@ -205,6 +205,7 @@ def tiles(path):
     comp("GZIP1_I32", pattern(n, np.int32), compression_type="GZIP_1")
     comp("GZIP2_I32", pattern(n, np.int32), compression_type="GZIP_2")
     comp("GZIP2_U32", pattern(n, np.uint32), compression_type="GZIP_2")
+    comp("GZIP2_I64", pattern(n, np.int64), compression_type="GZIP_2")
     comp("NOCOMP_I16", pattern(n, np.int16), compression_type="NOCOMPRESS")
     comp("GZIP2_F32", pattern(n, np.float32), compression_type="GZIP_2", quantize_level=0.0)
     comp("GZIP1_F64", pattern(n, np.float64), compression_type="GZIP_1", quantize_level=0.0)
