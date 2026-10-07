@@ -10,7 +10,6 @@ erfinv-grad	wall_time	batch=1	n=5	5.406e-01	5.382e-01 5.400e-01 5.406e-01 5.407e
 search/cuda	wall_time	batch=1	n=5	3.209e+00	2.632e+00 2.670e+00 3.209e+00 3.283e+00 3.309e+00
 search/host	wall_time	batch=1	n=5	6.686e-01	6.235e-01 6.433e-01 6.686e-01 6.786e-01 6.910e-01
 search/nv	wall_time	batch=1	n=5	1.456e+00	1.436e+00 1.454e+00 1.456e+00 1.475e+00 2.095e+00
-shaped-16k	wall_time	batch=1	n=5	5.288e+01	5.236e+01 5.286e+01 5.288e+01 5.295e+01 5.348e+01
 shaped-1k	wall_time	batch=1	n=5	4.080e-01	4.060e-01 4.073e-01 4.080e-01 4.083e-01 4.084e-01
 shaped-4k	wall_time	batch=1	n=5	2.549e+00	2.548e+00 2.549e+00 2.549e+00 2.550e+00 2.551e+00
 sinkhorn-64	wall_time	batch=1	n=5	2.504e+00	2.494e+00 2.504e+00 2.504e+00 2.510e+00 2.519e+00
@@ -55,9 +54,9 @@ linalg/solve-32	wall_time	batch=1	n=5	1.085e+00	1.060e+00 1.077e+00 1.085e+00 1.
 linalg/solve-512	wall_time	batch=1	n=5	1.026e+00	1.004e+00 1.011e+00 1.026e+00 1.045e+00 1.052e+00
 search/host	wall_time	batch=1	n=5	1.315e+00	1.207e+00 1.304e+00 1.315e+00 1.356e+00 1.359e+00
 search/metal	wall_time	batch=1	n=5	3.365e+00	3.315e+00 3.347e+00 3.365e+00 3.406e+00 4.603e+00
-shaped-16k	wall_time	batch=1	n=5	6.574e+00	6.568e+00 6.573e+00 6.574e+00 6.582e+00 6.846e+00
 shaped-1k	wall_time	batch=1	n=5	2.485e-01	2.457e-01 2.481e-01 2.485e-01 2.486e-01 2.490e-01
 shaped-4k	wall_time	batch=1	n=5	1.001e+00	1.000e+00 1.001e+00 1.001e+00 1.005e+00 1.036e+00
+shaped-8k	wall_time	batch=1	n=5	2.819e+00	2.772e+00 2.816e+00 2.819e+00 2.824e+00 2.858e+00
 sinkhorn-64	wall_time	batch=1	n=5	4.230e+00	4.094e+00 4.199e+00 4.230e+00 4.326e+00 4.328e+00
 special/betainc	wall_time	batch=1	n=5	5.954e+00	4.463e+00 4.803e+00 5.954e+00 7.103e+00 7.699e+00
 special/betainc-grad-a	wall_time	batch=1	n=5	1.103e+01	9.878e+00 1.088e+01 1.103e+01 1.207e+01 1.315e+01

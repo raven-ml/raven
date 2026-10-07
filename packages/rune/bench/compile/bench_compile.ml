@@ -38,7 +38,11 @@ let grad f = Rune.grad' (fun x -> Nx.sum (f x))
    regions selected by [where] over a parameter and a variable that broadcast
    against each other, each region a chain whose intermediates fan out into two
    uses. A region is [region_ops] operations: its selection, its clamp,
-   [region_steps] steps of four operations and the select. *)
+   [region_steps] steps of four operations and the select.
+
+   The largest, of 8k operations, shows most a cost that grows faster than the
+   program, as compile time does from about 4k: an upcast of float64 kernels
+   made it compile 6.5 times as long, 4k 4.9 times. *)
 let region_ops = 64
 let region_steps = 14
 
@@ -241,7 +245,7 @@ let cases =
     ("erfinv-grad", fun () -> compile (grad Nx.erfinv) (input (-1.) 1.));
     ("shaped-1k", shaped_case 1024);
     ("shaped-4k", shaped_case 4096);
-    ("shaped-16k", shaped_case 16384);
+    ("shaped-8k", shaped_case 8192);
   ]
   @ special "erfc" Nx.erfc (-6.) 6.
   @ special "ndtr" Nx.ndtr (-10.) 10.
