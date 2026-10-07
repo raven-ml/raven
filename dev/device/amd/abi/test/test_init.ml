@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* The library's initialisation, measured between the initialisers of the probes
-   linked around it (support/dune): its tables are static data, and the one
-   value it computes is Capability.key. Reading the tables builds nothing that
-   outlives the reading. *)
+   linked around it (support/dune): it computes no value, and allocates only
+   what its declarations take, Capability.key's type id and Packet's exception
+   Hole. Reading the tables builds nothing that outlives the reading. *)
 
 open Windtrap
 open Device_amd_abi
@@ -20,12 +20,21 @@ let timeout = S.timeout
 let reading = B.before -. B.start
 let init = Device_amd_abi_after.after -. B.before -. reading
 
-let key_words () =
+(* The words [f] allocates, less a reading's. *)
+let words f =
   let a = B.allocated () in
   let b = B.allocated () in
-  ignore (Sys.opaque_identity (Type.Id.make () : int Type.Id.t));
+  f ();
   let c = B.allocated () in
   c -. b -. (b -. a)
+
+(* What the library's declarations take: one type id and one exception. *)
+let declared () =
+  words (fun () ->
+      ignore (Sys.opaque_identity (Type.Id.make () : int Type.Id.t)))
+  +. words (fun () ->
+      let exception E in
+      ignore (Sys.opaque_identity E))
 
 (* Every reader of a table, on each generation. *)
 let read_tables () =
@@ -54,12 +63,11 @@ let tests =
     [
       xfail
         ~reason:
-          "initialisation allocates 13 words where Capability.key takes 5: \
-           Packet's exception Hole takes 3, and Sdma.trap, a list over \
-           Defs.sdma_op_trap that -opaque builds keep from being a constant, \
-           takes 5"
-        (test "initialising the library allocates only Capability.key"
-           (fun () -> equal float_exact (key_words ()) init));
+          "Sdma computes trap, a list over Defs.sdma_op_trap, at \
+           initialisation: 5 words, as -opaque builds keep it from being a \
+           constant"
+        (test "initialising the library allocates only its declarations"
+           (fun () -> equal float_exact (declared ()) init));
       test "reading every table keeps no word live" (fun () ->
           read_tables ();
           let l0 = live () in
