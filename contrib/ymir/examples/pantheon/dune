@@ -1,0 +1,20 @@
+; The 1999 supernova cosmology result on Pantheon+. The fit on the real data
+; is not part of runtest: it reads the Pantheon+ release, 33 MB that a test
+; run does not hold, and run.sh fetches it by digest. The same path on a small
+; synthetic sample is test_fit, which runtest runs.
+
+(library
+ (name pantheon_fit)
+ (modules fit)
+ (libraries ymir jera nx rune))
+
+(executable
+ (name pantheon)
+ (modules pantheon)
+ (libraries pantheon_fit jera nx))
+
+(test
+ (name test_fit)
+ (modules test_fit)
+ (package ymir)
+ (libraries pantheon_fit jera nx rune windtrap))
