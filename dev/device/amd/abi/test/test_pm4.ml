@@ -229,6 +229,11 @@ let runs =
           equal (list int)
             [ packet3 0x76 2; 0x20c; 0x0100_0011; 0 ]
             (List.filteri (fun i _ -> i < 4) (words (dispatch gfx11))));
+      cases ~name:string_of_int "a wave limit outside 10 bits is refused"
+        [ 0; 1024 ] (fun n ->
+          raises_match (Exn.invalid_arg ~substring:"waves_per_array") (fun () ->
+              Pm4.dispatch gfx11 kernel ~program:0 ~scratch:0 ~args:0 ~packet:0
+                ~threads:(1, 1, 1) ~groups:(1, 1, 1) ~waves_per_array:n ()));
       test "a GC with no dispatch registers is refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Pm4.dispatch") (fun () ->
               dispatch (gpu (10, 3, 0))));

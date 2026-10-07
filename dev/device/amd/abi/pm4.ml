@@ -272,6 +272,11 @@ let address fn g name = Register.address g (register fn g name)
    from their bit 8, with their _HI words after them. *)
 let address_shift = 8
 
+(* COMPUTE_RESOURCE_LIMITS.WAVES_PER_SH: a 10-bit field, whose 0 sets no
+   limit. *)
+let no_wave_limit = 0
+let max_waves_per_array = 0x3ff
+
 (* GFX11 runs kernels privileged, for their context save and restore:
    COMPUTE_PGM_RSRC1.PRIV. *)
 let priv = 1 lsl 20
@@ -303,9 +308,15 @@ let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
   let resource_limits = compute "RESOURCE_LIMITS" in
   let start_x = compute "START_X" in
   let limits =
-    Register.encode
-      (register fn g "regCOMPUTE_RESOURCE_LIMITS")
-      [ ("waves_per_sh", Option.value waves_per_array ~default:0) ]
+    match waves_per_array with
+    | None -> no_wave_limit
+    | Some n when n < 1 || n > max_waves_per_array ->
+        invalid_arg
+          (Printf.sprintf "%s: waves_per_array %d, expected 1 to 1023" fn n)
+    | Some n ->
+        Register.encode
+          (register fn g "regCOMPUTE_RESOURCE_LIMITS")
+          [ ("waves_per_sh", n) ]
   in
   let initiator =
     let wave32 = if k.wave32 then 1 else 0 in
