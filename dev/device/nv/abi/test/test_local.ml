@@ -3,40 +3,69 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Local memory sizing on an RTX 5000 Ada's geometry. *)
+(* Local memory sizing: a thread's need rounded to 32 bytes, for every thread of
+   every multiprocessor, in TPCs of 32 KiB multiples and an allocation of 128
+   KiB multiples. *)
 
 open Windtrap
 open Device_nv_abi
+module S = Device_nv_abi_support
 
-let ada =
-  {
-    Gpu.compute_class = 0xc9c0;
-    sass_version = 0x89;
-    gpcs = 11;
-    tpcs_per_gpc = 6;
-    sms_per_tpc = 2;
-    warps_per_sm = 48;
-    shared_window = 0x7294_0000_0000;
-    local_window = 0x7293_0000_0000;
-    local = (fun _ -> Ok ());
-  }
+let round_up n a = (n + a - 1) / a * a
+
+let geometry =
+  let open Gen in
+  let+ gpcs = int_range 1 16
+  and+ tpcs_per_gpc = int_range 1 10
+  and+ sms_per_tpc = int_range 1 4
+  and+ warps_per_sm = int_range 1 64 in
+  { (S.gpu ()) with gpcs; tpcs_per_gpc; sms_per_tpc; warps_per_sm }
+
+let pp_gpu ppf (g : Gpu.t) =
+  Format.fprintf ppf
+    "{ gpcs = %d; tpcs_per_gpc = %d; sms_per_tpc = %d; warps_per_sm = %d }"
+    g.gpcs g.tpcs_per_gpc g.sms_per_tpc g.warps_per_sm
+
+let need =
+  Gen.frequency
+    [
+      (3, Gen.int_range 0 0x10_0000);
+      (1, Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 31; 32; 33; 576 ]);
+    ]
+
+let local =
+  Testable.make
+    ~pp:(fun ppf (l : Local.t) ->
+      Format.fprintf ppf "{ per_thread = %d; per_tpc = %d; bytes = %d }"
+        l.per_thread l.per_tpc l.bytes)
+    ~equal:( = )
 
 let tests =
-  group "make"
+  group ~timeout:10. "make"
     [
       test "no local memory is none" (fun () ->
-          let l = Local.make ada 0 in
-          equal (list int) [ 0; 0; 0 ] [ l.per_thread; l.per_tpc; l.bytes ]);
-      test "596 bytes a thread" (fun () ->
+          equal local
+            { per_thread = 0; per_tpc = 0; bytes = 0 }
+            (Local.make (S.gpu ()) 0));
+      test "596 bytes a thread on an RTX 5000 Ada" (fun () ->
           (* 608 bytes a thread, 19456 a warp, 96 warps a TPC: 57 * 32 KiB; 66
              TPCs: 123273216 bytes, rounded up to 941 * 128 KiB. *)
-          let l = Local.make ada 596 in
-          equal (list int)
-            [ 608; 57 * 0x8000; 941 * 0x20000 ]
-            [ l.per_thread; l.per_tpc; l.bytes ]);
-      test "a negative need is refused" (fun () ->
+          equal local
+            { per_thread = 608; per_tpc = 57 * 0x8000; bytes = 941 * 0x20000 }
+            (Local.make (S.gpu ()) 596));
+      prop "local memory is the least multiples that hold every thread"
+        (Gen.pair (Gen.with_pp pp_gpu geometry) need)
+        (fun (g, n) ->
+          let per_thread = round_up n 32 in
+          let per_tpc =
+            round_up (per_thread * 32 * g.warps_per_sm * g.sms_per_tpc) 0x8000
+          in
+          let bytes = round_up (per_tpc * g.tpcs_per_gpc * g.gpcs) 0x20000 in
+          equal local { per_thread; per_tpc; bytes } (Local.make g n));
+      cases ~name:string_of_int "a negative need is refused" [ min_int; -1 ]
+        (fun n ->
           raises_match (Exn.invalid_arg ~substring:"Local.make") (fun () ->
-              Local.make ada (-1)));
+              Local.make (S.gpu ()) n));
     ]
 
 let () = exit (run "device_nv_abi.local" [ tests ])

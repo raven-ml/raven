@@ -1,10 +1,36 @@
 (tests
- (names test_packet test_method test_gpfifo test_launch test_local test_qmd)
- (modules test_packet test_method test_gpfifo test_launch test_local test_qmd)
- (libraries device_nv_abi windtrap))
+ (names
+  test_packet
+  test_method
+  test_gpfifo
+  test_cubin
+  test_launch
+  test_local
+  test_qmd
+  test_structure)
+ (modules
+  test_packet
+  test_method
+  test_gpfifo
+  test_cubin
+  test_launch
+  test_local
+  test_qmd
+  test_structure)
+ (libraries device_nv_abi device_nv_abi_support device_elf windtrap)
+ (deps
+  (source_tree fixtures)))
+
+; The probes' initialisers run around device_nv_abi's in the order the
+; libraries are listed, and -linkall links every module of the library.
 
 (test
- (name test_cubin)
- (modules test_cubin)
- (libraries device_nv_abi windtrap)
- (deps ../../../elf/test/fixtures/simple_add_sm89.cubin))
+ (name test_init)
+ (modules test_init)
+ (link_flags
+  (:standard -linkall))
+ (libraries
+  device_nv_abi_before
+  device_nv_abi
+  device_nv_abi_after
+  windtrap))
