@@ -6,6 +6,8 @@
 /* Windows: accesses to mapped ranges, calls of transports, and the C entry
    points of device_pci.h. */
 
+#define _GNU_SOURCE
+
 #include <stdint.h>
 #include <string.h>
 

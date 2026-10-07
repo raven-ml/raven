@@ -13,7 +13,7 @@
    bytes are the machine's is a failure the suite sees. Held, its accesses
    block until it is let go, as a link's round trip does. */
 
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include <stdint.h>
 #include <stdlib.h>

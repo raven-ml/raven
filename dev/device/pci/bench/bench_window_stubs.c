@@ -11,6 +11,8 @@
    The transport copies to and from a buffer of its own and does nothing
    else, so its rows are the window's cost above the wire. */
 
+#define _GNU_SOURCE
+
 #include <stdint.h>
 #include <string.h>
 
