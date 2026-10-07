@@ -304,14 +304,14 @@
  (dir packages/jera)
  (synopsis "Numerical methods for OCaml")
  (description
-  "Integrals, interpolants, differential equations and splittings over Nx tensors, each stated so that Rune differentiates the answer rather than the algorithm: quadrature rules, piecewise Chebyshev series and splines, Runge-Kutta and stochastic marches, and symplectic splittings.")
+  "Numerical methods over Nx tensors: linear and nonlinear systems, minimisation with bounds, quadrature, splines and Chebyshev fits, ordinary, stiff, differential-algebraic, delay and stochastic differential equations, and symplectic splittings. Every solve meets a stated tolerance and reports a status per lane, and Rune differentiates each answer through its own equation.")
  (depends
   (nx
    (= :version))
   (rune
    (= :version)))
  (tags
-  (numerical-methods quadrature interpolation differential-equations)))
+  (numerical-methods linear-algebra optimization quadrature interpolation differential-equations)))
 
 (package
  (name norn)
