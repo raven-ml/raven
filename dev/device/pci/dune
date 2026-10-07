@@ -3,11 +3,11 @@
 
 (library
  (name device_pci)
- (modules device_pci tlsf window)
- (private_modules tlsf)
+ (modules device_pci tlsf window sysmem)
+ (private_modules tlsf sysmem)
  (libraries unix)
  (install_c_headers device_pci)
  (foreign_stubs
   (language c)
-  (names device_pci_window)
+  (names device_pci_window device_pci_sysmem)
   (flags :standard -std=c11 -O2 -Wall -Wextra)))
