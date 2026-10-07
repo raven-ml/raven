@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* Windows: accesses to mapped ranges, calls of transports, and the C entry
-   points of device_pci.h. */
+   points of device_pci.h. A write takes the [n] bytes of [s] from [off]. */
 
 #define _GNU_SOURCE
 
@@ -161,7 +161,6 @@ static void write_pieces(volatile uint8_t *dst, value s, size_t off, size_t n) {
   CAMLreturn0;
 }
 
-/* Writes the [n] bytes of [s] from [off]. */
 value caml_device_pci_write_at(value a, value s, value off, value n) {
   size_t len = Long_val(n);
   if (len >= PIECE)
@@ -273,7 +272,6 @@ value caml_device_pci_transport_read(value tr, value a, value n) {
   CAMLreturn(s);
 }
 
-/* Writes the [n] bytes of [s] from [off]. */
 value caml_device_pci_transport_write(value tr, value a, value s, value off,
                                       value n) {
   CAMLparam5(tr, a, s, off, n);
