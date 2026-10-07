@@ -284,6 +284,29 @@ let law_tests =
             broyden ?budget:None;
             anderson ?budget:None ~memory:2;
           ]);
+    test "compiled newton with a banded solver equals eager" (fun () ->
+        (* Bratu's problem on 16 nodes, h = 1/17, below its critical λ. The
+           band's probe and factors are taken inside the search's loop. *)
+        let second u =
+          let n = Nx.dim 0 u in
+          let left = Nx.pad [| (1, 0) |] 0. (Nx.slice [ Nx.R (0, n - 1) ] u)
+          and right = Nx.pad [| (0, 1) |] 0. (Nx.slice [ Nx.R (1, n) ] u) in
+          Nx.sub (Nx.mul_s u 2.) (Nx.add left right)
+        in
+        let solve lambda =
+          let f u =
+            Nx.sub (second u) (Nx.mul_s (Nx.mul lambda (Nx.exp u)) (1. /. 289.))
+          in
+          Solution.get
+            (System.solve one
+               (System.newton ~derivative:(derivative f))
+               ~linear:(Linear.banded ~width:1) ~tol:tight ~budget:30 f
+               (Nx.zeros_like lambda))
+        in
+        let lambda = Nx.linspace f64 1. 1.5 16 in
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (solve lambda) (Rune.jit' solve lambda));
     test "vmap is each lane's solve (law 3)" (fun () ->
         let a = jacobian (Nx.eye f64 2) (Nx.zeros f64 [| 2 |]) in
         let solve b =

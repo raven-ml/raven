@@ -172,10 +172,11 @@ let gradient_tests =
             let x =
               Solution.get (minimum m (objective a b) (Nx.zeros_like b))
             in
-            (* The error is an estimate from the last steps' contraction, and a
-               quasi-Newton method's rate can jump tenfold from one step to the
-               next: the gradient is within a hundred times the tolerance's
-               distance times the curvature. *)
+            (* The error is an estimate from the last steps' contraction, which
+               can be about ten times optimistic for a quasi-Newton method whose
+               rate jumps between steps. A distance of ten times [tol]'s scale,
+               about 10⁻⁹ here, times a curvature of at most [n + 3] bounds the
+               gradient by [10⁻⁸ (n + 2)] to spare. *)
             equal
               (Oracle.tensor ~abs:(1e-8 *. Float.of_int (Nx.dim 0 b + 2)) ())
               (Nx.zeros_like b) (gradient a b x))

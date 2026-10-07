@@ -435,7 +435,7 @@ let solve m ~linear f guess =
        ~budget:50 f guess)
 
 (* Bratu's problem u'' + λ eᵘ = 0 on 64 interior nodes with zero ends, λ the
-   argument per node, by Newton. *)
+   argument per node, by Newton with the band of half-width 1. *)
 let newton_bratu =
   {
     id = "system-newton-bratu-64";
@@ -446,7 +446,7 @@ let newton_bratu =
         let derivative u du = snd (Rune.jvp' f u du) in
         solve
           (System.newton ~derivative)
-          ~linear:Linear.dense f (Nx.zeros_like lambda));
+          ~linear:(Linear.banded ~width:1) f (Nx.zeros_like lambda));
     x = (fun () -> Nx.linspace f64 1. 1.5 64);
     rows = all;
   }

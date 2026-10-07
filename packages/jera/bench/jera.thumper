@@ -19,6 +19,7 @@
 # forced: blessed minimize-nelder-mead-rosenbrock-4/eager minimize-nelder-mead-rosenbrock-4/compiled under load 11.7 on 10 cores
 # forced: blessed system-lanes-inverse-10k/eager system-lanes-inverse-10k/compiled system-lanes-inverse-10k/grad under load 19.0 on 10 cores
 # forced: blessed system-lanes-inverse-10k/grad under load 23.8 on 10 cores
+# forced: blessed system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad under load 23.1 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
@@ -190,9 +191,9 @@ system-lanes-inverse-10k/eager	alloc_words	exact	130585
 system-lanes-inverse-10k/eager	wall_time	batch=1	n=20	5.478e-02	3.696e-02 4.413e-02 4.650e-02 4.889e-02 5.060e-02 5.113e-02 5.183e-02 5.183e-02 5.374e-02 5.375e-02 5.580e-02 5.673e-02 5.686e-02 5.963e-02 7.093e-02 7.115e-02 7.994e-02 8.025e-02 8.389e-02 9.403e-02
 system-lanes-inverse-10k/grad	alloc_words	exact	5178
 system-lanes-inverse-10k/grad	wall_time	batch=1	n=20	1.030e-02	6.580e-03 6.921e-03 6.958e-03 7.066e-03 7.229e-03 7.328e-03 7.441e-03 7.832e-03 9.895e-03 9.905e-03 1.069e-02 1.194e-02 1.526e-02 1.550e-02 1.728e-02 2.897e-02 3.934e-02 4.250e-02 4.252e-02 4.835e-02
-system-newton-bratu-64/compiled	alloc_words	exact	4382
-system-newton-bratu-64/compiled	wall_time	batch=2	n=20	1.794e-03	1.609e-03 1.615e-03 1.620e-03 1.631e-03 1.645e-03 1.646e-03 1.667e-03 1.674e-03 1.734e-03 1.747e-03 1.841e-03 1.961e-03 1.974e-03 2.065e-03 2.068e-03 2.191e-03 2.470e-03 2.747e-03 2.877e-03 3.089e-03
-system-newton-bratu-64/eager	alloc_words	exact	202095
-system-newton-bratu-64/eager	wall_time	batch=8	n=20	8.877e-04	8.043e-04 8.196e-04 8.285e-04 8.423e-04 8.456e-04 8.479e-04 8.513e-04 8.586e-04 8.667e-04 8.753e-04 9.002e-04 9.038e-04 9.074e-04 9.158e-04 9.188e-04 9.284e-04 9.674e-04 1.026e-03 1.052e-03 1.241e-03
-system-newton-bratu-64/grad	alloc_words	exact	4316
-system-newton-bratu-64/grad	wall_time	batch=2	n=20	1.989e-03	1.970e-03 1.974e-03 1.978e-03 1.980e-03 1.981e-03 1.984e-03 1.984e-03 1.984e-03 1.986e-03 1.987e-03 1.991e-03 1.991e-03 2.000e-03 2.135e-03 2.257e-03 2.462e-03 2.782e-03 2.918e-03 2.936e-03 3.223e-03
+system-newton-bratu-64/compiled	alloc_words	exact	4338
+system-newton-bratu-64/compiled	wall_time	batch=128	n=20	7.243e-05	6.817e-05 6.966e-05 7.052e-05 7.100e-05 7.116e-05 7.116e-05 7.146e-05 7.170e-05 7.202e-05 7.236e-05 7.249e-05 7.256e-05 7.282e-05 7.309e-05 7.312e-05 7.316e-05 7.344e-05 7.399e-05 7.441e-05 7.916e-05
+system-newton-bratu-64/eager	alloc_words	exact	1987155
+system-newton-bratu-64/eager	wall_time	batch=1	n=20	6.638e-03	6.070e-03 6.074e-03 6.158e-03 6.172e-03 6.229e-03 6.293e-03 6.304e-03 6.467e-03 6.480e-03 6.544e-03 6.732e-03 6.760e-03 6.777e-03 6.783e-03 6.809e-03 6.833e-03 6.844e-03 6.941e-03 6.950e-03 8.628e-03
+system-newton-bratu-64/grad	alloc_words	exact	4272
+system-newton-bratu-64/grad	wall_time	batch=64	n=20	8.464e-05	8.110e-05 8.267e-05 8.305e-05 8.307e-05 8.310e-05 8.317e-05 8.398e-05 8.405e-05 8.432e-05 8.434e-05 8.494e-05 8.501e-05 8.507e-05 8.525e-05 8.539e-05 8.554e-05 8.566e-05 8.599e-05 8.700e-05 8.825e-05
