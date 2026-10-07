@@ -1,6 +1,62 @@
 # thumper baseline v1
 # suite: nx_pool
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+claim/65536-empty-chunks-all-cores	alloc_words	exact	0
+claim/65536-empty-chunks-all-cores	cpu_time	batch=32	n=20	9.773e-03	9.769e-03 9.772e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.773e-03 9.774e-03 9.774e-03 9.822e-03 1.040e-02 1.040e-02 1.040e-02
+claim/65536-empty-chunks-all-cores	wall_time	batch=32	n=20	1.648e-03	1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.648e-03 1.649e-03 1.649e-03 1.649e-03
+claim/floor-65536-empty-chunks-all-cores	alloc_words	exact	0
+claim/floor-65536-empty-chunks-all-cores	cpu_time	batch=2048	n=20	2.909e-04	2.814e-04 2.816e-04 2.818e-04 2.822e-04 2.824e-04 2.827e-04 2.871e-04 2.886e-04 2.900e-04 2.908e-04 2.911e-04 2.912e-04 2.918e-04 2.919e-04 2.924e-04 2.924e-04 2.924e-04 2.924e-04 2.924e-04 3.006e-04
+claim/floor-65536-empty-chunks-all-cores	wall_time	batch=2048	n=20	4.827e-05	4.823e-05 4.824e-05 4.824e-05 4.825e-05 4.825e-05 4.825e-05 4.826e-05 4.827e-05 4.827e-05 4.827e-05 4.827e-05 4.828e-05 4.830e-05 4.832e-05 4.832e-05 4.835e-05 4.836e-05 4.838e-05 4.867e-05 5.022e-05
+compute/balanced-1-thread	alloc_words	exact	0
+compute/balanced-1-thread	cpu_time	batch=16	n=20	5.045e-03	5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.046e-03
+compute/balanced-1-thread	wall_time	batch=16	n=20	5.045e-03	5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.045e-03 5.046e-03 5.053e-03 5.053e-03 5.054e-03
+compute/balanced-all-cores	alloc_words	exact	0
+compute/balanced-all-cores	cpu_time	batch=64	n=20	5.252e-03	5.173e-03 5.203e-03 5.209e-03 5.211e-03 5.220e-03 5.222e-03 5.226e-03 5.243e-03 5.251e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.287e-03
+compute/balanced-all-cores	wall_time	batch=64	n=20	8.768e-04	8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.770e-04 8.770e-04 8.787e-04 8.788e-04
+compute/balanced-performance-cores	alloc_words	exact	0
+compute/balanced-performance-cores	cpu_time	batch=64	n=20	5.250e-03	4.965e-03 5.134e-03 5.188e-03 5.211e-03 5.231e-03 5.233e-03 5.234e-03 5.236e-03 5.246e-03 5.248e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.252e-03 5.301e-03 5.443e-03
+compute/balanced-performance-cores	wall_time	batch=64	n=20	8.769e-04	8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.768e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.769e-04 8.785e-04 8.789e-04 8.790e-04 8.838e-04
+compute/balanced-performance-cores-under-load	alloc_words	exact	0
+compute/balanced-performance-cores-under-load	cpu_time	batch=8	n=20	5.269e-03	4.775e-03 4.938e-03 4.941e-03 4.944e-03 4.950e-03 4.952e-03 4.956e-03 5.266e-03 5.266e-03 5.268e-03 5.269e-03 5.271e-03 5.271e-03 5.272e-03 5.272e-03 5.274e-03 5.276e-03 5.589e-03 5.603e-03 5.610e-03
+compute/balanced-performance-cores-under-load	wall_time	batch=8	n=20	5.253e-03	3.481e-03 3.986e-03 4.314e-03 4.320e-03 5.000e-03 5.001e-03 5.003e-03 5.006e-03 5.009e-03 5.164e-03 5.341e-03 5.481e-03 5.495e-03 5.506e-03 5.668e-03 5.993e-03 6.008e-03 6.511e-03 7.330e-03 8.004e-03
+compute/skewed-performance-cores	alloc_words	exact	0
+compute/skewed-performance-cores	cpu_time	batch=64	n=20	5.115e-03	4.919e-03 4.961e-03 5.003e-03 5.034e-03 5.065e-03 5.068e-03 5.076e-03 5.085e-03 5.107e-03 5.112e-03 5.118e-03 5.123e-03 5.123e-03 5.155e-03 5.168e-03 5.172e-03 5.175e-03 5.188e-03 5.200e-03 5.210e-03
+compute/skewed-performance-cores	wall_time	batch=64	n=20	8.708e-04	8.707e-04 8.707e-04 8.707e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.708e-04 8.709e-04 8.709e-04 8.720e-04 8.729e-04
+launch/2us-chunks-all-cores	alloc_words	exact	0
+launch/2us-chunks-all-cores	cpu_time	batch=32768	n=20	1.563e-05	1.544e-05 1.544e-05 1.544e-05 1.545e-05 1.545e-05 1.545e-05 1.545e-05 1.545e-05 1.545e-05 1.556e-05 1.570e-05 1.602e-05 1.605e-05 1.605e-05 1.605e-05 1.606e-05 1.606e-05 1.606e-05 1.606e-05 1.606e-05
+launch/2us-chunks-all-cores	wall_time	batch=32768	n=20	2.630e-06	2.623e-06 2.624e-06 2.624e-06 2.624e-06 2.624e-06 2.627e-06 2.627e-06 2.629e-06 2.630e-06 2.630e-06 2.631e-06 2.631e-06 2.631e-06 2.632e-06 2.632e-06 2.633e-06 2.633e-06 2.634e-06 2.635e-06 2.638e-06
+launch/2us-chunks-all-cores-150us-apart	alloc_words	exact	0
+launch/2us-chunks-all-cores-150us-apart	cpu_time	batch=512	n=20	6.745e-04	6.728e-04 6.729e-04 6.732e-04 6.737e-04 6.738e-04 6.738e-04 6.739e-04 6.739e-04 6.744e-04 6.745e-04 6.746e-04 6.747e-04 6.747e-04 6.750e-04 6.755e-04 6.757e-04 6.758e-04 6.761e-04 6.762e-04 6.770e-04
+launch/2us-chunks-all-cores-150us-apart	wall_time	batch=512	n=20	1.562e-04	1.556e-04 1.556e-04 1.557e-04 1.557e-04 1.561e-04 1.561e-04 1.561e-04 1.562e-04 1.562e-04 1.562e-04 1.562e-04 1.563e-04 1.563e-04 1.564e-04 1.564e-04 1.564e-04 1.565e-04 1.567e-04 1.568e-04 1.570e-04
+launch/2us-chunks-all-cores-5us-apart	alloc_words	exact	0
+launch/2us-chunks-all-cores-5us-apart	cpu_time	batch=8192	n=20	4.504e-05	4.502e-05 4.503e-05 4.503e-05 4.503e-05 4.503e-05 4.503e-05 4.503e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.504e-05 4.506e-05 4.509e-05
+launch/2us-chunks-all-cores-5us-apart	wall_time	batch=8192	n=20	7.506e-06	7.503e-06 7.504e-06 7.505e-06 7.505e-06 7.505e-06 7.505e-06 7.506e-06 7.506e-06 7.506e-06 7.506e-06 7.506e-06 7.506e-06 7.506e-06 7.506e-06 7.507e-06 7.507e-06 7.507e-06 7.509e-06 7.515e-06 7.546e-06
+launch/empty-1-thread	alloc_words	exact	0
+launch/empty-1-thread	cpu_time	batch=33554432	n=20	1.806e-09	1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.806e-09 1.806e-09 1.806e-09 1.806e-09 1.806e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09
+launch/empty-1-thread	wall_time	batch=33554432	n=20	1.807e-09	1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.806e-09 1.806e-09 1.806e-09 1.806e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.807e-09 1.809e-09
+launch/empty-1-thread-8-chunks	alloc_words	exact	0
+launch/empty-1-thread-8-chunks	cpu_time	batch=33554432	n=20	1.805e-09	1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.806e-09
+launch/empty-1-thread-8-chunks	wall_time	batch=33554432	n=20	1.805e-09	1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.804e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.805e-09 1.806e-09 1.808e-09 1.809e-09
+launch/empty-2-threads	alloc_words	exact	0
+launch/empty-2-threads	cpu_time	batch=262144	n=20	4.318e-07	4.308e-07 4.311e-07 4.311e-07 4.312e-07 4.314e-07 4.314e-07 4.316e-07 4.317e-07 4.317e-07 4.317e-07 4.319e-07 4.322e-07 4.322e-07 4.466e-07 4.471e-07 4.471e-07 4.472e-07 4.472e-07 4.474e-07 9.533e-07
+launch/empty-2-threads	wall_time	batch=262144	n=20	2.180e-07	2.121e-07 2.172e-07 2.174e-07 2.175e-07 2.176e-07 2.177e-07 2.177e-07 2.178e-07 2.180e-07 2.180e-07 2.181e-07 2.181e-07 2.182e-07 2.182e-07 2.182e-07 2.183e-07 2.183e-07 2.185e-07 2.185e-07 2.186e-07
+launch/empty-all-cores	alloc_words	exact	0
+launch/empty-all-cores	cpu_time	batch=131072	n=20	4.031e-06	4.008e-06 4.017e-06 4.020e-06 4.029e-06 4.030e-06 4.030e-06 4.030e-06 4.030e-06 4.030e-06 4.031e-06 4.031e-06 4.031e-06 4.031e-06 4.031e-06 4.031e-06 4.031e-06 4.032e-06 4.032e-06 4.033e-06 4.177e-06
+launch/empty-all-cores	wall_time	batch=131072	n=20	6.737e-07	6.718e-07 6.727e-07 6.731e-07 6.734e-07 6.734e-07 6.734e-07 6.734e-07 6.735e-07 6.736e-07 6.737e-07 6.737e-07 6.739e-07 6.740e-07 6.741e-07 6.743e-07 6.745e-07 6.746e-07 6.755e-07 6.760e-07 6.777e-07
+launch/empty-performance-cores	alloc_words	exact	0
+launch/empty-performance-cores	cpu_time	batch=65536	n=20	4.743e-06	4.411e-06 4.440e-06 4.441e-06 4.441e-06 4.441e-06 4.443e-06 4.573e-06 4.717e-06 4.743e-06 4.743e-06 4.744e-06 4.744e-06 4.745e-06 4.745e-06 4.746e-06 4.746e-06 4.746e-06 4.747e-06 4.747e-06 4.749e-06
+launch/empty-performance-cores	wall_time	batch=65536	n=20	7.781e-07	7.740e-07 7.752e-07 7.758e-07 7.769e-07 7.770e-07 7.772e-07 7.775e-07 7.775e-07 7.777e-07 7.780e-07 7.782e-07 7.782e-07 7.784e-07 7.787e-07 7.787e-07 7.788e-07 7.794e-07 7.795e-07 7.807e-07 7.812e-07
+launch/floor-2us-chunks-all-cores	alloc_words	exact	0
+launch/floor-2us-chunks-all-cores	cpu_time	batch=32768	n=20	1.398e-05	1.396e-05 1.396e-05 1.396e-05 1.396e-05 1.397e-05 1.397e-05 1.397e-05 1.397e-05 1.397e-05 1.397e-05 1.399e-05 1.410e-05 1.456e-05 1.457e-05 1.458e-05 1.458e-05 1.458e-05 1.458e-05 1.458e-05 1.458e-05
+launch/floor-2us-chunks-all-cores	wall_time	batch=32768	n=20	2.369e-06	2.367e-06 2.367e-06 2.368e-06 2.368e-06 2.368e-06 2.368e-06 2.369e-06 2.369e-06 2.369e-06 2.369e-06 2.369e-06 2.370e-06 2.370e-06 2.370e-06 2.370e-06 2.371e-06 2.371e-06 2.372e-06 2.375e-06 2.375e-06
+launch/floor-empty-all-cores	alloc_words	exact	0
+launch/floor-empty-all-cores	cpu_time	batch=131072	n=20	2.836e-06	2.678e-06 2.759e-06 2.760e-06 2.760e-06 2.760e-06 2.760e-06 2.760e-06 2.760e-06 2.760e-06 2.760e-06 2.912e-06 2.912e-06 2.912e-06 2.912e-06 2.913e-06 2.913e-06 2.913e-06 2.913e-06 2.913e-06 4.137e-06
+launch/floor-empty-all-cores	wall_time	batch=131072	n=20	4.711e-07	4.703e-07 4.708e-07 4.708e-07 4.709e-07 4.709e-07 4.710e-07 4.711e-07 4.711e-07 4.711e-07 4.711e-07 4.712e-07 4.712e-07 4.712e-07 4.713e-07 4.713e-07 4.714e-07 4.717e-07 4.722e-07 4.924e-07 7.195e-07
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
@@ -57,3 +113,59 @@ launch/floor-2us-chunks-all-cores	wall_time	batch=16384	n=20	7.008e-06	4.774e-06
 launch/floor-empty-all-cores	alloc_words	exact	0
 launch/floor-empty-all-cores	cpu_time	batch=32768	n=20	1.436e-05	1.204e-05 1.205e-05 1.227e-05 1.230e-05 1.254e-05 1.322e-05 1.349e-05 1.370e-05 1.396e-05 1.415e-05 1.458e-05 1.569e-05 1.609e-05 1.610e-05 1.628e-05 1.632e-05 1.782e-05 1.928e-05 2.216e-05 3.289e-05
 launch/floor-empty-all-cores	wall_time	batch=32768	n=20	1.537e-06	1.239e-06 1.268e-06 1.269e-06 1.285e-06 1.307e-06 1.383e-06 1.436e-06 1.446e-06 1.482e-06 1.497e-06 1.576e-06 1.693e-06 1.764e-06 1.769e-06 1.773e-06 1.774e-06 1.973e-06 2.139e-06 2.504e-06 3.971e-06
+
+# machine: baccbeca132e3ae9
+# host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+claim/65536-empty-chunks-all-cores	alloc_words	exact	0
+claim/65536-empty-chunks-all-cores	cpu_time	batch=64	n=20	1.792e-02	1.747e-02 1.764e-02 1.765e-02 1.777e-02 1.781e-02 1.782e-02 1.784e-02 1.786e-02 1.789e-02 1.792e-02 1.793e-02 1.798e-02 1.801e-02 1.815e-02 1.823e-02 1.831e-02 1.850e-02 1.859e-02 1.862e-02 1.877e-02
+claim/65536-empty-chunks-all-cores	wall_time	batch=64	n=20	1.148e-03	1.143e-03 1.143e-03 1.144e-03 1.146e-03 1.146e-03 1.146e-03 1.146e-03 1.147e-03 1.147e-03 1.148e-03 1.148e-03 1.148e-03 1.149e-03 1.149e-03 1.149e-03 1.150e-03 1.150e-03 1.151e-03 1.151e-03 1.154e-03
+claim/floor-65536-empty-chunks-all-cores	alloc_words	exact	0
+claim/floor-65536-empty-chunks-all-cores	cpu_time	batch=1024	n=20	1.068e-03	1.037e-03 1.037e-03 1.042e-03 1.042e-03 1.047e-03 1.047e-03 1.057e-03 1.063e-03 1.065e-03 1.068e-03 1.068e-03 1.069e-03 1.072e-03 1.074e-03 1.077e-03 1.079e-03 1.081e-03 1.085e-03 1.087e-03 1.089e-03
+claim/floor-65536-empty-chunks-all-cores	wall_time	batch=1024	n=20	6.817e-05	6.816e-05 6.816e-05 6.816e-05 6.816e-05 6.816e-05 6.816e-05 6.817e-05 6.817e-05 6.817e-05 6.817e-05 6.817e-05 6.817e-05 6.818e-05 6.818e-05 6.818e-05 6.818e-05 6.823e-05 6.823e-05 6.831e-05 6.834e-05
+compute/balanced-1-thread	alloc_words	exact	0
+compute/balanced-1-thread	cpu_time	batch=8	n=20	6.713e-03	6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.714e-03 6.717e-03 6.720e-03 6.733e-03
+compute/balanced-1-thread	wall_time	batch=8	n=20	6.713e-03	6.712e-03 6.712e-03 6.712e-03 6.712e-03 6.712e-03 6.712e-03 6.712e-03 6.712e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.713e-03 6.714e-03 6.714e-03 6.716e-03 6.730e-03 6.736e-03
+compute/balanced-all-cores	alloc_words	exact	0
+compute/balanced-all-cores	cpu_time	batch=128	n=20	6.980e-03	6.755e-03 6.782e-03 6.793e-03 6.817e-03 6.835e-03 6.877e-03 6.890e-03 6.925e-03 6.947e-03 6.971e-03 6.990e-03 7.009e-03 7.072e-03 7.103e-03 7.126e-03 7.151e-03 7.175e-03 7.193e-03 7.198e-03 7.236e-03
+compute/balanced-all-cores	wall_time	batch=128	n=20	4.485e-04	4.484e-04 4.484e-04 4.484e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.487e-04 4.488e-04 4.492e-04
+compute/balanced-performance-cores	alloc_words	exact	0
+compute/balanced-performance-cores	cpu_time	batch=128	n=20	6.944e-03	6.731e-03 6.771e-03 6.795e-03 6.804e-03 6.808e-03 6.834e-03 6.874e-03 6.894e-03 6.921e-03 6.927e-03 6.961e-03 6.970e-03 6.991e-03 7.077e-03 7.114e-03 7.127e-03 7.129e-03 7.145e-03 7.175e-03 7.242e-03
+compute/balanced-performance-cores	wall_time	batch=128	n=20	4.484e-04	4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.485e-04 4.488e-04 4.492e-04
+compute/balanced-performance-cores-under-load	alloc_words	exact	0
+compute/balanced-performance-cores-under-load	cpu_time	batch=8	n=20	7.240e-03	4.127e-03 6.948e-03 6.972e-03 7.043e-03 7.223e-03 7.225e-03 7.226e-03 7.234e-03 7.238e-03 7.239e-03 7.241e-03 7.244e-03 7.247e-03 7.247e-03 7.254e-03 7.257e-03 7.260e-03 7.267e-03 7.285e-03 7.317e-03
+compute/balanced-performance-cores-under-load	wall_time	batch=8	n=20	3.420e-03	2.184e-03 2.203e-03 2.577e-03 2.763e-03 2.856e-03 3.041e-03 3.042e-03 3.225e-03 3.315e-03 3.342e-03 3.499e-03 3.555e-03 3.637e-03 3.789e-03 4.001e-03 4.002e-03 4.268e-03 4.363e-03 4.636e-03 5.438e-03
+compute/skewed-performance-cores	alloc_words	exact	0
+compute/skewed-performance-cores	cpu_time	batch=128	n=20	7.153e-03	7.133e-03 7.135e-03 7.135e-03 7.136e-03 7.138e-03 7.138e-03 7.138e-03 7.143e-03 7.144e-03 7.152e-03 7.153e-03 7.153e-03 7.154e-03 7.155e-03 7.156e-03 7.156e-03 7.166e-03 7.173e-03 7.184e-03 7.212e-03
+compute/skewed-performance-cores	wall_time	batch=128	n=20	4.484e-04	4.483e-04 4.483e-04 4.483e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.484e-04 4.485e-04 4.490e-04 4.744e-04
+launch/2us-chunks-all-cores	alloc_words	exact	0
+launch/2us-chunks-all-cores	cpu_time	batch=16384	n=20	6.868e-05	6.676e-05 6.698e-05 6.742e-05 6.760e-05 6.781e-05 6.786e-05 6.798e-05 6.853e-05 6.862e-05 6.867e-05 6.868e-05 6.881e-05 6.891e-05 6.902e-05 6.904e-05 6.919e-05 6.922e-05 6.922e-05 6.927e-05 6.931e-05
+launch/2us-chunks-all-cores	wall_time	batch=16384	n=20	4.385e-06	4.369e-06 4.377e-06 4.377e-06 4.378e-06 4.381e-06 4.381e-06 4.381e-06 4.382e-06 4.383e-06 4.384e-06 4.385e-06 4.386e-06 4.387e-06 4.390e-06 4.391e-06 4.392e-06 4.394e-06 4.397e-06 4.397e-06 4.398e-06
+launch/2us-chunks-all-cores-150us-apart	alloc_words	exact	0
+launch/2us-chunks-all-cores-150us-apart	cpu_time	batch=512	n=20	1.783e-03	1.779e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.783e-03 1.784e-03 1.784e-03
+launch/2us-chunks-all-cores-150us-apart	wall_time	batch=512	n=20	1.608e-04	1.607e-04 1.607e-04 1.607e-04 1.607e-04 1.607e-04 1.607e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.608e-04 1.609e-04 1.609e-04 1.609e-04
+launch/2us-chunks-all-cores-5us-apart	alloc_words	exact	0
+launch/2us-chunks-all-cores-5us-apart	cpu_time	batch=8192	n=20	1.475e-04	1.473e-04 1.473e-04 1.473e-04 1.473e-04 1.474e-04 1.475e-04 1.475e-04 1.475e-04 1.475e-04 1.475e-04 1.475e-04 1.475e-04 1.475e-04 1.476e-04 1.476e-04 1.476e-04 1.477e-04 1.477e-04 1.478e-04 1.479e-04
+launch/2us-chunks-all-cores-5us-apart	wall_time	batch=8192	n=20	9.221e-06	9.205e-06 9.206e-06 9.206e-06 9.208e-06 9.214e-06 9.216e-06 9.217e-06 9.220e-06 9.220e-06 9.221e-06 9.222e-06 9.222e-06 9.223e-06 9.224e-06 9.225e-06 9.227e-06 9.231e-06 9.233e-06 9.235e-06 9.244e-06
+launch/empty-1-thread	alloc_words	exact	0
+launch/empty-1-thread	cpu_time	batch=16777216	n=20	3.401e-09	3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.402e-09 3.403e-09 3.403e-09 3.404e-09
+launch/empty-1-thread	wall_time	batch=16777216	n=20	3.401e-09	3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.401e-09 3.402e-09 3.402e-09 3.403e-09 3.403e-09 3.403e-09 3.404e-09
+launch/empty-1-thread-8-chunks	alloc_words	exact	0
+launch/empty-1-thread-8-chunks	cpu_time	batch=16777216	n=20	3.201e-09	3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.203e-09 3.203e-09 3.203e-09 3.205e-09 3.205e-09 3.210e-09
+launch/empty-1-thread-8-chunks	wall_time	batch=16777216	n=20	3.201e-09	3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.201e-09 3.202e-09 3.203e-09 3.203e-09 3.203e-09 3.203e-09 3.205e-09 3.205e-09 3.210e-09
+launch/empty-2-threads	alloc_words	exact	0
+launch/empty-2-threads	cpu_time	batch=262144	n=20	4.258e-07	4.082e-07 4.095e-07 4.110e-07 4.199e-07 4.232e-07 4.235e-07 4.246e-07 4.249e-07 4.251e-07 4.255e-07 4.260e-07 4.262e-07 4.263e-07 4.265e-07 4.266e-07 4.270e-07 4.277e-07 6.198e-07 1.958e-06 3.257e-06
+launch/empty-2-threads	wall_time	batch=262144	n=20	2.124e-07	2.096e-07 2.098e-07 2.098e-07 2.103e-07 2.108e-07 2.110e-07 2.113e-07 2.115e-07 2.119e-07 2.123e-07 2.126e-07 2.127e-07 2.127e-07 2.129e-07 2.130e-07 2.134e-07 2.140e-07 2.152e-07 2.197e-07 2.395e-07
+launch/empty-all-cores	alloc_words	exact	0
+launch/empty-all-cores	cpu_time	batch=65536	n=20	2.112e-05	2.024e-05 2.044e-05 2.045e-05 2.054e-05 2.070e-05 2.080e-05 2.094e-05 2.095e-05 2.099e-05 2.101e-05 2.122e-05 2.127e-05 2.130e-05 2.131e-05 2.133e-05 2.133e-05 2.141e-05 2.148e-05 2.153e-05 2.184e-05
+launch/empty-all-cores	wall_time	batch=65536	n=20	1.335e-06	1.303e-06 1.307e-06 1.311e-06 1.315e-06 1.321e-06 1.324e-06 1.325e-06 1.328e-06 1.331e-06 1.333e-06 1.338e-06 1.340e-06 1.342e-06 1.349e-06 1.349e-06 1.357e-06 1.359e-06 1.363e-06 1.364e-06 1.365e-06
+launch/empty-performance-cores	alloc_words	exact	0
+launch/empty-performance-cores	cpu_time	batch=32768	n=20	2.895e-05	2.806e-05 2.832e-05 2.834e-05 2.844e-05 2.848e-05 2.857e-05 2.875e-05 2.876e-05 2.891e-05 2.895e-05 2.895e-05 2.908e-05 2.911e-05 2.927e-05 2.946e-05 2.956e-05 2.960e-05 2.994e-05 3.021e-05 3.038e-05
+launch/empty-performance-cores	wall_time	batch=32768	n=20	1.871e-06	1.841e-06 1.848e-06 1.850e-06 1.852e-06 1.853e-06 1.858e-06 1.864e-06 1.865e-06 1.866e-06 1.869e-06 1.874e-06 1.875e-06 1.875e-06 1.878e-06 1.878e-06 1.879e-06 1.879e-06 1.880e-06 1.881e-06 1.887e-06
+launch/floor-2us-chunks-all-cores	alloc_words	exact	0
+launch/floor-2us-chunks-all-cores	cpu_time	batch=32768	n=20	4.721e-05	4.631e-05 4.642e-05 4.670e-05 4.671e-05 4.673e-05 4.680e-05 4.694e-05 4.699e-05 4.709e-05 4.712e-05 4.729e-05 4.743e-05 4.757e-05 4.764e-05 4.773e-05 4.777e-05 4.789e-05 4.796e-05 4.797e-05 4.818e-05
+launch/floor-2us-chunks-all-cores	wall_time	batch=32768	n=20	3.011e-06	2.998e-06 2.999e-06 2.999e-06 3.000e-06 3.002e-06 3.005e-06 3.008e-06 3.009e-06 3.010e-06 3.011e-06 3.012e-06 3.012e-06 3.012e-06 3.013e-06 3.014e-06 3.014e-06 3.015e-06 3.018e-06 3.019e-06 3.022e-06
+launch/floor-empty-all-cores	alloc_words	exact	0
+launch/floor-empty-all-cores	cpu_time	batch=131072	n=20	8.141e-06	7.921e-06 7.962e-06 7.973e-06 8.003e-06 8.025e-06 8.057e-06 8.070e-06 8.113e-06 8.115e-06 8.125e-06 8.158e-06 8.182e-06 8.193e-06 8.219e-06 8.253e-06 8.276e-06 8.292e-06 8.322e-06 8.355e-06 8.415e-06
+launch/floor-empty-all-cores	wall_time	batch=131072	n=20	5.236e-07	5.223e-07 5.226e-07 5.227e-07 5.229e-07 5.233e-07 5.233e-07 5.233e-07 5.234e-07 5.234e-07 5.235e-07 5.236e-07 5.239e-07 5.240e-07 5.241e-07 5.242e-07 5.243e-07 5.245e-07 5.246e-07 5.246e-07 5.251e-07
