@@ -195,6 +195,16 @@ QMD_VALUES = [
     ("release_structure_size_semaphore_two_words", "RELEASE0_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS",
      "RELEASE_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS"),
 ]
+# The fields only one version has.
+OPTIONAL = {"qmd_type", "sm_global_caching_enable"}
+# The shifts the encoder applies to its values: (OCaml name, the field each
+# version names it by).
+QMD_SHIFTS = [
+    ("program_address_shift", "PROGRAM_ADDRESS_LOWER", "PROGRAM_ADDRESS_LOWER_SHIFTED4"),
+    ("constant_buffer_addr_shift", "CONSTANT_BUFFER_ADDR_LOWER(i)", "CONSTANT_BUFFER_ADDR_LOWER_SHIFTED6(i)"),
+    ("shader_local_memory_shift", "SHADER_LOCAL_MEMORY_HIGH_SIZE", "SHADER_LOCAL_MEMORY_HIGH_SIZE_SHIFTED4"),
+    ("shared_memory_shift", "SHARED_MEMORY_SIZE", "SHARED_MEMORY_SIZE_SHIFTED7"),
+]
 
 # Reading headers
 
@@ -345,7 +355,7 @@ def generate():
     def let(name, value):
         out.append(f"let {ml_ident(name)} = {value}")
 
-    out.append(QMD_TYPES)
+    out.append(qmd_types())
     out.append("\n(* Classes *)\n")
     for h, n in CLASS_IDS:
         let(n, ml_int(number(lookup(defs[h], n, h))))
@@ -383,7 +393,7 @@ def generate():
         if len(values) != 1:
             sys.exit(f"{name} differs between versions")
         let(name, ml_int(values.pop()))
-    for (h, prefix, version), v in zip(QMD, range(2)):
+    for v, (h, prefix, version) in enumerate(QMD):
         d = defs[h]
 
         def field(n, i=None):
@@ -417,19 +427,7 @@ def generate():
             out.append("        }")
         out.append("      );")
         out.append("  }")
-    return HEADER(texts) + "\n".join(out) + "\n"
-
-
-OPTIONAL = {"qmd_type", "sm_global_caching_enable"}
-
-# The shifts the encoder applies to its values: (OCaml name, the field each
-# version names it by).
-QMD_SHIFTS = [
-    ("program_address_shift", "PROGRAM_ADDRESS_LOWER", "PROGRAM_ADDRESS_LOWER_SHIFTED4"),
-    ("constant_buffer_addr_shift", "CONSTANT_BUFFER_ADDR_LOWER(i)", "CONSTANT_BUFFER_ADDR_LOWER_SHIFTED6(i)"),
-    ("shader_local_memory_shift", "SHADER_LOCAL_MEMORY_HIGH_SIZE", "SHADER_LOCAL_MEMORY_HIGH_SIZE_SHIFTED4"),
-    ("shared_memory_shift", "SHARED_MEMORY_SIZE", "SHARED_MEMORY_SIZE_SHIFTED7"),
-]
+    return header(texts) + "\n".join(out) + "\n"
 
 
 def qmd_types():
@@ -457,10 +455,7 @@ def qmd_types():
     )
 
 
-QMD_TYPES = qmd_types()
-
-
-def HEADER(texts):
+def header(texts):
     owners = []
     for h in SOURCES:
         m = re.search(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", texts[h])
