@@ -3544,6 +3544,9 @@ thread.
 
 ### Nx
 
+- `Nx.mean`, `Nx.var` and `Nx.std` at `float16`, `bfloat16` and the float8
+  dtypes compute at float32 and round once. A float16 mean of 70000 ones was
+  NaN and a variance whose squared deviations passed 65504 was infinite.
 - Operations on empty tensors no longer offset the NULL address of an empty
   buffer, which C leaves undefined: a concatenation, a reduction over an empty
   axis, a gather from one, or a matmul with an empty inner dimension did.

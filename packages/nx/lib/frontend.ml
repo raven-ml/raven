@@ -1081,12 +1081,13 @@ let mean ?axes ?(keepdims = false) x =
   | Unsigned -> int_mean ?axes ~keepdims Nx_dtype.uint64 x n
   | Signed -> int_mean ?axes ~keepdims Nx_dtype.int64 x n
   | _ ->
-      let s = sum ?axes ~keepdims x in
-      let divisor =
-        broadcast_to (shape s)
-          (scalar (Value.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
+      let mean x =
+        let s = sum ?axes ~keepdims x in
+        let dt = dtype x in
+        let count = Nx_dtype.of_float dt (float_of_int n) in
+        div s (broadcast_to (shape s) (scalar (Value.context x) dt count))
       in
-      div s divisor
+      at_float32 { f = mean } x
 
 (* The variance of integers is a fraction that can outgrow their dtype. *)
 let refuse_int op x =
@@ -1096,13 +1097,13 @@ let refuse_int op x =
         (Nx_dtype.to_string (dtype x))
   | _ -> ()
 
-let var ?axes ?(keepdims = false) ?(ddof = 0) x =
-  refuse_int "var" x;
+(* The variance of a float or complex [x], at its own dtype. *)
+let variance op ?axes ~keepdims ~ddof x =
   let dt = Value.dtype x in
   let mean_x = mean ?axes ~keepdims:true x in
   let sum_sq = sum ?axes ~keepdims (square (sub x mean_x)) in
   let n = reduction_element_count (shape x) ?axes () in
-  if ddof >= n then err "var" "ddof %d, must be below the count %d" ddof n;
+  if ddof >= n then err op "ddof %d, must be below the count %d" ddof n;
   let n_corr = float_of_int (n - ddof) in
   let divisor =
     broadcast_to (shape sum_sq)
@@ -1110,9 +1111,13 @@ let var ?axes ?(keepdims = false) ?(ddof = 0) x =
   in
   div sum_sq divisor
 
+let var ?axes ?(keepdims = false) ?(ddof = 0) x =
+  refuse_int "var" x;
+  at_float32 { f = (fun x -> variance "var" ?axes ~keepdims ~ddof x) } x
+
 let std ?axes ?(keepdims = false) ?(ddof = 0) x =
   refuse_int "std" x;
-  sqrt (var ?axes ~keepdims ~ddof x)
+  at_float32 { f = (fun x -> sqrt (variance "std" ?axes ~keepdims ~ddof x)) } x
 
 (* A [bool] or [bit] tensor reduces as it is; any other is compared with zero
    first. *)

@@ -3049,7 +3049,9 @@ val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     propagates. [keepdims] defaults to [false].
 
     An integer mean is the exact mean rounded toward zero, as {!div} rounds. It
-    lies between the least and greatest element, so it never wraps.
+    lies between the least and greatest element, so it never wraps. At
+    [float16], [bfloat16] and the float8 dtypes, the mean computes at [float32]
+    and rounds once, so it is finite whenever it fits the dtype.
 
     Raises [Invalid_argument] if [t] is an integer tensor and an axis of [axes]
     is empty, since the mean of nothing has no integer value, or if [axes] hold
@@ -3067,7 +3069,9 @@ val var :
 (** [var ?axes ?keepdims ?ddof t] is the variance along [axes]. [ddof] (delta
     degrees of freedom) defaults to [0] (population variance); use [1] for
     sample variance. Computed as [E[(X - E[X])²] / (N - ddof)]. [keepdims]
-    defaults to [false].
+    defaults to [false]. At [float16], [bfloat16] and the float8 dtypes, the
+    variance computes at [float32] and rounds once, so it is finite whenever it
+    fits the dtype.
 
     Raises [Invalid_argument] if [ddof >= N], or if [t] is an integer tensor:
     its variance is a fraction that its dtype need not hold; {!cast} it to a
@@ -3088,7 +3092,9 @@ val std :
   ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
 (** [std ?axes ?keepdims ?ddof t] is the standard deviation:
     [sqrt({!var} ~ddof t)]. [ddof] defaults to [0]. [keepdims] defaults to
-    [false].
+    [false]. At [float16], [bfloat16] and the float8 dtypes, it computes at
+    [float32] and rounds once, so it is finite whenever it fits the dtype, even
+    where the variance does not.
 
     Raises [Invalid_argument] as {!var} does.
 

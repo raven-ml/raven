@@ -185,6 +185,34 @@ let float_reductions =
           equal near var (Ref.of_nx (Nx.var ?axes ~keepdims ~ddof t));
           equal near (Ref.map Float.sqrt var)
             (Ref.of_nx (Nx.std ?axes ~keepdims ~ddof t)));
+      prop "at float16 mean, var and std are float32's, rounded once"
+        (Gen.pair (with_axes values) (Gen.int_range 0 1))
+        (fun ((t, axes, keepdims), ddof) ->
+          let n = Nx.numel t / Int.max 1 (Nx.numel (Nx.sum ?axes t)) in
+          assume (n > ddof);
+          let h = Nx.cast Nx.float16 t in
+          let wide = Nx.cast Nx.float32 h in
+          let once x = Nx.cast Nx.float16 x in
+          equal ~msg:"mean" (tensor float_exact)
+            (once (Nx.mean ?axes ~keepdims wide))
+            (Nx.mean ?axes ~keepdims h);
+          equal ~msg:"var" (tensor float_exact)
+            (once (Nx.var ?axes ~keepdims ~ddof wide))
+            (Nx.var ?axes ~keepdims ~ddof h);
+          equal ~msg:"std" (tensor float_exact)
+            (once (Nx.std ?axes ~keepdims ~ddof wide))
+            (Nx.std ?axes ~keepdims ~ddof h));
+      test "a float16 mean of more ones than float16 holds is one" (fun () ->
+          equal float_exact 1.
+            (Nx.item [] (Nx.mean (Nx.ones Nx.float16 [| 70_000 |]))));
+      test "a float16 var whose squared deviations overflow float16 is finite"
+        (fun () ->
+          (* Deviations 100, 100, 100 and 300 from the mean 100. *)
+          let x = Nx.create Nx.float16 [| 4 |] [| 0.; 0.; 0.; 400. |] in
+          equal float_exact 30000. (Nx.item [] (Nx.var x)));
+      test "a float16 std whose var overflows float16 is finite" (fun () ->
+          let x = Nx.create Nx.float16 [| 2 |] [| 300.; -300. |] in
+          equal float_exact 300. (Nx.item [] (Nx.std x)));
       test "var refuses ddof at least the count" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.var ~ddof:3 (Nx.zeros Nx.float64 [| 3 |])));
@@ -606,7 +634,8 @@ let float_dtypes =
 let layouts dt xs =
   let n = Array.length xs / 2 in
   let wide =
-    Nx.create dt [| 2; 2 * n |]
+    Nx.create dt
+      [| 2; 2 * n |]
       (Array.init (4 * n) (fun i -> if i mod 2 = 0 then xs.(i / 2) else 7.))
   in
   [
@@ -626,8 +655,8 @@ let mixed_zeros = [| -0.; 0.; -0.; 0.; -0.; 0. |]
 (* A check of a matrix at any float dtype, named after its dtype and layout. *)
 type check = { run : 'b. string -> (float, 'b) Nx.t -> unit }
 
-(* [on_every_path xs c] runs [c] on the matrix of [xs] at every float dtype
-   and in every layout. *)
+(* [on_every_path xs c] runs [c] on the matrix of [xs] at every float dtype and
+   in every layout. *)
 let on_every_path xs c =
   List.iter
     (fun (F (name, dt)) ->
@@ -653,9 +682,7 @@ let signed_zeros =
                       equal ~msg:(msg ^ ", min") (tensor float_exact)
                         (filled (-0.)) (Nx.min ?axes t))
                     [
-                      (None, [||]);
-                      (Some [ 0 ], [| 3 |]);
-                      (Some [ 1 ], [| 2 |]);
+                      (None, [||]); (Some [ 0 ], [| 3 |]); (Some [ 1 ], [| 2 |]);
                     ]);
             });
       test "argmax and argmin point at the zero max and min return" (fun () ->
@@ -667,13 +694,17 @@ let signed_zeros =
                   let equal what =
                     equal ~msg:(msg ^ ", " ^ what) (tensor int64)
                   in
-                  equal "argmax along rows" (ints [| 1L; 0L |])
+                  equal "argmax along rows"
+                    (ints [| 1L; 0L |])
                     (Nx.argmax ~axis:1 t);
-                  equal "argmin along rows" (ints [| 0L; 1L |])
+                  equal "argmin along rows"
+                    (ints [| 0L; 1L |])
                     (Nx.argmin ~axis:1 t);
-                  equal "argmax along columns" (ints [| 1L; 0L; 1L |])
+                  equal "argmax along columns"
+                    (ints [| 1L; 0L; 1L |])
                     (Nx.argmax ~axis:0 t);
-                  equal "argmin along columns" (ints [| 0L; 1L; 0L |])
+                  equal "argmin along columns"
+                    (ints [| 0L; 1L; 0L |])
                     (Nx.argmin ~axis:0 t));
             });
       test "cummax and cummin turn to the extreme zero" (fun () ->
@@ -687,8 +718,7 @@ let signed_zeros =
                 (v [| 0.; -0.; -0. |])
                 (Nx.cummin (v [| 0.; -0.; 0. |])))
             float_dtypes);
-      test "a sum of zeros is +0 on every path, whatever their signs"
-        (fun () ->
+      test "a sum of zeros is +0 on every path, whatever their signs" (fun () ->
           List.iter
             (fun xs ->
               on_every_path xs
@@ -700,8 +730,8 @@ let signed_zeros =
                           let zeros = Nx.zeros (Nx.dtype t) shape in
                           equal ~msg:(msg ^ ", sum") (tensor float_exact) zeros
                             (Nx.sum ?axes t);
-                          equal ~msg:(msg ^ ", mean") (tensor float_exact)
-                            zeros (Nx.mean ?axes t))
+                          equal ~msg:(msg ^ ", mean") (tensor float_exact) zeros
+                            (Nx.mean ?axes t))
                         [
                           (None, [||]);
                           (Some [ 0 ], [| 3 |]);
@@ -1982,10 +2012,7 @@ let array_equal_cases =
       t [| 2; 3 |] 7l,
       Nx.create Nx.int32 [| 2; 3 |] [| 7l; 7l; 7l; 7l; 7l; 8l |],
       false );
-    ( "transposed shapes that broadcast",
-      t [| 1; 2 |] 7l,
-      t [| 2; 1 |] 7l,
-      false );
+    ("transposed shapes that broadcast", t [| 1; 2 |] 7l, t [| 2; 1 |] 7l, false);
     ("a row against a matrix", t [| 3 |] 7l, t [| 2; 3 |] 7l, false);
     ("a scalar against a vector", t [||] 7l, t [| 3 |] 7l, false);
     ("a leading axis of one", t [| 1; 3 |] 7l, t [| 3 |] 7l, false);
@@ -2002,8 +2029,7 @@ let array_equal =
         array_equal_cases
         (fun (_, a, b, expected) ->
           equal bool expected (Nx.item [] (Nx.array_equal a b));
-          equal bool ~msg:"swapped" expected
-            (Nx.item [] (Nx.array_equal b a)));
+          equal bool ~msg:"swapped" expected (Nx.item [] (Nx.array_equal b a)));
     ]
 
 let () =
