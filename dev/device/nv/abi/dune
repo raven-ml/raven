@@ -5,7 +5,6 @@
  (modules_without_implementation
   cubin
   gpfifo
-  gpu
   launch
   local
   method
