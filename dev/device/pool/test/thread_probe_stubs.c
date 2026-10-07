@@ -200,13 +200,17 @@ static void raise_faults(void) {
 }
 
 /* 7 MiB of the 8 MiB nx_pool.h promises, touched from the top down so an
-   overflow meets the guard page first. */
+   overflow meets the guard page first. The deepest byte is read back, so
+   the frame is used. */
 #define DEEP_BYTES (7 << 20)
+
+static volatile char deep_sink;
 
 static __attribute__((noinline)) void deep_stack(void) {
   volatile char frame[DEEP_BYTES];
   for (size_t i = DEEP_BYTES; i > 0; i -= 4096)
     frame[i - 1] = (char)i;
+  deep_sink = frame[4095];
 }
 
 /* Children made by fork */
