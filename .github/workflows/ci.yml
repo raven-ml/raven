@@ -94,7 +94,8 @@ jobs:
       # bit kernels read and write views at any bit: their properties run
       # first, over 1000 cases each. A domain's thread exits on the signal
       # stack the OCaml runtime allocated, which AddressSanitizer would unmap
-      # as its own.
+      # as its own. The documentation's examples run in the step above: dune
+      # 3.24 links mdx's generator without the profile's link flags.
       - name: Test nx under the sanitizers
         if: runner.os != 'Windows'
         env:
@@ -103,7 +104,7 @@ jobs:
         run: |
           WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
           WINDTRAP_PROP_COUNT=1000 opam exec -- dune exec --profile sanitize packages/nx/test/test_bit.exe
-          opam exec -- dune build --profile sanitize @packages/nx/runtest
+          opam exec -- dune build --profile sanitize @packages/nx/test/runtest
 
       - name: Build and test brot
         env:
