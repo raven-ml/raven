@@ -9,10 +9,11 @@
     32- or 64-bit. Reading one with {!of_string} lays out its {e image}: the
     contents of its allocated program sections ([SHT_PROGBITS] with
     [SHF_ALLOC]), its code and data. If one of these sections has a nonzero
-    address ([sh_addr]), each goes at its address, as in an executable.
-    Otherwise each follows the image's end in section order, at its alignment,
-    as in a relocatable object. The image ends where its last section ends.
-    Other sections, such as [.bss], the symbol and string tables or debugging
+    address ([sh_addr]), each goes at its address less {!field-address}, as in
+    an executable whose image starts with its first section. Otherwise each
+    follows the image's end in section order, at its alignment, as in a
+    relocatable object. The image ends where its last section ends. Other
+    sections, such as [.bss], the symbol and string tables or debugging
     information, stay out of the image.
 
     Reading copies no section's bytes. A section's bytes are a range of the
@@ -44,7 +45,10 @@
       | Undefined | Outside _ -> None
     ]}
     Applying a relocation is the loader's: its kinds, the width of the field it
-    patches and the formula that fills it are the machine's.
+    patches and the formula that fills it are the machine's. A formula that adds
+    the load address to an address of the object, such as [R_X86_64_RELATIVE]'s
+    [B + A], takes [B = base - o.address], how far the image moved from its link
+    address.
 
     In this module an {e offset} is an image offset unless said otherwise. *)
 
@@ -110,6 +114,11 @@ type t = private {
       (** The version of that ABI, [EI_ABIVERSION], whose meaning is [os_abi]'s.
       *)
   flags : int;  (** Its machine's flags, [e_flags]. *)
+  address : int;
+      (** The address its image starts at: the lowest address of a section the
+          image holds, rounded down to the largest alignment among them, or [0]
+          when its sections follow the image's end. An address [a] of the object
+          is the offset [a - o.address]. *)
   file : string;  (** The object: [obj] itself, as {!of_string} read it. *)
   size : int;
       (** The length of its image, in bytes, from [0] to [max_int]. A corrupted
@@ -128,7 +137,7 @@ type t = private {
           not occupy memory ([SHF_ALLOC] clear), such as debugging information,
           are left out. A relocation section that names no section
           ([sh_info = 0]), such as a dynamic one, patches the image at its
-          entries' addresses ([r_offset]). *)
+          entries' addresses ([r_offset]) less {!field-address}. *)
 }
 (** The type for objects laid out in their image. For an object [o]:
     - A section [s]'s bytes lie in the object,
@@ -168,7 +177,7 @@ val of_string : ?align:int -> string -> (t, string) result
     - its image would be longer than [max_int] bytes;
     - a relocation's offset lies at or past the end of the section it patches,
       or a relocation patches allocated memory the image does not hold: a
-      section the image lacks, or an address past its end.
+      section the image lacks, or an address before its start or past its end.
 
     Any other object is [Ok]. Reading takes memory linear in [obj]'s length, and
     time linear in it up to sorting its sections, whatever {!field-size} is.

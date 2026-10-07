@@ -589,11 +589,13 @@ let test_addressed_symbols () =
            strtab names;
          ])
   in
-  equal ~msg:"a symbol's value is its address" (list symbol)
+  equal ~msg:"the image starts at the first section's address" int 0x100
+    o.address;
+  equal ~msg:"a symbol's value is its address less the image's" (list symbol)
     [
       null_symbol;
-      sym_entry "k" (Image { section = 1; offset = 0x104 });
-      sym_entry "k.kd" (Image { section = 2; offset = 0x200 });
+      sym_entry "k" (Image { section = 1; offset = 0x4 });
+      sym_entry "k.kd" (Image { section = 2; offset = 0x100 });
     ]
     (syms o)
 
@@ -643,13 +645,13 @@ let test_dynamic_symbols () =
     ]
   in
   equal ~msg:"the dynamic symbols of an object with no symbol table"
-    (option int) (Some 0x102)
+    (option int) (Some 0x2)
     (Elf.symbol (read (write (text :: dynamic))) "k.kd");
   let static, names = symbols [ defined "k.kd" 1 0x101 ] in
   let o =
     read (write ((text :: dynamic) @ [ symtab ~link:5 static; strtab names ]))
   in
-  equal ~msg:"the symbol table over the dynamic one" (option int) (Some 0x101)
+  equal ~msg:"the symbol table over the dynamic one" (option int) (Some 0x1)
     (Elf.symbol o "k.kd")
 
 (* Relocations *)
@@ -738,11 +740,13 @@ let test_dynamic_relocations () =
   let offsets at =
     List.map (fun (r : Elf.relocation) -> r.offset) (read (obj ~at)).relocations
   in
-  equal ~msg:"one in a section patches its address" (list int) [ 0x102 ]
-    (offsets 0x102);
-  equal ~msg:"one in the zeros between sections too" (list int) [ 0x180 ]
+  equal ~msg:"one in a section patches its address less the image's" (list int)
+    [ 0x2 ] (offsets 0x102);
+  equal ~msg:"one in the zeros between sections too" (list int) [ 0x80 ]
     (offsets 0x180);
-  equal ~msg:"and the image's last byte" (list int) [ 0x203 ] (offsets 0x203);
+  equal ~msg:"the image's first byte" (list int) [ 0 ] (offsets 0x100);
+  equal ~msg:"and its last" (list int) [ 0x103 ] (offsets 0x203);
+  ignore (refused (obj ~at:0xff));
   ignore (refused (obj ~at:0x204))
 
 (* Extended section numbering *)
@@ -865,17 +869,18 @@ let test_many_relocation_sections () =
   equal ~msg:"every relocation" int count (List.length o.relocations);
   less ~msg:"CPU seconds" float_exact ~than:1.0 seconds
 
-(* An object's image starts at its address: reading allocates as much whatever
-   the address, up to the largest. *)
+(* An object's image starts at its first section's address: reading allocates as
+   much whatever the address, up to the largest. *)
 let gen_address =
   Gen.(
-    frequency
-      [
-        (1, int_range 1 0xffff);
-        (1, map (fun k -> 1 lsl k) (int_range 0 61));
-        (1, int_range 1 (max_int - 4));
-        (1, constant (max_int - 4));
-      ])
+    with_pp Format.pp_print_int
+    @@ frequency
+         [
+           (1, int_range 1 0xffff);
+           (1, map (fun k -> 1 lsl k) (int_range 0 61));
+           (1, int_range 1 (max_int - 4));
+           (1, constant (max_int - 4));
+         ])
 
 let at_address a = write [ section ~addr:a ".text" "ABCD" ]
 
@@ -889,7 +894,8 @@ let law_address a =
   let r, bytes = allocated (fun () -> Elf.of_string obj) in
   let o = require_ok ~pp:Format.pp_print_string r in
   cover "past 1 GiB" (a > 1 lsl 30);
-  equal ~msg:"the image's size" int (a + 4) o.size;
+  equal ~msg:"the image's address" int a o.address;
+  equal ~msg:"the image's size" int 4 o.size;
   equal ~msg:"bytes allocated" float_exact (Lazy.force baseline) bytes
 
 (* Refusals: each object breaks one rule of an object that reads. *)
@@ -1003,7 +1009,8 @@ let refusals =
       patch_section well_formed 2 sh_offset 8 ehdr_size );
     ("names longer than the object", shared_names);
     ( "an image longer than max_int",
-      write [ section ~addr:(max_int - 1) ".text" "AB" ] );
+      write [ section ~addr:0 ".a" "A"; section ~addr:(max_int - 1) ".b" "AB" ]
+    );
     ( "an image aligned past max_int",
       write
         [
@@ -1047,7 +1054,10 @@ let test_near_refusals () =
           ]));
   ignore (read (patch well_formed (symbol_entry + 15) 1 0xff));
   ignore (read (dynamic_into ~at:0x10c));
-  ignore (read (write [ section ~addr:(max_int - 2) ".text" "AB" ]))
+  ignore
+    (read
+       (write
+          [ section ~addr:0 ".a" "A"; section ~addr:(max_int - 2) ".b" "AB" ]))
 
 (* [msg] says which cause the documentation lists an object breaks. *)
 let test_messages () =
@@ -1060,7 +1070,9 @@ let test_messages () =
       ("overlap", addressed ~text:0x100 ~data:0x103);
       ("shared bytes", patch_section well_formed 2 sh_offset 8 ehdr_size);
       ("names", shared_names);
-      ("too long", write [ section ~addr:(max_int - 1) ".text" "AB" ]);
+      ( "too long",
+        write
+          [ section ~addr:0 ".a" "A"; section ~addr:(max_int - 1) ".b" "AB" ] );
       ("past its section", with_relocation ~target:1 (5, 1, 1, 0));
       ("outside the image", with_relocation ~target:3 (0, 1, 1, 0));
     ]
@@ -1242,13 +1254,19 @@ let object_of c =
 (* The model: each part's image offset, as the documentation lays out the
    image. *)
 let offsets c =
-  let addressed = List.exists (fun s -> in_image s && s.addr <> 0) c.parts in
+  let held = List.filter in_image c.parts in
+  let addressed = List.exists (fun s -> s.addr <> 0) held in
   let round x a = (x + a - 1) / a * a in
+  let start =
+    let low = List.fold_left (fun m (s : sh) -> min m s.addr) max_int held in
+    let align = List.fold_left (fun m (s : sh) -> max m s.align) 1 held in
+    low / align * align
+  in
   snd
     (List.fold_left_map
        (fun end_ (s : sh) ->
          if not (in_image s) then (end_, None)
-         else if addressed then (end_, Some s.addr)
+         else if addressed then (end_, Some (s.addr - start))
          else
            let off = round end_ (max c.align (max 1 s.align)) in
            (off + s.size, Some off))
@@ -1363,6 +1381,7 @@ let law_image c =
   cover "a section past align"
     (List.exists (fun s -> in_image s && s.align > c.align) c.parts);
   cover "a gap" (String.contains (model_image c) '\000');
+  cover "an image starting past address 0" ((read_case c).address > 0);
   equal ~msg:"image" string (model_image c) (image (read_case c))
 
 let law_lookup c =
@@ -1387,16 +1406,17 @@ let law_lookup c =
 
 (* Corrupted objects *)
 
-let root = "../../../.."
+(* Real objects, copied at 832a8fcb6: simple_add_sm89.cubin from
+   packages/tolk/test/runtime/ops_nv/, simple_add_gfx1100.hsaco and
+   lds_gfx1100.o from packages/tolk/test/gen/runtime/ops_amd_fixtures/,
+   unfold.8.co from packages/nx/lib/amd/kernels/gfx12-generic/. host.c says how
+   host_x86_64.o and host_aarch64.o were compiled. *)
 
-let fixture path =
-  In_channel.with_open_bin (Filename.concat root path) In_channel.input_all
-
-let cubin_path = "packages/tolk/test/runtime/ops_nv/simple_add_sm89.cubin"
-let amd = "packages/tolk/test/gen/runtime/ops_amd_fixtures/"
-let hsaco_path = amd ^ "simple_add_gfx1100.hsaco"
-let lds_path = amd ^ "lds_gfx1100.o"
-let stripped_path = "packages/nx/lib/amd/kernels/gfx12-generic/unfold.8.co"
+let fixture path = In_channel.with_open_bin path In_channel.input_all
+let cubin_path = "simple_add_sm89.cubin"
+let hsaco_path = "simple_add_gfx1100.hsaco"
+let lds_path = "lds_gfx1100.o"
+let stripped_path = "unfold.8.co"
 
 let corruptible =
   lazy
@@ -1653,15 +1673,17 @@ let test_hsaco () =
   equal ~msg:"under the HSA ABI" int 64 o.os_abi;
   equal ~msg:"code object version 5" int 3 o.abi_version;
   equal ~msg:"for gfx1100" int 0x41 o.flags;
-  equal ~msg:"the image ends with .text at 0x1600" int 0x1880 o.size;
-  equal ~msg:"zeros before .rodata" string (String.make 0x5c0 '\000')
-    (String.sub (image o) 0 0x5c0);
+  equal ~msg:".rodata at 0x5c0 rounded down to .text's alignment of 256" int
+    0x500 o.address;
+  equal ~msg:"the image ends with .text at 0x1100" int 0x1380 o.size;
+  equal ~msg:"zeros before .rodata" string (String.make 0xc0 '\000')
+    (String.sub (image o) 0 0xc0);
   equal ~msg:"and between .rodata and .text" string
-    (String.make (0x1600 - 0x600) '\000')
-    (String.sub (image o) 0x600 (0x1600 - 0x600));
+    (String.make (0x1100 - 0x100) '\000')
+    (String.sub (image o) 0x100 (0x1100 - 0x100));
   equal ~msg:"the comment stays out" (option int) None
     (section_named o ".comment").offset;
-  equal ~msg:"the kernel descriptor" (option int) (Some 0x5c0)
+  equal ~msg:"the kernel descriptor" (option int) (Some 0xc0)
     (Elf.symbol o "simple_add.kd");
   equal ~msg:"the symbol table over the dynamic one" int 10
     (Iarray.length o.symbols);
@@ -1681,10 +1703,10 @@ let test_stripped () =
   equal ~msg:"the dynamic symbols" (list string)
     [ ""; "u"; "u.kd"; "__hip_cuid_5224b70de10a6e29" ]
     (List.map (fun (s : Elf.symbol) -> s.name) (syms o));
-  equal ~msg:"the kernel descriptor" (option int) (Some 0x5c0)
+  equal ~msg:"the kernel descriptor" (option int) (Some 0xc0)
     (Elf.symbol o "u.kd");
-  equal ~msg:"the code" (option int) (Some 0x1600) (Elf.symbol o "u");
-  equal ~msg:"the image" int 0x2e80 o.size
+  equal ~msg:"the code" (option int) (Some 0x1100) (Elf.symbol o "u");
+  equal ~msg:"the image" int 0x2980 o.size
 
 let test_relocatable_amd () =
   let o = read (fixture lds_path) in
@@ -1703,37 +1725,12 @@ let test_relocatable_amd () =
     ]
     o.relocations
 
-(* Host objects compiled at test time *)
-
-let clang =
-  lazy
-    (Sys.command (Printf.sprintf "clang --version > %s 2>&1" Filename.null) = 0)
-
-(* [src] compiled for [target] as the host loader takes it. *)
-let compile ~target src =
-  if not (Lazy.force clang) then skip ~reason:"no clang" ();
-  let c = temp_file ~suffix:".c" () and o = temp_file ~suffix:".o" () in
-  Out_channel.with_open_bin c (fun oc -> output_string oc src);
-  let cmd =
-    Printf.sprintf
-      "clang -c -x c -O2 -fPIC -ffreestanding -fno-math-errno -nostdlib \
-       -fno-ident --target=%s-none-unknown-elf %s -o %s"
-      target (Filename.quote c) (Filename.quote o)
-  in
-  if Sys.command cmd <> 0 then failf "clang failed: %s" cmd;
-  In_channel.with_open_bin o In_channel.input_all
-
-let host_source =
-  {|void ext(int);
-static int counter;
-static const int table[4] = {1, 2, 3, 4};
-void f(int i) { ext(i); counter += table[i & 3]; }
-|}
+(* Host objects *)
 
 (* The call to [ext] is the relocation a loader fills with a slot that jumps to
    it: its kind, its addend and the undefined symbol by name. *)
 let test_host (target, call, addend) =
-  let o = read (compile ~target host_source) in
+  let o = read (fixture ("host_" ^ target ^ ".o")) in
   invariants o;
   let text = section_named o ".text" in
   equal ~msg:"the function" (option int) text.offset (Elf.symbol o "f");

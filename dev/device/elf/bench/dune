@@ -13,7 +13,7 @@
  (deps
   (glob_files *.thumper)
   host_arm64.o
-  %{project_root}/packages/nx/lib/amd/kernels/gfx12-generic/unary.float16.co
-  %{project_root}/packages/tolk/test/runtime/ops_nv/simple_add_sm89.cubin)
+  unary.float16.co
+  simple_add_sm89.cubin)
  (action
   (run %{exe:bench_elf.exe})))

@@ -29,6 +29,7 @@ type t = {
   os_abi : int;
   abi_version : int;
   flags : int;
+  address : int;
   file : string;
   size : int;
   sections : section iarray;
@@ -259,18 +260,33 @@ let round_up n a =
   else if n > max_int - a then too_long ()
   else n + a - (n mod a)
 
-(* Whether the sections go at their addresses, each held section's image offset,
-   and the image's length. Sections go at their addresses if one has an address,
-   else follow each other. *)
+(* The address of image offset 0 when sections go at their addresses: the lowest
+   held section's, rounded down to their largest alignment, so that each keeps
+   its alignment in the image. *)
+let start hs =
+  let low = ref max_int and align = ref 1 in
+  Array.iter
+    (fun h ->
+      if held h then begin
+        low := Int.min !low h.sh_addr;
+        align := Int.max !align h.sh_addralign
+      end)
+    hs;
+  !low - (!low land (!align - 1))
+
+(* Whether the sections go at their addresses, the address the image starts at,
+   each held section's image offset, and the image's length. Sections go at
+   their addresses if one has an address, else follow each other. *)
 let layout ~align hs =
   let addressed = Array.exists (fun h -> held h && h.sh_addr <> 0) hs in
+  let address = if addressed then start hs else 0 in
   let offsets = Array.make (Array.length hs) None in
   let size = ref 0 and spans = ref [] in
   Array.iteri
     (fun i h ->
       if held h then begin
         let off =
-          if addressed then h.sh_addr
+          if addressed then h.sh_addr - address
           else round_up !size (Int.max align h.sh_addralign)
         in
         if off > max_int - h.sh_size then too_long ();
@@ -283,7 +299,7 @@ let layout ~align hs =
       end)
     hs;
   disjoint ~where:"the image" (Array.of_list (List.rev !spans));
-  (addressed, offsets, !size)
+  (addressed, address, offsets, !size)
 
 (* [at + n], or [max_int] past it: the end of an address range. *)
 let end_of at n = if at > max_int - n then max_int else at + n
@@ -363,7 +379,7 @@ let read ~align obj =
     if names_index = shn_undef then None
     else Some (strings names_index "the ELF header")
   in
-  let addressed, offsets, size = layout ~align hs in
+  let addressed, address, offsets, size = layout ~align hs in
   (* The place of a symbol in section [index] at [value]. *)
   let place index value =
     let h = section_of index "a symbol" in
@@ -479,10 +495,10 @@ let read ~align obj =
     else if h.sh_info = 0 then
       let lacks = Lazy.force lacks in
       entries r (fun a ->
-          if a >= size || holds lacks a then
+          if a < address || a - address >= size || holds lacks a then
             fail
               "a relocation patches address %d, which the image does not hold" a;
-          a)
+          a - address)
     else
       let target = section_of h.sh_info "a relocation section" in
       if target.sh_flags land shf_alloc = 0 then []
@@ -521,6 +537,7 @@ let read ~align obj =
     os_abi = u8 obj 7;
     abi_version = u8 obj 8;
     flags = u32 obj f.e_flags;
+    address;
     file = obj;
     size;
     sections = Iarray.of_array (Array.mapi section hs);

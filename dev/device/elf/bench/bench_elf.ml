@@ -11,16 +11,15 @@
 
 module Elf = Device_elf
 
-let root = "../../../.."
+(* Copied at 832a8fcb6: unary.float16.co from
+   packages/nx/lib/amd/kernels/gfx12-generic/, simple_add_sm89.cubin from
+   packages/tolk/test/runtime/ops_nv/. host.c says how host_arm64.o was
+   compiled. *)
 
-let read path =
-  In_channel.with_open_bin (Filename.concat root path) In_channel.input_all
-
-let code_object =
-  read "packages/nx/lib/amd/kernels/gfx12-generic/unary.float16.co"
-
-let cubin = read "packages/tolk/test/runtime/ops_nv/simple_add_sm89.cubin"
-let host = read "dev/device/elf/bench/host_arm64.o"
+let read path = In_channel.with_open_bin path In_channel.input_all
+let code_object = read "unary.float16.co"
+let cubin = read "simple_add_sm89.cubin"
+let host = read "host_arm64.o"
 
 let of_string ?align obj () =
   match Elf.of_string ?align obj with Ok o -> o | Error e -> failwith e
