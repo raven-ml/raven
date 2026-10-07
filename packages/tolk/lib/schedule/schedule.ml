@@ -343,32 +343,51 @@ let pm_resolve_linear_call =
 let schedule_cache : (string, t) Hashtbl.t = Hashtbl.create 64
 let schedule_cache_lock = Mutex.create ()
 
-(* [fn] with its ranges numbered by their order in it. Whoever makes a loop
-   numbers its range from a counter of its own, whose value depends on what the
-   process did before, such as making a schedule or reading one back: the key
-   is the same for every numbering of one function's ranges. A range's new
-   number can be another range's old one, as when ranges numbered 1 and 0 trade
-   numbers, so the renumbering is one walk: a renumbered range is not
-   renumbered again. *)
-let ranges_in_order fn =
-  let ranges =
-    List.filter (fun u -> op u = Op.Range) (toposort ~calls:Enter fn)
+(* [in_order fn] is the pairs that take each range and each storage of [fn] to a
+   placeholder numbered by its order in it. Whoever makes a loop numbers its
+   range, and whoever makes storage, such as a staged loop's carry or
+   call-local storage that inlining renames, takes its slot, from a counter
+   whose value depends on what the process did before, such as making a
+   schedule or reading one back: the key is [fn] with its placeholders, and so
+   is the schedule kept, in memory and on disk, so that one schedule serves
+   every numbering of a function, each given back its own. A placeholder is no
+   node a schedule makes: ranges are numbered below [0], storage below every
+   slot of [fn] and below [-1], the slot of a variable. *)
+let in_order fn =
+  let nodes = toposort ~calls:Enter fn in
+  let slot u = match arg u with Param p -> Some p.slot | _ -> None in
+  let lowest =
+    List.fold_left
+      (fun m u -> min m (Option.value ~default:0 (slot u)))
+      (-1) nodes
   in
-  substitute ~calls:Enter ~pass:Once fn
-    (List.mapi
-       (fun k r ->
-         ( r,
-           replace r
-             ~arg:(Range { axis_id = [ k ]; axis_type = axis_type r }) ))
-       ranges)
+  let ranges = List.filter (fun u -> op u = Op.Range) nodes in
+  let storage =
+    List.filter
+      (fun u ->
+        (op u = Op.Buffer || op u = Op.Alloc)
+        && match slot u with Some s -> s >= 0 | None -> false)
+      nodes
+  in
+  List.mapi
+    (fun k r ->
+      ( r,
+        replace r ~arg:(Range { axis_id = [ -1 - k ]; axis_type = axis_type r })
+      ))
+    ranges
+  @ List.mapi
+      (fun k u ->
+        let p = param_of u in
+        (u, replace u ~arg:(Param { p with slot = lowest - 1 - k })))
+      storage
 
 (* The key of a schedule, in memory and, with the setting scache at 2 or more,
-   on disk: the function's, its ranges numbered in order, every setting and
-   variable that shapes what compilation makes ([Setting.shaping]), and the
+   on disk: the function's with its placeholders ([in_order]), every setting
+   and variable that shapes what compilation makes ([Setting.shaping]), and the
    digest of this library's sources, of which a schedule is a function. *)
 let schedule_key fn =
   String.concat "\n"
-    ([ Source_digest.digest; key (ranges_in_order fn) ]
+    ([ Source_digest.digest; key fn ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Setting.shaping ()))
 
 let lower_sink_to_linear call =
@@ -378,7 +397,9 @@ let lower_sink_to_linear call =
   | Op.Sink, Kernel _ -> None
   | Op.Sink, _ when precompile ->
       let start = Unix.gettimeofday () in
-      let cache_key = Digest.BLAKE256.string (schedule_key fn)
+      let placed = in_order fn in
+      let place g = substitute ~calls:Enter ~pass:Once g placed in
+      let cache_key = Digest.BLAKE256.string (schedule_key (place fn))
       and cached = setting Setting.scache >= 1 in
       let hit =
         if cached then
@@ -389,8 +410,9 @@ let lower_sink_to_linear call =
       let make () =
         if setting Setting.spec <> 0 then
           Spec.type_verify ~calls:Enter Spec.tensor fn;
-        create_schedule
-          (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn))
+        place
+          (create_schedule
+             (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
       in
       let linear, kept =
         match hit with
@@ -414,6 +436,10 @@ let lower_sink_to_linear call =
           ((Unix.gettimeofday () -. start) *. 1000.)
           (if kept then " cache hit" else "CACHE MISS")
           (String.sub (Digest.BLAKE256.to_hex cache_key) 0 8);
+      let linear =
+        substitute ~calls:Enter ~pass:Once linear
+          (List.map (fun (u, p) -> (p, u)) placed)
+      in
       Some (replace call ~src:(linear :: List.tl (src call)))
   | _ -> None
 

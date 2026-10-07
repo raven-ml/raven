@@ -511,6 +511,55 @@ let renumbered () =
   is_true ~msg:"the first is new" (List.mem "CACHE MISS" (verdicts (in_slot 0)));
   equal (list string) [ " cache hit"; " cache hit" ] (verdicts (in_slot 9))
 
+(* Storage that a builder numbers from the process's counter, such as a staged
+   loop's carry, can sit in the body of a precompiled call, where it stays
+   storage. [counted g] is precompiled_function [g] as such a body: its output a
+   parameter of the call, its input storage in a slot the counter gives now. *)
+let counted g =
+  let storage slot =
+    List.find
+      (fun n ->
+        match Ops.arg n with
+        | Param p -> Ops.op n = Buffer && p.slot = slot
+        | _ -> false)
+      (Ops.toposort ~calls:Skip g)
+  in
+  let out = storage 4 and input = storage 3 in
+  let fresh =
+    match Ops.arg input with
+    | Param p ->
+        Ops.replace input ~arg:(Param { p with slot = Ops.unique_num () })
+    | _ -> fail "storage without its argument"
+  in
+  let body =
+    Ops.substitute ~calls:Skip ~pass:Fixed_point g
+      [ (out, Call.param_like out 0); (input, fresh) ]
+  in
+  (Ops.sink [ Ops.after out [ Ops.call ~precompile:true body [ out ] ] ], fresh)
+
+(* The second schedule hits under the first's keys, and holds its own
+   storage. *)
+let counted_alike () =
+  let g = unique "precompiled_function" in
+  let first, mine = counted g in
+  ignore (Ops.unique_num ());
+  let second, theirs = counted g in
+  let linear =
+    with_settings ~debug:3 ~scache:1 (fun () ->
+        ignore (Schedule.create_linear_with_vars first);
+        fst (Schedule.create_linear_with_vars ~capturing:true second))
+  in
+  let lines = reports () in
+  let half = List.length lines / 2 in
+  let missed = List.filteri (fun i _ -> i < half) lines in
+  equal (list report)
+    (List.map (fun (n, _, key) -> (n, " cache hit", key)) missed)
+    (List.filteri (fun i _ -> i >= half) lines);
+  let held = Ops.toposort ~calls:Enter linear in
+  equal ~msg:"the second schedule holds its storage, not the first's"
+    (pair bool bool) (true, false)
+    (List.memq theirs held, List.memq mine held)
+
 (* tinygrad prints, for chained_functions, the function's body missing and then
    hitting twice, and the program's body missing. *)
 let chained () =
@@ -641,6 +690,8 @@ let cache =
       test "DEBUG=0 prints nothing" quiet;
       test "the time printed is the time scheduling took" timed;
       test "call-local storage in other slots is the same body" renumbered;
+      test "storage numbered in another counter state is the same body"
+        counted_alike;
       test "a function called three times is scheduled once" chained;
       test "a variable bound to another value is the same body" rebinding;
       test "domains scheduling one body at once schedule it alike"
@@ -1326,6 +1377,25 @@ let renumbered_loops () =
         (verdicts axes))
     [ (1, 0); (0, 1); (1, 2); (2, 1) ]
 
+(* A body that hits under another numbering is given back its own loops. *)
+let own_loops () =
+  let axes linear =
+    List.filter_map
+      (fun u -> if Ops.op u = Range then Some (Ops.axis_id u) else None)
+      (Ops.toposort ~calls:Enter linear)
+  in
+  let schedule loops =
+    with_settings ~debug:0 ~scache:1 (fun () ->
+        fst (Schedule.create_linear_with_vars ~capturing:true (two_loops loops)))
+  in
+  ignore (schedule (7, 8));
+  let held = axes (schedule (13, 14)) in
+  equal (list (list int)) ~msg:"its own loops" [ [ 13 ]; [ 14 ] ]
+    (List.filter (fun a -> List.mem a [ [ 13 ]; [ 14 ] ]) held
+    |> List.sort_uniq compare);
+  equal (list (list int)) ~msg:"none of the first's" []
+    (List.filter (fun a -> List.mem a [ [ 7 ]; [ 8 ] ]) held)
+
 let loops =
   group "create_linear_with_vars › loops of calls"
     [
@@ -1337,6 +1407,7 @@ let loops =
       test "a loop whose range has another number is the same body"
         renumbered_loop;
       test "a body whose loops trade numbers is the same body" renumbered_loops;
+      test "a body that hits under other numbers keeps its own loops" own_loops;
     ]
 
 (* Schedules on disk

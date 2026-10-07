@@ -1209,6 +1209,10 @@ thread.
 
 ### Tolk (new)
 
+- A schedule kept on disk now serves a later process that builds the same
+  function: its key no longer holds the slots a process counter gives a staged
+  loop's carry or renamed call-local storage. A body that hits the schedule
+  cache under other range numbers keeps its own loops.
 - On the host, a compiled product of MXFP4 codes in a checkpoint's layout
   (`Nx_quant.mxfp4`) decodes them as vectors, 16 at a time, where it decoded
   each code alone and branched on it on x86: its time no longer depends on the

@@ -1924,8 +1924,9 @@ the Exclusions of `README.md`.
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
 - **tolk:** `lib/codegen/codegen.ml:1157` (`program_key`), `:1167`
-  (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:309`
-  (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
+  (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:356`
+  (`in_order`), `:388` (`schedule_key`) and `:393`
+  (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
   name); `lib/setting.ml:266` (`scache`, `2` by default) and `:141`
   (`shaping`); `lib/setting.ml:294` (`cc`); and
@@ -1937,8 +1938,11 @@ the Exclusions of `README.md`.
   text (`Graph`), and a later process reads them back instead of making
   them. tinygrad keeps programs for its process only, and schedules on disk
   only when asked. Each key is the kernel or function, a function with its
-  ranges numbered in order (whoever makes a loop numbers its range from a
-  counter whose value depends on what the process did before), for programs
+  ranges and its storage replaced by placeholders numbered in order (whoever
+  makes a loop numbers its range, and whoever makes a staged loop's carry or
+  inlines call-local storage numbers it, from a counter whose value depends
+  on what the process did before); the schedule is kept with the same
+  placeholders and given back each function's own ranges and storage, for programs
   the renderer and its target, the value of every setting and environment
   variable that shapes what compilation makes, and the digest of the
   library's sources, which dune computes when it builds the library: an
@@ -1982,7 +1986,9 @@ the Exclusions of `README.md`.
   among them, `create_linear_with_vars ›
   schedules are kept on disk ›` the same as programs' for schedules, and `›
   with SCACHE at 1, nothing is kept on disk`, and `create_linear_with_vars ›
-  loops of calls › a loop whose range has another number is the same body`;
+  loops of calls › a loop whose range has another number is the same body`
+  and `› a body that hits under other numbers keeps its own loops`, and
+  `› cache › storage numbered in another counter state is the same body`;
   the `Helpers` suite's
   `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
   object cached by the default compiler is not served under CC`.
