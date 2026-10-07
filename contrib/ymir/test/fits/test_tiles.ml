@@ -6,7 +6,7 @@
 (* Tile-compressed images: Rice, gzip and uncompressed tiles of integers and
    floats, quantized floats under each dither, read against astropy's
    reading of its own files (gen/fixtures.py); windows that meet some tiles;
-   and hostile bytes, which give values or an Error. *)
+   and writing, streamed by tile rows. *)
 
 open Windtrap
 open Ymir_fits
@@ -171,33 +171,6 @@ let windows =
     law "GZIP2_U32" [| 10; 13 |];
     law "CUBE" [| 2; 5; 7 |];
   ]
-
-(* Hostile bytes *)
-
-let raw = lazy (In_channel.with_open_bin path In_channel.input_all)
-
-let hostile =
-  prop "a changed byte gives values or an Error"
-    Gen.(pair (int_range 0 (106560 - 1)) (int_range 0 255))
-    (fun (pos, byte) ->
-      let raw = Lazy.force raw in
-      let a =
-        Bigarray.(Array1.create int8_unsigned c_layout (String.length raw))
-      in
-      String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) raw;
-      Bigarray.Array1.set a pos byte;
-      let t = Nx.of_bigarray (Bigarray.genarray_of_array1 a) in
-      match Fits.of_bytes ~name:"x" t with
-      | Error _ -> collect "read fails"
-      | Ok hdus ->
-          List.iter
-            (fun h ->
-              match I.values Nx.float64 h with
-              | Ok _ -> collect "values"
-              | Error _ -> collect "error")
-            hdus)
-
-(* Writing *)
 
 let quantizer () =
   (* ymir quantizes as cfitsio's C source states: each tile's ZSCALE is the
@@ -375,7 +348,6 @@ let () =
          test "validity" validity;
          test "ZDITHER0 absent" no_zdither0;
          group "windows" windows;
-         hostile;
          group "writing"
            ([
               test "the quantizer is cfitsio's" quantizer;

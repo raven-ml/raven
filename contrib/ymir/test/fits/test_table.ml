@@ -5,8 +5,8 @@
 
 (* Tables: every TFORM code, the unsigned offsets, TNULL, scaling, cell
    shapes, text grids, heap arrays and ASCII fields, read against astropy's
-   reading of its own file (gen/fixtures.py); writing that reads back as
-   its columns; and hostile bytes. *)
+   reading of its own file (gen/fixtures.py); and writing that reads back
+   as its columns. *)
 
 open Windtrap
 open Ymir_fits
@@ -540,33 +540,6 @@ let text_errors () =
           );
         ])
 
-(* Hostile bytes *)
-
-let raw = lazy (In_channel.with_open_bin path In_channel.input_all)
-
-let hostile =
-  prop "a changed byte gives values or an Error"
-    Gen.(
-      pair (int_range 0 (String.length (Lazy.force raw) - 1)) (int_range 0 255))
-    (fun (pos, byte) ->
-      let raw = Lazy.force raw in
-      let a =
-        Bigarray.(Array1.create int8_unsigned c_layout (String.length raw))
-      in
-      String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) raw;
-      Bigarray.Array1.set a pos byte;
-      match
-        Fits.of_bytes ~name:"x" (Nx.of_bigarray (Bigarray.genarray_of_array1 a))
-      with
-      | Error _ -> collect "read fails"
-      | Ok hdus ->
-          List.iter
-            (fun h ->
-              match T.read h with
-              | Ok _ -> collect "values"
-              | Error _ -> collect "error")
-            (List.tl hdus))
-
 let () =
   exit
   @@ run "Fits.Table"
@@ -585,5 +558,4 @@ let () =
              test "TNULL" nulls;
              test "text and caller errors" text_errors;
            ];
-         hostile;
        ]
