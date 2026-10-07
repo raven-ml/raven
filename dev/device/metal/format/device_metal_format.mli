@@ -20,14 +20,14 @@
     else: it ends no encoder and makes no other encoder or command buffer, and
     waiting for earlier work and signalling [v] are the driver's. {!field-split}
     starts a new command buffer. The fill stops at the first call that fails and
-    returns its failure, which is not [0], or returns [0] once every call
+    returns the failure [split] returned, or returns [0] once every call
     succeeded. [queue] is valid only during the call.
 
     After the fill returns, the driver ends and commits the last command buffer.
     The value [v] is reached once every command buffer of the work completed; if
-    one fails, Metal's reason loses the device. A fill that splits [n] times
-    makes [n + 1] command buffers, the work's ring units, which the driver
-    counts against the command buffers its queue holds.
+    one fails, Metal's reason loses the device. A fill whose work declares [r]
+    ring units makes at most [r] command buffers: it splits at most [r - 1]
+    times.
 
     {b References.}
     - Apple's Metal framework headers (macOS 26 SDK):
@@ -39,48 +39,67 @@
        Encoding indirect command buffers on the CPU}: the buffers that the
       commands of an indirect command buffer use must be declared resident. *)
 
-type command = {
+type dispatch = {
   pipeline : nativeint;
       (** Its [MTLComputePipelineState]: an entry of an image the device loaded.
       *)
   offset : int;
-      (** The offset, in bytes, of its arguments in the indirect command
-          buffer's buffer, its kernel buffer [0]. *)
+      (** Where its arguments start in the indirect command buffer's argument
+          buffer, bound as its kernel buffer [0]: bytes from the argument
+          buffer's first byte. *)
   groups : int * int * int;  (** Its threadgroups per grid. *)
   threads : int * int * int;  (** Its threads per threadgroup. *)
 }
-(** The type for the dispatches of an indirect command buffer. *)
+(** The type for the dispatches an indirect command buffer records. *)
+
+type icb = {
+  handle : nativeint;  (** The [MTLIndirectCommandBuffer]. *)
+  commands : nativeint array;
+      (** The [MTLIndirectComputeCommand] of each dispatch, in order. A fill may
+          change one before it runs [handle], while no earlier work that runs
+          [handle] is in flight: for instance its threadgroups per grid, with
+          [concurrentDispatchThreadgroups:threadsPerThreadgroup:]. *)
+  release : unit -> unit;
+      (** [release ()] releases [handle], [commands] and the pipelines they
+          hold. The linked step that made them calls it once, after the last
+          work that ran [handle] completed; until then they live, whatever
+          happens to their pipelines' image. Raises [Invalid_argument] if called
+          twice. Any domain may call it. *)
+}
+(** The type for indirect command buffers. *)
 
 type t = {
-  icb :
-    nativeint -> command array -> (nativeint * nativeint array, string) result;
-      (** [icb buffer cmds] is [Ok (icb, commands)]: [icb], an
-          [MTLIndirectCommandBuffer] with one concurrent dispatch per command of
-          [cmds], in order, each on its arguments in [buffer] and run after the
-          one before it completed; and [commands], the
-          [MTLIndirectComputeCommand] of each dispatch, in the same order, which
-          a fill may change before it runs [icb], for instance with
-          [concurrentDispatchThreadgroups:threadsPerThreadgroup:]. [buffer] is
-          the [MTLBuffer] of a memory of the device. [icb], [commands] and the
-          pipelines they hold live until that memory is freed to the driver,
-          which happens after the work that ran them.
+  icb : nativeint -> dispatch array -> (icb, string) result;
+      (** [icb buffer ds] is an indirect command buffer with one concurrent
+          dispatch per element of [ds], in order, each on its arguments in the
+          argument buffer [buffer], an [MTLBuffer] of the device, and run after
+          the one before it completed. [ds] may be empty.
 
-          The result is [Error msg] if a command asks for more threads per
+          The result is [Error msg] if a dispatch asks for more threads per
           threadgroup than its pipeline allows
-          ([maxTotalThreadsPerThreadgroup]), or if Metal cannot make [icb].
+          ([maxTotalThreadsPerThreadgroup]), or if Metal cannot make the
+          indirect command buffer.
 
-          Raises [Invalid_argument] if an offset lies outside [buffer], or a
-          size is less than [1]. Any domain may call it. *)
+          Raises [Invalid_argument] if [buffer] or a pipeline belongs to another
+          [MTLDevice], an offset lies outside [buffer], or a size is less than
+          [1]. Any domain may call it. *)
   split : nativeint;
-      (** [split] is the address of [int split(void *queue, uint64_t *times)],
-          which a fill calls to end the open command buffer and start a new one.
-          It commits the open command buffer and stores at [queue] the encoder
-          of the next, made as the first was. Unless [times] is [NULL], it
-          writes the committed command buffer's GPU start and end times into
-          [times[0]] and [times[1]] before [v] is reached: nanoseconds of the
-          host's monotonic clock, as unsigned integers in the host's byte order.
-          It returns [0], or a failure that the fill returns as its own. Only a
-          fill, during its call, may call it. *)
+      (** [split] is the address of
+          [int split(void *queue, uint64_t *start, uint64_t *end)], which a fill
+          calls to end the open command buffer and start a new one. It commits
+          the open command buffer and stores at [queue] the encoder of the next,
+          made as the first was. When the queue holds as many command buffers as
+          it can, it waits until the work's own earlier command buffers
+          complete, so one work may make more command buffers than the queue
+          holds. Unless [start] is [NULL], it writes the time the committed
+          command buffer started on the GPU at [start] before [v] is reached;
+          likewise the time it ended at [end]. Times are nanoseconds of the host
+          clock ([CLOCK_UPTIME_RAW], the clock of Metal's [GPUStartTime]), as
+          unsigned 64-bit integers in the host's byte order.
+
+          It returns [0], or a failure that the fill returns as its own: a
+          failure if the fill already made as many command buffers as its work
+          declared ring units. Only a fill, during its call, may call it. *)
 }
 (** The type for what compiled code needs from a Metal device. *)
 
