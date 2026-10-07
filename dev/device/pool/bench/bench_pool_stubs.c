@@ -190,12 +190,14 @@ static void *floor_thread(void *arg) {
   }
 }
 
-/* [floor_start threads] starts [threads] - 1 floor threads. */
+/* [floor_start threads] starts [threads] - 1 floor threads. They begin at
+   generation 0, which a row's earlier threads may have moved past. */
 value pool_bench_floor_start(value v_threads) {
   floor_job.threads = Int_val(v_threads);
   floor_job.ids = calloc((size_t)floor_job.threads, sizeof *floor_job.ids);
   if (floor_job.ids == NULL) abort();
   atomic_store(&floor_job.stop, 0);
+  atomic_store(&floor_job.generation, 0);
   for (int i = 1; i < floor_job.threads; i++)
     if (pthread_create(&floor_job.ids[i], NULL, floor_thread,
                        (void *)(intptr_t)i) != 0)
