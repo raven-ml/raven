@@ -3,7 +3,10 @@
 ;
 ; The sanitize profile compiles the C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
-; executable, whose link_flags keep :standard to carry them.
+; executable, whose link_flags keep :standard to carry them. Its options are
+; CI's, so a local run fails where CI does: a report ends the process, leaks
+; are not errors, and a domain's thread exits on the signal stack the OCaml
+; runtime allocated, which AddressSanitizer would unmap as its own.
 ;
 ; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout of its own: the
 ; watch server is shared, and a test that never ends blocks every build.
@@ -26,6 +29,8 @@
   (link_flags
    (:standard -cclib -fsanitize=address,undefined))
   (env-vars
+   (ASAN_OPTIONS halt_on_error=1:detect_leaks=0:use_sigaltstack=0)
+   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
    (WINDTRAP_TIMEOUT 60)))
  (_
   (c_flags
