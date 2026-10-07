@@ -1,34 +1,45 @@
-; A consumer library whose stubs call nx_pool_run, run as native code and
-; as bytecode, where each library's stubs load as a shared library of their
-; own and resolve the pool's symbols at load.
+; The pool's suite. Its probes are the C stubs of a library of their own,
+; which call nx_pool.h as a consumer's stubs do. The probes fork and read
+; signal masks, so the suite runs where POSIX does.
 
 (library
- (name pool_smoke)
- (modules pool_smoke)
+ (name pool_probe)
+ (modules pool_probe)
+ (enabled_if
+  (<> %{os_type} Win32))
  (libraries device_pool)
  (foreign_stubs
   (language c)
-  (names pool_smoke_stubs)
+  (names pool_probe_stubs)
   (flags :standard -std=c11 -Wall -Wextra)))
 
 (executable
- (name smoke)
- (modules smoke)
+ (name test_pool)
+ (modules test_pool)
  (modes native byte)
- (libraries pool_smoke))
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries pool_probe unix windtrap))
 
 (rule
  (alias runtest)
+ (enabled_if
+  (<> %{os_type} Win32))
  (action
-  (run %{dep:smoke.exe})))
+  (run %{dep:test_pool.exe})))
 
-; ocamlrun finds each library's stubs on CAML_LD_LIBRARY_PATH.
+; ocamlrun loads each library's stubs as a shared library of its own, found
+; on CAML_LD_LIBRARY_PATH (':' separates its directories, as on every system
+; the suite runs on); the pool's symbols resolve at load. windtrap's stubs
+; sit in the stublibs directory beside its library.
 
 (rule
  (alias runtest)
- (deps ../dlldevice_pool_stubs.so dllpool_smoke_stubs.so)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (deps ../dlldevice_pool_stubs.so dllpool_probe_stubs.so)
  (action
   (setenv
    CAML_LD_LIBRARY_PATH
-   "..:."
-   (run %{dep:smoke.bc}))))
+   "..:.:%{lib:windtrap:../stublibs}"
+   (run %{dep:test_pool.bc}))))

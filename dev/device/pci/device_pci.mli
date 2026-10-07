@@ -69,9 +69,11 @@
 
 (** {1:hardware Reaching the hardware} *)
 
-(* Pending: module Machine = Machine *)
+module Machine = Machine
+(** Machines, their PCI functions, and transports to other machines. *)
 
-(* Pending: module Function = Function *)
+module Function = Function
+(** PCI functions the process has taken. *)
 
 module Window = Window
 (** Ranges of a machine's addresses that the process reads and writes. *)

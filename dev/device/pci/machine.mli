@@ -46,7 +46,7 @@ val failed : t -> string option
 val page : t -> int
 (** [page m] is the page size of [m] in bytes. *)
 
-type id = {
+type id = Ops.id = {
   bus : string;  (** Its bus address. *)
   vendor : int;  (** Its vendor's identifier, such as [0x1002] for AMD. *)
   device : int;  (** Its device identifier, assigned by its vendor. *)
@@ -86,14 +86,14 @@ val wait : t -> ms:int -> (unit -> bool) -> bool
     operation is called. *)
 
 (** The type for how a function reaches system memory. *)
-type addressing =
+type addressing = Ops.addressing =
   | Physical
       (** At physical addresses of its machine, which no IOMMU translates. *)
   | Iommu
       (** Through an IOMMU, at device addresses the process maps for it alone.
       *)
 
-type fn = {
+type fn = Ops.fn = {
   addressing : addressing;  (** How it reaches system memory. *)
   config : int -> int -> int;  (** {!Function.config}. *)
   set_config : int -> int -> int -> unit;  (** {!Function.set_config}. *)
@@ -113,7 +113,7 @@ type fn = {
 }
 (** The type for the operations on a function a transport took. *)
 
-type ops = {
+type ops = Ops.ops = {
   transport : Window.transport;
       (** The C accesses to the machine's addresses, which its windows use and
           whose [failed] function is {!failed}'s. *)
@@ -127,3 +127,8 @@ type ops = {
 
 val make : name:string -> ops -> t
 (** [make ~name ops] is the machine named [name] that [ops] reaches. *)
+
+(**/**)
+
+val take : t -> lock:string -> string -> (fn, string) result
+(* [take m ~lock bus] is [m]'s take: {!Function.take} builds on it. *)

@@ -3,11 +3,11 @@
 
 (library
  (name device_pci)
- (modules device_pci tlsf window sysmem space page_table)
- (private_modules tlsf sysmem)
+ (modules device_pci tlsf window sysmem space page_table address ops sysfs vfio local machine function)
+ (private_modules tlsf sysmem address ops sysfs vfio local)
  (libraries unix)
  (install_c_headers device_pci)
  (foreign_stubs
   (language c)
-  (names device_pci_window device_pci_sysmem)
+  (names device_pci_window device_pci_sysmem device_pci_files device_pci_vfio device_pci_machine)
   (flags :standard -std=c11 -O2 -Wall -Wextra)))
