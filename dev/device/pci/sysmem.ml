@@ -13,7 +13,6 @@ external release_at : int -> int -> unit = "caml_device_pci_sysmem_release"
 external unmap_at : int -> int -> unit = "caml_device_pci_sysmem_unmap"
 external lock_at : int -> int -> unit = "caml_device_pci_sysmem_lock"
 external unlock_at : int -> int -> unit = "caml_device_pci_sysmem_unlock"
-external pagemap : int -> int -> string = "caml_device_pci_pagemap"
 
 let page = page_size ()
 let round_page n = (n + page - 1) / page * page
@@ -65,6 +64,37 @@ let check_setting () =
            setting);
     Atomic.set checked true
   end
+
+(* The page-map entries of the [pages] pages from [a], 8 bytes each. The kernel
+   walks the page tables for what is read: a channel, which reads 64 KiB ahead,
+   would make it walk 32 MiB of them to pin one page. [Unix.read] reads at most
+   64 KiB a call and releases the runtime for each. *)
+let pagemap_file = "/proc/self/pagemap"
+
+let pagemap a pages =
+  let n = 8 * pages and b = Bytes.create (8 * pages) in
+  let read fd =
+    ignore (Unix.lseek fd (a / page * 8) SEEK_SET);
+    let rec go got =
+      if got < n then
+        match Unix.read fd b got (n - got) with
+        | 0 -> raise (Unix.Unix_error (EIO, "read", pagemap_file))
+        | k -> go (got + k)
+    in
+    go 0
+  in
+  match Unix.openfile pagemap_file [ O_RDONLY; O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error (e, _, _) ->
+      failwith
+        (Printf.sprintf "opening %s: %s" pagemap_file (Unix.error_message e))
+  | fd -> (
+      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+      match read fd with
+      | () -> Bytes.unsafe_to_string b
+      | exception Unix.Unix_error (e, _, _) ->
+          failwith
+            (Printf.sprintf "reading %s: %s" pagemap_file (Unix.error_message e))
+      )
 
 (* Bits 0-54 of a page-map entry are the page frame, which reads as 0 without
    the privilege. *)
