@@ -48,6 +48,7 @@ qmd/launch/blackwell	wall_time	batch=8192	n=20	9.264e-07	9.125e-07 9.168e-07 9.1
 # forced: blessed under load 5.3 on 10 cores
 # forced: blessed qmd/launch/ada qmd/launch/blackwell cubin/of-string/nv-128-kernels under load 6.9 on 10 cores
 # forced: blessed qmd/launch/ada qmd/launch/blackwell launch/make/ada cubin/of-string/nv-128-kernels cubin/kernel/last-of-128 under load 9.9 on 10 cores
+# forced: blessed qmd/launch/ada qmd/launch/blackwell under load 16.3 on 10 cores
 
 cubin/elf-of-string/nv-128-kernels	alloc_words	exact	31432
 cubin/elf-of-string/nv-128-kernels	wall_time	batch=32	n=20	1.584e-04	1.532e-04 1.534e-04 1.539e-04 1.541e-04 1.549e-04 1.564e-04 1.573e-04 1.580e-04 1.583e-04 1.584e-04 1.584e-04 1.585e-04 1.595e-04 1.597e-04 1.599e-04 1.603e-04 1.607e-04 1.610e-04 1.623e-04 1.659e-04
@@ -81,10 +82,10 @@ qmd/encode/ada	alloc_words	exact	240
 qmd/encode/ada	wall_time	batch=32768	n=20	1.990e-07	1.941e-07 1.958e-07 1.969e-07 1.972e-07 1.975e-07 1.976e-07 1.977e-07 1.977e-07 1.978e-07 1.989e-07 1.992e-07 1.995e-07 1.997e-07 1.999e-07 2.000e-07 2.050e-07 2.055e-07 2.080e-07 2.091e-07 2.127e-07
 qmd/fill-into-bytes/ada	alloc_words	exact	0
 qmd/fill-into-bytes/ada	wall_time	batch=262144	n=20	3.401e-08	3.358e-08 3.369e-08 3.369e-08 3.380e-08 3.386e-08 3.390e-08 3.393e-08 3.393e-08 3.396e-08 3.400e-08 3.402e-08 3.406e-08 3.407e-08 3.409e-08 3.409e-08 3.411e-08 3.416e-08 3.419e-08 3.421e-08 3.445e-08
-qmd/launch/ada	alloc_words	exact	1321
-qmd/launch/ada	wall_time	batch=4096	n=20	1.515e-06	1.472e-06 1.486e-06 1.493e-06 1.496e-06 1.499e-06 1.505e-06 1.505e-06 1.506e-06 1.506e-06 1.513e-06 1.516e-06 1.516e-06 1.518e-06 1.521e-06 1.523e-06 1.526e-06 1.530e-06 1.535e-06 1.536e-06 1.538e-06
-qmd/launch/blackwell	alloc_words	exact	1420
-qmd/launch/blackwell	wall_time	batch=4096	n=20	1.490e-06	1.435e-06 1.445e-06 1.463e-06 1.469e-06 1.475e-06 1.477e-06 1.480e-06 1.485e-06 1.487e-06 1.488e-06 1.492e-06 1.496e-06 1.499e-06 1.501e-06 1.502e-06 1.502e-06 1.507e-06 1.508e-06 1.509e-06 1.524e-06
+qmd/launch/ada	alloc_words	exact	690
+qmd/launch/ada	wall_time	batch=8192	n=20	8.136e-07	7.987e-07 8.016e-07 8.045e-07 8.066e-07 8.093e-07 8.093e-07 8.112e-07 8.118e-07 8.123e-07 8.132e-07 8.139e-07 8.140e-07 8.141e-07 8.154e-07 8.156e-07 8.168e-07 8.171e-07 8.190e-07 8.193e-07 8.350e-07
+qmd/launch/blackwell	alloc_words	exact	725
+qmd/launch/blackwell	wall_time	batch=8192	n=20	8.338e-07	8.160e-07 8.201e-07 8.238e-07 8.247e-07 8.265e-07 8.285e-07 8.293e-07 8.299e-07 8.307e-07 8.324e-07 8.353e-07 8.359e-07 8.381e-07 8.425e-07 8.426e-07 8.444e-07 8.452e-07 8.516e-07 8.593e-07 8.596e-07
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
