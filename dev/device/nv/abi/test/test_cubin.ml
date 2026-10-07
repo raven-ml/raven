@@ -292,7 +292,9 @@ let relocatable_gen ~valid =
     frequency
       [
         (3, int_range (-0x1000) 0x1000);
-        (1, of_list ~pp:Format.pp_print_int [ -(1 lsl 48); 1 lsl 48; -1 ]);
+        ( 1,
+          of_list ~pp:Format.pp_print_int
+            [ min_int; -(1 lsl 48); -1; 1 lsl 48; 1 lsl 62; max_int ] );
       ]
   in
   let kinds = [ r_cuda_64; r_cuda_abs32_lo_32; r_cuda_abs32_hi_32 ] in
@@ -333,7 +335,9 @@ let base =
   Gen.frequency
     [
       (3, Gen.int_range 0 ((1 lsl 49) - 1));
-      (1, Gen.of_list ~pp:Format.pp_print_int [ 0; (1 lsl 49) - 1 ]);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_int
+          [ min_int; -1; 0; (1 lsl 49) - 1; max_int ] );
     ]
 
 (* What a relocation writes, as cubin.mli states it, over the ELF layout: the
@@ -386,7 +390,7 @@ let relocations =
           let obj = relocatable r in
           let c = read obj and o = layout obj in
           cover "a patch" (o.relocations <> []);
-          cover "an address that wraps below zero"
+          cover "an address of 2^63 or more"
             (List.exists
                (fun (r : Device_elf.relocation) ->
                  match expected_patch ~base r with
