@@ -4356,7 +4356,11 @@ stores through a pad.
   batch of its own whose loop stops after a trip that clears the flag, inside
   the engine's back edge of one trip, which reads the flag before the first; a
   loop around a back edge stays the engine's, which reads its flag before each
-  trip. A split program passes its split, its blocks
+  trip. The program does not read the flag before the first trip itself: the
+  loop's trips would then be a load ordered after the calls before it, and
+  `Shape.ssimplify` of a window moving with the loop rebuilds the loop's range
+  with those calls inside, so the program would hold two copies of the range
+  and one of them no end. A split program passes its split, its blocks
   `max 1 (min extent (min (4·w) (ops / 2^18)))` computed by the program for
   the host's workers `w`, a variable the engine binds at link. A run waits for
   the work that touched the memory the batch reaches, then calls the program
