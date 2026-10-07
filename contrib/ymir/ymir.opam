@@ -19,6 +19,7 @@ depends: [
   "rune" {with-test & >= "1.0.0~alpha3"}
   "jera" {with-test & >= "1.0.0~alpha3"}
   "windtrap" {with-test & >= "0.2.0"}
+  "thumper" {with-test}
   "odoc" {with-doc}
 ]
 build: [

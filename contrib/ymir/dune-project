@@ -45,6 +45,7 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0))))
+    (>= 0.2.0)))
+  (thumper :with-test))
  (tags
   (units physical-quantities astronomy science)))
