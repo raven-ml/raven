@@ -429,19 +429,23 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
    A cycle builds an orthonormal basis [V] of the Krylov space of [a M] from the
    residual, [M] the preconditioner, with the Hessenberg matrix [H] of [a M] on
    it: step [j] orthogonalises [a M v_j] against the basis by Gram–Schmidt
-   applied twice, which keeps [V] orthonormal to rounding. The [y] of least [‖β
-   e₁ − H y‖] comes from [H]'s pseudoinverse, which also holds when the space
-   stops growing: an exact solution in the span leaves zero columns, whose [y]
-   is zero. The cycle then moves [u] by [M Vᵀ y] and applies [a] for the next
-   residual. The loop's carry holds [u], the residual [r − a u] and the count of
-   cycles. *)
+   applied twice, which keeps [V] orthonormal to rounding. Each column of [H] is
+   reduced as it arrives: [Q], the product of the earlier steps' Givens
+   rotations, has row [j + 1] still [e_{j+1}], so the column's diagonal under
+   [Q] is [Q]'s row [j] against it, and one more rotation, which joins [Q],
+   zeroes its subdiagonal. After [restart] steps [Q H] is an upper triangle [R]
+   over a zero row, and the [y] of least [‖β e₁ − H y‖] solves [R y = β Q e₁]
+   above that row.
+
+   When the space stops growing the next basis vector is zero, and so are the
+   columns after it: a column with nothing to rotate keeps the identity, and a
+   zero on [R]'s diagonal reads as one, so those columns' [y] is zero. The cycle
+   then moves [u] by [M Vᵀ y] and applies [a] for the next residual. The loop's
+   carry holds [u], the residual [r − a u] and the count of cycles. *)
 
 let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
     (res : (float, d) Nx.t) =
   let rows = restart + 1 in
-  (* [e_k] among the basis's rows, and among [H]'s columns. *)
-  let row k = Nx.cast dtype (Nx.equal (Nx.arange Nx.int32 0 rows 1) k) in
-  let column k = Nx.cast dtype (Nx.equal (Nx.arange Nx.int32 0 restart 1) k) in
   let outer x y =
     Nx.mul (Nx.reshape [| Nx.dim 0 x; 1 |] x) (Nx.reshape [| 1; Nx.dim 0 y |] y)
   in
@@ -450,33 +454,51 @@ let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
     Nx.where zero (Nx.zeros_like w)
       (Nx.div w (Nx.where zero (Nx.ones_like norm) norm))
   in
-  let step (v, h) j =
-    let w = apply (precondition (Nx.matmul (row j) v)) in
+  (* Step [j] reads [e_j] and [e_{j+1}] among the basis's rows and [e_j] among
+     [H]'s columns. *)
+  let step (v, (h, q)) (here, (next, column)) =
+    let w = apply (precondition (Nx.matmul here v)) in
     let orthogonalise w =
       let c = Nx.matmul v w in
       (Nx.sub w (Nx.matmul (Nx.transpose v) c), c)
     in
     let w, c1 = orthogonalise w in
     let w, c2 = orthogonalise w in
-    let norm = Nx.norm w in
-    let next = row (Nx.add_s j 1l) in
+    let c = Nx.add c1 c2 and norm = Nx.norm w in
     let v = Nx.add v (outer next (normalise w norm)) in
-    let h =
-      Nx.add h (outer (Nx.add (Nx.add c1 c2) (Nx.mul next norm)) (column j))
+    let h = Nx.add h (outer (Nx.add c (Nx.mul next norm)) column) in
+    let qj = Nx.matmul here q in
+    let top = dot qj c in
+    let rho = Nx.sqrt (Nx.add (Nx.square top) (Nx.square norm)) in
+    let none = Nx.equal_s rho 0. in
+    let rho = Nx.where none (Nx.ones_like rho) rho in
+    let cos = Nx.where none (Nx.ones_like rho) (Nx.div top rho)
+    and sin = Nx.div norm rho in
+    let q =
+      Nx.add q
+        (Nx.add
+           (outer here (Nx.sub (Nx.add (Nx.mul cos qj) (Nx.mul sin next)) qj))
+           (outer next (Nx.sub (Nx.sub (Nx.mul cos next) (Nx.mul sin qj)) next)))
     in
-    ((v, h), ())
+    ((v, (h, q)), ())
   in
   let beta = Nx.norm res in
-  let first = row (Nx.scalar Nx.int32 0l) in
-  let (v, h), () =
+  let basis = Nx.eye dtype rows in
+  let (v, (h, q)), () =
     Rune.scan
-      Nx.Ptree.(pair tensor tensor)
-      Nx.Ptree.tensor Nx.Ptree.unit ~f:step
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      Nx.Ptree.unit ~f:step
       ~init:
-        (outer first (normalise res beta), Nx.zeros dtype [| rows; restart |])
-      (Nx.arange Nx.int32 0 restart 1)
+        ( outer (Nx.get [ 0 ] basis) (normalise res beta),
+          (Nx.zeros dtype [| rows; restart |], basis) )
+      ( Nx.slice [ Nx.R (0, restart) ] basis,
+        (Nx.slice [ Nx.R (1, rows) ] basis, Nx.eye dtype restart) )
   in
-  let y = Nx.matmul (Nx.pinv h) (Nx.mul first beta) in
+  let r = Nx.slice [ Nx.R (0, restart) ] (Nx.matmul q h) in
+  let unread = Nx.cast dtype (Nx.equal_s (Nx.diagonal r) 0.) in
+  let g = Nx.mul (Nx.slice [ Nx.R (0, restart); Nx.I 0 ] q) beta in
+  let y = Nx.solve_triangular ~upper:true (Nx.add r (Nx.diag unread)) g in
   precondition (Nx.matmul y (Nx.slice [ Nx.R (0, restart) ] v))
 
 let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget

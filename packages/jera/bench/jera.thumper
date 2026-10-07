@@ -8,35 +8,38 @@
 # forced: blessed ode-path-tsit5-100-pendulums/eager ode-path-tsit5-100-pendulums/compiled ode-path-tsit5-100-pendulums/grad under load 85.0 on 10 cores
 # forced: blessed ode-event-tsit5-100-pendulums/eager ode-event-tsit5-100-pendulums/compiled ode-event-tsit5-100-pendulums/grad under load 34.3 on 10 cores
 # forced: blessed ode-delay-tsit5-100-logistic/eager ode-delay-tsit5-100-logistic/compiled ode-delay-tsit5-100-logistic/grad under load 25.0 on 10 cores
+# forced: blessed linear-dense-128/eager linear-dense-128/compiled linear-dense-128/grad linear-banded-poisson-256/eager linear-banded-poisson-256/compiled linear-banded-poisson-256/grad linear-cg-poisson-256/eager linear-cg-poisson-256/compiled linear-cg-poisson-256/grad linear-gmres-convection-256/eager linear-gmres-convection-256/compiled linear-gmres-convection-256/grad under load 14.4 on 10 cores
+# forced: blessed linear-dense-128/eager linear-gmres-convection-256/grad under load 13.2 on 10 cores
+# forced: blessed linear-dense-128/eager linear-gmres-convection-256/grad under load 15.3 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
 grid-cubic-16x16-eval-1k/eager	alloc_words	exact	190201
 grid-cubic-16x16-eval-1k/eager	wall_time	batch=8	n=20	1.008e-03	9.372e-04 9.517e-04 9.563e-04 9.617e-04 9.634e-04 9.655e-04 9.659e-04 9.934e-04 9.959e-04 1.007e-03 1.008e-03 1.013e-03 1.018e-03 1.023e-03 1.025e-03 1.027e-03 1.030e-03 1.037e-03 1.053e-03 1.141e-03
-linear-banded-poisson-256/compiled	alloc_words	exact	188494
-linear-banded-poisson-256/compiled	wall_time	batch=16	n=20	6.007e-04	5.951e-04 5.957e-04 5.961e-04 5.965e-04 5.966e-04 5.968e-04 5.978e-04 5.979e-04 5.992e-04 6.003e-04 6.012e-04 6.031e-04 6.036e-04 6.054e-04 6.060e-04 6.069e-04 6.071e-04 6.109e-04 6.159e-04 6.162e-04
-linear-banded-poisson-256/eager	alloc_words	exact	2403247
-linear-banded-poisson-256/eager	wall_time	batch=1	n=20	5.435e-03	5.241e-03 5.400e-03 5.407e-03 5.412e-03 5.414e-03 5.414e-03 5.417e-03 5.417e-03 5.419e-03 5.432e-03 5.437e-03 5.445e-03 5.446e-03 5.491e-03 5.511e-03 5.511e-03 5.513e-03 5.528e-03 5.544e-03 5.551e-03
-linear-banded-poisson-256/grad	alloc_words	exact	421510
-linear-banded-poisson-256/grad	wall_time	batch=4	n=20	1.306e-03	1.300e-03 1.302e-03 1.303e-03 1.303e-03 1.303e-03 1.303e-03 1.304e-03 1.304e-03 1.305e-03 1.305e-03 1.306e-03 1.307e-03 1.309e-03 1.310e-03 1.311e-03 1.313e-03 1.317e-03 1.320e-03 1.321e-03 1.358e-03
-linear-cg-poisson-256/compiled	alloc_words	exact	254894
-linear-cg-poisson-256/compiled	wall_time	batch=8	n=20	1.213e-03	1.207e-03 1.208e-03 1.208e-03 1.208e-03 1.208e-03 1.209e-03 1.210e-03 1.211e-03 1.212e-03 1.213e-03 1.213e-03 1.215e-03 1.215e-03 1.216e-03 1.217e-03 1.218e-03 1.221e-03 1.227e-03 1.228e-03 1.242e-03
-linear-cg-poisson-256/eager	alloc_words	exact	1689031
-linear-cg-poisson-256/eager	wall_time	batch=1	n=20	4.340e-03	4.246e-03 4.256e-03 4.279e-03 4.280e-03 4.281e-03 4.281e-03 4.302e-03 4.315e-03 4.322e-03 4.338e-03 4.343e-03 4.353e-03 4.367e-03 4.373e-03 4.382e-03 4.384e-03 4.418e-03 4.426e-03 4.464e-03 4.489e-03
-linear-cg-poisson-256/grad	alloc_words	exact	603439
-linear-cg-poisson-256/grad	wall_time	batch=2	n=20	2.749e-03	2.739e-03 2.740e-03 2.740e-03 2.742e-03 2.743e-03 2.744e-03 2.744e-03 2.744e-03 2.748e-03 2.748e-03 2.750e-03 2.750e-03 2.755e-03 2.757e-03 2.759e-03 2.766e-03 2.772e-03 2.832e-03 2.832e-03 2.842e-03
-linear-dense-128/compiled	alloc_words	exact	48683
-linear-dense-128/compiled	wall_time	batch=2	n=20	2.959e-03	2.940e-03 2.943e-03 2.945e-03 2.945e-03 2.949e-03 2.949e-03 2.950e-03 2.952e-03 2.956e-03 2.959e-03 2.959e-03 2.962e-03 2.965e-03 2.968e-03 2.972e-03 2.973e-03 2.979e-03 2.998e-03 3.013e-03 3.091e-03
-linear-dense-128/eager	alloc_words	exact	58844
-linear-dense-128/eager	wall_time	batch=8	n=20	8.375e-04	8.231e-04 8.241e-04 8.246e-04 8.259e-04 8.318e-04 8.321e-04 8.327e-04 8.328e-04 8.346e-04 8.368e-04 8.382e-04 8.416e-04 8.449e-04 8.450e-04 8.451e-04 8.465e-04 8.613e-04 8.615e-04 8.619e-04 8.628e-04
-linear-dense-128/grad	alloc_words	exact	95108
-linear-dense-128/grad	wall_time	batch=1	n=20	5.550e-03	5.524e-03 5.530e-03 5.531e-03 5.540e-03 5.540e-03 5.541e-03 5.543e-03 5.546e-03 5.547e-03 5.548e-03 5.551e-03 5.556e-03 5.559e-03 5.560e-03 5.564e-03 5.570e-03 5.574e-03 5.597e-03 5.641e-03 5.683e-03
-linear-gmres-convection-256/compiled	alloc_words	exact	1221313
-linear-gmres-convection-256/compiled	wall_time	batch=1	n=20	1.443e-02	1.414e-02 1.416e-02 1.420e-02 1.427e-02 1.434e-02 1.441e-02 1.441e-02 1.442e-02 1.442e-02 1.443e-02 1.443e-02 1.444e-02 1.445e-02 1.446e-02 1.446e-02 1.446e-02 1.447e-02 1.447e-02 1.447e-02 1.483e-02
-linear-gmres-convection-256/eager	alloc_words	exact	3326719
-linear-gmres-convection-256/eager	wall_time	batch=1	n=20	2.016e-02	1.974e-02 1.975e-02 1.978e-02 1.981e-02 1.984e-02 1.993e-02 2.011e-02 2.014e-02 2.014e-02 2.016e-02 2.016e-02 2.017e-02 2.019e-02 2.032e-02 2.035e-02 2.041e-02 2.044e-02 2.048e-02 2.107e-02 2.147e-02
-linear-gmres-convection-256/grad	alloc_words	exact	2398402
-linear-gmres-convection-256/grad	wall_time	batch=1	n=20	2.802e-02	2.796e-02 2.799e-02 2.799e-02 2.800e-02 2.800e-02 2.801e-02 2.801e-02 2.802e-02 2.802e-02 2.802e-02 2.802e-02 2.803e-02 2.810e-02 2.813e-02 2.817e-02 2.817e-02 2.817e-02 2.821e-02 2.834e-02 2.851e-02
+linear-banded-poisson-256/compiled	alloc_words	exact	1818
+linear-banded-poisson-256/compiled	wall_time	batch=128	n=20	5.114e-05	4.844e-05 4.867e-05 4.898e-05 4.908e-05 4.934e-05 5.017e-05 5.029e-05 5.072e-05 5.096e-05 5.107e-05 5.122e-05 5.174e-05 5.199e-05 5.229e-05 5.289e-05 5.334e-05 5.419e-05 5.588e-05 5.821e-05 5.956e-05
+linear-banded-poisson-256/eager	alloc_words	exact	1828353
+linear-banded-poisson-256/eager	wall_time	batch=1	n=20	6.188e-03	5.635e-03 5.917e-03 5.952e-03 5.961e-03 5.988e-03 6.038e-03 6.049e-03 6.084e-03 6.120e-03 6.163e-03 6.214e-03 6.241e-03 6.360e-03 6.450e-03 6.476e-03 6.536e-03 6.557e-03 6.745e-03 6.819e-03 6.871e-03
+linear-banded-poisson-256/grad	alloc_words	exact	1818
+linear-banded-poisson-256/grad	wall_time	batch=128	n=20	6.943e-05	6.754e-05 6.797e-05 6.814e-05 6.836e-05 6.863e-05 6.893e-05 6.896e-05 6.902e-05 6.905e-05 6.924e-05 6.963e-05 6.966e-05 6.980e-05 7.036e-05 7.054e-05 7.059e-05 7.218e-05 7.222e-05 7.483e-05 7.696e-05
+linear-cg-poisson-256/compiled	alloc_words	exact	2460
+linear-cg-poisson-256/compiled	wall_time	batch=16	n=20	4.577e-04	4.451e-04 4.451e-04 4.471e-04 4.472e-04 4.481e-04 4.500e-04 4.504e-04 4.517e-04 4.521e-04 4.570e-04 4.584e-04 4.624e-04 4.638e-04 4.663e-04 4.692e-04 4.724e-04 4.870e-04 5.007e-04 5.031e-04 5.229e-04
+linear-cg-poisson-256/eager	alloc_words	exact	1622133
+linear-cg-poisson-256/eager	wall_time	batch=1	n=20	5.371e-03	5.004e-03 5.092e-03 5.129e-03 5.158e-03 5.222e-03 5.273e-03 5.278e-03 5.311e-03 5.341e-03 5.345e-03 5.398e-03 5.405e-03 5.450e-03 5.507e-03 5.555e-03 5.715e-03 5.954e-03 6.027e-03 6.243e-03 6.328e-03
+linear-cg-poisson-256/grad	alloc_words	exact	3340
+linear-cg-poisson-256/grad	wall_time	batch=8	n=20	9.812e-04	9.567e-04 9.604e-04 9.630e-04 9.632e-04 9.675e-04 9.680e-04 9.696e-04 9.720e-04 9.736e-04 9.769e-04 9.856e-04 9.867e-04 9.950e-04 9.982e-04 9.993e-04 1.005e-03 1.008e-03 1.022e-03 1.034e-03 1.068e-03
+linear-dense-128/compiled	alloc_words	exact	1818
+linear-dense-128/compiled	wall_time	batch=2	n=20	3.181e-03	2.992e-03 2.994e-03 3.066e-03 3.077e-03 3.082e-03 3.109e-03 3.122e-03 3.151e-03 3.162e-03 3.169e-03 3.192e-03 3.251e-03 3.271e-03 3.298e-03 3.304e-03 3.321e-03 3.351e-03 3.364e-03 3.382e-03 3.560e-03
+linear-dense-128/eager	alloc_words	exact	58613
+linear-dense-128/eager	wall_time	batch=4	n=20	1.195e-03	1.003e-03 1.035e-03 1.044e-03 1.087e-03 1.096e-03 1.107e-03 1.148e-03 1.157e-03 1.167e-03 1.169e-03 1.221e-03 1.265e-03 1.287e-03 1.360e-03 1.513e-03 1.711e-03 2.240e-03 2.345e-03 3.186e-03 4.245e-03
+linear-dense-128/grad	alloc_words	exact	1818
+linear-dense-128/grad	wall_time	batch=1	n=20	5.915e-03	5.719e-03 5.779e-03 5.814e-03 5.823e-03 5.829e-03 5.838e-03 5.850e-03 5.853e-03 5.907e-03 5.912e-03 5.918e-03 6.017e-03 6.144e-03 6.186e-03 6.246e-03 6.277e-03 6.323e-03 6.429e-03 6.594e-03 6.685e-03
+linear-gmres-convection-256/compiled	alloc_words	exact	2305
+linear-gmres-convection-256/compiled	wall_time	batch=1	n=20	5.063e-03	4.972e-03 4.992e-03 4.998e-03 5.001e-03 5.007e-03 5.013e-03 5.026e-03 5.029e-03 5.059e-03 5.060e-03 5.065e-03 5.096e-03 5.098e-03 5.116e-03 5.133e-03 5.168e-03 5.233e-03 5.311e-03 5.396e-03 5.584e-03
+linear-gmres-convection-256/eager	alloc_words	exact	3487369
+linear-gmres-convection-256/eager	wall_time	batch=1	n=20	2.531e-02	2.414e-02 2.446e-02 2.448e-02 2.465e-02 2.471e-02 2.507e-02 2.516e-02 2.518e-02 2.519e-02 2.531e-02 2.531e-02 2.533e-02 2.537e-02 2.562e-02 2.568e-02 2.573e-02 2.574e-02 2.610e-02 2.616e-02 2.692e-02
+linear-gmres-convection-256/grad	alloc_words	exact	3179
+linear-gmres-convection-256/grad	wall_time	batch=1	n=20	1.115e-02	1.109e-02 1.109e-02 1.110e-02 1.112e-02 1.113e-02 1.114e-02 1.114e-02 1.114e-02 1.114e-02 1.115e-02 1.116e-02 1.116e-02 1.116e-02 1.117e-02 1.119e-02 1.121e-02 1.122e-02 1.124e-02 1.127e-02 1.159e-02
 minimize-bracket-1k/compiled	alloc_words	exact	29248
 minimize-bracket-1k/compiled	wall_time	batch=16	n=20	4.714e-04	4.391e-04 4.506e-04 4.595e-04 4.630e-04 4.640e-04 4.671e-04 4.678e-04 4.696e-04 4.700e-04 4.711e-04 4.716e-04 4.739e-04 4.787e-04 4.818e-04 5.118e-04 5.256e-04 5.442e-04 5.458e-04 5.794e-04 6.009e-04
 minimize-bracket-1k/eager	alloc_words	exact	217962
