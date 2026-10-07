@@ -104,13 +104,12 @@ static long affinity_cpus(void) {
   return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
-/* The process's cgroup v2 directory: the cgroup2 mount that holds the path
-   of /proc/self/cgroup's "0::" line. A mount's root is the cgroup it shows,
-   so the directory is the mount point joined with the path below that
-   root. [mount] receives the mount point, where the walk to the ancestors
-   stops. Returns 0 if there is none. */
-static int cgroup_dir(char *dir, size_t dir_size, char *mount,
-                      size_t mount_size) {
+/* The process's cgroup v2 directory, written to [dir]: the cgroup2 mount
+   that holds the path of /proc/self/cgroup's "0::" line. A mount's root is
+   the cgroup it shows, so the directory is the mount point joined with the
+   path below that root. Returns the length of the mount point, where the
+   walk to the ancestors stops, or 0 if there is none. */
+static size_t cgroup_dir(char *dir, size_t size) {
   char line[4096], path[4096] = "", root[4096], point[4096];
   FILE *f = fopen("/proc/self/cgroup", "r");
   if (f == NULL) return 0;
@@ -120,20 +119,20 @@ static int cgroup_dir(char *dir, size_t dir_size, char *mount,
   fclose(f);
   if (path[0] != '/') return 0;
 
-  int found = 0;
+  size_t stop = 0;
   f = fopen("/proc/self/mountinfo", "r");
   if (f == NULL) return 0;
-  while (!found && fgets(line, sizeof line, f)) {
+  while (stop == 0 && fgets(line, sizeof line, f)) {
     if (strstr(line, " - cgroup2 ") == NULL) continue;
     if (sscanf(line, "%*s %*s %*s %4095s %4095s", root, point) != 2) continue;
     size_t n = strcmp(root, "/") == 0 ? 0 : strlen(root);
     if (strncmp(path, root, n) != 0 || (path[n] != '/' && path[n] != '\0'))
       continue;
-    found = snprintf(dir, dir_size, "%s%s", point, path + n) < (int)dir_size &&
-            snprintf(mount, mount_size, "%s", point) < (int)mount_size;
+    if (snprintf(dir, size, "%s%s", point, path + n) < (int)size)
+      stop = strlen(point);
   }
   fclose(f);
-  return found;
+  return stop;
 }
 
 /* The CPUs the cgroup quotas allow: the smallest of ceil (quota / period)
@@ -142,9 +141,9 @@ static int cgroup_dir(char *dir, size_t dir_size, char *mount,
    rounding a quota of 1.5 down would leave a third of it idle. A file
    reads "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
 static long quota_cpus(void) {
-  char dir[4096], mount[4096], file[4200];
-  if (!cgroup_dir(dir, sizeof dir, mount, sizeof mount)) return -1;
-  size_t stop = strlen(mount);
+  char dir[4096], file[4200];
+  size_t stop = cgroup_dir(dir, sizeof dir);
+  if (stop == 0) return -1;
   long least = -1;
   for (;;) {
     snprintf(file, sizeof file, "%s/cpu.max", dir);
@@ -185,13 +184,14 @@ static int count_cores(void) {
 }
 
 static int count_performance_cores(int cores) {
-  int p = 0;
 #if defined(__APPLE__)
+  int p = 0;
   size_t size = sizeof p;
-  if (sysctlbyname("hw.perflevel0.physicalcpu", &p, &size, NULL, 0) != 0)
-    p = 0;
+  if (sysctlbyname("hw.perflevel0.physicalcpu", &p, &size, NULL, 0) == 0 &&
+      p >= 1 && p <= cores)
+    return p;
 #endif
-  return p < 1 || p > cores ? cores : p;
+  return cores;
 }
 
 static int g_cores, g_performance_cores;
@@ -275,19 +275,23 @@ static void relax(void) {
 #endif
 }
 
-/* Spins while [*word] is [value] ([until] 0) or until it is ([until] 1), up
-   to the clock's [deadline], and returns the last value read. The clock is
-   read every 64 loads. */
-static uint64_t spin(_Atomic uint64_t *word, uint64_t value, int until,
+/* What a spin waits for: [*word] to leave [value], or to reach it. */
+typedef enum { LEAVE, REACH } spin_until;
+
+/* Spins until [*word] leaves or reaches [value], up to the clock's
+   [deadline], and returns the last value read. The clock is read every 64
+   loads. */
+static uint64_t spin(_Atomic uint64_t *word, uint64_t value, spin_until until,
                      uint64_t deadline) {
+  int reach = until == REACH;
   uint64_t v = atomic_load_explicit(word, memory_order_acquire);
-  if ((v == value) == until) return v;
+  if ((v == value) == reach) return v;
   uint64_t start = now_ns();
   for (;;) {
     for (int i = 0; i < 64; i++) {
       relax();
       v = atomic_load_explicit(word, memory_order_acquire);
-      if ((v == value) == until) return v;
+      if ((v == value) == reach) return v;
     }
     uint64_t now = now_ns();
     if (now >= deadline) return v;
@@ -341,24 +345,21 @@ static int participant_parked(pool *p, int threads) {
   return 0;
 }
 
-/* The generation of the next job after [seen], once it is written, spinning
-   for it until [deadline] and parked after. */
-static uint64_t next_job(pool *p, int id, uint64_t seen, uint64_t deadline) {
-  uint64_t g = seen;
-  for (;;) {
-    uint64_t v = spin(&p->generation, g, 0, deadline);
-    if (v == g) v = park_worker(p, id, g);
-    if (v % 2 == 0 && v != seen) return v;
-    g = v;
-  }
+/* The generation of the next job after [g], once it is written: spun for
+   until [deadline], parked for after. */
+static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
+  do {
+    uint64_t v = spin(&p->generation, g, LEAVE, deadline);
+    g = v == g ? park_worker(p, id, g) : v;
+  } while (g % 2 != 0);
+  return g;
 }
 
 static void *work(void *arg) {
   const worker *w = arg;
   pool *p = w->pool;
   in_body = 1;
-  /* Workers start before the first job, at generation 0: seeding [seen] with
-     0 makes a worker that first runs after job 1 was published process it. */
+  /* Workers start before the first job, at generation 0. */
   uint64_t seen = 0;
   /* The spin window runs from the worker's last part in a job, and a job it
      takes no part in leaves the window as it was: a worker that narrow jobs
@@ -454,9 +455,10 @@ fail_pool:
    reinitialising live pthread objects in place is undefined.
 
    init_mtx serialises lazy creation. The prepare handler holds it and the
-   current pool's drive and parking locks, so fork waits for a running job;
-   the parent releases them, and the child clears the pointer and releases
-   only the still-valid init_mtx. */
+   current pool's drive mutex, so fork waits for a running job of more than
+   one thread; the parent releases both, and the child clears the pointer
+   and releases only the still-valid init_mtx, never touching the old
+   pool's locks. */
 static _Atomic(pool *) g_pool;
 static pthread_mutex_t init_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
@@ -468,18 +470,12 @@ static void register_atfork(void) { atfork_ok = 1; }
 static void atfork_prepare(void) {
   pthread_mutex_lock(&init_mtx);
   pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
-  if (p) {
-    pthread_mutex_lock(&p->drive);
-    pthread_mutex_lock(&p->mtx);
-  }
+  if (p) pthread_mutex_lock(&p->drive);
 }
 
 static void atfork_parent(void) {
   pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
-  if (p) {
-    pthread_mutex_unlock(&p->mtx);
-    pthread_mutex_unlock(&p->drive);
-  }
+  if (p) pthread_mutex_unlock(&p->drive);
   pthread_mutex_unlock(&init_mtx);
 }
 
@@ -494,12 +490,14 @@ static void register_atfork(void) {
 #endif
 
 /* The pool, made at first use; NULL if it cannot be made, or if a later
-   fork could not be made safe, which leaves the caller computing alone. */
+   fork could not be made safe, which leaves the caller computing alone. A
+   pool exists only once the fork handlers are registered, so a job that
+   finds one skips the once. */
 static pool *get(void) {
-  pthread_once(&atfork_once, register_atfork);
-  if (!atfork_ok) return NULL;
   pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
   if (p) return p;
+  pthread_once(&atfork_once, register_atfork);
+  if (!atfork_ok) return NULL;
   pthread_mutex_lock(&init_mtx);
   p = atomic_load_explicit(&g_pool, memory_order_relaxed);
   if (!p) {
@@ -546,7 +544,7 @@ static void run_shared(pool *p, const job *j) {
   in_body = 0;
 
   if (atomic_load(&p->pending) != 0 &&
-      spin(&p->pending, 0, 1, now_ns() + spin_ns) != 0) {
+      spin(&p->pending, 0, REACH, now_ns() + spin_ns) != 0) {
     pthread_mutex_lock(&p->mtx);
     atomic_store(&p->waiting, 1);
     while (atomic_load(&p->pending) != 0) pthread_cond_wait(&p->done, &p->mtx);
