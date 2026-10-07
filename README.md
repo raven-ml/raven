@@ -28,6 +28,9 @@ let grad_f = Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x
 let tokenizer = Brot.from_file "tokenizer.json" |> Result.get_ok
 let ids = Brot.encode_ids tokenizer "The meaning of life is"
 
+(* jera — numerical methods *)
+let cos_integral = Jera.Quad.(fixed (Rule.gauss 10) Nx.cos (Range.v (Nx.zeros_like x) x))
+
 (* kaun — neural networks *)
 let layer = Kaun.Linear.init ~inputs:768 ~outputs:10
 let logits = Kaun.Linear.apply layer x
@@ -52,6 +55,7 @@ let () = Hugin.(line ~x:(num x) ~y:(num y) () |> save "sine.png")
 | ᚱ   | [**rune**](packages/rune/)     | JAX               | Automatic differentiation and functional transformations |
 | ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
 | ᚹ   | [**vega**](packages/vega/)     | Optax             | Composable gradient-based optimizers                     |
+| ᛄ   | [**jera**](packages/jera/)     | SciPy             | Systems, minima, integrals, interpolation, ODEs and SDEs |
 | ᚾ   | [**norn**](packages/norn/)     | NumPyro / Stan    | Probabilistic inference: models, samplers, diagnostics   |
 | ᚨ   | [**brot**](packages/brot/)     | HF Tokenizers     | Fast, HuggingFace-compatible tokenization                |
 | ᛃ   | [**talon**](packages/talon/)   | pandas / Polars   | Dataframes with typed queries, CSV and Parquet           |
@@ -63,10 +67,11 @@ let () = Hugin.(line ~x:(num x) ~y:(num y) () |> save "sine.png")
 
 Packages in [`contrib/`](contrib/) build against every change to the core and release on their own schedule.
 
-|     | Package                               | Like      | What it does                                   |
-| --- | ------------------------------------- | --------- | ---------------------------------------------- |
-| ᚠ   | [**fehu**](contrib/fehu/)             | Gymnasium | Reinforcement learning environments            |
-| ᛋ   | [**sowilo**](contrib/sowilo/)         | OpenCV    | Differentiable computer vision                 |
+|     | Package                               | Like      | What it does                                          |
+| --- | ------------------------------------- | --------- | ----------------------------------------------------- |
+| ᚠ   | [**fehu**](contrib/fehu/)             | Gymnasium | Reinforcement learning environments                   |
+| ᛋ   | [**sowilo**](contrib/sowilo/)         | OpenCV    | Differentiable computer vision                        |
+|     | [**ymir**](contrib/ymir/)             | Astropy   | Astronomy: units, frames, FITS, photometry, cosmology |
 
 ## Getting started
 
