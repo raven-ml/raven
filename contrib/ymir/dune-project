@@ -32,6 +32,8 @@
   dune
   (nx
    (>= 1.0.0~alpha3))
+  (compress
+   (>= 1.0.0~alpha3))
   (rune
    (and
     :with-test

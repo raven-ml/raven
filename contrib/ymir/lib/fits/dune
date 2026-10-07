@@ -1,0 +1,14 @@
+(library
+ (name ymir_fits)
+ (public_name ymir.fits)
+ (libraries nx nx.dtype nx.device nx.ragged ymir.units compress.deflate unix)
+ (private_modules
+  err
+  value
+  decimal
+  header
+  checksum
+  hdu
+  structure
+  image
+  files))

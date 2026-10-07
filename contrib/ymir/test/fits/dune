@@ -1,0 +1,6 @@
+(tests
+ (names test_header test_hdu test_image)
+ (package ymir)
+ (libraries ymir.fits nx nx.dtype windtrap)
+ (deps
+  (glob_files golden/*)))

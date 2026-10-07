@@ -4,6 +4,14 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- New library `ymir.fits`, FITS files without the compiler. `Fits.read`
+  copies a file's headers, checks every data unit's extent and reads no data;
+  `Fits.Header` keeps every record as the file held it, reading a value with
+  `Fits.Value` when asked, so one bad card fails alone. `Fits.Image.raw` and
+  `values` read stored numbers or physical values in the dtype the caller
+  names, with windows that read only the rows they cover; `Fits.Image.hdu`
+  and `Fits.write` write images whose structure, `DATASUM` and `CHECKSUM`
+  the writer computes, and `Fits.verify` checks them.
 - `Ymir.Frame` names the fixed celestial frames, ICRS, FK5 at J2000, Galactic,
   the J2000 ecliptic and supergalactic, with one value per frame type.
   `Frame.matrix` converts between any two from their standards' orientations,
