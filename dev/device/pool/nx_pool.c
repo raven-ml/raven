@@ -231,7 +231,6 @@ typedef struct pool pool;
 typedef struct {
   pool *pool;
   int id;
-  pthread_t thread;
 } worker;
 
 struct pool {
@@ -389,32 +388,34 @@ static void *work(void *arg) {
 
 /* Starts the workers of [p], with [stack_bytes] of stack and the signals
    sent to the process blocked, keeping those a body raises itself. A worker
-   that cannot be made ends the list: the job runs with those made. */
+   that cannot be made so ends the list: the job runs with those made. The
+   workers are never joined. */
 static void start_workers(pool *p, int wanted) {
+  p->threads = 1;
   pthread_attr_t attr;
-  int attr_ok = pthread_attr_init(&attr) == 0;
-  if (attr_ok) pthread_attr_setstacksize(&attr, stack_bytes);
+  if (pthread_attr_init(&attr) != 0) return;
+  int sized = pthread_attr_setstacksize(&attr, stack_bytes) == 0;
 #if !defined(_WIN32)
   sigset_t blocked, saved;
   sigfillset(&blocked);
-  int faults[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS};
+  static const int faults[] = {SIGSEGV, SIGBUS,  SIGFPE, SIGILL,
+                               SIGTRAP, SIGABRT, SIGSYS};
   for (size_t i = 0; i < sizeof faults / sizeof *faults; i++)
     sigdelset(&blocked, faults[i]);
   pthread_sigmask(SIG_SETMASK, &blocked, &saved);
 #endif
-  p->threads = 1;
-  for (int id = 1; id < wanted; id++) {
+  for (int id = 1; sized && id < wanted; id++) {
     worker *w = &p->workers[id];
     w->pool = p;
     w->id = id;
-    if (pthread_create(&w->thread, attr_ok ? &attr : NULL, work, w) != 0)
-      break;
+    pthread_t thread;
+    if (pthread_create(&thread, &attr, work, w) != 0) break;
     p->threads = id + 1;
   }
 #if !defined(_WIN32)
   pthread_sigmask(SIG_SETMASK, &saved, NULL);
 #endif
-  if (attr_ok) pthread_attr_destroy(&attr);
+  pthread_attr_destroy(&attr);
 }
 
 /* A new pool, or NULL if its memory or locks cannot be had. calloc's zeros
