@@ -236,20 +236,34 @@ let derivatives =
             in
             Nx.sum (Nx.mul w image)
           in
-          let at row col =
-            Nx.item [] (f (Nx.create f64 [| 2 |] [| row; col |]))
+          let at p = Nx.item [] (f (Nx.create f64 [| 2 |] p)) in
+          (* Central differences at step e and e/2, combined by Richardson's
+             extrapolation; the change of that estimate when e halves bounds
+             its error. Near a cell edge the circle nearly touches, the sum's
+             higher derivatives grow as (r - d)^(-3/2), and the differences
+             do not converge at any step a float64 sum resolves: such a centre
+             holds no reference. *)
+          let central i =
+            let d e =
+              let up = [| row; col |] and down = [| row; col |] in
+              up.(i) <- up.(i) +. e;
+              down.(i) <- down.(i) -. e;
+              (at up -. at down) /. (2. *. e)
+            in
+            let richardson e = ((4. *. d (e /. 2.)) -. d e) /. 3. in
+            let fine = richardson 5e-7 in
+            (fine, Float.abs (fine -. richardson 1e-6))
           in
-          let h = 1e-6 in
-          let fd =
-            [|
-              (at (row +. h) col -. at (row -. h) col) /. (2. *. h);
-              (at row (col +. h) -. at row (col -. h)) /. (2. *. h);
-            |]
-          in
+          let fd = Array.init 2 central in
+          (* A reference holds when its error is a tenth of the tolerance. *)
+          Array.iter
+            (fun (fd, error) ->
+              assume (error <= 0.1 *. (1e-6 +. (1e-6 *. Float.abs fd))))
+            fd;
           let d =
             Nx.to_array (Rune.grad' f (Nx.create f64 [| 2 |] [| row; col |]))
           in
-          equal (array (float_rel ~rel:1e-6 ~abs:1e-6)) fd d);
+          equal (array (float_rel ~rel:1e-6 ~abs:1e-6)) (Array.map fst fd) d);
       test "a zero radius has zero gradient" (fun () ->
           let d =
             Rune.grad'
