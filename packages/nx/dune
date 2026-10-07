@@ -1,7 +1,8 @@
 ; The sanitize profile compiles nx's C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
-; executable: CI runs the nx.io suite under it, with halt_on_error, so that a
-; codec that reads or writes out of bounds on a malformed stream fails there.
+; executable, whose link_flags keep :standard to carry them: CI runs every nx
+; suite under it, with halt_on_error, so that C that reads or writes out of
+; bounds, or whose behaviour is undefined, fails there.
 
 (env
  (sanitize

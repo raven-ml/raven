@@ -89,20 +89,21 @@ jobs:
           opam exec -- dune build --release packages/nx
           opam exec -- dune build --release @packages/nx/runtest
 
-      # The codecs parse untrusted bytes, and the bit kernels read and write
-      # views at any bit: their suites run with the C of nx built under
-      # AddressSanitizer and UndefinedBehaviorSanitizer, each property over
-      # 1000 cases. A domain's thread exits on the signal stack the OCaml
-      # runtime allocated, which AddressSanitizer would unmap as its own.
-      - name: Test nx.io and the bit dtype under the sanitizers
+      # Every nx suite runs with the C of nx built under AddressSanitizer and
+      # UndefinedBehaviorSanitizer. The codecs parse untrusted bytes, and the
+      # bit kernels read and write views at any bit: their properties run
+      # first, over 1000 cases each. A domain's thread exits on the signal
+      # stack the OCaml runtime allocated, which AddressSanitizer would unmap
+      # as its own.
+      - name: Test nx under the sanitizers
         if: runner.os != 'Windows'
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-          WINDTRAP_PROP_COUNT: 1000
         run: |
-          opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
-          opam exec -- dune exec --profile sanitize packages/nx/test/test_bit.exe
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune exec --profile sanitize packages/nx/test/test_bit.exe
+          opam exec -- dune build --profile sanitize @packages/nx/runtest
 
       - name: Build and test brot
         env:
@@ -204,3 +205,12 @@ jobs:
         run: |
           opam exec -- dune build --release packages/quill
           opam exec -- dune build --release @packages/quill/runtest
+
+      # windtrap captures a test's output, so a sanitizer's report, written to
+      # standard error as the process aborts, lands in the test's capture
+      # under _build/_tests and in no failure block.
+      - name: Print the sanitizers' reports
+        if: failure() && runner.os != 'Windows'
+        run: |
+          { grep -rlE 'Sanitizer|runtime error:' _build/_tests || true; } |
+            while read -r f; do echo "::group::$f"; cat "$f"; echo "::endgroup::"; done
