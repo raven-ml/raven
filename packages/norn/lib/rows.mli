@@ -41,6 +41,17 @@ val elements : 'u Nx.Ptree.t -> int -> 'u -> int
 (** [elements u c x] is the number of float elements of one chain of [x], a
     position of [c] chains. *)
 
+(** {1:flat Flat rows} *)
+
+val ravel : 'u Nx.Ptree.t -> (float, 'f) Nx.t -> 'u -> (float, 'f) Nx.t
+(** [ravel u like x] is the float elements of each chain of [x], in walk order,
+    as the rows of a [[c; d]] matrix at [like]'s dtype, [c] the length of
+    [like]. *)
+
+val unravel : 'u Nx.Ptree.t -> 'u -> (float, 'f) Nx.t -> 'u
+(** [unravel u x m] is the position of [x]'s structure whose float tensors hold
+    the rows of [m], at their own dtypes, and whose other tensors are [x]'s. *)
+
 (** {1:densities Densities} *)
 
 val count : string -> 'u Nx.Ptree.t -> 'u -> int

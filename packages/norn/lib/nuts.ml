@@ -65,28 +65,6 @@ let logaddexp a b =
   in
   Nx.where (Nx.equal m ninf) ninf s
 
-(* Geometry per chain *)
-
-let per_chain_color u g z =
-  Rune.vmap P.(Gaussian.ptree u @-> u @-> returns u) (Gaussian.color u) g z
-
-let per_chain_whiten u g x =
-  Rune.vmap P.(Gaussian.ptree u @-> u @-> returns u) (Gaussian.whiten u) g x
-
-(* [to_whitened u g x gx] is the gradient in whitened coordinates of a gradient
-   [gx] at [x]: [color]'s transpose applied to it. *)
-let to_whitened u g z gx =
-  Rune.vmap
-    P.(Gaussian.ptree u @-> u @-> u @-> returns u)
-    (fun g z gx -> snd (Rune.vjp u u (Gaussian.color u g) z) gx)
-    g z gx
-
-let to_original u g x gz =
-  Rune.vmap
-    P.(Gaussian.ptree u @-> u @-> u @-> returns u)
-    (fun g x gz -> snd (Rune.vjp u u (Gaussian.whiten u g) x) gz)
-    g x gz
-
 (* Keys
 
    Transition [n] of a run has the key [fold_in k n], warmup's transitions
@@ -278,12 +256,12 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
   let dt = Nx.dtype eps in
   let c = (Nx.shape eps).(0) in
   let i32 v = Nx.scalar Nx.int32 (Int32.of_int v) in
-  let color z = per_chain_color u geometry z in
-  let lp_z z = lp (color z) in
-  let z0 = per_chain_whiten u geometry position in
-  let g0 = to_whitened u geometry z0 grad in
-  let p0 = H.momentum u keys z0 in
-  let kinetic p = H.kinetic u eps p in
+  let f = Gaussian.flat u position geometry in
+  let lp_z = H.rows_density u lp f position in
+  let { H.z = z0; g = g0; _ } = H.enter u f position lp0 grad in
+  let rows = P.tensor in
+  let p0 = H.momentum rows keys z0 in
+  let kinetic p = H.kinetic rows eps p in
   let h0 = Nx.sub (kinetic p0) lp0 in
   let start = { z = z0; p = p0; g = g0; lp = lp0 } in
   let empty = { first = p0; last = p0; rho = p0; weight = lp0; prop = start } in
@@ -318,12 +296,12 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
         (Nx.greater (uniforms dt keys t.doubling (i32 0)) (Nx.scalar dt 0.5))
         t.forward
     in
-    let from = H.choose_point u forward t.front t.back in
+    let from = H.choose_point rows forward t.front t.back in
     let cursor =
-      H.choose_point u (Nx.broadcast_to [| c |] fresh) from t.cursor
+      H.choose_point rows (Nx.broadcast_to [| c |] fresh) from t.cursor
     in
     let h = Nx.where forward eps (Nx.neg eps) in
-    let leaf, finite = leapfrog u lp_z running h cursor in
+    let leaf, finite = leapfrog rows lp_z running h cursor in
     let delta = Nx.sub (Nx.sub (kinetic leaf.p) leaf.lp) h0 in
     let delta = Nx.where (Nx.isnan delta) (Nx.scalar dt Float.infinity) delta in
     let diverged =
@@ -356,16 +334,18 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
               (Nx.less_equal (i32 (l + 1)) t.doubling)
           in
           let slot' =
-            choose_node u (Nx.broadcast_to [| c |] is_first) node slot
+            choose_node rows (Nx.broadcast_to [| c |] is_first) node slot
           in
           let code =
             Nx.add (i32 ((l + 1) lsl max_depth)) (Nx.div next (i32 span))
           in
-          let parent, ok = merge u eps keys t.doubling code slot node in
+          let parent, ok = merge rows eps keys t.doubling code slot node in
           let joins = Nx.broadcast_to [| c |] joins in
           turned :=
             Nx.logical_or !turned (Nx.logical_and joins (Nx.logical_not ok));
-          cascade (l + 1) (choose_node u joins parent node) rest (slot' :: acc)
+          cascade (l + 1)
+            (choose_node rows joins parent node)
+            rest (slot' :: acc)
     in
     let sub, slots = cascade 0 node t.slots [] in
     let complete = Nx.broadcast_to [| c |] (Nx.equal next t.size) in
@@ -382,24 +362,24 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
         (Nx.less u_top (Nx.exp (Nx.sub sub.weight t.total)))
     in
     let sample =
-      H.choose_point u (Nx.logical_and merges take) sub.prop t.sample
+      H.choose_point rows (Nx.logical_and merges take) sub.prop t.sample
     in
     let total = Nx.where merges (logaddexp t.total sub.weight) t.total in
-    let sum = Rows.choose u merges (Rows.add u t.sum sub.rho) t.sum in
+    let sum = Rows.choose rows merges (Rows.add rows t.sum sub.rho) t.sum in
     (* The criterion around the merged trajectory and between its halves, the
        backward half first. *)
-    let bb = Rows.choose u forward t.back.p sub.last
-    and bf = Rows.choose u forward t.front.p sub.first in
-    let fb = Rows.choose u forward sub.first t.back.p
-    and ff = Rows.choose u forward sub.last t.front.p in
-    let rb = Rows.choose u forward t.sum sub.rho
-    and rf = Rows.choose u forward sub.rho t.sum in
+    let bb = Rows.choose rows forward t.back.p sub.last
+    and bf = Rows.choose rows forward t.front.p sub.first in
+    let fb = Rows.choose rows forward sub.first t.back.p
+    and ff = Rows.choose rows forward sub.last t.front.p in
+    let rb = Rows.choose rows forward t.sum sub.rho
+    and rf = Rows.choose rows forward sub.rho t.sum in
     let persists =
       Nx.logical_and
-        (criterion u eps bb ff sum)
+        (criterion rows eps bb ff sum)
         (Nx.logical_and
-           (criterion u eps bb fb (Rows.add u rb fb))
-           (criterion u eps bf ff (Rows.add u rf bf)))
+           (criterion rows eps bb fb (Rows.add rows rb fb))
+           (criterion rows eps bf ff (Rows.add rows rf bf)))
     in
     let depth = Nx.where merges (Nx.add t.depth (i32 1)) t.depth in
     let full = Nx.logical_and merges (Nx.greater_equal depth (i32 max_depth)) in
@@ -407,14 +387,16 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
       Nx.logical_or (Nx.logical_not valid)
         (Nx.logical_or (Nx.logical_and merges (Nx.logical_not persists)) full)
     in
-    let front = H.choose_point u (Nx.logical_and merges forward) leaf t.front in
+    let front =
+      H.choose_point rows (Nx.logical_and merges forward) leaf t.front
+    in
     let back =
-      H.choose_point u
+      H.choose_point rows
         (Nx.logical_and merges (Nx.logical_not forward))
         leaf t.back
     in
-    let keep a b = Rows.choose u running a b
-    and keep_point a b = H.choose_point u running a b in
+    let keep a b = Rows.choose rows running a b
+    and keep_point a b = H.choose_point rows running a b in
     let keep_t a b = Nx.where running a b in
     let size = Nx.where (Nx.equal next t.size) (Nx.mul t.size (i32 2)) t.size in
     {
@@ -424,7 +406,7 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
       sample = keep_point sample t.sample;
       sum = keep sum t.sum;
       total = keep_t total t.total;
-      slots = List.map2 (fun s o -> choose_node u running s o) slots t.slots;
+      slots = List.map2 (fun s o -> choose_node rows running s o) slots t.slots;
       forward = keep_t forward t.forward;
       running = Nx.logical_and running (Nx.logical_not stop);
       diverging = Nx.logical_or t.diverging (Nx.logical_and running diverged);
@@ -442,14 +424,13 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
     }
   in
   let t =
-    Rune.iterate (tree_ptree u)
+    Rune.iterate (tree_ptree rows)
       ~max:((1 lsl max_depth) - 1)
       ~until:(fun t -> Nx.logical_not (Nx.any t.running))
       ~f:trip init
   in
   let s = t.sample in
-  let x = color s.z in
-  let gx = to_original u geometry x s.g in
+  let x, gx = H.leave u f position s in
   let stats =
     Stats.
       {
@@ -601,13 +582,13 @@ let adapt_ptree (type u f) (u : u P.t) : (u, f) adapt P.t =
    search precedes. *)
 let init_step_size u lp k (s : (_, _) state) =
   let c = (Nx.shape s.step_size).(0) in
-  let lp_z z = lp (per_chain_color u s.geometry z) in
-  let z0 = per_chain_whiten u s.geometry s.position in
-  let g0 = to_whitened u s.geometry z0 s.grad in
-  let start = { z = z0; p = z0; g = g0; lp = s.lp } in
-  H.search "Norn.Nuts.warmup" u lp_z ~reduce:Fun.id
+  let f = Gaussian.flat u s.position s.geometry in
+  H.search "Norn.Nuts.warmup" P.tensor
+    (H.rows_density u lp f s.position)
+    ~reduce:Fun.id
     (Nx.Rng.split_batch ~n:c k)
-    start s.step_size
+    (H.enter u f s.position s.lp s.grad)
+    s.step_size
 
 let warmup u lp k ~steps (s : (_, _) state) =
   if steps < 0 then

@@ -107,30 +107,28 @@ let search (type f) context u lp_z ~reduce keys start (eps : (float, f) Nx.t) =
   in
   eps
 
+(* Whitened rows
+
+   Chains move in the whitened coordinates of a Gaussian, one flat row each
+   ([Gaussian.flat]); the density and the positions keep their structure, [x]
+   the template whose structure a row takes back. *)
+
+let rows_density u lp f x z = lp (Rows.unravel u x (Gaussian.color_flat f z))
+
+let enter u f x lp grad =
+  let z = Gaussian.whiten_flat f (Rows.ravel u lp x) in
+  { z; p = z; g = Gaussian.pull f (Rows.ravel u lp grad); lp }
+
+let leave u f x at =
+  ( Rows.unravel u x (Gaussian.color_flat f at.z),
+    Rows.unravel u x (Gaussian.push f at.g) )
+
 (* Fixed-length transitions
 
    Every chain shares one step size, one length and one Gaussian, and moves with
    unit metric in the Gaussian's whitened coordinates. *)
 
 let max_steps = 1024
-let color u g z = Rune.vmap P.(u @-> returns u) (Gaussian.color u g) z
-let whiten u g x = Rune.vmap P.(u @-> returns u) (Gaussian.whiten u g) x
-
-(* [to_whitened u g z gx] is the gradient in whitened coordinates of a gradient
-   [gx] at [color z]: [color]'s transpose applied to it; [to_original] is
-   [whiten]'s. *)
-let to_whitened u g z gx =
-  Rune.vmap
-    P.(u @-> u @-> returns u)
-    (fun z gx -> snd (Rune.vjp u u (Gaussian.color u g) z) gx)
-    z gx
-
-let to_original u g x gz =
-  Rune.vmap
-    P.(u @-> u @-> returns u)
-    (fun x gz -> snd (Rune.vjp u u (Gaussian.whiten u g) x) gz)
-    x gz
-
 let chain_keys k c = Nx.Rng.split_batch ~n:c (Nx.Rng.fold_in k 0)
 
 type ('u, 'f) trip = {
@@ -167,9 +165,9 @@ type ('u, 'f) transition = {
   steps : Nx.int32_t;
   diverging : Nx.bool_t;
   energy : (float, 'f) Nx.t;
-  z0 : 'u;
-  z1 : 'u;
-  p1 : 'u;
+  z0 : (float, 'f) Nx.t;
+  z1 : (float, 'f) Nx.t;
+  p1 : (float, 'f) Nx.t;
   time : (float, 'f) Nx.t;
 }
 
@@ -179,12 +177,13 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
   let c = (Nx.shape lp0).(0) in
   let i32 v = Nx.scalar Nx.int32 (Int32.of_int v) in
   let keys = chain_keys k c in
-  let lp_z z = lp (color u g z) in
-  let z0 = whiten u g x in
-  let g0 = to_whitened u g z0 grad in
-  let p0 = momentum u keys z0 in
+  let f = Gaussian.flat u x g in
+  let lp_z = rows_density u lp f x in
+  let { z = z0; g = g0; _ } = enter u f x lp0 grad in
+  let rows = P.tensor in
+  let p0 = momentum rows keys z0 in
   let h = Nx.broadcast_to [| c |] eps in
-  let h0 = Nx.sub (kinetic u h p0) lp0 in
+  let h0 = Nx.sub (kinetic rows h p0) lp0 in
   let jitter = Nx.mul_s (Nx.Rng.uniform (Nx.Rng.fold_in k 1) dt [||]) 2. in
   let n =
     Nx.clamp ~min:(Nx_dtype.of_float dt 1.)
@@ -193,11 +192,11 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
   in
   let n = Nx.cast Nx.int32 n in
   let energy_error (at : (_, f) point) =
-    let d = Nx.sub (Nx.sub (kinetic u h at.p) at.lp) h0 in
+    let d = Nx.sub (Nx.sub (kinetic rows h at.p) at.lp) h0 in
     Nx.where (Nx.isnan d) (Nx.scalar dt Float.infinity) d
   in
   let step t =
-    let leaf, finite = leapfrog context u lp_z t.running h t.at in
+    let leaf, finite = leapfrog context rows lp_z t.running h t.at in
     let diverged =
       Nx.logical_and t.running
         (Nx.logical_or (Nx.logical_not finite)
@@ -205,7 +204,7 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
     in
     let moved = Nx.logical_and t.running (Nx.logical_not diverged) in
     {
-      at = choose_point u moved leaf t.at;
+      at = choose_point rows moved leaf t.at;
       running = moved;
       diverging = Nx.logical_or t.diverging diverged;
       steps = Nx.add t.steps (Nx.cast Nx.int32 t.running);
@@ -214,7 +213,7 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
   in
   let start = { z = z0; p = p0; g = g0; lp = lp0 } in
   let t =
-    Rune.iterate (trip_ptree u) ~max:max_steps
+    Rune.iterate (trip_ptree rows) ~max:max_steps
       ~until:(fun t ->
         Nx.logical_or
           (Nx.greater_equal t.trip n)
@@ -239,8 +238,7 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
       keys
   in
   let accepted = Nx.less uniform alpha in
-  let x1 = color u g t.at.z in
-  let g1 = to_original u g x1 t.at.g in
+  let x1, g1 = leave u f x t.at in
   {
     position = Rows.choose u accepted x1 x;
     lp = Nx.where accepted t.at.lp lp0;
@@ -293,34 +291,27 @@ let chees_ptree (type f) () : f chees P.t =
   end in
   P.nest (module S) P.unit
 
-(* [centre u w x] is [x] less its mean over chains weighted by [w]. *)
-let centre u w x =
-  P.map u
-    (fun _ t ->
-      if not (Rows.float_leaf t) then t
-      else
-        let w = Rows.column w t in
-        let mean =
-          Nx.div
-            (Nx.sum ~axes:[ 0 ] ~keepdims:true (Nx.mul w t))
-            (Nx.sum ~axes:[ 0 ] ~keepdims:true w)
-        in
-        Nx.sub t mean)
-    x
+(* [centre w x] is the rows [x] less their mean over chains weighted by [w]. *)
+let centre w x =
+  let w = Rows.column w x in
+  Nx.sub x
+    (Nx.div
+       (Nx.sum ~axes:[ 0 ] ~keepdims:true (Nx.mul w x))
+       (Nx.sum ~axes:[ 0 ] ~keepdims:true w))
 
-(* [chees_gradient u m] is the acceptance-weighted mean over chains of the ChEES
+(* [chees_gradient m] is the acceptance-weighted mean over chains of the ChEES
    criterion's derivative in log length, [t d ((z1 - mean z1) · p1)] with [d =
    |z1 - mean z1|² - |z0 - mean z0|²], the means over chains, [z1]'s weighted by
    acceptance; zero when no chain accepts. *)
-let chees_gradient u (m : (_, _) transition) =
+let chees_gradient (m : (_, _) transition) =
   let w = m.alpha in
   let total = Nx.sum w in
   let none = Nx.equal total (Nx.zeros_like total) in
   let w = Nx.where none (Nx.zeros_like w) w in
   let weights = Nx.where none (Nx.ones_like w) w in
-  let d0 = centre u (Nx.ones_like w) m.z0 and d1 = centre u weights m.z1 in
-  let d = Nx.sub (Rows.dot u w d1 d1) (Rows.dot u w d0 d0) in
-  let per_chain = Nx.mul (Nx.mul m.time d) (Rows.dot u w d1 m.p1) in
+  let d0 = centre (Nx.ones_like w) m.z0 and d1 = centre weights m.z1 in
+  let d = Nx.sub (Rows.dot P.tensor w d1 d1) (Rows.dot P.tensor w d0 d0) in
+  let per_chain = Nx.mul (Nx.mul m.time d) (Rows.dot P.tensor w d1 m.p1) in
   Nx.div
     (Nx.sum (Nx.mul w per_chain))
     (Nx.where none (Nx.ones_like total) total)

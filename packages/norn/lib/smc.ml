@@ -219,7 +219,7 @@ let hamiltonian_moves context u ~prior ~likelihood keys g moves tempered x0
         g ~step_size ~length x lp grad
     in
     let chees =
-      Hamiltonian.chees_step chees step_size (Hamiltonian.chees_gradient u t)
+      Hamiltonian.chees_step chees step_size (Hamiltonian.chees_gradient t)
     in
     (((t.position, (t.lp, t.grad)), chees), (t.position, t.alpha))
   in

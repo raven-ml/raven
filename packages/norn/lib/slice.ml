@@ -361,14 +361,21 @@ let unit_directions u keys lp like =
     (fun _ t -> if Rows.float_leaf t then Nx.div t (Rows.column norm t) else t)
     z
 
+(* The walkers move as flat rows ([Rows.ravel]): a step is then a few operations
+   on one matrix rather than a few per tensor. *)
 let hit_and_run context u a eval keys g x lp aux =
+  let rows = Rows.ravel u lp x in
   let z =
-    unit_directions u
+    unit_directions P.tensor
       (Rune.vmap
          P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
          (fun k -> Nx.Rng.fold_in k 5)
          keys)
-      lp x
+      lp rows
   in
-  let direction = Rune.vmap P.(u @-> returns u) (Gaussian.direction u g) z in
-  move context u a eval keys ~direction x lp aux
+  let direction = Gaussian.direction_flat (Gaussian.flat u x g) z in
+  let eval ks y = eval ks (Rows.unravel u x y) in
+  let y, lp, aux, evaluations =
+    move context P.tensor a eval keys ~direction rows lp aux
+  in
+  (Rows.unravel u x y, lp, aux, evaluations)

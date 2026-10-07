@@ -216,14 +216,12 @@ let harmonic_mean a =
    the transition the search precedes. *)
 let init_step_size u lp k (s : (_, _) state) =
   let c = (Nx.shape s.lp).(0) in
-  let g = s.geometry in
-  let z0 = H.whiten u g s.position in
-  let start =
-    { H.z = z0; p = z0; g = H.to_whitened u g z0 s.grad; lp = s.lp }
-  in
-  H.search "Norn.Hmc.warmup" u
-    (fun z -> lp (H.color u g z))
-    ~reduce:log_harmonic_mean (H.chain_keys k c) start s.step_size
+  let f = Gaussian.flat u s.position s.geometry in
+  H.search "Norn.Hmc.warmup" P.tensor
+    (H.rows_density u lp f s.position)
+    ~reduce:log_harmonic_mean (H.chain_keys k c)
+    (H.enter u f s.position s.lp s.grad)
+    s.step_size
 
 let warmup (type f) u lp k ~steps (s : (_, f) state) =
   if steps < 0 then invalid_argf "Norn.Hmc.warmup: steps = %d is negative" steps;
@@ -257,7 +255,7 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
       let averaging, step_size =
         Adapt.average a.averaging ~target:st.accept (harmonic_mean move.alpha)
       in
-      let chees = H.chees_step a.chees step_size (H.chees_gradient u move) in
+      let chees = H.chees_step a.chees step_size (H.chees_gradient move) in
       let st = { st with step_size; length = Nx.exp chees.log_length } in
       let window = Adapt.record u a.window st.position st.grad in
       { st; averaging; chees; window }

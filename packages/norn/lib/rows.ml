@@ -68,6 +68,42 @@ let zeros u x = P.map u (fun _ t -> Nx.zeros_like t) x
 let elements u c x =
   P.fold u (fun _ t n -> if float_leaf t then n + (Nx.numel t / c) else n) x 0
 
+(* Flat rows
+
+   [ravel u like x] is the float elements of each chain of [x], in walk order,
+   as the rows of a [[c; d]] matrix at [like]'s dtype; [unravel u x m] is its
+   inverse, with the tensors of [x] that are not floats kept. Arithmetic on one
+   matrix costs a kernel where arithmetic on a structure costs one per
+   tensor. *)
+
+let ravel (type f) u (like : (float, f) Nx.t) x : (float, f) Nx.t =
+  let c = (Nx.shape like).(0) in
+  let rows =
+    P.fold u
+      (fun _ t acc ->
+        if float_leaf t then
+          Nx.cast (Nx.dtype like) (Nx.reshape [| c; -1 |] t) :: acc
+        else acc)
+      x []
+  in
+  match List.rev rows with
+  | [] -> Nx.zeros (Nx.dtype like) [| c; 0 |]
+  | [ r ] -> r
+  | rows -> Nx.concatenate ~axis:1 rows
+
+let unravel u x m =
+  let c = (Nx.shape m).(0) in
+  let at = ref 0 in
+  P.map u
+    (fun _ t ->
+      if not (float_leaf t) then t
+      else
+        let n = Nx.numel t / c in
+        let r = Nx.slice [ Nx.A; Nx.R (!at, !at + n) ] m in
+        at := !at + n;
+        Nx.cast (Nx.dtype t) (Nx.reshape (Nx.shape t) r))
+    x
+
 (* Densities *)
 
 let count context u x =

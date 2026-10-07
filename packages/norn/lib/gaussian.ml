@@ -59,10 +59,9 @@ let stretch g u e z =
   let w = Nx.sub_s (Nx.pow g.variances (Nx.scalar_like g.variances e)) 1. in
   combine u g.directions (Nx.mul w c) z
 
-(* The maps the samplers move through, at one position: [color u g z] is
-   [m + S A z], standard normal coordinates [z] mapped to [g]; [direction] is
-   [S A z], without the mean; [whiten] is the inverse of [color], and [log_det]
-   its [log |det|]. *)
+(* At one position: [color u g z] is [m + S A z], standard normal coordinates
+   [z] mapped to [g]; [direction] is [S A z], without the mean; [whiten] is the
+   inverse of [color], and [log_det] its [log |det|]. *)
 
 let direction u g z =
   Nx.Ptree.map2 u (fun _ s x -> Nx.mul s x) g.scale (stretch g u 0.5 z)
@@ -84,6 +83,82 @@ let log_det (type f) (g : (_, f) t) u : (float, f) Nx.t =
       g.scale (Nx.zeros dt [||])
   in
   Nx.add logs (Nx.mul_s (Nx.sum (Nx.log g.variances)) 0.5)
+
+(* Flat rows
+
+   The samplers move in whitened coordinates held as one flat row per chain
+   ([Rows.ravel]). Over such rows a Gaussian has a mean and a scale [[..; d]],
+   directions [[..; k; d]] and variances [[..; k]], [..] being [[c]] for
+   Gaussians stacked on the chain axis and nothing for one: a map is then a few
+   operations on one matrix, where over the structure it is a few per tensor. *)
+
+type 'f flat = {
+  m : (float, 'f) Nx.t;
+  s : (float, 'f) Nx.t;
+  dirs : (float, 'f) Nx.t;
+  v : (float, 'f) Nx.t;
+}
+
+(* [flat u x g] is [g] over the rows of [x], a position of chains whose float
+   tensors, in walk order, make the rows. A tensor of [g] has the trailing axes
+   of [x]'s at its path, after the chain axis for stacked Gaussians and, for the
+   directions, the axis of [k]. *)
+let flat (type f) u x (g : (_, f) t) : f flat =
+  let dt = Nx.dtype g.variances in
+  let vs = Nx.shape g.variances in
+  let lead = Array.sub vs 0 (Array.length vs - 1) in
+  let ravel empty field =
+    let shaped =
+      Nx.Ptree.map2 u
+        (fun _ t xl ->
+          if not (Nx_dtype.is Float (Nx.dtype t)) then t
+          else
+            let e = Nx.ndim xl - 1 in
+            let n = Nx.numel xl / (Nx.shape xl).(0) in
+            Nx.reshape
+              (Array.append (Array.sub (Nx.shape t) 0 (Nx.ndim t - e)) [| n |])
+              t)
+        field x
+    in
+    let parts =
+      Nx.Ptree.fold u
+        (fun _ t acc ->
+          if Nx_dtype.is Float (Nx.dtype t) then Nx.cast dt t :: acc else acc)
+        shaped []
+    in
+    match List.rev parts with
+    | [] -> Nx.zeros dt (Array.append empty [| 0 |])
+    | [ p ] -> p
+    | p :: _ as ps -> Nx.concatenate ~axis:(Nx.ndim p - 1) ps
+  in
+  {
+    m = ravel lead g.mean;
+    s = ravel lead g.scale;
+    dirs = ravel vs g.directions;
+    v = g.variances;
+  }
+
+(* [stretch_flat f e z] is [stretch] over rows [z] of shape [[c; d]]. *)
+let stretch_flat f e z =
+  if (Nx.shape f.v).(Nx.ndim f.v - 1) = 0 then z
+  else
+    let coef =
+      Nx.sum ~axes:[ 2 ] (Nx.mul (Nx.unsqueeze ~axes:[ 1 ] z) f.dirs)
+    in
+    let w = Nx.sub_s (Nx.pow f.v (Nx.scalar_like f.v e)) 1. in
+    let shift = Nx.mul (Nx.unsqueeze ~axes:[ 2 ] (Nx.mul w coef)) f.dirs in
+    Nx.add z (Nx.sum ~axes:[ 1 ] shift)
+
+(* Over rows: [color_flat] is [m + S A z], [direction_flat] [S A z] and
+   [whiten_flat] the inverse of [color_flat]. A gradient [gx] at [color_flat z]
+   is [pull f gx] in whitened coordinates, [A S gx] by the symmetry of [A], and
+   a whitened gradient [gz] is [push f gz], [S⁻¹ A⁻¹ gz], at [x]. *)
+
+let direction_flat f z = Nx.mul f.s (stretch_flat f 0.5 z)
+let color_flat f z = Nx.add f.m (direction_flat f z)
+let whiten_flat f x = stretch_flat f (-0.5) (Nx.div (Nx.sub x f.m) f.s)
+let pull f gx = stretch_flat f 0.5 (Nx.mul f.s gx)
+let push f gz = Nx.div (stretch_flat f (-0.5) gz) f.s
 
 let elements u x =
   Nx.Ptree.fold u
@@ -240,6 +315,7 @@ let sample u k ~n g =
   Rune.vmap Nx.Ptree.(u @-> returns u) (color u g) z
 
 let mean _ g = g.mean
+
 (* [rank g] is the number of [g]'s directions, also of Gaussians stacked on a
    chain axis. *)
 let rank g = (Nx.shape g.variances).(Nx.ndim g.variances - 1)
