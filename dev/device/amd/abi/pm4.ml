@@ -261,8 +261,6 @@ let register fn g name =
   | Some r -> r
   | None -> invalid_argf "%s: %s has no %s" fn (gc_name g) name
 
-let address fn g name = Register.address g (register fn g name)
-
 (* COMPUTE_PGM_LO and DISPATCH_SCRATCH_BASE_LO take 256-byte aligned addresses,
    from their bit 8, with their _HI words after them. *)
 let address_shift = 8
@@ -296,31 +294,29 @@ let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
     ~packet:dispatch_packet ~threads:(tx, ty, tz) ~groups:(gx, gy, gz)
     ?waves_per_array () =
   let fn = "Pm4.dispatch" in
-  let compute name = address fn g ("regCOMPUTE_" ^ name) in
-  let pgm_lo = compute "PGM_LO" in
-  let pgm_rsrc1 = compute "PGM_RSRC1" in
-  let pgm_rsrc3 = compute "PGM_RSRC3" in
-  let tmpring_size = compute "TMPRING_SIZE" in
-  let scratch_base_lo = compute "DISPATCH_SCRATCH_BASE_LO" in
-  let restart_x = compute "RESTART_X" in
-  let user_data_0 = compute "USER_DATA_0" in
-  let resource_limits = compute "RESOURCE_LIMITS" in
-  let start_x = compute "START_X" in
+  let reg name = register fn g name in
+  let at r = Register.address g r in
+  let resource_limits = reg "regCOMPUTE_RESOURCE_LIMITS" in
+  let initiator = reg "regCOMPUTE_DISPATCH_INITIATOR" in
+  let pgm_lo = at (reg "regCOMPUTE_PGM_LO") in
+  let pgm_rsrc1 = at (reg "regCOMPUTE_PGM_RSRC1") in
+  let pgm_rsrc3 = at (reg "regCOMPUTE_PGM_RSRC3") in
+  let tmpring_size = at (reg "regCOMPUTE_TMPRING_SIZE") in
+  let scratch_base_lo = at (reg "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO") in
+  let restart_x = at (reg "regCOMPUTE_RESTART_X") in
+  let user_data_0 = at (reg "regCOMPUTE_USER_DATA_0") in
+  let start_x = at (reg "regCOMPUTE_START_X") in
   let limits =
     match waves_per_array with
     | None -> no_wave_limit
     | Some n when n < 1 || n > max_waves_per_array ->
         invalid_argf "%s: waves_per_array %d, expected 1 to 1023" fn n
-    | Some n ->
-        Register.encode
-          (register fn g "regCOMPUTE_RESOURCE_LIMITS")
-          [ ("waves_per_sh", n) ]
+    | Some n -> Register.encode resource_limits [ ("waves_per_sh", n) ]
   in
-  let initiator =
+  let initiator_word =
     let wave32 = if k.wave32 then 1 else 0 in
     let lanes = if major g = 9 then [] else [ ("cs_w32_en", wave32) ] in
-    Register.encode
-      (register fn g "regCOMPUTE_DISPATCH_INITIATOR")
+    Register.encode initiator
       (lanes @ [ ("force_start_at_000", 1); ("compute_shader_en", 1) ])
   in
   let rsrc1 = if major g = 11 then k.rsrc1 lor priv else k.rsrc1 in
@@ -345,10 +341,10 @@ let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
   @ set_reg scratch_base_lo [ W64 (Shift (Value scratch, address_shift)) ]
   @ set_reg restart_x (zeros 3)
   @ set_reg user_data_0 user
-  @ set_reg resource_limits [ Dword limits ]
+  @ set_reg (at resource_limits) [ Dword limits ]
   @ set_reg start_x
       (zeros 3 @ [ W32 (Value tx); W32 (Value ty); W32 (Value tz) ] @ zeros 2)
   @ packet Defs.packet3_dispatch_direct
-      [ W32 (Value gx); W32 (Value gy); W32 (Value gz); Dword initiator ]
+      [ W32 (Value gx); W32 (Value gy); W32 (Value gz); Dword initiator_word ]
 
 let run g p = acquire_mem g Agent @ p @ event_write Cs_partial_flush

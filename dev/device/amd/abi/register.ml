@@ -13,28 +13,12 @@ type t = Defs.register = {
   fields : (string * (int * int)) list;
 }
 
-let major ((m, _, _) : Gpu.version) = m
-
 let gc_name (g : Gpu.t) =
   let a, b, c = g.gc in
   strf "GC %d.%d.%d" a b c
 
-(* The registers of the latest version of [g]'s GC major at or before its GC: GC
-   11.0.2 takes 11.0.0's. *)
-let registers (g : Gpu.t) =
-  let latest best (v, rs) =
-    if major v <> major g.gc || compare v g.gc > 0 then best
-    else
-      match best with
-      | Some (b, _) when compare b v >= 0 -> best
-      | _ -> Some (v, rs)
-  in
-  match List.fold_left latest None Defs.gc_registers with
-  | Some (_, rs) -> rs
-  | None -> []
-
-let find g name =
-  List.find_opt (fun r -> String.equal r.name name) (registers g)
+let registers (g : Gpu.t) = Defs.registers (Defs.gc g.gc)
+let find (g : Gpu.t) name = Defs.find (Defs.gc g.gc) name
 
 (* The bases of the latest generation at or before [major], from [latest]. *)
 let rec bases major latest = function

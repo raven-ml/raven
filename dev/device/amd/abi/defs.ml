@@ -9,1168 +9,3525 @@ type register = {
   fields : (string * (int * int)) list;
 }
 
-(* The registers of each GC version, their fields as (name, (lowest bit,
-   highest bit)). *)
-let gc_registers = [
-  ( (9, 4, 3), [
-      { name = "regGRBM_CNTL"; offset = 0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] };
-      { name = "regGRBM_SOFT_RESET"; offset = 8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cane", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_utcl2", (23, 23)) ] };
-      { name = "regGRBM_GFX_CNTL"; offset = 0x22; segment = 0; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)) ] };
-      { name = "regCP_MEC_CNTL"; offset = 0x8d; segment = 0; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] };
-      { name = "regCP_STAT"; offset = 0x1a0; segment = 0; fields = [ ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] };
-      { name = "regCP_ME_CNTL"; offset = 0x1b6; segment = 0; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] };
-      { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0x1c2; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] };
-      { name = "regSH_MEM_BASES"; offset = 0x30a; segment = 0; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] };
-      { name = "regSH_MEM_CONFIG"; offset = 0x30d; segment = 0; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (3, 4)); ("f8_mode", (8, 8)); ("precision_mode", (9, 9)); ("retry_disable", (12, 12)); ("private_nv", (13, 13)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_CMN"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_EVENT"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("stage", (6, 8)); ("event_type", (10, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_INST"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("wave_id", (5, 8)); ("simd_id", (9, 10)); ("inst_type", (11, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_INST_PC_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("wave_id", (5, 8)); ("simd_id", (9, 10)); ("trap_error", (15, 15)); ("pc_lo", (16, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("priv", (5, 5)); ("cu_id", (6, 9)); ("wave_id", (10, 13)); ("simd_id", (14, 15)); ("data_lo", (16, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_ISSUE"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("simd_id", (5, 6)); ("inst0", (8, 9)); ("inst1", (10, 11)); ("inst2", (12, 13)); ("inst3", (14, 15)); ("inst4", (16, 17)); ("inst5", (18, 19)); ("inst6", (20, 21)); ("inst7", (22, 23)); ("inst8", (24, 25)); ("inst9", (26, 27)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_MISC"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 11)); ("sh_id", (12, 12)); ("misc_token_type", (13, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_PERF_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("cu_id", (6, 9)); ("cntr_bank", (10, 11)); ("cntr0", (12, 24)); ("cntr1_lo", (25, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_REG_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("pipe_id", (5, 6)); ("me_id", (7, 8)); ("reg_dropped_prev", (9, 9)); ("reg_type", (10, 12)); ("reg_priv", (14, 14)); ("reg_op", (15, 15)); ("reg_addr", (16, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_REG_2_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_REG_CS_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("pipe_id", (5, 6)); ("me_id", (7, 8)); ("reg_addr", (9, 15)); ("data_lo", (16, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_REG_CS_2_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("data_hi", (0, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_lo", (16, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_WAVE"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("cu_id", (6, 9)); ("wave_id", (10, 13)); ("simd_id", (14, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_WAVE_START"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("cu_id", (6, 9)); ("wave_id", (10, 13)); ("simd_id", (14, 15)); ("dispatcher", (16, 20)); ("vs_no_alloc_or_grouped", (21, 21)); ("count", (22, 28)); ("tg_id", (29, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_INST_PC_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("pc_hi", (0, 23)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("data_hi", (0, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_PERF_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("cntr1_hi", (0, 5)); ("cntr2", (6, 18)); ("cntr3", (19, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("time_hi", (0, 31)) ] };
-      { name = "regGB_ADDR_CONFIG"; offset = 0x63e; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("bank_interleave_size", (8, 10)); ("num_banks", (12, 14)); ("shader_engine_tile_size", (16, 18)); ("num_shader_engines", (19, 20)); ("num_gpus", (21, 23)); ("multi_gpu_tile_size", (24, 25)); ("num_rb_per_se", (26, 27)); ("row_size", (28, 29)); ("num_lower_pipes", (30, 30)); ("se_enable", (31, 31)) ] };
-      { name = "regGCVM_L2_CNTL"; offset = 0x820; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] };
-      { name = "regGCVM_L2_CNTL2"; offset = 0x821; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] };
-      { name = "regGCVM_L2_CNTL3"; offset = 0x822; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x827; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x828; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x82b; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("uce", (29, 29)); ("fed", (30, 30)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x82c; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x82d; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x82e; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x82f; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x831; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x832; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x833; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x834; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x835; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x836; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL4"; offset = 0x837; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)) ] };
-      { name = "regGCVM_L2_CNTL5"; offset = 0x838; segment = 0; fields = [ ("walker_fetch_pde_mtype_enable", (0, 0)); ("walker_fetch_pde_noalloc_enable", (1, 1)) ] };
-      { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x83b; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)) ] };
-      { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x860; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)); ("secure_protection_fault_enable_interrupt", (23, 23)); ("secure_protection_fault_enable_default", (24, 24)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x882; segment = 0; fields = [ ("semaphore", (0, 0)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x894; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 17)); ("invalidate_l2_ptes", (18, 18)); ("invalidate_l2_pde0", (19, 19)); ("invalidate_l2_pde1", (20, 20)); ("invalidate_l2_pde2", (21, 21)); ("invalidate_l1_ptes", (22, 22)); ("clear_protection_fault_status_addr", (23, 23)); ("log_request", (24, 24)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x8a6; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x8a7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x8a8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x8a9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x8aa; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x8ab; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x8ac; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x8ad; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x8ae; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x8af; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x8b0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x8b1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x8b2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x8b3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x8b4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x8b5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x8b6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x8b7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x8b8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x8b9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x8ba; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x8bb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x8bc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x8bd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x8be; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x8bf; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x8c0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x8c1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x8c2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x8c3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x8c4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x8c5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x8c6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x8c7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x8c8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x8c9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x8ca; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x8cb; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x8cc; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x8eb; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x8ec; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x90b; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x90c; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x948; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x949; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
-      { name = "regGCMC_VM_XGMI_LFB_CNTL"; offset = 0x957; segment = 0; fields = [ ("pf_lfb_region", (0, 3)); ("pf_max_region", (4, 7)) ] };
-      { name = "regGCMC_VM_XGMI_LFB_SIZE"; offset = 0x958; segment = 0; fields = [ ("pf_lfb_size", (0, 16)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x95c; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x95d; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_TOP"; offset = 0x95e; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BOT"; offset = 0x95f; segment = 0; fields = [ ("agp_bot", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BASE"; offset = 0x960; segment = 0; fields = [ ("agp_base", (0, 23)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x961; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x962; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x963; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 12)); ("atc_en", (13, 13)) ] };
-      { name = "regTCP_CNTL"; offset = 0xb02; segment = 0; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("l1_size", (2, 3)); ("flat_buf_hash_enable", (4, 4)); ("flat_buf_cache_swizzle", (5, 5)); ("force_eow_total_cnt", (15, 20)); ("force_eow_tagram_cnt", (22, 27)); ("disable_z_map", (28, 28)) ] };
-      { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0xe00; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("restore", (14, 14)) ] };
-      { name = "regCOMPUTE_START_X"; offset = 0xe04; segment = 0; fields = [ ("start", (0, 31)) ] };
-      { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0xe0b; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_LO"; offset = 0xe0c; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0xe10; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_PGM_RSRC1"; offset = 0xe12; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("debug_mode", (22, 22)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("cdbg_user", (25, 25)); ("fp16_ovfl", (26, 26)) ] };
-      { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0xe15; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)); ("simd_disable", (27, 30)) ] };
-      { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0xe18; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 24)) ] };
-      { name = "regCOMPUTE_RESTART_X"; offset = 0xe1b; segment = 0; fields = [ ("restart", (0, 31)) ] };
-      { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0xe1e; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_RSRC3"; offset = 0xe2d; segment = 0; fields = [ ("accum_offset", (0, 5)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("tg_split", (16, 16)) ] };
-      { name = "regCOMPUTE_USER_DATA_0"; offset = 0xe40; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_INT_CNTL"; offset = 0x1049; segment = 0; fields = [ ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x105c; segment = 0; fields = [ ("doorbell_range_lower", (2, 27)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x105d; segment = 0; fields = [ ("doorbell_range_upper", (2, 27)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x10a4; segment = 0; fields = [ ("ip_start", (0, 12)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x10a5; segment = 0; fields = [ ("ip_start", (0, 11)) ] };
-      { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x11db; segment = 0; fields = [ ("reset", (0, 0)) ] };
-      { name = "regCP_MQD_BASE_ADDR"; offset = 0x1245; segment = 0; fields = [ ("base_addr", (2, 31)) ] };
-      { name = "regCP_HQD_ACTIVE"; offset = 0x1247; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] };
-      { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1249; segment = 0; fields = [ ("preload_req", (0, 0)); ("preload_size", (8, 17)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1254; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1256; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("wpp_clamp_en", (16, 16)); ("endian_swap", (17, 18)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 24)); ("slot_based_wptr", (25, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("roq_pq_ib_flip", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] };
-      { name = "regCP_HQD_IB_CONTROL"; offset = 0x125a; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 24)); ("ib_priv_state", (30, 30)); ("processing_ib", (31, 31)) ] };
-      { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x125d; segment = 0; fields = [ ("dequeue_req", (0, 2)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] };
-      { name = "regCP_MQD_CONTROL"; offset = 0x1267; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 24)) ] };
-      { name = "regCP_HQD_EOP_CONTROL"; offset = 0x126c; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 24)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x127c; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regTCP_UTCL1_CNTL2"; offset = 0x12b6; segment = 0; fields = [ ("spare", (0, 7)); ("mtype_ovrd_dis", (9, 9)); ("any_line_valid", (10, 10)); ("gpuvm_inv_mode", (12, 12)); ("force_snoop", (14, 14)); ("force_gpuvm_inv_ack", (15, 15)); ("force_frag_2m_to_64k", (26, 26)); ("thrashing_timeout_protect_enable", (27, 27)); ("thrashing_enable", (28, 28)) ] };
-      { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] };
-      { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] };
-      { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] };
-      { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] };
-      { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] };
-      { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] };
-      { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] };
-      { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 7)); ("sh_index", (8, 15)); ("se_index", (16, 23)); ("sh_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BASE"; offset = 0x2330; segment = 1; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_SIZE"; offset = 0x2331; segment = 1; fields = [ ("size", (0, 21)) ] };
-      { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x2332; segment = 1; fields = [ ("cu_sel", (0, 4)); ("sh_sel", (5, 5)); ("reg_stall_en", (7, 7)); ("simd_en", (8, 11)); ("vm_id_mask", (12, 13)); ("spi_stall_en", (14, 14)); ("sq_stall_en", (15, 15)) ] };
-      { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x2333; segment = 1; fields = [ ("token_mask", (0, 15)); ("reg_mask", (16, 23)); ("reg_drop_on_stall", (24, 24)) ] };
-      { name = "regSQ_THREAD_TRACE_PERF_MASK"; offset = 0x2334; segment = 1; fields = [ ("sh0_mask", (0, 15)); ("sh1_mask", (16, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x2335; segment = 1; fields = [ ("reset_buffer", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_MODE"; offset = 0x2336; segment = 1; fields = [ ("mask_ps", (0, 2)); ("mask_vs", (3, 5)); ("mask_gs", (6, 8)); ("mask_es", (9, 11)); ("mask_hs", (12, 14)); ("mask_ls", (15, 17)); ("mask_cs", (18, 20)); ("mode", (21, 22)); ("capture_mode", (23, 24)); ("autoflush_en", (25, 25)); ("tc_perf_en", (26, 26)); ("issue_mask", (27, 28)); ("test_mode", (29, 29)); ("interrupt_en", (30, 30)); ("wrap", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BASE2"; offset = 0x2337; segment = 1; fields = [ ("addr_hi", (0, 3)) ] };
-      { name = "regSQ_THREAD_TRACE_TOKEN_MASK2"; offset = 0x2338; segment = 1; fields = [ ("inst_mask", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x2339; segment = 1; fields = [ ("wptr", (0, 29)); ("read_offset", (30, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x233a; segment = 1; fields = [ ("finish_pending", (0, 9)); ("finish_done", (16, 25)); ("utc_error", (28, 28)); ("new_buf", (29, 29)); ("busy", (30, 30)); ("full", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HIWATER"; offset = 0x233b; segment = 1; fields = [ ("hiwater", (0, 2)) ] };
-      { name = "regSQ_THREAD_TRACE_CNTR"; offset = 0x233c; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("rsrc_mgmt_reset", (26, 26)); ("ttrace_stall_all", (27, 27)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_HI"; offset = 0x31c1; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_HI"; offset = 0x31c3; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_HI"; offset = 0x31c5; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_HI"; offset = 0x31c7; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_HI"; offset = 0x31c9; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_HI"; offset = 0x31cb; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_HI"; offset = 0x31cd; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_HI"; offset = 0x31cf; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_LO"; offset = 0x31d0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_HI"; offset = 0x31d1; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_LO"; offset = 0x31d2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_HI"; offset = 0x31d3; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_LO"; offset = 0x31d4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_HI"; offset = 0x31d5; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_LO"; offset = 0x31d6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_HI"; offset = 0x31d7; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_LO"; offset = 0x31d8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_HI"; offset = 0x31d9; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_LO"; offset = 0x31da; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_HI"; offset = 0x31db; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_LO"; offset = 0x31dc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_HI"; offset = 0x31dd; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_LO"; offset = 0x31de; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_HI"; offset = 0x31df; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regTCC_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] };
-      { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("vgt_busy_user_defined_mask", (12, 12)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("ia_busy_user_defined_mask", (23, 23)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tc_busy_user_defined_mask", (27, 27)); ("wd_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("vgt_busy_user_defined_mask", (12, 12)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("ia_busy_user_defined_mask", (23, 23)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tc_busy_user_defined_mask", (27, 27)); ("wd_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("vs_en", (1, 1)); ("gs_en", (2, 2)); ("es_en", (3, 3)); ("hs_en", (4, 4)); ("ls_en", (5, 5)); ("cs_en", (6, 6)); ("cntr_rate", (8, 12)); ("disable_flush", (13, 13)); ("vmid_mask", (16, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_MASK"; offset = 0x39e1; segment = 1; fields = [ ("sh0_mask", (0, 15)); ("sh1_mask", (16, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)) ] };
-      { name = "regTCC_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regTCC_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regTCC_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regTCC_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] };
-      { name = "regRLC_SAFE_MODE"; offset = 0x4c05; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] };
-      { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("reserved_0", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_rep_fgcg_override", (9, 9)); ("gfxip_perf_clk_en", (10, 10)); ("reserved_15_11", (11, 15)); ("enable_cgts_legacy", (16, 16)); ("reserved_31_17", (17, 31)) ] };
-      { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] };
-      { name = "regRLC_SPM_MC_CNTL"; offset = 0x4c71; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 4)); ("rlc_spm_perf_cntr", (5, 5)); ("rlc_spm_fed", (6, 6)); ("rlc_spm_mtype_over", (7, 7)); ("rlc_spm_mtype", (8, 9)); ("reserved", (10, 31)) ] };
-      { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] };
-      { name = "regRLC_CP_SCHEDULERS"; offset = 0x4caa; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)); ("scheduler2", (16, 23)); ("scheduler3", (24, 31)) ] };
-      { name = "regRLC_SPARE_INT"; offset = 0x4ccc; segment = 1; fields = [ ("interrupt", (0, 0)); ("reserved", (1, 31)) ] };
-    ] );
-  ( (11, 0, 0), [
-      { name = "regSDMA0_CNTL"; offset = 0x1c; segment = 0; fields = [ ("trap_enable", (0, 0)); ("sem_wait_int_enable", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] };
-      { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2e; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] };
-      { name = "regSDMA0_UTCL1_CNTL"; offset = 0x3c; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] };
-      { name = "regSDMA0_UTCL1_PAGE"; offset = 0x3f; segment = 0; fields = [ ("vm_hole", (0, 0)); ("req_type", (1, 4)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)); ("llc_noalloc", (24, 24)) ] };
-      { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x5c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x89; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] };
-      { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x65c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] };
-      { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] };
-      { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)); ("soft_reset_sdma1", (24, 24)) ] };
-      { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] };
-      { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] };
-      { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 20)); ("num_rb_per_se", (26, 27)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL"; offset = 0x15bc; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] };
-      { name = "regGCVM_L2_CNTL2"; offset = 0x15bd; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] };
-      { name = "regGCVM_L2_CNTL3"; offset = 0x15be; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15c4; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15c5; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x15c8; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("prt", (29, 29)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15c9; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15ca; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15cb; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15cc; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15ce; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15cf; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d0; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15d1; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15d2; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15d3; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL4"; offset = 0x15d4; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] };
-      { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15d7; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] };
-      { name = "regGCVM_L2_CNTL5"; offset = 0x15da; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x1678; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x1679; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_TOP"; offset = 0x167a; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BOT"; offset = 0x167b; segment = 0; fields = [ ("agp_bot", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BASE"; offset = 0x167c; segment = 0; fields = [ ("agp_base", (0, 23)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x167d; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x167e; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x167f; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] };
-      { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x1688; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x16aa; segment = 0; fields = [ ("semaphore", (0, 0)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x16bc; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("log_request", (25, 25)); ("invalidate_4k_pages_only", (26, 26)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x16ce; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x16cf; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x16d0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x16d1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x16d2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x16d3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x16d4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x16d5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x16d6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x16d7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x16d8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x16d9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x16da; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x16db; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x16dc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x16dd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x16de; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x16df; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x16e0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x16e1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x16e2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x16e3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x16e4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x16e5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x16e6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x16e7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x16e8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x16e9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x16ea; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x16eb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x16ec; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x16ed; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x16ee; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x16ef; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x16f0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x16f1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x16f2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x16f3; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x16f4; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x1713; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x1714; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x1733; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x1734; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)) ] };
-      { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] };
-      { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] };
-      { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] };
-      { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 26)) ] };
-      { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] };
-      { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 9)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("image_op", (31, 31)) ] };
-      { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] };
-      { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] };
-      { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] };
-      { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("pq_volatile", (26, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] };
-      { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_volatile", (26, 26)); ("processing_ib", (31, 31)) ] };
-      { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] };
-      { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("mqd_volatile", (26, 26)) ] };
-      { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("eop_volatile", (26, 26)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_pipe2_reset", (22, 22)); ("mec_me2_pipe3_reset", (23, 23)); ("mec_invalidate_icache", (27, 27)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] };
-      { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] };
-      { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] };
-      { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] };
-      { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] };
-      { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [  ] };
-      { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] };
-      { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] };
-      { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] };
-      { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] };
-      { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] };
-      { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] };
-      { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] };
-      { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 7)); ("sa_index", (8, 15)); ("se_index", (16, 23)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] };
-      { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_BASE"; offset = 0x39e8; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_BASE"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] };
-      { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("all_vmid", (2, 2)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("util_timer", (13, 13)); ("wavestart_mode", (14, 15)); ("rt_freq", (16, 17)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("draw_event_en", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)) ] };
-      { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 10)); ("ttrace_exec", (11, 11)); ("bop_events_token_include", (12, 12)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] };
-      { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_16_11", (11, 16)); ("gc_cac_mgcg_clk_cntl", (17, 17)); ("se_cac_mgcg_clk_cntl", (18, 18)); ("reserved_31_19", (19, 31)) ] };
-      { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] };
-      { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] };
-      { name = "regRLC_RLCS_BOOTLOAD_STATUS"; offset = 0x4e82; segment = 1; fields = [ ("gfx_init_done", (0, 0)); ("rlc_gpm_iram_loaded", (3, 3)); ("rlc_gpm_iram_done", (4, 4)); ("reserved", (5, 30)); ("bootload_complete", (31, 31)) ] };
-      { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] };
-      { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_mtype_over", (8, 8)); ("rlc_spm_mtype", (9, 11)); ("rlc_spm_bc", (12, 12)); ("rlc_spm_ro", (13, 13)); ("rlc_spm_vol", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved_3", (16, 17)); ("rlc_spm_llc_noalloc", (18, 18)); ("rlc_spm_llc_noalloc_over", (19, 19)); ("reserved", (20, 31)) ] };
-      { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] };
-    ] );
-  ( (11, 0, 3), [
-      { name = "regSDMA0_CNTL"; offset = 0x1c; segment = 0; fields = [ ("trap_enable", (0, 0)); ("sem_wait_int_enable", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("drm_restore_enable", (19, 19)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] };
-      { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2e; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] };
-      { name = "regSDMA0_UTCL1_CNTL"; offset = 0x3c; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] };
-      { name = "regSDMA0_UTCL1_PAGE"; offset = 0x3f; segment = 0; fields = [ ("vm_hole", (0, 0)); ("req_type", (1, 4)); ("tmz_enable", (5, 5)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)); ("llc_noalloc", (24, 24)) ] };
-      { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x5c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x89; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)); ("ib_priv", (31, 31)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] };
-      { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x65c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("dbg_select_bits", (2, 7)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] };
-      { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] };
-      { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cpaxi", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)); ("soft_reset_sdma1", (24, 24)) ] };
-      { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] };
-      { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] };
-      { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 20)); ("num_rb_per_se", (26, 27)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL"; offset = 0x15c0; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] };
-      { name = "regGCVM_L2_CNTL2"; offset = 0x15c1; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] };
-      { name = "regGCVM_L2_CNTL3"; offset = 0x15c2; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15c8; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15c9; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x15cc; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("prt", (29, 29)); ("fed", (30, 30)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15cd; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15ce; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15cf; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15d0; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15d2; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15d3; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d4; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15d5; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15d6; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15d7; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL4"; offset = 0x15d8; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] };
-      { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15db; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] };
-      { name = "regGCVM_L2_CNTL5"; offset = 0x15de; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x1688; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x1689; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_TOP"; offset = 0x168a; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BOT"; offset = 0x168b; segment = 0; fields = [ ("agp_bot", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BASE"; offset = 0x168c; segment = 0; fields = [ ("agp_base", (0, 23)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x168d; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x168e; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x168f; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] };
-      { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x1698; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)); ("secure_protection_fault_enable_interrupt", (23, 23)); ("secure_protection_fault_enable_default", (24, 24)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x16ba; segment = 0; fields = [ ("semaphore", (0, 0)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x16cc; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("log_request", (25, 25)); ("invalidate_4k_pages_only", (26, 26)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x16de; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x16df; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x16e0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x16e1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x16e2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x16e3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x16e4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x16e5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x16e6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x16e7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x16e8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x16e9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x16ea; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x16eb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x16ec; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x16ed; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x16ee; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x16ef; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x16f0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x16f1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x16f2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x16f3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x16f4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x16f5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x16f6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x16f7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x16f8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x16f9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x16fa; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x16fb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x16fc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x16fd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x16fe; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x16ff; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x1700; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x1701; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x1702; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x1703; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x1704; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x1723; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x1724; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x1743; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x1744; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)) ] };
-      { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] };
-      { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("debug_mode", (22, 22)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("cdbg_user", (25, 25)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] };
-      { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] };
-      { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 26)) ] };
-      { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] };
-      { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 9)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("image_op", (31, 31)) ] };
-      { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] };
-      { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] };
-      { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] };
-      { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("pq_volatile", (26, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] };
-      { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_volatile", (26, 26)); ("ib_priv_state", (30, 30)); ("processing_ib", (31, 31)) ] };
-      { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] };
-      { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("mqd_volatile", (26, 26)) ] };
-      { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("eop_volatile", (26, 26)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_pipe2_reset", (22, 22)); ("mec_me2_pipe3_reset", (23, 23)); ("mec_invalidate_icache", (27, 27)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] };
-      { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] };
-      { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] };
-      { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] };
-      { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] };
-      { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("enable_128b_dcc_comp_read_for_indep64", (7, 7)); ("disable_write_combining", (9, 9)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_z_map", (28, 28)); ("force_order_between_read_write_to_same_address", (29, 29)); ("astc_ve_msb_tolerant", (31, 31)) ] };
-      { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] };
-      { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] };
-      { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] };
-      { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] };
-      { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] };
-      { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] };
-      { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] };
-      { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 7)); ("sa_index", (8, 15)); ("se_index", (16, 23)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] };
-      { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_BASE"; offset = 0x39e8; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_BASE"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] };
-      { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("all_vmid", (2, 2)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("util_timer", (13, 13)); ("wavestart_mode", (14, 15)); ("rt_freq", (16, 17)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("draw_event_en", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)) ] };
-      { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 10)); ("ttrace_exec", (11, 11)); ("bop_events_token_include", (12, 12)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] };
-      { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_16_11", (11, 16)); ("gc_cac_mgcg_clk_cntl", (17, 17)); ("se_cac_mgcg_clk_cntl", (18, 18)); ("reserved_31_19", (19, 31)) ] };
-      { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] };
-      { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] };
-      { name = "regRLC_RLCS_BOOTLOAD_STATUS"; offset = 0x4e82; segment = 1; fields = [ ("gfx_init_done", (0, 0)); ("gfx_security_policy_loaded", (1, 1)); ("gfx_security_policy_done", (2, 2)); ("rlc_gpm_iram_loaded", (3, 3)); ("rlc_gpm_iram_done", (4, 4)); ("reserved", (5, 30)); ("bootload_complete", (31, 31)) ] };
-      { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] };
-      { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_mtype_over", (8, 8)); ("rlc_spm_mtype", (9, 11)); ("rlc_spm_bc", (12, 12)); ("rlc_spm_ro", (13, 13)); ("rlc_spm_vol", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved_3", (16, 17)); ("rlc_spm_llc_noalloc", (18, 18)); ("rlc_spm_llc_noalloc_over", (19, 19)); ("reserved", (20, 31)) ] };
-      { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] };
-    ] );
-  ( (11, 5, 0), [
-      { name = "regSDMA0_CNTL"; offset = 0x1c; segment = 0; fields = [ ("trap_enable", (0, 0)); ("sem_wait_int_enable", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] };
-      { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2e; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] };
-      { name = "regSDMA0_UTCL1_CNTL"; offset = 0x3c; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] };
-      { name = "regSDMA0_UTCL1_PAGE"; offset = 0x3f; segment = 0; fields = [ ("vm_hole", (0, 0)); ("req_type", (1, 4)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)); ("llc_noalloc", (24, 24)) ] };
-      { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x5c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x89; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] };
-      { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] };
-      { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] };
-      { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cpaxi", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)) ] };
-      { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] };
-      { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] };
-      { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 20)); ("num_rb_per_se", (26, 27)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL"; offset = 0x15c0; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] };
-      { name = "regGCVM_L2_CNTL2"; offset = 0x15c1; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] };
-      { name = "regGCVM_L2_CNTL3"; offset = 0x15c2; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15c8; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15c9; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x15cc; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("prt", (29, 29)); ("fed", (30, 30)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15cd; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15ce; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15cf; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15d0; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15d2; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15d3; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d4; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15d5; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15d6; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15d7; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL4"; offset = 0x15d8; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] };
-      { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15db; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] };
-      { name = "regGCVM_L2_CNTL5"; offset = 0x15de; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x167c; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x167d; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_TOP"; offset = 0x167e; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BOT"; offset = 0x167f; segment = 0; fields = [ ("agp_bot", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BASE"; offset = 0x1680; segment = 0; fields = [ ("agp_base", (0, 23)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x1681; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x1682; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x1683; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] };
-      { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x168c; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x16ae; segment = 0; fields = [ ("semaphore", (0, 0)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x16c0; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("invalidate_4k_pages_only", (26, 26)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x16d2; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x16d3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x16d4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x16d5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x16d6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x16d7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x16d8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x16d9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x16da; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x16db; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x16dc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x16dd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x16de; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x16df; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x16e0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x16e1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x16e2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x16e3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x16e4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x16e5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x16e6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x16e7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x16e8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x16e9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x16ea; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x16eb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x16ec; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x16ed; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x16ee; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x16ef; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x16f0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x16f1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x16f2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x16f3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x16f4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x16f5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x16f6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x16f7; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x16f8; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x1717; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x1718; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x1737; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x1738; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)) ] };
-      { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] };
-      { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] };
-      { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] };
-      { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 26)) ] };
-      { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] };
-      { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 9)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("image_op", (31, 31)) ] };
-      { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] };
-      { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] };
-      { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] };
-      { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("pq_volatile", (26, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] };
-      { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_volatile", (26, 26)); ("processing_ib", (31, 31)) ] };
-      { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] };
-      { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("mqd_volatile", (26, 26)) ] };
-      { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("eop_volatile", (26, 26)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_pipe2_reset", (22, 22)); ("mec_me2_pipe3_reset", (23, 23)); ("mec_invalidate_icache", (27, 27)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] };
-      { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] };
-      { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] };
-      { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] };
-      { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] };
-      { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("enable_128b_dcc_comp_read_for_indep64", (7, 7)); ("disable_decompression_power_opt", (8, 8)); ("disable_write_combining", (9, 9)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_z_map", (28, 28)); ("force_order_between_read_write_to_same_address", (29, 29)); ("astc_ve_msb_tolerant", (31, 31)) ] };
-      { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] };
-      { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] };
-      { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] };
-      { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] };
-      { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] };
-      { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] };
-      { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] };
-      { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 6)); ("sa_index", (8, 15)); ("se_index", (16, 23)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] };
-      { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] };
-      { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_BASE"; offset = 0x39e8; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_BASE"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] };
-      { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("all_vmid", (2, 2)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("util_timer", (13, 13)); ("wavestart_mode", (14, 15)); ("rt_freq", (16, 17)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("draw_event_en", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)) ] };
-      { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 10)); ("ttrace_exec", (11, 11)); ("bop_events_token_include", (12, 12)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] };
-      { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_16_11", (11, 16)); ("gc_cac_mgcg_clk_cntl", (17, 17)); ("se_cac_mgcg_clk_cntl", (18, 18)); ("reserved_31_19", (19, 31)) ] };
-      { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] };
-      { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] };
-      { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] };
-      { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_mtype_over", (8, 8)); ("rlc_spm_mtype", (9, 11)); ("rlc_spm_bc", (12, 12)); ("reserved_2", (13, 13)); ("rlc_spm_vol", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved_3", (16, 17)); ("rlc_spm_llc_noalloc", (18, 18)); ("rlc_spm_llc_noalloc_over", (19, 19)); ("reserved", (20, 31)) ] };
-      { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] };
-    ] );
-  ( (12, 0, 0), [
-      { name = "regSDMA0_CNTL"; offset = 0xd; segment = 0; fields = [ ("trap_enable", (0, 0)); ("reserved", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] };
-      { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2b; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] };
-      { name = "regSDMA0_UTCL1_CNTL"; offset = 0x35; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] };
-      { name = "regSDMA0_UTCL1_PAGE"; offset = 0x38; segment = 0; fields = [ ("invalid_addr", (0, 0)); ("req_type", (1, 4)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)) ] };
-      { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x55; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("mcu_cgcg_allow", (4, 4)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("mcu_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x87; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x89; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x8f; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] };
-      { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0x91; segment = 0; fields = [ ("offset", (2, 27)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0x98; segment = 0; fields = [ ("addr", (2, 31)) ] };
-      { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0x99; segment = 0; fields = [ ("addr", (0, 31)) ] };
-      { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0x9b; segment = 0; fields = [ ("enable", (0, 0)) ] };
-      { name = "regSDMA0_MCU_CNTL"; offset = 0x588e; segment = 1; fields = [ ("halt", (0, 0)); ("reset", (1, 1)); ("dbg_select_bits", (2, 7)) ] };
-      { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x655; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("mcu_cgcg_allow", (4, 4)); ("cgcg_idle_hysteresis", (16, 31)) ] };
-      { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 11)); ("sed_read_timeout", (16, 27)); ("report_last_rderr", (31, 31)) ] };
-      { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)); ("soft_reset_sdma1", (24, 24)) ] };
-      { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] };
-      { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] };
-      { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("ping_pong_en", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)); ("interleave_2d_en", (18, 18)); ("ttrace_queue_id", (29, 31)) ] };
-      { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] };
-      { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("wg_rr_en", (21, 21)); ("debug_mode", (22, 22)); ("disable_perf", (23, 23)); ("bulky", (24, 24)); ("cdbg_user", (25, 25)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] };
-      { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] };
-      { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 29)) ] };
-      { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] };
-      { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] };
-      { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 11)); ("glg_en", (13, 13)); ("image_op", (31, 31)) ] };
-      { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL"; offset = 0x15c4; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] };
-      { name = "regGCVM_L2_CNTL2"; offset = 0x15c5; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] };
-      { name = "regGCVM_L2_CNTL3"; offset = 0x15c6; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15cc; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15cd; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32"; offset = 0x15d0; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 29)); ("prt", (30, 30)); ("uce", (31, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15d2; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15d3; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15d4; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15d5; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15d7; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15d8; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d9; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15da; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15db; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] };
-      { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15dc; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] };
-      { name = "regGCVM_L2_CNTL4"; offset = 0x15dd; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] };
-      { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15e0; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] };
-      { name = "regGCVM_L2_CNTL5"; offset = 0x15e3; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)); ("utcl2_atc_invreq_repeater_fgcg_off", (17, 17)); ("utcl2_one_outstanding_atc_invreq", (18, 18)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x1614; segment = 0; fields = [ ("fb_base", (0, 23)) ] };
-      { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x1615; segment = 0; fields = [ ("fb_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_TOP"; offset = 0x1616; segment = 0; fields = [ ("agp_top", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BOT"; offset = 0x1617; segment = 0; fields = [ ("agp_bot", (0, 23)) ] };
-      { name = "regGCMC_VM_AGP_BASE"; offset = 0x1618; segment = 0; fields = [ ("agp_base", (0, 23)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x1619; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x161a; segment = 0; fields = [ ("logical_addr", (0, 29)) ] };
-      { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x161b; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 12)) ] };
-      { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x1624; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (4, 7)); ("retry_permission_or_invalid_page_fault", (8, 8)); ("retry_other_fault", (9, 9)); ("range_protection_fault_enable_interrupt", (10, 10)); ("range_protection_fault_enable_default", (11, 11)); ("dummy_page_protection_fault_enable_interrupt", (12, 12)); ("dummy_page_protection_fault_enable_default", (13, 13)); ("pde0_protection_fault_enable_interrupt", (14, 14)); ("pde0_protection_fault_enable_default", (15, 15)); ("valid_protection_fault_enable_interrupt", (16, 16)); ("valid_protection_fault_enable_default", (17, 17)); ("read_protection_fault_enable_interrupt", (18, 18)); ("read_protection_fault_enable_default", (19, 19)); ("write_protection_fault_enable_interrupt", (20, 20)); ("write_protection_fault_enable_default", (21, 21)); ("execute_protection_fault_enable_interrupt", (22, 22)); ("execute_protection_fault_enable_default", (23, 23)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x1646; segment = 0; fields = [ ("semaphore", (0, 0)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x1658; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("log_request", (25, 25)); ("invalidate_4k_pages_only", (26, 26)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x166a; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x166b; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x166c; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x166d; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x166e; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x166f; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x1670; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x1671; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x1672; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x1673; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x1674; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x1675; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x1676; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x1677; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x1678; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x1679; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x167a; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x167b; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x167c; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x167d; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x167e; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x167f; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x1680; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x1681; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x1682; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x1683; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x1684; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x1685; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x1686; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x1687; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x1688; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x1689; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x168a; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x168b; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x168c; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x168d; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] };
-      { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x168e; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x168f; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x1690; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x16af; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x16b0; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x16cf; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] };
-      { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x16d0; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] };
-      { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] };
-      { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] };
-      { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] };
-      { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] };
-      { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] };
-      { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_priv_state", (30, 30)); ("processing_ib", (31, 31)) ] };
-      { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] };
-      { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)) ] };
-      { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)) ] };
-      { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] };
-      { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_invalidate_icache", (27, 27)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] };
-      { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] };
-      { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] };
-      { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] };
-      { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] };
-      { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] };
-      { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] };
-      { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] };
-      { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] };
-      { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] };
-      { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 6)); ("sa_index", (8, 9)); ("se_index", (16, 19)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] };
-      { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("spare", (0, 3)); ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] };
-      { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] };
-      { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] };
-      { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("sc_clean_user_defined_mask", (9, 9)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)) ] };
-      { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("sc_clean_user_defined_mask", (9, 9)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)) ] };
-      { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b86; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] };
-      { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] };
-      { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_31_11", (11, 31)) ] };
-      { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] };
-      { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("srm_gpm_fifo_reset", (2, 2)); ("reserved", (3, 31)) ] };
-      { name = "regRLC_RLCS_BOOTLOAD_STATUS"; offset = 0x4e7c; segment = 1; fields = [ ("gfx_fuse_dist_done", (0, 0)); ("gfx_init_done", (1, 1)); ("gfx_security_policy_loaded", (2, 2)); ("gfx_security_policy_done", (3, 3)); ("rlc_gpm_iram_loaded", (4, 4)); ("rlc_gpm_iram_done", (5, 5)); ("status_6_30", (6, 30)); ("bootload_complete", (31, 31)) ] };
-      { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] };
-      { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_sdr", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_temporal", (8, 10)); ("rlc_spm_comp", (11, 12)); ("rlc_spm_comp_over", (13, 13)); ("rlc_spm_ro", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved", (16, 31)) ] };
-      { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] };
-      { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 22)); ("num_rb_per_se", (26, 27)) ] };
-      { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] };
-      { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] };
-      { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("f8_mode", (8, 8)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] };
-      { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("store_atomic_collapse_clause_limit", (2, 4)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("disable_write_combining", (9, 9)); ("force_scope_eow", (10, 10)); ("force_temporal_eow", (11, 11)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_full_cl_access", (27, 27)); ("disable_z_map", (28, 28)); ("astc_ve_msb_tolerant", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] };
-      { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] };
-      { name = "regSPI_SQG_EVENT_CTL"; offset = 0x2448; segment = 1; fields = [ ("enable_sqg_top_events", (0, 0)); ("enable_sqg_bop_events", (1, 1)) ] };
-      { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] };
-      { name = "regCP_PERFMON_CNTL_1"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] };
-      { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] };
-      { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e6; segment = 1; fields = [ ("size", (0, 21)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_BASE_LO"; offset = 0x39e7; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF0_BASE_HI"; offset = 0x39e8; segment = 1; fields = [ ("base_hi", (0, 12)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("size", (0, 21)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_BASE_LO"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_BUF1_BASE_HI"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 12)) ] };
-      { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("stall_all_simds", (13, 13)); ("util_timer", (14, 14)); ("wavestart_mode", (15, 16)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("gl1x_prefetch_page", (23, 26)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("ncp_reg_token_en", (30, 30)); ("draw_event_en", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)); ("exclude_nondetail_wavestart_ext", (18, 18)); ("exclude_nondetail_alloc", (19, 19)) ] };
-      { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 11)); ("ttrace_exec", (12, 12)); ("bop_events_token_include", (13, 13)); ("exclude_barrier_wait", (14, 14)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HALT"; offset = 0x39f0; segment = 1; fields = [ ("enter_cgcg", (0, 0)); ("cgcg_ready", (1, 1)); ("enter_poweroff", (2, 2)); ("poweroff_ready", (3, 3)) ] };
-      { name = "regSQ_THREAD_TRACE_POWEROFF_RESTORE_1"; offset = 0x39f1; segment = 1; fields = [ ("states", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] };
-      { name = "regSQ_THREAD_TRACE_FINISH_DONE_DEBUG"; offset = 0x39fb; segment = 1; fields = [ ("gfx", (0, 9)); ("exp", (10, 15)) ] };
-    ] );
+(* The GC versions with registers. *)
+type gc = No_gc | Gc_9_4_3 | Gc_11_0_0 | Gc_11_0_3 | Gc_11_5_0 | Gc_12_0_0
+
+(* GC 9.4.3, its fields as (name, (lowest bit, highest bit)) *)
+
+let gc_9_4_3_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
+let gc_9_4_3_regGRBM_SOFT_RESET = { name = "regGRBM_SOFT_RESET"; offset = 8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cane", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_utcl2", (23, 23)) ] }
+let gc_9_4_3_regGRBM_GFX_CNTL = { name = "regGRBM_GFX_CNTL"; offset = 0x22; segment = 0; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)) ] }
+let gc_9_4_3_regCP_MEC_CNTL = { name = "regCP_MEC_CNTL"; offset = 0x8d; segment = 0; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] }
+let gc_9_4_3_regCP_STAT = { name = "regCP_STAT"; offset = 0x1a0; segment = 0; fields = [ ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] }
+let gc_9_4_3_regCP_ME_CNTL = { name = "regCP_ME_CNTL"; offset = 0x1b6; segment = 0; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] }
+let gc_9_4_3_regCP_RB_WPTR_POLL_CNTL = { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0x1c2; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] }
+let gc_9_4_3_regSH_MEM_BASES = { name = "regSH_MEM_BASES"; offset = 0x30a; segment = 0; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] }
+let gc_9_4_3_regSH_MEM_CONFIG = { name = "regSH_MEM_CONFIG"; offset = 0x30d; segment = 0; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (3, 4)); ("f8_mode", (8, 8)); ("precision_mode", (9, 9)); ("retry_disable", (12, 12)); ("private_nv", (13, 13)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_CMN = { name = "regSQ_THREAD_TRACE_WORD_CMN"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_EVENT = { name = "regSQ_THREAD_TRACE_WORD_EVENT"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("stage", (6, 8)); ("event_type", (10, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST = { name = "regSQ_THREAD_TRACE_WORD_INST"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("wave_id", (5, 8)); ("simd_id", (9, 10)); ("inst_type", (11, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_PC_1_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_INST_PC_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("wave_id", (5, 8)); ("simd_id", (9, 10)); ("trap_error", (15, 15)); ("pc_lo", (16, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("priv", (5, 5)); ("cu_id", (6, 9)); ("wave_id", (10, 13)); ("simd_id", (14, 15)); ("data_lo", (16, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_ISSUE = { name = "regSQ_THREAD_TRACE_WORD_ISSUE"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("simd_id", (5, 6)); ("inst0", (8, 9)); ("inst1", (10, 11)); ("inst2", (12, 13)); ("inst3", (14, 15)); ("inst4", (16, 17)); ("inst5", (18, 19)); ("inst6", (20, 21)); ("inst7", (22, 23)); ("inst8", (24, 25)); ("inst9", (26, 27)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_MISC = { name = "regSQ_THREAD_TRACE_WORD_MISC"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 11)); ("sh_id", (12, 12)); ("misc_token_type", (13, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_PERF_1_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_PERF_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("cu_id", (6, 9)); ("cntr_bank", (10, 11)); ("cntr0", (12, 24)); ("cntr1_lo", (25, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_1_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_REG_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("pipe_id", (5, 6)); ("me_id", (7, 8)); ("reg_dropped_prev", (9, 9)); ("reg_type", (10, 12)); ("reg_priv", (14, 14)); ("reg_op", (15, 15)); ("reg_addr", (16, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_2_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_REG_2_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_CS_1_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_REG_CS_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("pipe_id", (5, 6)); ("me_id", (7, 8)); ("reg_addr", (9, 15)); ("data_lo", (16, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_CS_2_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_REG_CS_2_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("data_hi", (0, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_lo", (16, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_WAVE = { name = "regSQ_THREAD_TRACE_WORD_WAVE"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("cu_id", (6, 9)); ("wave_id", (10, 13)); ("simd_id", (14, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_WAVE_START = { name = "regSQ_THREAD_TRACE_WORD_WAVE_START"; offset = 0x3b0; segment = 0; fields = [ ("token_type", (0, 3)); ("time_delta", (4, 4)); ("sh_id", (5, 5)); ("cu_id", (6, 9)); ("wave_id", (10, 13)); ("simd_id", (14, 15)); ("dispatcher", (16, 20)); ("vs_no_alloc_or_grouped", (21, 21)); ("count", (22, 28)); ("tg_id", (29, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_PC_2_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_INST_PC_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("pc_hi", (0, 23)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("data_hi", (0, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_PERF_2_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_PERF_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("cntr1_hi", (0, 5)); ("cntr2", (6, 18)); ("cntr3", (19, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2 = { name = "regSQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2"; offset = 0x3b1; segment = 0; fields = [ ("time_hi", (0, 31)) ] }
+let gc_9_4_3_regGB_ADDR_CONFIG = { name = "regGB_ADDR_CONFIG"; offset = 0x63e; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("bank_interleave_size", (8, 10)); ("num_banks", (12, 14)); ("shader_engine_tile_size", (16, 18)); ("num_shader_engines", (19, 20)); ("num_gpus", (21, 23)); ("multi_gpu_tile_size", (24, 25)); ("num_rb_per_se", (26, 27)); ("row_size", (28, 29)); ("num_lower_pipes", (30, 30)); ("se_enable", (31, 31)) ] }
+let gc_9_4_3_regGCVM_L2_CNTL = { name = "regGCVM_L2_CNTL"; offset = 0x820; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] }
+let gc_9_4_3_regGCVM_L2_CNTL2 = { name = "regGCVM_L2_CNTL2"; offset = 0x821; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] }
+let gc_9_4_3_regGCVM_L2_CNTL3 = { name = "regGCVM_L2_CNTL3"; offset = 0x822; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_CNTL = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x827; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_CNTL2 = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x828; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_STATUS = { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x82b; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("uce", (29, 29)); ("fed", (30, 30)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x82c; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x82d; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x82e; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x82f; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x831; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x832; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x833; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x834; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x835; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x836; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCVM_L2_CNTL4 = { name = "regGCVM_L2_CNTL4"; offset = 0x837; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)) ] }
+let gc_9_4_3_regGCVM_L2_CNTL5 = { name = "regGCVM_L2_CNTL5"; offset = 0x838; segment = 0; fields = [ ("walker_fetch_pde_mtype_enable", (0, 0)); ("walker_fetch_pde_noalloc_enable", (1, 1)) ] }
+let gc_9_4_3_regGCVM_L2_BANK_SELECT_RESERVED_CID2 = { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x83b; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_CNTL = { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x860; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)); ("secure_protection_fault_enable_interrupt", (23, 23)); ("secure_protection_fault_enable_default", (24, 24)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG17_SEM = { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x882; segment = 0; fields = [ ("semaphore", (0, 0)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG17_REQ = { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x894; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 17)); ("invalidate_l2_ptes", (18, 18)); ("invalidate_l2_pde0", (19, 19)); ("invalidate_l2_pde1", (20, 20)); ("invalidate_l2_pde2", (21, 21)); ("invalidate_l1_ptes", (22, 22)); ("clear_protection_fault_status_addr", (23, 23)); ("log_request", (24, 24)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG17_ACK = { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x8a6; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x8a7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x8a8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x8a9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x8aa; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x8ab; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x8ac; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x8ad; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x8ae; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x8af; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x8b0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x8b1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x8b2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x8b3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x8b4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x8b5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x8b6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x8b7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x8b8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x8b9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x8ba; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x8bb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x8bc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x8bd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x8be; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x8bf; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x8c0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x8c1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x8c2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x8c3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x8c4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x8c5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x8c6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x8c7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x8c8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x8c9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_9_4_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x8ca; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x8cb; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x8cc; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x8eb; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x8ec; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x90b; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x90c; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x948; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] }
+let gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x949; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] }
+let gc_9_4_3_regGCMC_VM_XGMI_LFB_CNTL = { name = "regGCMC_VM_XGMI_LFB_CNTL"; offset = 0x957; segment = 0; fields = [ ("pf_lfb_region", (0, 3)); ("pf_max_region", (4, 7)) ] }
+let gc_9_4_3_regGCMC_VM_XGMI_LFB_SIZE = { name = "regGCMC_VM_XGMI_LFB_SIZE"; offset = 0x958; segment = 0; fields = [ ("pf_lfb_size", (0, 16)) ] }
+let gc_9_4_3_regGCMC_VM_FB_LOCATION_BASE = { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x95c; segment = 0; fields = [ ("fb_base", (0, 23)) ] }
+let gc_9_4_3_regGCMC_VM_FB_LOCATION_TOP = { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x95d; segment = 0; fields = [ ("fb_top", (0, 23)) ] }
+let gc_9_4_3_regGCMC_VM_AGP_TOP = { name = "regGCMC_VM_AGP_TOP"; offset = 0x95e; segment = 0; fields = [ ("agp_top", (0, 23)) ] }
+let gc_9_4_3_regGCMC_VM_AGP_BOT = { name = "regGCMC_VM_AGP_BOT"; offset = 0x95f; segment = 0; fields = [ ("agp_bot", (0, 23)) ] }
+let gc_9_4_3_regGCMC_VM_AGP_BASE = { name = "regGCMC_VM_AGP_BASE"; offset = 0x960; segment = 0; fields = [ ("agp_base", (0, 23)) ] }
+let gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x961; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x962; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_9_4_3_regGCMC_VM_MX_L1_TLB_CNTL = { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x963; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 12)); ("atc_en", (13, 13)) ] }
+let gc_9_4_3_regTCP_CNTL = { name = "regTCP_CNTL"; offset = 0xb02; segment = 0; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("l1_size", (2, 3)); ("flat_buf_hash_enable", (4, 4)); ("flat_buf_cache_swizzle", (5, 5)); ("force_eow_total_cnt", (15, 20)); ("force_eow_tagram_cnt", (22, 27)); ("disable_z_map", (28, 28)) ] }
+let gc_9_4_3_regCOMPUTE_DISPATCH_INITIATOR = { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0xe00; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("restore", (14, 14)) ] }
+let gc_9_4_3_regCOMPUTE_START_X = { name = "regCOMPUTE_START_X"; offset = 0xe04; segment = 0; fields = [ ("start", (0, 31)) ] }
+let gc_9_4_3_regCOMPUTE_PERFCOUNT_ENABLE = { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0xe0b; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] }
+let gc_9_4_3_regCOMPUTE_PGM_LO = { name = "regCOMPUTE_PGM_LO"; offset = 0xe0c; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO = { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0xe10; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regCOMPUTE_PGM_RSRC1 = { name = "regCOMPUTE_PGM_RSRC1"; offset = 0xe12; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("debug_mode", (22, 22)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("cdbg_user", (25, 25)); ("fp16_ovfl", (26, 26)) ] }
+let gc_9_4_3_regCOMPUTE_RESOURCE_LIMITS = { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0xe15; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)); ("simd_disable", (27, 30)) ] }
+let gc_9_4_3_regCOMPUTE_TMPRING_SIZE = { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0xe18; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 24)) ] }
+let gc_9_4_3_regCOMPUTE_RESTART_X = { name = "regCOMPUTE_RESTART_X"; offset = 0xe1b; segment = 0; fields = [ ("restart", (0, 31)) ] }
+let gc_9_4_3_regCOMPUTE_THREAD_TRACE_ENABLE = { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0xe1e; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] }
+let gc_9_4_3_regCOMPUTE_PGM_RSRC3 = { name = "regCOMPUTE_PGM_RSRC3"; offset = 0xe2d; segment = 0; fields = [ ("accum_offset", (0, 5)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("tg_split", (16, 16)) ] }
+let gc_9_4_3_regCOMPUTE_USER_DATA_0 = { name = "regCOMPUTE_USER_DATA_0"; offset = 0xe40; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regCP_INT_CNTL = { name = "regCP_INT_CNTL"; offset = 0x1049; segment = 0; fields = [ ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] }
+let gc_9_4_3_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x105c; segment = 0; fields = [ ("doorbell_range_lower", (2, 27)) ] }
+let gc_9_4_3_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x105d; segment = 0; fields = [ ("doorbell_range_upper", (2, 27)) ] }
+let gc_9_4_3_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x10a4; segment = 0; fields = [ ("ip_start", (0, 12)) ] }
+let gc_9_4_3_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x10a5; segment = 0; fields = [ ("ip_start", (0, 11)) ] }
+let gc_9_4_3_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x11db; segment = 0; fields = [ ("reset", (0, 0)) ] }
+let gc_9_4_3_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1245; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
+let gc_9_4_3_regCP_HQD_ACTIVE = { name = "regCP_HQD_ACTIVE"; offset = 0x1247; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] }
+let gc_9_4_3_regCP_HQD_PERSISTENT_STATE = { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1249; segment = 0; fields = [ ("preload_req", (0, 0)); ("preload_size", (8, 17)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] }
+let gc_9_4_3_regCP_HQD_PQ_DOORBELL_CONTROL = { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1254; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] }
+let gc_9_4_3_regCP_HQD_PQ_CONTROL = { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1256; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("wpp_clamp_en", (16, 16)); ("endian_swap", (17, 18)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 24)); ("slot_based_wptr", (25, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("roq_pq_ib_flip", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] }
+let gc_9_4_3_regCP_HQD_IB_CONTROL = { name = "regCP_HQD_IB_CONTROL"; offset = 0x125a; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 24)); ("ib_priv_state", (30, 30)); ("processing_ib", (31, 31)) ] }
+let gc_9_4_3_regCP_HQD_DEQUEUE_REQUEST = { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x125d; segment = 0; fields = [ ("dequeue_req", (0, 2)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] }
+let gc_9_4_3_regCP_MQD_CONTROL = { name = "regCP_MQD_CONTROL"; offset = 0x1267; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 24)) ] }
+let gc_9_4_3_regCP_HQD_EOP_CONTROL = { name = "regCP_HQD_EOP_CONTROL"; offset = 0x126c; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 24)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] }
+let gc_9_4_3_regCP_HQD_PQ_WPTR_HI = { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x127c; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regTCP_UTCL1_CNTL2 = { name = "regTCP_UTCL1_CNTL2"; offset = 0x12b6; segment = 0; fields = [ ("spare", (0, 7)); ("mtype_ovrd_dis", (9, 9)); ("any_line_valid", (10, 10)); ("gpuvm_inv_mode", (12, 12)); ("force_snoop", (14, 14)); ("force_gpuvm_inv_ack", (15, 15)); ("force_frag_2m_to_64k", (26, 26)); ("thrashing_timeout_protect_enable", (27, 27)); ("thrashing_enable", (28, 28)) ] }
+let gc_9_4_3_regSCRATCH_REG0 = { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] }
+let gc_9_4_3_regSCRATCH_REG1 = { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] }
+let gc_9_4_3_regSCRATCH_REG2 = { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] }
+let gc_9_4_3_regSCRATCH_REG3 = { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] }
+let gc_9_4_3_regSCRATCH_REG5 = { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] }
+let gc_9_4_3_regSCRATCH_REG6 = { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] }
+let gc_9_4_3_regSCRATCH_REG7 = { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] }
+let gc_9_4_3_regGRBM_GFX_INDEX = { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 7)); ("sh_index", (8, 15)); ("se_index", (16, 23)); ("sh_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_BASE = { name = "regSQ_THREAD_TRACE_BASE"; offset = 0x2330; segment = 1; fields = [ ("addr", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_SIZE = { name = "regSQ_THREAD_TRACE_SIZE"; offset = 0x2331; segment = 1; fields = [ ("size", (0, 21)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_MASK = { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x2332; segment = 1; fields = [ ("cu_sel", (0, 4)); ("sh_sel", (5, 5)); ("reg_stall_en", (7, 7)); ("simd_en", (8, 11)); ("vm_id_mask", (12, 13)); ("spi_stall_en", (14, 14)); ("sq_stall_en", (15, 15)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_TOKEN_MASK = { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x2333; segment = 1; fields = [ ("token_mask", (0, 15)); ("reg_mask", (16, 23)); ("reg_drop_on_stall", (24, 24)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_PERF_MASK = { name = "regSQ_THREAD_TRACE_PERF_MASK"; offset = 0x2334; segment = 1; fields = [ ("sh0_mask", (0, 15)); ("sh1_mask", (16, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_CTRL = { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x2335; segment = 1; fields = [ ("reset_buffer", (31, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_MODE = { name = "regSQ_THREAD_TRACE_MODE"; offset = 0x2336; segment = 1; fields = [ ("mask_ps", (0, 2)); ("mask_vs", (3, 5)); ("mask_gs", (6, 8)); ("mask_es", (9, 11)); ("mask_hs", (12, 14)); ("mask_ls", (15, 17)); ("mask_cs", (18, 20)); ("mode", (21, 22)); ("capture_mode", (23, 24)); ("autoflush_en", (25, 25)); ("tc_perf_en", (26, 26)); ("issue_mask", (27, 28)); ("test_mode", (29, 29)); ("interrupt_en", (30, 30)); ("wrap", (31, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_BASE2 = { name = "regSQ_THREAD_TRACE_BASE2"; offset = 0x2337; segment = 1; fields = [ ("addr_hi", (0, 3)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_TOKEN_MASK2 = { name = "regSQ_THREAD_TRACE_TOKEN_MASK2"; offset = 0x2338; segment = 1; fields = [ ("inst_mask", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_WPTR = { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x2339; segment = 1; fields = [ ("wptr", (0, 29)); ("read_offset", (30, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_STATUS = { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x233a; segment = 1; fields = [ ("finish_pending", (0, 9)); ("finish_done", (16, 25)); ("utc_error", (28, 28)); ("new_buf", (29, 29)); ("busy", (30, 30)); ("full", (31, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_HIWATER = { name = "regSQ_THREAD_TRACE_HIWATER"; offset = 0x233b; segment = 1; fields = [ ("hiwater", (0, 2)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_CNTR = { name = "regSQ_THREAD_TRACE_CNTR"; offset = 0x233c; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_0 = { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_1 = { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_2 = { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_3 = { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_9_4_3_regSPI_CONFIG_CNTL = { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("rsrc_mgmt_reset", (26, 26)); ("ttrace_stall_all", (27, 27)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] }
+let gc_9_4_3_regGRBM_PERFCOUNTER0_LO = { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regGRBM_PERFCOUNTER0_HI = { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regGRBM_PERFCOUNTER1_LO = { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regGRBM_PERFCOUNTER1_HI = { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER0_LO = { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER0_HI = { name = "regSQ_PERFCOUNTER0_HI"; offset = 0x31c1; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER1_LO = { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER1_HI = { name = "regSQ_PERFCOUNTER1_HI"; offset = 0x31c3; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER2_LO = { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER2_HI = { name = "regSQ_PERFCOUNTER2_HI"; offset = 0x31c5; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER3_LO = { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER3_HI = { name = "regSQ_PERFCOUNTER3_HI"; offset = 0x31c7; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER4_LO = { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER4_HI = { name = "regSQ_PERFCOUNTER4_HI"; offset = 0x31c9; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER5_LO = { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER5_HI = { name = "regSQ_PERFCOUNTER5_HI"; offset = 0x31cb; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER6_LO = { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER6_HI = { name = "regSQ_PERFCOUNTER6_HI"; offset = 0x31cd; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER7_LO = { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER7_HI = { name = "regSQ_PERFCOUNTER7_HI"; offset = 0x31cf; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER8_LO = { name = "regSQ_PERFCOUNTER8_LO"; offset = 0x31d0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER8_HI = { name = "regSQ_PERFCOUNTER8_HI"; offset = 0x31d1; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER9_LO = { name = "regSQ_PERFCOUNTER9_LO"; offset = 0x31d2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER9_HI = { name = "regSQ_PERFCOUNTER9_HI"; offset = 0x31d3; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER10_LO = { name = "regSQ_PERFCOUNTER10_LO"; offset = 0x31d4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER10_HI = { name = "regSQ_PERFCOUNTER10_HI"; offset = 0x31d5; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER11_LO = { name = "regSQ_PERFCOUNTER11_LO"; offset = 0x31d6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER11_HI = { name = "regSQ_PERFCOUNTER11_HI"; offset = 0x31d7; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER12_LO = { name = "regSQ_PERFCOUNTER12_LO"; offset = 0x31d8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER12_HI = { name = "regSQ_PERFCOUNTER12_HI"; offset = 0x31d9; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER13_LO = { name = "regSQ_PERFCOUNTER13_LO"; offset = 0x31da; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER13_HI = { name = "regSQ_PERFCOUNTER13_HI"; offset = 0x31db; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER14_LO = { name = "regSQ_PERFCOUNTER14_LO"; offset = 0x31dc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER14_HI = { name = "regSQ_PERFCOUNTER14_HI"; offset = 0x31dd; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER15_LO = { name = "regSQ_PERFCOUNTER15_LO"; offset = 0x31de; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER15_HI = { name = "regSQ_PERFCOUNTER15_HI"; offset = 0x31df; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER0_LO = { name = "regTCC_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER0_HI = { name = "regTCC_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER1_LO = { name = "regTCC_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER1_HI = { name = "regTCC_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER2_LO = { name = "regTCC_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER2_HI = { name = "regTCC_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER3_LO = { name = "regTCC_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER3_HI = { name = "regTCC_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_9_4_3_regCP_PERFMON_CNTL = { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] }
+let gc_9_4_3_regGRBM_PERFCOUNTER0_SELECT = { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("vgt_busy_user_defined_mask", (12, 12)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("ia_busy_user_defined_mask", (23, 23)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tc_busy_user_defined_mask", (27, 27)); ("wd_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_9_4_3_regGRBM_PERFCOUNTER1_SELECT = { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("vgt_busy_user_defined_mask", (12, 12)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("ia_busy_user_defined_mask", (23, 23)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tc_busy_user_defined_mask", (27, 27)); ("wd_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER0_SELECT = { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER1_SELECT = { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER2_SELECT = { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER3_SELECT = { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER4_SELECT = { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER5_SELECT = { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER6_SELECT = { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER7_SELECT = { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER8_SELECT = { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER9_SELECT = { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER10_SELECT = { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER11_SELECT = { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER12_SELECT = { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER13_SELECT = { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER14_SELECT = { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER15_SELECT = { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("sqc_bank_mask", (12, 15)); ("sqc_client_mask", (16, 19)); ("spm_mode", (20, 23)); ("simd_mask", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER_CTRL = { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("vs_en", (1, 1)); ("gs_en", (2, 2)); ("es_en", (3, 3)); ("hs_en", (4, 4)); ("ls_en", (5, 5)); ("cs_en", (6, 6)); ("cntr_rate", (8, 12)); ("disable_flush", (13, 13)); ("vmid_mask", (16, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER_MASK = { name = "regSQ_PERFCOUNTER_MASK"; offset = 0x39e1; segment = 1; fields = [ ("sh0_mask", (0, 15)); ("sh1_mask", (16, 31)) ] }
+let gc_9_4_3_regSQ_PERFCOUNTER_CTRL2 = { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER0_SELECT = { name = "regTCC_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER1_SELECT = { name = "regTCC_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER2_SELECT = { name = "regTCC_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regTCC_PERFCOUNTER3_SELECT = { name = "regTCC_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_9_4_3_regRLC_CNTL = { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] }
+let gc_9_4_3_regRLC_SAFE_MODE = { name = "regRLC_SAFE_MODE"; offset = 0x4c05; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] }
+let gc_9_4_3_regRLC_CGTT_MGCG_OVERRIDE = { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("reserved_0", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_rep_fgcg_override", (9, 9)); ("gfxip_perf_clk_en", (10, 10)); ("reserved_15_11", (11, 15)); ("enable_cgts_legacy", (16, 16)); ("reserved_31_17", (17, 31)) ] }
+let gc_9_4_3_regRLC_CGCG_CGLS_CTRL = { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] }
+let gc_9_4_3_regRLC_SPM_MC_CNTL = { name = "regRLC_SPM_MC_CNTL"; offset = 0x4c71; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 4)); ("rlc_spm_perf_cntr", (5, 5)); ("rlc_spm_fed", (6, 6)); ("rlc_spm_mtype_over", (7, 7)); ("rlc_spm_mtype", (8, 9)); ("reserved", (10, 31)) ] }
+let gc_9_4_3_regRLC_SRM_CNTL = { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] }
+let gc_9_4_3_regRLC_CP_SCHEDULERS = { name = "regRLC_CP_SCHEDULERS"; offset = 0x4caa; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)); ("scheduler2", (16, 23)); ("scheduler3", (24, 31)) ] }
+let gc_9_4_3_regRLC_SPARE_INT = { name = "regRLC_SPARE_INT"; offset = 0x4ccc; segment = 1; fields = [ ("interrupt", (0, 0)); ("reserved", (1, 31)) ] }
+
+let gc_9_4_3_registers = [
+  gc_9_4_3_regGRBM_CNTL;
+  gc_9_4_3_regGRBM_SOFT_RESET;
+  gc_9_4_3_regGRBM_GFX_CNTL;
+  gc_9_4_3_regCP_MEC_CNTL;
+  gc_9_4_3_regCP_STAT;
+  gc_9_4_3_regCP_ME_CNTL;
+  gc_9_4_3_regCP_RB_WPTR_POLL_CNTL;
+  gc_9_4_3_regSH_MEM_BASES;
+  gc_9_4_3_regSH_MEM_CONFIG;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_CMN;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_EVENT;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_PC_1_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_ISSUE;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_MISC;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_PERF_1_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_1_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_2_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_CS_1_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_CS_2_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_WAVE;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_WAVE_START;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_PC_2_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_PERF_2_OF_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2;
+  gc_9_4_3_regGB_ADDR_CONFIG;
+  gc_9_4_3_regGCVM_L2_CNTL;
+  gc_9_4_3_regGCVM_L2_CNTL2;
+  gc_9_4_3_regGCVM_L2_CNTL3;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_CNTL;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_CNTL2;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_STATUS;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32;
+  gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32;
+  gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32;
+  gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32;
+  gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32;
+  gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32;
+  gc_9_4_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32;
+  gc_9_4_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32;
+  gc_9_4_3_regGCVM_L2_CNTL4;
+  gc_9_4_3_regGCVM_L2_CNTL5;
+  gc_9_4_3_regGCVM_L2_BANK_SELECT_RESERVED_CID2;
+  gc_9_4_3_regGCVM_CONTEXT0_CNTL;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG17_SEM;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG17_REQ;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG17_ACK;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32;
+  gc_9_4_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32;
+  gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32;
+  gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32;
+  gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32;
+  gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32;
+  gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32;
+  gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32;
+  gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB;
+  gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB;
+  gc_9_4_3_regGCMC_VM_XGMI_LFB_CNTL;
+  gc_9_4_3_regGCMC_VM_XGMI_LFB_SIZE;
+  gc_9_4_3_regGCMC_VM_FB_LOCATION_BASE;
+  gc_9_4_3_regGCMC_VM_FB_LOCATION_TOP;
+  gc_9_4_3_regGCMC_VM_AGP_TOP;
+  gc_9_4_3_regGCMC_VM_AGP_BOT;
+  gc_9_4_3_regGCMC_VM_AGP_BASE;
+  gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR;
+  gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR;
+  gc_9_4_3_regGCMC_VM_MX_L1_TLB_CNTL;
+  gc_9_4_3_regTCP_CNTL;
+  gc_9_4_3_regCOMPUTE_DISPATCH_INITIATOR;
+  gc_9_4_3_regCOMPUTE_START_X;
+  gc_9_4_3_regCOMPUTE_PERFCOUNT_ENABLE;
+  gc_9_4_3_regCOMPUTE_PGM_LO;
+  gc_9_4_3_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO;
+  gc_9_4_3_regCOMPUTE_PGM_RSRC1;
+  gc_9_4_3_regCOMPUTE_RESOURCE_LIMITS;
+  gc_9_4_3_regCOMPUTE_TMPRING_SIZE;
+  gc_9_4_3_regCOMPUTE_RESTART_X;
+  gc_9_4_3_regCOMPUTE_THREAD_TRACE_ENABLE;
+  gc_9_4_3_regCOMPUTE_PGM_RSRC3;
+  gc_9_4_3_regCOMPUTE_USER_DATA_0;
+  gc_9_4_3_regCP_INT_CNTL;
+  gc_9_4_3_regCP_MEC_DOORBELL_RANGE_LOWER;
+  gc_9_4_3_regCP_MEC_DOORBELL_RANGE_UPPER;
+  gc_9_4_3_regCP_PFP_PRGRM_CNTR_START;
+  gc_9_4_3_regCP_ME_PRGRM_CNTR_START;
+  gc_9_4_3_regSPI_COMPUTE_QUEUE_RESET;
+  gc_9_4_3_regCP_MQD_BASE_ADDR;
+  gc_9_4_3_regCP_HQD_ACTIVE;
+  gc_9_4_3_regCP_HQD_PERSISTENT_STATE;
+  gc_9_4_3_regCP_HQD_PQ_DOORBELL_CONTROL;
+  gc_9_4_3_regCP_HQD_PQ_CONTROL;
+  gc_9_4_3_regCP_HQD_IB_CONTROL;
+  gc_9_4_3_regCP_HQD_DEQUEUE_REQUEST;
+  gc_9_4_3_regCP_MQD_CONTROL;
+  gc_9_4_3_regCP_HQD_EOP_CONTROL;
+  gc_9_4_3_regCP_HQD_PQ_WPTR_HI;
+  gc_9_4_3_regTCP_UTCL1_CNTL2;
+  gc_9_4_3_regSCRATCH_REG0;
+  gc_9_4_3_regSCRATCH_REG1;
+  gc_9_4_3_regSCRATCH_REG2;
+  gc_9_4_3_regSCRATCH_REG3;
+  gc_9_4_3_regSCRATCH_REG5;
+  gc_9_4_3_regSCRATCH_REG6;
+  gc_9_4_3_regSCRATCH_REG7;
+  gc_9_4_3_regGRBM_GFX_INDEX;
+  gc_9_4_3_regSQ_THREAD_TRACE_BASE;
+  gc_9_4_3_regSQ_THREAD_TRACE_SIZE;
+  gc_9_4_3_regSQ_THREAD_TRACE_MASK;
+  gc_9_4_3_regSQ_THREAD_TRACE_TOKEN_MASK;
+  gc_9_4_3_regSQ_THREAD_TRACE_PERF_MASK;
+  gc_9_4_3_regSQ_THREAD_TRACE_CTRL;
+  gc_9_4_3_regSQ_THREAD_TRACE_MODE;
+  gc_9_4_3_regSQ_THREAD_TRACE_BASE2;
+  gc_9_4_3_regSQ_THREAD_TRACE_TOKEN_MASK2;
+  gc_9_4_3_regSQ_THREAD_TRACE_WPTR;
+  gc_9_4_3_regSQ_THREAD_TRACE_STATUS;
+  gc_9_4_3_regSQ_THREAD_TRACE_HIWATER;
+  gc_9_4_3_regSQ_THREAD_TRACE_CNTR;
+  gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_0;
+  gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_1;
+  gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_2;
+  gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_3;
+  gc_9_4_3_regSPI_CONFIG_CNTL;
+  gc_9_4_3_regGRBM_PERFCOUNTER0_LO;
+  gc_9_4_3_regGRBM_PERFCOUNTER0_HI;
+  gc_9_4_3_regGRBM_PERFCOUNTER1_LO;
+  gc_9_4_3_regGRBM_PERFCOUNTER1_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER0_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER0_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER1_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER1_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER2_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER2_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER3_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER3_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER4_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER4_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER5_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER5_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER6_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER6_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER7_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER7_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER8_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER8_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER9_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER9_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER10_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER10_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER11_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER11_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER12_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER12_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER13_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER13_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER14_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER14_HI;
+  gc_9_4_3_regSQ_PERFCOUNTER15_LO;
+  gc_9_4_3_regSQ_PERFCOUNTER15_HI;
+  gc_9_4_3_regTCC_PERFCOUNTER0_LO;
+  gc_9_4_3_regTCC_PERFCOUNTER0_HI;
+  gc_9_4_3_regTCC_PERFCOUNTER1_LO;
+  gc_9_4_3_regTCC_PERFCOUNTER1_HI;
+  gc_9_4_3_regTCC_PERFCOUNTER2_LO;
+  gc_9_4_3_regTCC_PERFCOUNTER2_HI;
+  gc_9_4_3_regTCC_PERFCOUNTER3_LO;
+  gc_9_4_3_regTCC_PERFCOUNTER3_HI;
+  gc_9_4_3_regCP_PERFMON_CNTL;
+  gc_9_4_3_regGRBM_PERFCOUNTER0_SELECT;
+  gc_9_4_3_regGRBM_PERFCOUNTER1_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER0_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER1_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER2_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER3_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER4_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER5_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER6_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER7_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER8_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER9_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER10_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER11_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER12_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER13_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER14_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER15_SELECT;
+  gc_9_4_3_regSQ_PERFCOUNTER_CTRL;
+  gc_9_4_3_regSQ_PERFCOUNTER_MASK;
+  gc_9_4_3_regSQ_PERFCOUNTER_CTRL2;
+  gc_9_4_3_regTCC_PERFCOUNTER0_SELECT;
+  gc_9_4_3_regTCC_PERFCOUNTER1_SELECT;
+  gc_9_4_3_regTCC_PERFCOUNTER2_SELECT;
+  gc_9_4_3_regTCC_PERFCOUNTER3_SELECT;
+  gc_9_4_3_regRLC_CNTL;
+  gc_9_4_3_regRLC_SAFE_MODE;
+  gc_9_4_3_regRLC_CGTT_MGCG_OVERRIDE;
+  gc_9_4_3_regRLC_CGCG_CGLS_CTRL;
+  gc_9_4_3_regRLC_SPM_MC_CNTL;
+  gc_9_4_3_regRLC_SRM_CNTL;
+  gc_9_4_3_regRLC_CP_SCHEDULERS;
+  gc_9_4_3_regRLC_SPARE_INT;
 ]
+
+let gc_9_4_3_find = function
+  | "regGRBM_CNTL" -> Some gc_9_4_3_regGRBM_CNTL
+  | "regGRBM_SOFT_RESET" -> Some gc_9_4_3_regGRBM_SOFT_RESET
+  | "regGRBM_GFX_CNTL" -> Some gc_9_4_3_regGRBM_GFX_CNTL
+  | "regCP_MEC_CNTL" -> Some gc_9_4_3_regCP_MEC_CNTL
+  | "regCP_STAT" -> Some gc_9_4_3_regCP_STAT
+  | "regCP_ME_CNTL" -> Some gc_9_4_3_regCP_ME_CNTL
+  | "regCP_RB_WPTR_POLL_CNTL" -> Some gc_9_4_3_regCP_RB_WPTR_POLL_CNTL
+  | "regSH_MEM_BASES" -> Some gc_9_4_3_regSH_MEM_BASES
+  | "regSH_MEM_CONFIG" -> Some gc_9_4_3_regSH_MEM_CONFIG
+  | "regSQ_THREAD_TRACE_WORD_CMN" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_CMN
+  | "regSQ_THREAD_TRACE_WORD_EVENT" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_EVENT
+  | "regSQ_THREAD_TRACE_WORD_INST" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST
+  | "regSQ_THREAD_TRACE_WORD_INST_PC_1_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_PC_1_OF_2
+  | "regSQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2
+  | "regSQ_THREAD_TRACE_WORD_ISSUE" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_ISSUE
+  | "regSQ_THREAD_TRACE_WORD_MISC" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_MISC
+  | "regSQ_THREAD_TRACE_WORD_PERF_1_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_PERF_1_OF_2
+  | "regSQ_THREAD_TRACE_WORD_REG_1_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_1_OF_2
+  | "regSQ_THREAD_TRACE_WORD_REG_2_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_2_OF_2
+  | "regSQ_THREAD_TRACE_WORD_REG_CS_1_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_CS_1_OF_2
+  | "regSQ_THREAD_TRACE_WORD_REG_CS_2_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_REG_CS_2_OF_2
+  | "regSQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2
+  | "regSQ_THREAD_TRACE_WORD_WAVE" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_WAVE
+  | "regSQ_THREAD_TRACE_WORD_WAVE_START" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_WAVE_START
+  | "regSQ_THREAD_TRACE_WORD_INST_PC_2_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_PC_2_OF_2
+  | "regSQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2
+  | "regSQ_THREAD_TRACE_WORD_PERF_2_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_PERF_2_OF_2
+  | "regSQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2
+  | "regGB_ADDR_CONFIG" -> Some gc_9_4_3_regGB_ADDR_CONFIG
+  | "regGCVM_L2_CNTL" -> Some gc_9_4_3_regGCVM_L2_CNTL
+  | "regGCVM_L2_CNTL2" -> Some gc_9_4_3_regGCVM_L2_CNTL2
+  | "regGCVM_L2_CNTL3" -> Some gc_9_4_3_regGCVM_L2_CNTL3
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_CNTL
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL2" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_CNTL2
+  | "regGCVM_L2_PROTECTION_FAULT_STATUS" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_STATUS
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32" -> Some gc_9_4_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32" -> Some gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32" -> Some gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32" -> Some gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32" -> Some gc_9_4_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32" -> Some gc_9_4_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32" -> Some gc_9_4_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32
+  | "regGCVM_L2_CNTL4" -> Some gc_9_4_3_regGCVM_L2_CNTL4
+  | "regGCVM_L2_CNTL5" -> Some gc_9_4_3_regGCVM_L2_CNTL5
+  | "regGCVM_L2_BANK_SELECT_RESERVED_CID2" -> Some gc_9_4_3_regGCVM_L2_BANK_SELECT_RESERVED_CID2
+  | "regGCVM_CONTEXT0_CNTL" -> Some gc_9_4_3_regGCVM_CONTEXT0_CNTL
+  | "regGCVM_INVALIDATE_ENG17_SEM" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG17_SEM
+  | "regGCVM_INVALIDATE_ENG17_REQ" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG17_REQ
+  | "regGCVM_INVALIDATE_ENG17_ACK" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG17_ACK
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32" -> Some gc_9_4_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32" -> Some gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32" -> Some gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32" -> Some gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32" -> Some gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32" -> Some gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32" -> Some gc_9_4_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB" -> Some gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB" -> Some gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB
+  | "regGCMC_VM_XGMI_LFB_CNTL" -> Some gc_9_4_3_regGCMC_VM_XGMI_LFB_CNTL
+  | "regGCMC_VM_XGMI_LFB_SIZE" -> Some gc_9_4_3_regGCMC_VM_XGMI_LFB_SIZE
+  | "regGCMC_VM_FB_LOCATION_BASE" -> Some gc_9_4_3_regGCMC_VM_FB_LOCATION_BASE
+  | "regGCMC_VM_FB_LOCATION_TOP" -> Some gc_9_4_3_regGCMC_VM_FB_LOCATION_TOP
+  | "regGCMC_VM_AGP_TOP" -> Some gc_9_4_3_regGCMC_VM_AGP_TOP
+  | "regGCMC_VM_AGP_BOT" -> Some gc_9_4_3_regGCMC_VM_AGP_BOT
+  | "regGCMC_VM_AGP_BASE" -> Some gc_9_4_3_regGCMC_VM_AGP_BASE
+  | "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR" -> Some gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR
+  | "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR" -> Some gc_9_4_3_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR
+  | "regGCMC_VM_MX_L1_TLB_CNTL" -> Some gc_9_4_3_regGCMC_VM_MX_L1_TLB_CNTL
+  | "regTCP_CNTL" -> Some gc_9_4_3_regTCP_CNTL
+  | "regCOMPUTE_DISPATCH_INITIATOR" -> Some gc_9_4_3_regCOMPUTE_DISPATCH_INITIATOR
+  | "regCOMPUTE_START_X" -> Some gc_9_4_3_regCOMPUTE_START_X
+  | "regCOMPUTE_PERFCOUNT_ENABLE" -> Some gc_9_4_3_regCOMPUTE_PERFCOUNT_ENABLE
+  | "regCOMPUTE_PGM_LO" -> Some gc_9_4_3_regCOMPUTE_PGM_LO
+  | "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" -> Some gc_9_4_3_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO
+  | "regCOMPUTE_PGM_RSRC1" -> Some gc_9_4_3_regCOMPUTE_PGM_RSRC1
+  | "regCOMPUTE_RESOURCE_LIMITS" -> Some gc_9_4_3_regCOMPUTE_RESOURCE_LIMITS
+  | "regCOMPUTE_TMPRING_SIZE" -> Some gc_9_4_3_regCOMPUTE_TMPRING_SIZE
+  | "regCOMPUTE_RESTART_X" -> Some gc_9_4_3_regCOMPUTE_RESTART_X
+  | "regCOMPUTE_THREAD_TRACE_ENABLE" -> Some gc_9_4_3_regCOMPUTE_THREAD_TRACE_ENABLE
+  | "regCOMPUTE_PGM_RSRC3" -> Some gc_9_4_3_regCOMPUTE_PGM_RSRC3
+  | "regCOMPUTE_USER_DATA_0" -> Some gc_9_4_3_regCOMPUTE_USER_DATA_0
+  | "regCP_INT_CNTL" -> Some gc_9_4_3_regCP_INT_CNTL
+  | "regCP_MEC_DOORBELL_RANGE_LOWER" -> Some gc_9_4_3_regCP_MEC_DOORBELL_RANGE_LOWER
+  | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_9_4_3_regCP_MEC_DOORBELL_RANGE_UPPER
+  | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_9_4_3_regCP_PFP_PRGRM_CNTR_START
+  | "regCP_ME_PRGRM_CNTR_START" -> Some gc_9_4_3_regCP_ME_PRGRM_CNTR_START
+  | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_9_4_3_regSPI_COMPUTE_QUEUE_RESET
+  | "regCP_MQD_BASE_ADDR" -> Some gc_9_4_3_regCP_MQD_BASE_ADDR
+  | "regCP_HQD_ACTIVE" -> Some gc_9_4_3_regCP_HQD_ACTIVE
+  | "regCP_HQD_PERSISTENT_STATE" -> Some gc_9_4_3_regCP_HQD_PERSISTENT_STATE
+  | "regCP_HQD_PQ_DOORBELL_CONTROL" -> Some gc_9_4_3_regCP_HQD_PQ_DOORBELL_CONTROL
+  | "regCP_HQD_PQ_CONTROL" -> Some gc_9_4_3_regCP_HQD_PQ_CONTROL
+  | "regCP_HQD_IB_CONTROL" -> Some gc_9_4_3_regCP_HQD_IB_CONTROL
+  | "regCP_HQD_DEQUEUE_REQUEST" -> Some gc_9_4_3_regCP_HQD_DEQUEUE_REQUEST
+  | "regCP_MQD_CONTROL" -> Some gc_9_4_3_regCP_MQD_CONTROL
+  | "regCP_HQD_EOP_CONTROL" -> Some gc_9_4_3_regCP_HQD_EOP_CONTROL
+  | "regCP_HQD_PQ_WPTR_HI" -> Some gc_9_4_3_regCP_HQD_PQ_WPTR_HI
+  | "regTCP_UTCL1_CNTL2" -> Some gc_9_4_3_regTCP_UTCL1_CNTL2
+  | "regSCRATCH_REG0" -> Some gc_9_4_3_regSCRATCH_REG0
+  | "regSCRATCH_REG1" -> Some gc_9_4_3_regSCRATCH_REG1
+  | "regSCRATCH_REG2" -> Some gc_9_4_3_regSCRATCH_REG2
+  | "regSCRATCH_REG3" -> Some gc_9_4_3_regSCRATCH_REG3
+  | "regSCRATCH_REG5" -> Some gc_9_4_3_regSCRATCH_REG5
+  | "regSCRATCH_REG6" -> Some gc_9_4_3_regSCRATCH_REG6
+  | "regSCRATCH_REG7" -> Some gc_9_4_3_regSCRATCH_REG7
+  | "regGRBM_GFX_INDEX" -> Some gc_9_4_3_regGRBM_GFX_INDEX
+  | "regSQ_THREAD_TRACE_BASE" -> Some gc_9_4_3_regSQ_THREAD_TRACE_BASE
+  | "regSQ_THREAD_TRACE_SIZE" -> Some gc_9_4_3_regSQ_THREAD_TRACE_SIZE
+  | "regSQ_THREAD_TRACE_MASK" -> Some gc_9_4_3_regSQ_THREAD_TRACE_MASK
+  | "regSQ_THREAD_TRACE_TOKEN_MASK" -> Some gc_9_4_3_regSQ_THREAD_TRACE_TOKEN_MASK
+  | "regSQ_THREAD_TRACE_PERF_MASK" -> Some gc_9_4_3_regSQ_THREAD_TRACE_PERF_MASK
+  | "regSQ_THREAD_TRACE_CTRL" -> Some gc_9_4_3_regSQ_THREAD_TRACE_CTRL
+  | "regSQ_THREAD_TRACE_MODE" -> Some gc_9_4_3_regSQ_THREAD_TRACE_MODE
+  | "regSQ_THREAD_TRACE_BASE2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_BASE2
+  | "regSQ_THREAD_TRACE_TOKEN_MASK2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_TOKEN_MASK2
+  | "regSQ_THREAD_TRACE_WPTR" -> Some gc_9_4_3_regSQ_THREAD_TRACE_WPTR
+  | "regSQ_THREAD_TRACE_STATUS" -> Some gc_9_4_3_regSQ_THREAD_TRACE_STATUS
+  | "regSQ_THREAD_TRACE_HIWATER" -> Some gc_9_4_3_regSQ_THREAD_TRACE_HIWATER
+  | "regSQ_THREAD_TRACE_CNTR" -> Some gc_9_4_3_regSQ_THREAD_TRACE_CNTR
+  | "regSQ_THREAD_TRACE_USERDATA_0" -> Some gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_0
+  | "regSQ_THREAD_TRACE_USERDATA_1" -> Some gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_1
+  | "regSQ_THREAD_TRACE_USERDATA_2" -> Some gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_2
+  | "regSQ_THREAD_TRACE_USERDATA_3" -> Some gc_9_4_3_regSQ_THREAD_TRACE_USERDATA_3
+  | "regSPI_CONFIG_CNTL" -> Some gc_9_4_3_regSPI_CONFIG_CNTL
+  | "regGRBM_PERFCOUNTER0_LO" -> Some gc_9_4_3_regGRBM_PERFCOUNTER0_LO
+  | "regGRBM_PERFCOUNTER0_HI" -> Some gc_9_4_3_regGRBM_PERFCOUNTER0_HI
+  | "regGRBM_PERFCOUNTER1_LO" -> Some gc_9_4_3_regGRBM_PERFCOUNTER1_LO
+  | "regGRBM_PERFCOUNTER1_HI" -> Some gc_9_4_3_regGRBM_PERFCOUNTER1_HI
+  | "regSQ_PERFCOUNTER0_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER0_LO
+  | "regSQ_PERFCOUNTER0_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER0_HI
+  | "regSQ_PERFCOUNTER1_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER1_LO
+  | "regSQ_PERFCOUNTER1_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER1_HI
+  | "regSQ_PERFCOUNTER2_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER2_LO
+  | "regSQ_PERFCOUNTER2_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER2_HI
+  | "regSQ_PERFCOUNTER3_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER3_LO
+  | "regSQ_PERFCOUNTER3_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER3_HI
+  | "regSQ_PERFCOUNTER4_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER4_LO
+  | "regSQ_PERFCOUNTER4_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER4_HI
+  | "regSQ_PERFCOUNTER5_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER5_LO
+  | "regSQ_PERFCOUNTER5_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER5_HI
+  | "regSQ_PERFCOUNTER6_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER6_LO
+  | "regSQ_PERFCOUNTER6_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER6_HI
+  | "regSQ_PERFCOUNTER7_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER7_LO
+  | "regSQ_PERFCOUNTER7_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER7_HI
+  | "regSQ_PERFCOUNTER8_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER8_LO
+  | "regSQ_PERFCOUNTER8_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER8_HI
+  | "regSQ_PERFCOUNTER9_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER9_LO
+  | "regSQ_PERFCOUNTER9_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER9_HI
+  | "regSQ_PERFCOUNTER10_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER10_LO
+  | "regSQ_PERFCOUNTER10_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER10_HI
+  | "regSQ_PERFCOUNTER11_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER11_LO
+  | "regSQ_PERFCOUNTER11_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER11_HI
+  | "regSQ_PERFCOUNTER12_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER12_LO
+  | "regSQ_PERFCOUNTER12_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER12_HI
+  | "regSQ_PERFCOUNTER13_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER13_LO
+  | "regSQ_PERFCOUNTER13_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER13_HI
+  | "regSQ_PERFCOUNTER14_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER14_LO
+  | "regSQ_PERFCOUNTER14_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER14_HI
+  | "regSQ_PERFCOUNTER15_LO" -> Some gc_9_4_3_regSQ_PERFCOUNTER15_LO
+  | "regSQ_PERFCOUNTER15_HI" -> Some gc_9_4_3_regSQ_PERFCOUNTER15_HI
+  | "regTCC_PERFCOUNTER0_LO" -> Some gc_9_4_3_regTCC_PERFCOUNTER0_LO
+  | "regTCC_PERFCOUNTER0_HI" -> Some gc_9_4_3_regTCC_PERFCOUNTER0_HI
+  | "regTCC_PERFCOUNTER1_LO" -> Some gc_9_4_3_regTCC_PERFCOUNTER1_LO
+  | "regTCC_PERFCOUNTER1_HI" -> Some gc_9_4_3_regTCC_PERFCOUNTER1_HI
+  | "regTCC_PERFCOUNTER2_LO" -> Some gc_9_4_3_regTCC_PERFCOUNTER2_LO
+  | "regTCC_PERFCOUNTER2_HI" -> Some gc_9_4_3_regTCC_PERFCOUNTER2_HI
+  | "regTCC_PERFCOUNTER3_LO" -> Some gc_9_4_3_regTCC_PERFCOUNTER3_LO
+  | "regTCC_PERFCOUNTER3_HI" -> Some gc_9_4_3_regTCC_PERFCOUNTER3_HI
+  | "regCP_PERFMON_CNTL" -> Some gc_9_4_3_regCP_PERFMON_CNTL
+  | "regGRBM_PERFCOUNTER0_SELECT" -> Some gc_9_4_3_regGRBM_PERFCOUNTER0_SELECT
+  | "regGRBM_PERFCOUNTER1_SELECT" -> Some gc_9_4_3_regGRBM_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER0_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER0_SELECT
+  | "regSQ_PERFCOUNTER1_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER2_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER2_SELECT
+  | "regSQ_PERFCOUNTER3_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER3_SELECT
+  | "regSQ_PERFCOUNTER4_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER4_SELECT
+  | "regSQ_PERFCOUNTER5_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER5_SELECT
+  | "regSQ_PERFCOUNTER6_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER6_SELECT
+  | "regSQ_PERFCOUNTER7_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER7_SELECT
+  | "regSQ_PERFCOUNTER8_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER8_SELECT
+  | "regSQ_PERFCOUNTER9_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER9_SELECT
+  | "regSQ_PERFCOUNTER10_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER10_SELECT
+  | "regSQ_PERFCOUNTER11_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER11_SELECT
+  | "regSQ_PERFCOUNTER12_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER12_SELECT
+  | "regSQ_PERFCOUNTER13_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER13_SELECT
+  | "regSQ_PERFCOUNTER14_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER14_SELECT
+  | "regSQ_PERFCOUNTER15_SELECT" -> Some gc_9_4_3_regSQ_PERFCOUNTER15_SELECT
+  | "regSQ_PERFCOUNTER_CTRL" -> Some gc_9_4_3_regSQ_PERFCOUNTER_CTRL
+  | "regSQ_PERFCOUNTER_MASK" -> Some gc_9_4_3_regSQ_PERFCOUNTER_MASK
+  | "regSQ_PERFCOUNTER_CTRL2" -> Some gc_9_4_3_regSQ_PERFCOUNTER_CTRL2
+  | "regTCC_PERFCOUNTER0_SELECT" -> Some gc_9_4_3_regTCC_PERFCOUNTER0_SELECT
+  | "regTCC_PERFCOUNTER1_SELECT" -> Some gc_9_4_3_regTCC_PERFCOUNTER1_SELECT
+  | "regTCC_PERFCOUNTER2_SELECT" -> Some gc_9_4_3_regTCC_PERFCOUNTER2_SELECT
+  | "regTCC_PERFCOUNTER3_SELECT" -> Some gc_9_4_3_regTCC_PERFCOUNTER3_SELECT
+  | "regRLC_CNTL" -> Some gc_9_4_3_regRLC_CNTL
+  | "regRLC_SAFE_MODE" -> Some gc_9_4_3_regRLC_SAFE_MODE
+  | "regRLC_CGTT_MGCG_OVERRIDE" -> Some gc_9_4_3_regRLC_CGTT_MGCG_OVERRIDE
+  | "regRLC_CGCG_CGLS_CTRL" -> Some gc_9_4_3_regRLC_CGCG_CGLS_CTRL
+  | "regRLC_SPM_MC_CNTL" -> Some gc_9_4_3_regRLC_SPM_MC_CNTL
+  | "regRLC_SRM_CNTL" -> Some gc_9_4_3_regRLC_SRM_CNTL
+  | "regRLC_CP_SCHEDULERS" -> Some gc_9_4_3_regRLC_CP_SCHEDULERS
+  | "regRLC_SPARE_INT" -> Some gc_9_4_3_regRLC_SPARE_INT
+  | _ -> None
+
+(* GC 11.0.0, its fields as (name, (lowest bit, highest bit)) *)
+
+let gc_11_0_0_regSDMA0_CNTL = { name = "regSDMA0_CNTL"; offset = 0x1c; segment = 0; fields = [ ("trap_enable", (0, 0)); ("sem_wait_int_enable", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] }
+let gc_11_0_0_regSDMA0_WATCHDOG_CNTL = { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2e; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] }
+let gc_11_0_0_regSDMA0_UTCL1_CNTL = { name = "regSDMA0_UTCL1_CNTL"; offset = 0x3c; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] }
+let gc_11_0_0_regSDMA0_UTCL1_PAGE = { name = "regSDMA0_UTCL1_PAGE"; offset = 0x3f; segment = 0; fields = [ ("vm_hole", (0, 0)); ("req_type", (1, 4)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)); ("llc_noalloc", (24, 24)) ] }
+let gc_11_0_0_regSDMA0_RLC_CGCG_CTRL = { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x5c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_CNTL = { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_BASE = { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_BASE_HI = { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR = { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR = { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x89; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_11_0_0_regSDMA1_RLC_CGCG_CTRL = { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x65c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_11_0_0_regSDMA0_F32_CNTL = { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] }
+let gc_11_0_0_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
+let gc_11_0_0_regGRBM_SOFT_RESET = { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)); ("soft_reset_sdma1", (24, 24)) ] }
+let gc_11_0_0_regCP_STAT = { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] }
+let gc_11_0_0_regCP_RB_WPTR_POLL_CNTL = { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] }
+let gc_11_0_0_regGB_ADDR_CONFIG = { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 20)); ("num_rb_per_se", (26, 27)) ] }
+let gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] }
+let gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] }
+let gc_11_0_0_regGCVM_L2_CNTL = { name = "regGCVM_L2_CNTL"; offset = 0x15bc; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] }
+let gc_11_0_0_regGCVM_L2_CNTL2 = { name = "regGCVM_L2_CNTL2"; offset = 0x15bd; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] }
+let gc_11_0_0_regGCVM_L2_CNTL3 = { name = "regGCVM_L2_CNTL3"; offset = 0x15be; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15c4; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL2 = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15c5; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_STATUS = { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x15c8; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("prt", (29, 29)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15c9; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15ca; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15cb; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15cc; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] }
+let gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15ce; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15cf; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d0; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15d1; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15d2; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15d3; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] }
+let gc_11_0_0_regGCVM_L2_CNTL4 = { name = "regGCVM_L2_CNTL4"; offset = 0x15d4; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] }
+let gc_11_0_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2 = { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15d7; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] }
+let gc_11_0_0_regGCVM_L2_CNTL5 = { name = "regGCVM_L2_CNTL5"; offset = 0x15da; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)) ] }
+let gc_11_0_0_regGCMC_VM_FB_LOCATION_BASE = { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x1678; segment = 0; fields = [ ("fb_base", (0, 23)) ] }
+let gc_11_0_0_regGCMC_VM_FB_LOCATION_TOP = { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x1679; segment = 0; fields = [ ("fb_top", (0, 23)) ] }
+let gc_11_0_0_regGCMC_VM_AGP_TOP = { name = "regGCMC_VM_AGP_TOP"; offset = 0x167a; segment = 0; fields = [ ("agp_top", (0, 23)) ] }
+let gc_11_0_0_regGCMC_VM_AGP_BOT = { name = "regGCMC_VM_AGP_BOT"; offset = 0x167b; segment = 0; fields = [ ("agp_bot", (0, 23)) ] }
+let gc_11_0_0_regGCMC_VM_AGP_BASE = { name = "regGCMC_VM_AGP_BASE"; offset = 0x167c; segment = 0; fields = [ ("agp_base", (0, 23)) ] }
+let gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x167d; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x167e; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_11_0_0_regGCMC_VM_MX_L1_TLB_CNTL = { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x167f; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_CNTL = { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x1688; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG17_SEM = { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x16aa; segment = 0; fields = [ ("semaphore", (0, 0)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG17_REQ = { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x16bc; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("log_request", (25, 25)); ("invalidate_4k_pages_only", (26, 26)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG17_ACK = { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x16ce; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x16cf; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x16d0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x16d1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x16d2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x16d3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x16d4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x16d5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x16d6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x16d7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x16d8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x16d9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x16da; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x16db; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x16dc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x16dd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x16de; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x16df; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x16e0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x16e1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x16e2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x16e3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x16e4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x16e5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x16e6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x16e7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x16e8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x16e9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x16ea; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x16eb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x16ec; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x16ed; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x16ee; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x16ef; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x16f0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x16f1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x16f2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x16f3; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x16f4; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x1713; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x1714; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x1733; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x1734; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_0_regCOMPUTE_DISPATCH_INITIATOR = { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)) ] }
+let gc_11_0_0_regCOMPUTE_START_X = { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] }
+let gc_11_0_0_regCOMPUTE_PERFCOUNT_ENABLE = { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] }
+let gc_11_0_0_regCOMPUTE_PGM_LO = { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO = { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regCOMPUTE_PGM_RSRC1 = { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] }
+let gc_11_0_0_regCOMPUTE_RESOURCE_LIMITS = { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] }
+let gc_11_0_0_regCOMPUTE_TMPRING_SIZE = { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 26)) ] }
+let gc_11_0_0_regCOMPUTE_RESTART_X = { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] }
+let gc_11_0_0_regCOMPUTE_THREAD_TRACE_ENABLE = { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] }
+let gc_11_0_0_regCOMPUTE_PGM_RSRC3 = { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 9)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("image_op", (31, 31)) ] }
+let gc_11_0_0_regCOMPUTE_USER_DATA_0 = { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regCP_INT_CNTL = { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] }
+let gc_11_0_0_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] }
+let gc_11_0_0_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
+let gc_11_0_0_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_0_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_0_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_0_0_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_0_0_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
+let gc_11_0_0_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
+let gc_11_0_0_regCP_HQD_ACTIVE = { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] }
+let gc_11_0_0_regCP_HQD_PERSISTENT_STATE = { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] }
+let gc_11_0_0_regCP_HQD_PQ_DOORBELL_CONTROL = { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] }
+let gc_11_0_0_regCP_HQD_PQ_CONTROL = { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("pq_volatile", (26, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] }
+let gc_11_0_0_regCP_HQD_IB_CONTROL = { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_volatile", (26, 26)); ("processing_ib", (31, 31)) ] }
+let gc_11_0_0_regCP_HQD_DEQUEUE_REQUEST = { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] }
+let gc_11_0_0_regCP_MQD_CONTROL = { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("mqd_volatile", (26, 26)) ] }
+let gc_11_0_0_regCP_HQD_EOP_CONTROL = { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("eop_volatile", (26, 26)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] }
+let gc_11_0_0_regCP_HQD_PQ_WPTR_HI = { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regCP_MEC_CNTL = { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_pipe2_reset", (22, 22)); ("mec_me2_pipe3_reset", (23, 23)); ("mec_invalidate_icache", (27, 27)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] }
+let gc_11_0_0_regCP_ME_CNTL = { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] }
+let gc_11_0_0_regGRBM_GFX_CNTL = { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] }
+let gc_11_0_0_regSH_MEM_BASES = { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] }
+let gc_11_0_0_regSH_MEM_CONFIG = { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] }
+let gc_11_0_0_regTCP_CNTL = { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [  ] }
+let gc_11_0_0_regSCRATCH_REG0 = { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] }
+let gc_11_0_0_regSCRATCH_REG1 = { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] }
+let gc_11_0_0_regSCRATCH_REG2 = { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] }
+let gc_11_0_0_regSCRATCH_REG3 = { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] }
+let gc_11_0_0_regSCRATCH_REG5 = { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] }
+let gc_11_0_0_regSCRATCH_REG6 = { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] }
+let gc_11_0_0_regSCRATCH_REG7 = { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] }
+let gc_11_0_0_regGRBM_GFX_INDEX = { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 7)); ("sa_index", (8, 15)); ("se_index", (16, 23)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_0 = { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_1 = { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_2 = { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_3 = { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_4 = { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_5 = { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_6 = { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_7 = { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_0_regSPI_CONFIG_CNTL = { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] }
+let gc_11_0_0_regCP_MEC_RS64_PRGRM_CNTR_START = { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_0_regCP_MEC_RS64_CNTL = { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] }
+let gc_11_0_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI = { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_0_0_regGRBM_PERFCOUNTER0_LO = { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGRBM_PERFCOUNTER0_HI = { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_0_regGRBM_PERFCOUNTER1_LO = { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGRBM_PERFCOUNTER1_HI = { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER0_LO = { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER1_LO = { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER2_LO = { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER3_LO = { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER4_LO = { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER5_LO = { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER6_LO = { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER7_LO = { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER0_LO = { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER0_HI = { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER1_LO = { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER1_HI = { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER2_LO = { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER2_HI = { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER3_LO = { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER3_HI = { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_0_regCP_PERFMON_CNTL = { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] }
+let gc_11_0_0_regGRBM_PERFCOUNTER0_SELECT = { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_11_0_0_regGRBM_PERFCOUNTER1_SELECT = { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER0_SELECT = { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER1_SELECT = { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER2_SELECT = { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER3_SELECT = { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER4_SELECT = { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER5_SELECT = { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER6_SELECT = { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER7_SELECT = { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER8_SELECT = { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER9_SELECT = { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER10_SELECT = { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER11_SELECT = { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER12_SELECT = { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER13_SELECT = { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER14_SELECT = { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER15_SELECT = { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER_CTRL = { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] }
+let gc_11_0_0_regSQ_PERFCOUNTER_CTRL2 = { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_BUF0_BASE = { name = "regSQ_THREAD_TRACE_BUF0_BASE"; offset = 0x39e8; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_BUF0_SIZE = { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_BUF1_BASE = { name = "regSQ_THREAD_TRACE_BUF1_BASE"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_BUF1_SIZE = { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_CTRL = { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("all_vmid", (2, 2)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("util_timer", (13, 13)); ("wavestart_mode", (14, 15)); ("rt_freq", (16, 17)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("draw_event_en", (31, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_MASK = { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_TOKEN_MASK = { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 10)); ("ttrace_exec", (11, 11)); ("bop_events_token_include", (12, 12)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_WPTR = { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_STATUS = { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_STATUS2 = { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_0_regSQ_THREAD_TRACE_DROPPED_CNTR = { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER0_SELECT = { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER1_SELECT = { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER2_SELECT = { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regGL2C_PERFCOUNTER3_SELECT = { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_0_regRLC_CNTL = { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] }
+let gc_11_0_0_regRLC_CGTT_MGCG_OVERRIDE = { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_16_11", (11, 16)); ("gc_cac_mgcg_clk_cntl", (17, 17)); ("se_cac_mgcg_clk_cntl", (18, 18)); ("reserved_31_19", (19, 31)) ] }
+let gc_11_0_0_regRLC_CGCG_CGLS_CTRL = { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] }
+let gc_11_0_0_regRLC_SRM_CNTL = { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] }
+let gc_11_0_0_regRLC_RLCS_BOOTLOAD_STATUS = { name = "regRLC_RLCS_BOOTLOAD_STATUS"; offset = 0x4e82; segment = 1; fields = [ ("gfx_init_done", (0, 0)); ("rlc_gpm_iram_loaded", (3, 3)); ("rlc_gpm_iram_done", (4, 4)); ("reserved", (5, 30)); ("bootload_complete", (31, 31)) ] }
+let gc_11_0_0_regRLC_SAFE_MODE = { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] }
+let gc_11_0_0_regRLC_SPM_MC_CNTL = { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_mtype_over", (8, 8)); ("rlc_spm_mtype", (9, 11)); ("rlc_spm_bc", (12, 12)); ("rlc_spm_ro", (13, 13)); ("rlc_spm_vol", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved_3", (16, 17)); ("rlc_spm_llc_noalloc", (18, 18)); ("rlc_spm_llc_noalloc_over", (19, 19)); ("reserved", (20, 31)) ] }
+let gc_11_0_0_regRLC_CP_SCHEDULERS = { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] }
+
+let gc_11_0_0_registers = [
+  gc_11_0_0_regSDMA0_CNTL;
+  gc_11_0_0_regSDMA0_WATCHDOG_CNTL;
+  gc_11_0_0_regSDMA0_UTCL1_CNTL;
+  gc_11_0_0_regSDMA0_UTCL1_PAGE;
+  gc_11_0_0_regSDMA0_RLC_CGCG_CTRL;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_CNTL;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_BASE;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_BASE_HI;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_HI;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_HI;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO;
+  gc_11_0_0_regSDMA0_QUEUE0_IB_CNTL;
+  gc_11_0_0_regSDMA0_QUEUE0_DOORBELL;
+  gc_11_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
+  gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
+  gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_11_0_0_regSDMA1_RLC_CGCG_CTRL;
+  gc_11_0_0_regSDMA0_F32_CNTL;
+  gc_11_0_0_regGRBM_CNTL;
+  gc_11_0_0_regGRBM_SOFT_RESET;
+  gc_11_0_0_regCP_STAT;
+  gc_11_0_0_regCP_RB_WPTR_POLL_CNTL;
+  gc_11_0_0_regGB_ADDR_CONFIG;
+  gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB;
+  gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB;
+  gc_11_0_0_regGCVM_L2_CNTL;
+  gc_11_0_0_regGCVM_L2_CNTL2;
+  gc_11_0_0_regGCVM_L2_CNTL3;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL2;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_STATUS;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32;
+  gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32;
+  gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32;
+  gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32;
+  gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32;
+  gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32;
+  gc_11_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32;
+  gc_11_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32;
+  gc_11_0_0_regGCVM_L2_CNTL4;
+  gc_11_0_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2;
+  gc_11_0_0_regGCVM_L2_CNTL5;
+  gc_11_0_0_regGCMC_VM_FB_LOCATION_BASE;
+  gc_11_0_0_regGCMC_VM_FB_LOCATION_TOP;
+  gc_11_0_0_regGCMC_VM_AGP_TOP;
+  gc_11_0_0_regGCMC_VM_AGP_BOT;
+  gc_11_0_0_regGCMC_VM_AGP_BASE;
+  gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR;
+  gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR;
+  gc_11_0_0_regGCMC_VM_MX_L1_TLB_CNTL;
+  gc_11_0_0_regGCVM_CONTEXT0_CNTL;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG17_SEM;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG17_REQ;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG17_ACK;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32;
+  gc_11_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32;
+  gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32;
+  gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32;
+  gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32;
+  gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32;
+  gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32;
+  gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32;
+  gc_11_0_0_regCOMPUTE_DISPATCH_INITIATOR;
+  gc_11_0_0_regCOMPUTE_START_X;
+  gc_11_0_0_regCOMPUTE_PERFCOUNT_ENABLE;
+  gc_11_0_0_regCOMPUTE_PGM_LO;
+  gc_11_0_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO;
+  gc_11_0_0_regCOMPUTE_PGM_RSRC1;
+  gc_11_0_0_regCOMPUTE_RESOURCE_LIMITS;
+  gc_11_0_0_regCOMPUTE_TMPRING_SIZE;
+  gc_11_0_0_regCOMPUTE_RESTART_X;
+  gc_11_0_0_regCOMPUTE_THREAD_TRACE_ENABLE;
+  gc_11_0_0_regCOMPUTE_PGM_RSRC3;
+  gc_11_0_0_regCOMPUTE_USER_DATA_0;
+  gc_11_0_0_regCP_INT_CNTL;
+  gc_11_0_0_regCP_MEC_DOORBELL_RANGE_LOWER;
+  gc_11_0_0_regCP_MEC_DOORBELL_RANGE_UPPER;
+  gc_11_0_0_regCP_PFP_PRGRM_CNTR_START;
+  gc_11_0_0_regCP_ME_PRGRM_CNTR_START;
+  gc_11_0_0_regCP_PFP_PRGRM_CNTR_START_HI;
+  gc_11_0_0_regCP_ME_PRGRM_CNTR_START_HI;
+  gc_11_0_0_regSPI_COMPUTE_QUEUE_RESET;
+  gc_11_0_0_regCP_MQD_BASE_ADDR;
+  gc_11_0_0_regCP_HQD_ACTIVE;
+  gc_11_0_0_regCP_HQD_PERSISTENT_STATE;
+  gc_11_0_0_regCP_HQD_PQ_DOORBELL_CONTROL;
+  gc_11_0_0_regCP_HQD_PQ_CONTROL;
+  gc_11_0_0_regCP_HQD_IB_CONTROL;
+  gc_11_0_0_regCP_HQD_DEQUEUE_REQUEST;
+  gc_11_0_0_regCP_MQD_CONTROL;
+  gc_11_0_0_regCP_HQD_EOP_CONTROL;
+  gc_11_0_0_regCP_HQD_PQ_WPTR_HI;
+  gc_11_0_0_regCP_MEC_CNTL;
+  gc_11_0_0_regCP_ME_CNTL;
+  gc_11_0_0_regGRBM_GFX_CNTL;
+  gc_11_0_0_regSH_MEM_BASES;
+  gc_11_0_0_regSH_MEM_CONFIG;
+  gc_11_0_0_regTCP_CNTL;
+  gc_11_0_0_regSCRATCH_REG0;
+  gc_11_0_0_regSCRATCH_REG1;
+  gc_11_0_0_regSCRATCH_REG2;
+  gc_11_0_0_regSCRATCH_REG3;
+  gc_11_0_0_regSCRATCH_REG5;
+  gc_11_0_0_regSCRATCH_REG6;
+  gc_11_0_0_regSCRATCH_REG7;
+  gc_11_0_0_regGRBM_GFX_INDEX;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_0;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_1;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_2;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_3;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_4;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_5;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_6;
+  gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_7;
+  gc_11_0_0_regSPI_CONFIG_CNTL;
+  gc_11_0_0_regCP_MEC_RS64_PRGRM_CNTR_START;
+  gc_11_0_0_regCP_MEC_RS64_CNTL;
+  gc_11_0_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI;
+  gc_11_0_0_regGRBM_PERFCOUNTER0_LO;
+  gc_11_0_0_regGRBM_PERFCOUNTER0_HI;
+  gc_11_0_0_regGRBM_PERFCOUNTER1_LO;
+  gc_11_0_0_regGRBM_PERFCOUNTER1_HI;
+  gc_11_0_0_regSQ_PERFCOUNTER0_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER1_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER2_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER3_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER4_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER5_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER6_LO;
+  gc_11_0_0_regSQ_PERFCOUNTER7_LO;
+  gc_11_0_0_regGL2C_PERFCOUNTER0_LO;
+  gc_11_0_0_regGL2C_PERFCOUNTER0_HI;
+  gc_11_0_0_regGL2C_PERFCOUNTER1_LO;
+  gc_11_0_0_regGL2C_PERFCOUNTER1_HI;
+  gc_11_0_0_regGL2C_PERFCOUNTER2_LO;
+  gc_11_0_0_regGL2C_PERFCOUNTER2_HI;
+  gc_11_0_0_regGL2C_PERFCOUNTER3_LO;
+  gc_11_0_0_regGL2C_PERFCOUNTER3_HI;
+  gc_11_0_0_regCP_PERFMON_CNTL;
+  gc_11_0_0_regGRBM_PERFCOUNTER0_SELECT;
+  gc_11_0_0_regGRBM_PERFCOUNTER1_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER0_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER1_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER2_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER3_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER4_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER5_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER6_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER7_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER8_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER9_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER10_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER11_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER12_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER13_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER14_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER15_SELECT;
+  gc_11_0_0_regSQ_PERFCOUNTER_CTRL;
+  gc_11_0_0_regSQ_PERFCOUNTER_CTRL2;
+  gc_11_0_0_regSQ_THREAD_TRACE_BUF0_BASE;
+  gc_11_0_0_regSQ_THREAD_TRACE_BUF0_SIZE;
+  gc_11_0_0_regSQ_THREAD_TRACE_BUF1_BASE;
+  gc_11_0_0_regSQ_THREAD_TRACE_BUF1_SIZE;
+  gc_11_0_0_regSQ_THREAD_TRACE_CTRL;
+  gc_11_0_0_regSQ_THREAD_TRACE_MASK;
+  gc_11_0_0_regSQ_THREAD_TRACE_TOKEN_MASK;
+  gc_11_0_0_regSQ_THREAD_TRACE_WPTR;
+  gc_11_0_0_regSQ_THREAD_TRACE_STATUS;
+  gc_11_0_0_regSQ_THREAD_TRACE_STATUS2;
+  gc_11_0_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR;
+  gc_11_0_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR;
+  gc_11_0_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR;
+  gc_11_0_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR;
+  gc_11_0_0_regSQ_THREAD_TRACE_DROPPED_CNTR;
+  gc_11_0_0_regGL2C_PERFCOUNTER0_SELECT;
+  gc_11_0_0_regGL2C_PERFCOUNTER1_SELECT;
+  gc_11_0_0_regGL2C_PERFCOUNTER2_SELECT;
+  gc_11_0_0_regGL2C_PERFCOUNTER3_SELECT;
+  gc_11_0_0_regRLC_CNTL;
+  gc_11_0_0_regRLC_CGTT_MGCG_OVERRIDE;
+  gc_11_0_0_regRLC_CGCG_CGLS_CTRL;
+  gc_11_0_0_regRLC_SRM_CNTL;
+  gc_11_0_0_regRLC_RLCS_BOOTLOAD_STATUS;
+  gc_11_0_0_regRLC_SAFE_MODE;
+  gc_11_0_0_regRLC_SPM_MC_CNTL;
+  gc_11_0_0_regRLC_CP_SCHEDULERS;
+]
+
+let gc_11_0_0_find = function
+  | "regSDMA0_CNTL" -> Some gc_11_0_0_regSDMA0_CNTL
+  | "regSDMA0_WATCHDOG_CNTL" -> Some gc_11_0_0_regSDMA0_WATCHDOG_CNTL
+  | "regSDMA0_UTCL1_CNTL" -> Some gc_11_0_0_regSDMA0_UTCL1_CNTL
+  | "regSDMA0_UTCL1_PAGE" -> Some gc_11_0_0_regSDMA0_UTCL1_PAGE
+  | "regSDMA0_RLC_CGCG_CTRL" -> Some gc_11_0_0_regSDMA0_RLC_CGCG_CTRL
+  | "regSDMA0_QUEUE0_RB_CNTL" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_CNTL
+  | "regSDMA0_QUEUE0_RB_BASE" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_BASE
+  | "regSDMA0_QUEUE0_RB_BASE_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_BASE_HI
+  | "regSDMA0_QUEUE0_RB_RPTR" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR
+  | "regSDMA0_QUEUE0_RB_RPTR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR
+  | "regSDMA0_QUEUE0_RB_WPTR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_11_0_0_regSDMA0_QUEUE0_IB_CNTL
+  | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_11_0_0_regSDMA0_QUEUE0_DOORBELL
+  | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_11_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA1_RLC_CGCG_CTRL" -> Some gc_11_0_0_regSDMA1_RLC_CGCG_CTRL
+  | "regSDMA0_F32_CNTL" -> Some gc_11_0_0_regSDMA0_F32_CNTL
+  | "regGRBM_CNTL" -> Some gc_11_0_0_regGRBM_CNTL
+  | "regGRBM_SOFT_RESET" -> Some gc_11_0_0_regGRBM_SOFT_RESET
+  | "regCP_STAT" -> Some gc_11_0_0_regCP_STAT
+  | "regCP_RB_WPTR_POLL_CNTL" -> Some gc_11_0_0_regCP_RB_WPTR_POLL_CNTL
+  | "regGB_ADDR_CONFIG" -> Some gc_11_0_0_regGB_ADDR_CONFIG
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB" -> Some gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB" -> Some gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB
+  | "regGCVM_L2_CNTL" -> Some gc_11_0_0_regGCVM_L2_CNTL
+  | "regGCVM_L2_CNTL2" -> Some gc_11_0_0_regGCVM_L2_CNTL2
+  | "regGCVM_L2_CNTL3" -> Some gc_11_0_0_regGCVM_L2_CNTL3
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL2" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL2
+  | "regGCVM_L2_PROTECTION_FAULT_STATUS" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_STATUS
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32" -> Some gc_11_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32" -> Some gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32" -> Some gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32" -> Some gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32" -> Some gc_11_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32" -> Some gc_11_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32" -> Some gc_11_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32
+  | "regGCVM_L2_CNTL4" -> Some gc_11_0_0_regGCVM_L2_CNTL4
+  | "regGCVM_L2_BANK_SELECT_RESERVED_CID2" -> Some gc_11_0_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2
+  | "regGCVM_L2_CNTL5" -> Some gc_11_0_0_regGCVM_L2_CNTL5
+  | "regGCMC_VM_FB_LOCATION_BASE" -> Some gc_11_0_0_regGCMC_VM_FB_LOCATION_BASE
+  | "regGCMC_VM_FB_LOCATION_TOP" -> Some gc_11_0_0_regGCMC_VM_FB_LOCATION_TOP
+  | "regGCMC_VM_AGP_TOP" -> Some gc_11_0_0_regGCMC_VM_AGP_TOP
+  | "regGCMC_VM_AGP_BOT" -> Some gc_11_0_0_regGCMC_VM_AGP_BOT
+  | "regGCMC_VM_AGP_BASE" -> Some gc_11_0_0_regGCMC_VM_AGP_BASE
+  | "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR" -> Some gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR
+  | "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR" -> Some gc_11_0_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR
+  | "regGCMC_VM_MX_L1_TLB_CNTL" -> Some gc_11_0_0_regGCMC_VM_MX_L1_TLB_CNTL
+  | "regGCVM_CONTEXT0_CNTL" -> Some gc_11_0_0_regGCVM_CONTEXT0_CNTL
+  | "regGCVM_INVALIDATE_ENG17_SEM" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG17_SEM
+  | "regGCVM_INVALIDATE_ENG17_REQ" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG17_REQ
+  | "regGCVM_INVALIDATE_ENG17_ACK" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG17_ACK
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32" -> Some gc_11_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32" -> Some gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32" -> Some gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32" -> Some gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32" -> Some gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32" -> Some gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32" -> Some gc_11_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32
+  | "regCOMPUTE_DISPATCH_INITIATOR" -> Some gc_11_0_0_regCOMPUTE_DISPATCH_INITIATOR
+  | "regCOMPUTE_START_X" -> Some gc_11_0_0_regCOMPUTE_START_X
+  | "regCOMPUTE_PERFCOUNT_ENABLE" -> Some gc_11_0_0_regCOMPUTE_PERFCOUNT_ENABLE
+  | "regCOMPUTE_PGM_LO" -> Some gc_11_0_0_regCOMPUTE_PGM_LO
+  | "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" -> Some gc_11_0_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO
+  | "regCOMPUTE_PGM_RSRC1" -> Some gc_11_0_0_regCOMPUTE_PGM_RSRC1
+  | "regCOMPUTE_RESOURCE_LIMITS" -> Some gc_11_0_0_regCOMPUTE_RESOURCE_LIMITS
+  | "regCOMPUTE_TMPRING_SIZE" -> Some gc_11_0_0_regCOMPUTE_TMPRING_SIZE
+  | "regCOMPUTE_RESTART_X" -> Some gc_11_0_0_regCOMPUTE_RESTART_X
+  | "regCOMPUTE_THREAD_TRACE_ENABLE" -> Some gc_11_0_0_regCOMPUTE_THREAD_TRACE_ENABLE
+  | "regCOMPUTE_PGM_RSRC3" -> Some gc_11_0_0_regCOMPUTE_PGM_RSRC3
+  | "regCOMPUTE_USER_DATA_0" -> Some gc_11_0_0_regCOMPUTE_USER_DATA_0
+  | "regCP_INT_CNTL" -> Some gc_11_0_0_regCP_INT_CNTL
+  | "regCP_MEC_DOORBELL_RANGE_LOWER" -> Some gc_11_0_0_regCP_MEC_DOORBELL_RANGE_LOWER
+  | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_11_0_0_regCP_MEC_DOORBELL_RANGE_UPPER
+  | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_11_0_0_regCP_PFP_PRGRM_CNTR_START
+  | "regCP_ME_PRGRM_CNTR_START" -> Some gc_11_0_0_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_11_0_0_regCP_PFP_PRGRM_CNTR_START_HI
+  | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_11_0_0_regCP_ME_PRGRM_CNTR_START_HI
+  | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_11_0_0_regSPI_COMPUTE_QUEUE_RESET
+  | "regCP_MQD_BASE_ADDR" -> Some gc_11_0_0_regCP_MQD_BASE_ADDR
+  | "regCP_HQD_ACTIVE" -> Some gc_11_0_0_regCP_HQD_ACTIVE
+  | "regCP_HQD_PERSISTENT_STATE" -> Some gc_11_0_0_regCP_HQD_PERSISTENT_STATE
+  | "regCP_HQD_PQ_DOORBELL_CONTROL" -> Some gc_11_0_0_regCP_HQD_PQ_DOORBELL_CONTROL
+  | "regCP_HQD_PQ_CONTROL" -> Some gc_11_0_0_regCP_HQD_PQ_CONTROL
+  | "regCP_HQD_IB_CONTROL" -> Some gc_11_0_0_regCP_HQD_IB_CONTROL
+  | "regCP_HQD_DEQUEUE_REQUEST" -> Some gc_11_0_0_regCP_HQD_DEQUEUE_REQUEST
+  | "regCP_MQD_CONTROL" -> Some gc_11_0_0_regCP_MQD_CONTROL
+  | "regCP_HQD_EOP_CONTROL" -> Some gc_11_0_0_regCP_HQD_EOP_CONTROL
+  | "regCP_HQD_PQ_WPTR_HI" -> Some gc_11_0_0_regCP_HQD_PQ_WPTR_HI
+  | "regCP_MEC_CNTL" -> Some gc_11_0_0_regCP_MEC_CNTL
+  | "regCP_ME_CNTL" -> Some gc_11_0_0_regCP_ME_CNTL
+  | "regGRBM_GFX_CNTL" -> Some gc_11_0_0_regGRBM_GFX_CNTL
+  | "regSH_MEM_BASES" -> Some gc_11_0_0_regSH_MEM_BASES
+  | "regSH_MEM_CONFIG" -> Some gc_11_0_0_regSH_MEM_CONFIG
+  | "regTCP_CNTL" -> Some gc_11_0_0_regTCP_CNTL
+  | "regSCRATCH_REG0" -> Some gc_11_0_0_regSCRATCH_REG0
+  | "regSCRATCH_REG1" -> Some gc_11_0_0_regSCRATCH_REG1
+  | "regSCRATCH_REG2" -> Some gc_11_0_0_regSCRATCH_REG2
+  | "regSCRATCH_REG3" -> Some gc_11_0_0_regSCRATCH_REG3
+  | "regSCRATCH_REG5" -> Some gc_11_0_0_regSCRATCH_REG5
+  | "regSCRATCH_REG6" -> Some gc_11_0_0_regSCRATCH_REG6
+  | "regSCRATCH_REG7" -> Some gc_11_0_0_regSCRATCH_REG7
+  | "regGRBM_GFX_INDEX" -> Some gc_11_0_0_regGRBM_GFX_INDEX
+  | "regSQ_THREAD_TRACE_USERDATA_0" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_0
+  | "regSQ_THREAD_TRACE_USERDATA_1" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_1
+  | "regSQ_THREAD_TRACE_USERDATA_2" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_2
+  | "regSQ_THREAD_TRACE_USERDATA_3" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_3
+  | "regSQ_THREAD_TRACE_USERDATA_4" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_4
+  | "regSQ_THREAD_TRACE_USERDATA_5" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_5
+  | "regSQ_THREAD_TRACE_USERDATA_6" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_6
+  | "regSQ_THREAD_TRACE_USERDATA_7" -> Some gc_11_0_0_regSQ_THREAD_TRACE_USERDATA_7
+  | "regSPI_CONFIG_CNTL" -> Some gc_11_0_0_regSPI_CONFIG_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START" -> Some gc_11_0_0_regCP_MEC_RS64_PRGRM_CNTR_START
+  | "regCP_MEC_RS64_CNTL" -> Some gc_11_0_0_regCP_MEC_RS64_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START_HI" -> Some gc_11_0_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI
+  | "regGRBM_PERFCOUNTER0_LO" -> Some gc_11_0_0_regGRBM_PERFCOUNTER0_LO
+  | "regGRBM_PERFCOUNTER0_HI" -> Some gc_11_0_0_regGRBM_PERFCOUNTER0_HI
+  | "regGRBM_PERFCOUNTER1_LO" -> Some gc_11_0_0_regGRBM_PERFCOUNTER1_LO
+  | "regGRBM_PERFCOUNTER1_HI" -> Some gc_11_0_0_regGRBM_PERFCOUNTER1_HI
+  | "regSQ_PERFCOUNTER0_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER0_LO
+  | "regSQ_PERFCOUNTER1_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER1_LO
+  | "regSQ_PERFCOUNTER2_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER2_LO
+  | "regSQ_PERFCOUNTER3_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER3_LO
+  | "regSQ_PERFCOUNTER4_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER4_LO
+  | "regSQ_PERFCOUNTER5_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER5_LO
+  | "regSQ_PERFCOUNTER6_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER6_LO
+  | "regSQ_PERFCOUNTER7_LO" -> Some gc_11_0_0_regSQ_PERFCOUNTER7_LO
+  | "regGL2C_PERFCOUNTER0_LO" -> Some gc_11_0_0_regGL2C_PERFCOUNTER0_LO
+  | "regGL2C_PERFCOUNTER0_HI" -> Some gc_11_0_0_regGL2C_PERFCOUNTER0_HI
+  | "regGL2C_PERFCOUNTER1_LO" -> Some gc_11_0_0_regGL2C_PERFCOUNTER1_LO
+  | "regGL2C_PERFCOUNTER1_HI" -> Some gc_11_0_0_regGL2C_PERFCOUNTER1_HI
+  | "regGL2C_PERFCOUNTER2_LO" -> Some gc_11_0_0_regGL2C_PERFCOUNTER2_LO
+  | "regGL2C_PERFCOUNTER2_HI" -> Some gc_11_0_0_regGL2C_PERFCOUNTER2_HI
+  | "regGL2C_PERFCOUNTER3_LO" -> Some gc_11_0_0_regGL2C_PERFCOUNTER3_LO
+  | "regGL2C_PERFCOUNTER3_HI" -> Some gc_11_0_0_regGL2C_PERFCOUNTER3_HI
+  | "regCP_PERFMON_CNTL" -> Some gc_11_0_0_regCP_PERFMON_CNTL
+  | "regGRBM_PERFCOUNTER0_SELECT" -> Some gc_11_0_0_regGRBM_PERFCOUNTER0_SELECT
+  | "regGRBM_PERFCOUNTER1_SELECT" -> Some gc_11_0_0_regGRBM_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER0_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER0_SELECT
+  | "regSQ_PERFCOUNTER1_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER2_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER2_SELECT
+  | "regSQ_PERFCOUNTER3_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER3_SELECT
+  | "regSQ_PERFCOUNTER4_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER4_SELECT
+  | "regSQ_PERFCOUNTER5_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER5_SELECT
+  | "regSQ_PERFCOUNTER6_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER6_SELECT
+  | "regSQ_PERFCOUNTER7_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER7_SELECT
+  | "regSQ_PERFCOUNTER8_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER8_SELECT
+  | "regSQ_PERFCOUNTER9_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER9_SELECT
+  | "regSQ_PERFCOUNTER10_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER10_SELECT
+  | "regSQ_PERFCOUNTER11_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER11_SELECT
+  | "regSQ_PERFCOUNTER12_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER12_SELECT
+  | "regSQ_PERFCOUNTER13_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER13_SELECT
+  | "regSQ_PERFCOUNTER14_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER14_SELECT
+  | "regSQ_PERFCOUNTER15_SELECT" -> Some gc_11_0_0_regSQ_PERFCOUNTER15_SELECT
+  | "regSQ_PERFCOUNTER_CTRL" -> Some gc_11_0_0_regSQ_PERFCOUNTER_CTRL
+  | "regSQ_PERFCOUNTER_CTRL2" -> Some gc_11_0_0_regSQ_PERFCOUNTER_CTRL2
+  | "regSQ_THREAD_TRACE_BUF0_BASE" -> Some gc_11_0_0_regSQ_THREAD_TRACE_BUF0_BASE
+  | "regSQ_THREAD_TRACE_BUF0_SIZE" -> Some gc_11_0_0_regSQ_THREAD_TRACE_BUF0_SIZE
+  | "regSQ_THREAD_TRACE_BUF1_BASE" -> Some gc_11_0_0_regSQ_THREAD_TRACE_BUF1_BASE
+  | "regSQ_THREAD_TRACE_BUF1_SIZE" -> Some gc_11_0_0_regSQ_THREAD_TRACE_BUF1_SIZE
+  | "regSQ_THREAD_TRACE_CTRL" -> Some gc_11_0_0_regSQ_THREAD_TRACE_CTRL
+  | "regSQ_THREAD_TRACE_MASK" -> Some gc_11_0_0_regSQ_THREAD_TRACE_MASK
+  | "regSQ_THREAD_TRACE_TOKEN_MASK" -> Some gc_11_0_0_regSQ_THREAD_TRACE_TOKEN_MASK
+  | "regSQ_THREAD_TRACE_WPTR" -> Some gc_11_0_0_regSQ_THREAD_TRACE_WPTR
+  | "regSQ_THREAD_TRACE_STATUS" -> Some gc_11_0_0_regSQ_THREAD_TRACE_STATUS
+  | "regSQ_THREAD_TRACE_STATUS2" -> Some gc_11_0_0_regSQ_THREAD_TRACE_STATUS2
+  | "regSQ_THREAD_TRACE_GFX_DRAW_CNTR" -> Some gc_11_0_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_GFX_MARKER_CNTR" -> Some gc_11_0_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR" -> Some gc_11_0_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR" -> Some gc_11_0_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_DROPPED_CNTR" -> Some gc_11_0_0_regSQ_THREAD_TRACE_DROPPED_CNTR
+  | "regGL2C_PERFCOUNTER0_SELECT" -> Some gc_11_0_0_regGL2C_PERFCOUNTER0_SELECT
+  | "regGL2C_PERFCOUNTER1_SELECT" -> Some gc_11_0_0_regGL2C_PERFCOUNTER1_SELECT
+  | "regGL2C_PERFCOUNTER2_SELECT" -> Some gc_11_0_0_regGL2C_PERFCOUNTER2_SELECT
+  | "regGL2C_PERFCOUNTER3_SELECT" -> Some gc_11_0_0_regGL2C_PERFCOUNTER3_SELECT
+  | "regRLC_CNTL" -> Some gc_11_0_0_regRLC_CNTL
+  | "regRLC_CGTT_MGCG_OVERRIDE" -> Some gc_11_0_0_regRLC_CGTT_MGCG_OVERRIDE
+  | "regRLC_CGCG_CGLS_CTRL" -> Some gc_11_0_0_regRLC_CGCG_CGLS_CTRL
+  | "regRLC_SRM_CNTL" -> Some gc_11_0_0_regRLC_SRM_CNTL
+  | "regRLC_RLCS_BOOTLOAD_STATUS" -> Some gc_11_0_0_regRLC_RLCS_BOOTLOAD_STATUS
+  | "regRLC_SAFE_MODE" -> Some gc_11_0_0_regRLC_SAFE_MODE
+  | "regRLC_SPM_MC_CNTL" -> Some gc_11_0_0_regRLC_SPM_MC_CNTL
+  | "regRLC_CP_SCHEDULERS" -> Some gc_11_0_0_regRLC_CP_SCHEDULERS
+  | _ -> None
+
+(* GC 11.0.3, its fields as (name, (lowest bit, highest bit)) *)
+
+let gc_11_0_3_regSDMA0_CNTL = { name = "regSDMA0_CNTL"; offset = 0x1c; segment = 0; fields = [ ("trap_enable", (0, 0)); ("sem_wait_int_enable", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("drm_restore_enable", (19, 19)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] }
+let gc_11_0_3_regSDMA0_WATCHDOG_CNTL = { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2e; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] }
+let gc_11_0_3_regSDMA0_UTCL1_CNTL = { name = "regSDMA0_UTCL1_CNTL"; offset = 0x3c; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] }
+let gc_11_0_3_regSDMA0_UTCL1_PAGE = { name = "regSDMA0_UTCL1_PAGE"; offset = 0x3f; segment = 0; fields = [ ("vm_hole", (0, 0)); ("req_type", (1, 4)); ("tmz_enable", (5, 5)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)); ("llc_noalloc", (24, 24)) ] }
+let gc_11_0_3_regSDMA0_RLC_CGCG_CTRL = { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x5c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_CNTL = { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_BASE = { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_BASE_HI = { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR = { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR = { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x89; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)); ("ib_priv", (31, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_11_0_3_regSDMA1_RLC_CGCG_CTRL = { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x65c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_11_0_3_regSDMA0_F32_CNTL = { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("dbg_select_bits", (2, 7)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] }
+let gc_11_0_3_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
+let gc_11_0_3_regGRBM_SOFT_RESET = { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cpaxi", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)); ("soft_reset_sdma1", (24, 24)) ] }
+let gc_11_0_3_regCP_STAT = { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] }
+let gc_11_0_3_regCP_RB_WPTR_POLL_CNTL = { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] }
+let gc_11_0_3_regGB_ADDR_CONFIG = { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 20)); ("num_rb_per_se", (26, 27)) ] }
+let gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] }
+let gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] }
+let gc_11_0_3_regGCVM_L2_CNTL = { name = "regGCVM_L2_CNTL"; offset = 0x15c0; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] }
+let gc_11_0_3_regGCVM_L2_CNTL2 = { name = "regGCVM_L2_CNTL2"; offset = 0x15c1; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] }
+let gc_11_0_3_regGCVM_L2_CNTL3 = { name = "regGCVM_L2_CNTL3"; offset = 0x15c2; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_CNTL = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15c8; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_CNTL2 = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15c9; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_STATUS = { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x15cc; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("prt", (29, 29)); ("fed", (30, 30)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15cd; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15ce; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15cf; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15d0; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] }
+let gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15d2; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15d3; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d4; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15d5; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15d6; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15d7; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] }
+let gc_11_0_3_regGCVM_L2_CNTL4 = { name = "regGCVM_L2_CNTL4"; offset = 0x15d8; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] }
+let gc_11_0_3_regGCVM_L2_BANK_SELECT_RESERVED_CID2 = { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15db; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] }
+let gc_11_0_3_regGCVM_L2_CNTL5 = { name = "regGCVM_L2_CNTL5"; offset = 0x15de; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)) ] }
+let gc_11_0_3_regGCMC_VM_FB_LOCATION_BASE = { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x1688; segment = 0; fields = [ ("fb_base", (0, 23)) ] }
+let gc_11_0_3_regGCMC_VM_FB_LOCATION_TOP = { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x1689; segment = 0; fields = [ ("fb_top", (0, 23)) ] }
+let gc_11_0_3_regGCMC_VM_AGP_TOP = { name = "regGCMC_VM_AGP_TOP"; offset = 0x168a; segment = 0; fields = [ ("agp_top", (0, 23)) ] }
+let gc_11_0_3_regGCMC_VM_AGP_BOT = { name = "regGCMC_VM_AGP_BOT"; offset = 0x168b; segment = 0; fields = [ ("agp_bot", (0, 23)) ] }
+let gc_11_0_3_regGCMC_VM_AGP_BASE = { name = "regGCMC_VM_AGP_BASE"; offset = 0x168c; segment = 0; fields = [ ("agp_base", (0, 23)) ] }
+let gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x168d; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x168e; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_11_0_3_regGCMC_VM_MX_L1_TLB_CNTL = { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x168f; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_CNTL = { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x1698; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)); ("secure_protection_fault_enable_interrupt", (23, 23)); ("secure_protection_fault_enable_default", (24, 24)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG17_SEM = { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x16ba; segment = 0; fields = [ ("semaphore", (0, 0)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG17_REQ = { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x16cc; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("log_request", (25, 25)); ("invalidate_4k_pages_only", (26, 26)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG17_ACK = { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x16de; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x16df; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x16e0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x16e1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x16e2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x16e3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x16e4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x16e5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x16e6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x16e7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x16e8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x16e9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x16ea; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x16eb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x16ec; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x16ed; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x16ee; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x16ef; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x16f0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x16f1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x16f2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x16f3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x16f4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x16f5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x16f6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x16f7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x16f8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x16f9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x16fa; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x16fb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x16fc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x16fd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x16fe; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x16ff; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x1700; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x1701; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_0_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x1702; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x1703; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x1704; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x1723; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x1724; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x1743; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x1744; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_0_3_regCOMPUTE_DISPATCH_INITIATOR = { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)) ] }
+let gc_11_0_3_regCOMPUTE_START_X = { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] }
+let gc_11_0_3_regCOMPUTE_PERFCOUNT_ENABLE = { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] }
+let gc_11_0_3_regCOMPUTE_PGM_LO = { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO = { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regCOMPUTE_PGM_RSRC1 = { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("debug_mode", (22, 22)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("cdbg_user", (25, 25)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] }
+let gc_11_0_3_regCOMPUTE_RESOURCE_LIMITS = { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] }
+let gc_11_0_3_regCOMPUTE_TMPRING_SIZE = { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 26)) ] }
+let gc_11_0_3_regCOMPUTE_RESTART_X = { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] }
+let gc_11_0_3_regCOMPUTE_THREAD_TRACE_ENABLE = { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] }
+let gc_11_0_3_regCOMPUTE_PGM_RSRC3 = { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 9)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("image_op", (31, 31)) ] }
+let gc_11_0_3_regCOMPUTE_USER_DATA_0 = { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regCP_INT_CNTL = { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] }
+let gc_11_0_3_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] }
+let gc_11_0_3_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
+let gc_11_0_3_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_3_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_3_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_0_3_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_0_3_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
+let gc_11_0_3_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
+let gc_11_0_3_regCP_HQD_ACTIVE = { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] }
+let gc_11_0_3_regCP_HQD_PERSISTENT_STATE = { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] }
+let gc_11_0_3_regCP_HQD_PQ_DOORBELL_CONTROL = { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] }
+let gc_11_0_3_regCP_HQD_PQ_CONTROL = { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("pq_volatile", (26, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] }
+let gc_11_0_3_regCP_HQD_IB_CONTROL = { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_volatile", (26, 26)); ("ib_priv_state", (30, 30)); ("processing_ib", (31, 31)) ] }
+let gc_11_0_3_regCP_HQD_DEQUEUE_REQUEST = { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] }
+let gc_11_0_3_regCP_MQD_CONTROL = { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("mqd_volatile", (26, 26)) ] }
+let gc_11_0_3_regCP_HQD_EOP_CONTROL = { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("eop_volatile", (26, 26)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] }
+let gc_11_0_3_regCP_HQD_PQ_WPTR_HI = { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regCP_MEC_CNTL = { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_pipe2_reset", (22, 22)); ("mec_me2_pipe3_reset", (23, 23)); ("mec_invalidate_icache", (27, 27)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] }
+let gc_11_0_3_regCP_ME_CNTL = { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] }
+let gc_11_0_3_regGRBM_GFX_CNTL = { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] }
+let gc_11_0_3_regSH_MEM_BASES = { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] }
+let gc_11_0_3_regSH_MEM_CONFIG = { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] }
+let gc_11_0_3_regTCP_CNTL = { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("enable_128b_dcc_comp_read_for_indep64", (7, 7)); ("disable_write_combining", (9, 9)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_z_map", (28, 28)); ("force_order_between_read_write_to_same_address", (29, 29)); ("astc_ve_msb_tolerant", (31, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG0 = { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG1 = { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG2 = { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG3 = { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG5 = { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG6 = { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] }
+let gc_11_0_3_regSCRATCH_REG7 = { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] }
+let gc_11_0_3_regGRBM_GFX_INDEX = { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 7)); ("sa_index", (8, 15)); ("se_index", (16, 23)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_0 = { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_1 = { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_2 = { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_3 = { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_4 = { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_5 = { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_6 = { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_7 = { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_0_3_regSPI_CONFIG_CNTL = { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] }
+let gc_11_0_3_regCP_MEC_RS64_PRGRM_CNTR_START = { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_0_3_regCP_MEC_RS64_CNTL = { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] }
+let gc_11_0_3_regCP_MEC_RS64_PRGRM_CNTR_START_HI = { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_0_3_regGRBM_PERFCOUNTER0_LO = { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGRBM_PERFCOUNTER0_HI = { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_3_regGRBM_PERFCOUNTER1_LO = { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGRBM_PERFCOUNTER1_HI = { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER0_LO = { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER1_LO = { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER2_LO = { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER3_LO = { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER4_LO = { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER5_LO = { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER6_LO = { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER7_LO = { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER0_LO = { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER0_HI = { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER1_LO = { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER1_HI = { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER2_LO = { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER2_HI = { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER3_LO = { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER3_HI = { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_0_3_regCP_PERFMON_CNTL = { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] }
+let gc_11_0_3_regGRBM_PERFCOUNTER0_SELECT = { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_11_0_3_regGRBM_PERFCOUNTER1_SELECT = { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER0_SELECT = { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER1_SELECT = { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER2_SELECT = { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER3_SELECT = { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER4_SELECT = { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER5_SELECT = { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER6_SELECT = { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER7_SELECT = { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER8_SELECT = { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER9_SELECT = { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER10_SELECT = { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER11_SELECT = { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER12_SELECT = { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER13_SELECT = { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER14_SELECT = { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER15_SELECT = { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER_CTRL = { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] }
+let gc_11_0_3_regSQ_PERFCOUNTER_CTRL2 = { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_BUF0_BASE = { name = "regSQ_THREAD_TRACE_BUF0_BASE"; offset = 0x39e8; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_BUF0_SIZE = { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_BUF1_BASE = { name = "regSQ_THREAD_TRACE_BUF1_BASE"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_BUF1_SIZE = { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_CTRL = { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("all_vmid", (2, 2)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("util_timer", (13, 13)); ("wavestart_mode", (14, 15)); ("rt_freq", (16, 17)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("draw_event_en", (31, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_MASK = { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_TOKEN_MASK = { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 10)); ("ttrace_exec", (11, 11)); ("bop_events_token_include", (12, 12)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_WPTR = { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_STATUS = { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_STATUS2 = { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_GFX_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_GFX_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_3_regSQ_THREAD_TRACE_DROPPED_CNTR = { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER0_SELECT = { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER1_SELECT = { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER2_SELECT = { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regGL2C_PERFCOUNTER3_SELECT = { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_0_3_regRLC_CNTL = { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] }
+let gc_11_0_3_regRLC_CGTT_MGCG_OVERRIDE = { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_16_11", (11, 16)); ("gc_cac_mgcg_clk_cntl", (17, 17)); ("se_cac_mgcg_clk_cntl", (18, 18)); ("reserved_31_19", (19, 31)) ] }
+let gc_11_0_3_regRLC_CGCG_CGLS_CTRL = { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] }
+let gc_11_0_3_regRLC_SRM_CNTL = { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] }
+let gc_11_0_3_regRLC_RLCS_BOOTLOAD_STATUS = { name = "regRLC_RLCS_BOOTLOAD_STATUS"; offset = 0x4e82; segment = 1; fields = [ ("gfx_init_done", (0, 0)); ("gfx_security_policy_loaded", (1, 1)); ("gfx_security_policy_done", (2, 2)); ("rlc_gpm_iram_loaded", (3, 3)); ("rlc_gpm_iram_done", (4, 4)); ("reserved", (5, 30)); ("bootload_complete", (31, 31)) ] }
+let gc_11_0_3_regRLC_SAFE_MODE = { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] }
+let gc_11_0_3_regRLC_SPM_MC_CNTL = { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_mtype_over", (8, 8)); ("rlc_spm_mtype", (9, 11)); ("rlc_spm_bc", (12, 12)); ("rlc_spm_ro", (13, 13)); ("rlc_spm_vol", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved_3", (16, 17)); ("rlc_spm_llc_noalloc", (18, 18)); ("rlc_spm_llc_noalloc_over", (19, 19)); ("reserved", (20, 31)) ] }
+let gc_11_0_3_regRLC_CP_SCHEDULERS = { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] }
+
+let gc_11_0_3_registers = [
+  gc_11_0_3_regSDMA0_CNTL;
+  gc_11_0_3_regSDMA0_WATCHDOG_CNTL;
+  gc_11_0_3_regSDMA0_UTCL1_CNTL;
+  gc_11_0_3_regSDMA0_UTCL1_PAGE;
+  gc_11_0_3_regSDMA0_RLC_CGCG_CTRL;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_CNTL;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_BASE;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_BASE_HI;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_HI;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_HI;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO;
+  gc_11_0_3_regSDMA0_QUEUE0_IB_CNTL;
+  gc_11_0_3_regSDMA0_QUEUE0_DOORBELL;
+  gc_11_0_3_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
+  gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
+  gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_11_0_3_regSDMA1_RLC_CGCG_CTRL;
+  gc_11_0_3_regSDMA0_F32_CNTL;
+  gc_11_0_3_regGRBM_CNTL;
+  gc_11_0_3_regGRBM_SOFT_RESET;
+  gc_11_0_3_regCP_STAT;
+  gc_11_0_3_regCP_RB_WPTR_POLL_CNTL;
+  gc_11_0_3_regGB_ADDR_CONFIG;
+  gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB;
+  gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB;
+  gc_11_0_3_regGCVM_L2_CNTL;
+  gc_11_0_3_regGCVM_L2_CNTL2;
+  gc_11_0_3_regGCVM_L2_CNTL3;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_CNTL;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_CNTL2;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_STATUS;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32;
+  gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32;
+  gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32;
+  gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32;
+  gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32;
+  gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32;
+  gc_11_0_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32;
+  gc_11_0_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32;
+  gc_11_0_3_regGCVM_L2_CNTL4;
+  gc_11_0_3_regGCVM_L2_BANK_SELECT_RESERVED_CID2;
+  gc_11_0_3_regGCVM_L2_CNTL5;
+  gc_11_0_3_regGCMC_VM_FB_LOCATION_BASE;
+  gc_11_0_3_regGCMC_VM_FB_LOCATION_TOP;
+  gc_11_0_3_regGCMC_VM_AGP_TOP;
+  gc_11_0_3_regGCMC_VM_AGP_BOT;
+  gc_11_0_3_regGCMC_VM_AGP_BASE;
+  gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR;
+  gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR;
+  gc_11_0_3_regGCMC_VM_MX_L1_TLB_CNTL;
+  gc_11_0_3_regGCVM_CONTEXT0_CNTL;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG17_SEM;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG17_REQ;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG17_ACK;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32;
+  gc_11_0_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32;
+  gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32;
+  gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32;
+  gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32;
+  gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32;
+  gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32;
+  gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32;
+  gc_11_0_3_regCOMPUTE_DISPATCH_INITIATOR;
+  gc_11_0_3_regCOMPUTE_START_X;
+  gc_11_0_3_regCOMPUTE_PERFCOUNT_ENABLE;
+  gc_11_0_3_regCOMPUTE_PGM_LO;
+  gc_11_0_3_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO;
+  gc_11_0_3_regCOMPUTE_PGM_RSRC1;
+  gc_11_0_3_regCOMPUTE_RESOURCE_LIMITS;
+  gc_11_0_3_regCOMPUTE_TMPRING_SIZE;
+  gc_11_0_3_regCOMPUTE_RESTART_X;
+  gc_11_0_3_regCOMPUTE_THREAD_TRACE_ENABLE;
+  gc_11_0_3_regCOMPUTE_PGM_RSRC3;
+  gc_11_0_3_regCOMPUTE_USER_DATA_0;
+  gc_11_0_3_regCP_INT_CNTL;
+  gc_11_0_3_regCP_MEC_DOORBELL_RANGE_LOWER;
+  gc_11_0_3_regCP_MEC_DOORBELL_RANGE_UPPER;
+  gc_11_0_3_regCP_PFP_PRGRM_CNTR_START;
+  gc_11_0_3_regCP_ME_PRGRM_CNTR_START;
+  gc_11_0_3_regCP_PFP_PRGRM_CNTR_START_HI;
+  gc_11_0_3_regCP_ME_PRGRM_CNTR_START_HI;
+  gc_11_0_3_regSPI_COMPUTE_QUEUE_RESET;
+  gc_11_0_3_regCP_MQD_BASE_ADDR;
+  gc_11_0_3_regCP_HQD_ACTIVE;
+  gc_11_0_3_regCP_HQD_PERSISTENT_STATE;
+  gc_11_0_3_regCP_HQD_PQ_DOORBELL_CONTROL;
+  gc_11_0_3_regCP_HQD_PQ_CONTROL;
+  gc_11_0_3_regCP_HQD_IB_CONTROL;
+  gc_11_0_3_regCP_HQD_DEQUEUE_REQUEST;
+  gc_11_0_3_regCP_MQD_CONTROL;
+  gc_11_0_3_regCP_HQD_EOP_CONTROL;
+  gc_11_0_3_regCP_HQD_PQ_WPTR_HI;
+  gc_11_0_3_regCP_MEC_CNTL;
+  gc_11_0_3_regCP_ME_CNTL;
+  gc_11_0_3_regGRBM_GFX_CNTL;
+  gc_11_0_3_regSH_MEM_BASES;
+  gc_11_0_3_regSH_MEM_CONFIG;
+  gc_11_0_3_regTCP_CNTL;
+  gc_11_0_3_regSCRATCH_REG0;
+  gc_11_0_3_regSCRATCH_REG1;
+  gc_11_0_3_regSCRATCH_REG2;
+  gc_11_0_3_regSCRATCH_REG3;
+  gc_11_0_3_regSCRATCH_REG5;
+  gc_11_0_3_regSCRATCH_REG6;
+  gc_11_0_3_regSCRATCH_REG7;
+  gc_11_0_3_regGRBM_GFX_INDEX;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_0;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_1;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_2;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_3;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_4;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_5;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_6;
+  gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_7;
+  gc_11_0_3_regSPI_CONFIG_CNTL;
+  gc_11_0_3_regCP_MEC_RS64_PRGRM_CNTR_START;
+  gc_11_0_3_regCP_MEC_RS64_CNTL;
+  gc_11_0_3_regCP_MEC_RS64_PRGRM_CNTR_START_HI;
+  gc_11_0_3_regGRBM_PERFCOUNTER0_LO;
+  gc_11_0_3_regGRBM_PERFCOUNTER0_HI;
+  gc_11_0_3_regGRBM_PERFCOUNTER1_LO;
+  gc_11_0_3_regGRBM_PERFCOUNTER1_HI;
+  gc_11_0_3_regSQ_PERFCOUNTER0_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER1_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER2_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER3_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER4_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER5_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER6_LO;
+  gc_11_0_3_regSQ_PERFCOUNTER7_LO;
+  gc_11_0_3_regGL2C_PERFCOUNTER0_LO;
+  gc_11_0_3_regGL2C_PERFCOUNTER0_HI;
+  gc_11_0_3_regGL2C_PERFCOUNTER1_LO;
+  gc_11_0_3_regGL2C_PERFCOUNTER1_HI;
+  gc_11_0_3_regGL2C_PERFCOUNTER2_LO;
+  gc_11_0_3_regGL2C_PERFCOUNTER2_HI;
+  gc_11_0_3_regGL2C_PERFCOUNTER3_LO;
+  gc_11_0_3_regGL2C_PERFCOUNTER3_HI;
+  gc_11_0_3_regCP_PERFMON_CNTL;
+  gc_11_0_3_regGRBM_PERFCOUNTER0_SELECT;
+  gc_11_0_3_regGRBM_PERFCOUNTER1_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER0_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER1_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER2_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER3_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER4_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER5_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER6_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER7_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER8_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER9_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER10_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER11_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER12_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER13_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER14_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER15_SELECT;
+  gc_11_0_3_regSQ_PERFCOUNTER_CTRL;
+  gc_11_0_3_regSQ_PERFCOUNTER_CTRL2;
+  gc_11_0_3_regSQ_THREAD_TRACE_BUF0_BASE;
+  gc_11_0_3_regSQ_THREAD_TRACE_BUF0_SIZE;
+  gc_11_0_3_regSQ_THREAD_TRACE_BUF1_BASE;
+  gc_11_0_3_regSQ_THREAD_TRACE_BUF1_SIZE;
+  gc_11_0_3_regSQ_THREAD_TRACE_CTRL;
+  gc_11_0_3_regSQ_THREAD_TRACE_MASK;
+  gc_11_0_3_regSQ_THREAD_TRACE_TOKEN_MASK;
+  gc_11_0_3_regSQ_THREAD_TRACE_WPTR;
+  gc_11_0_3_regSQ_THREAD_TRACE_STATUS;
+  gc_11_0_3_regSQ_THREAD_TRACE_STATUS2;
+  gc_11_0_3_regSQ_THREAD_TRACE_GFX_DRAW_CNTR;
+  gc_11_0_3_regSQ_THREAD_TRACE_GFX_MARKER_CNTR;
+  gc_11_0_3_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR;
+  gc_11_0_3_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR;
+  gc_11_0_3_regSQ_THREAD_TRACE_DROPPED_CNTR;
+  gc_11_0_3_regGL2C_PERFCOUNTER0_SELECT;
+  gc_11_0_3_regGL2C_PERFCOUNTER1_SELECT;
+  gc_11_0_3_regGL2C_PERFCOUNTER2_SELECT;
+  gc_11_0_3_regGL2C_PERFCOUNTER3_SELECT;
+  gc_11_0_3_regRLC_CNTL;
+  gc_11_0_3_regRLC_CGTT_MGCG_OVERRIDE;
+  gc_11_0_3_regRLC_CGCG_CGLS_CTRL;
+  gc_11_0_3_regRLC_SRM_CNTL;
+  gc_11_0_3_regRLC_RLCS_BOOTLOAD_STATUS;
+  gc_11_0_3_regRLC_SAFE_MODE;
+  gc_11_0_3_regRLC_SPM_MC_CNTL;
+  gc_11_0_3_regRLC_CP_SCHEDULERS;
+]
+
+let gc_11_0_3_find = function
+  | "regSDMA0_CNTL" -> Some gc_11_0_3_regSDMA0_CNTL
+  | "regSDMA0_WATCHDOG_CNTL" -> Some gc_11_0_3_regSDMA0_WATCHDOG_CNTL
+  | "regSDMA0_UTCL1_CNTL" -> Some gc_11_0_3_regSDMA0_UTCL1_CNTL
+  | "regSDMA0_UTCL1_PAGE" -> Some gc_11_0_3_regSDMA0_UTCL1_PAGE
+  | "regSDMA0_RLC_CGCG_CTRL" -> Some gc_11_0_3_regSDMA0_RLC_CGCG_CTRL
+  | "regSDMA0_QUEUE0_RB_CNTL" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_CNTL
+  | "regSDMA0_QUEUE0_RB_BASE" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_BASE
+  | "regSDMA0_QUEUE0_RB_BASE_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_BASE_HI
+  | "regSDMA0_QUEUE0_RB_RPTR" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR
+  | "regSDMA0_QUEUE0_RB_RPTR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR
+  | "regSDMA0_QUEUE0_RB_WPTR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_11_0_3_regSDMA0_QUEUE0_IB_CNTL
+  | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_11_0_3_regSDMA0_QUEUE0_DOORBELL
+  | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_11_0_3_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_0_3_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_0_3_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA1_RLC_CGCG_CTRL" -> Some gc_11_0_3_regSDMA1_RLC_CGCG_CTRL
+  | "regSDMA0_F32_CNTL" -> Some gc_11_0_3_regSDMA0_F32_CNTL
+  | "regGRBM_CNTL" -> Some gc_11_0_3_regGRBM_CNTL
+  | "regGRBM_SOFT_RESET" -> Some gc_11_0_3_regGRBM_SOFT_RESET
+  | "regCP_STAT" -> Some gc_11_0_3_regCP_STAT
+  | "regCP_RB_WPTR_POLL_CNTL" -> Some gc_11_0_3_regCP_RB_WPTR_POLL_CNTL
+  | "regGB_ADDR_CONFIG" -> Some gc_11_0_3_regGB_ADDR_CONFIG
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB" -> Some gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB" -> Some gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB
+  | "regGCVM_L2_CNTL" -> Some gc_11_0_3_regGCVM_L2_CNTL
+  | "regGCVM_L2_CNTL2" -> Some gc_11_0_3_regGCVM_L2_CNTL2
+  | "regGCVM_L2_CNTL3" -> Some gc_11_0_3_regGCVM_L2_CNTL3
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_CNTL
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL2" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_CNTL2
+  | "regGCVM_L2_PROTECTION_FAULT_STATUS" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_STATUS
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32" -> Some gc_11_0_3_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32" -> Some gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32" -> Some gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32" -> Some gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32" -> Some gc_11_0_3_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32" -> Some gc_11_0_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32" -> Some gc_11_0_3_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32
+  | "regGCVM_L2_CNTL4" -> Some gc_11_0_3_regGCVM_L2_CNTL4
+  | "regGCVM_L2_BANK_SELECT_RESERVED_CID2" -> Some gc_11_0_3_regGCVM_L2_BANK_SELECT_RESERVED_CID2
+  | "regGCVM_L2_CNTL5" -> Some gc_11_0_3_regGCVM_L2_CNTL5
+  | "regGCMC_VM_FB_LOCATION_BASE" -> Some gc_11_0_3_regGCMC_VM_FB_LOCATION_BASE
+  | "regGCMC_VM_FB_LOCATION_TOP" -> Some gc_11_0_3_regGCMC_VM_FB_LOCATION_TOP
+  | "regGCMC_VM_AGP_TOP" -> Some gc_11_0_3_regGCMC_VM_AGP_TOP
+  | "regGCMC_VM_AGP_BOT" -> Some gc_11_0_3_regGCMC_VM_AGP_BOT
+  | "regGCMC_VM_AGP_BASE" -> Some gc_11_0_3_regGCMC_VM_AGP_BASE
+  | "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR" -> Some gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR
+  | "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR" -> Some gc_11_0_3_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR
+  | "regGCMC_VM_MX_L1_TLB_CNTL" -> Some gc_11_0_3_regGCMC_VM_MX_L1_TLB_CNTL
+  | "regGCVM_CONTEXT0_CNTL" -> Some gc_11_0_3_regGCVM_CONTEXT0_CNTL
+  | "regGCVM_INVALIDATE_ENG17_SEM" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG17_SEM
+  | "regGCVM_INVALIDATE_ENG17_REQ" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG17_REQ
+  | "regGCVM_INVALIDATE_ENG17_ACK" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG17_ACK
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32" -> Some gc_11_0_3_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32" -> Some gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32" -> Some gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32" -> Some gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32" -> Some gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32" -> Some gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32" -> Some gc_11_0_3_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32
+  | "regCOMPUTE_DISPATCH_INITIATOR" -> Some gc_11_0_3_regCOMPUTE_DISPATCH_INITIATOR
+  | "regCOMPUTE_START_X" -> Some gc_11_0_3_regCOMPUTE_START_X
+  | "regCOMPUTE_PERFCOUNT_ENABLE" -> Some gc_11_0_3_regCOMPUTE_PERFCOUNT_ENABLE
+  | "regCOMPUTE_PGM_LO" -> Some gc_11_0_3_regCOMPUTE_PGM_LO
+  | "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" -> Some gc_11_0_3_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO
+  | "regCOMPUTE_PGM_RSRC1" -> Some gc_11_0_3_regCOMPUTE_PGM_RSRC1
+  | "regCOMPUTE_RESOURCE_LIMITS" -> Some gc_11_0_3_regCOMPUTE_RESOURCE_LIMITS
+  | "regCOMPUTE_TMPRING_SIZE" -> Some gc_11_0_3_regCOMPUTE_TMPRING_SIZE
+  | "regCOMPUTE_RESTART_X" -> Some gc_11_0_3_regCOMPUTE_RESTART_X
+  | "regCOMPUTE_THREAD_TRACE_ENABLE" -> Some gc_11_0_3_regCOMPUTE_THREAD_TRACE_ENABLE
+  | "regCOMPUTE_PGM_RSRC3" -> Some gc_11_0_3_regCOMPUTE_PGM_RSRC3
+  | "regCOMPUTE_USER_DATA_0" -> Some gc_11_0_3_regCOMPUTE_USER_DATA_0
+  | "regCP_INT_CNTL" -> Some gc_11_0_3_regCP_INT_CNTL
+  | "regCP_MEC_DOORBELL_RANGE_LOWER" -> Some gc_11_0_3_regCP_MEC_DOORBELL_RANGE_LOWER
+  | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_11_0_3_regCP_MEC_DOORBELL_RANGE_UPPER
+  | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_11_0_3_regCP_PFP_PRGRM_CNTR_START
+  | "regCP_ME_PRGRM_CNTR_START" -> Some gc_11_0_3_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_11_0_3_regCP_PFP_PRGRM_CNTR_START_HI
+  | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_11_0_3_regCP_ME_PRGRM_CNTR_START_HI
+  | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_11_0_3_regSPI_COMPUTE_QUEUE_RESET
+  | "regCP_MQD_BASE_ADDR" -> Some gc_11_0_3_regCP_MQD_BASE_ADDR
+  | "regCP_HQD_ACTIVE" -> Some gc_11_0_3_regCP_HQD_ACTIVE
+  | "regCP_HQD_PERSISTENT_STATE" -> Some gc_11_0_3_regCP_HQD_PERSISTENT_STATE
+  | "regCP_HQD_PQ_DOORBELL_CONTROL" -> Some gc_11_0_3_regCP_HQD_PQ_DOORBELL_CONTROL
+  | "regCP_HQD_PQ_CONTROL" -> Some gc_11_0_3_regCP_HQD_PQ_CONTROL
+  | "regCP_HQD_IB_CONTROL" -> Some gc_11_0_3_regCP_HQD_IB_CONTROL
+  | "regCP_HQD_DEQUEUE_REQUEST" -> Some gc_11_0_3_regCP_HQD_DEQUEUE_REQUEST
+  | "regCP_MQD_CONTROL" -> Some gc_11_0_3_regCP_MQD_CONTROL
+  | "regCP_HQD_EOP_CONTROL" -> Some gc_11_0_3_regCP_HQD_EOP_CONTROL
+  | "regCP_HQD_PQ_WPTR_HI" -> Some gc_11_0_3_regCP_HQD_PQ_WPTR_HI
+  | "regCP_MEC_CNTL" -> Some gc_11_0_3_regCP_MEC_CNTL
+  | "regCP_ME_CNTL" -> Some gc_11_0_3_regCP_ME_CNTL
+  | "regGRBM_GFX_CNTL" -> Some gc_11_0_3_regGRBM_GFX_CNTL
+  | "regSH_MEM_BASES" -> Some gc_11_0_3_regSH_MEM_BASES
+  | "regSH_MEM_CONFIG" -> Some gc_11_0_3_regSH_MEM_CONFIG
+  | "regTCP_CNTL" -> Some gc_11_0_3_regTCP_CNTL
+  | "regSCRATCH_REG0" -> Some gc_11_0_3_regSCRATCH_REG0
+  | "regSCRATCH_REG1" -> Some gc_11_0_3_regSCRATCH_REG1
+  | "regSCRATCH_REG2" -> Some gc_11_0_3_regSCRATCH_REG2
+  | "regSCRATCH_REG3" -> Some gc_11_0_3_regSCRATCH_REG3
+  | "regSCRATCH_REG5" -> Some gc_11_0_3_regSCRATCH_REG5
+  | "regSCRATCH_REG6" -> Some gc_11_0_3_regSCRATCH_REG6
+  | "regSCRATCH_REG7" -> Some gc_11_0_3_regSCRATCH_REG7
+  | "regGRBM_GFX_INDEX" -> Some gc_11_0_3_regGRBM_GFX_INDEX
+  | "regSQ_THREAD_TRACE_USERDATA_0" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_0
+  | "regSQ_THREAD_TRACE_USERDATA_1" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_1
+  | "regSQ_THREAD_TRACE_USERDATA_2" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_2
+  | "regSQ_THREAD_TRACE_USERDATA_3" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_3
+  | "regSQ_THREAD_TRACE_USERDATA_4" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_4
+  | "regSQ_THREAD_TRACE_USERDATA_5" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_5
+  | "regSQ_THREAD_TRACE_USERDATA_6" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_6
+  | "regSQ_THREAD_TRACE_USERDATA_7" -> Some gc_11_0_3_regSQ_THREAD_TRACE_USERDATA_7
+  | "regSPI_CONFIG_CNTL" -> Some gc_11_0_3_regSPI_CONFIG_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START" -> Some gc_11_0_3_regCP_MEC_RS64_PRGRM_CNTR_START
+  | "regCP_MEC_RS64_CNTL" -> Some gc_11_0_3_regCP_MEC_RS64_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START_HI" -> Some gc_11_0_3_regCP_MEC_RS64_PRGRM_CNTR_START_HI
+  | "regGRBM_PERFCOUNTER0_LO" -> Some gc_11_0_3_regGRBM_PERFCOUNTER0_LO
+  | "regGRBM_PERFCOUNTER0_HI" -> Some gc_11_0_3_regGRBM_PERFCOUNTER0_HI
+  | "regGRBM_PERFCOUNTER1_LO" -> Some gc_11_0_3_regGRBM_PERFCOUNTER1_LO
+  | "regGRBM_PERFCOUNTER1_HI" -> Some gc_11_0_3_regGRBM_PERFCOUNTER1_HI
+  | "regSQ_PERFCOUNTER0_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER0_LO
+  | "regSQ_PERFCOUNTER1_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER1_LO
+  | "regSQ_PERFCOUNTER2_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER2_LO
+  | "regSQ_PERFCOUNTER3_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER3_LO
+  | "regSQ_PERFCOUNTER4_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER4_LO
+  | "regSQ_PERFCOUNTER5_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER5_LO
+  | "regSQ_PERFCOUNTER6_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER6_LO
+  | "regSQ_PERFCOUNTER7_LO" -> Some gc_11_0_3_regSQ_PERFCOUNTER7_LO
+  | "regGL2C_PERFCOUNTER0_LO" -> Some gc_11_0_3_regGL2C_PERFCOUNTER0_LO
+  | "regGL2C_PERFCOUNTER0_HI" -> Some gc_11_0_3_regGL2C_PERFCOUNTER0_HI
+  | "regGL2C_PERFCOUNTER1_LO" -> Some gc_11_0_3_regGL2C_PERFCOUNTER1_LO
+  | "regGL2C_PERFCOUNTER1_HI" -> Some gc_11_0_3_regGL2C_PERFCOUNTER1_HI
+  | "regGL2C_PERFCOUNTER2_LO" -> Some gc_11_0_3_regGL2C_PERFCOUNTER2_LO
+  | "regGL2C_PERFCOUNTER2_HI" -> Some gc_11_0_3_regGL2C_PERFCOUNTER2_HI
+  | "regGL2C_PERFCOUNTER3_LO" -> Some gc_11_0_3_regGL2C_PERFCOUNTER3_LO
+  | "regGL2C_PERFCOUNTER3_HI" -> Some gc_11_0_3_regGL2C_PERFCOUNTER3_HI
+  | "regCP_PERFMON_CNTL" -> Some gc_11_0_3_regCP_PERFMON_CNTL
+  | "regGRBM_PERFCOUNTER0_SELECT" -> Some gc_11_0_3_regGRBM_PERFCOUNTER0_SELECT
+  | "regGRBM_PERFCOUNTER1_SELECT" -> Some gc_11_0_3_regGRBM_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER0_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER0_SELECT
+  | "regSQ_PERFCOUNTER1_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER2_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER2_SELECT
+  | "regSQ_PERFCOUNTER3_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER3_SELECT
+  | "regSQ_PERFCOUNTER4_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER4_SELECT
+  | "regSQ_PERFCOUNTER5_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER5_SELECT
+  | "regSQ_PERFCOUNTER6_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER6_SELECT
+  | "regSQ_PERFCOUNTER7_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER7_SELECT
+  | "regSQ_PERFCOUNTER8_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER8_SELECT
+  | "regSQ_PERFCOUNTER9_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER9_SELECT
+  | "regSQ_PERFCOUNTER10_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER10_SELECT
+  | "regSQ_PERFCOUNTER11_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER11_SELECT
+  | "regSQ_PERFCOUNTER12_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER12_SELECT
+  | "regSQ_PERFCOUNTER13_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER13_SELECT
+  | "regSQ_PERFCOUNTER14_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER14_SELECT
+  | "regSQ_PERFCOUNTER15_SELECT" -> Some gc_11_0_3_regSQ_PERFCOUNTER15_SELECT
+  | "regSQ_PERFCOUNTER_CTRL" -> Some gc_11_0_3_regSQ_PERFCOUNTER_CTRL
+  | "regSQ_PERFCOUNTER_CTRL2" -> Some gc_11_0_3_regSQ_PERFCOUNTER_CTRL2
+  | "regSQ_THREAD_TRACE_BUF0_BASE" -> Some gc_11_0_3_regSQ_THREAD_TRACE_BUF0_BASE
+  | "regSQ_THREAD_TRACE_BUF0_SIZE" -> Some gc_11_0_3_regSQ_THREAD_TRACE_BUF0_SIZE
+  | "regSQ_THREAD_TRACE_BUF1_BASE" -> Some gc_11_0_3_regSQ_THREAD_TRACE_BUF1_BASE
+  | "regSQ_THREAD_TRACE_BUF1_SIZE" -> Some gc_11_0_3_regSQ_THREAD_TRACE_BUF1_SIZE
+  | "regSQ_THREAD_TRACE_CTRL" -> Some gc_11_0_3_regSQ_THREAD_TRACE_CTRL
+  | "regSQ_THREAD_TRACE_MASK" -> Some gc_11_0_3_regSQ_THREAD_TRACE_MASK
+  | "regSQ_THREAD_TRACE_TOKEN_MASK" -> Some gc_11_0_3_regSQ_THREAD_TRACE_TOKEN_MASK
+  | "regSQ_THREAD_TRACE_WPTR" -> Some gc_11_0_3_regSQ_THREAD_TRACE_WPTR
+  | "regSQ_THREAD_TRACE_STATUS" -> Some gc_11_0_3_regSQ_THREAD_TRACE_STATUS
+  | "regSQ_THREAD_TRACE_STATUS2" -> Some gc_11_0_3_regSQ_THREAD_TRACE_STATUS2
+  | "regSQ_THREAD_TRACE_GFX_DRAW_CNTR" -> Some gc_11_0_3_regSQ_THREAD_TRACE_GFX_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_GFX_MARKER_CNTR" -> Some gc_11_0_3_regSQ_THREAD_TRACE_GFX_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR" -> Some gc_11_0_3_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR" -> Some gc_11_0_3_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_DROPPED_CNTR" -> Some gc_11_0_3_regSQ_THREAD_TRACE_DROPPED_CNTR
+  | "regGL2C_PERFCOUNTER0_SELECT" -> Some gc_11_0_3_regGL2C_PERFCOUNTER0_SELECT
+  | "regGL2C_PERFCOUNTER1_SELECT" -> Some gc_11_0_3_regGL2C_PERFCOUNTER1_SELECT
+  | "regGL2C_PERFCOUNTER2_SELECT" -> Some gc_11_0_3_regGL2C_PERFCOUNTER2_SELECT
+  | "regGL2C_PERFCOUNTER3_SELECT" -> Some gc_11_0_3_regGL2C_PERFCOUNTER3_SELECT
+  | "regRLC_CNTL" -> Some gc_11_0_3_regRLC_CNTL
+  | "regRLC_CGTT_MGCG_OVERRIDE" -> Some gc_11_0_3_regRLC_CGTT_MGCG_OVERRIDE
+  | "regRLC_CGCG_CGLS_CTRL" -> Some gc_11_0_3_regRLC_CGCG_CGLS_CTRL
+  | "regRLC_SRM_CNTL" -> Some gc_11_0_3_regRLC_SRM_CNTL
+  | "regRLC_RLCS_BOOTLOAD_STATUS" -> Some gc_11_0_3_regRLC_RLCS_BOOTLOAD_STATUS
+  | "regRLC_SAFE_MODE" -> Some gc_11_0_3_regRLC_SAFE_MODE
+  | "regRLC_SPM_MC_CNTL" -> Some gc_11_0_3_regRLC_SPM_MC_CNTL
+  | "regRLC_CP_SCHEDULERS" -> Some gc_11_0_3_regRLC_CP_SCHEDULERS
+  | _ -> None
+
+(* GC 11.5.0, its fields as (name, (lowest bit, highest bit)) *)
+
+let gc_11_5_0_regSDMA0_CNTL = { name = "regSDMA0_CNTL"; offset = 0x1c; segment = 0; fields = [ ("trap_enable", (0, 0)); ("sem_wait_int_enable", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] }
+let gc_11_5_0_regSDMA0_WATCHDOG_CNTL = { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2e; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] }
+let gc_11_5_0_regSDMA0_UTCL1_CNTL = { name = "regSDMA0_UTCL1_CNTL"; offset = 0x3c; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] }
+let gc_11_5_0_regSDMA0_UTCL1_PAGE = { name = "regSDMA0_UTCL1_PAGE"; offset = 0x3f; segment = 0; fields = [ ("vm_hole", (0, 0)); ("req_type", (1, 4)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)); ("llc_noalloc", (24, 24)) ] }
+let gc_11_5_0_regSDMA0_RLC_CGCG_CTRL = { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x5c; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_CNTL = { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("f32_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_BASE = { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_BASE_HI = { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR = { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR = { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x89; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x8a; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x92; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0xab; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0xb2; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0xb3; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0xb5; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_11_5_0_regSDMA0_F32_CNTL = { name = "regSDMA0_F32_CNTL"; offset = 0x589a; segment = 1; fields = [ ("halt", (0, 0)); ("th0_checksum_clr", (8, 8)); ("th0_reset", (9, 9)); ("th0_enable", (10, 10)); ("th1_checksum_clr", (12, 12)); ("th1_reset", (13, 13)); ("th1_enable", (14, 14)); ("th0_priority", (16, 23)); ("th1_priority", (24, 31)) ] }
+let gc_11_5_0_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 7)); ("report_last_rderr", (31, 31)) ] }
+let gc_11_5_0_regGRBM_SOFT_RESET = { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_cpaxi", (21, 21)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)) ] }
+let gc_11_5_0_regCP_STAT = { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("semaphore_busy", (19, 19)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] }
+let gc_11_5_0_regCP_RB_WPTR_POLL_CNTL = { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] }
+let gc_11_5_0_regGB_ADDR_CONFIG = { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 20)); ("num_rb_per_se", (26, 27)) ] }
+let gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] }
+let gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] }
+let gc_11_5_0_regGCVM_L2_CNTL = { name = "regGCVM_L2_CNTL"; offset = 0x15c0; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] }
+let gc_11_5_0_regGCVM_L2_CNTL2 = { name = "regGCVM_L2_CNTL2"; offset = 0x15c1; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] }
+let gc_11_5_0_regGCVM_L2_CNTL3 = { name = "regGCVM_L2_CNTL3"; offset = 0x15c2; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_CNTL = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15c8; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_CNTL2 = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15c9; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_STATUS = { name = "regGCVM_L2_PROTECTION_FAULT_STATUS"; offset = 0x15cc; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 28)); ("prt", (29, 29)); ("fed", (30, 30)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15cd; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15ce; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15cf; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15d0; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] }
+let gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15d2; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15d3; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d4; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15d5; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_5_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15d6; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15d7; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] }
+let gc_11_5_0_regGCVM_L2_CNTL4 = { name = "regGCVM_L2_CNTL4"; offset = 0x15d8; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] }
+let gc_11_5_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2 = { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15db; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] }
+let gc_11_5_0_regGCVM_L2_CNTL5 = { name = "regGCVM_L2_CNTL5"; offset = 0x15de; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)) ] }
+let gc_11_5_0_regGCMC_VM_FB_LOCATION_BASE = { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x167c; segment = 0; fields = [ ("fb_base", (0, 23)) ] }
+let gc_11_5_0_regGCMC_VM_FB_LOCATION_TOP = { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x167d; segment = 0; fields = [ ("fb_top", (0, 23)) ] }
+let gc_11_5_0_regGCMC_VM_AGP_TOP = { name = "regGCMC_VM_AGP_TOP"; offset = 0x167e; segment = 0; fields = [ ("agp_top", (0, 23)) ] }
+let gc_11_5_0_regGCMC_VM_AGP_BOT = { name = "regGCMC_VM_AGP_BOT"; offset = 0x167f; segment = 0; fields = [ ("agp_bot", (0, 23)) ] }
+let gc_11_5_0_regGCMC_VM_AGP_BASE = { name = "regGCMC_VM_AGP_BASE"; offset = 0x1680; segment = 0; fields = [ ("agp_base", (0, 23)) ] }
+let gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x1681; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x1682; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_11_5_0_regGCMC_VM_MX_L1_TLB_CNTL = { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x1683; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 13)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_CNTL = { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x168c; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (3, 6)); ("retry_permission_or_invalid_page_fault", (7, 7)); ("retry_other_fault", (8, 8)); ("range_protection_fault_enable_interrupt", (9, 9)); ("range_protection_fault_enable_default", (10, 10)); ("dummy_page_protection_fault_enable_interrupt", (11, 11)); ("dummy_page_protection_fault_enable_default", (12, 12)); ("pde0_protection_fault_enable_interrupt", (13, 13)); ("pde0_protection_fault_enable_default", (14, 14)); ("valid_protection_fault_enable_interrupt", (15, 15)); ("valid_protection_fault_enable_default", (16, 16)); ("read_protection_fault_enable_interrupt", (17, 17)); ("read_protection_fault_enable_default", (18, 18)); ("write_protection_fault_enable_interrupt", (19, 19)); ("write_protection_fault_enable_default", (20, 20)); ("execute_protection_fault_enable_interrupt", (21, 21)); ("execute_protection_fault_enable_default", (22, 22)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG17_SEM = { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x16ae; segment = 0; fields = [ ("semaphore", (0, 0)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG17_REQ = { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x16c0; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("invalidate_4k_pages_only", (26, 26)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG17_ACK = { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x16d2; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x16d3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x16d4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x16d5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x16d6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x16d7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x16d8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x16d9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x16da; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x16db; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x16dc; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x16dd; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x16de; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x16df; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x16e0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x16e1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x16e2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x16e3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x16e4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x16e5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x16e6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x16e7; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x16e8; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x16e9; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x16ea; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x16eb; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x16ec; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x16ed; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x16ee; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x16ef; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x16f0; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x16f1; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x16f2; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x16f3; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x16f4; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x16f5; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_11_5_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x16f6; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x16f7; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x16f8; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x1717; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x1718; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x1737; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x1738; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_11_5_0_regCOMPUTE_DISPATCH_INITIATOR = { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("reserved", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)) ] }
+let gc_11_5_0_regCOMPUTE_START_X = { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] }
+let gc_11_5_0_regCOMPUTE_PERFCOUNT_ENABLE = { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] }
+let gc_11_5_0_regCOMPUTE_PGM_LO = { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO = { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regCOMPUTE_PGM_RSRC1 = { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("dx10_clamp", (21, 21)); ("ieee_mode", (23, 23)); ("bulky", (24, 24)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] }
+let gc_11_5_0_regCOMPUTE_RESOURCE_LIMITS = { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] }
+let gc_11_5_0_regCOMPUTE_TMPRING_SIZE = { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 26)) ] }
+let gc_11_5_0_regCOMPUTE_RESTART_X = { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] }
+let gc_11_5_0_regCOMPUTE_THREAD_TRACE_ENABLE = { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] }
+let gc_11_5_0_regCOMPUTE_PGM_RSRC3 = { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 9)); ("trap_on_start", (10, 10)); ("trap_on_end", (11, 11)); ("image_op", (31, 31)) ] }
+let gc_11_5_0_regCOMPUTE_USER_DATA_0 = { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regCP_INT_CNTL = { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] }
+let gc_11_5_0_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] }
+let gc_11_5_0_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
+let gc_11_5_0_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_5_0_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_5_0_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_5_0_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_5_0_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
+let gc_11_5_0_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
+let gc_11_5_0_regCP_HQD_ACTIVE = { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] }
+let gc_11_5_0_regCP_HQD_PERSISTENT_STATE = { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] }
+let gc_11_5_0_regCP_HQD_PQ_DOORBELL_CONTROL = { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] }
+let gc_11_5_0_regCP_HQD_PQ_CONTROL = { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("pq_volatile", (26, 26)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] }
+let gc_11_5_0_regCP_HQD_IB_CONTROL = { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_volatile", (26, 26)); ("processing_ib", (31, 31)) ] }
+let gc_11_5_0_regCP_HQD_DEQUEUE_REQUEST = { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] }
+let gc_11_5_0_regCP_MQD_CONTROL = { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("mqd_volatile", (26, 26)) ] }
+let gc_11_5_0_regCP_HQD_EOP_CONTROL = { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("eop_volatile", (26, 26)); ("sig_sem_result", (29, 30)); ("pend_sig_sem", (31, 31)) ] }
+let gc_11_5_0_regCP_HQD_PQ_WPTR_HI = { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regCP_MEC_CNTL = { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_me1_pipe2_reset", (18, 18)); ("mec_me1_pipe3_reset", (19, 19)); ("mec_me2_pipe0_reset", (20, 20)); ("mec_me2_pipe1_reset", (21, 21)); ("mec_me2_pipe2_reset", (22, 22)); ("mec_me2_pipe3_reset", (23, 23)); ("mec_invalidate_icache", (27, 27)); ("mec_me2_halt", (28, 28)); ("mec_me2_step", (29, 29)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] }
+let gc_11_5_0_regCP_ME_CNTL = { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] }
+let gc_11_5_0_regGRBM_GFX_CNTL = { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] }
+let gc_11_5_0_regSH_MEM_BASES = { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] }
+let gc_11_5_0_regSH_MEM_CONFIG = { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] }
+let gc_11_5_0_regTCP_CNTL = { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("enable_128b_dcc_comp_read_for_indep64", (7, 7)); ("disable_decompression_power_opt", (8, 8)); ("disable_write_combining", (9, 9)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_z_map", (28, 28)); ("force_order_between_read_write_to_same_address", (29, 29)); ("astc_ve_msb_tolerant", (31, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG0 = { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG1 = { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG2 = { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG3 = { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG5 = { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG6 = { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] }
+let gc_11_5_0_regSCRATCH_REG7 = { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] }
+let gc_11_5_0_regGRBM_GFX_INDEX = { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 6)); ("sa_index", (8, 15)); ("se_index", (16, 23)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_0 = { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_1 = { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_2 = { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_3 = { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_4 = { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_5 = { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_6 = { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_7 = { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_11_5_0_regSPI_CONFIG_CNTL = { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] }
+let gc_11_5_0_regCP_MEC_RS64_PRGRM_CNTR_START = { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] }
+let gc_11_5_0_regCP_MEC_RS64_CNTL = { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] }
+let gc_11_5_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI = { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] }
+let gc_11_5_0_regGRBM_PERFCOUNTER0_LO = { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGRBM_PERFCOUNTER0_HI = { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_5_0_regGRBM_PERFCOUNTER1_LO = { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGRBM_PERFCOUNTER1_HI = { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER0_LO = { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER1_LO = { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER2_LO = { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER3_LO = { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER4_LO = { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER5_LO = { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER6_LO = { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER7_LO = { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER0_LO = { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER0_HI = { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER1_LO = { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER1_HI = { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER2_LO = { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER2_HI = { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER3_LO = { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER3_HI = { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_11_5_0_regCP_PERFMON_CNTL = { name = "regCP_PERFMON_CNTL"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] }
+let gc_11_5_0_regGRBM_PERFCOUNTER0_SELECT = { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_11_5_0_regGRBM_PERFCOUNTER1_SELECT = { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("gds_busy_user_defined_mask", (24, 24)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)); ("rmi_busy_user_defined_mask", (31, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER0_SELECT = { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER1_SELECT = { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER2_SELECT = { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER3_SELECT = { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER4_SELECT = { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER5_SELECT = { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER6_SELECT = { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER7_SELECT = { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER8_SELECT = { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER9_SELECT = { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER10_SELECT = { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER11_SELECT = { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER12_SELECT = { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER13_SELECT = { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER14_SELECT = { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER15_SELECT = { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER_CTRL = { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] }
+let gc_11_5_0_regSQ_PERFCOUNTER_CTRL2 = { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_BUF0_BASE = { name = "regSQ_THREAD_TRACE_BUF0_BASE"; offset = 0x39e8; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_BUF0_SIZE = { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_BUF1_BASE = { name = "regSQ_THREAD_TRACE_BUF1_BASE"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_BUF1_SIZE = { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 3)); ("size", (8, 29)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_CTRL = { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("all_vmid", (2, 2)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("util_timer", (13, 13)); ("wavestart_mode", (14, 15)); ("rt_freq", (16, 17)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("draw_event_en", (31, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_MASK = { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_TOKEN_MASK = { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 10)); ("ttrace_exec", (11, 11)); ("bop_events_token_include", (12, 12)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_WPTR = { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_STATUS = { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_STATUS2 = { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_5_0_regSQ_THREAD_TRACE_DROPPED_CNTR = { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER0_SELECT = { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER1_SELECT = { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER2_SELECT = { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regGL2C_PERFCOUNTER3_SELECT = { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b85; segment = 1; fields = [ ("perf_sel", (0, 9)); ("cntr_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_11_5_0_regRLC_CNTL = { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] }
+let gc_11_5_0_regRLC_CGTT_MGCG_OVERRIDE = { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_16_11", (11, 16)); ("gc_cac_mgcg_clk_cntl", (17, 17)); ("se_cac_mgcg_clk_cntl", (18, 18)); ("reserved_31_19", (19, 31)) ] }
+let gc_11_5_0_regRLC_CGCG_CGLS_CTRL = { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] }
+let gc_11_5_0_regRLC_SRM_CNTL = { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("reserved", (2, 31)) ] }
+let gc_11_5_0_regRLC_SAFE_MODE = { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] }
+let gc_11_5_0_regRLC_SPM_MC_CNTL = { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_policy", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_mtype_over", (8, 8)); ("rlc_spm_mtype", (9, 11)); ("rlc_spm_bc", (12, 12)); ("reserved_2", (13, 13)); ("rlc_spm_vol", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved_3", (16, 17)); ("rlc_spm_llc_noalloc", (18, 18)); ("rlc_spm_llc_noalloc_over", (19, 19)); ("reserved", (20, 31)) ] }
+let gc_11_5_0_regRLC_CP_SCHEDULERS = { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] }
+
+let gc_11_5_0_registers = [
+  gc_11_5_0_regSDMA0_CNTL;
+  gc_11_5_0_regSDMA0_WATCHDOG_CNTL;
+  gc_11_5_0_regSDMA0_UTCL1_CNTL;
+  gc_11_5_0_regSDMA0_UTCL1_PAGE;
+  gc_11_5_0_regSDMA0_RLC_CGCG_CTRL;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_CNTL;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_BASE;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_BASE_HI;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_HI;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_HI;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO;
+  gc_11_5_0_regSDMA0_QUEUE0_IB_CNTL;
+  gc_11_5_0_regSDMA0_QUEUE0_DOORBELL;
+  gc_11_5_0_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
+  gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
+  gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_11_5_0_regSDMA0_F32_CNTL;
+  gc_11_5_0_regGRBM_CNTL;
+  gc_11_5_0_regGRBM_SOFT_RESET;
+  gc_11_5_0_regCP_STAT;
+  gc_11_5_0_regCP_RB_WPTR_POLL_CNTL;
+  gc_11_5_0_regGB_ADDR_CONFIG;
+  gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB;
+  gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB;
+  gc_11_5_0_regGCVM_L2_CNTL;
+  gc_11_5_0_regGCVM_L2_CNTL2;
+  gc_11_5_0_regGCVM_L2_CNTL3;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_CNTL;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_CNTL2;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_STATUS;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32;
+  gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32;
+  gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32;
+  gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32;
+  gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32;
+  gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32;
+  gc_11_5_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32;
+  gc_11_5_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32;
+  gc_11_5_0_regGCVM_L2_CNTL4;
+  gc_11_5_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2;
+  gc_11_5_0_regGCVM_L2_CNTL5;
+  gc_11_5_0_regGCMC_VM_FB_LOCATION_BASE;
+  gc_11_5_0_regGCMC_VM_FB_LOCATION_TOP;
+  gc_11_5_0_regGCMC_VM_AGP_TOP;
+  gc_11_5_0_regGCMC_VM_AGP_BOT;
+  gc_11_5_0_regGCMC_VM_AGP_BASE;
+  gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR;
+  gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR;
+  gc_11_5_0_regGCMC_VM_MX_L1_TLB_CNTL;
+  gc_11_5_0_regGCVM_CONTEXT0_CNTL;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG17_SEM;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG17_REQ;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG17_ACK;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32;
+  gc_11_5_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32;
+  gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32;
+  gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32;
+  gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32;
+  gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32;
+  gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32;
+  gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32;
+  gc_11_5_0_regCOMPUTE_DISPATCH_INITIATOR;
+  gc_11_5_0_regCOMPUTE_START_X;
+  gc_11_5_0_regCOMPUTE_PERFCOUNT_ENABLE;
+  gc_11_5_0_regCOMPUTE_PGM_LO;
+  gc_11_5_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO;
+  gc_11_5_0_regCOMPUTE_PGM_RSRC1;
+  gc_11_5_0_regCOMPUTE_RESOURCE_LIMITS;
+  gc_11_5_0_regCOMPUTE_TMPRING_SIZE;
+  gc_11_5_0_regCOMPUTE_RESTART_X;
+  gc_11_5_0_regCOMPUTE_THREAD_TRACE_ENABLE;
+  gc_11_5_0_regCOMPUTE_PGM_RSRC3;
+  gc_11_5_0_regCOMPUTE_USER_DATA_0;
+  gc_11_5_0_regCP_INT_CNTL;
+  gc_11_5_0_regCP_MEC_DOORBELL_RANGE_LOWER;
+  gc_11_5_0_regCP_MEC_DOORBELL_RANGE_UPPER;
+  gc_11_5_0_regCP_PFP_PRGRM_CNTR_START;
+  gc_11_5_0_regCP_ME_PRGRM_CNTR_START;
+  gc_11_5_0_regCP_PFP_PRGRM_CNTR_START_HI;
+  gc_11_5_0_regCP_ME_PRGRM_CNTR_START_HI;
+  gc_11_5_0_regSPI_COMPUTE_QUEUE_RESET;
+  gc_11_5_0_regCP_MQD_BASE_ADDR;
+  gc_11_5_0_regCP_HQD_ACTIVE;
+  gc_11_5_0_regCP_HQD_PERSISTENT_STATE;
+  gc_11_5_0_regCP_HQD_PQ_DOORBELL_CONTROL;
+  gc_11_5_0_regCP_HQD_PQ_CONTROL;
+  gc_11_5_0_regCP_HQD_IB_CONTROL;
+  gc_11_5_0_regCP_HQD_DEQUEUE_REQUEST;
+  gc_11_5_0_regCP_MQD_CONTROL;
+  gc_11_5_0_regCP_HQD_EOP_CONTROL;
+  gc_11_5_0_regCP_HQD_PQ_WPTR_HI;
+  gc_11_5_0_regCP_MEC_CNTL;
+  gc_11_5_0_regCP_ME_CNTL;
+  gc_11_5_0_regGRBM_GFX_CNTL;
+  gc_11_5_0_regSH_MEM_BASES;
+  gc_11_5_0_regSH_MEM_CONFIG;
+  gc_11_5_0_regTCP_CNTL;
+  gc_11_5_0_regSCRATCH_REG0;
+  gc_11_5_0_regSCRATCH_REG1;
+  gc_11_5_0_regSCRATCH_REG2;
+  gc_11_5_0_regSCRATCH_REG3;
+  gc_11_5_0_regSCRATCH_REG5;
+  gc_11_5_0_regSCRATCH_REG6;
+  gc_11_5_0_regSCRATCH_REG7;
+  gc_11_5_0_regGRBM_GFX_INDEX;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_0;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_1;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_2;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_3;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_4;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_5;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_6;
+  gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_7;
+  gc_11_5_0_regSPI_CONFIG_CNTL;
+  gc_11_5_0_regCP_MEC_RS64_PRGRM_CNTR_START;
+  gc_11_5_0_regCP_MEC_RS64_CNTL;
+  gc_11_5_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI;
+  gc_11_5_0_regGRBM_PERFCOUNTER0_LO;
+  gc_11_5_0_regGRBM_PERFCOUNTER0_HI;
+  gc_11_5_0_regGRBM_PERFCOUNTER1_LO;
+  gc_11_5_0_regGRBM_PERFCOUNTER1_HI;
+  gc_11_5_0_regSQ_PERFCOUNTER0_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER1_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER2_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER3_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER4_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER5_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER6_LO;
+  gc_11_5_0_regSQ_PERFCOUNTER7_LO;
+  gc_11_5_0_regGL2C_PERFCOUNTER0_LO;
+  gc_11_5_0_regGL2C_PERFCOUNTER0_HI;
+  gc_11_5_0_regGL2C_PERFCOUNTER1_LO;
+  gc_11_5_0_regGL2C_PERFCOUNTER1_HI;
+  gc_11_5_0_regGL2C_PERFCOUNTER2_LO;
+  gc_11_5_0_regGL2C_PERFCOUNTER2_HI;
+  gc_11_5_0_regGL2C_PERFCOUNTER3_LO;
+  gc_11_5_0_regGL2C_PERFCOUNTER3_HI;
+  gc_11_5_0_regCP_PERFMON_CNTL;
+  gc_11_5_0_regGRBM_PERFCOUNTER0_SELECT;
+  gc_11_5_0_regGRBM_PERFCOUNTER1_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER0_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER1_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER2_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER3_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER4_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER5_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER6_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER7_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER8_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER9_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER10_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER11_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER12_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER13_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER14_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER15_SELECT;
+  gc_11_5_0_regSQ_PERFCOUNTER_CTRL;
+  gc_11_5_0_regSQ_PERFCOUNTER_CTRL2;
+  gc_11_5_0_regSQ_THREAD_TRACE_BUF0_BASE;
+  gc_11_5_0_regSQ_THREAD_TRACE_BUF0_SIZE;
+  gc_11_5_0_regSQ_THREAD_TRACE_BUF1_BASE;
+  gc_11_5_0_regSQ_THREAD_TRACE_BUF1_SIZE;
+  gc_11_5_0_regSQ_THREAD_TRACE_CTRL;
+  gc_11_5_0_regSQ_THREAD_TRACE_MASK;
+  gc_11_5_0_regSQ_THREAD_TRACE_TOKEN_MASK;
+  gc_11_5_0_regSQ_THREAD_TRACE_WPTR;
+  gc_11_5_0_regSQ_THREAD_TRACE_STATUS;
+  gc_11_5_0_regSQ_THREAD_TRACE_STATUS2;
+  gc_11_5_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR;
+  gc_11_5_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR;
+  gc_11_5_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR;
+  gc_11_5_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR;
+  gc_11_5_0_regSQ_THREAD_TRACE_DROPPED_CNTR;
+  gc_11_5_0_regGL2C_PERFCOUNTER0_SELECT;
+  gc_11_5_0_regGL2C_PERFCOUNTER1_SELECT;
+  gc_11_5_0_regGL2C_PERFCOUNTER2_SELECT;
+  gc_11_5_0_regGL2C_PERFCOUNTER3_SELECT;
+  gc_11_5_0_regRLC_CNTL;
+  gc_11_5_0_regRLC_CGTT_MGCG_OVERRIDE;
+  gc_11_5_0_regRLC_CGCG_CGLS_CTRL;
+  gc_11_5_0_regRLC_SRM_CNTL;
+  gc_11_5_0_regRLC_SAFE_MODE;
+  gc_11_5_0_regRLC_SPM_MC_CNTL;
+  gc_11_5_0_regRLC_CP_SCHEDULERS;
+]
+
+let gc_11_5_0_find = function
+  | "regSDMA0_CNTL" -> Some gc_11_5_0_regSDMA0_CNTL
+  | "regSDMA0_WATCHDOG_CNTL" -> Some gc_11_5_0_regSDMA0_WATCHDOG_CNTL
+  | "regSDMA0_UTCL1_CNTL" -> Some gc_11_5_0_regSDMA0_UTCL1_CNTL
+  | "regSDMA0_UTCL1_PAGE" -> Some gc_11_5_0_regSDMA0_UTCL1_PAGE
+  | "regSDMA0_RLC_CGCG_CTRL" -> Some gc_11_5_0_regSDMA0_RLC_CGCG_CTRL
+  | "regSDMA0_QUEUE0_RB_CNTL" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_CNTL
+  | "regSDMA0_QUEUE0_RB_BASE" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_BASE
+  | "regSDMA0_QUEUE0_RB_BASE_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_BASE_HI
+  | "regSDMA0_QUEUE0_RB_RPTR" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR
+  | "regSDMA0_QUEUE0_RB_RPTR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR
+  | "regSDMA0_QUEUE0_RB_WPTR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_11_5_0_regSDMA0_QUEUE0_IB_CNTL
+  | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_11_5_0_regSDMA0_QUEUE0_DOORBELL
+  | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_11_5_0_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_11_5_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_11_5_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA0_F32_CNTL" -> Some gc_11_5_0_regSDMA0_F32_CNTL
+  | "regGRBM_CNTL" -> Some gc_11_5_0_regGRBM_CNTL
+  | "regGRBM_SOFT_RESET" -> Some gc_11_5_0_regGRBM_SOFT_RESET
+  | "regCP_STAT" -> Some gc_11_5_0_regCP_STAT
+  | "regCP_RB_WPTR_POLL_CNTL" -> Some gc_11_5_0_regCP_RB_WPTR_POLL_CNTL
+  | "regGB_ADDR_CONFIG" -> Some gc_11_5_0_regGB_ADDR_CONFIG
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB" -> Some gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB" -> Some gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB
+  | "regGCVM_L2_CNTL" -> Some gc_11_5_0_regGCVM_L2_CNTL
+  | "regGCVM_L2_CNTL2" -> Some gc_11_5_0_regGCVM_L2_CNTL2
+  | "regGCVM_L2_CNTL3" -> Some gc_11_5_0_regGCVM_L2_CNTL3
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_CNTL
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL2" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_CNTL2
+  | "regGCVM_L2_PROTECTION_FAULT_STATUS" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_STATUS
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32" -> Some gc_11_5_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32" -> Some gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32" -> Some gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32" -> Some gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32" -> Some gc_11_5_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32" -> Some gc_11_5_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32" -> Some gc_11_5_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32
+  | "regGCVM_L2_CNTL4" -> Some gc_11_5_0_regGCVM_L2_CNTL4
+  | "regGCVM_L2_BANK_SELECT_RESERVED_CID2" -> Some gc_11_5_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2
+  | "regGCVM_L2_CNTL5" -> Some gc_11_5_0_regGCVM_L2_CNTL5
+  | "regGCMC_VM_FB_LOCATION_BASE" -> Some gc_11_5_0_regGCMC_VM_FB_LOCATION_BASE
+  | "regGCMC_VM_FB_LOCATION_TOP" -> Some gc_11_5_0_regGCMC_VM_FB_LOCATION_TOP
+  | "regGCMC_VM_AGP_TOP" -> Some gc_11_5_0_regGCMC_VM_AGP_TOP
+  | "regGCMC_VM_AGP_BOT" -> Some gc_11_5_0_regGCMC_VM_AGP_BOT
+  | "regGCMC_VM_AGP_BASE" -> Some gc_11_5_0_regGCMC_VM_AGP_BASE
+  | "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR" -> Some gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR
+  | "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR" -> Some gc_11_5_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR
+  | "regGCMC_VM_MX_L1_TLB_CNTL" -> Some gc_11_5_0_regGCMC_VM_MX_L1_TLB_CNTL
+  | "regGCVM_CONTEXT0_CNTL" -> Some gc_11_5_0_regGCVM_CONTEXT0_CNTL
+  | "regGCVM_INVALIDATE_ENG17_SEM" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG17_SEM
+  | "regGCVM_INVALIDATE_ENG17_REQ" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG17_REQ
+  | "regGCVM_INVALIDATE_ENG17_ACK" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG17_ACK
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32" -> Some gc_11_5_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32" -> Some gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32" -> Some gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32" -> Some gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32" -> Some gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32" -> Some gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32" -> Some gc_11_5_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32
+  | "regCOMPUTE_DISPATCH_INITIATOR" -> Some gc_11_5_0_regCOMPUTE_DISPATCH_INITIATOR
+  | "regCOMPUTE_START_X" -> Some gc_11_5_0_regCOMPUTE_START_X
+  | "regCOMPUTE_PERFCOUNT_ENABLE" -> Some gc_11_5_0_regCOMPUTE_PERFCOUNT_ENABLE
+  | "regCOMPUTE_PGM_LO" -> Some gc_11_5_0_regCOMPUTE_PGM_LO
+  | "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" -> Some gc_11_5_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO
+  | "regCOMPUTE_PGM_RSRC1" -> Some gc_11_5_0_regCOMPUTE_PGM_RSRC1
+  | "regCOMPUTE_RESOURCE_LIMITS" -> Some gc_11_5_0_regCOMPUTE_RESOURCE_LIMITS
+  | "regCOMPUTE_TMPRING_SIZE" -> Some gc_11_5_0_regCOMPUTE_TMPRING_SIZE
+  | "regCOMPUTE_RESTART_X" -> Some gc_11_5_0_regCOMPUTE_RESTART_X
+  | "regCOMPUTE_THREAD_TRACE_ENABLE" -> Some gc_11_5_0_regCOMPUTE_THREAD_TRACE_ENABLE
+  | "regCOMPUTE_PGM_RSRC3" -> Some gc_11_5_0_regCOMPUTE_PGM_RSRC3
+  | "regCOMPUTE_USER_DATA_0" -> Some gc_11_5_0_regCOMPUTE_USER_DATA_0
+  | "regCP_INT_CNTL" -> Some gc_11_5_0_regCP_INT_CNTL
+  | "regCP_MEC_DOORBELL_RANGE_LOWER" -> Some gc_11_5_0_regCP_MEC_DOORBELL_RANGE_LOWER
+  | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_11_5_0_regCP_MEC_DOORBELL_RANGE_UPPER
+  | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_11_5_0_regCP_PFP_PRGRM_CNTR_START
+  | "regCP_ME_PRGRM_CNTR_START" -> Some gc_11_5_0_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_11_5_0_regCP_PFP_PRGRM_CNTR_START_HI
+  | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_11_5_0_regCP_ME_PRGRM_CNTR_START_HI
+  | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_11_5_0_regSPI_COMPUTE_QUEUE_RESET
+  | "regCP_MQD_BASE_ADDR" -> Some gc_11_5_0_regCP_MQD_BASE_ADDR
+  | "regCP_HQD_ACTIVE" -> Some gc_11_5_0_regCP_HQD_ACTIVE
+  | "regCP_HQD_PERSISTENT_STATE" -> Some gc_11_5_0_regCP_HQD_PERSISTENT_STATE
+  | "regCP_HQD_PQ_DOORBELL_CONTROL" -> Some gc_11_5_0_regCP_HQD_PQ_DOORBELL_CONTROL
+  | "regCP_HQD_PQ_CONTROL" -> Some gc_11_5_0_regCP_HQD_PQ_CONTROL
+  | "regCP_HQD_IB_CONTROL" -> Some gc_11_5_0_regCP_HQD_IB_CONTROL
+  | "regCP_HQD_DEQUEUE_REQUEST" -> Some gc_11_5_0_regCP_HQD_DEQUEUE_REQUEST
+  | "regCP_MQD_CONTROL" -> Some gc_11_5_0_regCP_MQD_CONTROL
+  | "regCP_HQD_EOP_CONTROL" -> Some gc_11_5_0_regCP_HQD_EOP_CONTROL
+  | "regCP_HQD_PQ_WPTR_HI" -> Some gc_11_5_0_regCP_HQD_PQ_WPTR_HI
+  | "regCP_MEC_CNTL" -> Some gc_11_5_0_regCP_MEC_CNTL
+  | "regCP_ME_CNTL" -> Some gc_11_5_0_regCP_ME_CNTL
+  | "regGRBM_GFX_CNTL" -> Some gc_11_5_0_regGRBM_GFX_CNTL
+  | "regSH_MEM_BASES" -> Some gc_11_5_0_regSH_MEM_BASES
+  | "regSH_MEM_CONFIG" -> Some gc_11_5_0_regSH_MEM_CONFIG
+  | "regTCP_CNTL" -> Some gc_11_5_0_regTCP_CNTL
+  | "regSCRATCH_REG0" -> Some gc_11_5_0_regSCRATCH_REG0
+  | "regSCRATCH_REG1" -> Some gc_11_5_0_regSCRATCH_REG1
+  | "regSCRATCH_REG2" -> Some gc_11_5_0_regSCRATCH_REG2
+  | "regSCRATCH_REG3" -> Some gc_11_5_0_regSCRATCH_REG3
+  | "regSCRATCH_REG5" -> Some gc_11_5_0_regSCRATCH_REG5
+  | "regSCRATCH_REG6" -> Some gc_11_5_0_regSCRATCH_REG6
+  | "regSCRATCH_REG7" -> Some gc_11_5_0_regSCRATCH_REG7
+  | "regGRBM_GFX_INDEX" -> Some gc_11_5_0_regGRBM_GFX_INDEX
+  | "regSQ_THREAD_TRACE_USERDATA_0" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_0
+  | "regSQ_THREAD_TRACE_USERDATA_1" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_1
+  | "regSQ_THREAD_TRACE_USERDATA_2" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_2
+  | "regSQ_THREAD_TRACE_USERDATA_3" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_3
+  | "regSQ_THREAD_TRACE_USERDATA_4" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_4
+  | "regSQ_THREAD_TRACE_USERDATA_5" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_5
+  | "regSQ_THREAD_TRACE_USERDATA_6" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_6
+  | "regSQ_THREAD_TRACE_USERDATA_7" -> Some gc_11_5_0_regSQ_THREAD_TRACE_USERDATA_7
+  | "regSPI_CONFIG_CNTL" -> Some gc_11_5_0_regSPI_CONFIG_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START" -> Some gc_11_5_0_regCP_MEC_RS64_PRGRM_CNTR_START
+  | "regCP_MEC_RS64_CNTL" -> Some gc_11_5_0_regCP_MEC_RS64_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START_HI" -> Some gc_11_5_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI
+  | "regGRBM_PERFCOUNTER0_LO" -> Some gc_11_5_0_regGRBM_PERFCOUNTER0_LO
+  | "regGRBM_PERFCOUNTER0_HI" -> Some gc_11_5_0_regGRBM_PERFCOUNTER0_HI
+  | "regGRBM_PERFCOUNTER1_LO" -> Some gc_11_5_0_regGRBM_PERFCOUNTER1_LO
+  | "regGRBM_PERFCOUNTER1_HI" -> Some gc_11_5_0_regGRBM_PERFCOUNTER1_HI
+  | "regSQ_PERFCOUNTER0_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER0_LO
+  | "regSQ_PERFCOUNTER1_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER1_LO
+  | "regSQ_PERFCOUNTER2_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER2_LO
+  | "regSQ_PERFCOUNTER3_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER3_LO
+  | "regSQ_PERFCOUNTER4_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER4_LO
+  | "regSQ_PERFCOUNTER5_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER5_LO
+  | "regSQ_PERFCOUNTER6_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER6_LO
+  | "regSQ_PERFCOUNTER7_LO" -> Some gc_11_5_0_regSQ_PERFCOUNTER7_LO
+  | "regGL2C_PERFCOUNTER0_LO" -> Some gc_11_5_0_regGL2C_PERFCOUNTER0_LO
+  | "regGL2C_PERFCOUNTER0_HI" -> Some gc_11_5_0_regGL2C_PERFCOUNTER0_HI
+  | "regGL2C_PERFCOUNTER1_LO" -> Some gc_11_5_0_regGL2C_PERFCOUNTER1_LO
+  | "regGL2C_PERFCOUNTER1_HI" -> Some gc_11_5_0_regGL2C_PERFCOUNTER1_HI
+  | "regGL2C_PERFCOUNTER2_LO" -> Some gc_11_5_0_regGL2C_PERFCOUNTER2_LO
+  | "regGL2C_PERFCOUNTER2_HI" -> Some gc_11_5_0_regGL2C_PERFCOUNTER2_HI
+  | "regGL2C_PERFCOUNTER3_LO" -> Some gc_11_5_0_regGL2C_PERFCOUNTER3_LO
+  | "regGL2C_PERFCOUNTER3_HI" -> Some gc_11_5_0_regGL2C_PERFCOUNTER3_HI
+  | "regCP_PERFMON_CNTL" -> Some gc_11_5_0_regCP_PERFMON_CNTL
+  | "regGRBM_PERFCOUNTER0_SELECT" -> Some gc_11_5_0_regGRBM_PERFCOUNTER0_SELECT
+  | "regGRBM_PERFCOUNTER1_SELECT" -> Some gc_11_5_0_regGRBM_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER0_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER0_SELECT
+  | "regSQ_PERFCOUNTER1_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER2_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER2_SELECT
+  | "regSQ_PERFCOUNTER3_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER3_SELECT
+  | "regSQ_PERFCOUNTER4_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER4_SELECT
+  | "regSQ_PERFCOUNTER5_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER5_SELECT
+  | "regSQ_PERFCOUNTER6_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER6_SELECT
+  | "regSQ_PERFCOUNTER7_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER7_SELECT
+  | "regSQ_PERFCOUNTER8_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER8_SELECT
+  | "regSQ_PERFCOUNTER9_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER9_SELECT
+  | "regSQ_PERFCOUNTER10_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER10_SELECT
+  | "regSQ_PERFCOUNTER11_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER11_SELECT
+  | "regSQ_PERFCOUNTER12_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER12_SELECT
+  | "regSQ_PERFCOUNTER13_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER13_SELECT
+  | "regSQ_PERFCOUNTER14_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER14_SELECT
+  | "regSQ_PERFCOUNTER15_SELECT" -> Some gc_11_5_0_regSQ_PERFCOUNTER15_SELECT
+  | "regSQ_PERFCOUNTER_CTRL" -> Some gc_11_5_0_regSQ_PERFCOUNTER_CTRL
+  | "regSQ_PERFCOUNTER_CTRL2" -> Some gc_11_5_0_regSQ_PERFCOUNTER_CTRL2
+  | "regSQ_THREAD_TRACE_BUF0_BASE" -> Some gc_11_5_0_regSQ_THREAD_TRACE_BUF0_BASE
+  | "regSQ_THREAD_TRACE_BUF0_SIZE" -> Some gc_11_5_0_regSQ_THREAD_TRACE_BUF0_SIZE
+  | "regSQ_THREAD_TRACE_BUF1_BASE" -> Some gc_11_5_0_regSQ_THREAD_TRACE_BUF1_BASE
+  | "regSQ_THREAD_TRACE_BUF1_SIZE" -> Some gc_11_5_0_regSQ_THREAD_TRACE_BUF1_SIZE
+  | "regSQ_THREAD_TRACE_CTRL" -> Some gc_11_5_0_regSQ_THREAD_TRACE_CTRL
+  | "regSQ_THREAD_TRACE_MASK" -> Some gc_11_5_0_regSQ_THREAD_TRACE_MASK
+  | "regSQ_THREAD_TRACE_TOKEN_MASK" -> Some gc_11_5_0_regSQ_THREAD_TRACE_TOKEN_MASK
+  | "regSQ_THREAD_TRACE_WPTR" -> Some gc_11_5_0_regSQ_THREAD_TRACE_WPTR
+  | "regSQ_THREAD_TRACE_STATUS" -> Some gc_11_5_0_regSQ_THREAD_TRACE_STATUS
+  | "regSQ_THREAD_TRACE_STATUS2" -> Some gc_11_5_0_regSQ_THREAD_TRACE_STATUS2
+  | "regSQ_THREAD_TRACE_GFX_DRAW_CNTR" -> Some gc_11_5_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_GFX_MARKER_CNTR" -> Some gc_11_5_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR" -> Some gc_11_5_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR" -> Some gc_11_5_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_DROPPED_CNTR" -> Some gc_11_5_0_regSQ_THREAD_TRACE_DROPPED_CNTR
+  | "regGL2C_PERFCOUNTER0_SELECT" -> Some gc_11_5_0_regGL2C_PERFCOUNTER0_SELECT
+  | "regGL2C_PERFCOUNTER1_SELECT" -> Some gc_11_5_0_regGL2C_PERFCOUNTER1_SELECT
+  | "regGL2C_PERFCOUNTER2_SELECT" -> Some gc_11_5_0_regGL2C_PERFCOUNTER2_SELECT
+  | "regGL2C_PERFCOUNTER3_SELECT" -> Some gc_11_5_0_regGL2C_PERFCOUNTER3_SELECT
+  | "regRLC_CNTL" -> Some gc_11_5_0_regRLC_CNTL
+  | "regRLC_CGTT_MGCG_OVERRIDE" -> Some gc_11_5_0_regRLC_CGTT_MGCG_OVERRIDE
+  | "regRLC_CGCG_CGLS_CTRL" -> Some gc_11_5_0_regRLC_CGCG_CGLS_CTRL
+  | "regRLC_SRM_CNTL" -> Some gc_11_5_0_regRLC_SRM_CNTL
+  | "regRLC_SAFE_MODE" -> Some gc_11_5_0_regRLC_SAFE_MODE
+  | "regRLC_SPM_MC_CNTL" -> Some gc_11_5_0_regRLC_SPM_MC_CNTL
+  | "regRLC_CP_SCHEDULERS" -> Some gc_11_5_0_regRLC_CP_SCHEDULERS
+  | _ -> None
+
+(* GC 12.0.0, its fields as (name, (lowest bit, highest bit)) *)
+
+let gc_12_0_0_regSDMA0_CNTL = { name = "regSDMA0_CNTL"; offset = 0xd; segment = 0; fields = [ ("trap_enable", (0, 0)); ("reserved", (2, 2)); ("data_swap_enable", (3, 3)); ("fence_swap_enable", (4, 4)); ("midcmd_preempt_enable", (5, 5)); ("pio_done_ack_enable", (6, 6)); ("tmz_midcmd_preempt_enable", (8, 8)); ("midcmd_expire_enable", (9, 9)); ("cp_mes_int_enable", (10, 10)); ("page_retry_timeout_int_enable", (11, 11)); ("page_null_int_enable", (12, 12)); ("page_fault_int_enable", (13, 13)); ("ch_perfcnt_enable", (16, 16)); ("midcmd_worldswitch_enable", (17, 17)); ("ctxempty_int_enable", (28, 28)); ("frozen_int_enable", (29, 29)); ("ib_preempt_int_enable", (30, 30)); ("rb_preempt_int_enable", (31, 31)) ] }
+let gc_12_0_0_regSDMA0_WATCHDOG_CNTL = { name = "regSDMA0_WATCHDOG_CNTL"; offset = 0x2b; segment = 0; fields = [ ("queue_hang_count", (0, 7)); ("cmd_timeout_count", (8, 15)) ] }
+let gc_12_0_0_regSDMA0_UTCL1_CNTL = { name = "regSDMA0_UTCL1_CNTL"; offset = 0x35; segment = 0; fields = [ ("redo_delay", (0, 4)); ("page_wait_delay", (5, 8)); ("resp_mode", (9, 10)); ("force_invalidation", (14, 14)); ("force_invreq_heavy", (15, 15)); ("wr_exe_perms_ctrl", (16, 16)); ("rd_exe_perms_ctrl", (17, 17)); ("invack_delay", (18, 21)); ("reql2_credit", (24, 29)) ] }
+let gc_12_0_0_regSDMA0_UTCL1_PAGE = { name = "regSDMA0_UTCL1_PAGE"; offset = 0x38; segment = 0; fields = [ ("invalid_addr", (0, 0)); ("req_type", (1, 4)); ("use_mtype", (6, 9)); ("use_pt_snoop", (10, 10)); ("use_io", (11, 11)); ("rd_l2_policy", (12, 13)); ("wr_l2_policy", (14, 15)); ("dma_page_size", (16, 21)); ("use_bc", (22, 22)); ("addr_is_pa", (23, 23)) ] }
+let gc_12_0_0_regSDMA0_RLC_CGCG_CTRL = { name = "regSDMA0_RLC_CGCG_CTRL"; offset = 0x55; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("mcu_cgcg_allow", (4, 4)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_CNTL = { name = "regSDMA0_QUEUE0_RB_CNTL"; offset = 0x80; segment = 0; fields = [ ("rb_enable", (0, 0)); ("rb_size", (1, 5)); ("wptr_poll_enable", (8, 8)); ("rb_swap_enable", (9, 9)); ("wptr_poll_swap_enable", (10, 10)); ("mcu_wptr_poll_enable", (11, 11)); ("rptr_writeback_enable", (12, 12)); ("rptr_writeback_swap_enable", (13, 13)); ("rptr_writeback_timer", (16, 20)); ("rb_priv", (23, 23)); ("rb_vmid", (24, 27)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_BASE = { name = "regSDMA0_QUEUE0_RB_BASE"; offset = 0x81; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_BASE_HI = { name = "regSDMA0_QUEUE0_RB_BASE_HI"; offset = 0x82; segment = 0; fields = [ ("addr", (0, 23)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR = { name = "regSDMA0_QUEUE0_RB_RPTR"; offset = 0x83; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_HI"; offset = 0x84; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR = { name = "regSDMA0_QUEUE0_RB_WPTR"; offset = 0x85; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_HI"; offset = 0x86; segment = 0; fields = [ ("offset", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO"; offset = 0x87; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI"; offset = 0x88; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_IB_CNTL = { name = "regSDMA0_QUEUE0_IB_CNTL"; offset = 0x89; segment = 0; fields = [ ("ib_enable", (0, 0)); ("ib_swap_enable", (4, 4)); ("switch_inside_ib", (8, 8)); ("cmd_vmid", (16, 19)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_DOORBELL = { name = "regSDMA0_QUEUE0_DOORBELL"; offset = 0x8f; segment = 0; fields = [ ("enable", (28, 28)); ("captured", (30, 30)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET = { name = "regSDMA0_QUEUE0_DOORBELL_OFFSET"; offset = 0x91; segment = 0; fields = [ ("offset", (2, 27)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO"; offset = 0x98; segment = 0; fields = [ ("addr", (2, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI = { name = "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI"; offset = 0x99; segment = 0; fields = [ ("addr", (0, 31)) ] }
+let gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE = { name = "regSDMA0_QUEUE0_MINOR_PTR_UPDATE"; offset = 0x9b; segment = 0; fields = [ ("enable", (0, 0)) ] }
+let gc_12_0_0_regSDMA0_MCU_CNTL = { name = "regSDMA0_MCU_CNTL"; offset = 0x588e; segment = 1; fields = [ ("halt", (0, 0)); ("reset", (1, 1)); ("dbg_select_bits", (2, 7)) ] }
+let gc_12_0_0_regSDMA1_RLC_CGCG_CTRL = { name = "regSDMA1_RLC_CGCG_CTRL"; offset = 0x655; segment = 0; fields = [ ("cgcg_int_enable", (1, 1)); ("mcu_cgcg_allow", (4, 4)); ("cgcg_idle_hysteresis", (16, 31)) ] }
+let gc_12_0_0_regGRBM_CNTL = { name = "regGRBM_CNTL"; offset = 0xda0; segment = 0; fields = [ ("read_timeout", (0, 11)); ("sed_read_timeout", (16, 27)); ("report_last_rderr", (31, 31)) ] }
+let gc_12_0_0_regGRBM_SOFT_RESET = { name = "regGRBM_SOFT_RESET"; offset = 0xda8; segment = 0; fields = [ ("soft_reset_cp", (0, 0)); ("soft_reset_rlc", (2, 2)); ("soft_reset_utcl2", (15, 15)); ("soft_reset_gfx", (16, 16)); ("soft_reset_cpf", (17, 17)); ("soft_reset_cpc", (18, 18)); ("soft_reset_cpg", (19, 19)); ("soft_reset_cac", (20, 20)); ("soft_reset_ea", (22, 22)); ("soft_reset_sdma0", (23, 23)); ("soft_reset_sdma1", (24, 24)) ] }
+let gc_12_0_0_regCP_STAT = { name = "regCP_STAT"; offset = 0xf40; segment = 0; fields = [ ("roq_db_busy", (5, 5)); ("roq_ce_db_busy", (6, 6)); ("roq_ring_busy", (9, 9)); ("roq_indirect1_busy", (10, 10)); ("roq_indirect2_busy", (11, 11)); ("roq_state_busy", (12, 12)); ("dc_busy", (13, 13)); ("utcl2iu_busy", (14, 14)); ("pfp_busy", (15, 15)); ("meq_busy", (16, 16)); ("me_busy", (17, 17)); ("query_busy", (18, 18)); ("interrupt_busy", (20, 20)); ("surface_sync_busy", (21, 21)); ("dma_busy", (22, 22)); ("rciu_busy", (23, 23)); ("scratch_ram_busy", (24, 24)); ("gcriu_busy", (25, 25)); ("ce_busy", (26, 26)); ("tciu_busy", (27, 27)); ("roq_ce_ring_busy", (28, 28)); ("roq_ce_indirect1_busy", (29, 29)); ("roq_ce_indirect2_busy", (30, 30)); ("cp_busy", (31, 31)) ] }
+let gc_12_0_0_regCP_RB_WPTR_POLL_CNTL = { name = "regCP_RB_WPTR_POLL_CNTL"; offset = 0xf62; segment = 0; fields = [ ("poll_frequency", (0, 15)); ("idle_poll_count", (16, 31)) ] }
+let gc_12_0_0_regCOMPUTE_DISPATCH_INITIATOR = { name = "regCOMPUTE_DISPATCH_INITIATOR"; offset = 0x1ba0; segment = 0; fields = [ ("compute_shader_en", (0, 0)); ("partial_tg_en", (1, 1)); ("force_start_at_000", (2, 2)); ("ordered_append_enbl", (3, 3)); ("ordered_append_mode", (4, 4)); ("use_thread_dimensions", (5, 5)); ("order_mode", (6, 6)); ("scalar_l1_inv_vol", (10, 10)); ("vector_l1_inv_vol", (11, 11)); ("ping_pong_en", (12, 12)); ("tunnel_enable", (13, 13)); ("restore", (14, 14)); ("cs_w32_en", (15, 15)); ("amp_shader_en", (16, 16)); ("disable_disp_prempt_en", (17, 17)); ("interleave_2d_en", (18, 18)); ("ttrace_queue_id", (29, 31)) ] }
+let gc_12_0_0_regCOMPUTE_START_X = { name = "regCOMPUTE_START_X"; offset = 0x1ba4; segment = 0; fields = [ ("start", (0, 31)) ] }
+let gc_12_0_0_regCOMPUTE_PERFCOUNT_ENABLE = { name = "regCOMPUTE_PERFCOUNT_ENABLE"; offset = 0x1bab; segment = 0; fields = [ ("perfcount_enable", (0, 0)) ] }
+let gc_12_0_0_regCOMPUTE_PGM_LO = { name = "regCOMPUTE_PGM_LO"; offset = 0x1bac; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO = { name = "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"; offset = 0x1bb0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regCOMPUTE_PGM_RSRC1 = { name = "regCOMPUTE_PGM_RSRC1"; offset = 0x1bb2; segment = 0; fields = [ ("vgprs", (0, 5)); ("sgprs", (6, 9)); ("priority", (10, 11)); ("float_mode", (12, 19)); ("priv", (20, 20)); ("wg_rr_en", (21, 21)); ("debug_mode", (22, 22)); ("disable_perf", (23, 23)); ("bulky", (24, 24)); ("cdbg_user", (25, 25)); ("fp16_ovfl", (26, 26)); ("wgp_mode", (29, 29)); ("mem_ordered", (30, 30)); ("fwd_progress", (31, 31)) ] }
+let gc_12_0_0_regCOMPUTE_RESOURCE_LIMITS = { name = "regCOMPUTE_RESOURCE_LIMITS"; offset = 0x1bb5; segment = 0; fields = [ ("waves_per_sh", (0, 9)); ("tg_per_cu", (12, 15)); ("lock_threshold", (16, 21)); ("simd_dest_cntl", (22, 22)); ("force_simd_dist", (23, 23)); ("cu_group_count", (24, 26)) ] }
+let gc_12_0_0_regCOMPUTE_TMPRING_SIZE = { name = "regCOMPUTE_TMPRING_SIZE"; offset = 0x1bb8; segment = 0; fields = [ ("waves", (0, 11)); ("wavesize", (12, 29)) ] }
+let gc_12_0_0_regCOMPUTE_RESTART_X = { name = "regCOMPUTE_RESTART_X"; offset = 0x1bbb; segment = 0; fields = [ ("restart", (0, 31)) ] }
+let gc_12_0_0_regCOMPUTE_THREAD_TRACE_ENABLE = { name = "regCOMPUTE_THREAD_TRACE_ENABLE"; offset = 0x1bbe; segment = 0; fields = [ ("thread_trace_enable", (0, 0)) ] }
+let gc_12_0_0_regCOMPUTE_PGM_RSRC3 = { name = "regCOMPUTE_PGM_RSRC3"; offset = 0x1bc8; segment = 0; fields = [ ("shared_vgpr_cnt", (0, 3)); ("inst_pref_size", (4, 11)); ("glg_en", (13, 13)); ("image_op", (31, 31)) ] }
+let gc_12_0_0_regCOMPUTE_USER_DATA_0 = { name = "regCOMPUTE_USER_DATA_0"; offset = 0x1be0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB"; offset = 0x15a8; segment = 0; fields = [ ("physical_page_number_lsb", (0, 31)) ] }
+let gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB = { name = "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB"; offset = 0x15a9; segment = 0; fields = [ ("physical_page_number_msb", (0, 3)) ] }
+let gc_12_0_0_regGCVM_L2_CNTL = { name = "regGCVM_L2_CNTL"; offset = 0x15c4; segment = 0; fields = [ ("enable_l2_cache", (0, 0)); ("enable_l2_fragment_processing", (1, 1)); ("l2_cache_pte_endian_swap_mode", (2, 3)); ("l2_cache_pde_endian_swap_mode", (4, 5)); ("l2_pde0_cache_tag_generation_mode", (8, 8)); ("enable_l2_pte_cache_lru_update_by_write", (9, 9)); ("enable_l2_pde0_cache_lru_update_by_write", (10, 10)); ("enable_default_page_out_to_system_memory", (11, 11)); ("l2_pde0_cache_split_mode", (12, 14)); ("effective_l2_queue_size", (15, 17)); ("pde_fault_classification", (18, 18)); ("context1_identity_access_mode", (19, 20)); ("identity_mode_fragment_size", (21, 25)); ("l2_pte_cache_addr_mode", (26, 27)) ] }
+let gc_12_0_0_regGCVM_L2_CNTL2 = { name = "regGCVM_L2_CNTL2"; offset = 0x15c5; segment = 0; fields = [ ("invalidate_all_l1_tlbs", (0, 0)); ("invalidate_l2_cache", (1, 1)); ("disable_invalidate_per_domain", (21, 21)); ("disable_bigk_cache_optimization", (22, 22)); ("l2_pte_cache_vmid_mode", (23, 25)); ("invalidate_cache_mode", (26, 27)); ("pde_cache_effective_size", (28, 30)) ] }
+let gc_12_0_0_regGCVM_L2_CNTL3 = { name = "regGCVM_L2_CNTL3"; offset = 0x15c6; segment = 0; fields = [ ("bank_select", (0, 5)); ("l2_cache_update_mode", (6, 7)); ("l2_cache_update_wildcard_reference_value", (8, 12)); ("l2_cache_bigk_fragment_size", (15, 19)); ("l2_cache_bigk_associativity", (20, 20)); ("l2_cache_4k_effective_size", (21, 23)); ("l2_cache_bigk_effective_size", (24, 27)); ("l2_cache_4k_force_miss", (28, 28)); ("l2_cache_bigk_force_miss", (29, 29)); ("pde_cache_force_miss", (30, 30)); ("l2_cache_4k_associativity", (31, 31)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL"; offset = 0x15cc; segment = 0; fields = [ ("clear_protection_fault_status_addr", (0, 0)); ("allow_subsequent_protection_fault_status_addr_updates", (1, 1)); ("range_protection_fault_enable_default", (2, 2)); ("pde0_protection_fault_enable_default", (3, 3)); ("pde1_protection_fault_enable_default", (4, 4)); ("pde2_protection_fault_enable_default", (5, 5)); ("translate_further_protection_fault_enable_default", (6, 6)); ("nack_protection_fault_enable_default", (7, 7)); ("dummy_page_protection_fault_enable_default", (8, 8)); ("valid_protection_fault_enable_default", (9, 9)); ("read_protection_fault_enable_default", (10, 10)); ("write_protection_fault_enable_default", (11, 11)); ("execute_protection_fault_enable_default", (12, 12)); ("client_id_no_retry_fault_interrupt", (13, 28)); ("other_client_id_no_retry_fault_interrupt", (29, 29)); ("crash_on_no_retry_fault", (30, 30)); ("crash_on_retry_fault", (31, 31)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL2 = { name = "regGCVM_L2_PROTECTION_FAULT_CNTL2"; offset = 0x15cd; segment = 0; fields = [ ("client_id_prt_fault_interrupt", (0, 15)); ("other_client_id_prt_fault_interrupt", (16, 16)); ("active_page_migration_pte", (17, 17)); ("active_page_migration_pte_read_retry", (18, 18)); ("enable_retry_fault_interrupt", (19, 19)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_STATUS_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32"; offset = 0x15d0; segment = 0; fields = [ ("more_faults", (0, 0)); ("walker_error", (1, 3)); ("permission_faults", (4, 7)); ("mapping_error", (8, 8)); ("cid", (9, 17)); ("rw", (18, 18)); ("atomic", (19, 19)); ("vmid", (20, 23)); ("vf", (24, 24)); ("vfid", (25, 29)); ("prt", (30, 30)); ("uce", (31, 31)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32"; offset = 0x15d2; segment = 0; fields = [ ("logical_page_addr_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32"; offset = 0x15d3; segment = 0; fields = [ ("logical_page_addr_hi4", (0, 3)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32"; offset = 0x15d4; segment = 0; fields = [ ("physical_page_addr_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32 = { name = "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32"; offset = 0x15d5; segment = 0; fields = [ ("physical_page_addr_hi4", (0, 3)) ] }
+let gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32"; offset = 0x15d7; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32"; offset = 0x15d8; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32"; offset = 0x15d9; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32 = { name = "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32"; offset = 0x15da; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_12_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32"; offset = 0x15db; segment = 0; fields = [ ("physical_page_offset_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32 = { name = "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32"; offset = 0x15dc; segment = 0; fields = [ ("physical_page_offset_hi4", (0, 3)) ] }
+let gc_12_0_0_regGCVM_L2_CNTL4 = { name = "regGCVM_L2_CNTL4"; offset = 0x15dd; segment = 0; fields = [ ("l2_cache_4k_partition_count", (0, 5)); ("vmc_tap_pde_request_physical", (6, 6)); ("vmc_tap_pte_request_physical", (7, 7)); ("mm_nonrt_ififo_active_transaction_limit", (8, 17)); ("mm_softrt_ififo_active_transaction_limit", (18, 27)); ("bpm_cgcgls_override", (28, 28)); ("gc_ch_fgcg_off", (29, 29)); ("vfifo_head_of_queue", (30, 30)); ("vfifo_visible_bank_silos", (31, 31)) ] }
+let gc_12_0_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2 = { name = "regGCVM_L2_BANK_SELECT_RESERVED_CID2"; offset = 0x15e0; segment = 0; fields = [ ("reserved_read_client_id", (0, 8)); ("reserved_write_client_id", (10, 18)); ("enable", (20, 20)); ("reserved_cache_invalidation_mode", (24, 24)); ("reserved_cache_private_invalidation", (25, 25)); ("reserved_cache_fragment_size", (26, 30)) ] }
+let gc_12_0_0_regGCVM_L2_CNTL5 = { name = "regGCVM_L2_CNTL5"; offset = 0x15e3; segment = 0; fields = [ ("l2_cache_smallk_fragment_size", (0, 4)); ("walker_priority_client_id", (5, 13)); ("walker_fetch_pde_noalloc_enable", (14, 14)); ("walker_fetch_pde_mtype_enable", (15, 15)); ("utcl2_atc_req_fgcg_off", (16, 16)); ("utcl2_atc_invreq_repeater_fgcg_off", (17, 17)); ("utcl2_one_outstanding_atc_invreq", (18, 18)) ] }
+let gc_12_0_0_regGCMC_VM_FB_LOCATION_BASE = { name = "regGCMC_VM_FB_LOCATION_BASE"; offset = 0x1614; segment = 0; fields = [ ("fb_base", (0, 23)) ] }
+let gc_12_0_0_regGCMC_VM_FB_LOCATION_TOP = { name = "regGCMC_VM_FB_LOCATION_TOP"; offset = 0x1615; segment = 0; fields = [ ("fb_top", (0, 23)) ] }
+let gc_12_0_0_regGCMC_VM_AGP_TOP = { name = "regGCMC_VM_AGP_TOP"; offset = 0x1616; segment = 0; fields = [ ("agp_top", (0, 23)) ] }
+let gc_12_0_0_regGCMC_VM_AGP_BOT = { name = "regGCMC_VM_AGP_BOT"; offset = 0x1617; segment = 0; fields = [ ("agp_bot", (0, 23)) ] }
+let gc_12_0_0_regGCMC_VM_AGP_BASE = { name = "regGCMC_VM_AGP_BASE"; offset = 0x1618; segment = 0; fields = [ ("agp_base", (0, 23)) ] }
+let gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR"; offset = 0x1619; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR = { name = "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR"; offset = 0x161a; segment = 0; fields = [ ("logical_addr", (0, 29)) ] }
+let gc_12_0_0_regGCMC_VM_MX_L1_TLB_CNTL = { name = "regGCMC_VM_MX_L1_TLB_CNTL"; offset = 0x161b; segment = 0; fields = [ ("enable_l1_tlb", (0, 0)); ("system_access_mode", (3, 4)); ("system_aperture_unmapped_access", (5, 5)); ("enable_advanced_driver_model", (6, 6)); ("eco_bits", (7, 10)); ("mtype", (11, 12)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_CNTL = { name = "regGCVM_CONTEXT0_CNTL"; offset = 0x1624; segment = 0; fields = [ ("enable_context", (0, 0)); ("page_table_depth", (1, 2)); ("page_table_block_size", (4, 7)); ("retry_permission_or_invalid_page_fault", (8, 8)); ("retry_other_fault", (9, 9)); ("range_protection_fault_enable_interrupt", (10, 10)); ("range_protection_fault_enable_default", (11, 11)); ("dummy_page_protection_fault_enable_interrupt", (12, 12)); ("dummy_page_protection_fault_enable_default", (13, 13)); ("pde0_protection_fault_enable_interrupt", (14, 14)); ("pde0_protection_fault_enable_default", (15, 15)); ("valid_protection_fault_enable_interrupt", (16, 16)); ("valid_protection_fault_enable_default", (17, 17)); ("read_protection_fault_enable_interrupt", (18, 18)); ("read_protection_fault_enable_default", (19, 19)); ("write_protection_fault_enable_interrupt", (20, 20)); ("write_protection_fault_enable_default", (21, 21)); ("execute_protection_fault_enable_interrupt", (22, 22)); ("execute_protection_fault_enable_default", (23, 23)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG17_SEM = { name = "regGCVM_INVALIDATE_ENG17_SEM"; offset = 0x1646; segment = 0; fields = [ ("semaphore", (0, 0)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG17_REQ = { name = "regGCVM_INVALIDATE_ENG17_REQ"; offset = 0x1658; segment = 0; fields = [ ("per_vmid_invalidate_req", (0, 15)); ("flush_type", (16, 18)); ("invalidate_l2_ptes", (19, 19)); ("invalidate_l2_pde0", (20, 20)); ("invalidate_l2_pde1", (21, 21)); ("invalidate_l2_pde2", (22, 22)); ("invalidate_l1_ptes", (23, 23)); ("clear_protection_fault_status_addr", (24, 24)); ("log_request", (25, 25)); ("invalidate_4k_pages_only", (26, 26)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG17_ACK = { name = "regGCVM_INVALIDATE_ENG17_ACK"; offset = 0x166a; segment = 0; fields = [ ("per_vmid_invalidate_ack", (0, 15)); ("semaphore", (16, 16)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32"; offset = 0x166b; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32"; offset = 0x166c; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32"; offset = 0x166d; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32"; offset = 0x166e; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32"; offset = 0x166f; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32"; offset = 0x1670; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32"; offset = 0x1671; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32"; offset = 0x1672; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32"; offset = 0x1673; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32"; offset = 0x1674; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32"; offset = 0x1675; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32"; offset = 0x1676; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32"; offset = 0x1677; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32"; offset = 0x1678; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32"; offset = 0x1679; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32"; offset = 0x167a; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32"; offset = 0x167b; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32"; offset = 0x167c; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32"; offset = 0x167d; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32"; offset = 0x167e; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32"; offset = 0x167f; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32"; offset = 0x1680; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32"; offset = 0x1681; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32"; offset = 0x1682; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32"; offset = 0x1683; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32"; offset = 0x1684; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32"; offset = 0x1685; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32"; offset = 0x1686; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32"; offset = 0x1687; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32"; offset = 0x1688; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32"; offset = 0x1689; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32"; offset = 0x168a; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32"; offset = 0x168b; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32"; offset = 0x168c; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32"; offset = 0x168d; segment = 0; fields = [ ("s_bit", (0, 0)); ("logi_page_addr_range_lo31", (1, 31)) ] }
+let gc_12_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32 = { name = "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32"; offset = 0x168e; segment = 0; fields = [ ("logi_page_addr_range_hi5", (0, 4)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32"; offset = 0x168f; segment = 0; fields = [ ("page_directory_entry_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32"; offset = 0x1690; segment = 0; fields = [ ("page_directory_entry_hi32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32"; offset = 0x16af; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32"; offset = 0x16b0; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32"; offset = 0x16cf; segment = 0; fields = [ ("logical_page_number_lo32", (0, 31)) ] }
+let gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32 = { name = "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32"; offset = 0x16d0; segment = 0; fields = [ ("logical_page_number_hi4", (0, 3)) ] }
+let gc_12_0_0_regCP_INT_CNTL = { name = "regCP_INT_CNTL"; offset = 0x1de9; segment = 0; fields = [ ("resume_int_enable", (8, 8)); ("suspend_int_enable", (9, 9)); ("dma_watch_int_enable", (10, 10)); ("cp_vm_doorbell_wr_int_enable", (11, 11)); ("cp_ecc_error_int_enable", (14, 14)); ("gpf_int_enable", (16, 16)); ("wrm_poll_timeout_int_enable", (17, 17)); ("cmp_busy_int_enable", (18, 18)); ("cntx_busy_int_enable", (19, 19)); ("cntx_empty_int_enable", (20, 20)); ("gfx_idle_int_enable", (21, 21)); ("priv_instr_int_enable", (22, 22)); ("priv_reg_int_enable", (23, 23)); ("opcode_error_int_enable", (24, 24)); ("time_stamp_int_enable", (26, 26)); ("reserved_bit_error_int_enable", (27, 27)); ("generic2_int_enable", (29, 29)); ("generic1_int_enable", (30, 30)); ("generic0_int_enable", (31, 31)) ] }
+let gc_12_0_0_regCP_MEC_DOORBELL_RANGE_LOWER = { name = "regCP_MEC_DOORBELL_RANGE_LOWER"; offset = 0x1dfc; segment = 0; fields = [ ("doorbell_range_lower", (2, 11)) ] }
+let gc_12_0_0_regCP_MEC_DOORBELL_RANGE_UPPER = { name = "regCP_MEC_DOORBELL_RANGE_UPPER"; offset = 0x1dfd; segment = 0; fields = [ ("doorbell_range_upper", (2, 11)) ] }
+let gc_12_0_0_regCP_PFP_PRGRM_CNTR_START = { name = "regCP_PFP_PRGRM_CNTR_START"; offset = 0x1e44; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_12_0_0_regCP_ME_PRGRM_CNTR_START = { name = "regCP_ME_PRGRM_CNTR_START"; offset = 0x1e45; segment = 0; fields = [ ("ip_start", (0, 31)) ] }
+let gc_12_0_0_regCP_PFP_PRGRM_CNTR_START_HI = { name = "regCP_PFP_PRGRM_CNTR_START_HI"; offset = 0x1e59; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_12_0_0_regCP_ME_PRGRM_CNTR_START_HI = { name = "regCP_ME_PRGRM_CNTR_START_HI"; offset = 0x1e79; segment = 0; fields = [ ("ip_start", (0, 29)) ] }
+let gc_12_0_0_regCP_MQD_BASE_ADDR = { name = "regCP_MQD_BASE_ADDR"; offset = 0x1fa9; segment = 0; fields = [ ("base_addr", (2, 31)) ] }
+let gc_12_0_0_regCP_HQD_ACTIVE = { name = "regCP_HQD_ACTIVE"; offset = 0x1fab; segment = 0; fields = [ ("active", (0, 0)); ("busy_gate", (1, 1)) ] }
+let gc_12_0_0_regCP_HQD_PERSISTENT_STATE = { name = "regCP_HQD_PERSISTENT_STATE"; offset = 0x1fad; segment = 0; fields = [ ("preload_req", (0, 0)); ("tmz_connect_override", (1, 1)); ("suspend_status", (7, 7)); ("preload_size", (8, 17)); ("tmz_switch_exempt", (18, 18)); ("tmz_match_dis", (19, 19)); ("wpp_clamp_en", (20, 20)); ("wpp_switch_qos_en", (21, 21)); ("iq_switch_qos_en", (22, 22)); ("ib_switch_qos_en", (23, 23)); ("eop_switch_qos_en", (24, 24)); ("pq_switch_qos_en", (25, 25)); ("tc_offload_qos_en", (26, 26)); ("cache_full_packet_en", (27, 27)); ("restore_active", (28, 28)); ("relaunch_waves", (29, 29)); ("qswitch_mode", (30, 30)); ("disp_active", (31, 31)) ] }
+let gc_12_0_0_regCP_HQD_PQ_DOORBELL_CONTROL = { name = "regCP_HQD_PQ_DOORBELL_CONTROL"; offset = 0x1fb8; segment = 0; fields = [ ("doorbell_mode", (0, 0)); ("doorbell_bif_drop", (1, 1)); ("doorbell_offset", (2, 27)); ("doorbell_source", (28, 28)); ("doorbell_schd_hit", (29, 29)); ("doorbell_en", (30, 30)); ("doorbell_hit", (31, 31)) ] }
+let gc_12_0_0_regCP_HQD_PQ_CONTROL = { name = "regCP_HQD_PQ_CONTROL"; offset = 0x1fba; segment = 0; fields = [ ("queue_size", (0, 5)); ("wptr_carry", (6, 6)); ("rptr_carry", (7, 7)); ("rptr_block_size", (8, 13)); ("queue_full_en", (14, 14)); ("pq_empty", (15, 15)); ("slot_based_wptr", (18, 19)); ("min_avail_size", (20, 21)); ("tmz", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)); ("no_update_rptr", (27, 27)); ("unord_dispatch", (28, 28)); ("tunnel_dispatch", (29, 29)); ("priv_state", (30, 30)); ("kmd_queue", (31, 31)) ] }
+let gc_12_0_0_regCP_HQD_IB_CONTROL = { name = "regCP_HQD_IB_CONTROL"; offset = 0x1fbe; segment = 0; fields = [ ("ib_size", (0, 19)); ("min_ib_avail_size", (20, 21)); ("ib_exe_disable", (23, 23)); ("ib_cache_policy", (24, 25)); ("ib_priv_state", (30, 30)); ("processing_ib", (31, 31)) ] }
+let gc_12_0_0_regCP_HQD_DEQUEUE_REQUEST = { name = "regCP_HQD_DEQUEUE_REQUEST"; offset = 0x1fc1; segment = 0; fields = [ ("dequeue_req", (0, 3)); ("iq_req_pend", (4, 4)); ("dequeue_int", (8, 8)); ("iq_req_pend_en", (9, 9)); ("dequeue_req_en", (10, 10)) ] }
+let gc_12_0_0_regCP_MQD_CONTROL = { name = "regCP_MQD_CONTROL"; offset = 0x1fcb; segment = 0; fields = [ ("vmid", (0, 3)); ("priv_state", (8, 8)); ("processing_mqd", (12, 12)); ("processing_mqd_en", (13, 13)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)) ] }
+let gc_12_0_0_regCP_HQD_EOP_CONTROL = { name = "regCP_HQD_EOP_CONTROL"; offset = 0x1fd0; segment = 0; fields = [ ("eop_size", (0, 5)); ("processing_eop", (8, 8)); ("process_eop_en", (12, 12)); ("processing_eopib", (13, 13)); ("process_eopib_en", (14, 14)); ("halt_fetcher", (21, 21)); ("halt_fetcher_en", (22, 22)); ("exe_disable", (23, 23)); ("cache_policy", (24, 25)) ] }
+let gc_12_0_0_regCP_HQD_PQ_WPTR_HI = { name = "regCP_HQD_PQ_WPTR_HI"; offset = 0x1fe0; segment = 0; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regCP_MEC_CNTL = { name = "regCP_MEC_CNTL"; offset = 0x802; segment = 1; fields = [ ("mec_me1_pipe0_reset", (16, 16)); ("mec_me1_pipe1_reset", (17, 17)); ("mec_invalidate_icache", (27, 27)); ("mec_me1_halt", (30, 30)); ("mec_me1_step", (31, 31)) ] }
+let gc_12_0_0_regCP_ME_CNTL = { name = "regCP_ME_CNTL"; offset = 0x803; segment = 1; fields = [ ("ce_invalidate_icache", (4, 4)); ("pfp_invalidate_icache", (6, 6)); ("me_invalidate_icache", (8, 8)); ("pfp_pipe0_disable", (12, 12)); ("pfp_pipe1_disable", (13, 13)); ("me_pipe0_disable", (14, 14)); ("me_pipe1_disable", (15, 15)); ("ce_pipe0_reset", (16, 16)); ("ce_pipe1_reset", (17, 17)); ("pfp_pipe0_reset", (18, 18)); ("pfp_pipe1_reset", (19, 19)); ("me_pipe0_reset", (20, 20)); ("me_pipe1_reset", (21, 21)); ("ce_halt", (24, 24)); ("ce_step", (25, 25)); ("pfp_halt", (26, 26)); ("pfp_step", (27, 27)); ("me_halt", (28, 28)); ("me_step", (29, 29)) ] }
+let gc_12_0_0_regGRBM_GFX_CNTL = { name = "regGRBM_GFX_CNTL"; offset = 0x900; segment = 1; fields = [ ("pipeid", (0, 1)); ("meid", (2, 3)); ("vmid", (4, 7)); ("queueid", (8, 10)); ("ctxid", (11, 13)) ] }
+let gc_12_0_0_regSCRATCH_REG0 = { name = "regSCRATCH_REG0"; offset = 0x2040; segment = 1; fields = [ ("scratch_reg0", (0, 31)) ] }
+let gc_12_0_0_regSCRATCH_REG1 = { name = "regSCRATCH_REG1"; offset = 0x2041; segment = 1; fields = [ ("scratch_reg1", (0, 31)) ] }
+let gc_12_0_0_regSCRATCH_REG2 = { name = "regSCRATCH_REG2"; offset = 0x2042; segment = 1; fields = [ ("scratch_reg2", (0, 31)) ] }
+let gc_12_0_0_regSCRATCH_REG3 = { name = "regSCRATCH_REG3"; offset = 0x2043; segment = 1; fields = [ ("scratch_reg3", (0, 31)) ] }
+let gc_12_0_0_regSCRATCH_REG5 = { name = "regSCRATCH_REG5"; offset = 0x2045; segment = 1; fields = [ ("scratch_reg5", (0, 31)) ] }
+let gc_12_0_0_regSCRATCH_REG6 = { name = "regSCRATCH_REG6"; offset = 0x2046; segment = 1; fields = [ ("scratch_reg6", (0, 31)) ] }
+let gc_12_0_0_regSCRATCH_REG7 = { name = "regSCRATCH_REG7"; offset = 0x2047; segment = 1; fields = [ ("scratch_reg7", (0, 31)) ] }
+let gc_12_0_0_regGRBM_GFX_INDEX = { name = "regGRBM_GFX_INDEX"; offset = 0x2200; segment = 1; fields = [ ("instance_index", (0, 6)); ("sa_index", (8, 9)); ("se_index", (16, 19)); ("sa_broadcast_writes", (29, 29)); ("instance_broadcast_writes", (30, 30)); ("se_broadcast_writes", (31, 31)) ] }
+let gc_12_0_0_regCP_MEC_RS64_PRGRM_CNTR_START = { name = "regCP_MEC_RS64_PRGRM_CNTR_START"; offset = 0x2900; segment = 1; fields = [ ("ip_start", (0, 31)) ] }
+let gc_12_0_0_regCP_MEC_RS64_CNTL = { name = "regCP_MEC_RS64_CNTL"; offset = 0x2904; segment = 1; fields = [ ("spare", (0, 3)); ("mec_invalidate_icache", (4, 4)); ("mec_pipe0_reset", (16, 16)); ("mec_pipe1_reset", (17, 17)); ("mec_pipe2_reset", (18, 18)); ("mec_pipe3_reset", (19, 19)); ("mec_pipe0_active", (26, 26)); ("mec_pipe1_active", (27, 27)); ("mec_pipe2_active", (28, 28)); ("mec_pipe3_active", (29, 29)); ("mec_halt", (30, 30)); ("mec_step", (31, 31)) ] }
+let gc_12_0_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI = { name = "regCP_MEC_RS64_PRGRM_CNTR_START_HI"; offset = 0x2938; segment = 1; fields = [ ("ip_start", (0, 29)) ] }
+let gc_12_0_0_regGRBM_PERFCOUNTER0_LO = { name = "regGRBM_PERFCOUNTER0_LO"; offset = 0x3040; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regGRBM_PERFCOUNTER0_HI = { name = "regGRBM_PERFCOUNTER0_HI"; offset = 0x3041; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_12_0_0_regGRBM_PERFCOUNTER1_LO = { name = "regGRBM_PERFCOUNTER1_LO"; offset = 0x3043; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regGRBM_PERFCOUNTER1_HI = { name = "regGRBM_PERFCOUNTER1_HI"; offset = 0x3044; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER0_LO = { name = "regGL2C_PERFCOUNTER0_LO"; offset = 0x3380; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER0_HI = { name = "regGL2C_PERFCOUNTER0_HI"; offset = 0x3381; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER1_LO = { name = "regGL2C_PERFCOUNTER1_LO"; offset = 0x3382; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER1_HI = { name = "regGL2C_PERFCOUNTER1_HI"; offset = 0x3383; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER2_LO = { name = "regGL2C_PERFCOUNTER2_LO"; offset = 0x3384; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER2_HI = { name = "regGL2C_PERFCOUNTER2_HI"; offset = 0x3385; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER3_LO = { name = "regGL2C_PERFCOUNTER3_LO"; offset = 0x3386; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER3_HI = { name = "regGL2C_PERFCOUNTER3_HI"; offset = 0x3387; segment = 1; fields = [ ("perfcounter_hi", (0, 31)) ] }
+let gc_12_0_0_regGRBM_PERFCOUNTER0_SELECT = { name = "regGRBM_PERFCOUNTER0_SELECT"; offset = 0x3840; segment = 1; fields = [ ("perf_sel", (0, 5)); ("sc_clean_user_defined_mask", (9, 9)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)) ] }
+let gc_12_0_0_regGRBM_PERFCOUNTER1_SELECT = { name = "regGRBM_PERFCOUNTER1_SELECT"; offset = 0x3841; segment = 1; fields = [ ("perf_sel", (0, 5)); ("sc_clean_user_defined_mask", (9, 9)); ("db_clean_user_defined_mask", (10, 10)); ("cb_clean_user_defined_mask", (11, 11)); ("ta_busy_user_defined_mask", (13, 13)); ("sx_busy_user_defined_mask", (14, 14)); ("spi_busy_user_defined_mask", (16, 16)); ("sc_busy_user_defined_mask", (17, 17)); ("pa_busy_user_defined_mask", (18, 18)); ("grbm_busy_user_defined_mask", (19, 19)); ("db_busy_user_defined_mask", (20, 20)); ("cb_busy_user_defined_mask", (21, 21)); ("cp_busy_user_defined_mask", (22, 22)); ("bci_busy_user_defined_mask", (25, 25)); ("rlc_busy_user_defined_mask", (26, 26)); ("tcp_busy_user_defined_mask", (27, 27)); ("ge_busy_user_defined_mask", (28, 28)); ("utcl2_busy_user_defined_mask", (29, 29)); ("ea_busy_user_defined_mask", (30, 30)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER0_SELECT = { name = "regGL2C_PERFCOUNTER0_SELECT"; offset = 0x3b80; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER1_SELECT = { name = "regGL2C_PERFCOUNTER1_SELECT"; offset = 0x3b82; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER2_SELECT = { name = "regGL2C_PERFCOUNTER2_SELECT"; offset = 0x3b84; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regGL2C_PERFCOUNTER3_SELECT = { name = "regGL2C_PERFCOUNTER3_SELECT"; offset = 0x3b86; segment = 1; fields = [ ("perf_sel", (0, 9)); ("perf_sel1", (10, 19)); ("cntr_mode", (20, 23)); ("perf_mode1", (24, 27)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regRLC_CNTL = { name = "regRLC_CNTL"; offset = 0x4c00; segment = 1; fields = [ ("rlc_enable_f32", (0, 0)); ("force_retry", (1, 1)); ("read_cache_disable", (2, 2)); ("rlc_step_f32", (3, 3)); ("reserved", (4, 31)) ] }
+let gc_12_0_0_regRLC_CGTT_MGCG_OVERRIDE = { name = "regRLC_CGTT_MGCG_OVERRIDE"; offset = 0x4c48; segment = 1; fields = [ ("rlc_repeater_fgcg_override", (0, 0)); ("rlc_cgtt_sclk_override", (1, 1)); ("gfxip_mgcg_override", (2, 2)); ("gfxip_cgcg_override", (3, 3)); ("gfxip_cgls_override", (4, 4)); ("grbm_cgtt_sclk_override", (5, 5)); ("gfxip_mgls_override", (6, 6)); ("gfxip_gfx3d_cg_override", (7, 7)); ("gfxip_fgcg_override", (8, 8)); ("gfxip_repeater_fgcg_override", (9, 9)); ("perfmon_clock_state", (10, 10)); ("reserved_31_11", (11, 31)) ] }
+let gc_12_0_0_regRLC_CGCG_CGLS_CTRL = { name = "regRLC_CGCG_CGLS_CTRL"; offset = 0x4c49; segment = 1; fields = [ ("cgcg_en", (0, 0)); ("cgls_en", (1, 1)); ("cgls_rep_compansat_delay", (2, 7)); ("cgcg_gfx_idle_threshold", (8, 26)); ("cgcg_controller", (27, 27)); ("cgcg_reg_ctrl", (28, 28)); ("sleep_mode", (29, 30)); ("sim_silicon_en", (31, 31)) ] }
+let gc_12_0_0_regRLC_SRM_CNTL = { name = "regRLC_SRM_CNTL"; offset = 0x4c80; segment = 1; fields = [ ("srm_enable", (0, 0)); ("auto_incr_addr", (1, 1)); ("srm_gpm_fifo_reset", (2, 2)); ("reserved", (3, 31)) ] }
+let gc_12_0_0_regRLC_RLCS_BOOTLOAD_STATUS = { name = "regRLC_RLCS_BOOTLOAD_STATUS"; offset = 0x4e7c; segment = 1; fields = [ ("gfx_fuse_dist_done", (0, 0)); ("gfx_init_done", (1, 1)); ("gfx_security_policy_loaded", (2, 2)); ("gfx_security_policy_done", (3, 3)); ("rlc_gpm_iram_loaded", (4, 4)); ("rlc_gpm_iram_done", (5, 5)); ("status_6_30", (6, 30)); ("bootload_complete", (31, 31)) ] }
+let gc_12_0_0_regRLC_SAFE_MODE = { name = "regRLC_SAFE_MODE"; offset = 0x980; segment = 1; fields = [ ("cmd", (0, 0)); ("message", (1, 4)); ("reserved1", (5, 7)); ("response", (8, 11)); ("reserved", (12, 31)) ] }
+let gc_12_0_0_regRLC_SPM_MC_CNTL = { name = "regRLC_SPM_MC_CNTL"; offset = 0x982; segment = 1; fields = [ ("rlc_spm_vmid", (0, 3)); ("rlc_spm_sdr", (4, 5)); ("rlc_spm_perf_cntr", (6, 6)); ("rlc_spm_fed", (7, 7)); ("rlc_spm_temporal", (8, 10)); ("rlc_spm_comp", (11, 12)); ("rlc_spm_comp_over", (13, 13)); ("rlc_spm_ro", (14, 14)); ("rlc_spm_nofill", (15, 15)); ("reserved", (16, 31)) ] }
+let gc_12_0_0_regRLC_CP_SCHEDULERS = { name = "regRLC_CP_SCHEDULERS"; offset = 0x98a; segment = 1; fields = [ ("scheduler0", (0, 7)); ("scheduler1", (8, 15)) ] }
+let gc_12_0_0_regGB_ADDR_CONFIG = { name = "regGB_ADDR_CONFIG"; offset = 0x13de; segment = 0; fields = [ ("num_pipes", (0, 2)); ("pipe_interleave_size", (3, 5)); ("max_compressed_frags", (6, 7)); ("num_pkrs", (8, 10)); ("num_shader_engines", (19, 22)); ("num_rb_per_se", (26, 27)) ] }
+let gc_12_0_0_regSPI_COMPUTE_QUEUE_RESET = { name = "regSPI_COMPUTE_QUEUE_RESET"; offset = 0x1f73; segment = 0; fields = [ ("reset", (0, 0)) ] }
+let gc_12_0_0_regSH_MEM_BASES = { name = "regSH_MEM_BASES"; offset = 0x9e3; segment = 1; fields = [ ("private_base", (0, 15)); ("shared_base", (16, 31)) ] }
+let gc_12_0_0_regSH_MEM_CONFIG = { name = "regSH_MEM_CONFIG"; offset = 0x9e4; segment = 1; fields = [ ("address_mode", (0, 0)); ("alignment_mode", (2, 3)); ("f8_mode", (8, 8)); ("initial_inst_prefetch", (14, 15)); ("icache_use_gl1", (18, 18)) ] }
+let gc_12_0_0_regTCP_CNTL = { name = "regTCP_CNTL"; offset = 0x19a2; segment = 1; fields = [ ("force_hit", (0, 0)); ("force_miss", (1, 1)); ("store_atomic_collapse_clause_limit", (2, 4)); ("flat_buf_cache_swizzle", (5, 5)); ("td_data_en_override", (6, 6)); ("disable_write_combining", (9, 9)); ("force_scope_eow", (10, 10)); ("force_temporal_eow", (11, 11)); ("force_eow_total_cnt", (15, 20)); ("force_eow_set_cnt", (22, 26)); ("disable_full_cl_access", (27, 27)); ("disable_z_map", (28, 28)); ("astc_ve_msb_tolerant", (31, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_0 = { name = "regSQ_THREAD_TRACE_USERDATA_0"; offset = 0x2340; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_1 = { name = "regSQ_THREAD_TRACE_USERDATA_1"; offset = 0x2341; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_2 = { name = "regSQ_THREAD_TRACE_USERDATA_2"; offset = 0x2342; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_3 = { name = "regSQ_THREAD_TRACE_USERDATA_3"; offset = 0x2343; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_4 = { name = "regSQ_THREAD_TRACE_USERDATA_4"; offset = 0x2344; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_5 = { name = "regSQ_THREAD_TRACE_USERDATA_5"; offset = 0x2345; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_6 = { name = "regSQ_THREAD_TRACE_USERDATA_6"; offset = 0x2346; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_7 = { name = "regSQ_THREAD_TRACE_USERDATA_7"; offset = 0x2347; segment = 1; fields = [ ("data", (0, 31)) ] }
+let gc_12_0_0_regSPI_CONFIG_CNTL = { name = "regSPI_CONFIG_CNTL"; offset = 0x2440; segment = 1; fields = [ ("gpr_write_priority", (0, 20)); ("exp_priority_order", (21, 23)); ("enable_sqg_top_events", (24, 24)); ("enable_sqg_bop_events", (25, 25)); ("alloc_arb_lru_ena", (28, 28)); ("exp_arb_lru_ena", (29, 29)); ("ps_pkr_priority_cntl", (30, 31)) ] }
+let gc_12_0_0_regSPI_SQG_EVENT_CTL = { name = "regSPI_SQG_EVENT_CTL"; offset = 0x2448; segment = 1; fields = [ ("enable_sqg_top_events", (0, 0)); ("enable_sqg_bop_events", (1, 1)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER0_LO = { name = "regSQ_PERFCOUNTER0_LO"; offset = 0x31c0; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER1_LO = { name = "regSQ_PERFCOUNTER1_LO"; offset = 0x31c2; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER2_LO = { name = "regSQ_PERFCOUNTER2_LO"; offset = 0x31c4; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER3_LO = { name = "regSQ_PERFCOUNTER3_LO"; offset = 0x31c6; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER4_LO = { name = "regSQ_PERFCOUNTER4_LO"; offset = 0x31c8; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER5_LO = { name = "regSQ_PERFCOUNTER5_LO"; offset = 0x31ca; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER6_LO = { name = "regSQ_PERFCOUNTER6_LO"; offset = 0x31cc; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER7_LO = { name = "regSQ_PERFCOUNTER7_LO"; offset = 0x31ce; segment = 1; fields = [ ("perfcounter_lo", (0, 31)) ] }
+let gc_12_0_0_regCP_PERFMON_CNTL_1 = { name = "regCP_PERFMON_CNTL_1"; offset = 0x3808; segment = 1; fields = [ ("perfmon_state", (0, 3)); ("spm_perfmon_state", (4, 7)); ("perfmon_enable_mode", (8, 9)); ("perfmon_sample_enable", (10, 10)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER0_SELECT = { name = "regSQ_PERFCOUNTER0_SELECT"; offset = 0x39c0; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER1_SELECT = { name = "regSQ_PERFCOUNTER1_SELECT"; offset = 0x39c1; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER2_SELECT = { name = "regSQ_PERFCOUNTER2_SELECT"; offset = 0x39c2; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER3_SELECT = { name = "regSQ_PERFCOUNTER3_SELECT"; offset = 0x39c3; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER4_SELECT = { name = "regSQ_PERFCOUNTER4_SELECT"; offset = 0x39c4; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER5_SELECT = { name = "regSQ_PERFCOUNTER5_SELECT"; offset = 0x39c5; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER6_SELECT = { name = "regSQ_PERFCOUNTER6_SELECT"; offset = 0x39c6; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER7_SELECT = { name = "regSQ_PERFCOUNTER7_SELECT"; offset = 0x39c7; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER8_SELECT = { name = "regSQ_PERFCOUNTER8_SELECT"; offset = 0x39c8; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER9_SELECT = { name = "regSQ_PERFCOUNTER9_SELECT"; offset = 0x39c9; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER10_SELECT = { name = "regSQ_PERFCOUNTER10_SELECT"; offset = 0x39ca; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER11_SELECT = { name = "regSQ_PERFCOUNTER11_SELECT"; offset = 0x39cb; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER12_SELECT = { name = "regSQ_PERFCOUNTER12_SELECT"; offset = 0x39cc; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER13_SELECT = { name = "regSQ_PERFCOUNTER13_SELECT"; offset = 0x39cd; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER14_SELECT = { name = "regSQ_PERFCOUNTER14_SELECT"; offset = 0x39ce; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER15_SELECT = { name = "regSQ_PERFCOUNTER15_SELECT"; offset = 0x39cf; segment = 1; fields = [ ("perf_sel", (0, 8)); ("spm_mode", (20, 23)); ("perf_mode", (28, 31)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER_CTRL = { name = "regSQ_PERFCOUNTER_CTRL"; offset = 0x39e0; segment = 1; fields = [ ("ps_en", (0, 0)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)) ] }
+let gc_12_0_0_regSQ_PERFCOUNTER_CTRL2 = { name = "regSQ_PERFCOUNTER_CTRL2"; offset = 0x39e2; segment = 1; fields = [ ("force_en", (0, 0)); ("vmid_en", (1, 16)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_BUF0_SIZE = { name = "regSQ_THREAD_TRACE_BUF0_SIZE"; offset = 0x39e6; segment = 1; fields = [ ("size", (0, 21)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_BUF0_BASE_LO = { name = "regSQ_THREAD_TRACE_BUF0_BASE_LO"; offset = 0x39e7; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_BUF0_BASE_HI = { name = "regSQ_THREAD_TRACE_BUF0_BASE_HI"; offset = 0x39e8; segment = 1; fields = [ ("base_hi", (0, 12)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_BUF1_SIZE = { name = "regSQ_THREAD_TRACE_BUF1_SIZE"; offset = 0x39e9; segment = 1; fields = [ ("size", (0, 21)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_BUF1_BASE_LO = { name = "regSQ_THREAD_TRACE_BUF1_BASE_LO"; offset = 0x39ea; segment = 1; fields = [ ("base_lo", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_BUF1_BASE_HI = { name = "regSQ_THREAD_TRACE_BUF1_BASE_HI"; offset = 0x39eb; segment = 1; fields = [ ("base_hi", (0, 12)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_CTRL = { name = "regSQ_THREAD_TRACE_CTRL"; offset = 0x39ec; segment = 1; fields = [ ("mode", (0, 1)); ("gl1_perf_en", (3, 3)); ("interrupt_en", (4, 4)); ("double_buffer", (5, 5)); ("hiwater", (6, 8)); ("reg_at_hwm", (9, 10)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("stall_all_simds", (13, 13)); ("util_timer", (14, 14)); ("wavestart_mode", (15, 16)); ("sync_count_markers", (18, 18)); ("sync_count_draws", (19, 19)); ("lowater_offset", (20, 22)); ("gl1x_prefetch_page", (23, 26)); ("auto_flush_padding_dis", (28, 28)); ("auto_flush_mode", (29, 29)); ("ncp_reg_token_en", (30, 30)); ("draw_event_en", (31, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_MASK = { name = "regSQ_THREAD_TRACE_MASK"; offset = 0x39ed; segment = 1; fields = [ ("simd_sel", (0, 1)); ("wgp_sel", (4, 7)); ("sa_sel", (9, 9)); ("wtype_include", (10, 16)); ("exclude_nondetail_shaderdata", (17, 17)); ("exclude_nondetail_wavestart_ext", (18, 18)); ("exclude_nondetail_alloc", (19, 19)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_TOKEN_MASK = { name = "regSQ_THREAD_TRACE_TOKEN_MASK"; offset = 0x39ee; segment = 1; fields = [ ("token_exclude", (0, 11)); ("ttrace_exec", (12, 12)); ("bop_events_token_include", (13, 13)); ("exclude_barrier_wait", (14, 14)); ("reg_include", (16, 23)); ("inst_exclude", (24, 25)); ("reg_exclude", (26, 28)); ("reg_detail_all", (31, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_WPTR = { name = "regSQ_THREAD_TRACE_WPTR"; offset = 0x39ef; segment = 1; fields = [ ("offset", (0, 28)); ("buffer_id", (31, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_HALT = { name = "regSQ_THREAD_TRACE_HALT"; offset = 0x39f0; segment = 1; fields = [ ("enter_cgcg", (0, 0)); ("cgcg_ready", (1, 1)); ("enter_poweroff", (2, 2)); ("poweroff_ready", (3, 3)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_POWEROFF_RESTORE_1 = { name = "regSQ_THREAD_TRACE_POWEROFF_RESTORE_1"; offset = 0x39f1; segment = 1; fields = [ ("states", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_STATUS = { name = "regSQ_THREAD_TRACE_STATUS"; offset = 0x39f4; segment = 1; fields = [ ("finish_pending", (0, 11)); ("finish_done", (12, 23)); ("write_error", (24, 24)); ("busy", (25, 25)); ("owner_vmid", (28, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_STATUS2 = { name = "regSQ_THREAD_TRACE_STATUS2"; offset = 0x39f5; segment = 1; fields = [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("packet_lost_buf_no_lockdown", (4, 4)); ("buf_issue_status", (8, 12)); ("buf_issue", (13, 13)); ("write_buf_full", (14, 14)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_GFX_DRAW_CNTR"; offset = 0x39f6; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_GFX_MARKER_CNTR"; offset = 0x39f7; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR"; offset = 0x39f8; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR = { name = "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR"; offset = 0x39f9; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_DROPPED_CNTR = { name = "regSQ_THREAD_TRACE_DROPPED_CNTR"; offset = 0x39fa; segment = 1; fields = [ ("cntr", (0, 31)) ] }
+let gc_12_0_0_regSQ_THREAD_TRACE_FINISH_DONE_DEBUG = { name = "regSQ_THREAD_TRACE_FINISH_DONE_DEBUG"; offset = 0x39fb; segment = 1; fields = [ ("gfx", (0, 9)); ("exp", (10, 15)) ] }
+
+let gc_12_0_0_registers = [
+  gc_12_0_0_regSDMA0_CNTL;
+  gc_12_0_0_regSDMA0_WATCHDOG_CNTL;
+  gc_12_0_0_regSDMA0_UTCL1_CNTL;
+  gc_12_0_0_regSDMA0_UTCL1_PAGE;
+  gc_12_0_0_regSDMA0_RLC_CGCG_CTRL;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_CNTL;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_BASE;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_BASE_HI;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_HI;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_HI;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI;
+  gc_12_0_0_regSDMA0_QUEUE0_IB_CNTL;
+  gc_12_0_0_regSDMA0_QUEUE0_DOORBELL;
+  gc_12_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO;
+  gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI;
+  gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE;
+  gc_12_0_0_regSDMA0_MCU_CNTL;
+  gc_12_0_0_regSDMA1_RLC_CGCG_CTRL;
+  gc_12_0_0_regGRBM_CNTL;
+  gc_12_0_0_regGRBM_SOFT_RESET;
+  gc_12_0_0_regCP_STAT;
+  gc_12_0_0_regCP_RB_WPTR_POLL_CNTL;
+  gc_12_0_0_regCOMPUTE_DISPATCH_INITIATOR;
+  gc_12_0_0_regCOMPUTE_START_X;
+  gc_12_0_0_regCOMPUTE_PERFCOUNT_ENABLE;
+  gc_12_0_0_regCOMPUTE_PGM_LO;
+  gc_12_0_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO;
+  gc_12_0_0_regCOMPUTE_PGM_RSRC1;
+  gc_12_0_0_regCOMPUTE_RESOURCE_LIMITS;
+  gc_12_0_0_regCOMPUTE_TMPRING_SIZE;
+  gc_12_0_0_regCOMPUTE_RESTART_X;
+  gc_12_0_0_regCOMPUTE_THREAD_TRACE_ENABLE;
+  gc_12_0_0_regCOMPUTE_PGM_RSRC3;
+  gc_12_0_0_regCOMPUTE_USER_DATA_0;
+  gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB;
+  gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB;
+  gc_12_0_0_regGCVM_L2_CNTL;
+  gc_12_0_0_regGCVM_L2_CNTL2;
+  gc_12_0_0_regGCVM_L2_CNTL3;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL2;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_STATUS_LO32;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32;
+  gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32;
+  gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32;
+  gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32;
+  gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32;
+  gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32;
+  gc_12_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32;
+  gc_12_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32;
+  gc_12_0_0_regGCVM_L2_CNTL4;
+  gc_12_0_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2;
+  gc_12_0_0_regGCVM_L2_CNTL5;
+  gc_12_0_0_regGCMC_VM_FB_LOCATION_BASE;
+  gc_12_0_0_regGCMC_VM_FB_LOCATION_TOP;
+  gc_12_0_0_regGCMC_VM_AGP_TOP;
+  gc_12_0_0_regGCMC_VM_AGP_BOT;
+  gc_12_0_0_regGCMC_VM_AGP_BASE;
+  gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR;
+  gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR;
+  gc_12_0_0_regGCMC_VM_MX_L1_TLB_CNTL;
+  gc_12_0_0_regGCVM_CONTEXT0_CNTL;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG17_SEM;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG17_REQ;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG17_ACK;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32;
+  gc_12_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32;
+  gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32;
+  gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32;
+  gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32;
+  gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32;
+  gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32;
+  gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32;
+  gc_12_0_0_regCP_INT_CNTL;
+  gc_12_0_0_regCP_MEC_DOORBELL_RANGE_LOWER;
+  gc_12_0_0_regCP_MEC_DOORBELL_RANGE_UPPER;
+  gc_12_0_0_regCP_PFP_PRGRM_CNTR_START;
+  gc_12_0_0_regCP_ME_PRGRM_CNTR_START;
+  gc_12_0_0_regCP_PFP_PRGRM_CNTR_START_HI;
+  gc_12_0_0_regCP_ME_PRGRM_CNTR_START_HI;
+  gc_12_0_0_regCP_MQD_BASE_ADDR;
+  gc_12_0_0_regCP_HQD_ACTIVE;
+  gc_12_0_0_regCP_HQD_PERSISTENT_STATE;
+  gc_12_0_0_regCP_HQD_PQ_DOORBELL_CONTROL;
+  gc_12_0_0_regCP_HQD_PQ_CONTROL;
+  gc_12_0_0_regCP_HQD_IB_CONTROL;
+  gc_12_0_0_regCP_HQD_DEQUEUE_REQUEST;
+  gc_12_0_0_regCP_MQD_CONTROL;
+  gc_12_0_0_regCP_HQD_EOP_CONTROL;
+  gc_12_0_0_regCP_HQD_PQ_WPTR_HI;
+  gc_12_0_0_regCP_MEC_CNTL;
+  gc_12_0_0_regCP_ME_CNTL;
+  gc_12_0_0_regGRBM_GFX_CNTL;
+  gc_12_0_0_regSCRATCH_REG0;
+  gc_12_0_0_regSCRATCH_REG1;
+  gc_12_0_0_regSCRATCH_REG2;
+  gc_12_0_0_regSCRATCH_REG3;
+  gc_12_0_0_regSCRATCH_REG5;
+  gc_12_0_0_regSCRATCH_REG6;
+  gc_12_0_0_regSCRATCH_REG7;
+  gc_12_0_0_regGRBM_GFX_INDEX;
+  gc_12_0_0_regCP_MEC_RS64_PRGRM_CNTR_START;
+  gc_12_0_0_regCP_MEC_RS64_CNTL;
+  gc_12_0_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI;
+  gc_12_0_0_regGRBM_PERFCOUNTER0_LO;
+  gc_12_0_0_regGRBM_PERFCOUNTER0_HI;
+  gc_12_0_0_regGRBM_PERFCOUNTER1_LO;
+  gc_12_0_0_regGRBM_PERFCOUNTER1_HI;
+  gc_12_0_0_regGL2C_PERFCOUNTER0_LO;
+  gc_12_0_0_regGL2C_PERFCOUNTER0_HI;
+  gc_12_0_0_regGL2C_PERFCOUNTER1_LO;
+  gc_12_0_0_regGL2C_PERFCOUNTER1_HI;
+  gc_12_0_0_regGL2C_PERFCOUNTER2_LO;
+  gc_12_0_0_regGL2C_PERFCOUNTER2_HI;
+  gc_12_0_0_regGL2C_PERFCOUNTER3_LO;
+  gc_12_0_0_regGL2C_PERFCOUNTER3_HI;
+  gc_12_0_0_regGRBM_PERFCOUNTER0_SELECT;
+  gc_12_0_0_regGRBM_PERFCOUNTER1_SELECT;
+  gc_12_0_0_regGL2C_PERFCOUNTER0_SELECT;
+  gc_12_0_0_regGL2C_PERFCOUNTER1_SELECT;
+  gc_12_0_0_regGL2C_PERFCOUNTER2_SELECT;
+  gc_12_0_0_regGL2C_PERFCOUNTER3_SELECT;
+  gc_12_0_0_regRLC_CNTL;
+  gc_12_0_0_regRLC_CGTT_MGCG_OVERRIDE;
+  gc_12_0_0_regRLC_CGCG_CGLS_CTRL;
+  gc_12_0_0_regRLC_SRM_CNTL;
+  gc_12_0_0_regRLC_RLCS_BOOTLOAD_STATUS;
+  gc_12_0_0_regRLC_SAFE_MODE;
+  gc_12_0_0_regRLC_SPM_MC_CNTL;
+  gc_12_0_0_regRLC_CP_SCHEDULERS;
+  gc_12_0_0_regGB_ADDR_CONFIG;
+  gc_12_0_0_regSPI_COMPUTE_QUEUE_RESET;
+  gc_12_0_0_regSH_MEM_BASES;
+  gc_12_0_0_regSH_MEM_CONFIG;
+  gc_12_0_0_regTCP_CNTL;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_0;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_1;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_2;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_3;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_4;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_5;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_6;
+  gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_7;
+  gc_12_0_0_regSPI_CONFIG_CNTL;
+  gc_12_0_0_regSPI_SQG_EVENT_CTL;
+  gc_12_0_0_regSQ_PERFCOUNTER0_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER1_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER2_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER3_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER4_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER5_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER6_LO;
+  gc_12_0_0_regSQ_PERFCOUNTER7_LO;
+  gc_12_0_0_regCP_PERFMON_CNTL_1;
+  gc_12_0_0_regSQ_PERFCOUNTER0_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER1_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER2_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER3_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER4_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER5_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER6_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER7_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER8_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER9_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER10_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER11_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER12_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER13_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER14_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER15_SELECT;
+  gc_12_0_0_regSQ_PERFCOUNTER_CTRL;
+  gc_12_0_0_regSQ_PERFCOUNTER_CTRL2;
+  gc_12_0_0_regSQ_THREAD_TRACE_BUF0_SIZE;
+  gc_12_0_0_regSQ_THREAD_TRACE_BUF0_BASE_LO;
+  gc_12_0_0_regSQ_THREAD_TRACE_BUF0_BASE_HI;
+  gc_12_0_0_regSQ_THREAD_TRACE_BUF1_SIZE;
+  gc_12_0_0_regSQ_THREAD_TRACE_BUF1_BASE_LO;
+  gc_12_0_0_regSQ_THREAD_TRACE_BUF1_BASE_HI;
+  gc_12_0_0_regSQ_THREAD_TRACE_CTRL;
+  gc_12_0_0_regSQ_THREAD_TRACE_MASK;
+  gc_12_0_0_regSQ_THREAD_TRACE_TOKEN_MASK;
+  gc_12_0_0_regSQ_THREAD_TRACE_WPTR;
+  gc_12_0_0_regSQ_THREAD_TRACE_HALT;
+  gc_12_0_0_regSQ_THREAD_TRACE_POWEROFF_RESTORE_1;
+  gc_12_0_0_regSQ_THREAD_TRACE_STATUS;
+  gc_12_0_0_regSQ_THREAD_TRACE_STATUS2;
+  gc_12_0_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR;
+  gc_12_0_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR;
+  gc_12_0_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR;
+  gc_12_0_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR;
+  gc_12_0_0_regSQ_THREAD_TRACE_DROPPED_CNTR;
+  gc_12_0_0_regSQ_THREAD_TRACE_FINISH_DONE_DEBUG;
+]
+
+let gc_12_0_0_find = function
+  | "regSDMA0_CNTL" -> Some gc_12_0_0_regSDMA0_CNTL
+  | "regSDMA0_WATCHDOG_CNTL" -> Some gc_12_0_0_regSDMA0_WATCHDOG_CNTL
+  | "regSDMA0_UTCL1_CNTL" -> Some gc_12_0_0_regSDMA0_UTCL1_CNTL
+  | "regSDMA0_UTCL1_PAGE" -> Some gc_12_0_0_regSDMA0_UTCL1_PAGE
+  | "regSDMA0_RLC_CGCG_CTRL" -> Some gc_12_0_0_regSDMA0_RLC_CGCG_CTRL
+  | "regSDMA0_QUEUE0_RB_CNTL" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_CNTL
+  | "regSDMA0_QUEUE0_RB_BASE" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_BASE
+  | "regSDMA0_QUEUE0_RB_BASE_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_BASE_HI
+  | "regSDMA0_QUEUE0_RB_RPTR" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR
+  | "regSDMA0_QUEUE0_RB_RPTR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_HI
+  | "regSDMA0_QUEUE0_RB_WPTR" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR
+  | "regSDMA0_QUEUE0_RB_WPTR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_HI
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_LO" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_LO
+  | "regSDMA0_QUEUE0_RB_RPTR_ADDR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_RPTR_ADDR_HI
+  | "regSDMA0_QUEUE0_IB_CNTL" -> Some gc_12_0_0_regSDMA0_QUEUE0_IB_CNTL
+  | "regSDMA0_QUEUE0_DOORBELL" -> Some gc_12_0_0_regSDMA0_QUEUE0_DOORBELL
+  | "regSDMA0_QUEUE0_DOORBELL_OFFSET" -> Some gc_12_0_0_regSDMA0_QUEUE0_DOORBELL_OFFSET
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_LO
+  | "regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI" -> Some gc_12_0_0_regSDMA0_QUEUE0_RB_WPTR_POLL_ADDR_HI
+  | "regSDMA0_QUEUE0_MINOR_PTR_UPDATE" -> Some gc_12_0_0_regSDMA0_QUEUE0_MINOR_PTR_UPDATE
+  | "regSDMA0_MCU_CNTL" -> Some gc_12_0_0_regSDMA0_MCU_CNTL
+  | "regSDMA1_RLC_CGCG_CTRL" -> Some gc_12_0_0_regSDMA1_RLC_CGCG_CTRL
+  | "regGRBM_CNTL" -> Some gc_12_0_0_regGRBM_CNTL
+  | "regGRBM_SOFT_RESET" -> Some gc_12_0_0_regGRBM_SOFT_RESET
+  | "regCP_STAT" -> Some gc_12_0_0_regCP_STAT
+  | "regCP_RB_WPTR_POLL_CNTL" -> Some gc_12_0_0_regCP_RB_WPTR_POLL_CNTL
+  | "regCOMPUTE_DISPATCH_INITIATOR" -> Some gc_12_0_0_regCOMPUTE_DISPATCH_INITIATOR
+  | "regCOMPUTE_START_X" -> Some gc_12_0_0_regCOMPUTE_START_X
+  | "regCOMPUTE_PERFCOUNT_ENABLE" -> Some gc_12_0_0_regCOMPUTE_PERFCOUNT_ENABLE
+  | "regCOMPUTE_PGM_LO" -> Some gc_12_0_0_regCOMPUTE_PGM_LO
+  | "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO" -> Some gc_12_0_0_regCOMPUTE_DISPATCH_SCRATCH_BASE_LO
+  | "regCOMPUTE_PGM_RSRC1" -> Some gc_12_0_0_regCOMPUTE_PGM_RSRC1
+  | "regCOMPUTE_RESOURCE_LIMITS" -> Some gc_12_0_0_regCOMPUTE_RESOURCE_LIMITS
+  | "regCOMPUTE_TMPRING_SIZE" -> Some gc_12_0_0_regCOMPUTE_TMPRING_SIZE
+  | "regCOMPUTE_RESTART_X" -> Some gc_12_0_0_regCOMPUTE_RESTART_X
+  | "regCOMPUTE_THREAD_TRACE_ENABLE" -> Some gc_12_0_0_regCOMPUTE_THREAD_TRACE_ENABLE
+  | "regCOMPUTE_PGM_RSRC3" -> Some gc_12_0_0_regCOMPUTE_PGM_RSRC3
+  | "regCOMPUTE_USER_DATA_0" -> Some gc_12_0_0_regCOMPUTE_USER_DATA_0
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB" -> Some gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB
+  | "regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB" -> Some gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB
+  | "regGCVM_L2_CNTL" -> Some gc_12_0_0_regGCVM_L2_CNTL
+  | "regGCVM_L2_CNTL2" -> Some gc_12_0_0_regGCVM_L2_CNTL2
+  | "regGCVM_L2_CNTL3" -> Some gc_12_0_0_regGCVM_L2_CNTL3
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL
+  | "regGCVM_L2_PROTECTION_FAULT_CNTL2" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_CNTL2
+  | "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_STATUS_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_LO32" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_ADDR_HI32" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_ADDR_HI32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_LO32
+  | "regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32" -> Some gc_12_0_0_regGCVM_L2_PROTECTION_FAULT_DEFAULT_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32" -> Some gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32" -> Some gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_LOW_ADDR_HI32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32" -> Some gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_LO32
+  | "regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32" -> Some gc_12_0_0_regGCVM_L2_CONTEXT1_IDENTITY_APERTURE_HIGH_ADDR_HI32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32" -> Some gc_12_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_LO32
+  | "regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32" -> Some gc_12_0_0_regGCVM_L2_CONTEXT_IDENTITY_PHYSICAL_OFFSET_HI32
+  | "regGCVM_L2_CNTL4" -> Some gc_12_0_0_regGCVM_L2_CNTL4
+  | "regGCVM_L2_BANK_SELECT_RESERVED_CID2" -> Some gc_12_0_0_regGCVM_L2_BANK_SELECT_RESERVED_CID2
+  | "regGCVM_L2_CNTL5" -> Some gc_12_0_0_regGCVM_L2_CNTL5
+  | "regGCMC_VM_FB_LOCATION_BASE" -> Some gc_12_0_0_regGCMC_VM_FB_LOCATION_BASE
+  | "regGCMC_VM_FB_LOCATION_TOP" -> Some gc_12_0_0_regGCMC_VM_FB_LOCATION_TOP
+  | "regGCMC_VM_AGP_TOP" -> Some gc_12_0_0_regGCMC_VM_AGP_TOP
+  | "regGCMC_VM_AGP_BOT" -> Some gc_12_0_0_regGCMC_VM_AGP_BOT
+  | "regGCMC_VM_AGP_BASE" -> Some gc_12_0_0_regGCMC_VM_AGP_BASE
+  | "regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR" -> Some gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_LOW_ADDR
+  | "regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR" -> Some gc_12_0_0_regGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR
+  | "regGCMC_VM_MX_L1_TLB_CNTL" -> Some gc_12_0_0_regGCMC_VM_MX_L1_TLB_CNTL
+  | "regGCVM_CONTEXT0_CNTL" -> Some gc_12_0_0_regGCVM_CONTEXT0_CNTL
+  | "regGCVM_INVALIDATE_ENG17_SEM" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG17_SEM
+  | "regGCVM_INVALIDATE_ENG17_REQ" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG17_REQ
+  | "regGCVM_INVALIDATE_ENG17_ACK" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG17_ACK
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG0_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG1_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG2_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG3_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG4_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG5_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG6_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG7_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG8_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG9_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG10_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG11_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG12_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG13_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG14_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG15_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG16_ADDR_RANGE_HI32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_LO32
+  | "regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32" -> Some gc_12_0_0_regGCVM_INVALIDATE_ENG17_ADDR_RANGE_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32" -> Some gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32" -> Some gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32" -> Some gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32" -> Some gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_START_ADDR_HI32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32" -> Some gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_LO32
+  | "regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32" -> Some gc_12_0_0_regGCVM_CONTEXT0_PAGE_TABLE_END_ADDR_HI32
+  | "regCP_INT_CNTL" -> Some gc_12_0_0_regCP_INT_CNTL
+  | "regCP_MEC_DOORBELL_RANGE_LOWER" -> Some gc_12_0_0_regCP_MEC_DOORBELL_RANGE_LOWER
+  | "regCP_MEC_DOORBELL_RANGE_UPPER" -> Some gc_12_0_0_regCP_MEC_DOORBELL_RANGE_UPPER
+  | "regCP_PFP_PRGRM_CNTR_START" -> Some gc_12_0_0_regCP_PFP_PRGRM_CNTR_START
+  | "regCP_ME_PRGRM_CNTR_START" -> Some gc_12_0_0_regCP_ME_PRGRM_CNTR_START
+  | "regCP_PFP_PRGRM_CNTR_START_HI" -> Some gc_12_0_0_regCP_PFP_PRGRM_CNTR_START_HI
+  | "regCP_ME_PRGRM_CNTR_START_HI" -> Some gc_12_0_0_regCP_ME_PRGRM_CNTR_START_HI
+  | "regCP_MQD_BASE_ADDR" -> Some gc_12_0_0_regCP_MQD_BASE_ADDR
+  | "regCP_HQD_ACTIVE" -> Some gc_12_0_0_regCP_HQD_ACTIVE
+  | "regCP_HQD_PERSISTENT_STATE" -> Some gc_12_0_0_regCP_HQD_PERSISTENT_STATE
+  | "regCP_HQD_PQ_DOORBELL_CONTROL" -> Some gc_12_0_0_regCP_HQD_PQ_DOORBELL_CONTROL
+  | "regCP_HQD_PQ_CONTROL" -> Some gc_12_0_0_regCP_HQD_PQ_CONTROL
+  | "regCP_HQD_IB_CONTROL" -> Some gc_12_0_0_regCP_HQD_IB_CONTROL
+  | "regCP_HQD_DEQUEUE_REQUEST" -> Some gc_12_0_0_regCP_HQD_DEQUEUE_REQUEST
+  | "regCP_MQD_CONTROL" -> Some gc_12_0_0_regCP_MQD_CONTROL
+  | "regCP_HQD_EOP_CONTROL" -> Some gc_12_0_0_regCP_HQD_EOP_CONTROL
+  | "regCP_HQD_PQ_WPTR_HI" -> Some gc_12_0_0_regCP_HQD_PQ_WPTR_HI
+  | "regCP_MEC_CNTL" -> Some gc_12_0_0_regCP_MEC_CNTL
+  | "regCP_ME_CNTL" -> Some gc_12_0_0_regCP_ME_CNTL
+  | "regGRBM_GFX_CNTL" -> Some gc_12_0_0_regGRBM_GFX_CNTL
+  | "regSCRATCH_REG0" -> Some gc_12_0_0_regSCRATCH_REG0
+  | "regSCRATCH_REG1" -> Some gc_12_0_0_regSCRATCH_REG1
+  | "regSCRATCH_REG2" -> Some gc_12_0_0_regSCRATCH_REG2
+  | "regSCRATCH_REG3" -> Some gc_12_0_0_regSCRATCH_REG3
+  | "regSCRATCH_REG5" -> Some gc_12_0_0_regSCRATCH_REG5
+  | "regSCRATCH_REG6" -> Some gc_12_0_0_regSCRATCH_REG6
+  | "regSCRATCH_REG7" -> Some gc_12_0_0_regSCRATCH_REG7
+  | "regGRBM_GFX_INDEX" -> Some gc_12_0_0_regGRBM_GFX_INDEX
+  | "regCP_MEC_RS64_PRGRM_CNTR_START" -> Some gc_12_0_0_regCP_MEC_RS64_PRGRM_CNTR_START
+  | "regCP_MEC_RS64_CNTL" -> Some gc_12_0_0_regCP_MEC_RS64_CNTL
+  | "regCP_MEC_RS64_PRGRM_CNTR_START_HI" -> Some gc_12_0_0_regCP_MEC_RS64_PRGRM_CNTR_START_HI
+  | "regGRBM_PERFCOUNTER0_LO" -> Some gc_12_0_0_regGRBM_PERFCOUNTER0_LO
+  | "regGRBM_PERFCOUNTER0_HI" -> Some gc_12_0_0_regGRBM_PERFCOUNTER0_HI
+  | "regGRBM_PERFCOUNTER1_LO" -> Some gc_12_0_0_regGRBM_PERFCOUNTER1_LO
+  | "regGRBM_PERFCOUNTER1_HI" -> Some gc_12_0_0_regGRBM_PERFCOUNTER1_HI
+  | "regGL2C_PERFCOUNTER0_LO" -> Some gc_12_0_0_regGL2C_PERFCOUNTER0_LO
+  | "regGL2C_PERFCOUNTER0_HI" -> Some gc_12_0_0_regGL2C_PERFCOUNTER0_HI
+  | "regGL2C_PERFCOUNTER1_LO" -> Some gc_12_0_0_regGL2C_PERFCOUNTER1_LO
+  | "regGL2C_PERFCOUNTER1_HI" -> Some gc_12_0_0_regGL2C_PERFCOUNTER1_HI
+  | "regGL2C_PERFCOUNTER2_LO" -> Some gc_12_0_0_regGL2C_PERFCOUNTER2_LO
+  | "regGL2C_PERFCOUNTER2_HI" -> Some gc_12_0_0_regGL2C_PERFCOUNTER2_HI
+  | "regGL2C_PERFCOUNTER3_LO" -> Some gc_12_0_0_regGL2C_PERFCOUNTER3_LO
+  | "regGL2C_PERFCOUNTER3_HI" -> Some gc_12_0_0_regGL2C_PERFCOUNTER3_HI
+  | "regGRBM_PERFCOUNTER0_SELECT" -> Some gc_12_0_0_regGRBM_PERFCOUNTER0_SELECT
+  | "regGRBM_PERFCOUNTER1_SELECT" -> Some gc_12_0_0_regGRBM_PERFCOUNTER1_SELECT
+  | "regGL2C_PERFCOUNTER0_SELECT" -> Some gc_12_0_0_regGL2C_PERFCOUNTER0_SELECT
+  | "regGL2C_PERFCOUNTER1_SELECT" -> Some gc_12_0_0_regGL2C_PERFCOUNTER1_SELECT
+  | "regGL2C_PERFCOUNTER2_SELECT" -> Some gc_12_0_0_regGL2C_PERFCOUNTER2_SELECT
+  | "regGL2C_PERFCOUNTER3_SELECT" -> Some gc_12_0_0_regGL2C_PERFCOUNTER3_SELECT
+  | "regRLC_CNTL" -> Some gc_12_0_0_regRLC_CNTL
+  | "regRLC_CGTT_MGCG_OVERRIDE" -> Some gc_12_0_0_regRLC_CGTT_MGCG_OVERRIDE
+  | "regRLC_CGCG_CGLS_CTRL" -> Some gc_12_0_0_regRLC_CGCG_CGLS_CTRL
+  | "regRLC_SRM_CNTL" -> Some gc_12_0_0_regRLC_SRM_CNTL
+  | "regRLC_RLCS_BOOTLOAD_STATUS" -> Some gc_12_0_0_regRLC_RLCS_BOOTLOAD_STATUS
+  | "regRLC_SAFE_MODE" -> Some gc_12_0_0_regRLC_SAFE_MODE
+  | "regRLC_SPM_MC_CNTL" -> Some gc_12_0_0_regRLC_SPM_MC_CNTL
+  | "regRLC_CP_SCHEDULERS" -> Some gc_12_0_0_regRLC_CP_SCHEDULERS
+  | "regGB_ADDR_CONFIG" -> Some gc_12_0_0_regGB_ADDR_CONFIG
+  | "regSPI_COMPUTE_QUEUE_RESET" -> Some gc_12_0_0_regSPI_COMPUTE_QUEUE_RESET
+  | "regSH_MEM_BASES" -> Some gc_12_0_0_regSH_MEM_BASES
+  | "regSH_MEM_CONFIG" -> Some gc_12_0_0_regSH_MEM_CONFIG
+  | "regTCP_CNTL" -> Some gc_12_0_0_regTCP_CNTL
+  | "regSQ_THREAD_TRACE_USERDATA_0" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_0
+  | "regSQ_THREAD_TRACE_USERDATA_1" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_1
+  | "regSQ_THREAD_TRACE_USERDATA_2" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_2
+  | "regSQ_THREAD_TRACE_USERDATA_3" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_3
+  | "regSQ_THREAD_TRACE_USERDATA_4" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_4
+  | "regSQ_THREAD_TRACE_USERDATA_5" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_5
+  | "regSQ_THREAD_TRACE_USERDATA_6" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_6
+  | "regSQ_THREAD_TRACE_USERDATA_7" -> Some gc_12_0_0_regSQ_THREAD_TRACE_USERDATA_7
+  | "regSPI_CONFIG_CNTL" -> Some gc_12_0_0_regSPI_CONFIG_CNTL
+  | "regSPI_SQG_EVENT_CTL" -> Some gc_12_0_0_regSPI_SQG_EVENT_CTL
+  | "regSQ_PERFCOUNTER0_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER0_LO
+  | "regSQ_PERFCOUNTER1_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER1_LO
+  | "regSQ_PERFCOUNTER2_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER2_LO
+  | "regSQ_PERFCOUNTER3_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER3_LO
+  | "regSQ_PERFCOUNTER4_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER4_LO
+  | "regSQ_PERFCOUNTER5_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER5_LO
+  | "regSQ_PERFCOUNTER6_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER6_LO
+  | "regSQ_PERFCOUNTER7_LO" -> Some gc_12_0_0_regSQ_PERFCOUNTER7_LO
+  | "regCP_PERFMON_CNTL_1" -> Some gc_12_0_0_regCP_PERFMON_CNTL_1
+  | "regSQ_PERFCOUNTER0_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER0_SELECT
+  | "regSQ_PERFCOUNTER1_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER1_SELECT
+  | "regSQ_PERFCOUNTER2_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER2_SELECT
+  | "regSQ_PERFCOUNTER3_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER3_SELECT
+  | "regSQ_PERFCOUNTER4_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER4_SELECT
+  | "regSQ_PERFCOUNTER5_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER5_SELECT
+  | "regSQ_PERFCOUNTER6_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER6_SELECT
+  | "regSQ_PERFCOUNTER7_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER7_SELECT
+  | "regSQ_PERFCOUNTER8_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER8_SELECT
+  | "regSQ_PERFCOUNTER9_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER9_SELECT
+  | "regSQ_PERFCOUNTER10_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER10_SELECT
+  | "regSQ_PERFCOUNTER11_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER11_SELECT
+  | "regSQ_PERFCOUNTER12_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER12_SELECT
+  | "regSQ_PERFCOUNTER13_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER13_SELECT
+  | "regSQ_PERFCOUNTER14_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER14_SELECT
+  | "regSQ_PERFCOUNTER15_SELECT" -> Some gc_12_0_0_regSQ_PERFCOUNTER15_SELECT
+  | "regSQ_PERFCOUNTER_CTRL" -> Some gc_12_0_0_regSQ_PERFCOUNTER_CTRL
+  | "regSQ_PERFCOUNTER_CTRL2" -> Some gc_12_0_0_regSQ_PERFCOUNTER_CTRL2
+  | "regSQ_THREAD_TRACE_BUF0_SIZE" -> Some gc_12_0_0_regSQ_THREAD_TRACE_BUF0_SIZE
+  | "regSQ_THREAD_TRACE_BUF0_BASE_LO" -> Some gc_12_0_0_regSQ_THREAD_TRACE_BUF0_BASE_LO
+  | "regSQ_THREAD_TRACE_BUF0_BASE_HI" -> Some gc_12_0_0_regSQ_THREAD_TRACE_BUF0_BASE_HI
+  | "regSQ_THREAD_TRACE_BUF1_SIZE" -> Some gc_12_0_0_regSQ_THREAD_TRACE_BUF1_SIZE
+  | "regSQ_THREAD_TRACE_BUF1_BASE_LO" -> Some gc_12_0_0_regSQ_THREAD_TRACE_BUF1_BASE_LO
+  | "regSQ_THREAD_TRACE_BUF1_BASE_HI" -> Some gc_12_0_0_regSQ_THREAD_TRACE_BUF1_BASE_HI
+  | "regSQ_THREAD_TRACE_CTRL" -> Some gc_12_0_0_regSQ_THREAD_TRACE_CTRL
+  | "regSQ_THREAD_TRACE_MASK" -> Some gc_12_0_0_regSQ_THREAD_TRACE_MASK
+  | "regSQ_THREAD_TRACE_TOKEN_MASK" -> Some gc_12_0_0_regSQ_THREAD_TRACE_TOKEN_MASK
+  | "regSQ_THREAD_TRACE_WPTR" -> Some gc_12_0_0_regSQ_THREAD_TRACE_WPTR
+  | "regSQ_THREAD_TRACE_HALT" -> Some gc_12_0_0_regSQ_THREAD_TRACE_HALT
+  | "regSQ_THREAD_TRACE_POWEROFF_RESTORE_1" -> Some gc_12_0_0_regSQ_THREAD_TRACE_POWEROFF_RESTORE_1
+  | "regSQ_THREAD_TRACE_STATUS" -> Some gc_12_0_0_regSQ_THREAD_TRACE_STATUS
+  | "regSQ_THREAD_TRACE_STATUS2" -> Some gc_12_0_0_regSQ_THREAD_TRACE_STATUS2
+  | "regSQ_THREAD_TRACE_GFX_DRAW_CNTR" -> Some gc_12_0_0_regSQ_THREAD_TRACE_GFX_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_GFX_MARKER_CNTR" -> Some gc_12_0_0_regSQ_THREAD_TRACE_GFX_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_DRAW_CNTR" -> Some gc_12_0_0_regSQ_THREAD_TRACE_HP3D_DRAW_CNTR
+  | "regSQ_THREAD_TRACE_HP3D_MARKER_CNTR" -> Some gc_12_0_0_regSQ_THREAD_TRACE_HP3D_MARKER_CNTR
+  | "regSQ_THREAD_TRACE_DROPPED_CNTR" -> Some gc_12_0_0_regSQ_THREAD_TRACE_DROPPED_CNTR
+  | "regSQ_THREAD_TRACE_FINISH_DONE_DEBUG" -> Some gc_12_0_0_regSQ_THREAD_TRACE_FINISH_DONE_DEBUG
+  | _ -> None
+
+(* The GC version whose registers a GPU of GC [(major, minor, stepping)]
+   takes: the latest of its major at or before it. *)
+let gc ((major, minor, stepping) : int * int * int) =
+  match major with
+  | 9 -> if minor > 4 || (minor = 4 && stepping >= 3) then Gc_9_4_3 else No_gc
+  | 11 -> if minor > 5 || (minor = 5 && stepping >= 0) then Gc_11_5_0 else if minor > 0 || (minor = 0 && stepping >= 3) then Gc_11_0_3 else if minor > 0 || (minor = 0 && stepping >= 0) then Gc_11_0_0 else No_gc
+  | 12 -> if minor > 0 || (minor = 0 && stepping >= 0) then Gc_12_0_0 else No_gc
+  | _ -> No_gc
+
+(* The registers of a GC version, in its headers' order. *)
+let registers = function
+  | No_gc -> []
+  | Gc_9_4_3 -> gc_9_4_3_registers
+  | Gc_11_0_0 -> gc_11_0_0_registers
+  | Gc_11_0_3 -> gc_11_0_3_registers
+  | Gc_11_5_0 -> gc_11_5_0_registers
+  | Gc_12_0_0 -> gc_12_0_0_registers
+
+(* The register of a GC version named [name], if any. *)
+let find gc name =
+  match gc with
+  | No_gc -> None
+  | Gc_9_4_3 -> gc_9_4_3_find name
+  | Gc_11_0_0 -> gc_11_0_0_find name
+  | Gc_11_0_3 -> gc_11_0_3_find name
+  | Gc_11_5_0 -> gc_11_5_0_find name
+  | Gc_12_0_0 -> gc_12_0_0_find name
 
 (* The bases of the GC's register segments in PM4's register space, by the
    GC major version from which they hold, from segment 0 to the last with a
