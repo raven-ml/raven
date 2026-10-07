@@ -27,15 +27,15 @@ let[@inline] round32
   Bigarray.Array1.unsafe_get c 0
 
 (* Appendix I: 10000 uniform deviates from Park and Miller's generator,
-   rounded to float32. *)
+   rounded to float32, computed when the library loads so that domains share
+   them without a lock. *)
 let randoms =
-  lazy
-    (let a = 16807. and m = 2147483647. in
-     let seed = ref 1. in
-     Array.init n_random (fun _ ->
-         let temp = a *. !seed in
-         seed := temp -. (m *. Float.of_int (int_of_float (temp /. m)));
-         to_f32 (!seed /. m)))
+  let a = 16807. and m = 2147483647. in
+  let seed = ref 1. in
+  Array.init n_random (fun _ ->
+      let temp = a *. !seed in
+      seed := temp -. (m *. Float.of_int (int_of_float (temp /. m)));
+      to_f32 (!seed /. m))
 
 (* The dither sequence of a tile: [start (tile + zdither0 - 1)] for a 0-based
    tile, then [next] after each pixel. The decoder scales the deviate in
@@ -51,7 +51,7 @@ let index s r =
   if s.f32 then int_of_float (to_f32 (r *. 500.)) else int_of_float (r *. 500.)
 
 let start ~f32 row =
-  let r = Lazy.force randoms in
+  let r = randoms in
   let iseed = (row - 1) mod n_random in
   let s = { r; iseed; next = 0; f32 } in
   s.next <- index s r.(iseed);

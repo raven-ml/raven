@@ -1,5 +1,5 @@
 (tests
- (names test_header test_hdu test_image test_tiles test_unit test_table)
+ (names test_header test_hdu test_image test_tiles test_unit test_table test_domains)
  (package ymir)
  (libraries ymir.fits ymir.units nx nx.dtype nx.ragged windtrap)
  (deps

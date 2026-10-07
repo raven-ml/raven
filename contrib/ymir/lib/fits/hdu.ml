@@ -20,11 +20,11 @@ type store = { buffer : B.t; offset : int; size : int }
 type t = {
   name : string;  (** the file's path, [of_bytes]'s name, or [""] *)
   index : int;  (** position in the file; [0] for a constructed HDU *)
-  digest : string Lazy.t;  (** of the file's headers *)
-  header : Header.t Lazy.t;
-  data : store Lazy.t;
+  digest : string Once.t;  (** of the file's headers *)
+  header : Header.t Once.t;
+  data : store Once.t;
   header_bytes : (int * int) option;  (** a read HDU's header, in [buffer] *)
-  stream : stream Lazy.t option;
+  stream : stream Once.t option;
       (** a constructed HDU whose data [write] streams without encoding it whole
       *)
 }
@@ -39,17 +39,17 @@ and stream = { provisional : Header.t; write : sink -> Header.t }
    zeros. *)
 and sink = { append : B.t -> unit; patch : int -> string -> unit }
 
-let header h = Lazy.force h.header
+let header h = Once.get h.header
 
 (* A header holding [h]'s structure, without encoding a constructed HDU that
    [write] would stream. *)
 let structure h =
   match h.stream with
-  | Some st when not (Lazy.is_val h.header) -> (Lazy.force st).provisional
+  | Some st when not (Once.is_computed h.header) -> (Once.get st).provisional
   | _ -> header h
 
 let name h = h.name
-let digest h = Lazy.force h.digest
+let digest h = Once.get h.digest
 let place h = Header.place (header h)
 
 (* Host bytes *)
@@ -228,10 +228,10 @@ let walk ~name src =
   in
   let parts = go [] 0 0 in
   let digest =
-    lazy
-      (let ctx = List.map (fun (h, _, _) -> Header.to_string h) parts in
-       "blake2b-256:"
-       ^ Digest.BLAKE256.to_hex (Digest.BLAKE256.string (String.concat "" ctx)))
+    Once.make (fun () ->
+        let ctx = List.map (fun (h, _, _) -> Header.to_string h) parts in
+        "blake2b-256:"
+        ^ Digest.BLAKE256.to_hex (Digest.BLAKE256.string (String.concat "" ctx)))
   in
   List.mapi
     (fun index (header, store, hb) ->
@@ -239,8 +239,8 @@ let walk ~name src =
         name;
         index;
         digest;
-        header = Lazy.from_val header;
-        data = Lazy.from_val store;
+        header = Once.of_value header;
+        data = Once.of_value store;
         header_bytes = Some hb;
         stream = None;
       })
@@ -267,7 +267,7 @@ let of_bytes ~name t = catch (fun () -> walk ~name (buffer_of t))
 
 (* Data *)
 
-let store h = Lazy.force h.data
+let store h = Once.get h.data
 
 let data h =
   let s = store h in
@@ -323,31 +323,31 @@ let get ?ver name hdus =
 (* Constructed HDUs *)
 
 let header_digest header =
-  lazy
-    ("blake2b-256:"
-    ^ Digest.BLAKE256.to_hex
-        (Digest.BLAKE256.string (Header.to_string (Lazy.force header))))
+  Once.make (fun () ->
+      "blake2b-256:"
+      ^ Digest.BLAKE256.to_hex
+          (Digest.BLAKE256.string (Header.to_string (Once.get header))))
 
 (* [constructed_lazy encoded] is the HDU whose header and data [encoded]
    computes when first asked, as a tiled image's whose PCOUNT is its
    compressed size. *)
 let constructed_lazy ?stream encoded =
   let header =
-    lazy
-      (let h, _ = Lazy.force encoded in
-       Header.with_place (hdu_place "" 0 h) h)
+    Once.make (fun () ->
+        let h, _ = Once.get encoded in
+        Header.with_place (hdu_place "" 0 h) h)
   in
   {
     name = "";
     index = 0;
     digest = header_digest header;
     header;
-    data = lazy (snd (Lazy.force encoded));
+    data = Once.make (fun () -> snd (Once.get encoded));
     header_bytes = None;
     stream;
   }
 
 let constructed ?stream header data =
-  constructed_lazy ?stream (lazy (header, Lazy.force data))
+  constructed_lazy ?stream (Once.make (fun () -> (header, Once.get data)))
 
 let host_store b = { buffer = b; offset = 0; size = B.nbytes b }

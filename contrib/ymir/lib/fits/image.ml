@@ -550,13 +550,14 @@ let tiled header t ~bitpix ~others ~tile plan =
   let slab a b = Hdu.bigbytes (encode (Nx.slice [ Nx.R (a, b) ] t)) in
   (* a quantized image is read once before it is coded, for its seed *)
   let zdither0 =
-    lazy
-      (match plan with
-      | Tiles.Quantized _ ->
-          let s = Checksum.summer () in
-          each_slab t (fun b -> Checksum.feed s (Hdu.bigbytes b) 0 (B.nbytes b));
-          Tiles.zdither0 (Checksum.total s)
-      | Lossless _ -> 0)
+    Once.make (fun () ->
+        match plan with
+        | Tiles.Quantized _ ->
+            let s = Checksum.summer () in
+            each_slab t (fun b ->
+                Checksum.feed s (Hdu.bigbytes b) 0 (B.nbytes b));
+            Tiles.zdither0 (Checksum.total s)
+        | Lossless _ -> 0)
   in
   let header_of (tb : Tiles.table) =
     let columns =
@@ -591,20 +592,20 @@ let tiled header t ~bitpix ~others ~tile plan =
     Structure.apply ~owned ~prefix ~others:(columns @ tb.keys @ others) header
   in
   let code heap =
-    Tiles.code ~bitpix ~axes ~tile plan ~zdither0:(Lazy.force zdither0) ~slab
+    Tiles.code ~bitpix ~axes ~tile plan ~zdither0:(Once.get zdither0) ~slab
       ~heap
   in
   let encoded =
-    lazy
-      (let heap = Buffer.create 4096 in
-       let rows, tb = code (Buffer.add_string heap) in
-       let data = rows ^ Buffer.contents heap in
-       let b = Hdu.host_bytes (String.length data) in
-       let a = Hdu.bigbytes b in
-       String.iteri
-         (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c))
-         data;
-       (header_of tb, Hdu.host_store b))
+    Once.make (fun () ->
+        let heap = Buffer.create 4096 in
+        let rows, tb = code (Buffer.add_string heap) in
+        let data = rows ^ Buffer.contents heap in
+        let b = Hdu.host_bytes (String.length data) in
+        let a = Hdu.bigbytes b in
+        String.iteri
+          (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c))
+          data;
+        (header_of tb, Hdu.host_store b))
   in
   let write (sink : Hdu.sink) =
     (* the rows go first as zeros, then the heap tile row by tile row, then
@@ -628,13 +629,14 @@ let tiled header t ~bitpix ~others ~tile plan =
     header_of tb
   in
   let provisional =
-    lazy
-      (header_of
-         (Tiles.table ~bitpix ~axes ~tile plan ~zdither0:(Lazy.force zdither0)
-            ~maxes:(0, 0) ~heap:0))
+    Once.make (fun () ->
+        header_of
+          (Tiles.table ~bitpix ~axes ~tile plan ~zdither0:(Once.get zdither0)
+             ~maxes:(0, 0) ~heap:0))
   in
   Hdu.constructed_lazy
-    ~stream:(lazy { Hdu.provisional = Lazy.force provisional; write })
+    ~stream:
+      (Once.make (fun () -> { Hdu.provisional = Once.get provisional; write }))
     encoded
 
 let check_shape fn t =
@@ -669,9 +671,9 @@ let hdu ?tiles header (t : ('a, 'b) Nx.t) =
           ~prefix:(Structure.image_prefix ~primary:false ~bitpix ~axes)
           ~others header
       in
-      let data = lazy (Hdu.host_store (encode t)) in
+      let data = Once.make (fun () -> Hdu.host_store (encode t)) in
       Hdu.constructed
-        ~stream:(Lazy.from_val (plain_stream header t))
+        ~stream:(Once.of_value (plain_stream header t))
         header data
 
 let quantized (type b) ?tiles q header (t : (float, b) Nx.t) =

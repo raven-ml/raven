@@ -1618,4 +1618,4 @@ let hdu header columns =
       in
       let b = Hdu.host_bytes (A.dim table) in
       A.blit table (Hdu.bigbytes b);
-      Hdu.constructed h (Lazy.from_val (Hdu.host_store b)))
+      Hdu.constructed h (Once.of_value (Hdu.host_store b)))

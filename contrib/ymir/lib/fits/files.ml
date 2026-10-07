@@ -59,7 +59,7 @@ let v header bytes =
     | _ -> header
   in
   let b = Hdu.buffer_of bytes in
-  Hdu.constructed header (Lazy.from_val { Hdu.buffer = b; offset = 0; size })
+  Hdu.constructed header (Once.of_value { Hdu.buffer = b; offset = 0; size })
 
 (* [groups records structural] splits [records] into the leading run of
    mandatory records and the structural keywords after it, each with its
@@ -140,7 +140,7 @@ let with_header h (hdu : Hdu.t) =
   let header =
     Header.with_place (Hdu.hdu_place hdu.name hdu.index header) header
   in
-  { hdu with header = Lazy.from_val header; header_bytes = None }
+  { hdu with header = Once.of_value header; header_bytes = None }
 
 (* Checksums *)
 
@@ -222,7 +222,7 @@ let empty_primary () =
       ~prefix:(Structure.image_prefix ~primary:true ~bitpix:8 ~axes:[||])
       ~others:[] Header.empty
   in
-  Hdu.constructed h (Lazy.from_val (Hdu.host_store (Hdu.host_bytes 0)))
+  Hdu.constructed h (Once.of_value (Hdu.host_store (Hdu.host_bytes 0)))
 
 let is_image h =
   match Header.find_struct Value.string "XTENSION" h with
@@ -285,7 +285,7 @@ let bigbytes_of_string str =
 let write_hdu fd ~primary (hdu : Hdu.t) =
   let stream =
     match hdu.stream with
-    | Some st when not (Lazy.is_val hdu.data) -> Some (Lazy.force st)
+    | Some st when not (Once.is_computed hdu.data) -> Some (Once.get st)
     | _ -> None
   in
   let first =
