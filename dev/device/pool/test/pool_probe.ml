@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* Probes of nx_pool.h (pool_probe_stubs.c), and the waits the suites share. *)
 
 (* Recorded jobs *)

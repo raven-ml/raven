@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* The suite of nx_pool.h, through the probes of pool_probe_stubs.c. *)
 
 open Windtrap

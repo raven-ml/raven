@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* The suite of nx_pool.h's threads, through the probes of thread_probe_stubs.c:
    what a body sees on a worker, and the workers' life. *)
 

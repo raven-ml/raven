@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* Probes of nx_pool.h's threads (thread_probe_stubs.c). *)
 
 (* [burst ()] runs a job on every core, then jobs of two chunks on two threads
