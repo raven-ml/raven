@@ -8,16 +8,19 @@
    One pool per process: nx_pool_cores () - 1 persistent workers, made at
    the first job of more than one thread. A job is published behind a
    generation counter; its threads claim chunk indices from a shared counter
-   with one relaxed fetch-add each, and the workers count down to the
-   caller.
+   with one relaxed fetch-add each. A worker enters the job before it
+   claims, while the caller has not closed it. The caller closes the job
+   once its own claims find no chunk left and waits only for the workers
+   inside, so a worker late to see the job, or kept off its core by the
+   system, delays nothing.
 
    Jobs come in bursts, such as the kernels of a compiled program a few
    microseconds apart. A worker spins on the generation until spin_ns has
-   passed since it last took part in a job, and the caller spins on the
-   countdown for spin_ns, before either parks on a condition variable. A
-   job wakes the parked workers only if one of its own participants is among
-   them. A job's publication then costs no system call, and a worker that a
-   burst's jobs leave out parks once its window ends. */
+   passed since the last job it was one of the threads of, and the caller
+   spins on the workers inside for spin_ns, before either parks on a
+   condition variable. A job wakes the parked workers only if one of its own
+   threads is among them. A job's publication then costs no system call,
+   and a worker that a burst's jobs leave out parks once its window ends. */
 
 #define _GNU_SOURCE
 
@@ -218,7 +221,7 @@ typedef struct {
   nx_pool_body body;
   void *ctx;
   int64_t total, chunks;
-  int wide;
+  int threads, wide;
 } job;
 
 /* floor (i * total / chunks), exactly. */
@@ -241,21 +244,19 @@ struct pool {
   pthread_mutex_t mtx;   /* guards parking */
   pthread_cond_t wake;   /* parked workers wait here for a new generation */
   pthread_cond_t done;   /* a parked caller waits here for the job's end */
-  _Atomic uint64_t generation; /* even; odd while a job is being written */
-  /* The job's threads, written while the generation is odd. A worker
-     outside the job may read it while the next job writes it, so it is
-     atomic, and the worker reads it again if the generation moved. */
-  _Atomic int active;
-  /* The job, read by its participants only, each of whom holds the next
-     job back until it counts down. */
+  /* The job's number in the high 32 bits and its threads in the low 32,
+     so that one load tells a worker that a job began and whether it is one
+     of its threads. */
+  _Atomic uint64_t generation;
+  /* The job, written while no worker is inside and read only inside. */
   job job;
   /* Keeps the claims' cache line at least a line away from the job's and
      the generation's, whatever the pool's address: every claim would
      otherwise take that line from the threads that spin on it. */
   char gap[line_bytes];
-  _Atomic int64_t next;     /* next unclaimed chunk index */
-  _Atomic uint64_t pending; /* participating workers not yet finished */
-  _Atomic int waiting;      /* whether the caller parked on [done] */
+  _Atomic int64_t next;    /* next unclaimed chunk index */
+  _Atomic uint64_t inside; /* the workers inside the job, | closed */
+  _Atomic int waiting;     /* whether the caller parked on [done] */
   /* Bit [id % 64] of word [id / 64] is set while worker [id] is parked. */
   _Atomic uint64_t parked[];
 };
@@ -309,6 +310,30 @@ static void claim(pool *p, const job *j, int id) {
   }
 }
 
+/* Entering. The caller opens a job after writing it and closes it once its
+   own claims find no chunk left, then waits for the workers inside. A worker
+   claims only inside, so the caller never rewrites a job a worker reads, and
+   a worker that arrives after the close turns back without a claim. */
+static const uint64_t closed = (uint64_t)1 << 63;
+
+static int enter(pool *p) {
+  uint64_t v = atomic_load_explicit(&p->inside, memory_order_relaxed);
+  do
+    if (v & closed) return 0;
+  while (!atomic_compare_exchange_weak_explicit(
+      &p->inside, &v, v + 1, memory_order_acquire, memory_order_relaxed));
+  return 1;
+}
+
+static void leave(pool *p) {
+  if (atomic_fetch_sub(&p->inside, 1) == (closed | 1) &&
+      atomic_load(&p->waiting)) {
+    pthread_mutex_lock(&p->mtx);
+    pthread_cond_signal(&p->done);
+    pthread_mutex_unlock(&p->mtx);
+  }
+}
+
 /* Parking: a thread sets its bit in [parked] (or sets [waiting]) and reads
    the word it waits on again before it waits, and the thread that changes the
    word reads the flag after the change, both sequentially consistent: one of
@@ -341,14 +366,11 @@ static int participant_parked(pool *p, int threads) {
   return 0;
 }
 
-/* The generation of the next job after [g], once it is written: spun for
-   until [deadline], parked for after. */
+/* The generation of the next job after [g]: spun for until [deadline],
+   parked for after. */
 static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
-  do {
-    uint64_t v = spin(&p->generation, g, LEAVE, deadline);
-    g = v == g ? park_worker(p, id, g) : v;
-  } while (g % 2 != 0);
-  return g;
+  uint64_t v = spin(&p->generation, g, LEAVE, deadline);
+  return v == g ? park_worker(p, id, g) : v;
 }
 
 static void *work(void *arg) {
@@ -363,19 +385,12 @@ static void *work(void *arg) {
   uint64_t deadline = now_ns() + spin_ns;
   for (;;) {
     seen = next_job(p, w->id, seen, deadline);
-    int active = atomic_load_explicit(&p->active, memory_order_relaxed);
-    atomic_thread_fence(memory_order_acquire);
-    /* A participant holds the next job back until it counts down, so a
-       generation that moved while [active] was read had no part for this
-       worker, and a participant reads its own job. */
-    if (atomic_load_explicit(&p->generation, memory_order_relaxed) != seen ||
-        w->id >= active)
-      continue;
-    claim(p, &p->job, w->id);
-    if (atomic_fetch_sub(&p->pending, 1) == 1 && atomic_load(&p->waiting)) {
-      pthread_mutex_lock(&p->mtx);
-      pthread_cond_signal(&p->done);
-      pthread_mutex_unlock(&p->mtx);
+    if (w->id >= (int)(uint32_t)seen) continue;
+    /* The job open by now may be a later one than [seen], whose threads
+       the worker learns inside. */
+    if (enter(p)) {
+      if (w->id < p->job.threads) claim(p, &p->job, w->id);
+      leave(p);
     }
     deadline = now_ns() + spin_ns;
   }
@@ -508,8 +523,8 @@ static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
 
 /* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
    or without a pool, else on at most p->threads (<= nx_pool_cores ()). The
-   job is published under a sequence lock (odd while written); the caller
-   claims as worker 0 and waits for the workers' countdown, after which no
+   caller writes the job while it is closed, opens it, announces it, claims
+   as worker 0, closes it and waits for the workers inside, after which no
    thread touches the job or the claim counter until the next publish. Out
    of line, so a serial nx_pool_run saves no registers. */
 __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
@@ -520,17 +535,14 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
     body(0, total, 0, ctx);
     return;
   }
-  job j = {body, ctx, total, c, total > INT64_MAX / c};
+  job j = {body, ctx, total, c, t, total > INT64_MAX / c};
 
   pthread_mutex_lock(&p->drive);
-  uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
-  atomic_store_explicit(&p->generation, g + 1, memory_order_relaxed);
-  atomic_thread_fence(memory_order_release);
   p->job = j;
-  atomic_store_explicit(&p->active, t, memory_order_relaxed);
   atomic_store_explicit(&p->next, 0, memory_order_relaxed);
-  atomic_store_explicit(&p->pending, (uint64_t)(t - 1), memory_order_relaxed);
-  atomic_store(&p->generation, g + 2);
+  atomic_store_explicit(&p->inside, 0, memory_order_release);
+  uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
+  atomic_store(&p->generation, ((g >> 32) + 1) << 32 | (uint32_t)t);
   if (participant_parked(p, t)) {
     pthread_mutex_lock(&p->mtx);
     pthread_cond_broadcast(&p->wake);
@@ -541,11 +553,12 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
   claim(p, &j, 0);
   in_body = 0;
 
-  if (atomic_load(&p->pending) != 0 &&
-      spin(&p->pending, 0, REACH, now_ns() + spin_ns) != 0) {
+  if (atomic_fetch_or(&p->inside, closed) != 0 &&
+      spin(&p->inside, closed, REACH, now_ns() + spin_ns) != closed) {
     pthread_mutex_lock(&p->mtx);
     atomic_store(&p->waiting, 1);
-    while (atomic_load(&p->pending) != 0) pthread_cond_wait(&p->done, &p->mtx);
+    while (atomic_load(&p->inside) != closed)
+      pthread_cond_wait(&p->done, &p->mtx);
     atomic_store(&p->waiting, 0);
     pthread_mutex_unlock(&p->mtx);
   }
