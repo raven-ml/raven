@@ -164,9 +164,25 @@ module Wcs = struct
   (* The FITS limit on [m] in [PVi_m]. *)
   let pv_terms = 100
 
-  (* [stated_pv h sfx i] is each [m] with [PVi_m] in [h], ascending. *)
+  (* [stated_pv h sfx i] is each [m] with [PVi_m] in [h], ascending: one
+     pass over the header's keys. *)
   let stated_pv h sfx i =
-    List.filter (fun m -> present h (pv_key i m sfx)) (List.init pv_terms Fun.id)
+    let prefix = strf "PV%d_" i in
+    let np = String.length prefix and ns = String.length sfx in
+    Header.records h
+    |> List.filter_map (fun r ->
+        let key =
+          if String.length r >= 8 then String.trim (String.sub r 0 8) else ""
+        in
+        let n = String.length key in
+        if
+          n > np + ns
+          && String.sub key 0 np = prefix
+          && String.sub key (n - ns) ns = sfx
+        then int_of_string_opt (String.sub key np (n - np - ns))
+        else None)
+    |> List.filter (fun m -> m >= 0 && m < pv_terms && present h (pv_key i m sfx))
+    |> List.sort_uniq Int.compare
 
   (* How the header's PV terms read: the projection's parameters with the
      native reference point, or TPV's terms. *)
