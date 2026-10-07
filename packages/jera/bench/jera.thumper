@@ -22,6 +22,7 @@
 # forced: blessed system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad under load 23.1 on 10 cores
 # forced: blessed minimize-bracket-1k/eager minimize-bracket-1k/compiled system-newton-bratu-64/eager system-newton-bratu-64/compiled system-newton-bratu-64/grad system-broyden-16/eager system-broyden-16/compiled system-broyden-16/grad system-anderson-tanh-64/eager system-anderson-tanh-64/compiled system-anderson-tanh-64/grad system-lanes-inverse-10k/eager system-lanes-inverse-10k/compiled system-lanes-inverse-10k/grad minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-rosenbrock-64/compiled minimize-lbfgs-rosenbrock-64/grad minimize-lbfgs-nnls-200/eager minimize-lbfgs-nnls-200/compiled minimize-bfgs-convex-16/eager minimize-bfgs-convex-16/compiled minimize-bfgs-convex-16/grad minimize-newton-convex-16/eager minimize-newton-convex-16/compiled minimize-newton-convex-16/grad minimize-lm-exponential-200/eager minimize-lm-exponential-200/compiled minimize-lm-exponential-200/grad minimize-nelder-mead-rosenbrock-4/eager minimize-nelder-mead-rosenbrock-4/compiled under load 21.6 on 10 cores
 # forced: blessed minimize-lm-exponential-200/eager minimize-lm-exponential-200/compiled minimize-lm-exponential-200/grad under load 19.8 on 10 cores
+# forced: blessed minimize-bracket-1k/eager minimize-bracket-1k/compiled minimize-lbfgs-rosenbrock-64/eager minimize-lbfgs-rosenbrock-64/compiled minimize-lbfgs-rosenbrock-64/grad minimize-lbfgs-nnls-200/eager minimize-lbfgs-nnls-200/compiled minimize-bfgs-convex-16/eager minimize-bfgs-convex-16/compiled minimize-bfgs-convex-16/grad minimize-newton-convex-16/eager minimize-newton-convex-16/compiled minimize-newton-convex-16/grad minimize-lm-exponential-200/eager minimize-lm-exponential-200/compiled minimize-lm-exponential-200/grad minimize-nelder-mead-rosenbrock-4/eager minimize-nelder-mead-rosenbrock-4/compiled under load 10.8 on 10 cores
 
 grid-cubic-16x16-eval-1k/compiled	alloc_words	exact	8356
 grid-cubic-16x16-eval-1k/compiled	wall_time	batch=64	n=20	1.087e-04	1.079e-04 1.081e-04 1.081e-04 1.082e-04 1.082e-04 1.083e-04 1.083e-04 1.085e-04 1.085e-04 1.087e-04 1.087e-04 1.088e-04 1.090e-04 1.486e-04 1.765e-04 1.767e-04 2.295e-04 2.699e-04 3.136e-04 4.707e-04
@@ -51,42 +52,42 @@ linear-gmres-convection-256/eager	alloc_words	exact	3487369
 linear-gmres-convection-256/eager	wall_time	batch=1	n=20	2.531e-02	2.414e-02 2.446e-02 2.448e-02 2.465e-02 2.471e-02 2.507e-02 2.516e-02 2.518e-02 2.519e-02 2.531e-02 2.531e-02 2.533e-02 2.537e-02 2.562e-02 2.568e-02 2.573e-02 2.574e-02 2.610e-02 2.616e-02 2.692e-02
 linear-gmres-convection-256/grad	alloc_words	exact	3179
 linear-gmres-convection-256/grad	wall_time	batch=1	n=20	1.115e-02	1.109e-02 1.109e-02 1.110e-02 1.112e-02 1.113e-02 1.114e-02 1.114e-02 1.114e-02 1.114e-02 1.115e-02 1.116e-02 1.116e-02 1.116e-02 1.117e-02 1.119e-02 1.121e-02 1.122e-02 1.124e-02 1.127e-02 1.159e-02
-minimize-bfgs-convex-16/compiled	alloc_words	exact	6529
-minimize-bfgs-convex-16/compiled	wall_time	batch=64	n=20	1.325e-04	1.308e-04 1.311e-04 1.312e-04 1.314e-04 1.315e-04 1.319e-04 1.321e-04 1.322e-04 1.322e-04 1.323e-04 1.328e-04 1.332e-04 1.333e-04 1.338e-04 1.339e-04 1.344e-04 1.350e-04 1.357e-04 1.360e-04 1.365e-04
-minimize-bfgs-convex-16/eager	alloc_words	exact	390491
-minimize-bfgs-convex-16/eager	wall_time	batch=8	n=20	1.230e-03	1.200e-03 1.208e-03 1.209e-03 1.209e-03 1.213e-03 1.216e-03 1.217e-03 1.221e-03 1.222e-03 1.229e-03 1.230e-03 1.231e-03 1.231e-03 1.243e-03 1.245e-03 1.249e-03 1.254e-03 1.263e-03 1.288e-03 1.289e-03
+minimize-bfgs-convex-16/compiled	alloc_words	exact	6625
+minimize-bfgs-convex-16/compiled	wall_time	batch=64	n=20	1.258e-04	1.242e-04 1.247e-04 1.248e-04 1.249e-04 1.251e-04 1.252e-04 1.252e-04 1.253e-04 1.254e-04 1.257e-04 1.259e-04 1.261e-04 1.262e-04 1.278e-04 1.280e-04 1.283e-04 1.297e-04 1.321e-04 1.322e-04 1.363e-04
+minimize-bfgs-convex-16/eager	alloc_words	exact	396338
+minimize-bfgs-convex-16/eager	wall_time	batch=8	n=20	1.165e-03	1.134e-03 1.145e-03 1.146e-03 1.148e-03 1.148e-03 1.155e-03 1.159e-03 1.160e-03 1.162e-03 1.162e-03 1.167e-03 1.167e-03 1.169e-03 1.171e-03 1.171e-03 1.172e-03 1.174e-03 1.177e-03 1.179e-03 1.188e-03
 minimize-bfgs-convex-16/grad	alloc_words	exact	6415
-minimize-bfgs-convex-16/grad	wall_time	batch=64	n=20	1.461e-04	1.444e-04 1.446e-04 1.447e-04 1.448e-04 1.448e-04 1.448e-04 1.449e-04 1.449e-04 1.451e-04 1.460e-04 1.462e-04 1.462e-04 1.464e-04 1.468e-04 1.470e-04 1.476e-04 1.477e-04 1.487e-04 1.490e-04 1.501e-04
+minimize-bfgs-convex-16/grad	wall_time	batch=32	n=20	1.430e-04	1.377e-04 1.389e-04 1.391e-04 1.392e-04 1.401e-04 1.406e-04 1.415e-04 1.422e-04 1.426e-04 1.430e-04 1.430e-04 1.434e-04 1.436e-04 1.440e-04 1.445e-04 1.445e-04 1.446e-04 1.502e-04 1.548e-04 1.586e-04
 minimize-bracket-1k/compiled	alloc_words	exact	2412
-minimize-bracket-1k/compiled	wall_time	batch=32	n=20	2.726e-04	2.629e-04 2.650e-04 2.653e-04 2.657e-04 2.658e-04 2.668e-04 2.680e-04 2.689e-04 2.704e-04 2.715e-04 2.737e-04 2.742e-04 2.762e-04 2.800e-04 2.812e-04 2.825e-04 2.826e-04 2.866e-04 2.880e-04 2.906e-04
+minimize-bracket-1k/compiled	wall_time	batch=32	n=20	2.570e-04	2.565e-04 2.565e-04 2.565e-04 2.565e-04 2.566e-04 2.566e-04 2.567e-04 2.568e-04 2.569e-04 2.569e-04 2.572e-04 2.572e-04 2.574e-04 2.575e-04 2.575e-04 2.575e-04 2.576e-04 2.577e-04 2.582e-04 2.589e-04
 minimize-bracket-1k/eager	alloc_words	exact	217687
-minimize-bracket-1k/eager	wall_time	batch=4	n=20	1.690e-03	1.561e-03 1.570e-03 1.604e-03 1.607e-03 1.612e-03 1.617e-03 1.632e-03 1.633e-03 1.677e-03 1.687e-03 1.692e-03 1.697e-03 1.701e-03 1.710e-03 1.728e-03 1.731e-03 1.761e-03 1.783e-03 1.796e-03 1.853e-03
-minimize-lbfgs-nnls-200/compiled	alloc_words	exact	291880
-minimize-lbfgs-nnls-200/compiled	wall_time	batch=1	n=20	1.475e-01	1.455e-01 1.469e-01 1.470e-01 1.470e-01 1.471e-01 1.472e-01 1.473e-01 1.475e-01 1.475e-01 1.475e-01 1.475e-01 1.476e-01 1.477e-01 1.480e-01 1.481e-01 1.489e-01 1.490e-01 1.506e-01 1.507e-01 1.510e-01
-minimize-lbfgs-nnls-200/eager	alloc_words	exact	83050889
-minimize-lbfgs-nnls-200/eager	wall_time	batch=1	n=20	3.720e-01	3.597e-01 3.603e-01 3.615e-01 3.643e-01 3.656e-01 3.658e-01 3.690e-01 3.693e-01 3.698e-01 3.709e-01 3.731e-01 3.738e-01 3.759e-01 3.926e-01 4.767e-01 5.176e-01 5.370e-01 5.459e-01 5.562e-01 5.931e-01
-minimize-lbfgs-rosenbrock-64/compiled	alloc_words	exact	157848
-minimize-lbfgs-rosenbrock-64/compiled	wall_time	batch=2	n=20	4.234e-03	4.113e-03 4.168e-03 4.196e-03 4.197e-03 4.204e-03 4.207e-03 4.210e-03 4.210e-03 4.216e-03 4.231e-03 4.236e-03 4.251e-03 4.256e-03 4.258e-03 4.266e-03 4.270e-03 4.278e-03 4.282e-03 4.286e-03 4.324e-03
-minimize-lbfgs-rosenbrock-64/eager	alloc_words	exact	26276716
-minimize-lbfgs-rosenbrock-64/eager	wall_time	batch=1	n=20	8.237e-02	7.863e-02 7.961e-02 7.969e-02 7.982e-02 8.080e-02 8.115e-02 8.139e-02 8.163e-02 8.167e-02 8.192e-02 8.282e-02 8.296e-02 8.309e-02 8.331e-02 8.343e-02 8.400e-02 8.513e-02 8.558e-02 9.014e-02 1.174e-01
+minimize-bracket-1k/eager	wall_time	batch=4	n=20	1.610e-03	1.534e-03 1.544e-03 1.547e-03 1.556e-03 1.567e-03 1.577e-03 1.588e-03 1.598e-03 1.603e-03 1.606e-03 1.613e-03 1.613e-03 1.616e-03 1.617e-03 1.623e-03 1.631e-03 1.633e-03 1.635e-03 1.691e-03 1.764e-03
+minimize-lbfgs-nnls-200/compiled	alloc_words	exact	32229
+minimize-lbfgs-nnls-200/compiled	wall_time	batch=1	n=20	2.450e-02	2.379e-02 2.400e-02 2.401e-02 2.405e-02 2.421e-02 2.423e-02 2.440e-02 2.440e-02 2.440e-02 2.449e-02 2.450e-02 2.453e-02 2.482e-02 2.487e-02 2.501e-02 2.512e-02 2.514e-02 2.515e-02 2.523e-02 2.559e-02
+minimize-lbfgs-nnls-200/eager	alloc_words	exact	4708445
+minimize-lbfgs-nnls-200/eager	wall_time	batch=1	n=20	2.520e-02	2.470e-02 2.488e-02 2.489e-02 2.491e-02 2.492e-02 2.499e-02 2.505e-02 2.506e-02 2.511e-02 2.512e-02 2.528e-02 2.528e-02 2.529e-02 2.540e-02 2.564e-02 2.654e-02 2.668e-02 2.676e-02 2.705e-02 2.712e-02
+minimize-lbfgs-rosenbrock-64/compiled	alloc_words	exact	161988
+minimize-lbfgs-rosenbrock-64/compiled	wall_time	batch=2	n=20	4.046e-03	4.012e-03 4.022e-03 4.025e-03 4.025e-03 4.026e-03 4.029e-03 4.030e-03 4.031e-03 4.035e-03 4.044e-03 4.047e-03 4.065e-03 4.069e-03 4.073e-03 4.116e-03 4.118e-03 4.203e-03 4.216e-03 4.231e-03 4.440e-03
+minimize-lbfgs-rosenbrock-64/eager	alloc_words	exact	26824458
+minimize-lbfgs-rosenbrock-64/eager	wall_time	batch=1	n=20	7.751e-02	7.632e-02 7.636e-02 7.642e-02 7.644e-02 7.651e-02 7.668e-02 7.702e-02 7.715e-02 7.722e-02 7.737e-02 7.765e-02 7.766e-02 7.777e-02 7.803e-02 7.818e-02 7.838e-02 7.845e-02 7.860e-02 7.883e-02 7.906e-02
 minimize-lbfgs-rosenbrock-64/grad	alloc_words	exact	153684
-minimize-lbfgs-rosenbrock-64/grad	wall_time	batch=2	n=20	4.700e-03	4.582e-03 4.601e-03 4.625e-03 4.654e-03 4.664e-03 4.666e-03 4.669e-03 4.679e-03 4.684e-03 4.691e-03 4.708e-03 4.721e-03 4.743e-03 4.746e-03 4.749e-03 4.761e-03 4.853e-03 4.888e-03 4.889e-03 4.970e-03
+minimize-lbfgs-rosenbrock-64/grad	wall_time	batch=2	n=20	4.521e-03	4.484e-03 4.497e-03 4.497e-03 4.501e-03 4.501e-03 4.504e-03 4.508e-03 4.509e-03 4.509e-03 4.517e-03 4.524e-03 4.526e-03 4.610e-03 4.638e-03 4.649e-03 4.674e-03 4.730e-03 4.758e-03 4.798e-03 4.799e-03
 minimize-lm-exponential-200/compiled	alloc_words	exact	7253
-minimize-lm-exponential-200/compiled	wall_time	batch=32	n=20	1.845e-04	1.832e-04 1.833e-04 1.834e-04 1.839e-04 1.839e-04 1.840e-04 1.843e-04 1.843e-04 1.845e-04 1.845e-04 1.845e-04 1.846e-04 1.846e-04 1.850e-04 1.852e-04 1.857e-04 1.860e-04 1.860e-04 1.870e-04 1.880e-04
+minimize-lm-exponential-200/compiled	wall_time	batch=32	n=20	1.791e-04	1.785e-04 1.785e-04 1.786e-04 1.787e-04 1.787e-04 1.787e-04 1.788e-04 1.790e-04 1.790e-04 1.791e-04 1.792e-04 1.793e-04 1.793e-04 1.794e-04 1.794e-04 1.797e-04 1.799e-04 1.808e-04 1.809e-04 1.854e-04
 minimize-lm-exponential-200/eager	alloc_words	exact	314254
-minimize-lm-exponential-200/eager	wall_time	batch=8	n=20	1.110e-03	1.061e-03 1.083e-03 1.093e-03 1.095e-03 1.096e-03 1.098e-03 1.102e-03 1.103e-03 1.107e-03 1.109e-03 1.111e-03 1.112e-03 1.118e-03 1.119e-03 1.124e-03 1.131e-03 1.131e-03 1.133e-03 1.135e-03 1.150e-03
+minimize-lm-exponential-200/eager	wall_time	batch=8	n=20	1.050e-03	1.030e-03 1.032e-03 1.034e-03 1.036e-03 1.042e-03 1.043e-03 1.044e-03 1.045e-03 1.049e-03 1.049e-03 1.050e-03 1.058e-03 1.059e-03 1.060e-03 1.062e-03 1.067e-03 1.069e-03 1.074e-03 1.078e-03 1.112e-03
 minimize-lm-exponential-200/grad	alloc_words	exact	7145
-minimize-lm-exponential-200/grad	wall_time	batch=32	n=20	1.933e-04	1.914e-04 1.915e-04 1.920e-04 1.924e-04 1.926e-04 1.927e-04 1.928e-04 1.929e-04 1.931e-04 1.932e-04 1.933e-04 1.934e-04 1.934e-04 1.934e-04 1.935e-04 1.937e-04 1.940e-04 1.942e-04 1.950e-04 1.953e-04
+minimize-lm-exponential-200/grad	wall_time	batch=32	n=20	1.878e-04	1.871e-04 1.872e-04 1.873e-04 1.874e-04 1.874e-04 1.874e-04 1.875e-04 1.875e-04 1.877e-04 1.878e-04 1.879e-04 1.880e-04 1.881e-04 1.882e-04 1.887e-04 1.887e-04 1.898e-04 1.903e-04 1.909e-04 1.916e-04
 minimize-nelder-mead-rosenbrock-4/compiled	alloc_words	exact	372129
-minimize-nelder-mead-rosenbrock-4/compiled	wall_time	batch=4	n=20	2.494e-03	2.425e-03 2.446e-03 2.469e-03 2.471e-03 2.471e-03 2.472e-03 2.474e-03 2.474e-03 2.492e-03 2.492e-03 2.495e-03 2.496e-03 2.496e-03 2.499e-03 2.504e-03 2.508e-03 2.508e-03 2.512e-03 2.514e-03 2.521e-03
+minimize-nelder-mead-rosenbrock-4/compiled	wall_time	batch=4	n=20	2.403e-03	2.391e-03 2.392e-03 2.393e-03 2.393e-03 2.396e-03 2.396e-03 2.398e-03 2.399e-03 2.399e-03 2.402e-03 2.404e-03 2.408e-03 2.410e-03 2.411e-03 2.411e-03 2.412e-03 2.431e-03 2.435e-03 2.436e-03 2.476e-03
 minimize-nelder-mead-rosenbrock-4/eager	alloc_words	exact	9601361
-minimize-nelder-mead-rosenbrock-4/eager	wall_time	batch=1	n=20	3.053e-02	3.015e-02 3.023e-02 3.034e-02 3.034e-02 3.038e-02 3.044e-02 3.045e-02 3.051e-02 3.052e-02 3.053e-02 3.053e-02 3.055e-02 3.060e-02 3.064e-02 3.064e-02 3.068e-02 3.078e-02 3.081e-02 3.089e-02 3.147e-02
-minimize-newton-convex-16/compiled	alloc_words	exact	3835
-minimize-newton-convex-16/compiled	wall_time	batch=64	n=20	7.703e-05	7.338e-05 7.555e-05 7.593e-05 7.596e-05 7.607e-05 7.659e-05 7.665e-05 7.668e-05 7.675e-05 7.695e-05 7.710e-05 7.734e-05 7.737e-05 7.767e-05 7.768e-05 7.793e-05 7.804e-05 7.860e-05 7.903e-05 8.006e-05
-minimize-newton-convex-16/eager	alloc_words	exact	183904
-minimize-newton-convex-16/eager	wall_time	batch=8	n=20	6.424e-04	6.245e-04 6.273e-04 6.296e-04 6.300e-04 6.312e-04 6.338e-04 6.347e-04 6.371e-04 6.384e-04 6.390e-04 6.457e-04 6.457e-04 6.480e-04 6.488e-04 6.537e-04 6.560e-04 6.560e-04 6.596e-04 6.676e-04 6.789e-04
+minimize-nelder-mead-rosenbrock-4/eager	wall_time	batch=1	n=20	2.924e-02	2.894e-02 2.895e-02 2.900e-02 2.903e-02 2.904e-02 2.907e-02 2.912e-02 2.913e-02 2.920e-02 2.923e-02 2.925e-02 2.926e-02 2.927e-02 2.928e-02 2.929e-02 2.934e-02 2.939e-02 2.939e-02 2.957e-02 2.972e-02
+minimize-newton-convex-16/compiled	alloc_words	exact	3859
+minimize-newton-convex-16/compiled	wall_time	batch=128	n=20	7.516e-05	7.375e-05 7.383e-05 7.393e-05 7.411e-05 7.413e-05 7.439e-05 7.472e-05 7.505e-05 7.512e-05 7.514e-05 7.517e-05 7.534e-05 7.534e-05 7.554e-05 7.565e-05 7.605e-05 7.664e-05 7.689e-05 7.714e-05 7.826e-05
+minimize-newton-convex-16/eager	alloc_words	exact	185141
+minimize-newton-convex-16/eager	wall_time	batch=16	n=20	6.242e-04	5.991e-04 6.021e-04 6.049e-04 6.057e-04 6.093e-04 6.155e-04 6.157e-04 6.178e-04 6.192e-04 6.228e-04 6.256e-04 6.262e-04 6.267e-04 6.272e-04 6.293e-04 6.305e-04 6.318e-04 6.336e-04 6.343e-04 6.574e-04
 minimize-newton-convex-16/grad	alloc_words	exact	3793
-minimize-newton-convex-16/grad	wall_time	batch=64	n=20	9.148e-05	8.861e-05 8.922e-05 8.936e-05 8.945e-05 8.947e-05 8.951e-05 8.961e-05 9.004e-05 9.090e-05 9.118e-05 9.178e-05 9.202e-05 9.273e-05 9.297e-05 9.298e-05 9.304e-05 9.388e-05 9.742e-05 1.002e-04 1.072e-04
+minimize-newton-convex-16/grad	wall_time	batch=64	n=20	8.667e-05	8.620e-05 8.635e-05 8.653e-05 8.653e-05 8.654e-05 8.658e-05 8.658e-05 8.660e-05 8.663e-05 8.665e-05 8.669e-05 8.670e-05 8.670e-05 8.674e-05 8.680e-05 8.688e-05 8.691e-05 8.691e-05 8.695e-05 8.705e-05
 ode-delay-tsit5-100-logistic/compiled	alloc_words	exact	127164
 ode-delay-tsit5-100-logistic/compiled	wall_time	batch=8	n=20	8.644e-04	8.428e-04 8.439e-04 8.445e-04 8.448e-04 8.500e-04 8.507e-04 8.539e-04 8.588e-04 8.618e-04 8.641e-04 8.646e-04 8.713e-04 8.730e-04 8.866e-04 8.909e-04 8.999e-04 9.040e-04 9.042e-04 9.112e-04 9.168e-04
 ode-delay-tsit5-100-logistic/eager	alloc_words	exact	3620928

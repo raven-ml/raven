@@ -692,21 +692,27 @@ module Minimize : sig
       structure whose float tensors bound each coordinate, infinite for no
       bound.
 
-      {b Box.} Every gradient method takes Bertsekas's (1982) projected step:
-      the coordinates within [ε] of a bound whose gradient pushes out of the box
-      are held, [ε] the norm of [x − P (x − ∇f x)] with [P] the projection on
-      the box; the method's scaling acts on the others and [−∇f] on the held
-      ones, and the search backtracks by halving along the projection arc
-      [P (x + α d)] to the sufficient decrease
-      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)]. A held coordinate is freed a few
-      at a time as the set of held ones changes, so a problem where many bounds
-      change takes more iterations than one whose bounds settle.
-      {!levenberg_marquardt} projects its steps and {!nelder_mead} clips its
-      vertices. The undamped step is the projected one, [P (x + δ) − x]. The
-      answer is stated as the zero of [x − P (x − ∇f x)], so its derivative is
-      zero in a coordinate held at a constant bound and follows a bound that
-      moves; that system is not symmetric, so its [linear] must not be
-      {!Linear.cg}. A lane whose [lo] exceeds its [hi] somewhere ends [Stalled].
+      {b Box.} {!bfgs} and {!lbfgs} take the generalised Cauchy point and
+      subspace step of L-BFGS-B (Byrd, Lu, Nocedal and Zhu, 1995): the projected
+      gradient path [P (x − t ∇f)], [P] the projection on the box, is walked
+      segment by segment to the first minimum of the method's quadratic model,
+      every coordinate that reached its bound held there; the model is then
+      minimised over the free coordinates, truncated to the box, and the step to
+      that point is searched to the strong Wolfe conditions within it. Many
+      bounds change in one step, as they do on the path. {!lbfgs}'s model is its
+      compact representation, [O(n m)] numbers per step; {!bfgs}'s is [H⁻¹],
+      [n²]. {!newton} takes Bertsekas's (1982) projected step: the coordinates
+      within [ε] of a bound whose gradient pushes out of the box are held, [ε]
+      the norm of [x − P (x − ∇f x)], its Hessian solve acts on the others and
+      [−∇f] on the held ones, and the search backtracks by halving along the
+      projection arc [P (x + α d)] to the sufficient decrease
+      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)]. {!levenberg_marquardt} projects
+      its steps and {!nelder_mead} clips its vertices. The undamped step is the
+      projected one, [P (x + δ) − x]. The answer is stated as the zero of
+      [x − P (x − ∇f x)], so its derivative is zero in a coordinate held at a
+      constant bound and follows a bound that moves; that system is not
+      symmetric, so its [linear] must not be {!Linear.cg}. A lane whose [lo]
+      exceeds its [hi] somewhere ends [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,

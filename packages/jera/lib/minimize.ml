@@ -262,21 +262,52 @@ let name : type x f. (x, f) t -> string = function
 type 'd vector = (float, 'd) Nx.t
 type 'd point = { x : 'd vector; value : 'd vector; g : 'd vector }
 
+(* A quasi-Newton method's model of the Hessian, [B], for a box's Cauchy point
+   and subspace step: [apply v] is [B v]; [segments path] the model's slope [f'
+   = dᵀ g + dᵀ B z] and curvature [f'' = dᵀ B d] along each segment of the path,
+   from its start [x + z] in its direction [d]; and [reduced ~free r] the [d] of
+   the free coordinates' system [B d = −r], zero on the others. *)
+type 'd model = {
+  apply : 'd vector -> 'd vector;
+  segments : 'd path -> 'd vector * 'd vector;
+  reduced : free:'d vector -> 'd vector -> 'd vector;
+}
+
+(* The projected gradient path [P (x − t g)] at [x]: coordinate [i] reaches its
+   bound at [t.(i)], [d0 = −g] where [t > 0], its order sorts [t], and segment
+   [j] starts at [starts.(j)], [0] then the sorted [t]. *)
+and 'd path = {
+  g : 'd vector;
+  d0 : 'd vector;
+  t : 'd vector;
+  order : (int64, Nx.int64_elt) Nx.t;
+  starts : 'd vector;
+}
+
 type ('d, 'm) descent = {
   memory : 'm Nx.Ptree.t;
   init : 'm;
-  direction :
-    'd Search.state ->
-    'm ->
-    free:'d vector option ->
-    'd vector * (bool, Nx.bool_elt) Nx.t;
+  direction : 'd Search.state -> 'm -> 'd vector * (bool, Nx.bool_elt) Nx.t;
   search :
     running:(bool, Nx.bool_elt) Nx.t ->
+    longest:'d vector ->
     'd point ->
     'd vector ->
     'd point * (bool, Nx.bool_elt) Nx.t * (int32, Nx.int32_elt) Nx.t;
   update : 'd vector -> 'd vector -> 'm -> 'm;
+  boxed : ('d, 'm) boxed;
 }
+
+(* How a method steps in a box: the quasi-Newton methods by the generalised
+   Cauchy point and subspace step of their model, Newton by Bertsekas's
+   projected step, its direction restricted to the free coordinates. *)
+and ('d, 'm) boxed =
+  | Cauchy of ('m -> 'd model)
+  | Projected of
+      ('d Search.state ->
+      'm ->
+      free:'d vector ->
+      'd vector * (bool, Nx.bool_elt) Nx.t)
 
 type 'd method_ = Method : ('d, 'm) descent -> 'd method_
 
@@ -289,23 +320,16 @@ let unpack (x, (value, g)) = { x; value; g }
    curvature [yᵀ s], Newton so that its full step is taken near a minimum, where
    the conditions' approximate form accepts a decrease below [f]'s rounding by
    its slope. *)
-let wolfe dtype ~trials evaluate ~running (p : _ point) delta =
+let wolfe dtype ~trials evaluate ~running ~longest (p : _ point) delta =
   let trial alpha =
     let q = evaluate (Nx.add p.x (Search.along alpha delta)) in
     (pack q, q.value, Search.dot q.g delta)
   in
   let q, found, tries =
-    Search.wolfe (point_ptree ()) dtype ~trials ~running ~phi0:p.value
+    Search.wolfe (point_ptree ()) dtype ~trials ~running ~longest ~phi0:p.value
       ~slope0:(Search.dot p.g delta) trial (pack p)
   in
   (unpack q, found, tries)
-
-(* [free]'s coordinates of [v], all of them without a box. *)
-let restrict free v = match free with None -> v | Some f -> Nx.mul f v
-
-(* [d] with [−g] on the coordinates [free] holds. *)
-let held free g d =
-  match free with None -> d | Some f -> Nx.sub d (Nx.mul (Nx.rsub_s 1. f) g)
 
 let outer u v = Nx.mul (Nx.reshape [| -1; 1 |] u) (Nx.reshape [| 1; -1 |] v)
 
@@ -315,9 +339,38 @@ let outer u v = Nx.mul (Nx.reshape [| -1; 1 |] u) (Nx.reshape [| 1; -1 |] v)
    curvature. *)
 let bfgs_method dtype n ~trials evaluate =
   let eye = Nx.eye dtype n in
-  let direction (s : _ Search.state) (h, _) ~free =
-    ( held free s.fx (Nx.neg (restrict free (Nx.matmul h (restrict free s.fx)))),
-      Nx.scalar Nx.bool false )
+  let direction (s : _ Search.state) (h, _) =
+    (Nx.neg (Nx.matmul h s.fx), Nx.scalar Nx.bool false)
+  in
+  (* [B = H⁻¹], factored once per step; its segments are computed from every
+     segment's direction and start as rows, [n²] numbers each, as [B]. *)
+  let model (h, _) =
+    let b = Nx.inv h in
+    let segments p =
+      let column = Nx.reshape [| n + 1; 1 |] p.starts
+      and row = Nx.reshape [| 1; n |] p.t
+      and d0 = Nx.reshape [| 1; n |] p.d0 in
+      let live = Nx.reshape [| n + 1; 1 |] (Nx.isfinite p.starts) in
+      let dirs = Nx.mul (Nx.cast dtype (Nx.greater row column)) d0 in
+      let reached =
+        Nx.where live
+          (Nx.mul (Nx.minimum row column) d0)
+          (Nx.zeros dtype [| n + 1; n |])
+      in
+      let rowdot a c = Nx.sum ~axes:[ 1 ] (Nx.mul a c) in
+      ( Nx.add (Nx.matmul dirs p.g) (rowdot dirs (Nx.matmul reached b)),
+        rowdot dirs (Nx.matmul dirs b) )
+    in
+    {
+      apply = (fun v -> Nx.matmul b v);
+      segments;
+      reduced =
+        (fun ~free r ->
+          let a =
+            Nx.add (Nx.mul (outer free free) b) (Nx.diag (Nx.rsub_s 1. free))
+          in
+          Nx.mul free (Nx.solve a (Nx.neg r)));
+    }
   in
   let update step y (h, first) =
     let ys = Search.dot y step in
@@ -341,32 +394,33 @@ let bfgs_method dtype n ~trials evaluate =
       direction;
       search = wolfe dtype ~trials evaluate;
       update;
+      boxed = Cauchy model;
     }
 
-(* L-BFGS keeps the last [m] pairs, newest first, zero in an empty slot. The
-   two-loop recursion (Nocedal, 1980) runs on the pairs restricted to the free
-   coordinates, each with [ρ = 1 / yᵀs] there, a pair of non-positive curvature
-   entering neither loop. The initial inverse Hessian is [yᵀs / yᵀy] of the
-   newest pair. *)
+(* L-BFGS keeps the last [m] pairs of positive curvature, newest first, zero in
+   an empty slot. The direction is the two-loop recursion (Nocedal, 1980) over
+   them, an empty slot entering neither loop, with the initial inverse Hessian
+   [yᵀs / yᵀy] of the newest pair. In a box its model is the compact
+   representation [B = θ I − W M Wᵀ] of Byrd, Nocedal and Schnabel (1994), [W =
+   [Y, θ S]], [M = [[−D, Lᵀ], [L, θ SᵀS]]⁻¹], [D] the pairs' curvatures and [L]
+   their [sᵢᵀ yⱼ] of [i] newer than [j], with [θ] the newest pair's [yᵀy / yᵀs];
+   its reduced systems are solved by Sherman, Morrison and Woodbury's formula on
+   the [2m × 2m] matrix. *)
 let lbfgs_method dtype n m ~trials evaluate =
-  let direction (s : _ Search.state) (ss, ys) ~free =
+  let direction (s : _ Search.state) (ss, ys) =
     let pair i =
-      let s = restrict free (Nx.get [ i ] ss)
-      and y = restrict free (Nx.get [ i ] ys) in
+      let s = Nx.get [ i ] ss and y = Nx.get [ i ] ys in
       let curvature = Search.dot y s in
+      let curved = Nx.greater_s curvature 0. in
       ( s,
         y,
-        Nx.where
-          (Nx.greater_s curvature 0.)
-          (Nx.recip
-             (Nx.where
-                (Nx.greater_s curvature 0.)
-                curvature (Nx.ones_like curvature)))
+        Nx.where curved
+          (Nx.recip (Nx.where curved curvature (Nx.ones_like curvature)))
           (Nx.zeros_like curvature) )
     in
     let pairs = Array.init m pair in
     let alphas = Array.make m (Nx.scalar dtype 0.) in
-    let q = ref (restrict free s.fx) in
+    let q = ref s.fx in
     for i = 0 to m - 1 do
       let s, y, rho = pairs.(i) in
       alphas.(i) <- Nx.mul rho (Search.dot s !q);
@@ -384,13 +438,110 @@ let lbfgs_method dtype n m ~trials evaluate =
       let beta = Nx.mul rho (Search.dot y !r) in
       r := Nx.add !r (Nx.mul (Nx.sub alphas.(i) beta) s)
     done;
-    (held free s.fx (Nx.neg !r), Nx.scalar Nx.bool false)
+    (Nx.neg !r, Nx.scalar Nx.bool false)
+  in
+  let model (ss, ys) =
+    let sy = Nx.matmul ss (Nx.transpose ys) in
+    let curvature = Nx.diagonal sy in
+    let valid = Nx.greater_s curvature 0. in
+    let c0 = Nx.get [ 0 ] curvature in
+    let theta =
+      Nx.where (Nx.get [ 0 ] valid)
+        (Nx.div
+           (Search.dot (Nx.get [ 0 ] ys) (Nx.get [ 0 ] ys))
+           (Nx.where (Nx.get [ 0 ] valid) c0 (Nx.ones_like c0)))
+        (Nx.ones_like c0)
+    in
+    let both = Nx.concatenate ~axis:0 [ valid; valid ] in
+    let w =
+      Nx.mul
+        (Nx.reshape [| 2 * m; 1 |] (Nx.cast dtype both))
+        (Nx.concatenate ~axis:0 [ ys; Nx.mul theta ss ])
+    in
+    let index = Nx.arange Nx.int32 0 m 1 in
+    let newer =
+      Nx.cast dtype
+        (Nx.less (Nx.reshape [| m; 1 |] index) (Nx.reshape [| 1; m |] index))
+    in
+    let l = Nx.mul sy newer in
+    let k =
+      Nx.concatenate ~axis:0
+        [
+          Nx.concatenate ~axis:1 [ Nx.neg (Nx.diag curvature); Nx.transpose l ];
+          Nx.concatenate ~axis:1
+            [ l; Nx.mul theta (Nx.matmul ss (Nx.transpose ss)) ];
+        ]
+    in
+    let kept =
+      Nx.logical_and
+        (Nx.reshape [| 2 * m; 1 |] both)
+        (Nx.reshape [| 1; 2 * m |] both)
+    in
+    let k = Nx.where kept k (Nx.eye dtype (2 * m)) in
+    let mm = Nx.inv k in
+    (* Along the sorted breakpoints every quantity is a prefix sum in the [2m]
+       space of [W]: on segment [j], [p = Wᵀ d] and [c = Wᵀ z] with [z_i = min
+       (t_i, s_j) d_i], so [c = Σ_{k<j} t_k d_k w_k + s_j p], [dᵀz = s_j dᵀd],
+       and [f' = gᵀd + θ s_j dᵀd − pᵀ M c], [f'' = θ dᵀd − pᵀ M p]: [O(n m)]
+       numbers for the whole path. *)
+    let segments p =
+      let sorted v = Nx.take ~indices:p.order v in
+      let d = sorted p.d0 and g = sorted p.g and t = sorted p.t in
+      let rows = Nx.take ~axis:1 ~indices:p.order w in
+      let before v =
+        Nx.concatenate ~axis:0 [ Nx.zeros dtype [| 1 |]; Nx.cumsum ~axis:0 v ]
+      in
+      let before_rows v =
+        Nx.concatenate ~axis:1
+          [ Nx.zeros dtype [| 2 * m; 1 |]; Nx.cumsum ~axis:1 v ]
+      in
+      let finite_t = Nx.where (Nx.isfinite t) t (Nx.zeros_like t) in
+      let total v = Nx.sum v in
+      let dd = Nx.sub (total (Nx.square d)) (before (Nx.square d)) in
+      let gd = Nx.sub (total (Nx.mul g d)) (before (Nx.mul g d)) in
+      let pw = Nx.mul rows (Nx.reshape [| 1; n |] d) in
+      let ps = Nx.sub (Nx.sum ~axes:[ 1 ] ~keepdims:true pw) (before_rows pw) in
+      let starts =
+        Nx.where (Nx.isfinite p.starts) p.starts (Nx.zeros_like p.starts)
+      in
+      let cs =
+        Nx.add
+          (before_rows (Nx.mul pw (Nx.reshape [| 1; n |] finite_t)))
+          (Nx.mul ps (Nx.reshape [| 1; n + 1 |] starts))
+      in
+      let quad a c = Nx.sum ~axes:[ 0 ] (Nx.mul a (Nx.matmul mm c)) in
+      ( Nx.sub (Nx.add gd (Nx.mul (Nx.mul theta starts) dd)) (quad ps cs),
+        Nx.sub (Nx.mul theta dd) (quad ps ps) )
+    in
+    {
+      apply =
+        (fun v ->
+          Nx.sub (Nx.mul theta v)
+            (Nx.matmul (Nx.transpose w) (Nx.matmul mm (Nx.matmul w v))));
+      segments;
+      reduced =
+        (fun ~free r ->
+          let u = Nx.mul w (Nx.reshape [| 1; n |] free) in
+          let inner =
+            Nx.sub
+              (Nx.eye dtype (2 * m))
+              (Nx.div (Nx.matmul mm (Nx.matmul u (Nx.transpose u))) theta)
+          in
+          let v = Nx.solve inner (Nx.matmul mm (Nx.matmul u r)) in
+          Nx.neg
+            (Nx.add (Nx.div r theta)
+               (Nx.div (Nx.matmul (Nx.transpose u) v) (Nx.square theta))));
+    }
   in
   let push v memory =
     Nx.concatenate ~axis:0
       [ Nx.unsqueeze ~axes:[ 0 ] v; Nx.slice [ Nx.R (0, m - 1) ] memory ]
   in
-  let update step y (ss, ys) = (push step ss, push y ys) in
+  (* A pair of non-positive curvature is not kept. *)
+  let update step y (ss, ys) =
+    let keep = Nx.greater_s (Search.dot step y) 0. in
+    (Nx.where keep (push step ss) ss, Nx.where keep (push y ys) ys)
+  in
   Method
     {
       memory = Nx.Ptree.(pair tensor tensor);
@@ -398,14 +549,16 @@ let lbfgs_method dtype n m ~trials evaluate =
       direction;
       search = wolfe dtype ~trials evaluate;
       update;
+      boxed = Cauchy model;
     }
 
 (* Newton solves [H δ = −g] with [linear] on Hessian-vector products, on the
    free coordinates: the operator is [H] there and the identity elsewhere. *)
 let newton_method dtype ~trials evaluate ~solve =
-  let direction (s : _ Search.state) () ~free =
-    let u, failed = solve s.x ~free (Nx.neg (restrict free s.fx)) in
-    (held free s.fx u, failed)
+  let direction (s : _ Search.state) () = solve s.x ~free:None (Nx.neg s.fx) in
+  let restricted (s : _ Search.state) () ~free =
+    let u, failed = solve s.x ~free:(Some free) (Nx.neg (Nx.mul free s.fx)) in
+    (Nx.sub u (Nx.mul (Nx.rsub_s 1. free) s.fx), failed)
   in
   Method
     {
@@ -414,6 +567,7 @@ let newton_method dtype ~trials evaluate ~solve =
       direction;
       search = wolfe dtype ~trials evaluate;
       update = (fun _ _ () -> ());
+      boxed = Projected restricted;
     }
 
 (* Under a box every gradient method takes Bertsekas's (1982) projected step:
@@ -468,17 +622,89 @@ let free box (x : _ vector) g =
   in
   Nx.cast (Nx.dtype x) (Nx.logical_not active)
 
+(* The generalised Cauchy point and subspace step of Byrd, Lu, Nocedal and Zhu
+   (1995) for the model [B] at [x] with gradient [g] in [box]. The projected
+   gradient path [P (x − t g)] is piecewise linear: coordinate [i] reaches its
+   bound at [t_i], and on the segment starting at [s] the free coordinates are
+   those with [t_i > s], the point is [x + z] with [z_i = min (t_i, s) d_i], [d
+   = −g] there. The model's slope and curvature along each segment, [f' = dᵀ g +
+   dᵀ B z] and [f'' = dᵀ B d], are computed for every segment at once, and the
+   Cauchy point is at the first segment whose model stops decreasing inside it.
+   From there the subspace step minimises the model over the coordinates still
+   free, truncated to stay in the box. *)
+let cauchy model box x g =
+  let dtype = Nx.dtype x in
+  let inf = Nx.full_like x Float.infinity in
+  let safe = Nx.where (Nx.equal_s g 0.) (Nx.ones_like g) g in
+  let t =
+    Nx.where (Nx.less_s g 0.)
+      (Nx.div (Nx.sub x box.hi) safe)
+      (Nx.where (Nx.greater_s g 0.) (Nx.div (Nx.sub x box.lo) safe) inf)
+  in
+  let d0 = Nx.where (Nx.greater_s t 0.) (Nx.neg g) (Nx.zeros_like g) in
+  let sorted, order = Nx.sort t in
+  let starts = Nx.concatenate ~axis:0 [ Nx.zeros dtype [| 1 |]; sorted ]
+  and ends =
+    Nx.concatenate ~axis:0 [ sorted; Nx.full dtype [| 1 |] Float.infinity ]
+  in
+  let slope, curve = model.segments { g; d0; t; order; starts } in
+  let positive = Nx.greater_s curve 0. in
+  let inside =
+    Nx.where positive
+      (Nx.sub starts
+         (Nx.div slope (Nx.where positive curve (Nx.ones_like curve))))
+      (Nx.full_like curve Float.infinity)
+  in
+  let stops =
+    Nx.logical_and (Nx.isfinite starts)
+      (Nx.logical_or (Nx.greater_equal_s slope 0.) (Nx.less inside ends))
+  in
+  let j = Nx.reshape [| 1 |] (Nx.argmax (Nx.cast Nx.int32 stops)) in
+  let pick v = Nx.reshape [||] (Nx.take ~indices:j v) in
+  let tstar =
+    Nx.where (Nx.greater_equal_s (pick slope) 0.) (pick starts) (pick inside)
+  in
+  let xcp = project box (Nx.sub x (Nx.mul tstar g)) in
+  let free = Nx.cast dtype (Nx.greater t tstar) in
+  let r = Nx.mul free (Nx.add g (model.apply (Nx.sub xcp x))) in
+  let dhat = model.reduced ~free r in
+  let dsafe = Nx.where (Nx.equal_s dhat 0.) (Nx.ones_like dhat) dhat in
+  let room =
+    Nx.where (Nx.greater_s dhat 0.)
+      (Nx.div (Nx.sub box.hi xcp) dsafe)
+      (Nx.where (Nx.less_s dhat 0.) (Nx.div (Nx.sub box.lo xcp) dsafe) inf)
+  in
+  let alpha = Nx.minimum (Nx.scalar dtype 1.) (Nx.min room) in
+  Nx.sub (Nx.add xcp (Nx.mul alpha dhat)) x
+
 (* The search from [s]: the loop of iterations, each the method's undamped step
-   tested, then its search for the running lanes. *)
+   tested, then its search for the running lanes. In a box the step stays in it:
+   a Cauchy step searches only the segment to its subspace point, which the box
+   holds, a projected one its projection arc. *)
 let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
     value =
+  let unbounded = Nx.full_like value Float.infinity in
   let step (s : _ Search.state) (value, memory) =
-    let mask = Option.map (fun b -> free b s.x s.fx) box in
-    let d, failed = m.direction s memory ~free:mask in
-    let delta =
-      match box with
-      | None -> d
-      | Some b -> Nx.sub (project b (Nx.add s.x d)) s.x
+    let here = { x = s.x; value; g = s.fx } in
+    let delta, failed, search =
+      match (box, m.boxed) with
+      | None, _ ->
+          let d, failed = m.direction s memory in
+          ( d,
+            failed,
+            fun ~running -> m.search ~running ~longest:unbounded here d )
+      | Some b, Cauchy model ->
+          let d = cauchy (model memory) b s.x s.fx in
+          ( d,
+            Nx.scalar Nx.bool false,
+            fun ~running ->
+              m.search ~running ~longest:(Nx.ones_like value) here d )
+      | Some b, Projected restricted ->
+          let d, failed = restricted s memory ~free:(free b s.x s.fx) in
+          ( Nx.sub (project b (Nx.add s.x d)) s.x,
+            failed,
+            fun ~running ->
+              projected ~trials evaluate ~project:(project b) ~running here d )
     in
     let s = { s with st = settle s.st failed Stalled } in
     let s = Search.test tol s delta in
@@ -486,13 +712,7 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
     let downhill = Search.descends s.fx delta in
     let st = settle s.st (Nx.logical_not downhill) Stalled in
     let run' = Nx.logical_and run (searching st) in
-    let here = { x = s.x; value; g = s.fx } in
-    let q, found, tries =
-      match box with
-      | None -> m.search ~running:run' here d
-      | Some b ->
-          projected ~trials evaluate ~project:(project b) ~running:run' here d
-    in
+    let q, found, tries = search ~running:run' in
     (* A step below the floats' resolution is no decrease. *)
     let found =
       Nx.logical_and found
@@ -527,7 +747,7 @@ let path ~steps (Method m) (p : _ point) =
     let s =
       { (Search.start p.x p.g) with st = Nx.full Nx.int32 lanes running }
     in
-    let delta, failed = m.direction s memory ~free:None in
+    let delta, failed = m.direction s memory in
     let flat = Nx.all ~axes:[ -1 ] (Nx.equal_s p.g 0.) in
     let downhill = Search.descends p.g delta in
     let stopped =
@@ -535,7 +755,9 @@ let path ~steps (Method m) (p : _ point) =
         (Nx.logical_or failed (Nx.logical_or flat (Nx.logical_not downhill)))
     in
     let running = Nx.logical_not stopped in
-    let q, found, _ = m.search ~running p delta in
+    let q, found, _ =
+      m.search ~running ~longest:(Nx.full_like p.value Float.infinity) p delta
+    in
     let moved = Nx.logical_and running found in
     let memory' = m.update (Nx.sub q.x p.x) (Nx.sub q.g p.g) memory in
     let memory =

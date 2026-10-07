@@ -75,24 +75,26 @@ val wolfe :
   (float, 'b) Nx.dtype ->
   trials:int ->
   running:(bool, Nx.bool_elt) Nx.t ->
+  longest:(float, 'b) Nx.t ->
   phi0:(float, 'b) Nx.t ->
   slope0:(float, 'b) Nx.t ->
   ((float, 'b) Nx.t -> 'p * (float, 'b) Nx.t * (float, 'b) Nx.t) ->
   'p ->
   'p * (bool, Nx.bool_elt) Nx.t * (int32, Nx.int32_elt) Nx.t
-(** [wolfe p dtype ~trials ~running ~phi0 ~slope0 trial origin] searches each
-    running lane for a step length [α] that meets the strong Wolfe conditions on
-    the merit [φ] with [φ 0 = phi0] and [φ' 0 = slope0 < 0]:
+(** [wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin]
+    searches each running lane for a step length [α] that meets the strong Wolfe
+    conditions on the merit [φ] with [φ 0 = phi0] and [φ' 0 = slope0 < 0]:
     [φ α ≤ φ 0 + c α φ' 0] with [c = 10⁻⁴], and [|φ' α| ≤ 0.9 |φ' 0|]; a trial
     within [√ε |φ 0|] of [φ 0] meets the first by its slope,
     [φ' α ≤ (2c − 1) φ' 0], which a decrease below [φ]'s rounding still shows.
     [trial α] is the point's payload of structure [p], [φ α] and [φ' α];
-    [origin] is the payload at [α = 0]. Bracketing doubles [α] from [1], then
-    zooms by safeguarded quadratic steps, bisecting when the bracket has not
-    halved over two trials, for at most [trials] trials. The result is the
-    accepted payload or, when the trials ran out, the one of least merit that
-    met the sufficient decrease; whether a lane found either; and the trials
-    each lane took. *)
+    bracketing never tries past [longest], per lane, and a decreasing trial
+    there ends it; [origin] is the payload at [α = 0]. Bracketing doubles [α]
+    from [1], then zooms by safeguarded quadratic steps, bisecting when the
+    bracket has not halved over two trials, for at most [trials] trials. The
+    result is the accepted payload or, when the trials ran out, the one of least
+    merit that met the sufficient decrease; whether a lane found either; and the
+    trials each lane took. *)
 
 (** {1:iterations Iterations} *)
 

@@ -128,7 +128,7 @@ type ('p, 'd) wolfe = {
   trip : (int32, Nx.int32_elt) Nx.t;
 }
 
-let wolfe p dtype ~trials ~running ~phi0 ~slope0 trial origin =
+let wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin =
   let lanes = Nx.shape running in
   let zero = Nx.zeros dtype lanes
   and inf = Nx.full dtype lanes Float.infinity in
@@ -161,12 +161,19 @@ let wolfe p dtype ~trials ~running ~phi0 ~slope0 trial origin =
     in
     let flat = Nx.less_equal (Nx.abs slope) (Nx.mul_s slope0 (-.c2)) in
     let low = Nx.logical_and s.searching (Nx.logical_not high) in
-    let accept = Nx.logical_and low flat in
     let rising =
       Nx.where s.zoom
         (Nx.greater_equal_s (Nx.mul slope (Nx.sub ha la)) 0.)
         (Nx.greater_equal_s slope 0.)
     in
+    (* A trial at the longest step that still descends ends the bracketing: it
+       cannot grow. *)
+    let capped =
+      Nx.logical_and (Nx.logical_not s.zoom)
+        (Nx.logical_and (Nx.logical_not rising)
+           (Nx.greater_equal s.alpha longest))
+    in
+    let accept = Nx.logical_and low (Nx.logical_or flat capped) in
     let flip =
       Nx.logical_and low (Nx.logical_and (Nx.logical_not flat) rising)
     in
@@ -204,7 +211,7 @@ let wolfe p dtype ~trials ~running ~phi0 ~slope0 trial origin =
         quadratic
         (Nx.add la (Nx.mul_s w 0.5))
     in
-    let next = Nx.where zoom inner (Nx.mul_s s.alpha 2.) in
+    let next = Nx.where zoom inner (Nx.minimum longest (Nx.mul_s s.alpha 2.)) in
     let widths = (pick zoom (Nx.abs w) w1, pick zoom w1 w2) in
     {
       alpha = pick searching next s.alpha;
