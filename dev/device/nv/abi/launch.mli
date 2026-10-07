@@ -13,7 +13,7 @@
     Constant bank [0] is written anew for each launch: the driver's parameters
     ({!driver_parameters}), then the kernel's. *)
 
-type t
+type t = private Repr.launch
 (** The type for kernels set up for launch on a GPU. *)
 
 val make : Gpu.t -> Cubin.kernel -> (t, string) result

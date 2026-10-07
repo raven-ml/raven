@@ -3,7 +3,6 @@
  (libraries device_elf)
  (private_modules defs repr)
  (modules_without_implementation
-  launch
   local
   qmd
   repr))
