@@ -28,6 +28,8 @@ val descriptor : Gpu.t -> base:int -> int -> string
 (** [descriptor g ~base n] is the 16 bytes of the buffer descriptor of the
     scratch buffer of [n] bytes at address [base], split evenly among [g]'s
     dies, [n / g.xccs] bytes each, as a queue that dispatches AQL packets hands
-    it to kernels.
+    it to kernels. A die's share is the descriptor's 32-bit record count:
+    [n / g.xccs] is less than [2{^32}].
 
-    Raises [Invalid_argument] if [g]'s GC has no buffer descriptor layout. *)
+    Raises [Invalid_argument] if [n] is negative, if [n / g.xccs] is [2{^32}] or
+    more, or if [g]'s GC has no buffer descriptor layout. *)

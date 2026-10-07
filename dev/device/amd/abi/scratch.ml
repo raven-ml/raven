@@ -56,7 +56,15 @@ let index_stride_64 = 3
 let oob_select_raw = 2
 let mask32 = 0xffff_ffff
 
+(* NUM_RECORDS, a descriptor's word 2: the bytes of a die's share. *)
+let max_records = 0xffff_ffff
+
 let descriptor (g : Gpu.t) ~base n =
+  let share = n / g.xccs in
+  if n < 0 || share > max_records then
+    invalid_argf
+      "Scratch.descriptor: %d bytes, %d a die, expected 0 to 4294967295 a die" n
+      share;
   let no_layout () =
     invalid_argf "Scratch.descriptor: %s has no buffer descriptor layout"
       (gc_name g)
@@ -100,6 +108,6 @@ let descriptor (g : Gpu.t) ~base n =
   let set i w = Bytes.set_int32_le b (4 * i) (Int32.of_int (w land mask32)) in
   set 0 base;
   set 1 word1;
-  set 2 (n / g.xccs);
+  set 2 share;
   set 3 word3;
   Bytes.unsafe_to_string b
