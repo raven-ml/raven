@@ -1,3 +1,0 @@
-(test
- (name test_cuda_format)
- (libraries device_cuda_format windtrap))

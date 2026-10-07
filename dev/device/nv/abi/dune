@@ -1,5 +1,5 @@
 (library
- (name device_nv_format)
+ (name device_nv_abi)
  (libraries device_elf)
  (modules_without_implementation
   cubin

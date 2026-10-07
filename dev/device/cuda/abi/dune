@@ -1,0 +1,2 @@
+(library
+ (name device_cuda_abi))

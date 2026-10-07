@@ -7,7 +7,7 @@
    its own key. *)
 
 open Windtrap
-module Metal = Device_metal_format
+module Cuda = Device_cuda_abi
 
 type binding = B : 'a Type.Id.t * 'a -> binding
 
@@ -20,25 +20,28 @@ let find : type a. a Type.Id.t -> binding list -> a option =
   in
   List.find_map found bindings
 
-let split = 0x7f00_2000n
-let record = { Metal.icb = (fun _ _ -> Error "no Metal"); split }
+let launch_kernel = 0x7f00_1000n
+let symbol = function "cuLaunchKernel" -> Some launch_kernel | _ -> None
 
 let test_found () =
   let other : int Type.Id.t = Type.Id.make () in
-  match find Metal.key [ B (other, 1); B (Metal.key, record) ] with
+  let bindings = [ B (other, 1); B (Cuda.key, { Cuda.symbol }) ] in
+  match find Cuda.key bindings with
   | None -> fail "no record under the key"
-  | Some metal -> equal ~msg:"its split" nativeint split metal.split
+  | Some cuda ->
+      equal ~msg:"its lookup" (option nativeint) (Some launch_kernel)
+        (cuda.symbol "cuLaunchKernel")
 
 let test_alone () =
-  let other : Metal.t Type.Id.t = Type.Id.make () in
+  let other : Cuda.t Type.Id.t = Type.Id.make () in
   is_none ~msg:"another key of the same type"
-    (find other [ B (Metal.key, record) ]);
+    (find other [ B (Cuda.key, { Cuda.symbol }) ]);
   is_none ~msg:"the key under another key's binding"
-    (find Metal.key [ B (other, record) ])
+    (find Cuda.key [ B (other, { Cuda.symbol }) ])
 
 let () =
   exit
-  @@ run "device_metal_format"
+  @@ run "device_cuda_abi"
        [
          group ~timeout:10. "key"
            [
