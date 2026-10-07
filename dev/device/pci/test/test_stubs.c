@@ -10,7 +10,10 @@
    A far machine holds [size] bytes at addresses [base, base + size) and
    nothing else. Its transport logs every access, fails on request, and
    fails on an access outside its bytes, so an access beyond a window whose
-   bytes are the machine's is a failure the suite sees. */
+   bytes are the machine's is a failure the suite sees. Held, its accesses
+   block until it is let go, as a link's round trip does. */
+
+#define _POSIX_C_SOURCE 200809L
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -46,14 +49,29 @@ struct far {
   uint64_t base;
   size_t size;
   uint8_t *bytes;
-  int broken, outside;
+  int broken, outside, held, waiting;
   size_t logged;
   struct access log[LOG];
 };
 
+/* The longest a held access waits before it fails. */
+#define HOLD_MS 2000
+
+/* Whether [f] was let go within HOLD_MS. */
+static int let_go(struct far *f) {
+  struct timespec ms = {0, 1000000};
+  __atomic_store_n(&f->waiting, 1, __ATOMIC_RELEASE);
+  for (int i = 0; i < HOLD_MS; i++) {
+    if (!__atomic_load_n(&f->held, __ATOMIC_ACQUIRE)) return 1;
+    nanosleep(&ms, NULL);
+  }
+  return 0;
+}
+
 static int far_access(struct far *f, int write, uint64_t a, void *p,
                       size_t n) {
   if (__atomic_load_n(&f->broken, __ATOMIC_ACQUIRE)) return -1;
+  if (__atomic_load_n(&f->held, __ATOMIC_ACQUIRE) && !let_go(f)) return -1;
   if (a < f->base || a - f->base > f->size || n > f->size - (a - f->base)) {
     __atomic_store_n(&f->outside, 1, __ATOMIC_RELEASE);
     return -1;
@@ -99,6 +117,25 @@ value test_far(value base, value size) {
 value test_far_break(value far) {
   struct far *f = (struct far *)Long_val(far);
   __atomic_store_n(&f->broken, 1, __ATOMIC_RELEASE);
+  return Val_unit;
+}
+
+value test_far_hold(value far) {
+  struct far *f = (struct far *)Long_val(far);
+  __atomic_store_n(&f->waiting, 0, __ATOMIC_RELEASE);
+  __atomic_store_n(&f->held, 1, __ATOMIC_RELEASE);
+  return Val_unit;
+}
+
+/* Whether an access waits on the hold. */
+value test_far_waiting(value far) {
+  struct far *f = (struct far *)Long_val(far);
+  return Val_bool(__atomic_load_n(&f->waiting, __ATOMIC_ACQUIRE));
+}
+
+value test_far_let_go(value far) {
+  struct far *f = (struct far *)Long_val(far);
+  __atomic_store_n(&f->held, 0, __ATOMIC_RELEASE);
   return Val_unit;
 }
 

@@ -15,6 +15,7 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/threads.h>
 
 #include "device_pci.h"
 
@@ -131,8 +132,9 @@ value caml_device_pci_bigarray(value a, value n) {
                             1, (void *)Long_val(a), (intnat)Long_val(n));
 }
 
-/* Transports, from OCaml: the runtime stays held (accesses are short; boot
-   code makes many). */
+/* Transports, from OCaml. A transport may block for a round trip, so its
+   functions run without the OCaml runtime, on a copy of the bytes: other
+   domains collect meanwhile. */
 
 #define TRANSPORT(v) ((const struct device_pci_transport *)Long_val(v))
 
@@ -145,29 +147,44 @@ value caml_device_pci_transport_read(value tr, value a, value n) {
   CAMLparam3(tr, a, n);
   CAMLlocal1(s);
   const struct device_pci_transport *t = TRANSPORT(tr);
-  s = caml_alloc_string(Long_val(n));
-  if (t->read(t->ctx, (uint64_t)Long_val(a), Bytes_val(s), Long_val(n)) != 0)
+  uint64_t at = (uint64_t)Long_val(a);
+  size_t len = Long_val(n);
+  char *buf = caml_stat_alloc(len ? len : 1);
+  caml_release_runtime_system();
+  int r = t->read(t->ctx, at, buf, len);
+  caml_acquire_runtime_system();
+  if (r != 0) {
+    caml_stat_free(buf);
     transport_failed(t);
+  }
+  s = caml_alloc_initialized_string(len, buf);
+  caml_stat_free(buf);
   CAMLreturn(s);
 }
 
 value caml_device_pci_transport_write(value tr, value a, value s) {
   CAMLparam3(tr, a, s);
   const struct device_pci_transport *t = TRANSPORT(tr);
-  if (t->write(t->ctx, (uint64_t)Long_val(a), String_val(s),
-               caml_string_length(s)) != 0)
-    transport_failed(t);
+  uint64_t at = (uint64_t)Long_val(a);
+  size_t len = caml_string_length(s);
+  char *buf = caml_stat_alloc(len ? len : 1);
+  memcpy(buf, String_val(s), len);
+  caml_release_runtime_system();
+  int r = t->write(t->ctx, at, buf, len);
+  caml_acquire_runtime_system();
+  caml_stat_free(buf);
+  if (r != 0) transport_failed(t);
   CAMLreturn(Val_unit);
 }
 
 /* device_pci.h */
 
 void device_pci_window_of(value w, struct device_pci_window *out) {
-  int mapped = Bool_val(Field(w, 2));
+  const struct device_pci_transport *tr = TRANSPORT(Field(w, 2));
   out->address = (uint64_t)Long_val(Field(w, 0));
   out->length = (size_t)Long_val(Field(w, 1));
-  out->mapped = mapped ? AT(Long_val(Field(w, 0))) : NULL;
-  out->transport = mapped ? NULL : TRANSPORT(Field(w, 3));
+  out->mapped = tr ? NULL : AT(Long_val(Field(w, 0)));
+  out->transport = tr;
 }
 
 int device_pci_write(const struct device_pci_window *w, size_t off,

@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A transport is the address of its C structure. *)
+(* A transport is the address of its C structure, 0 for none. Process addresses
+   fit an OCaml int on every 64-bit host, 52-bit ones included. *)
 type transport = int
 
-(* device_pci_window_of reads these fields by position: keep their order.
-   [transport] is 0 for a mapped window. *)
-type t = { address : int; length : int; mapped : bool; transport : transport }
+(* device_pci_window_of reads these fields by position: keep their order. A
+   mapped window has no transport. *)
+type t = { address : int; length : int; transport : transport }
 
 (* Mapped windows: one volatile access of the width, at a process address. *)
 
@@ -64,17 +65,21 @@ external transport_write : transport -> int -> string -> unit
 
 (* Windows *)
 
-let make fn ~mapped transport address length =
+let make fn transport address length =
   if length < 0 then
     invalid_arg (Printf.sprintf "Window.%s: %d bytes" fn length);
-  { address; length; mapped; transport }
+  { address; length; transport }
 
-let v address length = make "v" ~mapped:true 0 address length
+let v address length = make "v" 0 address length
 let transport p = p
-let through tr address length = make "through" ~mapped:false tr address length
+
+let through tr address length =
+  if tr = 0 then invalid_arg "Window.through: no transport";
+  make "through" tr address length
+
 let address w = w.address
 let length w = w.length
-let mapped w = w.mapped
+let mapped w = w.transport = 0
 
 let check fn w off n =
   if off < 0 || n < 0 || off > w.length - n then
@@ -84,9 +89,10 @@ let check fn w off n =
 
 let aligned fn w off size =
   check fn w off size;
-  if off land (size - 1) <> 0 then
+  if (w.address + off) land (size - 1) <> 0 then
     invalid_arg
-      (Printf.sprintf "Window.%s: offset %d not %d-aligned" fn off size)
+      (Printf.sprintf "Window.%s: address 0x%x not %d-aligned" fn
+         (w.address + off) size)
 
 let sub w off n =
   check "sub" w off n;
@@ -96,26 +102,26 @@ let sub w off n =
 
 let get8 w off =
   check "get8" w off 1;
-  if w.mapped then get8_at (w.address + off)
+  if mapped w then get8_at (w.address + off)
   else Char.code (transport_read w.transport (w.address + off) 1).[0]
 
 let set8 w off x =
   check "set8" w off 1;
-  if w.mapped then set8_at (w.address + off) (x land 0xff)
+  if mapped w then set8_at (w.address + off) (x land 0xff)
   else
     transport_write w.transport (w.address + off)
       (String.make 1 (Char.unsafe_chr (x land 0xff)))
 
 let get32 w off =
   aligned "get32" w off 4;
-  if w.mapped then get32_at (w.address + off)
+  if mapped w then get32_at (w.address + off)
   else
     let s = transport_read w.transport (w.address + off) 4 in
     Int32.to_int (String.get_int32_le s 0) land 0xffff_ffff
 
 let set32 w off x =
   aligned "set32" w off 4;
-  if w.mapped then set32_at (w.address + off) (x land 0xffff_ffff)
+  if mapped w then set32_at (w.address + off) (x land 0xffff_ffff)
   else
     let b = Bytes.create 4 in
     Bytes.set_int32_le b 0 (Int32.of_int x);
@@ -123,12 +129,12 @@ let set32 w off x =
 
 let get64 w off =
   aligned "get64" w off 8;
-  if w.mapped then get64_at (w.address + off)
+  if mapped w then get64_at (w.address + off)
   else String.get_int64_le (transport_read w.transport (w.address + off) 8) 0
 
 let set64 w off x =
   aligned "set64" w off 8;
-  if w.mapped then set64_at (w.address + off) x
+  if mapped w then set64_at (w.address + off) x
   else
     let b = Bytes.create 8 in
     Bytes.set_int64_le b 0 x;
@@ -136,13 +142,13 @@ let set64 w off x =
 
 let read w off n =
   check "read" w off n;
-  if w.mapped then read_at (w.address + off) n
+  if mapped w then read_at (w.address + off) n
   else transport_read w.transport (w.address + off) n
 
 let write w off s =
   let n = String.length s in
   check "write" w off n;
-  if w.mapped then write_at (w.address + off) s 0 n
+  if mapped w then write_at (w.address + off) s 0 n
   else transport_write w.transport (w.address + off) s
 
 (* A fill through a transport is sent in pieces of at most this many bytes. *)
@@ -150,7 +156,7 @@ let fill_piece = 1 lsl 20
 
 let fill w off n c =
   check "fill" w off n;
-  if w.mapped then fill_at (w.address + off) n (Char.code c)
+  if mapped w then fill_at (w.address + off) n (Char.code c)
   else begin
     let piece = String.make (Int.min n fill_piece) c in
     let at = ref off and left = ref n in
@@ -164,6 +170,6 @@ let fill w off n c =
   end
 
 let bigarray w =
-  if not w.mapped then
+  if not (mapped w) then
     invalid_arg "Window.bigarray: a window through a transport";
   bigarray_at w.address w.length

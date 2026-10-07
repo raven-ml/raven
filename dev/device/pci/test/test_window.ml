@@ -10,6 +10,9 @@ external memory : int -> int = "test_memory"
 external far : int -> int -> int = "test_far"
 external break : int -> unit = "test_far_break"
 external log : int -> (bool * int * int) list = "test_far_log"
+external hold : int -> unit = "test_far_hold"
+external waiting : int -> bool = "test_far_waiting"
+external let_go : int -> unit = "test_far_let_go"
 external window_of : Window.t -> int * int * int * bool = "test_window_of"
 external c_store32 : Window.t -> int -> int -> int = "test_store32"
 external c_store64 : Window.t -> int -> int64 -> int = "test_store64"
@@ -38,11 +41,7 @@ let far_window n =
 
    A window is its bytes inside its root window's. Alignment is of the address
    on the machine: [skew] is the root's address modulo 8. Counts below zero are
-   misuse like bytes outside the window.
-
-   A word access whose offset in the window and address on the machine disagree
-   on alignment is left to [address_alignment], so the laws hold under either
-   reading of the interface. *)
+   misuse like bytes outside the window. *)
 
 type view = { bytes : Bytes.t; skew : int; off : int; len : int }
 
@@ -126,9 +125,6 @@ let commands ~is_mapped make =
           (Window.read w 0 r.len))
   in
   let word w r o = inside r o w && aligned r o w in
-  let agreed w r o =
-    (not (inside r o w)) || Bool.equal (o mod w = 0) (aligned r o w)
-  in
   [
     command "window" (skew @-> length @-> makes win) Model.window make;
     command "sub" (win ^-> index @-> index @-> makes win) Model.sub Window.sub;
@@ -136,20 +132,12 @@ let commands ~is_mapped make =
     command "set8"
       (win ^-> index @-> Gen.int @-> returns unit)
       Model.set8 Window.set8;
-    command "get32"
-      ~pre:(fun r o -> agreed 4 r o)
-      (win ^-> index @-> returns int)
-      Model.get32 Window.get32;
+    command "get32" (win ^-> index @-> returns int) Model.get32 Window.get32;
     command "set32"
-      ~pre:(fun r o _ -> agreed 4 r o)
       (win ^-> index @-> Gen.int @-> returns unit)
       Model.set32 Window.set32;
-    command "get64"
-      ~pre:(fun r o -> agreed 8 r o)
-      (win ^-> index @-> returns int64)
-      Model.get64 Window.get64;
+    command "get64" (win ^-> index @-> returns int64) Model.get64 Window.get64;
     command "set64"
-      ~pre:(fun r o _ -> agreed 8 r o)
       (win ^-> index @-> Gen.int64 @-> returns unit)
       Model.set64 Window.set64;
     command "read"
@@ -205,8 +193,6 @@ let address_alignment make () =
   raises_match ~msg:"get64 at an unaligned address" Exn.invalid_arg (fun () ->
       Window.get64 w 0)
 
-let misaligned = "window.ml aligns offsets in the window; the lead decides"
-
 let same_bytes =
   group "accesses"
     [
@@ -214,12 +200,8 @@ let same_bytes =
         (commands ~is_mapped:true mapped);
       stateful ~count:300 "a window through a transport behaves as its bytes"
         (commands ~is_mapped:false through);
-      xfail ~reason:misaligned
-        (test "a mapped word is aligned by its address"
-           (address_alignment mapped));
-      xfail ~reason:misaligned
-        (test "a far word is aligned by its address"
-           (address_alignment through));
+      test "a mapped word is aligned by its address" (address_alignment mapped);
+      test "a far word is aligned by its address" (address_alignment through);
     ]
 
 (* Windows *)
@@ -245,7 +227,9 @@ let test_negative () =
       let msg = string_of_int n in
       raises_match ~msg Exn.invalid_arg (fun () -> Window.v a n);
       raises_match ~msg Exn.invalid_arg (fun () -> Window.through tr base n))
-    [ -1; min_int ]
+    [ -1; min_int ];
+  raises_match ~msg:"no transport" Exn.invalid_arg (fun () ->
+      Window.through (Window.transport 0) base 16)
 
 (* A sub-window's place, for [(skew, len, off, n)] with [off, n] in [len]. *)
 let place =
@@ -267,7 +251,8 @@ let windows =
     [
       test "v is the bytes at the address it is given" test_v;
       test "through is the bytes at the address it is given" test_through;
-      test "v and through refuse a negative length" test_negative;
+      test "v and through refuse a negative length, and through no transport"
+        test_negative;
       prop "a mapped sub-window starts its offset past its parent" place
         (sub_address mapped);
       prop "a far sub-window starts its offset past its parent" place
@@ -358,6 +343,24 @@ let test_order () =
         mine)
     [ 0; 1 ]
 
+(* A transport access that blocks holds no other domain: one collects while it
+   waits. Holding the runtime, the collection would wait for the access, and the
+   access would fail once its hold ran out. *)
+let test_blocking () =
+  let f, w = far_window 8 in
+  hold f;
+  let other =
+    Domain.spawn (fun () ->
+        while not (waiting f) do
+          Domain.cpu_relax ()
+        done;
+        Gc.full_major ();
+        let_go f)
+  in
+  let x = Window.get32 w 0 in
+  Domain.join other;
+  equal ~msg:"the word" int 0 x
+
 let failed_accesses =
   [
     ("get8", fun w -> ignore (Window.get8 w 1));
@@ -393,6 +396,8 @@ let transports =
        test "a 32- or 64-bit access is one access of its width" test_one_access;
        test "each domain's accesses arrive in the order it makes them"
          test_order;
+       test "a domain whose transport access blocks holds no other"
+         test_blocking;
        cases ~name:fst "a failed transport fails with its reason"
          failed_accesses (fun (_, run) ->
            raises broke (fun () -> run (broken ())));

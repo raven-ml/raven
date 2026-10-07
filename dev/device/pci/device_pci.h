@@ -7,11 +7,10 @@
    OCaml.
 
    A window (Window.t) is a range of a machine's addresses. On this machine
-   it is mapped into the process, and each access is one volatile load or
-   store of its width. On another machine it is reached through a transport,
-   whose functions the accesses call; they may block, so a driver whose
-   windows may be another machine's declares that its submission may block
-   and runs it without the OCaml runtime.
+   it is mapped into the process. On another machine it is reached through a
+   transport, whose functions the accesses call; they may block, so a driver
+   whose windows may be another machine's declares that its submission may
+   block and runs it without the OCaml runtime.
 
    Every access returns 0, or -1 once the transport failed: the value read
    is then unspecified, and the transport's [failed] gives the reason.
@@ -23,16 +22,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef CAML_NAME_SPACE
 #define CAML_NAME_SPACE
+#endif
 #include <caml/mlvalues.h>
 
 /* The accesses to another machine's addresses, which the library that
    reaches it implements. [read] and [write] move [n] bytes at [address] of
    the machine, as one access where [n] is 4 or 8 and [address] is aligned
    to it, and return 0, or -1 once the transport failed. They may block, and
-   may be called from several threads at once; the accesses one thread
-   makes complete in the order it makes them. [failed] is the reason the
-   transport failed, or NULL; once it is not NULL it stays. */
+   may be called from several threads at once, never holding the OCaml
+   runtime; the accesses one thread makes complete in the order it makes
+   them. [failed] is the reason the transport failed, or NULL; once it is not
+   NULL it stays. */
 struct device_pci_transport {
   void *ctx;
   int (*read)(void *ctx, uint64_t address, void *dst, size_t n);
@@ -47,8 +49,9 @@ struct device_pci_window {
   const struct device_pci_transport *transport; /* when not mapped */
 };
 
-/* Reads the window [w], a Window.t, into [out]. Bounds are the caller's:
-   no access below checks them. */
+/* Reads the window [w], a Window.t, into [out]. It reads the OCaml heap, so
+   the caller holds the OCaml runtime; [out] holds no OCaml value and serves
+   without it. Bounds are the caller's: no access below checks them. */
 void device_pci_window_of(value w, struct device_pci_window *out);
 
 /* Orders every access before it before every access after it, as devices
@@ -60,6 +63,9 @@ static inline void device_pci_barrier(void) {
   __atomic_thread_fence(__ATOMIC_SEQ_CST);
 #endif
 }
+
+/* Register accesses: each is one access of exactly its width, at an
+   address aligned to it. */
 
 static inline int device_pci_store32(const struct device_pci_window *w,
                                      size_t off, uint32_t x) {
@@ -97,8 +103,8 @@ static inline int device_pci_load64(const struct device_pci_window *w,
   return w->transport->read(w->transport->ctx, w->address + off, x, 8);
 }
 
-/* Stores the [n] bytes at [src] from byte [off] of [w], a 32-bit word at a
-   time where [w]'s side is aligned. */
+/* Copies the [n] bytes at [src] to byte [off] of [w], at widths it chooses:
+   memory, never registers. */
 int device_pci_write(const struct device_pci_window *w, size_t off,
                      const void *src, size_t n);
 

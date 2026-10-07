@@ -7,31 +7,23 @@
 
     A window is a range of addresses of the machine a GPU is in: a PCI
     function's registers or memory behind one of its BARs, or system memory the
-    function reaches. On this machine the range is mapped into the process and
-    each access is one volatile load or store of exactly its width, so a
-    register is read and written once each and in program order; {!barrier}
-    orders accesses for the processor and the bus. On another machine the range
-    is reached through a {{!transports}transport}, and each domain's accesses
-    complete in the order it makes them. An access through a transport whose
-    machine failed raises [Failure] with {!Machine.failed}'s reason
-    ({{!Device_pci.errors}errors}).
+    function reaches. On this machine the range is mapped into the process; on
+    another machine it is reached through a {{!transports}transport}, and each
+    domain's accesses complete in the order it makes them. An access through a
+    transport whose machine failed raises [Failure] with {!Machine.failed}'s
+    reason ({{!Device_pci.errors}errors}).
 
     Values are little-endian. Nothing is checked beyond the range: the caller
     keeps the mapping alive, and an access after it is unmapped is undefined.
 
-    {b C.} A driver's C code reaches windows through [device_pci.h]:
-    [device_pci_window_of] reads a window into a [struct device_pci_window], and
-    [device_pci_store32], [device_pci_store64], [device_pci_load32],
-    [device_pci_load64] and [device_pci_write] access it without calling OCaml.
-    On a mapped window they are the stores and loads; through a transport they
-    call its C functions, so a submission that writes a queue stays one section
-    of C on every machine. They return [0], or [-1] once the transport failed.
-*)
+    {b C.} A driver's C code accesses windows through [device_pci.h], which
+    states its contract. *)
 
 (** {1:windows Windows} *)
 
 type t
-(** The type for windows. *)
+(** The type for windows. Windows are values: two windows are equal iff they are
+    the same bytes of the same machine. *)
 
 val v : int -> int -> t
 (** [v a n] is the [n] bytes mapped at [a] in the process.
@@ -56,8 +48,16 @@ val sub : t -> int -> int -> t
 
 (** {1:accesses Accesses}
 
+    {!get32}, {!set32}, {!get64} and {!set64} are register accesses: one access
+    of exactly that width, on this machine and through a transport, so a
+    register is read and written once each and in program order. {!read},
+    {!write} and {!fill} copy memory, at widths they choose; touch registers
+    only with the accesses above. {!barrier} orders accesses for the processor
+    and the bus.
+
     Each raises [Invalid_argument] if the bytes it accesses do not lie in the
-    window, or if a 32- or 64-bit access is not aligned to its width. *)
+    window, a count below zero included, or if a 32- or 64-bit access is at an
+    address not aligned to its width. *)
 
 val get8 : t -> int -> int
 (** [get8 w off] is the byte at [off] of [w]. *)
@@ -72,19 +72,16 @@ val set32 : t -> int -> int -> unit
 (** [set32 w off x] stores the low 32 bits of [x] at byte [off] of [w]. *)
 
 val get64 : t -> int -> int64
-(** [get64 w off] is the 64-bit word at byte [off] of [w], read in one access.
-*)
+(** [get64 w off] is the 64-bit word at byte [off] of [w]. *)
 
 val set64 : t -> int -> int64 -> unit
-(** [set64 w off x] stores [x] at byte [off] of [w] in one access. *)
+(** [set64 w off x] stores [x] at byte [off] of [w]. *)
 
 val read : t -> int -> int -> string
-(** [read w off n] is the [n] bytes of [w] from byte [off], read a 32-bit word
-    at a time where the window's side is aligned: memory behind a BAR need not
-    accept other widths. *)
+(** [read w off n] is a copy of the [n] bytes of [w] from byte [off]. *)
 
 val write : t -> int -> string -> unit
-(** [write w off s] stores [s] at byte [off] of [w], as {!read} reads. *)
+(** [write w off s] copies [s] to byte [off] of [w]. *)
 
 val fill : t -> int -> int -> char -> unit
 (** [fill w off n c] stores [n] bytes [c] from byte [off] of [w]. *)
@@ -106,9 +103,7 @@ val bigarray :
     For the libraries that reach another machine. A transport is a
     [struct device_pci_transport] of C functions that read and write the
     machine's addresses, declared in [device_pci.h], which states their
-    contract. The accesses of [device_pci.h] call them as a driver's submission
-    runs, which may be without the OCaml runtime; the accesses above call them
-    holding it. *)
+    contract. *)
 
 type transport
 (** The type for transports. *)
@@ -121,4 +116,4 @@ val transport : int -> transport
 val through : transport -> int -> int -> t
 (** [through tr a n] is the [n] bytes at [a] of the machine [tr] reaches.
 
-    Raises [Invalid_argument] if [n < 0]. *)
+    Raises [Invalid_argument] if [n < 0] or [tr] is [transport 0]. *)
