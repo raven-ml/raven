@@ -478,6 +478,19 @@ let lane_tests =
              (System.lanes
                 ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
                 ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
+    test "a lane whose step at its zero moves one ulp converges" (fun () ->
+        (* The seed's step lands two ulps from the zero, the next moves the
+           estimate one ulp, and the third cannot move it. The contraction over
+           that one-ulp step is a ratio of rounding errors, 1 here. *)
+        let a = Nx.create f64 [| 1; 1; 1 |] [| 2.074449998531568 |] in
+        let z = Nx.create f64 [| 1; 1 |] [| 0.6661511920166958 |] in
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
+        equal near z
+          (Solution.get
+             (System.lanes
+                ~tol:(Tol.v ~rel:1e-14 ~abs:1e-14)
+                ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
     test "compiled lanes equal eager" (fun () ->
         let a =
           Nx.broadcast_to [| 3; 2; 2 |]

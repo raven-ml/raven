@@ -118,8 +118,9 @@ type 'd state = {
 (** The state of a Newton-type search: the estimate [x], the function the search
     steps on at [x] ([f] for a system, the gradient for a minimum), the last
     point a step was tested at, the undamped map [N x = x + δ x] there, the
-    error estimate and the contraction of the last test, the status, the
-    evaluations and the count of iterations, which every lane shares. *)
+    error estimate, the contraction over the last step the floats resolve, the
+    status, the evaluations and the count of iterations, which every lane
+    shares. *)
 
 val start : (float, 'd) Nx.t -> (float, 'd) Nx.t -> 'd state
 (** [start x0 fx] is the state at [x0], where the function is [fx], after one
@@ -127,11 +128,13 @@ val start : (float, 'd) Nx.t -> (float, 'd) Nx.t -> 'd state
 
 val test : Tol.t -> 'd state -> (float, 'd) Nx.t -> 'd state
 (** [test tol s delta] tests the undamped step [delta] at [s.x]:
-    [e = contraction delta ~q], with [q] the larger of the contractions of the
-    undamped map over the last two steps, each [|N x − N x'| / |x − x'|] from
-    the point [x'] tested before [x]. A running lane whose error meets [tol]
-    converges at [x + delta], and one whose step no longer moves its estimate
-    stalls. *)
+    [e = contraction delta ~q], with [q] the larger of the contraction of the
+    undamped map over the last step, [|N x − N x'| / |x − x'|] from the point
+    [x'] tested before [x], and the one the state holds. The state then holds
+    the last step's contraction, unless that step lies within a unit in the last
+    place of [x'], where the contraction is a ratio of rounding errors. A
+    running lane whose error meets [tol] converges at [x + delta], and one whose
+    step no longer moves its estimate ends as {!resolved} says. *)
 
 val secant : 'd state -> (float, 'd) Nx.t -> (float, 'd) Nx.t
 (** [secant s next] is the contraction [|next − N x'| / |x − x'|] of a map that
@@ -143,9 +146,9 @@ val resolved :
   stuck:(bool, Nx.bool_elt) Nx.t ->
   'd state
 (** [resolved s ~delta ~stuck] ends each running lane whose step [delta] cannot
-    move its estimate, [stuck]: [Converged] with [e = |delta|] when its last
-    step contracted, [0 ≤ q < 1], at its zero to the arithmetic's precision;
-    [Stalled] otherwise. *)
+    move its estimate, [stuck]: [Converged] with [e = |delta|] when the last
+    step the floats resolve contracted, [0 ≤ s.q < 1], at its zero to the
+    arithmetic's precision; [Stalled] otherwise. *)
 
 val decide :
   Tol.t ->

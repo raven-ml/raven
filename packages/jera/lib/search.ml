@@ -376,9 +376,9 @@ let still x step =
        (Nx.less_equal (Nx.abs step) ulp))
 
 (* A running lane whose step cannot move its estimate has reached the floats'
-   resolution. If its last step contracted, [q < 1], its estimate is its zero to
-   the arithmetic's precision: it converges, with the step it could not take as
-   its error. Otherwise it stalls. *)
+   resolution. If the last step they resolve contracted, [q < 1], its estimate
+   is its zero to the arithmetic's precision: it converges, with the step it
+   could not take as its error. Otherwise it stalls. *)
 let resolved s ~delta ~stuck =
   let stuck = Nx.logical_and (searching s.st) stuck in
   let contracting =
@@ -397,6 +397,13 @@ let decide tol s ~map ~q delta =
   let converged =
     Nx.logical_and run (Nx.equal_s st (Solution.code Converged))
   in
+  (* A step the floats do not resolve measures no contraction: over a step of
+     one ulp, [q] is a ratio of rounding errors, 1 for a step that flips between
+     the floats either side of a zero. The state keeps the contraction of the
+     last step they resolve. *)
+  let measured =
+    Nx.logical_and run (Nx.logical_not (still s.before (Nx.sub s.x s.before)))
+  in
   let s =
     {
       s with
@@ -404,7 +411,7 @@ let decide tol s ~map ~q delta =
       before = hold run s.x s.before;
       mapped = hold run mapped s.mapped;
       e = hold run e s.e;
-      q = hold run q s.q;
+      q = hold measured q s.q;
       st;
     }
   in
