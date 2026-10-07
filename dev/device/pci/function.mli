@@ -41,13 +41,10 @@
 type t
 (** The type for functions the process has taken. *)
 
-val take : Machine.t -> lock:string -> string -> (t, string) result
-(** [take m ~lock bus] takes the function at [bus] on [m] for this process. It
-    locks the function through two files of the temporary directory:
-    [nx_BUS.lock], which every process of this library takes, and
-    [LOCK_BUS.lock], which other programs driving such a GPU take with the same
-    [lock] name. A lock file that is a link or no regular file is refused.
-    Taking a function changes nothing on [m].
+val take : Machine.t -> string -> (t, string) result
+(** [take m bus] takes the function at [bus] on [m] for this process alone:
+    behind an IOMMU, VFIO opens its group for one process at a time; taken
+    physically, [m] locks it. Taking a function changes nothing on [m].
 
     [Error why] if [bus] is no function of [m], if [m] failed, if a process,
     this one included, holds it, or if neither way is open:
@@ -60,10 +57,7 @@ val take : Machine.t -> lock:string -> string -> (t, string) result
 
     [why] names what to change, such as the udev rule that grants [/dev/vfio/N],
     or the [driverctl] commands that bind the other functions of its IOMMU group
-    to [vfio-pci].
-
-    Raises [Invalid_argument] if [lock] is not a non-empty word of ASCII
-    letters, digits, [-] and [_]. *)
+    to [vfio-pci]. *)
 
 val release : t -> unit
 (** [release f] gives [f] back: it unmaps its BAR windows, closes the process's

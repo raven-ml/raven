@@ -31,6 +31,6 @@ type ops = {
   transport : Window.transport;
   page : int;
   functions : unit -> id list;
-  take : lock:string -> string -> (fn, string) result;
+  take : string -> (fn, string) result;
   reserve : base:int -> int -> unit;
 }

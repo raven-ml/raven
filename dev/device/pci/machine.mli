@@ -127,8 +127,7 @@ type ops = Ops.ops = {
           whose [failed] function is {!failed}'s. *)
   page : int;  (** {!page}. *)
   functions : unit -> id list;  (** {!functions}, in any order. *)
-  take : lock:string -> string -> (fn, string) result;
-      (** {!Function.take} on the machine. *)
+  take : string -> (fn, string) result;  (** {!Function.take} on the machine. *)
   reserve : base:int -> int -> unit;  (** {!reserve}. *)
 }
 (** The type for the operations of a transport. *)
@@ -138,5 +137,5 @@ val make : name:string -> ops -> t
 
 (**/**)
 
-val take : t -> lock:string -> string -> (fn, string) result
-(* [take m ~lock bus] is [m]'s take: {!Function.take} builds on it. *)
+val take : t -> string -> (fn, string) result
+(* [take m bus] is [m]'s take: {!Function.take} builds on it. *)

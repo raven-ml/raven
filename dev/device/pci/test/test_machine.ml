@@ -28,7 +28,7 @@ let fake ?(page = 16384) ?(ids = []) ?(name = "far:7000") () =
         transport = Window.unsafe_transport far;
         page;
         functions = (fun () -> ask "functions" ids);
-        take = (fun ~lock:_ _ -> ask "take" (Error "far:7000: taken"));
+        take = (fun _ -> ask "take" (Error "far:7000: taken"));
         reserve =
           (fun ~base n ->
             if base = 0 then failwith "far:7000: the range is in use";

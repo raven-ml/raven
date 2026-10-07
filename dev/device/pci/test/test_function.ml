@@ -234,7 +234,7 @@ let fake_machine ?(base = next_base ()) ?(page = 4096)
       m_lock = Mutex.create ();
     }
   in
-  let take ~lock:_ bus =
+  let take bus =
     Mutex.protect m.m_lock @@ fun () ->
     if not (List.mem bus m.buses) then
       Error (bus ^ " is no PCI function of far:1")
@@ -260,7 +260,7 @@ let fake_machine ?(base = next_base ()) ?(page = 4096)
 
 let take_fake ?base ?page ?addressing () =
   let machine, m = fake_machine ?base ?page ?addressing () in
-  let f = Result.get_ok (Function.take machine ~lock:"t" bus1) in
+  let f = Result.get_ok (Function.take machine bus1) in
   (machine, f, List.hd m.taken)
 
 let addressing =
@@ -283,19 +283,16 @@ let test_take_asks () =
         page = 4096;
         functions = (fun () -> []);
         take =
-          (fun ~lock bus ->
-            calls := (lock, bus) :: !calls;
+          (fun bus ->
+            calls := bus :: !calls;
             Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`");
         reserve = (fun ~base:_ _ -> ());
       }
   in
   equal ~msg:"the machine's refusal" (result pass string)
     (Error "far:1: run `driverctl set-override 0000:01:00.0 vfio-pci`")
-    (Function.take machine ~lock:"am" bus1);
-  equal ~msg:"what the machine was asked"
-    (list (pair string string))
-    [ ("am", bus1) ]
-    !calls
+    (Function.take machine bus1);
+  equal ~msg:"what the machine was asked" (list string) [ bus1 ] !calls
 
 let test_taken () =
   List.iter
@@ -313,28 +310,22 @@ let test_taken () =
    again. *)
 let test_refused () =
   let machine, m = fake_machine () in
-  equal ~msg:"absent" bool true
-    (Result.is_error (Function.take machine ~lock:"t" absent));
-  let f = Result.get_ok (Function.take machine ~lock:"t" bus1) in
+  equal ~msg:"absent" bool true (Result.is_error (Function.take machine absent));
+  let f = Result.get_ok (Function.take machine bus1) in
   equal ~msg:"held" (result pass string)
     (Error (bus1 ^ " is held"))
-    (Function.take machine ~lock:"t" bus1);
+    (Function.take machine bus1);
   Function.release f;
-  let g = Result.get_ok (Function.take machine ~lock:"t" bus1) in
+  let g = Result.get_ok (Function.take machine bus1) in
   equal ~msg:"taken again once released" string bus1 (Function.bus g);
   equal ~msg:"functions made" int 2 (List.length m.taken)
 
-(* A failed machine and a lock name that is no word. *)
-let test_take_refused () =
+let test_take_failed () =
   let machine, m = fake_machine () in
-  raises_match ~msg:"a lock name with a slash" (Exn.invalid_arg ~substring:"")
-    (fun () -> Function.take machine ~lock:"../t" bus1);
-  raises_match ~msg:"an empty lock name" (Exn.invalid_arg ~substring:"")
-    (fun () -> Function.take machine ~lock:"" bus1);
   break m.far;
   equal ~msg:"a failed machine" (result pass string)
     (Error "far: the link broke")
-    (Function.take machine ~lock:"t" bus1);
+    (Function.take machine bus1);
   equal ~msg:"functions made" int 0 (List.length m.taken)
 
 (* After release, only free_dma and unpin reach the machine. *)
@@ -367,14 +358,13 @@ let test_released () =
 let taking =
   group "taking"
     [
-      test "a take asks the machine with its lock name, and keeps its refusal"
+      test "a take asks the machine for its bus, and keeps its refusal"
         test_take_asks;
       test "a taken function is on its machine at its bus, as the machine says"
         test_taken;
       test "a function another holder has is refused until released"
         test_refused;
-      test "a failed machine and a lock name that is no word refuse a take"
-        test_take_refused;
+      test "a failed machine refuses a take" test_take_failed;
       test "a released function refuses all but free_dma and unpin"
         test_released;
     ]
@@ -585,7 +575,7 @@ let take_ref m bus =
   f
 
 let take_sys ((machine : Machine.t), (m : machine_fake)) bus =
-  match Function.take machine ~lock:"t" bus with
+  match Function.take machine bus with
   | Ok f -> (f, List.hd m.taken)
   | Error _ -> raise Refused
 
@@ -857,7 +847,7 @@ let state bus =
 
 let test_refused_here () =
   if on_linux then skip ~reason:"this machine has /sys/bus/pci" ();
-  match Function.take Machine.this ~lock:"t" "0000:00:00.0" with
+  match Function.take Machine.this "0000:00:00.0" with
   | Ok _ -> fail "a function taken on a machine without PCI functions"
   | Error why -> contains ~msg:"names the bus" ~sub:"0000:00:00.0" why
 
@@ -870,7 +860,7 @@ let test_changes_nothing () =
   let before = List.map state buses in
   List.iter
     (fun bus ->
-      match Function.take Machine.this ~lock:"t" bus with
+      match Function.take Machine.this bus with
       | Ok f -> Function.release f
       | Error _ -> ())
     buses;
@@ -883,48 +873,31 @@ let test_changes_nothing () =
 let takeable () =
   Machine.functions Machine.this
   |> List.find_map (fun (d : Machine.id) ->
-      match Function.take Machine.this ~lock:"t" d.bus with
+      match Function.take Machine.this d.bus with
       | Ok f ->
           Function.release f;
           Some d
       | Error _ -> None)
 
-(* A planted link is not followed, and nothing but a regular file serves. *)
-let test_lock_files () =
+(* One process holds a function at a time, this one included. *)
+let test_held_here () =
   if not on_linux then skip ~reason:"this machine has no /sys/bus/pci" ();
   let d =
     match takeable () with
     | Some d -> d
     | None -> skip ~reason:"no function this process may take" ()
   in
-  let dir = temp_dir () in
-  setenv "TMPDIR" (Some dir);
-  let previous = Filename.get_temp_dir_name () in
-  Filename.set_temp_dir_name dir;
-  Fun.protect ~finally:(fun () -> Filename.set_temp_dir_name previous)
-  @@ fun () ->
-  List.iter
-    (fun name ->
-      let file = Filename.concat dir (name ^ "_" ^ d.bus ^ ".lock") in
-      let target = Filename.concat dir "target" in
-      Unix.symlink target file;
-      is_error ~msg:(name ^ ": a link")
-        (Function.take Machine.this ~lock:"t" d.bus);
-      is_false
-        ~msg:(name ^ ": its target is not created")
-        (Sys.file_exists target);
-      Sys.remove file;
-      Unix.mkdir file 0o700;
-      is_error ~msg:(name ^ ": a directory")
-        (Function.take Machine.this ~lock:"t" d.bus);
-      Unix.rmdir file)
-    [ "nx"; "t" ]
+  let f = Result.get_ok (Function.take Machine.this d.bus) in
+  is_error ~msg:"held" (Function.take Machine.this d.bus);
+  Function.release f;
+  let g = Result.get_ok (Function.take Machine.this d.bus) in
+  Function.release g
 
 let vfio_function () =
   if not (Sys.file_exists "/dev/vfio") then skip ~reason:"no /dev/vfio" ();
   Machine.functions Machine.this
   |> List.find_map (fun (d : Machine.id) ->
-      match Function.take Machine.this ~lock:"t" d.bus with
+      match Function.take Machine.this d.bus with
       | Ok f when Function.addressing f = Iommu -> Some (d, f)
       | Ok f ->
           Function.release f;
@@ -969,8 +942,8 @@ let this_machine =
         test_refused_here;
       test "listing and taking functions change nothing on this machine"
         test_changes_nothing;
-      test "a lock file that is a link or a directory refuses a take"
-        test_lock_files;
+      test "a function taken here refuses a second take until released"
+        test_held_here;
       test "a function behind an IOMMU reaches its memory at one run apart"
         test_vfio;
     ]

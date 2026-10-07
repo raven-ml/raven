@@ -18,19 +18,11 @@ type t = {
   pins : (int * int, unit) Hashtbl.t; (* (address, bytes) *)
 }
 
-(* A lock name becomes part of a file name. *)
-let word s =
-  s <> ""
-  && String.for_all (fun c -> Char.Ascii.is_alphanum c || c = '-' || c = '_') s
-
-let take machine ~lock bus =
-  if not (word lock) then
-    invalid_arg (Printf.sprintf "Function.take: %S is no lock name" lock);
+let take machine bus =
   let taken =
     match Machine.failed machine with
     | Some why -> Error why
-    | None -> (
-        try Machine.take machine ~lock bus with Failure why -> Error why)
+    | None -> ( try Machine.take machine bus with Failure why -> Error why)
   in
   Result.map
     (fun fn ->

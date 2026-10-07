@@ -27,7 +27,7 @@ let functions m =
   List.sort (fun a b -> Address.compare a.bus b.bus) (m.ops.functions ())
 
 let reserve m ~base n = m.ops.reserve ~base n
-let take m ~lock bus = m.ops.take ~lock bus
+let take m bus = m.ops.take bus
 
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
    between calls, so that a long wait holds no core. Elapsed time is compared in
