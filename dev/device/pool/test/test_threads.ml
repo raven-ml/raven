@@ -10,6 +10,8 @@ open Windtrap
 module P = Pool_probe
 module T = Thread_probe
 
+let strf = Printf.sprintf
+
 let cores = P.cores ()
 let needs_two_cores = P.needs_two_cores
 
@@ -121,7 +123,7 @@ let test_narrow_burst () =
   let median = List.nth (List.sort Int.compare samples) 25 in
   at_most
     ~msg:
-      (Printf.sprintf
+      (strf
          "threads running beside the burst's caller and its worker, of %s"
          (String.concat " " (List.map string_of_int samples)))
     int ~than:2 median

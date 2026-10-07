@@ -8,6 +8,8 @@
 open Windtrap
 module P = Pool_probe
 
+let strf = Printf.sprintf
+
 (* A process this executable starts, to see the first call of nx_pool_cores
    under a pinned affinity. It must call nothing of the pool before, so this
    comes first. *)
@@ -145,7 +147,7 @@ let mount ?(root = "/") point =
 let host_mount = mount "/sys/fs/cgroup"
 let session = "/user.slice/user-1000.slice/session-2.scope"
 let cpu_max cgroup = "sys/fs/cgroup" ^ cgroup ^ "/cpu.max"
-let quota q = Printf.sprintf "%d 100000\n" q
+let quota q = strf "%d 100000\n" q
 let no_quota = "max 100000\n"
 
 let trees =
@@ -370,7 +372,7 @@ let test_claim_order ((threads, total, chunks) as job) =
   List.iter
     (fun th ->
       equal
-        ~msg:(Printf.sprintf "the chunks thread %d ran, in its order" th)
+        ~msg:(strf "the chunks thread %d ran, in its order" th)
         (list int64)
         (distinct (los th))
         (los th))
@@ -424,7 +426,7 @@ let chunk_tests =
         job_gen test_bounds;
       cases
         ~name:(fun (total, chunks, _) ->
-          Printf.sprintf "total %Ld, chunks %Ld" total chunks)
+          strf "total %Ld, chunks %Ld" total chunks)
         "a job whose total times its chunks passes 64 bits, or of more chunks \
          than units, calls ranges of the stated chunks"
         wide_jobs test_wide_job;
