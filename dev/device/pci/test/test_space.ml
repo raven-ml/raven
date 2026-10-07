@@ -23,7 +23,7 @@ type model = {
 }
 
 let create (base, n) =
-  if base < 0 || n < 0 then invalid_arg "Space.create";
+  if base < 0 || n < 0 || n > max_int - base then invalid_arg "Space.create";
   { base; length = n; live = []; freed = [] }
 
 let is_pow2 a = a > 0 && a land (a - 1) = 0
@@ -136,6 +136,7 @@ let lengths =
       1 lsl 20;
       1 lsl 24;
       1 lsl 44;
+      max_int;
       -1;
     ]
 

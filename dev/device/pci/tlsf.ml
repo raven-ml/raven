@@ -184,27 +184,35 @@ let alloc ?(align = 1) t n =
   if n < 0 then invalid_arg (Printf.sprintf "Tlsf.alloc: %d bytes" n);
   if align <= 0 then invalid_arg (Printf.sprintf "Tlsf.alloc: align %d" align);
   let req = Int.max t.block n in
-  match suitable t (class_of (round_class (req + align - 1))) with
-  | None -> None
-  | Some start ->
-      let b = find t start in
-      remove t b;
-      (* The gap below the aligned start stays free. Its neighbour before was
-         [b]'s, which is not free. *)
-      let gap = round_up (t.base + start) align - t.base - start in
-      let start, b =
-        if gap = 0 then (start, b)
-        else
-          let a, ab = carve t start b gap in
-          insert t start b;
-          (a, ab)
-      in
-      (* The tail above the request is free, unless smaller than a block. *)
-      if b.size - req >= t.block then begin
-        let r, rb = carve t start b req in
-        insert t r rb
-      end;
-      Some (t.base + start)
+  (* A block of [req + align - 1] bytes holds the request wherever it starts.
+     None is larger than the range, and the sum could wrap past [max_int]. *)
+  if req > t.length - align + 1 then None
+  else
+    let need = round_class (req + align - 1) in
+    (* Rounding wraps below 0 only for a range within 2^57 of [max_int]. *)
+    if need < 0 then None
+    else
+      match suitable t (class_of need) with
+      | None -> None
+      | Some start ->
+          let b = find t start in
+          remove t b;
+          (* The gap below the aligned start stays free. Its neighbour before
+             was [b]'s, which is not free. *)
+          let gap = round_up (t.base + start) align - t.base - start in
+          let start, b =
+            if gap = 0 then (start, b)
+            else
+              let a, ab = carve t start b gap in
+              insert t start b;
+              (a, ab)
+          in
+          (* The tail above the request is free, unless smaller than a block. *)
+          if b.size - req >= t.block then begin
+            let r, rb = carve t start b req in
+            insert t r rb
+          end;
+          Some (t.base + start)
 
 let free t x =
   let start = x - t.base in

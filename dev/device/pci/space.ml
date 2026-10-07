@@ -14,7 +14,7 @@ type t = {
 }
 
 let create ~base n =
-  if base < 0 || n < 0 then
+  if base < 0 || n < 0 || n > max_int - base then
     invalid_arg (Printf.sprintf "Space.create: %d addresses at 0x%x" n base);
   { base; length = n; tlsf = None; lock = Mutex.create () }
 

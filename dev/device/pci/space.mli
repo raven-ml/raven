@@ -18,7 +18,7 @@ val create : base:int -> int -> t
     allocates nothing until the first {!alloc}, so a vendor's space costs a
     program that drives none of its GPUs nothing.
 
-    Raises [Invalid_argument] if [base < 0] or [n < 0]. *)
+    Raises [Invalid_argument] if [base < 0], [n < 0] or [base + n > max_int]. *)
 
 val base : t -> int
 (** [base s] is [s]'s first address. *)
