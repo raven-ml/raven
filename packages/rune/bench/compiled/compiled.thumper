@@ -126,12 +126,12 @@ transcendental/sin-float64-1Mi-host	wall_time	batch=1	n=20	6.896e-03	6.397e-03 6
 # forced: blessed reverse/jit-of-grad-clipped-disc-float64-104x104-host under load 9.4 on 10 cores
 # forced: blessed gaussian/process-float64-8x11-host under load 8.5 on 10 cores
 
-decode/kv-2880x512-bfloat16-host	alloc_words	exact	1162
-decode/kv-2880x512-bfloat16-host	wall_time	batch=8	n=20	2.936e-04	2.433e-04 2.521e-04 2.528e-04 2.538e-04 2.729e-04 2.796e-04 2.805e-04 2.831e-04 2.855e-04 2.889e-04 2.983e-04 3.047e-04 3.057e-04 3.096e-04 3.150e-04 3.201e-04 3.240e-04 3.403e-04 9.208e-04 9.478e-04
-decode/q-2880x4096-bfloat16-host	alloc_words	exact	1162
-decode/q-2880x4096-bfloat16-host	wall_time	batch=2	n=20	3.635e-03	3.544e-03 3.547e-03 3.570e-03 3.575e-03 3.580e-03 3.585e-03 3.606e-03 3.607e-03 3.628e-03 3.631e-03 3.638e-03 3.713e-03 3.743e-03 3.810e-03 4.093e-03 4.196e-03 4.280e-03 4.298e-03 4.387e-03 5.149e-03
-decode/router-2880x32-bfloat16-host	alloc_words	exact	1162
-decode/router-2880x32-bfloat16-host	wall_time	batch=128	n=20	6.495e-05	6.381e-05 6.390e-05 6.425e-05 6.426e-05 6.458e-05 6.475e-05 6.488e-05 6.490e-05 6.491e-05 6.495e-05 6.495e-05 6.504e-05 6.506e-05 6.508e-05 6.509e-05 6.515e-05 6.518e-05 6.519e-05 6.535e-05 6.569e-05
+decode/kv-2880x512-bfloat16-host	alloc_words	exact	1142
+decode/kv-2880x512-bfloat16-host	wall_time	batch=32	n=20	2.434e-04	2.049e-04 2.065e-04 2.089e-04 2.215e-04 2.257e-04 2.281e-04 2.311e-04 2.345e-04 2.371e-04 2.406e-04 2.461e-04 2.479e-04 2.507e-04 2.507e-04 2.507e-04 2.513e-04 2.523e-04 2.536e-04 2.593e-04 2.598e-04
+decode/q-2880x4096-bfloat16-host	alloc_words	exact	1142
+decode/q-2880x4096-bfloat16-host	wall_time	batch=2	n=20	3.677e-03	3.563e-03 3.580e-03 3.629e-03 3.632e-03 3.636e-03 3.651e-03 3.658e-03 3.664e-03 3.664e-03 3.677e-03 3.677e-03 3.682e-03 3.688e-03 3.700e-03 3.709e-03 3.719e-03 3.728e-03 3.781e-03 3.857e-03 3.969e-03
+decode/router-2880x32-bfloat16-host	alloc_words	exact	1142
+decode/router-2880x32-bfloat16-host	wall_time	batch=128	n=20	5.554e-05	5.338e-05 5.442e-05 5.480e-05 5.499e-05 5.514e-05 5.515e-05 5.531e-05 5.534e-05 5.542e-05 5.548e-05 5.559e-05 5.568e-05 5.573e-05 5.579e-05 5.588e-05 5.588e-05 5.601e-05 5.620e-05 5.736e-05 5.749e-05
 eigh/float32-64x8x8-eager	alloc_words	exact	248
 eigh/float32-64x8x8-eager	wall_time	batch=128	n=20	5.520e-05	5.081e-05 5.223e-05 5.277e-05 5.296e-05 5.312e-05 5.316e-05 5.383e-05 5.432e-05 5.446e-05 5.503e-05 5.538e-05 5.546e-05 5.583e-05 5.612e-05 5.627e-05 5.648e-05 5.879e-05 6.022e-05 6.433e-05 6.594e-05
 eigh/float32-64x8x8-host	alloc_words	exact	9262
@@ -178,8 +178,8 @@ loop/vmap-newton-256-lanes-compiled	alloc_words	exact	7128
 loop/vmap-newton-256-lanes-compiled	wall_time	batch=256	n=20	2.731e-05	2.597e-05 2.598e-05 2.604e-05 2.616e-05 2.620e-05 2.658e-05 2.664e-05 2.666e-05 2.698e-05 2.715e-05 2.746e-05 2.801e-05 2.808e-05 2.810e-05 2.815e-05 2.816e-05 2.817e-05 2.827e-05 2.845e-05 2.923e-05
 loop/vmap-newton-256-lanes-eager	alloc_words	exact	38403
 loop/vmap-newton-256-lanes-eager	wall_time	batch=32	n=20	1.619e-04	1.460e-04 1.510e-04 1.516e-04 1.532e-04 1.547e-04 1.567e-04 1.580e-04 1.600e-04 1.601e-04 1.611e-04 1.626e-04 1.641e-04 1.644e-04 1.665e-04 1.669e-04 1.671e-04 1.677e-04 1.687e-04 1.694e-04 1.708e-04
-lorenz/step-batch-128-host	alloc_words	exact	43933
-lorenz/step-batch-128-host	wall_time	batch=1	n=20	1.077e-02	1.033e-02 1.053e-02 1.056e-02 1.061e-02 1.065e-02 1.067e-02 1.071e-02 1.074e-02 1.076e-02 1.076e-02 1.079e-02 1.079e-02 1.084e-02 1.098e-02 1.103e-02 1.126e-02 1.134e-02 1.139e-02 1.166e-02 1.176e-02
+lorenz/step-batch-128-host	alloc_words	exact	43925
+lorenz/step-batch-128-host	wall_time	batch=1	n=20	1.007e-02	9.844e-03 9.909e-03 9.916e-03 9.954e-03 9.955e-03 9.978e-03 9.980e-03 1.005e-02 1.005e-02 1.006e-02 1.007e-02 1.011e-02 1.014e-02 1.015e-02 1.017e-02 1.070e-02 1.077e-02 1.079e-02 1.114e-02 1.758e-02
 metal/decode-kv-2880x512-bfloat16	alloc_words	batch=32	n=20	1.542e+03	1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.542e+03 1.898e+03 1.910e+03 1.910e+03 1.911e+03
 metal/decode-kv-2880x512-bfloat16	wall_time	batch=32	n=20	2.981e-04	2.860e-04 2.878e-04 2.888e-04 2.892e-04 2.901e-04 2.926e-04 2.930e-04 2.932e-04 2.965e-04 2.979e-04 2.983e-04 3.011e-04 3.029e-04 3.038e-04 3.058e-04 3.070e-04 3.072e-04 3.113e-04 3.143e-04 3.143e-04
 metal/decode-q-2880x4096-bfloat16	alloc_words	exact	811
