@@ -34,14 +34,7 @@ let save_npy (type a b) ?(overwrite = true) path (arr : (a, b) Nx.t) =
   | _ ->
       wrap_exn @@ fun () ->
       with_npy ~by:"Nx_io.save_npy" arr @@ fun packed ->
-      (if not overwrite then Npy.write ~exclusive:true packed path
-       else
-         let temp = Temp_file.sibling path in
-         match Npy.write packed temp with
-         | () -> Temp_file.replace temp path
-         | exception exn ->
-             Temp_file.remove_if_exists temp;
-             raise exn);
+      Temp_file.write ~overwrite path (Npy.write packed);
       Ok ()
 
 (* Npz *)
@@ -73,22 +66,8 @@ let add_npy zo name (Nx.P t) =
 
 let save_npz ?(overwrite = true) path archive =
   wrap_exn @@ fun () ->
-  let write ~exclusive output =
-    let zo = Zip_archive.open_out ~exclusive output in
-    try
+  Temp_file.write ~overwrite path (fun fd ->
+      let zo = Zip_archive.open_out fd in
       List.iter (fun (name, t) -> add_npy zo name t) (Archive.bindings archive);
-      Zip_archive.close_out zo
-    with exn ->
-      Zip_archive.abort_out zo;
-      Temp_file.remove_if_exists output;
-      raise exn
-  in
-  (if not overwrite then write ~exclusive:true path
-   else
-     let temp = Temp_file.sibling path in
-     match write ~exclusive:false temp with
-     | () -> Temp_file.replace temp path
-     | exception exn ->
-         Temp_file.remove_if_exists temp;
-         raise exn);
+      Zip_archive.close_out zo);
   Ok ()

@@ -26,14 +26,4 @@ let decompress input output =
 let gunzip ~src ~dst =
   let input = Unix.openfile src [ Unix.O_RDONLY ] 0 in
   Fun.protect ~finally:(fun () -> Unix.close input) @@ fun () ->
-  let temp = Temp_file.sibling dst in
-  match
-    let output = Unix.openfile temp [ Unix.O_WRONLY; Unix.O_TRUNC ] 0 in
-    Fun.protect
-      ~finally:(fun () -> Unix.close output)
-      (fun () -> decompress input output)
-  with
-  | () -> Temp_file.replace temp dst
-  | exception exn ->
-      Temp_file.remove_if_exists temp;
-      raise exn
+  Temp_file.write ~overwrite:true dst (decompress input)

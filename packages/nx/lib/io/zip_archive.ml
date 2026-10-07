@@ -535,12 +535,9 @@ let write_string fd text =
 let add_offset archive amount =
   archive.offset <- checked_add "output" archive.offset amount
 
-let open_out ?(exclusive = false) path =
-  let flags =
-    if exclusive then [ Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY ]
-    else [ Unix.O_CREAT; Unix.O_TRUNC; Unix.O_WRONLY ]
-  in
-  let fd = Unix.openfile path flags 0o640 in
+(* An archive written to [fd], which its caller closes after {!close_out} writes
+   the central directory. *)
+let open_out fd =
   {
     fd;
     offset = 0;
@@ -746,10 +743,4 @@ let close_out archive =
       ^ size32 ^ offset32 ^ le16 0
     in
     write_string archive.fd eocd;
-    archive.closed <- true;
-    Unix.close archive.fd)
-
-let abort_out archive =
-  if not archive.closed then (
-    archive.closed <- true;
-    Unix.close archive.fd)
+    archive.closed <- true)

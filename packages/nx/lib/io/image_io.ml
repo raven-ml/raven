@@ -152,37 +152,10 @@ let load_image ~grayscale path =
   in
   Nx.of_bigarray (reshape (genarray_of_array1 dst) shape)
 
-let encode_to_path ~encode ~exclusive path data ~width ~height ~channels =
-  let flags =
-    if exclusive then [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL ]
-    else [ Unix.O_WRONLY; Unix.O_TRUNC ]
-  in
-  let fd = Unix.openfile path flags 0o640 in
-  match
-    Fun.protect
-      ~finally:(fun () -> Unix.close fd)
-      (fun () -> encode fd data width height channels)
-  with
-  | () -> ()
-  | exception exn ->
-      Temp_file.remove_if_exists path;
-      raise exn
-
 let save_png ~overwrite path data ~width ~height ~channels =
   ignore (checked_pixels width height channels);
-  if not overwrite then
-    encode_to_path ~encode:write_png ~exclusive:true path data ~width ~height
-      ~channels
-  else
-    let temp = Temp_file.sibling path in
-    match
-      encode_to_path ~encode:write_png ~exclusive:false temp data ~width ~height
-        ~channels
-    with
-    | () -> Temp_file.replace temp path
-    | exception exn ->
-        Temp_file.remove_if_exists temp;
-        raise exn
+  Temp_file.write ~overwrite path (fun fd ->
+      write_png fd data width height channels)
 
 let encode_png data ~width ~height ~channels ~ppm ~srgb =
   ignore (checked_pixels width height channels);
@@ -194,16 +167,5 @@ let save_jpeg ~overwrite path data ~width ~height ~channels =
   ignore (checked_pixels width height channels);
   if channels <> 1 && channels <> 3 then
     invalid_arg "JPEG output requires one or three channels";
-  if not overwrite then
-    encode_to_path ~encode:jpeg_encode ~exclusive:true path data ~width ~height
-      ~channels
-  else
-    let temp = Temp_file.sibling path in
-    match
-      encode_to_path ~encode:jpeg_encode ~exclusive:false temp data ~width
-        ~height ~channels
-    with
-    | () -> Temp_file.replace temp path
-    | exception exn ->
-        Temp_file.remove_if_exists temp;
-        raise exn
+  Temp_file.write ~overwrite path (fun fd ->
+      jpeg_encode fd data width height channels)

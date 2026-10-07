@@ -423,22 +423,7 @@ let really_write_string fd text =
   in
   loop 0
 
-let write ?(exclusive = false) packed path =
-  let flags =
-    if exclusive then [ Unix.O_CREAT; Unix.O_EXCL; Unix.O_WRONLY ]
-    else [ Unix.O_CREAT; Unix.O_TRUNC; Unix.O_WRONLY ]
-  in
-  let fd = Unix.openfile path flags 0o640 in
-  match
-    Fun.protect
-      ~finally:(fun () -> Unix.close fd)
-      (fun () ->
-        let encoded = encode packed in
-        really_write_string fd encoded.header;
-        Nx_io_codec.write_all fd encoded.data ~off:0
-          ~len:(Array1.dim encoded.data))
-  with
-  | () -> ()
-  | exception exn ->
-      (if exclusive then try Sys.remove path with Sys_error _ -> ());
-      raise exn
+let write packed fd =
+  let encoded = encode packed in
+  really_write_string fd encoded.header;
+  Nx_io_codec.write_all fd encoded.data ~off:0 ~len:(Array1.dim encoded.data)

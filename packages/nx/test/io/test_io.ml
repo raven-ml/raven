@@ -1360,6 +1360,21 @@ let every_format =
           f.save path;
           f.save fresh;
           equal string (read fresh) (read path));
+      (* A umask without the owner's write bit makes a new file one only its
+         creating descriptor can write: a save writes through that descriptor,
+         never through the file's name. *)
+      cases ~name "a save writes under a umask that denies the owner write"
+        formats (fun f ->
+          if Unix.geteuid () <> 0 then begin
+            let path = file f.suffix "old"
+            and fresh = missing ("x" ^ f.suffix) in
+            f.save fresh;
+            let umask = Unix.umask 0o277 in
+            Fun.protect
+              ~finally:(fun () -> ignore (Unix.umask umask))
+              (fun () -> f.save path);
+            equal string (read fresh) (read path)
+          end);
       cases ~name
         "~overwrite:false writes a new file and refuses an existing one, \
          leaving it as it was"

@@ -3585,6 +3585,10 @@ thread.
   `Error` if its path exists, where it emptied the file there, following a
   link. `Nx_device.Buffer.flush` waits for the writes to a file's buffer and
   forces them to its storage.
+- `Nx_io.save_npy`, `save_npz`, `save_image` and `gunzip` write through the
+  descriptor that created their file. They reopened it by name, so a link put
+  there meanwhile redirected the write, and a umask without the owner's write
+  bit failed it. Every save's file is now `0666` less the umask.
 - `Nx_io.save_safetensors` creates its temporary file exclusively and syncs it
   through its own descriptor: a link put at its name no longer redirects the
   write or the sync.
