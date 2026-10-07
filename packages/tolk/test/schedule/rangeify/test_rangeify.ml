@@ -191,7 +191,6 @@ let recorded =
        programs)
 
 let is_kernel u = Ops.op u = Call && Ops.op (Ops.nth u 0) = Sink
-
 let kernels u = List.length (List.filter is_kernel (Ops.toposort ~calls:Skip u))
 
 let counts =
@@ -479,7 +478,9 @@ let out = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
 
 let stores value =
   Ops.sink
-    [ Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ] ]
+    [
+      Ops.after out [ Ops.store (Shape.reshape out (Shape.shape value)) value ];
+    ]
 
 let schedule sink = Rangeify.get_kernel_graph (Prepare.prepare_rangeify sink)
 let kernels_of sink = kernels (schedule sink)
@@ -580,7 +581,9 @@ let out2 = Call.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
 
 let stores2 ?(size = 16) v w =
   let at slot = Call.param ~device:cpu ~shape:[ Int size ] slot Float32 in
-  let store o v = Ops.after o [ Ops.store (Shape.reshape o (Shape.shape v)) v ] in
+  let store o v =
+    Ops.after o [ Ops.store (Shape.reshape o (Shape.shape v)) v ]
+  in
   Ops.sink [ store (at 0) v; store (at 4) w ]
 
 (* Knuth's two-sum of [a] and [b]: the rounded sum and its error. *)
@@ -617,7 +620,9 @@ let shared =
           writes sink);
       test "outputs that share a broadcast reduction read it from its kernel"
         (fun () ->
-          let m = Shape.expand (Shape.rop (input 1) Max [ 1 ]) (ints [ 4; 4 ]) in
+          let m =
+            Shape.expand (Shape.rop (input 1) Max [ 1 ]) (ints [ 4; 4 ])
+          in
           let sink = stores2 Ops.O.(m + input 2) Ops.O.(m * input 3) in
           equal int 2 (kernels_of sink);
           writes sink);
@@ -656,6 +661,60 @@ let shared =
           writes sink);
     ]
 
+(* Reductions that share a domain
+
+   Reductions whose outputs a kernel indexes alike and that reduce axes of the
+   same sizes run one loop when neither reads the other: the nodes their sources
+   share are computed once. *)
+
+let small = Call.param ~device:cpu ~shape:[ Int 4 ] 0 Float32
+
+let stores_small value =
+  Ops.sink
+    [
+      Ops.after small
+        [ Ops.store (Shape.reshape small (Shape.shape value)) value ];
+    ]
+
+(* The loops each kernel reduces over. *)
+let reduce_loops sink =
+  List.map
+    (fun c ->
+      List.length
+        (List.filter
+           (fun u -> Ops.op u = Range && Ops.axis_type u = Reduce)
+           (Ops.toposort ~calls:Skip (Ops.nth c 0))))
+    (calls (schedule sink))
+
+let siblings =
+  let v = Ops.O.(input 1 * input 2) in
+  group "get_kernel_graph › reductions that share a domain"
+    [
+      test "a sum and a maximum of one computation run one loop" (fun () ->
+          let sink =
+            stores_small Ops.O.(Shape.rop v Add [ 1 ] + Shape.rop v Max [ 1 ])
+          in
+          equal (list int) [ 1 ] (reduce_loops sink);
+          writes sink);
+      test "a reduction that reads another of its domain runs its own loop"
+        (fun () ->
+          let x = input 1 in
+          let sums = Shape.reshape (Shape.rop x Add [ 1 ]) (ints [ 4; 1 ]) in
+          let centred = Ops.O.(x - Shape.expand sums (ints [ 4; 4 ])) in
+          let sink =
+            stores_small (Shape.rop Ops.O.(centred * centred) Add [ 1 ])
+          in
+          equal int 2 (List.fold_left ( + ) 0 (reduce_loops sink));
+          writes sink);
+      test "reductions of axes of different sizes run a loop each" (fun () ->
+          let w = input ~shape:[ 4; 8 ] 3 in
+          let sink =
+            stores_small Ops.O.(Shape.rop v Add [ 1 ] + Shape.rop w Add [ 1 ])
+          in
+          equal (list int) [ 2 ] (reduce_loops sink);
+          writes sink);
+    ]
+
 (* Generated programs
 
    The law of scheduling end to end: a function of up to three inputs of up to
@@ -669,6 +728,8 @@ type step =
   | Add_input
   | Sum of int
   | Max of int
+  | Sum_max of int
+  | Center of int
   | Rotate of int
   | Flip of int
   | Pad of int
@@ -684,6 +745,8 @@ let pp_step ppf = function
   | Add_input -> Format.fprintf ppf "x + an input"
   | Sum k -> Format.fprintf ppf "sum %d" k
   | Max k -> Format.fprintf ppf "max %d" k
+  | Sum_max k -> Format.fprintf ppf "sum %d + max %d" k k
+  | Center k -> Format.fprintf ppf "x - sum %d" k
   | Rotate k -> Format.fprintf ppf "rotate by %d" k
   | Flip k -> Format.fprintf ppf "flip %d" k
   | Pad k -> Format.fprintf ppf "pad %d" k
@@ -703,6 +766,8 @@ let step =
         Add_input;
         Sum k;
         Max k;
+        Sum_max k;
+        Center k;
         Rotate k;
         Flip k;
         Pad k;
@@ -761,6 +826,13 @@ let build (shape, steps) =
     | Add_input when List.length !memory < 3 -> Ops.O.(v + fresh shape)
     | Sum k when rank > 0 -> Shape.rop v Add [ k mod rank ]
     | Max k when rank > 0 -> Shape.rop v Max [ k mod rank ]
+    | Sum_max k when rank > 0 ->
+        Ops.O.(Shape.rop v Add [ k mod rank ] + Shape.rop v Max [ k mod rank ])
+    | Center k when rank > 0 ->
+        let a = k mod rank in
+        let kept = List.mapi (fun b n -> if b = a then 1 else n) shape in
+        let sums = Shape.reshape (Shape.rop v Add [ a ]) (ints kept) in
+        Ops.O.(v - Shape.expand sums (ints shape))
     | Rotate k when rank > 0 ->
         Shape.permute v (List.init rank (fun i -> (i + k) mod rank))
     | Flip k -> (
@@ -797,11 +869,33 @@ let build (shape, steps) =
   in
   (sink, !memory)
 
+(* Whether two reductions of a kernel reduce over one range. *)
+let shares_a_loop kernels =
+  List.exists
+    (fun c ->
+      let reduces =
+        List.filter
+          (fun u -> Ops.op u = Reduce)
+          (Ops.toposort ~calls:Skip (Ops.nth c 0))
+      in
+      List.exists
+        (fun r ->
+          List.exists
+            (fun r' ->
+              r != r'
+              && List.exists
+                   (fun u -> List.memq u (List.tl (Ops.src r')))
+                   (List.tl (Ops.src r)))
+            reduces)
+        reduces)
+    (calls kernels)
+
 let writes_what_it_computes ?(cover = fun _ _ -> ()) drawn =
   let sink, buffers = build drawn in
   let kernels = schedule sink in
   let expected = Tensors.writes ~buffers sink in
   cover "several kernels" (List.length (calls kernels) > 1);
+  cover "reductions that share a loop" (shares_a_loop kernels);
   cover "a value is written" (expected <> []);
   equal (list write) expected (Kernel_graphs.writes ~buffers kernels)
 
@@ -972,6 +1066,7 @@ let () =
          spec;
          rules;
          shared;
+         siblings;
          loops;
          states;
          cost;

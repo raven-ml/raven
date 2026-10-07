@@ -13,7 +13,7 @@ local_and_grouped_reduce_7	local_and_grouped_reduce	metal	(Opt(op=OptOps.SPLIT, 
 local_and_grouped_reduce_8	local_and_grouped_reduce	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=3, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL)))		ok	
 local_and_grouped_reduce_9	local_and_grouped_reduce	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)))		ok	
 local_and_grouped_reduce_10	local_and_grouped_reduce	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=6, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=8, arg=(2, AxisType.LOCAL)))		ok	
-sum_and_max_grouped	sum_and_max	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(11, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.LOCAL, True)), Opt(op=OptOps.PADTO, axis=2, arg=32))		ok	
+sum_and_max_grouped	sum_and_max	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(11, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.LOCAL, True)), Opt(op=OptOps.PADTO, axis=1, arg=32))		ok	
 flip_pad_sum_grouped	flip_pad_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.LOCAL, True)), Opt(op=OptOps.PADTO, axis=0, arg=8), Opt(op=OptOps.SPLIT, axis=0, arg=(12, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL)))		ok	
 strided_conv_grouped	strided_conv	metal	(Opt(op=OptOps.SPLIT, axis=5, arg=(0, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.LOCAL)))		ok	
 cumsum_unrolled_padded	cumsum	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.PADTO, axis=0, arg=4))		ok	
@@ -131,6 +131,8 @@ double_sum_unroll_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, A
 double_sum_group_twice	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)))		ok	
 sibling_sums_group	sibling_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)		ok	
 ten_sums_group	ten_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		ok	
+ten_shared_sums_group	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(256, AxisType.LOCAL, True)),)		ok	
+ten_shared_sums_group_unfit	ten_shared_sums	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(1024, AxisType.LOCAL, True)),)		KernelOptError	0
 single_kernel_softmax_group	single_kernel_softmax	metal	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		ok	
 split_axis_negative	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=-1, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
 split_axis_past_end	sum_rows	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UNROLL)),)		KernelOptError	0

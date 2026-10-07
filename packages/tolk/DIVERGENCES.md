@@ -4451,3 +4451,44 @@ stores through a pad.
   `experts_down_cpu`, recorded from the equally patched tinygrad; rune's
   lower_index suite: `quantised products › a product decodes a checkpoint's
   codes 16 at once on the host`.
+
+## D144. Reductions of one domain that read none of each other share their loop
+
+- **tinygrad:** `schedule/indexing.py:299-301` (`run_rangeify`: each
+  reduction takes new ranges for the axes it reduces), `:253-276` (a node its
+  consumers index apart is stored) and `schedule/rangeify.py:50`
+  (`remove_bufferize`, which inlines such a store back into each consumer);
+  `codegen/__init__.py:177` (`merge_reduce_ends`, which already makes one
+  loop of the reductions that close one range).
+- **tolk:** `lib/schedule/indexing.ml:572` (`reaches`), `:583`
+  (`reduce_loops`) and `:709` (its use in `assign_ranges`);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
+  are recorded.
+- **Differs:** a reduction whose output is indexed by the same ranges as an
+  earlier one's in the walk, and that reduces axes of the same sizes, takes
+  that reduction's reduce ranges when no reduction of the group reaches it,
+  through anything. The walk meets a reduction before those it reads, so only
+  a reduction already in the group can read it. The sources are then indexed
+  alike: a node they share is one node, computed once per element of the
+  loop, where tinygrad indexes it by each reduction's ranges, stores it, and
+  inlines the store back into each loop. A group of a loop that several
+  reductions close takes a buffer of shared memory for each (D101).
+- **Reason:** (b): rune's reverse mode. The cotangent of a value that
+  operations broadcast sums one reduction per operation, each over the same
+  cotangent computation: the gradient of an aperture's weights over a 104 x
+  104 grid in its radius, which 28 operations broadcast, was one kernel of 28
+  loops, each computing the whole cell, and took 647-672 ms compiled against
+  93-171 ms eagerly on an M1 Max under load 11-15; one loop takes 30-31 ms.
+- **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
+  `get_kernel_graph › reductions that share a domain` (every test), and its
+  law over generated programs, whose `sum k + max k` and `x - sum k` steps
+  cover reductions that share a loop; its recorded `multireduce_*` and
+  `ugly_reduceop_pairing` kernel graphs and `kernel_counts`; the Indexing
+  suite's recorded `two_consumers` graph; the Postrange suite's
+  `sum_and_max_grouped`, `ten_shared_sums_group` and
+  `ten_shared_sums_group_unfit` cases, and the Codegen suite's
+  `two_grouped_stores_local`, whose upstream axes count one loop for the two
+  maximums; all from the equally patched tinygrad. Rune's Jit suite:
+  `transformations › a compiled gradient of a parameter broadcast over a grid
+  is its gradient`; the rune bench's
+  `reverse/jit-of-grad-clipped-disc-float64-104x104-host` row.

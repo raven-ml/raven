@@ -4822,11 +4822,11 @@
 4820 Ops.CAST dtypes.short [36] dtypes.short
 4821 Ops.CAST dtypes.ushort [105] dtypes.ushort
 4822 Ops.SUB dtypes.int [4801, 4800]
-4823 Ops.RANGE dtypes.int [4822] (2, AxisType.WEAK)
+4823 Ops.RANGE dtypes.int [4822] (1, AxisType.WEAK)
 4824 Ops.ADD dtypes.int [4800, 4823]
 4825 Ops.MUL dtypes.int [4824, 86]
 4826 Ops.SHL dtypes.int [4824, 104]
-4827 Ops.RANGE dtypes.int [84, 4823] (3, AxisType.WEAK)
+4827 Ops.RANGE dtypes.int [84, 4823] (2, AxisType.WEAK)
 4828 Ops.MUL dtypes.int [4827, 4809]
 4829 Ops.ADD dtypes.int [4828, 4805]
 4830 Ops.SHR dtypes.int [4829, 106]
@@ -5004,7 +5004,7 @@
 5002 Ops.CONST dtypes.weakint [] 420
 5003 Ops.CAST dtypes.int [5002] dtypes.int
 5004 Ops.SUB dtypes.int [4997, 4996]
-5005 Ops.RANGE dtypes.int [5004] (2, AxisType.WEAK)
+5005 Ops.RANGE dtypes.int [5004] (1, AxisType.WEAK)
 5006 Ops.ADD dtypes.int [4996, 5005]
 5007 Ops.MUL dtypes.int [5006, 5003]
 5008 Ops.ADD dtypes.int [5007, 4999]
@@ -5020,7 +5020,7 @@
 5018 Ops.SHL dtypes.int [5017, 104]
 5019 Ops.SHR dtypes.int [5015, 106]
 5020 Ops.SHL dtypes.int [5019, 104]
-5021 Ops.RANGE dtypes.int [84, 5005] (3, AxisType.WEAK)
+5021 Ops.RANGE dtypes.int [84, 5005] (2, AxisType.WEAK)
 5022 Ops.SHL dtypes.int [5021, 6]
 5023 Ops.ADD dtypes.int [5018, 5022]
 5024 Ops.ADD dtypes.int [5023, 33]

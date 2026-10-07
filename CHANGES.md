@@ -1212,6 +1212,11 @@ thread.
 
 ### Tolk (new)
 
+- Reductions over one domain that read none of each other share their loop
+  and compute what their sources share once. A compiled gradient in a
+  parameter that many operations broadcast sums one reduction per broadcast,
+  and each recomputed the whole graph: over a 104 x 104 grid such a gradient
+  took 650 ms compiled against 130 ms eagerly, and takes 31 ms.
 - A schedule kept on disk now serves a later process that builds the same
   function: its key no longer holds the slots a process counter gives a staged
   loop's carry or renamed call-local storage. A body that hits the schedule

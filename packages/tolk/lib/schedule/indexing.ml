@@ -29,6 +29,16 @@ type ctx = {
          in order. *)
   loops : t list Tbl.t; (* A group's loops, by its first store. *)
   ends : t Tbl.t; (* A group's end, by its first store. *)
+  mutable siblings : siblings list;
+      (* The reductions that share their loops, newest group first. *)
+}
+
+and siblings = {
+  sizes : sint list; (* The sizes of the axes they reduce. *)
+  outer : t list; (* The ranges that index their outputs. *)
+  reduced : t list; (* The ranges they reduce. *)
+  reached : unit Tbl.t; (* What the members reach, but the pending ones. *)
+  mutable pending : t list; (* The members whose reach is not walked yet. *)
 }
 
 (* A range of size 1 only ever takes the value 0. *)
@@ -545,6 +555,49 @@ let loops_of rctx x =
           Tbl.replace rctx.loops f r;
           r)
 
+(* Reductions that share their loops
+
+   A reduction reduces its source over ranges of its own. Reductions whose
+   outputs are indexed by the same ranges and that reduce axes of the same sizes
+   take the same ranges instead when neither reads the other: their sources are
+   then indexed alike, so the nodes they share are computed once, and their
+   accumulators add in one loop. Reverse mode makes such reductions: the
+   cotangent of a value that operations broadcast sums one reduction per
+   operation, each over the same cotangent computation.
+
+   The walk meets a reduction before those it reads, so a reduction joins the
+   first group of its key whose members do not reach it. A group walks what its
+   members reach only once a second reduction asks to join it. *)
+
+let reaches g x =
+  let unseen u = not (Tbl.mem g.reached u) in
+  List.iter
+    (fun m ->
+      List.iter
+        (fun u -> Tbl.replace g.reached u ())
+        (toposort ~calls:Skip ~gate:unseen (nth m 0)))
+    g.pending;
+  g.pending <- [];
+  Tbl.mem g.reached x
+
+let reduce_loops rctx x sizes outer =
+  let fits g =
+    List.equal Sint.equal g.sizes sizes
+    && List.equal Ops.equal g.outer outer
+    && not (reaches g x)
+  in
+  match List.find_opt fits rctx.siblings with
+  | Some g ->
+      g.pending <- x :: g.pending;
+      g.reduced
+  | None ->
+      let reduced = new_ranges ~axis_type:Axis_type.Reduce rctx sizes in
+      let g =
+        { sizes; outer; reduced; reached = Tbl.create 64; pending = [ x ] }
+      in
+      rctx.siblings <- g :: rctx.siblings;
+      reduced
+
 (* Kernels are internal, and after, shard selections and shard stacks carry no
    ranges, as a sink does not. *)
 let no_ranges = ops Op.[ Call; Linear; After; Mstack; Mselect ]
@@ -653,8 +706,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
       let rngs =
         match arg x with
         | Reduce { num_axes; _ } when num_axes <> 0 ->
-            new_ranges ~axis_type:Axis_type.Reduce rctx
-              (List.take num_axes (shape (nth x 0)))
+            reduce_loops rctx x (List.take num_axes (shape (nth x 0))) out_rngs
             @ out_rngs
         | _ -> rngs
       in
@@ -677,6 +729,7 @@ let run_rangeify ?(debug = false) tsink =
       shares = Tbl.create 8;
       loops = Tbl.create 8;
       ends = Tbl.create 8;
+      siblings = [];
     }
   in
   ignore

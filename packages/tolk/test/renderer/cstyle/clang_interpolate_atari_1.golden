@@ -4,12 +4,12 @@ typedef signed char signed_char4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef short short4 __attribute__((aligned(8),ext_vector_type(4)));
 typedef unsigned short unsigned_short4 __attribute__((aligned(8),ext_vector_type(4)));
 void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1_13440, const int block_lo_, const int block_hi_) {
-  for (int Lidx2 = 0; Lidx2 < (block_hi_-block_lo_); Lidx2++) {
-    int alu0 = (block_lo_+Lidx2);
+  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {
+    int alu0 = (block_lo_+Lidx1);
     int alu1 = (alu0*420);
     int alu2 = (alu1+146);
-    for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
-      int alu3 = (Lidx3<<2);
+    for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {
+      int alu3 = (Lidx2<<2);
       int alu4 = (((alu2>>7)<<6)+alu3);
       unsigned char val0 = (*(data1_13440+(alu4+1)));
       unsigned char val1 = (*(data1_13440+(alu4+2)));

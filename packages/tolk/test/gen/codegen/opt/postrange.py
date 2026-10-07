@@ -268,7 +268,8 @@ KERNELS = {
     "sum_rows_64": lambda: last(empty(64, 64).sum(1)),
     "double_sum": lambda: last(empty(4, 4, 4).sum((1, 2)).sum()),
     "sibling_sums": lambda: last(empty(64).sum() + empty(128).sum() + empty(40).sum()),
-    "ten_sums": lambda: last(sum((empty(1024).sum() for _ in range(9)), start=empty(1024).sum())),
+    "ten_sums": lambda: last(sum((empty(1024 * n).sum() for n in range(2, 11)), start=empty(1024).sum())),
+    "ten_shared_sums": lambda: last(sum((empty(1024).sum() for _ in range(9)), start=empty(1024).sum())),
     "single_kernel_softmax": lambda: last(single_kernel_softmax(empty(32, 32))),
     # test_custom_kernel.py
     "variable_add": lambda: [c.src[0] for c in Tensor.linear_with_vars(
@@ -314,7 +315,8 @@ for n, opts in enumerate([
 ]):
     case(f"local_and_grouped_reduce_{n}", "local_and_grouped_reduce", "metal", opts)
 
-case("sum_and_max_grouped", "sum_and_max", "metal", [local(0, 0), unroll(1, 11), local(2, 0, top=True), padto(2, 32)])
+# the sum and the maximum share their loop, which upstream's axes 1 and 2 split
+case("sum_and_max_grouped", "sum_and_max", "metal", [local(0, 0), unroll(1, 11), local(1, 0, top=True), padto(1, 32)])
 case("flip_pad_sum_grouped", "flip_pad_sum", "metal", [local(1, 0, top=True), padto(0, 8), upcast(0, 12), local(0, 0)])
 case("strided_conv_grouped", "strided_conv", "metal", [local(5, 0, top=True), local(1, 0)])
 case("cumsum_unrolled_padded", "cumsum", "cpu", [unroll(2, 0), upcast(0, 0), padto(0, 4)])
@@ -416,6 +418,9 @@ case("double_sum_group_twice", "double_sum", "metal", [local(1, 4, top=True), lo
 # a group shares its threads with the independent outermost reductions whose axis it divides, while their buffers fit
 case("sibling_sums_group", "sibling_sums", "metal", [local(0, 16, top=True)])
 case("ten_sums_group", "ten_sums", "metal", [local(0, 1024, top=True)])
+# a group of a loop that reductions share takes a buffer for each of them
+case("ten_shared_sums_group", "ten_shared_sums", "metal", [local(0, 256, top=True)])
+case("ten_shared_sums_group_unfit", "ten_shared_sums", "metal", [local(0, 1024, top=True)])
 case("single_kernel_softmax_group", "single_kernel_softmax", "metal", [local(2, 4)])
 
 # The refusals of apply_opt, one per check

@@ -11,7 +11,7 @@ local_and_grouped_reduce_7	6	[128, 2, 2, 8, 16, 4]	[AxisType.GLOBAL, AxisType.LO
 local_and_grouped_reduce_8	6	[2048, 2, 2, 2, 2, 8]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.REDUCE]	[1, 2, 3, 4, 5]	[0, 1, 2, 3, 4]	[1, 2, 3, 4, 5]	0	1	4	1	3	2048    2    2    2    2    8	0:8:REDUCE 5:2:LOCAL
 local_and_grouped_reduce_9	6	[128, 2, 2, 2, 2, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.REDUCE]	[5]	[0, 1, 2, 3, 4]	[5]	0	1	0	1	3	 128    2    2    2    2  128	1:128:GLOBAL 5:2:LOCAL
 local_and_grouped_reduce_10	10	[128, 2, 2, 2, 2, 2, 2, 2, 2, 8]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.REDUCE]	[2, 4, 6, 8, 9]	[0, 1, 2, 3, 4, 5, 6, 7, 8]	[2, 4, 6, 8, 9]	0	1	4	1	3	 128    2    2    2    2    2    2    2    2    8	0:8:REDUCE 9:2:LOCAL
-sum_and_max_grouped	4	[7, 143, 32, 11]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.REDUCE, AxisType.UNROLL]	[1, 2, 3]	[0, 1]	[1, 2]	1	11	1	2	3	   7  143   32   11	0:32:REDUCE
+sum_and_max_grouped	3	[7, 32, 11]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.UNROLL]	[1, 2]	[0, 1]	[1]	1	11	1	2	2	   7   32   11	5:32:LOCAL
 flip_pad_sum_grouped	3	[22, 2, 12]	[AxisType.LOCAL, AxisType.LOCAL, AxisType.UPCAST]	[0]	[0, 1]	[0]	1	12	1	1	2	  22    2   12	1:1:GLOBAL 4:2:LOCAL
 strided_conv_grouped	6	[4, 8, 3, 8, 3, 3]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.LOCAL, AxisType.REDUCE, AxisType.REDUCE]	[2, 4, 5]	[0, 1, 2, 3]	[2, 4, 5]	0	1	1	1	3	   4    8    3    8    3    3	4:1:GLOBAL 7:8:LOCAL
 cumsum_unrolled_padded	3	[20, 13, 17]	[AxisType.WEAK, AxisType.UPCAST, AxisType.UNROLL]	[2]	[0]	[]	2	221	0	1	2	  20   13   17	2:20:WEAK
@@ -121,8 +121,9 @@ top_split_upcast	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.REDUCE]
 double_sum_group	2	[16, 4]	[AxisType.LOCAL, AxisType.REDUCE]	[0, 1]	[0]	[0, 1]	0	1	1	2	2	  16    4	0:1:REDUCE 3:16:LOCAL
 double_sum_group_twice	2	[4, 16]	[AxisType.LOCAL, AxisType.LOCAL]	[0, 1]	[0, 1]	[0, 1]	0	1	2	2	2	   4   16	0:1:REDUCE 4:16:LOCAL
 sibling_sums_group	4	[16, 4, 8, 40]	[AxisType.LOCAL, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE]	[0, 1, 2, 3]	[0]	[0, 1, 2, 3]	0	1	1	3	4	  16    4    8   40	0:4:REDUCE 3:16:LOCAL
-ten_sums_group	3	[1024, 1024, 1024]	[AxisType.LOCAL, AxisType.REDUCE, AxisType.REDUCE]	[0, 1, 2]	[0]	[0, 1, 2]	0	1	1	10	11	1024 1024 1024	0:1:REDUCE 10:1024:LOCAL
-single_kernel_softmax_group	6	[32, 32, 4, 8, 8, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE]	[2, 3, 4, 5]	[0, 1, 2]	[2, 3, 4, 5]	0	1	1	3	5	  32   32    4    8    8   32	0:8:REDUCE 5:4:LOCAL
+ten_sums_group	10	[1024, 2, 3, 4, 5, 6, 7, 8, 9216, 10240]	[AxisType.LOCAL, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE, AxisType.REDUCE]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]	[0]	[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]	0	1	1	10	11	1024    2    3    4    5    6    7    8 9216 10240	0:1:REDUCE 10:1024:LOCAL
+ten_shared_sums_group	2	[256, 4]	[AxisType.LOCAL, AxisType.REDUCE]	[0, 1]	[0]	[0, 1]	0	1	1	10	11	 256    4	0:4:REDUCE 1:256:LOCAL
+single_kernel_softmax_group	5	[32, 32, 4, 8, 32]	[AxisType.GLOBAL, AxisType.GLOBAL, AxisType.LOCAL, AxisType.REDUCE, AxisType.REDUCE]	[2, 3, 4]	[0, 1, 2]	[2, 3, 4]	0	1	1	3	4	  32   32    4    8   32	0:8:REDUCE 4:4:LOCAL
 split_last_axis	3	[32, 16, 2]	[AxisType.WEAK, AxisType.REDUCE, AxisType.UNROLL]	[1, 2]	[0]	[1]	1	2	0	1	2	  32   16    2	0:16:REDUCE 2:2:UNROLL
 unroll_32	3	[64, 2, 32]	[AxisType.WEAK, AxisType.REDUCE, AxisType.UNROLL]	[1, 2]	[0]	[1]	1	32	0	1	2	  64    2   32	0:2:REDUCE 2:32:UNROLL
 upcast_16	3	[4, 16, 64]	[AxisType.WEAK, AxisType.UPCAST, AxisType.REDUCE]	[2]	[0]	[2]	1	16	0	1	2	   4   16   64	1:4:WEAK 2:16:UPCAST

@@ -197,7 +197,8 @@ PROGRAMS = {
     "phi_arange_float": lambda: last(Tensor.arange(5.5, (3.5 * 300), 3.5).clone()),
     "phi_arange_negative": lambda: last(Tensor.arange(-1, -100, -5).clone()),
     "phi_arange_255": lambda: last(Tensor.arange(255).clone()),
-    "two_grouped_stores_local": lambda: with_opts(last(single_kernel_softmax(empty(32, 32))), [local(3, 4), local(5, 4)]),
+    # the two maximums share their loop: upstream's axes 3 and 5 are 2 and 4
+    "two_grouped_stores_local": lambda: with_opts(last(single_kernel_softmax(empty(32, 32))), [local(2, 4), local(4, 4)]),
     # null/test_dtype_weak.py::TestNoRedundantWide
     "fancy_index": lambda: last(empty(8, 9, 10, 11, 12)[1, Tensor([0, 1, 2]).reshape(3, 1), 2, Tensor([0, 1]).reshape(1, 2), 2]),
     # null/test_arange.py

@@ -1737,6 +1737,8 @@ codegen/opt/postrange/tc_widened_bfloat.golden
 codegen/opt/postrange/tc_widened_bfloat_16.golden
 codegen/opt/postrange/tc_widened_half.golden
 codegen/opt/postrange/tc_widened_half_16.golden
+codegen/opt/postrange/ten_shared_sums.golden
+codegen/opt/postrange/ten_shared_sums_group.golden
 codegen/opt/postrange/ten_sums.golden
 codegen/opt/postrange/ten_sums_group.golden
 codegen/opt/postrange/top_split_upcast.golden
