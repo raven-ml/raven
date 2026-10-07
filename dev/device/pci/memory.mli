@@ -108,7 +108,7 @@ val map_peer : t -> owner:t -> memory -> (memory, string) result
     [owner], for the GPU of [m], at its address on [owner]: the GPU's memory
     through [owner]'s memory BAR or link, and system memory at its pages, which
     stay [owner]'s. [Error why] if the GPUs are on different machines, if either
-    is behind an IOMMU ({!Function.Iommu}), if [mem] is in the GPU's memory and
+    is behind an IOMMU ({!Machine.Iommu}), if [mem] is in the GPU's memory and
     [owner]'s BAR is {!small_bar}, or if a page table has no room.
 
     Raises [Invalid_argument] if [mem] is not {!Allocated} by [owner], or if the

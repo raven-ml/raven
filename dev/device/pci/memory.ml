@@ -168,7 +168,7 @@ let map_peer m ~owner mem =
   | Some mem' when mem' == mem -> ()
   | _ -> invalid_arg "Memory.map_peer: memory its owner did not allocate");
   let map = mem.mapping in
-  let iommu f = Function.addressing f = Function.Iommu in
+  let iommu f = Function.addressing f = Machine.Iommu in
   if Function.machine m.fn != Function.machine owner.fn then
     Error "the GPUs are on different machines"
   else if iommu m.fn || iommu owner.fn then
