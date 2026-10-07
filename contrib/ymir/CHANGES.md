@@ -4,6 +4,12 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Ymir.Fits` is `ymir.fits`'s `Fits` with ymir's readers. `Fits.Wcs.read`
+  turns a header's celestial description (TAN and ARC; CD, PC, CDELT and
+  CROTA2; ICRS, FK5 J2000, Galactic, ecliptic and supergalactic) into a
+  `Transform.t`, and `Fits.Wcs.write` prints one back, keeping every record
+  whose value is unchanged. `Fits.observation` reads an image HDU with its
+  error, `PIXAR_SR` area, validity and grid, optionally through a window.
 - `Ymir.Cosmology`, the background of a homogeneous expanding universe: one
   record of tensors for flat and curved ΛCDM, wCDM and w0waCDM with radiation
   and massive neutrinos, and its expansion rate, density parameters,

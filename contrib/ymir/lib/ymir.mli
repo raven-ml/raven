@@ -17,7 +17,8 @@
     seen through a transform, {!Region} is a shape placed on a grid's world, and
     {!Observation} holds data on a grid and integrates them over a region.
     {!Cosmology} is the background of a homogeneous expanding universe: its
-    expansion rate, distances, volumes and times. *)
+    expansion rate, distances, volumes and times. {!Fits} reads and writes FITS
+    files and builds these values from them. *)
 
 (** {1:units Units} *)
 
@@ -917,4 +918,130 @@ module Cosmology : sig
   val age :
     (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
   (** [age c z] is the time since the big bang at [z]. *)
+end
+
+(** {1:files Files} *)
+
+(** FITS files.
+
+    [Fits] is [ymir.fits]'s {!Ymir_fits.Fits}, with the functions that build
+    transforms and observations from FITS headers and images.
+
+    {[
+    let ( let* ) = Result.bind
+
+    let obs path =
+      let* hdus = Fits.read path in
+      Fits.observation ~dtype:Nx.float64 ~frame:Frame.icrs ~data:"SCI"
+        ~error:"ERR" hdus
+    ]} *)
+module Fits : sig
+  include module type of struct
+    include Ymir_fits.Fits
+  end
+
+  (** World coordinate systems.
+
+      A header's celestial description reads as the stages
+
+      {[
+      axes [| 1; 0 |] ~origin:1 (* tensor order, 0-based -> FITS, 1-based *)
+      >> shift crpix
+      >> linear cd (* a CD header *)
+      (* or: linear pc >> scale cdelt, a PC, CROTA2 or CDELT header *)
+      >> axes [| 1; 0 |] ~origin:0 (* when latitude is axis 1 *)
+      >> celestial code frame dtype ~pv ~native ~crval ~lonpole ~latpole
+      ]}
+
+      CRPIX, CD, PC and CDELT are held as the header writes them, CRVAL in CUNIT
+      (degrees when absent), and LONPOLE, LATPOLE and the native reference point
+      (φ₀, θ₀) = ([PVi_1], [PVi_2]) on the longitude axis [i] in degrees. A
+      keyword FITS leaves out takes its default: CRPIX and CRVAL 0, CDELT 1, PC
+      the identity, a missing CD element 0, (φ₀, θ₀) = (0°, 90°), LATPOLE 90°,
+      and LONPOLE 180° + φ₀ when CRVAL's latitude is below θ₀, φ₀ otherwise.
+      CROTA2 reads as the PC matrix it implies.
+
+      {b Frames.} The CTYPE prefix chooses the system and [RADESYS] (or
+      [RADECSYS]) and [EQUINOX] (or [EPOCH]) qualify an equatorial or ecliptic
+      one: absent both, ICRS; [EQUINOX] alone, FK4 below 1984.0 and FK5 from it;
+      [EQUINOX] 2000.0 under FK5 when absent; [EQUINOX] ignored under ICRS.
+
+      - [RA]/[DEC] under ICRS is {!Frame.icrs}, under FK5 at 2000.0
+        {!Frame.fk5_j2000}.
+      - [GLON]/[GLAT] is {!Frame.galactic}, [SLON]/[SLAT]
+        {!Frame.supergalactic}.
+      - [ELON]/[ELAT] under ICRS at 2000.0 is {!Frame.ecliptic_j2000}.
+
+      Other systems and equinoxes are an [Error] naming what they need.
+
+      {b Scope.} TAN and ARC are read. Other projections, SIP, TPV (and TAN with
+      PV terms), distortion lookup tables, [PVi_m] on the longitude axis beyond
+      [m = 1, 2], and a third WCS axis are an [Error] naming the keyword. *)
+  module Wcs : sig
+    val read :
+      ?alt:char ->
+      'f Frame.t ->
+      Header.t ->
+      ((Transform.plane, 'f Direction.t) Transform.t, string) result
+    (** [read ~alt f h] is the map from 0-based pixel indices, in tensor axis
+        order, to directions in [f], from [h]'s primary description or its
+        alternate [alt] (['A'] to ['Z']). It reads [h] and changes nothing in
+        it. It is an [Error] if [h]'s frame is not [f], as in
+        ["SCI: FK5 at equinox 2000.0; the caller expects icrs. Read with
+         Frame.fk5_j2000."], or if a keyword does not read.
+
+        Raises [Invalid_argument] if [alt] is not [' '] or ['A'] to ['Z']. *)
+
+    val write :
+      ?alt:char ->
+      ?window:(int * int) array ->
+      (Transform.plane, 'f Direction.t) Transform.t ->
+      Header.t ->
+      (Header.t, string) result
+    (** [write ~alt ~window t h] is [h] with [alt]'s WCS keywords spelling [t],
+        and with [window], [(start, stop)] per tensor axis, each CRPIX less its
+        axis's start. A keyword whose value reads back equal keeps its record,
+        one that differs is set in place, and one [h] lacks is added where the
+        first removed keyword was, or at the end, unless its value is its
+        default. Keywords [t] no longer spells (CD for a PC header, CROTA, SIP)
+        are removed. Other records are unchanged, so [write (read h) h] is [h]
+        for every header {!read} reads and that spells PC as PC.
+
+        It is an [Error] naming the stage if [t] is not a list {!read} builds,
+        up to an absent PC or a scale stage on its own, or if [t]'s leaves are
+        batched.
+
+        Raises [Invalid_argument] if [alt] is not [' '] or ['A'] to ['Z'], or
+        [window] does not have two ranges. *)
+  end
+
+  val observation :
+    dtype:(float, 'e) Nx.dtype ->
+    frame:'f Frame.t ->
+    data:string ->
+    ?error:string ->
+    ?ver:int ->
+    ?window:(int * int) array ->
+    hdu list ->
+    (('f Direction.t, 'e) Observation.t, string) result
+  (** [observation ~dtype ~frame ~data ~error ~ver ~window hdus] is the image
+      HDU named [data] ({!get} with [ver]) as an observation at [dtype]:
+
+      - its values ({!Image.values}), in the unit [BUNIT] states; a unit per
+        [pix] or [pixel] is per {!Grid.cell}, so each pixel counts once.
+      - its grid, the image's shape seen through {!Wcs.read} [frame]; with
+        [window], [(start, stop)] per tensor axis, the window of that grid
+        ({!Grid.window}), reading only the rows it covers.
+      - with [error], the variance: the HDU [error], of [data]'s shape and a
+        unit that converts to [data]'s, converted and squared.
+      - the area [PIXAR_SR] in steradians, when the header states it.
+      - validity: false where the value or the error is not finite, which
+        includes [BLANK].
+
+      Data-quality planes stay the caller's: read them with {!Image.raw} and
+      apply them with {!Observation.restrict}.
+
+      It is an [Error] if an HDU is missing or is not a two-axis image, if
+      [BUNIT] is absent, if the error's shape or unit disagree, or as
+      {!Wcs.read} and {!Image.values} are. *)
 end

@@ -13,5 +13,6 @@
   region
   observation
   cosmology
-  cosmology_tables)
- (libraries nx nx.dtype nx.wide ymir.units))
+  cosmology_tables
+  fits)
+ (libraries nx nx.dtype nx.wide ymir.units ymir.fits))
