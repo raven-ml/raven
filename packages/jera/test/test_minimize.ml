@@ -366,14 +366,29 @@ let lm_tests =
 let simplex ?(budget = 2000) ?(tol = Tol.v ~rel:1e-9 ~abs:1e-10) f x0 =
   Minimize.solve one Minimize.nelder_mead ~tol ~budget f x0
 
+(* How far the answer may sit from the bowl's center [c] under [~rel ~abs]. The
+   method promises the diameter per component [e_i] of its simplex around the
+   best vertex [y]: the root mean square of [e_i / s_i], [s_i = abs + rel
+   |y_i|], is at most 1, so one component of [n] reaches [√n s_i]. The restart's
+   probes [y + σ e_i], [σ] the largest [e_i] or [s_i], find none lower, which on
+   the bowl, [|x − c|²] near [c], puts [c_i] above [y_i − σ / 2]. On the other
+   side the simplex contracted around the minimum, which lies within its
+   diameter. So [|y_i − c_i| <= σ <= √n max_i s_i], and with [|y_i| <= |c_i| +
+   σ], [σ <= √n (abs + rel max_i |c_i|) / (1 − √n rel)]. *)
+let around ~rel ~abs c =
+  let k = Float.sqrt (Float.of_int (Nx.dim 0 c)) in
+  k *. (abs +. (rel *. Nx.item [] (Nx.max (Nx.abs c)))) /. (1. -. (k *. rel))
+
 let nelder_mead_tests =
   [
     prop "it finds a bowl's center" centers (fun c ->
         cover "several unknowns" (Nx.dim 0 c > 2);
-        equal (near ()) c
+        let rel = 1e-8 and abs = 1e-9 in
+        equal
+          (Oracle.tensor ~abs:(around ~rel ~abs c) ())
+          c
           (Solution.get
-             (simplex ~budget:5000
-                ~tol:(Tol.v ~rel:1e-8 ~abs:1e-9)
+             (simplex ~budget:5000 ~tol:(Tol.v ~rel ~abs)
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros_like c))));
     test "it finds Rosenbrock's minimum" (fun () ->
