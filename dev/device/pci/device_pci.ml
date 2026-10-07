@@ -10,3 +10,4 @@ module Space = Space
 module Page_table = Page_table
 module Memory = Memory
 module Firmware = Firmware
+module Gpus = Gpus

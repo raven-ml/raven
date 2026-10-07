@@ -149,6 +149,41 @@ let test_firmware () =
   equal ~msg:"another digest" bool true
     (Result.is_error (Firmware.find ~dir "image.bin" ~sha256:"00"))
 
+let test_gpus () =
+  let tr = Window.transport (far 0 4096) in
+  let m =
+    Machine.make ~name:"far:3"
+      {
+        transport = tr;
+        page = 4096;
+        functions =
+          (fun () ->
+            [
+              { bus = "0000:01:00.0"; vendor = 0x1002; device = 1; class_ = 3 };
+            ]);
+        take = (fun ~lock:_ _ -> Ok (fake tr));
+        reserve = (fun ~base:_ _ -> ());
+      }
+  in
+  let g =
+    Gpus.make ~name:"AMD" ~lock:"smoke" ~memory_bar:0 (fun id ->
+        id.vendor = 0x1002)
+  in
+  equal ~msg:"buses" (list string) [ "0000:01:00.0" ] (Gpus.buses g m);
+  let opened () = Gpus.open_pci g m 0 (fun h _ -> Ok h) in
+  let h = Result.get_ok (opened ()) in
+  equal ~msg:"held" bool true (Result.is_error (opened ()));
+  equal ~msg:"another machine's through its kernel driver" bool true
+    (Result.is_error (Gpus.open_kernel g m 0 (fun h -> Ok h)));
+  Gpus.lose h;
+  raises_match (Exn.invalid_arg ~substring:"given back") (fun () ->
+      Gpus.release h);
+  equal ~msg:"lost until a reset" bool true (Result.is_error (opened ()));
+  equal ~msg:"reset" (result unit string) (Ok ()) (Gpus.reset g m 0 ignore);
+  Gpus.release (Result.get_ok (opened ()));
+  equal ~msg:"no GPU 1" (result unit string)
+    (Error "no GPU 1; there are 1 AMD GPUs") (Gpus.reset g m 1 ignore)
+
 let () =
   exit
   @@ run "device_pci smoke"
@@ -157,4 +192,5 @@ let () =
          test "a machine through a transport" test_transport;
          test "memory" test_memory;
          test "firmware" test_firmware;
+         test "gpus" test_gpus;
        ]

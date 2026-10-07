@@ -94,4 +94,5 @@ module Memory = Memory
 module Firmware = Firmware
 (** Firmware images, verified by digest. *)
 
-(* Pending: module Gpus = Gpus *)
+module Gpus = Gpus
+(** A vendor's GPUs, and the process's hold on them. *)
