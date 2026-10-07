@@ -60,7 +60,8 @@ external bigarray_at :
 external transport_read : transport -> int -> int -> string
   = "caml_device_pci_transport_read"
 
-external transport_write : transport -> int -> string -> unit
+(* [transport_write tr a s off n] writes the [n] bytes of [s] from [off]. *)
+external transport_write : transport -> int -> string -> int -> int -> unit
   = "caml_device_pci_transport_write"
 
 (* Windows *)
@@ -71,7 +72,7 @@ let make fn transport address length =
   { address; length; transport }
 
 let v address length = make "v" 0 address length
-let transport p = p
+let unsafe_transport p = p
 
 let through tr address length =
   if tr = 0 then invalid_arg "Window.through: no transport";
@@ -111,6 +112,7 @@ let set8 w off x =
   else
     transport_write w.transport (w.address + off)
       (String.make 1 (Char.unsafe_chr (x land 0xff)))
+      0 1
 
 let get32 w off =
   aligned "get32" w off 4;
@@ -125,7 +127,7 @@ let set32 w off x =
   else
     let b = Bytes.create 4 in
     Bytes.set_int32_le b 0 (Int32.of_int x);
-    transport_write w.transport (w.address + off) (Bytes.unsafe_to_string b)
+    transport_write w.transport (w.address + off) (Bytes.unsafe_to_string b) 0 4
 
 let get64 w off =
   aligned "get64" w off 8;
@@ -138,18 +140,23 @@ let set64 w off x =
   else
     let b = Bytes.create 8 in
     Bytes.set_int64_le b 0 x;
-    transport_write w.transport (w.address + off) (Bytes.unsafe_to_string b)
+    transport_write w.transport (w.address + off) (Bytes.unsafe_to_string b) 0 8
 
 let read w off n =
   check "read" w off n;
   if mapped w then read_at (w.address + off) n
   else transport_read w.transport (w.address + off) n
 
-let write w off s =
-  let n = String.length s in
-  check "write" w off n;
-  if mapped w then write_at (w.address + off) s 0 n
-  else transport_write w.transport (w.address + off) s
+let blit_string s soff w off n =
+  if soff < 0 || n < 0 || soff > String.length s - n then
+    invalid_arg
+      (Printf.sprintf "Window.blit_string: %d bytes at %d outside %d bytes" n
+         soff (String.length s));
+  check "blit_string" w off n;
+  if mapped w then write_at (w.address + off) s soff n
+  else transport_write w.transport (w.address + off) s soff n
+
+let write w off s = blit_string s 0 w off (String.length s)
 
 (* A fill through a transport is sent in pieces of at most this many bytes. *)
 let fill_piece = 1 lsl 20
@@ -157,17 +164,16 @@ let fill_piece = 1 lsl 20
 let fill w off n c =
   check "fill" w off n;
   if mapped w then fill_at (w.address + off) n (Char.code c)
-  else begin
+  else
     let piece = String.make (Int.min n fill_piece) c in
-    let at = ref off and left = ref n in
-    while !left > 0 do
-      let k = Int.min !left fill_piece in
-      let s = if k = String.length piece then piece else String.sub piece 0 k in
-      transport_write w.transport (w.address + !at) s;
-      at := !at + k;
-      left := !left - k
-    done
-  end
+    let rec go at left =
+      if left > 0 then begin
+        let k = Int.min left fill_piece in
+        transport_write w.transport (w.address + at) piece 0 k;
+        go (at + k) (left - k)
+      end
+    in
+    go off n
 
 let bigarray w =
   if not (mapped w) then

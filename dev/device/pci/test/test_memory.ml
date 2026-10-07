@@ -32,9 +32,9 @@ let space_length = 1 lsl 30
 
 (* The bytes behind the BARs and the space's system memory, should the library
    access them. Allocated once, mapped lazily by calloc. *)
-let bars = lazy (Window.transport (far bar_base (4 * bar_slot)))
-let system = lazy (Window.transport (far space_base space_length))
-let link = lazy (Window.transport (far 0 0))
+let bars = lazy (Window.unsafe_transport (far bar_base (4 * bar_slot)))
+let system = lazy (Window.unsafe_transport (far space_base space_length))
+let link = lazy (Window.unsafe_transport (far 0 0))
 
 (* The fake function *)
 

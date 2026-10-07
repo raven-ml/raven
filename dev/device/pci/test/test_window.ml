@@ -31,11 +31,11 @@ let mapped skew n = Window.v (memory (n + 8) + skew) n
 
 let through skew n =
   let a = base + skew in
-  Window.through (Window.transport (far a n)) a n
+  Window.through (Window.unsafe_transport (far a n)) a n
 
 let far_window n =
   let f = far base n in
-  (f, Window.through (Window.transport f) base n)
+  (f, Window.through (Window.unsafe_transport f) base n)
 
 (* The model
 
@@ -88,6 +88,11 @@ module Model = struct
   let read r o n =
     check r o n;
     Bytes.sub_string r.bytes (r.off + o) n
+
+  let blit_string r s so o n =
+    if so < 0 || n < 0 || so > String.length s - n then invalid_arg "string";
+    check r o n;
+    Bytes.blit_string s so r.bytes (r.off + o) n
 
   let write r o s =
     check r o (String.length s);
@@ -146,6 +151,10 @@ let commands ~is_mapped make =
     command "write"
       (win ^-> index @-> bytes @-> returns unit)
       Model.write Window.write;
+    command "blit_string"
+      (win ^-> bytes @-> index @-> index @-> index @-> returns unit)
+      Model.blit_string
+      (fun w s so o n -> Window.blit_string s so w o n);
     command "fill"
       (win ^-> index @-> index @-> Gen.char @-> returns unit)
       Model.fill Window.fill;
@@ -220,7 +229,7 @@ let test_through () =
   equal ~msg:"mapped" bool false (Window.mapped w)
 
 let test_negative () =
-  let tr = Window.transport (far base 16) in
+  let tr = Window.unsafe_transport (far base 16) in
   let a = memory 16 in
   List.iter
     (fun n ->
@@ -229,7 +238,7 @@ let test_negative () =
       raises_match ~msg Exn.invalid_arg (fun () -> Window.through tr base n))
     [ -1; min_int ];
   raises_match ~msg:"no transport" Exn.invalid_arg (fun () ->
-      Window.through (Window.transport 0) base 16)
+      Window.through (Window.unsafe_transport 0) base 16)
 
 (* A sub-window's place, for [(skew, len, off, n)] with [off, n] in [len]. *)
 let place =
@@ -302,7 +311,7 @@ let test_one_access () =
    machine: a neighbouring register keeps its value and its side effects. *)
 let stores_only write (skew, len, off, n) =
   let f = far (base + skew) len in
-  let w = Window.through (Window.transport f) (base + skew) len in
+  let w = Window.through (Window.unsafe_transport f) (base + skew) len in
   write w off (String.make n 'x');
   let a = base + skew + off in
   cover "a store between two other bytes" (off > 0 && off + n < len);
@@ -316,6 +325,9 @@ let bulk =
   [
     prop "write stores only the bytes it is given" place
       (stores_only Window.write);
+    prop "blit_string stores only the bytes it is given" place
+      (stores_only (fun w off s ->
+           Window.blit_string ("ab" ^ s ^ "cd") 2 w off (String.length s)));
     prop "device_pci_write stores only the bytes it is given" place
       (stores_only (fun w off s -> equal int 0 (c_write w off s)));
   ]

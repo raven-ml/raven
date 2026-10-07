@@ -66,7 +66,7 @@ let set64 w () =
   done
 
 let mapped = Window.v (buffer span) span
-let through = Window.through (Window.transport (far ())) 0 span
+let through = Window.through (Window.unsafe_transport (far ())) 0 span
 let bench = Thumper.bench
 
 let () =

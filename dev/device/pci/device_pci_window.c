@@ -164,14 +164,16 @@ value caml_device_pci_transport_read(value tr, value a, value n) {
   CAMLreturn(s);
 }
 
-value caml_device_pci_transport_write(value tr, value a, value s) {
-  CAMLparam3(tr, a, s);
+/* Writes the [n] bytes of [s] from [off]. */
+value caml_device_pci_transport_write(value tr, value a, value s, value off,
+                                      value n) {
+  CAMLparam5(tr, a, s, off, n);
   const struct device_pci_transport *t = TRANSPORT(tr);
   uint64_t at = (uint64_t)Long_val(a);
-  size_t len = caml_string_length(s);
+  size_t len = Long_val(n);
   char small[SMALL];
   char *buf = len <= SMALL ? small : caml_stat_alloc(len);
-  memcpy(buf, String_val(s), len);
+  memcpy(buf, String_val(s) + Long_val(off), len);
   caml_release_runtime_system();
   int r = t->write(t->ctx, at, buf, len);
   caml_acquire_runtime_system();

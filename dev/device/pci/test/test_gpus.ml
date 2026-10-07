@@ -53,7 +53,7 @@ let machine ?(name = "far:1") ids =
   let fake =
     { taken = []; refusal = None; released = ignore; lock = Mutex.create () }
   in
-  let tr = Window.transport (far 0 4096) in
+  let tr = Window.unsafe_transport (far 0 4096) in
   let take ~lock bus =
     Mutex.protect fake.lock @@ fun () ->
     match fake.refusal with

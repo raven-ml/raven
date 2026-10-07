@@ -48,7 +48,7 @@ and machine_fake = {
   m_lock : Mutex.t;
 }
 
-let transport () = Window.transport (far 0 4096)
+let transport () = Window.unsafe_transport (far 0 4096)
 
 (* BAR 0 is 64-bit, so index 1 is its upper half. *)
 let bars = [| Some (0xe000_0000, 64 * 1024); None; Some (0xf000_0000, 4096) |]
@@ -224,7 +224,7 @@ let fake_machine ?(base = next_base ()) ?(page = 4096)
   let m =
     {
       far;
-      tr = Window.transport far;
+      tr = Window.unsafe_transport far;
       buses = [ bus1; bus2 ];
       m_page = page;
       m_addressing = addressing;

@@ -25,11 +25,6 @@ type t
 (** The type for windows. Windows are values: two windows are equal iff they are
     the same bytes of the same machine. *)
 
-val v : int -> int -> t
-(** [v a n] is the [n] bytes mapped at [a] in the process.
-
-    Raises [Invalid_argument] if [n < 0]. *)
-
 val address : t -> int
 (** [address w] is the address of [w]'s first byte on its machine. For a mapped
     window it is the process's address. *)
@@ -51,9 +46,9 @@ val sub : t -> int -> int -> t
     {!get32}, {!set32}, {!get64} and {!set64} are register accesses: one access
     of exactly that width, on this machine and through a transport, so a
     register is read and written once each and in program order. {!read},
-    {!write} and {!fill} copy memory, at widths they choose; touch registers
-    only with the accesses above. {!barrier} orders accesses for the processor
-    and the bus.
+    {!blit_string}, {!write} and {!fill} copy memory, at widths they choose;
+    touch registers only with the accesses above. {!barrier} orders accesses for
+    the processor and the bus.
 
     Each raises [Invalid_argument] if the bytes it accesses do not lie in the
     window, a count below zero included, or if a 32- or 64-bit access is at an
@@ -80,8 +75,14 @@ val set64 : t -> int -> int64 -> unit
 val read : t -> int -> int -> string
 (** [read w off n] is a copy of the [n] bytes of [w] from byte [off]. *)
 
+val blit_string : string -> int -> t -> int -> int -> unit
+(** [blit_string s soff w off n] copies the [n] bytes of [s] from byte [soff] to
+    byte [off] of [w].
+
+    Raises [Invalid_argument] also if the bytes do not lie in [s]. *)
+
 val write : t -> int -> string -> unit
-(** [write w off s] copies [s] to byte [off] of [w]. *)
+(** [write w off s] is [blit_string s 0 w off (String.length s)]. *)
 
 val fill : t -> int -> int -> char -> unit
 (** [fill w off n c] stores [n] bytes [c] from byte [off] of [w]. *)
@@ -108,12 +109,19 @@ val bigarray :
 type transport
 (** The type for transports. *)
 
-val transport : int -> transport
-(** [transport p] is the transport whose [struct device_pci_transport] is at
-    address [p] of the process. The structure stays valid and unchanged while a
-    window or a machine uses it. *)
+val unsafe_transport : int -> transport
+(** [unsafe_transport p] is the transport whose [struct device_pci_transport] is
+    at address [p] of the process. Unsafe: nothing checks [p], which must point
+    to such a structure that stays valid and unchanged while a window or a
+    machine uses it. *)
 
 val through : transport -> int -> int -> t
 (** [through tr a n] is the [n] bytes at [a] of the machine [tr] reaches.
 
-    Raises [Invalid_argument] if [n < 0] or [tr] is [transport 0]. *)
+    Raises [Invalid_argument] if [n < 0] or [tr] is [unsafe_transport 0]. *)
+
+(**/**)
+
+val v : int -> int -> t
+(* [v a n] is the [n] bytes mapped at [a] in the process, for the library's own
+   mappings. Raises [Invalid_argument] if [n < 0]. *)

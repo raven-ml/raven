@@ -69,7 +69,7 @@ let take ~bar_size =
   let machine =
     Machine.make ~name:"bench"
       {
-        transport = Window.transport (transport ());
+        transport = Window.unsafe_transport (transport ());
         page;
         functions = (fun () -> []);
         take = (fun ~lock:_ _ -> Ok fn);

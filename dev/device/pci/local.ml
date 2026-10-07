@@ -253,4 +253,4 @@ let take ~lock:name bus =
     | exception Unix.Unix_error (e, f, arg) ->
         refused (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))
 
-let ops = { Ops.transport = Window.transport 0; page; functions; take; reserve }
+let ops = { Ops.transport = Window.unsafe_transport 0; page; functions; take; reserve }
