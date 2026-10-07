@@ -31,10 +31,10 @@ let test_found () =
 
 let test_alone () =
   let other : Metal.t Type.Id.t = Type.Id.make () in
-  equal ~msg:"another key of the same type" bool false
-    (Option.is_some (find other [ B (Metal.key, record) ]));
-  equal ~msg:"the key under another key's binding" bool false
-    (Option.is_some (find Metal.key [ B (other, record) ]))
+  is_none ~msg:"another key of the same type"
+    (find other [ B (Metal.key, record) ]);
+  is_none ~msg:"the key under another key's binding"
+    (find Metal.key [ B (other, record) ])
 
 let () =
   exit
