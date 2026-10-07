@@ -24,19 +24,20 @@ symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	5.612e-07	5.609e-07
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 10.2 on 10 cores
+# forced: blessed of-string/amd-16-kernels of-string/amd-128-kernels of-string/cubin-sm89 of-string/host-aarch64 under load 11.0 on 10 cores
 
-of-string/amd-128-kernels	alloc_words	exact	5766
-of-string/amd-128-kernels	wall_time	batch=256	n=20	3.921e-05	3.809e-05 3.825e-05 3.852e-05 3.862e-05 3.872e-05 3.874e-05 3.890e-05 3.900e-05 3.911e-05 3.921e-05 3.921e-05 3.928e-05 3.931e-05 3.941e-05 3.942e-05 3.972e-05 3.975e-05 3.985e-05 4.007e-05 5.212e-05
-of-string/amd-16-kernels	alloc_words	exact	1622
-of-string/amd-16-kernels	wall_time	batch=2048	n=20	4.357e-06	4.292e-06 4.304e-06 4.308e-06 4.312e-06 4.340e-06 4.341e-06 4.343e-06 4.347e-06 4.355e-06 4.356e-06 4.358e-06 4.361e-06 4.380e-06 4.383e-06 4.394e-06 4.415e-06 4.419e-06 4.430e-06 4.481e-06 5.162e-06
-of-string/cubin-sm89	alloc_words	exact	972
-of-string/cubin-sm89	wall_time	batch=4096	n=20	1.810e-06	1.788e-06 1.789e-06 1.789e-06 1.792e-06 1.799e-06 1.799e-06 1.800e-06 1.803e-06 1.804e-06 1.809e-06 1.811e-06 1.813e-06 1.819e-06 1.829e-06 1.829e-06 1.840e-06 1.842e-06 1.844e-06 1.860e-06 1.860e-06
+of-string/amd-128-kernels	alloc_words	exact	5681
+of-string/amd-128-kernels	wall_time	batch=128	n=20	3.933e-05	3.871e-05 3.894e-05 3.903e-05 3.905e-05 3.909e-05 3.910e-05 3.911e-05 3.915e-05 3.926e-05 3.930e-05 3.935e-05 3.943e-05 3.946e-05 3.948e-05 3.953e-05 3.971e-05 3.982e-05 3.982e-05 3.991e-05 4.049e-05
+of-string/amd-16-kernels	alloc_words	exact	1537
+of-string/amd-16-kernels	wall_time	batch=2048	n=20	4.362e-06	4.282e-06 4.297e-06 4.305e-06 4.317e-06 4.324e-06 4.327e-06 4.338e-06 4.339e-06 4.359e-06 4.361e-06 4.362e-06 4.366e-06 4.367e-06 4.372e-06 4.379e-06 4.380e-06 4.384e-06 4.389e-06 4.400e-06 4.405e-06
+of-string/cubin-sm89	alloc_words	exact	899
+of-string/cubin-sm89	wall_time	batch=4096	n=20	1.853e-06	1.829e-06 1.837e-06 1.838e-06 1.842e-06 1.843e-06 1.849e-06 1.851e-06 1.851e-06 1.852e-06 1.852e-06 1.854e-06 1.855e-06 1.855e-06 1.857e-06 1.857e-06 1.859e-06 1.861e-06 1.865e-06 1.867e-06 1.873e-06
 of-string/floor-bytes-amd-128-kernels	alloc_words	exact	5
 of-string/floor-bytes-amd-128-kernels	wall_time	batch=1024	n=20	6.575e-06	6.435e-06 6.457e-06 6.468e-06 6.480e-06 6.500e-06 6.512e-06 6.528e-06 6.530e-06 6.556e-06 6.566e-06 6.584e-06 6.592e-06 6.599e-06 6.611e-06 6.629e-06 6.640e-06 6.642e-06 6.653e-06 6.672e-06 6.689e-06
 of-string/floor-symbols-amd-128-kernels	alloc_words	exact	3983
 of-string/floor-symbols-amd-128-kernels	wall_time	batch=256	n=20	2.905e-05	2.834e-05 2.835e-05 2.854e-05 2.867e-05 2.870e-05 2.890e-05 2.890e-05 2.891e-05 2.898e-05 2.903e-05 2.908e-05 2.910e-05 2.918e-05 2.929e-05 2.932e-05 2.950e-05 2.951e-05 2.953e-05 2.977e-05 2.999e-05
-of-string/host-aarch64	alloc_words	exact	1273
-of-string/host-aarch64	wall_time	batch=2048	n=20	2.725e-06	2.648e-06 2.661e-06 2.667e-06 2.671e-06 2.672e-06 2.674e-06 2.696e-06 2.697e-06 2.711e-06 2.716e-06 2.735e-06 2.766e-06 2.768e-06 2.771e-06 2.771e-06 2.772e-06 2.782e-06 2.791e-06 2.803e-06 2.817e-06
+of-string/host-aarch64	alloc_words	exact	1212
+of-string/host-aarch64	wall_time	batch=2048	n=20	2.805e-06	2.768e-06 2.772e-06 2.778e-06 2.782e-06 2.785e-06 2.795e-06 2.796e-06 2.802e-06 2.802e-06 2.803e-06 2.807e-06 2.808e-06 2.809e-06 2.810e-06 2.812e-06 2.814e-06 2.818e-06 2.831e-06 2.837e-06 2.840e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
 symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	1.157e-06	1.111e-06 1.120e-06 1.125e-06 1.128e-06 1.131e-06 1.135e-06 1.138e-06 1.145e-06 1.152e-06 1.153e-06 1.162e-06 1.165e-06 1.167e-06 1.168e-06 1.175e-06 1.175e-06 1.391e-06 1.443e-06 1.971e-06 3.065e-06
 
