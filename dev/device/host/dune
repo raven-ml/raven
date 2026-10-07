@@ -1,0 +1,6 @@
+; Host programs: ELF objects linked into executable memory and called.
+
+(library
+ (name device_host)
+ (libraries device_elf device_pool)
+ (modules_without_implementation device_host))
