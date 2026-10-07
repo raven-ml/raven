@@ -205,8 +205,12 @@ let fn t =
   {
     Ops.addressing =
       (match t.container with None -> Physical | Some _ -> Iommu);
-    config = config t;
-    set_config = set_config t;
+    config8 = (fun off -> config t off 1);
+    config16 = (fun off -> config t off 2);
+    config32 = (fun off -> config t off 4);
+    set_config8 = (fun off x -> set_config t off 1 x);
+    set_config16 = (fun off x -> set_config t off 2 x);
+    set_config32 = (fun off x -> set_config t off 4 x);
     bar =
       (fun i ->
         match Sysfs.bar t.host t.bus i with

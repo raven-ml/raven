@@ -75,20 +75,29 @@ let in_config f fn off n =
     invalid_arg
       (Printf.sprintf "Function.%s: byte %d outside configuration space" fn off)
 
-let config f fn off n =
-  in_config f fn off n;
-  f.fn.config off n
+let config8 f off =
+  in_config f "config8" off 1;
+  f.fn.config8 off
 
-let set_config f fn off n x =
-  in_config f fn off n;
-  f.fn.set_config off n x
+let config16 f off =
+  in_config f "config16" off 2;
+  f.fn.config16 off
 
-let config8 f off = config f "config8" off 1
-let config16 f off = config f "config16" off 2
-let config32 f off = config f "config32" off 4
-let set_config8 f off x = set_config f "set_config8" off 1 x
-let set_config16 f off x = set_config f "set_config16" off 2 x
-let set_config32 f off x = set_config f "set_config32" off 4 x
+let config32 f off =
+  in_config f "config32" off 4;
+  f.fn.config32 off
+
+let set_config8 f off x =
+  in_config f "set_config8" off 1;
+  f.fn.set_config8 off x
+
+let set_config16 f off x =
+  in_config f "set_config16" off 2;
+  f.fn.set_config16 off x
+
+let set_config32 f off x =
+  in_config f "set_config32" off 4;
+  f.fn.set_config32 off x
 
 (* BARs *)
 
@@ -145,14 +154,14 @@ let failed f =
   live f "failed";
   match Machine.failed f.machine with
   | Some _ as why -> why
-  | None when f.fn.config 0 2 = absent ->
+  | None when f.fn.config16 0 = absent ->
       Some (Printf.sprintf "%s left the bus: its vendor ID reads 0xffff" f.bus)
   | None -> None
 
 let reset f =
   live f "reset";
   let* () = f.fn.reset () in
-  let answers () = f.fn.config 0 2 <> absent in
+  let answers () = f.fn.config16 0 <> absent in
   if Machine.wait f.machine ~ms:reset_ms answers then Ok ()
   else
     match Machine.failed f.machine with

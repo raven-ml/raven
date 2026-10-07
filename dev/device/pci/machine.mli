@@ -102,12 +102,12 @@ type addressing = Ops.addressing =
 
 type fn = Ops.fn = {
   addressing : addressing;  (** How it reaches system memory. *)
-  config : int -> int -> int;
-      (** [config off n] is the [n]-byte value at [off], [n] being 1, 2 or 4:
-          {!Function.config8}, {!Function.config16}, {!Function.config32}. *)
-  set_config : int -> int -> int -> unit;
-      (** [set_config off n x] writes the low [n] bytes of [x] at [off]:
-          {!Function.set_config8} and its siblings. *)
+  config8 : int -> int;  (** {!Function.config8}. *)
+  config16 : int -> int;  (** {!Function.config16}. *)
+  config32 : int -> int;  (** {!Function.config32}. *)
+  set_config8 : int -> int -> unit;  (** {!Function.set_config8}. *)
+  set_config16 : int -> int -> unit;  (** {!Function.set_config16}. *)
+  set_config32 : int -> int -> unit;  (** {!Function.set_config32}. *)
   bar : int -> (int * int) option;  (** {!Function.bar}. *)
   map : int -> int -> int -> (Window.t, string) result;
       (** [map i off n] is {!Function.map} of BAR [i]. *)

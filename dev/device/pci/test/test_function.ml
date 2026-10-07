@@ -101,32 +101,39 @@ let fake_fn m bus =
         failwith ("misuse reached the machine: " ^ name)
     | None -> run ()
   in
-  let width n = if List.mem n [ 1; 2; 4 ] then None else Some "width" in
   let in_config off n =
-    if off < 0 || off > config_size - n then Some "offset" else width n
+    if off < 0 || off > config_size - n then Some "offset" else None
+  in
+  let config n off =
+    call
+      (Printf.sprintf "config%d" (8 * n))
+      (fun () -> in_config off n)
+      (fun () ->
+        let x = ref 0 in
+        for i = n - 1 downto 0 do
+          x := (!x lsl 8) lor Bytes.get_uint8 f.config (off + i)
+        done;
+        !x)
+  in
+  let set_config n off x =
+    call
+      (Printf.sprintf "set_config%d" (8 * n))
+      (fun () -> in_config off n)
+      (fun () ->
+        for i = 0 to n - 1 do
+          Bytes.set_uint8 f.config (off + i) ((x lsr (8 * i)) land 0xff)
+        done)
   in
   let window w = (Window.address w, Window.length w) in
   let ops =
     {
       Machine.addressing = f.addressing;
-      config =
-        (fun off n ->
-          call "config"
-            (fun () -> in_config off n)
-            (fun () ->
-              let x = ref 0 in
-              for i = n - 1 downto 0 do
-                x := (!x lsl 8) lor Bytes.get_uint8 f.config (off + i)
-              done;
-              !x));
-      set_config =
-        (fun off n x ->
-          call "set_config"
-            (fun () -> in_config off n)
-            (fun () ->
-              for i = 0 to n - 1 do
-                Bytes.set_uint8 f.config (off + i) ((x lsr (8 * i)) land 0xff)
-              done));
+      config8 = config 1;
+      config16 = config 2;
+      config32 = config 4;
+      set_config8 = set_config 1;
+      set_config16 = set_config 2;
+      set_config32 = set_config 4;
       bar =
         (fun i ->
           call "bar"
@@ -468,7 +475,7 @@ let test_empty () =
 let test_reset () =
   let _, f, fake = take_fake () in
   require_ok (Function.reset f);
-  equal ~msg:"asked" (list string) [ "config"; "reset" ] fake.calls
+  equal ~msg:"asked" (list string) [ "config16"; "reset" ] fake.calls
 
 (* A vendor ID of all ones is a function that does not answer. *)
 let test_reset_silent () =
@@ -1000,8 +1007,12 @@ let far_function far =
   let fn =
     {
       Machine.addressing = Iommu;
-      config = (fun off _ -> if off = 0 then 0x1002 else 0);
-      set_config = (fun _ _ _ -> ());
+      config8 = (fun _ -> 0);
+      config16 = (fun off -> if off = 0 then 0x1002 else 0);
+      config32 = (fun _ -> 0);
+      set_config8 = (fun _ _ -> ());
+      set_config16 = (fun _ _ -> ());
+      set_config32 = (fun _ _ -> ());
       bar = (fun i -> if i = 0 then Some (base, 4096) else None);
       map = (fun _ off n -> Ok (Window.through tr (base + off) n));
       unmap = ignore;

@@ -44,8 +44,12 @@ let runs =
 let fn ~bar_size =
   {
     Machine.addressing = Physical;
-    config = (fun _ _ -> 0);
-    set_config = (fun _ _ _ -> ());
+    config8 = (fun _ -> 0);
+    config16 = (fun _ -> 0);
+    config32 = (fun _ -> 0);
+    set_config8 = (fun _ _ -> ());
+    set_config16 = (fun _ _ -> ());
+    set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some (bar_base, bar_size) else None);
     map = (fun _ off n -> Ok (Window.v (bar_base + off) n));
     unmap = ignore;

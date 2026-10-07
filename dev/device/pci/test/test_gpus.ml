@@ -32,8 +32,12 @@ let fake_fn fake tr bus =
   in
   {
     Machine.addressing = Physical;
-    config = (fun _ _ -> 0);
-    set_config = (fun _ _ _ -> ());
+    config8 = (fun _ -> 0);
+    config16 = (fun _ -> 0);
+    config32 = (fun _ -> 0);
+    set_config8 = (fun _ _ -> ());
+    set_config16 = (fun _ _ -> ());
+    set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some (0, 4096) else None);
     map = (fun _ off n -> Ok (Window.through tr off n));
     unmap = (fun _ -> ());
@@ -435,9 +439,9 @@ let resets =
 
 (* This machine *)
 
-(* Taking a GPU of this machine is a hardware opt-in: such a test runs only
-   when DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds
-   while it runs, so that it never takes a device another user drives. *)
+(* Taking a GPU of this machine is a hardware opt-in: such a test runs only when
+   DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds while
+   it runs, so that it never takes a device another user drives. *)
 
 let test_this_none () =
   let g = Gpus.make ~memory_bar:0 (fun _ -> false) in

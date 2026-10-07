@@ -68,8 +68,12 @@ let rec remove x = function
 let ops k =
   {
     Machine.addressing = k.addressing;
-    config = (fun _ _ -> 0);
-    set_config = (fun _ _ _ -> ());
+    config8 = (fun _ -> 0);
+    config16 = (fun _ -> 0);
+    config32 = (fun _ -> 0);
+    set_config8 = (fun _ _ -> ());
+    set_config16 = (fun _ _ -> ());
+    set_config32 = (fun _ _ -> ());
     bar = (fun i -> if i = 0 then Some k.bar else None);
     map =
       (fun _ off n -> Ok (Window.through (Lazy.force bars) (fst k.bar + off) n));
