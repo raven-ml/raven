@@ -46,13 +46,14 @@ qmd/launch/blackwell	wall_time	batch=8192	n=20	9.221e-07	9.126e-07 9.130e-07 9.1
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 5.3 on 10 cores
+# forced: blessed qmd/launch/ada qmd/launch/blackwell cubin/of-string/nv-128-kernels under load 6.9 on 10 cores
 
 cubin/elf-of-string/nv-128-kernels	alloc_words	exact	31432
 cubin/elf-of-string/nv-128-kernels	wall_time	batch=32	n=20	1.584e-04	1.532e-04 1.534e-04 1.539e-04 1.541e-04 1.549e-04 1.564e-04 1.573e-04 1.580e-04 1.583e-04 1.584e-04 1.584e-04 1.585e-04 1.595e-04 1.597e-04 1.599e-04 1.603e-04 1.607e-04 1.610e-04 1.623e-04 1.659e-04
 cubin/kernel/last-of-128	alloc_words	exact	44791
 cubin/kernel/last-of-128	wall_time	batch=64	n=20	9.957e-05	9.809e-05 9.861e-05 9.869e-05 9.880e-05 9.880e-05 9.899e-05 9.926e-05 9.946e-05 9.950e-05 9.953e-05 9.961e-05 9.976e-05 9.980e-05 9.983e-05 1.000e-04 1.001e-04 1.001e-04 1.004e-04 1.010e-04 1.035e-04
-cubin/of-string/nv-128-kernels	alloc_words	exact	37085
-cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	1.612e-04	1.535e-04 1.538e-04 1.539e-04 1.559e-04 1.562e-04 1.566e-04 1.582e-04 1.597e-04 1.602e-04 1.610e-04 1.615e-04 1.615e-04 1.616e-04 1.621e-04 1.629e-04 1.639e-04 1.645e-04 1.660e-04 1.662e-04 1.670e-04
+cubin/of-string/nv-128-kernels	alloc_words	exact	37213
+cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	1.598e-04	1.563e-04 1.576e-04 1.577e-04 1.578e-04 1.580e-04 1.592e-04 1.594e-04 1.595e-04 1.596e-04 1.597e-04 1.598e-04 1.599e-04 1.600e-04 1.602e-04 1.603e-04 1.604e-04 1.612e-04 1.621e-04 1.628e-04 1.630e-04
 cubin/patches/128-relocations	alloc_words	exact	1156
 cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.713e-06	1.672e-06 1.674e-06 1.679e-06 1.690e-06 1.695e-06 1.701e-06 1.703e-06 1.708e-06 1.709e-06 1.712e-06 1.713e-06 1.713e-06 1.718e-06 1.719e-06 1.720e-06 1.724e-06 1.729e-06 1.745e-06 1.747e-06 1.751e-06
 gpfifo/entry-encode	alloc_words	exact	30
@@ -79,10 +80,10 @@ qmd/encode/ada	alloc_words	exact	240
 qmd/encode/ada	wall_time	batch=32768	n=20	1.990e-07	1.941e-07 1.958e-07 1.969e-07 1.972e-07 1.975e-07 1.976e-07 1.977e-07 1.977e-07 1.978e-07 1.989e-07 1.992e-07 1.995e-07 1.997e-07 1.999e-07 2.000e-07 2.050e-07 2.055e-07 2.080e-07 2.091e-07 2.127e-07
 qmd/fill-into-bytes/ada	alloc_words	exact	0
 qmd/fill-into-bytes/ada	wall_time	batch=262144	n=20	3.401e-08	3.358e-08 3.369e-08 3.369e-08 3.380e-08 3.386e-08 3.390e-08 3.393e-08 3.393e-08 3.396e-08 3.400e-08 3.402e-08 3.406e-08 3.407e-08 3.409e-08 3.409e-08 3.411e-08 3.416e-08 3.419e-08 3.421e-08 3.445e-08
-qmd/launch/ada	alloc_words	exact	1351
-qmd/launch/ada	wall_time	batch=4096	n=20	1.501e-06	1.490e-06 1.492e-06 1.493e-06 1.496e-06 1.496e-06 1.499e-06 1.499e-06 1.499e-06 1.499e-06 1.501e-06 1.501e-06 1.503e-06 1.505e-06 1.506e-06 1.509e-06 1.512e-06 1.514e-06 1.515e-06 1.549e-06 1.551e-06
-qmd/launch/blackwell	alloc_words	exact	1450
-qmd/launch/blackwell	wall_time	batch=4096	n=20	1.526e-06	1.493e-06 1.495e-06 1.499e-06 1.499e-06 1.505e-06 1.509e-06 1.515e-06 1.515e-06 1.517e-06 1.524e-06 1.527e-06 1.539e-06 1.546e-06 1.547e-06 1.554e-06 1.557e-06 1.565e-06 1.584e-06 1.602e-06 1.693e-06
+qmd/launch/ada	alloc_words	exact	1327
+qmd/launch/ada	wall_time	batch=4096	n=20	1.496e-06	1.488e-06 1.492e-06 1.493e-06 1.493e-06 1.493e-06 1.494e-06 1.495e-06 1.495e-06 1.495e-06 1.496e-06 1.496e-06 1.496e-06 1.497e-06 1.498e-06 1.499e-06 1.499e-06 1.506e-06 1.509e-06 1.512e-06 1.518e-06
+qmd/launch/blackwell	alloc_words	exact	1426
+qmd/launch/blackwell	wall_time	batch=4096	n=20	1.476e-06	1.470e-06 1.471e-06 1.473e-06 1.473e-06 1.473e-06 1.474e-06 1.474e-06 1.475e-06 1.476e-06 1.476e-06 1.476e-06 1.479e-06 1.482e-06 1.482e-06 1.482e-06 1.482e-06 1.483e-06 1.484e-06 1.484e-06 1.488e-06
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
