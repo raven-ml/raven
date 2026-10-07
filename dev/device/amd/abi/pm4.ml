@@ -95,7 +95,8 @@ let copy_data write source addr =
 (* The poll interval a wait takes by default, in clocks of its poll timer. *)
 let default_interval = 4
 
-(* A wait's space: a register, or memory. *)
+(* The spaces a wait reads: registers, or memory. *)
+let register_space = 0
 let memory_space = 1
 
 let function_of = function
@@ -115,7 +116,9 @@ let wait g loc cmp v ?(mask = 0xffff_ffff) ?(interval = default_interval) () =
         Register (r - Defs.packet3_set_uconfig_reg_start)
     | loc -> loc
   in
-  let space = match loc with Memory _ -> memory_space | Register _ -> 0 in
+  let space =
+    match loc with Memory _ -> memory_space | Register _ -> register_space
+  in
   packet Defs.packet3_wait_reg_mem
     ((Dword (wait_control space cmp) :: at loc)
     @ [ W32 (Value v); Dword mask; Dword interval ])
