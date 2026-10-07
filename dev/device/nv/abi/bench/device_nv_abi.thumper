@@ -1,0 +1,44 @@
+# thumper baseline v1
+# suite: device_nv_abi
+
+# machine: 943935ae6b4f79ac
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+# forced: blessed under load 5.3 on 10 cores
+
+cubin/elf-of-string/nv-128-kernels	alloc_words	exact	31432
+cubin/elf-of-string/nv-128-kernels	wall_time	batch=32	n=20	1.584e-04	1.532e-04 1.534e-04 1.539e-04 1.541e-04 1.549e-04 1.564e-04 1.573e-04 1.580e-04 1.583e-04 1.584e-04 1.584e-04 1.585e-04 1.595e-04 1.597e-04 1.599e-04 1.603e-04 1.607e-04 1.610e-04 1.623e-04 1.659e-04
+cubin/kernel/last-of-128	alloc_words	exact	44791
+cubin/kernel/last-of-128	wall_time	batch=64	n=20	9.957e-05	9.809e-05 9.861e-05 9.869e-05 9.880e-05 9.880e-05 9.899e-05 9.926e-05 9.946e-05 9.950e-05 9.953e-05 9.961e-05 9.976e-05 9.980e-05 9.983e-05 1.000e-04 1.001e-04 1.001e-04 1.004e-04 1.010e-04 1.035e-04
+cubin/of-string/nv-128-kernels	alloc_words	exact	37085
+cubin/of-string/nv-128-kernels	wall_time	batch=32	n=20	1.612e-04	1.535e-04 1.538e-04 1.539e-04 1.559e-04 1.562e-04 1.566e-04 1.582e-04 1.597e-04 1.602e-04 1.610e-04 1.615e-04 1.615e-04 1.616e-04 1.621e-04 1.629e-04 1.639e-04 1.645e-04 1.660e-04 1.662e-04 1.670e-04
+cubin/patches/128-relocations	alloc_words	exact	1156
+cubin/patches/128-relocations	wall_time	batch=4096	n=20	1.713e-06	1.672e-06 1.674e-06 1.679e-06 1.690e-06 1.695e-06 1.701e-06 1.703e-06 1.708e-06 1.709e-06 1.712e-06 1.713e-06 1.713e-06 1.718e-06 1.719e-06 1.720e-06 1.724e-06 1.729e-06 1.745e-06 1.747e-06 1.751e-06
+gpfifo/entry-encode	alloc_words	exact	30
+gpfifo/entry-encode	wall_time	batch=262144	n=20	3.477e-08	3.432e-08 3.442e-08 3.448e-08 3.450e-08 3.455e-08 3.464e-08 3.473e-08 3.473e-08 3.474e-08 3.476e-08 3.477e-08 3.478e-08 3.484e-08 3.485e-08 3.492e-08 3.498e-08 3.509e-08 3.781e-08 5.563e-08 7.351e-08
+gpfifo/entry-fill-into-bytes	alloc_words	exact	0
+gpfifo/entry-fill-into-bytes	wall_time	batch=1048576	n=20	9.145e-09	9.022e-09 9.023e-09 9.025e-09 9.036e-09 9.052e-09 9.067e-09 9.081e-09 9.120e-09 9.142e-09 9.144e-09 9.146e-09 9.158e-09 9.162e-09 9.166e-09 9.173e-09 9.183e-09 9.203e-09 9.212e-09 9.257e-09 9.331e-09
+launch/driver-parameters-into-bytes/ada	alloc_words	exact	0
+launch/driver-parameters-into-bytes/ada	wall_time	batch=524288	n=20	9.576e-09	9.461e-09 9.493e-09 9.531e-09 9.539e-09 9.551e-09 9.566e-09 9.566e-09 9.567e-09 9.573e-09 9.573e-09 9.578e-09 9.605e-09 9.609e-09 9.623e-09 9.634e-09 9.641e-09 9.646e-09 9.699e-09 9.701e-09 9.724e-09
+launch/driver-parameters/ada	alloc_words	exact	46
+launch/driver-parameters/ada	wall_time	batch=262144	n=20	2.787e-08	2.748e-08 2.762e-08 2.764e-08 2.776e-08 2.779e-08 2.781e-08 2.783e-08 2.784e-08 2.787e-08 2.787e-08 2.788e-08 2.803e-08 2.804e-08 2.805e-08 2.810e-08 2.816e-08 2.816e-08 2.816e-08 2.817e-08 2.853e-08
+launch/make/ada	alloc_words	exact	15
+launch/make/ada	wall_time	batch=1048576	n=20	8.037e-09	7.861e-09 7.891e-09 7.936e-09 7.936e-09 7.939e-09 7.960e-09 8.011e-09 8.018e-09 8.025e-09 8.035e-09 8.039e-09 8.040e-09 8.060e-09 8.060e-09 8.079e-09 8.083e-09 8.118e-09 8.151e-09 8.177e-09 8.187e-09
+method/placement-encode	alloc_words	exact	223
+method/placement-encode	wall_time	batch=32768	n=20	2.088e-07	2.063e-07 2.065e-07 2.065e-07 2.065e-07 2.075e-07 2.077e-07 2.084e-07 2.085e-07 2.087e-07 2.088e-07 2.089e-07 2.090e-07 2.090e-07 2.092e-07 2.093e-07 2.093e-07 2.095e-07 2.097e-07 2.097e-07 2.100e-07
+method/placement-fill-into-bytes	alloc_words	exact	0
+method/placement-fill-into-bytes	wall_time	batch=262144	n=20	2.259e-08	2.194e-08 2.241e-08 2.242e-08 2.245e-08 2.250e-08 2.250e-08 2.254e-08 2.254e-08 2.255e-08 2.259e-08 2.259e-08 2.259e-08 2.263e-08 2.264e-08 2.273e-08 2.279e-08 2.282e-08 2.286e-08 2.292e-08 2.298e-08
+method/release-encode	alloc_words	exact	37
+method/release-encode	wall_time	batch=131072	n=20	5.749e-08	5.702e-08 5.707e-08 5.721e-08 5.721e-08 5.728e-08 5.728e-08 5.729e-08 5.742e-08 5.747e-08 5.747e-08 5.752e-08 5.753e-08 5.754e-08 5.759e-08 5.767e-08 5.785e-08 5.788e-08 5.797e-08 5.822e-08 5.870e-08
+method/release-fill-into-bytes	alloc_words	exact	0
+method/release-fill-into-bytes	wall_time	batch=524288	n=20	9.760e-09	9.665e-09 9.706e-09 9.708e-09 9.718e-09 9.722e-09 9.726e-09 9.729e-09 9.755e-09 9.756e-09 9.756e-09 9.764e-09 9.765e-09 9.776e-09 9.777e-09 9.786e-09 9.787e-09 9.807e-09 9.807e-09 9.886e-09 9.932e-09
+method/release-template	alloc_words	exact	63
+method/release-template	wall_time	batch=65536	n=20	8.992e-08	8.898e-08 8.902e-08 8.921e-08 8.924e-08 8.933e-08 8.935e-08 8.961e-08 8.968e-08 8.968e-08 8.990e-08 8.994e-08 8.996e-08 9.013e-08 9.020e-08 9.026e-08 9.033e-08 9.041e-08 9.088e-08 9.158e-08 9.210e-08
+qmd/encode/ada	alloc_words	exact	240
+qmd/encode/ada	wall_time	batch=32768	n=20	1.990e-07	1.941e-07 1.958e-07 1.969e-07 1.972e-07 1.975e-07 1.976e-07 1.977e-07 1.977e-07 1.978e-07 1.989e-07 1.992e-07 1.995e-07 1.997e-07 1.999e-07 2.000e-07 2.050e-07 2.055e-07 2.080e-07 2.091e-07 2.127e-07
+qmd/fill-into-bytes/ada	alloc_words	exact	0
+qmd/fill-into-bytes/ada	wall_time	batch=262144	n=20	3.401e-08	3.358e-08 3.369e-08 3.369e-08 3.380e-08 3.386e-08 3.390e-08 3.393e-08 3.393e-08 3.396e-08 3.400e-08 3.402e-08 3.406e-08 3.407e-08 3.409e-08 3.409e-08 3.411e-08 3.416e-08 3.419e-08 3.421e-08 3.445e-08
+qmd/launch/ada	alloc_words	exact	1351
+qmd/launch/ada	wall_time	batch=4096	n=20	1.501e-06	1.490e-06 1.492e-06 1.493e-06 1.496e-06 1.496e-06 1.499e-06 1.499e-06 1.499e-06 1.499e-06 1.501e-06 1.501e-06 1.503e-06 1.505e-06 1.506e-06 1.509e-06 1.512e-06 1.514e-06 1.515e-06 1.549e-06 1.551e-06
+qmd/launch/blackwell	alloc_words	exact	1450
+qmd/launch/blackwell	wall_time	batch=4096	n=20	1.526e-06	1.493e-06 1.495e-06 1.499e-06 1.499e-06 1.505e-06 1.509e-06 1.515e-06 1.515e-06 1.517e-06 1.524e-06 1.527e-06 1.539e-06 1.546e-06 1.547e-06 1.554e-06 1.557e-06 1.565e-06 1.584e-06 1.602e-06 1.693e-06

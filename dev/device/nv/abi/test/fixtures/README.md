@@ -1,0 +1,22 @@
+# NV ABI fixtures
+
+- `simple_add_sm89.cubin`, the cubin of `simple_add.cu` for sm_89, made in
+  this directory by `nvrtc.c` with NVRTC 12.8.93 (CUDA 12.8, the PyPI
+  package `nvidia-cuda-nvrtc-cu12==12.8.93`), whose files are under
+  `$NVRTC`:
+  `cc nvrtc.c -I$NVRTC/include -L$NVRTC/lib -l:libnvrtc.so.12 -Wl,-rpath,$NVRTC/lib -o nvrtc && ./nvrtc simple_add.cu sm_89 simple_add_sm89.cubin`.
+  Another release of NVRTC writes its own version into the file.
+
+What the suite expects of it was read with Homebrew LLVM 22.1.7's
+`llvm-readelf -S -r -s -x .nv.info -x .nv.info.simple_add simple_add_sm89.cubin`:
+
+- two allocated sections, `.nv.constant0.simple_add` (0x17c bytes,
+  alignment 4) then `.text.simple_add` (0x200 bytes, alignment 128): laid
+  out at 128 bytes, the code starts at 0x180 and the image ends at 0x380;
+- `.nv.info` holds `04 2f 0800 06000000 0c000000`, EIATTR_REGCOUNT (0x2f)
+  of symbol 6, `simple_add`: 12 registers; and `04 12 0800 06000000
+  00000000`, EIATTR_MIN_STACK_SIZE (0x12): no stack;
+- `.nv.info.simple_add` holds `04 0a 0800 02000000 6001 1c00`,
+  EIATTR_PARAM_CBANK (0xa): parameters at 0x160 of bank 0, 0x1c bytes;
+- its one relocation, in `.rel.debug_frame`, patches a section the image
+  does not hold.

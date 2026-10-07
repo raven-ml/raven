@@ -1,0 +1,12 @@
+(executable
+ (name bench_nv_abi)
+ (libraries device_nv_abi device_elf thumper))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper)
+  (source_tree ../test/fixtures))
+ (action
+  (run %{exe:bench_nv_abi.exe})))
