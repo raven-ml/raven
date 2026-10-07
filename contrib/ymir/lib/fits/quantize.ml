@@ -21,7 +21,8 @@ let to_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 (* Rounding to float32 through a one-element float32 array [c], which boxes
    nothing in a loop. *)
-let round32 c x =
+let[@inline] round32
+    (c : (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t) x =
   Bigarray.Array1.unsafe_set c 0 x;
   Bigarray.Array1.unsafe_get c 0
 
@@ -143,10 +144,12 @@ type stats = {
 let noise5 (data : floats) nx ny =
   let nx, ny = if nx < 9 then (nx * ny, 1) else (nx, ny) in
   let good v = not (Float.is_nan v) in
-  let minv = ref Float.max_float and maxv = ref (-.Float.max_float) in
+  (* the least and greatest good pixels, in a float array, which boxes
+     nothing *)
+  let mm = [| Float.max_float; -.Float.max_float |] in
   let range v =
-    if v < !minv then minv := v;
-    if v > !maxv then maxv := v
+    if v < mm.(0) then mm.(0) <- v;
+    if v > mm.(1) then mm.(1) <- v
   in
   if nx < 9 then begin
     let ngood = ref 0 in
@@ -158,8 +161,8 @@ let noise5 (data : floats) nx ny =
     done;
     {
       ngood = !ngood;
-      minval = !minv;
-      maxval = !maxv;
+      minval = mm.(0);
+      maxval = mm.(1);
       noise2 = 0.;
       noise3 = 0.;
       noise5 = 0.;
@@ -174,19 +177,21 @@ let noise5 (data : floats) nx ny =
     and r5 = Array.make ny 0. in
     let nrows = ref 0 and nrows2 = ref 0 and ngood = ref 0 in
     let cell = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 1 in
-    let f = round32 cell in
     for jj = 0 to ny - 1 do
       let row = jj * nx in
       let ii = ref 0 in
-      let next () =
+      (* [next k] moves [ii] to the next good pixel and stores it in
+         [v.(k)]; [false] at the row's end *)
+      let next v k =
         while !ii < nx && not (good (Bigarray.Array1.get data (row + !ii))) do
           incr ii
         done;
-        if !ii = nx then None
+        if !ii = nx then false
         else begin
-          let v = Bigarray.Array1.get data (row + !ii) in
-          range v;
-          Some v
+          let x = Bigarray.Array1.get data (row + !ii) in
+          range x;
+          v.(k) <- x;
+          true
         end
       in
       let v = Array.make 9 0. in
@@ -194,12 +199,11 @@ let noise5 (data : floats) nx ny =
         if k = 8 then true
         else begin
           if k > 0 then incr ii;
-          match next () with
-          | None -> false
-          | Some x ->
-              v.(k) <- x;
-              incr ngood;
-              first (k + 1)
+          if next v k then begin
+            incr ngood;
+            first (k + 1)
+          end
+          else false
         end
       in
       if first 0 then begin
@@ -207,38 +211,43 @@ let noise5 (data : floats) nx ny =
         incr ii;
         let continue = ref true in
         while !continue && !ii < nx do
-          match next () with
-          | None -> continue := false
-          | Some x ->
-              v.(8) <- x;
-              let v1 = v.(0)
-              and v3 = v.(2)
-              and v4 = v.(3)
-              and v5 = v.(4)
-              and v6 = v.(5)
-              and v7 = v.(6)
-              and v9 = v.(8) in
-              if not (v5 = v6 && v6 = v7) then begin
-                d2.(!nvals2) <- f (Float.abs (f (v5 -. v7)));
-                incr nvals2
-              end;
-              if not (v3 = v4 && v4 = v5 && v5 = v6 && v6 = v7) then begin
-                d3.(!nvals) <- f (Float.abs (f (f (f (2. *. v5) -. v3) -. v7)));
-                d5.(!nvals) <-
-                  f
-                    (Float.abs
-                       (f
-                          (f
-                             (f
-                                (f (f (6. *. v5) -. f (4. *. v3))
-                                -. f (4. *. v7))
-                             +. v1)
-                          +. v9)));
-                incr nvals
-              end
-              else incr ngood;
-              Array.blit v 1 v 0 8;
-              incr ii
+          if not (next v 8) then continue := false
+          else begin
+            let v1 = v.(0)
+            and v3 = v.(2)
+            and v4 = v.(3)
+            and v5 = v.(4)
+            and v6 = v.(5)
+            and v7 = v.(6)
+            and v9 = v.(8) in
+            if not (v5 = v6 && v6 = v7) then begin
+              d2.(!nvals2) <- round32 cell (Float.abs (round32 cell (v5 -. v7)));
+              incr nvals2
+            end;
+            if not (v3 = v4 && v4 = v5 && v5 = v6 && v6 = v7) then begin
+              d3.(!nvals) <-
+                round32 cell
+                  (Float.abs
+                     (round32 cell
+                        (round32 cell (round32 cell (2. *. v5) -. v3) -. v7)));
+              d5.(!nvals) <-
+                round32 cell
+                  (Float.abs
+                     (round32 cell
+                        (round32 cell
+                           (round32 cell
+                              (round32 cell
+                                 (round32 cell (6. *. v5)
+                                 -. round32 cell (4. *. v3))
+                              -. round32 cell (4. *. v7))
+                           +. v1)
+                        +. v9)));
+              incr nvals
+            end
+            else incr ngood;
+            Array.blit v 1 v 0 8;
+            incr ii
+          end
         done;
         ngood := !ngood + !nvals;
         if !nvals = 1 then begin
@@ -264,8 +273,8 @@ let noise5 (data : floats) nx ny =
     in
     {
       ngood = !ngood;
-      minval = !minv;
-      maxval = !maxv;
+      minval = mm.(0);
+      maxval = mm.(1);
       noise2 = 1.0483579 *. over r2 !nrows2;
       noise3 = 0.6052697 *. over r3 !nrows;
       noise5 = 0.1772048 *. over r5 !nrows;

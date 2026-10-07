@@ -147,7 +147,8 @@ let encode ~width ~block
     let i = ref 0 in
     while !i < n do
       let len = Int.min block (n - !i) in
-      let sum = ref 0. in
+      (* the block's sum, in a float array, which boxes nothing *)
+      let sum = [| 0. |] in
       for j = 0 to len - 1 do
         let next = Bigarray.Array1.get v (!i + j) in
         (* the difference wrapped to a signed value of the width, then
@@ -160,11 +161,12 @@ let encode ~width ~block
           if d < 0 then lnot (d lsl 1) land mask else (d lsl 1) land mask
         in
         diff.(j) <- m;
-        sum := !sum +. float_of_int m;
+        sum.(0) <- sum.(0) +. float_of_int m;
         last := next
       done;
       let dpsum =
-        Float.max 0. ((!sum -. float_of_int (len / 2) -. 1.) /. float_of_int len)
+        Float.max 0.
+          ((sum.(0) -. float_of_int (len / 2) -. 1.) /. float_of_int len)
       in
       let psum = ref ((int_of_float dpsum land mask) lsr 1) in
       let fs = ref 0 in
@@ -179,7 +181,7 @@ let encode ~width ~block
           put b bbits diff.(j)
         done
       end
-      else if fs = 0 && !sum = 0. then put b fsbits 0
+      else if fs = 0 && sum.(0) = 0. then put b fsbits 0
       else begin
         put b fsbits (fs + 1);
         for j = 0 to len - 1 do

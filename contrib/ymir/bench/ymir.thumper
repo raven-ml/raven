@@ -19,8 +19,8 @@ fits-image-4096/raw-int16-rice	alloc_words	exact	4435930
 fits-image-4096/raw-int16-rice	wall_time	batch=1	n=20	2.339e-01	2.272e-01 2.276e-01 2.282e-01 2.282e-01 2.287e-01 2.293e-01 2.296e-01 2.297e-01 2.325e-01 2.337e-01 2.342e-01 2.344e-01 2.363e-01 2.365e-01 2.366e-01 2.382e-01 2.571e-01 2.923e-01 3.645e-01 4.088e-01
 fits-image-4096/values-float32	alloc_words	exact	1638
 fits-image-4096/values-float32	wall_time	batch=1	n=20	4.566e-02	3.965e-02 4.114e-02 4.266e-02 4.344e-02 4.365e-02 4.415e-02 4.425e-02 4.511e-02 4.527e-02 4.564e-02 4.569e-02 4.577e-02 4.587e-02 4.594e-02 4.605e-02 4.606e-02 4.626e-02 4.643e-02 4.647e-02 4.791e-02
-fits-quantized-1024/write	alloc_words	exact	79019826
-fits-quantized-1024/write	wall_time	batch=1	n=20	3.572e-01	3.339e-01 3.412e-01 3.440e-01 3.449e-01 3.475e-01 3.479e-01 3.494e-01 3.520e-01 3.527e-01 3.565e-01 3.579e-01 3.592e-01 3.615e-01 3.707e-01 3.841e-01 4.075e-01 4.181e-01 4.260e-01 4.375e-01 5.028e-01
+fits-quantized-1024/write	alloc_words	exact	16314793
+fits-quantized-1024/write	wall_time	batch=1	n=20	4.475e-01	3.920e-01 3.981e-01 4.055e-01 4.069e-01 4.077e-01 4.212e-01 4.216e-01 4.224e-01 4.301e-01 4.453e-01 4.497e-01 4.499e-01 4.530e-01 4.582e-01 4.584e-01 4.612e-01 4.746e-01 4.768e-01 4.780e-01 4.950e-01
 fits-table-50x100k/raw-one-column	alloc_words	exact	1457723
 fits-table-50x100k/raw-one-column	wall_time	batch=1	n=20	1.365e-02	1.246e-02 1.306e-02 1.333e-02 1.336e-02 1.342e-02 1.347e-02 1.348e-02 1.351e-02 1.355e-02 1.364e-02 1.366e-02 1.369e-02 1.372e-02 1.382e-02 1.384e-02 1.384e-02 1.394e-02 1.395e-02 1.410e-02 1.469e-02
 fits-table-50x100k/read	alloc_words	exact	70086245
