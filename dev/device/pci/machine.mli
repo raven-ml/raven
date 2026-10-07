@@ -125,7 +125,8 @@ type fn = Ops.fn = {
   pin : int -> int -> ((int * int) list, string) result;
       (** {!Function.pin}. *)
   unpin : int -> int -> unit;  (** {!Function.unpin}. *)
-  release : unit -> unit;  (** {!Function.release}. *)
+  release : unit -> unit;
+      (** {!Function.release}, which turns the function's bus mastering off. *)
 }
 (** The type for the operations on a function a transport took. *)
 

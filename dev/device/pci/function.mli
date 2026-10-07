@@ -60,10 +60,17 @@ val take : Machine.t -> string -> (t, string) result
     to [vfio-pci]. *)
 
 val release : t -> unit
-(** [release f] gives [f] back: it unmaps its BAR windows, closes the process's
-    files for it and unlocks it. Behind an IOMMU, [f] no longer reaches the
-    memory mapped for it, which stays allocated until {!free_dma}. Releasing it
-    again does nothing. *)
+(** [release f] gives [f] back: it turns [f]'s bus mastering off, so that [f]
+    reaches system memory by DMA no more, unmaps its BAR windows, closes the
+    process's files for it and unlocks it. The memory allocated for [f] stays
+    allocated until {!free_dma}. Releasing it again does nothing.
+
+    A function of {!Machine.this} the process still holds when it exits loses
+    its bus mastering then, once the exit functions of the libraries above this
+    one, such as its driver's, have run; a child of [fork] exiting changes
+    nothing. A process killed by a signal stops nothing: behind an IOMMU, Linux
+    then stops the function's DMA as it closes the process's files; taken
+    physically, the function keeps mastering the bus. *)
 
 val machine : t -> Machine.t
 (** [machine f] is the machine [f] is on. *)

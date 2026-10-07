@@ -877,9 +877,9 @@ let model = group ~timeout:patience "against a model" [ sequences; parallel ]
 
 (* This machine *)
 
-(* Taking a GPU of this machine is a hardware opt-in: such a test runs only
-   when DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds
-   while it runs, so that it never takes a device another user drives. *)
+(* Taking a GPU of this machine is a hardware opt-in: such a test runs only when
+   DEVICE_PCI_TEST_GPU_LOCK names the machine's GPU lock, which it holds while
+   it runs, so that it never takes a device another user drives. *)
 
 let sysfs bus file =
   Filename.concat (Filename.concat "/sys/bus/pci/devices" bus) file
@@ -1187,6 +1187,70 @@ let test_physical () =
       ("VFIO's no-IOMMU mode", [], [ "12" ], Some "12");
     ]
 
+(* The command register and two of its bits (PCI Express Base Specification,
+   7.5.1.1.3): the function answers at its memory BARs, and it masters the bus,
+   reaching system memory by DMA. *)
+let command = 0x04
+let memory_space = 0x2
+let bus_master = 0x4
+
+(* [take_mastering m bus] takes [bus] on [m] and turns its bus mastering on. *)
+let take_mastering m bus =
+  let f = require_ok (Function.take m bus) in
+  Function.set_config16 f command (memory_space lor bus_master);
+  f
+
+let test_release_stops_dma () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Host.gpu "0000:03:00.0" in
+  let m = Machine.at (Host.make [ fn ]) in
+  Function.release (take_mastering m fn.bus);
+  let f = require_ok (Function.take m fn.bus) in
+  equal hex memory_space (Function.config16 f command);
+  Function.release f
+
+(* The test's executable, run with [exiting], is [exit_mastering]'s process. *)
+let exiting = "--exit-mastering"
+
+(* Takes [bus] of the host at [root] with its bus mastering on, forks a child
+   that exits, and exits, with 0 iff the child's exit left the bus mastering
+   on. *)
+let exit_mastering root bus =
+  let f = take_mastering (Machine.at root) bus in
+  (match Unix.fork () with
+  | 0 -> exit 0
+  | child -> ignore (Unix.waitpid [] child));
+  exit (if Function.config16 f command land bus_master <> 0 then 0 else 1)
+
+let test_exit_stops_dma () =
+  if not on_linux then skip ~reason:"flock on a function's file needs Linux" ();
+  let fn = Host.gpu "0000:03:00.0" in
+  let root = Host.make [ fn ] in
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe
+      [| exe; exiting; root; fn.bus |]
+      Unix.stdin Unix.stdout Unix.stderr
+  in
+  let status = ref None in
+  let exited () =
+    match Unix.waitpid [ WNOHANG ] pid with
+    | 0, _ -> false
+    | _, s ->
+        status := Some s;
+        true
+  in
+  if not (poll exited) then begin
+    Unix.kill pid Sys.sigkill;
+    failf "the process holding %s did not exit" fn.bus
+  end;
+  let code = match !status with Some (WEXITED c) -> c | _ -> -1 in
+  equal ~msg:"its child's exit left it mastering the bus" int 0 code;
+  let f = require_ok (Function.take (Machine.at root) fn.bus) in
+  equal ~msg:"its own exit stopped it" hex memory_space
+    (Function.config16 f command);
+  Function.release f
+
 let host_files =
   group ~timeout:patience "a host's files"
     [
@@ -1197,6 +1261,12 @@ let host_files =
         "a function alone and enabled, under no translating IOMMU, is taken \
          physically, its BARs as its registers and resource file say"
         test_physical;
+      test "a function taken physically stops mastering the bus when released"
+        test_release_stops_dma;
+      test
+        "a function taken physically stops mastering the bus when its process \
+         exits, and a child that process forked exits without stopping it"
+        test_exit_stops_dma;
     ]
 
 let this_machine =
@@ -1212,8 +1282,17 @@ let this_machine =
     ]
 
 let () =
-  exit
-  @@ run "device_pci Function"
-       [
-         taking; uses; misuse_refused; model; failures; host_files; this_machine;
-       ]
+  match Sys.argv with
+  | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
+  | _ ->
+      exit
+      @@ run "device_pci Function"
+           [
+             taking;
+             uses;
+             misuse_refused;
+             model;
+             failures;
+             host_files;
+             this_machine;
+           ]
