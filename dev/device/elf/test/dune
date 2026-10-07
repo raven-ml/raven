@@ -1,6 +1,8 @@
 (test
- (name smoke)
+ (name test_elf)
  (libraries device_elf windtrap)
  (deps
   %{project_root}/packages/tolk/test/runtime/ops_nv/simple_add_sm89.cubin
-  %{project_root}/packages/tolk/test/gen/runtime/ops_amd_fixtures/simple_add_gfx1100.hsaco))
+  %{project_root}/packages/tolk/test/gen/runtime/ops_amd_fixtures/simple_add_gfx1100.hsaco
+  %{project_root}/packages/tolk/test/gen/runtime/ops_amd_fixtures/lds_gfx1100.o
+  %{project_root}/packages/nx/lib/amd/kernels/gfx12-generic/unfold.8.co))
