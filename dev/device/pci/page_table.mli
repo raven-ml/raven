@@ -31,6 +31,12 @@ type target =
   | System  (** System memory, which the GPU reaches over the bus. *)
   | Peer  (** Another GPU's memory, reached over a direct link. *)
 
+(** The type for what a table entry holds. *)
+type entry =
+  | Invalid  (** Nothing: the addresses it covers are not mapped. *)
+  | Page  (** A page. *)
+  | Table of int  (** The table at this physical address. *)
+
 type format = {
   levels : int list;
       (** The bit position of the address each level indexes, from the leaf
@@ -43,31 +49,29 @@ type format = {
           levels of 512 entries; with 49 bits, [[12; 21; 29; 38; 47]] has a root
           of 4 entries and a level of 256. *)
   first : int;  (** The number of the root level. *)
-  get : level:int -> table:int -> int -> int64;
-      (** [get ~level ~table i] is entry [i] of the table of [level] at physical
-          address [table]: the 64 bits of it that the format uses. *)
-  set : level:int -> table:int -> int -> int64 -> unit;
-      (** [set ~level ~table i e] writes entry [i] of that table: [e] as [get]
-          reads it. *)
-  encode :
+  get : level:int -> table:int -> int -> entry;
+      (** [get ~level ~table i] is what entry [i] of the table of [level] at
+          physical address [table] holds. *)
+  set_table : level:int -> table:int -> int -> child:int -> unit;
+      (** [set_table ~level ~table i ~child] points entry [i] of that table to
+          the table at physical address [child]. *)
+  set_page :
     level:int ->
-    table:bool ->
+    table:int ->
+    int ->
+    pa:int ->
     target ->
     uncached:bool ->
     snooped:bool ->
     fragment:int ->
-    valid:bool ->
-    int ->
-    int64;
-      (** [encode ~level ~table t ~uncached ~snooped ~fragment ~valid pa] is the
-          entry at [level] for the physical address [pa] in [t]: a child table
-          if [table], a page otherwise, part of a naturally aligned run of
-          [2{^fragment}] 4 KiB pages. *)
-  valid : int64 -> bool;  (** [valid e] is [true] iff [e] is in use. *)
-  leaf : level:int -> int64 -> bool;
-      (** [leaf ~level e] is [true] iff [e] maps a page rather than a table. *)
-  address : int64 -> int;
-      (** [address e] is the physical address of the table [e] points to. *)
+    unit;
+      (** [set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment] makes
+          entry [i] of that table map the page at physical address [pa] of [tg],
+          part of a naturally aligned run of [2{^fragment}] 4 KiB pages.
+          [fragment] bounds the run: a format may record a smaller one, or none.
+      *)
+  clear : level:int -> table:int -> int -> unit;
+      (** [clear ~level ~table i] makes entry [i] of that table map nothing. *)
   large : level:int -> bool;
       (** [large ~level] is [true] iff pages may map at [level]. *)
   zero : int -> int -> unit;
@@ -76,7 +80,14 @@ type format = {
       (** [flush ()] makes the GPU see the entries written so far. *)
 }
 (** The type for a vendor's page-table format and the access to the GPU's memory
-    that holds the tables. *)
+    that holds the tables. A format's entries obey:
+    - after [set_table ~level ~table i ~child], [get ~level ~table i] is
+      [Table child]; after [set_page], [Page]; after [clear], [Invalid];
+    - an entry in memory that [zero] zeroed is [Invalid];
+    - at the leaf level, [get] is never [Table _].
+
+    Page_table calls [set_page] only at the leaf level or where [large] holds,
+    and [set_table] only with tables in the GPU's memory. *)
 
 (** {1:page_tables Page tables} *)
 

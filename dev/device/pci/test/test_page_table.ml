@@ -736,31 +736,27 @@ let test_real_formats =
     (fun (_, first, levels, bits, counts) ->
       let mem = Hashtbl.create 16 and writes = ref [] in
       let bottom = first + List.length levels - 1 in
+      let set ~level ~table i e =
+        writes := (level, i) :: !writes;
+        Hashtbl.replace mem (table + (8 * i)) e
+      in
       let fmt =
         {
           Page_table.levels;
           bits;
           first;
           get =
-            (fun ~level:_ ~table i ->
-              Option.value ~default:0L (Hashtbl.find_opt mem (table + (8 * i))));
-          set =
-            (fun ~level ~table i e ->
-              writes := (level, i) :: !writes;
-              Hashtbl.replace mem (table + (8 * i)) e);
-          encode =
-            (fun ~level:_
-              ~table:_
-              _
-              ~uncached:_
-              ~snooped:_
-              ~fragment:_
-              ~valid
-              pa
-            -> Int64.of_int (pa lor Bool.to_int valid));
-          valid = (fun e -> Int64.logand e 1L <> 0L);
-          leaf = (fun ~level _ -> level = bottom);
-          address = (fun e -> Int64.to_int e land address_mask);
+            (fun ~level ~table i : Page_table.entry ->
+              match Hashtbl.find_opt mem (table + (8 * i)) with
+              | None | Some 0 -> Invalid
+              | Some _ when level = bottom -> Page
+              | Some e -> Table (e land address_mask));
+          set_table =
+            (fun ~level ~table i ~child -> set ~level ~table i (child lor 1));
+          set_page =
+            (fun ~level ~table i ~pa _ ~uncached:_ ~snooped:_ ~fragment:_ ->
+              set ~level ~table i (pa lor 1));
+          clear = (fun ~level ~table i -> set ~level ~table i 0);
           large = (fun ~level -> level = bottom);
           zero =
             (fun pa n ->

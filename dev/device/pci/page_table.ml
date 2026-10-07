@@ -4,26 +4,25 @@
   ---------------------------------------------------------------------------*)
 
 type target = Gpu | System | Peer
+type entry = Invalid | Page | Table of int
 
 type format = {
   levels : int list;
   bits : int;
   first : int;
-  get : level:int -> table:int -> int -> int64;
-  set : level:int -> table:int -> int -> int64 -> unit;
-  encode :
+  get : level:int -> table:int -> int -> entry;
+  set_table : level:int -> table:int -> int -> child:int -> unit;
+  set_page :
     level:int ->
-    table:bool ->
+    table:int ->
+    int ->
+    pa:int ->
     target ->
     uncached:bool ->
     snooped:bool ->
     fragment:int ->
-    valid:bool ->
-    int ->
-    int64;
-  valid : int64 -> bool;
-  leaf : level:int -> int64 -> bool;
-  address : int64 -> int;
+    unit;
+  clear : level:int -> table:int -> int -> unit;
   large : level:int -> bool;
   zero : int -> int -> unit;
   flush : unit -> unit;
@@ -143,14 +142,6 @@ let new_table t =
       Held.replace t.held pa (ref 0);
       pa
 
-(* Whether the valid entry [e] at depth [d] maps a page: every one of the last
-   level does. *)
-let is_page t d e = d = bottom t || t.fmt.leaf ~level:(level t d) e
-
-let invalid_entry t level =
-  t.fmt.encode ~level ~table:false Gpu ~uncached:false ~snooped:false
-    ~fragment:0 ~valid:false 0
-
 (* The number of valid entries of [table]. Kept as entries are written and
    cleared, it tells that a table is empty without reading its entries, each a
    read across the bus. *)
@@ -159,18 +150,14 @@ let entries t table = Held.find t.held table
 (* The table entry [i] of [table], at depth [d], points to, made if missing. *)
 let child t d table i =
   let level = level t d in
-  let e = t.fmt.get ~level ~table i in
-  if not (t.fmt.valid e) then begin
-    let pa = new_table t in
-    t.fmt.set ~level ~table i
-      (t.fmt.encode ~level ~table:true Gpu ~uncached:false ~snooped:false
-         ~fragment:0 ~valid:true pa);
-    incr (entries t table);
-    pa
-  end
-  else if is_page t d e then
-    invalid_arg "Page_table.tables: a larger page maps the address"
-  else t.fmt.address e
+  match t.fmt.get ~level ~table i with
+  | Table child -> child
+  | Invalid ->
+      let child = new_table t in
+      t.fmt.set_table ~level ~table i ~child;
+      incr (entries t table);
+      child
+  | Page -> invalid_arg "Page_table.tables: a larger page maps the address"
 
 (* Calls [f i at lo hi] for each entry [i] of a table at depth [d], whose first
    entry maps [at], that overlaps [lo, hi): [at] is the first address the entry
@@ -187,26 +174,27 @@ let each t d ~at lo hi f =
 let rec unmapped t d table ~at lo hi =
   let level = level t d in
   each t d ~at lo hi @@ fun i at lo hi ->
-  let e = t.fmt.get ~level ~table i in
-  if not (t.fmt.valid e) then ()
-  else if is_page t d e then
-    invalid_arg
-      (Printf.sprintf "Page_table.map: 0x%x is mapped already" (t.base + lo))
-  else unmapped t (d + 1) (t.fmt.address e) ~at lo hi
+  match t.fmt.get ~level ~table i with
+  | Invalid -> ()
+  | Table child -> unmapped t (d + 1) child ~at lo hi
+  | Page ->
+      invalid_arg
+        (Printf.sprintf "Page_table.map: 0x%x is mapped already" (t.base + lo))
 
 (* Raises unless pages map every address of [lo, hi), none past it. *)
 let rec mapped t d table ~at lo hi =
   let level = level t d and c = covers t d in
   each t d ~at lo hi @@ fun i at lo hi ->
-  let e = t.fmt.get ~level ~table i in
-  if not (t.fmt.valid e) then
-    invalid_arg
-      (Printf.sprintf "Page_table.unmap: 0x%x is not mapped" (t.base + lo))
-  else if not (is_page t d e) then mapped t (d + 1) (t.fmt.address e) ~at lo hi
-  else if lo <> at || hi <> at + c then
-    invalid_arg
-      (Printf.sprintf "Page_table.unmap: the page at 0x%x is partly outside"
-         (t.base + at))
+  match t.fmt.get ~level ~table i with
+  | Invalid ->
+      invalid_arg
+        (Printf.sprintf "Page_table.unmap: 0x%x is not mapped" (t.base + lo))
+  | Table child -> mapped t (d + 1) child ~at lo hi
+  | Page ->
+      if lo <> at || hi <> at + c then
+        invalid_arg
+          (Printf.sprintf "Page_table.unmap: the page at 0x%x is partly outside"
+             (t.base + at))
 
 (* The fragment of the page at [v] of the run [lo, hi), mapped [delta] bytes
    further: the log2 of the pages of the largest block naturally aligned in both
@@ -259,10 +247,10 @@ and join r =
       join r
   | _ -> ()
 
-(* The entry at depth [d] of the page at [v] of [r]'s run. A fragment's block is
-   aligned in the space's addresses; the pages of a block share its fragment,
-   which is found once a block. *)
-let entry t r d v =
+(* Maps the page at [v] of [r]'s run with entry [i] of [table], at depth [d]. A
+   fragment's block is aligned in the space's addresses; the pages of a block
+   share its fragment, which is found once a block. *)
+let map_page t r d table i v =
   if v >= r.until then begin
     let va = t.base + v and k = t.shifts.(d) - page_bits in
     r.frag <-
@@ -270,8 +258,8 @@ let entry t r d v =
         va k;
     r.until <- (va lor ((page lsl r.frag) - 1)) + 1 - t.base
   end;
-  t.fmt.encode ~level:(level t d) ~table:false r.target ~uncached:r.uncached
-    ~snooped:r.snooped ~fragment:r.frag ~valid:true (v + r.delta)
+  t.fmt.set_page ~level:(level t d) ~table i ~pa:(v + r.delta) r.target
+    ~uncached:r.uncached ~snooped:r.snooped ~fragment:r.frag
 
 (* Maps [lo, hi) to the runs of [r], each page with the largest entry that its
    run holds and both its addresses are aligned to. One walk serves every run:
@@ -282,7 +270,7 @@ let rec write t d table ~at lo hi r =
     for i = (lo - at) / c to ((hi - at) / c) - 1 do
       let v = at + (i * c) in
       seek r v;
-      t.fmt.set ~level ~table i (entry t r d v)
+      map_page t r d table i v
     done;
     let n = entries t table in
     n := !n + ((hi - lo) / c)
@@ -294,7 +282,7 @@ let rec write t d table ~at lo hi r =
       lo = at && hi = at + c && hi <= r.hi && aligned (lo + r.delta) c
     in
     if whole && t.fmt.large ~level then begin
-      t.fmt.set ~level ~table i (entry t r d lo);
+      map_page t r d table i lo;
       incr (entries t table)
     end
     else
@@ -307,30 +295,26 @@ let rec write t d table ~at lo hi r =
    a page. *)
 let rec clear t d table ~at lo hi =
   let level = level t d and c = covers t d and n = entries t table in
-  let none = invalid_entry t level in
   if d = bottom t then begin
     for i = (lo - at) / c to ((hi - at) / c) - 1 do
-      t.fmt.set ~level ~table i none
+      t.fmt.clear ~level ~table i
     done;
     n := !n - ((hi - lo) / c)
   end
   else begin
     each t d ~at lo hi @@ fun i at lo hi ->
-    let e = t.fmt.get ~level ~table i in
-    if not (t.fmt.valid e) then ()
-    else if t.fmt.leaf ~level e then begin
-      t.fmt.set ~level ~table i none;
-      decr n
-    end
-    else begin
-      let child = t.fmt.address e in
-      if clear t (d + 1) child ~at lo hi then begin
-        t.fmt.set ~level ~table i none;
-        decr n;
-        Held.remove t.held child;
-        pfree t child
-      end
-    end
+    match t.fmt.get ~level ~table i with
+    | Invalid -> ()
+    | Page ->
+        t.fmt.clear ~level ~table i;
+        decr n
+    | Table child ->
+        if clear t (d + 1) child ~at lo hi then begin
+          t.fmt.clear ~level ~table i;
+          decr n;
+          Held.remove t.held child;
+          pfree t child
+        end
   end;
   !n = 0
 

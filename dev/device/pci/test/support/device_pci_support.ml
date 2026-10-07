@@ -96,28 +96,29 @@ module Tables = struct
 
   let format m =
     let touch () = m.touches <- m.touches + 1 in
+    let set table i e =
+      touch ();
+      Hashtbl.replace m.entries (table + (8 * i)) (Int64.of_int e);
+      m.unflushed <- m.unflushed + 1
+    in
     {
       Page_table.levels = [ 12; 21; 30; 39 ];
       bits = 48;
       first = 0;
       get =
-        (fun ~level:_ ~table i ->
+        (fun ~level ~table i : Page_table.entry ->
           touch ();
-          entry_at m table i);
-      set =
-        (fun ~level:_ ~table i e ->
-          touch ();
-          Hashtbl.replace m.entries (table + (8 * i)) e;
-          m.unflushed <- m.unflushed + 1);
-      encode =
-        (fun ~level:_ ~table tg ~uncached ~snooped ~fragment ~valid pa ->
-          Int64.of_int
-            (pa lor bit valid 0 lor bit (not table) 1 lor target_code tg
-           lor bit uncached 4 lor bit snooped 5
+          let e = Int64.to_int (entry_at m table i) in
+          if e land 1 = 0 then Invalid
+          else if level = leaf || e land 2 <> 0 then Page
+          else Table (e land address_mask));
+      set_table = (fun ~level:_ ~table i ~child -> set table i (child lor 1));
+      set_page =
+        (fun ~level:_ ~table i ~pa tg ~uncached ~snooped ~fragment ->
+          set table i
+            (pa lor 3 lor target_code tg lor bit uncached 4 lor bit snooped 5
             lor ((fragment land 63) lsl 6)));
-      valid = (fun e -> Int64.logand e 1L <> 0L);
-      leaf = (fun ~level e -> level = leaf || Int64.logand e 2L <> 0L);
-      address = (fun e -> Int64.to_int e land address_mask);
+      clear = (fun ~level:_ ~table i -> set table i 0);
       large = (fun ~level -> large level);
       zero =
         (fun pa n ->

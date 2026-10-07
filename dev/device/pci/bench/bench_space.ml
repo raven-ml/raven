@@ -136,11 +136,14 @@ let entries () : entries =
   Bigarray.Array1.fill b 0L;
   b
 
-let get (b : entries) ~level:_ ~table i =
-  Bigarray.Array1.get b ((table lsr 3) + i)
+let set (b : entries) table i e =
+  Bigarray.Array1.set b ((table lsr 3) + i) (Int64.of_int e)
 
-let set (b : entries) ~level:_ ~table i e =
-  Bigarray.Array1.set b ((table lsr 3) + i) e
+let get (b : entries) ~level ~table i : Page_table.entry =
+  let e = Int64.to_int (Bigarray.Array1.get b ((table lsr 3) + i)) in
+  if e land 1 = 0 then Invalid
+  else if level = 3 || e land 2 = 0 then Page
+  else Table (e land lnot 0xfff)
 
 (* Memory past the tables holds no entries and is not kept. *)
 let zero (b : entries) pa n =
@@ -149,12 +152,6 @@ let zero (b : entries) pa n =
       Bigarray.Array1.set b i 0L
     done
 
-let encode ~table ~valid pa =
-  Int64.of_int (pa lor (if valid then 1 else 0) lor if table then 2 else 0)
-
-let valid e = Int64.logand e 1L = 1L
-let leaf ~level e = level = 3 || Int64.logand e 2L = 0L
-let address e = Int64.to_int e land lnot 0xfff
 let large ~level = level >= 2
 let levels = [ 12; 21; 30; 39 ]
 let bits = 48
@@ -167,13 +164,11 @@ let page_table () =
       bits;
       first = 0;
       get = get b;
-      set = set b;
-      encode =
-        (fun ~level:_ ~table _ ~uncached:_ ~snooped:_ ~fragment:_ ~valid pa ->
-          encode ~table ~valid pa);
-      valid;
-      leaf;
-      address;
+      set_table = (fun ~level:_ ~table i ~child -> set b table i (child lor 3));
+      set_page =
+        (fun ~level:_ ~table i ~pa _ ~uncached:_ ~snooped:_ ~fragment:_ ->
+          set b table i (pa lor 1));
+      clear = (fun ~level:_ ~table i -> set b table i 0);
       large;
       zero = zero b;
       flush = ignore;
