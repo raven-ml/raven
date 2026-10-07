@@ -70,9 +70,10 @@ val reserve : t -> base:int -> int -> unit
 
 val wait : t -> ms:int -> (unit -> bool) -> bool
 (** [wait m ~ms f] calls [f], at least once, until it is [true] or at least [ms]
-    milliseconds passed on a monotonic clock, relaxing the processor between
-    calls, and is [true] iff [f] became [true]. It is the loop in which drivers
-    wait for their devices.
+    milliseconds passed on a monotonic clock, and is [true] iff [f] became
+    [true]. For its first millisecond it calls [f] back to back, relaxing the
+    processor; then it sleeps 0.1 ms between calls, so that a long wait holds no
+    core. It is the loop in which drivers wait for their devices.
 
     Raises [Failure] once [m] fails, with {!failed}'s reason
     ({{!Device_pci.errors}errors}). *)

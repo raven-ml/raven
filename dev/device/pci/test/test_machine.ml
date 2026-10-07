@@ -277,6 +277,12 @@ let test_full_time () =
     at_least ~msg:"ns waited" int ~than:2_000_000 (now_ns () - t0)
   done
 
+(* A wait of 100 ms spins for its first millisecond only: the rest sleeps. *)
+let test_naps () =
+  let t0 = Sys.time () in
+  ignore (Machine.wait Machine.this ~ms:100 (fun () -> false) : bool);
+  less ~msg:"CPU ms" int ~than:50 (int_of_float ((Sys.time () -. t0) *. 1000.))
+
 let test_zero () =
   let n, f = counter () in
   equal ~msg:"result" bool true (Machine.wait Machine.this ~ms:0 (f 1));
@@ -312,6 +318,7 @@ let waits =
         test_times_out;
       test "a wait whose condition never holds lasts its whole time"
         test_full_time;
+      test "a long wait holds no core" test_naps;
       test "a wait of 0 ms asks its condition once (unstated)" test_zero;
       test "a wait on a failed machine raises its reason" test_failed_wait;
       test "a machine that fails during a wait ends it with its reason"
