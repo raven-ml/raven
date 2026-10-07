@@ -98,13 +98,13 @@ let gpu m ~uncached ~bar n =
       end
       else
         let host = Function.map ~off:pa ~length:mapping.size m.fn m.bar in
+        Some { mapping; host = Some host; source = Allocated }
+
 let positive fn n =
   if n <= 0 then invalid_arg (Printf.sprintf "Memory.%s: %d bytes" fn n)
 
-        Some { mapping; host = Some host; source = Allocated }
-  positive "alloc" n;
-
 let alloc ?(uncached = false) m kind n =
+  positive "alloc" n;
   let mem =
     match kind with
     | Host -> system m n
@@ -140,9 +140,9 @@ let free m mem =
 (* Mapping *)
 
 let no_room = "no GPU memory left for a page table"
-  positive "map_host" n;
 
 let map_host m a n =
+  positive "map_host" n;
   let page = Machine.page (Function.machine m.fn) in
   let n = round_up n page in
   let base = Page_table.base m.tables in

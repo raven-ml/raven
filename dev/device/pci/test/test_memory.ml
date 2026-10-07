@@ -361,12 +361,6 @@ let test_small_bar =
       equal bool small (Memory.small_bar x.memory);
       Function.release x.fn)
 
-let test_no_bar () =
-  let x = gpu () in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-      Memory.create x.fn x.tables ~bar:1);
-  Function.release x.fn
-
 let test_no_bytes =
   cases "no bytes, or fewer, are refused"
     ~name:(fun (name, n, _) -> Printf.sprintf "%s %d" name n)
@@ -385,6 +379,12 @@ let test_no_bytes =
       raises_match (Exn.invalid_arg ~substring:"Memory.") (fun () -> f x);
       equal ~msg:"no pin held" ranges [] x.fake.pins;
       Function.release x.fn)
+
+let test_no_bar () =
+  let x = gpu () in
+  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      Memory.create x.fn x.tables ~bar:1);
+  Function.release x.fn
 
 type rule = In_gpu | Through_bar | In_host
 
@@ -1000,13 +1000,13 @@ let () =
            [
              test_small_bar;
              test "a BAR the function lacks is refused" test_no_bar;
+             test_no_bytes;
              test_kinds;
              test_sizes;
              test_uncached;
            ];
          group "exhaustion"
            [
-             test_no_bytes;
              test "no room is None" test_out_of_memory;
              test "a small BAR's blocks stay inside it" test_small_bar_fills;
              test "no room for a table is None" test_tables_full;
