@@ -7,18 +7,24 @@
 
    Launches are empty jobs: what the pool costs a caller, alone (with one chunk,
    and with the 8 a kernel's serial job may pass), on the performance cores and
-   on every core. Thumper calls a case back to back, so workers that a job's
+   on every core. A job of 2 threads runs while the other workers are parked,
+   and pays no wake for them. A job of one 2 us chunk per core needs every
+   thread to start within a chunk's time, or another thread runs its chunk after
+   its own. Thumper calls a case back to back, so workers that a job's
    predecessor ran still spin; the rows 5 us and 150 us apart keep the caller
    busy that long before each job, within the spin window and past it, where the
-   job wakes parked workers. A job of 2 threads runs while the other workers are
-   parked, and pays no wake for them.
+   job wakes parked workers.
 
    Claims are a job of 65,536 empty chunks: one claim each.
 
    Compute jobs are 65,536 units of 64 dependent multiply-adds, 8 chunks a
    thread: on one thread, on the performance cores, on every core, with the cost
    skewed (the costliest units first, the threads balanced by claiming), and
-   against one spinning process per core, another program on the host. *)
+   against one spinning process per core, another program on the host.
+
+   A floor row runs the job of the row above it on threads of the bench's own,
+   each with a fixed share of the chunks and nothing claimed: what announcing a
+   job and waiting for every thread cost without the pool. *)
 
 (* Competing load
 
@@ -75,9 +81,16 @@ let load_stop pids =
 external cores : unit -> int = "pool_bench_cores"
 external performance_cores : unit -> int = "pool_bench_performance_cores"
 external empty : int -> int -> int -> unit = "pool_bench_empty" [@@noalloc]
-external empty_after : int -> int -> unit = "pool_bench_empty_after" [@@noalloc]
+external busy : int -> unit = "pool_bench_busy" [@@noalloc]
 
 external compute : int -> int -> int -> bool -> unit = "pool_bench_compute"
+[@@noalloc]
+
+external floor_start : int -> unit = "pool_bench_floor_start"
+external floor_stop : unit -> unit = "pool_bench_floor_stop"
+external floor_empty : int -> int -> unit = "pool_bench_floor_empty" [@@noalloc]
+
+external floor_compute : int -> int -> unit = "pool_bench_floor_compute"
 [@@noalloc]
 
 let cores = cores ()
@@ -86,9 +99,22 @@ let us = 1_000
 let units = 1 lsl 16
 let chunks_per_thread = 8
 
+(* 24 units, about 2 us on a performance core. *)
+let chunk_units = 24
+
+(* [floor name f] is a floor row: [f] on [cores] floor threads. *)
+let floor name f =
+  Thumper.bench_with_setup
+    ~setup:(fun () -> floor_start cores)
+    ~teardown:floor_stop name f
+
 let launch =
   let job threads () = empty threads threads threads in
-  let after gap () = empty_after gap cores in
+  let chunks () = compute cores (chunk_units * cores) cores false in
+  let after gap () =
+    busy gap;
+    chunks ()
+  in
   Thumper.group "launch"
     [
       Thumper.bench "empty-1-thread" (job 1);
@@ -96,8 +122,12 @@ let launch =
       Thumper.bench "empty-2-threads" (job 2);
       Thumper.bench "empty-performance-cores" (job fast);
       Thumper.bench "empty-all-cores" (job cores);
-      Thumper.bench "empty-all-cores-5us-apart" (after (5 * us));
-      Thumper.bench "empty-all-cores-150us-apart" (after (150 * us));
+      floor "floor-empty-all-cores" (fun () -> floor_empty cores cores);
+      Thumper.bench "2us-chunks-all-cores" chunks;
+      floor "floor-2us-chunks-all-cores" (fun () ->
+          floor_compute (chunk_units * cores) cores);
+      Thumper.bench "2us-chunks-all-cores-5us-apart" (after (5 * us));
+      Thumper.bench "2us-chunks-all-cores-150us-apart" (after (150 * us));
     ]
 
 let claim =
@@ -106,6 +136,8 @@ let claim =
     [
       Thumper.bench "65536-empty-chunks-all-cores" (fun () ->
           empty cores chunks chunks);
+      floor "floor-65536-empty-chunks-all-cores" (fun () ->
+          floor_empty chunks chunks);
     ]
 
 let compute =
