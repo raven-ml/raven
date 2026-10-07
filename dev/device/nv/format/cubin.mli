@@ -10,30 +10,63 @@
     registers, stack, shared memory and constant banks, the cubin records in
     other sections and in the attributes of its [.nv.info] sections.
 
-    A cubin is uploaded as its {e image}: its sections laid out in GPU memory
-    ({!Device_elf}), then zeros the GPU's instruction prefetch may read past the
-    code. Offsets are image offsets. *)
+    A cubin is uploaded as its {e image}: {!size} bytes, which are the image of
+    its object {!elf} ({!Device_elf}), zeros up to [size] for the GPU's
+    instruction prefetch, which may read past the code, and {!patches} written
+    over them. Into [bytes], for an upload at [base]:
+    {[
+    let image c ~base =
+      let o = Cubin.elf c in
+      let b = Bytes.make (Cubin.size c) '\000' in
+      let put (s : Device_elf.section) =
+        match s.offset with
+        | Some off -> Bytes.blit_string o.file s.at b off s.length
+        | None -> ()
+      in
+      Iarray.iter put o.sections;
+      let patch (at, p) = Bytes.blit_string p 0 b at (String.length p) in
+      List.iter patch (Cubin.patches c ~base);
+      b
+    ]}
+    Reading a cubin copies none of its bytes: a loader writes them once, into
+    its destination.
+
+    Offsets are image offsets. *)
 
 type t
 (** The type for cubins. *)
 
 val of_string : string -> (t, string) result
 (** [of_string obj] is the cubin [obj], its sections laid out at an alignment of
-    128 bytes ({!Device_elf.of_string}). It is [Error] with the reason if [obj]
-    is not a well-formed ELF object, or if a relocation uses a symbol outside
-    the image, patches bytes past its end, or is of a type other than the 64-bit
-    address of a symbol ([R_CUDA_64], [0x2]) and its low ([R_CUDA_ABS32_LO_32],
-    [0x38]) or high ([R_CUDA_ABS32_HI_32], [0x39]) 32 bits. *)
+    128 bytes ({!Device_elf.of_string}). The result is [Error msg], [msg] saying
+    which, if [obj] is not a well-formed ELF object, or if:
+    - its image would be longer than [2{^49}] bytes, more than the 49-bit
+      virtual addresses of GPUs before Hopper reach, which only a corrupted
+      address makes;
+    - a relocation is of a type other than the 64-bit address of a symbol
+      ([R_CUDA_64], [0x2]) and its low ([R_CUDA_ABS32_LO_32], [0x38]) or high
+      ([R_CUDA_ABS32_HI_32], [0x39]) 32 bits;
+    - a relocation's symbol is not in the image, or the bytes it patches
+      ({!patches}) lie past the end of the image of {!elf}. *)
 
 val size : t -> int
-(** [size c] is the length of [c]'s image: its sections, then zeros up to the
-    next multiple of 4 KiB and 4 KiB more. *)
+(** [size c] is the length of [c]'s image: the image of {!elf}, then zeros up to
+    the next multiple of 4 KiB and 4 KiB more. *)
 
-val image : t -> base:int -> string
-(** [image c ~base] is [c]'s image, of {!size}[ c] bytes, relocated for an
-    upload at the address [base]: the address of a symbol in the 8 bytes at a
-    relocation's offset, or its low or high 32 bits in the 4 bytes 4 after it. A
-    symbol's address is [base] plus its offset, plus the relocation's addend. *)
+val elf : t -> Device_elf.t
+(** [elf c] is the object [c] was read from, which lays out its image. *)
+
+val patches : t -> base:int -> (int * string) list
+(** [patches c ~base] is what [c]'s relocations write over its image for an
+    upload at the address [base], in the order of its relocations: at each
+    offset, the little-endian bytes there. A relocation of type [R_CUDA_64]
+    writes its symbol's address in the 8 bytes at its offset; one of type
+    [R_CUDA_ABS32_LO_32] or [R_CUDA_ABS32_HI_32] writes the low or high 32 bits
+    of that address in the 4 bytes 4 past its offset. A symbol's address is
+    [base] plus its offset, plus the relocation's addend, modulo [2{^64}].
+
+    Every patch lies in the image of {!elf}, and so in \[[0];{!size}[ c]\[. A
+    later patch overwrites an earlier one where they share bytes. *)
 
 (** {1:kernels Kernels} *)
 
