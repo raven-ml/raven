@@ -4,5 +4,4 @@
  (private_modules defs)
  (modules_without_implementation
   capability
-  code_object
   thread_trace))

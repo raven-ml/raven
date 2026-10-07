@@ -1,3 +1,13 @@
 (tests
  (names test_packet test_gpu test_register test_sdma test_scratch test_pm4 test_aql)
+ (modules test_packet test_gpu test_register test_sdma test_scratch test_pm4 test_aql)
  (libraries device_amd_abi windtrap))
+
+(test
+ (name test_code_object)
+ (modules test_code_object)
+ (libraries device_amd_abi device_elf windtrap)
+ (deps
+  ../../../elf/test/fixtures/amd_gfx1100.o
+  ../../../elf/test/fixtures/amd_gfx1100.hsaco
+  ../../../elf/test/fixtures/host_x86_64.o))
