@@ -4,11 +4,16 @@
 ; The sanitize profile compiles the C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links the sanitizer runtimes into every
 ; executable, whose link_flags keep :standard to carry them.
+;
+; WINDTRAP_TIMEOUT bounds each test that sets no ~timeout of its own: the
+; watch server is shared, and a test that never ends blocks every build.
 
 (env
  (dev
   (c_flags
-   (:standard -std=c11 -Wall -Wextra -Werror)))
+   (:standard -std=c11 -Wall -Wextra -Werror))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)))
  (sanitize
   (c_flags
    (:standard
@@ -19,7 +24,11 @@
     -fno-omit-frame-pointer
     -fsanitize=address,undefined))
   (link_flags
-   (:standard -cclib -fsanitize=address,undefined)))
+   (:standard -cclib -fsanitize=address,undefined))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)))
  (_
   (c_flags
-   (:standard -std=c11 -Wall -Wextra))))
+   (:standard -std=c11 -Wall -Wextra))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60))))
