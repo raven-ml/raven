@@ -71,7 +71,101 @@ let separations () =
         (fun (f, a, b) -> timed (fun () -> f a b));
     ]
 
-let suite () = [ galactic (); separations () ]
+(* FITS: what a photometry program and a catalogue reader call. Each file
+   is written once in the setup, so the timed region reads it. *)
+
+module Fits = Ymir_fits.Fits
+
+let fits_side = 4096
+
+let fits_path name =
+  Filename.concat
+    (Filename.get_temp_dir_name ())
+    ("ymir-bench-" ^ name ^ ".fits")
+
+let fits_file name hdus () =
+  let path = fits_path name in
+  (match Fits.write path hdus with Ok () -> () | Error e -> failwith e);
+  match Fits.read path with Ok h -> h | Error e -> failwith e
+
+let fits_image () =
+  Nx.init Nx.float32 [| fits_side; fits_side |] (fun i ->
+      100.
+      +. (Float.of_int (((i.(0) * 7919) + (i.(1) * 104729)) mod 1000) *. 0.01))
+
+let ok = function Ok x -> x | Error e -> failwith e
+
+let fits_reads () =
+  let plain () =
+    List.hd
+      (fits_file "plain"
+         [ Fits.Image.hdu Fits.Header.empty (fits_image ()) ]
+         ())
+  in
+  let rice () =
+    let t =
+      Nx.init Nx.int16 [| fits_side; fits_side |] (fun i ->
+          ((i.(0) * 7) + i.(1)) mod 3000)
+    in
+    List.nth
+      (fits_file "rice"
+         [ Fits.Image.hdu ~tiles:[| 64; 64 |] Fits.Header.empty t ]
+         ())
+      1
+  in
+  Thumper.group "fits-image-4096"
+    [
+      Thumper.bench_with_setup ~setup:plain "values-float32" (fun h ->
+          timed (fun () -> ok (Fits.Image.values Nx.float32 h)));
+      Thumper.bench_with_setup ~setup:rice "raw-int16-rice" (fun h ->
+          timed (fun () -> ok (Fits.Image.raw Nx.int16 h)));
+    ]
+
+let fits_quantize () =
+  let side = 1024 in
+  let image () =
+    Nx.init Nx.float32 [| side; side |] (fun i ->
+        100. +. sin (Float.of_int ((i.(0) * side) + i.(1))))
+  in
+  Thumper.group "fits-quantized-1024"
+    [
+      Thumper.bench_with_setup ~setup:image "write" (fun t ->
+          let path = fits_path "quantized" in
+          timed (fun () ->
+              ok
+                (Fits.write path
+                   [ Fits.Image.quantized 16. Fits.Header.empty t ])));
+    ]
+
+let fits_table () =
+  let columns = 50 and rows = 100_000 in
+  let table () =
+    let col i =
+      ( Printf.sprintf "c%d" i,
+        Fits.Header.empty,
+        Fits.Table.Array
+          {
+            values =
+              Nx.P (Nx.init f64 [| rows |] (fun r -> Float.of_int (r.(0) + i)));
+            validity = None;
+          } )
+    in
+    let hdu = ok (Fits.Table.hdu Fits.Header.empty (List.init columns col)) in
+    List.nth (fits_file "table" [ hdu ] ()) 1
+  in
+  Thumper.group "fits-table-50x100k"
+    [
+      Thumper.bench_with_setup ~setup:table "raw-one-column" (fun h ->
+          timed (fun () -> ok (Fits.Table.raw f64 "c7" h)));
+      Thumper.bench_with_setup ~setup:table "read" (fun h ->
+          timed (fun () -> ok (Fits.Table.read h)));
+    ]
+
+let suite () =
+  [
+    galactic (); separations (); fits_reads (); fits_quantize (); fits_table ();
+  ]
+
 let config = Thumper.Config.(default |> deadline 60.)
 
 let () =

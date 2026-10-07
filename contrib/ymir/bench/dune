@@ -1,6 +1,6 @@
 (executable
  (name bench_ymir)
- (libraries ymir rune nx nx.device thumper))
+ (libraries ymir ymir.fits rune nx nx.device thumper))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`, or run the
 ; built exe directly. [--warm] fills tolk's disk cache with what the cases
