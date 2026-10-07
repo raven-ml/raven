@@ -12,10 +12,7 @@
    memory BAR; [visible], on a GPU whose BAR is 256 MiB, is system memory, which
    the machine gives as one run per 4 KiB page, apart, mapped an entry each. An
    allocation of each kind and size stays resident, so the rows measure the warm
-   path, without table creation.
-
-   [today/] makes the same calls on nx.device's Pci_memory, for [gpu] alone: its
-   other kinds map BARs and system memory of a real function. *)
+   path, without table creation. *)
 
 module Machine = Device_pci.Machine
 module Function = Device_pci.Function
@@ -23,8 +20,6 @@ module Window = Device_pci.Window
 module Space = Device_pci.Space
 module Page_table = Device_pci.Page_table
 module Memory = Device_pci.Memory
-module Today = Nx_device_support.Page_table
-module Today_memory = Nx_device_support.Pci_memory
 
 let kib = 1024
 let mib = 1024 * kib
@@ -150,29 +145,6 @@ let page_table () =
   Page_table.booted t;
   t
 
-let today_page_table () =
-  let b = entries () in
-  let entry =
-    {
-      Today.levels;
-      bits;
-      first = 0;
-      get = get b;
-      set = set b;
-      encode;
-      valid;
-      leaf;
-      address;
-      large;
-      zero = zero b;
-      flush = ignore;
-    }
-  in
-  let space = Today.Space.create ~base:space_base space_base in
-  let t = Today.create entry space ~memory ~boot ~tables:true ~pages in
-  Today.booted t;
-  t
-
 (* Memories *)
 
 let kinds =
@@ -194,22 +166,6 @@ let alloc_free m kind n =
   | Some mem -> Memory.free m mem
   | None -> failwith "alloc-free: no memory"
 
-(* Today's Pci.t comes only from a function of a real machine. Its Gpu memory
-   neither reads it nor maps through it, so a stand-in that crashes on any use
-   takes its place. *)
-let no_function : Nx_device_support.Pci.t = Obj.magic 0
-
-let today_memory () =
-  let peer _ = invalid_arg "bench_memory: no peer" in
-  let m = Today_memory.create ~peer no_function (today_page_table ()) ~bar:0 in
-  List.iter (fun (_, n) -> ignore (Today_memory.alloc m n)) sizes;
-  m
-
-let today_alloc_free m n =
-  match Today_memory.alloc m n with
-  | Some mem -> Today_memory.free m mem
-  | None -> failwith "alloc-free: no memory"
-
 let rows =
   let kind (name, kind, bar_size) =
     let m = lazy (memory kind ~bar_size) in
@@ -224,21 +180,5 @@ let rows =
   in
   List.map kind kinds
 
-let today_rows =
-  let m = lazy (today_memory ()) in
-  let row (size_name, n) =
-    let n = Thumper.black_box n in
-    Thumper.bench_with_setup
-      ~setup:(fun () -> Lazy.force m)
-      size_name
-      (fun m -> today_alloc_free m n)
-  in
-  [ Thumper.group "gpu" (List.map row sizes) ]
-
 let () =
-  exit
-    (Thumper.run "device_pci_memory"
-       [
-         Thumper.group "alloc-free" rows;
-         Thumper.group "today" [ Thumper.group "alloc-free" today_rows ];
-       ])
+  exit (Thumper.run "device_pci_memory" [ Thumper.group "alloc-free" rows ])

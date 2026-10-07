@@ -17,7 +17,3 @@ alloc-free/visible/16MiB	alloc_words	exact	181596
 alloc-free/visible/16MiB	wall_time	batch=32	n=20	2.247e-04	2.178e-04 2.180e-04 2.199e-04 2.212e-04 2.214e-04 2.214e-04 2.222e-04 2.223e-04 2.230e-04 2.237e-04 2.257e-04 2.261e-04 2.264e-04 2.265e-04 2.266e-04 2.267e-04 2.268e-04 2.269e-04 2.272e-04 2.581e-04
 alloc-free/visible/4KiB	alloc_words	exact	414
 alloc-free/visible/4KiB	wall_time	batch=8192	n=20	8.185e-07	7.951e-07 8.015e-07 8.113e-07 8.124e-07 8.124e-07 8.160e-07 8.175e-07 8.175e-07 8.177e-07 8.177e-07 8.193e-07 8.194e-07 8.202e-07 8.204e-07 8.209e-07 8.217e-07 8.220e-07 8.249e-07 8.435e-07 1.304e-06
-today/alloc-free/gpu/16MiB	alloc_words	exact	1844
-today/alloc-free/gpu/16MiB	wall_time	batch=1024	n=20	8.844e-06	8.755e-06 8.758e-06 8.791e-06 8.791e-06 8.801e-06 8.801e-06 8.805e-06 8.812e-06 8.829e-06 8.837e-06 8.850e-06 8.861e-06 8.862e-06 8.870e-06 8.924e-06 8.936e-06 8.952e-06 8.977e-06 8.999e-06 1.169e-05
-today/alloc-free/gpu/4KiB	alloc_words	exact	623
-today/alloc-free/gpu/4KiB	wall_time	batch=4096	n=20	1.988e-06	1.965e-06 1.967e-06 1.969e-06 1.970e-06 1.974e-06 1.979e-06 1.983e-06 1.985e-06 1.987e-06 1.988e-06 1.989e-06 1.999e-06 2.007e-06 2.013e-06 2.018e-06 2.018e-06 2.029e-06 2.034e-06 2.036e-06 2.067e-06
