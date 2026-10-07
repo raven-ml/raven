@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..2e6f49e 100644
+index efb2e82..4f8764f 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace
@@ -67,7 +67,7 @@ index efb2e82..2e6f49e 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
-@@ -114,10 +120,72 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+@@ -114,10 +120,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -128,8 +128,17 @@ index efb2e82..2e6f49e 100644
 +  emulated = emulates(ren)
 +  return tuple(dt for dt in sorted(ren.supported_dtypes()) if not emulated(dt))
 +
-+# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of several lanes on
-+# the dtypes ctx holds, those computed on vectors, whose sources hold them in order: a scalar reads a view across lanes for free,
++# whether an operation of n lanes on srcs, each a scalar every lane reads or a vector of the lanes in order, computes each lane once.
++# a lane of a vector operation is its own, and a lane of a stack is its element: where a load fills several lanes and every other
++# source repeats them too, the lanes repeat, and computed apart each is computed once
++def distinct_lanes(n:int, srcs:list[UOp]) -> bool:
++  vectors = [v for x in srcs if splat(x) is None and (v:=in_order(n, x)) is not None]
++  if any(v.op is not Ops.STACK for v in vectors): return True
++  lanes = [tuple(v.src[i] for v in vectors) for i in range(n)]
++  return all(any(a is not b for a,b in zip(lanes[i], lanes[j])) for i in range(n) for j in range(i+1, n))
++
++# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of several distinct
++# lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order: a scalar reads a view across lanes for free,
 +# and a vector pays shuffles for it
 +def do_devectorize(ctx:tuple[DType, ...], b:UOp):
    if b.shape == (): return None
@@ -137,11 +146,12 @@ index efb2e82..2e6f49e 100644
    if not all(x.shape == b.shape or x.base.is_invalid for x in b.src): return None
 +  def lanes(x:UOp) -> bool: return splat(x) is not None or (x.dtype in ctx and in_order(prod(b.shape), x) is not None)
 +  if b.op in GroupOp.Elementwise and prod(b.shape) > 1 and b.dtype in ctx and \
-+     all(x.base.is_invalid or lanes(x) for x in b.src): return vector_operation(b)
++     all(x.base.is_invalid or lanes(x) for x in b.src) and \
++     distinct_lanes(prod(b.shape), [x for x in b.src if not x.base.is_invalid]): return vector_operation(b)
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-@@ -134,9 +202,59 @@ def do_stack_wmma(u:UOp):
+@@ -134,9 +212,59 @@ def do_stack_wmma(u:UOp):
        src.append(b)
    return u.replace(src=tuple(src))
  
@@ -201,7 +211,7 @@ index efb2e82..2e6f49e 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -151,10 +269,10 @@ devectorizer2 = pm_mops+PatternMatcher([
+@@ -151,10 +279,10 @@ devectorizer2 = pm_mops+PatternMatcher([
    (UPat(Ops.RESHAPE, dtype=dtypes.void, name="x"), lambda x: x.src[0]),
    # reshape of a single element shaped value to scalar is an index
    (UPat(Ops.RESHAPE, name="x"), lambda x: x.src[0].index(0) if x.marg == () and x.src[0].shape == (1,) else None),
@@ -215,7 +225,7 @@ index efb2e82..2e6f49e 100644
  ])
  
  def fix_group_for_reduce(x:UOp):
-@@ -194,19 +312,48 @@ def merge_reduce_ends(sink:UOp):
+@@ -194,19 +322,48 @@ def merge_reduce_ends(sink:UOp):
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -270,7 +280,7 @@ index efb2e82..2e6f49e 100644
  
  # an Invalid in a REDUCE source is that reduce's identity
  pm_reduce_identity = PatternMatcher([
-@@ -272,6 +419,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -272,6 +429,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -309,7 +319,7 @@ index efb2e82..2e6f49e 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if VIZ: graph_rewrite(ast, PatternMatcher([]), name="View Base AST")
    if DEBUG >= 5: print(pyrender(ast))
-@@ -310,7 +489,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -310,7 +499,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -318,7 +328,7 @@ index efb2e82..2e6f49e 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -323,7 +502,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -323,7 +512,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -327,7 +337,7 @@ index efb2e82..2e6f49e 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -346,11 +525,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -346,11 +535,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -342,7 +352,7 @@ index efb2e82..2e6f49e 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -364,11 +545,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -364,11 +555,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -356,7 +366,7 @@ index efb2e82..2e6f49e 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -377,7 +559,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -377,7 +569,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, pm_add_control_flow, ctx=CFGContext(sink), name="add control flow", bottom_up=True)
  
    # put unnumbered variable PARAMs in slots
@@ -366,7 +376,7 @@ index efb2e82..2e6f49e 100644
    sink = graph_rewrite(sink, pm_number_params, ctx=[num_params], name="number params with -1", walk=True)
  
    if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Output AST")
-@@ -432,9 +615,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -432,9 +625,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  

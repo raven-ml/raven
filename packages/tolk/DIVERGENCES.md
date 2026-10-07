@@ -4247,9 +4247,9 @@ stores through a pad.
   and `:156-159` (the upcast by 4 of a kernel that has none).
 - **tolk:** `lib/renderer/renderer.mli:138` (`vector_alu`);
   `lib/codegen/codegen.ml:235` (`constant_lanes`), `:270` (`in_order`),
-  `:293` (`vector_operation`), `:314` (`vector_dtypes`), `:324`
-  (`do_devectorize`), `:360` (`address_lanes`), `:415`
-  (`pm_vector_constants`) and `:799` (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
+  `:292` (`vector_operation`), `:315` (`distinct_lanes`), `:336`
+  (`vector_dtypes`), `:346` (`do_devectorize`), `:385` (`address_lanes`),
+  `:440` (`pm_vector_constants`) and `:824` (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
   (`clang_vectors`) and `:1144` (`clang_kernel`); `lib/uop/spec.ml:500`
   (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
   `lib/codegen/opt/heuristic.ml:446` (`host_vector_bytes`), `:463`
@@ -4265,10 +4265,13 @@ stores through a pad.
   one axis, when each source holds them in order: a vector operation,
   constants in any view (a literal), a stack of loads of memory, a load in as
   many lanes as read it, and of lanes of vectors, each in one lane, or a
-  scalar that every lane reads. A source that holds computed lanes in another
-  order, a broadcast or a permutation across lanes, or apart in registers, as
-  an accumulator's lanes, costs a vector shuffles that a scalar reads for
-  free: such an operation computes each lane apart. Loads, stores, tensor-core products,
+  scalar that every lane reads, and when no two of its lanes read the same
+  sources: a lane of a vector operation is its own, a lane of a stack its
+  element. A source that holds computed lanes in another order, a broadcast or
+  a permutation across lanes, or apart in registers, as an accumulator's
+  lanes, costs a vector shuffles that a scalar reads for free, and lanes that
+  repeat are computed once each apart: such an operation computes each lane
+  apart. Loads, stores, tensor-core products,
   calls, and operations on a weak type (an address) or an emulated one still
   compute each lane apart; an address is computed lane by lane through the
   vector operations it reads, so that accesses still merge. A sum fuses each
@@ -4318,7 +4321,11 @@ stores through a pad.
   product 2.5-4.5 times slower on random codes than on zero codes (kaun's
   decode bench, kimchi). A load fills each lane that reads it, as a literal
   fills its lanes, at no cost beyond the stack of distinct loads already
-  taken, and the decode, a vector, selects without branches. With D143, the
+  taken, and the decode, a vector, selects without branches. A load that
+  fills lanes the other sources fill alike repeats work instead: Q6_K's scale
+  byte serves 16 values, and converting it in each of their lanes made the
+  dense product's x86 kernel 45% longer and 33% slower on kimchi, so such
+  lanes stay apart, where each is computed once. With D143, the
   host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
   token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
   (alternated under load). A matmul's upcast products now build vectors of
@@ -4342,7 +4349,10 @@ stores through a pad.
   in programs › a program of a renderer that computes on vectors … (D141)`;
   rune's Rune.jit suite: `lanes` (every test); rune's Rune.quant suite:
   `decoding` (every law); rune's lower_index suite: `quantised products › a
-  product decodes a checkpoint's codes 16 at once on the host` (with D143);
+  product decodes a checkpoint's codes 16 at once on the host` (with D143)
+  and `› a product over GGUF's Q6_K blocks converts each scale once`; the
+  Codegen suite's `invalid_lanes_clang` and `invalid_lanes_int8_clang`, whose
+  lanes of one constant compute once;
   the Heuristic suite's `the
   optimisations chosen are tinygrad's › applied_opts`, the host cases
   `exp_float_cpu`, `exp_double_cpu`, `add_half_cpu`, `add_uchar_cpu`,

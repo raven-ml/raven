@@ -580,7 +580,8 @@ let quantised =
       (Tolk.Ops.src (Programs.kernels y))
   in
   let product w =
-    let x = Nx.ones Nx.float32 [| 1; k |] in
+    let s = Nx_quant.shape w in
+    let x = Nx.ones Nx.float32 [| 1; s.(Array.length s - 1) |] in
     let s = scope () in
     within s (fun () ->
         Nx_quant.apply
@@ -661,6 +662,43 @@ let quantised =
                (List.concat_map
                   (fun k -> List.map lanes (selects k))
                   (Tolk.Ops.src (Programs.kernels (product w))))));
+      test "a product over GGUF's Q6_K blocks converts each scale once"
+        (fun () ->
+          (* A scale byte serves 16 values: converted in each of their lanes,
+             the conversion and the products by the block's scale run 16
+             times. *)
+          let w = Nx_quant.q6_k (bytes [| n; 210 |]) in
+          let sources u =
+            let x = Tolk.Ops.nth u 0 in
+            let x =
+              if Tolk.Op.equal (Tolk.Ops.op x) Bitcast then Tolk.Ops.nth x 0
+              else x
+            in
+            if Tolk.Op.equal (Tolk.Ops.op x) Stack then Tolk.Ops.src x
+            else [ x ]
+          in
+          let converted k =
+            List.concat_map
+              (fun u ->
+                if
+                  Tolk.Op.equal (Tolk.Ops.op u) Cast
+                  && Tolk.Dtype.equal (Tolk.Ops.dtype u) Float32
+                  && Tolk.Dtype.equal (Tolk.Ops.dtype (Tolk.Ops.nth u 0)) Int8
+                then sources u
+                else [])
+              (Tolk.Ops.toposort ~calls:Enter
+                 (Tolk.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
+          in
+          let lanes =
+            List.concat_map converted
+              (Tolk.Ops.src (Programs.kernels (product w)))
+          in
+          let distinct =
+            List.fold_left
+              (fun seen u -> if List.memq u seen then seen else u :: seen)
+              [] lanes
+          in
+          equal int (List.length distinct) (List.length lanes));
       test "a product over GGUF's MXFP4 blocks loads each byte once" (fun () ->
           let w = Nx_quant.mxfp4_blocks (bytes [| n; k / 32 * 17 |]) in
           equal int (k / 32 * 17) (loaded (product w)));

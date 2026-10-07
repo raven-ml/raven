@@ -307,6 +307,29 @@ let vector_operation b s =
     let flat = replace b ~src in
     Some (if List.compare_length_with s 1 = 0 then flat else reshape flat s)
 
+(* Whether an operation of [n] lanes on the sources [srcs], each a scalar every
+   lane reads or a vector of the lanes in order, computes each lane once. A lane
+   of a vector operation is its own, and a lane of a stack is its element: where
+   a load fills several lanes and every other source repeats them too, the
+   lanes repeat, and computed apart each is computed once. *)
+let distinct_lanes n srcs =
+  let vectors =
+    List.filter_map
+      (fun x -> if Option.is_some (splat x) then None else in_order n x)
+      srcs
+  in
+  List.exists (fun v -> not (is Op.Stack v)) vectors
+  ||
+  let lane i = List.map (fun v -> nth v i) vectors in
+  let lanes = Array.init n lane in
+  let rec distinct i j =
+    if i >= n then true
+    else if j >= n then distinct (i + 1) (i + 2)
+    else if List.equal ( == ) lanes.(i) lanes.(j) then false
+    else distinct i (j + 1)
+  in
+  distinct 0 1
+
 (* The data types whose elementwise operations [ren] computes on vectors: those
    it computes natively, if it computes on vectors at all. Weak types are those
    of addresses, which are computed lane by lane. *)
@@ -317,9 +340,9 @@ let vector_dtypes (ren : Renderer.t) =
     List.filter (fun dt -> not (emulated dt)) (Renderer.supported_dtypes ren)
 
 (* Elementwise operations, loads and stores of vectors compute each lane apart,
-   except an elementwise operation on the [vectors] types of several lanes whose
-   sources hold them in order: a scalar reads a view across lanes for free, and
-   a vector pays shuffles for it. *)
+   except an elementwise operation on the [vectors] types of several distinct
+   lanes whose sources hold them in order: a scalar reads a view across lanes for
+   free, and a vector pays shuffles for it. *)
 let do_devectorize vectors b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
@@ -340,6 +363,9 @@ let do_devectorize vectors b =
     && Helpers.prod (int_shape s) > 1
     && on_vectors b
     && List.for_all (fun x -> invalid x || lanes x) (src b)
+    && distinct_lanes
+         (Helpers.prod (int_shape s))
+         (List.filter (fun x -> not (invalid x)) (src b))
   then vector_operation b s
   else
     let lane idx =
