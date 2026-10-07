@@ -17,11 +17,11 @@ open Device_pci
 
 let buffer = Device_pci_support.memory
 
-external far : unit -> int = "bench_far"
-external store32 : Window.t -> int = "bench_store32" [@@noalloc]
-external store64 : Window.t -> int = "bench_store64" [@@noalloc]
-external store32_bare : int -> int = "bench_store32_bare" [@@noalloc]
-external write_c : Window.t -> int = "bench_write" [@@noalloc]
+external far : unit -> int = "device_pci_bench_far"
+external store32 : Window.t -> int = "device_pci_bench_store32" [@@noalloc]
+external store64 : Window.t -> int = "device_pci_bench_store64" [@@noalloc]
+external store32_bare : int -> int = "device_pci_bench_store32_bare" [@@noalloc]
+external write_c : Window.t -> int = "device_pci_bench_write" [@@noalloc]
 
 let span = 4096
 let accesses = 1024

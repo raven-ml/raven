@@ -46,12 +46,12 @@ static const char *far_failed(void *ctx) {
 static const struct device_pci_transport transport = {NULL, far_read,
                                                       far_write, far_failed};
 
-value bench_far(value unit) {
+value device_pci_bench_far(value unit) {
   (void)unit;
   return Val_long((intnat)&transport);
 }
 
-value bench_store32(value w) {
+value device_pci_bench_store32(value w) {
   struct device_pci_window win;
   int failed = 0;
   device_pci_window_of(w, &win);
@@ -60,7 +60,7 @@ value bench_store32(value w) {
   return Val_int(failed);
 }
 
-value bench_store64(value w) {
+value device_pci_bench_store64(value w) {
   struct device_pci_window win;
   int failed = 0;
   device_pci_window_of(w, &win);
@@ -69,7 +69,7 @@ value bench_store64(value w) {
   return Val_int(failed);
 }
 
-value bench_store32_bare(value a) {
+value device_pci_bench_store32_bare(value a) {
   volatile uint8_t *p = (volatile uint8_t *)Long_val(a);
   for (size_t i = 0; i < STORES; i++)
     *(volatile uint32_t *)(p + (i * 4) % SPAN) = (uint32_t)i;
@@ -78,7 +78,7 @@ value bench_store32_bare(value a) {
 
 static uint8_t page[SPAN];
 
-value bench_write(value w) {
+value device_pci_bench_write(value w) {
   struct device_pci_window win;
   device_pci_window_of(w, &win);
   return Val_int(-device_pci_write(&win, 0, page, SPAN));
