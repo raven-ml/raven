@@ -1,6 +1,6 @@
 (executable
  (name bench_pool)
- (libraries device_pool thumper)
+ (libraries device_pool thumper unix)
  (foreign_stubs
   (language c)
   (names bench_pool_stubs)))
