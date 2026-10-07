@@ -41,8 +41,8 @@ val create :
     Raises [Invalid_argument] if [f] has no BAR [bar]. *)
 
 val small_bar : t -> bool
-(** [small_bar m] is [true] iff the memory BAR is 256 MiB, too small for the
-    process to reach all of the GPU's memory. *)
+(** [small_bar m] is [true] iff the memory BAR is smaller than the GPU's memory
+    ({!Page_table.memory}), so that the process does not reach all of it. *)
 
 (** {1:alloc Allocating} *)
 

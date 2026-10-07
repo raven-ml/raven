@@ -24,10 +24,8 @@ type t = {
   mapped : (int, memory) Hashtbl.t;
 }
 
-(* A memory BAR of this size reaches only part of a GPU's memory. *)
-let small = 256 lsl 20
-
-(* Large allocations round to large pages, so their tail maps with them. *)
+(* Large allocations round to the GPU's large pages, so their tail maps with
+   them. Small ones round to the GPU's page. *)
 let large = 8 lsl 20
 let large_page = 2 lsl 20
 let page = 0x1000
@@ -55,7 +53,7 @@ let create ?peer fn tables ~bar =
     mapped = Hashtbl.create 16;
   }
 
-let small_bar m = m.bar_size = small
+let small_bar m = m.bar_size < Page_table.memory m.tables
 
 (* Allocating *)
 

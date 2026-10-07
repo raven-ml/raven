@@ -353,9 +353,15 @@ let target = Testable.make ~pp:pp_target ~equal:( = )
 (* Placement *)
 
 let test_small_bar =
-  cases "a BAR of 256 MiB is small"
+  cases "a BAR that cannot reach all of the GPU's memory is small"
     ~name:(fun (bar, _) -> Printf.sprintf "%d MiB" (bar / mib))
-    [ (256 * mib, true); (512 * mib, false); (64 * mib, false) ]
+    [
+      (64 * mib, true);
+      (256 * mib, true);
+      ((512 * mib) - 4096, true);
+      (512 * mib, false);
+      (1024 * mib, false);
+    ]
     (fun (bar, small) ->
       let x = gpu ~memory:(512 * mib) ~bar () in
       equal bool small (Memory.small_bar x.memory);
