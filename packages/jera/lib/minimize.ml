@@ -572,11 +572,11 @@ let newton_method dtype ~trials evaluate ~solve =
 
 (* Under a box every gradient method takes Bertsekas's (1982) projected step:
    the coordinates within [ε] of a bound whose gradient pushes out of the box
-   are active, [ε] the projected gradient's norm [|x − P (x − g)|]; the method's
-   scaling acts on the free ones and [−g] on the active ones; and the search
-   backtracks by halving along the projection arc [P (x + α d)] to the
-   sufficient decrease [f ≤ f x + c gᵀ (P (x + α d) − x)]. The undamped step is
-   [P (x + d) − x]. *)
+   are active, [ε] the projected gradient's norm [|x − P (x − g)|], at most half
+   the coordinate's width; the method's scaling acts on the free ones and [−g]
+   on the active ones; and the search backtracks by halving along the projection
+   arc [P (x + α d)] to the sufficient decrease [f ≤ f x + c gᵀ (P (x + α d) −
+   x)]. The undamped step is [P (x + d) − x]. *)
 let projected ~trials evaluate ~project ~running (p : _ point) d =
   let dtype = Nx.dtype p.x in
   let rounding = Nx.mul_s (Nx.abs p.value) (sqrt (Num.eps dtype)) in
@@ -615,6 +615,11 @@ let project box x = Nx.minimum box.hi (Nx.maximum box.lo x)
 let free box (x : _ vector) g =
   let w = Search.norm (Nx.sub x (project box (Nx.sub x g))) in
   let w = Nx.reshape (Array.append (Nx.shape w) [| 1 |]) w in
+  (* Bertsekas bounds [ε] by a constant. Half the width is the box's own: a
+     coordinate is then near one bound at most. Far from a minimum the norm can
+     exceed the box, and a coordinate held from the far side takes [−g] across
+     the box and back, which the next iteration holds from the other bound. *)
+  let w = Nx.minimum w (Nx.mul_s (Nx.sub box.hi box.lo) 0.5) in
   let active =
     Nx.logical_or
       (Nx.logical_and (Nx.less_equal x (Nx.add box.lo w)) (Nx.greater_s g 0.))

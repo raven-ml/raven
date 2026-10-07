@@ -460,6 +460,74 @@ let box_tests =
               (Oracle.tensor ~abs:(1e-8 *. Float.of_int (Nx.dim 0 b + 2)) ())
               clipped x)
           methods);
+    test "newton holds no coordinate across the box from its bound" (fun () ->
+        (* From 0, the projected gradient's norm is near 3, more than the box's
+           width: a coordinate on the far side of the box from the bound its
+           gradient points to must still take Newton's step. *)
+        let a =
+          Nx.create f64 [| 6; 6 |]
+            [|
+              6.4313272094841949;
+              0.028430426682705345;
+              0.;
+              0.66626301127288756;
+              0.30728003895831379;
+              0.5341926153359895;
+              0.028430426682705345;
+              7.;
+              -0.30692569518070034;
+              -0.31513975132908201;
+              -0.43512096496446973;
+              0.10969130621850265;
+              0.;
+              -0.30692569518070034;
+              6.4678997436474717;
+              -0.065968985608132913;
+              0.53068011374290791;
+              -0.045649035063120569;
+              0.66626301127288756;
+              -0.31513975132908201;
+              -0.065968985608132913;
+              6.9165894552671086;
+              0.15951257682114395;
+              0.47505615008372593;
+              0.30728003895831379;
+              -0.43512096496446973;
+              0.53068011374290791;
+              0.15951257682114395;
+              6.0895978175913701;
+              -0.23389400887412992;
+              0.5341926153359895;
+              0.10969130621850265;
+              -0.045649035063120569;
+              0.47505615008372593;
+              -0.23389400887412992;
+              6.4250945471681007;
+            |]
+        in
+        let b =
+          vec
+            [|
+              2.1089768019734678;
+              0.45815595109283014;
+              2.9036475074050507;
+              -4.1882141344280761;
+              5.;
+              -2.4466654029499448;
+            |]
+        in
+        let lo, hi = unit_box b in
+        let x =
+          Solution.get
+            (Minimize.solve one
+               (Minimize.newton ~linear:Linear.dense)
+               ~within:(lo, hi) ~tol:tight ~budget:200 (objective a b)
+               (Nx.zeros_like b))
+        in
+        equal
+          (Oracle.tensor ~abs:1e-8 ())
+          (Nx.minimum hi (Nx.maximum lo (Nx.sub x (gradient a b x))))
+          x);
     test "a held coordinate's derivative is zero, a bound's is one" (fun () ->
         (* ½ |x − c|² in [0, 1]², c = (2, 0.5): the minimum is (1, 0.5). *)
         let solve (c, hi) =
