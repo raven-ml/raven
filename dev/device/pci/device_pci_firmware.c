@@ -3,11 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Firmware: SHA-256, and the system libraries that decompress and download
-   images, loaded when first needed. */
+/* Firmware: SHA-256, and the system libraries that decompress images, loaded
+   when first needed. */
 
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,7 +15,6 @@
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
-#include <caml/threads.h>
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -187,112 +185,5 @@ value caml_device_pci_unxz(value s) {
 #else
   (void)s;
   CAMLreturn(Val_none);
-#endif
-}
-
-/* HTTPS downloads through libcurl, with the runtime released. [Error why] if
-   the library is missing or the transfer fails. */
-
-/* Option and info codes (curl/curl.h). */
-#define CURLOPT_WRITEDATA 10001
-#define CURLOPT_URL 10002
-#define CURLOPT_LOW_SPEED_LIMIT 19
-#define CURLOPT_LOW_SPEED_TIME 20
-#define CURLOPT_FAILONERROR 45
-#define CURLOPT_FOLLOWLOCATION 52
-#define CURLOPT_CONNECTTIMEOUT 78
-#define CURLOPT_WRITEFUNCTION 20011
-#define CURLINFO_RESPONSE_CODE 0x200002
-
-typedef void *(*curl_init_t)(void);
-typedef int (*curl_setopt_t)(void *, int, ...);
-typedef int (*curl_perform_t)(void *);
-typedef int (*curl_getinfo_t)(void *, int, ...);
-typedef void (*curl_cleanup_t)(void *);
-typedef const char *(*curl_strerror_t)(int);
-
-struct sink {
-  char *data;
-  size_t len, cap;
-};
-
-static size_t sink_write(char *p, size_t size, size_t n, void *userdata) {
-  struct sink *s = userdata;
-  size_t k = size * n;
-  if (s->len + k > s->cap) {
-    size_t cap = s->cap ? s->cap : 1 << 20;
-    while (cap < s->len + k) cap *= 2;
-    char *d = realloc(s->data, cap);
-    if (!d) return 0;
-    s->data = d;
-    s->cap = cap;
-  }
-  memcpy(s->data + s->len, p, k);
-  s->len += k;
-  return k;
-}
-
-static value result(int ok, value v) {
-  CAMLparam1(v);
-  CAMLlocal1(r);
-  r = caml_alloc_small(1, ok ? 0 : 1);
-  Field(r, 0) = v;
-  CAMLreturn(r);
-}
-
-value caml_device_pci_download(value url) {
-  CAMLparam1(url);
-  CAMLlocal1(v);
-#ifndef _WIN32
-  static const char *const names[] = {"libcurl.so.4", "libcurl.so",
-                                      "libcurl-gnutls.so.4", "libcurl.4.dylib",
-                                      "libcurl.dylib", NULL};
-  void *h = load_library(names);
-  if (!h)
-    CAMLreturn(result(0, caml_copy_string("libcurl is not installed")));
-  curl_init_t init = (curl_init_t)dlsym(h, "curl_easy_init");
-  curl_setopt_t setopt = (curl_setopt_t)dlsym(h, "curl_easy_setopt");
-  curl_perform_t perform = (curl_perform_t)dlsym(h, "curl_easy_perform");
-  curl_getinfo_t getinfo = (curl_getinfo_t)dlsym(h, "curl_easy_getinfo");
-  curl_cleanup_t cleanup = (curl_cleanup_t)dlsym(h, "curl_easy_cleanup");
-  curl_strerror_t strerr = (curl_strerror_t)dlsym(h, "curl_easy_strerror");
-  if (!init || !setopt || !perform || !getinfo || !cleanup || !strerr)
-    CAMLreturn(result(0, caml_copy_string("libcurl lacks the easy interface")));
-  char *u = caml_stat_strdup(String_val(url));
-  struct sink s = {NULL, 0, 0};
-  long status = 0;
-  int rc;
-  caml_release_runtime_system();
-  void *c = init();
-  if (!c) {
-    rc = -1;
-  } else {
-    setopt(c, CURLOPT_URL, u);
-    setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
-    setopt(c, CURLOPT_WRITEFUNCTION, sink_write);
-    setopt(c, CURLOPT_WRITEDATA, &s);
-    setopt(c, CURLOPT_FAILONERROR, 1L);
-    setopt(c, CURLOPT_CONNECTTIMEOUT, 30L);
-    setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1L);
-    setopt(c, CURLOPT_LOW_SPEED_TIME, 60L);
-    rc = perform(c);
-    getinfo(c, CURLINFO_RESPONSE_CODE, &status);
-    cleanup(c);
-  }
-  caml_acquire_runtime_system();
-  caml_stat_free(u);
-  if (rc != 0) {
-    free(s.data);
-    char msg[512];
-    snprintf(msg, sizeof msg, "%s (HTTP status %ld)",
-             rc < 0 ? "libcurl failed to start" : strerr(rc), status);
-    CAMLreturn(result(0, caml_copy_string(msg)));
-  }
-  v = caml_alloc_initialized_string(s.len, s.data ? s.data : "");
-  free(s.data);
-  CAMLreturn(result(1, v));
-#else
-  (void)url;
-  CAMLreturn(result(0, caml_copy_string("downloads need a POSIX system")));
 #endif
 }

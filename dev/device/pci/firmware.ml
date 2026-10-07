@@ -7,9 +7,6 @@ external sha256_raw : string -> string = "caml_device_pci_sha256"
 external unzstd : string -> string option = "caml_device_pci_unzstd"
 external unxz : string -> string option = "caml_device_pci_unxz"
 
-external download : string -> (string, string) result
-  = "caml_device_pci_download"
-
 let system_dir = "/lib/firmware"
 
 let sha256 s =
@@ -47,34 +44,6 @@ let local file =
       | Some _ as s -> s
       | None -> decompressed ".xz" unxz)
 
-let rec mkdir_p d =
-  if not (Sys.file_exists d) then begin
-    mkdir_p (Filename.dirname d);
-    try Sys.mkdir d 0o755 with Sys_error _ when Sys.file_exists d -> ()
-  end
-
-(* Written to a temporary file then renamed, so a reader never sees half. *)
-let keep file s =
-  mkdir_p (Filename.dirname file);
-  let tmp, oc =
-    Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o644
-      ~temp_dir:(Filename.dirname file)
-      (Filename.basename file ^ ".")
-      ".tmp"
-  in
-  match
-    Fun.protect
-      ~finally:(fun () -> close_out_noerr oc)
-      (fun () ->
-        output_string oc s;
-        close_out oc);
-    Sys.rename tmp file
-  with
-  | () -> ()
-  | exception e ->
-      (try Sys.remove tmp with Sys_error _ -> ());
-      raise e
-
 let wrong ~digest file s =
   Error
     (Printf.sprintf "%s has SHA-256 %s, not the pinned %s" file (sha256 s)
@@ -92,28 +61,19 @@ let installed name ~digest =
       | _ -> None)
 
 let find ?dir name ~sha256:digest =
-  let in_dir =
-    match dir with
-    | None -> None
-    | Some d -> (
-        let file = Filename.concat d name in
-        match local file with
-        | Some s when sha256 s = digest -> Some (Ok (Some s))
-        | Some s -> Some (wrong ~digest file s)
-        | None -> None)
+  let in_dir d =
+    let file = Filename.concat d name in
+    Option.map
+      (fun s -> if sha256 s = digest then Ok s else wrong ~digest file s)
+      (local file)
   in
-  match in_dir with Some r -> r | None -> Ok (installed name ~digest)
-
-let fetch ~base_url name ~sha256:digest =
-  match installed name ~digest with
-  | Some _ -> Ok ()
+  match Option.bind dir in_dir with
+  | Some r -> r
   | None -> (
-      match download (base_url ^ name) with
-      | Error why ->
-          Error (Printf.sprintf "downloading %s%s: %s" base_url name why)
-      | Ok s when sha256 s <> digest -> wrong ~digest (base_url ^ name) s
-      | Ok s -> (
-          let file = Filename.concat (cache ()) name in
-          try Ok (keep file s)
-          with Sys_error why ->
-            Error (Printf.sprintf "keeping %s in the cache: %s" name why)))
+      match installed name ~digest with
+      | Some s -> Ok s
+      | None ->
+          let places = Option.to_list dir @ [ system_dir; cache () ] in
+          Error
+            (Printf.sprintf "%s with SHA-256 %s is in none of %s" name digest
+               (String.concat ", " places)))

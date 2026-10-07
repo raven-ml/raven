@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Firmware images by digest, in directories, the cache and file:// origins.
-   Every lookup in this process sees a cache of its own; the lookups that need
-   another environment run in a child process. *)
+(* Firmware images by digest, in directories and the cache. Every lookup in this
+   process sees a cache of its own; the lookups that need another environment
+   run in a child process. *)
 
 open Windtrap
 open Device_pci
@@ -21,10 +21,9 @@ let () =
   | None -> ()
   | Some name ->
       (match Firmware.find name ~sha256:digest with
-      | Ok (Some s) when s = image -> print_string "the image"
-      | Ok (Some _) -> print_string "other bytes"
-      | Ok None -> print_string "none"
-      | Error why -> print_string ("error: " ^ why));
+      | Ok s when s = image -> print_string "the image"
+      | Ok _ -> print_string "other bytes"
+      | Error _ -> print_string "none");
       exit 0
 
 (* SHA-256 *)
@@ -120,13 +119,24 @@ let with_cache f =
   Unix.putenv "RAVEN_CACHE_ROOT" root;
   f (Filename.concat root "firmware")
 
-let found = result (option string) string
+let found = result string string
+
+let has s sub =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+(* [find]'s [Error] for an image no place holds, rather than a file with another
+   digest. *)
+let missing why = has why "none of"
 
 let test_dir () =
   with_cache @@ fun _ ->
   let dir = temp_dir () in
   write dir (name "plain.bin") image;
-  equal ~msg:"the image" found (Ok (Some image))
+  equal ~msg:"the image" found (Ok image)
     (Firmware.find ~dir (name "plain.bin") ~sha256:digest);
   write dir (name "other.bin") "another image\n";
   match Firmware.find ~dir (name "other.bin") ~sha256:digest with
@@ -134,21 +144,31 @@ let test_dir () =
   | Ok _ -> fail "a file with another digest was loaded"
 
 let test_nowhere () =
-  with_cache @@ fun _ ->
+  with_cache @@ fun cache ->
   let dir = temp_dir () in
-  equal ~msg:"with a directory" found (Ok None)
+  let refused ~msg places r =
+    match r with
+    | Ok _ -> fail "an image nowhere was found"
+    | Error why ->
+        List.iter
+          (fun sub -> contains ~msg ~sub why)
+          ([ name "absent.bin"; digest ] @ places)
+  in
+  refused ~msg:"with a directory, naming the image, its digest and the places"
+    [ dir; "/lib/firmware"; cache ]
     (Firmware.find ~dir (name "absent.bin") ~sha256:digest);
-  equal ~msg:"without" found (Ok None)
+  refused ~msg:"without" [ "/lib/firmware"; cache ]
     (Firmware.find (name "absent.bin") ~sha256:digest)
 
 let test_cache () =
   with_cache @@ fun cache ->
   write cache (name "cached.bin") image;
-  equal ~msg:"an image of the cache" found (Ok (Some image))
+  equal ~msg:"an image of the cache" found (Ok image)
     (Firmware.find (name "cached.bin") ~sha256:digest);
   write cache (name "stale.bin") "another image\n";
-  equal ~msg:"another digest is skipped" found (Ok None)
-    (Firmware.find (name "stale.bin") ~sha256:digest)
+  match Firmware.find (name "stale.bin") ~sha256:digest with
+  | Error why -> contains ~msg:"another digest is skipped" ~sub:"none of" why
+  | Ok _ -> fail "a file with another digest was loaded"
 
 let test_dir_first () =
   with_cache @@ fun cache ->
@@ -157,16 +177,17 @@ let test_dir_first () =
   write dir (name "both.bin") "another image\n";
   is_error ~msg:"the directory's file, refused"
     (Firmware.find ~dir (name "both.bin") ~sha256:digest);
-  equal ~msg:"the cache's, when the directory lacks it" found (Ok (Some image))
+  equal ~msg:"the cache's, when the directory lacks it" found (Ok image)
     (Firmware.find ~dir:(temp_dir ()) (name "both.bin") ~sha256:digest)
 
-(* Without the library, the compressed file is not read: [Ok None]. *)
+(* Without the library, the compressed file is not read: the image is
+   missing. *)
 let test_compressed =
   cases "compressed files of a directory"
     ~name:(fun (file, _, _) -> file)
     [
-      ("image.bin.xz", xz, Ok (Some image));
-      ("image.bin.zst", zst, Ok (Some image));
+      ("image.bin.xz", xz, Ok image);
+      ("image.bin.zst", zst, Ok image);
       ("other.bin.xz", other_xz, Error ());
       ("other.bin.zst", other_zst, Error ());
     ]
@@ -176,10 +197,11 @@ let test_compressed =
       write dir (name file) bytes;
       let plain = name (Filename.remove_extension file) in
       match (Firmware.find ~dir plain ~sha256:digest, expected) with
-      | Ok None, _ -> skip ~reason:"the system has no decompression library" ()
-      | Ok (Some s), Ok (Some e) -> equal ~msg:"decompressed" string e s
+      | Error why, _ when missing why ->
+          skip ~reason:"the system has no decompression library" ()
+      | Ok s, Ok e -> equal ~msg:"decompressed" string e s
       | Error why, Error () -> contains ~msg:"names the file" ~sub:plain why
-      | Ok (Some _), _ -> fail "an image with another digest was loaded"
+      | Ok _, _ -> fail "an image with another digest was loaded"
       | Error why, _ -> fail why)
 
 (* The cache's location, in a child whose environment holds [env] alone. *)
@@ -229,64 +251,11 @@ let test_location =
       write at (name file) image;
       equal string expected (find_in env file))
 
-(* Downloads *)
-
-let test_find_downloads_nothing () =
+let test_writes_nothing () =
   with_cache @@ fun cache ->
-  let origin = temp_dir () in
-  write origin (name "remote.bin") image;
-  equal ~msg:"nothing local" found (Ok None)
-    (Firmware.find (name "remote.bin") ~sha256:digest);
-  equal ~msg:"the cache untouched" bool false
-    (Sys.file_exists (Filename.concat cache (name "remote.bin")))
-
-let has s sub =
-  let n = String.length sub in
-  let rec go i =
-    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
-  in
-  go 0
-
-let fetched ~base_url file =
-  match Firmware.fetch ~base_url (name file) ~sha256:digest with
-  | Ok () -> ()
-  | Error why when has why "libcurl" -> skip ~reason:why ()
-  | Error why -> fail why
-
-let test_fetch () =
-  with_cache @@ fun cache ->
-  let origin = temp_dir () in
-  let base_url = "file://" ^ origin ^ "/" in
-  write origin (name "remote.bin") image;
-  fetched ~base_url "remote.bin";
-  equal ~msg:"kept in the cache" string image
-    (In_channel.with_open_bin
-       (Filename.concat cache (name "remote.bin"))
-       In_channel.input_all);
-  Sys.remove (Filename.concat origin (name "remote.bin"));
-  equal ~msg:"found in the cache" found (Ok (Some image))
-    (Firmware.find (name "remote.bin") ~sha256:digest);
-  equal ~msg:"a cached image needs no download" (result unit string) (Ok ())
-    (Firmware.fetch ~base_url (name "remote.bin") ~sha256:digest)
-
-let test_fetch_refused () =
-  with_cache @@ fun cache ->
-  let origin = temp_dir () in
-  let base_url = "file://" ^ origin ^ "/" in
-  write origin (name "image.bin") image;
-  fetched ~base_url "image.bin";
-  write origin (name "bad.bin") "tampered";
-  (match Firmware.fetch ~base_url (name "bad.bin") ~sha256:digest with
-  | Error why -> contains ~msg:"another digest, naming it" ~sub:"bad.bin" why
-  | Ok () -> fail "a download with another digest was kept");
-  equal ~msg:"not kept" bool false
-    (Sys.file_exists (Filename.concat cache (name "bad.bin")));
-  is_error ~msg:"a download that could not be made"
-    (Firmware.fetch ~base_url (name "missing.bin") ~sha256:digest);
-  let file = Filename.temp_file ~temp_dir:(Lazy.force root) "f" "" in
-  Unix.putenv "RAVEN_CACHE_ROOT" file;
-  is_error ~msg:"a cache that cannot be written"
-    (Firmware.fetch ~base_url (name "image.bin") ~sha256:digest)
+  is_error ~msg:"an image nowhere"
+    (Firmware.find (name "absent.bin") ~sha256:digest);
+  equal ~msg:"no cache made" bool false (Sys.file_exists cache)
 
 let () =
   exit
@@ -296,16 +265,12 @@ let () =
          group "find"
            [
              test "a directory's image, refused with another digest" test_dir;
-             test "an image nowhere is none" test_nowhere;
+             test "an image nowhere is refused, naming where it looked"
+               test_nowhere;
              test "the cache's image, skipped with another digest" test_cache;
              test "the directory comes before the cache" test_dir_first;
              test_compressed;
              test_location;
-             test "a lookup downloads nothing" test_find_downloads_nothing;
-           ];
-         group "fetch"
-           [
-             test "an image downloaded is kept in the cache" test_fetch;
-             test "refusals" test_fetch_refused;
+             test "a lookup writes nothing" test_writes_nothing;
            ];
        ]
