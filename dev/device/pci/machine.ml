@@ -48,20 +48,18 @@ external now_ns : unit -> (int[@untagged])
 (* This machine has no transport: nothing fails it. [host] is the files of a
    machine this process reaches without a transport. [reserved] is the ranges
    [reserve] gave, which [Function] checks addresses against before a transport
-   is asked; [lock] guards it. *)
+   is asked: every allocation at an address reads it, so it is read without a
+   lock, and [reserve], which is rare, replaces it whole. *)
 type t = {
   name : string option;
   ops : ops;
   host : Sysfs.t option;
-  lock : Mutex.t;
-  mutable reserved : (int * int) list;
+  reserved : (int * int) list Atomic.t;
 }
 
 let address = Address.v
 let compare_address = Address.compare
-
-let machine name host ops =
-  { name; ops; host; lock = Mutex.create (); reserved = [] }
+let machine name host ops = { name; ops; host; reserved = Atomic.make [] }
 
 let at root =
   let host = Sysfs.v root in
@@ -77,26 +75,23 @@ let page m = m.ops.page
 let functions m =
   List.sort (fun a b -> Address.compare a.bus b.bus) (m.ops.functions ())
 
+let rec record m range =
+  let ranges = Atomic.get m.reserved in
+  if
+    (not (List.mem range ranges))
+    && not (Atomic.compare_and_set m.reserved ranges (range :: ranges))
+  then record m range
+
 let reserve m ~base n =
   let r = m.ops.reserve ~base n in
-  if Result.is_ok r then
-    Mutex.protect m.lock (fun () ->
-        if not (List.mem (base, n) m.reserved) then
-          m.reserved <- (base, n) :: m.reserved);
+  if Result.is_ok r then record m (base, n);
   r
 
-(* A loop and a bare lock, since every allocation at an address asks: no closure
-   is made. [within] cannot raise. *)
 let rec within a n = function
   | [] -> false
   | (base, len) :: l -> (a >= base && a <= base + len - n) || within a n l
 
-let reserved m a n =
-  Mutex.lock m.lock;
-  let r = within a n m.reserved in
-  Mutex.unlock m.lock;
-  r
-
+let reserved m a n = within a n (Atomic.get m.reserved)
 let take m bus = m.ops.take bus
 
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
