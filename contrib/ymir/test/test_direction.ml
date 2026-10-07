@@ -239,6 +239,11 @@ let stated =
 
 let reads_the_ray =
   let powers = Gen.of_list [ 0x1p-500; 0x1p500 ] in
+  let rows =
+    Gen.with_pp
+      (fun ppf (r, k) -> Format.fprintf ppf "%a times %h" pp_row r k)
+      (Gen.pair rows powers)
+  in
   let reads (r, k) f =
     let k_r = exact_multiple k r in
     equal bits (f (icrs (row r))) (f (icrs (row k_r)))
@@ -246,12 +251,29 @@ let reads_the_ray =
   let other = lonlat 0.7 (-0.2) in
   group "Readers read the ray"
     [
-      prop "lon and lat: a power-of-two multiple reads the same bits"
-        (Gen.pair rows powers) (fun c ->
+      prop "lon and lat: a power-of-two multiple reads the same bits" rows
+        (fun c ->
           reads c lon;
           reads c lat);
-      prop "separation and position_angle: the same, on either side"
-        (Gen.pair rows powers) (fun c ->
+      prop "separation and position_angle: the same, on either side" rows
+        (fun c ->
+          reads c (fun d -> separation d other);
+          reads c (fun d -> separation other d);
+          reads c (fun d -> position_angle d other);
+          reads c (fun d -> position_angle other d));
+      cases
+        ~name:(fun r -> Format.asprintf "%a" pp_row r)
+        "a row of subnormal components reads as its normal multiple"
+        [
+          (0., -0x1p-1074, 0.);
+          (0x1p-1074, 0x1p-1074, -0x1p-1074);
+          (0x0.fffffffffffffp-1022, 0x1p-1060, 0.);
+          (0x1p-1050, 0., 0x1.8p-1049);
+        ]
+        (fun r ->
+          let c = (r, 0x1p600) in
+          reads c lon;
+          reads c lat;
           reads c (fun d -> separation d other);
           reads c (fun d -> separation other d);
           reads c (fun d -> position_angle d other);

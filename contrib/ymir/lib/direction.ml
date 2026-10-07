@@ -53,29 +53,44 @@ let check_finite what v =
 let sign_bit_off = 0x7FFF_FFFF_FFFF_FFFFL
 let mantissa_bits = 52
 let exponent_all_ones = 2047L
+let least_normal = 0x1p-1022
+let subnormal_lift = 0x1p54
 
-(* [scale v] is, for each row of [v], the power of two that brings its largest
-   component into [2, 4), with shape [...; 1]. The exponent is read from the
-   bits, so the scale is exact and carries no derivative: each reader is
-   homogeneous of degree 0 in a row, and holding the scale constant gives its
-   exact gradient. Squares and cross products of a scaled row stay in range for
-   every finite row, and a row of NaN or infinities scales by 0. *)
+(* [scale v] is [v] with each row times the power of two that brings its largest
+   component into [2, 4). No one power of two reaches from the least subnormal,
+   2^-1074, to 2, so a row whose largest component is subnormal is first lifted
+   by 2^54, which makes each of its nonzero components normal. Both factors are
+   read from the bits, so the scaling is exact and carries no derivative: each
+   reader is homogeneous of degree 0 in a row, and holding the scale constant
+   gives its exact gradient. Squares and cross products of a scaled row stay in
+   range for every finite row, a zero row stays zero, and a row of NaN or
+   infinities scales by 0. *)
 let scale v =
   let magnitude =
     Nx.(bitwise_and (bitcast int64 v) (scalar int64 sign_bit_off))
   in
+  let largest =
+    Nx.bitcast Nx.float64 (Nx.max ~axes:[ last v ] ~keepdims:true magnitude)
+  in
+  let lift =
+    Nx.where
+      (Nx.less_s largest least_normal)
+      (Nx.full_like largest subnormal_lift)
+      (Nx.full_like largest 1.)
+  in
   let exponent =
-    Nx.rshift (Nx.max ~axes:[ last v ] ~keepdims:true magnitude) mantissa_bits
+    Nx.rshift (Nx.bitcast Nx.int64 (Nx.mul largest lift)) mantissa_bits
   in
   let exponent = Nx.maximum exponent (Nx.scalar Nx.int64 1L) in
   let biased = Nx.sub (Nx.scalar Nx.int64 exponent_all_ones) exponent in
-  Nx.bitcast Nx.float64 (Nx.lshift biased mantissa_bits)
+  Nx.mul (Nx.mul v lift)
+    (Nx.bitcast Nx.float64 (Nx.lshift biased mantissa_bits))
 
-(* [rows what v] is [v] with each row scaled by {!scale}. Raises
-   [Invalid_argument] where a row has an infinite component. *)
+(* [rows what v] is [scale v]. Raises [Invalid_argument] where a row has an
+   infinite component. *)
 let rows what v =
   check_finite what v;
-  Nx.mul v (scale v)
+  scale v
 
 (* [near a b] is [b], scaled rows, times 2, 1 or 1/2, whichever brings its
    largest component within a factor √2 of [a]'s. Two close rows then have close
@@ -139,7 +154,7 @@ let of_xyz frame v =
       Invalid_argument
         (strf "Direction.of_xyz: the vector%s is zero and names no direction"
            (at i)));
-  let s = Nx.mul v (scale v) in
+  let s = scale v in
   let norm = Nx.sqrt (Nx.sum ~axes:[ n - 1 ] ~keepdims:true (Nx.square s)) in
   { frame; xyz = Nx.div s norm }
 

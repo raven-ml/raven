@@ -140,9 +140,9 @@ end
     - {e Readers read the ray.} {!lon}, {!lat}, {!separation} and
       {!position_angle} read every finite row as the direction it points in. A
       positive multiple of a row reads the same up to the rounding of the
-      multiple, and bit for bit when the multiple is a power of two that keeps
-      the components normal. A NaN component gives NaN, and an infinite one
-      raises [Invalid_argument]. {!rotate} and {!xyz} are linear.
+      multiple, and bit for bit when the multiple is a power of two that rounds
+      no component, subnormal ones included. A NaN component gives NaN, and an
+      infinite one raises [Invalid_argument]. {!rotate} and {!xyz} are linear.
 
     So a sum of two directions read as a direction is their chordal midpoint.
 

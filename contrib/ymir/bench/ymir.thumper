@@ -15,6 +15,7 @@
 # forced: blessed shapes-104/ellipse-eager shapes-104/polygon-eager under load 9.7 on 10 cores
 # forced: blessed observation-4096/sub-eager under load 50.1 on 10 cores
 # forced: blessed fits-observation-4096/sci-err-float32 under load 30.9 on 10 cores
+# forced: blessed galactic-lat-1m/eager galactic-lat-1m/compiled separation-1m/eager separation-1m/compiled under load 20.9 on 10 cores
 
 age-1k/compiled	alloc_words	exact	849
 age-1k/compiled	wall_time	batch=2	n=20	4.240e-03	2.058e-03 2.175e-03 2.469e-03 2.968e-03 3.252e-03 3.462e-03 3.654e-03 3.803e-03 3.945e-03 4.144e-03 4.335e-03 4.494e-03 4.892e-03 4.942e-03 5.331e-03 5.482e-03 6.723e-03 6.850e-03 7.650e-03 8.104e-03
@@ -44,16 +45,16 @@ fits-table-50x100k/raw-one-column	alloc_words	exact	1457723
 fits-table-50x100k/raw-one-column	wall_time	batch=1	n=20	1.365e-02	1.246e-02 1.306e-02 1.333e-02 1.336e-02 1.342e-02 1.347e-02 1.348e-02 1.351e-02 1.355e-02 1.364e-02 1.366e-02 1.369e-02 1.372e-02 1.382e-02 1.384e-02 1.384e-02 1.394e-02 1.395e-02 1.410e-02 1.469e-02
 fits-table-50x100k/read	alloc_words	exact	70086245
 fits-table-50x100k/read	wall_time	batch=1	n=20	4.346e-01	4.079e-01 4.137e-01 4.252e-01 4.274e-01 4.283e-01 4.288e-01 4.295e-01 4.299e-01 4.317e-01 4.319e-01 4.374e-01 4.377e-01 4.388e-01 4.417e-01 4.425e-01 4.504e-01 4.508e-01 4.549e-01 4.649e-01 4.809e-01
-galactic-lat-1m/compiled	alloc_words	exact	1555
-galactic-lat-1m/compiled	wall_time	batch=1	n=20	5.908e-02	4.066e-02 4.110e-02 4.240e-02 4.462e-02 4.555e-02 5.503e-02 5.563e-02 5.708e-02 5.802e-02 5.864e-02 5.951e-02 6.032e-02 6.090e-02 6.238e-02 6.366e-02 6.677e-02 6.757e-02 7.092e-02 9.153e-02 1.182e-01
-galactic-lat-1m/eager	alloc_words	exact	10834
-galactic-lat-1m/eager	wall_time	batch=1	n=20	1.030e-01	6.333e-02 6.344e-02 6.536e-02 6.720e-02 6.881e-02 7.152e-02 7.937e-02 8.534e-02 9.572e-02 1.028e-01 1.032e-01 1.066e-01 1.088e-01 1.151e-01 1.218e-01 1.229e-01 1.331e-01 1.519e-01 1.680e-01 2.149e-01
+galactic-lat-1m/compiled	alloc_words	exact	1547
+galactic-lat-1m/compiled	wall_time	batch=1	n=20	2.355e-02	2.064e-02 2.084e-02 2.171e-02 2.204e-02 2.228e-02 2.246e-02 2.254e-02 2.305e-02 2.317e-02 2.336e-02 2.375e-02 2.434e-02 2.453e-02 2.502e-02 2.510e-02 2.675e-02 2.676e-02 2.723e-02 2.744e-02 3.077e-02
+galactic-lat-1m/eager	alloc_words	exact	12017
+galactic-lat-1m/eager	wall_time	batch=1	n=20	4.965e-02	4.409e-02 4.452e-02 4.565e-02 4.624e-02 4.629e-02 4.650e-02 4.658e-02 4.671e-02 4.907e-02 4.913e-02 5.016e-02 5.029e-02 5.079e-02 5.090e-02 5.130e-02 5.375e-02 5.574e-02 5.802e-02 5.810e-02 6.009e-02
 observation-4096/sub-eager	alloc_words	exact	7295
 observation-4096/sub-eager	wall_time	batch=1	n=20	3.651e-02	1.114e-02 1.903e-02 2.135e-02 2.380e-02 2.567e-02 2.785e-02 2.877e-02 2.984e-02 3.503e-02 3.580e-02 3.722e-02 3.729e-02 3.751e-02 3.838e-02 4.038e-02 4.691e-02 5.609e-02 7.203e-02 1.347e-01 1.347e-01
-separation-1m/compiled	alloc_words	exact	2609
-separation-1m/compiled	wall_time	batch=1	n=20	4.704e-02	3.783e-02 3.853e-02 3.914e-02 3.982e-02 4.086e-02 4.101e-02 4.252e-02 4.389e-02 4.619e-02 4.682e-02 4.726e-02 5.709e-02 5.804e-02 6.061e-02 6.195e-02 6.906e-02 7.904e-02 8.146e-02 9.206e-02 9.334e-02
-separation-1m/eager	alloc_words	exact	17967
-separation-1m/eager	wall_time	batch=1	n=20	2.002e-01	1.401e-01 1.538e-01 1.596e-01 1.666e-01 1.723e-01 1.793e-01 1.843e-01 1.880e-01 1.939e-01 1.996e-01 2.009e-01 2.092e-01 2.181e-01 2.192e-01 2.230e-01 2.284e-01 2.292e-01 2.308e-01 2.531e-01 2.820e-01
+separation-1m/compiled	alloc_words	exact	2601
+separation-1m/compiled	wall_time	batch=1	n=20	4.226e-02	2.699e-02 2.946e-02 3.181e-02 3.263e-02 3.404e-02 3.466e-02 3.549e-02 3.563e-02 4.018e-02 4.072e-02 4.379e-02 4.980e-02 5.128e-02 5.480e-02 5.594e-02 7.049e-02 7.059e-02 7.858e-02 7.993e-02 8.320e-02
+separation-1m/eager	alloc_words	exact	20337
+separation-1m/eager	wall_time	batch=1	n=20	8.385e-02	7.766e-02 7.913e-02 8.071e-02 8.080e-02 8.142e-02 8.190e-02 8.220e-02 8.228e-02 8.272e-02 8.342e-02 8.429e-02 8.533e-02 8.567e-02 8.602e-02 8.681e-02 8.871e-02 8.913e-02 9.223e-02 9.223e-02 1.428e-01
 shapes-104/ellipse-eager	alloc_words	exact	192706
 shapes-104/ellipse-eager	wall_time	batch=1	n=20	3.622e-02	3.502e-02 3.506e-02 3.534e-02 3.571e-02 3.583e-02 3.599e-02 3.605e-02 3.607e-02 3.608e-02 3.621e-02 3.623e-02 3.636e-02 3.637e-02 3.641e-02 3.649e-02 3.680e-02 3.709e-02 3.733e-02 3.767e-02 3.807e-02
 shapes-104/polygon-eager	alloc_words	exact	669099
