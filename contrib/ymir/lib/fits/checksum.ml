@@ -48,6 +48,46 @@ let string s str =
   done;
   !acc
 
+(* A running sum of a data unit's words, over pieces of any length. *)
+type summer = { mutable sum : int; pending : Bytes.t; mutable npending : int }
+
+let summer () = { sum = 0; pending = Bytes.make 4 '\000'; npending = 0 }
+
+let feed s (a : bigbytes) off len =
+  let off = ref off and len = ref len in
+  while s.npending > 0 && !len > 0 do
+    Bytes.set s.pending s.npending
+      (Char.unsafe_chr (Bigarray.Array1.get a !off));
+    s.npending <- s.npending + 1;
+    incr off;
+    decr len;
+    if s.npending = 4 then begin
+      s.sum <- string s.sum (Bytes.to_string s.pending);
+      s.npending <- 0
+    end
+  done;
+  let whole = !len land lnot 3 in
+  s.sum <- bigbytes s.sum a !off whole;
+  for j = 0 to !len - whole - 1 do
+    Bytes.set s.pending j
+      (Char.unsafe_chr (Bigarray.Array1.get a (!off + whole + j)))
+  done;
+  s.npending <- !len - whole
+
+let total s =
+  if s.npending = 0 then s.sum
+  else begin
+    Bytes.fill s.pending s.npending (4 - s.npending) '\000';
+    string s.sum (Bytes.to_string s.pending)
+  end
+
+(* [at off] is a running sum of bytes that start at byte [off] of a data
+   unit, which may not start a word. *)
+let at off =
+  let s = summer () in
+  s.npending <- off land 3;
+  s
+
 (* Appendix J: the 16 characters whose words sum to [x], each byte of [x] spread
    over four characters from '0' up, stepped off the punctuation between the
    digits and the letters, then rotated one place right. *)

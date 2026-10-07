@@ -146,39 +146,6 @@ let with_header h (hdu : Hdu.t) =
 
 let chunk = 1 lsl 22
 
-(* A running sum of a data unit's words, over pieces of any length. *)
-type summer = { mutable sum : int; pending : Bytes.t; mutable npending : int }
-
-let summer () = { sum = 0; pending = Bytes.make 4 '\000'; npending = 0 }
-
-let feed s (a : Checksum.bigbytes) off len =
-  let off = ref off and len = ref len in
-  while s.npending > 0 && !len > 0 do
-    Bytes.set s.pending s.npending
-      (Char.unsafe_chr (Bigarray.Array1.get a !off));
-    s.npending <- s.npending + 1;
-    incr off;
-    decr len;
-    if s.npending = 4 then begin
-      s.sum <- Checksum.string s.sum (Bytes.to_string s.pending);
-      s.npending <- 0
-    end
-  done;
-  let whole = !len land lnot 3 in
-  s.sum <- Checksum.bigbytes s.sum a !off whole;
-  for j = 0 to !len - whole - 1 do
-    Bytes.set s.pending j
-      (Char.unsafe_chr (Bigarray.Array1.get a (!off + whole + j)))
-  done;
-  s.npending <- !len - whole
-
-let total s =
-  if s.npending = 0 then s.sum
-  else begin
-    Bytes.fill s.pending s.npending (4 - s.npending) '\000';
-    Checksum.string s.sum (Bytes.to_string s.pending)
-  end
-
 (* [each_chunk store f] calls [f] on host copies of [store]'s bytes, in order. *)
 let each_chunk (s : Hdu.store) f =
   let host = Hdu.host_bytes (Int.min chunk (Int.max 1 s.size)) in
@@ -192,12 +159,9 @@ let each_chunk (s : Hdu.store) f =
   done
 
 let data_sum (hdu : Hdu.t) =
-  let s = summer () in
-  (match hdu.slabs with
-  | Some { write } when not (Lazy.is_val hdu.data) ->
-      write (fun b -> feed s (Hdu.bigbytes b) 0 (B.nbytes b))
-  | _ -> each_chunk (Hdu.store hdu) (fun a n -> feed s a 0 n));
-  total s
+  let s = Checksum.summer () in
+  each_chunk (Hdu.store hdu) (fun a n -> Checksum.feed s a 0 n);
+  Checksum.total s
 
 (* DATASUM reads as an unsigned decimal up to 2^32 - 1, blanks and leading
    zeros allowed; a blank one is absent. *)
@@ -269,8 +233,7 @@ let is_image h =
 (* The header [hdu] is written with, first in the file or not, before its
    checksums: the first HDU is the primary, and an image HDU elsewhere is an
    IMAGE extension. *)
-let positioned ~primary (hdu : Hdu.t) =
-  let h = Hdu.header hdu in
+let positioned ~primary ~place h =
   let is_primary = Header.find_struct Value.string "XTENSION" h = Ok None in
   let kind = Hdu.kind_of is_primary h in
   let image prim =
@@ -285,7 +248,7 @@ let positioned ~primary (hdu : Hdu.t) =
   | Primary { groups = true }
     when match Hdu.naxes h with [||] -> false | a -> a.(0) = 0 ->
       if primary then h
-      else fail_at (Hdu.place hdu) "random groups can only be the primary HDU"
+      else fail_at place "random groups can only be the primary HDU"
   | Primary _ -> image primary
   | Extension "IMAGE" -> if primary then image true else h
   | Extension _ -> h
@@ -312,24 +275,58 @@ let write_string fd s =
   done
 
 (* Writes [hdu] at the descriptor's position. *)
+let bigbytes_of_string str =
+  Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout
+    (String.length str) (fun i -> Char.code str.[i])
+
+(* Writes [hdu] at the descriptor's position: the data unit first, after
+   room for a header of the final one's size, summed as it passes; then the
+   header with its checksums. *)
 let write_hdu fd ~primary (hdu : Hdu.t) =
-  let h0 = positioned ~primary hdu in
+  let stream =
+    match hdu.stream with
+    | Some st when not (Lazy.is_val hdu.data) -> Some (Lazy.force st)
+    | _ -> None
+  in
+  let first =
+    match stream with Some st -> st.provisional | None -> Hdu.header hdu
+  in
+  let place = Hdu.hdu_place hdu.name hdu.index first in
+  let h0 = positioned ~primary ~place first in
   let start = Unix.lseek fd 0 Unix.SEEK_CUR in
   let hlen =
     String.length (Header.to_string (with_sums h0 ~datasum:0 ~checksum:zeros))
   in
-  ignore (Unix.lseek fd (start + hlen) Unix.SEEK_SET);
-  let s = summer () in
+  let data_start = start + hlen in
+  ignore (Unix.lseek fd data_start Unix.SEEK_SET);
+  let s = Checksum.summer () in
+  let patched = ref 0 in
   let size = ref 0 in
   let emit a n =
-    feed s a 0 n;
+    Checksum.feed s a 0 n;
     write_all fd a 0 n;
     size := !size + n
   in
-  (match hdu.slabs with
-  | Some { write } when not (Lazy.is_val hdu.data) ->
-      write (fun b -> emit (Hdu.bigbytes b) (B.nbytes b))
-  | _ -> each_chunk (Hdu.store hdu) emit);
+  (* A patch overwrites bytes appended as zeros, which summed to nothing: its
+     sum, at its offset, adds to the data unit's. *)
+  let patch off str =
+    let here = Unix.lseek fd 0 Unix.SEEK_CUR in
+    ignore (Unix.lseek fd (data_start + off) Unix.SEEK_SET);
+    write_string fd str;
+    ignore (Unix.lseek fd here Unix.SEEK_SET);
+    let p = Checksum.at off in
+    Checksum.feed p (bigbytes_of_string str) 0 (String.length str);
+    patched := Checksum.add !patched (Checksum.total p)
+  in
+  let final =
+    match stream with
+    | Some st ->
+        st.write
+          { Hdu.append = (fun b -> emit (Hdu.bigbytes b) (B.nbytes b)); patch }
+    | None ->
+        each_chunk (Hdu.store hdu) emit;
+        first
+  in
   let pad = Hdu.padded !size - !size in
   let fill =
     if Header.find_struct Value.string "XTENSION" h0 = Ok (Some "TABLE") then
@@ -338,24 +335,26 @@ let write_hdu fd ~primary (hdu : Hdu.t) =
   in
   write_string fd (String.make pad fill);
   if fill = ' ' then
-    feed s
-      (Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout pad
-         (fun _ -> 32))
-      0 pad;
-  let d = total s in
-  (match stated_datasum (Hdu.header hdu) with
-  | Some stated when stated <> d ->
-      fail_at (Hdu.place hdu)
-        "DATASUM states %d, the data unit sums to %d; Fits.v (Header.remove \
-         \"DATASUM\" (Fits.header hdu)) (Fits.data hdu) accepts the data as it \
-         is"
-        stated d
-  | _ -> ());
+    Checksum.feed s (bigbytes_of_string (String.make pad ' ')) 0 pad;
+  let d = Checksum.add (Checksum.total s) !patched in
+  if stream = None then
+    begin match stated_datasum first with
+    | Some stated when stated <> d ->
+        fail_at place
+          "DATASUM states %d, the data unit sums to %d; Fits.v (Header.remove \
+           \"DATASUM\" (Fits.header hdu)) (Fits.data hdu) accepts the data as \
+           it is"
+          stated d
+    | _ -> ()
+    end;
+  let h0 = if stream = None then h0 else positioned ~primary ~place final in
   let h1 = with_sums h0 ~datasum:d ~checksum:zeros in
   let c =
     Checksum.checksum (Checksum.add (Checksum.string 0 (Header.to_string h1)) d)
   in
   let h2 = Header.to_string (with_sums h0 ~datasum:d ~checksum:c) in
+  (* the provisional header holds the final one's records *)
+  assert (String.length h2 = hlen);
   let stop = Unix.lseek fd 0 Unix.SEEK_CUR in
   ignore (Unix.lseek fd start Unix.SEEK_SET);
   write_string fd h2;
@@ -375,7 +374,7 @@ let rename temp path =
 let write path hdus =
   let hdus =
     match hdus with
-    | h :: _ when not (is_image (Hdu.header h)) -> empty_primary () :: hdus
+    | h :: _ when not (is_image (Hdu.structure h)) -> empty_primary () :: hdus
     | [] -> [ empty_primary () ]
     | _ -> hdus
   in

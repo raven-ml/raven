@@ -138,7 +138,15 @@ let window_gen shape =
             (triple (axis a) (axis b) (axis c))
       | _ -> assert false
     in
-    frequency [ (1, constant (Array.map (fun n -> (0, n)) shape)); (9, some) ])
+    let pixel =
+      map
+        (fun i -> Array.map (fun n -> (i mod n, (i mod n) + 1)) shape)
+        (int_range 0 1000)
+    in
+    frequency
+      [
+        (1, constant (Array.map (fun n -> (0, n)) shape)); (1, pixel); (8, some);
+      ])
 
 let slice w t =
   Nx.slice (Array.to_list (Array.map (fun (a, b) -> Nx.R (a, b)) w)) t
@@ -293,6 +301,36 @@ let lossless =
     law Nx.float64;
   ]
 
+let streamed =
+  prop "a streamed tiled write gives the in-memory encoding's bytes"
+    Gen.(
+      triple
+        (pair (int_range 1 20) (int_range 1 20))
+        (pair (int_range 1 7) (int_range 1 7))
+        bool)
+    (fun ((h, w), (th, tw), quantize) ->
+      let t =
+        Nx.init Nx.float32 [| h; w |] (fun i ->
+            100. +. sin (Float.of_int ((i.(0) * 31) + i.(1))))
+      in
+      let hdu () =
+        if quantize then I.quantized 8. ~tiles:[| th; tw |] H.empty t
+        else I.hdu ~tiles:[| th; tw |] H.empty t
+      in
+      let bytes hdus =
+        let path = temp_file ~suffix:".fits" () in
+        require_ok (Fits.write path hdus);
+        In_channel.with_open_bin path In_channel.input_all
+      in
+      let primary = I.hdu H.empty (Nx.zeros Nx.uint8 [| 1 |]) in
+      let a = bytes [ primary; hdu () ] in
+      let x = hdu () in
+      let b = bytes [ primary; Fits.v (Fits.header x) (Fits.data x) ] in
+      cover "several tile rows" (h > th);
+      equal string
+        (Digest.to_hex (Digest.string a))
+        (Digest.to_hex (Digest.string b)))
+
 let written () =
   (* Through a file: checksums verify and every codec reads back. *)
   let t =
@@ -343,6 +381,7 @@ let () =
               test "the quantizer is cfitsio's" quantizer;
               test "undefined and flat tiles" quantized_nan;
               test "through a file" written;
+              streamed;
             ]
            @ lossless);
        ]

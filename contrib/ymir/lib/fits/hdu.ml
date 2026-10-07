@@ -24,16 +24,30 @@ type t = {
   header : Header.t Lazy.t;
   data : store Lazy.t;
   header_bytes : (int * int) option;  (** a read HDU's header, in [buffer] *)
-  slabs : slabs option;
+  stream : stream Lazy.t option;
       (** a constructed HDU whose data [write] streams without encoding it whole
       *)
 }
 
-(* [slabs.write emit] calls [emit] with host buffers of the data unit's bytes,
-   in order. *)
-and slabs = { write : (B.t -> unit) -> unit }
+(* How [write] streams a constructed HDU: [provisional] holds the final
+   header's records, so the data unit's place is known before it is written;
+   [write sink] writes the data unit and is the final header. *)
+and stream = { provisional : Header.t; write : sink -> Header.t }
+
+(* Where a stream writes: [append] adds host bytes at the end of the data
+   unit; [patch off s] writes [s] over bytes from [off] that were appended as
+   zeros. *)
+and sink = { append : B.t -> unit; patch : int -> string -> unit }
 
 let header h = Lazy.force h.header
+
+(* A header holding [h]'s structure, without encoding a constructed HDU that
+   [write] would stream. *)
+let structure h =
+  match h.stream with
+  | Some st when not (Lazy.is_val h.header) -> (Lazy.force st).provisional
+  | _ -> header h
+
 let name h = h.name
 let digest h = Lazy.force h.digest
 let place h = Header.place (header h)
@@ -228,7 +242,7 @@ let walk ~name src =
         header = Lazy.from_val header;
         data = Lazy.from_val store;
         header_bytes = Some hb;
-        slabs = None;
+        stream = None;
       })
     parts
 
@@ -317,7 +331,7 @@ let header_digest header =
 (* [constructed_lazy encoded] is the HDU whose header and data [encoded]
    computes when first asked, as a tiled image's whose PCOUNT is its
    compressed size. *)
-let constructed_lazy ?slabs encoded =
+let constructed_lazy ?stream encoded =
   let header =
     lazy
       (let h, _ = Lazy.force encoded in
@@ -330,10 +344,10 @@ let constructed_lazy ?slabs encoded =
     header;
     data = lazy (snd (Lazy.force encoded));
     header_bytes = None;
-    slabs;
+    stream;
   }
 
-let constructed ?slabs header data =
-  constructed_lazy ?slabs (lazy (header, Lazy.force data))
+let constructed ?stream header data =
+  constructed_lazy ?stream (lazy (header, Lazy.force data))
 
 let host_store b = { buffer = b; offset = 0; size = B.nbytes b }

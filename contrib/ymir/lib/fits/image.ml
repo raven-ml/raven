@@ -115,15 +115,26 @@ let of_big_endian (type a b) (dtype : (a, b) Nx.dtype) shape bytes : (a, b) Nx.t
 (* [to_big_endian t] is a host buffer of [t]'s elements in C order, each
    big-endian. *)
 let to_big_endian (type a b) (t : (a, b) Nx.t) : B.t =
-  let t = Nx.place Nx.Placement.host t in
+  let t = Nx.contiguous (Nx.place Nx.Placement.host t) in
   let w = Nx_dtype.itemsize (Nx.dtype t) in
-  let bytes =
-    if w = 1 then Nx.bitcast Nx.uint8 (Nx.contiguous t)
-    else
-      let u = Nx.bitcast Nx.uint8 t in
-      Nx.copy (if Sys.big_endian then u else Nx.flip ~axes:[ Nx.ndim u - 1 ] u)
-  in
-  Nx.to_buffer bytes
+  let src = Nx.to_buffer (Nx.bitcast Nx.uint8 t) in
+  if w = 1 || Sys.big_endian then src
+  else begin
+    (* each element's bytes reversed, in one pass that allocates nothing *)
+    let n = B.nbytes src in
+    let dst = B.create Nx_device.host Nx_dtype.Scalar.UInt8 n in
+    let a = B.bigarray Bigarray.int8_unsigned src
+    and b = B.bigarray Bigarray.int8_unsigned dst in
+    let i = ref 0 in
+    while !i < n do
+      for j = 0 to w - 1 do
+        Bigarray.Array1.unsafe_set b (!i + j)
+          (Bigarray.Array1.unsafe_get a (!i + w - 1 - j))
+      done;
+      i := !i + w
+    done;
+    dst
+  end
 
 (* Descriptions *)
 
@@ -491,22 +502,30 @@ let encode t =
 (* Rows of at most this many bytes make one slab of a streamed write. *)
 let slab_bytes = 1 lsl 22
 
-let slabs (type a b) (t : (a, b) Nx.t) : Hdu.slabs =
-  let write emit =
-    let shape = Nx.shape t in
-    let lead = shape.(0) in
-    let row = Nx.nbytes t / Int.max 1 lead in
-    let step = Int.max 1 (slab_bytes / Int.max 1 row) in
-    let rec go a =
-      if a < lead then begin
-        let b = Int.min lead (a + step) in
-        emit (encode (Nx.slice [ Nx.R (a, b) ] t));
-        go b
-      end
-    in
-    go 0
+(* [each_slab t f] calls [f] with the big-endian elements of [t]'s slabs
+   along its leading axis, in order. *)
+let each_slab (type a b) (t : (a, b) Nx.t) f =
+  let shape = Nx.shape t in
+  let lead = shape.(0) in
+  let row = Nx.nbytes t / Int.max 1 lead in
+  let step = Int.max 1 (slab_bytes / Int.max 1 row) in
+  let rec go a =
+    if a < lead then begin
+      let b = Int.min lead (a + step) in
+      f (encode (Nx.slice [ Nx.R (a, b) ] t));
+      go b
+    end
   in
-  { Hdu.write }
+  go 0
+
+let plain_stream header t =
+  {
+    Hdu.provisional = header;
+    write =
+      (fun sink ->
+        each_slab t sink.Hdu.append;
+        header);
+  }
 
 (* The tile shape in file order, from [tiles] in tensor axis order, each
    at most its axis. *)
@@ -524,56 +543,99 @@ let tile_shape fn shape tiles =
        (Array.to_list
           (Array.map2 (fun t n -> Int.max 1 (Int.min t n)) tiles shape)))
 
-(* A tiled image HDU: a BINTABLE of the tiles coded by [plan]. *)
+(* A tiled image HDU: a BINTABLE of the tiles coded by [plan], tile row by
+   tile row from slabs of [t] along its leading axis. *)
 let tiled header t ~bitpix ~others ~tile plan =
   let axes = Array.of_list (List.rev (Array.to_list (Nx.shape t))) in
+  let slab a b = Hdu.bigbytes (encode (Nx.slice [ Nx.R (a, b) ] t)) in
+  (* a quantized image is read once before it is coded, for its seed *)
+  let zdither0 =
+    lazy
+      (match plan with
+      | Tiles.Quantized _ ->
+          let s = Checksum.summer () in
+          each_slab t (fun b -> Checksum.feed s (Hdu.bigbytes b) 0 (B.nbytes b));
+          Tiles.zdither0 (Checksum.total s)
+      | Lossless _ -> 0)
+  in
+  let header_of (tb : Tiles.table) =
+    let columns =
+      List.concat
+        (List.mapi
+           (fun i (name, form) ->
+             Structure.
+               [
+                 string (strf "TTYPE%d" (i + 1)) name;
+                 string (strf "TFORM%d" (i + 1)) form;
+               ])
+           tb.columns)
+    in
+    let prefix =
+      Structure.
+        [
+          string "XTENSION" "BINTABLE";
+          int "BITPIX" 8;
+          int "NAXIS" 2;
+          int "NAXIS1" tb.row_bytes;
+          int "NAXIS2" tb.ntiles;
+          int "PCOUNT" tb.pcount;
+          int "GCOUNT" 1;
+          int "TFIELDS" (List.length tb.columns);
+        ]
+    in
+    let owned k =
+      Structure.table_owned k || Structure.tile_owned k
+      || Structure.image_owned k
+      || (bitpix < 0 && k = "BLANK")
+    in
+    Structure.apply ~owned ~prefix ~others:(columns @ tb.keys @ others) header
+  in
+  let code heap =
+    Tiles.code ~bitpix ~axes ~tile plan ~zdither0:(Lazy.force zdither0) ~slab
+      ~heap
+  in
   let encoded =
     lazy
-      (let be = encode t in
-       let e = Tiles.write ~bitpix ~axes ~tile plan (Hdu.bigbytes be) in
-       let columns =
-         List.concat
-           (List.mapi
-              (fun i (name, form) ->
-                Structure.
-                  [
-                    string (strf "TTYPE%d" (i + 1)) name;
-                    string (strf "TFORM%d" (i + 1)) form;
-                  ])
-              e.columns)
-       in
-       let prefix =
-         Structure.
-           [
-             string "XTENSION" "BINTABLE";
-             int "BITPIX" 8;
-             int "NAXIS" 2;
-             int "NAXIS1" e.row_bytes;
-             int "NAXIS2" e.ntiles;
-             int "PCOUNT" (String.length e.heap);
-             int "GCOUNT" 1;
-             int "TFIELDS" (List.length e.columns);
-           ]
-       in
-       let owned k =
-         Structure.table_owned k || Structure.tile_owned k
-         || Structure.image_owned k
-         || (bitpix < 0 && k = "BLANK")
-       in
-       let h =
-         Structure.apply ~owned ~prefix
-           ~others:(columns @ e.keys @ others)
-           header
-       in
-       let data = e.rows ^ e.heap in
+      (let heap = Buffer.create 4096 in
+       let rows, tb = code (Buffer.add_string heap) in
+       let data = rows ^ Buffer.contents heap in
        let b = Hdu.host_bytes (String.length data) in
        let a = Hdu.bigbytes b in
        String.iteri
          (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c))
          data;
-       (h, Hdu.host_store b))
+       (header_of tb, Hdu.host_store b))
   in
-  Hdu.constructed_lazy encoded
+  let write (sink : Hdu.sink) =
+    (* the rows go first as zeros, then the heap tile row by tile row, then
+       the rows themselves *)
+    let tb0 =
+      Tiles.table ~bitpix ~axes ~tile plan ~zdither0:0 ~maxes:(0, 0) ~heap:0
+    in
+    let zeros = Hdu.host_bytes (tb0.ntiles * tb0.row_bytes) in
+    Bigarray.Array1.fill (Hdu.bigbytes zeros) 0;
+    sink.append zeros;
+    let rows, tb =
+      code (fun s ->
+          let b = Hdu.host_bytes (String.length s) in
+          let a = Hdu.bigbytes b in
+          String.iteri
+            (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c))
+            s;
+          sink.append b)
+    in
+    sink.patch 0 rows;
+    header_of tb
+  in
+  let provisional =
+    lazy
+      (header_of
+         (Tiles.table ~bitpix ~axes ~tile plan ~zdither0:(Lazy.force zdither0)
+            ~maxes:(0, 0) ~heap:0))
+  in
+  Hdu.constructed_lazy
+    ~stream:(lazy { Hdu.provisional = Lazy.force provisional; write })
+    encoded
 
 let check_shape fn t =
   if Array.length (Nx.shape t) = 0 then
@@ -608,7 +670,9 @@ let hdu ?tiles header (t : ('a, 'b) Nx.t) =
           ~others header
       in
       let data = lazy (Hdu.host_store (encode t)) in
-      Hdu.constructed ~slabs:(slabs t) header data
+      Hdu.constructed
+        ~stream:(Lazy.from_val (plain_stream header t))
+        header data
 
 let quantized (type b) ?tiles q header (t : (float, b) Nx.t) =
   if not (Float.is_finite q && q > 0.) then
