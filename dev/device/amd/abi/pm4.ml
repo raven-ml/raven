@@ -267,11 +267,6 @@ let indirect_buffer addr ~dwords =
 
 (* Runs *)
 
-let register fn g name =
-  match Register.find g name with
-  | Some r -> r
-  | None -> invalid_argf "%s: %s has no %s" fn (gc_name g) name
-
 (* COMPUTE_PGM_LO and DISPATCH_SCRATCH_BASE_LO take 256-byte aligned addresses,
    from their bit 8, with their _HI words after them. *)
 let address_shift = 8
@@ -305,35 +300,23 @@ let swizzle_enable = Int64.min_int
 let num_records = 0xffff_ffff
 let scratch_format = 0x20c14000
 
-let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
+let dispatch (g : Gpu.t) (k : Code_object.kernel) ~program ~scratch ~args
     ~packet:dispatch_packet ~threads:(tx, ty, tz) ~groups:(gx, gy, gz)
     ?waves_per_array () =
   let fn = "Pm4.dispatch" in
-  let reg name = register fn g name in
-  let at r = Register.address g r in
-  let resource_limits = reg "regCOMPUTE_RESOURCE_LIMITS" in
-  let initiator = reg "regCOMPUTE_DISPATCH_INITIATOR" in
-  let pgm_lo = at (reg "regCOMPUTE_PGM_LO") in
-  let pgm_rsrc1 = at (reg "regCOMPUTE_PGM_RSRC1") in
-  let pgm_rsrc3 = at (reg "regCOMPUTE_PGM_RSRC3") in
-  let tmpring_size = at (reg "regCOMPUTE_TMPRING_SIZE") in
-  let scratch_base_lo = at (reg "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO") in
-  let restart_x = at (reg "regCOMPUTE_RESTART_X") in
-  let user_data_0 = at (reg "regCOMPUTE_USER_DATA_0") in
-  let start_x = at (reg "regCOMPUTE_START_X") in
+  let d : Defs.dispatch =
+    match Defs.dispatch (Defs.gc g.gc) with
+    | Some d -> d
+    | None -> invalid_argf "%s: %s has no register of a dispatch" fn (gc_name g)
+  in
   let limits =
     match waves_per_array with
     | None -> no_wave_limit
     | Some n when n < 1 || n > max_waves_per_array ->
         invalid_argf "%s: waves_per_array %d, expected 1 to 1023" fn n
-    | Some n -> Register.encode resource_limits [ ("waves_per_sh", n) ]
+    | Some n -> n lsl fst d.waves_per_sh
   in
-  let initiator_word =
-    let wave32 = if k.wave32 then 1 else 0 in
-    let lanes = if major g = 9 then [] else [ ("cs_w32_en", wave32) ] in
-    Register.encode initiator
-      (lanes @ [ ("force_start_at_000", 1); ("compute_shader_en", 1) ])
-  in
+  let initiator = if k.wave32 then d.initiator_wave32 else d.initiator_wave64 in
   let rsrc1 = if major g = 11 then k.rsrc1 lor priv else k.rsrc1 in
   let granule =
     match g.gc with 9, 5, _ -> lds_granule_gfx950 | _ -> lds_granule
@@ -352,17 +335,17 @@ let dispatch g (k : Code_object.kernel) ~program ~scratch ~args
     @ [ W64 (Value args) ]
   in
   let zeros n = List.init n (fun _ -> Dword 0) in
-  set_reg pgm_lo [ W64 (Shift (Value program, address_shift)) ]
-  @ set_reg pgm_rsrc1 [ Dword rsrc1; Dword (k.rsrc2 lor (lds lsl lds_shift)) ]
-  @ set_reg pgm_rsrc3 [ Dword k.rsrc3 ]
-  @ set_reg tmpring_size [ Dword (Scratch.tmpring g k.private_segment) ]
-  @ set_reg scratch_base_lo [ W64 (Shift (Value scratch, address_shift)) ]
-  @ set_reg restart_x (zeros 3)
-  @ set_reg user_data_0 user
-  @ set_reg (at resource_limits) [ Dword limits ]
-  @ set_reg start_x
+  set_reg d.pgm_lo [ W64 (Shift (Value program, address_shift)) ]
+  @ set_reg d.pgm_rsrc1 [ Dword rsrc1; Dword (k.rsrc2 lor (lds lsl lds_shift)) ]
+  @ set_reg d.pgm_rsrc3 [ Dword k.rsrc3 ]
+  @ set_reg d.tmpring_size [ Dword (Scratch.tmpring g k.private_segment) ]
+  @ set_reg d.scratch_base_lo [ W64 (Shift (Value scratch, address_shift)) ]
+  @ set_reg d.restart_x (zeros 3)
+  @ set_reg d.user_data_0 user
+  @ set_reg d.resource_limits [ Dword limits ]
+  @ set_reg d.start_x
       (zeros 3 @ [ W32 (Value tx); W32 (Value ty); W32 (Value tz) ] @ zeros 2)
   @ packet Defs.packet3_dispatch_direct
-      [ W32 (Value gx); W32 (Value gy); W32 (Value gz); Dword initiator_word ]
+      [ W32 (Value gx); W32 (Value gy); W32 (Value gz); Dword initiator ]
 
 let run g p = acquire_mem g Agent @ p @ event_write Cs_partial_flush

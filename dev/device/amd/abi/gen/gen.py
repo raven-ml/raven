@@ -118,6 +118,14 @@ GC_REGISTERS = [
 GC_SEGMENTS = [f"GC_BASE__INST0_SEG{i}" for i in range(6)]
 GC_BASES = {9: "vega20_ip_offset.h", 10: "sienna_cichlid_ip_offset.h"}
 
+# The registers a dispatch sets, by the name of their address in the
+# dispatch's record.
+DISPATCH_REGISTERS = [("pgm_lo", "regCOMPUTE_PGM_LO"), ("pgm_rsrc1", "regCOMPUTE_PGM_RSRC1"),
+                      ("pgm_rsrc3", "regCOMPUTE_PGM_RSRC3"), ("tmpring_size", "regCOMPUTE_TMPRING_SIZE"),
+                      ("scratch_base_lo", "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO"),
+                      ("restart_x", "regCOMPUTE_RESTART_X"), ("user_data_0", "regCOMPUTE_USER_DATA_0"),
+                      ("resource_limits", "regCOMPUTE_RESOURCE_LIMITS"), ("start_x", "regCOMPUTE_START_X")]
+
 # PM4: the same in soc15d.h (GFX9) and nvd.h (GFX10 on).
 PM4_CONSTANTS = [
     "PACKET_TYPE3", "PACKET3_SET_SH_REG", "PACKET3_SET_SH_REG_START", "PACKET3_SET_SH_REG_END", "PACKET3_SET_UCONFIG_REG",
@@ -720,6 +728,7 @@ def generate(h):
     # Versions are constant constructors and lookups are functions, so that
     # nothing is built when a program starts.
     tags = {ver: "Gc_" + "_".join(map(str, ver)) for ver in GC_VERSIONS}
+    gc_regs = {}
     out += ["(* Registers *)", "",
             "type register = {", "  name : string;", "  offset : int;", "  segment : int;",
             "  fields : (string * (int * int)) list;", "}", "",
@@ -728,6 +737,7 @@ def generate(h):
     for ver in GC_VERSIONS:
         v = "_".join(map(str, ver))
         regs = gc_registers(h[gc_header(ver, "offset")], h[gc_header(ver, "sh_mask")])
+        gc_regs[ver] = regs
         out.append(f"(* GC {'.'.join(map(str, ver))}, its fields as (name, (lowest bit, highest bit)) *)")
         out.append("")
         for n, (off, seg, fields) in regs.items():
@@ -775,6 +785,48 @@ def generate(h):
         out += [f"    | {i} -> {ml_int(b)}" for i, b in enumerate(bases)]
         out.append("    | _ -> -1)")
     out += ["  else -1", ""]
+
+    # What a dispatch writes, resolved per GC version: no dispatch looks a
+    # register up by name or computes its address.
+    out += ["(* The registers a dispatch sets on a GC version: each one's address in",
+            "   PM4's register space; RESOURCE_LIMITS.WAVES_PER_SH as (lowest bit,",
+            "   highest bit); and DISPATCH_INITIATOR's word for waves of 32 and of 64",
+            "   lanes, with COMPUTE_SHADER_EN and FORCE_START_AT_000 set, and CS_W32_EN",
+            "   for 32 lanes where the GC has it. *)",
+            "type dispatch = {"]
+    out += [f"  {f} : int;" for f, _ in DISPATCH_REGISTERS]
+    out += ["  waves_per_sh : int * int;", "  initiator_wave32 : int;", "  initiator_wave64 : int;", "}", ""]
+
+    def base(major, segment):
+        b = [bs for m, _, bs in sorted(gens) if m <= major]
+        return b[-1][segment] if b and segment < len(b[-1]) else None
+
+    def word(fields, values):
+        w = 0
+        for f, v in values:
+            lo, hi = next((lo, hi) for n, lo, hi in fields if n == f)
+            w |= (v & ((1 << (hi - lo + 1)) - 1)) << lo
+        return w
+    dispatches = {}
+    for ver, regs in gc_regs.items():
+        names = [r for _, r in DISPATCH_REGISTERS] + ["regCOMPUTE_DISPATCH_INITIATOR"]
+        if any(r not in regs or base(ver[0], regs[r][1]) is None for r in names):
+            continue
+        v = "_".join(map(str, ver))
+        fs = [f"{f} = {ml_int(base(ver[0], regs[r][1]) + regs[r][0])}" for f, r in DISPATCH_REGISTERS]
+        limits = dict((n, (lo, hi)) for n, lo, hi in regs["regCOMPUTE_RESOURCE_LIMITS"][2])["waves_per_sh"]
+        init = regs["regCOMPUTE_DISPATCH_INITIATOR"][2]
+        on = [("force_start_at_000", 1), ("compute_shader_en", 1)]
+        w32 = on + ([("cs_w32_en", 1)] if any(n == "cs_w32_en" for n, _, _ in init) else [])
+        fs += [f"waves_per_sh = ({limits[0]}, {limits[1]})", f"initiator_wave32 = {ml_int(word(init, w32))}",
+               f"initiator_wave64 = {ml_int(word(init, on))}"]
+        out.append(f"let gc_{v}_dispatch = {{ " + "; ".join(fs) + " }")
+        dispatches[ver] = v
+    out += ["", "(* The registers a dispatch sets on a GC version, if it has them all. *)",
+            "let dispatch = function", "  | No_gc -> None"]
+    out += [f"  | {t} -> " + (f"Some gc_{dispatches[ver]}_dispatch" if ver in dispatches else "None")
+            for ver, t in tags.items()]
+    out.append("")
 
     # PM4
     kfd = constants(h["kfd_pm4_headers_ai.h"], PM4_ENUMS)
