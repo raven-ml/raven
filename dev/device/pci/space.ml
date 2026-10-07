@@ -34,7 +34,7 @@ let tlsf s =
       s.tlsf <- Some t;
       t
 
-let is_power_of_two n = n > 0 && n land (n - 1) = 0
+let is_pow2 n = n > 0 && n land (n - 1) = 0
 
 (* The largest power of two not above [n > 0]. *)
 let top_bit n =
@@ -44,7 +44,7 @@ let top_bit n =
 let alloc ?(align = 0x1000) s n =
   if n <= 0 then
     invalid_argf "Space.alloc: %d addresses, expected more than 0" n;
-  if not (is_power_of_two align) then
+  if not (is_pow2 align) then
     invalid_argf "Space.alloc: align %d is not a positive power of two" align;
   let align = Int.max (top_bit n) align in
   Mutex.protect s.lock (fun () -> Tlsf.alloc ~align (tlsf s) n)

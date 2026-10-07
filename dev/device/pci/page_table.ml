@@ -76,7 +76,7 @@ type t = {
 let table_share = 512
 let table_round = 1 lsl 20
 let round_up n a = (n + a - 1) / a * a
-let is_power_of_two n = n > 0 && n land (n - 1) = 0
+let is_pow2 n = n > 0 && n land (n - 1) = 0
 let aligned x a = x land (a - 1) = 0
 
 (* A table that cannot be allocated, inside a walk. *)
@@ -104,7 +104,7 @@ let take t tlsf ?(align = page) ?(zero = true) n =
     | None -> None
 
 let palloc ?(align = page) ?zero ?boot t n =
-  if n <= 0 || not (is_power_of_two align) then
+  if n <= 0 || not (is_pow2 align) then
     invalid_argf
       "Page_table.palloc: %d bytes aligned to %d, expected more than 0 bytes \
        and a power of two"
