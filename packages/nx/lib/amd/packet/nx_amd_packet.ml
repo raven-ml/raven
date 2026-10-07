@@ -58,27 +58,14 @@ let function_of = function
 (* GC registers *)
 
 module Gc = struct
-  type register = {
+  type register = D.register = {
     name : string;
     offset : int;
     segment : int;
     fields : (string * (int * int)) list;
   }
 
-  let tables =
-    List.map
-      (fun (v, regs) ->
-        ( v,
-          List.map
-            (fun (name, offset, segment, fields) ->
-              {
-                name;
-                offset;
-                segment;
-                fields = List.map (fun (f, lo, hi) -> (f, (lo, hi))) fields;
-              })
-            regs ))
-      D.gc_registers
+  let tables = D.gc_registers
 
   let family gc =
     List.fold_left

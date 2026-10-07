@@ -3581,6 +3581,10 @@ thread.
 
 ### Nx
 
+- Host operations on large tensors are fast again in programs that link
+  `nx.amd.packet`: its GC register table was built at startup and stayed live,
+  so each major cycle, which large buffers start every few operations, marked
+  47k more words (an eager `Nx.add` of 1Mi floats took 1.4 times as long).
 - `Nx_device_support.Remote_server.stop` ends a connected client's session on
   Windows, where it waited for the client to leave.
 - **Breaking:** `Nx_device.Buffer.create_file` creates a new file and returns

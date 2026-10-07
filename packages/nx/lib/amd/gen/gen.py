@@ -546,8 +546,13 @@ def generate(cache, pins, pin, outdir):
 
     # Registers
     regs = {(p, v): registers(kernel, p, v) for p, vs in REG_FILES.items() for v in vs}
-    pk = [*out, "(* The registers of each GC version: (name, offset, segment, fields as",
-          "   (name, lowest bit, highest bit)). *)", "let gc_registers = ["]
+    # GC's registers are records, which the compiler lays out as static data:
+    # a table built from them at initialisation would stay live in the heap,
+    # where each major cycle of every program that links nx marks it.
+    pk = [*out, "type register = {", "  name : string;", "  offset : int;", "  segment : int;",
+          "  fields : (string * (int * int)) list;", "}", "",
+          "(* The registers of each GC version, their fields as (name, (lowest bit,",
+          "   highest bit)). *)", "let gc_registers = ["]
     out.append("(* The registers of each block version: (name, offset, segment, fields as")
     out.append("   (name, lowest bit, highest bit)), but GC's, which nx.amd.packet holds. *)")
     out.append("let registers = [")
@@ -557,8 +562,12 @@ def generate(cache, pins, pin, outdir):
         keep = [(n, r) for n, r in rs.items() if any(p.fullmatch(n) for p in pats)]
         lines.append(f"  ( {json.dumps(prefix)}, {ml_version(ver)}, [" if prefix != "gc" else f"  ( {ml_version(ver)}, [")
         for n, (off, seg, fields) in keep:
-            fs = "; ".join(f"({json.dumps(f)}, {lo}, {hi})" for f, lo, hi in fields)
-            lines.append(f"      ({json.dumps(n)}, {ml_int(off)}, {seg}, [ {fs} ]);")
+            if prefix == "gc":
+                fs = "; ".join(f"({json.dumps(f)}, ({lo}, {hi}))" for f, lo, hi in fields)
+                lines.append(f"      {{ name = {json.dumps(n)}; offset = {ml_int(off)}; segment = {seg}; fields = [ {fs} ] }};")
+            else:
+                fs = "; ".join(f"({json.dumps(f)}, {lo}, {hi})" for f, lo, hi in fields)
+                lines.append(f"      ({json.dumps(n)}, {ml_int(off)}, {seg}, [ {fs} ]);")
         lines.append("    ] );")
     for (prefix, ver), rs in regs.items():
         emit(pk if prefix == "gc" else out, prefix, ver, rs)
