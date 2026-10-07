@@ -311,8 +311,13 @@ type t = {
   records : kernel option array;
 }
 
+(* The sections the GPU's memory holds: ELF's, but a kernel's shared memory,
+   which NVIDIA's compilers mark allocated though it is on chip. *)
+let held (s : Device_elf.section) =
+  Device_elf.allocated s && after ~prefix:shared s.name < 0
+
 let of_string obj =
-  let* o = Device_elf.of_string ~align:section_align obj in
+  let* o = Device_elf.of_string ~align:section_align ~held obj in
   let* () =
     (* The ELF image's end rounds up to a page, and a page follows. *)
     if o.size <= max_image - page then Ok ()

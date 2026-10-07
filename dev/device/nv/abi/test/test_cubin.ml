@@ -195,7 +195,14 @@ let nv_info ?(name = ".nv.info") ?(info = 0) contents =
 
 (* The ELF layout below a cubin *)
 
-let layout obj = require_ok ~pp:pp_error (Device_elf.of_string ~align:128 obj)
+(* The sections the GPU's memory holds, as cubin.mli states them. *)
+let held (s : Device_elf.section) =
+  Device_elf.allocated s
+  && not (String.starts_with ~prefix:".nv.shared." s.name)
+
+let layout obj =
+  require_ok ~pp:pp_error (Device_elf.of_string ~align:128 ~held obj)
+
 let page = 4096
 
 (* simple_add, as llvm-readelf reads it *)

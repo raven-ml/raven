@@ -28,8 +28,12 @@
       List.iter patch (Cubin.patches c ~base);
       b
     ]}
-    Reading a cubin copies none of its bytes: a loader writes them once, into
-    its destination.
+    The image of {!elf} holds what the GPU's memory holds of the cubin: its
+    code, constant banks and globals, a global without an initial value
+    ([.nv.global], which has no bytes in the object) as zeros. A kernel's shared
+    memory ([.nv.shared.name]) is on chip, of each block of its launches, and
+    stays out. Reading a cubin copies none of its bytes: a loader writes them
+    once, into its destination.
 
     Offsets are image offsets. *)
 
@@ -37,9 +41,10 @@ type t
 (** The type for cubins. *)
 
 val of_string : string -> (t, string) result
-(** [of_string obj] is the cubin [obj], its sections laid out at an alignment of
-    128 bytes ({!Device_elf.of_string}). The result is [Error msg], [msg] saying
-    which, if [obj] is not a well-formed ELF object, or if:
+(** [of_string obj] is the cubin [obj], the sections the GPU's memory holds laid
+    out at an alignment of 128 bytes ({!Device_elf.of_string}). The result is
+    [Error msg], [msg] saying which, if [obj] is not a well-formed ELF object,
+    or if:
     - its image ({!size}) would be longer than [2{^49}] bytes, more than the
       49-bit virtual addresses of GPUs before Hopper reach, which only a
       corrupted address makes;
