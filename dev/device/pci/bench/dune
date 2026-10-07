@@ -1,11 +1,11 @@
-; The process memory and the in-process transport are the tests' own.
+; The process memory is the tests' own.
 
 (copy_files# ../test/test_stubs.c)
 
 (executable
  (name bench_window)
  (modules bench_window)
- (libraries device_pci nx.device.support thumper)
+ (libraries device_pci thumper)
  (foreign_stubs
   (language c)
   (names test_stubs bench_window_stubs)
@@ -41,7 +41,7 @@
 (executable
  (name bench_memory)
  (modules bench_memory)
- (libraries device_pci nx.device.support thumper)
+ (libraries device_pci thumper)
  (foreign_stubs
   (language c)
   (names bench_memory_stubs)

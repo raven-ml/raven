@@ -11,16 +11,12 @@
    mapped window from OCaml, [c] stores from C through device_pci.h as a
    submission does, with [store32-bare] the same stores through a bare pointer,
    and [through] reaches a buffer through an in-process transport: the cost a
-   remote or USB machine adds above its wire.
-
-   [today/] makes the same accesses through nx.device's Mmio, whose remote
-   ranges call OCaml functions where a transport calls C ones. *)
+   remote or USB machine adds above its wire. *)
 
 module Window = Device_pci.Window
-module Mmio = Nx_device_support.Mmio
 
 external buffer : int -> int = "test_memory"
-external far : int -> int -> int = "test_far"
+external far : unit -> int = "bench_far"
 external store32 : Window.t -> int = "bench_store32" [@@noalloc]
 external store64 : Window.t -> int = "bench_store64" [@@noalloc]
 external store32_bare : int -> int = "bench_store32_bare" [@@noalloc]
@@ -69,56 +65,8 @@ let set64 w () =
     Window.set64 w (i * 8 mod span) x64
   done
 
-(* Mmio *)
-
-let mmio_get8 m () =
-  let s = ref 0 in
-  for i = 0 to accesses - 1 do
-    s := !s + Mmio.get8 m i
-  done;
-  !s
-
-let mmio_set8 m () =
-  for i = 0 to accesses - 1 do
-    Mmio.set8 m i i
-  done
-
-let mmio_get32 m () =
-  let s = ref 0 in
-  for i = 0 to accesses - 1 do
-    s := !s + Mmio.get32 m (i * 4 mod span)
-  done;
-  !s
-
-let mmio_set32 m () =
-  for i = 0 to accesses - 1 do
-    Mmio.set32 m (i * 4 mod span) i
-  done
-
-let mmio_get64 m () =
-  let s = ref 0L in
-  for i = 0 to accesses - 1 do
-    s := Int64.add !s (Mmio.get64 m (i * 8 mod span))
-  done;
-  Int64.to_int !s
-
-let mmio_set64 m () =
-  for i = 0 to accesses - 1 do
-    Mmio.set64 m (i * 8 mod span) x64
-  done
-
-(* Today's remote range over a buffer of its own. *)
-let mmio_far =
-  let b = Bytes.make span '\000' in
-  let read a n = Bytes.sub_string b (Nativeint.to_int a) n in
-  let write a s =
-    Bytes.blit_string s 0 b (Nativeint.to_int a) (String.length s)
-  in
-  Mmio.remote { read; write } 0n span
-
 let mapped = Window.v (buffer span) span
-let through = Window.through (Window.transport (far 0 span)) 0 span
-let mmio = Mmio.v (Nativeint.of_int (buffer span)) span
+let through = Window.through (Window.transport (far ())) 0 span
 let bench = Thumper.bench
 
 let () =
@@ -150,25 +98,5 @@ let () =
              bench "set32" (set32 through);
              bench "get64" (get64 through);
              bench "set64" (set64 through);
-           ];
-         Thumper.group "today"
-           [
-             Thumper.group "mapped"
-               [
-                 bench "get8" (mmio_get8 mmio);
-                 bench "set8" (mmio_set8 mmio);
-                 bench "get32" (mmio_get32 mmio);
-                 bench "set32" (mmio_set32 mmio);
-                 bench "get64" (mmio_get64 mmio);
-                 bench "set64" (mmio_set64 mmio);
-                 bench "write-4KiB" (fun () -> Mmio.write mmio 0 page);
-               ];
-             Thumper.group "through"
-               [
-                 bench "get32" (mmio_get32 mmio_far);
-                 bench "set32" (mmio_set32 mmio_far);
-                 bench "get64" (mmio_get64 mmio_far);
-                 bench "set64" (mmio_set64 mmio_far);
-               ];
            ];
        ])
