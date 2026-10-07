@@ -8,10 +8,7 @@
     A machine is this one ({!this}) or another one a {e transport} reaches
     ({!make}). Every function of this library works on either, and a driver
     never learns which. This library knows no transport: another library
-    implements one by giving the operations of {!ops}.
-
-    Taking a function of this machine needs Linux; elsewhere this machine has no
-    functions. *)
+    implements one by giving the operations of {!ops}. *)
 
 (** {1:addresses Bus addresses}
 

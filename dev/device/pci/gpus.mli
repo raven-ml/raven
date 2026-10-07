@@ -17,9 +17,9 @@
     the machine touches it. A GPU lost while driven over PCI opens again only
     after a {!reset}.
 
-    Opening and changing GPUs of one vendor are serialized. Every [Error] names
-    what to do where something can be done; the driver puts the GPU's name in
-    front. *)
+    Opening and changing GPUs of one vendor are serialized. The driver puts the
+    GPU's name in front of an [Error]'s message. A function given a GPU number
+    [i] raises [Invalid_argument] if [i < 0]. *)
 
 type t
 (** The type for a vendor's GPUs. *)
@@ -36,7 +36,13 @@ val buses : t -> Machine.t -> string list
 (** [buses g m] is the bus addresses of [g]'s GPUs on [m], in bus order: GPU [i]
     is the [i]th. *)
 
-(** {1:holds Opening} *)
+(** {1:holds Opening}
+
+    An open is a bracket. It holds the GPU and calls the driver's [f], which
+    starts the GPU. If [f] is [Ok _], the process keeps the hold until
+    {!release} or {!lose}; otherwise the open gives back what it took.
+    [Failure], [Sys_error] and [Unix.Unix_error] raised by [f] are [Error]s, so
+    a driver's open raises nothing the world causes. *)
 
 type hold
 (** The type for the process's hold on one GPU. *)
@@ -48,15 +54,11 @@ val open_kernel :
   t -> Machine.t -> int -> (hold -> ('a, string) result) -> ('a, string) result
 (** [open_kernel g m i f] is [f h], the process holding GPU [i] of [m] by [h]
     for its kernel driver to drive. If [f h] is [Ok _], the process reaches
-    [g]'s GPUs through their kernel driver from then on, and holds GPU [i] until
-    {!release} or {!lose}; otherwise [h] is released. [Failure], [Sys_error] and
-    [Unix.Unix_error] raised by [f] are [Error]s.
+    [g]'s GPUs through their kernel driver from then on.
 
     [Error why] without calling [f] if [m] is not {!Machine.this}, if [m] is not
     Linux, if the process reaches [g]'s GPUs over PCI, if [m] has no GPU [i],
-    saying how many it has, or if the process holds it already.
-
-    Raises [Invalid_argument] if [i < 0]. *)
+    saying how many it has, or if the process holds it already. *)
 
 val open_pci :
   t ->
@@ -65,18 +67,15 @@ val open_pci :
   (hold -> Function.t -> ('a, string) result) ->
   ('a, string) result
 (** [open_pci g m i f] is [f h fn], the process holding GPU [i] of [m] by [h]
-    and its function [fn] taken ({!Function.take}). If [f h fn] is [Ok _], the
-    process reaches [g]'s GPUs of {!Machine.this} over PCI from then on, if [m]
-    is that machine, and holds GPU [i] and [fn] until {!release} or {!lose};
-    otherwise [fn] and [h] are released. [Failure], [Sys_error] and
-    [Unix.Unix_error] raised by [f] are [Error]s.
+    and its function [fn] taken ({!Function.take}). The hold keeps [fn]. If
+    [f h fn] is [Ok _] and [m] is {!Machine.this}, the process reaches [g]'s
+    GPUs of this machine over PCI from then on.
 
     [Error why] without calling [f] if the process reaches [g]'s GPUs of
     {!Machine.this} through their kernel driver, if [m] has no GPU [i], saying
     how many it has, if the process holds it already, if it was lost over PCI
-    and not {!reset} since, or if its function cannot be taken.
-
-    Raises [Invalid_argument] if [i < 0]. *)
+    and not {!reset} since, or if its function cannot be taken, [why] being
+    {!Function.take}'s. *)
 
 val release : hold -> unit
 (** [release h] gives the GPU [h] holds back: it releases its function if
@@ -94,8 +93,10 @@ val lose : hold -> unit
 (** {1:changes Changes to the machine}
 
     These change the machine and persist after the process. Each refuses a GPU
-    the process holds. {!detach} and {!attach} change this machine's sysfs, so
-    they act on {!Machine.this} alone. *)
+    the process holds. {!detach} and {!attach} write this machine's
+    [/sys/bus/pci], so they act on {!Machine.this} alone, and need
+    [CAP_SYS_ADMIN] and write access to the files they write, which root has. An
+    [Error] for a file the process may not write names it. *)
 
 val detach : t -> int -> (unit, string) result
 (** [detach g i] detaches GPU [i] of {!Machine.this} from its kernel driver, so
@@ -105,28 +106,24 @@ val detach : t -> int -> (unit, string) result
     and makes its memory BAR the largest size the BAR and its bridge take. A
     function bound to [vfio-pci] keeps its BAR's size: Linux resizes no BAR of a
     function a driver holds. The kernel driver's users, a display among them,
-    lose the GPU until {!attach} or a reboot. It needs [CAP_SYS_ADMIN] and write
-    access to the files under [/sys/bus/pci] it writes, which root has.
+    lose the GPU until {!attach} or a reboot.
 
     [Error why] if [i] is no GPU, if the process holds it, if the process may
-    not write a file, naming it, or if the GPU is still not detached, saying
-    why, such as when an IOMMU translates its addresses and it is not bound to
-    [vfio-pci]. A memory BAR left small on [vfio-pci] is no error; the message
-    of the open that needs it names the unbind, detach and bind that enlarge it.
-
-    Raises [Invalid_argument] if [i < 0]. *)
+    not write a file, or if the GPU is still not detached, saying why, such as
+    when an IOMMU translates its addresses and it is not bound to [vfio-pci]. A
+    memory BAR left small on [vfio-pci] is no error; the message of the open
+    that needs it names the unbind, detach and bind that enlarge it. *)
 
 val attach : t -> int -> (unit, string) result
 (** [attach g i] gives GPU [i] of {!Machine.this} back to its kernel driver:
     Linux rescans the bus, which brings back the functions {!detach} removed,
-    and binds the GPU's driver. It needs [CAP_SYS_ADMIN] and write access to
-    [/sys/bus/pci/rescan] and [/sys/bus/pci/drivers_probe], which root has.
+    and binds the GPU's driver. It writes [/sys/bus/pci/rescan] and
+    [/sys/bus/pci/drivers_probe].
 
-    [Error why] if [i] is no GPU, if the process holds it, if it is bound to
-    [vfio-pci], naming the [driverctl] command that unbinds it, or if no driver
-    takes it, such as when the driver's module is not loaded.
-
-    Raises [Invalid_argument] if [i < 0]. *)
+    [Error why] if [i] is no GPU, if the process holds it, if the process may
+    not write a file, if it is bound to [vfio-pci], naming the [driverctl]
+    command that unbinds it, or if no driver takes it, such as when the driver's
+    module is not loaded. *)
 
 val reset :
   t -> Machine.t -> int -> (Function.t -> unit) -> (unit, string) result
@@ -135,6 +132,4 @@ val reset :
     again afterwards. [Failure] raised by [f] is an [Error].
 
     [Error why] if [i] is no GPU, if the process holds it, or if its function
-    cannot be taken.
-
-    Raises [Invalid_argument] if [i < 0]. *)
+    cannot be taken. *)

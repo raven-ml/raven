@@ -11,15 +11,13 @@
     each access is one volatile load or store of exactly its width, so a
     register is read and written once each and in program order; {!barrier}
     orders accesses for the processor and the bus. On another machine the range
-    is reached through a {e transport}, whose accesses complete in the order
-    they are made.
+    is reached through a {{!transports}transport}, and each domain's accesses
+    complete in the order it makes them. An access through a transport whose
+    machine failed raises [Failure] with {!Machine.failed}'s reason
+    ({{!Device_pci.errors}errors}).
 
     Values are little-endian. Nothing is checked beyond the range: the caller
     keeps the mapping alive, and an access after it is unmapped is undefined.
-
-    An access through a transport whose machine failed raises [Failure] with
-    {!Machine.failed}'s reason ({{!Device_pci.errors}errors}). An access to a
-    mapped window cannot fail.
 
     {b C.} A driver's C code reaches windows through [device_pci.h]:
     [device_pci_window_of] reads a window into a [struct device_pci_window], and
@@ -107,10 +105,8 @@ val bigarray :
 
     For the libraries that reach another machine. A transport is a
     [struct device_pci_transport] of C functions that read and write the
-    machine's addresses. They may block, run without the OCaml runtime, may be
-    called from several domains at once, and return [-1] once the transport
-    failed, whose reason its [failed] function then gives. Accesses made by one
-    domain complete in the order it makes them. *)
+    machine's addresses, declared in [device_pci.h], which states their
+    contract. The library calls them without holding the OCaml runtime. *)
 
 type transport
 (** The type for transports. *)

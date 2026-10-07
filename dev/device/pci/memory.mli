@@ -80,10 +80,8 @@ val alloc : ?uncached:bool -> t -> kind -> int -> memory option
     reach a block that fits.
 
     Raises [Failure] if system memory or a page table cannot be allocated,
-    having freed what it took, naming the limit as {!Function.alloc_dma} does.
-    The locked-memory limit and the IOMMU's mapping limit raise rather than
-    answer [None]: they are the machine's settings, which freeing memory rarely
-    cures and whose name the caller needs. *)
+    having freed what it took, naming what is missing as {!Function.alloc_dma}
+    does ({{!Device_pci.errors}errors}). *)
 
 val free : t -> memory -> unit
 (** [free m mem] unmaps and frees [mem] and returns its addresses.
@@ -97,8 +95,7 @@ val map_host : t -> int -> int -> (memory, string) result
 (** [map_host m a n] maps the [n] bytes at [a] of the GPU's machine for the GPU,
     at [a]: it {!Function.pin}s them and maps their pages, snooped and uncached.
     [Error why] if [a] is not on a page, lies outside the GPU's virtual
-    addresses, or cannot be pinned, naming the limit when the IOMMU holds
-    [dma_entry_limit] mappings. *)
+    addresses, or cannot be pinned, [why] being {!Function.pin}'s reason. *)
 
 val map_peer : t -> owner:t -> memory -> (memory, string) result
 (** [map_peer m ~owner mem] maps [mem], which {!alloc} allocated on the GPU of

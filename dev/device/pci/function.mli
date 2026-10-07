@@ -5,38 +5,30 @@
 
 (** PCI functions the process has taken.
 
-    A driver that drives a GPU itself takes the GPU's PCI function: it reads and
-    writes its configuration space, maps its BARs, the windows through which the
-    process reaches its registers and memory, waits for its interrupts, and
-    allocates the system memory it reaches by DMA. Taking a function changes
-    nothing on its machine; only {!Gpus.detach} and {!Gpus.attach} do.
+    A taken function gives the process what a kernel driver has of it: its
+    configuration space, its BARs mapped as windows on its registers and memory,
+    its interrupts and reset, and the system memory it reaches by DMA. Taking a
+    function changes nothing on its machine; only {!Gpus.detach} and
+    {!Gpus.attach} do.
 
-    A function of {!Machine.this} is taken one of two ways, which follow from
+    A function of {!Machine.this} is taken in one of two ways, which follow from
     the machine's state and which {!addressing} reports:
-    - {e Behind an IOMMU}, through VFIO, without root. An administrator binds
-      the function to [vfio-pci] ([driverctl set-override BUS vfio-pci]) on a
-      machine whose IOMMU is on and grants the user its group's file
-      [/dev/vfio/N]. The function then reaches only the memory the process maps
-      for it, at device addresses the process chooses. That memory counts
-      against the process's locked-memory limit ([ulimit -l]), and a container
-      holds at most [dma_entry_limit] mappings (a parameter of
-      [vfio_iommu_type1], 65,535 by default).
-    - {e Physically}, through [/sys/bus/pci], unbound from any driver. Mapping
-      its BARs needs write access to their files and a kernel that is not locked
-      down ([/sys/kernel/security/lockdown], which Secure Boot turns on in
-      several distributions); configuration space past its first 64 bytes needs
-      [CAP_SYS_ADMIN]; its interrupts, through VFIO's no-IOMMU mode, need it
-      bound to [vfio-pci] and [CAP_SYS_RAWIO]. The function reaches system
+    - {e Behind an IOMMU}, through VFIO, without root. An administrator turns
+      the IOMMU on, binds the function to [vfio-pci]
+      ([driverctl set-override BUS vfio-pci]) and grants the user its group's
+      file [/dev/vfio/N]. The function reaches only the memory the process maps
+      for it, at device addresses the process chooses.
+    - {e Physically}, through [/sys/bus/pci], with write access to its BAR files
+      and no driver bound other than [vfio-pci]. The function reaches system
       memory at its physical addresses, which the IOMMU, if any, must not
       translate.
 
-    A function of another machine is taken through its transport
+    {!take} lists what refuses a take; an operation that needs more states it. A
+    function of another machine is taken through its transport
     ({!Machine.make}), {!Physical}ly, and has no interrupts.
 
     One owner calls a function's operations at a time, except that {!pin},
-    {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain.
-    Accesses that fail under the process raise [Failure]
-    ({{!Device_pci.errors}errors}). *)
+    {!unpin}, {!alloc_dma} and {!free_dma} may be called from any domain. *)
 
 (** {1:functions Functions} *)
 
@@ -59,13 +51,18 @@ val take : Machine.t -> lock:string -> string -> (t, string) result
     [lock] name. A lock file that is a link or no regular file is refused.
     Taking a function changes nothing on [m].
 
-    [Error why] if [bus] is no function of [m], if it is bound to a driver other
-    than [vfio-pci] ({!Gpus.detach}), if another process holds it, if the IOMMU
-    translates its addresses and it is not bound to [vfio-pci], if the kernel is
-    locked down and it is not behind an IOMMU, or if the process may not access
-    it. [why] names what to change, such as the udev rule that grants
-    [/dev/vfio/N], or the [driverctl] commands that bind the other functions of
-    its IOMMU group to [vfio-pci]. *)
+    [Error why] if [bus] is no function of [m], if another process holds it, or
+    if neither way is open:
+    - it is bound to a driver other than [vfio-pci] ({!Gpus.detach});
+    - the IOMMU translates its addresses and it is not bound to [vfio-pci];
+    - it is not behind an IOMMU and the kernel is locked down
+      ([/sys/kernel/security/lockdown], which Secure Boot turns on in several
+      distributions), which refuses every mapping of a BAR;
+    - the process may not open its files.
+
+    [why] names what to change, such as the udev rule that grants [/dev/vfio/N],
+    or the [driverctl] commands that bind the other functions of its IOMMU group
+    to [vfio-pci]. *)
 
 val release : t -> unit
 (** [release f] gives [f] back: it unmaps its BAR windows, closes the process's
@@ -92,8 +89,9 @@ val config : t -> int -> int -> int
     configuration space, [n] being 1, 2 or 4.
 
     Raises [Invalid_argument] if [n] is not 1, 2 or 4, and [Failure] naming
-    [CAP_SYS_ADMIN] if [off] is past the first 64 bytes and [f], taken
-    physically, may not read them. *)
+    [CAP_SYS_ADMIN] if [off] is past the first 64 bytes, [f] was taken
+    physically and the process lacks that capability: Linux shows other readers
+    the first 64 bytes alone. *)
 
 val set_config : t -> int -> int -> int -> unit
 (** [set_config f off n x] writes the low [n] bytes of [x] at byte [off] of
@@ -127,8 +125,10 @@ val unmap : t -> Window.t -> unit
 
 val interrupt : t -> int -> bool
 (** [interrupt f ms] waits at most [ms] milliseconds for an interrupt of [f],
-    with the OCaml runtime released, and is [true] iff one arrived. Without
-    VFIO, or on another machine, it is [false] at once. *)
+    with the OCaml runtime released, and is [true] iff one arrived. Taken
+    physically, [f] has interrupts only bound to [vfio-pci] in VFIO's no-IOMMU
+    mode, whose files need [CAP_SYS_RAWIO]. Without interrupts, and on another
+    machine, it is [false] at once. *)
 
 val reset : t -> unit
 (** [reset f] resets [f] with the reset Linux has for it, and waits at most a
@@ -139,13 +139,17 @@ val reset : t -> unit
 
 (** {1:dma System memory}
 
-    The system memory of [f]'s machine that [f] reaches, at the addresses it
-    reaches it at, as (address, bytes) runs in order: physical addresses for a
-    function taken {!Physical}ly, one run per page unless contiguous; device
-    addresses behind an IOMMU, which the process maps for [f] alone, as one run.
-    Physical addresses need Linux, the privileges for [/proc/self/pagemap] and
-    [mlock], and the kernel setting [vm.compact_unevictable_allowed = 0],
-    without which the kernel may move locked pages. *)
+    A function reaches system memory of its machine at addresses given as
+    (address, bytes) {e runs}, in order.
+    - Behind an IOMMU they are device addresses the process maps for the
+      function alone, as one run. The memory counts against the process's
+      locked-memory limit ([ulimit -l]), and the function's VFIO container holds
+      at most [dma_entry_limit] mappings (a parameter of [vfio_iommu_type1],
+      65,535 by default).
+    - Taken {!Physical}ly, they are physical addresses, one run per page unless
+      contiguous. Reading them needs the privileges for [/proc/self/pagemap] and
+      [mlock], and the kernel setting [vm.compact_unevictable_allowed = 0],
+      without which the kernel may move locked pages. *)
 
 val alloc_dma :
   ?contiguous:bool -> ?va:int -> t -> int -> Window.t * (int * int) list
@@ -159,11 +163,9 @@ val alloc_dma :
 
     Raises [Invalid_argument] if [va] is not on a page, if [contiguous] memory
     is larger than 2 MiB, or if [va] is not on 2 MiB for a huge page. Raises
-    [Failure] naming the limit if the machine cannot: no free memory or huge
-    page, a missing privilege or setting, the locked-memory limit, or the
-    container's [dma_entry_limit]. Those limits are reached by use, yet raise: a
-    default [ulimit -l] would otherwise make every allocation fail without a
-    word of why. *)
+    [Failure] naming what is missing if the machine cannot: free memory or a
+    huge page, a privilege or setting, or room under the locked-memory limit or
+    [dma_entry_limit] ({{!Device_pci.errors}errors}). *)
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more.
@@ -177,9 +179,9 @@ val pin : t -> int -> int -> (int * int) list
     stays locked until each pin is {!unpin}ned, and behind an IOMMU [(a, n)]
     stays mapped for [f] as long.
 
-    Raises [Invalid_argument] if [a] is not on a page, and [Failure] if the
-    pages cannot be locked or their addresses read, or as {!alloc_dma} does for
-    the limits behind an IOMMU. *)
+    Raises [Invalid_argument] if [a] is not on a page, and [Failure] as
+    {!alloc_dma} does, or if the pages cannot be locked or their addresses read.
+*)
 
 val unpin : t -> int -> int -> unit
 (** [unpin f a n] releases one pin of the [n] bytes at [a].
