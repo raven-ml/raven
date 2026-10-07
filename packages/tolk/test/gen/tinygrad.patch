@@ -901,7 +901,7 @@ diff --git a/tinygrad/codegen/late/gater.py b/tinygrad/codegen/late/gater.py
 index 319a60c..612ddfa 100644
 --- a/tinygrad/codegen/late/gater.py
 +++ b/tinygrad/codegen/late/gater.py
-@@ -1,10 +1,25 @@
+@@ -1,10 +1,29 @@
  # this is a temporary intermediate step while we remove this index style
  from tinygrad.uop.ops import PatternMatcher, UPat, Ops
 -from tinygrad.dtype import Invalid, dtypes
@@ -909,10 +909,14 @@ index 319a60c..612ddfa 100644
 +from tinygrad.dtype import Invalid, dtypes, truncate
 +
 +def _holds(dt, w, v) -> bool:
-+  """the constant v of type w converts to dt and back unchanged, its sign and bits included"""
-+  def conv(t, x): return truncate.get(t, lambda y: y)(t.const(x))
++  """the constant v of type w converts to dt and back unchanged, its sign and bits included. a NaN or an infinity has no integer
++  value: it converts to no integer type"""
++  def conv(t, x):
++    if x is None or isinstance(x, float) and not math.isfinite(x) and not (dtypes.is_float(t) or dtypes.is_bool(t)): return None
++    return truncate.get(t, lambda y: y)(t.const(x))
 +  def same(x, y): return struct.pack("d", x) == struct.pack("d", y) if isinstance(x, float) and isinstance(y, float) else x == y
-+  return same(conv(w, conv(dt, v)), conv(w, v))
++  back, c = conv(w, conv(dt, v)), conv(w, v)
++  return back is not None and c is not None and same(back, c)
  
  def move_where_load(gate, l, a, w):
 -  return l.replace(src=(l.src[0], l.vconst_like(0) if a.is_invalid else l.const_like(a.val) if a.op is Ops.CONST else

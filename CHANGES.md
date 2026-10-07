@@ -186,6 +186,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.pad` of an integer tensor cast to a float, padded with a
+  value that is a NaN or an infinity in that float, compiles. It raised
+  `Invalid_argument "-inf has no integer value"`.
 - A compiled `Rune.iterate` or `Rune.scan` whose step calls `Nx.take` with a
   constant index tensor compiles. It raised `Invalid_argument "a
   dtypes.weakint cannot be stored"`.

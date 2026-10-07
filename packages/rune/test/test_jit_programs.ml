@@ -1423,6 +1423,13 @@ let found =
               ( None,
                 leaf I64 [| 1 |] [| 0. |],
                 Cast (F32, leaf F16 [| 1; 0 |] [||]) ) ) );
+    (* A float16 conversion of an int32 padded with a value that rounds to
+       [-inf] in float16: the gated int32 load asked for the pad's integer
+       value, which an infinity has none of. *)
+    Pad
+      ( [| (0, 1); (0, 0) |],
+        -0x1.ffe71f7658b66p+15,
+        Cast (F16, leaf I32 [| 2; 3 |] [| 0.; 0.; 0.; 0.; 0.; 0. |]) );
   ]
 
 (* [where (x < 0) x 0], which selects the zero at [x = -0.], the zero a captured

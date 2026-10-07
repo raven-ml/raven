@@ -3902,23 +3902,26 @@ stores through a pad.
   the other value of `where gate (cast (load ...)) a` the load's alternative,
   converted to the load's type: `a.cast(l.dtype)`, or the constant's value at
   that type.
-- **tolk:** `lib/codegen/late/gater.ml:14` (`holds`) and `:25`
+- **tolk:** `lib/codegen/late/gater.ml:17` (`holds`) and `:37`
   (`move_where_load`); `test/gen/tinygrad.patch`, which gives tinygrad the same
   rule before the goldens are generated.
 - **Differs:** the selection moves into the load only when the load's type
   holds its other value: when the load is not converted, when the value is a
   conversion of a value of the load's type, or when it is a constant that
-  converts to the load's type and back to its bits, sign included. Otherwise
-  the selection stays. tinygrad converted the value to the load's type and
-  back, so `where gate (float32 (load float16)) 0x1p-149` read 0 where the gate
-  failed, a non-integer or a `-0.` read through an integer load lost its
-  fraction or its sign, and a float32 above 65504 read through a float16 load
-  read infinity.
+  converts to the load's type and back to its bits, sign included. A NaN or
+  an infinity converts to no integer type, so it never moves into an integer
+  load, and neither does an integer that a float load rounds to an infinity.
+  Otherwise the selection stays. tinygrad converted the value to the load's
+  type and back, so `where gate (float32 (load float16)) 0x1p-149` read 0
+  where the gate failed, a non-integer or a `-0.` read through an integer
+  load lost its fraction or its sign, and a float32 above 65504 read through
+  a float16 load read infinity.
 - **Reason:** (b). rune's pad of a widened float16 with a float32 pad value
   (`Nx.pad` of `Nx.cast Nx.float32 x`), read through a slice, compiled to such
   a selection: a pad of `0x1p-149` read 0, where eager reads `0x1p-149`.
 - **Pinned by:** the Gater suite (`test/codegen/late/gater`):
   `pm_move_gates_from_index › a selection of a converted gated load keeps its
+  value` and `laws › a moved selection of a converted gated load keeps its
   value`, and the cases `where_of_cast` and `where_of_half` of
   `moves_output.golden`, from the patched tinygrad; rune's Rune.jit programs
   suite: `a compiled program › computes eager's bits`, whose examples hold the

@@ -11,14 +11,25 @@ open Shape
 let zero = `Int Bigint.zero
 
 (* [holds dt w c] is [true] iff the constant [c] of type [w] converts to [dt]
-   and back unchanged, its sign and bits included. *)
+   and back unchanged, its sign and bits included. A NaN or an infinity has no
+   integer value: it converts to no integer type, so it holds in none, and an
+   integer that rounds to an infinity in a float [dt] does not come back. *)
 let holds dt w c =
-  let there =
-    match Dtype.const dt c with
-    | #Dtype.value as v -> (Dtype.truncate dt v :> Dtype.const)
-    | `Invalid -> `Invalid
+  let convert dt (c : Dtype.const) =
+    match c with
+    | `Float x
+      when not (Float.is_finite x || Dtype.is_float dt || Dtype.is_bool dt) ->
+        None
+    | c -> Some (Dtype.const dt c)
   in
-  Dtype.equal_const (Dtype.const w there) (Dtype.const w c)
+  let there =
+    match convert dt c with
+    | Some (#Dtype.value as v) -> Some (Dtype.truncate dt v :> Dtype.const)
+    | there -> there
+  in
+  match (Option.bind there (convert w), convert w c) with
+  | Some back, Some c -> Dtype.equal_const back c
+  | _ -> false
 
 (* The load reads the selection's other value where its gate fails, as a value
    of its own type, which the conversion after it then converts: only a value
