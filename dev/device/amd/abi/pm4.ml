@@ -285,8 +285,9 @@ let lds_granule = 512
    address with SWIZZLE_ENABLE, bit 63, the most records, and a word of its
    format and lane stride. No primary source gives these words: ROCR-Runtime
    dispatches through AQL, whose queue descriptor the CP hands kernels
-   ({!Scratch.descriptor}). They are the words today's PM4 dispatches write,
-   unverified (plan decision 24); only GFX9 and GFX10 kernels read them. *)
+   ({!Scratch.descriptor}). These are the words tinygrad's PM4 dispatch writes
+   (tinygrad/runtime/ops_amd.py), unverified on hardware; only GFX9 and GFX10
+   kernels read them. *)
 let swizzle_enable = Int64.min_int
 let num_records = 0xffff_ffff
 let scratch_format = 0x20c14000
