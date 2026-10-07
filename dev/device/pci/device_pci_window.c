@@ -138,6 +138,10 @@ value caml_device_pci_bigarray(value a, value n) {
 
 #define TRANSPORT(v) ((const struct device_pci_transport *)Long_val(v))
 
+/* Copies of at most this many bytes, registers among them, stay on the C
+   stack; longer ones are allocated. */
+#define SMALL 64
+
 static void transport_failed(const struct device_pci_transport *tr) {
   const char *why = tr->failed(tr->ctx);
   caml_failwith(why ? why : "the machine's transport failed");
@@ -149,16 +153,14 @@ value caml_device_pci_transport_read(value tr, value a, value n) {
   const struct device_pci_transport *t = TRANSPORT(tr);
   uint64_t at = (uint64_t)Long_val(a);
   size_t len = Long_val(n);
-  char *buf = caml_stat_alloc(len ? len : 1);
+  char small[SMALL];
+  char *buf = len <= SMALL ? small : caml_stat_alloc(len);
   caml_release_runtime_system();
   int r = t->read(t->ctx, at, buf, len);
   caml_acquire_runtime_system();
-  if (r != 0) {
-    caml_stat_free(buf);
-    transport_failed(t);
-  }
-  s = caml_alloc_initialized_string(len, buf);
-  caml_stat_free(buf);
+  if (r == 0) s = caml_alloc_initialized_string(len, buf);
+  if (buf != small) caml_stat_free(buf);
+  if (r != 0) transport_failed(t);
   CAMLreturn(s);
 }
 
@@ -167,12 +169,13 @@ value caml_device_pci_transport_write(value tr, value a, value s) {
   const struct device_pci_transport *t = TRANSPORT(tr);
   uint64_t at = (uint64_t)Long_val(a);
   size_t len = caml_string_length(s);
-  char *buf = caml_stat_alloc(len ? len : 1);
+  char small[SMALL];
+  char *buf = len <= SMALL ? small : caml_stat_alloc(len);
   memcpy(buf, String_val(s), len);
   caml_release_runtime_system();
   int r = t->write(t->ctx, at, buf, len);
   caml_acquire_runtime_system();
-  caml_stat_free(buf);
+  if (buf != small) caml_stat_free(buf);
   if (r != 0) transport_failed(t);
   CAMLreturn(Val_unit);
 }
