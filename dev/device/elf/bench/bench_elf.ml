@@ -11,9 +11,11 @@
 
 module Elf = Device_elf
 
-(* Copied at 832a8fcb6: unary.float16.co from
-   packages/nx/lib/amd/kernels/gfx12-generic/, simple_add_sm89.cubin from
-   packages/tolk/test/runtime/ops_nv/. host.c says how host_arm64.o was
+(* Copies of the repository's objects: unary.float16.co of
+   packages/nx/lib/amd/kernels/gfx12-generic/, which `uv run
+   packages/nx/lib/amd/kernels/gen.py` compiles from src/ there, and
+   simple_add_sm89.cubin of packages/tolk/test/runtime/ops_nv/, NVRTC 12.8's
+   sm_89 code of simple_add.cu there. host.c says how host_arm64.o was
    compiled. *)
 
 let read path = In_channel.with_open_bin path In_channel.input_all

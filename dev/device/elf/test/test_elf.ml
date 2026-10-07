@@ -1417,10 +1417,14 @@ let law_lookup c =
 
 (* Corrupted objects *)
 
-(* Real objects, copied at 832a8fcb6: simple_add_sm89.cubin from
-   packages/tolk/test/runtime/ops_nv/, simple_add_gfx1100.hsaco and
-   lds_gfx1100.o from packages/tolk/test/gen/runtime/ops_amd_fixtures/,
-   unfold.8.co from packages/nx/lib/amd/kernels/gfx12-generic/. host.c says how
+(* Real objects, copies of the repository's. simple_add_sm89.cubin is
+   packages/tolk/test/runtime/ops_nv/'s, NVRTC 12.8's sm_89 code of
+   simple_add.cu there. simple_add_gfx1100.hsaco and lds_gfx1100.o are
+   packages/tolk/test/gen/runtime/ops_amd_fixtures/'s: the first compiled from
+   HIP by comgr, the second LLVM 21's AMDGPU code of the lds module of
+   kernels.ll there. unfold.8.co is
+   packages/nx/lib/amd/kernels/gfx12-generic/'s, which `uv run
+   packages/nx/lib/amd/kernels/gen.py` compiles from src/ there. host.c says how
    host_x86_64.o and host_aarch64.o were compiled. *)
 
 let fixture path = In_channel.with_open_bin path In_channel.input_all
