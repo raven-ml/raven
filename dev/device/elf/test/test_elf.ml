@@ -22,6 +22,7 @@ let sht_rel = 9
 let sht_dynsym = 11
 let sht_init_array = 14
 let sht_symtab_shndx = 18
+let sht_x86_64_unwind = 0x70000001
 let shf_write = 0x1
 let shf_alloc = 0x2
 let shf_execinstr = 0x4
@@ -1932,6 +1933,20 @@ let test_host (target, call, addend, table) =
     [ sym_entry "ext" Undefined ]
     (List.map (fun (r : Elf.relocation) -> r.symbol) calls)
 
+(* x86_64's unwind tables are allocated program data of their own type: the
+   image holds them, and their relocations patch it. *)
+let test_unwind () =
+  let o = read (fixture "host_unwind_x86_64.o") in
+  invariants o;
+  let eh = section_named o ".eh_frame" in
+  equal ~msg:"its type" int sht_x86_64_unwind eh.kind;
+  let off = require_some ~msg:"the image holds .eh_frame" eh.offset in
+  let into_eh (r : Elf.relocation) =
+    r.offset >= off && r.offset < off + eh.size
+  in
+  equal ~msg:"its relocations, one per function" int 8
+    (List.length (List.filter into_eh o.relocations))
+
 (* Each test's limit, in seconds. *)
 let timeout = 30.
 
@@ -2025,5 +2040,10 @@ let () =
                "host objects"
                [ ("x86_64", 4, -4, 0x80); ("aarch64", 283, 0, 0) ]
                test_host;
+             xfail
+               ~reason:
+                 "an x86_64 object's .eh_frame (SHT_X86_64_UNWIND) stays out \
+                  of the image"
+               (test "an x86_64 object's unwind tables" test_unwind);
            ];
        ]
