@@ -51,6 +51,11 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~accept ~shrink trial (s.x, s.fx)
     in
+    (* A step below the floats' resolution is no decrease. *)
+    let found =
+      Nx.logical_and found
+        (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal x s.x)))
+    in
     let st = settle s.Search.st (Nx.logical_not found) Stalled in
     ({ s with x; fx; st; n = Nx.add s.n tries }, ())
   in
@@ -293,5 +298,129 @@ let solve x m ~linear ~tol ~budget f guess =
          (Linear.name linear) Tol.pp tol budget)
     ~spent:{ used = s.k; unit = "iterations"; budget }
     ~fix ~value ~error:(unravel s.e) ~status:s.st ~evaluations:s.n
+    ~facts:[ Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q) ]
+    ()
+
+(* Lanes
+
+   Newton's search over the leading axes of a tensor, each index a system of the
+   trailing axis's [k] unknowns: the search of {!solve}'s Newton, whose
+   reductions are already per lane, with its linear solve a batched [k × k]
+   direct solve of the caller's Jacobian, checked as {!Linear.dense} checks its
+   solution. The answer's derivative probes the residual's derivative with the
+   [k] basis vectors in every lane at once, which gives each lane's block,
+   solves the blocks, and checks the solution with one more product: where it
+   misses, [f] read another lane. *)
+
+let lanes_shape x = Array.sub (Nx.shape x) 0 (Nx.ndim x - 1)
+
+(* [a] of shape [lanes @ [k; k]] solved against [b] of shape [lanes @ [k]], the
+   lanes flattened so that every right-hand side is one vector. *)
+let batched a b =
+  let k = Nx.dim (-1) b in
+  let a' = Nx.reshape [| -1; k; k |] a and b' = Nx.reshape [| -1; k; 1 |] b in
+  Nx.reshape (Nx.shape b) (Nx.solve a' b')
+
+let product a u =
+  Nx.squeeze ~axes:[ -1 ] (Nx.matmul a (Nx.unsqueeze ~axes:[ -1 ] u))
+
+(* The backward error of an LU solve of [a u = b], per lane. *)
+let backward_bound a u b =
+  let k = Nx.dim (-1) b in
+  let frobenius = Nx.sqrt (Nx.sum ~axes:[ -2; -1 ] (Nx.square a)) in
+  Nx.mul_s
+    (Nx.add (Nx.mul frobenius (Search.norm u)) (Search.norm b))
+    (16. *. float k *. Num.eps (Nx.dtype b))
+
+let blocks fn op b =
+  let k = Nx.dim (-1) b in
+  let basis j =
+    Nx.broadcast_to (Nx.shape b)
+      (Nx.cast (Nx.dtype b)
+         (Nx.equal (Nx.arange Nx.int32 0 k 1)
+            (Nx.scalar Nx.int32 (Int32.of_int j))))
+  in
+  let a = Nx.stack ~axis:(-1) (List.init k (fun j -> op (basis j))) in
+  let u = batched a b in
+  let miss = Search.norm (Nx.sub (op u) b) in
+  let fine =
+    Nx.logical_or
+      (Nx.logical_not (Search.finite u))
+      (Nx.less_equal miss (Nx.mul_s (backward_bound a u b) 4.))
+  in
+  Nx.check Nx.Ptree.unit fine () (fun i () ->
+      Invalid_argument
+        (Printf.sprintf
+           "%s: the derivative at lane [%s] is not per lane: f reads other \
+            lanes than its argument's own"
+           fn
+           (String.concat ", " (Array.to_list (Array.map string_of_int i)))));
+  u
+
+let lanes ~tol ~budget ~jacobian f guess =
+  let fn = "Jera.System.lanes" in
+  if budget < 1 then
+    invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
+  if Nx.ndim guess < 1 then
+    invalid_arg
+      (fn ^ ": the guess is a scalar; its last axis holds the unknowns");
+  let shape = Nx.shape guess in
+  let lanes = lanes_shape guess and k = shape.(Array.length shape - 1) in
+  let f v =
+    let r = f v in
+    if Nx.shape r <> shape then
+      invalid_arg
+        (Printf.sprintf "%s: f returned shape %s for a guess of shape %s" fn
+           (Num.shape (Nx.shape r))
+           (Num.shape shape));
+    r
+  in
+  let jacobian v =
+    let j = jacobian v in
+    let expected = Array.append lanes [| k; k |] in
+    if Nx.shape j <> expected then
+      invalid_arg
+        (Printf.sprintf "%s: jacobian returned shape %s, not %s" fn
+           (Num.shape (Nx.shape j))
+           (Num.shape expected));
+    j
+  in
+  let residual v = Rune.detach (f v) in
+  let x0 = Rune.detach guess in
+  let direction x fx =
+    let a = Rune.detach (jacobian x) in
+    let delta = batched a (Nx.neg fx) in
+    let jd = product a delta in
+    let miss = Search.norm (Nx.add jd fx) in
+    let failed =
+      Nx.logical_or
+        (Nx.logical_not
+           (Search.finite (Nx.reshape (Array.append lanes [| k * k |]) a)))
+        (Nx.logical_not
+           (Nx.less_equal miss (backward_bound a delta (Nx.neg fx))))
+    in
+    (delta, jd, failed)
+  in
+  let s = Search.start x0 (residual x0) in
+  let s =
+    if k = 0 then
+      { s with st = Nx.full Nx.int32 lanes (Solution.code Converged) }
+    else
+      newton_search ~tol ~budget
+        ~trials:(Num.precision (Nx.dtype guess))
+        ~residual ~direction s
+  in
+  let ok = Nx.equal_s s.st (Solution.code Converged) in
+  let ok_k = Nx.broadcast_to shape (Nx.unsqueeze ~axes:[ -1 ] ok) in
+  let estimate = s.x in
+  let value =
+    Rune.root Nx.Ptree.tensor ~linear_solve:(blocks fn)
+      ~residual:(fun v -> Nx.where ok_k (f v) (Nx.sub v estimate))
+      (fun () -> estimate)
+  in
+  Solution.v ~fn
+    ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
+    ~spent:{ used = Nx.broadcast_to lanes s.k; unit = "iterations"; budget }
+    ~fix ~value ~error:s.e ~status:s.st ~evaluations:s.n
     ~facts:[ Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q) ]
     ()

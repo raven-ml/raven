@@ -33,6 +33,17 @@ let system =
   |> with_pp (fun ppf (a, z) ->
       Format.fprintf ppf "a = %a@ z = %a" Nx.pp a Nx.pp z)
 
+(* [system] with exactly five unknowns. *)
+let five =
+  let open Gen in
+  (let+ a = list ~size:(constant 25) (float_range (-1.) 1.)
+   and+ z = list ~size:(constant 5) (float_range (-2.) 2.) in
+   let a = Nx.create f64 [| 5; 5 |] (Array.of_list a) in
+   ( Nx.add a (Nx.mul_s (Nx.eye f64 5) 7.),
+     Nx.create f64 [| 5 |] (Array.of_list z) ))
+  |> with_pp (fun ppf (a, z) ->
+      Format.fprintf ppf "a = %a@ z = %a" Nx.pp a Nx.pp z)
+
 let field a b x = Nx.sub (Nx.add (Nx.matmul a x) (Nx.sin x)) b
 let rhs a z = Nx.add (Nx.matmul a z) (Nx.sin z)
 let jacobian a x = Nx.add a (Nx.diag (Nx.cos x))
@@ -232,6 +243,23 @@ let law_tests =
         in
         let ok = List.map converged [ 2.; 0.8; 0.5 ] in
         cover "a wrong derivative converged" (List.exists Fun.id ok));
+    prop
+      "steps twice too long, which the line search halves onto the zero, never \
+       converge early (law 2)"
+      five (fun (a, z) ->
+        (* The undamped map x + 2δ does not contract, whatever the damped steps
+           do: a solve that converges is at the zero to its tolerance. *)
+        let f = field a (rhs a z) in
+        let s =
+          System.solve one
+            (System.newton ~derivative:(fun x dx ->
+                 Nx.mul_s (derivative f x dx) 0.5))
+            ~linear:Linear.dense
+            ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14)
+            ~budget:60 f (Nx.zeros_like z)
+        in
+        if Nx.item [] (Solution.ok s) then
+          equal (Oracle.tensor ~rel:1e-10 ~abs:1e-12 ()) z (Solution.get s));
     test "a lane that did not converge has a zero derivative (law 5)" (fun () ->
         let g =
           Rune.grad'
@@ -268,6 +296,158 @@ let law_tests =
           (Rune.vmap' solve bs));
   ]
 
+(* Lanes *)
+
+(* [l] lanes of systems [a x + sin x = b] of [k] unknowns each, built around
+   zeros [z], with the same diagonally dominant [a] as [system]. *)
+let lane_systems =
+  let open Gen in
+  (let* l = int_range 0 5 in
+   let* k = int_range 1 3 in
+   let+ a = list ~size:(constant (l * k * k)) (float_range (-1.) 1.)
+   and+ z = list ~size:(constant (l * k)) (float_range (-2.) 2.) in
+   let a = Nx.create f64 [| l; k; k |] (Array.of_list a) in
+   let a = Nx.add a (Nx.mul_s (Nx.eye f64 k) (Float.of_int (k + 2))) in
+   (a, Nx.create f64 [| l; k |] (Array.of_list z)))
+  |> with_pp (fun ppf (a, z) ->
+      Format.fprintf ppf "a = %a@ z = %a" Nx.pp a Nx.pp z)
+
+let apply a x =
+  Nx.squeeze ~axes:[ -1 ] (Nx.matmul a (Nx.unsqueeze ~axes:[ -1 ] x))
+
+let lane_field a b x = Nx.sub (Nx.add (apply a x) (Nx.sin x)) b
+
+let lane_jacobian a x =
+  Nx.add a
+    (Nx.mul (Nx.eye f64 (Nx.dim (-1) x)) (Nx.unsqueeze ~axes:[ -1 ] (Nx.cos x)))
+
+let in_lanes ?(budget = 50) a b guess =
+  System.lanes ~tol:tight ~budget ~jacobian:(lane_jacobian a) (lane_field a b)
+    guess
+
+let lane_tests =
+  [
+    prop "each lane's zero is the one its system is built around" lane_systems
+      (fun (a, z) ->
+        cover "no lane" (Nx.dim 0 z = 0);
+        cover "several lanes of several unknowns"
+          (Nx.dim 0 z > 1 && Nx.dim 1 z > 1);
+        let b = apply a z |> Nx.add (Nx.sin z) in
+        equal near z (Solution.get (in_lanes a b (Nx.zeros_like z))));
+    prop "lanes are vmap of solve per lane, bit for bit (law 3)" lane_systems
+      (fun (a, z) ->
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let one (a, (b, x0)) =
+          let f x = Nx.sub (Nx.add (Nx.matmul a x) (Nx.sin x)) b in
+          let jac x = Nx.add a (Nx.mul (Nx.eye f64 (Nx.dim 0 x)) (Nx.cos x)) in
+          Solution.get
+            (System.solve one
+               (System.newton ~derivative:(fun x dx -> Nx.matmul (jac x) dx))
+               ~linear:Linear.dense ~tol:tight ~budget:50 f x0)
+        in
+        if Nx.dim 0 z > 0 then
+          equal (Oracle.tensor ())
+            (Rune.vmap
+               Nx.Ptree.(pair tensor (pair tensor tensor) @-> returns tensor)
+               one
+               (a, (b, Nx.zeros_like z)))
+            (Solution.get (in_lanes a b (Nx.zeros_like z))));
+    test "leading axes are lanes, whatever their number" (fun () ->
+        let a =
+          Nx.broadcast_to [| 2; 3; 2; 2 |]
+            (Nx.create f64 [| 2; 2 |] [| 4.; 1.; 1.; 3. |])
+        in
+        let z = Nx.reshape [| 2; 3; 2 |] (Nx.linspace f64 (-1.) 1. 12) in
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        equal near z (Solution.get (in_lanes a b (Nx.zeros_like z))));
+    test "a lane with no zero fails alone, with a zero derivative" (fun () ->
+        (* Lane 1 is x² + 1 = 0 in its first unknown. *)
+        let f c x =
+          let first = Nx.slice [ Nx.A; Nx.R (0, 1) ] x in
+          let lift = Nx.reshape [| 2; 1 |] c in
+          Nx.concatenate ~axis:1
+            [ Nx.add (Nx.square first) lift; Nx.slice [ Nx.A; Nx.R (1, 2) ] x ]
+        in
+        let jacobian x =
+          let first = Nx.mul_s (Nx.slice [ Nx.A; Nx.I 0 ] x) 2. in
+          let zero = Nx.zeros_like first and one = Nx.ones_like first in
+          Nx.reshape [| 2; 2; 2 |] (Nx.stack ~axis:1 [ first; zero; zero; one ])
+        in
+        let solve c =
+          System.lanes ~tol:tight ~budget:30 ~jacobian (f c)
+            (Nx.create f64 [| 2; 2 |] [| 0.5; 0.5; 0.5; 0.5 |])
+        in
+        let c = vec [| -4.; 1. |] in
+        let s = solve c in
+        equal (array bool) [| true; false |] (Nx.to_array (Solution.ok s));
+        equal
+          (Oracle.tensor ~rel:1e-10 ())
+          (vec [| 2.; 0. |])
+          (Nx.get [ 0 ] (Solution.best s));
+        (* d x / d c = −1 / (2x) in lane 0, zero in the failed lane. *)
+        equal
+          (Oracle.tensor ~rel:1e-9 ~abs:0. ())
+          (vec [| -0.25; 0. |])
+          (Rune.grad'
+             (fun c ->
+               Nx.sum (Nx.slice [ Nx.A; Nx.I 0 ] (Solution.best (solve c))))
+             c));
+    prop "grad in b is each lane's implicit derivative J⁻ᵀ 1 (law 1)"
+      lane_systems (fun (a, z) ->
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let expected =
+          if Nx.dim 0 z = 0 then z
+          else
+            Nx.squeeze ~axes:[ -1 ]
+              (Nx.solve
+                 (Nx.transpose ~axes:[ 0; 2; 1 ] (lane_jacobian a z))
+                 (Nx.ones f64 [| Nx.dim 0 z; Nx.dim 1 z; 1 |]))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-8 ~abs:1e-12 ())
+          expected
+          (Rune.grad'
+             (fun b -> Nx.sum (Solution.get (in_lanes a b (Nx.zeros_like z))))
+             b));
+    test "a field that mixes lanes raises in the derivative" (fun () ->
+        let mixed b x =
+          Nx.sub (Nx.add x (Nx.mul_s (Nx.flip ~axes:[ 0 ] x) 0.1)) b
+        in
+        let jacobian x =
+          Nx.broadcast_to
+            (Array.append (Nx.shape x) [| 1 |])
+            (Nx.ones f64 [| 1 |])
+        in
+        invalid_with "is not per lane" (fun () ->
+            Rune.grad'
+              (fun b ->
+                (* A cotangent that differs between lanes, which a mixing
+                   derivative's blocks cannot solve. *)
+                Nx.sum
+                  (Nx.mul
+                     (Nx.create f64 [| 2; 1 |] [| 1.; 2. |])
+                     (Solution.best
+                        (System.lanes ~tol:tight ~budget:30 ~jacobian (mixed b)
+                           (Nx.zeros f64 [| 2; 1 |])))))
+              (Nx.create f64 [| 2; 1 |] [| 1.; 2. |])));
+    test "compiled lanes equal eager" (fun () ->
+        let a =
+          Nx.broadcast_to [| 3; 2; 2 |]
+            (Nx.create f64 [| 2; 2 |] [| 4.; 1.; 1.; 3. |])
+        in
+        let f b = Solution.get (in_lanes a b (Nx.zeros f64 [| 3; 2 |])) in
+        let b = Nx.reshape [| 3; 2 |] (Nx.linspace f64 (-2.) 2. 6) in
+        equal (Oracle.tensor ()) (f b) (Rune.jit' f b));
+    test "invalid arguments raise" (fun () ->
+        invalid_with "Jera.System.lanes: the guess is a scalar" (fun () ->
+            System.lanes ~tol:tight ~budget:5 ~jacobian:Fun.id Fun.id
+              (scalar 1.));
+        invalid_with "Jera.System.lanes: jacobian returned shape [2,1]"
+          (fun () ->
+            System.lanes ~tol:tight ~budget:5 ~jacobian:Fun.id Fun.id
+              (Nx.zeros f64 [| 2; 1 |])));
+  ]
+
 let () =
   exit
     (run "Jera.System"
@@ -275,5 +455,6 @@ let () =
          group "newton" newton_tests;
          group "broyden" broyden_tests;
          group "anderson" anderson_tests;
+         group "lanes" lane_tests;
          group "laws" law_tests;
        ])

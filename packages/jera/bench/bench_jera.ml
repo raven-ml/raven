@@ -490,6 +490,39 @@ let anderson_tanh =
     rows = all;
   }
 
+(* The inverse of u + 0.1 |u|² u = x at 10⁴ points of the plane, one system of
+   two unknowns per lane. *)
+let lanes =
+  {
+    id = "system-lanes-inverse-10k";
+    f =
+      (fun x ->
+        let d u =
+          Nx.mul_s
+            (Nx.mul u (Nx.sum ~axes:[ -1 ] ~keepdims:true (Nx.square u)))
+            0.1
+        in
+        let jacobian u =
+          let s = Nx.sum ~axes:[ -1 ] ~keepdims:true (Nx.square u) in
+          Nx.add
+            (Nx.mul (Nx.eye f64 2)
+               (Nx.unsqueeze ~axes:[ -1 ] (Nx.add_s (Nx.mul_s s 0.1) 1.)))
+            (Nx.mul_s
+               (Nx.mul
+                  (Nx.unsqueeze ~axes:[ -1 ] u)
+                  (Nx.unsqueeze ~axes:[ -2 ] u))
+               0.2)
+        in
+        Solution.get
+          (System.lanes
+             ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14)
+             ~budget:30 ~jacobian
+             (fun u -> Nx.sub (Nx.add u (d u)) x)
+             x));
+    x = (fun () -> Nx.reshape [| 10_000; 2 |] (Nx.linspace f64 (-2.) 2. 20_000));
+    rows = all;
+  }
+
 (* Minima *)
 
 (* The extended Rosenbrock function on 64 unknowns, shifted by the argument [c]:
@@ -627,6 +660,7 @@ let workloads =
     newton_bratu;
     broyden_dense;
     anderson_tanh;
+    lanes;
     lbfgs_rosenbrock;
     bfgs_convex;
     newton_convex;

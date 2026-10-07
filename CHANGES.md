@@ -1053,6 +1053,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Add `System.lanes`, Newton's method over the leading axes of a tensor:
+  each lane is a system of the last axis's unknowns with its own status, a
+  `k × k` direct solve of the caller's Jacobian per step, and its own implicit
+  derivative, so many small systems solve without `Rune.vmap`.
 - Add `Ode.kvaerno5 ?mass ~linear derivative`, Kværnø's L-stable ESDIRK
   5(4) for stiff fields and, with a singular mass, index-1 DAEs. Each attempt
   prepares `M − γhJ` once with `~linear`; each stage is a simplified Newton

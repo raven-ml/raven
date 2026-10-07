@@ -26,6 +26,7 @@
       {tr {td Zero of a system } {td derivative given } {td {!System.newton} } }
       {tr {td  } {td no usable derivative } {td {!System.broyden} } }
       {tr {td  } {td fixed point [x = g x] } {td {!System.anderson} } }
+      {tr {td  } {td many small systems } {td {!System.lanes} } }
       {tr {td Minimum } {td smooth, small } {td {!Minimize.bfgs} } }
       {tr {td  } {td smooth, large } {td {!Minimize.lbfgs} } }
       {tr {td  } {td smooth, ill-conditioned } {td {!Minimize.newton} } }
@@ -511,6 +512,43 @@ module System : sig
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [guess]
       differ in dtype, or if [f] returns a value of another structure, dtype or
       shape than its argument. *)
+
+  val lanes :
+    tol:Tol.t ->
+    budget:int ->
+    jacobian:((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
+    (float, 'b) Nx.t ->
+    (float, 'b) Nx.t Solution.t
+  (** [lanes ~tol ~budget ~jacobian f guess] is a zero of [f] in each lane: one
+      problem per lane, the last axis holding its [k] coordinates, as
+      {!Root.newton} is elementwise for one. [f] computes each lane's result
+      from that lane alone; [jacobian x], of shape [lanes @ [k; k]], is [f]'s
+      Jacobian per lane, and steers the steps only, as {!newton}'s [derivative]
+      does.
+
+      {b Method.} {!newton}'s search, with each lane's step a [k × k] direct
+      solve of [jacobian], checked against the backward error of an LU
+      factorisation as {!Linear.dense} checks, and its own line search and
+      status. {b Error.} As {!solve}'s, per lane. {b Cost.} One evaluation of
+      [f] and [jacobian] and a batch of [k × k] factorisations per iteration,
+      plus the line search's trials. {b Derivative.} Each lane's implicit one,
+      [−J⁻¹ ∂f/∂θ] with [J] rune's derivative of [f], whose blocks it probes
+      with [k] products in every lane at once; it checks its solution with one
+      more product and raises [Invalid_argument] where [f] read another lane.
+
+      {[
+      (* u + d u = x for each point of [x], shape [n; 2] *)
+      System.lanes
+        ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14)
+        ~budget:20
+        ~jacobian:(fun u -> Nx.add (Nx.eye Nx.float64 2) (jacobian_of_d u))
+        (fun u -> Nx.sub (Nx.add u (d u)) x)
+        x
+      ]}
+
+      Raises [Invalid_argument] if [budget < 1], if [guess] is a scalar, or if
+      [f] or [jacobian] returns another shape. *)
 end
 
 module Minimize : sig

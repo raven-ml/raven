@@ -333,8 +333,16 @@ let start x0 fx =
    last two contractions: a quasi-Newton method's rate varies from step to step,
    and one small ratio would promise steps that shrink faster than the next one
    does. *)
+(* A step that did not move the estimate has no contraction: [q] is then
+   infinite, so the error stays unbounded. *)
 let secant s next =
-  Nx.div (norm (Nx.sub next s.mapped)) (norm (Nx.sub s.x s.before))
+  let moved = norm (Nx.sub s.x s.before) in
+  let still = Nx.equal_s moved 0. in
+  Nx.where still
+    (Nx.full_like moved Float.infinity)
+    (Nx.div
+       (norm (Nx.sub next s.mapped))
+       (Nx.where still (Nx.ones_like moved) moved))
 
 let decide tol s ~map ~q delta =
   let run = searching s.st in
