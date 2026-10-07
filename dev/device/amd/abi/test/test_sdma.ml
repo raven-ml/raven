@@ -50,6 +50,7 @@ let copies =
        frequency
          [
            (2, int_range 0 4096);
+           (1, constant max);
            ( 2,
              map
                (fun (k, d) -> (k * max) + d)

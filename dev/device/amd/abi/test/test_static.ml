@@ -5,8 +5,9 @@
 
 (* The library's tables are static data: a program that links it and reads every
    table holds no more live words than one that links the same Stdlib modules
-   alone, but for the modules' own few words (live_with.ml, live_without.ml). A
-   register table built at initialisation held 47,000. *)
+   alone, but for the modules' own few words (live_with.ml, live_without.ml).
+   One GC's register table, built on the heap, holds tens of thousands of
+   words. *)
 
 open Windtrap
 
