@@ -52,9 +52,24 @@ let rec mkdir_p d =
 (* Written to a temporary file then renamed, so a reader never sees half. *)
 let keep file s =
   mkdir_p (Filename.dirname file);
-  let tmp = Printf.sprintf "%s.%d.tmp" file (Unix.getpid ()) in
-  Out_channel.with_open_bin tmp (fun oc -> output_string oc s);
-  Sys.rename tmp file
+  let tmp, oc =
+    Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o644
+      ~temp_dir:(Filename.dirname file)
+      (Filename.basename file ^ ".")
+      ".tmp"
+  in
+  match
+    Fun.protect
+      ~finally:(fun () -> close_out_noerr oc)
+      (fun () ->
+        output_string oc s;
+        close_out oc);
+    Sys.rename tmp file
+  with
+  | () -> ()
+  | exception e ->
+      (try Sys.remove tmp with Sys_error _ -> ());
+      raise e
 
 let wrong ~digest file s =
   Error
