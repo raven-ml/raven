@@ -12,6 +12,7 @@
 # forced: blessed distance-modulus-4x1590/eager distance-modulus-4x1590/compiled distance-modulus-4x1590/grad age-1k/eager age-1k/compiled under load 22.1 on 10 cores
 # forced: blessed fits-observation-4096/sci-err-float32 under load 19.5 on 10 cores
 # forced: blessed wcs-1m/eager wcs-1m/compiled solved-100k/sip-forward-eager solved-100k/sip-inverse-eager solved-100k/zpn-deproject-eager aperture-104/eager aperture-104/eager-grad aperture-104/compiled-grad under load 9.6 on 10 cores
+# forced: blessed shapes-104/ellipse-eager shapes-104/polygon-eager under load 9.7 on 10 cores
 
 age-1k/compiled	alloc_words	exact	849
 age-1k/compiled	wall_time	batch=2	n=20	4.240e-03	2.058e-03 2.175e-03 2.469e-03 2.968e-03 3.252e-03 3.462e-03 3.654e-03 3.803e-03 3.945e-03 4.144e-03 4.335e-03 4.494e-03 4.892e-03 4.942e-03 5.331e-03 5.482e-03 6.723e-03 6.850e-03 7.650e-03 8.104e-03
@@ -49,6 +50,10 @@ separation-1m/compiled	alloc_words	exact	2609
 separation-1m/compiled	wall_time	batch=1	n=20	4.704e-02	3.783e-02 3.853e-02 3.914e-02 3.982e-02 4.086e-02 4.101e-02 4.252e-02 4.389e-02 4.619e-02 4.682e-02 4.726e-02 5.709e-02 5.804e-02 6.061e-02 6.195e-02 6.906e-02 7.904e-02 8.146e-02 9.206e-02 9.334e-02
 separation-1m/eager	alloc_words	exact	17967
 separation-1m/eager	wall_time	batch=1	n=20	2.002e-01	1.401e-01 1.538e-01 1.596e-01 1.666e-01 1.723e-01 1.793e-01 1.843e-01 1.880e-01 1.939e-01 1.996e-01 2.009e-01 2.092e-01 2.181e-01 2.192e-01 2.230e-01 2.284e-01 2.292e-01 2.308e-01 2.531e-01 2.820e-01
+shapes-104/ellipse-eager	alloc_words	exact	192706
+shapes-104/ellipse-eager	wall_time	batch=1	n=20	3.622e-02	3.502e-02 3.506e-02 3.534e-02 3.571e-02 3.583e-02 3.599e-02 3.605e-02 3.607e-02 3.608e-02 3.621e-02 3.623e-02 3.636e-02 3.637e-02 3.641e-02 3.649e-02 3.680e-02 3.709e-02 3.733e-02 3.767e-02 3.807e-02
+shapes-104/polygon-eager	alloc_words	exact	669099
+shapes-104/polygon-eager	wall_time	batch=1	n=20	1.230e-01	1.145e-01 1.150e-01 1.166e-01 1.167e-01 1.168e-01 1.191e-01 1.196e-01 1.206e-01 1.220e-01 1.225e-01 1.234e-01 1.245e-01 1.255e-01 1.269e-01 1.271e-01 1.283e-01 1.293e-01 1.356e-01 1.640e-01 2.061e-01
 solved-100k/sip-forward-eager	alloc_words	exact	74323
 solved-100k/sip-forward-eager	wall_time	batch=1	n=20	3.055e-02	2.891e-02 2.983e-02 2.990e-02 2.991e-02 3.001e-02 3.012e-02 3.015e-02 3.035e-02 3.037e-02 3.051e-02 3.060e-02 3.060e-02 3.081e-02 3.082e-02 3.084e-02 3.084e-02 3.088e-02 3.088e-02 3.104e-02 3.210e-02
 solved-100k/sip-inverse-eager	alloc_words	exact	247848

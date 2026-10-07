@@ -365,6 +365,39 @@ let aperture_rows () =
         (fun (f, s, p) -> timed (fun () -> f s p));
     ]
 
+(* An ellipse and a hexagon about the aperture's centre on its stamp. *)
+let shape_rows () =
+  let stamp () = Observation.grid (fst (aperture_inputs ())) in
+  let at () = Transform.about (Lazy.force target) in
+  let ellipse g =
+    Region.weights
+      (Region.ellipse (at ())
+         ~a:(arcsec (Nx.scalar f64 1.2))
+         ~b:(arcsec (Nx.scalar f64 0.7))
+         ~angle:(degrees (Nx.scalar f64 33.)))
+      g
+  in
+  let hexagon g =
+    let v =
+      Nx.init f64 [| 6; 2 |] (fun i ->
+          let a = Float.pi *. float_of_int i.(0) /. 3. in
+          (if i.(1) = 0 then Float.sin a else Float.cos a) *. 1.2 /. 3600.)
+    in
+    Region.weights
+      (Region.polygon f64 (at ())
+         (Transform.apply
+            (Transform.inverse (at ()))
+            (degrees v)))
+      g
+  in
+  Thumper.group "shapes-104"
+    [
+      Thumper.bench_with_setup ~setup:stamp "ellipse-eager" (fun g ->
+          timed (fun () -> ellipse g));
+      Thumper.bench_with_setup ~setup:stamp "polygon-eager" (fun g ->
+          timed (fun () -> hexagon g));
+    ]
+
 (* Cosmology *)
 
 let planck = Cosmology.planck2018 ~codata:Codata.v2022 f64
@@ -420,6 +453,7 @@ let suite () =
     wcs_rows ();
     solved_rows ();
     aperture_rows ();
+    shape_rows ();
     fits_reads ();
     fits_observation ();
     fits_quantize ();
