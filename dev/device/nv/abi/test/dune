@@ -1,6 +1,6 @@
 (tests
- (names test_packet test_method test_gpfifo test_launch test_local)
- (modules test_packet test_method test_gpfifo test_launch test_local)
+ (names test_packet test_method test_gpfifo test_launch test_local test_qmd)
+ (modules test_packet test_method test_gpfifo test_launch test_local test_qmd)
  (libraries device_nv_abi windtrap))
 
 (test

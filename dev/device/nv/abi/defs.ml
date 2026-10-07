@@ -48,6 +48,7 @@ type release = {
   enable : field;
   structure_size : field;
   payload64b : field;
+  membar_type : field;
   address_lower : field;
   address_upper : field;
   payload_lower : field;
@@ -187,6 +188,7 @@ let api_visible_call_limit_no_check = 1
 let sampler_index_via_header_index = 1
 let dependent_qmd0_action_qmd_schedule = 1
 let release_structure_size_semaphore_four_words = 0
+let release_membar_type_fe_none = 0
 let release_structure_size_semaphore_two_words = 2
 
 (* Version 3, NVC7C0_QMDV03_00 (clc7c0qmd.h). *)
@@ -242,6 +244,7 @@ let qmd_v3 =
           enable = { lo = 0x337; bits = 1 };
           structure_size = { lo = 0x33e; bits = 2 };
           payload64b = { lo = 0x33d; bits = 1 };
+          membar_type = { lo = 0x333; bits = 1 };
           address_lower = { lo = 0x300; bits = 0x20 };
           address_upper = { lo = 0x320; bits = 8 };
           payload_lower = { lo = 0x340; bits = 0x20 };
@@ -251,6 +254,7 @@ let qmd_v3 =
           enable = { lo = 0x3b7; bits = 1 };
           structure_size = { lo = 0x3be; bits = 2 };
           payload64b = { lo = 0x3bd; bits = 1 };
+          membar_type = { lo = 0x3b3; bits = 1 };
           address_lower = { lo = 0x380; bits = 0x20 };
           address_upper = { lo = 0x3a0; bits = 8 };
           payload_lower = { lo = 0x3c0; bits = 0x20 };
@@ -312,6 +316,7 @@ let qmd_v5 =
           enable = { lo = 0x120; bits = 1 };
           structure_size = { lo = 0x121; bits = 2 };
           payload64b = { lo = 0x12c; bits = 1 };
+          membar_type = { lo = 0x123; bits = 1 };
           address_lower = { lo = 0x1e0; bits = 0x20 };
           address_upper = { lo = 0x200; bits = 0x19 };
           payload_lower = { lo = 0x220; bits = 0x20 };
@@ -321,6 +326,7 @@ let qmd_v5 =
           enable = { lo = 0x130; bits = 1 };
           structure_size = { lo = 0x131; bits = 2 };
           payload64b = { lo = 0x13c; bits = 1 };
+          membar_type = { lo = 0x133; bits = 1 };
           address_lower = { lo = 0x300; bits = 0x20 };
           address_upper = { lo = 0x320; bits = 0x19 };
           payload_lower = { lo = 0x340; bits = 0x20 };

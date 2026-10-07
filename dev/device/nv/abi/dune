@@ -2,6 +2,4 @@
  (name device_nv_abi)
  (libraries device_elf)
  (private_modules defs repr)
- (modules_without_implementation
-  qmd
-  repr))
+ (modules_without_implementation repr))

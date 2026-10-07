@@ -19,6 +19,8 @@ let reserved_local = 0x240
    largest is what a launch can take. A configuration is set as its 4 KiB pages
    plus one, as NAK does (Mesa 25.2, nak/qmd.rs:338-354). *)
 let shared_configs = [ 32; 64; 100 ]
+let config kib = (kib * 1024 / 4096) + 1
+let max_shared_config = config (List.fold_left Int.max 0 shared_configs)
 
 (* The driver's parameters at the start of bank 0, as 32-bit words: their count,
    and the words of the shared and local memory windows (64 bits each) and of
@@ -56,8 +58,16 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
             included, more than 100 KiB"
            shared_bytes)
   | Some c ->
-      let shared_config = (c * 1024 / 4096) + 1 in
-      Ok { kernel = k; gpu = g; layout; shared_bytes; shared_config }
+      let shared_config = config c in
+      Ok
+        {
+          kernel = k;
+          gpu = g;
+          layout;
+          shared_bytes;
+          shared_config;
+          max_shared_config;
+        }
 
 let banks l =
   let add banks (b : Cubin.bank) =

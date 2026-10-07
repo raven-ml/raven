@@ -175,6 +175,7 @@ QMD_RELEASE_FIELDS = [
     ("enable", "RELEASE{k}_ENABLE", "RELEASE_ENABLE(i)"),
     ("structure_size", "RELEASE{k}_STRUCTURE_SIZE", "RELEASE_STRUCTURE_SIZE(i)"),
     ("payload64b", "RELEASE{k}_PAYLOAD64B", "RELEASE_PAYLOAD64B(i)"),
+    ("membar_type", "RELEASE{k}_MEMBAR_TYPE", "RELEASE_MEMBAR_TYPE(i)"),
     ("address_lower", "RELEASE{k}_ADDRESS_LOWER", "RELEASE_SEMAPHORE{k}_ADDR_LOWER"),
     ("address_upper", "RELEASE{k}_ADDRESS_UPPER", "RELEASE_SEMAPHORE{k}_ADDR_UPPER"),
     ("payload_lower", "RELEASE{k}_PAYLOAD_LOWER", "RELEASE_SEMAPHORE{k}_PAYLOAD_LOWER"),
@@ -190,6 +191,7 @@ QMD_VALUES = [
     ("dependent_qmd0_action_qmd_schedule", "DEPENDENT_QMD0_ACTION_QMD_SCHEDULE", "DEPENDENT_QMD0_ACTION_QMD_SCHEDULE"),
     ("release_structure_size_semaphore_four_words", "RELEASE0_STRUCTURE_SIZE_SEMAPHORE_FOUR_WORDS",
      "RELEASE_STRUCTURE_SIZE_SEMAPHORE_FOUR_WORDS"),
+    ("release_membar_type_fe_none", "RELEASE0_MEMBAR_TYPE_FE_NONE", "RELEASE_MEMBAR_TYPE_FE_NONE"),
     ("release_structure_size_semaphore_two_words", "RELEASE0_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS",
      "RELEASE_STRUCTURE_SIZE_SEMAPHORE_TWO_WORDS"),
 ]
