@@ -33,6 +33,7 @@ type t = {
   smooth : dtype -> instance Gen.t;
   finite : instance Gen.t;
   complex : instance Gen.t option;
+  complex_found : instance list;
   dtypes : dtype list;
   derivative : (float -> float) option;
 }
@@ -210,9 +211,19 @@ let complexes = [ D Nx.complex64; D Nx.complex128 ]
 let wide = [ D Nx.float32; D Nx.float64; D Nx.complex64; D Nx.complex128 ]
 
 let case ?(kind = Tangent) ?(difference = (1e-6, 1e-8)) ?finite ?complex
-    ?(dtypes = reals) ?derivative row smooth =
+    ?(complex_found = []) ?(dtypes = reals) ?derivative row smooth =
   let finite = match finite with Some g -> g | None -> smooth float64 in
-  { row; kind; difference; smooth; finite; complex; dtypes; derivative }
+  {
+    row;
+    kind;
+    difference;
+    smooth;
+    finite;
+    complex;
+    complex_found;
+    dtypes;
+    derivative;
+  }
 
 let unary_instance k g =
   let* s = shape 0 3 in
@@ -987,6 +998,24 @@ let conditioned values d m n =
   let scaled = Nx.mul (q u) (Nx.unsqueeze ~axes:[ -2 ] s) in
   Nx.matmul scaled (adjoint (q v))
 
+(* nx's QR leaves the sign of each column of [Q] and row of [R] open, and its
+   choice jumps where a reflection's leading entry changes sign. The factors are
+   compared with [R]'s diagonal made positive: unique, and smooth on a matrix of
+   full rank. *)
+let qr_at ~reduced x =
+  let f x =
+    let q, r = Op.eval (Qr { reduced; x = one x }) in
+    let d = Nx.dtype r in
+    let s = Nx.cast d (Nx.sign (Nx.cast Nx.float64 (Nx.diagonal r))) in
+    [
+      Nx.mul q (Nx.unsqueeze ~axes:[ -2 ] s);
+      Nx.mul r (Nx.unsqueeze ~axes:[ -1 ] s);
+    ]
+  in
+  instance ~extra:None
+    (Printf.sprintf "qr %s" (if reduced then "reduced" else "complete"))
+    f [ x ]
+
 let qr_instance values d =
   let* m = int_range 1 4 in
   let* n = int_range 1 4 in
@@ -999,17 +1028,30 @@ let qr_instance values d =
       let+ right = values d (Array.append lead [| m; n - m |]) in
       Nx.concatenate ~axis:(-1) [ left; right ]
   in
-  let f x =
-    let q, r = Op.eval (Qr { reduced; x = one x }) in
-    [ q; r ]
-  in
-  instance
-    (Printf.sprintf "qr %s" (if reduced then "reduced" else "complete"))
-    f [ x ]
+  qr_at ~reduced x
+
+(* Two matrices of one column of four equal entries, the second's imaginary up
+   to [1e-17]: nx's QR gives its [R] the sign opposite to the real part of the
+   leading entry, which a central difference crosses. *)
+let qr_found =
+  let c re im = { Complex.re; im } in
+  let e = 2.7755575615628914e-17 and a = 0.24999999999999997 in
+  qr_at ~reduced:true
+    (Nx.create Nx.complex128 [| 2; 4; 1 |]
+       [|
+         c a e;
+         c 0.25 (-.e);
+         c 0.25 (-.e);
+         c 0.25 (-.e);
+         c (-.e) a;
+         c e 0.25;
+         c e 0.25;
+         c e 0.25;
+       |])
 
 let qr_case =
-  case ~dtypes:wide ~complex:(qr_instance complex_values Nx.complex128) Qr
-    (fun (D d) -> qr_instance real_values d)
+  case ~dtypes:wide ~complex:(qr_instance complex_values Nx.complex128)
+    ~complex_found:[ qr_found ] Qr (fun (D d) -> qr_instance real_values d)
 
 let diag_matrix d n v = Nx.mul (Nx.eye d n) (Nx.unsqueeze ~axes:[ -2 ] v)
 

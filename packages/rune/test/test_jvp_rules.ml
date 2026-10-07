@@ -145,8 +145,8 @@ let second_order (eps, rel) (Case.Instance i, seed) =
 (* The rows *)
 
 let laws ~count (c : Case.t) =
-  let prop ?(gen = c.smooth Case.float64) name law =
-    prop ~count name (at gen) law
+  let prop ?(gen = c.smooth Case.float64) ?examples name law =
+    prop ~count ?examples name (at gen) law
   in
   let dtype (Case.D d as t) =
     prop ~gen:(c.smooth t) (Format.asprintf "at %a" Nx.pp_dtype d) primal
@@ -165,6 +165,7 @@ let laws ~count (c : Case.t) =
     | Some gen ->
         [
           prop ~gen
+            ~examples:(List.map (fun i -> (i, 0)) c.complex_found)
             "on complex values the tangent agrees with a central difference"
             (central c.difference);
         ]

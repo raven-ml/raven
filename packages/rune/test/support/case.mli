@@ -57,6 +57,9 @@ type t = {
   complex : instance Windtrap.Gen.t option;
       (** Complex128 points inside the smooth complex domain, both components
           drawn, for a row nx computes on complex values. *)
+  complex_found : instance list;
+      (** Complex128 points at which a law over {!complex} once failed, run
+          before any drawn point. *)
   dtypes : dtype list;  (** The dtypes {!smooth} takes. *)
   derivative : (float -> float) option;
       (** The derivative of an elementwise row of one operand, in OCaml floats.
