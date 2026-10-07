@@ -7,6 +7,9 @@
    it behind an IOMMU. VFIO's requests (device_pci_vfio.c) raise Unix.Unix_error
    with their errno when refused, ENOSYS without Linux. *)
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 (* The IOMMU models. device_pci_vfio.c reads the constructors in this order as
    its enum model: keep the two in sync. *)
 type model = Type1v2 | No_iommu
@@ -72,14 +75,13 @@ let open_file bus file =
    a driver VFIO accepts. *)
 let not_viable h bus g =
   match Sysfs.group_holders h g with
-  | [] -> Printf.sprintf "IOMMU group %s of %s is not viable" g bus
+  | [] -> strf "IOMMU group %s of %s is not viable" g bus
   | held ->
-      Printf.sprintf
+      strf
         "IOMMU group %s of %s also holds %s, bound to other drivers; VFIO \
          takes a group whole: bind each to vfio-pci: %s"
         g bus
-        (String.concat ", "
-           (List.map (fun (f, d) -> Printf.sprintf "%s (%s)" f d) held))
+        (String.concat ", " (List.map (fun (f, d) -> strf "%s (%s)" f d) held))
         (String.concat " && " (List.map (fun (f, _) -> Sysfs.bind_vfio f) held))
 
 (* Mapping memory behind an IOMMU pins it, and the kernel counts the pinned
@@ -88,20 +90,19 @@ let map_error bus n (e : Unix.error) =
   let u = user () in
   match e with
   | ENOMEM ->
-      Printf.sprintf
+      strf
         "mapping %d bytes for %s: %s; the locked-memory limit (ulimit -l) \
          bounds the memory an IOMMU maps for a process: raise it for %s with \
          echo '%s - memlock unlimited' | sudo tee \
          /etc/security/limits.d/90-raven.conf, then log in again"
         n bus (Unix.error_message e) u u
   | ENOSPC ->
-      Printf.sprintf
+      strf
         "mapping %d bytes for %s: the IOMMU holds as many mappings as Linux \
          allows; raise the limit in \
          /sys/module/vfio_iommu_type1/parameters/dma_entry_limit"
         n bus
-  | e ->
-      Printf.sprintf "mapping %d bytes for %s: %s" n bus (Unix.error_message e)
+  | e -> strf "mapping %d bytes for %s: %s" n bus (Unix.error_message e)
 
 (* Opening *)
 
@@ -172,8 +173,7 @@ let open_function h files bus m =
    those bytes map too. *)
 let bar_offset bus device i off n =
   let size, offset, mappable, areas =
-    Fail.step (Printf.sprintf "reading region %d of %s" i bus) (fun () ->
-        region device i)
+    Fail.step (strf "reading region %d of %s" i bus) (fun () -> region device i)
   in
   let inside (o, k) = off >= o && off + n <= o + k in
   if (not mappable) || off + n > size then
@@ -260,8 +260,7 @@ let open_ h files bus =
    the first count. *)
 let map_dma fn bus c a n =
   Mutex.protect c.mutex @@ fun () ->
-  if c.closed then
-    invalid_arg (Printf.sprintf "Function.%s: %s was released" fn bus);
+  if c.closed then invalid_argf "Function.%s: %s was released" fn bus;
   match Hashtbl.find_opt c.maps (a, n) with
   | Some (iova, k) ->
       Hashtbl.replace c.maps (a, n) (iova, k + 1);
@@ -288,7 +287,7 @@ let unmap_dma bus c a n =
   | iova, k when k > 1 -> Hashtbl.replace c.maps (a, n) (iova, k - 1)
   | iova, _ ->
       if not c.closed then
-        Fail.bug (Printf.sprintf "unmapping %d bytes for %s" n bus) (fun () ->
+        Fail.bug (strf "unmapping %d bytes for %s" n bus) (fun () ->
             unmap c.fd iova n);
       Hashtbl.remove c.maps (a, n);
       Space.free c.iova iova

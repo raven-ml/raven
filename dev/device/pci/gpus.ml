@@ -3,6 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let ( let* ) = Result.bind
+
 type interface = Kernel | Pci
 
 (* A vendor's GPUs. [mutex] serializes opens, resets and changes, drivers
@@ -49,17 +53,13 @@ let bus h = h.bus
 
 (* Checks *)
 
-let index fn i =
-  if i < 0 then invalid_arg (Printf.sprintf "Gpus.%s: GPU %d is negative" fn i)
-
-let ( let* ) = Result.bind
+let index fn i = if i < 0 then invalid_argf "Gpus.%s: GPU %d is negative" fn i
 
 (* The bus of GPU [i] of [m], which the process does not hold. *)
 let gpu g m i =
   let all = buses g m in
   match List.nth_opt all i with
-  | None ->
-      Error (Printf.sprintf "no such GPU; the machine has %d" (List.length all))
+  | None -> Error (strf "no such GPU; the machine has %d" (List.length all))
   | Some bus
     when Mutex.protect g.holds (fun () ->
              List.exists (fun h -> h.machine == m && h.bus = bus) g.held) ->
@@ -74,7 +74,7 @@ let refuse_interface g wanted =
   match g.interface with
   | Some c when c <> wanted ->
       Error
-        (Printf.sprintf
+        (strf
            "this process reaches these GPUs %s; open this one that way, or \
             from another process"
            (interface_name c))
@@ -136,10 +136,9 @@ let give_back ending h =
   let g = h.gpus in
   Mutex.protect g.holds @@ fun () ->
   if not (List.memq h g.held) then
-    invalid_arg
-      (Printf.sprintf "Gpus.%s: %s was given back already"
-         (match ending with Released -> "release" | Lost -> "lose")
-         h.bus);
+    invalid_argf "Gpus.%s: %s was given back already"
+      (match ending with Released -> "release" | Lost -> "lose")
+      h.bus;
   g.held <- List.filter (fun h' -> h' != h) g.held;
   if ending = Lost && Option.is_some h.fn then
     g.spent <- (h.machine, h.bus) :: g.spent;
@@ -158,8 +157,7 @@ let change g fn m i f =
   match Machine.host m with
   | None ->
       Error
-        (Printf.sprintf
-           "%s is reached through a transport; change its GPUs there"
+        (strf "%s is reached through a transport; change its GPUs there"
            (Option.value (Machine.name m) ~default:"the machine"))
   | Some host ->
       let* bus = gpu g m i in

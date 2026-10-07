@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 exception Failed of string
 
 let fail fmt = Printf.ksprintf (fun why -> raise (Failed why)) fmt
@@ -16,4 +18,4 @@ let result f = match f () with v -> Ok v | exception Failed why -> Error why
 let bug what f =
   try f ()
   with Unix.Unix_error (e, _, _) ->
-    failwith (Printf.sprintf "%s: %s" what (Unix.error_message e))
+    failwith (strf "%s: %s" what (Unix.error_message e))

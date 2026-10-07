@@ -6,6 +6,9 @@
 (* This machine's operations: functions taken through VFIO behind an IOMMU, or
    physically through /sys/bus/pci. *)
 
+let strf = Printf.sprintf
+let ( let* ) = Result.bind
+
 external flock : Unix.file_descr -> unit = "caml_device_pci_flock"
 external file_map : Unix.file_descr -> int -> int -> int = "caml_device_pci_map"
 external file_unmap : int -> int -> unit = "caml_device_pci_unmap"
@@ -31,7 +34,7 @@ let locked h bus f =
   let file = Sysfs.path h bus "config" in
   match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
   | exception Unix.Unix_error (e, _, _) ->
-      Error (Printf.sprintf "opening %s: %s" file (Unix.error_message e))
+      Error (strf "opening %s: %s" file (Unix.error_message e))
   | fd -> (
       Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
       match lock h bus fd with
@@ -126,7 +129,7 @@ let map t i off n =
     let first, len = pages off n in
     let window fd base =
       let a =
-        Fail.step (Printf.sprintf "mapping BAR %d of %s" i t.bus) (fun () ->
+        Fail.step (strf "mapping BAR %d of %s" i t.bus) (fun () ->
             file_map fd (base + first) len)
       in
       Window.v (a + off - first) n
@@ -135,7 +138,7 @@ let map t i off n =
     | Some c ->
         window (Vfio.device c) (Vfio.bar_offset t.bus (Vfio.device c) i off n)
     | None ->
-        let file = Sysfs.path t.host t.bus (Printf.sprintf "resource%d" i) in
+        let file = Sysfs.path t.host t.bus (strf "resource%d" i) in
         let fd =
           Fail.step ("opening " ^ file) (fun () ->
               Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0)
@@ -280,14 +283,13 @@ let take_physical host files bus =
 (* A failure gives back every descriptor taken. *)
 let take host bus =
   if not (Sysfs.exists host bus) then
-    Error (Printf.sprintf "%s is no PCI function of this machine" bus)
+    Error (strf "%s is no PCI function of this machine" bus)
   else
     let files = ref [] in
     let refused why =
       List.iter Unix.close !files;
       Error why
     in
-    let ( let* ) = Result.bind in
     match
       let state = Sysfs.state host bus in
       let* addressing = Sysfs.access host bus state in

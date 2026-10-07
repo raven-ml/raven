@@ -3,6 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let ( let* ) = Result.bind
+
 (* What the process holds of a function, so that misuse is refused before its
    machine is asked: its BAR windows, DMA memory and pins. Windows are values,
    so each table binds a window or a pinned range once for each time it is live.
@@ -24,7 +28,7 @@ let take machine bus =
     match Machine.failed machine with
     | Some why -> Error why
     | None when Option.is_none (Address.numbers bus) ->
-        Error (Printf.sprintf "%S is no PCI bus address" bus)
+        Error (strf "%S is no PCI bus address" bus)
     | None -> Machine.take machine bus
   in
   Result.map
@@ -41,15 +45,13 @@ let take machine bus =
       })
     taken
 
-let ( let* ) = Result.bind
 let machine f = f.machine
 let bus f = f.bus
 let addressing f = f.fn.addressing
 let released f = f.released
 
 let live f fn =
-  if f.released then
-    invalid_arg (Printf.sprintf "Function.%s: %s is released" fn f.bus)
+  if f.released then invalid_argf "Function.%s: %s is released" fn f.bus
 
 let release f =
   if not f.released then begin
@@ -72,8 +74,7 @@ let config_size = 4096
 let in_config f fn off n =
   live f fn;
   if off < 0 || off > config_size - n then
-    invalid_arg
-      (Printf.sprintf "Function.%s: byte %d outside configuration space" fn off)
+    invalid_argf "Function.%s: byte %d outside configuration space" fn off
 
 let config8 f off =
   in_config f "config8" off 1;
@@ -103,8 +104,7 @@ let set_config32 f off x =
 
 let index f fn i =
   live f fn;
-  if i < 0 then
-    invalid_arg (Printf.sprintf "Function.%s: BAR %d is negative" fn i)
+  if i < 0 then invalid_argf "Function.%s: BAR %d is negative" fn i
 
 let bar f i =
   index f "bar" i;
@@ -115,14 +115,12 @@ let map ?(off = 0) ?length f i =
   let size =
     match f.fn.bar i with
     | Some (_, size) -> size
-    | None ->
-        invalid_arg (Printf.sprintf "Function.map: %s has no BAR %d" f.bus i)
+    | None -> invalid_argf "Function.map: %s has no BAR %d" f.bus i
   in
   let length = Option.value length ~default:(size - off) in
   if off < 0 || length < 0 || off > size - length then
-    invalid_arg
-      (Printf.sprintf "Function.map: %d bytes at %d outside BAR %d of %d bytes"
-         length off i size);
+    invalid_argf "Function.map: %d bytes at %d outside BAR %d of %d bytes"
+      length off i size;
   let* w = f.fn.map i off length in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.maps w ());
   Ok w
@@ -131,7 +129,7 @@ let map ?(off = 0) ?length f i =
 let forget f table fn w =
   Mutex.protect f.lock @@ fun () ->
   if not (Hashtbl.mem table w) then
-    invalid_arg (Printf.sprintf "Function.%s: no such window of %s" fn f.bus);
+    invalid_argf "Function.%s: no such window of %s" fn f.bus;
   Hashtbl.remove table w
 
 let unmap f w =
@@ -142,8 +140,7 @@ let unmap f w =
 
 let interrupt f ms =
   live f "interrupt";
-  if ms < 0 then
-    invalid_arg (Printf.sprintf "Function.interrupt: %d ms is negative" ms);
+  if ms < 0 then invalid_argf "Function.interrupt: %d ms is negative" ms;
   f.fn.interrupt ms
 
 (* A function answers again once its vendor ID reads other than all ones. *)
@@ -155,7 +152,7 @@ let failed f =
   match Machine.failed f.machine with
   | Some _ as why -> why
   | None when f.fn.config16 0 = absent ->
-      Some (Printf.sprintf "%s left the bus: its vendor ID reads 0xffff" f.bus)
+      Some (strf "%s left the bus: its vendor ID reads 0xffff" f.bus)
   | None -> None
 
 let reset f =
@@ -167,9 +164,7 @@ let reset f =
     match Machine.failed f.machine with
     | Some why -> Error why
     | None ->
-        Error
-          (Printf.sprintf "%s does not answer %d ms after its reset" f.bus
-             reset_ms)
+        Error (strf "%s does not answer %d ms after its reset" f.bus reset_ms)
 
 (* System memory *)
 
@@ -178,24 +173,21 @@ let huge = 2 lsl 20
 
 let on_page f fn a =
   if a mod Machine.page f.machine <> 0 then
-    invalid_arg
-      (Printf.sprintf "Function.%s: 0x%x is not on a %d-byte page" fn a
-         (Machine.page f.machine))
+    invalid_argf "Function.%s: 0x%x is not on a %d-byte page" fn a
+      (Machine.page f.machine)
 
 let alloc_dma ?(contiguous = false) ?va f n =
   live f "alloc_dma";
   let page = Machine.page f.machine in
   if n <= 0 || n > max_int - page then
-    invalid_arg
-      (Printf.sprintf "Function.alloc_dma: %d bytes, expected 1 to %d" n
-         (max_int - page));
+    invalid_argf "Function.alloc_dma: %d bytes, expected 1 to %d" n
+      (max_int - page);
   let n = (n + page - 1) / page * page in
   if contiguous && n > huge then
-    invalid_arg
-      (Printf.sprintf
-         "Function.alloc_dma: %d bytes of contiguous memory, expected at most \
-          2 MiB"
-         n);
+    invalid_argf
+      "Function.alloc_dma: %d bytes of contiguous memory, expected at most 2 \
+       MiB"
+      n;
   (* Reached physically, contiguous memory larger than a page is a huge page,
      which maps whole at [va]. *)
   let huge_page =
@@ -207,15 +199,11 @@ let alloc_dma ?(contiguous = false) ?va f n =
   | Some va ->
       on_page f "alloc_dma" va;
       if huge_page && va mod huge <> 0 then
-        invalid_arg
-          (Printf.sprintf
-             "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs"
-             va);
+        invalid_argf
+          "Function.alloc_dma: 0x%x is not on 2 MiB, which a huge page needs" va;
       if not (Machine.reserved f.machine va mapped) then
-        invalid_arg
-          (Printf.sprintf
-             "Function.alloc_dma: 0x%x is in no range Machine.reserve reserved"
-             va));
+        invalid_argf
+          "Function.alloc_dma: 0x%x is in no range Machine.reserve reserved" va);
   let* ((w, _) as dma) = f.fn.alloc_dma ~contiguous ~va n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.dmas w ());
   Ok dma
@@ -227,9 +215,7 @@ let free_dma f w =
 let pin f a n =
   live f "pin";
   on_page f "pin" a;
-  if n <= 0 then
-    invalid_arg
-      (Printf.sprintf "Function.pin: %d bytes, expected more than 0" n);
+  if n <= 0 then invalid_argf "Function.pin: %d bytes, expected more than 0" n;
   let* runs = f.fn.pin a n in
   Mutex.protect f.lock (fun () -> Hashtbl.add f.pins (a, n) ());
   Ok runs
@@ -237,7 +223,6 @@ let pin f a n =
 let unpin f a n =
   Mutex.protect f.lock (fun () ->
       if not (Hashtbl.mem f.pins (a, n)) then
-        invalid_arg
-          (Printf.sprintf "Function.unpin: 0x%x is not pinned for %s" a f.bus);
+        invalid_argf "Function.unpin: 0x%x is not pinned for %s" a f.bus;
       Hashtbl.remove f.pins (a, n));
   f.fn.unpin a n

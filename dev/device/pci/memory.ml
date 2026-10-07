@@ -3,6 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 type kind = Gpu | Bar | Host | Visible
 type source = Allocated | Borrowed | Peer
 
@@ -36,9 +39,7 @@ let create ?peer fn tables ~bar =
     match Function.bar fn bar with
     | Some b -> b
     | None ->
-        invalid_arg
-          (Printf.sprintf "Memory.create: %s has no BAR %d" (Function.bus fn)
-             bar)
+        invalid_argf "Memory.create: %s has no BAR %d" (Function.bus fn) bar
   in
   let through_bar ranges =
     (List.map (fun (p, n) -> (p + base, n)) ranges, Page_table.System)
@@ -105,9 +106,7 @@ let gpu m ~uncached ~bar n =
             Error why)
 
 let positive fn n =
-  if n <= 0 then
-    invalid_arg
-      (Printf.sprintf "Memory.%s: %d bytes, expected more than 0" fn n)
+  if n <= 0 then invalid_argf "Memory.%s: %d bytes, expected more than 0" fn n
 
 let alloc ?(uncached = false) m kind n =
   positive "alloc" n;
@@ -128,10 +127,9 @@ let forget table fn mem =
   match Hashtbl.find_opt table mem.mapping.va with
   | Some mem' when mem' == mem -> Hashtbl.remove table mem.mapping.va
   | _ ->
-      invalid_arg
-        (Printf.sprintf
-           "Memory.%s: the memory at 0x%x is not this GPU's, or was given back"
-           fn mem.mapping.va)
+      invalid_argf
+        "Memory.%s: the memory at 0x%x is not this GPU's, or was given back" fn
+        mem.mapping.va
 
 (* Once the function is released the GPU may be another instance's: only system
    memory, pins and addresses are given back, and no entry is written. *)
@@ -159,13 +157,11 @@ let map_host m a n =
   let n = round_up n page in
   let base = Page_table.base m.tables in
   if a mod page <> 0 then
-    Error
-      (Printf.sprintf "the memory at 0x%x does not start on a %d-byte page" a
-         page)
+    Error (strf "the memory at 0x%x does not start on a %d-byte page" a page)
   else if a < base || a + n > base + Page_table.span m.tables then
     Error
-      (Printf.sprintf
-         "the memory at 0x%x is outside the GPU's addresses [0x%x, 0x%x)" a base
+      (strf "the memory at 0x%x is outside the GPU's addresses [0x%x, 0x%x)" a
+         base
          (base + Page_table.span m.tables))
   else
     match Function.pin m.fn a n with
@@ -189,9 +185,8 @@ let map_peer m ~owner mem =
   (match Hashtbl.find_opt owner.allocated mem.mapping.va with
   | Some mem' when mem' == mem -> ()
   | _ ->
-      invalid_arg
-        (Printf.sprintf "Memory.map_peer: the memory at 0x%x is not its owner's"
-           mem.mapping.va));
+      invalid_argf "Memory.map_peer: the memory at 0x%x is not its owner's"
+        mem.mapping.va);
   let map = mem.mapping in
   let iommu f = Function.addressing f = Machine.Iommu in
   if Function.machine m.fn != Function.machine owner.fn then

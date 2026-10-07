@@ -3,6 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
+(* Errors *)
+
+let[@inline never] err_range fn n off len =
+  invalid_argf "Window.%s: %d bytes at %d outside %d bytes" fn n off len
+
 (* A transport is the address of its C structure, 0 for none. Process addresses
    fit an OCaml int on every 64-bit host, 52-bit ones included. *)
 type transport = int
@@ -83,8 +90,7 @@ external transport_write : transport -> int -> string -> int -> int -> unit
 (* Windows *)
 
 let make fn transport address length =
-  if length < 0 then
-    invalid_arg (Printf.sprintf "Window.%s: length %d is negative" fn length);
+  if length < 0 then invalid_argf "Window.%s: length %d is negative" fn length;
   { address; length; transport }
 
 let v address length = make "v" 0 address length
@@ -99,10 +105,7 @@ let length w = w.length
 let mapped w = w.transport = 0
 
 let check fn w off n =
-  if off < 0 || n < 0 || off > w.length - n then
-    invalid_arg
-      (Printf.sprintf "Window.%s: %d bytes at %d outside %d bytes" fn n off
-         w.length)
+  if off < 0 || n < 0 || off > w.length - n then err_range fn n off w.length
 
 (* A register access checks its window inline with one test, [usable], and
    formats a refusal out of line, so that the access stays small enough for its
@@ -112,9 +115,8 @@ let[@inline] usable w off size =
 
 let[@inline never] misuse fn w off size =
   check fn w off size;
-  invalid_arg
-    (Printf.sprintf "Window.%s: address 0x%x is not a multiple of %d" fn
-       (w.address + off) size)
+  invalid_argf "Window.%s: address 0x%x is not a multiple of %d" fn
+    (w.address + off) size
 
 let sub w off n =
   check "sub" w off n;
@@ -159,9 +161,7 @@ let read w off n =
 
 let blit_string s soff w off n =
   if soff < 0 || n < 0 || soff > String.length s - n then
-    invalid_arg
-      (Printf.sprintf "Window.blit_string: %d bytes at %d outside %d bytes" n
-         soff (String.length s));
+    err_range "blit_string" n soff (String.length s);
   check "blit_string" w off n;
   if mapped w then write_at (w.address + off) s soff n
   else transport_write w.transport (w.address + off) s soff n

@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 (* A host's files, under its root directory: "/" for this machine. *)
 type t = {
   devices : string;
@@ -23,7 +25,7 @@ let v root =
   }
 
 let vfio_pci = "vfio-pci"
-let path h bus file = Printf.sprintf "%s/%s/%s" h.devices bus file
+let path h bus file = strf "%s/%s/%s" h.devices bus file
 let exists h bus = Sys.file_exists (Filename.concat h.devices bus)
 let vfio_file h name = Filename.concat h.vfio name
 
@@ -41,7 +43,7 @@ let put file s =
   ignore (Unix.single_write_substring fd s 0 (String.length s))
 
 let refused file (e : Unix.error) =
-  let why = Printf.sprintf "writing %s: %s" file (Unix.error_message e) in
+  let why = strf "writing %s: %s" file (Unix.error_message e) in
   match e with
   | EACCES | EPERM ->
       Fail.fail
@@ -186,7 +188,7 @@ let iommu_of h bus =
   | None -> No_iommu
   | Some g when Sys.file_exists (noiommu_file h g) -> No_iommu
   | Some g -> (
-      match read (Printf.sprintf "%s/%s/type" h.groups g) with
+      match read (strf "%s/%s/type" h.groups g) with
       | "identity" -> Identity
       | _ -> Translating
       | exception Fail.Failed _ -> Translating)
@@ -207,11 +209,11 @@ let state h bus =
     locked_down = locked_down h;
   }
 
-let bind_vfio bus = Printf.sprintf "sudo driverctl set-override %s vfio-pci" bus
+let bind_vfio bus = strf "sudo driverctl set-override %s vfio-pci" bus
 
 (* Bridges are held by pcieport, which VFIO accepts. *)
 let group_holders h g =
-  match Sys.readdir (Printf.sprintf "%s/%s/devices" h.groups g) with
+  match Sys.readdir (strf "%s/%s/devices" h.groups g) with
   | exception Sys_error _ -> []
   | fns ->
       Array.to_list fns |> List.sort String.compare
@@ -224,32 +226,28 @@ let group_holders h g =
 let access h bus s =
   match s with
   | { driver = Some d; iommu = No_iommu; _ } when d <> vfio_pci ->
-      Error
-        (Printf.sprintf "%s is bound to the driver %s; detach the GPU first" bus
-           d)
+      Error (strf "%s is bound to the driver %s; detach the GPU first" bus d)
   | { driver = Some d; _ } when d <> vfio_pci ->
       Error
-        (Printf.sprintf
+        (strf
            "%s is bound to the driver %s (to take it through the IOMMU, \
             without root, bind it to vfio-pci: %s)"
            bus d (bind_vfio bus))
   | { driver = Some _; iommu = Identity | Translating; _ } -> Ok Ops.Iommu
   | { driver = None; iommu = Translating; _ } ->
       Error
-        (Printf.sprintf
+        (strf
            "the IOMMU translates the addresses %s reaches, so it cannot reach \
             physical ones; bind it to vfio-pci to take it through the IOMMU \
             (%s), or boot Linux with iommu=pt"
            bus (bind_vfio bus))
   | { siblings = s :: _; _ } ->
-      Error
-        (Printf.sprintf "%s shares its device with %s; detach the GPU first" bus
-           s)
+      Error (strf "%s shares its device with %s; detach the GPU first" bus s)
   | { driver = None; enabled = false; _ } ->
-      Error (Printf.sprintf "%s is disabled; detach the GPU first" bus)
+      Error (strf "%s is disabled; detach the GPU first" bus)
   | { locked_down = true; _ } ->
       Error
-        (Printf.sprintf
+        (strf
            "the kernel is locked down (%s), which refuses mapping a BAR \
             outside VFIO; take %s behind an IOMMU: turn the IOMMU on and bind \
             it to vfio-pci (%s)"
@@ -308,7 +306,7 @@ let attach h bus =
 let largest = Sys.int_size - 2
 
 let resize h bus i =
-  let file = path h bus (Printf.sprintf "resource%d_resize" i) in
+  let file = path h bus (strf "resource%d_resize" i) in
   if driver h bus = None && Sys.file_exists file then
     let sizes = read_hex file in
     let rec try_from k =

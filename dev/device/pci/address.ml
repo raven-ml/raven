@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let v ~domain ~bus ~device ~fn =
-  Printf.sprintf "%04x:%02x:%02x.%x" domain bus device fn
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let v ~domain ~bus ~device ~fn = strf "%04x:%02x:%02x.%x" domain bus device fn
 
 (* Each number is one to eight hexadecimal digits, so that nothing else, such as
    a path's "/" or ".", passes. *)
@@ -31,10 +32,9 @@ let numbers_exn a =
   match numbers a with
   | Some n -> n
   | None ->
-      invalid_arg
-        (Printf.sprintf
-           "Machine.compare_address: %S is no PCI bus address, expected \
-            DDDD:BB:DD.F"
-           a)
+      invalid_argf
+        "Machine.compare_address: %S is no PCI bus address, expected \
+         DDDD:BB:DD.F"
+        a
 
 let compare a b = Stdlib.compare (numbers_exn a) (numbers_exn b)

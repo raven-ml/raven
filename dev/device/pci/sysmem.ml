@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 external page_size : unit -> int = "caml_device_pci_page_size"
 external reserve_at : int -> int -> unit = "caml_device_pci_reserve"
 
@@ -26,7 +28,7 @@ let huge = 2 lsl 20
 let lock = Mutex.create ()
 let reserved : (int * int, unit) Hashtbl.t = Hashtbl.create 4
 let pins : (int, int) Hashtbl.t = Hashtbl.create 64
-let range a n = Printf.sprintf "[0x%x, 0x%x)" a (a + n)
+let range a n = strf "[0x%x, 0x%x)" a (a + n)
 
 let reserve ~base n =
   Mutex.protect lock @@ fun () ->
@@ -167,8 +169,7 @@ let map_bytes ?va n ~huge ~locked =
   | a -> a
   | exception Unix.Unix_error (e, _, _) ->
       let why =
-        Printf.sprintf "allocating %d bytes of system memory: %s" n
-          (Unix.error_message e)
+        strf "allocating %d bytes of system memory: %s" n (Unix.error_message e)
       in
       Fail.fail "%s"
         (match e with

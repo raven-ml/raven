@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
 let digest s = Digest.BLAKE256.to_hex (Digest.BLAKE256.string s)
 
 let read file =
@@ -15,7 +16,7 @@ let missing dirs name ~digest others =
     | [] -> ""
     | l -> "; another digest in " ^ String.concat ", " (List.rev l)
   in
-  Printf.sprintf "%s with digest %s is in none of [%s]%s" name digest
+  strf "%s with digest %s is in none of [%s]%s" name digest
     (String.concat ", " dirs) others
 
 let find dirs name ~digest:pinned =

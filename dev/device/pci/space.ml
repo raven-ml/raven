@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
 (* The allocator is made by the first allocation: a vendor's space, which its
    library makes when it is linked, puts nothing in the heap of a program that
    drives none of its GPUs. *)
@@ -15,10 +17,9 @@ type t = {
 
 let create ~base n =
   if base < 0 || n < 0 || n > max_int - base then
-    invalid_arg
-      (Printf.sprintf
-         "Space.create: %d addresses at 0x%x, expected a range of 0 to max_int"
-         n base);
+    invalid_argf
+      "Space.create: %d addresses at 0x%x, expected a range of 0 to max_int" n
+      base;
   { base; length = n; tlsf = None; lock = Mutex.create () }
 
 let base s = s.base
@@ -42,17 +43,13 @@ let top_bit n =
 
 let alloc ?(align = 0x1000) s n =
   if n <= 0 then
-    invalid_arg
-      (Printf.sprintf "Space.alloc: %d addresses, expected more than 0" n);
+    invalid_argf "Space.alloc: %d addresses, expected more than 0" n;
   if not (is_power_of_two align) then
-    invalid_arg
-      (Printf.sprintf "Space.alloc: align %d is not a positive power of two"
-         align);
+    invalid_argf "Space.alloc: align %d is not a positive power of two" align;
   let align = Int.max (top_bit n) align in
   Mutex.protect s.lock (fun () -> Tlsf.alloc ~align (tlsf s) n)
 
 let free s a =
   Mutex.protect s.lock @@ fun () ->
   try Tlsf.free (tlsf s) a
-  with Invalid_argument _ ->
-    invalid_arg (Printf.sprintf "Space.free: no range at 0x%x" a)
+  with Invalid_argument _ -> invalid_argf "Space.free: no range at 0x%x" a

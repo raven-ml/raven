@@ -12,6 +12,7 @@
 
    Starts are relative to [base]; [none] ends a chain. *)
 
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let second_bits = 4
 let classes = 1 lsl second_bits
 let levels = Sys.int_size
@@ -148,8 +149,8 @@ let absorb t start b next =
 (* Allocators *)
 
 let create ?(block = 16) ~base length =
-  if length < 0 then invalid_arg (Printf.sprintf "Tlsf.create: %d" length);
-  if block <= 0 then invalid_arg (Printf.sprintf "Tlsf.create: block %d" block);
+  if length < 0 then invalid_argf "Tlsf.create: %d" length;
+  if block <= 0 then invalid_argf "Tlsf.create: block %d" block;
   let t =
     {
       base;
@@ -181,8 +182,8 @@ let length t = t.length
 let round_up n a = (n + a - 1) / a * a
 
 let alloc ?(align = 1) t n =
-  if n < 0 then invalid_arg (Printf.sprintf "Tlsf.alloc: %d bytes" n);
-  if align <= 0 then invalid_arg (Printf.sprintf "Tlsf.alloc: align %d" align);
+  if n < 0 then invalid_argf "Tlsf.alloc: %d bytes" n;
+  if align <= 0 then invalid_argf "Tlsf.alloc: align %d" align;
   let req = Int.max t.block n in
   (* A block of [req + align - 1] bytes holds the request wherever it starts.
      None is larger than the range, and the sum could wrap past [max_int]. *)
@@ -232,4 +233,4 @@ let free t x =
           absorb t start b (start + b.size)
       | _ -> ());
       insert t start b
-  | _ -> invalid_arg (Printf.sprintf "Tlsf.free: no block at 0x%x" x)
+  | _ -> invalid_argf "Tlsf.free: no block at 0x%x" x
