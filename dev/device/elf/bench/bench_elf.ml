@@ -4,10 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* Reading the objects a program load reads: an AMD code object of 128 kernels
-   (139 KB, its symbol table stripped, as a library ships its kernels) and a
-   host object of six kernels. Then finding a kernel's descriptor in that code
-   object, as the AMD loader does for each kernel it loads: the last one, behind
-   every other symbol. *)
+   (139 KB, its symbol table stripped, as a library ships its kernels), a cubin
+   as the NV loader reads it, and a host object of six kernels. Then finding a
+   kernel's descriptor in that code object, as the AMD loader does for each
+   kernel it loads: the last one, behind every other symbol. *)
 
 module Elf = Device_elf
 
@@ -19,10 +19,11 @@ let read path =
     In_channel.input_all
 
 let code_object = read "amd_many_gfx1100.hsaco"
+let cubin = read "simple_add_sm89.cubin"
 let host = read "host_aarch64.o"
 
-let of_string obj () =
-  match Elf.of_string obj with Ok o -> o | Error e -> failwith e
+let of_string ?align obj () =
+  match Elf.of_string ?align obj with Ok o -> o | Error e -> failwith e
 
 let last_kernel (o : Elf.t) =
   let last = ref "" in
@@ -43,6 +44,7 @@ let () =
          Thumper.group "of-string"
            [
              Thumper.bench "amd-128-kernels" (of_string code_object);
+             Thumper.bench "cubin-sm89" (of_string ~align:128 cubin);
              Thumper.bench "host-aarch64" (of_string host);
            ];
          Thumper.group "symbol"

@@ -1429,6 +1429,7 @@ let fixture path =
     (Filename.concat "fixtures" path)
     In_channel.input_all
 
+let cubin_path = "simple_add_sm89.cubin"
 let hsaco_path = "amd_gfx1100.hsaco"
 let amd_object_path = "amd_gfx1100.o"
 let stripped_path = "amd_many_gfx1100.hsaco"
@@ -1437,6 +1438,7 @@ let host_path target = "host_" ^ target ^ ".o"
 let corruptible =
   lazy
     [|
+      fixture cubin_path;
       fixture hsaco_path;
       fixture amd_object_path;
       fixture (host_path "aarch64");
@@ -1658,6 +1660,29 @@ let test_firmware32 () =
 
 (* Real objects *)
 
+let test_cubin () =
+  let o = read ~align:128 (fixture cubin_path) in
+  invariants o;
+  equal ~msg:"an executable" int 2 o.kind;
+  equal ~msg:"for NVIDIA GPUs" int 190 o.machine;
+  equal ~msg:"under the CUDA ABI" int 51 o.os_abi;
+  equal ~msg:"its version" int 7 o.abi_version;
+  equal ~msg:"for sm_89" int 0x590559 o.flags;
+  equal ~msg:"debugging information stays out" (option int) None
+    (section_named o ".debug_frame").offset;
+  equal ~msg:"the constant bank first" (option int) (Some 0)
+    (section_named o ".nv.constant0.simple_add").offset;
+  equal ~msg:"its 380 bytes, then the code at 384" (option int) (Some 384)
+    (section_named o ".text.simple_add").offset;
+  equal ~msg:"the image ends with the code" int 896 o.size;
+  equal ~msg:"the kernel's symbol" (option int) (Some 384)
+    (Elf.symbol o "simple_add");
+  equal ~msg:"symbols by index" symbol
+    (sym_entry "simple_add" (Image { section = 11; offset = 384 }))
+    (Iarray.get o.symbols 6);
+  equal ~msg:"the debugging relocation is left out" (list relocation) []
+    o.relocations
+
 (* amd_gfx1100.hsaco: .rodata (64 bytes, aligned to 64) at 0x600 and .text
    (0x280 bytes, aligned to 256) at 0x1700; .dynamic at 0x2980 and .bss after it
    hold no bytes of the image. *)
@@ -1840,6 +1865,7 @@ let () =
            ];
          group "real objects"
            [
+             test "an NVIDIA cubin" test_cubin;
              test "an AMD code object" test_hsaco;
              test "an AMD code object without its symbol table" test_stripped;
              test "a relocatable AMD object" test_relocatable_amd;

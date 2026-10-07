@@ -16,9 +16,12 @@ symbol/amd-128-kernels-last-kernel	wall_time	batch=8192	n=20	5.603e-07	5.582e-07
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 14.5 on 10 cores
+# forced: blessed of-string/cubin-sm89 under load 9.8 on 10 cores
 
 of-string/amd-128-kernels	alloc_words	exact	5716
 of-string/amd-128-kernels	wall_time	batch=256	n=20	4.007e-05	3.885e-05 3.918e-05 3.924e-05 3.963e-05 3.973e-05 4.000e-05 4.002e-05 4.002e-05 4.002e-05 4.006e-05 4.009e-05 4.011e-05 4.013e-05 4.033e-05 4.034e-05 4.038e-05 4.051e-05 4.077e-05 4.078e-05 4.082e-05
+of-string/cubin-sm89	alloc_words	exact	950
+of-string/cubin-sm89	wall_time	batch=4096	n=20	1.872e-06	1.796e-06 1.827e-06 1.832e-06 1.835e-06 1.856e-06 1.859e-06 1.859e-06 1.861e-06 1.863e-06 1.870e-06 1.874e-06 1.877e-06 1.882e-06 1.883e-06 1.884e-06 1.885e-06 1.886e-06 1.889e-06 1.913e-06 1.931e-06
 of-string/host-aarch64	alloc_words	exact	1238
 of-string/host-aarch64	wall_time	batch=2048	n=20	2.668e-06	2.591e-06 2.614e-06 2.623e-06 2.644e-06 2.657e-06 2.660e-06 2.662e-06 2.663e-06 2.664e-06 2.668e-06 2.669e-06 2.677e-06 2.677e-06 2.680e-06 2.683e-06 2.683e-06 2.707e-06 2.722e-06 2.729e-06 2.783e-06
 symbol/amd-128-kernels-last-kernel	alloc_words	exact	8
