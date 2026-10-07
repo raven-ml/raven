@@ -1,11 +1,11 @@
 (* Law 10: reference posteriors, as a careful user relies on them. On six
-   posteriordb posteriors, a run of NUTS, HMC, ensemble sampling or SMC whose
+   posteriordb posteriors, a run of NUTS, HMC or ensemble sampling whose
    diagnostics pass, nested R-hat and the summary's findings, recovers every
    element's mean and standard deviation within z sqrt (mcse² + mcse_ref²); a
-   run that does not recover is flagged by them. Nested sampling runs four
-   independent replicates and recovers within t sqrt (se² + mcse_ref²), se the
-   replicates' spread over 2 and t of Student's t with 3 degrees of freedom, or
-   is flagged by a replicate that spent its budget. HMC also recovers Neal's
+   run that does not recover is flagged by them. SMC and nested sampling run
+   four independent replicates and recover within t sqrt (se² + mcse_ref²), se
+   the replicates' spread over 2 and t of Student's t with 3 degrees of freedom,
+   or are flagged by a replicate that spent its budget. HMC also recovers Neal's
    funnel, non-centred, at 1024 chains. z and t hold the family-wise false-alarm
    rate over every comparison at 1%. The reference moments and their errors come
    from gen/posteriordb.py. Both verdicts are covered. *)
@@ -18,8 +18,7 @@ let posteriors = lazy (P.all "../golden/posteriordb.golden")
 let warmup = 300
 let false_alarms = 0.01
 
-(* Four samplers judged by their chains, nested sampling, and the funnel's four
-   moments. *)
+(* Five samplers, and the funnel's four moments. *)
 let kernels = 5
 let funnel_comparisons = 4
 let replicates = 4
@@ -82,19 +81,19 @@ type kernel = {
     'u Norn.Draws.t * Nx.float64_elt Norn.Stats.t Norn.Draws.t option;
 }
 
-let nuts =
+let nuts ?accept ~draws () =
   {
     chains = 8;
     superchains = 4;
     run =
       (fun u lp k start ->
-        let s = Norn.Nuts.init u lp start in
+        let s = Norn.Nuts.init u ?accept lp start in
         let s = Norn.Nuts.warmup u lp k ~steps:warmup s in
-        let _, d, st = Norn.Nuts.sample u lp k ~draws:150 s in
+        let _, d, st = Norn.Nuts.sample u lp k ~draws s in
         (d, Some st));
   }
 
-let hmc =
+let hmc ~draws =
   {
     chains = 64;
     superchains = 8;
@@ -102,28 +101,29 @@ let hmc =
       (fun u lp k start ->
         let s = Norn.Hmc.init u lp start in
         let s = Norn.Hmc.warmup u lp k ~steps:warmup s in
-        let _, d, st = Norn.Hmc.sample u lp k ~draws:50 s in
+        let _, d, st = Norn.Hmc.sample u lp k ~draws s in
         (d, Some st));
   }
 
-(* Two ensembles of 64 walkers: at least twice the coordinates of each
-   posterior. Walkers spread over a region of another shape than a narrow,
-   correlated posterior come back to it only over many transitions, so they
-   start where HMC leaves them after twice the warmup, which on sblrc-blr leaves
-   no chain behind. *)
-let ensemble =
+(* Ensembles of 32 walkers: at least twice the coordinates of each posterior. A
+   walker's moves read the other walkers of its ensemble, so the walkers of one
+   ensemble are dependent and the ensembles independent: each ensemble is a
+   superchain of nested R-hat. Walkers spread over a region of another shape
+   than a narrow, correlated posterior come back to it only over many
+   transitions, so they start where HMC leaves them after twice the warmup. *)
+let ensemble ~ensembles ~draws =
   {
-    chains = 128;
-    superchains = 8;
+    chains = 32 * ensembles;
+    superchains = ensembles;
     run =
       (fun u lp k start ->
         let h = Norn.Hmc.init u lp start in
         let h =
           Norn.Hmc.warmup u lp (Nx.Rng.fold_in k 1) ~steps:(2 * warmup) h
         in
-        let s = Norn.Ensemble.init u ~ensembles:2 lp h.position in
+        let s = Norn.Ensemble.init u ~ensembles lp h.position in
         let s = Norn.Ensemble.warmup u lp k ~steps:warmup s in
-        let _, d, _ = Norn.Ensemble.sample u lp k ~draws:200 s in
+        let _, d, _ = Norn.Ensemble.sample u lp k ~draws s in
         (d, None));
   }
 
@@ -242,59 +242,49 @@ let chain_cell label kernel (P.Posterior p) =
           (param p.params) stats d);
   }
 
-(* Tempering from 1000 prior draws, in 25 chains of 40 states: the particles are
-   read as those chains' draws, so their errors count the chains'
-   autocorrelation. *)
-let smc_cell (P.Posterior p) =
-  let particles = 1000 and chains = 25 in
+(* A sampler that returns an evidence, run from prior draws. Its particles are
+   not chains a convergence diagnostic reads: tempering's chains start from
+   resampled, shared ancestors, and nested sampling's dead points from
+   survivors. So it runs four independent replicates as lanes of one compiled
+   run, each replicate's expectations of every element and of its square give
+   its mean and standard deviation, and the replicates' spread is their error. A
+   replicate that spent its budget flags the run. *)
+type replicated = {
+  label : string;
+  draws : int;
+  evidence :
+    'u.
+    'u Nx.Ptree.t ->
+    prior:('u -> Nx.float64_t) ->
+    likelihood:('u -> Nx.float64_t) ->
+    Nx.Rng.t ->
+    'u ->
+    ('u, Nx.float64_elt) Norn.Evidence.t;
+}
+
+(* Tempering from 1000 prior draws, in 25 chains of 40 states. *)
+let smc =
   {
-    name = "SMC › " ^ p.name;
-    verdict =
-      (fun () ->
-        let m = p.model in
-        let u = M.coords m in
-        let run =
-          Rune.jit
-            Nx.Ptree.(Nx.Rng.ptree @-> returns (Norn.Evidence.ptree u))
-            (fun k ->
-              Norn.Smc.run u ~budget:200 ~prior:(M.log_prior m)
-                ~likelihood:(M.log_likelihood m p.y) (Nx.Rng.fold_in k 0)
-                (M.from_prior m ~n:particles (Nx.Rng.fold_in k 1)))
-        in
-        let ev = run (Nx.Rng.key 1) in
-        match Norn.Evidence.stop ev with
-        | Temperature b ->
-            Flagged (Printf.sprintf "the budget was spent at β = %g" b)
-        | Remaining _ | Converged ->
-            let x = (Norn.Evidence.sample ev).values in
-            (* Particle [i] is state [i / M] of chain [i mod M]. *)
-            let chained =
-              Nx.Ptree.map u
-                (fun _ t ->
-                  let s = Nx.shape t in
-                  Nx.moveaxis 0 1
-                    (Nx.reshape
-                       (Array.append
-                          [| particles / chains; chains |]
-                          (Array.sub s 1 (Array.length s - 1)))
-                       t))
-                x
-            in
-            let d =
-              Norn.Draws.map u P.latent (M.constrain m) (Norn.Draws.v u chained)
-            in
-            judge_chains P.latent ~superchains:5 (refs p.refs) (param p.params)
-              None d);
+    label = "SMC";
+    draws = 1000;
+    evidence =
+      (fun u ~prior ~likelihood k start ->
+        Norn.Smc.run u ~budget:200 ~prior ~likelihood k start);
   }
 
-(* Nested sampling from 500 prior draws, four replicates as lanes of one
-   compiled run. Each replicate's expectations of every element and of its
-   square give its mean and standard deviation; the replicates' spread is their
-   error. *)
-let nested_cell (P.Posterior p) =
-  let live = 500 in
+(* Nested sampling from 500 prior draws. *)
+let nested =
   {
-    name = "nested sampling › " ^ p.name;
+    label = "nested sampling";
+    draws = 500;
+    evidence =
+      (fun u ~prior ~likelihood k start ->
+        Norn.Nested.run u ~budget:200 ~prior ~likelihood k start);
+  }
+
+let replicated_cell sampler (P.Posterior p) =
+  {
+    name = sampler.label ^ " › " ^ p.name;
     verdict =
       (fun () ->
         let m = p.model in
@@ -316,9 +306,9 @@ let nested_cell (P.Posterior p) =
                 Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
                 (fun k ->
                   let z =
-                    Norn.Nested.run u ~budget:200 ~prior:(M.log_prior m)
+                    sampler.evidence u ~prior:(M.log_prior m)
                       ~likelihood:(M.log_likelihood m p.y) (Nx.Rng.fold_in k 0)
-                      (M.from_prior m ~n:live (Nx.Rng.fold_in k 1))
+                      (M.from_prior m ~n:sampler.draws (Nx.Rng.fold_in k 1))
                   in
                   (z, fst (Norn.Evidence.expectation u flat z)))
                 ks)
@@ -334,7 +324,10 @@ let nested_cell (P.Posterior p) =
                   Some
                     (Printf.sprintf
                        "replicate %d spent its budget with %g nats left" i r)
-              | Temperature _ -> None)
+              | Temperature b ->
+                  Some
+                    (Printf.sprintf "replicate %d spent its budget at β = %g" i
+                       b))
             (List.init replicates Fun.id)
         in
         match spent with
@@ -386,13 +379,54 @@ let nested_cell (P.Posterior p) =
                  p.refs));
   }
 
+(* The cells, each sized as a careful user would run it: the smallest run, among
+   the sizes tried, whose diagnostics pass on the test's key, so that it reaches
+   the recovery branch. A cell that the diagnostics flag at every size names its
+   pathology. *)
+
+let nuts_cell (P.Posterior p as post) =
+  match p.name with
+  | "gp_pois_regr-gp_pois_regr" ->
+      (* At the default acceptance a transition or two in thousands diverges in
+         the hyperparameters' funnel; at 0.95 none does, and 250 draws reach an
+         effective size of 400 where 150 reach 300. *)
+      chain_cell "NUTS" (nuts ~accept:0.95 ~draws:250 ()) post
+  | _ -> chain_cell "NUTS" (nuts ~draws:150 ()) post
+
+let hmc_cell (P.Posterior p as post) =
+  let draws =
+    match p.name with
+    | "arK-arK" -> 100 (* at 50 an effective size of 288 *)
+    | "gp_pois_regr-gp_pois_regr" ->
+        (* R-hat 1.021 at 100 draws, 1.011 at 200, an effective size of 258 at
+           400 *)
+        800
+    | _ -> 50
+  in
+  (* Known pathologies, flagged at every size: on low_dim_gauss_mix a chain that
+     starts at the degenerate solution, both components one wide Gaussian, stays
+     there under the step size and metric the other chains tune (R-hat 1.03); on
+     sblrc-blr the shared warmup leaves some chains with a low E-BFMI. *)
+  chain_cell "HMC" (hmc ~draws) post
+
+let ensemble_cell (P.Posterior p as post) =
+  let draws =
+    match p.name with
+    | "eight_schools-eight_schools_noncentered" ->
+        800 (* an effective size of 371 at 600 *)
+    | _ -> 400 (* at 200, R-hat up to 1.016 *)
+  in
+  (* Known pathology, flagged at every size: on gp_pois_regr the stretch move
+     barely moves the Gaussian process's hyperparameters, whose effective size
+     stays near 200 from 800 draws to 1600. *)
+  chain_cell "ensemble sampling" (ensemble ~ensembles:4 ~draws) post
+
 let cells =
   lazy
     (let all = Lazy.force posteriors in
-     List.map (chain_cell "NUTS" nuts) all
-     @ List.map (chain_cell "HMC" hmc) all
-     @ List.map (chain_cell "ensemble sampling" ensemble) all
-     @ List.map smc_cell all @ List.map nested_cell all)
+     List.map nuts_cell all @ List.map hmc_cell all @ List.map ensemble_cell all
+     @ List.map (replicated_cell smc) all
+     @ List.map (replicated_cell nested) all)
 
 (* Neal's funnel: v ~ N(0, 3), x ~ N(0, exp (v / 2)) in nine dimensions,
    non-centred. Its exact moments: v's mean 0 and sd 3; each x's mean 0 and sd
@@ -432,7 +466,7 @@ let funnel_cell =
       (fun () ->
         let d, stats =
           fit
-            { hmc with chains = 1024; superchains = 8 }
+            { (hmc ~draws:50) with chains = 1024; superchains = 8 }
             funnel funnel_latent ()
         in
         let value name (f : Nx.float64_t funnel) =
