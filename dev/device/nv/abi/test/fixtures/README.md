@@ -7,7 +7,15 @@
   `cc nvrtc.c -I$NVRTC/include -L$NVRTC/lib -l:libnvrtc.so.12 -Wl,-rpath,$NVRTC/lib -o nvrtc && ./nvrtc simple_add.cu sm_89 simple_add_sm89.cubin`.
   Another release of NVRTC writes its own version into the file.
 
-What the suite expects of it was read with Homebrew LLVM 22.1.7's
+- `globals_sm89.cubin`, the cubin of `globals.cu` for sm_89, made the same
+  way on kimchi (Debian 13, x86_64), which rebuilds the committed bytes (md5
+  8fa197ddee692082de0ae3c46916b770):
+  `./nvrtc globals.cu sm_89 globals_sm89.cubin`. `llvm-readelf -S -r -s`
+  reads its uninitialised `scale` in `.nv.global` (NOBITS, allocated, 4
+  bytes) and its initialised `bias` in `.nv.global.init` (4 bytes), each
+  address written into `.nv.constant4` by a `R_CUDA_64` relocation.
+
+What the suite expects of `simple_add_sm89.cubin` was read with Homebrew LLVM 22.1.7's
 `llvm-readelf -S -r -s -x .nv.info -x .nv.info.simple_add simple_add_sm89.cubin`:
 
 - two allocated sections, `.nv.constant0.simple_add` (0x17c bytes,

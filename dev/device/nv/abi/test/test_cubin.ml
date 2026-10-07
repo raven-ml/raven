@@ -468,6 +468,39 @@ let many_sm89 =
             (Cubin.patches (read obj) ~base));
     ]
 
+(* A kernel reading an uninitialised global, scale in .nv.global, and an
+   initialised one, bias in .nv.global.init, each relocated into bank 4
+   (globals.cu, fixtures/README.md). *)
+
+let globals () =
+  read
+    (In_channel.with_open_bin "fixtures/globals_sm89.cubin" In_channel.input_all)
+
+let globals_sm89 =
+  group ~timeout:10. "globals_sm89"
+    [
+      test "an uninitialised global lies in the image, as zeros" (fun () ->
+          let o = Cubin.elf (globals ()) in
+          let s =
+            require_some
+              (Iarray.find_opt
+                 (fun (s : Device_elf.section) -> s.name = ".nv.global")
+                 o.sections)
+          in
+          let at = require_some ~msg:"held" s.offset in
+          equal ~msg:"bytes in the object" int 0 s.length;
+          equal ~msg:"scale" (option int) (Some at)
+            (Device_elf.symbol o "scale");
+          at_most ~msg:"its 4 bytes" int ~than:o.size (at + 4));
+      test "a relocation to an uninitialised global writes its address"
+        (fun () ->
+          let c = globals () and base = 0x7fff_0000_0000 in
+          let o = Cubin.elf c in
+          let expected = List.filter_map (expected_patch ~base) o.relocations in
+          equal ~msg:"count" int 2 (List.length expected);
+          equal (list (pair int string)) expected (Cubin.patches c ~base));
+    ]
+
 (* The image *)
 
 (* A cubin of a 16-byte bank at address 0 and 16 bytes of code at [at]: an image
@@ -501,6 +534,21 @@ let image =
           equal (pair int int)
             (page, 2 * page)
             ((Cubin.elf c).size, Cubin.size c));
+      test "a kernel's shared memory stays out of the image" (fun () ->
+          let shared =
+            section ~kind:nobits ~flags:(alloc lor 1) ~size:0x8000
+              ".nv.shared.k" ""
+          in
+          let c = read (write [ code "k" 0x100; shared ]) in
+          let k = require_some (Cubin.kernel c "k") in
+          equal (pair int int) (0x8000, 2 * page) (k.shared_bytes, Cubin.size c));
+      test "an uninitialised global's bytes count in the image" (fun () ->
+          let global =
+            section ~kind:nobits ~flags:(alloc lor 1) ~size:0x2000 ".nv.global"
+              ""
+          in
+          let c = read (write [ code "k" 0x100; global ]) in
+          equal int (4 * page) (Cubin.size c));
       test "a cubin without allocated sections takes a page" (fun () ->
           let c = read (write [ nv_info "" ]) in
           equal (pair int int) (0, page) ((Cubin.elf c).size, Cubin.size c));
@@ -857,4 +905,4 @@ let kernels =
 let () =
   exit
     (run "device_nv_abi.cubin"
-       [ nvrtc; many_sm89; relocations; image; kernels ])
+       [ nvrtc; many_sm89; relocations; globals_sm89; image; kernels ])
