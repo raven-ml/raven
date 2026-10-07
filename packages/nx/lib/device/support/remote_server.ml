@@ -23,6 +23,7 @@ type range = { kind : kind; mmio : Mmio.t }
 
 type session = {
   fd : Unix.file_descr;
+  stopping : bool Atomic.t; (* the server's *)
   programs : programs option;
   functions : (int, Pci.t) Hashtbl.t;
   mutable next_function : int;
@@ -377,12 +378,22 @@ let answer_error fd status why =
   Wire.send fd (Wire.encode_response status (String.length why) 0);
   Wire.send fd why
 
-(* Serves commands until the client leaves. A posted command that fails ends the
-   session with a fatal answer the client reads at its next command, and so does
-   a failure that is no refusal, such as a program's exception. *)
+(* The header of the client's next command, or [Wire.Closed] once the server
+   stops. The wait looks at the server each second: on Windows, the shutdown of
+   the socket that ends the session leaves a read blocked on it. *)
+let rec header s =
+  if Atomic.get s.stopping then raise Wire.Closed;
+  match Unix.select [ s.fd ] [] [] 1. with
+  | [], _, _ | (exception Unix.Unix_error (Unix.EINTR, _, _)) -> header s
+  | _ -> Wire.recv s.fd Wire.header
+
+(* Serves commands until the client leaves or the server stops. A posted command
+   that fails ends the session with a fatal answer the client reads at its next
+   command, and so does a failure that is no refusal, such as a program's
+   exception. *)
 let loop s =
   let rec next () =
-    match Wire.recv s.fd Wire.header with
+    match header s with
     | exception (Wire.Closed | Unix.Unix_error _) -> ()
     | h -> (
         let arg i = Wire.int64 h (4 + (8 * i)) in
@@ -489,10 +500,11 @@ let welcome fd key ~server ~client =
 
 (* Serves an authenticated client until it leaves, then cleans up after it. It
    never raises: whatever ends the session, the cleanup runs. *)
-let serve ~programs fd =
+let serve ~programs ~stopping fd =
   let s =
     {
       fd;
+      stopping;
       programs;
       functions = Hashtbl.create 4;
       next_function = 0;
@@ -617,7 +629,7 @@ let accept_loop ~key ~programs socket stopping =
             let ended = Atomic.make false and fd = p.fd in
             let d =
               Domain.spawn (fun () ->
-                  serve ~programs fd;
+                  serve ~programs ~stopping fd;
                   close fd;
                   Atomic.set ended true)
             in

@@ -3581,6 +3581,8 @@ thread.
 
 ### Nx
 
+- `Nx_device_support.Remote_server.stop` ends a connected client's session on
+  Windows, where it waited for the client to leave.
 - **Breaking:** `Nx_device.Buffer.create_file` creates a new file and returns
   `Error` if its path exists, where it emptied the file there, following a
   link. `Nx_device.Buffer.flush` waits for the writes to a file's buffer and
