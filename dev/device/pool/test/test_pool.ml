@@ -17,9 +17,7 @@ let () =
   | _ -> ()
 
 let cores = P.cores ()
-
-let needs_two_cores () =
-  if cores < 2 then skip ~reason:"the host has one core" ()
+let needs_two_cores = P.needs_two_cores
 
 (* Jobs by nx_pool.h *)
 
@@ -82,15 +80,6 @@ let distinct l = List.sort_uniq compare l
 
 (* Waiting *)
 
-(* Polls [ready] for at most [seconds], and fails with [why] if it never
-   holds. *)
-let within seconds why ready =
-  let deadline = Unix.gettimeofday () +. seconds in
-  while not (ready ()) do
-    if Unix.gettimeofday () > deadline then failf "after %gs, %s" seconds why;
-    Unix.sleepf 0.001
-  done
-
 (* [finishes ~within what f] is [f ()], run on a domain of its own, and fails
    the test if it has not returned after [within] seconds: a job that waits
    forever fails the test instead of hanging it. *)
@@ -117,24 +106,6 @@ let finishes ?(within = 10.) what f =
         wait ()
   in
   wait ()
-
-(* [while_held f] is [f ()], run while another domain's job of two threads runs:
-   every chunk of it waits until [f] has returned. *)
-let while_held f =
-  P.reset ();
-  let held = Domain.spawn (fun () -> P.hold ~only_worker:false) in
-  match
-    within 10. "the held job did not begin" (fun () -> P.hold_arrived () >= 1);
-    f ()
-  with
-  | v ->
-      P.hold_release ();
-      equal ~msg:"the held job ran until released" bool true (Domain.join held);
-      v
-  | exception e ->
-      P.hold_release ();
-      ignore (Domain.join held);
-      raise e
 
 (* Cores *)
 
@@ -172,6 +143,10 @@ let test_affinity () =
     ~msg:"cores at the first call, on one CPU, and after the affinity returned"
     (option string) (Some "1 1") line
 
+let test_windows_cores () =
+  if P.system () <> "windows" then skip ~reason:"the host is not Windows" ();
+  equal ~msg:"cores" int (P.active_processors ()) cores
+
 let cores_tests =
   group "cores"
     [
@@ -183,6 +158,8 @@ let cores_tests =
         test_macos_cores;
       test "off macOS the performance cores are the cores"
         test_other_performance_cores;
+      test "on Windows the cores are the active processors of every group"
+        test_windows_cores;
       test
         "on Linux the cores are bounded by the affinity at the first call, and \
          a later change is not seen"
@@ -394,35 +371,6 @@ let test_visibility () =
   equal ~msg:"values bodies read stale" int 0 bodies;
   equal ~msg:"values the caller read stale" int 0 caller
 
-let test_worker_mask () =
-  needs_two_cores ();
-  let worked, mask = P.worker_mask () in
-  equal ~msg:"a worker ran a chunk" bool true worked;
-  equal ~msg:"(signal, blocked)"
-    (list (pair string bool))
-    (List.map (fun (s, _) -> (s, not (List.mem s P.faults))) mask)
-    mask
-
-(* [in_child s] is the values of scenario [s], once its child answered. *)
-let in_child scenario =
-  let status, values = P.in_child scenario in
-  equal ~msg:"how the child ended" string "exit 0" status;
-  values
-
-let test_stack () =
-  needs_two_cores ();
-  let v = in_child Stack in
-  equal ~msg:"a worker ran the chunk" int 1 v.(0)
-
-let test_faults () =
-  needs_two_cores ();
-  let v = in_child Faults in
-  equal ~msg:"a worker ran the chunk" int 1 v.(0);
-  equal ~msg:"(signal, its handler ran on the worker)"
-    (list (pair string bool))
-    (List.map (fun s -> (s, true)) P.faults)
-    (List.mapi (fun k s -> (s, v.(1) land (1 lsl k) <> 0)) P.faults)
-
 let worker_tests =
   group "workers"
     [
@@ -434,18 +382,13 @@ let worker_tests =
         "bodies see the caller's writes made before the job, and the caller \
          the bodies' once it returns"
         test_visibility;
-      test "a body on a worker has 8 MiB of stack" test_stack;
-      test "workers block every signal but those a body raises itself"
-        test_worker_mask;
-      test "a fault signal a body raises on a worker runs its handler there"
-        test_faults;
     ]
 
 (* Scheduling *)
 
 let test_one_thread_at_once () =
   needs_two_cores ();
-  while_held (fun () ->
+  P.while_held (fun () ->
       let ran =
         finishes ~within:2. "a job of one thread" (fun () ->
             P.record ~threads:1 ~total:100L ~chunks:10L)
@@ -470,7 +413,7 @@ let test_nested () =
 let test_waits () =
   needs_two_cores ();
   let waiting =
-    while_held (fun () ->
+    P.while_held (fun () ->
         let d =
           Domain.spawn (fun () -> P.counted ~threads:2 ~total:4L ~chunks:4L)
         in
@@ -479,7 +422,7 @@ let test_waits () =
           (P.counted_calls ());
         d)
   in
-  within 10. "the waiting job did not run once the other ended" (fun () ->
+  P.within 10. "the waiting job did not run once the other ended" (fun () ->
       P.counted_calls () = 4);
   Domain.join waiting
 
@@ -519,131 +462,7 @@ let scheduling_tests =
         "jobs from two domains each call their chunks once" job_commands;
     ]
 
-(* Threads *)
-
-let needs_thread_states () =
-  if P.running_threads () < 0 then
-    skip ~reason:"the system does not report its threads' states" ()
-
-(* Polls until at most [n] threads other than this one run, for at most [within]
-   seconds, and is the last count. *)
-let settle_to n ~within =
-  let deadline = Unix.gettimeofday () +. within in
-  let rec poll () =
-    let k = P.running_threads () in
-    if k <= n || Unix.gettimeofday () > deadline then k
-    else (
-      Unix.sleepf 0.001;
-      poll ())
-  in
-  poll ()
-
-let test_made_once () =
-  needs_two_cores ();
-  let v = in_child Threads in
-  if v.(0) < 0 then skip ~reason:"the system does not count its threads" ();
-  equal ~msg:"threads after a job of one thread, as before any" int v.(0) v.(1);
-  greater ~msg:"threads after the first job of two" int ~than:v.(0) v.(2);
-  equal ~msg:"threads after jobs on every core, as after the first of two" int
-    v.(2) v.(3)
-
-(* An idle pool's threads park. A job then wakes a parked worker, and a caller
-   whose job a worker holds parks until the job ends. *)
-let test_parks () =
-  needs_thread_states ();
-  needs_two_cores ();
-  ignore (P.record ~threads:cores ~total:64L ~chunks:8L);
-  equal ~msg:"threads running once the pool is idle" int 0
-    (settle_to 0 ~within:5.);
-  P.reset ();
-  let finished = Atomic.make false in
-  let caller =
-    Domain.spawn (fun () ->
-        Fun.protect
-          ~finally:(fun () -> Atomic.set finished true)
-          (fun () -> P.hold ~only_worker:true))
-  in
-  within 10. "a parked worker was not woken for the job" (fun () ->
-      P.hold_arrived () = 2);
-  equal ~msg:"threads running while a worker holds the job: the caller parked"
-    int 1 (settle_to 1 ~within:5.);
-  P.hold_release ();
-  within 10. "the parked caller was not woken at the job's end" (fun () ->
-      Atomic.get finished);
-  equal ~msg:"the job was released" bool true (Domain.join caller)
-
-(* A burst of jobs of two threads takes the caller and one worker. The other
-   workers, which the job before the burst kept spinning and which take part in
-   none of its jobs, park while it runs: once at most two threads run beside
-   this one, the count read every millisecond stays there. A worker that a
-   wakeup reaches runs for a moment, so the median is what counts. *)
-let test_narrow_burst () =
-  needs_thread_states ();
-  if cores < 3 then skip ~reason:"every worker takes part" ();
-  P.reset ();
-  let burst = Domain.spawn P.burst in
-  let samples =
-    Fun.protect
-      ~finally:(fun () ->
-        P.burst_stop ();
-        Domain.join burst)
-      (fun () ->
-        ignore (settle_to 2 ~within:5.);
-        List.init 51 (fun _ ->
-            Unix.sleepf 0.001;
-            P.running_threads ()))
-  in
-  let median = List.nth (List.sort Int.compare samples) 25 in
-  at_most
-    ~msg:
-      (Printf.sprintf
-         "threads running beside the burst's caller and its worker, of %s"
-         (String.concat " " (List.map string_of_int samples)))
-    int ~than:2 median
-
-let test_fork_child () =
-  needs_two_cores ();
-  let v = in_child Job in
-  equal ~msg:"(a worker ran a chunk, units not run once)" (pair int int) (1, 0)
-    (v.(0), v.(1))
-
-let test_fork_waits () =
-  needs_two_cores ();
-  let forked = Atomic.make false in
-  let forking =
-    while_held (fun () ->
-        let d =
-          Domain.spawn (fun () ->
-              P.fork ();
-              Atomic.set forked true)
-        in
-        Unix.sleepf 0.05;
-        equal ~msg:"fork returned while a job ran" bool false
-          (Atomic.get forked);
-        d)
-  in
-  within 10. "fork did not return once the job ended" (fun () ->
-      Atomic.get forked);
-  Domain.join forking
-
-let thread_tests =
-  group "threads"
-    [
-      test
-        "the workers are made at the first job of more than one thread and \
-         live until the process exits"
-        test_made_once;
-      test "the pool's threads park when idle, and a job wakes them" test_parks;
-      test "a worker that a burst of narrow jobs leaves out parks"
-        test_narrow_burst;
-      test "a child made by fork runs its jobs on workers of its own"
-        test_fork_child;
-      test "fork waits for a running job to end" test_fork_waits;
-    ]
-
 let () =
   exit
     (run "nx_pool.h"
-       [
-         cores_tests; chunk_tests; worker_tests; scheduling_tests; thread_tests;
-       ])
+       [ cores_tests; chunk_tests; worker_tests; scheduling_tests ])

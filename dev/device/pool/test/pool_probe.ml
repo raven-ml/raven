@@ -1,4 +1,4 @@
-(* Probes of nx_pool.h (pool_probe_stubs.c). *)
+(* Probes of nx_pool.h (pool_probe_stubs.c), and the waits the suites share. *)
 
 (* Recorded jobs *)
 
@@ -48,46 +48,47 @@ external counted : threads:int -> total:int64 -> chunks:int64 -> unit
 
 external counted_calls : unit -> int = "probe_counted_calls"
 
-(* [burst ()] runs a job on every core, then jobs of two chunks on two threads
-   until [burst_stop ()]. *)
-external burst : unit -> unit = "probe_burst"
-external burst_stop : unit -> unit = "probe_burst_stop"
-
-(* Bodies on a worker *)
-
-(* Whether a worker ran a chunk, and the signals of a table with whether that
-   worker blocks them. *)
-external worker_mask : unit -> bool * (string * bool) list = "probe_worker_mask"
-
-(* The signals a body may raise itself, in the order of the child's bits. *)
-let faults =
-  [ "SIGSEGV"; "SIGBUS"; "SIGFPE"; "SIGILL"; "SIGTRAP"; "SIGABRT"; "SIGSYS" ]
-
-(* Children made by fork, right after a job of the parent's, and the values they
-   answer. *)
-type scenario =
-  (* The process's threads before any job, after a job of one thread, after the
-     first job of two, after jobs on every core. *)
-  | Threads
-  (* Whether a worker ran a chunk; the units of a job on every core not run
-     once. *)
-  | Job
-  (* Whether a worker ran a chunk that used 7 MiB of stack. *)
-  | Stack
-  (* Whether a worker ran a chunk; a bit per signal of [faults] that it raised
-     and whose handler ran before [raise] returned. *)
-  | Faults
-
-(* [in_child s] is (how the child ended, "exit 0" once it answered; its four
-   values). *)
-external in_child : scenario -> string * int array = "probe_in_child"
-external fork : unit -> unit = "probe_fork"
-
 (* The host *)
 
 external cores : unit -> int = "probe_cores"
 external performance_cores : unit -> int = "probe_performance_cores"
 external system : unit -> string = "probe_system"
 external sysctl : string -> int = "probe_sysctl"
+external active_processors : unit -> int = "probe_active_processors"
 external pinned_cores : unit -> int * int = "probe_pinned_cores"
-external running_threads : unit -> int = "probe_running_threads"
+
+(* Calls nx_pool_cores only when run: test_pool's affinity child must call
+   nothing of the pool before it pins itself. *)
+let needs_two_cores () =
+  if cores () < 2 then Windtrap.skip ~reason:"the host has one core" ()
+
+(* Waiting *)
+
+(* Polls [ready] for at most [seconds], and fails with [why] if it never
+   holds. *)
+let within seconds why ready =
+  let deadline = Unix.gettimeofday () +. seconds in
+  while not (ready ()) do
+    if Unix.gettimeofday () > deadline then
+      Windtrap.failf "after %gs, %s" seconds why;
+    Unix.sleepf 0.001
+  done
+
+(* [while_held f] is [f ()], run while another domain's job of two threads runs:
+   every chunk of it waits until [f] has returned. *)
+let while_held f =
+  reset ();
+  let held = Domain.spawn (fun () -> hold ~only_worker:false) in
+  match
+    within 10. "the held job did not begin" (fun () -> hold_arrived () >= 1);
+    f ()
+  with
+  | v ->
+      hold_release ();
+      Windtrap.equal ~msg:"the held job ran until released" Windtrap.bool true
+        (Domain.join held);
+      v
+  | exception e ->
+      hold_release ();
+      ignore (Domain.join held);
+      raise e

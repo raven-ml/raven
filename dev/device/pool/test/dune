@@ -1,37 +1,58 @@
-; The pool's suite. Its probes are the C stubs of a library of their own,
-; which call nx_pool.h as a consumer's stubs do. The probes fork and read
-; signal masks, so the suite runs where POSIX does.
+; The pool's suites. Their probes are the C stubs of libraries of their own,
+; which call nx_pool.h as a consumer's stubs do. test_pool runs on every
+; system. test_threads forks and reads signal masks and thread states, so it
+; runs where POSIX does.
 
 (library
  (name pool_probe)
  (modules pool_probe)
+ (libraries device_pool unix windtrap)
+ (foreign_stubs
+  (language c)
+  (names pool_probe_stubs)
+  (flags :standard -std=c11 -Wall -Wextra)))
+
+(library
+ (name thread_probe)
+ (modules thread_probe)
  (enabled_if
   (<> %{os_type} Win32))
  (libraries device_pool)
  (foreign_stubs
   (language c)
-  (names pool_probe_stubs)
+  (names thread_probe_stubs)
   (flags :standard -std=c11 -Wall -Wextra)))
 
 (executable
  (name test_pool)
  (modules test_pool)
  (modes native byte)
+ (libraries pool_probe unix windtrap))
+
+(executable
+ (name test_threads)
+ (modules test_threads)
+ (modes native byte)
  (enabled_if
   (<> %{os_type} Win32))
- (libraries pool_probe unix windtrap))
+ (libraries pool_probe thread_probe unix windtrap))
+
+(rule
+ (alias runtest)
+ (action
+  (run %{dep:test_pool.exe})))
 
 (rule
  (alias runtest)
  (enabled_if
   (<> %{os_type} Win32))
  (action
-  (run %{dep:test_pool.exe})))
+  (run %{dep:test_threads.exe})))
 
 ; ocamlrun loads each library's stubs as a shared library of its own, found
-; on CAML_LD_LIBRARY_PATH (':' separates its directories, as on every system
-; the suite runs on); the pool's symbols resolve at load. windtrap's stubs
-; sit in the stublibs directory beside its library.
+; on CAML_LD_LIBRARY_PATH; the pool's symbols resolve at load. windtrap's
+; stubs sit in the stublibs directory beside its library. ':' separates the
+; path's directories off Windows only, so the bytecode runs are POSIX's.
 
 (rule
  (alias runtest)
@@ -43,3 +64,17 @@
    CAML_LD_LIBRARY_PATH
    "..:.:%{lib:windtrap:../stublibs}"
    (run %{dep:test_pool.bc}))))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (deps
+  ../dlldevice_pool_stubs.so
+  dllpool_probe_stubs.so
+  dllthread_probe_stubs.so)
+ (action
+  (setenv
+   CAML_LD_LIBRARY_PATH
+   "..:.:%{lib:windtrap:../stublibs}"
+   (run %{dep:test_threads.bc}))))
