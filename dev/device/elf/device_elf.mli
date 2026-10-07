@@ -11,13 +11,30 @@
     [SHF_ALLOC]), its code and data. If one of these sections has a nonzero
     address ([sh_addr]), each goes at its address, as in an executable.
     Otherwise each follows the image's end in section order, at its alignment,
-    as in a relocatable object. Bytes no section covers are zero, and the image
-    ends where its last section ends. Other sections, such as [.bss], the symbol
-    and string tables or debugging information, stay out of the image; their
-    contents are in {!field-sections}.
+    as in a relocatable object. The image ends where its last section ends.
+    Other sections, such as [.bss], the symbol and string tables or debugging
+    information, stay out of the image.
+
+    Reading copies no section's bytes. A section's bytes are a range of the
+    object, and the image is described by the sections it holds: it is
+    {!field-size} bytes, each section [s] with [s.offset = Some off] puts at
+    [off] the [s.length] bytes of the object from [s.at], and every other byte
+    is zero. A loader writes this into its destination. Into [bytes], for
+    instance:
+    {[
+    let image (o : Device_elf.t) =
+      let b = Bytes.make o.size '\000' in
+      let put (s : Device_elf.section) =
+        match s.offset with
+        | Some off -> Bytes.blit_string o.file s.at b off s.length
+        | None -> ()
+      in
+      Iarray.iter put o.sections;
+      b
+    ]}
 
     The object's symbols and relocations come out in image offsets, so a loader
-    that copies the image to address [base] finds an offset [o] at [base + o].
+    that writes the image at address [base] finds an offset [o] at [base + o].
     The value of a relocation's symbol, for instance, is:
     {[
     let value ~base (r : Device_elf.relocation) =
@@ -62,8 +79,12 @@ type section = {
   size : int;
       (** Its size in memory, [sh_size]. A section with no bytes in the object,
           such as [.bss], has one too. *)
-  contents : string;
-      (** Its bytes in the object, [""] for a section with none. *)
+  at : int;
+      (** Where its bytes start in {!field-file}, [sh_offset]; [0] for the null
+          section and an [SHT_NOBITS] one. *)
+  length : int;
+      (** How many bytes it has in {!field-file}: [size], or [0] for a section
+          with none ([SHT_NOBITS] and the null section). *)
 }
 (** The type for sections. *)
 
@@ -89,7 +110,12 @@ type t = private {
       (** The version of that ABI, [EI_ABIVERSION], whose meaning is [os_abi]'s.
       *)
   flags : int;  (** Its machine's flags, [e_flags]. *)
-  image : string;  (** Its image. *)
+  file : string;  (** The object: [obj] itself, as {!of_string} read it. *)
+  size : int;
+      (** The length of its image, in bytes, from [0] to [max_int]. A corrupted
+          address can make it any of these, whatever the object's length, so a
+          loader checks it against what its destination holds before allocating.
+      *)
   sections : section iarray;
       (** Every section by index, from the null section at index [0]. *)
   symbols : symbol iarray;
@@ -105,13 +131,17 @@ type t = private {
           entries' addresses ([r_offset]). *)
 }
 (** The type for objects laid out in their image. For an object [o]:
-    - A section [s] with [s.offset = Some off] has its contents there:
-      [String.sub o.image off s.size = s.contents], and [off] is a multiple of
-      its alignment, [sh_addralign].
+    - A section [s]'s bytes lie in the object,
+      [s.at + s.length <= String.length o.file], and no two sections share a
+      byte of it.
+    - A section [s] with [s.offset = Some off] has its bytes in the object,
+      [s.length = s.size], and lies in the image, [off + s.size <= o.size], at a
+      multiple of its alignment, [sh_addralign]. No two such sections share a
+      byte of the image.
     - A place [Image { section = i; offset }] names a section [s], index [i] of
       [o.sections], with [s.offset = Some off] and
       [off <= offset <= off + s.size].
-    - A relocation's [offset] is less than [String.length o.image]. *)
+    - A relocation's [offset] is less than [o.size]. *)
 
 (** {1:reading Reading} *)
 
@@ -132,15 +162,16 @@ val of_string : ?align:int -> string -> (t, string) result
       not a string table;
     - a section's alignment is not a power of two, or a section the image holds
       is at an address that is not a multiple of it;
-    - two sections share bytes of the image;
-    - its image would be longer than 1 GiB. Real images are at most tens of
-      megabytes, so a longer one comes from a corrupted address, and reading it
-      would allocate gigabytes;
+    - two sections share bytes of the object, or of the image;
+    - its names together are longer than it, which only names that share bytes
+      of their string table can be;
+    - its image would be longer than [max_int] bytes;
     - a relocation's offset lies at or past the end of the section it patches,
       or a relocation patches allocated memory the image does not hold: a
       section the image lacks, or an address past its end.
 
-    Any other object is [Ok].
+    Any other object is [Ok]. Reading takes memory linear in [obj]'s length, and
+    time linear in it up to sorting its sections, whatever {!field-size} is.
 
     Raises [Invalid_argument] if [align] is not a positive power of two. *)
 

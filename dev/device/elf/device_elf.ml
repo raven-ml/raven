@@ -17,7 +17,8 @@ type section = {
   flags : int;
   offset : int option;
   size : int;
-  contents : string;
+  at : int;
+  length : int;
 }
 
 type relocation = { offset : int; kind : int; addend : int; symbol : symbol }
@@ -28,7 +29,8 @@ type t = {
   os_abi : int;
   abi_version : int;
   flags : int;
-  image : string;
+  file : string;
+  size : int;
   sections : section iarray;
   symbols : symbol iarray;
   relocations : relocation list;
@@ -203,29 +205,58 @@ let headers f obj =
     (Array.init count (fun i -> header f obj (shoff + (i * entsize))), names)
   end
 
-(* The string at [off] of the string table [tab]. *)
-let string_at tab off =
-  if off = 0 && tab = "" then ""
+(* Where a section's bytes start in the object, and how many it has there. *)
+let at_of h = if has_bytes h then h.sh_offset else 0
+let length_of h = if has_bytes h then h.sh_size else 0
+
+(* The string at [off] of the string table [tab], a header of [obj]. [named]
+   counts the bytes copied into names so far, which may not exceed the object's
+   length: names may share bytes of their table, and copying each would
+   otherwise take memory quadratic in the object. *)
+let string_at obj named tab off =
+  let first = at_of tab and n = length_of tab in
+  if off = 0 && n = 0 then ""
   else begin
-    if off < 0 || off >= String.length tab then
+    if off < 0 || off >= n then
       fail "a name at %d lies past its string table" off;
-    match String.index_from_opt tab off '\000' with
-    | Some e -> String.sub tab off (e - off)
-    | None -> fail "the name at %d is unterminated" off
+    match String.index_from_opt obj (first + off) '\000' with
+    | Some e when e < first + n ->
+        let len = e - first - off in
+        named := !named + len;
+        if !named > String.length obj then
+          raise (Malformed "the names are longer than the object");
+        String.sub obj (first + off) len
+    | _ -> fail "the name at %d is unterminated" off
   end
+
+let by_start (a, _) (b, _) = Int.compare a b
+
+(* Sorted by start, each span [(at, n)] with [n > 0] starts at or past the end
+   of the one before it. Spans usually come sorted, and are sorted otherwise
+   with a merge sort, whose memory is linear. *)
+let disjoint ~where spans =
+  let rec sorted i =
+    i >= Array.length spans
+    || (fst spans.(i - 1) <= fst spans.(i) && sorted (i + 1))
+  in
+  if not (sorted 1) then Array.stable_sort by_start spans;
+  ignore
+    (Array.fold_left
+       (fun last (at, n) ->
+         if n = 0 then last
+         else if at < last then
+           fail "two sections share bytes at %d of %s" at where
+         else at + n)
+       0 spans)
 
 (* Layout *)
 
-(* The longest image read, 1 GiB. Real images are at most tens of megabytes, so
-   a longer one comes from a corrupted address or alignment, and refusing it
-   keeps a small object from making the reader allocate gigabytes. *)
-let max_image = 1 lsl 30
-let too_long () = fail "the image would be longer than %d bytes" max_image
+let too_long () = fail "the image would be longer than %d bytes" max_int
 
 (* [n] rounded up to a multiple of [a], an image offset. *)
 let round_up n a =
   if n mod a = 0 then n
-  else if a > max_image then too_long ()
+  else if n > max_int - a then too_long ()
   else n + a - (n mod a)
 
 (* Whether the sections go at their addresses, each held section's image offset,
@@ -234,33 +265,59 @@ let round_up n a =
 let layout ~align hs =
   let addressed = Array.exists (fun h -> held h && h.sh_addr <> 0) hs in
   let offsets = Array.make (Array.length hs) None in
-  let length = ref 0 and spans = ref [] in
+  let size = ref 0 and spans = ref [] in
   Array.iteri
     (fun i h ->
       if held h then begin
         let off =
           if addressed then h.sh_addr
-          else round_up !length (Int.max align h.sh_addralign)
+          else round_up !size (Int.max align h.sh_addralign)
         in
-        if off > max_image - h.sh_size then too_long ();
+        if off > max_int - h.sh_size then too_long ();
         if h.sh_addralign > 1 && off mod h.sh_addralign <> 0 then
           fail "section %d at %d is not a multiple of its alignment %d" i off
             h.sh_addralign;
         offsets.(i) <- Some off;
-        length := Int.max !length (off + h.sh_size);
+        size := Int.max !size (off + h.sh_size);
         if h.sh_size > 0 then spans := (off, h.sh_size) :: !spans
       end)
     hs;
-  (* Sorted by offset, a section with bytes starts at or past the end of the one
-     before it. *)
-  let rec disjoint last = function
-    | [] -> ()
-    | (off, n) :: rest ->
-        if off < last then fail "two sections overlap at image offset %d" off;
-        disjoint (off + n) rest
+  disjoint ~where:"the image" (Array.of_list (List.rev !spans));
+  (addressed, offsets, !size)
+
+(* [at + n], or [max_int] past it: the end of an address range. *)
+let end_of at n = if at > max_int - n then max_int else at + n
+
+(* The allocated sections the image does not hold, as address ranges sorted and
+   merged into disjoint [(start, end)] pairs, for a binary search. *)
+let lacking hs =
+  let spans =
+    Array.to_list hs
+    |> List.filter_map (fun h ->
+        if h.sh_flags land shf_alloc = 0 || held h || h.sh_size = 0 then None
+        else Some (h.sh_addr, end_of h.sh_addr h.sh_size))
+    |> Array.of_list
   in
-  disjoint 0 (List.sort compare !spans);
-  (addressed, offsets, !length)
+  Array.stable_sort by_start spans;
+  let merge acc (s, e) =
+    match acc with
+    | (s', e') :: rest when s <= e' -> (s', Int.max e e') :: rest
+    | _ -> (s, e) :: acc
+  in
+  Array.of_list (List.rev (Array.fold_left merge [] spans))
+
+(* Whether one of [ranges], disjoint and sorted, holds [a]. *)
+let holds ranges a =
+  let rec search lo hi =
+    if lo >= hi then false
+    else
+      let mid = (lo + hi) / 2 in
+      let s, e = ranges.(mid) in
+      if a < s then search lo mid
+      else if a >= e then search (mid + 1) hi
+      else true
+  in
+  search 0 (Array.length ranges)
 
 (* Reading *)
 
@@ -288,36 +345,25 @@ let read ~align obj =
   Array.iter
     (fun h ->
       if h.sh_addralign <> 0 && not (is_pow2 h.sh_addralign) then
-        fail "a section's alignment of %d is not a power of two" h.sh_addralign)
+        fail "a section's alignment of %d is not a power of two" h.sh_addralign;
+      if has_bytes h then check obj h.sh_offset h.sh_size)
     hs;
-  let contents =
-    Array.map
-      (fun h ->
-        if not (has_bytes h) then ""
-        else begin
-          check obj h.sh_offset h.sh_size;
-          String.sub obj h.sh_offset h.sh_size
-        end)
-      hs
-  in
+  (* The gABI puts no byte of the object in two sections. Holding to it keeps
+     the entries of tables that would share bytes from being decoded twice. *)
+  disjoint ~where:"the object"
+    (Array.map (fun h -> (h.sh_offset, length_of h)) hs);
+  let named = ref 0 in
   let strings i what =
     let h = section_of i what in
     if h.sh_type <> sht_strtab then
       fail "%s links to section %d, not a string table" what i;
-    contents.(i)
+    h
   in
   let names =
     if names_index = shn_undef then None
     else Some (strings names_index "the ELF header")
   in
-  let addressed, offsets, length = layout ~align hs in
-  let image = Bytes.make length '\000' in
-  Array.iteri
-    (fun i h ->
-      Option.iter
-        (fun off -> Bytes.blit_string obj h.sh_offset image off h.sh_size)
-        offsets.(i))
-    hs;
+  let addressed, offsets, size = layout ~align hs in
   (* The place of a symbol in section [index] at [value]. *)
   let place index value =
     let h = section_of index "a symbol" in
@@ -326,32 +372,36 @@ let read ~align obj =
         Image { section = index; offset = off + value - h.sh_addr }
     | _ -> Outside index
   in
-  (* The symbol table of section [i], and the extended indexes of its symbols at
-     [SHN_XINDEX], from the [SHT_SYMTAB_SHNDX] section that links to it. *)
+  (* Each symbol table's [SHT_SYMTAB_SHNDX] section, the first linked to it. *)
+  let shndx = Array.make count None in
+  Array.iter
+    (fun h ->
+      if
+        h.sh_type = sht_symtab_shndx
+        && h.sh_link < count
+        && Option.is_none shndx.(h.sh_link)
+      then shndx.(h.sh_link) <- Some h)
+    hs;
+  (* The symbol table of section [i], with the extended indexes of its symbols
+     at [SHN_XINDEX]. *)
   let read_table i =
-    let h = hs.(i) and syms = contents.(i) in
+    let h = hs.(i) in
     let names = strings h.sh_link "a symbol table" in
     let entsize = Int.max f.sym h.sh_entsize in
-    let shndx =
-      Array.find_index
-        (fun x -> x.sh_type = sht_symtab_shndx && x.sh_link = i)
-        hs
-    in
     let extended k =
-      match shndx with
-      | Some x when 4 * (k + 1) <= String.length contents.(x) ->
-          u32 contents.(x) (4 * k)
+      match shndx.(i) with
+      | Some x when 4 * (k + 1) <= length_of x -> u32 obj (at_of x + (4 * k))
       | _ -> fail "symbol %d has an extended section index the object lacks" k
     in
     Iarray.init
-      (String.length syms / entsize)
+      (length_of h / entsize)
       (fun k ->
-        let e = k * entsize in
-        let name = string_at names (u32 syms e) in
-        let index = u16 syms (e + f.st_shndx) in
+        let e = at_of h + (k * entsize) in
+        let name = string_at obj named names (u32 obj e) in
+        let index = u16 obj (e + f.st_shndx) in
         let value =
-          if f.word = 8 then i64 syms (e + f.st_value)
-          else u32 syms (e + f.st_value)
+          if f.word = 8 then i64 obj (e + f.st_value)
+          else u32 obj (e + f.st_value)
         in
         let place =
           if index = shn_undef then Undefined
@@ -379,7 +429,7 @@ let read ~align obj =
   in
   (* The relocations of section [r], which patch the image at [at]'s results. *)
   let entries r at =
-    let h = hs.(r) and rels = contents.(r) in
+    let h = hs.(r) in
     let rela = h.sh_type = sht_rela in
     let entsize = Int.max ((if rela then 3 else 2) * f.word) h.sh_entsize in
     let symbol sym =
@@ -398,49 +448,38 @@ let read ~align obj =
     (* [r_info] holds the type in its low 32 bits and the symbol in its high
        ones, or in 32 bits the type in its low 8 bits and the symbol above. *)
     let r_type e =
-      if f.word = 8 then u32 rels (e + 8) else u32 rels (e + 4) land 0xff
+      if f.word = 8 then u32 obj (e + 8) else u32 obj (e + 4) land 0xff
     in
     let r_sym e =
-      if f.word = 8 then u32 rels (e + 12) else u32 rels (e + 4) lsr 8
+      if f.word = 8 then u32 obj (e + 12) else u32 obj (e + 4) lsr 8
     in
     let r_addend e =
       if not rela then 0
-      else if f.word = 8 then i64 rels (e + 16)
-      else i32 rels (e + 8)
+      else if f.word = 8 then i64 obj (e + 16)
+      else i32 obj (e + 8)
     in
     List.init
-      (String.length rels / entsize)
+      (length_of h / entsize)
       (fun k ->
-        let e = k * entsize in
+        let e = at_of h + (k * entsize) in
         {
-          offset = at (word f rels e);
+          offset = at (word f obj e);
           kind = r_type e;
           addend = r_addend e;
           symbol = symbol (r_sym e);
         })
   in
-  (* The allocated sections the image does not hold, as address ranges, which
-     mean something in an object whose sections have addresses. *)
-  let lacking () =
-    if not addressed then []
-    else
-      List.filter_map
-        (fun h ->
-          if h.sh_flags land shf_alloc = 0 || held h then None
-          else Some (h.sh_addr, h.sh_size))
-        (Array.to_list hs)
-  in
+  (* The allocated memory the image lacks, as addresses, which mean something in
+     an object whose sections have addresses. *)
+  let lacks = lazy (if addressed then lacking hs else [||]) in
   (* A dynamic relocation's offset is an address; any other's lies in the
      section it patches. *)
   let relocations_of r h =
     if h.sh_type <> sht_rel && h.sh_type <> sht_rela then []
     else if h.sh_info = 0 then
-      let lacking = lacking () in
-      let lacks a =
-        List.exists (fun (at, n) -> a >= at && a - at < n) lacking
-      in
+      let lacks = Lazy.force lacks in
       entries r (fun a ->
-          if a >= length || lacks a then
+          if a >= size || holds lacks a then
             fail
               "a relocation patches address %d, which the image does not hold" a;
           a)
@@ -464,12 +503,16 @@ let read ~align obj =
   in
   let section i h =
     {
-      name = Option.fold ~none:"" ~some:(fun n -> string_at n h.sh_name) names;
+      name =
+        Option.fold ~none:""
+          ~some:(fun n -> string_at obj named n h.sh_name)
+          names;
       kind = h.sh_type;
       flags = h.sh_flags;
       offset = offsets.(i);
       size = h.sh_size;
-      contents = contents.(i);
+      at = at_of h;
+      length = length_of h;
     }
   in
   {
@@ -478,7 +521,8 @@ let read ~align obj =
     os_abi = u8 obj 7;
     abi_version = u8 obj 8;
     flags = u32 obj f.e_flags;
-    image = Bytes.unsafe_to_string image;
+    file = obj;
+    size;
     sections = Iarray.of_array (Array.mapi section hs);
     symbols;
     relocations = List.concat (List.mapi relocations_of (Array.to_list hs));

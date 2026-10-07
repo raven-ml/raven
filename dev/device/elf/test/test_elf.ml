@@ -265,13 +265,13 @@ let elf_section =
   Testable.make
     ~pp:(fun ppf (s : Elf.section) ->
       Format.fprintf ppf
-        "{ name = %S; kind = %d; flags = %#x; offset = %a; size = %d; contents \
-         = %S }"
+        "{ name = %S; kind = %d; flags = %#x; offset = %a; size = %d; at = %d; \
+         length = %d }"
         s.name s.kind s.flags
         (Format.pp_print_option
            ~none:(fun ppf () -> Format.pp_print_string ppf "None")
            (fun ppf -> Format.fprintf ppf "Some %#x"))
-        s.offset s.size s.contents)
+        s.offset s.size s.at s.length)
     ~equal:( = )
 
 let relocation =
@@ -282,13 +282,31 @@ let relocation =
     ~equal:( = )
 
 let pp_t ppf (o : Elf.t) =
-  Format.fprintf ppf "<object: image of %d bytes, %d sections>"
-    (String.length o.image) (Iarray.length o.sections)
+  Format.fprintf ppf "<object: image of %d bytes, %d sections>" o.size
+    (Iarray.length o.sections)
 
 let read ?align obj =
   require_ok ~pp:Format.pp_print_string (Elf.of_string ?align obj)
 
 let refused ?align obj = require_error ~pp:pp_t (Elf.of_string ?align obj)
+
+(* [f ()] and the bytes it allocates. *)
+let allocated f =
+  let before = Gc.allocated_bytes () in
+  let r = f () in
+  (r, Gc.allocated_bytes () -. before)
+
+(* The most bytes reading may allocate for an object of [n] bytes. The real
+   objects take at most 3.2 per byte, and failing takes 424 bytes; an object of
+   nothing but small table entries takes more per byte. *)
+let linear n = (32. *. Float.of_int n) +. 4096.
+
+let in_linear_memory obj =
+  let r, bytes = allocated (fun () -> Elf.of_string obj) in
+  less ~msg:"bytes allocated" float_exact
+    ~than:(linear (String.length obj))
+    bytes;
+  r
 
 let section_named (o : Elf.t) name =
   require_some ~msg:name
@@ -299,25 +317,55 @@ let symbol_named (o : Elf.t) name =
     (Iarray.find_opt (fun (s : Elf.symbol) -> s.name = name) o.symbols)
 
 let syms (o : Elf.t) = Iarray.to_list o.symbols
+
+(* The image, as the documentation writes it into [bytes]. *)
+let image (o : Elf.t) =
+  let b = Bytes.make o.size '\000' in
+  let put (s : Elf.section) =
+    match s.offset with
+    | Some off -> Bytes.blit_string o.file s.at b off s.length
+    | None -> ()
+  in
+  Iarray.iter put o.sections;
+  Bytes.to_string b
+
+(* A section's bytes in the object. *)
+let contents (o : Elf.t) (s : Elf.section) = String.sub o.file s.at s.length
 let sym_entry name place : Elf.symbol = { name; place }
 let null_symbol = sym_entry "" Undefined
 let no_symbol = sym_entry "" (Absolute 0)
 
-(* The three equations of [Elf.t]'s documentation. *)
+(* Sorted by start, the spans [(at, n, msg)] share no byte. *)
+let disjoint where spans =
+  ignore
+    (List.fold_left
+       (fun last (at, n, msg) ->
+         at_least ~msg:(msg ^ " in " ^ where) int ~than:last at;
+         at + n)
+       0 (List.sort compare spans))
+
+(* The equations of [Elf.t]'s documentation. They never build the image, whose
+   size a corrupted address can make any [int]. *)
 let invariants (o : Elf.t) =
-  let length = String.length o.image in
   let count = Iarray.length o.sections in
+  let in_file = ref [] and in_image = ref [] in
   Iarray.iteri
     (fun i (s : Elf.section) ->
+      let msg = Printf.sprintf "section %d %S" i s.name in
+      at_least ~msg int ~than:0 s.at;
+      at_least ~msg int ~than:0 s.length;
+      at_most ~msg int ~than:(String.length o.file) (s.at + s.length);
+      if s.length > 0 then in_file := (s.at, s.length, msg) :: !in_file;
       match s.offset with
       | None -> ()
       | Some off ->
-          let msg = Printf.sprintf "section %d %S" i s.name in
           at_least ~msg int ~than:0 off;
-          at_least ~msg int ~than:0 s.size;
-          at_most ~msg int ~than:length (off + s.size);
-          equal ~msg string s.contents (String.sub o.image off s.size))
+          equal ~msg int s.size s.length;
+          at_most ~msg int ~than:o.size (off + s.size);
+          if s.size > 0 then in_image := (off, s.size, msg) :: !in_image)
     o.sections;
+  disjoint "the object" !in_file;
+  disjoint "the image" !in_image;
   let place (s : Elf.symbol) =
     match s.place with
     | Image { section; offset } ->
@@ -335,7 +383,7 @@ let invariants (o : Elf.t) =
     (fun (r : Elf.relocation) ->
       let msg = Format.asprintf "relocation at %#x" r.offset in
       at_least ~msg int ~than:0 r.offset;
-      less ~msg int ~than:length r.offset;
+      less ~msg int ~than:o.size r.offset;
       place r.symbol)
     o.relocations
 
@@ -373,7 +421,7 @@ let test_appended () =
   in
   equal ~msg:"text, data at 16, rodata right after it" string
     ("ABCDE" ^ String.make 11 '\000' ^ "01234567" ^ "xy")
-    o.image;
+    (image o);
   equal ~msg:"offsets"
     (list (option int))
     [ None; Some 0; None; Some 16; Some 24; None ]
@@ -383,21 +431,19 @@ let test_align () =
   let obj = write [ section ".text" "ABC"; section ".data" "DEF" ] in
   equal ~msg:"each section at a multiple of align" string
     ("ABC" ^ String.make 125 '\000' ^ "DEF")
-    (read ~align:128 obj).image;
+    (image (read ~align:128 obj));
   let obj = write [ section ".text" "ABC"; section ~align:64 ".data" "DEF" ] in
   equal ~msg:"the larger of align and the section's alignment" string
     ("ABC" ^ String.make 61 '\000' ^ "DEF")
-    (read ~align:2 obj).image
+    (image (read ~align:2 obj))
 
 let test_no_padding () =
   let o = read ~align:128 (write [ section ".a" "A"; section ".b" "BCD" ]) in
-  equal ~msg:"the image ends where its last section ends" int 131
-    (String.length o.image);
+  equal ~msg:"the image ends where its last section ends" int 131 o.size;
   let o = read (write [ section ".a" "A"; section ~align:64 ".empty" "" ]) in
-  equal ~msg:"an empty last section ends the image at its offset" int 64
-    (String.length o.image);
+  equal ~msg:"an empty last section ends the image at its offset" int 64 o.size;
   let o = read (write [ note ".comment" "x" ]) in
-  equal ~msg:"no section, no image" string "" o.image
+  equal ~msg:"no section, no image" string "" (image o)
 
 let test_addressed () =
   let obj =
@@ -413,8 +459,9 @@ let test_addressed () =
   equal ~msg:"each at its address, zeros in the gaps, before the first too"
     string
     (String.make 8 '\000' ^ "ABCD" ^ String.make 4 '\000' ^ "RO")
-    o.image;
-  equal ~msg:"align has no effect" string o.image (read ~align:4096 obj).image;
+    (image o);
+  equal ~msg:"align has no effect" string (image o)
+    (image (read ~align:4096 obj));
   let o =
     read
       (write
@@ -434,10 +481,11 @@ let test_bss () =
       flags = shf_alloc lor shf_write;
       offset = None;
       size = 64;
-      contents = "";
+      at = 0;
+      length = 0;
     }
     (section_named o ".bss");
-  equal ~msg:"and adds nothing to it" string "ABCD" o.image
+  equal ~msg:"and adds nothing to it" string "ABCD" (image o)
 
 let test_sections () =
   let o =
@@ -445,14 +493,23 @@ let test_sections () =
   in
   equal ~msg:"every section by index, from the null section" (list elf_section)
     [
-      { name = ""; kind = 0; flags = 0; offset = None; size = 0; contents = "" };
+      {
+        name = "";
+        kind = 0;
+        flags = 0;
+        offset = None;
+        size = 0;
+        at = 0;
+        length = 0;
+      };
       {
         name = ".text";
         kind = sht_progbits;
         flags = shf_alloc lor shf_execinstr;
         offset = Some 0;
         size = 2;
-        contents = "AB";
+        at = ehdr_size;
+        length = 2;
       };
       {
         name = ".shstrtab";
@@ -460,10 +517,14 @@ let test_sections () =
         flags = 0;
         offset = None;
         size = 17;
-        contents = "\000.text\000.shstrtab\000";
+        at = ehdr_size + 2;
+        length = 17;
       };
     ]
-    (Iarray.to_list o.sections)
+    (Iarray.to_list o.sections);
+  equal ~msg:"their bytes" (list string)
+    [ ""; "AB"; "\000.text\000.shstrtab\000" ]
+    (List.map (contents o) (Iarray.to_list o.sections))
 
 let test_no_names () =
   let obj = write [ section ".text" "AB" ] in
@@ -747,7 +808,7 @@ let test_many_sections () =
   equal ~msg:"every section" int (at + 5) (Iarray.length o.sections);
   equal ~msg:"the names past the header's reach" string ".far"
     (Iarray.get o.sections at).name;
-  equal ~msg:"the image" string "ABCD" o.image;
+  equal ~msg:"the image" string "ABCD" (image o);
   equal ~msg:"a symbol in a section past the header's reach" (list symbol)
     [ null_symbol; sym_entry "far" (Image { section = at; offset = 1 }) ]
     (syms o)
@@ -782,6 +843,54 @@ let test_many_symbols () =
     (sym_entry "" (Outside count))
     (Iarray.get o.symbols count);
   less ~msg:"CPU seconds" float_exact ~than:1.0 seconds
+
+(* Many dynamic relocation sections, each with its own symbol table, among many
+   allocated sections the image lacks: reading takes time linear in them. *)
+let test_many_relocation_sections () =
+  let count = 10_000 in
+  let entries, names = symbols [ defined "f" 1 0x100 ] in
+  let symtab_at = count + 2 and strtab_at = (3 * count) + 2 in
+  let obj =
+    write
+      (section ~addr:0x100 ".text" "ABCD"
+       :: List.init count (fun i -> bss ~addr:(0x1000 + (2 * i)) ".bss" 1)
+      @ List.init count (fun _ -> symtab ~link:strtab_at entries)
+      @ List.init count (fun i ->
+          rela_section ~link:(symtab_at + i) ~info:0 [ (0x102, 1, 1, 0) ])
+      @ [ strtab names ])
+  in
+  let start = Sys.time () in
+  let o = read obj in
+  let seconds = Sys.time () -. start in
+  equal ~msg:"every relocation" int count (List.length o.relocations);
+  less ~msg:"CPU seconds" float_exact ~than:1.0 seconds
+
+(* An object's image starts at its address: reading allocates as much whatever
+   the address, up to the largest. *)
+let gen_address =
+  Gen.(
+    frequency
+      [
+        (1, int_range 1 0xffff);
+        (1, map (fun k -> 1 lsl k) (int_range 0 61));
+        (1, int_range 1 (max_int - 4));
+        (1, constant (max_int - 4));
+      ])
+
+let at_address a = write [ section ~addr:a ".text" "ABCD" ]
+
+let baseline =
+  lazy
+    (let obj = at_address 1 in
+     snd (allocated (fun () -> Elf.of_string obj)))
+
+let law_address a =
+  let obj = at_address a in
+  let r, bytes = allocated (fun () -> Elf.of_string obj) in
+  let o = require_ok ~pp:Format.pp_print_string r in
+  cover "past 1 GiB" (a > 1 lsl 30);
+  equal ~msg:"the image's size" int (a + 4) o.size;
+  equal ~msg:"bytes allocated" float_exact (Lazy.force baseline) bytes
 
 (* Refusals: each object breaks one rule of an object that reads. *)
 
@@ -825,8 +934,21 @@ let into_init_array =
       rela_section ~link:3 ~info:2 [ (0, 1, 1, 0) ];
     ]
 
-(* The longest image the reader lays out, 1 GiB. *)
-let max_image = 1 lsl 30
+(* The largest power of two an [int] holds. *)
+let max_align = 1 lsl 61
+
+(* A symbol table whose 65 names are one name of 256 bytes, longer together than
+   the object. *)
+let shared_names =
+  let table = Buffer.create 2048 in
+  for _ = 0 to 64 do
+    add_symbol table ~name:1 ~shndx:shn_undef ~value:0
+  done;
+  write
+    [
+      symtab ~link:2 (Buffer.contents table);
+      strtab ("\000" ^ String.make 256 'n' ^ "\000");
+    ]
 
 (* An addressed object with [.bss] between [.text] and [.data], and a dynamic
    relocation at address [at]. *)
@@ -877,10 +999,18 @@ let refusals =
     ( "an alignment of 12 outside the image",
       patch_section well_formed 4 sh_addralign 8 12 );
     ("two sections overlapping in the image", addressed ~text:0x100 ~data:0x103);
-    ("an image longer than 1 GiB", write [ section ~addr:max_image ".text" "A" ]);
-    ( "an image aligned past 1 GiB",
-      write [ section ".text" "A"; section ~align:(2 * max_image) ".data" "B" ]
-    );
+    ( "two sections sharing bytes of the object",
+      patch_section well_formed 2 sh_offset 8 ehdr_size );
+    ("names longer than the object", shared_names);
+    ( "an image longer than max_int",
+      write [ section ~addr:(max_int - 1) ".text" "AB" ] );
+    ( "an image aligned past max_int",
+      write
+        [
+          section ~align:max_align ".a" "A";
+          section ~align:max_align ".b" "B";
+          section ~align:max_align ".c" "C";
+        ] );
     ( "a section the image holds at a multiple of half its alignment",
       write [ section ~addr:0x102 ~align:4 ".text" "ABCD" ] );
     ( "a symbol value past the int range",
@@ -916,7 +1046,8 @@ let test_near_refusals () =
             { (bss ~addr:0x103 ".bss" 8) with align = 8 };
           ]));
   ignore (read (patch well_formed (symbol_entry + 15) 1 0xff));
-  ignore (read (dynamic_into ~at:0x10c))
+  ignore (read (dynamic_into ~at:0x10c));
+  ignore (read (write [ section ~addr:(max_int - 2) ".text" "AB" ]))
 
 (* [msg] says which cause the documentation lists an object breaks. *)
 let test_messages () =
@@ -927,7 +1058,9 @@ let test_messages () =
       ("a section it lacks", patch_section well_formed 4 sh_link 4 99);
       ("alignment", patch_section well_formed 2 sh_addralign 8 3);
       ("overlap", addressed ~text:0x100 ~data:0x103);
-      ("too long", write [ section ~addr:max_image ".text" "A" ]);
+      ("shared bytes", patch_section well_formed 2 sh_offset 8 ehdr_size);
+      ("names", shared_names);
+      ("too long", write [ section ~addr:(max_int - 1) ".text" "AB" ]);
       ("past its section", with_relocation ~target:1 (5, 1, 1, 0));
       ("outside the image", with_relocation ~target:3 (0, 1, 1, 0));
     ]
@@ -950,11 +1083,15 @@ let test_bad_align () =
     [ 0; -1; -4; 3; 6; 96; min_int; max_int ]
 
 let test_largest_align () =
-  let align = 1 lsl 61 in
+  let align = max_align in
   equal ~msg:"one section at 0" string "ABCD"
-    (read ~align (write [ section ".text" "ABCD" ])).image;
-  ignore
-    (refused ~align (write [ section ".text" "ABCD"; section ".data" "EF" ]))
+    (image (read ~align (write [ section ".text" "ABCD" ])));
+  let o =
+    read ~align (write [ section ".text" "ABCD"; section ".data" "EF" ])
+  in
+  equal ~msg:"the next at the alignment" (option int) (Some align)
+    (section_named o ".data").offset;
+  equal ~msg:"an image no memory holds" int (align + 2) o.size
 
 (* The law: objects written from random sections *)
 
@@ -1132,23 +1269,39 @@ let model_image c =
     placed;
   Bytes.to_string b
 
+(* The writer puts each section's bytes after the ELF header, in order. *)
 let model_sections c : Elf.section list =
   let null : Elf.section =
-    { name = ""; kind = 0; flags = 0; offset = None; size = 0; contents = "" }
+    {
+      name = "";
+      kind = 0;
+      flags = 0;
+      offset = None;
+      size = 0;
+      at = 0;
+      length = 0;
+    }
+  in
+  let section (next, acc) (s : sh) offset =
+    let at, length =
+      if s.kind = sht_nobits then (0, 0) else (next, String.length s.contents)
+    in
+    let s : Elf.section =
+      {
+        name = s.name;
+        kind = s.kind;
+        flags = s.flags;
+        offset;
+        size = s.size;
+        at;
+        length;
+      }
+    in
+    (next + length, s :: acc)
   in
   null
-  :: List.map2
-       (fun (s : sh) offset : Elf.section ->
-         let contents = if s.kind = sht_nobits then "" else s.contents in
-         {
-           name = s.name;
-           kind = s.kind;
-           flags = s.flags;
-           offset;
-           size = s.size;
-           contents;
-         })
-       c.parts (offsets c)
+  :: List.rev
+       (snd (List.fold_left2 section (ehdr_size, []) c.parts (offsets c)))
 
 let model_symbols c =
   let parts = Array.of_list c.parts and offsets = Array.of_list (offsets c) in
@@ -1202,15 +1355,15 @@ let law_tables c =
 
 let law_image c =
   let offsets = offsets c in
-  let image = List.filter_map Fun.id offsets in
+  let held = List.filter_map Fun.id offsets in
   cover "addressed" (List.exists (fun s -> in_image s && s.addr <> 0) c.parts);
-  cover "appended" (image <> [] && List.for_all (fun s -> s.addr = 0) c.parts);
+  cover "appended" (held <> [] && List.for_all (fun s -> s.addr = 0) c.parts);
   cover "an empty section in the image"
     (List.exists (fun s -> in_image s && s.size = 0) c.parts);
   cover "a section past align"
     (List.exists (fun s -> in_image s && s.align > c.align) c.parts);
   cover "a gap" (String.contains (model_image c) '\000');
-  equal ~msg:"image" string (model_image c) (read_case c).image
+  equal ~msg:"image" string (model_image c) (image (read_case c))
 
 let law_lookup c =
   let o = read_case c in
@@ -1293,7 +1446,7 @@ let gen_corruption =
 
 let law_total corruption =
   let obj = corrupt corruption in
-  match Elf.of_string obj with
+  match in_linear_memory obj with
   | Error _ -> cover "refused" true
   | Ok o ->
       cover "read" true;
@@ -1301,8 +1454,7 @@ let law_total corruption =
       Iarray.iter
         (fun (s : Elf.symbol) ->
           Option.iter
-            (fun off ->
-              less ~msg:s.name int ~than:(String.length o.image + 1) off)
+            (fun off -> less ~msg:s.name int ~than:(o.size + 1) off)
             (Elf.symbol o s.name))
         o.symbols
 
@@ -1425,7 +1577,7 @@ let test_elf32 () =
   equal ~msg:"its machine" int 3 o.machine;
   equal ~msg:"text, then data at its alignment" string
     ("ABCD" ^ String.make 4 '\000' ^ "01234567")
-    o.image;
+    (image o);
   equal ~msg:"the symbols" (list symbol)
     [
       null_symbol;
@@ -1465,7 +1617,7 @@ let test_firmware32 () =
   in
   invariants o;
   List.iter
-    (fun (n, c) -> equal ~msg:n string c (section_named o n).contents)
+    (fun (n, c) -> equal ~msg:n string c (contents o (section_named o n)))
     parts
 
 (* Real objects *)
@@ -1484,7 +1636,7 @@ let test_cubin () =
     (section_named o ".nv.constant0.simple_add").offset;
   equal ~msg:"its 380 bytes, then the code at 384" (option int) (Some 384)
     (section_named o ".text.simple_add").offset;
-  equal ~msg:"the image ends with the code" int 896 (String.length o.image);
+  equal ~msg:"the image ends with the code" int 896 o.size;
   equal ~msg:"the kernel's symbol" (option int) (Some 384)
     (Elf.symbol o "simple_add");
   equal ~msg:"symbols by index" symbol
@@ -1501,13 +1653,12 @@ let test_hsaco () =
   equal ~msg:"under the HSA ABI" int 64 o.os_abi;
   equal ~msg:"code object version 5" int 3 o.abi_version;
   equal ~msg:"for gfx1100" int 0x41 o.flags;
-  equal ~msg:"the image ends with .text at 0x1600" int 0x1880
-    (String.length o.image);
+  equal ~msg:"the image ends with .text at 0x1600" int 0x1880 o.size;
   equal ~msg:"zeros before .rodata" string (String.make 0x5c0 '\000')
-    (String.sub o.image 0 0x5c0);
+    (String.sub (image o) 0 0x5c0);
   equal ~msg:"and between .rodata and .text" string
     (String.make (0x1600 - 0x600) '\000')
-    (String.sub o.image 0x600 (0x1600 - 0x600));
+    (String.sub (image o) 0x600 (0x1600 - 0x600));
   equal ~msg:"the comment stays out" (option int) None
     (section_named o ".comment").offset;
   equal ~msg:"the kernel descriptor" (option int) (Some 0x5c0)
@@ -1533,13 +1684,12 @@ let test_stripped () =
   equal ~msg:"the kernel descriptor" (option int) (Some 0x5c0)
     (Elf.symbol o "u.kd");
   equal ~msg:"the code" (option int) (Some 0x1600) (Elf.symbol o "u");
-  equal ~msg:"the image" int 0x2e80 (String.length o.image)
+  equal ~msg:"the image" int 0x2e80 o.size
 
 let test_relocatable_amd () =
   let o = read (fixture lds_path) in
   invariants o;
-  equal ~msg:".text, then .rodata at its alignment of 64" int 0x240
-    (String.length o.image);
+  equal ~msg:".text, then .rodata at its alignment of 64" int 0x240 o.size;
   equal ~msg:"the descriptor in .rodata" (option int) (Some 0x200)
     (Elf.symbol o "lds.kd");
   equal ~msg:"its relocation to the code" (list relocation)
@@ -1631,6 +1781,8 @@ let () =
              prop ~count:300
                "the image holds each program section at its offset" gen_case
                law_image;
+             prop ~count:300 "reading allocates as much at any address"
+               gen_address law_address;
            ];
          group "symbols"
            [
@@ -1660,12 +1812,15 @@ let () =
              test "an object of more than 65,279 sections" test_many_sections;
              test "70,000 symbols at extended indexes, in linear time"
                test_many_symbols;
+             test "10,000 relocation sections, in linear time"
+               test_many_relocation_sections;
            ];
          prop ~count:300 "an object reads back as written" gen_case law_tables;
          group "refusals"
            [
              cases ~name:fst "a malformed object is an error" refusals
-               (fun (_, obj) -> ignore (refused obj));
+               (fun (_, obj) ->
+                 ignore (require_error ~pp:pp_t (in_linear_memory obj)));
              test "a text is not an ELF object" test_not_elf;
              test "the neighbours of refusals read" test_near_refusals;
              test "each cause has its own message" test_messages;
