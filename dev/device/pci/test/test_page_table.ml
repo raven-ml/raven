@@ -990,8 +990,7 @@ let palloc_judge align zero boot n m got =
           align gap
   | Ok (Some a, zs) ->
       in_pool ~msg:"block" p ~align (a, size);
-      if Option.value zero ~default:true then
-        zeroed ~msg:"zeroed" zs (a, size);
+      if Option.value zero ~default:true then zeroed ~msg:"zeroed" zs (a, size);
       List.iter (apart ~msg:"zeroing" (m.boot.live @ m.main.live)) zs;
       take p (a, size)
 
@@ -1159,8 +1158,7 @@ let alloc_judge contiguous uncached n m got =
         (fun (pa, k) ->
           in_pool ~msg:"block" m.phys ~align:page (pa, k);
           take m.phys (pa, k);
-          if contiguous then
-            zeroed ~msg:"zeroed" zs (pa, k))
+          if contiguous then zeroed ~msg:"zeroed" zs (pa, k))
         a.pages;
       take m.space (a.va, size);
       m.maps <- a :: m.maps
