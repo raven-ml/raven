@@ -1011,7 +1011,6 @@ type 'x lm =
       ravel : 'x -> 'd vector;
       unravel : 'd vector -> 'x;
       residual : 'd vector -> 'd vector;
-      gradient : 'd vector -> 'd vector -> 'd vector;
       jacobian : 'd vector -> 'd vector;
       solve :
         'd vector ->
@@ -1059,10 +1058,6 @@ let lm_problem fn x r linear f start =
       ravel;
       unravel;
       residual = (fun v -> Rune.detach (residual v));
-      gradient =
-        (fun v r ->
-          let _, pullback = Rune.vjp' residual v in
-          Rune.detach (pullback r));
       jacobian = (fun v -> Rune.detach (jacobian v));
       solve;
       cost;
@@ -1071,39 +1066,32 @@ let lm_problem fn x r linear f start =
 
 (* One trial of the damped step [delta] from [x] with residual [r]: the point,
    its residual, and whether the step is accepted, with its ratio [ρ]. *)
-let lm_trial residual ~gradient ~project ~running j x r delta =
+let lm_trial residual ~jacobian ~project ~running j x r g delta =
   let half_square v = Nx.mul_s (Search.dot v v) 0.5 in
   let xt = project (Nx.add x delta) in
   let step = Nx.sub xt x in
   let rt = residual xt in
+  let jt = jacobian xt in
+  let gt = Nx.matmul (Nx.transpose jt) rt in
   let jd = Nx.matmul j step in
-  let g = Nx.matmul (Nx.transpose j) r in
   let predicted = Nx.sub (Nx.neg (Search.dot g step)) (half_square jd) in
   let cost = half_square r and cost' = half_square rt in
   (* Within [√ε |r|² / 2] of the cost its measured decrease is rounding. There
      the decrease is the gradients' trapezoid along the step, [−(∇ + ∇') · s /
      2], exact for a quadratic, with [∇' = J'ᵀ r'] rune's gradient at the trial
-     point, which holds the residual's curvature that [JᵀJ] lacks. *)
+     point, which holds the residual's curvature that [JᵀJ] lacks. The trial's
+     Jacobian is the next iteration's when the step is taken, so a search
+     materialises one Jacobian per iteration as before. *)
   let band = Nx.mul_s cost (sqrt (Num.eps (Nx.dtype cost))) in
   let blurred = Nx.less_equal (Nx.abs (Nx.sub cost' cost)) band in
-  (* The trial point's gradient, evaluated only inside the band. *)
-  let trapezoid, _ =
-    Rune.iterate
-      Nx.Ptree.(pair tensor tensor)
-      ~max:1
-      ~until:(fun (_, settled) -> settled)
-      ~f:(fun _ ->
-        ( Nx.mul_s (Search.dot (Nx.add g (gradient xt rt)) step) (-0.5),
-          Nx.scalar Nx.bool true ))
-      (Nx.zeros_like cost, Nx.logical_not (Nx.logical_and running blurred))
-  in
+  let trapezoid = Nx.mul_s (Search.dot (Nx.add g gt) step) (-0.5) in
   let decrease = Nx.where blurred trapezoid (Nx.sub cost cost') in
   let rho = Nx.div decrease predicted in
   let ok =
     Nx.logical_and running
       (Nx.logical_and (Search.finite rt) (Nx.greater_s rho accept_ratio))
   in
-  (xt, rt, ok, rho)
+  (xt, rt, jt, gt, ok, rho)
 
 let lm_damping ~running ~ok rho (lambda, nu) =
   let shrink =
@@ -1123,6 +1111,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
   let project = match box with None -> Fun.id | Some b -> project b in
   let x0 = project p.start in
   let s = Search.start x0 (p.residual x0) in
+  let j0 = p.jacobian x0 in
   let s =
     match box with
     | Some b ->
@@ -1130,9 +1119,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
     | None -> s
   in
   let lanes = [||] in
-  let step (s : _ Search.state) (d, (lambda, nu)) =
-    let j = p.jacobian s.x in
-    let g = Nx.matmul (Nx.transpose j) s.fx in
+  let step (s : _ Search.state) (d, (lambda, (nu, (j, g)))) =
     let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
     let toward v = Nx.sub (project (Nx.add s.x v)) s.x in
     let delta, failed = p.solve j (Nx.mul lambda d) (Nx.neg g) in
@@ -1158,8 +1145,8 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
     in
     let s = Search.decide tol s ~map:delta ~q gauss in
     let running = searching s.st in
-    let xt, rt, ok, rho =
-      lm_trial p.residual ~gradient:p.gradient ~project ~running j s.x s.fx
+    let xt, rt, jt, gt, ok, rho =
+      lm_trial p.residual ~jacobian:p.jacobian ~project ~running j s.x s.fx g
         delta
     in
     let lambda, nu = lm_damping ~running ~ok rho (lambda, nu) in
@@ -1169,7 +1156,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
         fx = Search.hold ok rt s.fx;
         n = Nx.add s.n (Nx.cast Nx.int32 running);
       },
-      (d, (lambda, nu)) )
+      (d, (lambda, (nu, (Search.hold ok jt j, Search.hold ok gt g)))) )
   in
   let s =
     if p.size = 0 then
@@ -1177,11 +1164,14 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
     else
       fst
         (Search.iterations ~budget
-           Nx.Ptree.(pair tensor (pair tensor tensor))
+           Nx.Ptree.(
+             pair tensor (pair tensor (pair tensor (pair tensor tensor))))
            step
            ( s,
              ( Nx.zeros p.dtype [| p.size |],
-               (Nx.full p.dtype lanes lambda0, Nx.full p.dtype lanes 2.) ) ))
+               ( Nx.full p.dtype lanes lambda0,
+                 ( Nx.full p.dtype lanes 2.,
+                   (j0, Nx.matmul (Nx.transpose j0) s.fx) ) ) ) ))
   in
   let value =
     answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
@@ -1202,8 +1192,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
    at a zero gradient or when its step no longer moves its estimate. *)
 let lm_path fn x r linear ~steps f start =
   let (Lm p) = lm_problem fn x r linear f start in
-  let trip (x, (r, (d, (lambda, (nu, stopped))))) _ =
-    let j = p.jacobian x in
+  let trip ((x, (r, j)), (d, (lambda, (nu, stopped)))) _ =
     let g = Nx.matmul (Nx.transpose j) r in
     let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
     let delta, failed = p.solve j (Nx.mul lambda d) (Nx.neg g) in
@@ -1214,26 +1203,27 @@ let lm_path fn x r linear ~steps f start =
     in
     let stopped = Nx.logical_or stopped (Nx.logical_or failed still) in
     let running = Nx.logical_not stopped in
-    let xt, rt, ok, rho =
-      lm_trial p.residual ~gradient:p.gradient ~project:Fun.id ~running j x r
+    let xt, rt, jt, _, ok, rho =
+      lm_trial p.residual ~jacobian:p.jacobian ~project:Fun.id ~running j x r g
         delta
     in
     let lambda, nu = lm_damping ~running ~ok rho (lambda, nu) in
-    ( (Search.hold ok xt x, (Search.hold ok rt r, (d, (lambda, (nu, stopped))))),
+    ( ( (Search.hold ok xt x, (Search.hold ok rt r, Search.hold ok jt j)),
+        (d, (lambda, (nu, stopped))) ),
       x )
   in
   let _, xs =
     Rune.scan
       Nx.Ptree.(
-        pair tensor
-          (pair tensor (pair tensor (pair tensor (pair tensor tensor)))))
+        pair
+          (pair tensor (pair tensor tensor))
+          (pair tensor (pair tensor (pair tensor tensor))))
       Nx.Ptree.tensor Nx.Ptree.tensor ~f:trip
       ~init:
-        ( p.start,
-          ( p.residual p.start,
-            ( Nx.zeros p.dtype [| p.size |],
-              ( Nx.scalar p.dtype lambda0,
-                (Nx.scalar p.dtype 2., Nx.scalar Nx.bool false) ) ) ) )
+        ( (p.start, (p.residual p.start, p.jacobian p.start)),
+          ( Nx.zeros p.dtype [| p.size |],
+            ( Nx.scalar p.dtype lambda0,
+              (Nx.scalar p.dtype 2., Nx.scalar Nx.bool false) ) ) )
       (Nx.arange Nx.int32 0 steps 1)
   in
   rows x start xs
