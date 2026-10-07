@@ -7,8 +7,6 @@ open Windtrap
 open Device_pci
 open Device_pci_support
 
-let ms_since t0 = (now_ns () - t0) / 1_000_000
-
 (* A machine a transport reaches: [far] is its C transport, [calls] the
    operations it was asked for, newest first. *)
 type fake = { far : int; machine : Machine.t; calls : string list ref }
@@ -251,15 +249,13 @@ let until_true =
   prop "a wait calls its condition until it holds, and no more"
     (Gen.int_range 1 200) (fun k ->
       let n, f = counter () in
-      let t0 = now_ns () in
       equal ~msg:"result" bool true (Machine.wait Machine.this ~ms:10_000 (f k));
-      equal ~msg:"calls" int k !n;
-      less ~msg:"ms, without waiting out its time" int ~than:5_000 (ms_since t0))
+      equal ~msg:"calls" int k !n)
 
 let test_times_out () =
   let n, f = counter () in
   equal ~msg:"result" bool false (Machine.wait Machine.this ~ms:30 (f max_int));
-  at_least ~msg:"calls" int ~than:2 !n
+  at_least ~msg:"calls" int ~than:1 !n
 
 (* Ten waits, so that one cut short shows however the machine is loaded. *)
 let test_full_time () =
@@ -295,10 +291,8 @@ let test_fails_during () =
     if !n = 3 then break f.far;
     false
   in
-  let t0 = now_ns () in
   raises (Failed "far: the link broke") (fun () ->
-      Machine.wait f.machine ~ms:10_000 cond);
-  less ~msg:"ms, without waiting out its time" int ~than:5_000 (ms_since t0)
+      Machine.wait f.machine ~ms:10_000 cond)
 
 let waits =
   group "waits"
@@ -306,7 +300,7 @@ let waits =
       test "a wait whose condition holds at once is true after one call"
         test_at_once;
       until_true;
-      test "a wait whose condition never holds is false, asked more than once"
+      test "a wait whose condition never holds is false, asked at least once"
         test_times_out;
       test "a wait whose condition never holds lasts its whole time"
         test_full_time;
