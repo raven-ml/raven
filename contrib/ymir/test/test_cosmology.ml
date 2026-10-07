@@ -369,6 +369,26 @@ let components =
 let box_magnitude = 1. /. 0.3
 let sum_bound = (5. *. 0x1p-46) +. (4. *. 0x1p-53 *. box_magnitude)
 
+(* Whether [m]'s distance to [z] is in the validation box. The models draw
+   every parameter and redshift inside it, so only the floor of a^4 E^2 is
+   checked: the density parameters' magnitudes at 401 scale factors spread over
+   [a_z, 1], the range the distance integrates, as the generator checks it. *)
+let distance_in_box m z =
+  let c = cosmology Nx.float64 m in
+  let a = Nx.linspace Nx.float64 (1. /. (1. +. z)) 1. 401 in
+  let zs = Nx.sub_s (Nx.recip a) 1. in
+  let magnitude =
+    List.fold_left
+      (fun acc i -> Nx.add acc (Nx.abs (Cosmology.density_parameter c i zs)))
+      (Nx.zeros_like zs) components
+  in
+  item (Nx.max magnitude) <= box_magnitude
+
+(* Two models with the same exact distance x, each computed within 2^-46 of x,
+   relative, on the box, differ by at most 2 * 2^-46 |x|, and the larger
+   magnitude of the two is at least (1 - 2^-46) |x|. *)
+let pair_bound = 2. *. 0x1p-46 /. (1. -. 0x1p-46)
+
 let laws =
   group "laws"
     [
@@ -398,15 +418,16 @@ let laws =
       prop "a species of zero mass counts as massless"
         Gen.(pair models redshifts)
         (fun (m, z) ->
-          let massless = cosmology Nx.float64 { m with m_nu = [] } in
-          let zero = cosmology Nx.float64 { m with m_nu = [ 0. ] } in
-          let f c =
-            let d =
-              item (Quantity.value mpc (Cosmology.comoving_distance c (f64 z)))
-            in
-            if Float.is_nan d then None else Some d
+          let massless = { m with m_nu = [] } in
+          assume (distance_in_box massless z);
+          let f m =
+            let c = cosmology Nx.float64 m in
+            item (Quantity.value mpc (Cosmology.comoving_distance c (f64 z)))
           in
-          equal (option (float_rel ~rel:1e-14 ~abs:0.)) (f massless) (f zero));
+          equal
+            (float_rel ~rel:pair_bound ~abs:0.)
+            (f massless)
+            (f { m with m_nu = [ 0. ] }));
       test "hubble at z = 0 is h0" (fun () ->
           let c = cosmology Nx.float64 planck_like in
           equal
