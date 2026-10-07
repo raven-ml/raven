@@ -1,6 +1,6 @@
 ; The process memory and the in-process transport are the tests' own.
 
-(copy_files# ../test/smoke_stubs.c)
+(copy_files# ../test/test_stubs.c)
 
 (executable
  (name bench_window)
@@ -8,7 +8,7 @@
  (libraries device_pci nx.device.support thumper)
  (foreign_stubs
   (language c)
-  (names smoke_stubs bench_window_stubs)
+  (names test_stubs bench_window_stubs)
   (extra_deps ../device_pci.h)
   (flags :standard -std=c11 -O2 -Wall -Wextra -I ..)))
 

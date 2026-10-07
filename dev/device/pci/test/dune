@@ -1,8 +1,8 @@
-(test
- (name smoke)
+(tests
+ (names test_window)
  (libraries device_pci windtrap)
  (foreign_stubs
   (language c)
-  (names smoke_stubs)
+  (names test_stubs)
   (extra_deps ../device_pci.h)
   (flags :standard -std=c11 -Wall -Wextra -I ..)))

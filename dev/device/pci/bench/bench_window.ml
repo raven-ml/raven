@@ -19,8 +19,8 @@
 module Window = Device_pci.Window
 module Mmio = Nx_device_support.Mmio
 
-external buffer : int -> int = "smoke_buffer"
-external far : unit -> int = "smoke_transport"
+external buffer : int -> int = "test_memory"
+external far : int -> int -> int = "test_far"
 external store32 : Window.t -> int = "bench_store32" [@@noalloc]
 external store64 : Window.t -> int = "bench_store64" [@@noalloc]
 external store32_bare : int -> int = "bench_store32_bare" [@@noalloc]
@@ -117,7 +117,7 @@ let mmio_far =
   Mmio.remote { read; write } 0n span
 
 let mapped = Window.v (buffer span) span
-let through = Window.through (Window.transport (far ())) 0 span
+let through = Window.through (Window.transport (far 0 span)) 0 span
 let mmio = Mmio.v (Nativeint.of_int (buffer span)) span
 let bench = Thumper.bench
 

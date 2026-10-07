@@ -1,0 +1,428 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Windtrap
+open Device_pci
+
+external memory : int -> int = "test_memory"
+external far : int -> int -> int = "test_far"
+external break : int -> unit = "test_far_break"
+external log : int -> (bool * int * int) list = "test_far_log"
+external window_of : Window.t -> int * int * int * bool = "test_window_of"
+external c_store32 : Window.t -> int -> int -> int = "test_store32"
+external c_store64 : Window.t -> int -> int64 -> int = "test_store64"
+external c_load32 : Window.t -> int -> int option = "test_load32"
+external c_load64 : Window.t -> int -> int64 option = "test_load64"
+external c_write : Window.t -> int -> string -> int = "test_write"
+
+(* Far machines put their bytes at [base], away from 0 so that an access sent to
+   its offset in place of its address misses them. *)
+let base = 0x4000_0000
+let broke = Failure "far: the link broke"
+
+(* [mapped skew n] and [through skew n] are [n] fresh zero bytes whose address
+   is [skew] modulo 8. A far machine holds exactly the window's bytes. *)
+let mapped skew n = Window.v (memory (n + 8) + skew) n
+
+let through skew n =
+  let a = base + skew in
+  Window.through (Window.transport (far a n)) a n
+
+let far_window n =
+  let f = far base n in
+  (f, Window.through (Window.transport f) base n)
+
+(* The model
+
+   A window is its bytes inside its root window's. Alignment is of the address
+   on the machine: [skew] is the root's address modulo 8. Counts below zero are
+   misuse like bytes outside the window.
+
+   A word access whose offset in the window and address on the machine disagree
+   on alignment is left to [address_alignment], so the laws hold under either
+   reading of the interface. *)
+
+type view = { bytes : Bytes.t; skew : int; off : int; len : int }
+
+let inside r o n = o >= 0 && n >= 0 && o <= r.len - n
+let aligned r o w = (r.skew + r.off + o) mod w = 0
+let check r o n = if not (inside r o n) then invalid_arg "outside"
+
+let check_word r o w =
+  check r o w;
+  cover "a word that ends the window" (o = r.len - w);
+  if not (aligned r o w) then invalid_arg "unaligned"
+
+module Model = struct
+  let window skew n = { bytes = Bytes.make n '\000'; skew; off = 0; len = n }
+
+  let sub r o n =
+    check r o n;
+    { r with off = r.off + o; len = n }
+
+  let get8 r o =
+    check r o 1;
+    Bytes.get_uint8 r.bytes (r.off + o)
+
+  let set8 r o b =
+    check r o 1;
+    Bytes.set_uint8 r.bytes (r.off + o) (b land 0xff)
+
+  let get32 r o =
+    check_word r o 4;
+    Int32.to_int (Bytes.get_int32_le r.bytes (r.off + o)) land 0xffff_ffff
+
+  let set32 r o x =
+    check_word r o 4;
+    Bytes.set_int32_le r.bytes (r.off + o) (Int32.of_int x)
+
+  let get64 r o =
+    check_word r o 8;
+    Bytes.get_int64_le r.bytes (r.off + o)
+
+  let set64 r o x =
+    check_word r o 8;
+    Bytes.set_int64_le r.bytes (r.off + o) x
+
+  let read r o n =
+    check r o n;
+    Bytes.sub_string r.bytes (r.off + o) n
+
+  let write r o s =
+    check r o (String.length s);
+    Bytes.blit_string s 0 r.bytes (r.off + o) (String.length s)
+
+  let fill r o n c =
+    check r o n;
+    Bytes.fill r.bytes (r.off + o) n c
+end
+
+(* Offsets and counts around every window's bounds, and the extremes. *)
+let index =
+  Gen.frequency
+    [
+      (8, Gen.int_range (-2) 42);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_int
+          [ min_int; min_int + 1; max_int - 1; max_int ] );
+    ]
+
+let skew = Gen.int_range 0 7
+let length = Gen.int_range 0 40
+let inner = Gen.int_range 0 40
+let bytes = Gen.string_of ~size:(Gen.int_range 0 12) Gen.char
+
+(* Every access of the interface and of device_pci.h, on windows made by [make].
+   The C accesses check no bounds, so they are called inside. *)
+let commands ~is_mapped make =
+  let win =
+    abstract "w" ~invariant:(fun r w ->
+        equal ~msg:"length" int r.len (Window.length w);
+        equal ~msg:"mapped" bool is_mapped (Window.mapped w);
+        equal ~msg:"bytes" string
+          (Bytes.sub_string r.bytes r.off r.len)
+          (Window.read w 0 r.len))
+  in
+  let word w r o = inside r o w && aligned r o w in
+  let agreed w r o =
+    (not (inside r o w)) || Bool.equal (o mod w = 0) (aligned r o w)
+  in
+  [
+    command "window" (skew @-> length @-> makes win) Model.window make;
+    command "sub" (win ^-> index @-> index @-> makes win) Model.sub Window.sub;
+    command "get8" (win ^-> index @-> returns int) Model.get8 Window.get8;
+    command "set8"
+      (win ^-> index @-> Gen.int @-> returns unit)
+      Model.set8 Window.set8;
+    command "get32"
+      ~pre:(fun r o -> agreed 4 r o)
+      (win ^-> index @-> returns int)
+      Model.get32 Window.get32;
+    command "set32"
+      ~pre:(fun r o _ -> agreed 4 r o)
+      (win ^-> index @-> Gen.int @-> returns unit)
+      Model.set32 Window.set32;
+    command "get64"
+      ~pre:(fun r o -> agreed 8 r o)
+      (win ^-> index @-> returns int64)
+      Model.get64 Window.get64;
+    command "set64"
+      ~pre:(fun r o _ -> agreed 8 r o)
+      (win ^-> index @-> Gen.int64 @-> returns unit)
+      Model.set64 Window.set64;
+    command "read"
+      (win ^-> index @-> index @-> returns string)
+      Model.read Window.read;
+    command "write"
+      (win ^-> index @-> bytes @-> returns unit)
+      Model.write Window.write;
+    command "fill"
+      (win ^-> index @-> index @-> Gen.char @-> returns unit)
+      Model.fill Window.fill;
+    command "device_pci_store32"
+      ~pre:(fun r o _ -> word 4 r o)
+      (win ^-> inner @-> Gen.int @-> returns int)
+      (fun r o x ->
+        Model.set32 r o x;
+        0)
+      c_store32;
+    command "device_pci_store64"
+      ~pre:(fun r o _ -> word 8 r o)
+      (win ^-> inner @-> Gen.int64 @-> returns int)
+      (fun r o x ->
+        Model.set64 r o x;
+        0)
+      c_store64;
+    command "device_pci_load32"
+      ~pre:(fun r o -> word 4 r o)
+      (win ^-> inner @-> returns (option int))
+      (fun r o -> Some (Model.get32 r o))
+      c_load32;
+    command "device_pci_load64"
+      ~pre:(fun r o -> word 8 r o)
+      (win ^-> inner @-> returns (option int64))
+      (fun r o -> Some (Model.get64 r o))
+      c_load64;
+    command "device_pci_write"
+      ~pre:(fun r o s -> inside r o (String.length s))
+      (win ^-> inner @-> bytes @-> returns int)
+      (fun r o s ->
+        Model.write r o s;
+        0)
+      c_write;
+  ]
+
+(* A window one byte past an aligned address: its words at offsets 3 and 7 are
+   aligned on the machine, those at offset 0 are not. *)
+let address_alignment make () =
+  let w = Window.sub (make 0 24) 1 20 in
+  equal ~msg:"get32 at an aligned address" int 0 (Window.get32 w 3);
+  equal ~msg:"get64 at an aligned address" int64 0L (Window.get64 w 7);
+  raises_match ~msg:"get32 at an unaligned address" Exn.invalid_arg (fun () ->
+      Window.get32 w 0);
+  raises_match ~msg:"get64 at an unaligned address" Exn.invalid_arg (fun () ->
+      Window.get64 w 0)
+
+let misaligned = "window.ml aligns offsets in the window; the lead decides"
+
+let same_bytes =
+  group "accesses"
+    [
+      stateful ~count:300 "a mapped window behaves as its bytes"
+        (commands ~is_mapped:true mapped);
+      stateful ~count:300 "a window through a transport behaves as its bytes"
+        (commands ~is_mapped:false through);
+      xfail ~reason:misaligned
+        (test "a mapped word is aligned by its address"
+           (address_alignment mapped));
+      xfail ~reason:misaligned
+        (test "a far word is aligned by its address"
+           (address_alignment through));
+    ]
+
+(* Windows *)
+
+let test_v () =
+  let a = memory 16 in
+  let w = Window.v a 16 in
+  equal ~msg:"address" int a (Window.address w);
+  equal ~msg:"length" int 16 (Window.length w);
+  equal ~msg:"mapped" bool true (Window.mapped w)
+
+let test_through () =
+  let w = through 0 16 in
+  equal ~msg:"address" int base (Window.address w);
+  equal ~msg:"length" int 16 (Window.length w);
+  equal ~msg:"mapped" bool false (Window.mapped w)
+
+let test_negative () =
+  let tr = Window.transport (far base 16) in
+  let a = memory 16 in
+  List.iter
+    (fun n ->
+      let msg = string_of_int n in
+      raises_match ~msg Exn.invalid_arg (fun () -> Window.v a n);
+      raises_match ~msg Exn.invalid_arg (fun () -> Window.through tr base n))
+    [ -1; min_int ]
+
+(* A sub-window's place, for [(skew, len, off, n)] with [off, n] in [len]. *)
+let place =
+  let open Gen in
+  bind (pair skew length) (fun (s, len) ->
+      bind (int_range 0 len) (fun off ->
+          map (fun n -> (s, len, off, n)) (int_range 0 (len - off))))
+  |> with_pp (fun ppf (s, len, off, n) ->
+      Format.fprintf ppf "skew %d, length %d, sub %d %d" s len off n)
+
+let sub_address make (s, len, off, n) =
+  let w = make s len in
+  let x = Window.sub w off n in
+  equal ~msg:"address" int (Window.address w + off) (Window.address x);
+  equal ~msg:"length" int n (Window.length x)
+
+let windows =
+  group "windows"
+    [
+      test "v is the bytes at the address it is given" test_v;
+      test "through is the bytes at the address it is given" test_through;
+      test "v and through refuse a negative length" test_negative;
+      prop "a mapped sub-window starts its offset past its parent" place
+        (sub_address mapped);
+      prop "a far sub-window starts its offset past its parent" place
+        (sub_address through);
+    ]
+
+(* Bigarrays *)
+
+let test_bigarray () =
+  let w = Window.sub (mapped 0 16) 3 10 in
+  let b = Window.bigarray w in
+  equal ~msg:"length" int 10 (Bigarray.Array1.dim b);
+  Window.set8 w 0 0x41;
+  equal ~msg:"a store is in the bigarray" char 'A' b.{0};
+  b.{9} <- 'z';
+  equal ~msg:"the bigarray is the window" int (Char.code 'z') (Window.get8 w 9)
+
+let bigarrays =
+  group "bigarrays"
+    [
+      test "a mapped window's bigarray is its bytes" test_bigarray;
+      test "a far window has no bigarray" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              Window.bigarray (through 0 16)));
+    ]
+
+(* Transports *)
+
+let access = triple bool int int
+
+let test_one_access () =
+  let f, w = far_window 32 in
+  let once msg kind off n run =
+    run ();
+    equal ~msg (list access) [ (kind, base + off, n) ] (log f)
+  in
+  once "get32" false 4 4 (fun () -> ignore (Window.get32 w 4));
+  once "set32" true 28 4 (fun () -> Window.set32 w 28 1);
+  once "get64" false 8 8 (fun () -> ignore (Window.get64 w 8));
+  once "set64" true 24 8 (fun () -> Window.set64 w 24 1L);
+  once "device_pci_load32" false 4 4 (fun () -> ignore (c_load32 w 4));
+  once "device_pci_store32" true 28 4 (fun () -> ignore (c_store32 w 28 1));
+  once "device_pci_load64" false 8 8 (fun () -> ignore (c_load64 w 8));
+  once "device_pci_store64" true 24 8 (fun () -> ignore (c_store64 w 24 1L))
+
+(* A store of [n] bytes at [off] of a far window reaches no other byte of the
+   machine: a neighbouring register keeps its value and its side effects. *)
+let stores_only write (skew, len, off, n) =
+  let f = far (base + skew) len in
+  let w = Window.through (Window.transport f) (base + skew) len in
+  write w off (String.make n 'x');
+  let a = base + skew + off in
+  cover "a store between two other bytes" (off > 0 && off + n < len);
+  List.iter
+    (fun (_, x, m) ->
+      if x < a || x + m > a + n then
+        failf "a store of %d bytes at %#x is outside [%#x, %#x)" m x a (a + n))
+    (log f)
+
+let bulk =
+  [
+    prop "write stores only the bytes it is given" place
+      (stores_only Window.write);
+    prop "device_pci_write stores only the bytes it is given" place
+      (stores_only (fun w off s -> equal int 0 (c_write w off s)));
+  ]
+
+(* Two domains each store ascending words of their half of a far machine. *)
+let test_order () =
+  let words = 256 in
+  let f, w = far_window (8 * words) in
+  let store d () =
+    for i = 0 to words - 1 do
+      Window.set32 w (((d * words) + i) * 4) i
+    done
+  in
+  let other = Domain.spawn (store 1) in
+  store 0 ();
+  Domain.join other;
+  let seen = List.map (fun (_, a, _) -> (a - base) / 4) (log f) in
+  List.iter
+    (fun d ->
+      let mine = List.filter (fun i -> i / words = d) seen in
+      equal
+        ~msg:(Printf.sprintf "domain %d" d)
+        (list int)
+        (List.init words (fun i -> (d * words) + i))
+        mine)
+    [ 0; 1 ]
+
+let failed_accesses =
+  [
+    ("get8", fun w -> ignore (Window.get8 w 1));
+    ("set8", fun w -> Window.set8 w 1 0);
+    ("get32", fun w -> ignore (Window.get32 w 4));
+    ("set32", fun w -> Window.set32 w 4 0);
+    ("get64", fun w -> ignore (Window.get64 w 8));
+    ("set64", fun w -> Window.set64 w 8 0L);
+    ("read", fun w -> ignore (Window.read w 1 9));
+    ("write", fun w -> Window.write w 1 "123456789");
+    ("fill", fun w -> Window.fill w 1 9 'x');
+  ]
+
+let c_failed =
+  [
+    ("device_pci_store32", fun w -> c_store32 w 4 0);
+    ("device_pci_store64", fun w -> c_store64 w 8 0L);
+    ( "device_pci_load32",
+      fun w -> Option.fold ~none:(-1) ~some:(fun _ -> 0) (c_load32 w 4) );
+    ( "device_pci_load64",
+      fun w -> Option.fold ~none:(-1) ~some:(fun _ -> 0) (c_load64 w 8) );
+    ("device_pci_write", fun w -> c_write w 1 "123456789");
+  ]
+
+let broken () =
+  let f, w = far_window 32 in
+  break f;
+  w
+
+let transports =
+  group "transports"
+    ([
+       test "a 32- or 64-bit access is one access of its width" test_one_access;
+       test "each domain's accesses arrive in the order it makes them"
+         test_order;
+       cases ~name:fst "a failed transport fails with its reason"
+         failed_accesses (fun (_, run) ->
+           raises broke (fun () -> run (broken ())));
+       cases ~name:fst "a C access returns -1 once its transport failed"
+         c_failed (fun (_, run) -> equal int (-1) (run (broken ())));
+     ]
+    @ bulk)
+
+(* The C view *)
+
+let test_window_of () =
+  let w = mapped 0 16 in
+  let a = Window.address w in
+  let shown = quad int int int bool in
+  equal ~msg:"mapped" shown (a, 16, a, false) (window_of w);
+  equal ~msg:"a mapped sub-window" shown
+    (a + 3, 9, a + 3, false)
+    (window_of (Window.sub w 3 9));
+  let w = through 0 16 in
+  equal ~msg:"through" shown (base, 16, 0, true) (window_of w);
+  equal ~msg:"a far sub-window" shown
+    (base + 3, 9, 0, true)
+    (window_of (Window.sub w 3 9))
+
+let c_view =
+  group "device_pci.h"
+    [
+      test "device_pci_window_of reads a window's place and side" test_window_of;
+    ]
+
+let () =
+  exit
+  @@ run "device_pci" [ same_bytes; windows; bigarrays; transports; c_view ]
