@@ -959,7 +959,9 @@ module Fits : sig
       keyword FITS leaves out takes its default: CRPIX and CRVAL 0, CDELT 1, PC
       the identity, a missing CD element 0, (φ₀, θ₀) = (0°, 90°), LATPOLE 90°,
       and LONPOLE 180° + φ₀ when CRVAL's latitude is below θ₀, φ₀ otherwise.
-      CROTA2 reads as the PC matrix it implies.
+      CROTA2 reads as the PC matrix it implies. [PVi_3] and [PVi_4] on the
+      longitude axis are LONPOLE's and LATPOLE's other spellings; a header
+      giving both spellings of one with different values is an [Error].
 
       {b Frames.} The CTYPE prefix chooses the system and [RADESYS] (or
       [RADECSYS]) and [EQUINOX] (or [EPOCH]) qualify an equatorial or ecliptic
@@ -976,7 +978,8 @@ module Fits : sig
 
       {b Scope.} TAN and ARC are read. Other projections, SIP, TPV (and TAN with
       PV terms), distortion lookup tables, [PVi_m] on the longitude axis beyond
-      [m = 1, 2], and a third WCS axis are an [Error] naming the keyword. *)
+      [m = 1, ..., 4], and a third WCS axis are an [Error] naming the keyword.
+  *)
   module Wcs : sig
     val read :
       ?alt:char ->
@@ -1004,8 +1007,10 @@ module Fits : sig
         one that differs is set in place, and one [h] lacks is added where the
         first removed keyword was, or at the end, unless its value is its
         default. Keywords [t] no longer spells (CD for a PC header, CROTA, SIP)
-        are removed. Other records are unchanged, so [write (read h) h] is [h]
-        for every header {!read} reads and that spells PC as PC.
+        are removed. A pole keeps the spelling [h] gives it. Other records are
+        unchanged, so [write (read h) h] is [h] for every header {!read} reads,
+        except that a CROTA2 header is written with the PC matrix it reads as,
+        whose stages are equal.
 
         It is an [Error] naming the stage if [t] is not a list {!read} builds,
         up to an absent PC or a scale stage on its own, or if [t]'s leaves are

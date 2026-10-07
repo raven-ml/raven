@@ -171,6 +171,11 @@ let errors =
           ( "CTYPE1: the SIN projection is not read yet",
             [ set_s "CTYPE1" "RA---SIN"; set_s "CTYPE2" "DEC--SIN" ] );
           ("a header with both CD and PC is ambiguous", [ set_f "CD1_1" 1e-5 ]);
+          ( "LONPOLE = 180 and PV1_3 = 150 spell one value and disagree",
+            [ set_f "LONPOLE" 180.; set_f "PV1_3" 150. ] );
+          ( "PV1_5: only PV1_1 to PV1_4 (the native reference point, LONPOLE \
+             and LATPOLE) are read on the longitude axis",
+            [ set_f "PV1_5" 1. ] );
           ("CROTA2 beside PC is ambiguous", [ set_f "CROTA2" 10. ]);
           ( "PV2_1: TAN with PV terms is the TPV distortion, not read yet",
             [ set_f "PV2_1" 1. ] );

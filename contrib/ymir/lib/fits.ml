@@ -165,8 +165,9 @@ module Wcs = struct
       List.init 100 (fun m -> strf "PV%d_%d%s" axes.lng m sfx)
       |> List.find_opt (fun k ->
           present h k
-          && k <> strf "PV%d_1%s" axes.lng sfx
-          && k <> strf "PV%d_2%s" axes.lng sfx)
+          && not
+               (List.mem k
+                  (List.init 4 (fun m -> strf "PV%d_%d%s" axes.lng (m + 1) sfx))))
     in
     let distortion =
       if sfx <> "" then None
@@ -182,8 +183,8 @@ module Wcs = struct
           (Transform.code_name axes.code)
     | None, Some k, _ ->
         fail h
-          "%s: only PV%d_1 and PV%d_2 (the native reference point) are read on \
-           the longitude axis"
+          "%s: only PV%d_1 to PV%d_4 (the native reference point, LONPOLE and \
+           LATPOLE) are read on the longitude axis"
           k axes.lng axes.lng
     | None, None, Some k -> fail h "%s: this distortion is not read yet" k
     | None, None, None -> Ok ()
@@ -323,6 +324,17 @@ module Wcs = struct
 
   let default_latpole = 90.
 
+  (* [pole h key alt default] reads LONPOLE or LATPOLE, which FITS also spells
+     PVi_3 and PVi_4 on the longitude axis [i] (Paper II §2.5). *)
+  let pole h key alt default =
+    let* a = find_float h key in
+    let* b = find_float h alt in
+    match (a, b) with
+    | Some x, Some y when not (Float.equal x y) ->
+        fail h "%s = %g and %s = %g spell one value and disagree" key x alt y
+    | Some x, _ | None, Some x -> Ok x
+    | None, None -> Ok default
+
   let read ?alt (frame : 'f Frame.t) h =
     let f64 = Nx.float64 in
     let sfx = suffix "read" alt in
@@ -371,9 +383,13 @@ module Wcs = struct
     let* phi0, theta0 = read_native h sfx axes in
     let delta0 = U.ratio Nx.float64 u U.degree *. crval_lat in
     let* lonpole =
-      float_or h ("LONPOLE" ^ sfx) (default_lonpole ~delta0 ~theta0 ~phi0)
+      pole h ("LONPOLE" ^ sfx)
+        (strf "PV%d_3%s" axes.lng sfx)
+        (default_lonpole ~delta0 ~theta0 ~phi0)
     in
-    let* latpole = float_or h ("LATPOLE" ^ sfx) default_latpole in
+    let* latpole =
+      pole h ("LATPOLE" ^ sfx) (strf "PV%d_4%s" axes.lng sfx) default_latpole
+    in
     let deg x = Quantity.v U.degree x in
     let swap =
       if axes.lng = 1 then Transform.id else Transform.axes [| 1; 0 |] ~origin:0
@@ -522,6 +538,13 @@ module Wcs = struct
 
   let index_pairs = [ (1, 1); (1, 2); (2, 1); (2, 2) ]
 
+  (* A pole is written with the spelling the header uses: PVi_3 or PVi_4 when
+     it has one, and then LONPOLE or LATPOLE only where it has that too. *)
+  let pole_cards h key alt x d =
+    if present h alt then
+      [ card ~optional:true key (F x); card ~optional:true alt (F x) ]
+    else [ default x d key ]
+
   (* [cards h sfx window steps] is the cards [steps] spell, or [Error] naming a
      stage FITS cannot spell there. *)
   let cards h sfx window steps =
@@ -616,11 +639,11 @@ module Wcs = struct
           default crval.(1) 0. (strf "CRVAL%d%s" lat sfx);
           default phi0 0. (strf "PV%d_1%s" lng sfx);
           default theta0 90. (strf "PV%d_2%s" lng sfx);
-          default c.lonpole
-            (default_lonpole ~delta0 ~theta0 ~phi0)
-            ("LONPOLE" ^ sfx);
-          default c.latpole default_latpole ("LATPOLE" ^ sfx);
         ]
+      @ pole_cards h ("LONPOLE" ^ sfx) (strf "PV%d_3%s" lng sfx) c.lonpole
+          (default_lonpole ~delta0 ~theta0 ~phi0)
+      @ pole_cards h ("LATPOLE" ^ sfx) (strf "PV%d_4%s" lng sfx) c.latpole
+          default_latpole
       @ frame_cards h sfx c.frame)
 
   (* The keywords of an alternate's description the writer owns. *)

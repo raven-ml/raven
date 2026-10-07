@@ -191,6 +191,24 @@ CASES = [
         ],
         (60, 60),
     ),
+    (
+        "PV1_3 and PV1_4 for LONPOLE and LATPOLE",
+        "icrs",
+        " ",
+        [
+            ("CTYPE1", "RA---ARC"),
+            ("CTYPE2", "DEC--ARC"),
+            ("CRPIX1", 30.0),
+            ("CRPIX2", 30.0),
+            ("CDELT1", -1.0),
+            ("CDELT2", 1.0),
+            ("CRVAL1", 10.0),
+            ("CRVAL2", 80.0),
+            ("PV1_3", 150.0),
+            ("PV1_4", 75.0),
+        ],
+        (60, 60),
+    ),
 ]
 
 
