@@ -7,6 +7,5 @@
   gpfifo
   launch
   local
-  method
   qmd
   repr))
