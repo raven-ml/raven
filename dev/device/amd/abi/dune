@@ -6,5 +6,4 @@
   aql
   capability
   code_object
-  pm4
   thread_trace))
