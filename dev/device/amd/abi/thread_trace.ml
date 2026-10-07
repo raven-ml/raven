@@ -1,8 +1,6 @@
 (*---------------------------------------------------------------------------
-  Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
-  Copyright (c) 2026 The Raven authors. ISC License.
-
-  SPDX-License-Identifier: MIT AND ISC
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
 open Packet
@@ -11,19 +9,26 @@ let major (g : Gpu.t) =
   let m, _, _ = g.gc in
   m
 
-(* Recording *)
+(* Recording
 
-(* A trace buffer's size is in pages of 4096 bytes, its address from bit 12. *)
+   The program follows Mesa's ac_sqtt.c (ac_sqtt_emit_start, ac_sqtt_emit_stop,
+   ac_sqtt_emit_wait, ac_sqtt_get_ctrl) for a compute queue, register by
+   register, with the departures the comments name: the values traces were
+   captured with on gfx1100, gfx1201 and gfx942. *)
+
+(* A trace buffer's size is in pages of 4096 bytes, its address from bit 12
+   (SQTT_BUFFER_ALIGN_SHIFT). *)
 let page = 4096
 let page_shift = 12
 
-(* GFX9 and GFX11 hold the address's bits from 44 in a register of their own. *)
+(* GFX9 and GFX11 hold the address's bits from 44 in a register of their own
+   (SQ_THREAD_TRACE_BASE2, BUF0_SIZE.BASE_HI). *)
 let high_shift = 44
 
-(* The poll interval of the waits for the engines. *)
+(* The poll interval of the waits for the engines, as ac_sqtt_emit_wait's. *)
 let interval = 4
 
-(* The engines that trace instructions. *)
+(* The engines that trace instructions, where Mesa takes a mask. *)
 let itraced e = e < 2
 
 let register fn g name =
@@ -73,7 +78,7 @@ let known (p : int Packet.t) =
     (fun i ->
       Dword (Int32.to_int (String.get_int32_le s (4 * i)) land 0xffff_ffff))
 
-(* The SPI's and the trace's configuration, as Mesa's ac_sqtt.c sets them. *)
+(* The SPI's configuration around a trace, as Mesa's radv_sqtt.c sets it. *)
 let spi_config fn g ~tracing =
   let t = Bool.to_int tracing in
   set fn g "SPI_CONFIG_CNTL"
@@ -85,6 +90,8 @@ let spi_config fn g ~tracing =
       ("enable_sqg_top_events", t);
     ]
 
+(* ac_sqtt_get_ctrl's, but for HIWATER, 1 where Mesa writes 5, and GFX12's
+   LOWATER_OFFSET, which Mesa sets to 4. *)
 let trace_config fn g ~tracing =
   set fn g "SQ_THREAD_TRACE_CTRL"
     ([
@@ -99,21 +106,25 @@ let trace_config fn g ~tracing =
     @ if major g >= 12 then [] else [ ("rt_freq", Defs.sq_tt_rt_freq_4096_clk) ]
     )
 
-(* GFX9's tokens: misc, time, registers, wave starts and ends, user data and
-   compute registers; and the instructions, on the engines that trace them. *)
+(* GFX9's tokens, by SQ_THREAD_TRACE_TOKEN_* type (vega10_enum.h): MISC,
+   TIMESTAMP, REG, WAVE_START, WAVE_END, INST_USERDATA, REG_CSPRIV and REG_CS;
+   and INST, INST_PC and ISSUE on the engines that trace instructions. Mesa
+   traces every token (0xbfff). *)
 let gfx9_tokens = [ 0; 1; 2; 3; 6; 12; 5; 15 ]
 let gfx9_instruction_tokens = [ 10; 11; 13 ]
 let bits = List.fold_left (fun m b -> m lor (1 lsl b)) 0
 
-(* The registers a GFX11 trace includes. *)
+(* The registers a GFX11 trace includes: Mesa's, but CONFIG. *)
 let included =
   Defs.sq_tt_token_mask_sqdec_bit lor Defs.sq_tt_token_mask_shdec_bit
   lor Defs.sq_tt_token_mask_gfxudec_bit lor Defs.sq_tt_token_mask_comp_bit
   lor Defs.sq_tt_token_mask_context_bit
 
-(* The tokens an engine that traces no instructions excludes. GFX12 lays the
-   field out as GFX11, whose enumeration names its bits, and excludes
-   performance counter tokens too. *)
+(* The tokens an engine that traces no instructions excludes: Mesa's five.
+   GFX12's enumeration names few of the field's bits, so GFX11's are taken for
+   them; GFX12 also sets bit 11, PERF on GFX11, which Mesa does not (an
+   unverified value, plan decision 22). Mesa excludes PERF on every GFX11
+   engine; here no traced engine excludes anything. *)
 let instructions_excluded g =
   let gfx11 =
     bits
@@ -129,6 +140,10 @@ let instructions_excluded g =
   if major g >= 12 then gfx11 lor (1 lsl Defs.sq_tt_token_exclude_perf_shift)
   else gfx11
 
+(* Mesa writes BASE2 before BASE ("order seems important") and the mask per
+   engine with its active compute unit, sets PERF_MASK, HIWATER, STATUS and
+   every stage's MODE bit, and enables the trace with
+   COMPUTE_THREAD_TRACE_ENABLE. *)
 let start_gfx9 fn g ~size buffer =
   let base e shift = W32 (Shift (Value (buffer e), shift)) in
   grbm fn g ()
@@ -157,6 +172,8 @@ let start_gfx9 fn g ~size buffer =
       @ set fn g "SQ_THREAD_TRACE_MODE"
           [ ("mask_cs", 1); ("autoflush_en", 1); ("mode", 1) ])
 
+(* Mesa traces every stage and the first active work-group processor, and on
+   GFX12 zeroes SQ_THREAD_TRACE_WPTR and excludes CP_ME_MC_RADDR. *)
 let start_gfx11 fn g ~size buffer =
   let base e shift = Shift (Value (buffer e), shift) in
   let gfx12 = major g >= 12 in
@@ -208,6 +225,8 @@ let start (g : Gpu.t) ~size buffer =
   Pm4.acquire_mem g System @ program @ grbm fn g () @ enable
   @ Pm4.acquire_mem g System
 
+(* GFX11 on waits for FINISH_PENDING to clear, where Mesa waits for FINISH_DONE
+   to be set; GFX9 stops by MODE alone. *)
 let stop (g : Gpu.t) ends =
   let fn = "Thread_trace.stop" in
   let gfx9 = major g = 9 in
@@ -240,8 +259,8 @@ let stop (g : Gpu.t) ends =
   @ (if gfx9 then [] else spi_config fn g ~tracing:false)
   @ Pm4.acquire_mem g System
 
-(* An engine's write pointer counts 32-byte units from the trace's start, or
-   from address 0 on GFX 11.0. *)
+(* An engine's write pointer counts 32-byte units in 29 bits from the trace's
+   start, or from address 0 on GFX 11.0 (ac_sqtt_copy_info_regs). *)
 let units w = w land 0x1fff_ffff * 32
 
 let length (g : Gpu.t) ~buffer w =
@@ -249,301 +268,80 @@ let length (g : Gpu.t) ~buffer w =
 
 (* Decoding *)
 
-(* A trace is a stream of packets of 1 to 18 nibbles, least significant nibble
-   first. A packet's first byte names its type, whose size gives where the next
-   packet starts; most packets advance the trace's time, in shader cycles, by a
-   delta field. An RDNA trace starts with a layout header that names the format:
-   layout 3 (RDNA3), or layout 4 (RDNA4). A CDNA trace has none. *)
+(* A GFX9 trace is a stream of tokens of 16-bit words, little-endian. A token's
+   first word names its type in its low 4 bits, which gives its words
+   (Defs.sq_thread_trace_tokens), and the SQ_THREAD_TRACE_WORD_* registers lay
+   out their fields. A token advances the trace's time by its delta, in units of
+   4 shader cycles; a TIMESTAMP token holds an absolute time, which sets the
+   time from its second on. Neither rule is in the headers: they are how
+   tinygrad's decoder reads GFX9 traces (tinygrad/renderer/amd/sqtt.py),
+   unverified (plan decision 22). *)
 
-type field = int * int (* lowest, highest bit *)
+let cycles_per_delta = 4
+let token_type = (0, 3)
 
-(* The compute unit, SIMD and slot of a wave. A compute unit of RDNA is its
-   work-group processor and the shader array above them. *)
-type wave_fields = {
-  cu : field;
-  array : (field * int) option;
-  simd : field;
-  slot : field;
-}
+(* A TIMESTAMP's bits that must be clear for its time to count. *)
+let timestamp_reserved = (4, 15)
+let bits_of w (lo, hi) = (w lsr lo) land ((1 lsl (hi - lo + 1)) - 1)
 
-type kind =
-  | Plain
-  | Short (* a delta of 4 more than its field *)
-  | Mark of { rt : int; pl : int }
-    (* a realtime marker when [rt] is set and [pl] clear, a delta otherwise *)
-  | Timestamp (* CDNA's absolute time *)
-  | Layout
-  | Start of wave_fields
-  | End of wave_fields
-
-(* A packet type: its number, as AMD's decoder numbers them; the bits of the
-   first byte that name it and their value; its nibbles; its delta field; and
-   its kind. *)
-type packet = int * int * int * int * field option * kind
-
-let rdna3 : packet list =
-  [
-    (1, 0x7, 0x3, 3, Some (3, 5), Plain);
-    (2, 0xf, 0xf, 2, Some (4, 5), Plain);
-    (3, 0xf, 0xe, 2, Some (4, 5), Plain);
-    (4, 0xf, 0xd, 3, Some (4, 6), Plain);
-    (5, 0x1f, 0x4, 6, Some (5, 7), Plain);
-    (6, 0x1f, 0x14, 6, Some (5, 7), Plain);
-    (7, 0x7f, 0x21, 18, Some (8, 10), Plain);
-    ( 8,
-      0x1f,
-      0x15,
-      5,
-      Some (5, 7),
-      End
-        {
-          cu = (11, 13);
-          array = Some ((8, 8), 3);
-          simd = (9, 10);
-          slot = (15, 19);
-        } );
-    ( 9,
-      0x1f,
-      0xc,
-      8,
-      Some (5, 6),
-      Start
-        {
-          cu = (10, 12);
-          array = Some ((7, 7), 3);
-          simd = (8, 9);
-          slot = (13, 17);
-        } );
-    (10, 0x1f, 0x1c, 12, Some (5, 6), Plain);
-    (11, 0x1f, 0x5, 5, Some (5, 7), Plain);
-    (12, 0x1f, 0x6, 13, Some (5, 7), Plain);
-    (13, 0x1f, 0x16, 7, Some (5, 7), Plain);
-    (14, 0x7f, 0x31, 12, Some (7, 8), Plain);
-    (15, 0xf, 0x8, 2, Some (4, 7), Short);
-    (16, 0xf, 0x0, 1, None, Plain);
-    (17, 0x7f, 0x51, 6, Some (7, 15), Plain);
-    (18, 0xff, 0x61, 6, Some (8, 10), Plain);
-    (19, 0xff, 0xe1, 8, Some (8, 10), Plain);
-    (20, 0xf, 0x9, 16, Some (4, 6), Plain);
-    (21, 0x7f, 0x71, 16, Some (7, 9), Plain);
-    (22, 0x7f, 0x1, 12, Some (12, 47), Mark { rt = 9; pl = 8 });
-    (23, 0x7f, 0x11, 16, None, Layout);
-    (24, 0x7, 0x2, 5, Some (4, 6), Plain);
-  ]
-
-(* RDNA4 widens the work-group processor and moves fields of eight types. *)
-let rdna4 : packet list =
-  [
-    (1, 0x7, 0x3, 3, Some (3, 5), Plain);
-    (2, 0xf, 0xf, 2, Some (4, 5), Plain);
-    (3, 0xf, 0xe, 2, Some (4, 5), Plain);
-    (4, 0xf, 0xd, 3, Some (4, 6), Plain);
-    (5, 0x1f, 0x4, 6, Some (5, 7), Plain);
-    (6, 0x1f, 0x14, 6, Some (5, 7), Plain);
-    (7, 0x7f, 0x21, 18, Some (8, 10), Plain);
-    ( 8,
-      0x1f,
-      0x15,
-      5,
-      Some (5, 7),
-      End
-        {
-          cu = (11, 14);
-          array = Some ((8, 8), 4);
-          simd = (9, 10);
-          slot = (15, 19);
-        } );
-    ( 9,
-      0x1f,
-      0xc,
-      8,
-      Some (5, 6),
-      Start
-        {
-          cu = (10, 13);
-          array = Some ((7, 7), 4);
-          simd = (8, 9);
-          slot = (15, 19);
-        } );
-    (10, 0x1f, 0x1c, 10, Some (5, 6), Plain);
-    (11, 0x1f, 0x5, 6, Some (5, 7), Plain);
-    (12, 0x1f, 0x6, 14, Some (7, 9), Plain);
-    (13, 0x1f, 0x16, 8, Some (7, 9), Plain);
-    (14, 0x7f, 0x31, 12, Some (7, 8), Plain);
-    (15, 0xf, 0x8, 2, Some (4, 7), Short);
-    (16, 0xf, 0x0, 1, None, Plain);
-    (17, 0x7f, 0x51, 6, Some (7, 15), Plain);
-    (18, 0xff, 0x61, 6, Some (8, 10), Plain);
-    (19, 0xff, 0xe1, 8, Some (8, 10), Plain);
-    (20, 0xf, 0x9, 16, Some (4, 6), Plain);
-    (21, 0x7f, 0x71, 16, Some (7, 9), Plain);
-    (22, 0x7f, 0x1, 16, Some (12, 63), Mark { rt = 7; pl = 8 });
-    (23, 0x7f, 0x11, 16, None, Layout);
-    (24, 0x7, 0x2, 5, Some (3, 5), Plain);
-  ]
-
-(* CDNA's deltas count 4 cycles, from bit 4 of every packet. *)
-let cdna : packet list =
-  [
-    (0, 0xf, 0x0, 4, Some (4, 11), Plain);
-    (1, 0xf, 0x1, 16, Some (4, 4), Timestamp);
-    (2, 0xf, 0x2, 16, Some (4, 4), Plain);
-    ( 3,
-      0xf,
-      0x3,
-      8,
-      Some (4, 4),
-      Start { cu = (6, 9); array = None; simd = (14, 15); slot = (10, 13) } );
-    (4, 0xf, 0x4, 4, Some (4, 4), Plain);
-    (5, 0xf, 0x5, 12, Some (4, 4), Plain);
-    ( 6,
-      0xf,
-      0x6,
-      4,
-      Some (4, 4),
-      End { cu = (6, 9); array = None; simd = (14, 15); slot = (10, 13) } );
-    (7, 0xf, 0x7, 4, Some (4, 4), Plain);
-    (8, 0xf, 0x8, 4, Some (4, 4), Plain);
-    (9, 0xf, 0x9, 4, Some (4, 4), Plain);
-    (10, 0xf, 0xa, 4, Some (4, 4), Plain);
-    (11, 0xf, 0xb, 16, Some (4, 4), Plain);
-    (12, 0xf, 0xc, 12, Some (4, 4), Plain);
-    (13, 0xf, 0xd, 8, Some (4, 4), Plain);
-    (14, 0xf, 0xe, 16, Some (4, 4), Plain);
-    (15, 0xf, 0xf, 12, Some (4, 4), Plain);
-    (16, 0x7f, 0x11, 16, None, Layout);
-  ]
-
-(* A format: the packet type of each first byte, and the cycles a delta
-   counts. *)
-type format = { types : packet array; scale : int }
-
-let popcount n =
-  let rec go n c = if n = 0 then c else go (n land (n - 1)) (c + 1) in
-  go n 0
-
-(* A byte names the type of the most bits that match it; among types of as many
-   bits, the first listed, type 16 after the others. Type 16 names the bytes no
-   other type does. *)
-let format ~scale packets =
-  let rank (id, mask, _, _, _, _) = (-popcount mask, id = 16) in
-  let ordered =
-    List.stable_sort (fun a b -> compare (rank a) (rank b)) packets
-  in
-  let default = List.find (fun (id, _, _, _, _, _) -> id = 16) packets in
-  let matches b (_, mask, value, _, _, _) = b land mask = value in
-  let of_byte b = Option.value ~default (List.find_opt (matches b) ordered) in
-  { types = Array.init 256 of_byte; scale }
-
-let field reg (lo, hi) =
-  Int64.(
-    to_int
-      (logand
-         (shift_right_logical reg lo)
-         (sub (shift_left 1L (hi - lo + 1)) 1L)))
-
-type event =
-  | Marker of { time : int; realtime : int }
-  | Wave_start of { time : int; cu : int; simd : int; slot : int }
-  | Wave_end of { time : int; cu : int; simd : int; slot : int }
-
-let wave_of reg w =
-  let cu =
-    match w.array with
-    | None -> field reg w.cu
-    | Some (array, shift) -> field reg w.cu lor (field reg array lsl shift)
-  in
-  (cu, field reg w.simd, field reg w.slot)
-
-(* Calls [f] on the markers and the starts and ends of waves of [data], in
-   order. The reader holds the next 16 nibbles in [reg], the current packet's
-   from bit 0, and shifts in as many as the packet before it took. *)
-let iter (g : Gpu.t) f data =
-  let n = String.length data in
-  let byte i = Char.code (String.unsafe_get data i) in
-  let cdna = lazy (format ~scale:4 cdna) in
-  let fmt =
-    ref (if major g = 9 then Lazy.force cdna else format ~scale:1 rdna3)
-  in
-  let reg = ref 0L and pos = ref 0 and nib_off = ref 0 and nibbles = ref 16 in
-  let time = ref 0 and ts_offset = ref None in
-  while !pos + ((!nibbles + !nib_off + 1) lsr 1) <= n do
-    let need = !nibbles - !nib_off in
-    if !nib_off = 1 then begin
-      (reg :=
-         Int64.(
-           logor
-             (shift_right_logical !reg 4)
-             (shift_left (of_int (byte !pos lsr 4)) 60)));
-      incr pos
+let gfx9_iter f data =
+  let n = String.length data / 2 in
+  let words = Array.make 16 1 in
+  List.iter (fun (t, w) -> words.(t) <- w) Defs.sq_thread_trace_tokens;
+  let half i = String.get_uint16_le data (2 * i) in
+  let word32 i = half i lor (half (i + 1) lsl 16) in
+  let time = ref 0 and offset = ref None and i = ref 0 in
+  let advance w field = time := !time + (bits_of w field * cycles_per_delta) in
+  let wave w cu slot simd = (bits_of w cu, bits_of w simd, bits_of w slot) in
+  while !i < n && !i + words.(bits_of (half !i) token_type) <= n do
+    let w = half !i in
+    let t = bits_of w token_type in
+    if t = Defs.sq_thread_trace_token_timestamp then begin
+      let lo = word32 !i in
+      if bits_of lo timestamp_reserved = 0 then
+        let abs =
+          bits_of lo Defs.sq_thread_trace_word_timestamp_1_of_2__time_lo
+          lor bits_of
+                (word32 (!i + 2))
+                Defs.sq_thread_trace_word_timestamp_2_of_2__time_hi
+              lsl 16
+        in
+        match !offset with
+        | None -> offset := Some (abs - !time)
+        | Some o -> time := ((abs - o) land lnot 3) - 4
+    end
+    else if t = Defs.sq_thread_trace_token_misc then
+      advance w Defs.sq_thread_trace_word_misc__time_delta
+    else begin
+      advance w Defs.sq_thread_trace_word_cmn__time_delta;
+      if t = Defs.sq_thread_trace_token_wave_start then
+        let cu, simd, slot =
+          Defs.(
+            wave w sq_thread_trace_word_wave_start__cu_id
+              sq_thread_trace_word_wave_start__wave_id
+              sq_thread_trace_word_wave_start__simd_id)
+        in
+        f (Rdna_trace.Wave_start { time = !time; cu; simd; slot })
+      else if t = Defs.sq_thread_trace_token_wave_end then
+        let cu, simd, slot =
+          Defs.(
+            wave w sq_thread_trace_word_wave__cu_id
+              sq_thread_trace_word_wave__wave_id
+              sq_thread_trace_word_wave__simd_id)
+        in
+        f (Rdna_trace.Wave_end { time = !time; cu; simd; slot })
     end;
-    let bytes = need lsr 1 in
-    if bytes > 0 then begin
-      let k = Int.min bytes 8 in
-      let chunk = ref 0L in
-      for i = k - 1 downto 0 do
-        chunk := Int64.(logor (shift_left !chunk 8) (of_int (byte (!pos + i))))
-      done;
-      let kept = if k = 8 then 0L else Int64.shift_right_logical !reg (8 * k) in
-      (reg := Int64.(logor kept (shift_left !chunk (64 - (8 * k)))));
-      pos := !pos + bytes
-    end;
-    nib_off := need land 1;
-    (if !nib_off = 1 then
-       reg :=
-         Int64.(
-           logor
-             (shift_right_logical !reg 4)
-             (shift_left (of_int (byte !pos land 0xf)) 60)));
-    let _, _, _, size, delta, kind = !fmt.types.(Int64.to_int !reg land 0xff) in
-    nibbles := size;
-    let delta = Option.fold ~none:0 ~some:(field !reg) delta in
-    let marker =
-      match kind with
-      | Mark { rt; pl } -> field !reg (rt, rt) = 1 && field !reg (pl, pl) = 0
-      | Plain | Short | Timestamp | Layout | Start _ | End _ -> false
-    in
-    (match kind with
-    | Mark _ when marker -> ()
-    | Short -> time := !time + delta + 4
-    | Timestamp -> (
-        if field !reg (4, 15) = 0 then
-          let abs = field !reg (16, 63) in
-          match !ts_offset with
-          | None -> ts_offset := Some (abs - !time)
-          | Some o -> time := ((abs - o) land lnot 3) - 4)
-    | Plain | Mark _ | Layout | Start _ | End _ ->
-        time := !time + (delta * !fmt.scale));
-    match kind with
-    | Layout -> (
-        match field !reg (7, 12) with
-        | 3 -> ()
-        | 4 -> fmt := format ~scale:1 rdna4
-        | _ ->
-            (* Not a layout header: the trace is CDNA's, and this packet one of
-               its own. *)
-            fmt := Lazy.force cdna;
-            let _, _, _, size, _, kind =
-              !fmt.types.(Int64.to_int !reg land 0xff)
-            in
-            nibbles := size;
-            if kind = Timestamp && field !reg (4, 15) = 0 then
-              ts_offset := Some (field !reg (16, 63) - !time))
-    | Mark _ when marker -> f (Marker { time = !time; realtime = delta })
-    | Start w ->
-        let cu, simd, slot = wave_of !reg w in
-        f (Wave_start { time = !time; cu; simd; slot })
-    | End w ->
-        let cu, simd, slot = wave_of !reg w in
-        f (Wave_end { time = !time; cu; simd; slot })
-    | Plain | Short | Mark _ | Timestamp -> ()
+    i := !i + words.(t)
   done
+
+let iter (g : Gpu.t) f data =
+  if major g = 9 then gfx9_iter f data else Rdna_trace.iter f data
 
 type wave = { cu : int; simd : int; slot : int; start : int; stop : int }
 
 let waves g data =
   let started = Hashtbl.create 64 and waves = ref [] in
-  let on = function
+  let on : Rdna_trace.event -> unit = function
     | Wave_start { time; cu; simd; slot } ->
         Hashtbl.replace started (cu, simd, slot) time
     | Wave_end { time; cu; simd; slot } -> (
@@ -559,7 +357,7 @@ let waves g data =
 
 let markers g data =
   let markers = ref [] in
-  let on = function
+  let on : Rdna_trace.event -> unit = function
     | Marker { time; realtime } -> markers := (time, realtime) :: !markers
     | Wave_start _ | Wave_end _ -> ()
   in

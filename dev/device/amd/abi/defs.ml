@@ -1277,6 +1277,41 @@ let sq_tt_token_exclude_immediate_shift = 5
 let sq_tt_token_exclude_inst_shift = 8
 let sq_tt_token_exclude_perf_shift = 0xb
 
+(* GFX9's thread trace tokens, from vega10_enum.h and gc_9_4_3_sh_mask.h:
+   each type, and its 16-bit words. *)
+let sq_thread_trace_tokens = [
+  (0, 1); (* MISC *)
+  (1, 4); (* TIMESTAMP *)
+  (2, 4); (* REG *)
+  (3, 2); (* WAVE_START *)
+  (4, 1); (* WAVE_ALLOC *)
+  (5, 3); (* REG_CSPRIV *)
+  (6, 1); (* WAVE_END *)
+  (7, 1); (* EVENT *)
+  (8, 1); (* EVENT_CS *)
+  (9, 1); (* EVENT_GFX1 *)
+  (10, 1); (* INST *)
+  (11, 4); (* INST_PC *)
+  (12, 3); (* INST_USERDATA *)
+  (13, 2); (* ISSUE *)
+  (14, 4); (* PERF *)
+  (15, 3); (* REG_CS *)
+]
+let sq_thread_trace_token_misc = 0
+let sq_thread_trace_token_timestamp = 1
+let sq_thread_trace_token_wave_start = 3
+let sq_thread_trace_token_wave_end = 6
+let sq_thread_trace_word_cmn__time_delta = (4, 4)
+let sq_thread_trace_word_misc__time_delta = (4, 11)
+let sq_thread_trace_word_wave_start__cu_id = (6, 9)
+let sq_thread_trace_word_wave_start__wave_id = (10, 13)
+let sq_thread_trace_word_wave_start__simd_id = (14, 15)
+let sq_thread_trace_word_wave__cu_id = (6, 9)
+let sq_thread_trace_word_wave__wave_id = (10, 13)
+let sq_thread_trace_word_wave__simd_id = (14, 15)
+let sq_thread_trace_word_timestamp_1_of_2__time_lo = (16, 31)
+let sq_thread_trace_word_timestamp_2_of_2__time_hi = (0, 31)
+
 (* SDMA: (mask, shift) for a field *)
 
 let sdma_op_copy = 1

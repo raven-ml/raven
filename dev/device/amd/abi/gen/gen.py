@@ -145,6 +145,23 @@ SOC_TRACE = ["SQ_TT_RT_FREQ_4096_CLK", "SQ_TT_WTYPE_INCLUDE_CS_BIT", "SQ_TT_TOKE
              "SQ_TT_TOKEN_EXCLUDE_VALUINST_SHIFT", "SQ_TT_TOKEN_EXCLUDE_IMMEDIATE_SHIFT", "SQ_TT_TOKEN_EXCLUDE_INST_SHIFT",
              "SQ_TT_TOKEN_EXCLUDE_PERF_SHIFT"]
 
+# GFX9's thread trace tokens: each SQ_THREAD_TRACE_TOKEN_* type of
+# vega10_enum.h, and the SQ_THREAD_TRACE_WORD_* registers of gc_9_4_3's
+# headers that lay out its words, in order. The words of a type follow its
+# name, the _1_OF_2 and _2_OF_2 of a token of two; WAVE_ALLOC and WAVE_END
+# take WORD_WAVE, EVENT_CS and EVENT_GFX1 WORD_EVENT, REG_CSPRIV WORD_REG_CS.
+GFX9_TOKENS = {
+    "MISC": ["MISC"], "TIMESTAMP": ["TIMESTAMP_1_OF_2", "TIMESTAMP_2_OF_2"], "REG": ["REG_1_OF_2", "REG_2_OF_2"],
+    "WAVE_START": ["WAVE_START"], "WAVE_ALLOC": ["WAVE"], "REG_CSPRIV": ["REG_CS_1_OF_2", "REG_CS_2_OF_2"],
+    "WAVE_END": ["WAVE"], "EVENT": ["EVENT"], "EVENT_CS": ["EVENT"], "EVENT_GFX1": ["EVENT"], "INST": ["INST"],
+    "INST_PC": ["INST_PC_1_OF_2", "INST_PC_2_OF_2"], "INST_USERDATA": ["INST_USERDATA_1_OF_2", "INST_USERDATA_2_OF_2"],
+    "ISSUE": ["ISSUE"], "PERF": ["PERF_1_OF_2", "PERF_2_OF_2"], "REG_CS": ["REG_CS_1_OF_2", "REG_CS_2_OF_2"],
+}
+# The fields the decoder reads: (word, field).
+GFX9_TOKEN_FIELDS = [("CMN", "TIME_DELTA"), ("MISC", "TIME_DELTA"), ("WAVE_START", "CU_ID"), ("WAVE_START", "WAVE_ID"),
+                     ("WAVE_START", "SIMD_ID"), ("WAVE", "CU_ID"), ("WAVE", "WAVE_ID"), ("WAVE", "SIMD_ID"),
+                     ("TIMESTAMP_1_OF_2", "TIME_LO"), ("TIMESTAMP_2_OF_2", "TIME_HI")]
+
 # SDMA packets: the same in each version's header but for the fence's memory
 # type, from version 5.
 SDMA_PKT = {(4, 0, 0): "vega10_sdma_pkt_open", (5, 0, 0): "navi10_sdma_pkt_open", (6, 0, 0): "sdma_v6_0_0_pkt_open"}
@@ -566,6 +583,37 @@ def generate(cache, pins, pin, outfile):
     out += ["(* Events and thread trace values, the same in each SOC enumeration that",
             "   defines them *)", ""]
     out += [f"let {ml_name(n)} = {ml_int(soc_enum(n))}" for n in SOC_EVENTS + SOC_TRACE]
+    out.append("")
+
+    # GFX9's thread trace tokens
+    masks = {}
+    for m in re.finditer(r"#define\s+SQ_THREAD_TRACE_WORD_(\w+?)__(\w+)_MASK\s+(0x[0-9a-fA-F]+)",
+                         (amd / "include/asic_reg/gc/gc_9_4_3_sh_mask.h").read_text()):
+        masks.setdefault(m.group(1), {})[m.group(2)] = int(m.group(3), 16)
+
+    def halfwords(word):
+        if word not in masks:
+            sys.exit(f"gc_9_4_3_sh_mask.h has no SQ_THREAD_TRACE_WORD_{word}")
+        return 1 if max(masks[word].values()).bit_length() <= 16 else 2
+    vega10 = socs[0]
+    tokens = []
+    for name, words in GFX9_TOKENS.items():
+        m = re.search(rf"^\s*SQ_THREAD_TRACE_TOKEN_{name}\s*=\s*(0x[0-9a-fA-F]+|\d+)", vega10, re.M)
+        if m is None:
+            sys.exit(f"vega10_enum.h has no SQ_THREAD_TRACE_TOKEN_{name}")
+        tokens.append((name, int(m.group(1), 0), sum(halfwords(w) for w in words)))
+    if sorted(v for _, v, _ in tokens) != list(range(16)):
+        sys.exit("GFX9's thread trace token types are not 0 to 15")
+    out += ["(* GFX9's thread trace tokens, from vega10_enum.h and gc_9_4_3_sh_mask.h:",
+            "   each type, and its 16-bit words. *)", "let sq_thread_trace_tokens = ["]
+    out += [f"  ({v}, {n}); (* {name} *)" for name, v, n in sorted(tokens, key=lambda t: t[1])]
+    out.append("]")
+    out += [f"let sq_thread_trace_token_{name.lower()} = {v}" for name, v, _ in tokens
+            if name in ("MISC", "TIMESTAMP", "WAVE_START", "WAVE_END")]
+    for word, f in GFX9_TOKEN_FIELDS:
+        mask = masks[word][f]
+        out.append(f"let sq_thread_trace_word_{word.lower()}__{f.lower()} = "
+                   f"({(mask & -mask).bit_length() - 1}, {mask.bit_length() - 1})")
     out.append("")
 
     # SDMA
