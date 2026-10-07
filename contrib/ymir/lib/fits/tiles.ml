@@ -466,23 +466,42 @@ type out =
       (float, Bigarray.float64_elt, Bigarray.c_layout) A.t
       * (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
 
-let set place out k (v : values) j =
-  let range lo hi x =
-    if x < lo || x > hi then fail_at place "%d is outside BITPIX's type" x
-    else x
-  in
+let out_of_range place x = fail_at place "%d is outside BITPIX's type" x
+
+(* [copy_run place out k v j run] copies [run] values of the tile from [j]
+   to the window from [k]. *)
+let copy_run place out k (v : values) j run =
+  let check lo hi x = if x < lo || x > hi then out_of_range place x else x in
   match (out, v) with
-  | U8 o, Ints a -> A.unsafe_set o k (range 0 255 (A.unsafe_get a j))
-  | I16 o, Ints a -> A.unsafe_set o k (range (-32768) 32767 (A.unsafe_get a j))
+  | U8 o, Ints a ->
+      for r = 0 to run - 1 do
+        A.unsafe_set o (k + r) (check 0 255 (A.unsafe_get a (j + r)))
+      done
+  | I16 o, Ints a ->
+      for r = 0 to run - 1 do
+        A.unsafe_set o (k + r) (check (-32768) 32767 (A.unsafe_get a (j + r)))
+      done
   | I32 o, Ints a ->
-      A.unsafe_set o k
-        (Int32.of_int (range (-2147483648) 2147483647 (A.unsafe_get a j)))
-  | I64 o, Ints a -> A.unsafe_set o k (Int64.of_int (A.unsafe_get a j))
-  | I64 o, Longs a -> A.unsafe_set o k (A.unsafe_get a j)
-  | F32 (o, _), Reals a -> A.unsafe_set o k (A.unsafe_get a j)
-  | F64 (o, _), Reals a -> A.unsafe_set o k (A.unsafe_get a j)
-  | F32 (_, o), Bits32 a -> A.unsafe_set o k (Int32.of_int (A.unsafe_get a j))
-  | F64 (_, o), Bits64 a -> A.unsafe_set o k (A.unsafe_get a j)
+      for r = 0 to run - 1 do
+        A.unsafe_set o (k + r)
+          (Int32.of_int
+             (check (-2147483648) 2147483647 (A.unsafe_get a (j + r))))
+      done
+  | I64 o, Ints a ->
+      for r = 0 to run - 1 do
+        A.unsafe_set o (k + r) (Int64.of_int (A.unsafe_get a (j + r)))
+      done
+  | I64 o, Longs a -> A.blit (A.sub a j run) (A.sub o k run)
+  | F32 (o, _), Reals a ->
+      for r = 0 to run - 1 do
+        A.unsafe_set o (k + r) (A.unsafe_get a (j + r))
+      done
+  | F64 (o, _), Reals a -> A.blit (A.sub a j run) (A.sub o k run)
+  | F32 (_, o), Bits32 a ->
+      for r = 0 to run - 1 do
+        A.unsafe_set o (k + r) (Int32.of_int (A.unsafe_get a (j + r)))
+      done
+  | F64 (_, o), Bits64 a -> A.blit (A.sub a j run) (A.sub o k run)
   | (U8 _ | I16 _ | I32 _ | I64 _), (Reals _ | Bits32 _ | Bits64 _) ->
       fail_at place "floats in an integer image"
   | (F32 _ | F64 _), (Ints _ | Longs _) ->
@@ -561,9 +580,7 @@ let read t bounds : Nx.packed =
           done;
           let tk = !tk + (a.(0) - start.(0))
           and ok = !ok + (a.(0) - fst fb.(0)) in
-          for r = 0 to run - 1 do
-            set place out (ok + r) v (tk + r)
-          done
+          if run > 0 then copy_run place out ok v tk run
         end
         else
           for x = a.(axis) to b.(axis) - 1 do

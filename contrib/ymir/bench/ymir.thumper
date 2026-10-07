@@ -6,9 +6,10 @@
 # ocaml: 5.5.1 · 64-bit · release
 # forced: blessed under load 33.7 on 10 cores
 # forced: blessed fits-image-4096/values-float32 fits-image-4096/raw-int16-rice fits-quantized-1024/write fits-table-50x100k/raw-one-column fits-table-50x100k/read under load 33.5 on 10 cores
+# forced: blessed fits-image-4096/raw-int16-rice under load 22.4 on 10 cores
 
-fits-image-4096/raw-int16-rice	alloc_words	exact	87011290
-fits-image-4096/raw-int16-rice	wall_time	batch=1	n=20	2.444e-01	2.407e-01 2.411e-01 2.419e-01 2.429e-01 2.435e-01 2.437e-01 2.438e-01 2.441e-01 2.442e-01 2.443e-01 2.445e-01 2.452e-01 2.466e-01 2.469e-01 2.487e-01 2.496e-01 2.496e-01 2.501e-01 2.514e-01 2.735e-01
+fits-image-4096/raw-int16-rice	alloc_words	exact	4435930
+fits-image-4096/raw-int16-rice	wall_time	batch=1	n=20	2.339e-01	2.272e-01 2.276e-01 2.282e-01 2.282e-01 2.287e-01 2.293e-01 2.296e-01 2.297e-01 2.325e-01 2.337e-01 2.342e-01 2.344e-01 2.363e-01 2.365e-01 2.366e-01 2.382e-01 2.571e-01 2.923e-01 3.645e-01 4.088e-01
 fits-image-4096/values-float32	alloc_words	exact	1638
 fits-image-4096/values-float32	wall_time	batch=1	n=20	4.566e-02	3.965e-02 4.114e-02 4.266e-02 4.344e-02 4.365e-02 4.415e-02 4.425e-02 4.511e-02 4.527e-02 4.564e-02 4.569e-02 4.577e-02 4.587e-02 4.594e-02 4.605e-02 4.606e-02 4.626e-02 4.643e-02 4.647e-02 4.791e-02
 fits-quantized-1024/write	alloc_words	exact	79019826
