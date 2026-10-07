@@ -12,16 +12,19 @@
     gives the means as a {!t} when it opens the device, under {!key}.
 
     {b Fills.} Work for the device's queue can be a C function, a {e fill}:
-    [int fill(void *queue, void *arg, uint64_t v)]. [queue] points at a word
-    that holds the open compute command encoder, an [id] the driver made before
-    the call: its command buffer runs after the device's earlier work, and every
-    memory of the device is resident while it runs. The fill encodes into that
-    encoder, for instance [executeCommandsInBuffer:withRange:], and nothing
-    else: it ends no encoder and makes no other encoder or command buffer, and
-    waiting for earlier work and signalling [v] are the driver's. {!field-split}
-    starts a new command buffer. The fill stops at the first call that fails and
-    returns the failure [split] returned, or returns [0] once every call
-    succeeded. [queue] is valid only during the call.
+    [int fill(void *queue, void *arg, uint64_t v)], called with the value [v]
+    the work completes on the device's timeline. [queue] points at a word that
+    holds the open compute command encoder, an [id] the driver made before the
+    call: it runs what the fill encodes in order, each after the one before
+    completed ([MTLDispatchTypeSerial]), its command buffer runs after the
+    device's earlier work, and every memory of the device is resident while it
+    runs. The fill encodes into that encoder, for instance
+    [executeCommandsInBuffer:withRange:], and nothing else: it ends no encoder
+    and makes no other encoder or command buffer, and waiting for earlier work
+    and signalling [v] are the driver's. {!field-split} starts a new command
+    buffer. The fill stops at the first call that fails and returns the failure
+    [split] returned, or returns [0] once every call succeeded. [queue] is valid
+    only during the call.
 
     After the fill returns, the driver ends and commits the last command buffer.
     The value [v] is reached once every command buffer of the work completed; if
@@ -34,7 +37,14 @@
       [MTLIndirectCommandBuffer.h], [MTLIndirectCommandEncoder.h]
       ([setBarrier]), [MTLComputeCommandEncoder.h]
       ([executeCommandsInBuffer:withRange:], [useResources:count:usage:]),
-      [MTLCommandBuffer.h] ([GPUStartTime], [GPUEndTime]).
+      [MTLCommandBuffer.h] ([GPUStartTime], [GPUEndTime], [MTLDispatchType]).
+    - [MTLCommandQueue.h] ([commandBuffer], [maxCommandBufferCount]) and
+      {{:https://developer.apple.com/documentation/metal/mtlcommandqueue/makecommandbuffer()}
+       makeCommandBuffer()}: a full queue blocks until the GPU finishes a
+      command buffer.
+    - {{:https://developer.apple.com/documentation/metal/mtlcommandbuffer/gpustarttime}
+       gpuStartTime}: host time relative to mach time; [clock_gettime(3)]:
+      [CLOCK_UPTIME_RAW] is mach time.
     - {{:https://developer.apple.com/documentation/metal/encoding-indirect-command-buffers-on-the-cpu}
        Encoding indirect command buffers on the CPU}: the buffers that the
       commands of an indirect command buffer use must be declared resident.
@@ -62,15 +72,16 @@ type icb = {
   handle : nativeint;  (** The [MTLIndirectCommandBuffer]. *)
   commands : nativeint array;
       (** The [MTLIndirectComputeCommand] of each dispatch, in order. A fill may
-          change one before it runs [handle], while no earlier work that runs
-          [handle] is in flight: for instance its threadgroups per grid, with
-          [concurrentDispatchThreadgroups:threadsPerThreadgroup:]. *)
+          change one before it first runs [handle], while no earlier work that
+          runs [handle] is in flight: for instance its threadgroups per grid,
+          with [concurrentDispatchThreadgroups:threadsPerThreadgroup:]. *)
   release : unit -> unit;
       (** [release ()] releases [handle], [commands] and the pipelines they
-          hold. The linked step that made them calls it once, after the last
-          work that ran [handle] completed; until then they live, whatever
-          happens to their pipelines' image. Raises [Invalid_argument] if called
-          twice. Any domain may call it. *)
+          hold. The owner of the linked step that made them calls it once, after
+          the last work that ran [handle] completed, or at once when the device
+          is lost; until then they live, whatever happens to their pipelines'
+          image. Raises [Invalid_argument] if called twice. Any domain may call
+          it. *)
 }
 (** The type for indirect command buffers. *)
 
@@ -96,8 +107,8 @@ type t = {
           calls to end the open command buffer and start a new one. It commits
           the open command buffer and stores at [queue] the encoder of the next,
           made as the first was. When the queue holds as many command buffers as
-          it can, it waits until the work's own earlier command buffers
-          complete, so one work may make more command buffers than the queue
+          it can, it waits until an earlier command buffer of the work
+          completes, so one work may make more command buffers than the queue
           holds. Unless [start] is [NULL], it writes the time the committed
           command buffer started on the GPU at [start] before [v] is reached;
           likewise the time it ended at [end]. Times are nanoseconds of the host
