@@ -453,8 +453,8 @@ let scheduling_tests =
       test "a job of one thread runs at once while another thread's job runs"
         test_one_thread_at_once;
       test
-        "a job begun from a body runs at once on the body's thread as worker \
-         0, in one call"
+        "a job begun from a body of a job of more than one thread runs at once \
+         on the body's thread as worker 0, in one call"
         test_nested;
       test "a job of more than one thread waits for another thread's job to end"
         test_waits;

@@ -263,8 +263,10 @@ struct pool {
   _Atomic uint64_t parked[];
 };
 
-/* Whether the thread runs a body: a job it begins then runs alone on it,
-   since the pool runs one job at a time and the outer job holds it. */
+/* Whether the thread runs a body of a job of more than one thread: a job
+   it begins then runs alone on it, since the pool runs one such job at a
+   time and the outer job holds it. A job on one thread holds nothing, so
+   its bodies leave the flag as it was. */
 static _Thread_local int in_body;
 
 static void relax(void) {
@@ -508,14 +510,6 @@ static pool *get(void) {
   return p;
 }
 
-/* Runs [j] on the calling thread alone, as worker 0, in one call. */
-static void run_alone(const job *j) {
-  int outer = in_body;
-  in_body = 1;
-  j->body(0, j->total, 0, j->ctx);
-  in_body = outer;
-}
-
 /* Publishes [j] under a sequence lock (the odd generation marks the job
    being written), claims chunks as worker 0, and waits for the workers to
    count down. The claim counter is reset under the drive mutex and claimed
@@ -554,19 +548,36 @@ static void run_shared(pool *p, const job *j) {
   pthread_mutex_unlock(&p->drive);
 }
 
+static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
+  return x < lo ? lo : x > hi ? hi : x;
+}
+
+/* Runs a job of [t] > 1 threads and [c] chunks: alone if it was begun from
+   a body or no pool can be had, else on at most p->threads, the workers
+   made plus the caller, which is at most nx_pool_cores (). Kept out of
+   line: inlined, it makes nx_pool_run save a dozen registers on every
+   serial job. */
+__attribute__((noinline)) static void run(int t, int64_t total, int64_t c, nx_pool_body body,
+                void *ctx) {
+  pool *p = in_body ? NULL : get();
+  if (p && t > p->threads) t = p->threads;
+  if (p == NULL || t == 1) {
+    body(0, total, 0, ctx);
+    return;
+  }
+  job j = {body, ctx, total, c, total > INT64_MAX / c, t};
+  run_shared(p, &j);
+}
+
+/* A job on one thread, every serial kernel's, is one call before anything
+   else: no thread-local, no division. */
 void nx_pool_run(int threads, int64_t total, int64_t chunks, nx_pool_body body,
                  void *ctx) {
   if (total <= 0) return;
-  job j = {body, ctx, total, 0, 0, 0};
-  j.chunks = chunks < 1 ? 1 : chunks > total ? total : chunks;
-  j.wide = total > INT64_MAX / j.chunks;
-  j.threads = threads < 1 ? 1 : (int64_t)threads > j.chunks ? (int)j.chunks
-                                                              : threads;
-  pool *p = j.threads > 1 && !in_body ? get() : NULL;
-  if (p && j.threads > p->threads) j.threads = p->threads;
-  if (p == NULL || j.threads <= 1) {
-    run_alone(&j);
-    return;
-  }
-  run_shared(p, &j);
+  int64_t c = clamp(chunks, 1, total);
+  int t = (int)clamp(threads, 1, c);
+  if (t == 1)
+    body(0, total, 0, ctx);
+  else
+    run(t, total, c, body, ctx);
 }

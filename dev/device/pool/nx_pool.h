@@ -100,8 +100,8 @@ typedef void (*nx_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    samples threads by SIGPROF therefore never samples a worker.
 
    Scheduling. The pool runs one job of more than one thread at a time. A
-   job of t = 1, or a job begun from a body, runs at once on the calling
-   thread alone as worker 0. Any other job first waits for another thread's
+   job of t = 1, or a job begun from a body of a job of more than one
+   thread, runs at once on the calling thread alone as worker 0. Any other job first waits for another thread's
    job to end. A caller that holds the OCaml runtime during a job of t > 1
    keeps every domain of the program from collecting until the job ends,
    including the time it waits: release the runtime around such jobs.
