@@ -5,16 +5,16 @@
 
 (** ELF objects laid out in one image.
 
-    Host programs, GPU programs and firmware come as 64-bit little-endian ELF
-    objects. Reading one with {!of_string} lays out its {e image}: the contents
-    of its allocated program sections ([SHT_PROGBITS] with [SHF_ALLOC]), its
-    code and data. If one of these sections has a nonzero address ([sh_addr]),
-    each goes at its address, as in an executable. Otherwise each follows the
-    image's end in section order, at its alignment, as in a relocatable object.
-    Bytes no section covers are zero, and the image ends where its last section
-    ends. Other sections, such as [.bss], the symbol and string tables or
-    debugging information, stay out of the image; their contents are in
-    {!field-sections}.
+    Host programs, GPU programs and firmware come as little-endian ELF objects,
+    32- or 64-bit. Reading one with {!of_string} lays out its {e image}: the
+    contents of its allocated program sections ([SHT_PROGBITS] with
+    [SHF_ALLOC]), its code and data. If one of these sections has a nonzero
+    address ([sh_addr]), each goes at its address, as in an executable.
+    Otherwise each follows the image's end in section order, at its alignment,
+    as in a relocatable object. Bytes no section covers are zero, and the image
+    ends where its last section ends. Other sections, such as [.bss], the symbol
+    and string tables or debugging information, stay out of the image; their
+    contents are in {!field-sections}.
 
     The object's symbols and relocations come out in image offsets, so a loader
     that copies the image to address [base] finds an offset [o] at [base + o].
@@ -44,9 +44,9 @@ type place =
           {!field-sections}, and the symbol's offset. *)
   | Outside of int
       (** Defined, but not in the image: in a section the image does not hold,
-          such as [.bss]; past the end of its section; or at a special section
-          index other than [SHN_UNDEF] and [SHN_ABS], such as [SHN_COMMON]. The
-          integer is the symbol's section index. *)
+          such as [.bss]; before the start or past the end of its section; or at
+          a special section index other than [SHN_UNDEF] and [SHN_ABS], such as
+          [SHN_COMMON]. The integer is the symbol's section index. *)
 
 type symbol = {
   name : string;  (** Its name, [""] for a nameless one. *)
@@ -100,11 +100,14 @@ type t = private {
       (** The relocations that patch the image, in the order of their sections
           and then of their entries. Relocations that patch a section that does
           not occupy memory ([SHF_ALLOC] clear), such as debugging information,
-          are left out. *)
+          are left out. A relocation section that names no section
+          ([sh_info = 0]), such as a dynamic one, patches the image at its
+          entries' addresses ([r_offset]). *)
 }
 (** The type for objects laid out in their image. For an object [o]:
     - A section [s] with [s.offset = Some off] has its contents there:
-      [String.sub o.image off s.size = s.contents].
+      [String.sub o.image off s.size = s.contents], and [off] is a multiple of
+      its alignment, [sh_addralign].
     - A place [Image { section = i; offset }] names a section [s], index [i] of
       [o.sections], with [s.offset = Some off] and
       [off <= offset <= off + s.size].
@@ -118,13 +121,26 @@ val of_string : ?align:int -> string -> (t, string) result
     that is a multiple of [align] and of its alignment, [sh_addralign]. [align]
     has no effect when its sections go at their addresses, and defaults to [1].
 
-    The result is [Error msg] if [obj] is not a well-formed 64-bit little-endian
-    ELF object: if a part of it lies past its end, if it refers to a section,
-    symbol or name it does not have, if a section's alignment is not a power of
-    two, if two sections overlap in the image, if its image would be longer than
-    [Sys.max_string_length], if a relocation's offset lies past the end of the
-    section it patches, or if a relocation patches memory the image does not
-    hold. [msg] says which. Any other object is [Ok].
+    The result is [Error msg], [msg] saying which, if [obj] is not a 32- or
+    64-bit little-endian ELF object, or if:
+    - a part of it lies past its end, or a 64-bit field holds a value an [int]
+      cannot;
+    - its section headers are shorter than its class's, 40 or 64 bytes
+      ([e_shentsize]);
+    - it refers to a section, symbol or name it does not have, or links a
+      section to one of the wrong type, such as a symbol table to names that are
+      not a string table;
+    - a section's alignment is not a power of two, or a section the image holds
+      is at an address that is not a multiple of it;
+    - two sections share bytes of the image;
+    - its image would be longer than 1 GiB. Real images are at most tens of
+      megabytes, so a longer one comes from a corrupted address, and reading it
+      would allocate gigabytes;
+    - a relocation's offset lies at or past the end of the section it patches,
+      or a relocation patches allocated memory the image does not hold: a
+      section the image lacks, or an address past its end.
+
+    Any other object is [Ok].
 
     Raises [Invalid_argument] if [align] is not a positive power of two. *)
 

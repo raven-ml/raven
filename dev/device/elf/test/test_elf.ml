@@ -752,6 +752,37 @@ let test_many_sections () =
     [ null_symbol; sym_entry "far" (Image { section = at; offset = 1 }) ]
     (syms o)
 
+(* Every section past the header's reach with a symbol of its own, each at an
+   extended index: reading takes time linear in the symbols. *)
+let test_many_symbols () =
+  let count = 70_000 in
+  let filler = List.init count (fun _ -> note "" "") in
+  let indexes = Buffer.create (4 * (count + 1)) in
+  Buffer.add_int32_le indexes 0l;
+  for i = 1 to count do
+    Buffer.add_int32_le indexes (Int32.of_int i)
+  done;
+  let entries, names =
+    symbols (List.init count (fun _ -> defined "" shn_xindex 0))
+  in
+  let obj =
+    write
+      (filler
+      @ [
+          symtab ~link:(count + 2) entries;
+          strtab names;
+          section ~kind:sht_symtab_shndx ~flags:0 ~link:(count + 1) ~align:4
+            ~entsize:4 ".symtab_shndx" (Buffer.contents indexes);
+        ])
+  in
+  let start = Sys.time () in
+  let o = read obj in
+  let seconds = Sys.time () -. start in
+  equal ~msg:"the last symbol's section" symbol
+    (sym_entry "" (Outside count))
+    (Iarray.get o.symbols count);
+  less ~msg:"CPU seconds" float_exact ~than:1.0 seconds
+
 (* Refusals: each object breaks one rule of an object that reads. *)
 
 let objects_entries, objects_names =
@@ -778,6 +809,8 @@ let entry obj s i size =
     (String.get_int64_le obj (shoff obj + (s * shdr_size) + sh_offset))
   + (i * size)
 
+let symbol_entry = entry well_formed 4 1 24
+
 let addressed ~text ~data =
   write [ section ~addr:text ".text" "ABCD"; section ~addr:data ".data" "EFGH" ]
 
@@ -792,15 +825,28 @@ let into_init_array =
       rela_section ~link:3 ~info:2 [ (0, 1, 1, 0) ];
     ]
 
+(* The longest image the reader lays out, 1 GiB. *)
+let max_image = 1 lsl 30
+
+(* An addressed object with [.bss] between [.text] and [.data], and a dynamic
+   relocation at address [at]. *)
+let dynamic_into ~at =
+  write
+    [
+      section ~addr:0x100 ".text" "ABCD";
+      bss ~addr:0x104 ".bss" 8;
+      section ~addr:0x110 ".data" "EFGH";
+      rela_section ~name:".rela.dyn" ~link:0 ~info:0 [ (at, 0, 1, 0) ];
+    ]
+
 let refusals =
   let len = String.length well_formed in
-  let symbol_entry = entry well_formed 4 1 24 in
   let rela_entry = entry well_formed 6 0 24 in
   [
     ("a text", "not an object");
     ("the empty string", "");
     ("another magic number", patch well_formed 1 1 (Char.code 'X'));
-    ("a 32-bit object", patch well_formed 4 1 1);
+    ("an unknown class", patch well_formed 4 1 3);
     ("a big-endian object", patch well_formed 5 1 2);
     ("a truncated header", String.sub well_formed 0 (ehdr_size - 1));
     ("section headers past the end", patch well_formed 40 8 (len - shdr_size));
@@ -831,8 +877,16 @@ let refusals =
     ( "an alignment of 12 outside the image",
       patch_section well_formed 4 sh_addralign 8 12 );
     ("two sections overlapping in the image", addressed ~text:0x100 ~data:0x103);
-    ( "an image longer than the longest string",
-      write [ section ~addr:Sys.max_string_length ".text" "A" ] );
+    ("an image longer than 1 GiB", write [ section ~addr:max_image ".text" "A" ]);
+    ( "an image aligned past 1 GiB",
+      write [ section ".text" "A"; section ~align:(2 * max_image) ".data" "B" ]
+    );
+    ( "a section the image holds at a multiple of half its alignment",
+      write [ section ~addr:0x102 ~align:4 ".text" "ABCD" ] );
+    ( "a symbol value past the int range",
+      patch well_formed (symbol_entry + 15) 1 0x40 );
+    ( "a dynamic relocation into .bss between program sections",
+      dynamic_into ~at:0x106 );
     ( "an address past the int range",
       patch_section (addressed ~text:0x100 ~data:0x200) 2 sh_addr 8 (-16) );
     ( "a relocation past its section's end",
@@ -852,7 +906,17 @@ let test_near_refusals () =
   ignore (read (addressed ~text:0x100 ~data:0x104));
   ignore (read (patch_section well_formed 2 sh_addralign 8 0));
   ignore (read (with_relocation ~target:1 (3, 1, 1, 0)));
-  ignore (read (with_relocation ~target:2 (7, 1, 1, 0)))
+  ignore (read (with_relocation ~target:2 (7, 1, 1, 0)));
+  ignore (read (write [ section ~addr:0x104 ~align:4 ".text" "ABCD" ]));
+  ignore
+    (read
+       (write
+          [
+            section ~addr:0x100 ".text" "A";
+            { (bss ~addr:0x103 ".bss" 8) with align = 8 };
+          ]));
+  ignore (read (patch well_formed (symbol_entry + 15) 1 0xff));
+  ignore (read (dynamic_into ~at:0x10c))
 
 (* [msg] says which cause the documentation lists an object breaks. *)
 let test_messages () =
@@ -863,7 +927,7 @@ let test_messages () =
       ("a section it lacks", patch_section well_formed 4 sh_link 4 99);
       ("alignment", patch_section well_formed 2 sh_addralign 8 3);
       ("overlap", addressed ~text:0x100 ~data:0x103);
-      ("too long", write [ section ~addr:Sys.max_string_length ".text" "A" ]);
+      ("too long", write [ section ~addr:max_image ".text" "A" ]);
       ("past its section", with_relocation ~target:1 (5, 1, 1, 0));
       ("outside the image", with_relocation ~target:3 (0, 1, 1, 0));
     ]
@@ -952,7 +1016,8 @@ let at_addresses ~start parts =
   let _, placed =
     List.fold_left_map
       (fun at ((s : sh), gap, key) ->
-        let addr = at + gap in
+        let a = max 1 s.align in
+        let addr = (at + gap + a - 1) / a * a in
         (addr + s.size, (key, { s with addr })))
       start parts
   in
@@ -1226,39 +1291,8 @@ let gen_corruption =
     (frequency
        [ (4, constant None); (1, map Option.some (int_range 0 0xfffff)) ])
 
-(* A bound on the image an object can lay out: the sum of the addresses, sizes
-   and alignments of every section header in it, read at the header table's
-   offset and entry size. A corrupted address can ask for an image of any length
-   below [Sys.max_string_length], which the law skips. *)
-let image_bound obj =
-  let len = String.length obj in
-  let word at =
-    if at < 0 || at + 8 > len then 0
-    else Int64.to_int (String.get_int64_le obj at)
-  in
-  let sum stride =
-    let shoff = word 40 in
-    if shoff < 0 || stride <= 0 then 0
-    else
-      let total = ref 0 in
-      let at = ref shoff in
-      while !at >= 0 && !at < len && !total < max_int / 4 do
-        List.iter
-          (fun field ->
-            let v = word (!at + field) in
-            total :=
-              if v < 0 || v > max_int / 4 then max_int / 4 else !total + v)
-          [ sh_addr; sh_size; sh_addralign ];
-        at := !at + stride
-      done;
-      !total
-  in
-  if len < ehdr_size then 0
-  else max (sum shdr_size) (sum (String.get_uint16_le obj 58))
-
 let law_total corruption =
   let obj = corrupt corruption in
-  assume (image_bound obj <= 1 lsl 24);
   match Elf.of_string obj with
   | Error _ -> cover "refused" true
   | Ok o ->
@@ -1271,6 +1305,168 @@ let law_total corruption =
               less ~msg:s.name int ~than:(String.length o.image + 1) off)
             (Elf.symbol o s.name))
         o.symbols
+
+(* 32-bit objects *)
+
+let ehdr32_size = 52
+let shdr32_size = 40
+
+(* A 32-bit object of [sections], with its names in a last [.shstrtab]. *)
+let write32 ?(kind = 1) ?(machine = 3) sections =
+  let names = Buffer.create 64 in
+  Buffer.add_char names '\000';
+  let name_of n =
+    let at = Buffer.length names in
+    Buffer.add_string names n;
+    Buffer.add_char names '\000';
+    at
+  in
+  let at = List.map (fun (s : sh) -> name_of s.name) sections in
+  let at = at @ [ name_of ".shstrtab" ] in
+  let sections =
+    sections
+    @ [ section ~kind:sht_strtab ~flags:0 ".shstrtab" (Buffer.contents names) ]
+  in
+  let body = Buffer.create 256 and headers = Buffer.create 256 in
+  Buffer.add_string headers (String.make shdr32_size '\000');
+  List.iter2
+    (fun (s : sh) name ->
+      let offset = ehdr32_size + Buffer.length body in
+      if s.kind <> sht_nobits then Buffer.add_string body s.contents;
+      List.iter
+        (fun v -> Buffer.add_int32_le headers (Int32.of_int v))
+        [
+          name;
+          s.kind;
+          s.flags;
+          s.addr;
+          offset;
+          s.size;
+          s.link;
+          s.info;
+          s.align;
+          s.entsize;
+        ])
+    sections at;
+  let b = Buffer.create 1024 in
+  Buffer.add_string b "\x7fELF\001\001\001";
+  Buffer.add_string b (String.make 9 '\000');
+  Buffer.add_uint16_le b kind;
+  Buffer.add_uint16_le b machine;
+  Buffer.add_int32_le b 1l;
+  Buffer.add_int32_le b 0l;
+  Buffer.add_int32_le b 0l;
+  Buffer.add_int32_le b (Int32.of_int (ehdr32_size + Buffer.length body));
+  Buffer.add_int32_le b 0l;
+  List.iter (Buffer.add_uint16_le b)
+    [
+      ehdr32_size;
+      0;
+      0;
+      shdr32_size;
+      List.length sections + 1;
+      List.length sections;
+    ];
+  Buffer.add_buffer b body;
+  Buffer.add_buffer b headers;
+  Buffer.contents b
+
+(* A 32-bit symbol table's entries, after the null symbol, and its names. *)
+let symbols32 syms =
+  let names = Buffer.create 64 and table = Buffer.create 64 in
+  Buffer.add_char names '\000';
+  Buffer.add_string table (String.make 16 '\000');
+  List.iter
+    (fun s ->
+      Buffer.add_int32_le table (Int32.of_int (Buffer.length names));
+      Buffer.add_string names s.name;
+      Buffer.add_char names '\000';
+      Buffer.add_int32_le table (Int32.of_int s.value);
+      Buffer.add_int32_le table 0l;
+      Buffer.add_uint8 table 0x10;
+      Buffer.add_uint8 table 0;
+      Buffer.add_uint16_le table s.shndx)
+    syms;
+  (Buffer.contents table, Buffer.contents names)
+
+(* 32-bit relocations: [r_info] holds the symbol above the type's 8 bits. *)
+let relocs32 entries =
+  let b = Buffer.create 64 in
+  List.iter
+    (fun (offset, sym, kind, addend) ->
+      Buffer.add_int32_le b (Int32.of_int offset);
+      Buffer.add_int32_le b (Int32.of_int ((sym lsl 8) lor kind));
+      Option.iter (fun a -> Buffer.add_int32_le b (Int32.of_int a)) addend)
+    entries;
+  Buffer.contents b
+
+let test_elf32 () =
+  let entries, names =
+    symbols32 [ defined "f" 1 0; defined "d" 2 4; undefined "ext" ]
+  in
+  let o =
+    read
+      (write32
+         [
+           section ~align:4 ".text" "ABCD";
+           section ~align:8 ".data" "01234567";
+           section ~kind:sht_symtab ~flags:0 ~link:4 ~entsize:16 ".symtab"
+             entries;
+           strtab names;
+           section ~kind:sht_rela ~flags:0 ~link:3 ~info:1 ~entsize:12
+             ".rela.text"
+             (relocs32 [ (0, 2, 5, Some (-4)) ]);
+           section ~kind:sht_rel ~flags:0 ~link:3 ~info:1 ~entsize:8 ".rel.text"
+             (relocs32 [ (2, 3, 6, None) ]);
+         ])
+  in
+  invariants o;
+  equal ~msg:"its type" int 1 o.kind;
+  equal ~msg:"its machine" int 3 o.machine;
+  equal ~msg:"text, then data at its alignment" string
+    ("ABCD" ^ String.make 4 '\000' ^ "01234567")
+    o.image;
+  equal ~msg:"the symbols" (list symbol)
+    [
+      null_symbol;
+      sym_entry "f" (Image { section = 1; offset = 0 });
+      sym_entry "d" (Image { section = 2; offset = 12 });
+      sym_entry "ext" Undefined;
+    ]
+    (syms o);
+  equal ~msg:"the relocations" (list relocation)
+    [
+      {
+        offset = 0;
+        kind = 5;
+        addend = -4;
+        symbol = sym_entry "d" (Image { section = 2; offset = 12 });
+      };
+      { offset = 2; kind = 6; addend = 0; symbol = sym_entry "ext" Undefined };
+    ]
+    o.relocations
+
+(* The shape of NVIDIA's Blackwell boot firmware: no type, four allocated
+   sections with OS and processor flags, read by name. *)
+let test_firmware32 () =
+  let flags = shf_alloc lor 0x100 lor 0x1000_0000 in
+  let parts =
+    [
+      ("hash", "H");
+      ("signature", "SIG");
+      ("publickey", "KEY");
+      ("image", "IMAGE");
+    ]
+  in
+  let o =
+    read
+      (write32 ~kind:0 ~machine:0
+         (List.map (fun (n, c) -> section ~flags n c) parts))
+  in
+  invariants o;
+  List.iter
+    (fun (n, c) -> equal ~msg:n string c (section_named o n).contents)
+    parts
 
 (* Real objects *)
 
@@ -1462,6 +1658,8 @@ let () =
              test "the section count in the null section" test_extended_header;
              test "a symbol's section in the extended index table" test_xindex;
              test "an object of more than 65,279 sections" test_many_sections;
+             test "70,000 symbols at extended indexes, in linear time"
+               test_many_symbols;
            ];
          prop ~count:300 "an object reads back as written" gen_case law_tables;
          group "refusals"
@@ -1475,6 +1673,11 @@ let () =
              test "the largest align" test_largest_align;
              prop ~count:2000 "a corrupted object reads or is refused"
                gen_corruption law_total;
+           ];
+         group "32-bit objects"
+           [
+             test "sections, symbols and relocations" test_elf32;
+             test "firmware read by section name" test_firmware32;
            ];
          group "real objects"
            [
