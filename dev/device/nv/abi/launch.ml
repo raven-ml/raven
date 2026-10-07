@@ -22,8 +22,9 @@ let reserved_local = 0x240
    largest is what a launch can take. A configuration is set as its 4 KiB pages
    plus one, as NAK does (Mesa 25.2, nak/qmd.rs:338-354). *)
 let shared_configs = [ 32; 64; 100 ]
+let max_shared_kib = List.fold_left Int.max 0 shared_configs
 let config kib = (kib * 1024 / 4096) + 1
-let max_shared_config = config (List.fold_left Int.max 0 shared_configs)
+let max_shared_config = config max_shared_kib
 
 (* The driver's parameters at the start of bank 0, as 32-bit words: their count,
    and the words of the shared and local memory windows (64 bits each) and of
@@ -51,25 +52,27 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
         g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
         Defs.blackwell_compute_b
   in
-  let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
-  match List.find_opt (fun c -> c * 1024 >= shared_bytes) shared_configs with
-  | None ->
-      Error
-        (strf
-           "the kernel needs %d bytes of shared memory, the driver's 1 KiB \
-            included, more than 100 KiB"
-           shared_bytes)
-  | Some c ->
-      let shared_config = config c in
-      Ok
-        {
-          kernel = k;
-          gpu = g;
-          layout;
-          shared_bytes;
-          shared_config;
-          max_shared_config;
-        }
+  (* Compared before the driver's 1 KiB is added, which a corrupt size near
+     max_int would overflow. *)
+  if k.shared_bytes > (max_shared_kib * 1024) - reserved_shared then
+    Error
+      (strf
+         "the kernel declares %d bytes of shared memory, more than the %d a \
+          launch leaves it beside the driver's 1 KiB"
+         k.shared_bytes
+         ((max_shared_kib * 1024) - reserved_shared))
+  else
+    let shared_bytes = round_up (reserved_shared + k.shared_bytes) 128 in
+    let c = List.find (fun c -> c * 1024 >= shared_bytes) shared_configs in
+    Ok
+      {
+        kernel = k;
+        gpu = g;
+        layout;
+        shared_bytes;
+        shared_config = config c;
+        max_shared_config;
+      }
 
 let banks l =
   let banks = l.kernel.banks in

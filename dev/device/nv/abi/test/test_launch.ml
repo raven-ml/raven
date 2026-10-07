@@ -52,13 +52,8 @@ let memory =
                (Launch.make
                   (S.gpu ~compute_class:cls ())
                   (S.kernel ~shared_bytes ()))));
-      xfail
-        ~reason:
-          "Launch.make adds the driver's 1 KiB to the kernel's shared memory \
-           in an int, which max_int overflows, and takes the launch"
-        (test "a kernel of max_int bytes of shared memory is refused" (fun () ->
-             is_error
-               (Launch.make (S.gpu ()) (S.kernel ~shared_bytes:max_int ()))));
+      test "a kernel of max_int bytes of shared memory is refused" (fun () ->
+          is_error (Launch.make (S.gpu ()) (S.kernel ~shared_bytes:max_int ())));
       prop "a thread's local memory is its stack and 576 bytes"
         (Gen.pair S.compute_class (Gen.int_range 0 0x10_0000))
         (fun (cls, stack_bytes) ->
