@@ -356,6 +356,19 @@ let models =
 
 let redshifts = Gen.(one_of [ float_range 0. 3.; float_range 3. 1100. ])
 
+let components =
+  Cosmology.[ Cold_matter; Photons; Neutrinos; Dark_energy; Curvature ]
+
+(* The validation box holds a^4 E^2, the sum of the terms Omega_i a^4 E^2, to at
+   least 0.3 of the sum of their magnitudes, so sum |Omega_i| <= 1 / 0.3. Each
+   density parameter is within 2^-46 of its exact value, and the exact values
+   sum to 1, so the five are within 5 * 2^-46 of 1. Adding them rounds four
+   times, each by at most 2^-53 of a partial sum, which is at most
+   sum |Omega_i|. The models also draw universes whose terms nearly cancel,
+   outside the box, where no accuracy is promised; the law discards them. *)
+let box_magnitude = 1. /. 0.3
+let sum_bound = (5. *. 0x1p-46) +. (4. *. 0x1p-53 *. box_magnitude)
+
 let laws =
   group "laws"
     [
@@ -363,15 +376,16 @@ let laws =
         Gen.(pair models redshifts)
         (fun (m, z) ->
           let c = cosmology Nx.float64 m in
-          let sum =
-            List.fold_left
-              (fun acc i ->
-                acc +. item (Cosmology.density_parameter c i (f64 z)))
-              0.
-              Cosmology.
-                [ Cold_matter; Photons; Neutrinos; Dark_energy; Curvature ]
+          let omegas =
+            List.map
+              (fun i -> item (Cosmology.density_parameter c i (f64 z)))
+              components
           in
-          equal (float 1e-14) 1. sum);
+          let magnitude =
+            List.fold_left (fun acc o -> acc +. Float.abs o) 0. omegas
+          in
+          assume (magnitude <= box_magnitude);
+          equal (float sum_bound) 1. (List.fold_left ( +. ) 0. omegas));
       prop "flat: D_M is D_C bit for bit"
         Gen.(pair models redshifts)
         (fun (m, z) ->
