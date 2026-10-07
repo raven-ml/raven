@@ -1159,8 +1159,11 @@ module Ensemble : sig
     ('u, 'f) state * 'u Draws.t * 'f stats Draws.t
   (** [sample u lp k ~draws s] is the state after [draws] transitions, the
       walkers' positions and their statistics, each walker a chain of the draws.
-      Transition [n] of the run, counted by [s.draw], has the key
-      [Nx.Rng.fold_in k n].
+      A walker's moves read the other walkers of its ensemble, so the chains of
+      one ensemble are dependent and those of two independent: their R-hat is
+      {!Diag.nested_rhat} with a superchain per ensemble ({!Summary.v}'s
+      [superchains] at [s.ensembles]). Transition [n] of the run, counted by
+      [s.draw], has the key [Nx.Rng.fold_in k n].
 
       Raises [Invalid_argument] if [draws < 1]. *)
 end
