@@ -32,6 +32,7 @@
       {tr {td  } {td smooth, ill-conditioned } {td {!Minimize.newton} } }
       {tr {td  } {td sum of squares } {td {!Minimize.levenberg_marquardt} } }
       {tr {td  } {td no useful gradient } {td {!Minimize.nelder_mead} } }
+      {tr {td  } {td bounds } {td [~within] on any of them } }
       {tr {td  } {td one variable, a bracket } {td {!Minimize.bracket} } }
       {tr
         {td Integral, one dimension }
@@ -628,10 +629,11 @@ module Minimize : sig
 
       {b Method.} Each step solves [H δ = −∇f] with [linear] on rune's
       Hessian-vector products, truncated by its tolerance with {!Linear.cg},
-      then backtracks from [x + δ] to the sufficient decrease of [f]. A Hessian
-      that is not positive-definite gives a step that is not downhill, or ends
-      {!Linear.cg}, and the lane stalls. {b Cost.} One solve of [linear] per
-      iteration; quadratic convergence near a minimum. *)
+      then searches from [x + δ] to the strong Wolfe conditions, as {!bfgs}
+      does, so near a minimum it takes the full step. A Hessian that is not
+      positive-definite gives a step that is not downhill, or ends {!Linear.cg},
+      and the lane stalls. {b Cost.} One solve of [linear] per iteration;
+      quadratic convergence near a minimum. *)
 
   val levenberg_marquardt :
     'r Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r) t
@@ -676,15 +678,36 @@ module Minimize : sig
   val solve :
     'x Nx.Ptree.t ->
     ('x, 'f) t ->
+    ?within:'x * 'x ->
     tol:Tol.t ->
     budget:int ->
     'f ->
     'x ->
     'x Solution.t
-  (** [solve x m ~tol ~budget f x0] is a local minimum of [f] from [x0] by [m].
-      Its evaluations count the calls of [f], with its gradient for a gradient
-      method, and [budget] its iterations, or its evaluations for
-      {!nelder_mead}.
+  (** [solve x m ~within:(lo, hi) ~tol ~budget f x0] is a local minimum of [f]
+      from [x0] by [m], in the box [[lo, hi]] when given: values of [x0]'s
+      structure whose float tensors bound each coordinate, infinite for no
+      bound.
+
+      {b Box.} Every gradient method takes Bertsekas's (1982) projected step:
+      the coordinates within [ε] of a bound whose gradient pushes out of the box
+      are held, [ε] the norm of [x − P (x − ∇f x)] with [P] the projection on
+      the box; the method's scaling acts on the others and [−∇f] on the held
+      ones, and the search backtracks by halving along the projection arc
+      [P (x + α d)] to the sufficient decrease
+      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)]. A held coordinate is freed a few
+      at a time as the set of held ones changes, so a problem where many bounds
+      change takes more iterations than one whose bounds settle.
+      {!levenberg_marquardt} projects its steps and {!nelder_mead} clips its
+      vertices. The undamped step is the projected one, [P (x + δ) − x]. The
+      answer is stated as the zero of [x − P (x − ∇f x)], so its derivative is
+      zero in a coordinate held at a constant bound and follows a bound that
+      moves; that system is not symmetric, so its [linear] must not be
+      {!Linear.cg}. A lane whose [lo] exceeds its [hi] somewhere ends [Stalled].
+
+      [x0] is projected on the box first. Its evaluations count the calls of
+      [f], with its gradient for a gradient method, and [budget] its iterations,
+      or its evaluations for {!nelder_mead}.
 
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
       differ in dtype, or if [f] returns other than a scalar. *)

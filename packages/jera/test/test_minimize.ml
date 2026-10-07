@@ -10,6 +10,7 @@ open Windtrap
 open Jera
 
 let f64 = Nx.float64
+let scalar_of x = Nx.scalar f64 x
 let vec a = Nx.create f64 [| Array.length a |] a
 let tight = Tol.v ~rel:1e-10 ~abs:1e-12
 
@@ -401,6 +402,102 @@ let nelder_mead_tests =
         equal (Oracle.tensor ()) (vec [| -1.2; 1. |]) (Nx.get [ 0 ] xs));
   ]
 
+(* Boxes *)
+
+let unit_box b = (Nx.full_like b (-0.5), Nx.full_like b 0.5)
+
+let box_tests =
+  [
+    prop "the answer is its projected gradient's fixed point (law 10)" convex
+      (fun (a, b) ->
+        cover "a coordinate held at a bound"
+          (Nx.dim 0 b > 0 && Nx.item [] (Nx.max (Nx.abs (Nx.solve a b))) > 0.5);
+        List.iter
+          (fun (_, m) ->
+            let lo, hi = unit_box b in
+            let x =
+              Solution.get
+                (Minimize.solve one m ~within:(lo, hi) ~tol:tight ~budget:200
+                   (objective a b) (Nx.zeros_like b))
+            in
+            let clipped =
+              Nx.minimum hi (Nx.maximum lo (Nx.sub x (gradient a b x)))
+            in
+            equal
+              (Oracle.tensor ~abs:(1e-8 *. Float.of_int (Nx.dim 0 b + 2)) ())
+              clipped x)
+          methods);
+    test "a held coordinate's derivative is zero, a bound's is one" (fun () ->
+        (* ½ |x − c|² in [0, 1]², c = (2, 0.5): the minimum is (1, 0.5). *)
+        let solve (c, hi) =
+          Solution.get
+            (Minimize.solve one
+               (Minimize.bfgs ~linear:Linear.dense)
+               ~within:(Nx.zeros f64 [| 2 |], hi)
+               ~tol:tight ~budget:100
+               (fun x -> Nx.mul_s (Nx.sum (Nx.square (Nx.sub x c))) 0.5)
+               (Nx.zeros f64 [| 2 |]))
+        in
+        let c = vec [| 2.; 0.5 |] and hi = vec [| 1.; 1. |] in
+        equal (Oracle.tensor ~rel:1e-9 ()) (vec [| 1.; 0.5 |]) (solve (c, hi));
+        let dc, dhi =
+          Rune.grad
+            Nx.Ptree.(pair tensor tensor)
+            (fun ch -> Nx.sum (solve ch))
+            (c, hi)
+        in
+        equal (Oracle.tensor ~abs:1e-12 ()) (vec [| 0.; 1. |]) dc;
+        equal (Oracle.tensor ~abs:1e-12 ()) (vec [| 1.; 0. |]) dhi);
+    test "levenberg_marquardt holds a fit's parameter at its bound" (fun () ->
+        let y = model (vec [| 2.; -1.3 |]) in
+        let p =
+          Solution.get
+            (Minimize.solve one lm
+               ~within:(vec [| 0.; -5. |], vec [| 10.; -1.5 |])
+               ~tol:tight ~budget:100
+               (fun p -> Nx.sub (model p) y)
+               (vec [| 1.; -2. |]))
+        in
+        equal (Oracle.tensor ~abs:0. ()) (scalar_of (-1.5)) (Nx.get [ 1 ] p));
+    test "nelder_mead clips its vertices into the box" (fun () ->
+        let c = vec [| 2.; -0.25 |] in
+        equal
+          (Oracle.tensor ~abs:1e-6 ())
+          (vec [| 1.; -0.25 |])
+          (Solution.get
+             (Minimize.solve one Minimize.nelder_mead
+                ~within:(Nx.full f64 [| 2 |] (-1.), Nx.ones f64 [| 2 |])
+                ~tol:(Tol.v ~rel:1e-9 ~abs:1e-10)
+                ~budget:2000
+                (fun x -> Nx.sum (bowl c x))
+                (Nx.zeros f64 [| 2 |]))));
+    test "an empty box stalls" (fun () ->
+        let s =
+          Minimize.solve one
+            (Minimize.lbfgs ~memory:3 ~linear:Linear.dense)
+            ~within:(vec [| 1.; 0. |], vec [| 0.; 1. |])
+            ~tol:tight ~budget:20 rosenbrock
+            (vec [| 0.; 0. |])
+        in
+        equal bool true (is Stalled s));
+    test "compiled equals eager in a box (law 3)" (fun () ->
+        List.iter
+          (fun (_, m) ->
+            let f c =
+              Solution.get
+                (Minimize.solve one m ~within:(unit_box c) ~tol:tight
+                   ~budget:200
+                   (fun x ->
+                     Nx.add
+                       (Nx.sum (Nx.square (Nx.sub x c)))
+                       (Nx.sum (Nx.square (Nx.square x))))
+                   (Nx.zeros_like c))
+            in
+            let c = vec [| 1.; -0.25; 2. |] in
+            equal (Oracle.tensor ()) (f c) (Rune.jit' f c))
+          methods);
+  ]
+
 (* Iterates *)
 
 let iterate_tests =
@@ -533,6 +630,7 @@ let () =
          group "gradient methods" gradient_tests;
          group "levenberg_marquardt" lm_tests;
          group "nelder_mead" nelder_mead_tests;
+         group "boxes" box_tests;
          group "iterates" iterate_tests;
          group "laws" law_tests;
        ])

@@ -44,12 +44,13 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
     let trial alpha =
       let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
-      ((x, fx), half_square fx)
+      let phi = half_square fx in
+      ((x, fx), phi, accept alpha phi)
     in
     let (x, fx), found, tries =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
-        dtype ~trials ~running:run ~accept ~shrink trial (s.x, s.fx)
+        dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
     (* A step below the floats' resolution is no decrease. *)
     let found =
@@ -111,12 +112,13 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
     let trial alpha =
       let x = Nx.add s.x (Search.along alpha delta) in
       let fx = residual x in
-      ((x, fx), Search.norm fx)
+      let phi = Search.norm fx in
+      ((x, fx), phi, accept alpha phi)
     in
     let (x, fx), found, tries =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
-        dtype ~trials ~running:run ~accept ~shrink trial (s.x, s.fx)
+        dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
     let st = settle s.Search.st (Nx.logical_not found) Stalled in
     let dx = Nx.sub x s.x and df = Nx.sub fx s.fx in

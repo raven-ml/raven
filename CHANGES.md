@@ -1053,6 +1053,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.solve` takes `?within:(lo, hi)`, a box: gradient methods take
+  Bertsekas's projected steps, `levenberg_marquardt` projects its steps and
+  `nelder_mead` clips its vertices; a coordinate held at a bound has the
+  bound's derivative.
 - Add `System.lanes`, Newton's method over the leading axes of a tensor:
   each lane is a system of the last axis's unknowns with its own status, a
   `k × k` direct solve of the caller's Jacobian per step, and its own implicit

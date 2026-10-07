@@ -252,10 +252,12 @@ let name : type x f. (x, f) t -> string = function
    A gradient method searches on the vector of the float tensors with detached
    values (Search, one lane). Its state's function is the gradient [g], and the
    objective's value at [x] is carried beside it with the method's memory. A
-   method gives its undamped step at a state, [δ] with whether its linear solve
-   failed; its search along [δ], to a point, its value and gradient, whether the
-   search found a decrease and its evaluations; and the update of its memory
-   after a move from [x] to [x + s] that changed [g] by [y]. *)
+   method gives its direction at a state, [d] with whether its linear solve
+   failed, its scaling restricted to the coordinates [free] marks with ones and
+   [−g] on the others, which a box holds, all of them free without a box; its
+   search along [δ], to a point, its value and gradient, whether the search
+   found a decrease and its evaluations; and the update of its memory after a
+   move from [x] to [x + s] that changed [g] by [y]. *)
 
 type 'd vector = (float, 'd) Nx.t
 type 'd point = { x : 'd vector; value : 'd vector; g : 'd vector }
@@ -263,7 +265,11 @@ type 'd point = { x : 'd vector; value : 'd vector; g : 'd vector }
 type ('d, 'm) descent = {
   memory : 'm Nx.Ptree.t;
   init : 'm;
-  direction : 'd Search.state -> 'm -> 'd vector * (bool, Nx.bool_elt) Nx.t;
+  direction :
+    'd Search.state ->
+    'm ->
+    free:'d vector option ->
+    'd vector * (bool, Nx.bool_elt) Nx.t;
   search :
     running:(bool, Nx.bool_elt) Nx.t ->
     'd point ->
@@ -278,8 +284,11 @@ let point_ptree () = Nx.Ptree.(pair tensor (pair tensor tensor))
 let pack p = (p.x, (p.value, p.g))
 let unpack (x, (value, g)) = { x; value; g }
 
-(* The quasi-Newton methods search to the strong Wolfe conditions, so that every
-   pair they keep has positive curvature [yᵀ s]. *)
+(* Every gradient method searches to the strong Wolfe conditions, from its full
+   step: the quasi-Newton methods so that every pair they keep has positive
+   curvature [yᵀ s], Newton so that its full step is taken near a minimum, where
+   the conditions' approximate form accepts a decrease below [f]'s rounding by
+   its slope. *)
 let wolfe dtype ~trials evaluate ~running (p : _ point) delta =
   let trial alpha =
     let q = evaluate (Nx.add p.x (Search.along alpha delta)) in
@@ -291,20 +300,12 @@ let wolfe dtype ~trials evaluate ~running (p : _ point) delta =
   in
   (unpack q, found, tries)
 
-(* Newton searches to the sufficient decrease alone, from its full step. *)
-let armijo dtype ~trials evaluate ~running (p : _ point) delta =
-  let accept, shrink =
-    Search.armijo ~phi0:p.value ~slope0:(Search.dot p.g delta)
-  in
-  let trial alpha =
-    let q = evaluate (Nx.add p.x (Search.along alpha delta)) in
-    (pack q, q.value)
-  in
-  let q, found, tries =
-    Search.backtrack (point_ptree ()) dtype ~trials ~running ~accept ~shrink
-      trial (pack p)
-  in
-  (unpack q, found, tries)
+(* [free]'s coordinates of [v], all of them without a box. *)
+let restrict free v = match free with None -> v | Some f -> Nx.mul f v
+
+(* [d] with [−g] on the coordinates [free] holds. *)
+let held free g d =
+  match free with None -> d | Some f -> Nx.sub d (Nx.mul (Nx.rsub_s 1. f) g)
 
 let outer u v = Nx.mul (Nx.reshape [| -1; 1 |] u) (Nx.reshape [| 1; -1 |] v)
 
@@ -314,8 +315,9 @@ let outer u v = Nx.mul (Nx.reshape [| -1; 1 |] u) (Nx.reshape [| 1; -1 |] v)
    curvature. *)
 let bfgs_method dtype n ~trials evaluate =
   let eye = Nx.eye dtype n in
-  let direction (s : _ Search.state) (h, _) =
-    (Nx.neg (Nx.matmul h s.fx), Nx.scalar Nx.bool false)
+  let direction (s : _ Search.state) (h, _) ~free =
+    ( held free s.fx (Nx.neg (restrict free (Nx.matmul h (restrict free s.fx)))),
+      Nx.scalar Nx.bool false )
   in
   let update step y (h, first) =
     let ys = Search.dot y step in
@@ -341,21 +343,36 @@ let bfgs_method dtype n ~trials evaluate =
       update;
     }
 
-(* L-BFGS keeps the last [m] pairs, newest first, with [ρ = 1 / yᵀs], [0] for an
-   empty slot or a pair of non-positive curvature, which then enters neither
-   loop of the two-loop recursion (Nocedal, 1980). The initial inverse Hessian
-   is [yᵀs / yᵀy] of the newest pair. *)
+(* L-BFGS keeps the last [m] pairs, newest first, zero in an empty slot. The
+   two-loop recursion (Nocedal, 1980) runs on the pairs restricted to the free
+   coordinates, each with [ρ = 1 / yᵀs] there, a pair of non-positive curvature
+   entering neither loop. The initial inverse Hessian is [yᵀs / yᵀy] of the
+   newest pair. *)
 let lbfgs_method dtype n m ~trials evaluate =
-  let direction (s : _ Search.state) (ss, (ys, rhos)) =
-    let pair i = (Nx.get [ i ] ss, Nx.get [ i ] ys, Nx.get [ i ] rhos) in
+  let direction (s : _ Search.state) (ss, ys) ~free =
+    let pair i =
+      let s = restrict free (Nx.get [ i ] ss)
+      and y = restrict free (Nx.get [ i ] ys) in
+      let curvature = Search.dot y s in
+      ( s,
+        y,
+        Nx.where
+          (Nx.greater_s curvature 0.)
+          (Nx.recip
+             (Nx.where
+                (Nx.greater_s curvature 0.)
+                curvature (Nx.ones_like curvature)))
+          (Nx.zeros_like curvature) )
+    in
+    let pairs = Array.init m pair in
     let alphas = Array.make m (Nx.scalar dtype 0.) in
-    let q = ref s.fx in
+    let q = ref (restrict free s.fx) in
     for i = 0 to m - 1 do
-      let s, y, rho = pair i in
+      let s, y, rho = pairs.(i) in
       alphas.(i) <- Nx.mul rho (Search.dot s !q);
       q := Nx.sub !q (Nx.mul alphas.(i) y)
     done;
-    let _, y0, rho0 = pair 0 in
+    let _, y0, rho0 = pairs.(0) in
     let gamma =
       Nx.where (Nx.greater_s rho0 0.)
         (Nx.recip (Nx.mul rho0 (Search.dot y0 y0)))
@@ -363,61 +380,118 @@ let lbfgs_method dtype n m ~trials evaluate =
     in
     let r = ref (Nx.mul gamma !q) in
     for i = m - 1 downto 0 do
-      let s, y, rho = pair i in
+      let s, y, rho = pairs.(i) in
       let beta = Nx.mul rho (Search.dot y !r) in
       r := Nx.add !r (Nx.mul (Nx.sub alphas.(i) beta) s)
     done;
-    (Nx.neg !r, Nx.scalar Nx.bool false)
+    (held free s.fx (Nx.neg !r), Nx.scalar Nx.bool false)
   in
   let push v memory =
     Nx.concatenate ~axis:0
       [ Nx.unsqueeze ~axes:[ 0 ] v; Nx.slice [ Nx.R (0, m - 1) ] memory ]
   in
-  let update step y (ss, (ys, rhos)) =
-    let curvature = Search.dot y step in
-    let rho =
-      Nx.where
-        (Nx.greater_s curvature 0.)
-        (Nx.recip curvature) (Nx.zeros_like curvature)
-    in
-    (push step ss, (push y ys, push rho rhos))
-  in
+  let update step y (ss, ys) = (push step ss, push y ys) in
   Method
     {
-      memory = Nx.Ptree.(pair tensor (pair tensor tensor));
-      init =
-        ( Nx.zeros dtype [| m; n |],
-          (Nx.zeros dtype [| m; n |], Nx.zeros dtype [| m |]) );
+      memory = Nx.Ptree.(pair tensor tensor);
+      init = (Nx.zeros dtype [| m; n |], Nx.zeros dtype [| m; n |]);
       direction;
       search = wolfe dtype ~trials evaluate;
       update;
     }
 
-(* Newton solves [H δ = −g] with [linear] on Hessian-vector products. *)
+(* Newton solves [H δ = −g] with [linear] on Hessian-vector products, on the
+   free coordinates: the operator is [H] there and the identity elsewhere. *)
 let newton_method dtype ~trials evaluate ~solve =
-  let direction (s : _ Search.state) () = solve s.x (Nx.neg s.fx) in
+  let direction (s : _ Search.state) () ~free =
+    let u, failed = solve s.x ~free (Nx.neg (restrict free s.fx)) in
+    (held free s.fx u, failed)
+  in
   Method
     {
       memory = Nx.Ptree.unit;
       init = ();
       direction;
-      search = armijo dtype ~trials evaluate;
+      search = wolfe dtype ~trials evaluate;
       update = (fun _ _ () -> ());
     }
 
+(* Under a box every gradient method takes Bertsekas's (1982) projected step:
+   the coordinates within [ε] of a bound whose gradient pushes out of the box
+   are active, [ε] the projected gradient's norm [|x − P (x − g)|]; the method's
+   scaling acts on the free ones and [−g] on the active ones; and the search
+   backtracks by halving along the projection arc [P (x + α d)] to the
+   sufficient decrease [f ≤ f x + c gᵀ (P (x + α d) − x)]. The undamped step is
+   [P (x + d) − x]. *)
+let projected ~trials evaluate ~project ~running (p : _ point) d =
+  let dtype = Nx.dtype p.x in
+  let rounding = Nx.mul_s (Nx.abs p.value) (sqrt (Num.eps dtype)) in
+  let trial alpha =
+    let x = project (Nx.add p.x (Search.along alpha d)) in
+    let q = evaluate x in
+    let step = Nx.sub x p.x in
+    let slope = Search.dot p.g step in
+    let sufficient =
+      Nx.less_equal q.value (Nx.add p.value (Nx.mul_s slope Search.c))
+    in
+    (* Within [f]'s rounding the decrease shows in the gradients along the
+       displacement, as in the line search's approximate conditions. *)
+    let approximate =
+      Nx.logical_and
+        (Nx.less_equal q.value (Nx.add p.value rounding))
+        (Nx.less_equal (Search.dot q.g step)
+           (Nx.mul_s slope ((2. *. Search.c) -. 1.)))
+    in
+    ( pack q,
+      q.value,
+      Nx.logical_and (Nx.less_s slope 0.) (Nx.logical_or sufficient approximate)
+    )
+  in
+  let shrink alpha _ = Nx.mul_s alpha 0.5 in
+  let q, found, tries =
+    Search.backtrack (point_ptree ()) dtype ~trials ~running ~shrink trial
+      (pack p)
+  in
+  (unpack q, found, tries)
+
+type 'd box = { lo : 'd vector; hi : 'd vector }
+
+let project box x = Nx.minimum box.hi (Nx.maximum box.lo x)
+
+let free box (x : _ vector) g =
+  let w = Search.norm (Nx.sub x (project box (Nx.sub x g))) in
+  let w = Nx.reshape (Array.append (Nx.shape w) [| 1 |]) w in
+  let active =
+    Nx.logical_or
+      (Nx.logical_and (Nx.less_equal x (Nx.add box.lo w)) (Nx.greater_s g 0.))
+      (Nx.logical_and (Nx.greater_equal x (Nx.sub box.hi w)) (Nx.less_s g 0.))
+  in
+  Nx.cast (Nx.dtype x) (Nx.logical_not active)
+
 (* The search from [s]: the loop of iterations, each the method's undamped step
    tested, then its search for the running lanes. *)
-let descend ~tol ~budget (Method m) (s : _ Search.state) value =
+let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
+    value =
   let step (s : _ Search.state) (value, memory) =
-    let delta, failed = m.direction s memory in
+    let mask = Option.map (fun b -> free b s.x s.fx) box in
+    let d, failed = m.direction s memory ~free:mask in
+    let delta =
+      match box with
+      | None -> d
+      | Some b -> Nx.sub (project b (Nx.add s.x d)) s.x
+    in
     let s = { s with st = settle s.st failed Stalled } in
     let s = Search.test tol s delta in
     let run = searching s.st in
     let downhill = Search.descends s.fx delta in
     let st = settle s.st (Nx.logical_not downhill) Stalled in
     let run' = Nx.logical_and run (searching st) in
+    let here = { x = s.x; value; g = s.fx } in
     let q, found, tries =
-      m.search ~running:run' { x = s.x; value; g = s.fx } delta
+      match box with
+      | None -> m.search ~running:run' here d
+      | Some b ->
+          projected ~trials evaluate ~project:(project b) ~running:run' here d
     in
     (* A step below the floats' resolution is no decrease. *)
     let found =
@@ -453,7 +527,7 @@ let path ~steps (Method m) (p : _ point) =
     let s =
       { (Search.start p.x p.g) with st = Nx.full Nx.int32 lanes running }
     in
-    let delta, failed = m.direction s memory in
+    let delta, failed = m.direction s memory ~free:None in
     let flat = Nx.all ~axes:[ -1 ] (Nx.equal_s p.g 0.) in
     let downhill = Search.descends p.g delta in
     let stopped =
@@ -525,6 +599,8 @@ type ('x, 'b) problem =
       ravel : 'x -> 'd vector;
       unravel : 'd vector -> 'x;
       objective : 'x -> (float, 'b) Nx.t;
+      evaluate : 'd vector -> 'd point;
+      trials : int;
       meth : 'd method_;
       start : 'd point;
     }
@@ -562,43 +638,110 @@ let problem fn x kind linear f start =
             unravel
         in
         let gradient = Rune.grad x objective in
-        let solve at rhs =
+        let solve at ~free rhs =
           let hessian v =
-            Rune.detach
-              (ravel (snd (Rune.jvp x x gradient (unravel at) (unravel v))))
+            let hv u =
+              Rune.detach
+                (ravel (snd (Rune.jvp x x gradient (unravel at) (unravel u))))
+            in
+            match free with
+            | None -> hv v
+            | Some f ->
+                Nx.add (Nx.mul f (hv (Nx.mul f v))) (Nx.mul (Nx.rsub_s 1. f) v)
           in
           let r = Linear.run linear dtype size hessian precondition rhs in
           (Rune.detach r.u, Rune.detach (Linear.failed r))
         in
-        newton_method dtype ~trials:(Num.precision dtype) evaluate ~solve
+        newton_method dtype ~trials evaluate ~solve
   in
   let start = evaluate (Rune.detach (ravel start)) in
-  Problem { dtype; size; ravel; unravel; objective; meth; start }
+  Problem
+    { dtype; size; ravel; unravel; objective; evaluate; trials; meth; start }
 
-let gradient_solve fn x m kind linear ~tol ~budget f start =
+(* The answer at [estimate]: the zero of rune's gradient of [objective], or
+   under the box [within] the zero of [x − P (x − ∇f x)], so a coordinate held
+   at a bound follows the bound. *)
+let answer fn x linear ~dtype ~st ~ravel ~unravel ?within objective estimate =
+  match within with
+  | None -> minimum fn x linear ~dtype ~st objective estimate
+  | Some (lo, hi) ->
+      let ok = Nx.equal_s st (Solution.code Converged) in
+      let gradient = Rune.grad x objective in
+      let xh = ravel estimate in
+      Rune.root x
+        ~linear_solve:(Linear.derivative fn x linear)
+        ~residual:(fun v ->
+          let rv = ravel v and rlo = ravel lo and rhi = ravel hi in
+          let clipped =
+            Nx.minimum rhi (Nx.maximum rlo (Nx.sub rv (ravel (gradient v))))
+          in
+          unravel (Nx.where ok (Nx.sub rv clipped) (Nx.sub rv xh)))
+        (fun () -> estimate)
+
+(* The box of [within] on the vectors of [p], detached: a lane whose [lo]
+   exceeds its [hi] somewhere has no point, and stalls. *)
+let box_of p (lo, hi) =
+  let detached v = Rune.detach (p v) in
+  { lo = detached lo; hi = detached hi }
+
+let gradient_solve fn x m kind linear ?within ~tol ~budget f start =
   let (Problem p) = problem fn x kind linear f start in
-  let s = Search.start p.start.x p.start.g in
+  let box = Option.map (box_of p.ravel) within in
+  let start =
+    match box with
+    | None -> p.start
+    | Some b -> p.evaluate (project b p.start.x)
+  in
+  let s = Search.start start.x start.g in
   let s =
     {
       s with
-      st = settle s.st (Nx.logical_not (Nx.isfinite p.start.value)) Not_finite;
+      st = settle s.st (Nx.logical_not (Nx.isfinite start.value)) Not_finite;
     }
+  in
+  let s =
+    match box with
+    | Some b ->
+        { s with st = settle s.st (Nx.any (Nx.greater b.lo b.hi)) Stalled }
+    | None -> s
   in
   let s =
     if p.size = 0 then
       { s with st = Nx.scalar Nx.int32 (Solution.code Converged) }
-    else descend ~tol ~budget p.meth s p.start.value
+    else
+      descend ?box ~trials:p.trials p.evaluate ~tol ~budget p.meth s start.value
   in
   let value =
-    minimum fn x linear ~dtype:p.dtype ~st:s.st p.objective (p.unravel s.x)
+    answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
+      ?within p.objective (p.unravel s.x)
+  in
+  let fix (st : Solution.status) facts =
+    match (st, box) with
+    | Stalled, Some _ when List.assoc_opt "empty box" facts = Some 1. ->
+        "lo exceeds hi in some coordinate: the box holds no point."
+    | _ -> fix st facts
+  in
+  let facts =
+    match box with
+    | None -> []
+    | Some b ->
+        [
+          Solution.Fact
+            ("empty box", Nx.cast p.dtype (Nx.any (Nx.greater b.lo b.hi)));
+        ]
   in
   Solution.v ~fn
     ~settings:
-      (Format.asprintf "method %s, solver %s, tol %a, budget %d" (name m)
-         (Linear.name linear) Tol.pp tol budget)
+      (Format.asprintf "method %s, solver %s, tol %a, budget %d%s" (name m)
+         (Linear.name linear) Tol.pp tol budget
+         (if Option.is_some box then ", in a box" else ""))
     ~spent:{ used = s.k; unit = "iterations"; budget }
     ~fix ~value ~error:(p.unravel s.e) ~status:s.st ~evaluations:s.n
-    ~facts:[ Fact ("gradient", Search.norm s.fx); Fact ("contraction", s.q) ]
+    ~facts:
+      ([
+         Solution.Fact ("gradient", Search.norm s.fx); Fact ("contraction", s.q);
+       ]
+      @ facts)
     ()
 
 (* [rows x like xs] is the structure [like] with each float tensor read from the
@@ -642,6 +785,7 @@ type 'x lm =
   | Lm : {
       dtype : (float, 'd) Nx.dtype;
       size : int;
+      ravel : 'x -> 'd vector;
       unravel : 'd vector -> 'x;
       residual : 'd vector -> 'd vector;
       jacobian : 'd vector -> 'd vector;
@@ -688,6 +832,7 @@ let lm_problem fn x r linear f start =
     {
       dtype;
       size;
+      ravel;
       unravel;
       residual = (fun v -> Rune.detach (residual v));
       jacobian = (fun v -> Rune.detach (jacobian v));
@@ -698,13 +843,14 @@ let lm_problem fn x r linear f start =
 
 (* One trial of the damped step [delta] from [x] with residual [r]: the point,
    its residual, and whether the step is accepted, with its ratio [ρ]. *)
-let lm_trial residual ~running j x r delta =
+let lm_trial residual ~project ~running j x r delta =
   let half_square v = Nx.mul_s (Search.dot v v) 0.5 in
-  let xt = Nx.add x delta in
+  let xt = project (Nx.add x delta) in
+  let step = Nx.sub xt x in
   let rt = residual xt in
-  let jd = Nx.matmul j delta in
+  let jd = Nx.matmul j step in
   let g = Nx.matmul (Nx.transpose j) r in
-  let predicted = Nx.sub (Nx.neg (Search.dot g delta)) (half_square jd) in
+  let predicted = Nx.sub (Nx.neg (Search.dot g step)) (half_square jd) in
   let rho = Nx.div (Nx.sub (half_square r) (half_square rt)) predicted in
   let ok =
     Nx.logical_and running
@@ -723,15 +869,27 @@ let lm_damping ~running ~ok rho (lambda, nu) =
       (Nx.where rejected (Nx.mul lambda nu) lambda),
     Nx.where ok (Nx.full_like nu 2.) (Nx.where rejected (Nx.mul_s nu 2.) nu) )
 
-let lm_solve fn x r linear ~tol ~budget f start =
+let lm_solve fn x r linear ?within ~tol ~budget f start =
   let (Lm p) = lm_problem fn x r linear f start in
-  let s = Search.start p.start (p.residual p.start) in
+  let box = Option.map (box_of p.ravel) within in
+  (* Under a box the steps are projected onto it. *)
+  let project = match box with None -> Fun.id | Some b -> project b in
+  let x0 = project p.start in
+  let s = Search.start x0 (p.residual x0) in
+  let s =
+    match box with
+    | Some b ->
+        { s with st = settle s.st (Nx.any (Nx.greater b.lo b.hi)) Stalled }
+    | None -> s
+  in
   let lanes = [||] in
   let step (s : _ Search.state) (d, (lambda, nu)) =
     let j = p.jacobian s.x in
     let g = Nx.matmul (Nx.transpose j) s.fx in
     let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
+    let toward v = Nx.sub (project (Nx.add s.x v)) s.x in
     let delta, failed = p.solve j (Nx.mul lambda d) (Nx.neg g) in
+    let delta = toward delta in
     let s = { s with st = settle s.st failed Stalled } in
     let q = Search.secant s (Nx.add s.x delta) in
     let gate =
@@ -748,12 +906,14 @@ let lm_solve fn x r linear ~tol ~budget f start =
         ~until:(fun (_, settled) -> settled)
         ~f:(fun _ ->
           let gn, gn_failed = p.solve j (Nx.zeros_like d) (Nx.neg g) in
-          (Nx.where gn_failed delta gn, Nx.scalar Nx.bool true))
+          (Nx.where gn_failed delta (toward gn), Nx.scalar Nx.bool true))
         (delta, Nx.logical_not gate)
     in
     let s = Search.decide tol s ~map:delta ~q gauss in
     let running = searching s.st in
-    let xt, rt, ok, rho = lm_trial p.residual ~running j s.x s.fx delta in
+    let xt, rt, ok, rho =
+      lm_trial p.residual ~project ~running j s.x s.fx delta
+    in
     let lambda, nu = lm_damping ~running ~ok rho (lambda, nu) in
     ( {
         s with
@@ -776,13 +936,15 @@ let lm_solve fn x r linear ~tol ~budget f start =
                (Nx.full p.dtype lanes lambda0, Nx.full p.dtype lanes 2.) ) ))
   in
   let value =
-    minimum fn x linear ~dtype:p.dtype ~st:s.st p.cost (p.unravel s.x)
+    answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
+      ?within p.cost (p.unravel s.x)
   in
   Solution.v ~fn
     ~settings:
       (Format.asprintf
-         "method levenberg_marquardt, solver %s, tol %a, budget %d"
-         (Linear.name linear) Tol.pp tol budget)
+         "method levenberg_marquardt, solver %s, tol %a, budget %d%s"
+         (Linear.name linear) Tol.pp tol budget
+         (if Option.is_some box then ", in a box" else ""))
     ~spent:{ used = s.k; unit = "iterations"; budget }
     ~fix ~value ~error:(p.unravel s.e) ~status:s.st ~evaluations:s.n
     ~facts:[ Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q) ]
@@ -804,7 +966,9 @@ let lm_path fn x r linear ~steps f start =
     in
     let stopped = Nx.logical_or stopped (Nx.logical_or failed still) in
     let running = Nx.logical_not stopped in
-    let xt, rt, ok, rho = lm_trial p.residual ~running j x r delta in
+    let xt, rt, ok, rho =
+      lm_trial p.residual ~project:Fun.id ~running j x r delta
+    in
     let lambda, nu = lm_damping ~running ~ok rho (lambda, nu) in
     ( (Search.hold ok xt x, (Search.hold ok rt r, (d, (lambda, (nu, stopped))))),
       x )
@@ -843,6 +1007,7 @@ type 'x simplex =
   | Simplex : {
       dtype : (float, 'd) Nx.dtype;
       size : int;
+      ravel : 'x -> 'd vector;
       unravel : 'd vector -> 'x;
       values : 'd vector -> 'd vector;
       start : 'd vector;
@@ -865,7 +1030,8 @@ let simplex_problem (type b) fn x (f : _ -> (float, b) Nx.t) start =
   let values vs =
     Rune.detach (Rune.vmap Nx.Ptree.(tensor @-> returns tensor) value vs)
   in
-  Simplex { dtype; size; unravel; values; start = Rune.detach (ravel start) }
+  Simplex
+    { dtype; size; ravel; unravel; values; start = Rune.detach (ravel start) }
 
 (* The simplex of [x0] and [x0 + h_i e_i], [h_i] a twentieth of [x0_i], or [2.5
    · 10⁻⁴] where [x0_i] is zero. *)
@@ -879,7 +1045,7 @@ let initial x0 =
     ]
 
 (* One trip of the simplex [(v, fv)]: the new simplex and the evaluations. *)
-let reflect values n (v, fv) =
+let reflect ?(project = Fun.id) values n (v, fv) =
   let nf = float n in
   let expansion = 1. +. (2. /. nf)
   and contraction = 0.75 -. (1. /. (2. *. nf))
@@ -892,7 +1058,7 @@ let reflect values n (v, fv) =
   and fworst = Nx.get [ n ] fv in
   let c = Nx.mean ~axes:[ 0 ] (Nx.slice [ Nx.R (0, n) ] v) in
   let one p = Nx.get [ 0 ] (values (Nx.reshape [| 1; -1 |] p)) in
-  let xr = Nx.add c (Nx.sub c worst) in
+  let xr = project (Nx.add c (Nx.sub c worst)) in
   let fr = one xr in
   let expand = Nx.less fr fbest in
   let accept = Nx.logical_and (Nx.logical_not expand) (Nx.less fr fsecond) in
@@ -902,11 +1068,12 @@ let reflect values n (v, fv) =
       (Nx.less fr fworst)
   in
   let second =
-    Nx.where expand
-      (Nx.add c (Nx.mul_s (Nx.sub xr c) expansion))
-      (Nx.where outside
-         (Nx.add c (Nx.mul_s (Nx.sub xr c) contraction))
-         (Nx.add c (Nx.mul_s (Nx.sub worst c) contraction)))
+    project
+    @@ Nx.where expand
+         (Nx.add c (Nx.mul_s (Nx.sub xr c) expansion))
+         (Nx.where outside
+            (Nx.add c (Nx.mul_s (Nx.sub xr c) contraction))
+            (Nx.add c (Nx.mul_s (Nx.sub worst c) contraction)))
   in
   let f2, _ =
     Rune.iterate
@@ -940,7 +1107,7 @@ let reflect values n (v, fv) =
         v,
       Nx.where last (Nx.broadcast_to (Nx.shape fv) fpoint) fv )
   in
-  let shrunk = Nx.add best (Nx.mul_s (Nx.sub v best) shrinkage) in
+  let shrunk = project (Nx.add best (Nx.mul_s (Nx.sub v best) shrinkage)) in
   let (v, fv), _ =
     Rune.iterate
       Nx.Ptree.(pair (pair tensor tensor) tensor)
@@ -963,10 +1130,13 @@ let spread (v, fv) =
   let best = Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] (Nx.argmin fv)) v in
   (Nx.reshape [| -1 |] best, Nx.max ~axes:[ 0 ] (Nx.abs (Nx.sub v best)))
 
-let simplex_solve fn x ~tol ~budget f start =
+let simplex_solve fn x ?within ~tol ~budget f start =
   let (Simplex p) = simplex_problem fn x f start in
   let n = p.size in
-  let v0 = initial p.start in
+  (* Under a box the simplex's vertices are clipped into it. *)
+  let box = Option.map (box_of p.ravel) within in
+  let project = match box with None -> Fun.id | Some b -> project b in
+  let v0 = project (initial (project p.start)) in
   let fv0 = p.values v0 in
   let st0 =
     settle
@@ -974,20 +1144,30 @@ let simplex_solve fn x ~tol ~budget f start =
       (Nx.logical_not (Nx.isfinite (Nx.get [ 0 ] fv0)))
       Not_finite
   in
+  let st0 =
+    match box with
+    | Some b -> settle st0 (Nx.any (Nx.greater b.lo b.hi)) Stalled
+    | None -> st0
+  in
   let step ((v, fv), (st, (_, evaluations))) =
-    let (v, fv), spent = reflect p.values n (v, fv) in
+    let (v, fv), spent = reflect ~project p.values n (v, fv) in
     let evaluations = Nx.add evaluations spent in
     let best, diameter = spread (v, fv) in
     let met = Search.accepted tol ~e:diameter ~y:best in
     (* The restart: a fresh simplex of the diameter's norm around the best
        vertex, evaluated only once the diameter has met [tol]. *)
-    let sigma = Nx.max diameter in
+    (* A simplex that collapsed, as clipping into a box can make it, restarts
+       at the tolerance's scale, so the restart still probes. *)
+    let sigma = Nx.maximum (Nx.max diameter) (Nx.max (Tol.scale tol best)) in
     let fresh =
-      Nx.concatenate ~axis:0
-        [
-          Nx.reshape [| 1; -1 |] best;
-          Nx.add (Nx.reshape [| 1; -1 |] best) (Nx.mul (Nx.eye p.dtype n) sigma);
-        ]
+      project
+      @@ Nx.concatenate ~axis:0
+           [
+             Nx.reshape [| 1; -1 |] best;
+             Nx.add
+               (Nx.reshape [| 1; -1 |] best)
+               (Nx.mul (Nx.eye p.dtype n) sigma);
+           ]
     in
     let ffresh, _ =
       Rune.iterate
@@ -1044,7 +1224,8 @@ let simplex_solve fn x ~tol ~budget f start =
     match st with
     | Budget_spent -> "Raise the budget, or loosen tol."
     | Not_finite -> "f is not finite at the start."
-    | Converged | Stalled | Not_bracketed -> ""
+    | Stalled -> "lo exceeds hi in some coordinate: the box holds no point."
+    | Converged | Not_bracketed -> ""
   in
   Solution.v ~fn
     ~settings:
@@ -1075,17 +1256,17 @@ let simplex_path fn x ~steps f start =
     in
     rows x start (Nx.concatenate ~axis:0 [ first; xs ])
 
-let solve (type x f) (x : x Nx.Ptree.t) (m : (x, f) t) ~tol ~budget (f : f)
-    (start : x) : x Solution.t =
+let solve (type x f) (x : x Nx.Ptree.t) (m : (x, f) t) ?within ~tol ~budget
+    (f : f) (start : x) : x Solution.t =
   let fn = "Jera.Minimize.solve" in
   if budget < 1 then
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   match m with
   | Gradient (kind, linear) ->
-      gradient_solve fn x m kind linear ~tol ~budget f start
+      gradient_solve fn x m kind linear ?within ~tol ~budget f start
   | Levenberg_marquardt (r, linear) ->
-      lm_solve fn x r linear ~tol ~budget f start
-  | Nelder_mead -> simplex_solve fn x ~tol ~budget f start
+      lm_solve fn x r linear ?within ~tol ~budget f start
+  | Nelder_mead -> simplex_solve fn x ?within ~tol ~budget f start
 
 let iterates (type x f) (x : x Nx.Ptree.t) (m : (x, f) t) ~steps (f : f)
     (start : x) : x =

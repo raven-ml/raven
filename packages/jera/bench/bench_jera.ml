@@ -576,6 +576,42 @@ let convex m id =
     rows = all;
   }
 
+(* Non-negative least squares, 300 equations in 200 unknowns of which 52 end at
+   their bound, the right-hand side the argument, by L-BFGS with 10 pairs in the
+   box [0, ∞). *)
+let nnls =
+  let m = 300 and n = 200 in
+  let a =
+    let i = Nx.reshape [| m; 1 |] (Nx.arange_f f64 0. (float m) 1.)
+    and j = Nx.reshape [| 1; n |] (Nx.arange_f f64 0. (float n) 1.) in
+    Nx.add
+      (Nx.sin
+         (Nx.add
+            (Nx.mul_s (Nx.mul i j) 0.013)
+            (Nx.add (Nx.mul_s i 0.7) (Nx.mul_s j 1.9))))
+      (Nx.mul_s
+         (Nx.cast f64 (Nx.equal (Nx.cast Nx.int32 i) (Nx.cast Nx.int32 j)))
+         3.)
+  in
+  {
+    id = "minimize-lbfgs-nnls-200";
+    f =
+      (fun b ->
+        let f x =
+          Nx.mul_s (Nx.sum (Nx.square (Nx.sub (Nx.matmul a x) b))) 0.5
+        in
+        Solution.get
+          (Minimize.solve Nx.Ptree.tensor
+             (Minimize.lbfgs ~memory:10 ~linear:Linear.dense)
+             ~within:(Nx.zeros f64 [| n |], Nx.full f64 [| n |] Float.infinity)
+             ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
+             ~budget:2000 f (Nx.zeros f64 [| n |])));
+    x =
+      (fun () ->
+        Nx.matmul a (Nx.cos (Nx.mul_s (Nx.arange_f f64 0. (float n) 1.) 0.37)));
+    rows = [ Eager; Compiled ];
+  }
+
 let bfgs_convex =
   convex (Minimize.bfgs ~linear:Linear.dense) "minimize-bfgs-convex-16"
 
@@ -662,6 +698,7 @@ let workloads =
     anderson_tanh;
     lanes;
     lbfgs_rosenbrock;
+    nnls;
     bfgs_convex;
     newton_convex;
     lm_exponential;

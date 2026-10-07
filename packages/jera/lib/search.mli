@@ -43,19 +43,22 @@ val backtrack :
   (float, 'b) Nx.dtype ->
   trials:int ->
   running:(bool, Nx.bool_elt) Nx.t ->
-  accept:((float, 'b) Nx.t -> (float, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t) ->
   shrink:((float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-  ((float, 'b) Nx.t -> 'p * (float, 'b) Nx.t) ->
+  ((float, 'b) Nx.t -> 'p * (float, 'b) Nx.t * (bool, Nx.bool_elt) Nx.t) ->
   'p ->
   'p * (bool, Nx.bool_elt) Nx.t * (int32, Nx.int32_elt) Nx.t
-(** [backtrack p dtype ~trials ~running ~accept ~shrink trial last] searches
-    from the step length [α = 1] of [dtype] in each running lane: [trial α] is a
-    point's payload of structure [p], whose tensors' shapes start with the
-    lanes', and its merit [φ]. A lane ends at the first [α] with [accept α φ],
-    and otherwise moves to [shrink α φ], which is at most [α / 2], for at most
-    [trials] trials. The result is the accepted payload, or [last] in a lane
-    that accepted none, whether each lane accepted, and the trials each lane
-    took. *)
+(** [backtrack p dtype ~trials ~running ~shrink trial last] searches from the
+    step length [α = 1] of [dtype] in each running lane: [trial α] is a point's
+    payload of structure [p], whose tensors' shapes start with the lanes', its
+    merit [φ] and whether the lane accepts it. A lane ends at the first accepted
+    [α], and otherwise moves to [shrink α φ], which is at most [α / 2], for at
+    most [trials] trials. The result is the accepted payload, or [last] in a
+    lane that accepted none, whether each lane accepted, and the trials each
+    lane took. *)
+
+val c : float
+(** [c] is the sufficient-decrease constant, [10⁻⁴]: a step must take [c] of the
+    decrease its slope predicts. *)
 
 val armijo :
   phi0:(float, 'b) Nx.t ->

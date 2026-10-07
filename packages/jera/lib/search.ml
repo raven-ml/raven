@@ -58,11 +58,11 @@ let contraction delta ~q =
    The carry holds the trial length, the payload, whether each lane still
    searches, the trials each lane took and the count of trips. *)
 
-let backtrack p dtype ~trials ~running ~accept ~shrink trial last =
+let backtrack p dtype ~trials ~running ~shrink trial last =
   let step (alpha, (payload, (searching, (n, j)))) =
-    let next, phi = trial alpha in
+    let next, phi, accepted = trial alpha in
     let n = Nx.add n (Nx.cast Nx.int32 searching) in
-    let ok = Nx.logical_and searching (accept alpha phi) in
+    let ok = Nx.logical_and searching accepted in
     let payload = Nx.Ptree.map2 p (fun _ a b -> hold ok a b) next payload in
     let searching = Nx.logical_and searching (Nx.logical_not ok) in
     let alpha = Nx.where searching (shrink alpha phi) alpha in
