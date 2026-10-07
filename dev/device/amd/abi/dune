@@ -6,7 +6,6 @@
   capability
   code_object
   gpu
-  packet
   pm4
   register
   scratch
