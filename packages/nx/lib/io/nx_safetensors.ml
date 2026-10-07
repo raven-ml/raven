@@ -145,7 +145,6 @@ let tensor_data (type a b) name (t : (a, b) Nx.t) =
         (dtype, Nx.Op.eval (Read { by = "Nx_io.save_safetensors"; x = t }))
 
 let replace_or_keep temp path =
-  Unix.chmod temp Temp_file.mode;
   let failed e =
     fail_msg "cannot replace %s (%s): the tensors were written to %s" path
       (Unix.error_message e) temp
@@ -160,18 +159,31 @@ let replace_or_keep temp path =
       try Unix.rename temp path with Unix.Unix_error (e, _, _) -> failed e)
   | Unix.Unix_error (e, _, _) -> failed e
 
-(* Writes the header and the tensors' bytes, each at its offset after the
-   header, to a new file at [temp]. *)
-let write temp header parts =
-  let hlen = String.length header in
-  let data_len =
-    List.fold_left (fun n (off, src) -> Int.max n (off + B.nbytes src)) 0 parts
+(* A new file of [n] bytes beside [path], and its name. *)
+let sibling path n =
+  let held name =
+    match Unix.lstat name with
+    | _ -> true
+    | exception Unix.Unix_error _ -> false
   in
-  let file =
-    match B.create_file temp (hlen + data_len) with
-    | Ok file -> file
+  let rec go attempts =
+    let temp = Temp_file.name path in
+    match B.create_file temp n with
+    | Ok file -> (temp, file)
+    | Error _ when attempts > 1 && held temp -> go (attempts - 1)
     | Error why -> raise (Sys_error why)
   in
+  go 1000
+
+(* The bytes of a file of [header] then [parts], each part at its offset after
+   the header. *)
+let size header parts =
+  String.length header
+  + List.fold_left (fun n (off, src) -> Int.max n (off + B.nbytes src)) 0 parts
+
+(* Writes the header and the tensors' bytes into [file]. *)
+let write file header parts =
+  let hlen = String.length header in
   let bytes = B.create Nx_device.host Nx_dtype.Scalar.UInt8 hlen in
   let chars = B.bigarray Bigarray.char bytes in
   String.iteri (Bigarray.Array1.set chars) header;
@@ -213,10 +225,10 @@ let save_safetensors ?(overwrite = true) path archive =
     List.map (fun (name, off) -> (off, Hashtbl.find srcs name)) offsets
   in
   try
-    let temp = Temp_file.sibling path in
+    let temp, file = sibling path (size header parts) in
     match
-      Storage.claiming (List.map snd parts) (fun () -> write temp header parts);
-      Temp_file.sync temp
+      Storage.claiming (List.map snd parts) (fun () -> write file header parts);
+      B.flush file
     with
     | () -> replace_or_keep temp path
     | exception e ->

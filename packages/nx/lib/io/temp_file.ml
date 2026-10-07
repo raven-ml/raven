@@ -6,14 +6,18 @@
 let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
 let prng = Domain.DLS.new_key Random.State.make_self_init
 
+(* A name beside [path] for a temporary file, drawn at random. *)
+let name path =
+  let tag = Random.State.bits (Domain.DLS.get prng) land 0xffffff in
+  Filename.concat (Filename.dirname path)
+    (Printf.sprintf "%s.%06x.tmp" (Filename.basename path) tag)
+
 (* A fresh empty file beside [path]. It is created with [Unix], so that a
    directory that cannot be written raises [Unix.Unix_error] as the other writes
    of this library do. *)
 let sibling path =
-  let dir = Filename.dirname path and base = Filename.basename path in
   let rec create attempts =
-    let tag = Random.State.bits (Domain.DLS.get prng) land 0xffffff in
-    let name = Filename.concat dir (Printf.sprintf "%s.%06x.tmp" base tag) in
+    let name = name path in
     match Unix.openfile name [ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC ] 0o600 with
     | fd ->
         Unix.close fd;
@@ -22,12 +26,6 @@ let sibling path =
         create (attempts - 1)
   in
   create 1000
-
-(* Forces the bytes written to [path], through any of its descriptors, to its
-   storage. *)
-let sync path =
-  let fd = Unix.openfile path [ O_RDWR; O_CLOEXEC ] 0 in
-  Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> Unix.fsync fd)
 
 let mode = 0o640
 

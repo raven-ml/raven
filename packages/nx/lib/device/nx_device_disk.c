@@ -74,7 +74,7 @@ static int open_file(const char *path, int mode, int64_t size,
   HANDLE h = CreateFileW(
       wpath, mode == MODE_READ ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
-      create ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+      create ? CREATE_NEW : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   int code = 0;
   BY_HANDLE_FILE_INFORMATION info;
   LARGE_INTEGER n;
@@ -104,6 +104,10 @@ static int open_file(const char *path, int mode, int64_t size,
 
 static void close_file(intptr_t h) { CloseHandle((HANDLE)h); }
 
+static int sync_file(intptr_t h) {
+  return FlushFileBuffers((HANDLE)h) ? 0 : (int)GetLastError();
+}
+
 static int identify(intptr_t h, int64_t identity[3]) {
   BY_HANDLE_FILE_INFORMATION info;
   FILE_BASIC_INFO basic;
@@ -127,7 +131,7 @@ static int open_file(const char *path, int mode, int64_t size,
   /* Non-blocking, so that a FIFO is refused rather than waited on. It changes
      nothing for a regular file. */
   int flags = O_CLOEXEC | O_NONBLOCK |
-              (create              ? O_RDWR | O_CREAT | O_TRUNC
+              (create              ? O_RDWR | O_CREAT | O_EXCL
                : mode == MODE_READ ? O_RDONLY
                                    : O_RDWR);
   int fd;
@@ -155,6 +159,14 @@ static int open_file(const char *path, int mode, int64_t size,
 
 static void close_file(intptr_t h) { close((int)h); }
 
+static int sync_file(intptr_t h) {
+  int r;
+  do
+    r = fsync((int)h);
+  while (r != 0 && errno == EINTR);
+  return r == 0 ? 0 : errno;
+}
+
 static int identify(intptr_t h, int64_t identity[3]) {
   struct stat st;
   if (fstat((int)h, &st) != 0) return errno;
@@ -174,7 +186,8 @@ static int identify(intptr_t h, int64_t identity[3]) {
 /* [open_file path mode size] is [(code, handle, size)]: [code] is 0, a
    system error, [NOT_REGULAR] or [TOO_MANY]. [mode] is [MODE_READ], for
    reading; [MODE_WRITE], for reading and writing; or [MODE_CREATE], which
-   creates or truncates the file, for reading and writing, at [size] bytes. */
+   creates the file, which must not exist, for reading and writing, at [size]
+   bytes. */
 value caml_nx_device_file_open(value v_path, value v_mode, value v_size) {
   CAMLparam3(v_path, v_mode, v_size);
   CAMLlocal1(r);
@@ -195,6 +208,16 @@ value caml_nx_device_file_close(value v_handle) {
   close_file(h);
   caml_acquire_runtime_system();
   return Val_unit;
+}
+
+/* [file_sync h] is 0 once the bytes written to the file [h] have reached its
+   storage, or a system error. */
+value caml_nx_device_file_sync(value v_handle) {
+  intptr_t h = Nativeint_val(v_handle);
+  caml_release_runtime_system();
+  int code = sync_file(h);
+  caml_acquire_runtime_system();
+  return Val_int(code);
 }
 
 /* [file_identity h] is [[| code; device; inode; change |]]: [code] is 0 or

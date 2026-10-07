@@ -4513,7 +4513,10 @@ let on_disk_at_read path =
            ~offset:0 Nx_dtype.Scalar.Float32 4;
        ])
 
-(* [x] written to the file at [path], as a value on the disk over it. *)
+(* A path that names nothing, where [on_disk_at] makes a file. *)
+let new_path () = Filename.concat (temp_dir ()) "file"
+
+(* [x] written to a new file at [path], as a value on the disk over it. *)
 let on_disk_at path x =
   let module B = Nx_device.Buffer in
   let src = elements x in
@@ -4534,7 +4537,7 @@ let on_disk_at path x =
 let unaligned_on_disk v =
   let module B = Nx_device.Buffer in
   let n = Array.length v in
-  let path = temp_file () in
+  let path = new_path () in
   let bytes =
     Nx.init Nx.uint8
       [| 2 + (4 * n) |]
@@ -4561,8 +4564,8 @@ let unaligned_on_disk v =
    places the third when it traces. *)
 let captured () =
   ( x (),
-    on_disk_at (temp_file ()) (Nx.create Nx.float32 [| 1 |] [| 1.5 |]),
-    on_disk_at (temp_file ()) (y ()) )
+    on_disk_at (new_path ()) (Nx.create Nx.float32 [| 1 |] [| 1.5 |]),
+    on_disk_at (new_path ()) (y ()) )
 
 (* [nested_reading (c, one, w) xs] scans the rows of [xs] with a step that scans
    its row's elements, the inner step reading the three captures. *)
@@ -4630,14 +4633,14 @@ let disk =
             (Nx.mul_s (Nx.create Nx.int32 [| 6 |] v) 3l)
             (Rune.jit' (fun a -> Nx.mul_s a 3l) a));
       test "a leaf and a capture on the disk are read as host values" (fun () ->
-          let a = on_disk_at (temp_file ()) (x ()) in
-          let w = on_disk_at (temp_file ()) (y ()) in
+          let a = on_disk_at (new_path ()) (x ()) in
+          let w = on_disk_at (new_path ()) (y ()) in
           equal close
             (Nx.mul (poly (x ())) (y ()))
             (Rune.jit' (fun a -> Nx.mul (poly a) w) a));
       test "a consumed value on the disk is copied, and its file unchanged"
         (fun () ->
-          let path = temp_file () in
+          let path = new_path () in
           let a = on_disk_at path (x ()) in
           let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
           equal floats (Nx.add_s (x ()) 1.) (host r);
@@ -4646,7 +4649,7 @@ let disk =
         "a consumed weight that is a window of its file is computed from a \
          copy and stays readable, as its sibling does" (fun () ->
           let module B = Nx_device.Buffer in
-          let path = temp_file () in
+          let path = new_path () in
           ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
           let p = Nx.Placement.on (Nx.Device.make Nx_device.disk) in
           let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
@@ -4662,9 +4665,9 @@ let disk =
           equal ~msg:"the weight" floats (y ()) (host w);
           equal ~msg:"its sibling" floats (x ()) (host sibling));
       test "the file opened is read, not the one at its path now" (fun () ->
-          let path = temp_file () in
+          let path = new_path () in
           let a = on_disk_at path (x ()) in
-          let replacement = temp_file () in
+          let replacement = new_path () in
           ignore (on_disk_at replacement (y ()));
           Sys.rename replacement path;
           equal close (poly (x ())) (host (Rune.jit' poly a)));
@@ -5156,7 +5159,7 @@ let on_one_device ~name d =
           equal floats (Nx.full Nx.float32 [| n |] 21.) (host !s));
       test "a view of a weight on the disk placed on the device is captured"
         (fun () ->
-          let w = on_disk_at (temp_file ()) (grid 4 4) in
+          let w = on_disk_at (new_path ()) (grid 4 4) in
           let p = Nx.place (on d) (Nx.matrix_transpose w) in
           let g = Rune.jit' (fun a -> Nx.matmul a p) in
           equal close
@@ -5165,7 +5168,7 @@ let on_one_device ~name d =
       test
         "a consumed value placed from a file lends its storage only where the \
          file was copied, and the file keeps its elements" (fun () ->
-          let path = temp_file () in
+          let path = new_path () in
           let elements = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 1.; 2. |] in
           let pool = Nx.place (on d) (on_disk_at path elements) in
           let before = Witness.addresses pool in

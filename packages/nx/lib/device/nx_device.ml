@@ -479,6 +479,7 @@ external file_identity : nativeint -> int * int * int * int
   = "caml_nx_device_file_identity"
 
 external file_close : nativeint -> unit = "caml_nx_device_file_close"
+external file_sync : nativeint -> int = "caml_nx_device_file_sync"
 
 external file_read :
   (nativeint[@unboxed]) ->
@@ -2102,6 +2103,18 @@ module Buffer = struct
     open_file path ~create:true n
 
   let file_of b = Option.get b.base.file
+
+  let flush b =
+    if device b != disk then
+      invalid_arg "Nx_device.Buffer.flush: the buffer is not on the disk";
+    List.iter
+      (fun s -> wait_signal s.by s.upto)
+      (Atomic.get b.base.links).stamps;
+    let f = file_of b in
+    with_devices [ disk ] (fun () ->
+        match file_sync (descriptor f) with
+        | 0 -> ()
+        | code -> raise (Sys_error (f.path ^ ": " ^ error_message code)))
 
   (* A file's pages are its mapping on the host, made once and kept with the
      file. *)

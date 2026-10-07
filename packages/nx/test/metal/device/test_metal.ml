@@ -188,7 +188,7 @@ let memory =
           let v = Nx_device.submitted metal in
           B.copy ~src:(of_file path) ~dst:b;
           is_true ~msg:"read" (read b = bytes);
-          let out = temp_file () in
+          let out = Filename.concat (temp_dir ()) "file" in
           B.copy ~src:b ~dst:(create_file out n);
           is_true ~msg:"written"
             (In_channel.with_open_bin out In_channel.input_all = bytes);
@@ -616,8 +616,8 @@ let failed_watched =
             dispatch fill 1 v;
             v)
       in
-      (* Either macOS ends the spin's command buffer or the spin completes:
-         the reads end, however long macOS lets the GPU run. *)
+      (* Either macOS ends the spin's command buffer or the spin completes: the
+         reads end, however long macOS lets the GPU run. *)
       let rec settle () =
         if Nx_device.lost d = None && Nx_device.signaled d < v then begin
           Unix.sleepf 0.05;

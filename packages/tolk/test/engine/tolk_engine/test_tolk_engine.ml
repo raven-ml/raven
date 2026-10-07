@@ -196,7 +196,9 @@ let kernel ?(name = "axpy") ?(size = 4) ?bound () =
       (Dtype.Value.of_int 100)
   in
   let n =
-    match bound with Some v -> Call.bind n (`Int (Bigint.of_int v)) | None -> n
+    match bound with
+    | Some v -> Call.bind n (`Int (Bigint.of_int v))
+    | None -> n
   in
   let i = Ops.range (Int size) [ 0 ] in
   let at b = Ops.index (buffer b) [ i ] in
@@ -474,7 +476,8 @@ let buffer d dt values =
   else
     let file =
       Result.get_ok
-        (Buffer.create_file (temp_file ())
+        (Buffer.create_file
+           (Filename.concat (temp_dir ()) "file")
            (Array.length values * Dtype.itemsize dt))
     in
     Buffer.copy ~src:(Run.buffer host dt values) ~dst:file;
@@ -1737,7 +1740,9 @@ let run_of_fills n =
   let bound =
     List.concat_map
       (fun ((y, x), _) ->
-        [ (y, [ Run.buffer host Float32 a ]); (x, [ Run.buffer host Float32 a ]) ])
+        [
+          (y, [ Run.buffer host Float32 a ]); (x, [ Run.buffer host Float32 a ]);
+        ])
       fills
   in
   let compiled =
@@ -1993,8 +1998,7 @@ let timing =
         "the clock is the device's where it has queues, the host's otherwise"
         [ on clock_by_device ];
       group
-        "a profile taken around a time changes neither its clock nor its \
-         value"
+        "a profile taken around a time changes neither its clock nor its value"
         [ on time_under_profile ];
       group "a time is positive, under a second" [ on positive ];
       group "a time under a profile leaves the profile taken"
@@ -2117,18 +2121,27 @@ let host_range_is_one_call () =
   let trips = 5 and k = 4 in
   let compiled, src, out = three_in_a_range ~trips k in
   let xs = Array.init (trips * k) Float.of_int in
-  let out_buffer = Run.buffer host Float32 (floats (Array.make (trips * k) 0.)) in
+  let out_buffer =
+    Run.buffer host Float32 (floats (Array.make (trips * k) 0.))
+  in
   let s =
     Engine.link ~devices
       ~bound:
-        [ (src, [ Run.buffer host Float32 (floats xs) ]); (out, [ out_buffer ]) ]
+        [
+          (src, [ Run.buffer host Float32 (floats xs) ]); (out, [ out_buffer ]);
+        ]
       compiled
   in
-  let names = host_spans (fun () -> Engine.run s [||]; Engine.run s [||]) in
+  let names =
+    host_spans (fun () ->
+        Engine.run s [||];
+        Engine.run s [||])
+  in
   let kernel = String.equal "add_one_4" in
   equal int ~msg:"a call from OCaml per run" 2
     (List.length (List.filter (fun n -> not (kernel n)) names));
-  equal int ~msg:"a span of each kernel's call" (2 * 3 * trips)
+  equal int ~msg:"a span of each kernel's call"
+    (2 * 3 * trips)
     (List.length (List.filter kernel names));
   equal values
     (floats (Array.map (fun x -> x +. 3.) xs))
@@ -2138,11 +2151,15 @@ let host_range_splits () =
   let trips = 2 and k = 1 lsl 20 in
   let compiled, src, out = three_in_a_range ~trips k in
   let xs = Array.init (trips * k) (fun i -> Float.of_int (i mod 1000)) in
-  let out_buffer = Run.buffer host Float32 (floats (Array.make (trips * k) 0.)) in
+  let out_buffer =
+    Run.buffer host Float32 (floats (Array.make (trips * k) 0.))
+  in
   let s =
     Engine.link ~devices
       ~bound:
-        [ (src, [ Run.buffer host Float32 (floats xs) ]); (out, [ out_buffer ]) ]
+        [
+          (src, [ Run.buffer host Float32 (floats xs) ]); (out, [ out_buffer ]);
+        ]
       compiled
   in
   Engine.run s [||];
@@ -2151,8 +2168,7 @@ let host_range_splits () =
     (Run.values Float32 out_buffer)
 
 (* A copy on CPU:1's queue into host memory, after a slow fill of its source,
-   then a host range that reads what it copied: the range waits for the
-   copy. *)
+   then a host range that reads what it copied: the range waits for the copy. *)
 let host_range_after_a_batch () =
   let trips = 3 in
   let x, filled = fill "CPU:1" 7. in
@@ -2163,7 +2179,9 @@ let host_range_after_a_batch () =
     Shape.shrink out
       [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 4)) ]
   in
-  let out_buffer = Run.buffer host Float32 (floats (Array.make (4 * trips) 0.)) in
+  let out_buffer =
+    Run.buffer host Float32 (floats (Array.make (4 * trips) 0.))
+  in
   let s =
     link_calls
       ~bound:[ (out, [ out_buffer ]) ]
@@ -2174,7 +2192,9 @@ let host_range_after_a_batch () =
       ]
   in
   Null_device.with_latency 0.05 (fun () -> Engine.run s [||]);
-  equal values (floats (Array.make (4 * trips) 8.)) (Run.values Float32 out_buffer)
+  equal values
+    (floats (Array.make (4 * trips) 8.))
+    (Run.values Float32 out_buffer)
 
 (* A copy on CPU:1's queue into CPU:2's memory, which a slow kernel of CPU:2
    filled first: the copy lands last. *)
@@ -2298,7 +2318,8 @@ let stages_host_memory ~as_input n =
   let nd = Null_device.device in
   let from k = floats (Array.init n (fun i -> Float.of_int (k + i))) in
   let h =
-    if as_input then Call.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
+    if as_input then
+      Call.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
     else Ops.new_buffer (Single "CPU") n Float32
   in
   let x = Ops.new_buffer (Single "CPU:4") n Float32

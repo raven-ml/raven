@@ -1301,7 +1301,7 @@ module Runtimes = struct
   (* [x] written to a fresh file, as a value on the disk over it. *)
   let on_disk x =
     let module B = Nx_device.Buffer in
-    let src = elements x and path = temp_file () in
+    let src = elements x and path = Filename.concat (temp_dir ()) "file" in
     let pp = Format.pp_print_string in
     B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
     Nx.of_buffer (Nx.dtype x) (Nx.shape x)

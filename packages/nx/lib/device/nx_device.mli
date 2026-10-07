@@ -365,17 +365,25 @@ module Buffer : sig
       regular file. *)
 
   val create_file : string -> int -> (t, string) result
-  (** [create_file path n] is the file at [path], created, or emptied if it
-      exists, and sized to [n] bytes, as a buffer of [n] [UInt8] elements on
-      {!disk} for reading and writing: {!copy} reads and writes them. Its bytes
-      read as zero until they are written. It names the file as {!of_file} does,
-      and its own writes do not change which file that is. A write reaches the
-      file when {!copy} returns, and the storage once the system flushes the
-      file, which a sync of the file forces.
+  (** [create_file path n] is a new file at [path], sized to [n] bytes, as a
+      buffer of [n] [UInt8] elements on {!disk} for reading and writing: {!copy}
+      reads and writes them. Its bytes read as zero until they are written. The
+      file is created where [path] names nothing, so it is never an existing
+      file or the target of a link at [path]. It names the file as {!of_file}
+      does, and its own writes do not change which file that is. A write reaches
+      the file when {!copy} returns, and its storage once {!flush} returns.
 
-      [Error why] naming [path] if it cannot be created.
+      [Error why] naming [path] if [path] exists or the file cannot be created.
 
       Raises [Invalid_argument] if [n < 0]. *)
+
+  val flush : t -> unit
+  (** [flush b] returns once every write to [b] queued before it, by any device,
+      has completed and its bytes have reached [b]'s file's storage.
+
+      Raises [Invalid_argument] if [b] is not on the {!disk}, and [Sys_error]
+      naming the file if the system cannot flush it or, as {!copy} does, if its
+      path no longer names it. *)
 
   val borrow : device -> t -> (t, string) result
   (** [borrow d b] is a borrowed buffer on [d] over the memory of the buffer [b]

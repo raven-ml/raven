@@ -239,9 +239,8 @@ let parameters =
           equal (list int) [ 0; 4 ] (List.sort compare phases);
           exact (Nx.add x (Nx.mul x x)) (Programs.compiled s y));
       test "a buffer on the disk has phase 0" (fun () ->
-          let path = Filename.temp_file "lower" ".bin" in
+          let path = Filename.concat (temp_dir ()) "file" in
           let b = Result.get_ok (Nx_device.Buffer.create_file path 64) in
-          Sys.remove path;
           equal int 0 (Lower.phase Nx.uint8 b 3));
       test "a parameter binds nothing when traced" (fun () ->
           let s = scope () in
@@ -414,7 +413,8 @@ let kernel_buffers y =
   List.map
     (fun k ->
       List.filter_map
-        (fun u -> if Ops.op u = Op.Param then Some (Shape.max_numel u) else None)
+        (fun u ->
+          if Ops.op u = Op.Param then Some (Shape.max_numel u) else None)
         (Ops.toposort ~calls:Enter k))
     (List.concat_map bodies (Ops.src linear))
 

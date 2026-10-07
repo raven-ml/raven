@@ -3581,6 +3581,13 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Buffer.create_file` creates a new file and returns
+  `Error` if its path exists, where it emptied the file there, following a
+  link. `Nx_device.Buffer.flush` waits for the writes to a file's buffer and
+  forces them to its storage.
+- `Nx_io.save_safetensors` creates its temporary file exclusively and syncs it
+  through its own descriptor: a link put at its name no longer redirects the
+  write or the sync.
 - `nx.metal.device` builds on every system, as `nx.nv.device` and
   `nx.amd.device` do: a program links it anywhere, and off macOS
   `Nx_metal_device.get` refuses, saying Metal exists on macOS only.

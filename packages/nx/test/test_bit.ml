@@ -1121,7 +1121,7 @@ let exact =
          (fun () ->
            let module B = Nx_device.Buffer in
            let size = 65536 in
-           let path = temp_file () in
+           let path = Filename.concat (temp_dir ()) "file" in
            let pp = Format.pp_print_string in
            let file = require_ok ~pp (B.create_file path size) in
            let ones = Nx.full Nx.uint8 [| size |] 0 in

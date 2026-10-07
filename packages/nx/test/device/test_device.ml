@@ -71,6 +71,9 @@ let of_file path =
 let create_file path n =
   match B.create_file path n with Ok b -> b | Error why -> failwith why
 
+(* A path that names nothing, where {!create_file} makes a file. *)
+let new_path () = Filename.concat (temp_dir ()) "file"
+
 (* The function [name] of [binary], which [d] loads. *)
 let program d ~binary ~name =
   match Nx_device.Program.load d ~binary ~name with
@@ -2155,7 +2158,7 @@ let transferred d =
 let test_file_round_trip () =
   let n = (5 lsl 20) + 12345 and at = 4097 in
   let bytes = pattern 3 n in
-  let path = temp_file () in
+  let path = new_path () in
   let file = create_file path (at + n + 3) in
   write (B.view file ~offset:at S.UInt8 n) bytes;
   let on_disk = contents path in
@@ -2175,9 +2178,7 @@ let test_file_staged () =
   let slot = 64 lsl 20 in
   let n = (2 * slot) + (slot / 2) + 12345 and at = 1001 in
   let bytes = pattern 5 n in
-  let file =
-    B.view (create_file (temp_file ()) (at + n)) ~offset:at S.UInt8 n
-  in
+  let file = B.view (create_file (new_path ()) (at + n)) ~offset:at S.UInt8 n in
   let dev = B.create f.dev S.UInt8 n in
   write dev bytes;
   let staged = f.drv.staged in
@@ -2186,7 +2187,7 @@ let test_file_staged () =
   let back = B.create f.dev S.UInt8 n in
   B.copy ~src:file ~dst:back;
   equal ~msg:"slots read into the device" int 6 (f.drv.staged - staged);
-  let other = create_file (temp_file ()) n in
+  let other = create_file (new_path ()) n in
   B.copy ~src:file ~dst:other;
   is_true ~msg:"bytes through the device and back" (read back = bytes);
   is_true ~msg:"bytes from file to file" (read other = bytes)
@@ -2246,7 +2247,7 @@ let test_file_reopened () =
   let b = of_file path in
   evict ();
   equal ~msg:"reopened, the same file" string "old" (read b);
-  let written = create_file (temp_file ()) 3 in
+  let written = create_file (new_path ()) 3 in
   write written "abc";
   evict ();
   write (B.view written ~offset:1 S.UInt8 1) "z";
@@ -2298,12 +2299,42 @@ let disks =
           equal ~msg:"a view" string "world"
             (read (B.view b ~offset:6 S.UInt8 5)));
       test "a new file is zero until a copy writes it, at any offset" (fun () ->
-          let path = temp_file () in
+          let path = new_path () in
           let b = create_file path 10 in
           equal ~msg:"zeros" string (String.make 10 '\000') (read b);
           write (B.view b ~offset:3 S.UInt8 5) "abcde";
           equal string "\000\000\000abcde\000\000" (contents path);
           equal ~msg:"read again" string (contents path) (read (of_file path)));
+      test
+        "a new file is made where its path names nothing, leaving an existing \
+         file and a link's target as they were" (fun () ->
+          let path = file_of "old" in
+          let link = new_path () in
+          Unix.symlink path link;
+          List.iter
+            (fun p ->
+              match B.create_file p 4 with
+              | Ok _ -> failf "%s: created over an existing name" p
+              | Error why ->
+                  equal ~msg:"names the path" string p
+                    (String.sub why 0 (String.length p)))
+            [ path; link ];
+          equal string "old" (contents path));
+      test
+        "a flushed file holds the bytes copied into it, from the host or \
+         through a device's staging" (fun () ->
+          let bytes = pattern 11 ((3 lsl 20) + 17) in
+          let n = String.length bytes in
+          List.iter
+            (fun d ->
+              let src = B.create d S.UInt8 n in
+              write src bytes;
+              let path = new_path () in
+              let file = create_file path n in
+              B.copy ~src ~dst:file;
+              B.flush file;
+              equal ~msg:(Nx_device.name d) string bytes (contents path))
+            [ host; far_one.dev ]);
       test "a view of a file's bytes is of any format, at any byte" (fun () ->
           let bytes = pattern 9 64 in
           let f = B.view (of_file (file_of bytes)) ~offset:3 S.Float32 4 in
@@ -2320,7 +2351,7 @@ let disks =
       test
         "a read counts in DISK's bytes_out and a write in its bytes_in, \
          allocating nothing" (fun () ->
-          let b = create_file (temp_file ()) 8 in
+          let b = create_file (new_path ()) 8 in
           let (i0, o0), (hi0, ho0) = (transferred disk, transferred host) in
           write b "abcdefgh";
           ignore (read (B.view b ~offset:2 S.UInt8 3));
@@ -2643,7 +2674,7 @@ let buffers =
       test
         "a borrow of all of a memory spans it, through a mapping of whole \
          pages, and a borrow of part of it does not" (fun () ->
-          let file = create_file (temp_file ()) 16 in
+          let file = create_file (new_path ()) 16 in
           let on_host = borrow host file in
           let whole = borrow far_one.dev on_host in
           let part = borrow far_one.dev (B.view on_host ~offset:8 S.UInt8 8) in
@@ -3120,7 +3151,9 @@ let refusals =
       raise_ "a vendor's region on DISK" (fun () ->
           Driver.buffer Nx_device.disk unaddressed S.UInt8 1);
       raise_ "a new file of -1 bytes" (fun () ->
-          B.create_file (temp_file ()) (-1));
+          B.create_file (new_path ()) (-1));
+      raise_ "a flush of a buffer apart from the disk" (fun () ->
+          B.flush (B.create host S.UInt8 1));
       error ~sub:"missing" "a file that does not exist, naming it" (fun () ->
           B.of_file (Filename.concat (temp_dir ()) "missing"));
       error ~sub:"not a regular file" "a directory" (fun () ->
@@ -3638,7 +3671,7 @@ let test_submit_refusals () =
   refused ~msg:"no device" [] [];
   refused ~msg:"the host" [ host ] [];
   refused ~msg:"the disk" [ Nx_device.disk ] [];
-  refused ~msg:"a buffer on the disk" [ a ] [ create_file (temp_file ()) 8 ];
+  refused ~msg:"a buffer on the disk" [ a ] [ create_file (new_path ()) 8 ];
   let b = B.create a S.UInt8 8 in
   ignore (consume ~why:"consumed" b);
   refused ~msg:"a dead buffer" [ a ] [ b ];
