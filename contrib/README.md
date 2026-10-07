@@ -4,11 +4,11 @@ Packages built on Raven's core libraries that sit outside the 1.0 commitment.
 Each one is its own dune project with its own version and opam metadata.
 `fehu`, `sowilo` and `ymir` keep their own `CHANGES.md`.
 
-| Package                   | What it does                                    |
-| ------------------------- | ----------------------------------------------- |
-| [**fehu**](fehu/)         | Reinforcement learning environments             |
-| [**sowilo**](sowilo/)     | Differentiable computer vision                  |
-| [**ymir**](ymir/)         | Exact physical units                            |
+| Package                   | What it does                                          |
+| ------------------------- | ----------------------------------------------------- |
+| [**fehu**](fehu/)         | Reinforcement learning environments                   |
+| [**sowilo**](sowilo/)     | Differentiable computer vision                        |
+| [**ymir**](ymir/)         | Astronomy: units, frames, FITS, photometry, cosmology |
 
 ## Policy
 

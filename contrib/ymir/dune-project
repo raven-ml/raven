@@ -25,7 +25,7 @@
  (name ymir)
  (synopsis "Astronomy for OCaml")
  (description
-  "Astronomy over Nx tensors. Exact physical units and quantities: a unit is an exact monomial over primes, pi and named symbols with one canonical text, and a conversion is one correctly rounded multiply, or it raises. The background cosmology: expansion rate, distances, volumes and times of a homogeneous universe, batched, compiled and differentiable.")
+  "Astronomy over Nx tensors: exact units and quantities, celestial frames and directions, FITS files (headers, images, tile compression, tables, world coordinates), maps from pixels to the sky, aperture photometry with exact cell overlaps, and the background cosmology. Every function is a formula of nx operations, so it runs batched, compiled and differentiated.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -48,4 +48,4 @@
     (>= 0.2.0)))
   (thumper :with-test))
  (tags
-  (units physical-quantities astronomy science)))
+  (astronomy units fits cosmology photometry science)))

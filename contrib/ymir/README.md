@@ -1,56 +1,81 @@
 # Ymir
 
-Astronomy for OCaml, built on [Nx](../../packages/nx/): exact physical
-units, and the background cosmology.
-
-`ymir.units` gives a unit as an exact value: a product of primes, π and named
-symbols with rational exponents, kept in one canonical form whose text is its
-identity. `km` and `1e3 m` are one unit, and a conversion is one correctly
-rounded multiply, or it raises. A quantity is a tensor in a unit, a structure
-that `jit`, `vmap`, `scan` and `jvp` carry with no rule of their own.
+Astronomy for OCaml, built on [Nx](../../packages/nx/). Ymir gives tensors
+astronomical meaning: exact units and quantities, celestial frames and
+directions, FITS files, maps from pixels to the sky, aperture photometry on
+images, and the background cosmology. Every function is a formula of nx
+operations, so rune batches, compiles and differentiates it with no rule of its
+own.
 
 ## Quick start
 
 ```ocaml
-open Ymir_units
+open Ymir
 
-let speed = Unit.(kilo metre / second)
-let () = print_endline (Unit.to_string speed)          (* 1e3 m s^-1 *)
+let () =
+  (* Ages of a Planck 2018 universe at four redshifts, in gigayears. *)
+  let planck = Cosmology.planck2018 ~codata:Codata.v2022 Nx.float64 in
+  let z = Nx.create Nx.float64 [| 4 |] [| 0.; 1.; 3.; 1100. |] in
+  let gyr = Unit.giga Units.julian_year in
+  Nx.print (Quantity.value gyr (Cosmology.age planck z));
 
-(* The factor from km/s to m/s, rounded once to float32. *)
-let f = Unit.ratio Nx.float32 speed Unit.(metre / second)   (* 1000. *)
-
-(* Exact SI constants are units: h/k_B stays exact until it is rounded. *)
-let h_over_k = Unit.(planck / boltzmann)
-
-(* A tensor in km/s, read in m/s: one multiply by 1000. *)
-let v = Quantity.v speed (Nx.create Nx.float32 [| 2 |] [| 1.; 2.5 |])
-let v_si = Quantity.value Unit.(metre / second) v
+  (* The angle between two directions, in arcseconds. *)
+  let deg x = Quantity.v Unit.degree (Nx.scalar Nx.float64 x) in
+  let a = Direction.lonlat Frame.icrs ~lon:(deg 10.) ~lat:(deg 20.) in
+  let b = Direction.lonlat Frame.icrs ~lon:(deg 10.001) ~lat:(deg 20.) in
+  Nx.print (Quantity.value Unit.arcsecond (Direction.separation a b))
 ```
 
-## Features
+The [examples](examples/) teach each part on small synthetic data.
 
-- **Exact units**: `Unit.int`, `Unit.decimal`, `Unit.pi`, `Unit.symbol`,
-  `Unit.scoped` and the algebra `*`, `/`, `**`, `root`
-- **Canonical text**: `Unit.to_string` and a strict `Unit.of_string`, a stable
-  format for files and table metadata
-- **Conversion**: `Unit.ratio` rounds the exact factor once to any nx dtype,
-  identically on every platform, and raises on a factor that would be 0,
-  subnormal, overflow or lose integers
-- **The SI**: base and derived units, prefixes from `quecto` to `quetta`, and
-  the exact defining constants, with the radian as a dimension
-- **Quantities**: `Quantity.v`, `value` and `convert`, the algebra `add`,
-  `sub`, `mul`, `div`, `pow`, `root`, `times` and `per`, and payloads of every
-  float, complex and integer dtype; an integer conversion raises rather than
-  wrap
-- **Measured constants**: `Constant.v` reads the published notation
-  `6.67430(15)e-11`, and `Codata.v2018` and `Codata.v2022` hold the CODATA
-  releases; a constant rounds once to the dtype a program asks for
-- **Names**: `Vocabulary.lookup` reads a symbol with an SI prefix (`MJy`),
-  `Vocabulary.spell` and `pp` write a unit with a vocabulary's symbols, and
-  `Vocabulary.si` holds the SI's
-- **Cosmology**: `Cosmology.t`, one record of tensors for flat and curved
-  ΛCDM, wCDM and w0waCDM with radiation and massive neutrinos; the
-  expansion rate, density parameters, distances, volumes and times as fixed
-  Gauss–Legendre sums with a stated error bound, batched, compiled and
-  differentiable in every parameter; and the Planck and WMAP realisations
+## Libraries
+
+- `ymir` is the whole library; `open Ymir` brings every module below into
+  scope.
+- `ymir.units` holds the units alone, for code that needs no astronomy.
+- `ymir.fits` reads and writes FITS files without the rest.
+
+## What's inside
+
+- **Units**: `Unit` is a unit as an exact value, a product of primes, π and
+  named symbols with rational exponents, with one canonical text. A
+  conversion rounds the exact factor once, or raises when the units don't
+  convert. `Quantity` is a tensor in a unit. The SI's units, prefixes and
+  exact constants are built in, `Codata.v2018` and `Codata.v2022` hold the
+  measured constants, and `Vocabulary` spells units with symbols such as
+  `MJy sr^-1`.
+- **Frames and directions**: `Frame` names ICRS, FK5 J2000, Galactic, the
+  J2000 ecliptic and supergalactic, and a frame mismatch is a type error.
+  `Direction` holds batches of directions with their separations, position
+  angles and rotations between frames.
+- **Transforms**: `Transform` maps pixels to the sky as a list of stages
+  (axis order, shift, linear map, TAN and ARC projections) that compose with
+  `>>`, invert, and print back what they read.
+- **Grids, regions and observations**: `Grid` is an image's cells seen
+  through a transform, with each cell's exact area or solid angle. `Region`
+  places circles and annuli on a grid and weighs each cell by its exact
+  covered fraction. `Observation` holds data with variance and validity, and
+  `Observation.integrate` sums it over a region: aperture photometry,
+  differentiable in the aperture's centre and radius.
+- **FITS**: `Fits` reads and writes headers, images (tile compression
+  included), binary and ASCII tables, `BUNIT` and `TUNIT` units, and world
+  coordinates (`Fits.Wcs`). `Fits.observation` reads an image HDU with its
+  error, area and validity as an `Observation`.
+- **Cosmology**: `Cosmology.t` is one record of tensors for flat and curved
+  ΛCDM, wCDM and w0waCDM with radiation and massive neutrinos. Expansion
+  rate, density parameters, distances, volumes and times are fixed
+  Gauss–Legendre sums with a stated error bound (2⁻⁴⁶ relative in float64),
+  batched over models and redshifts. The Planck and WMAP fits are built in.
+
+## Validation
+
+Two results on public data reproduce published ones. They download their
+data, so they run outside `runtest`; `runtest` checks the same paths on
+bundled cutouts and simulated data.
+
+- `test/nircam`: aperture photometry on a JWST NIRCam mosaic agrees with
+  photutils within 10⁻⁶ of the sums, with gradients in the aperture's centre
+  and radius checked against finite differences.
+- `test/pantheon`: fitting Ω_m and Ω_Λ to the Pantheon+ and SH0ES
+  supernovae with their full covariance reproduces Brout et al. (2022),
+  Table 3.

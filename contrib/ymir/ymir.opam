@@ -3,11 +3,11 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Astronomy for OCaml"
 description:
-  "Astronomy over Nx tensors. Exact physical units and quantities: a unit is an exact monomial over primes, pi and named symbols with one canonical text, and a conversion is one correctly rounded multiply, or it raises. The background cosmology: expansion rate, distances, volumes and times of a homogeneous universe, batched, compiled and differentiable."
+  "Astronomy over Nx tensors: exact units and quantities, celestial frames and directions, FITS files (headers, images, tile compression, tables, world coordinates), maps from pixels to the sky, aperture photometry with exact cell overlaps, and the background cosmology. Every function is a formula of nx operations, so it runs batched, compiled and differentiated."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
-tags: ["units" "physical-quantities" "astronomy" "science"]
+tags: ["astronomy" "units" "fits" "cosmology" "photometry" "science"]
 homepage: "https://github.com/raven-ml/raven"
 doc: "https://github.com/raven-ml/raven/tree/main/contrib/ymir"
 bug-reports: "https://github.com/raven-ml/raven/issues"
