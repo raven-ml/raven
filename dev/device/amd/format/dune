@@ -3,6 +3,7 @@
  (libraries device_elf)
  (modules_without_implementation
   aql
+  capability
   code_object
   gpu
   packet
