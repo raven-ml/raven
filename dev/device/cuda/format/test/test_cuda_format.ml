@@ -34,10 +34,10 @@ let test_found () =
 
 let test_alone () =
   let other : Cuda.t Type.Id.t = Type.Id.make () in
-  equal ~msg:"another key of the same type" bool false
-    (Option.is_some (find other [ B (Cuda.key, { Cuda.symbol }) ]));
-  equal ~msg:"the key under another key's binding" bool false
-    (Option.is_some (find Cuda.key [ B (other, { Cuda.symbol }) ]))
+  is_none ~msg:"another key of the same type"
+    (find other [ B (Cuda.key, { Cuda.symbol }) ]);
+  is_none ~msg:"the key under another key's binding"
+    (find Cuda.key [ B (other, { Cuda.symbol }) ])
 
 let () =
   exit
