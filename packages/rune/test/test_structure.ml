@@ -394,6 +394,134 @@ let arithmetic_tests =
         done);
   ]
 
+(* Pairing. A record whose walk reports a case and an integer beside its float
+   tensors, as a record of quantities reports each unit, and carries a counter.
+   The gradient is the vector the structure's [dot] pairs with tangents, so it
+   keeps the reports; a pullback is a tangent map's adjoint under the [dot]s of
+   the parameters and of the result. *)
+
+type tagged = {
+  tag : string;
+  order : int;
+  a : Nx.float64_t;
+  b : Nx.float64_t;
+  count : Nx.int32_t;
+}
+
+module Tagged = struct
+  type _ t = tagged
+
+  let walk c { tag; order; a; b; count } =
+    let open Nx.Ptree.Walk in
+    let order = field c "order" int order in
+    let a =
+      field c "a"
+        (fun c a ->
+          case c tag;
+          tensor c a)
+        a
+    in
+    let b = field c "b" tensor b in
+    let count = field c "count" tensor count in
+    { tag; order; a; b; count }
+end
+
+let tagged = Nx.Ptree.instantiate (module Tagged)
+
+let pp_tagged ppf x =
+  Format.fprintf ppf "@[<v>%s %d@,%a@,%a@]" x.tag x.order Nx.pp x.a Nx.pp x.b
+
+(* Draws [n] values of one tag and order: a point and its directions. *)
+let tagged_gen n =
+  let open Gen in
+  let floats k = array ~size:(constant k) (float_range (-2.) 2.) in
+  with_pp
+    (Format.pp_print_list pp_tagged)
+    (let+ tag = of_list [ "m"; "1e3 m"; "K" ]
+     and+ order = int_range 0 3
+     and+ vs = list ~size:(constant n) (pair (floats 3) (floats 4)) in
+     List.map
+       (fun (a, b) ->
+         {
+           tag;
+           order;
+           a = Nx.create f64 [| 3 |] a;
+           b = Nx.create f64 [| 2; 2 |] b;
+           count = Nx.create Nx.int32 [| 1 |] [| 5l |];
+         })
+       vs)
+
+let objective x =
+  let k = float_of_int x.order in
+  Nx.add
+    (Nx.mul (Nx.sum (Nx.sin x.a)) (Nx.sum (Nx.mul x.b x.b)))
+    (Nx.mul_s (Nx.sum (Nx.mul x.a x.a)) k)
+
+(* A map from the record to a record of another tag, as a function of quantities
+   returns its result in its own unit. *)
+let image x =
+  {
+    x with
+    tag = x.tag ^ "^2";
+    a = Nx.mul (Nx.sin x.a) (Nx.sum x.b);
+    b = Nx.add (Nx.mul x.b x.b) (Nx.mul_s (Nx.sum x.a) (float_of_int x.order));
+  }
+
+let dot = Nx.Ptree.dot tagged f64
+
+let visit =
+  let equal a b =
+    match (a, b) with
+    | Nx.Ptree.Leaf p, Nx.Ptree.Leaf q -> Nx.Ptree.Path.equal p q
+    | Report (p, r), Report (q, s) -> Nx.Ptree.Path.equal p q && r = s
+    | _ -> false
+  in
+  Testable.make ~pp:Nx.Ptree.pp_visit ~equal
+
+(* [magnitude x y] is the sum of the magnitudes of the products [dot x y]
+   adds. *)
+let magnitude x y =
+  let abs = Nx.Ptree.map tagged (fun _ t -> Nx.abs t) in
+  Nx.item [] (dot (abs x) (abs y))
+
+let rounding scale = 1e3 *. epsilon_float *. (1. +. scale)
+
+let pairing_tests =
+  [
+    prop "a gradient paired with a tangent is the derivative along it"
+      (tagged_gen 2) (fun xs ->
+        let x, t = match xs with [ x; t ] -> (x, t) | _ -> assert false in
+        let g = Rune.grad tagged objective x in
+        let _, d = Rune.jvp tagged Nx.Ptree.tensor objective x t in
+        equal
+          (float (rounding (magnitude g t)))
+          (Nx.item [] d)
+          (Nx.item [] (dot g t)));
+    prop "a gradient keeps the parameters' visits, and steps them"
+      (tagged_gen 1) (fun xs ->
+        let x = List.hd xs in
+        let visits = Nx.Ptree.visits tagged in
+        let g = Rune.grad tagged objective x in
+        equal ~msg:"gradient" (list visit) (visits x) (visits g);
+        let step = Nx.Ptree.axpy tagged (scalar (-0.5)) g x in
+        equal ~msg:"step" (list visit) (visits x) (visits step));
+    prop "a pullback is the adjoint of the tangent map under both dots"
+      (tagged_gen 3) (fun xs ->
+        let x, v, u =
+          match xs with [ x; v; u ] -> (x, v, u) | _ -> assert false
+        in
+        let y, jv = Rune.jvp tagged tagged image x v in
+        let _, pb = Rune.vjp tagged tagged image x in
+        let u = { u with tag = y.tag } in
+        let jtu = pb u in
+        equal ~msg:"pullback" (list visit) (Nx.Ptree.visits tagged x)
+          (Nx.Ptree.visits tagged jtu);
+        equal
+          (float (rounding (magnitude u jv +. magnitude jtu v)))
+          (Nx.item [] (dot u jv))
+          (Nx.item [] (dot jtu v)));
+  ]
+
 let () =
   exit
     (run "Rune structures"
@@ -402,4 +530,5 @@ let () =
          group "signatures" signature_tests;
          group "preconditions" precondition_tests;
          group "arithmetic" arithmetic_tests;
+         group "pairing" pairing_tests;
        ])

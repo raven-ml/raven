@@ -86,6 +86,13 @@ val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
     [p] with [params]' dtypes and shapes. Tensors of [params] that do not
     contribute to the result have all-zero gradients.
 
+    The gradient is the value [g] of structure [p] whose {!Nx.Ptree.dot} with
+    every tangent [t] of [params] is the derivative of [f] along [t], as {!jvp}
+    computes it, for real tensors. The pairing is element by element, so [g]
+    keeps [params]' reports (cases, integers, lengths): they fix what each
+    tensor's elements count, and each gradient tensor counts in the same terms
+    as its parameter.
+
     To differentiate with respect to several values, pass them as one:
     [grad Nx.Ptree.(pair p q) (fun (a, b) -> loss a b x) (a0, b0)] is the pair
     of their gradients.
@@ -128,9 +135,10 @@ val value_and_grad_aux :
 val vjp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q * ('q -> 'p)
 (** [vjp p q f params] is [(f params, pullback)]. [pullback cts] is the
     vector-Jacobian product of [f] at [params] against [cts], a value of
-    structure [p], the adjoint of {!jvp} (see {!section-complex}). [cts] has the
-    result's structure [q]: one cotangent per tensor of the result, of that
-    tensor's dtype and shape.
+    structure [p]: the adjoint of {!jvp} under {!Nx.Ptree.dot} on the parameters
+    and on the result (see {!section-complex}). [cts] has the result's structure
+    [q] and reports: one cotangent per tensor of the result, of that tensor's
+    dtype and shape. The pullback's value keeps [params]' reports.
 
     The cotangent of an integer or boolean tensor of the result is checked like
     the others and ignored.
