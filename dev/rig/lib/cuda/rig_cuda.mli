@@ -31,8 +31,9 @@
         work = Copy { src; dst };
       }
     in
-    let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 g [| copy |] in
-    Rig.wait g (Rig.Point.value (Rig.submit s))
+    let s = Rig.Submission.make ~reads:0 ~writes:0 g [| copy |] in
+    Rig.wait g
+      (Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]))
     ]}
 
     {b The CUDA library} ([libcuda]) is loaded at the first call of {!count} or

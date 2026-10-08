@@ -22,8 +22,9 @@
         (fun () -> Rig_metal.open_ 0)
       |> Result.get_ok
     in
-    let s = Rig.Submission.make ~reads:0 ~writes:0 ~waits:0 d [||] in
-    Rig.wait d (Rig.Point.value (Rig.submit s))
+    let s = Rig.Submission.make ~reads:0 ~writes:0 d [||] in
+    Rig.wait d
+      (Rig.Point.value (Rig.submit s ~reads:[||] ~writes:[||] ~waits:[||]))
     ]}
 
     {b Submissions.} Work reaches the device in C, through {!room_entry} and
