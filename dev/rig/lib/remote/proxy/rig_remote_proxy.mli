@@ -188,10 +188,10 @@ val unload : t -> image -> unit
 val word : t -> region
 (** [word d] is [d]'s word: its shadow, eight bytes of this process's memory
     that hold, as an unsigned 64-bit integer in the host's byte order, the last
-    value [v] the agent reported done, or that {!stop} wrote. The receiving
-    thread writes it with release order, after it wrote the bytes of the copies
-    into this process's memory of every value up to [v]. It never decreases and
-    is never freed. *)
+    value [v] the agent reported done. The receiving thread writes [v] with
+    release order, after it wrote the bytes of the copies into this process's
+    memory of every value up to [v]. After {!stop} it takes the last value
+    handed over, as {!stop} states. It never decreases and is never freed. *)
 
 val signaled : t -> int
 (** [signaled d] is the value in [d]'s shadow, read with acquire order. *)
