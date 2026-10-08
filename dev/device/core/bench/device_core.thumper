@@ -35,12 +35,20 @@ floor/bigarray-create-1M	alloc_words	exact	9
 floor/bigarray-create-1M	wall_time	batch=1024	n=20	5.506e-06	5.469e-06 5.477e-06 5.485e-06 5.485e-06 5.486e-06 5.487e-06 5.488e-06 5.496e-06 5.500e-06 5.504e-06 5.507e-06 5.508e-06 5.535e-06 5.539e-06 5.541e-06 5.556e-06 5.571e-06 5.575e-06 5.591e-06 5.693e-06
 floor/bigarray-dropped-1000	alloc_words	exact	9009
 floor/bigarray-dropped-1000	wall_time	batch=8	n=20	6.578e-04	6.555e-04 6.563e-04 6.567e-04 6.567e-04 6.568e-04 6.569e-04 6.569e-04 6.577e-04 6.578e-04 6.578e-04 6.578e-04 6.581e-04 6.583e-04 6.583e-04 6.592e-04 6.596e-04 6.609e-04 6.613e-04 6.673e-04 6.675e-04
+floor/cuda/cost	alloc_words	exact	0
+floor/cuda/cost	wall_time	batch=4096	n=20	1.763e-06	1.756e-06 1.762e-06 1.762e-06 1.762e-06 1.762e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.763e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.764e-06 1.765e-06 1.766e-06
+floor/cuda/release	alloc_words	exact	0
+floor/cuda/release	wall_time	batch=2048	n=20	3.761e-06	3.752e-06 3.754e-06 3.758e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.759e-06 3.761e-06 3.761e-06 3.762e-06 3.762e-06 3.762e-06 3.763e-06 3.763e-06 3.763e-06 3.765e-06 3.766e-06 3.769e-06
 floor/memcpy-4K	alloc_words	exact	0
 floor/memcpy-4K	wall_time	batch=262144	n=20	2.860e-08	2.857e-08 2.857e-08 2.857e-08 2.857e-08 2.858e-08 2.858e-08 2.858e-08 2.859e-08 2.859e-08 2.859e-08 2.861e-08 2.862e-08 2.862e-08 2.863e-08 2.864e-08 2.866e-08 2.866e-08 2.869e-08 2.870e-08 2.877e-08
 floor/memcpy-64M	alloc_words	exact	0
 floor/memcpy-64M	wall_time	batch=1	n=20	1.269e-03	1.243e-03 1.249e-03 1.254e-03 1.254e-03 1.256e-03 1.260e-03 1.260e-03 1.264e-03 1.267e-03 1.268e-03 1.269e-03 1.270e-03 1.276e-03 1.279e-03 1.280e-03 1.281e-03 1.282e-03 1.283e-03 1.284e-03 1.403e-03
 floor/mutex-section	alloc_words	exact	0
 floor/mutex-section	wall_time	batch=524288	n=20	1.124e-08	1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.123e-08 1.124e-08 1.124e-08 1.124e-08 1.124e-08 1.124e-08 1.124e-08 1.125e-08 1.125e-08 1.126e-08 1.127e-08 1.130e-08 1.149e-08
+floor/nv/cost	alloc_words	exact	0
+floor/nv/cost	wall_time	batch=8192	n=20	7.879e-07	7.842e-07 7.870e-07 7.872e-07 7.873e-07 7.874e-07 7.875e-07 7.875e-07 7.878e-07 7.878e-07 7.878e-07 7.879e-07 7.879e-07 7.879e-07 7.880e-07 7.880e-07 7.882e-07 7.883e-07 7.885e-07 7.885e-07 7.886e-07
+floor/nv/release	alloc_words	exact	0
+floor/nv/release	wall_time	batch=2048	n=20	3.393e-06	3.386e-06 3.388e-06 3.388e-06 3.388e-06 3.390e-06 3.391e-06 3.391e-06 3.391e-06 3.393e-06 3.393e-06 3.393e-06 3.393e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.394e-06 3.395e-06 3.397e-06
 floor/polled/cost	alloc_words	exact	0
 floor/polled/cost	wall_time	batch=262144	n=20	2.897e-08	2.861e-08 2.866e-08 2.869e-08 2.876e-08 2.880e-08 2.882e-08 2.888e-08 2.888e-08 2.888e-08 2.895e-08 2.898e-08 2.901e-08 2.908e-08 2.913e-08 2.933e-08 2.948e-08 2.949e-08 2.949e-08 2.951e-08 2.967e-08
 floor/polled/pipelined-100	alloc_words	exact	0
@@ -61,6 +69,14 @@ replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=16384	n=20	3.528e-07	3.493e-07 3.500e-07 3.506e-07 3.508e-07 3.508e-07 3.513e-07 3.517e-07 3.519e-07 3.522e-07 3.527e-07 3.530e-07 3.537e-07 3.537e-07 3.541e-07 3.542e-07 3.548e-07 3.552e-07 3.556e-07 3.556e-07 3.761e-07
 replay/polled/pipelined-100	alloc_words	exact	0
 replay/polled/pipelined-100	wall_time	batch=256	n=20	3.560e-05	3.536e-05 3.539e-05 3.551e-05 3.552e-05 3.554e-05 3.555e-05 3.556e-05 3.556e-05 3.557e-05 3.559e-05 3.560e-05 3.561e-05 3.567e-05 3.568e-05 3.570e-05 3.574e-05 3.583e-05 3.589e-05 3.615e-05 3.619e-05
+submit/cuda/cost	alloc_words	exact	0
+submit/cuda/cost	wall_time	batch=4096	n=20	1.732e-06	1.729e-06 1.730e-06 1.731e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.732e-06 1.733e-06 1.733e-06 1.733e-06 1.733e-06 1.733e-06 1.734e-06
+submit/cuda/empty	alloc_words	exact	0
+submit/cuda/empty	wall_time	batch=2048	n=20	3.969e-06	3.962e-06 3.963e-06 3.963e-06 3.964e-06 3.964e-06 3.965e-06 3.968e-06 3.968e-06 3.968e-06 3.969e-06 3.969e-06 3.969e-06 3.971e-06 3.971e-06 3.971e-06 3.973e-06 3.974e-06 3.974e-06 3.978e-06 4.026e-06
+submit/nv/cost	alloc_words	exact	0
+submit/nv/cost	wall_time	batch=8192	n=20	7.776e-07	7.748e-07 7.766e-07 7.772e-07 7.774e-07 7.775e-07 7.775e-07 7.775e-07 7.776e-07 7.776e-07 7.776e-07 7.777e-07 7.777e-07 7.778e-07 7.778e-07 7.778e-07 7.778e-07 7.779e-07 7.780e-07 7.780e-07 7.781e-07
+submit/nv/empty	alloc_words	exact	0
+submit/nv/empty	wall_time	batch=2048	n=20	3.498e-06	3.493e-06 3.493e-06 3.495e-06 3.495e-06 3.495e-06 3.495e-06 3.496e-06 3.497e-06 3.498e-06 3.498e-06 3.499e-06 3.499e-06 3.500e-06 3.501e-06 3.501e-06 3.501e-06 3.502e-06 3.502e-06 3.503e-06 3.564e-06
 submit/polled/cost	alloc_words	exact	0
 submit/polled/cost	wall_time	batch=131072	n=20	5.657e-08	5.642e-08 5.642e-08 5.645e-08 5.645e-08 5.645e-08 5.648e-08 5.649e-08 5.649e-08 5.654e-08 5.656e-08 5.658e-08 5.669e-08 5.672e-08 5.672e-08 5.675e-08 5.679e-08 5.684e-08 5.699e-08 5.704e-08 5.773e-08
 submit/polled/empty	alloc_words	exact	0
@@ -113,6 +129,10 @@ floor/memcpy-4K	alloc_words	exact	0
 floor/memcpy-4K	wall_time	batch=131072	n=20	5.916e-08	5.808e-08 5.825e-08 5.834e-08 5.836e-08 5.849e-08 5.851e-08 5.863e-08 5.879e-08 5.902e-08 5.910e-08 5.922e-08 5.927e-08 5.939e-08 5.952e-08 5.974e-08 6.085e-08 6.681e-08 6.872e-08 7.210e-08 7.566e-08
 floor/memcpy-64M	alloc_words	exact	0
 floor/memcpy-64M	wall_time	batch=1	n=20	1.417e-03	1.383e-03 1.393e-03 1.397e-03 1.401e-03 1.404e-03 1.404e-03 1.407e-03 1.407e-03 1.409e-03 1.414e-03 1.420e-03 1.420e-03 1.426e-03 1.426e-03 1.426e-03 1.446e-03 1.456e-03 1.488e-03 1.560e-03 1.575e-03
+floor/metal/cost	alloc_words	exact	0
+floor/metal/cost	wall_time	batch=2048	n=20	2.768e-06	2.475e-06 2.490e-06 2.499e-06 2.516e-06 2.525e-06 2.683e-06 2.699e-06 2.718e-06 2.752e-06 2.764e-06 2.772e-06 2.779e-06 2.796e-06 2.831e-06 2.837e-06 2.859e-06 2.942e-06 2.945e-06 3.128e-06 3.718e-06
+floor/metal/release	alloc_words	exact	0
+floor/metal/release	wall_time	batch=256	n=20	2.006e-05	6.604e-06 7.134e-06 7.924e-06 8.419e-06 1.095e-05 1.195e-05 1.427e-05 1.662e-05 1.980e-05 2.002e-05 2.009e-05 2.015e-05 2.034e-05 2.056e-05 2.085e-05 2.089e-05 2.093e-05 2.172e-05 2.178e-05 2.209e-05
 floor/mutex-section	alloc_words	exact	0
 floor/mutex-section	wall_time	batch=524288	n=20	1.588e-08	1.579e-08 1.580e-08 1.580e-08 1.582e-08 1.583e-08 1.583e-08 1.584e-08 1.585e-08 1.585e-08 1.587e-08 1.589e-08 1.593e-08 1.596e-08 1.597e-08 1.599e-08 1.602e-08 1.608e-08 1.612e-08 1.628e-08 1.654e-08
 floor/polled/cost	alloc_words	exact	0
@@ -135,6 +155,10 @@ replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=16384	n=20	5.788e-07	5.660e-07 5.718e-07 5.762e-07 5.767e-07 5.773e-07 5.777e-07 5.778e-07 5.780e-07 5.786e-07 5.787e-07 5.790e-07 5.792e-07 5.792e-07 5.797e-07 5.802e-07 5.804e-07 5.808e-07 5.811e-07 5.812e-07 5.822e-07
 replay/polled/pipelined-100	alloc_words	exact	0
 replay/polled/pipelined-100	wall_time	batch=128	n=20	5.795e-05	5.665e-05 5.689e-05 5.701e-05 5.732e-05 5.771e-05 5.781e-05 5.787e-05 5.790e-05 5.790e-05 5.795e-05 5.795e-05 5.798e-05 5.801e-05 5.801e-05 5.808e-05 5.813e-05 5.821e-05 5.829e-05 5.836e-05 5.850e-05
+submit/metal/cost	alloc_words	batch=2048	n=20	1.389e+00	1.056e+00 1.104e+00 1.121e+00 1.199e+00 1.213e+00 1.302e+00 1.319e+00 1.374e+00 1.377e+00 1.377e+00 1.401e+00 1.428e+00 1.497e+00 1.521e+00 1.527e+00 1.582e+00 1.698e+00 1.743e+00 1.968e+00 2.043e+00
+submit/metal/cost	wall_time	batch=2048	n=20	3.218e-06	2.956e-06 2.961e-06 3.026e-06 3.039e-06 3.065e-06 3.073e-06 3.147e-06 3.189e-06 3.193e-06 3.194e-06 3.242e-06 3.512e-06 3.516e-06 3.574e-06 3.598e-06 3.667e-06 3.962e-06 4.052e-06 4.136e-06 4.644e-06
+submit/metal/empty	alloc_words	exact	7
+submit/metal/empty	wall_time	batch=512	n=20	1.669e-05	1.430e-05 1.455e-05 1.531e-05 1.550e-05 1.603e-05 1.616e-05 1.645e-05 1.660e-05 1.664e-05 1.665e-05 1.673e-05 1.673e-05 1.685e-05 1.687e-05 1.716e-05 1.743e-05 1.801e-05 1.868e-05 1.955e-05 2.224e-05
 submit/polled/cost	alloc_words	exact	0
 submit/polled/cost	wall_time	batch=65536	n=20	8.957e-08	8.949e-08 8.949e-08 8.949e-08 8.950e-08 8.952e-08 8.953e-08 8.954e-08 8.956e-08 8.957e-08 8.957e-08 8.957e-08 8.962e-08 8.964e-08 8.969e-08 8.972e-08 8.973e-08 8.974e-08 8.975e-08 8.975e-08 9.055e-08
 submit/polled/empty	alloc_words	exact	0
@@ -172,6 +196,10 @@ copy/memory-4K	alloc_words	exact	0
 copy/memory-4K	wall_time	batch=65536	n=20	9.198e-08	9.113e-08 9.119e-08 9.125e-08 9.155e-08 9.185e-08 9.191e-08 9.192e-08 9.193e-08 9.197e-08 9.197e-08 9.198e-08 9.199e-08 9.200e-08 9.202e-08 9.204e-08 9.204e-08 9.206e-08 9.206e-08 9.276e-08 9.515e-08
 drain/dropped-1000	alloc_words	exact	75161
 drain/dropped-1000	wall_time	batch=16	n=20	6.166e-04	6.121e-04 6.123e-04 6.131e-04 6.134e-04 6.135e-04 6.138e-04 6.143e-04 6.155e-04 6.159e-04 6.165e-04 6.167e-04 6.200e-04 6.211e-04 6.214e-04 6.222e-04 6.237e-04 6.363e-04 6.608e-04 6.724e-04 6.768e-04
+floor/amd/cost	alloc_words	exact	0
+floor/amd/cost	wall_time	batch=4096	n=20	1.405e-06	1.374e-06 1.381e-06 1.381e-06 1.382e-06 1.383e-06 1.389e-06 1.395e-06 1.395e-06 1.402e-06 1.405e-06 1.406e-06 1.408e-06 1.411e-06 1.421e-06 1.423e-06 1.432e-06 1.437e-06 1.441e-06 1.479e-06 1.481e-06
+floor/amd/release	alloc_words	exact	0
+floor/amd/release	wall_time	batch=512	n=20	1.458e-05	1.433e-05 1.436e-05 1.440e-05 1.440e-05 1.441e-05 1.442e-05 1.442e-05 1.444e-05 1.453e-05 1.453e-05 1.462e-05 1.469e-05 1.474e-05 1.480e-05 1.481e-05 1.483e-05 1.483e-05 1.484e-05 1.485e-05 1.489e-05
 floor/atomic-cas-2	alloc_words	exact	0
 floor/atomic-cas-2	wall_time	batch=2097152	n=20	4.602e-09	4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.601e-09 4.602e-09 4.602e-09 4.602e-09 4.602e-09 4.603e-09 4.603e-09 4.604e-09 4.604e-09 4.605e-09 4.606e-09 4.608e-09 4.614e-09 4.616e-09 4.625e-09
 floor/bigarray-collected-64M	alloc_words	exact	9
@@ -208,6 +236,10 @@ replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=8192	n=20	6.477e-07	6.460e-07 6.461e-07 6.461e-07 6.462e-07 6.462e-07 6.469e-07 6.476e-07 6.476e-07 6.477e-07 6.477e-07 6.477e-07 6.478e-07 6.478e-07 6.478e-07 6.479e-07 6.479e-07 6.480e-07 6.483e-07 6.485e-07 6.490e-07
 replay/polled/pipelined-100	alloc_words	exact	0
 replay/polled/pipelined-100	wall_time	batch=128	n=20	6.376e-05	6.372e-05 6.373e-05 6.373e-05 6.374e-05 6.374e-05 6.375e-05 6.375e-05 6.375e-05 6.375e-05 6.376e-05 6.376e-05 6.376e-05 6.377e-05 6.377e-05 6.377e-05 6.410e-05 6.442e-05 6.443e-05 6.458e-05 6.480e-05
+submit/amd/cost	alloc_words	exact	0
+submit/amd/cost	wall_time	batch=4096	n=20	1.346e-06	1.295e-06 1.298e-06 1.309e-06 1.315e-06 1.315e-06 1.320e-06 1.332e-06 1.333e-06 1.343e-06 1.346e-06 1.347e-06 1.357e-06 1.357e-06 1.357e-06 1.364e-06 1.366e-06 1.373e-06 1.374e-06 1.379e-06 1.379e-06
+submit/amd/empty	alloc_words	exact	0
+submit/amd/empty	wall_time	batch=512	n=20	1.481e-05	1.457e-05 1.461e-05 1.465e-05 1.469e-05 1.470e-05 1.471e-05 1.472e-05 1.475e-05 1.478e-05 1.479e-05 1.483e-05 1.483e-05 1.483e-05 1.483e-05 1.484e-05 1.484e-05 1.484e-05 1.485e-05 1.486e-05 1.489e-05
 submit/polled/cost	alloc_words	exact	0
 submit/polled/cost	wall_time	batch=65536	n=20	9.931e-08	9.926e-08 9.927e-08 9.928e-08 9.929e-08 9.929e-08 9.930e-08 9.930e-08 9.930e-08 9.931e-08 9.931e-08 9.932e-08 9.932e-08 9.933e-08 9.934e-08 9.935e-08 9.935e-08 9.936e-08 9.937e-08 9.939e-08 1.007e-07
 submit/polled/empty	alloc_words	exact	0
