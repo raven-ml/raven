@@ -45,6 +45,12 @@ let read_mode = 0
 let write_mode = 1
 let create_mode = 2
 
+(* [why code] is what the failure [code] of an open says. *)
+let why code =
+  if code = not_regular then "not a regular file"
+  else if code = too_many then "too many open files"
+  else error code
+
 (* Files *)
 
 (* A file is named by its path and its identity, bytes that name it exactly and
@@ -151,8 +157,7 @@ let reopen f =
   | 0, fd, _, _ ->
       close fd;
       sys_error f "the path names another file since its buffers opened it"
-  | code, _, _, _ when code = too_many -> sys_error f "too many open files"
-  | code, _, _, _ -> sys_error f (error code)
+  | code, _, _, _ -> sys_error f (why code)
 
 let pin f =
   Mutex.protect lock @@ fun () ->
@@ -246,11 +251,7 @@ let open_file path mode n =
         admit f fd;
         rest f;
         Ok f
-    | code, _, _, _ when code = not_regular ->
-        Error (strf "%s: not a regular file" path)
-    | code, _, _, _ when code = too_many ->
-        Error (strf "%s: too many open files" path)
-    | code, _, _, _ -> Error (strf "%s: %s" path (error code))
+    | code, _, _, _ -> Error (strf "%s: %s" path (why code))
   in
   if String.contains path '\000' then
     Error (strf "%s: a path has no NUL byte" path)
