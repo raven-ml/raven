@@ -293,6 +293,11 @@ val part :
       keeps the two ranges apart: a copy between overlapping ranges writes
       undefined bytes.
 
+    No part writes a timeline word, [g]'s or another device's: only the devices'
+    streams write their words, and a word the work wrote could move backwards or
+    claim work that has not completed. Nothing checks it, since a fill can store
+    anywhere.
+
     Raises [Invalid_argument] if [queue] is not a queue of [g], if [w] is
     [`Words _], which names ring words a CUDA device has not, if [units] or
     [bytes] is not [0], if a copy's range lies outside its region, if a region
