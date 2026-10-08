@@ -29,6 +29,10 @@
 /* A slot older than this is rewritten from the host before it is used. */
 #define SLOT_STALE (UINT64_C(1) << 31)
 
+/* AQL packets: 16 words, the first of which holds the header (hsa.h). */
+#define AQL_WORDS 16
+#define AQL_INVALID 1 /* HSA_PACKET_TYPE_INVALID */
+
 #define LOW32(v) ((uint32_t)((v) & 0xffffffffu))
 
 static uint64_t align_up(uint64_t n, uint64_t a) { return (n + a - 1) / a * a; }
@@ -52,36 +56,72 @@ static uint64_t hole_value(const struct device_amd_hole *h,
   return v;
 }
 
-/* Places [n] words on [q]: on a PM4 ring they wrap; on an SDMA ring they
-   never do, and the ring's end is zeroed when they do not fit before it. */
-static void put_words(struct device_amd_ring *q, const uint32_t *w, size_t n) {
-  uint64_t at = q->put & (q->size - 1);
-  if (q->sdma && at + n > q->size) {
-    for (uint64_t i = at; i < q->size; i++) q->words[i] = 0;
-    q->put += q->size - at;
-    at = 0;
-  }
-  for (size_t i = 0; i < n; i++) q->words[(at + i) & (q->size - 1)] = w[i];
-  q->put += n;
-}
-
-static void emit(struct device_amd *d, struct device_amd_ring *q, int t,
-                 uint64_t a0, uint64_t a1, uint64_t a2) {
+/* Template [t]'s words in [w], its holes filled from [args]: their count. */
+static int patch(const struct device_amd *d, int t, const uint64_t *args,
+                 uint32_t *w) {
   const struct device_amd_template *tp = &d->templates[t];
-  uint64_t args[3] = {a0, a1, a2};
-  uint32_t w[DEVICE_AMD_TEMPLATE_WORDS];
-  memcpy(w, tp->words, sizeof w);
+  memcpy(w, tp->words, sizeof tp->words);
   for (int i = 0; i < tp->nholes; i++) {
     const struct device_amd_hole *h = &tp->holes[i];
     uint64_t v = hole_value(h, args);
     w[h->at] = (uint32_t)v;
     if (h->wide == 2) w[h->at + 1] = (uint32_t)(v >> 32);
   }
-  put_words(q, w, (size_t)tp->n);
+  return tp->n;
 }
 
 static int words_of(const struct device_amd *d, int t) {
   return d->templates[t].n;
+}
+
+/* Places [n] words on [q]: on a PM4 ring they wrap; on an SDMA ring they
+   never do, and the ring's end is zeroed when they do not fit before it; on
+   an AQL ring each packet's first word is stored last, with release order,
+   since the queue may read a packet as soon as its header is valid. */
+static void put_words(struct device_amd_ring *q, const uint32_t *w, size_t n) {
+  uint64_t mask = q->size - 1, at = q->put & mask;
+  if (q->kind == RING_SDMA && at + n > q->size) {
+    for (uint64_t i = at; i < q->size; i++) q->words[i] = 0;
+    q->put += q->size - at;
+    at = 0;
+  }
+  if (q->kind == RING_AQL)
+    for (size_t p = 0; p < n; p += AQL_WORDS) {
+      for (size_t i = 1; i < AQL_WORDS; i++)
+        q->words[(at + p + i) & mask] = w[p + i];
+      __atomic_store_n(&q->words[(at + p) & mask], w[p], __ATOMIC_RELEASE);
+    }
+  else
+    for (size_t i = 0; i < n; i++) q->words[(at + i) & mask] = w[i];
+  q->put += n;
+}
+
+/* Places template [t] on [q]. On an AQL ring the writer's PM4 words gather
+   in the segment, from ib_at, until [flush] places them as one packet. */
+static void emit(struct device_amd *d, struct device_amd_ring *q, int t,
+                 uint64_t a0, uint64_t a1, uint64_t a2) {
+  uint64_t args[3] = {a0, a1, a2};
+  uint32_t w[DEVICE_AMD_TEMPLATE_WORDS];
+  int n = patch(d, t, args, w);
+  if (q->kind != RING_AQL) {
+    put_words(q, w, (size_t)n);
+    return;
+  }
+  struct device_amd_segment *g = &d->segment;
+  if (d->ib_n == 0) d->ib_at = g->put;
+  memcpy(g->host + (d->ib_at + 4 * d->ib_n) % g->size, w, 4 * (size_t)n);
+  d->ib_n += (size_t)n;
+}
+
+/* Places the PM4 words gathered for an AQL ring as one indirect buffer. */
+static void flush(struct device_amd *d, struct device_amd_ring *q) {
+  if (q->kind != RING_AQL || d->ib_n == 0) return;
+  struct device_amd_segment *g = &d->segment;
+  uint64_t args[3] = {g->gpu + d->ib_at % g->size, d->ib_n, 0};
+  uint32_t w[DEVICE_AMD_TEMPLATE_WORDS];
+  put_words(q, w, (size_t)patch(d, A_IB, args, w));
+  g->put = d->ib_at + align_up(4 * d->ib_n, SEGMENT_ALIGN);
+  d->ib_n = 0;
 }
 
 /* Room */
@@ -98,7 +138,8 @@ static uint64_t reclaim(struct device_amd_marks *m, uint64_t free,
 }
 
 static void mark(struct device_amd_marks *m, uint64_t v, uint64_t end) {
-  m->at[(m->head + m->count) % DEVICE_AMD_MARKS] = (struct device_amd_mark){v, end};
+  m->at[(m->head + m->count) % DEVICE_AMD_MARKS] =
+      (struct device_amd_mark){v, end};
   m->count++;
 }
 
@@ -107,36 +148,49 @@ static uint64_t copies(const struct device_amd *d, uint64_t bytes) {
 }
 
 /* The words a submission of [parts] places on each queue, at most, with
-   DEVICE_AMD_WAITS waits, and the segment bytes it takes. */
+   DEVICE_AMD_WAITS waits, and the bytes it takes from the segment in one
+   run: its fills', and on an AQL ring the writer's own PM4 words, each
+   indirect buffer of them aligned. */
 static void need(const struct device_amd *d, const struct nx_part *p, int n,
                  uint64_t *words, uint64_t *bytes) {
   int c = DEVICE_AMD_COMPUTE, s = DEVICE_AMD_COPY;
   uint64_t slot_wait_c = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE);
-  words[c] = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE) +
-             DEVICE_AMD_WAITS * words_of(d, T_WAIT64) + words_of(d, T_SIGNAL) +
-             slot_wait_c + words_of(d, T_RELEASE);
-  words[s] = 2 * words_of(d, S_POLL) + words_of(d, S_POLL) +
-             words_of(d, S_FENCE) + words_of(d, S_TRAP);
+  uint64_t pm4 = words_of(d, T_WAIT) + words_of(d, T_ACQUIRE) +
+                 DEVICE_AMD_SCRATCH_WRITES * words_of(d, T_WRITE) +
+                 DEVICE_AMD_WAITS * words_of(d, T_WAIT64) +
+                 words_of(d, T_SIGNAL) + slot_wait_c + words_of(d, T_RELEASE);
+  uint64_t parts = 0, flushes = 2;
+  words[s] = 3 * words_of(d, S_POLL) + words_of(d, S_FENCE) +
+             words_of(d, S_TRAP);
   *bytes = SEGMENT_ALIGN;
   for (int i = 0; i < n; i++) {
     uint64_t w = p[i].words ? p[i].n
                  : p[i].fill ? p[i].ring_units
                              : copies(d, p[i].copy_bytes) * words_of(d, S_COPY);
-    if (p[i].queue == c)
-      words[c] += w + words_of(d, T_FLUSH) + words_of(d, T_SIGNAL) +
-                  (uint64_t)p[i].nafter * slot_wait_c;
-    else
+    if (p[i].queue == c) {
+      parts += w;
+      pm4 += words_of(d, T_FLUSH) + words_of(d, T_SIGNAL) +
+             (uint64_t)p[i].nafter * slot_wait_c;
+      flushes++;
+    } else
       words[s] += w + words_of(d, S_FENCE) +
                   (uint64_t)p[i].nafter * words_of(d, S_POLL);
     *bytes += align_up(p[i].segment_bytes, SEGMENT_ALIGN);
   }
+  if (d->rings[c].kind != RING_AQL) words[c] = pm4 + parts;
+  else {
+    words[c] = flushes * words_of(d, A_IB) + parts;
+    *bytes += 4 * pm4 + flushes * SEGMENT_ALIGN;
+  }
 }
 
 /* Whether a part is one the device runs. */
-static int runs(const struct nx_part *p, int i) {
+static int runs(const struct device_amd *d, const struct nx_part *p, int i) {
   if (p->queue != DEVICE_AMD_COMPUTE && p->queue != DEVICE_AMD_COPY) return 0;
   if (is_copy(p) && p->queue != DEVICE_AMD_COPY) return 0;
   if (p->words && p->fill) return 0;
+  if (p->words && d->rings[p->queue].kind == RING_AQL && p->n % AQL_WORDS)
+    return 0;
   for (int j = 0; j < p->nafter; j++)
     if (p->after[j] < 0 || p->after[j] >= i) return 0;
   return 1;
@@ -146,7 +200,7 @@ int device_amd_room(void *self, const struct nx_part *parts, int n) {
   struct device_amd *d = self;
   if (n > DEVICE_AMD_PARTS) return NX_NEVER;
   for (int i = 0; i < n; i++)
-    if (!runs(&parts[i], i)) return NX_NEVER;
+    if (!runs(d, &parts[i], i)) return NX_NEVER;
   uint64_t words[DEVICE_AMD_QUEUES], bytes;
   need(d, parts, n, words, &bytes);
   struct device_amd_ring *c = &d->rings[DEVICE_AMD_COMPUTE];
@@ -173,6 +227,7 @@ int device_amd_room(void *self, const struct nx_part *parts, int n) {
 int device_amd_place(void *queue, const uint32_t *words, size_t n) {
   struct device_amd_writer *w = queue;
   if (w->q->put + n > w->ring_end) return 1;
+  if (w->q->kind == RING_AQL && n % AQL_WORDS) return 3;
   put_words(w->q, words, n);
   return 0;
 }
@@ -196,13 +251,28 @@ struct submission {
   struct device_amd *d;
   uint64_t v;
   int used[DEVICE_AMD_QUEUES];
-  int last[DEVICE_AMD_QUEUES];   /* the queue's last part, or -1 */
+  int last[DEVICE_AMD_QUEUES]; /* the queue's last part, or -1 */
   int nsignalled;
   int slot[DEVICE_AMD_SLOTS];
 };
 
 static uint64_t slot_gpu(const struct device_amd *d, int i) {
   return d->slots_gpu + 8 * (uint64_t)i;
+}
+
+/* The pending writes of a new AQL scratch to the queue's descriptor, placed
+   once, by the queue, between submissions. */
+static void scratch(struct submission *s, struct device_amd_ring *r) {
+  struct device_amd *d = s->d;
+  int idle = 0;
+  if (!atomic_load_explicit(&d->scratch_ready, memory_order_acquire) ||
+      !atomic_compare_exchange_strong(&d->scratch_lock, &idle, 1))
+    return;
+  for (int i = 0; i < d->scratch_n; i++)
+    emit(d, r, T_WRITE, d->scratch_at[i], d->scratch_value[i], 0);
+  atomic_store_explicit(&d->scratch_ready, 0, memory_order_relaxed);
+  atomic_store_explicit(&d->scratch_taken, s->v, memory_order_release);
+  atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);
 }
 
 /* Places the queue's prefix once per submission: its own wait for v-1 or
@@ -217,6 +287,7 @@ static void enter(struct submission *s, int q, const struct nx_wait *waits,
     if (r->released == s->v - 1) emit(d, r, T_FLUSH, 0, 0, 0);
     else emit(d, r, T_WAIT, d->word_gpu, s->v - 1, 0);
     emit(d, r, T_ACQUIRE, 0, 0, 0);
+    scratch(s, r);
     for (int i = 0; i < nwaits; i++)
       emit(d, r, T_WAIT64, waits[i].at, waits[i].value, 0);
     if (nwaits > 0 && copy_parts) {
@@ -261,8 +332,10 @@ static void copy(struct submission *s, const struct nx_part *p) {
 static void release(struct submission *s, int q) {
   struct device_amd *d = s->d;
   struct device_amd_ring *r = &d->rings[q];
-  if (q == DEVICE_AMD_COMPUTE) emit(d, r, T_RELEASE, d->word_gpu, s->v, 0);
-  else {
+  if (q == DEVICE_AMD_COMPUTE) {
+    emit(d, r, T_RELEASE, d->word_gpu, s->v, 0);
+    flush(d, r);
+  } else {
     emit(d, r, S_FENCE, d->word_gpu, s->v, 0);
     emit(d, r, S_TRAP, 0, 0, 0);
   }
@@ -285,10 +358,12 @@ static void hand_over(struct submission *s) {
     struct device_amd_ring *r = &d->rings[q];
     if (!s->used[q]) continue;
     mark(&r->marks, s->v, r->put);
-    uint64_t at = r->sdma ? 4 * r->put : r->put;
+    uint64_t at = r->kind == RING_SDMA  ? 4 * r->put
+                  : r->kind == RING_AQL ? r->put / AQL_WORDS
+                                        : r->put;
     *r->write = at;
     device_amd_barrier();
-    *r->doorbell = at;
+    *r->doorbell = r->kind == RING_AQL ? at - 1 : at;
   }
 }
 
@@ -303,14 +378,23 @@ static void refresh_slot(struct device_amd *d, uint64_t v) {
 }
 
 /* After a fill failed: drops every word placed for v and places only v's
-   release, after every earlier value, on compute. */
+   release, after every earlier value, on compute. On an AQL ring the
+   dropped packets keep valid headers past the write position, which the
+   queue may read: each gets the invalid header type. Bytes the fill took
+   stay v's, and return once the word reaches v. */
 static int fail(struct submission *s, int part, int code) {
   struct device_amd *d = s->d;
   for (int q = 0; q < DEVICE_AMD_QUEUES; q++) {
-    d->rings[q].put = d->rings[q].start;
+    struct device_amd_ring *r = &d->rings[q];
+    if (r->kind == RING_AQL)
+      for (uint64_t p = r->start; p < r->put; p += AQL_WORDS)
+        __atomic_store_n(&r->words[p & (r->size - 1)], AQL_INVALID,
+                         __ATOMIC_RELEASE);
+    r->put = r->start;
     s->used[q] = 0;
   }
   s->nsignalled = 0;
+  d->ib_n = 0;
   snprintf(d->failure_text, sizeof d->failure_text,
            "a fill on %s failed with %d",
            part == DEVICE_AMD_COMPUTE ? "COMPUTE:0" : "COPY:0", code);
@@ -347,16 +431,17 @@ int device_amd_submit(void *self, uint64_t v, const struct nx_wait *waits,
   int r = nparts > 0 ? parts[nparts - 1].queue : DEVICE_AMD_COMPUTE;
   if (r == DEVICE_AMD_COPY && LOW32(v) == 0) r = DEVICE_AMD_COMPUTE;
   refresh_slot(d, v);
-  for (int q = 0; q < DEVICE_AMD_QUEUES; q++) d->rings[q].start = d->rings[q].put;
+  for (int q = 0; q < DEVICE_AMD_QUEUES; q++)
+    d->rings[q].start = d->rings[q].put;
 
   /* The submission's segment bytes lie in one run, which never wraps. */
+  uint64_t words[DEVICE_AMD_QUEUES], bytes;
+  need(d, parts, nparts, words, &bytes);
   struct device_amd_segment *g = &d->segment;
-  uint64_t bytes = 0;
-  for (int i = 0; i < nparts; i++)
-    bytes += align_up(parts[i].segment_bytes, SEGMENT_ALIGN);
   if (g->put % g->size + bytes > g->size) g->put += g->size - g->put % g->size;
   g->start = g->put;
 
+  struct device_amd_ring *compute = &d->rings[DEVICE_AMD_COMPUTE];
   if (nwaits > 0) enter(&s, DEVICE_AMD_COMPUTE, waits, nwaits, copy_parts);
   int placed_compute = 0;
   for (int i = 0; i < nparts; i++) {
@@ -368,10 +453,12 @@ int device_amd_submit(void *self, uint64_t v, const struct nx_wait *waits,
       emit(d, ring, T_FLUSH, 0, 0, 0);
     for (int j = 0; j < p->nafter; j++)
       if (parts[p->after[j]].queue != q) wait_slot(&s, q, p->after[j]);
+    flush(d, ring);
     if (p->words) put_words(ring, p->words, p->n);
     else if (p->fill) {
-      struct device_amd_writer w = {d, ring, ring->put + p->ring_units,
-                                    g->put + p->segment_bytes};
+      struct device_amd_writer w = {
+          d, ring, ring->put + p->ring_units,
+          g->put + align_up(p->segment_bytes, SEGMENT_ALIGN)};
       int code = p->fill(&w, p->arg, v);
       if (code != 0) {
         int answer = fail(&s, q, code);
@@ -382,6 +469,7 @@ int device_amd_submit(void *self, uint64_t v, const struct nx_wait *waits,
       copy(&s, p);
     if (named[i] || (s.last[q] == i && r != q)) signal_slot(&s, q, i);
   }
+  flush(d, compute);
   enter(&s, r, waits, nwaits, copy_parts);
   int o = 1 - r;
   if (s.last[o] >= 0) wait_slot(&s, r, s.last[o]);

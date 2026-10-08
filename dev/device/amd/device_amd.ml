@@ -19,6 +19,7 @@ type 'm memory = { address : int; host : nativeint option; data : 'm }
 type 'm path = {
   key : 'm Type.Id.t;
   gpu : Abi.Gpu.t;
+  waves : int;
   lds : int;
   clock_hz : int;
   mec : int;
@@ -101,7 +102,7 @@ external set_segment : int -> nativeint -> int -> int -> unit
   = "caml_device_amd_segment"
 
 external set_ring :
-  int -> int -> nativeint -> int -> nativeint -> nativeint -> bool -> unit
+  int -> int -> nativeint -> int -> nativeint -> nativeint -> int -> unit
   = "caml_device_amd_ring_byte" "caml_device_amd_ring"
 
 external set_template : int -> int -> string -> int array -> unit
@@ -110,6 +111,15 @@ external set_template : int -> int -> string -> int array -> unit
 external set_max_copy : int -> int -> unit = "caml_device_amd_max_copy"
 external hdp_count : int -> nativeint -> int -> bool = "caml_device_amd_hdp"
 external zero : nativeint -> int -> unit = "caml_device_amd_zero"
+external poke32 : nativeint -> int -> int -> unit = "caml_device_amd_poke32"
+
+external publish_scratch : int -> int array -> int array -> unit
+  = "caml_device_amd_scratch"
+
+external scratch_taken : int -> int = "caml_device_amd_scratch_taken"
+[@@noalloc]
+
+external signaled_word : int -> int = "caml_device_amd_signaled" [@@noalloc]
 
 (* Opening *)
 
@@ -125,6 +135,18 @@ type t = {
   capability : Abi.Capability.t;
   word : region;
   own : mem list; (* rings, pointers, segment, slots *)
+  scratch : scratch;
+}
+
+(* An AQL queue's scratch: in its descriptor, published for the next submission
+   to write there, and replaced, each freed once the word reaches the value that
+   installed its successor. *)
+and scratch = {
+  lock : Mutex.t;
+  mutable installed : (mem * int) option;
+      (* the buffer and its bytes per lane *)
+  mutable pending : (mem * int) option;
+  mutable retired : (mem * int) list; (* freed once the word reaches the int *)
 }
 
 (* The minimum version of a GC's compute firmware whose queues run 64-bit waits
@@ -136,9 +158,26 @@ let segment_bytes = 1 lsl 20
 let slots = 513
 let pointers_bytes = 4096
 
-(* Where each queue's read and write positions are in the pointers. *)
-let read_at = function 0 -> 0 | _ -> 64
-let write_at q = read_at q + 8
+(* The queues' positions in the pointers: the compute queue's at the start,
+   where an AQL queue's descriptor (amd_hsa_queue.h, amd_queue_t) holds them,
+   the copy queue's after the descriptor. *)
+let descriptor_bytes = 256
+let read_at ~aql = function 0 when aql -> 128 | 0 -> 0 | _ -> descriptor_bytes
+let write_at ~aql = function 0 when aql -> 56 | q -> read_at ~aql q + 8
+
+(* The descriptor's fields an AQL queue's creator writes (amd_hsa_queue.h). *)
+let max_cu_id = 72
+let max_wave_id = 76
+let read_dispatch_id_field_base_byte_offset = 136
+let queue_properties = 180
+let is_ptr64 = 1 lsl 1
+let enable_profiling = 1 lsl 3
+
+(* The descriptor's scratch fields. *)
+let compute_tmpring_size = 140
+let scratch_resource_descriptor = 144
+let scratch_backing_memory_location = 160
+let scratch_wave64_lane_byte_size = 176
 
 (* Templates: each packet the writer places, its values the arguments 0, 1 and 2
    of a use. Their order is device_amd_stubs.h's. *)
@@ -164,37 +203,37 @@ let hole (at, w) =
   [ at; wide; arg; List.length ops ]
   @ List.concat_map (fun (op, k) -> [ op; k ]) ops
 
-let templates (g : Abi.Gpu.t) ~interrupt ~waits64 =
+(* On an AQL queue, whose PM4 words every die runs, a release writes once: on
+   die 0, after the barrier of its packet, every die's work is done. *)
+let templates (g : Abi.Gpu.t) ~interrupt ~waits64 ~aql =
+  let once p = if aql then Pm4.pred_exec ~xcc_mask:1 p else p in
   [
     Pm4.wait g (Memory 0) Equal 1 ();
     Pm4.event_write Cs_partial_flush;
     Pm4.acquire_mem g System;
     (if waits64 then Pm4.wait_64 g 0 Greater_equal 1 () else []);
-    Pm4.release_mem g System 0 (Low_32 1);
-    Pm4.release_mem g System ~interrupt 0 (Data_64 1);
+    once (Pm4.release_mem g System 0 (Low_32 1));
+    once (Pm4.release_mem g System ~interrupt 0 (Data_64 1));
     Pm4.write_data (Memory 0) 1;
     Sdma.poll 0 Equal 1 ();
     Sdma.fence g 0 1;
     Sdma.trap;
     Sdma.copy_linear ~dst:0 ~src:1 ~bytes:2;
+    Abi.Aql.indirect_buffer 0 ~dwords:1;
   ]
 
-let set_templates self g ~interrupt ~waits64 =
+let set_templates self g ~interrupt ~waits64 ~aql =
   let set i p =
     let words, holes = Packet.template (fun _ -> None) p in
     set_template self i words (Array.of_list (List.concat_map hole holes))
   in
-  List.iteri set (templates g ~interrupt ~waits64);
+  List.iteri set (templates g ~interrupt ~waits64 ~aql);
   set_max_copy self (Sdma.max_copy g)
 
 let supported (g : Abi.Gpu.t) =
   let major, _, _ = g.target in
   if not (major = 11 || major = 12 || List.mem g.target [ (9, 4, 2); (9, 5, 0) ])
   then Error (strf "the device drives no %s GPU" (Abi.Gpu.processor g))
-  else if g.xccs > 1 then
-    Error
-      (strf "the device drives no GPU of several dies such as this %s"
-         (Abi.Gpu.processor g))
   else if Abi.Register.registers g = [] then
     Error (strf "no registers are known for the GC of %s" (Abi.Gpu.processor g))
   else Ok ()
@@ -207,11 +246,67 @@ let waits64 (p : _ path) =
 external place_entry : unit -> int = "caml_device_amd_place_entry"
 external segment_entry : unit -> int = "caml_device_amd_segment_entry"
 
-let capability_of (p : _ path) =
+(* AQL scratch *)
+
+(* The writes that point an AQL queue's descriptor at [desc] to scratch [m] for
+   kernels of [n] bytes per lane: GPU addresses and 32-bit values. *)
+let scratch_writes (g : Abi.Gpu.t) ~desc m n bytes =
+  let base = mem_address m in
+  let d = Abi.Scratch.descriptor g ~base bytes in
+  let word i = Int32.to_int (String.get_int32_le d (4 * i)) land 0xffff_ffff in
+  [
+    (desc + scratch_backing_memory_location, base land 0xffff_ffff);
+    (desc + scratch_backing_memory_location + 4, base lsr 32);
+    (desc + scratch_wave64_lane_byte_size, n);
+    (desc + compute_tmpring_size, Abi.Scratch.tmpring g n);
+  ]
+  @ List.init 4 (fun i ->
+      (desc + scratch_resource_descriptor + (4 * i), word i))
+
+(* Moves a published scratch the queue took to installed, retiring the one it
+   replaced, and frees the retired ones the word passed. *)
+let settle_scratch self ops st =
+  (match st.pending with
+  | Some p when scratch_taken self > 0 ->
+      let taken = scratch_taken self in
+      Option.iter
+        (fun (m, _) -> st.retired <- (m, taken) :: st.retired)
+        st.installed;
+      st.installed <- Some p;
+      st.pending <- None
+  | Some _ | None -> ());
+  let reached, kept =
+    List.partition (fun (_, v) -> signaled_word self >= v) st.retired
+  in
+  List.iter (fun (m, _) -> ops.free m) reached;
+  st.retired <- kept
+
+let grow_scratch self ops (g : Abi.Gpu.t) ~desc st n =
+  Mutex.protect st.lock @@ fun () ->
+  settle_scratch self ops st;
+  let have =
+    match (st.pending, st.installed) with
+    | Some (_, h), _ | None, Some (_, h) -> h
+    | None, None -> 0
+  in
+  if have >= n then Ok ()
+  else
+    let bytes = Abi.Scratch.size g n in
+    match ops.alloc `Gpu bytes with
+    | None -> Error (strf "no GPU memory for %d bytes of scratch" bytes)
+    | Some m ->
+        let ats, values = List.split (scratch_writes g ~desc m n bytes) in
+        publish_scratch self (Array.of_list ats) (Array.of_list values);
+        (* A buffer published and never taken was never in the queue's use. *)
+        Option.iter (fun (old, _) -> ops.free old) st.pending;
+        st.pending <- Some (m, n);
+        Ok ()
+
+let capability_of (p : _ path) ~aql ~grow =
   {
     Abi.Capability.gpu = p.gpu;
     clock_hz = p.clock_hz;
-    compute = Pm4;
+    compute = (if aql then Aql { scratch = grow } else Pm4);
     place = Nativeint.of_int (place_entry ());
     segment = Nativeint.of_int (segment_entry ());
   }
@@ -240,7 +335,7 @@ let make (type m) (p : m path) =
         Ok m
     | None -> Error (strf "no memory for its %s" what)
   in
-  let waits64 = waits64 p in
+  let waits64 = waits64 p and aql = p.gpu.xccs > 1 in
   let opened =
     let* word = alloc "timeline word" 8 in
     let* slot_words = alloc "slot words" (8 * slots) in
@@ -256,23 +351,40 @@ let make (type m) (p : m path) =
     set_memory self word_host (mem_address word) slots_host
       (mem_address slot_words);
     set_segment self segment_host (mem_address segment) segment_bytes;
-    set_templates self p.gpu ~interrupt:p.interrupt ~waits64;
+    set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     zero pointers_host pointers_bytes;
+    if aql then begin
+      let cus = p.gpu.compute_units * p.gpu.xccs in
+      poke32 pointers_host queue_properties (is_ptr64 lor enable_profiling);
+      poke32 pointers_host read_dispatch_id_field_base_byte_offset
+        (read_at ~aql 0);
+      poke32 pointers_host max_cu_id (cus - 1);
+      poke32 pointers_host max_wave_id (p.waves - 1)
+    end;
     let queue q kind ring =
       let* ring_host = host_of "ring" ring in
       let at = mem_address pointers in
       let* doorbell =
         p.queue kind ~ring:(mem_address ring) ~bytes:ring_bytes
-          ~read:(at + read_at q)
-          ~write:(at + write_at q)
+          ~read:(at + read_at ~aql q)
+          ~write:(at + write_at ~aql q)
       in
       queues := true;
-      let write = Nativeint.add pointers_host (Nativeint.of_int (write_at q)) in
-      set_ring self q ring_host ring_bytes write doorbell (kind = `Sdma);
+      let write =
+        Nativeint.add pointers_host (Nativeint.of_int (write_at ~aql q))
+      in
+      let kind = match kind with `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2 in
+      set_ring self q ring_host ring_bytes write doorbell kind;
       Ok ()
     in
-    let* () = queue 0 `Pm4 compute in
+    let* () = queue 0 (if aql then `Aql else `Pm4) compute in
     let* () = queue 1 `Sdma copy in
+    let scratch =
+      { lock = Mutex.create (); installed = None; pending = None; retired = [] }
+    in
+    let grow =
+      grow_scratch self ops p.gpu ~desc:(mem_address pointers) scratch
+    in
     let word =
       {
         owner = self;
@@ -295,9 +407,10 @@ let make (type m) (p : m path) =
         hdp = p.hdp;
         hdps = Mutex.create ();
         ops;
-        capability = capability_of p;
+        capability = capability_of p ~aql ~grow;
         word;
         own = [ slot_words; segment; compute; copy; pointers ];
+        scratch;
       }
   in
   match opened with
@@ -601,7 +714,6 @@ let submit_entry = Nativeint.of_int (submit_entry ())
 
 (* Timeline *)
 
-external signaled_word : int -> int = "caml_device_amd_signaled" [@@noalloc]
 external settle : int -> unit = "caml_device_amd_settle"
 
 let word g = g.word
@@ -618,5 +730,7 @@ let stop g =
   | `Unknown -> `Unknown
   | `Stopped ->
       settle g.self;
-      List.iter (give_back g) g.own;
+      let st = g.scratch in
+      let buffers = Option.to_list st.installed @ Option.to_list st.pending in
+      List.iter (give_back g) (List.map fst (buffers @ st.retired) @ g.own);
       `Stopped

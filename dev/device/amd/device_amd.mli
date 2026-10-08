@@ -357,6 +357,7 @@ type 'm path = {
       (** The path's key: devices whose paths share [key] map each other's
           memory with [map_peer]. *)
   gpu : Device_amd_abi.Gpu.t;  (** The GPU, as its formats depend on it. *)
+  waves : int;  (** The most waves a compute unit runs at once. *)
   lds : int;  (** The local data share of a workgroup, in bytes. *)
   clock_hz : int;  (** The frequency of the GPU's clock, in hertz. *)
   mec : int;  (** The version of the firmware of its compute queues. *)

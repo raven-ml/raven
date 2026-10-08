@@ -304,8 +304,8 @@ type device = {
 let eop_bytes = 0x1000
 
 (* The waves the context save area holds, as the kernel driver counts them
-   (kfd_queue.c, kfd_queue_ctx_save_restore_size): 32 per compute unit from
-   GFX 10.1, before it 40 per compute unit up to 512 per shader engine. *)
+   (kfd_queue.c, kfd_queue_ctx_save_restore_size): 32 per compute unit from GFX
+   10.1, before it 40 per compute unit up to 512 per shader engine. *)
 let waves (n : Topology.node) =
   let g = n.gpu in
   if compare g.target (10, 1, 0) < 0 then
@@ -448,6 +448,7 @@ let path d : mem Amd.path =
   {
     key;
     gpu = g.node.gpu;
+    waves = g.node.waves_per_cu;
     lds = g.node.lds;
     clock_hz = g.clock_khz * 1000;
     mec = g.node.mec;

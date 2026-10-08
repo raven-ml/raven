@@ -60,16 +60,16 @@ value caml_device_amd_segment(value v_self, value v_host, value v_gpu,
 }
 
 /* Ring [q]: its words, size in bytes, write-position word and doorbell, all
-   host addresses, and whether it is an SDMA ring. */
+   host addresses, and its kind (RING_PM4, RING_AQL, RING_SDMA). */
 value caml_device_amd_ring(value v_self, value v_q, value v_words,
                            value v_bytes, value v_write, value v_doorbell,
-                           value v_sdma) {
+                           value v_kind) {
   struct device_amd_ring *r = &Device_val(v_self)->rings[Int_val(v_q)];
   r->words = Host_val(v_words);
   r->size = (uint64_t)Long_val(v_bytes) / 4;
   r->write = Host_val(v_write);
   r->doorbell = Host_val(v_doorbell);
-  r->sdma = Bool_val(v_sdma);
+  r->kind = Int_val(v_kind);
   return Val_unit;
 }
 
@@ -272,6 +272,36 @@ value caml_device_amd_settle(value v_self) {
                                                 memory_order_release,
                                                 memory_order_acquire)) {
   }
+  return Val_unit;
+}
+
+/* Publishes the writes of a new AQL scratch to the queue's descriptor: the
+   32-bit [values] at the GPU addresses [at], which the next submission
+   places. */
+value caml_device_amd_scratch(value v_self, value v_at, value v_values) {
+  struct device_amd *d = Device_val(v_self);
+  int n = (int)Wosize_val(v_at), idle = 0;
+  while (!atomic_compare_exchange_weak(&d->scratch_lock, &idle, 1)) idle = 0;
+  for (int i = 0; i < n; i++) {
+    d->scratch_at[i] = (uint64_t)at(v_at, i);
+    d->scratch_value[i] = (uint32_t)at(v_values, i);
+  }
+  d->scratch_n = n;
+  atomic_store_explicit(&d->scratch_taken, 0, memory_order_relaxed);
+  atomic_store_explicit(&d->scratch_ready, 1, memory_order_release);
+  atomic_store_explicit(&d->scratch_lock, 0, memory_order_release);
+  return Val_unit;
+}
+
+/* The value whose submission placed the last scratch writes, or 0. */
+value caml_device_amd_scratch_taken(value v_self) {
+  return Val_long(atomic_load_explicit(&Device_val(v_self)->scratch_taken,
+                                       memory_order_acquire));
+}
+
+value caml_device_amd_poke32(value v_host, value v_off, value v_v) {
+  uint8_t *p = Host_val(v_host);
+  *(volatile uint32_t *)(p + Long_val(v_off)) = (uint32_t)Long_val(v_v);
   return Val_unit;
 }
 

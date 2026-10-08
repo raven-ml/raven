@@ -33,6 +33,16 @@
 /* The queues, in Device_amd.queues's order. */
 enum { DEVICE_AMD_COMPUTE, DEVICE_AMD_COPY, DEVICE_AMD_QUEUES };
 
+/* The packets a ring reads, in Device_amd's order. On an AQL ring a packet
+   is 16 words whose first is stored last, and the writer's own PM4 words go
+   in an indirect buffer in the segment; its write position counts packets.
+   An SDMA ring's packets never wrap; its write position counts bytes. */
+enum { RING_PM4, RING_AQL, RING_SDMA };
+
+/* The scratch writes an AQL queue's descriptor takes at the next
+   submission's first compute entry. */
+#define DEVICE_AMD_SCRATCH_WRITES 8
+
 /* The packets the writer places, which Device_amd encodes once per device.
    Their arguments: 0 an address, 1 a value, and for a copy 0 its
    destination, 1 its source, 2 its bytes. */
@@ -48,6 +58,7 @@ enum {
   S_FENCE,     /* copy: once the work before completed, low 32 of 1 at 0 */
   S_TRAP,      /* copy: interrupt */
   S_COPY,      /* copy: 2 bytes from 1 to 0, at most the engine's packet */
+  A_IB,        /* AQL compute: the 1 words of PM4 packets at 0 */
   DEVICE_AMD_TEMPLATES
 };
 
@@ -89,7 +100,7 @@ struct device_amd_ring {
   uint64_t size;                /* words, a power of two */
   volatile uint64_t *write;     /* the write position the queue reads */
   volatile uint64_t *doorbell;
-  int sdma;                     /* packets never wrap; positions in bytes */
+  int kind;                     /* RING_PM4, RING_AQL or RING_SDMA */
   uint64_t put, start, free;    /* placed, at the submission's start, done */
   uint64_t released;            /* the last value this ring released */
   struct device_amd_marks marks;
@@ -121,6 +132,14 @@ struct device_amd {
   struct device_amd_template templates[DEVICE_AMD_TEMPLATES];
   uint64_t max_copy;            /* the bytes one S_COPY moves */
   struct device_amd_hdp hdps[DEVICE_AMD_HDPS];
+  uint64_t ib_at;               /* the PM4 words not yet in an AQL packet */
+  size_t ib_n;
+  int scratch_n;                /* the descriptor's pending writes */
+  uint64_t scratch_at[DEVICE_AMD_SCRATCH_WRITES];
+  uint32_t scratch_value[DEVICE_AMD_SCRATCH_WRITES];
+  _Atomic int scratch_ready;
+  _Atomic int scratch_lock;     /* held while the writes change or are read */
+  _Atomic uint64_t scratch_taken;   /* the value that placed them */
   uint64_t last;
   const char *failure;
   char failure_text[96];
