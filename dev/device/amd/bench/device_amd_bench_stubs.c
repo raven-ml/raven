@@ -31,6 +31,7 @@
 #include <caml/mlvalues.h>
 
 #define Ptr_val(v) ((void *)Nativeint_val(v))
+#define Addr_val(v) ((void *)Long_val(v))
 
 /* Templates: packet words and the words that hold a computation on an
    argument, laid out as Device_amd lays out its own: the word's index, one
@@ -141,7 +142,7 @@ value device_amd_bench_fill_arg(value v_place, value v_segment, value v_arg,
 
 /* Reads the [v_n] bytes at [v_p], 8 at a time: their sum. */
 value device_amd_bench_read(value v_p, value v_n) {
-  const volatile uint64_t *p = Ptr_val(v_p);
+  const volatile uint64_t *p = Addr_val(v_p);
   size_t n = (size_t)Long_val(v_n) / 8;
   uint64_t s = 0;
   for (size_t i = 0; i < n; i++) s += p[i];
@@ -150,7 +151,7 @@ value device_amd_bench_read(value v_p, value v_n) {
 
 /* Stores [v_v] at [v_p], a 64-bit word of host memory. */
 value device_amd_bench_set64(value v_p, value v_v) {
-  *(volatile uint64_t *)Ptr_val(v_p) = (uint64_t)Long_val(v_v);
+  *(volatile uint64_t *)Addr_val(v_p) = (uint64_t)Long_val(v_v);
   return Val_unit;
 }
 
@@ -520,7 +521,7 @@ value device_amd_bench_switch(value unit) {
    release, on the compute queue. */
 value device_amd_bench_waits(value v_at, value v_n) {
   for (long i = 0; i < Long_val(v_n); i++)
-    emit(COMPUTE, F_WAIT64, (uint64_t)Nativeint_val(v_at), 1, 0);
+    emit(COMPUTE, F_WAIT64, (uint64_t)Long_val(v_at), 1, 0);
   release(COMPUTE);
   ring(COMPUTE);
   spin();
@@ -541,8 +542,8 @@ value device_amd_bench_launch(value v_w, value v_k) {
 /* A copy of [v_n] bytes between GPU addresses, then a release, on the copy
    queue. */
 value device_amd_bench_copy(value v_dst, value v_src, value v_n) {
-  uint64_t dst = (uint64_t)Nativeint_val(v_dst);
-  uint64_t src = (uint64_t)Nativeint_val(v_src);
+  uint64_t dst = (uint64_t)Long_val(v_dst);
+  uint64_t src = (uint64_t)Long_val(v_src);
   uint64_t n = (uint64_t)Long_val(v_n);
   for (uint64_t off = 0; off < n; off += max_copy) {
     uint64_t k = n - off < max_copy ? n - off : max_copy;
@@ -558,7 +559,7 @@ value device_amd_bench_copy(value v_dst, value v_src, value v_n) {
    address, the same for the GPU and the host. */
 value device_amd_bench_buffer(value v_kind, value v_n) {
   struct mem m = alloc(Int_val(v_kind), (uint64_t)Long_val(v_n));
-  return caml_copy_nativeint((intnat)m.at);
+  return Val_long((intnat)m.at);
 }
 
 value device_amd_bench_alloc(value v_kind, value v_n) {
@@ -572,13 +573,13 @@ value device_amd_bench_pages(value v_n) {
   size_t n = (size_t)Long_val(v_n);
   if (posix_memalign(&p, 4096, n)) caml_raise_out_of_memory();
   memset(p, 1, n);
-  return caml_copy_nativeint((intnat)p);
+  return Val_long((intnat)p);
 }
 
 /* Maps the [v_n] bytes of host memory at the page [v_p] for the GPU, then
    unmaps them. */
 value device_amd_bench_map_host(value v_p, value v_n) {
-  uint64_t p = (uint64_t)Nativeint_val(v_p);
+  uint64_t p = (uint64_t)Long_val(v_p);
   struct kfd_ioctl_alloc_memory_of_gpu_args a = {
       .va_addr = p, .size = (uint64_t)Long_val(v_n), .mmap_offset = p,
       .gpu_id = gpu_id, .flags = USERPTR_FLAGS};

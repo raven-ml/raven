@@ -84,7 +84,7 @@ let opened path what e =
 type gpu = {
   node : Topology.node;
   drm : int; (* its render node *)
-  hdp : nativeint option; (* the register whose store flushes the HDP *)
+  hdp : int option; (* the register whose store flushes the HDP *)
   clock_khz : int;
   cus : int array; (* its active compute units, as cu_bitmap lays them out *)
   mutable doorbells : (int64 * int) option; (* the page: offset, address *)
@@ -152,7 +152,7 @@ let alloc fd g kind n : mem Amd.memory option =
           check "mapping GPU memory" (map_file g.drm at n (offset b));
         check "mapping memory for the GPU"
           (map_gpu fd handle g.node.gpu_id true);
-        let host = if kind = `Gpu then None else Some (Nativeint.of_int at) in
+        let host = if kind = `Gpu then None else Some at in
         let data = { handle; bytes = n; at; kind = Own; owner = g } in
         Some { Amd.address = at; host; data }
 
@@ -172,8 +172,8 @@ let free fd g (m : mem Amd.memory) =
       if p.kind = Own then unmap_mem p.at p.bytes
 
 let map_host fd g a n : mem Amd.memory option =
-  let base = Nativeint.to_int a land lnot (page - 1) in
-  let bytes = round_up (Nativeint.to_int a + n - base) page in
+  let base = a land lnot (page - 1) in
+  let bytes = round_up (a + n - base) page in
   let b = Bytes.create 16 in
   if kfd_alloc fd g.node.gpu_id base bytes userptr b < 0 then None
   else
@@ -184,15 +184,27 @@ let map_host fd g a n : mem Amd.memory option =
     end
     else
       let data = { handle; bytes; at = base; kind = Borrowed; owner = g } in
-      Some { Amd.address = Nativeint.to_int a; host = Some a; data }
+      Some { Amd.address = a; host = Some a; data }
 
 (* Memory of another device: of the same GPU, in this address space already; of
    a GPU the topology links this one to, mapped for it. *)
+let linked g (n : Topology.node) =
+  n.gpu_id = g.node.gpu_id || Topology.linked "/" g.node.index n.index
+
+(* GPU [j] in bus order: this one, or one the topology links it to. *)
+let reaches g ~index j =
+  j = index
+  ||
+  match List.nth_opt (Topology.gpus "/") j with
+  | None -> false
+  | Some bus -> (
+      match Topology.node "/" bus with Ok n -> linked g n | Error _ -> false)
+
 let map_peer fd g (m : mem Amd.memory) =
   let o = m.data.owner in
   if o.node.gpu_id = g.node.gpu_id then
     Some { m with data = { m.data with kind = View } }
-  else if not (Topology.linked "/" g.node.index o.node.index) then None
+  else if not (linked g o.node) then None
   else if map_gpu fd m.data.handle g.node.gpu_id true < 0 then None
   else Some { m with data = { m.data with kind = Peer } }
 
@@ -210,7 +222,7 @@ let remap_hdp fd gpu_id =
   end
   else
     let p = map_file fd at page (offset b) in
-    if p < 0 then None else Some (Nativeint.of_int p)
+    if p < 0 then None else Some p
 
 (* KFD 1.14 asks a process to enable its runtime before using queues. *)
 let runtime_from = 1014
@@ -339,7 +351,7 @@ let doorbell d off =
         g.doorbells <- Some (base, at);
         at
   in
-  Nativeint.of_int (page_at + Int64.to_int (Int64.sub off base))
+  page_at + Int64.to_int (Int64.sub off base)
 
 let queue d kind ~ring ~bytes ~read ~write =
   let compute = kind <> `Sdma in
@@ -447,10 +459,11 @@ let wgps (g : gpu) =
 
 let key : mem Type.Id.t = Type.Id.make ()
 
-let path d : mem Amd.path =
+let path d ~index : mem Amd.path =
   let g = d.gpu and fd = d.fd in
   {
     key;
+    index;
     gpu = g.node.gpu;
     waves = g.node.waves_per_cu;
     lds = g.node.lds;
@@ -460,6 +473,7 @@ let path d : mem Amd.path =
     budget = g.node.budget;
     alloc = alloc fd g;
     map_host = map_host fd g;
+    reaches = reaches g ~index;
     map_peer = map_peer fd g;
     free = free fd g;
     queue = queue d;
@@ -505,7 +519,7 @@ let open_ i =
       let drop () =
         Array.iter (fun id -> ignore (destroy_event fd id)) events
       in
-      match Amd.make (path d) with
+      match Amd.make (path d ~index:i) with
       | Ok _ as r -> r
       | Error _ as e ->
           drop ();

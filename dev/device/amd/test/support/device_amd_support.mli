@@ -16,7 +16,7 @@ val gpu : unit -> Device_amd.t
     names no file, or if another process holds the lock, which this process
     keeps until it exits once it took it. *)
 
-val stop : Device_amd.t -> [ `Stopped | `Unknown ]
+val stop : Device_amd.t -> unit
 (** [stop g] is [Device_amd.stop g]. Tests stop the devices {!gpu} opened
     through it. *)
 
@@ -27,15 +27,46 @@ val wait : Device_amd.t -> int -> unit
 (** [wait g v] returns once [g]'s timeline word reaches [v], sleeping on the
     device between reads. *)
 
-val read : nativeint -> int -> string
+val still :
+  ?msg:string -> 'a Windtrap.testable -> 'a -> (unit -> 'a) -> ms:int -> unit
+(** [still w x f ~ms] reads [f ()] for about [ms] milliseconds of CPU time, and
+    asserts under [w] that each read is [x]. *)
+
+val read : int -> int -> string
 (** [read a n] is the [n] bytes of host memory at [a]. *)
 
-val write : nativeint -> string -> unit
+val write : int -> string -> unit
 (** [write a s] writes [s] to host memory at [a]. *)
 
+val pages : int -> int
+(** [pages n] is the host address of [n] new zeroed bytes on pages of their
+    own. *)
+
+val free_pages : int -> int -> unit
+(** [free_pages a n] gives back the [n] bytes at [a] that {!pages} gave. *)
+
 val fill :
-  Device_amd.capability -> int array -> bytes:int -> nativeint * nativeint
-(** [fill c ws ~bytes] is a fill, as a C function and its argument, that places
-    the words [ws] with [c]'s [place], then takes [bytes] bytes of the argument
-    segment with [c]'s [segment] if [bytes > 0], and returns the first failure.
-    The argument lives as long as the process. *)
+  ?code:int ->
+  Device_amd.capability ->
+  int array ->
+  bytes:int ->
+  nativeint * nativeint
+(** [fill ~code c ws ~bytes] is a fill, as a C function and its argument, that
+    places the words [ws] with [c]'s [place], then takes [bytes] bytes of the
+    argument segment with [c]'s [segment] if [bytes > 0], and returns the first
+    failure of these, else [code] (defaults to [0]). The argument lives as long
+    as the process. *)
+
+val room :
+  ?words:int ->
+  ?fill:bool ->
+  ?copy:int ->
+  ?after:int ->
+  Device_amd.t ->
+  queue:int ->
+  [ `Fits | `Later | `Never ]
+(** [room ~words ~fill ~copy ~after g ~queue] is what [device_amd_room]
+    answers for one part on the queue of index [queue]: [words] words (at most
+    [64]; defaults to none), a fill if [fill] (defaults to [false]), a copy of
+    [copy] bytes if positive (defaults to [0]), after part [after] if it is not
+    negative (defaults to [-1]). *)

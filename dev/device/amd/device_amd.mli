@@ -51,13 +51,12 @@
     fault or a reset of the GPU, at a later {!sleep}. Work that runs long is no
     fault: only the path's report is. A function that calls the path answers its
     refusal of the arguments as its result ([None], [Error]) and raises {!Fault}
-    for any other failure. {!signaled}, {!free}, {!unmap} and {!stop} never
-    raise it.
+    for any other failure. {!signaled}, {!free} and {!stop} never raise it.
 
     {b Domains.} Every value may be called from any domain, at the same time as
     others, with three exceptions. {!room} and {!submit} run one call at a time,
     in value order: their caller serialises them. {!stop} is called once, after
-    every other call returned; after it only {!free} and {!unmap} are called.
+    every other call returned; after it only {!free} and {!signaled} are called.
     {!sleep} may run while another domain submits.
 
     {b References.}
@@ -83,9 +82,6 @@ val key : t Type.Id.t
 val arch : t -> string
 (** [arch g] is the processor the GPU runs code objects of, as LLVM names it
     ({!Device_amd_abi.Gpu.processor}), such as ["gfx1201"]. *)
-
-val machine : t -> string option
-(** [machine g] is [None]: [g]'s GPU is on this machine. *)
 
 val budget : t -> int
 (** [budget g] is the bytes of the GPU's own memory. *)
@@ -146,10 +142,13 @@ val alloc : t -> [ `Device | `Pinned | `Mapped ] -> int -> region option
     Raises [Invalid_argument] if [n < 1]. *)
 
 val free : t -> region -> unit
-(** [free g r] frees the allocation [r]. The caller frees it once no work that
-    uses it runs.
+(** [free g r] gives back [r], which {!alloc}, {!map_peer} or {!map_host} gave:
+    an allocation's memory, or a mapping, which ends only the mapping. The
+    caller frees it once no work that uses it runs, and frees a mapping of
+    another device's memory before that memory.
 
-    Raises [Invalid_argument] if [r] is no allocation of [g], or was freed. *)
+    Raises [Invalid_argument] if [r] is no such region of [g], such as {!word},
+    or was freed. *)
 
 val address : region -> int option
 (** [address r] is [Some a], [a] the GPU address of [r]'s first byte. *)
@@ -157,9 +156,14 @@ val address : region -> int option
 val handle : region -> nativeint
 (** [handle r] is {!address}[ r]: the GPU names memory by address. *)
 
-val host : region -> nativeint option
+val host : region -> int option
 (** [host r] is [Some a], [a] the host address of [r]'s first byte, unless [r]
     is [`Device] memory or another GPU's. *)
+
+val peer : t -> t -> bool
+(** [peer g g'] is [true] iff {!map_peer}[ g g'] maps [`Device] memory of [g']:
+    the path that opened both reaches [g']'s GPU from [g]'s. It is [false] for
+    [g] itself. *)
 
 val map_peer : t -> t -> region -> region option
 (** [map_peer g g' r] is [Some r'] with [r'] a new region of [g] over the memory
@@ -167,47 +171,47 @@ val map_peer : t -> t -> region -> region option
     it and [g]'s GPU reaches [g']'s memory: over a link between them, or through
     a memory BAR as large as [g']'s memory. It is [None] otherwise, for devices
     two paths opened, and for [`Mapped] memory of [g'] when [g] already flushes
-    the host data path of seven other GPUs, the most it keeps. {!unmap} of [r']
-    ends only [r'], and {!free} refuses it.
+    the host data path of seven other GPUs, the most it keeps.
 
     Raises [Invalid_argument] if [g'] is [g], or if [r] is no region of [g'] or
-    was freed or unmapped. *)
+    was freed. *)
 
-val map_host : t -> nativeint -> int -> region option
+val map_host : t -> int -> int -> region option
 (** [map_host g a n] is [Some r] with [r] the [n] bytes of host memory at [a],
     which [g]'s work addresses at [a]. The path maps the pages that hold them,
-    which must stay mapped in the process until [r] is unmapped. It is [None] if
+    which must stay mapped in the process until [r] is freed. It is [None] if
     the path refuses them, such as read-only pages, or pages that a region
     {!map_host} gave a device of the same GPU maps: a GPU maps a page at most
     once.
 
     Raises [Invalid_argument] if [n < 1]. *)
 
-val unmap : t -> region -> unit
-(** [unmap g r] ends the region [r] that {!map_peer} or {!map_host} gave. The
-    caller unmaps it once no work that uses it runs.
-
-    Raises [Invalid_argument] if [r] is an allocation, a region of another
-    device, or was unmapped. *)
-
 (** {1:images Images} *)
 
 type image
 (** The type for code objects loaded on a device. *)
 
-val image : t -> string -> (image * (region * string) option, string) result
-(** [image g bin] is [Ok (m, Some (r, b))] with [m] the code object [bin], [r]
-    new [`Device] memory for its image and [b] the image's bytes
-    ({!Device_amd_abi.Code_object}), which the caller copies into [r] before
-    work runs a kernel of [m]. Code runs from the GPU's own memory, so that its
-    fetches never cross the bus.
+val image :
+  t ->
+  string ->
+  ( [ `Loaded of image | `Place of int * (region -> image * string) ],
+    string )
+  result
+(** [image g bin] is [Ok (`Place (n, lay))] for the code object [bin], whose
+    image takes [n] bytes ({!Device_amd_abi.Code_object.size}). The caller
+    allocates them as [`Device] memory [r] of [g], at least [n] bytes: [lay r]
+    is the code object laid over [r] and the image's bytes, which the caller
+    copies to [r]'s start before work runs a kernel of it. Code runs from the
+    GPU's own memory, so that its fetches never cross the bus. [image] makes
+    nothing on the GPU, and [lay] calls nothing and raises nothing. It is never
+    [`Loaded]: the device's library places no code itself.
 
     The result is [Error msg] if [bin] is not a code object, with
     {!Device_amd_abi.Code_object.of_string}'s message, if it is for another
-    processor, as ["a code object for gfx90a; the GPU is gfx1201"], if a kernel
-    takes more local data share than the GPU has, as
-    ["kernel reduce takes 98304 bytes of local data share; the GPU has 65536"],
-    or if the GPU has not the memory for its image. *)
+    processor, as ["a code object for gfx90a; the GPU is gfx1201"], or if a
+    kernel takes more local data share than the GPU has, as
+    ["kernel reduce takes 98304 bytes of local data share; the GPU has 65536"].
+*)
 
 val entry : image -> string -> int option
 (** [entry m f] is [Some a], [a] the address of the descriptor of [m]'s kernel
@@ -217,8 +221,9 @@ val entry : image -> string -> int option
     Raises [Invalid_argument] if [m] was unloaded. *)
 
 val unload : t -> image -> unit
-(** [unload g m] frees [m]'s image. The caller unloads it once no work that runs
-    its kernels runs.
+(** [unload g m] ends [m]: its kernels' addresses are no longer valid. The
+    caller unloads it once no work that runs its kernels runs, and frees the
+    region it was laid over after.
 
     Raises [Invalid_argument] if [m] is another device's or was unloaded. *)
 
@@ -254,8 +259,7 @@ val part :
     Raises [Invalid_argument] if [queue] is not a queue of [g], if words on an
     AQL queue are not a multiple of 16, if [units] or [bytes] is negative, if a
     copy is on ["COMPUTE:0"] or its range lies outside its region, if a region
-    is of another device or was freed or unmapped, or if an index of [after] is
-    negative. *)
+    is of another device or was freed, or if an index of [after] is negative. *)
 
 val room : t -> part array -> [ `Fits | `Later | `Never ]
 (** [room g ps] is [`Fits] if [ps] fit [g]'s rings and argument segment now,
@@ -268,7 +272,7 @@ val room : t -> part array -> [ `Fits | `Later | `Never ]
 val submit :
   t ->
   v:int ->
-  waits:([ `Word | `Equal | `Object ] * int * int) array ->
+  waits:([ `Word | `Object ] * int * int) array ->
   handles:nativeint array ->
   part array ->
   [ `Ok | `Failed of string ]
@@ -291,8 +295,8 @@ val submit :
     Raises [Invalid_argument] if [v] is not the value after the last one, if a
     part is another device's, if a part's [after] names a part at or after its
     own index, if [waits] is not empty while {!waits_on}[ g `Store] is [false],
-    or if a wait is [`Equal] or [`Object]: the device waits only on other
-    devices' timeline words. *)
+    or if a wait is [`Object]: the device waits only on other devices' timeline
+    words. *)
 
 val room_entry : nativeint
 (** [room_entry] is the address of the C function [device_amd_room], {!room} for
@@ -332,13 +336,13 @@ val sleep : t -> seen:int -> still_ms:int -> unit
 exception Fault of string
 (** The exception for a fault of a device's work, with the path's report. *)
 
-val stop : t -> [ `Stopped | `Unknown ]
-(** [stop g] stops [g] for good. It destroys [g]'s queues: once none runs, it
-    raises the timeline word to the last value {!submit} was given, so work of
-    other devices that waits on it runs on, and is [`Stopped]. It is [`Unknown]
-    if the path could not destroy a queue; the word then reaches the last value
-    only if every queue still runs. After [stop], only {!free} and {!unmap} may
-    be called on [g]. *)
+val stop : t -> unit
+(** [stop g] stops [g] for good, never waiting. It destroys [g]'s queues: once
+    none runs, it writes the last value {!submit} was given into the timeline
+    word, with release order, so work of other devices that waits on it runs on.
+    If the path could not destroy every queue, the word reaches that value only
+    if the queues still run and complete their work. After [stop], only {!free}
+    and {!signaled} may be called on [g]. *)
 
 (** {1:paths Paths}
 
@@ -348,7 +352,7 @@ val stop : t -> [ `Stopped | `Unknown ]
 
 type 'm memory = {
   address : int;  (** The GPU address of its first byte. *)
-  host : nativeint option;
+  host : int option;
       (** The host address of its first byte, if the host addresses it. *)
   data : 'm;  (** The path's own data for it. *)
 }
@@ -358,6 +362,9 @@ type 'm path = {
   key : 'm Type.Id.t;
       (** The path's key: devices whose paths share [key] map each other's
           memory with [map_peer]. *)
+  index : int;
+      (** The GPU's number among the machine's AMD GPUs in bus order
+          ({!is_gpu}). *)
   gpu : Device_amd_abi.Gpu.t;  (** The GPU, as its formats depend on it. *)
   waves : int;  (** The most waves a compute unit runs at once. *)
   lds : int;  (** The local data share of a workgroup, in bytes. *)
@@ -375,11 +382,16 @@ type 'm path = {
           host and snooped by the GPU, which the kernel driver owns, so that no
           unmap of host memory takes it from the GPU. It is [None] if the memory
           of [k] is exhausted, or [`Bar] memory does not exist. *)
-  map_host : nativeint -> int -> 'm memory option;
+  map_host : int -> int -> 'm memory option;
       (** [map_host a n] maps for the GPU the pages that hold the [n] bytes of
           host memory at [a], at their host address: the result's [address] is
           [a]. It is [None] where the path refuses the pages, such as read-only
           ones. *)
+  reaches : int -> bool;
+      (** [reaches j] is [true] iff [map_peer] maps the GPU memory the path
+          gives a device of GPU [j], numbered as [index]: this GPU, or one it
+          reaches over a link or through a memory BAR as large as that GPU's
+          memory. *)
   map_peer : 'm memory -> 'm memory option;
       (** [map_peer m] maps for the GPU the memory [m] that the path gave
           another of its devices, at the same address, or is [None] if the GPU
@@ -394,13 +406,13 @@ type 'm path = {
     bytes:int ->
     read:int ->
     write:int ->
-    (nativeint, string) result;
+    (int, string) result;
       (** [queue k ~ring ~bytes ~read ~write] makes a hardware queue that reads
           packets of [k] from the [bytes] bytes of [`System] memory at [ring],
           writes its read position to the 64-bit word at [read] and reads its
           write position from the word at [write], all GPU addresses. It is the
           host address of the queue's 64-bit doorbell, or [Error msg]. *)
-  hdp : nativeint option;
+  hdp : int option;
       (** The host address of the 32-bit register whose store flushes the GPU's
           host data path, after which host writes through the memory BAR are in
           the GPU's memory; [None] if the host does not reach it. *)

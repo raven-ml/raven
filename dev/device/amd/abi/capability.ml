@@ -7,12 +7,12 @@ type compute = Pm4 | Aql of { scratch : int -> (unit, string) result }
 
 type trace = {
   buffers : int;
-  buffers_host : nativeint;
+  buffers_host : int;
   window : int;
   slots : int;
   engines : int;
   ends : int;
-  ends_host : nativeint;
+  ends_host : int;
 }
 
 type t = {

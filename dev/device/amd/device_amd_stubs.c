@@ -23,7 +23,7 @@
 #include "device_amd_stubs.h"
 
 #define Device_val(v) ((struct device_amd *)Long_val(v))
-#define Host_val(v) ((void *)Nativeint_val(v))
+#define Host_val(v) ((void *)Long_val(v))
 
 static intnat at(value a, int i) { return Long_val(Field(a, i)); }
 

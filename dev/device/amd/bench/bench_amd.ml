@@ -36,18 +36,15 @@ external template : int -> string -> int array -> unit
 external floor_release : int -> unit = "device_amd_bench_release"
 external floor_release_agent : int -> unit = "device_amd_bench_release_agent"
 external floor_switch : unit -> unit = "device_amd_bench_switch"
-external floor_waits : nativeint -> int -> unit = "device_amd_bench_waits"
+external floor_waits : int -> int -> unit = "device_amd_bench_waits"
 external floor_launch : string -> int -> unit = "device_amd_bench_launch"
-
-external floor_copy : nativeint -> nativeint -> int -> unit
-  = "device_amd_bench_copy"
-
-external buffer : int -> int -> nativeint = "device_amd_bench_buffer"
+external floor_copy : int -> int -> int -> unit = "device_amd_bench_copy"
+external buffer : int -> int -> int = "device_amd_bench_buffer"
 external floor_alloc : int -> int -> unit = "device_amd_bench_alloc"
-external floor_map_host : nativeint -> int -> unit = "device_amd_bench_map_host"
-external pages : int -> nativeint = "device_amd_bench_pages"
-external read : nativeint -> int -> int = "device_amd_bench_read"
-external set64 : nativeint -> int -> unit = "device_amd_bench_set64" [@@noalloc]
+external floor_map_host : int -> int -> unit = "device_amd_bench_map_host"
+external pages : int -> int = "device_amd_bench_pages"
+external read : int -> int -> int = "device_amd_bench_read"
+external set64 : int -> int -> unit = "device_amd_bench_set64" [@@noalloc]
 external fill_entry : unit -> nativeint = "device_amd_bench_fill_entry"
 
 external fill_arg :
@@ -134,11 +131,13 @@ let dispatch gpu (k : Abi.Code_object.kernel) ~base ~args ~threads =
     (Pm4.dispatch gpu k ~program:(base + k.entry) ~scratch:0 ~args ~packet:0
        ~threads:(threads, 1, 1) ~groups:(1, 1, 1) ())
 
-(* The code object loaded on the driver's device, its image copied in by the
-   copy queue, and the address of its image. *)
+(* The code object laid over device memory of the driver's device, its image
+   copied in by the copy queue, and the address of its image. *)
 let load t =
   match A.image t.g binary with
-  | Ok (m, Some (code, bytes)) ->
+  | Ok (`Place (n, lay)) ->
+      let code = Option.get (A.alloc t.g `Device n) in
+      let m, bytes = lay code in
       let n = String.length bytes in
       let staging = Option.get (A.alloc t.g `Pinned n) in
       S.write (host staging) bytes;
@@ -146,7 +145,7 @@ let load t =
         [| A.part t.g ~queue:"COPY:0" (`Copy ((code, 0), (staging, 0), n)) |];
       let k = kernel "empty" in
       Option.get (A.entry m "empty") - k.descriptor
-  | Ok (_, None) -> failwith "an image without code"
+  | Ok (`Loaded _) -> failwith "code the device's library placed"
   | Error why -> failwith why
 
 (* The floors *)
@@ -257,7 +256,7 @@ let floor_load () =
   let code = buffer gpu_memory n and staging = buffer system_memory n in
   S.write staging (Bytes.unsafe_to_string b);
   floor_copy code staging n;
-  Nativeint.to_int code
+  code
 
 (* Rows *)
 
@@ -460,7 +459,7 @@ let map_host_rows =
     [
       row "256MiB"
         (fun () -> (dev (), pages n))
-        (fun (t, p) -> A.unmap t.g (Option.get (A.map_host t.g p n)));
+        (fun (t, p) -> A.free t.g (Option.get (A.map_host t.g p n)));
       row "floor-256MiB"
         (fun () ->
           ignore (floor ());
@@ -471,9 +470,15 @@ let map_host_rows =
 let image_rows =
   Thumper.group "image"
     [
+      (* The code object read, laid over device memory, ended and its memory
+         freed. *)
       row "one-object" dev (fun t ->
           match A.image t.g binary with
-          | Ok (m, _) -> A.unload t.g m
+          | Ok (`Place (n, lay)) ->
+              let code = Option.get (A.alloc t.g `Device n) in
+              A.unload t.g (fst (lay code));
+              A.free t.g code
+          | Ok (`Loaded _) -> failwith "code the device's library placed"
           | Error why -> failwith why);
     ]
 

@@ -14,10 +14,11 @@ module Sdma = Abi.Sdma
 
 exception Fault of string
 
-type 'm memory = { address : int; host : nativeint option; data : 'm }
+type 'm memory = { address : int; host : int option; data : 'm }
 
 type 'm path = {
   key : 'm Type.Id.t;
+  index : int;
   gpu : Abi.Gpu.t;
   waves : int;
   lds : int;
@@ -26,7 +27,8 @@ type 'm path = {
   wgps : int array array;
   budget : int;
   alloc : [ `Gpu | `Bar | `System ] -> int -> 'm memory option;
-  map_host : nativeint -> int -> 'm memory option;
+  map_host : int -> int -> 'm memory option;
+  reaches : int -> bool;
   map_peer : 'm memory -> 'm memory option;
   free : 'm memory -> unit;
   queue :
@@ -35,8 +37,8 @@ type 'm path = {
     bytes:int ->
     read:int ->
     write:int ->
-    (nativeint, string) result;
-  hdp : nativeint option;
+    (int, string) result;
+  hdp : int option;
   interrupt : int;
   sleep : ms:int -> unit;
   stable_power : unit -> (unit, string) result;
@@ -52,7 +54,8 @@ let mem_host (Mem (_, m)) = m.host
 (* The path's functions over memory whose type the key hides. *)
 type ops = {
   alloc : [ `Gpu | `Bar | `System ] -> int -> mem option;
-  map_host : nativeint -> int -> mem option;
+  map_host : int -> int -> mem option;
+  reaches : int -> bool;
   map_peer : mem -> mem option;
   free : mem -> unit;
   sleep : ms:int -> unit;
@@ -69,6 +72,7 @@ let ops (type m) (p : m path) =
   {
     alloc = (fun k n -> Option.map pack (p.alloc k n));
     map_host = (fun a n -> Option.map pack (p.map_host a n));
+    reaches = p.reaches;
     map_peer =
       (fun m -> Option.bind (own m) (fun m -> Option.map pack (p.map_peer m)));
     free = (fun m -> Option.iter p.free (own m));
@@ -78,40 +82,36 @@ let ops (type m) (p : m path) =
 
 (* Memory *)
 
-type kind = Alloc | Word | View | Borrowed
-
 type region = {
   owner : int; (* the device's C state *)
-  kind : kind;
   address : int;
-  host : nativeint option;
+  host : int option;
   bytes : int;
   mem : mem;
-  flush : nativeint option; (* the HDP register this region keeps flushed *)
-  live : bool Atomic.t; (* taken once, by the free or unmap that ends it *)
+  flush : int option; (* the HDP register this region keeps flushed *)
+  live : bool Atomic.t; (* taken once, by the free that ends it *)
 }
 
 (* C state *)
 
 external create : unit -> int = "caml_device_amd_create"
 
-external set_memory : int -> nativeint -> int -> nativeint -> int -> unit
+external set_memory : int -> int -> int -> int -> int -> unit
   = "caml_device_amd_memory"
 
-external set_segment : int -> nativeint -> int -> int -> unit
+external set_segment : int -> int -> int -> int -> unit
   = "caml_device_amd_segment"
 
-external set_ring :
-  int -> int -> nativeint -> int -> nativeint -> nativeint -> int -> unit
+external set_ring : int -> int -> int -> int -> int -> int -> int -> unit
   = "caml_device_amd_ring_byte" "caml_device_amd_ring"
 
 external set_template : int -> int -> string -> int array -> unit
   = "caml_device_amd_template"
 
 external set_max_copy : int -> int -> unit = "caml_device_amd_max_copy"
-external hdp_count : int -> nativeint -> int -> bool = "caml_device_amd_hdp"
-external zero : nativeint -> int -> unit = "caml_device_amd_zero"
-external poke32 : nativeint -> int -> int -> unit = "caml_device_amd_poke32"
+external hdp_count : int -> int -> int -> bool = "caml_device_amd_hdp"
+external zero : int -> int -> unit = "caml_device_amd_zero"
+external poke32 : int -> int -> int -> unit = "caml_device_amd_poke32"
 
 external publish_scratch : int -> int array -> int array -> unit
   = "caml_device_amd_scratch"
@@ -125,11 +125,13 @@ external signaled_word : int -> int = "caml_device_amd_signaled" [@@noalloc]
 
 type t = {
   self : int;
+  path : int; (* the path's key, as an integer *)
+  index : int; (* the GPU's number in bus order *)
   gpu : Abi.Gpu.t;
   budget : int;
   lds : int;
   waits64 : bool;
-  hdp : nativeint option;
+  hdp : int option;
   hdps : Mutex.t; (* the HDP registers' counts *)
   ops : ops;
   capability : Abi.Capability.t;
@@ -404,6 +406,10 @@ let make (type m) (p : m path) =
     set_memory self word_host (mem_address word) slots_host
       (mem_address slot_words);
     set_segment self segment_host (mem_address segment) segment_bytes;
+    (* The GPU's own register takes the first of the empty table's slots, with
+       no region counted, so that its own [`Mapped] memory always finds one and
+       views of other GPUs' take at most the rest. *)
+    Option.iter (fun reg -> ignore (hdp_count self reg 0)) p.hdp;
     set_templates self p.gpu ~interrupt:p.interrupt ~waits64 ~aql;
     zero pointers_host pointers_bytes;
     if aql then begin
@@ -423,9 +429,7 @@ let make (type m) (p : m path) =
           ~write:(at + write_at ~aql q)
       in
       queues := true;
-      let write =
-        Nativeint.add pointers_host (Nativeint.of_int (write_at ~aql q))
-      in
+      let write = pointers_host + write_at ~aql q in
       let kind = match kind with `Pm4 -> 0 | `Aql -> 1 | `Sdma -> 2 in
       set_ring self q ring_host ring_bytes write doorbell kind;
       Ok ()
@@ -443,7 +447,6 @@ let make (type m) (p : m path) =
     let word =
       {
         owner = self;
-        kind = Word;
         address = mem_address word;
         host = Some word_host;
         bytes = 8;
@@ -455,6 +458,8 @@ let make (type m) (p : m path) =
     Ok
       {
         self;
+        path = Type.Id.uid p.key;
+        index = p.index;
         gpu = p.gpu;
         budget = p.budget;
         lds = p.lds;
@@ -486,7 +491,6 @@ let is_gpu ~vendor ~class_ =
 
 let key = Type.Id.make ()
 let arch g = Abi.Gpu.processor g.gpu
-let machine _ = None
 let budget g = g.budget
 let queues _ = [ "COMPUTE:0"; "COPY:0" ]
 let completion _ = `Store
@@ -506,10 +510,9 @@ let self g = Nativeint.of_int g.self
 let count_hdp g reg delta =
   Mutex.protect g.hdps (fun () -> hdp_count g.self reg delta)
 
-let region g kind ?flush n m =
+let region g ?flush n m =
   {
     owner = g.self;
-    kind;
     address = mem_address m;
     host = mem_host m;
     bytes = n;
@@ -520,9 +523,9 @@ let region g kind ?flush n m =
 
 let alloc g kind n =
   if n < 1 then invalid_argf "Device_amd.alloc: %d bytes, expected at least 1" n;
-  let system () = Option.map (region g Alloc n) (g.ops.alloc `System n) in
+  let system () = Option.map (region g n) (g.ops.alloc `System n) in
   match kind with
-  | `Device -> Option.map (region g Alloc n) (g.ops.alloc `Gpu n)
+  | `Device -> Option.map (region g n) (g.ops.alloc `Gpu n)
   | `Pinned -> system ()
   | `Mapped -> (
       match g.hdp with
@@ -532,7 +535,7 @@ let alloc g kind n =
           | None -> system ()
           | Some m ->
               ignore (count_hdp g reg 1);
-              Some (region g Alloc ~flush:reg n m)))
+              Some (region g ~flush:reg n m)))
 
 (* Gives back [r], whose [live] the caller took. *)
 let release g r =
@@ -540,8 +543,9 @@ let release g r =
   g.ops.free r.mem
 
 let free g r =
-  if r.owner <> g.self || r.kind <> Alloc then
-    invalid_arg "Device_amd.free: the region is no allocation of the device";
+  if r.owner <> g.self || r == g.word then
+    invalid_arg
+      "Device_amd.free: the region is no allocation or mapping of the device";
   if not (Atomic.compare_and_set r.live true false) then
     invalid_arg "Device_amd.free: the region was freed";
   release g r
@@ -549,6 +553,7 @@ let free g r =
 let address (r : region) = Some r.address
 let handle (r : region) = Nativeint.of_int r.address
 let host (r : region) = r.host
+let peer g g' = g.self <> g'.self && g.path = g'.path && g.ops.reaches g'.index
 
 let map_peer g g' r =
   if g.self = g'.self then
@@ -558,7 +563,7 @@ let map_peer g g' r =
   match g.ops.map_peer r.mem with
   | None -> None
   | Some m -> (
-      let view flush = Some (region g View ?flush r.bytes m) in
+      let view flush = Some (region g ?flush r.bytes m) in
       match r.flush with
       | Some reg when count_hdp g reg 1 -> view (Some reg)
       | Some _ ->
@@ -569,14 +574,7 @@ let map_peer g g' r =
 let map_host g a n =
   if n < 1 then
     invalid_argf "Device_amd.map_host: %d bytes, expected at least 1" n;
-  Option.map (region g Borrowed n) (g.ops.map_host a n)
-
-let unmap g r =
-  if r.owner <> g.self || (r.kind <> View && r.kind <> Borrowed) then
-    invalid_arg "Device_amd.unmap: the region is no mapping of the device";
-  if not (Atomic.compare_and_set r.live true false) then
-    invalid_arg "Device_amd.unmap: the region was unmapped";
-  release g r
+  Option.map (region g n) (g.ops.map_host a n)
 
 (* Images *)
 
@@ -585,7 +583,7 @@ module Code_object = Abi.Code_object
 type image = {
   holder : int;
   co : Code_object.t;
-  code : region;
+  base : int; (* the address of the region it was laid over *)
   loaded : bool Atomic.t; (* taken once, by the unload *)
 }
 
@@ -623,30 +621,27 @@ let image g bin =
         Error
           (strf "kernel %s takes %d bytes of local data share; the GPU has %d"
              name n g.lds)
-    | None -> (
-        let n = Code_object.size co in
-        match g.ops.alloc `Gpu n with
-        | None -> Error (strf "no GPU memory for its %d bytes" n)
-        | Some m ->
-            let code = region g Alloc n m in
-            Ok
-              ( { holder = g.self; co; code; loaded = Atomic.make true },
-                Some (code, image_bytes co) ))
+    | None ->
+        let lay (r : region) =
+          let m =
+            { holder = g.self; co; base = r.address; loaded = Atomic.make true }
+          in
+          (m, image_bytes co)
+        in
+        Ok (`Place (Code_object.size co, lay))
 
 let entry m f =
   if not (Atomic.get m.loaded) then
     invalid_arg "Device_amd.entry: the image was unloaded";
   Option.map
-    (fun (k : Code_object.kernel) -> m.code.address + k.descriptor)
+    (fun (k : Code_object.kernel) -> m.base + k.descriptor)
     (Code_object.kernel m.co f)
 
 let unload g m =
   if m.holder <> g.self then
     invalid_arg "Device_amd.unload: the image is another device's";
   if not (Atomic.compare_and_set m.loaded true false) then
-    invalid_arg "Device_amd.unload: the image was unloaded";
-  Atomic.set m.code.live false;
-  release g m.code
+    invalid_arg "Device_amd.unload: the image was unloaded"
 
 (* Work. A part is the ints the C submit reads: the device's state, then
    nx_part's queue, fill, arg, ring units, segment bytes, copy_dst,
@@ -743,7 +738,7 @@ let check_part self i (p : part) =
 
 let wait_kind = function
   | `Word -> nx_word
-  | `Equal | `Object ->
+  | `Object ->
       invalid_arg
         "Device_amd.submit: the device waits only on other devices' timeline \
          words"
@@ -786,18 +781,19 @@ let sleep g ~seen ~still_ms = if signaled g = seen then g.ops.sleep ~ms:still_ms
 
 let give_back g m = try g.ops.free m with Fault _ -> ()
 
+(* A queue the path could not destroy may still run, so its memory stays and its
+   own releases raise the word. *)
 let stop g =
   match g.ops.stop () with
-  | exception Fault _ -> `Unknown
-  | `Unknown -> `Unknown
+  | exception Fault _ -> ()
+  | `Unknown -> ()
   | `Stopped ->
       settle g.self;
       let st = g.scratch in
       let buffers = Option.to_list st.installed @ Option.to_list st.pending in
       let traces = match g.traces.made with Some (_, ms) -> ms | None -> [] in
       List.iter (give_back g)
-        (List.map fst (buffers @ st.retired) @ traces @ g.own);
-      `Stopped
+        (List.map fst (buffers @ st.retired) @ traces @ g.own)
 
 (* Tests *)
 

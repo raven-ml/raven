@@ -6,10 +6,13 @@
 open Windtrap
 
 external lock : string -> bool = "device_amd_test_lock"
-external read : nativeint -> int -> string = "device_amd_test_read"
-external write : nativeint -> string -> unit = "device_amd_test_write"
+external read : int -> int -> string = "device_amd_test_read"
+external write : int -> string -> unit = "device_amd_test_write"
+external pages : int -> int = "device_amd_test_pages"
+external free_pages : int -> int -> unit = "device_amd_test_free_pages"
 
-external fill_arg : nativeint -> nativeint -> int array -> int -> nativeint
+external fill_arg :
+  nativeint -> nativeint -> int array -> int -> int -> nativeint
   = "device_amd_test_fill_arg"
 
 external fill_entry : unit -> nativeint = "device_amd_test_fill_entry"
@@ -43,7 +46,7 @@ let gpu () =
     skip ~reason:"the machine has no AMD GPU" ();
   if not (take_lock ()) then
     skip ~reason:"another process holds the GPU lock" ();
-  Option.iter (fun g -> ignore (stop g)) !opened;
+  Option.iter stop !opened;
   match Device_amd_amdgpu.open_ 0 with
   | Ok g ->
       opened := Some g;
@@ -53,7 +56,7 @@ let gpu () =
 let with_gpu f =
   let g = gpu () in
   let stop_left () =
-    match !opened with Some o when o == g -> ignore (stop g) | _ -> ()
+    match !opened with Some o when o == g -> stop g | _ -> ()
   in
   Fun.protect ~finally:stop_left (fun () -> f g)
 
@@ -67,5 +70,21 @@ let wait g v =
   in
   loop ()
 
-let fill (c : Device_amd.capability) ws ~bytes =
-  (fill_entry (), fill_arg c.place c.segment ws bytes)
+let still ?msg w x f ~ms =
+  let t0 = Sys.time () in
+  while Sys.time () -. t0 < Float.of_int ms /. 1000. do
+    equal ?msg w x (f ())
+  done
+
+let fill ?(code = 0) (c : Device_amd.capability) ws ~bytes =
+  (fill_entry (), fill_arg c.place c.segment ws bytes code)
+
+external room_c :
+  nativeint -> nativeint -> int -> int -> bool -> int -> int -> int
+  = "device_amd_test_room_byte" "device_amd_test_room"
+
+let room ?(words = 0) ?(fill = false) ?(copy = 0) ?(after = -1) g ~queue =
+  match room_c Device_amd.room_entry (Device_amd.self g) queue words fill copy after with
+  | 0 -> `Fits
+  | 1 -> `Later
+  | _ -> `Never

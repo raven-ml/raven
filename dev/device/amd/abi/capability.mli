@@ -45,12 +45,12 @@ type compute =
 
 type trace = {
   buffers : int;  (** The GPU address of the trace windows. *)
-  buffers_host : nativeint;  (** Their host address. *)
+  buffers_host : int;  (** Their host address. *)
   window : int;  (** The bytes of a run's trace of one shader engine. *)
   slots : int;  (** The runs the buffers hold. *)
   engines : int;  (** The shader engines, numbered across dies. *)
   ends : int;  (** The GPU address of the end words. *)
-  ends_host : nativeint;  (** Their host address. *)
+  ends_host : int;  (** Their host address. *)
 }
 (** The type for the device's thread trace buffers: one set per GPU, which every
     program that traces writes ({!Thread_trace}). Each of [slots] runs traces
