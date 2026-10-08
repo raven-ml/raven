@@ -380,8 +380,10 @@ let route d = function
 
 (* Takes what became due: retiring memory whose foreign uses are reached enters
    the cache, or is freed if [d] is lost and counts as stopped; pending releases
-   whose value [d] reached. *)
+   whose value [d] reached. In a forked child, io memory waits for no use: the
+   parent's devices work on the parent's copy. *)
 let due d =
+  let child = Dev.forked () in
   let lost = Dev.is_lost d in
   let free_lost = lost && answered d in
   let w = if lost && not free_lost then -1 else Dev.word d in
@@ -403,7 +405,10 @@ let due d =
               cache d e;
               false
             end
-            else if (e.held || is_io_memory e) && reached e.stamps then (
+            else if
+              (child && is_io_memory e)
+              || ((e.held || is_io_memory e) && reached e.stamps)
+            then (
               frees := e :: !frees;
               false)
             else true)
@@ -441,8 +446,7 @@ let empty d =
   Mutex.protect d.lock (fun () ->
       d.retiring = [] && d.pending = [] && Hashtbl.length d.cache = 0)
 
-(* Drains [d]'s own list and what became due on it. A forked child calls no
-   driver. *)
+(* Drains [d]'s own list and what became due on it. *)
 let drain_own d =
   if released_any d.release then List.iter (route d) (released d.release);
   let frees, pending = due d in
@@ -463,7 +467,8 @@ let drain_lost d =
       end)
     (Atomic.get lost_devices)
 
-(* Drains [d], then the lost devices that hold memory, then the holds. *)
+(* Drains [d], then the lost devices that hold memory, then the holds. A forked
+   child drains only io devices, whose memory frees without a driver call. *)
 let drain d =
   if not (Dev.forked ()) then begin
     if not (idle d) then drain_own d;
@@ -471,6 +476,7 @@ let drain d =
     if released_any holds_list then List.iter (route d) (released holds_list);
     if !holds != [] then drain_holds ()
   end
+  else if Dev.is_io d && not (idle d) then drain_own d
 
 let () =
   Dev.answered :=

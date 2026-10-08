@@ -83,37 +83,43 @@ let test_child () =
   C.wait d v;
   ignore (Sys.opaque_identity !b)
 
-(* An io device whose memory is host bytes, whose state its library holds. *)
+let page_bytes = 1 lsl 16
+
+(* An io device whose memory is host bytes on a page, whose state its library
+   holds, and which counts the regions it holds. *)
 module Store = struct
   type t = unit
 
-  type region =
-    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  (* A host buffer of at least a page, which starts on one. *)
+  type region = B.t
 
   exception Fault of string
 
+  let held = Atomic.make 0
   let region_key : region Type.Id.t = Type.Id.make ()
   let budget () = max_int
 
   let alloc () n =
-    Some (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
+    Atomic.incr held;
+    Some (B.create C.host (Int.max n page_bytes))
 
-  let free () _ = ()
+  let free () _ = Atomic.decr held
   let read () _ ~at:_ ~dst:_ ~len:_ = ()
   let write () _ ~at:_ ~src:_ ~len:_ = ()
-  let pages () r = Some r
+  let pages () r = Some (B.bigarray Bigarray.char r)
   let prefetch () _ ~at:_ ~len:_ = ()
   let stop () = ()
 end
+
+let open_store name =
+  require_ok ~pp:Format.pp_print_string
+    (C.open_io (module Store) ~name (fun () -> Ok ()))
 
 (* An io device's state is its library's, which decides what a fork does to it:
    the core leaves it usable in the child, where a driver's device is lost. *)
 let test_io_child () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let io =
-    require_ok ~pp:Format.pp_print_string
-      (C.open_io (module Store) ~name:"fork:io" (fun () -> Ok ()))
-  in
+  let io = open_store "fork:io" in
   let d, _ = P.open_ "fork:beside-io" in
   let lines, ended =
     in_child (fun () ->
@@ -126,12 +132,57 @@ let test_io_child () =
   equal string "exited 0" (status ended);
   equal (list string) [ "not lost"; "bytes made: 8"; "forked" ] lines
 
+(* A forked child frees the io memory it drops, as its parent does: a child that
+   makes and drops io buffers in a loop holds a bounded number of them. *)
+let test_io_loop () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let io = open_store "fork:io-loop" in
+  let lines, ended =
+    in_child (fun () ->
+        let base = Atomic.get Store.held and most = ref 0 in
+        for _ = 1 to 100 do
+          ignore (Sys.opaque_identity (B.create io 8));
+          Gc.full_major ();
+          most := Int.max !most (Atomic.get Store.held - base)
+        done;
+        [ Printf.sprintf "most held: %d" !most ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "most held: 1" ] lines
+
+(* A parent's device works on the parent's copy of io memory: the child frees
+   its own copy once dropped, whatever work the device still has on it. *)
+let test_io_used () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  let io = open_store "fork:io-used" in
+  let d, p = P.open_ "fork:io-user" in
+  let m = ref (Some (B.create io page_bytes)) in
+  let s = Sub.make ~reads:1 ~writes:0 ~waits:0 d [||] in
+  Sub.read s 0 (require_some (B.borrow d (Option.get !m)));
+  ignore (C.submit s);
+  let before = Atomic.get Store.held in
+  let lines, ended =
+    in_child (fun () ->
+        m := None;
+        Gc.full_major ();
+        Gc.full_major ();
+        ignore (B.create io 0);
+        [ Printf.sprintf "freed: %d" (before - Atomic.get Store.held) ])
+  in
+  equal string "exited 0" (status ended);
+  equal (list string) [ "freed: 1" ] lines;
+  ignore (P.run p);
+  ignore (Sys.opaque_identity !m)
+
 let tests =
   [
     group ~timeout "fork"
       [
         test "a forked child's devices are lost for good" test_child;
         test "a forked child's io devices stay its library's" test_io_child;
+        test "a forked child frees the io memory it drops" test_io_loop;
+        test "a forked child frees io memory a parent's device uses"
+          test_io_used;
       ];
   ]
 
