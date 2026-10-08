@@ -24,23 +24,15 @@
 
 #include "device_metal_ring.h"
 
-#define most 4096 /* commits and releases of a ring */
-
-struct release {
-  struct device_metal_release node;
-  int id;
-  struct test_ring *ring;
-};
+#define most 4096 /* commits of a ring */
 
 struct test_ring {
   struct device_metal_ring ring;
   struct device_metal_slot slots[8];
   uint64_t word, values;
-  int commits, releases, nran;
+  int commits;
   int commit_of[8]; /* the commit each slot holds */
   uint64_t times[most][2];
-  struct release release[most];
-  int ran[most];
 };
 
 #define Ring_val(v) (*(struct test_ring **)Data_custom_val(v))
@@ -90,32 +82,9 @@ value device_metal_test_complete(value v_ring, value v_slot, value v_failed) {
   return Val_unit;
 }
 
-static void run_release(struct device_metal_release *node) {
-  struct release *r = (struct release *)node;
-  r->ring->ran[r->ring->nran++] = r->id;
-}
-
-value device_metal_test_defer(value v_ring) {
-  struct test_ring *t = Ring_val(v_ring);
-  if (t->releases == most) caml_invalid_argument("Device_metal_support.defer");
-  int id = t->releases++;
-  t->release[id] = (struct release){{run_release, NULL}, id, t};
-  device_metal_ring_defer(&t->ring, &t->release[id].node);
-  return Val_int(id);
-}
-
 value device_metal_test_word(value v_ring) {
   return Val_long(
       (intnat)__atomic_load_n(&Ring_val(v_ring)->word, __ATOMIC_ACQUIRE));
-}
-
-value device_metal_test_ran(value v_ring) {
-  CAMLparam1(v_ring);
-  CAMLlocal1(v);
-  struct test_ring *t = Ring_val(v_ring);
-  v = caml_alloc_tuple(t->nran);
-  for (int i = 0; i < t->nran; i++) Store_field(v, i, Val_int(t->ran[i]));
-  CAMLreturn(t->nran ? v : Atom(0));
 }
 
 /* The times of commit [k]. */

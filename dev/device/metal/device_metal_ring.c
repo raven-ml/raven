@@ -68,7 +68,7 @@ int device_metal_ring_take(struct device_metal_ring *r) {
   while (r->tail - r->head == r->nslots)
     pthread_cond_wait(&r->changed, &r->mutex);
   int i = (int)(r->tail++ % r->nslots);
-  r->slots[i] = (struct device_metal_slot){0, NULL, NULL, taken, NULL};
+  r->slots[i] = (struct device_metal_slot){0, NULL, NULL, taken};
   pthread_mutex_unlock(&r->mutex);
   return i;
 }
@@ -77,7 +77,6 @@ void device_metal_ring_complete(struct device_metal_ring *r, int i,
                                 const char *failure, uint64_t start,
                                 uint64_t end) {
   struct device_metal_slot *s = &r->slots[i];
-  struct device_metal_release *releases = NULL;
   pthread_mutex_lock(&r->mutex);
   if (s->start) *s->start = start;
   if (s->end) *s->end = end;
@@ -89,35 +88,12 @@ void device_metal_ring_complete(struct device_metal_ring *r, int i,
     if (h->state == taken) break;
     if (h->state == failed) r->held = 1;
     if (h->v > 0 && !r->held) __atomic_store_n(r->word, h->v, __ATOMIC_RELEASE);
-    /* Prepend the slot's list, whose order does not matter. */
-    for (struct device_metal_release *l = h->releases, *next; l; l = next) {
-      next = l->next;
-      l->next = releases;
-      releases = l;
-    }
     r->head++;
   }
   if (r->drain && r->head == r->tail)
     __atomic_store_n(r->word, r->drain, __ATOMIC_RELEASE);
   pthread_cond_broadcast(&r->changed);
   pthread_mutex_unlock(&r->mutex);
-  for (struct device_metal_release *next; releases; releases = next) {
-    next = releases->next;
-    releases->run(releases);
-  }
-}
-
-void device_metal_ring_defer(struct device_metal_ring *r,
-                             struct device_metal_release *rel) {
-  pthread_mutex_lock(&r->mutex);
-  int now = r->head == r->tail;
-  if (!now) {
-    struct device_metal_slot *last = &r->slots[(r->tail - 1) % r->nslots];
-    rel->next = last->releases;
-    last->releases = rel;
-  }
-  pthread_mutex_unlock(&r->mutex);
-  if (now) rel->run(rel);
 }
 
 const char *device_metal_ring_failure(struct device_metal_ring *r) {

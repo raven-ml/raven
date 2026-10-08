@@ -242,17 +242,15 @@ value caml_device_metal_image(value v_d, value v_b) {
 
 /* Indirect command buffers */
 
-/* What an indirect command buffer's release frees once its work completed:
-   the buffer, its commands and the pipelines they hold, one per command. */
+/* What an indirect command buffer's release frees: the buffer, its
+   commands and the pipelines they hold, one per command. */
 struct icb {
-  struct device_metal_release node;
   id<MTLIndirectCommandBuffer> icb;
   int n;
   id commands[];
 };
 
-static void free_icb(struct device_metal_release *node) {
-  struct icb *b = (struct icb *)node;
+static void free_icb(struct icb *b) {
   for (int i = 0; i < 2 * b->n; i++) [b->commands[i] release];
   [b->icb release];
   free(b);
@@ -322,7 +320,6 @@ value caml_device_metal_icb(value v_d, value v_buffer, value v_pipelines,
     why = caml_copy_string(text);
     CAMLreturn(tuple(2, why, Atom(0), Val_unit));
   }
-  b->node.run = free_icb;
   b->n = n;
   objects = caml_alloc_tuple(2 + (mlsize_t)n);
   v = caml_copy_nativeint((intnat)b);
@@ -350,11 +347,8 @@ value caml_device_metal_icb(value v_d, value v_buffer, value v_pipelines,
   CAMLreturn(tuple(2, why, objects, Val_unit));
 }
 
-/* Frees the indirect command buffer [v_icb] once the command buffers [v_d]
-   committed before the call completed. */
-value caml_device_metal_icb_release(value v_d, value v_icb) {
-  device_metal_ring_defer(&Device_val(v_d)->ring,
-                          (struct device_metal_release *)Nativeint_val(v_icb));
+value caml_device_metal_icb_release(value v_icb) {
+  free_icb((struct icb *)Nativeint_val(v_icb));
   return Val_unit;
 }
 
@@ -415,7 +409,7 @@ NO_METAL3(caml_device_metal_map_host)
 NO_METAL2(caml_device_metal_free)
 NO_METAL1(caml_device_metal_release)
 NO_METAL2(caml_device_metal_image)
-NO_METAL2(caml_device_metal_icb_release)
+NO_METAL1(caml_device_metal_icb_release)
 NO_METAL3(caml_device_metal_sleep)
 NO_METAL1(caml_device_metal_stop)
 

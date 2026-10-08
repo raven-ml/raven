@@ -13,8 +13,6 @@ external commit : ring -> last:bool -> int = "device_metal_test_commit"
 external complete : ring -> int -> failed:bool -> unit
   = "device_metal_test_complete"
 
-external defer : ring -> int = "device_metal_test_defer"
-external ran : ring -> int array = "device_metal_test_ran"
 external word : ring -> int = "device_metal_test_word"
 external times : ring -> int -> int * int = "device_metal_test_times"
 external failure : ring -> string option = "device_metal_test_failure"

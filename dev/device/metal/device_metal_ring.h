@@ -19,21 +19,13 @@
    taking a slot waits while every slot is taken: that wait is the
    device's back-pressure.
 
-   One mutex guards the ring. Completion holds it for a few stores and
-   releases what was deferred to a slot after unlocking it. */
+   One mutex guards the ring. Completion holds it for a few stores. */
 
 #ifndef DEVICE_METAL_RING_H
 #define DEVICE_METAL_RING_H
 
 #include <pthread.h>
 #include <stdint.h>
-
-/* A release to run once every command buffer committed before it was
-   deferred completed. The caller owns the node until [run] is called. */
-struct device_metal_release {
-  void (*run)(struct device_metal_release *self);
-  struct device_metal_release *next;
-};
 
 /* A command buffer between its take and its release. The taker sets [v]
    (0 for a buffer that is not its submission's last) and the [start] and
@@ -42,7 +34,6 @@ struct device_metal_slot {
   uint64_t v;
   uint64_t *start, *end;
   int state;
-  struct device_metal_release *releases;
 };
 
 struct device_metal_ring {
@@ -70,11 +61,6 @@ int device_metal_ring_take(struct device_metal_ring *r);
 void device_metal_ring_complete(struct device_metal_ring *r, int i,
                                 const char *failure, uint64_t start,
                                 uint64_t end);
-
-/* Runs [rel] once the last slot taken is released, at once if none is
-   taken. */
-void device_metal_ring_defer(struct device_metal_ring *r,
-                             struct device_metal_release *rel);
 
 /* The first failure, or NULL. It lives as long as [r]. */
 const char *device_metal_ring_failure(struct device_metal_ring *r);

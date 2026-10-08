@@ -91,15 +91,12 @@ type icb = {
           runs [handle] is in flight: for instance its threadgroups per grid,
           with [concurrentDispatchThreadgroups:threadsPerThreadgroup:]. *)
   release : unit -> unit;
-      (** [release ()] releases [handle], [commands] and the pipelines they hold
-          once the last command buffer the driver committed before the call
-          completed, at once if it already has. The owner of the linked step
-          that made them calls it once, after the last work that ran [handle]
-          completed or once the driver stopped the device, whether or not that
-          work drained: a command buffer still running [handle] keeps them
-          alive. Until they are released they live, whatever happens to their
-          pipelines' image. Raises [Invalid_argument] if called twice. Any
-          domain may call it. *)
+      (** [release ()] releases [handle], [commands] and the pipelines they
+          hold. The owner of the linked step that made them calls it once, after
+          the last work that ran [handle] completed: until then they live,
+          whatever happens to their pipelines' image. Raises [Invalid_argument]
+          if called twice. Any domain may call it, also after the driver stopped
+          the device. *)
 }
 (** The type for indirect command buffers. *)
 

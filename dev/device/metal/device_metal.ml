@@ -30,8 +30,7 @@ external make_icb :
   int -> nativeint -> int array -> int array -> string * nativeint array
   = "caml_device_metal_icb"
 
-external release_icb : int -> nativeint -> unit
-  = "caml_device_metal_icb_release"
+external release_icb : nativeint -> unit = "caml_device_metal_icb_release"
 
 external signaled_word : (int[@untagged]) -> (int[@untagged])
   = "caml_device_metal_signaled_byte" "caml_device_metal_signaled"
@@ -115,7 +114,7 @@ let icb self align buffer (ds : Device_metal_abi.dispatch array) =
       let release () =
         if not (Atomic.compare_and_set released false true) then
           invalid_arg "Device_metal_abi.icb: release called twice";
-        release_icb self objects.(0)
+        release_icb objects.(0)
       in
       let commands = Array.sub objects 2 (Array.length ds) in
       Ok { Device_metal_abi.handle = objects.(1); commands; release }

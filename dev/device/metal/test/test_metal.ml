@@ -13,19 +13,12 @@ let strf = Printf.sprintf
    A model of the ring of a device's command buffers: slots taken in commit
    order, completed in any order, released in commit order. The word is the last
    value released before the first failed slot, and after stop, once no slot is
-   taken, the last value taken. Completions and releases go on after stop;
-   commits and waits do not. *)
+   taken, the last value taken. Completions go on after stop; commits and waits
+   do not. *)
 
 module Ring = struct
   type state = Taken | Done | Failed
-
-  type slot = {
-    index : int;
-    k : int;
-    v : int;
-    mutable state : state;
-    mutable releases : int list;
-  }
+  type slot = { index : int; k : int; v : int; mutable state : state }
 
   type t = {
     n : int;
@@ -38,8 +31,6 @@ module Ring = struct
     mutable held : bool;
     mutable drain : bool;
     mutable failure : string option;
-    mutable ran : int list;
-    mutable releases : int;
     mutable over : bool;
   }
 
@@ -55,17 +46,13 @@ module Ring = struct
       held = false;
       drain = false;
       failure = None;
-      ran = [];
-      releases = 0;
       over = false;
     }
 
   let commit m ~last =
     cover "a slot is taken again" (m.tail >= m.n);
     let v = if last then m.values + 1 else 0 in
-    let s =
-      { index = m.tail mod m.n; k = m.commits; v; state = Taken; releases = [] }
-    in
+    let s = { index = m.tail mod m.n; k = m.commits; v; state = Taken } in
     if last then m.values <- v;
     m.taken <- m.taken @ [ s ];
     m.tail <- m.tail + 1;
@@ -77,7 +64,6 @@ module Ring = struct
         if s.state = Failed then m.held <- true;
         cover "a value completes after a failed slot" (m.held && s.v > 0);
         if s.v > 0 && not m.held then m.word <- s.v;
-        m.ran <- s.releases @ m.ran;
         release m rest
     | rest -> rest
 
@@ -93,15 +79,6 @@ module Ring = struct
       cover "the last slot completes after stop" true;
       m.word <- m.values
     end
-
-  let defer m =
-    let id = m.releases in
-    m.releases <- id + 1;
-    begin match List.rev m.taken with
-    | last :: _ -> last.releases <- id :: last.releases
-    | [] -> m.ran <- id :: m.ran
-    end;
-    id
 
   let stop m =
     m.over <- true;
@@ -120,7 +97,6 @@ end
 let ring_invariant (m : Ring.t) r =
   equal int ~msg:"word" m.word (S.word r);
   equal (option string) ~msg:"failure" m.failure (S.failure r);
-  equal (slist int compare) ~msg:"releases run" m.ran (Array.to_list (S.ran r));
   for k = 0 to m.commits - 1 do
     equal (pair int int)
       ~msg:(strf "times of commit %d" k)
@@ -143,7 +119,6 @@ let ring_commands =
       (ring ^-> slot ^-> Gen.bool @-> returns unit)
       (fun m i failed -> Ring.complete m i ~failed)
       (fun r i failed -> S.complete r i ~failed);
-    command "defer" (ring ^-> returns int) Ring.defer S.defer;
     command "sleep" ~pre:open_
       (ring ^-> returns (option string))
       (fun (m : Ring.t) -> m.failure)
@@ -599,19 +574,19 @@ let stopped_running () =
   let w = S.weak b.handle in
   let v = submit_ok t [| S.execute b ~pipelines:[| spin |] |] in
   equal stopped `Unknown (Device_metal.stop t.d);
-  b.release ();
   S.wait t.d v;
-  while S.alive w do
-    Domain.cpu_relax ()
-  done;
-  equal bool true (S.get32 (host out) 0 <> 0)
+  equal bool true (S.get32 (host out) 0 <> 0);
+  b.release ();
+  equal bool false (S.alive w)
 
 let timeline =
   group ~timeout:60. "timeline"
     [
       test "sleep returns at once when the word differs from seen" sleep_seen;
       test "stop answers Stopped once the work completed" stopped_idle;
-      test "stop answers Unknown while work runs, and a release waits for it"
+      test
+        "stop answers Unknown while work runs, the word reaches the last value \
+         once it ends, and its indirect command buffer is released after"
         stopped_running;
     ]
 

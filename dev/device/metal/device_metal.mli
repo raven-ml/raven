@@ -58,8 +58,8 @@
     with three exceptions. {!room} and {!submit} are called one at a time: the
     caller holds the device's {e turn} from {!room} to the end of {!submit}.
     {!stop} is called once, after every other call returned. After {!stop} only
-    {!free} and {!unmap} are called. {!sleep} may run while another domain
-    submits.
+    {!free}, {!unmap} and the release of an indirect command buffer are called.
+    {!sleep} may run while another domain submits.
 
     {b Platforms.} A device opens on macOS 15 and later, whose command queues
     take residency sets. Elsewhere the library builds, {!count} is [0] off
@@ -160,9 +160,7 @@ val capability : t -> capability
     its kernel arguments' own alignment, an argument structure's largest
     member's, such as [8] for a structure that holds device pointers. Its
     indirect command buffers retain their pipelines, so an {!unload} cannot end
-    one, and an indirect command buffer's [release] keeps its objects until
-    every command buffer [d] committed before the call completed, so it is safe
-    whatever {!stop} answered. *)
+    one. *)
 
 val capability_key : capability Type.Id.t
 (** [capability_key] is {!Device_metal_abi.key}. *)

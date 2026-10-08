@@ -28,13 +28,6 @@ val complete : ring -> int -> failed:bool -> unit
 (** [complete r i ~failed] completes the command buffer of slot [i], which
     failed with the message ["command buffer k failed"] iff [failed]. *)
 
-val defer : ring -> int
-(** [defer r] defers a release to the last slot taken and is its number, from
-    [0]. *)
-
-val ran : ring -> int array
-(** [ran r] is the releases that ran, in the order they ran. *)
-
 val word : ring -> int
 (** [word r] is the value in [r]'s word. *)
 
