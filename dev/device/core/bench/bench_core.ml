@@ -195,6 +195,27 @@ let floor_run t =
   Support.store t.word t.k;
   floor_submit t.f 1
 
+(* Another domain calling the same device's entries until the row ends, with a
+   floor of its own: the driver alone serializes the two. *)
+let floor_contended () =
+  let t = floor () in
+  let stop = Atomic.make false in
+  let other =
+    {
+      t with
+      f = floor_new (P.self t.fp) P.room_entry P.submit_entry Support.bump;
+      k = 0;
+    }
+  in
+  let rival =
+    Domain.spawn (fun () ->
+        while not (Atomic.get stop) do
+          floor_submit other.f 1;
+          floor_drained other
+        done)
+  in
+  (t, stop, rival)
+
 let floor_rows =
   let row name f = Thumper.bench_with_setup ~setup:floor name f in
   Thumper.group "floor"
@@ -204,6 +225,14 @@ let floor_rows =
           ignore (P.run t.fp);
           ignore (P.signaled t.fp));
       row "polled/cost" (fun t ->
+          floor_submit t.f 1;
+          floor_drained t);
+      Thumper.bench_with_setup ~setup:floor_contended
+        ~teardown:(fun (_, stop, rival) ->
+          Atomic.set stop true;
+          Domain.join rival)
+        "polled/two-domains"
+        (fun (t, _, _) ->
           floor_submit t.f 1;
           floor_drained t);
       row "polled/run" floor_run;
