@@ -142,6 +142,11 @@ DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)(\([\w\s,]*\))?((?:[^\n]*\\
 TYPEDEF = re.compile(r"^[ \t]*typedef\b", re.M)
 TAGGED = re.compile(r"^[ \t]*(struct|union|enum)[ \t]+(\w+)\s*\{", re.M)
 IDENT = re.compile(r"\b[A-Za-z_]\w*\b")
+DIRECTIVE = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif|define|undef)\b(.*)$")
+
+# The macros a 64-bit Linux build defines that the headers' conditionals
+# test; every other name a conditional tests is undefined.
+PLATFORM = {"__linux__", "__LP64__"}
 
 # The scalar types, (bytes, alignment), in the 64-bit Linux ABIs.
 SCALARS = {
@@ -177,8 +182,61 @@ class Item:
         self.__dict__.update(k)
 
 
+def condition(directive, expr, defined):
+    """Whether the conditional [directive] [expr] holds, given the macros
+    [defined] so far, by name, with their bodies (None for a function-like
+    one). A name the expression uses that no macro defines is 0."""
+    if directive in ("ifdef", "ifndef"):
+        return (expr.split()[0] in defined) == (directive == "ifdef")
+    e = re.sub(r"\bdefined\s*(?:\(\s*(\w+)\s*\)|(\w+))",
+               lambda m: "1" if (m.group(1) or m.group(2)) in defined else "0", expr)
+    for _ in range(16):
+        e = IDENT.sub(lambda m: f"({defined[m.group()]})" if defined.get(m.group()) else "0", e)
+    e = re.sub(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]+\b", r"\1", e)
+    e = e.replace("&&", " and ").replace("||", " or ")
+    e = re.sub(r"!(?!=)", " not ", e)
+    try:
+        return bool(eval(e, {"__builtins__": {}}))
+    except Exception:
+        sys.exit(f"cannot evaluate the conditional {expr}")
+
+
+def active(b):
+    """For each line of the blanked text [b], whether a 64-bit Linux build
+    compiles it."""
+    defined = dict.fromkeys(PLATFORM, "1")
+    stack, out = [], []
+    for line in b.split("\n"):
+        live = all(taken for taken, _ in stack)
+        out.append(live)
+        m = DIRECTIVE.match(line)
+        if not m:
+            continue
+        d, rest = m.group(1), m.group(2).strip()
+        if d in ("if", "ifdef", "ifndef"):
+            c = live and condition(d, rest, defined)
+            stack.append([c, c])
+        elif d == "elif":
+            outer = all(taken for taken, _ in stack[:-1])
+            c = outer and not stack[-1][1] and condition("if", rest, defined)
+            stack[-1] = [c, stack[-1][1] or c]
+        elif d == "else":
+            outer = all(taken for taken, _ in stack[:-1])
+            stack[-1] = [outer and not stack[-1][1], True]
+        elif d == "endif":
+            stack.pop()
+        elif d == "define" and live:
+            m = re.match(r"(\w+)(\()?\s*(.*)", rest)
+            defined[m.group(1)] = None if m.group(2) else (m.group(3) or "1")
+        elif d == "undef" and live:
+            defined.pop(rest.split()[0], None)
+    return out
+
+
 def items(text):
+    """The definitions a 64-bit Linux build compiles of the header [text]."""
     b = blank(text)
+    lines = active(b)
     out = []
     for m in DEFINE.finditer(b):
         params = [p.strip() for p in m.group(2)[1:-1].split(",")] if m.group(2) else None
@@ -194,7 +252,10 @@ def items(text):
             names = [n.strip() for n in b[close + 1:end].split(",")]
             kind = re.search(r"\b(struct|union|enum)\b", head).group(1)
             tag = re.sub(r"\b(volatile|struct|union|enum)\b", "", head).strip()
-            out.append(Item(kind, names + ([tag] if tag else []), m.start(), end + 1, body=b[brace + 1:close]))
+            it = Item(kind, names + ([tag] if tag else []), m.start(), end + 1, body=b[brace + 1:close])
+            out.append(it)
+            if kind == "enum":
+                out += constants(it)
         else:
             words = b[m.end():end].split()
             out.append(Item("alias", [words[-1]], m.start(), end + 1, target=words[-2]))
@@ -202,8 +263,18 @@ def items(text):
         close = matching(b, m.end() - 1)
         end = b.index(";", close)
         if b[close + 1:end].strip() == "":
-            out.append(Item(m.group(1), [m.group(2)], m.start(), end + 1, body=b[m.end():close]))
-    return out
+            it = Item(m.group(1), [m.group(2)], m.start(), end + 1, body=b[m.end():close])
+            out.append(it)
+            if it.kind == "enum":
+                out += constants(it)
+    return [it for it in out if lines[b.count("\n", 0, it.start)]]
+
+
+def constants(enum):
+    """The constants of [enum], each an item over the enum's span."""
+    entries = [e.split("=", 1) for e in (e.strip() for e in enum.body.split(",")) if e]
+    enum.entries = [(e[0].strip(), e[1].strip() if len(e) > 1 else None) for e in entries]
+    return [Item("constant", [n], enum.start, enum.end, enum=enum) for n, _ in enum.entries]
 
 
 class Model:
@@ -259,7 +330,17 @@ class Model:
         return "".join(out)
 
     def value(self, name):
-        e = self.expand(self.item(name).body)
+        it = self.item(name)
+        if it.kind == "constant":
+            v = -1
+            for n, expr in it.enum.entries:
+                v = self.evaluate(expr, n) if expr else v + 1
+                if n == name:
+                    return v
+        return self.evaluate(it.body, name)
+
+    def evaluate(self, expr, name):
+        e = self.expand(expr)
         e = re.sub(r"\(\s*(?:const\s+)?(?:Nv[US]\d+|NvV32|NvLength|unsigned(?:\s+(?:long\s+long|long|int|char))?|"
                    r"int|long)\s*\)", "", e)
         e = re.sub(r"\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]+\b", r"\1", e)
@@ -376,6 +457,8 @@ class Model:
         it = self.item(name)
         if it.kind == "define":
             return set(IDENT.findall(it.body))
+        if it.kind == "constant":
+            return set(it.enum.names)
         if it.kind == "alias":
             return {it.target}
         return set(IDENT.findall(it.body))
@@ -594,7 +677,7 @@ def generate():
 
 
 def header(models):
-    owners = sorted({re.search(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", t).group(1).strip()
+    owners = sorted({re.search(r"Copyright \(c\) ([^\n]*?NVIDIA[^\n.]*)", t, re.I).group(1).strip()
                      for m in models for t in m.texts.values()})
     notice = (
         "   Permission is hereby granted, free of charge, to any person obtaining a\n"
