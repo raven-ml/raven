@@ -251,8 +251,8 @@ let entries =
       false,
       0,
       0x8000_0000_0000_1071L );
-    (* GFX12 maps system memory MTYPE_NC however uncached it is asked to be:
-       the kernel's gmc_v12_0_get_vm_pte works around a hardware bug so. *)
+    (* GFX12 maps system memory MTYPE_NC however uncached it is asked to be: the
+       kernel's gmc_v12_0_get_vm_pte works around a hardware bug so. *)
     ( "GFX12 2 MiB uncached system page",
       gfx12,
       2,
@@ -566,6 +566,23 @@ let mi300_blocks =
 let queues =
   group ~timeout:10. "compute queues"
     [
+      cases ~name:fst
+        "the format's GC registers and the boot's agree where both name one"
+        [
+          ("GC 12.0.1", []);
+          ("GC 11.0.0", navi31);
+          ("GC 11.0.3", (11, (11, 0, 3)) :: navi31);
+          ("GC 11.5.0", (11, (11, 5, 0)) :: navi31);
+          ("GC 9.4.3", mi300_blocks);
+          ("GC 9.5.0", (11, (9, 5, 0)) :: mi300_blocks);
+        ]
+        (fun (_, blocks) ->
+          let d =
+            List.fold_left
+              (fun d (b, v) -> with_version d b v)
+              (table "r9700.bin") (List.rev blocks)
+          in
+          match Regs.layout d with Ok _ -> () | Error why -> fail why);
       cases ~name:fst
         "a shader array selection and a broadcast hold the bits GRBM_GFX_INDEX \
          states"

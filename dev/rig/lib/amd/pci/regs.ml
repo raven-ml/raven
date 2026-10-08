@@ -80,9 +80,22 @@ let layout d =
   let* () =
     if Register.registers gpu = [] then unbooted D.gc_hwid gc else Ok ()
   in
-  (* The GC registers the queues' format needs, and those of a boot. *)
+  (* The GC registers the queues' format needs, and those of a boot, which must
+     agree on a register both name. *)
   let* _, boot_regs = table "gc" D.gc_hwid in
-  let gc_regs = Register.registers gpu @ boot_regs in
+  let format = Register.registers gpu in
+  let* () =
+    match
+      List.find_opt
+        (fun (r : Register.t) ->
+          List.exists (fun (f : Register.t) -> f.name = r.name && f <> r) format)
+        boot_regs
+    with
+    | None -> Ok ()
+    | Some r ->
+        Error (strf "GC %s's register tables disagree on %s" (dotted gc) r.name)
+  in
+  let gc_regs = format @ boot_regs in
   let* mp = table "mp" D.mp0_hwid in
   let* hdp = table "hdp" D.hdp_hwid in
   let* mmhub = table "mmhub" D.mmhub_hwid in
