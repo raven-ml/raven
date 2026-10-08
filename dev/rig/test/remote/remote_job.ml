@@ -110,6 +110,10 @@ let finish a =
       a.status <- Some s;
       s
 
+let exit_w =
+  Testable.structural ~pp:(fun ppf (code, lines) ->
+      Format.fprintf ppf "exit %d, printed [%s]" code (String.concat "; " lines))
+
 let kill a =
   if a.status = None then begin
     (try Unix.kill a.pid Sys.sigkill with Unix.Unix_error _ -> ());

@@ -97,6 +97,9 @@ type t = {
   mutable job : Link.job option;
   mutable self : int;  (** This agent's process, once a controller came. *)
   mutable controller : Link.t option;
+  accepted : (int, Unix.file_descr) Hashtbl.t;
+      (** Connections of the job's agents before this one, admitted, waiting for
+          the join that names their machines. *)
   peers : (int, Link.t) Hashtbl.t;  (** The job's other agents' links. *)
   mutable stopped : bool;  (** Once it listens no more. *)
 }
@@ -133,6 +136,7 @@ let listen ~key host port =
               job = None;
               self = 0;
               controller = None;
+              accepted = Hashtbl.create 4;
               peers = Hashtbl.create 4;
               stopped = false;
             })
@@ -165,13 +169,11 @@ let handshake a fd =
       a.self <- self;
       a.controller <-
         Some (Link.make j fd ~name:"controller" ~peer:Wire.Controller)
-  | Ok ((Wire.Agent i as peer), _) -> (
+  | Ok (Wire.Agent i, _) ->
       Mutex.protect a.lock @@ fun () ->
-      match a.job with
-      | Some j ->
-          Hashtbl.replace a.peers i
-            (Link.make j fd ~name:(strf "agent %d" i) ~peer)
-      | None -> Unix.close fd)
+      if a.stopped || Hashtbl.mem a.accepted i || Hashtbl.mem a.peers i then
+        Unix.close fd
+      else Hashtbl.replace a.accepted i fd
   | Ok (Wire.Controller, Wire.Controller) -> Unix.close fd
 
 (* Accepts connections until [wake] is readable, each handshake on a thread of
@@ -203,12 +205,15 @@ let accept_loop a wake =
   loop ()
 
 (* Ends [a]'s listening: wakes the acceptor through [waker], waits for it, and
-   closes the socket. *)
+   closes the socket and the connections no join named. *)
 let stop a waker acceptor =
   Mutex.protect a.lock (fun () -> a.stopped <- true);
   ignore (Unix.write_substring waker "x" 0 1);
   Thread.join acceptor;
-  Unix.close a.socket
+  Unix.close a.socket;
+  Mutex.protect a.lock @@ fun () ->
+  Hashtbl.iter (fun _ fd -> Unix.close fd) a.accepted;
+  Hashtbl.reset a.accepted
 
 (* Serving *)
 
@@ -250,40 +255,65 @@ let account s id d : Wire.account =
     reaches = List.sort compare reaches;
   }
 
-(* Connects to the job's agents after this one, then waits for those before
-   it. *)
+(* Connects to the job's agents after this one, then makes links of the
+   connections of those before it, all within [join_s]. Each link is named after
+   its agent's machine, as the controller names it in [agents]. *)
 let join s agents =
   let a = s.agent in
-  List.iteri
-    (fun i (host, port) ->
-      let j = i + 1 in
-      if j > a.self then
-        match dial_tcp ~s:join_s host port with
-        | Error why -> raise (Refused (strf "%s:%d: %s" host port why))
-        | Ok fd -> (
-            match
-              Wire.dial fd ~key:a.key ~self:(Wire.Agent a.self)
-                ~peer:(Wire.Agent j)
-            with
-            | Error why ->
-                Unix.close fd;
-                raise (Refused (strf "%s:%d: %s" host port why))
-            | Ok () ->
-                let l =
-                  Link.make s.job fd ~name:(strf "%s:%d" host port)
-                    ~peer:(Wire.Agent j)
-                in
-                Mutex.protect a.lock (fun () -> Hashtbl.replace a.peers j l)))
-    agents;
+  if a.self > List.length agents then
+    raise (Refused (strf "the job has no agent %d" a.self));
+  let until = Unix.gettimeofday () +. join_s in
+  let late name = Refused (strf "%s: no answer within %.0f s" name join_s) in
+  let dial j ({ name; host; port } : Wire.agent) =
+    let left = until -. Unix.gettimeofday () in
+    if left <= 0. then raise (late name);
+    match dial_tcp ~s:left host port with
+    | Error why -> raise (Refused (strf "%s: %s" name why))
+    | Ok fd -> (
+        match
+          Wire.dial fd ~key:a.key ~self:(Wire.Agent a.self) ~peer:(Wire.Agent j)
+        with
+        | Error why ->
+            Unix.close fd;
+            raise (Refused (strf "%s: %s" name why))
+        | Ok () when Unix.gettimeofday () > until ->
+            Unix.close fd;
+            raise (late name)
+        | Ok () ->
+            let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
+            Mutex.protect a.lock (fun () -> Hashtbl.replace a.peers j l))
+  in
+  List.iteri (fun i m -> if i + 1 > a.self then dial (i + 1) m) agents;
   (* The agents before this one dial it; their handshakes run on the acceptor's
      threads. *)
-  let joined () = Mutex.protect a.lock (fun () -> Hashtbl.length a.peers) in
-  let until = Unix.gettimeofday () +. join_s in
-  while joined () < List.length agents - 1 && Unix.gettimeofday () < until do
+  let before = List.filteri (fun i _ -> i + 1 < a.self) agents in
+  let accepted () =
+    Mutex.protect a.lock (fun () -> Hashtbl.length a.accepted)
+  in
+  while accepted () < List.length before && Unix.gettimeofday () < until do
     Thread.delay 0.01
   done;
-  if joined () < List.length agents - 1 then
-    raise (Refused "the job's other agents did not connect");
+  let missing =
+    Mutex.protect a.lock @@ fun () ->
+    List.concat
+      (List.mapi
+         (fun i ({ name; _ } : Wire.agent) ->
+           let j = i + 1 in
+           match Hashtbl.find_opt a.accepted j with
+           | None -> [ name ]
+           | Some fd ->
+               Hashtbl.remove a.accepted j;
+               Hashtbl.replace a.peers j
+                 (Link.make s.job fd ~name ~peer:(Wire.Agent j));
+               [])
+         before)
+  in
+  if missing <> [] then
+    raise
+      (Refused
+         (strf "%s did not connect within %.0f s"
+            (String.concat ", " missing)
+            join_s));
   account s 0 Rig.host
 
 let open_kind s kind =

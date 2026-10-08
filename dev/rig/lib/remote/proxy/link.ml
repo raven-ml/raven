@@ -140,9 +140,10 @@ let encode_request : type a. a Wire.request -> string =
   | Wire.Join { agents } ->
       add_u8 b 1;
       add_list b
-        (fun b (h, p) ->
-          add_string b h;
-          add_u32 b p)
+        (fun b (a : Wire.agent) ->
+          add_string b a.name;
+          add_string b a.host;
+          add_u32 b a.port)
         agents
   | Wire.Open kind ->
       add_u8 b 2;
@@ -180,8 +181,9 @@ let decode_request r =
     | 1 ->
         let agents =
           list r (fun r ->
-              let h = string r in
-              (h, u32 r))
+              let name = string r in
+              let host = string r in
+              { Wire.name; host; port = u32 r })
         in
         Any (Wire.Join { agents })
     | 2 -> Any (Wire.Open (string r))

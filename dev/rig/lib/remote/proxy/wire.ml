@@ -244,8 +244,10 @@ type account = {
   reaches : int list;
 }
 
+type agent = { name : string; host : string; port : int }
+
 type _ request =
-  | Join : { agents : (string * int) list } -> account request
+  | Join : { agents : agent list } -> account request
   | Open : string -> account list request
   | Alloc : {
       id : int;

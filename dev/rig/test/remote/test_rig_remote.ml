@@ -17,10 +17,6 @@ let lost_w =
     | None -> Format.pp_print_string ppf "not lost"
     | Some why -> Format.fprintf ppf "lost: %S" why)
 
-let exit_w =
-  Testable.structural ~pp:(fun ppf (code, lines) ->
-      Format.fprintf ppf "exit %d, printed [%s]" code (String.concat "; " lines))
-
 (* Connecting *)
 
 let two_agents () =

@@ -154,16 +154,24 @@ type account = {
 }
 (** The type for an agent's account of one of its devices. *)
 
+type agent = {
+  name : string;
+      (** Its machine's name, which the controller gives it: every process of
+          the job names the machine by it. *)
+  host : string;  (** The host the agent listens at. *)
+  port : int;  (** The port the agent listens at. *)
+}
+(** The type for the agents of a job, as a join names them. *)
+
 (** The type for requests, each answered by a value of its parameter. The ids of
     memory, images and rails are the controller's, from one count: each names
     one object of the job on the agent from its request until the controller
     drops it ([Drop]). *)
 type _ request =
-  | Join : { agents : (string * int) list } -> account request
-      (** Makes the agent its job's agent, the job's agents being [agents],
-          every agent's host and port in the order of their processes from [1].
-          Answered with its host's account once it is connected to every other
-          agent. *)
+  | Join : { agents : agent list } -> account request
+      (** Makes the agent its job's agent, the job's agents being [agents], in
+          the order of their processes from [1]. Answered with its host's
+          account once it is connected to every other agent. *)
   | Open : string -> account list request
       (** Opens the agent's devices of a kind, such as ["CUDA"]: answered with
           their accounts, in its index order. *)

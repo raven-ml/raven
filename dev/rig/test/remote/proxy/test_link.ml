@@ -727,7 +727,10 @@ let pp_request : type a. Format.formatter -> a Wire.request -> unit =
   | Wire.Join { agents } ->
       Format.fprintf ppf "Join [%s]"
         (String.concat "; "
-           (List.map (fun (h, p) -> Printf.sprintf "%S:%d" h p) agents))
+           (List.map
+              (fun (a : Wire.agent) ->
+                Printf.sprintf "%S %S:%d" a.name a.host a.port)
+              agents))
   | Wire.Open k -> Format.fprintf ppf "Open %a" pp_bytes k
   | Wire.Alloc { id; device; memory; bytes } ->
       Format.fprintf ppf "Alloc {id %d; device %d; %s; bytes %d}" id device
@@ -791,7 +794,10 @@ let case_g =
   in
   one_of
     [
-      (let+ agents = small_list (pair text (int_range 0 65535))
+      (let+ agents =
+         small_list
+           (let+ name = text and+ host = text and+ port = int_range 0 65535 in
+            { Wire.name; host; port })
        and+ a = answer account_g in
        Case (Wire.Join { agents }, a, account));
       (let+ k = text and+ a = answer (small_list account_g) in

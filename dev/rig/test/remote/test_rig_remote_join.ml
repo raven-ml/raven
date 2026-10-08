@@ -55,11 +55,7 @@ let () =
        [
          group ~timeout:60. "rig_remote"
            [
-             xfail
-               ~reason:
-                 "connect waits for an unanswered join past the first agent's \
-                  failure"
-               (test "two agents that cannot reach each other fail the join"
-                  unjoined);
+             test "two agents that cannot reach each other fail the join"
+               unjoined;
            ];
        ])

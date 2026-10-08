@@ -24,7 +24,14 @@ let joined a f =
   Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
   require_ok (Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1));
   let l = Link.make j fd ~name:(machine a) ~peer:(Wire.Agent 1) in
-  ignore (require_ok (Link.request l (Wire.Join { agents = [ address a ] })));
+  ignore
+    (require_ok
+       (Link.request l
+          (Wire.Join
+             {
+               agents =
+                 [ { name = machine a; host = "127.0.0.1"; port = a.port } ];
+             })));
   Fun.protect
     ~finally:(fun () ->
       if Link.failure j = None then Link.fail j "the test ends")

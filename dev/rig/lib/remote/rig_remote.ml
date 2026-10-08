@@ -221,19 +221,65 @@ let rec dial ~key job acc i = function
               in
               dial ~key job (m :: acc) (i + 1) rest))
 
-(* Joins every agent at once: each waits for the ones before it to connect. *)
-let join agents ms =
-  let answers = Array.make (List.length ms) (Error "") in
-  let threads =
-    List.mapi
-      (fun i m ->
-        Thread.create
-          (fun () -> answers.(i) <- request m (Wire.Join { agents }))
-          ())
-      ms
+(* How long the controller waits for an agent's answer to its join: the agent's
+   own bound on joining, and a second for the answer to come. *)
+let join_answer_s = Agent.join_s +. 1.
+
+(* Joins every agent at once, each named as [ms] names it: each waits for the
+   ones before it to connect. The first refusal fails the job, which ends the
+   other requests, and so does an agent that does not answer within
+   [join_answer_s]. *)
+let join job agents ms =
+  let agents =
+    List.map2
+      (fun m (host, port) -> { Wire.name = m.name; host; port })
+      ms agents
   in
+  let answers = Array.make (List.length ms) None in
+  let lock = Mutex.create () in
+  let ask i m =
+    match request m (Wire.Join { agents }) with
+    | Ok a -> Mutex.protect lock (fun () -> answers.(i) <- Some a)
+    | Error why -> Link.fail job why
+  in
+  let threads = List.mapi (fun i m -> Thread.create (ask i) m) ms in
+  let until = Unix.gettimeofday () +. join_answer_s in
+  let rec wait () =
+    let unanswered =
+      Mutex.protect lock (fun () ->
+          List.filteri (fun i _ -> Option.is_none answers.(i)) ms)
+    in
+    match unanswered with
+    | [] -> ()
+    | m :: _ when Unix.gettimeofday () >= until ->
+        Link.fail job
+          (strf "%s: no answer to its join within %.0f s" m.name join_answer_s)
+    | _ -> if Link.wait job ~ms:10 = Link.Open then wait ()
+  in
+  wait ();
   List.iter Thread.join threads;
-  Array.to_list answers
+  match Link.failure job with
+  | Some why -> Error why
+  | None -> Ok (List.filter_map Fun.id (Array.to_list answers))
+
+(* Opens each machine's host. On a failure it closes those it opened and fails
+   the job. *)
+let open_hosts job ms accounts =
+  let rec go = function
+    | [] -> Ok ()
+    | (m, a) :: rest -> (
+        match open_host m a with
+        | Ok h ->
+            m.host <- Some h;
+            go rest
+        | Error why -> Error (strf "%s: %s" m.name why))
+  in
+  match go (List.combine ms accounts) with
+  | Ok () -> Ok ()
+  | Error why ->
+      List.iter (fun m -> Option.iter Rig.close m.host) ms;
+      Link.fail job why;
+      Error why
 
 let check_agents agents =
   if agents = [] then invalid_arg "Rig_remote.connect: no agent";
@@ -255,19 +301,7 @@ let connect ~key agents =
       match dial ~key job [] 1 agents with
       | Error _ as e -> e
       | Ok ms -> (
-          let rec hosts_of = function
-            | [] -> Ok ()
-            | (m, Ok a) :: rest -> (
-                match open_host m a with
-                | Ok h ->
-                    m.host <- Some h;
-                    hosts_of rest
-                | Error why -> abandon job m.name why)
-            | (_, Error why) :: _ ->
-                Link.fail job why;
-                Error why
-          in
-          match hosts_of (List.combine ms (join agents ms)) with
+          match Result.bind (join job agents ms) (open_hosts job ms) with
           | Error _ as e -> e
           | Ok () ->
               let j = { job; machines = ms } in

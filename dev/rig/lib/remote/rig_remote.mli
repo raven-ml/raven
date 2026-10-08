@@ -68,6 +68,8 @@
     - a device of any of its processes is lost other than by a close, as
       {!Rig.failure} reports it. This process notices its own within a second.
 
+    Every process names a machine by the name {!connect} gave it.
+
     Then, on each of its processes that still answer: every connection is shut
     down, every count of a rail is raised so that no wait for one blocks, and
     every device of the process but {!Rig.host} is lost with the root cause
@@ -119,22 +121,23 @@ val connect : key:string -> (string * int) list -> (t, string) result
 (** [connect ~key agents] starts a job with an agent at each host and port of
     [agents]. It connects to each agent, proves [key] to it and checks that it
     proves [key] back, has the agents connect to each other likewise, and opens
-    each machine's host ({!hosts}). Each connection, and each answer of a
-    handshake, comes within 10 seconds, or the job fails. Once it returns, the
-    job's processes watch each other, and the process closes the job at exit
-    ({!close}).
+    each machine's host ({!hosts}). Each connection, each answer of a handshake,
+    and each agent's connections to the others come within 10 seconds, or the
+    job fails. Once it returns, the job's processes watch each other, and the
+    process closes the job at exit ({!close}).
 
     Each machine's name is ["HOST:PORT"] as [agents] gives them, followed by
     ["#n"] for the process's [n]th connection to that address from the second
     on: a name names one machine for the life of the process, so a device opened
-    on one job's machine is never another's.
+    on one job's machine is never another's. The agents name the machine so too.
 
     [Error why] if an agent cannot be reached, serves another job, speaks
     another version of the protocol, or does not know [key], if the controller
     does not, or if two agents cannot connect to each other, [why] starting with
-    ["HOST:PORT: "]; and if the process failed ({!Rig.failure}), [why] its
-    failure: a process whose job failed, or that lost a device before, starts no
-    job. The agents reached are told the job failed.
+    a machine's name and [": "], and naming both machines of two agents that
+    cannot connect; and if the process failed, [why] is {!Rig.failure}'s text: a
+    process whose job failed, or that lost a device before, starts no job. The
+    agents reached are told the job failed.
 
     Raises [Invalid_argument] if [key] has fewer than 16 or more than 4096
     bytes, [agents] is empty or lists an address twice, or a job of the process
