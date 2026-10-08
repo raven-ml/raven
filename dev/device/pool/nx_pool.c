@@ -15,12 +15,10 @@
    system, delays nothing.
 
    Jobs come in bursts, such as the kernels of a compiled program a few
-   microseconds apart. A worker spins on the generation until spin_ns has
-   passed since the last job it was one of the threads of, and the caller
-   spins on the workers inside for spin_ns, before either parks on a
-   condition variable. A job wakes the parked workers only if one of its own
-   threads is among them. A job's publication then costs no system call,
-   and a worker that a burst's jobs leave out parks once its window ends. */
+   microseconds apart. A waiting thread spins for spin_ns before it parks on
+   a condition variable, and a job wakes the parked workers only if one of
+   its own threads is among them, so a job's publication costs no system
+   call. */
 
 #define _GNU_SOURCE
 
@@ -49,12 +47,11 @@
 #endif
 
 /* How long a waiting thread spins before it parks. Waking a parked thread
-   takes a system call and tens of microseconds before it runs, which each
-   launch of a compiled program's kernels paid for each of its workers;
-   spinning longer than the gaps between such launches keeps the workers
-   running for the next. Past busy_ns of spinning, a thread yields its core
-   between reads, so that a spinning pool slows other threads little when
-   the cores are all taken. */
+   takes a system call and tens of microseconds before it runs; a spin
+   longer than the gaps within a burst keeps the workers running for the
+   next job. Past busy_ns of spinning, a thread yields its core between
+   reads, so that a spinning pool slows other threads little when the cores
+   are all taken. */
 static const uint64_t spin_ns = 100000;
 static const uint64_t busy_ns = 2000;
 
@@ -331,10 +328,9 @@ static void claim(pool *p, const job *j, int id) {
   }
 }
 
-/* Entering. The caller opens a job after writing it and closes it once its
-   own claims find no chunk left, then waits for the workers inside. A worker
-   claims only inside, so the caller never rewrites a job a worker reads, and
-   a worker that arrives after the close turns back without a claim.
+/* Entering. A worker claims only inside, so the caller never rewrites a job
+   a worker reads, and a worker that arrives after the close turns back
+   without a claim.
 
    A worker that sees the job closed turns back after one load. Else it
    enters with a fetch-add, which always lands: a compare-and-swap fails and
@@ -559,11 +555,9 @@ static int64_t clamp(int64_t x, int64_t lo, int64_t hi) {
 }
 
 /* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
-   or without a pool, else on at most p->threads (<= nx_pool_cores ()). The
-   caller writes the job while it is closed, opens it, announces it, claims
-   as worker 0, closes it and waits for the workers inside, after which no
-   thread touches the job or the claim counter until the next publish. Out
-   of line, so a serial nx_pool_run saves no registers. */
+   or without a pool, else on at most p->threads (<= nx_pool_cores ()). Once
+   it returns, no thread touches the job or the claim counter until the next
+   job opens. Out of line, so a serial nx_pool_run saves no registers. */
 __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
                                           nx_pool_body body, void *ctx) {
   pool *p = in_body ? NULL : get();
