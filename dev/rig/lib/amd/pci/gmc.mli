@@ -81,6 +81,14 @@ val start_hub :
     reported and redirected to the system memory page {!fault_page} names;
     [scratch] answers accesses outside the apertures. *)
 
+val translates :
+  t -> [ `Gc | `Mm ] -> Rig_pci.Page_table.t -> (unit, string) result
+(** [translates g hub tables] is [Ok ()] iff every instance of [hub] holds what
+    {!start_hub} gave it over [tables]: its L2 cache and context 0 on, the
+    context over the tables' root. A block's reset clears them, as the RLC's
+    autoload clears the GC's hub, which then passes the GPU's addresses through
+    untranslated, to host memory if no IOMMU stands between. [Error msg] names the hub, the instance and what it reads. *)
+
 val fault_page : t -> [ `Gc | `Mm ] -> int -> unit
 (** [fault_page g hub a] makes the page of system memory at bus address [a] the
     one [hub]'s faulting accesses reach on every instance, as the kernel's dummy

@@ -51,13 +51,18 @@ val make :
     the compute queue's, and the KIQ's on a virtual function, whose doorbell it
     rings through [doorbells]. *)
 
+val wait_autoload : t -> unit
+(** [wait_autoload g] waits for the RLC to have loaded the GC's firmware, on a
+    GC that loads it so. The load resets the GC's hub, so the hub is started
+    after it ({!Gmc.start_hub}). *)
+
 val start : t -> Rig_pci.Memory.t -> Images.t -> partial:bool -> unit
-(** [start g m images ~partial] waits for the RLC to have loaded the GC's
-    firmware and starts the micro-engines, the RS64 ones from the start
-    addresses of [images]: a full boot configures them and their doorbell
-    ranges, and a virtual function its KIQ, in system memory of [m]; a partial
-    boot dequeues the queues the last boot left and resets the engines. The GC's
-    hub is started before ({!Gmc.start_hub}). *)
+(** [start g m images ~partial] starts the micro-engines, once the RLC loaded
+    the GC's firmware ({!wait_autoload}), the RS64 ones from the start addresses
+    of [images]: a full boot configures them and their doorbell ranges, and a
+    virtual function its KIQ, in system memory of [m]; a partial boot dequeues
+    the queues the last boot left and resets the engines. The GC's hub is
+    started before ({!Gmc.start_hub}). *)
 
 val queue :
   t ->

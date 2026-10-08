@@ -363,6 +363,31 @@ let start_hub g hub tables ~scratch =
     (instances g hub);
   if hub = `Gc then g.gc_started <- true
 
+(* A hub translates once its L2 cache and context 0 are on, over the tables'
+   root: a block's reset clears them, as the RLC's autoload does the GC's, and
+   the hub then passes addresses through untranslated. *)
+let translates g hub tables =
+  let r = g.r and ip = hub_prefix hub in
+  let reg s = strf "reg%s%s" ip s in
+  let root = fabric g (Page_table.root tables) lor 1 in
+  let wrong inst =
+    let l2 = Regs.field ~inst r (reg "VM_L2_CNTL") "enable_l2_cache" in
+    let ctx = Regs.field ~inst r (reg "VM_CONTEXT0_CNTL") "enable_context" in
+    let base =
+      Regs.read ~inst r (reg "VM_CONTEXT0_PAGE_TABLE_BASE_ADDR_LO32")
+      lor (Regs.read ~inst r (reg "VM_CONTEXT0_PAGE_TABLE_BASE_ADDR_HI32") lsl 32)
+    in
+    if l2 = 1 && ctx = 1 && base = root then None
+    else
+      Some
+        (strf
+           "the %s hub (instance %d) does not translate: L2 cache %d, context             0 %d, table base 0x%x where 0x%x was written"
+           ip inst l2 ctx base root)
+  in
+  match List.find_map wrong (instances g hub) with
+  | None -> Ok ()
+  | Some why -> Error why
+
 let fault_page g hub a =
   let name = strf "reg%sVM_L2_PROTECTION_FAULT_DEFAULT_ADDR" (hub_prefix hub) in
   List.iter

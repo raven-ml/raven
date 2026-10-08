@@ -338,25 +338,45 @@ let boot g ~partial ~pool ~kiq =
      memory alone, so that no address a step gets wrong reaches the host's. A
      virtual function's KIQ, in system memory, needs it earlier. *)
   set_bus_master g.f false;
-  (* Both hubs before the interrupt handler and the firmware, as the kernel's
-     GMC starts them, so that the RLC's autoload never fetches through a hub
-     being programmed. The hubs' fault page and the handler's dummy read are
-     this session's page. *)
+  (* The GPU masters the bus only while both hubs translate: an untranslated
+     address goes to host memory as it stands. *)
+  let master () =
+    List.iter
+      (fun hub ->
+        match Gmc.translates g.gmc hub g.tables with
+        | Ok () -> ()
+        | Error why -> raise (Regs.Stuck why))
+      [ `Mm; `Gc ];
+    set_bus_master g.f true
+  in
+  (* The hubs as the kernel starts them: the MM hub, and on GC 9 the GC's too,
+     before the interrupt handler and the firmware (gmc_v9_0_gart_enable); from
+     GC 11 the GC hub once the RLC's autoload is done, since the autoload
+     resets it (gfx_v11_0_hw_init, gfx_v12_0_hw_init). The hubs' fault page
+     and the handler's dummy read are this session's page. *)
+  let start_gc () =
+    Gmc.start_hub g.gmc `Gc g.tables ~scratch:(fabric pool.scratch);
+    Gmc.fault_page g.gmc `Gc g.fault_bus
+  in
+  let gc_late = Regs.version (Regs.layout_of r) D.gc_hwid >= (11, 0, 0) in
   if not partial then begin
     Soc.start r;
     Gmc.start_hub g.gmc `Mm g.tables ~scratch:(fabric pool.scratch)
   end;
-  Gmc.start_hub g.gmc `Gc g.tables ~scratch:(fabric pool.scratch);
   Gmc.fault_page g.gmc `Mm g.fault_bus;
-  Gmc.fault_page g.gmc `Gc g.fault_bus;
+  if not gc_late then start_gc ();
   Soc.interrupts r ~dummy:g.fault_bus;
   Ih.start g.ih;
   if not g.vf then begin
     Psp.start g.psp g.images ~partial;
     if not partial then Smu.start g.smu
   end;
+  Gfx.wait_autoload g.gfx;
+  if gc_late then start_gc ();
+  Gmc.flush_hdp g.gmc;
+  Gmc.invalidate g.gmc;
   Page_table.booted g.tables;
-  if g.vf then set_bus_master g.f true;
+  if g.vf then master ();
   Gfx.start g.gfx g.memory g.images ~partial;
   if g.vf then kiq := Some g.gfx;
   let xccs = (Regs.gpu (Regs.layout_of r)).xccs in
@@ -371,7 +391,7 @@ let boot g ~partial ~pool ~kiq =
     Regs.write ~value:session r "regSCRATCH_REG7" [];
     mark g ~dirty:true
   end;
-  set_bus_master g.f true
+  master ()
 
 let fault_status l =
   if Regs.has l "regGCVM_L2_PROTECTION_FAULT_STATUS_LO32" then

@@ -311,13 +311,16 @@ let start_kiq g m =
             [ ("scheduler0", (2 lsl 5) lor (1 lsl 3) lor 0x80) ]);
       g.kiq <- Some (w, va)
 
-let start g m images ~partial =
-  g.starts <- images.Images.starts;
+let wait_autoload g =
   let r = g.r in
   if Regs.has (Regs.layout_of r) "regRLC_RLCS_BOOTLOAD_STATUS" then
     Regs.wait r "the RLC's autoload" (fun () ->
         Regs.read r "regCP_STAT" = 0
-        && Regs.field r "regRLC_RLCS_BOOTLOAD_STATUS" "bootload_complete" = 1);
+        && Regs.field r "regRLC_RLCS_BOOTLOAD_STATUS" "bootload_complete" = 1)
+
+let start g m images ~partial =
+  g.starts <- images.Images.starts;
+  let r = g.r in
   if partial then reset_mec g
   else begin
     config_mec g;

@@ -63,7 +63,8 @@ val start :
 (** [start f find] boots the GPU of [f], whose function the caller took and
     whose machine has {!space} reserved, its firmware read with [find]: a
     partial or full boot as {!plan} says. The GPU masters the bus only once
-    booted, its hubs' faults reaching a page of system memory the boot owns.
+    booted and both its hubs read back as translating ({!Gmc.translates}), its
+    hubs' faults reaching a page of system memory the boot owns.
 
     [Error (`Refused msg)], no register written, if a BAR cannot be mapped, if
     its discovery table is refused, if a block has a version this library does
@@ -73,7 +74,7 @@ val start :
     [Error `Running], no register written and its BARs unmapped, if it is
     [`Booted] outside a fabric: firmware this library did not start runs on it,
     which the vendor's reset stops. [Error (`Lost msg)] if a block does not
-    answer, naming the step: the GPU is then stopped ({!stop}). An exception
+    answer, naming the step, or a hub does not translate: the GPU is then stopped ({!stop}). An exception
     raised during the boot stops it too, and passes through. *)
 
 val writes : pcie:int option -> rebars:int list -> (int * int) list
