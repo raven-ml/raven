@@ -1034,10 +1034,13 @@ module type Driver = sig
       and may call it after {!stop}. Counted. *)
 
   val sleep : t -> seen:int -> still_ms:int -> unit
-  (** [sleep d ~seen ~still_ms] returns once the word differs from [seen], at
-      once if it already does, or after [still_ms] milliseconds. It blocks on
-      the device's events and raises {!Fault} once the device faulted. It may
-      run beside the hand-over. Counted. *)
+  (** [sleep d ~seen ~still_ms] blocks on the device's events until the word
+      differs from [seen], returning at once if it already does, and returns at
+      the latest after [still_ms] milliseconds. It may return earlier, on an
+      event of other work or a timer of the driver's own: this library reads the
+      word again after every return and sleeps again while it is unmoved. It
+      raises {!Fault} once the device faulted. It may run beside the hand-over.
+      Counted. *)
 
   val room_entry : nativeint
   (** [room_entry] is the address of [d]'s room check, in the shape
