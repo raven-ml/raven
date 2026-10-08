@@ -17,15 +17,14 @@
      finite, in range         x
      past the largest finite  ±inf               ±57344   ±448    ±6
      below the least normal   a subnormal or ±0
-     ±inf                     ±inf               ±inf     NaN     ±6
+     ±inf                     ±inf               ±57344   ±448    ±6
      NaN                      NaN                NaN      NaN     +0
 
-   In the formats of a byte or less a finite value stays finite: past the
-   largest finite value it saturates. An infinity stays non-finite where the
-   format can say so, as its infinity or else its NaN; e2m1fn has neither,
-   so an infinity saturates and NaN stores as +0, as in integers. Integers
-   truncate toward zero, saturate to their range and take NaN to 0.
-   Booleans are x != 0.
+   The formats of a byte or less saturate: past the largest finite value,
+   infinities included, a store is the largest finite value of its sign
+   (OFP8's saturating conversion). NaN stays NaN where the format has one;
+   e2m1fn has none and stores +0, as integers do. Integers truncate toward
+   zero, saturate to their range and take NaN to 0. Booleans are x != 0.
 
    C, CUDA and HIP sources compile this header with no OCaml header. Metal
    sources compile it too, without the row table and the functions of
@@ -41,7 +40,6 @@
 #define nx_signbit metal::signbit
 #define nx_isfinite metal::isfinite
 #define nx_isnan metal::isnan
-#define nx_isinf metal::isinf
 #else
 #include <math.h>
 #include <stdint.h>
@@ -51,7 +49,6 @@
 #define nx_signbit signbit
 #define nx_isfinite isfinite
 #define nx_isnan isnan
-#define nx_isinf isinf
 #endif
 
 /* Codes and facts */
@@ -207,8 +204,9 @@ static inline float nx_f16_to_float(uint16_t c) {
    exponent at 1 - bias. A code's low bits below the sign are its magnitude,
    which orders the finite values. */
 
-/* The magnitude code of the finite binary32 [f], rounded to nearest, ties to
-   even; a code past the format's largest finite one means [f] overflows. */
+/* The magnitude code of the binary32 [f], not NaN, rounded to nearest, ties
+   to even; a code past the format's largest finite one means [f] overflows,
+   as an infinity does. */
 static inline uint32_t nx_mini_round(float f, int m, int bias) {
   uint32_t i = nx_float_bits(f);
   int exp = (int)((i >> 23) & 0xFF) - 127;
@@ -250,7 +248,7 @@ static inline uint32_t nx_mini_saturate(float f, int m, int bias,
 
 static inline uint8_t nx_float_to_e4m3fn(float f) {
   uint8_t sign = nx_signbit(f) ? 0x80 : 0;
-  if (!nx_isfinite(f)) return sign | 0x7F;
+  if (nx_isnan(f)) return sign | 0x7F;
   return sign | (uint8_t)nx_mini_saturate(f, 3, 7, 0x7E);
 }
 
@@ -260,12 +258,12 @@ static inline float nx_e4m3fn_to_float(uint8_t c) {
   return s * nx_mini_value(c & 0x7F, 3, 7);
 }
 
-/* e5m2: IEEE-like, with infinities; largest finite 57344. */
+/* e5m2 (OCP E5M2): IEEE-like, with infinities, which decode but never
+   store; largest finite 57344. */
 
 static inline uint8_t nx_float_to_e5m2(float f) {
   uint8_t sign = nx_signbit(f) ? 0x80 : 0;
   if (nx_isnan(f)) return sign | 0x7F;
-  if (nx_isinf(f)) return sign | 0x7C;
   return sign | (uint8_t)nx_mini_saturate(f, 2, 15, 0x7B);
 }
 
@@ -277,14 +275,12 @@ static inline float nx_e5m2_to_float(uint8_t c) {
 }
 
 /* e2m1fn (OCP FP4 E2M1): no infinity and no NaN, values ±{0, 0.5, 1, 1.5,
-   2, 3, 4, 6}. NaN stores as +0, as it does in integers, and an infinity
-   saturates. A code is the low four bits of its byte. */
+   2, 3, 4, 6}. NaN stores as +0, as it does in integers. A code is the low
+   four bits of its byte. */
 
 static inline uint8_t nx_float_to_e2m1fn(float f) {
   if (nx_isnan(f)) return 0;
-  uint8_t sign = nx_signbit(f) ? 0x8 : 0;
-  if (nx_isinf(f)) return sign | 0x7;
-  return sign | (uint8_t)nx_mini_saturate(f, 1, 1, 0x7);
+  return (nx_signbit(f) ? 0x8 : 0) | (uint8_t)nx_mini_saturate(f, 1, 1, 0x7);
 }
 
 static inline float nx_e2m1fn_to_float(uint8_t c) {

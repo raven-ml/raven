@@ -200,13 +200,14 @@ val equal_witness :
       is a subnormal or a zero of its sign.
     - A result whose magnitude exceeds the largest finite value is the infinity
       of its sign in [Float64], [Float32], [Float16] and [Bfloat16]: [65519.]
-      stores in [Float16] as [65504.] and [65520.] as infinity. The formats of a
-      byte or less keep a finite value finite: it saturates to ±57344 in
-      [Float8_e5m2], ±448 in [Float8_e4m3fn] and ±6 in [Float4_e2m1fn].
-    - An infinity stays non-finite where the format can say so: it is the
-      infinity of its sign in every format with infinities and NaN in
-      [Float8_e4m3fn]. [Float4_e2m1fn] has neither: an infinity saturates to ±6.
-    - NaN is NaN, except in [Float4_e2m1fn]: it stores [+0.], as integers do.
+      stores in [Float16] as [65504.] and [65520.] as infinity. An infinity
+      stays one there.
+    - The formats of a byte or less saturate: past the largest finite value,
+      infinities included, a store is ±57344 in [Float8_e5m2], ±448 in
+      [Float8_e4m3fn] and ±6 in [Float4_e2m1fn]. [Float8_e5m2]'s infinities are
+      values a buffer may hold, which no store writes.
+    - NaN is NaN, except in [Float4_e2m1fn], which has none: it stores [+0.], as
+      integers do.
     - Integers truncate toward zero, saturate to their range and store NaN as
       [0], signed and unsigned alike.
     - Complex numbers store the value as their real part, rounded to their

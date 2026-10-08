@@ -237,12 +237,12 @@ let specials =
     Store (D.Bfloat16, -.inf, -.inf);
     Store (D.Float8_e5m2, nan, nan);
     Store (D.Float8_e5m2, -0., -0.);
-    Store (D.Float8_e5m2, inf, inf);
-    Store (D.Float8_e5m2, -.inf, -.inf);
+    Store (D.Float8_e5m2, inf, 57344.);
+    Store (D.Float8_e5m2, -.inf, -57344.);
     Store (D.Float8_e4m3fn, nan, nan);
     Store (D.Float8_e4m3fn, -0., -0.);
-    Store (D.Float8_e4m3fn, inf, nan);
-    Store (D.Float8_e4m3fn, -.inf, nan);
+    Store (D.Float8_e4m3fn, inf, 448.);
+    Store (D.Float8_e4m3fn, -.inf, -448.);
     Store (D.Float4_e2m1fn, nan, 0.);
     Store (D.Float4_e2m1fn, -0., -0.);
     Store (D.Float4_e2m1fn, inf, 6.);
@@ -400,8 +400,7 @@ let reference (f : D.float_format) x =
   let saturates = f.exponent_bits + f.fraction_bits < 8 in
   if Float.is_nan x then if f.nans then Float.nan else 0.
   else if Float.abs x = Float.infinity then
-    if f.infinities then x
-    else if f.nans then Float.nan
+    if f.infinities && not saturates then x
     else Float.copy_sign f.max_finite x
   else
     let a = Float.abs x in
