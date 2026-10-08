@@ -53,8 +53,8 @@ type t
 
 val space : Rig_pci.Space.t
 (** [space] is the GPU addresses every GPU this library boots shares, in the
-    process and on this machine, which reserves them before the first take:
-    2{^ 44} bytes from [0x2000_0000_0000]. *)
+    process and on its machine, which {!start}'s caller reserves
+    ({!Rig_pci.Machine.reserve}): 2{^ 44} bytes from [0x2000_0000_0000]. *)
 
 val start :
   Rig_pci.Function.t ->
@@ -82,6 +82,19 @@ val memory : t -> Rig_pci.Memory.t
 
 val hive : t -> bool
 (** [hive g] is {!Gmc.hive}. *)
+
+val budget : t -> int
+(** [budget g] is the bytes of the GPU's memory it hands out: its page tables'
+    main pool. *)
+
+val reaches : t -> t -> bool
+(** [reaches g o] is [true] iff [g] reaches all of [o]'s memory, both GPUs of
+    one machine: over their fabric, or through [o]'s memory BAR as large as its
+    memory, both at physical addresses no IOMMU translates. *)
+
+val protect : t -> (unit -> 'a) -> 'a
+(** [protect g f] is [f ()] with [g]'s register sequences and page-table edits
+    held off, as {!Rig_pci.Memory} calls on [g]'s memory need. *)
 
 val queue :
   t ->
@@ -121,5 +134,7 @@ val stop : t -> [ `Clean | `Lost | `Unknown ]
       loses its bus mastering and reaches no memory outside its own: the mark is
       dirty, and only a reset recovers it;
     - [`Unknown] if its machine failed, or a queue of a GPU in a fabric did not
-      leave, whose writes to its peers bus mastering does not stop. [`Clean] and
-      [`Lost] answer [Rig_amd]'s [`Stopped]. *)
+      leave, whose writes to its peers bus mastering does not stop.
+
+    [`Clean] and [`Lost] answer [Rig_amd]'s [`Stopped]. A later stop does
+    nothing and answers the same. *)

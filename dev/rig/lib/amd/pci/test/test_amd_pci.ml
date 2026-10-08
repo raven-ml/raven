@@ -992,6 +992,61 @@ let firmware =
             (List.length (List.sort_uniq compare paths)));
     ]
 
+(* Numbering *)
+
+module Tree = Rig_pci_support.Tree
+
+(* A machine whose AMD GPUs are a display controller, a processing accelerator
+   and a display controller of another subclass, beside an AMD audio function
+   and another vendor's GPU, listed out of bus order. *)
+let machine () =
+  let fn bus vendor class_ = { (Tree.gpu bus) with vendor; class_ } in
+  Tree.make
+    [
+      fn "0000:83:00.0" 0x1002 0x120000;
+      fn "0000:03:00.1" 0x1002 0x040300;
+      fn "0000:03:00.0" 0x1002 0x030000;
+      fn "0000:01:00.0" 0x10de 0x030000;
+      fn "0000:02:00.0" 0x1002 0x038000;
+    ]
+
+let numbering =
+  group "numbering"
+    [
+      test "GPUs are AMD's display controllers and accelerators in bus order"
+        (fun () ->
+          let root = machine () in
+          equal (list string)
+            [ "0000:02:00.0"; "0000:03:00.0"; "0000:83:00.0" ]
+            (Rig_amd_pci.gpus_at root);
+          equal int 3 (Rig_amd_pci.count ~machine:(Rig_pci.Machine.at root) ()));
+      test "a machine with no PCI functions has no GPU" (fun () ->
+          equal int 0
+            (Rig_amd_pci.count ~machine:(Rig_pci.Machine.at (Tree.make [])) ()));
+      cases ~name:fst "GPUs are named by number"
+        [
+          ("0", (0, "AMD-PCI"));
+          ("1", (1, "AMD-PCI:1"));
+          ("12", (12, "AMD-PCI:12"));
+        ]
+        (fun (_, (i, name)) -> equal string name (Rig_amd_pci.device_name i));
+      test "an open past the last GPU names the GPU and the count" (fun () ->
+          let machine = Rig_pci.Machine.at (machine ()) in
+          match Rig_amd_pci.open_ ~machine ~firmware:[] 3 with
+          | Ok _ -> fail "GPU 3 opened"
+          | Error why ->
+              equal string "AMD-PCI:3: no such GPU; the machine has 3" why);
+      cases ~name:fst "a negative GPU number raises"
+        [
+          ("device_name", fun () -> ignore (Rig_amd_pci.device_name (-1)));
+          ("open_", fun () -> ignore (Rig_amd_pci.open_ ~firmware:[] (-1)));
+          ("detach", fun () -> ignore (Rig_amd_pci.detach (-1)));
+          ("attach", fun () -> ignore (Rig_amd_pci.attach (-1)));
+          ("reset", fun () -> ignore (Rig_amd_pci.reset (-1)));
+        ]
+        (fun (_, f) -> raises_match Exn.invalid_arg f);
+    ]
+
 let () =
   exit
     (run "rig_amd_pci"
@@ -1007,4 +1062,5 @@ let () =
          sessions;
          interrupts;
          firmware;
+         numbering;
        ])

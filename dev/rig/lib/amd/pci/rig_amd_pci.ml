@@ -1,0 +1,241 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+module Discovery = Discovery
+module Regs = Regs
+module Images = Images
+module Gmc = Gmc
+module Smu = Smu
+module Psp = Psp
+module Gfx = Gfx
+module Boot = Boot
+module Ih = Ih
+module Machine = Rig_pci.Machine
+module Memory = Rig_pci.Memory
+module Window = Rig_pci.Window
+module Gpus = Rig_pci.Gpus
+module Amd = Rig_amd
+
+let strf = Printf.sprintf
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let ( let* ) = Result.bind
+
+(* Numbering *)
+
+(* The kernel driver serves a GPU through DRM nodes, each with a [dev] file
+   under the GPU's directory, which {!Gpus.detach} finds itself. *)
+let gpus =
+  Gpus.make ~memory_bar:0
+    ~nodes:(fun ~read:_ _ -> [])
+    (fun (id : Machine.id) -> Amd.is_gpu ~vendor:id.vendor ~class_:id.class_)
+
+let gpus_at root = Gpus.buses gpus (Machine.at root)
+let count ?(machine = Machine.this) () = List.length (Gpus.buses gpus machine)
+
+let index fn i =
+  if i < 0 then invalid_argf "Rig_amd_pci.%s: GPU %d is negative" fn i
+
+let device_name i =
+  index "device_name" i;
+  if i = 0 then "AMD-PCI" else strf "AMD-PCI:%d" i
+
+(* Firmware *)
+
+let pinned = Images.pinned
+let origin = Images.origin
+
+(* Memory *)
+
+(* The memory a path gives a device: its own, another GPU's mapped for it, or a
+   view of its own GPU's, which maps nothing. A peer mapping keeps its owner's
+   region, which a third GPU maps in turn. *)
+type mem =
+  | Own of Boot.t * Memory.region
+  | Peer of { owner : Boot.t; region : Memory.region; mapped : Memory.region }
+  | View of Boot.t * Memory.region
+
+let origin_of = function
+  | Own (o, r) | View (o, r) -> (o, r)
+  | Peer { owner; region; _ } -> (owner, region)
+
+let host (r : Memory.region) =
+  match r.host with
+  | Some w when Window.mapped w -> Some (Window.address w)
+  | _ -> None
+
+let memory (r : Memory.region) data =
+  { Amd.address = r.mapping.va; host = host r; data }
+
+(* The opened GPUs of this machine, by number, for [reaches]. *)
+let opened : (int, Boot.t) Hashtbl.t = Hashtbl.create 4
+let opened_lock = Mutex.create ()
+
+let alloc g kind n =
+  let kind =
+    match kind with
+    | `Gpu -> Memory.Gpu
+    | `Bar -> Memory.Bar
+    | `System -> Memory.Host
+  in
+  match Boot.protect g (fun () -> Memory.alloc (Boot.memory g) kind n) with
+  | Ok (Some r) -> Some (memory r (Own (g, r)))
+  | Ok None -> None
+  | Error why -> raise (Amd.Fault why)
+
+let map_host g a n =
+  match Boot.protect g (fun () -> Memory.map_host (Boot.memory g) a n) with
+  | Ok r -> Some (memory r (Own (g, r)))
+  | Error _ -> None
+
+let reaches g ~index j =
+  j = index
+  ||
+  match Mutex.protect opened_lock (fun () -> Hashtbl.find_opt opened j) with
+  | Some o -> Boot.reaches g o
+  | None -> false
+
+let map_peer g (m : mem Amd.memory) =
+  let owner, region = origin_of m.data in
+  if owner == g then Some { m with data = View (owner, region) }
+  else if not (Boot.reaches g owner) then None
+  else
+    let mapped () =
+      Memory.map_peer (Boot.memory g) ~owner:(Boot.memory owner) region
+    in
+    match Boot.protect g mapped with
+    | Ok mapped -> Some { m with data = Peer { owner; region; mapped } }
+    | Error _ -> None
+
+let free g (m : mem Amd.memory) =
+  match m.data with
+  | View _ -> ()
+  | Peer { mapped; _ } ->
+      Boot.protect g (fun () -> Memory.unmap (Boot.memory g) mapped)
+  | Own (_, r) -> (
+      let m = Boot.memory g in
+      match r.source with
+      | Memory.Allocated -> Boot.protect g (fun () -> Memory.free m r)
+      | Borrowed | Peer -> Boot.protect g (fun () -> Memory.unmap m r))
+
+(* Opening *)
+
+let key : mem Type.Id.t = Type.Id.make ()
+
+(* The reference clock of SOC15 and SOC21 GPUs, which the timestamps of their
+   packets count. *)
+let clock_hz = 100_000_000
+
+(* Work whose timeline word has not moved for 30 s is a hang: no kernel bounds
+   the GPU's work. *)
+let hang_ms = 30_000
+
+(* A compute unit's SIMDs: 4 on GC 9, 2 from GC 10 on (NUM_SIMD_PER_CU of the
+   kernel's vega10_enum.h, navi10_enum.h, soc21_enum.h and soc24_enum.h). *)
+let simds_per_cu (gpu : Rig_amd_abi.Gpu.t) =
+  match gpu.gc with 9, _, _ -> 4 | _ -> 2
+
+(* The interrupt context of a release. The path wakes on every entry of the
+   interrupt ring, so any context but 0 serves. *)
+let interrupt = 1
+
+(* [hold] is the GPU's hold once the open returned; until then the bracket gives
+   the function back. *)
+let path g ~index ~hold : mem Amd.path =
+  let gc = Boot.gc g and gpu = Boot.gpu g in
+  let stop () =
+    let s = Boot.stop g in
+    Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
+    Option.iter
+      (fun h ->
+        match s with
+        | `Clean -> Gpus.release h
+        | `Lost | `Unknown -> Gpus.lose h)
+      !hold;
+    match s with `Clean | `Lost -> `Stopped | `Unknown -> `Unknown
+  in
+  {
+    key;
+    index;
+    gpu;
+    waves = gc.waves * simds_per_cu gpu;
+    lds = gc.lds;
+    clock_hz;
+    mec = Boot.mec g;
+    wgps = Boot.wgps g;
+    budget = Boot.budget g;
+    alloc = alloc g;
+    map_host = map_host g;
+    reaches = reaches g ~index;
+    map_peer = map_peer g;
+    free = free g;
+    queue = Boot.queue g;
+    hdp = Boot.hdp g;
+    interrupt;
+    hang_ms = Some hang_ms;
+    sleep = Boot.sleep g;
+    stable_power = (fun () -> Ok ());
+    stop;
+  }
+
+let start ~firmware ~index ~hold fn =
+  let* () =
+    Machine.reserve
+      (Rig_pci.Function.machine fn)
+      ~base:(Rig_pci.Space.base Boot.space)
+      (Rig_pci.Space.length Boot.space)
+  in
+  let* g = Boot.start fn (Rig_pci.Firmware.find firmware) in
+  Mutex.protect opened_lock (fun () -> Hashtbl.replace opened index g);
+  let failed why =
+    ignore (Boot.stop g);
+    Mutex.protect opened_lock (fun () -> Hashtbl.remove opened index);
+    Error why
+  in
+  match Amd.make (path g ~index ~hold) with
+  | Error why -> failed why
+  | exception Amd.Fault why -> failed why
+  | Ok d ->
+      (* A host resets a VF that holds its access long: every queue is made, so
+         it goes back. *)
+      Boot.give_back g;
+      Ok (d, g)
+
+(* The GPU's name in front of a refusal's message. *)
+let named i r =
+  Result.map_error (fun why -> strf "%s: %s" (device_name i) why) r
+
+let open_ ?(machine = Machine.this) ~firmware i =
+  index "open_" i;
+  named i
+  @@
+  let* () =
+    match Machine.files machine with
+    | Some _ -> Ok ()
+    | None -> Error "its machine is reached through a transport"
+  in
+  let hold = ref None in
+  let opened =
+    Gpus.open_ gpus machine i
+      ~at_exit:(fun (_, g) -> ignore (Boot.stop g))
+      (fun h fn ->
+        let* d, g = start ~firmware ~index:i ~hold fn in
+        hold := Some h;
+        Ok (d, g))
+  in
+  Result.map fst opened
+
+(* Changes to the machine *)
+
+let detach i =
+  index "detach" i;
+  named i (Gpus.detach gpus Machine.this i)
+
+let attach i =
+  index "attach" i;
+  named i (Gpus.attach gpus Machine.this i)
+
+let reset ?(machine = Machine.this) i =
+  index "reset" i;
+  named i (Gpus.reset gpus machine i Boot.reset)

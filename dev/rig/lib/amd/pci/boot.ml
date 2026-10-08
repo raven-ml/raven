@@ -44,6 +44,7 @@ type t = {
   mutable fault : string option;
       (* the first report, raised again by each sleep *)
   mutable eops : Memory.region list;
+  mutable stopped : [ `Clean | `Lost | `Unknown ] option;
   hw : Mutex.t; (* the register sequences and page-table edits *)
 }
 
@@ -283,9 +284,7 @@ let stop_locked g =
     let lost = g.fault <> None || not left in
     quietly (fun () -> mark g ~dirty:lost);
     give_back_access g;
-    List.iter
-      (fun m -> try Memory.free g.memory m with Invalid_argument _ -> ())
-      g.eops;
+    List.iter (Memory.free g.memory) g.eops;
     g.eops <- [];
     if not lost then `Clean
     else begin
@@ -296,7 +295,14 @@ let stop_locked g =
     end
   end
 
-let stop g = Mutex.protect g.hw (fun () -> stop_locked g)
+let stop g =
+  Mutex.protect g.hw @@ fun () ->
+  match g.stopped with
+  | Some s -> s
+  | None ->
+      let s = stop_locked g in
+      g.stopped <- Some s;
+      s
 
 (* Starting *)
 
@@ -419,6 +425,7 @@ let start f find =
       lease;
       fault = None;
       eops = [];
+      stopped = None;
       hw = Mutex.create ();
     }
   in
@@ -437,6 +444,14 @@ let mec g = g.images.mec
 let wgps g = Mutex.protect g.hw (fun () -> Gfx.wgps g.gfx)
 let memory g = g.memory
 let hive g = Gmc.hive g.gmc
+let budget g = Page_table.main_pool g.tables
+let protect g f = Mutex.protect g.hw f
+
+let reaches g o =
+  let physical g = Function.addressing g.f = Machine.Physical in
+  (hive g && hive o)
+  || (physical g && physical o && not (Memory.small_bar o.memory))
+
 let host w off = if Window.mapped w then Some (Window.address w + off) else None
 let hdp g = host g.mmio (Gmc.hdp g.gmc)
 
