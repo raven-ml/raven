@@ -307,7 +307,8 @@ static _Atomic intnat heap_live;
 static _Atomic intnat held_at_cycle;
 static _Atomic intnat collected_at_cycle;
 
-static void heap_trim(void);
+static size_t heap_cache_cap(void);
+static void heap_trim(size_t cap);
 
 /* Run once per major cycle, after it ends ([slice_end]). */
 static void cycle_ended(void) {
@@ -319,7 +320,7 @@ static void cycle_ended(void) {
       (collected - atomic_exchange_explicit(&collected_at_cycle, collected,
                                             memory_order_relaxed));
   atomic_store_explicit(&heap_live, live > 0 ? live : 0, memory_order_relaxed);
-  heap_trim();
+  heap_trim(heap_cache_cap());
 }
 
 /* The end of each major slice, in whichever domain runs it, sees whether a
@@ -459,11 +460,10 @@ static void heap_keep(void *data, size_t n) {
   heap_free_list(dropped);
 }
 
-/* Gives back what the cache holds beyond what it may now: run as a major
-   cycle ends, so a program that stops freeing buffers does not keep the
-   share of a working set it dropped. */
-static void heap_trim(void) {
-  size_t cap = heap_cache_cap();
+/* Gives back what the cache holds beyond [cap], oldest first: run as a major
+   cycle ends with what the cache may keep now, so a program that stops
+   freeing buffers does not keep the share of a working set it dropped. */
+static void heap_trim(size_t cap) {
   heap_cache_acquire();
   struct heap_entry *dropped = heap_over(cap);
   heap_cache_release();
@@ -506,6 +506,15 @@ intnat rig_heap_kept(void) { return heap_kept(); }
 
 intnat rig_heap_held(void) {
   return atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+}
+
+/* Gives back kept buffers until they fit in [v_budget] beside the bytes
+   host buffers hold. */
+value caml_rig_heap_trim(value v_budget) {
+  intnat room = Long_val(v_budget) -
+                atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+  heap_trim(room > 0 ? (size_t)room : 0);
+  return Val_unit;
 }
 
 value caml_rig_heap_drop(value unit) {

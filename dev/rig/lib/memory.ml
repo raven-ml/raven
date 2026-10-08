@@ -87,6 +87,7 @@ type bytes_ba =
 external heap_alloc : int -> bytes_ba = "caml_rig_heap_alloc"
 external heap_aligned : int -> int -> bytes_ba option = "caml_rig_heap_aligned"
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
+external heap_trim : int -> unit = "caml_rig_heap_trim"
 external heap_release : int -> unit = "caml_rig_heap_release" [@@noalloc]
 
 external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
@@ -923,13 +924,10 @@ let of_io d r n =
   m.token <- token d.release (Memory e) n max_int (-1);
   m
 
-(* Releases the device's cache down to its budget. *)
-let trim d = release_cache ~upto:d.budget ~wait:false d
-
 let set_budget d n =
   if n < 0 then invalid_argf "Rig.set_budget: budget %d is negative" n;
   Dev.protect d (fun () -> d.budget <- n);
-  trim d
+  if Dev.is_host d then heap_trim n else release_cache ~upto:n ~wait:false d
 
 let free_cache d =
   if Dev.is_host d then heap_drop () else release_cache ~wait:false d

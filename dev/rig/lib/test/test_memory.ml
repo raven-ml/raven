@@ -361,6 +361,25 @@ let test_host_free_cache () =
   C.free_cache C.host;
   equal ~msg:"after free_cache" int 0 (Support.host_kept ())
 
+(* set_budget on the host gives back what it keeps, oldest first, until its live
+   buffers and what it keeps fit in the new budget. *)
+let test_host_set_budget () =
+  let mib = 1 lsl 20 in
+  C.free_cache C.host;
+  let live = ref (List.init 4 (fun _ -> B.create C.host mib)) in
+  ignore (Sys.opaque_identity !live);
+  live := [];
+  Gc.full_major ();
+  Gc.full_major ();
+  at_least ~msg:"kept" int ~than:(4 * mib) (Support.host_kept ());
+  let room = 5 * mib / 2 in
+  with_host_budget
+    (Support.host_held () + room)
+    (fun () ->
+      at_most ~msg:"kept after set_budget" int ~than:room (Support.host_kept ());
+      at_least ~msg:"what fits stays kept" int ~than:(2 * mib)
+        (Support.host_kept ()))
+
 (* The host keeps a collected buffer's bytes, all of them, whichever array over
    it is collected last: a float32 view that outlives its buffer keeps its
    buffer's size. *)
@@ -511,6 +530,8 @@ let tests =
         test "the host keeps a collected buffer's memory for its size"
           test_host_cache;
         test "free_cache on the host returns what it keeps" test_host_free_cache;
+        test "set_budget on the host returns what it keeps beyond the budget"
+          test_host_set_budget;
         test "host memory a device borrowed returns once its work ran"
           test_borrowed_host;
         test "a bigarray a device borrowed lives until its work ran"

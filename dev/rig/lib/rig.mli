@@ -67,12 +67,15 @@
     the collector hands its memory back to its device, even while the domain
     that made them is blocked. The device keeps it in a cache for reuse once
     every other device's last use of it is reached, and gives it back to its
-    driver once its own work is done too. An allocation of more than the
-    device's {!budget} raises {!Out_of_memory} at once and keeps the cache.
+    driver once its own work is done too. A {e drain} of a device takes back the
+    memory of its buffers collected since, and runs the release of every hold
+    that became due ({!Hold}). {!Buffer.create}, {!Buffer.of_io} and
+    {!Buffer.copy} drain the devices they use first. An allocation of more than
+    the device's {!budget} raises {!Out_of_memory} at once and keeps the cache.
     Another that the budget or the driver refuses waits for the device's
-    submitted work, releases its cache, drains every other device
-    ({!Buffer.create}), collects unreachable buffers from its second try on, and
-    tries again, four tries in all, before it raises {!Out_of_memory}.
+    submitted work, releases its cache, drains every other device, collects
+    unreachable buffers from its second try on, and tries again, four tries in
+    all, before it raises {!Out_of_memory}.
 
     The host keeps the memory of collected buffers of 64 KiB or more in a cache
     for the next buffers of their sizes. It returns what the cache holds beyond
@@ -109,10 +112,7 @@ val name : t -> string
 val host_of : t -> t
 (** [host_of d] is the host of [d]'s machine: {!host} for this machine's
     devices, the device {!open_io} opened with [~host:true] for another
-    machine's. A host is its own.
-
-    Raises [Invalid_argument] if [d] is of another machine whose host is not
-    open. *)
+    machine's. A host is its own. *)
 
 val arch : t -> string
 (** [arch d] is the architecture of [d]'s processor, as its driver names it,
@@ -147,7 +147,8 @@ val reaches : t -> t -> bool
     - a driver's device reaches its host's memory, a memory device's, and that
       of a device of its own driver that it maps ({!Driver.peer}).
 
-    It is [false] across machines and when either device is an {!Io} device. *)
+    Otherwise it is [false]: across machines, and between an {!Io} device and
+    any other device. *)
 
 val capability : t -> 'a Type.Id.t -> 'a option
 (** [capability d k] is [Some c] if [d]'s driver declares its capability record
@@ -163,12 +164,10 @@ val pp : Format.formatter -> t -> unit
 (** {2:budgets Budgets} *)
 
 val budget : t -> int
-(** [budget d] is the most bytes of [d]'s own memory ({!Buffer.Device} and
-    {!Buffer.Mapped}, and {!Buffer.Pinned} where the host addresses [d]'s
-    memory) that [d] holds at once in live buffers, loaded programs' code and
-    its cache; for a host, of host buffers and of devices' other pinned memory.
-    It is [max_int] for a host, and the driver's {!Driver.budget} until
-    {!set_budget}. *)
+(** [budget d] is the most bytes [d] holds at once in the memory that counts in
+    its budget ({!Buffer.memory}): live buffers, loaded programs' code and its
+    cache. It starts at [max_int] for a host, {!Driver.budget} for a driver's
+    device and {!Io.budget} for an io device; {!set_budget} changes it. *)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], returning cached memory to its
@@ -259,7 +258,9 @@ module Buffer : sig
 
   (** The type for the memories of a device that {!create} allocates. *)
   type memory =
-    | Device  (** The device's own memory. *)
+    | Device
+        (** The device's own memory, which counts in the device's {!budget}. On
+            a host, host memory, which counts in the host's. *)
     | Pinned
         (** Host memory that both the device's work and the host address,
             page-locked where the host pages: coherent, with no flush. It counts
@@ -268,10 +269,11 @@ module Buffer : sig
             device's. *)
     | Mapped
         (** The device's own memory, which the host also addresses through a
-            write-combined window. A host write is seen by work submitted after
-            it; the host reads it slowly. Where the device has no such window,
-            or the window or the budget cannot hold the buffer, it is [Pinned]
-            memory, which keeps these promises; no cache is released for it. *)
+            write-combined window, and which counts in the device's {!budget}. A
+            host write is seen by work submitted after it; the host reads it
+            slowly. Where the device has no such window, or the window or the
+            budget cannot hold the buffer, it is [Pinned] memory, which keeps
+            these promises; no cache is released for it. *)
 
   val create : ?memory:memory -> device -> int -> t
   (** [create d n] is an owned buffer of [n] bytes in [d]'s memory [memory]
@@ -281,17 +283,14 @@ module Buffer : sig
       pages, where pages are larger) starts on a page, so devices can {!borrow}
       it. On an {!Io} device it is memory the device's {!Io.alloc} makes.
 
-      [create] first {e drains} [d]: it takes back the memory of [d]'s buffers
-      collected since, and runs the releases of holds that became due ({!Hold}).
-
       Raises [Invalid_argument] if [n < 0] or [d] is an io device that makes no
       memory of its own; {!Out_of_memory}; and {!Lost} if [d] is lost. *)
 
   val of_io : device -> 'r Type.Id.t -> 'r -> int -> t
   (** [of_io d k r n] is a buffer over the [n] bytes of [r], a region of the io
-      device [d] whose library declares [k] ({!Io.region_key}). It drains [d]
-      first, as {!create} does. The memory is never exclusive ({!Claim}), and
-      returns to [d]'s {!Io.free} once unreachable.
+      device [d] whose library declares [k] ({!Io.region_key}). The memory is
+      never exclusive ({!Claim}), and returns to [d]'s {!Io.free} once
+      unreachable.
 
       Raises [Invalid_argument] if [d] is no io device, its library's key is not
       [k], or [n < 0]. *)
@@ -327,9 +326,10 @@ module Buffer : sig
       than the host asks the io device to read the borrowed bytes ahead
       ({!Io.prefetch}).
 
-      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}), {!Lost} if
-      [d] is lost or [b]'s stamps name a lost device, and [Sys_error] where
-      asking an io device for [b]'s pages failed ({!Io.pages}). *)
+      Raises [Invalid_argument] if [b] is dead ({!Claim.consume}); {!Lost} if
+      [d] or [b]'s device is lost or is lost by the borrow, or [b]'s stamps name
+      a lost device; and [Sys_error] where asking an io device for [b]'s pages
+      failed and may pass ({!Io.pages}). *)
 
   (** The type for what an access does with a buffer. *)
   type access =
@@ -364,31 +364,31 @@ module Buffer : sig
       only [src] is host-addressable, [src]'s otherwise, directly between memory
       it addresses or maps, and through the host's {e staging memory} otherwise:
       two slots of 64 MiB of host memory, made at the first copy that needs them
-      and kept for the life of the process. A copy holds a slot until it
-      returns, and a copy that finds both held waits for one. It moves the bytes
+      and kept for the life of the process ({!domains}). It moves the bytes
       through its slot's two halves in turn, so one half fills while the other
       drains. A device that runs no copy has memory the host addresses, which
       the host copies. An {!Io} device's memory is read and written by its
       {!Io.read} and {!Io.write}, through the staging memory when the host does
-      not address the other side. Between machines, only memory of an {!Io}
-      device copies, by its reads and writes, with memory this process's host
-      addresses; no device copies other memory between machines.
+      not address the other side. Between machines, an {!Io} device's memory
+      copies by its reads and writes, through the staging memory where the host
+      does not address the other side. Memory of a driver's device copies only
+      with memory of its own machine.
 
-      [copy] first drains the devices of [src] and [dst] ({!create}). Staging
-      memory that a device lost while it used it is replaced, so a loss reaches
-      no other device's copies.
+      Staging memory that a device lost while it used it is replaced, so a loss
+      reaches no other device's copies.
 
       Raises [Invalid_argument] if [src] and [dst] differ in size, overlap
-      ({!overlaps}), or either is dead, or if no device copies between their
-      memory; {!Lost} if a device involved is lost or is lost by the copy, or a
-      point it waits for is on a lost device; {!Out_of_memory} if a host cannot
-      allocate its staging memory; and what an {!Io} device's read or write
-      raises. *)
+      ({!overlaps}), or either is dead, or one is memory of a driver's device of
+      another machine than the other's; {!Lost} if a device involved is lost or
+      is lost by the copy, or a point it waits for is on a lost device;
+      {!Out_of_memory} if a host cannot allocate its staging memory; and what an
+      {!Io} device's read or write raises. *)
 
   val device : t -> device
   (** [device b] is the device [b] is on: [d] for a buffer that {!create},
       {!of_io} or {!borrow} made on [d], {!host} for one {!of_bigarray} made,
-      and its buffer's device for a {!view}. *)
+      and its buffer's device for a {!view} and for {!Claim.consume}'s result.
+  *)
 
   val length : t -> int
   (** [length b] is the number of [b]'s bytes. *)
@@ -548,12 +548,12 @@ module Hold : sig
       beyond memory, such as a driver object that work runs. It runs once, after
       the hold is unreachable and, for each device the hold has a stamp of, that
       stamp is reached and, if the device is lost, its driver's {!Driver.stop}
-      returned. It runs in the next drain of any device ({!Buffer.create}), such
-      as a {!Buffer.copy}'s, or as a lost device's stop returns. It holds no
-      lock of this library, must not call it, and must not raise: an exception
-      it raises is raised again by the call whose drain ran it. It counts as a
-      call in flight on each device of the hold that is not lost, so no
-      {!Driver.stop} of those devices runs beside it.
+      returned. It runs in the next {{!reclaim}drain} of any device, such as a
+      {!Buffer.copy}'s, or as a lost device's stop returns. It holds no lock of
+      this library, must not call it, and must not raise: an exception it raises
+      is raised again by the call whose drain ran it. It counts as a call in
+      flight on each device of the hold that is not lost, so no {!Driver.stop}
+      of those devices runs beside it.
 
       Raises [Invalid_argument] if a buffer is dead, or its memory is already in
       a hold. *)
@@ -624,10 +624,9 @@ module Submission : sig
     t
   (** [make ~hold ~reads ~writes ~waits d parts] is a submission of [parts] on
       [d], with [reads] read slots, [writes] write slots and [waits] wait slots,
-      all unset. [d]'s driver runs the parts of a queue in array order, each
-      also after those its [after] lists ({!part}). [hold] names the memory of a
-      {!Hold}: every submit of the submission raises the hold's stamp of [d],
-      and the parts may name the hold's memory.
+      all unset. [hold] names the memory of a {!Hold}: every submit of the
+      submission raises the hold's stamp of [d], and the parts may name the
+      hold's memory.
 
       Raises [Invalid_argument] if [d] is a host or an {!Io} device, which run
       no submitted work, a count is negative, an index of a part's [after] is
@@ -683,13 +682,13 @@ val submit : Submission.t -> Point.t
     It allocates nothing unless it waits.
 
     Raises [Invalid_argument] if a read or write slot is unset, a buffer of a
-    slot or a part is dead, a slot or a part names memory of a hold other than
-    the submission's, a wait slot's point is beyond its device's {!submitted}
-    value, or the parts never fit [d]'s empty queues or name one its driver does
-    not run; and {!Lost} if [d] is lost, [d]'s hand-over fails, a point [s]
-    follows is on a lost device, or a producer [d]'s queue waits on is lost
-    before the hand-over. A device lost after [v] was handed over raises
-    {!Lost}, with [v]'s stamps naming it. *)
+    slot or a part is dead, a slot's memory is in a hold, a part names memory of
+    a hold other than the submission's, a wait slot's point is beyond its
+    device's {!submitted} value, or the parts never fit [d]'s empty queues or
+    name one its driver does not run; and {!Lost} if [d] is lost, [d]'s
+    hand-over fails, a point [s] follows is on a lost device, or a producer
+    [d]'s queue waits on is lost before the hand-over. A device lost after [v]
+    was handed over raises {!Lost}, with [v]'s stamps naming it. *)
 
 (** {1:programs Programs} *)
 
@@ -715,9 +714,8 @@ module Program : sig
       starts with [d]'s {!name}. [d] stays usable.
 
       Raises [Invalid_argument] if [d] loads no code (a host or an {!Io}
-      device), {!Out_of_memory} if [d] cannot allocate the code's memory after
-      the release, drain and collection {!reclaim} describes, and {!Lost} if [d]
-      is lost or is lost by the load. *)
+      device), {!Out_of_memory}, and {!Lost} if [d] is lost or is lost by the
+      load. *)
 
   val device : t -> device
   (** [device p] is the device [p] is loaded on. *)
@@ -784,9 +782,10 @@ module Profile : sig
         start : int;
         stop : int;
       }
-        (** A {!Buffer.copy} of [bytes] from [src]'s memory to [dst]'s. A copy
-            through staging memory also records its copies into and out of it.
-        *)
+        (** A transfer of [bytes] from [src]'s memory to [dst]'s, by a
+            {!Buffer.copy}. A copy through staging memory records each piece
+            into and out of it, with {!host} as one side, and no event of its
+            own. *)
 
   val take :
     ?counters:string list -> ?trace:bool -> (unit -> 'a) -> 'a * event list
@@ -883,15 +882,12 @@ end
     states, one at a time per device, under the device's turn. A driver's own
     OCaml forms of them, for a driver used alone, are no part of this signature.
 
-    {b Calls.} The facts ({!arch}, {!budget}, {!queues}, {!completion},
-    {!waits_on}, {!max_waits}, {!blocks}) and {!capability} are read once, when
-    the device opens: a {!Fault} there is the open's [Error]. {!address},
-    {!handle}, {!host} and {!peer} call no library function, and this library
-    calls them at any time. Every other call this library makes on a device that
-    is not lost is {e counted}: {!stop} waits for none of them. {!stop} runs
-    once, with no counted call inside, and after it only {!free}, {!signaled}
-    and holds' releases follow. A {!Fault} from a counted call, and a failed
-    hand-over, lose the device. *)
+    {b Calls.} {!address}, {!handle}, {!host} and {!peer} call no library
+    function, and this library calls them at any time. Every other call this
+    library makes on a device that is not lost is {e counted}: {!stop} waits for
+    none of them. {!stop} runs once, with no counted call inside, and after it
+    only {!free}, {!signaled} and holds' releases follow. A {!Fault} from a
+    counted call, and a failed hand-over, lose the device. *)
 module type Driver = sig
   type t
   (** The type for open devices of the driver. *)
@@ -916,7 +912,8 @@ module type Driver = sig
 
   (** {1:facts Facts}
 
-      Read once, when the device opens. *)
+      Read once, when the device opens: a {!Fault} here is the open's [Error].
+  *)
 
   val arch : t -> string
   (** [arch d] is [d]'s architecture. *)
@@ -1020,8 +1017,7 @@ module type Driver = sig
   val unload : t -> image -> unit
   (** [unload d i] releases what {!image} made for [i], once no work of [d] that
       runs it can run. The region of a [`Place] is not [i]'s: this library frees
-      it after. This library never calls it after {!stop}, which releases what
-      it would. Counted. *)
+      it after. Counted. *)
 
   (** {1:timeline Timeline} *)
 
@@ -1172,7 +1168,8 @@ val open_ :
     are never reused.
 
     Raises [Invalid_argument] if the open device of that name is another
-    driver's. *)
+    driver's, or [machine] names another machine whose host is not open
+    ({!open_io}). *)
 
 val open_io :
   (module Io with type t = 'a) ->

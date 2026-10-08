@@ -326,7 +326,7 @@ let rec waits s n i count =
     if Dev.point_reached p then waits s n (i + 1) count
     else
       let way =
-        if count = s.dev.max_waits then host_wait else pair s.dev producer
+        if count >= s.dev.max_waits then host_wait else pair s.dev producer
       in
       if way = host_wait then begin
         Dev.wait producer v;

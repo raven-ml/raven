@@ -416,6 +416,7 @@ value rig_test_shares(value v_ba) {
 /* The core's own: every lock it has, in one order. */
 extern void rig_locks_take(void);
 extern void rig_locks_give(void);
+extern int rig_locks_waiting(void);
 
 value rig_test_locks_take(value unit) {
   (void)unit;
@@ -429,6 +430,11 @@ value rig_test_locks_give(value unit) {
   (void)unit;
   rig_locks_give();
   return Val_unit;
+}
+
+value rig_test_locks_waiting(value unit) {
+  (void)unit;
+  return Val_int(rig_locks_waiting());
 }
 
 /* The core's own: the bytes its host heap keeps for reuse. */

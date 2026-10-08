@@ -34,6 +34,7 @@ external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 
 external host_kept : unit -> int = "rig_test_host_kept"
 external host_held : unit -> int = "rig_test_host_held"
+external waiting : unit -> int = "rig_test_locks_waiting"
 external locks_take : unit -> unit = "rig_test_locks_take"
 external locks_give : unit -> unit = "rig_test_locks_give" [@@noalloc]
 
@@ -321,6 +322,35 @@ let await what f =
       failwith (Printf.sprintf "await: no %s after %.0f s" what watchdog_s);
     Thread.yield ()
   done
+
+(* Machines *)
+
+module Far_host = struct
+  type t = unit
+  type region = unit
+
+  exception Fault of string
+
+  let region_key : region Type.Id.t = Type.Id.make ()
+  let budget () = max_int
+  let alloc () _ = None
+  let free () () = ()
+  let read () () ~at:_ ~dst:_ ~len:_ = ()
+  let write () () ~at:_ ~src:_ ~len:_ = ()
+  let pages () () = None
+  let prefetch () () ~at:_ ~len:_ = ()
+  let stop () = ()
+end
+
+let machine m =
+  match
+    Rig.open_io
+      (module Far_host)
+      ~machine:m ~host:true ~name:"CPU"
+      (fun () -> Ok ())
+  with
+  | Ok d -> d
+  | Error e -> failwith e
 
 (* Readers *)
 

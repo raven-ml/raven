@@ -104,6 +104,35 @@ let io_write src dst n =
           I.write h r ~at:dst.offset ~src:(host_address src) ~len:n)
   | None -> invalid_argf "Rig.%s: the destination is no io memory" fn
 
+(* Copies [n] bytes from [src] to [dst] in one transfer, where one runs it: the
+   host between memory it addresses or with an io device's, or a device's copy
+   queue between memory it maps. A copy on a queue returns at once unless
+   [wait]: what reads or writes its buffers later waits for it by their stamps.
+   Whether it ran. *)
+let direct ~wait src dst n =
+  let sd = src.mem.dev and dd = dst.mem.dev in
+  if local src.mem && local dst.mem then begin
+    Buffer.wait src Buffer.Read;
+    Buffer.wait dst Buffer.Read_write;
+    memmove (host_address dst) (host_address src) n;
+    true
+  end
+  else if Dev.is_io sd && local dst.mem then begin
+    Buffer.wait src Buffer.Read;
+    Buffer.wait dst Buffer.Read_write;
+    io_read src dst n;
+    true
+  end
+  else if Dev.is_io dd && local src.mem then begin
+    Buffer.wait src Buffer.Read;
+    Buffer.wait dst Buffer.Read_write;
+    io_write src dst n;
+    true
+  end
+  else
+    let runner = if local src.mem then dd else sd in
+    (not (Dev.is_io runner)) && on_queue ~wait runner src dst
+
 let rec copy ~src ~dst =
   Buffer.check_live fn src;
   Buffer.check_live fn dst;
@@ -117,44 +146,23 @@ let rec copy ~src ~dst =
   Memory.drain sd;
   if dd != sd then Memory.drain dd;
   if n > 0 then begin
-    let start = Prof.now () in
     route ~wait:true src dst n;
     (* A read, a write or a move hands over addresses only: the buffers stay
        reachable until it returned, or a collection could free their memory
        under it. *)
     ignore (Sys.opaque_identity src);
-    ignore (Sys.opaque_identity dst);
-    record sd dd n start
+    ignore (Sys.opaque_identity dst)
   end
 
-(* Copies [n] bytes from [src] to [dst]. A copy on a device's queue returns at
-   once unless [wait]: what reads or writes its buffers later waits for it by
-   their stamps. *)
+(* Copies [n] bytes from [src] to [dst], directly or through the staging memory,
+   recording each transfer that ran. *)
 and route ~wait src dst n =
   let sd = src.mem.dev and dd = dst.mem.dev in
-  if local src.mem && local dst.mem then begin
-    Buffer.wait src Buffer.Read;
-    Buffer.wait dst Buffer.Read_write;
-    memmove (host_address dst) (host_address src) n
-  end
-  else if Dev.is_io sd && local dst.mem then begin
-    Buffer.wait src Buffer.Read;
-    Buffer.wait dst Buffer.Read_write;
-    io_read src dst n
-  end
-  else if Dev.is_io dd && local src.mem then begin
-    Buffer.wait src Buffer.Read;
-    Buffer.wait dst Buffer.Read_write;
-    io_write src dst n
-  end
-  else
-    let runner = if local src.mem then dd else sd in
-    let copied = (not (Dev.is_io runner)) && on_queue ~wait runner src dst in
-    if copied then ()
-    else if is_slot src.mem || is_slot dst.mem then
-      invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name
-        dd.name
-    else staged src dst n
+  let start = Prof.now () in
+  if direct ~wait src dst n then record sd dd n start
+  else if is_slot src.mem || is_slot dst.mem then
+    invalid_argf "Rig.%s: no device copies between %s and %s" fn sd.name dd.name
+  else staged src dst n
 
 (* Through the host's staging memory: the copy holds a slot, whose two halves
    take the pieces in turn, so one half fills while the other drains. A leg on a
@@ -194,8 +202,4 @@ and staged src dst n =
 
 (* One leg of a staged copy, which a device's queue runs without the host
    waiting. *)
-and leg ~src ~dst =
-  let n = Buffer.length src in
-  let start = Prof.now () in
-  route ~wait:false src dst n;
-  record src.mem.dev dst.mem.dev n start
+and leg ~src ~dst = route ~wait:false src dst (Buffer.length src)

@@ -240,6 +240,20 @@ let test_max_waits () =
   equal ~msg:"once they hold" int 1 (P.run cp);
   equal int (C.Point.value b) (C.signaled consumer)
 
+(* A driver answering fewer than zero waits has a queue with no room for any:
+   every producer is waited for on the host. *)
+let test_negative_max_waits () =
+  let producer, pp = P.open_ "submit:negative-producer" in
+  let consumer, cp =
+    P.open_ ~waits_on:[ `Host ] ~max_waits:(-1) "submit:negative-consumer"
+  in
+  let a = C.submit (empty producer) in
+  let s = empty ~waits:1 consumer in
+  Sub.wait_for s 0 a;
+  ignore (C.submit s);
+  equal ~msg:"waits in the queue" int 0 (List.length (P.last_waits cp));
+  equal ~msg:"the producer's work" int 0 (P.queued pp)
+
 (* A producer whose word the device cannot map is waited for on the host: the
    submit returns with the producer's work done and no wait in the queue. *)
 let test_unmapped_wait () =
@@ -544,6 +558,8 @@ let tests =
           test_unmapped_wait;
         test "waits beyond the queue's bound are waited for on the host"
           test_max_waits;
+        test "a driver answering negative waits has the host wait for all"
+          test_negative_max_waits;
         test "a queue that waits on objects waits on the producer's object"
           test_in_queue_object;
         test "a full queue's submit waits for room" test_room;

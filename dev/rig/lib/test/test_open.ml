@@ -146,18 +146,19 @@ let test_machine () =
     [ C.shares_host_memory g; C.shares_host_memory far ];
   equal (list bool) [ false; false ] [ C.reaches g C.host; C.reaches C.host g ]
 
-(* A device of a machine whose host is not open has no host here: it shares no
-   memory with this process's host. *)
+(* A device of another machine opens once that machine's host is open, so every
+   device has a host: before, the open raises and leaves the name unopened. *)
 let test_machine_without_host () =
-  let g =
-    require_ok ~pp:Format.pp_print_string
-      (C.open_
-         (module P)
-         ~machine:"hostless" ~name:"open:lone-gpu"
-         (fun () -> Ok (P.make ())))
+  let open_gpu () =
+    C.open_
+      (module P)
+      ~machine:"hostless" ~name:"open:lone-gpu"
+      (fun () -> Ok (P.make ()))
   in
-  raises_match Exn.invalid_arg (fun () -> C.host_of g);
-  equal bool false (C.shares_host_memory g)
+  raises_match Exn.invalid_arg (fun () -> open_gpu ());
+  let far = open_store ~machine:"hostless" ~host:true "HOST" in
+  let g = require_ok ~pp:Format.pp_print_string (open_gpu ()) in
+  equal device far (C.host_of g)
 
 (* A fault while the device's facts are read is the open's error, and the
    driver's handle is stopped: nothing it opened stays. *)
@@ -259,7 +260,7 @@ let tests =
       test "a region an io library gave is a buffer of its device" test_of_io;
       test "a device of another machine is named after it, its host the io's"
         test_machine;
-      test "a device of a machine whose host is not open has no host"
+      test "a device of another machine opens once that machine's host is"
         test_machine_without_host;
       test "a point prints as its device's name and its value" test_point;
       test "an opener's error leaves the name free" test_failed_open;

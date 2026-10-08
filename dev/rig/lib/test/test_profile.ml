@@ -268,8 +268,9 @@ let test_copy () =
     [ ("CPU", "profile:copy", 100) ]
     (copies events)
 
-(* A copy through the staging memory also records its copies into and out of it:
-   between devices that map none of each other's memory. *)
+(* A copy through the staging memory, between devices that map none of each
+   other's memory, records its copies into and out of it and no event of its
+   own: each transfer that ran is one event. *)
 let test_staged_copy () =
   let open_ name = P.open_ ~host_visible:false ~peers:false name in
   let d, _ = open_ "profile:staged-src" and e, _ = open_ "profile:staged-dst" in
@@ -277,11 +278,7 @@ let test_staged_copy () =
   let (), events = Prof.take (fun () -> B.copy ~src ~dst) in
   equal
     (slist (triple string string int) compare)
-    [
-      ("CPU", "profile:staged-dst", 64);
-      ("profile:staged-src", "CPU", 64);
-      ("profile:staged-src", "profile:staged-dst", 64);
-    ]
+    [ ("CPU", "profile:staged-dst", 64); ("profile:staged-src", "CPU", 64) ]
     (copies events)
 
 (* An exception [after]'s function raises is raised again by the wait that ran
@@ -431,7 +428,7 @@ let tests =
     group ~timeout "copies"
       [
         test "a copy records the bytes it moved" test_copy;
-        test "a staged copy records its copies into and out of staging"
+        test "a staged copy records only its copies into and out of staging"
           test_staged_copy;
       ];
     group ~timeout "cost"

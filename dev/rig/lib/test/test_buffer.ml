@@ -249,6 +249,7 @@ let test_create_empty_words () =
 (* A copy between this machine's host memory and another machine's driver memory
    raises: no device copies between them. *)
 let test_copy_machines () =
+  ignore (Support.machine "elsewhere");
   let g =
     require_ok ~pp:Format.pp_print_string
       (C.open_
@@ -467,8 +468,10 @@ let test_staging_turns () =
       [ List.nth dsts 0; List.nth dsts 1 ]
   in
   Support.await "two copies in the slots" (fun () -> P.sleepers pd = 2);
+  let waiting = Support.waiting () in
   let third = copier (List.nth srcs 2) (List.nth dsts 2) in
-  Thread.delay 0.1;
+  Support.await "the third copy waiting for a slot" (fun () ->
+      Support.waiting () > waiting);
   equal ~msg:"copies waiting on the device" int 2 (P.sleepers pd);
   P.open_gate pd;
   List.iter Thread.join (third :: first);

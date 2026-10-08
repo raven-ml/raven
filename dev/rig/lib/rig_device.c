@@ -181,6 +181,7 @@ static int is_lost(struct rig_device *d) {
 struct rig_lock {
   rig_mutex mu;
   rig_cond cv;
+  _Atomic int waiting; /* threads in [caml_rig_lock_wait], for tests */
   struct rig_lock *next;
 };
 
@@ -201,6 +202,7 @@ static void forked_child(void) {
   for (struct rig_lock *l = atomic_load(&locks); l != NULL; l = l->next) {
     mutex_init(&l->mu);
     cond_init(&l->cv);
+    atomic_store(&l->waiting, 0);
   }
   int n = atomic_load(&top);
   for (int i = 1; i <= n; i++) {
@@ -231,6 +233,7 @@ value caml_rig_lock_new(value unit) {
   if (l == NULL) caml_raise_out_of_memory();
   mutex_init(&l->mu);
   cond_init(&l->cv);
+  atomic_init(&l->waiting, 0);
   l->next = atomic_load(&locks);
   while (!atomic_compare_exchange_weak(&locks, &l->next, l)) {
   }
@@ -258,9 +261,11 @@ value caml_rig_lock_give(value v_l) {
    meanwhile. */
 value caml_rig_lock_wait(value v_l) {
   struct rig_lock *l = Lock_val(v_l);
+  atomic_fetch_add_explicit(&l->waiting, 1, memory_order_relaxed);
   caml_enter_blocking_section_no_pending();
   cond_wait(&l->cv, &l->mu);
   caml_leave_blocking_section();
+  atomic_fetch_sub_explicit(&l->waiting, 1, memory_order_relaxed);
   return Val_unit;
 }
 
@@ -279,6 +284,14 @@ void rig_locks_take(void) {
 void rig_locks_give(void) {
   for (struct rig_lock *l = atomic_load(&locks); l != NULL; l = l->next)
     mutex_unlock(&l->mu);
+}
+
+/* The threads waiting on any lock for a broadcast, for tests. */
+int rig_locks_waiting(void) {
+  int n = 0;
+  for (struct rig_lock *l = atomic_load(&locks); l != NULL; l = l->next)
+    n += atomic_load_explicit(&l->waiting, memory_order_relaxed);
+  return n;
 }
 
 /* A device record of index [v_index] named [v_name]. */

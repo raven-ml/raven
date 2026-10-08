@@ -174,6 +174,11 @@ val locked : (unit -> 'a) -> 'a
     threads inside each would: what a fork during [f] leaves the child. [f] must
     not call rig, whose calls would wait for those locks. *)
 
+val waiting : unit -> int
+(** [waiting ()] is how many threads wait inside a lock of rig's core for
+    another to change what it guards, such as a copy waiting for a staging slot.
+*)
+
 val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)
@@ -181,6 +186,10 @@ val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
     checks. It raises [Failure] naming [what] after 10 s. *)
+
+val machine : string -> Rig.t
+(** [machine m] is the host of the machine named [m], an io device that makes no
+    memory, opened unless it is open: devices of [m] open once it is. *)
 
 (** The C readers of [rig.h], called from C. *)
 module Reader : sig
