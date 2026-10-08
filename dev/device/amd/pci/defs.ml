@@ -224,6 +224,240 @@ let soc15_mtype_uc = 3
 let soc21_mtype_uc = 3
 let soc24_mtype_uc = 3
 
+(* Interrupts *)
+
+let soc15_ih_clientid_grbm_cp = 0x14
+let soc15_ih_clientid_utcl2 = 0x1b
+let soc15_ih_clientid_se0sh = 0xa
+let soc15_ih_clientid_se1sh = 0xb
+let soc15_ih_clientid_se2sh = 0xc
+let soc15_ih_clientid_se3sh = 0xd
+let soc15_ih_clientid_sdma0 = 8
+let soc15_ih_clientid_sdma1 = 9
+let soc15_ih_clientid_sdma2 = 1
+let soc15_ih_clientid_sdma3 = 4
+let soc15_ih_clientid_sdma4 = 5
+let soc15_ih_clientid_sdma5 = 0x11
+let soc15_ih_clientid_sdma6 = 0x13
+let soc15_ih_clientid_sdma7 = 0x18
+let soc15_client_name = function
+  | 0 -> "IH"
+  | 1 -> "ACP"
+  | 2 -> "ATHUB"
+  | 3 -> "BIF"
+  | 4 -> "DCE"
+  | 5 -> "ISP"
+  | 6 -> "PCIE0"
+  | 7 -> "RLC"
+  | 8 -> "SDMA0"
+  | 9 -> "SDMA1"
+  | 0xa -> "SE0SH"
+  | 0xb -> "SE1SH"
+  | 0xc -> "SE2SH"
+  | 0xd -> "SE3SH"
+  | 0xe -> "UVD1"
+  | 0xf -> "THM"
+  | 0x10 -> "UVD"
+  | 0x11 -> "VCE0"
+  | 0x12 -> "VMC"
+  | 0x13 -> "XDMA"
+  | 0x14 -> "GRBM_CP"
+  | 0x15 -> "ATS"
+  | 0x16 -> "ROM_SMUIO"
+  | 0x17 -> "DF"
+  | 0x18 -> "VCE1"
+  | 0x19 -> "PWR"
+  | 0x1a -> "RESERVED"
+  | 0x1b -> "UTCL2"
+  | 0x1c -> "EA"
+  | 0x1d -> "UTCL2LOG"
+  | 0x1e -> "MP0"
+  | 0x1f -> "MP1"
+  | _ -> ""
+
+let soc21_ih_clientid_grbm_cp = 0x14
+let soc21_ih_clientid_gfx = 0xa
+let soc21_client_name = function
+  | 0 -> "IH"
+  | 2 -> "ATHUB"
+  | 3 -> "BIF"
+  | 4 -> "DCN"
+  | 5 -> "ISP"
+  | 6 -> "MP3"
+  | 7 -> "RLC"
+  | 0xa -> "GFX"
+  | 0xb -> "IMU"
+  | 0xe -> "VCN1"
+  | 0xf -> "THM"
+  | 0x10 -> "VCN"
+  | 0x11 -> "VPE1"
+  | 0x12 -> "VMC"
+  | 0x14 -> "GRBM_CP"
+  | 0x16 -> "ROM_SMUIO"
+  | 0x17 -> "DF"
+  | 0x18 -> "VPE"
+  | 0x19 -> "PWR"
+  | 0x1a -> "LSDMA"
+  | 0x1e -> "MP0"
+  | 0x1f -> "MP1"
+  | _ -> ""
+
+(* Interrupt sources: block, source ID, name. *)
+let ih_sources = [
+  ("GFX_9_0", 0xb0, "CP_RB_INTERRUPT_PKT");
+  ("GFX_9_0", 0xb1, "CP_IB1_INTERRUPT_PKT");
+  ("GFX_9_0", 0xb2, "CP_IB2_INTERRUPT_PKT");
+  ("GFX_9_0", 0xb4, "CP_PM4_PKT_RSVD_BIT_ERROR");
+  ("GFX_9_0", 0xb5, "CP_EOP_INTERRUPT");
+  ("GFX_9_0", 0xb7, "CP_BAD_OPCODE_ERROR");
+  ("GFX_9_0", 0xb8, "CP_PRIV_REG_FAULT");
+  ("GFX_9_0", 0xb9, "CP_PRIV_INSTR_FAULT");
+  ("GFX_9_0", 0xba, "CP_WAIT_MEM_SEM_FAULT");
+  ("GFX_9_0", 0xbb, "CP_CTX_EMPTY_INTERRUPT");
+  ("GFX_9_0", 0xbc, "CP_CTX_BUSY_INTERRUPT");
+  ("GFX_9_0", 0xc0, "CP_ME_WAIT_REG_MEM_POLL_TIMEOUT");
+  ("GFX_9_0", 0xc1, "CP_SIG_INCOMPLETE");
+  ("GFX_9_0", 0xc2, "CP_PREEMPT_ACK");
+  ("GFX_9_0", 0xc3, "CP_GPF");
+  ("GFX_9_0", 0xc4, "CP_GDS_ALLOC_ERROR");
+  ("GFX_9_0", 0xc5, "CP_ECC_ERROR");
+  ("GFX_9_0", 0xc7, "CP_COMPUTE_QUERY_STATUS");
+  ("GFX_9_0", 0xc8, "CP_VM_DOORBELL");
+  ("GFX_9_0", 0xc9, "CP_FUE_ERROR");
+  ("GFX_9_0", 0xca, "RLC_STRM_PERF_MONITOR_INTERRUPT");
+  ("GFX_9_0", 0xe8, "GRBM_RD_TIMEOUT_ERROR");
+  ("GFX_9_0", 0xe9, "GRBM_REG_GUI_IDLE");
+  ("GFX_9_0", 0xef, "SQ_INTERRUPT_ID");
+  ("GFX_11_0_0", 0, "UTCL2_FAULT");
+  ("GFX_11_0_0", 1, "UTCL2_DATA_POISONING");
+  ("GFX_11_0_0", 0xa, "MEM_ACCES_MON");
+  ("GFX_11_0_0", 0x30, "SDMA_ATOMIC_RTN_DONE");
+  ("GFX_11_0_0", 0x31, "SDMA_TRAP");
+  ("GFX_11_0_0", 0x32, "SDMA_SRBMWRITE");
+  ("GFX_11_0_0", 0x33, "SDMA_CTXEMPTY");
+  ("GFX_11_0_0", 0x34, "SDMA_PREEMPT");
+  ("GFX_11_0_0", 0x35, "SDMA_IB_PREEMPT");
+  ("GFX_11_0_0", 0x36, "SDMA_DOORBELL_INVALID");
+  ("GFX_11_0_0", 0x37, "SDMA_QUEUE_HANG");
+  ("GFX_11_0_0", 0x38, "SDMA_ATOMIC_TIMEOUT");
+  ("GFX_11_0_0", 0x39, "SDMA_POLL_TIMEOUT");
+  ("GFX_11_0_0", 0x3a, "SDMA_PAGE_TIMEOUT");
+  ("GFX_11_0_0", 0x3b, "SDMA_PAGE_NULL");
+  ("GFX_11_0_0", 0x3c, "SDMA_PAGE_FAULT");
+  ("GFX_11_0_0", 0x3d, "SDMA_VM_HOLE");
+  ("GFX_11_0_0", 0x3e, "SDMA_ECC");
+  ("GFX_11_0_0", 0x3f, "SDMA_FROZEN");
+  ("GFX_11_0_0", 0x40, "SDMA_SRAM_ECC");
+  ("GFX_11_0_0", 0x41, "SDMA_SEM_INCOMPLETE_TIMEOUT");
+  ("GFX_11_0_0", 0x42, "SDMA_SEM_WAIT_FAIL_TIMEOUT");
+  ("GFX_11_0_0", 0x43, "SDMA_FENCE");
+  ("GFX_11_0_0", 0x80, "RLC_GC_FED_INTERRUPT");
+  ("GFX_11_0_0", 0xb1, "CP_GENERIC_INT");
+  ("GFX_11_0_0", 0xb4, "CP_PM4_PKT_RSVD_BIT_ERROR");
+  ("GFX_11_0_0", 0xb5, "CP_EOP_INTERRUPT");
+  ("GFX_11_0_0", 0xb7, "CP_BAD_OPCODE_ERROR");
+  ("GFX_11_0_0", 0xb8, "CP_PRIV_REG_FAULT");
+  ("GFX_11_0_0", 0xb9, "CP_PRIV_INSTR_FAULT");
+  ("GFX_11_0_0", 0xba, "CP_WAIT_MEM_SEM_FAULT");
+  ("GFX_11_0_0", 0xbb, "CP_CTX_EMPTY_INTERRUPT");
+  ("GFX_11_0_0", 0xbc, "CP_CTX_BUSY_INTERRUPT");
+  ("GFX_11_0_0", 0xc0, "CP_ME_WAIT_REG_MEM_POLL_TIMEOUT");
+  ("GFX_11_0_0", 0xc1, "CP_SIG_INCOMPLETE");
+  ("GFX_11_0_0", 0xc2, "CP_PREEMPT_ACK");
+  ("GFX_11_0_0", 0xc3, "CP_GPF");
+  ("GFX_11_0_0", 0xc4, "CP_GDS_ALLOC_ERROR");
+  ("GFX_11_0_0", 0xc5, "CP_ECC_ERROR");
+  ("GFX_11_0_0", 0xc7, "CP_COMPUTE_QUERY_STATUS");
+  ("GFX_11_0_0", 0xc8, "CP_VM_DOORBELL");
+  ("GFX_11_0_0", 0xc9, "CP_FUE_ERROR");
+  ("GFX_11_0_0", 0xca, "RLC_STRM_PERF_MONITOR_INTERRUPT");
+  ("GFX_11_0_0", 0xe8, "GRBM_RD_TIMEOUT_ERROR");
+  ("GFX_11_0_0", 0xe9, "GRBM_REG_GUI_IDLE");
+  ("GFX_11_0_0", 0xef, "SQ_INTERRUPT_ID");
+  ("GFX_12_0_0", 0, "UTCL2_FAULT");
+  ("GFX_12_0_0", 1, "UTCL2_DATA_POISONING");
+  ("GFX_12_0_0", 0xa, "MEM_ACCES_MON");
+  ("GFX_12_0_0", 0x30, "SDMA_ATOMIC_RTN_DONE");
+  ("GFX_12_0_0", 0x31, "SDMA_TRAP");
+  ("GFX_12_0_0", 0x32, "SDMA_SRBMWRITE");
+  ("GFX_12_0_0", 0x33, "SDMA_CTXEMPTY");
+  ("GFX_12_0_0", 0x34, "SDMA_PREEMPT");
+  ("GFX_12_0_0", 0x35, "SDMA_IB_PREEMPT");
+  ("GFX_12_0_0", 0x36, "SDMA_DOORBELL_INVALID");
+  ("GFX_12_0_0", 0x37, "SDMA_QUEUE_HANG");
+  ("GFX_12_0_0", 0x38, "SDMA_ATOMIC_TIMEOUT");
+  ("GFX_12_0_0", 0x39, "SDMA_POLL_TIMEOUT");
+  ("GFX_12_0_0", 0x3a, "SDMA_PAGE_TIMEOUT");
+  ("GFX_12_0_0", 0x3b, "SDMA_PAGE_NULL");
+  ("GFX_12_0_0", 0x3c, "SDMA_PAGE_FAULT");
+  ("GFX_12_0_0", 0x3d, "SDMA_VM_HOLE");
+  ("GFX_12_0_0", 0x3e, "SDMA_ECC");
+  ("GFX_12_0_0", 0x3f, "SDMA_FROZEN");
+  ("GFX_12_0_0", 0x40, "SDMA_SRAM_ECC");
+  ("GFX_12_0_0", 0x41, "SDMA_SEM_INCOMPLETE_TIMEOUT");
+  ("GFX_12_0_0", 0x42, "SDMA_SEM_WAIT_FAIL_TIMEOUT");
+  ("GFX_12_0_0", 0x46, "SDMA_FENCE");
+  ("GFX_12_0_0", 0x80, "RLC_GC_FED_INTERRUPT");
+  ("GFX_12_0_0", 0xb1, "CP_GENERIC_INT");
+  ("GFX_12_0_0", 0xb4, "CP_PM4_PKT_RSVD_BIT_ERROR");
+  ("GFX_12_0_0", 0xb5, "CP_EOP_INTERRUPT");
+  ("GFX_12_0_0", 0xb7, "CP_BAD_OPCODE_ERROR");
+  ("GFX_12_0_0", 0xb8, "CP_PRIV_REG_FAULT");
+  ("GFX_12_0_0", 0xb9, "CP_PRIV_INSTR_FAULT");
+  ("GFX_12_0_0", 0xba, "CP_WAIT_MEM_SEM_FAULT");
+  ("GFX_12_0_0", 0xbb, "CP_CTX_EMPTY_INTERRUPT");
+  ("GFX_12_0_0", 0xbc, "CP_CTX_BUSY_INTERRUPT");
+  ("GFX_12_0_0", 0xc0, "CP_ME_WAIT_REG_MEM_POLL_TIMEOUT");
+  ("GFX_12_0_0", 0xc1, "CP_SIG_INCOMPLETE");
+  ("GFX_12_0_0", 0xc2, "CP_PREEMPT_ACK");
+  ("GFX_12_0_0", 0xc3, "CP_GPF");
+  ("GFX_12_0_0", 0xc4, "CP_GDS_ALLOC_ERROR");
+  ("GFX_12_0_0", 0xc5, "CP_ECC_ERROR");
+  ("GFX_12_0_0", 0xc7, "CP_COMPUTE_QUERY_STATUS");
+  ("GFX_12_0_0", 0xc8, "CP_VM_DOORBELL");
+  ("GFX_12_0_0", 0xc9, "CP_FUE_ERROR");
+  ("GFX_12_0_0", 0xca, "RLC_STRM_PERF_MONITOR_INTERRUPT");
+  ("GFX_12_0_0", 0xe8, "GRBM_RD_TIMEOUT_ERROR");
+  ("GFX_12_0_0", 0xe9, "GRBM_REG_GUI_IDLE");
+  ("GFX_12_0_0", 0xef, "SQ_INTERRUPT_ID");
+  ("SDMA0_4_0", 0xd9, "SDMA_ATOMIC_RTN_DONE");
+  ("SDMA0_4_0", 0xda, "SDMA_ATOMIC_TIMEOUT");
+  ("SDMA0_4_0", 0xdb, "SDMA_IB_PREEMPT");
+  ("SDMA0_4_0", 0xdc, "SDMA_ECC");
+  ("SDMA0_4_0", 0xdd, "SDMA_PAGE_FAULT");
+  ("SDMA0_4_0", 0xde, "SDMA_PAGE_NULL");
+  ("SDMA0_4_0", 0xdf, "SDMA_XNACK");
+  ("SDMA0_4_0", 0xe0, "SDMA_TRAP");
+  ("SDMA0_4_0", 0xe1, "SDMA_SEM_INCOMPLETE_TIMEOUT");
+  ("SDMA0_4_0", 0xe2, "SDMA_SEM_WAIT_FAIL_TIMEOUT");
+  ("SDMA0_4_0", 0xe4, "SDMA_SRAM_ECC");
+  ("SDMA0_4_0", 0xf0, "SDMA_PREEMPT");
+  ("SDMA0_4_0", 0xf2, "SDMA_VM_HOLE");
+  ("SDMA0_4_0", 0xf3, "SDMA_CTXEMPTY");
+  ("SDMA0_4_0", 0xf4, "SDMA_DOORBELL_INVALID");
+  ("SDMA0_4_0", 0xf5, "SDMA_FROZEN");
+  ("SDMA0_4_0", 0xf6, "SDMA_POLL_TIMEOUT");
+  ("SDMA0_4_0", 0xf7, "SDMA_SRBMWRITE");
+  ("SDMA0_5_0", 0xd9, "SDMA_ATOMIC_RTN_DONE");
+  ("SDMA0_5_0", 0xda, "SDMA_ATOMIC_TIMEOUT");
+  ("SDMA0_5_0", 0xdb, "SDMA_IB_PREEMPT");
+  ("SDMA0_5_0", 0xdc, "SDMA_ECC");
+  ("SDMA0_5_0", 0xdd, "SDMA_PAGE_FAULT");
+  ("SDMA0_5_0", 0xde, "SDMA_PAGE_NULL");
+  ("SDMA0_5_0", 0xdf, "SDMA_XNACK");
+  ("SDMA0_5_0", 0xe0, "SDMA_TRAP");
+  ("SDMA0_5_0", 0xe1, "SDMA_SEM_INCOMPLETE_TIMEOUT");
+  ("SDMA0_5_0", 0xe2, "SDMA_SEM_WAIT_FAIL_TIMEOUT");
+  ("SDMA0_5_0", 0xe4, "SDMA_SRAM_ECC");
+  ("SDMA0_5_0", 0xf0, "SDMA_PREEMPT");
+  ("SDMA0_5_0", 0xf2, "SDMA_VM_HOLE");
+  ("SDMA0_5_0", 0xf3, "SDMA_CTXEMPTY");
+  ("SDMA0_5_0", 0xf4, "SDMA_DOORBELL_INVALID");
+  ("SDMA0_5_0", 0xf5, "SDMA_FROZEN");
+  ("SDMA0_5_0", 0xf6, "SDMA_POLL_TIMEOUT");
+  ("SDMA0_5_0", 0xf7, "SDMA_SRBMWRITE");
+]
+
 (* Registers *)
 
 (* The registers of each block but GC, at each version with headers: each

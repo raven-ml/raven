@@ -58,7 +58,21 @@ SOURCES = {
     "vega10_enum.h": KERNEL + "include/vega10_enum.h",  # memory types, GFX9
     "soc21_enum.h": KERNEL + "include/soc21_enum.h",  # GFX11
     "soc24_enum.h": KERNEL + "include/soc24_enum.h",  # GFX12
+    "soc15_ih_clientid.h": KERNEL + "include/soc15_ih_clientid.h",  # interrupt clients
+    **{f"irqsrcs_{b}.h": KERNEL + f"include/ivsrcid/{d}/irqsrcs_{b}.h"  # interrupt sources
+       for d, b in (("gfx", "gfx_9_0"), ("gfx", "gfx_11_0_0"), ("gfx", "gfx_12_0_0"), ("sdma0", "sdma0_4_0"),
+                    ("sdma0", "sdma0_5_0"))},
 }
+
+# Interrupts: the clients' enumerations, and the source headers of the blocks
+# whose interrupts the library reads.
+IH_ENUMS = ["soc15_ih_clientid", "soc21_ih_clientid"]
+IH_CLIENTS = ["SOC15_IH_CLIENTID_GRBM_CP", "SOC15_IH_CLIENTID_UTCL2"] + [
+    f"SOC15_IH_CLIENTID_SE{i}SH" for i in range(4)] + [f"SOC15_IH_CLIENTID_SDMA{i}" for i in range(8)] + [
+    "SOC21_IH_CLIENTID_GRBM_CP", "SOC21_IH_CLIENTID_GFX"]
+IH_SOURCES = ["irqsrcs_gfx_9_0.h", "irqsrcs_gfx_11_0_0.h", "irqsrcs_gfx_12_0_0.h", "irqsrcs_sdma0_4_0.h",
+              "irqsrcs_sdma0_5_0.h"]
+SRCID = re.compile(r"^\s*#\s*define\s+(\w+?)__SRCID__(\w+)\s+(0x[0-9a-fA-F]+|\d+)\b", re.M)
 
 # Page-table entries: their bits, the first bit of their fields, the levels
 # of the tables, and the uncached memory type of each generation.
@@ -279,7 +293,7 @@ def enum_values(text, wanted):
                 continue
             name, _, value = item.partition("=")
             name = name.strip()
-            nxt = evaluate(value.strip(), {}) if value else nxt
+            nxt = evaluate(value.strip(), {n: str(v) for n, v in out.items()}) if value else nxt
             out[name] = nxt
             nxt += 1
     missing = set(wanted) - set(out)
@@ -533,6 +547,10 @@ def excerpt(name, text):
     elif name == "amdgpu_vm.h":
         keep |= enum_blocks(text, ["amdgpu_vm_level"])
         keep |= {i for i, l in enumerate(lines) if DEFINE.match(l) and DEFINE.match(l).group(1) in PTE_BITS + PTE_SHIFTS}
+    elif name == "soc15_ih_clientid.h":
+        keep |= enum_blocks(text, IH_ENUMS)
+    elif name in IH_SOURCES:
+        keep |= {i for i, l in enumerate(lines) if SRCID.match(l)}
     elif name in MTYPES:
         keep |= {i for i, l in enumerate(lines) if re.match(r"\s*MTYPE_UC\s*=", l)}
     elif name == "psp_gfx_if.h":
@@ -654,6 +672,30 @@ def generate(h):
             sys.exit(f"{hdr}: no MTYPE_UC")
         out.append(f"let {gen_name}_mtype_uc = {int(m.group(1), 0)}")
     out.append("")
+
+    # Interrupts
+    ih = h["soc15_ih_clientid.h"]
+    out += ["(* Interrupts *)", ""]
+    for soc in ("soc15", "soc21"):
+        body = re.search(rf"enum\s+{soc}_ih_clientid\s*\{{(.*?)\}}", preprocess(ih), re.S).group(1)
+        prefix = f"{soc.upper()}_IH_CLIENTID_"
+        primary = [n.strip() for n, v in re.findall(r"(\w+)\s*=\s*(0x[0-9a-fA-F]+|\d+)", body)]
+        values = enum_values(ih, primary)
+        every = enum_values(ih, re.findall(r"(\w+)\s*=", body))
+        for n in IH_CLIENTS:
+            if n.startswith(prefix):
+                out.append(f"let {n.lower()} = {ml_int(every[n])}")
+        out.append(f"let {soc}_client_name = function")
+        for n, v in sorted(values.items(), key=lambda x: x[1]):
+            out.append(f"  | {ml_int(v)} -> {json.dumps(n[len(prefix):])}")
+        out.append("  | _ -> \"\"")
+        out.append("")
+    out.append("(* Interrupt sources: block, source ID, name. *)")
+    out.append("let ih_sources = [")
+    for hdr in IH_SOURCES:
+        for m in SRCID.finditer(h[hdr]):
+            out.append(f"  ({json.dumps(m.group(1))}, {ml_int(int(m.group(3), 0))}, {json.dumps(m.group(2))});")
+    out += ["]", ""]
 
     # Registers
     out += ["(* Registers *)", "",
