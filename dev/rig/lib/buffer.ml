@@ -14,6 +14,8 @@ type access = Read | Read_write
 let generation (c : claim) = Atomic.Loc.get [%atomic.loc c.generation]
 let is_live b = b.generation = generation b.mem.claim
 
+let dead b = if is_live b then None else Some b.mem.claim.why
+
 let check_live fn b =
   if not (is_live b) then
     invalid_argf "Rig.%s: the buffer is dead: %s" fn b.mem.claim.why

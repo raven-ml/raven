@@ -11,6 +11,7 @@ type t = buffer
 type memory = Device | Pinned | Mapped
 type access = Read | Read_write
 
+val dead : t -> string option
 val check_live : string -> t -> unit
 (* [check_live fn b] raises [Invalid_argument] naming [fn] if [b] is dead. *)
 

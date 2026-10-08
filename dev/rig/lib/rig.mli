@@ -394,6 +394,12 @@ module Buffer : sig
   val is_borrowed : t -> bool
   (** [is_borrowed b] is [true] iff [b] is borrowed. *)
 
+  val dead : t -> string option
+  (** [dead b] is [Some why] if [b] is dead, [why] the reason its memory was
+      consumed with ({!Claim.consume}), and [None] while [b] lives. A library
+      that calls this one on its caller's buffer checks it first, to refuse a
+      dead buffer under its own name. *)
+
   val view : t -> first:int -> length:int -> t
   (** [view b ~first ~length] is the [length] bytes of [b] from its byte [first]
       on, over [b]'s memory.

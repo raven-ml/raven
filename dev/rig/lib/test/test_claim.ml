@@ -277,6 +277,19 @@ let group_commands =
     command "read" (two ^-> judges unit) judge_any read_group;
   ]
 
+(* A buffer's death is a fact with its reason: none while it lives, the
+   consumption's reason once its memory is consumed; the buffer consume gives
+   lives. *)
+let test_dead_fact () =
+  let b = B.create C.host 16 in
+  equal ~msg:"live" (option string) None (B.dead b);
+  let b' =
+    Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        Claim.consume c ~why:"donated" b)
+  in
+  equal ~msg:"consumed" (option string) (Some "donated") (B.dead b);
+  equal ~msg:"its successor" (option string) None (B.dead b')
+
 let tests =
   [
     group ~timeout "claims"
@@ -315,6 +328,7 @@ let tests =
           test_consume_refusals;
         test "a dead buffer refuses claims and accepts a release"
           test_dead_claims;
+        test "a buffer's death is a fact with its reason" test_dead_fact;
       ];
     group ~timeout "domains"
       [
