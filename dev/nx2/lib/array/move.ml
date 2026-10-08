@@ -18,9 +18,10 @@ let pp_ints = Shape.pp
 let numel = Shape.numel
 let check_rank = Shape.check_rank
 
-let reshape s s' =
+(* [n] is the number of elements of [s]. *)
+let reshape s n s' =
   check_rank "Move.Reshape" (Array.length s');
-  let n = numel "Move.Reshape" s and n' = numel "Move.Reshape" s' in
+  let n' = numel "Move.Reshape" s' in
   if n <> n' then
     invalid_argf "Move.Reshape: %a has %d elements, %a has %d" pp_ints s n
       pp_ints s' n';
@@ -136,9 +137,9 @@ let window s ws =
    set tells only that many axes apart: refuse it before any movement. *)
 let shape m s =
   check_rank "Move.shape" (Array.length s);
-  ignore (numel "Move.shape" s);
+  let n = numel "Move.shape" s in
   match m with
-  | Reshape s' -> reshape s s'
+  | Reshape s' -> reshape s n s'
   | Broadcast s' -> broadcast s s'
   | Permute p -> permute s p
   | Slice rs -> slice s rs

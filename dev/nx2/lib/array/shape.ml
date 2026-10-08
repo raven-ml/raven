@@ -50,7 +50,9 @@ let numel fn s =
     let n = ref 1 in
     for i = 0 to r - 1 do
       let d = Array.unsafe_get s i in
-      if !n > max_int / d then
+      (* Two factors below 2^31 multiply without overflow: the division, tens of
+         cycles, runs only for larger ones. *)
+      if !n lor d >= 1 lsl 31 && !n > max_int / d then
         invalid_argf "%s: the number of elements of %a overflows" fn pp s;
       n := !n * d
     done;

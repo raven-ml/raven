@@ -180,7 +180,12 @@ let v ?(offset = 0) ~strides s =
   ignore (Shape.numel "Layout.v" s);
   for i = 0 to r - 1 do
     let d = s.(i) and st = strides.(i) in
-    if d > 1 && (st = min_int || abs st > max_int / (d - 1)) then
+    (* As in Shape.numel, the division runs only for factors past 2^31. *)
+    if
+      d > 1
+      && (st = min_int
+         || (abs st lor (d - 1) >= 1 lsl 31 && abs st > max_int / (d - 1)))
+    then
       invalid_argf
         "Layout.v: axis %d has extent %d and stride %d: its reach overflows" i d
         st
