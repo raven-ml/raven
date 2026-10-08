@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The suite of nx_pool.h's threads, through the probes of thread_probe_stubs.c:
-   what a body sees on a worker, and the workers' life. *)
+(* The suite of nx_pool.h's threads, through the probes of
+   nx_pool_thread_probe_stubs.c: what a body sees on a worker, and the workers'
+   life. *)
 
 open Windtrap
-module P = Pool_probe
-module T = Thread_probe
+module P = Nx_pool_probe
+module T = Nx_pool_thread_probe
 
 let strf = Printf.sprintf
 let cores = P.cores ()

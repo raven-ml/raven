@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** What the pool's suites and bench share: probes of [nx_pool.h], whose bodies
-    record what the pool did (pool_probe_stubs.c), and the suites' waits.
+    record what the pool did (nx_pool_probe_stubs.c), and the suites' waits.
 
     A probe that waits for another call of its job, which [nx_pool.h] forbids a
     body, gives up after 10 s, so a pool that breaks a promise fails the test

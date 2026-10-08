@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The suite of nx_pool.h, through the probes of pool_probe_stubs.c. *)
+(* The suite of nx_pool.h, through the probes of nx_pool_probe_stubs.c. *)
 
 open Windtrap
-module P = Pool_probe
+module P = Nx_pool_probe
 
 let strf = Printf.sprintf
 

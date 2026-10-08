@@ -7,7 +7,7 @@
    worker, fork children, and the process's threads. They fork and read
    signal masks and thread states, so they build where POSIX does.
 
-   Some bodies wait for another call, up to [patience] (pool_probe.h), to
+   Some bodies wait for another call, up to [patience] (nx_pool_probe.h), to
    force a chunk onto a worker. */
 
 #define _GNU_SOURCE
@@ -40,7 +40,7 @@
 #endif
 
 #include "nx_pool.h"
-#include "pool_probe.h"
+#include "nx_pool_probe.h"
 
 static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;
@@ -53,10 +53,10 @@ static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static _Atomic int burst_stop;
 
-/* [probe_burst ()] runs a job on every core, then jobs of two chunks on two
-   threads back to back until [probe_burst_stop], whose request it then
-   clears. */
-value probe_burst(value unit) {
+/* [nx_pool_test_burst ()] runs a job on every core, then jobs of two chunks
+   on two threads back to back until [nx_pool_test_burst_stop], whose request
+   it then clears. */
+value nx_pool_test_burst(value unit) {
   (void)unit;
   int cores = nx_pool_cores();
   caml_enter_blocking_section();
@@ -68,7 +68,7 @@ value probe_burst(value unit) {
   return Val_unit;
 }
 
-value probe_burst_stop(value unit) {
+value nx_pool_test_burst_stop(value unit) {
   (void)unit;
   atomic_store(&burst_stop, 1);
   return Val_unit;
@@ -127,9 +127,9 @@ static sigset_t worker_mask;
 
 static void read_mask(void) { pthread_sigmask(SIG_BLOCK, NULL, &worker_mask); }
 
-/* [probe_worker_mask ()] is (whether a worker ran, the signals of the table
-   with whether a worker blocks them). */
-value probe_worker_mask(value unit) {
+/* [nx_pool_test_worker_mask ()] is (whether a worker ran, the signals of the
+   table with whether a worker blocks them). */
+value nx_pool_test_worker_mask(value unit) {
   CAMLparam1(unit);
   CAMLlocal5(result, list, pair, name, cell);
   caml_enter_blocking_section();
@@ -154,7 +154,7 @@ value probe_worker_mask(value unit) {
   CAMLreturn(result);
 }
 
-/* The signals a body may raise itself, in the order of [probe_faults]. */
+/* The signals a body may raise itself, in the order of the probe's [faults]. */
 static const int faults[] = {SIGSEGV, SIGBUS,  SIGFPE, SIGILL,
                              SIGTRAP, SIGABRT, SIGSYS};
 
@@ -388,9 +388,9 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
     snprintf(status, len, "exit 0");
 }
 
-/* [probe_in_child scenario] is (status, values) of [in_child] for the
+/* [nx_pool_test_in_child scenario] is (status, values) of [in_child] for the
    scenario of that index: threads, job, stack, faults, limited. */
-value probe_in_child(value v_scenario) {
+value nx_pool_test_in_child(value v_scenario) {
   CAMLparam1(v_scenario);
   CAMLlocal3(result, values, s);
   static void (*const scenarios[])(int64_t *) = {
@@ -411,7 +411,7 @@ value probe_in_child(value v_scenario) {
 }
 
 /* Whether the system can limit a process's own threads. */
-value probe_limits_threads(value unit) {
+value nx_pool_test_limits_threads(value unit) {
   (void)unit;
 #if defined(__linux__)
   return Val_true;
@@ -420,8 +420,8 @@ value probe_limits_threads(value unit) {
 #endif
 }
 
-/* [probe_fork ()] forks a child that exits at once, and waits for it. */
-value probe_fork(value unit) {
+/* [nx_pool_test_fork ()] forks a child that exits at once, and waits for it. */
+value nx_pool_test_fork(value unit) {
   (void)unit;
   caml_enter_blocking_section();
   pid_t pid = fork();
@@ -433,13 +433,13 @@ value probe_fork(value unit) {
     }
   caml_leave_blocking_section();
   if (pid < 0)
-    caml_failwith("probe_fork: fork failed");
+    caml_failwith("nx_pool_test_fork: fork failed");
   return Val_unit;
 }
 
 /* The threads of the process, other than the calling one, that are running
    now, or -1 where the system does not say. */
-value probe_running_threads(value unit) {
+value nx_pool_test_running_threads(value unit) {
   (void)unit;
 #if defined(__APPLE__)
   mach_port_t task = mach_task_self();

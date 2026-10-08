@@ -10,40 +10,41 @@ type job = { calls : call list; count : int; overlaps : int }
 
 external record_raw :
   int -> int64 -> int64 -> (int64 * int64 * int * int) array * int * int
-  = "probe_record"
+  = "nx_pool_test_record"
 
 let record ~threads ~total ~chunks =
   let calls, count, overlaps = record_raw threads total chunks in
   let call (lo, hi, worker, thread) = { lo; hi; worker; thread } in
   { calls = List.map call (Array.to_list calls); count; overlaps }
 
-external visibility : jobs:int -> threads:int -> int * int = "probe_visibility"
+external visibility : jobs:int -> threads:int -> int * int
+  = "nx_pool_test_visibility"
 
 external nested : threads:int -> outer:int -> inner:int -> int * int * int * int
-  = "probe_nested"
+  = "nx_pool_test_nested"
 
-external balance : int -> bool = "probe_balance"
+external balance : int -> bool = "nx_pool_test_balance"
 
 (* Jobs observed from another domain *)
 
-external reset : unit -> unit = "probe_reset"
-external hold : only_worker:bool -> bool = "probe_hold"
-external hold_arrived : unit -> int = "probe_hold_arrived"
-external hold_release : unit -> unit = "probe_hold_release"
+external reset : unit -> unit = "nx_pool_test_reset"
+external hold : only_worker:bool -> bool = "nx_pool_test_hold"
+external hold_arrived : unit -> int = "nx_pool_test_hold_arrived"
+external hold_release : unit -> unit = "nx_pool_test_hold_release"
 
 external counted : threads:int -> total:int64 -> chunks:int64 -> unit
-  = "probe_counted"
+  = "nx_pool_test_counted"
 
-external counted_calls : unit -> int = "probe_counted_calls"
+external counted_calls : unit -> int = "nx_pool_test_counted_calls"
 
 (* The host *)
 
-external cores : unit -> int = "probe_cores"
-external performance_cores : unit -> int = "probe_performance_cores"
-external cgroup_cpus : string -> int = "probe_cgroup_cpus"
-external sysctl : string -> int = "probe_sysctl"
-external active_processors : unit -> int = "probe_active_processors"
-external pinned_cores : unit -> int * int = "probe_pinned_cores"
+external cores : unit -> int = "nx_pool_test_cores"
+external performance_cores : unit -> int = "nx_pool_test_performance_cores"
+external cgroup_cpus : string -> int = "nx_pool_test_cgroup_cpus"
+external sysctl : string -> int = "nx_pool_test_sysctl"
+external active_processors : unit -> int = "nx_pool_test_active_processors"
+external pinned_cores : unit -> int * int = "nx_pool_test_pinned_cores"
 
 let needs_two_cores () =
   if cores () < 2 then Windtrap.skip ~reason:"the host has one core" ()

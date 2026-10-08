@@ -6,8 +6,8 @@
 /* What the pool's probe stubs share: a monotonic clock, and how long a
    probe waits for the pool before it gives up. */
 
-#ifndef POOL_PROBE_H
-#define POOL_PROBE_H
+#ifndef NX_POOL_PROBE_H
+#define NX_POOL_PROBE_H
 
 #include <stdint.h>
 

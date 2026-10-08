@@ -2,7 +2,7 @@
 ; the stubs of a library that depends on it include.
 
 (library
- (name device_pool)
+ (name nx_pool)
  (modules)
  (install_c_headers nx_pool)
  (foreign_stubs

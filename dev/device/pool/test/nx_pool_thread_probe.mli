@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Probes of [nx_pool.h]'s threads (thread_probe_stubs.c): what a body sees on
-    a worker, and the workers' life. POSIX only. *)
+(** Probes of [nx_pool.h]'s threads (nx_pool_thread_probe_stubs.c): what a body
+    sees on a worker, and the workers' life. POSIX only. *)
 
 (** {1:burst A burst of jobs} *)
 

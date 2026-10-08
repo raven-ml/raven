@@ -1,7 +1,7 @@
 (library
- (name device_pool_bench_probe)
+ (name nx_pool_bench_probe)
  (modules)
- (libraries device_pool pool_probe)
+ (libraries nx_pool nx_pool_probe)
  (foreign_stubs
   (language c)
   (names bench_pool_stubs)))
@@ -9,7 +9,7 @@
 (executable
  (name bench_pool)
  (modules bench_pool)
- (libraries device_pool_bench_probe pool_probe thumper unix))
+ (libraries nx_pool_bench_probe nx_pool_probe thumper unix))
 
 (rule
  (alias bench)

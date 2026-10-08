@@ -19,7 +19,7 @@
 #include <stdlib.h>
 
 #include "nx_pool.h"
-#include "pool_probe.h"
+#include "nx_pool_probe.h"
 
 /* Empty jobs */
 
@@ -31,7 +31,7 @@ static void empty(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* [empty threads total chunks] runs a job whose bodies do nothing. */
-value pool_bench_empty(value v_threads, value v_total, value v_chunks) {
+value nx_pool_bench_empty(value v_threads, value v_total, value v_chunks) {
   nx_pool_run(Int_val(v_threads), Long_val(v_total), Long_val(v_chunks), empty,
               NULL);
   return Val_unit;
@@ -39,7 +39,7 @@ value pool_bench_empty(value v_threads, value v_total, value v_chunks) {
 
 /* [busy gap] keeps the calling thread busy for [gap] nanoseconds, as a
    caller between two jobs. */
-value pool_bench_busy(value v_gap) {
+value nx_pool_bench_busy(value v_gap) {
   int64_t end = now_ns() + Long_val(v_gap);
   while (now_ns() < end) {
   }
@@ -91,7 +91,7 @@ static sink *sinks(void) {
 }
 
 /* [compute threads total chunks skewed] runs a compute-bound job. */
-value pool_bench_compute(value v_threads, value v_total, value v_chunks,
+value nx_pool_bench_compute(value v_threads, value v_total, value v_chunks,
                          value v_skewed) {
   work w = {Long_val(v_total), Bool_val(v_skewed), sinks()};
   nx_pool_run(Int_val(v_threads), w.total, Long_val(v_chunks), compute, &w);
@@ -163,7 +163,7 @@ static void *floor_thread(void *arg) {
 
 /* [floor_start threads] starts [threads] - 1 floor threads. They begin at
    generation 0, which a row's earlier threads may have moved past. */
-value pool_bench_floor_start(value v_threads) {
+value nx_pool_bench_floor_start(value v_threads) {
   floor_job.threads = Int_val(v_threads);
   floor_job.ids = calloc((size_t)floor_job.threads, sizeof *floor_job.ids);
   if (floor_job.ids == NULL) abort();
@@ -177,7 +177,7 @@ value pool_bench_floor_start(value v_threads) {
 }
 
 /* [floor_stop ()] ends the threads [floor_start] started. */
-value pool_bench_floor_stop(value unit) {
+value nx_pool_bench_floor_stop(value unit) {
   (void)unit;
   atomic_store(&floor_job.stop, 1);
   for (int i = 1; i < floor_job.threads; i++)
@@ -201,14 +201,14 @@ static void floor_run(int64_t total, int64_t chunks, nx_pool_body body,
 }
 
 /* [floor_empty total chunks] is [empty] on the floor threads. */
-value pool_bench_floor_empty(value v_total, value v_chunks) {
+value nx_pool_bench_floor_empty(value v_total, value v_chunks) {
   floor_run(Long_val(v_total), Long_val(v_chunks), empty, NULL);
   return Val_unit;
 }
 
 /* [floor_compute total chunks] is a balanced [compute] on the floor
    threads. */
-value pool_bench_floor_compute(value v_total, value v_chunks) {
+value nx_pool_bench_floor_compute(value v_total, value v_chunks) {
   work w = {Long_val(v_total), 0, sinks()};
   floor_run(w.total, Long_val(v_chunks), compute, &w);
   return Val_unit;

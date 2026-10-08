@@ -78,21 +78,23 @@ let load_stop pids =
 
 (* Jobs *)
 
-external empty : int -> int -> int -> unit = "pool_bench_empty" [@@noalloc]
-external busy : int -> unit = "pool_bench_busy" [@@noalloc]
+external empty : int -> int -> int -> unit = "nx_pool_bench_empty" [@@noalloc]
+external busy : int -> unit = "nx_pool_bench_busy" [@@noalloc]
 
-external compute : int -> int -> int -> bool -> unit = "pool_bench_compute"
+external compute : int -> int -> int -> bool -> unit = "nx_pool_bench_compute"
 [@@noalloc]
 
-external floor_start : int -> unit = "pool_bench_floor_start"
-external floor_stop : unit -> unit = "pool_bench_floor_stop"
-external floor_empty : int -> int -> unit = "pool_bench_floor_empty" [@@noalloc]
+external floor_start : int -> unit = "nx_pool_bench_floor_start"
+external floor_stop : unit -> unit = "nx_pool_bench_floor_stop"
 
-external floor_compute : int -> int -> unit = "pool_bench_floor_compute"
+external floor_empty : int -> int -> unit = "nx_pool_bench_floor_empty"
 [@@noalloc]
 
-let cores = Pool_probe.cores ()
-let fast = Pool_probe.performance_cores ()
+external floor_compute : int -> int -> unit = "nx_pool_bench_floor_compute"
+[@@noalloc]
+
+let cores = Nx_pool_probe.cores ()
+let fast = Nx_pool_probe.performance_cores ()
 let us = 1_000
 let units = 1 lsl 16
 let chunks_per_thread = 8

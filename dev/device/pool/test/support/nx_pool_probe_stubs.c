@@ -7,7 +7,7 @@
    pool did with them, called from OCaml as a consumer's stubs call the pool.
    They build on every system the pool does.
 
-   Some bodies wait for another call, up to [patience] (pool_probe.h), to
+   Some bodies wait for another call, up to [patience] (nx_pool_probe.h), to
    force a chunk onto a worker or to hold a job open. */
 
 #define _GNU_SOURCE
@@ -35,7 +35,7 @@
 
 #include "nx_pool.h"
 #include "nx_pool_cgroup.h"
-#include "pool_probe.h"
+#include "nx_pool_probe.h"
 
 /* Time */
 
@@ -78,11 +78,11 @@ static void record(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static const int64_t max_recorded = INT64_C(1) << 20;
 
-/* [probe_record threads total chunks] is (calls, count, overlaps): the calls
-   as (lo, hi, worker, thread) in the order they began, [thread] numbering the
-   threads in order of their first call, the caller's 0; the number of calls;
-   the calls that began while another of their worker ran. */
-value probe_record(value v_threads, value v_total, value v_chunks) {
+/* [nx_pool_test_record threads total chunks] is (calls, count, overlaps): the
+   calls as (lo, hi, worker, thread) in the order they began, [thread]
+   numbering the threads in order of their first call, the caller's 0; the
+   number of calls; the calls that began while another of their worker ran. */
+value nx_pool_test_record(value v_threads, value v_total, value v_chunks) {
   CAMLparam3(v_threads, v_total, v_chunks);
   CAMLlocal4(result, calls, entry, bound);
   int threads = Int_val(v_threads);
@@ -94,7 +94,7 @@ value probe_record(value v_threads, value v_total, value v_chunks) {
       cap = total;
   }
   if (cap > max_recorded)
-    caml_invalid_argument("probe_record: too many chunks");
+    caml_invalid_argument("nx_pool_test_record: too many chunks");
   int slots = nx_pool_cores();
   record_job j = {calloc((size_t)cap + 1, sizeof(call)),      cap,   0,
                   calloc((size_t)slots, sizeof(_Atomic int)), slots, 0};
@@ -164,10 +164,10 @@ static void copy(int64_t lo, int64_t hi, int worker, void *ctx) {
     atomic_fetch_add(j->misses, misses);
 }
 
-/* [probe_visibility jobs threads] runs [jobs] jobs, each over values the
+/* [nx_pool_test_visibility jobs threads] runs [jobs] jobs, each over values the
    caller writes just before it, and is (the values bodies read stale, the
    values the caller read stale after a job). */
-value probe_visibility(value v_jobs, value v_threads) {
+value nx_pool_test_visibility(value v_jobs, value v_threads) {
   CAMLparam2(v_jobs, v_threads);
   CAMLlocal1(result);
   int64_t jobs = Long_val(v_jobs);
@@ -241,17 +241,17 @@ static void outer(int64_t lo, int64_t hi, int worker, void *ctx) {
       atomic_fetch_add(&j->unit_errors, 1);
 }
 
-/* [probe_nested threads outer inner] runs a job of [outer] chunks of one unit
-   on [threads] threads, whose every body begins a job of [inner] chunks of
-   one unit on [threads] threads. It is (outer units run, inner jobs not run
-   in one call, inner calls off their outer body's thread or not worker 0,
-   inner units not run once). */
-value probe_nested(value v_threads, value v_outer, value v_inner) {
+/* [nx_pool_test_nested threads outer inner] runs a job of [outer] chunks of
+   one unit on [threads] threads, whose every body begins a job of [inner]
+   chunks of one unit on [threads] threads. It is (outer units run, inner jobs
+   not run in one call, inner calls off their outer body's thread or not
+   worker 0, inner units not run once). */
+value nx_pool_test_nested(value v_threads, value v_outer, value v_inner) {
   CAMLparam3(v_threads, v_outer, v_inner);
   CAMLlocal1(result);
   int64_t inner_units = Long_val(v_inner);
   if (inner_units < 0 || inner_units > MAX_INNER)
-    caml_invalid_argument("probe_nested: inner");
+    caml_invalid_argument("nx_pool_test_nested: inner");
   outer_job j = {Int_val(v_threads), inner_units, 0, 0, 0, 0};
   int64_t outer_units = Long_val(v_outer);
   caml_enter_blocking_section();
@@ -288,10 +288,10 @@ static void balance(int64_t lo, int64_t hi, int worker, void *ctx) {
   j->balanced = rest > 0 && atomic_load(&j->done) == rest;
 }
 
-/* [probe_balance chunks] runs a job of [chunks] chunks of one unit on two
-   threads, whose call that runs unit 0 lasts until the units after it have
-   run, and is whether they ran while it lasted. */
-value probe_balance(value v_chunks) {
+/* [nx_pool_test_balance chunks] runs a job of [chunks] chunks of one unit on
+   two threads, whose call that runs unit 0 lasts until the units after it
+   have run, and is whether they ran while it lasted. */
+value nx_pool_test_balance(value v_chunks) {
   balance_job j = {Long_val(v_chunks), 0, 0};
   caml_enter_blocking_section();
   nx_pool_run(2, j.chunks, j.chunks, balance, &j);
@@ -304,8 +304,8 @@ value probe_balance(value v_chunks) {
 static _Atomic int hold_arrived, hold_released;
 static _Atomic int64_t counted_calls;
 
-/* Every chunk waits for [probe_hold_release]; with [only_worker], the two
-   chunks first meet, then the worker's alone waits. */
+/* Every chunk waits for [nx_pool_test_hold_release]; with [only_worker], the
+   two chunks first meet, then the worker's alone waits. */
 static void hold(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;
   (void)hi;
@@ -322,7 +322,7 @@ static void hold(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
-value probe_reset(value unit) {
+value nx_pool_test_reset(value unit) {
   (void)unit;
   atomic_store(&hold_arrived, 0);
   atomic_store(&hold_released, 0);
@@ -330,9 +330,9 @@ value probe_reset(value unit) {
   return Val_unit;
 }
 
-/* [probe_hold only_worker] runs a job of two chunks on two threads that
+/* [nx_pool_test_hold only_worker] runs a job of two chunks on two threads that
    [hold]s, and is whether it was released before patience ran out. */
-value probe_hold(value v_only_worker) {
+value nx_pool_test_hold(value v_only_worker) {
   int only_worker = Bool_val(v_only_worker);
   caml_enter_blocking_section();
   nx_pool_run(2, 2, 2, hold, &only_worker);
@@ -340,12 +340,12 @@ value probe_hold(value v_only_worker) {
   return Val_bool(atomic_load(&hold_released));
 }
 
-value probe_hold_arrived(value unit) {
+value nx_pool_test_hold_arrived(value unit) {
   (void)unit;
   return Val_int(atomic_load(&hold_arrived));
 }
 
-value probe_hold_release(value unit) {
+value nx_pool_test_hold_release(value unit) {
   (void)unit;
   atomic_store(&hold_released, 1);
   return Val_unit;
@@ -359,7 +359,7 @@ static void counted(int64_t lo, int64_t hi, int worker, void *ctx) {
   atomic_fetch_add(&counted_calls, 1);
 }
 
-value probe_counted(value v_threads, value v_total, value v_chunks) {
+value nx_pool_test_counted(value v_threads, value v_total, value v_chunks) {
   int threads = Int_val(v_threads);
   int64_t total = Int64_val(v_total), chunks = Int64_val(v_chunks);
   caml_enter_blocking_section();
@@ -368,29 +368,29 @@ value probe_counted(value v_threads, value v_total, value v_chunks) {
   return Val_unit;
 }
 
-value probe_counted_calls(value unit) {
+value nx_pool_test_counted_calls(value unit) {
   (void)unit;
   return Val_long(atomic_load(&counted_calls));
 }
 
 /* The host */
 
-value probe_cores(value unit) {
+value nx_pool_test_cores(value unit) {
   (void)unit;
   return Val_int(nx_pool_cores());
 }
 
-value probe_performance_cores(value unit) {
+value nx_pool_test_performance_cores(value unit) {
   (void)unit;
   return Val_int(nx_pool_performance_cores());
 }
 
-value probe_cgroup_cpus(value v_root) {
+value nx_pool_test_cgroup_cpus(value v_root) {
   return Val_long(nx_pool_cgroup_cpus(String_val(v_root)));
 }
 
-/* [probe_sysctl name] is the integer [name] reads, or -1. */
-value probe_sysctl(value v_name) {
+/* [nx_pool_test_sysctl name] is the integer [name] reads, or -1. */
+value nx_pool_test_sysctl(value v_name) {
 #if defined(__APPLE__)
   int n;
   size_t len = sizeof n;
@@ -402,9 +402,9 @@ value probe_sysctl(value v_name) {
   return Val_int(-1);
 }
 
-/* [probe_active_processors ()] is the processors active in every group, or
-   -1 off Windows. */
-value probe_active_processors(value unit) {
+/* [nx_pool_test_active_processors ()] is the processors active in every
+   group, or -1 off Windows. */
+value nx_pool_test_active_processors(value unit) {
   (void)unit;
 #if defined(_WIN32)
   return Val_long((long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
@@ -413,10 +413,10 @@ value probe_active_processors(value unit) {
 #endif
 }
 
-/* [probe_pinned_cores ()] pins the calling thread to one CPU of its affinity,
-   reads nx_pool_cores, restores the affinity, reads it again: (first, second),
-   or (-1, -1) where affinity is not Linux's. */
-value probe_pinned_cores(value unit) {
+/* [nx_pool_test_pinned_cores ()] pins the calling thread to one CPU of its
+   affinity, reads nx_pool_cores, restores the affinity, reads it again:
+   (first, second), or (-1, -1) where affinity is not Linux's. */
+value nx_pool_test_pinned_cores(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(result);
   int first = -1, second = -1;
