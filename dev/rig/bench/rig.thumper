@@ -20,7 +20,7 @@ buffer/host-create-1M	wall_time	batch=1024	n=20	6.207e-06	6.143e-06 6.148e-06 6.
 buffer/memory-create-cached-4K	alloc_words	exact	66
 buffer/memory-create-cached-4K	wall_time	batch=32768	n=20	2.809e-07	2.735e-07 2.785e-07 2.786e-07 2.796e-07 2.803e-07 2.805e-07 2.805e-07 2.806e-07 2.808e-07 2.808e-07 2.809e-07 2.810e-07 2.812e-07 2.817e-07 2.823e-07 2.824e-07 2.825e-07 2.827e-07 2.831e-07 2.854e-07
 buffer/wait-reached-24	alloc_words	exact	0
-buffer/wait-reached-24	wall_time	batch=16384	n=20	3.800e-07	3.782e-07 3.783e-07 3.784e-07 3.784e-07 3.785e-07 3.787e-07 3.788e-07 3.794e-07 3.797e-07 3.797e-07 3.803e-07 3.805e-07 3.806e-07 3.820e-07 3.821e-07 3.833e-07 3.835e-07 3.851e-07 3.857e-07 3.886e-07
+buffer/wait-reached-24	wall_time	batch=16384	n=20	3.944e-07	3.874e-07 3.878e-07 3.880e-07 3.882e-07 3.884e-07 3.902e-07 3.928e-07 3.930e-07 3.930e-07 3.931e-07 3.958e-07 3.973e-07 3.974e-07 3.975e-07 3.976e-07 3.980e-07 3.982e-07 3.982e-07 3.998e-07 4.065e-07
 claim/c-read-release-3	alloc_words	exact	0
 claim/c-read-release-3	wall_time	batch=262144	n=20	3.028e-08	3.027e-08 3.027e-08 3.027e-08 3.027e-08 3.027e-08 3.027e-08 3.027e-08 3.028e-08 3.028e-08 3.028e-08 3.028e-08 3.028e-08 3.028e-08 3.028e-08 3.028e-08 3.029e-08 3.029e-08 3.029e-08 3.030e-08 3.077e-08
 claim/read-release	alloc_words	exact	0
@@ -88,7 +88,7 @@ submit/polled/slots-24	wall_time	batch=32768	n=20	2.076e-07	2.034e-07 2.041e-07 
 submit/polled/two-domains	alloc_words	exact	0
 submit/polled/two-domains	wall_time	batch=8192	n=20	6.115e-07	5.834e-07 5.867e-07 5.892e-07 5.952e-07 5.960e-07 6.045e-07 6.055e-07 6.067e-07 6.098e-07 6.106e-07 6.124e-07 6.128e-07 6.155e-07 6.165e-07 6.173e-07 6.179e-07 6.237e-07 6.262e-07 6.276e-07 6.406e-07
 wait/memory/reached	alloc_words	exact	0
-wait/memory/reached	wall_time	batch=2097152	n=20	3.619e-09	3.611e-09 3.612e-09 3.614e-09 3.615e-09 3.615e-09 3.616e-09 3.618e-09 3.618e-09 3.619e-09 3.619e-09 3.619e-09 3.621e-09 3.621e-09 3.624e-09 3.624e-09 3.624e-09 3.625e-09 3.630e-09 3.636e-09 3.656e-09
+wait/memory/reached	wall_time	batch=2097152	n=20	3.840e-09	3.816e-09 3.819e-09 3.824e-09 3.828e-09 3.830e-09 3.830e-09 3.834e-09 3.834e-09 3.835e-09 3.838e-09 3.841e-09 3.849e-09 3.850e-09 3.851e-09 3.857e-09 3.869e-09 3.873e-09 3.878e-09 3.879e-09 3.880e-09
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
