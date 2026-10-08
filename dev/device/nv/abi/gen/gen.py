@@ -20,6 +20,10 @@ in --cache, and --pin records the digests of headers not yet pinned.
 Generating reads the excerpts alone, offline. --check generates
 into memory and fails if a committed file differs.
 
+Text is read and written as latin-1, one character per byte, so every byte
+of a header round-trips into its excerpt as upstream wrote it. The headers are
+ASCII C.
+
 Every value is NVIDIA's. Where two classes the library supports both define a
 name (the copy classes 0xc7b5 and 0xc9b5, the launch descriptors of 0xc7c0 and
 0xc9c0), the script fails unless they agree. Every table is a literal, which
@@ -328,7 +332,7 @@ def fetch(url, cache, pins, pin):
         pins[url] = digest
     if pins[url] != digest:
         sys.exit(f"{url}: SHA-256 {digest}, pinned {pins[url]}")
-    return data.decode()
+    return data.decode("latin-1")
 
 
 # Generation
@@ -350,7 +354,7 @@ def ml_option(f):
 
 
 def generate():
-    texts = {h: (HEADERS / h).read_text() for h in SOURCES}
+    texts = {h: (HEADERS / h).read_text(encoding="latin-1") for h in SOURCES}
     defs = {h: defines(t) for h, t in texts.items()}
     out = []
 
@@ -505,14 +509,14 @@ def main():
             files[PINS] = json.dumps(dict(sorted(pins.items())), indent=1) + "\n"
     else:
         files = {OUT: generate()}
-    stale = [f for f, text in files.items() if not f.exists() or f.read_text() != text]
+    stale = [f for f, text in files.items() if not f.exists() or f.read_text(encoding="latin-1") != text]
     if a.check:
         if stale:
             sys.exit("stale: " + ", ".join(str(f.relative_to(HERE.parent)) for f in stale))
         return
     for f in stale:
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(files[f])
+        f.write_text(files[f], encoding="latin-1")
 
 
 if __name__ == "__main__":
