@@ -94,7 +94,9 @@ static unsigned char *put_side(unsigned char *b, int local, uint64_t id,
 }
 
 /* The hand-over: the frame wire.mli lays out, then the bytes of its copies
-   from this process's memory, read once the work they follow is done. */
+   from this process's memory, once the work they follow is done. The
+   sending thread reads them in place: the proxy's word stays below [v],
+   and rig keeps the memory, until they are sent. */
 static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
                         int nwaits, const struct rig_part *parts, int nparts,
                         const uint64_t *handles, int nhandles,
@@ -105,7 +107,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   (void)nhandles;
   size_t n = 8 + 8 + 4 + 16 * (size_t)nwaits + 4;
   uint64_t bytes = 0;
-  int reads_local = 0, nlocals = 0;
+  int nreads = 0, nlocals = 0;
   for (int i = 0; i < nparts; i++) {
     const struct rig_part *p = &parts[i];
     if (is_words(p)) {
@@ -116,36 +118,33 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
     n += 1 + 8 + (p->copy_local == RIG_LOCAL_SRC ? 1 : 17) +
          (p->copy_local == RIG_LOCAL_DST ? 1 : 17);
     bytes += p->copy_bytes;
-    if (p->copy_local == RIG_LOCAL_SRC) {
-      n += p->copy_bytes;
-      reads_local = 1;
-    }
+    if (p->copy_local == RIG_LOCAL_SRC) nreads++;
     if (p->copy_local == RIG_LOCAL_DST) nlocals++;
   }
   struct rig_remote_local **locals =
       nlocals > 0 ? calloc((size_t)nlocals, sizeof *locals) : NULL;
   struct rig_remote_flight *f = malloc(sizeof *f);
-  unsigned char *buf = malloc(n);
-  int ok = f != NULL && buf != NULL && (nlocals == 0 || locals != NULL);
+  struct rig_remote_frame *frame = rig_remote_frame(K_HANDOVER, n, nreads);
+  int ok = f != NULL && frame != NULL && (nlocals == 0 || locals != NULL);
   for (int i = 0; ok && i < nlocals; i++)
     ok = (locals[i] = malloc(sizeof **locals)) != NULL;
   if (!ok) {
     for (int i = 0; locals != NULL && i < nlocals; i++) free(locals[i]);
     free(locals);
     free(f);
-    free(buf);
+    free(frame);
     *failure = "out of memory for a hand-over";
     return RIG_FAILED;
   }
 
-  if (reads_local) {
+  if (nreads > 0) {
     pthread_mutex_lock(&l->mu);
     while (!atomic_load(&l->failed) && !followed(d, waits, nwaits))
       pthread_cond_wait(&l->cv, &l->mu);
     pthread_mutex_unlock(&l->mu);
   }
 
-  unsigned char *b = put_u64(put_u64(buf, d->id), v);
+  unsigned char *b = put_u64(put_u64(frame->buf + HEADER, d->id), v);
   b = put_u32(b, (uint32_t)nwaits);
   for (int i = 0; i < nwaits; i++)
     b = put_u64(put_u64(b, waits[i].at), waits[i].value);
@@ -167,12 +166,13 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
     b = put_side(b, p->copy_local == RIG_LOCAL_DST, p->copy_dst,
                  p->copy_dst_offset);
   }
+  int j = 0;
   for (int i = 0; i < nparts; i++) {
     const struct rig_part *p = &parts[i];
     if (is_words(p) || p->copy_local != RIG_LOCAL_SRC) continue;
-    memcpy(b, (const unsigned char *)(uintptr_t)p->copy_src + p->copy_src_offset,
-           p->copy_bytes);
-    b += p->copy_bytes;
+    frame->spans[j].p =
+        (const unsigned char *)(uintptr_t)p->copy_src + p->copy_src_offset;
+    frame->spans[j++].n = p->copy_bytes;
   }
 
   /* The receiving thread finds the copies into this process's memory and the
@@ -204,15 +204,16 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   d->flying += bytes;
   d->handed = v;
   if (nlocals > 0) d->written = v;
+  if (nreads > 0) {
+    frame->reader = d;
+    d->reading++;
+  }
   pthread_mutex_unlock(&l->mu);
   free(locals);
 
-  int r = rig_remote_queue(l, K_HANDOVER, buf, n, NULL);
-  free(buf);
+  int r = rig_remote_queue(l, frame, NULL);
   if (r == 0) return RIG_OK;
-  *failure = r == -2   ? "out of memory for a hand-over"
-             : r == -3 ? "the job is closed"
-                       : why(l);
+  *failure = r == -3 ? "the job is closed" : why(l);
   return RIG_FAILED;
 }
 

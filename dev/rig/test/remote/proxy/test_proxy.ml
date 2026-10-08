@@ -697,6 +697,83 @@ let closing_handover () =
       | exception Rig.Lost (_, why) ->
           contains ~msg:"the reason" ~sub:"clos" why)
 
+(* [n] bytes of [p], fewer once its stream ended. *)
+let read_n p n =
+  let b = Bytes.create n in
+  let rec go k =
+    if k = n then k
+    else
+      match Unix.read p b k (n - k) with
+      | 0 -> k
+      | r -> go (k + r)
+      | exception Unix.Unix_error _ -> k
+  in
+  Bytes.sub_string b 0 (go 0)
+
+(* Answers the request [p] reads next, an allocation, that it succeeded. *)
+let grant_alloc p =
+  let h = read_n p 9 in
+  if String.length h < 9 then fail "the link ended before its request";
+  ignore (read_n p (Int64.to_int (String.get_int64_le h 0)));
+  let answer = "\000\001" in
+  let frame = Bytes.create (9 + String.length answer) in
+  Bytes.set_int64_le frame 0 (Int64.of_int (String.length answer));
+  Bytes.set frame 8 '\002';
+  Bytes.blit_string answer 0 frame 9 (String.length answer);
+  ignore (Unix.write p frame 0 (Bytes.length frame))
+
+(* A copy from this process's memory whose hand-over is still being sent when
+   the job fails, to a peer that reads nothing: the hand-over's bytes are this
+   process's memory, so the stopped device's word stays below the copy's value
+   until the frame ends, here when the peer closes its end. *)
+let reading_in_flight () =
+  let n = 64 lsl 20 in
+  let job = Link.job () in
+  let d, p = connected () in
+  let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
+  let machine = fresh_machine () in
+  let host =
+    ok_or_fail
+      (Rig.open_host
+         (module Proxy)
+         ~machine ~name:"CPU"
+         (fun () ->
+           Ok
+             (Proxy.make far (account 0 ~reaches:[])
+                (Rig_remote_abi.Host { machine; rail = no_rails }))))
+  in
+  let p_open = ref true in
+  let close_p () =
+    if !p_open then begin
+      p_open := false;
+      Unix.close p
+    end
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Link.fail job "the test ended";
+      close_p ();
+      Rig.close host)
+    (fun () ->
+      let _, region = spawn (fun () -> B.create host n) in
+      grant_alloc p;
+      let dst = region () in
+      let src = B.create Rig.host n in
+      let v = Rig.Point.value (submit (copy_submission host ~src ~dst)) in
+      (match Unix.select [ p ] [] [] patience with
+      | [], _, _ -> fail "the hand-over did not start"
+      | _ -> ());
+      Link.fail job "the peer reads nothing";
+      raises_match
+        (function Rig.Lost _ -> true | _ -> false)
+        (fun () -> Rig.wait host v);
+      Thread.delay 0.2;
+      less ~msg:"the word while the bytes are being sent (sampled)" int ~than:v
+        (Rig.signaled host);
+      close_p ();
+      until ~what:"the word at the copy's value once the frame ended" (fun () ->
+          Rig.signaled host = v))
+
 (* A second proxy of one account would take the first's place in the link's
    table, and the first's reports would never reach it. *)
 let second_proxy () =
@@ -724,6 +801,10 @@ let failures =
       test "closing the host waits for its submitted work" close_waits;
       test "a hand-over on a closing job fails naming the close"
         closing_handover;
+      test
+        "a device stopped while a hand-over sends this process's memory waits \
+         for the frame (sampled)"
+        reading_in_flight;
       test "make refuses a second proxy of an account on the link" second_proxy;
     ]
 

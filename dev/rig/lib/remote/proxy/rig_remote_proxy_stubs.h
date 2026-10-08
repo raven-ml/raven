@@ -128,7 +128,7 @@ struct rig_remote_why {
   const char *s;
 };
 
-struct entry;
+struct rig_remote_frame;
 struct pending;
 struct cmd;
 struct rail;
@@ -151,8 +151,8 @@ struct rig_remote_link {
   int peer; /* 0 for the controller, i for agent i */
   pthread_mutex_t mu;
   pthread_cond_t cv; /* any change: queue, answers, commands, words */
-  struct entry *head, *tail;
-  size_t queued;
+  struct rig_remote_frame *head, *tail;
+  size_t queued; /* bytes the frames of the queue own */
   int sending; /* a frame is being sent, by the thread or an abort */
   int closing, sent_close, got_close, threads, fd_closed;
   int receiving; /* the receiving thread runs: copies' bytes may land */
@@ -190,7 +190,9 @@ struct rig_remote_dev {
   uint64_t written;      /* the last value that copies into local memory */
   uint64_t flying;       /* bytes of [flights] */
   int stopped; /* its stop ran: the word takes [handed] once no copy's
-                  bytes may land */
+                  bytes may land or be read */
+  int reading; /* its frames queued or being sent that read this
+                  process's memory */
   struct rig_remote_local *locals, *locals_last;
   struct rig_remote_flight *flights, *flights_last;
 };
@@ -199,16 +201,41 @@ struct rig_remote_dev {
    its own copy, taking no lock. */
 int rig_remote_forked(struct rig_remote_job *j);
 
-/* Queues a frame of [kind] whose payload is the [n] bytes at [p], waiting
-   while the queue is full: [0]; [-1] if the job failed, or [-3] if the link
-   closes, the frame then dropped; [-2] if memory ran out. Called without the runtime, and
-   without the link's lock. */
-int rig_remote_queue(struct rig_remote_link *l, int kind,
-                     const unsigned char *p, size_t n, struct pending *q);
+/* Bytes of this process's memory a frame sends without copying them. */
+struct rig_remote_span {
+  const unsigned char *p;
+  size_t n;
+};
 
-/* Writes [handed] into a stopped proxy's word once no copy into this
-   process's memory may still land: none is pending, or the receiving thread
-   ended. Holds the link's lock. */
+/* A frame for the sending thread: [buf]'s [n] bytes, the header and the
+   payload's own bytes, then its [spans], which it borrows until it is sent
+   or dropped. Once it is, [reader]'s [reading], if set, drops by one. */
+struct rig_remote_frame {
+  struct rig_remote_frame *next;
+  int kind;
+  unsigned char *buf;
+  size_t n;
+  struct rig_remote_dev *reader;
+  int nspans;
+  struct rig_remote_span spans[];
+};
+
+/* A frame of [kind] with [np] bytes of its own at [buf + HEADER], for the
+   caller to write, and [nspans] spans to set, in one allocation; NULL if
+   memory ran out. */
+struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans);
+
+/* Queues [f], which it takes, after writing its header, waiting while the
+   queue is full: [0]; [-1] if the job failed, or [-3] if the link closes,
+   [f] then dropped. Called without the runtime, and without the link's
+   lock. */
+int rig_remote_queue(struct rig_remote_link *l, struct rig_remote_frame *f,
+                     struct pending *q);
+
+/* Writes [handed] into a stopped proxy's word once no copy may still touch
+   this process's memory: none into it is pending, or the receiving thread
+   ended, and no hand-over reading it is queued or being sent. Holds the
+   link's lock. */
 void rig_remote_settle(struct rig_remote_dev *d);
 
 /* Adds [d] to its link's proxies: [0]; [-1] if the link has a proxy of

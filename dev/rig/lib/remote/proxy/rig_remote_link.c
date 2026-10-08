@@ -64,6 +64,7 @@ typedef WSAPOLLFD rig_remote_pollfd;
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <sys/uio.h>
 #include <unistd.h>
 typedef struct pollfd rig_remote_pollfd;
 #define close_sock close
@@ -102,12 +103,6 @@ enum {
 };
 
 /* Structures */
-
-struct entry {
-  struct entry *next;
-  unsigned char *buf; /* header and payload */
-  size_t n;
-};
 
 struct pending {
   struct pending *next;
@@ -323,12 +318,22 @@ static struct rig_remote_why *link_reason(struct rig_remote_link *l,
 
 /* Failure */
 
-static void free_entries(struct rig_remote_link *l) {
+/* Ends [f], sent or dropped: its spans are no longer read. Holds [l]'s
+   lock. */
+static void frame_done(struct rig_remote_link *l, struct rig_remote_frame *f) {
+  if (f->reader != NULL) {
+    f->reader->reading--;
+    rig_remote_settle(f->reader);
+  }
+  pthread_cond_broadcast(&l->cv);
+  free(f);
+}
+
+static void drop_frames(struct rig_remote_link *l) {
   while (l->head != NULL) {
-    struct entry *e = l->head;
-    l->head = e->next;
-    free(e->buf);
-    free(e);
+    struct rig_remote_frame *f = l->head;
+    l->head = f->next;
+    frame_done(l, f);
   }
   l->tail = NULL;
   l->queued = 0;
@@ -385,7 +390,7 @@ static void fail_job(struct rig_remote_job *j, struct rig_remote_why *why) {
   for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
     pthread_mutex_lock(&l->mu);
     atomic_store(&l->failed, 1);
-    free_entries(l);
+    drop_frames(l);
     for (struct rail *r = l->rails; r != NULL; r = r->next)
       for (int c = 0; c < 3; c++) atomic_store(count(r, c), INT64_MAX);
     l->abort_owed = !l->sent_close;
@@ -482,24 +487,51 @@ static int send_rails(struct rig_remote_link *l) {
   return sent;
 }
 
+/* Sends [f]: its own bytes, then its spans. The first span goes in the
+   same call as the frame's own bytes, so that a small frame leaves in one
+   segment. */
+static int send_frame(struct rig_remote_link *l, struct rig_remote_frame *f) {
+  size_t own = 0, first = 0; /* bytes of [buf] and of the first span sent */
+#ifndef _WIN32
+  if (f->nspans > 0) {
+    struct iovec v[2] = {{f->buf, f->n},
+                         {(void *)f->spans[0].p, f->spans[0].n}};
+    struct msghdr m = {0};
+    m.msg_iov = v;
+    m.msg_iovlen = 2;
+    ssize_t k = sendmsg(l->fd, &m, RIG_REMOTE_NOSIGNAL);
+    if (k < 0 && !again(errno)) return errno;
+    if (k > 0) {
+      own = (size_t)k < f->n ? (size_t)k : f->n;
+      first = (size_t)k - own;
+    }
+  }
+#endif
+  int err = send_all(l, f->buf + own, f->n - own);
+  for (int i = 0; err == 0 && i < f->nspans; i++) {
+    size_t skip = i == 0 ? first : 0;
+    err = send_all(l, f->spans[i].p + skip, f->spans[i].n - skip);
+  }
+  return err;
+}
+
 static void *sender(void *arg) {
   struct rig_remote_link *l = arg;
   pthread_mutex_lock(&l->mu);
   for (;;) {
     if (atomic_load(&l->failed)) break;
     if (l->head != NULL) {
-      struct entry *e = l->head;
-      l->head = e->next;
+      struct rig_remote_frame *f = l->head;
+      l->head = f->next;
       if (l->head == NULL) l->tail = NULL;
-      l->queued -= e->n;
+      l->queued -= f->n;
       l->sending = 1;
       pthread_cond_broadcast(&l->cv);
       pthread_mutex_unlock(&l->mu);
-      int err = send_all(l, e->buf, e->n);
-      int closed = e->buf[8] == K_CLOSE;
-      free(e->buf);
-      free(e);
+      int err = send_frame(l, f);
+      int closed = f->kind == K_CLOSE;
       pthread_mutex_lock(&l->mu);
+      frame_done(l, f);
       l->sending = 0;
       l->sent_ns = now_ns();
       if (err != 0) {
@@ -542,7 +574,7 @@ static void *sender(void *arg) {
     wait_ns(&l->cv, &l->mu, l->sent_ns + BEAT_NS - now);
   }
   if (atomic_load(&l->failed)) {
-    free_entries(l);
+    drop_frames(l);
     abort_link(l);
   }
   pthread_mutex_unlock(&l->mu);
@@ -770,7 +802,8 @@ static int recv_bytes(struct rig_remote_link *l, uint64_t n, int64_t *last) {
 
 void rig_remote_settle(struct rig_remote_dev *d) {
   struct rig_remote_link *l = d->link;
-  if (!d->stopped || (d->locals != NULL && l->receiving)) return;
+  if (!d->stopped || (d->locals != NULL && l->receiving) || d->reading > 0)
+    return;
   if (atomic_load(&d->word) < d->handed)
     atomic_store_explicit(&d->word, d->handed, memory_order_release);
   pthread_cond_broadcast(&l->cv);
@@ -871,40 +904,38 @@ static void *receiver(void *arg) {
 
 /* Queueing */
 
+struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans) {
+  size_t spans = (size_t)nspans * sizeof(struct rig_remote_span);
+  if (np > SIZE_MAX - HEADER - spans - sizeof(struct rig_remote_frame))
+    return NULL;
+  struct rig_remote_frame *f = malloc(sizeof *f + spans + HEADER + np);
+  if (f == NULL) return NULL;
+  f->next = NULL;
+  f->kind = kind;
+  f->buf = (unsigned char *)f->spans + spans;
+  f->n = HEADER + np;
+  f->reader = NULL;
+  f->nspans = nspans;
+  return f;
+}
+
 /* Appends [q], if not NULL, to the pending requests with the frame, and a
    close makes the frame the link's last. */
-int rig_remote_queue(struct rig_remote_link *l, int kind,
-                     const unsigned char *p, size_t np, struct pending *q) {
-  struct entry *e = malloc(sizeof *e);
-  size_t n = HEADER + np;
-  unsigned char *buf = e != NULL ? malloc(n) : NULL;
-  if (buf == NULL) {
-    free(e);
-    return -2;
-  }
-  put_header(buf, np, kind);
-  if (np > 0) memcpy(buf + HEADER, p, np);
-  e->next = NULL;
-  e->buf = buf;
-  e->n = n;
+int rig_remote_queue(struct rig_remote_link *l, struct rig_remote_frame *f,
+                     struct pending *q) {
+  uint64_t np = f->n - HEADER;
+  for (int i = 0; i < f->nspans; i++) np += f->spans[i].n;
+  put_header(f->buf, np, f->kind);
   pthread_mutex_lock(&l->mu);
   while (!atomic_load(&l->failed) && !l->closing && l->head != NULL &&
-         l->queued + n > QUEUE_BYTES)
+         l->queued + f->n > QUEUE_BYTES)
     pthread_cond_wait(&l->cv, &l->mu);
   if (atomic_load(&l->failed) || l->closing) {
     int r = atomic_load(&l->failed) ? -1 : -3;
+    frame_done(l, f);
     pthread_mutex_unlock(&l->mu);
-    free(buf);
-    free(e);
     return r;
   }
-  if (l->tail != NULL)
-    l->tail->next = e;
-  else
-    l->head = e;
-  l->tail = e;
-  l->queued += n;
-  if (kind == K_CLOSE) l->closing = 1;
   if (q != NULL) {
     if (l->pending_last != NULL)
       l->pending_last->next = q;
@@ -912,6 +943,13 @@ int rig_remote_queue(struct rig_remote_link *l, int kind,
       l->pending = q;
     l->pending_last = q;
   }
+  if (l->tail != NULL)
+    l->tail->next = f;
+  else
+    l->head = f;
+  l->tail = f;
+  l->queued += f->n;
+  if (f->kind == K_CLOSE) l->closing = 1;
   pthread_cond_broadcast(&l->cv);
   pthread_mutex_unlock(&l->mu);
   return 0;
@@ -989,7 +1027,8 @@ value caml_rig_remote_link_job_close(value vj) {
   if (atomic_load(&j->state) == OPEN) {
     for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
       pthread_mutex_unlock(&j->mu);
-      rig_remote_queue(l, K_CLOSE, NULL, 0, NULL);
+      struct rig_remote_frame *f = rig_remote_frame(K_CLOSE, 0, 0);
+      if (f != NULL) rig_remote_queue(l, f, NULL);
       pthread_mutex_lock(&j->mu);
     }
     for (;;) {
@@ -1091,14 +1130,12 @@ value caml_rig_remote_link_post(value vl, value vkind, value head) {
   struct rig_remote_link *l = Link_val(vl);
   if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
   size_t n = caml_string_length(head);
-  unsigned char *b = malloc(n + 1);
-  if (b == NULL) caml_raise_out_of_memory();
-  memcpy(b, String_val(head), n);
+  struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), n, 0);
+  if (f == NULL) caml_raise_out_of_memory();
+  memcpy(f->buf + HEADER, String_val(head), n);
   caml_release_runtime_system();
-  int r = rig_remote_queue(l, Int_val(vkind), b, n, NULL);
+  rig_remote_queue(l, f, NULL);
   caml_acquire_runtime_system();
-  free(b);
-  if (r == -2) caml_raise_out_of_memory();
   CAMLreturn(Val_unit);
 }
 
@@ -1111,15 +1148,13 @@ value caml_rig_remote_link_post_area(value vl, value vkind, value head,
   if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
   size_t nh = caml_string_length(head);
   size_t nb = caml_ba_byte_size(Caml_ba_array_val(area));
-  unsigned char *b = malloc(nh + nb + 1);
-  if (b == NULL) caml_raise_out_of_memory();
-  memcpy(b, String_val(head), nh);
-  memcpy(b + nh, Caml_ba_data_val(area), nb);
+  struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), nh + nb, 0);
+  if (f == NULL) caml_raise_out_of_memory();
+  memcpy(f->buf + HEADER, String_val(head), nh);
+  memcpy(f->buf + HEADER + nh, Caml_ba_data_val(area), nb);
   caml_release_runtime_system();
-  int r = rig_remote_queue(l, Int_val(vkind), b, nh + nb, NULL);
+  rig_remote_queue(l, f, NULL);
   caml_acquire_runtime_system();
-  free(b);
-  if (r == -2) caml_raise_out_of_memory();
   CAMLreturn(Val_unit);
 }
 
@@ -1147,17 +1182,16 @@ value caml_rig_remote_link_request(value vl, value head) {
   struct pending *q = NULL;
   if (!rig_remote_forked(l->job)) {
     size_t n = caml_string_length(head);
-    unsigned char *b = malloc(n + 1);
+    struct rig_remote_frame *f = rig_remote_frame(K_REQUEST, n, 0);
     q = calloc(1, sizeof *q);
-    if (b == NULL || q == NULL) {
-      free(b);
+    if (f == NULL || q == NULL) {
+      free(f);
       free(q);
       caml_raise_out_of_memory();
     }
-    memcpy(b, String_val(head), n);
+    memcpy(f->buf + HEADER, String_val(head), n);
     caml_release_runtime_system();
-    int k = rig_remote_queue(l, K_REQUEST, b, n, q);
-    free(b);
+    int k = rig_remote_queue(l, f, q);
     if (k == 0) {
       pthread_mutex_lock(&l->mu);
       while (!q->done && !atomic_load(&l->failed))
@@ -1169,7 +1203,6 @@ value caml_rig_remote_link_request(value vl, value head) {
     /* A request the queue took stays pending until answered: once the job
        failed unanswered, the receiving thread may still hold it. */
     if (k != 0) free(q);
-    if (k == -2) caml_raise_out_of_memory();
     closing = k == -3;
   }
   if (closing)
