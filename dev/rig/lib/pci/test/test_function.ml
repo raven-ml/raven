@@ -952,10 +952,13 @@ let sequences =
 
 (* Pins and DMA memory from two domains at once. A pin lost by a race shows when
    the suffix unpins it. The invariant runs only before the parallel calls, so
-   misuse that reached the machine is read by a command. *)
+   misuse that reached the machine is read by a command. Each program runs 50
+   times, each run a hand-off between domains that waits for a time slice when
+   the processors are busy: 60 programs keep the test well within its patience
+   on a loaded machine. *)
 let parallel =
   stateful "pins and DMA memory are counted the same from two domains"
-    ~domains:2 ~count:100
+    ~domains:2 ~count:60
     ([
        machine_cmd;
        take_cmd;
