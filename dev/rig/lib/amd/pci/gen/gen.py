@@ -776,21 +776,27 @@ def generate(h):
     for n, v in enum_values(h["amdgpu_doorbell.h"], DOORBELLS).items():
         out.append(f"let {n.lower()} = {ml_int(v)}")
     out.append("")
+    out += ["(* The fields of a memory queue descriptor, as (byte offset, bytes); the",
+            "   thread management words of its shader engines, in order. *)",
+            "type mqd = {"]
+    out += [f"  {f} : int * int;" for f in MQD_FIELDS]
+    out += [f"  {f} : (int * int) option;" for f in MQD_OPTIONAL]
+    out += ["  compute_static_thread_mgmt : (int * int) list;", "  sizeof : int;", "}", ""]
     for hdr, (st, major) in MQDS.items():
         size, fields = packed_layout(h[hdr], st)
-        out.append(f"(* The memory queue descriptor of GFX{major}, {st} *)")
-        out.append(f"module Mqd_v{major} = struct")
-        out.append(f"  let sizeof = {size}")
+        out.append(f"(* GFX{major}'s, {st} *)")
+        out.append(f"let mqd_v{major} = {{")
         for f in MQD_FIELDS:
             if f not in fields:
                 sys.exit(f"{st} has no field {f}")
-            out.append(f"  let {f} = {ml_field(fields[f])}")
+            out.append(f"  {f} = {ml_field(fields[f])};")
         for f in MQD_OPTIONAL:
-            out.append(f"  let {f} = " + (f"Some {ml_field(fields[f])}" if f in fields else "None"))
+            out.append(f"  {f} = " + (f"Some {ml_field(fields[f])};" if f in fields else "None;"))
         mgmt = sorted((f for f in fields if f.startswith("compute_static_thread_mgmt_se")),
                       key=lambda f: int(f[len("compute_static_thread_mgmt_se"):]))
-        out.append("  let compute_static_thread_mgmt = [ " + "; ".join(ml_field(fields[f]) for f in mgmt) + " ]")
-        out += ["end", ""]
+        out.append("  compute_static_thread_mgmt = [ " + "; ".join(ml_field(fields[f]) for f in mgmt) + " ];")
+        out.append(f"  sizeof = {size};")
+        out += ["}", ""]
 
     # Security processor
     g, ps = h["psp_gfx_if.h"], h["amdgpu_psp.h"]

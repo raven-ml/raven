@@ -27,142 +27,10 @@ type queue = {
   doorbell : int;
 }
 
-(* The fields of an MQD, as the kernel's struct of the GC's generation lays them
-   out. *)
-type layout = {
-  header : int * int;
-  base_lo : int * int;
-  base_hi : int * int;
-  pipe_priority : int * int;
-  queue_priority : int * int;
-  quantum : int * int;
-  persistent_state : int * int;
-  pq_base_lo : int * int;
-  pq_base_hi : int * int;
-  rptr_lo : int * int;
-  rptr_hi : int * int;
-  wptr_lo : int * int;
-  wptr_hi : int * int;
-  doorbell_control : int * int;
-  pq_control : int * int;
-  ib_control : int * int;
-  hq_status0 : int * int;
-  mqd_control : int * int;
-  vmid : int * int;
-  aql_control : int * int;
-  eop_lo : int * int;
-  eop_hi : int * int;
-  eop_control : int * int;
-  tg_chunk : (int * int) option;
-  logic_xcc : (int * int) option;
-  stride : (int * int) option;
-  thread_mgmt : (int * int) list;
-  bytes : int;
-}
-
-let v9 =
-  let open D.Mqd_v9 in
-  {
-    header;
-    base_lo = cp_mqd_base_addr_lo;
-    base_hi = cp_mqd_base_addr_hi;
-    pipe_priority = cp_hqd_pipe_priority;
-    queue_priority = cp_hqd_queue_priority;
-    quantum = cp_hqd_quantum;
-    persistent_state = cp_hqd_persistent_state;
-    pq_base_lo = cp_hqd_pq_base_lo;
-    pq_base_hi = cp_hqd_pq_base_hi;
-    rptr_lo = cp_hqd_pq_rptr_report_addr_lo;
-    rptr_hi = cp_hqd_pq_rptr_report_addr_hi;
-    wptr_lo = cp_hqd_pq_wptr_poll_addr_lo;
-    wptr_hi = cp_hqd_pq_wptr_poll_addr_hi;
-    doorbell_control = cp_hqd_pq_doorbell_control;
-    pq_control = cp_hqd_pq_control;
-    ib_control = cp_hqd_ib_control;
-    hq_status0 = cp_hqd_hq_status0;
-    mqd_control = cp_mqd_control;
-    vmid = cp_hqd_vmid;
-    aql_control = cp_hqd_aql_control;
-    eop_lo = cp_hqd_eop_base_addr_lo;
-    eop_hi = cp_hqd_eop_base_addr_hi;
-    eop_control = cp_hqd_eop_control;
-    tg_chunk = compute_tg_chunk_size;
-    logic_xcc = compute_current_logic_xcc_id;
-    stride = cp_mqd_stride_size;
-    thread_mgmt = compute_static_thread_mgmt;
-    bytes = sizeof;
-  }
-
-let v11 =
-  let open D.Mqd_v11 in
-  {
-    header;
-    base_lo = cp_mqd_base_addr_lo;
-    base_hi = cp_mqd_base_addr_hi;
-    pipe_priority = cp_hqd_pipe_priority;
-    queue_priority = cp_hqd_queue_priority;
-    quantum = cp_hqd_quantum;
-    persistent_state = cp_hqd_persistent_state;
-    pq_base_lo = cp_hqd_pq_base_lo;
-    pq_base_hi = cp_hqd_pq_base_hi;
-    rptr_lo = cp_hqd_pq_rptr_report_addr_lo;
-    rptr_hi = cp_hqd_pq_rptr_report_addr_hi;
-    wptr_lo = cp_hqd_pq_wptr_poll_addr_lo;
-    wptr_hi = cp_hqd_pq_wptr_poll_addr_hi;
-    doorbell_control = cp_hqd_pq_doorbell_control;
-    pq_control = cp_hqd_pq_control;
-    ib_control = cp_hqd_ib_control;
-    hq_status0 = cp_hqd_hq_status0;
-    mqd_control = cp_mqd_control;
-    vmid = cp_hqd_vmid;
-    aql_control = cp_hqd_aql_control;
-    eop_lo = cp_hqd_eop_base_addr_lo;
-    eop_hi = cp_hqd_eop_base_addr_hi;
-    eop_control = cp_hqd_eop_control;
-    tg_chunk = compute_tg_chunk_size;
-    logic_xcc = compute_current_logic_xcc_id;
-    stride = cp_mqd_stride_size;
-    thread_mgmt = compute_static_thread_mgmt;
-    bytes = sizeof;
-  }
-
-let v12 =
-  let open D.Mqd_v12 in
-  {
-    header;
-    base_lo = cp_mqd_base_addr_lo;
-    base_hi = cp_mqd_base_addr_hi;
-    pipe_priority = cp_hqd_pipe_priority;
-    queue_priority = cp_hqd_queue_priority;
-    quantum = cp_hqd_quantum;
-    persistent_state = cp_hqd_persistent_state;
-    pq_base_lo = cp_hqd_pq_base_lo;
-    pq_base_hi = cp_hqd_pq_base_hi;
-    rptr_lo = cp_hqd_pq_rptr_report_addr_lo;
-    rptr_hi = cp_hqd_pq_rptr_report_addr_hi;
-    wptr_lo = cp_hqd_pq_wptr_poll_addr_lo;
-    wptr_hi = cp_hqd_pq_wptr_poll_addr_hi;
-    doorbell_control = cp_hqd_pq_doorbell_control;
-    pq_control = cp_hqd_pq_control;
-    ib_control = cp_hqd_ib_control;
-    hq_status0 = cp_hqd_hq_status0;
-    mqd_control = cp_mqd_control;
-    vmid = cp_hqd_vmid;
-    aql_control = cp_hqd_aql_control;
-    eop_lo = cp_hqd_eop_base_addr_lo;
-    eop_hi = cp_hqd_eop_base_addr_hi;
-    eop_control = cp_hqd_eop_control;
-    tg_chunk = compute_tg_chunk_size;
-    logic_xcc = compute_current_logic_xcc_id;
-    stride = cp_mqd_stride_size;
-    thread_mgmt = compute_static_thread_mgmt;
-    bytes = sizeof;
-  }
-
 let layout_of_gc = function
-  | 9, _, _ -> v9
-  | 11, _, _ -> v11
-  | 12, _, _ -> v12
+  | 9, _, _ -> D.mqd_v9
+  | 11, _, _ -> D.mqd_v11
+  | 12, _, _ -> D.mqd_v12
   | a, b, c ->
       invalid_argf "Rig_amd_pci.open_: GC %d.%d.%d has no queue descriptor" a b
         c
@@ -181,29 +49,29 @@ let die_stride = 0x1000
 
 let mqd l q ~base ~kiq ~aql ~xcc ~xccs =
   let gc = (Regs.gpu l).gc in
-  let f = layout_of_gc gc in
-  let b = Bytes.make f.bytes '\000' in
+  let (f : D.mqd) = layout_of_gc gc in
+  let b = Bytes.make f.sizeof '\000' in
   let set (off, _) v = Bytes.set_int32_le b off (Int32.of_int (lo32 v)) in
   let enc name kvs = Register.encode (Regs.register l name) kvs in
   set f.header mqd_header;
-  set f.base_lo (lo32 base);
-  set f.base_hi (hi32 base);
-  set f.pipe_priority pipe_priority;
-  set f.queue_priority queue_priority;
-  set f.quantum quantum;
-  set f.persistent_state
+  set f.cp_mqd_base_addr_lo (lo32 base);
+  set f.cp_mqd_base_addr_hi (hi32 base);
+  set f.cp_hqd_pipe_priority pipe_priority;
+  set f.cp_hqd_queue_priority queue_priority;
+  set f.cp_hqd_quantum quantum;
+  set f.cp_hqd_persistent_state
     (enc "regCP_HQD_PERSISTENT_STATE"
        [ ("preload_size", 0x55); ("preload_req", 1) ]);
-  set f.pq_base_lo (lo32 (q.ring lsr 8));
-  set f.pq_base_hi (hi32 (q.ring lsr 8));
-  set f.rptr_lo (lo32 q.read);
-  set f.rptr_hi (hi32 q.read);
-  set f.wptr_lo (lo32 q.write);
-  set f.wptr_hi (hi32 q.write);
-  set f.doorbell_control
+  set f.cp_hqd_pq_base_lo (lo32 (q.ring lsr 8));
+  set f.cp_hqd_pq_base_hi (hi32 (q.ring lsr 8));
+  set f.cp_hqd_pq_rptr_report_addr_lo (lo32 q.read);
+  set f.cp_hqd_pq_rptr_report_addr_hi (hi32 q.read);
+  set f.cp_hqd_pq_wptr_poll_addr_lo (lo32 q.write);
+  set f.cp_hqd_pq_wptr_poll_addr_hi (hi32 q.write);
+  set f.cp_hqd_pq_doorbell_control
     (enc "regCP_HQD_PQ_DOORBELL_CONTROL"
        [ ("doorbell_offset", q.doorbell * 2); ("doorbell_en", 1) ]);
-  set f.pq_control
+  set f.cp_hqd_pq_control
     (enc "regCP_HQD_PQ_CONTROL"
        ([
           ("rptr_block_size", 5);
@@ -219,23 +87,24 @@ let mqd l q ~base ~kiq ~aql ~xcc ~xccs =
            ("no_update_rptr", Bool.to_int (xcc <> 0 || xccs = 1));
          ]
        else []));
-  set f.ib_control (enc "regCP_HQD_IB_CONTROL" [ ("min_ib_avail_size", 3) ]);
-  set f.hq_status0 hq_status0;
-  set f.mqd_control (enc "regCP_MQD_CONTROL" [ ("priv_state", 1) ]);
-  set f.vmid 0;
-  set f.aql_control (Bool.to_int aql);
-  set f.eop_lo (lo32 (q.eop lsr 8));
-  set f.eop_hi (hi32 (q.eop lsr 8));
-  set f.eop_control
+  set f.cp_hqd_ib_control
+    (enc "regCP_HQD_IB_CONTROL" [ ("min_ib_avail_size", 3) ]);
+  set f.cp_hqd_hq_status0 hq_status0;
+  set f.cp_mqd_control (enc "regCP_MQD_CONTROL" [ ("priv_state", 1) ]);
+  set f.cp_hqd_vmid 0;
+  set f.cp_hqd_aql_control (Bool.to_int aql);
+  set f.cp_hqd_eop_base_addr_lo (lo32 (q.eop lsr 8));
+  set f.cp_hqd_eop_base_addr_hi (hi32 (q.eop lsr 8));
+  set f.cp_hqd_eop_control
     (enc "regCP_HQD_EOP_CONTROL" [ ("eop_size", log2 (q.eop_bytes / 4) - 1) ]);
   (* The thread management words first: on GFX9 four of them share their place
      with the fields of a queue across dies, set after them, as the kernel's
      kfd_mqd_manager_v9 does. *)
-  List.iter (fun w -> set w all_units) f.thread_mgmt;
+  List.iter (fun w -> set w all_units) f.compute_static_thread_mgmt;
   if aql && xccs > 1 then begin
-    Option.iter (fun w -> set w 1) f.tg_chunk;
-    Option.iter (fun w -> set w xcc) f.logic_xcc;
-    Option.iter (fun w -> set w die_stride) f.stride
+    Option.iter (fun w -> set w 1) f.compute_tg_chunk_size;
+    Option.iter (fun w -> set w xcc) f.compute_current_logic_xcc_id;
+    Option.iter (fun w -> set w die_stride) f.cp_mqd_stride_size
   end;
   Bytes.to_string b
 

@@ -236,101 +236,134 @@ let amdgpu_navi10_doorbell_kiq = 0
 let amdgpu_navi10_doorbell_mec_ring0 = 3
 let amdgpu_navi10_doorbell_sdma_engine0 = 0x100
 
-(* The memory queue descriptor of GFX9, v9_mqd *)
-module Mqd_v9 = struct
-  let sizeof = 2048
-  let header = (0, 4)
-  let cp_mqd_base_addr_lo = (512, 4)
-  let cp_mqd_base_addr_hi = (516, 4)
-  let cp_hqd_pipe_priority = (532, 4)
-  let cp_hqd_queue_priority = (536, 4)
-  let cp_hqd_quantum = (540, 4)
-  let cp_hqd_persistent_state = (528, 4)
-  let cp_hqd_pq_base_lo = (544, 4)
-  let cp_hqd_pq_base_hi = (548, 4)
-  let cp_hqd_pq_rptr_report_addr_lo = (556, 4)
-  let cp_hqd_pq_rptr_report_addr_hi = (560, 4)
-  let cp_hqd_pq_wptr_poll_addr_lo = (564, 4)
-  let cp_hqd_pq_wptr_poll_addr_hi = (568, 4)
-  let cp_hqd_pq_doorbell_control = (572, 4)
-  let cp_hqd_pq_control = (580, 4)
-  let cp_hqd_ib_control = (596, 4)
-  let cp_hqd_hq_status0 = (640, 4)
-  let cp_mqd_control = (648, 4)
-  let cp_hqd_vmid = (524, 4)
-  let cp_hqd_aql_control = (724, 4)
-  let cp_hqd_eop_base_addr_lo = (660, 4)
-  let cp_hqd_eop_base_addr_hi = (664, 4)
-  let cp_hqd_eop_control = (668, 4)
-  let compute_tg_chunk_size = Some (164, 4)
-  let compute_current_logic_xcc_id = Some (156, 4)
-  let cp_mqd_stride_size = Some (904, 4)
-  let compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (156, 4); (160, 4); (164, 4); (168, 4) ]
-end
+(* The fields of a memory queue descriptor, as (byte offset, bytes); the
+   thread management words of its shader engines, in order. *)
+type mqd = {
+  header : int * int;
+  cp_mqd_base_addr_lo : int * int;
+  cp_mqd_base_addr_hi : int * int;
+  cp_hqd_pipe_priority : int * int;
+  cp_hqd_queue_priority : int * int;
+  cp_hqd_quantum : int * int;
+  cp_hqd_persistent_state : int * int;
+  cp_hqd_pq_base_lo : int * int;
+  cp_hqd_pq_base_hi : int * int;
+  cp_hqd_pq_rptr_report_addr_lo : int * int;
+  cp_hqd_pq_rptr_report_addr_hi : int * int;
+  cp_hqd_pq_wptr_poll_addr_lo : int * int;
+  cp_hqd_pq_wptr_poll_addr_hi : int * int;
+  cp_hqd_pq_doorbell_control : int * int;
+  cp_hqd_pq_control : int * int;
+  cp_hqd_ib_control : int * int;
+  cp_hqd_hq_status0 : int * int;
+  cp_mqd_control : int * int;
+  cp_hqd_vmid : int * int;
+  cp_hqd_aql_control : int * int;
+  cp_hqd_eop_base_addr_lo : int * int;
+  cp_hqd_eop_base_addr_hi : int * int;
+  cp_hqd_eop_control : int * int;
+  compute_tg_chunk_size : (int * int) option;
+  compute_current_logic_xcc_id : (int * int) option;
+  cp_mqd_stride_size : (int * int) option;
+  compute_static_thread_mgmt : (int * int) list;
+  sizeof : int;
+}
 
-(* The memory queue descriptor of GFX11, v11_compute_mqd *)
-module Mqd_v11 = struct
-  let sizeof = 2048
-  let header = (0, 4)
-  let cp_mqd_base_addr_lo = (512, 4)
-  let cp_mqd_base_addr_hi = (516, 4)
-  let cp_hqd_pipe_priority = (532, 4)
-  let cp_hqd_queue_priority = (536, 4)
-  let cp_hqd_quantum = (540, 4)
-  let cp_hqd_persistent_state = (528, 4)
-  let cp_hqd_pq_base_lo = (544, 4)
-  let cp_hqd_pq_base_hi = (548, 4)
-  let cp_hqd_pq_rptr_report_addr_lo = (556, 4)
-  let cp_hqd_pq_rptr_report_addr_hi = (560, 4)
-  let cp_hqd_pq_wptr_poll_addr_lo = (564, 4)
-  let cp_hqd_pq_wptr_poll_addr_hi = (568, 4)
-  let cp_hqd_pq_doorbell_control = (572, 4)
-  let cp_hqd_pq_control = (580, 4)
-  let cp_hqd_ib_control = (596, 4)
-  let cp_hqd_hq_status0 = (640, 4)
-  let cp_mqd_control = (648, 4)
-  let cp_hqd_vmid = (524, 4)
-  let cp_hqd_aql_control = (724, 4)
-  let cp_hqd_eop_base_addr_lo = (660, 4)
-  let cp_hqd_eop_base_addr_hi = (664, 4)
-  let cp_hqd_eop_control = (668, 4)
-  let compute_tg_chunk_size = None
-  let compute_current_logic_xcc_id = None
-  let cp_mqd_stride_size = None
-  let compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (176, 4); (180, 4); (184, 4); (188, 4) ]
-end
+(* GFX9's, v9_mqd *)
+let mqd_v9 = {
+  header = (0, 4);
+  cp_mqd_base_addr_lo = (512, 4);
+  cp_mqd_base_addr_hi = (516, 4);
+  cp_hqd_pipe_priority = (532, 4);
+  cp_hqd_queue_priority = (536, 4);
+  cp_hqd_quantum = (540, 4);
+  cp_hqd_persistent_state = (528, 4);
+  cp_hqd_pq_base_lo = (544, 4);
+  cp_hqd_pq_base_hi = (548, 4);
+  cp_hqd_pq_rptr_report_addr_lo = (556, 4);
+  cp_hqd_pq_rptr_report_addr_hi = (560, 4);
+  cp_hqd_pq_wptr_poll_addr_lo = (564, 4);
+  cp_hqd_pq_wptr_poll_addr_hi = (568, 4);
+  cp_hqd_pq_doorbell_control = (572, 4);
+  cp_hqd_pq_control = (580, 4);
+  cp_hqd_ib_control = (596, 4);
+  cp_hqd_hq_status0 = (640, 4);
+  cp_mqd_control = (648, 4);
+  cp_hqd_vmid = (524, 4);
+  cp_hqd_aql_control = (724, 4);
+  cp_hqd_eop_base_addr_lo = (660, 4);
+  cp_hqd_eop_base_addr_hi = (664, 4);
+  cp_hqd_eop_control = (668, 4);
+  compute_tg_chunk_size = Some (164, 4);
+  compute_current_logic_xcc_id = Some (156, 4);
+  cp_mqd_stride_size = Some (904, 4);
+  compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (156, 4); (160, 4); (164, 4); (168, 4) ];
+  sizeof = 2048;
+}
 
-(* The memory queue descriptor of GFX12, v12_compute_mqd *)
-module Mqd_v12 = struct
-  let sizeof = 2048
-  let header = (0, 4)
-  let cp_mqd_base_addr_lo = (512, 4)
-  let cp_mqd_base_addr_hi = (516, 4)
-  let cp_hqd_pipe_priority = (532, 4)
-  let cp_hqd_queue_priority = (536, 4)
-  let cp_hqd_quantum = (540, 4)
-  let cp_hqd_persistent_state = (528, 4)
-  let cp_hqd_pq_base_lo = (544, 4)
-  let cp_hqd_pq_base_hi = (548, 4)
-  let cp_hqd_pq_rptr_report_addr_lo = (556, 4)
-  let cp_hqd_pq_rptr_report_addr_hi = (560, 4)
-  let cp_hqd_pq_wptr_poll_addr_lo = (564, 4)
-  let cp_hqd_pq_wptr_poll_addr_hi = (568, 4)
-  let cp_hqd_pq_doorbell_control = (572, 4)
-  let cp_hqd_pq_control = (580, 4)
-  let cp_hqd_ib_control = (596, 4)
-  let cp_hqd_hq_status0 = (640, 4)
-  let cp_mqd_control = (648, 4)
-  let cp_hqd_vmid = (524, 4)
-  let cp_hqd_aql_control = (724, 4)
-  let cp_hqd_eop_base_addr_lo = (660, 4)
-  let cp_hqd_eop_base_addr_hi = (664, 4)
-  let cp_hqd_eop_control = (668, 4)
-  let compute_tg_chunk_size = None
-  let compute_current_logic_xcc_id = None
-  let cp_mqd_stride_size = None
-  let compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (176, 4); (180, 4); (184, 4); (188, 4); (236, 4) ]
-end
+(* GFX11's, v11_compute_mqd *)
+let mqd_v11 = {
+  header = (0, 4);
+  cp_mqd_base_addr_lo = (512, 4);
+  cp_mqd_base_addr_hi = (516, 4);
+  cp_hqd_pipe_priority = (532, 4);
+  cp_hqd_queue_priority = (536, 4);
+  cp_hqd_quantum = (540, 4);
+  cp_hqd_persistent_state = (528, 4);
+  cp_hqd_pq_base_lo = (544, 4);
+  cp_hqd_pq_base_hi = (548, 4);
+  cp_hqd_pq_rptr_report_addr_lo = (556, 4);
+  cp_hqd_pq_rptr_report_addr_hi = (560, 4);
+  cp_hqd_pq_wptr_poll_addr_lo = (564, 4);
+  cp_hqd_pq_wptr_poll_addr_hi = (568, 4);
+  cp_hqd_pq_doorbell_control = (572, 4);
+  cp_hqd_pq_control = (580, 4);
+  cp_hqd_ib_control = (596, 4);
+  cp_hqd_hq_status0 = (640, 4);
+  cp_mqd_control = (648, 4);
+  cp_hqd_vmid = (524, 4);
+  cp_hqd_aql_control = (724, 4);
+  cp_hqd_eop_base_addr_lo = (660, 4);
+  cp_hqd_eop_base_addr_hi = (664, 4);
+  cp_hqd_eop_control = (668, 4);
+  compute_tg_chunk_size = None;
+  compute_current_logic_xcc_id = None;
+  cp_mqd_stride_size = None;
+  compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (176, 4); (180, 4); (184, 4); (188, 4) ];
+  sizeof = 2048;
+}
+
+(* GFX12's, v12_compute_mqd *)
+let mqd_v12 = {
+  header = (0, 4);
+  cp_mqd_base_addr_lo = (512, 4);
+  cp_mqd_base_addr_hi = (516, 4);
+  cp_hqd_pipe_priority = (532, 4);
+  cp_hqd_queue_priority = (536, 4);
+  cp_hqd_quantum = (540, 4);
+  cp_hqd_persistent_state = (528, 4);
+  cp_hqd_pq_base_lo = (544, 4);
+  cp_hqd_pq_base_hi = (548, 4);
+  cp_hqd_pq_rptr_report_addr_lo = (556, 4);
+  cp_hqd_pq_rptr_report_addr_hi = (560, 4);
+  cp_hqd_pq_wptr_poll_addr_lo = (564, 4);
+  cp_hqd_pq_wptr_poll_addr_hi = (568, 4);
+  cp_hqd_pq_doorbell_control = (572, 4);
+  cp_hqd_pq_control = (580, 4);
+  cp_hqd_ib_control = (596, 4);
+  cp_hqd_hq_status0 = (640, 4);
+  cp_mqd_control = (648, 4);
+  cp_hqd_vmid = (524, 4);
+  cp_hqd_aql_control = (724, 4);
+  cp_hqd_eop_base_addr_lo = (660, 4);
+  cp_hqd_eop_base_addr_hi = (664, 4);
+  cp_hqd_eop_control = (668, 4);
+  compute_tg_chunk_size = None;
+  compute_current_logic_xcc_id = None;
+  cp_mqd_stride_size = None;
+  compute_static_thread_mgmt = [ (92, 4); (96, 4); (104, 4); (108, 4); (176, 4); (180, 4); (184, 4); (188, 4); (236, 4) ];
+  sizeof = 2048;
+}
 
 (* The security processor *)
 
