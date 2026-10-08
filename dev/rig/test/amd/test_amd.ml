@@ -1838,6 +1838,20 @@ let code =
           put flag (le64 0);
           run g [| spin g p flag 150_000 |];
           equal string ~msg:"flag" (le32s [ 1 ]) (String.sub (get flag) 0 4));
+      test "a release wakes a sleeper well before its bound" (fun () ->
+          (* A few milliseconds of work, slept on with a bound of seconds: the
+             release's interrupt, not the bound, ends the sleep. *)
+          S.with_gpu @@ fun g ->
+          let p = image g in
+          let flag = buffer ~memory:Pinned g 8 in
+          put flag (le64 0);
+          let v = S.submit g [| spin g p flag 2_000 |] in
+          let t0 = S.now_ns () in
+          while A.signaled g < v do
+            A.sleep g ~seen:(A.signaled g) ~still_ms:5_000
+          done;
+          less int ~msg:"ms asleep" ~than:1_000
+            ((S.now_ns () - t0) / 1_000_000));
       test "a device stopped while its work runs stops it" (fun () ->
           let g = S.gpu () in
           let p = image g in
