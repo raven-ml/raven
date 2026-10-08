@@ -212,14 +212,12 @@ module Io = struct
   (* A file opened for writing maps shared, so the mapping is the file; one
      opened for reading maps copy-on-write. *)
   let pages () f =
-    if f.size = 0 then None
-    else
-      match using f (fun fd -> map fd f.size f.writable) with
-      | 0, ba ->
-          if f.writable then f.pages <- Some ba;
-          Some ba
-      | _ -> None
-      | exception Sys_error _ -> None
+    match using f (fun fd -> map fd f.size f.writable) with
+    | 0, ba ->
+        if f.writable then f.pages <- Some ba;
+        Some ba
+    | _ -> None
+    | exception Sys_error _ -> None
 
   (* A file that cannot be reopened gets no advice; its pages, mapped already,
      stay valid. *)
