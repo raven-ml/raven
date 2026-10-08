@@ -254,11 +254,6 @@ value caml_rig_heap_reserve(value v_n, value v_budget) {
   return Val_true;
 }
 
-value caml_rig_heap_return(value v_n) {
-  atomic_fetch_sub_explicit(&heap_bytes, Long_val(v_n), memory_order_relaxed);
-  return Val_unit;
-}
-
 /* The bytes the collector has returned, ever, of buffers made before the
    last major cycle ended, and the number of major cycles seen ended (see
    [slice_end]). A token holds its bytes and the cycles seen ended when it
@@ -358,11 +353,6 @@ static mlsize_t heap_cycle_bytes(void) {
          live / 150 *
              atomic_load_explicit(&caml_custom_major_ratio,
                                   memory_order_relaxed);
-}
-
-value caml_rig_heap_live(value unit) {
-  (void)unit;
-  return Val_long(atomic_load_explicit(&heap_live, memory_order_relaxed));
 }
 
 /* Reusing freed buffers
@@ -471,11 +461,6 @@ static void *heap_take(size_t n) {
 
 static intnat heap_kept(void) {
   return (intnat)atomic_load_explicit(&heap_cached, memory_order_relaxed);
-}
-
-value caml_rig_heap_cached(value unit) {
-  (void)unit;
-  return Val_long(heap_kept());
 }
 
 static void heap_drop_all(void) {
