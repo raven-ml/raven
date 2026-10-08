@@ -937,11 +937,40 @@ let shorter s =
       let sign = if s.[0] = '-' then "-" else "" in
       [ strf "%s%de%d" sign q (e + 1); strf "%s%de%d" sign (q + 1) (e + 1) ]
 
+(* The order of two positive decimals as [significand] gives them. *)
+let compare_decimal (d, e) (d', e') =
+  let top = String.length d + e and top' = String.length d' + e' in
+  if top <> top' then Int.compare top top'
+  else
+    let n = max (String.length d) (String.length d') in
+    let pad s = s ^ String.make (n - String.length s) '0' in
+    String.compare (pad d) (pad d')
+
 (* Whether the decimal [t] reads back as [v] in [f]: [t] rounds to [v] at [f]'s
    precision with the exponent unbounded, so a decimal that saturates to the
-   largest finite value does not read back as it. *)
+   largest finite value does not read back as it. [t] is read through the
+   nearest double; where that double is a boundary between two values of [f],
+   [t]'s digits against the boundary's exact expansion say which side [t] lies
+   on. *)
 let reads_back f v t =
-  Testable.equal float_exact v (nearest f (float_of_string t))
+  let x = float_of_string t in
+  let x =
+    if
+      f.frac >= 52 || x = 0.
+      || Testable.equal float_exact
+           (nearest f (Float.pred x))
+           (nearest f (Float.succ x))
+    then x
+    else
+      match (significand t, significand (strf "%.200e" x)) with
+      | Some a, Some b ->
+          let c = compare_decimal a b in
+          let up = if Float.sign_bit x then Float.pred x else Float.succ x in
+          let down = if Float.sign_bit x then Float.succ x else Float.pred x in
+          if c > 0 then up else if c < 0 then down else x
+      | _ -> x
+  in
+  Testable.equal float_exact v (nearest f x)
 
 let check_printed (F (dt, f)) v =
   let s = Format.asprintf "%a" (D.pp_value dt) v in

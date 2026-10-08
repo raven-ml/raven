@@ -436,19 +436,72 @@ let rounds_into f a =
   let limit = top +. (step /. 2.) in
   a < limit || (a = limit && Float.rem (top /. step) 2. = 0.)
 
+(* The significant digits of the unsigned decimal [t], without leading or
+   trailing zeros, and the exponent of the first: ["0.0125"] is [("125", -2)],
+   zero [("0", 0)]. *)
+let scientific t =
+  let m, e =
+    match String.index_opt t 'e' with
+    | Some i ->
+        ( String.sub t 0 i,
+          int_of_string (String.sub t (i + 1) (String.length t - i - 1)) )
+    | None -> (t, 0)
+  in
+  let point =
+    Option.value (String.index_opt m '.') ~default:(String.length m)
+  in
+  let ds = String.concat "" (String.split_on_char '.' m) in
+  let n = String.length ds in
+  let first = ref 0 and last = ref n in
+  while !first < n && ds.[!first] = '0' do
+    incr first
+  done;
+  while !last > !first && ds.[!last - 1] = '0' do
+    decr last
+  done;
+  if !first = n then ("0", 0)
+  else (String.sub ds !first (!last - !first), e + point - 1 - !first)
+
+(* The order of two decimals as [scientific] gives them, both non-zero or both
+   zero. *)
+let compare_decimal (d, e) (d', e') =
+  if e <> e' then Int.compare e e'
+  else
+    let n = max (String.length d) (String.length d') in
+    let pad s = s ^ String.make (n - String.length s) '0' in
+    String.compare (pad d) (pad d')
+
 (* The shortest decimal that rounds to [x] in [dt]'s format, and of those the
    nearest to [x]: a float32 [0.1] prints as [0.1], though the double it holds
    has 17 digits, and a float16 [65504.] as [65500]. At each number of digits it
    tries the decimal nearest to [x], then the next one up in magnitude, then the
    next one down: at the bottom of a binade the gap below [x] is half the gap
    above, so the nearest decimal can fall outside [x]'s rounding interval where
-   the next one up lies inside. *)
+   the next one up lies inside.
+
+   A decimal is read through the double nearest to it. Where that double is a
+   boundary between two values of a format narrower than a double, the read may
+   have moved the decimal onto it: the decimal's own digits, compared with the
+   boundary's exact expansion, say which side it lies on. *)
 let float_text code x =
   let ax = Float.abs x and sign = if Float.sign_bit x then "-" else "" in
   let format = Option.get rows.(code).format in
+  let boundary v =
+    format.fraction_bits < 52
+    && not (Float.equal (round code (Float.pred v)) (round code (Float.succ v)))
+  in
   let reads_back t =
-    let v = float_of_string (sign ^ t) in
-    rounds_into format (Float.abs v) && Float.equal (round code v) x
+    let v = float_of_string t in
+    let v =
+      if not (boundary v) then v
+      else
+        let c =
+          compare_decimal (scientific t)
+            (scientific (Printf.sprintf "%.200e" v))
+        in
+        if c > 0 then Float.succ v else if c < 0 then Float.pred v else v
+    in
+    rounds_into format v && Float.equal (round code v) ax
   in
   (* The decimal [k] units in the last place from [(m, e)], [p] digits wide. *)
   let beside p (m, e) k =
