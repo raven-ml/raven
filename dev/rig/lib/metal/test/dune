@@ -1,5 +1,5 @@
 (test
  (name test_metal)
- (libraries rig rig_metal rig_metal_abi rig_metal_support windtrap)
+ (libraries rig rig_disk rig_metal rig_metal_abi rig_metal_support windtrap)
  (deps
   (source_tree fixtures)))

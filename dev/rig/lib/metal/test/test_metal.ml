@@ -5,6 +5,7 @@
 
 open Windtrap
 module S = Rig_metal_support
+module B = Rig.Buffer
 
 let strf = Printf.sprintf
 
@@ -460,6 +461,39 @@ let icbs =
       test "runs after its image is unloaded" after_unload;
     ]
 
+(* Bytes *)
+
+(* Bytes print by their length and digest past a line. *)
+let octets =
+  let pp ppf s =
+    let n = String.length s in
+    if n <= 48 then Format.fprintf ppf "%S" s
+    else
+      Format.fprintf ppf "%d bytes, md5 %s" n (Digest.to_hex (Digest.string s))
+  in
+  Testable.make ~pp ~equal:String.equal
+
+let random_bytes ~seed n =
+  let r = Random.State.make [| seed |] in
+  String.init n (fun _ -> Char.unsafe_chr (Random.State.bits r land 255))
+
+let bumped s =
+  String.map (fun c -> Char.unsafe_chr ((Char.code c + 1) land 255)) s
+
+let host_buffer s =
+  let a =
+    Bigarray.Array1.create Bigarray.char Bigarray.c_layout (String.length s)
+  in
+  String.iteri (Bigarray.Array1.set a) s;
+  B.of_bigarray a
+
+(* The bytes of [b], copied to the host. *)
+let contents b =
+  let h = B.create Rig.host (B.length b) in
+  B.copy ~src:b ~dst:h;
+  let a = B.bigarray Bigarray.char h in
+  String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)
+
 (* Memory *)
 
 let page = 16384
@@ -528,6 +562,16 @@ let given_back () =
   equal bool ~msg:"allocation" false (S.alive wr);
   equal bool ~msg:"mapping" false (S.alive wm)
 
+(* The host addresses host memory a device borrowed: the copy is its own. *)
+let copied_into_borrow () =
+  let t = dev () in
+  let n = 4 * page in
+  let h = B.create Rig.host n in
+  let b = require_some (B.borrow t.c h) in
+  let s = random_bytes ~seed:19 n in
+  B.copy ~src:(host_buffer s) ~dst:b;
+  equal octets s (contents h)
+
 let memory =
   group ~timeout:60. "memory"
     [
@@ -546,6 +590,146 @@ let memory =
          given back"
         misused_regions;
       test "free releases an allocation's or a mapping's buffer" given_back;
+      xfail
+        ~reason:
+          "Rig.Buffer.copy raises Invalid_argument (no device copies between \
+           the device and CPU): a driver's borrow of host memory has no host \
+           address in rig, and Metal runs no copy"
+        (test "the host copies into a borrow of host memory" copied_into_borrow);
+    ]
+
+(* Files
+
+   Files of the disk, written under this test's directory in _build and removed
+   as the tests end. *)
+
+let files = "files"
+
+let clear_files () =
+  if not (Sys.file_exists files) then Sys.mkdir files 0o755
+  else
+    Array.iter
+      (fun f -> Sys.remove (Filename.concat files f))
+      (Sys.readdir files)
+
+let file_names = Atomic.make 0
+
+(* [with_path f] is [f p], [p] a path under [files] that names nothing, removed
+   after [f]. *)
+let with_path f =
+  let n = Atomic.fetch_and_add file_names 1 in
+  let p = Filename.concat files (string_of_int n) in
+  let remove () = if Sys.file_exists p then Sys.remove p in
+  Fun.protect ~finally:remove (fun () -> f p)
+
+let write_file p s = Out_channel.with_open_bin p (fun oc -> output_string oc s)
+let read_file p = In_channel.with_open_bin p In_channel.input_all
+let of_file p = require_ok ~pp:Format.pp_print_string (Rig_disk.of_file p)
+
+let create_file p n =
+  require_ok ~pp:Format.pp_print_string (Rig_disk.create_file p n)
+
+(* Work on [t]'s device that adds 1 to each byte of [b], a buffer on it, in a
+   write slot; it returns once the work is done. *)
+let bump t b =
+  let n = B.length b and args = alloc t args_bytes in
+  set_args args ~at:0 ~out:(B.address b) ~c:n;
+  let f =
+    S.dispatch ~pipeline:(pipeline t "bump") args
+      ~groups:((n + 255) / 256)
+      ~threads:256
+  in
+  let s = Rig.Submission.make ~reads:0 ~writes:1 ~waits:0 t.c [| S.part f |] in
+  Rig.Submission.write s 0 b;
+  ignore (Rig.submit s);
+  B.wait b Read;
+  Rig_metal.free t.d args
+
+let buffer =
+  let pp ppf b =
+    Format.fprintf ppf "%d bytes on %a" (B.length b) Rig.pp (B.device b)
+  in
+  Testable.make ~pp ~equal:( == )
+
+(* The bytes of a file from byte [at_file] copy into the device's memory from
+   byte [at] and back into a new file. The host addresses the device's memory:
+   the copies are the host's, with no value on the device's timeline. *)
+let file_round_trip (n, at_file, at) =
+  let t = dev () in
+  let v = Rig.submitted t.c in
+  cover "no bytes" (n = 0);
+  cover "a file range off a page" (at_file mod page <> 0);
+  with_path @@ fun src ->
+  with_path @@ fun dst ->
+  let into s =
+    write_file src (String.make at_file 'x' ^ s);
+    let file = B.view (of_file src) ~first:at_file ~length:n in
+    let mem = B.view (B.create t.c (at + n)) ~first:at ~length:n in
+    B.copy ~src:file ~dst:mem;
+    mem
+  in
+  let out mem =
+    B.copy ~src:mem ~dst:(create_file dst n);
+    read_file dst
+  in
+  Law.round_trip octets buffer into out (random_bytes ~seed:n n);
+  equal int ~msg:"values submitted" v (Rig.submitted t.c)
+
+let gen_file_range =
+  let edges = Gen.of_list [ 0; 1; page - 1; page; page + 1 ] in
+  Gen.triple
+    (Gen.frequency [ (1, edges); (3, Gen.int_range 0 (1 lsl 20)) ])
+    (Gen.int_range 0 (2 * page))
+    (Gen.int_range 0 256)
+
+(* The pages of a file [of_file] opened are copy-on-write. *)
+let opened_file_borrow () =
+  let t = dev () in
+  with_path @@ fun path ->
+  let n = (1 lsl 20) + 4099 and at = 4 in
+  let s = random_bytes ~seed:13 n in
+  write_file path s;
+  let file = B.view (of_file path) ~first:at ~length:(n - at) in
+  let b = require_some (B.borrow t.c file) in
+  equal (pair bool string)
+    (true, Rig.name t.c)
+    (B.is_borrowed b, Rig.name (B.device b));
+  bump t b;
+  let s' = String.sub s at (n - at) in
+  let pages = require_some (B.borrow Rig.host file) in
+  equal octets ~msg:"the process's pages" (bumped s') (contents pages);
+  equal octets ~msg:"a copy of the file" s' (contents file);
+  equal octets ~msg:"the file" s (read_file path)
+
+(* The pages of a file [create_file] made are the file. *)
+let created_file_borrow () =
+  let t = dev () in
+  with_path @@ fun path ->
+  let n = (1 lsl 20) + 4099 in
+  let s = random_bytes ~seed:17 n in
+  let file = create_file path n in
+  let b = require_some (B.borrow t.c file) in
+  B.copy ~src:(host_buffer s) ~dst:file;
+  bump t b;
+  equal octets ~msg:"a copy of the file" (bumped s) (contents file);
+  equal octets ~msg:"the file" (bumped s) (read_file path)
+
+let file_tests =
+  group ~timeout:60. "files"
+    [
+      prop ~count:30
+        ~examples:[ ((3 lsl 20) + 12345, 5, 16) ]
+        "a file's bytes copy into the device's memory and back, with no work \
+         on its timeline"
+        gen_file_range file_round_trip;
+      test
+        "a borrow of an opened file is its pages: the device reads them, and \
+         its writes stay the process's"
+        opened_file_borrow;
+      test
+        "a borrow of a created file is its pages: the device reads a copy's \
+         writes, and its own reach the file"
+        created_file_borrow;
     ]
 
 (* Images *)
@@ -748,6 +932,7 @@ let opening =
 
 let () =
   S.hold_gpu ();
+  clear_files ();
   exit
     (run "rig_metal"
-       [ ring_tests; work; icbs; memory; images; timeline; opening ])
+       [ ring_tests; work; icbs; memory; file_tests; images; timeline; opening ])
