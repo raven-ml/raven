@@ -19,6 +19,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/aqlprofile/linux/vega10_enum.h. */
+
 SQ_THREAD_TRACE_TOKEN_MISC               = 0x00000000,
 SQ_THREAD_TRACE_TOKEN_TIMESTAMP          = 0x00000001,
 SQ_THREAD_TRACE_TOKEN_REG                = 0x00000002,

@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/nvd.h. */
+
 #define	PACKET_TYPE3	3
 #define	PACKET3_DISPATCH_DIRECT				0x15
 #define	PACKET3_PRED_EXEC				0x23
@@ -48,9 +50,6 @@
 #define		PACKET3_RELEASE_MEM_EVENT_INDEX(x)	((x) << 8)
 #define		PACKET3_RELEASE_MEM_GCR_GLM_WB		(1 << 12)
 #define		PACKET3_RELEASE_MEM_GCR_GLM_INV		(1 << 13)
-#define		PACKET3_RELEASE_MEM_GCR_GLV_INV		(1 << 14)
-#define		PACKET3_RELEASE_MEM_GCR_GL1_INV		(1 << 15)
-#define		PACKET3_RELEASE_MEM_GCR_GL2_INV		(1 << 20)
 #define		PACKET3_RELEASE_MEM_GCR_GL2_WB		(1 << 21)
 #define		PACKET3_RELEASE_MEM_GCR_SEQ		(1 << 22)
 #define		PACKET3_RELEASE_MEM_DATA_SEL(x)		((x) << 29)

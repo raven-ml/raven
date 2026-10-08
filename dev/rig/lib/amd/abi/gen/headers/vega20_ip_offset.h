@@ -19,6 +19,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/vega20_ip_offset.h. */
+
 #define GC_BASE__INST0_SEG0                        0x00002000
 #define GC_BASE__INST0_SEG1                        0x0000A000
 #define GC_BASE__INST0_SEG2                        0

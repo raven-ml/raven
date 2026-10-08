@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/soc15d.h. */
+
 #define	PACKET_TYPE3	3
 #define	PACKET3_DISPATCH_DIRECT				0x15
 #define	PACKET3_PRED_EXEC				0x23

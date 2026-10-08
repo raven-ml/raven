@@ -40,6 +40,8 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/inc/hsa.h. */
+
 typedef struct hsa_signal_s {
   /**
    * Opaque handle. Two handles reference the same object of the enclosing type

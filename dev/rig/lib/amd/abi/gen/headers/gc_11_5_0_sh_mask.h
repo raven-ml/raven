@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/gc/gc_11_5_0_sh_mask.h. */
+
 #define SDMA0_CNTL__TRAP_ENABLE_MASK                                                                          0x00000001L
 #define SDMA0_CNTL__SEM_WAIT_INT_ENABLE_MASK                                                                  0x00000004L
 #define SDMA0_CNTL__DATA_SWAP_ENABLE_MASK                                                                     0x00000008L

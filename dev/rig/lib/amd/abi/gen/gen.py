@@ -14,9 +14,10 @@ Run from the worktree root:
   uv run dev/rig/lib/amd/abi/gen/gen.py --excerpt [--check]
 
 The inputs are excerpts of AMD's, LLVM's and PAL's headers, in headers/: each
-is a header's licence notice and the lines this script reads, verbatim and in
-the header's order (a #define, an enumerator, a struct's definition, a table of
-a document). SOURCES names the header each comes from, at its version.
+is a header's licence notice, the URL it is cut from, and the lines this script
+reads, verbatim and in the header's order (a #define, an enumerator, a struct's
+definition, a table of a document). SOURCES names the header each comes from,
+at its version. defs.ml carries the notices of all of them.
 --excerpt makes them from the upstream headers, each pinned in pins.json by URL
 and SHA-256 and checked against its pin; downloads are kept in --cache, and
 --pin records the digests of headers not yet pinned. Generating reads the
@@ -89,6 +90,32 @@ SOURCES = {
     "gfx9_plus_merged_f32_mec_pm4_packets.h": PAL + "gfx9/chip/gfx9_plus_merged_f32_mec_pm4_packets.h",
     "gfx12_merged_f32_mec_pm4_packets.h": PAL + "gfx12/chip/gfx12_merged_f32_mec_pm4_packets.h",
 }
+
+# counter_defs.yaml carries no notice: its project's licence, the MIT licence
+# of ROCM + "rocprofiler-compute/LICENSE.md", covers it.
+ROCPROF_LICENCE = """\
+MIT License
+
+Copyright (C) Advanced Micro Devices, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
 
 # What the runtime reads
 
@@ -636,11 +663,13 @@ def counter_defs(text):
 
 
 def licence(name, text):
-    """The header's leading comments, its licence notice; for a document, a
-    comment that names its source and licence."""
+    """The header's leading comments, its licence notice, then the source the
+    excerpt is cut from; for a document, a comment that names its source and
+    licence."""
     if name.endswith(".yaml"):
         return (f"# Excerpt of {SOURCES[name]}.\n"
-                "# rocm-systems is under the MIT licence.\n")
+                "# rocprofiler-compute's LICENSE.md covers it:\n#\n"
+                + "".join(f"# {l}".rstrip() + "\n" for l in ROCPROF_LICENCE.splitlines()))
     if name.endswith(".rst"):
         return (f".. Excerpt of {SOURCES[name]}.\n"
                 ".. LLVM is under the Apache License v2.0 with LLVM Exceptions (SPDX:\n"
@@ -648,7 +677,7 @@ def licence(name, text):
     m = re.match(r"\s*((?:/\*.*?\*/\s*|//[^\n]*\n)+)", text, re.S)
     if m is None:
         sys.exit(f"{name}: no licence notice")
-    return m.group(1).rstrip() + "\n"
+    return m.group(1).rstrip() + f"\n\n/* Excerpt of {SOURCES[name]}. */\n"
 
 
 def blocks(text, names):
@@ -674,8 +703,8 @@ def blocks(text, names):
 
 
 def excerpt(name, text):
-    """[name]'s excerpt of [text]: its licence notice and the lines this script
-    reads, in order."""
+    """[name]'s excerpt of [text]: its licence notice, its URL and the lines
+    this script reads, in order."""
     if name.endswith(".rst"):
         lines = text.splitlines()
         return licence(name, text) + "\n" + "\n\n".join("\n".join(rst_table_lines(lines, t)) for t in RST_TABLES) + "\n"
@@ -772,9 +801,68 @@ def same(what, values):
     return values[0]
 
 
+MIT = """\
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE."""
+
+
+def notice(text):
+    """The lines of [text]'s licence notice, a run of // comments, without
+    their markers and rules."""
+    m = re.match(r"\s*((?://[^\n]*\n)+)", text)
+    lines = [l[2:].removeprefix(" ").rstrip() for l in m.group(1).splitlines()]
+    return "\n".join(l for l in lines if not l.startswith("//")).strip("\n")
+
+
+def header(h):
+    """The licence header of defs.ml: raven's, then the notices of the sources
+    of its values, from the excerpts [h]."""
+    kind = {n: "llvm" if "LLVM Exceptions" in t else "ncsa" if "NCSA" in t else "mit" for n, t in h.items()}
+    ncsa = sorted(n for n in h if kind[n] == "ncsa")
+    llvm = sorted(n for n in h if kind[n] == "llvm")
+    owners = sorted({m.group(0).rstrip(" */") for n, t in h.items() if kind[n] == "mit"
+                     for m in re.finditer(r"Copyright [^\n]*?Advanced Micro Devices, Inc\.[^\n]*", t)})
+    ncsa_notices = {notice(h[n]) for n in ncsa}
+    if len(ncsa_notices) != 1:
+        sys.exit(f"the notices of {ncsa} differ")
+    indent = lambda s: "\n".join(f"   {l}".rstrip() for l in s.splitlines())
+    return (
+        "(*---------------------------------------------------------------------------\n"
+        "  Copyright (c) 2026 The Raven authors. All rights reserved.\n"
+        "  SPDX-License-Identifier: ISC\n"
+        "  ---------------------------------------------------------------------------*)\n\n"
+        "(* Generated by gen/gen.py from the excerpts in gen/headers; do not edit.\n"
+        "   The command that regenerates this file is in gen/gen.py.\n\n"
+        "   The values are AMD's and LLVM's, copied from their headers and documents.\n\n"
+        f"   AMD's {' and '.join(ncsa)} are under the University of Illinois/NCSA\n"
+        "   Open Source License:\n\n"
+        + indent(ncsa_notices.pop()) + "\n\n"
+        "   AMD's other sources are under the MIT licence:\n\n"
+        + indent("\n".join(owners)) + "\n\n" + indent(MIT) + "\n\n"
+        f"   LLVM's {', '.join(llvm[:-1])} and {llvm[-1]} are under\n"
+        "   the Apache License v2.0 with LLVM Exceptions (SPDX-License-Identifier:\n"
+        "   Apache-2.0 WITH LLVM-exception), whose text is in rig's LICENSE-llvm. *)\n"
+    )
+
+
 def generate(h):
     """defs.ml, from the excerpts [h], by name."""
-    out = ["(* Generated by gen/gen.py from the excerpts in gen/headers; do not edit. *)", ""]
+    out = [header(h)]
 
     # Registers: each a literal record, each version's list of them and its
     # lookup by name, a match the compiler turns into a search of the names.

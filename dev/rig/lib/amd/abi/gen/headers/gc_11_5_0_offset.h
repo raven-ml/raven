@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/gc/gc_11_5_0_offset.h. */
+
 #define regSDMA0_CNTL                                                                                   0x001c
 #define regSDMA0_CNTL_BASE_IDX                                                                          0
 #define regSDMA0_WATCHDOG_CNTL                                                                          0x002e

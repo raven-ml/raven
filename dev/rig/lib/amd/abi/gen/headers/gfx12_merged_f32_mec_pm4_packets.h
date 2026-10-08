@@ -23,6 +23,8 @@
  *
  **********************************************************************************************************************/
 
+/* Excerpt of https://raw.githubusercontent.com/GPUOpen-Drivers/pal/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/hw/gfxip/gfx12/chip/gfx12_merged_f32_mec_pm4_packets.h. */
+
 typedef union PM4_MEC_TYPE_3_HEADER
 {
     struct

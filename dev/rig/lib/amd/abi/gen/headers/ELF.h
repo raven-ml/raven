@@ -16,6 +16,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+/* Excerpt of https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/include/llvm/BinaryFormat/ELF.h. */
+
   EM_AMDGPU = 224,        // AMD GPU architecture
   ELFABIVERSION_AMDGPU_HSA_V6 = 4,
   EF_AMDGPU_MACH = 0x0ff,

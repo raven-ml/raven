@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdgpu/sdma_v6_0_0_pkt_open.h. */
+
 #define SDMA_OP_COPY  1
 #define SDMA_OP_FENCE  5
 #define SDMA_OP_TRAP  6

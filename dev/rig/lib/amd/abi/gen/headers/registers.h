@@ -40,6 +40,8 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/rocr-runtime/runtime/hsa-runtime/core/inc/registers.h. */
+
 SQ_RSRC_BUF                              = 0x00000000,
 BUF_DATA_FORMAT_32                       = 0x00000004,
 BUF_NUM_FORMAT_UINT                      = 0x00000004,

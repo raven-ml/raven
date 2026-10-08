@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/aqlprofile/linux/soc24_enum.h. */
+
 CS_PARTIAL_FLUSH                         = 0x00000007,
 CACHE_FLUSH_AND_INV_TS_EVENT             = 0x00000014,
 THREAD_TRACE_MARKER                      = 0x00000035,

@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/rocm-systems/cccc350dc620e61ae2554978b62ab3532dc10bd9/projects/aqlprofile/linux/soc21_enum.h. */
+
 SQ_TT_RT_FREQ_4096_CLK                   = 0x00000002,
 SQ_TT_TOKEN_MASK_SQDEC_BIT               = 0x00000001,
 SQ_TT_TOKEN_MASK_SHDEC_BIT               = 0x00000002,

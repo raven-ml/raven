@@ -22,6 +22,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/amdkfd/kfd_pm4_headers_ai.h. */
+
 	event_index__mec_release_mem__end_of_pipe = 5,
 	int_sel__mec_release_mem__none = 0,
 	int_sel__mec_release_mem__send_interrupt_after_write_confirm = 2,

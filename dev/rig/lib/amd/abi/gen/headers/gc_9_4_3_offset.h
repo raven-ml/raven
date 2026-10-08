@@ -21,6 +21,8 @@
  *
  */
 
+/* Excerpt of https://raw.githubusercontent.com/ROCm/ROCK-Kernel-Driver/33970e1351f5e511029602454979f3de7e22260f/drivers/gpu/drm/amd/include/asic_reg/gc/gc_9_4_3_offset.h. */
+
 #define regGRBM_CNTL                                                                                    0x0000
 #define regGRBM_CNTL_BASE_IDX                                                                           0
 #define regGRBM_SOFT_RESET                                                                              0x0008

@@ -19,6 +19,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+/* Excerpt of https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-20.1.0/llvm/include/llvm/Support/AMDHSAKernelDescriptor.h. */
+
   KERNEL_CODE_PROPERTY(ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER, 0, 1),
   KERNEL_CODE_PROPERTY(ENABLE_SGPR_DISPATCH_PTR, 1, 1),
   KERNEL_CODE_PROPERTY(ENABLE_WAVEFRONT_SIZE32, 10, 1), // GFX10+
