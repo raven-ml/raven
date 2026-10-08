@@ -3,128 +3,1041 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A proxy of another machine's host, whose agent's end is a loop in this
-   process that keeps the machine's memory as bytes. *)
+(* Proxies of another machine, opened through rig over a real link on loopback.
+   The machine's agent is the other end of the link, a loop on a thread of this
+   process that keeps the machine's memory as bytes, runs each hand-over's parts
+   in order and reports its word, as an agent does. *)
 
 open Windtrap
 module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
+module Proxy = Rig_remote_proxy
 module B = Rig.Buffer
+module Sub = Rig.Submission
 
-let timeout = 30.
+(* The most anything the test awaits may take. *)
+let patience = 5.
+
+(* The bytes in flight past which a proxy's room check answers later. *)
+let in_flight_limit = 64 lsl 20
+
+(* Sockets and threads *)
 
 let connected () =
-  let l = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
-  Unix.listen l 1;
-  let port =
-    match Unix.getsockname l with
-    | Unix.ADDR_INET (_, p) -> p
-    | Unix.ADDR_UNIX _ -> assert false
+  let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close l)
+    (fun () ->
+      Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+      Unix.listen l 1;
+      let port =
+        match Unix.getsockname l with
+        | Unix.ADDR_INET (_, p) -> p
+        | Unix.ADDR_UNIX _ -> assert false
+      in
+      let d = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+      Unix.connect d (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
+      let a, _ = Unix.accept ~cloexec:true l in
+      (d, a))
+
+(* Runs [f] on a thread: [join] is its result, or the exception it raised. *)
+let spawn f =
+  let r = ref None in
+  let t =
+    Thread.create
+      (fun () ->
+        r := Some (match f () with v -> Ok v | exception e -> Error e))
+      ()
   in
-  let d = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Unix.connect d (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
-  let a, _ = Unix.accept l in
-  Unix.close l;
-  (d, a)
+  ( (fun () -> Option.is_some !r),
+    fun () ->
+      Thread.join t;
+      match Option.get !r with Ok v -> v | Error e -> raise e )
 
-let host_account : Wire.account =
-  { id = 0; name = "CPU"; arch = "arm64"; budget = 1 lsl 30; reaches = [] }
+let until ~what cond =
+  let t0 = Unix.gettimeofday () in
+  while not (cond ()) do
+    if Unix.gettimeofday () -. t0 > patience then
+      failf "%s: not within %.0f s" what patience;
+    Thread.delay 0.001
+  done
 
-let area_of_bytes b =
-  let a =
-    Bigarray.Array1.create Bigarray.char Bigarray.c_layout (Bytes.length b)
-  in
-  Bytes.iteri (fun i c -> a.{i} <- c) b;
-  a
+(* The agent *)
 
-(* The agent's end: memory as bytes by id, each hand-over's copies run in order,
-   then its word. *)
-let agent a =
-  let memory = Hashtbl.create 8 in
-  let rec loop () =
-    match Link.next a with
-    | Error _ | Ok Wire.Close -> ()
-    | Ok (Wire.Request (Wire.Alloc { id; bytes; _ } as r)) ->
-        Hashtbl.replace memory id (Bytes.make bytes '\000');
-        Link.answer a r (Ok true);
-        loop ()
-    | Ok (Wire.Request r) ->
-        Link.answer a r (Error "not served here");
-        loop ()
-    | Ok (Wire.Drop id) ->
-        Hashtbl.remove memory id;
-        loop ()
-    | Ok (Wire.Handover (h, local)) ->
-        let k = ref 0 in
-        Array.iter
-          (function
-            | Wire.Copy
-                { src = Wire.Local; dst = Wire.Region { id; offset }; bytes } ->
-                let m = Hashtbl.find memory id in
-                for i = 0 to bytes - 1 do
-                  Bytes.set m (offset + i) local.(!k).{i}
-                done;
-                incr k
-            | Wire.Copy
-                { src = Wire.Region { id; offset }; dst = Wire.Local; bytes } ->
-                let m = Hashtbl.find memory id in
-                Link.bytes a ~device:h.device ~value:h.value
-                  (area_of_bytes (Bytes.sub m offset bytes))
-            | _ -> ())
-          h.parts;
-        Link.word a ~device:h.device h.value;
-        loop ()
-  in
-  loop ()
+(* A region of the machine: its bytes once something wrote them. Copies between
+   regions nothing wrote move nothing, so large regions cost no memory. *)
+type region = { size : int; mutable bytes : Bytes.t option }
 
-let machines = Atomic.make 0
+let bytes_of r =
+  match r.bytes with
+  | Some b -> b
+  | None ->
+      let b = Bytes.make r.size '\000' in
+      r.bytes <- Some b;
+      b
 
-(* A job whose host proxy talks to [agent] on a thread. *)
-let with_host f =
-  let j = Link.job () in
+(* What the agent received, oldest first. *)
+type event =
+  | Alloc of { id : int; device : int; bytes : int }
+  | Map of { id : int; device : int; region : int }
+  | Drop of int
+  | Handover of {
+      device : int;
+      value : int;
+      waits : (int * int) list;
+      local : int; (* copies whose bytes came from the controller *)
+      parts : Wire.part list;
+    }
+
+type agent = {
+  job : Link.job;
+  link : Link.t; (* the agent's end *)
+  memory : (int, region) Hashtbl.t;
+  done_ : (int, int) Hashtbl.t; (* each device's last value reported *)
+  mutable events : event list;
+  mutable violations : string list;
+  mutable room : int; (* bytes it still allocates *)
+  lock : Mutex.t;
+  mutable paused : bool;
+  resumed : Condition.t;
+}
+
+let record ag e = Mutex.protect ag.lock (fun () -> ag.events <- e :: ag.events)
+let events ag = Mutex.protect ag.lock (fun () -> List.rev ag.events)
+
+let violate ag fmt =
+  Printf.ksprintf
+    (fun s ->
+      Mutex.protect ag.lock (fun () -> ag.violations <- s :: ag.violations))
+    fmt
+
+let pause ag = Mutex.protect ag.lock (fun () -> ag.paused <- true)
+
+let resume ag =
+  Mutex.protect ag.lock (fun () ->
+      ag.paused <- false;
+      Condition.broadcast ag.resumed)
+
+let gate ag =
+  Mutex.protect ag.lock (fun () ->
+      while ag.paused do
+        Condition.wait ag.resumed ag.lock
+      done)
+
+(* The binary the host loads lists its functions, separated by commas; one that
+   starts with "bad" is refused. *)
+let functions = Hashtbl.create 8
+
+let answer : type a. agent -> a Wire.request -> (a, string) result =
+ fun ag -> function
+  | Wire.Alloc { id; device; bytes; _ } ->
+      if bytes > ag.room then Ok false
+      else begin
+        ag.room <- ag.room - bytes;
+        Hashtbl.replace ag.memory id { size = bytes; bytes = None };
+        record ag (Alloc { id; device; bytes });
+        Ok true
+      end
+  | Wire.Map { id; device; region } -> (
+      match Hashtbl.find_opt ag.memory region with
+      | None -> Ok false
+      | Some r ->
+          Hashtbl.replace ag.memory id r;
+          record ag (Map { id; device; region });
+          Ok true)
+  | Wire.Load { id; binary } ->
+      if String.starts_with ~prefix:"bad" binary then
+        Error "the agent refuses it"
+      else begin
+        Hashtbl.replace functions id (String.split_on_char ',' binary);
+        Ok ()
+      end
+  | Wire.Entry { image; name } -> (
+      match Hashtbl.find_opt functions image with
+      | None -> Ok None
+      | Some fs ->
+          let rec index i = function
+            | [] -> None
+            | f :: _ when f = name -> Some i
+            | _ :: fs -> index (i + 1) fs
+          in
+          Ok (index 0 fs))
+  | Wire.Open _ | Wire.Join _ | Wire.Rail _ -> Error "not served here"
+
+let region ag id =
+  match Hashtbl.find_opt ag.memory id with
+  | Some r -> r
+  | None -> failwith (Printf.sprintf "no region %d" id)
+
+let run_handover ag (h : Wire.handover) (local : Rig_remote_abi.area array) =
+  gate ag;
+  Array.iter
+    (fun (d, v) ->
+      let reached = Option.value ~default:0 (Hashtbl.find_opt ag.done_ d) in
+      if reached < v then
+        violate ag "device %d's value %d waits on device %d's %d, reached %d"
+          h.device h.value d v reached)
+    h.waits;
+  let k = ref 0 in
+  Array.iter
+    (function
+      | Wire.Words _ -> ()
+      | Wire.Copy { src = Wire.Local; dst = Wire.Region { id; offset }; bytes }
+        ->
+          let a = local.(!k) in
+          incr k;
+          if Bigarray.Array1.dim a <> bytes then
+            violate ag "a local copy of %d bytes came with %d" bytes
+              (Bigarray.Array1.dim a);
+          let m = bytes_of (region ag id) in
+          for i = 0 to bytes - 1 do
+            Bytes.set m (offset + i) a.{i}
+          done
+      | Wire.Copy { src = Wire.Region { id; offset }; dst = Wire.Local; bytes }
+        ->
+          let m = bytes_of (region ag id) in
+          let a =
+            Bigarray.Array1.create Bigarray.char Bigarray.c_layout bytes
+          in
+          for i = 0 to bytes - 1 do
+            a.{i} <- Bytes.get m (offset + i)
+          done;
+          Link.bytes ag.link ~device:h.device ~value:h.value a
+      | Wire.Copy
+          {
+            src = Wire.Region { id = s; offset = so };
+            dst = Wire.Region { id = d; offset = doff };
+            bytes;
+          } -> (
+          let rs = region ag s and rd = region ag d in
+          match (rs.bytes, rd.bytes) with
+          | None, None -> ()
+          | _ -> Bytes.blit (bytes_of rs) so (bytes_of rd) doff bytes)
+      | Wire.Copy { src = Wire.Local; dst = Wire.Local; _ } ->
+          violate ag "a copy from Local to Local")
+    h.parts;
+  record ag
+    (Handover
+       {
+         device = h.device;
+         value = h.value;
+         waits = Array.to_list h.waits;
+         local = !k;
+         parts = Array.to_list h.parts;
+       });
+  Hashtbl.replace ag.done_ h.device h.value;
+  Link.word ag.link ~device:h.device h.value
+
+let rec serve ag =
+  match Link.next ag.link with
+  | Error _ | Ok Wire.Close -> ()
+  | Ok (Wire.Request r) ->
+      Link.answer ag.link r (answer ag r);
+      serve ag
+  | Ok (Wire.Drop id) ->
+      record ag (Drop id);
+      serve ag
+  | Ok (Wire.Handover (h, local)) ->
+      run_handover ag h local;
+      serve ag
+
+(* A machine *)
+
+type machine = {
+  ag : agent;
+  far : Link.t; (* the controller's end *)
+  host : Rig.t;
+  devices : Rig.t array; (* MEM:1, MEM:2, … *)
+}
+
+let count = Atomic.make 0
+
+let account id ~reaches : Wire.account =
+  {
+    id;
+    name = (if id = 0 then "CPU" else Printf.sprintf "MEM:%d" id);
+    arch = (if id = 0 then "arm64" else Printf.sprintf "mem%d" id);
+    budget = (1 lsl 30) + id;
+    reaches;
+  }
+
+let no_rails _ ~send:_ ~receive:_ = Error "no rails"
+let ok_or_fail = function Ok d -> d | Error e -> failf "open: %s" e
+
+(* A job, a link to a fresh machine whose agent serves on a thread, its host
+   opened through rig, and a device for each list of [reaches] (the ids the
+   device reaches). Ends every device and the job, and joins the agent. *)
+let with_machine ?(reaches = []) ?(room = max_int) f =
+  let job = Link.job () in
   let d, a = connected () in
-  let c = Link.make j d ~name:"far" ~peer:(Wire.Agent 1) in
-  let a = Link.make j a ~name:"controller" ~peer:Wire.Controller in
-  let t = Thread.create agent a in
-  let machine = Printf.sprintf "proxy:%d" (Atomic.fetch_and_add machines 1) in
-  let host =
-    Rig_remote_proxy.make c host_account
-      (Rig_remote_abi.Host
-         { machine; rail = (fun _ ~send:_ ~receive:_ -> Error "no rails") })
+  let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
+  let link = Link.make job a ~name:"controller" ~peer:Wire.Controller in
+  let ag =
+    {
+      job;
+      link;
+      memory = Hashtbl.create 16;
+      done_ = Hashtbl.create 4;
+      events = [];
+      violations = [];
+      room;
+      lock = Mutex.create ();
+      paused = false;
+      resumed = Condition.create ();
+    }
   in
-  let h =
-    match
-      Rig.open_
-        (module Rig_remote_proxy)
-        ~machine ~host:true ~name:"CPU"
-        (fun () -> Ok host)
-    with
-    | Ok h -> h
-    | Error e -> failwith e
+  let _, served =
+    spawn (fun () ->
+        try serve ag
+        with e ->
+          Link.fail job ("the agent raised " ^ Printexc.to_string e);
+          raise e)
   in
+  let machine = Printf.sprintf "proxy-test:%d" (Atomic.fetch_and_add count 1) in
+  let host_account =
+    account 0 ~reaches:(List.init (List.length reaches) succ)
+  in
+  let finish host =
+    resume ag;
+    Option.iter Rig.close host;
+    (match Link.wait job ~ms:0 with
+    | Link.Open -> Link.fail job "the test ended"
+    | _ -> ());
+    served ()
+  in
+  match
+    Rig.open_
+      (module Proxy)
+      ~machine ~host:true ~name:"CPU"
+      (fun () ->
+        Ok
+          (Proxy.make far host_account
+             (Rig_remote_abi.Host { machine; rail = no_rails })))
+  with
+  | Error e ->
+      finish None;
+      failf "open: %s" e
+  | Ok host ->
+      Fun.protect
+        ~finally:(fun () -> finish (Some host))
+        (fun () ->
+          let accounts =
+            Array.of_list
+              (host_account
+              :: List.mapi (fun i r -> account (i + 1) ~reaches:r) reaches)
+          in
+          let devices =
+            Array.init (List.length reaches) (fun i ->
+                let a = accounts.(i + 1) in
+                ok_or_fail
+                  (Rig.open_
+                     (module Proxy)
+                     ~machine ~name:a.name
+                     (fun () ->
+                       Ok
+                         (Proxy.make far a
+                            (Rig_remote_abi.Device { id = a.id })))))
+          in
+          let m = { ag; far; host; devices } in
+          f m;
+          match Mutex.protect ag.lock (fun () -> ag.violations) with
+          | [] -> ()
+          | vs -> failf "the agent saw: %s" (String.concat "; " (List.rev vs)))
+
+(* Buffers *)
+
+let host_buffer s = B.of_string s
+
+let read_host b =
+  let s = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 s 0 (B.length b);
+  Bytes.to_string s
+
+(* [b]'s bytes, through a copy to this process. *)
+let read b =
+  let h = B.create Rig.host (B.length b) in
+  B.copy ~src:b ~dst:h;
+  read_host h
+
+let far_of_string d s =
+  let b = B.create d (String.length s) in
+  B.copy ~src:(host_buffer s) ~dst:b;
+  b
+
+let random_string n = String.init n (fun _ -> Char.chr (Random.int 256))
+
+let copy_submission d ~src ~dst =
+  Sub.make ~reads:0 ~writes:0 d
+    [| { Sub.queue = "COPY:0"; after = [||]; work = Sub.Copy { src; dst } } |]
+
+let submit ?(waits = [||]) s = Rig.submit s ~reads:[||] ~writes:[||] ~waits
+
+let lost_w =
+  Testable.structural ~pp:(fun ppf -> function
+    | None -> Format.pp_print_string ppf "not lost"
+    | Some why -> Format.fprintf ppf "lost: %S" why)
+
+(* Facts *)
+
+let rec_w =
+  Testable.make
+    ~pp:(fun ppf -> function
+      | Rig_remote_abi.Host h -> Format.fprintf ppf "Host %s" h.machine
+      | Rig_remote_abi.Device { id } -> Format.fprintf ppf "Device %d" id)
+    ~equal:( == )
+
+(* A job with one link [far], whose peer end nothing serves. *)
+let with_job_link f =
+  let job = Link.job () in
   Fun.protect
     ~finally:(fun () ->
-      Link.fail j "test ended";
-      Thread.join t)
-    (fun () -> f h)
+      match Link.wait job ~ms:0 with
+      | Link.Open -> Link.fail job "the test ended"
+      | _ -> ())
+    (fun () ->
+      let d, a = connected () in
+      let far = Link.make job d ~name:"far" ~peer:(Wire.Agent 1) in
+      ignore (Link.make job a ~name:"controller" ~peer:Wire.Controller);
+      f far)
 
-let copies =
-  group ~timeout "copy"
+let completion_w =
+  Testable.structural ~pp:(fun ppf -> function
+    | `Host -> Format.pp_print_string ppf "`Host"
+    | `Store -> Format.pp_print_string ppf "`Store"
+    | `Object h -> Format.fprintf ppf "`Object %nd" h)
+
+let blocks_w =
+  Testable.structural ~pp:(fun ppf -> function
+    | `Returns -> Format.pp_print_string ppf "`Returns"
+    | `May_block -> Format.pp_print_string ppf "`May_block")
+
+let driver_facts () =
+  with_job_link @@ fun far ->
+  let a = account 3 ~reaches:[] in
+  let c = Rig_remote_abi.Device { id = 3 } in
+  let p = Proxy.make far a c in
+  equal (list string) [ "COMPUTE:0"; "COPY:0" ] (Proxy.queues p);
+  equal completion_w `Host (Proxy.completion p);
+  equal (list bool) [ true; false; false ]
+    (List.map (Proxy.waits_on p) [ `Host; `Store; `Object ]);
+  equal int max_int (Proxy.max_waits p);
+  equal blocks_w `May_block (Proxy.blocks p);
+  equal bool false (Proxy.maps_host p);
+  equal rec_w c (Proxy.capability p);
+  equal string "mem3" (Proxy.arch p);
+  equal int ((1 lsl 30) + 3) (Proxy.budget p)
+
+let rig_facts () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let d = m.devices.(0) in
+  equal string "mem1" (Rig.arch d);
+  equal int ((1 lsl 30) + 1) (Rig.budget d);
+  equal bool true (Rig.equal m.host (Rig.host_of d));
+  equal bool true (Rig.computes d);
+  equal bool false (Rig.shares_host_memory m.host);
+  equal bool false (Rig.reaches m.host Rig.host);
+  equal bool false (Rig.reaches Rig.host m.host);
+  starts_with ~affix:"MEM:1@proxy-test:" (Rig.name d);
+  match Rig.capability d Rig_remote_abi.key with
+  | Some (Rig_remote_abi.Device { id }) -> equal int 1 id
+  | _ -> fail "a device's record is Device"
+
+(* The ids a device reaches decide what it maps of the others. *)
+let reaches () =
+  with_machine ~reaches:[ [ 2 ]; [] ] @@ fun m ->
+  let d1 = m.devices.(0) and d2 = m.devices.(1) in
+  equal bool true (Rig.reaches d1 d2);
+  equal bool false (Rig.reaches d2 d1)
+
+let two_links () =
+  let job = Link.job () in
+  Fun.protect
+    ~finally:(fun () -> Link.fail job "the test ended")
+    (fun () ->
+      let link name i =
+        let d, a = connected () in
+        let l = Link.make job d ~name ~peer:(Wire.Agent i) in
+        ignore (Link.make job a ~name:"controller" ~peer:Wire.Controller);
+        l
+      in
+      let l1 = link "one" 1 and l2 = link "two" 2 in
+      let device id = Rig_remote_abi.Device { id } in
+      let p = Proxy.make l1 (account 1 ~reaches:[ 1; 2 ]) (device 1) in
+      let q = Proxy.make l2 (account 2 ~reaches:[ 1; 2 ]) (device 2) in
+      let q' = Proxy.make l1 (account 2 ~reaches:[]) (device 2) in
+      equal bool false (Proxy.peer p q);
+      equal bool true (Proxy.peer p q');
+      let r = Proxy.word q' in
+      equal ~msg:"a word's handle" nativeint 0n (Proxy.handle r);
+      equal ~msg:"a word's shadow is this process's" bool true
+        (Option.is_some (Proxy.host r));
+      equal ~msg:"map_host" bool true
+        (Option.is_none (Proxy.map_host p 4096 4096));
+      Link.fail job "lost";
+      equal ~msg:"once lost" bool true (Proxy.peer p q');
+      equal bool true (Option.is_none (Proxy.map_peer p q (Proxy.word q)));
+      match Proxy.map_peer p q' (Proxy.word q') with
+      | Some r -> equal (option int) (Some 3) (Proxy.address r)
+      | None -> fail "a proxy of the same link maps the word")
+
+let make_misuse () =
+  with_job_link @@ fun far ->
+  let rig_host = Rig_remote_abi.Host { machine = "m"; rail = no_rails } in
+  raises_match ~msg:"a host's record for device 1" Exn.invalid_arg (fun () ->
+      Proxy.make far (account 1 ~reaches:[]) rig_host);
+  raises_match ~msg:"device 2's record for device 1" Exn.invalid_arg (fun () ->
+      Proxy.make far (account 1 ~reaches:[]) (Rig_remote_abi.Device { id = 2 }));
+  raises_match ~msg:"a device's record for the host" Exn.invalid_arg (fun () ->
+      Proxy.make far (account 0 ~reaches:[]) (Rig_remote_abi.Device { id = 1 }))
+
+let facts =
+  group "facts"
     [
-      test "bytes copied to another machine's host come back" (fun () ->
-          with_host @@ fun h ->
-          let src = B.of_string "to the agent and back" in
-          let far = B.create h (B.length src) in
-          let back = B.create Rig.host (B.length src) in
-          B.copy ~src ~dst:far;
-          B.copy ~src:far ~dst:back;
-          equal string "to the agent and back"
-            (let ba = B.bigarray Bigarray.char back in
-             String.init (B.length back) (Bigarray.Array1.get ba)));
-      test "a proxy's name ends with its machine's" (fun () ->
-          with_host @@ fun h ->
-          equal string "CPU@proxy:" (String.sub (Rig.name h) 0 10));
+      test
+        "a proxy's facts are the agent's account's and the ones its .mli lists"
+        driver_facts;
+      test
+        "rig sees another machine's device, whose memory this process does not \
+         reach"
+        rig_facts;
+      test "a device reaches the devices its account lists" reaches;
+      test
+        "proxies of two links never map each other; a word maps at its id plus \
+         one"
+        two_links;
+      test "make raises for a record of another device" make_misuse;
     ]
 
-let () = exit (run "rig_remote_proxy.proxy" [ copies ])
+(* Memory *)
+
+let alloc_reaches_agent () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let b = B.create m.devices.(0) 4096 in
+  let id = Nativeint.to_int (B.handle b) in
+  let device, bytes =
+    require_match
+      (List.find_map (function
+        | Alloc a when a.id = id -> Some (a.device, a.bytes)
+        | _ -> None))
+      (events m.ag)
+  in
+  equal ~msg:"the allocation's device" int 1 device;
+  at_least ~msg:"the allocation's bytes" int ~than:4096 bytes;
+  raises_match ~msg:"a proxy's memory has no address" Exn.invalid_arg (fun () ->
+      B.address b)
+
+let refused_alloc () =
+  with_machine ~room:(1 lsl 20) @@ fun m ->
+  ignore (B.create m.host 4096);
+  raises_match
+    (function Rig.Out_of_memory (_, n) -> n = 2 lsl 20 | _ -> false)
+    (fun () -> B.create m.host (2 lsl 20))
+
+let dropped () =
+  with_machine @@ fun m ->
+  let id =
+    let b = B.create m.host 4096 in
+    Nativeint.to_int (B.handle b)
+  in
+  Gc.full_major ();
+  (* A drain takes the collected memory back into the cache. *)
+  ignore (B.create m.host 16);
+  Rig.free_cache m.host;
+  until ~what:"the drop" (fun () -> List.mem (Drop id) (events m.ag))
+
+(* A borrow maps the memory on the agent; a copy through it moves the memory's
+   bytes. *)
+let borrowed () =
+  with_machine ~reaches:[ [ 2 ]; [] ] @@ fun m ->
+  let d1 = m.devices.(0) and d2 = m.devices.(1) in
+  let b2 = far_of_string d2 "mapped" in
+  let b1 = require_some (B.borrow d1 b2) in
+  let region = Nativeint.to_int (B.handle b2) in
+  equal bool true
+    (List.exists
+       (function Map { device = 1; region = r; _ } -> r = region | _ -> false)
+       (events m.ag));
+  let dst = B.create d1 6 in
+  B.copy ~src:b1 ~dst;
+  equal string "mapped" (read dst)
+
+let memory =
+  group "memory"
+    [
+      test
+        "a buffer on a proxy is an allocation of the agent, named by a handle"
+        alloc_reaches_agent;
+      test "an allocation the agent refuses raises Out_of_memory" refused_alloc;
+      test "memory given back reaches the agent as a drop" dropped;
+      test "a device borrows the memory of a device it reaches" borrowed;
+    ]
+
+(* Copies *)
+
+let sizes =
+  Gen.frequency
+    [
+      (3, Gen.int_range 0 5000);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 4095; 4096; 4097; 1 lsl 20 ]
+      );
+    ]
+
+let round_trip n =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  List.iter
+    (fun d ->
+      let s = random_string n in
+      equal ~msg:(Rig.name d) string s (read (far_of_string d s)))
+    [ m.host; m.devices.(0) ]
+
+(* A copy into this process's memory writes only the bytes its part names. *)
+let only_named () =
+  with_machine @@ fun m ->
+  let far = far_of_string m.host (String.make 16 'f') in
+  let h = host_buffer (String.make 64 '.') in
+  B.copy ~src:far ~dst:(B.view h ~first:20 ~length:16);
+  equal string
+    (String.make 20 '.' ^ String.make 16 'f' ^ String.make 28 '.')
+    (read_host h)
+
+let within_machine () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let a = far_of_string m.host "within the machine" in
+  let b = B.create m.host (B.length a) in
+  B.copy ~src:a ~dst:b;
+  let crossing =
+    List.exists
+      (function
+        | Handover { parts; local; _ } ->
+            local = 0
+            && List.exists
+                 (function
+                   | Wire.Copy { src = Wire.Region _; dst = Wire.Region _; _ }
+                     ->
+                       true
+                   | _ -> false)
+                 parts
+        | _ -> false)
+      (events m.ag)
+  in
+  equal ~msg:"a copy between regions, with no bytes from here" bool true
+    crossing;
+  equal string "within the machine" (read b)
+
+(* Bytes copied into this process are in place once the value is reached,
+   whatever their size. *)
+let bytes_before_word () =
+  with_machine @@ fun m ->
+  let n = 8 lsl 20 in
+  let far =
+    far_of_string m.host (String.init n (fun i -> Char.chr (i land 0xff)))
+  in
+  for round = 1 to 3 do
+    let h = B.create Rig.host n in
+    let p = submit (copy_submission m.host ~src:far ~dst:h) in
+    Rig.wait m.host (Rig.Point.value p);
+    let ba = B.bigarray Bigarray.char h in
+    let bad = ref (-1) in
+    for i = n - 1 downto 0 do
+      if ba.{i} <> Char.chr (i land 0xff) then bad := i
+    done;
+    equal
+      ~msg:(Printf.sprintf "round %d: the first wrong byte" round)
+      int (-1) !bad
+  done
+
+(* A law: copies submitted without waiting, between this process's memory and
+   two devices of the machine, leave what the same copies leave run one after
+   another. *)
+
+type place = Here of int | There of int * int (* device, buffer *)
+type op = { src : place; dst : place; at_src : int; at_dst : int; len : int }
+
+let buffer_size = 64
+
+let pp_place ppf = function
+  | Here i -> Format.fprintf ppf "here%d" i
+  | There (d, i) -> Format.fprintf ppf "dev%d.%d" d i
+
+let pp_op ppf o =
+  Format.fprintf ppf "%a[%d] -> %a[%d] x%d" pp_place o.src o.at_src pp_place
+    o.dst o.at_dst o.len
+
+let place_g =
+  Gen.of_list ~pp:pp_place
+    [ Here 0; Here 1; There (0, 0); There (0, 1); There (1, 0) ]
+
+let op_g =
+  let open Gen in
+  let* src, dst =
+    such_that
+      (fun (s, d) ->
+        s <> d
+        &&
+        match (s, d) with
+        | Here _, Here _ -> false
+        | There (a, _), There (b, _) -> a = b
+        | _ -> true)
+      (pair place_g place_g)
+  in
+  let* len = int_range 1 buffer_size in
+  let+ at_src = int_range 0 (buffer_size - len)
+  and+ at_dst = int_range 0 (buffer_size - len) in
+  { src; dst; at_src; at_dst; len }
+
+let device_of = function There (d, _) -> Some d | Here _ -> None
+
+let copies_law ops =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let devices = [| m.host; m.devices.(0) |] in
+  let init = Array.init 5 (fun _ -> random_string buffer_size) in
+  let model = Array.map Bytes.of_string init in
+  let index = function
+    | Here i -> i
+    | There (0, i) -> 2 + i
+    | There (_, _) -> 4
+  in
+  let buffers =
+    Array.init 5 (fun i ->
+        match i with
+        | 0 | 1 -> host_buffer init.(i)
+        | 2 | 3 -> far_of_string devices.(0) init.(i)
+        | _ -> far_of_string devices.(1) init.(i))
+  in
+  let last = Array.make 2 0 in
+  List.iteri
+    (fun k o ->
+      let d =
+        match (device_of o.src, device_of o.dst) with
+        | Some d, _ | None, Some d -> d
+        | None, None -> assert false
+      in
+      cover "a copy into this process"
+        (match o.dst with Here _ -> true | There _ -> false);
+      let after_into same =
+        match o.src with
+        | Here _ ->
+            List.exists
+              (fun (j, o') ->
+                j < k && o'.dst = o.src && device_of o'.src = Some d = same)
+              (List.mapi (fun j o -> (j, o)) ops)
+        | There _ -> false
+      in
+      cover "a copy from this process after a copy into it, on its device"
+        (after_into true);
+      cover "a copy from this process after a copy into it, on another device"
+        (after_into false);
+      let view p at = B.view buffers.(index p) ~first:at ~length:o.len in
+      let s =
+        copy_submission devices.(d) ~src:(view o.src o.at_src)
+          ~dst:(view o.dst o.at_dst)
+      in
+      last.(d) <- Rig.Point.value (submit s);
+      Bytes.blit model.(index o.src) o.at_src model.(index o.dst) o.at_dst o.len)
+    ops;
+  Array.iteri (fun d v -> if v > 0 then Rig.wait devices.(d) v) last;
+  Array.iteri
+    (fun i b ->
+      let got = if i < 2 then read_host b else read b in
+      equal
+        ~msg:(Printf.sprintf "buffer %d" i)
+        string
+        (Bytes.to_string model.(i))
+        got)
+    buffers
+
+let copies =
+  group "copy"
+    [
+      prop ~count:50
+        "bytes copied to each device of the machine and back are the bytes"
+        sizes round_trip;
+      test "a copy into this process writes only the bytes its part names"
+        only_named;
+      test "a copy within the machine moves no byte across the link"
+        within_machine;
+      test "a copy's bytes are in place once its value is reached, at 8 MiB"
+        bytes_before_word;
+      prop ~count:60
+        "copies submitted at once leave what they leave one after another"
+        (Gen.with_pp
+           (Format.pp_print_list
+              ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+              pp_op)
+           (Gen.list ~size:(Gen.int_range 1 12) op_g))
+        copies_law;
+    ]
+
+(* Work *)
+
+let never () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let far = B.create m.host 16 and far2 = B.create m.host 16 in
+  let h = B.create Rig.host 16 in
+  let both =
+    Sub.make ~reads:0 ~writes:0 m.host
+      [|
+        {
+          Sub.queue = "COPY:0";
+          after = [||];
+          work = Sub.Copy { src = far; dst = h };
+        };
+        {
+          Sub.queue = "COPY:0";
+          after = [||];
+          work = Sub.Copy { src = h; dst = far2 };
+        };
+      |]
+  in
+  raises_match ~msg:"a copy from here after a copy into here" Exn.invalid_arg
+    (fun () -> submit both);
+  let words = host_buffer "\001\000\000\000\002\000\000\000" in
+  let on d =
+    Sub.make ~reads:0 ~writes:0 d
+      [| { Sub.queue = "COMPUTE:0"; after = [||]; work = Sub.Words words } |]
+  in
+  raises_match ~msg:"words on a device other than the host" Exn.invalid_arg
+    (fun () -> submit (on m.devices.(0)));
+  let p = submit (on m.host) in
+  Rig.wait m.host (Rig.Point.value p);
+  equal bool true
+    (List.exists
+       (function
+         | Handover { device = 0; parts = [ Wire.Words w ]; _ } ->
+             w = "\001\000\000\000\002\000\000\000"
+         | _ -> false)
+       (events m.ag))
+
+(* The fill is rig's timestamp, harmless if a hand-over called it. *)
+let fill_refused () =
+  with_machine @@ fun m ->
+  let arg = B.create Rig.host 64 in
+  let fill =
+    Sub.make ~reads:0 ~writes:0 m.host
+      [|
+        {
+          Sub.queue = "COMPUTE:0";
+          after = [||];
+          work =
+            Sub.Fill
+              {
+                fill = Rig.Profile.timestamp;
+                arg;
+                ring_units = 0;
+                segment_bytes = 0;
+              };
+        };
+      |]
+  in
+  raises_match Exn.invalid_arg (fun () -> submit fill)
+
+(* Waits between devices of one link travel with the hand-over, as the
+   producer's id and value. *)
+let waits_travel () =
+  with_machine ~reaches:[ []; [] ] @@ fun m ->
+  let d1 = m.devices.(0) and d2 = m.devices.(1) in
+  let a = B.create d1 64 and b = B.create d1 64 and c = B.create d2 64 in
+  let c' = B.create d2 64 in
+  pause m.ag;
+  let p = submit (copy_submission d1 ~src:a ~dst:b) in
+  let q = submit ~waits:[| p |] (copy_submission d2 ~src:c ~dst:c') in
+  resume m.ag;
+  Rig.wait d2 (Rig.Point.value q);
+  let waits =
+    require_match
+      (List.find_map (function
+        | Handover { device = 2; waits; _ } -> Some waits
+        | _ -> None))
+      (events m.ag)
+  in
+  equal (list (pair int int)) [ (1, Rig.Point.value p) ] waits
+
+(* With the agent held, copies of 40 MiB within the machine: the third finds
+   more than 64 MiB in flight and waits. *)
+let room_later () =
+  with_machine @@ fun m ->
+  let n = in_flight_limit / 8 * 5 in
+  let a = B.create m.host n and b = B.create m.host n in
+  let s = copy_submission m.host ~src:a ~dst:b in
+  pause m.ag;
+  ignore (submit s);
+  ignore (submit s);
+  let finished, third = spawn (fun () -> submit s) in
+  Thread.delay 0.3;
+  let early = finished () in
+  resume m.ag;
+  let p = third () in
+  Rig.wait m.host (Rig.Point.value p);
+  equal ~msg:"the third submit returned while 80 MiB were in flight" bool false
+    early
+
+let room_idle () =
+  with_machine @@ fun m ->
+  let n = 100 lsl 20 in
+  let a = B.create m.host n and b = B.create m.host n in
+  let p = submit (copy_submission m.host ~src:a ~dst:b) in
+  Rig.wait m.host (Rig.Point.value p)
+
+let work =
+  group "work"
+    [
+      test "parts a proxy does not run are refused; words run on the host" never;
+      test "a fill is refused" fill_refused;
+      test "a wait on another device of the link reaches the agent" waits_travel;
+      test "a submission waits while more than 64 MiB are in flight" room_later;
+      test "an idle device takes a submission of any size" room_idle;
+    ]
+
+(* Code *)
+
+let images () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let i = require_ok (Rig.Image.load m.host "run,step") in
+  equal (option int) (Some 1) (Rig.Image.entry i "step");
+  equal (option int) None (Rig.Image.entry i "walk");
+  let why = require_error (Rig.Image.load m.host "bad code") in
+  starts_with ~msg:"the reason starts with the host's name"
+    ~affix:(Rig.name m.host) why;
+  contains ~msg:"the agent's reason" ~sub:"the agent refuses it" why;
+  let why = require_error (Rig.Image.load m.devices.(0) "run") in
+  contains ~msg:"names the machine's host" ~sub:"host" why
+
+let code =
+  group "code"
+    [ test "the machine's host loads code, its devices do not" images ]
+
+(* Failure and close *)
+
+let job_fails () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let d = m.devices.(0) in
+  let b = far_of_string d "before" in
+  Link.fail m.ag.job "the machine went away";
+  raises_match
+    (function Rig.Lost (_, why) -> why = "the machine went away" | _ -> false)
+    (fun () -> B.create d 16);
+  equal lost_w (Some "the machine went away") (Rig.lost d);
+  raises_match (function Rig.Lost _ -> true | _ -> false) (fun () -> read b)
+
+let agent_dies () =
+  with_machine @@ fun m ->
+  Link.fail m.ag.job "the agent's process ended";
+  raises_match
+    (function
+      | Rig.Lost (_, why) -> why = "the agent's process ended" | _ -> false)
+    (fun () -> B.create m.host 16)
+
+(* A hand-over waiting for its word when the job fails: the wait raises and the
+   device stops at its last value. *)
+let in_flight_fails () =
+  with_machine @@ fun m ->
+  let a = B.create m.host 64 and b = B.create m.host 64 in
+  pause m.ag;
+  let p = submit (copy_submission m.host ~src:a ~dst:b) in
+  Link.fail m.ag.job "failed in flight";
+  raises_match
+    (function Rig.Lost (_, why) -> why = "failed in flight" | _ -> false)
+    (fun () -> Rig.wait m.host (Rig.Point.value p));
+  until ~what:"the word at the last value handed over" (fun () ->
+      Rig.signaled m.host = Rig.Point.value p)
+
+(* Each counted call of a proxy made directly on the link, with a region and an
+   image the agent made before the job failed. *)
+let counted =
+  [
+    ("alloc", fun p _ _ -> ignore (Proxy.alloc p `Device 16));
+    ("map_peer", fun p r _ -> ignore (Proxy.map_peer p p r));
+    ("image", fun p _ _ -> ignore (Proxy.image p "run"));
+    ("entry", fun _ _ i -> ignore (Proxy.entry i "run"));
+    ("sleep", fun p _ _ -> Proxy.sleep p ~seen:0 ~still_ms:10);
+  ]
+
+(* free and unload send nothing once the job failed; signaled reads the shadow
+   as before. *)
+let quiet_after_failure () =
+  with_machine @@ fun m ->
+  let p =
+    Proxy.make m.far (account 0 ~reaches:[])
+      (Rig_remote_abi.Host { machine = "direct"; rail = no_rails })
+  in
+  let r = require_some (Proxy.alloc p `Device 16) in
+  let i =
+    match Proxy.image p "run" with
+    | Ok (`Loaded i) -> i
+    | Ok (`Place _) -> fail "the host loads its own code"
+    | Error why -> fail why
+  in
+  Link.fail m.ag.job "root";
+  Proxy.free p r;
+  Proxy.unload p i;
+  equal int 0 (Proxy.signaled p)
+
+let counted_after_failure (_, call) =
+  with_machine @@ fun m ->
+  let p =
+    Proxy.make m.far (account 0 ~reaches:[])
+      (Rig_remote_abi.Host { machine = "direct"; rail = no_rails })
+  in
+  let r = require_some (Proxy.alloc p `Device 16) in
+  let i =
+    match Proxy.image p "run" with
+    | Ok (`Loaded i) -> i
+    | Ok (`Place _) -> fail "the host loads its own code"
+    | Error why -> fail why
+  in
+  Link.fail m.ag.job "root";
+  raises_match
+    (function Proxy.Fault "root" -> true | _ -> false)
+    (fun () -> call p r i)
+
+let close_device () =
+  with_machine ~reaches:[ [] ] @@ fun m ->
+  let d = m.devices.(0) in
+  ignore (far_of_string d "closing");
+  Rig.close d;
+  equal lost_w (Some "closed") (Rig.lost d);
+  equal (option string) None (Link.failure m.ag.job);
+  equal string "the host goes on"
+    (read (far_of_string m.host "the host goes on"))
+
+(* A close waits for the work submitted before it. *)
+let close_waits () =
+  with_machine @@ fun m ->
+  let a = far_of_string m.host "waited for" in
+  let b = B.create m.host (B.length a) in
+  pause m.ag;
+  ignore (submit (copy_submission m.host ~src:a ~dst:b));
+  let finished, closed = spawn (fun () -> Rig.close m.host) in
+  Thread.delay 0.2;
+  let early = finished () in
+  resume m.ag;
+  closed ();
+  equal ~msg:"the close returned before the work it waits for" bool false early;
+  equal lost_w (Some "closed") (Rig.lost m.host)
+
+let failures =
+  group "failure"
+    [
+      test "a failed job loses the machine's devices with its root cause"
+        job_fails;
+      test "a job failed by the agent's end loses the host" agent_dies;
+      test "a wait for a value handed over when the job fails raises Lost"
+        in_flight_fails;
+      cases
+        ~name:(fun (n, _) ->
+          n ^ " raises Fault with the root cause once the job failed")
+        "counted" counted counted_after_failure;
+      test "free, unload and signaled raise nothing once the job failed"
+        quiet_after_failure;
+      test "closing a device ends it alone" close_device;
+      test "closing the host waits for its submitted work" close_waits;
+    ]
+
+let () =
+  exit
+    (run "rig_remote_proxy.proxy"
+       [
+         group ~timeout:60. "proxy"
+           [ facts; memory; copies; work; code; failures ];
+       ])
