@@ -5,57 +5,58 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-alloc-free/bar/16MiB	alloc_words	exact	383
-alloc-free/bar/16MiB	wall_time	batch=8192	n=20	7.097e-07	6.942e-07 6.980e-07 7.001e-07 7.009e-07 7.061e-07 7.073e-07 7.078e-07 7.084e-07 7.093e-07 7.097e-07 7.098e-07 7.127e-07 7.133e-07 7.144e-07 7.149e-07 7.167e-07 7.189e-07 7.203e-07 7.226e-07 7.295e-07
-alloc-free/bar/4KiB	alloc_words	exact	391
-alloc-free/bar/4KiB	wall_time	batch=16384	n=20	5.620e-07	5.570e-07 5.585e-07 5.587e-07 5.588e-07 5.588e-07 5.592e-07 5.606e-07 5.609e-07 5.615e-07 5.617e-07 5.624e-07 5.625e-07 5.628e-07 5.631e-07 5.632e-07 5.644e-07 5.647e-07 5.648e-07 5.651e-07 5.655e-07
-alloc-free/fragmented/bar/16MiB	alloc_words	exact	427
-alloc-free/fragmented/bar/16MiB	wall_time	batch=8192	n=20	8.189e-07	7.982e-07 8.000e-07 8.100e-07 8.107e-07 8.108e-07 8.108e-07 8.141e-07 8.164e-07 8.170e-07 8.186e-07 8.192e-07 8.193e-07 8.204e-07 8.218e-07 8.222e-07 8.230e-07 8.259e-07 8.311e-07 8.319e-07 8.360e-07
-alloc-free/gpu/16MiB	alloc_words	exact	810
-alloc-free/gpu/16MiB	wall_time	batch=4096	n=20	1.657e-06	1.633e-06 1.633e-06 1.643e-06 1.645e-06 1.647e-06 1.649e-06 1.652e-06 1.654e-06 1.655e-06 1.655e-06 1.658e-06 1.658e-06 1.659e-06 1.661e-06 1.664e-06 1.667e-06 1.668e-06 1.670e-06 1.672e-06 1.679e-06
-alloc-free/gpu/4KiB	alloc_words	exact	328
-alloc-free/gpu/4KiB	wall_time	batch=16384	n=20	4.515e-07	4.488e-07 4.491e-07 4.494e-07 4.494e-07 4.497e-07 4.499e-07 4.500e-07 4.500e-07 4.504e-07 4.512e-07 4.518e-07 4.520e-07 4.531e-07 4.534e-07 4.534e-07 4.535e-07 4.536e-07 4.547e-07 4.547e-07 4.548e-07
-alloc-free/visible/16MiB	alloc_words	exact	913
-alloc-free/visible/16MiB	wall_time	batch=128	n=20	5.691e-05	5.577e-05 5.594e-05 5.601e-05 5.602e-05 5.613e-05 5.637e-05 5.650e-05 5.653e-05 5.668e-05 5.689e-05 5.693e-05 5.696e-05 5.698e-05 5.700e-05 5.701e-05 5.714e-05 5.743e-05 5.900e-05 5.936e-05 5.985e-05
-alloc-free/visible/4KiB	alloc_words	exact	255
-alloc-free/visible/4KiB	wall_time	batch=16384	n=20	3.975e-07	3.947e-07 3.948e-07 3.960e-07 3.961e-07 3.961e-07 3.962e-07 3.963e-07 3.965e-07 3.971e-07 3.975e-07 3.975e-07 3.976e-07 3.976e-07 3.978e-07 3.979e-07 3.987e-07 3.999e-07 4.010e-07 4.016e-07 4.029e-07
+alloc-free/bar/16MiB	alloc_words	exact	375
+alloc-free/bar/16MiB	wall_time	batch=8192	n=20	6.589e-07	6.360e-07 6.386e-07 6.440e-07 6.464e-07 6.470e-07 6.474e-07 6.495e-07 6.506e-07 6.507e-07 6.571e-07 6.606e-07 6.617e-07 6.652e-07 6.660e-07 6.665e-07 6.668e-07 6.677e-07 6.678e-07 6.810e-07 6.850e-07
+alloc-free/bar/4KiB	alloc_words	exact	383
+alloc-free/bar/4KiB	wall_time	batch=16384	n=20	5.149e-07	5.107e-07 5.118e-07 5.128e-07 5.136e-07 5.136e-07 5.139e-07 5.142e-07 5.142e-07 5.146e-07 5.148e-07 5.150e-07 5.153e-07 5.158e-07 5.164e-07 5.171e-07 5.175e-07 5.177e-07 5.189e-07 5.201e-07 5.211e-07
+alloc-free/fragmented/bar/16MiB	alloc_words	exact	417
+alloc-free/fragmented/bar/16MiB	wall_time	batch=8192	n=20	7.477e-07	7.316e-07 7.319e-07 7.320e-07 7.369e-07 7.412e-07 7.438e-07 7.440e-07 7.451e-07 7.459e-07 7.467e-07 7.487e-07 7.512e-07 7.530e-07 7.534e-07 7.550e-07 7.559e-07 7.563e-07 7.592e-07 7.620e-07 7.622e-07
+alloc-free/gpu/16MiB	alloc_words	exact	789
+alloc-free/gpu/16MiB	wall_time	batch=4096	n=20	1.523e-06	1.502e-06 1.508e-06 1.511e-06 1.515e-06 1.515e-06 1.515e-06 1.516e-06 1.520e-06 1.520e-06 1.523e-06 1.524e-06 1.525e-06 1.526e-06 1.526e-06 1.528e-06 1.536e-06 1.541e-06 1.542e-06 1.544e-06 1.544e-06
+alloc-free/gpu/4KiB	alloc_words	exact	321
+alloc-free/gpu/4KiB	wall_time	batch=16384	n=20	4.121e-07	4.094e-07 4.101e-07 4.104e-07 4.106e-07 4.107e-07 4.108e-07 4.109e-07 4.114e-07 4.118e-07 4.119e-07 4.123e-07 4.123e-07 4.124e-07 4.140e-07 4.141e-07 4.146e-07 4.164e-07 4.176e-07 4.177e-07 4.190e-07
+alloc-free/visible/16MiB	alloc_words	exact	895
+alloc-free/visible/16MiB	wall_time	batch=128	n=20	5.680e-05	5.547e-05 5.587e-05 5.607e-05 5.628e-05 5.635e-05 5.640e-05 5.642e-05 5.660e-05 5.675e-05 5.676e-05 5.685e-05 5.704e-05 5.716e-05 5.724e-05 5.735e-05 5.766e-05 5.782e-05 5.802e-05 5.840e-05 5.915e-05
+alloc-free/visible/4KiB	alloc_words	exact	253
+alloc-free/visible/4KiB	wall_time	batch=16384	n=20	3.616e-07	3.602e-07 3.604e-07 3.604e-07 3.606e-07 3.607e-07 3.608e-07 3.610e-07 3.612e-07 3.613e-07 3.615e-07 3.616e-07 3.621e-07 3.621e-07 3.629e-07 3.642e-07 3.644e-07 3.656e-07 3.657e-07 3.675e-07 3.724e-07
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
-# forced: blessed alloc-free/gpu/4KiB alloc-free/gpu/16MiB alloc-free/bar/4KiB alloc-free/bar/16MiB alloc-free/visible/4KiB under load 11.7 on 10 cores
-# forced: blessed alloc-free/fragmented/bar/16MiB under load 7.9 on 10 cores
+# forced: blessed under load 12.6 on 10 cores
 
-alloc-free/bar/16MiB	alloc_words	exact	383
-alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.090e-06	1.070e-06 1.071e-06 1.072e-06 1.076e-06 1.077e-06 1.085e-06 1.089e-06 1.089e-06 1.090e-06 1.090e-06 1.091e-06 1.092e-06 1.094e-06 1.095e-06 1.095e-06 1.095e-06 1.096e-06 1.096e-06 1.100e-06 1.100e-06
-alloc-free/bar/4KiB	alloc_words	exact	391
-alloc-free/bar/4KiB	wall_time	batch=8192	n=20	8.975e-07	8.796e-07 8.837e-07 8.869e-07 8.908e-07 8.925e-07 8.955e-07 8.957e-07 8.962e-07 8.965e-07 8.971e-07 8.979e-07 8.999e-07 9.003e-07 9.040e-07 9.088e-07 9.113e-07 9.120e-07 9.143e-07 9.219e-07 9.580e-07
-alloc-free/fragmented/bar/16MiB	alloc_words	exact	427
-alloc-free/fragmented/bar/16MiB	wall_time	batch=4096	n=20	1.229e-06	1.201e-06 1.205e-06 1.205e-06 1.209e-06 1.213e-06 1.217e-06 1.219e-06 1.221e-06 1.227e-06 1.227e-06 1.230e-06 1.231e-06 1.237e-06 1.253e-06 1.263e-06 1.265e-06 1.271e-06 1.279e-06 1.279e-06 1.280e-06
-alloc-free/gpu/16MiB	alloc_words	exact	810
-alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	2.681e-06	2.625e-06 2.626e-06 2.630e-06 2.639e-06 2.639e-06 2.649e-06 2.662e-06 2.677e-06 2.677e-06 2.680e-06 2.682e-06 2.687e-06 2.692e-06 2.697e-06 2.699e-06 2.704e-06 2.708e-06 2.710e-06 2.721e-06 2.749e-06
-alloc-free/gpu/4KiB	alloc_words	exact	328
-alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	7.281e-07	6.945e-07 6.950e-07 6.968e-07 6.995e-07 7.031e-07 7.039e-07 7.051e-07 7.083e-07 7.118e-07 7.244e-07 7.319e-07 7.578e-07 7.698e-07 7.780e-07 8.017e-07 8.399e-07 8.911e-07 9.082e-07 9.246e-07 9.953e-07
-alloc-free/visible/16MiB	alloc_words	exact	913
-alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.657e-04	1.622e-04 1.624e-04 1.628e-04 1.630e-04 1.638e-04 1.646e-04 1.648e-04 1.652e-04 1.656e-04 1.656e-04 1.658e-04 1.661e-04 1.675e-04 1.677e-04 1.686e-04 1.725e-04 1.726e-04 1.728e-04 1.755e-04 1.764e-04
-alloc-free/visible/4KiB	alloc_words	exact	255
-alloc-free/visible/4KiB	wall_time	batch=16384	n=20	6.011e-07	5.902e-07 5.916e-07 5.922e-07 5.938e-07 5.983e-07 5.990e-07 6.000e-07 6.003e-07 6.004e-07 6.011e-07 6.012e-07 6.012e-07 6.017e-07 6.019e-07 6.023e-07 6.023e-07 6.024e-07 6.028e-07 6.043e-07 6.059e-07
+alloc-free/bar/16MiB	alloc_words	exact	375
+alloc-free/bar/16MiB	wall_time	batch=8192	n=20	1.023e-06	9.995e-07 9.999e-07 1.003e-06 1.013e-06 1.016e-06 1.016e-06 1.016e-06 1.016e-06 1.018e-06 1.022e-06 1.024e-06 1.027e-06 1.036e-06 1.036e-06 1.038e-06 1.039e-06 1.039e-06 1.040e-06 1.052e-06 1.061e-06
+alloc-free/bar/4KiB	alloc_words	exact	383
+alloc-free/bar/4KiB	wall_time	batch=8192	n=20	8.375e-07	8.188e-07 8.222e-07 8.231e-07 8.242e-07 8.282e-07 8.285e-07 8.321e-07 8.329e-07 8.330e-07 8.374e-07 8.375e-07 8.384e-07 8.401e-07 8.407e-07 8.451e-07 8.471e-07 8.560e-07 8.580e-07 8.628e-07 8.650e-07
+alloc-free/fragmented/bar/16MiB	alloc_words	exact	417
+alloc-free/fragmented/bar/16MiB	wall_time	batch=8192	n=20	1.189e-06	1.158e-06 1.160e-06 1.170e-06 1.171e-06 1.174e-06 1.181e-06 1.184e-06 1.185e-06 1.186e-06 1.188e-06 1.190e-06 1.191e-06 1.194e-06 1.198e-06 1.205e-06 1.210e-06 1.216e-06 1.217e-06 1.230e-06 1.236e-06
+alloc-free/gpu/16MiB	alloc_words	exact	789
+alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	2.490e-06	2.377e-06 2.392e-06 2.408e-06 2.440e-06 2.452e-06 2.461e-06 2.461e-06 2.465e-06 2.484e-06 2.488e-06 2.492e-06 2.493e-06 2.494e-06 2.521e-06 2.524e-06 2.541e-06 2.561e-06 2.570e-06 2.574e-06 4.876e-06
+alloc-free/gpu/4KiB	alloc_words	exact	321
+alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	6.602e-07	6.467e-07 6.484e-07 6.514e-07 6.517e-07 6.543e-07 6.563e-07 6.567e-07 6.577e-07 6.594e-07 6.600e-07 6.604e-07 6.617e-07 6.635e-07 6.675e-07 6.681e-07 6.734e-07 6.743e-07 6.753e-07 6.759e-07 6.838e-07
+alloc-free/visible/16MiB	alloc_words	exact	895
+alloc-free/visible/16MiB	wall_time	batch=32	n=20	1.744e-04	1.699e-04 1.719e-04 1.724e-04 1.729e-04 1.733e-04 1.735e-04 1.736e-04 1.738e-04 1.740e-04 1.743e-04 1.744e-04 1.749e-04 1.770e-04 1.773e-04 1.782e-04 1.787e-04 1.790e-04 1.815e-04 1.975e-04 3.210e-04
+alloc-free/visible/4KiB	alloc_words	exact	253
+alloc-free/visible/4KiB	wall_time	batch=16384	n=20	5.755e-07	5.541e-07 5.633e-07 5.661e-07 5.689e-07 5.708e-07 5.714e-07 5.715e-07 5.718e-07 5.739e-07 5.746e-07 5.764e-07 5.790e-07 5.825e-07 5.832e-07 5.836e-07 6.031e-07 6.111e-07 6.130e-07 6.161e-07 6.371e-07
 
 # machine: baccbeca132e3ae9
 # host: nonnormal · Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-alloc-free/bar/16MiB	alloc_words	exact	383
-alloc-free/bar/16MiB	wall_time	batch=4096	n=20	1.329e-06	1.294e-06 1.295e-06 1.296e-06 1.302e-06 1.303e-06 1.303e-06 1.303e-06 1.317e-06 1.322e-06 1.327e-06 1.330e-06 1.332e-06 1.334e-06 1.336e-06 1.336e-06 1.337e-06 1.346e-06 1.423e-06 1.466e-06 1.476e-06
-alloc-free/bar/4KiB	alloc_words	exact	391
-alloc-free/bar/4KiB	wall_time	batch=8192	n=20	1.050e-06	1.049e-06 1.049e-06 1.049e-06 1.049e-06 1.049e-06 1.049e-06 1.050e-06 1.050e-06 1.050e-06 1.050e-06 1.050e-06 1.051e-06 1.051e-06 1.053e-06 1.053e-06 1.054e-06 1.056e-06 1.057e-06 1.058e-06 1.066e-06
-alloc-free/fragmented/bar/16MiB	alloc_words	exact	427
-alloc-free/fragmented/bar/16MiB	wall_time	batch=4096	n=20	1.481e-06	1.470e-06 1.471e-06 1.472e-06 1.474e-06 1.474e-06 1.476e-06 1.481e-06 1.481e-06 1.481e-06 1.481e-06 1.481e-06 1.482e-06 1.483e-06 1.483e-06 1.483e-06 1.483e-06 1.484e-06 1.485e-06 1.485e-06 1.491e-06
-alloc-free/gpu/16MiB	alloc_words	exact	810
-alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	2.776e-06	2.761e-06 2.762e-06 2.763e-06 2.764e-06 2.771e-06 2.772e-06 2.773e-06 2.774e-06 2.774e-06 2.775e-06 2.777e-06 2.780e-06 2.781e-06 2.783e-06 2.783e-06 2.789e-06 2.795e-06 2.801e-06 2.806e-06 2.841e-06
-alloc-free/gpu/4KiB	alloc_words	exact	328
-alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	9.189e-07	9.069e-07 9.085e-07 9.096e-07 9.098e-07 9.104e-07 9.106e-07 9.115e-07 9.117e-07 9.131e-07 9.153e-07 9.225e-07 9.226e-07 9.228e-07 9.237e-07 9.238e-07 9.246e-07 9.265e-07 9.294e-07 9.368e-07 9.413e-07
-alloc-free/visible/16MiB	alloc_words	exact	913
-alloc-free/visible/16MiB	wall_time	batch=64	n=20	1.141e-04	1.139e-04 1.139e-04 1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.141e-04 1.141e-04 1.141e-04 1.141e-04 1.141e-04 1.143e-04 1.144e-04 1.144e-04 1.144e-04 1.146e-04 1.146e-04 1.147e-04
-alloc-free/visible/4KiB	alloc_words	exact	255
-alloc-free/visible/4KiB	wall_time	batch=8192	n=20	8.113e-07	8.070e-07 8.105e-07 8.106e-07 8.108e-07 8.110e-07 8.111e-07 8.111e-07 8.113e-07 8.113e-07 8.113e-07 8.114e-07 8.116e-07 8.117e-07 8.117e-07 8.117e-07 8.118e-07 8.119e-07 8.121e-07 8.124e-07 8.137e-07
+alloc-free/bar/16MiB	alloc_words	exact	375
+alloc-free/bar/16MiB	wall_time	batch=4096	n=20	1.233e-06	1.230e-06 1.231e-06 1.231e-06 1.231e-06 1.231e-06 1.231e-06 1.231e-06 1.232e-06 1.232e-06 1.233e-06 1.233e-06 1.233e-06 1.233e-06 1.233e-06 1.233e-06 1.233e-06 1.234e-06 1.234e-06 1.234e-06 1.247e-06
+alloc-free/bar/4KiB	alloc_words	exact	383
+alloc-free/bar/4KiB	wall_time	batch=8192	n=20	1.019e-06	1.018e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.019e-06 1.020e-06 1.020e-06 1.020e-06 1.020e-06 1.020e-06 1.020e-06 1.020e-06 1.020e-06 1.020e-06
+alloc-free/fragmented/bar/16MiB	alloc_words	exact	417
+alloc-free/fragmented/bar/16MiB	wall_time	batch=4096	n=20	1.412e-06	1.403e-06 1.405e-06 1.406e-06 1.408e-06 1.409e-06 1.410e-06 1.411e-06 1.411e-06 1.412e-06 1.412e-06 1.412e-06 1.412e-06 1.412e-06 1.413e-06 1.414e-06 1.414e-06 1.414e-06 1.414e-06 1.415e-06 1.415e-06
+alloc-free/gpu/16MiB	alloc_words	exact	789
+alloc-free/gpu/16MiB	wall_time	batch=2048	n=20	2.655e-06	2.653e-06 2.653e-06 2.653e-06 2.653e-06 2.654e-06 2.654e-06 2.654e-06 2.654e-06 2.654e-06 2.655e-06 2.655e-06 2.655e-06 2.655e-06 2.655e-06 2.656e-06 2.656e-06 2.657e-06 2.657e-06 2.659e-06 2.659e-06
+alloc-free/gpu/4KiB	alloc_words	exact	321
+alloc-free/gpu/4KiB	wall_time	batch=8192	n=20	8.651e-07	8.647e-07 8.648e-07 8.649e-07 8.649e-07 8.650e-07 8.651e-07 8.651e-07 8.651e-07 8.651e-07 8.651e-07 8.652e-07 8.652e-07 8.653e-07 8.653e-07 8.654e-07 8.655e-07 8.655e-07 8.659e-07 8.691e-07 8.734e-07
+alloc-free/huge/two-gpus/64KiB	alloc_words	exact	126
+alloc-free/huge/two-gpus/64KiB	wall_time	batch=1024	n=20	5.415e-06	4.403e-06 4.733e-06 4.790e-06 4.964e-06 5.000e-06 5.038e-06 5.099e-06 5.107e-06 5.187e-06 5.397e-06 5.433e-06 5.549e-06 5.627e-06 5.663e-06 6.082e-06 6.423e-06 6.432e-06 7.055e-06 7.275e-06 7.867e-06
+alloc-free/visible/16MiB	alloc_words	exact	895
+alloc-free/visible/16MiB	wall_time	batch=64	n=20	1.141e-04	1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.140e-04 1.141e-04 1.141e-04 1.141e-04 1.141e-04 1.141e-04 1.141e-04 1.142e-04 1.142e-04 1.143e-04 1.143e-04 1.144e-04 1.145e-04 1.146e-04
+alloc-free/visible/4KiB	alloc_words	exact	253
+alloc-free/visible/4KiB	wall_time	batch=8192	n=20	8.036e-07	7.908e-07 7.929e-07 7.981e-07 7.984e-07 8.013e-07 8.027e-07 8.030e-07 8.033e-07 8.034e-07 8.034e-07 8.037e-07 8.037e-07 8.048e-07 8.057e-07 8.070e-07 8.071e-07 8.074e-07 8.074e-07 8.077e-07 8.078e-07
